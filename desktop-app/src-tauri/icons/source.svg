@@ -1,0 +1,6 @@
+<!-- The app icon: the official Kivali icon (web/public/logos/kivali-icon.svg,
+     copied next to this file by `make icons`) on the 1024px canvas with the
+     100px margin macOS app icons keep around their rounded square. -->
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <image x="100" y="100" width="824" height="824" xlink:href="kivali-icon.svg"/>
+</svg>

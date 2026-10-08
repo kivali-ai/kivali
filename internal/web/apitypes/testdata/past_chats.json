@@ -1,0 +1,14 @@
+{
+  "chats": [
+    {
+      "ts": "20260901T093000.000000000Z",
+      "title": "Chose the hosting provider",
+      "range": {
+        "from": 1788255000000,
+        "to": 1788258600000
+      },
+      "messages": 24,
+      "tokens": 51200
+    }
+  ]
+}

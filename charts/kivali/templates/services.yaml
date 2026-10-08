@@ -1,0 +1,36 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: kivali
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kivali.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    app: kivali
+  ports:
+    - name: http
+      port: {{ .Values.service.port }}
+      targetPort: http
+      {{- if and (has .Values.service.type (list "NodePort" "LoadBalancer")) .Values.service.nodePort }}
+      nodePort: {{ .Values.service.nodePort }}
+      {{- end }}
+---
+# ClusterIP Service in front of the egress-proxy sidecar. Agent pods set
+# HTTP_PROXY to it; the proxy applies the allowlist.
+apiVersion: v1
+kind: Service
+metadata:
+  name: kivali-egress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kivali.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    app: kivali
+  ports:
+    - name: proxy
+      port: 3128
+      targetPort: 3128

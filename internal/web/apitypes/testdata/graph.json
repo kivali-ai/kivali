@@ -1,0 +1,45 @@
+{
+  "readouts": {
+    "nodes": 1204,
+    "flagged": 3,
+    "problems": 2
+  },
+  "owners": [
+    {
+      "slug": "engineering-lead",
+      "name": "Engineering lead",
+      "count": 12,
+      "nodes": [
+        {
+          "id": "engineering-lead/changelog",
+          "kind": "requirement",
+          "type": "artifact",
+          "title": "Every release has a changelog",
+          "status": "provisional",
+          "flagged": true,
+          "updated": "2026-09-20T17:00:00Z",
+          "version": 3
+        },
+        {
+          "id": "engineering-lead/bad",
+          "kind": "artifact",
+          "type": "artifact",
+          "title": "bad.md",
+          "status": "current",
+          "flagged": false,
+          "problem": "front matter rejected: kind \"memo\" is not one of requirement, decision, certificate, reference",
+          "version": 0
+        }
+      ],
+      "has_more": true
+    },
+    {
+      "slug": "",
+      "name": "Unowned",
+      "count": 0,
+      "nodes": [],
+      "has_more": false
+    }
+  ],
+  "stale": true
+}

@@ -1,0 +1,118 @@
+{
+  "readouts": {
+    "open": 14,
+    "ready": 5,
+    "blocked": 2,
+    "on_hold": 1,
+    "closed_week": 9
+  },
+  "goals": [
+    {
+      "id": 40,
+      "title": "Ship the release",
+      "owner": {
+        "slug": "engineering-lead",
+        "name": "Engineering lead"
+      },
+      "done": 1,
+      "total": 3,
+      "state": "moving",
+      "look_back": [
+        {
+          "id": 41,
+          "title": "Draft the release notes",
+          "state": "closed",
+          "owner": {
+            "slug": "buyer",
+            "name": "Buyer"
+          },
+          "waiting_on": [],
+          "closed_at": "2026-09-19T17:00:00Z",
+          "resolution": "done"
+        }
+      ],
+      "current": [
+        {
+          "id": 42,
+          "title": "Update the docs",
+          "state": "blocked",
+          "owner": {
+            "slug": "buyer",
+            "name": "Buyer"
+          },
+          "waiting_on": [
+            {
+              "id": 45,
+              "title": "Run the tests",
+              "state": "ready",
+              "owner": {
+                "slug": "buyer",
+                "name": "Buyer"
+              }
+            }
+          ],
+          "why": "Waiting on #45 Run the tests, assigned to Buyer",
+          "acceptance": {
+            "satisfied": 1,
+            "claimed": 1,
+            "unclaimed": 1
+          }
+        },
+        {
+          "id": 43,
+          "title": "Fixture",
+          "state": "on_hold",
+          "owner": {
+            "slug": "engineering-lead",
+            "name": "Engineering lead"
+          },
+          "waiting_on": [],
+          "held_by": {
+            "slug": "ceo",
+            "name": "You"
+          },
+          "why": "On hold by you"
+        },
+        {
+          "id": 44,
+          "title": "Migration",
+          "state": "moving",
+          "owner": {
+            "slug": "engineering-lead",
+            "name": "Engineering lead"
+          },
+          "waiting_on": []
+        }
+      ],
+      "look_forward": [
+        {
+          "id": 46,
+          "title": "Label",
+          "state": "ready",
+          "owner": {
+            "slug": "buyer",
+            "name": "Buyer"
+          },
+          "waiting_on": []
+        }
+      ],
+      "unclaimed": [
+        {
+          "name": "test plan"
+        }
+      ]
+    }
+  ],
+  "closed_goals": [
+    {
+      "id": 30,
+      "title": "Pick a host",
+      "owner": {
+        "slug": "engineering-lead",
+        "name": "Engineering lead"
+      },
+      "closed_at": "2026-09-19T17:00:00Z",
+      "resolution": "done"
+    }
+  ]
+}

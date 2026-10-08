@@ -1,0 +1,20 @@
+#!/bin/sh
+# The console's input side accepts exactly one verb, KIVALI-POWEROFF,
+# which starts a clean shutdown. Only the process that owns the VM's
+# serial attachment can write here. This stands in for the vsock guest
+# agent the supervisor step adds; it is not a shell.
+#
+# Virtualization.framework's requestStop cannot reach this kernel:
+# Alpine's linux-virt has CONFIG_INPUT_KEYBOARD unset (so no
+# gpio-keys), so the virtual power button produces no event.
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+
+stty -F /dev/console -echo 2>/dev/null
+while read -r line; do
+  case "$line" in
+    KIVALI-POWEROFF)
+      echo "KIVALI-VM: poweroff requested on the console"
+      exec poweroff
+      ;;
+  esac
+done < /dev/console

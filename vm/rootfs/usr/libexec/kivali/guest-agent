@@ -1,0 +1,7 @@
+#!/bin/sh
+# Runs kivali-guest, the vsock agent kivali-supervisor talks to (busybox
+# init `respawn`). Its stdin is /dev/null: console-control is the only
+# reader of the console. It writes its log to the data disk
+# (log/guest.log) and only start-up lines to the console.
+exec </dev/null
+exec /usr/libexec/kivali/kivali-guest

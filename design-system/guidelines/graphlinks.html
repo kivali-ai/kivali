@@ -1,0 +1,32 @@
+<!-- @dsCard group="Brand" viewport="700x330" name="Graph links" subtitle="How links are drawn" -->
+<!doctype html>
+<html><head><meta charset="utf-8"><link rel="stylesheet" href="../styles.css"><style>
+body{margin:0;padding:20px;background:var(--paper);font-family:var(--font-sans);color:var(--ink)}
+.lbl{font:500 11px/16px var(--font-mono);letter-spacing:.02em;color:var(--ink-muted);margin:0 0 10px}
+svg text{font:400 12px var(--font-sans);fill:var(--ink)} svg .m{font:400 11px var(--font-mono);fill:var(--ink-muted)}
+.rest{stroke:var(--ink-faint);stroke-width:1.5;fill:none}.sup{stroke:var(--ink-faint);stroke-width:1.5;stroke-dasharray:5 4;fill:none}
+.path{stroke:var(--cobalt);stroke-width:2.5;fill:none}.bad{stroke:var(--danger);stroke-width:1.5;stroke-dasharray:2 3;fill:none}
+.hd{fill:var(--ink-faint)}.hdc{fill:var(--cobalt)}.hdd{fill:var(--danger)}
+.clu{fill:var(--identity-iris);opacity:.10}.clu2{fill:var(--identity-ochre);opacity:.12}
+.n{fill:var(--paper-raised);stroke:var(--line)}.ns{fill:var(--paper-raised);stroke:var(--cobalt);stroke-width:1.5}
+</style></head><body>
+<p class="lbl">Rests on · supersedes · selected path · unresolved · owner clusters</p>
+<svg width="100%" viewBox="0 0 660 250" style="max-width:660px;display:block" role="img" aria-label="Example of graph link styles">
+<defs>
+<marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 1L9 5L0 9z" class="hd"/></marker>
+<marker id="ac" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 1L9 5L0 9z" class="hdc"/></marker>
+<marker id="ad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 1L9 5L0 9z" class="hdd"/></marker>
+</defs>
+<rect x="8" y="8" width="300" height="234" rx="16" class="clu"/><text x="22" y="30" class="m">Chief of Staff</text>
+<rect x="352" y="8" width="300" height="160" rx="16" class="clu2"/><text x="366" y="30" class="m">Bookkeeper</text>
+<rect x="30" y="50" width="200" height="34" rx="8" class="ns"/><text x="44" y="72">decision/seed-supplier</text>
+<rect x="380" y="50" width="170" height="34" rx="8" class="ns"/><text x="394" y="72">req/seed-budget</text>
+<rect x="380" y="112" width="170" height="34" rx="8" class="n"/><text x="394" y="134">req/tool-policy</text>
+<rect x="30" y="126" width="200" height="34" rx="8" class="n" opacity=".7"/><text x="44" y="148" opacity=".7" style="text-decoration:line-through">decision/chain-store-seeds</text>
+<rect x="30" y="196" width="200" height="34" rx="8" class="n" stroke-dasharray="4 3"/><text x="44" y="218">decision/drip-line</text>
+<path d="M230 67 H378" class="path" marker-end="url(#ac)"/><text x="268" y="60" class="m">rests on</text>
+<path d="M465 84 V110" class="rest" marker-end="url(#a)"/>
+<path d="M130 126 V86" class="sup" marker-end="url(#a)"/><text x="138" y="110" class="m">superseded by</text>
+<path d="M230 213 H400" class="bad" marker-end="url(#ad)"/><text x="410" y="217" class="m" style="fill:var(--danger)">missing: req/drip-budget</text>
+</svg>
+</body></html>

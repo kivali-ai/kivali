@@ -1,0 +1,327 @@
+/*
+ * The app frame: sidebar (desktop), phone header and tab bar (below 960), the content column, and the bare
+ * page that sign-in, 404 and setup use. App classes and the body margin; every value is a token. Breakpoint: --bp-md (960px)
+ * cannot be a custom property inside @media, so the literal appears in the two media queries.
+ * A 4px step is var(--space-1); fractions of it are calc() over the token.
+ */
+
+/*
+ * ---- Page ----
+ * The frame and the bare page start at the window's edge. The vendored page defaults keep the browser's body
+ * margin; with it the document is taller than the frame, and the tab bar lifts by the margin at the end of
+ * the page.
+ */
+body { margin: 0; }
+
+/* ---- Frame ---- */
+.app-frame {
+  display: flex;
+  min-height: 100vh;
+  background: var(--paper);
+  color: var(--ink);
+}
+.app-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+.app-page {
+  flex: 1;
+  padding: var(--space-4);
+}
+
+/* ---- Content column: 880 default; transcript 760, reading 640, wide 1200 ---- */
+.app-column {
+  box-sizing: border-box;
+  width: 100%;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+.app-column.is-content { max-width: var(--content); }
+.app-column.is-transcript { max-width: calc(var(--content-narrow) + var(--space-4) * 7.5); }
+.app-column.is-reading { max-width: var(--content-narrow); }
+.app-column.is-wide { max-width: var(--content-wide); }
+
+.app-placeholder {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+.app-route-error { padding: var(--space-4) 0; }
+
+/* One h1 at every width: the phone header carries it below 960, the page carries it from 960. */
+.app-page-title { display: none; }
+.app-back { display: none; }
+
+/* ---- Sidebar (hidden below 960) ---- */
+.app-sidebar { display: none; }
+/* The org's mark and name at the top of the sidebar. Not a control: the server has one org per deployment. */
+.app-sidebar-org {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space-1) * 2.5);
+  padding: calc(var(--space-1) * 1.5) calc(var(--space-1) * 2.5) calc(var(--space-1) * 1.5) calc(var(--space-1) * 1.5);
+  font-family: var(--type-heading-family);
+  font-weight: var(--type-title-weight);
+  font-size: var(--type-body-size);
+  line-height: calc(var(--space-1) * 5);
+  color: var(--ink);
+}
+.app-sidebar-org-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.app-sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-1) / 2);
+}
+/* Text only screen readers get (the separators in a NavItem's accessible name). */
+.app-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+/* Wraps a tree item's avatar so it can be hidden from the name without changing the NavItem's layout. */
+.app-nav-lead {
+  display: inline-flex;
+  flex: none;
+}
+/* The compact running AgentState beside Home's label (canvas: 8px after the word). */
+.app-nav-running {
+  display: inline-flex;
+  vertical-align: middle;
+  margin-left: var(--space-2);
+}
+.app-hairline {
+  width: 100%;
+  margin: 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+.app-sidebar-tree {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+.app-tree {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-1) / 2);
+}
+/* The root row matches a NavItem's box and type (500 14/20 sans) without being one: it is not a link. */
+.app-tree-person {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space-1) * 2.5);
+  height: calc(var(--space-1) * 9);
+  padding: 0 calc(var(--space-1) * 2.5);
+  font-family: var(--font-sans);
+  font-weight: 500;
+  font-size: calc(var(--type-caption-size) + 1px);
+  line-height: calc(var(--space-1) * 5);
+  color: var(--ink-muted);
+}
+.app-tree-person-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.app-tree-count {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--space-1) * 1.5);
+}
+.app-sidebar-foot {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-1) * 5);
+  padding: 0 var(--space-1);
+}
+.app-account {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space-1) * 2.5);
+}
+.app-account-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---- Phone header and tab bar (hidden from 960) ---- */
+.app-phone-header {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space-1) * 3);
+  padding: calc(var(--space-1) * 3.5) var(--space-4) calc(var(--space-1) * 1.5);
+}
+/*
+ * 600 22/28 display, the canvas's phone title. No token: heading is 500 20/28 and title 600 32/38, so this
+ * is heading's size plus 2px with title's weight. Two classes so it wins over the Text
+ * variant's font shorthand whatever the stylesheet order.
+ */
+.app-phone-header .app-phone-title {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-family: var(--type-heading-family);
+  font-weight: var(--type-title-weight);
+  font-size: calc(var(--type-heading-size) + 1px + 1px);
+  line-height: var(--type-heading-line);
+  letter-spacing: var(--type-heading-tracking);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.app-tabbar {
+  position: sticky;
+  bottom: 0;
+  z-index: var(--z-sticky);
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  border-top: 1px solid var(--line);
+  background: var(--paper-raised);
+  padding: var(--space-2) 0 calc(var(--space-1) * 5.5);
+}
+.app-tab {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) 0;
+  border-radius: var(--radius-md);
+  color: var(--ink-muted);
+  /* 500 11/14 sans, the canvas's tab label. No token: label is 11/16 mono. */
+  font-family: var(--font-sans);
+  font-weight: var(--type-label-weight);
+  font-size: var(--type-label-size);
+  line-height: calc(var(--space-1) * 3.5);
+  text-decoration: none;
+}
+.app-tab.is-active { color: var(--ink); }
+.app-tab:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+.app-tab-icon {
+  position: relative;
+  display: inline-flex;
+}
+/* The Needs-you count: the frame's one signal highlight. Canvas: 500 10/1 mono, 3/5 padding, at (13, -7). */
+.app-tab-count {
+  position: absolute;
+  top: calc(var(--space-1) * -1.75);
+  left: calc(var(--space-1) * 3.25);
+  padding: calc(var(--space-1) * 0.75) calc(var(--space-1) * 1.25);
+  border-radius: var(--radius-full);
+  background: var(--signal);
+  color: var(--on-signal);
+  font-family: var(--font-mono);
+  font-weight: var(--type-label-weight);
+  font-size: calc(var(--type-label-size) - 1px);
+  line-height: calc(var(--type-label-size) - 1px);
+}
+
+/* ---- Desktop ---- */
+@media (min-width: 960px) {
+  /* Fixed to the window rather than sticky in the frame: a sticky box stays inside the frame, so it moves
+     when the page's end passes under it (a list that shortens, a page height that is not a whole pixel). */
+  .app-sidebar {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+    position: fixed;
+    top: 0;
+    left: 0;
+    box-sizing: border-box;
+    width: var(--sidebar-width);
+    height: 100dvh;
+    padding: var(--space-4) calc(var(--space-1) * 3);
+    border-right: 1px solid var(--line);
+    background: var(--paper);
+  }
+  .app-main { margin-left: var(--sidebar-width); }
+  .app-phone-header,
+  .app-tabbar { display: none; }
+  .app-page { padding: var(--space-6) calc(var(--space-6) * 2) var(--space-8); }
+  .app-page-title { display: block; }
+  .app-back {
+    display: block;
+    margin-bottom: calc(var(--space-2) * -1);
+  }
+}
+
+/* ---- Bare page: sign-in, 404, setup. No frame. ---- */
+.app-bare {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  background: var(--paper);
+  color: var(--ink);
+}
+.app-bare-main {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-8) var(--space-4);
+}
+.app-bare-column {
+  box-sizing: border-box;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+.app-bare-column.is-narrow { max-width: calc(var(--space-1) * 90); }
+.app-bare-column.is-medium { max-width: calc(var(--space-1) * 120); }
+.app-bare-column.is-wide { max-width: calc(var(--space-1) * 140); }
+.app-bare-foot {
+  display: flex;
+  justify-content: center;
+  padding: var(--space-4) 0 var(--space-6);
+}
+.app-lockup-light,
+.app-lockup-dark {
+  height: calc(var(--space-1) * 4.5);
+  width: auto;
+}
+.app-lockup-light { display: block; }
+.app-lockup-dark { display: none; }
+:root[data-theme="dark"] .app-lockup-light { display: none; }
+:root[data-theme="dark"] .app-lockup-dark { display: block; }
+
+.app-login {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.app-login-mark {
+  display: flex;
+  justify-content: center;
+}
+.app-login-head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  text-align: center;
+}
+.app-login-note { text-align: center; }

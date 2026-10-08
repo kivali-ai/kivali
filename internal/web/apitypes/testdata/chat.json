@@ -1,0 +1,397 @@
+{
+  "rows": [
+    {
+      "kind": "message",
+      "ts": 1788255000000,
+      "role": "sent",
+      "from": {
+        "kind": "person",
+        "slug": "ceo",
+        "name": "You"
+      },
+      "body_md": "Where are we on the quote?",
+      "attachments": [
+        {
+          "name": "hosting-quote.pdf",
+          "size_bytes": 86016,
+          "url": "/attachments/9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+        }
+      ],
+      "pending": false
+    },
+    {
+      "kind": "message",
+      "ts": 1788255001000,
+      "role": "received",
+      "from": {
+        "kind": "agent",
+        "slug": "engineering-lead",
+        "name": "Engineering lead"
+      },
+      "body_md": "Checking now.",
+      "attachments": [],
+      "model": "Opus 5.5",
+      "effort": "high",
+      "pending": false
+    },
+    {
+      "kind": "message",
+      "ts": 1788255001500,
+      "role": "received",
+      "from": {
+        "kind": "agent",
+        "slug": "engineering-lead",
+        "name": "Engineering lead"
+      },
+      "body_md": "API Error: usage limit",
+      "attachments": [],
+      "pending": false,
+      "is_error": true
+    },
+    {
+      "kind": "message",
+      "ts": 1788255001800,
+      "role": "sent",
+      "from": {
+        "kind": "person",
+        "slug": "ceo",
+        "name": "You"
+      },
+      "body_md": "$ ls\nquote.pdf",
+      "attachments": [],
+      "pending": false,
+      "quiet": true,
+      "source_kind": "shell_captured"
+    },
+    {
+      "kind": "delivery",
+      "ts": 1788255002000,
+      "from": {
+        "kind": "agent",
+        "slug": "buyer",
+        "name": "Buyer"
+      },
+      "body_md": "Attached.",
+      "attachments": [
+        {
+          "name": "hosting-quote.pdf",
+          "size_bytes": 86016,
+          "url": "/attachments/9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+        }
+      ],
+      "title": "Quote is in",
+      "delivered_to": {
+        "slug": "engineering-lead",
+        "name": "Engineering lead"
+      },
+      "also_to": [
+        {
+          "slug": "tester",
+          "name": "tester"
+        }
+      ],
+      "kind_badge": "assignment update",
+      "message_type": "assignment_event",
+      "assignment_ref": {
+        "id": 42,
+        "title": "Get a hosting quote"
+      },
+      "replies_to": {
+        "slug": "buyer",
+        "name": "Buyer"
+      },
+      "in_reply_to": "/messages/2026-09-01/0001-engineering-lead.md",
+      "raw_url": "/messages/2026-09-01/0002-buyer.md"
+    },
+    {
+      "kind": "ceo_queue",
+      "ts": 1788255003000,
+      "from": {
+        "kind": "agent",
+        "slug": "engineering-lead",
+        "name": "Engineering lead"
+      },
+      "body_md": "$3.8k.",
+      "attachments": [],
+      "title": "Approve the hosting spend",
+      "message_type": "ceo_approval_request",
+      "raw_url": "/messages/2026-09-01/0003-engineering-lead.md",
+      "path": "messages/2026-09-01/0003-engineering-lead.md",
+      "resolved": false
+    },
+    {
+      "kind": "tool_use",
+      "ts": 1788255004000,
+      "tool_use_id": "toolu_01",
+      "name": "Bash",
+      "input": "{\"command\":\"ls\"}",
+      "output": "quote.pdf",
+      "status": "done",
+      "started_ts": 1788255004000,
+      "ended_ts": 1788255004200
+    },
+    {
+      "kind": "tool_use",
+      "ts": 1788255004300,
+      "is_error": true,
+      "tool_use_id": "toolu_02",
+      "name": "Read",
+      "input": "{}",
+      "output": "no such file",
+      "status": "error",
+      "started_ts": 1788255004300,
+      "ended_ts": 1788255004400
+    },
+    {
+      "kind": "tool_use",
+      "ts": 1788255004500,
+      "tool_use_id": "toolu_03",
+      "name": "WebFetch",
+      "input": "{}",
+      "status": "running",
+      "started_ts": 1788255004500
+    },
+    {
+      "kind": "tool_use",
+      "ts": 1788255004600,
+      "tool_use_id": "toolu_06",
+      "name": "file_create",
+      "input": "{\"path\":\"notes/plan.md\",\"content\":\"# Plan…\"}",
+      "output": "Wrote notes/plan.md (48213 bytes)…",
+      "status": "done",
+      "started_ts": 1788255004600,
+      "ended_ts": 1788255004700,
+      "input_truncated": true,
+      "output_truncated": true
+    },
+    {
+      "kind": "doc_published",
+      "ts": 1788255005000,
+      "body_md": "We take the **$3.8k** quote.",
+      "attachments": [
+        {
+          "name": "hosting-quote.pdf",
+          "size_bytes": 86016,
+          "url": "/attachments/9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+        }
+      ],
+      "title": "Quote accepted",
+      "message_type": "notice",
+      "assignment_ref": {
+        "id": 42,
+        "title": "Get a hosting quote"
+      },
+      "raw_url": "/messages/2026-09-01/0004-engineering-lead.md",
+      "to": [
+        {
+          "slug": "buyer",
+          "name": "Buyer"
+        },
+        {
+          "slug": "tester",
+          "name": "tester"
+        }
+      ],
+      "tool_use_id": "toolu_04"
+    },
+    {
+      "kind": "file_shared",
+      "ts": 1788255006000,
+      "from": {
+        "kind": "agent",
+        "slug": "engineering-lead",
+        "name": "Engineering lead"
+      },
+      "body_md": "Shared file: hosting-quote.pdf",
+      "attachments": [
+        {
+          "name": "hosting-quote.pdf",
+          "size_bytes": 86016,
+          "url": "/attachments/9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+        }
+      ]
+    },
+    {
+      "kind": "subagents",
+      "ts": 1788255007000,
+      "tool_use_id": "toolu_05",
+      "tasks": [
+        {
+          "index": 0,
+          "id": "aaaa1111",
+          "title": "Compare hosting providers",
+          "model": "Sonnet 4.6",
+          "effort": "low",
+          "state": "done",
+          "output_md": "Three providers quote under $4k.",
+          "url": "/api/v1/agents/engineering-lead/subagents/aaaa1111"
+        },
+        {
+          "index": 1,
+          "id": "bbbb2222",
+          "title": "Check the build logs",
+          "model": "Haiku 4.5",
+          "effort": "medium",
+          "state": "errored",
+          "error": "The agent pod went away",
+          "url": "/api/v1/agents/engineering-lead/subagents/bbbb2222"
+        },
+        {
+          "index": 2,
+          "id": "",
+          "title": "Check lead times",
+          "model": "Sonnet 4.6",
+          "effort": "high",
+          "state": "running"
+        }
+      ]
+    },
+    {
+      "kind": "task_result",
+      "ts": 1788255007500,
+      "tasks": [
+        {
+          "index": 0,
+          "id": "aaaa1111",
+          "title": "Compare hosting providers",
+          "model": "Sonnet 4.6",
+          "effort": "low",
+          "state": "done",
+          "output_md": "Three providers quote under $4k.",
+          "url": "/api/v1/agents/engineering-lead/subagents/aaaa1111"
+        }
+      ]
+    },
+    {
+      "kind": "task_result",
+      "ts": 1788255007600,
+      "body_md": "A report that names no task.",
+      "tasks": []
+    },
+    {
+      "kind": "marker",
+      "ts": 1788255008000,
+      "body_md": "User pressed Stop.",
+      "marker_kind": "user-interruption",
+      "text": "Chat interrupted by Stop"
+    },
+    {
+      "kind": "marker",
+      "ts": 1788255008500,
+      "body_md": "",
+      "marker_kind": "paused-to-deliver",
+      "text": "Paused to deliver your message"
+    },
+    {
+      "kind": "wake_update",
+      "ts": 1788255009000,
+      "body_md": "Since your last turn: #42 moved to review."
+    },
+    {
+      "kind": "rotation_prompt",
+      "ts": 1788255010000,
+      "body_md": "The CEO has requested a chat rotation."
+    }
+  ],
+  "pending": [
+    {
+      "id": "7c1d9e4b2a6f",
+      "text": "Also check the staging deploy.",
+      "queued_at": 1789923600000,
+      "attachments": [
+        {
+          "sha": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+          "name": "quote.pdf"
+        }
+      ],
+      "deletable": true
+    }
+  ],
+  "fill": {
+    "pct": 82,
+    "tokens": 164000,
+    "limit": 200000,
+    "bucket": "high",
+    "long_threshold": 150000,
+    "resolved_model": "claude-opus-5-5"
+  },
+  "models": [
+    {
+      "id": "claude-opus-5-5",
+      "label": "Opus 5.5",
+      "legacy": false,
+      "current": true,
+      "context_window": 1000000,
+      "efforts": [
+        {
+          "id": "low",
+          "label": "Low",
+          "default": false
+        },
+        {
+          "id": "medium",
+          "label": "Medium",
+          "default": false
+        },
+        {
+          "id": "high",
+          "label": "High",
+          "default": true
+        },
+        {
+          "id": "xhigh",
+          "label": "Extra high",
+          "default": false
+        },
+        {
+          "id": "max",
+          "label": "Max",
+          "default": false
+        }
+      ],
+      "provider": "claude"
+    },
+    {
+      "id": "claude-opus-4-1",
+      "label": "Opus 4.1",
+      "legacy": true,
+      "current": false,
+      "context_window": 200000,
+      "efforts": [
+        {
+          "id": "low",
+          "label": "Low",
+          "default": false
+        },
+        {
+          "id": "medium",
+          "label": "Medium",
+          "default": false
+        },
+        {
+          "id": "high",
+          "label": "High",
+          "default": true
+        },
+        {
+          "id": "xhigh",
+          "label": "Extra high",
+          "default": false
+        },
+        {
+          "id": "max",
+          "label": "Max",
+          "default": false
+        }
+      ],
+      "provider": "claude"
+    }
+  ],
+  "current_model": "claude-opus-5-5",
+  "current_effort": "high",
+  "running": true,
+  "waiting_tasks": 1,
+  "archived": false,
+  "rotating": false,
+  "generation": "20260901T120000.000000000Z"
+}

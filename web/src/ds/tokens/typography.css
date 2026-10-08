@@ -1,0 +1,65 @@
+/* Kivali type. Fonts ship locally (SIL OFL). */
+@font-face { font-family: "Space Grotesk"; src: url("../fonts/SpaceGrotesk-Medium.woff2") format("woff2"); font-weight: 500; font-style: normal; font-display: swap; }
+@font-face { font-family: "Space Grotesk"; src: url("../fonts/SpaceGrotesk-SemiBold.woff2") format("woff2"); font-weight: 600; font-style: normal; font-display: swap; }
+@font-face { font-family: "IBM Plex Sans"; src: url("../fonts/IBMPlexSans-Regular.woff2") format("woff2"); font-weight: 400; font-style: normal; font-display: swap; }
+@font-face { font-family: "IBM Plex Sans"; src: url("../fonts/IBMPlexSans-Italic.woff2") format("woff2"); font-weight: 400; font-style: italic; font-display: swap; }
+@font-face { font-family: "IBM Plex Sans"; src: url("../fonts/IBMPlexSans-Medium.woff2") format("woff2"); font-weight: 500; font-style: normal; font-display: swap; }
+@font-face { font-family: "IBM Plex Sans"; src: url("../fonts/IBMPlexSans-SemiBold.woff2") format("woff2"); font-weight: 600; font-style: normal; font-display: swap; }
+@font-face { font-family: "IBM Plex Mono"; src: url("../fonts/IBMPlexMono-Regular.woff2") format("woff2"); font-weight: 400; font-style: normal; font-display: swap; }
+@font-face { font-family: "IBM Plex Mono"; src: url("../fonts/IBMPlexMono-Medium.woff2") format("woff2"); font-weight: 500; font-style: normal; font-display: swap; }
+:root {
+  --font-display: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --type-display-family: var(--font-display);
+  --type-display-size: 56px;
+  --type-display-line: 60px;
+  --type-display-weight: 600;
+  --type-display-tracking: -0.03em;
+  --type-display: 600 56px/60px var(--font-display);
+  --type-title-family: var(--font-display);
+  --type-title-size: 32px;
+  --type-title-line: 38px;
+  --type-title-weight: 600;
+  --type-title-tracking: -0.02em;
+  --type-title: 600 32px/38px var(--font-display);
+  --type-heading-family: var(--font-display);
+  --type-heading-size: 20px;
+  --type-heading-line: 28px;
+  --type-heading-weight: 500;
+  --type-heading-tracking: -0.01em;
+  --type-heading: 500 20px/28px var(--font-display);
+  --type-body-family: var(--font-sans);
+  --type-body-size: 15px;
+  --type-body-line: 24px;
+  --type-body-weight: 400;
+  --type-body-tracking: 0;
+  --type-body: 400 15px/24px var(--font-sans);
+  --type-caption-family: var(--font-sans);
+  --type-caption-size: 13px;
+  --type-caption-line: 18px;
+  --type-caption-weight: 400;
+  --type-caption-tracking: 0;
+  --type-caption: 400 13px/18px var(--font-sans);
+  --type-label-family: var(--font-mono);
+  --type-label-size: 11px;
+  --type-label-line: 16px;
+  --type-label-weight: 500;
+  --type-label-tracking: 0.02em;
+  --type-label: 500 11px/16px var(--font-mono);
+  --type-code-family: var(--font-mono);
+  --type-code-size: 13px;
+  --type-code-line: 20px;
+  --type-code-weight: 400;
+  --type-code-tracking: 0;
+  --type-code: 400 13px/20px var(--font-mono);
+
+  /* Semantic aliases */
+  --text-display: var(--type-display);
+  --text-title: var(--type-title);
+  --text-heading: var(--type-heading);
+  --text-body: var(--type-body);
+  --text-caption: var(--type-caption);
+  --text-label: var(--type-label);
+  --text-code: var(--type-code);
+}

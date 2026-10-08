@@ -1,0 +1,150 @@
+{
+  "id": 42,
+  "title": "Update the docs",
+  "state": "on_hold",
+  "why": "On hold under #40 by you",
+  "held_by": {
+    "slug": "ceo",
+    "name": "You"
+  },
+  "held_here": false,
+  "seq": 118,
+  "facts": {
+    "assignee": {
+      "slug": "buyer",
+      "name": "Buyer"
+    },
+    "opened_by": {
+      "slug": "engineering-lead",
+      "name": "Engineering lead"
+    },
+    "opened": "2026-09-01T09:30:00Z",
+    "updated": "2026-09-20T17:00:00Z",
+    "part_of": {
+      "id": 40,
+      "title": "Ship the release",
+      "state": "on_hold",
+      "owner": {
+        "slug": "engineering-lead",
+        "name": "Engineering lead"
+      }
+    },
+    "waits_on": [
+      {
+        "id": 45,
+        "title": "Run the tests",
+        "state": "ready",
+        "owner": {
+          "slug": "buyer",
+          "name": "Buyer"
+        }
+      }
+    ],
+    "holds_up": [
+      {
+        "id": 40,
+        "title": "Ship the release",
+        "state": "on_hold",
+        "owner": {
+          "slug": "engineering-lead",
+          "name": "Engineering lead"
+        }
+      }
+    ],
+    "counts_toward": [
+      {
+        "id": 40,
+        "title": "Ship the release",
+        "condition": "docs updated"
+      }
+    ]
+  },
+  "description_md": "Check the docs against the **v3** API.",
+  "conditions": [
+    {
+      "name": "page list",
+      "state": "satisfied",
+      "met_by": {
+        "id": 47,
+        "title": "List the pages",
+        "at": "2026-09-20T17:00:00Z"
+      },
+      "claimed_by": []
+    },
+    {
+      "name": "margins",
+      "state": "claimed",
+      "claimed_by": [
+        {
+          "id": 48,
+          "title": "Margins"
+        }
+      ]
+    },
+    {
+      "name": "sign-off",
+      "state": "unclaimed",
+      "claimed_by": []
+    }
+  ],
+  "progress": {
+    "satisfied": 1,
+    "claimed": 1,
+    "unclaimed": 1
+  },
+  "outcome": {
+    "resolution": "done",
+    "text": "Every page is up to date.",
+    "at": "2026-09-20T17:00:00Z",
+    "unmet": [
+      "sign-off"
+    ]
+  },
+  "log": [
+    {
+      "at": "2026-09-01T09:30:00Z",
+      "by": {
+        "slug": "engineering-lead",
+        "name": "Engineering lead"
+      },
+      "text": "opened it, assigned to Buyer"
+    },
+    {
+      "at": "2026-09-01T09:30:00Z",
+      "by": {
+        "slug": "engineering-lead",
+        "name": "Engineering lead"
+      },
+      "text": "made it wait on #45",
+      "ref": {
+        "id": 45,
+        "title": "Run the tests"
+      }
+    },
+    {
+      "at": "2026-09-20T17:00:00Z",
+      "by": {
+        "slug": "ceo",
+        "name": "You"
+      },
+      "text": "edited the title",
+      "note": "Wait for the review.",
+      "before_ref": {
+        "kind": "attachment",
+        "ref": "3f2a",
+        "url": "/attachments/3f2a"
+      }
+    }
+  ],
+  "parts": [
+    {
+      "id": 47,
+      "title": "List the pages",
+      "state": "closed",
+      "owner": {
+        "slug": "buyer",
+        "name": "Buyer"
+      }
+    }
+  ]
+}

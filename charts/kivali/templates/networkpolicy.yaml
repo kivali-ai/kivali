@@ -1,0 +1,85 @@
+{{- if .Values.networkPolicy.enabled }}
+# Agents run shell commands in pods and must not be able to act as the owner
+# by calling the server's HTTP API. Two policies; they take effect only on
+# a cluster whose CNI enforces NetworkPolicy (k3s's embedded network policy
+# controller does).
+#
+# 1. Agent pods: egress default deny, then only the egress proxy and DNS.
+#    This is the load-bearing one: it stops an agent pod reaching anything
+#    but the proxy and DNS, whatever the server's own policy says.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kivali-agentpod-egress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kivali.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: kivali-agentpod
+  policyTypes: [Egress]
+  egress:
+    # The egress proxy sidecar runs in the server pod. Agent pods reach
+    # core over the hostPath Unix socket, not the network.
+    - to:
+        - podSelector:
+            matchLabels:
+              app: kivali
+      ports:
+        - protocol: TCP
+          port: 3128
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+# 2. Server pod, defence in depth: the HTTP port only from outside the pod
+#    network, the proxy port only from pods in this namespace. On k3s
+#    kube-router evaluates policy before kube-proxy's SNAT and accepts
+#    traffic from the local node ahead of every pod chain, so kubelet
+#    probes and host-forwarded NodePort traffic are admitted, while a pod's
+#    request to the NodePort is dropped with its real pod address. The
+#    cost: any in-cluster front end (Traefik, cloudflared, Tailscale
+#    operator pods) is also a pod and is blocked; admit it with
+#    networkPolicy.serverIngress.extraFrom.
+{{- if .Values.networkPolicy.serverIngress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kivali-server-ingress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kivali.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: kivali
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - {{ .Values.networkPolicy.podCIDR }}
+        {{- with .Values.networkPolicy.serverIngress.extraFrom }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      ports:
+        - protocol: TCP
+          port: 8080
+    - from:
+        - podSelector: {}
+      ports:
+        - protocol: TCP
+          port: 3128
+{{- end }}
+{{- end }}

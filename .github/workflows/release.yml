@@ -1,0 +1,735 @@
+# Release
+#
+# Two ways in:
+#
+#   a release    a pushed release tag (scripts/release.sh pushes vX.Y.Z
+#                together with the version bump) publishes the GitHub
+#                release that Kivali Desktop and every Kivali org consume:
+#                signed, notarized, with the updater's feed
+#   a dev build  run by hand (Actions, Release, Run workflow) on any
+#                branch: the same builds with no tag and no signing
+#                material, published as the pre-release
+#                vX.Y.Z-dev.<run number> (X.Y.Z the tree's version), its
+#                tag created on the commit built. The macOS app is ad-hoc
+#                signed and not notarized, neither app carries updater
+#                artifacts, and there is no latest.json. A pre-release is
+#                skipped by GitHub's /releases/latest, so neither the
+#                updater nor a feed check ever offers a dev build.
+#
+# docs/developers/releasing.md is the procedure: the secrets a release
+# needs, how the updater and the org upgrade read the result, how to roll
+# a release back.
+#
+#   checks           ci.yml, called: every per-commit check, Kivali
+#                    Desktop's on macOS and Windows among them
+#   nightly          nightly.yml, called: the race detector and the
+#                    integration suite
+#   verify           the version: the tag, or the dev build's. For a
+#                    release, the tag is vX.Y.Z and every versioned file
+#                    says X.Y.Z (make version-check), failing first and
+#                    saying why: the desktop's tauri.conf.json version
+#                    must equal the tag. It also checks every signing
+#                    secret is set (listing the missing ones) and that the
+#                    updater public key is not the development one, so
+#                    none of that is discovered after the images and the
+#                    VM images have been built.
+#   images           one native runner per architecture: the three images
+#                    (kivali, kivali-egress-proxy, kivali-dev-shell) saved
+#                    together and zstd-compressed,
+#                    kivali-images-linux-<arch>.tar.zst, the single
+#                    archive the supervisor imports; and the Debian
+#                    package lists of kivali and kivali-dev-shell, for
+#                    SOURCES.md
+#   chart            kivali-X.Y.Z.tgz
+#   licenses         THIRD_PARTY_LICENSES.txt, the notices of everything a
+#                    release ships (make third-party-licenses). The apps
+#                    bundle the same file; each image also carries its
+#                    own, written as it is built.
+#   vm               the VM image for each desktop platform, on a native
+#                    Linux runner, with that architecture's images and the
+#                    chart baked in: arm64 for macOS (Image, initramfs.gz,
+#                    root.squashfs), amd64 for Windows (root.vhdx); each
+#                    with packages.txt and SOURCES.md
+#   feed             release.json: the supervisor's update feed, with the
+#                    sha256 of the chart and the image bundles
+#   desktop-macos    Kivali.app on macos-15 (arm64): the supervisor sidecar
+#                    stamped with the version, the arm64 VM image bundled,
+#                    signed with a Developer ID certificate, notarized,
+#                    shipped as Kivali_X.Y.Z_aarch64.dmg plus the
+#                    updater's Kivali.app.tar.gz and .sig
+#   desktop-windows  the per-machine NSIS installer on windows-latest
+#                    (x64): the supervisor sidecar stamped with the
+#                    version, the amd64 VM image bundled, shipped as
+#                    Kivali_X.Y.Z_x64-setup.exe, which is also the
+#                    updater's artifact, and its .sig
+#   publish          waits for checks and nightly as well as the builds; a
+#                    failed test publishes nothing. Writes latest.json for
+#                    tauri-plugin-updater, covering both platforms. One
+#                    draft release, every asset uploaded, then published.
+#                    SOURCES.md (the GPL and LGPL sources and the written
+#                    offer) is the arm64 VM image's with the images'
+#                    Debian packages appended; vm-amd64-SOURCES.md is the
+#                    amd64 VM image's, which adds the EFI stub.
+#                    A pre-release tag (vX.Y.Z-rc1) is published as a
+#                    pre-release, which GitHub's /releases/latest skips,
+#                    so the updater never offers it.
+#
+# NOT RUN HERE: the VM boot test (make -C vm boottest). It needs
+# Virtualization.framework, which GitHub-hosted macOS runners cannot
+# offer (no nested virtualization on Apple Silicon runners), so nothing in
+# this workflow boots the image. Run `make -C vm boottest` on a Mac against
+# the vm job's arm64 artifacts before announcing a release.
+#
+# The Windows installer is not Authenticode-signed: Windows SmartScreen
+# warns on its first run. Updates are verified either way, by the
+# updater's own signature.
+#
+# Secrets (Settings -> Secrets and variables -> Actions; docs/developers/releasing.md
+# says where each comes from). A release needs all of them, and the
+# verify job checks them first and lists every missing one; a dev build
+# needs none:
+#
+#   APPLE_CERTIFICATE                 base64 of the Developer ID Application .p12
+#   APPLE_CERTIFICATE_PASSWORD        the .p12's export password
+#   KEYCHAIN_PASSWORD                 any string; protects the job's temporary keychain
+#   APPLE_SIGNING_IDENTITY            "Developer ID Application: Name (TEAMID)"
+#   notarization, ONE of:
+#     APPLE_ID, APPLE_PASSWORD (an app-specific password), APPLE_TEAM_ID
+#     APPLE_API_KEY (key id), APPLE_API_ISSUER, APPLE_API_KEY_P8 (base64 of the .p8)
+#   TAURI_SIGNING_PRIVATE_KEY         the updater's private key (the file's contents);
+#                                     both platforms' updates are signed with it
+#   TAURI_SIGNING_PRIVATE_KEY_PASSWORD  its password (may be empty)
+#
+# GITHUB_TOKEN (automatic) publishes the release.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+      - 'v[0-9]+.[0-9]+.[0-9]+-*'
+  workflow_dispatch:
+
+# One run per tag or branch. A second run waits for the first rather
+# than cancelling a half-published release.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: CI
+    uses: ./.github/workflows/ci.yml
+
+  nightly:
+    name: Nightly
+    uses: ./.github/workflows/nightly.yml
+
+  verify:
+    name: Version and signing
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Every later job reads the version (and whether this is a dev build)
+    # from here, as TAG.
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      dev: ${{ steps.version.outputs.dev }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Version
+        id: version
+        run: |
+          conf="$(jq -r .version desktop-app/src-tauri/tauri.conf.json)"
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            version="v$conf-dev.$GITHUB_RUN_NUMBER"
+            echo "::notice title=Dev build::$version, from $GITHUB_REF_NAME at $GITHUB_SHA: unsigned, no updater artifacts, published as a pre-release."
+            dev=true
+          else
+            version="$GITHUB_REF_NAME"
+            # tauri.conf.json's version is the desktop's; the tag is
+            # everyone else's. A release cut by hand (not
+            # scripts/release.sh) is where these drift, so say exactly
+            # which one is wrong.
+            if [ "v$conf" != "$version" ]; then
+              echo "::error title=Version mismatch::tag $version but desktop-app/src-tauri/tauri.conf.json says version $conf. Run scripts/release.sh (it bumps every versioned file together) and tag the release commit it makes; nothing was built."
+              exit 1
+            fi
+            dev=false
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "dev=$dev" >> "$GITHUB_OUTPUT"
+
+      # A dev build stamps its own version into the desktop's files (the
+      # desktop jobs run scripts/bump-version.sh); the tree's files must
+      # still agree with one another.
+      - name: Every versioned file agrees
+        env:
+          TAG: ${{ steps.version.outputs.version }}
+          DEV: ${{ steps.version.outputs.dev }}
+        run: |
+          if [ "$DEV" = true ]; then make version-check; else make version-check VERSION="$TAG"; fi
+
+      # Everything a signed, notarized, updatable app needs, checked
+      # here, first, so a missing secret fails in seconds and not after
+      # the images and the VM images have been built (the tag is already
+      # pushed by then, and its version number spent). Secrets are
+      # readable from any job; only their presence is tested.
+      - name: Signing material is present
+        if: steps.version.outputs.dev != 'true'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          missing=""
+          for v in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD KEYCHAIN_PASSWORD APPLE_SIGNING_IDENTITY TAURI_SIGNING_PRIVATE_KEY; do
+            if [ -z "${!v}" ]; then missing="$missing $v"; fi
+          done
+          if [ -z "$APPLE_ID$APPLE_PASSWORD$APPLE_TEAM_ID" ] && [ -z "$APPLE_API_KEY$APPLE_API_ISSUER$APPLE_API_KEY_P8" ]; then
+            missing="$missing (notarization: APPLE_ID+APPLE_PASSWORD+APPLE_TEAM_ID, or APPLE_API_KEY+APPLE_API_ISSUER+APPLE_API_KEY_P8)"
+          elif [ -n "$APPLE_ID$APPLE_PASSWORD$APPLE_TEAM_ID" ] && { [ -z "$APPLE_ID" ] || [ -z "$APPLE_PASSWORD" ] || [ -z "$APPLE_TEAM_ID" ]; }; then
+            missing="$missing (notarization: APPLE_ID, APPLE_PASSWORD and APPLE_TEAM_ID go together)"
+          elif [ -z "$APPLE_ID$APPLE_PASSWORD$APPLE_TEAM_ID" ] && { [ -z "$APPLE_API_KEY" ] || [ -z "$APPLE_API_ISSUER" ] || [ -z "$APPLE_API_KEY_P8" ]; }; then
+            missing="$missing (notarization: APPLE_API_KEY, APPLE_API_ISSUER and APPLE_API_KEY_P8 go together)"
+          fi
+          if [ -n "$missing" ]; then
+            echo "::error title=Release secrets missing::A release needs these repository secrets, which are not set:$missing. See docs/developers/releasing.md. To build without them, run this workflow by hand for a dev build."
+            exit 1
+          fi
+
+      - name: Updater public key is the owner's
+        if: steps.version.outputs.dev != 'true'
+        run: bash scripts/check-updater-key.sh
+
+  images:
+    name: Images (${{ matrix.arch }})
+    needs: verify
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          # Native arm64, no QEMU.
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    env:
+      TAG: ${{ needs.verify.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.24'
+          cache: true
+
+      - name: zstd
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends zstd
+
+      # Builds the three images and saves them together, compressed:
+      # dist/kivali-images-linux-<arch>.tar.zst. The bundle script checks
+      # the archive lists all three references at the version.
+      - name: make release-bundle-${{ matrix.arch }}
+        run: make release-bundle-${{ matrix.arch }} VERSION="$TAG"
+
+      # The images' Debian packages, for the release's SOURCES.md. The
+      # bundle script left the images loaded.
+      - name: Package lists
+        run: |
+          mkdir -p dist/sources
+          for img in kivali kivali-dev-shell; do
+            id="$(docker create "$img:$TAG")"
+            docker cp "$id:/usr/share/doc/kivali/packages.txt" "dist/sources/$img-linux-${{ matrix.arch }}.txt"
+            docker rm "$id"
+          done
+          ls -l dist/sources
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sources-${{ matrix.arch }}
+          path: dist/sources/*.txt
+          retention-days: 7
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: images-${{ matrix.arch }}
+          path: dist/kivali-images-linux-${{ matrix.arch }}.tar.zst
+          retention-days: 7
+          if-no-files-found: error
+
+      # The same images uncompressed, for the VM image's root disk
+      # (squashfs compresses better from a plain tar).
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vm-images-${{ matrix.arch }}
+          path: dist/images/bundle-${{ matrix.arch }}/kivali-images.tar
+          retention-days: 7
+          if-no-files-found: error
+
+  chart:
+    name: Chart
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      TAG: ${{ needs.verify.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.16.4
+
+      - name: Package the chart
+        run: make chart-package VERSION="$TAG"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chart
+          path: dist/kivali-*.tgz
+          retention-days: 7
+          if-no-files-found: error
+
+  licenses:
+    name: Third-party licenses
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.24'
+          cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: make web-install
+        run: make web-install
+
+      # cargo (the runner's stable rustup) reads the shell's crates from
+      # the registry; jq is on the runner.
+      - name: make third-party-licenses
+        run: make third-party-licenses
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: licenses
+          path: dist/licenses/*.txt
+          retention-days: 7
+          if-no-files-found: error
+
+  vm:
+    name: VM image (${{ matrix.arch }})
+    needs: [verify, images, chart]
+    # The root disk is built under Docker BuildKit with --platform
+    # linux/<arch>: a native runner of each architecture keeps it fast.
+    # arm64 is the macOS app's (Virtualization.framework boots the kernel,
+    # initramfs and squashfs), amd64 the Windows app's (Hyper-V boots
+    # root.vhdx, which holds all three).
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            files: Image initramfs.gz root.squashfs packages.txt SOURCES.md VERSION
+          - arch: amd64
+            runner: ubuntu-latest
+            files: root.vhdx packages.txt SOURCES.md VERSION
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env:
+      TAG: ${{ needs.verify.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.24'
+          cache: true
+
+      # Where `make vm-release` looks for them, as after a local
+      # `make release-assets`.
+      - uses: actions/download-artifact@v4
+        with:
+          name: vm-images-${{ matrix.arch }}
+          path: dist/images/bundle-${{ matrix.arch }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: chart
+          path: dist
+
+      # The root disk bakes the image bundle and the chart, so a first
+      # install needs no download.
+      - name: make vm-release
+        run: make vm-release VERSION="$TAG" VM_ARCH=${{ matrix.arch }}
+
+      - name: Collect the artifacts
+        run: |
+          mkdir -p vm-artifacts
+          for f in ${{ matrix.files }}; do cp "vm/build/out/$f" vm-artifacts/; done
+          ls -l vm-artifacts
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vm-${{ matrix.arch }}
+          path: vm-artifacts/*
+          retention-days: 7
+          if-no-files-found: error
+
+  feed:
+    name: release.json
+    needs: [verify, images, chart]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      TAG: ${{ needs.verify.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: images-*
+          path: dist
+          merge-multiple: true
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: chart
+          path: dist
+
+      - name: make release-feed
+        run: make release-feed VERSION="$TAG"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-json
+          path: dist/release.json
+          retention-days: 7
+          if-no-files-found: error
+
+  desktop-macos:
+    name: Kivali Desktop (macOS arm64)
+    needs: [verify, vm]
+    runs-on: macos-15
+    timeout-minutes: 90
+    # Only the version here: the secrets are handed to the two steps that
+    # need them, and "Prepare signing" exports only the ones with a value.
+    env:
+      TAG: ${{ needs.verify.outputs.version }}
+      DEV: ${{ needs.verify.outputs.dev }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.24'
+          cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            web/package-lock.json
+            desktop-app/package-lock.json
+
+      # Pinned in lockstep with desktop-app/rust-toolchain.toml.
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: '1.99.0'
+
+      # The release profile's dependencies, from nightly.yml's package
+      # job on main. Never saved here: a cache written on a tag is
+      # readable by that tag alone, and a dev build's branch reads main's.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: desktop-release
+          workspaces: desktop-app/src-tauri
+          save-if: false
+
+      # A dev build's version, in the desktop's files for this build only
+      # (not committed): the app and its sidecar report it.
+      - name: Dev version
+        if: env.DEV == 'true'
+        run: bash scripts/bump-version.sh "$TAG"
+
+      # The VM image the vm job built, bundled into the app as
+      # Contents/Resources/vm (desktop-app/Makefile VM_BUNDLE).
+      - uses: actions/download-artifact@v4
+        with:
+          name: vm-arm64
+          path: vm/build/out
+
+      # A temporary keychain holding the Developer ID certificate, so
+      # codesign (run by tauri build) finds the identity without a login
+      # session; then the environment the build reads. Only variables
+      # with a value are exported: tauri treats a variable that is set
+      # but empty as present, and an empty APPLE_ID would send it down
+      # the Apple-ID notarization path even when an API key is in use.
+      # (The certificate itself is imported here, so APPLE_CERTIFICATE is
+      # deliberately not exported: tauri would import it a second time.)
+      - name: Prepare signing
+        if: env.DEV != 'true'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          cert="$RUNNER_TEMP/certificate.p12"
+          echo "$APPLE_CERTIFICATE" | base64 --decode > "$cert"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security set-keychain-settings -t 3600 -u build.keychain
+          security import "$cert" -k build.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain
+          rm -f "$cert"
+          security find-identity -v -p codesigning build.keychain
+
+          export_var() {
+            # NAME VALUE: multi-line safe, and the value is masked.
+            echo "::add-mask::$2"
+            { echo "$1<<KIVALI_EOF"; echo "$2"; echo "KIVALI_EOF"; } >> "$GITHUB_ENV"
+          }
+          export_var APPLE_SIGNING_IDENTITY "$APPLE_SIGNING_IDENTITY"
+          export_var TAURI_SIGNING_PRIVATE_KEY "$TAURI_SIGNING_PRIVATE_KEY"
+          if [ -n "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" ]; then
+            export_var TAURI_SIGNING_PRIVATE_KEY_PASSWORD "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD"
+          fi
+          if [ -n "$APPLE_ID" ]; then
+            export_var APPLE_ID "$APPLE_ID"
+            export_var APPLE_PASSWORD "$APPLE_PASSWORD"
+            export_var APPLE_TEAM_ID "$APPLE_TEAM_ID"
+          else
+            # App Store Connect API key: tauri reads the key from the
+            # file APPLE_API_KEY_PATH names.
+            echo "$APPLE_API_KEY_P8" | base64 --decode > "$RUNNER_TEMP/AuthKey.p8"
+            export_var APPLE_API_KEY "$APPLE_API_KEY"
+            export_var APPLE_API_ISSUER "$APPLE_API_ISSUER"
+            export_var APPLE_API_KEY_PATH "$RUNNER_TEMP/AuthKey.p8"
+          fi
+
+      # make desktop-release: checks the versions once more, then for a
+      # release runs desktop-app's `make build` (release-preflight, the
+      # sidecar built with Go and stamped with the version, tauri build:
+      # sign, notarize, staple, dmg, updater artifacts) and copies the
+      # dmg, Kivali.app.tar.gz and its .sig into dist/; for a dev build
+      # (DEV=1), `make build-trial`, ad-hoc signed, and the dmg only.
+      - name: Build
+        run: make desktop-release VERSION="$TAG" DEV=${{ env.DEV == 'true' && '1' || '' }}
+
+      - name: Remove the keychain and keys
+        if: always() && env.DEV != 'true'
+        run: |
+          security delete-keychain build.keychain || true
+          rm -f "$RUNNER_TEMP/AuthKey.p8"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-macos
+          path: |
+            dist/Kivali_*_aarch64.dmg
+            dist/Kivali.app.tar.gz
+            dist/Kivali.app.tar.gz.sig
+          retention-days: 7
+          if-no-files-found: error
+
+  desktop-windows:
+    name: Kivali Desktop (Windows x64)
+    needs: [verify, vm]
+    runs-on: windows-latest
+    timeout-minutes: 90
+    env:
+      TAG: ${{ needs.verify.outputs.version }}
+      DEV: ${{ needs.verify.outputs.dev }}
+    # Git Bash, not pwsh: the Makefiles' recipes are POSIX shell, and
+    # pwsh judges a multi-line step by its last command's exit code only.
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.24'
+          cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            web/package-lock.json
+            desktop-app/package-lock.json
+
+      # Pinned in lockstep with desktop-app/rust-toolchain.toml.
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: '1.99.0'
+
+      # As desktop-macos: nightly.yml's release-profile cache, restored
+      # and never saved.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: desktop-release
+          workspaces: desktop-app/src-tauri
+          save-if: false
+
+      # The hosted Windows image has Git Bash (bash, perl, coreutils) but
+      # no GNU make.
+      - name: GNU make
+        run: choco install make --no-progress -y
+
+      - name: Dev version
+        if: env.DEV == 'true'
+        run: bash scripts/bump-version.sh "$TAG"
+
+      # The amd64 VM image, bundled as <install dir>\vm\root.vhdx
+      # (desktop-app/Makefile VM_BUNDLE).
+      - uses: actions/download-artifact@v4
+        with:
+          name: vm-amd64
+          path: vm/build/out
+
+      # make desktop-release: checks the versions once more, then for a
+      # release runs desktop-app's `make build` (release-preflight, the
+      # sidecar built with Go for windows/amd64 and stamped with the
+      # version, tauri build: the NSIS installer and its updater
+      # signature) and copies Kivali_X.Y.Z_x64-setup.exe and its .sig into
+      # dist/; for a dev build (DEV=1), `make build-trial` and the
+      # installer only.
+      - name: Build
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ env.DEV != 'true' && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ env.DEV != 'true' && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
+        run: make desktop-release VERSION="$TAG" DEV=${{ env.DEV == 'true' && '1' || '' }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-windows
+          path: |
+            dist/Kivali_*_x64-setup.exe
+            dist/Kivali_*_x64-setup.exe.sig
+          retention-days: 7
+          if-no-files-found: error
+
+  publish:
+    name: Publish the release
+    # Every build and every test must succeed: a failed or cancelled job
+    # publishes nothing.
+    needs: [checks, nightly, verify, images, chart, licenses, vm, feed, desktop-macos, desktop-windows]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ needs.verify.outputs.version }}
+      DEV: ${{ needs.verify.outputs.dev }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: '{images-*,chart,licenses,vm-arm64,release-json,desktop-*}'
+          path: assets
+          merge-multiple: true
+
+      # The amd64 VM image is inside the Windows installer; only its
+      # package list and SOURCES.md are published, beside the arm64 one's.
+      - uses: actions/download-artifact@v4
+        with:
+          name: vm-amd64
+          path: vm-amd64
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: sources-*
+          path: sources
+          merge-multiple: true
+
+      - name: The amd64 VM image's package list and SOURCES.md
+        run: |
+          cp vm-amd64/packages.txt assets/vm-amd64-packages.txt
+          cp vm-amd64/SOURCES.md assets/vm-amd64-SOURCES.md
+
+      # The arm64 VM image's SOURCES.md (from the vm job) covers that VM;
+      # the images' Debian packages (both architectures') and the egress
+      # proxy's base are appended.
+      - name: SOURCES.md
+        run: |
+          for f in sources/*.txt; do
+            sh scripts/third-party-sources.sh debian "The $(basename "$f" .txt) image" "$f"
+          done >> assets/SOURCES.md
+          sh scripts/third-party-sources.sh distroless >> assets/SOURCES.md
+
+      # The updater's feed, from both platforms' updater artifacts;
+      # --require fails the release if either is missing. A dev build has
+      # no updater artifacts and no feed.
+      - name: latest.json
+        if: env.DEV != 'true'
+        run: bash scripts/latest-json.sh "$TAG" --dir assets --require
+
+      - name: Assets
+        run: ls -l assets
+
+      # A draft until every asset is up, so /releases/latest (what the
+      # updater and release feeds resolve) never points at a half-uploaded
+      # release. Re-running replaces assets (--clobber). A dev build's tag
+      # does not exist yet: the release creates it on the commit built
+      # when it is published.
+      - name: Create the draft release
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then exit 0; fi
+          if [ "$DEV" = true ]; then
+            gh release create "$TAG" --draft --prerelease --target "$GITHUB_SHA" \
+              --title "Kivali ${TAG#v} (dev build)" \
+              --notes "A dev build of $GITHUB_REF_NAME at $GITHUB_SHA, for testing. Not signed: the macOS app is not notarized, so macOS blocks its first launch until you allow it in System Settings, Privacy & Security; Windows SmartScreen warns before the installer runs. It does not update itself."
+          else
+            pre=""
+            case "$TAG" in *-*) pre="--prerelease" ;; esac
+            gh release create "$TAG" --draft --verify-tag --title "Kivali ${TAG#v}" --generate-notes $pre
+          fi
+
+      - name: Upload the assets
+        run: gh release upload "$TAG" assets/* --clobber
+
+      - name: Publish
+        run: gh release edit "$TAG" --draft=false

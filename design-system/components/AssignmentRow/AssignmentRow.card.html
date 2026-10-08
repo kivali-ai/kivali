@@ -1,0 +1,19 @@
+<!-- @dsCard group="Components" viewport="700x330" name="AssignmentRow" -->
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="../../styles.css">
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="../../_ds_bundle.js"></script>
+<style>body{margin:0;padding:20px;background:var(--paper);font-family:var(--font-sans);color:var(--ink)} .row{display:flex;flex-wrap:wrap;gap:12px;align-items:center} .col{display:flex;flex-direction:column;gap:14px} .lbl{font:500 11px/16px var(--font-mono);letter-spacing:.02em;color:var(--ink-muted)}</style></head>
+<body><div id="root"></div>
+<script>
+const {createElement:h,Fragment:F}=React; const K=window.KivaliDesignSystem_9b9983; const root=ReactDOM.createRoot(document.getElementById("root"));
+const CS={name:"Chief of Staff",role:"compass",color:"iris"},SS={name:"Supplier scout",role:"search",color:"clay"},BK={name:"Bookkeeper",role:"calculator",color:"ochre"};
+root.render(h("div",{style:{maxWidth:640,background:"var(--paper-raised)",border:"1px solid var(--line)",borderRadius:"var(--radius-lg)",overflow:"hidden"}},
+ h(K.AssignmentRow,{id:7,title:"Choose a seed supplier for the spring beds",state:"blocked",assignee:CS,expanded:true,onToggle:()=>{},onClick:()=>{},openChildren:2,acceptance:{satisfied:1,claimed:1,unclaimed:1}}),
+ h(K.AssignmentRow,{id:12,title:"Price out three seed suppliers",state:"ready",assignee:SS,depth:1,onClick:()=>{}}),
+ h(K.AssignmentRow,{id:15,title:"Check the budget for seeds",state:"blocked",assignee:BK,depth:1,onClick:()=>{},waitingOn:[{id:12,state:"ready"}]}),
+ h(K.AssignmentRow,{id:18,title:"Approve spend over $500",state:"held",assignee:{kind:"person",name:"Maya Chen"},depth:1,last:true,onClick:()=>{},heldBy:"you",selected:true}),
+ h(K.AssignmentRow,{id:4,title:"Draft the planting calendar",state:"done",assignee:CS,onClick:()=>{}})));
+</script></body></html>

@@ -1,0 +1,221 @@
+{
+  "$schema": "../node_modules/oxlint/configuration_schema.json",
+  "plugins": [
+    "react",
+    "import"
+  ],
+  "categories": {
+    "correctness": "off"
+  },
+  "rules": {
+    "react/forbid-elements": [
+      "error",
+      {
+        "forbid": [
+          {
+            "element": "button",
+            "message": "Use Button from the design system."
+          },
+          {
+            "element": "input",
+            "message": "Use TextField, Checkbox or Switch from the design system."
+          },
+          {
+            "element": "select",
+            "message": "Use Select from the design system."
+          },
+          {
+            "element": "textarea",
+            "message": "Use TextField with multiline."
+          },
+          {
+            "element": "table",
+            "message": "Use Table from the design system."
+          },
+          {
+            "element": "dialog",
+            "message": "Use Dialog from the design system."
+          },
+          {
+            "element": "h1",
+            "message": "Use the type classes (kv-display, kv-title, kv-heading) on a div or span, not raw headings."
+          },
+          {
+            "element": "h2",
+            "message": "Use the type classes (kv-display, kv-title, kv-heading) on a div or span, not raw headings."
+          },
+          {
+            "element": "h3",
+            "message": "Use the type classes (kv-display, kv-title, kv-heading) on a div or span, not raw headings."
+          },
+          {
+            "element": "h4",
+            "message": "Use the type classes (kv-display, kv-title, kv-heading) on a div or span, not raw headings."
+          },
+          {
+            "element": "h5",
+            "message": "Use the type classes (kv-display, kv-title, kv-heading) on a div or span, not raw headings."
+          },
+          {
+            "element": "h6",
+            "message": "Use the type classes (kv-display, kv-title, kv-heading) on a div or span, not raw headings."
+          },
+          {
+            "element": "svg",
+            "message": "No inline SVG outside src/ds. Use the Icon component (add missing Lucide icons to its map in src/ds/Icon) or a chart component."
+          },
+          {
+            "element": "a",
+            "message": "Use react-router Link (or a design-system component with href). For an external link add // eslint-disable-next-line react/forbid-elements -- external."
+          }
+        ]
+      }
+    ],
+    "react/forbid-dom-props": [
+      "error",
+      {
+        "forbid": [
+          {
+            "propName": "style",
+            "message": "No style= props outside src/ds. Use an app- class with tokens; a documented CSS variable (--kv-autorel-frac) may be passed via a design-system prop."
+          }
+        ]
+      }
+    ],
+    "no-restricted-imports": [
+      "error",
+      {
+        "paths": [
+          {
+            "name": "lucide-react",
+            "message": "No icon libraries. Use the design-system Icon component; add missing Lucide icons to its map in src/ds/Icon."
+          },
+          {
+            "name": "styled-components",
+            "message": "No CSS-in-JS. Use design-system components and app- classes in src/styles with tokens."
+          },
+          {
+            "name": "tailwindcss",
+            "message": "No CSS framework. Use design-system components and tokens."
+          },
+          {
+            "name": "antd",
+            "message": "No component kit. Use the design-system components from src/ds."
+          },
+          {
+            "name": "bootstrap",
+            "message": "No CSS framework. Use design-system components and tokens."
+          }
+        ],
+        "patterns": [
+          {
+            "group": [
+              "@emotion/**"
+            ],
+            "message": "No CSS-in-JS. Use design-system components and app- classes in src/styles with tokens."
+          },
+          {
+            "group": [
+              "@mui/**"
+            ],
+            "message": "No component kit. Use the design-system components from src/ds."
+          },
+          {
+            "group": [
+              "@chakra-ui/**"
+            ],
+            "message": "No component kit. Use the design-system components from src/ds."
+          },
+          {
+            "group": [
+              "bootstrap/*",
+              "tailwindcss/*"
+            ],
+            "message": "No CSS framework. Use design-system components and tokens."
+          },
+          {
+            "group": [
+              "@radix-ui/**"
+            ],
+            "message": "Radix is wrapped inside src/ds only. Use the design-system Checkbox, Switch, Dialog, Tabs, Menu or Tooltip."
+          },
+          {
+            "group": [
+              "**/ds/*",
+              "**/ds/*/**",
+              "!**/ds/index",
+              "!**/ds/index.ts",
+              "!**/ds/index.css"
+            ],
+            "message": "Import design-system components from the barrel ('../ds' or 'src/ds/index.ts'), not component internals (AcceptanceMeter, AgentAvatar, AgentState, ...)."
+          }
+        ]
+      }
+    ]
+  },
+  "overrides": [
+    {
+      "files": [
+        "**/src/ds/**"
+      ],
+      "rules": {
+        "react/forbid-elements": "off",
+        "react/forbid-dom-props": "off",
+        "no-restricted-imports": [
+          "error",
+          {
+            "paths": [
+              {
+                "name": "lucide-react",
+                "message": "No icon libraries. Use the design-system Icon component; add missing Lucide icons to its map in src/ds/Icon."
+              },
+              {
+                "name": "styled-components",
+                "message": "No CSS-in-JS. Use design-system components and app- classes in src/styles with tokens."
+              },
+              {
+                "name": "tailwindcss",
+                "message": "No CSS framework. Use design-system components and tokens."
+              },
+              {
+                "name": "antd",
+                "message": "No component kit. Use the design-system components from src/ds."
+              },
+              {
+                "name": "bootstrap",
+                "message": "No CSS framework. Use design-system components and tokens."
+              }
+            ],
+            "patterns": [
+              {
+                "group": [
+                  "@emotion/**"
+                ],
+                "message": "No CSS-in-JS. Use design-system components and app- classes in src/styles with tokens."
+              },
+              {
+                "group": [
+                  "@mui/**"
+                ],
+                "message": "No component kit. Use the design-system components from src/ds."
+              },
+              {
+                "group": [
+                  "@chakra-ui/**"
+                ],
+                "message": "No component kit. Use the design-system components from src/ds."
+              },
+              {
+                "group": [
+                  "bootstrap/*",
+                  "tailwindcss/*"
+                ],
+                "message": "No CSS framework. Use design-system components and tokens."
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

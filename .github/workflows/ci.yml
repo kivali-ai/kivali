@@ -1,0 +1,231 @@
+# CI
+#
+# Every push to a branch and every pull request: the Go checks, the web
+# app's lint, tests and Playwright, the helm chart and the licenses of
+# every shipped dependency on Linux, and Kivali Desktop (the shell and
+# the supervisor) on macOS and Windows. The
+# slow suites (race detector, integration on k3s) are nightly.yml's.
+# release.yml calls this workflow on a tag, so a tag push does not run
+# it a second time.
+#
+# The web targets do not skip when the frontend is missing or broken:
+# `make web-install` is `npm ci`, which fails without
+# web/package-lock.json, and web-lint / web-test refuse to run without
+# web/node_modules. A red frontend is a red build.
+
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_call:
+
+# Keyed by the calling workflow too: called from release.yml, this run
+# must not cancel (or be cancelled by) another workflow's on the ref.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Go + web checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.24'
+          cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: npm ci (web app)
+        run: make web-install
+
+      # Pinned in lockstep with GOLANGCI_VERSION in the Makefile.
+      - name: golangci-lint install
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.13.2
+          install-only: true
+
+      # Pinned in lockstep with SHELLCHECK_VERSION in the Makefile. The
+      # runner's own shellcheck is Ubuntu's older package, which names
+      # some findings differently (SC2317 for 0.11's SC2329), so a script
+      # clean locally failed here.
+      - name: shellcheck install
+        run: |
+          v=v0.11.0
+          curl -fsSL "https://github.com/koalaman/shellcheck/releases/download/$v/shellcheck-$v.linux.x86_64.tar.xz" | tar -xJ -C "$RUNNER_TEMP"
+          sudo install "$RUNNER_TEMP/shellcheck-$v/shellcheck" /usr/local/bin/shellcheck
+          shellcheck --version
+
+      - name: Install helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.16.4
+
+      # Everything this job checks, in one target (Makefile, "CI"):
+      # version-check vet tidy-check lint unit-test web-lint web-test
+      # api-types-check cross-check helm-lint helm-template.
+      - name: make ci-check
+        run: make ci-check
+
+  licenses:
+    name: Dependency licenses
+    # Every third-party component a release ships, held to
+    # scripts/license-policy.txt (make license-check). Reads metadata
+    # only: nothing is compiled but the checker and go-licenses.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.24'
+          cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            web/package-lock.json
+            desktop-app/package-lock.json
+
+      # Pinned in lockstep with desktop-app/rust-toolchain.toml; only
+      # `cargo metadata` runs.
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: '1.99.0'
+
+      - name: npm ci (web app)
+        run: make web-install
+
+      # npm ci of desktop-app/ (desktop-app deps) and the check; jq is on
+      # the runner.
+      - name: make license-check
+        run: make license-check
+
+  e2e:
+    name: End-to-end (Playwright)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.24'
+          cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: npm ci (web app)
+        run: make web-install
+
+      - name: Install Chromium
+        working-directory: web
+        run: npx playwright install --with-deps chromium
+
+      # Functional specs and axe only. The visual spec runs when
+      # KIVALI_VISUAL=1 and needs Linux baselines under
+      # web/e2e/__screenshots__; add it here once they are committed.
+      - name: make ci-e2e
+        run: make ci-e2e
+
+      - name: Upload the report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            web/e2e/playwright-report
+            web/e2e/test-results
+          retention-days: 7
+
+  desktop:
+    name: Kivali Desktop (${{ matrix.name }})
+    # On each OS Kivali Desktop ships for: the supervisor with its native
+    # backend compiled in (Virtualization.framework, Hyper-V), the shell's
+    # lint (clippy sees only the platform module compiled for the runner),
+    # its Rust and TypeScript tests, and the end-to-end test over the
+    # platform's real transport (a Unix socket, a named pipe) against the
+    # fake supervisor.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS
+            runner: macos-15
+          - name: Windows
+            runner: windows-latest
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    env:
+      # Line tables only: backtraces keep their lines, and target/ (what
+      # the cache below saves) is a fraction of full debug info's size,
+      # most of all on Windows, where full debug info is PDBs.
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.24'
+          cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: desktop-app/package-lock.json
+
+      # Pinned in lockstep with desktop-app/rust-toolchain.toml, and made
+      # the default so the cache below is keyed on the compiler that
+      # builds (a new stable release would otherwise discard it).
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: '1.99.0'
+          components: clippy
+
+      # Tauri and its crates take most of half an hour to compile cold;
+      # cached, only our own crates build. One cache per OS, written by
+      # main only: every other branch and pull request restores main's
+      # and saves nothing, so the repository's cache holds one copy per
+      # OS instead of one per branch. Saved on failure too, so a red lint
+      # on main still warms it.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            desktop-app/src-tauri
+            desktop-app/fake-supervisor
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-on-failure: true
+
+      # The hosted Windows image has Git Bash (bash, perl, coreutils) but
+      # no GNU make.
+      - name: GNU make
+        if: runner.os == 'Windows'
+        run: choco install make --no-progress -y
+
+      - name: make ci-desktop
+        run: make ci-desktop

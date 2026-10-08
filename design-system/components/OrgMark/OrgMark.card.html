@@ -1,0 +1,17 @@
+<!-- @dsCard group="Components" viewport="700x200" name="OrgMark" -->
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="../../styles.css">
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="../../_ds_bundle.js"></script>
+<style>body{margin:0;padding:20px;background:var(--paper);font-family:var(--font-sans);color:var(--ink)} .row{display:flex;flex-wrap:wrap;gap:12px;align-items:center} .col{display:flex;flex-direction:column;gap:14px} .lbl{font:500 11px/16px var(--font-mono);letter-spacing:.02em;color:var(--ink-muted)}</style></head>
+<body><div id="root"></div>
+<script>
+const {createElement:h,Fragment:F}=React; const K=window.KivaliDesignSystem_9b9983; const root=ReactDOM.createRoot(document.getElementById("root"));
+const LOGO="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+PHJlY3Qgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByeD0iMTQiIGZpbGw9IiMyRTVFM0EiLz48cGF0aCBkPSJNMzIgNTBjMC0xNCA2LTI0IDE4LTMwLTIgMTQtOCAyNC0xOCAzMHoiIGZpbGw9IiNFOEQzOEEiLz48cGF0aCBkPSJNMzIgNTBjMC0xMi01LTIwLTE1LTI1IDEgMTIgNiAyMCAxNSAyNXoiIGZpbGw9IiNBOEM5OEEiLz48Y2lyY2xlIGN4PSIzMiIgY3k9IjUwIiByPSIzIiBmaWxsPSIjRThEMzhBIi8+PC9zdmc+";
+const lbl=t=>h("p",{className:"lbl",style:{margin:"0 0 8px"}},t);
+root.render(h("div",{className:"col",style:{gap:18}},
+ h("div",null,lbl("With an uploaded logo · Sunset Gardens (a made-up org)"),h("div",{className:"row"},[40,28,20].map(s=>h(K.OrgMark,{key:s,name:"Sunset Gardens",src:LOGO,size:s})))),
+ h("div",null,lbl("Fallback · initials on the org's identity color"),h("div",{className:"row"},[40,28,20].map(s=>h(K.OrgMark,{key:s,name:"Juniper Studio",color:"clay",size:s})),h(K.OrgMark,{name:"Personal",color:"lake",size:40}),h(K.OrgMark,{name:"Kivali Labs",color:"iris",size:40})))));
+</script></body></html>

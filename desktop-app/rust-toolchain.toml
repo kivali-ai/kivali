@@ -1,0 +1,10 @@
+# The desktop shell's Rust, pinned. rustup picks it up for any cargo run
+# under desktop-app/ (its Makefile, CI's desktop jobs, the nightly
+# package job, release.yml's desktop jobs). Pinned so clippy says the
+# same thing here and on CI, and so CI's build caches, keyed on the
+# compiler, are not thrown away by every stable release. Bump
+# deliberately, together with every `toolchain:` in .github/workflows/.
+[toolchain]
+channel = "1.99.0"
+components = ["clippy"]
+profile = "minimal"

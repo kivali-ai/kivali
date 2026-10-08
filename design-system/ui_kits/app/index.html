@@ -1,0 +1,60 @@
+<!-- @dsCard group="Kivali app" viewport="1280x800" name="App shell" subtitle="Sidebar, inbox, chat, work, team, knowledge" -->
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Kivali app</title>
+<link rel="stylesheet" href="../../styles.css">
+<style>html,body,#root{height:100%;margin:0}</style>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="../../_ds_bundle.js"></script>
+</head><body><div id="root"></div>
+<script type="text/babel" src="Sidebar.jsx"></script>
+<script type="text/babel" src="ChatScreen.jsx"></script>
+<script type="text/babel" src="WorkScreens.jsx"></script>
+<script type="text/babel">
+const { Dialog, DialogClose, Button, TextField, Select, Toast } = window.KivaliDesignSystem_9b9983;
+const AGENTS = [
+  { id: 'cos', name: 'Chief of Staff', role: 'compass', color: 'iris', state: 'idle', reports: 'Maya Chen', notes: 512, learned: 2 },
+  { id: 'garden', name: 'Garden advisor', role: 'sprout', color: 'olive', state: 'running', reports: 'Chief of Staff', notes: 214, learned: 3 },
+  { id: 'scout', name: 'Supplier scout', role: 'search', color: 'clay', state: 'blocked', reports: 'Chief of Staff', notes: 88, learned: 0 },
+  { id: 'books', name: 'Bookkeeper', role: 'calculator', color: 'ochre', state: 'done', reports: 'Chief of Staff', notes: 301, learned: 1 },
+];
+function App() {
+  const [view, setView] = React.useState(() => localStorage.getItem('kv-kit-view') || 'inbox');
+  const [agents, setAgents] = React.useState(AGENTS);
+  const [hire, setHire] = React.useState(false);
+  const [toast, setToast] = React.useState(null);
+  const [name, setName] = React.useState('');
+  React.useEffect(() => { localStorage.setItem('kv-kit-view', view); }, [view]);
+  const showToast = (title, body) => { setToast({ title, body }); setTimeout(() => setToast(null), 3500); };
+  const openChat = (id) => setView('chat:' + id);
+  const agent = view.startsWith('chat:') && agents.find((a) => a.id === view.slice(5));
+  const doHire = () => {
+    const n = name.trim() || 'Recruiter';
+    const a = { id: 'a' + Date.now(), name: n, role: 'user-search', color: 'plum', state: 'queued', reports: 'Chief of Staff', notes: 0, learned: 0 };
+    setAgents((x) => [...x, a]); setHire(false); setName('');
+    showToast(n + ' joined your team', 'It will read its brief and start on its first run.');
+  };
+  return (
+    <div style={{ display: 'flex', height: '100%' }}>
+      <Sidebar view={view} setView={setView} agents={agents} onHire={() => setHire(true)} />
+      <main style={{ flex: 1, minWidth: 0, height: '100%', overflowY: 'auto' }}>
+        {agent ? <ChatScreen key={agent.id} agent={agent} />
+          : view === 'work' ? <WorkScreen />
+          : view === 'team' ? <TeamScreen agents={agents} openChat={openChat} onHire={() => setHire(true)} />
+          : view === 'graph' ? <GraphScreen />
+          : <InboxScreen openChat={openChat} onToast={showToast} />}
+      </main>
+      <Dialog open={hire} onOpenChange={setHire} title="Hire an agent" description="Give it a name and a manager. You can write its brief next."
+        footer={<><DialogClose asChild><Button>Cancel</Button></DialogClose><Button variant="primary" onClick={doHire}>Hire agent</Button></>}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+          <TextField label="Name" placeholder="Recruiter" value={name} onChange={(e) => setName(e.target.value)} />
+          <Select label="Reports to" options={agents.map((a) => ({ value: a.id, label: a.name }))} />
+        </div>
+      </Dialog>
+      {toast && <div style={{ position: 'fixed', right: 24, bottom: 24, zIndex: 'var(--z-toast)' }}><Toast tone="success" title={toast.title} onDismiss={() => setToast(null)}>{toast.body}</Toast></div>}
+    </div>
+  );
+}
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script></body></html>

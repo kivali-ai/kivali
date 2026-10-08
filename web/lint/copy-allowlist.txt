@@ -1,0 +1,22 @@
+# Words and phrases exempt from the Title Case label heuristic (copy-lint.mjs).
+# One entry per line, case-sensitive. Multi-word entries match as phrases. Lines starting with # are comments.
+Kivali
+Chief of Staff
+Maya
+Google
+GitHub
+Radix
+Claude
+Opus
+Sonnet
+Haiku
+Fable
+Garden advisor
+Home
+Team
+Work
+Graph
+Org
+Background
+About
+Past chats

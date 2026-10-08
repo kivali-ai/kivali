@@ -1,0 +1,58 @@
+{
+  "summary": {
+    "ts": "20260901T093000.000000000Z",
+    "title": "Chose the hosting provider",
+    "range": {
+      "from": 1788255000000,
+      "to": 1788258600000
+    },
+    "messages": 24,
+    "tokens": 51200,
+    "digest_md": "Compared three hosts and chose the cheapest.",
+    "memory_added": [
+      "The host gives a discount on a yearly plan [[ep:20260901T093000.000000000Z]]"
+    ],
+    "habits_diff": {
+      "before": "- Ask for two quotes.",
+      "after": "- Ask for three quotes."
+    }
+  },
+  "rows": [
+    {
+      "kind": "message",
+      "ts": 1788255000000,
+      "role": "sent",
+      "from": {
+        "kind": "person",
+        "slug": "ceo",
+        "name": "You"
+      },
+      "body_md": "Where are we on the quote?",
+      "attachments": [
+        {
+          "name": "hosting-quote.pdf",
+          "size_bytes": 86016,
+          "url": "/attachments/9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+        }
+      ],
+      "pending": false
+    },
+    {
+      "kind": "message",
+      "ts": 1788255001000,
+      "role": "received",
+      "from": {
+        "kind": "agent",
+        "slug": "engineering-lead",
+        "name": "Engineering lead"
+      },
+      "body_md": "Checking now.",
+      "attachments": [],
+      "model": "Opus 5.5",
+      "effort": "high",
+      "pending": false
+    }
+  ],
+  "prev_ts": "20260820T120000.000000000Z",
+  "next_ts": "20260915T080000.000000000Z"
+}

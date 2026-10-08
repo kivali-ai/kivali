@@ -1,0 +1,17 @@
+{
+  "source": "internal/web/chat_rotation_page_test.go (the wire)",
+  "about": "A new chat was asked for: the marker for the request (replayed once, as a reopen would), the turn that folds the chat into memory, done with rotation:true, and rotation_done once the fresh chat is settled.",
+  "steps": [
+    { "action": "stream_open" },
+    { "event": "chat_marker", "data": { "kind": "rotation", "content": "", "ts": 1789923700000 } },
+    { "event": "chat_marker", "data": { "kind": "rotation", "content": "", "ts": 1789923700000 } },
+    { "event": "thinking", "data": { "step": 1 } },
+    { "event": "tool_use_start", "data": { "tool_use_id": "toolu_rot_01", "tool_name": "agent_memory_view", "start_ts": 1789923701000 } },
+    { "event": "tool_use", "data": { "tool_use_id": "toolu_rot_01", "tool_name": "agent_memory_view", "tool_input": "{}" } },
+    { "event": "tool_result", "data": { "tool_use_id": "toolu_rot_01", "is_error": false, "stdout": "# What I know" } },
+    { "event": "delta", "data": { "text": "My memory is in the shape I want.", "start_ts": 1789923702000, "model": "Opus 5.5", "effort": "high" } },
+    { "event": "chat_fill", "data": { "chat_fill_pct": 84, "chat_token_est": 168000, "chat_context_limit": 200000, "chat_long_thresh": 150000, "chat_fill_bucket": "high", "chat_resolved_model": "claude-opus-5-5" } },
+    { "event": "done", "data": { "stop": "end_turn", "waiting_tasks": 0, "rotation": true } },
+    { "event": "rotation_done", "data": {} }
+  ]
+}

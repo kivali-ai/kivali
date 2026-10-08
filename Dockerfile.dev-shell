@@ -1,0 +1,139 @@
+# syntax=docker/dockerfile:1.7
+#
+# Per-agent shell-exec sidecar. Runs alongside the agent runtime
+# container in every agent pod; listens on a Unix-domain socket on
+# a pod-local emptyDir; runs `bash -c <command>` for run_shell tool
+# calls dispatched by the agent runtime.
+#
+# The image is a "real Debian" — the toolkit agents reach for via
+# run_shell lives here, not in the slim Kivali runtime image. Same
+# uid:gid (65532:65532) as the agent container so writes under
+# /files/ share ownership across containers.
+#
+# Persistence model. Each shell call is a fresh bash subprocess;
+# state survives across calls + chat rotations + pod restarts via
+# the per-agent /scratch/ PVC mounted at HOME=/scratch/home. pip
+# --user installs (default), pyenv state under $HOME/.pyenv, and
+# any agent edits to ~/.shell_env (auto-sourced before every
+# command via BASH_ENV) all stick. Concurrent shell calls run as
+# parallel processes — fan-out from subagents Just Works.
+#
+# Apt is intentionally not exposed at runtime: the container runs
+# as unprivileged uid 65532 and apt-get cannot install without
+# root. Python packages can still be installed at runtime via
+# `pip install --user <pkg>` (lands under $HOME/.local). System
+# packages need an image rebuild; agents who need one publish a
+# ceo_notification, and the operator rebuilds with the package named
+# in DEV_SHELL_EXTRA_PACKAGES (below).
+#
+# The default toolkit is small and company-agnostic. Anything domain
+# specific (ffmpeg, a database client, a compiler toolchain, ...) is the
+# operator's to add at build time:
+#
+#   make images DEV_SHELL_EXTRA_PACKAGES="ffmpeg postgresql-client"
+#   docker build -f Dockerfile.dev-shell \
+#       --build-arg DEV_SHELL_EXTRA_PACKAGES="build-essential golang-go" .
+#
+# Base is debian:trixie-slim (Debian 13, current stable), pinned by
+# digest (the same one as the root Dockerfile and vm/Dockerfile) so a
+# build installs from exactly the base that SOURCES.md records, and a
+# release name never silently moves to the next Debian release the way
+# debian:stable-slim does. Multi-arch: every package below ships for
+# amd64 and arm64.
+#
+# The installed package list is recorded at build time in
+# /etc/kivali/dev-shell-packages, one package per line (the defaults
+# plus DEV_SHELL_EXTRA_PACKAGES). The dev-shell daemon reads it at
+# start and serves it to the agent's MCP server, which builds the
+# run_shell tool description from it. That file is the public contract
+# for what is preinstalled; there is no second list to keep in step.
+
+ARG GO_VERSION=1.24
+ARG VERSION=dev
+
+# The Go stages run on the build host's own architecture and
+# cross-compile for the target, so a multi-arch build never runs the Go
+# compiler under QEMU.
+FROM --platform=$BUILDPLATFORM golang:${GO_VERSION}-alpine AS build
+ARG VERSION
+ARG TARGETOS
+ARG TARGETARCH
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
+COPY . .
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
+    -trimpath \
+    -ldflags="-s -w -X main.version=${VERSION}" \
+    -o /out/dev-shell ./cmd/dev-shell
+# The image's third-party notices: Kivali's NOTICE and the Go modules
+# linked into dev-shell for this platform (scripts/third-party-licenses.sh).
+RUN --mount=type=cache,target=/go/pkg/mod \
+    set -eu; \
+    { sh scripts/third-party-licenses.sh header kivali-dev-shell; \
+      GOOS=${TARGETOS} GOARCH=${TARGETARCH} CGO_ENABLED=0 sh scripts/third-party-licenses.sh go ./cmd/dev-shell; } > /out/THIRD_PARTY_LICENSES
+
+FROM debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f
+LABEL org.opencontainers.image.licenses="Apache-2.0"
+
+# Space-separated apt packages added to the defaults below.
+ARG DEV_SHELL_EXTRA_PACKAGES=""
+
+# Toolkit: bash and coreutils; python3 + pip + venv; the everyday
+# utilities (git, jq, ripgrep, fd-find, curl, wget, tar/zip/unzip,
+# less); pandoc (document conversion) and imagemagick (raster images).
+# ca-certificates underpins outbound HTTPS.
+#
+# fd-find ships its binary as `fdfind` on Debian (collision with the
+# `fd` debugger). Symlink to `fd` so agent commands match upstream
+# documentation.
+RUN set -eu; \
+    packages="bash ca-certificates coreutils git python3 python3-pip python3-venv jq ripgrep fd-find curl wget tar zip unzip less pandoc imagemagick"; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends $packages ${DEV_SHELL_EXTRA_PACKAGES}; \
+    ln -s /usr/bin/fdfind /usr/local/bin/fd; \
+    mkdir -p /etc/kivali; \
+    printf '%s\n' $packages ${DEV_SHELL_EXTRA_PACKAGES} | sort -u > /etc/kivali/dev-shell-packages; \
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*; \
+    groupadd -r -g 65532 kivali; \
+    useradd -r -u 65532 -g 65532 -s /bin/bash kivali; \
+    mkdir -p /scratch /files; \
+    chown 65532:65532 /scratch /files
+
+# /usr/share/doc/kivali: the installed Debian packages, the defaults and
+# DEV_SHELL_EXTRA_PACKAGES alike (packages.txt), where their source is
+# and Kivali's offer of it (SOURCES.md), and the third-party notices
+# (THIRD_PARTY_LICENSES).
+RUN --mount=type=bind,source=scripts/third-party-sources.sh,target=/tmp/third-party-sources.sh \
+    set -eu; \
+    d=/usr/share/doc/kivali; \
+    mkdir -p "$d"; \
+    { . /etc/os-release; echo "# $PRETTY_NAME"; dpkg-query -W -f '${Package} ${Version} ${source:Package} ${source:Version}\n' | sort; } > "$d/packages.txt"; \
+    { sh /tmp/third-party-sources.sh header "the kivali-dev-shell image"; \
+      sh /tmp/third-party-sources.sh debian "Debian packages" "$d/packages.txt"; } > "$d/SOURCES.md"
+COPY --from=build /out/THIRD_PARTY_LICENSES /usr/share/doc/kivali/
+COPY --from=build /out/dev-shell /usr/local/bin/dev-shell
+
+# Debian marks its Python externally managed (PEP 668), so a bare
+# `pip install --user` stops with "externally-managed-environment".
+# A --user install lands under $HOME/.local and cannot touch the
+# system's packages (uid 65532 cannot write them), so allow it. A
+# config file, not an env var: the daemon hands commands only an
+# allowlisted environment (internal/devshell/exec.go bashEnv).
+RUN printf '[global]\nbreak-system-packages = true\n' > /etc/pip.conf
+
+USER 65532:65532
+
+# Persistence wiring. The daemon mkdir's $HOME on first start and
+# writes a default $BASH_ENV shim if none exists. Both env vars
+# propagate into every bash subprocess.
+ENV HOME=/scratch/home
+ENV BASH_ENV=/scratch/home/.shell_env
+
+# Default cwd for shell exec is /files; the daemon's --root flag
+# (defaulted to /files) governs cwd resolution per-request.
+WORKDIR /files
+ENTRYPOINT ["/usr/local/bin/dev-shell"]

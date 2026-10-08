@@ -1,0 +1,51 @@
+bin/
+*.test
+*.out
+
+.DS_Store
+.claude/worktrees/
+.claude/settings.local.json
+
+# Secrets and keys never belong in the tree.
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.p8
+*.der
+!/desktop-app/src-tauri/src/testdata/idtoken-test-key.der
+
+
+# Stray cmd-package binaries. `go build ./cmd/egress-proxy` (no -o
+# flag) from repo root drops a binary named after the package into
+# the cwd. These belong under bin/ or inside a container — never at
+# root. Root-anchored so the cmd/<pkg>/ source directories are not
+# affected. `go build` of the module root drops /kivali the same way.
+/kivali
+/egress-proxy
+/sandbox
+/inspect_request
+
+# The repo root has no JS workspace; these keep a stray root install
+# out of git.
+/node_modules/
+/package-lock.json
+/dist/
+
+# Kivali web app workspace. web/package-lock.json IS committed (reproducible image builds).
+/web/node_modules/
+/web/dist/
+/web/e2e/.playwright/
+/web/e2e/test-results*/
+/web/e2e/report/
+/web/e2e/playwright-report/
+# Visual baselines are generated, never committed; see web/e2e/README.md.
+/web/e2e/__screenshots__/
+/web/playwright-report/
+# Vite output embedded into the binary; built by `make web-build`, never committed.
+/internal/web/ui/dist/*
+!/internal/web/ui/dist/.gitkeep
+
+# Operator-local Makefile overrides (DEV_SHELL_EXTRA_PACKAGES, REGISTRY).
+/local.mk

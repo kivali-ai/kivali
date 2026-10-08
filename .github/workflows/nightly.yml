@@ -1,0 +1,215 @@
+# Nightly
+#
+# The slow Linux suites, too long for every commit (ci.yml):
+#
+#   race         the unit tests under the race detector. Much of the
+#                server is concurrent, and a data race survives any
+#                number of serial runs before it bites under a real fleet.
+#   images       the server and egress-proxy images, linux/arm64, with
+#                BuildKit + GHA layer caching, handed to integration as a
+#                workflow artifact
+#   integration  the VM's k3s started directly on an arm64 runner
+#                (scripts/ci-k3s.sh), the images loaded, Kivali installed
+#                as kivali-supervisor installs it. Hermetic (no secrets).
+#   package      Kivali Desktop built and bundled with the release profile
+#                on macOS and Windows (make -C desktop-app build-trial:
+#                the dmg, the NSIS installer; unsigned, no VM image), so a
+#                broken bundle shows up before a tag does. Its Rust cache
+#                is the one release.yml's desktop jobs restore.
+#
+# Runs once a night on main, by hand (workflow_dispatch), and from
+# release.yml before a release is published (package excepted: the
+# release builds the real bundles).
+
+name: Nightly
+
+on:
+  schedule:
+    - cron: '0 7 * * *'
+  workflow_dispatch:
+  workflow_call:
+
+concurrency:
+  group: nightly-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  race:
+    name: Race detector
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.24'
+          cache: true
+
+      - name: Race detector
+        run: make race-test
+
+  images:
+    name: Build images (arm64)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      # buildx is required for GHA cache and the `type=docker,dest=` tar
+      # output used to hand images to the integration job.
+      - uses: docker/setup-buildx-action@v3
+
+      # Each image gets its own cache scope so a change in one doesn't
+      # invalidate the other. mode=max stores all stages, including the
+      # builder, so the slow apt + node layer is reused across runs. Only
+      # main writes it: a cache written on a release tag is readable by
+      # that tag alone, so it would only take space.
+      - name: Build main image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/arm64
+          tags: kivali:nightly
+          build-args: |
+            VERSION=nightly
+          cache-from: type=gha,scope=main-arm64
+          cache-to: ${{ github.ref == 'refs/heads/main' && 'type=gha,mode=max,scope=main-arm64' || '' }}
+          outputs: type=docker,dest=/tmp/kivali-arm64.tar
+
+      - name: Build egress-proxy image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.egress-proxy
+          platforms: linux/arm64
+          tags: kivali-egress-proxy:nightly
+          cache-from: type=gha,scope=egress-arm64
+          cache-to: ${{ github.ref == 'refs/heads/main' && 'type=gha,mode=max,scope=egress-arm64' || '' }}
+          outputs: type=docker,dest=/tmp/kivali-egress-proxy-arm64.tar
+
+      # Retention=1 day: only this run consumes them.
+      - name: Upload images
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-images-arm64
+          path: |
+            /tmp/kivali-arm64.tar
+            /tmp/kivali-egress-proxy-arm64.tar
+          retention-days: 1
+          if-no-files-found: error
+
+  integration:
+    name: Integration (the VM's k3s, installed as the supervisor does)
+    # linux/arm64, the VM's platform: scripts/ci-k3s.sh runs the k3s
+    # binary and airgap images the VM image bakes.
+    runs-on: ubuntu-24.04-arm
+    needs: [images]
+    timeout-minutes: 25
+    env:
+      KIVALI_IT_DISPOSABLE_K3S: '1'
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.24'
+          cache: true
+
+      # The suite packages charts/kivali with helm, as a release does.
+      - name: Install helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.16.4
+
+      - name: Download prebuilt images
+        uses: actions/download-artifact@v4
+        with:
+          name: nightly-images-arm64
+          path: /tmp
+
+      - name: Load images into docker
+        run: |
+          docker load -i /tmp/kivali-arm64.tar
+          docker load -i /tmp/kivali-egress-proxy-arm64.tar
+          docker image ls kivali
+          docker image ls kivali-egress-proxy
+
+      - name: Start k3s
+        run: scripts/ci-k3s.sh up
+
+      # The env vars tell integration_test.go to skip its local
+      # `docker build` and use the tags just loaded; it imports them
+      # into k3s itself.
+      - name: Integration tests
+        env:
+          KIVALI_TEST_IMAGE_TAG: kivali:nightly
+          KIVALI_TEST_EGRESS_IMAGE_TAG: kivali-egress-proxy:nightly
+        run: make integration-test
+
+      - name: k3s log
+        if: failure()
+        # Absent when `Start k3s` failed before starting k3s.
+        run: sudo tail -n 200 /tmp/k3s.log || echo "no /tmp/k3s.log, so k3s never started"
+
+  package:
+    name: Kivali Desktop bundle (${{ matrix.name }})
+    # Not when release.yml calls this workflow (github.workflow is then
+    # the caller's): the release builds the real bundles.
+    if: github.workflow == 'Nightly'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS
+            runner: macos-15
+          - name: Windows
+            runner: windows-latest
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.24'
+          cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            web/package-lock.json
+            desktop-app/package-lock.json
+
+      # Pinned in lockstep with desktop-app/rust-toolchain.toml.
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: '1.99.0'
+
+      # The release profile's dependencies, the slowest part of a release
+      # (Tauri and its crates, optimized). Shared with release.yml's
+      # desktop jobs by key: they restore it and never save, since a
+      # cache written on a tag is readable by that tag alone.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: desktop-release
+          workspaces: desktop-app/src-tauri
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      # The hosted Windows image has Git Bash (bash, perl, coreutils) but
+      # no GNU make.
+      - name: GNU make
+        if: runner.os == 'Windows'
+        run: choco install make --no-progress -y
+
+      - name: make -C desktop-app build-trial
+        run: make -C desktop-app build-trial

@@ -1,0 +1,9 @@
+# Release tags whose upgrade needs steps the app cannot do. One tag per
+# line (vX.Y.Z); scripts/release-json.sh writes manual_steps: true into
+# that release's release.json, and Kivali Desktop then shows "see the
+# upgrade notes" instead of offering the one-click upgrade.
+#
+# Add the line BEFORE running `make release VERSION=vX.Y.Z` (the tree
+# must be clean, so commit it first). A release that is already out is
+# fixed by re-running release-json.sh --manual-steps and re-uploading
+# release.json; see docs/developers/releasing.md.

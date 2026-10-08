@@ -1,0 +1,223 @@
+{{- include "kivali.validate" . -}}
+# Single writer: message_queue.json / chat.jsonl / message files all assume
+# one process mutates them. Never scale beyond 1 replica.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kivali
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kivali.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: kivali
+  template:
+    metadata:
+      labels:
+        app: kivali
+      {{- if .Values.secrets.create }}
+      annotations:
+        # Env from a Secret is read at start; roll the pod when the chart-managed Secret changes.
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+      {{- end }}
+    spec:
+      serviceAccountName: kivali
+      # Chowns the hostPath UDS dir to the kivali UID so the unprivileged
+      # main container can bind core.sock there. hostPath volumes ignore
+      # fsGroup; a short-lived root container is the cleanest fix. Idempotent.
+      initContainers:
+        - name: agentpod-uds-perms
+          image: {{ .Values.initImage }}
+          command: ["sh", "-c", "chmod 0700 {{ .Values.udsDir }} && chown 65532:65532 {{ .Values.udsDir }}"]
+          volumeMounts:
+            - name: agentpod-uds
+              mountPath: {{ .Values.udsDir }}
+          securityContext:
+            runAsUser: 0
+      containers:
+        - name: egress-proxy
+          image: {{ include "kivali.egressImage" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["--listen=:3128", "--allowlist=/etc/egress/allowlist.yaml"]
+          ports:
+            - name: proxy
+              containerPort: 3128
+          volumeMounts:
+            - name: egress-config
+              mountPath: /etc/egress
+              readOnly: true
+          resources:
+            {{- toYaml .Values.egress.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]
+        - name: kivali
+          image: {{ include "kivali.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["--addr=:8080"]
+          env:
+            - name: DATA_DIR
+              value: /data
+            - name: AGENTPOD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            # Same image as the server: every subcommand, `kivali agent`
+            # included, is in the one binary.
+            - name: AGENTPOD_IMAGE
+              value: {{ include "kivali.image" . }}
+            - name: AGENTPOD_UDS_DIR
+              value: {{ .Values.udsDir }}
+            - name: EGRESS_ALLOWLIST_SYNC_PATH
+              value: /etc/egress/allowlist.yaml
+            - name: EGRESS_PROXY_URL
+              value: http://kivali-egress.{{ .Release.Namespace }}.svc.cluster.local:3128
+            - name: KIVALI_ENV
+              value: {{ .Values.kivaliEnv | quote }}
+            {{- if .Values.models.agent }}
+            - name: AGENT_MODEL
+              value: {{ .Values.models.agent | quote }}
+            {{- end }}
+            {{- if .Values.models.summary }}
+            - name: SUMMARY_MODEL
+              value: {{ .Values.models.summary | quote }}
+            {{- end }}
+            {{- if .Values.devMode }}
+            # A pod cannot bind loopback and still be reached through a Service.
+            - name: DEV_MODE
+              value: "true"
+            - name: DEV_MODE_ALLOW_NONLOOPBACK
+              value: "true"
+            {{- else }}
+            # optional: true on the two deployment-specific keys so a Secret
+            # predating them still schedules; config.Validate then names the
+            # missing variable instead of CreateContainerConfigError.
+            - name: OWNER_EMAILS
+              valueFrom:
+                secretKeyRef:
+                  name: kivali-secrets
+                  key: owner-emails
+                  optional: true
+            # Sign-in uses the public Google client Kivali ships with unless
+            # the Secret carries an own client (both keys); then the redirect
+            # URL must be the one registered on that client. All optional:
+            # config.Validate names a half-configured client at boot.
+            - name: GOOGLE_OAUTH_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: kivali-secrets
+                  key: google-oauth-client-id
+                  optional: true
+            - name: GOOGLE_OAUTH_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: kivali-secrets
+                  key: google-oauth-client-secret
+                  optional: true
+            - name: SESSION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: kivali-secrets
+                  key: session-key
+            {{- with .Values.oauth.publicClientID }}
+            - name: OAUTH_PUBLIC_CLIENT_ID
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.oauth.relayURL }}
+            - name: OAUTH_RELAY_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.oauth.jwksURL }}
+            - name: OAUTH_JWKS_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.oauth.issuer }}
+            - name: OAUTH_ISSUER
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.oauth.authURL }}
+            - name: OAUTH_AUTH_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.oauth.tokenURL }}
+            - name: OAUTH_TOKEN_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.oauth.userinfoURL }}
+            - name: OAUTH_USERINFO_URL
+              value: {{ . | quote }}
+            {{- end }}
+            - name: OAUTH_REDIRECT_URL
+              {{- if .Values.oauth.redirectURL }}
+              value: {{ .Values.oauth.redirectURL | quote }}
+              {{- else }}
+              valueFrom:
+                secretKeyRef:
+                  name: kivali-secrets
+                  key: oauth-redirect-url
+                  optional: true
+              {{- end }}
+            {{- with .Values.externalURL }}
+            - name: KIVALI_EXTERNAL_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- end }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: 8080
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+            - name: egress-config
+              mountPath: /etc/egress
+            - name: agentpod-uds
+              mountPath: {{ .Values.udsDir }}
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 15
+          resources:
+            {{- toYaml .Values.server.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: kivali-data
+        - name: tmp
+          emptyDir:
+            sizeLimit: 1Gi
+        - name: egress-config
+          emptyDir:
+            sizeLimit: 8Mi
+        # Only the socket file lives here; not a data channel.
+        - name: agentpod-uds
+          hostPath:
+            path: {{ .Values.udsDir }}
+            type: DirectoryOrCreate

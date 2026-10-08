@@ -1,0 +1,22 @@
+Kivali {{ .Chart.AppVersion }} installed in namespace {{ .Release.Namespace }}.
+
+Images (all three must exist at the same tag): {{ include "kivali.image" . }}, {{ include "kivali.egressImage" . }}, and kivali-dev-shell:{{ .Values.image.tag | default .Chart.AppVersion }} (derived by the server).
+
+{{- if .Values.devMode }}
+
+DEV MODE: authentication is OFF. Anyone who can reach the HTTP port is the owner.
+{{- else if not .Values.secrets.create }}
+
+Secret kivali-secrets must exist in {{ .Release.Namespace }} with keys owner-emails and session-key, plus google-oauth-client-id, google-oauth-client-secret and oauth-redirect-url for your own Google client (see the chart's README.md).
+{{- end }}
+
+Connect Claude: sign the server in once by starting the Claude Code CLI in the server container; when it is not signed in it opens its sign-in menu (a Claude subscription, an Anthropic Console account, Amazon Bedrock or Google Vertex AI), and `/login` switches later:
+  kubectl -n {{ .Release.Namespace }} exec -it deploy/kivali -c kivali -- claude
+
+Reach the UI:
+  kubectl -n {{ .Release.Namespace }} port-forward service/kivali 8080:{{ .Values.service.port }}
+
+UPGRADES: the server adopts existing agent pods at boot and the chart has no hooks, so delete agent pods yourself:
+  kubectl -n {{ .Release.Namespace }} delete pod -l app=kivali-agentpod --wait
+ - prod-style installs (image tag moves with every release): run it BEFORE `helm upgrade`, so no pod outlives the boot of the new server and is adopted against a socket about to die. This only works when the upgrade restarts the server. If the server pod did not restart (same image tag, only values changed), run `kubectl -n {{ .Release.Namespace }} rollout restart deploy/kivali` afterwards, because the server has no reconcile loop and adopts nothing that is gone.
+ - dev-style installs (mutable tag such as :dev, upgrade is a no-op until the pod restarts): run it AFTER `helm upgrade`, then `kubectl -n {{ .Release.Namespace }} rollout restart deploy/kivali`.

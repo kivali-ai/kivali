@@ -1,0 +1,20 @@
+{
+  "skills": [
+    {
+      "name": "pdf",
+      "version": "1.2.0",
+      "enabled": true,
+      "builtin": true,
+      "description": "Read and fill PDFs.",
+      "updated_at": "2026-09-01T09:30:00Z"
+    },
+    {
+      "name": "quote-check",
+      "version": "0.3.1",
+      "enabled": false,
+      "builtin": false,
+      "description": "Check a hosting quote.",
+      "updated_at": "2026-09-20T17:00:00Z"
+    }
+  ]
+}

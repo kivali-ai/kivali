@@ -1,0 +1,333 @@
+/*
+ * Org: the sectioned page on desktop, the list of sub-pages on phone. Tokens only; rows, cards, tables and
+ * charts come from the design system. Breakpoint 960 is a literal because custom properties do not work in
+ * @media. Canvas values that are not a token are calc() over the 4px step (--space-1).
+ */
+
+.app-org {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-8);
+}
+
+/* The left index: sticky while the sections scroll past. It starts level with the first section, under the header. */
+.app-org-index {
+  position: sticky;
+  top: var(--space-6);
+  padding-top: calc(var(--space-8) * 2 + var(--space-2));
+  flex: none;
+  width: calc(var(--space-8) * 6 + var(--space-2));
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-1) / 2);
+}
+
+.app-org-sections {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-8) + var(--space-2));
+}
+
+/* The end of the page for the index's scroll spy: on screen means the last section wins. Out of flow, so no gap. */
+.app-org-end {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 1px;
+  height: 1px;
+  pointer-events: none;
+}
+
+/* Canvas 6a's header: OrgMark 40 beside the org's name (the h1) and a mono line under it. */
+.app-org-header {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space-2) + var(--space-1) * 1.5);
+}
+
+.app-org-section,
+.app-org-sub {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-2) + var(--space-1));
+  scroll-margin-top: var(--space-6);
+}
+
+.app-org-sub {
+  gap: var(--space-4);
+}
+
+.app-org-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: calc(var(--space-2) + var(--space-1));
+}
+
+.app-org-title {
+  flex: 1;
+}
+
+/* ---- Raised list container, as on Home ---- */
+.app-org-list {
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.app-org-rows {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: -1px;
+}
+
+.app-org-none {
+  padding: var(--space-4);
+}
+
+.app-org-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-1) * 1.5);
+  padding: calc(var(--space-2) + var(--space-1));
+  border-bottom: 1px solid var(--line);
+}
+
+/* ---- Usage ---- */
+.app-org-tiles {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: calc(var(--space-2) + var(--space-1));
+}
+
+.app-org-tile {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-1) / 2);
+  min-width: 0;
+  padding: var(--space-4);
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+/* Display 28/34 on desktop, 20/26 on phone; the family and tracking come from Text. */
+.app-org-tile-value {
+  font-size: calc(var(--space-1) * 7);
+  line-height: calc(var(--space-1) * 8.5);
+}
+
+.app-org-panel {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-2) + var(--space-1) / 2);
+  padding: calc(var(--space-2) + var(--space-1) * 1.5) var(--space-4);
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+.app-org-panel-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.app-org-panel-title {
+  flex: 1;
+}
+
+.app-org-plain {
+  margin: 0;
+}
+
+/* ---- Organization ---- */
+.app-org-identity {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+  align-items: start;
+}
+
+.app-org-identity.is-phone {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.app-org-name {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+/* The logo control, shared with the setup wizard (screens/org/LogoField). */
+.app-logo-empty,
+.app-logo-set {
+  display: flex;
+  gap: calc(var(--space-2) + var(--space-1));
+  align-items: flex-start;
+}
+
+.app-logo-drop {
+  flex: 1;
+  min-width: 0;
+}
+
+.app-logo-set {
+  align-items: center;
+}
+
+.app-logo-tile {
+  flex: none;
+  padding: var(--space-1);
+  border-radius: var(--radius-md);
+  box-shadow: 0 0 0 1px var(--line);
+}
+
+.app-logo-tile.is-over {
+  background: var(--cobalt-soft);
+  box-shadow: var(--focus-ring);
+}
+
+.app-logo-side {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.app-logo-actions {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.app-logo-caption {
+  margin: 0;
+}
+
+/* ---- Handbook ---- */
+.app-org-prose {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-2) + var(--space-1));
+  padding: var(--space-4) calc(var(--space-4) + var(--space-1));
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+.app-org-folds {
+  display: flex;
+  flex-direction: column;
+  margin: 0 calc((var(--space-4) + var(--space-1)) * -1);
+  border-top: 1px solid var(--line);
+}
+
+.app-org-fold {
+  border-bottom: 1px solid var(--line);
+}
+
+.app-org-fold-body {
+  padding: 0 calc(var(--space-4) + var(--space-1)) calc(var(--space-2) + var(--space-1) * 1.5);
+}
+
+.app-org-editor {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-2) + var(--space-1));
+}
+
+.app-org-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(var(--space-2) + var(--space-1));
+}
+
+.app-org-grow {
+  flex: 1 1 calc(var(--space-8) * 7);
+}
+
+/* ---- Add field: text field and its button on one line ---- */
+.app-org-add {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+
+.app-org-add-field {
+  flex: 1;
+  min-width: 0;
+}
+
+/* The switch is named by its hidden label ("Enable pdf"): the row's title already says which skill. */
+.app-org-switch label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* ---- Phone Org home ---- */
+.app-org-phone {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.app-org-glance {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space-2) + var(--space-1));
+  padding: calc(var(--space-2) + var(--space-1) * 1.5) var(--space-4);
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.app-org-glance-cells {
+  flex: 1;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+.app-org-glance-cell {
+  display: flex;
+  flex-direction: column;
+}
+
+.app-org-glance-go {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+/* ---- Phone: tiles shrink to 20/26 and the tables scroll inside their containers ---- */
+@media (max-width: 959px) {
+  .app-org-tile {
+    padding: calc(var(--space-2) + var(--space-1));
+  }
+
+  .app-org-tile-value {
+    font-size: calc(var(--space-1) * 5);
+    line-height: calc(var(--space-1) * 6.5);
+  }
+
+  .app-org-tiles {
+    gap: var(--space-2);
+  }
+}

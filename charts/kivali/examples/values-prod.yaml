@@ -1,0 +1,11 @@
+# Standalone server install, prod-style (supervisor-run orgs do not use this
+# file). kivali-secrets is created by the operator (kubectl create secret
+# generic kivali-secrets ... ; its keys are listed in charts/kivali/README.md).
+#   helm install kivali charts/kivali -n kivali --create-namespace -f charts/kivali/examples/values-prod.yaml
+kivaliEnv: prod
+image:
+  tag: v0.15.1
+egress:
+  image:
+    tag: v0.15.1
+# networkPolicy.podCIDR defaults to k3s's 10.42.0.0/16.

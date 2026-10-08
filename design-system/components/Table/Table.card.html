@@ -1,0 +1,14 @@
+<!-- @dsCard group="Components" viewport="700x260" name="Table" -->
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="../../styles.css">
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="../../_ds_bundle.js"></script>
+<style>body{margin:0;padding:20px;background:var(--paper);font-family:var(--font-sans);color:var(--ink)} .row{display:flex;flex-wrap:wrap;gap:12px;align-items:center} .col{display:flex;flex-direction:column;gap:14px} .lbl{font:500 11px/16px var(--font-mono);letter-spacing:.02em;color:var(--ink-muted)}</style></head>
+<body><div id="root"></div>
+<script>
+const {createElement:h,Fragment:F}=React; const K=window.KivaliDesignSystem_9b9983; const root=ReactDOM.createRoot(document.getElementById("root"));
+root.render(h(K.Table,{columns:[{key:"name",label:"File"},{key:"kind",label:"Kind"},{key:"size",label:"Size",align:"right",mono:true},{key:"when",label:"Added",mono:true}],
+ rows:[{id:1,name:"Seed catalogue.pdf",kind:h(K.Badge,null,"Project file"),size:"2.4 MB",when:"Sep 21"},{id:2,name:"Planting calendar 2026.md",kind:h(K.Badge,{tone:"cobalt"},"Artifact"),size:"18 KB",when:"Sep 19"},{id:3,name:"Handbook.md",kind:h(K.Badge,null,"System"),size:"6 KB",when:"Sep 02"}]}));
+</script></body></html>

@@ -1,0 +1,12 @@
+{
+  "agents": [
+    { "slug": "chief-of-staff", "name": "Chief of Staff", "role_title": "Chief of Staff", "icon": "compass", "reports_to": "ceo", "depth": 1, "state": "idle", "context_pct": 12 },
+    { "slug": "bookkeeper", "name": "Bookkeeper", "role_title": "Bookkeeper", "icon": "calculator", "reports_to": "chief-of-staff", "depth": 2, "state": "idle", "context_pct": 0 }
+  ],
+  "inbox": { "unactioned": 0, "pending_paths": [], "ceo_paths": [], "auto_release": "30s" },
+  "release": { "running": false, "active_agents": 0, "pending_docs": 0 },
+  "messages_total": 40,
+  "assignments_version": 3,
+  "goals": [],
+  "readouts": { "working": 0, "blocked": 0, "closed_week": 2, "spend_today": 0.5, "spend_7d": 6 }
+}

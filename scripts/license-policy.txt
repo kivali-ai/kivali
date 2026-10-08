@@ -1,0 +1,31 @@
+# The licenses Kivali's shipped dependencies may carry
+# (scripts/license-check.sh, `make license-check`).
+#
+# Kivali is Apache-2.0 and ships as binaries, images and a desktop app.
+# A dependency passes when its SPDX license expression is satisfiable
+# with the licenses allowed here: either side of an OR, both sides of an
+# AND; a WITH exception never decides. Adding a license is a reviewed
+# change: it admits every future dependency under it.
+#
+#   allow ID                           an SPDX license identifier
+#   exception ECOSYSTEM NAME REASON    one component (go, npm or cargo,
+#                                      by name, any version) that passes
+#                                      whatever its license; the reason
+#                                      records the review
+
+allow MIT
+allow MIT-0
+allow Apache-2.0
+allow BSD-2-Clause
+allow BSD-3-Clause
+allow ISC
+allow 0BSD
+allow Zlib
+allow Unicode-3.0
+allow Unicode-DFS-2016
+allow Unlicense
+allow CC0-1.0
+allow BSL-1.0
+# File-level copyleft: allowed while the MPL-2.0 files ship unmodified
+# (a change to one must be published under MPL-2.0).
+allow MPL-2.0

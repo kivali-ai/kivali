@@ -1,0 +1,10 @@
+{
+  "hosts": [
+    {
+      "host": "*.pypi.org"
+    },
+    {
+      "host": "api.anthropic.com"
+    }
+  ]
+}

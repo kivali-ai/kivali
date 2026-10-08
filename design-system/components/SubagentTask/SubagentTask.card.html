@@ -1,0 +1,19 @@
+<!-- @dsCard group="Components" viewport="700x560" name="SubagentTask" subtitle="Model, effort, latest activity and result" -->
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="../../styles.css">
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="../../_ds_bundle.js"></script>
+<style>body{margin:0;padding:20px;background:var(--paper);font-family:var(--font-sans);color:var(--ink)} .row{display:flex;flex-wrap:wrap;gap:12px;align-items:center} .col{display:flex;flex-direction:column;gap:14px} .lbl{font:500 11px/16px var(--font-mono);letter-spacing:.02em;color:var(--ink-muted)}</style></head>
+<body><div id="root"></div>
+<script>
+const {createElement:h,Fragment:F}=React; const K=window.KivaliDesignSystem_9b9983; const root=ReactDOM.createRoot(document.getElementById("root"));
+const lbl=t=>h("p",{className:"lbl",style:{margin:"0 0 8px"}},t);
+root.render(h("div",{className:"col",style:{maxWidth:640,gap:18}},
+ h("div",null,lbl("Running · shown opened"),h(K.SubagentTask,{title:"Compare three seed suppliers",state:"running",defaultOpen:true,model:"sonnet",effort:"medium",elapsed:"1m 12s",latest:"Reading the co-op catalogue, page 4 of 9",sessionHref:"#"},
+  h(K.ToolCall,{name:"web_search",summary:"heirloom tomato seed prices",status:"done",duration:"1.2s"}),
+  h(K.ToolCall,{name:"read_file",summary:"coop-catalogue.pdf",status:"running",defaultOpen:true,input:{path:"supplier-docs/coop-catalogue.pdf",pages:"4-9"}}))) ,
+ h("div",null,lbl("Done · shown opened"),h(K.SubagentTask,{title:"Summarize last week's rainfall",state:"done",model:"haiku",effort:"low",elapsed:"18s",defaultOpen:true,result:"Total rainfall was 14mm across three days, most of it Tuesday afternoon. The east beds stayed damp for four days afterward, so no watering was needed. The west beds dried faster and needed water by Saturday morning, as we agreed.",sessionHref:"#"})),
+ h("div",null,lbl("Failed · as it first appears, collapsed"),h(K.SubagentTask,{title:"Pull invoices from the supplier portal",state:"errored",model:"sonnet",effort:"high",elapsed:"42s",error:"Login rejected: the portal asked for a one-time code.",sessionHref:"#"}))));
+</script></body></html>

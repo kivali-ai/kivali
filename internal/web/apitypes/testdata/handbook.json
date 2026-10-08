@@ -1,0 +1,22 @@
+{
+  "content": "We ship.\n## Money\n- Under budget\n",
+  "sections": [
+    {
+      "title": "Opening",
+      "lines": [
+        "We ship."
+      ],
+      "line_count": 1
+    },
+    {
+      "title": "Money",
+      "lines": [
+        "- Under budget",
+        ""
+      ],
+      "line_count": 1
+    }
+  ],
+  "draft": false,
+  "updated_at": "2026-09-20T17:00:00Z"
+}

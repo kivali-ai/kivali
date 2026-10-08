@@ -1,0 +1,46 @@
+/* Fixture: violates every stylelint rule at least once. Not part of the app. */
+
+@font-face { /* rule: at-rule-disallowed-list (font-face) */
+  font-family: "Comic Sans";
+  src: url("x.woff2");
+}
+
+.kv-button { /* rule: selector-disallowed-list (.kv-) */
+  color: var(--ink);
+}
+
+.plain-class { /* rule: selector-class-pattern (app- prefix) */
+  color: var(--ink);
+}
+
+.is-open { /* rule: selector-disallowed-list (bare state modifier) */
+  color: var(--ink);
+}
+
+.app-card {
+  color: #ff0000; /* rule: color-no-hex */
+  background: red; /* rule: declaration-strict-value (named color) */
+  padding: 12px; /* rule: declaration-strict-value (raw px) */
+  margin: 0 0 8px 0; /* rule: declaration-strict-value (raw px in shorthand) */
+  border-radius: 6px; /* rule: declaration-strict-value (radius) */
+  z-index: 5; /* rule: declaration-strict-value (z-index) */
+  font-size: 14px; /* rule: declaration-strict-value (font-size) */
+  transition: opacity 200ms; /* rule: declaration-property-value-disallowed-list (raw duration) */
+  font: 12px sans-serif; /* rule: declaration-strict-value (font shorthand is a token only) */
+  width: 300px; /* rule: declaration-strict-value (width) */
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2); /* rule: declaration-strict-value (shadow) */
+  display: block !important; /* rule: declaration-no-important */
+  animation: app-spin var(--duration-fast) ease-in-out; /* rule: declaration-property-value-disallowed-list (raw easing) */
+  margin-top: calc(100% - 12px); /* rule: declaration-strict-value (raw px inside calc) */
+  font-family: Georgia, serif; /* rule: declaration-strict-value (font-family must be a token) */
+  margin-bottom: -2px; /* rule: declaration-strict-value (only the -1px hairline tuck is allowed) */
+}
+
+/* kivali-lint-disable-next-line token-check/raw-color -- rule: kivali-lint/directive (unused in CSS) */
+.app-quiet {
+  color: var(--ink);
+}
+
+.app-tall {
+  max-height: calc(50vh - var(--space-4)); /* rule: declaration-strict-value (only 100vh/100dvh inside calc) */
+}

@@ -1,0 +1,19 @@
+<!-- @dsCard group="Components" viewport="700x560" name="Message" -->
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="../../styles.css">
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="../../_ds_bundle.js"></script>
+<style>body{margin:0;padding:20px;background:var(--paper);font-family:var(--font-sans);color:var(--ink)} .row{display:flex;flex-wrap:wrap;gap:12px;align-items:center} .col{display:flex;flex-direction:column;gap:14px} .lbl{font:500 11px/16px var(--font-mono);letter-spacing:.02em;color:var(--ink-muted)}</style></head>
+<body><div id="root"></div>
+<script>
+const {createElement:h,Fragment:F}=React; const K=window.KivaliDesignSystem_9b9983; const root=ReactDOM.createRoot(document.getElementById("root"));
+const GA={kind:"agent",name:"Garden advisor",role:"sprout",color:"olive"};
+root.render(h("div",{className:"col",style:{maxWidth:600,gap:18}},
+ h(K.Message,{from:{kind:"person",name:"Maya Chen"},time:"6:02"},"Should I water the tomatoes today?"),
+ h(K.Message,{from:GA,time:"6:02",model:"opus · high"},h(K.Prose,null,h("p",null,"Not today. The beds were watered on Friday, and ",h("strong",null,"6mm of rain")," is forecast for this afternoon."))),
+ h(K.Message,{from:{kind:"system"},time:"6:30"},"Chat rotated · memory saved"),
+ h(K.Message,{from:GA,time:"6:31",streaming:true},"I'll check again tomorrow at 6am and"),
+ h(K.Message,{from:{kind:"person",name:"Maya Chen"},time:"6:31",pending:true,onDelete:()=>{},onSendNow:()=>{}},"Also check bed 3 while you're at it.")));
+</script></body></html>

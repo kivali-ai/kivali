@@ -1,0 +1,86 @@
+{
+  "plan": {
+    "title": "Renewal recommendation: Acme",
+    "steps": [
+      {
+        "n": 1,
+        "title": "Pull actual spend vs. contracted minimum",
+        "state": "done"
+      },
+      {
+        "n": 2,
+        "title": "List every support incident",
+        "state": "running"
+      },
+      {
+        "n": 3,
+        "title": "Find two comparable vendors",
+        "state": "needs_help"
+      },
+      {
+        "n": 4,
+        "title": "Write the recommendation",
+        "state": "idle"
+      }
+    ],
+    "done": 1,
+    "total": 4,
+    "running": 2,
+    "finished": 2,
+    "needs_help": 1
+  },
+  "sessions": [
+    {
+      "id": "a1b2c3d4",
+      "kind": "subagent",
+      "state": "running",
+      "title": "2. List every support incident",
+      "model": "Opus 5.5",
+      "effort": "high",
+      "elapsed_s": 312,
+      "step": 2,
+      "activity": "running file_view",
+      "started": "2026-09-01T09:30:00Z",
+      "url": "/agents/engineering-lead/subagents/a1b2c3d4"
+    },
+    {
+      "id": "e5f6a7b8",
+      "kind": "subagent",
+      "state": "queued",
+      "title": "Read the ticket export",
+      "model": "Sonnet 4.6",
+      "effort": "medium",
+      "elapsed_s": 4,
+      "step": 2,
+      "caller_id": "a1b2c3d4",
+      "started": "2026-09-01T09:30:00Z",
+      "url": "/agents/engineering-lead/subagents/e5f6a7b8"
+    },
+    {
+      "id": "c9d0e1f2",
+      "kind": "subagent",
+      "state": "errored",
+      "title": "Find two comparable vendors",
+      "model": "Opus 5.5",
+      "effort": "high",
+      "elapsed_s": 95,
+      "step": 3,
+      "error": "The pod ran out of memory",
+      "started": "2026-09-01T09:30:00Z",
+      "ended": "2026-09-20T17:00:00Z",
+      "url": "/agents/engineering-lead/subagents/c9d0e1f2"
+    },
+    {
+      "id": "0a1b2c3d",
+      "kind": "subagent",
+      "state": "done",
+      "title": "Check the contract dates",
+      "model": "Sonnet 4.6",
+      "effort": "low",
+      "elapsed_s": 40,
+      "started": "2026-09-01T09:30:00Z",
+      "ended": "2026-09-20T17:00:00Z",
+      "url": "/agents/engineering-lead/subagents/0a1b2c3d"
+    }
+  ]
+}

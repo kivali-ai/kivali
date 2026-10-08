@@ -1,0 +1,71 @@
+# Modules the guest loads explicitly at boot, one per line. Device
+# drivers are also coldplugged from sysfs modaliases; this list covers
+# what k3s, flannel, kube-router (NetworkPolicy) and containerd need
+# before anything asks for it, plus the devices the boot path relies on.
+#
+# One list serves both architectures and both hypervisors. A module
+# that does not exist for this architecture, or refuses to load on this
+# hypervisor (hv_sock, hv_utils and hv_balloon anywhere but Hyper-V),
+# is named once in boot's "modules not loaded" line and is otherwise
+# harmless.
+#
+# vsock: exactly one guest-to-host transport can register, the first to
+# load; a second fails with EBUSY. hv_sock (Hyper-V sockets) refuses to
+# load outside Hyper-V, while the virtio transport loads anywhere,
+# device or not, so hv_sock comes first: on Hyper-V it takes the slot
+# and vmw_vsock_virtio_transport is "not loaded"; elsewhere hv_sock is
+# "not loaded" and the virtio transport takes it.
+vsock
+hv_sock
+vmw_vsock_virtio_transport
+virtio_net
+virtio_rng
+virtio_balloon
+# Hyper-V integration services (shutdown, time sync, heartbeat; the
+# host's graceful stop runs the guest's clean shutdown) and the
+# balloon that returns idle memory to Windows.
+hv_utils
+hv_balloon
+ext4
+overlay
+br_netfilter
+bridge
+veth
+vxlan
+nf_conntrack
+nf_nat
+nf_tables
+nft_compat
+nft_chain_nat
+nft_ct
+nft_masq
+nft_nat
+nft_redir
+nft_reject_inet
+nft_fib_inet
+ip_tables
+ip6_tables
+iptable_nat
+iptable_filter
+iptable_mangle
+ip6table_nat
+ip6table_filter
+ip6table_mangle
+ipt_REJECT
+ip6t_REJECT
+xt_conntrack
+xt_MASQUERADE
+xt_addrtype
+xt_comment
+xt_mark
+xt_multiport
+xt_nat
+xt_statistic
+xt_set
+ip_set
+ip_set_hash_ip
+ip_set_hash_net
+ip_set_hash_ipport
+ip_set_hash_ipportnet
+ip_set_hash_ipportip
+ip_set_bitmap_port

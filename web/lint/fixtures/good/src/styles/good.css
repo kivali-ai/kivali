@@ -1,0 +1,61 @@
+/* Fixture: clean app CSS. */
+
+.app-card {
+  color: var(--text-primary);
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-4);
+  margin: 0;
+  margin-bottom: -1px;
+  gap: var(--space-2);
+  width: 100%;
+  max-width: var(--content);
+  height: auto;
+  z-index: var(--z-sticky);
+  font-family: var(--font-sans);
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-line);
+  box-shadow: var(--shadow-sm);
+  transition: opacity var(--duration-fast) var(--ease-out);
+  --app-card-accent: var(--signal);
+  outline-color: var(--app-card-accent);
+}
+
+.app-card.is-open {
+  background: var(--paper);
+}
+
+.app-card:hover .app-card-title {
+  color: var(--ink);
+}
+
+.app-grid {
+  display: grid;
+  grid-template-columns: 1fr 2fr;
+  inset: 0;
+  min-height: 100vh;
+  max-height: calc(100vh - var(--space-8) * 9);
+  height: calc(100dvh - var(--space-8));
+  font: var(--text-body);
+  margin-inline: calc(var(--space-4) * -1);
+  width: min(100%, var(--content));
+  animation: app-spin var(--duration-fast) var(--ease-out);
+}
+
+/* Breakpoints are literal px in @media params (custom properties do not work there): 960 turns the
+   sidebar into a tab bar, 640 goes to one column. */
+@media (max-width: 960px) {
+  .app-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .app-grid {
+    padding: var(--space-2);
+  }
+}
+
+/* kivali-lint-disable-next-line token-check/raw-color -- the escape hatch works in CSS too */
+.app-legacy { --app-legacy-tint: rgb(0 0 0 / 0.1); }

@@ -1,0 +1,68 @@
+{
+  "fields": {
+    "id": "engineering-lead/changelog",
+    "type": "artifact",
+    "kind": "requirement",
+    "owner": {
+      "slug": "engineering-lead",
+      "name": "Engineering lead"
+    },
+    "path": "reqs/changelog.md",
+    "status": "superseded",
+    "declared_status": "provisional",
+    "condition": "until the next release",
+    "check": "changelog check passes",
+    "source": "",
+    "summary": "Every release has a changelog",
+    "payload": "",
+    "manifested": true,
+    "rejected": "",
+    "about": {
+      "id": "engineering-lead/release-plan",
+      "pin": "",
+      "resolved": true
+    },
+    "depends_on": [
+      {
+        "id": "chief-of-staff/release-policy",
+        "pin": "2",
+        "resolved": true
+      }
+    ],
+    "supersedes": [],
+    "evidence": [
+      "ci/run-12.csv"
+    ],
+    "flagged": true,
+    "flags": [
+      "depends_on chief-of-staff/release-policy@2 is superseded"
+    ],
+    "problems": [],
+    "versions": [
+      {
+        "n": 1,
+        "at": "2026-09-01T09:30:00Z",
+        "sha": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+        "payload_sha": "",
+        "url": "/attachments/9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+      }
+    ],
+    "about_me": [],
+    "dependents": [
+      "engineering-lead/signoff"
+    ],
+    "superseded_by": [
+      "engineering-lead/changelog-2"
+    ],
+    "reports_to": ""
+  },
+  "version": {
+    "n": 1,
+    "at": "2026-09-01T09:30:00Z",
+    "sha": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+    "payload_sha": "",
+    "url": "/attachments/9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+  },
+  "body_md": "Every release has a changelog.",
+  "body_note": "The text of this version is no longer stored. The version stays on record."
+}

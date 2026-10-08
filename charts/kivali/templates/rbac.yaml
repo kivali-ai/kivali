@@ -1,0 +1,42 @@
+# Lets the kivali pod manage per-agent pods and PVCs in its own namespace.
+# No cluster-scoped permissions, no access to secrets/configmaps.
+# PVC delete is intentionally absent: Provisioner.Destroy preserves a fired
+# agent's PVC for forensics.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kivali
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kivali.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: kivali-agentpod-manager
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kivali.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "list", "create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: kivali-agentpod-manager
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kivali.labels" . | nindent 4 }}
+subjects:
+  - kind: ServiceAccount
+    name: kivali
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: Role
+  name: kivali-agentpod-manager
+  apiGroup: rbac.authorization.k8s.io

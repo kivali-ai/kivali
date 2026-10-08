@@ -1,0 +1,34 @@
+/*
+ * Kivali addition, not vendored: type classes for the Text component.
+ * The vendored kivali.css styles components only and has no type classes; screens need headings,
+ * captions and labels in the brand type scale. Every value is a token from tokens/typography.css
+ * and tokens/colors.css.
+ */
+.kv-text { margin: 0; }
+
+.kv-text-display { font: var(--text-display); letter-spacing: var(--type-display-tracking); }
+.kv-text-title { font: var(--text-title); letter-spacing: var(--type-title-tracking); }
+.kv-text-heading { font: var(--text-heading); letter-spacing: var(--type-heading-tracking); }
+.kv-text-body { font: var(--text-body); letter-spacing: var(--type-body-tracking); }
+.kv-text-caption { font: var(--text-caption); letter-spacing: var(--type-caption-tracking); }
+.kv-text-label { font: var(--text-label); letter-spacing: var(--type-label-tracking); }
+.kv-text-code { font: var(--text-code); letter-spacing: var(--type-code-tracking); }
+
+/* The vendored kivali.css styles Prose h1–h3 only; h4–h6 (an agent's role or memory can go that deep) fall
+   back to browser defaults. All three read as body-size titles, below the h3, in the title weight. */
+.kv-prose h4,
+.kv-prose h5,
+.kv-prose h6 {
+  font: var(--text-body);
+  font-weight: var(--type-title-weight);
+  letter-spacing: var(--type-body-tracking);
+  margin: var(--space-4) 0 var(--space-2);
+}
+
+.kv-text--default { color: var(--ink); }
+.kv-text--muted { color: var(--ink-muted); }
+.kv-text--faint { color: var(--ink-faint); }
+.kv-text--signal { color: var(--signal-ink); }
+.kv-text--cobalt { color: var(--cobalt); }
+.kv-text--success { color: var(--success); }
+.kv-text--danger { color: var(--danger); }

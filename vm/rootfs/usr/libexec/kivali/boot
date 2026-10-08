@@ -1,0 +1,291 @@
+#!/bin/sh
+# Kivali Desktop guest boot, run once by busybox init as `sysinit`.
+#
+# Root (found by the initramfs: /dev/vda on Virtualization.framework,
+# partition 2 of the root VHDX on Hyper-V) is a read-only squashfs. This
+# script:
+#   - mounts the kernel filesystems, cgroup v2 and tmpfs for /run,
+#     /tmp and /root, and tmpfs-backed overlays on /etc and /var;
+#   - loads modules and applies sysctls;
+#   - brings up networking with DHCP;
+#   - mounts the data disk (kivali.data=<dev> or kivali.data=scsi:<h:c:t:l>
+#     on the kernel command line, default /dev/vdb) at /var/lib/kivali.
+#     It formats it only
+#     when the host says so, on the boot right after the host created
+#     the file, AND its first MiB reads back as all zeros. The host says
+#     so either on the command line (kivali.format-data=1) or, with
+#     kivali.format-data=ask, by answering KIVALI-FORMAT-DATA 1 to the
+#     question this script asks on the console. Otherwise the disk must
+#     be ext4 labelled kivali-data; it is checked with e2fsck -p and
+#     mounted errors=remount-ro;
+#   - lays out the k3s state directory on it, bind-mounts the baked
+#     image tarballs into <data-dir>/agent/images, and binds the
+#     kubelet and /etc/rancher state onto the data disk too;
+#   - on a first boot with kivali.selftest=1, places the self-test
+#     chart and HelmChart manifest.
+# Any failure powers the VM off with a KIVALI-VM FATAL line.
+
+exec </dev/null
+export PATH=/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+DATA_DEV=/dev/vdb
+DATA=/var/lib/kivali
+K3S_DATA=$DATA/k3s
+IMAGES=/usr/share/kivali/images
+
+say() { echo "KIVALI-VM: $*"; }
+fatal() {
+  echo "KIVALI-VM FATAL: $*"
+  # Recorded for the guest agent's status; /run may not be mounted yet.
+  echo "$*" > /run/kivali/fatal 2>/dev/null
+  sync
+  poweroff -f
+  exit 1
+}
+must() { "$@" || fatal "boot: '$*' failed"; }
+
+say "boot: kernel $(uname -r), root read-only"
+
+# --- kernel filesystems and writable scratch ------------------------
+mountpoint -q /proc || must mount -t proc proc /proc
+mountpoint -q /sys || must mount -t sysfs sysfs /sys
+mountpoint -q /dev || must mount -t devtmpfs devtmpfs /dev
+must mkdir -p /dev/pts /dev/shm
+must mount -t devpts -o gid=5,mode=620,ptmxmode=666 devpts /dev/pts
+must mount -t tmpfs -o mode=1777,nosuid,nodev shm /dev/shm
+must mount -t tmpfs -o mode=0755,nosuid,nodev run /run
+must mount -t tmpfs -o mode=1777,nosuid,nodev tmp /tmp
+must mount -t tmpfs -o mode=0700 root /root
+must mkdir -p /run/kivali
+
+# cgroup v2 only (the kernel is booted with cgroup_no_v1=all). The
+# root cgroup is exempt from the no-internal-processes rule, so every
+# available controller is delegated to its children here; k3s/kubelet
+# then build /kubepods under it with the cgroupfs driver.
+must mount -t cgroup2 -o nsdelegate cgroup2 /sys/fs/cgroup
+ctrls=''
+for c in $(cat /sys/fs/cgroup/cgroup.controllers); do ctrls="$ctrls +$c"; done
+echo "$ctrls" > /sys/fs/cgroup/cgroup.subtree_control || fatal "boot: cannot delegate cgroup controllers$ctrls"
+say "boot: cgroup v2 controllers:$ctrls"
+
+mountpoint -q /sys/kernel/security || mount -t securityfs securityfs /sys/kernel/security 2>/dev/null
+mountpoint -q /sys/fs/bpf || mount -t bpf bpf /sys/fs/bpf 2>/dev/null
+
+# --- modules and sysctls -------------------------------------------
+echo /sbin/modprobe > /proc/sys/kernel/modprobe
+missing=''
+while read -r m; do
+  case "$m" in ''|'#'*) continue ;; esac
+  modprobe "$m" 2>/dev/null || missing="$missing $m"
+done < /etc/kivali/modules
+# Coldplug: load drivers for every device the VM presents.
+find /sys/devices -name modalias -type f -exec cat {} + 2>/dev/null | sort -u | xargs modprobe -a -q -b 2>/dev/null
+[ -n "$missing" ] && say "boot: modules not loaded:$missing"
+must sysctl -q -p /etc/sysctl.d/kivali.conf
+
+# --- writable /etc and /var as overlays over the read-only root -----
+for d in etc var; do
+  must mkdir -p "/run/overlay/$d/upper" "/run/overlay/$d/work"
+  must mount -t overlay "overlay-$d" -o "lowerdir=/$d,upperdir=/run/overlay/$d/upper,workdir=/run/overlay/$d/work" "/$d"
+done
+must mkdir -p /var/log /var/lib/cni /var/lib/kubelet "$DATA" /etc/rancher
+
+hostname -F /etc/hostname
+say "boot: clock $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+
+# --- networking -----------------------------------------------------
+ip link set lo up
+nic=''
+for p in /sys/class/net/*; do
+  n=${p##*/}
+  [ "$n" = lo ] && continue
+  [ -e "$p/device" ] && nic=$n && break
+done
+if [ -n "$nic" ]; then
+  ip link set "$nic" up
+  # -b: return once leased, keep renewing in the background.
+  udhcpc -i "$nic" -b -S -s /usr/share/udhcpc/default.script >/dev/null 2>&1
+  addr=$(ip -4 -o addr show dev "$nic" | awk '{print $4}')
+  say "boot: network $nic ${addr:-no address}"
+  # Nothing may connect in on the NAT NIC: VZ NAT's address is reachable
+  # from the Mac (and its other users) through the vmnet bridge, which
+  # would expose the NodePort and the API server. Drop every inbound TCP
+  # SYN on it before k3s starts. Replies to the guest's own outbound
+  # connections, DHCP, loopback, cni0/flannel and vsock are unaffected.
+  # A table of its own at raw priority (-300) runs before kube-proxy's
+  # NAT, and k3s's iptables-restore never touches it.
+  must nft add table inet kivali_inbound
+  must nft add chain inet kivali_inbound prerouting '{ type filter hook prerouting priority raw; policy accept; }'
+  must nft add rule inet kivali_inbound prerouting iifname "$nic" tcp flags '& (syn | ack) == syn' drop
+  # Flannel's VXLAN port: a single node never receives remote VXLAN, and
+  # a crafted packet there would land on the pod network.
+  must nft add rule inet kivali_inbound prerouting iifname "$nic" udp dport 8472 drop
+  say "boot: inbound TCP connections and VXLAN (udp/8472) on $nic dropped"
+else
+  say "boot: no network interface"
+fi
+
+# --- data disk ------------------------------------------------------
+# kivali.data=<dev> names it; without it, /dev/vdb. The Hyper-V image
+# bakes kivali.data=scsi:0:0:0:1 in instead: the disk at that SCSI
+# address (host:channel:target:lun; the LUN is the controller location
+# the broker attaches the data disk at, 1, the root disk being 0),
+# because Hyper-V's storage driver probes the two disks concurrently
+# and names them in whichever order they answer, so the data disk is
+# /dev/sdb on one boot and /dev/sda on the next (the initramfs finds
+# the root disk by content for the same reason).
+DATA_SCSI=
+for w in $(cat /proc/cmdline); do
+  case "$w" in
+    kivali.data=/dev/?*) DATA_DEV=${w#kivali.data=} ;;
+    kivali.data=scsi:?*) DATA_SCSI=${w#kivali.data=scsi:} ;;
+    kivali.data=*) fatal "boot: $w is not a device under /dev or scsi:<h:c:t:l>" ;;
+  esac
+done
+# scsi_disk prints the whole disk at the SCSI address $1, if it is
+# attached yet: /sys/block/<disk>/device links to the SCSI device
+# directory named after the address.
+scsi_disk() {
+  for b in /sys/block/*; do
+    [ -L "$b/device" ] || continue
+    if [ "$(basename "$(readlink -f "$b/device")")" = "$1" ]; then
+      echo "/dev/${b##*/}"
+      return 0
+    fi
+  done
+  return 1
+}
+# Disks probe asynchronously: the root disk was there when the
+# initramfs looked, the data disk may follow it by a moment. Up to 5 s.
+n=0
+while :; do
+  if [ -n "$DATA_SCSI" ]; then
+    DATA_DEV=$(scsi_disk "$DATA_SCSI") || DATA_DEV=
+  fi
+  [ -n "$DATA_DEV" ] && [ -b "$DATA_DEV" ] && break
+  n=$((n + 1))
+  [ "$n" -gt 100 ] && fatal "boot: no data disk at ${DATA_SCSI:+scsi:}${DATA_SCSI:-$DATA_DEV}"
+  usleep 50000
+done
+say "boot: data disk $DATA_DEV${DATA_SCSI:+ (scsi:$DATA_SCSI)}"
+# What the host advertises for the data disk; recorded for the discard
+# fault described in vm/README.md.
+q=/sys/block/${DATA_DEV##*/}/queue
+say "boot: data disk $DATA_DEV queue: discard_max_bytes=$(cat $q/discard_max_bytes) max_discard_segments=$(cat $q/max_discard_segments) write_zeroes_max_bytes=$(cat $q/write_zeroes_max_bytes)"
+
+# blank: the first MiB was read in full and is all zeros. A short or
+# failed read counts as not blank.
+blank() {
+  dd if="$DATA_DEV" of=/run/kivali/data-head bs=65536 count=16 2>/dev/null || return 1
+  [ "$(wc -c < /run/kivali/data-head)" -eq 1048576 ] || return 1
+  [ "$(tr -d '\000' < /run/kivali/data-head | head -c 1 | wc -c)" -eq 0 ]
+}
+
+# Whether the host says to format. It says yes only on the boot right
+# after it created the disk, in one of two ways:
+#   kivali.format-data=1    on the command line (macOS, where the host
+#                           passes the command line per boot);
+#   kivali.format-data=ask  on the console (Hyper-V, whose command line
+#                           is baked into the image): print
+#                           KIVALI-VM ASK format-data, read one line
+#                           from the console for up to 30 s. Only the
+#                           exact line KIVALI-FORMAT-DATA 1 is a yes
+#                           (a trailing CR is ignored); anything else,
+#                           or nothing, is a no.
+# console-control, the console's reader once the guest is up, is a
+# respawn entry that init starts only after this sysinit script, so
+# this read is the console's only reader.
+yes=''
+if grep -qw kivali.format-data=1 /proc/cmdline; then
+  yes=kivali.format-data=1
+elif grep -qw kivali.format-data=ask /proc/cmdline; then
+  stty -F /dev/console -echo 2>/dev/null
+  echo "KIVALI-VM ASK format-data"
+  if IFS= read -r -t 30 answer </dev/console; then
+    answer=${answer%"$(printf '\r')"}
+    say "boot: format-data: the host answered '$(printf '%s' "$answer" | tr -cd ' -~' | head -c 64)'"
+    [ "$answer" = "KIVALI-FORMAT-DATA 1" ] && yes='the host answered KIVALI-FORMAT-DATA 1'
+  else
+    say "boot: format-data: no answer within 30 s"
+  fi
+fi
+
+first_boot=0
+if [ -n "$yes" ]; then
+  if blank; then
+    say "boot: formatting the new data disk ext4 ($yes, disk blank)"
+    # No discard, and no lazy init: with lazy init the kernel later
+    # zeroes inode tables and the journal in the background with
+    # write-zeroes, the same virtio path as the discard fault (see
+    # vm/README.md). Eager init costs ~1 GiB of real allocation.
+    must mkfs.ext4 -q -F -L kivali-data -m 0 -e remount-ro \
+      -E nodiscard,lazy_itable_init=0,lazy_journal_init=0 "$DATA_DEV" </dev/null
+    first_boot=1
+  else
+    say "boot: $yes but the data disk is not blank; not formatting"
+  fi
+fi
+rm -f /run/kivali/data-head
+
+if [ "$first_boot" = 0 ]; then
+  info=$(blkid "$DATA_DEV")
+  case "$info" in
+    *'TYPE="ext4"'*) ;;
+    *) fatal "boot: data disk $DATA_DEV is not ext4 (${info:-no signature}); refusing to touch it" ;;
+  esac
+  case "$info" in
+    *'LABEL="kivali-data"'*) ;;
+    *) fatal "boot: data disk $DATA_DEV is not labelled kivali-data ($info); refusing to mount it" ;;
+  esac
+  # -p: fix what is safe to fix unattended. 0 clean, 1 fixed, 2 fixed
+  # (reboot advised only for a mounted root); 4 and up need a person.
+  e2fsck -p "$DATA_DEV" >/run/kivali/e2fsck.log 2>&1
+  rc=$?
+  # Recorded for the guest agent's status: a repair means the filesystem
+  # was found damaged, which a clean or merely unclean (journal replay)
+  # stop never leaves.
+  echo "$rc" > /run/kivali/fsck
+  if [ "$rc" -ge 4 ]; then
+    fatal "boot: e2fsck -p on $DATA_DEV exited $rc: $(tail -n 3 /run/kivali/e2fsck.log | tr '\n' ' ')"
+  fi
+  [ "$rc" -ne 0 ] && say "boot: e2fsck repaired the data disk (exit $rc): $(tail -n 3 /run/kivali/e2fsck.log | tr '\n' ' ')"
+  # kivali.fsck=force (the crash tests): a full read-only check after the
+  # journal replay above. A filesystem that a power cut can only leave
+  # needing that replay is clean now; anything this finds is damage.
+  if grep -qw kivali.fsck=force /proc/cmdline; then
+    if e2fsck -fn "$DATA_DEV" >/run/kivali/e2fsck-force.log 2>&1; then
+      say "boot: forced e2fsck -fn: clean"
+    else
+      fatal "boot: forced e2fsck -fn found damage on $DATA_DEV: $(grep -v '^Pass\|^e2fsck\|^kivali-data:' /run/kivali/e2fsck-force.log | head -n 5 | tr '\n' ' ')"
+    fi
+  fi
+fi
+must mount -t ext4 -o noatime,errors=remount-ro "$DATA_DEV" "$DATA"
+say "boot: data disk mounted at $DATA ($(df -h "$DATA" | awk 'NR==2 {print $2 " total, " $4 " free"}'))"
+
+# --- k3s state on the data disk -------------------------------------
+must mkdir -p "$K3S_DATA/server/manifests" "$K3S_DATA/server/static/charts" \
+  "$K3S_DATA/agent/images" "$DATA/kubelet" "$DATA/rancher" "$DATA/log"
+# k3s imports every tarball in <data-dir>/agent/images at start; the
+# baked ones come from the root disk, read-only.
+must mount --bind "$IMAGES" "$K3S_DATA/agent/images"
+must mount -o remount,bind,ro "$K3S_DATA/agent/images"
+# kubelet's pod directory (emptyDirs, projected volumes) and the node
+# password / kubeconfig in /etc/rancher persist with the cluster.
+must mount --bind "$DATA/kubelet" /var/lib/kubelet
+must mount --bind "$DATA/rancher" /etc/rancher
+# kubelet and containerd need shared mount propagation.
+must mount --make-rshared /
+say "boot: baked image tarballs: $(ls "$IMAGES" | tr '\n' ' ')"
+
+if [ "$first_boot" = 1 ] && grep -qw kivali.selftest=1 /proc/cmdline; then
+  must cp /usr/share/kivali/selftest/kivali-selftest-0.1.0.tgz "$K3S_DATA/server/static/charts/"
+  must cp /usr/share/kivali/selftest/kivali-selftest.yaml "$K3S_DATA/server/manifests/"
+  say "boot: self-test HelmChart placed in $K3S_DATA/server/manifests"
+fi
+echo "$first_boot" > /run/kivali/first-boot
+
+# k3s-server and ready start only if this exists: busybox init runs
+# them even when this script died without reaching fatal.
+: > /run/kivali/booted
+say "boot: done"

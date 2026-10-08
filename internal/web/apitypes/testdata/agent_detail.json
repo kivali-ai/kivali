@@ -1,0 +1,115 @@
+{
+  "slug": "engineering-lead",
+  "name": "Engineering lead",
+  "role_title": "Engineering lead",
+  "icon": "code",
+  "reports_to": "chief-of-staff",
+  "depth": 2,
+  "model": "claude-opus-5-5",
+  "model_label": "Opus 5.5",
+  "effort": "high",
+  "context_pct": 82,
+  "state": "running",
+  "created": "2026-09-01T09:30:00Z",
+  "role_line": "Owns the product from plan to release.",
+  "models": [
+    {
+      "id": "claude-opus-5-5",
+      "label": "Opus 5.5",
+      "legacy": false,
+      "current": true,
+      "context_window": 1000000,
+      "efforts": [
+        {
+          "id": "low",
+          "label": "Low",
+          "default": false
+        },
+        {
+          "id": "medium",
+          "label": "Medium",
+          "default": false
+        },
+        {
+          "id": "high",
+          "label": "High",
+          "default": true
+        },
+        {
+          "id": "xhigh",
+          "label": "Extra high",
+          "default": false
+        },
+        {
+          "id": "max",
+          "label": "Max",
+          "default": false
+        }
+      ],
+      "provider": "claude"
+    },
+    {
+      "id": "claude-sonnet-4-6",
+      "label": "Sonnet 4.6",
+      "legacy": false,
+      "current": true,
+      "context_window": 1000000,
+      "efforts": [
+        {
+          "id": "low",
+          "label": "Low",
+          "default": false
+        },
+        {
+          "id": "medium",
+          "label": "Medium",
+          "default": false
+        },
+        {
+          "id": "high",
+          "label": "High",
+          "default": true
+        },
+        {
+          "id": "xhigh",
+          "label": "Extra high",
+          "default": false
+        },
+        {
+          "id": "max",
+          "label": "Max",
+          "default": false
+        }
+      ],
+      "provider": "claude"
+    },
+    {
+      "id": "claude-haiku-3",
+      "label": "Haiku 3",
+      "legacy": false,
+      "current": true,
+      "context_window": 200000,
+      "efforts": [],
+      "provider": "claude"
+    },
+    {
+      "id": "claude-opus-4-1",
+      "label": "claude-opus-4-1",
+      "legacy": true,
+      "current": false,
+      "context_window": 200000,
+      "efforts": [],
+      "provider": "claude"
+    }
+  ],
+  "context": {
+    "pct": 82,
+    "tokens": 164000,
+    "limit": 200000
+  },
+  "counts": {
+    "background": 2,
+    "past_chats": 5
+  },
+  "archived": false
+}

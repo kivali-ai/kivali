@@ -1,0 +1,24 @@
+{
+  "name": "kivali-desktop",
+  "private": true,
+  "version": "0.15.1",
+  "license": "Apache-2.0",
+  "type": "module",
+  "description": "Kivali Desktop's bundled pages (setup, Settings, each team's Kivali page) and the Tauri CLI. See docs/developers/desktop-app.md.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit -p tsconfig.json && vite build",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.12.1"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.12.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.2",
+    "vitest": "^4.1.11"
+  }
+}

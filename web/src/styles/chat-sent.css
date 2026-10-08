@@ -1,0 +1,11 @@
+/* ---- A message the agent sent: the line, and the card it opens to ---- */
+
+.app-chat-sent {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.app-chat-sent-raw {
+  margin-left: auto;
+}

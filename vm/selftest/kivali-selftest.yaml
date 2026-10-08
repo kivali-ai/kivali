@@ -1,0 +1,15 @@
+# Placed in <data-dir>/server/manifests on a first boot with
+# kivali.selftest=1. The chart is fetched by the Helm controller's job
+# from k3s's own static-file endpoint, which serves
+# <data-dir>/server/static/ at https://<apiserver>/static/. The
+# %{KUBERNETES_API}% token is expanded by the controller to the
+# in-cluster API address; the job trusts the cluster CA.
+apiVersion: helm.cattle.io/v1
+kind: HelmChart
+metadata:
+  name: kivali-selftest
+  namespace: kube-system
+spec:
+  chart: https://%{KUBERNETES_API}%/static/charts/kivali-selftest-0.1.0.tgz
+  targetNamespace: kivali-selftest
+  createNamespace: true

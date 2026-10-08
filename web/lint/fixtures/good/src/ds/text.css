@@ -1,0 +1,15 @@
+/* Fixture: Kivali's own CSS under src/ds (like the Text component's text.css). It defines .kv-*
+   classes and --kv-* properties, and sets type with the font shorthand tokens. */
+.kv-text-heading {
+  --kv-text-measure: var(--content);
+  font: var(--text-heading);
+  max-width: var(--kv-text-measure);
+}
+
+.kv-text--muted {
+  color: var(--ink-muted);
+}
+
+.kv-text-heading.is-clamped {
+  overflow: hidden;
+}

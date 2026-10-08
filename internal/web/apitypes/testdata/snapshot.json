@@ -1,0 +1,102 @@
+{
+  "agents": [
+    {
+      "slug": "chief-of-staff",
+      "name": "Chief of Staff",
+      "role_title": "Chief of Staff",
+      "icon": "compass",
+      "reports_to": "ceo",
+      "depth": 1,
+      "state": "waiting",
+      "context_pct": 41,
+      "waiting_tasks": 2
+    },
+    {
+      "slug": "engineering-lead",
+      "name": "Engineering lead",
+      "role_title": "Engineering lead",
+      "icon": "code",
+      "reports_to": "chief-of-staff",
+      "depth": 2,
+      "state": "running",
+      "context_pct": 82
+    },
+    {
+      "slug": "buyer",
+      "name": "Buyer",
+      "role_title": "Buyer",
+      "icon": "shopping-cart",
+      "reports_to": "engineering-lead",
+      "depth": 3,
+      "state": "needs_help",
+      "context_pct": 0
+    },
+    {
+      "slug": "tester",
+      "name": "tester",
+      "role_title": "",
+      "icon": "",
+      "reports_to": "engineering-lead",
+      "depth": 3,
+      "state": "quarantined",
+      "context_pct": 0
+    }
+  ],
+  "inbox": {
+    "unactioned": 1,
+    "pending_paths": [
+      "messages/2026-09-28/0007-engineering-lead.md"
+    ],
+    "ceo_paths": [
+      "messages/2026-09-28/0003-chief-of-staff.md"
+    ],
+    "auto_release": "30s"
+  },
+  "release": {
+    "running": true,
+    "active_agents": 1,
+    "pending_docs": 1
+  },
+  "messages_total": 214,
+  "assignments_version": 17,
+  "goals": [
+    {
+      "id": 40,
+      "title": "Ship the release",
+      "owner": "engineering-lead",
+      "done": 7,
+      "total": 12,
+      "blocked": [
+        {
+          "id": 42,
+          "on": 45,
+          "on_title": "Run the tests",
+          "on_assignee": {
+            "slug": "test-runner",
+            "name": "Test runner"
+          }
+        }
+      ],
+      "workers": [
+        "buyer",
+        "tester"
+      ]
+    },
+    {
+      "id": 50,
+      "title": "Hire a CFO",
+      "owner": "chief-of-staff",
+      "done": 0,
+      "total": 3,
+      "blocked": [],
+      "workers": []
+    }
+  ],
+  "readouts": {
+    "working": 2,
+    "blocked": 1,
+    "closed_week": 9,
+    "spend_today": 4.25,
+    "spend_7d": 61.5
+  }
+}

@@ -1,0 +1,20 @@
+<!-- @dsCard group="Components" viewport="700x860" name="AgentAvatar" subtitle="Initials plus role, on an identity color" -->
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="../../styles.css">
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="../../_ds_bundle.js"></script>
+<style>body{margin:0;padding:20px;background:var(--paper);font-family:var(--font-sans);color:var(--ink)} .row{display:flex;flex-wrap:wrap;gap:14px;align-items:flex-end} .lbl{font:500 11px/16px var(--font-mono);letter-spacing:.02em;color:var(--ink-muted);margin:0 0 10px} .sec{margin-bottom:22px} .who{display:flex;align-items:center;gap:10px;font:500 14px/18px var(--font-sans)} .who > span > small{display:block;font:400 12px/16px var(--font-sans);color:var(--ink-muted)} .g{display:grid;grid-template-columns:repeat(auto-fill,minmax(92px,1fr));gap:12px 6px} .c{display:flex;flex-direction:column;align-items:center;gap:6px} .c > span:last-child{font:400 10px/13px var(--font-mono);color:var(--ink-muted);text-align:center}</style></head>
+<body><div id="root"></div>
+<script>
+const {createElement:h,Fragment:F}=React; const K=window.KivaliDesignSystem_9b9983; const root=ReactDOM.createRoot(document.getElementById("root"));
+const A=[["Chief of Staff","compass","iris"],["Garden advisor","sprout","olive"],["Supplier scout","search","clay"],["Policy advisor","scale","lake"],["Bookkeeper","calculator","ochre"],["Recruiter","user-search","plum"]];
+const lbl=t=>h("p",{className:"lbl"},t);
+root.render(h("div",null,
+ h("div",{className:"sec"},lbl("Sizes · the role icon shows at 32px and up"),h("div",{className:"row"},[56,40,32,24,20,16].map(s=>h(K.AgentAvatar,{key:s,name:"Garden advisor",role:"sprout",color:"olive",size:s})))),
+ h("div",{className:"sec"},lbl("A team, next to a person"),h("div",{className:"row"},A.map(([n,r,c])=>h(K.AgentAvatar,{key:n,name:n,role:r,color:c,size:40})),h("span",{style:{width:12}}),h(K.PersonAvatar,{name:"Maya Chen",size:40}))),
+ h("div",{className:"sec"},lbl("With a name"),h("div",{className:"row",style:{gap:28}},h("span",{className:"who"},h(K.AgentAvatar,{name:"Garden advisor",role:"sprout",color:"olive",size:32}),h("span",null,"Garden advisor",h("small",null,"Gardening"))),h("span",{className:"who"},h(K.PersonAvatar,{name:"Maya Chen",size:32}),h("span",null,"Maya Chen",h("small",null,"CEO · a person"))))),
+ h("div",{className:"sec"},lbl("Identity colors"),h("div",{className:"row"},K.identityColors.map(c=>h("div",{className:"c",key:c},h(K.AgentAvatar,{name:c,initials:c.slice(0,2).toUpperCase(),color:c,size:40,role:"user"}),h("span",null,c))))),
+ h("div",null,lbl("Role icons · "+K.roleIconNames.length+" in the set"),h("div",{className:"g"},K.roleIconNames.map(r=>h("div",{className:"c",key:r},h(K.AgentAvatar,{name:r,initials:"Ab",role:r,color:"slate",size:40}),h("span",null,r)))))));
+</script></body></html>

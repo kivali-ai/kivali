@@ -1,0 +1,25 @@
+{
+  "source": "the agent stream's events (internal/web/chat_hub.go), in the order the hub sends them",
+  "about": "The agent dispatches two background tasks, ends its turn waiting on them, and they finish one by one; each result reaches the agent as a subagent_result message, painted where it landed from the row it carries.",
+  "steps": [
+    { "event": "tool_use_start", "data": { "tool_use_id": "toolu_sub", "tool_name": "mcp__kivali__subagent", "start_ts": 1789923600000 } },
+    { "event": "subagent_started", "data": { "parent": "engineering-lead", "tool_use_id": "toolu_sub", "tasks": [
+      { "index": 0, "id": "aaaa1111", "description": "Compare hosting providers", "model": "Sonnet 4.6", "effort": "low" },
+      { "index": 1, "id": "bbbb2222", "description": "Check the build logs", "model": "Haiku 4.5", "effort": "medium" }
+    ] } },
+    { "event": "tool_result", "data": { "tool_use_id": "toolu_sub", "is_error": false, "stdout": "dispatched 2 tasks" } },
+    { "event": "subagent_activity", "data": { "parent": "engineering-lead", "tool_use_id": "toolu_sub", "index": 0, "id": "aaaa1111", "current_activity": "running WebFetch" } },
+    { "event": "subagent_progress", "data": { "parent": "engineering-lead", "tool_use_id": "toolu_sub", "index": 0, "id": "aaaa1111", "status": "running", "final_text": "", "error": "" } },
+    { "event": "subagent_activity", "data": { "parent": "engineering-lead", "tool_use_id": "toolu_sub", "index": 0, "id": "aaaa1111", "current_activity": "running file_view" } },
+    { "event": "done", "data": { "stop": "end_turn", "waiting_tasks": 2 } },
+    { "event": "subagent_completed", "data": { "parent": "engineering-lead", "tool_use_id": "toolu_sub", "tasks": [
+      { "index": 0, "id": "aaaa1111", "final_text": "Three providers quote under $4k.", "error": "" }
+    ] } },
+    { "event": "subagent_activity", "data": { "parent": "engineering-lead", "tool_use_id": "toolu_sub", "index": 0, "id": "aaaa1111", "current_activity": "late activity" } },
+    { "event": "chat_message", "data": { "role": "received", "kind": "subagent_result", "content": "Background task aaaa1111 (Compare hosting providers) finished.\n\nThree providers quote under $4k.\n", "ts": 1789923700000, "attachments": [], "row": {
+      "kind": "task_result", "ts": 1789923700000, "tasks": [
+        { "index": 0, "id": "aaaa1111", "title": "Compare hosting providers", "model": "Sonnet 4.6", "effort": "low", "state": "done", "output_md": "Three providers quote under $4k.", "url": "/api/v1/agents/engineering-lead/subagents/aaaa1111" }
+      ] } } },
+    { "event": "subagent_progress", "data": { "parent": "engineering-lead", "tool_use_id": "toolu_sub", "index": 1, "id": "bbbb2222", "status": "errored", "final_text": "", "error": "The agent pod went away" } }
+  ]
+}

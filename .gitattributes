@@ -1,0 +1,13 @@
+# Every text file is checked out with LF endings, on Windows too, and
+# git decides text against binary by content (so zips and images stay
+# as they are).
+#
+# A Windows checkout with git's default core.autocrlf=true would
+# rewrite text files with CRLF, and this tree reads its own files on
+# Linux: shell scripts run in images (`#!/usr/bin/env bash\r` fails
+# with `env: 'bash\r': No such file or directory`), Markdown is embedded
+# into the server binary and parsed line by line (a CRLF handbook.md
+# would make the server panic at start), and golden files
+# (internal/web/apitypes/testdata/*.json) are compared byte for byte by tests that `make test-vm` runs on a copy of the checkout.
+# One rule covers them all, and whatever comes next.
+*              text=auto eol=lf

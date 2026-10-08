@@ -1,0 +1,30 @@
+#!/bin/sh
+# Runs k3s server for the life of the VM (busybox init `once`). Its
+# log goes to the data disk; the previous boot's log is kept as .1.
+export PATH=/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export HOME=/root
+
+DATA=/var/lib/kivali
+LOG=$DATA/log/k3s.log
+
+if [ ! -e /run/kivali/booted ]; then
+  echo "KIVALI-VM FATAL: k3s: boot did not complete; not starting k3s"
+  echo "k3s: boot did not complete; not starting k3s" > /run/kivali/fatal 2>/dev/null
+  sync
+  exec poweroff -f
+fi
+
+# Rotate: keep the previous boot's log as k3s.log.1.
+[ -f "$LOG" ] && mv -f "$LOG" "$LOG.1"
+echo "KIVALI-VM: k3s: starting $(k3s --version | head -n 1), log $LOG"
+echo $$ > /run/kivali/k3s.pid
+
+# --prefer-bundled-bin: the root has no iptables/mount helpers of its
+# own beyond busybox; k3s's bundled userspace is used instead.
+exec k3s server </dev/null \
+  --data-dir="$DATA/k3s" \
+  --disable=traefik,servicelb,metrics-server \
+  --node-name=kivali \
+  --write-kubeconfig-mode=0600 \
+  --prefer-bundled-bin \
+  >>"$LOG" 2>&1

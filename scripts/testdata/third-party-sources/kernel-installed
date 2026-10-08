@@ -1,0 +1,252 @@
+P:alpine-baselayout
+V:3.7.2-r0
+T:Alpine base dir structure and init scripts
+U:https://gitlab.alpinelinux.org/alpine/aports/-/tree/master/main/alpine-baselayout
+L:GPL-2.0-only
+o:alpine-baselayout
+c:15b3b78187b3808104f98f765e9632e0b09281a7
+
+P:alpine-baselayout-data
+V:3.7.2-r0
+T:Alpine base dir structure and init scripts
+U:https://gitlab.alpinelinux.org/alpine/aports/-/tree/master/main/alpine-baselayout
+L:GPL-2.0-only
+o:alpine-baselayout
+c:15b3b78187b3808104f98f765e9632e0b09281a7
+
+P:alpine-keys
+V:2.6-r0
+T:Public keys for Alpine Linux packages
+U:https://alpinelinux.org
+L:MIT
+o:alpine-keys
+c:b9f23becced4d7b3ccc0fa0f28530243ccd314a0
+
+P:alpine-release
+V:3.23.6-r0
+T:Alpine release data
+U:https://alpinelinux.org
+L:MIT
+o:alpine-base
+c:8608c79733409c3aa716f7985d1cb45aedba55bd
+
+P:apk-tools
+V:3.0.8-r0
+T:Alpine Package Keeper - package manager for alpine
+U:https://gitlab.alpinelinux.org/alpine/apk-tools
+L:GPL-2.0-only
+o:apk-tools
+c:286502dc74df00f907f93b0563867630dcc139e5
+
+P:busybox
+V:1.37.0-r30
+T:Size optimized toolbox of many common UNIX utilities
+U:https://busybox.net/
+L:GPL-2.0-only
+o:busybox
+c:1e823a60eb85606954b3a5af5f8e5bbd1ea680cf
+
+P:busybox-binsh
+V:1.37.0-r30
+T:busybox ash /bin/sh
+U:https://busybox.net/
+L:GPL-2.0-only
+o:busybox
+c:1e823a60eb85606954b3a5af5f8e5bbd1ea680cf
+k:100
+
+P:busybox-static
+V:1.37.0-r30
+T:Statically linked Busybox
+U:https://busybox.net/
+L:GPL-2.0-only
+o:busybox
+c:1e823a60eb85606954b3a5af5f8e5bbd1ea680cf
+
+P:ca-certificates-bundle
+V:20260909-r0
+T:Pre generated bundle of Mozilla certificates
+U:https://www.mozilla.org/en-US/about/governance/policies/security-group/certs/
+L:MPL-2.0 AND MIT
+o:ca-certificates
+c:c733d58a9d16316e7fb6a49e65f28ecda365c56b
+
+P:cryptsetup-libs
+V:2.8.1-r0
+T:Cryptsetup shared library
+U:https://gitlab.com/cryptsetup/cryptsetup
+L:GPL-2.0-or-later WITH cryptsetup-OpenSSL-exception
+o:cryptsetup
+c:6d9d53106af5480b06c5ebb6d7adaa43f2984a76
+
+P:device-mapper-libs
+V:2.03.35-r0
+T:Device-mapper shared library
+U:https://sourceware.org/lvm2/
+L:GPL-2.0-or-later AND LGPL-2.1-or-later AND BSD-2-Clause
+o:lvm2
+c:d42ba006edd6f2179218eda78d7284aba45d9f52
+
+P:json-c
+V:0.18-r1
+T:A JSON implementation in C
+U:https://github.com/json-c/json-c/wiki
+L:MIT
+o:json-c
+c:8e0faa63c91abd41feb359ce5fe4299a88a57ef1
+
+P:kmod
+V:34.2-r1
+T:Linux kernel module management utilities
+U:http://git.kernel.org/?p=utils/kernel/kmod/kmod.git;a=summary
+L:GPL-2.0-or-later
+o:kmod
+c:1997195d08a4d0e04899714802276d89d1ad4cb2
+
+P:kmod-libs
+V:34.2-r1
+T:Linux kernel module management utilities (libraries)
+U:http://git.kernel.org/?p=utils/kernel/kmod/kmod.git;a=summary
+L:LGPL-2.1-or-later
+o:kmod
+c:1997195d08a4d0e04899714802276d89d1ad4cb2
+
+P:lddtree
+V:1.27-r0
+T:List dynamic dependencies as a tree
+U:https://github.com/ncopa/lddtree
+L:GPL-2.0-only
+o:lddtree
+c:007305e7880a70d5c804019aa3da115da732776b
+
+P:libapk
+V:3.0.8-r0
+T:Alpine Package Keeper - package manager for alpine
+U:https://gitlab.alpinelinux.org/alpine/apk-tools
+L:GPL-2.0-only
+o:apk-tools
+c:286502dc74df00f907f93b0563867630dcc139e5
+
+P:libblkid
+V:2.41.6-r1
+T:Block device identification library from util-linux
+U:https://git.kernel.org/cgit/utils/util-linux/util-linux.git
+L:LGPL-2.1-or-later
+o:util-linux
+c:96f05433b217acf92bee031df551b10d8b3a1ec2
+
+P:libcrypto3
+V:3.5.8-r0
+T:Crypto library from openssl
+U:https://www.openssl.org/
+L:Apache-2.0
+o:openssl
+c:2b4b2590f782b95276d31dcaaf41554b1a597a0b
+k:100
+
+P:libeconf
+V:0.8.3-r0
+T:Enhanced Config File Parser
+U:https://github.com/openSUSE/libeconf
+L:MIT
+o:libeconf
+c:36b72fb9c0502028e6dd976e5ec5ee852fac39be
+
+P:libssl3
+V:3.5.8-r0
+T:SSL shared libraries
+U:https://www.openssl.org/
+L:Apache-2.0
+o:openssl
+c:2b4b2590f782b95276d31dcaaf41554b1a597a0b
+k:100
+
+P:libuuid
+V:2.41.6-r1
+T:DCE compatible Universally Unique Identifier library
+U:https://git.kernel.org/cgit/utils/util-linux/util-linux.git
+L:BSD-3-Clause
+o:util-linux
+c:96f05433b217acf92bee031df551b10d8b3a1ec2
+
+P:linux-virt
+V:6.18.55-r0
+T:Linux lts kernel
+U:https://www.kernel.org
+L:GPL-2.0-only
+o:linux-lts
+c:a485504610a948f6ef7b76b1dc02388c9be9bb03
+
+P:mdev-conf
+V:4.9-r0
+T:Configuration files for mdev and mdevd
+U:https://gitlab.alpinelinux.org/alpine/mdev-conf
+L:MIT
+o:mdev-conf
+c:11877d6400f684cbb835ee9967b8a3f721a39b4b
+
+P:mkinitfs
+V:3.13.0-r0
+T:Tool to generate initramfs images for Alpine
+U:https://gitlab.alpinelinux.org/alpine/mkinitfs
+L:GPL-2.0-only
+o:mkinitfs
+c:b7abde6dc01e687e41b08254d82ccfeb0518f413
+k:900
+
+P:musl
+V:1.2.5-r23
+T:the musl c library (libc) implementation
+U:https://musl.libc.org/
+L:MIT
+o:musl
+c:8aef0c37b0ad23dc4137f0e4755b97a59dc698b8
+
+P:musl-utils
+V:1.2.5-r23
+T:the musl c library (libc) implementation
+U:https://musl.libc.org/
+L:MIT AND BSD-2-Clause AND GPL-2.0-or-later
+o:musl
+c:8aef0c37b0ad23dc4137f0e4755b97a59dc698b8
+
+P:scanelf
+V:1.3.8-r2
+T:Scan ELF binaries for stuff
+U:https://wiki.gentoo.org/wiki/Hardened/PaX_Utilities
+L:GPL-2.0-only
+o:pax-utils
+c:3912b4fa83437852312ad3c37a00229ff59fab1c
+
+P:ssl_client
+V:1.37.0-r30
+T:External ssl_client for busybox wget
+U:https://busybox.net/
+L:GPL-2.0-only
+o:busybox
+c:1e823a60eb85606954b3a5af5f8e5bbd1ea680cf
+
+P:xz-libs
+V:5.8.4-r0
+T:Library and CLI tools for XZ and LZMA compressed files (libraries)
+U:https://tukaani.org/xz/
+L:GPL-2.0-or-later AND 0BSD AND Public-Domain AND LGPL-2.1-or-later
+o:xz
+c:7d9b04ca29cda85937d7d73c0639e9a0a94ec87c
+
+P:zlib
+V:1.3.2-r0
+T:A compression/decompression Library
+U:https://zlib.net/
+L:Zlib
+o:zlib
+c:f8c94d2e1d318ab29eb4ac5f00225341c877ed65
+
+P:zstd-libs
+V:1.5.7-r2
+T:Zstandard - Fast real-time compression algorithm (libraries)
+U:https://facebook.github.io/zstd/
+L:BSD-3-Clause OR GPL-2.0-or-later
+o:zstd
+c:3c6e2ee2b16f403d53eab39c4426eb61f003c322
+

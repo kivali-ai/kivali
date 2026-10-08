@@ -1,0 +1,86 @@
+#!/bin/sh
+# Reports readiness on the console (busybox init `once`). Prints
+# KIVALI-VM READY exactly once when all of these hold:
+#   - the node's Ready condition is True and the node's bootID is this
+#     boot's (/proc/sys/kernel/random/boot_id), so a Ready left over
+#     from the previous boot does not count;
+#   - kube-router's NetworkPolicy controller is active: its
+#     KUBE-ROUTER-FORWARD chain exists in this boot's netfilter tables;
+#   - an unprivileged user can create a user + mount namespace and
+#     bind-mount inside it, as the dev-shell's `unshare -mUr` does;
+#   - with kivali.selftest=1 on the kernel command line, the Helm
+#     controller has installed the self-test chart from the static
+#     charts URL (its ConfigMap exists in namespace kivali-selftest).
+# Once the node is Ready it is uncordoned, unconditionally: a clean
+# shutdown cordons it, and a crash between the two must not leave it so.
+# Each wait is bounded at 5 minutes. A failed check or an expired wait
+# prints KIVALI-VM FATAL and powers the VM off cleanly.
+exec </dev/null
+K3S_BIN=/var/lib/kivali/k3s/data/current/bin
+export PATH=/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$K3S_BIN:$K3S_BIN/aux
+export HOME=/root
+WAIT_S=300
+
+say() { echo "KIVALI-VM: $*"; }
+fatal() {
+  echo "KIVALI-VM FATAL: $*"
+  # Recorded for the guest agent's status.
+  echo "$*" > /run/kivali/fatal
+  exec poweroff
+}
+kc() { k3s kubectl "$@"; }
+uptime_s() { cut -d. -f1 /proc/uptime; }
+
+# wait_for <what> <command...>: run the command every second until it
+# succeeds, or FATAL after WAIT_S seconds (monotonic, from /proc/uptime).
+wait_for() {
+  what=$1
+  shift
+  deadline=$(($(uptime_s) + WAIT_S))
+  until "$@"; do
+    [ "$(uptime_s)" -ge "$deadline" ] && fatal "ready: waited ${WAIT_S}s for $what; giving up"
+    sleep 1
+  done
+}
+
+[ -e /run/kivali/booted ] || exit 0  # k3s-server reports and powers off
+
+boot_id=$(cat /proc/sys/kernel/random/boot_id)
+node_ready() {
+  set -- $(kc get node kivali -o jsonpath='{.status.nodeInfo.bootID} {range .status.conditions[?(@.type=="Ready")]}{.status}{end}' 2>/dev/null)
+  [ "${1:-}" = "$boot_id" ] && [ "${2:-}" = True ]
+}
+say "ready: waiting for the node to be Ready (boot $boot_id)"
+wait_for "the node to be Ready" node_ready
+say "ready: node kivali Ready ($(kc get node kivali --no-headers -o custom-columns=V:.status.nodeInfo.kubeletVersion,R:.status.nodeInfo.containerRuntimeVersion))"
+
+if out=$(kc uncordon kivali 2>&1); then
+  say "ready: $out"
+else
+  fatal "ready: uncordon failed: $out"
+fi
+
+# k3s's bundled iptables picks the backend (nft or legacy) the same
+# way kube-router does, so it sees the chain kube-router creates.
+command -v iptables >/dev/null || fatal "ready: k3s's bundled iptables is not at $K3S_BIN/aux"
+policy_active() { iptables -S KUBE-ROUTER-FORWARD >/dev/null 2>&1; }
+say "ready: waiting for the network policy controller"
+wait_for "the network policy controller (chain KUBE-ROUTER-FORWARD)" policy_active
+say "ready: network policy controller active (chain KUBE-ROUTER-FORWARD, $(iptables -V))"
+
+if out=$(su nobody -s /bin/sh -c "unshare -m -U -r sh -c 'mount --bind /tmp /mnt'" 2>&1); then
+  say "ready: unprivileged user namespace + bind mount ok"
+else
+  fatal "ready: unprivileged user namespaces do not work: $out"
+fi
+
+if grep -qw kivali.selftest=1 /proc/cmdline; then
+  selftest_installed() { kc -n kivali-selftest get configmap kivali-selftest >/dev/null 2>&1; }
+  say "ready: waiting for HelmChart kube-system/kivali-selftest"
+  wait_for "HelmChart kube-system/kivali-selftest to install" selftest_installed
+  say "ready: HelmChart kivali-selftest installed: $(kc -n kivali-selftest get configmap kivali-selftest -o jsonpath='{.data.message}')"
+fi
+
+# Recorded for the guest agent's status: READY holds for this boot only.
+echo "$boot_id" > /run/kivali/ready
+echo "KIVALI-VM READY"

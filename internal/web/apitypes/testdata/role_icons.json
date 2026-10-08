@@ -1,0 +1,258 @@
+[
+  {
+    "name": "compass",
+    "description": "a compass: coordinating, running operations, planning, chief of staff"
+  },
+  {
+    "name": "briefcase",
+    "description": "a briefcase: general business, executive, consulting"
+  },
+  {
+    "name": "target",
+    "description": "a target: product management, goals, strategy"
+  },
+  {
+    "name": "lightbulb",
+    "description": "a light bulb: ideas, innovation, brainstorming"
+  },
+  {
+    "name": "rocket",
+    "description": "a rocket: launches, growth, a new venture"
+  },
+  {
+    "name": "code",
+    "description": "angle brackets: software engineering, programming"
+  },
+  {
+    "name": "terminal",
+    "description": "a command prompt: devops, systems administration, automation"
+  },
+  {
+    "name": "server",
+    "description": "a server rack: hosting, backend, infrastructure, platform"
+  },
+  {
+    "name": "database",
+    "description": "a database cylinder: data engineering, records"
+  },
+  {
+    "name": "chart-line",
+    "description": "a line chart: analytics, metrics, reporting"
+  },
+  {
+    "name": "bug",
+    "description": "a bug: quality assurance, testing"
+  },
+  {
+    "name": "cpu",
+    "description": "a chip: hardware, embedded systems"
+  },
+  {
+    "name": "circuit-board",
+    "description": "a circuit board: electronics"
+  },
+  {
+    "name": "pen-tool",
+    "description": "a pen nib: design, UX, product design"
+  },
+  {
+    "name": "palette",
+    "description": "a paint palette: brand, art direction, creative work"
+  },
+  {
+    "name": "file-text",
+    "description": "a page of text: writing, documentation, editing"
+  },
+  {
+    "name": "languages",
+    "description": "two scripts: translation, localization"
+  },
+  {
+    "name": "megaphone",
+    "description": "a megaphone: marketing, announcements"
+  },
+  {
+    "name": "newspaper",
+    "description": "a newspaper: press, public relations, news"
+  },
+  {
+    "name": "camera",
+    "description": "a camera: photography, visual content"
+  },
+  {
+    "name": "video",
+    "description": "a video camera: video production"
+  },
+  {
+    "name": "music",
+    "description": "a music note: music, audio, podcasts"
+  },
+  {
+    "name": "handshake",
+    "description": "a handshake: sales, partnerships, business development"
+  },
+  {
+    "name": "headset",
+    "description": "a headset: customer support, help desk"
+  },
+  {
+    "name": "mail",
+    "description": "an envelope: email, correspondence, managing an inbox"
+  },
+  {
+    "name": "calendar",
+    "description": "a calendar: scheduling, personal or executive assistant"
+  },
+  {
+    "name": "users",
+    "description": "a group of people: people operations, HR, team culture"
+  },
+  {
+    "name": "user-search",
+    "description": "a person under a magnifier: recruiting, hiring"
+  },
+  {
+    "name": "calculator",
+    "description": "a calculator: finance, accounting, bookkeeping, budgets"
+  },
+  {
+    "name": "receipt",
+    "description": "a receipt: expenses, invoices, billing"
+  },
+  {
+    "name": "coins",
+    "description": "a stack of coins: fundraising, investors, treasury"
+  },
+  {
+    "name": "piggy-bank",
+    "description": "a piggy bank: personal finance, savings, a household budget"
+  },
+  {
+    "name": "gavel",
+    "description": "a gavel: legal work, contracts, counsel"
+  },
+  {
+    "name": "scale",
+    "description": "balance scales: policy, ethics, weighing options, advising"
+  },
+  {
+    "name": "shield-check",
+    "description": "a shield with a check: compliance, risk, audit, governance"
+  },
+  {
+    "name": "shield",
+    "description": "a shield: security, safety, protection"
+  },
+  {
+    "name": "lock",
+    "description": "a padlock: privacy, access, secrets"
+  },
+  {
+    "name": "search",
+    "description": "a magnifying glass: research, investigation, sourcing"
+  },
+  {
+    "name": "book-open",
+    "description": "an open book: reading, knowledge, a library"
+  },
+  {
+    "name": "graduation-cap",
+    "description": "a graduation cap: teaching, tutoring, coaching"
+  },
+  {
+    "name": "microscope",
+    "description": "a microscope: science, lab work, analysis"
+  },
+  {
+    "name": "flask-conical",
+    "description": "a flask: chemistry, experiments, research and development"
+  },
+  {
+    "name": "shopping-cart",
+    "description": "a shopping cart: purchasing, procurement, shopping"
+  },
+  {
+    "name": "truck",
+    "description": "a truck: logistics, shipping, delivery"
+  },
+  {
+    "name": "package",
+    "description": "a parcel: inventory, warehousing, fulfilment"
+  },
+  {
+    "name": "factory",
+    "description": "a factory: manufacturing, production"
+  },
+  {
+    "name": "wrench",
+    "description": "a wrench: maintenance, repairs, field service"
+  },
+  {
+    "name": "globe",
+    "description": "a globe: international work, world affairs"
+  },
+  {
+    "name": "plane",
+    "description": "an aeroplane: travel, trips, itineraries"
+  },
+  {
+    "name": "map",
+    "description": "a folded map: navigation, a territory, local knowledge"
+  },
+  {
+    "name": "house",
+    "description": "a house: the household, home, family, chores"
+  },
+  {
+    "name": "utensils",
+    "description": "a fork and knife: cooking, meals, nutrition"
+  },
+  {
+    "name": "dumbbell",
+    "description": "a dumbbell: fitness, training"
+  },
+  {
+    "name": "heart-pulse",
+    "description": "a heart with a pulse: health, wellness"
+  },
+  {
+    "name": "sprout",
+    "description": "a sprout: gardening, plants, landscaping"
+  },
+  {
+    "name": "leaf",
+    "description": "a leaf: environment, sustainability, conservation"
+  },
+  {
+    "name": "tractor",
+    "description": "a tractor: farming, agriculture"
+  },
+  {
+    "name": "beef",
+    "description": "a cut of meat: livestock, animal husbandry"
+  },
+  {
+    "name": "fish",
+    "description": "a fish: fishing, marine life, aquariums"
+  },
+  {
+    "name": "cloud-sun",
+    "description": "a sun behind a cloud: weather, climate"
+  },
+  {
+    "name": "vote",
+    "description": "a ballot box: civic life, elections, politics"
+  },
+  {
+    "name": "landmark",
+    "description": "a columned building: government, the public sector, banking"
+  },
+  {
+    "name": "radio",
+    "description": "a radio: communications, broadcasting"
+  },
+  {
+    "name": "user",
+    "description": "a person: a general role that none of the others fits"
+  }
+]

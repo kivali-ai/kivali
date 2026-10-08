@@ -1,0 +1,45 @@
+{
+  "meta": {
+    "id": "bbbb2222",
+    "parent": "engineering-lead",
+    "state": "errored",
+    "model": "Haiku 4.5",
+    "effort": "medium",
+    "description": "Check the build logs",
+    "started": 1788255000000,
+    "ended": 1788255060000,
+    "error": "The agent pod went away",
+    "step": "Read the logs",
+    "activity": "running Bash"
+  },
+  "rows": [
+    {
+      "kind": "message",
+      "ts": 1788255000000,
+      "role": "received",
+      "from": {
+        "kind": "agent",
+        "slug": "engineering-lead",
+        "name": "Engineering lead"
+      },
+      "body_md": "Check the build logs.",
+      "attachments": [],
+      "pending": false
+    },
+    {
+      "kind": "message",
+      "ts": 1788255050000,
+      "role": "received",
+      "from": {
+        "kind": "agent",
+        "slug": "bbbb2222",
+        "name": "Check the build logs"
+      },
+      "body_md": "Two flaky tests.",
+      "attachments": [],
+      "model": "Haiku 4.5",
+      "effort": "medium",
+      "pending": false
+    }
+  ]
+}

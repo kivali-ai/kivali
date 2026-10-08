@@ -1,0 +1,202 @@
+/*
+ * Proposals: one full-length review page, 760 wide (the frame sets the column). Tokens only; the summary, the
+ * diff and the buttons come from the design system. Canvas values that are not a token are calc() over the 4px
+ * step (--space-1). Breakpoint 640: custom properties do not work inside @media, so the literal appears there.
+ */
+
+.app-proposal {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.app-proposal-head {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-2) + var(--space-1) / 2);
+}
+
+.app-proposal-badges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* Title: 26/32 on phone, 32/38 from 640 (the title token). */
+.app-proposal .app-proposal-title {
+  font-size: calc(var(--space-6) + var(--space-1) / 2);
+  line-height: var(--space-8);
+  text-wrap: balance;
+}
+
+.app-proposal-by {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space-2) + var(--space-1) / 2);
+}
+
+/* ---- Attachments the proposer sent ---- */
+.app-proposal-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* ---- Summary card ---- */
+.app-proposal-summary {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-4) - var(--space-1) / 2);
+}
+
+/* The tile: the 56 avatar with the facts beside it, wrapping under it when narrow. */
+.app-proposal-agent {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--space-4);
+}
+
+.app-proposal-facts {
+  display: grid;
+  flex: 1 1 calc(var(--space-8) * 8 + var(--space-1));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: calc(var(--space-2) + var(--space-1) / 2) calc(var(--space-4) + var(--space-1));
+  margin: 0;
+}
+
+.app-proposal-fact-value {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--space-1) * 1.5);
+  text-wrap: pretty;
+}
+
+.app-proposal-fact {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-1) / 2);
+  min-width: 0;
+}
+
+.app-proposal-fact dd {
+  margin: 0;
+}
+
+.app-proposal-moves {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.app-proposal-move {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(var(--space-2) + var(--space-1) / 2) calc(var(--space-2) * 1.75);
+  padding: calc(var(--space-2) + var(--space-1) / 2) 0;
+  border-top: 1px solid var(--line);
+}
+
+.app-proposal-move:first-child {
+  border-top: 0;
+}
+
+.app-proposal-move-who,
+.app-proposal-move-line,
+.app-proposal-move-failed {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.app-proposal-move-line {
+  color: var(--ink-muted);
+}
+
+.app-proposal-move-failed {
+  flex-basis: 100%;
+  color: var(--danger);
+}
+
+.app-proposal-struck {
+  text-decoration: line-through;
+}
+
+/* ---- Document blocks ---- */
+.app-proposal-doc {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-2) + var(--space-1) / 2);
+  padding-top: var(--space-2);
+}
+
+.app-proposal-doc-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--line);
+  color: var(--ink-muted);
+}
+
+/* ---- The decision: a hairline, then note, picked files, and the buttons ---- */
+.app-proposal-decision {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-2) + var(--space-1));
+  padding-top: calc(var(--space-4) + var(--space-1));
+  border-top: 1px solid var(--line);
+}
+
+.app-proposal-picked {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.app-proposal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(var(--space-2) + var(--space-1) / 2);
+}
+
+.app-proposal-spacer {
+  flex: 1 1 0;
+}
+
+/* ---- After an answer: a hairline, then the way home ---- */
+.app-proposal-after {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--line);
+}
+
+.app-proposal-home {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--space-1) * 1.5);
+  font: var(--text-body);
+  font-weight: var(--type-heading-weight);
+}
+
+@media (min-width: 640px) {
+  .app-proposal .app-proposal-title {
+    font-size: var(--type-title-size);
+    line-height: var(--type-title-line);
+  }
+}

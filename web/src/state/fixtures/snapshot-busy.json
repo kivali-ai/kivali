@@ -1,0 +1,15 @@
+{
+  "agents": [
+    { "slug": "chief-of-staff", "name": "Chief of Staff", "role_title": "Chief of Staff", "icon": "compass", "reports_to": "ceo", "depth": 1, "state": "running", "context_pct": 86 },
+    { "slug": "engineering-lead", "name": "Engineering lead", "role_title": "Engineering lead", "icon": "code", "reports_to": "chief-of-staff", "depth": 2, "state": "waiting", "waiting_tasks": 2, "context_pct": 50 },
+    { "slug": "test-runner", "name": "Test runner", "role_title": "Test runner", "icon": "bug", "reports_to": "engineering-lead", "depth": 3, "state": "idle", "context_pct": 49 },
+    { "slug": "support-lead", "name": "Support lead", "role_title": "Support lead", "icon": "headset", "reports_to": "chief-of-staff", "depth": 2, "state": "needs_help", "context_pct": 0 },
+    { "slug": "advisor", "name": "Garden advisor", "role_title": "Garden advisor", "icon": "sprout", "reports_to": "ceo", "depth": 1, "state": "idle", "context_pct": 7 }
+  ],
+  "inbox": { "unactioned": 3, "pending_paths": ["messages/2026-09-28/0007-engineering-lead.md"], "ceo_paths": ["messages/2026-09-28/0003-chief-of-staff.md"], "auto_release": "5m" },
+  "release": { "running": true, "active_agents": 1, "pending_docs": 1 },
+  "messages_total": 214,
+  "assignments_version": 17,
+  "goals": [],
+  "readouts": { "working": 2, "blocked": 0, "closed_week": 9, "spend_today": 4.25, "spend_7d": 61.5 }
+}

@@ -1,0 +1,20 @@
+{
+  "source": "the agent stream's events (internal/web/chat_hub.go), in the order the hub sends them",
+  "about": "A reply, then a tool call that streams its input, lands, returns, is replayed after a reopen, then a failing call.",
+  "steps": [
+    { "event": "thinking", "data": { "step": 1 } },
+    { "event": "delta", "data": { "text": "Let me look.", "start_ts": 1789923600000, "model": "Opus 5.5", "effort": "high" } },
+    { "event": "thinking", "data": { "step": 1 } },
+    { "event": "tool_use_start", "data": { "tool_use_id": "toolu_01", "tool_name": "file_view", "start_ts": 1789923601000 } },
+    { "event": "tool_input_delta", "data": { "tool_use_id": "toolu_01", "text": "{\"path\": \"/files/" } },
+    { "event": "tool_input_delta", "data": { "tool_use_id": "toolu_01", "text": "quote.md\"}" } },
+    { "event": "tool_use", "data": { "tool_use_id": "toolu_01", "tool_name": "file_view", "tool_input": "{\"path\":\"/files/quote.md\"}" } },
+    { "event": "tool_result", "data": { "tool_use_id": "toolu_01", "is_error": false, "stdout": "Provider A: $92 a month" } },
+    { "action": "stream_open" },
+    { "event": "tool_use_start", "data": { "tool_use_id": "toolu_01", "tool_name": "file_view", "start_ts": 1789923601000 } },
+    { "event": "tool_use", "data": { "tool_use_id": "toolu_01", "tool_name": "file_view", "tool_input": "{\"path\":\"/files/other.md\"}" } },
+    { "event": "tool_use_start", "data": { "tool_use_id": "toolu_02", "tool_name": "run_shell", "start_ts": 1789923602000 } },
+    { "event": "tool_use", "data": { "tool_use_id": "toolu_02", "tool_name": "run_shell", "tool_input": "{\"command\":\"ls /nope\"}" } },
+    { "event": "tool_result", "data": { "tool_use_id": "toolu_02", "is_error": true, "stdout": "no such file" } }
+  ]
+}

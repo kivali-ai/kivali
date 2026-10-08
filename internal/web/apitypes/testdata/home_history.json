@@ -1,0 +1,64 @@
+{
+  "threads": [
+    {
+      "path": "messages/2026-09-20/0001-chief-of-staff.md",
+      "last_activity": "2026-09-20T17:00:00Z",
+      "request": {
+        "path": "messages/2026-09-20/0001-chief-of-staff.md",
+        "type": "ceo_approval_request",
+        "label": "Approval request",
+        "title": "Accept the hosting quote",
+        "from": {
+          "slug": "chief-of-staff",
+          "name": "Chief of Staff"
+        },
+        "to": [
+          {
+            "slug": "ceo",
+            "name": "You"
+          }
+        ],
+        "at": "2026-09-01T09:30:00Z",
+        "body_md": "Quote attached.",
+        "attachments": [
+          {
+            "name": "hosting-quote.pdf",
+            "size_bytes": 86016,
+            "url": "/attachments/3f2a"
+          }
+        ],
+        "raw_url": "/messages/2026-09-20/0001-chief-of-staff.md"
+      },
+      "replies": [
+        {
+          "path": "messages/2026-09-20/0002-ceo.md",
+          "type": "ceo_approval_response",
+          "label": "Approved",
+          "title": "Approved: Accept the hosting quote",
+          "from": {
+            "slug": "ceo",
+            "name": "You"
+          },
+          "to": [
+            {
+              "slug": "chief-of-staff",
+              "name": "Chief of Staff"
+            }
+          ],
+          "at": "2026-09-20T17:00:00Z",
+          "body_md": "Keep it under budget.",
+          "attachments": [],
+          "assignment": {
+            "id": 40,
+            "title": "Ship the release"
+          },
+          "decision": "approved",
+          "raw_url": "/messages/2026-09-20/0002-ceo.md"
+        }
+      ],
+      "decision": "approved"
+    }
+  ],
+  "total": 41,
+  "next_before": "1790000000000000000:messages/2026-09-20/0001-chief-of-staff.md"
+}

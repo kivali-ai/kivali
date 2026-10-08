@@ -1,0 +1,27 @@
+# Dev-style standalone install (on any throwaway Kubernetes cluster): mutable
+# :dev tags, dev resource numbers, auth off. The dev org itself is run by
+# the supervisor (make dev-up, docs/developers/deployment.md), not with this file.
+#   helm install kivali charts/kivali -n kivali-dev --create-namespace -f charts/kivali/examples/values-dev.yaml
+kivaliEnv: dev
+devMode: true
+image:
+  tag: dev
+egress:
+  image:
+    tag: dev
+server:
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 8Gi
+# kivali-secrets is created by the chart (single-user only). In devMode
+# no key in it is required, so it is empty here.
+secrets:
+  create: true
+# Set to the cluster's pod network; 10.244.0.0/16 is a common CNI default.
+# The chart default is k3s's 10.42.0.0/16.
+networkPolicy:
+  podCIDR: 10.244.0.0/16

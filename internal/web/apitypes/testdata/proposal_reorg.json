@@ -1,0 +1,50 @@
+{
+  "path": "messages/2026-09-28/0005-chief-of-staff.md",
+  "kind": "reorg",
+  "title": "Reorg: review under the Engineering lead",
+  "proposer": {
+    "slug": "chief-of-staff",
+    "name": "Chief of Staff"
+  },
+  "proposed_at": "2026-09-01T09:30:00Z",
+  "reason_md": "Review work should sit with the Engineering lead.",
+  "attachments": [],
+  "summary": {
+    "moves": [
+      {
+        "slug": "buyer",
+        "name": "Buyer",
+        "to": {
+          "slug": "engineering-lead",
+          "name": "Engineering lead"
+        }
+      },
+      {
+        "slug": "tester",
+        "name": "tester",
+        "from": {
+          "slug": "chief-of-staff",
+          "name": "Chief of Staff"
+        },
+        "to": {
+          "slug": "buyer",
+          "name": "Buyer"
+        },
+        "failed": "tester reports to buyer, which would make a cycle"
+      }
+    ],
+    "facts": [
+      {
+        "label": "Changes",
+        "value": "2 reporting lines"
+      }
+    ]
+  },
+  "docs": [],
+  "resolved": {
+    "approved": true,
+    "at": "2026-09-20T17:00:00Z",
+    "result": "1 reporting line changed and 1 could not be",
+    "link": "/team"
+  }
+}

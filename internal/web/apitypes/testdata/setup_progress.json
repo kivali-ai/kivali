@@ -1,0 +1,22 @@
+{
+  "state": "running",
+  "stages": [
+    {
+      "label": "Reading your files",
+      "state": "done"
+    },
+    {
+      "label": "Writing its first briefing",
+      "state": "running"
+    },
+    {
+      "label": "Hiring",
+      "state": "queued"
+    },
+    {
+      "label": "Asking it to draft the handbook",
+      "state": "queued"
+    }
+  ],
+  "elapsed_s": 34
+}

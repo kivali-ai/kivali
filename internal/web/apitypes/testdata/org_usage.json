@@ -1,0 +1,193 @@
+{
+  "tiles": {
+    "today": {
+      "spend": 4.25,
+      "calls": 31,
+      "cache_hit_pct": 82
+    },
+    "d7": {
+      "spend": 61.5,
+      "calls": 540,
+      "cache_hit_pct": 79
+    },
+    "d30": {
+      "spend": 210.75,
+      "calls": 2210,
+      "cache_hit_pct": 77
+    }
+  },
+  "daily": [
+    {
+      "date": "2026-08-30",
+      "spend": 0
+    },
+    {
+      "date": "2026-08-31",
+      "spend": 0
+    },
+    {
+      "date": "2026-09-01",
+      "spend": 0
+    },
+    {
+      "date": "2026-09-02",
+      "spend": 0
+    },
+    {
+      "date": "2026-09-03",
+      "spend": 0
+    },
+    {
+      "date": "2026-09-04",
+      "spend": 0
+    },
+    {
+      "date": "2026-09-05",
+      "spend": 0
+    },
+    {
+      "date": "2026-09-06",
+      "spend": 0
+    },
+    {
+      "date": "2026-09-07",
+      "spend": 0
+    },
+    {
+      "date": "2026-09-08",
+      "spend": 0
+    },
+    {
+      "date": "2026-09-09",
+      "spend": 0
+    },
+    {
+      "date": "2026-09-10",
+      "spend": 0
+    },
+    {
+      "date": "2026-09-11",
+      "spend": 0
+    },
+    {
+      "date": "2026-09-12",
+      "spend": 0
+    },
+    {
+      "date": "2026-09-13",
+      "spend": 0
+    },
+    {
+      "date": "2026-09-14",
+      "spend": 0
+    },
+    {
+      "date": "2026-09-15",
+      "spend": 0
+    },
+    {
+      "date": "2026-09-16",
+      "spend": 0
+    },
+    {
+      "date": "2026-09-17",
+      "spend": 0
+    },
+    {
+      "date": "2026-09-18",
+      "spend": 0
+    },
+    {
+      "date": "2026-09-19",
+      "spend": 0
+    },
+    {
+      "date": "2026-09-20",
+      "spend": 0
+    },
+    {
+      "date": "2026-09-21",
+      "spend": 0
+    },
+    {
+      "date": "2026-09-22",
+      "spend": 0
+    },
+    {
+      "date": "2026-09-23",
+      "spend": 0
+    },
+    {
+      "date": "2026-09-24",
+      "spend": 0
+    },
+    {
+      "date": "2026-09-25",
+      "spend": 0
+    },
+    {
+      "date": "2026-09-26",
+      "spend": 12.5
+    },
+    {
+      "date": "2026-09-27",
+      "spend": 18.25
+    },
+    {
+      "date": "2026-09-28",
+      "spend": 4.25
+    }
+  ],
+  "by_agent": [
+    {
+      "slug": "engineering-lead",
+      "name": "Engineering lead",
+      "d7": 30,
+      "d30": 120.5
+    },
+    {
+      "slug": "chief-of-staff",
+      "name": "Chief of Staff",
+      "d7": 25,
+      "d30": 80
+    },
+    {
+      "slug": "",
+      "name": "Kivali",
+      "d7": 6.5,
+      "d30": 10.25
+    }
+  ],
+  "windows": {
+    "h24": {
+      "calls": 40,
+      "tokens_in": 1200000,
+      "tokens_out": 30000,
+      "cache_read": 950000,
+      "cache_create": 120000,
+      "spend": 5.5,
+      "unpriced": 0,
+      "unpriced_calls": 0
+    },
+    "d7": {
+      "calls": 540,
+      "tokens_in": 15000000,
+      "tokens_out": 400000,
+      "cache_read": 11800000,
+      "cache_create": 1500000,
+      "spend": 61.5,
+      "unpriced": 27324359,
+      "unpriced_calls": 12
+    },
+    "d30": {
+      "calls": 2210,
+      "tokens_in": 60000000,
+      "tokens_out": 1600000,
+      "cache_read": 46000000,
+      "cache_create": 6000000,
+      "spend": 210.75,
+      "unpriced": 27324359,
+      "unpriced_calls": 12
+    }
+  }
+}

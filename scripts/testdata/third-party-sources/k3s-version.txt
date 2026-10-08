@@ -1,0 +1,4 @@
+#!/bin/bash
+# An excerpt of k3s's scripts/version.sh: the line third-party-sources.sh reads.
+VERSION_RUNC="v1.3.1"
+VERSION_ROOT="v0.15.2"

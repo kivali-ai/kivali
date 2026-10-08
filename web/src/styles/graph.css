@@ -1,0 +1,128 @@
+/*
+ * Graph: a compact list built for thousands of nodes. Tokens only; owner sections are Cards, nodes are the
+ * design system's NodeRow. Breakpoint 960 (tab bar gone); custom properties do not work inside @media, so the
+ * literal appears in the query. Canvas values that are not a token are calc() over the 4px step (--space-1).
+ */
+
+.app-graph {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-6) + var(--space-1));
+}
+
+.app-graph-top {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-1) * 1.5);
+}
+
+.app-graph-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-2);
+}
+
+.app-graph-search {
+  flex: 1 1 calc(var(--space-8) * 8);
+}
+
+.app-graph-filters {
+  display: flex;
+  gap: calc(var(--space-1) * 1.5);
+  padding-bottom: var(--space-1);
+}
+
+.app-graph-owners {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-2) + var(--space-1) / 2);
+}
+
+/* Rows run edge to edge inside the owner's card, under a hairline. */
+.app-graph-rows {
+  margin: 0 calc(-1 * var(--space-4)) calc(-1 * var(--space-4));
+  border-top: 1px solid var(--line);
+}
+
+.app-graph-more {
+  padding: var(--space-2) var(--space-4);
+}
+
+/* The expanded node on desktop: its text under the row's field list. */
+.app-graph-inline {
+  padding: 0 var(--space-4) calc(var(--space-2) + var(--space-1));
+  border-bottom: 1px solid var(--line);
+  background: var(--paper);
+}
+
+.app-graph-detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.app-graph-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-1) var(--space-4);
+  margin: 0;
+  font: var(--type-caption);
+}
+
+.app-graph-field {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.app-graph-value {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.app-graph-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.app-graph-mono {
+  font: var(--type-code);
+}
+
+.app-graph-text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-top: calc(var(--space-2) + var(--space-1) / 2);
+}
+
+.app-graph-version {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.app-graph-loading {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.app-graph-skeleton {
+  padding: var(--space-4);
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+@media (min-width: 960px) {
+  .app-graph-field {
+    display: grid;
+    grid-template-columns: calc(var(--space-8) * 4.5) minmax(0, 1fr);
+    gap: var(--space-4);
+  }
+}

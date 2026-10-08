@@ -1,0 +1,13 @@
+{
+  "id": "7c1d9e4b2a6f",
+  "text": "Also check the staging deploy.",
+  "queued_at": 1789923600000,
+  "attachments": [
+    {
+      "sha": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+      "name": "quote.pdf"
+    }
+  ],
+  "deletable": true,
+  "delivered_ts": 1789923600000
+}

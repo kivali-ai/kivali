@@ -1,0 +1,62 @@
+#!/bin/busybox sh
+# Kivali Desktop initramfs. Its one job: load the modules that make the
+# root disk visible, find the read-only squashfs root by content, mount
+# it, and hand over to the root's /sbin/init (busybox init, which runs
+# /usr/libexec/kivali/boot).
+
+/bin/busybox --install -s /bin
+export PATH=/bin
+
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t devtmpfs devtmpfs /dev
+
+say() { echo "KIVALI-VM: $*"; }
+fatal() {
+  echo "KIVALI-VM FATAL: $*"
+  sync
+  poweroff -f
+}
+
+say "initramfs: kernel $(uname -r)"
+
+while read -r m; do
+  insmod "/lib/modules/$m" || fatal "initramfs: insmod $m failed"
+done < /lib/modules/load.list
+
+# The root disk is the first block device or partition, in this order,
+# whose first four bytes are the squashfs magic "hsqs": /dev/vd* then
+# /dev/sd*, each in name order, a disk before its partitions. On
+# Virtualization.framework that is the whole disk /dev/vda; on Hyper-V
+# partition 2 of the root VHDX, /dev/sda2, behind its EFI system
+# partition. Nothing else the guest is given starts with that magic: the
+# data disk is ext4 or zeros, a GPT disk starts with its protective MBR.
+find_root() {
+  for d in /dev/vd* /dev/sd*; do
+    [ -b "$d" ] || continue
+    if [ "$(dd if="$d" bs=4 count=1 2>/dev/null)" = hsqs ]; then
+      echo "$d"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# virtio_blk and hv_storvsc probe asynchronously (and a disk's
+# partitions appear just after it); the nodes appear within moments of
+# the insmods above. Up to 10 s.
+n=0
+until root=$(find_root); do
+  n=$((n + 1))
+  [ "$n" -gt 200 ] && fatal "initramfs: no squashfs root disk on /dev/vd* or /dev/sd*"
+  usleep 50000
+done
+
+mount -t squashfs -o ro "$root" /newroot || fatal "initramfs: cannot mount $root as squashfs"
+say "initramfs: root disk $root mounted read-only"
+
+mount --move /proc /newroot/proc
+mount --move /sys /newroot/sys
+mount --move /dev /newroot/dev
+
+exec switch_root /newroot /sbin/init

@@ -1,0 +1,13 @@
+/* Fixture: violates every token-check rule at least once. Not part of the app. */
+@import "./other.css"; /* rule: token-check/css-import */
+@import url("https://fonts.googleapis.com/css2?family=Inter"); /* rule: token-check/css-import (a URL) */
+
+.app-tokens {
+  --brand: var(--ink); /* rule: token-check/app-definition (not prefixed --app-) */
+  color: var(--ink-brand); /* rule: token-check/unknown-property */
+  background: var(--kv-not-a-thing); /* rule: token-check/unknown-property (--kv-*) */
+  border-color: rgb(10, 20, 30); /* rule: token-check/raw-color (rgb) */
+  fill: hsl(210 40% 50%); /* rule: token-check/raw-color (hsl) */
+  outline-color: #0af; /* rule: token-check/raw-color (hex) */
+  font-family: "Helvetica Neue", Arial; /* rule: token-check/font-family */
+}

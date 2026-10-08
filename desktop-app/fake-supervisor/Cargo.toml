@@ -1,0 +1,31 @@
+[package]
+name = "fake-supervisor"
+version = "0.0.0"
+license = "Apache-2.0"
+edition = "2021"
+publish = false
+description = "A stand-in for kivali-supervisor that speaks the shell's protocol, for developing Kivali Desktop before the real one exists"
+
+[[bin]]
+name = "kivali-supervisor"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# The Windows pipe name's hash (pipe.rs, the shell's platform::pipe_name
+# rule), tested on every OS.
+sha2 = "0.10"
+
+# The named-pipe server (pipe.rs): the pipe, its owner-only DACL from
+# SDDL, the current token's user SID.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_Security_Authorization",
+  "Win32_Storage_FileSystem",
+  "Win32_System_IO",
+  "Win32_System_Pipes",
+  "Win32_System_Threading",
+] }

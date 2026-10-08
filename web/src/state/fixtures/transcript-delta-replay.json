@@ -1,0 +1,21 @@
+{
+  "source": "the agent stream's events (internal/web/chat_hub.go), in the order the hub sends them",
+  "about": "A reply streams, the tab is backgrounded twice and the hub replays the buffered deltas on each reopen; a live delta then continues the same reply.",
+  "steps": [
+    { "action": "stream_open" },
+    { "event": "delta", "data": { "text": "First, ", "start_ts": 1789923600000, "model": "Opus 4.8", "effort": "high" } },
+    { "event": "delta", "data": { "text": "the release ", "start_ts": 1789923600000, "model": "Opus 4.8", "effort": "high" } },
+    { "event": "delta", "data": { "text": "notes.", "start_ts": 1789923600000, "model": "Opus 4.8", "effort": "high" } },
+    { "action": "stream_open" },
+    { "event": "delta", "data": { "text": "First, ", "start_ts": 1789923600000, "model": "Opus 4.8", "effort": "high" } },
+    { "event": "delta", "data": { "text": "the release ", "start_ts": 1789923600000, "model": "Opus 4.8", "effort": "high" } },
+    { "event": "delta", "data": { "text": "notes.", "start_ts": 1789923600000, "model": "Opus 4.8", "effort": "high" } },
+    { "action": "stream_open" },
+    { "event": "delta", "data": { "text": "First, ", "start_ts": 1789923600000, "model": "Opus 4.8", "effort": "high" } },
+    { "event": "delta", "data": { "text": "the release ", "start_ts": 1789923600000, "model": "Opus 4.8", "effort": "high" } },
+    { "event": "delta", "data": { "text": "notes.", "start_ts": 1789923600000, "model": "Opus 4.8", "effort": "high" } },
+    { "event": "delta", "data": { "text": " Done.", "start_ts": 1789923600000, "model": "Opus 4.8", "effort": "high" } },
+    { "action": "stream_open" },
+    { "event": "delta", "data": { "text": "Next, the requirements.", "start_ts": 1789923605000, "model": "Opus 4.8", "effort": "high" } }
+  ]
+}

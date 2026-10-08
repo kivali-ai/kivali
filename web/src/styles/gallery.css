@@ -1,0 +1,65 @@
+/* The design system gallery at /_ds. App classes only, every value a token. */
+.app-gallery { min-height: 100vh; background: var(--paper); color: var(--ink); }
+
+.app-gallery-bar {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-sticky);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-8);
+  background: var(--paper);
+  border-bottom: 1px solid var(--line);
+}
+.app-gallery-bar-title { flex: 1; min-width: 0; }
+.app-gallery-controls { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--space-6); }
+
+.app-gallery-column {
+  box-sizing: border-box;
+  max-width: 100%;
+  margin: 0 auto;
+  padding: var(--space-8);
+}
+/* Desktop shows the wide content width. */
+.app-gallery-column { width: var(--content-wide); }
+/* 390px, the phone design width: 97.5 steps of the 4px base. */
+.app-gallery-column.is-phone { width: calc(var(--space-1) * 97.5); padding: var(--space-4); }
+
+.app-gallery-nav { display: flex; flex-wrap: wrap; gap: var(--space-4); margin-bottom: var(--space-8); }
+
+.app-group { margin-bottom: var(--space-8); }
+.app-group-title { margin-bottom: var(--space-6); padding-bottom: var(--space-2); border-bottom: 1px solid var(--line); }
+
+.app-component { margin-bottom: var(--space-8); }
+.app-component-title { margin-bottom: var(--space-4); }
+
+.app-spec { margin-bottom: var(--space-6); }
+.app-spec-label { margin-bottom: var(--space-2); }
+
+.app-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-4); }
+.app-col { display: flex; flex-direction: column; gap: var(--space-4); }
+.app-col-tight { display: flex; flex-direction: column; gap: var(--space-2); }
+
+.app-narrow { max-width: var(--content-narrow); }
+.app-sidebar-demo { display: flex; flex-direction: column; gap: var(--space-1); width: var(--sidebar-width); max-width: 100%; }
+
+.app-box {
+  overflow: hidden;
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+}
+
+.app-state-grid { display: grid; grid-template-columns: repeat(4, max-content); gap: var(--space-4) var(--space-8); }
+.app-icon-grid { display: grid; grid-template-columns: repeat(auto-fill, calc(var(--space-1) * 24)); gap: var(--space-1); }
+.app-icon-cell { display: flex; flex-direction: column; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-1); border-radius: var(--radius-md); }
+.app-icon-name { font: var(--text-label); color: var(--ink-muted); text-align: center; overflow-wrap: anywhere; }
+
+.app-who { display: inline-flex; align-items: center; gap: var(--space-2); }
+.app-who-text { display: flex; flex-direction: column; }
+.app-who-text small { font: var(--text-caption); color: var(--ink-muted); }
+
+.app-tooltip-pad { padding-top: var(--space-6); }
+.app-inline-text { margin: 0; font: var(--text-body); }

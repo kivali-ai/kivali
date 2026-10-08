@@ -1,0 +1,87 @@
+#!/bin/sh
+# Clean shutdown (busybox init `shutdown`, before it powers off):
+#   1. cordon the node, then delete the Kivali pods through the API with
+#      a wait, so each gets its terminationGracePeriodSeconds while
+#      kubelet is still up. The Deployment controller's replacement
+#      server pod stays Pending; it starts at the next boot once `ready`
+#      uncordons the node, and the server provisions agent pods, exactly
+#      as a deploy does. It also means no
+#      persisted agent pod can run at the next boot before the
+#      NetworkPolicy controller is programmed;
+#   2. stop k3s (SIGTERM, up to 30 s, then SIGKILL);
+#   3. stop every remaining process: containers outside Kivali, shims
+#      (SIGTERM, up to 10 s for them to exit, then SIGKILL);
+#   4. unmount everything on the data disk, then the disk itself.
+export PATH=/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export HOME=/root
+
+say() { echo "KIVALI-VM: $*"; }
+
+# others: pids of every process except init, this script and its
+# ancestors-to-be (the subshell running the pipeline).
+others() {
+  for p in /proc/[0-9]*; do
+    pid=${p#/proc/}
+    [ "$pid" = 1 ] || [ "$pid" = "$$" ] && continue
+    # Kernel threads have an empty cmdline.
+    [ -s "$p/cmdline" ] || continue
+    [ "$(cat "$p/stat" 2>/dev/null | awk '{print $4}')" = "$$" ] && continue
+    echo "$pid"
+  done
+}
+
+pid=$(cat /run/kivali/k3s.pid 2>/dev/null)
+if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+  # Cordon first, so the Deployment controller's replacement for the
+  # deleted server pod stays Pending instead of starting and then being
+  # killed without its grace period in step 3. `ready` uncordons at the
+  # next boot once the node is Ready.
+  if out=$(k3s kubectl cordon kivali 2>&1 </dev/null); then
+    say "shutdown: node cordoned"
+  else
+    say "shutdown: WARNING cordon failed: $(echo "$out" | tail -n 1)"
+  fi
+  say "shutdown: deleting Kivali pods (each gets its grace period)"
+  if out=$(k3s kubectl delete pods -A -l 'app in (kivali,kivali-agentpod)' --wait --timeout=60s 2>&1 </dev/null); then
+    say "shutdown: Kivali pods deleted: $(echo "$out" | grep -c deleted) pod(s)"
+  else
+    say "shutdown: WARNING deleting Kivali pods failed: $(echo "$out" | tail -n 1)"
+  fi
+
+  say "shutdown: stopping k3s"
+  kill -TERM "$pid" 2>/dev/null
+  n=0
+  while kill -0 "$pid" 2>/dev/null && [ "$n" -lt 300 ]; do usleep 100000; n=$((n + 1)); done
+  if kill -0 "$pid" 2>/dev/null; then
+    say "shutdown: k3s did not stop within 30 s; killing it"
+    kill -KILL "$pid" 2>/dev/null
+  fi
+fi
+
+say "shutdown: stopping remaining processes"
+kill -TERM -1 2>/dev/null
+n=0
+while [ -n "$(others)" ] && [ "$n" -lt 100 ]; do usleep 100000; n=$((n + 1)); done
+left=$(others | wc -l)
+if [ "$left" -gt 0 ]; then
+  say "shutdown: $left process(es) still running after 10 s; killing them"
+  kill -KILL -1 2>/dev/null
+  usleep 200000
+fi
+
+# Unmount everything below the data disk and its binds, deepest first.
+awk '{print $2}' /proc/mounts |
+  grep -E '^(/var/lib/kivali/|/var/lib/kubelet|/etc/rancher|/run/k3s|/run/netns|/run/containerd)' |
+  sort -r |
+  while read -r m; do umount "$m" 2>/dev/null || umount -l "$m" 2>/dev/null; done
+
+sync
+if umount /var/lib/kivali 2>/dev/null; then
+  say "shutdown: data disk unmounted cleanly"
+elif mount -o remount,ro /var/lib/kivali 2>/dev/null; then
+  say "shutdown: data disk busy, remounted read-only"
+else
+  say "shutdown: WARNING data disk could not be unmounted or remounted read-only"
+fi
+sync
+say "shutdown: powering off"

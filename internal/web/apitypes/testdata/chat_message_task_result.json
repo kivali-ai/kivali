@@ -1,0 +1,23 @@
+{
+  "role": "received",
+  "kind": "subagent_result",
+  "content": "Background task aaaa1111 (Compare hosting providers) finished.\n\nThree providers quote under $4k.\n",
+  "ts": 1788255007500,
+  "attachments": [],
+  "row": {
+    "kind": "task_result",
+    "ts": 1788255007500,
+    "tasks": [
+      {
+        "index": 0,
+        "id": "aaaa1111",
+        "title": "Compare hosting providers",
+        "model": "Sonnet 4.6",
+        "effort": "low",
+        "state": "done",
+        "output_md": "Three providers quote under $4k.",
+        "url": "/api/v1/agents/engineering-lead/subagents/aaaa1111"
+      }
+    ]
+  }
+}

@@ -1,0 +1,14 @@
+bin/
+.git/
+*.md
+k8s/
+web/node_modules
+node_modules
+internal/web/ui/dist
+vm/
+.claude/
+dist/
+# The desktop app is not part of any image, and its Rust build tree
+# runs to many gigabytes; once it was copied into the build context on
+# every server image build.
+desktop-app/

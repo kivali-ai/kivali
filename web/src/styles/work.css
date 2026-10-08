@@ -1,0 +1,413 @@
+/*
+ * Work: the board by goal (1200 column) and the assignment detail (880 column). Tokens only; rows come from the
+ * design system (AssignmentRow, Card, Table, Readouts) and sit in one raised container per column. Breakpoints:
+ * 640 (one column) and 960 (three columns, tab bar gone); custom properties do not work inside @media, so the
+ * literals appear in the queries. Canvas values that are not a token are calc() over the 4px step (--space-1).
+ */
+
+.app-work,
+.app-work-detail {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-8) + var(--space-1));
+}
+
+.app-work-detail {
+  gap: calc(var(--space-6) + var(--space-1));
+}
+
+.app-work-top {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-1) * 1.5);
+}
+
+.app-work-nowrap {
+  white-space: nowrap;
+}
+
+.app-work-link {
+  font: var(--type-caption);
+  color: var(--link);
+}
+
+.app-work-filter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2) var(--space-4);
+}
+
+.app-work-empty {
+  padding: calc(var(--space-2) + var(--space-1) + var(--space-1) / 2) calc(var(--space-2) + var(--space-1));
+}
+
+/* ---- Board: one block per goal ---- */
+.app-work-goal {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-2) + var(--space-1) + var(--space-1) / 2);
+}
+
+.app-work-goal-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-6);
+  padding-bottom: calc(var(--space-2) + var(--space-1));
+  border-bottom: 1px solid var(--line);
+}
+
+.app-work-goal-titles {
+  flex: 1 1 calc(var(--space-8) * 10);
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.app-work-goal-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.app-work-goal-link {
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.app-work-goal-link:hover {
+  color: var(--cobalt);
+}
+
+.app-work-goal-owner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.app-work-goal-progress {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space-2) + var(--space-1) / 2);
+  flex: 0 1 calc(var(--space-8) * 8);
+  min-width: calc(var(--space-8) * 6);
+}
+
+.app-work-goal-bar {
+  flex: 1;
+}
+
+.app-work-cols {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-4) calc(var(--space-4) + var(--space-1));
+  align-items: start;
+}
+
+.app-work-col {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.app-work-col-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.app-work-col-label {
+  color: var(--ink);
+}
+
+/* One raised container per column: paper-raised, a line border, radius 16, shadow-sm. */
+.app-work-box {
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+/* Rows bring their own hairline; the last one tucks under the container's edge. */
+.app-work-group:last-child {
+  margin-bottom: -1px;
+}
+
+.app-work-owner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: calc(var(--space-2) + var(--space-1) / 2) calc(var(--space-2) + var(--space-1)) var(--space-1);
+  font: var(--type-caption);
+  color: var(--ink-muted);
+}
+
+/* Unclaimed Done-when conditions: the condition in words, then "Unclaimed" in signal-ink mono at the right. */
+.app-work-unclaimed {
+  display: flex;
+  align-items: baseline;
+  gap: calc(var(--space-2) + var(--space-1) / 2);
+  margin: 0;
+  padding: calc(var(--space-2) + var(--space-1) / 2) calc(var(--space-2) + var(--space-1));
+  border-top: 1px solid var(--line);
+  font: var(--type-caption);
+  color: var(--ink);
+}
+
+.app-work-unclaimed-name {
+  flex: 1;
+  min-width: 0;
+  text-wrap: pretty;
+}
+
+.app-work-group + .app-work-unclaimed {
+  border-top: 1px solid var(--line);
+}
+
+.app-work-box > .app-work-unclaimed:first-child {
+  border-top: 0;
+}
+
+.app-work-closed {
+  margin: 0 calc(-1 * var(--space-4)) calc(-1 * var(--space-4));
+  border-top: 1px solid var(--line);
+}
+
+.app-work-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+}
+
+.app-work-loading {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+/* ---- Detail ---- */
+/* Title block on the left; on desktop the Act menu sits at its right, level with the state line. */
+.app-work-detail-head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
+}
+
+.app-work-detail-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.app-work-before {
+  font: var(--type-caption);
+  color: var(--link);
+}
+
+.app-work-detail-line {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space-2) + var(--space-1) / 2);
+}
+
+.app-work-detail-ref {
+  flex: 1;
+}
+
+.app-work-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: calc(var(--space-2) + var(--space-2) - var(--space-1) / 2) var(--space-4);
+  margin: 0;
+  padding: var(--space-4);
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+/* Inside the More details card the facts sit bare: no second container. */
+.app-work-facts-more {
+  padding: 0;
+  background: none;
+  border: 0;
+  box-shadow: none;
+}
+
+.app-work-fact {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.app-work-fact-value {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(var(--space-1) * 1.5);
+  min-width: 0;
+  margin: 0;
+  /* One type for every fact value: the caption the Text, Nobody and ref values already carry. */
+  font: var(--type-caption);
+  letter-spacing: var(--type-caption-tracking);
+  overflow-wrap: anywhere;
+}
+
+/* Bare #id refs wrap in a row inside the cell, as the canvas draws Parts, Waits on and Holds up. */
+.app-work-refs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) calc(var(--space-1) * 1.5);
+  min-width: 0;
+  max-width: 100%;
+}
+
+.app-work-ref {
+  display: inline-flex;
+  max-width: 100%;
+}
+
+/* A titled ref fills at most its cell: a grid track with a zero minimum lets the ref shrink, and its
+   title ellipsizes. */
+.app-work-ref-fit {
+  display: grid;
+  grid-template-columns: minmax(0, max-content);
+  min-width: 0;
+  max-width: 100%;
+}
+
+.app-work-counts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+  max-width: 100%;
+}
+
+.app-work-person {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--space-1) * 1.5);
+  min-width: 0;
+  max-width: 100%;
+}
+
+.app-work-section {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-2) + var(--space-1) / 2);
+}
+
+.app-work-section-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+}
+
+.app-work-metby {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(var(--space-1) * 1.5);
+}
+
+.app-work-unclaimed-word {
+  font: var(--type-label);
+  letter-spacing: var(--type-label-tracking);
+  color: var(--signal-ink);
+  white-space: nowrap;
+}
+
+.app-work-outcome {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.app-work-log {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.app-work-log-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: calc(var(--space-1) / 2) var(--space-4);
+  padding: calc(var(--space-2) + var(--space-1) / 2) 0;
+  border-top: 1px solid var(--line);
+  font: var(--type-body);
+}
+
+.app-work-log-time {
+  padding-top: calc(var(--space-1) * 0.75);
+}
+
+.app-work-log-text {
+  min-width: 0;
+  text-wrap: pretty;
+}
+
+.app-work-log-note {
+  color: var(--ink-muted);
+}
+
+/* ---- Act dialogs ---- */
+.app-work-form {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-2) + var(--space-1));
+}
+
+/* ---- Toasts: bottom-centre above the tab bar on phone, bottom-right on desktop ---- */
+.app-work-toasts {
+  position: fixed;
+  left: var(--space-4);
+  right: var(--space-4);
+  bottom: calc(var(--space-8) * 3);
+  z-index: var(--z-toast);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+@media (min-width: 640px) {
+  .app-work-log-row {
+    grid-template-columns: calc(var(--space-8) * 4.5) minmax(0, 1fr);
+  }
+}
+
+@media (min-width: 960px) {
+  .app-work-cols {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .app-work-facts {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .app-work-facts-more {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .app-work-toasts {
+    left: auto;
+    right: var(--space-6);
+    bottom: var(--space-6);
+    align-items: flex-end;
+  }
+}

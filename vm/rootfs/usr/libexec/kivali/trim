@@ -1,0 +1,51 @@
+#!/bin/sh
+# Returns the data disk's free space to the host (busybox init `once`).
+#
+# data.img is a sparse file: a block the guest writes stays allocated on
+# the Mac after the file holding it is deleted. fstrim discards the
+# filesystem's free extents and Virtualization.framework punches holes
+# for them, so data.img's allocation follows what the disk holds now,
+# not the most it ever held.
+#
+# The disk is formatted and mounted without discard (see vm/README.md:
+# discard during a re-format corrupted guest memory). This is the only
+# discard the guest issues: one fstrim of the mounted filesystem, once
+# this boot is READY and then every 24 hours. A trim cut short by a
+# shutdown or a hard stop is harmless: it only ever discards free space.
+#
+#   trim          the loop init runs
+#   trim --once   one pass now (boottest -trim-check)
+exec </dev/null
+export PATH=/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+DATA=/var/lib/kivali
+EVERY_S=86400
+
+say() { echo "KIVALI-VM: $*"; }
+
+trim_once() {
+  say "trim: start"
+  if out=$(fstrim -v "$DATA" 2>&1); then
+    say "trim: done: $out"
+  else
+    say "trim: WARNING fstrim failed: $out"
+    return 1
+  fi
+}
+
+if [ "${1:-}" = --once ]; then
+  trim_once
+  exit
+fi
+
+[ -e /run/kivali/booted ] || exit 0  # k3s-server reports and powers off
+
+# Wait for this boot's READY, so the first trim never competes with
+# k3s's start-up and image import.
+boot_id=$(cat /proc/sys/kernel/random/boot_id)
+until [ "$(cat /run/kivali/ready 2>/dev/null)" = "$boot_id" ]; do sleep 10; done
+
+while :; do
+  trim_once
+  sleep "$EVERY_S"
+done

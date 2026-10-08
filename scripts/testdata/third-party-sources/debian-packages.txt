@@ -1,0 +1,7 @@
+# Debian GNU/Linux 13 (trixie)
+base-files 13.8+deb13u6 base-files 13.8+deb13u6
+bash 5.2.37-2+b9 bash 5.2.37-2
+bsdutils 1:2.41.5-0+deb13u1 util-linux 2.41.5-0+deb13u1
+libblkid1 2.41.5-0+deb13u1 util-linux 2.41.5-0+deb13u1
+libstdc++6 14.2.0-19 gcc-14 14.2.0-19
+login 1:4.17.4-2 shadow 1:4.17.4-2

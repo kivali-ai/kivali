@@ -1,0 +1,13 @@
+# Kivali Desktop guest. PID 1 is busybox init: it reaps orphans,
+# runs `boot` to completion, then starts k3s, the readiness reporter
+# and the data disk trim (after READY, then daily) once each, keeps the
+# guest agent (vsock, for kivali-supervisor) and the console control
+# loop (the only reader of the console) running, and runs `shutdown`
+# before powering off.
+::sysinit:/usr/libexec/kivali/boot
+::once:/usr/libexec/kivali/k3s-server
+::once:/usr/libexec/kivali/ready
+::once:/usr/libexec/kivali/trim
+::respawn:/usr/libexec/kivali/guest-agent
+::respawn:/usr/libexec/kivali/console-control
+::shutdown:/usr/libexec/kivali/shutdown

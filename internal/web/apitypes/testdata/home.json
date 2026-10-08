@@ -1,0 +1,154 @@
+{
+  "goals": [
+    {
+      "id": 40,
+      "title": "Ship the release",
+      "owner": "engineering-lead",
+      "done": 7,
+      "total": 12,
+      "blocked": [
+        {
+          "id": 42,
+          "on": 45,
+          "on_title": "Run the tests",
+          "on_assignee": {
+            "slug": "test-runner",
+            "name": "Test runner"
+          }
+        }
+      ],
+      "workers": [
+        "buyer"
+      ]
+    }
+  ],
+  "readouts": {
+    "working": 2,
+    "blocked": 1,
+    "closed_week": 9,
+    "spend_today": 4.25,
+    "spend_7d": 61.5
+  },
+  "needs": [
+    {
+      "id": "messages/2026-09-28/0003-chief-of-staff.md",
+      "kind": "proposal",
+      "proposal_kind": "hire",
+      "title": "Approve hire: Garden advisor",
+      "from": {
+        "slug": "chief-of-staff",
+        "name": "Chief of Staff"
+      },
+      "at": "2026-09-20T17:00:00Z",
+      "body_md": "We need someone on the garden.",
+      "attachments": [
+        {
+          "name": "hosting-quote.pdf",
+          "size_bytes": 86016,
+          "url": "/attachments/3f2a"
+        }
+      ],
+      "review_path": "/proposals/messages/2026-09-28/0003-chief-of-staff.md",
+      "raw_url": "/messages/2026-09-28/0003-chief-of-staff.md"
+    },
+    {
+      "id": "messages/2026-09-28/0004-engineering-lead.md",
+      "kind": "notification",
+      "title": "Weekly report",
+      "from": {
+        "slug": "engineering-lead",
+        "name": "Engineering lead"
+      },
+      "at": "2026-09-20T17:00:00Z",
+      "body_md": "All quiet.",
+      "attachments": [],
+      "raw_url": "/messages/2026-09-28/0004-engineering-lead.md"
+    },
+    {
+      "id": "assignment:52",
+      "kind": "assignment",
+      "title": "#52 assigned to you: Budget?",
+      "from": {
+        "slug": "buyer",
+        "name": "Buyer"
+      },
+      "at": "2026-09-20T17:00:00Z",
+      "body_md": "How much?",
+      "attachments": [],
+      "assignment": {
+        "id": 52,
+        "title": "Budget?"
+      }
+    },
+    {
+      "id": "agent:tester",
+      "kind": "needs_help",
+      "title": "tester keeps restarting",
+      "from": {
+        "slug": "tester",
+        "name": "tester"
+      },
+      "at": "2026-09-01T09:30:00Z",
+      "body_md": "It restarted several times in a row without getting anything done.",
+      "attachments": [],
+      "agent": {
+        "slug": "tester",
+        "name": "tester",
+        "state": "quarantined"
+      }
+    }
+  ],
+  "queue": [
+    {
+      "path": "messages/2026-09-28/0007-engineering-lead.md",
+      "kind": "notice",
+      "title": "Release update",
+      "from": {
+        "slug": "engineering-lead",
+        "name": "Engineering lead"
+      },
+      "to": [
+        {
+          "slug": "buyer",
+          "name": "Buyer"
+        },
+        {
+          "slug": "tester",
+          "name": "tester"
+        }
+      ],
+      "body_md": "The build passed.",
+      "attachments": [],
+      "queued_at": "2026-09-20T17:00:00Z",
+      "releases_at": "2026-09-20T17:00:30Z",
+      "held": false,
+      "raw_url": "/messages/2026-09-28/0007-engineering-lead.md"
+    },
+    {
+      "path": "messages/2026-09-28/0008-assignment.md",
+      "kind": "assignment",
+      "title": "#42 assigned to you: Run the tests",
+      "from": {
+        "slug": "engineering-lead",
+        "name": "Engineering lead"
+      },
+      "to": [
+        {
+          "slug": "tester",
+          "name": "tester"
+        }
+      ],
+      "body_md": "Run the test suite.",
+      "attachments": [],
+      "assignment": {
+        "id": 42,
+        "title": "Run the tests"
+      },
+      "queued_at": "2026-09-20T17:00:00Z",
+      "held": true,
+      "raw_url": "/messages/2026-09-28/0008-assignment.md"
+    }
+  ],
+  "auto_release": "30s",
+  "history_total": 41
+}

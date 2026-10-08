@@ -1,0 +1,10 @@
+{
+  "source": "the agent stream's events (internal/web/chat_hub.go), in the order the hub sends them",
+  "about": "One turn answered by two models: the reply splits where the answering model changes, and each part keeps its own model.",
+  "steps": [
+    { "event": "delta", "data": { "text": "from fable", "start_ts": 1000, "model": "Fable 5.1", "effort": "high" } },
+    { "event": "delta", "data": { "text": " still fable", "start_ts": 1000, "model": "Fable 5.1", "effort": "high" } },
+    { "event": "delta", "data": { "text": "from opus", "start_ts": 2000, "model": "Opus 5", "effort": "high" } },
+    { "event": "done", "data": { "stop": "end_turn", "waiting_tasks": 0 } }
+  ]
+}

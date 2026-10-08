@@ -1,0 +1,44 @@
+{
+  "path": "messages/2026-09-28/0006-chief-of-staff.md",
+  "kind": "offboard",
+  "title": "Offboard: tester",
+  "proposer": {
+    "slug": "chief-of-staff",
+    "name": "Chief of Staff"
+  },
+  "proposed_at": "2026-09-01T09:30:00Z",
+  "reason_md": "Testing moved to CI.",
+  "attachments": [],
+  "summary": {
+    "agent": {
+      "slug": "tester",
+      "name": "tester",
+      "role_title": "",
+      "icon": "",
+      "reports_to": {
+        "slug": "engineering-lead",
+        "name": "Engineering lead"
+      },
+      "model": "claude-sonnet-4-6",
+      "model_label": "Sonnet 4.6",
+      "effort": "medium"
+    },
+    "moves": [],
+    "facts": [
+      {
+        "label": "Reports to",
+        "value": "Engineering lead"
+      },
+      {
+        "label": "Model",
+        "value": "Sonnet 4.6 · medium"
+      },
+      {
+        "label": "Its assignments move to",
+        "value": "Engineering lead"
+      }
+    ]
+  },
+  "docs": [],
+  "offboard_sentence": "Its files move to the archive. Nothing is deleted, and you can restore it later."
+}

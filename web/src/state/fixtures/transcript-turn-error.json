@@ -1,0 +1,12 @@
+{
+  "source": "the agent stream's events (internal/web/chat_hub.go), in the order the hub sends them",
+  "about": "A turn that stops on an error: the marker lands below the partial reply, an unknown marker kind is ignored, and the terminal error event ends the turn with a banner and paints no row of its own.",
+  "steps": [
+    { "event": "thinking", "data": { "step": 1 } },
+    { "event": "delta", "data": { "text": "Checking the quote", "start_ts": 1789923600000, "model": "Opus 5.5", "effort": "high" } },
+    { "event": "chat_marker", "data": { "kind": "turn-error", "content": "API Error: usage limit reached", "ts": 1789923601000 } },
+    { "event": "chat_marker", "data": { "kind": "something-new", "content": "?", "ts": 1789923601500 } },
+    { "event": "chat_marker", "data": { "kind": "turn-error", "content": "API Error: usage limit reached", "ts": 1789923601000 } },
+    { "event": "error", "data": { "error": "The model's usage limit was reached." } }
+  ]
+}

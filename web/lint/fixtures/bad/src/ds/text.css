@@ -1,0 +1,14 @@
+/* Fixture: Kivali's own CSS under src/ds may define .kv-* classes but is still held to the token rules. */
+.kv-text-heading {
+  font: 500 20px/28px var(--font-display); /* rule: declaration-strict-value (literal font shorthand) */
+  padding: 12px; /* rule: declaration-strict-value (raw px) */
+  color: var(--kv-text-nope); /* rule: token-check/unknown-property (used, never defined) */
+}
+
+.app-sidebar .kv-text-heading { /* rule: selector-disallowed-list (src/ds never styles app- classes) */
+  color: var(--ink);
+}
+
+.Text_Heading { /* rule: selector-class-pattern (not kv-block[-elem][--modifier]) */
+  color: var(--ink);
+}

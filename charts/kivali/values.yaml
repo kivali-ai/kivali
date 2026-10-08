@@ -1,0 +1,171 @@
+# Default values for the kivali chart. kivali-supervisor installs it into
+# each org's k3s and sets the values an org needs
+# (internal/supervisor/install.go, InstallValues).
+#
+# The release name MUST be "kivali" (helm install kivali ...): the server
+# hard-codes the names of the objects below, so the chart renders them with
+# fixed names and fails the render for any other release name. The namespace
+# is whatever the release is installed into (-n NS --create-namespace).
+
+# "dev" or "prod". prod refuses to start with DEV_MODE on. Sets KIVALI_ENV.
+kivaliEnv: prod
+
+# DEV_MODE: authentication off, every request is the dev user. Sets
+# DEV_MODE=true and DEV_MODE_ALLOW_NONLOOPBACK=true (a pod cannot bind
+# loopback and be reached through a Service) and drops the OAuth and owner
+# env vars, so no OAuth secrets are needed. Refused with kivaliEnv: prod.
+# Only for a single-user machine where nothing but the owner can reach the
+# HTTP port (see networkPolicy).
+devMode: false
+
+# KIVALI_EXTERNAL_URL: the https origin other computers reach this
+# deployment at, e.g. "https://kivali.example.com" or a Tailscale name
+# such as "https://dana-imac.tailnet.ts.net" (no path). With the public
+# OAuth client, sign-in derives its callback only for loopback
+# (127.0.0.1, localhost, [::1]) and this host; a sign-in started at any
+# other host is refused, so a deployment reached at a public address
+# through the public client needs this (or oauth-redirect-url). Unused
+# with an own client. Kivali Desktop sets it from "Let other computers
+# connect". Not an https origin refuses to boot. Ignored with devMode.
+externalURL: ""
+
+# Sign-in is Google, through one of two OAuth clients (docs/developers/auth.md):
+# the public client Kivali ships with, whose secret lives only in a
+# relay, or an own client when Secret kivali-secrets carries both
+# google-oauth-client-id and google-oauth-client-secret.
+oauth:
+  # Literal OAUTH_REDIRECT_URL. Empty (the default) reads it from key
+  # oauth-redirect-url of Secret kivali-secrets, which is right for any
+  # deployment whose public URL is specific to the operator. Set it only
+  # where the address is the same for everyone, e.g. a dev cluster
+  # reached over `kubectl port-forward ... 8080:80`
+  # (http://127.0.0.1:8080/auth/callback). Required with an own client
+  # (it must match the redirect URI registered on it); with the public
+  # client, when both the value and the Secret key are empty, each
+  # sign-in derives it for loopback or externalURL's host only. Ignored
+  # with devMode.
+  redirectURL: ""
+  # OAUTH_PUBLIC_CLIENT_ID: swap the public client id the server was
+  # built with (to test a relay before it is baked, or run another
+  # relay). Empty keeps the baked id. Unused with an own client.
+  publicClientID: ""
+  # OAUTH_RELAY_URL: the public client's relay base. Empty uses the
+  # relay the server was built with. Unused with an own client.
+  relayURL: ""
+  # OAUTH_AUTH_URL, OAUTH_TOKEN_URL, OAUTH_USERINFO_URL: another OAuth
+  # 2.0 server in place of Google's endpoints. Empty keeps Google's.
+  authURL: ""
+  tokenURL: ""
+  userinfoURL: ""
+  # OAUTH_JWKS_URL, OAUTH_ISSUER: where id_tokens are verified against.
+  # Empty keeps Google's signing keys and issuers.
+  jwksURL: ""
+  issuer: ""
+
+image:
+  # Server image. Also the image agent pods run (AGENTPOD_IMAGE). The server
+  # derives the dev-shell sidecar image (kivali-dev-shell) from it, so
+  # kivali, kivali-egress-proxy and kivali-dev-shell must all exist at the
+  # same tag on the node or in the registry.
+  repository: kivali
+  # Empty means .Chart.AppVersion.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+egress:
+  # Forward proxy sidecar; every agent pod's HTTP(S)_PROXY points at it.
+  image:
+    repository: kivali-egress-proxy
+    # Empty means .Chart.AppVersion.
+    tag: ""
+  resources:
+    requests:
+      cpu: 20m
+      memory: 32Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+# initContainer that chmods/chowns the hostPath UDS dir for UID 65532.
+initImage: busybox:1.36
+
+server:
+  # Prod sizing. Each agent's CLI runs in its own agent pod, not here;
+  # this container runs the server and the CLI subprocesses of its own
+  # model calls (summaries and the like).
+  resources:
+    requests:
+      cpu: 200m
+      memory: 1Gi
+    limits:
+      cpu: 1000m
+      memory: 12Gi
+
+# hostPath directory holding core.sock, shared by the server and every agent
+# pod on the node. Sets AGENTPOD_UDS_DIR.
+udsDir: /var/run/kivali/uds
+
+# Models. Empty leaves the server's built-in default (AGENT_MODEL,
+# SUMMARY_MODEL are not set).
+models:
+  agent: ""
+  summary: ""
+
+# The Secret kivali-secrets is operator-created by default (the
+# supervisor's install sets secrets.create and the values below). Keys the chart reads:
+#   owner-emails, oauth-redirect-url, google-oauth-client-id,
+#   google-oauth-client-secret, session-key
+secrets:
+  # true makes the chart create kivali-secrets from the values below. FOR
+  # SINGLE-USER INSTALLS ONLY (the desktop VM): the values land in the Helm
+  # release record, which anyone with read access to the namespace's
+  # Secrets can read. Servers should create the Secret themselves.
+  create: false
+  ownerEmails: ""
+  # Optional: an own Google OAuth client. Leave all three empty to sign in
+  # through the public client Kivali ships with.
+  oauthRedirectURL: ""
+  googleOAuthClientID: ""
+  googleOAuthClientSecret: ""
+  sessionKey: ""
+
+service:
+  # Service "kivali". NodePort 30080, which kivali-supervisor forwards to
+  # the host's loopback. nodePort only applies to NodePort/LoadBalancer.
+  type: NodePort
+  port: 80
+  nodePort: 30080
+
+persistence:
+  # PVC kivali-data (RWO). Everything durable lives here.
+  size: 10Gi
+  # Empty omits storageClassName, so the cluster default class is used.
+  storageClassName: ""
+  # Adds helm.sh/resource-policy: keep so `helm uninstall` leaves the data.
+  keepOnUninstall: true
+
+networkPolicy:
+  # Keeps pods from reaching the server's HTTP API. See the README.
+  enabled: true
+  # CIDR of the cluster's pod network, excluded from the HTTP ingress rule.
+  # k3s: 10.42.0.0/16 (default), kind: 10.244.0.0/16.
+  podCIDR: 10.42.0.0/16
+  serverIngress:
+    # The server-ingress policy (HTTP port only from outside the pod
+    # network). Set false to drop it, e.g. behind an in-cluster front end
+    # you do not want to enumerate.
+    enabled: true
+    # NetworkPolicyPeer entries appended to the port 8080 rule, to admit
+    # in-cluster front ends (k3s's Traefik, cloudflared, Tailscale operator).
+    extraFrom: []
+    # - namespaceSelector:
+    #     matchLabels:
+    #       kubernetes.io/metadata.name: kube-system
+    #   podSelector:
+    #     matchLabels:
+    #       app.kubernetes.io/name: traefik
+
+# Extra container env for the server: a list of Kubernetes EnvVar objects.
+extraEnv: []
+# - name: SOME_VAR
+#   value: "x"

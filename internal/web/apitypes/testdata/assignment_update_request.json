@@ -1,0 +1,18 @@
+{
+  "title": "Update the docs, v3",
+  "description_md": "Check the docs.",
+  "assignee": "buyer",
+  "parent": 40,
+  "waits_on": [
+    45
+  ],
+  "conditions": [
+    "page list",
+    "margins"
+  ],
+  "counts_toward": [
+    "docs updated"
+  ],
+  "note": "v3 changes the API.",
+  "seq": 118
+}

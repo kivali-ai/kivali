@@ -1,0 +1,6 @@
+{
+  "error": "quote-check 0.3.0 is not newer than the installed 0.3.1",
+  "who": "you, by confirming the replacement",
+  "old_version": "0.3.1",
+  "new_version": "0.3.0"
+}

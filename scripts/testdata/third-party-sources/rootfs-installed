@@ -1,0 +1,202 @@
+P:alpine-baselayout
+V:3.7.2-r0
+T:Alpine base dir structure and init scripts
+U:https://gitlab.alpinelinux.org/alpine/aports/-/tree/master/main/alpine-baselayout
+L:GPL-2.0-only
+o:alpine-baselayout
+c:15b3b78187b3808104f98f765e9632e0b09281a7
+
+P:alpine-baselayout-data
+V:3.7.2-r0
+T:Alpine base dir structure and init scripts
+U:https://gitlab.alpinelinux.org/alpine/aports/-/tree/master/main/alpine-baselayout
+L:GPL-2.0-only
+o:alpine-baselayout
+c:15b3b78187b3808104f98f765e9632e0b09281a7
+
+P:busybox
+V:1.37.0-r30
+T:Size optimized toolbox of many common UNIX utilities
+U:https://busybox.net/
+L:GPL-2.0-only
+o:busybox
+c:1e823a60eb85606954b3a5af5f8e5bbd1ea680cf
+
+P:busybox-binsh
+V:1.37.0-r30
+T:busybox ash /bin/sh
+U:https://busybox.net/
+L:GPL-2.0-only
+o:busybox
+c:1e823a60eb85606954b3a5af5f8e5bbd1ea680cf
+k:100
+
+P:ca-certificates-bundle
+V:20260909-r0
+T:Pre generated bundle of Mozilla certificates
+U:https://www.mozilla.org/en-US/about/governance/policies/security-group/certs/
+L:MPL-2.0 AND MIT
+o:ca-certificates
+c:c733d58a9d16316e7fb6a49e65f28ecda365c56b
+
+P:e2fsprogs
+V:1.47.3-r0
+T:Standard Ext2/3/4 filesystem utilities
+U:https://e2fsprogs.sourceforge.net/
+L:GPL-2.0-or-later AND LGPL-2.0-or-later AND BSD-3-Clause AND MIT
+o:e2fsprogs
+c:00f1c5f4b16e16ff5dc6ac6dc97e8445e842fecb
+
+P:e2fsprogs-libs
+V:1.47.3-r0
+T:Standard Ext2/3/4 filesystem utilities (libraries)
+U:https://e2fsprogs.sourceforge.net/
+L:GPL-2.0-or-later AND LGPL-2.0-or-later AND BSD-3-Clause AND MIT
+o:e2fsprogs
+c:00f1c5f4b16e16ff5dc6ac6dc97e8445e842fecb
+
+P:gmp
+V:6.3.0-r4
+T:free library for arbitrary precision arithmetic
+U:https://gmplib.org/
+L:LGPL-3.0-or-later OR GPL-2.0-or-later
+o:gmp
+c:8bfc27fafbf6c27761b150c571c3075a5a3db0de
+
+P:jansson
+V:2.14.1-r0
+T:lightweight JSON library
+U:http://www.digip.org/jansson/
+L:MIT
+o:jansson
+c:9161ac3604718ebb3c85b5795f0a084d45362571
+
+P:kmod
+V:34.2-r1
+T:Linux kernel module management utilities
+U:http://git.kernel.org/?p=utils/kernel/kmod/kmod.git;a=summary
+L:GPL-2.0-or-later
+o:kmod
+c:1997195d08a4d0e04899714802276d89d1ad4cb2
+
+P:libblkid
+V:2.41.6-r1
+T:Block device identification library from util-linux
+U:https://git.kernel.org/cgit/utils/util-linux/util-linux.git
+L:LGPL-2.1-or-later
+o:util-linux
+c:96f05433b217acf92bee031df551b10d8b3a1ec2
+
+P:libcom_err
+V:1.47.3-r0
+T:Common error description library
+U:https://e2fsprogs.sourceforge.net/
+L:GPL-2.0-or-later AND LGPL-2.0-or-later AND BSD-3-Clause AND MIT
+o:e2fsprogs
+c:00f1c5f4b16e16ff5dc6ac6dc97e8445e842fecb
+
+P:libcrypto3
+V:3.5.9-r0
+T:Crypto library from openssl
+U:https://www.openssl.org/
+L:Apache-2.0
+o:openssl
+c:adcf4978067013c3c0917e54542f3b762d7bfc48
+k:100
+
+P:libeconf
+V:0.8.3-r0
+T:Enhanced Config File Parser
+U:https://github.com/openSUSE/libeconf
+L:MIT
+o:libeconf
+c:36b72fb9c0502028e6dd976e5ec5ee852fac39be
+
+P:libmnl
+V:1.0.5-r2
+T:Library for minimalistic netlink
+U:https://www.netfilter.org/projects/libmnl/
+L:LGPL-2.1-or-later
+o:libmnl
+c:fc95c59998285564fbcb0bfb2443898c62e10171
+
+P:libncursesw
+V:6.5_p20251123-r0
+T:Console display library (libncursesw)
+U:https://invisible-island.net/ncurses/
+L:X11
+o:ncurses
+c:f7479f62dcb52ace52d99650c80de275010ec3ac
+
+P:libnftnl
+V:1.3.0-r0
+T:Netfilter library providing interface to the nf_tables subsystem
+U:https://netfilter.org/projects/libnftnl
+L:GPL-2.0-or-later
+o:libnftnl
+c:c2bf55a504114799d2227e33c14792a2dfe1a130
+
+P:libuuid
+V:2.41.6-r1
+T:DCE compatible Universally Unique Identifier library
+U:https://git.kernel.org/cgit/utils/util-linux/util-linux.git
+L:BSD-3-Clause
+o:util-linux
+c:96f05433b217acf92bee031df551b10d8b3a1ec2
+
+P:musl
+V:1.2.5-r23
+T:the musl c library (libc) implementation
+U:https://musl.libc.org/
+L:MIT
+o:musl
+c:8aef0c37b0ad23dc4137f0e4755b97a59dc698b8
+
+P:ncurses-terminfo-base
+V:6.5_p20251123-r0
+T:Descriptions of common terminals
+U:https://invisible-island.net/ncurses/
+L:X11
+o:ncurses
+c:f7479f62dcb52ace52d99650c80de275010ec3ac
+
+P:nftables
+V:1.1.5-r2
+T:Netfilter tables userspace tools
+U:https://netfilter.org/projects/nftables
+L:GPL-2.0-or-later
+o:nftables
+c:3ad6ddd15d7322059aee9635ad917b7875b1c676
+
+P:readline
+V:8.3.1-r0
+T:GNU readline library
+U:https://tiswww.cwru.edu/php/chet/readline/rltop.html
+L:GPL-3.0-or-later
+o:readline
+c:1d76ecdcac4abea004f7946038405cdb8b214522
+
+P:xz-libs
+V:5.8.4-r0
+T:Library and CLI tools for XZ and LZMA compressed files (libraries)
+U:https://tukaani.org/xz/
+L:GPL-2.0-or-later AND 0BSD AND Public-Domain AND LGPL-2.1-or-later
+o:xz
+c:7d9b04ca29cda85937d7d73c0639e9a0a94ec87c
+
+P:zlib
+V:1.3.2-r1
+T:A compression/decompression Library
+U:https://zlib.net/
+L:Zlib
+o:zlib
+c:b92621a82657b055485976b304462bddf9aa9183
+
+P:zstd-libs
+V:1.5.7-r2
+T:Zstandard - Fast real-time compression algorithm (libraries)
+U:https://facebook.github.io/zstd/
+L:BSD-3-Clause OR GPL-2.0-or-later
+o:zstd
+c:3c6e2ee2b16f403d53eab39c4426eb61f003c322
+

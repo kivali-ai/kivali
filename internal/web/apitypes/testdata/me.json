@@ -1,0 +1,13 @@
+{
+  "user": {
+    "email": "maya@example.com",
+    "name": "Maya",
+    "initials": "M"
+  },
+  "org": {
+    "name": "Plainsong",
+    "has_logo": true
+  },
+  "version": "v0.15.0",
+  "dev_mode": false
+}

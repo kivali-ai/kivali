@@ -1,0 +1,37 @@
+{
+  "needed": true,
+  "step": "cos",
+  "org": {
+    "name": "Plainsong",
+    "has_logo": true
+  },
+  "kind": "",
+  "files": [
+    {
+      "sha": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+      "name": "business-plan.pdf",
+      "size_bytes": 482113,
+      "extracted": true
+    },
+    {
+      "sha": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+      "name": "site-photo.jpg",
+      "size_bytes": 1203344,
+      "extracted": false
+    }
+  ],
+  "cos": {
+    "exists": false,
+    "default_role_md": "# Chief of Staff\n\nYou run the org day to day.\n",
+    "default_handbook_md": "# Handbook\n\n## The company\n\nThis section is a placeholder.\n"
+  },
+  "credential": {
+    "ready": false,
+    "provider": "claude",
+    "present": false,
+    "who": "",
+    "billing": "",
+    "guidance": "No model is connected yet; whoever runs this Kivali server can sign it in to Claude."
+  },
+  "restore_available": true
+}

@@ -1,0 +1,38 @@
+# syntax=docker/dockerfile:1.7
+#
+# Kivali egress proxy. Runs as a sidecar alongside the main Kivali
+# container; mediates HTTP + HTTPS traffic from sandbox Pods through a
+# hostname allowlist YAML that Kivali keeps hot-synchronized over a
+# shared volume.
+#
+# Multi-arch: the Go build runs on the build host's architecture and
+# cross-compiles for the target; the distroless runtime is multi-arch.
+FROM --platform=$BUILDPLATFORM golang:1.24-alpine AS build
+ARG TARGETOS
+ARG TARGETARCH
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
+COPY . .
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldflags="-s -w" -o /out/egress-proxy ./cmd/egress-proxy
+# /usr/share/doc/kivali: the third-party notices (Kivali's NOTICE and the
+# Go modules linked into the proxy for this platform) and SOURCES.md, on
+# the base image's packages (scripts/third-party-licenses.sh,
+# scripts/third-party-sources.sh).
+RUN --mount=type=cache,target=/go/pkg/mod \
+    set -eu; \
+    mkdir -p /out/doc; \
+    { sh scripts/third-party-licenses.sh header kivali-egress-proxy; \
+      GOOS=${TARGETOS} GOARCH=${TARGETARCH} CGO_ENABLED=0 sh scripts/third-party-licenses.sh go ./cmd/egress-proxy; } > /out/doc/THIRD_PARTY_LICENSES; \
+    { sh scripts/third-party-sources.sh header "the kivali-egress-proxy image"; \
+      sh scripts/third-party-sources.sh distroless; } > /out/doc/SOURCES.md
+
+FROM gcr.io/distroless/static:nonroot
+LABEL org.opencontainers.image.licenses="Apache-2.0"
+COPY --from=build /out/doc/ /usr/share/doc/kivali/
+COPY --from=build /out/egress-proxy /usr/local/bin/egress-proxy
+EXPOSE 3128
+ENTRYPOINT ["/usr/local/bin/egress-proxy", "--listen=:3128", "--allowlist=/etc/egress/allowlist.yaml"]

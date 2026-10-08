@@ -1,0 +1,3 @@
+/* Fixture: src/ds/index.css imports its own token files; relative imports that resolve inside src/ds pass. */
+@import "./tokens/colors.css";
+@import "./kivali.css";

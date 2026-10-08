@@ -1,0 +1,5 @@
+apiVersion: v2
+name: kivali-selftest
+description: Boot self-test for the Kivali Desktop VM. Installs one ConfigMap through k3s's Helm controller from the static charts URL.
+type: application
+version: 0.1.0

@@ -1,0 +1,21 @@
+{
+  "source": "the agent stream's events (internal/web/chat_hub.go), in the order the hub sends them",
+  "about": "A whole turn as a second device sees it: your message (twice, replayed), the wake note, reasoning, a reply, a tool call, the fill snap and done.",
+  "steps": [
+    { "action": "stream_open" },
+    { "event": "chat_message", "data": { "role": "received", "kind": "direct_chat", "content": "Where are we on the quote?", "ts": 1789923600000, "attachments": [{ "sha": "abc123", "name": "hosting-quote.pdf" }] } },
+    { "event": "wake_update", "data": { "content": "Since your last turn: #42 moved to review.", "ts": 1789923600001 } },
+    { "event": "chat_message", "data": { "role": "received", "kind": "direct_chat", "content": "Where are we on the quote?", "ts": 1789923600000, "attachments": [] } },
+    { "event": "wake_update", "data": { "content": "Since your last turn: #42 moved to review.", "ts": 1789923600001 } },
+    { "event": "thinking", "data": { "step": 1, "summary": "Checking the budget." } },
+    { "action": "thinking_promote" },
+    { "event": "thinking", "data": { "step": 2 } },
+    { "action": "thinking_promote" },
+    { "event": "delta", "data": { "text": "Provider A is **cheapest**.", "start_ts": 1789923602000, "model": "Opus 5.5", "effort": "high" } },
+    { "event": "tool_use_start", "data": { "tool_use_id": "toolu_9", "tool_name": "assignment_view", "start_ts": 1789923603000 } },
+    { "event": "tool_use", "data": { "tool_use_id": "toolu_9", "tool_name": "assignment_view", "tool_input": "{\"id\":42}" } },
+    { "event": "tool_result", "data": { "tool_use_id": "toolu_9", "is_error": false, "stdout": "state: blocked" } },
+    { "event": "chat_fill", "data": { "chat_fill_pct": 64, "chat_token_est": 128000, "chat_context_limit": 200000, "chat_long_thresh": 150000, "chat_fill_bucket": "mid", "chat_resolved_model": "claude-opus-5-5" } },
+    { "event": "done", "data": { "stop": "end_turn", "waiting_tasks": 0, "rotation": false } }
+  ]
+}

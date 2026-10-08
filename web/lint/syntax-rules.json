@@ -1,0 +1,431 @@
+{
+  "note": "Generated from design-system/_adherence.oxlintrc.json no-restricted-syntax selectors plus HTML passthrough props. Evaluated by syntax-check.mjs over app code AND src/ds (the designer's config lints the components too). Local additions to the designer's prop lists, each declared by the TSX port in src/ds: Checkbox ariaLabel; Menu side (enum top|right|bottom|left); ListRow expanded (aria-expanded on the row button). Escape hatch for a single line: // kivali-lint-disable-next-line syntax/<rule> -- reason.",
+  "rules": [
+    {
+      "kind": "literal",
+      "pattern": "(?<![\\w&/])#(?:[0-9a-fA-F]{8}|[0-9a-fA-F]{6}|[0-9a-fA-F]{3,4})\\b(?<!#\\d+)",
+      "flags": "",
+      "message": "Raw hex color — use a design-system color token via var()."
+    },
+    {
+      "kind": "literal",
+      "pattern": "\\b\\d+px\\b",
+      "flags": "",
+      "message": "Raw px value — use a design-system spacing token via var(). Breakpoints come from src/ds/breakpoints.ts (via the ds barrel).",
+      "exemptFilesNote": "CSS custom properties do not work inside @media params, so breakpoints are literal px. The ONE sanctioned TS home is src/ds/breakpoints.ts (BREAKPOINT_TABBAR = 960, BREAKPOINT_ONE_COLUMN = 640, mediaQuery()). Exact paths relative to web/ (or to a fixture set root); no globs. CSS @media params are not declarations, so stylelint already allows px there.",
+      "exemptFiles": ["src/ds/breakpoints.ts"]
+    },
+    {
+      "kind": "literal",
+      "pattern": "font-family\\s*:\\s*(?!var\\(|['\\\"]?(?:Space Grotesk|IBM Plex Sans|IBM Plex Mono))",
+      "flags": "i",
+      "message": "Font not provided by the design system. Available: Space Grotesk, IBM Plex Sans, IBM Plex Mono."
+    },
+    {
+      "kind": "props",
+      "component": "AcceptanceMeter",
+      "allowed": "satisfied|claimed|unclaimed|compact|key|ref|className|style|children|aria-[\\w-]+|data-[\\w-]+|on[A-Z]\\w*|id|name|type|disabled|title|role|tabIndex|autoFocus|placeholder|value|defaultValue|required|autoComplete|htmlFor|form|min|max|step|maxLength|readOnly|href|to|target|rel|accept|multiple|lang|dir|hidden|slot|autoCapitalize|inputMode",
+      "message": "<AcceptanceMeter> doesn't accept that prop. Declared props: satisfied, claimed, unclaimed, compact."
+    },
+    {
+      "kind": "props",
+      "component": "AgentAvatar",
+      "allowed": "name|role|color|initials|size|key|ref|className|style|children|aria-[\\w-]+|data-[\\w-]+|on[A-Z]\\w*|id|name|type|disabled|title|role|tabIndex|autoFocus|placeholder|value|defaultValue|required|autoComplete|htmlFor|form|min|max|step|maxLength|readOnly|href|to|target|rel|accept|multiple|lang|dir|hidden|slot|autoCapitalize|inputMode",
+      "message": "<AgentAvatar> doesn't accept that prop. Declared props: name, role, color, initials, size."
+    },
+    {
+      "kind": "props",
+      "component": "AgentState",
+      "allowed": "state|label|compact|key|ref|className|style|children|aria-[\\w-]+|data-[\\w-]+|on[A-Z]\\w*|id|name|type|disabled|title|role|tabIndex|autoFocus|placeholder|value|defaultValue|required|autoComplete|htmlFor|form|min|max|step|maxLength|readOnly|href|to|target|rel|accept|multiple|lang|dir|hidden|slot|autoCapitalize|inputMode",
+      "message": "<AgentState> doesn't accept that prop. Declared props: state, label, compact."
+    },
+    {
+      "kind": "props",
+      "component": "AutoRelease",
+      "allowed": "value|onChange|stops|variant|label|className|key|ref|className|style|children|aria-[\\w-]+|data-[\\w-]+|on[A-Z]\\w*|id|name|type|disabled|title|role|tabIndex|autoFocus|placeholder|value|defaultValue|required|autoComplete|htmlFor|form|min|max|step|maxLength|readOnly|href|to|target|rel|accept|multiple|lang|dir|hidden|slot|autoCapitalize|inputMode",
+      "message": "<AutoRelease> doesn't accept that prop. Declared props: value, onChange, stops, variant, label, className."
+    },
+    {
+      "kind": "enum",
+      "component": "AutoRelease",
+      "prop": "variant",
+      "allowed": "slider|select",
+      "message": "<AutoRelease> variant must be one of 'slider' | 'select'."
+    },
+    {
+      "kind": "props",
+      "component": "Badge",
+      "allowed": "tone|variant|mono|children|key|ref|className|style|children|aria-[\\w-]+|data-[\\w-]+|on[A-Z]\\w*|id|name|type|disabled|title|role|tabIndex|autoFocus|placeholder|value|defaultValue|required|autoComplete|htmlFor|form|min|max|step|maxLength|readOnly|href|to|target|rel|accept|multiple|lang|dir|hidden|slot|autoCapitalize|inputMode",
+      "message": "<Badge> doesn't accept that prop. Declared props: tone, variant, mono, children."
+    },
+    {
+      "kind": "enum",
+      "component": "Badge",
+      "prop": "variant",
+      "allowed": "soft|solid|outline",
+      "message": "<Badge> variant must be one of 'soft' | 'solid' | 'outline'."
+    },
+    {
+      "kind": "props",
+      "component": "Banner",
+      "allowed": "tone|title|action|onDismiss|children|key|ref|className|style|children|aria-[\\w-]+|data-[\\w-]+|on[A-Z]\\w*|id|name|type|disabled|title|role|tabIndex|autoFocus|placeholder|value|defaultValue|required|autoComplete|htmlFor|form|min|max|step|maxLength|readOnly|href|to|target|rel|accept|multiple|lang|dir|hidden|slot|autoCapitalize|inputMode",
+      "message": "<Banner> doesn't accept that prop. Declared props: tone, title, action, onDismiss, children."
+    },
+    {
+      "kind": "enum",
+      "component": "Banner",
+      "prop": "tone",
+      "allowed": "info|warning|danger|success",
+      "message": "<Banner> tone must be one of 'info' | 'warning' | 'danger' | 'success'."
+    },
+    {
+      "kind": "props",
+      "component": "Button",
+      "allowed": "variant|size|icon|iconOnly|loading|key|ref|className|style|children|aria-[\\w-]+|data-[\\w-]+|on[A-Z]\\w*|id|name|type|disabled|title|role|tabIndex|autoFocus|placeholder|value|defaultValue|required|autoComplete|htmlFor|form|min|max|step|maxLength|readOnly|href|to|target|rel|accept|multiple|lang|dir|hidden|slot|autoCapitalize|inputMode",
+      "message": "<Button> doesn't accept that prop. Declared props: variant, size, icon, iconOnly, loading."
+    },
+    {
+      "kind": "enum",
+      "component": "Button",
+      "prop": "variant",
+      "allowed": "primary|secondary|ghost|danger",
+      "message": "<Button> variant must be one of 'primary' | 'secondary' | 'ghost' | 'danger'."
+    },
+    {
+      "kind": "enum",
+      "component": "Button",
+      "prop": "size",
+      "allowed": "sm|md",
+      "message": "<Button> size must be one of 'sm' | 'md'."
+    },
+    {
+      "kind": "props",
+      "component": "Card",
+      "allowed": "title|meta|actions|collapsible|defaultOpen|tone|children|className|style|key|ref|className|style|children|aria-[\\w-]+|data-[\\w-]+|on[A-Z]\\w*|id|name|type|disabled|title|role|tabIndex|autoFocus|placeholder|value|defaultValue|required|autoComplete|htmlFor|form|min|max|step|maxLength|readOnly|href|to|target|rel|accept|multiple|lang|dir|hidden|slot|autoCapitalize|inputMode",
+      "message": "<Card> doesn't accept that prop. Declared props: title, meta, actions, collapsible, defaultOpen, tone, children, className, style."
+    },
+    {
+      "kind": "enum",
+      "component": "Card",
+      "prop": "tone",
+      "allowed": "attention",
+      "message": "<Card> tone must be one of 'attention'."
+    },
+    {
+      "kind": "props",
+      "component": "ChatPager",
+      "allowed": "title|index|total|onOlder|onNewer|onCurrent|compact|key|ref|className|style|children|aria-[\\w-]+|data-[\\w-]+|on[A-Z]\\w*|id|name|type|disabled|title|role|tabIndex|autoFocus|placeholder|value|defaultValue|required|autoComplete|htmlFor|form|min|max|step|maxLength|readOnly|href|to|target|rel|accept|multiple|lang|dir|hidden|slot|autoCapitalize|inputMode",
+      "message": "<ChatPager> doesn't accept that prop. Declared props: title, index, total, onOlder, onNewer, onCurrent, compact."
+    },
+    {
+      "kind": "props",
+      "component": "Checkbox",
+      "allowed": "label|hint|checked|defaultChecked|onCheckedChange|disabled|name|ariaLabel|key|ref|className|style|children|aria-[\\w-]+|data-[\\w-]+|on[A-Z]\\w*|id|name|type|disabled|title|role|tabIndex|autoFocus|placeholder|value|defaultValue|required|autoComplete|htmlFor|form|min|max|step|maxLength|readOnly|href|to|target|rel|accept|multiple|lang|dir|hidden|slot|autoCapitalize|inputMode",
+      "message": "<Checkbox> doesn't accept that prop. Declared props: label, hint, checked, defaultChecked, onCheckedChange, disabled, name, ariaLabel."
+    },
+    {
+      "kind": "props",
+      "component": "CodeBlock",
+      "allowed": "code|language|title|key|ref|className|style|children|aria-[\\w-]+|data-[\\w-]+|on[A-Z]\\w*|id|name|type|disabled|title|role|tabIndex|autoFocus|placeholder|value|defaultValue|required|autoComplete|htmlFor|form|min|max|step|maxLength|readOnly|href|to|target|rel|accept|multiple|lang|dir|hidden|slot|autoCapitalize|inputMode",
+      "message": "<CodeBlock> doesn't accept that prop. Declared props: code, language, title."
+    },
+    {
+      "kind": "props",
+      "component": "Composer",
+      "allowed": "placeholder|value|defaultValue|onChange|onSend|busy|onAttach|footer|disabled|allowEmpty|key|ref|className|style|children|aria-[\\w-]+|data-[\\w-]+|on[A-Z]\\w*|id|name|type|disabled|title|role|tabIndex|autoFocus|placeholder|value|defaultValue|required|autoComplete|htmlFor|form|min|max|step|maxLength|readOnly|href|to|target|rel|accept|multiple|lang|dir|hidden|slot|autoCapitalize|inputMode",
+      "message": "<Composer> doesn't accept that prop. Declared props: placeholder, value, defaultValue, onChange, onSend, busy, onAttach, footer, disabled, allowEmpty (Kivali addition: send attachments without text)."
+    },
+    {
+      "kind": "props",
+      "component": "ContextGauge",
+      "allowed": "value|threshold|onNewChat|compact|title|key|ref|className|style|children|aria-[\\w-]+|data-[\\w-]+|on[A-Z]\\w*|id|name|type|disabled|title|role|tabIndex|autoFocus|placeholder|value|defaultValue|required|autoComplete|htmlFor|form|min|max|step|maxLength|readOnly|href|to|target|rel|accept|multiple|lang|dir|hidden|slot|autoCapitalize|inputMode",
+      "message": "<ContextGauge> doesn't accept that prop. Declared props: value, threshold, onNewChat, compact, title."
+    },
+    {
+      "kind": "props",
+      "component": "DayBars",
+      "allowed": "values|width|height|max|format|labels|color|ariaLabel|key|ref|className|style|children|aria-[\\w-]+|data-[\\w-]+|on[A-Z]\\w*|id|name|type|disabled|title|role|tabIndex|autoFocus|placeholder|value|defaultValue|required|autoComplete|htmlFor|form|min|max|step|maxLength|readOnly|href|to|target|rel|accept|multiple|lang|dir|hidden|slot|autoCapitalize|inputMode",
+      "message": "<DayBars> doesn't accept that prop. Declared props: values, width, height, max, format, labels, color, ariaLabel."
+    },
+    {
+      "kind": "props",
+      "component": "Dialog",
+      "allowed": "open|defaultOpen|onOpenChange|trigger|title|description|footer|tone|children|key|ref|className|style|children|aria-[\\w-]+|data-[\\w-]+|on[A-Z]\\w*|id|name|type|disabled|title|role|tabIndex|autoFocus|placeholder|value|defaultValue|required|autoComplete|htmlFor|form|min|max|step|maxLength|readOnly|href|to|target|rel|accept|multiple|lang|dir|hidden|slot|autoCapitalize|inputMode",
+      "message": "<Dialog> doesn't accept that prop. Declared props: open, defaultOpen, onOpenChange, trigger, title, description, footer, tone, children."
+    },
+    {
+      "kind": "enum",
+      "component": "Dialog",
+      "prop": "tone",
+      "allowed": "danger",
+      "message": "<Dialog> tone must be one of 'danger'."
+    },
+    {
+      "kind": "props",
+      "component": "DocDiff",
+      "allowed": "before|after|openChanged|key|ref|className|style|children|aria-[\\w-]+|data-[\\w-]+|on[A-Z]\\w*|id|name|type|disabled|title|role|tabIndex|autoFocus|placeholder|value|defaultValue|required|autoComplete|htmlFor|form|min|max|step|maxLength|readOnly|href|to|target|rel|accept|multiple|lang|dir|hidden|slot|autoCapitalize|inputMode",
+      "message": "<DocDiff> doesn't accept that prop. Declared props: before, after, openChanged."
+    },
+    {
+      "kind": "props",
+      "component": "EmptyState",
+      "allowed": "title|action|children|key|ref|className|style|children|aria-[\\w-]+|data-[\\w-]+|on[A-Z]\\w*|id|name|type|disabled|title|role|tabIndex|autoFocus|placeholder|value|defaultValue|required|autoComplete|htmlFor|form|min|max|step|maxLength|readOnly|href|to|target|rel|accept|multiple|lang|dir|hidden|slot|autoCapitalize|inputMode",
+      "message": "<EmptyState> doesn't accept that prop. Declared props: title, action, children."
+    },
+    {
+      "kind": "props",
+      "component": "FileDrop",
+      "allowed": "label|hint|accept|multiple|onFiles|key|ref|className|style|children|aria-[\\w-]+|data-[\\w-]+|on[A-Z]\\w*|id|name|type|disabled|title|role|tabIndex|autoFocus|placeholder|value|defaultValue|required|autoComplete|htmlFor|form|min|max|step|maxLength|readOnly|href|to|target|rel|accept|multiple|lang|dir|hidden|slot|autoCapitalize|inputMode",
+      "message": "<FileDrop> doesn't accept that prop. Declared props: label, hint, accept, multiple, onFiles."
+    },
+    {
+      "kind": "props",
+      "component": "GoalRow",
+      "allowed": "title|href|owner|done|total|blocker|workers|maxWorkers|key|ref|className|style|children|aria-[\\w-]+|data-[\\w-]+|on[A-Z]\\w*|id|name|type|disabled|title|role|tabIndex|autoFocus|placeholder|value|defaultValue|required|autoComplete|htmlFor|form|min|max|step|maxLength|readOnly|href|to|target|rel|accept|multiple|lang|dir|hidden|slot|autoCapitalize|inputMode",
+      "message": "<GoalRow> doesn't accept that prop. Declared props: title, href, owner, done, total, blocker, workers, maxWorkers."
+    },
+    {
+      "kind": "props",
+      "component": "Icon",
+      "allowed": "name|size|strokeWidth|label|key|ref|className|style|children|aria-[\\w-]+|data-[\\w-]+|on[A-Z]\\w*|id|name|type|disabled|title|role|tabIndex|autoFocus|placeholder|value|defaultValue|required|autoComplete|htmlFor|form|min|max|step|maxLength|readOnly|href|to|target|rel|accept|multiple|lang|dir|hidden|slot|autoCapitalize|inputMode",
+      "message": "<Icon> doesn't accept that prop. Declared props: name, size, strokeWidth, label."
+    },
+    {
+      "kind": "props",
+      "component": "AssignmentRef",
+      "allowed": "id|title|state|href|key|ref|className|style|children|aria-[\\w-]+|data-[\\w-]+|on[A-Z]\\w*|id|name|type|disabled|title|role|tabIndex|autoFocus|placeholder|value|defaultValue|required|autoComplete|htmlFor|form|min|max|step|maxLength|readOnly|href|to|target|rel|accept|multiple|lang|dir|hidden|slot|autoCapitalize|inputMode",
+      "message": "<AssignmentRef> doesn't accept that prop. Declared props: id, title, state, href."
+    },
+    {
+      "kind": "props",
+      "component": "AssignmentRow",
+      "allowed": "id|title|state|assignee|depth|last|openChildren|acceptance|waitingOn|heldBy|expanded|onToggle|href|onClick|selected|key|ref|className|style|children|aria-[\\w-]+|data-[\\w-]+|on[A-Z]\\w*|id|name|type|disabled|title|role|tabIndex|autoFocus|placeholder|value|defaultValue|required|autoComplete|htmlFor|form|min|max|step|maxLength|readOnly|href|to|target|rel|accept|multiple|lang|dir|hidden|slot|autoCapitalize|inputMode",
+      "message": "<AssignmentRow> doesn't accept that prop. Declared props: id, title, state, assignee, depth, last, openChildren, acceptance, waitingOn, heldBy, expanded, onToggle, href, onClick, selected."
+    },
+    {
+      "kind": "props",
+      "component": "AssignmentState",
+      "allowed": "state|label|compact|key|ref|className|style|children|aria-[\\w-]+|data-[\\w-]+|on[A-Z]\\w*|id|name|type|disabled|title|role|tabIndex|autoFocus|placeholder|value|defaultValue|required|autoComplete|htmlFor|form|min|max|step|maxLength|readOnly|href|to|target|rel|accept|multiple|lang|dir|hidden|slot|autoCapitalize|inputMode",
+      "message": "<AssignmentState> doesn't accept that prop. Declared props: state, label, compact."
+    },
+    {
+      "kind": "props",
+      "component": "ListRow",
+      "allowed": "lead|title|meta|trail|href|onClick|selected|expanded|key|ref|className|style|children|aria-[\\w-]+|data-[\\w-]+|on[A-Z]\\w*|id|name|type|disabled|title|role|tabIndex|autoFocus|placeholder|value|defaultValue|required|autoComplete|htmlFor|form|min|max|step|maxLength|readOnly|href|to|target|rel|accept|multiple|lang|dir|hidden|slot|autoCapitalize|inputMode",
+      "message": "<ListRow> doesn't accept that prop. Declared props: lead, title, meta, trail, href, onClick, selected, expanded."
+    },
+    {
+      "kind": "props",
+      "component": "Menu",
+      "allowed": "trigger|items|align|side|defaultOpen|key|ref|className|style|children|aria-[\\w-]+|data-[\\w-]+|on[A-Z]\\w*|id|name|type|disabled|title|role|tabIndex|autoFocus|placeholder|value|defaultValue|required|autoComplete|htmlFor|form|min|max|step|maxLength|readOnly|href|to|target|rel|accept|multiple|lang|dir|hidden|slot|autoCapitalize|inputMode",
+      "message": "<Menu> doesn't accept that prop. Declared props: trigger, items, align, side, defaultOpen."
+    },
+    {
+      "kind": "enum",
+      "component": "Menu",
+      "prop": "side",
+      "allowed": "top|right|bottom|left",
+      "message": "<Menu> side must be one of 'top' | 'right' | 'bottom' | 'left'."
+    },
+    {
+      "kind": "enum",
+      "component": "Menu",
+      "prop": "align",
+      "allowed": "start|center|end",
+      "message": "<Menu> align must be one of 'start' | 'center' | 'end'."
+    },
+    {
+      "kind": "props",
+      "component": "Message",
+      "allowed": "from|time|streaming|model|pending|onDelete|onSendNow|sendNowLoading|className|children|key|ref|className|style|children|aria-[\\w-]+|data-[\\w-]+|on[A-Z]\\w*|id|name|type|disabled|title|role|tabIndex|autoFocus|placeholder|value|defaultValue|required|autoComplete|htmlFor|form|min|max|step|maxLength|readOnly|href|to|target|rel|accept|multiple|lang|dir|hidden|slot|autoCapitalize|inputMode",
+      "message": "<Message> doesn't accept that prop. Declared props: from, time, streaming, model, pending, onDelete, onSendNow, sendNowLoading (Kivali addition), className, children."
+    },
+    {
+      "kind": "props",
+      "component": "NavItem",
+      "allowed": "icon|lead|label|count|attention|active|depth|href|onClick|key|ref|className|style|children|aria-[\\w-]+|data-[\\w-]+|on[A-Z]\\w*|id|name|type|disabled|title|role|tabIndex|autoFocus|placeholder|value|defaultValue|required|autoComplete|htmlFor|form|min|max|step|maxLength|readOnly|href|to|target|rel|accept|multiple|lang|dir|hidden|slot|autoCapitalize|inputMode",
+      "message": "<NavItem> doesn't accept that prop. Declared props: icon, lead, label, count, attention, active, depth, href, onClick."
+    },
+    {
+      "kind": "props",
+      "component": "NodeChip",
+      "allowed": "id|kind|summary|status|owner|ownerName|href|selected|key|ref|className|style|children|aria-[\\w-]+|data-[\\w-]+|on[A-Z]\\w*|id|name|type|disabled|title|role|tabIndex|autoFocus|placeholder|value|defaultValue|required|autoComplete|htmlFor|form|min|max|step|maxLength|readOnly|href|to|target|rel|accept|multiple|lang|dir|hidden|slot|autoCapitalize|inputMode",
+      "message": "<NodeChip> doesn't accept that prop. Declared props: id, kind, summary, status, owner, ownerName, href, selected."
+    },
+    {
+      "kind": "enum",
+      "component": "NodeChip",
+      "prop": "kind",
+      "allowed": "decision|requirement|artifact",
+      "message": "<NodeChip> kind must be one of 'decision' | 'requirement' | 'artifact'."
+    },
+    {
+      "kind": "enum",
+      "component": "NodeChip",
+      "prop": "status",
+      "allowed": "active|superseded|flagged|unresolved",
+      "message": "<NodeChip> status must be one of 'active' | 'superseded' | 'flagged' | 'unresolved'."
+    },
+    {
+      "kind": "props",
+      "component": "NodeRow",
+      "allowed": "node|short|expanded|onToggle|fields|compact|key|ref|className|style|children|aria-[\\w-]+|data-[\\w-]+|on[A-Z]\\w*|id|name|type|disabled|title|role|tabIndex|autoFocus|placeholder|value|defaultValue|required|autoComplete|htmlFor|form|min|max|step|maxLength|readOnly|href|to|target|rel|accept|multiple|lang|dir|hidden|slot|autoCapitalize|inputMode",
+      "message": "<NodeRow> doesn't accept that prop. Declared props: node, short, expanded, onToggle, fields, compact."
+    },
+    {
+      "kind": "props",
+      "component": "OrgMark",
+      "allowed": "name|src|color|size|key|ref|className|style|children|aria-[\\w-]+|data-[\\w-]+|on[A-Z]\\w*|id|name|type|disabled|title|role|tabIndex|autoFocus|placeholder|value|defaultValue|required|autoComplete|htmlFor|form|min|max|step|maxLength|readOnly|href|to|target|rel|accept|multiple|lang|dir|hidden|slot|autoCapitalize|inputMode",
+      "message": "<OrgMark> doesn't accept that prop. Declared props: name, src, color, size."
+    },
+    {
+      "kind": "props",
+      "component": "OrgSwitcher",
+      "allowed": "orgs|current|onSelect|onCreate|defaultOpen|key|ref|className|style|children|aria-[\\w-]+|data-[\\w-]+|on[A-Z]\\w*|id|name|type|disabled|title|role|tabIndex|autoFocus|placeholder|value|defaultValue|required|autoComplete|htmlFor|form|min|max|step|maxLength|readOnly|href|to|target|rel|accept|multiple|lang|dir|hidden|slot|autoCapitalize|inputMode",
+      "message": "<OrgSwitcher> doesn't accept that prop. Declared props: orgs, current, onSelect, onCreate, defaultOpen."
+    },
+    {
+      "kind": "props",
+      "component": "PersonAvatar",
+      "allowed": "name|src|size|key|ref|className|style|children|aria-[\\w-]+|data-[\\w-]+|on[A-Z]\\w*|id|name|type|disabled|title|role|tabIndex|autoFocus|placeholder|value|defaultValue|required|autoComplete|htmlFor|form|min|max|step|maxLength|readOnly|href|to|target|rel|accept|multiple|lang|dir|hidden|slot|autoCapitalize|inputMode",
+      "message": "<PersonAvatar> doesn't accept that prop. Declared props: name, src, size."
+    },
+    {
+      "kind": "props",
+      "component": "Progress",
+      "allowed": "value|max|label|tone|key|ref|className|style|children|aria-[\\w-]+|data-[\\w-]+|on[A-Z]\\w*|id|name|type|disabled|title|role|tabIndex|autoFocus|placeholder|value|defaultValue|required|autoComplete|htmlFor|form|min|max|step|maxLength|readOnly|href|to|target|rel|accept|multiple|lang|dir|hidden|slot|autoCapitalize|inputMode",
+      "message": "<Progress> doesn't accept that prop. Declared props: value, max, label, tone."
+    },
+    {
+      "kind": "enum",
+      "component": "Progress",
+      "prop": "tone",
+      "allowed": "ink|cobalt|success",
+      "message": "<Progress> tone must be one of 'ink' | 'cobalt' | 'success'."
+    },
+    {
+      "kind": "props",
+      "component": "Prose",
+      "allowed": "html|children|className|style|key|ref|className|style|children|aria-[\\w-]+|data-[\\w-]+|on[A-Z]\\w*|id|name|type|disabled|title|role|tabIndex|autoFocus|placeholder|value|defaultValue|required|autoComplete|htmlFor|form|min|max|step|maxLength|readOnly|href|to|target|rel|accept|multiple|lang|dir|hidden|slot|autoCapitalize|inputMode",
+      "message": "<Prose> doesn't accept that prop. Declared props: html, children, className, style."
+    },
+    {
+      "kind": "props",
+      "component": "QueueRow",
+      "allowed": "from|to|kind|refId|title|releasesIn|held|selectable|selected|onSelect|onRelease|onToggle|expanded|children|key|ref|className|style|children|aria-[\\w-]+|data-[\\w-]+|on[A-Z]\\w*|id|name|type|disabled|title|role|tabIndex|autoFocus|placeholder|value|defaultValue|required|autoComplete|htmlFor|form|min|max|step|maxLength|readOnly|href|to|target|rel|accept|multiple|lang|dir|hidden|slot|autoCapitalize|inputMode",
+      "message": "<QueueRow> doesn't accept that prop. Declared props: from, to, kind, refId, title, releasesIn, held, selectable, selected, onSelect, onRelease, onToggle, expanded, children."
+    },
+    {
+      "kind": "enum",
+      "component": "QueueRow",
+      "prop": "kind",
+      "allowed": "notice|assignment",
+      "message": "<QueueRow> kind must be one of 'notice' | 'assignment'."
+    },
+    {
+      "kind": "props",
+      "component": "RankedBars",
+      "allowed": "items|top|format|restLabel|key|ref|className|style|children|aria-[\\w-]+|data-[\\w-]+|on[A-Z]\\w*|id|name|type|disabled|title|role|tabIndex|autoFocus|placeholder|value|defaultValue|required|autoComplete|htmlFor|form|min|max|step|maxLength|readOnly|href|to|target|rel|accept|multiple|lang|dir|hidden|slot|autoCapitalize|inputMode",
+      "message": "<RankedBars> doesn't accept that prop. Declared props: items, top, format, restLabel."
+    },
+    {
+      "kind": "props",
+      "component": "Readouts",
+      "allowed": "items|key|ref|className|style|children|aria-[\\w-]+|data-[\\w-]+|on[A-Z]\\w*|id|name|type|disabled|title|role|tabIndex|autoFocus|placeholder|value|defaultValue|required|autoComplete|htmlFor|form|min|max|step|maxLength|readOnly|href|to|target|rel|accept|multiple|lang|dir|hidden|slot|autoCapitalize|inputMode",
+      "message": "<Readouts> doesn't accept that prop. Declared props: items."
+    },
+    {
+      "kind": "props",
+      "component": "Select",
+      "allowed": "label|hint|error|options|key|ref|className|style|children|aria-[\\w-]+|data-[\\w-]+|on[A-Z]\\w*|id|name|type|disabled|title|role|tabIndex|autoFocus|placeholder|value|defaultValue|required|autoComplete|htmlFor|form|min|max|step|maxLength|readOnly|href|to|target|rel|accept|multiple|lang|dir|hidden|slot|autoCapitalize|inputMode",
+      "message": "<Select> doesn't accept that prop. Declared props: label, hint, error, options."
+    },
+    {
+      "kind": "props",
+      "component": "Skeleton",
+      "allowed": "width|height|round|key|ref|className|style|children|aria-[\\w-]+|data-[\\w-]+|on[A-Z]\\w*|id|name|type|disabled|title|role|tabIndex|autoFocus|placeholder|value|defaultValue|required|autoComplete|htmlFor|form|min|max|step|maxLength|readOnly|href|to|target|rel|accept|multiple|lang|dir|hidden|slot|autoCapitalize|inputMode",
+      "message": "<Skeleton> doesn't accept that prop. Declared props: width, height, round."
+    },
+    {
+      "kind": "props",
+      "component": "SubagentGroup",
+      "allowed": "tasks|defaultOpen|children|key|ref|className|style|children|aria-[\\w-]+|data-[\\w-]+|on[A-Z]\\w*|id|name|type|disabled|title|role|tabIndex|autoFocus|placeholder|value|defaultValue|required|autoComplete|htmlFor|form|min|max|step|maxLength|readOnly|href|to|target|rel|accept|multiple|lang|dir|hidden|slot|autoCapitalize|inputMode",
+      "message": "<SubagentGroup> doesn't accept that prop. Declared props: tasks, defaultOpen, children."
+    },
+    {
+      "kind": "props",
+      "component": "SubagentTask",
+      "allowed": "title|state|model|effort|elapsed|latest|result|error|sessionHref|defaultOpen|children|key|ref|className|style|children|aria-[\\w-]+|data-[\\w-]+|on[A-Z]\\w*|id|name|type|disabled|title|role|tabIndex|autoFocus|placeholder|value|defaultValue|required|autoComplete|htmlFor|form|min|max|step|maxLength|readOnly|href|to|target|rel|accept|multiple|lang|dir|hidden|slot|autoCapitalize|inputMode",
+      "message": "<SubagentTask> doesn't accept that prop. Declared props: title, state, model, effort, elapsed, latest, result, error, sessionHref, defaultOpen, children."
+    },
+    {
+      "kind": "props",
+      "component": "Switch",
+      "allowed": "label|hint|checked|defaultChecked|onCheckedChange|disabled|name|key|ref|className|style|children|aria-[\\w-]+|data-[\\w-]+|on[A-Z]\\w*|id|name|type|disabled|title|role|tabIndex|autoFocus|placeholder|value|defaultValue|required|autoComplete|htmlFor|form|min|max|step|maxLength|readOnly|href|to|target|rel|accept|multiple|lang|dir|hidden|slot|autoCapitalize|inputMode",
+      "message": "<Switch> doesn't accept that prop. Declared props: label, hint, checked, defaultChecked, onCheckedChange, disabled, name."
+    },
+    {
+      "kind": "props",
+      "component": "Table",
+      "allowed": "columns|rows|rowKey|dense|key|ref|className|style|children|aria-[\\w-]+|data-[\\w-]+|on[A-Z]\\w*|id|name|type|disabled|title|role|tabIndex|autoFocus|placeholder|value|defaultValue|required|autoComplete|htmlFor|form|min|max|step|maxLength|readOnly|href|to|target|rel|accept|multiple|lang|dir|hidden|slot|autoCapitalize|inputMode",
+      "message": "<Table> doesn't accept that prop. Declared props: columns, rows, rowKey, dense."
+    },
+    {
+      "kind": "props",
+      "component": "Tabs",
+      "allowed": "tabs|value|defaultValue|onValueChange|key|ref|className|style|children|aria-[\\w-]+|data-[\\w-]+|on[A-Z]\\w*|id|name|type|disabled|title|role|tabIndex|autoFocus|placeholder|value|defaultValue|required|autoComplete|htmlFor|form|min|max|step|maxLength|readOnly|href|to|target|rel|accept|multiple|lang|dir|hidden|slot|autoCapitalize|inputMode",
+      "message": "<Tabs> doesn't accept that prop. Declared props: tabs, value, defaultValue, onValueChange."
+    },
+    {
+      "kind": "props",
+      "component": "TextField",
+      "allowed": "label|hint|error|multiline|rows|key|ref|className|style|children|aria-[\\w-]+|data-[\\w-]+|on[A-Z]\\w*|id|name|type|disabled|title|role|tabIndex|autoFocus|placeholder|value|defaultValue|required|autoComplete|htmlFor|form|min|max|step|maxLength|readOnly|href|to|target|rel|accept|multiple|lang|dir|hidden|slot|autoCapitalize|inputMode",
+      "message": "<TextField> doesn't accept that prop. Declared props: label, hint, error, multiline, rows."
+    },
+    {
+      "kind": "props",
+      "component": "Thinking",
+      "allowed": "active|label|seconds|defaultOpen|children|key|ref|className|style|children|aria-[\\w-]+|data-[\\w-]+|on[A-Z]\\w*|id|name|type|disabled|title|role|tabIndex|autoFocus|placeholder|value|defaultValue|required|autoComplete|htmlFor|form|min|max|step|maxLength|readOnly|href|to|target|rel|accept|multiple|lang|dir|hidden|slot|autoCapitalize|inputMode",
+      "message": "<Thinking> doesn't accept that prop. Declared props: active, label, seconds, defaultOpen, children."
+    },
+    {
+      "kind": "props",
+      "component": "Toast",
+      "allowed": "tone|title|action|onDismiss|children|key|ref|className|style|children|aria-[\\w-]+|data-[\\w-]+|on[A-Z]\\w*|id|name|type|disabled|title|role|tabIndex|autoFocus|placeholder|value|defaultValue|required|autoComplete|htmlFor|form|min|max|step|maxLength|readOnly|href|to|target|rel|accept|multiple|lang|dir|hidden|slot|autoCapitalize|inputMode",
+      "message": "<Toast> doesn't accept that prop. Declared props: tone, title, action, onDismiss, children."
+    },
+    {
+      "kind": "enum",
+      "component": "Toast",
+      "prop": "tone",
+      "allowed": "info|success|danger",
+      "message": "<Toast> tone must be one of 'info' | 'success' | 'danger'."
+    },
+    {
+      "kind": "props",
+      "component": "ToolCall",
+      "allowed": "name|status|summary|input|output|error|duration|defaultOpen|key|ref|className|style|children|aria-[\\w-]+|data-[\\w-]+|on[A-Z]\\w*|id|name|type|disabled|title|role|tabIndex|autoFocus|placeholder|value|defaultValue|required|autoComplete|htmlFor|form|min|max|step|maxLength|readOnly|href|to|target|rel|accept|multiple|lang|dir|hidden|slot|autoCapitalize|inputMode",
+      "message": "<ToolCall> doesn't accept that prop. Declared props: name, status, summary, input, output, error, duration, defaultOpen."
+    },
+    {
+      "kind": "enum",
+      "component": "ToolCall",
+      "prop": "status",
+      "allowed": "running|done|error",
+      "message": "<ToolCall> status must be one of 'running' | 'done' | 'error'."
+    },
+    {
+      "kind": "props",
+      "component": "Tooltip",
+      "allowed": "content|side|open|children|key|ref|className|style|children|aria-[\\w-]+|data-[\\w-]+|on[A-Z]\\w*|id|name|type|disabled|title|role|tabIndex|autoFocus|placeholder|value|defaultValue|required|autoComplete|htmlFor|form|min|max|step|maxLength|readOnly|href|to|target|rel|accept|multiple|lang|dir|hidden|slot|autoCapitalize|inputMode",
+      "message": "<Tooltip> doesn't accept that prop. Declared props: content, side, open, children."
+    },
+    {
+      "kind": "enum",
+      "component": "Tooltip",
+      "prop": "side",
+      "allowed": "top|right|bottom|left",
+      "message": "<Tooltip> side must be one of 'top' | 'right' | 'bottom' | 'left'."
+    }
+  ]
+}

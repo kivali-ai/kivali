@@ -1,0 +1,8 @@
+version: "2"
+
+# Default v2 linter set is fine (errcheck, govet, ineffassign,
+# staticcheck, unused). Enabling formatters separately.
+
+formatters:
+  enable:
+    - gofmt

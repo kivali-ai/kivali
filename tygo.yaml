@@ -1,0 +1,15 @@
+# tygo turns the Go wire types in internal/web/apitypes into the
+# TypeScript the web app compiles against. Run `make api-types` after
+# changing apitypes; `make api-types-check` (on CI) fails when the
+# generated file is stale. Never edit web/src/api/types.gen.ts by hand.
+packages:
+  - path: "github.com/kivali-ai/kivali/internal/web/apitypes"
+    output_path: "web/src/api/types.gen.ts"
+    indent: "  "
+    enum_style: "union"
+    type_mappings:
+      time.Time: "string /* RFC 3339 */"
+    exclude_files:
+      - "nonil.go"
+    frontmatter: |
+      // Source: internal/web/apitypes. Regenerate with `make api-types`.

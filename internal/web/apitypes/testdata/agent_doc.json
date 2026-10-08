@@ -1,0 +1,10 @@
+{
+  "kind": "memory",
+  "content": "# Facts\n- Prod runs v0.14 [[ep:2026-09-17T01]]\n",
+  "updated_at": "2026-09-20T17:00:00Z",
+  "stats": {
+    "lines": 2,
+    "chars": 43,
+    "notes": 12
+  }
+}

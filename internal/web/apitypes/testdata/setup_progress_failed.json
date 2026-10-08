@@ -1,0 +1,20 @@
+{
+  "state": "failed",
+  "stages": [
+    {
+      "label": "Reading your files",
+      "state": "done"
+    },
+    {
+      "label": "Writing its first briefing",
+      "state": "failed"
+    },
+    {
+      "label": "Hiring",
+      "state": "queued"
+    }
+  ],
+  "elapsed_s": 61,
+  "error": "your Chief of Staff could not write its first briefing because the model call failed",
+  "who": "you, by trying again, or whoever runs this Kivali server if it keeps failing"
+}

@@ -1,0 +1,17 @@
+{
+  "source": "internal/web/chat_pending_test.go event order",
+  "about": "A message sent mid-turn waits as pending, is offered to the turn (Delete goes away), Send now pauses the turn: the partial reply, then the marker, then the delivered message, then the follow-up turn.",
+  "steps": [
+    { "event": "delta", "data": { "text": "Asking Provider A", "start_ts": 1789923600000, "model": "Opus 5.5", "effort": "high" } },
+    { "event": "pending_message", "data": { "id": "p1", "text": "Also ask about a five-day turn.", "queued_at": 1789923601000, "attachments": [], "deletable": true } },
+    { "event": "pending_message", "data": { "id": "p1", "text": "Also ask about a five-day turn.", "queued_at": 1789923601000, "attachments": [], "deletable": true } },
+    { "event": "pending_offered", "data": { "id": "p1" } },
+    { "event": "delta", "data": { "text": " about the invoice", "start_ts": 1789923600000, "model": "Opus 5.5", "effort": "high" } },
+    { "event": "chat_marker", "data": { "kind": "paused-to-deliver", "content": "Paused to deliver your message", "ts": 1789923602000 } },
+    { "event": "pending_delivered", "data": { "id": "p1", "ts": 1789923601000 } },
+    { "event": "done", "data": { "stop": "cancelled", "waiting_tasks": 0 } },
+    { "action": "stream_open" },
+    { "event": "chat_message", "data": { "role": "received", "kind": "direct_chat", "content": "Also ask about a five-day turn.", "ts": 1789923601000, "attachments": [] } },
+    { "event": "delta", "data": { "text": "Asking about a five-day turn now.", "start_ts": 1789923603000, "model": "Opus 5.5", "effort": "high" } }
+  ]
+}

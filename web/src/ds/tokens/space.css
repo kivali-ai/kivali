@@ -1,0 +1,36 @@
+/* Kivali space, shape, motion, stacking and layout. */
+:root {
+  /* Spacing · 4px base */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --space-8: 32px;
+  /* Radius */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+  --radius-full: 9999px;
+  /* Duration */
+  --duration-fast: 120ms; /* @kind other */
+  --duration-base: 200ms; /* @kind other */
+  --duration-slow: 320ms; /* @kind other */
+  /* Easing */
+  --ease-out: cubic-bezier(0.2, 0.7, 0.2, 1); /* @kind other */
+  --ease-in-out: cubic-bezier(0.6, 0, 0.3, 1); /* @kind other */
+  /* Stacking */
+  --z-sticky: 100; /* @kind other */
+  --z-drawer: 200; /* @kind other */
+  --z-menu: 300; /* @kind other */
+  --z-dialog: 400; /* @kind other */
+  --z-toast: 500; /* @kind other */
+  --z-tooltip: 600; /* @kind other */
+  /* Layout */
+  --sidebar-width: 264px; /* @kind other */
+  --content-narrow: 640px; /* @kind other */
+  --content: 880px; /* @kind other */
+  --content-wide: 1200px; /* @kind other */
+  --bp-sm: 640px; /* @kind other */
+  --bp-md: 960px; /* @kind other */
+  --bp-lg: 1280px; /* @kind other */
+}

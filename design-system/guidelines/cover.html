@@ -1,0 +1,46 @@
+<!-- @dsCard group="Brand" viewport="960x288" name="Cover" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><link rel="stylesheet" href="../styles.css">
+<title>Kivali</title>
+<style>
+  html, body { margin:0; height:100%; }
+  body { background:var(--paper); color:var(--ink); font-family:"IBM Plex Sans", var(--font-sans, sans-serif); overflow:hidden; }
+  .cover { position:relative; height:288px; overflow:hidden; }
+  .art { position:absolute; top:0; left:480px; width:480px; height:288px; overflow:hidden; }
+  .art svg { display:block; width:480px; height:288px; }
+  .tile { fill:var(--ink); } .stem { fill:var(--on-ink); }
+  [data-theme="dark"] .tile { fill:var(--paper-raised); } [data-theme="dark"] .stem { fill:var(--ink); }
+  .sig { fill:var(--signal); } .cob { fill:var(--cobalt); } .graph { fill:var(--ink-faint); } .cut { fill:var(--paper); }
+  .words { position:absolute; left:var(--space-8); bottom:var(--space-8); max-width:440px; }
+  .name { margin:0; line-height:0; }
+  .name svg { display:block; height:104px; width:auto; }
+  .name .ltr { fill:var(--ink); } .name .dot { fill:var(--signal); }
+  .tag { margin:var(--space-4) 0 0 4px; font-size:14px; line-height:20px; color:var(--ink-muted); }
+</style>
+</head>
+<body>
+<div class="cover">
+<div class="art" aria-hidden="true">
+<svg viewBox="0 0 480 288" width="480" height="288">
+<!--
+  blocks      the logo icon as the slab (224x224, flush top and bottom with every block, radius 24% like the mark) · signal disc 96 across · cobalt pill 96x112 · ink-faint panel 128x224 bleeding off the right edge
+  arrangement the icon leads, a disc over a pill beside it, a graphite side panel: the faceplate from the first cover, now built around the real mark
+  pattern     the dot grid (space-4 family, 24px pitch) cut into the graphite panel, 27 dots; the icon's two honey dots are the figure
+  scales      gutters space-4; margins space-8; corners radius-lg, pill and disc radius-full, tile 24% of its side as in the logo
+-->
+<rect class="tile" x="32.0" y="32.0" width="224.0" height="224.0" rx="54.0"/><rect class="stem" x="90.2" y="139.5" width="35.8" height="89.6" rx="17.9"/><rect class="stem" x="161.9" y="162.8" width="35.8" height="66.3" rx="17.9"/><circle class="sig" cx="108.2" cy="89.8" r="26.4"/><circle class="sig" cx="179.8" cy="113.1" r="26.4"/>
+<circle class="sig" cx="320" cy="80" r="48"/>
+<rect class="cob" x="272" y="144" width="96" height="112" rx="48"/>
+<rect class="graph" x="384" y="32" width="112" height="224" rx="16"/>
+<circle class="cut" cx="408" cy="56" r="2.5"/><circle class="cut" cx="432" cy="56" r="2.5"/><circle class="cut" cx="456" cy="56" r="2.5"/><circle class="cut" cx="408" cy="80" r="2.5"/><circle class="cut" cx="432" cy="80" r="2.5"/><circle class="cut" cx="456" cy="80" r="2.5"/><circle class="cut" cx="408" cy="104" r="2.5"/><circle class="cut" cx="432" cy="104" r="2.5"/><circle class="cut" cx="456" cy="104" r="2.5"/><circle class="cut" cx="408" cy="128" r="2.5"/><circle class="cut" cx="432" cy="128" r="2.5"/><circle class="cut" cx="456" cy="128" r="2.5"/><circle class="cut" cx="408" cy="152" r="2.5"/><circle class="cut" cx="432" cy="152" r="2.5"/><circle class="cut" cx="456" cy="152" r="2.5"/><circle class="cut" cx="408" cy="176" r="2.5"/><circle class="cut" cx="432" cy="176" r="2.5"/><circle class="cut" cx="456" cy="176" r="2.5"/><circle class="cut" cx="408" cy="200" r="2.5"/><circle class="cut" cx="432" cy="200" r="2.5"/><circle class="cut" cx="456" cy="200" r="2.5"/><circle class="cut" cx="408" cy="224" r="2.5"/><circle class="cut" cx="432" cy="224" r="2.5"/><circle class="cut" cx="456" cy="224" r="2.5"/>
+</svg>
+</div>
+<div class="words">
+<h1 class="name" aria-label="Kivali"><svg viewBox="76 -16 2200 730" role="img" aria-hidden="true"><path class="ltr" d="M76 700V0H179V399H195L389 207H526L277 446L534 700H398L195 495H179V700Z M607 700V207H710V700Z M957 700 791 207H900L1031 624H1047L1178 207H1287L1121 700Z M1506 714Q1453 714 1411.5 696.0Q1370 678 1345.5 643.0Q1321 608 1321 558Q1321 507 1345.5 473.5Q1370 440 1412.5 423.0Q1455 406 1509 406H1659V374Q1659 331 1633.0 305.0Q1607 279 1553 279Q1500 279 1472.0 304.0Q1444 329 1435 369L1339 338Q1351 298 1377.5 265.5Q1404 233 1448.0 213.0Q1492 193 1554 193Q1650 193 1705.0 242.0Q1760 291 1760 381V584Q1760 614 1788 614H1830V700H1753Q1718 700 1696.0 682.0Q1674 664 1674 633V630H1659Q1651 645 1635.0 665.0Q1619 685 1588.0 699.5Q1557 714 1506 714ZM1521 629Q1583 629 1621.0 593.5Q1659 558 1659 496V486H1515Q1474 486 1449.0 503.5Q1424 521 1424 555Q1424 589 1450.0 609.0Q1476 629 1521 629Z M1910 700V0H2013V700Z M2146 700V282H2249V700Z"/><circle class="dot" cx="658.5" cy="62" r="78"/><circle class="dot" cx="2197.5" cy="62" r="78"/></svg></h1>
+<p class="tag">The agentic OS with personality.</p>
+</div>
+</div>
+</body>
+</html>

@@ -1,0 +1,59 @@
+{
+  "path": "messages/2026-09-28/0003-chief-of-staff.md",
+  "kind": "role_update",
+  "title": "Update role: Buyer",
+  "proposer": {
+    "slug": "chief-of-staff",
+    "name": "Chief of Staff"
+  },
+  "proposed_at": "2026-09-01T09:30:00Z",
+  "reason_md": "The buyer should own vendor quotes too.",
+  "attachments": [
+    {
+      "name": "quotes.csv",
+      "size_bytes": 2048,
+      "url": "/attachments/3f2a"
+    }
+  ],
+  "summary": {
+    "agent": {
+      "slug": "buyer",
+      "name": "Buyer",
+      "role_title": "Buyer",
+      "icon": "shopping-cart",
+      "reports_to": {
+        "slug": "engineering-lead",
+        "name": "Engineering lead"
+      },
+      "model": "claude-opus-5-5",
+      "model_label": "Opus 5.5",
+      "effort": "high"
+    },
+    "moves": [],
+    "facts": [
+      {
+        "label": "Reports to",
+        "value": "Engineering lead"
+      },
+      {
+        "label": "Model",
+        "value": "Opus 5.5 · high"
+      }
+    ]
+  },
+  "docs": [
+    {
+      "key": "role",
+      "title": "Role",
+      "meta": "role.md · 5 lines",
+      "before": "# Buyer\n\n## Scope\nBuys software and services.\n",
+      "after": "# Buyer\n\n## Scope\nBuys software and services.\nOwns vendor quotes.\n",
+      "before_is_current": true
+    }
+  ],
+  "resolved": {
+    "approved": false,
+    "at": "2026-09-20T17:00:00Z",
+    "result": "Buyer keeps its current role"
+  }
+}

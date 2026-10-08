@@ -1,0 +1,52 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "Kivali",
+  "mainBinaryName": "Kivali",
+  "version": "0.15.1",
+  "identifier": "ai.kivali.desktop",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [],
+    "withGlobalTauri": false,
+    "security": {
+      "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost; img-src 'self' data:; style-src 'self'",
+      "devCsp": "default-src 'self'; connect-src ipc: http://ipc.localhost ws://localhost:1420; img-src 'self' data:; style-src 'self' 'unsafe-inline'",
+      "capabilities": ["shell-pages"]
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["app", "dmg"],
+    "createUpdaterArtifacts": true,
+    "category": "Productivity",
+    "shortDescription": "Run Kivali teams on this computer, or connect to one",
+    "copyright": "Copyright 2026 The Kivali Authors",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "externalBin": ["binaries/kivali-supervisor"],
+    "macOS": {
+      "minimumSystemVersion": "13.0",
+      "hardenedRuntime": true,
+      "signingIdentity": "-",
+      "entitlements": "Entitlements.plist"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEMxMEYxMzQ1QTU5ODQ0Q0EKUldUS1JKaWxSUk1Qd1NUU2RkbjA4bTZJYVhLaW55N1lCajZub05EN3hKaTB3WUxreFVDZ1I3Y2MK",
+      "endpoints": [
+        "https://github.com/kivali-ai/kivali/releases/latest/download/latest.json"
+      ]
+    }
+  }
+}

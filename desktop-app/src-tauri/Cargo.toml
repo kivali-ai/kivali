@@ -1,0 +1,143 @@
+[package]
+name = "kivali-desktop"
+version = "0.15.1"
+description = "Kivali Desktop: the shell that creates, runs and connects to Kivali orgs"
+license = "Apache-2.0"
+edition = "2021"
+rust-version = "1.90"
+publish = false
+default-run = "kivali-desktop"
+
+[lib]
+name = "kivali_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+serde_json = "1"
+
+[dependencies]
+# "unstable": multiwebview (a team window's webview beside Kivali's own pages).
+tauri = { version = "2", features = ["tray-icon", "image-png", "unstable"] }
+tauri-plugin-updater = "2"
+tauri-plugin-autostart = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+# System notifications (platform::notify), sent from Rust only.
+tauri-plugin-notification = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+url = "2"
+# The same reqwest and rustls (ring provider) the updater plugin already
+# pulls in, so the remote-org check (orgurl.rs, https to a remote org)
+# adds no second TLS stack. The supervisor client does not use it: it
+# speaks HTTP/1.1 itself over the platform's transport
+# (src/supervisor/http.rs).
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls-no-provider"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+tokio = { version = "1", features = ["rt", "time"] }
+dirs = "6"
+# The Windows pipe name's hash (platform::pipe_name), tested everywhere.
+sha2 = "0.10"
+semver = "1"
+time = { version = "0.3", features = ["parsing", "formatting"] }
+# The desktop sign-in's return token (signin.rs).
+getrandom = "0.3"
+base64 = "0.22"
+# RS256 signatures on Google id_tokens (the owner's sign-in at setup).
+ring = "0.17"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+# The alert sheet, the appearance and Reduce motion queries and the
+# device-owner prompt (platform/macos.rs); notifications whose clicks
+# are routed (platform/notify_macos.rs; "exception" catches the center
+# throwing outside an app bundle).
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = { version = "0.6", features = ["exception"] }
+block2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = [
+  "std",
+  "NSArray",
+  "NSBundle",
+  "NSDictionary",
+  "NSError",
+  "NSString",
+  "NSUserDefaults",
+] }
+objc2-app-kit = { version = "0.3", default-features = false, features = [
+  "std",
+  "block2",
+  "NSAccessibility",
+  "NSAlert",
+  "NSAppearance",
+  "NSApplication",
+  "NSButton",
+  "NSCell",
+  "NSControl",
+  "NSGraphics",
+  "NSResponder",
+  "NSRunningApplication",
+  "NSView",
+  "NSWindow",
+  "NSWorkspace",
+] }
+objc2-local-authentication = { version = "0.3", default-features = false, features = ["std", "block2", "LAContext", "LAError"] }
+objc2-user-notifications = { version = "0.3", default-features = false, features = [
+  "std",
+  "block2",
+  "bitflags",
+  "UNNotification",
+  "UNNotificationContent",
+  "UNNotificationRequest",
+  "UNNotificationResponse",
+  "UNNotificationTrigger",
+  "UNUserNotificationCenter",
+] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_Storage_FileSystem",
+  # The shell's log and the flags' output (platform::redirect_output,
+  # platform::attach_terminal): the standard handles and AttachConsole.
+  "Win32_System_Console",
+  "Win32_System_Diagnostics_ToolHelp",
+  "Win32_System_Pipes",
+  "Win32_System_Registry",
+  "Win32_System_SystemInformation",
+  "Win32_System_Threading",
+  # The alerts (platform::alert): TaskDialogIndirect, comctl32 v6.
+  "Win32_UI_Controls",
+  # The team window menu's keys (platform::menu_shortcuts, press_keys):
+  # the modifiers' state and SendInput.
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_UI_WindowsAndMessaging",
+] }
+# Windows Hello (platform::authenticate).
+windows = { version = "0.62", features = ["Foundation", "Security_Credentials_UI", "Win32_Foundation", "Win32_System_WinRT"] }
+windows-future = "0.3"
+# The team window's frame guard (platform::guard_frames): WebView2's
+# FrameNavigationStarting, on the controller Tauri hands over. The
+# version Tauri 2.12 itself uses (`cargo tree -i webview2-com`), so
+# there is one copy: the controller's type is that copy's. A Tauri on
+# another 0.x of it fails to build here, so the two move together.
+webview2-com = "0.39.1"
+
+[dev-dependencies]
+tempfile = "3"
+
+# Dependencies without debug info in dev and test builds: most of a cold
+# build's codegen and link time goes into debug info for Tauri's
+# dependencies (on Linux, the GTK and WebKit bindings), which nobody
+# steps through. The shell's own crate keeps it.
+[profile.dev.package."*"]
+debug = false
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true

@@ -1,0 +1,257 @@
+/*
+ * The agent pages (header and tabs) and the chat: transcript, pending line, composer, toasts. App classes
+ * only; every value is a token or calc() over tokens. Breakpoints are literal in @media (custom properties
+ * cannot be used there): 960 is --bp-md, 640 is --bp-sm.
+ */
+
+/* ---- Agent page: header, tabs, body ---- */
+.app-agent {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.app-agent-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) calc(var(--space-1) * 3.5);
+}
+.app-agent-titles {
+  flex: 1;
+  min-width: 0;
+}
+/* The phone header carries the name below 960; the page carries it from 960 (one h1 at every width). */
+.app-agent-name {
+  display: none;
+}
+.app-agent-role {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.app-agent-menu {
+  display: flex;
+}
+.app-agent-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) calc(var(--space-1) * 3.5);
+  flex-basis: 100%;
+}
+.app-agent-body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/*
+ * Header and tabs are pinned to the top of the column, on paper so the body scrolls under
+ * them without showing through; the tabs list's own hairline is the edge. The padding gives the stuck header
+ * room from the window's edge and the tabs; the matching negative margins keep the resting layout unchanged.
+ * AgentPage measures the header into --app-agent-head-h so the tabs pin directly beneath it.
+ */
+.app-agent-head.is-pinned {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-sticky);
+  background: var(--paper);
+  padding: var(--space-4) 0 var(--space-2);
+  margin: calc(var(--space-4) * -1) 0 calc(var(--space-2) * -1);
+}
+.app-agent-tabs > [role='tablist'] {
+  position: sticky;
+  top: var(--app-agent-head-h, 0);
+  z-index: var(--z-sticky);
+  background: var(--paper);
+}
+/* The top of the body: AgentPage watches it leave the window to condense the phone header. */
+.app-agent-sentinel {
+  height: 0;
+}
+
+/* Below 960, scrolled: one slim row (back, avatar 24, name, compact state, context, New chat, the ⋯ menu). */
+.app-agent-head.is-condensed {
+  flex-wrap: nowrap;
+  gap: var(--space-2);
+  padding-top: var(--space-2);
+  margin-top: calc(var(--space-2) * -1);
+}
+.app-agent-head.is-condensed > * {
+  flex: none;
+}
+.app-agent-head.is-condensed .app-agent-name {
+  display: block;
+  flex: 1;
+  min-width: 0;
+  font-weight: var(--type-label-weight);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.app-agent-ctx {
+  display: inline-flex;
+  flex: none;
+}
+/* The slim row carries the way back while it shows, so the phone header's (scrolled away) is not a second one. */
+.app-main:has(.app-agent-head.is-condensed) .app-phone-header > :first-child {
+  visibility: hidden;
+}
+
+/* ---- Chat: the transcript sits on the composer; short chats sit at the bottom ---- */
+.app-chat {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  /* The window less the header and tabs above, so a short chat sits on the composer. Tokens and 100vh only. */
+  min-height: calc(100vh - var(--space-8) * 9);
+}
+.app-chat-scroll {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: var(--space-4);
+  min-width: 0;
+}
+.app-chat-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.app-transcript {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+.app-transcript-tools {
+  display: flex;
+  justify-content: flex-end;
+}
+.app-transcript-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+.app-transcript-item {
+  min-width: 0;
+}
+
+/* Blocks inside an agent's message, in the order they happened (ToolCall: an 8px gap). */
+.app-chat-items {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.app-chat-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+.app-chat-shared {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.app-chat-link {
+  font-family: var(--type-caption-family);
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-line);
+  font-weight: 500;
+  color: var(--link);
+}
+.app-chat-error-text {
+  margin: 0;
+  white-space: pre-wrap;
+}
+.app-chat-card-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) calc(var(--space-1) * 3);
+  margin-top: calc(var(--space-1) * 2.5);
+}
+
+/* ---- New messages, below the fold ---- */
+.app-chat-jump {
+  position: sticky;
+  bottom: calc(var(--space-8) * 4);
+  z-index: var(--z-sticky);
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+.app-chat-jump > * {
+  pointer-events: auto;
+}
+
+/* ---- Composer: stays at the foot of the window while the transcript scrolls ---- */
+.app-chat-compose {
+  position: sticky;
+  bottom: 0;
+  z-index: var(--z-sticky);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-bottom: var(--space-4);
+  background: var(--paper);
+}
+.app-chat-select {
+  width: calc(var(--space-8) * 2.5);
+}
+.app-chat-file {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+.app-chat-spacer {
+  flex: 1;
+}
+
+/* ---- Toasts: bottom-centre above the composer on phone, bottom-right on desktop ---- */
+.app-chat-toasts {
+  position: fixed;
+  left: var(--space-4);
+  right: var(--space-4);
+  bottom: calc(var(--space-8) * 4);
+  z-index: var(--z-toast);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+@media (min-width: 960px) {
+  .app-agent-name {
+    display: block;
+  }
+  .app-agent-status {
+    flex-basis: auto;
+    order: 3;
+  }
+  .app-agent-menu {
+    order: 4;
+  }
+  .app-chat-select {
+    width: calc(var(--space-8) * 3.5);
+  }
+  .app-chat-toasts {
+    left: auto;
+    right: var(--space-6);
+    bottom: calc(var(--space-8) * 4);
+    align-items: flex-end;
+  }
+}
+
+/* A message body is markdown inside the design system's Prose, whose paragraphs carry a
+   bottom margin. The last block in a message must not add space under the text: in a
+   person's bubble it made the bubble tall and pushed the text above centre. */
+.app-chat-prose > :last-child {
+  margin-bottom: 0;
+}

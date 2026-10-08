@@ -1,0 +1,229 @@
+/*
+ * Home: Needs you, In flight, Queue, History. Tokens only; rows come from the design system (GoalRow, ListRow,
+ * QueueRow) and sit in one raised container per section. Breakpoints: 640 (one column) and 960 (tab bar);
+ * custom properties do not work inside @media, so the literals appear in the queries.
+ * Canvas values that are not a token are calc() over the 4px step (--space-1).
+ */
+
+.app-home {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-8) + var(--space-1));
+}
+
+/* The desktop title and the Now · History tabs. The phone header carries the title below 960. */
+.app-home-top {
+  display: none;
+}
+
+/* ---- Sections ---- */
+.app-home-section {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-2) + var(--space-1));
+}
+
+.app-home-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: calc(var(--space-2) + var(--space-1) / 2);
+}
+
+/* In flight: the readouts wrap under the heading on phone, sit beside it from 640. */
+.app-home-readouts-head {
+  column-gap: calc(var(--space-4) + var(--space-1));
+  row-gap: calc(var(--space-1) * 1.5);
+}
+
+/* One raised container per list: paper-raised, a line border, radius 16, shadow-sm. Rows bring their own
+   hairlines; the inner wrapper tucks the last one under the container's edge. */
+.app-home-list {
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.app-home-rows {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: -1px;
+}
+
+.app-home-none {
+  padding: var(--space-4);
+  border-bottom: 1px solid var(--line);
+}
+
+.app-home-item {
+  display: flex;
+  flex-direction: column;
+}
+
+/* The expanded part of a Needs-you or History row: indented to the text column (avatar 32 plus gap). */
+.app-home-expand {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-4) - var(--space-1) / 2);
+  padding: var(--space-2) calc(var(--space-2) + var(--space-1)) calc(var(--space-2) + var(--space-1));
+  border-bottom: 1px solid var(--line);
+}
+
+.app-home-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.app-home-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.app-home-spacer {
+  flex: 1;
+}
+
+.app-home-link {
+  font: var(--type-caption);
+  color: var(--link);
+}
+
+.app-home-review {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--space-1) * 1.5);
+}
+
+/* Hand back: Resolution beside Outcome from 640, stacked below. */
+.app-home-handback {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: calc(var(--space-2) + var(--space-1));
+}
+
+/* ---- Queue ---- */
+.app-home-queue-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(var(--space-2) + var(--space-1)) var(--space-6);
+}
+
+.app-home-queue-head > .app-home-head {
+  flex: 1 0 auto;
+}
+
+.app-home-queue-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.app-home-filters {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.app-home-release-all {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* ---- History ---- */
+.app-home-reply {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-top: calc(var(--space-2) + var(--space-1));
+  border-top: 1px solid var(--line);
+}
+
+.app-home-reply-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.app-home-more {
+  display: flex;
+  justify-content: center;
+}
+
+.app-home-foot-link {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--space-1) * 1.5);
+  align-self: flex-start;
+  font: var(--type-body);
+  color: var(--link);
+}
+
+/* ---- Loading ---- */
+.app-home-loading {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-8) + var(--space-1));
+}
+
+.app-home-skeleton {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space-2) + var(--space-1));
+  padding: calc(var(--space-2) + var(--space-1) / 2) calc(var(--space-2) + var(--space-1));
+  border-bottom: 1px solid var(--line);
+}
+
+.app-home-skeleton-text {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-1) * 1.5);
+}
+
+/* ---- Toasts: bottom-centre above the tab bar on phone, bottom-right on desktop ---- */
+.app-home-toasts {
+  position: fixed;
+  left: var(--space-4);
+  right: var(--space-4);
+  bottom: calc(var(--space-8) * 3);
+  z-index: var(--z-toast);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+@media (min-width: 640px) {
+  .app-home-expand {
+    padding: 0 calc(var(--space-4) + var(--space-1)) calc(var(--space-4) + var(--space-1)) calc(var(--space-8) + var(--space-6));
+  }
+
+  .app-home-handback {
+    grid-template-columns: minmax(calc(var(--space-8) * 4.5), calc(var(--space-8) * 5.5)) minmax(0, 1fr);
+  }
+}
+
+@media (min-width: 960px) {
+  .app-home-top {
+    display: flex;
+    flex-direction: column;
+    gap: calc(var(--space-2) + var(--space-1));
+  }
+
+  .app-home-toasts {
+    left: auto;
+    right: var(--space-6);
+    bottom: var(--space-6);
+    align-items: flex-end;
+  }
+}

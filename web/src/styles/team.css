@@ -1,0 +1,66 @@
+/*
+ * Team: the org by reporting line. From 960, one header and one raised container per manager, a manager's own
+ * reports nesting below, indented; below 960, one list indented by level (the canvas's phone). Tokens only.
+ */
+.app-team {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+.app-team-title {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.app-team-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.app-team-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.app-team-list {
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+.app-team-rows {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: -1px;
+}
+/* From 960: a manager's reports nest one group down, 32 in per level. */
+.app-team-branch {
+  padding-left: var(--space-8);
+  margin-top: var(--space-2);
+}
+/* Below 960: one list, each row 16 in per level under the person. */
+.app-team-indent-1 {
+  padding-left: var(--space-4);
+}
+.app-team-indent-2 {
+  padding-left: calc(var(--space-4) * 2);
+}
+.app-team-indent-3 {
+  padding-left: calc(var(--space-4) * 3);
+}
+.app-team-indent-4 {
+  padding-left: calc(var(--space-4) * 4);
+}
+.app-team-indent-5 {
+  padding-left: calc(var(--space-4) * 5);
+}
+.app-team-caption {
+  font: var(--text-label);
+  letter-spacing: var(--type-label-tracking);
+}
+/* The archive rows run to the card's edges, under the header's hairline. */
+.app-team-archive {
+  margin: 0 calc(var(--space-4) * -1) calc(var(--space-4) * -1);
+  border-top: 1px solid var(--line);
+}
