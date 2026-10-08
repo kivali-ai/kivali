@@ -90,7 +90,8 @@ The tests run the common code against the fake backend
 amd64, so a hard-coded file name or architecture fails) and the real host
 of whichever OS runs them; `host_test.go` covers each Host method on that
 OS. `.github/workflows/ci.yml`'s desktop jobs run the suite on
-GitHub-hosted macOS and Windows runners on every push (`make ci-desktop`),
+GitHub-hosted macOS and Windows runners on every pull request and every
+push to `main` (`make ci-desktop`),
 and CI cross-builds and vets for Windows and Linux.
 
 ## Processes

@@ -75,7 +75,7 @@ vX.Y.Z-dev.N --cleanup-tag`.
 | `desktop-app/package.json`, `package-lock.json` | `"version"` | follows tauri.conf.json (same) |
 
 `make version-check` asserts they agree (with `VERSION=vX.Y.Z`, that they
-all equal it, the desktop's without the `v`). CI runs it on every push;
+all equal it, the desktop's without the `v`). CI runs it on every pull request and every push to `main`;
 `release.sh` runs it before the bump (and `bump-version.sh` after); the release workflow runs
 it first with the pushed tag and fails the whole run, before building
 anything, if the tag and tauri.conf.json's version differ.
@@ -232,7 +232,8 @@ when the dependencies change.
 
 After any dependency change, run `make licenses`: it regenerates the
 notices and holds every shipped dependency to `scripts/license-policy.txt`
-(`make license-check`, which CI also runs on every push).
+(`make license-check`, which CI also runs on every pull request and every
+push to `main`).
 
 ## Secrets
 

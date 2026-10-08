@@ -1,12 +1,12 @@
 # CI
 #
-# Every push to a branch and every pull request: the Go checks, the web
+# Every pull request and every push to main: the Go checks, the web
 # app's lint, tests and Playwright, the helm chart and the licenses of
 # every shipped dependency on Linux, and Kivali Desktop (the shell and
 # the supervisor) on macOS and Windows. The
 # slow suites (race detector, integration on k3s) are nightly.yml's.
 # release.yml calls this workflow on a tag, so a tag push does not run
-# it a second time.
+# it a second time. A branch without a pull request runs nothing.
 #
 # The web targets do not skip when the frontend is missing or broken:
 # `make web-install` is `npm ci`, which fails without
@@ -17,15 +17,17 @@ name: CI
 
 on:
   push:
-    branches: ['**']
+    branches: [main]
   pull_request:
   workflow_call:
 
 # Keyed by the calling workflow too: called from release.yml, this run
 # must not cancel (or be cancelled by) another workflow's on the ref.
+# A new push to a pull request cancels its stale run; on main every
+# merged commit runs to completion, so each one has a result.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
