@@ -207,9 +207,10 @@ pub async fn open_team_page(webview: Webview, app: AppHandle, id: String, path: 
 }
 
 #[tauri::command]
-pub fn pause_team(webview: Webview, app: AppHandle, id: String) -> Res {
+pub fn confirm_pause(webview: Webview, app: AppHandle, id: String) -> Res {
     guard(&webview)?;
-    shell::pause_team(&app, &id)
+    crate::menus::confirm_pause(&app, &id, false);
+    Ok(())
 }
 
 #[tauri::command]
@@ -418,7 +419,7 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static 
         connect_reset,
         open_team,
         open_team_page,
-        pause_team,
+        confirm_pause,
         resume_team,
         retry_team,
         pause_and_resume,
@@ -466,7 +467,7 @@ pub const COMMANDS: &[&str] = &[
     "connect_reset",
     "open_team",
     "open_team_page",
-    "pause_team",
+    "confirm_pause",
     "resume_team",
     "retry_team",
     "pause_and_resume",

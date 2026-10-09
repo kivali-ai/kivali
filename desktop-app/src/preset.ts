@@ -4,7 +4,7 @@
 import type { ConnectError, ConnectFound } from "./types";
 import type { SetupState } from "./logic/setup";
 
-export type DialogId = "pause" | "update" | "memory" | "remove" | "delete" | "delete-confirm";
+export type DialogId = "update" | "memory" | "remove" | "delete" | "delete-confirm";
 
 export interface Preset {
   setup?: Partial<SetupState>;

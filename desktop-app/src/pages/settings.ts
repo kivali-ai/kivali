@@ -13,7 +13,7 @@ import { claudeLine, cpuOptions, devicesHint, devicesView, diskLines, memoryConf
 import type { DialogId } from "../preset";
 import type { Snapshot, Team } from "../types";
 import { banner, button, caption, card, dot, field, monoLabel, orgMark, row, select, settingsButtonLabel, switchRow } from "../ui";
-import { confirmDeleteSheet, deleteSheet, memorySheet, pauseSheet, removeSheet, updateSheet, type Facts } from "./dialogs";
+import { confirmDeleteSheet, deleteSheet, memorySheet, removeSheet, updateSheet, type Facts } from "./dialogs";
 import { foundryDialog, openFoundry } from "./foundry";
 import { isFoundry } from "../logic/foundry";
 
@@ -305,7 +305,7 @@ async function resume(ctx: Ctx, id: string) {
 function overview(ctx: Ctx, t: Team): Child[] {
   const st = statusRow(t, ctx.snap, ctx.now);
   let action: Child = null;
-  if (st.action === "pause") action = button(st.actionLabel!, { variant: "secondary", size: "sm", id: "pause", onclick: () => openDialog(ctx, "pause", t.id) });
+  if (st.action === "pause") action = button(st.actionLabel!, { variant: "secondary", size: "sm", id: "pause", onclick: () => void ctx.act("confirm_pause", { id: t.id }) });
   if (st.action === "resume") action = button(st.actionLabel!, { variant: "secondary", size: "sm", id: "resume", onclick: () => void resume(ctx, t.id) });
   if (st.action === "retry")
     action = button(st.actionLabel!, {
@@ -632,8 +632,6 @@ function dialogView(ctx: Ctx): HTMLElement | null {
   }
   const close = () => closeDialog(ctx);
   switch (dialog.id) {
-    case "pause":
-      return pauseSheet(ctx, t, close);
     case "update":
       return updateSheet(ctx, t, close);
     case "memory":

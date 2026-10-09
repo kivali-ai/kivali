@@ -137,15 +137,6 @@ export function agentsWorking(working: number | null | undefined): string | null
   return working === 1 ? "1 agent working" : `${working.toLocaleString("en-US")} agents working`;
 }
 
-/** The pause dialog's sentence (the native alert's is view.rs `pause_message`). */
-export function pauseText(team: Pick<Team, "working">): string {
-  const n = team.working;
-  if (n == null) return "Agents that are working stop mid-task and pick up where they left off when you resume.";
-  if (n === 0) return "No agents are working right now. They pick up where they left off when you resume.";
-  if (n === 1) return "1 agent is working. It stops mid-task and picks up where it left off when you resume.";
-  return `${n.toLocaleString("en-US")} agents are working. They stop mid-task and pick up where they left off when you resume.`;
-}
-
 /** The update dialog's sentence: "It takes about 3 minutes. Agents pause while it updates. If
  *  anything goes wrong, Plainsong goes back to 0.16." */
 export function updateText(team: Team): string {

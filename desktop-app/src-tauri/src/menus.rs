@@ -549,8 +549,9 @@ pub fn refresh(app: &AppHandle) {
     }
 }
 
-/// Pause from a menu: a sheet on the team's window, then pause.
-fn confirm_pause(app: &AppHandle, id: &str) {
+/// Asks, then pauses: from a menu (`on_team_window`) as a sheet on the
+/// team's window when it shows, from Settings as an alert of its own.
+pub fn confirm_pause(app: &AppHandle, id: &str, on_team_window: bool) {
     let sh = app.state::<Shell>();
     let Some(t) = sh.team(id) else { return };
     // "3 agents are working. They stop mid-task…" when the team said.
@@ -562,7 +563,9 @@ fn confirm_pause(app: &AppHandle, id: &str) {
         destructive: None,
         suppression: None,
     };
-    let parent = app.get_window(&windows::team_label(id)).filter(|w| w.is_visible().unwrap_or(false));
+    let parent = app
+        .get_window(&windows::team_label(id))
+        .filter(|w| on_team_window && w.is_visible().unwrap_or(false));
     let app2 = app.clone();
     let id = id.to_string();
     platform::alert(
@@ -746,7 +749,7 @@ fn command(app: &AppHandle, id: &str) {
                     let team = team.to_string();
                     open_off_main(app, move |app| windows::show_team(app, &team))
                 }
-                "pause" => confirm_pause(app, team),
+                "pause" => confirm_pause(app, team, true),
                 "resume" => resume_or_ask(app, team),
                 "settings" => {
                     let route = format!("team/{team}");

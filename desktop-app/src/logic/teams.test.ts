@@ -4,7 +4,6 @@ import {
   claudeLine,
   cpuOptions,
   deleteList,
-  pauseText,
   signedOutLine,
   updateText,
   devicesHint,
@@ -193,11 +192,6 @@ describe("dialogs", () => {
   it("the delete dialog falls back to the snapshot's numbers", () => {
     expect(deleteList(team({ agents: 1, files: 1 }), null, "macos").slice(0, 2)).toEqual(["1 agent and what they remember", "1 file"]);
     expect(deleteList(team({ agents: 1 }), { agents: 6, files: null, disk_used_bytes: null }, "macos")[0]).toBe("6 agents and what they remember");
-  });
-  it("the pause dialog says how many agents it stops", () => {
-    expect(pauseText(team({ working: 3 }))).toBe("3 agents are working. They stop mid-task and pick up where they left off when you resume.");
-    expect(pauseText(team({ working: 1 }))).toBe("1 agent is working. It stops mid-task and picks up where it left off when you resume.");
-    expect(pauseText(team())).toBe("Agents that are working stop mid-task and pick up where they left off when you resume.");
   });
   it("the update dialog says how long", () => {
     const t = team({

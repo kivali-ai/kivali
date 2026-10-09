@@ -186,13 +186,13 @@ account already signed in. It never opens a terminal session, so
 at `http://localhost:1420`. In a plain browser (no Tauri), `ipc.ts`
 loads `mock.ts`, which answers every command from fixtures:
 `?state=<artboard id>` opens that screen with its snapshot and page
-state (`A1`–`A20`, `B1`–`B6`, `C4`–`C8`, `D1`–`D6`, `D9`–`D11`, `E1`,
+state (`A1`–`A20`, `B1`–`B6`, `C4`–`C8`, `D1`–`D6`, `D9`–`D11`,
 `E3`, `E5`–`E8`, `G1`, `G2`, `G4`, `G5`; default `D1`), filling in the
 route when the URL has none, and draws the page at the artboard's
 content size (`&frame=0` turns that off). `?theme=dark|light` forces a
 theme; a `G` id forces dark. Commands are logged to the console and
 change the fixture's snapshot where that makes sense. The import is
-dead code in a build. Native surfaces (menu bar, tray, alerts E2/E4,
+dead code in a build. Native surfaces (menu bar, tray, alerts E1/E2/E4,
 the OS prompt, notifications) and the team web app are not in the mock.
 
 When the VM image's root disk has been built (`make -C vm image`;
@@ -1001,7 +1001,7 @@ status:
 welcome when there are no teams), adopt supervisors left running, and
 resume the teams in `running_at_quit` ("Launch and quit").
 
-**Pausing and resuming.** Pause (E1, from the menus, the team page or
+**Pausing and resuming.** Pause (E1, from the Team menu or
 Settings) runs `down` without `exit`: the VM stops, the supervisor
 keeps serving, and `paused_at` is recorded. Resume (C4, the menus,
 Settings) is the memory check, then `up` with the progress page (C5).
@@ -1272,8 +1272,8 @@ that callback.
 
 | Alert | Raised from | Native |
 | --- | --- | --- |
-| E1 Pause a team | the Team menu (the menu bar's; on Windows the team window's), the tray | yes (on the team's window when showing) |
-| E1 | the team page, Settings | in-page sheet |
+| E1 Pause a team | the Team menu (the menu bar's; on Windows the team window's) | yes (on the team's window when showing) |
+| E1 | Settings → team → Pause… | yes, app-modal |
 | E2 Quit | Quit | yes, with "Don't ask again" |
 | E3 Update a team | the tray's update item | yes, app-modal |
 | E3 | Settings → team → Update… | in-page sheet |
@@ -1416,7 +1416,7 @@ welcome screen.
 | `connect_check(address)` | normalise and check an address; `{origin, name, host}` or `{kind: unreachable \| not_kivali \| invalid, message}` |
 | `connect_signin(origin, name)`, `connect_reset` | start B3's sign-in in a hidden window; drop it |
 | `open_team(id)`, `open_team_page(id, path)` | open a team's window; open a path of its web app there (no page calls either) |
-| `pause_team`, `resume_team`, `retry_team` (id) | pause; resume (refused with `memory:<id>` when it would not fit); resume, or recheck a team elsewhere |
+| `confirm_pause`, `resume_team`, `retry_team` (id) | show E1, then pause; resume (refused with `memory:<id>` when it would not fit); resume, or recheck a team elsewhere |
 | `pause_and_resume(pause, resume)` | E5's confirm |
 | `update_team(id)` | the Kivali update |
 | `open_in_browser(id)` | the team's address in the system browser |

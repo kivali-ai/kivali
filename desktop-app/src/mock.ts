@@ -300,7 +300,6 @@ const FIXTURES: Record<string, Fixture> = {
       s.last_deleted = { name: "Plainsong", freed_bytes: 18 * 1024 ** 3 };
     },
   },
-  "dialog-pause": { hash: "#/settings/team/plainsong/overview", preset: { dialog: { id: "pause", team: "plainsong" } } },
   "dialog-update": {
     hash: "#/settings/team/plainsong/overview",
     snap: (s) =>
@@ -438,7 +437,7 @@ export function installMock() {
       return null;
     },
     connect_reset: () => ((snap.connect = { state: "idle", origin: null, name: null, error: null, team_id: null, email: null }), null),
-    pause_team: (a) => (Object.assign(find(a.id)!, { state: "paused", phrase: "paused", paused_since: new Date().toISOString() }), null),
+    confirm_pause: (a) => (Object.assign(find(a.id)!, { state: "paused", phrase: "paused", paused_since: new Date().toISOString() }), null),
     resume_team: (a) => {
       const t = find(a.id)!;
       const other = snap.teams.find((x) => x.id !== t.id && x.place === "here" && x.state === "running");

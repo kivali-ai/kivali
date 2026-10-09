@@ -25,7 +25,7 @@ const COMMANDS: &[&str] = &[
     "connect_reset",
     "open_team",
     "open_team_page",
-    "pause_team",
+    "confirm_pause",
     "resume_team",
     "retry_team",
     "pause_and_resume",

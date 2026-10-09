@@ -36,7 +36,7 @@
     "allow-connect-reset",
     "allow-open-team",
     "allow-open-team-page",
-    "allow-pause-team",
+    "allow-confirm-pause",
     "allow-resume-team",
     "allow-retry-team",
     "allow-pause-and-resume",

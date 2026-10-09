@@ -1,35 +1,15 @@
-// The in-page dialogs (pause, update, memory, remove, delete, and the API-key / Claude-account
+// The in-page dialogs (update, memory, remove, delete, and the API-key / Claude-account
 // switches from the AI tab), drawn as sheets at the top of the window.
 
 import type { Ctx } from "../ctx";
 import { h } from "../h";
 import { shortVersion } from "../logic/format";
-import { deleteList, memoryDialog, osPromptLine, pauseText, thisComputer, updateText } from "../logic/teams";
+import { deleteList, memoryDialog, osPromptLine, thisComputer, updateText } from "../logic/teams";
 import { deviceName } from "../logic/format";
 import type { Team } from "../types";
 import { button, caption, field, sheet } from "../ui";
 
 const p = (text: string) => h("p", { class: "sheet-text" }, text);
-
-/** E1. */
-export function pauseSheet(ctx: Ctx, team: Team, close: () => void): HTMLElement {
-  const ok = button("Pause", {
-    variant: "primary",
-    id: "sheet-ok",
-    onclick: () => {
-      close();
-      void ctx.act("pause_team", { id: team.id });
-    },
-  });
-  return sheet({
-    key: `E1-${team.id}`,
-    title: `Pause ${team.name}?`,
-    body: [p(pauseText(team))],
-    buttons: [button("Cancel", { variant: "ghost", id: "sheet-cancel", onclick: close }), ok],
-    defaultButton: ok,
-    onCancel: close,
-  });
-}
 
 /** E3. */
 export function updateSheet(ctx: Ctx, team: Team, close: () => void): HTMLElement {
