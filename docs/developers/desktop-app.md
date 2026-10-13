@@ -1477,15 +1477,13 @@ Apple material only for a darwin `TRIPLE`):
   app-specific password) and `APPLE_TEAM_ID`, or an App Store Connect
   API key (`APPLE_API_KEY`, `APPLE_API_ISSUER`, `APPLE_API_KEY_PATH`).
   The bundler notarizes and staples when they are set.
-- **The updater key.** `tauri.conf.json` carries the public key of a
-  development keypair generated with `npx tauri signer generate`; its
-  private key is `desktop-app/.keys/updater.key`, which is git-ignored
-  and stays on the machine that made it. A release replaces the public
-  key with the project owner's and builds with
-  `TAURI_SIGNING_PRIVATE_KEY` (and its password) set to the owner's
-  private key. An app signed with one key never accepts an update signed
-  with the other, so the switch has to happen before the first public
-  release.
+- **The updater key.** `tauri.conf.json` carries the project owner's
+  updater public key; a release builds with `TAURI_SIGNING_PRIVATE_KEY`
+  (and its password) set to the matching private key. Local builds sign
+  with a development keypair generated with `npx tauri signer generate`,
+  whose private key is `desktop-app/.keys/updater.key`, git-ignored and
+  kept on the machine that made it. An app accepts only updates signed
+  with the key whose public half it was built with.
 - **The virtualization entitlement.** `Entitlements.plist` carries
   `com.apple.security.virtualization`; the bundler signs both the app
   and the sidecar with it under the hardened runtime. It is not a
