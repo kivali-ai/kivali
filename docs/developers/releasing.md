@@ -259,13 +259,13 @@ Windows one needs the two `TAURI_SIGNING_*`. `publish` uses the automatic
 | `TAURI_SIGNING_PRIVATE_KEY` | the updater's private key (the file's contents) | `npx tauri signer generate -w kivali-updater.key` in `desktop-app`; keep the file somewhere safe |
 | `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | its password (may be empty) | chosen at generation |
 
-Not a secret but required before the first release: the **public** half
-(`kivali-updater.key.pub`) goes in `desktop-app/src-tauri/tauri.conf.json`
-under `plugins.updater.pubkey`, replacing the development key's. `release.sh` and
-the workflow both refuse while the development key is still there. An app signed
-with one updater key never accepts an update signed with the other, so this
-must happen before the first public release, and the private key must never
-be lost: a release signed with a new one cannot update installed apps.
+Not a secret: the **public** half (`kivali-updater.key.pub`) is in
+`desktop-app/src-tauri/tauri.conf.json` under `plugins.updater.pubkey`
+(minisign key id `87430193D5352BFC`). `release.sh` and the workflow both
+refuse while the development key is there instead. An app signed with one
+updater key never accepts an update signed with the other, so the private
+key must never be lost: a release signed with a new one cannot update
+installed apps.
 
 ## How the releases are consumed
 
