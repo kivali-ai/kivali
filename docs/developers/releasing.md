@@ -13,30 +13,40 @@ the first release" first.
 
 1. **Decide whether the upgrade needs steps the app cannot do.** If it
    does, add the tag (one line, `vX.Y.Z`) to `scripts/manual-steps` and
-   commit that on `main` first, and write the steps in the release
+   merge that to `main` first, and write the steps in the release
    notes (see "Publishing a release that needs manual steps").
-2. **Cut it** on a clean, up-to-date `main`:
+2. **Cut it**, from any checkout of the repository with `gh` signed in:
 
    ```
    make release VERSION=vX.Y.Z
    ```
 
-   `scripts/release.sh` checks the version is semver, the branch is
-   `main`, the tree is clean, `origin/main` has nothing local `main`
-   lacks, and the tag is unused. It then refuses unless
-   every versioned file already agrees (`scripts/version-check.sh`) and
-   until tauri.conf.json carries the owner's updater public key
-   (`scripts/check-updater-key.sh`), bumps them all together (`scripts/bump-version.sh`), commits, tags
-   `vX.Y.Z` and pushes the commit and tag atomically.
-3. **The tag push starts `.github/workflows/release.yml`.** Watch it
+   `main` takes changes only through pull requests, so `scripts/release.sh`
+   works in two halves. First it opens the release: it checks the version
+   is semver and the tag is unused, refuses unless every versioned file on
+   `origin/main` agrees (`scripts/version-check.sh`) and tauri.conf.json
+   carries the owner's updater public key (`scripts/check-updater-key.sh`),
+   bumps them all together (`scripts/bump-version.sh`) on a branch
+   `release/vX.Y.Z`, pushes it and opens a pull request to `main`. Then it
+   waits for that pull request to be merged.
+3. **Merge the release pull request.** Its CI runs the per-commit checks
+   first. Once it is merged the script tags the commit the merge put on
+   `main` (a rebase merge gives it a new hash; a later commit on `main` is
+   never tagged) with an annotated `vX.Y.Z`, after checking that commit says
+   `X.Y.Z` everywhere, and pushes the tag. The work happens in temporary
+   worktrees, so the checkout you run it from is left as it was. Stopping
+   the script while it waits is safe: run `make release VERSION=vX.Y.Z`
+   again and it carries on (`--no-wait`, passed to `scripts/release.sh`,
+   stops once the pull request is open).
+4. **The tag push starts `.github/workflows/release.yml`.** Watch it
    under the repository's Actions tab. When it finishes the release is
    published with every asset and `/releases/latest` points at it.
-4. **Run the boot test on a Mac.** CI cannot: `make -C vm boottest` needs
+5. **Run the boot test on a Mac.** CI cannot: `make -C vm boottest` needs
    Virtualization.framework and GitHub-hosted runners have no nested
    virtualization. Download the release's `Image`, `initramfs.gz` and
    `root.squashfs` into a directory, put it at `vm/build/out`, and run
    `make -C vm boottest`. Do this before announcing the release.
-5. **Upgrade the orgs.** Each takes the release from the feed
+6. **Upgrade the orgs.** Each takes the release from the feed
    (`kivali-supervisor upgrade`, or Update in Kivali Desktop;
    [deployment.md](deployment.md)), installing the release's own chart
    and image bundle.
@@ -149,7 +159,7 @@ Choices worth knowing:
   updater's `Kivali.app.tar.gz` is that same stapled app.
 - **Early checks.** Everything that can be known before a minute is spent
   is checked in the `verify` job (and, for the updater key, by
-  `release.sh` before it pushes): the tag equals tauri.conf.json's version,
+  `release.sh` before it opens the release pull request): the tag equals tauri.conf.json's version,
   every versioned file agrees, every signing secret is set (the error lists
   each missing one), and tauri.conf.json's updater public key is not the
   development key. A failure there costs seconds; a failure after the images
@@ -355,13 +365,23 @@ points at the previous release.
   workflow.
 - **A fix to the workflow or the scripts**: a re-run uses the workflow and
   scripts at the tagged commit, so edits on `main` do not reach it. Cut a
-  new tag (`make release VERSION=vX.Y.(Z+1)`) for the fix, and leave the
+  new release (`make release VERSION=vX.Y.(Z+1)`) for the fix, and leave the
   failed draft alone or delete it.
 - **Start the same version over**: delete the draft release and the tag
   (`gh release delete vX.Y.Z --cleanup-tag`, or delete the draft in the UI
-  and `git push origin :refs/tags/vX.Y.Z; git tag -d vX.Y.Z`), fix and
-  commit, then run `make release VERSION=vX.Y.Z` again. Only do this when
-  nothing was published: never reuse a version that already shipped.
+  and `git push origin :refs/tags/vX.Y.Z; git tag -d vX.Y.Z`), and merge
+  the fix to `main`. `main` already says `X.Y.Z`, so tag its tip by hand
+  rather than with `make release` (which would tag the release pull
+  request's merge again, without the fix):
+
+  ```
+  git fetch origin && git switch --detach origin/main
+  make version-check VERSION=vX.Y.Z && scripts/check-updater-key.sh
+  git tag -a vX.Y.Z -m "Release vX.Y.Z" && git push origin refs/tags/vX.Y.Z
+  ```
+
+  Only do this when nothing was published: never reuse a version that
+  already shipped.
 
 ## Publishing a release that needs manual steps
 
