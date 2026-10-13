@@ -48,11 +48,9 @@ test('a message gets a streamed reply with its tool call collapsed', async ({ pa
   await expect(tool.getByText(/500 of 500 sent/)).toBeVisible();
 });
 
-// Fails about one run in five. On `done` the chat refetches /chat, and that response can still
-// say running:true (the server clears its in-flight mark just after it emits done). The reload
-// path in screens/agent/Chat.tsx takes `running` from it but never reopens the stream, so
-// nothing turns it off and Stop stays up. Un-fixme once the reload reopens the stream when the
-// chat says it is running (the 204 then settles it), or the server clears the mark first.
+// On `done` the chat refetches /chat, and that response can still say running:true (the server
+// clears its in-flight mark just after it emits done). The page reopens the stream on that
+// answer, and the 204 it gets settles Stop.
 test('Stop goes away once a turn has finished', async ({ page }) => {
   await page.goto('agents/engineering-lead');
   await send(page, 'How is the mail switch going?');

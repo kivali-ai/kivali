@@ -13,6 +13,8 @@ export class FakeStream implements EventStream {
   state: ConnectionState = 'idle';
   started = false;
   stopped = false;
+  /** Whether start() connects. A stream that does not stands for one the server answers 204. */
+  connects = true;
   private handlers = new Map<string, Set<StreamHandler>>();
   private stateHandlers = new Set<(s: ConnectionState) => void>();
 
@@ -29,7 +31,7 @@ export class FakeStream implements EventStream {
   }
   start() {
     this.started = true;
-    this.setState('open');
+    if (this.connects) this.setState('open');
   }
   stop() {
     this.stopped = true;
