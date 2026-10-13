@@ -113,7 +113,7 @@ LICENSES_BUNDLE := --config '{"bundle":{"resources":{"$(LICENSES)":"THIRD_PARTY_
 # A stale GOROOT in some shells breaks `go build` (see the root Makefile).
 unexport GOROOT
 
-.PHONY: dev build build-debug build-trial test lint fmt-check clean sidecar deps release-preflight icons licenses
+.PHONY: dev build build-compile build-bundle build-debug build-trial build-trial-bundle test lint fmt-check clean sidecar deps release-preflight icons licenses
 
 deps: node_modules/.installed
 
@@ -173,12 +173,26 @@ release-preflight:
 			printf "refusing a release build with development signing material:$$p\nset ALLOW_DEV_KEYS=1 to build anyway (never for distribution); make build-debug needs none of this\n" >&2; exit 1; fi; \
 	fi
 
-build: release-preflight deps sidecar licenses
+# A release build is two halves, so signing material never meets the
+# project's dependencies. build-compile builds everything: the web app
+# (beforeBuildCommand), every crate with its build script and macros,
+# the sidecar and the license notices; it needs no secret. build-bundle
+# packages what that built, running only the tauri CLI and the
+# platform's signing tools: on macOS it signs, notarizes and staples the
+# app and builds the dmg, and it signs the updater artifacts. `build` is
+# both; the release workflow runs them as separate steps and hands the
+# secrets to the second alone.
+build: release-preflight build-compile build-bundle
+
+build-compile: deps sidecar licenses
+	npx tauri build --no-bundle $(VM_BUNDLE) $(LICENSES_BUNDLE)
+
+build-bundle: release-preflight
 	@if [ -z "$$TAURI_SIGNING_PRIVATE_KEY" ] && [ ! -f "$(UPDATER_KEY)" ]; then \
 		echo "no updater key: set TAURI_SIGNING_PRIVATE_KEY or run npx tauri signer generate -w .keys/updater.key" >&2; exit 1; fi
 	TAURI_SIGNING_PRIVATE_KEY="$${TAURI_SIGNING_PRIVATE_KEY:-$(UPDATER_KEY)}" \
 	TAURI_SIGNING_PRIVATE_KEY_PASSWORD="$${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}" \
-		npx tauri build $(VM_BUNDLE) $(LICENSES_BUNDLE)
+		npx tauri bundle $(VM_BUNDLE) $(LICENSES_BUNDLE)
 
 build-debug: deps sidecar licenses
 ifneq ($(DEBUG_NO_UPDATER),)
@@ -195,8 +209,10 @@ endif
 # lines go to a console window, which closes the app when it is closed),
 # the release one a windowed program whose lines go to logs/shell.log.
 # Never for distribution: a release is `make build` with the keys.
-build-trial: deps sidecar licenses
-	npx tauri build $(VM_BUNDLE) $(LICENSES_BUNDLE) --config '{"bundle":{"createUpdaterArtifacts":false}}'
+build-trial: build-compile build-trial-bundle
+
+build-trial-bundle:
+	npx tauri bundle $(VM_BUNDLE) $(LICENSES_BUNDLE) --config '{"bundle":{"createUpdaterArtifacts":false}}'
 
 # The end-to-end test drives the fake supervisor's debug build, and the
 # real one too when KIVALI_REAL_SUPERVISOR names its binary.

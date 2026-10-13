@@ -92,7 +92,7 @@ explains instead of upgrading ("Update states").
 
 ```
 desktop-app/
-  Makefile                 dev, build, build-debug, build-trial, test, lint, fmt-check, icons, clean, sidecar, licenses
+  Makefile                 dev, build (build-compile + build-bundle), build-debug, build-trial, test, lint, fmt-check, icons, clean, sidecar, licenses
   package.json             Vite, TypeScript, Vitest, @tauri-apps/cli + api (dev deps only)
   index.html, src/         the bundled pages (plain TypeScript, no framework; "The bundled pages")
     main.ts                routing, the snapshot, rendering
@@ -151,7 +151,8 @@ when it is not on `PATH`.
 ```sh
 make -C desktop-app dev           # tauri dev against a Kivali-dev config dir (macOS: ~/Library/Application Support/Kivali-dev)
 make -C desktop-app build-debug   # a debug bundle (macOS: src-tauri/target/debug/bundle/macos/Kivali.app, ad-hoc signed); no updater key needed
-make -C desktop-app build         # release bundles + updater artifacts (needs the real supervisor)
+make -C desktop-app build         # release bundles + updater artifacts (needs the real supervisor):
+                                  #   build-compile (no secret needed), then build-bundle (signs and packages)
 make -C desktop-app build-trial   # release-profile bundle for a trial install: no updater artifacts, no keys checked
 make -C desktop-app test          # cargo test + vitest
 make -C desktop-app lint          # tsc + clippy, warnings as errors (clippy required; what CI runs)
