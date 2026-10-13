@@ -2043,7 +2043,7 @@ dependencies = [
 
 [[package]]
 name = "kivali-desktop"
-version = "0.15.1"
+version = "1.0.0"
 dependencies = [
  "base64 0.22.1",
  "block2",
