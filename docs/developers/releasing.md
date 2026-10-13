@@ -101,7 +101,7 @@ Jobs, in order (`needs` in parentheses):
 | `feed` (images, chart) | ubuntu-latest | `release.json` (`scripts/release-json.sh`) |
 | `desktop-macos` (verify, vm) | macos-15 (Apple Silicon) | `Kivali_X.Y.Z_aarch64.dmg`, `Kivali.app.tar.gz`, `Kivali.app.tar.gz.sig` |
 | `desktop-windows` (verify, vm) | windows-latest (x64) | `Kivali_X.Y.Z_x64-setup.exe` and its `.sig` |
-| `publish` (all, plus `checks` and `nightly`) | ubuntu-latest | `latest.json` (both platforms, `scripts/latest-json.sh --require`); `SOURCES.md` (the arm64 VM's, with the images' Debian packages and the egress proxy's base appended), `vm-amd64-SOURCES.md` and `vm-amd64-packages.txt`; one release: created as a draft, every asset uploaded, then published |
+| `publish` (all, plus `checks` and `nightly`) | ubuntu-latest | `latest.json` (both platforms, `scripts/latest-json.sh --require`); `SOURCES.md` (the arm64 VM's, with the images' Debian packages and the egress proxy's base appended), `vm-amd64-SOURCES.md` and `vm-amd64-packages.txt`; the release notes (`scripts/release-notes.sh`); one release: created as a draft, every asset uploaded, then published |
 
 Choices worth knowing:
 
@@ -160,6 +160,12 @@ Choices worth knowing:
   `latest.json` resolve through) never points at a half-uploaded release.
   A tag with a suffix (`vX.Y.Z-rc1`) is published as a pre-release, which
   `/latest` skips, so neither the updater nor a feed check offers it.
+- **Release notes** open with the two installers, linked by name and
+  platform (`scripts/release-notes.sh`, which fails the job if either is
+  missing), since the release page is where people download the app and
+  it carries every other asset too. A release's GitHub-generated notes
+  follow; a dev build's caveat comes first. Edit the published notes to
+  add anything more.
 - **Tests gate publishing.** The workflow calls `ci.yml` (every
   per-commit check, Kivali Desktop's on macOS and Windows among them)
   and `nightly.yml` (race detector, integration suite on k3s) on the
@@ -180,6 +186,7 @@ make vm-release VERSION=vX.Y.Z       # the VM image for VM_ARCH (arm64, the defa
                                      #   Windows), with dist's images of that arch and the chart baked in
 make desktop-release VERSION=vX.Y.Z  # this platform's installer and updater artifacts in dist/
 scripts/latest-json.sh vX.Y.Z        # latest.json from the updater artifacts in dist/
+scripts/release-notes.sh vX.Y.Z      # the release notes' download section, on stdout
 ```
 
 `make desktop-release` lists which signing variables are set (names only)

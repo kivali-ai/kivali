@@ -710,6 +710,19 @@ jobs:
       - name: Assets
         run: ls -l assets
 
+      # The release page is where people download the app, among every
+      # other asset: the notes open with the two installers, linked, and
+      # what each needs (scripts/release-notes.sh). It fails if either
+      # installer is missing. A release's generated notes follow them.
+      - name: Release notes
+        run: |
+          if [ "$DEV" = true ]; then
+            bash scripts/release-notes.sh "$TAG" --dir assets --dev "$GITHUB_REF_NAME" "$GITHUB_SHA" > "$RUNNER_TEMP/notes.md"
+          else
+            bash scripts/release-notes.sh "$TAG" --dir assets > "$RUNNER_TEMP/notes.md"
+          fi
+          cat "$RUNNER_TEMP/notes.md"
+
       # A draft until every asset is up, so /releases/latest (what the
       # updater and release feeds resolve) never points at a half-uploaded
       # release. Re-running replaces assets (--clobber). A dev build's tag
@@ -721,11 +734,12 @@ jobs:
           if [ "$DEV" = true ]; then
             gh release create "$TAG" --draft --prerelease --target "$GITHUB_SHA" \
               --title "Kivali ${TAG#v} (dev build)" \
-              --notes "A dev build of $GITHUB_REF_NAME at $GITHUB_SHA, for testing. Not signed: the macOS app is not notarized, so macOS blocks its first launch until you allow it in System Settings, Privacy & Security; Windows SmartScreen warns before the installer runs. It does not update itself."
+              --notes-file "$RUNNER_TEMP/notes.md"
           else
             pre=""
             case "$TAG" in *-*) pre="--prerelease" ;; esac
-            gh release create "$TAG" --draft --verify-tag --title "Kivali ${TAG#v}" --generate-notes $pre
+            gh release create "$TAG" --draft --verify-tag --title "Kivali ${TAG#v}" \
+              --notes-file "$RUNNER_TEMP/notes.md" --generate-notes $pre
           fi
 
       - name: Upload the assets
