@@ -388,6 +388,9 @@ fn create_team_window(app: &AppHandle, t: &Team, visible: bool) -> Option<Window
     let pin = pin_of(app, &id);
     let start = t.origin().and_then(|o| Url::parse(&format!("{o}/")).ok());
     *pin.lock().unwrap() = start.as_ref().map(Url::origin);
+    // A new web view has loaded nothing, whatever an earlier window of
+    // this team did.
+    set_loaded(&id, false);
     let mut builder = WindowBuilder::new(app, team_label(&id))
         .title(team_title(t))
         .inner_size(1200.0, 760.0)
@@ -653,12 +656,16 @@ pub fn sync_team(app: &AppHandle, t: &Team) {
         if let Some(origin) = t.origin().and_then(|o| Url::parse(&format!("{o}/")).ok()) {
             let pin = pin_of(app, &t.id);
             let moved = pin.lock().unwrap().as_ref() != Some(&origin.origin());
+            // Only a web view that has loaded a page has a URL to read: one
+            // made for a paused team never loads its `about:blank` (Tauri
+            // skips it), and a sign-in that refuses the first page leaves it
+            // with none; on macOS wry panics reading a URL that is not there.
             if moved {
                 // A team here whose port changed, or the first start.
                 *pin.lock().unwrap() = Some(origin.origin());
                 set_loaded(&t.id, false);
                 let _ = web.navigate(origin);
-            } else if web.url().map(|u| u.scheme() == "about").unwrap_or(false) {
+            } else if loaded(&t.id) && web.url().map(|u| u.scheme() == "about").unwrap_or(false) {
                 set_loaded(&t.id, false);
                 let _ = web.navigate(origin);
             }
