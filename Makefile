@@ -266,12 +266,13 @@ endif
 # dockerfile is found in it by name).
 BUILD_VM_CTX := --frontend dockerfile.v0 --local context=/var/lib/kivali/build/ctx/src --local dockerfile=/var/lib/kivali/build/ctx/src
 
-# release cuts a new Kivali release by bumping the release version
-# (the chart's appVersion and the desktop app's), committing the bump,
-# creating an annotated tag at the release commit, and pushing commit +
-# tag to origin. It does NOT build anything: the tag starts the release
-# workflow, which builds and publishes every asset (docs/developers/releasing.md).
-release: require-explicit-version ## cut a release: bump, commit, tag, push (VERSION=vX.Y.Z)
+# release cuts a new Kivali release through a pull request: it bumps the
+# release version (the chart's appVersion and the desktop app's) on a
+# branch release/vX.Y.Z, opens a pull request to main, waits for it to be
+# merged, then tags the merged commit and pushes the tag. It does NOT
+# build anything: the tag starts the release workflow, which builds and
+# publishes every asset (docs/developers/releasing.md).
+release: require-explicit-version ## cut a release: bump in a PR, then tag its merge (VERSION=vX.Y.Z)
 	bash scripts/release.sh $(VERSION)
 
 # The GitHub release's Linux assets, built locally with the same targets

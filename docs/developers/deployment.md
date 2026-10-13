@@ -173,22 +173,24 @@ make release VERSION=vX.Y.Z
 
 `scripts/release.sh` bumps `appVersion` in `charts/kivali/Chart.yaml`
 (the default image tag) and the Kivali Desktop version files with it
-(`make version-check` asserts they agree), commits with a templated
-message, creates an annotated tag at that commit, pushes both to origin,
-and packages the chart into `dist/kivali-<version>.tgz` (`make
-chart-package VERSION=vX.Y.Z` does the same alone). It does **not**
-build or push images. Pushing the tag starts the release workflow, which
+(`make version-check` asserts they agree) on a branch `release/vX.Y.Z`
+made from `origin/main`, and opens a pull request to `main`. Once that is
+merged it tags the merged commit with an annotated `vX.Y.Z` and pushes the
+tag. It does **not** build or push images (`make chart-package
+VERSION=vX.Y.Z` packages the chart locally). Pushing the tag starts the
+release workflow, which
 publishes the GitHub release: the image bundles, the chart,
 `release.json` (the supervisor's feed), the VM image, the signed desktop
 app and its update feed. The full procedure, its secrets and rollback
 are in [releasing.md](releasing.md).
 
-Guards before it will proceed: VERSION is semver, branch is `main`, the
-tree is clean, `origin/main` has nothing local `main` lacks, the tag
+Guards before it opens the pull request: VERSION is semver, the tag
 doesn't already exist, the chart has the line it expects, every
-versioned file (chart, desktop) agrees before the bump, and the
-desktop updater's public key is not the development key
-(`scripts/check-updater-key.sh`).
+versioned file (chart, desktop) on `origin/main` agrees before the bump,
+and the desktop updater's public key is not the development key
+(`scripts/check-updater-key.sh`). Before it tags: the merge commit is on
+`origin/main` and says the release version everywhere, with the owner's
+updater key.
 
 `VERSION` must be passed as `key=value`. `make release v0.2.5` is
 rejected loudly, because VERSION would otherwise silently fall back to

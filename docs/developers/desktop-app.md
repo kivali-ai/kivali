@@ -1454,7 +1454,7 @@ prints, and what the minimum desktop version is compared with), and
 `make sidecar` stamps the Go supervisor with it
 (`-ldflags "-X main.version=<version>"`), so the app and its sidecar
 carry one number (the root `make supervisor` stamps the same string).
-`scripts/release.sh` bumps it with the rest of the release (chart
+`scripts/release.sh` bumps it with the rest of the release, in the release pull request (chart
 `appVersion` and the five desktop files), and
 `make version-check` asserts they all agree; the release tag `vX.Y.Z` is
 the source for everything else, and the release workflow refuses a tag
