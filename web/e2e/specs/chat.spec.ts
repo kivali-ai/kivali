@@ -277,6 +277,9 @@ test.describe('the pinned agent header', () => {
     const item = transcript(page).locator(':scope > li').nth(3);
     await expect(item).toBeVisible();
     await page.evaluate(() => window.scrollTo(0, 0));
+    // The chat opens at its newest message, so on a phone the header starts condensed and expands only once
+    // the observer sees the top; the sentinel sits 48px higher until it has.
+    await expect(header(page)).not.toHaveClass(/is-condensed/);
     const sentinel = await page.evaluate(() => document.querySelector('.app-agent-sentinel')!.getBoundingClientRect().top + window.scrollY);
     const itemTop = async () => Math.round((await item.boundingBox())?.y ?? NaN);
     // Just past the top of the body: the header condenses (on a phone) and the text stays where it was.
