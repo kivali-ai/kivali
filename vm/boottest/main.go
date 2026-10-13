@@ -74,6 +74,7 @@ type options struct {
 	integritySeed      uint64
 
 	vzCaching, vzSync string
+	mac               net.HardwareAddr
 }
 
 func main() {
@@ -96,9 +97,14 @@ func main() {
 	flag.Uint64Var(&o.integritySeed, "integrity-seed", 0, "with -integrity-cycles, the seed of the power-cut times (0: from the clock; printed, to repeat a run)")
 	flag.StringVar(&o.vzCaching, "vz-caching", "", "experiment only: the data disk's caching mode instead of the supervisor's (automatic, cached, uncached)")
 	flag.StringVar(&o.vzSync, "vz-sync", "", "experiment only: the data disk's synchronization mode instead of the supervisor's (full, fsync, none)")
+	mac := flag.String("mac", guestMAC.String(), "the guest NIC's MAC; another one gets another DHCP address (with -keep-data, tests a node IP change)")
 	flag.Parse()
 
 	var err error
+	if o.mac, err = net.ParseMAC(*mac); err != nil {
+		fmt.Fprintf(os.Stderr, "boottest: -mac: %v\n", err)
+		os.Exit(2)
+	}
 	if o.integrityCycles > 0 {
 		if o.integrityMaxRun < o.integrityMinRun {
 			fmt.Fprintln(os.Stderr, "boottest: -integrity-max-run is shorter than -integrity-min-run")
@@ -438,9 +444,9 @@ func newVM(o options, cmdline, dataPath string, consoleIn, consoleOut *os.File) 
 		return nil, err
 	}
 	// A fixed MAC keeps the DHCP lease, and so the node address k3s
-	// persists, the same on every boot; a changed IP leaves k3s
-	// reconnecting to the old one ("no route to host").
-	mac, err := vz.NewMACAddress(guestMAC)
+	// persists, the same on every boot; the guest's k3s-server repairs
+	// the node object when it does change (-mac tests that).
+	mac, err := vz.NewMACAddress(o.mac)
 	if err != nil {
 		return nil, err
 	}

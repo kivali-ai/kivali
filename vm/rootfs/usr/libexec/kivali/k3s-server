@@ -1,11 +1,36 @@
 #!/bin/sh
 # Runs k3s server for the life of the VM (busybox init `once`). Its
 # log goes to the data disk; the previous boot's log is kept as .1.
+#
+# The node object in k3s's datastore keeps the address the node had
+# when k3s last ran. When this boot's address differs (a new DHCP
+# lease), kube-router's network policy controller can read the old
+# address before the kubelet and the cloud controller replace it, find
+# no interface carrying it, and k3s exits. So when the address is not
+# the one recorded in $NODE_IP (or nothing is recorded and a datastore
+# exists), k3s first runs without its agent (no kubelet, no pods, no
+# network policy controller) while the node object's addresses and
+# address annotations are set to this boot's address, then stops, and
+# only then starts normally. /run/kivali/k3s-started marks the normal
+# start; `ready` waits for it.
 export PATH=/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 export HOME=/root
+exec </dev/null
 
 DATA=/var/lib/kivali
 LOG=$DATA/log/k3s.log
+# The node address k3s last started with.
+NODE_IP=$DATA/node-ip
+# How long the agentless start may take to update the node object.
+REPAIR_S=120
+
+say() { echo "KIVALI-VM: $*"; }
+fatal() {
+  echo "KIVALI-VM FATAL: $*"
+  echo "$*" > /run/kivali/fatal 2>/dev/null
+  sync
+  exec poweroff
+}
 
 if [ ! -e /run/kivali/booted ]; then
   echo "KIVALI-VM FATAL: k3s: boot did not complete; not starting k3s"
@@ -16,15 +41,72 @@ fi
 
 # Rotate: keep the previous boot's log as k3s.log.1.
 [ -f "$LOG" ] && mv -f "$LOG" "$LOG.1"
-echo "KIVALI-VM: k3s: starting $(k3s --version | head -n 1), log $LOG"
-echo $$ > /run/kivali/k3s.pid
+say "k3s: starting $(k3s --version | head -n 1), log $LOG"
 
 # --prefer-bundled-bin: the root has no iptables/mount helpers of its
 # own beyond busybox; k3s's bundled userspace is used instead.
-exec k3s server </dev/null \
+set -- \
   --data-dir="$DATA/k3s" \
   --disable=traefik,servicelb,metrics-server \
   --node-name=kivali \
   --write-kubeconfig-mode=0600 \
-  --prefer-bundled-bin \
-  >>"$LOG" 2>&1
+  --prefer-bundled-bin
+
+# This boot's address, as k3s picks it: the address of the interface
+# the default route uses.
+dev=$(ip -4 route show default | awk '{for (i = 1; i < NF; i++) if ($i == "dev") {print $(i + 1); exit}}')
+ip=''
+[ -n "$dev" ] && ip=$(ip -4 -o addr show dev "$dev" scope global | awk '{split($4, a, "/"); print a[1]; exit}')
+last=$(cat "$NODE_IP" 2>/dev/null)
+
+kc() { k3s kubectl "$@" 2>&1; }
+
+# set_node_ip: the node object's InternalIP and address annotations
+# become $ip. Fails until the API server answers.
+set_node_ip() {
+  kc get node kivali >/dev/null || return 1
+  kc annotate node kivali --overwrite \
+    "alpha.kubernetes.io/provided-node-ip=$ip" \
+    "k3s.io/internal-ip=$ip" \
+    "flannel.alpha.coreos.com/public-ip=$ip" >/dev/null || return 1
+  addrs="{\"type\":\"InternalIP\",\"address\":\"$ip\"}"
+  for a in $(kc get node kivali -o jsonpath='{range .status.addresses[*]}{.type}={.address}{" "}{end}'); do
+    case "$a" in
+      InternalIP=*) ;;
+      *=*) addrs="$addrs,{\"type\":\"${a%%=*}\",\"address\":\"${a#*=}\"}" ;;
+    esac
+  done
+  kc patch node kivali --subresource=status --type=merge \
+    -p "{\"status\":{\"addresses\":[$addrs]}}" >/dev/null || return 1
+  [ "$(kc get node kivali -o jsonpath='{.status.addresses[?(@.type=="InternalIP")].address}')" = "$ip" ]
+}
+
+# stop <pid>: SIGTERM, up to 30 s, then SIGKILL.
+stop() {
+  kill -TERM "$1" 2>/dev/null
+  n=0
+  while kill -0 "$1" 2>/dev/null && [ "$n" -lt 300 ]; do usleep 100000; n=$((n + 1)); done
+  kill -KILL "$1" 2>/dev/null
+  wait "$1" 2>/dev/null
+}
+
+if [ -n "$ip" ] && [ "$ip" != "$last" ] && [ -e "$DATA/k3s/server/db/state.db" ]; then
+  say "k3s: node address ${last:-not recorded}, now $ip; updating the node object with k3s's agent disabled"
+  k3s server "$@" --disable-agent >>"$LOG" 2>&1 &
+  pid=$!
+  # shutdown stops this k3s if the VM is stopped meanwhile.
+  echo "$pid" > /run/kivali/k3s.pid
+  deadline=$(($(cut -d. -f1 /proc/uptime) + REPAIR_S))
+  until set_node_ip; do
+    kill -0 "$pid" 2>/dev/null || fatal "k3s: k3s exited while updating the node address to $ip (see $LOG)"
+    [ "$(cut -d. -f1 /proc/uptime)" -ge "$deadline" ] && fatal "k3s: could not update the node address to $ip within ${REPAIR_S}s (see $LOG)"
+    sleep 1
+  done
+  stop "$pid"
+  say "k3s: node address updated to $ip"
+fi
+[ -n "$ip" ] && [ "$ip" != "$last" ] && echo "$ip" > "$NODE_IP"
+
+echo $$ > /run/kivali/k3s.pid
+: > /run/kivali/k3s-started
+exec k3s server "$@" >>"$LOG" 2>&1
