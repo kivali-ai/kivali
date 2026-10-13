@@ -511,7 +511,8 @@ jobs:
       # certificate is imported here, so APPLE_CERTIFICATE is unset too:
       # tauri would import it a second time. Tauri waits on notarization
       # without a word, so scripts/notary-progress.sh prints Apple's status
-      # for the submission once a minute until the bundle ends.
+      # for the submission once a minute until the bundle ends. DEV= on
+      # make's command line keeps the job's DEV (false) from reaching it.
       - name: Sign, notarize and package
         if: env.DEV != 'true'
         env:
@@ -560,7 +561,7 @@ jobs:
           bash scripts/notary-progress.sh &
           progress=$!
           trap 'kill "$progress" 2>/dev/null || true' EXIT
-          make desktop-release-bundle VERSION="$TAG"
+          make desktop-release-bundle VERSION="$TAG" DEV=
 
       # A dev build: ad-hoc signed, not notarized, no updater artifacts, the
       # dmg only (make desktop-release-bundle DEV=1).
