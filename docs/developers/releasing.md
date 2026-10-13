@@ -127,12 +127,21 @@ Choices worth knowing:
   version) and the app, and bundle `vm/build/out`. Both sign the updater
   artifacts with `TAURI_SIGNING_PRIVATE_KEY`, and `publish` writes
   `latest.json` from both, refusing a release that lacks either platform.
+- **Secrets never meet the project's dependencies.** Each desktop job
+  compiles first, with no secret in reach (`make desktop-release-compile`:
+  the web app, every crate with its build script and macros, the sidecar,
+  the license notices). One later step holds the signing material and runs
+  only the tauri CLI and the platform's signing tools on what was built
+  (`make desktop-release-bundle`, `tauri bundle`). Nothing is written to
+  `GITHUB_ENV`, so no later step or action sees a secret.
 - **Windows** builds the per-machine NSIS installer, which is also the
   updater's artifact. It is not Authenticode-signed, so SmartScreen warns
   on its first run; updates are verified by the updater's signature
   either way.
 - **macOS** signs with the Developer ID certificate from an imported
-  temporary keychain. Tauri signs, **notarizes and staples the `.app`** (it does so when its
+  temporary keychain, on the keychain search list. The step fails at once,
+  naming the problem, unless `APPLE_SIGNING_IDENTITY` is a valid
+  code-signing identity in that certificate. Tauri signs, **notarizes and staples the `.app`** (it does so when its
   credentials are in the environment) and then builds the dmg around the
   stapled app; the dmg itself is not separately notarized. The `.app`
   carries the ticket, so it passes Gatekeeper offline once copied out of the
@@ -185,6 +194,7 @@ make release-assets VERSION=vX.Y.Z   # dist/: image bundles for RELEASE_ARCHES (
 make vm-release VERSION=vX.Y.Z       # the VM image for VM_ARCH (arm64, the default; amd64 for
                                      #   Windows), with dist's images of that arch and the chart baked in
 make desktop-release VERSION=vX.Y.Z  # this platform's installer and updater artifacts in dist/
+                                     #   (desktop-release-compile, then desktop-release-bundle)
 scripts/latest-json.sh vX.Y.Z        # latest.json from the updater artifacts in dist/
 scripts/release-notes.sh vX.Y.Z      # the release notes' download section, on stdout
 ```

@@ -342,7 +342,7 @@ clean: ## remove every build output (bin, dist, web, VM image, desktop app)
         web-install require-web-deps web-build web-lint web-test web-deps \
         e2e-bins e2e-bins-linux web-e2e web-e2e-baselines web-e2e-visual-check api-types-check \
         require-release-version require-explicit-version image-tars release-feed \
-        vm-release desktop-release third-party-licenses license-check helm-lint helm-template chart-package \
+        vm-release desktop-release desktop-release-check desktop-release-compile desktop-release-bundle third-party-licenses license-check helm-lint helm-template chart-package \
         supervisor dev-images dev-chart
 
 # ---- Go ------------------------------------------------------------
@@ -549,7 +549,8 @@ web-e2e-visual-check: web-deps web-build e2e-bins-linux
 #   desktop-release        this platform's installer and updater artifacts
 #                          (macOS: signed and notarized), when the signing
 #                          environment is present (desktop-macos and
-#                          desktop-windows jobs)
+#                          desktop-windows jobs): desktop-release-compile,
+#                          which needs no secret, then desktop-release-bundle
 #   third-party-licenses   dist/licenses/THIRD_PARTY_LICENSES.txt
 #                          (licenses job)
 
@@ -685,23 +686,36 @@ endif
 # build-trial, the release profile with no signing material checked or
 # used (macOS: ad-hoc signed, not notarized) and no updater artifacts;
 # only the installer is collected.
-desktop-release: require-release-version require-explicit-version
+#
+# desktop-release is two halves, which the release workflow runs as
+# separate steps so that only the second sees a secret:
+# desktop-release-compile builds everything the app is made of (the
+# project's dependencies run here) and desktop-release-bundle signs,
+# notarizes and packages it, then collects the result into dist/.
+desktop-release: desktop-release-compile desktop-release-bundle
+
+desktop-release-check: require-release-version require-explicit-version
 	@bash scripts/version-check.sh $(VERSION) >/dev/null || { bash scripts/version-check.sh $(VERSION); exit 1; }
-	@echo "desktop-release: signing environment (names only; values are never printed):"
-	@for v in APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID APPLE_API_KEY APPLE_API_ISSUER APPLE_API_KEY_PATH TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD; do \
-		if [ -n "$${!v}" ]; then echo "  set      $$v"; else echo "  not set  $$v"; fi; done
 	@# The app must ship the VM image of its own version: refuse a missing
 	@# image, or one built for another version (vm/build/out/VERSION is
 	@# written by `make -C vm image` from VM_VERSION).
 	@test -f vm/build/out/$(DESKTOP_VM_ROOT) || { echo "desktop-release: vm/build/out has no $(DESKTOP_VM_ROOT); the app would ship without a VM image (make vm-release VERSION=$(VERSION) VM_ARCH=$(DESKTOP_VM_ARCH))" >&2; exit 1; }
 	@vmv="$$(cat vm/build/out/VERSION 2>/dev/null || true)"; if [ "$$vmv" != "$(DESKTOP_VERSION)" ]; then \
 		echo "desktop-release: vm/build/out is VM image version '$${vmv:-unknown (no VERSION file)}', the desktop is $(DESKTOP_VERSION) (make vm-release VERSION=$(VERSION) VM_ARCH=$(DESKTOP_VM_ARCH))" >&2; exit 1; fi
+
+desktop-release-compile: desktop-release-check
+	$(MAKE) -C desktop-app build-compile
+
+desktop-release-bundle: desktop-release-check
+	@echo "desktop-release: signing environment (names only; values are never printed):"
+	@for v in APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID APPLE_API_KEY APPLE_API_ISSUER APPLE_API_KEY_PATH TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD; do \
+		if [ -n "$${!v}" ]; then echo "  set      $$v"; else echo "  not set  $$v"; fi; done
 	@mkdir -p dist
 ifneq ($(DEV),)
-	$(MAKE) -C desktop-app build-trial
+	$(MAKE) -C desktop-app build-trial-bundle
 	cp $(addprefix desktop-app/src-tauri/target/release/bundle/,$(DESKTOP_INSTALLER)) dist/
 else
-	$(MAKE) -C desktop-app build
+	$(MAKE) -C desktop-app build-bundle
 	cp $(addprefix desktop-app/src-tauri/target/release/bundle/,$(DESKTOP_INSTALLER) $(DESKTOP_UPDATER)) dist/
 endif
 
