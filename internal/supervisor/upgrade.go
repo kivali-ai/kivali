@@ -236,6 +236,11 @@ func (s *Supervisor) stage(ctx context.Context, g Guest, feed string, rel Releas
 	}
 	downloads := filepath.Join(s.o.ConfigDir, "downloads")
 	dir := filepath.Join(downloads, strings.TrimPrefix(rel.Version, "v"))
+	// fetchRelease checked the version; this keeps any other way in from
+	// writing, or later deleting, outside downloads.
+	if filepath.Dir(dir) != downloads {
+		return sg, fmt.Errorf("release version %q does not name a directory under %s", rel.Version, downloads)
+	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return sg, err
 	}

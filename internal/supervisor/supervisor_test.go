@@ -529,6 +529,54 @@ func TestUpgradeRefusals(t *testing.T) {
 	}
 }
 
+func TestValidVersion(t *testing.T) {
+	for _, v := range []string{"1.0.0", "v1.0.0", "1.0.0-rc.1", "v1.0.0-dev.12", "1.0.0+build.5", "10.20.30-a-b.c+d"} {
+		if !validVersion(v) {
+			t.Errorf("validVersion(%q) = false, want true", v)
+		}
+	}
+	for _, v := range []string{"", "latest", "1.0", "1.0.0.0", "1.0.0-", "1.0.0-x/../../escape", `1.0.0-x\..\escape`, "../1.0.0", "1.0.0 ", "1.0.0-rc 1"} {
+		if validVersion(v) {
+			t.Errorf("validVersion(%q) = true, want false", v)
+		}
+	}
+}
+
+// A feed whose version would name a directory outside downloads is
+// refused before anything is downloaded, even with a chart that agrees
+// with it.
+func TestUpgradeRefusesAFeedVersionThatIsNotAVersion(t *testing.T) {
+	h := newHarness(t)
+	h.mustUp(UpOptions{Install: owner})
+	for _, v := range []string{"0.16.0-x/../../escape", `0.16.0-x\..\..\escape`, "latest"} {
+		feed := writeReleaseChart(t, filepath.Join(t.TempDir(), "rel"), v, v, "v0.16.0")
+		err := h.sup.Upgrade(context.Background(), UpgradeOptions{Feed: feed, Force: true}, h.logf())
+		if err == nil || !strings.Contains(err.Error(), "is not vMAJOR.MINOR.PATCH") {
+			t.Fatalf("version %q: %v", v, err)
+		}
+		res, err := h.sup.Check(context.Background(), feed, h.logf())
+		if err != nil || res.Status != CheckFailed {
+			t.Fatalf("check %q: %+v %v", v, res, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(h.dir, "escape")); !os.IsNotExist(err) {
+		t.Fatalf("a directory outside downloads: %v", err)
+	}
+}
+
+// stage keeps a release's downloads under downloads whatever reached it.
+func TestStageRefusesADirectoryOutsideDownloads(t *testing.T) {
+	h := newHarness(t)
+	rel := Release{Version: "0.16.0-x/../../escape", Images: map[string]Asset{h.sup.platform(): {Name: "images.tar.zst"}}}
+	_, err := h.sup.stage(context.Background(), nil, "", rel, h.logf())
+	if err == nil || !strings.Contains(err.Error(), "does not name a directory under") {
+		t.Fatalf("stage: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(h.dir, "escape")); !os.IsNotExist(err) {
+		t.Fatalf("a directory outside downloads: %v", err)
+	}
+}
+
 func (h *harness) update(t *testing.T, fn func(*State)) error {
 	t.Helper()
 	return h.sup.update(fn)
