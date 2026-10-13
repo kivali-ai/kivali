@@ -48,7 +48,9 @@ moment a console line contains `<text>` (fault injection; prints
 writes and deletes 2 GiB on the data disk through the guest agent, runs
 `trim --once`, and fails unless `data.img` gave most of it back;
 `-trim-crash-after <d>` instead hard-stops the VM `<d>` into that trim
-(fault injection).
+(fault injection); `-mac <addr>` gives the NIC another MAC, so VZ NAT
+hands out another address (with `-keep-data`, tests a node address
+change).
 
 `-integrity-cycles <n>` is the data disk's crash test: `n` boots on one
 data disk, each with `kivali.fsck=force` (after `e2fsck -p` replays the
@@ -280,10 +282,11 @@ mode and full synchronization):
 | virtio-net | `eth0` | DHCP; outbound only; **fixed MAC** (`02:4b:56:00:00:01`) |
 | virtio-rng, virtio-vsock | | entropy; vsock for the supervisor's agent |
 
-The supervisor must also give the NIC a fixed, locally administered
-MAC so DHCP hands out the same address on every boot: k3s persists the
-node address, and with a changed IP it keeps reconnecting to the old one
-("no route to host").
+The supervisor also gives the NIC a fixed, locally administered MAC, so
+DHCP usually hands out the same address on every boot. A fixed MAC does
+not guarantee it (on Hyper-V the Default Switch's lease can change
+while a team is paused, and its subnet changes at a host reboot), so
+`k3s-server` handles a changed address ("What the guest init does").
 
 **Devices on Hyper-V** (amd64; the VM [supervisor.md](../docs/developers/supervisor.md),
 "The Windows backend", configures):
@@ -499,6 +502,25 @@ powering off. The
 scripts live in `rootfs/usr/libexec/kivali/`. `k3s-server` and `ready`
 do nothing unless `boot` finished (`/run/kivali/booted`); if it did not,
 `k3s-server` prints a FATAL and powers off.
+
+`k3s-server`: k3s keeps the node's address in the node object in its
+datastore. Started on a new address, kube-router's network policy
+controller can read the old one before the kubelet and the cloud
+controller replace it, find no interface carrying it, and stop k3s
+for good: the same stale node object fails every later boot. So
+`k3s-server` records the address k3s starts with in
+`/var/lib/kivali/node-ip` (the address of the default route's
+interface, which is what k3s picks). When this boot's address differs,
+or nothing is recorded and a datastore exists, it first runs
+`k3s server --disable-agent` (no kubelet, no pods, no network policy
+controller), sets the node's InternalIP and its
+`alpha.kubernetes.io/provided-node-ip`, `k3s.io/internal-ip` and
+`flannel.alpha.coreos.com/public-ip` annotations to the new address,
+stops it, and only then starts k3s normally. It prints `KIVALI-VM: k3s:
+node address <old>, now <new>; updating ...` and `KIVALI-VM: k3s: node
+address updated to <new>`; the extra start takes a few seconds, and not
+managing it within 120 s is a FATAL. `ready` waits for the normal start
+(`/run/kivali/k3s-started`) before checking anything.
 
 `trim`: waits for this boot's READY, then runs `fstrim` on the data
 disk and again every 24 hours, printing `KIVALI-VM: trim: done:

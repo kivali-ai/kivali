@@ -1,6 +1,8 @@
 #!/bin/sh
-# Reports readiness on the console (busybox init `once`). Prints
-# KIVALI-VM READY exactly once when all of these hold:
+# Reports readiness on the console (busybox init `once`). Waits for
+# k3s-server's normal start of k3s (/run/kivali/k3s-started; before it,
+# k3s may run without its agent to update the node's address), then
+# prints KIVALI-VM READY exactly once when all of these hold:
 #   - the node's Ready condition is True and the node's bootID is this
 #     boot's (/proc/sys/kernel/random/boot_id), so a Ready left over
 #     from the previous boot does not count;
@@ -44,6 +46,9 @@ wait_for() {
 }
 
 [ -e /run/kivali/booted ] || exit 0  # k3s-server reports and powers off
+
+k3s_started() { [ -e /run/kivali/k3s-started ]; }
+wait_for "k3s-server to start k3s" k3s_started
 
 boot_id=$(cat /proc/sys/kernel/random/boot_id)
 node_ready() {

@@ -395,9 +395,11 @@ boot and 12 s on a later one; a clean `down` under 5 s.
 - No Authenticode signing, and no Defender check of the installer (a
   `root.vhdx` holding the guest binary is not flagged).
 - No end-to-end test covers the desktop GUI on Windows.
-- The Default Switch's subnet changes at a host reboot; k3s takes the
-  lease's address as its node IP each boot; no test covers a host
-  reboot between two boots.
+- The guest's address can change between boots: the Default Switch's
+  subnet changes at a host reboot, and its lease can change while a
+  team is paused. The guest repairs k3s's node object when it does
+  (vm/README.md, "What the guest init does"); the boot test covers that
+  on macOS (`-mac`), and no test covers it on Hyper-V.
 - Dynamic Memory: nothing is reclaimed at idle, and no test covers
   behaviour under load.
 - The exec stream through the supervisor's pipe moves a few MB/s, so

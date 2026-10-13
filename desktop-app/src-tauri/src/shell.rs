@@ -953,6 +953,7 @@ fn boot(app: &AppHandle, sh: &Shell, rt: &Runtime, req: UpRequest, progress: &mu
     let st = match result {
         Ok(st) => st,
         Err(e) => {
+            eprintln!("kivali: {}: up failed: {e}", rt.id);
             *rt.failure.lock().unwrap() = Some(e.to_string());
             let _ = rt.refresh_status();
             return Err(sup_err(e));
