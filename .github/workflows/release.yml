@@ -437,7 +437,9 @@ jobs:
     name: Kivali Desktop (macOS arm64)
     needs: [verify, vm]
     runs-on: macos-15
-    timeout-minutes: 90
+    # Notarization is Apple's queue: usually minutes, sometimes far
+    # longer, and a run that times out has to submit again.
+    timeout-minutes: 180
     # Only the version here: the secrets go to "Sign, notarize and
     # package" alone, after the project's dependencies have run.
     env:
@@ -507,7 +509,9 @@ jobs:
       # set but empty as present, and an empty APPLE_ID would send it down
       # the Apple-ID notarization path even when an API key is in use. The
       # certificate is imported here, so APPLE_CERTIFICATE is unset too:
-      # tauri would import it a second time.
+      # tauri would import it a second time. Tauri waits on notarization
+      # without a word, so scripts/notary-progress.sh prints Apple's status
+      # for the submission once a minute until the bundle ends.
       - name: Sign, notarize and package
         if: env.DEV != 'true'
         env:
@@ -553,6 +557,9 @@ jobs:
             unset APPLE_API_KEY_P8
             export APPLE_API_KEY_PATH="$RUNNER_TEMP/AuthKey.p8"
           fi
+          bash scripts/notary-progress.sh &
+          progress=$!
+          trap 'kill "$progress" 2>/dev/null || true' EXIT
           make desktop-release-bundle VERSION="$TAG"
 
       # A dev build: ad-hoc signed, not notarized, no updater artifacts, the

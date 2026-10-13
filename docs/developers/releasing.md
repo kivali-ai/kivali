@@ -157,7 +157,12 @@ Choices worth knowing:
   stapled app; the dmg itself is not separately notarized. The `.app`
   carries the ticket, so it passes Gatekeeper offline once copied out of the
   dmg, and the dmg opens because the app inside it is notarized. The
-  updater's `Kivali.app.tar.gz` is that same stapled app.
+  updater's `Kivali.app.tar.gz` is that same stapled app. Tauri waits
+  for Apple's verdict silently, so the step runs
+  `scripts/notary-progress.sh` beside it, which logs each submission's
+  status (`In Progress`, `Accepted`, `Invalid`) once a minute. The job
+  allows 180 minutes, since Apple's queue sometimes takes far longer than
+  its usual few minutes.
 - **Early checks.** Everything that can be known before a minute is spent
   is checked in the `verify` job (and, for the updater key, by
   `release.sh` before it opens the release pull request): the tag equals tauri.conf.json's version,
