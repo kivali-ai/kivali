@@ -124,7 +124,8 @@ Choices worth knowing:
   archive carries the images' own names, not a registry's: the chart's
   image references (`kivali:vX.Y.Z`) resolve to what containerd imported.
 - **The VM images** are built from each architecture's *bundle
-  uncompressed* (squashfs compresses it), so a first install needs no
+  uncompressed* (squashfs compresses it; the `vm` job decompresses the
+  `images` job's bundle), so a first install needs no
   download: arm64 for macOS, amd64 for Windows, where `root.vhdx` holds
   the unified kernel image and the squashfs. The arm64 image's release
   asset names are the ones the supervisor's `--vm-dir` expects (`Image`,

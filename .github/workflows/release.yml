@@ -277,15 +277,6 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
-      # The same images uncompressed, for the VM image's root disk
-      # (squashfs compresses better from a plain tar).
-      - uses: actions/upload-artifact@v4
-        with:
-          name: vm-images-${{ matrix.arch }}
-          path: dist/images/bundle-${{ matrix.arch }}/kivali-images.tar
-          retention-days: 7
-          if-no-files-found: error
-
   chart:
     name: Chart
     needs: verify
@@ -373,12 +364,20 @@ jobs:
           go-version: '1.24'
           cache: true
 
-      # Where `make vm-release` looks for them, as after a local
-      # `make release-assets`.
       - uses: actions/download-artifact@v4
         with:
-          name: vm-images-${{ matrix.arch }}
-          path: dist/images/bundle-${{ matrix.arch }}
+          name: images-${{ matrix.arch }}
+          path: dist
+
+      # The root disk bakes the bundle uncompressed (squashfs compresses
+      # better from a plain tar), where `make vm-release` looks for it, as
+      # after a local `make release-assets`.
+      - name: Decompress the image bundle
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends zstd
+          mkdir -p dist/images/bundle-${{ matrix.arch }}
+          zstd -d -o dist/images/bundle-${{ matrix.arch }}/kivali-images.tar dist/kivali-images-linux-${{ matrix.arch }}.tar.zst
 
       - uses: actions/download-artifact@v4
         with:
