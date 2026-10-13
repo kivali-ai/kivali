@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -144,7 +145,21 @@ func (s *Supervisor) fetchRelease(ctx context.Context, feed string) (Release, er
 	if r.Version == "" {
 		return Release{}, errors.New("release.json: no version")
 	}
+	if !validVersion(r.Version) {
+		return Release{}, fmt.Errorf("release.json: version %q is not vMAJOR.MINOR.PATCH", r.Version)
+	}
 	return r, nil
+}
+
+// versionPattern is a release version: MAJOR.MINOR.PATCH with an optional
+// leading v, pre-release and build suffix, in semver's characters only.
+var versionPattern = regexp.MustCompile(`^v?[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$`)
+
+// validVersion reports whether v is a release version. The version names
+// the release's downloads directory, so a separator in it would reach
+// outside that directory.
+func validVersion(v string) bool {
+	return versionPattern.MatchString(v)
 }
 
 // validAssetName reports whether name is a plain file name on every OS:
