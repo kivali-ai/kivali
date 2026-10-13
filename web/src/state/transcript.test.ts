@@ -21,6 +21,7 @@ import {
   initialTranscript,
   isSentSide,
   isStreaming,
+  MAX_MISSED_ENDS,
   mergeLoaded,
   reconcileSnapshot,
   reduceTranscript,
@@ -398,6 +399,38 @@ describe('messages and markers (chat-message-dedup, chat-turn-error-marker, chat
     // The 204 at page load (or from the org snapshot's reopen) says only "nothing to attach to".
     expect(run(live, [{ type: 'stream_closed', wasOpen: false }]).reloadSeq).toBe(0);
     expect(run(live, [{ type: 'stream_closed' }]).running).toBe(false);
+  });
+
+  it('refetches when the stream opened to follow a turn finds nothing: the turn ended before it connected', () => {
+    // The GET said running; the follow-up turn was over (reply and all) by the time the stream connected.
+    const told = start({ ...emptyChat, running: true });
+    const s = run(told, [{ type: 'stream_closed', wasOpen: false, followed: true }]);
+    expect(s.reloadSeq).toBe(1);
+    expect(s.running).toBe(false);
+    // The same with a background task still counted, which keeps `running` off but not the turn's rows.
+    const waiting = start({ ...emptyChat, running: true, waiting_tasks: 1 });
+    expect(waiting.waitingTasks).toBe(1);
+    expect(run(waiting, [{ type: 'stream_closed', wasOpen: false, followed: true }]).reloadSeq).toBe(1);
+  });
+
+  it('bounds the refetches a followed 204 asks for, and a connected stream or an idle answer resets them', () => {
+    const followed204: TranscriptAction = { type: 'stream_closed', wasOpen: false, followed: true };
+    const stale: TranscriptAction = { type: 'loaded', chat: { ...emptyChat, running: true }, at: AT };
+    // A stale `running` keeps answering the same way: a refetch each time, up to the bound.
+    let s = start({ ...emptyChat, running: true });
+    for (let i = 1; i <= MAX_MISSED_ENDS; i++) {
+      s = run(s, [followed204, stale]);
+      expect(s.reloadSeq).toBe(i);
+    }
+    s = run(s, [followed204]);
+    expect(s.reloadSeq).toBe(MAX_MISSED_ENDS);
+    expect(s.running).toBe(false);
+    // A stream that connects resets the count.
+    s = run(s, [stale, { type: 'stream_open', at: AT }, ev('done', { waiting_tasks: 0 }), stale, followed204]);
+    expect(s.missedEnds).toBe(1);
+    // So does an answer that says nothing is running.
+    s = run(s, [{ type: 'loaded', chat: emptyChat, at: AT }]);
+    expect(s.missedEnds).toBe(0);
   });
 
   it('a turn error is a marker below the partial reply; unknown kinds are ignored; the error event paints nothing and stops', () => {

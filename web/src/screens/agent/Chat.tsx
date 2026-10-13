@@ -115,10 +115,11 @@ export function Chat() {
   // settle it: a live turn streams (and ends with `done`), and nothing running answers 204, which clears it.
   // The fetch after `done` can still say running (the server clears its in-flight mark just after it emits
   // `done`); reopening is what keeps Stop from staying up on that stale answer. A no-op when one is open.
+  // A turn that ends before the stream connects (the 204 again) is fetched: the reducer asks for it.
   const loadAndFollow = useCallback(
     async (isCancelled: () => boolean = () => false): Promise<void> => {
       const chat = await load();
-      if (!isCancelled() && chat && chat.running && !chat.archived) stream.open();
+      if (!isCancelled() && chat && chat.running && !chat.archived) stream.open(false, true);
     },
     [load, stream],
   );
@@ -196,7 +197,7 @@ export function Chat() {
     });
     if (r.armed) resume.current = { armed: false, midTurn: false };
     if (decision.waiting !== undefined) dispatch({ type: 'waiting', tasks: decision.waiting });
-    if (decision.open) stream.open(decision.open === 'force');
+    if (decision.open) stream.open(decision.open === 'force', true);
     if (decision.refetch) void loadAndFollow();
     // Runs once per snapshot: org.tree is a new array on each one.
   }, [agentState, node, org.tree, readOnly, stream, loadAndFollow, state.loaded]);

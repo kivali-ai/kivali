@@ -57,6 +57,8 @@ export interface Harness {
 
 export interface HarnessOptions {
   path?: string;
+  /** Agent streams never connect: closing one is the server's 204 (nothing running), not a drop. */
+  streams204?: boolean;
   chat?: Chat;
   detail?: AgentDetail;
   snapshot?: OrgSnapshot;
@@ -99,6 +101,7 @@ export function renderAgent(opts: HarnessOptions = {}): Harness {
   const deps: ChatDeps = {
     openStream(url) {
       const s = new FakeStream();
+      s.connects = !opts.streams204;
       streams.push(s);
       streamUrls.push(url);
       return s;

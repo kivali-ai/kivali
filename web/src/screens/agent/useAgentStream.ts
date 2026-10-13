@@ -35,8 +35,12 @@ export const AGENT_STREAM_EVENTS = [
 export const ROTATION_FALLBACK_MS = 15_000;
 
 export interface AgentStreamControl {
-  /** Opens the stream. `force` replaces one that is open (it may have died while the tab was hidden). */
-  open(force?: boolean): void;
+  /**
+   * Opens the stream. `force` replaces one that is open (it may have died while the tab was hidden).
+   * `followed` says it is opened to follow a turn the page was told is running, so a 204 means that turn
+   * ended before the stream connected.
+   */
+  open(force?: boolean, followed?: boolean): void;
   close(): void;
   isOpen(): boolean;
 }
@@ -74,7 +78,7 @@ export function useAgentStream(slug: string, dispatch: Dispatch<TranscriptAction
   }, []);
 
   const open = useCallback(
-    (force = false) => {
+    (force = false, followed = false) => {
       if (current.current && !force) return;
       close();
       const s = depsRef.current.openStream('/agents/' + encodeURIComponent(slug) + '/stream');
@@ -116,7 +120,7 @@ export function useAgentStream(slug: string, dispatch: Dispatch<TranscriptAction
         } else if (state === 'closed') {
           current.current = null;
           s.stop();
-          dispatch({ type: 'stream_closed', wasOpen: opened });
+          dispatch({ type: 'stream_closed', wasOpen: opened, followed });
         }
       });
       s.start();

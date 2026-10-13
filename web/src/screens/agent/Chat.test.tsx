@@ -809,6 +809,26 @@ describe('Chat: the live stream', () => {
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull());
   });
 
+  it('fetches the reply of a turn that ended before the stream following it connected', async () => {
+    // A finished background task woke the agent: the GET says running (the task still counted), and the
+    // turn, reply and all, is over by the time the stream connects, which answers 204.
+    const h = renderAgent({ chat: { ...idle, running: true, waiting_tasks: 1 }, streams204: true });
+    await loaded();
+    await waitFor(() => expect(h.streams.length).toBeGreaterThan(0));
+    const before = gets(h, CHAT);
+    act(() => h.stream().setState('closed'));
+    await waitFor(() => expect(gets(h, CHAT)).toBe(before + 1));
+  });
+
+  it('fetches the chat when the stream the snapshot opened finds the turn already over', async () => {
+    const h = renderAgent({ chat: idle, streams204: true });
+    await loaded();
+    h.snapshot(snapshotWith('running'));
+    await waitFor(() => expect(h.streams).toHaveLength(1));
+    act(() => h.stream().setState('closed'));
+    await waitFor(() => expect(gets(h, CHAT)).toBe(2));
+  });
+
   it('swallows the 204 a stream gets when nothing is running', async () => {
     const h = renderAgent({ chat: { ...idle, running: true } });
     await loaded();

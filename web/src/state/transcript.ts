@@ -126,6 +126,11 @@ export interface TranscriptState {
   reloadSeq: number;
   /** POSTed messages (their ts) that went straight to an idle agent and have not been painted yet. */
   awaiting: number[];
+  /**
+   * Refetches in a row for a followed turn whose stream found nothing running (a 204). Bounded: a stale
+   * `running` answers the same way, and only a connected stream or an answer that says idle resets it.
+   */
+  missedEnds: number;
   /** Whether the person is reading the bottom of the transcript. */
   atBottom: boolean;
   /** Rows that arrived while the person was scrolled up. */
@@ -136,8 +141,11 @@ export type TranscriptAction =
   | { type: 'loaded'; chat: Chat; at: number }
   | { type: 'event'; name: string; data: unknown; at: number }
   | { type: 'stream_open'; at: number }
-  /** The connection ended without done/error. `wasOpen` says it had connected (a drop), not a 204 probe. */
-  | { type: 'stream_closed'; wasOpen?: boolean }
+  /**
+   * The connection ended without done/error. `wasOpen` says it had connected (a drop), not a 204 probe;
+   * `followed` that it was opened to follow a turn the page was told is running.
+   */
+  | { type: 'stream_closed'; wasOpen?: boolean; followed?: boolean }
   | { type: 'thinking_promote' }
   | { type: 'send_posted'; text: string; response: MessagePostResponse; at: number }
   /** New chat was confirmed on this page and the server started the rotation. */
@@ -162,6 +170,9 @@ export const MARKER_TEXT: Record<string, string> = {
 
 /** The stream's marker for a new chat that was asked for. It is painted as the `rotation_prompt` row it stands for. */
 const ROTATION_MARKER = 'rotation';
+
+/** How many refetches in a row a followed turn's 204 asks for (TranscriptState.missedEnds). */
+export const MAX_MISSED_ENDS = 2;
 
 /** How long a reasoning step waits before it is shown. */
 export const THINKING_PROMOTE_MS = 300;
@@ -188,6 +199,7 @@ export function initialTranscript(agent: { slug: string; name: string }): Transc
     rotationSeq: 0,
     reloadSeq: 0,
     awaiting: [],
+    missedEnds: 0,
     atBottom: true,
     unreadBelow: 0,
   };
@@ -399,6 +411,7 @@ function loaded(state: TranscriptState, chat: Chat, at: number): TranscriptState
     generation: chat.generation,
     rotationSeq: rotated ? state.rotationSeq + 1 : state.rotationSeq,
     awaiting: state.awaiting.filter((ts) => !painted.has(ts)),
+    missedEnds: chat.running ? state.missedEnds : 0,
     unreadBelow: 0,
   };
 }
@@ -960,19 +973,24 @@ export function reduceTranscript(state: TranscriptState, action: TranscriptActio
       return onEvent(state, action.name, action.data, action.at);
     case 'stream_open': {
       // The hub replays what it still holds: close the open reply so its deltas rebuild it, not double it.
-      const s = closeReply(state);
+      const s = { ...closeReply(state), missedEnds: 0 };
       return s.thinking.since ? s : { ...s, thinking: { ...s.thinking, since: action.at } };
     }
     case 'stream_closed': {
       // A 204 (nothing running) or a dropped connection. Waiting on tasks outlives the stream.
-      const s = closeReply(state);
+      const closed = closeReply(state);
+      // The page was told a turn is running (a GET, or the org snapshot) and the stream it opened to follow
+      // that turn found nothing: the turn ended in between, and its rows, the reply among them, are on the
+      // server. A stale `running` answers the same way, so this refetches a bounded number of times in a row.
+      const missed = action.followed === true && action.wasOpen !== true && closed.missedEnds < MAX_MISSED_ENDS;
+      const s = missed ? { ...closed, missedEnds: closed.missedEnds + 1 } : closed;
       // A rotation this page was following went out of its sight, and `rotation_done` with it: the turn
       // was over before the stream opened (a 204), or the connection dropped. The GET says where it stands.
-      if (s.waitingTasks > 0) return { ...s, running: false, reloadSeq: s.rotating ? s.reloadSeq + 1 : s.reloadSeq };
+      if (s.waitingTasks > 0) return { ...s, running: false, reloadSeq: s.rotating || missed ? s.reloadSeq + 1 : s.reloadSeq };
       // The turn's end was missed: a message was sent and never painted, or a connected stream ended
       // mid-turn without `done` (the hub was gone when the browser reconnected). The server has the rest.
-      // A probe that never connected (the 204 at page load) is not that: refetching on it would churn.
-      const lost = s.awaiting.length > 0 || (action.wasOpen === true && s.running) || s.rotating;
+      // A probe that was not following a turn and never connected says only "nothing to attach to".
+      const lost = missed || s.awaiting.length > 0 || (action.wasOpen === true && s.running) || s.rotating;
       return { ...s, running: false, thinking: emptyThinking, reloadSeq: lost ? s.reloadSeq + 1 : s.reloadSeq };
     }
     case 'thinking_promote':
