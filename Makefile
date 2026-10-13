@@ -683,10 +683,11 @@ endif
 # covers both platforms, is written when the release is published
 # (scripts/latest-json.sh).
 #
-# DEV=1 is a dev build (release.yml run by hand): desktop-app's
-# build-trial, the release profile with no signing material checked or
-# used (macOS: ad-hoc signed, not notarized) and no updater artifacts;
-# only the installer is collected.
+# DEV=1 (or DEV=true) is a dev build (release.yml run by hand):
+# desktop-app's build-trial, the release profile with no signing material
+# checked or used (macOS: ad-hoc signed, not notarized) and no updater
+# artifacts; only the installer is collected. Any other value, empty or
+# false among them, is a release build.
 #
 # desktop-release is two halves, which the release workflow runs as
 # separate steps so that only the second sees a secret:
@@ -712,7 +713,7 @@ desktop-release-bundle: desktop-release-check
 	@for v in APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID APPLE_API_KEY APPLE_API_ISSUER APPLE_API_KEY_PATH TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD; do \
 		if [ -n "$${!v}" ]; then echo "  set      $$v"; else echo "  not set  $$v"; fi; done
 	@mkdir -p dist
-ifneq ($(DEV),)
+ifneq ($(filter 1 true,$(DEV)),)
 	$(MAKE) -C desktop-app build-trial-bundle
 	cp $(addprefix desktop-app/src-tauri/target/release/bundle/,$(DESKTOP_INSTALLER)) dist/
 else
