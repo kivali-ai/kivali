@@ -307,9 +307,10 @@ fn pin_of(app: &AppHandle, id: &str) -> Arc<Mutex<Option<url::Origin>>> {
 /// page starting to arrive. A failed load is sent again after
 /// [`retry_delay`], each retry waiting longer up to a bound, until a page
 /// finishes or the team stops serving: a load that failed for a moment
-/// (the network not yet up after waking) recovers on its own. A load the
-/// web view turned away from (a desktop sign-in, a page for the browser)
-/// is no longer pending, and is not retried.
+/// (the network not yet up after waking) recovers on its own. A failed
+/// signed-in handoff is sent again as a handoff, with a new token. A load
+/// the web view turned away from (a desktop sign-in, a page for the
+/// browser) is no longer pending, and is not retried.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 struct WebLoad {
     /// A page finished loading since the web view was last sent to the origin.
@@ -325,8 +326,26 @@ struct WebLoad {
     retry_at: Option<Instant>,
     /// The pending load is known to have failed.
     failed: bool,
+    /// A page of the pending load has started to arrive.
+    arriving: bool,
+    /// The pending load is the signed-in handoff.
+    handoff: bool,
     /// Retries since a page last finished, for the backoff.
     tries: u32,
+}
+
+/// Where a pending load is sent again: the team's origin, or a new
+/// signed-in handoff.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Resend {
+    Origin,
+    Handoff,
+}
+
+/// Whether the shell logs a load's `tries`-th retry: the first, then
+/// every tenth, so a team that stays out of reach does not fill the log.
+fn logs_retry(tries: u32) -> bool {
+    tries == 1 || tries.is_multiple_of(10)
 }
 
 /// How long a pending load may go without a page finishing before it
@@ -352,19 +371,24 @@ impl WebLoad {
         w
     }
 
-    /// A page finished loading.
-    fn finished(&mut self) {
+    /// A page finished loading. Returns the retries it took.
+    fn finished(&mut self) -> u32 {
+        let tries = self.tries;
         self.loaded = true;
         self.loaded_serving = self.serving;
         self.retry_at = None;
         self.failed = false;
+        self.arriving = false;
+        self.handoff = false;
         self.tries = 0;
+        tries
     }
 
     /// A page started to arrive: a pending load is under way, its
     /// patience counted from now.
     fn started(&mut self, now: Instant) {
         if self.retry_at.is_some() && !self.failed {
+            self.arriving = true;
             self.retry_at = Some(now + patience(self.tries));
         }
     }
@@ -374,6 +398,7 @@ impl WebLoad {
     fn failed(&mut self, now: Instant) {
         if self.serving && !self.loaded && self.retry_at.is_some() {
             self.failed = true;
+            self.arriving = false;
             self.retry_at = Some(now + retry_delay(self.tries));
         }
     }
@@ -383,43 +408,67 @@ impl WebLoad {
     fn handed_off(&mut self) {
         self.retry_at = None;
         self.failed = false;
+        self.arriving = false;
+        self.handoff = false;
     }
 
-    /// The web view is being sent to the team's origin (or, signed in, to
-    /// its handoff); the load is pending while the team serves.
+    /// The web view is being sent to the team's origin; the load is
+    /// pending while the team serves.
     fn sending(&mut self, now: Instant) {
         self.loaded = false;
         self.sent = true;
         self.failed = false;
+        self.arriving = false;
+        self.handoff = false;
         self.retry_at = self.serving.then(|| now + patience(self.tries));
     }
 
-    /// Whether a pending load is under way and not known to have failed.
-    fn in_progress(&self, now: Instant) -> bool {
-        !self.failed && self.retry_at.is_some_and(|t| now < t)
+    /// The web view is being sent to the signed-in handoff; the load is
+    /// pending while the team serves.
+    fn sending_handoff(&mut self, now: Instant) {
+        self.sending(now);
+        self.handoff = true;
     }
 
-    /// Whether to send the web view to the origin again now: a pending
-    /// load failed and its retry is due. Records the send.
-    fn retry(&mut self, now: Instant) -> bool {
+    /// Whether a pending load is in flight, for Reload to leave be: the
+    /// signed-in handoff, or a load whose page has started to arrive,
+    /// until it fails or its patience runs out. A load with nothing
+    /// arriving yet may have failed unseen (WKWebView), so it is not.
+    fn in_flight(&self, now: Instant) -> bool {
+        (self.handoff || self.arriving) && !self.failed && self.retry_at.is_some_and(|t| now < t)
+    }
+
+    /// Records a send of the pending load again, as the same kind.
+    fn resend(&mut self, now: Instant) -> Resend {
+        if self.handoff {
+            self.sending_handoff(now);
+            Resend::Handoff
+        } else {
+            self.sending(now);
+            Resend::Origin
+        }
+    }
+
+    /// Where to send the web view again now, if anywhere: a pending load
+    /// failed and its retry is due. Records the send.
+    fn retry(&mut self, now: Instant) -> Option<Resend> {
         if !self.serving || self.loaded || !self.retry_at.is_some_and(|t| now >= t) {
-            return false;
+            return None;
         }
         self.tries = self.tries.saturating_add(1);
-        self.sending(now);
-        true
+        Some(self.resend(now))
     }
 
-    /// View → Reload while the team serves: whether to send the web view
-    /// to the origin, as it has no page to reload. A load in progress is
-    /// left to finish. Records the send.
-    fn reload(&mut self, now: Instant) -> bool {
-        if self.loaded || self.in_progress(now) {
-            return false;
+    /// View → Reload while the team serves: where to send the web view,
+    /// as it has no page to reload, if anywhere: at once, the backoff
+    /// from scratch, unless a load is in flight ([`WebLoad::in_flight`]).
+    /// Records the send.
+    fn reload(&mut self, now: Instant) -> Option<Resend> {
+        if self.loaded || self.in_flight(now) {
+            return None;
         }
         self.tries = 0;
-        self.sending(now);
-        true
+        Some(self.resend(now))
     }
 
     /// Records whether the team serves now and returns whether to send the
@@ -429,8 +478,7 @@ impl WebLoad {
         self.serving = serving;
         if !serving {
             self.sent = false;
-            self.retry_at = None;
-            self.failed = false;
+            self.handed_off();
             self.tries = 0;
             return false;
         }
@@ -467,8 +515,9 @@ fn arm_retry(app: &AppHandle, id: &str) {
     });
 }
 
-/// Sends a team's web view to its origin again when its pending load
-/// failed and the retry is due ([`WebLoad::retry`]).
+/// Sends a team's web view to its origin again, or to a new signed-in
+/// handoff, when its pending load failed and the retry is due
+/// ([`WebLoad::retry`]).
 fn retry_load(app: &AppHandle, id: &str) {
     let sh = app.state::<Shell>();
     let Some(t) = sh.team(id) else { return };
@@ -480,11 +529,73 @@ fn retry_load(app: &AppHandle, id: &str) {
     if pin_of(app, id).lock().unwrap().as_ref() != Some(&origin.origin()) {
         return;
     }
-    if web_load(id, |w| w.retry(Instant::now())) {
-        eprintln!("kivali: {}: no page loaded; sending it to the team again", web_label(id));
-        let _ = web.navigate(origin);
-        arm_retry(app, id);
+    let Some((how, tries)) = web_load(id, |w| w.retry(Instant::now()).map(|how| (how, w.tries))) else { return };
+    if logs_retry(tries) {
+        eprintln!("kivali: {}: no page loaded; trying again (retry {tries})", web_label(id));
     }
+    send_again(app, id, &web, origin, how);
+}
+
+/// Sends a team's web view where [`WebLoad`] said, the send already
+/// recorded there.
+fn send_again(app: &AppHandle, id: &str, web: &tauri::Webview, origin: Url, how: Resend) {
+    match how {
+        Resend::Origin => {
+            let _ = web.navigate(origin);
+        }
+        Resend::Handoff => send_handoff(app, id, true),
+    }
+    arm_retry(app, id);
+}
+
+/// Sends a team here's web view to the signed-in handoff
+/// (docs/developers/auth.md, Desktop handoff) with a token fresh from
+/// the team's supervisor, fetched off the main thread. Each token works
+/// once and for two minutes, so a handoff sent again gets a new one.
+/// `retrying`: this resends a pending handoff, and goes only while that
+/// is still pending; with no token to be had, the web view goes to the
+/// origin instead. A first handoff with no token leaves the window as
+/// it is.
+fn send_handoff(app: &AppHandle, id: &str, retrying: bool) {
+    let sh = app.state::<Shell>();
+    let Some(t) = sh.team(id) else { return };
+    let (Some(rt), Some(origin), Some(root)) = (sh.runtime(id), t.origin(), team_root(&t)) else { return };
+    let app2 = app.clone();
+    let id = id.to_string();
+    std::thread::spawn(move || {
+        let target = match rt.supervisor.handoff() {
+            Ok(token) => handoff_url(&origin, &token),
+            Err(e) => {
+                eprintln!("kivali: opening {id} signed in: {e}");
+                None
+            }
+        };
+        let app3 = app2.clone();
+        let _ = app2.run_on_main_thread(move || {
+            // Only onto the origin the window is pinned to.
+            if pin_of(&app3, &id).lock().unwrap().as_ref() != Some(&root.origin()) {
+                return;
+            }
+            if retrying && !web_load(&id, |w| !w.loaded && w.retry_at.is_some()) {
+                return;
+            }
+            let Some(w) = app3.get_webview(&web_label(&id)) else { return };
+            let now = Instant::now();
+            match target {
+                Some(target) => {
+                    // A load in flight, which View → Reload leaves be.
+                    web_load(&id, |l| l.sending_handoff(now));
+                    let _ = w.navigate(target);
+                }
+                None if retrying => {
+                    web_load(&id, |l| l.sending(now));
+                    let _ = w.navigate(root);
+                }
+                None => return,
+            }
+            arm_retry(&app3, &id);
+        });
+    });
 }
 
 /// How a page load of a team's web view ended.
@@ -493,11 +604,13 @@ fn load_ended(app: &AppHandle, id: &str, end: platform::LoadEnd) {
         platform::LoadEnd::Shown => {
             // The web view has something to show: the window may now
             // swap the team's page for it (sync_team).
-            let first = web_load(id, |w| {
+            let (first, tries) = web_load(id, |w| {
                 let first = !w.loaded;
-                w.finished();
-                first
+                (first, w.finished())
             });
+            if tries > 0 {
+                eprintln!("kivali: {}: a page loaded after {tries} retries", web_label(id));
+            }
             if first {
                 sync_all(app);
             }
@@ -811,8 +924,8 @@ fn handoff_url(origin: &str, token: &str) -> Option<Url> {
 /// shows its web app, the web view trades a one-time token from the
 /// team's supervisor for a session as the owner who signed in during
 /// setup (docs/developers/auth.md, Desktop handoff), so the first open needs no
-/// second sign-in. The token is fetched off the main thread; on any
-/// failure the window simply stays as `show_team` left it.
+/// second sign-in ([`send_handoff`]). On any failure to get a token the
+/// window simply stays as `show_team` left it.
 pub fn show_team_signed_in(app: &AppHandle, id: &str) {
     show_team(app, id);
     let sh = app.state::<Shell>();
@@ -820,29 +933,7 @@ pub fn show_team_signed_in(app: &AppHandle, id: &str) {
     if !t.is_here() || !shows_web(&sh, &t) {
         return;
     }
-    let (Some(rt), Some(origin)) = (sh.runtime(id), t.origin()) else { return };
-    let app2 = app.clone();
-    let id = id.to_string();
-    std::thread::spawn(move || {
-        let token = match rt.supervisor.handoff() {
-            Ok(tok) => tok,
-            Err(e) => return eprintln!("kivali: opening {id} signed in: {e}"),
-        };
-        let Some(target) = handoff_url(&origin, &token) else { return };
-        let app3 = app2.clone();
-        let _ = app2.run_on_main_thread(move || {
-            // Only onto the origin the window is pinned to.
-            if pin_of(&app3, &id).lock().unwrap().as_ref() != Some(&target.origin()) {
-                return;
-            }
-            if let Some(w) = app3.get_webview(&web_label(&id)) {
-                // A load under way that View → Reload leaves be.
-                web_load(&id, |l| l.sending(Instant::now()));
-                let _ = w.navigate(target);
-                arm_retry(&app3, &id);
-            }
-        });
-    });
+    send_handoff(app, id, false);
 }
 
 /// A hidden window for the team being connected, loading its own
@@ -1093,9 +1184,10 @@ pub fn reload_front(app: &AppHandle) {
 
 /// View → Reload in a team's window: its web app, or its page. A team
 /// that serves but whose web view has no page to show has its web view
-/// sent to the origin, unless `sync_team` just sent it or a load is in
-/// progress (a first load, a retry, the signed-in handoff), which is
-/// left to finish ([`WebLoad::reload`]).
+/// sent to the origin (or a failed handoff sent again) at once, unless
+/// `sync_team` just sent it or a load is in flight (the signed-in
+/// handoff, a page arriving), which is left to finish
+/// ([`WebLoad::reload`]).
 pub fn reload_team(app: &AppHandle, id: &str) {
     let sh = app.state::<Shell>();
     if let Some(t) = sh.team(id) {
@@ -1106,9 +1198,8 @@ pub fn reload_team(app: &AppHandle, id: &str) {
             let pinned = pin_of(app, id).lock().unwrap().clone();
             if let (Some(web), Some(origin)) = (app.get_webview(&web_label(id)), team_root(&t)) {
                 if pinned.as_ref() == Some(&origin.origin()) {
-                    if web_load(id, |w| w.reload(Instant::now())) {
-                        let _ = web.navigate(origin);
-                        arm_retry(app, id);
+                    if let Some(how) = web_load(id, |w| w.reload(Instant::now())) {
+                        send_again(app, id, &web, origin, how);
                     }
                     return;
                 }
@@ -1208,6 +1299,8 @@ pub fn sign_out_team(app: &AppHandle, id: &str) {
 mod tests {
     use super::*;
 
+    const ORIGIN: Option<Resend> = Some(Resend::Origin);
+
     fn secs(n: u64) -> Duration {
         Duration::from_secs(n)
     }
@@ -1220,7 +1313,7 @@ mod tests {
         let mut w = WebLoad::new(false, t0);
         assert_eq!(w.retry_at, None);
         assert!(!w.sync(false, false, false, t0));
-        assert!(!w.retry(t0 + secs(3600)));
+        assert_eq!(w.retry(t0 + secs(3600)), None);
         assert!(w.sync(true, false, false, t0));
         assert!(!w.loaded);
         assert_eq!(w.retry_at, Some(t0 + patience(0)));
@@ -1257,14 +1350,14 @@ mod tests {
         w.failed(t0);
         assert!(!w.loaded && w.retry_at.is_none());
         assert!(w.sync(true, false, false, t0 + secs(5)));
-        assert!(w.in_progress(t0 + secs(5)));
+        assert_eq!(w.retry_at, Some(t0 + secs(5) + patience(0)));
     }
 
     #[test]
     fn web_view_made_while_serving_is_left_to_load() {
         let t0 = Instant::now();
         let mut w = WebLoad::new(true, t0);
-        assert!(w.in_progress(t0));
+        assert!(w.retry_at.is_some() && !w.in_flight(t0));
         assert!(!w.sync(true, false, false, t0));
         w.started(t0 + secs(1));
         w.finished();
@@ -1273,7 +1366,7 @@ mod tests {
         assert!(!w.sync(false, false, false, t0 + secs(3)));
         assert!(!w.sync(true, false, false, t0 + secs(4)));
         assert!(w.loaded);
-        assert!(!w.retry(t0 + secs(3600)));
+        assert_eq!(w.retry(t0 + secs(3600)), None);
     }
 
     #[test]
@@ -1295,24 +1388,24 @@ mod tests {
         let t0 = Instant::now();
         let mut w = WebLoad::new(true, t0);
         assert!(!w.sync(true, false, false, t0));
-        assert!(!w.retry(t0 + patience(0) - secs(1)));
+        assert_eq!(w.retry(t0 + patience(0) - secs(1)), None);
         let mut at = t0 + patience(0);
-        assert!(w.retry(at));
+        assert_eq!(w.retry(at), ORIGIN);
         assert_eq!(w.tries, 1);
         // Each wait is longer, up to a minute.
         let mut waits = vec![];
         for _ in 0..6 {
             let next = w.retry_at.unwrap();
             waits.push(next - at);
-            assert!(!w.retry(next - secs(1)));
-            assert!(w.retry(next));
+            assert_eq!(w.retry(next - secs(1)), None);
+            assert_eq!(w.retry(next), ORIGIN);
             at = next;
         }
         assert_eq!(waits, vec![secs(20), secs(40), secs(60), secs(60), secs(60), secs(60)]);
         // A page arrives: no more retries, and the next failure starts
         // the backoff again.
         w.finished();
-        assert!(!w.retry(at + secs(3600)));
+        assert_eq!(w.retry(at + secs(3600)), None);
         assert_eq!(w.tries, 0);
     }
 
@@ -1321,9 +1414,9 @@ mod tests {
         let t0 = Instant::now();
         let mut w = WebLoad::new(true, t0);
         w.started(t0 + secs(8));
-        assert!(!w.retry(t0 + patience(0)));
-        assert!(w.in_progress(t0 + patience(0)));
-        assert!(w.retry(t0 + secs(8) + patience(0)));
+        assert_eq!(w.retry(t0 + patience(0)), None);
+        assert!(w.in_flight(t0 + patience(0)));
+        assert_eq!(w.retry(t0 + secs(8) + patience(0)), ORIGIN);
     }
 
     #[test]
@@ -1333,15 +1426,15 @@ mod tests {
         let mut w = WebLoad::new(true, t0);
         w.started(t0);
         w.failed(t0 + secs(1));
-        assert!(!w.in_progress(t0 + secs(1)));
+        assert!(!w.in_flight(t0 + secs(1)));
         assert_eq!(w.retry_at, Some(t0 + secs(1) + retry_delay(0)));
         let mut at = t0 + secs(1);
         let mut waits = vec![];
         for _ in 0..7 {
             let next = w.retry_at.unwrap();
             waits.push(next - at);
-            assert!(!w.retry(next - Duration::from_millis(1)));
-            assert!(w.retry(next));
+            assert_eq!(w.retry(next - Duration::from_millis(1)), None);
+            assert_eq!(w.retry(next), ORIGIN);
             w.failed(next);
             at = next;
         }
@@ -1356,7 +1449,7 @@ mod tests {
         let mut w = WebLoad::new(true, t0);
         w.failed(t0);
         assert!(!w.sync(false, false, false, t0));
-        assert!(!w.retry(t0 + secs(3600)));
+        assert_eq!(w.retry(t0 + secs(3600)), None);
         // A failure reported while not serving schedules nothing.
         w.failed(t0 + secs(1));
         assert_eq!(w.retry_at, None);
@@ -1379,30 +1472,58 @@ mod tests {
         w.handed_off();
         w.started(t0 + secs(1));
         w.failed(t0 + secs(2));
-        assert!(!w.retry(t0 + secs(3600)));
+        assert_eq!(w.retry(t0 + secs(3600)), None);
         // Reload sends it again.
-        assert!(w.reload(t0 + secs(3600)));
+        assert_eq!(w.reload(t0 + secs(3600)), ORIGIN);
     }
 
     #[test]
-    fn reload_leaves_a_load_in_progress() {
+    fn reload_sends_at_once_unless_a_load_is_in_flight() {
         let t0 = Instant::now();
-        // A load under way (the first, or the signed-in handoff).
+        // Nothing arriving yet (macOS: it may have failed unseen): Reload
+        // sends it at once, the backoff from scratch.
         let mut w = WebLoad::new(true, t0);
-        w.sending(t0 + secs(1));
-        assert!(!w.reload(t0 + secs(2)));
-        assert!(w.in_progress(t0 + secs(2)));
-        // Failed: Reload sends it at once, the backoff from scratch.
-        w.failed(t0 + secs(3));
         w.tries = 4;
-        assert!(w.reload(t0 + secs(3)));
+        assert_eq!(w.reload(t0 + secs(1)), ORIGIN);
         assert_eq!(w.tries, 0);
-        assert_eq!(w.retry_at, Some(t0 + secs(3) + patience(0)));
-        // Past its patience: failed too.
-        assert!(w.reload(t0 + secs(3) + patience(0)));
+        assert_eq!(w.retry_at, Some(t0 + secs(1) + patience(0)));
+        // A page arriving is left to finish, until its patience runs out.
+        w.started(t0 + secs(2));
+        assert_eq!(w.reload(t0 + secs(3)), None);
+        assert_eq!(w.reload(t0 + secs(2) + patience(0)), ORIGIN);
+        // Failed (WebView2 says so): sent at once.
+        w.started(t0 + secs(30));
+        w.failed(t0 + secs(31));
+        assert_eq!(w.reload(t0 + secs(31)), ORIGIN);
         // A page shows: Reload reloads it, not the web view's origin.
         w.finished();
-        assert!(!w.reload(t0 + secs(3600)));
+        assert_eq!(w.reload(t0 + secs(3600)), None);
+    }
+
+    #[test]
+    fn handoff_is_left_to_finish_and_sent_again_as_a_handoff() {
+        let t0 = Instant::now();
+        let mut w = WebLoad::new(true, t0);
+        w.sending_handoff(t0 + secs(1));
+        // In flight before anything arrives: Reload leaves it.
+        assert_eq!(w.reload(t0 + secs(2)), None);
+        // It never finishes: retried as a handoff, with a new token.
+        assert_eq!(w.retry(t0 + secs(1) + patience(0)), Some(Resend::Handoff));
+        assert!(w.handoff && w.tries == 1);
+        // Reported failed: Reload sends a handoff at once.
+        w.failed(t0 + secs(20));
+        assert_eq!(w.reload(t0 + secs(20)), Some(Resend::Handoff));
+        // Sent to the origin instead (no token to be had): plain retries.
+        w.sending(t0 + secs(21));
+        assert_eq!(w.retry(t0 + secs(21) + patience(0)), ORIGIN);
+        assert_eq!(w.finished(), 1);
+        assert!(!w.handoff);
+    }
+
+    #[test]
+    fn retries_are_logged_now_and_then() {
+        let logged: Vec<u32> = (1..=40).filter(|&n| logs_retry(n)).collect();
+        assert_eq!(logged, vec![1, 10, 20, 30, 40]);
     }
 
     fn u(s: &str) -> Url {

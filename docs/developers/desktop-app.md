@@ -439,10 +439,15 @@ to the origin again after 1 s, doubling with each retry to at most
 30 s, until a page finishes or the team stops serving (`WebLoad`), so
 a window opened while the network was still coming up (a team
 elsewhere at launch, after waking) shows the team once it answers.
-A load the web view turns away, to the desktop sign-in or the
-browser, is not retried. View → Reload on a web view with no page
-sends it to the origin at once, unless the change to the window
-already did or a load is in progress, which it leaves to finish.
+A failed handoff is sent again as a handoff, with a token fresh from
+the supervisor, as each token works once ([auth.md](auth.md),
+"Desktop handoff"); with no token to be had, the web view goes to the
+origin. A load the web view turns away, to the desktop sign-in or the
+browser, is not retried. The first retry is logged, then every tenth,
+and the page that finally loads. View → Reload on a web view with no
+page sends it again at once, the backoff from scratch, unless the
+change to the window already did or a load is in flight (the handoff,
+or a page that has started to arrive), which it leaves to finish.
 Windows of teams that are gone are destroyed.
 
 Choosing a team in the tray, the end of setup, or a sign-in finishing
