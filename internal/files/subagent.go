@@ -78,9 +78,9 @@ func BuildSubagentOverlay(layout SubagentOverlay) error {
 	}
 	// Core builds this inside the parent's writable tree, where the
 	// agent could have left a link at subagents/ or subagents/<id>/.
-	// Those are made real directories first, and every removal goes
-	// through an os.Root on the parent tree, so a link cannot carry
-	// core's writes into someone else's directory.
+	// Those are made real directories first, and every removal and
+	// symlink goes through an os.Root on the parent tree, so a link
+	// cannot carry core's writes into someone else's directory.
 	parentRoot := SubagentParentRoot(layout.Root)
 	rel, err := filepath.Rel(parentRoot, filepath.Clean(layout.Root))
 	if err != nil {
@@ -120,18 +120,15 @@ func BuildSubagentOverlay(layout SubagentOverlay) error {
 		SharedWorkspaceDir: "../../" + SharedWorkspaceDir,
 	}
 	for name, target := range links {
-		dst := filepath.Join(layout.Root, name)
+		dst := rel + "/" + name
 		// If the symlink already points at the right target, leave it.
-		if existing, err := os.Readlink(dst); err == nil && existing == target {
+		if existing, err := proot.Readlink(dst); err == nil && existing == target {
 			continue
 		}
 		// Drop any stale entry (file, empty dir, or wrong-target
 		// symlink) so the next Symlink call doesn't fail with EEXIST.
-		_ = proot.Remove(rel + "/" + name)
-		// By path: os.Root has Symlink only from Go 1.25. The parent
-		// directories were just made real; a link swapped in since can
-		// misplace this one symlink, never remove or overwrite anything.
-		if err := os.Symlink(target, dst); err != nil {
+		_ = proot.Remove(dst)
+		if err := proot.Symlink(target, dst); err != nil {
 			return fmt.Errorf("symlink %s -> %s: %w", name, target, err)
 		}
 	}

@@ -154,8 +154,9 @@ func Restore(dst string, src Source, opt Options) (*Result, error) {
 	return res, nil
 }
 
-// mkdirAllIn is os.MkdirAll inside root, for the Go versions whose
-// os.Root has no MkdirAll. An existing component must be a directory.
+// mkdirAllIn is os.MkdirAll inside root that never follows a link: an
+// existing component must be a directory itself, where root.MkdirAll
+// would follow a symlink to one.
 func mkdirAllIn(root *os.Root, rel string, perm fs.FileMode) error {
 	parts := strings.Split(rel, "/")
 	for i := range parts {

@@ -48,7 +48,7 @@
 # run_shell tool description from it. That file is the public contract
 # for what is preinstalled; there is no second list to keep in step.
 
-ARG GO_VERSION=1.24
+ARG GO_VERSION=1.27
 ARG VERSION=dev
 
 # The Go stages run on the build host's own architecture and
