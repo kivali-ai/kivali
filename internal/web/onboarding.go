@@ -235,16 +235,11 @@ func (s *Server) seedCoS(ctx context.Context, c cosSeed, stage func(int)) error 
 	}
 	// Its pod, as every other hire gets one (ApplyHire, and the boot's
 	// BulkProvisionAgentPods): without it the first turn has nowhere to
-	// run and is dropped. Files first, for the reason BulkProvisionAgentPods
-	// gives. A failure is logged, not fatal: the next boot provisions it.
+	// run and is dropped. Through ProvisionAgentPod, which syncs the
+	// agent's files first and takes the agent's provision lock. A
+	// failure is logged, not fatal: the next boot provisions it.
 	if s.AgentPod != nil {
-		if s.AgentpodHub != nil {
-			s.AgentpodHub.MarkStarting(cosSlug, s.clk().Now())
-		}
-		if err := s.Store.SyncAgentFilesystem(cosSlug); err != nil {
-			log.Printf("agentpod: files sync %s before provisioning: %v", cosSlug, err)
-		}
-		if err := s.AgentPod.Provision(ctx, cosSlug); err != nil {
+		if err := s.ProvisionAgentPod(ctx, cosSlug); err != nil {
 			log.Printf("agentpod: provision %s: %v", cosSlug, err)
 		} else {
 			log.Printf("agentpod: provisioned %s", cosSlug)

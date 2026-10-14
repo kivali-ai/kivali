@@ -9,8 +9,8 @@ import (
 
 // Provisioner is the narrow interface the runtime needs for per-agent
 // pod lifecycle. Kept here so internal/agent stays free of k8s
-// concerns in its dependency graph. main.go plugs in the real
-// *agentpod.Provisioner at startup.
+// concerns in its dependency graph. web.NewServer plugs in the
+// server's ProvisionAgentPod, which serializes provisions per agent.
 type Provisioner interface {
 	Provision(ctx context.Context, slug string) error
 }

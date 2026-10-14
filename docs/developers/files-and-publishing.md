@@ -80,9 +80,13 @@ The provisioner asks for that list on every `Provision`
 the pod's spec hash and the pod is recreated; an unchanged one leaves
 the pod running and the agent is not marked starting
 (`Provisioner.ProvisionNotify`). Provisions for one agent run one at a
-time (`Server.ProvisionAgentPod` holds a per-slug lock), so a later one
+time (`Server.ProvisionAgentPod` holds a per-slug lock; a hire and
+setup's Chief of Staff provision through it too), so a later one
 reads the lists after the earlier one is done and applies any change
-saved meanwhile. A restore re-provisions every agent from the restored
+saved meanwhile. An offboard holds the same lock while it archives the
+agent and deletes its pod, and a provision that finds the agent no
+longer active does nothing, so an offboarded agent never gets its pod
+or its directory back. A restore re-provisions every agent from the restored
 lists.
 
 The settings API changes a list by name, never by replacing it:
