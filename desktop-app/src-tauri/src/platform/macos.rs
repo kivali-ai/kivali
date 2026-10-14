@@ -346,6 +346,12 @@ pub fn app_is_active() -> bool {
 /// already decides its frames.
 pub fn guard_frames(_webview: &tauri::Webview, _may_load: Box<dyn Fn(&str) -> bool + Send>) {}
 
+/// Nothing to watch: WKWebView never finishes a load that failed, so
+/// wry's `Finished` is a page shown.
+pub fn watch_loads(_webview: &tauri::Webview, _ended: Box<dyn Fn(super::LoadEnd) + Send>) -> bool {
+    false
+}
+
 /// Nothing to hand over: no window has a menu of its own
 /// ([`WINDOW_MENU`]), and AppKit gives the menu bar its key equivalents
 /// before a webview sees them.

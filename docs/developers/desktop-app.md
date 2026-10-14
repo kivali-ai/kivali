@@ -274,6 +274,7 @@ own build.
 | owner check | `authenticate` | LocalAuthentication, `LAPolicyDeviceOwnerAuthentication` (Touch ID or the login password) | Windows Hello (`UserConsentVerifier`, owned by the foreground window); where Hello is not set up, a Continue/Cancel confirmation |
 | notifications | `notify`, `NotifyTarget`, `on_notification_click` | UNUserNotificationCenter (`notify_macos.rs`): the target rides in `userInfo` and the center's delegate routes the click; outside an app bundle, `tauri-plugin-notification` | `tauri-plugin-notification`; a click only brings Kivali forward |
 | team window frames | `guard_frames` | nothing: WKWebView asks wry about frames too, so `on_navigation` decides them | WebView2's `FrameNavigationStarting`, hooked through Tauri's `with_webview` on its `ICoreWebView2Controller` (`webview2-com` 0.39, Tauri's own copy); a frame `frame_may_load` refuses is cancelled |
+| team window loads | `watch_loads`, `LoadEnd` | nothing (returns false): a failed load never finishes, so wry's `Finished` is a page shown | WebView2's `NavigationCompleted`, hooked the same way: a load that could not reach the server (refused, reset, timed out, disconnected, name not found) is `Failed` though it finishes on an error page; a cancelled one reports nothing; anything else is `Shown` |
 | app menu | `APP_MENU` | the menu bar (F1) | none |
 | window menu | `WINDOW_MENU`, `menu_shortcuts`, `press_keys` | none (the menu bar is the app's) | a menu bar in each team window (Tauri's per-window menu); WebView2's `AcceleratorKeyPressed` hands it the webview's keys; the Edit items type their shortcut into the webview (`SendInput`) |
 | wording | `TRAY_AREA` | menu bar | notification area |
@@ -425,8 +426,24 @@ connected). When the web app shows and the team's origin moved (the
 first start, or a port the supervisor changed), the pin moves and the
 web view navigates there first. A web view whose load failed before
 the team served (one that has not finished a page while serving) is
-sent to the origin once each time the team starts serving; View →
-Reload sends it again. Windows of teams that are gone are destroyed.
+sent to the origin each time the team starts serving. Until the web
+view finishes a page, the window keeps the team's page.
+
+A load sent while the team serves (the first, or the signed-in
+handoff) is pending until a page finishes, and failed when WebView2
+reports it could not reach the server (`platform::watch_loads`) or,
+as WKWebView reports nothing, when no page finished within its
+patience: 10 s from the load starting or a page starting to arrive,
+doubling with each retry to at most a minute. A failed load is sent
+to the origin again after 1 s, doubling with each retry to at most
+30 s, until a page finishes or the team stops serving (`WebLoad`), so
+a window opened while the network was still coming up (a team
+elsewhere at launch, after waking) shows the team once it answers.
+A load the web view turns away, to the desktop sign-in or the
+browser, is not retried. View → Reload on a web view with no page
+sends it to the origin at once, unless the change to the window
+already did or a load is in progress, which it leaves to finish.
+Windows of teams that are gone are destroyed.
 
 Choosing a team in the tray, the end of setup, or a sign-in finishing
 opens its window or brings it to the front (`show_team`), and records
@@ -504,7 +521,8 @@ to one team never signs another out. Local storage is per origin, port
 included, so it needs nothing. Nothing else is partitioned.
 
 The **View** menu acts on the team window in front: Reload reloads
-whichever webview shows; Actual size, Zoom in and Zoom out set both
+whichever webview shows, or, while the team serves and its web view
+has no page, sends the web view to the origin as above; Actual size, Zoom in and Zoom out set both
 webviews' zoom (0.5 to 2.0 in steps of 0.1, per team, for this run).
 
 ## Signing in to a team
