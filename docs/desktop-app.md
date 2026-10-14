@@ -121,4 +121,6 @@ In Settings, on the team's **Overview**, choose the **Delete** button, which nam
 3. Quit Kivali, then remove the app. On macOS, move it from **Applications** to the Trash. On Windows, open **Settings**, **Apps**, **Installed apps**, and uninstall **Kivali**.
 4. To remove everything else Kivali kept (logs, settings), delete its folder: `~/Library/Application Support/Kivali` on macOS, `%LOCALAPPDATA%\Kivali` on Windows.
 
+On Windows, each team's data lives in its own folder under `C:\ProgramData\Kivali\broker\vm`, and uninstalling keeps every team you have not deleted: installing Kivali again opens those teams as they were, as long as Kivali's folder from step 4 is still there too. Deleting a team in Settings removes its data and its virtual machine; deleting those folders by hand deletes the teams' data for good.
+
 If **Open Kivali at login** was on, turn it off before uninstalling. On macOS you can also remove Kivali from **System Settings**, **General**, **Login Items**.

@@ -1571,7 +1571,9 @@ own virtual account ([supervisor.md](supervisor.md), "The broker"):
 - Before the files are removed, it is stopped and removed (`broker
   uninstall`). One that cannot be removed is explained (`sc.exe delete
   kivali-broker`) and the uninstall goes on. The uninstall an update
-  runs keeps it.
+  runs keeps it. Either way the teams' VM directories under
+  `C:\ProgramData\Kivali\broker\vm`, which hold their data disks, stay,
+  and an install that follows opens those teams again.
 
 Both ask whether Kivali is running (and offer to close it) before they
 touch the broker, so a Cancel there leaves the service as it was.
