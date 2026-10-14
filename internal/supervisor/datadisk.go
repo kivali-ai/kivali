@@ -7,6 +7,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 )
 
 // migrateSpare is the room a move of the data disk leaves free on the
@@ -23,11 +25,18 @@ const migrateSpare = 2 << 30
 //
 // The legacy file is never changed until its copy is in place: a
 // volume short of room for the copy refuses the up at once; the backend
-// copies the file and puts the copy in place (ImportDataDisk), or
-// reports that an earlier up did (ErrAlreadyImported); only then is the
-// legacy file renamed to MigratedSuffix, and it is deleted once the copy
-// has booted to READY (dropMigratedLocked). A failure anywhere before
-// that leaves it where it was, and the next up starts again.
+// copies the file and puts the copy in place (ImportDataDisk); only then
+// is the legacy file renamed to MigratedSuffix, and it is deleted once
+// the copy has booted to READY (dropMigratedLocked). A failure anywhere
+// before that leaves it where it was, and the next up starts again.
+//
+// When the backend already has a data disk (ErrAlreadyImported), the
+// legacy file may be the copy an up cut short left behind, or a disk an
+// earlier version made and used after the move (run again on this
+// team, it finds no disk at the legacy path and makes one). Nothing
+// tells the two apart, so the legacy file is renamed to a name of its
+// own (keptName) that nothing deletes but a destroy, and the line says
+// where it is.
 //
 // A legacy disk whose first boot never reached READY is disposable, as
 // bootLocked treats one: it is not copied, and bootLocked makes a new
@@ -62,8 +71,10 @@ func (s *Supervisor) migrateLocked(ctx context.Context, logf Logf) error {
 		if err != nil {
 			used = fi.Size()
 		}
+		// With a data disk in place already, the import copies nothing
+		// (ErrAlreadyImported), so it needs no room.
 		dir := existingDir(s.dataDir())
-		if free, err := s.o.Host.FreeBytes(dir); err == nil && free < uint64(used)+migrateSpare {
+		if free, err := s.o.Host.FreeBytes(dir); err == nil && free < uint64(used)+migrateSpare && !exists(s.dataPath()) {
 			need := uint64(used) + migrateSpare
 			where := dir
 			if v := filepath.VolumeName(dir); v != "" {
@@ -77,7 +88,13 @@ func (s *Supervisor) migrateLocked(ctx context.Context, logf Logf) error {
 		err = m.ImportDataDisk(ctx, s.o.ConfigDir, progressOf(ctx), logf)
 		switch {
 		case errors.Is(err, ErrAlreadyImported):
-			logf("the data disk was already copied to %s", s.dataPath())
+			kept := keptName(legacy, s.o.Clock.Now())
+			if err := s.o.Host.Rename(legacy, kept); err != nil {
+				return fmt.Errorf("set aside the data disk %s: %w", legacy, err)
+			}
+			logf("the team's data disk is already in %s; the disk at %s may hold other data, so it is kept as %s, unused, and deleted only with the team",
+				s.dataPath(), legacy, kept)
+			return nil
 		case err != nil:
 			return fmt.Errorf("update the team's data: %w; the data disk at %s is unchanged", err, legacy)
 		}
@@ -109,6 +126,29 @@ func (s *Supervisor) dropMigratedLocked(logf Logf) {
 		return
 	}
 	logf("deleted %s, the data disk's copy from before it moved", legacy+MigratedSuffix)
+}
+
+// keptName is the name a legacy data disk is kept under, beside it, when
+// the backend already had a data disk: KeptSuffix and the time, so a
+// second one kept never replaces the first.
+func keptName(legacy string, now time.Time) string {
+	return legacy + KeptSuffix + "-" + now.UTC().Format("20060102T150405Z")
+}
+
+// keptCopies are the legacy data disks kept beside legacy (keptName).
+func keptCopies(legacy string) []string {
+	entries, err := os.ReadDir(filepath.Dir(legacy))
+	if err != nil {
+		return nil
+	}
+	prefix := filepath.Base(legacy) + KeptSuffix + "-"
+	var kept []string
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), prefix) {
+			kept = append(kept, filepath.Join(filepath.Dir(legacy), e.Name()))
+		}
+	}
+	return kept
 }
 
 // existingDir is dir, or the nearest directory above it that exists: a

@@ -27,6 +27,11 @@ const (
 	// path (DataDiskMigrator) takes once it is copied to its place; it
 	// is deleted once the copy has booted to READY.
 	MigratedSuffix = ".migrated"
+	// KeptSuffix, with the time after it (keptName), makes the name a
+	// data disk at a backend's legacy path takes when the backend
+	// already has a data disk: it may hold other data, so only a
+	// destroy deletes it.
+	KeptSuffix = ".kept"
 )
 
 // State is local.json, the supervisor's own record of the local org

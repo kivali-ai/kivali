@@ -116,9 +116,10 @@ func (s *Supervisor) Destroy(ctx context.Context, logf Logf) (DestroyResult, err
 	if m, ok := s.o.Backend.(DataDiskMigrator); ok {
 		// Where an earlier version kept the disk: one not moved yet (a
 		// destroy before the first up of this version), its snapshot,
-		// and the copy set aside after the move.
+		// the copy set aside after the move, and any kept because the
+		// backend already had a disk.
 		if legacy := m.LegacyDataDiskPath(dir); legacy != "" {
-			for _, p := range []string{legacy, legacy + SnapshotSuffix, legacy + MigratedSuffix} {
+			for _, p := range append([]string{legacy, legacy + SnapshotSuffix, legacy + MigratedSuffix}, keptCopies(legacy)...) {
 				if exists(p) {
 					logf("deleting %s", p)
 					remove(p, true)
