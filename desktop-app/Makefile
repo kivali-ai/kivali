@@ -42,6 +42,13 @@ else
   GO_ENV := CGO_ENABLED=1
 endif
 
+# With CI=true in the environment (GitHub Actions sets it), tauri's dmg
+# bundler skips the Finder script that lays out the dmg window: the
+# window size, the icon size, and the app and Applications link side by
+# side. This keeps that layout, so a dmg built in CI looks like one
+# built locally.
+export TAURI_BUNDLER_DMG_IGNORE_CI := true
+
 # The one desktop version: tauri.conf.json's. Cargo.toml and package.json
 # follow it (build.rs refuses a mismatch) and the supervisor is stamped
 # with it, so the app and its sidecar carry one number.

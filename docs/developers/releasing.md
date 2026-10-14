@@ -157,6 +157,10 @@ Choices worth knowing:
   stapled app; the dmg itself is not separately notarized. The `.app`
   carries the ticket, so it passes Gatekeeper offline once copied out of the
   dmg, and the dmg opens because the app inside it is notarized. The
+  dmg's window layout (large icons, the app beside an Applications link)
+  comes from a Finder script that Tauri skips when `CI=true`;
+  `desktop-app/Makefile` sets `TAURI_BUNDLER_DMG_IGNORE_CI=true` so the
+  release dmg gets the same layout as a local build. The
   updater's `Kivali.app.tar.gz` is that same stapled app. Tauri waits
   for Apple's verdict silently, so the step runs
   `scripts/notary-progress.sh` beside it, which logs each submission's
