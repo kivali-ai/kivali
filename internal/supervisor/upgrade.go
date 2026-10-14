@@ -122,7 +122,7 @@ func (s *Supervisor) Upgrade(ctx context.Context, o UpgradeOptions, logf Logf) e
 		logf("agent pods deleted")
 	}
 	running, _ := s.current()
-	if err := s.stopLocked(ctx, logf); err != nil {
+	if _, err := s.stopLocked(ctx, logf); err != nil {
 		// A hard stop leaves a disk that e2fsck will fix; the
 		// snapshot is then of that disk, which is still the org.
 		logf("stop: %v", err)
@@ -194,7 +194,7 @@ func (s *Supervisor) Upgrade(ctx context.Context, o UpgradeOptions, logf Logf) e
 		// to the snapshot: an org left running now would take writes that
 		// rollback silently discards. Stop it, so the loss is only what
 		// the upgrade itself did, and say so.
-		if serr := s.stopLocked(context.WithoutCancel(ctx), logf); serr != nil {
+		if _, serr := s.stopLocked(context.WithoutCancel(ctx), logf); serr != nil {
 			logf("stop: %v", serr)
 		}
 		return fmt.Errorf("the upgrade to %s could not be recorded (%w); the org was stopped, and the next start rolls back to %s", sg.meta.Version, err, from)
@@ -422,7 +422,7 @@ func (s *Supervisor) rollbackLocked(ctx context.Context, logf Logf) (bool, error
 	// Stopped first: a failure to record the step below must not leave
 	// the failed release running on a disk the journal will roll back.
 	if m, _ := s.current(); m != nil {
-		if err := s.stopLocked(ctx, logf); err != nil {
+		if _, err := s.stopLocked(ctx, logf); err != nil {
 			logf("stop: %v", err)
 		}
 	}

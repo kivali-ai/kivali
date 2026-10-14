@@ -61,7 +61,7 @@ func (s *Supervisor) Destroy(ctx context.Context, logf Logf) (DestroyResult, err
 		return DestroyResult{}, err
 	}
 	if m, _ := s.current(); m != nil {
-		if err := s.stopLocked(ctx, logf); err != nil {
+		if _, err := s.stopLocked(ctx, logf); err != nil {
 			// The stop's own bound hard-stops the VM: it is down either way.
 			logf("stop: %v", err)
 		}

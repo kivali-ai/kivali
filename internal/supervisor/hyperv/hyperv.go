@@ -34,6 +34,7 @@ import (
 	"github.com/Microsoft/go-winio/pkg/guid"
 	"golang.org/x/sys/windows"
 
+	"github.com/kivali-ai/kivali/internal/clock"
 	"github.com/kivali-ai/kivali/internal/supervisor"
 	"github.com/kivali-ai/kivali/internal/supervisor/broker"
 	"github.com/kivali-ai/kivali/internal/supervisor/guestapi"
@@ -83,6 +84,9 @@ const (
 // Backend creates Hyper-V machines through a broker client.
 type Backend struct {
 	Client *broker.Client
+	// Clock times the compaction's progress lines; nil is the system
+	// clock.
+	Clock clock.Clock
 
 	// guestShutdown, for tests, replaces the guest agent's shutdown in
 	// StopLeftover (there is no VM to dial).
@@ -90,10 +94,89 @@ type Backend struct {
 }
 
 var (
-	_ supervisor.Backend         = Backend{}
-	_ supervisor.MachineRemover  = Backend{}
-	_ supervisor.LeftoverStopper = Backend{}
+	_ supervisor.Backend           = Backend{}
+	_ supervisor.MachineRemover    = Backend{}
+	_ supervisor.LeftoverStopper   = Backend{}
+	_ supervisor.DataDiskCompactor = Backend{}
 )
+
+// compactThreshold is the discarded space below which the data disk is
+// left as it is. A dynamic VHDX keeps the space of a block the guest
+// discarded (vhdx.go) until it is compacted, which only the broker can
+// do, with the VM off; a compaction is a PowerShell process and a
+// privileged operation on every start or stop otherwise, and under
+// 1 GiB the file is within a few dozen 32 MiB blocks of its smallest,
+// which is within what partly filled blocks cost anyway (a fresh disk's
+// file is 1.7 GB larger than what the guest's df reports used).
+// Measured: Quick mode gave 2.5 GB back in about a second on an SSD.
+const compactThreshold = 1 << 30
+
+// compactTimeout bounds one compaction as the client: longer than the
+// broker's own bound on the script (broker.OptimizeTimeout), so what
+// comes back is the broker's answer.
+const compactTimeout = broker.OptimizeTimeout + 5*time.Minute
+
+// compactHeartbeat is how often a compaction still running says so:
+// inside the desktop app's 30 s idle limit on an operation.
+const compactHeartbeat = 10 * time.Second
+
+func (b Backend) clock() clock.Clock {
+	if b.Clock != nil {
+		return b.Clock
+	}
+	return clock.System{}
+}
+
+// CompactDataDisk reads the data disk's block allocation table (a few
+// dozen KiB, whatever the disk's size) and, when the blocks the guest
+// discarded still hold compactThreshold or more of the file, has the
+// broker compact it (POST /v1/vhd/optimize: Optimize-VHD in Quick mode,
+// which drops those blocks and moves the rest down). It is called with
+// the VM off, before a start and after a clean stop, and calls began
+// once a compaction is under way; while one runs it logs a line every
+// compactHeartbeat. The disk's content is the same before and after;
+// its file is as small as what the disk holds.
+func (b Backend) CompactDataDisk(ctx context.Context, path string, began func(), logf supervisor.Logf) error {
+	path = plainPath(path)
+	l, err := readVHDX(path)
+	if err != nil {
+		return fmt.Errorf("read the data disk's block table: %w", err)
+	}
+	if l.DiscardedBytes() < compactThreshold {
+		return nil
+	}
+	began()
+	logf("the data disk's file holds %s of blocks the guest discarded; compacting it", gib(l.DiscardedBytes()))
+	ctx, cancel := context.WithTimeout(ctx, compactTimeout)
+	defer cancel()
+	clk := b.clock()
+	start := clk.Now()
+	beat := clk.NewTicker(compactHeartbeat)
+	quiet := make(chan struct{})
+	go func() {
+		defer close(quiet)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case now := <-beat.C():
+				logf("waiting for the data disk's compaction to finish (%s so far)", now.Sub(start).Round(time.Second))
+			}
+		}
+	}()
+	res, err := b.Client.OptimizeVHD(ctx, path)
+	beat.Stop()
+	cancel()
+	<-quiet
+	if err != nil {
+		return fmt.Errorf("compact the data disk: %w", err)
+	}
+	logf("the data disk's file is compacted: %s to %s in %s", gib(res.SizeBefore), gib(res.SizeAfter), clk.Now().Sub(start).Round(time.Second))
+	return nil
+}
+
+// gib formats bytes as GiB with one decimal.
+func gib(n int64) string { return fmt.Sprintf("%.1f GiB", float64(n)/(1<<30)) }
 
 // Image checks dir holds the root disk and reads the image's version
 // from VERSION ("dev" without one). The guest is amd64.

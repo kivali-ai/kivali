@@ -51,6 +51,14 @@ type fakeBroker struct {
 	gracefulIgnored bool
 	// missing makes GET /v1/vm/{name} answer 404: no VM yet.
 	missing bool
+	// optimizes records POST /v1/vhd/optimize requests; optimizeResult
+	// is the answer, or optimizeStatus the refusal when set.
+	optimizes      []broker.OptimizeRequest
+	optimizeResult broker.OptimizeResult
+	optimizeStatus int
+	// optimizeEntered and optimizeWait, when set, make the compaction
+	// signal that it has begun and then wait for the release.
+	optimizeEntered, optimizeWait chan struct{}
 }
 
 func (f *fakeBroker) handler() http.Handler {
@@ -116,6 +124,24 @@ func (f *fakeBroker) handler() http.Handler {
 		f.vhds = append(f.vhds, vr)
 		f.mu.Unlock()
 		writeJSON(w, broker.VHDResult{Path: vr.Path})
+	})
+	mux.HandleFunc("POST /v1/vhd/optimize", func(w http.ResponseWriter, r *http.Request) {
+		var or broker.OptimizeRequest
+		_ = json.NewDecoder(r.Body).Decode(&or)
+		f.mu.Lock()
+		f.optimizes = append(f.optimizes, or)
+		status, res := f.optimizeStatus, f.optimizeResult
+		entered, wait := f.optimizeEntered, f.optimizeWait
+		f.mu.Unlock()
+		if entered != nil {
+			close(entered)
+			<-wait
+		}
+		if status != 0 {
+			http.Error(w, "kivali-96e3ef74 is Running; its data disk is compacted only while it is off", status)
+			return
+		}
+		writeJSON(w, res)
 	})
 	return mux
 }

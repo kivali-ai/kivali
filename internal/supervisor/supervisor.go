@@ -578,13 +578,14 @@ func (s *Supervisor) watch(m Machine) {
 
 // stopLocked shuts the VM down cleanly: the agent's shutdown, the
 // backend's poweroff request if the agent cannot be reached, and a hard
-// stop only if neither stops the VM in time. The caller holds s.op.
-func (s *Supervisor) stopLocked(ctx context.Context, logf Logf) error {
+// stop only if neither stops the VM in time. It reports whether the
+// guest said it unmounted the data disk cleanly. The caller holds s.op.
+func (s *Supervisor) stopLocked(ctx context.Context, logf Logf) (clean bool, err error) {
 	s.mu.Lock()
 	m, g, console := s.machine, s.guest, s.console
 	s.mu.Unlock()
 	if m == nil {
-		return nil
+		return false, nil
 	}
 	s.dropForward()
 	defer func() {
@@ -605,7 +606,7 @@ func (s *Supervisor) stopLocked(ctx context.Context, logf Logf) error {
 	}()
 
 	c, cancel := context.WithTimeout(ctx, 30*time.Second)
-	err := g.Shutdown(c)
+	err = g.Shutdown(c)
 	cancel()
 	if err != nil {
 		logf("the guest agent did not take the shutdown (%v); asking the VM to power off", err)
@@ -615,8 +616,7 @@ func (s *Supervisor) stopLocked(ctx context.Context, logf Logf) error {
 	} else {
 		logf("clean shutdown requested through the guest agent")
 	}
-	clean := false
-	stopped := func() error {
+	stopped := func() (bool, error) {
 		// The stop can overtake the last console lines.
 		for drained := false; !drained; {
 			select {
@@ -631,7 +631,7 @@ func (s *Supervisor) stopLocked(ctx context.Context, logf Logf) error {
 		} else {
 			logf("VM stopped (the clean-unmount line was not seen; see logs/console.log)")
 		}
-		return nil
+		return clean, nil
 	}
 	start := s.o.Clock.Now()
 	deadline := s.o.Clock.After(stopTimeout)
@@ -646,7 +646,7 @@ func (s *Supervisor) stopLocked(ctx context.Context, logf Logf) error {
 		}
 		select {
 		case <-deadline:
-			return hardStopLate(m)
+			return false, hardStopLate(m)
 		default:
 		}
 		select {
@@ -657,7 +657,7 @@ func (s *Supervisor) stopLocked(ctx context.Context, logf Logf) error {
 		case <-m.Done():
 			return stopped()
 		case <-deadline:
-			return hardStopLate(m)
+			return false, hardStopLate(m)
 		case <-beat:
 			// A caller that treats a silent operation as wedged (the
 			// desktop app's quit) must not kill this process while the
@@ -666,9 +666,38 @@ func (s *Supervisor) stopLocked(ctx context.Context, logf Logf) error {
 			logf("waiting for the VM to finish its clean shutdown (%s so far)", s.o.Clock.Now().Sub(start).Round(time.Second))
 			beat = s.o.Clock.After(stopHeartbeat)
 		case <-ctx.Done():
-			return ctx.Err()
+			return false, ctx.Err()
 		}
 	}
+}
+
+// compactLocked gives the backend its chance to compact the data disk
+// (DataDiskCompactor), with the VM off and the caller holding s.op;
+// began is the backend's word that a compaction is under way. A failure
+// is logged: nothing of the start or the stop depends on it. The
+// backend keeps a long compaction talking (a line every few seconds),
+// as a slow stop does, for a caller that reads silence as a hang.
+func (s *Supervisor) compactLocked(ctx context.Context, began func(), logf Logf) {
+	c, ok := s.o.Backend.(DataDiskCompactor)
+	if !ok {
+		return
+	}
+	if err := c.CompactDataDisk(ctx, s.dataPath(), began, logf); err != nil {
+		logf("the data disk was not compacted: %v", err)
+	}
+}
+
+// compactBeforeBootLocked compacts the data disk before up boots it,
+// when there is one whose first boot reached READY: a disk still to be
+// made, or one bootLocked will recreate, has nothing to give back. A VM
+// stopped without a down (a host reboot shuts it down; the app's quit
+// may not wait) is compacted here, on its next start.
+func (s *Supervisor) compactBeforeBootLocked(ctx context.Context, logf Logf) {
+	if _, err := os.Stat(s.dataPath()); err != nil || !s.State().DataDiskFormatted {
+		return
+	}
+	s.compactLocked(ctx, func() { setStage(ctx, StageMakingRoom) }, logf)
+	setStage(ctx, StageStarting)
 }
 
 // hardStopLate powers off a VM that did not stop within stopTimeout. A
@@ -811,6 +840,7 @@ func (s *Supervisor) Up(ctx context.Context, o UpOptions, logf Logf) error {
 		if err := s.recoverLocked(logf); err != nil {
 			return err
 		}
+		s.compactBeforeBootLocked(ctx, logf)
 		if err := s.bootLocked(ctx, logf); err != nil {
 			return err
 		}
@@ -898,7 +928,14 @@ func (s *Supervisor) downLocked(waitCtx context.Context, stopBound time.Duration
 		stopCtx, cancel = context.WithTimeout(stopCtx, stopBound)
 		defer cancel()
 	}
-	return s.stopLocked(stopCtx, logf)
+	clean, err := s.stopLocked(stopCtx, logf)
+	if err == nil && clean {
+		// The disk is closed and quiet: what the guest discarded (its
+		// fstrim) is given back to the host now rather than at the next
+		// start, where the person is waiting.
+		s.compactLocked(stopCtx, func() {}, logf)
+	}
+	return err
 }
 
 // Forward moves the host port forward to port and records it.

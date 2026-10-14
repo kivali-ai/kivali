@@ -168,6 +168,51 @@ type fakeBackend struct {
 	// moment; removeErr, when set, is its answer.
 	removals  []machineRemoval
 	removeErr error
+	// compactions records every CompactDataDisk, with what held at that
+	// moment; compactErr, when set, is its answer; compactEntered, when
+	// set, is closed as one begins, and compactWait, when set, is waited
+	// for (closed by the test) before it answers.
+	compactions    []compaction
+	compactErr     error
+	compactEntered chan struct{}
+	compactWait    chan struct{}
+}
+
+// compaction is one CompactDataDisk: the disk's path, whether every
+// machine had stopped by then and how many boots there had been.
+type compaction struct {
+	path       string
+	allStopped bool
+	boots      int
+}
+
+// The fake data disk keeps discarded space, as Hyper-V's does.
+var _ DataDiskCompactor = (*fakeBackend)(nil)
+
+func (h *fakeBackend) CompactDataDisk(_ context.Context, path string, began func(), _ Logf) error {
+	h.mu.Lock()
+	stopped := true
+	for _, m := range h.machines {
+		stopped = stopped && !m.running()
+	}
+	h.compactions = append(h.compactions, compaction{path: path, allStopped: stopped, boots: len(h.boots)})
+	entered, wait, err := h.compactEntered, h.compactWait, h.compactErr
+	h.compactEntered, h.compactWait = nil, nil
+	h.mu.Unlock()
+	began()
+	if entered != nil {
+		close(entered)
+	}
+	if wait != nil {
+		<-wait
+	}
+	return err
+}
+
+func (h *fakeBackend) compacted() []compaction {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]compaction(nil), h.compactions...)
 }
 
 // machineRemoval is one RemoveMachine: its config directory, whether

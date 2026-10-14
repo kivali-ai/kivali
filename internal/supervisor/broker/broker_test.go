@@ -196,7 +196,7 @@ func TestEncodedCommand(t *testing.T) {
 // Every operation has a script and a timeout, so a run never blocks
 // without bound and no name is mistyped.
 func TestEveryScriptHasATimeout(t *testing.T) {
-	for _, name := range []string{scriptGetVM, scriptConfigureVM, scriptStartVM, scriptStopVM, scriptRemoveVM, scriptNewVHD, scriptSetupStatus, scriptSetupApply} {
+	for _, name := range []string{scriptGetVM, scriptConfigureVM, scriptStartVM, scriptStopVM, scriptRemoveVM, scriptNewVHD, scriptOptimizeVHD, scriptSetupStatus, scriptSetupApply} {
 		if _, err := Script(name); err != nil {
 			t.Errorf("missing script %q: %v", name, err)
 		}
