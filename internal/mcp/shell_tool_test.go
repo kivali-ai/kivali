@@ -63,7 +63,7 @@ func TestShellToolForwardsCommandAndRenders(t *testing.T) {
 }
 
 // listingShellExec is a fakeShellExec that also reports its packages,
-// as the dev-shell sidecar client does.
+// as the agent-shell sidecar client does.
 type listingShellExec struct {
 	fakeShellExec
 	pkgs []string

@@ -39,11 +39,11 @@ type Toolkit struct {
 
 // FullAgentDeps wires the dependencies a full agent's MCP toolkit
 // needs. A single agentpod.Client backs every UDS-routed dispatcher;
-// ShellExec is the dev-shell sidecar (LocalShell without one);
+// ShellExec is the agent-shell sidecar (LocalShell without one);
 // Subagent reaches the Kivali web pod via controlclient (same control
 // socket the Client uses).
 //
-// Files runs the file_* tools: in an agent pod the dev-shell sidecar
+// Files runs the file_* tools: in an agent pod the agent-shell sidecar
 // (NewSidecarFilesDispatcher), so file_* and run_shell act on the same
 // tree with the same privileges; without one, a local Backend
 // (NewLocalFilesDispatcher).
@@ -167,7 +167,7 @@ func composeFullAgentToolkit(d fullAgentToolkitDeps) Toolkit {
 
 // SubagentDeps wires the subagent-toolkit MCP server. Files runs
 // file_* against the subagent's view of its parent's /files/
-// (/files/subagents/<id>/, built by core), in the dev-shell sidecar
+// (/files/subagents/<id>/, built by core), in the agent-shell sidecar
 // like the parent's, so file_view and run_shell never disagree.
 // list_skills routes through UDS (skills catalog is global).
 type SubagentDeps struct {
@@ -189,7 +189,7 @@ type SubagentDeps struct {
 
 // SubagentToolkit returns the narrow tool bundle a subagent gets. Only
 // what's necessary to do focused work and produce files for the parent.
-// file_* and run_shell run in the dev-shell sidecar, rooted at the
+// file_* and run_shell run in the agent-shell sidecar, rooted at the
 // subagent's view; list_skills and the graph reads are UDS.
 func SubagentToolkit(deps SubagentDeps) Toolkit {
 	requireFiles("SubagentToolkit", deps.Files)

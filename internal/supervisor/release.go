@@ -28,7 +28,7 @@ type Release struct {
 	Chart Asset `json:"chart"`
 	// Images maps a platform (linux/arm64, linux/amd64) to the image
 	// bundle: a tar (optionally .gz or .zst) of the kivali,
-	// kivali-egress-proxy and kivali-dev-shell images at one tag.
+	// kivali-egress-proxy and kivali-agent-shell images at one tag.
 	Images map[string]Asset `json:"images"`
 	// MinDesktopVersion is the oldest Kivali Desktop that can run it.
 	MinDesktopVersion string `json:"min_desktop_version"`

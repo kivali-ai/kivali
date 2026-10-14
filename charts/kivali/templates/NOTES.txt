@@ -1,6 +1,6 @@
 Kivali {{ .Chart.AppVersion }} installed in namespace {{ .Release.Namespace }}.
 
-Images (all three must exist at the same tag): {{ include "kivali.image" . }}, {{ include "kivali.egressImage" . }}, and kivali-dev-shell:{{ .Values.image.tag | default .Chart.AppVersion }} (derived by the server).
+Images (all three must exist at the same tag): {{ include "kivali.image" . }}, {{ include "kivali.egressImage" . }}, and kivali-agent-shell:{{ .Values.image.tag | default .Chart.AppVersion }} (derived by the server).
 
 {{- if .Values.devMode }}
 

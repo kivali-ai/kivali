@@ -257,7 +257,7 @@ The build bakes every file in `KIVALI_IMAGES_DIR` (default
 disk's `/usr/share/kivali/images/`. The release pipeline sets
 `KIVALI_IMAGES_DIR` to a directory holding its `docker save` (or
 `.tar.zst`; k3s accepts `.tar`, `.tar.gz`, `.tar.zst`, `.tar.lz4`)
-tarball of `kivali`, `kivali-egress-proxy` and `kivali-dev-shell` for
+tarball of `kivali`, `kivali-egress-proxy` and `kivali-agent-shell` for
 the image's architecture; `make -C vm dev-images` fills the default
 with the `:dev` tags `make images VERSION=dev` built, exported from the
 build VM's containerd as an OCI tar (`ENGINE=vm`) or saved from Docker

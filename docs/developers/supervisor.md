@@ -934,7 +934,7 @@ extraEnv: <--env>
 
 Image tags are discovered from the baked tarballs' `manifest.json`
 (`RepoTags`) or OCI `index.json` annotations: exactly one `kivali` tag,
-with `kivali-egress-proxy` and `kivali-dev-shell` at the same tag and
+with `kivali-egress-proxy` and `kivali-agent-shell` at the same tag and
 prefix, else the install refuses. The install waits for the deployment
 (label `helm.sh/chart: kivali-<version>`, container image, rollout
 complete) and then `/readyz` through the forward. It fails fast when a

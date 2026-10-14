@@ -42,8 +42,8 @@ import (
 //     parent's slug + the per-call subagent id, both used to scope
 //     /files/ and the per-subagent cwd inside the parent's agent pod)
 //
-// Transport: run_shell and file_* go to the dev-shell sidecar
-// (DEV_SHELL_SOCKET); every other dispatcher routes through
+// Transport: run_shell and file_* go to the agent-shell sidecar
+// (AGENT_SHELL_SOCKET); every other dispatcher routes through
 // agentpod.Client over the core UDS specified by --core-uds. There is
 // no FSStore-in-process fallback — agents always run in their own pod
 // with no store mount. Subagent + route-message backends still go
@@ -76,9 +76,9 @@ func runMCP(args []string) {
 }
 
 // runFullAgentMCP wires up the full agent toolkit. run_shell and the
-// file_* tools dispatch to the dev-shell sidecar over the per-pod UDS
-// at /run/kivali-dev-shell/sock (always present in production agent
-// pods — see DevShellImageFor); every other dispatcher routes through
+// file_* tools dispatch to the agent-shell sidecar over the per-pod UDS
+// at /run/kivali-agent-shell/sock (always present in production agent
+// pods — see AgentShellImageFor); every other dispatcher routes through
 // agentpod.Client to core's UDS endpoints, and subagent +
 // route-message use controlclient against the same core socket.
 //
@@ -100,7 +100,7 @@ func runFullAgentMCP(logger *log.Logger, socketPath, agentSlug string) {
 	// dispatcher routes server-side.
 	subagentBackend := controlSubagentBackend{client: controlclient.New(socketPath, agentSlug)}
 
-	// run_shell and the file_* tools both execute in the dev-shell
+	// run_shell and the file_* tools both execute in the agent-shell
 	// sidecar, reached over its per-pod UDS. The sidecar carries the
 	// Debian dev toolkit (python, jq, git, etc.) the slim Kivali
 	// runtime image deliberately doesn't ship, and it is the only
@@ -108,7 +108,7 @@ func runFullAgentMCP(logger *log.Logger, socketPath, agentSlug string) {
 	// runs in holds the Claude credentials and mounts nothing an agent
 	// can write. The daemon builds the files Backend itself, from its
 	// own mounts (docs/developers/files-and-publishing.md).
-	shellExec, filesDisp, err := agentFileTools(os.Getenv("DEV_SHELL_SOCKET"), localFilesRequested(), agentSlug, agentFilesRoot())
+	shellExec, filesDisp, err := agentFileTools(os.Getenv("AGENT_SHELL_SOCKET"), localFilesRequested(), agentSlug, agentFilesRoot())
 	if err != nil {
 		logger.Fatal(err)
 	}
@@ -143,7 +143,7 @@ func runFullAgentMCP(logger *log.Logger, socketPath, agentSlug string) {
 }
 
 // runSubagentMCP wires up the subagent toolkit. file_* and run_shell
-// BOTH execute in the dev-shell sidecar against the parent's /files/
+// BOTH execute in the agent-shell sidecar against the parent's /files/
 // narrowed to the subagent's overlay subdir (/files/subagents/<id>/).
 // Same physical tree, no dual-view confusion; files the subagent
 // writes under artifacts/private/ persist directly on the PVC where
@@ -163,12 +163,12 @@ func runSubagentMCP(logger *log.Logger, socketPath, parent, id, filesRoot string
 	}
 	client := agentpod.NewClient(socketPath, parent)
 	// Shell cwd and the file_* root are the subagent's narrowed
-	// /files/ view. In the agent pod both execute in the dev-shell
-	// sidecar (DEV_SHELL_SOCKET is set on `kivali agent`), named by
+	// /files/ view. In the agent pod both execute in the agent-shell
+	// sidecar (AGENT_SHELL_SOCKET is set on `kivali agent`), named by
 	// the view's path under the daemon's root; the daemon builds the
 	// Backend, with the parent's tree as a WriteRoot since the view's
 	// links resolve into it.
-	shellExec, filesDisp, err := subagentFileTools(os.Getenv("DEV_SHELL_SOCKET"), localFilesRequested(), parent, filesRoot)
+	shellExec, filesDisp, err := subagentFileTools(os.Getenv("AGENT_SHELL_SOCKET"), localFilesRequested(), parent, filesRoot)
 	if err != nil {
 		logger.Fatal(err)
 	}

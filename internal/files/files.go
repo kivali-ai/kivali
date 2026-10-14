@@ -72,7 +72,7 @@ type Backend struct {
 	Root          string
 	ReadOnlyRoots []string
 	// ReadRoots are the host directories outside Root that core's
-	// symlink farms point into: in the agent pod's dev-shell container
+	// symlink farms point into: in the agent pod's agent-shell container
 	// /data/project_files, /data/skills, /data/attachments and
 	// /data/agents/<slug>/chats (see PodReadRoots). Read-only to the
 	// backend.
@@ -117,14 +117,14 @@ func (b *Backend) mountFor(rel string) string {
 }
 
 // PodReadRoots returns the ReadRoots for an agent's backend in its
-// agent pod, where the file_* tools run in the dev-shell container:
+// agent pod, where the file_* tools run in the agent-shell container:
 // the read-only mounts the /files/ symlink farms resolve through (see
 // agentpod's manifest). Nothing else outside /files/ is readable
 // through them, whatever a link says.
 //
 // With no slug the per-agent chats root is left out rather than
-// guessed: a dev-shell started without --agent serves the shared roots
-// only (see cmd/dev-shell).
+// guessed: a agent-shell started without --agent serves the shared roots
+// only (see cmd/agent-shell).
 func PodReadRoots(slug string) []string {
 	roots := []string{
 		"/data/project_files",

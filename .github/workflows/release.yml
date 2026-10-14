@@ -34,11 +34,11 @@
 #                    none of that is discovered after the images and the
 #                    VM images have been built.
 #   images           one native runner per architecture: the three images
-#                    (kivali, kivali-egress-proxy, kivali-dev-shell) saved
+#                    (kivali, kivali-egress-proxy, kivali-agent-shell) saved
 #                    together and zstd-compressed,
 #                    kivali-images-linux-<arch>.tar.zst, the single
 #                    archive the supervisor imports; and the Debian
-#                    package lists of kivali and kivali-dev-shell, for
+#                    package lists of kivali and kivali-agent-shell, for
 #                    SOURCES.md
 #   chart            kivali-X.Y.Z.tgz
 #   licenses         THIRD_PARTY_LICENSES.txt, the notices of everything a
@@ -256,7 +256,7 @@ jobs:
       - name: Package lists
         run: |
           mkdir -p dist/sources
-          for img in kivali kivali-dev-shell; do
+          for img in kivali kivali-agent-shell; do
             id="$(docker create "$img:$TAG")"
             docker cp "$id:/usr/share/doc/kivali/packages.txt" "dist/sources/$img-linux-${{ matrix.arch }}.txt"
             docker rm "$id"

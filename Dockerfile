@@ -114,7 +114,7 @@ RUN npm install -g --no-progress @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION
 # uploaded. Claude Code is the native binary copied from claude-build
 # above; ldd shows it only links the glibc family that ships with
 # Debian. The base is pinned by digest (the same one as
-# Dockerfile.dev-shell and vm/Dockerfile) so SOURCES.md names exactly
+# Dockerfile.agent-shell and vm/Dockerfile) so SOURCES.md names exactly
 # what the image was built from.
 FROM debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f
 LABEL org.opencontainers.image.licenses="Apache-2.0"

@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// The dev-shell names its agent with --agent, which a pod spec from
+// The agent-shell names its agent with --agent, which a pod spec from
 // before the flag does not pass. Without a slug the per-agent chats
 // root is left out, not made into /data/agents/chats; the shared
 // roots stay.

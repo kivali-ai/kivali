@@ -14,7 +14,7 @@ func TestShellToolNamesTheReportedPackages(t *testing.T) {
 	if !strings.Contains(d, want) {
 		t.Errorf("description lacks %q:\n%s", want, d)
 	}
-	if !strings.Contains(d, "DEV_SHELL_EXTRA_PACKAGES") {
+	if !strings.Contains(d, "AGENT_SHELL_EXTRA_PACKAGES") {
 		t.Errorf("description does not name the build arg:\n%s", d)
 	}
 }

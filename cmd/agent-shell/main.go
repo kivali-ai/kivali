@@ -1,7 +1,7 @@
-// dev-shell is the per-agent shell-exec sidecar.
+// agent-shell is the per-agent shell-exec sidecar.
 //
 // One process per agent pod, listening on a UDS shared with the agent
-// runtime container via an emptyDir mounted at /run/kivali-dev-shell/.
+// runtime container via an emptyDir mounted at /run/kivali-agent-shell/.
 // POST /v1/exec runs a single bash command and returns
 // stdout/stderr/exit. POST /v1/files runs one file_* tool call against
 // the agent's /files/ (or a subagent's view of it). /healthz returns
@@ -37,7 +37,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/kivali-ai/kivali/internal/devshell"
+	"github.com/kivali-ai/kivali/internal/agentshell"
 	"github.com/kivali-ai/kivali/internal/files"
 )
 
@@ -61,18 +61,18 @@ export PATH="$HOME/.local/bin:$PATH"
 `
 
 func main() {
-	socketPath := flag.String("socket", devshell.SocketDefault, "UDS path to listen on")
-	rootPath := flag.String("root", devshell.RootDefault, "default cwd for /v1/exec; the agent's /files/ for /v1/files")
+	socketPath := flag.String("socket", agentshell.SocketDefault, "UDS path to listen on")
+	rootPath := flag.String("root", agentshell.RootDefault, "default cwd for /v1/exec; the agent's /files/ for /v1/files")
 	agentSlug := flag.String("agent", "", "slug of the agent this pod runs; names its read-only /data mounts for /v1/files")
-	packagesFile := flag.String("packages-file", devshell.PackagesFileDefault, "image's installed package list, one per line; served at GET /v1/packages")
+	packagesFile := flag.String("packages-file", agentshell.PackagesFileDefault, "image's installed package list, one per line; served at GET /v1/packages")
 	flag.Parse()
 
-	logger := log.New(os.Stderr, "dev-shell ", log.LstdFlags|log.Lmicroseconds)
+	logger := log.New(os.Stderr, "agent-shell ", log.LstdFlags|log.Lmicroseconds)
 
 	// The package list the image recorded at build time. Without it the
 	// daemon still serves, with an empty list, and the run_shell
 	// description says the list is unknown.
-	packages, err := devshell.ReadPackages(*packagesFile)
+	packages, err := agentshell.ReadPackages(*packagesFile)
 	if err != nil {
 		logger.Printf("warning: read %s: %v; serving an empty package list", *packagesFile, err)
 	}
@@ -111,7 +111,7 @@ func main() {
 	}
 
 	srv := &http.Server{
-		Handler: devshell.NewHandler(devshell.ServerConfig{
+		Handler: agentshell.NewHandler(agentshell.ServerConfig{
 			Root:      *rootPath,
 			ReadRoots: readRoots,
 			Packages:  packages,

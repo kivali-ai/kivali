@@ -1,4 +1,4 @@
-package devshell
+package agentshell
 
 import (
 	"encoding/json"
@@ -12,7 +12,7 @@ import (
 	"github.com/kivali-ai/kivali/internal/files"
 )
 
-// ServerConfig configures the dev-shell daemon's HTTP-over-UDS handler.
+// ServerConfig configures the agent-shell daemon's HTTP-over-UDS handler.
 // Root is the absolute path bash starts in by default — typically
 // /files/ in production so cwd-relative paths resolve under the
 // agent's writable workspace. Tests pin a temp dir.
@@ -25,7 +25,7 @@ import (
 //
 // ReadRoots are the host directories outside Root that the /files/
 // symlink farms resolve through, read-only: in an agent pod the
-// /data/* mounts of the dev-shell container (files.PodReadRoots). The
+// /data/* mounts of the agent-shell container (files.PodReadRoots). The
 // file_* tools follow a link into Root or one of these and nowhere
 // else.
 type ServerConfig struct {

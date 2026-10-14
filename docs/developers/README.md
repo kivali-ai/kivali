@@ -25,7 +25,7 @@ internal/
   config/             environment-variable configuration (../configuration.md)
   controlclient/      Unix-socket client the MCP subprocesses use to reach the server
   convert/            office documents and PDFs to text, for project files
-  devshell/           the dev-shell daemon: bash and the file_* tools over UDS
+  agentshell/           the agent-shell daemon: bash and the file_* tools over UDS
   files/              the /files/ namespace behind the file_* tools (files-and-publishing.md)
   graph/              the knowledge graph over published files (knowledge-graph.md)
   mcp/                MCP server pieces: skills, project files, agent memory
@@ -41,7 +41,7 @@ internal/
   web/apitypes/       the JSON wire contract; TypeScript is generated from it
   web/ui/             the embedded web app build and its SPA handler
 cmd/
-  dev-shell/          the per-agent shell sidecar
+  agent-shell/          the per-agent shell sidecar
   egress-proxy/       the egress proxy (per-agent domain allowlist)
   devseed/            seeds a data directory (demo, empty, setup scenarios)
   fake-claude/        a scripted stand-in for the claude CLI (local runs, e2e)
@@ -101,7 +101,7 @@ Ctrl-C stops everything.
 | `CLAUDE` | `fake` (default: `cmd/fake-claude` answers; no sign-in, no cost) or `real` (the `claude` CLI on your `PATH`, billed to whatever it is signed in to) |
 | `DEMO_PORT` | the port (default 8080) |
 
-There are no agent pods or dev-shell locally (the boot log says
+There are no agent pods or agent-shell locally (the boot log says
 `agentpod: disabled (not running in-cluster)`); chat, messaging,
 release and the wizard work. `make run` sets
 `KIVALI_MCP_LOCAL_FILES=1` and `KIVALI_MCP_LOCAL_FILES_ROOT` (a `files/`

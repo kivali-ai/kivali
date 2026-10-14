@@ -6,17 +6,17 @@ import (
 	"testing"
 
 	"github.com/kivali-ai/kivali/internal/agentpod"
-	"github.com/kivali-ai/kivali/internal/devshell"
+	"github.com/kivali-ai/kivali/internal/agentshell"
 )
 
-// Without DEV_SHELL_SOCKET the file tools refuse unless the local tree
+// Without AGENT_SHELL_SOCKET the file tools refuse unless the local tree
 // is asked for, whatever is on disk: a pod whose spec lost the variable
 // refuses to start rather than answering file calls from whatever tree
 // its container has.
 func TestFileToolsRefuseWithoutSidecar(t *testing.T) {
 	root := t.TempDir()
-	if _, _, err := agentFileTools("", false, "alice", root); err == nil || !strings.Contains(err.Error(), "DEV_SHELL_SOCKET") || !strings.Contains(err.Error(), LocalFilesEnv) {
-		t.Errorf("agentFileTools with no socket, not asked for local: err = %v, want a refusal naming DEV_SHELL_SOCKET and %s", err, LocalFilesEnv)
+	if _, _, err := agentFileTools("", false, "alice", root); err == nil || !strings.Contains(err.Error(), "AGENT_SHELL_SOCKET") || !strings.Contains(err.Error(), LocalFilesEnv) {
+		t.Errorf("agentFileTools with no socket, not asked for local: err = %v, want a refusal naming AGENT_SHELL_SOCKET and %s", err, LocalFilesEnv)
 	}
 	if _, _, err := subagentFileTools("", false, "alice", root); err == nil {
 		t.Error("subagentFileTools with no socket, not asked for local: want a refusal")
@@ -52,14 +52,14 @@ func TestFileToolsUseTheSidecarWhenSocketSet(t *testing.T) {
 	if err != nil || disp == nil {
 		t.Fatalf("agentFileTools = %v, %v", disp, err)
 	}
-	if _, ok := shell.(*devshell.SidecarShell); !ok {
-		t.Errorf("shell = %T, want *devshell.SidecarShell", shell)
+	if _, ok := shell.(*agentshell.SidecarShell); !ok {
+		t.Errorf("shell = %T, want *agentshell.SidecarShell", shell)
 	}
 	shell, _, err = subagentFileTools("/run/sock", false, "alice", "/files/subagents/s1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ss := shell.(*devshell.SidecarShell); ss.CwdPrefix != "subagents/s1" || ss.OverlayPrivate != "/files/subagents/s1/artifacts/private" {
+	if ss := shell.(*agentshell.SidecarShell); ss.CwdPrefix != "subagents/s1" || ss.OverlayPrivate != "/files/subagents/s1/artifacts/private" {
 		t.Errorf("subagent shell = %+v", ss)
 	}
 	for _, bad := range []string{"/files", "/elsewhere/s1"} {

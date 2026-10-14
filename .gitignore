@@ -47,5 +47,5 @@ bin/
 /internal/web/ui/dist/*
 !/internal/web/ui/dist/.gitkeep
 
-# Operator-local Makefile overrides (DEV_SHELL_EXTRA_PACKAGES, REGISTRY).
+# Operator-local Makefile overrides (AGENT_SHELL_EXTRA_PACKAGES, REGISTRY).
 /local.mk

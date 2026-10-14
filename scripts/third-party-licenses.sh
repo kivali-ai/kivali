@@ -17,7 +17,7 @@
 # lists exactly what was built into it):
 #
 #   header ARTIFACT        Kivali's NOTICE and what ARTIFACT bundles besides
-#                          (release, kivali, kivali-dev-shell,
+#                          (release, kivali, kivali-agent-shell,
 #                          kivali-egress-proxy)
 #   go PKG...              the Go modules linked into PKG..., for the GOOS,
 #                          GOARCH and CGO_ENABLED in the environment, and the
@@ -113,9 +113,9 @@ header() {
   artifact=$1
   case "$artifact" in
     kivali) what='the kivali image (the Kivali server and its web app)' ;;
-    kivali-dev-shell) what='the kivali-dev-shell image (the agents'"'"' shell)' ;;
+    kivali-agent-shell) what='the kivali-agent-shell image (the agents'"'"' shell)' ;;
     kivali-egress-proxy) what='the kivali-egress-proxy image' ;;
-    release) what='Kivali: Kivali Desktop, the Kivali VM image, and the kivali, kivali-dev-shell and kivali-egress-proxy images' ;;
+    release) what='Kivali: Kivali Desktop, the Kivali VM image, and the kivali, kivali-agent-shell and kivali-egress-proxy images' ;;
     *) die "unknown artifact '$artifact'" ;;
   esac
   printf 'Third-party software in %s\n%s\n\n' "$what" "$rule"
@@ -154,7 +154,7 @@ offer of their source code are in /usr/share/doc/kivali/packages.txt and
 /usr/share/doc/kivali/SOURCES.md.
 EOF
       ;;
-    kivali-dev-shell)
+    kivali-agent-shell)
       cat <<'EOF'
 
 --------------------------------------------------------------------------------
@@ -203,8 +203,8 @@ The Kivali VM image and the operating systems of the images
 
 Kivali Desktop includes the Kivali VM image: a Linux kernel and Alpine
 Linux packages, k3s and the container images k3s runs, and the kivali,
-kivali-egress-proxy and kivali-dev-shell images. The kivali and
-kivali-dev-shell images are built on Debian, the kivali-egress-proxy
+kivali-egress-proxy and kivali-agent-shell images. The kivali and
+kivali-agent-shell images are built on Debian, the kivali-egress-proxy
 image on gcr.io/distroless/static. Much of this is licensed under the
 GNU GPL or LGPL. Each Debian package's copyright and license are in
 /usr/share/doc/<package>/copyright inside its image. The exact packages
@@ -372,7 +372,7 @@ release() {
   esac
   self="$root/scripts/third-party-licenses.sh"
   header release
-  (cd "$root" && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 sh "$self" go . ./cmd/dev-shell ./cmd/egress-proxy ./cmd/kivali-guest)
+  (cd "$root" && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 sh "$self" go . ./cmd/agent-shell ./cmd/egress-proxy ./cmd/kivali-guest)
   (cd "$root" && GOOS=$goos GOARCH=$goarch CGO_ENABLED=$cgo sh "$self" go ./cmd/kivali-supervisor)
   npm_section "$root/web"
   cargo_section "$root/desktop-app/src-tauri/Cargo.toml" "$triple"

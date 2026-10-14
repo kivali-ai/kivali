@@ -22,14 +22,14 @@ const ShellToolName = "run_shell"
 // file_view paths and shell paths point at the same physical bytes.
 //
 // The toolkit paragraph is not written by hand: it names the packages
-// the running dev-shell reports (see ShellPackageLister), because a
+// the running agent-shell reports (see ShellPackageLister), because a
 // description that disagrees with the image sends agents to plan
 // workflows around tools that are not there. With
 // no list to name, ShellTool states that instead of guessing.
 func ShellTool() provider.Tool { return ShellToolWithPackages(nil) }
 
 // ShellPackageLister is implemented by a ShellExecutor that can say
-// which packages its shell has installed: the dev-shell sidecar client.
+// which packages its shell has installed: the agent-shell sidecar client.
 // Executors that cannot (tests, the in-process local shell) simply do
 // not implement it.
 type ShellPackageLister interface {
@@ -42,7 +42,7 @@ type ShellPackageLister interface {
 // by default); the sidecar client's own 30s dial grace plus backoff
 // would outlast that and leave the agent with no kivali tools at all,
 // which is worse than the fallback sentence. 20s covers a cold image
-// pull of the dev-shell.
+// pull of the agent-shell.
 const shellPackagesTimeout = 20 * time.Second
 
 // ShellPackages asks exec for its installed packages, once, bounded by
@@ -64,7 +64,7 @@ func ShellPackages(ctx context.Context, exec ShellExecutor) []string {
 	return pkgs
 }
 
-// shellToolkitUnknown is the toolkit paragraph when the dev-shell's
+// shellToolkitUnknown is the toolkit paragraph when the agent-shell's
 // package list is not available (daemon unreachable, or an image with
 // no list file).
 const shellToolkitUnknown = "The shell is bash on Debian. Its package list could not be read, so check for a tool with \"command -v <tool>\" before relying on it."
@@ -94,7 +94,7 @@ func shellToolkitText(pkgs []string) string {
 }
 
 // ShellToolWithPackages is ShellTool with the toolkit paragraph naming
-// pkgs, the dev-shell's installed package list. An empty list gets the
+// pkgs, the agent-shell's installed package list. An empty list gets the
 // fallback sentence.
 func ShellToolWithPackages(pkgs []string) provider.Tool {
 	return provider.Tool{
@@ -111,7 +111,7 @@ PERSISTENT ENVIRONMENT. Each run_shell call is a fresh bash subprocess, but $HOM
 - Edit ~/.shell_env to export env vars, prepend PATH, source pyenv init, etc. Changes stick.
 - Cwd does NOT persist between calls — each command starts at the cwd you pass (or /files/). If you want a series of commands in one place, prepend "cd <path> && " to each, or chain inside one command with && / newlines.
 
-Apt-get is NOT available — the container runs as a non-root user and cannot install system packages at runtime. For Python use "pip install --user <pkg>" or a venv. If you need a system package that is not installed, publish a ceo_notification describing what you need and why; an operator adds it by rebuilding the dev-shell image with the package named in the DEV_SHELL_EXTRA_PACKAGES build arg.
+Apt-get is NOT available — the container runs as a non-root user and cannot install system packages at runtime. For Python use "pip install --user <pkg>" or a venv. If you need a system package that is not installed, publish a ceo_notification describing what you need and why; an operator adds it by rebuilding the agent-shell image with the package named in the AGENT_SHELL_EXTRA_PACKAGES build arg.
 
 Use this for: running tests, experimenting with libraries, document conversion, image processing, processing data, prototyping scripts, anything that wants a shell. Chain steps inside a single "command" with && / ; / newlines. stdout and stderr are each capped at 256KB with a truncation marker. Both are persisted in your chat history as a tool_result and replay on every subsequent turn until your chat rotates — treat each large output like spending tokens. For commands that produce a lot, redirect to a file in /files/artifacts/private/ and read just the section you need (grep -n, head, sed -n 'A,Bp') on a subsequent call. Default timeout is 60 seconds; raise it with "timeout_seconds" up to 600.
 

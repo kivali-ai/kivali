@@ -79,7 +79,7 @@ vX.Y.Z-dev.N --cleanup-tag`.
 
 | File | Carries | Source |
 | --- | --- | --- |
-| `charts/kivali/Chart.yaml` | `appVersion: vX.Y.Z` (the default image tag of the server, egress proxy and dev-shell) | the tag |
+| `charts/kivali/Chart.yaml` | `appVersion: vX.Y.Z` (the default image tag of the server, egress proxy and agent-shell) | the tag |
 | `desktop-app/src-tauri/tauri.conf.json` | `"version": "X.Y.Z"` | **the desktop's source** |
 | `desktop-app/src-tauri/Cargo.toml`, `Cargo.lock` | `version` | follows tauri.conf.json (`build.rs` stops the build otherwise) |
 | `desktop-app/package.json`, `package-lock.json` | `"version"` | follows tauri.conf.json (same) |
@@ -104,7 +104,7 @@ Jobs, in order (`needs` in parentheses):
 | Job | Runner | Produces |
 | --- | --- | --- |
 | `verify` | ubuntu-latest | tag equals tauri.conf.json's version; `make version-check VERSION=$tag` |
-| `images` (verify), amd64 and arm64 | ubuntu-latest, ubuntu-24.04-arm (native; no QEMU) | `kivali-images-linux-<arch>.tar.zst`; the kivali and kivali-dev-shell images' Debian package lists (for `SOURCES.md`) |
+| `images` (verify), amd64 and arm64 | ubuntu-latest, ubuntu-24.04-arm (native; no QEMU) | `kivali-images-linux-<arch>.tar.zst`; the kivali and kivali-agent-shell images' Debian package lists (for `SOURCES.md`) |
 | `chart` (verify) | ubuntu-latest | `kivali-X.Y.Z.tgz` (`make chart-package`) |
 | `licenses` (verify) | ubuntu-latest | `THIRD_PARTY_LICENSES.txt`, the notices of everything a release ships (`make third-party-licenses`) |
 | `vm` (images, chart), arm64 and amd64 | ubuntu-24.04-arm, ubuntu-latest (native) | arm64, for macOS: `Image`, `initramfs.gz`, `root.squashfs`; amd64, for Windows: `root.vhdx`; each with `packages.txt` and `SOURCES.md`, and that architecture's images and the chart baked in |
@@ -118,7 +118,7 @@ Choices worth knowing:
 - **The image bundle** is what the supervisor imports
   (`internal/supervisor/release.go`, `guestapi/images.go`): one
   `docker save` archive holding `kivali`, `kivali-egress-proxy` and
-  `kivali-dev-shell` at `:vX.Y.Z`, zstd-compressed.
+  `kivali-agent-shell` at `:vX.Y.Z`, zstd-compressed.
   `scripts/image-bundle.sh` makes it from the per-image tarballs of
   `make image-tars ARCH=<arch>` (run by `release-bundle-<arch>`) and checks all three references are listed. The
   archive carries the images' own names, not a registry's: the chart's
@@ -252,7 +252,7 @@ source and a written offer of it:
   the k3s and k3s-root tags; snapshot.debian.org for Debian), followed by
   the written offer. Each VM image has one at
   `/usr/share/doc/kivali/SOURCES.md` (with the GNU license texts beside it
-  in `licenses/`), the kivali and kivali-dev-shell images one for their
+  in `licenses/`), the kivali and kivali-agent-shell images one for their
   Debian packages beside `packages.txt`. The release's `SOURCES.md` is the
   arm64 VM's with the images' Debian packages appended, and
   `vm-amd64-SOURCES.md` is the amd64 VM's, which adds the EFI stub.

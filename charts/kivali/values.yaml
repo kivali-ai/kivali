@@ -64,8 +64,8 @@ oauth:
 
 image:
   # Server image. Also the image agent pods run (AGENTPOD_IMAGE). The server
-  # derives the dev-shell sidecar image (kivali-dev-shell) from it, so
-  # kivali, kivali-egress-proxy and kivali-dev-shell must all exist at the
+  # derives the agent-shell sidecar image (kivali-agent-shell) from it, so
+  # kivali, kivali-egress-proxy and kivali-agent-shell must all exist at the
   # same tag on the node or in the registry.
   repository: kivali
   # Empty means .Chart.AppVersion.

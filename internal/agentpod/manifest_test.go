@@ -48,11 +48,11 @@ func TestPodManifestShape(t *testing.T) {
 	}
 
 	containers := spec["containers"].([]any)
-	// agent + dev-shell. The dev-shell sidecar is always present —
+	// agent + agent-shell. The agent-shell sidecar is always present —
 	// its image is derived from the agentpod image at the same tag,
-	// so a release ships both atomically (see DevShellImageFor).
+	// so a release ships both atomically (see AgentShellImageFor).
 	if len(containers) != 2 {
-		t.Fatalf("want 2 containers (agent + dev-shell), got %d", len(containers))
+		t.Fatalf("want 2 containers (agent + agent-shell), got %d", len(containers))
 	}
 	container := containers[0].(map[string]any)
 	if got := container["image"].(string); got != "ghcr.io/kivali-ai/kivali:test" {
@@ -220,8 +220,8 @@ func TestPodManifestNoProviderHomeWhenUnset(t *testing.T) {
 // TestPodManifestSidecarPresent proves the sidecar container is
 // always emitted, with the same /files/ + /scratch/ volumeMounts
 // as the agent container, and the agent container's env carries
-// DEV_SHELL_SOCKET so its kivali mcp subprocess routes run_shell
-// through the sidecar. The dev-shell image identifier is derived
+// AGENT_SHELL_SOCKET so its kivali mcp subprocess routes run_shell
+// through the sidecar. The agent-shell image identifier is derived
 // from the agentpod image at the same tag — both ship as one
 // atomic release set, no separate config knob.
 func TestPodManifestSidecarPresent(t *testing.T) {
@@ -230,7 +230,7 @@ func TestPodManifestSidecarPresent(t *testing.T) {
 	pod := c.podManifest("alice")
 	containers := pod["spec"].(map[string]any)["containers"].([]any)
 	if len(containers) != 2 {
-		t.Fatalf("want 2 containers (agent + dev-shell), got %d", len(containers))
+		t.Fatalf("want 2 containers (agent + agent-shell), got %d", len(containers))
 	}
 
 	// Find each container by name — order isn't a contract.
@@ -239,26 +239,26 @@ func TestPodManifestSidecarPresent(t *testing.T) {
 		m := c.(map[string]any)
 		byName[m["name"].(string)] = m
 	}
-	dev, ok := byName["dev-shell"]
+	dev, ok := byName["agent-shell"]
 	if !ok {
-		t.Fatalf("missing dev-shell container; have %v", byName)
+		t.Fatalf("missing agent-shell container; have %v", byName)
 	}
 	// testConfig().Image == "ghcr.io/kivali-ai/kivali:test"; the derived
-	// dev-shell image swaps the name and keeps the registry + tag.
-	if got := dev["image"]; got != "ghcr.io/kivali-ai/kivali-dev-shell:test" {
-		t.Errorf("dev-shell image = %v, want ghcr.io/kivali-ai/kivali-dev-shell:test", got)
+	// agent-shell image swaps the name and keeps the registry + tag.
+	if got := dev["image"]; got != "ghcr.io/kivali-ai/kivali-agent-shell:test" {
+		t.Errorf("agent-shell image = %v, want ghcr.io/kivali-ai/kivali-agent-shell:test", got)
 	}
 	args := dev["args"].([]string)
 	wantArgs := []string{
-		"--socket=/run/kivali-dev-shell/sock",
+		"--socket=/run/kivali-agent-shell/sock",
 		"--root=/files",
 		"--agent=alice",
 	}
 	if !reflect.DeepEqual(args, wantArgs) {
-		t.Errorf("dev-shell args = %v, want %v", args, wantArgs)
+		t.Errorf("agent-shell args = %v, want %v", args, wantArgs)
 	}
 
-	// dev-shell mounts: /run/kivali-dev-shell (the IPC emptyDir),
+	// agent-shell mounts: /run/kivali-agent-shell (the IPC emptyDir),
 	// /scratch (per-agent PVC — HOME lives here for persistence),
 	// /files RW, /files/artifacts/shared RO, plus the four symlink-
 	// target mounts (/data/attachments, /data/skills, /data/project_files,
@@ -276,36 +276,36 @@ func TestPodManifestSidecarPresent(t *testing.T) {
 	for _, m := range devMounts {
 		devByPath[m["mountPath"].(string)] = m
 	}
-	if _, ok := devByPath["/run/kivali-dev-shell"]; !ok {
-		t.Error("dev-shell missing /run/kivali-dev-shell mount (the UDS lives here)")
+	if _, ok := devByPath["/run/kivali-agent-shell"]; !ok {
+		t.Error("agent-shell missing /run/kivali-agent-shell mount (the UDS lives here)")
 	}
 	if _, ok := devByPath["/scratch"]; !ok {
-		t.Error("dev-shell missing /scratch mount (HOME=/scratch/home, persistence root)")
+		t.Error("agent-shell missing /scratch mount (HOME=/scratch/home, persistence root)")
 	}
 	if files, ok := devByPath["/files"]; !ok {
-		t.Error("dev-shell missing /files mount (run_shell and file_* both execute against it)")
+		t.Error("agent-shell missing /files mount (run_shell and file_* both execute against it)")
 	} else if files["subPath"] != "agents/alice/memory" {
-		t.Errorf("dev-shell /files subPath = %v, want agents/alice/memory", files["subPath"])
+		t.Errorf("agent-shell /files subPath = %v, want agents/alice/memory", files["subPath"])
 	}
 	if shared, ok := devByPath["/files/artifacts/shared"]; !ok {
-		t.Error("dev-shell missing /files/artifacts/shared RO mount (run_shell could clobber peer artifacts)")
+		t.Error("agent-shell missing /files/artifacts/shared RO mount (run_shell could clobber peer artifacts)")
 	} else if ro, _ := shared["readOnly"].(bool); !ro {
-		t.Errorf("dev-shell /files/artifacts/shared readOnly = false, want true")
+		t.Errorf("agent-shell /files/artifacts/shared readOnly = false, want true")
 	}
-	// The symlink farms are read-only mounts in the dev-shell too:
+	// The symlink farms are read-only mounts in the agent-shell too:
 	// run_shell is the one tool that could otherwise repoint a farm
 	// link or replace a farm dir with a link core would write through.
 	for _, d := range []string{"project", "skills", "attachments", "past-chats", "episodes"} {
 		m, ok := devByPath["/files/"+d]
 		if !ok {
-			t.Errorf("dev-shell missing /files/%s RO mount", d)
+			t.Errorf("agent-shell missing /files/%s RO mount", d)
 			continue
 		}
 		if m["subPath"] != "agents/alice/memory/"+d {
-			t.Errorf("dev-shell /files/%s subPath = %v, want agents/alice/memory/%s", d, m["subPath"], d)
+			t.Errorf("agent-shell /files/%s subPath = %v, want agents/alice/memory/%s", d, m["subPath"], d)
 		}
 		if ro, _ := m["readOnly"].(bool); !ro {
-			t.Errorf("dev-shell /files/%s readOnly = false, want true", d)
+			t.Errorf("agent-shell /files/%s readOnly = false, want true", d)
 		}
 	}
 	// Nested mounts must follow /files in the list: kubelet mounts in
@@ -316,10 +316,10 @@ func TestPodManifestSidecarPresent(t *testing.T) {
 		if p == "/files" {
 			filesAt = i
 		} else if strings.HasPrefix(p, "/files/") && (filesAt < 0 || i < filesAt) {
-			t.Errorf("dev-shell mount %s comes before /files", p)
+			t.Errorf("agent-shell mount %s comes before /files", p)
 		}
 	}
-	// Four symlink-target mounts the dev-shell needs so bash can
+	// Four symlink-target mounts the agent-shell needs so bash can
 	// follow /files/{attachments,skills,project,past-chats}/ links.
 	// Each must be RO; attachments + per-agent chats use a per-slug
 	// subPath, skills + project_files are globally shared.
@@ -336,21 +336,21 @@ func TestPodManifestSidecarPresent(t *testing.T) {
 	for _, tgt := range symlinkTargets {
 		m, ok := devByPath[tgt.mountPath]
 		if !ok {
-			t.Errorf("dev-shell missing %s RO mount — bash cannot follow %s symlinks without it", tgt.mountPath, tgt.surface)
+			t.Errorf("agent-shell missing %s RO mount — bash cannot follow %s symlinks without it", tgt.mountPath, tgt.surface)
 			continue
 		}
 		if m["subPath"] != tgt.subPath {
-			t.Errorf("dev-shell %s subPath = %v, want %s", tgt.mountPath, m["subPath"], tgt.subPath)
+			t.Errorf("agent-shell %s subPath = %v, want %s", tgt.mountPath, m["subPath"], tgt.subPath)
 		}
 		if ro, _ := m["readOnly"].(bool); !ro {
-			t.Errorf("dev-shell %s readOnly = false, want true", tgt.mountPath)
+			t.Errorf("agent-shell %s readOnly = false, want true", tgt.mountPath)
 		}
 	}
 	if _, has := devByPath["/data/mock-home"]; has {
-		t.Error("dev-shell should not mount /data/mock-home — agent-runtime concern (claude CLI credentials)")
+		t.Error("agent-shell should not mount /data/mock-home — agent-runtime concern (claude CLI credentials)")
 	}
 
-	// dev-shell env: HOME on the persistent PVC + BASH_ENV
+	// agent-shell env: HOME on the persistent PVC + BASH_ENV
 	// pointing at the editable shim file. Both are load-bearing
 	// for the persistence model.
 	devEnv := dev["env"].([]map[string]any)
@@ -359,13 +359,13 @@ func TestPodManifestSidecarPresent(t *testing.T) {
 		devEnvByName[e["name"].(string)] = e["value"].(string)
 	}
 	if devEnvByName["HOME"] != "/scratch/home" {
-		t.Errorf("dev-shell HOME = %q, want /scratch/home", devEnvByName["HOME"])
+		t.Errorf("agent-shell HOME = %q, want /scratch/home", devEnvByName["HOME"])
 	}
 	if devEnvByName["BASH_ENV"] != "/scratch/home/.shell_env" {
-		t.Errorf("dev-shell BASH_ENV = %q, want /scratch/home/.shell_env", devEnvByName["BASH_ENV"])
+		t.Errorf("agent-shell BASH_ENV = %q, want /scratch/home/.shell_env", devEnvByName["BASH_ENV"])
 	}
 
-	// Agent container env carries DEV_SHELL_SOCKET so kivali mcp
+	// Agent container env carries AGENT_SHELL_SOCKET so kivali mcp
 	// inside it routes run_shell and file_* through the sidecar's UDS.
 	agent, ok := byName["agent"]
 	if !ok {
@@ -374,12 +374,12 @@ func TestPodManifestSidecarPresent(t *testing.T) {
 	envs := agent["env"].([]map[string]any)
 	var sock string
 	for _, e := range envs {
-		if e["name"] == "DEV_SHELL_SOCKET" {
+		if e["name"] == "AGENT_SHELL_SOCKET" {
 			sock = e["value"].(string)
 		}
 	}
-	if sock != "/run/kivali-dev-shell/sock" {
-		t.Errorf("agent env DEV_SHELL_SOCKET = %q, want /run/kivali-dev-shell/sock", sock)
+	if sock != "/run/kivali-agent-shell/sock" {
+		t.Errorf("agent env AGENT_SHELL_SOCKET = %q, want /run/kivali-agent-shell/sock", sock)
 	}
 	// Agent container also needs the IPC mount so it can dial
 	// the daemon's socket. Without it, every run_shell call
@@ -387,19 +387,19 @@ func TestPodManifestSidecarPresent(t *testing.T) {
 	agentMounts := agent["volumeMounts"].([]map[string]any)
 	hasIPC := false
 	for _, m := range agentMounts {
-		if m["mountPath"] == "/run/kivali-dev-shell" {
+		if m["mountPath"] == "/run/kivali-agent-shell" {
 			hasIPC = true
 			break
 		}
 	}
 	if !hasIPC {
-		t.Error("agent container missing /run/kivali-dev-shell mount (cannot dial dev-shell daemon)")
+		t.Error("agent container missing /run/kivali-agent-shell mount (cannot dial agent-shell daemon)")
 	}
 }
 
 // TestPodManifestSidecarSpecHashChanges proves drift is detected
-// when the agentpod image's tag bumps — that bumps the dev-shell
-// image too (DevShellImageFor preserves the tag), so the manifest
+// when the agentpod image's tag bumps — that bumps the agent-shell
+// image too (AgentShellImageFor preserves the tag), so the manifest
 // changes and Provision recreates any agent pod running against
 // another tag.
 func TestPodManifestSidecarSpecHashChanges(t *testing.T) {
@@ -420,26 +420,26 @@ func TestPodManifestSidecarSpecHashChanges(t *testing.T) {
 	}
 }
 
-// TestDevShellImageFor pins the derivation rule. A release ships
-// Kivali and kivali-dev-shell as one set; this helper is the only
+// TestAgentShellImageFor pins the derivation rule. A release ships
+// Kivali and kivali-agent-shell as one set; this helper is the only
 // place that knows their names line up. Cases cover the two
 // canonical shapes (registry-prefixed and bare), plus a missing
 // tag (treated as :latest, matching docker's default).
-func TestDevShellImageFor(t *testing.T) {
+func TestAgentShellImageFor(t *testing.T) {
 	cases := []struct {
 		in, want string
 	}{
-		{"kivali:v0.8.3", "kivali-dev-shell:v0.8.3"},
-		{"kivali:dev", "kivali-dev-shell:dev"},
-		{"ghcr.io/kivali-ai/kivali:v0.8.3", "ghcr.io/kivali-ai/kivali-dev-shell:v0.8.3"},
-		{"registry.internal:5000/kivali:v0.8.3", "registry.internal:5000/kivali-dev-shell:v0.8.3"},
-		{"kivali", "kivali-dev-shell:latest"},
+		{"kivali:v0.8.3", "kivali-agent-shell:v0.8.3"},
+		{"kivali:dev", "kivali-agent-shell:dev"},
+		{"ghcr.io/kivali-ai/kivali:v0.8.3", "ghcr.io/kivali-ai/kivali-agent-shell:v0.8.3"},
+		{"registry.internal:5000/kivali:v0.8.3", "registry.internal:5000/kivali-agent-shell:v0.8.3"},
+		{"kivali", "kivali-agent-shell:latest"},
 		{"", ""},
 	}
 	for _, tc := range cases {
-		got := DevShellImageFor(tc.in)
+		got := AgentShellImageFor(tc.in)
 		if got != tc.want {
-			t.Errorf("DevShellImageFor(%q) = %q, want %q", tc.in, got, tc.want)
+			t.Errorf("AgentShellImageFor(%q) = %q, want %q", tc.in, got, tc.want)
 		}
 	}
 }
@@ -472,14 +472,14 @@ func TestPodManifestNoService(t *testing.T) {
 	}
 }
 
-// TestPodManifestUnifiedFilesMounts proves the dev-shell container
+// TestPodManifestUnifiedFilesMounts proves the agent-shell container
 // gets the subPath mounts the file_* tools and run_shell rely on:
 // /files RW (per-slug subPath) with RO nested mounts over core's
 // subtrees, /data/project_files RO, /data/skills RO, /data/attachments
 // RO (per-agent hardlink dir), and /data/agents/<slug>/chats RO
 // (per-agent archive dir) — and that the agent container, which holds
 // the Claude credentials, gets none of them. file_* executes in the
-// dev-shell, so nothing an agent can write, or plant a symlink in, is
+// agent-shell, so nothing an agent can write, or plant a symlink in, is
 // mounted beside the credentials.
 func TestPodManifestUnifiedFilesMounts(t *testing.T) {
 	c := testConfig()
@@ -493,17 +493,17 @@ func TestPodManifestUnifiedFilesMounts(t *testing.T) {
 	}
 
 	// The agent container mounts exactly its scratch PVC, core's UDS
-	// dir, the dev-shell socket dir and the CLI's HOME.
+	// dir, the agent-shell socket dir and the CLI's HOME.
 	var agentPaths []string
 	for _, m := range byName["agent"]["volumeMounts"].([]map[string]any) {
 		agentPaths = append(agentPaths, m["mountPath"].(string))
 	}
-	wantAgent := []string{"/scratch", c.UDSDir, "/run/kivali-dev-shell", "/data/mock-home"}
+	wantAgent := []string{"/scratch", c.UDSDir, "/run/kivali-agent-shell", "/data/mock-home"}
 	if !reflect.DeepEqual(agentPaths, wantAgent) {
 		t.Errorf("agent container mounts = %v, want %v", agentPaths, wantAgent)
 	}
 
-	mounts := byName["dev-shell"]["volumeMounts"].([]map[string]any)
+	mounts := byName["agent-shell"]["volumeMounts"].([]map[string]any)
 	byMount := map[string]map[string]any{}
 	for _, m := range mounts {
 		byMount[m["mountPath"].(string)] = m

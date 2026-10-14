@@ -655,8 +655,8 @@ func (r *Runtime) handleSubagentTurn(ctx context.Context, ev Event) error {
 	if r.ScratchRoot == "" {
 		// Scratch holds the run's driver files (its MCP config) and
 		// stderr.log: the agent container's own half of the per-agent
-		// PVC, which the dev-shell cannot reach. The subagent's /files/
-		// tree is the dev-shell's, under the parent's
+		// PVC, which the agent-shell cannot reach. The subagent's /files/
+		// tree is the agent-shell's, under the parent's
 		// /files/subagents/<id>/.
 		_ = r.postFailed(ctx, ct.TurnID, FailedReasonOtherError,
 			"subagent: runtime not configured (ScratchRoot empty)")
@@ -808,14 +808,14 @@ func subagentFinalText(final *provider.CompleteResponse) string {
 // subagentMCPServer is the one MCP server a subagent run loads: this
 // binary's `kivali mcp --toolkit subagent`, scoped to the parent and
 // the subagent's id, routing list_skills and the other core tools
-// through UDS, and run_shell and every file_* call to the dev-shell
+// through UDS, and run_shell and every file_* call to the agent-shell
 // sidecar's daemon (this container mounts no /files), both scoped to
 // the same /files/subagents/<id>/ root — file_view and run_shell never
 // disagree.
 //
 // The launch arguments are the trust boundary: the driver writes them
 // into a config in the agent container's own half of /scratch, which
-// the dev-shell does not mount, so nothing the shell can write may be
+// the agent-shell does not mount, so nothing the shell can write may be
 // read as the command a provider executes.
 func subagentMCPServer(kivaliBin, coreUDS, parent, id string, depth int) provider.MCPServer {
 	return provider.MCPServer{
@@ -827,7 +827,7 @@ func subagentMCPServer(kivaliBin, coreUDS, parent, id string, depth int) provide
 			"--parent", parent,
 			"--subagent-id", id,
 			"--core-uds", coreUDS,
-			// The subagent's /files/ root in the dev-shell container. The
+			// The subagent's /files/ root in the agent-shell container. The
 			// mount (manifest.go subPath agents/<parent>/<storage>)
 			// exposes the parent's whole tree at /files/; the
 			// SubagentService overlay places the subagent-scoped subdir

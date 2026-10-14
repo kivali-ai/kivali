@@ -24,7 +24,7 @@ var FilesystemBeta = files.Beta
 // FilesystemTools is the file_* virtual-filesystem tool family. All paths
 // are rooted at "/files/" from the model's perspective; the
 // internal/files Backend maps paths to a per-agent on-disk directory
-// with traversal protection. The tools execute in the dev-shell
+// with traversal protection. The tools execute in the agent-shell
 // container, beside run_shell, with the same mounts and privileges, so
 // file_view paths and shell paths point at the same physical bytes
 // (see docs/developers/files-and-publishing.md).

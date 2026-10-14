@@ -61,7 +61,7 @@ golicenses() {
 }
 
 : > "$tmp/deps"
-golicenses linux amd64 0 . ./cmd/dev-shell ./cmd/egress-proxy ./cmd/kivali-guest
+golicenses linux amd64 0 . ./cmd/agent-shell ./cmd/egress-proxy ./cmd/kivali-guest
 golicenses darwin arm64 1 ./cmd/kivali-supervisor
 golicenses windows amd64 0 ./cmd/kivali-supervisor
 

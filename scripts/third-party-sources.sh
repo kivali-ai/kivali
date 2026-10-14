@@ -23,7 +23,7 @@
 #   distroless                the egress proxy's base image
 #
 # Who calls what: the VM image build (vm/Dockerfile) writes the VM's
-# SOURCES.md, the kivali and kivali-dev-shell image builds theirs from
+# SOURCES.md, the kivali and kivali-agent-shell image builds theirs from
 # the packages they install, and the release workflow publishes the VM's
 # with the images' Debian sections appended.
 #
@@ -53,7 +53,7 @@ offer() {
 Kivali includes software licensed under the GNU General Public License
 (GPL) and the GNU Lesser General Public License (LGPL): among it the
 Linux kernel, BusyBox and other Alpine Linux packages and k3s in the
-Kivali VM image, and Debian packages in the kivali and kivali-dev-shell
+Kivali VM image, and Debian packages in the kivali and kivali-agent-shell
 images. SOURCES.md lists them, with links to the source code of the
 exact versions shipped.
 
@@ -170,7 +170,7 @@ EOF
   tr -d '\r' < "$lock" | awk 'NF >= 2 {printf "- `%s@%s`\n", $1, $2}'
   cat <<'EOF'
 
-The kivali, kivali-egress-proxy and kivali-dev-shell images beside them
+The kivali, kivali-egress-proxy and kivali-agent-shell images beside them
 carry their own SOURCES.md at /usr/share/doc/kivali/; the release's
 SOURCES.md includes their Debian packages.
 EOF

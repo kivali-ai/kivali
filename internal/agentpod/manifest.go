@@ -18,9 +18,9 @@ import (
 //
 //  1. Container command is `kivali agent --slug=<slug> --uds=<sock>`.
 //  2. The agent container's mounts: its own half of the per-agent PVC
-//     at /scratch (the dev-shell mounts the other half there; see
+//     at /scratch (the agent-shell mounts the other half there; see
 //     scratch.go), hostPath UDS dir at /var/run/kivali/uds, the
-//     dev-shell socket dir, and the Kivali PVC's provider home subdir
+//     agent-shell socket dir, and the Kivali PVC's provider home subdir
 //     (HomeSubPath, from the provider's Credentials: claude-home) at
 //     /data/<HomeSubPath>, so the embedded CLI sees the same
 //     credentials the operator signed in with.
@@ -36,50 +36,50 @@ import (
 
 const (
 	agentpodSocketName = "core.sock"
-	// devShellSocketDir is mounted as an emptyDir into both the
-	// agent and dev-shell containers; the daemon listens on a
+	// agentShellSocketDir is mounted as an emptyDir into both the
+	// agent and agent-shell containers; the daemon listens on a
 	// socket inside it. Deliberately NOT under /scratch (which
 	// agents browse via run_shell): putting the socket on a path
 	// agents have no reason to enumerate keeps the dispatch
 	// machinery invisible from inside the shell. emptyDir is
 	// pod-local + ephemeral — perfect for an in-pod IPC channel.
-	devShellSocketDir  = "/run/kivali-dev-shell"
-	devShellSocketName = "sock"
+	agentShellSocketDir  = "/run/kivali-agent-shell"
+	agentShellSocketName = "sock"
 )
 
-// DevShellSocketPath returns the in-pod absolute path of the
-// dev-shell sidecar's UDS. Used by mcp_cmd.go's wiring + by the
+// AgentShellSocketPath returns the in-pod absolute path of the
+// agent-shell sidecar's UDS. Used by mcp_cmd.go's wiring + by the
 // daemon binary's --socket flag default. Kept as a function (not a
 // const referencing the manifest) so tests can override per-fixture.
-func DevShellSocketPath() string { return devShellSocketDir + "/" + devShellSocketName }
+func AgentShellSocketPath() string { return agentShellSocketDir + "/" + agentShellSocketName }
 
 // dataVolumeName is the pod volume backed by the web pod's data PVC.
 const dataVolumeName = "kivali-data"
 
-// devShellSockVolumeName is the emptyDir volume that holds the
-// daemon's UDS. Mounted into both containers at devShellSocketDir.
-const devShellSockVolumeName = "dev-shell-sock"
+// agentShellSockVolumeName is the emptyDir volume that holds the
+// daemon's UDS. Mounted into both containers at agentShellSocketDir.
+const agentShellSockVolumeName = "agent-shell-sock"
 
-// devShellImageName is the second image's base name. Both images
-// (the main image + kivali-dev-shell) ship at the same tag; a release is
-// one atomic set, so deriving the dev-shell image from the
+// agentShellImageName is the second image's base name. Both images
+// (the main image + kivali-agent-shell) ship at the same tag; a release is
+// one atomic set, so deriving the agent-shell image from the
 // agentpod image's registry + tag is the only correct shape.
-const devShellImageName = "kivali-dev-shell"
+const agentShellImageName = "kivali-agent-shell"
 
-// DevShellImageFor returns the dev-shell sidecar image to pair with
+// AgentShellImageFor returns the agent-shell sidecar image to pair with
 // agentpodImage. Both are released in lock-step at the same tag, so
 // we keep the registry + tag and swap the name.
 //
 // Examples:
 //
-//	"kivali:v0.8.3"                  → "kivali-dev-shell:v0.8.3"
-//	"ghcr.io/kivali-ai/kivali:v0.8.3"    → "ghcr.io/kivali-ai/kivali-dev-shell:v0.8.3"
-//	"kivali:dev"                     → "kivali-dev-shell:dev"
+//	"kivali:v0.8.3"                  → "kivali-agent-shell:v0.8.3"
+//	"ghcr.io/kivali-ai/kivali:v0.8.3"    → "ghcr.io/kivali-ai/kivali-agent-shell:v0.8.3"
+//	"kivali:dev"                     → "kivali-agent-shell:dev"
 //
 // An agentpodImage without a tag is treated as ":latest" — matches
 // docker's default. An empty agentpodImage returns empty (the
 // validator catches it upstream).
-func DevShellImageFor(agentpodImage string) string {
+func AgentShellImageFor(agentpodImage string) string {
 	if agentpodImage == "" {
 		return ""
 	}
@@ -93,11 +93,11 @@ func DevShellImageFor(agentpodImage string) string {
 		name = agentpodImage[:i]
 		tag = agentpodImage[i+1:]
 	}
-	// Replace the last "/"-separated segment with devShellImageName.
+	// Replace the last "/"-separated segment with agentShellImageName.
 	if i := strings.LastIndex(name, "/"); i >= 0 {
-		return name[:i+1] + devShellImageName + ":" + tag
+		return name[:i+1] + agentShellImageName + ":" + tag
 	}
-	return devShellImageName + ":" + tag
+	return agentShellImageName + ":" + tag
 }
 
 // filesMounts returns the agent's /files mount (RW), then a RW mount
@@ -107,7 +107,7 @@ func DevShellImageFor(agentpodImage string) string {
 // attachments/, past-chats/ and episodes/ symlink farms, and the two
 // published trees, public/<slug> at /files/artifacts/public and public/
 // itself at /files/artifacts/shared, where every agent's published
-// tree, archived ones included, appears by owner. Only the dev-shell
+// tree, archived ones included, appears by owner. Only the agent-shell
 // container mounts them.
 //
 // The farms are core's: the file_* tools refuse writes there by path
@@ -249,15 +249,15 @@ func (c ProvisionerConfig) podManifest(slug string) map[string]any {
 		}
 	}
 	// Agent-container-only env: the `kivali mcp` subprocess inside
-	// this container picks up DEV_SHELL_SOCKET and routes run_shell
+	// this container picks up AGENT_SHELL_SOCKET and routes run_shell
 	// and the file_* tools through the sidecar's UDS; this container
 	// has no /files to run them against.
 	// The sidecar's own envs are built separately below — it
 	// doesn't need this var.
 	agentEnvs := append([]map[string]any{}, envs...)
 	agentEnvs = append(agentEnvs, map[string]any{
-		"name":  "DEV_SHELL_SOCKET",
-		"value": DevShellSocketPath(),
+		"name":  "AGENT_SHELL_SOCKET",
+		"value": AgentShellSocketPath(),
 	})
 	cpuReq := c.CPURequest
 	if cpuReq == "" {
@@ -290,7 +290,7 @@ func (c ProvisionerConfig) podManifest(slug string) map[string]any {
 	mounts := []map[string]any{
 		// The agent runtime's half of the per-agent PVC: CLI session
 		// files, subagent run dirs (their mcp-config.json), the read
-		// cache. The dev-shell mounts the other half at the same path
+		// cache. The agent-shell mounts the other half at the same path
 		// and cannot reach this one; see scratch.go.
 		{"name": "scratch", "mountPath": "/scratch", "subPath": ScratchAgentSubPath},
 		// UDS mount: read-write because the agent's Client opens
@@ -298,11 +298,11 @@ func (c ProvisionerConfig) podManifest(slug string) map[string]any {
 		// startup). The socket file itself is created + owned by
 		// the Kivali web pod; the agent pod is a client.
 		{"name": "uds", "mountPath": c.UDSDir},
-		// Dev-shell IPC: emptyDir shared with the sidecar so the
+		// Agent-shell IPC: emptyDir shared with the sidecar so the
 		// agent runtime can dial the daemon's UDS. Distinct from
 		// /scratch so agents don't see the dispatch machinery in
 		// the working directory of their shell commands.
-		{"name": devShellSockVolumeName, "mountPath": devShellSocketDir},
+		{"name": agentShellSockVolumeName, "mountPath": agentShellSocketDir},
 	}
 	volumes := []map[string]any{
 		{
@@ -319,13 +319,13 @@ func (c ProvisionerConfig) podManifest(slug string) map[string]any {
 			},
 		},
 		{
-			// emptyDir for the dev-shell IPC socket. Pod-local +
+			// emptyDir for the agent-shell IPC socket. Pod-local +
 			// ephemeral; lives only as long as the pod. Both the
-			// agent and dev-shell containers mount it at
-			// devShellSocketDir, so the daemon can listen and the
+			// agent and agent-shell containers mount it at
+			// agentShellSocketDir, so the daemon can listen and the
 			// runtime can dial without exposing the path on a PVC
 			// agents browse.
-			"name":     devShellSockVolumeName,
+			"name":     agentShellSockVolumeName,
 			"emptyDir": map[string]any{},
 		},
 	}
@@ -348,7 +348,7 @@ func (c ProvisionerConfig) podManifest(slug string) map[string]any {
 	//
 	// It is the agent container's only mount of the Kivali PVC. The
 	// agent's /files/ and the /data mounts its farms resolve through
-	// belong to the dev-shell container alone, where run_shell and the
+	// belong to the agent-shell container alone, where run_shell and the
 	// file_* tools execute: nothing an agent can write, or plant a
 	// symlink in, is mounted beside the credentials.
 	if c.DataClaimName != "" {
@@ -358,7 +358,7 @@ func (c ProvisionerConfig) podManifest(slug string) map[string]any {
 			"subPath":   c.HomeSubPath,
 		})
 		// Two volumes name the one PVC: the provider home for the agent
-		// container, kivali-data for the dev-shell's subPath mounts.
+		// container, kivali-data for the agent-shell's subPath mounts.
 		volumes = append(volumes, map[string]any{
 			"name": c.HomeSubPath,
 			"persistentVolumeClaim": map[string]any{
@@ -393,12 +393,12 @@ func (c ProvisionerConfig) podManifest(slug string) map[string]any {
 		"volumeMounts": mounts,
 	}
 
-	// dev-shell sidecar — see docs/developers/files-and-publishing.md. It runs
+	// agent-shell sidecar — see docs/developers/files-and-publishing.md. It runs
 	// the dev tooling (python, jq, git, etc.) the slim Kivali
 	// runtime image deliberately omits, and it is where run_shell and
 	// every file_* tool execute: the one container that mounts the
 	// agent's /files/ and the /data mounts its farms resolve through.
-	// UDS at /run/kivali-dev-shell/sock — the agent runtime's MCP
+	// UDS at /run/kivali-agent-shell/sock — the agent runtime's MCP
 	// server dials it for every run_shell and file_* call. Always
 	// present: the image identifier is derived from c.Image at the
 	// same tag, so a release ships both images atomically and there's
@@ -407,10 +407,10 @@ func (c ProvisionerConfig) podManifest(slug string) map[string]any {
 		// Shared IPC: the daemon listens on a socket file inside
 		// this dir; the agent runtime mounts the same emptyDir at
 		// the same path and dials.
-		{"name": devShellSockVolumeName, "mountPath": devShellSocketDir},
+		{"name": agentShellSockVolumeName, "mountPath": agentShellSocketDir},
 		// /scratch is the shell's half of the per-agent PVC (the
 		// agent container's half is not mounted here; see
-		// scratch.go). The dev-shell uses it as the persistence
+		// scratch.go). The agent-shell uses it as the persistence
 		// root: $HOME = /scratch/home so pip --user installs,
 		// ~/.bashrc edits, pyenv state, etc. survive pod restart +
 		// chat rotation. Mount is RW (default).
@@ -482,22 +482,22 @@ func (c ProvisionerConfig) podManifest(slug string) map[string]any {
 	)
 
 	devContainer := map[string]any{
-		"name":            "dev-shell",
-		"image":           DevShellImageFor(c.Image),
+		"name":            "agent-shell",
+		"image":           AgentShellImageFor(c.Image),
 		"imagePullPolicy": c.ImagePullPolicy,
 		// The daemon binary defaults its own --socket and --root
-		// to /run/kivali-dev-shell/sock + /files; pass them
+		// to /run/kivali-agent-shell/sock + /files; pass them
 		// explicitly anyway so a future flag-default change in
-		// cmd/dev-shell doesn't silently change behavior here.
+		// cmd/agent-shell doesn't silently change behavior here.
 		// --agent names the per-agent /data mounts above.
 		"args": []string{
-			"--socket=" + DevShellSocketPath(),
+			"--socket=" + AgentShellSocketPath(),
 			"--root=/files",
 			"--agent=" + slug,
 		},
 		"env": devEnvs,
 		"resources": map[string]any{
-			// Dev-shell is sized for build/run workloads and is
+			// Agent-shell is sized for build/run workloads and is
 			// independent of the runtime container. Bigger CPU
 			// burst (tests, conversions, any toolchain an operator
 			// bakes in); same memory ceiling — kubelet

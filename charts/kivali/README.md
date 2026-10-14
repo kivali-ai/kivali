@@ -46,8 +46,8 @@ kubectl -n kivali create secret generic kivali-secrets \
   --from-literal=owner-emails=you@example.com \
   --from-literal=session-key=$(openssl rand -hex 32)
 
-# 2. Install (images kivali, kivali-egress-proxy and kivali-dev-shell must
-#    exist at the same tag; the server derives the dev-shell image from
+# 2. Install (images kivali, kivali-egress-proxy and kivali-agent-shell must
+#    exist at the same tag; the server derives the agent-shell image from
 #    AGENTPOD_IMAGE, so it has no value here).
 helm install kivali charts/kivali -n kivali -f charts/kivali/examples/values-prod.yaml
 
@@ -121,7 +121,7 @@ sit under `networkPolicy.enabled` (default true):
    get egress default deny, allowing only TCP 3128 to pods labelled
    `app=kivali` (the proxy sidecar lives in the server pod) and TCP/UDP 53
    to CoreDNS in `kube-system`. Agent pods reach core over the hostPath Unix
-   socket, and every outbound request of the CLI and the dev-shell already
+   socket, and every outbound request of the CLI and the agent-shell already
    goes through the proxy via `HTTP_PROXY`.
 2. `kivali-server-ingress` (defence in depth): the server's HTTP port 8080
    accepts only `0.0.0.0/0` except `networkPolicy.podCIDR`; port 3128

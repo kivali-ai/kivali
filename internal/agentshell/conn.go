@@ -1,4 +1,4 @@
-package devshell
+package agentshell
 
 import (
 	"context"
@@ -50,7 +50,7 @@ func newSidecarConn(socketPath string, clk clock.Clock, dialTimeout, startupGrac
 // do issues the request, retrying a failed dial during the startup
 // grace window. The retry loop covers the common case where the agent
 // container's first run_shell or file_* call fires before the
-// dev-shell container has finished booting — the daemon's image pull
+// agent-shell container has finished booting — the daemon's image pull
 // alone can take 10–20s on a cold node.
 //
 // Only a dial is retried: until the connection exists the daemon
@@ -77,7 +77,7 @@ func (c *sidecarConn) do(req *http.Request) (*http.Response, error) {
 		if req.GetBody != nil {
 			body, err := req.GetBody()
 			if err != nil {
-				return nil, fmt.Errorf("devshell: GetBody: %w", err)
+				return nil, fmt.Errorf("agentshell: GetBody: %w", err)
 			}
 			req.Body = body
 		}
@@ -86,11 +86,11 @@ func (c *sidecarConn) do(req *http.Request) (*http.Response, error) {
 			return resp, nil
 		}
 		if !isDialError(err) {
-			return nil, fmt.Errorf("devshell: %s: %w", c.socketPath, err)
+			return nil, fmt.Errorf("agentshell: %s: %w", c.socketPath, err)
 		}
 		lastErr = err
 		if c.clk.Now().After(deadline) || req.Context().Err() != nil {
-			return nil, fmt.Errorf("devshell: dial %s after %v: %w", c.socketPath, c.startupGrace, lastErr)
+			return nil, fmt.Errorf("agentshell: dial %s after %v: %w", c.socketPath, c.startupGrace, lastErr)
 		}
 		wait := c.clk.NewTimer(backoff)
 		select {

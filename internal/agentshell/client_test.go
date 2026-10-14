@@ -1,4 +1,4 @@
-package devshell
+package agentshell
 
 import (
 	"context"
@@ -81,7 +81,7 @@ func TestSidecarShellCwdPrefix(t *testing.T) {
 
 // TestSidecarShellStartupRetry asserts the client waits for the
 // sidecar's socket to appear instead of failing on first dial. With
-// a fresh agent pod, the agent runtime can race the dev-shell
+// a fresh agent pod, the agent runtime can race the agent-shell
 // container's startup; the retry loop must absorb that.
 func TestSidecarShellStartupRetry(t *testing.T) {
 	tmp := t.TempDir()
@@ -286,7 +286,7 @@ func TestJoinCwd(t *testing.T) {
 // shortSock returns a UDS path under /tmp short enough to satisfy
 // macOS's sun_path 104-char limit. t.TempDir() on darwin returns a
 // path under /var/folders/... that already burns ~80 chars, so the
-// socket file overflows. Production uses /run/kivali-dev-shell/sock —
+// socket file overflows. Production uses /run/kivali-agent-shell/sock —
 // always short — so the limit isn't a runtime concern.
 func shortSock(t *testing.T) string {
 	t.Helper()
