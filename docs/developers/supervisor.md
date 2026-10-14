@@ -107,8 +107,12 @@ GitHub-hosted macOS and Windows runners on every pull request and every
 push to `main` (`make ci-desktop`), its `broker-windows` job runs the
 `broker`, `vhdx` and `hyperv` packages' tests on a Windows runner on
 their own (the elevated runner makes, compacts and refuses real VHDX
-files through virtdisk.dll there; those tests skip in a process that
-is not elevated), and CI cross-builds and vets for Windows and Linux.
+files through virtdisk.dll there: dynamic disks given data and
+discards through an attach, compacted to the end and cancelled while
+the compaction runs, the blocks left read back and checked; those tests
+skip in a process that is not elevated, and fail in one with
+`KIVALI_REQUIRE_ELEVATED` set, as that job sets it, so they never pass
+there unrun), and CI cross-builds and vets for Windows and Linux.
 
 ## Processes
 
@@ -542,7 +546,12 @@ boot and 12 s on a later one; a clean `down` under 5 s.
   broker bounds it at `broker.OptimizeTimeout` (20 minutes) and cancels
   it past that (`CancelIoEx` on the overlapped `CompactVirtualDisk`,
   still waiting for it to end, under the VM's lock); a compaction cut
-  short is left to the VHDX's own log, which has not been exercised.
+  short is left to the VHDX's own log. The `broker-windows` CI job
+  cancels one as soon as it is under way, on a disk of 1.25 GiB of
+  blocks with every other one discarded, and checks the disk opens and
+  its blocks are intact (`TestCompactCancelledWhileItRuns`); nothing
+  makes the cancel land at a given point, and no real data disk has
+  been cut short.
 - The move of the data disk ("Moving the data disk") is tested against
   fakes and, for the broker's copy and checks, real VHDX files made with
   virtdisk.dll on CI's Windows runner; it has not been run on a machine
