@@ -239,9 +239,12 @@ type Server struct {
 	// startupHolds names the slugs HoldTurnsForStartup holds until
 	// BulkProvisionAgentPods has provisioned them.
 	startupHolds map[string]bool
-	// restartsOwed names the slugs whose pod is to be reprovisioned
-	// once the agent is idle.
-	restartsOwed map[string]bool
+	// restartsOwed holds, per slug, the reprovision to run once the
+	// agent is idle.
+	restartsOwed map[string]*owedRestart
+	// owedRestartDone, when set, runs once an owed reprovision has
+	// finished and its hold is released. A test seam.
+	owedRestartDone func(slug string)
 	// plannedRestarts names the slugs whose pod Kivali deleted or
 	// created, until a new runtime subscribes.
 	plannedRestarts map[string]bool

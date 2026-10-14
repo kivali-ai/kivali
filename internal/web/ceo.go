@@ -343,6 +343,17 @@ func (s *Server) respondAsCEO(ctx context.Context, kind responseKind, approved *
 	// again. Like a denial, the response carries the slug and packages
 	// so the proposer can tell which request was answered.
 	var respSoftware *store.SoftwareInstall
+	// A restart deferred until the proposer is idle can still fail.
+	// Then the answer is corrected to saved-not-applied, as an idle
+	// agent's failed restart answers, once it has been delivered:
+	// answered closes when this function returns, after deliveredResp
+	// is set on success.
+	var (
+		answered      = make(chan struct{})
+		deliveredResp *store.Message
+		deliveredRel  string
+	)
+	defer close(answered)
 	if kind == responseKindApproval && reqMsg.SoftwareInstall != nil {
 		respSoftware = &store.SoftwareInstall{Slug: reqMsg.SoftwareInstall.Slug, Packages: reqMsg.SoftwareInstall.Packages}
 	}
@@ -363,7 +374,12 @@ func (s *Server) respondAsCEO(ctx context.Context, kind responseKind, approved *
 			respSoftware.Outcome = store.SoftwareSavedNotApplied
 		default:
 			respSoftware.Packages = added
-			deferred, perr := s.ReprovisionAgentPod(context.WithoutCancel(ctx), reqMsg.SoftwareInstall.Slug)
+			deferred, perr := s.ReprovisionAgentPod(context.WithoutCancel(ctx), reqMsg.SoftwareInstall.Slug, func(error) {
+				<-answered
+				if deliveredResp != nil {
+					s.softwareNotApplied(*deliveredResp, deliveredRel)
+				}
+			})
 			switch {
 			case perr != nil:
 				log.Printf("software_install %s: provision agent pod: %v", reqMsg.SoftwareInstall.Slug, perr)
@@ -463,6 +479,8 @@ func (s *Server) respondAsCEO(ctx context.Context, kind responseKind, approved *
 			"Your answer is saved but could not be delivered to "+proposer, whoServer)
 	}
 
+	deliveredResp, deliveredRel = &resp, respRel
+
 	// The ack just resolved a CEO-inbox item. Push a fresh /org/stream
 	// snapshot so the CEO-inbox count drops without waiting
 	// for an unrelated event to wake the publisher. (DeliverToAgent
@@ -472,6 +490,28 @@ func (s *Server) respondAsCEO(ctx context.Context, kind responseKind, approved *
 	s.NotifyOrgState()
 
 	return ceoResponse{Request: reqMsg, Response: resp}, nil
+}
+
+// softwareNotApplied corrects an approved software install whose
+// deferred restart failed: the response's outcome becomes
+// saved-not-applied, which the owner's view of the request reads, and
+// the proposer is told so, in the words an idle agent's failed restart
+// gets.
+func (s *Server) softwareNotApplied(resp store.Message, rel string) {
+	if resp.SoftwareInstall == nil || len(resp.To) == 0 {
+		return
+	}
+	si := *resp.SoftwareInstall
+	si.Outcome = store.SoftwareSavedNotApplied
+	resp.SoftwareInstall = &si
+	if p, err := s.Store.WriteMessage(resp); err != nil || p != resp.Path {
+		log.Printf("software_install %s: record the failed restart on %s: %v", si.Slug, rel, err)
+		return
+	}
+	if s.Messenger == nil || !s.Messenger.DeliverToAgent(context.Background(), resp.To[0], resp, rel, s.deliveryHooks()) {
+		log.Printf("software_install %s: tell the agent its restart failed: not delivered", si.Slug)
+	}
+	s.NotifyOrgState()
 }
 
 // ingestCEOResponseAttachment writes an uploaded file into the blob

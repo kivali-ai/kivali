@@ -252,14 +252,12 @@ func (h *agentpodHub) RuntimeID(slug string) string {
 }
 
 // HasRuntime reports whether the runtime runtimeID is subscribed for
-// slug. An empty id stands for any runtime: it reports whether anything
-// is subscribed.
+// slug. An empty id matches a subscriber that sent none (a runtime
+// older than the header), not any subscriber: a turn published to such
+// a runtime is alive only while one is subscribed.
 func (h *agentpodHub) HasRuntime(slug, runtimeID string) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if runtimeID == "" {
-		return len(h.subs[slug]) > 0
-	}
 	for sub := range h.subs[slug] {
 		if sub.runtime == runtimeID {
 			return true

@@ -466,12 +466,27 @@ func TestConsecutiveRuntimeDisruptions(t *testing.T) {
 			want: 2,
 		},
 		{
-			name: "disruption then agent reply resets count",
+			name: "the agent's own output does not reset the count",
 			hist: []ChatMessage{
 				{Role: RoleReceived, Kind: KindRuntimeDisruption, TS: ts(0)},
 				{Role: RoleSent, TS: ts(1)},
 			},
-			want: 0,
+			want: 1,
+		},
+		{
+			name: "resumed turns that each write a sentence and die count",
+			hist: []ChatMessage{
+				{Role: RoleReceived, Kind: "direct_chat", TS: ts(0)},
+				{Role: RoleSent, Kind: "direct_chat", TS: ts(1)},
+				{Role: RoleReceived, Kind: KindRuntimeDisruption, TS: ts(2)},
+				{Role: RoleSent, Kind: "direct_chat", TS: ts(3)},
+				{Role: RoleReceived, Kind: KindRuntimeDisruption, TS: ts(4)},
+				{Role: RoleSent, Kind: "direct_chat", TS: ts(5)},
+				{Role: RoleReceived, Kind: KindRuntimeDisruption, Planned: true, TS: ts(6)},
+				{Role: RoleSent, Kind: "direct_chat", TS: ts(7)},
+				{Role: RoleReceived, Kind: KindRuntimeDisruption, TS: ts(8)},
+			},
+			want: 3,
 		},
 		{
 			name: "disruption then CEO direct chat resets count",
