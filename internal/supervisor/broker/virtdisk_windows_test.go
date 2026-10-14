@@ -16,11 +16,11 @@ import (
 )
 
 // These make real VHDX files with virtdisk.dll and compact them as the
-// broker does, through a winCaller impersonating this account over a
-// pipe, and check them as the broker's root disk is checked. They need an elevated test process (GitHub's Windows runners
-// are elevated); no Hyper-V. With KIVALI_REQUIRE_ELEVATED set, as CI
-// sets it, a process that is not elevated fails them rather than
-// skipping them.
+// broker does, as the broker's own files, and check them as the
+// broker's root disk is checked. They need an elevated test process
+// (GitHub's Windows runners are elevated); no Hyper-V. With
+// KIVALI_REQUIRE_ELEVATED set, as CI sets it, a process that is not
+// elevated fails them rather than skipping them.
 
 func skipUnlessElevated(t *testing.T) {
 	t.Helper()
@@ -53,34 +53,25 @@ func createVHDX(t *testing.T, p string, fixed bool) {
 	}
 }
 
-// pinAsCaller is a caller impersonating this account over a pipe, with
-// p pinned as the broker pins the data disk (File for writing), and p's
-// canonical path.
-func pinAsCaller(t *testing.T, p string) (*winCaller, string) {
-	t.Helper()
-	server, _ := callerPipe(t)
-	c := &winCaller{pipe: windows.Handle(server.Fd()), sid: ourSID(t)}
-	t.Cleanup(func() { _ = c.Close() })
-	canon, err := c.File(p, AccessWrite)
-	if err != nil {
-		t.Fatalf("File(%s): %v", p, err)
-	}
-	return c, canon
-}
-
-// A dynamic VHDX is compacted, opened as the impersonated caller, and
-// its file's sizes come back.
+// A dynamic VHDX is compacted, opened as the broker, and its file's
+// sizes come back; the meter is detached when it ends.
 func TestCompactDynamicVHDX(t *testing.T) {
 	skipUnlessElevated(t)
 	p := filepath.Join(canonical(t, t.TempDir()), DataDiskName)
 	createVHDX(t, p, false)
-	c, canon := pinAsCaller(t, p)
-	before, after, err := c.CompactVHDX(context.Background(), canon)
+	m := &Meter{}
+	before, after, err := winFiles{}.CompactVHDX(context.Background(), p, m)
 	if err != nil {
 		t.Fatalf("CompactVHDX: %v", err)
 	}
 	if before <= 0 || after <= 0 || after > before {
 		t.Fatalf("sizes before %d, after %d", before, after)
+	}
+	m.mu.Lock()
+	attached := m.read != nil
+	m.mu.Unlock()
+	if attached {
+		t.Fatal("the compaction left its progress reader on the meter")
 	}
 }
 
@@ -89,25 +80,23 @@ func TestCompactVHDXCancelled(t *testing.T) {
 	skipUnlessElevated(t)
 	p := filepath.Join(canonical(t, t.TempDir()), DataDiskName)
 	createVHDX(t, p, false)
-	c, canon := pinAsCaller(t, p)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, _, err := c.CompactVHDX(ctx, canon); !errors.Is(err, context.Canceled) {
+	if _, _, err := (winFiles{}).CompactVHDX(ctx, p, nil); !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v, want context.Canceled", err)
 	}
 }
 
-// A differencing disk is refused on the virtual disk's own handle, as
-// differencing, without its parent being opened: the parent its locator
-// names is gone (renamed away), so an open that looked for it would fail
-// on that instead. The broker's own read of the locator gives the
-// parent's path from the file Windows wrote.
-func TestCompactRefusesDifferencingWithoutOpeningTheParent(t *testing.T) {
-	skipUnlessElevated(t)
-	dir := canonical(t, t.TempDir())
+// diffWithoutParent makes a differencing VHDX at dir\name whose parent
+// is then renamed away, so an open that looked for the parent would fail
+// on that instead of refusing the disk as differencing. The broker's own
+// read of the locator gives the parent's path from the file Windows
+// wrote.
+func diffWithoutParent(t *testing.T, dir, name string) string {
+	t.Helper()
 	parent := filepath.Join(dir, "parent.vhdx")
 	createVHDX(t, parent, false)
-	p := filepath.Join(dir, DataDiskName)
+	p := filepath.Join(dir, name)
 	if err := vhd.CreateDiffVhd(p, parent, 2); err != nil {
 		t.Fatalf("create the differencing disk: %v", err)
 	}
@@ -118,8 +107,15 @@ func TestCompactRefusesDifferencingWithoutOpeningTheParent(t *testing.T) {
 	if err := os.Rename(parent, filepath.Join(dir, "moved.vhdx")); err != nil {
 		t.Fatal(err)
 	}
-	c, canon := pinAsCaller(t, p)
-	_, _, err = c.CompactVHDX(context.Background(), canon)
+	return p
+}
+
+// A differencing disk is refused on the virtual disk's own handle, as
+// differencing, without its parent being opened.
+func TestCompactRefusesDifferencingWithoutOpeningTheParent(t *testing.T) {
+	skipUnlessElevated(t)
+	p := diffWithoutParent(t, canonical(t, t.TempDir()), DataDiskName)
+	_, _, err := winFiles{}.CompactVHDX(context.Background(), p, nil)
 	if !errors.Is(err, errNotDynamic) || !strings.Contains(err.Error(), "differencing") {
 		t.Fatalf("err = %v, want the refusal of a differencing disk", err)
 	}
@@ -130,8 +126,7 @@ func TestCompactRefusesFixed(t *testing.T) {
 	skipUnlessElevated(t)
 	p := filepath.Join(canonical(t, t.TempDir()), DataDiskName)
 	createVHDX(t, p, true)
-	c, canon := pinAsCaller(t, p)
-	_, _, err := c.CompactVHDX(context.Background(), canon)
+	_, _, err := winFiles{}.CompactVHDX(context.Background(), p, nil)
 	if !errors.Is(err, errNotDynamic) || !strings.Contains(err.Error(), "fixed") {
 		t.Fatalf("err = %v, want the refusal of a fixed disk", err)
 	}
@@ -142,8 +137,7 @@ func TestCompactRefusesAFileThatIsNoVHDX(t *testing.T) {
 	skipUnlessElevated(t)
 	p := filepath.Join(canonical(t, t.TempDir()), DataDiskName)
 	write(t, p, strings.Repeat("x", 4096))
-	c, canon := pinAsCaller(t, p)
-	if _, _, err := c.CompactVHDX(context.Background(), canon); err == nil {
+	if _, _, err := (winFiles{}).CompactVHDX(context.Background(), p, nil); err == nil {
 		t.Fatal("a file that is no VHDX was compacted")
 	}
 }

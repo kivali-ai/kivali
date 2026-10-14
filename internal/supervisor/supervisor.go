@@ -217,11 +217,22 @@ func New(o Options) (*Supervisor, error) {
 	if o.Home == "" {
 		o.Home, _ = os.UserHomeDir()
 	}
-	st, err := LoadState(o.ConfigDir, o.Backend.DataDiskPath(o.ConfigDir))
+	st, err := LoadState(o.ConfigDir, dataDisks(o)...)
 	if err != nil {
 		return nil, err
 	}
 	return &Supervisor{o: o, image: image, state: st, op: make(chan struct{}, 1)}, nil
+}
+
+// dataDisks are the places a data disk of o's org may be: where the
+// backend keeps it, and where an earlier version kept it
+// (DataDiskMigrator), if anywhere.
+func dataDisks(o Options) []string {
+	disks := []string{o.Backend.DataDiskPath(o.ConfigDir)}
+	if m, ok := o.Backend.(DataDiskMigrator); ok {
+		disks = append(disks, m.LegacyDataDiskPath(o.ConfigDir))
+	}
+	return disks
 }
 
 // platform is the guest's image platform, the key of a release's image
@@ -366,7 +377,7 @@ func (s *Supervisor) bootLocked(ctx context.Context, logf Logf) error {
 		if err := s.update(func(st *State) { st.DataDiskFormatted = false }); err != nil {
 			return err
 		}
-		if err := s.o.Backend.CreateDataDisk(data, DataDiskSize); err != nil {
+		if err := s.o.Backend.CreateDataDisk(s.o.ConfigDir, DataDiskSize); err != nil {
 			return fmt.Errorf("create data disk: %w", err)
 		}
 	}
@@ -381,6 +392,7 @@ func (s *Supervisor) bootLocked(ctx context.Context, logf Logf) error {
 	}
 	m, err := s.o.Backend.NewMachine(MachineConfig{
 		ImageDir:   s.o.VMDir,
+		ConfigDir:  s.o.ConfigDir,
 		DataDisk:   data,
 		FormatData: fresh,
 		CPUs:       st.CPUs,
@@ -682,7 +694,7 @@ func (s *Supervisor) compactLocked(ctx context.Context, began func(), logf Logf)
 	if !ok {
 		return
 	}
-	if err := c.CompactDataDisk(ctx, s.dataPath(), began, logf); err != nil {
+	if err := c.CompactDataDisk(ctx, s.o.ConfigDir, began, progressOf(ctx), logf); err != nil {
 		logf("the data disk was not compacted: %v", err)
 	}
 }
@@ -790,9 +802,10 @@ type UpOptions struct {
 	Prepare bool `json:"prepare,omitempty"`
 }
 
-// Up recovers an interrupted upgrade, boots the VM if it is not
-// running, starts the forward and installs Kivali if it is not
-// installed yet.
+// Up recovers an interrupted upgrade, moves the data disk to where the
+// backend keeps it if an earlier version kept it elsewhere
+// (migrateLocked), boots the VM if it is not running, starts the
+// forward and installs Kivali if it is not installed yet.
 func (s *Supervisor) Up(ctx context.Context, o UpOptions, logf Logf) error {
 	ctx, end, err := s.begin(ctx, "up", true)
 	if err != nil {
@@ -806,7 +819,7 @@ func (s *Supervisor) Up(ctx context.Context, o UpOptions, logf Logf) error {
 		// person may have edited it to get past a refused recovery
 		// (docs/developers/supervisor.md), and saving the in-memory copy first would
 		// silently undo that edit.
-		disk, err := LoadState(s.o.ConfigDir, s.dataPath())
+		disk, err := LoadState(s.o.ConfigDir, dataDisks(s.o)...)
 		if err != nil {
 			return err
 		}
@@ -837,13 +850,17 @@ func (s *Supervisor) Up(ctx context.Context, o UpOptions, logf Logf) error {
 				return err
 			}
 		}
-		if err := s.recoverLocked(logf); err != nil {
+		if err := s.recoverLocked(ctx, logf); err != nil {
+			return err
+		}
+		if err := s.migrateLocked(ctx, logf); err != nil {
 			return err
 		}
 		s.compactBeforeBootLocked(ctx, logf)
 		if err := s.bootLocked(ctx, logf); err != nil {
 			return err
 		}
+		s.dropMigratedLocked(logf)
 	} else {
 		logf("the VM is already running")
 	}

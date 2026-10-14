@@ -338,11 +338,12 @@ func refresh(service *mgr.Service, exePath string) error {
 // each on its own, so a step that fails leaves the rest done and a
 // second run finishes it; a service that is not there is not an error
 // when something else was removed. The teams' files stay, and so does
-// the broker's own directory when it still holds the Hyper-V files of
-// teams whose VMs are registered (a team not destroyed before the
-// uninstall): those are returned as left, the teams' config directory
-// keys, and are not an error. Hyper-V keeps a registered VM's files
-// open, and deleting them under it would leave the VM broken.
+// the broker's own directory when it still holds a team's VM directory
+// (a team not destroyed before the uninstall: its data disk, and the
+// Hyper-V files of its VM if that is registered): those are returned as
+// left, the teams' config directory keys, and are not an error. Hyper-V
+// keeps a registered VM's files open, and deleting them under it would
+// leave the VM broken; the data disk is the team's data.
 func Uninstall() (left []string, err error) {
 	m, err := mgr.Connect()
 	if err != nil {
@@ -387,8 +388,9 @@ func Uninstall() (left []string, err error) {
 }
 
 // registeredVMs lists the config directory keys of the VM directories
-// still under the broker's VM root: each is a team whose VM is still
-// registered in Hyper-V. None when the root is absent.
+// still under the broker's VM root: each is a team not destroyed, whose
+// data disk is there and whose VM may still be registered in Hyper-V.
+// None when the root is absent.
 func registeredVMs() ([]string, error) {
 	root, err := (winFiles{}).VMRoot()
 	if err != nil {

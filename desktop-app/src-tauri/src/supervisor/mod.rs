@@ -58,9 +58,10 @@ impl Error {
     }
 }
 
-/// Reads an operation's NDJSON answer: every log line goes to
-/// `on_progress`, the final line decides. Blank lines are skipped; the
-/// stream ending first is a protocol error.
+/// Reads an operation's NDJSON answer: every log line, and every report
+/// of a stage's progress (with an empty label), goes to `on_progress`;
+/// the final line decides. Blank lines are skipped; the stream ending
+/// first is a protocol error.
 pub fn read_events(
     reader: impl BufRead,
     on_progress: &mut dyn FnMut(Progress),
@@ -70,15 +71,15 @@ pub fn read_events(
         if line.trim().is_empty() {
             continue;
         }
-        let Event { log, done, error, result, stage } = wire::parse_event(&line).map_err(Error::Protocol)?;
+        let Event { log, done, error, result, stage, progress } = wire::parse_event(&line).map_err(Error::Protocol)?;
         if done {
             return match error.filter(|e| !e.is_empty()) {
                 Some(e) => Err(Error::Supervisor(e)),
                 None => Ok(result.filter(|v| !v.is_null())),
             };
         }
-        if let Some(label) = log {
-            on_progress(Progress { label, stage });
+        if log.is_some() || progress.is_some() {
+            on_progress(Progress { label: log.unwrap_or_default(), stage, progress });
         }
     }
     Err(Error::Protocol("the stream closed before the operation finished".into()))
@@ -358,6 +359,31 @@ mod tests {
         assert_eq!(v["running"], true);
         let none = read_events(Cursor::new("{\"done\":true}\n"), &mut |_| {}).unwrap();
         assert_eq!(none, None);
+    }
+
+    /// A report of the stage's progress arrives as a step with no line;
+    /// a line carries the stage's last report.
+    #[test]
+    fn events_carry_progress() {
+        let input = concat!(
+            "{\"log\":\"updating the team's data\",\"stage\":\"updating-data\"}\n",
+            "{\"stage\":\"updating-data\",\"progress\":{\"done\":3221225472,\"total\":8589934592}}\n",
+            "{\"log\":\"copying the data disk (10s so far)\",\"stage\":\"updating-data\",\"progress\":{\"done\":3221225472,\"total\":8589934592}}\n",
+            "{\"stage\":\"updating-data\"}\n",
+            "{\"done\":true}\n",
+        );
+        let mut seen = Vec::new();
+        read_events(Cursor::new(input), &mut |p| seen.push(p)).unwrap();
+        let three = Some(StageProgress { done: 3 << 30, total: 8 << 30 });
+        let stage = || Some(stage::UPDATING_DATA.to_string());
+        assert_eq!(
+            seen,
+            [
+                Progress { label: "updating the team's data".into(), stage: stage(), progress: None },
+                Progress { label: String::new(), stage: stage(), progress: three },
+                Progress { label: "copying the data disk (10s so far)".into(), stage: stage(), progress: three },
+            ]
+        );
     }
 
     #[test]

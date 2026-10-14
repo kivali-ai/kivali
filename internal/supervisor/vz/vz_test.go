@@ -44,14 +44,15 @@ func TestCmdline(t *testing.T) {
 }
 
 func TestCreateDataDiskIsSparseAndReplaces(t *testing.T) {
-	p := (Backend{}).DataDiskPath(t.TempDir())
+	dir := t.TempDir()
+	p := (Backend{}).DataDiskPath(dir)
 	if filepath.Base(p) != DataDiskFile {
 		t.Fatalf("data disk path %s", p)
 	}
 	if err := os.WriteFile(p, []byte("old"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := (Backend{}).CreateDataDisk(p, 1<<30); err != nil {
+	if err := (Backend{}).CreateDataDisk(dir, 1<<30); err != nil {
 		t.Fatal(err)
 	}
 	fi, err := os.Stat(p)

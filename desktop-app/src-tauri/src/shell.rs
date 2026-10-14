@@ -9,7 +9,7 @@ use crate::platform;
 use crate::signin::PendingSignin;
 use crate::supervisor::sidecar::{self, Sidecar, STOP_TIMEOUTS};
 use crate::supervisor::wire::{
-    CheckReport, CredentialStatus, OrgState, Progress, Report, SetupInfo, SetupRequest, SetupResult, Status,
+    CheckReport, CredentialStatus, OrgState, Progress, Report, SetupInfo, SetupRequest, SetupResult, StageProgress, Status,
 };
 use crate::supervisor::{Error as SupError, Supervisor, UpRequest};
 use crate::teams::{Kind, Place, Team, TeamsFile};
@@ -66,6 +66,10 @@ pub struct TeamOp {
     pub stage: Option<usize>,
     pub stage_since: Instant,
     pub started_ms: u64,
+    /// The stages the operation has been in, by index.
+    pub seen: Vec<bool>,
+    /// The current stage's last progress report, while it has any.
+    pub measured: Option<StageProgress>,
 }
 
 impl TeamOp {
@@ -79,23 +83,38 @@ impl TeamOp {
             stage: None,
             stage_since: Instant::now(),
             started_ms: unix_ms(),
+            seen: vec![false; kind.stages().len()],
+            measured: None,
         }
     }
 
+    /// Takes a line or a progress report: a stage the report names
+    /// becomes the current one (with no progress yet), its progress the
+    /// stage's, and its line, if it has one, the newest.
     fn progress(&mut self, p: &Progress) {
-        if let Some(i) = view::stage_index(self.kind, p.stage.as_deref()) {
+        let index = view::stage_index(self.kind, p.stage.as_deref());
+        if let Some(i) = index {
             if self.stage != Some(i) {
                 self.stage = Some(i);
                 self.stage_since = Instant::now();
+                self.measured = None;
             }
+            self.seen[i] = true;
         }
-        self.lines.push(p.label.clone());
+        if p.progress.is_some() && index.is_some() {
+            self.measured = p.progress;
+        }
+        if !p.label.is_empty() {
+            self.lines.push(p.label.clone());
+        }
     }
 
     pub fn view(&self) -> OpView {
         let stages = self.kind.stages();
-        let index = if self.finished { stages.len().saturating_sub(1) } else { self.stage.unwrap_or(0) };
-        let (percent, remaining) = view::progress(self.kind, index, self.stage_since.elapsed(), self.finished);
+        let index = if self.finished { stages.len().saturating_sub(1) } else { self.stage.unwrap_or(self.kind.first_stage()) };
+        let shown = view::shown_stages(self.kind, &self.seen, index);
+        let measured = self.measured.filter(|_| self.running && self.stage == Some(index));
+        let (percent, remaining) = view::progress(self.kind, &shown, index, self.stage_since.elapsed(), measured, self.finished);
         OpView {
             kind: self.kind,
             running: self.running,
@@ -103,11 +122,12 @@ impl TeamOp {
             finished: self.finished,
             lines: self.lines.clone(),
             stage: stages.get(index).map(|s| s.1.to_string()),
-            stage_index: index,
-            stages: stages.iter().map(|s| s.1.to_string()).collect(),
+            stage_index: shown.iter().position(|&i| i == index).unwrap_or(0),
+            stages: shown.iter().map(|&i| stages[i].1.to_string()).collect(),
             started_ms: self.started_ms,
             percent,
             remaining: if self.running { remaining } else { None },
+            stage_progress: measured.map(|m| view::measure(self.kind, index, m)),
         }
     }
 }
@@ -888,7 +908,7 @@ fn shell(app: &AppHandle) -> tauri::State<'_, Shell> {
 }
 
 fn label(text: &str) -> Progress {
-    Progress { label: text.to_string(), stage: None }
+    Progress { label: text.to_string(), ..Default::default() }
 }
 
 /// Runs one long operation of a team on its own thread. One at a time
@@ -2291,19 +2311,63 @@ mod tests {
 
     #[test]
     fn op_view_stages() {
+        let line = |label: &str, stage: Option<&str>| Progress { label: label.into(), stage: stage.map(Into::into), progress: None };
         let mut op = TeamOp::new(OpKind::Create);
-        op.progress(&Progress { label: "creating the data disk".into(), stage: Some("making-room".into()) });
-        op.progress(&Progress { label: "VM started".into(), stage: Some("starting".into()) });
-        op.progress(&Progress { label: "no stage".into(), stage: None });
+        op.progress(&line("creating the data disk", Some("making-room")));
+        op.progress(&line("VM started", Some("starting")));
+        op.progress(&line("no stage", None));
         let v = op.view();
         assert_eq!(v.stage.as_deref(), Some("Starting up"));
         assert_eq!(v.stage_index, 1);
         assert_eq!(v.stages, ["Making room", "Starting up", "Setting up your team", "Ready"]);
         assert_eq!(v.lines.len(), 3);
+        assert!(v.stage_progress.is_none());
         op.running = false;
         op.finished = true;
         let v = op.view();
         assert_eq!((v.stage.as_deref(), v.percent), (Some("Ready"), 100));
+
+        // A plain resume shows the stages it goes through, as before.
+        let mut op = TeamOp::new(OpKind::Resume);
+        let v = op.view();
+        assert_eq!(v.stage.as_deref(), Some("Starting up"));
+        assert_eq!(v.stages, ["Starting up", "Setting up your team"]);
+        op.progress(&line("VM started", Some("starting")));
+        assert_eq!(op.view().stages, ["Starting up", "Setting up your team"]);
+    }
+
+    /// A resume that moves the data disk: the stage shows once the
+    /// supervisor is in it, its reports fill the bar and make the
+    /// caption's measure (in bytes), a report adds no line, and the next
+    /// stage starts with no measure until it reports one.
+    #[test]
+    fn op_view_stage_progress() {
+        let mut op = TeamOp::new(OpKind::Resume);
+        op.progress(&Progress { label: "the VM is not running".into(), stage: Some("starting".into()), progress: None });
+        op.progress(&Progress { label: "updating the team's data".into(), stage: Some("updating-data".into()), progress: None });
+        let v = op.view();
+        assert_eq!((v.stage.as_deref(), v.stage_index), (Some("Updating team data"), 0));
+        assert_eq!(v.stages, ["Updating team data", "Starting up", "Setting up your team"]);
+        assert_eq!(v.stage_progress, None);
+
+        let three = StageProgress { done: 3 << 30, total: 8 << 30 };
+        op.progress(&Progress { label: String::new(), stage: Some("updating-data".into()), progress: Some(three) });
+        let v = op.view();
+        assert_eq!(v.stage_progress, Some(view::StageMeasure { done: 3 << 30, total: 8 << 30, bytes: true }));
+        // 3/8 of the 120 seconds' share of 150.
+        assert_eq!(v.percent, 30);
+        assert_eq!(v.lines, ["the VM is not running", "updating the team's data"]);
+
+        op.progress(&Progress { label: "the data disk's file holds 1.2 GiB of blocks the guest discarded; compacting it".into(), stage: Some("making-room".into()), progress: None });
+        let v = op.view();
+        assert_eq!((v.stage.as_deref(), v.stage_progress), (Some("Making room"), None));
+        assert_eq!(v.stages, ["Updating team data", "Making room", "Starting up", "Setting up your team"]);
+        op.progress(&Progress { label: String::new(), stage: Some("making-room".into()), progress: Some(StageProgress { done: 40, total: 100 }) });
+        assert_eq!(op.view().stage_progress, Some(view::StageMeasure { done: 40, total: 100, bytes: false }));
+
+        op.progress(&Progress { label: "VM started".into(), stage: Some("starting".into()), progress: None });
+        let v = op.view();
+        assert_eq!((v.stage.as_deref(), v.stage_index, v.stage_progress), (Some("Starting up"), 2, None));
     }
 
     /// What resumes at the next launch follows what runs: added when a

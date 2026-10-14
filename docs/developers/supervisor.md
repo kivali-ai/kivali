@@ -41,18 +41,26 @@ hypervisor, socket type or file system feature.
 **Backend** is the VM: `Image(dir)` (the image's version and guest
 architecture; the architecture picks the release's image bundle),
 `DataDiskPath(configDir)`,
-`CreateDataDisk(path, size)`, and `NewMachine` from a neutral
-`MachineConfig` (image directory, data disk, `FormatData` on a disk's
-first boot, CPUs, memory, console log). A `Machine` has `Start`,
-`Events` (the marker lines), `Done`, `DialAgent`, `RequestPoweroff` (when
-the agent cannot be reached) and `HardStop`. A backend whose VM outlives
-`serve` (Hyper-V's is a persistent object) also implements the optional
-`MachineRemover` (`RemoveMachine(configDir)`), which `destroy` calls.
+`CreateDataDisk(configDir, size)`, and `NewMachine` from a neutral
+`MachineConfig` (image directory, config directory, data disk,
+`FormatData` on a disk's first boot, CPUs, memory, console log). A
+`Machine` has `Start`, `Events` (the marker lines), `Done`, `DialAgent`,
+`RequestPoweroff` (when the agent cannot be reached) and `HardStop`. A
+backend whose VM outlives `serve` (Hyper-V's is a persistent object)
+also implements the optional `MachineRemover`
+(`RemoveMachine(configDir)`), which `destroy` calls, and
+`LeftoverStopper`. The Hyper-V backend implements three more:
+`DataDiskCompactor` (the compaction before a boot and after a `down`),
+`DataDiskKeeper` (the data disk is the broker's, so the upgrade's
+snapshot, its restore and deletion, and `destroy`'s deletion of the
+disk go through the backend instead of the Host's file operations) and
+`DataDiskMigrator` (the disk an earlier version kept in the config
+directory is moved by `up`: "Moving the data disk").
 
 | Backend | Package | Image | Data disk | Agent | Poweroff request |
 | --- | --- | --- | --- | --- | --- |
 | macOS | `vz` (darwin + cgo) | `Image`, `initramfs.gz`, `root.squashfs`, `VERSION`; arm64 | `data.img`, a sparse raw file | vsock port 1024 | the console verb `KIVALI-POWEROFF` |
-| Windows | `hyperv` (windows) | `root.vhdx`, `VERSION`; amd64 | `data.vhdx`, a dynamic VHDX (the broker makes it) | Hyper-V sockets to vsock port 1024 | the console verb `KIVALI-POWEROFF` |
+| Windows | `hyperv` (windows) | `root.vhdx`, `VERSION`; amd64 | `data.vhdx`, a dynamic VHDX in the team's VM directory, `ProgramData\Kivali\broker\vm\<key>` (the broker's: the person's account reads it, only the broker writes it) | Hyper-V sockets to vsock port 1024 | the console verb `KIVALI-POWEROFF` |
 
 The macOS backend owns the kernel command line and its format flag, the
 fixed MAC and the serial console. The Windows backend (one Generation 2
@@ -213,21 +221,28 @@ never reached READY (`data_disk_formatted` false), is recreated by the
 backend's `CreateDataDisk` (64 GiB; on macOS a sparse all-zero raw file)
 and booted with `FormatData` (on macOS `kivali.format-data=1` on the
 kernel command line); format is never asked for on any other boot. A
-missing `local.json` next to an existing data disk counts as formatted:
-the guest refuses (FATAL) a disk that is not a Kivali disk, but a
-reformat would destroy one that is.
+missing `local.json` next to an existing data disk (where the backend
+keeps it, or where an earlier version did) counts as formatted: the
+guest refuses (FATAL) a disk that is not a Kivali disk, but a reformat
+would destroy one that is.
 
 Other files: the RPC socket (`supervisor.sock`, macOS and Linux),
-`serve.lock`, the data disk (`data.img` on macOS), its snapshot next to it
-(`data.img.upgrade`, only during an upgrade), `downloads/<version>/`
+`serve.lock`, the data disk (`data.img` on macOS; on Windows not here
+but in the broker's VM directory of the team, "The Windows backend"),
+its snapshot next to it (`data.img.upgrade`, only during an upgrade),
+`data.vhdx.migrated` on Windows (the data disk an earlier version kept
+here, set aside once moved until the moved disk has booted),
+`downloads/<version>/`
 (verified release assets, deleted when the upgrade commits or rolls
 back), `logs/console.log` (+ `.1`, the previous boot; timestamped; the
 guest's boot and console output, on macOS headed by the kernel command
 line), `logs/supervisor.log`.
 
 `destroy` deletes exactly these, after a clean stop: the data disk, its
-snapshot, the backend's data directory if that is then empty (`data\` on
-Windows), `downloads/`, `local.json`, stray `.tmp-local.json-*` and
+snapshot (on Windows through the broker, `DELETE /v1/vhd`, which takes
+the VM directory with them; and `data.vhdx`, its snapshot and
+`data.vhdx.migrated` in the config directory, if an earlier version left
+any), `downloads/`, `local.json`, stray `.tmp-local.json-*` and
 `.kivali-backup-*` temporary files, and the three log files (the `logs`
 directory too if nothing else is in it). It never touches the RPC
 endpoint, `serve.lock`, the config directory itself or any file it does
@@ -239,9 +254,9 @@ Windows a `supervisor.log` that `serve` still writes cannot be deleted;
 that is logged, not an error. Where the backend's VM outlives `serve`
 (`MachineRemover`: Hyper-V), `destroy` removes it after the stop and
 before the files, whether or not this `serve` booted it: through the
-broker (`DELETE /v1/vm`), which takes the VM, its differencing child
-and the broker's `vm\` directory, never the data disk. A failure there
-is logged and the files go all the same.
+broker (`DELETE /v1/vm`), which takes the VM and its differencing child,
+never the data disk, and keeps the VM directory while the data disk is
+in it. A failure there is logged and the files go all the same.
 
 ## Secrets at rest
 
@@ -357,10 +372,52 @@ open, a poll of the broker (every 15 s, a state-only query) reports the
 VM Off. `DialAgent` is go-winio's Hyper-V socket dial to the VM's id and
 the vsock service id of port 1024. `RequestPoweroff` and the format
 answer are written to the console under one lock, so they never
-interleave. The VM's configuration and differencing disk live in the
-broker's VM directory of the team, `ProgramData\Kivali\broker\vm\<key>`;
-the data disk is `<config>/data.vhdx`, 64 GiB dynamic, with no partition
-table.
+interleave. The VM's configuration, its differencing disk and its data
+disk, `data.vhdx` (64 GiB dynamic, with no partition table), live in the
+broker's VM directory of the team, `ProgramData\Kivali\broker\vm\<key>`
+(`DataDiskPath`). The person's account can read the data disk (its
+size for `status`, its block table for the compaction) and never write
+it: Hyper-V opens a differencing disk's parent chain as a privileged
+account when it attaches or starts a disk, so a disk the person could
+write could name a share on another host as its parent and have the
+machine's account authenticate to it. No check when the VM starts can
+close that: the VM's worker needs write access to the disk, so the
+broker cannot hold the file against changes through `Start-VM`, and
+Windows replays a VHDX's log as it opens one, which a check of the
+file's bytes does not see. So only the broker writes the data disk, and
+every operation that makes, replaces, copies, compacts or deletes it is
+a broker request ("The broker").
+
+**Moving the data disk.** Earlier versions kept the data disk in the
+config directory, `%LOCALAPPDATA%\Kivali\...\data.vhdx`, where the
+person's account can write it. The first `up` of this version moves it
+(`DataDiskMigrator`), under the operation lock, after a VM an earlier
+`serve` left running is stopped and an interrupted upgrade is recovered
+(a journal whose snapshot sits beside the legacy disk is rolled back
+there, with the Host's `Rename`, so the disk moved is the recovered
+one), and before the compaction and the boot, in the `updating-data`
+stage:
+
+1. The volume the disk moves to (ProgramData's) needs the legacy file's
+   allocated bytes and 2 GiB more free; short of that, `up` fails with
+   how much to free and where, and nothing has changed.
+2. `POST /v1/vhd/import` copies it into the VM directory as the broker's
+   own file and puts the copy in place as `data.vhdx`; meanwhile the
+   backend asks `POST /v1/vhd/progress` every second and reports the
+   bytes copied as the stage's progress, and logs a line every 10 s. A
+   disk the broker refuses (anything but a dynamic VHDX with no parent)
+   fails `up` with the reason and stays where it was.
+3. The legacy file is renamed `data.vhdx.migrated`, and deleted once the
+   moved disk has booted to READY. A legacy disk whose first boot never
+   reached READY is not copied: it is set aside the same way, and a new
+   disk is made in its place.
+
+Every step can be cut short. Before the broker's rename, the legacy file
+is untouched and the broker deletes its partial copy (`import.vhdx`) at
+the next try; after it, the next import answers 409 `already-imported`
+and `up` goes on from step 3; after step 3, `up` finds no legacy file,
+boots the moved disk, and deletes a `data.vhdx.migrated` it finds once
+the boot is READY. A boot that fails keeps `data.vhdx.migrated`.
 
 **The data disk's size.** A dynamic VHDX grows in 32 MiB blocks and
 keeps a block's space after the guest discards it (the guest's `fstrim`,
@@ -382,8 +439,10 @@ runs it before the
 boot, in the `making-room` stage, because a VM stopped without a
 `down` (a host reboot shuts the guest down through the integration
 service, and `serve`'s exit does not compact) has had no chance since
-its last trim. A failure is logged and the start or stop goes on; a
-compaction that takes long says so every 10 s, like a slow stop. The
+its last trim. A failure is logged and the start or stop goes on; while
+it runs, the backend asks `POST /v1/vhd/progress` every second and
+reports virtdisk's progress as the stage's, and a compaction that takes
+long says so every 10 s, like a slow stop. The
 threshold is where a compaction stops being worth a privileged broker
 request at every start and stop: below 1 GiB the file is
 within a few dozen blocks of its smallest, and partly filled blocks
@@ -467,6 +526,13 @@ boot and 12 s on a later one; a clean `down` under 5 s.
   it past that (`CancelIoEx` on the overlapped `CompactVirtualDisk`,
   still waiting for it to end, under the VM's lock); a compaction cut
   short is left to the VHDX's own log, which has not been exercised.
+- The move of the data disk ("Moving the data disk") is tested against
+  fakes and, for the broker's copy and checks, real VHDX files made with
+  virtdisk.dll on CI's Windows runner; it has not been run on a machine
+  with a real team's disk of several GB, nor timed. The data disk now
+  sits on ProgramData's volume, the system drive: a smaller system drive
+  than the profile's volume runs short sooner, and the move refuses to
+  start without room for the copy and 2 GiB.
 
 ## The broker
 
@@ -481,9 +547,8 @@ elevated installer, registers it, and `broker uninstall` removes the
 service, its event source and the group membership), or a foreground
 process in an elevated terminal with `--console`, serving HTTP/1.1 on
 the named pipe `\\.\pipe\kivali-broker`: `POST /v1/vm` (make the VM exist
-with exactly a configuration), `GET`/`start`/`stop`/`DELETE` on it,
-`POST /v1/vhd` (a new dynamic data disk), `POST /v1/vhd/optimize` (the
-data disk compacted while its VM is off), and `GET`/`POST /v1/setup`
+with exactly a configuration), `GET`/`start`/`stop`/`DELETE` on it, the
+data disk's requests (below), and `GET`/`POST /v1/setup`
 (Hyper-V, the Default Switch and the vsock service registration). The
 `hyperv` backend and `kivali-supervisor broker setup`/`status` are its
 clients, as the ordinary user; `KIVALI_BROKER_PIPE` overrides the pipe
@@ -499,43 +564,80 @@ cannot be read.
 The pipe's DACL lets Authenticated Users connect (read and write data)
 but not add an instance to the pipe, since every instance shares the
 first's owner; the policy is what protects the broker's operations,
-and it is reviewed as an elevation boundary. The broker
-impersonates the pipe's client for every file it names, so it opens
-nothing the caller could not, canonicalises each path from the opened
-handle and refuses any reparse point along it, and requires every path
-a request names to lie under a `config_dir` the caller can write to. The
+and it is reviewed as an elevation boundary. The only path a request
+names is its `config_dir`, which the broker opens as the pipe's client
+(impersonated, so it opens nothing the caller could not), canonicalises
+from the opened handle, refusing any reparse point along it, and
+requires the caller to be able to write to; the only file of the
+caller's it opens is the data disk an import copies, the same way. The
 VM's name must be `kivali-` plus the key of that directory, and a VM is
 started, stopped or removed only by the account whose SID the broker
 wrote into its notes at creation. The broker's own VM directory of the
-team (`ProgramData\Kivali\broker\vm\<key>`, owned by the broker, the
-caller may only read it, and refused if anyone else made it) is where
-it creates files as itself: `POST /v1/vhd` makes the disk there, grants
-the caller the right to move it, has the caller's own account rename it
-into place (replacing nothing), and checks by file identity that the
-disk the broker made is what landed before granting full control
-through a handle on it; `DELETE` removes the directory after the VM,
-through handles, deleting a link inside as the link, and removes it on
-its own when the VM does not exist and the directory was made for the
-caller. `POST /v1/vhd/optimize` opens `<dir>\data.vhdx` as the caller
-for writing and keeps it pinned for the request, requires the VM of
-that directory's key, if there is one, to be the caller's and Off, and
-holds that VM's lock while the compaction runs, so a start of it waits
-rather than races the compaction. The caller writes the file's bytes,
-at any moment, and opening a differencing disk opens the parent its
-locator names (a share on another host as easily as a local file), so
-no cmdlet ever opens the data disk: the broker reads the file's
-metadata itself, through the pinning handle (package `vhdx`), and
-refuses anything but a dynamic VHDX with no parent, then compacts it
-through virtdisk.dll (loaded from the system directory) on one handle:
-`OpenVirtualDisk` as the caller (impersonated, so the open is checked
-against the caller's token), with the storage type named as VHDX,
-`OPEN_VIRTUAL_DISK_PARAMETERS` version 2 and
-`OPEN_VIRTUAL_DISK_FLAG_NO_PARENTS`, so no parent is opened whatever
-the file says by then; `GetVirtualDiskInformation` on that handle
-refuses anything but a VHDX whose provider subtype is dynamic (3); and
-`CompactVirtualDisk` on it with `COMPACT_VIRTUAL_DISK_FLAG_NO_ZERO_SCAN`.
-The sizes it answers with are read through the pinning handle. The
-path reaches no cmdlet, so `[` and `]` are plain characters in it.
+team (`ProgramData\Kivali\broker\vm\<key>`, owned by the broker, with a
+protected DACL: SYSTEM, Administrators and the service's account in
+full control, the caller reading; refused if anyone else made it) is
+where it creates files as itself, and where the team's disks live. It
+belongs to the account it was first made for: every request that opens
+it reads its DACL's one account entry (the SIDs of its allow entries,
+from the entries themselves, but for the broker's own and Hyper-V's
+virtual machines', `S-1-5-83-…`) and refuses any other caller before
+touching it, since it holds that account's data. `DELETE /v1/vm`
+removes the directory after the VM, through handles, deleting a link
+inside as the link, unless the data disk or its snapshot is still in
+it; it removes it on its own, on the same terms, when the VM does not
+exist and the directory was made for the caller.
+
+**The data disk's requests.** Each body is `{"config_dir": ...}`, a
+directory the caller can write, from which the broker derives the VM
+and its VM directory (`POST /v1/vhd` adds `size_bytes` and `replace`);
+none names a disk, which is always `<VM directory>\data.vhdx`. Each
+takes the VM's lock, requires the VM, if there is one, to be the
+caller's and Off (but for the snapshot's deletion, a file the VM never
+opens), and opens the VM directory for the caller as above:
+
+| Request | What it does | Answer |
+| --- | --- | --- |
+| `POST /v1/vhd` | `New-VHD` of a dynamic disk straight at `data.vhdx`, as the broker; one already there is replaced only with `replace` (409 otherwise). The caller gets no grant: the file takes the directory's DACL | `{"path"}` |
+| `POST /v1/vhd/optimize` | compacts `data.vhdx` (below) | `{"size_before", "size_after"}` |
+| `POST /v1/vhd/import` | copies `<config_dir>\data.vhdx`, where earlier versions kept the disk, to `data.vhdx` (below); 409 `already-imported…` when `data.vhdx` is there | `{"path", "copied_bytes"}` |
+| `POST /v1/vhd/snapshot` | copies `data.vhdx` to `data.vhdx.upgrade`, replacing one there, flushed before the answer | `{"copied_bytes"}` |
+| `POST /v1/vhd/restore` | `MoveFileEx` of `data.vhdx.upgrade` over `data.vhdx` (`MOVEFILE_REPLACE_EXISTING \| MOVEFILE_WRITE_THROUGH`); 404 without a snapshot | `{}` |
+| `DELETE /v1/vhd/snapshot` | deletes `data.vhdx.upgrade` | `{"freed_bytes"}` |
+| `DELETE /v1/vhd` | deletes `data.vhdx`, its snapshot and an import's leftover copy, and the VM directory when there is no VM | `{"freed_bytes"}` |
+| `POST /v1/vhd/progress` | how far the import, snapshot or compaction running on the team's disk has got; takes no lock (the operation holds the VM's), answers only the account whose request runs it, and runs no script | `{"op", "done", "total"}`: `op` `import`, `snapshot` or `compact`, absent when none runs; bytes for a copy, virtdisk's `CurrentValue`/`CompletionValue` for a compaction |
+
+The compaction opens the data disk through virtdisk.dll (loaded from the
+system directory) as the broker, on one handle: `OpenVirtualDisk` with
+the storage type named as VHDX, `OPEN_VIRTUAL_DISK_PARAMETERS` version 2
+and `OPEN_VIRTUAL_DISK_FLAG_NO_PARENTS`, so no parent is opened whatever
+the file says; `GetVirtualDiskInformation` on that handle refuses
+anything but a VHDX whose provider subtype is dynamic (3); and
+`CompactVirtualDisk` on it with `COMPACT_VIRTUAL_DISK_FLAG_NO_ZERO_SCAN`,
+overlapped, its progress read with `GetVirtualDiskOperationProgress` on
+that handle and the OVERLAPPED when `/v1/vhd/progress` asks. The VM's
+lock is held meanwhile, so a start of it waits rather than races the
+compaction.
+
+The import reads a file the caller can rewrite at any moment, and
+opening a differencing disk opens the parent its locator names (a share
+on another host as easily as a local file), so the broker never opens
+the legacy file as a disk: it opens it as the caller (impersonated, so
+nothing the caller could not read is read), keeps that handle pinning
+it, reads its metadata through the handle (package `vhdx`) and refuses
+anything but a dynamic VHDX with no parent, deletes a leftover
+`import.vhdx`, and copies the file through the same handle into a new
+`import.vhdx` (`CREATE_NEW`, so nothing there, a link included, is
+followed), keeping a sparse source's holes and leaving a dense one
+dense (Hyper-V refuses a sparse virtual disk on older builds), within
+`broker.ImportTimeout` (60 minutes) and the request's life; it then
+flushes the copy, checks it again where the caller cannot touch it
+(the metadata through a handle, then virtdisk with no parents, opened
+for more than its metadata so the VHDX's log is replayed as any open
+of it would, and its subtype dynamic), and renames it to `data.vhdx`
+without replacing anything. A copy that fails, is refused or is
+cancelled is deleted. The paths reach no cmdlet, so `[` and `]` are
+plain characters in them.
+
 `get-vm` reports a VM's disks by location and path only; the one
 thing the broker reads from a disk file, the parent of a running VM's
 differencing child (to compare with the broker's root disk), it
@@ -546,11 +648,16 @@ script, validated (name, MAC, sizes, counts) before anything runs; the
 runner is an interface, so the policy is unit-tested with a fake and the
 real `powershell.exe` runs only on the machine.
 
-**The root disk is the broker's own.** No request names it:
-`POST /v1/vm` carries `name`, `config_dir`, `data_vhdx`, `cpus`,
-`memory_mb`, `mac` and `com_pipe`, and a body with any other field,
-`root_vhdx` among them, is refused with 400 (the decoder rejects
-unknown fields, naming the field). A root a caller chose could be a
+**The disks are the broker's own.** No request names one:
+`POST /v1/vm` carries `name`, `config_dir`, `cpus`, `memory_mb`, `mac`
+and `com_pipe`, and a body with any other field, `root_vhdx` and
+`data_vhdx` among them, is refused with 400 (the decoder rejects
+unknown fields, naming the field), as is a disk request with a `path`:
+a supervisor older than its broker fails at its first request, saying
+which field. `configure-vm` attaches `<VM directory>\data.vhdx`, which
+must exist (409 otherwise, naming `POST /v1/vhd`), and a start checks
+again that the VM's data slot is canonically that file and its root
+slot the broker's child beside it. A root a caller chose could be a
 differencing disk whose parent locator names a share on another host;
 `New-VHD -Differencing`, `Test-VHD` and every start open the child's
 parent chain, so Hyper-V would open that share as the machine's
@@ -639,7 +746,12 @@ and SIGKILL to it 5 s later if it has not exited. The agent logs only
 HTTP/1.1 over the RPC endpoint (`supervisor.sock` on macOS, the named
 pipe on Windows). Operations are `POST /v1/<name>` with a
 JSON body and answer NDJSON: `{"log": "...", "stage": "..."}` lines, then
-one `{"done": true, "error": "...", "result": {...}}`. They run to
+one `{"done": true, "error": "...", "result": {...}}`. While a stage has
+measurable work (moving the data disk, compacting it; "Stages" below),
+its progress arrives as a line of its own,
+`{"stage": "...", "progress": {"done": n, "total": n}}`, at each change,
+and the stage's later log lines carry the last one; `progress` is absent
+otherwise. They run to
 completion even if the client disconnects, except `down`'s and
 `destroy`'s wait behind another operation and `backup`, which end with
 the request.
@@ -682,7 +794,7 @@ without parsing lines:
 | Operation | Stages, in order |
 | --- | --- |
 | `up`, fresh disk | `making-room` (creating the disk, its first boot to READY), `starting` (guest agent, forward), `setting-up` (install, rollout, `/readyz`) |
-| `up`, installed | `making-room` (compacting the data disk, only when the Windows backend compacts it before the boot), `starting` (boot to READY, guest agent, forward), `setting-up` (rollout, `/readyz`) |
+| `up`, installed | `updating-data` (moving the data disk from where an earlier version kept it, only once, on Windows: "Moving the data disk"; with progress, the bytes copied), `making-room` (compacting the data disk, only when the Windows backend compacts it before the boot; with progress, in virtdisk's own units), `starting` (boot to READY, guest agent, forward), `setting-up` (rollout, `/readyz`) |
 | `install`, `address` | `setting-up` |
 | `upgrade` | `downloading` (preflight, fetch, verify, import), `snapshot` (journal, quiesce, stop, snapshot), `installing` (boot, chart, HelmChart rewrite), `starting` (rollout, `/readyz`); on failure `rolling-back` |
 | `down` | `pausing` |
@@ -869,7 +981,8 @@ An upgrade, with `local.json`'s `upgrade` as the journal:
 1. Preflight: no open journal; the release is newer (or `--force`), not
    `manual_steps`, not above our version; guest `ready`, node Ready,
    deployment healthy; 2 GiB free (the Host's `FreeBytes`) in the data
-   disk's directory.
+   disk's directory (on Windows the broker's VM directory, on
+   ProgramData's volume).
 2. Download chart and bundle into `downloads/<version>/`, verify SHA-256
    (a file appears under its name only once verified), read the chart's
    `Chart.yaml` (its version must equal release.json's `version`, or the
@@ -882,7 +995,9 @@ An upgrade, with `local.json`'s `upgrade` as the journal:
    the data disk next to it (on macOS `clonefile(data.img,
    data.img.upgrade)`), then the Host's `SyncDir` on that directory (on
    macOS `F_FULLFSYNC`) so the snapshot is on the drive before the journal
-   says so; then `snapshot_complete: true`, step `snapshotted`. A failed
+   says so; on Windows the broker's `POST /v1/vhd/snapshot`, which
+   flushes the copy before it answers (`DataDiskKeeper`). Then
+   `snapshot_complete: true`, step `snapshotted`. A failed
    snapshot deletes the partial file, clears the journal and starts the
    org unchanged.
 6. `applying`: boot (the old release comes up first), place the new chart,
@@ -894,13 +1009,18 @@ An upgrade, with `local.json`'s `upgrade` as the journal:
    `downloads/<version>/`, clear the journal.
 
 Rollback (failure in 6 or 7): step `rolling-back`, stop the VM, swap the
-snapshot over the data disk with the Host's durable `Rename`, clear the journal,
+snapshot over the data disk with the Host's durable `Rename` (on Windows
+the broker's `POST /v1/vhd/restore`; the snapshot's deletion likewise
+goes through `DELETE /v1/vhd/snapshot`), clear the journal,
 delete the downloads, boot and wait for the old chart. If the rename
 succeeded but the restored disk then fails to boot, the error says the
 disk was restored to the old release and starting it failed; it is not
 reported as a failed rollback.
 
-On `up` with a journal:
+On `up` with a journal (before the data disk is moved, on Windows: a
+journal an earlier version wrote names a snapshot beside the data disk
+in the config directory, and is recovered there with the Host's
+operations, so the disk then moved is the recovered one):
 
 | Journal | Recovery |
 | --- | --- |
@@ -916,7 +1036,9 @@ while `serve` runs takes effect; run no other command in between, since
 any of them rewrites `local.json` from memory):
 
 1. Put the snapshot file back at the recorded path, then run
-   `kivali-supervisor up`: it rolls back to the old release.
+   `kivali-supervisor up`: it rolls back to the old release. On Windows
+   the path is in the broker's VM directory, which only an
+   administrator can write.
 2. Or, to boot the data disk as it is (possibly the half-applied new
    release), edit `local.json` so that `"upgrade"` is `null`, then run
    `kivali-supervisor up`.

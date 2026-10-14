@@ -17,8 +17,10 @@
 //! | `POST /v1/handoff` | `{}` | a [`HandoffResult`]; 409 when the org is not running |
 //!
 //! An operation's answer is `200` with one JSON object per line: log
-//! lines `{"log": "..."}`, then exactly one final line with `"done":
-//! true` and either `"error"` or `"result"`. Backup and restore (the app's
+//! lines `{"log": "..."}` and reports of a stage's progress
+//! `{"stage": "...", "progress": {"done": n, "total": n}}`, then exactly
+//! one final line with `"done": true` and either `"error"` or
+//! `"result"`. Backup and restore (the app's
 //! own zip, through its endpoints) and the terminal (an upgraded PTY stream) are used
 //! through the `kivali-supervisor` command instead (see `mod.rs`).
 //!
@@ -38,12 +40,25 @@ pub struct Event {
     /// ([`stage`]); absent for operations without stages.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stage: Option<String>,
+    /// How far the stage's measurable work has got (copying or
+    /// compacting the data disk), while it has any. An event with this
+    /// and no `log` reports a change of it alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub progress: Option<StageProgress>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub done: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub result: Option<serde_json::Value>,
+}
+
+/// `done` of `total` units of a stage's work ([`Event::progress`]):
+/// bytes for a copy, the supervisor's own units for a compaction.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StageProgress {
+    pub done: u64,
+    pub total: u64,
 }
 
 fn is_false(b: &bool) -> bool {
@@ -64,7 +79,11 @@ fn is_zero_u32(n: &u32) -> bool {
 
 /// The progress stages an operation's lines carry (`Event::stage`).
 pub mod stage {
-    /// `up` on a fresh disk: creating it, its first boot to READY.
+    /// `up` of a team whose data disk an earlier version kept elsewhere:
+    /// moving it (with progress: bytes copied).
+    pub const UPDATING_DATA: &str = "updating-data";
+    /// `up` on a fresh disk: creating it, its first boot to READY; or
+    /// compacting the data disk before a boot (with progress).
     pub const MAKING_ROOM: &str = "making-room";
     /// Booting to READY, the guest agent, the forward; the upgrade's wait
     /// for the new release.
@@ -356,13 +375,17 @@ pub struct CheckResult {
 
 // ---- What the rest of the shell sees ----
 
-/// A step of a long operation, as the progress page lists it.
+/// A step of a long operation, as the progress page lists it: a line,
+/// or (an empty `label`) a change of the stage's progress alone.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Progress {
     pub label: String,
     /// The supervisor's stage id for the line (`stage`), when it gave one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stage: Option<String>,
+    /// How far the stage's measurable work has got, when it has any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub progress: Option<StageProgress>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -492,7 +515,16 @@ mod tests {
     fn desktop_additions_match_the_supervisor() {
         let ev = parse_event(r#"{"log":"creating the data disk","stage":"making-room"}"#).unwrap();
         assert_eq!(ev.stage.as_deref(), Some(stage::MAKING_ROOM));
+        assert_eq!(ev.progress, None);
         assert_eq!(parse_event(r#"{"done":true}"#).unwrap().stage, None);
+        let ev = parse_event(r#"{"stage":"updating-data","progress":{"done":3221225472,"total":8589934592}}"#).unwrap();
+        assert_eq!((ev.log, ev.stage.as_deref()), (None, Some(stage::UPDATING_DATA)));
+        assert_eq!(ev.progress, Some(StageProgress { done: 3 << 30, total: 8 << 30 }));
+        let ev = parse_event(r#"{"log":"copying the data disk (10s so far)","stage":"updating-data","progress":{"done":0,"total":8589934592}}"#).unwrap();
+        assert_eq!((ev.log.as_deref(), ev.progress), (Some("copying the data disk (10s so far)"), Some(StageProgress { done: 0, total: 8 << 30 })));
+        // The fake supervisor encodes the same.
+        let ev = Event { stage: Some(stage::UPDATING_DATA.into()), progress: Some(StageProgress { done: 3 << 30, total: 8 << 30 }), ..Default::default() };
+        assert_eq!(encode_event(&ev), "{\"stage\":\"updating-data\",\"progress\":{\"done\":3221225472,\"total\":8589934592}}\n");
 
         let r: Report = serde_json::from_str(
             r#"{"running":true,"state":{},"busy":false,"terminals":1,"disk_used_bytes":3221225472,"disk_size_bytes":68719476736}"#,

@@ -106,7 +106,9 @@ On the other computer, in Kivali Desktop, choose **File**, **Connect to a teamâ€
 
 ## Where your teams live
 
-Everything Kivali Desktop keeps is in one folder: `~/Library/Application Support/Kivali` on macOS, `%LOCALAPPDATA%\Kivali` on Windows. It holds the list of teams, each team's disk, and its logs. A team's agents, files and chats live on that team's disk, inside its virtual machine. To get a copy you can open or move, take a [backup](backup-and-restore.md).
+Kivali Desktop keeps the list of teams and their logs in one folder: `~/Library/Application Support/Kivali` on macOS, `%LOCALAPPDATA%\Kivali` on Windows. On macOS each team's disk is in that folder too. On Windows each team's disk is in `C:\ProgramData\Kivali\broker\vm`, where only Kivali's Hyper-V service can change it; you can read it there but not move or edit it. A team's agents, files and chats live on that team's disk, inside its virtual machine. To get a copy you can open or move, take a [backup](backup-and-restore.md).
+
+On Windows, the first time you resume a team after updating Kivali Desktop to this version, Kivali moves that team's disk from your folder to `C:\ProgramData\Kivali\broker\vm`. The team shows **Updating team data** with how much is copied; it can take a few minutes for a large team. The drive needs room for a copy of the disk and 2 GB more. If it doesn't have room, nothing changes and Kivali says how much to free.
 
 ## Deleting a team
 

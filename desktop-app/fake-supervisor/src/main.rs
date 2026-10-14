@@ -29,6 +29,12 @@
 //!                   setup's model check reports missing
 //!   FAKE_SETUP_REFUSED  1 makes every model check a refused sign-in
 //!
+//! A file named `data.vhdx` in the config directory is a data disk an
+//! earlier version kept there, as Hyper-V's was: the next `up` of a
+//! formatted team moves it, as the real supervisor does (the
+//! updating-data stage, with progress reports of the bytes copied, then
+//! a compaction in making-room with its own), and deletes it once up.
+//!
 //! It never opens a terminal session itself, so `terminals` stays 0.
 //!
 //! Each connection carries one request and closes after its answer
@@ -55,6 +61,11 @@ use wire::*;
 
 const SHIPPED: &str = "0.16.0";
 const LATEST: &str = "0.17.0";
+
+/// The data disk an earlier version kept in the config directory, and
+/// the size its move reports at least (the file itself is a marker).
+const LEGACY_DISK: &str = "data.vhdx";
+const LEGACY_DISK_SHOWN: u64 = 8 << 30;
 
 fn env_or<T: std::str::FromStr>(k: &str, d: T) -> T {
     std::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(d)
@@ -249,6 +260,35 @@ impl Fake {
         Ok(())
     }
 
+    /// Reports a stage's progress in `steps` even steps of `total`, an
+    /// event each, as the real supervisor's polls of the broker do.
+    fn reports(&self, out: &mut dyn Write, stage: &str, total: u64, steps: u64) -> std::io::Result<()> {
+        for i in 0..=steps {
+            let p = StageProgress { done: total * i / steps, total };
+            let ev = Event { stage: Some(stage.to_string()), progress: Some(p), ..Default::default() };
+            out.write_all(encode_event(&ev).as_bytes())?;
+            out.flush()?;
+            std::thread::sleep(self.step);
+        }
+        Ok(())
+    }
+
+    /// Moves a data disk an earlier version left in the config directory
+    /// (see the top of the file), when there is one.
+    fn move_legacy_disk(&self, out: &mut dyn Write) -> std::io::Result<()> {
+        let Some(dir) = self.state_file.parent() else { return Ok(()) };
+        let legacy = dir.join(LEGACY_DISK);
+        let Ok(meta) = std::fs::metadata(&legacy) else { return Ok(()) };
+        let size = meta.len().max(LEGACY_DISK_SHOWN);
+        self.logs(out, stage::UPDATING_DATA, &["updating the team's data: copying the data disk to the broker's directory"])?;
+        self.reports(out, stage::UPDATING_DATA, size, 8)?;
+        let _ = std::fs::rename(&legacy, dir.join(format!("{LEGACY_DISK}.migrated")));
+        self.logs(out, stage::UPDATING_DATA, &["the data disk is in its new place"])?;
+        self.logs(out, stage::MAKING_ROOM, &["the data disk's file holds 1.2 GiB of blocks the guest discarded; compacting it"])?;
+        self.reports(out, stage::MAKING_ROOM, 100, 4)?;
+        self.logs(out, stage::MAKING_ROOM, &["the data disk's file is compacted"])
+    }
+
     fn start_http(&self) {
         self.serving.store(true, Ordering::SeqCst);
         if self.http_started.swap(true, Ordering::SeqCst) {
@@ -275,7 +315,11 @@ impl Fake {
         } else if !formatted {
             let _ = self.logs(out, stage::MAKING_ROOM, &["creating the data disk", "VM started; first boot, the guest formats the data disk", "KIVALI-VM READY"]);
         } else {
+            let _ = self.move_legacy_disk(out);
             let _ = self.logs(out, stage::STARTING, &["VM started", "KIVALI-VM READY"]);
+            if let Some(dir) = self.state_file.parent() {
+                let _ = std::fs::remove_file(dir.join(format!("{LEGACY_DISK}.migrated")));
+            }
         }
         {
             let mut p = self.persisted.lock().unwrap();

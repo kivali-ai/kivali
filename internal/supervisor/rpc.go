@@ -20,16 +20,27 @@ import (
 	"github.com/kivali-ai/kivali/internal/supervisor/guestapi"
 )
 
-// Event is one line of an operation's NDJSON response: a log line, or
-// the final line with Done set.
+// Event is one line of an operation's NDJSON response: a log line, a
+// change of the stage's progress (Progress without Log), or the final
+// line with Done set.
 type Event struct {
 	Log string `json:"log,omitempty"`
 	// Stage is the operation's progress stage when the line was logged
 	// (StageStarting, ...); "" for an operation without stages.
-	Stage  string          `json:"stage,omitempty"`
-	Done   bool            `json:"done,omitempty"`
-	Error  string          `json:"error,omitempty"`
-	Result json.RawMessage `json:"result,omitempty"`
+	Stage string `json:"stage,omitempty"`
+	// Progress is how far the stage's measurable work has got, while it
+	// has any (copying the data disk, compacting it); nil otherwise.
+	Progress *EventProgress  `json:"progress,omitempty"`
+	Done     bool            `json:"done,omitempty"`
+	Error    string          `json:"error,omitempty"`
+	Result   json.RawMessage `json:"result,omitempty"`
+}
+
+// EventProgress is Done of Total units of a stage's work: bytes for a
+// copy, the backend's own units for a compaction.
+type EventProgress struct {
+	Done  int64 `json:"done"`
+	Total int64 `json:"total"`
 }
 
 // DownRequest is the body of POST /v1/down.
@@ -304,9 +315,12 @@ func stream(w http.ResponseWriter, stage *stageHolder, fn func(logf Logf) (any, 
 			fl.Flush()
 		}
 	}
+	stage.setEmit(send)
 	res, err := fn(func(format string, args ...any) {
-		send(Event{Log: fmt.Sprintf(format, args...), Stage: stage.get()})
+		id, p := stage.now()
+		send(Event{Log: fmt.Sprintf(format, args...), Stage: id, Progress: p})
 	})
+	stage.setEmit(nil)
 	final := Event{Done: true}
 	if err != nil {
 		final.Error = err.Error()
@@ -495,7 +509,9 @@ func (c *Client) Op(ctx context.Context, name string, body any, onLog func(strin
 			}
 			return ev.Result, nil
 		}
-		if onLog != nil {
+		// A progress event has no line; the command line prints the
+		// heartbeat lines instead.
+		if onLog != nil && ev.Log != "" {
 			onLog(ev.Log)
 		}
 	}

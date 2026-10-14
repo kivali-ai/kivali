@@ -12,6 +12,7 @@ package supervisor
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -31,13 +32,52 @@ type Backend interface {
 	// Image describes the VM image artifacts this backend boots from
 	// dir: their version and the guest architecture.
 	Image(dir string) (ImageInfo, error)
-	// DataDiskPath is where this backend keeps the org's data disk
-	// under the config directory.
+	// DataDiskPath is where this backend keeps the data disk of the org
+	// of the config directory: in it, or (Hyper-V) in a directory of
+	// the broker's that this account can read but not write.
 	DataDiskPath(configDir string) string
-	// CreateDataDisk makes an empty data disk of the given size the
-	// guest will format on its first boot, replacing any file at path.
-	CreateDataDisk(path string, size int64) error
+	// CreateDataDisk makes an empty data disk of the given size at
+	// DataDiskPath(configDir), which the guest formats on its first
+	// boot, replacing any disk there.
+	CreateDataDisk(configDir string, size int64) error
 	NewMachine(cfg MachineConfig) (Machine, error)
+}
+
+// Progress reports how far the measurable work of a stage has got: done
+// of total, in the unit of the work (bytes for a copy).
+type Progress func(done, total int64)
+
+// DataDiskMigrator is optional for a Backend whose data disk an earlier
+// version kept somewhere else (Hyper-V's: in the config directory, where
+// this account can write it, which the broker must not open as a disk).
+// Up moves such a disk before anything boots (docs/developers/supervisor.md,
+// "Moving the data disk"): LegacyDataDiskPath is where the earlier
+// version kept it, and ImportDataDisk copies the disk there to
+// DataDiskPath, with the VM off, reporting its progress, without
+// changing the legacy file. An import whose copy is already in place
+// (an earlier up's, which stopped before it renamed the legacy file) is
+// ErrAlreadyImported.
+type DataDiskMigrator interface {
+	LegacyDataDiskPath(configDir string) string
+	ImportDataDisk(ctx context.Context, configDir string, progress Progress, logf Logf) error
+}
+
+// ErrAlreadyImported is ImportDataDisk's answer when the data disk is
+// already where the backend keeps it.
+var ErrAlreadyImported = errors.New("the data disk is already in its place")
+
+// DataDiskKeeper is optional for a Backend whose data disk this account
+// cannot write (Hyper-V's, which only the broker changes): the upgrade's
+// snapshot, its rollback and its cleanup, and destroy's deletion of the
+// disk, go through it instead of the Host's file operations. The
+// snapshot is at DataDiskPath with SnapshotSuffix, as the Host's is; each
+// runs with the VM off. DeleteDataDisk deletes the disk and its snapshot
+// and gives the bytes they held.
+type DataDiskKeeper interface {
+	SnapshotDataDisk(ctx context.Context, configDir string) error
+	RestoreDataDiskSnapshot(ctx context.Context, configDir string) error
+	DeleteDataDiskSnapshot(ctx context.Context, configDir string) error
+	DeleteDataDisk(ctx context.Context, configDir string) (freed int64, err error)
 }
 
 // MachineRemover is optional for a Backend: one whose VM outlives the
@@ -67,15 +107,16 @@ type LeftoverStopper interface {
 // DataDiskCompactor is optional for a Backend whose data disk keeps the
 // space of blocks the guest has discarded until the host compacts it
 // (Hyper-V's dynamic VHDX; macOS's sparse data.img gives it back on
-// its own). The supervisor calls CompactDataDisk with the VM off, before
-// a start (the VM may have been stopped without a down: a host reboot)
-// and after a clean down, never inside an upgrade or a destroy; the
-// backend decides whether the disk is worth compacting, calls began
-// once a compaction is under way and logs a line every few seconds
-// while it runs (the desktop app reads a silent operation as a hang).
-// An error is logged, never a failure of the start or the stop.
+// its own). The supervisor calls CompactDataDisk with the config
+// directory and the VM off, before a start (the VM may have been
+// stopped without a down: a host reboot) and after a clean down, never
+// inside an upgrade or a destroy; the backend decides whether the disk
+// is worth compacting, calls began once a compaction is under way,
+// reports its progress while it runs, and logs a line every few seconds
+// (the desktop app reads a silent operation as a hang). An error is
+// logged, never a failure of the start or the stop.
 type DataDiskCompactor interface {
-	CompactDataDisk(ctx context.Context, path string, began func(), logf Logf) error
+	CompactDataDisk(ctx context.Context, configDir string, began func(), progress Progress, logf Logf) error
 }
 
 // ImageInfo describes a VM image.
@@ -86,7 +127,9 @@ type ImageInfo struct {
 
 // MachineConfig is one boot of the VM.
 type MachineConfig struct {
-	ImageDir   string // the backend reads what it needs here
+	ImageDir  string // the backend reads what it needs here
+	ConfigDir string // the org's: Hyper-V derives the VM from it
+	// DataDisk is DataDiskPath(ConfigDir).
 	DataDisk   string
 	FormatData bool // first boot: the guest formats the data disk
 	CPUs       uint

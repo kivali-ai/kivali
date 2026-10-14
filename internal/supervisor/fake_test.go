@@ -176,6 +176,8 @@ type fakeBackend struct {
 	compactErr     error
 	compactEntered chan struct{}
 	compactWait    chan struct{}
+	// compactProgress is what each compaction reports as it runs.
+	compactProgress [][2]int64
 }
 
 // compaction is one CompactDataDisk: the disk's path, whether every
@@ -189,17 +191,20 @@ type compaction struct {
 // The fake data disk keeps discarded space, as Hyper-V's does.
 var _ DataDiskCompactor = (*fakeBackend)(nil)
 
-func (h *fakeBackend) CompactDataDisk(_ context.Context, path string, began func(), _ Logf) error {
+func (h *fakeBackend) CompactDataDisk(_ context.Context, configDir string, began func(), progress Progress, _ Logf) error {
 	h.mu.Lock()
 	stopped := true
 	for _, m := range h.machines {
 		stopped = stopped && !m.running()
 	}
-	h.compactions = append(h.compactions, compaction{path: path, allStopped: stopped, boots: len(h.boots)})
-	entered, wait, err := h.compactEntered, h.compactWait, h.compactErr
+	h.compactions = append(h.compactions, compaction{path: h.DataDiskPath(configDir), allStopped: stopped, boots: len(h.boots)})
+	entered, wait, err, steps := h.compactEntered, h.compactWait, h.compactErr, h.compactProgress
 	h.compactEntered, h.compactWait = nil, nil
 	h.mu.Unlock()
 	began()
+	for _, s := range steps {
+		progress(s[0], s[1])
+	}
 	if entered != nil {
 		close(entered)
 	}
@@ -277,7 +282,8 @@ func (h *fakeBackend) DataDiskPath(configDir string) string {
 // CreateDataDisk records the size and makes a small all-zero file: the
 // fake guest reads only its head, and a real 64 GiB file is not sparse
 // on every test machine.
-func (h *fakeBackend) CreateDataDisk(p string, size int64) error {
+func (h *fakeBackend) CreateDataDisk(configDir string, size int64) error {
+	p := h.DataDiskPath(configDir)
 	h.mu.Lock()
 	h.created = append(h.created, size)
 	h.mu.Unlock()
@@ -725,9 +731,12 @@ type harness struct {
 	// that a path outside both it and dir is outside "home" whatever the
 	// OS keeps its temp directories under (on Windows they are inside the
 	// real home directory).
-	home  string
-	vm    *fakeBackend
-	clock *fakeClock
+	home string
+	vm   *fakeBackend
+	// backend, when set, is the Backend the supervisor gets instead of
+	// vm (a wrapper around it).
+	backend Backend
+	clock   *fakeClock
 	// snapshot replaces the host's Snapshot when set.
 	snapshot func(src, dst string) error
 	sup      *Supervisor
@@ -743,6 +752,8 @@ type harness struct {
 	// renameErr, when set, is asked about every Rename first; an error
 	// fails it.
 	renameErr func(oldpath, newpath string) error
+	// freeBytes, when set, answers FreeBytes.
+	freeBytes func(dir string) (uint64, error)
 }
 
 // testHost is the real host of the OS running the tests, with Snapshot
@@ -776,7 +787,11 @@ func (t testHost) Rename(oldpath, newpath string) error {
 func (t testHost) FreeBytes(dir string) (uint64, error) {
 	t.h.mu.Lock()
 	t.h.freeDirs = append(t.h.freeDirs, dir)
+	free := t.h.freeBytes
 	t.h.mu.Unlock()
+	if free != nil {
+		return free(dir)
+	}
 	return t.Host.FreeBytes(dir)
 }
 
@@ -842,11 +857,15 @@ func (h *harness) restart() {
 		}
 		h.sup.mu.Unlock()
 	}
+	var backend Backend = h.vm
+	if h.backend != nil {
+		backend = h.backend
+	}
 	sup, err := New(Options{
 		ConfigDir: h.dir,
 		Home:      h.home,
 		VMDir:     "/vm",
-		Backend:   h.vm,
+		Backend:   backend,
 		Host:      testHost{Host: host.Default(), h: h},
 		GuestFor:  func(m Machine) Guest { return fakeGuest{m.(*fakeMachine)} },
 		Clock:     h.clock,

@@ -9,11 +9,14 @@
 // Every request is checked as its caller: the server impersonates the
 // pipe client for every file it names, so it opens nothing the caller
 // could not open; paths are made canonical from an open handle and
-// refused if any component is a link; the root disk every VM boots is
-// the broker's own, installed beside it (RootPath), never one a request
-// names; the VM's name, MAC and console
-// pipe must be the ones derived from the caller's config directory; a
-// VM is touched only by the account whose SID its notes carry; and
+// refused if any component is a link; every disk a VM opens is the
+// broker's own and no request names one: the root disk is installed
+// beside it (RootPath), and the data disk and the root disk's child
+// live in the team's VM directory under the broker's own (VMRoot),
+// which the caller can read but not write; the VM's name, MAC and
+// console pipe must be the ones derived from the caller's config
+// directory; a VM is touched only by the account whose SID its notes
+// carry, and a VM directory only by the account it was made for; and
 // inputs reach PowerShell only as fields of a JSON object on stdin,
 // read by a fixed, embedded script.
 //
@@ -26,7 +29,6 @@
 package broker
 
 import (
-	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -44,13 +46,18 @@ const (
 	StateRunning = "Running"
 )
 
-// DataDiskName is the one VHD name POST /v1/vhd creates: the data disk.
-const DataDiskName = "data.vhdx"
+// The disks of a team's VM directory (Files.VMDir), each the broker's
+// own: the data disk, its upgrade snapshot, and the copy an import
+// writes before it becomes the data disk.
+const (
+	DataDiskName = "data.vhdx"
+	SnapshotName = DataDiskName + ".upgrade"
+	importName   = "import.vhdx"
+)
 
-// VMDirName is the directory under the config directory holding the
-// VM's configuration and the root disk's differencing child. The broker
-// makes and owns it (the caller can only read it), creates the data
-// disk in it before moving it into place, and removes it with the VM.
+// VMDirName names the folder beside the broker's executable that holds
+// the root disk (RootPath), and the broker's own folder of VM
+// directories under its log directory (VMRoot).
 const VMDirName = "vm"
 
 // ChildDiskName is the root disk's differencing child in the VM
@@ -106,12 +113,12 @@ const (
 )
 
 // VMRequest is the body of POST /v1/vm: the VM's whole configuration
-// but its root disk, which is the broker's own (RootPath). A body with
-// any other field, root_vhdx included, is refused (decode).
+// but its disks, which are the broker's own (the root disk, RootPath,
+// and the data disk in the team's VM directory). A body with any other
+// field, root_vhdx or data_vhdx among them, is refused (decode).
 type VMRequest struct {
 	Name      string `json:"name"`
 	ConfigDir string `json:"config_dir"`
-	DataVHDX  string `json:"data_vhdx"`
 	CPUs      uint   `json:"cpus"`
 	MemoryMB  uint64 `json:"memory_mb"`
 	// MAC is 12 hex digits without separators, as Hyper-V writes it
@@ -137,31 +144,34 @@ type StopRequest struct {
 	Graceful bool `json:"graceful"`
 }
 
-// VHDRequest is the body of POST /v1/vhd: the data disk to make at Path
-// (<config>\data.vhdx, where nothing may be yet). The broker creates it
-// in its own VM directory, <config>\vm, renames it to Path and then
-// grants the caller full control of it; it never creates a file at a
-// path in the caller's directory, where a link could send the creation
-// elsewhere.
+// VHDRequest is the body of POST /v1/vhd: a new dynamic data disk of
+// SizeBytes for the team of ConfigDir (a directory the caller can
+// write), made in the team's VM directory. A data disk already there is
+// replaced only with Replace (one whose first boot never reached
+// READY); without it the answer is 409.
 type VHDRequest struct {
-	Path      string `json:"path"`
+	ConfigDir string `json:"config_dir"`
 	SizeBytes int64  `json:"size_bytes"`
+	Replace   bool   `json:"replace,omitempty"`
 }
 
-// VHDResult answers POST /v1/vhd with the disk's canonical path.
+// VHDResult answers POST /v1/vhd with the data disk's path.
 type VHDResult struct {
 	Path string `json:"path"`
 }
 
-// OptimizeRequest is the body of POST /v1/vhd/optimize: the data disk to
-// compact (<config>\data.vhdx, a file the caller can write in a
-// directory the caller can write), while the VM of that directory is
-// off. The broker gives back the space of the blocks the guest
-// discarded (CompactVirtualDisk with no zero scan, as Optimize-VHD's
-// Quick mode); the disk's content is the same before and after.
-type OptimizeRequest struct {
-	Path string `json:"path"`
+// DiskRequest is the body of every other request about a team's data
+// disk (POST /v1/vhd/optimize, /import, /snapshot, /restore and
+// /progress; DELETE /v1/vhd and /v1/vhd/snapshot): the team's config
+// directory, a directory the caller can write, from which the broker
+// derives the VM and its VM directory. No request names a disk.
+type DiskRequest struct {
+	ConfigDir string `json:"config_dir"`
 }
+
+// Validate checks a disk request's form: an absolute local path. The
+// path reaches no cmdlet, so [ and ] are plain characters in it.
+func (r DiskRequest) Validate() error { return localAbs("config_dir", r.ConfigDir) }
 
 // OptimizeResult answers POST /v1/vhd/optimize with the file's size
 // before and after.
@@ -170,18 +180,45 @@ type OptimizeResult struct {
 	SizeAfter  int64 `json:"size_after"`
 }
 
-// Validate checks an optimize request's form: an absolute local path
-// named data.vhdx. The path reaches no cmdlet, so [ and ] are plain
-// characters in it.
-func (r OptimizeRequest) Validate() error {
-	if err := localAbs("path", r.Path); err != nil {
-		return err
-	}
-	if !strings.EqualFold(winBase(r.Path), DataDiskName) {
-		return fmt.Errorf("path %q: the broker compacts only %s", r.Path, DataDiskName)
-	}
-	return nil
+// ImportResult answers POST /v1/vhd/import: the data disk's path in the
+// VM directory and the bytes copied into it.
+type ImportResult struct {
+	Path        string `json:"path"`
+	CopiedBytes int64  `json:"copied_bytes"`
 }
+
+// SnapshotResult answers POST /v1/vhd/snapshot with the bytes copied.
+type SnapshotResult struct {
+	CopiedBytes int64 `json:"copied_bytes"`
+}
+
+// DeleteResult answers DELETE /v1/vhd and DELETE /v1/vhd/snapshot with
+// the allocated bytes the deleted files held.
+type DeleteResult struct {
+	FreedBytes int64 `json:"freed_bytes"`
+}
+
+// The long operations POST /v1/vhd/progress reports.
+const (
+	OpImport   = "import"
+	OpCompact  = "compact"
+	OpSnapshot = "snapshot"
+)
+
+// VHDProgress answers POST /v1/vhd/progress: the long operation running
+// on the team's data disk (OpImport, OpCompact or OpSnapshot; "" when
+// none) and how far it has got, Done of Total: bytes for a copy, the
+// virtual disk API's own units for a compaction.
+type VHDProgress struct {
+	Op    string `json:"op,omitempty"`
+	Done  int64  `json:"done,omitempty"`
+	Total int64  `json:"total,omitempty"`
+}
+
+// AlreadyImported starts the sentence of POST /v1/vhd/import's 409 when
+// the VM directory holds a data disk already: an earlier import
+// finished (IsAlreadyImported).
+const AlreadyImported = "already-imported"
 
 // Setup answers GET and POST /v1/setup.
 type Setup struct {
@@ -330,13 +367,8 @@ func (r VMRequest) Validate() error {
 	if r.MemoryMB%2 != 0 {
 		return fmt.Errorf("memory_mb %d is not a multiple of 2 MiB, as Hyper-V needs", r.MemoryMB)
 	}
-	for _, f := range []struct{ what, p string }{{"config_dir", r.ConfigDir}, {"data_vhdx", r.DataVHDX}} {
-		if err := localAbs(f.what, f.p); err != nil {
-			return err
-		}
-	}
-	if !hasExt(r.DataVHDX, ".vhdx") {
-		return errors.New("data_vhdx must be a .vhdx file")
+	if err := localAbs("config_dir", r.ConfigDir); err != nil {
+		return err
 	}
 	if !strings.HasPrefix(r.ComPipe, `\\.\pipe\kivali-`) || !strings.HasSuffix(r.ComPipe, "-com1") ||
 		!keyRE.MatchString(strings.TrimSuffix(strings.TrimPrefix(r.ComPipe, `\\.\pipe\kivali-`), "-com1")) {
@@ -345,14 +377,11 @@ func (r VMRequest) Validate() error {
 	return nil
 }
 
-// Validate checks a VHD request's form: an absolute local path named
-// data.vhdx and a size Hyper-V accepts (whole MiB).
+// Validate checks a VHD request's form: an absolute local path and a
+// size Hyper-V accepts (whole MiB).
 func (r VHDRequest) Validate() error {
-	if err := localAbs("path", r.Path); err != nil {
+	if err := localAbs("config_dir", r.ConfigDir); err != nil {
 		return err
-	}
-	if !strings.EqualFold(winBase(r.Path), DataDiskName) {
-		return fmt.Errorf("path %q: the broker creates only %s", r.Path, DataDiskName)
 	}
 	if r.SizeBytes < MinDiskBytes || r.SizeBytes > MaxDiskBytes {
 		return fmt.Errorf("size_bytes %d is outside %d to %d", r.SizeBytes, int64(MinDiskBytes), int64(MaxDiskBytes))
@@ -388,3 +417,29 @@ func OwnerOf(notes string) (string, bool) {
 	}
 	return owner, owner != ""
 }
+
+// DirAccount is the account a VM directory was made for, from the SIDs
+// its DACL grants anything to (each in its numeric form): every one but
+// the broker's own (SYSTEM, Administrators, the service's account) and
+// Hyper-V's virtual machines' (S-1-5-83-...), whose entries Hyper-V adds
+// as it attaches a disk. VMDir writes exactly one such entry, the first
+// caller's; "" when there is none, and an error when there is more than
+// one. It is pure, so every OS tests it.
+func DirAccount(sids []string) (string, error) {
+	account := ""
+	for _, sid := range sids {
+		switch {
+		case strings.EqualFold(sid, LocalSystemSID), strings.EqualFold(sid, AdministratorsSID), strings.EqualFold(sid, ServiceSID),
+			strings.HasPrefix(strings.ToUpper(sid), virtualMachinesPrefix):
+		case account == "" || strings.EqualFold(account, sid):
+			account = sid
+		default:
+			return "", fmt.Errorf("its DACL grants both %s and %s", account, sid)
+		}
+	}
+	return account, nil
+}
+
+// virtualMachinesPrefix starts the SIDs of Hyper-V's virtual machines
+// (NT VIRTUAL MACHINE\...).
+const virtualMachinesPrefix = "S-1-5-83-"

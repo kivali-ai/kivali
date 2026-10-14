@@ -15,6 +15,7 @@ import {
   memoryConflict,
   memoryDialog,
   memoryOptions,
+  measuredStep,
   memoryUse,
   osPromptLine,
   placeLine,
@@ -52,6 +53,31 @@ describe("teamPage", () => {
   it("waking", () => {
     const v = teamPage(team({ name: "Home", state: "starting", activity: "waking", op: op({ kind: "resume", percent: 40, remaining: "about 30 seconds" }) }), snap, now);
     expect(v).toEqual({ kind: "progress", title: "Waking Home up", body: "About 30 seconds.", percent: 40, step: null });
+  });
+  it("waking, while the team's data moves: the bar's caption says how much", () => {
+    const moving = op({
+      kind: "resume",
+      stage: "Updating team data",
+      stages: ["Updating team data", "Starting up", "Setting up your team"],
+      percent: 30,
+      remaining: "about 80 seconds",
+      stage_progress: { done: 3.2 * 1024 ** 3, total: 8 * 1024 ** 3, bytes: true },
+    });
+    expect(teamPage(team({ name: "Home", state: "starting", activity: "waking", op: moving }), snap, now)).toEqual({
+      kind: "progress",
+      title: "Waking Home up",
+      body: "About 80 seconds.",
+      percent: 30,
+      step: "Updating team data · 3.2 of 8 GB",
+    });
+    const compacting = op({ kind: "resume", stage: "Making room", percent: 85, stage_progress: { done: 40, total: 100, bytes: false } });
+    const v = teamPage(team({ state: "starting", activity: "waking", op: compacting }), snap, now);
+    expect(v.kind === "progress" && v.step).toBe("Making room · 40%");
+    // No caption without a measure, once the operation has ended, or for
+    // a measure with no total.
+    expect(measuredStep(op({ kind: "resume", stage: "Starting up" }))).toBeNull();
+    expect(measuredStep({ ...moving, running: false })).toBeNull();
+    expect(measuredStep(op({ stage: "Making room", stage_progress: { done: 0, total: 0, bytes: false } }))).toBeNull();
   });
   it("updating, with the step line", () => {
     const t = team({

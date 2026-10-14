@@ -4,6 +4,7 @@ import {
   deviceName,
   deviceShort,
   formatBytes,
+  formatBytesOf,
   formatMemory,
   initials,
   normalizeAddress,
@@ -28,6 +29,11 @@ describe("sizes", () => {
     expect(formatBytes(18 * 1024 ** 3)).toBe("18 GB");
     expect(formatBytes(2.4 * 1024 ** 3)).toBe("2.4 GB");
     expect(formatBytes(640 * 1024 ** 2)).toBe("640 MB");
+  });
+  it("part of a disk size", () => {
+    expect(formatBytesOf(3.2 * 1024 ** 3, 8 * 1024 ** 3)).toBe("3.2 of 8 GB");
+    expect(formatBytesOf(0, 8 * 1024 ** 3)).toBe("0 of 8 GB");
+    expect(formatBytesOf(120 * 1024 ** 2, 640 * 1024 ** 2)).toBe("120 of 640 MB");
   });
 });
 

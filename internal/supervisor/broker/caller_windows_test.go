@@ -42,7 +42,7 @@ func callerPipe(t *testing.T) (server *os.File, client net.Conn) {
 
 // The impersonating caller sees the client's SID and opens the client's
 // own files: the checks the broker makes before it touches anything
-// (WritableDir, Absent, File), here with this account at both ends of
+// (WritableDir, File), here with this account at both ends of
 // the pipe.
 func TestCallerOpensAsTheClient(t *testing.T) {
 	server, _ := callerPipe(t)
@@ -78,44 +78,19 @@ func TestCallerOpensAsTheClient(t *testing.T) {
 		t.Errorf("WritableDir(%s) = %s", dir, canon)
 	}
 	f := filepath.Join(dir, "data.vhdx")
-	if err := c.Absent(f); err != nil {
-		t.Errorf("Absent(%s) = %v", f, err)
+	if _, err := c.File(f); !errors.Is(err, windows.ERROR_FILE_NOT_FOUND) {
+		t.Errorf("File(%s) before creation = %v, want ERROR_FILE_NOT_FOUND", f, err)
 	}
 	if err := os.WriteFile(f, []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.Absent(f); !errors.Is(err, ErrExists) {
-		t.Errorf("Absent(%s) after creation = %v, want ErrExists", f, err)
+	// File pins the file against a rename while it is held.
+	if got, err := c.File(f); err != nil || got != f {
+		t.Errorf("File(%s) = %q, %v", f, got, err)
 	}
-	// A name-only open pins nothing (an attributes-only handle takes no
-	// part in sharing); a read or write check pins the file against a
-	// rename while it is held, and still lets a writer that shares
-	// reading, as Hyper-V opens a disk it attaches or starts, open it.
-	if got, err := c.File(f, AccessName); err != nil || got != f {
-		t.Errorf("File(%s, name) = %q, %v", f, got, err)
-	}
-	if err := os.Rename(f, f+".moved"); err != nil {
-		t.Errorf("a name-only check held the file: %v", err)
-	}
-	if err := os.Rename(f+".moved", f); err != nil {
-		t.Fatal(err)
-	}
-	for _, a := range []Access{AccessRead, AccessWrite} {
-		if got, err := c.File(f, a); err != nil || got != f {
-			t.Errorf("File(%s, %d) = %q, %v", f, a, got, err)
-		}
-		if err := os.Rename(f, f+".moved"); err == nil {
-			t.Errorf("File(%s, %d) did not pin the file: it could be renamed", f, a)
-			_ = os.Rename(f+".moved", f)
-		}
-		name, _ := windows.UTF16PtrFromString(f)
-		h, err := windows.CreateFile(name, windows.GENERIC_READ|windows.GENERIC_WRITE, windows.FILE_SHARE_READ, nil,
-			windows.OPEN_EXISTING, 0, 0)
-		if err != nil {
-			t.Errorf("File(%s, %d): a writer sharing reads cannot open the file: %v", f, a, err)
-		} else {
-			_ = windows.CloseHandle(h)
-		}
+	if err := os.Rename(f, f+".moved"); err == nil {
+		t.Errorf("File(%s) did not pin the file: it could be renamed", f)
+		_ = os.Rename(f+".moved", f)
 	}
 	if _, err := c.WritableDir(filepath.Join(dir, "missing")); !errors.Is(err, windows.ERROR_FILE_NOT_FOUND) {
 		t.Errorf("WritableDir(missing) = %v, want ERROR_FILE_NOT_FOUND", err)

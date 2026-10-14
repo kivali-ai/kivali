@@ -33,6 +33,7 @@ function op(o: Partial<OpView>): OpView {
     started_ms: Date.now() - 20_000,
     percent: 0,
     remaining: null,
+    stage_progress: null,
     ...o,
   };
 }
@@ -234,6 +235,27 @@ const FIXTURES: Record<string, Fixture> = {
     snap: (s) => {
       const t = s.teams[1];
       Object.assign(t, { state: "starting", activity: "waking", phrase: "waking up", op: op({ kind: "resume", percent: 40, remaining: "about 30 seconds", stage: "Starting up" }) });
+    },
+  },
+  // The first resume after an update that moves the team's data: the
+  // bar fills by the bytes copied, and its caption says how many.
+  "team-updating-data": {
+    hash: "#/team/home",
+    snap: (s) => {
+      const t = s.teams[1];
+      Object.assign(t, {
+        state: "starting",
+        activity: "waking",
+        phrase: "waking up",
+        op: op({
+          kind: "resume",
+          percent: 30,
+          remaining: "about 80 seconds",
+          stage: "Updating team data",
+          stages: ["Updating team data", "Starting up", "Setting up your team"],
+          stage_progress: { done: 3.2 * 1024 ** 3, total: 8 * 1024 ** 3, bytes: true },
+        }),
+      });
     },
   },
   "team-updating": {

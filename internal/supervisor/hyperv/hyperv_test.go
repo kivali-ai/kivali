@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -56,12 +57,27 @@ type fakeBroker struct {
 	missing bool
 	// optimizes records POST /v1/vhd/optimize requests; optimizeResult
 	// is the answer, or optimizeStatus the refusal when set.
-	optimizes      []broker.OptimizeRequest
+	optimizes      []broker.DiskRequest
 	optimizeResult broker.OptimizeResult
 	optimizeStatus int
 	// optimizeEntered and optimizeWait, when set, make the compaction
 	// signal that it has begun and then wait for the release.
 	optimizeEntered, optimizeWait chan struct{}
+	// imports records POST /v1/vhd/import requests; importResult is the
+	// answer, or importStatus and importMsg the refusal when set;
+	// importEntered and importWait, when set, hold the import as
+	// optimizeEntered and optimizeWait hold a compaction.
+	imports                   []broker.DiskRequest
+	importResult              broker.ImportResult
+	importStatus              int
+	importMsg                 string
+	importEntered, importWait chan struct{}
+	// progress, when set, answers POST /v1/vhd/progress.
+	progress func(broker.DiskRequest) broker.VHDProgress
+	// diskCalls records the snapshot, restore and delete requests, as
+	// "METHOD path config_dir"; deleteResult answers the deletions.
+	diskCalls    []string
+	deleteResult broker.DeleteResult
 }
 
 func (f *fakeBroker) handler() http.Handler {
@@ -130,10 +146,51 @@ func (f *fakeBroker) handler() http.Handler {
 		f.mu.Lock()
 		f.vhds = append(f.vhds, vr)
 		f.mu.Unlock()
-		writeJSON(w, broker.VHDResult{Path: vr.Path})
+		writeJSON(w, broker.VHDResult{Path: `C:\ProgramData\Kivali\broker\vm\96e3ef74\data.vhdx`})
 	})
+	mux.HandleFunc("POST /v1/vhd/import", func(w http.ResponseWriter, r *http.Request) {
+		var dr broker.DiskRequest
+		_ = json.NewDecoder(r.Body).Decode(&dr)
+		f.mu.Lock()
+		f.imports = append(f.imports, dr)
+		status, msg, res := f.importStatus, f.importMsg, f.importResult
+		entered, wait := f.importEntered, f.importWait
+		f.mu.Unlock()
+		if entered != nil {
+			close(entered)
+			<-wait
+		}
+		if status != 0 {
+			http.Error(w, msg, status)
+			return
+		}
+		writeJSON(w, res)
+	})
+	mux.HandleFunc("POST /v1/vhd/progress", func(w http.ResponseWriter, r *http.Request) {
+		var dr broker.DiskRequest
+		_ = json.NewDecoder(r.Body).Decode(&dr)
+		f.mu.Lock()
+		progress := f.progress
+		f.mu.Unlock()
+		var p broker.VHDProgress
+		if progress != nil {
+			p = progress(dr)
+		}
+		writeJSON(w, p)
+	})
+	for _, route := range []string{"POST /v1/vhd/snapshot", "POST /v1/vhd/restore", "DELETE /v1/vhd/snapshot", "DELETE /v1/vhd"} {
+		mux.HandleFunc(route, func(w http.ResponseWriter, r *http.Request) {
+			var dr broker.DiskRequest
+			_ = json.NewDecoder(r.Body).Decode(&dr)
+			f.mu.Lock()
+			f.diskCalls = append(f.diskCalls, route+" "+dr.ConfigDir)
+			res := f.deleteResult
+			f.mu.Unlock()
+			writeJSON(w, res)
+		})
+	}
 	mux.HandleFunc("POST /v1/vhd/optimize", func(w http.ResponseWriter, r *http.Request) {
-		var or broker.OptimizeRequest
+		var or broker.DiskRequest
 		_ = json.NewDecoder(r.Body).Decode(&or)
 		f.mu.Lock()
 		f.optimizes = append(f.optimizes, or)
@@ -251,7 +308,8 @@ func newMachine(t *testing.T, client *broker.Client, format bool) (*machine, *by
 	b := Backend{Client: client}
 	mAny, err := b.NewMachine(supervisor.MachineConfig{
 		ImageDir:   imageDir,
-		DataDisk:   filepath.Join(abs, DataDiskFile),
+		ConfigDir:  abs,
+		DataDisk:   b.DataDiskPath(abs),
 		FormatData: format,
 		CPUs:       4,
 		MemoryMB:   4096,
@@ -481,9 +539,10 @@ func TestNewMachineDerivation(t *testing.T) {
 	b := Backend{Client: client}
 	const configDir = `C:\Users\Maya\AppData\Local\Kivali`
 	_, err := b.NewMachine(supervisor.MachineConfig{
-		ImageDir: `C:\Program Files\Kivali\vm`,
-		DataDisk: filepath.Join(configDir, DataDiskFile),
-		CPUs:     4, MemoryMB: 4096,
+		ImageDir:  `C:\Program Files\Kivali\vm`,
+		ConfigDir: configDir,
+		DataDisk:  b.DataDiskPath(configDir),
+		CPUs:      4, MemoryMB: 4096,
 	})
 	if err != nil {
 		t.Fatalf("NewMachine: %v", err)
@@ -491,19 +550,20 @@ func TestNewMachineDerivation(t *testing.T) {
 	fb.mu.Lock()
 	req, fields := fb.ensureReq, fb.ensureFields
 	fb.mu.Unlock()
-	// The root disk is the broker's own: the request names none, and the
-	// image directory reaches the broker in no field.
+	// Both disks are the broker's own: the request names neither, and
+	// neither the image directory nor the broker's VM root reaches the
+	// broker in any field.
 	var names []string
 	for k := range fields {
 		names = append(names, k)
 	}
 	sort.Strings(names)
-	if want := "com_pipe,config_dir,cpus,data_vhdx,mac,memory_mb,name"; strings.Join(names, ",") != want {
+	if want := "com_pipe,config_dir,cpus,mac,memory_mb,name"; strings.Join(names, ",") != want {
 		t.Errorf("POST /v1/vm fields = %v, want %s", names, want)
 	}
 	for k, v := range fields {
-		if strings.Contains(strings.ToLower(string(v)), `program files`) {
-			t.Errorf("field %s carries the image directory: %s", k, v)
+		if s := strings.ToLower(string(v)); strings.Contains(s, `program files`) || strings.Contains(s, `vhdx`) {
+			t.Errorf("field %s carries a disk or the image directory: %s", k, v)
 		}
 	}
 	if req.Name != "kivali-96e3ef74" {
@@ -520,23 +580,75 @@ func TestNewMachineDerivation(t *testing.T) {
 	}
 }
 
+// The data disk is data.vhdx in the team's VM directory under the
+// broker's VM root, named by the config directory's key; the legacy
+// one, data.vhdx in the config directory.
+func TestDataDiskPaths(t *testing.T) {
+	b := Backend{VMRoot: `C:\ProgramData\Kivali\broker\vm`}
+	const configDir = `C:\Users\Maya\AppData\Local\Kivali`
+	if got, want := b.DataDiskPath(configDir), `C:\ProgramData\Kivali\broker\vm\96e3ef74\data.vhdx`; got != want {
+		t.Errorf("DataDiskPath = %s, want %s", got, want)
+	}
+	if got := b.DataDiskPath(`\\?\` + configDir); got != b.DataDiskPath(configDir) {
+		t.Errorf("DataDiskPath of the \\\\?\\ form = %s", got)
+	}
+	if got, want := b.LegacyDataDiskPath(configDir), configDir+`\data.vhdx`; got != want {
+		t.Errorf("LegacyDataDiskPath = %s, want %s", got, want)
+	}
+	root, err := broker.VMRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := (Backend{}).DataDiskPath(configDir); filepath.Dir(filepath.Dir(got)) != root {
+		t.Errorf("DataDiskPath without a VMRoot = %s, not under the broker's %s", got, root)
+	}
+}
+
+// CreateDataDisk asks the broker for a new disk for the config
+// directory, replacing one there: the supervisor touches no file.
 func TestCreateDataDisk(t *testing.T) {
 	fb := &fakeBroker{id: "d1e2f3a4-0000-0000-0000-000000000008"}
 	client := serveBroker(t, fb)
 	b := Backend{Client: client}
 	dir := t.TempDir()
-	p := filepath.Join(dir, DataDiskFile)
-	// An existing file is removed before the broker is asked.
-	if err := os.WriteFile(p, []byte("old"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := b.CreateDataDisk(p, 64<<30); err != nil {
+	if err := b.CreateDataDisk(dir, 64<<30); err != nil {
 		t.Fatalf("CreateDataDisk: %v", err)
 	}
 	fb.mu.Lock()
 	defer fb.mu.Unlock()
-	if len(fb.vhds) != 1 || fb.vhds[0].Path != p || fb.vhds[0].SizeBytes != 64<<30 {
-		t.Fatalf("vhd requests = %+v", fb.vhds)
+	if want := (broker.VHDRequest{ConfigDir: dir, SizeBytes: 64 << 30, Replace: true}); len(fb.vhds) != 1 || fb.vhds[0] != want {
+		t.Fatalf("vhd requests = %+v, want %+v", fb.vhds, want)
+	}
+}
+
+// The upgrade snapshot, its restore and deletion, and the data disk's
+// deletion are the broker's, each asked with the config directory.
+func TestKeeperAsksTheBroker(t *testing.T) {
+	fb := &fakeBroker{deleteResult: broker.DeleteResult{FreedBytes: 3 << 30}}
+	b := Backend{Client: serveBroker(t, fb)}
+	dir := `C:\Users\Maya\AppData\Local\Kivali`
+	ctx := context.Background()
+	if err := b.SnapshotDataDisk(ctx, dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.RestoreDataDiskSnapshot(ctx, dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.DeleteDataDiskSnapshot(ctx, dir); err != nil {
+		t.Fatal(err)
+	}
+	freed, err := b.DeleteDataDisk(ctx, `\\?\`+dir)
+	if err != nil || freed != 3<<30 {
+		t.Fatalf("DeleteDataDisk = %d, %v", freed, err)
+	}
+	fb.mu.Lock()
+	defer fb.mu.Unlock()
+	want := []string{
+		"POST /v1/vhd/snapshot " + dir, "POST /v1/vhd/restore " + dir,
+		"DELETE /v1/vhd/snapshot " + dir, "DELETE /v1/vhd " + dir,
+	}
+	if !slices.Equal(fb.diskCalls, want) {
+		t.Fatalf("broker calls = %q, want %q", fb.diskCalls, want)
 	}
 }
 

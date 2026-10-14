@@ -23,6 +23,10 @@ const (
 	// SnapshotSuffix makes the upgrade snapshot's name from the data
 	// disk's, next to it.
 	SnapshotSuffix = ".upgrade"
+	// MigratedSuffix makes the name a data disk at a backend's legacy
+	// path (DataDiskMigrator) takes once it is copied to its place; it
+	// is deleted once the copy has booted to READY.
+	MigratedSuffix = ".migrated"
 )
 
 // State is local.json, the supervisor's own record of the local org
@@ -90,16 +94,19 @@ func (st State) port() int {
 }
 
 // LoadState reads local.json from dir. A missing file yields the
-// defaults; if the data disk at dataDisk (the backend's path; "" when
-// there is no backend) is nevertheless present it is treated as
-// formatted, because the guest refuses (FATAL) a disk that is not a
-// Kivali disk but a reformat would destroy one that is.
-func LoadState(dir, dataDisk string) (State, error) {
+// defaults; if a data disk at any of dataDisks (the backend's path, and
+// where an earlier version kept it; "" is none) is nevertheless present
+// it is treated as formatted, because the guest refuses (FATAL) a disk
+// that is not a Kivali disk but a reformat would destroy one that is.
+func LoadState(dir string, dataDisks ...string) (State, error) {
 	st := defaultState()
 	b, err := os.ReadFile(filepath.Join(dir, "local.json"))
 	if errors.Is(err, fs.ErrNotExist) {
-		if dataDisk != "" {
-			if _, err := os.Stat(dataDisk); err == nil {
+		for _, p := range dataDisks {
+			if p == "" {
+				continue
+			}
+			if _, err := os.Stat(p); err == nil {
 				st.DataDiskFormatted = true
 			}
 		}

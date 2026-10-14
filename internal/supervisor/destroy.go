@@ -36,12 +36,15 @@ func (s *Supervisor) destroyRefusal() error {
 
 // Destroy deletes the local org: it cancels a running up, install or
 // load-images as Down does, stops the VM cleanly, removes the VM itself
-// where the backend's outlives serve (MachineRemover), and removes every
-// file the supervisor made in the config directory (the data disk, its
-// snapshot, downloads/, local.json, the logs), except the RPC endpoint
-// and serve.lock it is still serving on. The directory itself and any
-// file the supervisor does not know stay. ctx bounds only the wait for
-// the operation lock; once the lock is taken the destroy runs to the end.
+// where the backend's outlives serve (MachineRemover), deletes the data
+// disk and its snapshot (through the backend where it keeps them,
+// DataDiskKeeper, and wherever an earlier version kept them,
+// DataDiskMigrator), and removes every file the supervisor made in the
+// config directory (downloads/, local.json, the logs), except the RPC
+// endpoint and serve.lock it is still serving on. The directory itself
+// and any file the supervisor does not know stay. ctx bounds only the
+// wait for the operation lock; once the lock is taken the destroy runs
+// to the end.
 func (s *Supervisor) Destroy(ctx context.Context, logf Logf) (DestroyResult, error) {
 	setStage(ctx, StageDeleting)
 	logf = s.tee(ctx, logf)
@@ -91,13 +94,37 @@ func (s *Supervisor) Destroy(ctx context.Context, logf Logf) (DestroyResult, err
 	}
 	dir := s.o.ConfigDir
 	logf("deleting the data disk %s", s.dataPath())
-	remove(s.dataPath(), true)
-	if exists(s.snapshotPath()) {
-		logf("deleting the upgrade snapshot %s", s.snapshotPath())
-		remove(s.snapshotPath(), true)
+	if k, ok := s.o.Backend.(DataDiskKeeper); ok {
+		// The backend's own disk and snapshot, which this account cannot
+		// delete, and the directory they are in.
+		n, err := k.DeleteDataDisk(ctx, dir)
+		res.FreedBytes += n
+		if err != nil {
+			logf("delete the data disk: %v", err)
+			failed = append(failed, s.dataPath())
+		}
+	} else {
+		remove(s.dataPath(), true)
+		if exists(s.snapshotPath()) {
+			logf("deleting the upgrade snapshot %s", s.snapshotPath())
+			remove(s.snapshotPath(), true)
+		}
+		if d := s.dataDir(); filepath.Clean(d) != filepath.Clean(dir) {
+			_ = os.Remove(d) // only if empty: the backend's own directory
+		}
 	}
-	if d := s.dataDir(); filepath.Clean(d) != filepath.Clean(dir) {
-		_ = os.Remove(d) // only if empty: the backend's own directory
+	if m, ok := s.o.Backend.(DataDiskMigrator); ok {
+		// Where an earlier version kept the disk: one not moved yet (a
+		// destroy before the first up of this version), its snapshot,
+		// and the copy set aside after the move.
+		if legacy := m.LegacyDataDiskPath(dir); legacy != "" {
+			for _, p := range []string{legacy, legacy + SnapshotSuffix, legacy + MigratedSuffix} {
+				if exists(p) {
+					logf("deleting %s", p)
+					remove(p, true)
+				}
+			}
+		}
 	}
 	if exists(filepath.Join(dir, "downloads")) {
 		logf("deleting the downloaded releases")
