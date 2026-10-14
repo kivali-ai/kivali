@@ -504,6 +504,9 @@ func (s *Server) spawnChatLoopIfIdle(slug, source string) bool {
 		if err := s.Store.ClearActiveTurn(slug); err != nil {
 			log.Printf("chat %s: clear active turn after dropped spawn: %v", slug, err)
 		}
+		if s.spawnDropped != nil {
+			s.spawnDropped(slug)
+		}
 		if s.abandonSpawn(slug, hub, source) {
 			return true
 		}
@@ -1013,7 +1016,7 @@ func (s *Server) foldText(slug string, msg store.ChatMessage) (string, bool) {
 func (s *Server) abandonSpawn(slug string, hub *chatHub, source string) bool {
 	flushed := s.flushAndComplete(slug, hub)
 	hub.close()
-	s.removeHub(slug)
+	s.evictHubIfMatches(slug, hub)
 	if flushed > 0 {
 		return s.spawnChatLoopIfIdle(slug, source)
 	}

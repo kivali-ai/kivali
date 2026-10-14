@@ -309,14 +309,21 @@ func (s *Server) removeHub(slug string) {
 }
 
 // evictHubIfMatches removes slug's entry from chatHubs only if it is
-// still the same hub object passed in. Used by the post-loop linger
-// timer: if a fresh spawn already evicted us (via getOrCreateHub) and
-// installed a new hub, the timer must not clobber that new hub.
+// still the same hub object passed in, and then pushes a fresh org
+// snapshot. Every owner that lets go of its hub goes through it: the
+// post-loop linger timer, and a spawn that started no turn. Once a hub
+// is completed, a fresh spawn (a pod's subscribe wake, a delivery) can
+// evict it and install its own through getOrCreateHub; the earlier
+// owner must not clobber that new hub.
 func (s *Server) evictHubIfMatches(slug string, h *chatHub) {
 	s.streamMu.Lock()
 	cur, ok := s.chatHubs[slug]
-	if ok && cur == h {
+	evicted := ok && cur == h
+	if evicted {
 		delete(s.chatHubs, slug)
 	}
 	s.streamMu.Unlock()
+	if evicted {
+		s.NotifyOrgState()
+	}
 }

@@ -224,3 +224,62 @@ func TestAgentpodEventsStreamDeliversOwedTurn(t *testing.T) {
 		t.Fatal("the owed turn never reached the pod")
 	}
 }
+
+// A pod that subscribes while a spawn holds the agent's hub finds it
+// claimed, so its subscribe wake starts nothing. The spawn found no pod
+// when it published, so the dropped path starts the turn itself once it
+// lets go of the hub: one turn, on the pod that subscribed.
+func TestDroppedSpawnStartsTheTurnForAPodThatSubscribedMeanwhile(t *testing.T) {
+	srv := newChatServer(t)
+	seedOwedAgent(t, srv, "alice")
+	var sub *agentpodSubscriber
+	srv.spawnDropped = func(slug string) {
+		sub = srv.AgentpodHub.Subscribe(slug)
+		srv.wakeOnAgentpodSubscribe(slug)
+	}
+	if !srv.spawnChatLoopIfIdle("alice", "release") {
+		t.Fatal("spawn reported no turn started; the pod that subscribed meanwhile was left idle")
+	}
+	defer srv.AgentpodHub.Unsubscribe(sub)
+	if turns := chatTurnsQueued(t, sub); len(turns) != 1 {
+		t.Errorf("chat-turn events: %d, want 1", len(turns))
+	}
+}
+
+// A spawn that started no turn lets go of only its own hub. Once it has
+// completed that hub, a pod's subscribe wake can claim a fresh one and
+// start a turn on it; the abandoned spawn must leave that hub in place,
+// so its retry finds the turn running and does not start a second one.
+func TestAbandonedSpawnLeavesTheNextSpawnsHub(t *testing.T) {
+	srv := newChatServer(t)
+	seedOwedAgent(t, srv, "alice")
+	first, isOriginator := srv.getOrCreateHub("alice")
+	if !isOriginator {
+		t.Fatal("setup: first claim is not the originator")
+	}
+	// The abandoned spawn has completed its hub...
+	srv.flushAndComplete("alice", first)
+	// ...when the pod subscribes and its wake starts the turn.
+	sub := srv.AgentpodHub.Subscribe("alice")
+	defer srv.AgentpodHub.Unsubscribe(sub)
+	srv.wakeOnAgentpodSubscribe("alice")
+	srv.streamMu.Lock()
+	second := srv.chatHubs["alice"]
+	srv.streamMu.Unlock()
+	if second == nil || second == first {
+		t.Fatal("setup: the subscribe wake did not claim a hub of its own")
+	}
+
+	srv.abandonSpawn("alice", first, "release")
+	srv.streamMu.Lock()
+	cur := srv.chatHubs["alice"]
+	srv.streamMu.Unlock()
+	if cur != second {
+		t.Fatalf("hub after the abandoned spawn let go = %p, want the running turn's %p", cur, second)
+	}
+	// The dropped path's retry, now that a pod is subscribed.
+	srv.spawnChatLoopIfIdle("alice", "release")
+	if turns := chatTurnsQueued(t, sub); len(turns) != 1 {
+		t.Errorf("chat-turn events: %d, want 1", len(turns))
+	}
+}
