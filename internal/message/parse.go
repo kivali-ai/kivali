@@ -149,6 +149,8 @@ func Parse(block provider.ContentBlock, ctx ParseContext) (ParseResult, error) {
 		return parseProposeHire(block.ToolInput, ctx)
 	case ToolProposeOffboard:
 		return parseProposeOffboard(block.ToolInput, ctx)
+	case ToolProposeSoftwareInstall:
+		return parseProposeSoftwareInstall(block.ToolInput, ctx)
 	}
 	return ParseResult{}, fmt.Errorf("%w: %q", ErrUnknownTool, block.ToolName)
 }
@@ -428,6 +430,55 @@ func parseProposeOffboard(raw json.RawMessage, ctx ParseContext) (ParseResult, e
 			Date:     ctx.Now,
 			Body:     rationale,
 			Offboard: &store.Offboard{Slug: slug, Reason: rationale},
+		},
+	}, nil
+}
+
+// proposeSoftwareInstallInput is the on-wire shape of the
+// `propose_software_install` tool.
+type proposeSoftwareInstallInput struct {
+	Title    string   `json:"title"`
+	Packages []string `json:"packages"`
+	Reason   string   `json:"reason"`
+}
+
+// parseProposeSoftwareInstall turns a `propose_software_install` call
+// into a ceo_approval_request carrying a SoftwareInstall sub-object
+// that targets the caller. Any agent may propose; the CEO is not an
+// agent and may not. Package names are validated and normalized here;
+// dropping the ones the agent already has needs the store and happens
+// at publish time (mcp.StorePublisher).
+func parseProposeSoftwareInstall(raw json.RawMessage, ctx ParseContext) (ParseResult, error) {
+	if ctx.From == CEO || ctx.From == "" {
+		return ParseResult{}, fmt.Errorf("propose_software_install: only an agent may propose software for its own shell (caller: %q)", ctx.From)
+	}
+	var in proposeSoftwareInstallInput
+	if err := strictUnmarshal(raw, &in); err != nil {
+		return ParseResult{}, fmt.Errorf("propose_software_install: %w", err)
+	}
+	if err := requireFields(map[string]string{"title": in.Title, "reason": in.Reason}); err != nil {
+		return ParseResult{}, fmt.Errorf("propose_software_install: %w", err)
+	}
+	pkgs, err := store.NormalizeSoftware(in.Packages)
+	if err != nil {
+		return ParseResult{}, fmt.Errorf("propose_software_install: packages: %w", err)
+	}
+	if len(pkgs) == 0 {
+		return ParseResult{}, fmt.Errorf("propose_software_install: packages: name at least one Debian package")
+	}
+	reason, err := validateMessageField("reason", in.Reason)
+	if err != nil {
+		return ParseResult{}, fmt.Errorf("propose_software_install: %w", err)
+	}
+	return ParseResult{
+		Message: store.Message{
+			Type:            store.MsgCEOApprovalRequest,
+			Title:           in.Title,
+			From:            ctx.From,
+			To:              store.Recipients{CEO},
+			Date:            ctx.Now,
+			Body:            reason,
+			SoftwareInstall: &store.SoftwareInstall{Slug: ctx.From, Packages: pkgs},
 		},
 	}, nil
 }

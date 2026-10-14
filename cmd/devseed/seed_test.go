@@ -90,12 +90,12 @@ func TestSeedDemo(t *testing.T) {
 		t.Errorf("CEO assignment = %+v", a)
 	}
 
-	// The CEO's inbox: the assignment, the hire, the notification.
+	// The CEO's inbox: the assignment, the hire, the software request, the notification.
 	hist, err := st.ReadChatHistory(SlugCEO)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var hire *store.Message
+	var hire, software *store.Message
 	var inbox []string
 	for _, m := range hist {
 		if m.Kind != "ceo_inbox" {
@@ -109,9 +109,15 @@ func TestSeedDemo(t *testing.T) {
 		if msg.Hire != nil {
 			hire = &msg
 		}
+		if msg.SoftwareInstall != nil {
+			software = &msg
+		}
 	}
-	if len(inbox) != 3 {
+	if len(inbox) != 4 {
 		t.Errorf("ceo inbox = %q", inbox)
+	}
+	if software == nil || software.Title != SoftwareTitle || software.SoftwareInstall.Slug != SlugSupportLead || len(software.SoftwareInstall.Packages) != 1 {
+		t.Errorf("software proposal = %+v", software)
 	}
 	if hire == nil || hire.Title != HireTitle || hire.Hire.Slug != HireSlug || hire.Hire.ReportsTo != SlugSupportLead {
 		t.Errorf("hire proposal = %+v", hire)

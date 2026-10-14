@@ -185,6 +185,8 @@ func proposalKind(m store.Message) (apitypes.ProposalKind, bool) {
 		return apitypes.ProposalKindOffboard, true
 	case m.Reorg != nil:
 		return apitypes.ProposalKindReorg, true
+	case m.SoftwareInstall != nil:
+		return apitypes.ProposalKindSoftwareInstall, true
 	}
 	return "", false
 }
@@ -685,6 +687,24 @@ func (v *homeView) proposalOutcome(done ceoResponse) apitypes.NeedActionResponse
 		return apitypes.NeedActionResponse{
 			Result: who + " is offboarded and its files are in the archive",
 			Link:   "/team",
+		}
+	case req.SoftwareInstall != nil:
+		who := name(req.SoftwareInstall.Slug)
+		if !approved {
+			return apitypes.NeedActionResponse{Result: "Nothing is installed for " + who}
+		}
+		result := who + " is restarting to install the software"
+		if si := done.Response.SoftwareInstall; si != nil {
+			switch si.Outcome {
+			case store.SoftwareAlreadyInstalled:
+				result = who + " already has this software"
+			case store.SoftwareSavedNotApplied:
+				result = "The software is saved for " + who + " and installs the next time it starts"
+			}
+		}
+		return apitypes.NeedActionResponse{
+			Result: result,
+			Link:   "/agents/" + req.SoftwareInstall.Slug,
 		}
 	case req.Reorg != nil:
 		if !approved {

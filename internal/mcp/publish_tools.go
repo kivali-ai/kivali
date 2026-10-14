@@ -151,6 +151,9 @@ func (p *StorePublisher) StagePublish(ctx context.Context, toolName string, argu
 	if reason := p.checkOffboardPreconditions(msg); reason != "" {
 		return "", reason, true, nil
 	}
+	if reason := p.trimSoftwareInstall(&msg); reason != "" {
+		return "", reason, true, nil
+	}
 	for _, pa := range pr.Attachments {
 		// Path-only after the attachments collapse: route through the
 		// same resolver share_file uses (same access rules — artifacts
@@ -353,6 +356,29 @@ func (p *StorePublisher) checkOffboardPreconditions(msg store.Message) string {
 	sort.Strings(reports)
 	return fmt.Sprintf("cannot offboard %q: %s still report(s) to them. Offboarding would leave them unattached from the org chart, so move them first with propose_reorg — then re-propose this offboard.",
 		msg.Offboard.Slug, strings.Join(reports, ", "))
+}
+
+// trimSoftwareInstall drops from a propose_software_install the
+// packages the agent's shell already gets (the org-wide list plus its
+// own) and returns a refusal when nothing new remains, so the owner is
+// never asked about software that is already there. A no-op for every
+// other message type. The apply step repeats the trim against the
+// state at approve time.
+func (p *StorePublisher) trimSoftwareInstall(msg *store.Message) string {
+	si := msg.SoftwareInstall
+	if si == nil {
+		return ""
+	}
+	have, err := p.deps.Store.EffectiveSoftware(si.Slug)
+	if err != nil {
+		return "propose_software_install: could not read your current software: " + err.Error()
+	}
+	fresh := store.SubtractSoftware(si.Packages, have)
+	if len(fresh) == 0 {
+		return fmt.Sprintf("propose_software_install: everything you named is already installed in your shell (%s). Nothing to ask the owner for.", strings.Join(si.Packages, ", "))
+	}
+	msg.SoftwareInstall = &store.SoftwareInstall{Slug: si.Slug, Packages: fresh}
+	return ""
 }
 
 // NewStorePublishDispatcher returns an in-process PublishDispatcher

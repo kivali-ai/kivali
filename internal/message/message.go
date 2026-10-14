@@ -65,6 +65,12 @@ const (
 	// at parse. On approve the server archives the agent — the only
 	// path that does so.
 	ToolProposeOffboard = "propose_offboard"
+	// ToolProposeSoftwareInstall generates a ceo_approval_request that
+	// proposes installing Debian packages into the proposing agent's
+	// own shell. Listed for every agent (the CEO is not an agent); the
+	// proposal always targets the caller. On approve the server adds
+	// the packages to the agent's own list and recreates its shell.
+	ToolProposeSoftwareInstall = "propose_software_install"
 )
 
 // CEO is the special "slug" that represents the human user.
@@ -102,15 +108,17 @@ func AsClaudeTools(defs []ToolDef) []provider.Tool {
 // only when the CEO clicks Approve, so no tool call can create an
 // agent without an approval.
 //
-// Note that the propose_* family is NOT in this list — those are
-// listed only for the Chief of Staff (see ToolsFor). Anything that
-// doesn't filter on slug should still see only the tools every agent
-// has.
+// The org-mutating propose_* family is NOT in this list — those are
+// listed only for the Chief of Staff (see ToolsFor). The exception is
+// propose_software_install, which changes only the caller's own shell
+// and so is offered to every agent. Anything that doesn't filter on
+// slug should still see only the tools every agent has.
 func AllTools() []ToolDef {
 	return []ToolDef{
 		noticeTool,
 		ceoApprovalRequestTool,
 		ceoNotificationTool,
+		proposeSoftwareInstallTool,
 	}
 }
 

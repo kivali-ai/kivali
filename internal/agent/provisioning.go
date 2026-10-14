@@ -175,6 +175,38 @@ func (r *Runtime) ApplyOffboard(o store.Offboard) error {
 	return nil
 }
 
+// ApplySoftwareInstall adds the packages of a SoftwareInstall proposal
+// to the proposing agent's own software list and returns the names it
+// added. Names the agent's shell already gets (org-wide or its own)
+// are left out, so approving a request that became redundant since it
+// was written adds nothing and is not an error. Recreating the shell
+// so the software installs is the caller's job (internal/web/ceo.go),
+// the same split as ApplyOffboard's pod teardown.
+func (r *Runtime) ApplySoftwareInstall(si store.SoftwareInstall) ([]string, error) {
+	if err := message.ValidateSlug(si.Slug); err != nil {
+		return nil, fmt.Errorf("software_install: %w", err)
+	}
+	if si.Slug == CEOSlug {
+		return nil, fmt.Errorf("software_install: the owner has no shell to install software into")
+	}
+	pkgs, err := store.NormalizeSoftware(si.Packages)
+	if err != nil {
+		return nil, fmt.Errorf("software_install %s: %w", si.Slug, err)
+	}
+	have, err := r.Store.EffectiveSoftware(si.Slug)
+	if err != nil {
+		return nil, fmt.Errorf("software_install %s: %w", si.Slug, err)
+	}
+	fresh := store.SubtractSoftware(pkgs, have)
+	if len(fresh) == 0 {
+		return fresh, nil
+	}
+	if err := r.Store.AddAgentSoftware(si.Slug, fresh); err != nil {
+		return nil, fmt.Errorf("software_install %s: %w", si.Slug, err)
+	}
+	return fresh, nil
+}
+
 // directReports returns the slugs of every active agent whose
 // reports_to names slug, sorted so the refusal message is stable.
 func (r *Runtime) directReports(slug string) ([]string, error) {

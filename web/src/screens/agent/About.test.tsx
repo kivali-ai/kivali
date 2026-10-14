@@ -1,9 +1,9 @@
-import { act, screen, within } from '@testing-library/react';
+import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { AgentDoc } from '../../api/types.gen';
+import type { AgentDoc, AgentSoftware } from '../../api/types.gen';
 import { goAgentDetail } from '../../state/fixtures/transcript';
-import { emptyHabits, memoryDoc } from './tabsFixtures';
+import { agentSoftware, emptyHabits, memoryDoc } from './tabsFixtures';
 import { SLUG, deferred, reply, renderTabs } from './tabsHarness';
 
 const PATH = '/agents/' + SLUG + '/about';
@@ -34,8 +34,7 @@ describe('About: reading', () => {
     expect(page().getByRole('heading', { name: 'What you own' })).toBeInTheDocument();
     expect(page().getByText('Releases')).toBeInTheDocument();
     expect(page().getByRole('button', { name: 'Role' })).toHaveAttribute('aria-pressed', 'true');
-    // About holds only these three.
-    expect(page().getAllByRole('button', { pressed: false }).map((b) => b.textContent)).toEqual(['Habits', 'Memory']);
+    expect(page().getAllByRole('button', { pressed: false }).map((b) => b.textContent)).toEqual(['Habits', 'Memory', 'Software']);
   });
 
   it('describes the habits and the memory in their own words', async () => {
@@ -129,6 +128,57 @@ describe.each([
     expect(page().queryByRole('textbox')).toBeNull();
     const put = h.calls.find((c) => c.method === 'PUT' && c.url === DOC(kind));
     expect(put?.json).toEqual({ content: next });
+  });
+});
+
+describe('About: software', () => {
+  const SOFTWARE = '/api/v1/agents/' + SLUG + '/software';
+  const software = agentSoftware as AgentSoftware;
+
+  async function open(extra: Record<string, unknown> = {}) {
+    const user = userEvent.setup();
+    const h = renderTabs(PATH, { routes: { ...routes, ['GET ' + SOFTWARE]: software, ...extra } });
+    await page().findByText(/What it does/);
+    await user.click(page().getByRole('button', { name: 'Software' }));
+    return { user, h };
+  }
+
+  it('shows the org list read-only and the agent’s own list editable', async () => {
+    await open();
+    expect(await page().findByText('For every agent')).toBeInTheDocument();
+    expect(page().getByText('jq')).toBeInTheDocument();
+    expect(page().queryByRole('button', { name: 'Remove jq' })).toBeNull();
+    expect(page().getByText('Only for Engineering lead')).toBeInTheDocument();
+    expect(page().getByRole('button', { name: 'Remove ffmpeg' })).toBeInTheDocument();
+    expect(page().getByText(/Changing this list restarts Engineering lead to install it/)).toBeInTheDocument();
+  });
+
+  it('adds and removes from the agent’s own list only', async () => {
+    const saved: AgentSoftware = { org: software.org, own: ['ffmpeg', 'git-lfs', 'poppler-utils'] };
+    const removed: AgentSoftware = { org: software.org, own: ['git-lfs', 'poppler-utils'] };
+    const { user, h } = await open({ ['POST ' + SOFTWARE]: saved, ['DELETE ' + SOFTWARE + '/ffmpeg']: removed });
+    await user.type(await page().findByLabelText('Add software'), 'git-lfs');
+    await user.click(page().getByRole('button', { name: 'Add' }));
+    expect(await page().findByText('git-lfs')).toBeInTheDocument();
+    // Only the new name goes up: the server adds it to the list as it stands.
+    expect(h.calls.find((c) => c.method === 'POST' && c.url === SOFTWARE)?.json).toEqual({ packages: ['git-lfs'] });
+    await user.click(page().getByRole('button', { name: 'Remove ffmpeg' }));
+    await waitFor(() => expect(page().queryByRole('button', { name: 'Remove ffmpeg' })).toBeNull());
+    expect(h.count('DELETE', SOFTWARE + '/ffmpeg')).toBe(1);
+    expect(h.count('PUT', SOFTWARE)).toBe(0);
+  });
+
+  it('shows the server’s refusal of a bad name in a banner', async () => {
+    const { user } = await open({ ['POST ' + SOFTWARE]: () => reply(400, { error: '"bad name" is not a Debian package name', who: 'you' }) });
+    await user.type(await page().findByLabelText('Add software'), 'bad');
+    await user.click(page().getByRole('button', { name: 'Add' }));
+    expect(await page().findByText('"bad name" is not a Debian package name')).toBeInTheDocument();
+  });
+
+  it('has no Software for an archived agent', async () => {
+    renderTabs(PATH, { routes, detail: { ...goAgentDetail, archived: true } });
+    await page().findByText(/What it does/);
+    expect(page().queryByRole('button', { name: 'Software' })).toBeNull();
   });
 });
 

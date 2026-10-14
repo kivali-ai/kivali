@@ -72,11 +72,12 @@ const (
 type ProposalKind string
 
 const (
-	ProposalKindHire           ProposalKind = "hire"
-	ProposalKindRoleUpdate     ProposalKind = "role_update"
-	ProposalKindHandbookUpdate ProposalKind = "handbook_update"
-	ProposalKindOffboard       ProposalKind = "offboard"
-	ProposalKindReorg          ProposalKind = "reorg"
+	ProposalKindHire            ProposalKind = "hire"
+	ProposalKindRoleUpdate      ProposalKind = "role_update"
+	ProposalKindHandbookUpdate  ProposalKind = "handbook_update"
+	ProposalKindOffboard        ProposalKind = "offboard"
+	ProposalKindReorg           ProposalKind = "reorg"
+	ProposalKindSoftwareInstall ProposalKind = "software_install"
 )
 
 // NeedItem is one row of Needs you, newest first; needs-help rows

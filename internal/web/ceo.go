@@ -322,6 +322,46 @@ func (s *Server) respondAsCEO(ctx context.Context, kind responseKind, approved *
 		}
 	}
 
+	// Software installs: same atomicity rule as Hire. The packages are
+	// added to the proposer's own list and its shell is recreated
+	// BEFORE the approval response is written, and the response's
+	// Outcome says which of that happened: restarted, already
+	// installed (nothing new to add), or saved but not applied (the
+	// shell could not be recreated; the next pod start installs it).
+	// A provision error is logged, not a refusal. The provision runs
+	// on a context the request cannot cancel: the owner closing the
+	// page mid-recreate must not leave the pod deleted and never made
+	// again. Like a denial, the response carries the slug and packages
+	// so the proposer can tell which request was answered.
+	var respSoftware *store.SoftwareInstall
+	if kind == responseKindApproval && reqMsg.SoftwareInstall != nil {
+		respSoftware = &store.SoftwareInstall{Slug: reqMsg.SoftwareInstall.Slug, Packages: reqMsg.SoftwareInstall.Packages}
+	}
+	if kind == responseKindApproval && approved != nil && *approved && reqMsg.SoftwareInstall != nil {
+		if s.Runtime == nil {
+			return refuseCEOSaying(http.StatusInternalServerError, "software_install approval: no engine configured",
+				"This server has no agent runtime, so the proposal cannot be applied", whoServer)
+		}
+		added, serr := s.Runtime.ApplySoftwareInstall(*reqMsg.SoftwareInstall)
+		if serr != nil {
+			return refuseApply("The software install", "software_install apply: ", serr, proposer)
+		}
+		switch {
+		case len(added) == 0:
+			respSoftware.Outcome = store.SoftwareAlreadyInstalled
+		case s.AgentPod == nil:
+			respSoftware.Packages = added
+			respSoftware.Outcome = store.SoftwareSavedNotApplied
+		default:
+			respSoftware.Packages = added
+			respSoftware.Outcome = store.SoftwareRestarted
+			if perr := s.ProvisionAgentPod(context.WithoutCancel(ctx), reqMsg.SoftwareInstall.Slug); perr != nil {
+				log.Printf("software_install %s: provision agent pod: %v", reqMsg.SoftwareInstall.Slug, perr)
+				respSoftware.Outcome = store.SoftwareSavedNotApplied
+			}
+		}
+	}
+
 	// Reorgs: best-effort per move (CoS converges stragglers from the
 	// Failed list). Unlike the other Apply* paths, ApplyReorg never
 	// 5xx's the whole approval — partial failure is the design. The
@@ -342,20 +382,21 @@ func (s *Server) respondAsCEO(ctx context.Context, kind responseKind, approved *
 	}
 
 	resp := store.Message{
-		Type:           respType,
-		Title:          fmt.Sprintf("%s: %s", titlePrefix, reqMsg.Title),
-		From:           agent.CEOSlug,
-		To:             store.Recipients{reqMsg.From},
-		Date:           time.Now().UTC(),
-		InReplyTo:      reqPath,
-		Approved:       approved,
-		Hire:           appliedHire,
-		RoleUpdate:     appliedRoleUpdate,
-		HandbookUpdate: appliedHandbookUpdate,
-		Reorg:          appliedReorg,
-		Offboard:       respOffboard,
-		Attachments:    attachments,
-		Body:           body,
+		Type:            respType,
+		Title:           fmt.Sprintf("%s: %s", titlePrefix, reqMsg.Title),
+		From:            agent.CEOSlug,
+		To:              store.Recipients{reqMsg.From},
+		Date:            time.Now().UTC(),
+		InReplyTo:       reqPath,
+		Approved:        approved,
+		Hire:            appliedHire,
+		RoleUpdate:      appliedRoleUpdate,
+		HandbookUpdate:  appliedHandbookUpdate,
+		Reorg:           appliedReorg,
+		Offboard:        respOffboard,
+		SoftwareInstall: respSoftware,
+		Attachments:     attachments,
+		Body:            body,
 	}
 	respAbs, err := s.Store.WriteMessage(resp)
 	if err != nil {

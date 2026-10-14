@@ -6,7 +6,7 @@ import { ErrorBanner, None, RowList, RowSkeletons, SectionHead } from './parts';
 import type { SectionProps } from './sections';
 import { useAction, useResource } from './useResource';
 
-interface AddFieldProps {
+export interface AddFieldProps {
   label: string;
   placeholder: string;
   button: string;
@@ -15,7 +15,7 @@ interface AddFieldProps {
 }
 
 /** One text field and its button. It clears once the server has taken the value. */
-function AddField({ label, placeholder, button, busy, onAdd }: AddFieldProps) {
+export function AddField({ label, placeholder, button, busy, onAdd }: AddFieldProps) {
   const [value, setValue] = useState('');
   const trimmed = value.trim();
   return (

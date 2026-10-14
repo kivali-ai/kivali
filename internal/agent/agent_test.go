@@ -125,18 +125,18 @@ func TestBuildRequestToolSetByRole(t *testing.T) {
 	}
 	// Tool set, minus memory / shell (they're gated separately):
 	//   publish_notice, publish_ceo_approval_request,
-	//   publish_ceo_notification                                (=3 from message.AllTools)
+	//   publish_ceo_notification, propose_software_install      (=4 from message.AllTools)
 	//   + get_org_chart, search_past_chats, list_project_files,
 	//     list_skills, read_handbook                            (=5 from StateTools)
 	//   + graph_query, graph_node                               (=2 from GraphTools)
 	//   + assignment_create, assignment_update, assignment_close,
 	//     assignment_reopen, assignment_list, assignment_view   (=6 from AssignmentTools)
-	// → 16 tools for non-CoS. CoS additionally sees the five
+	// → 17 tools for non-CoS. CoS additionally sees the five
 	// org-mutating proposals (propose_hire, propose_offboard,
 	// propose_reorg, propose_role_update, propose_handbook_update)
-	// and read_agent_role → 22 tools.
-	const wantNonCoS = 16
-	const wantCoS = 22
+	// and read_agent_role → 23 tools.
+	const wantNonCoS = 17
+	const wantCoS = 23
 	cosCtx := base
 	cosCtx.IsChiefOfStaff = true
 	cosTools := cosCtx.BuildRequest().Tools
@@ -164,6 +164,10 @@ func TestBuildRequestToolSetByRole(t *testing.T) {
 		if nonCoSToolNames[want] {
 			t.Errorf("non-CoS should not see %q: have %v", want, nonCoSToolNames)
 		}
+	}
+	// Software installs are for every agent, not only the Chief of Staff.
+	if !cosToolNames[message.ToolProposeSoftwareInstall] || !nonCoSToolNames[message.ToolProposeSoftwareInstall] {
+		t.Errorf("propose_software_install should be on every agent's call: CoS %v, other %v", cosToolNames, nonCoSToolNames)
 	}
 	// State-lookup and assignment tools are on every agent's call.
 	for _, want := range []string{GetOrgChartToolName, ReadHandbookToolName, AssignmentListToolName, AssignmentCreateToolName} {

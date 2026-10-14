@@ -632,11 +632,12 @@ func TestAPIHomeNeedsProposalKinds(t *testing.T) {
 	}
 	want := map[string]apitypes.ProposalKind{}
 	for kind, m := range map[apitypes.ProposalKind]store.Message{
-		apitypes.ProposalKindHire:           {Title: "Hire", Hire: &store.Hire{Slug: "gardener", Role: "Gardener", ReportsTo: "chief-of-staff", Body: "# Gardener\n"}},
-		apitypes.ProposalKindRoleUpdate:     {Title: "Role", RoleUpdate: &store.RoleUpdate{Slug: "chief-of-staff", Body: "# new role\n"}},
-		apitypes.ProposalKindHandbookUpdate: {Title: "Handbook", HandbookUpdate: &store.HandbookUpdate{Body: "# rules\n"}},
-		apitypes.ProposalKindOffboard:       {Title: "Offboard", Offboard: &store.Offboard{Slug: "chief-of-staff"}},
-		apitypes.ProposalKindReorg:          {Title: "Reorg", Reorg: &store.Reorg{Moves: []store.ReorgMove{{Slug: "chief-of-staff", NewManager: agent.CEOSlug}}}},
+		apitypes.ProposalKindHire:            {Title: "Hire", Hire: &store.Hire{Slug: "gardener", Role: "Gardener", ReportsTo: "chief-of-staff", Body: "# Gardener\n"}},
+		apitypes.ProposalKindRoleUpdate:      {Title: "Role", RoleUpdate: &store.RoleUpdate{Slug: "chief-of-staff", Body: "# new role\n"}},
+		apitypes.ProposalKindHandbookUpdate:  {Title: "Handbook", HandbookUpdate: &store.HandbookUpdate{Body: "# rules\n"}},
+		apitypes.ProposalKindOffboard:        {Title: "Offboard", Offboard: &store.Offboard{Slug: "chief-of-staff"}},
+		apitypes.ProposalKindSoftwareInstall: {Title: "Software", SoftwareInstall: &store.SoftwareInstall{Slug: "chief-of-staff", Packages: []string{"ffmpeg"}}},
+		apitypes.ProposalKindReorg:           {Title: "Reorg", Reorg: &store.Reorg{Moves: []store.ReorgMove{{Slug: "chief-of-staff", NewManager: agent.CEOSlug}}}},
 	} {
 		want[seedCEORequest(t, srv, m)] = kind
 	}

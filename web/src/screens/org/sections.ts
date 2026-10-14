@@ -6,7 +6,7 @@ export interface SectionProps {
   showHead: boolean;
 }
 
-export type SectionKey = 'usage' | 'organization' | 'handbook' | 'files' | 'skills' | 'network' | 'backup' | 'about';
+export type SectionKey = 'usage' | 'organization' | 'handbook' | 'files' | 'skills' | 'network' | 'software' | 'backup' | 'about';
 
 export interface SectionInfo {
   key: SectionKey;
@@ -16,7 +16,7 @@ export interface SectionInfo {
   blurb: string;
 }
 
-/** The eight sections, in page order: canvas 6a/6b's index. */
+/** The nine sections, in page order: canvas 6a/6b's index. */
 export const SECTIONS: readonly SectionInfo[] = [
   { key: 'usage', label: 'Usage', icon: 'history', blurb: 'Spend per day and who spent it' },
   { key: 'organization', label: 'Organization', icon: 'settings', blurb: 'Name and logo' },
@@ -24,6 +24,7 @@ export const SECTIONS: readonly SectionInfo[] = [
   { key: 'files', label: 'Project files', icon: 'folder', blurb: 'Documents agents can read' },
   { key: 'skills', label: 'Skills', icon: 'puzzle', blurb: 'What agents know how to do' },
   { key: 'network', label: 'Network', icon: 'globe', blurb: 'Hosts agents can reach' },
+  { key: 'software', label: 'Software', icon: 'download', blurb: 'Programs installed for every agent' },
   { key: 'backup', label: 'Backup and restore', icon: 'archive', blurb: 'A copy of everything, as one file' },
   { key: 'about', label: 'About', icon: 'info', blurb: 'This Kivali server' },
 ];

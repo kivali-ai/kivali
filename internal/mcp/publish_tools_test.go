@@ -423,6 +423,63 @@ func TestPublishProposeReorgFastFailsOnUnknownSlugs(t *testing.T) {
 // and the fallthrough behaviour (no check) is what makes
 // publish_ceo_notification work in a fresh org where the CoS hasn't
 // created any peers yet.
+// propose_software_install is on every agent's list; the publish step
+// drops packages the agent's shell already gets and refuses a request
+// with nothing new.
+func TestPublishProposeSoftwareInstallDropsWhatIsInstalled(t *testing.T) {
+	s, err := store.New(t.TempDir())
+	if err != nil {
+		t.Fatalf("store: %v", err)
+	}
+	if err := s.CreateAgent(store.Agent{Slug: "alice", Role: "Analyst", ReportsTo: "ceo", Software: []string{"ffmpeg"}}, "role"); err != nil {
+		t.Fatalf("create alice: %v", err)
+	}
+	if err := s.WriteOrgSoftware([]string{"git"}); err != nil {
+		t.Fatal(err)
+	}
+	tools := PublishTools(PublishToolsConfig{
+		Dispatcher: NewStorePublishDispatcher(StorePublishDeps{Store: s, From: "alice"}),
+		From:       "alice",
+	})
+	c := startServer(t, tools)
+	call := func(packages ...string) toolsCallResult {
+		t.Helper()
+		result := c.call(t, "tools/call", map[string]any{
+			"name": "propose_software_install",
+			"arguments": map[string]any{
+				"title":    "Install software: tools",
+				"packages": packages,
+				"reason":   "I need them.",
+			},
+		})
+		var r toolsCallResult
+		if err := json.Unmarshal(result, &r); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		return r
+	}
+
+	r := call("ffmpeg", "git")
+	if !r.IsError || len(r.Content) == 0 || !strings.Contains(r.Content[0].Text, "already installed") {
+		t.Fatalf("everything installed should be refused; got %+v", r)
+	}
+	if msgs, _ := s.ListMessages(store.MessageFilter{Type: store.MsgCEOApprovalRequest}); len(msgs) != 0 {
+		t.Fatalf("a refused request reached the owner: %+v", msgs)
+	}
+
+	r = call("ffmpeg", "poppler-utils")
+	if r.IsError {
+		t.Fatalf("a request with something new should publish; got %+v", r.Content)
+	}
+	msgs, _ := s.ListMessages(store.MessageFilter{Type: store.MsgCEOApprovalRequest})
+	if len(msgs) != 1 || msgs[0].SoftwareInstall == nil {
+		t.Fatalf("messages = %+v", msgs)
+	}
+	if got := strings.Join(msgs[0].SoftwareInstall.Packages, ","); got != "poppler-utils" {
+		t.Errorf("packages = %q, want only the new one", got)
+	}
+}
+
 func TestPublishCEOApprovalRequestSkipsRecipientCheck(t *testing.T) {
 	s, err := store.New(t.TempDir())
 	if err != nil {

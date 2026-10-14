@@ -67,6 +67,11 @@ type ExecResponse struct {
 	DurationMs int64  `json:"duration_ms"`
 	TimedOut   bool   `json:"timed_out"`
 	Err        string `json:"err,omitempty"`
+
+	// Notice, when set, tells the agent which software the shell could
+	// not install when it started, and why. It rides on the first
+	// command's response after that install finished (Install.TakeNotice).
+	Notice string `json:"notice,omitempty"`
 }
 
 // FilesRequest is the body of POST /v1/files: one file_* tool call,
@@ -107,12 +112,19 @@ type FilesImage struct {
 	MIME string `json:"mime"`
 }
 
-// PackagesResponse is the body of GET /v1/packages: the apt packages
-// the agent-shell image has installed, one entry per package, as recorded
-// at build time in PackagesFileDefault. Empty when the image carries no
-// such file; the client then reports the list as unknown.
+// PackagesResponse is the body of GET /v1/packages. Packages is the apt
+// packages the shell has: the image's, as recorded at build time in
+// PackagesFileDefault, and those installed when the daemon started
+// (--install). Empty when the image carries no such file and nothing was
+// installed; the client then reports the list as unknown.
+//
+// Installing names the packages still being installed when the
+// response was written, and Failed the ones that could not be
+// installed, each with a short reason.
 type PackagesResponse struct {
-	Packages []string `json:"packages"`
+	Packages   []string         `json:"packages"`
+	Installing []string         `json:"installing,omitempty"`
+	Failed     []PackageFailure `json:"failed,omitempty"`
 }
 
 // PackagesFileDefault is where Dockerfile.agent-shell records the

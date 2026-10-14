@@ -7,8 +7,8 @@ import (
 
 func TestAllToolsComplete(t *testing.T) {
 	tools := AllTools()
-	if len(tools) != 3 {
-		t.Fatalf("AllTools count = %d, want 3", len(tools))
+	if len(tools) != 4 {
+		t.Fatalf("AllTools count = %d, want 4", len(tools))
 	}
 	names := map[string]bool{}
 	for _, tt := range tools {
@@ -23,7 +23,7 @@ func TestAllToolsComplete(t *testing.T) {
 			t.Errorf("tool %s: schema is not valid JSON", tt.Name)
 		}
 	}
-	want := []string{ToolNotice, ToolCEOApprovalRequest, ToolCEONotification}
+	want := []string{ToolNotice, ToolCEOApprovalRequest, ToolCEONotification, ToolProposeSoftwareInstall}
 	for _, n := range want {
 		if !names[n] {
 			t.Errorf("missing tool %s", n)
@@ -72,7 +72,7 @@ func TestToolsForGatesProposalsToChiefOfStaff(t *testing.T) {
 
 func TestAsClaudeToolsPreservesShape(t *testing.T) {
 	got := AsClaudeTools(AllTools())
-	if len(got) != 3 {
+	if len(got) != 4 {
 		t.Fatalf("len = %d", len(got))
 	}
 	for i, ct := range got {

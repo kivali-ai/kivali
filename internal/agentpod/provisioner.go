@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/kivali-ai/kivali/internal/provider"
+	"github.com/kivali-ai/kivali/internal/store"
 )
 
 // ProvisionerConfig controls per-agent Pod + PVC provisioning. The
@@ -159,9 +160,10 @@ func (c ProvisionerConfig) validate() error {
 // false and lifecycle methods are no-ops so callers can stay
 // simple.
 type Provisioner struct {
-	cfg    ProvisionerConfig
-	kube   *kubeClient
-	logger func(format string, args ...any)
+	cfg      ProvisionerConfig
+	kube     *kubeClient
+	logger   func(format string, args ...any)
+	software func(slug string) ([]string, error)
 }
 
 // ProvisionerOption configures a Provisioner. Functional options keep
@@ -171,6 +173,33 @@ type ProvisionerOption func(*Provisioner)
 // WithProvisionerLogger attaches a logger. Default discards messages.
 func WithProvisionerLogger(fn func(format string, args ...any)) ProvisionerOption {
 	return func(p *Provisioner) { p.logger = fn }
+}
+
+// WithSoftware names the software (Debian package names) each agent's
+// shell installs when its pod starts: fn is asked on every Provision,
+// so a changed list changes the pod's spec and Provision recreates it.
+// An error from fn fails that Provision. Without this option no agent
+// shell installs anything.
+func WithSoftware(fn func(slug string) ([]string, error)) ProvisionerOption {
+	return func(p *Provisioner) { p.software = fn }
+}
+
+// manifestFor is slug's pod manifest with its current software.
+func (p *Provisioner) manifestFor(slug string) (map[string]any, error) {
+	var software []string
+	if p.software != nil {
+		var err error
+		software, err = p.software(slug)
+		if err != nil {
+			return nil, fmt.Errorf("software: %w", err)
+		}
+		for _, n := range software {
+			if !store.ValidSoftwareName(n) {
+				return nil, fmt.Errorf("software: %q: %w", n, store.ErrInvalidSoftware)
+			}
+		}
+	}
+	return p.cfg.podManifestWithSoftware(slug, software), nil
 }
 
 // NewProvisioner returns a Provisioner. The k8s client is
@@ -221,19 +250,37 @@ func (p *Provisioner) Enabled() bool { return p != nil && p.kube != nil }
 //
 // Order: PVC first (Pod references it), then Pod. No Service.
 func (p *Provisioner) Provision(ctx context.Context, slug string) error {
+	return p.ProvisionNotify(ctx, slug, nil)
+}
+
+// ProvisionNotify is Provision that calls starting (when non-nil) once
+// it has decided to create the pod: before deleting a pod whose spec
+// drifted, or before creating a missing one. A pod that already matches
+// is left alone and starting is not called, so a caller that marks the
+// agent as starting there never marks one whose pod keeps running.
+// Out-of-cluster, where Provision does nothing, starting is called.
+func (p *Provisioner) ProvisionNotify(ctx context.Context, slug string, starting func()) error {
+	if starting == nil {
+		starting = func() {}
+	}
 	if !p.Enabled() {
 		p.logger("agentpod: Provision(%q): no-op (not in-cluster)", slug)
+		starting()
 		return nil
+	}
+	manifest, err := p.manifestFor(slug)
+	if err != nil {
+		return err
 	}
 	if err := p.kube.ensureResource(ctx, p.kube.pvcPath(PVCName(slug)), p.kube.pvcsPath(), p.cfg.pvcManifest(slug)); err != nil {
 		return fmt.Errorf("pvc: %w", err)
 	}
-	manifest := p.cfg.podManifest(slug)
 	desired := manifest["metadata"].(map[string]any)["labels"].(map[string]string)[specHashLabel]
 	existing, err := p.kube.getPodSpecHash(ctx, PodName(slug))
 	switch {
 	case errors.Is(err, ErrNotFound):
 		// Pod doesn't exist; fall through to create.
+		starting()
 	case err != nil:
 		return fmt.Errorf("pod: read spec-hash: %w", err)
 	case existing == desired:
@@ -242,6 +289,7 @@ func (p *Provisioner) Provision(ctx context.Context, slug string) error {
 	default:
 		// Drift (or a pod with no spec-hash label) — recreate.
 		p.logger("agentpod: %s pod spec drift (existing=%q desired=%q); recreating", slug, existing, desired)
+		starting()
 		if derr := p.kube.deleteResource(ctx, p.kube.podPath(PodName(slug))); derr != nil && !errors.Is(derr, ErrNotFound) {
 			return fmt.Errorf("pod: delete stale: %w", derr)
 		}

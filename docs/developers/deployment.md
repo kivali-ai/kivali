@@ -82,6 +82,12 @@ The image records what it installed in `/etc/kivali/agent-shell-packages`
 agent's `run_shell` tool description is built from it, so agents are
 told exactly what is installed.
 
+Software the owner adds in the app (Org > Software, an agent's own list,
+or an approved `propose_software_install`) is installed when the agent's
+pod starts instead; see
+[files-and-publishing.md](files-and-publishing.md#software-in-the-agent-shell).
+Baking a package in saves that install on every pod start.
+
 **Set it once per machine.** `make dev-vm`, `make dev-load` and the
 release bundles all build the agent-shell, and a build with no
 extras is the slim default, so a dev team that relies on extra tools

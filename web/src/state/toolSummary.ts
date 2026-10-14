@@ -188,6 +188,8 @@ export function summarizeTool(name: string, input: string | Fields | undefined):
       return o.section ? 'Reading the handbook: ' + short(str(o.section)) : 'Reading the handbook';
     case 'propose_handbook_update':
       return 'Proposing a handbook change';
+    case 'propose_software_install':
+      return 'Asking to install software';
     case 'read_agent_role':
       return o.slug ? 'Reading ' + str(o.slug) + "'s role" : 'Reading a role';
     case 'search_past_chats':

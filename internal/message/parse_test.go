@@ -413,6 +413,91 @@ func TestParseProposeOffboardRequiresSlug(t *testing.T) {
 	}
 }
 
+/* ---------- propose_software_install ----------------------------- */
+
+func softwareCtx(from string) ParseContext {
+	ctx := fixedCtx()
+	ctx.From = from
+	return ctx
+}
+
+func TestParseProposeSoftwareInstallTargetsTheCaller(t *testing.T) {
+	block := toolUse(ToolProposeSoftwareInstall, map[string]any{
+		"title":    "Install software: PDF tools",
+		"packages": []any{"Poppler-Utils", "ffmpeg", "ffmpeg"},
+		"reason":   "Quotes arrive as PDFs and I need to read their text.",
+	})
+	res, err := Parse(block, softwareCtx("market-analyst"))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	m := res.Message
+	if m.Type != store.MsgCEOApprovalRequest || m.To.Primary() != CEO || m.From != "market-analyst" {
+		t.Errorf("message = %+v", m)
+	}
+	si := m.SoftwareInstall
+	if si == nil || si.Slug != "market-analyst" {
+		t.Fatalf("SoftwareInstall = %+v, want it to target the caller", si)
+	}
+	if got := strings.Join(si.Packages, ","); got != "ffmpeg,poppler-utils" {
+		t.Errorf("packages = %q, want normalized, de-duplicated and sorted", got)
+	}
+	if m.Body != "Quotes arrive as PDFs and I need to read their text." {
+		t.Errorf("body = %q", m.Body)
+	}
+}
+
+func TestParseProposeSoftwareInstallRefusals(t *testing.T) {
+	good := map[string]any{"title": "t", "packages": []any{"ffmpeg"}, "reason": "r"}
+	with := func(k string, v any) map[string]any {
+		m := map[string]any{}
+		for kk, vv := range good {
+			m[kk] = vv
+		}
+		if v == nil {
+			delete(m, k)
+		} else {
+			m[k] = v
+		}
+		return m
+	}
+	for name, in := range map[string]map[string]any{
+		"no title":         with("title", nil),
+		"no reason":        with("reason", nil),
+		"no packages":      with("packages", nil),
+		"empty packages":   with("packages", []any{}),
+		"blank packages":   with("packages", []any{"  "}),
+		"an option":        with("packages", []any{"--allow-unauthenticated"}),
+		"a version pin":    with("packages", []any{"ffmpeg=7"}),
+		"a shell command":  with("packages", []any{"ffmpeg; rm -rf /"}),
+		"an unknown field": with("slug", "someone-else"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := Parse(toolUse(ToolProposeSoftwareInstall, in), softwareCtx("market-analyst")); err == nil {
+				t.Error("expected an error")
+			}
+		})
+	}
+	// The owner is not an agent and has no shell.
+	if _, err := Parse(toolUse(ToolProposeSoftwareInstall, good), softwareCtx(CEO)); err == nil {
+		t.Error("the CEO must not propose software")
+	}
+}
+
+func TestToolsForOffersSoftwareInstallToEveryAgent(t *testing.T) {
+	for _, cos := range []bool{true, false} {
+		found := false
+		for _, td := range ToolsFor("someone", cos) {
+			if td.Name == ToolProposeSoftwareInstall {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("isChiefOfStaff=%v: propose_software_install missing", cos)
+		}
+	}
+}
+
 func TestParseProposeRoleUpdateProducesApprovalRequestWithRoleUpdate(t *testing.T) {
 	block := toolUse(ToolProposeRoleUpdate, map[string]any{
 		"slug":      "market-analyst",

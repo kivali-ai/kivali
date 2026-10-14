@@ -70,6 +70,79 @@ socket is the agent. Parent and subagent differ only by the root the
 client names (`subagents/<id>` for a subagent), exactly as `run_shell`
 does.
 
+### Software in the agent shell
+
+An agent's shell has the image's packages plus its effective software:
+the org-wide list (`<data>/software.yaml`) and the agent's own
+(`software` in its `agent.yaml`), merged by `Store.EffectiveSoftware`.
+The provisioner asks for that list on every `Provision`
+(`agentpod.WithSoftware`, wired in `main.go`), so a changed list changes
+the pod's spec hash and the pod is recreated; an unchanged one leaves
+the pod running and the agent is not marked starting
+(`Provisioner.ProvisionNotify`). Provisions for one agent run one at a
+time (`Server.ProvisionAgentPod` holds a per-slug lock), so a later one
+reads the lists after the earlier one is done and applies any change
+saved meanwhile. A restore re-provisions every agent from the restored
+lists.
+
+The settings API changes a list by name, never by replacing it:
+`POST /api/v1/org/software` and `POST /api/v1/agents/{slug}/software`
+take `{packages}` to add, and `DELETE .../software/{name}` removes one,
+each applied to the list as it stands on disk (the store serializes
+every `agent.yaml` and `software.yaml` read-modify-write). Each write
+re-provisions the pods it reaches in the background. Approving an
+**Install software** proposal provisions synchronously, on a context the
+request cannot cancel, and records on the response's
+`software_install.outcome` what happened: `restarted`,
+`already_installed` (nothing new to add, no provision), or
+`saved_not_applied` (the provision failed; the next pod start installs
+it). The agent's and the owner's wording follow it.
+
+With a non-empty list the `agent-shell` container gets
+`--install=<sorted, comma-joined names>` and `runAsUser: 0`,
+`runAsGroup: 0`; with none it runs as the image's 65532 from the start.
+`allowPrivilegeEscalation: false` is set either way: nothing in the
+container gains privileges (the daemon's drop, apt-get's switch to
+`_apt` and `unshare -mUr` only shed them). Started as root, the daemon:
+
+1. starts `agent-shell install-software <names...>` (itself, via
+   `/proc/self/exe`) as a root child, with `HOME=/root`, the proxy
+   variables and `/` as its working directory. The child marks its
+   result pipe (fd 3) close-on-exec, runs `apt-get update` (a failed
+   update does not stop the install; its reason is added to each
+   failure), then checks each name is exactly a name in the package
+   lists (`apt-cache pkgnames --all-names <name>`), so apt-get never
+   reads one as a pattern; a name that is not fails with "no package
+   has this name". Then one `apt-get install -y --no-install-recommends`
+   of every remaining name, and on failure one per name to learn which
+   failed; the names are argv, validated as Debian package names (no
+   leading or trailing `-`), never shell text. It is the subreaper of
+   what it starts and kills whatever is left before it reports its
+   result on the pipe. The image's `policy-rc.d` stops maintainer
+   scripts from starting services. The daemon waits for the result for
+   at most the install's own 20-minute bound plus a grace, then counts
+   every package failed ("the installation did not finish in time").
+2. drops itself to `--run-as` (65532:65532): `setgroups([])`, `setgid`,
+   `setuid`, then reads back the real, effective and saved IDs, the
+   groups and the effective and ambient capability sets
+   (`/proc/self/status`) and exits unless every ID is 65532, there are
+   no groups and both capability sets are empty;
+3. only then creates `$HOME`, the socket, and serves.
+
+A daemon started as root drops also without `--install`. One started
+as anyone else installs nothing and reports every name as failed.
+
+While the install runs, `POST /v1/exec` waits for it (up to 10 minutes,
+then answers that the shell is still installing; the client allows for
+that wait) and `GET /v1/packages` waits up to 15s, then names what is
+still installing; `POST /v1/files` never waits. `GET /v1/packages`
+lists the image's packages and those installed, and the failures with
+a short reason (apt-get's error lines, and the update's fetch failure
+when the package servers could not be reached). The first `run_shell`
+result after an install with failures carries a notice naming them:
+the agent's own command, not a subagent's, whose caller is still
+waiting for the answer; otherwise the notice waits for the next one.
+
 ### Core reads an agent's workspace through one confined primitive
 
 Anything core takes from an agent's tree (share_file, message

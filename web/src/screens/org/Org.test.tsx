@@ -3,7 +3,7 @@ import { createMemoryRouter } from 'react-router';
 import { RouterProvider } from 'react-router/dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError, apiDelete, apiGet, apiGetBlob, apiPost, apiPostForm, apiPut } from '../../api/client';
-import type { Handbook, Me, Network, Org as OrgData, ProjectFiles, Skills, Usage } from '../../api/types.gen';
+import type { Handbook, Me, Network, OrgSoftware, Org as OrgData, ProjectFiles, Skills, Usage } from '../../api/types.gen';
 import { FrameChromeContext } from '../../app/chrome';
 import type { FrameChrome } from '../../app/chrome';
 import { TooltipProvider } from '../../ds';
@@ -16,7 +16,7 @@ import type { OrgContextValue } from '../../state/OrgProvider';
 import { aboutLine, versionLabel } from './About';
 import { BACKUP_DEBOUNCE_MS } from './Backup';
 import { Org, headerMeta } from './OrgPage';
-import { goHandbook, goDowngrade, goFiles, goNetwork, goOrg, goSkills, goUsage } from './orgFixtures';
+import { goHandbook, goDowngrade, goFiles, goNetwork, goOrg, goOrgSoftware, goSkills, goSoftwareAdd, goUsage } from './orgFixtures';
 import { downgradeOf } from './Skills';
 import { compact, unpricedNote } from './Usage';
 
@@ -103,6 +103,7 @@ function defaults(): Record<string, Route> {
     'GET /api/v1/org/files': goFiles,
     'GET /api/v1/org/skills': goSkills,
     'GET /api/v1/org/network': goNetwork,
+    'GET /api/v1/org/software': goOrgSoftware,
     'GET /api/v1/setup': { credential: { ready: true, provider: 'claude', present: true, who: 'owner@example.com', billing: 'Claude Max', guidance: '' }, restore_available: false },
   };
 }
@@ -212,7 +213,7 @@ describe('Org layout', () => {
     await renderOrg('/org');
     expect(screen.getByText('$4.25')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /Skills/ })).toHaveAttribute('href', '/org/skills');
-    for (const name of ['Organization', 'Handbook', 'Project files', 'Network', 'Backup and restore', 'About']) {
+    for (const name of ['Organization', 'Handbook', 'Project files', 'Network', 'Software', 'Backup and restore', 'About']) {
       expect(screen.getByRole('link', { name: new RegExp(name) })).toBeInTheDocument();
     }
     expect(screen.getByRole('link', { name: /About/ })).toHaveTextContent('Kivali 0.15.0');
@@ -233,7 +234,7 @@ describe('Org layout', () => {
     const scroll = vi.fn();
     Element.prototype.scrollIntoView = scroll;
     await renderOrg('/org/skills', { desktop: true });
-    const names = ['Usage', 'Organization', 'Handbook', 'Project files', 'Skills', 'Network', 'Backup and restore', 'About'];
+    const names = ['Usage', 'Organization', 'Handbook', 'Project files', 'Skills', 'Network', 'Software', 'Backup and restore', 'About'];
     expect(screen.getAllByRole('heading', { level: 2 }).map((el) => el.textContent)).toEqual(names);
     const index = screen.getByRole('navigation', { name: 'Org sections' });
     expect(within(index).getAllByRole('link').map((el) => el.textContent)).toEqual(names);
@@ -309,6 +310,7 @@ describe('Org index scroll spy', () => {
     files: 'below',
     skills: 'below',
     network: 'below',
+    software: 'below',
     backup: 'below',
     about: 'below',
   };
@@ -321,7 +323,7 @@ describe('Org index scroll spy', () => {
     const io = install();
     const h = await renderOrg('/org/files', { desktop: true });
     expect(current()).toBe('Project files');
-    expect(io.spy().targets.map((el) => el.id)).toEqual(['usage', 'organization', 'handbook', 'files', 'skills', 'network', 'backup', 'about'].map((k) => 'org-' + k));
+    expect(io.spy().targets.map((el) => el.id)).toEqual(['usage', 'organization', 'handbook', 'files', 'skills', 'network', 'software', 'backup', 'about'].map((k) => 'org-' + k));
 
     at(io.spy(), ALL_BELOW);
     expect(current()).toBe('Usage');
@@ -951,6 +953,43 @@ describe('Network', () => {
     expect(lastBody('POST', '/api/v1/org/network')).toEqual({ host: 'api.github.com' });
     await click(screen.getByRole('button', { name: 'Remove api.anthropic.com' }));
     expect(screen.queryByText('api.anthropic.com')).toBeNull();
+  });
+});
+
+// ---- Software ----
+
+describe('Software', () => {
+  it('lists the packages, adds several at once, and removes one', async () => {
+    const added: OrgSoftware = { packages: ['ffmpeg', 'git', 'jq', 'poppler-utils'] };
+    const removed: OrgSoftware = { packages: ['git', 'jq', 'poppler-utils'] };
+    await renderOrg('/org/software', {
+      desktop: true,
+      routes: { 'POST /api/v1/org/software': added, 'DELETE /api/v1/org/software/ffmpeg': removed },
+    });
+    expect(screen.getByText('git')).toBeInTheDocument();
+    expect(screen.getByText('2 packages for every agent')).toBeInTheDocument();
+    expect(screen.getByText(/restarts the agents it affects/)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Add software'), { target: { value: 'ffmpeg, poppler-utils' } });
+    await click(screen.getByRole('button', { name: 'Add' }));
+    // Only the new names go up: the server adds them to the list as it stands.
+    expect(lastBody('POST', '/api/v1/org/software')).toEqual({ packages: ['ffmpeg', 'poppler-utils'] });
+    // The body has the keys the Go server reads.
+    expect(Object.keys(lastBody('POST', '/api/v1/org/software') as object)).toEqual(Object.keys(goSoftwareAdd));
+    expect(screen.getByText('poppler-utils')).toBeInTheDocument();
+    await click(screen.getByRole('button', { name: 'Remove ffmpeg' }));
+    expect(calls.filter((c) => c.method === 'DELETE' && c.url === '/api/v1/org/software/ffmpeg')).toHaveLength(1);
+    expect(screen.queryByText('ffmpeg')).toBeNull();
+  });
+
+  it('says so when nothing is installed and shows the server’s refusal of a bad name', async () => {
+    await renderOrg('/org/software', {
+      desktop: true,
+      routes: { 'GET /api/v1/org/software': { packages: [] }, 'POST /api/v1/org/software': fail(400, '"rm -rf" is not a Debian package name', 'you') },
+    });
+    expect(screen.getByText(/No extra software/)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Add software'), { target: { value: 'rm -rf' } });
+    await click(screen.getByRole('button', { name: 'Add' }));
+    expect(await screen.findByText('"rm -rf" is not a Debian package name')).toBeInTheDocument();
   });
 });
 

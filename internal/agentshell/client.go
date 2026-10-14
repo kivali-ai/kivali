@@ -81,9 +81,11 @@ func (s *SidecarShell) Exec(ctx context.Context, _ string, req agent.ShellReques
 
 	// The client-side context must outlast the daemon's per-command
 	// timeout — otherwise we'd cancel the dial before the daemon
-	// could surface a TimedOut response. Add a generous buffer above
-	// MaxTimeout so a long-running command can finish naturally.
-	clientTimeout := TimeoutFor(req.TimeoutSeconds) + 30*time.Second
+	// could surface a TimedOut response — and its wait for a running
+	// software install (DefaultExecInstallWait), after which it
+	// answers that the shell is still installing. The 30s buffer
+	// covers the rest of the round trip.
+	clientTimeout := DefaultExecInstallWait + TimeoutFor(req.TimeoutSeconds) + 30*time.Second
 	cctx, cancel := context.WithTimeout(ctx, clientTimeout)
 	defer cancel()
 
@@ -114,35 +116,42 @@ func (s *SidecarShell) Exec(ctx context.Context, _ string, req agent.ShellReques
 		DurationMs: out.DurationMs,
 		TimedOut:   out.TimedOut,
 		Err:        out.Err,
+		Notice:     out.Notice,
 	}, nil
 }
 
 // Packages satisfies agent.ShellPackageLister: the apt packages the
-// agent-shell image has installed, from GET /v1/packages. An empty list
-// means the image records none. The call rides the same dial retry as
-// Exec, so a caller that must not wait out the startup grace bounds ctx.
-func (s *SidecarShell) Packages(ctx context.Context) ([]string, error) {
+// shell has (the image's and those installed at start), those still
+// being installed and those that failed, from GET /v1/packages. An empty
+// package list means the image records none. The call rides the same
+// dial retry as Exec, so a caller that must not wait out the startup
+// grace bounds ctx.
+func (s *SidecarShell) Packages(ctx context.Context) (agent.ShellSoftware, error) {
 	if s.SocketPath == "" {
-		return nil, errors.New("agentshell.SidecarShell: SocketPath is empty")
+		return agent.ShellSoftware{}, errors.New("agentshell.SidecarShell: SocketPath is empty")
 	}
 	hreq, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://agent-shell/v1/packages", nil)
 	if err != nil {
-		return nil, fmt.Errorf("agentshell: build request: %w", err)
+		return agent.ShellSoftware{}, fmt.Errorf("agentshell: build request: %w", err)
 	}
 	resp, err := s.connection().do(hreq)
 	if err != nil {
-		return nil, err
+		return agent.ShellSoftware{}, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode/100 != 2 {
 		errBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("agentshell: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(errBody)))
+		return agent.ShellSoftware{}, fmt.Errorf("agentshell: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(errBody)))
 	}
 	var out PackagesResponse
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, fmt.Errorf("agentshell: decode PackagesResponse: %w", err)
+		return agent.ShellSoftware{}, fmt.Errorf("agentshell: decode PackagesResponse: %w", err)
 	}
-	return out.Packages, nil
+	sw := agent.ShellSoftware{Packages: out.Packages, Installing: out.Installing}
+	for _, f := range out.Failed {
+		sw.Failed = append(sw.Failed, agent.ShellSoftwareFailure{Name: f.Name, Error: f.Error})
+	}
+	return sw, nil
 }
 
 // SyncSkills satisfies agent.ShellExecutor. Skills are surfaced to bash

@@ -84,6 +84,11 @@ type InboxView struct {
 	// reads a bare "I approved your request" and may go looking for
 	// a way to archive the agent itself.
 	Offboard *store.Offboard
+	// SoftwareInstall is non-nil on the same two message types when
+	// the approval is a propose_software_install proposal. The
+	// paraphrase names the packages and says the shell was restarted
+	// to install them.
+	SoftwareInstall *store.SoftwareInstall
 	// Assignment is non-nil on an assignment event: the assignment the
 	// wake is about. The UI links the bubble and the inbox card to
 	// /assignments/<id>.
@@ -104,20 +109,21 @@ type InboxView struct {
 // isn't relevant to the rendering they need.
 func BuildInboxView(d store.Message, relPath string) InboxView {
 	v := InboxView{
-		Type:           string(d.Type),
-		From:           d.From,
-		To:             d.To,
-		Title:          d.Title,
-		Body:           strings.TrimRight(d.Body, "\n"),
-		Approved:       d.Approved,
-		InReplyTo:      d.InReplyTo,
-		Path:           relPath,
-		Hire:           d.Hire,
-		RoleUpdate:     d.RoleUpdate,
-		HandbookUpdate: d.HandbookUpdate,
-		Offboard:       d.Offboard,
-		Assignment:     d.Assignment,
-		Attachments:    d.Attachments,
+		Type:            string(d.Type),
+		From:            d.From,
+		To:              d.To,
+		Title:           d.Title,
+		Body:            strings.TrimRight(d.Body, "\n"),
+		Approved:        d.Approved,
+		InReplyTo:       d.InReplyTo,
+		Path:            relPath,
+		Hire:            d.Hire,
+		RoleUpdate:      d.RoleUpdate,
+		HandbookUpdate:  d.HandbookUpdate,
+		Offboard:        d.Offboard,
+		SoftwareInstall: d.SoftwareInstall,
+		Assignment:      d.Assignment,
+		Attachments:     d.Attachments,
 	}
 	if d.Type == store.MsgCEOApprovalResponse {
 		if d.Approved != nil && *d.Approved {
@@ -295,6 +301,19 @@ func (v InboxView) decisionSpeech() string {
 					v.Offboard.Slug,
 				)
 			}
+			if v.SoftwareInstall != nil {
+				pkgs := softwareList(v.SoftwareInstall.Packages)
+				switch v.SoftwareInstall.Outcome {
+				case store.SoftwareAlreadyInstalled:
+					return fmt.Sprintf("%s is already in your shell.", pkgs)
+				case store.SoftwareSavedNotApplied:
+					return fmt.Sprintf("I approved installing %s. It is saved and installs the next time your shell starts.", pkgs)
+				}
+				return fmt.Sprintf(
+					"I approved installing %s. Your shell restarted to install it; commands you run wait until installation finishes. If something cannot be installed, the first command's output says which and why.",
+					pkgs,
+				)
+			}
 			return "I approved your request."
 		case "denied":
 			if v.Hire != nil {
@@ -313,12 +332,24 @@ func (v InboxView) decisionSpeech() string {
 			if v.Offboard != nil {
 				return fmt.Sprintf("I denied your proposal to let `%s` go. They remain an active agent.", v.Offboard.Slug)
 			}
+			if v.SoftwareInstall != nil {
+				return fmt.Sprintf("I denied installing %s. Your shell is unchanged.", softwareList(v.SoftwareInstall.Packages))
+			}
 			return "I denied your request."
 		}
 	case store.MsgCEONotificationAck:
 		return "I acknowledge your notification."
 	}
 	return ""
+}
+
+// softwareList joins package names as `a`, `b` for prose.
+func softwareList(pkgs []string) string {
+	quoted := make([]string, len(pkgs))
+	for i, p := range pkgs {
+		quoted[i] = "`" + p + "`"
+	}
+	return strings.Join(quoted, ", ")
 }
 
 // naturalLead composes the one-sentence preamble that introduces

@@ -123,6 +123,14 @@ type FSStore struct {
 	// mid-move agent twice.
 	orgMu sync.RWMutex
 
+	// agentYAMLMu serializes every read-modify-write of an agent.yaml
+	// (updateAgent, and the archive move, which takes it inside orgMu),
+	// so two setters landing together cannot drop each other's field.
+	agentYAMLMu sync.Mutex
+
+	// orgSoftwareMu serializes read-modify-writes of software.yaml.
+	orgSoftwareMu sync.Mutex
+
 	// assignmentsMu serializes every change to an assignment file. Ids and log
 	// sequence numbers are derived from the files, so two changes
 	// interleaved would allocate the same ones. Acquire via

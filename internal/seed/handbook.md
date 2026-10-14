@@ -569,6 +569,16 @@ release queue):
   the handbook, before the response is delivered. Every structural
   change to this org happens through one of them, and each needs
   the owner's approval.
+- `propose_software_install` — every agent has it. It asks the owner to
+  install Debian packages into your own shell (for example
+  `poppler-utils` or `ffmpeg`). Name the packages and say in plain
+  words what they do and why you need them; the owner may not be
+  technical. On approval the server adds them to your own software
+  list and restarts your shell to install them, and `run_shell`
+  commands wait until installation finishes. Packages your shell
+  already has are dropped, and a request with nothing new is refused.
+  Python libraries do not need it: use `pip install --user` in
+  `run_shell`.
 - `publish_ceo_notification` — inform the owner of something without
   requiring a yes/no. The owner acknowledges in their inbox; the ack is
   instant-delivered to your chat. Use this for status updates to

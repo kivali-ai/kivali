@@ -1,6 +1,7 @@
 // Proposal fixtures. The three Go golden files are what the server really emits; hire and handbook are
 // written against the generated types.
 import offboardJson from '../../../../internal/web/apitypes/testdata/proposal_offboard.json';
+import softwareJson from '../../../../internal/web/apitypes/testdata/proposal_software_install.json';
 import reorgJson from '../../../../internal/web/apitypes/testdata/proposal_reorg.json';
 import roleUpdateJson from '../../../../internal/web/apitypes/testdata/proposal_role_update.json';
 import type { Proposal } from '../../api/types.gen';
@@ -21,6 +22,7 @@ type Wire<T> = T extends string
 export const goRoleUpdate = (roleUpdateJson satisfies Wire<Proposal>) as Proposal;
 export const goReorg = (reorgJson satisfies Wire<Proposal>) as Proposal;
 export const goOffboard = (offboardJson satisfies Wire<Proposal>) as Proposal;
+export const goSoftware = (softwareJson satisfies Wire<Proposal>) as Proposal;
 
 export const hire: Proposal = {
   path: 'messages/2026-09-28/0002-chief-of-staff.md',
@@ -42,6 +44,7 @@ export const hire: Proposal = {
       effort: 'medium',
     },
     moves: [],
+    packages: [],
     facts: [
       { label: 'Reports to', value: 'Support lead' },
       { label: 'Model', value: 'Sonnet 4.6 · medium' },
@@ -71,7 +74,7 @@ export const handbook: Proposal = {
   proposed_at: '2026-09-27T09:00:00Z',
   reason_md: 'Two agents spent near $2,000 with only a manager sign-off.',
   attachments: [],
-  summary: { moves: [], facts: [{ label: 'Applies to', value: 'All 6 agents' }] },
+  summary: { moves: [], packages: [], facts: [{ label: 'Applies to', value: 'All 6 agents' }] },
   docs: [
     {
       key: 'handbook',

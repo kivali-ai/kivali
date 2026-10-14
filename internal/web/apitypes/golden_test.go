@@ -168,9 +168,10 @@ func goldenFixtures() map[string]any {
 		"agent_doc_empty_habits": AgentDoc{Kind: AgentDocKindHabits, Content: ""},
 		"agent_doc_put":          AgentDocPut{Content: "# Engineering lead\n\nOwns the release.\n"},
 		// The proposal page: fixtures in proposals_golden_test.go.
-		"proposal_role_update": goldenProposalRoleUpdate(),
-		"proposal_reorg":       goldenProposalReorg(),
-		"proposal_offboard":    goldenProposalOffboard(),
+		"proposal_role_update":      goldenProposalRoleUpdate(),
+		"proposal_reorg":            goldenProposalReorg(),
+		"proposal_offboard":         goldenProposalOffboard(),
+		"proposal_software_install": goldenProposalSoftwareInstall(),
 		// The Org page: fixtures in org_golden_test.go.
 		"org_usage":         goldenUsage(),
 		"org":               goldenOrg(),
@@ -183,6 +184,10 @@ func goldenFixtures() map[string]any {
 		"skill_downgrade":   goldenSkillDowngrade(),
 		"network":           Network{Hosts: []NetworkHost{{Host: "*.pypi.org"}, {Host: "api.anthropic.com"}}},
 		"network_add":       NetworkAdd{Host: "api.github.com"},
+		// Software lists: software_golden_test.go.
+		"org_software":   OrgSoftware{Packages: []string{"git", "jq"}},
+		"software_add":   SoftwareAdd{Packages: []string{"ffmpeg"}},
+		"agent_software": goldenAgentSoftware(),
 		// Sign-in and setup: setup_golden_test.go.
 		"login":                 Login{Org: MeOrg{Name: "Plainsong", HasLogo: true}, AuthReady: true, DevMode: false},
 		"setup":                 goldenSetup(),

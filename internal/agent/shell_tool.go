@@ -26,14 +26,30 @@ const ShellToolName = "run_shell"
 // description that disagrees with the image sends agents to plan
 // workflows around tools that are not there. With
 // no list to name, ShellTool states that instead of guessing.
-func ShellTool() provider.Tool { return ShellToolWithPackages(nil) }
+func ShellTool() provider.Tool { return ShellToolWithPackages(ShellSoftware{}) }
+
+// ShellSoftware is what an agent's shell reports about its software:
+// the packages it has, those still being installed, and those that
+// could not be installed.
+type ShellSoftware struct {
+	Packages   []string
+	Installing []string
+	Failed     []ShellSoftwareFailure
+}
+
+// ShellSoftwareFailure is a package the shell could not install, with
+// a short reason.
+type ShellSoftwareFailure struct {
+	Name  string
+	Error string
+}
 
 // ShellPackageLister is implemented by a ShellExecutor that can say
 // which packages its shell has installed: the agent-shell sidecar client.
 // Executors that cannot (tests, the in-process local shell) simply do
 // not implement it.
 type ShellPackageLister interface {
-	Packages(ctx context.Context) ([]string, error)
+	Packages(ctx context.Context) (ShellSoftware, error)
 }
 
 // shellPackagesTimeout bounds the package fetch. The fetch runs while
@@ -47,21 +63,21 @@ const shellPackagesTimeout = 20 * time.Second
 
 // ShellPackages asks exec for its installed packages, once, bounded by
 // shellPackagesTimeout; the caller's context otherwise passes through.
-// It returns nil when exec cannot say or the lookup fails or times out;
-// ShellToolWithPackages(nil) then words the toolkit paragraph
-// accordingly.
-func ShellPackages(ctx context.Context, exec ShellExecutor) []string {
+// It returns the zero ShellSoftware when exec cannot say or the lookup
+// fails or times out; ShellToolWithPackages then words the toolkit
+// paragraph accordingly.
+func ShellPackages(ctx context.Context, exec ShellExecutor) ShellSoftware {
 	l, ok := exec.(ShellPackageLister)
 	if !ok {
-		return nil
+		return ShellSoftware{}
 	}
 	ctx, cancel := context.WithTimeout(ctx, shellPackagesTimeout)
 	defer cancel()
-	pkgs, err := l.Packages(ctx)
+	sw, err := l.Packages(ctx)
 	if err != nil {
-		return nil
+		return ShellSoftware{}
 	}
-	return pkgs
+	return sw
 }
 
 // shellToolkitUnknown is the toolkit paragraph when the agent-shell's
@@ -78,32 +94,50 @@ var shellCommandNames = map[string]string{
 	"python3-pip": "pip3",
 }
 
-// shellToolkitText is the toolkit paragraph for a known package list.
-func shellToolkitText(pkgs []string) string {
-	if len(pkgs) == 0 {
-		return shellToolkitUnknown
-	}
-	names := make([]string, len(pkgs))
-	for i, p := range pkgs {
-		names[i] = p
-		if cmd, ok := shellCommandNames[p]; ok {
-			names[i] = p + " (" + cmd + ")"
+// shellToolkitText is the toolkit paragraph: the packages the shell
+// has, then those still being installed and those that failed.
+func shellToolkitText(sw ShellSoftware) string {
+	var b strings.Builder
+	if len(sw.Packages) == 0 {
+		b.WriteString(shellToolkitUnknown)
+	} else {
+		names := make([]string, len(sw.Packages))
+		for i, p := range sw.Packages {
+			names[i] = p
+			if cmd, ok := shellCommandNames[p]; ok {
+				names[i] = p + " (" + cmd + ")"
+			}
 		}
+		b.WriteString("The shell is bash. Installed packages: " + strings.Join(names, ", ") + ".")
 	}
-	return "The shell is bash. Preinstalled packages: " + strings.Join(names, ", ") + "."
+	if len(sw.Installing) > 0 {
+		b.WriteString(" Being installed now: " + strings.Join(sw.Installing, ", ") + "; commands wait until the installation finishes.")
+	}
+	if len(sw.Failed) > 0 {
+		parts := make([]string, len(sw.Failed))
+		for i, f := range sw.Failed {
+			parts[i] = f.Name + " (" + f.Error + ")"
+		}
+		b.WriteString(" Could not be installed: " + strings.Join(parts, "; ") + ".")
+	}
+	return b.String()
 }
 
+// ShellSoftwareText is run_shell's paragraph on getting software, for
+// an agent that has propose_software_install.
+const ShellSoftwareText = `SOFTWARE. System software (Debian packages) is installed by the owner; apt-get does not work in this shell. To get a package you need, call propose_software_install with the Debian package names, and say in plain words what the software is for. Once the owner approves, your shell restarts and installs it, and your commands wait until the installation finishes. For Python libraries use "pip install --user <pkg>" or a venv instead.`
+
 // ShellToolWithPackages is ShellTool with the toolkit paragraph naming
-// pkgs, the agent-shell's installed package list. An empty list gets the
-// fallback sentence.
-func ShellToolWithPackages(pkgs []string) provider.Tool {
+// the software sw reports. With no package list it gets the fallback
+// sentence.
+func ShellToolWithPackages(sw ShellSoftware) provider.Tool {
 	return provider.Tool{
 		Name: ShellToolName,
 		Description: `Run a shell command in your agent pod. The command runs against your /files/ workspace — the same filesystem you read with file_view and write with file_create, with the same privileges. Read /files/project/foo.csv with bash, write /files/artifacts/private/out.json with bash, and the next file_view sees it. Default cwd is /files/; pass a cwd to start somewhere else under that root.
 
 Read-only here, as for file_create: /files/project/, skills/, attachments/, past-chats/, episodes/, and the published trees (/files/artifacts/public/, /files/artifacts/shared/). Everything else under /files/ is your workspace. A command cannot publish by writing into the published trees; artifact_publish copies a workspace file or directory there.
 
-` + shellToolkitText(pkgs) + `
+` + shellToolkitText(sw) + `
 
 PERSISTENT ENVIRONMENT. Each run_shell call is a fresh bash subprocess, but $HOME is on a per-agent persistent disk and $BASH_ENV (~/.shell_env) is sourced before every command. So:
 
@@ -111,7 +145,7 @@ PERSISTENT ENVIRONMENT. Each run_shell call is a fresh bash subprocess, but $HOM
 - Edit ~/.shell_env to export env vars, prepend PATH, source pyenv init, etc. Changes stick.
 - Cwd does NOT persist between calls — each command starts at the cwd you pass (or /files/). If you want a series of commands in one place, prepend "cd <path> && " to each, or chain inside one command with && / newlines.
 
-Apt-get is NOT available — the container runs as a non-root user and cannot install system packages at runtime. For Python use "pip install --user <pkg>" or a venv. If you need a system package that is not installed, publish a ceo_notification describing what you need and why; an operator adds it by rebuilding the agent-shell image with the package named in the AGENT_SHELL_EXTRA_PACKAGES build arg.
+` + ShellSoftwareText + `
 
 Use this for: running tests, experimenting with libraries, document conversion, image processing, processing data, prototyping scripts, anything that wants a shell. Chain steps inside a single "command" with && / ; / newlines. stdout and stderr are each capped at 256KB with a truncation marker. Both are persisted in your chat history as a tool_result and replay on every subsequent turn until your chat rotates — treat each large output like spending tokens. For commands that produce a lot, redirect to a file in /files/artifacts/private/ and read just the section you need (grep -n, head, sed -n 'A,Bp') on a subsequent call. Default timeout is 60 seconds; raise it with "timeout_seconds" up to 600.
 

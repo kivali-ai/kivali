@@ -17,6 +17,7 @@ import { FilesSection } from './Files';
 import { NetworkSection } from './Lists';
 import { OrganizationSection } from './Organization';
 import { SkillsSection } from './Skills';
+import { SoftwareSection } from './Software';
 import { BackupSection } from './Backup';
 import { SECTIONS, sectionByKey } from './sections';
 import type { SectionInfo, SectionKey, SectionProps } from './sections';
@@ -31,6 +32,7 @@ const BODIES: Record<SectionKey, ComponentType<SectionProps>> = {
   files: FilesSection,
   skills: SkillsSection,
   network: NetworkSection,
+  software: SoftwareSection,
   backup: BackupSection,
   about: AboutSection,
 };

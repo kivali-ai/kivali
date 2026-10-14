@@ -5,8 +5,8 @@ import "time"
 // ---- /api/v1/proposals/{path...} ----
 
 // Proposal is GET /api/v1/proposals/{path...}: one proposal to change
-// the org (a hire, a role update, a handbook update, an offboard
-// or a reorg), everything its review page draws. Path is the request
+// the org (a hire, a role update, a handbook update, an offboard,
+// a reorg or a software install), everything its review page draws. Path is the request
 // message's path, the `path` that POST /api/v1/needs/approve and deny
 // take.
 type Proposal struct {
@@ -39,6 +39,9 @@ type ProposalSummary struct {
 	// kind.
 	Moves []ProposalMove `json:"moves"`
 	Facts []ProposalFact `json:"facts"`
+	// Packages is the Debian package names a software install adds to
+	// the agent's shell; empty for any other kind.
+	Packages []string `json:"packages"`
 }
 
 // ProposalAgent is the agent tile. For a hire it describes the agent

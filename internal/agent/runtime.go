@@ -39,6 +39,9 @@ type ShellResult struct {
 	DurationMs int64
 	TimedOut   bool
 	Err        string
+	// Notice is a message from the shell itself, shown to the model
+	// beside the output: which software it could not install.
+	Notice string
 }
 
 // ShellRequest is the runtime-facing payload for a single shell call.

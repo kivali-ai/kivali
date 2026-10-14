@@ -36,6 +36,57 @@ func TestDocumentRoundtrip(t *testing.T) {
 	}
 }
 
+func TestDocumentRoundtripSoftwareInstall(t *testing.T) {
+	s := mustStore(t)
+	d := Message{
+		Type:            MsgCEOApprovalRequest,
+		Title:           "Install software: PDF tools",
+		From:            "alice",
+		To:              Recipients{"ceo"},
+		Date:            time.Date(2026, 4, 18, 12, 0, 0, 0, time.UTC),
+		Body:            "I read PDFs.\n",
+		SoftwareInstall: &SoftwareInstall{Slug: "alice", Packages: []string{"ffmpeg", "poppler-utils"}},
+	}
+	path, err := s.WriteMessage(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.ReadMessage(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.SoftwareInstall == nil || got.SoftwareInstall.Slug != "alice" || strings.Join(got.SoftwareInstall.Packages, ",") != "ffmpeg,poppler-utils" {
+		t.Errorf("software_install = %+v", got.SoftwareInstall)
+	}
+	// Re-writing what was read keeps it.
+	again, err := s.WriteMessage(Message{Type: got.Type, Title: got.Title + " again", From: got.From, To: got.To, Date: got.Date, Body: got.Body, SoftwareInstall: got.SoftwareInstall})
+	if err != nil {
+		t.Fatal(err)
+	}
+	back, err := s.ReadMessage(again)
+	if err != nil || back.SoftwareInstall == nil || len(back.SoftwareInstall.Packages) != 2 {
+		t.Errorf("second round trip = %+v, %v", back.SoftwareInstall, err)
+	}
+	if back.SoftwareInstall.Outcome != "" {
+		t.Errorf("a request carries outcome %q", back.SoftwareInstall.Outcome)
+	}
+
+	// The approval response's outcome survives the round trip.
+	yes := true
+	resp, err := s.WriteMessage(Message{
+		Type: MsgCEOApprovalResponse, Title: "Approved: " + d.Title, From: "ceo", To: Recipients{"alice"},
+		Date: d.Date, Approved: &yes, InReplyTo: path,
+		SoftwareInstall: &SoftwareInstall{Slug: "alice", Packages: []string{"ffmpeg"}, Outcome: SoftwareSavedNotApplied},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := s.ReadMessage(resp)
+	if err != nil || r.SoftwareInstall == nil || r.SoftwareInstall.Outcome != SoftwareSavedNotApplied {
+		t.Errorf("response software_install = %+v, %v", r.SoftwareInstall, err)
+	}
+}
+
 func TestDocumentRoundtripWithAttachments(t *testing.T) {
 	s := mustStore(t)
 	d := Message{

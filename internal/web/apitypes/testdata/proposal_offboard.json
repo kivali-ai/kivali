@@ -37,7 +37,8 @@
         "label": "Its assignments move to",
         "value": "Engineering lead"
       }
-    ]
+    ],
+    "packages": []
   },
   "docs": [],
   "offboard_sentence": "Its files move to the archive. Nothing is deleted, and you can restore it later."
