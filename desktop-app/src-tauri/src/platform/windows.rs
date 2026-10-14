@@ -904,6 +904,86 @@ pub fn guard_frames(webview: &tauri::Webview, may_load: Box<dyn Fn(&str) -> bool
     }
 }
 
+/// How a top-level load that WebView2 completed ended: `None` for one
+/// cancelled (refused by the shell, or replaced by a newer navigation),
+/// which is no end of the load that follows; [`LoadEnd::Failed`] for one
+/// that could not reach the server; [`LoadEnd::Shown`] for anything else,
+/// the server's own answer or an error page about it (a certificate)
+/// that trying again would not change.
+fn load_end(
+    success: bool,
+    status: webview2_com::Microsoft::Web::WebView2::Win32::COREWEBVIEW2_WEB_ERROR_STATUS,
+) -> Option<super::LoadEnd> {
+    use webview2_com::Microsoft::Web::WebView2::Win32::{
+        COREWEBVIEW2_WEB_ERROR_STATUS_CANNOT_CONNECT, COREWEBVIEW2_WEB_ERROR_STATUS_CONNECTION_ABORTED,
+        COREWEBVIEW2_WEB_ERROR_STATUS_CONNECTION_RESET, COREWEBVIEW2_WEB_ERROR_STATUS_DISCONNECTED,
+        COREWEBVIEW2_WEB_ERROR_STATUS_HOST_NAME_NOT_RESOLVED, COREWEBVIEW2_WEB_ERROR_STATUS_OPERATION_CANCELED,
+        COREWEBVIEW2_WEB_ERROR_STATUS_SERVER_UNREACHABLE, COREWEBVIEW2_WEB_ERROR_STATUS_TIMEOUT,
+    };
+    if success {
+        return Some(super::LoadEnd::Shown);
+    }
+    if status == COREWEBVIEW2_WEB_ERROR_STATUS_OPERATION_CANCELED {
+        return None;
+    }
+    let unreached = [
+        COREWEBVIEW2_WEB_ERROR_STATUS_CANNOT_CONNECT,
+        COREWEBVIEW2_WEB_ERROR_STATUS_CONNECTION_ABORTED,
+        COREWEBVIEW2_WEB_ERROR_STATUS_CONNECTION_RESET,
+        COREWEBVIEW2_WEB_ERROR_STATUS_DISCONNECTED,
+        COREWEBVIEW2_WEB_ERROR_STATUS_HOST_NAME_NOT_RESOLVED,
+        COREWEBVIEW2_WEB_ERROR_STATUS_SERVER_UNREACHABLE,
+        COREWEBVIEW2_WEB_ERROR_STATUS_TIMEOUT,
+    ];
+    Some(if unreached.contains(&status) { super::LoadEnd::Failed } else { super::LoadEnd::Shown })
+}
+
+/// Reports how each top-level load of `webview` ends ([`load_end`]),
+/// from WebView2's `NavigationCompleted`, hooked on the controller Tauri
+/// exposes as [`guard_frames`] hooks frames, and returns whether it
+/// does: WebView2 finishes a failed load too, on its error page, so
+/// wry's `Finished` alone cannot tell. Called on the main thread, where
+/// Tauri runs `with_webview` in place. `ended` runs on the main thread;
+/// a load WebView2 says nothing readable about counts as shown.
+pub fn watch_loads(webview: &tauri::Webview, ended: Box<dyn Fn(super::LoadEnd) + Send>) -> bool {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    use webview2_com::Microsoft::Web::WebView2::Win32::COREWEBVIEW2_WEB_ERROR_STATUS;
+    use webview2_com::NavigationCompletedEventHandler;
+    let label = webview.label().to_string();
+    let watching = Arc::new(AtomicBool::new(false));
+    let watching_set = watching.clone();
+    let hooked = webview.with_webview(move |w| {
+        let handler = NavigationCompletedEventHandler::create(Box::new(move |_, args| {
+            let Some(args) = args else { return Ok(()) };
+            let mut success = windows::core::BOOL::default();
+            let mut status = COREWEBVIEW2_WEB_ERROR_STATUS::default();
+            // SAFETY: the arguments of the event being raised.
+            let read = unsafe { args.IsSuccess(&mut success).and_then(|()| args.WebErrorStatus(&mut status)) };
+            let end = match read {
+                Ok(()) => load_end(success.as_bool(), status),
+                Err(_) => Some(super::LoadEnd::Shown),
+            };
+            if let Some(end) = end {
+                ended(end);
+            }
+            Ok(())
+        }));
+        let mut token = 0i64;
+        // SAFETY: the live controller of this webview, on the main thread.
+        let added =
+            unsafe { w.controller().CoreWebView2().and_then(|c| c.add_NavigationCompleted(&handler, &mut token)) };
+        match added {
+            Ok(()) => watching_set.store(true, Ordering::SeqCst),
+            Err(e) => eprintln!("kivali: {label}: cannot watch its loads: {e}"),
+        }
+    });
+    if let Err(e) = hooked {
+        eprintln!("kivali: cannot watch a team web view's loads: {e}");
+    }
+    watching.load(Ordering::SeqCst)
+}
+
 /// The Windows counterparts of the Unix and macOS tests: the lock, the
 /// pipe (against a server this process makes, so the owner check sees
 /// this user), the timed reads, the process facts and the second-launch
@@ -917,6 +997,22 @@ mod tests {
     use super::*;
     use std::io::{Read, Write};
     use std::process::Stdio;
+
+    #[test]
+    fn load_ends() {
+        use super::super::LoadEnd;
+        use webview2_com::Microsoft::Web::WebView2::Win32::{
+            COREWEBVIEW2_WEB_ERROR_STATUS_CANNOT_CONNECT, COREWEBVIEW2_WEB_ERROR_STATUS_CERTIFICATE_EXPIRED,
+            COREWEBVIEW2_WEB_ERROR_STATUS_DISCONNECTED, COREWEBVIEW2_WEB_ERROR_STATUS_OPERATION_CANCELED,
+            COREWEBVIEW2_WEB_ERROR_STATUS_UNKNOWN,
+        };
+        assert_eq!(load_end(true, COREWEBVIEW2_WEB_ERROR_STATUS_UNKNOWN), Some(LoadEnd::Shown));
+        assert_eq!(load_end(false, COREWEBVIEW2_WEB_ERROR_STATUS_CANNOT_CONNECT), Some(LoadEnd::Failed));
+        assert_eq!(load_end(false, COREWEBVIEW2_WEB_ERROR_STATUS_DISCONNECTED), Some(LoadEnd::Failed));
+        assert_eq!(load_end(false, COREWEBVIEW2_WEB_ERROR_STATUS_OPERATION_CANCELED), None);
+        assert_eq!(load_end(false, COREWEBVIEW2_WEB_ERROR_STATUS_CERTIFICATE_EXPIRED), Some(LoadEnd::Shown));
+        assert_eq!(load_end(false, COREWEBVIEW2_WEB_ERROR_STATUS_UNKNOWN), Some(LoadEnd::Shown));
+    }
 
     #[test]
     fn one_instance_at_a_time() {

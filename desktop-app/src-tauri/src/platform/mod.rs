@@ -19,6 +19,7 @@
 //! | owner check | [`authenticate`] | LocalAuthentication (Touch ID or password) | Windows Hello, else a confirmation |
 //! | notifications | [`notify`], [`on_notification_click`] | UNUserNotificationCenter, clicks routed (the plugin outside an app bundle) | the notification plugin, clicks only bring Kivali forward |
 //! | team window frames | [`guard_frames`] | nothing: WKWebView asks wry about frames too | WebView2's `FrameNavigationStarting`, a refused frame cancelled |
+//! | team window loads | [`watch_loads`] | nothing: a failed load never finishes | WebView2's `NavigationCompleted`: a load that could not reach the server failed, though it finishes on an error page |
 //! | app menu | [`APP_MENU`] | the application menu | none |
 //! | window menu | [`WINDOW_MENU`], [`menu_shortcuts`], [`press_keys`] | none (the application menu) | a menu bar in each team window; WebView2's `AcceleratorKeyPressed` hands it the webview's keys |
 //! | wording | [`TRAY_AREA`] | menu bar | notification area |
@@ -71,8 +72,8 @@ use windows as shared;
 pub use os::{
     alert, app_is_active, authenticate, guard_frames, is_reopen, mark_app_menus, menu_bar_dark, menu_shortcuts,
     menus_dark, notify_running_instance, on_second_launch, open_terminal, parent_pid, peer_pid, press_keys,
-    reduce_motion, start_time, wait_exit, APP_MENU, INSTALL_EXITS, SECOND_LAUNCH_FOCUSES, TRAY_AREA, TRAY_ICONS,
-    WINDOW_MENU,
+    reduce_motion, start_time, wait_exit, watch_loads, APP_MENU, INSTALL_EXITS, SECOND_LAUNCH_FOCUSES, TRAY_AREA,
+    TRAY_ICONS, WINDOW_MENU,
 };
 pub use notify::{notify, on_notification_click, NotifyTarget};
 pub use shared::{
@@ -150,6 +151,17 @@ macro_rules! tray_set {
     };
 }
 use tray_set;
+
+/// How a page load of a team's web view ended, as [`watch_loads`]
+/// reports it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoadEnd {
+    /// A page shows: the server's answer, whatever its status.
+    Shown,
+    /// The server could not be reached (refused, reset, timed out, the
+    /// network down, the name not found).
+    Failed,
+}
 
 /// A native alert. `buttons` are in order: the first is
 /// the default (Return), one titled exactly "Cancel" answers Escape.
@@ -261,6 +273,7 @@ const _: () = {
     let _: fn(&tauri::Webview, Box<dyn Fn(&str) -> bool + Send>) = guard_frames;
     let _: fn(&tauri::Webview, Box<dyn Fn(&str) -> bool + Send>) = menu_shortcuts;
     let _: fn(&str) = press_keys;
+    let _: fn(&tauri::Webview, Box<dyn Fn(LoadEnd) + Send>) -> bool = watch_loads;
     let _: bool = APP_MENU || WINDOW_MENU || SECOND_LAUNCH_FOCUSES || INSTALL_EXITS;
     let _: &str = TRAY_AREA;
 };

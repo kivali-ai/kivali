@@ -122,6 +122,11 @@ pub fn app_is_active() -> bool {
 /// Nothing to add: WebKitGTK asks wry about frames as well as the page.
 pub fn guard_frames(_webview: &tauri::Webview, _may_load: Box<dyn Fn(&str) -> bool + Send>) {}
 
+/// Nothing to watch: wry's `Finished` is taken as a page shown.
+pub fn watch_loads(_webview: &tauri::Webview, _ended: Box<dyn Fn(super::LoadEnd) + Send>) -> bool {
+    false
+}
+
 /// No menus in the windows ([`WINDOW_MENU`]).
 pub fn menu_shortcuts(_webview: &tauri::Webview, _shortcut: Box<dyn Fn(&str) -> bool + Send>) {}
 
