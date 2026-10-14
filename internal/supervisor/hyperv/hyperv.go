@@ -104,17 +104,18 @@ var (
 // compactThreshold is the discarded space below which the data disk is
 // left as it is. A dynamic VHDX keeps the space of a block the guest
 // discarded (package vhdx) until it is compacted, which only the broker can
-// do, with the VM off; a compaction is a PowerShell process and a
-// privileged operation on every start or stop otherwise, and under
-// 1 GiB the file is within a few dozen 32 MiB blocks of its smallest,
-// which is within what partly filled blocks cost anyway (a fresh disk's
-// file is 1.7 GB larger than what the guest's df reports used).
-// Measured: Quick mode gave 2.5 GB back in about a second on an SSD.
+// do, with the VM off; a compaction is a broker request (a PowerShell
+// state query, then the compaction itself) and a privileged operation
+// on every start or stop otherwise, and under 1 GiB the file is within
+// a few dozen 32 MiB blocks of its smallest, which is within what partly
+// filled blocks cost anyway (a fresh disk's file is 1.7 GB larger than
+// what the guest's df reports used). Measured: Quick mode gave 2.5 GB
+// back in about a second on an SSD.
 const compactThreshold = 1 << 30
 
 // compactTimeout bounds one compaction as the client: longer than the
-// broker's own bound on the script (broker.OptimizeTimeout), so what
-// comes back is the broker's answer.
+// broker's own bound on the compaction (broker.OptimizeTimeout), so
+// what comes back is the broker's answer.
 const compactTimeout = broker.OptimizeTimeout + 5*time.Minute
 
 // compactHeartbeat is how often a compaction still running says so:
@@ -131,8 +132,9 @@ func (b Backend) clock() clock.Clock {
 // CompactDataDisk reads the data disk's block allocation table (a few
 // dozen KiB, whatever the disk's size) and, when the blocks the guest
 // discarded still hold compactThreshold or more of the file, has the
-// broker compact it (POST /v1/vhd/optimize: Optimize-VHD in Quick mode,
-// which drops those blocks and moves the rest down). It is called with
+// broker compact it (POST /v1/vhd/optimize: CompactVirtualDisk with no
+// zero scan, as Optimize-VHD's Quick mode, which drops those blocks and
+// moves the rest down). It is called with
 // the VM off, before a start and after a clean stop, and calls began
 // once a compaction is under way; while one runs it logs a line every
 // compactHeartbeat. The disk's content is the same before and after;

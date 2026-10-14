@@ -3,6 +3,7 @@
 package broker
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -14,6 +15,8 @@ import (
 	"unsafe"
 
 	"golang.org/x/sys/windows"
+
+	"github.com/kivali-ai/kivali/internal/supervisor/vhdx"
 )
 
 // The file rights the broker opens paths with. FILE_ADD_FILE is the
@@ -146,11 +149,65 @@ func (c *winCaller) Contents(p string) (io.ReaderAt, int64, error) {
 	if !ok {
 		return nil, 0, fmt.Errorf("%s is not pinned for reading", p)
 	}
-	var info windows.ByHandleFileInformation
-	if err := windows.GetFileInformationByHandle(h, &info); err != nil {
+	size, err := handleSize(h)
+	if err != nil {
 		return nil, 0, fmt.Errorf("stat %s: %w", p, err)
 	}
-	return handleReader{h}, int64(info.FileSizeHigh)<<32 | int64(info.FileSizeLow), nil
+	return handleReader{h}, size, nil
+}
+
+// handleSize is the size of the file open as h.
+func handleSize(h windows.Handle) (int64, error) {
+	var info windows.ByHandleFileInformation
+	if err := windows.GetFileInformationByHandle(h, &info); err != nil {
+		return 0, err
+	}
+	return int64(info.FileSizeHigh)<<32 | int64(info.FileSizeLow), nil
+}
+
+// CompactVHDX compacts the VHDX File pinned at p (Caller.CompactVHDX).
+// The virtual disk is opened as the caller, impersonated on a locked
+// thread, so the open is checked against the caller's token as every
+// other open of theirs is (the broker's own account need not be able to
+// open the file); it is opened without parents
+// (OPEN_VIRTUAL_DISK_FLAG_NO_PARENTS), its kind is checked through that
+// handle, and that handle compacts it. The sizes are read through the
+// pinning handle, before the open and after the virtual disk is closed.
+func (c *winCaller) CompactVHDX(ctx context.Context, p string) (before, after int64, err error) {
+	pin, ok := c.pinned[strings.ToLower(p)]
+	if !ok {
+		return 0, 0, fmt.Errorf("%s is not pinned", p)
+	}
+	if before, err = handleSize(pin); err != nil {
+		return 0, 0, fmt.Errorf("stat %s: %w", p, err)
+	}
+	if err := c.compact(ctx, p); err != nil {
+		return 0, 0, err
+	}
+	if after, err = handleSize(pin); err != nil {
+		return 0, 0, fmt.Errorf("stat %s: %w", p, err)
+	}
+	return before, after, nil
+}
+
+func (c *winCaller) compact(ctx context.Context, p string) error {
+	var vd windows.Handle
+	err := onCallerThread(c.pipe, func() error {
+		var e error
+		vd, e = openVHDXNoParents(p)
+		return e
+	})
+	if err != nil {
+		return fmt.Errorf("open %s as a VHDX: %w", p, err)
+	}
+	defer func() { _ = windows.CloseHandle(vd) }()
+	if err := checkDynamicVHDX(vd); err != nil {
+		return fmt.Errorf("%s: %w", p, err)
+	}
+	if err := compactVirtualDisk(ctx, vd); err != nil {
+		return fmt.Errorf("compact %s: %w", p, err)
+	}
+	return nil
 }
 
 // handleReader reads a file at an offset through a handle opened for
@@ -884,6 +941,28 @@ func deleteByHandle(h windows.Handle) error {
 	}
 	del := byte(1) // FILE_DISPOSITION_INFO: one BOOLEAN, DeleteFile
 	return windows.SetFileInformationByHandle(h, windows.FileDispositionInfo, &del, 1)
+}
+
+// ParentPath is the parent the locator of the differencing VHDX at p
+// names (Files.ParentPath), read through a handle the broker opens as
+// itself without following a link, sharing reading and writing with a
+// running VM that holds the disk. Only the locator's bytes are parsed;
+// the parent is never opened.
+func (winFiles) ParentPath(p string) (string, error) {
+	h, _, err := openPlainFile(p, windows.FILE_READ_DATA)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = windows.CloseHandle(h) }()
+	size, err := handleSize(h)
+	if err != nil {
+		return "", fmt.Errorf("stat %s: %w", p, err)
+	}
+	parent, err := vhdx.ParentPath(handleReader{h}, size)
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", p, err)
+	}
+	return parent, nil
 }
 
 // Canonical is p's final path as the broker sees it (no reparse point

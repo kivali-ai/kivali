@@ -3,17 +3,21 @@ package vhdx
 import (
 	"encoding/binary"
 	"hash/crc32"
+	"unicode/utf16"
 )
 
 // Spec describes a synthetic VHDX for tests: the parts of the format
-// Read reads, with the payload entries given as (state, file offset in
-// MiB) pairs.
+// Read and ParentPath read, with the payload entries given as (state,
+// file offset in MiB) pairs.
 type Spec struct {
 	BlockSize   uint32
 	SectorSize  uint32
 	VirtualSize uint64
 	Flags       uint32
 	Entries     [][2]uint64
+	// ParentLocator, when set, is written as the parent locator's
+	// key-value pairs, in order.
+	ParentLocator [][2]string
 	// BreakFirstRegionTable corrupts the first copy's checksum.
 	BreakFirstRegionTable bool
 }
@@ -28,7 +32,11 @@ func (v Spec) Bytes() []byte {
 
 	meta := b[metaOff:]
 	copy(meta, vhdxMetadataSignature)
-	binary.LittleEndian.PutUint16(meta[10:], 3)
+	items := 3
+	if v.ParentLocator != nil {
+		items = 4
+	}
+	binary.LittleEndian.PutUint16(meta[10:], uint16(items))
 	item := func(i int, id [16]byte, off uint32, data []byte) {
 		e := meta[vhdxMetadataHeaderSize+i*vhdxMetadataEntrySize:]
 		copy(e, id[:])
@@ -46,6 +54,9 @@ func (v Spec) Bytes() []byte {
 	ss := make([]byte, 4)
 	binary.LittleEndian.PutUint32(ss, v.SectorSize)
 	item(2, logicalSectorSizeID, 64<<10+16, ss)
+	if v.ParentLocator != nil {
+		item(3, parentLocatorID, 64<<10+32, parentLocator(v.ParentLocator))
+	}
 
 	chunkRatio := int((uint64(1) << 23) * uint64(v.SectorSize) / uint64(v.BlockSize))
 	bat := b[batOff:]
@@ -75,4 +86,32 @@ func (v Spec) Bytes() []byte {
 		binary.LittleEndian.PutUint32(table[4:], sum)
 	}
 	return b
+}
+
+// parentLocator lays out a VHDX parent locator: the header, the
+// entries, then each key and its value in UTF-16LE.
+func parentLocator(kv [][2]string) []byte {
+	enc := func(s string) []byte {
+		u := utf16.Encode([]rune(s))
+		out := make([]byte, 2*len(u))
+		for i, c := range u {
+			binary.LittleEndian.PutUint16(out[2*i:], c)
+		}
+		return out
+	}
+	head := make([]byte, vhdxParentLocatorHeaderSize+len(kv)*vhdxParentLocatorEntrySize)
+	copy(head, parentLocatorTypeVHDX[:])
+	binary.LittleEndian.PutUint16(head[18:], uint16(len(kv)))
+	var strs []byte
+	for i, p := range kv {
+		e := head[vhdxParentLocatorHeaderSize+i*vhdxParentLocatorEntrySize:]
+		k, v := enc(p[0]), enc(p[1])
+		binary.LittleEndian.PutUint32(e, uint32(len(head)+len(strs)))
+		binary.LittleEndian.PutUint16(e[8:], uint16(len(k)))
+		strs = append(strs, k...)
+		binary.LittleEndian.PutUint32(e[4:], uint32(len(head)+len(strs)))
+		binary.LittleEndian.PutUint16(e[10:], uint16(len(v)))
+		strs = append(strs, v...)
+	}
+	return append(head, strs...)
 }

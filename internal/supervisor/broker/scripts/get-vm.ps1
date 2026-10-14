@@ -1,8 +1,11 @@
 # get-vm: the VM named $a.name as the broker's policy needs to see it,
 # or {"exists": false}. $a.name is checked (kivali- and 8 hex digits)
 # before this runs, so it holds no wildcard. With $a.state_only (a
-# boolean), only what a state query needs: no cmdlet per device and no
-# Get-VHD per disk, since the backend polls this while the VM runs.
+# boolean), only what a state query needs: no cmdlet per device, since
+# the backend polls this while the VM runs. A disk is reported by where
+# it is attached and its path only: the data disk's bytes are the
+# caller's, and a cmdlet that reads a disk (Get-VHD) opens the parents
+# its locator names, so the broker reads what a disk file says itself.
 $vm = Get-VM -Name $a.name -ErrorAction SilentlyContinue
 if (-not $vm) {
     @{ exists = $false } | ConvertTo-Json -Compress
@@ -19,11 +22,7 @@ if ($a.state_only -eq $true) {
     return
 }
 $disks = @(Get-VMHardDiskDrive -VM $vm | ForEach-Object {
-    $parent = ''
-    if ($_.Path) {
-        try { $parent = [string](Get-VHD -Path $_.Path).ParentPath } catch { $parent = '' }
-    }
-    @{ controller = [int]$_.ControllerNumber; location = [int]$_.ControllerLocation; path = [string]$_.Path; parent = $parent }
+    @{ controller = [int]$_.ControllerNumber; location = [int]$_.ControllerLocation; path = [string]$_.Path }
 })
 $mem = Get-VMMemory -VM $vm
 $com = Get-VMComPort -VM $vm -Number 1

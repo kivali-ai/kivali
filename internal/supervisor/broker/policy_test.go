@@ -39,6 +39,11 @@ type fakeCaller struct {
 	// renameErr is Rename's answer (nil: the move happened).
 	renameErr error
 	renames   []rename
+	// compacted lists CompactVHDX's paths; compactSizes and compactErr
+	// are its answer.
+	compacted    []string
+	compactSizes [2]int64
+	compactErr   error
 }
 
 type rename struct{ src, dst string }
@@ -90,6 +95,17 @@ func (c *fakeCaller) Rename(src, dst string) error {
 	return c.renameErr
 }
 
+func (c *fakeCaller) CompactVHDX(_ context.Context, p string) (int64, int64, error) {
+	if e, ok := c.files[p]; !ok || !e.write {
+		return 0, 0, errors.New("not pinned for writing")
+	}
+	c.compacted = append(c.compacted, p)
+	if c.compactErr != nil {
+		return 0, 0, c.compactErr
+	}
+	return c.compactSizes[0], c.compactSizes[1], nil
+}
+
 func (c *fakeCaller) Close() error { return nil }
 
 // fakeFiles is the broker's own file work, recorded: the VM directories
@@ -99,6 +115,9 @@ func (c *fakeCaller) Close() error { return nil }
 type fakeFiles struct {
 	runner *fakeRunner
 	canon  map[string]string
+	// parents is what ParentPath reads from each differencing disk; a
+	// path it does not list fails to read.
+	parents map[string]string
 
 	mu        sync.Mutex
 	vmDirs    []string // VMDir's keys
@@ -147,6 +166,13 @@ func (f *fakeFiles) Canonical(p string) (string, error) {
 		return c, nil
 	}
 	return p, nil
+}
+
+func (f *fakeFiles) ParentPath(p string) (string, error) {
+	if parent, ok := f.parents[p]; ok {
+		return parent, nil
+	}
+	return "", errors.New("not a differencing disk")
 }
 
 func (f *fakeFiles) GrantFile(p, owner string) (FileID, error) {
@@ -255,7 +281,7 @@ func newHarness(t *testing.T) *harness {
 	h := &harness{
 		t:      t,
 		runner: runner,
-		files:  &fakeFiles{runner: runner, canon: map[string]string{}},
+		files:  &fakeFiles{runner: runner, canon: map[string]string{}, parents: map[string]string{}},
 		caller: &fakeCaller{sid: testSID, dirs: map[string]bool{}, files: map[string]fakeEntry{}},
 	}
 	s := &Server{
@@ -298,16 +324,18 @@ func (h *harness) allowCreate(r VMRequest) {
 }
 
 // ownVM makes get-vm report a VM owned by the caller in the given state,
-// with the disks the backend attaches.
+// with the disks the backend attaches, the child's parent being the
+// release's root.vhdx.
 func (h *harness) ownVM(state string) *vmInfo {
 	key := host.DirKey(testCfg)
+	h.files.parents[winJoin(vmDirFor(testCfg), ChildDiskName)] = `C:\Program Files\Kivali\vm\root.vhdx`
 	vm := &vmInfo{
 		Exists: true, ID: "VMID-1", State: state, Notes: OwnerNotes(testSID),
 		Path: vmDirFor(testCfg),
 		CPUs: 4, MemoryStartupMB: 4096, MemoryMaxMB: 4096, DynamicMemory: true,
 		MAC: MAC(key), Switch: DefaultSwitch, ComPipe: ComPipe(key),
 		Disks: []vmDisk{
-			{Controller: 0, Location: 0, Path: winJoin(vmDirFor(testCfg), ChildDiskName), Parent: `C:\Program Files\Kivali\vm\root.vhdx`},
+			{Controller: 0, Location: 0, Path: winJoin(vmDirFor(testCfg), ChildDiskName)},
 			{Controller: 0, Location: 1, Path: winJoin(testCfg, DataDiskName)},
 		},
 	}
@@ -471,6 +499,41 @@ func TestEnsureRunningRefusesStructuralChange(t *testing.T) {
 		t.Fatalf("err = %v (status %d)", err, statusOf(err))
 	}
 }
+
+// A running VM's root disk is compared by the parent the broker reads
+// from its own differencing child (Files.ParentPath): another parent,
+// or one that cannot be read, is a change of the root disk.
+func TestEnsureRunningComparesTheChildsParent(t *testing.T) {
+	child := winJoin(vmDirFor(testCfg), ChildDiskName)
+	for _, tc := range []struct {
+		what   string
+		parent *string
+		change bool
+	}{
+		{"the same parent, in another case", ptr(`c:\program files\kivali\vm\ROOT.vhdx`), false},
+		{"another parent", ptr(`C:\Users\Public\root.vhdx`), true},
+		{"unreadable", nil, true},
+	} {
+		h := newHarness(t)
+		r := h.req()
+		h.allowCreate(r)
+		h.ownVM(StateRunning)
+		delete(h.files.parents, child)
+		if tc.parent != nil {
+			h.files.parents[child] = *tc.parent
+		}
+		_, err := h.client.EnsureVM(context.Background(), r)
+		if tc.change {
+			if statusOf(err) != http.StatusConflict || !strings.Contains(err.Error(), "root disk") {
+				t.Errorf("%s: err = %v (status %d)", tc.what, err, statusOf(err))
+			}
+		} else if err != nil {
+			t.Errorf("%s: %v", tc.what, err)
+		}
+	}
+}
+
+func ptr(s string) *string { return &s }
 
 func TestOwnershipRefused(t *testing.T) {
 	h := newHarness(t)

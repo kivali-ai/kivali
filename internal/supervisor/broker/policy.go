@@ -47,6 +47,13 @@ type Caller interface {
 	// in the broker's VM directory, reaches the caller's own directory,
 	// where the broker, which is no administrator, cannot write.
 	Rename(src, dst string) error
+	// CompactVHDX compacts the dynamic VHDX that File pinned for
+	// AccessWrite at p (its canonical path) and gives the file's size
+	// before and after: the virtual disk is opened as the caller and
+	// without opening any parent its locator names, refused through
+	// that handle unless it is a dynamic VHDX (an error wrapping
+	// errNotDynamic), and compacted through it, until ctx ends.
+	CompactVHDX(ctx context.Context, p string) (before, after int64, err error)
 	// Close releases what the checks hold open.
 	Close() error
 }
@@ -89,6 +96,10 @@ type Files interface {
 	// Canonical is p's final path as the broker sees it, refusing a
 	// reparse point along it.
 	Canonical(p string) (string, error)
+	// ParentPath is the parent the locator of the differencing VHDX at
+	// p, a file in a VM directory, names: its bytes parsed through a
+	// handle opened without following a link, the parent never opened.
+	ParentPath(p string) (string, error)
 	// GrantFile grants callerSID full control of p, a file the broker
 	// made in a VM directory, through a handle opened on it without
 	// following a link, and returns its identity. The caller then moves
@@ -147,12 +158,12 @@ type Server struct {
 	locks map[string]*sync.Mutex
 }
 
-// OptimizeTimeout bounds a compaction. Quick mode moves the blocks
-// after a hole down into it, so its cost is the data moved: measured at
-// about a second for 2.5 GB on an SSD, which puts the whole of a 64 GiB
-// disk at a minute or two there and at some minutes on a slow disk. The
-// bound is generous because the runner kills a script that outlives it,
-// and a compaction cut short is left to the VHDX's own log to tidy.
+// OptimizeTimeout bounds a compaction. It moves the blocks after a
+// hole down into it, so its cost is the data moved: measured at about a
+// second for 2.5 GB on an SSD, which puts the whole of a 64 GiB disk at
+// a minute or two there and at some minutes on a slow disk. The bound is
+// generous because the compaction is cancelled past it, and a
+// compaction cut short is left to the VHDX's own log to tidy.
 const OptimizeTimeout = 20 * time.Minute
 
 // How long each script may run.
@@ -163,17 +174,16 @@ var scriptTimeouts = map[string]time.Duration{
 	scriptStopVM:      6 * time.Minute, // a graceful stop waits for the guest
 	scriptRemoveVM:    3 * time.Minute,
 	scriptNewVHD:      3 * time.Minute,
-	scriptOptimizeVHD: OptimizeTimeout,
 	scriptSetupStatus: time.Minute,
 	scriptSetupApply:  time.Minute,
 }
 
 // getVMArgs is get-vm's input. StateOnly asks for the VM's id, state,
 // notes (its owner) and assigned memory and nothing else: the devices
-// (each disk with a Get-VHD, the memory settings, the adapter, the COM
-// port) cost a cmdlet each, and only a configuration, a start and a
-// removal check them, while the backend polls a plain state query for
-// as long as the VM runs.
+// (the disks, the memory settings, the adapter, the COM port) cost a
+// cmdlet each, and only a configuration, a start and a removal check
+// them, while the backend polls a plain state query for as long as the
+// VM runs.
 type getVMArgs struct {
 	Name      string `json:"name"`
 	StateOnly bool   `json:"state_only"`
@@ -198,11 +208,14 @@ type vmInfo struct {
 	Disks            []vmDisk `json:"disks"`
 }
 
+// vmDisk is an attached disk as get-vm reports it: where it is attached
+// and its file. What a disk's file says (its parent) is read by the
+// broker itself (Files.ParentPath), never by a cmdlet, which would open
+// the parents a file's locator names.
 type vmDisk struct {
 	Controller int    `json:"controller"`
 	Location   int    `json:"location"`
 	Path       string `json:"path"`
-	Parent     string `json:"parent"`
 }
 
 func (v vmInfo) disk(location int) (vmDisk, bool) {
@@ -236,11 +249,12 @@ const (
 	changeCPUs   = "CPUs"
 )
 
-// diff names what configuring want would change on cur.
-func diff(cur vmInfo, want configureArgs) []string {
+// diff names what configuring want would change on cur, whose root
+// disk's parent is rootParent ("" when it could not be read).
+func diff(cur vmInfo, want configureArgs, rootParent string) []string {
 	var changes []string
 	root, ok := cur.disk(0)
-	if !ok || !strings.EqualFold(root.Path, want.Child) || !strings.EqualFold(root.Parent, want.Root) {
+	if !ok || !strings.EqualFold(root.Path, want.Child) || !strings.EqualFold(rootParent, want.Root) {
 		changes = append(changes, "root disk")
 	}
 	if data, ok := cur.disk(1); !ok || !strings.EqualFold(data.Path, want.Data) {
@@ -497,7 +511,15 @@ func (s *Server) ensureVM(r *http.Request, c Caller) (any, error) {
 		Notes:       OwnerNotes(c.SID()),
 	}
 	if running {
-		changes := diff(cur, args)
+		// The running child's parent, read from the broker's own file in
+		// its VM directory, which the caller cannot write.
+		rootParent := ""
+		if d, ok := cur.disk(0); ok && strings.EqualFold(d.Path, args.Child) {
+			if rootParent, err = s.Files.ParentPath(args.Child); err != nil {
+				s.logf("%s: the parent of %s: %v", req.Name, args.Child, err)
+			}
+		}
+		changes := diff(cur, args, rootParent)
 		var other []string
 		for _, ch := range changes {
 			if ch != changeMemory && ch != changeCPUs {
@@ -790,17 +812,19 @@ func (s *Server) newVHD(r *http.Request, c Caller) (any, error) {
 // compacted while the VM of its directory is off. The disk must be
 // data.vhdx directly inside a directory the caller can write, a regular
 // file the caller can write, pinned by the caller's handle for the
-// request (Caller.File), so Optimize-VHD, which runs as the broker and
-// follows a link at the path it is given, runs on the file that was
+// request (Caller.File), so the compaction runs on the file that was
 // checked. The VM of that directory, if it exists, must be the caller's
-// and Off: Hyper-V refuses to compact a disk a running VM holds, and a
-// VM cannot start on a disk being compacted, so the VM's lock is held
+// and Off: a disk a running VM holds cannot be compacted, and a VM
+// cannot start on a disk being compacted, so the VM's lock is held
 // meanwhile and a start of it waits rather than fails. The caller writes
-// the file's bytes, and Optimize-VHD, opening a differencing disk, would
-// open the parent its locator names (a share on another host as easily
-// as a local file) with the broker's rights; so before the script runs
-// the broker reads the file's metadata itself, through the pinning
-// handle, and refuses anything but a dynamic VHDX with no parent.
+// the file's bytes, and opening a differencing disk would open the
+// parent its locator names (a share on another host as easily as a
+// local file); so the broker reads the file's metadata through the
+// pinning handle and refuses anything but a dynamic VHDX with no parent,
+// and then compacts it through the virtual disk API itself
+// (Caller.CompactVHDX): opened as the caller and without parents, its
+// kind checked again on that very handle, and compacted through it, so
+// no parent is opened whatever the file says by then.
 func (s *Server) optimizeVHD(r *http.Request, c Caller) (any, error) {
 	var req OptimizeRequest
 	if err := decode(r, &req); err != nil {
@@ -834,14 +858,16 @@ func (s *Server) optimizeVHD(r *http.Request, c Caller) (any, error) {
 	if err := dynamicNoParent(c, p); err != nil {
 		return nil, refused("the data disk", err)
 	}
-	var res OptimizeResult
-	err = s.run(scriptOptimizeVHD, struct {
-		Path string `json:"path"`
-	}{p}, &res)
-	if err != nil {
-		return nil, err
+	ctx, cancel := context.WithTimeout(context.Background(), OptimizeTimeout)
+	defer cancel()
+	before, after, err := c.CompactVHDX(ctx, p)
+	if errors.Is(err, errNotDynamic) {
+		return nil, refused("the data disk", err)
 	}
-	return res, nil
+	if err != nil {
+		return nil, answer(http.StatusInternalServerError, "compact the data disk: %v", err)
+	}
+	return OptimizeResult{SizeBefore: before, SizeAfter: after}, nil
 }
 
 // dynamicNoParent reads the VHDX the caller pinned at p (its region

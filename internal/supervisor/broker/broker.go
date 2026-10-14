@@ -123,8 +123,8 @@ type VHDResult struct {
 // compact (<config>\data.vhdx, a file the caller can write in a
 // directory the caller can write), while the VM of that directory is
 // off. The broker gives back the space of the blocks the guest
-// discarded (Optimize-VHD in Quick mode); the disk's content is the
-// same before and after.
+// discarded (CompactVirtualDisk with no zero scan, as Optimize-VHD's
+// Quick mode); the disk's content is the same before and after.
 type OptimizeRequest struct {
 	Path string `json:"path"`
 }
@@ -137,15 +137,11 @@ type OptimizeResult struct {
 }
 
 // Validate checks an optimize request's form: an absolute local path
-// named data.vhdx, with no [ or ] (localAbs refuses * and ?):
-// Optimize-VHD takes the path as -Path and has no -LiteralPath, so the
-// path holds no character a wildcard pattern gives a meaning to.
+// named data.vhdx. The path reaches no cmdlet, so [ and ] are plain
+// characters in it.
 func (r OptimizeRequest) Validate() error {
 	if err := localAbs("path", r.Path); err != nil {
 		return err
-	}
-	if strings.ContainsAny(r.Path, "[]") {
-		return fmt.Errorf("path %q has a wildcard character", r.Path)
 	}
 	if !strings.EqualFold(winBase(r.Path), DataDiskName) {
 		return fmt.Errorf("path %q: the broker compacts only %s", r.Path, DataDiskName)
