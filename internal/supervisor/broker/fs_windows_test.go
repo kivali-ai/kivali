@@ -4,6 +4,7 @@ package broker
 
 import (
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -241,5 +242,36 @@ func TestGrantRenamePlaced(t *testing.T) {
 	mustExist(t, filepath.Join(target, "keep.txt"))
 	if _, err := os.Lstat(filepath.Join(target, DataDiskName)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("the disk went through the junction (%v)", err)
+	}
+}
+
+// Contents reads a file File pinned, through the pinning handle, at any
+// offset, and nothing File did not pin.
+func TestContentsReadsThePinnedFile(t *testing.T) {
+	server, _ := callerPipe(t)
+	c := &winCaller{pipe: windows.Handle(server.Fd()), sid: ourSID(t)}
+	defer func() { _ = c.Close() }()
+	base := canonical(t, t.TempDir())
+	p := filepath.Join(base, DataDiskName)
+	write(t, p, "0123456789")
+	canon, err := c.File(p, AccessWrite)
+	if err != nil {
+		t.Fatalf("File: %v", err)
+	}
+	f, size, err := c.Contents(canon)
+	if err != nil || size != 10 {
+		t.Fatalf("Contents: size %d, %v", size, err)
+	}
+	b := make([]byte, 4)
+	if n, err := f.ReadAt(b, 3); n != 4 || err != nil || string(b) != "3456" {
+		t.Fatalf("ReadAt(3) = %d %q, %v", n, b, err)
+	}
+	if n, err := f.ReadAt(b, 8); n != 2 || !errors.Is(err, io.EOF) {
+		t.Fatalf("ReadAt(8) = %d, %v", n, err)
+	}
+	other := filepath.Join(base, "other.vhdx")
+	write(t, other, "x")
+	if _, _, err := c.Contents(other); err == nil {
+		t.Fatal("Contents read a file File did not pin")
 	}
 }

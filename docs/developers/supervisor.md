@@ -28,7 +28,8 @@ backend and the real host of the OS running the tests),
 `internal/supervisor/hyperv` (windows: the Hyper-V backend) and
 `internal/supervisor/broker` (windows: the privileged Hyper-V broker it
 drives; its wire types, client and policy compile everywhere),
-`internal/supervisor/guestapi` (the guest agent protocol: types, client,
+`internal/supervisor/vhdx` (reading a VHDX's metadata and block table,
+for both), `internal/supervisor/guestapi` (the guest agent protocol: types, client,
 server), and `cmd/kivali-guest` (the guest binary, linux only).
 
 ## Platform boundary
@@ -360,15 +361,18 @@ vm/README.md, "What the guest init does"): Hyper-V reuses such a block
 for later writes and drops the unmapped blocks at the end of the file
 when the VM closes the disk, but one in the middle keeps its space until
 the file is compacted. With the VM off, before a start and after a clean
-`down` (never inside an upgrade or a destroy), the backend reads the
-disk's block allocation table itself (`hyperv/vhdx.go`: the region
+`down` (never inside an upgrade or a destroy, nor after the bounded stop
+of `serve`'s exit on a signal, when the host is logging off or shutting
+down and would kill a compaction partway), the backend reads the
+disk's block allocation table itself (package `vhdx`: the region
 table, the metadata and the table, a few dozen KiB whatever the disk's
 size) and, when the discarded blocks hold 1 GiB or more, asks the
 broker to compact the file (`POST /v1/vhd/optimize`: `Optimize-VHD
 -Mode Quick`, which drops those blocks and moves the rest down; it
 mounts nothing and needs no partition table). `up` runs it before the
-boot because a VM stopped without a `down` (a host reboot shuts the
-guest down through the integration service) has had no chance since
+boot, in the `making-room` stage, because a VM stopped without a
+`down` (a host reboot shuts the guest down through the integration
+service, and `serve`'s exit does not compact) has had no chance since
 its last trim. A failure is logged and the start or stop goes on; a
 compaction that takes long says so every 10 s, like a slow stop. The
 threshold is where a compaction stops being worth a privileged
@@ -501,7 +505,14 @@ caller. `POST /v1/vhd/optimize` opens `<dir>\data.vhdx` as the caller
 for writing and keeps it pinned for the request, requires the VM of
 that directory's key, if there is one, to be the caller's and Off, and
 holds that VM's lock while `Optimize-VHD` runs, so a start of it waits
-rather than races the compaction. Inputs reach PowerShell
+rather than races the compaction. The caller writes the file's bytes,
+and `Optimize-VHD` on a differencing disk would open the parent its
+locator names (a share on another host as easily as a local file) as
+the broker; so before the script runs the broker reads the file's
+metadata itself, through the pinning handle (package `vhdx`, never the
+parent locator), and refuses anything but a dynamic VHDX with no
+parent. The path holds no `[`, `]`, `*` or `?`, since the Hyper-V
+cmdlets take `-Path` and no `-LiteralPath`. Inputs reach PowerShell
 only as fields of a JSON object on the stdin of a fixed, embedded
 script, validated (name, MAC, sizes, counts) before anything runs; the
 runner is an interface, so the policy is unit-tested with a fake and the
@@ -600,7 +611,7 @@ without parsing lines:
 | Operation | Stages, in order |
 | --- | --- |
 | `up`, fresh disk | `making-room` (creating the disk, its first boot to READY), `starting` (guest agent, forward), `setting-up` (install, rollout, `/readyz`) |
-| `up`, installed | `starting` (boot to READY, guest agent, forward), `setting-up` (rollout, `/readyz`) |
+| `up`, installed | `making-room` (compacting the data disk, only when the Windows backend compacts it before the boot), `starting` (boot to READY, guest agent, forward), `setting-up` (rollout, `/readyz`) |
 | `install`, `address` | `setting-up` |
 | `upgrade` | `downloading` (preflight, fetch, verify, import), `snapshot` (journal, quiesce, stop, snapshot), `installing` (boot, chart, HelmChart rewrite), `starting` (rollout, `/readyz`); on failure `rolling-back` |
 | `down` | `pausing` |

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The data disk is compacted with the VM off: after a clean down, and
@@ -28,6 +29,34 @@ func TestDataDiskCompactedAfterDownAndBeforeUp(t *testing.T) {
 	c = h.vm.compacted()
 	if len(c) != 2 || c[1].path != h.dataPath() || !c[1].allStopped || c[1].boots != 1 {
 		t.Fatalf("after the second up: %+v, want a compaction before its boot", c)
+	}
+}
+
+// A bounded stop (serve's exit as the host logs off or shuts down)
+// compacts nothing after it, though the stop was clean: a compaction
+// would be killed partway with the host. The next up compacts the disk
+// before its boot; an unbounded down still compacts after the stop.
+func TestBoundedShutdownDoesNotCompact(t *testing.T) {
+	h := newHarness(t)
+	h.mustUp(UpOptions{Install: owner})
+	if err := h.sup.Shutdown(time.Hour, h.logf()); err != nil {
+		t.Fatalf("shutdown: %v", err)
+	}
+	if m, _ := h.sup.current(); m != nil {
+		t.Fatal("the VM is still running after the shutdown")
+	}
+	if c := h.vm.compacted(); len(c) != 0 {
+		t.Fatalf("compactions after a bounded shutdown: %+v", c)
+	}
+	h.mustUp(UpOptions{})
+	if c := h.vm.compacted(); len(c) != 1 || c[0].boots != 1 {
+		t.Fatalf("after the next up: %+v, want a compaction before its boot", c)
+	}
+	if err := h.sup.Down(context.Background(), h.logf()); err != nil {
+		t.Fatal(err)
+	}
+	if c := h.vm.compacted(); len(c) != 2 || !c[1].allStopped {
+		t.Fatalf("after an unbounded down: %+v, want a compaction after the stop", c)
 	}
 }
 

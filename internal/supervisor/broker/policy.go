@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/kivali-ai/kivali/internal/supervisor/host"
+	"github.com/kivali-ai/kivali/internal/supervisor/vhdx"
 )
 
 // Caller is the pipe client of one request, as the broker sees it
@@ -33,6 +34,11 @@ type Caller interface {
 	WritableDir(dir string) (string, error)
 	// File opens an existing regular file with one link, for access.
 	File(p string, access Access) (string, error)
+	// Contents reads the file File pinned for AccessRead or AccessWrite
+	// at p (the canonical path File returned) through the pinning
+	// handle, so what is read is the file that was checked, and gives
+	// its size.
+	Contents(p string) (io.ReaderAt, int64, error)
 	// Absent succeeds only if nothing, not even a dangling link, is at p
 	// as the caller sees it; ErrExists if something is.
 	Absent(p string) error
@@ -789,7 +795,12 @@ func (s *Server) newVHD(r *http.Request, c Caller) (any, error) {
 // checked. The VM of that directory, if it exists, must be the caller's
 // and Off: Hyper-V refuses to compact a disk a running VM holds, and a
 // VM cannot start on a disk being compacted, so the VM's lock is held
-// meanwhile and a start of it waits rather than fails.
+// meanwhile and a start of it waits rather than fails. The caller writes
+// the file's bytes, and Optimize-VHD, opening a differencing disk, would
+// open the parent its locator names (a share on another host as easily
+// as a local file) with the broker's rights; so before the script runs
+// the broker reads the file's metadata itself, through the pinning
+// handle, and refuses anything but a dynamic VHDX with no parent.
 func (s *Server) optimizeVHD(r *http.Request, c Caller) (any, error) {
 	var req OptimizeRequest
 	if err := decode(r, &req); err != nil {
@@ -820,6 +831,9 @@ func (s *Server) optimizeVHD(r *http.Request, c Caller) (any, error) {
 			return nil, answer(http.StatusConflict, "%s is %s; its data disk is compacted only while it is off", name, cur.State)
 		}
 	}
+	if err := dynamicNoParent(c, p); err != nil {
+		return nil, refused("the data disk", err)
+	}
 	var res OptimizeResult
 	err = s.run(scriptOptimizeVHD, struct {
 		Path string `json:"path"`
@@ -828,6 +842,25 @@ func (s *Server) optimizeVHD(r *http.Request, c Caller) (any, error) {
 		return nil, err
 	}
 	return res, nil
+}
+
+// dynamicNoParent reads the VHDX the caller pinned at p (its region
+// table, metadata and block table; never a parent locator) and refuses
+// it unless it is a dynamic disk: a differencing disk, a fixed one or a
+// file that is no VHDX is not the data disk the backend made.
+func dynamicNoParent(c Caller, p string) error {
+	f, size, err := c.Contents(p)
+	if err != nil {
+		return err
+	}
+	l, err := vhdx.Read(f, size)
+	if err != nil {
+		return fmt.Errorf("%s: %w", p, err)
+	}
+	if l.Fixed {
+		return fmt.Errorf("%s: a fixed disk, not a dynamic one", p)
+	}
+	return nil
 }
 
 func (s *Server) setupStatus(*http.Request, Caller) (any, error) {
