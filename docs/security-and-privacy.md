@@ -53,7 +53,7 @@ The proxy applies to agents' sandboxes. Kivali's server, which makes the connect
 These cannot happen without you:
 
 - **Changing the team.** Hiring, offboarding, reorganizing, and replacing a role or the handbook all happen only when you approve a Chief of Staff proposal. Offboarding archives; nothing is deleted.
-- **Agents reaching each other.** Every message from one agent to another waits in your Queue until you release it, unless you turn on auto-release.
+- **Agents reaching each other.** Every message from one agent to another waits in your Queue until you release it, or until auto-release lets it through. A new team starts with auto-release at 30s; set it to Off to hold everything.
 - **Decisions an agent asks you for**, which wait in **Needs you**.
 
 Within its own sandbox and the hosts you allow, an agent works without asking: it runs commands, writes files, and calls the services it can reach. Choose your network list with that in mind.

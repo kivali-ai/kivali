@@ -395,6 +395,9 @@ func TestAPISetupSeedCoSRunsInTheBackground(t *testing.T) {
 	if hist, _ := srv.Store.ReadChatHistory(cosSlug); len(hist) != 0 {
 		t.Errorf("without handbook_from_files the chief of staff gets no first message; chat = %+v", hist)
 	}
+	if got := srv.Store.ReadAutoRelease(); !got.Enabled || got.Delay != 30*time.Second {
+		t.Errorf("a new team's auto-release = %+v, want 30s", got)
+	}
 	if st := getSetup(t, srv); st.Needed || st.Step != apitypes.SetupStepDone {
 		t.Errorf("after the hire: needed %v step %q", st.Needed, st.Step)
 	}
@@ -449,6 +452,21 @@ func TestAPISetupSeedCoSHandbookFromFilesSendsTheFirstMessage(t *testing.T) {
 	}
 	if st := getSetup(t, srv); st.RestoreAvailable {
 		t.Error("a chief of staff with a chat is no longer a fresh server")
+	}
+}
+
+// The hire seeds auto-release only when the slider was never moved.
+func TestAPISetupSeedCoSKeepsAMovedSlider(t *testing.T) {
+	srv, _ := newSetupServer(t, seedReply("briefing", nil, nil))
+	if err := srv.setAutoRelease("off"); err != nil {
+		t.Fatal(err)
+	}
+	if rr := setupJSON(t, srv, http.MethodPost, "/api/v1/setup/seed-cos", apitypes.SeedCoSRequest{}); rr.Code != http.StatusAccepted {
+		t.Fatalf("POST seed-cos = %d: %s", rr.Code, rr.Body.String())
+	}
+	waitSeed(t, srv)
+	if got := srv.Store.ReadAutoRelease(); got.Enabled {
+		t.Errorf("auto-release after the hire = %+v, want the off it was set to", got)
 	}
 }
 

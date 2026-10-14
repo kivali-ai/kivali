@@ -43,7 +43,7 @@ A message released while its recipient is in the middle of a turn joins that tur
 
 ### Auto-release
 
-The **Auto-release** control sets how long the Queue holds a message before releasing it on its own: **Now**, **30s**, **2m**, **5m**, **20m** or **Off**. Each counting-down row shows its time left, and you can still release or bounce it before then.
+The **Auto-release** control sets how long the Queue holds a message before releasing it on its own: **Now**, **30s**, **2m**, **5m**, **20m** or **Off**. A new team starts at **30s**, and the control stays wherever you set it. Each counting-down row shows its time left, and you can still release or bounce it before then.
 
 - A message's countdown is set when it arrives. Moving the control later does not change countdowns already running, and messages that piled up while it was Off stay queued for you.
 - Moving to **Off** cancels every countdown.
