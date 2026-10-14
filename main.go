@@ -526,7 +526,8 @@ func main() {
 	go func() {
 		if aprov.Enabled() {
 			// Bulk provision runs goroutines in parallel; the timeout
-			// bounds the WHOLE wave. With drift-recreates dominated by
+			// bounds the WHOLE wave and the retries of the agents it
+			// failed. With drift-recreates dominated by
 			// terminationGracePeriodSeconds (~10s) plus image-pull /
 			// scheduler hesitation (~30-60s on a cold node), 5 min
 			// covers a realistic full-fleet recreate with headroom.
