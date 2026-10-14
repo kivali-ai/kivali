@@ -63,6 +63,9 @@ type Server struct {
 	// provisionLocks holds a *sync.Mutex per slug: ProvisionAgentPod
 	// runs one at a time for an agent (agentpod_bulk.go).
 	provisionLocks sync.Map
+	// spawnDropped, when set, runs when a spawn found no pod subscribed,
+	// while it still holds the agent's chat hub. A test seam.
+	spawnDropped func(slug string)
 	AuthMW         *auth.Middleware
 	OAuth          *auth.GoogleOAuth
 	Handoff        *auth.Handoff // GET /auth/handoff (docs/developers/auth.md); nil leaves it unregistered

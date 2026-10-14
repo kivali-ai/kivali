@@ -54,7 +54,7 @@ func (s *Server) publishAgentpodChatTurn(slug, source string, hub *chatHub, req 
 		}
 		hub.markCompleted()
 		hub.close()
-		s.removeHub(slug)
+		s.evictHubIfMatches(slug, hub)
 		return true
 	}
 	s.InitAgentpodTurnState(slug, source, turnID, hub, req.Model, s.effectiveEffort(req.Model, req.Effort))
@@ -75,7 +75,7 @@ func (s *Server) publishAgentpodChatTurn(slug, source string, hub *chatHub, req 
 		}
 		hub.markCompleted()
 		hub.close()
-		s.removeHub(slug)
+		s.evictHubIfMatches(slug, hub)
 	}
 	return true
 }
@@ -1169,7 +1169,6 @@ func (s *Server) finalizeAgentpodTurn(st *agentpodTurnState) {
 	if hub != nil {
 		time.AfterFunc(chatHubLingerDuration, func() {
 			s.evictHubIfMatches(st.slug, hub)
-			s.NotifyOrgState()
 		})
 	}
 	source := "chat"
