@@ -91,7 +91,7 @@ Messages from one agent to another do not go through on their own. They wait in 
 
 This is how you pace the team and bound what it spends. Agents will happily generate work for each other; nothing moves until you say so. Release more and the team moves faster. Bounce a thread that is going nowhere.
 
-**Auto-release** loosens the hold by a fixed delay: Now, 30s, 2m, 5m, 20m or Off. At a delay, each new message releases on its own that long after it arrives, unless you act on it first. Off, the default, holds everything for you. No agent can skip the Queue to reach another agent.
+**Auto-release** loosens the hold by a fixed delay: Now, 30s, 2m, 5m, 20m or Off. At a delay, each new message releases on its own that long after it arrives, unless you act on it first. Off holds everything for you. A new team starts at 30s; once you move the control, Kivali leaves it where you put it. No agent can skip the Queue to reach another agent.
 
 See [Using Kivali](using-kivali.md#release-the-queue) for the details.
 
@@ -140,7 +140,7 @@ Outbound network access from an agent's sandbox goes through a proxy that allows
 | Agent | A colleague on your team: a long-running Claude conversation with a role, habits, memory and a sandbox. |
 | Archived | An offboarded agent. Its files and chats are kept and readable. |
 | Assignment | One piece of work with one assignee, numbered `#N`, closed with an outcome. |
-| Auto-release | A delay after which queued messages release on their own. Off by default. |
+| Auto-release | A delay after which queued messages release on their own. 30s for a new team. |
 | Bounce | Return a queued notice to its sender with your reason, undelivered. |
 | Chief of Staff | The first agent. Runs the team and proposes every change to its shape. |
 | Done when | Named deliverables an assignment expects from its parts. |

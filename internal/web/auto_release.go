@@ -36,6 +36,11 @@ var autoReleaseDetents = []autoReleaseDetent{
 	{Key: "off", Label: "Off", Off: true},
 }
 
+// newTeamAutoRelease is the delay a team starts with: seedCoS writes
+// it when the Chief of Staff is hired, unless the slider was already
+// moved. Nothing writes it again, so a setting the CEO picks stays.
+const newTeamAutoRelease = 30 * time.Second
+
 // autoReleaseDetentByKey looks a detent up by its wire spelling.
 func autoReleaseDetentByKey(key string) (autoReleaseDetent, bool) {
 	for _, d := range autoReleaseDetents {

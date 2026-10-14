@@ -21,6 +21,47 @@ func TestAutoReleaseDefaultsOff(t *testing.T) {
 	}
 }
 
+// A seed writes only to a store that never had a setting; any setting
+// already made, off included, stays.
+func TestSeedAutoReleaseWritesOnlyTheFirstSetting(t *testing.T) {
+	seed := AutoRelease{Enabled: true, Delay: 30 * time.Second, Since: autoT0}
+
+	s := mustStore(t)
+	if err := s.SeedAutoRelease(seed); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.ReadAutoRelease(); !got.Enabled || got.Delay != seed.Delay || !got.Since.Equal(autoT0) {
+		t.Fatalf("seeded fresh store reads %+v, want %+v", got, seed)
+	}
+
+	for _, prior := range []AutoRelease{
+		{Enabled: false, Since: autoT0},
+		{Enabled: true, Delay: 5 * time.Minute, Since: autoT0},
+	} {
+		s := mustStore(t)
+		if err := s.WriteAutoRelease(prior); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.SeedAutoRelease(seed); err != nil {
+			t.Fatal(err)
+		}
+		if got := s.ReadAutoRelease(); got.Enabled != prior.Enabled || got.Delay != prior.Delay {
+			t.Fatalf("seed over %+v left %+v, want it unchanged", prior, got)
+		}
+	}
+
+	s = mustStore(t)
+	if err := os.WriteFile(filepath.Join(s.Root(), autoReleaseFile), []byte("not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SeedAutoRelease(seed); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(s.Root(), autoReleaseFile)); string(b) != "not json" {
+		t.Fatalf("seed rewrote an unreadable file: %q", b)
+	}
+}
+
 func TestAutoReleaseRoundTrip(t *testing.T) {
 	s := mustStore(t)
 	for i, want := range []AutoRelease{

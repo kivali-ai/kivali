@@ -226,6 +226,13 @@ func (s *Server) seedCoS(ctx context.Context, c cosSeed, stage func(int)) error 
 	if err := s.Store.WriteAgentMemory(cosSlug, memory); err != nil {
 		return hireFailed(err)
 	}
+	// The team's starting auto-release. Non-fatal: without it the Queue
+	// holds everything, which is safe, and the slider still works.
+	if err := s.Store.SeedAutoRelease(store.AutoRelease{Enabled: true, Delay: newTeamAutoRelease, Since: s.clk().Now()}); err != nil {
+		log.Printf("setup: seed auto-release: %v", err)
+	} else {
+		s.NotifyAutoRelease()
+	}
 	// Its pod, as every other hire gets one (ApplyHire, and the boot's
 	// BulkProvisionAgentPods): without it the first turn has nowhere to
 	// run and is dropped. Files first, for the reason BulkProvisionAgentPods

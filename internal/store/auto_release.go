@@ -201,6 +201,16 @@ func (s *FSStore) WriteAutoRelease(a AutoRelease) error {
 	return writeAtomic(s.path(autoReleaseFile), append(body, '\n'), 0o644)
 }
 
+// SeedAutoRelease writes a as the setting only when none was ever
+// written: no file at all. Any file, even one that reads as off or
+// fails to parse, is a setting someone made, and is left alone.
+func (s *FSStore) SeedAutoRelease(a AutoRelease) error {
+	if _, err := os.Stat(s.path(autoReleaseFile)); !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return s.WriteAutoRelease(a)
+}
+
 // settle drops the oldest settings nothing can still be under, as of
 // now. The oldest is dead when it is off (a message it governs reads
 // as off with or without it, since off is what predating every

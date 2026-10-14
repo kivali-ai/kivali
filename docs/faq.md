@@ -30,7 +30,7 @@ Your team's data stays on your machine (or your server). What leaves is what age
 
 ## Can agents act without me?
 
-Within limits. An agent works on its own inside its sandbox: it runs commands, writes and publishes files, and reaches the hosts you allow. It cannot hire, offboard or reorganize the team, or change roles or the handbook, without your approval. Messages between agents wait for you to release them, unless you turn on auto-release. See [How Kivali works](how-kivali-works.md).
+Within limits. An agent works on its own inside its sandbox: it runs commands, writes and publishes files, and reaches the hosts you allow. It cannot hire, offboard or reorganize the team, or change roles or the handbook, without your approval. Messages between agents wait in your Queue, and release on their own only under auto-release, which a new team starts at 30s. See [How Kivali works](how-kivali-works.md).
 
 ## Do agents run all the time?
 
