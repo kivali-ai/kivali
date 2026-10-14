@@ -55,7 +55,7 @@ func (s *Server) handleAPIOrgSoftware(w http.ResponseWriter, _ *http.Request) {
 		writeAPIError(w, http.StatusInternalServerError, "the software list could not be read", whoDevelopers)
 		return
 	}
-	writeJSON(w, http.StatusOK, apitypes.OrgSoftware{Packages: nonNilStrings(list)})
+	writeJSON(w, http.StatusOK, orgSoftware(list))
 }
 
 func (s *Server) handleAPIOrgSoftwareAdd(w http.ResponseWriter, r *http.Request) {
@@ -73,7 +73,7 @@ func (s *Server) handleAPIOrgSoftwareAdd(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	s.reprovisionEveryAgent()
-	writeJSON(w, http.StatusOK, apitypes.OrgSoftware{Packages: nonNilStrings(list)})
+	writeJSON(w, http.StatusOK, orgSoftware(list))
 }
 
 func (s *Server) handleAPIOrgSoftwareRemove(w http.ResponseWriter, r *http.Request) {
@@ -88,7 +88,7 @@ func (s *Server) handleAPIOrgSoftwareRemove(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	s.reprovisionEveryAgent()
-	writeJSON(w, http.StatusOK, apitypes.OrgSoftware{Packages: nonNilStrings(list)})
+	writeJSON(w, http.StatusOK, orgSoftware(list))
 }
 
 // reprovisionEveryAgent re-provisions every active agent's pod in the
@@ -139,12 +139,17 @@ func (s *Server) writeAgentSoftware(w http.ResponseWriter, slug string) {
 		writeAPIError(w, http.StatusInternalServerError, "the agent could not be read", whoDevelopers)
 		return
 	}
-	own, err := store.NormalizeSoftware(a.Software)
-	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, "the agent's software list could not be read", whoDevelopers)
-		return
-	}
-	writeJSON(w, http.StatusOK, apitypes.AgentSoftware{Org: nonNilStrings(org), Own: nonNilStrings(own)})
+	own := store.CleanSoftware(a.Software)
+	writeJSON(w, http.StatusOK, apitypes.AgentSoftware{
+		Org:     nonNilStrings(org),
+		Own:     own,
+		Invalid: store.InvalidSoftware(store.CleanSoftware(append(append([]string{}, org...), own...))),
+	})
+}
+
+// orgSoftware is the org-wide list as the API answers it.
+func orgSoftware(list []string) apitypes.OrgSoftware {
+	return apitypes.OrgSoftware{Packages: nonNilStrings(list), Invalid: store.InvalidSoftware(list)}
 }
 
 func (s *Server) handleAPIAgentSoftware(w http.ResponseWriter, r *http.Request) {

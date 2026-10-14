@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -44,8 +45,24 @@ func ValidSoftwareName(name string) bool {
 
 // NormalizeSoftware trims, lowercases, de-duplicates and sorts names,
 // dropping blanks. Any name that is not a Debian package name fails the
-// whole list, naming the first offender.
+// whole list, naming the first offender. It checks names on their way
+// in; a list already saved is read with CleanSoftware.
 func NormalizeSoftware(names []string) ([]string, error) {
+	out := CleanSoftware(names)
+	for _, n := range out {
+		if !ValidSoftwareName(n) {
+			return nil, fmt.Errorf("%q: %w", n, ErrInvalidSoftware)
+		}
+	}
+	return out, nil
+}
+
+// CleanSoftware trims, lowercases, de-duplicates and sorts names,
+// dropping blanks, and keeps names that are not Debian package names.
+// A saved list can hold such a name (software.yaml or agent.yaml edited
+// by hand): it stays listed, so the owner can see and remove it, and
+// installs nothing (EffectiveSoftware leaves it out).
+func CleanSoftware(names []string) []string {
 	seen := map[string]bool{}
 	out := []string{}
 	for _, n := range names {
@@ -53,18 +70,28 @@ func NormalizeSoftware(names []string) ([]string, error) {
 		if n == "" || seen[n] {
 			continue
 		}
-		if !ValidSoftwareName(n) {
-			return nil, fmt.Errorf("%q: %w", n, ErrInvalidSoftware)
-		}
 		seen[n] = true
 		out = append(out, n)
 	}
 	sort.Strings(out)
-	return out, nil
+	return out
 }
 
-// ReadOrgSoftware returns the org-wide list. A missing file is an
-// empty list.
+// InvalidSoftware returns the names in list that are not Debian package
+// names, keeping list's order. Never nil.
+func InvalidSoftware(list []string) []string {
+	out := []string{}
+	for _, n := range list {
+		if !ValidSoftwareName(n) {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// ReadOrgSoftware returns the org-wide list, cleaned (CleanSoftware):
+// a name in the file that is not a Debian package name is listed too.
+// A missing file is an empty list.
 func (s *FSStore) ReadOrgSoftware() ([]string, error) {
 	b, err := os.ReadFile(s.path(softwareFilename))
 	if errors.Is(err, fs.ErrNotExist) {
@@ -77,7 +104,7 @@ func (s *FSStore) ReadOrgSoftware() ([]string, error) {
 	if err := yaml.Unmarshal(b, &sw); err != nil {
 		return nil, fmt.Errorf("%s: %w", softwareFilename, err)
 	}
-	return NormalizeSoftware(sw.Packages)
+	return CleanSoftware(sw.Packages), nil
 }
 
 // ErrSoftwareNotListed is returned by RemoveOrgSoftware and
@@ -109,7 +136,9 @@ func (s *FSStore) writeOrgSoftwareLocked(clean []string) error {
 }
 
 // updateOrgSoftware is the read-modify-write of the org-wide list under
-// orgSoftwareMu. It returns the list as written.
+// orgSoftwareMu. It returns the list as written. Names already on the
+// list that are not Debian package names stay until they are removed;
+// callers check the names they add.
 func (s *FSStore) updateOrgSoftware(change func([]string) ([]string, error)) ([]string, error) {
 	s.orgSoftwareMu.Lock()
 	defer s.orgSoftwareMu.Unlock()
@@ -121,10 +150,7 @@ func (s *FSStore) updateOrgSoftware(change func([]string) ([]string, error)) ([]
 	if err != nil {
 		return nil, err
 	}
-	clean, err := NormalizeSoftware(next)
-	if err != nil {
-		return nil, err
-	}
+	clean := CleanSoftware(next)
 	if err := s.writeOrgSoftwareLocked(clean); err != nil {
 		return nil, err
 	}
@@ -143,7 +169,9 @@ func (s *FSStore) AddOrgSoftware(names []string) ([]string, error) {
 }
 
 // RemoveOrgSoftware removes name from the org-wide list and returns the
-// list as it now stands. A name not on it is ErrSoftwareNotListed.
+// list as it now stands. Any listed name can be removed, also one that
+// is not a Debian package name. A name not on it is
+// ErrSoftwareNotListed.
 func (s *FSStore) RemoveOrgSoftware(name string) ([]string, error) {
 	return s.updateOrgSoftware(func(cur []string) ([]string, error) {
 		return removeSoftware(cur, name)
@@ -168,17 +196,14 @@ func removeSoftware(list []string, name string) ([]string, error) {
 	return out, nil
 }
 
-// setAgentSoftwareList stores a normalized list on a, nil when empty.
-func setAgentSoftwareList(a *Agent, names []string) error {
-	clean, err := NormalizeSoftware(names)
-	if err != nil {
-		return err
-	}
-	a.Software = clean
-	if len(clean) == 0 {
+// setAgentSoftwareList stores a cleaned list on a, nil when empty.
+// Callers check the names they add; a name already on the list that is
+// not a Debian package name stays until it is removed.
+func setAgentSoftwareList(a *Agent, names []string) {
+	a.Software = CleanSoftware(names)
+	if len(a.Software) == 0 {
 		a.Software = nil
 	}
-	return nil
 }
 
 // SetAgentSoftware replaces an active agent's own list. Returns
@@ -188,7 +213,8 @@ func (s *FSStore) SetAgentSoftware(slug string, names []string) error {
 		return err
 	}
 	return s.updateAgent(slug, func(a *Agent) error {
-		return setAgentSoftwareList(a, names)
+		setAgentSoftwareList(a, names)
+		return nil
 	})
 }
 
@@ -199,29 +225,29 @@ func (s *FSStore) AddAgentSoftware(slug string, names []string) error {
 		return err
 	}
 	return s.updateAgent(slug, func(a *Agent) error {
-		return setAgentSoftwareList(a, append(append([]string{}, a.Software...), names...))
+		setAgentSoftwareList(a, append(append([]string{}, a.Software...), names...))
+		return nil
 	})
 }
 
-// RemoveAgentSoftware removes name from an active agent's own list. A
-// name not on it is ErrSoftwareNotListed; an agent that isn't active
-// is ErrNotFound.
+// RemoveAgentSoftware removes name from an active agent's own list.
+// Any listed name can be removed, also one that is not a Debian package
+// name. A name not on it is ErrSoftwareNotListed; an agent that isn't
+// active is ErrNotFound.
 func (s *FSStore) RemoveAgentSoftware(slug, name string) error {
 	return s.updateAgent(slug, func(a *Agent) error {
-		cur, err := NormalizeSoftware(a.Software)
+		next, err := removeSoftware(CleanSoftware(a.Software), name)
 		if err != nil {
 			return err
 		}
-		next, err := removeSoftware(cur, name)
-		if err != nil {
-			return err
-		}
-		return setAgentSoftwareList(a, next)
+		setAgentSoftwareList(a, next)
+		return nil
 	})
 }
 
 // EffectiveSoftware is what the agent's shell installs: the org-wide
-// list and the agent's own, merged and sorted.
+// list and the agent's own, merged and sorted. A listed name that is not
+// a Debian package name is left out and logged; the rest still install.
 func (s *FSStore) EffectiveSoftware(slug string) ([]string, error) {
 	org, err := s.ReadOrgSoftware()
 	if err != nil {
@@ -231,5 +257,10 @@ func (s *FSStore) EffectiveSoftware(slug string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	return NormalizeSoftware(append(org, a.Software...))
+	all := CleanSoftware(append(org, a.Software...))
+	if bad := InvalidSoftware(all); len(bad) > 0 {
+		log.Printf("software %s: not installing %s: not Debian package names", slug, strings.Join(bad, ", "))
+		all = SubtractSoftware(all, bad)
+	}
+	return all, nil
 }

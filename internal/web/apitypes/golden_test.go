@@ -185,7 +185,7 @@ func goldenFixtures() map[string]any {
 		"network":           Network{Hosts: []NetworkHost{{Host: "*.pypi.org"}, {Host: "api.anthropic.com"}}},
 		"network_add":       NetworkAdd{Host: "api.github.com"},
 		// Software lists: software_golden_test.go.
-		"org_software":   OrgSoftware{Packages: []string{"git", "jq"}},
+		"org_software":   goldenOrgSoftware(),
 		"software_add":   SoftwareAdd{Packages: []string{"ffmpeg"}},
 		"agent_software": goldenAgentSoftware(),
 		// Sign-in and setup: setup_golden_test.go.

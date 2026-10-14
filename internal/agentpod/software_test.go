@@ -233,8 +233,9 @@ func TestProvisionAppliesSoftware(t *testing.T) {
 	}
 }
 
-// A resolver error, or a name that is not a Debian package name, fails
-// Provision before anything is touched.
+// A resolver error fails Provision before anything is touched. A name
+// that is not a Debian package name never reaches the pod, and the rest
+// of the list still installs.
 func TestProvisionSoftwareErrors(t *testing.T) {
 	ctx := context.Background()
 
@@ -250,11 +251,11 @@ func TestProvisionSoftwareErrors(t *testing.T) {
 
 	resolveErr = nil
 	software = []string{"ffmpeg", "-oAPT::Get::AllowUnauthenticated=1"}
-	if err := p.Provision(ctx, "alice"); err == nil {
-		t.Error("Provision accepted an invalid package name")
+	if err := p.Provision(ctx, "alice"); err != nil {
+		t.Fatalf("Provision with an invalid name on the list = %v, want the pod made without it", err)
 	}
-	if len(fk.creates) != 0 {
-		t.Errorf("created %v despite the error", fk.creates)
+	if args := devArgsOf(t, fk.pod(t, "alice")); args[len(args)-1] != "--install=ffmpeg" {
+		t.Errorf("last arg = %q, want --install=ffmpeg", args[len(args)-1])
 	}
 }
 

@@ -150,12 +150,16 @@ describe('About: software', () => {
     expect(page().queryByRole('button', { name: 'Remove jq' })).toBeNull();
     expect(page().getByText('Only for Engineering lead')).toBeInTheDocument();
     expect(page().getByRole('button', { name: 'Remove ffmpeg' })).toBeInTheDocument();
+    // A listed name that is not a Debian package name is marked, and can be removed.
+    expect(page().getByText('x/y')).toBeInTheDocument();
+    expect(page().getAllByText('Not a Debian package name, so it is not installed')).toHaveLength(1);
+    expect(page().getByRole('button', { name: 'Remove x/y' })).toBeInTheDocument();
     expect(page().getByText(/Changing this list restarts Engineering lead to install it/)).toBeInTheDocument();
   });
 
   it('adds and removes from the agent’s own list only', async () => {
-    const saved: AgentSoftware = { org: software.org, own: ['ffmpeg', 'git-lfs', 'poppler-utils'] };
-    const removed: AgentSoftware = { org: software.org, own: ['git-lfs', 'poppler-utils'] };
+    const saved: AgentSoftware = { org: software.org, own: ['ffmpeg', 'git-lfs', 'poppler-utils'], invalid: [] };
+    const removed: AgentSoftware = { org: software.org, own: ['git-lfs', 'poppler-utils'], invalid: [] };
     const { user, h } = await open({ ['POST ' + SOFTWARE]: saved, ['DELETE ' + SOFTWARE + '/ffmpeg']: removed });
     await user.type(await page().findByLabelText('Add software'), 'git-lfs');
     await user.click(page().getByRole('button', { name: 'Add' }));

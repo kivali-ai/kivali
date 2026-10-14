@@ -13,6 +13,8 @@ export function splitPackages(value: string): string[] {
 
 interface PackageListProps {
   packages: readonly string[];
+  /** Listed names that are not Debian package names: shown as not installed. */
+  invalid?: readonly string[];
   /** Shown instead of the list when it is empty. */
   empty: string;
   /** Without these the list is read-only. */
@@ -20,7 +22,7 @@ interface PackageListProps {
 }
 
 /** Debian package names, one per row; with `edit`, each can be removed and more can be added. */
-export function PackageList({ packages, empty, edit }: PackageListProps) {
+export function PackageList({ packages, invalid = [], empty, edit }: PackageListProps) {
   return (
     <>
       {packages.length === 0 && <None>{empty}</None>}
@@ -31,6 +33,7 @@ export function PackageList({ packages, empty, edit }: PackageListProps) {
               key={name}
               lead={<Icon name="download" size={20} />}
               title={<Text variant="code">{name}</Text>}
+              {...(invalid.includes(name) ? { meta: 'Not a Debian package name, so it is not installed' } : {})}
               {...(edit
                 ? {
                     trail: (
@@ -74,6 +77,7 @@ export function SoftwareSection({ showHead }: SectionProps) {
       {list.data && (
         <PackageList
           packages={list.data.packages}
+          invalid={list.data.invalid}
           empty="No extra software. Agents have only what Kivali already includes."
           edit={{
             busy: action.busy,

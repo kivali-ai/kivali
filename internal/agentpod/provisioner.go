@@ -184,19 +184,22 @@ func WithSoftware(fn func(slug string) ([]string, error)) ProvisionerOption {
 	return func(p *Provisioner) { p.software = fn }
 }
 
-// manifestFor is slug's pod manifest with its current software.
+// manifestFor is slug's pod manifest with its current software. A name
+// that is not a Debian package name never reaches the pod: it is left
+// out and logged, and the rest of the list installs.
 func (p *Provisioner) manifestFor(slug string) (map[string]any, error) {
 	var software []string
 	if p.software != nil {
-		var err error
-		software, err = p.software(slug)
+		listed, err := p.software(slug)
 		if err != nil {
 			return nil, fmt.Errorf("software: %w", err)
 		}
-		for _, n := range software {
+		for _, n := range listed {
 			if !store.ValidSoftwareName(n) {
-				return nil, fmt.Errorf("software: %q: %w", n, store.ErrInvalidSoftware)
+				p.logger("agentpod: %s: not installing %q: %v", slug, n, store.ErrInvalidSoftware)
+				continue
 			}
+			software = append(software, n)
 		}
 	}
 	return p.cfg.podManifestWithSoftware(slug, software), nil

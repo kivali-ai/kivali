@@ -5,6 +5,10 @@
   ],
   "own": [
     "ffmpeg",
-    "poppler-utils"
+    "poppler-utils",
+    "x/y"
+  ],
+  "invalid": [
+    "x/y"
   ]
 }

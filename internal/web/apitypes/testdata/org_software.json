@@ -1,6 +1,10 @@
 {
   "packages": [
+    "bad name",
     "git",
     "jq"
+  ],
+  "invalid": [
+    "bad name"
   ]
 }

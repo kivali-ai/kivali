@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -138,6 +140,28 @@ func TestAPIAgentSoftware(t *testing.T) {
 	if got := pod.received(1); !reflect.DeepEqual(got, []string{"alice"}) {
 		t.Errorf("provisioned %v after remove, want [alice]", got)
 	}
+}
+
+// Names saved by hand that are not Debian package names are listed and
+// marked, removable, and break neither reads nor writes.
+func TestAPISoftwareListsAndRemovesSavedInvalidNames(t *testing.T) {
+	srv, pod := softwareServer(t)
+	if err := os.WriteFile(filepath.Join(srv.Store.Root(), "software.yaml"), []byte("packages: [git, \"bad name\"]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sw := orgOK[apitypes.OrgSoftware](t, orgGet(t, srv, "/api/v1/org/software"))
+	if !reflect.DeepEqual(sw.Packages, []string{"bad name", "git"}) || !reflect.DeepEqual(sw.Invalid, []string{"bad name"}) {
+		t.Fatalf("GET = %#v, want both names listed and the bad one marked", sw)
+	}
+	a := orgOK[apitypes.AgentSoftware](t, orgGet(t, srv, "/api/v1/agents/alice/software"))
+	if !reflect.DeepEqual(a.Invalid, []string{"bad name"}) || !reflect.DeepEqual(a.Own, []string{}) {
+		t.Errorf("agent GET = %#v", a)
+	}
+	sw = orgOK[apitypes.OrgSoftware](t, softwareDelete(t, srv, "/api/v1/org/software/bad%20name"))
+	if !reflect.DeepEqual(sw.Packages, []string{"git"}) || sw.Invalid == nil || len(sw.Invalid) != 0 {
+		t.Errorf("after removing the bad name = %#v", sw)
+	}
+	pod.received(2)
 }
 
 func TestAPIAgentSoftwareRefusals(t *testing.T) {
