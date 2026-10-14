@@ -417,8 +417,10 @@ web app only while it is running and has a port; a team elsewhere shows
 it unless the last reachability check failed (or while it is being
 connected). When the web app shows and the team's origin moved (the
 first start, or a port the supervisor changed), the pin moves and the
-web view navigates there first. Windows of teams that are gone are
-destroyed.
+web view navigates there first. A web view whose load failed before
+the team served (one that has not finished a page while serving) is
+sent to the origin once each time the team starts serving; View →
+Reload sends it again. Windows of teams that are gone are destroyed.
 
 Choosing a team in the tray, the end of setup, or a sign-in finishing
 opens its window or brings it to the front (`show_team`), and records
