@@ -82,6 +82,68 @@ func TestDownToExitDoesNotCompact(t *testing.T) {
 	}
 }
 
+// A down while an up compacts the data disk before its boot cancels the
+// up there: the compaction ends, nothing boots, and the down finds the
+// VM stopped.
+func TestDownDuringPreBootCompactionBootsNothing(t *testing.T) {
+	h := newHarness(t)
+	h.mustUp(UpOptions{Install: owner})
+	if err := h.sup.Down(context.Background(), h.logf()); err != nil {
+		t.Fatal(err)
+	}
+	boots := h.vm.bootCount()
+	entered, wait := make(chan struct{}), make(chan struct{})
+	defer close(wait)
+	h.vm.mu.Lock()
+	h.vm.compactEntered, h.vm.compactWait = entered, wait
+	h.vm.mu.Unlock()
+	upped := make(chan error, 1)
+	go func() { upped <- h.up(UpOptions{}) }()
+	<-entered // the up is compacting the disk before its boot
+
+	log := &serveLog{}
+	if err := h.sup.Down(context.Background(), log.logf); err != nil {
+		t.Fatalf("down: %v", err)
+	}
+	if err := <-upped; !errors.Is(err, context.Canceled) {
+		t.Fatalf("up: %v, want it cancelled", err)
+	}
+	if n := h.vm.bootCount(); n != boots {
+		t.Fatalf("%d boots after the cancelled up, want %d", n, boots)
+	}
+	if m, _ := h.sup.current(); m != nil {
+		t.Fatal("a VM is running after the down")
+	}
+	if !strings.Contains(strings.Join(log.get(), "\n"), "the VM is not running") {
+		t.Fatalf("down's log = %q", log.get())
+	}
+}
+
+// An up cancelled while the compaction before its boot runs to its end
+// anyway boots nothing either.
+func TestUpCancelledDuringACompactionThatFinishes(t *testing.T) {
+	h := newHarness(t)
+	h.mustUp(UpOptions{Install: owner})
+	if err := h.sup.Down(context.Background(), h.logf()); err != nil {
+		t.Fatal(err)
+	}
+	boots := h.vm.bootCount()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	h.vm.mu.Lock()
+	h.vm.compactDone = cancel
+	h.vm.mu.Unlock()
+	if err := h.sup.Up(ctx, UpOptions{Port: h.port}, h.logf()); !errors.Is(err, context.Canceled) {
+		t.Fatalf("up: %v, want it cancelled", err)
+	}
+	if n := h.vm.bootCount(); n != boots {
+		t.Fatalf("%d boots after the cancelled up, want %d", n, boots)
+	}
+	if c := h.vm.compacted(); len(c) != 2 {
+		t.Fatalf("compactions = %+v, want the down's and the up's", c)
+	}
+}
+
 // A compaction that fails fails nothing: down and up go on, the log
 // says so.
 func TestDataDiskCompactionFailureIsOnlyLogged(t *testing.T) {
