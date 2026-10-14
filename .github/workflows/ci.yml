@@ -2,8 +2,9 @@
 #
 # Every pull request and every push to main: the Go checks, the web
 # app's lint, tests and Playwright, the helm chart and the licenses of
-# every shipped dependency on Linux, and Kivali Desktop (the shell and
-# the supervisor) on macOS and Windows. The
+# every shipped dependency on Linux, the broker's Windows code on
+# Windows, and Kivali Desktop (the shell and the supervisor) on macOS and
+# Windows. The
 # slow suites (race detector, integration on k3s) are nightly.yml's.
 # release.yml calls this workflow on a tag, so a tag push does not run
 # it a second time. A branch without a pull request runs nothing.
@@ -160,6 +161,32 @@ jobs:
             web/e2e/playwright-report
             web/e2e/test-results
           retention-days: 7
+
+  broker-windows:
+    name: Broker and VHDX (Windows)
+    # The broker's Windows code against the real APIs, quickly and on its
+    # own: the virtual disk API's compaction (VHDX files made and
+    # compacted with virtdisk.dll, a differencing and a fixed disk
+    # refused without a parent opened), the caller's impersonated file
+    # checks, and the VHDX parsing. The hosted runner's process is
+    # elevated, which the virtdisk tests need; nothing needs Hyper-V.
+    runs-on: windows-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.27'
+          cache: true
+
+      - name: go test (broker, vhdx, hyperv)
+        env:
+          CGO_ENABLED: '0'
+        run: go test -count=1 ./internal/supervisor/broker/... ./internal/supervisor/vhdx/... ./internal/supervisor/hyperv/...
 
   desktop:
     name: Kivali Desktop (${{ matrix.name }})

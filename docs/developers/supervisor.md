@@ -92,8 +92,11 @@ amd64, so a hard-coded file name or architecture fails) and the real host
 of whichever OS runs them; `host_test.go` covers each Host method on that
 OS. `.github/workflows/ci.yml`'s desktop jobs run the suite on
 GitHub-hosted macOS and Windows runners on every pull request and every
-push to `main` (`make ci-desktop`),
-and CI cross-builds and vets for Windows and Linux.
+push to `main` (`make ci-desktop`), its `broker-windows` job runs the
+`broker`, `vhdx` and `hyperv` packages' tests on a Windows runner on
+their own (the elevated runner makes, compacts and refuses real VHDX
+files through virtdisk.dll there; those tests skip in a process that
+is not elevated), and CI cross-builds and vets for Windows and Linux.
 
 ## Processes
 
@@ -367,29 +370,33 @@ down and would kill a compaction partway), the backend reads the
 disk's block allocation table itself (package `vhdx`: the region
 table, the metadata and the table, a few dozen KiB whatever the disk's
 size) and, when the discarded blocks hold 1 GiB or more, asks the
-broker to compact the file (`POST /v1/vhd/optimize`: `Optimize-VHD
--Mode Quick`, which drops those blocks and moves the rest down; it
-mounts nothing and needs no partition table). `up` runs it before the
+broker to compact the file (`POST /v1/vhd/optimize`: virtdisk's
+`CompactVirtualDisk` with no zero scan, what `Optimize-VHD -Mode Quick`
+does to a disk that is not mounted, which drops those blocks and moves
+the rest down; it mounts nothing and needs no partition table). `up`
+runs it before the
 boot, in the `making-room` stage, because a VM stopped without a
 `down` (a host reboot shuts the guest down through the integration
 service, and `serve`'s exit does not compact) has had no chance since
 its last trim. A failure is logged and the start or stop goes on; a
 compaction that takes long says so every 10 s, like a slow stop. The
-threshold is where a compaction stops being worth a privileged
-PowerShell process at every start and stop: below 1 GiB the file is
+threshold is where a compaction stops being worth a privileged broker
+request at every start and stop: below 1 GiB the file is
 within a few dozen blocks of its smallest, and partly filled blocks
 cost about as much anyway (a fresh disk's file is 1.7 GB larger than
-what the guest's `df` reports used). Measured on one machine (NVMe):
-after 2 GiB written, deleted and trimmed with 1 GiB written after it,
-the file kept its 6.9 GB through the clean stop and Quick mode gave the
-2.5 GB back in about a second; Full, Pretrimmed and Retrim modes also
-run on the ext4 disk but found nothing more; Optimize-VHD on a running
-VM's disk fails with a sharing violation (0x80070020); the files left on
-the disk had the same checksums after the compaction. Through the
-broker (its PowerShell process included) the same compaction of 2 GiB
-took 4 to 6 s, before an `up`, before an `up` that first had to shut
-down a VM an earlier serve left running, and after a `down`; a hole of
-768 MiB was left alone.
+what the guest's `df` reports used). Measured on one machine (NVMe),
+with `Optimize-VHD`: after 2 GiB written, deleted and trimmed with
+1 GiB written after it, the file kept its 6.9 GB through the clean stop
+and Quick mode gave the 2.5 GB back in about a second; Full, Pretrimmed
+and Retrim modes also run on the ext4 disk but found nothing more; a
+compaction of a running VM's disk fails with a sharing violation
+(0x80070020); the files left on the disk had the same checksums after
+the compaction. A broker that ran `Optimize-VHD` in a PowerShell
+process took 4 to 6 s for the same compaction of 2 GiB, before an `up`,
+before an `up` that first had to shut down a VM an earlier serve left
+running, and after a `down`; a hole of 768 MiB was left alone. The
+compaction through `CompactVirtualDisk` has not been timed on a real
+data disk.
 
 A Hyper-V VM outlives the `serve` that started it (a logoff, a crash, the
 app killing `serve`). Before a start, a leftover running VM is shut down
@@ -449,9 +456,10 @@ boot and 12 s on a later one; a clean `down` under 5 s.
   package's private `LocalCache`, where the broker cannot see it.
 - A machine that sleeps stops its teams answering.
 - The data disk's compaction was measured with a few GB discarded. The
-  broker bounds the script at `broker.OptimizeTimeout` (20 minutes) and
-  kills it past that; a compaction cut short is left to the VHDX's own
-  log, which has not been exercised.
+  broker bounds it at `broker.OptimizeTimeout` (20 minutes) and cancels
+  it past that (`CancelIoEx` on the overlapped `CompactVirtualDisk`,
+  still waiting for it to end, under the VM's lock); a compaction cut
+  short is left to the VHDX's own log, which has not been exercised.
 
 ## The broker
 
@@ -504,15 +512,28 @@ its own when the VM does not exist and the directory was made for the
 caller. `POST /v1/vhd/optimize` opens `<dir>\data.vhdx` as the caller
 for writing and keeps it pinned for the request, requires the VM of
 that directory's key, if there is one, to be the caller's and Off, and
-holds that VM's lock while `Optimize-VHD` runs, so a start of it waits
+holds that VM's lock while the compaction runs, so a start of it waits
 rather than races the compaction. The caller writes the file's bytes,
-and `Optimize-VHD` on a differencing disk would open the parent its
-locator names (a share on another host as easily as a local file) as
-the broker; so before the script runs the broker reads the file's
-metadata itself, through the pinning handle (package `vhdx`, never the
-parent locator), and refuses anything but a dynamic VHDX with no
-parent. The path holds no `[`, `]`, `*` or `?`, since the Hyper-V
-cmdlets take `-Path` and no `-LiteralPath`. Inputs reach PowerShell
+at any moment, and opening a differencing disk opens the parent its
+locator names (a share on another host as easily as a local file), so
+no cmdlet ever opens the data disk: the broker reads the file's
+metadata itself, through the pinning handle (package `vhdx`), and
+refuses anything but a dynamic VHDX with no parent, then compacts it
+through virtdisk.dll (loaded from the system directory) on one handle:
+`OpenVirtualDisk` as the caller (impersonated, so the open is checked
+against the caller's token), with the storage type named as VHDX,
+`OPEN_VIRTUAL_DISK_PARAMETERS` version 2 and
+`OPEN_VIRTUAL_DISK_FLAG_NO_PARENTS`, so no parent is opened whatever
+the file says by then; `GetVirtualDiskInformation` on that handle
+refuses anything but a VHDX whose provider subtype is dynamic (3); and
+`CompactVirtualDisk` on it with `COMPACT_VIRTUAL_DISK_FLAG_NO_ZERO_SCAN`.
+The sizes it answers with are read through the pinning handle. The
+path reaches no cmdlet, so `[` and `]` are plain characters in it.
+`get-vm` reports a VM's disks by location and path only; the one
+thing the broker reads from a disk file, the parent of a running VM's
+differencing child (to compare with the requested `root_vhdx`), it
+parses from the child's parent locator itself, as the broker, from its
+own VM directory, without opening the parent. Inputs reach PowerShell
 only as fields of a JSON object on the stdin of a fixed, embedded
 script, validated (name, MAC, sizes, counts) before anything runs; the
 runner is an interface, so the policy is unit-tested with a fake and the

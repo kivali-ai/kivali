@@ -3,6 +3,8 @@ package broker
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -12,28 +14,29 @@ import (
 )
 
 func TestOptimizeRequestValidate(t *testing.T) {
-	for _, ok := range []string{`C:\Kivali\team1\data.vhdx`, `D:\x\DATA.VHDX`} {
+	for _, ok := range []string{`C:\Kivali\team1\data.vhdx`, `D:\x\DATA.VHDX`, `C:\Kivali\[team1]\data.vhdx`} {
 		if err := (OptimizeRequest{Path: ok}).Validate(); err != nil {
 			t.Errorf("Validate(%q) = %v", ok, err)
 		}
 	}
 	for _, bad := range []string{``, `C:\Kivali\team1\other.vhdx`, `C:\Kivali\team1\vm\root-child.vhdx`, `\\server\share\data.vhdx`, `C:\a\..\b\data.vhdx`, `data.vhdx`,
-		`C:\Kivali\[team1]\data.vhdx`, `C:\Kivali\team[1\data.vhdx`, `C:\Kivali\team]1\data.vhdx`, `C:\Kivali\team*\data.vhdx`, `C:\Kivali\team?\data.vhdx`} {
+		`C:\Kivali\team*\data.vhdx`, `C:\Kivali\team?\data.vhdx`} {
 		if err := (OptimizeRequest{Path: bad}).Validate(); err == nil {
 			t.Errorf("Validate(%q) accepted", bad)
 		}
 	}
 }
 
-// The caller's own data disk, its VM off: optimize-vhd runs on the
-// canonical path the caller's handle checked, and the sizes come back.
+// The caller's own data disk, its VM off: the caller's pinned file is
+// compacted, on the canonical path the caller's handle checked, and
+// the sizes come back. No script runs but the state query.
 func TestOptimizeVHD(t *testing.T) {
 	h := newHarness(t)
 	p := winJoin(testCfg, DataDiskName)
 	h.caller.dirs[testCfg] = true
 	h.caller.files[p] = fakeEntry{read: true, write: true}
+	h.caller.compactSizes = [2]int64{8627683328, 6580862976}
 	h.ownVM(StateOff)
-	h.runner.resp[scriptOptimizeVHD] = json.RawMessage(`{"size_before":8627683328,"size_after":6580862976}`)
 	res, err := h.client.OptimizeVHD(context.Background(), p)
 	if err != nil {
 		t.Fatalf("OptimizeVHD: %v", err)
@@ -41,14 +44,13 @@ func TestOptimizeVHD(t *testing.T) {
 	if res.SizeBefore != 8627683328 || res.SizeAfter != 6580862976 {
 		t.Fatalf("result = %+v", res)
 	}
-	args, ok := h.runner.lastCall(scriptOptimizeVHD)
-	if !ok {
-		t.Fatal("optimize-vhd not run")
+	if len(h.caller.compacted) != 1 || h.caller.compacted[0] != p {
+		t.Fatalf("compacted = %v", h.caller.compacted)
 	}
-	var oa map[string]any
-	_ = json.Unmarshal(args, &oa)
-	if oa["path"] != p || len(oa) != 1 {
-		t.Fatalf("optimize-vhd args = %v", oa)
+	for _, c := range h.runner.calls {
+		if c.script != scriptGetVM {
+			t.Errorf("%s ran", c.script)
+		}
 	}
 }
 
@@ -62,8 +64,8 @@ func TestOptimizeVHDWithoutVM(t *testing.T) {
 	if _, err := h.client.OptimizeVHD(context.Background(), p); err != nil {
 		t.Fatalf("OptimizeVHD: %v", err)
 	}
-	if !h.runner.called(scriptOptimizeVHD) {
-		t.Fatal("optimize-vhd not run")
+	if len(h.caller.compacted) != 1 {
+		t.Fatal("not compacted")
 	}
 }
 
@@ -79,8 +81,8 @@ func TestOptimizeVHDRefusesRunningVM(t *testing.T) {
 	if statusOf(err) != http.StatusConflict || !strings.Contains(err.Error(), "Running") {
 		t.Fatalf("err = %v (status %d)", err, statusOf(err))
 	}
-	if h.runner.called(scriptOptimizeVHD) {
-		t.Error("optimize-vhd ran on a running VM's disk")
+	if len(h.caller.compacted) != 0 {
+		t.Error("a running VM's disk was compacted")
 	}
 }
 
@@ -96,8 +98,8 @@ func TestOptimizeVHDRefusesForeignVM(t *testing.T) {
 	if statusOf(err) != http.StatusForbidden {
 		t.Fatalf("err = %v (status %d)", err, statusOf(err))
 	}
-	if h.runner.called(scriptOptimizeVHD) {
-		t.Error("optimize-vhd ran on another account's VM's disk")
+	if len(h.caller.compacted) != 0 {
+		t.Error("another account's VM's disk was compacted")
 	}
 }
 
@@ -134,16 +136,16 @@ func TestOptimizeVHDRefusals(t *testing.T) {
 		if statusOf(err) != tc.status {
 			t.Errorf("%s: err = %v (status %d), want %d", tc.what, err, statusOf(err), tc.status)
 		}
-		if h.runner.called(scriptOptimizeVHD) {
-			t.Errorf("%s: optimize-vhd ran", tc.what)
+		if len(h.caller.compacted) != 0 {
+			t.Errorf("%s: compacted", tc.what)
 		}
 	}
 }
 
 // Only a dynamic VHDX with no parent is compacted: the broker reads the
-// file's metadata through the caller's pinning handle before the script
-// runs, so Optimize-VHD never opens a parent a differencing disk's
-// locator names (the caller writes the file's bytes).
+// file's metadata through the caller's pinning handle first, and
+// refuses anything else with the reason before the virtual disk is
+// opened.
 func TestOptimizeVHDRefusesAllButADynamicDisk(t *testing.T) {
 	p := winJoin(testCfg, DataDiskName)
 	for _, tc := range []struct {
@@ -164,26 +166,48 @@ func TestOptimizeVHDRefusesAllButADynamicDisk(t *testing.T) {
 		if statusOf(err) != http.StatusForbidden || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%s: err = %v (status %d)", tc.what, err, statusOf(err))
 		}
-		if h.runner.called(scriptOptimizeVHD) {
-			t.Errorf("%s: optimize-vhd ran", tc.what)
+		if len(h.caller.compacted) != 0 {
+			t.Errorf("%s: compacted", tc.what)
 		}
 	}
 }
 
-// A path with a wildcard character is refused before anything is
-// opened: Optimize-VHD's -Path would treat it as a pattern.
-func TestOptimizeVHDRefusesWildcardPath(t *testing.T) {
+// The disk's kind is checked again on the virtual disk's own handle (a
+// caller can rewrite the file after the first read): a refusal there
+// is a refusal, any other failure the broker's.
+func TestOptimizeVHDCompactionErrors(t *testing.T) {
+	p := winJoin(testCfg, DataDiskName)
+	for _, tc := range []struct {
+		err    error
+		status int
+	}{
+		{fmt.Errorf("%s: %w: a differencing disk", p, errNotDynamic), http.StatusForbidden},
+		{errors.New("compact: the device is not ready"), http.StatusInternalServerError},
+	} {
+		h := newHarness(t)
+		h.caller.dirs[testCfg] = true
+		h.caller.files[p] = fakeEntry{read: true, write: true}
+		h.caller.compactErr = tc.err
+		h.ownVM(StateOff)
+		_, err := h.client.OptimizeVHD(context.Background(), p)
+		if statusOf(err) != tc.status {
+			t.Errorf("%v: err = %v (status %d), want %d", tc.err, err, statusOf(err), tc.status)
+		}
+	}
+}
+
+// A path with [ or ] is a plain path: it reaches no cmdlet.
+func TestOptimizeVHDTakesABracketedPath(t *testing.T) {
 	dir := `C:\Kivali\[team1]`
 	p := winJoin(dir, DataDiskName)
 	h := newHarness(t)
 	h.caller.dirs[dir] = true
 	h.caller.files[p] = fakeEntry{read: true, write: true}
-	_, err := h.client.OptimizeVHD(context.Background(), p)
-	if statusOf(err) != http.StatusBadRequest || !strings.Contains(err.Error(), "wildcard") {
-		t.Fatalf("err = %v (status %d)", err, statusOf(err))
+	if _, err := h.client.OptimizeVHD(context.Background(), p); err != nil {
+		t.Fatalf("OptimizeVHD: %v", err)
 	}
-	if h.runner.called(scriptOptimizeVHD) || h.runner.called(scriptGetVM) {
-		t.Error("a script ran")
+	if len(h.caller.compacted) != 1 || h.caller.compacted[0] != p {
+		t.Fatalf("compacted = %v", h.caller.compacted)
 	}
 }
 

@@ -144,3 +144,80 @@ func TestReadReaderAt(t *testing.T) {
 		t.Error("a truncated file was read")
 	}
 }
+
+// ParentPath reads a differencing disk's absolute_win32_path from its
+// locator, whatever else the locator holds and in whatever order, and
+// drops a \\?\ prefix.
+func TestParentPath(t *testing.T) {
+	for _, tc := range []struct {
+		locator [][2]string
+		want    string
+	}{
+		{[][2]string{
+			{"parent_linkage", "{83a2c1e0-5b1c-4c9e-9f2a-0d1e2f3a4b5c}"},
+			{"relative_path", `..\..\Program Files\Kivali\vm\root.vhdx`},
+			{"volume_path", `\\?\Volume{0b2c3d4e-0000-0000-0000-100000000000}\Program Files\Kivali\vm\root.vhdx`},
+			{"absolute_win32_path", `C:\Program Files\Kivali\vm\root.vhdx`},
+		}, `C:\Program Files\Kivali\vm\root.vhdx`},
+		{[][2]string{{"absolute_win32_path", `\\?\C:\Users\Public\root.vhdx`}}, `C:\Users\Public\root.vhdx`},
+		{[][2]string{{"absolute_win32_path", `\\attacker\share\p.vhdx`}}, `\\attacker\share\p.vhdx`},
+	} {
+		b := Spec{BlockSize: 2 << 20, SectorSize: 512, VirtualSize: 64 << 20, Flags: FlagHasParent, ParentLocator: tc.locator}.Bytes()
+		got, err := ParentPath(bytes.NewReader(b), int64(len(b)))
+		if err != nil || got != tc.want {
+			t.Errorf("ParentPath = %q, %v; want %q", got, err, tc.want)
+		}
+	}
+}
+
+func TestParentPathRefusals(t *testing.T) {
+	base := Spec{BlockSize: 2 << 20, SectorSize: 512, VirtualSize: 64 << 20, Flags: FlagHasParent}
+	noParent := Spec{BlockSize: 2 << 20, SectorSize: 512, VirtualSize: 64 << 20,
+		ParentLocator: [][2]string{{"absolute_win32_path", `C:\root.vhdx`}}}
+	noAbsolute := base
+	noAbsolute.ParentLocator = [][2]string{{"relative_path", `..\root.vhdx`}}
+	twice := base
+	twice.ParentLocator = [][2]string{{"absolute_win32_path", `C:\a.vhdx`}, {"absolute_win32_path", `C:\b.vhdx`}}
+	for _, tc := range []struct {
+		what string
+		b    []byte
+		want string
+	}{
+		{"no parent", noParent.Bytes(), "not a differencing disk"},
+		{"no locator", base.Bytes(), "parent locator"},
+		{"no absolute path", noAbsolute.Bytes(), "absolute_win32_path"},
+		{"a key twice", twice.Bytes(), "twice"},
+		{"not a VHDX", make([]byte, 3<<20), "not a VHDX"},
+	} {
+		if _, err := ParentPath(bytes.NewReader(tc.b), int64(len(tc.b))); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: err = %v, want %q", tc.what, err, tc.want)
+		}
+	}
+}
+
+// A locator whose entries point outside it, or that claims more
+// entries than it holds, is refused rather than read past.
+func TestParseParentLocatorBounds(t *testing.T) {
+	good := parentLocator([][2]string{{"absolute_win32_path", `C:\root.vhdx`}})
+	if m, err := parseParentLocator(good); err != nil || m["absolute_win32_path"] != `C:\root.vhdx` {
+		t.Fatalf("parse = %v, %v", m, err)
+	}
+	for _, tc := range []struct {
+		what  string
+		patch func(b []byte)
+	}{
+		{"key past the end", func(b []byte) { b[vhdxParentLocatorHeaderSize] = 0xff; b[vhdxParentLocatorHeaderSize+1] = 0xff }},
+		{"odd value length", func(b []byte) { b[vhdxParentLocatorHeaderSize+10]-- }},
+		{"too many entries", func(b []byte) { b[18] = 0xff }},
+		{"wrong type", func(b []byte) { b[0]++ }},
+	} {
+		b := append([]byte(nil), good...)
+		tc.patch(b)
+		if _, err := parseParentLocator(b); err == nil {
+			t.Errorf("%s: accepted", tc.what)
+		}
+	}
+	if _, err := parseParentLocator(good[:10]); err == nil {
+		t.Error("a truncated header was accepted")
+	}
+}

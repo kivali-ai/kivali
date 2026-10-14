@@ -196,12 +196,30 @@ func TestEncodedCommand(t *testing.T) {
 // Every operation has a script and a timeout, so a run never blocks
 // without bound and no name is mistyped.
 func TestEveryScriptHasATimeout(t *testing.T) {
-	for _, name := range []string{scriptGetVM, scriptConfigureVM, scriptStartVM, scriptStopVM, scriptRemoveVM, scriptNewVHD, scriptOptimizeVHD, scriptSetupStatus, scriptSetupApply} {
+	for _, name := range []string{scriptGetVM, scriptConfigureVM, scriptStartVM, scriptStopVM, scriptRemoveVM, scriptNewVHD, scriptSetupStatus, scriptSetupApply} {
 		if _, err := Script(name); err != nil {
 			t.Errorf("missing script %q: %v", name, err)
 		}
 		if scriptTimeouts[name] == 0 {
 			t.Errorf("script %q has no timeout", name)
+		}
+	}
+}
+
+// get-vm reads no disk file: the data disk's bytes are the caller's, and
+// Get-VHD opens the parents a file's locator names. The broker reads
+// the one parent it compares itself (Files.ParentPath).
+func TestGetVMReadsNoDisk(t *testing.T) {
+	s, err := Script(scriptGetVM)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(s, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "#") {
+			continue
+		}
+		if strings.Contains(line, "-VHD") {
+			t.Errorf("get-vm runs a VHD cmdlet: %s", strings.TrimSpace(line))
 		}
 	}
 }

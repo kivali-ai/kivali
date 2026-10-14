@@ -1,7 +1,9 @@
-// Package vhdx reads what a dynamic VHDX says about its blocks: the
-// Hyper-V backend, to decide whether the data disk is worth compacting,
-// and the broker, to refuse any file but a dynamic VHDX with no parent
-// before Optimize-VHD opens it.
+// Package vhdx reads what a VHDX's metadata says: a dynamic disk's
+// blocks, for the Hyper-V backend to decide whether the data disk is
+// worth compacting and for the broker to refuse any file but a dynamic
+// VHDX with no parent before it compacts one; and the parent a
+// differencing disk's locator names, for the broker to compare its own
+// differencing child's parent without opening it.
 package vhdx
 
 import (
@@ -11,6 +13,8 @@ import (
 	"hash/crc32"
 	"io"
 	"os"
+	"strings"
+	"unicode/utf16"
 
 	"github.com/Microsoft/go-winio/pkg/guid"
 )
@@ -23,13 +27,16 @@ import (
 // guest's fstrim) becomes PAYLOAD_BLOCK_UNMAPPED, but its place in the
 // file is kept, for the block to reuse; the file shrinks only when the
 // blocks at its end are dropped (Hyper-V does that when the VM closes
-// the disk) or when it is compacted (Optimize-VHD).
+// the disk) or when it is compacted.
 //
 // The region table (two copies, at 192 KiB and 256 KiB) locates the BAT
 // and the metadata region; the metadata region holds the block size,
 // the virtual disk size and the logical sector size, which together
 // give the BAT's layout: after every chunkRatio payload entries comes
-// one entry for a sector bitmap block (used by differencing disks).
+// one entry for a sector bitmap block (used by differencing disks). A
+// differencing disk's metadata also holds its parent locator: UTF-16
+// key-value pairs naming the parent (absolute_win32_path, relative_path,
+// parent_linkage, ...).
 const (
 	vhdxSignature          = "vhdxfile"
 	vhdxRegionTableOffset  = 192 << 10
@@ -44,6 +51,10 @@ const (
 	vhdxBATEntrySize       = 8
 	vhdxMinBlockSize       = 1 << 20
 	vhdxMaxBlockSize       = 256 << 20
+
+	vhdxParentLocatorHeaderSize = 20
+	vhdxParentLocatorEntrySize  = 12
+	vhdxMaxParentLocatorSize    = 64 << 10
 )
 
 // Payload block states (BAT entry bits 0 to 2).
@@ -69,6 +80,9 @@ var (
 	fileParametersID    = windowsGUID("CAA16737-FA36-4D43-B3B6-33F0AA44E76B")
 	virtualDiskSizeID   = windowsGUID("2FA54224-CD1B-4876-B211-5DBED83BF4B8")
 	logicalSectorSizeID = windowsGUID("8141BF1D-A96F-4709-BA47-F233A8FAAB5F")
+	parentLocatorID     = windowsGUID("A8D35F2D-B30B-454D-ABF7-D3D84834AB0C")
+	// The locator type a VHDX parent locator's header starts with.
+	parentLocatorTypeVHDX = windowsGUID("B04AEFB7-D19E-4A81-B789-25B8E9445913")
 )
 
 func windowsGUID(s string) [16]byte {
@@ -230,54 +244,80 @@ func parseRegionTable(f io.ReaderAt, off, fileSize int64) (map[[16]byte]vhdxRegi
 	return regions, nil
 }
 
+// metadataTable is the metadata region's table of items.
+type metadataTable struct {
+	f       io.ReaderAt
+	region  vhdxRegion
+	entries []byte
+	n       int
+}
+
+func readMetadataTable(f io.ReaderAt, meta vhdxRegion) (metadataTable, error) {
+	hdr := make([]byte, vhdxMetadataHeaderSize)
+	if _, err := f.ReadAt(hdr, int64(meta.offset)); err != nil {
+		return metadataTable{}, fmt.Errorf("read the metadata table: %w", err)
+	}
+	if string(hdr[:8]) != vhdxMetadataSignature {
+		return metadataTable{}, errors.New("the metadata table has no signature")
+	}
+	n := int(binary.LittleEndian.Uint16(hdr[10:]))
+	if n > vhdxMaxMetadataEntries {
+		return metadataTable{}, fmt.Errorf("the metadata table claims %d entries", n)
+	}
+	entries := make([]byte, n*vhdxMetadataEntrySize)
+	if _, err := f.ReadAt(entries, int64(meta.offset)+vhdxMetadataHeaderSize); err != nil {
+		return metadataTable{}, fmt.Errorf("read the metadata entries: %w", err)
+	}
+	return metadataTable{f: f, region: meta, entries: entries, n: n}, nil
+}
+
+// item reads the metadata item id: its first size bytes or, with size
+// 0, all of it, refusing one longer than limit. An item shorter than
+// size, or lying outside the region, is an error.
+func (m metadataTable) item(id [16]byte, size, limit int) ([]byte, error) {
+	for i := range m.n {
+		e := m.entries[i*vhdxMetadataEntrySize:]
+		if [16]byte(e[:16]) != id {
+			continue
+		}
+		off, length := binary.LittleEndian.Uint32(e[16:]), binary.LittleEndian.Uint32(e[20:])
+		if int64(length) < int64(size) || uint64(off) > uint64(m.region.length) || uint64(length) > uint64(m.region.length)-uint64(off) {
+			return nil, fmt.Errorf("metadata item %d lies outside its region", i)
+		}
+		if size == 0 {
+			if int64(length) > int64(limit) {
+				return nil, fmt.Errorf("metadata item %d is %d bytes long", i, length)
+			}
+			size = int(length)
+		}
+		b := make([]byte, size)
+		if _, err := m.f.ReadAt(b, int64(m.region.offset)+int64(off)); err != nil {
+			return nil, fmt.Errorf("read metadata item %d: %w", i, err)
+		}
+		return b, nil
+	}
+	return nil, errors.New("a required metadata item is missing")
+}
+
 // readMetadata reads the file parameters (block size and flags), the
 // virtual disk size and the logical sector size from the metadata
 // region.
 func readMetadata(f io.ReaderAt, meta vhdxRegion) (blockSize, flags uint32, virtualSize uint64, sectorSize uint32, err error) {
-	hdr := make([]byte, vhdxMetadataHeaderSize)
-	if _, err := f.ReadAt(hdr, int64(meta.offset)); err != nil {
-		return 0, 0, 0, 0, fmt.Errorf("read the metadata table: %w", err)
+	m, err := readMetadataTable(f, meta)
+	if err != nil {
+		return 0, 0, 0, 0, err
 	}
-	if string(hdr[:8]) != vhdxMetadataSignature {
-		return 0, 0, 0, 0, errors.New("the metadata table has no signature")
-	}
-	n := int(binary.LittleEndian.Uint16(hdr[10:]))
-	if n > vhdxMaxMetadataEntries {
-		return 0, 0, 0, 0, fmt.Errorf("the metadata table claims %d entries", n)
-	}
-	entries := make([]byte, n*vhdxMetadataEntrySize)
-	if _, err := f.ReadAt(entries, int64(meta.offset)+vhdxMetadataHeaderSize); err != nil {
-		return 0, 0, 0, 0, fmt.Errorf("read the metadata entries: %w", err)
-	}
-	item := func(id [16]byte, size int) ([]byte, error) {
-		for i := range n {
-			e := entries[i*vhdxMetadataEntrySize:]
-			if [16]byte(e[:16]) != id {
-				continue
-			}
-			off, length := binary.LittleEndian.Uint32(e[16:]), binary.LittleEndian.Uint32(e[20:])
-			if int(length) < size || uint64(off) > uint64(meta.length) || uint64(length) > uint64(meta.length)-uint64(off) {
-				return nil, fmt.Errorf("metadata item %d lies outside its region", i)
-			}
-			b := make([]byte, size)
-			if _, err := f.ReadAt(b, int64(meta.offset)+int64(off)); err != nil {
-				return nil, fmt.Errorf("read metadata item %d: %w", i, err)
-			}
-			return b, nil
-		}
-		return nil, errors.New("a required metadata item is missing")
-	}
-	fp, err := item(fileParametersID, 8)
+	fp, err := m.item(fileParametersID, 8, 0)
 	if err != nil {
 		return 0, 0, 0, 0, err
 	}
 	blockSize, flags = binary.LittleEndian.Uint32(fp), binary.LittleEndian.Uint32(fp[4:])
-	vs, err := item(virtualDiskSizeID, 8)
+	vs, err := m.item(virtualDiskSizeID, 8, 0)
 	if err != nil {
 		return 0, 0, 0, 0, err
 	}
 	virtualSize = binary.LittleEndian.Uint64(vs)
-	ss, err := item(logicalSectorSizeID, 4)
+	ss, err := m.item(logicalSectorSizeID, 4, 0)
 	if err != nil {
 		return 0, 0, 0, 0, err
 	}
@@ -292,4 +332,92 @@ func readMetadata(f io.ReaderAt, meta vhdxRegion) (blockSize, flags uint32, virt
 		return 0, 0, 0, 0, errors.New("the virtual disk size is 0")
 	}
 	return blockSize, flags, virtualSize, sectorSize, nil
+}
+
+// ParentPath reads the parent locator of the differencing VHDX in f,
+// size bytes long, and returns the path its absolute_win32_path entry
+// names, without a \\?\ prefix. It parses the locator's bytes and opens
+// nothing: the parent itself is never touched. A disk with no parent is
+// an error.
+func ParentPath(f io.ReaderAt, size int64) (string, error) {
+	var sig [8]byte
+	if _, err := f.ReadAt(sig[:], 0); err != nil || string(sig[:]) != vhdxSignature {
+		return "", errors.New("not a VHDX file")
+	}
+	regions, err := readRegionTable(f, size)
+	if err != nil {
+		return "", err
+	}
+	meta, ok := regions[metadataRegionID]
+	if !ok {
+		return "", errors.New("no metadata region")
+	}
+	m, err := readMetadataTable(f, meta)
+	if err != nil {
+		return "", err
+	}
+	fp, err := m.item(fileParametersID, 8, 0)
+	if err != nil {
+		return "", err
+	}
+	if binary.LittleEndian.Uint32(fp[4:])&FlagHasParent == 0 {
+		return "", errors.New("not a differencing disk")
+	}
+	loc, err := m.item(parentLocatorID, 0, vhdxMaxParentLocatorSize)
+	if err != nil {
+		return "", fmt.Errorf("the parent locator: %w", err)
+	}
+	entries, err := parseParentLocator(loc)
+	if err != nil {
+		return "", err
+	}
+	p := entries["absolute_win32_path"]
+	if p == "" {
+		return "", errors.New("the parent locator has no absolute_win32_path")
+	}
+	return strings.TrimPrefix(p, `\\?\`), nil
+}
+
+// parseParentLocator reads a VHDX parent locator's key-value entries:
+// a header (the locator type, 2 reserved bytes, the entry count), then
+// per entry the key's and the value's offset (from the locator's start)
+// and their lengths in bytes, the strings UTF-16LE.
+func parseParentLocator(loc []byte) (map[string]string, error) {
+	if len(loc) < vhdxParentLocatorHeaderSize {
+		return nil, errors.New("the parent locator is shorter than its header")
+	}
+	if [16]byte(loc[:16]) != parentLocatorTypeVHDX {
+		return nil, errors.New("the parent locator is not of the VHDX type")
+	}
+	n := int(binary.LittleEndian.Uint16(loc[18:]))
+	if vhdxParentLocatorHeaderSize+n*vhdxParentLocatorEntrySize > len(loc) {
+		return nil, fmt.Errorf("the parent locator claims %d entries", n)
+	}
+	str := func(off uint32, length uint16) (string, error) {
+		if length%2 != 0 || uint64(off)+uint64(length) > uint64(len(loc)) {
+			return "", errors.New("a parent locator entry lies outside the locator")
+		}
+		u := make([]uint16, length/2)
+		for i := range u {
+			u[i] = binary.LittleEndian.Uint16(loc[int(off)+2*i:])
+		}
+		return string(utf16.Decode(u)), nil
+	}
+	entries := make(map[string]string, n)
+	for i := range n {
+		e := loc[vhdxParentLocatorHeaderSize+i*vhdxParentLocatorEntrySize:]
+		k, err := str(binary.LittleEndian.Uint32(e), binary.LittleEndian.Uint16(e[8:]))
+		if err != nil {
+			return nil, err
+		}
+		v, err := str(binary.LittleEndian.Uint32(e[4:]), binary.LittleEndian.Uint16(e[10:]))
+		if err != nil {
+			return nil, err
+		}
+		if _, dup := entries[k]; dup {
+			return nil, fmt.Errorf("the parent locator names %q twice", k)
+		}
+		entries[k] = v
+	}
+	return entries, nil
 }
