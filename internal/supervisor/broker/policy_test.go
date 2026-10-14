@@ -118,6 +118,10 @@ type fakeFiles struct {
 	// parents is what ParentPath reads from each differencing disk; a
 	// path it does not list fails to read.
 	parents map[string]string
+	// rootErr is RootDisk's refusal (nil: the root disk is a fixed or
+	// dynamic VHDX); rootChecks lists the paths it was asked about.
+	rootErr    error
+	rootChecks []string
 
 	mu        sync.Mutex
 	vmDirs    []string // VMDir's keys
@@ -197,6 +201,22 @@ func (f *fakeFiles) PlacedFile(dst string, id FileID, owner string) error {
 
 func (f *fakeFiles) DeleteFile(string) error { return nil }
 
+func (f *fakeFiles) RootDisk(p string) (string, error) {
+	f.mu.Lock()
+	f.rootChecks = append(f.rootChecks, p)
+	f.mu.Unlock()
+	if f.rootErr != nil {
+		return "", f.rootErr
+	}
+	return f.Canonical(p)
+}
+
+func (f *fakeFiles) roots() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.rootChecks...)
+}
+
 func (f *fakeFiles) RemoveVMDir(dir, _ string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -259,6 +279,12 @@ func (r *fakeRunner) lastCall(script string) (json.RawMessage, bool) {
 	return nil, false
 }
 
+func (r *fakeRunner) count() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.calls)
+}
+
 func (r *fakeRunner) called(script string) bool {
 	_, ok := r.lastCall(script)
 	return ok
@@ -273,6 +299,7 @@ type harness struct {
 	runner *fakeRunner
 	files  *fakeFiles
 	caller *fakeCaller
+	server *Server
 	client *Client
 }
 
@@ -284,13 +311,14 @@ func newHarness(t *testing.T) *harness {
 		files:  &fakeFiles{runner: runner, canon: map[string]string{}, parents: map[string]string{}},
 		caller: &fakeCaller{sid: testSID, dirs: map[string]bool{}, files: map[string]fakeEntry{}},
 	}
-	s := &Server{
+	h.server = &Server{
 		Runner:   h.runner,
 		Files:    h.files,
+		Root:     testRoot,
 		CallerOf: func(*http.Request) (Caller, error) { return h.caller, nil },
 		Logf:     t.Logf,
 	}
-	ts := httptest.NewServer(s.Handler())
+	ts := httptest.NewServer(h.server.Handler())
 	t.Cleanup(ts.Close)
 	addr := strings.TrimPrefix(ts.URL, "http://")
 	h.client = &Client{Dial: func(ctx context.Context) (net.Conn, error) {
@@ -302,12 +330,14 @@ func newHarness(t *testing.T) *harness {
 
 const testCfg = `C:\Kivali\team1`
 
+// testRoot is the broker's root disk in the tests (Server.Root).
+const testRoot = `C:\Program Files\Kivali\vm\root.vhdx`
+
 func (h *harness) req() VMRequest {
 	key := host.DirKey(testCfg)
 	return VMRequest{
 		Name:      VMName(key),
 		ConfigDir: testCfg,
-		RootVHDX:  `C:\Program Files\Kivali\vm\root.vhdx`,
 		DataVHDX:  winJoin(testCfg, DataDiskName),
 		CPUs:      4,
 		MemoryMB:  4096,
@@ -316,19 +346,19 @@ func (h *harness) req() VMRequest {
 	}
 }
 
-// allowCreate lets the caller write the config dir and open both disks.
+// allowCreate lets the caller write the config dir and open the data
+// disk.
 func (h *harness) allowCreate(r VMRequest) {
 	h.caller.dirs[r.ConfigDir] = true
 	h.caller.files[r.DataVHDX] = fakeEntry{read: true, write: true}
-	h.caller.files[r.RootVHDX] = fakeEntry{read: true}
 }
 
 // ownVM makes get-vm report a VM owned by the caller in the given state,
 // with the disks the backend attaches, the child's parent being the
-// release's root.vhdx.
+// broker's root disk.
 func (h *harness) ownVM(state string) *vmInfo {
 	key := host.DirKey(testCfg)
-	h.files.parents[winJoin(vmDirFor(testCfg), ChildDiskName)] = `C:\Program Files\Kivali\vm\root.vhdx`
+	h.files.parents[winJoin(vmDirFor(testCfg), ChildDiskName)] = testRoot
 	vm := &vmInfo{
 		Exists: true, ID: "VMID-1", State: state, Notes: OwnerNotes(testSID),
 		Path: vmDirFor(testCfg),
@@ -377,7 +407,7 @@ func TestEnsureCreates(t *testing.T) {
 	if ca.Child != winJoin(vmDirFor(testCfg), ChildDiskName) {
 		t.Errorf("child = %q", ca.Child)
 	}
-	if ca.Data != r.DataVHDX || ca.Root != r.RootVHDX {
+	if ca.Data != r.DataVHDX || ca.Root != testRoot {
 		t.Errorf("disks = %q, %q", ca.Data, ca.Root)
 	}
 	if ca.MAC != strings.ToUpper(r.MAC) {
@@ -437,7 +467,6 @@ func TestEnsureDataDiskMustBeInConfigDir(t *testing.T) {
 	r.DataVHDX = `C:\Elsewhere\data.vhdx`
 	h.caller.dirs[r.ConfigDir] = true
 	h.caller.files[r.DataVHDX] = fakeEntry{read: true, write: true}
-	h.caller.files[r.RootVHDX] = fakeEntry{read: true}
 	_, err := h.client.EnsureVM(context.Background(), r)
 	if statusOf(err) != http.StatusForbidden || !strings.Contains(err.Error(), "not in") {
 		t.Fatalf("err = %v (status %d)", err, statusOf(err))
@@ -449,7 +478,6 @@ func TestEnsureRefusedWhenConfigDirNotWritable(t *testing.T) {
 	r := h.req()
 	// The caller cannot write the config dir.
 	h.caller.files[r.DataVHDX] = fakeEntry{read: true, write: true}
-	h.caller.files[r.RootVHDX] = fakeEntry{read: true}
 	_, err := h.client.EnsureVM(context.Background(), r)
 	if statusOf(err) != http.StatusForbidden || !strings.Contains(err.Error(), "config_dir") {
 		t.Fatalf("err = %v (status %d)", err, statusOf(err))
@@ -534,6 +562,110 @@ func TestEnsureRunningComparesTheChildsParent(t *testing.T) {
 }
 
 func ptr(s string) *string { return &s }
+
+// post sends body to path as raw JSON, past the client's types.
+func (h *harness) post(path, body string) (int, string) {
+	h.t.Helper()
+	hc := &http.Client{Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		return h.client.Dial(ctx)
+	}}}
+	resp, err := hc.Post("http://broker"+path, "application/json", strings.NewReader(body))
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	b, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, string(b)
+}
+
+// A request that names a root disk is refused before anything opens or
+// runs: the root is the broker's own, and a client that still sends one
+// learns so from the field's name.
+func TestEnsureRefusesARootFromTheCaller(t *testing.T) {
+	h := newHarness(t)
+	r := h.req()
+	h.allowCreate(r)
+	body, _ := json.Marshal(r)
+	var fields map[string]any
+	_ = json.Unmarshal(body, &fields)
+	fields["root_vhdx"] = `C:\Users\Public\root.vhdx`
+	body, _ = json.Marshal(fields)
+	status, msg := h.post("/v1/vm", string(body))
+	if status != http.StatusBadRequest || !strings.Contains(msg, "root_vhdx") {
+		t.Fatalf("answer = %d %q, want 400 naming root_vhdx", status, msg)
+	}
+	if h.runner.count() != 0 || len(h.files.roots()) != 0 {
+		t.Errorf("a refused request ran %d scripts and checked the root %d times", h.runner.count(), len(h.files.roots()))
+	}
+}
+
+// configure-vm gets the broker's root disk, as RootDisk made it
+// canonical, whatever the caller sent.
+func TestEnsureGivesTheBrokersRoot(t *testing.T) {
+	h := newHarness(t)
+	const configured = `C:\PROGRA~1\Kivali\vm\root.vhdx`
+	h.server.Root = configured
+	h.files.canon[configured] = testRoot
+	r := h.req()
+	h.allowCreate(r)
+	if _, err := h.client.EnsureVM(context.Background(), r); err != nil {
+		t.Fatalf("EnsureVM: %v", err)
+	}
+	if len(h.files.roots()) != 1 || h.files.roots()[0] != configured {
+		t.Errorf("root checks = %q, want [%s]", h.files.roots(), configured)
+	}
+	args, _ := h.runner.lastCall(scriptConfigureVM)
+	var ca configureArgs
+	if err := json.Unmarshal(args, &ca); err != nil {
+		t.Fatal(err)
+	}
+	if ca.Root != testRoot {
+		t.Errorf("configure-vm root = %q, want %s", ca.Root, testRoot)
+	}
+}
+
+// A root disk that fails its check, or none, refuses every
+// configuration with 503 and the reason, before any script runs.
+func TestEnsureRefusedWithoutAUsableRoot(t *testing.T) {
+	for _, tc := range []struct {
+		what, root string
+		err        error
+		want       string
+	}{
+		{"differencing", testRoot, errors.New("not a fixed or dynamic VHDX: a differencing disk"), "differencing"},
+		{"missing", testRoot, errors.New("The system cannot find the file specified."), "cannot find"},
+		{"none configured", "", nil, "no root disk"},
+	} {
+		h := newHarness(t)
+		h.server.Root = tc.root
+		h.files.rootErr = tc.err
+		r := h.req()
+		h.allowCreate(r)
+		h.ownVM(StateOff)
+		_, err := h.client.EnsureVM(context.Background(), r)
+		if statusOf(err) != http.StatusServiceUnavailable || !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), tc.root) {
+			t.Errorf("%s: err = %v (status %d)", tc.what, err, statusOf(err))
+		}
+		if h.runner.count() != 0 {
+			t.Errorf("%s: %d scripts ran", tc.what, h.runner.count())
+		}
+	}
+}
+
+// A running VM's child is compared with the broker's root disk: a VM
+// made from another root (the one an earlier broker had) is a change of
+// the root disk, left for a stop.
+func TestEnsureRunningComparesWithTheBrokersRoot(t *testing.T) {
+	h := newHarness(t)
+	r := h.req()
+	h.allowCreate(r)
+	h.ownVM(StateRunning)
+	h.server.Root = `D:\Kivali\vm\root.vhdx`
+	_, err := h.client.EnsureVM(context.Background(), r)
+	if statusOf(err) != http.StatusConflict || !strings.Contains(err.Error(), "root disk") {
+		t.Fatalf("err = %v (status %d)", err, statusOf(err))
+	}
+}
 
 func TestOwnershipRefused(t *testing.T) {
 	h := newHarness(t)

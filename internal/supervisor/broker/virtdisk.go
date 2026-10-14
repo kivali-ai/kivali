@@ -6,7 +6,8 @@ import (
 	"github.com/Microsoft/go-winio/pkg/guid"
 )
 
-// The parts of virtdisk.h the broker's compaction calls use
+// The parts of virtdisk.h the broker's compaction and root disk check
+// use
 // (virtdisk_windows.go), laid out as the C structures are on 64-bit
 // Windows (amd64 and arm64 alike: BOOL, ULONG and DWORD are 4 bytes, a
 // GUID 16 with 4-byte alignment, and a ULONGLONG 8 with 8-byte

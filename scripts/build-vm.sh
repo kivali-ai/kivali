@@ -32,7 +32,9 @@
 #   KIVALI_BUILD_VM_DIR   the build VM's config directory (default ~/.kivali-build-vm)
 #   KIVALI_VM_DIR         the VM image to boot: vm/build/out when it holds one, else the
 #                         installed Kivali Desktop's (the bootstrap: the first image on a
-#                         machine comes from a release, and builds its successors)
+#                         machine comes from a release, and builds its successors);
+#                         on Windows the VM boots the broker's root disk, the installed
+#                         one unless a console broker was given --root
 #   KIVALI_BUILD_VM_BOOT  0: never boot or stop; the config directory is a team already
 #                         running (the dev team, for `make dev-load`), whose containerd
 #                         gets the images straight from the build

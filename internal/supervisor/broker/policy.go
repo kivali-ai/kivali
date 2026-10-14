@@ -124,6 +124,14 @@ type Files interface {
 	// opened without following a link (a link is deleted as the link);
 	// nothing at p is no error.
 	DeleteFile(p string) error
+	// RootDisk checks the broker's root disk at p (Server.Root) and
+	// returns its canonical path: p made canonical (Canonical), opened as
+	// a VHDX for its metadata only and without opening any parent its
+	// locator names, and refused unless its provider subtype is fixed or
+	// dynamic. A differencing root would have Hyper-V open whatever parent
+	// it names; the install directory's DACL is what keeps one out, and
+	// this check is a second line.
+	RootDisk(p string) (string, error)
 }
 
 // Runner runs one of the broker's embedded PowerShell scripts (by name)
@@ -149,6 +157,11 @@ func answer(status int, format string, args ...any) *Error {
 type Server struct {
 	Runner Runner
 	Files  Files
+	// Root is the root disk every VM's differencing child has as its
+	// parent (RootPath: beside the broker's executable, or the console
+	// broker's --root), checked (Files.RootDisk) on every POST /v1/vm
+	// before anything else is opened or run.
+	Root string
 	// CallerOf identifies the caller of a request (on Windows, by
 	// impersonating the pipe client of the request's connection).
 	CallerOf func(*http.Request) (Caller, error)
@@ -432,9 +445,24 @@ func refused(what string, err error) error {
 	return answer(http.StatusForbidden, "refused: %s: %v", what, err)
 }
 
+// rootDisk is the broker's root disk, checked (Files.RootDisk): 503
+// when it is missing or not a disk the broker boots from, which is the
+// installation's fault, not the request's.
+func (s *Server) rootDisk() (string, error) {
+	if s.Root == "" {
+		return "", answer(http.StatusServiceUnavailable, "the broker has no root disk; reinstall Kivali, or start a console broker with --root")
+	}
+	root, err := s.Files.RootDisk(s.Root)
+	if err != nil {
+		return "", answer(http.StatusServiceUnavailable, "the broker's root disk %s cannot be used (%v); reinstall Kivali", s.Root, err)
+	}
+	return root, nil
+}
+
 // ensureVM is POST /v1/vm: the VM exists with exactly the requested
 // configuration (created, or reconfigured while off), or the request is
-// refused.
+// refused. Its root disk is the broker's own (Server.Root), never one a
+// caller names.
 func (s *Server) ensureVM(r *http.Request, c Caller) (any, error) {
 	var req VMRequest
 	if err := decode(r, &req); err != nil {
@@ -442,6 +470,10 @@ func (s *Server) ensureVM(r *http.Request, c Caller) (any, error) {
 	}
 	if err := req.Validate(); err != nil {
 		return nil, answer(http.StatusBadRequest, "%v", err)
+	}
+	root, err := s.rootDisk()
+	if err != nil {
+		return nil, err
 	}
 	defer s.lock(req.Name)()
 
@@ -470,10 +502,10 @@ func (s *Server) ensureVM(r *http.Request, c Caller) (any, error) {
 		}
 	}
 	running := cur.Exists && cur.State != StateOff
-	dataAccess, rootAccess := AccessWrite, AccessRead
+	dataAccess := AccessWrite
 	if running {
 		// A running VM holds its disks; only their names are compared.
-		dataAccess, rootAccess = AccessName, AccessName
+		dataAccess = AccessName
 	}
 	data, err := c.File(req.DataVHDX, dataAccess)
 	if err != nil {
@@ -484,12 +516,8 @@ func (s *Server) ensureVM(r *http.Request, c Caller) (any, error) {
 	if !strings.EqualFold(winDir(data), cfg) {
 		return nil, answer(http.StatusForbidden, "refused: data_vhdx %s is not in %s", data, cfg)
 	}
-	root, err := c.File(req.RootVHDX, rootAccess)
-	if err != nil {
-		return nil, refused("root_vhdx", err)
-	}
 	if strings.EqualFold(root, data) {
-		return nil, answer(http.StatusForbidden, "refused: root_vhdx and data_vhdx are the same file")
+		return nil, answer(http.StatusForbidden, "refused: data_vhdx %s is the broker's root disk", data)
 	}
 	vmDir, release, err := s.Files.VMDir(key, c.SID())
 	if err != nil {

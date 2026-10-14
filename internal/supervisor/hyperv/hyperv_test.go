@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -40,10 +41,12 @@ type fakeBroker struct {
 	id        string // the VM GUID returned (empty to leave the VM idless)
 	state     string
 	ensureReq broker.VMRequest
-	vhds      []broker.VHDRequest
-	stops     []bool
-	gets      int      // GET /v1/vm/{name} requests: the state polls
-	removes   []string // DELETE /v1/vm/{name} names
+	// ensureFields is the last POST /v1/vm body's fields, as sent.
+	ensureFields map[string]json.RawMessage
+	vhds         []broker.VHDRequest
+	stops        []bool
+	gets         int      // GET /v1/vm/{name} requests: the state polls
+	removes      []string // DELETE /v1/vm/{name} names
 	// removeStatus, when set, is DELETE's answer instead of 200.
 	removeStatus int
 	// gracefulIgnored makes a graceful stop answer without the VM
@@ -64,10 +67,14 @@ type fakeBroker struct {
 func (f *fakeBroker) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/vm", func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
 		var req broker.VMRequest
-		_ = json.NewDecoder(r.Body).Decode(&req)
+		_ = json.Unmarshal(body, &req)
+		var fields map[string]json.RawMessage
+		_ = json.Unmarshal(body, &fields)
 		f.mu.Lock()
 		f.ensureReq = req
+		f.ensureFields = fields
 		if f.state == "" {
 			f.state = broker.StateOff
 		}
@@ -482,8 +489,23 @@ func TestNewMachineDerivation(t *testing.T) {
 		t.Fatalf("NewMachine: %v", err)
 	}
 	fb.mu.Lock()
-	req := fb.ensureReq
+	req, fields := fb.ensureReq, fb.ensureFields
 	fb.mu.Unlock()
+	// The root disk is the broker's own: the request names none, and the
+	// image directory reaches the broker in no field.
+	var names []string
+	for k := range fields {
+		names = append(names, k)
+	}
+	sort.Strings(names)
+	if want := "com_pipe,config_dir,cpus,data_vhdx,mac,memory_mb,name"; strings.Join(names, ",") != want {
+		t.Errorf("POST /v1/vm fields = %v, want %s", names, want)
+	}
+	for k, v := range fields {
+		if strings.Contains(strings.ToLower(string(v)), `program files`) {
+			t.Errorf("field %s carries the image directory: %s", k, v)
+		}
+	}
 	if req.Name != "kivali-96e3ef74" {
 		t.Errorf("name = %q", req.Name)
 	}
@@ -493,8 +515,8 @@ func TestNewMachineDerivation(t *testing.T) {
 	if req.ComPipe != `\\.\pipe\kivali-96e3ef74-com1` {
 		t.Errorf("com pipe = %q", req.ComPipe)
 	}
-	if req.ConfigDir != configDir || req.RootVHDX != `C:\Program Files\Kivali\vm\root.vhdx` {
-		t.Errorf("config/root = %q, %q", req.ConfigDir, req.RootVHDX)
+	if req.ConfigDir != configDir {
+		t.Errorf("config = %q", req.ConfigDir)
 	}
 }
 

@@ -7,7 +7,8 @@
 // Hyper-V. docs/developers/supervisor.md, "The Windows backend", is the
 // design; it mirrors the macOS backend (internal/supervisor/vz).
 //
-// The VM boots a differencing child of the release's root.vhdx and a
+// The VM boots a differencing child of the broker's root.vhdx (the one
+// installed beside it, never one this process names) and a
 // dynamic data.vhdx, on Hyper-V's Default Switch, with COM1 on a named
 // pipe (the marker lines out, the poweroff verb and the first-boot
 // format answer in) and the guest agent reached over a Hyper-V socket
@@ -45,9 +46,11 @@ import (
 // The VM image's files on Windows.
 const (
 	// RootFile is the bootable root disk, a dynamic VHDX with an EFI
-	// partition and the squashfs. The VM boots a differencing child of
-	// it.
-	RootFile = "root.vhdx"
+	// partition and the squashfs, which marks a directory as the image
+	// (Image). The VM boots a differencing child of the broker's root
+	// disk (broker.RootPath), which in an installed layout is this same
+	// file: <install dir>\vm\root.vhdx.
+	RootFile = broker.RootFile
 	// VersionFile holds the image's version ("dev" without one).
 	VersionFile = "VERSION"
 	// DataDiskFile is the data disk's name in the config directory.
@@ -221,7 +224,9 @@ func (b Backend) CreateDataDisk(p string, size int64) error {
 
 // NewMachine derives the team's VM identity from its config directory
 // and makes the VM exist through the broker (POST /v1/vm), ready to
-// start. The config directory is the data disk's directory.
+// start. The config directory is the data disk's directory. The root
+// disk is the broker's own, root.vhdx installed beside it (broker.RootPath);
+// the image directory here gives only the image's version (Image).
 func (b Backend) NewMachine(c supervisor.MachineConfig) (supervisor.Machine, error) {
 	dataDisk := plainPath(c.DataDisk)
 	configDir := filepath.Dir(dataDisk)
@@ -234,7 +239,6 @@ func (b Backend) NewMachine(c supervisor.MachineConfig) (supervisor.Machine, err
 	req := broker.VMRequest{
 		Name:      broker.VMName(key),
 		ConfigDir: configDir,
-		RootVHDX:  filepath.Join(plainPath(c.ImageDir), RootFile),
 		DataVHDX:  dataDisk,
 		CPUs:      c.CPUs,
 		MemoryMB:  c.MemoryMB,

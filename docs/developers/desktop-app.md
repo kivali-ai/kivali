@@ -205,8 +205,11 @@ macOS `root.squashfs` keys it and `Image`, `initramfs.gz` and
 `root.squashfs` go in, as `Contents/Resources/vm`; on Windows
 `root.vhdx` keys it and goes in alone, as `<install dir>\vm` beside
 `Kivali.exe` (Tauri's resource directory there is the executable's,
-installed or under `target\debug`). `VERSION` goes in with either when
-present (the supervisor reads "dev" without it). The shell checks for
+installed or under `target\debug`); the broker boots that same
+`root.vhdx`, which it finds beside its own executable
+(`kivali-supervisor.exe`, also in the install directory), never through
+`serve` (docs/developers/supervisor.md, "The broker"). `VERSION` goes
+in with either when present (the supervisor reads "dev" without it). The shell checks for
 the same root file (`platform::VM_ROOT_FILE`) before it passes the
 directory on. The Windows image adds about 230 MiB to the installer
 (the 248 MiB VHDX holds an already-compressed squashfs), well inside
