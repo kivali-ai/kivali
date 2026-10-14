@@ -381,7 +381,11 @@ the file kept its 6.9 GB through the clean stop and Quick mode gave the
 2.5 GB back in about a second; Full, Pretrimmed and Retrim modes also
 run on the ext4 disk but found nothing more; Optimize-VHD on a running
 VM's disk fails with a sharing violation (0x80070020); the files left on
-the disk had the same checksums after the compaction.
+the disk had the same checksums after the compaction. Through the
+broker (its PowerShell process included) the same compaction of 2 GiB
+took 4 to 6 s, before an `up`, before an `up` that first had to shut
+down a VM an earlier serve left running, and after a `down`; a hole of
+768 MiB was left alone.
 
 A Hyper-V VM outlives the `serve` that started it (a logoff, a crash, the
 app killing `serve`). Before a start, a leftover running VM is shut down
