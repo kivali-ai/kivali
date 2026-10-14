@@ -913,6 +913,9 @@ func TestRPC(t *testing.T) {
 	default:
 		t.Fatal("down --exit did not ask serve to quit")
 	}
+	if c := h.vm.compacted(); len(c) != 0 {
+		t.Fatalf("down --exit compacted the data disk: %+v", c)
+	}
 	st, err := c.Status(ctx)
 	if err != nil || st.Running {
 		t.Fatalf("status after down: %+v %v", st, err)

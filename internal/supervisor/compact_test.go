@@ -60,6 +60,28 @@ func TestBoundedShutdownDoesNotCompact(t *testing.T) {
 	}
 }
 
+// A down for serve's exit (`down --exit`, the desktop app's quit and its
+// exit at a logoff) compacts nothing after its clean stop: the host may
+// be about to kill everything. The next up compacts the disk before its
+// boot.
+func TestDownToExitDoesNotCompact(t *testing.T) {
+	h := newHarness(t)
+	h.mustUp(UpOptions{Install: owner})
+	if err := h.sup.DownToExit(context.Background(), h.logf()); err != nil {
+		t.Fatalf("down: %v", err)
+	}
+	if m, _ := h.sup.current(); m != nil {
+		t.Fatal("the VM is still running after the down")
+	}
+	if c := h.vm.compacted(); len(c) != 0 {
+		t.Fatalf("compactions after a down to exit: %+v", c)
+	}
+	h.mustUp(UpOptions{})
+	if c := h.vm.compacted(); len(c) != 1 || !c[0].allStopped || c[0].boots != 1 {
+		t.Fatalf("after the next up: %+v, want a compaction before its boot", c)
+	}
+}
+
 // A compaction that fails fails nothing: down and up go on, the log
 // says so.
 func TestDataDiskCompactionFailureIsOnlyLogged(t *testing.T) {
