@@ -85,7 +85,10 @@ func TestSidecarShellPackagesRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Packages: %v", err)
 	}
-	if want := []string{"python3", "ripgrep"}; !reflect.DeepEqual(got, want) {
-		t.Errorf("Packages = %v, want %v", got, want)
+	if want := []string{"python3", "ripgrep"}; !reflect.DeepEqual(got.Packages, want) {
+		t.Errorf("Packages = %v, want %v", got.Packages, want)
+	}
+	if got.Installing != nil || got.Failed != nil {
+		t.Errorf("no install, yet Installing = %v, Failed = %v", got.Installing, got.Failed)
 	}
 }

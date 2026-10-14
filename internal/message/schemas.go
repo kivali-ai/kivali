@@ -87,7 +87,7 @@ var ceoApprovalRequestTool = ToolDef{
 
 Lead the body with the ask and the decision being requested.
 
-This tool carries no side effect: an approval here is a recorded answer, nothing more. The org-mutating proposals are separate Chief-of-Staff-only tools whose approval the server applies for you — propose_hire, propose_offboard, propose_reorg, propose_role_update, propose_handbook_update. Reach for one of those when you want something to actually change on approve.`,
+This tool carries no side effect: an approval here is a recorded answer, nothing more. The org-mutating proposals are separate Chief-of-Staff-only tools whose approval the server applies for you — propose_hire, propose_offboard, propose_reorg, propose_role_update, propose_handbook_update — and propose_software_install, which any agent can use for its own shell. Reach for one of those when you want something to actually change on approve.`,
 	Schema: json.RawMessage(`{
   "type": "object",
   "properties": {
@@ -219,6 +219,23 @@ One agent per proposal — a departure earns its own approval. If the agent has 
     "rationale": {"type": "string", "description": "` + rationaleDescription + `"}
   },
   "required": ["title", "slug"]
+}`),
+}
+
+var proposeSoftwareInstallTool = ToolDef{
+	Name:        ToolProposeSoftwareInstall,
+	MessageType: store.MsgCEOApprovalRequest,
+	Description: `Ask the owner to install software into your own shell. Any agent can use this. The proposal lands in the owner's inbox as an "Install software" request; on approve, the server adds the packages to your own software list, restarts your shell so they install, and only then does the ack land in your chat. Commands you run wait until installation finishes, so once the ack arrives the software is there.
+
+Name Debian package names (what apt installs, e.g. ` + "`ffmpeg`, `poppler-utils`" + `). Names are lowercase; no version pins, options or paths. Packages already in your shell (the org-wide list or your own) are dropped; if nothing new remains the request is refused. The owner is not necessarily technical, so say in the reason, in plain words, what the software does and why you need it. For Python libraries, use pip --user in your shell instead of asking.`,
+	Schema: json.RawMessage(`{
+  "type": "object",
+  "properties": {
+    "title":    {"type": "string", "description": "short approval title shown in the owner's inbox (e.g. 'Install software: PDF tools')"},
+    "packages": {"type": "array", "items": {"type": "string"}, "minItems": 1, "description": "Debian package names to install into your shell (e.g. ['poppler-utils', 'ffmpeg'])"},
+    "reason":   {"type": "string", "description": "plain words for a non-technical owner: what this software does and why you need it. Cap 4096 bytes."}
+  },
+  "required": ["title", "packages", "reason"]
 }`),
 }
 

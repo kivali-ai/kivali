@@ -43,7 +43,11 @@ type Agent struct {
 	// offers). Empty means "use the model's default" (Provider.Effort).
 	// Mirrors Model: set from the chat-page selector, read at request-
 	// build time, applied to the agent's next fresh CLI session.
-	Effort     string     `yaml:"effort,omitempty"`
+	Effort string `yaml:"effort,omitempty"`
+	// Software is the agent's own extra software (Debian package
+	// names), on top of the org-wide list; see software.go. Installed
+	// when the agent's pod starts.
+	Software   []string   `yaml:"software,omitempty"`
 	CreatedAt  time.Time  `yaml:"created_at"`
 	ArchivedAt *time.Time `yaml:"archived_at,omitempty"`
 }
@@ -253,11 +257,27 @@ func (s *FSStore) listAgentsIn(dir string, skipUnderscore bool) ([]Agent, error)
 // agent.yaml. All other identity and lifecycle fields are preserved.
 // Returns ErrNotFound if the agent isn't active.
 func (s *FSStore) SetAgentModel(slug, model string) error {
+	return s.updateAgent(slug, func(a *Agent) error {
+		a.Model = model
+		return nil
+	})
+}
+
+// updateAgent is the read-modify-write of an active agent's
+// agent.yaml: it reads the agent, applies change and writes the result,
+// holding agentYAMLMu throughout so two setters landing together cannot
+// drop each other's field. A change that returns an error writes
+// nothing. Returns ErrNotFound if the agent isn't active.
+func (s *FSStore) updateAgent(slug string, change func(*Agent) error) error {
+	s.agentYAMLMu.Lock()
+	defer s.agentYAMLMu.Unlock()
 	a, err := s.GetAgent(slug)
 	if err != nil {
 		return err
 	}
-	a.Model = model
+	if err := change(&a); err != nil {
+		return err
+	}
 	meta, err := yaml.Marshal(a)
 	if err != nil {
 		return err
@@ -320,16 +340,10 @@ func (s *FSStore) UpgradeModelPins(current func(model string) string) ([]ModelPi
 // default. Mirrors SetAgentModel; the change applies on the agent's
 // next fresh CLI session (the persistent runner pins effort at spawn).
 func (s *FSStore) SetAgentEffort(slug, effort string) error {
-	a, err := s.GetAgent(slug)
-	if err != nil {
-		return err
-	}
-	a.Effort = effort
-	meta, err := yaml.Marshal(a)
-	if err != nil {
-		return err
-	}
-	return writeAtomic(filepath.Join(s.path("agents", slug), "agent.yaml"), meta, 0o644)
+	return s.updateAgent(slug, func(a *Agent) error {
+		a.Effort = effort
+		return nil
+	})
 }
 
 // SetAgentReportsTo overwrites ReportsTo on an active agent's
@@ -337,16 +351,11 @@ func (s *FSStore) SetAgentEffort(slug, effort string) error {
 // callers should prefer Runtime.ApplyReorg, which layers existence and
 // cycle checks on top. Returns ErrNotFound if the agent isn't active.
 func (s *FSStore) SetAgentReportsTo(slug, newManager string) error {
-	a, err := s.GetAgent(slug)
+	err := s.updateAgent(slug, func(a *Agent) error {
+		a.ReportsTo = newManager
+		return nil
+	})
 	if err != nil {
-		return err
-	}
-	a.ReportsTo = newManager
-	meta, err := yaml.Marshal(a)
-	if err != nil {
-		return err
-	}
-	if err := writeAtomic(filepath.Join(s.path("agents", slug), "agent.yaml"), meta, 0o644); err != nil {
 		return err
 	}
 	s.Graph().OrgChanged()
@@ -374,6 +383,8 @@ func (s *FSStore) ArchiveAgent(slug string) error {
 func (s *FSStore) archiveAgent(slug string) error {
 	s.orgMu.Lock()
 	defer s.orgMu.Unlock()
+	s.agentYAMLMu.Lock()
+	defer s.agentYAMLMu.Unlock()
 	a, err := s.GetAgent(slug)
 	if err != nil {
 		return err

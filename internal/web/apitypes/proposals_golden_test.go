@@ -23,7 +23,8 @@ func goldenProposalRoleUpdate() Proposal {
 				ReportsTo: PersonRef{Slug: "engineering-lead", Name: "Engineering lead"},
 				Model:     "claude-opus-5-5", ModelLabel: "Opus 5.5", Effort: "high",
 			},
-			Moves: []ProposalMove{},
+			Moves:    []ProposalMove{},
+			Packages: []string{},
 			Facts: []ProposalFact{
 				{Label: "Reports to", Value: "Engineering lead"},
 				{Label: "Model", Value: "Opus 5.5 · high"},
@@ -57,7 +58,8 @@ func goldenProposalReorg() Proposal {
 				{Slug: "buyer", Name: "Buyer", To: PersonRef{Slug: "engineering-lead", Name: "Engineering lead"}},
 				{Slug: "tester", Name: "tester", From: &from, To: PersonRef{Slug: "buyer", Name: "Buyer"}, Failed: &reason},
 			},
-			Facts: []ProposalFact{{Label: "Changes", Value: "2 reporting lines"}},
+			Facts:    []ProposalFact{{Label: "Changes", Value: "2 reporting lines"}},
+			Packages: []string{},
 		},
 		Docs:     []ProposalDoc{},
 		Resolved: &ProposalResolution{Approved: true, At: t1, Result: "1 reporting line changed and 1 could not be", Link: "/team"},
@@ -81,7 +83,8 @@ func goldenProposalOffboard() Proposal {
 				ReportsTo: PersonRef{Slug: "engineering-lead", Name: "Engineering lead"},
 				Model:     "claude-sonnet-4-6", ModelLabel: "Sonnet 4.6", Effort: "medium",
 			},
-			Moves: []ProposalMove{},
+			Moves:    []ProposalMove{},
+			Packages: []string{},
 			Facts: []ProposalFact{
 				{Label: "Reports to", Value: "Engineering lead"},
 				{Label: "Model", Value: "Sonnet 4.6 · medium"},
@@ -90,5 +93,29 @@ func goldenProposalOffboard() Proposal {
 		},
 		Docs:             []ProposalDoc{},
 		OffboardSentence: &sentence,
+	}
+}
+
+// goldenProposalSoftwareInstall is a software install waiting on you.
+func goldenProposalSoftwareInstall() Proposal {
+	return Proposal{
+		Path:        "messages/2026-09-28/0007-buyer.md",
+		Kind:        ProposalKindSoftwareInstall,
+		Title:       "Install software: PDF tools",
+		Proposer:    PersonRef{Slug: "buyer", Name: "Buyer"},
+		ProposedAt:  t0,
+		ReasonMD:    "Vendor quotes arrive as PDFs and I need to read their text.",
+		Attachments: []AttachmentRef{},
+		Summary: ProposalSummary{
+			Agent: &ProposalAgent{
+				Slug: "buyer", Name: "Buyer", RoleTitle: "Buyer", Icon: "shopping-cart",
+				ReportsTo: PersonRef{Slug: "engineering-lead", Name: "Engineering lead"},
+				Model:     "claude-opus-5-5", ModelLabel: "Opus 5.5", Effort: "high",
+			},
+			Moves:    []ProposalMove{},
+			Facts:    []ProposalFact{},
+			Packages: []string{"poppler-utils"},
+		},
+		Docs: []ProposalDoc{},
 	}
 }

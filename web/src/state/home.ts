@@ -169,6 +169,7 @@ const PROPOSAL_LABELS: Record<string, string> = {
   handbook_update: 'Handbook update',
   offboard: 'Offboard',
   reorg: 'Reorg',
+  software_install: 'Install software',
 };
 
 /** The neutral kind badge on a Needs-you row. */

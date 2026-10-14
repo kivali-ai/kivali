@@ -18,6 +18,7 @@ describe('toolSummary', () => {
     expect(summarizeTool('mcp__kivali__read_handbook', '{}')).toBe('Reading the handbook');
     expect(summarizeTool('read_handbook', { section: 'How the org works' })).toBe('Reading the handbook: How the org works');
     expect(summarizeTool('propose_handbook_update', { title: 'x' })).toBe('Proposing a handbook change');
+    expect(summarizeTool('propose_software_install', { title: 'x' })).toBe('Asking to install software');
   });
 
   it('strips only the MCP server prefix', () => {

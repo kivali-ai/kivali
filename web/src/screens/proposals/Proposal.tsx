@@ -18,6 +18,7 @@ const KIND_LABEL: Record<string, string> = {
   handbook_update: 'Handbook update',
   offboard: 'Offboard',
   reorg: 'Reorg',
+  software_install: 'Install software',
 };
 
 const DOC_ICON: Record<string, string> = {
@@ -32,6 +33,7 @@ const NOTE_PLACEHOLDER: Record<string, string> = {
   handbook_update: 'Yes. Tell every agent when it lands.',
   offboard: 'Fine. Bring it back later if we need it.',
   reorg: 'OK. Keep me posted on how it goes.',
+  software_install: 'Go ahead. Tell me when it works.',
 };
 
 function asApiError(err: unknown): ApiError {
@@ -70,6 +72,7 @@ function summaryMeta(p: ProposalData): string | undefined {
   const agent = p.summary.agent;
   if (p.kind === 'hire') return 'New agent';
   if (p.kind === 'handbook_update') return 'Applies to every agent';
+  if (p.kind === 'software_install') return 'Software for this agent';
   if (agent?.role_title && agent.role_title !== agent.name) return agent.role_title;
   return undefined;
 }
@@ -87,6 +90,8 @@ export function linkLabel(kind: string, summary: ProposalSummary): string {
       return 'Open the archive';
     case 'reorg':
       return 'Open Team';
+    case 'software_install':
+      return name ? 'Open ' + name : 'Open agent';
     default:
       return 'Open';
   }
@@ -104,6 +109,8 @@ function approveLabel(p: ProposalData): string {
       return 'Offboard ' + (p.summary.agent?.name ?? 'agent');
     case 'reorg':
       return 'Approve reorg';
+    case 'software_install':
+      return 'Install';
     default:
       return 'Approve';
   }
@@ -171,8 +178,8 @@ function Move({ move }: { move: ProposalMove }) {
  * the tile is the 56 avatar beside the facts. Card titles are h3, so an unseen h2 keeps the outline in order.
  */
 function Summary({ p }: { p: ProposalData }) {
-  const { agent, moves, facts } = p.summary;
-  if (!agent && moves.length === 0 && facts.length === 0) return null;
+  const { agent, moves, facts, packages } = p.summary;
+  if (!agent && moves.length === 0 && facts.length === 0 && packages.length === 0) return null;
   return (
     <section className="app-proposal-summary-block" aria-labelledby="app-proposal-summary-h">
       <Text as="h2" id="app-proposal-summary-h" className="app-sr-only">
@@ -184,6 +191,20 @@ function Summary({ p }: { p: ProposalData }) {
             <div className="app-proposal-agent">
               <AgentAvatar {...agentIdentity(agent)} size={56} />
               <Facts facts={facts} reportsTo={agent.reports_to} />
+            </div>
+          )}
+          {packages.length > 0 && (
+            <div className="app-proposal-software">
+              <Text variant="body">
+                {`${agent?.name ?? 'This agent'} wants to install software. If you choose Install, ${agent?.name ?? 'the agent'} restarts now to install it. This takes a minute or two and stops anything ${agent?.name ?? 'the agent'} is doing.`}
+              </Text>
+              <ul className="app-proposal-packages" aria-label="Software to install">
+                {packages.map((name) => (
+                  <li key={name}>
+                    <Badge tone="neutral">{name}</Badge>
+                  </li>
+                ))}
+              </ul>
             </div>
           )}
           {moves.length > 0 && (
@@ -448,6 +469,11 @@ export function Proposal({ now }: ProposalProps) {
               {approveLabel(data)}
             </Button>
           </div>
+          {busy === 'approve' && data.kind === 'software_install' && (
+            <Text as="p" variant="caption" tone="muted" role="status">
+              {`Restarting ${data.summary.agent?.name ?? 'the agent'} to install the software. This takes a minute or two.`}
+            </Text>
+          )}
         </section>
       )}
 

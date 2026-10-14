@@ -1240,7 +1240,8 @@ export const ProposalKindRoleUpdate = "role_update";
 export const ProposalKindHandbookUpdate = "handbook_update";
 export const ProposalKindOffboard = "offboard";
 export const ProposalKindReorg = "reorg";
-export type ProposalKind = typeof ProposalKindHire | typeof ProposalKindRoleUpdate | typeof ProposalKindHandbookUpdate | typeof ProposalKindOffboard | typeof ProposalKindReorg;
+export const ProposalKindSoftwareInstall = "software_install";
+export type ProposalKind = typeof ProposalKindHire | typeof ProposalKindRoleUpdate | typeof ProposalKindHandbookUpdate | typeof ProposalKindOffboard | typeof ProposalKindReorg | typeof ProposalKindSoftwareInstall;
 /**
  * NeedItem is one row of Needs you, newest first; needs-help rows
  * follow the requests, in tree order.
@@ -1815,8 +1816,8 @@ export interface MessagePostResponse {
 
 /**
  * Proposal is GET /api/v1/proposals/{path...}: one proposal to change
- * the org (a hire, a role update, a handbook update, an offboard
- * or a reorg), everything its review page draws. Path is the request
+ * the org (a hire, a role update, a handbook update, an offboard,
+ * a reorg or a software install), everything its review page draws. Path is the request
  * message's path, the `path` that POST /api/v1/needs/approve and deny
  * take.
  */
@@ -1863,6 +1864,11 @@ export interface ProposalSummary {
    */
   moves: ProposalMove[];
   facts: ProposalFact[];
+  /**
+   * Packages is the Debian package names a software install adds to
+   * the agent's shell; empty for any other kind.
+   */
+  packages: string[];
 }
 /**
  * ProposalAgent is the agent tile. For a hire it describes the agent
@@ -2171,6 +2177,43 @@ export interface SetupProgress {
    */
   error?: string;
   who?: string;
+}
+
+//////////
+// source: software.go
+
+/**
+ * OrgSoftware is GET /api/v1/org/software, and the answer to POST
+ * /api/v1/org/software and DELETE /api/v1/org/software/{name}: the
+ * packages every agent's shell gets. Always sorted, never null.
+ */
+export interface OrgSoftware {
+  packages: string[];
+}
+/**
+ * SoftwareAdd is the body of POST /api/v1/org/software and of POST
+ * /api/v1/agents/{slug}/software: names to add to the list, keeping
+ * what is there. Names are trimmed, lowercased and de-duplicated; a
+ * name that is not a Debian package name, or an empty list, is a 400.
+ * DELETE .../software/{name} removes one name; a name not on the list
+ * is a 404.
+ */
+export interface SoftwareAdd {
+  packages: string[];
+}
+/**
+ * AgentSoftware is GET /api/v1/agents/{slug}/software, and the answer
+ * to its POST and DELETE.
+ */
+export interface AgentSoftware {
+  /**
+   * Org is the org-wide list, which this agent gets too. Read-only here.
+   */
+  org: string[];
+  /**
+   * Own is the agent's own list, the part POST and DELETE change.
+   */
+  own: string[];
 }
 
 //////////

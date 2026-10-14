@@ -56,6 +56,8 @@ func (s *Server) wireAPIOrgRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/org/network", s.handleAPINetworkAdd)
 	mux.HandleFunc("DELETE /api/v1/org/network/{host}", s.handleAPINetworkRemove)
 
+	s.wireAPISoftwareRoutes(mux)
+
 	mux.HandleFunc("POST /api/v1/org/backup", s.handleBackupDownload)
 	mux.HandleFunc("POST /api/v1/org/restore", s.handleAPIRestore)
 }

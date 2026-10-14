@@ -18,16 +18,31 @@
 //
 // Trust boundary: the socket lives on a pod-local emptyDir (no other
 // agent can reach it). 0o600 + matching uid is the auth. Single-
-// tenant; runs as the same uid:gid as the agent runtime container,
+// tenant; serves as the same uid:gid as the agent runtime container,
 // which is what lets that container dial the 0o600 socket. It is the
 // only container in the pod that mounts /files/: run_shell and the
 // file_* tools both write it from here.
+//
+// Software. With --install, the container starts as root so the
+// daemon can install those Debian packages. The order is fixed:
+//
+//  1. start `agent-shell install-software <pkgs...>` (this binary, via
+//     /proc/self/exe) as a root child, which runs apt-get and reports
+//     on a pipe;
+//  2. drop this process to --run-as (setgroups, setgid, setuid) and
+//     verify every user and group ID; a failure is fatal;
+//  3. only then set up HOME, create the socket and serve.
+//
+// A daemon started as root drops in step 2 also without --install: it
+// never serves or runs a command as root. Commands wait for the install
+// to finish; see agentshell.ServerConfig.Install.
 package main
 
 import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -38,6 +53,7 @@ import (
 	"time"
 
 	"github.com/kivali-ai/kivali/internal/agentshell"
+	"github.com/kivali-ai/kivali/internal/clock"
 	"github.com/kivali-ai/kivali/internal/files"
 )
 
@@ -61,13 +77,42 @@ export PATH="$HOME/.local/bin:$PATH"
 `
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == agentshell.InstallSubcommand {
+		os.Exit(installSoftware(os.Args[2:]))
+	}
+
 	socketPath := flag.String("socket", agentshell.SocketDefault, "UDS path to listen on")
 	rootPath := flag.String("root", agentshell.RootDefault, "default cwd for /v1/exec; the agent's /files/ for /v1/files")
 	agentSlug := flag.String("agent", "", "slug of the agent this pod runs; names its read-only /data mounts for /v1/files")
 	packagesFile := flag.String("packages-file", agentshell.PackagesFileDefault, "image's installed package list, one per line; served at GET /v1/packages")
+	install := flag.String("install", "", "comma-separated Debian packages to install at start; needs the daemon to start as root")
+	runAs := flag.String("run-as", agentshell.RunAsDefault, "uid:gid the daemon drops to when started as root")
 	flag.Parse()
 
 	logger := log.New(os.Stderr, "agent-shell ", log.LstdFlags|log.Lmicroseconds)
+
+	uid, gid, err := agentshell.ParseRunAs(*runAs)
+	if err != nil {
+		logger.Fatalf("%v", err)
+	}
+	// Before anything else: install as a root child if asked, then stop
+	// being root. Nothing below runs with privileges.
+	inst, err := agentshell.BecomeUnprivileged(agentshell.HostCreds{}, uid, gid,
+		agentshell.ParseInstallList(*install), startInstall, logger.Printf)
+	if err != nil {
+		logger.Fatalf("privileges: %v", err)
+	}
+	if ids, err := (agentshell.HostCreds{}).IDs(); err == nil {
+		logger.Printf("running as %s", ids)
+	}
+	if inst != nil {
+		logger.Printf("installing software: %v", inst.Requested())
+		go func() {
+			<-inst.Done()
+			_, installed, failed := inst.State()
+			logger.Printf("software installed: %v; failed: %v", installed, failed)
+		}()
+	}
 
 	// The package list the image recorded at build time. Without it the
 	// daemon still serves, with an empty list, and the run_shell
@@ -115,6 +160,7 @@ func main() {
 			Root:      *rootPath,
 			ReadRoots: readRoots,
 			Packages:  packages,
+			Install:   inst,
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
@@ -137,6 +183,30 @@ func main() {
 	_ = srv.Shutdown(shutCtx)
 	_ = os.Remove(*socketPath)
 	logger.Print("shutdown complete")
+}
+
+// startInstall starts the install child: this binary, run again as
+// `agent-shell install-software <pkgs...>` with the daemon's current
+// (root) credentials. /proc/self/exe is the running binary itself,
+// whatever its path.
+func startInstall(pkgs []string) (*agentshell.Install, error) {
+	return agentshell.StartInstallChild("/proc/self/exe", pkgs, agentshell.InstallEnv(os.Getenv), os.Stderr, clock.New())
+}
+
+// installSoftware is the install-software subcommand: apt-get for pkgs,
+// its result written as JSON to InstallResultFD.
+func installSoftware(pkgs []string) int {
+	result, err := agentshell.OpenInstallResult()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "agent-shell install-software: %v\n", err)
+		return 2
+	}
+	in := agentshell.Installer{Env: os.Environ(), Log: os.Stderr}
+	if err := agentshell.RunInstallSubcommand(in, pkgs, result); err != nil {
+		fmt.Fprintf(os.Stderr, "agent-shell install-software: write result: %v\n", err)
+		return 1
+	}
+	return 0
 }
 
 // bootstrapHome creates $HOME if it doesn't exist and writes the

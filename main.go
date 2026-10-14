@@ -289,7 +289,11 @@ func main() {
 	apCfg.FilesSubPath = func(slug string) string {
 		return path.Join("agents", slug, files.StoragePrefix)
 	}
-	aprov, err := agentpod.NewProvisioner(apCfg, agentpod.WithProvisionerLogger(log.Printf))
+	// Each agent's shell installs the org-wide software plus its own
+	// when its pod starts; a changed list recreates the pod.
+	aprov, err := agentpod.NewProvisioner(apCfg,
+		agentpod.WithProvisionerLogger(log.Printf),
+		agentpod.WithSoftware(s.EffectiveSoftware))
 	if err != nil {
 		log.Fatalf("agentpod provisioner: %v", err)
 	}

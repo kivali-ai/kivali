@@ -3,11 +3,13 @@
 import goHandbookJson from '../../../../internal/web/apitypes/testdata/handbook.json';
 import goNetworkJson from '../../../../internal/web/apitypes/testdata/network.json';
 import goOrgJson from '../../../../internal/web/apitypes/testdata/org.json';
+import goOrgSoftwareJson from '../../../../internal/web/apitypes/testdata/org_software.json';
 import goUsageJson from '../../../../internal/web/apitypes/testdata/org_usage.json';
 import goFilesJson from '../../../../internal/web/apitypes/testdata/project_files.json';
 import goDowngradeJson from '../../../../internal/web/apitypes/testdata/skill_downgrade.json';
 import goSkillsJson from '../../../../internal/web/apitypes/testdata/skills.json';
-import type { Handbook, Network, Org, ProjectFiles, SkillDowngrade, Skills, Usage } from '../../api/types.gen';
+import goSoftwareAddJson from '../../../../internal/web/apitypes/testdata/software_add.json';
+import type { Handbook, Network, Org, OrgSoftware, ProjectFiles, SkillDowngrade, Skills, SoftwareAdd, Usage } from '../../api/types.gen';
 
 /** The generated type with every string union widened to string: what a JSON import can be checked against. */
 type Wire<T> = T extends string
@@ -28,4 +30,6 @@ export const goHandbook = (goHandbookJson satisfies Wire<Handbook>) as Handbook;
 export const goFiles = (goFilesJson satisfies Wire<ProjectFiles>) as ProjectFiles;
 export const goSkills = (goSkillsJson satisfies Wire<Skills>) as Skills;
 export const goDowngrade = (goDowngradeJson satisfies Wire<SkillDowngrade>) as SkillDowngrade;
-export const goNetwork = (goNetworkJson satisfies Wire<Network>) as Network;
+export const goOrgSoftware = (goOrgSoftwareJson satisfies Wire<OrgSoftware>) as OrgSoftware;
+export const goSoftwareAdd = (goSoftwareAddJson satisfies Wire<SoftwareAdd>) as SoftwareAdd;
+export const goNetwork =(goNetworkJson satisfies Wire<Network>) as Network;

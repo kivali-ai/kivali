@@ -102,8 +102,9 @@ func (s *Server) proposal(reqPath string, kind apitypes.ProposalKind, req store.
 		ReasonMD:    strings.TrimRight(req.Body, "\n"),
 		Attachments: v.attachments(req.Attachments),
 		Summary: apitypes.ProposalSummary{
-			Moves: []apitypes.ProposalMove{},
-			Facts: []apitypes.ProposalFact{},
+			Moves:    []apitypes.ProposalMove{},
+			Facts:    []apitypes.ProposalFact{},
+			Packages: []string{},
 		},
 		Docs: []apitypes.ProposalDoc{},
 	}
@@ -181,6 +182,12 @@ func (s *Server) proposal(reqPath string, kind apitypes.ProposalKind, req store.
 		}
 		sentence := offboardSentence
 		p.OffboardSentence = &sentence
+
+	case apitypes.ProposalKindSoftwareInstall:
+		si := req.SoftwareInstall
+		a := s.proposalAgent(v, si.Slug)
+		p.Summary.Agent = &a
+		p.Summary.Packages = append([]string{}, si.Packages...)
 
 	case apitypes.ProposalKindReorg:
 		failed := map[store.ReorgMove]string{}

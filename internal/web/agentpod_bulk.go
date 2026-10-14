@@ -122,20 +122,13 @@ func (s *Server) provisionAgentPods(ctx context.Context, slugs []string) []strin
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			// Sync before the pod: the pod mounts subPaths of the
-			// agent's tree (the /files farms, artifacts/, the per-agent
-			// attachments and chats dirs), and kubelet makes a missing
-			// one as root, which core — not root — can then never write
-			// into. Sync makes each a real directory core owns. A sync
-			// that fails still provisions: an existing agent without
-			// its pod is worse off than one whose views are stale.
+			// The server has just started, so no pod is subscribed yet:
+			// every agent is starting until its pod dials in, also the
+			// ones whose pods keep running.
 			if s.AgentpodHub != nil {
 				s.AgentpodHub.MarkStarting(slug, s.clk().Now())
 			}
-			if err := s.Store.SyncAgentFilesystem(slug); err != nil {
-				log.Printf("agentpod: files sync %s before provisioning: %v", slug, err)
-			}
-			if err := s.AgentPod.Provision(ctx, slug); err != nil {
+			if err := s.ProvisionAgentPod(ctx, slug); err != nil {
 				log.Printf("agentpod: provision %s: %v", slug, err)
 				mu.Lock()
 				failed = append(failed, slug)
@@ -148,4 +141,75 @@ func (s *Server) provisionAgentPods(ctx context.Context, slugs []string) []strin
 	wg.Wait()
 	slices.Sort(failed)
 	return failed
+}
+
+// ProvisionAgentPod reconciles one agent's pod with its current spec:
+// a pod whose spec changed (its software, say) is recreated, one that
+// matches is left alone. Blocks until the pod is created.
+//
+// Sync before the pod: the pod mounts subPaths of the agent's tree
+// (the /files farms, artifacts/, the per-agent attachments and chats
+// dirs), and kubelet makes a missing one as root, which core — not
+// root — can then never write into. Sync makes each a real directory
+// core owns. A sync that fails still provisions: an existing agent
+// without its pod is worse off than one whose views are stale.
+//
+// The agent is marked starting only when its pod is about to be
+// created or recreated (podStartNotifier), so reconciling every agent
+// after an org-wide change leaves the ones whose pods keep running as
+// they were. An AgentPod that cannot say marks it every time.
+//
+// Calls for one slug run one at a time: two settings saves in quick
+// succession, an approval landing during a settings reprovision, or the
+// boot pass racing either. A later call waits for the earlier one, then
+// builds the spec from the lists as they are by then, so it sees the
+// earlier call's pod and the later change as drift and applies it.
+//
+// No-op when AgentPod is unwired.
+func (s *Server) ProvisionAgentPod(ctx context.Context, slug string) error {
+	if s.AgentPod == nil {
+		return nil
+	}
+	mu, _ := s.provisionLocks.LoadOrStore(slug, &sync.Mutex{})
+	mu.(*sync.Mutex).Lock()
+	defer mu.(*sync.Mutex).Unlock()
+	if err := s.Store.SyncAgentFilesystem(slug); err != nil {
+		log.Printf("agentpod: files sync %s before provisioning: %v", slug, err)
+	}
+	starting := func() {
+		if s.AgentpodHub != nil {
+			s.AgentpodHub.MarkStarting(slug, s.clk().Now())
+		}
+	}
+	if n, ok := s.AgentPod.(podStartNotifier); ok {
+		return n.ProvisionNotify(ctx, slug, starting)
+	}
+	starting()
+	return s.AgentPod.Provision(ctx, slug)
+}
+
+// podStartNotifier is an AgentPodLifecycle that reports when it is
+// about to create an agent's pod: *agentpod.Provisioner.
+type podStartNotifier interface {
+	ProvisionNotify(ctx context.Context, slug string, starting func()) error
+}
+
+// ReprovisionAgentPodsAsync runs ProvisionAgentPod for each slug in the
+// background, in parallel, and returns at once: a settings change that
+// alters pod specs answers the request before the pods have restarted.
+// The CEO has no pod and is skipped.
+func (s *Server) ReprovisionAgentPodsAsync(slugs []string) {
+	if s.AgentPod == nil {
+		return
+	}
+	for _, slug := range slugs {
+		if slug == agent.CEOSlug {
+			continue
+		}
+		go func() {
+			if err := s.ProvisionAgentPod(context.Background(), slug); err != nil {
+				log.Printf("agentpod: reprovision %s: %v", slug, err)
+			}
+		}()
+	}
 }

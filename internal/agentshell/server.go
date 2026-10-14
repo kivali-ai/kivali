@@ -1,6 +1,7 @@
 package agentshell
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -8,7 +9,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
+	"github.com/kivali-ai/kivali/internal/clock"
 	"github.com/kivali-ai/kivali/internal/files"
 )
 
@@ -37,7 +40,35 @@ type ServerConfig struct {
 	// Packages is the image's installed package list (ReadPackages),
 	// served by GET /v1/packages. Nil when the image records none.
 	Packages []string
+
+	// Install is the software install the daemon started with, nil
+	// when there is none. While it runs, POST /v1/exec waits for it
+	// (up to ExecInstallWait) so commands see the software, and
+	// GET /v1/packages waits up to PackagesInstallWait. POST /v1/files
+	// never waits.
+	Install *Install
+
+	// Clock drives the two waits. Nil means the real clock.
+	Clock clock.Clock
+
+	// ExecInstallWait and PackagesInstallWait bound the waits; zero
+	// means DefaultExecInstallWait and DefaultPackagesInstallWait.
+	ExecInstallWait     time.Duration
+	PackagesInstallWait time.Duration
 }
+
+// DefaultPackagesInstallWait bounds how long GET /v1/packages waits for
+// a running install. The agent's MCP server fetches the list while it
+// answers initialize and gives up after 20s (agent.ShellPackages), so
+// the daemon answers before that with the packages still installing
+// named as such.
+const DefaultPackagesInstallWait = 15 * time.Second
+
+// DefaultExecInstallWait bounds how long POST /v1/exec waits for a
+// running install before answering that the shell is still installing.
+// The client allows for it on top of the command's own timeout
+// (SidecarShell.Exec), so it answers rather than giving up first.
+const DefaultExecInstallWait = 10 * time.Minute
 
 // NewHandler returns the http.Handler that backs the daemon.
 //
@@ -49,7 +80,8 @@ type ServerConfig struct {
 // process, against a Backend built from Root, the request's root
 // and ReadRoots.
 //
-// GET /v1/packages — the image's installed package list.
+// GET /v1/packages — the packages the shell has, and the state of the
+// install the daemon started with.
 //
 // GET /healthz — k8s liveness probe.
 //
@@ -64,16 +96,19 @@ func NewHandler(cfg ServerConfig) http.Handler {
 	if cfg.FilesMaxBodyBytes <= 0 {
 		cfg.FilesMaxBodyBytes = FilesMaxBodyBytes
 	}
+	if cfg.Clock == nil {
+		cfg.Clock = clock.New()
+	}
+	if cfg.ExecInstallWait <= 0 {
+		cfg.ExecInstallWait = DefaultExecInstallWait
+	}
+	if cfg.PackagesInstallWait <= 0 {
+		cfg.PackagesInstallWait = DefaultPackagesInstallWait
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/exec", handleExec(cfg))
 	mux.HandleFunc("POST /v1/files", handleFiles(cfg))
-	mux.HandleFunc("GET /v1/packages", func(w http.ResponseWriter, _ *http.Request) {
-		pkgs := cfg.Packages
-		if pkgs == nil {
-			pkgs = []string{} // "packages": [], never null
-		}
-		writeJSON(w, http.StatusOK, PackagesResponse{Packages: pkgs})
-	})
+	mux.HandleFunc("GET /v1/packages", handlePackages(cfg))
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
@@ -91,6 +126,18 @@ func handleExec(cfg ServerConfig) http.HandlerFunc {
 		}
 		if req.Command == "" {
 			http.Error(w, "command is required", http.StatusBadRequest)
+			return
+		}
+		// The command runs once the software the shell starts with is
+		// in place, so it can use it.
+		switch waitInstall(r.Context(), cfg.Clock, cfg.Install, cfg.ExecInstallWait) {
+		case waitCanceled:
+			return // the caller is gone
+		case waitTimedOut:
+			writeJSON(w, http.StatusOK, ExecResponse{
+				ExitCode: -1,
+				Err:      "the shell is still installing software (" + strings.Join(cfg.Install.Requested(), ", ") + "); run the command again in a few minutes",
+			})
 			return
 		}
 		cwd, err := ResolveCwd(cfg.Root, req.Cwd)
@@ -131,7 +178,56 @@ func handleExec(cfg ServerConfig) http.HandlerFunc {
 		if runErr != nil {
 			res.Err = runErr.Error()
 		}
+		// The notice is for the agent itself, once: a subagent's command
+		// (OverlayPrivate set) or a caller that has gone away leaves it
+		// for the agent's next command.
+		if req.OverlayPrivate == "" && r.Context().Err() == nil {
+			res.Notice = cfg.Install.TakeNotice()
+		}
 		writeJSON(w, http.StatusOK, res)
+	}
+}
+
+func handlePackages(cfg ServerConfig) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if waitInstall(r.Context(), cfg.Clock, cfg.Install, cfg.PackagesInstallWait) == waitCanceled {
+			return
+		}
+		installing, installed, failed := cfg.Install.State()
+		pkgs := cfg.Packages
+		if len(installed) > 0 {
+			pkgs = mergePackages(cfg.Packages, installed)
+		}
+		if pkgs == nil {
+			pkgs = []string{} // "packages": [], never null
+		}
+		writeJSON(w, http.StatusOK, PackagesResponse{Packages: pkgs, Installing: installing, Failed: failed})
+	}
+}
+
+type waitOutcome int
+
+const (
+	waitFinished waitOutcome = iota
+	waitTimedOut
+	waitCanceled
+)
+
+// waitInstall waits for inst to finish, for at most bound on c, or
+// until ctx ends.
+func waitInstall(ctx context.Context, c clock.Clock, inst *Install, bound time.Duration) waitOutcome {
+	if inst.Finished() {
+		return waitFinished
+	}
+	t := c.NewTimer(bound)
+	defer t.Stop()
+	select {
+	case <-inst.Done():
+		return waitFinished
+	case <-t.C():
+		return waitTimedOut
+	case <-ctx.Done():
+		return waitCanceled
 	}
 }
 

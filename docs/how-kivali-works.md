@@ -61,6 +61,8 @@ Every team starts with one agent, the Chief of Staff. It runs the team day to da
 | Role update | Replaces an agent's role document. |
 | Handbook update | Replaces the handbook. You see the changes as a diff. |
 
+Any agent, not only the Chief of Staff, can send one more kind of proposal, **Install software**, asking for programs for itself. Approving it adds the software to that agent's list and restarts the agent to install it.
+
 Kivali applies the change the moment you approve. There is no other way for an agent to hire, offboard or reorganize. Other agents who think the team needs a new role make the case to their manager, and it reaches the Chief of Staff from there.
 
 ## The handbook

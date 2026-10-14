@@ -1,0 +1,10 @@
+{
+  "org": [
+    "git",
+    "jq"
+  ],
+  "own": [
+    "ffmpeg",
+    "poppler-utils"
+  ]
+}

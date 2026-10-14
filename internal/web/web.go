@@ -60,9 +60,12 @@ type Server struct {
 	// a fake. nil leaves both calls no-ops (tests that don't exercise
 	// hire/offboard).
 	AgentPod AgentPodLifecycle
-	AuthMW   *auth.Middleware
-	OAuth    *auth.GoogleOAuth
-	Handoff  *auth.Handoff // GET /auth/handoff (docs/developers/auth.md); nil leaves it unregistered
+	// provisionLocks holds a *sync.Mutex per slug: ProvisionAgentPod
+	// runs one at a time for an agent (agentpod_bulk.go).
+	provisionLocks sync.Map
+	AuthMW         *auth.Middleware
+	OAuth          *auth.GoogleOAuth
+	Handoff        *auth.Handoff // GET /auth/handoff (docs/developers/auth.md); nil leaves it unregistered
 	// DevUser, when non-empty, replaces the auth middleware with an
 	// unconditional bypass attributing every request to this email.
 	// Set only by main.go under DEV_MODE; ignored when AuthMW is set,

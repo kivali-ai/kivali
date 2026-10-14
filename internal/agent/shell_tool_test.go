@@ -3,25 +3,61 @@ package agent
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 )
 
 func TestShellToolNamesTheReportedPackages(t *testing.T) {
-	d := ShellToolWithPackages([]string{"bash", "fd-find", "git", "imagemagick", "python3-pip", "ripgrep"}).Description
-	want := "Preinstalled packages: bash, fd-find (fd), git, imagemagick (magick, convert), python3-pip (pip3), ripgrep (rg)."
+	d := ShellToolWithPackages(ShellSoftware{Packages: []string{"bash", "fd-find", "git", "imagemagick", "python3-pip", "ripgrep"}}).Description
+	want := "Installed packages: bash, fd-find (fd), git, imagemagick (magick, convert), python3-pip (pip3), ripgrep (rg)."
 	if !strings.Contains(d, want) {
 		t.Errorf("description lacks %q:\n%s", want, d)
 	}
-	if !strings.Contains(d, "AGENT_SHELL_EXTRA_PACKAGES") {
-		t.Errorf("description does not name the build arg:\n%s", d)
+}
+
+// The software paragraph sends the agent to propose_software_install,
+// keeps pip --user, and names no operator build step.
+func TestShellToolSoftwareParagraph(t *testing.T) {
+	d := ShellTool().Description
+	for _, want := range []string{"propose_software_install", "Debian package names", "pip install --user", "your commands wait until the installation finishes"} {
+		if !strings.Contains(d, want) {
+			t.Errorf("description lacks %q:\n%s", want, d)
+		}
+	}
+	for _, gone := range []string{"AGENT_SHELL_EXTRA_PACKAGES", "ceo_notification", "rebuild"} {
+		if strings.Contains(d, gone) {
+			t.Errorf("description still names %q:\n%s", gone, d)
+		}
+	}
+}
+
+// Packages still being installed and ones that failed are named, with
+// the reason for each failure.
+func TestShellToolNamesInstallingAndFailed(t *testing.T) {
+	d := ShellToolWithPackages(ShellSoftware{
+		Packages:   []string{"bash"},
+		Installing: []string{"ffmpeg", "poppler-utils"},
+		Failed:     []ShellSoftwareFailure{{Name: "nosuch", Error: "Unable to locate package nosuch"}},
+	}).Description
+	for _, want := range []string{
+		"Being installed now: ffmpeg, poppler-utils; commands wait until the installation finishes.",
+		"Could not be installed: nosuch (Unable to locate package nosuch).",
+	} {
+		if !strings.Contains(d, want) {
+			t.Errorf("description lacks %q:\n%s", want, d)
+		}
+	}
+	plain := ShellToolWithPackages(ShellSoftware{Packages: []string{"bash"}}).Description
+	if strings.Contains(plain, "Being installed now") || strings.Contains(plain, "Could not be installed") {
+		t.Errorf("description with no install names one:\n%s", plain)
 	}
 }
 
 // Nothing the description names may come from a hand-written list.
 func TestShellToolNamesNothingItWasNotTold(t *testing.T) {
-	d := ShellToolWithPackages([]string{"bash"}).Description
+	d := ShellToolWithPackages(ShellSoftware{Packages: []string{"bash"}}).Description
 	for _, s := range []string{"postgresql", "sqlite3", "ffmpeg", "golang", "build-essential", "gcc", "pandoc", "fd-find", "(rg)"} {
 		if strings.Contains(d, s) {
 			t.Errorf("description names %q, which is not in the reported list:\n%s", s, d)
@@ -30,27 +66,27 @@ func TestShellToolNamesNothingItWasNotTold(t *testing.T) {
 }
 
 func TestShellToolFallsBackWithoutAList(t *testing.T) {
-	for _, d := range []string{ShellTool().Description, ShellToolWithPackages([]string{}).Description} {
+	for _, d := range []string{ShellTool().Description, ShellToolWithPackages(ShellSoftware{Packages: []string{}}).Description} {
 		if !strings.Contains(d, shellToolkitUnknown) {
 			t.Errorf("description lacks the fallback sentence:\n%s", d)
 		}
-		if strings.Contains(d, "Preinstalled packages") {
+		if strings.Contains(d, "Installed packages") {
 			t.Errorf("fallback description claims a package list:\n%s", d)
 		}
 	}
 }
 
 type listerExec struct {
-	pkgs []string
-	err  error
+	sw  ShellSoftware
+	err error
 }
 
 func (l *listerExec) Exec(context.Context, string, ShellRequest) (*ShellResult, error) {
 	return nil, errors.New("unused")
 }
 func (l *listerExec) SyncSkills(context.Context, string) error { return nil }
-func (l *listerExec) Packages(context.Context) ([]string, error) {
-	return l.pkgs, l.err
+func (l *listerExec) Packages(context.Context) (ShellSoftware, error) {
+	return l.sw, l.err
 }
 
 // plainExec is an executor with no Packages method.
@@ -82,20 +118,21 @@ type deadlineExec struct {
 	deadline    time.Time
 }
 
-func (d *deadlineExec) Packages(ctx context.Context) ([]string, error) {
+func (d *deadlineExec) Packages(ctx context.Context) (ShellSoftware, error) {
 	d.deadline, d.hasDeadline = ctx.Deadline()
-	return nil, nil
+	return ShellSoftware{}, nil
 }
 
 func TestShellPackages(t *testing.T) {
 	ctx := context.Background()
-	if got := ShellPackages(ctx, &listerExec{pkgs: []string{"git"}}); len(got) != 1 || got[0] != "git" {
-		t.Errorf("lister: got %v, want [git]", got)
+	sw := ShellSoftware{Packages: []string{"git"}, Installing: []string{"ffmpeg"}}
+	if got := ShellPackages(ctx, &listerExec{sw: sw}); !reflect.DeepEqual(got, sw) {
+		t.Errorf("lister: got %+v, want %+v", got, sw)
 	}
-	if got := ShellPackages(ctx, &listerExec{err: errors.New("down")}); got != nil {
-		t.Errorf("failing lister: got %v, want nil", got)
+	if got := ShellPackages(ctx, &listerExec{sw: sw, err: errors.New("down")}); !reflect.DeepEqual(got, ShellSoftware{}) {
+		t.Errorf("failing lister: got %+v, want zero", got)
 	}
-	if got := ShellPackages(ctx, plainExec{}); got != nil {
-		t.Errorf("executor that cannot list: got %v, want nil", got)
+	if got := ShellPackages(ctx, plainExec{}); !reflect.DeepEqual(got, ShellSoftware{}) {
+		t.Errorf("executor that cannot list: got %+v, want zero", got)
 	}
 }

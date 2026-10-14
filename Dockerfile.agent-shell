@@ -18,17 +18,23 @@
 # command via BASH_ENV) all stick. Concurrent shell calls run as
 # parallel processes — fan-out from subagents Just Works.
 #
-# Apt is intentionally not exposed at runtime: the container runs
-# as unprivileged uid 65532 and apt-get cannot install without
-# root. Python packages can still be installed at runtime via
-# `pip install --user <pkg>` (lands under $HOME/.local). System
-# packages need an image rebuild; agents who need one publish a
-# ceo_notification, and the operator rebuilds with the package named
-# in AGENT_SHELL_EXTRA_PACKAGES (below).
+# Software at runtime. The owner's software lists (org-wide and per
+# agent) reach the container as the daemon's --install flag, and then
+# the container starts as root (the pod sets runAsUser 0; see
+# internal/agentpod/manifest.go). The daemon runs apt-get in a root
+# child process (`agent-shell install-software`), drops itself to
+# 65532:65532 before it creates its socket or runs any agent command,
+# and makes commands wait until the install finishes. The child kills
+# anything apt-get left running before it reports, and policy-rc.d
+# (below) keeps maintainer scripts from starting services. Without
+# --install the container runs as 65532 from the start (USER below).
+# Agents never have root: apt-get does not work from run_shell, and
+# Python packages install with `pip install --user <pkg>` (lands under
+# $HOME/.local).
 #
 # The default toolkit is small and company-agnostic. Anything domain
-# specific (ffmpeg, a database client, a compiler toolchain, ...) is the
-# operator's to add at build time:
+# specific is the owner's to add at runtime as above, or the operator's
+# to bake in at build time, which saves the install on every pod start:
 #
 #   make images AGENT_SHELL_EXTRA_PACKAGES="ffmpeg postgresql-client"
 #   docker build -f Dockerfile.agent-shell \
@@ -44,9 +50,10 @@
 # The installed package list is recorded at build time in
 # /etc/kivali/agent-shell-packages, one package per line (the defaults
 # plus AGENT_SHELL_EXTRA_PACKAGES). The agent-shell daemon reads it at
-# start and serves it to the agent's MCP server, which builds the
-# run_shell tool description from it. That file is the public contract
-# for what is preinstalled; there is no second list to keep in step.
+# start and serves it, with the packages it installed at start, to the
+# agent's MCP server, which builds the run_shell tool description from
+# it. That file is the public contract for what is preinstalled; there
+# is no second list to keep in step.
 
 ARG GO_VERSION=1.27
 ARG VERSION=dev
@@ -124,6 +131,11 @@ COPY --from=build /out/agent-shell /usr/local/bin/agent-shell
 # config file, not an env var: the daemon hands commands only an
 # allowlisted environment (internal/agentshell/exec.go bashEnv).
 RUN printf '[global]\nbreak-system-packages = true\n' > /etc/pip.conf
+
+# Software installed at runtime never starts a service: invoke-rc.d
+# asks policy-rc.d, and 101 is "action forbidden". A service a
+# maintainer script started would run as root beside the agent's shell.
+RUN printf '#!/bin/sh\nexit 101\n' > /usr/sbin/policy-rc.d && chmod 0755 /usr/sbin/policy-rc.d
 
 USER 65532:65532
 

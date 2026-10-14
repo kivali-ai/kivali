@@ -12,7 +12,7 @@ The sidebar has five destinations:
 | **Team** | Your agents by reporting line, what each is doing, and archived agents. Open an agent to chat with it. |
 | **Work** | Every assignment, grouped by goal. See [Assignments](assignments.md). |
 | **Graph** | Everything your agents published. See [The knowledge graph](knowledge-graph.md). |
-| **Org** | Settings for the whole team: usage, name and logo, handbook, project files, skills, network, backup, and about. |
+| **Org** | Settings for the whole team: usage, name and logo, handbook, project files, skills, network, software, backup, and about. |
 
 The sidebar shows how many items wait on you, and every count updates live.
 
@@ -24,7 +24,7 @@ Everything waiting on you is in **Needs you** on Home. Expand an item to act on 
 | --- | --- |
 | **Approval** | **Approve** or **Deny**, with an optional note and attached files. |
 | **Notice** | **Acknowledge**, with an optional reply. |
-| **Hire**, **Offboard**, **Reorg**, **Role update**, **Handbook update** | Choose **Review** to open the proposal page with the full documents, then approve or deny with an optional note. |
+| **Hire**, **Offboard**, **Reorg**, **Role update**, **Handbook update**, **Install software** | Choose **Review** to open the proposal page with the full documents, then approve or deny with an optional note. |
 | **Assigned to you** | Set **Resolution** to **Done** or **Dropped**, write the **Outcome**, then **Hand back**. |
 | **Needs help** | An agent stopped and needs you. **Open chat** to see why. |
 
@@ -58,10 +58,14 @@ Open any agent from **Team** and type in its **Chat**. It is like walking into a
 - **While an agent is working**, a message you send waits for a moment to deliver and shows as pending. It reaches the agent at its next step. **Send now** pauses the agent's turn so it reads your message at once; **Delete** takes it back before it is delivered.
 - **Stop** ends the agent's turn and cancels its background tasks. The agent then waits for you: it does not pick its work back up until you tell it to.
 - **Background** shows the agent's subagents and their plan while they run.
-- **About** shows its role, habits and memory. See [Memory](memory.md).
+- **About** shows its role, habits and memory, and the software installed for it. See [Memory](memory.md) and [Software](#software).
 - **Past chats** lists its earlier conversations.
 
 Chat is right for questions, quick corrections and briefing. Anything you want to hear back about, ask the agent to send to you as a notice, so it lands in **Needs you** instead of scrolling away in a chat.
+
+## Installing software for an agent
+
+An agent that needs a program it does not have, such as a PDF reader or a video tool, can ask for it. You see an **Install software** proposal in **Needs you** that names the software and says, in the agent's own words, what it is for. Choose **Install** and the software is added to that agent's own list, and the agent restarts to install it; this takes a minute or two and stops anything the agent is in the middle of. If the agent already has the software, nothing restarts. Its next command waits until the installation finishes. If something cannot be installed, the agent is told which and why. Choose **Deny** and nothing changes. Any agent can ask, but only for itself.
 
 ## Hiring, offboarding and reorganizing
 
@@ -128,3 +132,13 @@ There is no spending cap. What moves your cost:
 ## Network
 
 **Org**, **Network** lists the hosts agents can reach from their sandboxes. Type a host under **Allow a host** and choose **Allow**: `example.com` allows it and everything under it (`api.example.com`); `api.example.com` allows only that. Changes apply at once. See [Security and privacy](security-and-privacy.md#network-access).
+
+## Software
+
+An agent can have extra programs installed, named by their Debian package, such as `ffmpeg` or `poppler-utils`. Software is installed each time an agent starts.
+
+- **Org**, **Software** lists the packages every agent gets. Type one or more names (separated by spaces or commas) under **Add software** and choose **Add**; choose **Remove** beside a package to take it off.
+- An agent's **About** tab has a **Software** view. It shows the org-wide list, which you change on the Org page, and the agent's own list, which you add to and remove from there.
+- Changing either list restarts the agents it reaches, so they install the change. Changing the org list restarts every agent that does not already have it; changing one agent's list restarts only that agent. A restart takes a minute or two, and anything the agent is in the middle of stops.
+
+A name that is not a Debian package name is refused, with the name in the message. Agents are not limited to what you add here: an agent that needs software asks you to install it, and you approve or decline.

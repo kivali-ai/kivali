@@ -64,9 +64,9 @@ func ShellTool(cfg ShellToolConfig) *Tool {
 }
 
 // renderShellResult formats a ShellResult as a compact tool_result
-// body. Includes exit/timing and capped stdout/stderr — captured-file
-// bookends are gone (the unified /files/ mount means bytes on disk
-// are already where any follow-up tool needs them).
+// body: exit/timing, the shell's notice when it has one, and capped
+// stdout/stderr. Files the command wrote are on disk under /files/,
+// where any follow-up tool reads them.
 func renderShellResult(r *agent.ShellResult) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "exit_code=%d duration_ms=%d", r.ExitCode, r.DurationMs)
@@ -77,6 +77,11 @@ func renderShellResult(r *agent.ShellResult) string {
 		fmt.Fprintf(&b, " err=%q", r.Err)
 	}
 	b.WriteByte('\n')
+	if r.Notice != "" {
+		b.WriteString("--- notice ---\n")
+		b.WriteString(r.Notice)
+		b.WriteByte('\n')
+	}
 	if r.Stdout != "" {
 		b.WriteString("--- stdout ---\n")
 		b.WriteString(r.Stdout)
@@ -94,10 +99,16 @@ func renderShellResult(r *agent.ShellResult) string {
 	return b.String()
 }
 
-// subagentShellDescription is run_shell's description with the two
+// subagentShellSoftwareText is the software paragraph for a subagent,
+// which cannot propose an install itself.
+const subagentShellSoftwareText = `SOFTWARE. System software (Debian packages) is installed by the owner; apt-get does not work in this shell. If you need a package that is not installed, say so to your caller, naming the Debian package and what it is for. For Python libraries use "pip install --user <pkg>" or a venv instead.`
+
+// subagentShellDescription is run_shell's description with the
 // paragraphs that name tools a subagent does not have (publish_*,
-// share_file, assignments) swapped for ones that fit it.
+// share_file, assignments, propose_software_install) swapped for ones
+// that fit it.
 func subagentShellDescription(d string) string {
+	d = strings.Replace(d, agent.ShellSoftwareText, subagentShellSoftwareText, 1)
 	d = strings.Replace(d, agent.ShellHandOffText, "To hand a file the command produced to your caller, write it under /files/artifacts/private/. No need to base64-encode or content-address it yourself.", 1)
 	return strings.Replace(d, agent.ShellClosingText, "You see the tool_result and can iterate — a typical flow is: run → inspect output → fix something → run again.", 1)
 }

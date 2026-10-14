@@ -285,3 +285,139 @@ func TestBulkProvisionStopsRetryingWhenContextEnds(t *testing.T) {
 		t.Errorf("alice attempts: %d, want 1", got)
 	}
 }
+
+// notifyingAgentPod is an AgentPod that reports, like
+// *agentpod.Provisioner, whether it is about to create the pod.
+type notifyingAgentPod struct{ recreate bool }
+
+func (f *notifyingAgentPod) Provision(context.Context, string) error { return nil }
+func (f *notifyingAgentPod) Destroy(context.Context, string) error   { return nil }
+func (f *notifyingAgentPod) ProvisionNotify(_ context.Context, _ string, starting func()) error {
+	if f.recreate {
+		starting()
+	}
+	return nil
+}
+
+// Reconciling an agent whose pod keeps running (an org-wide software
+// change re-provisions everyone) does not mark it starting; one whose
+// pod is recreated is marked. An AgentPod that cannot say marks it.
+func TestProvisionAgentPodMarksStartingOnlyOnRecreate(t *testing.T) {
+	cases := []struct {
+		name string
+		pod  AgentPodLifecycle
+		want bool
+	}{
+		{"spec unchanged", &notifyingAgentPod{recreate: false}, false},
+		{"recreated", &notifyingAgentPod{recreate: true}, true},
+		{"cannot say", &syncCheckingAgentPod{missing: map[string][]string{}}, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			srv := newTestServer(t)
+			if err := srv.Store.CreateAgent(store.Agent{Slug: "alice", Role: "alice", ReportsTo: "ceo"}, "role"); err != nil {
+				t.Fatal(err)
+			}
+			if p, ok := c.pod.(*syncCheckingAgentPod); ok {
+				p.root = srv.Store.Root()
+			}
+			srv.AgentPod = c.pod
+			srv.AgentpodHub = newAgentpodHub()
+			if err := srv.ProvisionAgentPod(context.Background(), "alice"); err != nil {
+				t.Fatal(err)
+			}
+			if got := srv.AgentpodHub.Starting("alice", srv.clk().Now()); got != c.want {
+				t.Errorf("Starting = %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
+// blockingAgentPod reports, on entered, the agent's software list as
+// each Provision reads it, then holds the call until release[slug].
+type blockingAgentPod struct {
+	st      *store.FSStore
+	entered chan []string
+	release map[string]chan struct{}
+}
+
+func (p *blockingAgentPod) Provision(_ context.Context, slug string) error {
+	eff, _ := p.st.EffectiveSoftware(slug)
+	p.entered <- eff
+	<-p.release[slug]
+	return nil
+}
+
+func (p *blockingAgentPod) Destroy(context.Context, string) error { return nil }
+
+// Two provisions for one agent run one after the other, and the later
+// one builds the pod from the list as it stands once the first is done,
+// so a change saved while the first was recreating the pod is applied.
+func TestProvisionAgentPodSerializesPerSlug(t *testing.T) {
+	srv := newTestServer(t)
+	for _, slug := range []string{"alice", "bob"} {
+		if err := srv.Store.CreateAgent(store.Agent{Slug: slug, Role: slug, ReportsTo: "ceo"}, "role"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pod := &blockingAgentPod{st: srv.Store, entered: make(chan []string), release: map[string]chan struct{}{
+		"alice": make(chan struct{}), "bob": make(chan struct{}),
+	}}
+	srv.AgentPod = pod
+	ctx := context.Background()
+
+	first := make(chan error, 1)
+	go func() { first <- srv.ProvisionAgentPod(ctx, "alice") }()
+	if got := <-pod.entered; len(got) != 0 {
+		t.Fatalf("first provision read %v, want an empty list", got)
+	}
+	// While the first runs, alice's provisions are locked out...
+	mu, ok := srv.provisionLocks.Load("alice")
+	if !ok {
+		t.Fatal("no provision lock for alice")
+	}
+	if mu.(*sync.Mutex).TryLock() {
+		mu.(*sync.Mutex).Unlock()
+		t.Fatal("alice's provision lock is free while a provision runs")
+	}
+	// ...and another agent's are not.
+	other := make(chan error, 1)
+	go func() { other <- srv.ProvisionAgentPod(ctx, "bob") }()
+	<-pod.entered
+	pod.release["bob"] <- struct{}{}
+	if err := <-other; err != nil {
+		t.Fatal(err)
+	}
+
+	if err := srv.Store.AddAgentSoftware("alice", []string{"ffmpeg"}); err != nil {
+		t.Fatal(err)
+	}
+	second := make(chan error, 1)
+	go func() { second <- srv.ProvisionAgentPod(ctx, "alice") }()
+	pod.release["alice"] <- struct{}{}
+	if err := <-first; err != nil {
+		t.Fatal(err)
+	}
+	if got := <-pod.entered; len(got) != 1 || got[0] != "ffmpeg" {
+		t.Errorf("second provision read %v, want [ffmpeg]", got)
+	}
+	pod.release["alice"] <- struct{}{}
+	if err := <-second; err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The startup pass marks every agent starting, also one whose pod keeps
+// running: the server has just started and no pod is subscribed yet.
+func TestBulkProvisionMarksUnchangedPodsStarting(t *testing.T) {
+	srv := newTestServer(t)
+	if err := srv.Store.CreateAgent(store.Agent{Slug: "alice", Role: "alice", ReportsTo: "ceo"}, "role"); err != nil {
+		t.Fatal(err)
+	}
+	srv.AgentPod = &notifyingAgentPod{recreate: false}
+	srv.AgentpodHub = newAgentpodHub()
+	srv.BulkProvisionAgentPods(context.Background())
+	if !srv.AgentpodHub.Starting("alice", srv.clk().Now()) {
+		t.Error("Starting = false after the startup pass, want true")
+	}
+}

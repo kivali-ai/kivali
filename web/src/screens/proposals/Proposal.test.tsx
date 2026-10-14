@@ -7,7 +7,7 @@ import type { NeedActionResponse, Proposal as ProposalData } from '../../api/typ
 import { FrameChromeContext } from '../../app/chrome';
 import type { FrameChrome } from '../../app/chrome';
 import { pickFiles } from '../../lib/pickFiles';
-import { handbook, goOffboard, goReorg, goRoleUpdate, hire } from './fixtures';
+import { handbook, goOffboard, goReorg, goRoleUpdate, goSoftware, hire } from './fixtures';
 import { Proposal } from './Proposal';
 
 vi.mock('../../api/client', async (importOriginal) => {
@@ -173,6 +173,37 @@ describe('Proposal page', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(formMock).toHaveBeenCalledTimes(1);
     expect(screen.getByText('tester is offboarded')).toBeTruthy();
+  });
+
+  it('shows a software install in plain words with the package names and an Install button', async () => {
+    const { router } = await renderProposal(goSoftware);
+    expect(screen.getByText('Install software')).toBeTruthy();
+    expect(screen.getByText(/Buyer wants to install software/)).toBeTruthy();
+    expect(screen.getByText(/If you choose Install, Buyer restarts now to install it\. This takes a minute or two and stops anything Buyer is doing\./)).toBeTruthy();
+    const list = screen.getByRole('list', { name: 'Software to install' });
+    expect(within(list).getByText('poppler-utils')).toBeTruthy();
+    expect(screen.getByText('Vendor quotes arrive as PDFs and I need to read their text.')).toBeTruthy();
+    const approve = screen.getByRole('button', { name: 'Install' });
+    expect(approve.className).toContain('kv-btn--primary');
+    formMock.mockResolvedValue({ result: 'Buyer is restarting to install the software', link: '/agents/buyer' } satisfies NeedActionResponse);
+    fireEvent.click(approve);
+    await flush();
+    expect(screen.getByText('Buyer is restarting to install the software')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Open Buyer' }));
+    await flush();
+    expect(router.state.location.pathname).toBe('/agents/buyer');
+  });
+
+  it('says the agent is restarting while an Install runs', async () => {
+    formMock.mockReturnValue(new Promise(() => {}));
+    await renderProposal(goSoftware);
+    expect(screen.queryByRole('status')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Install' }));
+    await flush();
+    const install = screen.getByRole('button', { name: 'Install' }) as HTMLButtonElement;
+    expect(install.disabled).toBe(true);
+    expect(install.getAttribute('aria-busy')).toBe('true');
+    expect(screen.getByRole('status').textContent).toBe('Restarting Buyer to install the software. This takes a minute or two.');
   });
 
   it('keeps the primary button for every other kind', async () => {

@@ -45,6 +45,7 @@ const (
 	ItemSwitched  = "Riverside Food Bank switched over"
 	ItemBounces   = "Bounce handling checked"
 
+	SoftwareTitle    = "Install software: PDF reader"
 	HireTitle        = "Approve hire: Docs writer"
 	HireSlug         = "docs-writer"
 	NotificationText = "Weekly report: test reminders all delivered"
@@ -361,6 +362,17 @@ shift, exporting a list. You report to the Support lead and keep every
 page in step with the product.
 `),
 			InitialAgentMemory: "# Memory\n\n- The shift-swap page is the model for every other help page.\n",
+		},
+	})
+	must(e)
+
+	// The Support lead asks for software for its own shell.
+	_, e = s.toCEO(store.Message{
+		Type: store.MsgCEOApprovalRequest, Title: SoftwareTitle, From: SlugSupportLead, To: store.Recipients{SlugCEO},
+		Date: s.ago(22 * time.Hour),
+		Body: "Customers send their rotas as PDFs. I need a tool that reads the text out of them.\n",
+		SoftwareInstall: &store.SoftwareInstall{
+			Slug: SlugSupportLead, Packages: []string{"poppler-utils"},
 		},
 	})
 	must(e)

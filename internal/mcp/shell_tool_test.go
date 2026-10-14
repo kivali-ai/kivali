@@ -69,7 +69,9 @@ type listingShellExec struct {
 	pkgs []string
 }
 
-func (l *listingShellExec) Packages(context.Context) ([]string, error) { return l.pkgs, nil }
+func (l *listingShellExec) Packages(context.Context) (agent.ShellSoftware, error) {
+	return agent.ShellSoftware{Packages: l.pkgs}, nil
+}
 
 // TestShellToolDescriptionIsDerivedFromTheExecutor: the toolkit the
 // description names is what the executor reports, for the full agent
@@ -80,9 +82,20 @@ func TestShellToolDescriptionIsDerivedFromTheExecutor(t *testing.T) {
 	full := ShellTool(ShellToolConfig{Exec: exec, From: "alice"})
 	sub := SubagentShellTool(exec)
 	for name, d := range map[string]string{"full": full.Description, "subagent": sub.Description} {
-		if !strings.Contains(d, "Preinstalled packages: bash, jq.") {
+		if !strings.Contains(d, "Installed packages: bash, jq.") {
 			t.Errorf("%s description does not list the executor's packages:\n%s", name, d)
 		}
+	}
+	// The full agent asks for software itself; a subagent, which has no
+	// propose_* tools, asks its caller.
+	if !strings.Contains(full.Description, "propose_software_install") {
+		t.Errorf("full description does not name propose_software_install:\n%s", full.Description)
+	}
+	if strings.Contains(sub.Description, "propose_software_install") {
+		t.Errorf("subagent description names propose_software_install:\n%s", sub.Description)
+	}
+	if !strings.Contains(sub.Description, "say so to your caller") {
+		t.Errorf("subagent description lacks its software paragraph:\n%s", sub.Description)
 	}
 	plain := ShellTool(ShellToolConfig{Exec: &fakeShellExec{}, From: "alice"})
 	if !strings.Contains(plain.Description, "package list could not be read") {
@@ -104,6 +117,35 @@ func TestShellToolMarksErrorOnNonZeroExit(t *testing.T) {
 	}
 	if !res.IsError {
 		t.Errorf("expected IsError=true for exit 7")
+	}
+}
+
+// The shell's notice (software it could not install) reaches the model
+// with the command's output, and does not by itself mark the call an
+// error.
+func TestShellToolRendersTheNotice(t *testing.T) {
+	exec := &fakeShellExec{res: &agent.ShellResult{
+		Stdout: "ok\n",
+		Notice: "This software could not be installed when your shell started, so commands that need it will fail: nosuch (Unable to locate package nosuch).",
+	}}
+	tool := ShellTool(ShellToolConfig{Exec: exec, From: "alice"})
+	res, err := tool.Handler(context.Background(), json.RawMessage(`{"command":"true"}`))
+	if err != nil {
+		t.Fatalf("Handler: %v", err)
+	}
+	if res.IsError {
+		t.Errorf("a notice alone marked the call an error: %+v", res.Content)
+	}
+	body := res.Content[0]
+	if !strings.Contains(body, "--- notice ---\n"+exec.res.Notice) {
+		t.Errorf("rendered body lacks the notice:\n%s", body)
+	}
+	if !strings.Contains(body, "ok") {
+		t.Errorf("rendered body lacks stdout:\n%s", body)
+	}
+	plain := renderShellResult(&agent.ShellResult{Stdout: "ok\n"})
+	if strings.Contains(plain, "notice") {
+		t.Errorf("result without a notice renders one:\n%s", plain)
 	}
 }
 

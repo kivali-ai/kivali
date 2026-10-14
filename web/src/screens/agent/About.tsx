@@ -6,6 +6,7 @@ import { Banner, Button, Icon, Prose, Skeleton, Text, TextField } from '../../ds
 import { renderMarkdown } from '../../lib/markdown';
 import { useAgentPage } from './AgentPage';
 import { useChatDeps } from './chatDeps';
+import { SoftwarePane } from './SoftwarePane';
 import { agoPhrase, asApiError, listItemCount, stripProvenance, useFetched } from './tabsShared';
 import '../../styles/agent-tabs.css';
 
@@ -148,21 +149,27 @@ function DocPane({ slug, name, kind, label, archived }: { slug: string; name: st
   );
 }
 
-/** About: Role, Habits and Memory, one at a time, each read first with Edit swapping in the editor. */
+type AboutView = AgentDocKind | 'software';
+
+/**
+ * About: Role, Habits and Memory, one at a time, each read first with Edit swapping in the editor, and Software,
+ * the programs installed in the agent's shell. An archived agent has no shell, so no Software.
+ */
 export function About() {
   const { slug, name, archived } = useAgentPage();
-  const [kind, setKind] = useState<AgentDocKind>('role');
-  const current = KINDS.find((k) => k.kind === kind) ?? { kind, label: 'Role' };
+  const [view, setView] = useState<AboutView>('role');
+  const views: readonly { kind: AboutView; label: string }[] = archived ? KINDS : [...KINDS, { kind: 'software', label: 'Software' }];
+  const doc = KINDS.find((k) => k.kind === view);
   return (
     <div className="app-about">
       <div className="app-about-kinds" role="group" aria-label="Document">
-        {KINDS.map((k) => (
-          <Button key={k.kind} size="sm" variant={k.kind === kind ? 'secondary' : 'ghost'} aria-pressed={k.kind === kind} onClick={() => setKind(k.kind)}>
+        {views.map((k) => (
+          <Button key={k.kind} size="sm" variant={k.kind === view ? 'secondary' : 'ghost'} aria-pressed={k.kind === view} onClick={() => setView(k.kind)}>
             {k.label}
           </Button>
         ))}
       </div>
-      <DocPane key={kind} slug={slug} name={name} kind={current.kind} label={current.label} archived={archived} />
+      {doc ? <DocPane key={view} slug={slug} name={name} kind={doc.kind} label={doc.label} archived={archived} /> : <SoftwarePane slug={slug} name={name} />}
     </div>
   );
 }

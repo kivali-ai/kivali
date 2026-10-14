@@ -239,7 +239,50 @@ func (c ProvisionerConfig) PodManifest(slug string) map[string]any {
 	return c.podManifest(slug)
 }
 
+// podManifest is slug's pod with no extra software.
 func (c ProvisionerConfig) podManifest(slug string) map[string]any {
+	return c.podManifestWithSoftware(slug, nil)
+}
+
+// agentShellSecurityContext is the agent-shell container's
+// securityContext. allowPrivilegeEscalation is always false: nothing in
+// the container may gain privileges through a setuid binary or file
+// capabilities (it only ever drops them: the daemon to its own uid,
+// apt-get to _apt, `unshare -mUr` into a user namespace it owns).
+//
+// With software to install the container starts as root (uid and gid
+// 0, overriding the image's USER) so the daemon can run apt-get in a
+// root child before it drops to the image's uid for good; see
+// cmd/agent-shell. Without, it runs as the image's unprivileged user
+// from the start.
+func agentShellSecurityContext(install bool) map[string]any {
+	sc := map[string]any{"allowPrivilegeEscalation": false}
+	if install {
+		sc["runAsUser"] = 0
+		sc["runAsGroup"] = 0
+	}
+	return sc
+}
+
+// agentShellInstallArg is the agent-shell's --install value for
+// software: the names sorted and de-duplicated, comma-joined, so the
+// pod's spec hash changes exactly when the set does.
+func agentShellInstallArg(software []string) string {
+	set := map[string]bool{}
+	var names []string
+	for _, n := range software {
+		if !set[n] {
+			set[n] = true
+			names = append(names, n)
+		}
+	}
+	sort.Strings(names)
+	return strings.Join(names, ",")
+}
+
+// podManifestWithSoftware is slug's pod, its agent-shell installing
+// software (Debian package names, already validated) when it starts.
+func (c ProvisionerConfig) podManifestWithSoftware(slug string, software []string) map[string]any {
 	envs := []map[string]any{}
 	if c.ProxyURL != "" {
 		// Both upper-case and lower-case variants so every common
@@ -481,21 +524,28 @@ func (c ProvisionerConfig) podManifest(slug string) map[string]any {
 		map[string]any{"name": "BASH_ENV", "value": "/scratch/home/.shell_env"},
 	)
 
+	// The daemon binary defaults its own --socket and --root to
+	// /run/kivali-agent-shell/sock + /files; pass them explicitly
+	// anyway so a future flag-default change in cmd/agent-shell
+	// doesn't silently change behavior here. --agent names the
+	// per-agent /data mounts above; --install the software to install
+	// when it starts.
+	devArgs := []string{
+		"--socket=" + AgentShellSocketPath(),
+		"--root=/files",
+		"--agent=" + slug,
+	}
+	install := agentShellInstallArg(software)
+	if install != "" {
+		devArgs = append(devArgs, "--install="+install)
+	}
 	devContainer := map[string]any{
 		"name":            "agent-shell",
 		"image":           AgentShellImageFor(c.Image),
 		"imagePullPolicy": c.ImagePullPolicy,
-		// The daemon binary defaults its own --socket and --root
-		// to /run/kivali-agent-shell/sock + /files; pass them
-		// explicitly anyway so a future flag-default change in
-		// cmd/agent-shell doesn't silently change behavior here.
-		// --agent names the per-agent /data mounts above.
-		"args": []string{
-			"--socket=" + AgentShellSocketPath(),
-			"--root=/files",
-			"--agent=" + slug,
-		},
-		"env": devEnvs,
+		"args":            devArgs,
+		"securityContext": agentShellSecurityContext(install != ""),
+		"env":             devEnvs,
 		"resources": map[string]any{
 			// Agent-shell is sized for build/run workloads and is
 			// independent of the runtime container. Bigger CPU
