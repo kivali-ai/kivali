@@ -405,8 +405,8 @@ stage:
    own file and puts the copy in place as `data.vhdx`; meanwhile the
    backend asks `POST /v1/vhd/progress` every second and reports the
    bytes copied as the stage's progress, and logs a line every 10 s. A
-   disk the broker refuses (anything but a dynamic VHDX with no parent)
-   fails `up` with the reason and stays where it was.
+   disk the broker refuses (anything but a dynamic VHDX with no parent
+   of at most 4 TiB) fails `up` with the reason and stays where it was.
 3. The legacy file is renamed `data.vhdx.migrated`, and deleted once the
    moved disk has booted to READY. A legacy disk whose first boot never
    reached READY is not copied: it is set aside the same way, and a new
@@ -430,8 +430,10 @@ destroy, nor after a stop for `serve`'s exit, `down --exit` or a
 signal: that is the desktop app quitting, and at a logoff or a shutdown
 the host would kill a compaction partway), the backend reads the
 disk's block allocation table itself (package `vhdx`: the region
-table, the metadata and the table, a few dozen KiB whatever the disk's
-size) and, when the discarded blocks hold 1 GiB or more, asks the
+table, the metadata and the table, a few dozen KiB for the data disk;
+the table is read 1 MiB at a time, and a disk whose metadata claims more
+than `vhdx.MaxVirtualSize`, 4 TiB, the largest the broker makes, is
+refused before it is read) and, when the discarded blocks hold 1 GiB or more, asks the
 broker to compact the file (`POST /v1/vhd/optimize`: virtdisk's
 `CompactVirtualDisk` with no zero scan, what `Optimize-VHD -Mode Quick`
 does to a disk that is not mounted, which drops those blocks and moves
@@ -629,7 +631,9 @@ on another host as easily as a local file), so the broker never opens
 the legacy file as a disk: it opens it as the caller (impersonated, so
 nothing the caller could not read is read), keeps that handle pinning
 it, reads its metadata through the handle (package `vhdx`) and refuses
-anything but a dynamic VHDX with no parent, deletes a leftover
+anything but a dynamic VHDX with no parent of at most 4 TiB (so a
+sparse file of a few GiB cannot make the broker allocate its table's
+claimed length: the table is read a chunk at a time), deletes a leftover
 `import.vhdx`, and copies the file through the same handle into a new
 `import.vhdx` (`CREATE_NEW`, so nothing there, a link included, is
 followed), keeping a sparse source's holes and leaving a dense one

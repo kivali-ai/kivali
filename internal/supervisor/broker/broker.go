@@ -32,6 +32,8 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+
+	"github.com/kivali-ai/kivali/internal/supervisor/vhdx"
 )
 
 // PipeName is the broker's named pipe.
@@ -109,7 +111,7 @@ const (
 	MinMemoryMB  = 1024 // Dynamic Memory's minimum is 1 GiB
 	MaxMemoryMB  = 256 << 10
 	MinDiskBytes = 1 << 30
-	MaxDiskBytes = 4 << 40
+	MaxDiskBytes = vhdx.MaxVirtualSize
 )
 
 // VMRequest is the body of POST /v1/vm: the VM's whole configuration

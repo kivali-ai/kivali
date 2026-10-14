@@ -3,8 +3,10 @@ package vhdx
 import (
 	"bytes"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -142,6 +144,109 @@ func TestReadReaderAt(t *testing.T) {
 	}
 	if _, err := Read(bytes.NewReader(ok[:100]), 100); err == nil {
 		t.Error("a truncated file was read")
+	}
+}
+
+// sparseFile is a file of size bytes that begins with b and is zeros
+// after it, as a sparse file the caller made would read.
+type sparseFile struct {
+	b    []byte
+	size int64
+}
+
+func (s sparseFile) ReadAt(p []byte, off int64) (int, error) {
+	if off < 0 || off >= s.size {
+		return 0, io.EOF
+	}
+	n := len(p)
+	if int64(n) > s.size-off {
+		n = int(s.size - off)
+	}
+	clear(p[:n])
+	if off < int64(len(s.b)) {
+		copy(p[:n], s.b[off:])
+	}
+	if n < len(p) {
+		return n, io.EOF
+	}
+	return n, nil
+}
+
+// allocated is the bytes the heap gave out while fn ran.
+func allocated(fn func()) uint64 {
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	fn()
+	runtime.ReadMemStats(&after)
+	return after.TotalAlloc - before.TotalAlloc
+}
+
+// A virtual size over MaxVirtualSize is refused before the table is
+// read: a file the caller made, sparse and a few GiB long, cannot make
+// the reader allocate its BAT region's length.
+func TestReadVHDXRefusesAVirtualSizeOverTheLimit(t *testing.T) {
+	for _, vs := range []uint64{MaxVirtualSize + 1<<20, 400 << 40, 1 << 50, 1<<64 - 1<<20} {
+		v := Spec{BlockSize: 1 << 20, SectorSize: 512, VirtualSize: vs, BATLength: 1<<32 - 1<<20}
+		f := sparseFile{b: v.Bytes(), size: 2<<20 + 1<<32}
+		var err error
+		if n := allocated(func() { _, err = Read(f, f.size) }); n > 1<<20 {
+			t.Errorf("virtual size %d: Read allocated %d bytes", vs, n)
+		}
+		if err == nil || !strings.Contains(err.Error(), "virtual disk size") {
+			t.Errorf("virtual size %d: %v, want a refusal", vs, err)
+		}
+	}
+}
+
+// The largest disk Read reads, in the smallest blocks, has 32 MiB of
+// table: Read reads it a chunk at a time and allocates little.
+func TestReadVHDXLargestDiskAllocatesLittle(t *testing.T) {
+	// 1 MiB blocks and 512-byte sectors: a chunk is 4096 payload
+	// entries, so 4 Mi blocks take 1023 sector bitmap entries too.
+	const blocks = MaxVirtualSize >> 20
+	const tableBytes = (blocks + (blocks-1)/4096) * vhdxBATEntrySize
+	v := Spec{BlockSize: 1 << 20, SectorSize: 512, VirtualSize: MaxVirtualSize, BATLength: tableBytes,
+		Entries: [][2]uint64{{BlockFullyPresent, 3}, {BlockUnmapped, 4}}}
+	f := sparseFile{b: v.Bytes(), size: 2<<20 + tableBytes}
+	var l Layout
+	var err error
+	if n := allocated(func() { l, err = Read(f, f.size) }); n > 4<<20 {
+		t.Errorf("Read allocated %d bytes for a table of %d", n, tableBytes)
+	}
+	if err != nil || l.Blocks != blocks || l.Present != 1 || l.Discarded != 1 {
+		t.Fatalf("layout = %+v, err = %v", l, err)
+	}
+	// One entry short of the table is refused.
+	v.BATLength = tableBytes - vhdxBATEntrySize
+	f = sparseFile{b: v.Bytes(), size: 2<<20 + tableBytes}
+	if _, err := Read(f, f.size); err == nil || !strings.Contains(err.Error(), "too short") {
+		t.Errorf("a table one entry short: %v", err)
+	}
+}
+
+// The table read a chunk at a time counts as the table read whole, with
+// the chunks ending anywhere against the sector bitmap entries.
+func TestReadVHDXInChunks(t *testing.T) {
+	v := Spec{BlockSize: 256 << 20, SectorSize: 512, VirtualSize: 40 * 256 << 20}
+	for n := range 40 {
+		switch n % 4 {
+		case 0, 1:
+			v.Entries = append(v.Entries, [2]uint64{BlockFullyPresent, uint64(3 + n*256)})
+		case 2:
+			v.Entries = append(v.Entries, [2]uint64{BlockUnmapped, uint64(3 + n*256)})
+		default:
+			v.Entries = append(v.Entries, [2]uint64{BlockNotPresent, 0})
+		}
+	}
+	b := v.Bytes()
+	defer func(n int) { batChunkEntries = n }(batChunkEntries)
+	for _, chunk := range []int{1, 2, 3, 15, 16, 17, 18, 41, 42, 1 << 17} {
+		batChunkEntries = chunk
+		l, err := Read(bytes.NewReader(b), int64(len(b)))
+		if err != nil || l.Blocks != 40 || l.Present != 20 || l.Discarded != 10 {
+			t.Errorf("chunks of %d entries: layout = %+v, err = %v", chunk, l, err)
+		}
 	}
 }
 

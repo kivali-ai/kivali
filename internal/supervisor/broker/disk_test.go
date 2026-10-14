@@ -75,6 +75,7 @@ func TestImportVHD(t *testing.T) {
 func TestImportVHDRefusals(t *testing.T) {
 	differencing := vhdx.Spec{BlockSize: 32 << 20, SectorSize: 512, VirtualSize: 64 << 20, Flags: vhdx.FlagHasParent}.Bytes()
 	fixed := vhdx.Spec{BlockSize: 32 << 20, SectorSize: 512, VirtualSize: 64 << 20, Flags: vhdx.FlagLeaveBlocksAllocated}.Bytes()
+	huge := vhdx.Spec{BlockSize: 1 << 20, SectorSize: 512, VirtualSize: MaxDiskBytes + 1<<20}.Bytes()
 	for _, tc := range []struct {
 		what    string
 		content []byte
@@ -92,6 +93,7 @@ func TestImportVHDRefusals(t *testing.T) {
 		{"a differencing source", differencing, func(*harness) {}, http.StatusForbidden, "differencing"},
 		{"a fixed source", fixed, func(*harness) {}, http.StatusForbidden, "fixed"},
 		{"a source that is no VHDX", make([]byte, 3<<20), func(*harness) {}, http.StatusForbidden, "not a VHDX"},
+		{"a source larger than any disk the broker makes", huge, func(*harness) {}, http.StatusForbidden, "virtual disk size"},
 	} {
 		h := newHarness(t)
 		h.importable(tc.content)
