@@ -232,7 +232,9 @@ but in the broker's VM directory of the team, "The Windows backend"),
 its snapshot next to it (`data.img.upgrade`, only during an upgrade),
 `data.vhdx.migrated` on Windows (the data disk an earlier version kept
 here, set aside once moved until the moved disk has booted),
-`downloads/<version>/`
+`data.vhdx.kept-<UTC time>` on Windows (a disk an earlier version left
+here when the broker already had one, kept until `destroy`; "Moving
+the data disk"), `downloads/<version>/`
 (verified release assets, deleted when the upgrade commits or rolls
 back), `logs/console.log` (+ `.1`, the previous boot; timestamped; the
 guest's boot and console output, on macOS headed by the kernel command
@@ -240,9 +242,9 @@ line), `logs/supervisor.log`.
 
 `destroy` deletes exactly these, after a clean stop: the data disk, its
 snapshot (on Windows through the broker, `DELETE /v1/vhd`, which takes
-the VM directory with them; and `data.vhdx`, its snapshot and
-`data.vhdx.migrated` in the config directory, if an earlier version left
-any), `downloads/`, `local.json`, stray `.tmp-local.json-*` and
+the VM directory with them; and `data.vhdx`, its snapshot,
+`data.vhdx.migrated` and every `data.vhdx.kept-*` in the config
+directory, if an earlier version left any), `downloads/`, `local.json`, stray `.tmp-local.json-*` and
 `.kivali-backup-*` temporary files, and the three log files (the `logs`
 directory too if nothing else is in it). It never touches the RPC
 endpoint, `serve.lock`, the config directory itself or any file it does
@@ -399,8 +401,9 @@ one), and before the compaction and the boot, in the `updating-data`
 stage:
 
 1. The volume the disk moves to (ProgramData's) needs the legacy file's
-   allocated bytes and 2 GiB more free; short of that, `up` fails with
-   how much to free and where, and nothing has changed.
+   allocated bytes and 2 GiB more free, unless the VM directory has a
+   `data.vhdx` already (nothing is copied then); short of that, `up`
+   fails with how much to free and where, and nothing has changed.
 2. `POST /v1/vhd/import` copies it into the VM directory as the broker's
    own file and puts the copy in place as `data.vhdx`; meanwhile the
    backend asks `POST /v1/vhd/progress` every second and reports the
@@ -414,10 +417,19 @@ stage:
 
 Every step can be cut short. Before the broker's rename, the legacy file
 is untouched and the broker deletes its partial copy (`import.vhdx`) at
-the next try; after it, the next import answers 409 `already-imported`
-and `up` goes on from step 3; after step 3, `up` finds no legacy file,
-boots the moved disk, and deletes a `data.vhdx.migrated` it finds once
-the boot is READY. A boot that fails keeps `data.vhdx.migrated`.
+the next try; after step 3, `up` finds no legacy file, boots the moved
+disk, and deletes a `data.vhdx.migrated` it finds once the boot is
+READY. A boot that fails keeps `data.vhdx.migrated`.
+
+When the VM directory has a `data.vhdx` already, the import answers 409
+`already-imported` without opening the legacy file. That legacy file
+may be the one an `up` cut short after the broker's rename left behind,
+or a disk an earlier version made after the move and used (run again
+on this team, it finds no `data.vhdx` in the config directory and
+makes a new one there): nothing tells the two apart. So it is renamed
+`data.vhdx.kept-<UTC time>` (`KeptSuffix`), never used and never
+deleted but by `destroy`, the line in `supervisor.log` says where it
+is, and `up` boots the VM directory's disk.
 
 **The data disk's size.** A dynamic VHDX grows in 32 MiB blocks and
 keeps a block's space after the guest discards it (the guest's `fstrim`,

@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // keeperBackend is the fake backend as Hyper-V's is: the data disk is
@@ -233,8 +234,9 @@ func TestMoveFailsBeforeTheCopyIsInPlace(t *testing.T) {
 }
 
 // The copy is in place but the legacy file was not set aside (the up
-// stopped there): the next up's import says it is already done, and the
-// up goes on from there.
+// stopped there): the next up's import says it is already done, the
+// legacy file is kept under a name of its own and never deleted after
+// the boot, and the up goes on from there.
 func TestMoveStoppedAfterTheCopy(t *testing.T) {
 	h, k, before := legacyOrg(t)
 	legacy := k.LegacyDataDiskPath(h.dir)
@@ -262,6 +264,78 @@ func TestMoveStoppedAfterTheCopy(t *testing.T) {
 	}
 	if exists(legacy) || exists(legacy+MigratedSuffix) || h.disk()[ManifestRel] != before[ManifestRel] {
 		t.Fatal("the second up did not finish the move")
+	}
+	if kept := keptCopies(legacy); len(kept) != 1 || !exists(kept[0]) {
+		t.Fatalf("kept copies %v, want the legacy file kept", kept)
+	}
+}
+
+// A team moved, then run by an earlier version, which finds no disk at
+// the legacy path and makes a new one there, then by this version again:
+// the backend already has a disk, so the legacy one, which holds the
+// work done meanwhile, is kept beside it, unused, through the boot and
+// later ups, and deleted only with the team. A second such disk is kept
+// beside the first.
+func TestALegacyDiskMadeAfterTheMoveIsKept(t *testing.T) {
+	h, k, moved := legacyOrg(t)
+	legacy := k.LegacyDataDiskPath(h.dir)
+	h.mustUp(UpOptions{})
+	if err := h.sup.Down(context.Background(), h.logf()); err != nil {
+		t.Fatal(err)
+	}
+
+	// The earlier version's own disk, with other work on it.
+	other := diskFS{ManifestRel: "the earlier version's org"}
+	writeLegacy := func() {
+		t.Helper()
+		b, err := json.Marshal(other)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(legacy, b, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeLegacy()
+	h.restart()
+	// Nothing is copied, so a volume short of room for the legacy disk
+	// refuses nothing.
+	h.mu.Lock()
+	h.freeBytes = func(string) (uint64, error) { return 1 << 30, nil }
+	h.mu.Unlock()
+	log := &serveLog{}
+	if err := h.sup.Up(context.Background(), UpOptions{Port: h.port}, log.logf); err != nil {
+		t.Fatalf("up: %v", err)
+	}
+	kept := keptCopies(legacy)
+	if len(kept) != 1 || exists(legacy) || exists(legacy+MigratedSuffix) {
+		t.Fatalf("kept %v, legacy %v, set aside %v", kept, exists(legacy), exists(legacy+MigratedSuffix))
+	}
+	if got, err := readDisk(kept[0]); err != nil || got[ManifestRel] != other[ManifestRel] {
+		t.Fatalf("the kept disk holds %v, %v", got, err)
+	}
+	if h.disk()[ManifestRel] != moved[ManifestRel] {
+		t.Fatal("the up did not boot the moved disk")
+	}
+	if !strings.Contains(strings.Join(log.get(), "\n"), "kept as "+kept[0]) {
+		t.Fatalf("log = %q", log.get())
+	}
+
+	if err := h.sup.Down(context.Background(), h.logf()); err != nil {
+		t.Fatal(err)
+	}
+	<-h.clock.After(time.Hour) // a later time, a name of its own
+	writeLegacy()
+	h.mustUp(UpOptions{})
+	if got := keptCopies(legacy); len(got) != 2 || !slices.Contains(got, kept[0]) {
+		t.Fatalf("kept copies %v after a second, want both", got)
+	}
+
+	if _, err := h.sup.Destroy(context.Background(), h.logf()); err != nil {
+		t.Fatalf("destroy: %v", err)
+	}
+	if got := keptCopies(legacy); len(got) != 0 {
+		t.Fatalf("destroy left %v", got)
 	}
 }
 
