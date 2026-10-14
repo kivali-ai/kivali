@@ -76,6 +76,11 @@ func (s *Server) handleAgentpodEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	flusher.Flush()
 
+	// Start the turn a wake left owed while no pod was listening. Its
+	// chat-turn event lands in sub's buffer and goes out in the loop
+	// below.
+	s.wakeOnAgentpodSubscribe(slug)
+
 	heartbeat := s.clk().NewTicker(15 * time.Second)
 	defer heartbeat.Stop()
 

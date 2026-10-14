@@ -62,12 +62,10 @@ func TestSpawnChatLoopAgentpodPathTakes(t *testing.T) {
 // TestSpawnChatLoopFailsWithoutSubscriber covers the no-subscriber
 // drop: when no agent runtime is subscribed for slug (fresh hire,
 // pod restart in flight), the spawn returns false and tears down the
-// hub so the UI doesn't hang on a stuck "thinking" indicator. The
-// active-turn marker is DELIBERATELY RETAINED so the next Kivali
-// boot's RecoverInterruptedTurns scan writes a kind:runtime-
-// disruption row and auto-respawns the agent once the pod subscribes
-// — without this, a chat sent to a fresh hire silently disappears
-// and the user has no recovery path short of manually re-sending.
+// hub so the UI doesn't hang on a stuck "thinking" indicator. No turn
+// started, so no active-turn marker is left behind: the next boot must
+// not record a runtime disruption for it. The pod's subscription starts
+// the turn instead (agentpod_subscribe_wake_test.go).
 func TestSpawnChatLoopFailsWithoutSubscriber(t *testing.T) {
 	srv := newChatServer(t)
 	if err := srv.Store.CreateAgent(store.Agent{Slug: "alice", Role: "Analyst", ReportsTo: "ceo"}, "k"); err != nil {
@@ -89,27 +87,22 @@ func TestSpawnChatLoopFailsWithoutSubscriber(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadActiveTurn: %v", err)
 	}
-	if m.StartedAt.IsZero() {
-		t.Errorf("active-turn marker was cleared after dropped spawn; expected retained for RecoverInterruptedTurns to pick up on next boot")
+	if !m.StartedAt.IsZero() {
+		t.Errorf("active-turn marker left after a dropped spawn: %+v", m)
 	}
-	if m.Source != "chat" {
-		t.Errorf("retained marker.Source = %q, want %q (the spawn that dropped)", m.Source, "chat")
-	}
-	// And RecoverInterruptedTurns should see this slug as orphan,
-	// confirming the recovery hook will wake the agent.
 	orphans, err := srv.Store.ListOrphanActiveTurns()
 	if err != nil {
 		t.Fatalf("ListOrphanActiveTurns: %v", err)
 	}
-	found := false
-	for _, s := range orphans {
-		if s == "alice" {
-			found = true
-			break
-		}
+	if len(orphans) != 0 {
+		t.Errorf("orphan active turns after a dropped spawn: %v, want none", orphans)
 	}
-	if !found {
-		t.Errorf("alice not in orphan list after dropped spawn: %v", orphans)
+	hist, err := srv.Store.ReadChatHistory("alice")
+	if err != nil {
+		t.Fatalf("ReadChatHistory: %v", err)
+	}
+	if got := store.SpawnDecision(hist); got != store.SpawnNow {
+		t.Errorf("SpawnDecision after a dropped spawn = %v, want SpawnNow: the message is still owed", got)
 	}
 }
 

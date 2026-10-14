@@ -27,7 +27,8 @@ const (
 // BulkProvisionAgentPods provisions the pod of every active agent (sans
 // CEO): a first wave in PARALLEL, then the agents whose Provision failed
 // again after each bulkProvisionBackoff wait, until every pod exists or
-// ctx ends. Per-agent errors are logged and the other goroutines keep
+// ctx ends. Each retry takes only the failed agents that are still
+// active. Per-agent errors are logged and the other goroutines keep
 // running — one cluster-side hiccup must not block the rest.
 //
 // Parallel because Provision is reconcile-style: when Kivali web boots
@@ -52,16 +53,10 @@ func (s *Server) BulkProvisionAgentPods(ctx context.Context) {
 	if s.AgentPod == nil {
 		return
 	}
-	agents, err := s.Store.ListActiveAgents()
+	slugs, err := s.activeAgentPodSlugs(nil)
 	if err != nil {
 		log.Printf("agentpod: list agents: %v", err)
 		return
-	}
-	var slugs []string
-	for _, a := range agents {
-		if a.Slug != agent.CEOSlug {
-			slugs = append(slugs, a.Slug)
-		}
 	}
 	wait := bulkProvisionBackoff
 	for len(slugs) > 0 {
@@ -82,9 +77,37 @@ func (s *Server) BulkProvisionAgentPods(ctx context.Context) {
 			log.Printf("agentpod: no pod for %s (%v)", strings.Join(failed, ", "), ctx.Err())
 			return
 		}
-		slugs = failed
+		// An agent offboarded during the wait is not provisioned
+		// again: its pod would be recreated, and the sync would
+		// remake agents/<slug> without an agent.yaml.
+		slugs, err = s.activeAgentPodSlugs(failed)
+		if err != nil {
+			log.Printf("agentpod: list agents: %v", err)
+			return
+		}
 		wait = min(2*wait, bulkProvisionBackoffMax)
 	}
+}
+
+// activeAgentPodSlugs returns the slugs of the active agents that have
+// a pod (every one but the CEO), sorted. A non-nil only narrows them to the
+// slugs it holds.
+func (s *Server) activeAgentPodSlugs(only []string) ([]string, error) {
+	agents, err := s.Store.ListActiveAgents()
+	if err != nil {
+		return nil, err
+	}
+	var slugs []string
+	for _, a := range agents {
+		if a.Slug == agent.CEOSlug {
+			continue
+		}
+		if only != nil && !slices.Contains(only, a.Slug) {
+			continue
+		}
+		slugs = append(slugs, a.Slug)
+	}
+	return slugs, nil
 }
 
 // provisionAgentPods provisions the pods of slugs in parallel and

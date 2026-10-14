@@ -28,9 +28,8 @@ import (
 //   - AgentpodHub unwired (test fixtures that don't install a fake) →
 //     false. The caller (spawnChatLoopIfIdle) treats this as a hard
 //     failure and tears the spawn down.
-//   - SubscriberCount(slug) == 0 → false. Same outcome. The race
-//     between Subscribe and the publish is small; the next CEO
-//     interaction triggers a fresh spawn.
+//   - SubscriberCount(slug) == 0 → false. Same outcome; the turn
+//     starts when the pod subscribes (wakeOnAgentpodSubscribe).
 //   - JSON marshal of req fails → log, tear down state + hub, return
 //     true (a retry would re-attempt the same marshal and fail again).
 //     The hub gets closed so the user-visible state stays consistent;
