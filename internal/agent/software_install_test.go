@@ -87,6 +87,7 @@ func TestInboxSpeechForSoftwareInstallOutcomes(t *testing.T) {
 		store.SoftwareRestarted:        {"I approved installing `ffmpeg`.", "Your shell restarted to install it", "If something cannot be installed"},
 		store.SoftwareAlreadyInstalled: {"`ffmpeg` is already in your shell."},
 		store.SoftwareSavedNotApplied:  {"I approved installing `ffmpeg`. It is saved and installs the next time your shell starts."},
+		store.SoftwareRestartWhenIdle:  {"I approved installing `ffmpeg`.", "Your shell restarts to install it once your current turn and background tasks have ended", "If something cannot be installed"},
 	} {
 		msg := store.Message{
 			Type: store.MsgCEOApprovalResponse, Title: "Approved: Install software",

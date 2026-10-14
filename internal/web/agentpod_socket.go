@@ -58,7 +58,8 @@ func (s *Server) handleAgentpodEvents(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Connection", "keep-alive")
 	w.WriteHeader(http.StatusOK)
 
-	sub := s.AgentpodHub.Subscribe(slug)
+	runtimeID := r.Header.Get(agentpod.RuntimeHeader)
+	sub := s.AgentpodHub.SubscribeRuntime(slug, runtimeID)
 	// Wake the org-stream snapshot so the agent's disconnected
 	// state flips off the moment the agent pod dials in. Mirrors the
 	// defer below that fires when the pod drops.
@@ -76,6 +77,9 @@ func (s *Server) handleAgentpodEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	flusher.Flush()
 
+	// A new runtime means the one before it is gone: end the turns it
+	// was running, so the wake below can resume them here.
+	s.adoptRuntime(slug, runtimeID)
 	// Start the turn a wake left owed while no pod was listening. Its
 	// chat-turn event lands in sub's buffer and goes out in the loop
 	// below.

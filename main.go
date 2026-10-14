@@ -413,6 +413,13 @@ func main() {
 	// on the same node — agent pods can't reach the Kivali web pod's
 	// PVC. Both sockets serve identical handlers; splitting them
 	// reflects the topological reality, not a security boundary.
+	// Until the startup pass below has provisioned an agent's pod, its
+	// turns are held: a pod still running from before this start dials
+	// in at once, and a turn must not start on one the pass is about to
+	// recreate for a new spec. BulkProvisionAgentPods releases them.
+	if aprov.Enabled() {
+		srv.HoldTurnsForStartup()
+	}
 	stopAgentpodSocket := func() {}
 	if cfg.AgentpodUDSDir != "" {
 		if err := os.MkdirAll(cfg.AgentpodUDSDir, 0o700); err != nil {

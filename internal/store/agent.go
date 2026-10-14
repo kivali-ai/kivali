@@ -94,6 +94,13 @@ type ChatMessage struct {
 	// for one) and for a pure receipt.
 	Quiet bool `json:"quiet,omitempty"`
 
+	// Planned marks a KindRuntimeDisruption row for a turn Kivali
+	// interrupted itself: it recreated the agent's pod to apply a change
+	// (its software, say) while the turn ran. The agent resumes from it
+	// like any disruption, and it does not count toward the crash-loop
+	// breaker (ConsecutiveRuntimeDisruptions).
+	Planned bool `json:"planned,omitempty"`
+
 	// Model is the Claude model ID that produced this message, recorded
 	// only on the agent's own direct_chat output (RoleSent). Set at flush
 	// time from the turn's resolved model so the UI can label each model

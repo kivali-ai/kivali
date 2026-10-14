@@ -128,6 +128,12 @@ type agentpodTurnState struct {
 	source string
 	turnID string
 
+	// runtime is the runtime id of the subscriber the turn was
+	// published to (agentpodHub.RuntimeID), empty when it sent none. A
+	// different runtime subscribing for the slug means this one is gone
+	// (adoptRuntime).
+	runtime string
+
 	// kind is "" / "chat" for the parent's own chat turn,
 	// "subagent" for a subagent run. Routes appendChat between
 	// AppendChatMessage and AppendSubagentMessage and gates the
@@ -255,6 +261,7 @@ func (s *Server) InitAgentpodTurnState(slug, source, turnID string, hub *chatHub
 		hub:          hub,
 		source:       source,
 		turnID:       turnID,
+		runtime:      s.agentpodRuntimeID(slug),
 		model:        model,
 		effort:       effort,
 		pendingTools: map[string]agentpodPendingTool{},
@@ -266,6 +273,15 @@ func (s *Server) InitAgentpodTurnState(slug, source, turnID string, hub *chatHub
 	s.agentpodTurns[slug] = st
 	s.streamMu.Unlock()
 	return st
+}
+
+// agentpodRuntimeID is the runtime a turn published to slug now runs
+// on: the id of its latest subscriber, empty when none sent one.
+func (s *Server) agentpodRuntimeID(slug string) string {
+	if s.AgentpodHub == nil {
+		return ""
+	}
+	return s.AgentpodHub.RuntimeID(slug)
 }
 
 // lookupAgentpodTurn returns the in-flight state for slug. Returns nil
@@ -305,6 +321,7 @@ func (s *Server) installAgentpodSubagentTurn(parent, turnID, subagentID, model s
 	st := &agentpodTurnState{
 		slug:         parent,
 		turnID:       turnID,
+		runtime:      s.agentpodRuntimeID(parent),
 		kind:         agentpod.ChatTurnKindSubagent,
 		source:       "subagent",
 		model:        model,
@@ -886,7 +903,11 @@ func (s *Server) onAgentpodFailed(st *agentpodTurnState, ev agentpod.TurnEvent) 
 		s.finalizeSubagentTurn(st, subagentTurnResult{FinalText: ev.Text, Err: err})
 		return
 	}
-	s.finishFailedChatTurn(st, ev.FailedReason, ev.FailedDetail)
+	reason := ev.FailedReason
+	if reason == agentpod.FailedReasonRuntimeStopped && s.restartPlanned(st.slug) {
+		reason = failedReasonRuntimeRestarted
+	}
+	s.finishFailedChatTurn(st, reason, ev.FailedDetail)
 }
 
 // finishFailedChatTurn is the one exit for a parent chat turn that did
@@ -900,7 +921,10 @@ func (s *Server) onAgentpodFailed(st *agentpodTurnState, ev agentpod.TurnEvent) 
 //     event, since a cancel is not an error from the CEO's view.
 //   - subprocess-died: the CLI process crashed. A kind:runtime-disruption
 //     row; the spawn gate resumes the agent from it (and quarantines a
-//     crash loop).
+//     crash loop). The runtime stopping or vanishing mid-turn
+//     (runtime-stopped, runtime-lost) writes the same row, and Kivali's
+//     own pod restart (runtime-restarted) a Planned one, which the
+//     crash-loop breaker does not count.
 //   - everything else (other-error, turn-error, and any reason a newer
 //     pod may add): the turn stopped on something a retry would hit
 //     again. A kind:turn-error row; the spawn gate holds the agent until
@@ -938,6 +962,14 @@ func (s *Server) finishFailedChatTurn(st *agentpodTurnState, reason, detail stri
 		// reads in the order things happened.
 		st.flushAssistant(s)
 		s.finalizeSubprocessDisruption(st.slug, st.hub, fmt.Errorf("agent runtime reported subprocess-died: %s", emitDetail))
+		st.emitTerminal("error", failed)
+	case agentpod.FailedReasonRuntimeStopped, failedReasonRuntimeLost:
+		st.flushAssistant(s)
+		s.finalizeRuntimeDisruption(st.slug, st.hub, lostRuntimeText, false)
+		st.emitTerminal("error", failed)
+	case failedReasonRuntimeRestarted:
+		st.flushAssistant(s)
+		s.finalizeRuntimeDisruption(st.slug, st.hub, plannedDisruptionText, true)
 		st.emitTerminal("error", failed)
 	default:
 		st.flushAssistant(s)
@@ -1182,6 +1214,10 @@ func (s *Server) finalizeAgentpodTurn(st *agentpodTurnState) {
 	} else if !rotated {
 		s.spawnFollowupIfNewerReceived(st.slug, spawnReceivedTS, source)
 	}
+	// A pod restart owed until this turn ended runs now, unless the
+	// follow-up above has already started it (every spawn runs it
+	// first) or started a turn.
+	s.runOwedRestart(st.slug)
 }
 
 // publishCancelTurn fires EventCancelTurn at the agent runtime for
@@ -1447,73 +1483,62 @@ func (s *Server) dropAgentpodTurnIfMatches(st *agentpodTurnState) {
 	s.streamMu.Unlock()
 }
 
-// agentpodDisconnectGrace is how long we wait after the last events
-// SSE drops for slug before declaring the runtime presumed-dead and
-// synthesizing a failed event for any in-flight turn. Sized to cover
-// a normal pod restart (image pull on a warm cache + reschedule + SSE
-// reconnect) without lingering after a truly-dead pod. Var so tests
-// can shrink it.
+// agentpodDisconnectGrace is how long a turn's runtime may be gone
+// from the events stream before core ends the turn as lost. Sized to
+// cover a reconnect of the same runtime (a dropped stream, a slow
+// subscriber dropped by the hub) without lingering after a dead pod. A
+// different runtime subscribing ends it at once (adoptRuntime). Var so
+// tests can shrink it.
 var agentpodDisconnectGrace = 30 * time.Second
 
 // handleAgentpodDisconnect is fired by the events SSE handler's
-// deferred cleanup when its client connection ends. If this was the
-// last subscriber for slug AND there's an in-flight turn, we schedule
-// a grace-period cleanup: if no new subscriber appears, synthesize a
-// `failed` event so finalizeAgentpodTurn runs and drains the per-slug
-// state (latestRotations, pendingDeliveries, the
-// chat hub). Without this, a runtime that crashes without sending
-// done/failed leaves stale rotation state that the next agent's chat
-// turn would consume incorrectly.
+// deferred cleanup when its client connection ends. Each in-flight turn
+// of slug (the parent's own and its subagents') whose runtime is no
+// longer subscribed gets agentpodDisconnectGrace, on the server's
+// clock, for that runtime to come back; one still without it then is
+// ended: a subagent turn fails, which its parent reads as the task's
+// result, and the parent's turn ends as endLostTurn says (cancelled
+// after Stop, a Planned disruption when Kivali recreated the pod, a
+// runtime disruption otherwise), so finalizeAgentpodTurn drains the
+// per-slug state and the agent resumes on its next pod.
+//
+// A pod can die with background subagent turns in flight and no parent
+// turn: dispatching the batch ended the parent's turn, and the fan-out
+// is what killed the pod. Those turns are registered apart from the
+// parent's and are swept the same way.
 func (s *Server) handleAgentpodDisconnect(slug string) {
 	if s.AgentpodHub == nil {
 		return
 	}
-	if s.AgentpodHub.SubscriberCount(slug) > 0 {
-		// Another subscriber is still attached — nothing to do.
-		return
-	}
-	// A pod can die with background subagent turns in flight and NO
-	// parent turn: the agent dispatches a batch, ends its turn, and
-	// the fan-out is what kills the pod — N CLIs against one memory
-	// limit is the OOM shape. Those turns are registered separately
-	// from the parent's, so bailing on a nil parent turn (as this used
-	// to) left every one of them blocked in DriveSubagent forever,
-	// with the parent showing "waiting on N tasks" for work whose
-	// process no longer exists.
-	//
-	// Snapshot both here, at disconnect time, and re-confirm each
-	// after the grace.
+	// Snapshot now, and re-confirm each by pointer after the grace: a
+	// turn that finished in the window is gone from its map, and one
+	// that was replaced is not ours to end.
 	st := s.lookupAgentpodTurn(slug)
+	if st != nil && s.AgentpodHub.HasRuntime(slug, st.runtime) {
+		st = nil
+	}
 	subagentTurns := s.collectInflightSubagentTurns(slug)
+	for id, sub := range subagentTurns {
+		if s.AgentpodHub.HasRuntime(slug, sub.runtime) {
+			delete(subagentTurns, id)
+		}
+	}
 	if st == nil && len(subagentTurns) == 0 {
 		return
 	}
-	turnID := ""
-	if st != nil {
-		turnID = st.turnID
-	}
-	time.AfterFunc(agentpodDisconnectGrace, func() {
-		// Re-check on the timer's goroutine: a reconnecting runtime
-		// inside the grace window cancels this synthesis.
-		if s.AgentpodHub.SubscriberCount(slug) > 0 {
-			return
-		}
-		// Fail the orphaned subagent turns first, so the parent's own
-		// finalize (below) sees a settled batch rather than racing it.
-		//
-		// Identity is checked by POINTER, not by turn-id: ids are
-		// generated per run, but a state that was replaced rather than
-		// finished must not be failed out from under its new owner.
-		// A turn that completed normally in the window is already gone
-		// from the map and is skipped.
+	timer := s.clk().NewTimer(agentpodDisconnectGrace)
+	go func() {
+		<-timer.C()
+		// Subagent turns first, so the parent's own finalize below sees
+		// a settled batch rather than racing it.
 		for id, want := range subagentTurns {
 			s.streamMu.Lock()
 			cur, stillThere := s.agentpodSubagentTurns[id]
 			s.streamMu.Unlock()
-			if !stillThere || cur != want {
+			if !stillThere || cur != want || s.AgentpodHub.HasRuntime(slug, cur.runtime) {
 				continue
 			}
-			log.Printf("agentpod subagent turn %s/%s: subscriber gone for %s without done/failed; synthesizing failed (pod presumed dead)",
+			log.Printf("agentpod subagent turn %s/%s: runtime gone for %s without done/failed; failing it (pod presumed dead)",
 				slug, id, agentpodDisconnectGrace)
 			// Routes to finalizeSubagentTurn, which hands the error to
 			// the blocked DriveSubagent. That unwinds runJob →
@@ -1528,31 +1553,13 @@ func (s *Server) handleAgentpodDisconnect(slug string) {
 		if st == nil {
 			return
 		}
-		// Confirm the same turn is still in flight. If a new turn
-		// installed via InitAgentpodTurnState since we scheduled,
-		// don't synthesize a failure for it — it has its own
-		// subscriber lifecycle.
-		cur := s.lookupAgentpodTurn(slug)
-		if cur == nil || cur.turnID != turnID {
+		s.streamMu.Lock()
+		cur := s.agentpodTurns[slug]
+		s.streamMu.Unlock()
+		if cur != st || s.AgentpodHub.HasRuntime(slug, st.runtime) {
 			return
 		}
-		// If the user clicked Stop while the runtime was already
-		// dropped, treat the synthesized event as a cancellation
-		// rather than an error — Stop is the user's intent and
-		// surfacing "SSE disconnected" as an error in the UI is
-		// misleading. The user-interruption marker was already
-		// written synchronously by handleAgentStop at click time.
-		reason := agentpod.FailedReasonOtherError
-		detail := "agent runtime SSE disconnected without terminator event"
-		if cur.hub != nil && cur.hub.peekInterruptRequested() {
-			reason = agentpod.FailedReasonCancelled
-			detail = "agent runtime disconnected; user had pressed Stop"
-		}
-		log.Printf("agentpod turn %s/%s: subscriber gone for %s without done/failed; synthesizing %s", slug, turnID, agentpodDisconnectGrace, reason)
-		s.onAgentpodFailed(cur, agentpod.TurnEvent{
-			Kind:         agentpod.TurnEventFailed,
-			FailedReason: reason,
-			FailedDetail: detail,
-		})
-	})
+		log.Printf("agentpod turn %s/%s: runtime gone for %s without done/failed; ending it", slug, st.turnID, agentpodDisconnectGrace)
+		s.endLostTurn(st, s.restartPlanned(slug))
+	}()
 }

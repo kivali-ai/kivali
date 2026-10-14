@@ -70,7 +70,7 @@ export function SoftwareSection({ showHead }: SectionProps) {
     <>
       <SectionHead title="Software" show={showHead} meta={n === undefined ? undefined : `${n} ${n === 1 ? 'package' : 'packages'} for every agent`} />
       <Text as="p" variant="caption" tone="muted">
-        Extra programs for every agent to work with, named as Debian lists them (ffmpeg, poppler-utils). Changing this list restarts the agents it affects so they can install the change. Anything they are in the middle of stops, and it takes a minute or two. An agent can also ask you to install something just for itself.
+        Extra programs for every agent to work with, named as Debian lists them (ffmpeg, poppler-utils). Changing this list restarts the agents it affects so they can install the change, each once it has finished what it is doing. A restart takes a minute or two. An agent can also ask you to install something just for itself.
       </Text>
       <ErrorBanner error={list.error ?? action.error} {...(action.error ? { onDismiss: action.dismiss } : {})} />
       {!list.data && !list.error && <RowSkeletons />}

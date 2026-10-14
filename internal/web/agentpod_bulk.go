@@ -50,9 +50,14 @@ const (
 // ends: the callers wake recovered agents next, and a wake needs the
 // agent's pod listening.
 //
+// Each agent's startup hold (HoldTurnsForStartup) is released once its
+// pod is provisioned, and every hold left when this returns, so no
+// agent's turns stay held past the startup pass.
+//
 // No-op when AgentPod is unwired or the provisioner reports
 // !Enabled() (out-of-cluster development).
 func (s *Server) BulkProvisionAgentPods(ctx context.Context) {
+	defer s.releaseStartupHolds()
 	if s.AgentPod == nil {
 		return
 	}
@@ -139,6 +144,7 @@ func (s *Server) provisionAgentPods(ctx context.Context, slugs []string) []strin
 				return
 			}
 			log.Printf("agentpod: provisioned %s", slug)
+			s.releaseStartupHold(slug)
 		}()
 	}
 	wg.Wait()
@@ -160,7 +166,10 @@ func (s *Server) provisionAgentPods(ctx context.Context, slugs []string) []strin
 // The agent is marked starting only when its pod is about to be
 // created or recreated (podStartNotifier), so reconciling every agent
 // after an org-wide change leaves the ones whose pods keep running as
-// they were. An AgentPod that cannot say marks it every time.
+// they were. An AgentPod that cannot say marks it every time. From
+// that point a turn the old pod's runtime loses is Kivali's doing, a
+// Planned disruption (markRestartPlanned). ProvisionAgentPod does not
+// wait for the agent to be idle; ReprovisionAgentPod does.
 //
 // Calls for one slug run one at a time: two settings saves in quick
 // succession, an approval landing during a settings reprovision, or the
@@ -190,6 +199,7 @@ func (s *Server) ProvisionAgentPod(ctx context.Context, slug string) error {
 		log.Printf("agentpod: files sync %s before provisioning: %v", slug, err)
 	}
 	starting := func() {
+		s.markRestartPlanned(slug)
 		if s.AgentpodHub != nil {
 			s.AgentpodHub.MarkStarting(slug, s.clk().Now())
 		}
@@ -225,9 +235,10 @@ type podStartNotifier interface {
 	ProvisionNotify(ctx context.Context, slug string, starting func()) error
 }
 
-// ReprovisionAgentPodsAsync runs ProvisionAgentPod for each slug in the
-// background, in parallel, and returns at once: a settings change that
-// alters pod specs answers the request before the pods have restarted.
+// ReprovisionAgentPodsAsync runs ReprovisionAgentPod for each slug in
+// the background, in parallel, and returns at once: a settings change
+// that alters pod specs answers the request before the pods have
+// restarted, and an agent at work restarts once its work has ended.
 // The CEO has no pod and is skipped.
 func (s *Server) ReprovisionAgentPodsAsync(slugs []string) {
 	if s.AgentPod == nil {
@@ -238,7 +249,7 @@ func (s *Server) ReprovisionAgentPodsAsync(slugs []string) {
 			continue
 		}
 		go func() {
-			if err := s.ProvisionAgentPod(context.Background(), slug); err != nil {
+			if _, err := s.ReprovisionAgentPod(context.Background(), slug); err != nil {
 				log.Printf("agentpod: reprovision %s: %v", slug, err)
 			}
 		}()

@@ -334,6 +334,10 @@ func (s *Server) spawnChatLoopIfIdle(slug, source string) bool {
 	if s.Claude == nil {
 		return false
 	}
+	// A pod restart owed until the agent was idle goes first: the turn
+	// would otherwise start on the pod about to be recreated. Once it
+	// runs, the agent's turns are held and this spawn stops below.
+	s.runOwedRestart(slug)
 	a, err := s.Store.GetAgent(slug)
 	if err != nil {
 		return false
@@ -349,6 +353,18 @@ func (s *Server) spawnChatLoopIfIdle(slug, source string) bool {
 	if !isOriginator {
 		// Something's already running for this slug — nothing to do.
 		return false
+	}
+	// Turns are held while the agent's pod is recreated, or until the
+	// startup pass has provisioned it (agentpod_restart.go). Checked
+	// after the claim, under the same lock the hold is taken with, so
+	// a hold is either seen here or sees this hub. The work stays owed
+	// in chat.jsonl; the release, or the new pod's subscription, starts
+	// it.
+	s.streamMu.Lock()
+	held := s.turnsHeldLocked(slug)
+	s.streamMu.Unlock()
+	if held {
+		return s.abandonSpawn(slug, hub, source)
 	}
 	hub.spawnSource = source
 	// Rows appended under streamMu leave their files to be linked
@@ -541,24 +557,14 @@ func (s *Server) finalizeSubprocessDisruption(slug string, hub *chatHub, cause e
 		"The runtime failed mid-task: the underlying claude CLI subprocess died (%v). The Kivali server is still running; resume your prior work per the handbook.",
 		cause,
 	)
-	msg := store.ChatMessage{
-		Role:    store.RoleReceived,
-		Kind:    store.KindRuntimeDisruption,
-		Content: content,
-		TS:      time.Now().UTC(),
-	}
-	if err := s.Store.AppendChatMessage(slug, msg); err != nil {
-		log.Printf("chat %s: append subprocess disruption: %v", slug, err)
-		return
-	}
-	emitChatMarker(hub, msg)
+	s.finalizeRuntimeDisruption(slug, hub, content, false)
 }
 
 // finalizeTurnError writes a kind:turn-error chat entry when an agent's
 // turn stopped on an error the runtime will not recover from on its
 // own: the model call failed (a usage limit, an expired login, an API
-// error — the CLI closes such a turn with is_error), the transport
-// failed, or the agent pod went away mid-turn. It is the counterpart
+// error — the CLI closes such a turn with is_error) or the transport
+// failed. It is the counterpart
 // of finalizeSubprocessDisruption for everything that is NOT a crash:
 // a crash is resumed automatically, an error is held until something
 // new arrives, because a second attempt would hit the same wall.

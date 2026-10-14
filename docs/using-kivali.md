@@ -65,7 +65,7 @@ Chat is right for questions, quick corrections and briefing. Anything you want t
 
 ## Installing software for an agent
 
-An agent that needs a program it does not have, such as a PDF reader or a video tool, can ask for it. You see an **Install software** proposal in **Needs you** that names the software and says, in the agent's own words, what it is for. Choose **Install** and the software is added to that agent's own list, and the agent restarts to install it; this takes a minute or two and stops anything the agent is in the middle of. If the agent already has the software, nothing restarts. Its next command waits until the installation finishes. If something cannot be installed, the agent is told which and why. Choose **Deny** and nothing changes. Any agent can ask, but only for itself.
+An agent that needs a program it does not have, such as a PDF reader or a video tool, can ask for it. You see an **Install software** proposal in **Needs you** that names the software and says, in the agent's own words, what it is for. Choose **Install** and the software is added to that agent's own list, and the agent restarts to install it as soon as it has finished what it is doing; the restart takes a minute or two. If the agent already has the software, nothing restarts. Its next command waits until the installation finishes. If something cannot be installed, the agent is told which and why. Choose **Deny** and nothing changes. Any agent can ask, but only for itself.
 
 ## Hiring, offboarding and reorganizing
 
@@ -139,6 +139,6 @@ An agent can have extra programs installed, named by their Debian package, such 
 
 - **Org**, **Software** lists the packages every agent gets. Type one or more names (separated by spaces or commas) under **Add software** and choose **Add**; choose **Remove** beside a package to take it off.
 - An agent's **About** tab has a **Software** view. It shows the org-wide list, which you change on the Org page, and the agent's own list, which you add to and remove from there.
-- Changing either list restarts the agents it reaches, so they install the change. Changing the org list restarts every agent that does not already have it; changing one agent's list restarts only that agent. A restart takes a minute or two, and anything the agent is in the middle of stops.
+- Changing either list restarts the agents it reaches, so they install the change. Changing the org list restarts every agent that does not already have it; changing one agent's list restarts only that agent. An agent at work restarts once it has finished its turn and any background tasks, and a restart takes a minute or two.
 
 A name that is not a Debian package name is refused, with the name in the message. Agents are not limited to what you add here: an agent that needs software asks you to install it, and you approve or decline.

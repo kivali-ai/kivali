@@ -99,13 +99,17 @@ package name (a file edited by hand) stays listed, under `invalid` in
 the answer and marked on the page as not installed, is left out of what
 the pod installs (`Store.EffectiveSoftware` logs it), and `DELETE`
 removes it like any other. Each write
-re-provisions the pods it reaches in the background. Approving an
-**Install software** proposal provisions synchronously, on a context the
-request cannot cancel, and records on the response's
-`software_install.outcome` what happened: `restarted`,
-`already_installed` (nothing new to add, no provision), or
-`saved_not_applied` (the provision failed; the next pod start installs
-it). The agent's and the owner's wording follow it.
+re-provisions the pods it reaches in the background
+(`Server.ReprovisionAgentPod`): an idle agent's at once, a working
+agent's once its turn and background tasks have ended, so a change never
+cuts work short. Approving an **Install software** proposal provisions an
+idle agent's pod synchronously, on a context the request cannot cancel,
+and records on the response's `software_install.outcome` what happened:
+`restarted`, `restart_when_idle` (the agent was working; its pod is
+recreated once the work has ended), `already_installed` (nothing new to
+add, no provision), or `saved_not_applied` (the provision failed; the
+next pod start installs it). The agent's and the owner's wording follow
+it.
 
 With a non-empty list the `agent-shell` container gets
 `--install=<sorted, comma-joined names>` and `runAsUser: 0`,

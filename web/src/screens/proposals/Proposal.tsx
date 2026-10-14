@@ -196,7 +196,7 @@ function Summary({ p }: { p: ProposalData }) {
           {packages.length > 0 && (
             <div className="app-proposal-software">
               <Text variant="body">
-                {`${agent?.name ?? 'This agent'} wants to install software. If you choose Install, ${agent?.name ?? 'the agent'} restarts now to install it. This takes a minute or two and stops anything ${agent?.name ?? 'the agent'} is doing.`}
+                {`${agent?.name ?? 'This agent'} wants to install software. If you choose Install, ${agent?.name ?? 'the agent'} restarts to install it once it has finished what it is doing. This takes a minute or two.`}
               </Text>
               <ul className="app-proposal-packages" aria-label="Software to install">
                 {packages.map((name) => (

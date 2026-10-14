@@ -35,6 +35,9 @@ const podStartGrace = 2 * time.Minute
 type agentpodHub struct {
 	mu   sync.Mutex
 	subs map[string]map[*agentpodSubscriber]struct{}
+	// seq numbers subscriptions in the order they were made, so
+	// RuntimeID can name the most recent one.
+	seq uint64
 	// starting holds when each slug's pod was provisioned, until its
 	// first subscriber dials in (Starting).
 	starting map[string]time.Time
@@ -53,7 +56,11 @@ type agentpodHub struct {
 // frames them on the wire.
 type agentpodSubscriber struct {
 	slug string
-	ch   chan agentpod.Event
+	// runtime is the runtime id the subscriber sent
+	// (agentpod.RuntimeHeader); empty for a runtime that sent none.
+	runtime string
+	seq     uint64
+	ch      chan agentpod.Event
 	// closed is closed by the hub when it drops the subscriber for
 	// being slow; the SSE handler reads it to know "stop trying."
 	closed chan struct{}
@@ -135,17 +142,27 @@ func NewAgentpodHub() *agentpodHub { //nolint:revive // unexported return type i
 	return newAgentpodHub()
 }
 
-// Subscribe registers a new subscriber for slug and returns it.
-// The buffer cap (16) is sized to absorb burst publishes during a
-// reconnect window without dropping; sustained backlog → drop.
+// Subscribe registers a new subscriber for slug that sent no runtime id
+// and returns it.
 func (h *agentpodHub) Subscribe(slug string) *agentpodSubscriber {
+	return h.SubscribeRuntime(slug, "")
+}
+
+// SubscribeRuntime registers a new subscriber for slug, from the
+// runtime runtimeID, and returns it. The buffer cap (16) is sized to
+// absorb burst publishes during a reconnect window without dropping;
+// sustained backlog → drop.
+func (h *agentpodHub) SubscribeRuntime(slug, runtimeID string) *agentpodSubscriber {
 	sub := &agentpodSubscriber{
-		slug:   slug,
-		ch:     make(chan agentpod.Event, 16),
-		closed: make(chan struct{}),
+		slug:    slug,
+		runtime: runtimeID,
+		ch:      make(chan agentpod.Event, 16),
+		closed:  make(chan struct{}),
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	h.seq++
+	sub.seq = h.seq
 	if h.subs[slug] == nil {
 		h.subs[slug] = map[*agentpodSubscriber]struct{}{}
 	}
@@ -214,6 +231,41 @@ func (h *agentpodHub) dropLocked(sub *agentpodSubscriber) {
 			}
 		}
 	}
+}
+
+// RuntimeID is the runtime id of slug's most recent live subscriber:
+// the runtime a chat-turn published now is running on. Empty when none
+// is subscribed or it sent no id.
+func (h *agentpodHub) RuntimeID(slug string) string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	var latest *agentpodSubscriber
+	for sub := range h.subs[slug] {
+		if latest == nil || sub.seq > latest.seq {
+			latest = sub
+		}
+	}
+	if latest == nil {
+		return ""
+	}
+	return latest.runtime
+}
+
+// HasRuntime reports whether the runtime runtimeID is subscribed for
+// slug. An empty id stands for any runtime: it reports whether anything
+// is subscribed.
+func (h *agentpodHub) HasRuntime(slug, runtimeID string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if runtimeID == "" {
+		return len(h.subs[slug]) > 0
+	}
+	for sub := range h.subs[slug] {
+		if sub.runtime == runtimeID {
+			return true
+		}
+	}
+	return false
 }
 
 // SubscriberCount reports the number of live subscribers for slug.
