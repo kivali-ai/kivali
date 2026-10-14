@@ -1,6 +1,8 @@
 #!/bin/sh
 # Clean shutdown (busybox init `shutdown`, before it powers off):
-#   1. cordon the node, then delete the Kivali pods through the API with
+#   0. mark the shutdown (/run/kivali/stopping) for k3s-server;
+#   1. if k3s runs normally (not with its agent disabled, as while
+#      k3s-server updates the node's address), cordon the node, then delete the Kivali pods through the API with
 #      a wait, so each gets its terminationGracePeriodSeconds while
 #      kubelet is still up. The Deployment controller's replacement
 #      server pod stays Pending; it starts at the next boot once `ready`
@@ -30,8 +32,15 @@ others() {
   done
 }
 
+# k3s-server sees this and neither reports k3s stopping as a failure
+# nor starts it again.
+: > /run/kivali/stopping
+
 pid=$(cat /run/kivali/k3s.pid 2>/dev/null)
-if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+# Step 1 needs the normal start (k3s-started): while k3s-server updates
+# the node's address, k3s runs without its agent, and with no kubelet
+# no pod could finish deleting.
+if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && [ -e /run/kivali/k3s-started ]; then
   # Cordon first, so the Deployment controller's replacement for the
   # deleted server pod stays Pending instead of starting and then being
   # killed without its grace period in step 3. `ready` uncordons at the
@@ -47,7 +56,9 @@ if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
   else
     say "shutdown: WARNING deleting Kivali pods failed: $(echo "$out" | tail -n 1)"
   fi
+fi
 
+if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
   say "shutdown: stopping k3s"
   kill -TERM "$pid" 2>/dev/null
   n=0

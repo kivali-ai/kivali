@@ -50,7 +50,9 @@ writes and deletes 2 GiB on the data disk through the guest agent, runs
 `-trim-crash-after <d>` instead hard-stops the VM `<d>` into that trim
 (fault injection); `-mac <addr>` gives the NIC another MAC, so VZ NAT
 hands out another address (with `-keep-data`, tests a node address
-change).
+change); `-poweroff-on <text>` requests the clean shutdown the moment a
+console line contains `<text>` instead of on READY, and fails on a
+FATAL during it.
 
 `-integrity-cycles <n>` is the data disk's crash test: `n` boots on one
 data disk, each with `kivali.fsck=force` (after `e2fsck -p` replays the
@@ -513,14 +515,20 @@ for good: the same stale node object fails every later boot. So
 interface, which is what k3s picks). When this boot's address differs,
 or nothing is recorded and a datastore exists, it first runs
 `k3s server --disable-agent` (no kubelet, no pods, no network policy
-controller), sets the node's InternalIP and its
+controller; k3s lists the flag as experimental), sets the node's InternalIP and its
 `alpha.kubernetes.io/provided-node-ip`, `k3s.io/internal-ip` and
 `flannel.alpha.coreos.com/public-ip` annotations to the new address,
 stops it, and only then starts k3s normally. It prints `KIVALI-VM: k3s:
 node address <old>, now <new>; updating ...` and `KIVALI-VM: k3s: node
 address updated to <new>`; the extra start takes a few seconds, and not
-managing it within 120 s is a FATAL. `ready` waits for the normal start
-(`/run/kivali/k3s-started`) before checking anything.
+managing it within 120 s is a FATAL. With no node object yet (k3s
+never registered the node) there is nothing to update. The address is
+recorded only after the node object carries it. `ready` waits for the
+normal start (`/run/kivali/k3s-started`) before checking anything. A
+clean shutdown meanwhile marks itself (`/run/kivali/stopping`), stops
+the agentless k3s without cordoning or deleting pods (no kubelet could
+finish a deletion), and `k3s-server` then exits without a FATAL and
+without starting k3s.
 
 `trim`: waits for this boot's READY, then runs `fstrim` on the data
 disk and again every 24 hours, printing `KIVALI-VM: trim: done:

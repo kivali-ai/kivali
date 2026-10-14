@@ -53,6 +53,7 @@ const (
 	baseCmdline  = "console=hvc0 cgroup_no_v1=all panic=10 kivali.selftest=1"
 	formatFlag   = "kivali.format-data=1"
 	crashEvent   = "crash"
+	stopEvent    = "stop"
 )
 
 type options struct {
@@ -64,6 +65,7 @@ type options struct {
 	memMiB      uint64
 	timeout     time.Duration
 	crashOn     string
+	poweroffOn  string
 	trimCheck   bool
 	trimCrash   time.Duration
 
@@ -87,6 +89,7 @@ func main() {
 	flag.UintVar(&o.cpus, "cpus", 2, "virtual CPUs")
 	flag.Uint64Var(&o.memMiB, "memory-mib", 4096, "memory, MiB")
 	flag.DurationVar(&o.timeout, "timeout", 5*time.Minute, "how long to wait for "+readyLine)
+	flag.StringVar(&o.poweroffOn, "poweroff-on", "", "request the clean shutdown as soon as a console line contains this text, instead of on "+readyLine)
 	flag.StringVar(&o.crashOn, "crash-on", "", "fault injection: hard-stop the VM as soon as a console line contains this text, then exit 0")
 	flag.BoolVar(&o.trimCheck, "trim-check", false, "after READY, check that a deleted file's space leaves data.img once the guest trims")
 	flag.DurationVar(&o.trimCrash, "trim-crash-after", 0, "fault injection: with -trim-check, hard-stop the VM this long after the trim starts, then exit 0")
@@ -168,7 +171,7 @@ func boot(o options) error {
 	}
 
 	events := make(chan string, 16)
-	go watchConsole(guestToHostR, logFile, events, o.crashOn)
+	go watchConsole(guestToHostR, logFile, events, o.crashOn, o.poweroffOn)
 
 	start := time.Now()
 	if err := vm.Start(); err != nil {
@@ -203,6 +206,9 @@ wait:
 				}
 				fmt.Printf("boottest: hard-stopped the VM on a line containing %q after %s\n", o.crashOn, time.Since(start).Round(time.Millisecond))
 				return errFaultInjected
+			case stopEvent:
+				fmt.Printf("boottest: requesting the clean shutdown on a line containing %q after %s\n", o.poweroffOn, time.Since(start).Round(time.Millisecond))
+				break wait
 			}
 		case st := <-states:
 			if st == vz.VirtualMachineStateStopped || st == vz.VirtualMachineStateError {
@@ -213,7 +219,7 @@ wait:
 		}
 	}
 
-	if o.trimCheck {
+	if o.trimCheck && o.poweroffOn == "" {
 		err := trimCheck(vm, dataPath, o.trimCrash)
 		if errors.Is(err, errFaultInjected) {
 			fmt.Printf("boottest: hard-stopped the VM %s into the trim\n", o.trimCrash)
@@ -236,8 +242,11 @@ wait:
 	for {
 		select {
 		case ev := <-events:
-			if ev == cleanLine {
+			switch ev {
+			case cleanLine:
 				sawClean = true
+			case fatalPrefix:
+				return fail(errors.New("guest reported a fatal error during the clean shutdown"))
 			}
 		case st := <-states:
 			if st == vz.VirtualMachineStateStopped {
@@ -473,7 +482,7 @@ func newVM(o options, cmdline, dataPath string, consoleIn, consoleOut *os.File) 
 
 // watchConsole copies the guest console to the log, echoes progress
 // lines to stdout, and reports marker lines on events.
-func watchConsole(r io.Reader, log io.Writer, events chan<- string, crashOn string) {
+func watchConsole(r io.Reader, log io.Writer, events chan<- string, crashOn, poweroffOn string) {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 64<<10), 1<<20)
 	for sc.Scan() {
@@ -482,6 +491,12 @@ func watchConsole(r io.Reader, log io.Writer, events chan<- string, crashOn stri
 		if crashOn != "" && strings.Contains(line, crashOn) {
 			fmt.Println("  guest| " + line)
 			events <- crashEvent
+			continue
+		}
+		if poweroffOn != "" && strings.Contains(line, poweroffOn) {
+			fmt.Println("  guest| " + line)
+			events <- stopEvent
+			poweroffOn = ""
 			continue
 		}
 		if !strings.Contains(line, "KIVALI-VM") {

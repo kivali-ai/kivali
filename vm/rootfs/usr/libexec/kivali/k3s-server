@@ -12,7 +12,8 @@
 # network policy controller) while the node object's addresses and
 # address annotations are set to this boot's address, then stops, and
 # only then starts normally. /run/kivali/k3s-started marks the normal
-# start; `ready` waits for it.
+# start; `ready` waits for it. A clean shutdown meanwhile
+# (/run/kivali/stopping) ends this script quietly: no FATAL, no start.
 export PATH=/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 export HOME=/root
 exec </dev/null
@@ -59,26 +60,34 @@ ip=''
 [ -n "$dev" ] && ip=$(ip -4 -o addr show dev "$dev" scope global | awk '{split($4, a, "/"); print a[1]; exit}')
 last=$(cat "$NODE_IP" 2>/dev/null)
 
-kc() { k3s kubectl "$@" 2>&1; }
+kc() { k3s kubectl "$@"; }
+stopping() { [ -e /run/kivali/stopping ]; }
 
 # set_node_ip: the node object's InternalIP and address annotations
-# become $ip. Fails until the API server answers.
+# become $ip. With no node object (k3s never registered the node) there
+# is nothing to update, and node_missing is set. Fails until the API
+# server answers.
+node_missing=''
 set_node_ip() {
-  kc get node kivali >/dev/null || return 1
+  if ! list=$(kc get node kivali -o jsonpath='{range .status.addresses[*]}{.type}={.address}{" "}{end}' 2>/run/kivali/k3s-repair.err); then
+    grep -q NotFound /run/kivali/k3s-repair.err || return 1
+    node_missing=1
+    return 0
+  fi
   kc annotate node kivali --overwrite \
     "alpha.kubernetes.io/provided-node-ip=$ip" \
     "k3s.io/internal-ip=$ip" \
-    "flannel.alpha.coreos.com/public-ip=$ip" >/dev/null || return 1
+    "flannel.alpha.coreos.com/public-ip=$ip" >/dev/null 2>&1 || return 1
   addrs="{\"type\":\"InternalIP\",\"address\":\"$ip\"}"
-  for a in $(kc get node kivali -o jsonpath='{range .status.addresses[*]}{.type}={.address}{" "}{end}'); do
+  for a in $list; do
     case "$a" in
       InternalIP=*) ;;
       *=*) addrs="$addrs,{\"type\":\"${a%%=*}\",\"address\":\"${a#*=}\"}" ;;
     esac
   done
   kc patch node kivali --subresource=status --type=merge \
-    -p "{\"status\":{\"addresses\":[$addrs]}}" >/dev/null || return 1
-  [ "$(kc get node kivali -o jsonpath='{.status.addresses[?(@.type=="InternalIP")].address}')" = "$ip" ]
+    -p "{\"status\":{\"addresses\":[$addrs]}}" >/dev/null 2>&1 || return 1
+  [ "$(kc get node kivali -o jsonpath='{.status.addresses[?(@.type=="InternalIP")].address}' 2>/dev/null)" = "$ip" ]
 }
 
 # stop <pid>: SIGTERM, up to 30 s, then SIGKILL.
@@ -98,15 +107,25 @@ if [ -n "$ip" ] && [ "$ip" != "$last" ] && [ -e "$DATA/k3s/server/db/state.db" ]
   echo "$pid" > /run/kivali/k3s.pid
   deadline=$(($(cut -d. -f1 /proc/uptime) + REPAIR_S))
   until set_node_ip; do
+    # A shutdown stops this k3s itself; that is not a failure.
+    stopping && exit 0
     kill -0 "$pid" 2>/dev/null || fatal "k3s: k3s exited while updating the node address to $ip (see $LOG)"
     [ "$(cut -d. -f1 /proc/uptime)" -ge "$deadline" ] && fatal "k3s: could not update the node address to $ip within ${REPAIR_S}s (see $LOG)"
     sleep 1
   done
   stop "$pid"
-  say "k3s: node address updated to $ip"
+  stopping && exit 0
+  if [ -n "$node_missing" ]; then
+    say "k3s: no node object yet; nothing to update"
+  else
+    say "k3s: node address updated to $ip"
+  fi
 fi
+# Recorded only once the node object carries this address (or there is
+# none yet, and k3s registers it with this address).
 [ -n "$ip" ] && [ "$ip" != "$last" ] && echo "$ip" > "$NODE_IP"
 
+stopping && exit 0
 echo $$ > /run/kivali/k3s.pid
 : > /run/kivali/k3s-started
 exec k3s server "$@" >>"$LOG" 2>&1

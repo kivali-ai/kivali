@@ -105,7 +105,7 @@ func integrityCycle(o options, dataPath string, cycle int, format, last bool, ac
 		return acked, err
 	}
 	events := make(chan string, 16)
-	go watchConsole(guestToHostR, logFile, events, "")
+	go watchConsole(guestToHostR, logFile, events, "", "")
 	states := vm.StateChangedNotify()
 	start := time.Now()
 	if err := vm.Start(); err != nil {
