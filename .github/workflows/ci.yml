@@ -58,7 +58,7 @@ jobs:
       - name: golangci-lint install
         uses: golangci/golangci-lint-action@v9
         with:
-          version: v2.13.2
+          version: v2.14.0
           install-only: true
 
       # Pinned in lockstep with SHELLCHECK_VERSION in the Makefile. The

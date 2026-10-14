@@ -41,7 +41,7 @@ PKG    := ./...
 # the binary on PATH disagrees, so a green local run that CI will
 # reject is visible at the point it happens rather than at tag time.
 # Bump here and in .github/workflows/ci.yml together.
-GOLANGCI_VERSION := v2.13.2
+GOLANGCI_VERSION := v2.14.0
 
 # The same for shellcheck, which renames findings between releases (an
 # uncalled function is SC2317 before 0.11, SC2329 from it). Bump here and
