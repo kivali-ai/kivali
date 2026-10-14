@@ -24,7 +24,7 @@ use crate::teams::{Place, Team};
 use crate::view::TeamState;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use std::collections::HashSet;
+use std::collections::HashMap;
 use tauri::webview::{NewWindowResponse, PageLoadEvent, WebviewBuilder};
 use tauri::window::WindowBuilder;
 use tauri::{AppHandle, LogicalPosition, LogicalSize, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder, Window};
@@ -280,25 +280,81 @@ fn pin_of(app: &AppHandle, id: &str) -> Arc<Mutex<Option<url::Origin>>> {
     app.state::<Shell>().pins.lock().unwrap().entry(id.to_string()).or_default().clone()
 }
 
-/// The teams whose web view has finished loading a page since it was
-/// last sent to a new origin. Until then the window keeps showing the
-/// team's page (the setup wizard, "starting"): shown as soon as the load
-/// starts, the web view is blank for the moment the app takes to arrive,
-/// a flash between the two.
-static LOADED: Mutex<Option<HashSet<String>>> = Mutex::new(None);
-
-fn loaded(id: &str) -> bool {
-    LOADED.lock().unwrap().as_ref().is_some_and(|s| s.contains(id))
+/// What the shell knows of a team's web view, to decide when to show it
+/// and when to send it to the team's origin.
+///
+/// Until the web view has finished loading a page (`loaded`) the window
+/// keeps showing the team's page (the setup wizard, "starting"): shown as
+/// soon as the load starts, the web view is blank for the moment the app
+/// takes to arrive, a flash between the two.
+///
+/// A web view made before the team serves loads its origin while nothing
+/// answers there. That load fails: WKWebView never finishes it, WebView2
+/// finishes it on an error page. So when the team starts serving, a web
+/// view not yet sent to the origin while serving goes there once, unless
+/// its last finished load happened while serving. Once per run: a server
+/// that is up but refusing is not asked again until the team stops
+/// serving and starts again, or View → Reload asks.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct WebLoad {
+    /// A page finished loading since the web view was last sent to the origin.
+    loaded: bool,
+    /// The team showed its web app when the window last looked.
+    serving: bool,
+    /// The last finished load happened while the team was serving.
+    loaded_serving: bool,
+    /// The web view has been sent to the origin since the team began serving.
+    sent: bool,
 }
 
-fn set_loaded(id: &str, yes: bool) {
-    let mut g = LOADED.lock().unwrap();
-    let set = g.get_or_insert_with(HashSet::new);
-    if yes {
-        set.insert(id.to_string());
-    } else {
-        set.remove(id);
+impl WebLoad {
+    /// A new web view, its first navigation (to the origin, if the team
+    /// has one) under way; `serving` whether the team serves now.
+    fn new(serving: bool) -> Self {
+        WebLoad { serving, sent: serving, ..WebLoad::default() }
     }
+
+    /// A page finished loading.
+    fn finished(&mut self) {
+        self.loaded = true;
+        self.loaded_serving = self.serving;
+    }
+
+    /// The web view is being sent to the team's origin.
+    fn sending(&mut self) {
+        self.loaded = false;
+        self.sent = true;
+    }
+
+    /// Records whether the team serves now and returns whether to send the
+    /// web view to the origin. `moved`: the origin is not the one the web
+    /// view is pinned to. `blank`: a page has loaded and it is `about:`.
+    fn sync(&mut self, serving: bool, moved: bool, blank: bool) -> bool {
+        self.serving = serving;
+        if !serving {
+            self.sent = false;
+            return false;
+        }
+        let go = moved || blank || (!self.sent && !(self.loaded && self.loaded_serving));
+        self.sent = true;
+        if go {
+            self.sending();
+        }
+        go
+    }
+}
+
+/// Each team window's [`WebLoad`], by team id.
+static WEB_LOADS: Mutex<Option<HashMap<String, WebLoad>>> = Mutex::new(None);
+
+fn web_load<T>(id: &str, f: impl FnOnce(&mut WebLoad) -> T) -> T {
+    let mut g = WEB_LOADS.lock().unwrap();
+    f(g.get_or_insert_with(HashMap::new).entry(id.to_string()).or_default())
+}
+
+/// The root of a team's web app, if it has an origin.
+fn team_root(t: &Team) -> Option<Url> {
+    t.origin().and_then(|o| Url::parse(&format!("{o}/")).ok())
 }
 
 fn team_title(t: &Team) -> String {
@@ -386,11 +442,12 @@ fn finish_signin(app: &AppHandle, id: &str, ret: signin::Return) {
 fn create_team_window(app: &AppHandle, t: &Team, visible: bool) -> Option<Window> {
     let id = t.id.clone();
     let pin = pin_of(app, &id);
-    let start = t.origin().and_then(|o| Url::parse(&format!("{o}/")).ok());
+    let start = team_root(t);
     *pin.lock().unwrap() = start.as_ref().map(Url::origin);
     // A new web view has loaded nothing, whatever an earlier window of
     // this team did.
-    set_loaded(&id, false);
+    let serving = shows_web(&app.state::<Shell>(), t);
+    web_load(&id, |w| *w = WebLoad::new(serving));
     let mut builder = WindowBuilder::new(app, team_label(&id))
         .title(team_title(t))
         .inner_size(1200.0, 760.0)
@@ -462,8 +519,12 @@ fn create_team_window(app: &AppHandle, t: &Team, visible: bool) -> Option<Window
                 let path = payload.url().path().to_string();
                 // The web view has something to show: the window may
                 // now swap the team's page for it (sync_team).
-                if !loaded(&id_load) {
-                    set_loaded(&id_load, true);
+                let first = web_load(&id_load, |w| {
+                    let first = !w.loaded;
+                    w.finished();
+                    first
+                });
+                if first {
                     sync_all(&app_load);
                 }
                 shell::connect_page_loaded(&app_load, &id_load, &path);
@@ -653,30 +714,32 @@ pub fn sync_team(app: &AppHandle, t: &Team) {
     let _ = window.set_title(&team_title(t));
     let (Some(web), Some(page)) = (app.get_webview(&web_label(&t.id)), app.get_webview(&page_label(&t.id))) else { return };
     if shows_web(&sh, t) {
-        if let Some(origin) = t.origin().and_then(|o| Url::parse(&format!("{o}/")).ok()) {
+        if let Some(origin) = team_root(t) {
             let pin = pin_of(app, &t.id);
             let moved = pin.lock().unwrap().as_ref() != Some(&origin.origin());
             // Only a web view that has loaded a page has a URL to read: one
             // made for a paused team never loads its `about:blank` (Tauri
-            // skips it), and a sign-in that refuses the first page leaves it
-            // with none; on macOS wry panics reading a URL that is not there.
-            if moved {
-                // A team here whose port changed, or the first start.
+            // skips it), a load the server refuses never finishes on macOS,
+            // and a sign-in that refuses the first page leaves it with
+            // none; on macOS wry panics reading a URL that is not there.
+            // The URL is read outside the lock: reading it runs on the
+            // main thread, where page loads take the lock.
+            let blank = web_load(&t.id, |w| w.loaded) && web.url().map(|u| u.scheme() == "about").unwrap_or(false);
+            if web_load(&t.id, |w| w.sync(true, moved, blank)) {
+                // The first start, a port that changed, a load from before
+                // the team served (WebLoad), or an `about:` page.
                 *pin.lock().unwrap() = Some(origin.origin());
-                set_loaded(&t.id, false);
-                let _ = web.navigate(origin);
-            } else if loaded(&t.id) && web.url().map(|u| u.scheme() == "about").unwrap_or(false) {
-                set_loaded(&t.id, false);
                 let _ = web.navigate(origin);
             }
         }
-        // The page stays until the web view has a page to show (LOADED);
+        // The page stays until the web view has a page to show (WebLoad);
         // its load calls back here.
-        if loaded(&t.id) {
+        if web_load(&t.id, |w| w.loaded) {
             let _ = web.show();
             let _ = page.hide();
         }
     } else {
+        web_load(&t.id, |w| w.sync(false, false, false));
         let _ = page.show();
         let _ = web.hide();
     }
@@ -853,8 +916,24 @@ pub fn reload_front(app: &AppHandle) {
     }
 }
 
-/// View → Reload in a team's window: its web app, or its page.
+/// View → Reload in a team's window: its web app, or its page. A team
+/// that serves but whose web view has no page to show (its load failed)
+/// has its web view sent to the origin again.
 pub fn reload_team(app: &AppHandle, id: &str) {
+    let sh = app.state::<Shell>();
+    if let Some(t) = sh.team(id) {
+        sync_team(app, &t);
+        if shows_web(&sh, &t) && !web_load(id, |w| w.loaded) {
+            let pinned = pin_of(app, id).lock().unwrap().clone();
+            if let (Some(web), Some(origin)) = (app.get_webview(&web_label(id)), team_root(&t)) {
+                if pinned.as_ref() == Some(&origin.origin()) {
+                    web_load(id, WebLoad::sending);
+                    let _ = web.navigate(origin);
+                    return;
+                }
+            }
+        }
+    }
     if let Some(w) = shown_view(app, id) {
         let _ = w.reload();
     }
@@ -947,6 +1026,58 @@ pub fn sign_out_team(app: &AppHandle, id: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn web_view_made_before_the_team_serves_goes_to_the_origin_once() {
+        // macOS: the refused load never finishes.
+        let mut w = WebLoad::new(false);
+        assert!(!w.sync(false, false, false));
+        assert!(w.sync(true, false, false));
+        assert!(!w.loaded);
+        // Up but refusing: not asked again in this run.
+        assert!(!w.sync(true, false, false));
+        assert!(!w.sync(true, false, false));
+        // Stopped and started again: once more.
+        assert!(!w.sync(false, false, false));
+        assert!(w.sync(true, false, false));
+        w.finished();
+        assert!(w.loaded && w.loaded_serving);
+        assert!(!w.sync(true, false, false));
+    }
+
+    #[test]
+    fn error_page_from_before_the_team_served_is_replaced() {
+        // Windows: the refused load finishes, on an error page.
+        let mut w = WebLoad::new(false);
+        w.finished();
+        assert!(w.loaded && !w.loaded_serving);
+        assert!(!w.sync(false, false, false));
+        assert!(w.sync(true, false, false));
+        assert!(!w.loaded);
+        assert!(!w.sync(true, false, false));
+    }
+
+    #[test]
+    fn web_view_made_while_serving_is_left_to_load() {
+        let mut w = WebLoad::new(true);
+        assert!(!w.sync(true, false, false));
+        w.finished();
+        assert!(!w.sync(true, false, false));
+        // A page loaded while serving survives a pause on the same port.
+        assert!(!w.sync(false, false, false));
+        assert!(!w.sync(true, false, false));
+        assert!(w.loaded);
+    }
+
+    #[test]
+    fn moved_or_blank_web_view_goes_to_the_origin() {
+        let mut w = WebLoad::new(true);
+        w.finished();
+        assert!(w.sync(true, true, false));
+        w.finished();
+        assert!(w.sync(true, false, true));
+        assert!(!w.loaded);
+    }
 
     fn u(s: &str) -> Url {
         Url::parse(s).unwrap()
