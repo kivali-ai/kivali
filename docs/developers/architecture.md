@@ -105,7 +105,11 @@ the publish path.
 hash of the rendered spec. `Provision` leaves a pod whose label matches
 and deletes and recreates one that differs, so a new server image or env change reaches every agent the next time
 the server provisions. At boot the server syncs each agent's filesystem and provisions every active agent
-(`BulkProvisionAgentPods`); hire does the same for one. The scratch
+(`BulkProvisionAgentPods`), and provisions again, after a backoff that
+doubles from 5 s to a minute, the agents whose pod it could not create,
+until every pod exists or the boot's five-minute deadline passes (right
+after the node boots, the API server's service address can go
+unanswered for tens of seconds); hire does the same for one. The scratch
 PVC is never diffed and survives offboarding.
 
 **The agent pod's protocol** (`internal/agentpod/protocol.go`). Core
