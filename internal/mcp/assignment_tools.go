@@ -256,7 +256,7 @@ func wakeSummary(caller string, wakes []assignments.Wake) string {
 		case caller == assignments.CEO:
 			parts = append(parts, w.To+" (now)")
 		default:
-			parts = append(parts, w.To+" (when the owner releases it)")
+			parts = append(parts, w.To+" (once delivered)")
 		}
 	}
 	if hold {

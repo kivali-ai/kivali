@@ -67,7 +67,7 @@ const rationaleDescription = "short explanation for the owner: what's changing, 
 var noticeTool = ToolDef{
 	Name:        ToolNotice,
 	MessageType: store.MsgNotice,
-	Description: `Tell one or more agents something they should know. No reply is expected and none is possible. Use this for findings, decisions, heads-ups, and anything the recipient should know but you are not asking them to do. If you need someone to act, open an assignment for them with assignment_create instead; if you are reporting on work you were given, close the assignment with assignment_close. Address only the agents who need this; the owner moderates every notice like any other message.`,
+	Description: `Tell one or more agents something they should know. No reply is expected and none is possible. Use this for findings, decisions, heads-ups, and anything the recipient should know but you are not asking them to do. If you need someone to act, open an assignment for them with assignment_create instead; if you are reporting on work you were given, close the assignment with assignment_close. Address only the agents who need this; notices are delivered like any other message.`,
 	Schema: json.RawMessage(`{
   "type": "object",
   "properties": {
@@ -83,7 +83,7 @@ var noticeTool = ToolDef{
 var ceoApprovalRequestTool = ToolDef{
 	Name:        ToolCEOApprovalRequest,
 	MessageType: store.MsgCEOApprovalRequest,
-	Description: `Ask the owner to approve or deny something — direction changes, resource commits, anything you should not do unilaterally. Delivery is INSTANT: this bypasses the release queue, lands in the owner's inbox immediately, and the approve/deny response is delivered to your chat the moment the owner acts.
+	Description: `Ask the owner to approve or deny something — direction changes, resource commits, anything you should not do unilaterally. Delivery is INSTANT: this bypasses the delivery queue, lands in the owner's inbox immediately, and the approve/deny response is delivered to your chat the moment the owner acts.
 
 Lead the body with the ask and the decision being requested.
 
@@ -242,7 +242,7 @@ Name Debian package names (what apt installs, e.g. ` + "`ffmpeg`, `poppler-utils
 var ceoNotificationTool = ToolDef{
 	Name:        ToolCEONotification,
 	MessageType: store.MsgCEONotification,
-	Description: `Inform the owner of something with no explicit approve/deny gate — status updates, heads-ups, raised risks, and Cowork task requests (handbook §Cowork tasks for the spec format). Delivery is INSTANT: this bypasses the release queue, lands in the owner's inbox immediately, and the ack is delivered to your chat the moment the owner sees it. See handbook §How you communicate for notification-vs-chat-reply guidance.`,
+	Description: `Inform the owner of something with no explicit approve/deny gate — status updates, heads-ups, raised risks, and Cowork task requests (handbook §Cowork tasks for the spec format). Delivery is INSTANT: this bypasses the delivery queue, lands in the owner's inbox immediately, and the ack is delivered to your chat the moment the owner sees it. See handbook §How you communicate for notification-vs-chat-reply guidance.`,
 	Schema: json.RawMessage(`{
   "type": "object",
   "properties": {
