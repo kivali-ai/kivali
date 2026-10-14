@@ -5,6 +5,7 @@ package broker
 import (
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"path/filepath"
@@ -59,6 +60,9 @@ type winCaller struct {
 	pipe    windows.Handle
 	sid     string
 	handles []windows.Handle
+	// pinned is File's reading handle on each file it pinned, by the
+	// canonical path in lower case, for Contents.
+	pinned map[string]windows.Handle
 }
 
 // callerOf impersonates the pipe client to read its SID, then reverts;
@@ -120,7 +124,63 @@ func (c *winCaller) Close() error {
 		_ = windows.CloseHandle(h)
 	}
 	c.handles = nil
+	c.pinned = nil
 	return nil
+}
+
+// pin keeps h, a handle that reads the file at canon, until Close, and
+// records it for Contents.
+func (c *winCaller) pin(h windows.Handle, canon string) {
+	c.keep(h)
+	if c.pinned == nil {
+		c.pinned = map[string]windows.Handle{}
+	}
+	c.pinned[strings.ToLower(canon)] = h
+}
+
+// Contents reads the file File pinned at p through the pinning handle.
+// The handle's access was checked as the caller when it was opened;
+// reading through it opens nothing.
+func (c *winCaller) Contents(p string) (io.ReaderAt, int64, error) {
+	h, ok := c.pinned[strings.ToLower(p)]
+	if !ok {
+		return nil, 0, fmt.Errorf("%s is not pinned for reading", p)
+	}
+	var info windows.ByHandleFileInformation
+	if err := windows.GetFileInformationByHandle(h, &info); err != nil {
+		return nil, 0, fmt.Errorf("stat %s: %w", p, err)
+	}
+	return handleReader{h}, int64(info.FileSizeHigh)<<32 | int64(info.FileSizeLow), nil
+}
+
+// handleReader reads a file at an offset through a handle opened for
+// synchronous I/O (the offset goes in the OVERLAPPED; the handle's own
+// position is not used).
+type handleReader struct{ h windows.Handle }
+
+func (r handleReader) ReadAt(b []byte, off int64) (int, error) {
+	if off < 0 {
+		return 0, fmt.Errorf("negative offset %d", off)
+	}
+	n := 0
+	for n < len(b) {
+		pos := off + int64(n)
+		o := windows.Overlapped{Offset: uint32(pos), OffsetHigh: uint32(pos >> 32)}
+		chunk := b[n:]
+		if len(chunk) > 1<<30 {
+			chunk = chunk[:1<<30]
+		}
+		var done uint32
+		err := windows.ReadFile(r.h, chunk, &done, &o)
+		if errors.Is(err, windows.ERROR_HANDLE_EOF) || (err == nil && done == 0) {
+			return n, io.EOF
+		}
+		if err != nil {
+			return n, err
+		}
+		n += int(done)
+	}
+	return n, nil
 }
 
 // WritableDir opens dir as the caller with the right to add a file to
@@ -171,8 +231,12 @@ func (c *winCaller) File(p string, access Access) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if access != AccessWrite {
+	if access == AccessName {
 		c.keep(h)
+		return canon, nil
+	}
+	if access == AccessRead {
+		c.pin(h, canon)
 		return canon, nil
 	}
 	defer func() { _ = windows.CloseHandle(h) }()
@@ -192,7 +256,7 @@ func (c *winCaller) File(p string, access Access) (string, error) {
 		}
 		return "", fmt.Errorf("%s changed while it was being checked", p)
 	}
-	c.keep(pin)
+	c.pin(pin, canon)
 	return canon, nil
 }
 

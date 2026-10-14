@@ -6,27 +6,40 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 
 	"github.com/kivali-ai/kivali/internal/clock"
 	"github.com/kivali-ai/kivali/internal/supervisor/broker"
+	"github.com/kivali-ai/kivali/internal/supervisor/vhdx"
 )
 
 // discardedDisk writes a VHDX whose BAT holds n discarded 32 MiB blocks
 // that still have their place in the file, after 4 present ones.
 func discardedDisk(t *testing.T, n int) string {
 	t.Helper()
-	v := testVHDX{blockSize: 32 << 20, sectorSize: 512, virtualSize: 64 << 30}
+	v := vhdx.Spec{BlockSize: 32 << 20, SectorSize: 512, VirtualSize: 64 << 30}
 	for i := range 4 + n {
-		state := uint64(stFull)
+		state := uint64(vhdx.BlockFullyPresent)
 		if i >= 4 {
-			state = stUnmapped
+			state = vhdx.BlockUnmapped
 		}
-		v.entries = append(v.entries, [2]uint64{state, uint64(4 + i*32)})
+		v.Entries = append(v.Entries, [2]uint64{state, uint64(4 + i*32)})
 	}
-	return v.write(t)
+	return writeVHDX(t, v)
+}
+
+// writeVHDX writes v's bytes to data.vhdx in a test directory.
+func writeVHDX(t *testing.T, v vhdx.Spec) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "data.vhdx")
+	if err := os.WriteFile(p, v.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return p
 }
 
 type logLines struct {
@@ -132,8 +145,8 @@ func TestCompactDataDiskBrokerRefusal(t *testing.T) {
 func TestCompactDataDiskUnreadable(t *testing.T) {
 	fb := &fakeBroker{}
 	b := Backend{Client: serveBroker(t, fb)}
-	v := testVHDX{blockSize: 32 << 20, sectorSize: 512, virtualSize: 64 << 30, flags: vhdxHasParent}
-	err := b.CompactDataDisk(context.Background(), v.write(t), func() {}, func(string, ...any) {})
+	v := vhdx.Spec{BlockSize: 32 << 20, SectorSize: 512, VirtualSize: 64 << 30, Flags: vhdx.FlagHasParent}
+	err := b.CompactDataDisk(context.Background(), writeVHDX(t, v), func() {}, func(string, ...any) {})
 	if err == nil || !strings.Contains(err.Error(), "differencing") || len(fb.optimizes) != 0 {
 		t.Fatalf("err = %v, requests = %v", err, fb.optimizes)
 	}

@@ -137,10 +137,15 @@ type OptimizeResult struct {
 }
 
 // Validate checks an optimize request's form: an absolute local path
-// named data.vhdx.
+// named data.vhdx, with no [ or ] (localAbs refuses * and ?):
+// Optimize-VHD takes the path as -Path and has no -LiteralPath, so the
+// path holds no character a wildcard pattern gives a meaning to.
 func (r OptimizeRequest) Validate() error {
 	if err := localAbs("path", r.Path); err != nil {
 		return err
+	}
+	if strings.ContainsAny(r.Path, "[]") {
+		return fmt.Errorf("path %q has a wildcard character", r.Path)
 	}
 	if !strings.EqualFold(winBase(r.Path), DataDiskName) {
 		return fmt.Errorf("path %q: the broker compacts only %s", r.Path, DataDiskName)

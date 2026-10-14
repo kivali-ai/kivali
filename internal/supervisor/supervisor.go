@@ -911,7 +911,8 @@ func (s *Supervisor) cancelRunning(logf Logf) bool {
 
 // downLocked takes the operation lock (giving up only if waitCtx ends)
 // and stops the VM; a non-zero stopBound limits the stop alone (the
-// stop has its own bounds besides).
+// stop has its own bounds besides). After a clean stop the data disk is
+// compacted, unless stopBound is set.
 func (s *Supervisor) downLocked(waitCtx context.Context, stopBound time.Duration, logf Logf) error {
 	_, end, err := s.begin(waitCtx, "down", false)
 	if err != nil {
@@ -929,10 +930,13 @@ func (s *Supervisor) downLocked(waitCtx context.Context, stopBound time.Duration
 		defer cancel()
 	}
 	clean, err := s.stopLocked(stopCtx, logf)
-	if err == nil && clean {
+	if err == nil && clean && stopBound == 0 {
 		// The disk is closed and quiet: what the guest discarded (its
 		// fstrim) is given back to the host now rather than at the next
-		// start, where the person is waiting.
+		// start, where the person is waiting. A bounded stop is serve's
+		// exit (the host logging off or shutting down), which would kill
+		// a compaction partway, so that disk is compacted before the
+		// next boot instead (compactBeforeBootLocked).
 		s.compactLocked(stopCtx, func() {}, logf)
 	}
 	return err

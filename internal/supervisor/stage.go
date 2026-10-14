@@ -9,7 +9,7 @@ import (
 // belongs to (Event.Stage), so the shell can draw a step list without
 // parsing the lines (docs/developers/supervisor.md, "Stages").
 const (
-	StageMakingRoom  = "making-room"  // up: creating the data disk, its first boot to READY
+	StageMakingRoom  = "making-room"  // up: creating the data disk, its first boot to READY; compacting the data disk before a boot
 	StageStarting    = "starting"     // booting to READY, the guest agent, the forward
 	StageSettingUp   = "setting-up"   // install, rollout, /readyz; a credential change
 	StageDownloading = "downloading"  // upgrade: preflight, fetch, verify, import

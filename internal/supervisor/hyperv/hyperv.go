@@ -39,6 +39,7 @@ import (
 	"github.com/kivali-ai/kivali/internal/supervisor/broker"
 	"github.com/kivali-ai/kivali/internal/supervisor/guestapi"
 	"github.com/kivali-ai/kivali/internal/supervisor/host"
+	"github.com/kivali-ai/kivali/internal/supervisor/vhdx"
 )
 
 // The VM image's files on Windows.
@@ -102,7 +103,7 @@ var (
 
 // compactThreshold is the discarded space below which the data disk is
 // left as it is. A dynamic VHDX keeps the space of a block the guest
-// discarded (vhdx.go) until it is compacted, which only the broker can
+// discarded (package vhdx) until it is compacted, which only the broker can
 // do, with the VM off; a compaction is a PowerShell process and a
 // privileged operation on every start or stop otherwise, and under
 // 1 GiB the file is within a few dozen 32 MiB blocks of its smallest,
@@ -138,7 +139,7 @@ func (b Backend) clock() clock.Clock {
 // its file is as small as what the disk holds.
 func (b Backend) CompactDataDisk(ctx context.Context, path string, began func(), logf supervisor.Logf) error {
 	path = plainPath(path)
-	l, err := readVHDX(path)
+	l, err := vhdx.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("read the data disk's block table: %w", err)
 	}

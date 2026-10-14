@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/kivali-ai/kivali/internal/supervisor/host"
+	"github.com/kivali-ai/kivali/internal/supervisor/vhdx"
 )
 
 func TestOptimizeRequestValidate(t *testing.T) {
@@ -16,7 +17,8 @@ func TestOptimizeRequestValidate(t *testing.T) {
 			t.Errorf("Validate(%q) = %v", ok, err)
 		}
 	}
-	for _, bad := range []string{``, `C:\Kivali\team1\other.vhdx`, `C:\Kivali\team1\vm\root-child.vhdx`, `\\server\share\data.vhdx`, `C:\a\..\b\data.vhdx`, `data.vhdx`} {
+	for _, bad := range []string{``, `C:\Kivali\team1\other.vhdx`, `C:\Kivali\team1\vm\root-child.vhdx`, `\\server\share\data.vhdx`, `C:\a\..\b\data.vhdx`, `data.vhdx`,
+		`C:\Kivali\[team1]\data.vhdx`, `C:\Kivali\team[1\data.vhdx`, `C:\Kivali\team]1\data.vhdx`, `C:\Kivali\team*\data.vhdx`, `C:\Kivali\team?\data.vhdx`} {
 		if err := (OptimizeRequest{Path: bad}).Validate(); err == nil {
 			t.Errorf("Validate(%q) accepted", bad)
 		}
@@ -135,6 +137,53 @@ func TestOptimizeVHDRefusals(t *testing.T) {
 		if h.runner.called(scriptOptimizeVHD) {
 			t.Errorf("%s: optimize-vhd ran", tc.what)
 		}
+	}
+}
+
+// Only a dynamic VHDX with no parent is compacted: the broker reads the
+// file's metadata through the caller's pinning handle before the script
+// runs, so Optimize-VHD never opens a parent a differencing disk's
+// locator names (the caller writes the file's bytes).
+func TestOptimizeVHDRefusesAllButADynamicDisk(t *testing.T) {
+	p := winJoin(testCfg, DataDiskName)
+	for _, tc := range []struct {
+		what    string
+		content []byte
+		want    string
+	}{
+		{"differencing", vhdx.Spec{BlockSize: 32 << 20, SectorSize: 512, VirtualSize: 64 << 20, Flags: vhdx.FlagHasParent}.Bytes(), "differencing"},
+		{"fixed", vhdx.Spec{BlockSize: 32 << 20, SectorSize: 512, VirtualSize: 64 << 20, Flags: vhdx.FlagLeaveBlocksAllocated}.Bytes(), "fixed"},
+		{"not a VHDX", make([]byte, 3<<20), "not a VHDX"},
+		{"empty", []byte{}, "not a VHDX"},
+	} {
+		h := newHarness(t)
+		h.caller.dirs[testCfg] = true
+		h.caller.files[p] = fakeEntry{read: true, write: true, content: tc.content}
+		h.ownVM(StateOff)
+		_, err := h.client.OptimizeVHD(context.Background(), p)
+		if statusOf(err) != http.StatusForbidden || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: err = %v (status %d)", tc.what, err, statusOf(err))
+		}
+		if h.runner.called(scriptOptimizeVHD) {
+			t.Errorf("%s: optimize-vhd ran", tc.what)
+		}
+	}
+}
+
+// A path with a wildcard character is refused before anything is
+// opened: Optimize-VHD's -Path would treat it as a pattern.
+func TestOptimizeVHDRefusesWildcardPath(t *testing.T) {
+	dir := `C:\Kivali\[team1]`
+	p := winJoin(dir, DataDiskName)
+	h := newHarness(t)
+	h.caller.dirs[dir] = true
+	h.caller.files[p] = fakeEntry{read: true, write: true}
+	_, err := h.client.OptimizeVHD(context.Background(), p)
+	if statusOf(err) != http.StatusBadRequest || !strings.Contains(err.Error(), "wildcard") {
+		t.Fatalf("err = %v (status %d)", err, statusOf(err))
+	}
+	if h.runner.called(scriptOptimizeVHD) || h.runner.called(scriptGetVM) {
+		t.Error("a script ran")
 	}
 }
 

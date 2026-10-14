@@ -1,4 +1,8 @@
-package hyperv
+// Package vhdx reads what a dynamic VHDX says about its blocks: the
+// Hyper-V backend, to decide whether the data disk is worth compacting,
+// and the broker, to refuse any file but a dynamic VHDX with no parent
+// before Optimize-VHD opens it.
+package vhdx
 
 import (
 	"encoding/binary"
@@ -44,14 +48,17 @@ const (
 
 // Payload block states (BAT entry bits 0 to 2).
 const (
-	blockFullyPresent     = 6
-	blockPartiallyPresent = 7
+	BlockNotPresent       = 0
+	BlockZero             = 2
+	BlockUnmapped         = 3
+	BlockFullyPresent     = 6
+	BlockPartiallyPresent = 7
 )
 
 // File parameters flags.
 const (
-	vhdxLeaveBlocksAllocated = 1 << 0 // a fixed disk: every block has its space
-	vhdxHasParent            = 1 << 1 // a differencing disk
+	FlagLeaveBlocksAllocated = 1 << 0 // a fixed disk: every block has its space
+	FlagHasParent            = 1 << 1 // a differencing disk
 )
 
 // The region and metadata item identifiers, in the byte order the file
@@ -74,8 +81,11 @@ func windowsGUID(s string) [16]byte {
 
 var crc32c = crc32.MakeTable(crc32.Castagnoli)
 
-// vhdxLayout is what a VHDX says about its blocks.
-type vhdxLayout struct {
+// ErrDifferencing is Read's answer for a differencing disk.
+var ErrDifferencing = errors.New("a differencing disk")
+
+// Layout is what a VHDX says about its blocks.
+type Layout struct {
 	FileSize    int64
 	BlockSize   uint32
 	VirtualSize uint64
@@ -89,72 +99,83 @@ type vhdxLayout struct {
 }
 
 // DiscardedBytes is the space compaction gives back.
-func (l vhdxLayout) DiscardedBytes() int64 { return int64(l.Discarded) * int64(l.BlockSize) }
+func (l Layout) DiscardedBytes() int64 { return int64(l.Discarded) * int64(l.BlockSize) }
 
 type vhdxRegion struct {
 	offset uint64
 	length uint32
 }
 
-// readVHDX reads the VHDX at path, a dynamic disk with no parent, and
-// counts its blocks. It reads only the region table, the metadata and
-// the BAT: a few dozen KiB, whatever the disk's size.
-func readVHDX(path string) (vhdxLayout, error) {
+// ReadFile reads the VHDX at path with Read.
+func ReadFile(path string) (Layout, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return vhdxLayout{}, err
+		return Layout{}, err
 	}
 	defer func() { _ = f.Close() }()
 	fi, err := f.Stat()
 	if err != nil {
-		return vhdxLayout{}, err
+		return Layout{}, err
 	}
-	l := vhdxLayout{FileSize: fi.Size()}
-	var sig [8]byte
-	if _, err := f.ReadAt(sig[:], 0); err != nil || string(sig[:]) != vhdxSignature {
-		return l, fmt.Errorf("%s is not a VHDX file", path)
-	}
-	regions, err := readRegionTable(f, l.FileSize)
+	l, err := Read(f, fi.Size())
 	if err != nil {
 		return l, fmt.Errorf("%s: %w", path, err)
 	}
+	return l, nil
+}
+
+// Read reads the VHDX in f, size bytes long, a dynamic or fixed disk
+// with no parent, and counts its blocks; a differencing disk (its file
+// parameters' HasParent flag set) is an error, and its parent locator is
+// never read. It reads only the region table, the metadata and the BAT:
+// a few dozen KiB, whatever the disk's size.
+func Read(f io.ReaderAt, size int64) (Layout, error) {
+	l := Layout{FileSize: size}
+	var sig [8]byte
+	if _, err := f.ReadAt(sig[:], 0); err != nil || string(sig[:]) != vhdxSignature {
+		return l, errors.New("not a VHDX file")
+	}
+	regions, err := readRegionTable(f, l.FileSize)
+	if err != nil {
+		return l, err
+	}
 	meta, ok := regions[metadataRegionID]
 	if !ok {
-		return l, fmt.Errorf("%s has no metadata region", path)
+		return l, errors.New("no metadata region")
 	}
 	bat, ok := regions[batRegionID]
 	if !ok {
-		return l, fmt.Errorf("%s has no block allocation table", path)
+		return l, errors.New("no block allocation table")
 	}
 	var flags, sectorSize uint32
 	l.BlockSize, flags, l.VirtualSize, sectorSize, err = readMetadata(f, meta)
 	if err != nil {
-		return l, fmt.Errorf("%s: %w", path, err)
+		return l, err
 	}
-	if flags&vhdxHasParent != 0 {
-		return l, fmt.Errorf("%s is a differencing disk", path)
+	if flags&FlagHasParent != 0 {
+		return l, ErrDifferencing
 	}
-	l.Fixed = flags&vhdxLeaveBlocksAllocated != 0
+	l.Fixed = flags&FlagLeaveBlocksAllocated != 0
 	l.Blocks = int((l.VirtualSize + uint64(l.BlockSize) - 1) / uint64(l.BlockSize))
 	// After every chunkRatio payload entries, one sector bitmap entry.
 	chunkRatio := int((uint64(1) << 23) * uint64(sectorSize) / uint64(l.BlockSize))
 	if chunkRatio < 1 {
-		return l, fmt.Errorf("%s: block size %d and sector size %d make no chunk", path, l.BlockSize, sectorSize)
+		return l, fmt.Errorf("block size %d and sector size %d make no chunk", l.BlockSize, sectorSize)
 	}
 	entries := l.Blocks + (l.Blocks-1)/chunkRatio
 	if uint64(entries)*vhdxBATEntrySize > uint64(bat.length) {
-		return l, fmt.Errorf("%s: the block allocation table (%d bytes) is too short for %d blocks", path, bat.length, l.Blocks)
+		return l, fmt.Errorf("the block allocation table (%d bytes) is too short for %d blocks", bat.length, l.Blocks)
 	}
 	table := make([]byte, entries*vhdxBATEntrySize)
 	if _, err := f.ReadAt(table, int64(bat.offset)); err != nil {
-		return l, fmt.Errorf("%s: read the block allocation table: %w", path, err)
+		return l, fmt.Errorf("read the block allocation table: %w", err)
 	}
 	for n := 0; n < l.Blocks; n++ {
 		i := n + n/chunkRatio
 		e := binary.LittleEndian.Uint64(table[i*vhdxBATEntrySize:])
 		state, offsetMB := e&7, e>>20
 		switch {
-		case state == blockFullyPresent || state == blockPartiallyPresent:
+		case state == BlockFullyPresent || state == BlockPartiallyPresent:
 			l.Present++
 		case offsetMB != 0 && !l.Fixed:
 			l.Discarded++

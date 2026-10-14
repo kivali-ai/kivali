@@ -1,9 +1,11 @@
 package broker
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -12,11 +14,20 @@ import (
 	"testing"
 
 	"github.com/kivali-ai/kivali/internal/supervisor/host"
+	"github.com/kivali-ai/kivali/internal/supervisor/vhdx"
 )
 
 // --- fakes (the Windows-only parts the policy talks to) ---
 
-type fakeEntry struct{ read, write bool }
+type fakeEntry struct {
+	read, write bool
+	// content is what Contents reads; nil reads as a dynamic VHDX with
+	// no parent, the data disk the backend makes.
+	content []byte
+}
+
+// dynamicDisk is a dynamic VHDX with no parent.
+var dynamicDisk = vhdx.Spec{BlockSize: 32 << 20, SectorSize: 512, VirtualSize: 64 << 20}.Bytes()
 
 // fakeCaller answers the file checks from sets a test fills, as the
 // impersonating caller would: a path it does not list is one the caller
@@ -53,6 +64,18 @@ func (c *fakeCaller) File(p string, access Access) (string, error) {
 		return "", errors.New("access denied")
 	}
 	return p, nil
+}
+
+func (c *fakeCaller) Contents(p string) (io.ReaderAt, int64, error) {
+	e, ok := c.files[p]
+	if !ok || !e.read {
+		return nil, 0, errors.New("not pinned for reading")
+	}
+	b := e.content
+	if b == nil {
+		b = dynamicDisk
+	}
+	return bytes.NewReader(b), int64(len(b)), nil
 }
 
 func (c *fakeCaller) Absent(p string) error {
