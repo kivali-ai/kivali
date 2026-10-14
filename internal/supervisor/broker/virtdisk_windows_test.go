@@ -17,7 +17,7 @@ import (
 
 // These make real VHDX files with virtdisk.dll and compact them as the
 // broker does, through a winCaller impersonating this account over a
-// pipe. They need an elevated test process (GitHub's Windows runners
+// pipe, and check them as the broker's root disk is checked. They need an elevated test process (GitHub's Windows runners
 // are elevated); no Hyper-V. With KIVALI_REQUIRE_ELEVATED set, as CI
 // sets it, a process that is not elevated fails them rather than
 // skipping them.
@@ -145,5 +145,54 @@ func TestCompactRefusesAFileThatIsNoVHDX(t *testing.T) {
 	c, canon := pinAsCaller(t, p)
 	if _, _, err := c.CompactVHDX(context.Background(), canon); err == nil {
 		t.Fatal("a file that is no VHDX was compacted")
+	}
+}
+
+// The broker's root disk check accepts a dynamic and a fixed VHDX, and
+// gives the canonical path.
+func TestRootDiskAcceptsDynamicAndFixed(t *testing.T) {
+	skipUnlessElevated(t)
+	dir := canonical(t, t.TempDir())
+	for _, fixed := range []bool{false, true} {
+		p := filepath.Join(dir, "root-dynamic.vhdx")
+		if fixed {
+			p = filepath.Join(dir, "root-fixed.vhdx")
+		}
+		createVHDX(t, p, fixed)
+		got, err := winFiles{}.RootDisk(p)
+		if err != nil || !strings.EqualFold(got, p) {
+			t.Errorf("RootDisk(%s) = %q, %v; want %s", p, got, err, p)
+		}
+	}
+}
+
+// A differencing root is refused, as differencing, without its parent
+// being opened: the parent its locator names is gone (renamed away), so
+// an open that looked for it would fail on that instead.
+func TestRootDiskRefusesDifferencingWithoutOpeningTheParent(t *testing.T) {
+	skipUnlessElevated(t)
+	dir := canonical(t, t.TempDir())
+	parent := filepath.Join(dir, "parent.vhdx")
+	createVHDX(t, parent, false)
+	p := filepath.Join(dir, RootFile)
+	if err := vhd.CreateDiffVhd(p, parent, 2); err != nil {
+		t.Fatalf("create the differencing disk: %v", err)
+	}
+	if err := os.Rename(parent, filepath.Join(dir, "moved.vhdx")); err != nil {
+		t.Fatal(err)
+	}
+	_, err := winFiles{}.RootDisk(p)
+	if !errors.Is(err, errNotRoot) || !strings.Contains(err.Error(), "differencing") {
+		t.Fatalf("err = %v, want the refusal of a differencing disk", err)
+	}
+}
+
+// A file that is not a VHDX is no root disk.
+func TestRootDiskRefusesAFileThatIsNoVHDX(t *testing.T) {
+	skipUnlessElevated(t)
+	p := filepath.Join(canonical(t, t.TempDir()), RootFile)
+	write(t, p, strings.Repeat("x", 4096))
+	if _, err := (winFiles{}).RootDisk(p); err == nil {
+		t.Fatal("a file that is no VHDX was accepted as the root disk")
 	}
 }

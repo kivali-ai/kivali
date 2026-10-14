@@ -20,10 +20,12 @@ import (
 	"github.com/kivali-ai/kivali/internal/supervisor/broker"
 )
 
-const brokerUsage = `usage: kivali-supervisor broker [--console | install | uninstall | status | setup]
+const brokerUsage = `usage: kivali-supervisor broker [--console [--root <file>] | install | uninstall | status | setup]
 
   (no subcommand)   run as a Windows service (started by the service manager)
   --console         run in the foreground, in an elevated terminal
+  --root <file>     the root disk every VM boots from (default: vm\root.vhdx
+                    beside this executable, where the installer puts it)
   install           register the service under its own account and start it; also the
                     Hyper-V Administrators membership, the log directory under
                     ProgramData\Kivali, the event source and the guest agent's
@@ -46,6 +48,7 @@ itself is enabled by an administrator, and needs a reboot.
 func (c *cli) broker(args []string) int {
 	fs := flag.NewFlagSet("broker", flag.ExitOnError)
 	console := fs.Bool("console", false, "run in the foreground instead of as a service")
+	rootFlag := fs.String("root", "", `the root disk every VM boots from (default: vm\root.vhdx beside this executable)`)
 	fs.Usage = func() { fmt.Fprint(os.Stderr, brokerUsage) }
 	_ = fs.Parse(args)
 	switch rest := fs.Args(); {
@@ -93,10 +96,23 @@ func (c *cli) broker(args []string) int {
 			logger = log.New(eventLogWriter{el}, "", 0)
 		}
 	}
-	srv, err := broker.NewServer(logger.Printf)
+	// The root disk comes from this process's own command line and
+	// location, both an administrator's (the service's registered binary
+	// path, or an elevated terminal), never from a request.
+	exe, err := os.Executable()
 	if err != nil {
 		return fail(err)
 	}
+	root, err := broker.RootPath(exe, *rootFlag)
+	if err != nil {
+		logger.Printf("kivali-broker: %v", err)
+		return fail(err)
+	}
+	srv, err := broker.NewServer(root, logger.Printf)
+	if err != nil {
+		return fail(err)
+	}
+	logger.Printf("kivali-broker: the root disk is %s", root)
 	ln, err := broker.Listen(os.Getenv("KIVALI_BROKER_PIPE"))
 	if err != nil {
 		logger.Printf("kivali-broker: %v", err)

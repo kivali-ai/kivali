@@ -29,8 +29,9 @@ import (
 type connKey struct{}
 
 // NewServer is the production broker: the embedded PowerShell runner,
-// the broker's own file operations, and the impersonating caller check.
-func NewServer(logf func(string, ...any)) (*Server, error) {
+// the broker's own file operations, the impersonating caller check, and
+// root, the root disk every VM boots from (RootPath).
+func NewServer(root string, logf func(string, ...any)) (*Server, error) {
 	ps, err := newPowerShell()
 	if err != nil {
 		return nil, err
@@ -38,6 +39,7 @@ func NewServer(logf func(string, ...any)) (*Server, error) {
 	return &Server{
 		Runner:   ps,
 		Files:    winFiles{},
+		Root:     root,
 		CallerOf: callerOf,
 		Logf:     logf,
 	}, nil

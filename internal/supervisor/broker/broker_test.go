@@ -124,7 +124,6 @@ func TestVMRequestValidate(t *testing.T) {
 	key := host.DirKey(cfg)
 	good := VMRequest{
 		Name: VMName(key), ConfigDir: cfg,
-		RootVHDX: `C:\Program Files\Kivali\vm\root.vhdx`,
 		DataVHDX: `C:\Kivali\team1\data.vhdx`,
 		CPUs:     4, MemoryMB: 4096, MAC: MAC(key), ComPipe: ComPipe(key),
 	}
@@ -137,7 +136,7 @@ func TestVMRequestValidate(t *testing.T) {
 		"cpus huge":     mut(func(r *VMRequest) { r.CPUs = 1000 }),
 		"memory small":  mut(func(r *VMRequest) { r.MemoryMB = 512 }),
 		"memory odd":    mut(func(r *VMRequest) { r.MemoryMB = 4097 }),
-		"root not vhdx": mut(func(r *VMRequest) { r.RootVHDX = `C:\x\root.img` }),
+		"data not vhdx": mut(func(r *VMRequest) { r.DataVHDX = `C:\Kivali\team1\data.img` }),
 		"data unc":      mut(func(r *VMRequest) { r.DataVHDX = `\\srv\share\data.vhdx` }),
 		"pipe wrong":    mut(func(r *VMRequest) { r.ComPipe = `\\.\pipe\evil` }),
 		"name form":     mut(func(r *VMRequest) { r.Name = "kivali-XYZ" }),
@@ -145,6 +144,37 @@ func TestVMRequestValidate(t *testing.T) {
 	for why, r := range bad {
 		if err := r.Validate(); err == nil {
 			t.Errorf("request accepted but should fail: %s", why)
+		}
+	}
+}
+
+// The root disk is the administrator's --root when given, else
+// vm\root.vhdx beside the broker's executable, the installed layout.
+func TestRootPath(t *testing.T) {
+	const exe = `C:\Program Files\Kivali\kivali-supervisor.exe`
+	for _, tc := range []struct {
+		what, exe, override, want string
+	}{
+		{"installed", exe, "", `C:\Program Files\Kivali\vm\root.vhdx`},
+		{"the override wins", exe, `D:\dev\vm\build\out\root.vhdx`, `D:\dev\vm\build\out\root.vhdx`},
+		{"the override needs no executable", "", `D:\dev\root.vhdx`, `D:\dev\root.vhdx`},
+		{"an executable at a drive's root", `C:\kivali-supervisor.exe`, "", `C:\vm\root.vhdx`},
+	} {
+		got, err := RootPath(tc.exe, tc.override)
+		if err != nil || got != tc.want {
+			t.Errorf("%s: RootPath = %q, %v; want %s", tc.what, got, err, tc.want)
+		}
+	}
+	for _, tc := range []struct{ what, exe, override string }{
+		{"a UNC override", exe, `\\attacker\share\root.vhdx`},
+		{"a relative override", exe, `root.vhdx`},
+		{"an override that is no VHDX", exe, `D:\dev\root.img`},
+		{"an override with ..", exe, `D:\dev\..\root.vhdx`},
+		{"an executable on a share", `\\srv\share\kivali-supervisor.exe`, ""},
+		{"no executable", "", ""},
+	} {
+		if got, err := RootPath(tc.exe, tc.override); err == nil {
+			t.Errorf("%s: RootPath = %q, want an error", tc.what, got)
 		}
 	}
 }
