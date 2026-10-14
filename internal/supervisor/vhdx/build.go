@@ -20,6 +20,10 @@ type Spec struct {
 	ParentLocator [][2]string
 	// BreakFirstRegionTable corrupts the first copy's checksum.
 	BreakFirstRegionTable bool
+	// BATLength, when set, is the BAT region's length in the region
+	// table instead of 1 MiB; the bytes past the file Bytes returns are
+	// for the reader to supply.
+	BATLength uint32
 }
 
 // Bytes lays the file out as Hyper-V does: identifier at 0, the two
@@ -64,7 +68,16 @@ func (v Spec) Bytes() []byte {
 		i := n + n/chunkRatio
 		binary.LittleEndian.PutUint64(bat[i*vhdxBATEntrySize:], e[0]|e[1]<<20)
 	}
+	// Each sector bitmap entry is non-zero, as a differencing disk's
+	// may be: a reader that took one for a payload entry miscounts.
+	for i := chunkRatio; i < len(v.Entries)+len(v.Entries)/chunkRatio; i += chunkRatio + 1 {
+		binary.LittleEndian.PutUint64(bat[i*vhdxBATEntrySize:], BlockFullyPresent|1<<20)
+	}
 
+	batLength := uint32(1 << 20)
+	if v.BATLength != 0 {
+		batLength = v.BATLength
+	}
 	for copyNo, off := range []int{vhdxRegionTableOffset, vhdxRegionTableOffset + vhdxRegionTableSize} {
 		table := b[off : off+vhdxRegionTableSize]
 		copy(table, vhdxRegionSignature)
@@ -72,11 +85,12 @@ func (v Spec) Bytes() []byte {
 		for i, r := range []struct {
 			id     [16]byte
 			offset uint64
-		}{{metadataRegionID, metaOff}, {batRegionID, batOff}} {
+			length uint32
+		}{{metadataRegionID, metaOff, 1 << 20}, {batRegionID, batOff, batLength}} {
 			e := table[16+i*vhdxRegionEntrySize:]
 			copy(e, r.id[:])
 			binary.LittleEndian.PutUint64(e[16:], r.offset)
-			binary.LittleEndian.PutUint32(e[24:], 1<<20)
+			binary.LittleEndian.PutUint32(e[24:], r.length)
 			binary.LittleEndian.PutUint32(e[28:], 1)
 		}
 		sum := crc32.Checksum(table, crc32c)

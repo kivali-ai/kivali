@@ -57,6 +57,16 @@ const (
 	vhdxMaxParentLocatorSize    = 64 << 10
 )
 
+// MaxVirtualSize is the largest virtual disk Read reads: the largest the
+// broker makes (broker.MaxDiskBytes is this). A file whose metadata
+// claims more is refused before its block allocation table is read.
+const MaxVirtualSize = 4 << 40
+
+// batChunkEntries is how many BAT entries Read reads at a time (1 MiB of
+// table), so what it allocates is bounded whatever the table's length:
+// a disk of MaxVirtualSize in 1 MiB blocks has 32 MiB of table.
+var batChunkEntries = 1 << 17
+
 // Payload block states (BAT entry bits 0 to 2).
 const (
 	BlockNotPresent       = 0
@@ -141,8 +151,9 @@ func ReadFile(path string) (Layout, error) {
 // Read reads the VHDX in f, size bytes long, a dynamic or fixed disk
 // with no parent, and counts its blocks; a differencing disk (its file
 // parameters' HasParent flag set) is an error, and its parent locator is
-// never read. It reads only the region table, the metadata and the BAT:
-// a few dozen KiB, whatever the disk's size.
+// never read, and so is a virtual size over MaxVirtualSize. It reads
+// only the region table, the metadata and the BAT (a few dozen KiB for
+// the data disk, the BAT a chunk at a time).
 func Read(f io.ReaderAt, size int64) (Layout, error) {
 	l := Layout{FileSize: size}
 	var sig [8]byte
@@ -170,6 +181,9 @@ func Read(f io.ReaderAt, size int64) (Layout, error) {
 		return l, ErrDifferencing
 	}
 	l.Fixed = flags&FlagLeaveBlocksAllocated != 0
+	if l.VirtualSize > MaxVirtualSize {
+		return l, fmt.Errorf("the virtual disk size %d is over %d", l.VirtualSize, uint64(MaxVirtualSize))
+	}
 	l.Blocks = int((l.VirtualSize + uint64(l.BlockSize) - 1) / uint64(l.BlockSize))
 	// After every chunkRatio payload entries, one sector bitmap entry.
 	chunkRatio := int((uint64(1) << 23) * uint64(sectorSize) / uint64(l.BlockSize))
@@ -180,20 +194,29 @@ func Read(f io.ReaderAt, size int64) (Layout, error) {
 	if uint64(entries)*vhdxBATEntrySize > uint64(bat.length) {
 		return l, fmt.Errorf("the block allocation table (%d bytes) is too short for %d blocks", bat.length, l.Blocks)
 	}
-	table := make([]byte, entries*vhdxBATEntrySize)
-	if _, err := f.ReadAt(table, int64(bat.offset)); err != nil {
-		return l, fmt.Errorf("read the block allocation table: %w", err)
-	}
-	for n := 0; n < l.Blocks; n++ {
-		i := n + n/chunkRatio
-		e := binary.LittleEndian.Uint64(table[i*vhdxBATEntrySize:])
-		state, offsetMB := e&7, e>>20
-		switch {
-		case state == BlockFullyPresent || state == BlockPartiallyPresent:
-			l.Present++
-		case offsetMB != 0 && !l.Fixed:
-			l.Discarded++
+	buf := make([]byte, min(entries, batChunkEntries)*vhdxBATEntrySize)
+	for start := 0; start < entries; {
+		table := buf[:min(entries-start, batChunkEntries)*vhdxBATEntrySize]
+		if _, err := f.ReadAt(table, int64(bat.offset)+int64(start)*vhdxBATEntrySize); err != nil {
+			return l, fmt.Errorf("read the block allocation table: %w", err)
 		}
+		for j := 0; j < len(table); j += vhdxBATEntrySize {
+			// Entry i is the sector bitmap entry that follows each
+			// chunkRatio payload entries when i+1 is a multiple of
+			// chunkRatio+1.
+			if i := start + j/vhdxBATEntrySize; (i+1)%(chunkRatio+1) == 0 {
+				continue
+			}
+			e := binary.LittleEndian.Uint64(table[j:])
+			state, offsetMB := e&7, e>>20
+			switch {
+			case state == BlockFullyPresent || state == BlockPartiallyPresent:
+				l.Present++
+			case offsetMB != 0 && !l.Fixed:
+				l.Discarded++
+			}
+		}
+		start += len(table) / vhdxBATEntrySize
 	}
 	return l, nil
 }
