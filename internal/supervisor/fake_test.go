@@ -171,11 +171,15 @@ type fakeBackend struct {
 	// compactions records every CompactDataDisk, with what held at that
 	// moment; compactErr, when set, is its answer; compactEntered, when
 	// set, is closed as one begins, and compactWait, when set, is waited
-	// for (closed by the test) before it answers.
+	// for (closed by the test) before it answers, unless its ctx ends
+	// first, when it answers ctx's error (the broker cancels a
+	// compaction whose request goes away); compactDone, when set, is
+	// called as one answers.
 	compactions    []compaction
 	compactErr     error
 	compactEntered chan struct{}
 	compactWait    chan struct{}
+	compactDone    func()
 	// compactProgress is what each compaction reports as it runs.
 	compactProgress [][2]int64
 }
@@ -191,15 +195,15 @@ type compaction struct {
 // The fake data disk keeps discarded space, as Hyper-V's does.
 var _ DataDiskCompactor = (*fakeBackend)(nil)
 
-func (h *fakeBackend) CompactDataDisk(_ context.Context, configDir string, began func(), progress Progress, _ Logf) error {
+func (h *fakeBackend) CompactDataDisk(ctx context.Context, configDir string, began func(), progress Progress, _ Logf) error {
 	h.mu.Lock()
 	stopped := true
 	for _, m := range h.machines {
 		stopped = stopped && !m.running()
 	}
 	h.compactions = append(h.compactions, compaction{path: h.DataDiskPath(configDir), allStopped: stopped, boots: len(h.boots)})
-	entered, wait, err, steps := h.compactEntered, h.compactWait, h.compactErr, h.compactProgress
-	h.compactEntered, h.compactWait = nil, nil
+	entered, wait, done, err, steps := h.compactEntered, h.compactWait, h.compactDone, h.compactErr, h.compactProgress
+	h.compactEntered, h.compactWait, h.compactDone = nil, nil, nil
 	h.mu.Unlock()
 	began()
 	for _, s := range steps {
@@ -209,9 +213,22 @@ func (h *fakeBackend) CompactDataDisk(_ context.Context, configDir string, began
 		close(entered)
 	}
 	if wait != nil {
-		<-wait
+		select {
+		case <-wait:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	if done != nil {
+		done()
 	}
 	return err
+}
+
+func (h *fakeBackend) bootCount() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return len(h.boots)
 }
 
 func (h *fakeBackend) compacted() []compaction {

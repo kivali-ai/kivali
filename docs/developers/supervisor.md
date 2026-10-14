@@ -440,7 +440,9 @@ runs it before the
 boot, in the `making-room` stage, because a VM stopped without such a
 `down` (a host reboot shuts the guest down through the integration
 service, and `serve`'s exit does not compact) has had no chance since
-its last trim. A failure is logged and the start or stop goes on; while
+its last trim. A failure is logged and the start or stop goes on (an
+`up` cancelled during it, by a `down` say, ends there and boots
+nothing); while
 it runs, the backend asks `POST /v1/vhd/progress` every second and
 reports virtdisk's progress as the stage's, and a compaction that takes
 long says so every 10 s, like a slow stop. The

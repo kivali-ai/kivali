@@ -704,13 +704,19 @@ func (s *Supervisor) compactLocked(ctx context.Context, began func(), logf Logf)
 // made, or one bootLocked will recreate, has nothing to give back. A VM
 // stopped without a compacting down (a host reboot shuts it down; serve's
 // exit, DownToExit and Shutdown, compacts nothing) is compacted here, on
-// its next start.
-func (s *Supervisor) compactBeforeBootLocked(ctx context.Context, logf Logf) {
+// its next start. A failed compaction fails nothing, but an up
+// cancelled during it (a down, the client gone) ends there with ctx's
+// error, and nothing boots.
+func (s *Supervisor) compactBeforeBootLocked(ctx context.Context, logf Logf) error {
 	if _, err := os.Stat(s.dataPath()); err != nil || !s.State().DataDiskFormatted {
-		return
+		return nil
 	}
 	s.compactLocked(ctx, func() { setStage(ctx, StageMakingRoom) }, logf)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	setStage(ctx, StageStarting)
+	return nil
 }
 
 // hardStopLate powers off a VM that did not stop within stopTimeout. A
@@ -857,7 +863,9 @@ func (s *Supervisor) Up(ctx context.Context, o UpOptions, logf Logf) error {
 		if err := s.migrateLocked(ctx, logf); err != nil {
 			return err
 		}
-		s.compactBeforeBootLocked(ctx, logf)
+		if err := s.compactBeforeBootLocked(ctx, logf); err != nil {
+			return err
+		}
 		if err := s.bootLocked(ctx, logf); err != nil {
 			return err
 		}
