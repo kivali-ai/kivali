@@ -34,7 +34,8 @@ func TestShellToolSoftwareParagraph(t *testing.T) {
 }
 
 // Packages still being installed and ones that failed are named, with
-// the reason for each failure.
+// the reason for each failure. The description outlives the install, so
+// what it says about one still running holds once it has finished.
 func TestShellToolNamesInstallingAndFailed(t *testing.T) {
 	d := ShellToolWithPackages(ShellSoftware{
 		Packages:   []string{"bash"},
@@ -42,15 +43,20 @@ func TestShellToolNamesInstallingAndFailed(t *testing.T) {
 		Failed:     []ShellSoftwareFailure{{Name: "nosuch", Error: "Unable to locate package nosuch"}},
 	}).Description
 	for _, want := range []string{
-		"Being installed now: ffmpeg, poppler-utils; commands wait until the installation finishes.",
+		"Also installed when the shell starts: ffmpeg, poppler-utils. Commands wait until that installation finishes, and the first command after it says if any of it could not be installed.",
 		"Could not be installed: nosuch (Unable to locate package nosuch).",
 	} {
 		if !strings.Contains(d, want) {
 			t.Errorf("description lacks %q:\n%s", want, d)
 		}
 	}
+	for _, stale := range []string{"now", "currently", "being installed"} {
+		if strings.Contains(strings.ToLower(shellToolkitText(ShellSoftware{Packages: []string{"bash"}, Installing: []string{"ffmpeg"}})), stale) {
+			t.Errorf("the paragraph for a running install says %q, which goes stale once it finishes", stale)
+		}
+	}
 	plain := ShellToolWithPackages(ShellSoftware{Packages: []string{"bash"}}).Description
-	if strings.Contains(plain, "Being installed now") || strings.Contains(plain, "Could not be installed") {
+	if strings.Contains(plain, "installed when the shell starts") || strings.Contains(plain, "Could not be installed") {
 		t.Errorf("description with no install names one:\n%s", plain)
 	}
 }
