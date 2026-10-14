@@ -468,6 +468,7 @@ policy controller.
   kubelet/                  bound at /var/lib/kubelet (pod volumes)
   rancher/                  bound at /etc/rancher (k3s.yaml, node password)
   log/k3s.log, k3s.log.1    k3s output, this boot and the previous one
+  node-ip                   the node address k3s last started with
 ```
 
 **Installing a chart.** Copy the chart tarball to
@@ -522,9 +523,13 @@ stops it, and only then starts k3s normally. It prints `KIVALI-VM: k3s:
 node address <old>, now <new>; updating ...` and `KIVALI-VM: k3s: node
 address updated to <new>`; the extra start takes a few seconds, and not
 managing it within 120 s is a FATAL. With no node object yet (k3s
-never registered the node) there is nothing to update. The address is
-recorded only after the node object carries it. `ready` waits for the
-normal start (`/run/kivali/k3s-started`) before checking anything. A
+never registered the node) there is nothing to update; any other
+error, including a NotFound while the API server is still starting, is
+retried. Each kubectl request gives up after 10 s. The address is
+recorded only after the node object carries it and the agentless k3s
+has stopped, after a `sync`, by writing a temporary file and renaming
+it. `ready` waits for the normal start (`/run/kivali/k3s-started`)
+before checking anything. A
 clean shutdown meanwhile marks itself (`/run/kivali/stopping`), stops
 the agentless k3s without cordoning or deleting pods (no kubelet could
 finish a deletion), and `k3s-server` then exits without a FATAL and

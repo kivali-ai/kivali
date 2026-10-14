@@ -60,17 +60,21 @@ ip=''
 [ -n "$dev" ] && ip=$(ip -4 -o addr show dev "$dev" scope global | awk '{split($4, a, "/"); print a[1]; exit}')
 last=$(cat "$NODE_IP" 2>/dev/null)
 
-kc() { k3s kubectl "$@"; }
+# A request the API server accepts but stalls on gives up after 10 s,
+# so the repair loop below keeps to its deadline.
+kc() { k3s kubectl --request-timeout=10s "$@"; }
 stopping() { [ -e /run/kivali/stopping ]; }
 
 # set_node_ip: the node object's InternalIP and address annotations
 # become $ip. With no node object (k3s never registered the node) there
-# is nothing to update, and node_missing is set. Fails until the API
-# server answers.
+# is nothing to update, and node_missing is set. Any other error,
+# including a NotFound for the API resource while the API server is
+# still starting, fails, as does everything until the API server
+# answers.
 node_missing=''
 set_node_ip() {
   if ! list=$(kc get node kivali -o jsonpath='{range .status.addresses[*]}{.type}={.address}{" "}{end}' 2>/run/kivali/k3s-repair.err); then
-    grep -q NotFound /run/kivali/k3s-repair.err || return 1
+    grep -qF 'nodes "kivali" not found' /run/kivali/k3s-repair.err || return 1
     node_missing=1
     return 0
   fi
@@ -122,8 +126,13 @@ if [ -n "$ip" ] && [ "$ip" != "$last" ] && [ -e "$DATA/k3s/server/db/state.db" ]
   fi
 fi
 # Recorded only once the node object carries this address (or there is
-# none yet, and k3s registers it with this address).
-[ -n "$ip" ] && [ "$ip" != "$last" ] && echo "$ip" > "$NODE_IP"
+# none yet, and k3s registers it with this address). sync first, so the
+# datastore's update is on disk before the address is; the address is
+# written to a temporary file and renamed, so it is never partial.
+if [ -n "$ip" ] && [ "$ip" != "$last" ]; then
+  sync
+  echo "$ip" > "$NODE_IP.tmp" && mv -f "$NODE_IP.tmp" "$NODE_IP"
+fi
 
 stopping && exit 0
 echo $$ > /run/kivali/k3s.pid
