@@ -946,7 +946,6 @@ fn load_end(
 /// Tauri runs `with_webview` in place. `ended` runs on the main thread;
 /// a load WebView2 says nothing readable about counts as shown.
 pub fn watch_loads(webview: &tauri::Webview, ended: Box<dyn Fn(super::LoadEnd) + Send>) -> bool {
-    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
     use webview2_com::Microsoft::Web::WebView2::Win32::COREWEBVIEW2_WEB_ERROR_STATUS;
     use webview2_com::NavigationCompletedEventHandler;
