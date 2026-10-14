@@ -61,9 +61,13 @@ through the broker: a differencing child of `root.vhdx` and a dynamic
 `data.vhdx`, the Default Switch with a per-team MAC, COM1 on a named
 pipe carrying the marker lines out and the poweroff verb and the
 first-boot format answer in, and the guest agent over a Hyper-V socket
-to vsock port 1024. It needs the broker ("The broker" below) and a VM
-directory holding `root.vhdx`; without one `serve` and `up` stop at once
-with "no VM image found (root.vhdx): pass --vm-dir …". Linux builds with
+to vsock port 1024. It needs the broker ("The broker" below), whose own
+root disk the VM boots (`vm\root.vhdx` beside the broker's executable),
+and a VM directory holding `root.vhdx`, from which `serve` reads the
+image's version; installed, the two are the same file,
+`<install dir>\vm\root.vhdx`. Without a VM directory `serve` and `up`
+stop at once with "no VM image found (root.vhdx): pass --vm-dir …".
+Linux builds with
 no backend: the client subcommands work, `serve` refuses.
 
 **Host** is the operating system (`internal/supervisor/host`,
@@ -330,7 +334,7 @@ The VM is named `kivali-<key>`; its name, static MAC
 (`02:4b:56` then the first three bytes of the key) and console pipe
 (`\\.\pipe\kivali-<key>-com1`) all derive from the config directory's
 key, the same `host.DirKey` the RPC pipe uses. The devices: a
-differencing child of the release's `root.vhdx` as the root disk and a
+differencing child of the broker's `root.vhdx` as the root disk and a
 dynamic `data.vhdx` as the data disk (SCSI locations 0 and 1), one
 adapter on Hyper-V's Default Switch, COM1 on the console pipe, Dynamic
 Memory (minimum 1 GiB, startup and maximum the team's memory), the
@@ -449,11 +453,14 @@ boot and 12 s on a later one; a clean `down` under 5 s.
   behaviour under load.
 - The exec stream through the supervisor's pipe moves a few MB/s, so
   copying a VM image's artifacts out of the build VM takes minutes.
-- A development `root.vhdx` must sit where every account can read it
-  (Hyper-V checks the parent disk as the broker's account), for example
-  under `C:\Users\Public`, not inside a person's profile. A config
-  directory created from inside an MSIX-packaged app lands in the
-  package's private `LocalCache`, where the broker cannot see it.
+- The VM boots the broker's root disk, never the one in `serve
+  --vm-dir`: the installed service boots `<install dir>\vm\root.vhdx`
+  whatever image a development `serve` names. To boot a development
+  image (`vm\build\out\root.vhdx`), run a console broker with `--root`
+  ("The broker" below), and give `serve` the same image's directory, so
+  the version it reads is the one that boots. A config directory
+  created from inside an MSIX-packaged app lands in the package's
+  private `LocalCache`, where the broker cannot see it.
 - A machine that sleeps stops its teams answering.
 - The data disk's compaction was measured with a few GB discarded. The
   broker bounds it at `broker.OptimizeTimeout` (20 minutes) and cancels
@@ -480,7 +487,7 @@ data disk compacted while its VM is off), and `GET`/`POST /v1/setup`
 (Hyper-V, the Default Switch and the vsock service registration). The
 `hyperv` backend and `kivali-supervisor broker setup`/`status` are its
 clients, as the ordinary user; `KIVALI_BROKER_PIPE` overrides the pipe
-for a dev run. The client (`broker.Dial`) connects at impersonation
+for a dev run, read by the broker and its clients alike. The client (`broker.Dial`) connects at impersonation
 level, so the broker can check as the caller, and before writing
 anything reads the pipe's owner through its own handle: it must be
 the broker service's account, LocalSystem or the Administrators group
@@ -496,7 +503,7 @@ and it is reviewed as an elevation boundary. The broker
 impersonates the pipe's client for every file it names, so it opens
 nothing the caller could not, canonicalises each path from the opened
 handle and refuses any reparse point along it, and requires every path
-but `root_vhdx` to lie under a `config_dir` the caller can write to. The
+a request names to lie under a `config_dir` the caller can write to. The
 VM's name must be `kivali-` plus the key of that directory, and a VM is
 started, stopped or removed only by the account whose SID the broker
 wrote into its notes at creation. The broker's own VM directory of the
@@ -531,13 +538,56 @@ The sizes it answers with are read through the pinning handle. The
 path reaches no cmdlet, so `[` and `]` are plain characters in it.
 `get-vm` reports a VM's disks by location and path only; the one
 thing the broker reads from a disk file, the parent of a running VM's
-differencing child (to compare with the requested `root_vhdx`), it
+differencing child (to compare with the broker's root disk), it
 parses from the child's parent locator itself, as the broker, from its
 own VM directory, without opening the parent. Inputs reach PowerShell
 only as fields of a JSON object on the stdin of a fixed, embedded
 script, validated (name, MAC, sizes, counts) before anything runs; the
 runner is an interface, so the policy is unit-tested with a fake and the
 real `powershell.exe` runs only on the machine.
+
+**The root disk is the broker's own.** No request names it:
+`POST /v1/vm` carries `name`, `config_dir`, `data_vhdx`, `cpus`,
+`memory_mb`, `mac` and `com_pipe`, and a body with any other field,
+`root_vhdx` among them, is refused with 400 (the decoder rejects
+unknown fields, naming the field). A root a caller chose could be a
+differencing disk whose parent locator names a share on another host;
+`New-VHD -Differencing`, `Test-VHD` and every start open the child's
+parent chain, so Hyper-V would open that share as the machine's
+account. The broker uses `vm\root.vhdx` beside its own executable
+(`broker.RootPath`, from `os.Executable`): installed, that is
+`<install dir>\kivali-supervisor.exe` and `<install dir>\vm\root.vhdx`
+under `C:\Program Files\Kivali`, which only administrators can write,
+so the root disk is as trusted as the broker's binary. An administrator
+can name another on the broker's own command line, `--root <file>`
+(an absolute local `.vhdx`); the console broker is how a development
+image boots:
+
+```
+# an elevated terminal, the service left as it is
+$env:KIVALI_BROKER_PIPE = '\\.\pipe\kivali-broker-dev'
+bin\kivali-supervisor.exe broker --console --root C:\src\kivali\vm\build\out\root.vhdx
+# the person's terminal
+$env:KIVALI_BROKER_PIPE = '\\.\pipe\kivali-broker-dev'
+bin\kivali-supervisor.exe --config-dir $HOME\.kivali-dev up --vm-dir vm\build\out
+```
+
+On every `POST /v1/vm`, before anything else is opened or run, the
+broker checks its root disk as itself: made canonical, refusing a link
+at it, then opened through virtdisk.dll with
+`OPEN_VIRTUAL_DISK_FLAG_NO_PARENTS` and `GetInfoOnly` (its metadata
+only, and no parent its locator names), and refused unless
+`GetVirtualDiskInformation` gives a Microsoft VHDX whose provider
+subtype is fixed (2) or dynamic (3). A missing or differencing root
+answers 503 with the reason, and no script runs. The check is a second
+line: what keeps a hostile root out is the install directory's DACL,
+which the broker does not inspect. `configure-vm` makes the child
+with that canonical path as its parent and makes it again when the
+child's parent is another path or `Test-VHD` fails, which is what an
+update does: the installer stops the service, replaces `root.vhdx` at
+the same path and starts it again, and each team's child is made anew
+at its next configuration while off. A running VM whose child has
+another parent is a change of its root disk, left for a stop.
 
 ## The guest agent protocol (vsock port 1024)
 

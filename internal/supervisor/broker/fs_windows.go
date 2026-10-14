@@ -194,7 +194,7 @@ func (c *winCaller) compact(ctx context.Context, p string) error {
 	var vd windows.Handle
 	err := onCallerThread(c.pipe, func() error {
 		var e error
-		vd, e = openVHDXNoParents(p)
+		vd, e = openVHDXNoParents(p, false)
 		return e
 	})
 	if err != nil {
@@ -988,4 +988,20 @@ func (winFiles) Canonical(p string) (string, error) {
 		return "", errIsReparse
 	}
 	return finalPath(h)
+}
+
+// RootDisk checks the broker's root disk (Files.RootDisk), as the
+// broker: p made canonical, refusing a link at it (Canonical), then
+// opened through virtdisk for its metadata only, without opening any
+// parent its locator names, and refused unless it is a fixed or dynamic
+// VHDX (checkRootVHDX).
+func (f winFiles) RootDisk(p string) (string, error) {
+	canon, err := f.Canonical(p)
+	if err != nil {
+		return "", err
+	}
+	if err := checkRootVHDX(canon); err != nil {
+		return "", err
+	}
+	return canon, nil
 }

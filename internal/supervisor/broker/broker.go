@@ -9,7 +9,9 @@
 // Every request is checked as its caller: the server impersonates the
 // pipe client for every file it names, so it opens nothing the caller
 // could not open; paths are made canonical from an open handle and
-// refused if any component is a link; the VM's name, MAC and console
+// refused if any component is a link; the root disk every VM boots is
+// the broker's own, installed beside it (RootPath), never one a request
+// names; the VM's name, MAC and console
 // pipe must be the ones derived from the caller's config directory; a
 // VM is touched only by the account whose SID its notes carry; and
 // inputs reach PowerShell only as fields of a JSON object on stdin,
@@ -52,8 +54,39 @@ const DataDiskName = "data.vhdx"
 const VMDirName = "vm"
 
 // ChildDiskName is the root disk's differencing child in the VM
-// directory, whose parent is the release's root.vhdx.
+// directory, whose parent is the broker's root disk (RootPath).
 const ChildDiskName = "root-child.vhdx"
+
+// RootFile is the root disk's name in the vm folder beside the broker's
+// executable, where the installer puts it (RootPath).
+const RootFile = "root.vhdx"
+
+// RootPath is the root disk the broker gives every VM as the parent of
+// its differencing child: override when an administrator named one on
+// the broker's own command line (--root), else root.vhdx in the vm
+// folder beside exe, the broker's executable, which is where the
+// per-machine installer puts both (<install dir>\kivali-supervisor.exe
+// and <install dir>\vm\root.vhdx). Only an administrator can write
+// there, so the root disk is as trusted as the broker's binary. No
+// request names it: a caller who chose the root could hand Hyper-V a
+// differencing disk whose parent is a share on another host, which
+// Hyper-V would open as the machine. It is pure, so every OS tests it.
+func RootPath(exe, override string) (string, error) {
+	p := override
+	if p == "" {
+		if err := localAbs("the broker's executable", exe); err != nil {
+			return "", err
+		}
+		p = winJoin(winDir(exe), VMDirName, RootFile)
+	}
+	if err := localAbs("the root disk", p); err != nil {
+		return "", err
+	}
+	if !hasExt(p, ".vhdx") {
+		return "", fmt.Errorf("the root disk %q is not a .vhdx file", p)
+	}
+	return p, nil
+}
 
 // DefaultSwitch is the Hyper-V switch every VM is connected to.
 const DefaultSwitch = "Default Switch"
@@ -72,11 +105,12 @@ const (
 	MaxDiskBytes = 4 << 40
 )
 
-// VMRequest is the body of POST /v1/vm: the VM's whole configuration.
+// VMRequest is the body of POST /v1/vm: the VM's whole configuration
+// but its root disk, which is the broker's own (RootPath). A body with
+// any other field, root_vhdx included, is refused (decode).
 type VMRequest struct {
 	Name      string `json:"name"`
 	ConfigDir string `json:"config_dir"`
-	RootVHDX  string `json:"root_vhdx"`
 	DataVHDX  string `json:"data_vhdx"`
 	CPUs      uint   `json:"cpus"`
 	MemoryMB  uint64 `json:"memory_mb"`
@@ -296,13 +330,13 @@ func (r VMRequest) Validate() error {
 	if r.MemoryMB%2 != 0 {
 		return fmt.Errorf("memory_mb %d is not a multiple of 2 MiB, as Hyper-V needs", r.MemoryMB)
 	}
-	for _, f := range []struct{ what, p string }{{"config_dir", r.ConfigDir}, {"root_vhdx", r.RootVHDX}, {"data_vhdx", r.DataVHDX}} {
+	for _, f := range []struct{ what, p string }{{"config_dir", r.ConfigDir}, {"data_vhdx", r.DataVHDX}} {
 		if err := localAbs(f.what, f.p); err != nil {
 			return err
 		}
 	}
-	if !hasExt(r.RootVHDX, ".vhdx") || !hasExt(r.DataVHDX, ".vhdx") {
-		return errors.New("root_vhdx and data_vhdx must be .vhdx files")
+	if !hasExt(r.DataVHDX, ".vhdx") {
+		return errors.New("data_vhdx must be a .vhdx file")
 	}
 	if !strings.HasPrefix(r.ComPipe, `\\.\pipe\kivali-`) || !strings.HasSuffix(r.ComPipe, "-com1") ||
 		!keyRE.MatchString(strings.TrimSuffix(strings.TrimPrefix(r.ComPipe, `\\.\pipe\kivali-`), "-com1")) {

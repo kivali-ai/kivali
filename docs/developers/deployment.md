@@ -117,7 +117,10 @@ Hyper-V and the broker installed, and `helm` (`brew install helm`; point
 `HELM=/path/to/helm` at the binary if it is not on `PATH`). No Docker:
 images build in a Kivali VM (`scripts/build-vm.sh`), which boots the VM
 image in `vm/build/out` or, before there is one, the installed Kivali
-Desktop's.
+Desktop's. On Windows a VM boots the broker's own root disk: the
+installed service's is the installed release's `root.vhdx`, so to boot
+`vm\build\out\root.vhdx` run a console broker with `--root` on a pipe
+of its own (docs/developers/supervisor.md, "The broker").
 
 ```
 make dev-vm                          # once: the three :dev images and a dev chart, baked into vm/build/out

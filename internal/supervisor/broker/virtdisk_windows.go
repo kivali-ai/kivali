@@ -5,6 +5,7 @@ package broker
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"runtime"
 	"unsafe"
@@ -41,9 +42,11 @@ func findVirtdisk() error {
 // OPEN_VIRTUAL_DISK_FLAG_NO_PARENTS: the file alone, never a parent its
 // locator names. A Version 2 open takes VIRTUAL_DISK_ACCESS_NONE and,
 // with neither GetInfoOnly nor ReadOnly, gives a handle that can
-// compact. The open is checked with the token of the thread that makes
-// it.
-func openVHDXNoParents(p string) (windows.Handle, error) {
+// compact; with infoOnly (GetInfoOnly) one that can only read the
+// disk's metadata, as the root disk's check needs (its file may be the
+// parent of a running VM's child). The open is checked with the token
+// of the thread that makes it.
+func openVHDXNoParents(p string, infoOnly bool) (windows.Handle, error) {
 	if err := findVirtdisk(); err != nil {
 		return 0, err
 	}
@@ -53,6 +56,9 @@ func openVHDXNoParents(p string) (windows.Handle, error) {
 	}
 	vst := virtualStorageType{DeviceID: virtualStorageTypeDeviceVHDX, VendorID: virtualStorageTypeVendorMicrosoft}
 	params := openVirtualDiskParameters{Version: openVirtualDiskVersion2}
+	if infoOnly {
+		params.GetInfoOnly = 1
+	}
 	var h windows.Handle
 	r, _, _ := procOpenVirtualDisk.Call(
 		uintptr(unsafe.Pointer(&vst)),
@@ -83,26 +89,67 @@ func diskInfo(h windows.Handle, version uint32) ([24]byte, error) {
 	return info.Union, nil
 }
 
+// errNotVHDX is the refusal of a virtual disk that is no Microsoft VHDX.
+var errNotVHDX = errors.New("not a VHDX")
+
+// errNotRoot is the refusal of a root disk that has a parent: the
+// broker boots VMs only from a fixed or dynamic VHDX.
+var errNotRoot = errors.New("not a fixed or dynamic VHDX")
+
+// vhdxSubtype reads, through the open handle, the disk's provider
+// subtype (fixed, dynamic or differencing), refusing anything but a
+// Microsoft VHDX (errNotVHDX).
+func vhdxSubtype(h windows.Handle) (uint32, error) {
+	u, err := diskInfo(h, getVirtualDiskInfoVirtualStorageType)
+	if err != nil {
+		return 0, fmt.Errorf("read the disk's storage type: %w", err)
+	}
+	device := binary.LittleEndian.Uint32(u[:4])
+	vendor := guid.FromWindowsArray([16]byte(u[4:20]))
+	if device != virtualStorageTypeDeviceVHDX || vendor != virtualStorageTypeVendorMicrosoft {
+		return 0, fmt.Errorf("%w: its storage type is device %d of vendor %s", errNotVHDX, device, vendor)
+	}
+	u, err = diskInfo(h, getVirtualDiskInfoProviderSubtype)
+	if err != nil {
+		return 0, fmt.Errorf("read the disk's subtype: %w", err)
+	}
+	return binary.LittleEndian.Uint32(u[:4]), nil
+}
+
 // checkDynamicVHDX refuses, through the open handle, anything but a
 // Microsoft VHDX whose provider subtype is dynamic: a differencing disk
 // (which the handle, opened without parents, could not compact as a
 // whole anyway) and a fixed one are not the data disk the backend made.
 func checkDynamicVHDX(h windows.Handle) error {
-	u, err := diskInfo(h, getVirtualDiskInfoVirtualStorageType)
+	subtype, err := vhdxSubtype(h)
+	if errors.Is(err, errNotVHDX) {
+		return fmt.Errorf("%w: %w", errNotDynamic, err)
+	}
 	if err != nil {
-		return fmt.Errorf("read the disk's storage type: %w", err)
+		return err
 	}
-	device := binary.LittleEndian.Uint32(u[:4])
-	vendor := guid.FromWindowsArray([16]byte(u[4:20]))
-	if device != virtualStorageTypeDeviceVHDX || vendor != virtualStorageTypeVendorMicrosoft {
-		return fmt.Errorf("%w: its storage type is device %d of vendor %s", errNotDynamic, device, vendor)
-	}
-	u, err = diskInfo(h, getVirtualDiskInfoProviderSubtype)
-	if err != nil {
-		return fmt.Errorf("read the disk's subtype: %w", err)
-	}
-	if subtype := binary.LittleEndian.Uint32(u[:4]); subtype != providerSubtypeDynamic {
+	if subtype != providerSubtypeDynamic {
 		return fmt.Errorf("%w: %s", errNotDynamic, subtypeName(subtype))
+	}
+	return nil
+}
+
+// checkRootVHDX opens the VHDX at p for its metadata only, as the
+// broker and without opening any parent its locator names, and refuses
+// it unless its provider subtype is fixed or dynamic: the root disk the
+// broker boots every VM from has no parent (errNotRoot otherwise).
+func checkRootVHDX(p string) error {
+	h, err := openVHDXNoParents(p, true)
+	if err != nil {
+		return fmt.Errorf("open %s as a VHDX: %w", p, err)
+	}
+	defer func() { _ = windows.CloseHandle(h) }()
+	subtype, err := vhdxSubtype(h)
+	if err != nil {
+		return fmt.Errorf("%s: %w", p, err)
+	}
+	if subtype != providerSubtypeFixed && subtype != providerSubtypeDynamic {
+		return fmt.Errorf("%s: %w: %s", p, errNotRoot, subtypeName(subtype))
 	}
 	return nil
 }

@@ -1,7 +1,9 @@
 # configure-vm: make the VM $a.name exist, off, with exactly this
-# configuration. Every path in $a is canonical and was checked by the
-# broker as the caller (docs/developers/supervisor.md, "The broker"); the VM
-# directory is the broker's own.
+# configuration. Every path in $a is canonical (docs/developers/supervisor.md,
+# "The broker"): the data disk was checked by the broker as the caller;
+# the VM directory, and the child in it, are the broker's own; and the
+# root is the broker's own root disk, installed beside it, which the
+# broker checked is a fixed or dynamic VHDX with no parent.
 $vm = Get-VM -Name $a.name -ErrorAction SilentlyContinue
 if (-not $vm) {
     $vm = New-VM -Name $a.name -Generation 2 -NoVHD -Path $a.vm_dir -SwitchName $a.switch
@@ -11,8 +13,9 @@ if (-not $vm) {
 }
 if ($vm.State -ne 'Off') { throw "$($a.name) is $($vm.State), not Off" }
 
-# The root disk: a differencing child of the release's root.vhdx, made
-# again when its parent is another file or no longer matches it.
+# The root disk: a differencing child of the broker's root.vhdx, made
+# again when its parent is another file or no longer matches it (an
+# update replaces root.vhdx at the same path, and Test-VHD then fails).
 if (Test-Path -LiteralPath $a.child) {
     $keep = $false
     try {
