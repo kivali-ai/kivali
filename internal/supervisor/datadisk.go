@@ -42,12 +42,35 @@ const migrateSpare = 2 << 30
 // bootLocked treats one: it is not copied, and bootLocked makes a new
 // disk in its place.
 //
-// TODO: remove migrateLocked, dropMigratedLocked, DataDiskMigrator and
-// the broker's POST /v1/vhd/import once installs from before the broker
-// kept the data disk have resumed under this one. Nothing else imports
+// TODO: decide when to remove the move, and remove it with everything
+// that depends on it. The broker's POST /v1/vhd/import, its only use, is
+// the broker's one read of a disk the caller wrote; nothing else imports
 // a disk (a new team's disk is made in place, and a backup is restored
-// through the app), and the import is the broker's one read of a disk
-// the caller wrote.
+// through the app). No install reports whether its teams have moved: a
+// team can stay paused, or an install stay on an earlier version, for
+// any length of time, so removing it strands some teams. The version
+// that removes it must keep a check before the boot that refuses up
+// while a disk is at the legacy path, saying what to do: without it,
+// bootLocked finds no disk where the backend keeps it and makes an
+// empty one, and the team starts with none of its data. What depends on
+// DataDiskMigrator:
+//   - migrateLocked and dropMigratedLocked (here), keptName and
+//     keptCopies, and Up's calls to them (supervisor.go);
+//   - dataDisks (supervisor.go), which counts a disk at the legacy path
+//     as formatted, and cmd/kivali-supervisor's status without serve,
+//     which does the same;
+//   - recoverLocked (upgrade.go) and restoreTarget (here): an upgrade
+//     journal from before the move names a snapshot beside the legacy
+//     disk;
+//   - Destroy (destroy.go), which deletes the legacy disk, its snapshot,
+//     MigratedSuffix and every keptName copy;
+//   - the hyperv backend's LegacyDataDiskPath and ImportDataDisk, the
+//     broker's client (ImportVHD, IsAlreadyImported), its import and
+//     its "import" progress;
+//   - the updating-data stage (stage.go) and the desktop app's "Updating
+//     team data" for it (src-tauri view.rs, shell.rs, supervisor/,
+//     src/mock.ts), and fake-supervisor's simulation of the move;
+//   - docs/developers/supervisor.md, "Moving the data disk".
 func (s *Supervisor) migrateLocked(ctx context.Context, logf Logf) error {
 	m, ok := s.o.Backend.(DataDiskMigrator)
 	if !ok {
