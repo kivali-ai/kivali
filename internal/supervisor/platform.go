@@ -64,6 +64,20 @@ type LeftoverStopper interface {
 	StopLeftover(configDir string, logf Logf) error
 }
 
+// DataDiskCompactor is optional for a Backend whose data disk keeps the
+// space of blocks the guest has discarded until the host compacts it
+// (Hyper-V's dynamic VHDX; macOS's sparse data.img gives it back on
+// its own). The supervisor calls CompactDataDisk with the VM off, before
+// a start (the VM may have been stopped without a down: a host reboot)
+// and after a clean down, never inside an upgrade or a destroy; the
+// backend decides whether the disk is worth compacting, calls began
+// once a compaction is under way and logs a line every few seconds
+// while it runs (the desktop app reads a silent operation as a hang).
+// An error is logged, never a failure of the start or the stop.
+type DataDiskCompactor interface {
+	CompactDataDisk(ctx context.Context, path string, began func(), logf Logf) error
+}
+
 // ImageInfo describes a VM image.
 type ImageInfo struct {
 	Version string

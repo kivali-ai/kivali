@@ -354,6 +354,35 @@ broker's VM directory of the team, `ProgramData\Kivali\broker\vm\<key>`;
 the data disk is `<config>/data.vhdx`, 64 GiB dynamic, with no partition
 table.
 
+**The data disk's size.** A dynamic VHDX grows in 32 MiB blocks and
+keeps a block's space after the guest discards it (the guest's `fstrim`,
+vm/README.md, "What the guest init does"): Hyper-V reuses such a block
+for later writes and drops the unmapped blocks at the end of the file
+when the VM closes the disk, but one in the middle keeps its space until
+the file is compacted. With the VM off, before a start and after a clean
+`down` (never inside an upgrade or a destroy), the backend reads the
+disk's block allocation table itself (`hyperv/vhdx.go`: the region
+table, the metadata and the table, a few dozen KiB whatever the disk's
+size) and, when the discarded blocks hold 1 GiB or more, asks the
+broker to compact the file (`POST /v1/vhd/optimize`: `Optimize-VHD
+-Mode Quick`, which drops those blocks and moves the rest down; it
+mounts nothing and needs no partition table). `up` runs it before the
+boot because a VM stopped without a `down` (a host reboot shuts the
+guest down through the integration service) has had no chance since
+its last trim. A failure is logged and the start or stop goes on; a
+compaction that takes long says so every 10 s, like a slow stop. The
+threshold is where a compaction stops being worth a privileged
+PowerShell process at every start and stop: below 1 GiB the file is
+within a few dozen blocks of its smallest, and partly filled blocks
+cost about as much anyway (a fresh disk's file is 1.7 GB larger than
+what the guest's `df` reports used). Measured on one machine (NVMe):
+after 2 GiB written, deleted and trimmed with 1 GiB written after it,
+the file kept its 6.9 GB through the clean stop and Quick mode gave the
+2.5 GB back in about a second; Full, Pretrimmed and Retrim modes also
+run on the ext4 disk but found nothing more; Optimize-VHD on a running
+VM's disk fails with a sharing violation (0x80070020); the files left on
+the disk had the same checksums after the compaction.
+
 A Hyper-V VM outlives the `serve` that started it (a logoff, a crash, the
 app killing `serve`). Before a start, a leftover running VM is shut down
 cleanly (the guest agent's shutdown, else Hyper-V's shutdown integration
@@ -377,8 +406,9 @@ one team's NodePort from another, as on macOS.
 as the installed service and in console mode: a first boot with the
 format question, `status`, `exec`, a clean `down`, a second boot, two
 teams at once, `install`, `forward`, `backup`, `restore`,
-`terminal` (also in pipe mode), `upgrade` with its rollback, and
-`destroy`. A copied dynamic VHDX (the upgrade snapshot) attaches and
+`terminal` (also in pipe mode), `upgrade` with its rollback,
+`destroy`, and the data disk's compaction after a `down` and before the
+next `up`. A copied dynamic VHDX (the upgrade snapshot) attaches and
 boots, and a rebuilt parent `root.vhdx` is noticed and the differencing
 child recreated. `make -C vm image ARCH=amd64` builds the image; `make
 test-vm` runs under Git Bash; image builds use the build VM
@@ -410,6 +440,10 @@ boot and 12 s on a later one; a clean `down` under 5 s.
   directory created from inside an MSIX-packaged app lands in the
   package's private `LocalCache`, where the broker cannot see it.
 - A machine that sleeps stops its teams answering.
+- The data disk's compaction was measured with a few GB discarded. The
+  broker bounds the script at `broker.OptimizeTimeout` (20 minutes) and
+  kills it past that; a compaction cut short is left to the VHDX's own
+  log, which has not been exercised.
 
 ## The broker
 
@@ -425,7 +459,8 @@ service, its event source and the group membership), or a foreground
 process in an elevated terminal with `--console`, serving HTTP/1.1 on
 the named pipe `\\.\pipe\kivali-broker`: `POST /v1/vm` (make the VM exist
 with exactly a configuration), `GET`/`start`/`stop`/`DELETE` on it,
-`POST /v1/vhd` (a new dynamic data disk), and `GET`/`POST /v1/setup`
+`POST /v1/vhd` (a new dynamic data disk), `POST /v1/vhd/optimize` (the
+data disk compacted while its VM is off), and `GET`/`POST /v1/setup`
 (Hyper-V, the Default Switch and the vsock service registration). The
 `hyperv` backend and `kivali-supervisor broker setup`/`status` are its
 clients, as the ordinary user; `KIVALI_BROKER_PIPE` overrides the pipe
@@ -458,7 +493,11 @@ disk the broker made is what landed before granting full control
 through a handle on it; `DELETE` removes the directory after the VM,
 through handles, deleting a link inside as the link, and removes it on
 its own when the VM does not exist and the directory was made for the
-caller. Inputs reach PowerShell
+caller. `POST /v1/vhd/optimize` opens `<dir>\data.vhdx` as the caller
+for writing and keeps it pinned for the request, requires the VM of
+that directory's key, if there is one, to be the caller's and Off, and
+holds that VM's lock while `Optimize-VHD` runs, so a start of it waits
+rather than races the compaction. Inputs reach PowerShell
 only as fields of a JSON object on the stdin of a fixed, embedded
 script, validated (name, MAC, sizes, counts) before anything runs; the
 runner is an interface, so the policy is unit-tested with a fake and the
@@ -848,4 +887,4 @@ the fake VM (`TestRecover*` in `internal/supervisor`).
   status` in the server container and the Helm controller's rollout on a
   values-only change have not run in a real macOS VM.
 - `serve` on Linux builds but has no backend.
-- Windows: see "What is not done on Windows" above.
+- Windows: see "Known limitations on Windows" above.

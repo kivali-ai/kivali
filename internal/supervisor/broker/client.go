@@ -121,6 +121,14 @@ func (c *Client) NewVHD(ctx context.Context, path string, size int64) (VHDResult
 	return res, err
 }
 
+// OptimizeVHD is POST /v1/vhd/optimize: the data disk at path, the
+// caller's own and its VM off, compacted.
+func (c *Client) OptimizeVHD(ctx context.Context, path string) (OptimizeResult, error) {
+	var res OptimizeResult
+	err := c.do(ctx, http.MethodPost, "/v1/vhd/optimize", OptimizeRequest{Path: path}, &res)
+	return res, err
+}
+
 // Setup is GET /v1/setup.
 func (c *Client) Setup(ctx context.Context) (Setup, error) {
 	var st Setup

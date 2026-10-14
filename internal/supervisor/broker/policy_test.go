@@ -729,6 +729,11 @@ func TestStateOnlyQueries(t *testing.T) {
 	}{
 		{"GET", func(h *harness) error { _, err := h.client.VM(context.Background(), VMName(key)); return err }, true},
 		{"stop", func(h *harness) error { _, err := h.client.Stop(context.Background(), VMName(key), true); return err }, true},
+		{"optimize", func(h *harness) error {
+			h.caller.dirs[testCfg] = true
+			_, err := h.client.OptimizeVHD(context.Background(), winJoin(testCfg, DataDiskName))
+			return err
+		}, true},
 		{"start", func(h *harness) error { _, err := h.client.Start(context.Background(), VMName(key)); return err }, false},
 		{"DELETE", func(h *harness) error { return h.client.Remove(context.Background(), VMName(key)) }, false},
 		{"POST /v1/vm", func(h *harness) error {

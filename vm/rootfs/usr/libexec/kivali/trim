@@ -1,11 +1,16 @@
 #!/bin/sh
 # Returns the data disk's free space to the host (busybox init `once`).
 #
-# data.img is a sparse file: a block the guest writes stays allocated on
-# the Mac after the file holding it is deleted. fstrim discards the
-# filesystem's free extents and Virtualization.framework punches holes
-# for them, so data.img's allocation follows what the disk holds now,
-# not the most it ever held.
+# A block the guest writes stays allocated on the host after the file
+# holding it is deleted, until the guest discards it. fstrim discards
+# the filesystem's free extents. On macOS, Virtualization.framework
+# punches holes in the sparse data.img for them, so its allocation
+# follows what the disk holds now, not the most it ever held. On
+# Windows, Hyper-V marks the blocks of the dynamic data.vhdx unmapped
+# and reuses them for later writes, drops unmapped blocks at the end of
+# the file when the VM closes the disk, and the supervisor has the file
+# compacted while the VM is off (before a start and after a clean stop)
+# once the unmapped blocks hold 1 GiB or more.
 #
 # The disk is formatted and mounted without discard (see vm/README.md:
 # discard during a re-format corrupted guest memory). This is the only

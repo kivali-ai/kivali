@@ -532,9 +532,17 @@ without starting k3s.
 
 `trim`: waits for this boot's READY, then runs `fstrim` on the data
 disk and again every 24 hours, printing `KIVALI-VM: trim: done:
-/var/lib/kivali: N bytes trimmed`. It is how `data.img` shrinks: a block
-the guest wrote stays allocated on the host until it is discarded, and
-the disk is otherwise never discarded (below).
+/var/lib/kivali: N bytes trimmed`. It is how the data disk's file on
+the host shrinks: a block the guest wrote stays allocated there until
+it is discarded, and the disk is otherwise never discarded (below). On
+macOS Virtualization.framework punches holes in `data.img` for the
+discards at once. On Windows (Hyper-V advertises the data disk with
+`discard_max_bytes=4294966784` and a discard granularity of 32 MiB, the
+VHDX block size) Hyper-V marks the blocks of `data.vhdx` unmapped and
+reuses them for later writes, drops unmapped blocks at the end of the
+file when the VM closes the disk, and the supervisor has the rest
+compacted while the VM is off (docs/developers/supervisor.md, "The
+Windows backend").
 
 `boot`: mounts proc/sys/dev/devpts, tmpfs on `/run`, `/tmp`, `/root`
 and `/dev/shm`; cgroup2 on `/sys/fs/cgroup` with every controller

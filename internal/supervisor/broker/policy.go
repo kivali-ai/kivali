@@ -141,6 +141,14 @@ type Server struct {
 	locks map[string]*sync.Mutex
 }
 
+// OptimizeTimeout bounds a compaction. Quick mode moves the blocks
+// after a hole down into it, so its cost is the data moved: measured at
+// about a second for 2.5 GB on an SSD, which puts the whole of a 64 GiB
+// disk at a minute or two there and at some minutes on a slow disk. The
+// bound is generous because the runner kills a script that outlives it,
+// and a compaction cut short is left to the VHDX's own log to tidy.
+const OptimizeTimeout = 20 * time.Minute
+
 // How long each script may run.
 var scriptTimeouts = map[string]time.Duration{
 	scriptGetVM:       time.Minute,
@@ -149,6 +157,7 @@ var scriptTimeouts = map[string]time.Duration{
 	scriptStopVM:      6 * time.Minute, // a graceful stop waits for the guest
 	scriptRemoveVM:    3 * time.Minute,
 	scriptNewVHD:      3 * time.Minute,
+	scriptOptimizeVHD: OptimizeTimeout,
 	scriptSetupStatus: time.Minute,
 	scriptSetupApply:  time.Minute,
 }
@@ -260,6 +269,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/vm/{name}/stop", s.handle(s.stopVM))
 	mux.HandleFunc("DELETE /v1/vm/{name}", s.handle(s.removeVM))
 	mux.HandleFunc("POST /v1/vhd", s.handle(s.newVHD))
+	mux.HandleFunc("POST /v1/vhd/optimize", s.handle(s.optimizeVHD))
 	mux.HandleFunc("GET /v1/setup", s.handle(s.setupStatus))
 	mux.HandleFunc("POST /v1/setup", s.handle(s.setupApply))
 	return mux
@@ -768,6 +778,56 @@ func (s *Server) newVHD(r *http.Request, c Caller) (any, error) {
 		return nil, answer(http.StatusInternalServerError, "the new disk at %s: %v", p, err)
 	}
 	return VHDResult{Path: p}, nil
+}
+
+// optimizeVHD is POST /v1/vhd/optimize: the caller's own data disk,
+// compacted while the VM of its directory is off. The disk must be
+// data.vhdx directly inside a directory the caller can write, a regular
+// file the caller can write, pinned by the caller's handle for the
+// request (Caller.File), so Optimize-VHD, which runs as the broker and
+// follows a link at the path it is given, runs on the file that was
+// checked. The VM of that directory, if it exists, must be the caller's
+// and Off: Hyper-V refuses to compact a disk a running VM holds, and a
+// VM cannot start on a disk being compacted, so the VM's lock is held
+// meanwhile and a start of it waits rather than fails.
+func (s *Server) optimizeVHD(r *http.Request, c Caller) (any, error) {
+	var req OptimizeRequest
+	if err := decode(r, &req); err != nil {
+		return nil, err
+	}
+	if err := req.Validate(); err != nil {
+		return nil, answer(http.StatusBadRequest, "%v", err)
+	}
+	dir, err := c.WritableDir(winDir(req.Path))
+	if err != nil {
+		return nil, refused("the disk's directory", err)
+	}
+	name := VMName(host.DirKey(dir))
+	defer s.lock(name)()
+	p, err := c.File(winJoin(dir, DataDiskName), AccessWrite)
+	if err != nil {
+		return nil, refused("the data disk", err)
+	}
+	cur, err := s.inspect(name, true)
+	if err != nil {
+		return nil, err
+	}
+	if cur.Exists {
+		if err := ownedBy(cur, name, c.SID()); err != nil {
+			return nil, err
+		}
+		if cur.State != StateOff {
+			return nil, answer(http.StatusConflict, "%s is %s; its data disk is compacted only while it is off", name, cur.State)
+		}
+	}
+	var res OptimizeResult
+	err = s.run(scriptOptimizeVHD, struct {
+		Path string `json:"path"`
+	}{p}, &res)
+	if err != nil {
+		return nil, err
+	}
+	return res, nil
 }
 
 func (s *Server) setupStatus(*http.Request, Caller) (any, error) {

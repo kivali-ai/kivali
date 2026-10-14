@@ -23,6 +23,7 @@ const (
 	scriptStopVM      = "stop-vm"
 	scriptRemoveVM    = "remove-vm"
 	scriptNewVHD      = "new-vhd"
+	scriptOptimizeVHD = "optimize-vhd"
 	scriptSetupStatus = "setup-status"
 	scriptSetupApply  = "setup-apply"
 )

@@ -119,6 +119,35 @@ type VHDResult struct {
 	Path string `json:"path"`
 }
 
+// OptimizeRequest is the body of POST /v1/vhd/optimize: the data disk to
+// compact (<config>\data.vhdx, a file the caller can write in a
+// directory the caller can write), while the VM of that directory is
+// off. The broker gives back the space of the blocks the guest
+// discarded (Optimize-VHD in Quick mode); the disk's content is the
+// same before and after.
+type OptimizeRequest struct {
+	Path string `json:"path"`
+}
+
+// OptimizeResult answers POST /v1/vhd/optimize with the file's size
+// before and after.
+type OptimizeResult struct {
+	SizeBefore int64 `json:"size_before"`
+	SizeAfter  int64 `json:"size_after"`
+}
+
+// Validate checks an optimize request's form: an absolute local path
+// named data.vhdx.
+func (r OptimizeRequest) Validate() error {
+	if err := localAbs("path", r.Path); err != nil {
+		return err
+	}
+	if !strings.EqualFold(winBase(r.Path), DataDiskName) {
+		return fmt.Errorf("path %q: the broker compacts only %s", r.Path, DataDiskName)
+	}
+	return nil
+}
+
 // Setup answers GET and POST /v1/setup.
 type Setup struct {
 	// HyperV: the Hyper-V module answers (the role is enabled and its
