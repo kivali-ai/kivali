@@ -599,7 +599,8 @@ func (s *seeder) usage() error {
 }
 
 // settings: egress, skills.
-// Auto-release stays off (the default); the e2e spec toggles it.
+// Auto-release stays off: the demo team skips seedCoS, which starts a
+// real new team at 30s, so it reads as off. The e2e spec toggles it.
 func (s *seeder) settings() error {
 	al, err := s.st.ReadEgressAllowlist() // seeds the defaults
 	if err != nil {

@@ -89,7 +89,7 @@ Open its chat (from **Team**, or **Open its chat** on the last setup screen) and
 
 If it sent a handbook draft, open it from **Needs you** with **Review**, read the changes, and approve or deny. You can add a note either way.
 
-Read [How Kivali works](how-kivali-works.md) next. One idea in particular is different from a normal chat app: messages between agents wait for you to release them.
+Read [How Kivali works](how-kivali-works.md) next. One idea in particular is different from a normal chat app: messages between agents wait in a queue, and go through when you release them or when the auto-release delay passes.
 
 ## 6. Your first hire
 

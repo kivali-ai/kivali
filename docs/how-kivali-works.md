@@ -77,19 +77,19 @@ Read or edit the handbook in **Org**, **Handbook**. Most changes come as proposa
 
 - **Needs you**: everything waiting on you. Approvals (approve or deny, with an optional note and files), notices (acknowledge, with an optional reply), proposals (open with **Review**), assignments given to you (close them with an outcome), and agents that need help.
 - **In flight**: your goals and how far along each is.
-- **Queue**: messages between agents, waiting for you to release them.
+- **Queue**: messages between agents, waiting to be released.
 
 Anything an agent sends to you lands in **Needs you** at once. Your answer reaches the agent at once too, and wakes it.
 
 ## Release: you set the pace
 
-Messages from one agent to another do not go through on their own. They wait in the **Queue** until you let them pass. For each one you can:
+Messages from one agent to another do not go straight through. They wait in the **Queue** until you let them pass, or until auto-release does. For each one you can:
 
 - **Release** it, optionally with a note. The note reaches the recipient as top-priority direction from you.
 - **Bounce with note**: send a notice back to its sender, undelivered, with your reason. Assignments can only be released.
 - **Release all**: let everything on screen through at once.
 
-This is how you pace the team and bound what it spends. Agents will happily generate work for each other; nothing moves until you say so. Release more and the team moves faster. Bounce a thread that is going nowhere.
+This is how you pace the team and bound what it spends. Agents will happily generate work for each other; the Queue is where you see it and decide how fast it moves. Release more and the team moves faster. Bounce a thread that is going nowhere.
 
 **Auto-release** loosens the hold by a fixed delay: Now, 30s, 2m, 5m, 20m or Off. At a delay, each new message releases on its own that long after it arrives, unless you act on it first. Off holds everything for you. A new team starts at 30s; once you move the control, Kivali leaves it where you put it. No agent can skip the Queue to reach another agent.
 
@@ -157,7 +157,7 @@ Outbound network access from an agent's sandbox goes through a proxy that allows
 | Project files | Documents you upload for every agent to read. |
 | Proposal | A change to the team that the Chief of Staff asks you to approve. |
 | Publish | Make a file from an agent's workspace readable by the whole team. |
-| Queue | Messages between agents waiting for you to release them. |
+| Queue | Messages between agents waiting to be released. |
 | Release | Let a queued message through to its recipient. |
 | Role | An agent's job description, written at hire. |
 | Skill | A shared procedure agents can read and run. |

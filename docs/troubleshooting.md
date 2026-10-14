@@ -90,7 +90,7 @@ Only with your own OAuth client. The `oauth-redirect-url` in the Secret must mat
 
 ### An agent sent a message, but the other agent never got it
 
-Messages between agents wait in the **Queue** on Home until you release them. This is by design. See [Release the Queue](using-kivali.md#release-the-queue).
+Messages between agents wait in the **Queue** on Home until you release them or the auto-release delay passes. This is by design. If auto-release is set to **Off**, every message waits for you. See [Release the Queue](using-kivali.md#release-the-queue).
 
 ### An agent shows "Needs help"
 

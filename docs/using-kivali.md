@@ -32,7 +32,7 @@ Your answer reaches the agent at once and wakes it.
 
 ## Release the Queue
 
-Messages between agents wait in the **Queue** on Home until you let them through. Each row shows who it is from and to, what it is, and its title. Expand a row to read it.
+Messages between agents wait in the **Queue** on Home until you let them through, or until [auto-release](#auto-release) does. Each row shows who it is from and to, what it is, and its title. Expand a row to read it.
 
 - **Release** delivers it and wakes the recipient. Type a **Note to the recipient** first to add direction; it arrives as top-priority direction from you.
 - **Bounce with note** sends a notice back to its sender undelivered, with your note as the reason. Type the note first; the button needs one. A notice addressed to several agents is cancelled for all of them. Assignment updates cannot be bounced: change the assignment on **Work** instead.
