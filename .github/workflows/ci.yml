@@ -165,8 +165,9 @@ jobs:
   broker-windows:
     name: Broker and VHDX (Windows)
     # The broker's Windows code against the real APIs, quickly and on its
-    # own: the virtual disk API's compaction (VHDX files made and
-    # compacted with virtdisk.dll, a differencing and a fixed disk
+    # own: the virtual disk API's compaction (VHDX files made with
+    # virtdisk.dll, given data and discards through an attach, compacted
+    # and cancelled while compacting, a differencing and a fixed disk
     # refused without a parent opened), the caller's impersonated file
     # checks, and the VHDX parsing. The hosted runner's process is
     # elevated, which the virtdisk tests need; nothing needs Hyper-V.

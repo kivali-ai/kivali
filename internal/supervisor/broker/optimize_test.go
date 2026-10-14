@@ -12,6 +12,33 @@ import (
 	"github.com/kivali-ai/kivali/internal/supervisor/host"
 )
 
+// A Meter reads its reader while one is attached, keeps the last value
+// once it is detached, and calls its attached hook each time a reader
+// is attached, never for a detach.
+func TestMeterReader(t *testing.T) {
+	m := &Meter{}
+	hooks := 0
+	m.attached = func() {
+		hooks++
+		if d, tot := m.Get(); d != 3 || tot != 10 {
+			t.Errorf("Get in the hook = %d of %d, want the reader's 3 of 10", d, tot)
+		}
+	}
+	m.Reader(func() (int64, int64) { return 3, 10 })
+	m.Reader(nil)
+	if hooks != 1 {
+		t.Fatalf("hook called %d times, want once", hooks)
+	}
+	if d, tot := m.Get(); d != 3 || tot != 10 {
+		t.Fatalf("Get after the detach = %d of %d, want the last value read", d, tot)
+	}
+	var none *Meter
+	none.Reader(func() (int64, int64) { return 1, 1 })
+	if d, tot := none.Get(); d != 0 || tot != 0 {
+		t.Fatalf("a nil Meter = %d of %d", d, tot)
+	}
+}
+
 func TestDiskRequestValidate(t *testing.T) {
 	for _, ok := range []string{`C:\Kivali\team1`, `D:\x`, `C:\Kivali\[team1]`} {
 		if err := (DiskRequest{ConfigDir: ok}).Validate(); err != nil {

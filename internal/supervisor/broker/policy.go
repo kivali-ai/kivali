@@ -137,6 +137,10 @@ type Meter struct {
 	mu          sync.Mutex
 	done, total int64
 	read        func() (done, total int64)
+	// attached, when set, is called, outside the lock, each time an
+	// operation attaches a reader: the tests' way to act on an operation
+	// while it runs (read its progress, cancel it).
+	attached func()
 }
 
 // Set records done of total.
@@ -157,7 +161,11 @@ func (m *Meter) Reader(read func() (done, total int64)) {
 	}
 	m.mu.Lock()
 	m.read = read
+	attached := m.attached
 	m.mu.Unlock()
+	if read != nil && attached != nil {
+		attached()
+	}
 }
 
 // Get is the progress now.
