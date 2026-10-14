@@ -18,11 +18,16 @@ import (
 // These make real VHDX files with virtdisk.dll and compact them as the
 // broker does, through a winCaller impersonating this account over a
 // pipe. They need an elevated test process (GitHub's Windows runners
-// are elevated); no Hyper-V.
+// are elevated); no Hyper-V. With KIVALI_REQUIRE_ELEVATED set, as CI
+// sets it, a process that is not elevated fails them rather than
+// skipping them.
 
 func skipUnlessElevated(t *testing.T) {
 	t.Helper()
 	if !windows.GetCurrentProcessToken().IsElevated() {
+		if os.Getenv("KIVALI_REQUIRE_ELEVATED") != "" {
+			t.Fatal("KIVALI_REQUIRE_ELEVATED is set, but this test process is not elevated")
+		}
 		t.Skip("making VHDX files with virtdisk.dll here needs an elevated test process; run go test from an elevated terminal")
 	}
 }
