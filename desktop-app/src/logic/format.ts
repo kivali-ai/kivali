@@ -16,6 +16,13 @@ export function formatBytes(bytes: number): string {
   return `${trim(bytes / GB)} GB`;
 }
 
+/** Part of a size, in the whole's unit: "3.2 of 8 GB", "0 of 8 GB",
+ *  "120 of 640 MB". */
+export function formatBytesOf(done: number, total: number): string {
+  if (total < GB) return `${Math.round(done / MB)} of ${formatBytes(total)}`;
+  return `${trim(done / GB)} of ${formatBytes(total)}`;
+}
+
 function trim(n: number): string {
   if (n >= 10) return String(Math.round(n));
   const r = Math.round(n * 10) / 10;

@@ -3,7 +3,7 @@
 //! it: a team's state and phrase, an operation's stages and progress,
 //! whether a team fits in memory.
 
-use crate::supervisor::wire::{OrgState, Status};
+use crate::supervisor::wire::{stage, OrgState, StageProgress, Status};
 use serde::Serialize;
 use std::time::Duration;
 
@@ -53,9 +53,9 @@ impl OpKind {
         }
     }
 
-    /// The stages of this kind of operation: the supervisor's stage id,
-    /// the words people see, and a typical length (for the bar and "about
-    /// N seconds").
+    /// The stages of this kind of operation, in the order the supervisor
+    /// goes through them: its stage id, the words people see, and a
+    /// typical length (for the bar and "about N seconds").
     pub fn stages(self) -> &'static [(&'static str, &'static str, u64)] {
         match self {
             OpKind::Create => &[
@@ -64,7 +64,14 @@ impl OpKind {
                 ("setting-up", "Setting up your team", 25),
                 ("ready", "Ready", 0),
             ],
-            OpKind::Resume => &[("starting", "Starting up", 12), ("setting-up", "Setting up your team", 18)],
+            // `up` moves a data disk an earlier version kept elsewhere,
+            // then compacts the disk, then boots.
+            OpKind::Resume => &[
+                ("updating-data", "Updating team data", 120),
+                ("making-room", "Making room", 20),
+                ("starting", "Starting up", 12),
+                ("setting-up", "Setting up your team", 18),
+            ],
             OpKind::Update => &[
                 ("downloading", "Downloading", 60),
                 ("snapshot", "Saving a snapshot", 30),
@@ -75,6 +82,23 @@ impl OpKind {
             OpKind::Address => &[("setting-up", "Applying the change", 30)],
             OpKind::Delete => &[("deleting", "Deleting", 20)],
         }
+    }
+
+    /// The stages an operation of this kind goes through only sometimes
+    /// (a resume moves the data disk once, and compacts it only when the
+    /// guest has freed enough): they are shown, and count toward the bar,
+    /// only once the operation is in them.
+    pub fn optional(self) -> &'static [&'static str] {
+        match self {
+            OpKind::Resume => &["updating-data", "making-room"],
+            _ => &[],
+        }
+    }
+
+    /// Where an operation of this kind starts before the supervisor names
+    /// a stage: its first stage that every one goes through.
+    pub fn first_stage(self) -> usize {
+        self.stages().iter().position(|(id, _, _)| !self.optional().contains(id)).unwrap_or(0)
     }
 }
 
@@ -92,6 +116,26 @@ pub struct OpView {
     pub started_ms: u64,
     pub percent: u8,
     pub remaining: Option<String>,
+    /// How far the current stage's measurable work has got, while it has
+    /// any (the caption under the bar).
+    pub stage_progress: Option<StageMeasure>,
+}
+
+/// A stage's measured progress as the pages show it: `done` of `total`,
+/// in bytes when `bytes` (the data disk's copy), else in units that
+/// only make a share (a compaction).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct StageMeasure {
+    pub done: u64,
+    pub total: u64,
+    pub bytes: bool,
+}
+
+/// The measure of the stage at `index` of `kind`, from the supervisor's
+/// report.
+pub fn measure(kind: OpKind, index: usize, p: StageProgress) -> StageMeasure {
+    let id = kind.stages().get(index).map(|s| s.0).unwrap_or("");
+    StageMeasure { done: p.done.min(p.total), total: p.total, bytes: id == stage::UPDATING_DATA }
 }
 
 /// Where an operation is: which stage, from the supervisor's stage id
@@ -102,22 +146,50 @@ pub fn stage_index(kind: OpKind, stage_id: Option<&str>) -> Option<usize> {
     kind.stages().iter().position(|(s, _, _)| *s == id)
 }
 
-/// Rough share done and time left: the stages before the current one
-/// count whole, the current one by time spent against its typical
-/// length (never past 95% of it, so a slow stage does not read as done).
-pub fn progress(kind: OpKind, index: usize, in_stage: Duration, finished: bool) -> (u8, Option<String>) {
-    let stages = kind.stages();
+/// The stages an operation shows and counts, by index: those it has
+/// been in (`seen`), the one it is in, and those still ahead that every
+/// operation of its kind goes through (OpKind::optional ones only once
+/// they are seen).
+pub fn shown_stages(kind: OpKind, seen: &[bool], index: usize) -> Vec<usize> {
+    let optional = kind.optional();
+    kind.stages()
+        .iter()
+        .enumerate()
+        .filter(|(i, (id, _, _))| seen.get(*i).copied().unwrap_or(false) || *i == index || (*i > index && !optional.contains(id)))
+        .map(|(i, _)| i)
+        .collect()
+}
+
+/// Rough share done and time left, over the stages shown: those before
+/// the current one count whole, those after it not at all; the current
+/// one by its measured progress when it has some (and the time left from
+/// its rate so far), else by time spent against its typical length
+/// (never past 95% of it, so a slow stage does not read as done).
+pub fn progress(kind: OpKind, shown: &[usize], index: usize, in_stage: Duration, measured: Option<StageProgress>, finished: bool) -> (u8, Option<String>) {
     if finished {
         return (100, None);
     }
-    let total: u64 = stages.iter().map(|s| s.2).sum::<u64>().max(1);
-    let before: u64 = stages.iter().take(index).map(|s| s.2).sum();
-    let typical = stages.get(index).map(|s| s.2).unwrap_or(0);
-    let spent = (in_stage.as_secs_f64()).min(typical as f64 * 0.95);
-    let done = before as f64 + spent;
-    let percent = ((done / total as f64) * 100.0).clamp(0.0, 99.0) as u8;
-    let left = (total as f64 - done).max(0.0);
-    (percent, Some(about(left)))
+    let stages = kind.stages();
+    let secs = |i: usize| stages.get(i).map(|s| s.2).unwrap_or(0) as f64;
+    let total = shown.iter().map(|&i| secs(i)).sum::<f64>().max(1.0);
+    let before: f64 = shown.iter().filter(|&&i| i < index).map(|&i| secs(i)).sum();
+    let after: f64 = shown.iter().filter(|&&i| i > index).map(|&i| secs(i)).sum();
+    let typical = secs(index);
+    let spent = in_stage.as_secs_f64();
+    let (done, left) = match measured.filter(|m| m.total > 0) {
+        Some(m) => {
+            let f = (m.done as f64 / m.total as f64).clamp(0.0, 1.0);
+            // Under a twentieth done, the rate so far says little.
+            let left = if f >= 0.05 { spent * (1.0 - f) / f } else { typical * (1.0 - f) };
+            (typical * f, left)
+        }
+        None => {
+            let spent = spent.min(typical * 0.95);
+            (spent, typical - spent)
+        }
+    };
+    let percent = (((before + done) / total) * 100.0).clamp(0.0, 99.0) as u8;
+    (percent, Some(about(left.max(0.0) + after)))
 }
 
 /// "about 40 seconds", "about 3 minutes".
@@ -190,7 +262,7 @@ pub fn pause_message(working: Option<u64>) -> String {
 /// How long an operation of this kind typically takes, in words: "about
 /// 3 minutes" for an update.
 pub fn typical(kind: OpKind) -> String {
-    about(kind.stages().iter().map(|s| s.2).sum::<u64>() as f64)
+    about(kind.stages().iter().filter(|s| !kind.optional().contains(&s.0)).map(|s| s.2).sum::<u64>() as f64)
 }
 
 /// Memory a team may use on this computer: what is left of the host's
@@ -259,16 +331,69 @@ mod tests {
         assert_eq!(stage_index(OpKind::Create, Some("starting")), Some(1));
         assert_eq!(stage_index(OpKind::Create, Some("bogus")), None);
         assert_eq!(stage_index(OpKind::Update, Some("snapshot")), Some(1));
-        let (p, left) = progress(OpKind::Create, 1, Duration::from_secs(10), false);
+        let all = |kind: OpKind| (0..kind.stages().len()).collect::<Vec<_>>();
+        let (p, left) = progress(OpKind::Create, &all(OpKind::Create), 1, Duration::from_secs(10), None, false);
         // 12 + 10 of 57 seconds.
         assert_eq!(p, 38);
         assert_eq!(left.as_deref(), Some("about 40 seconds"));
         // A slow stage never reads as past 95% of itself.
-        let (p, _) = progress(OpKind::Pause, 0, Duration::from_secs(600), false);
+        let (p, _) = progress(OpKind::Pause, &[0], 0, Duration::from_secs(600), None, false);
         assert_eq!(p, 95);
-        assert_eq!(progress(OpKind::Create, 2, Duration::ZERO, true), (100, None));
+        assert_eq!(progress(OpKind::Create, &all(OpKind::Create), 2, Duration::ZERO, None, true), (100, None));
         assert_eq!(about(170.0), "about 3 minutes");
         assert_eq!(about(4.0), "a few seconds");
+    }
+
+    /// A resume's stages are in the order `up` goes through them; moving
+    /// the data disk and compacting it are shown, and counted, only once
+    /// the resume is in them, so a plain resume reads as before.
+    #[test]
+    fn resume_stages() {
+        let ids: Vec<_> = OpKind::Resume.stages().iter().map(|s| s.0).collect();
+        assert_eq!(ids, ["updating-data", "making-room", "starting", "setting-up"]);
+        assert_eq!(OpKind::Resume.first_stage(), 2);
+        assert_eq!(OpKind::Create.first_stage(), 0);
+        assert_eq!(typical(OpKind::Resume), "about 30 seconds");
+
+        // A plain resume: starting, then setting up, 12 and 18 seconds.
+        let mut seen = [false, false, true, false];
+        assert_eq!(shown_stages(OpKind::Resume, &seen, 2), [2, 3]);
+        let (p, left) = progress(OpKind::Resume, &[2, 3], 2, Duration::from_secs(6), None, false);
+        assert_eq!((p, left.as_deref()), (20, Some("about 30 seconds")));
+
+        // The supervisor moves the disk: every stage from there on shows.
+        seen[0] = true;
+        assert_eq!(shown_stages(OpKind::Resume, &seen, 0), [0, 2, 3]);
+        seen[1] = true;
+        assert_eq!(shown_stages(OpKind::Resume, &seen, 1), [0, 1, 2, 3]);
+        // Moved without compacting: the stage skipped no longer shows.
+        assert_eq!(shown_stages(OpKind::Resume, &[true, false, true, false], 2), [0, 2, 3]);
+    }
+
+    /// A stage that reports its progress fills its share of the bar by
+    /// what it has done, not by time, and its time left comes from its
+    /// rate so far.
+    #[test]
+    fn measured_progress_overrides_the_estimate() {
+        let shown = [0, 2, 3]; // updating-data 120, starting 12, setting-up 18
+        let three_of_eight = Some(StageProgress { done: 3 << 30, total: 8 << 30 });
+        // 3/8 of 120 seconds' share = 45 of 150.
+        let (p, left) = progress(OpKind::Resume, &shown, 0, Duration::from_secs(30), three_of_eight, false);
+        assert_eq!(p, 30);
+        // 30 s for 3/8: 50 s more, and 30 s of the stages after.
+        assert_eq!(left.as_deref(), Some("about 80 seconds"));
+        // However long it has taken, done is done.
+        let (p, _) = progress(OpKind::Resume, &shown, 0, Duration::from_secs(600), Some(StageProgress { done: 8, total: 8 }), false);
+        assert_eq!(p, 80);
+        // Without a report, time against the typical length, as before.
+        let (p, _) = progress(OpKind::Resume, &shown, 0, Duration::from_secs(30), None, false);
+        assert_eq!(p, 20);
+        // A report with no total is no measure.
+        let (p, _) = progress(OpKind::Resume, &shown, 0, Duration::from_secs(30), Some(StageProgress { done: 0, total: 0 }), false);
+        assert_eq!(p, 20);
+        // The copy is measured in bytes; a compaction only makes a share.
+        assert_eq!(measure(OpKind::Resume, 0, StageProgress { done: 9, total: 8 }), StageMeasure { done: 8, total: 8, bytes: true });
+        assert_eq!(measure(OpKind::Resume, 1, StageProgress { done: 40, total: 100 }), StageMeasure { done: 40, total: 100, bytes: false });
     }
 
     #[test]

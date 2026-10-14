@@ -108,9 +108,10 @@ func (Backend) DataDiskPath(configDir string) string {
 	return filepath.Join(configDir, DataDiskFile)
 }
 
-// CreateDataDisk makes a new sparse, all-zero raw disk of size bytes,
-// replacing any file at p.
-func (Backend) CreateDataDisk(p string, size int64) error {
+// CreateDataDisk makes a new sparse, all-zero raw disk of size bytes at
+// DataDiskPath(configDir), replacing any file there.
+func (b Backend) CreateDataDisk(configDir string, size int64) error {
+	p := b.DataDiskPath(configDir)
 	if err := os.Remove(p); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}

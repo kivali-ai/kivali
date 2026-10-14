@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"strings"
 	"sync"
@@ -21,77 +22,50 @@ import (
 // path the caller cannot open fails here exactly as it would for them.
 // Each method that opens a path returns it made canonical from the
 // handle it opened (GetFinalPathNameByHandle), refusing it if any
-// component is a reparse point, and keeps a handle on it open, reading
-// and without delete sharing, until Close: what was checked cannot be
-// renamed, removed or replaced by a link while the request runs (a
-// handle with no data access would pin nothing, and one that writes
-// would keep Hyper-V from attaching the disk; AccessName pins nothing,
-// for a disk a running VM holds itself).
+// component is a reparse point, and keeps a handle on it open until
+// Close: what was checked cannot be renamed, removed or replaced by a
+// link while the request runs.
 type Caller interface {
 	// SID is the caller's user SID, from the impersonation token.
 	SID() string
 	// WritableDir opens dir as a directory the caller can add files to.
 	WritableDir(dir string) (string, error)
-	// File opens an existing regular file with one link, for access.
-	File(p string, access Access) (string, error)
-	// Contents reads the file File pinned for AccessRead or AccessWrite
-	// at p (the canonical path File returned) through the pinning
-	// handle, so what is read is the file that was checked, and gives
-	// its size.
+	// File opens an existing regular file with one link that the caller
+	// can read, and pins it: the handle kept reads the file's data and
+	// shares no delete, since only data access and delete take part in
+	// sharing (a handle with no data access would pin nothing).
+	File(p string) (string, error)
+	// Contents reads the file File pinned at p (the canonical path File
+	// returned) through the pinning handle, so what is read is the file
+	// that was checked, and gives its size.
 	Contents(p string) (io.ReaderAt, int64, error)
-	// Absent succeeds only if nothing, not even a dangling link, is at p
-	// as the caller sees it; ErrExists if something is.
-	Absent(p string) error
-	// Rename moves src to dst as the caller, replacing nothing (ErrExists
-	// if anything is at dst): how a new data disk, granted to the caller
-	// in the broker's VM directory, reaches the caller's own directory,
-	// where the broker, which is no administrator, cannot write.
-	Rename(src, dst string) error
-	// CompactVHDX compacts the dynamic VHDX that File pinned for
-	// AccessWrite at p (its canonical path) and gives the file's size
-	// before and after: the virtual disk is opened as the caller and
-	// without opening any parent its locator names, refused through
-	// that handle unless it is a dynamic VHDX (an error wrapping
-	// errNotDynamic), and compacted through it, until ctx ends.
-	CompactVHDX(ctx context.Context, p string) (before, after int64, err error)
 	// Close releases what the checks hold open.
 	Close() error
 }
 
-// FileID names a file whatever its path: the volume and the file's
-// index on it. It is what GrantFile returns and PlacedFile checks.
-type FileID struct {
-	Volume, High, Low uint32
+// FileInfo is what Files.Stat reports of a file: its logical size and
+// the bytes the volume allocates to it.
+type FileInfo struct {
+	Size, Used int64
 }
 
-// Access is what File opens a file for.
-type Access int
-
-// File access.
-const (
-	// AccessRead: the caller can read the file's data.
-	AccessRead Access = iota + 1
-	// AccessWrite: the caller can read and write the file's data.
-	AccessWrite
-	// AccessName: only the canonical name, no data access, for a disk a
-	// running VM holds open.
-	AccessName
-)
-
-// ErrExists is Absent's answer when something is at the path.
-var ErrExists = errors.New("something already exists there")
-
-// Files is what the broker does on the file system as itself.
+// Files is what the broker does on the file system as itself. Every
+// path it is given is in a VM directory, which only the broker can
+// write, and every open of one is made without following a link at it.
 type Files interface {
-	// VMDir makes <configDir>\vm if it is absent, owned by the broker,
-	// with a protected DACL (SYSTEM and Administrators full control, the
-	// owner read), opens it, checks it is a directory the broker made
-	// (brokerOwned) and no link, and keeps it open without delete sharing
-	// until release. The caller cannot write in it, so nothing there is a
-	// link the caller planted: the broker creates files there as itself.
+	// VMDir makes the VM directory of a config directory key if it is
+	// absent, owned by the broker, with a protected DACL (SYSTEM,
+	// Administrators and the service's account in full control, and
+	// callerSID reading), opens it, checks it is a directory the broker
+	// made (brokerOwned) and no link, and keeps it open without delete
+	// sharing until release. The directory is bound to the account it
+	// was made for: one whose DACL grants another account (DirAccount)
+	// is refused, since it holds that account's data disk. The caller
+	// cannot write in it, so nothing there is a link the caller planted:
+	// the broker creates files there as itself.
 	VMDir(key, callerSID string) (dir string, release func(), err error)
 	// VMDirPath is the VM directory of a config directory key, whether
-	// or not it exists: <the broker's root>\<key>.
+	// or not it exists: <the broker's VM root>\<key>.
 	VMDirPath(key string) string
 	// Canonical is p's final path as the broker sees it, refusing a
 	// reparse point along it.
@@ -100,30 +74,45 @@ type Files interface {
 	// p, a file in a VM directory, names: its bytes parsed through a
 	// handle opened without following a link, the parent never opened.
 	ParentPath(p string) (string, error)
-	// GrantFile grants callerSID full control of p, a file the broker
-	// made in a VM directory, through a handle opened on it without
-	// following a link, and returns its identity. The caller then moves
-	// it (Caller.Rename) and PlacedFile checks where it landed.
-	GrantFile(p, callerSID string) (FileID, error)
-	// PlacedFile checks that dst, opened without following a link, is a
-	// plain file with the identity GrantFile returned and the canonical
-	// path dst (the caller could have renamed it away and put something
-	// else there), and applies the disk's DACL again through that
-	// handle, so the grant can never land on a link's target.
-	PlacedFile(dst string, id FileID, callerSID string) error
-	// RemoveVMDir deletes the VM directory dir (a canonical
-	// <config>\vm) and everything in it, after checking, on a handle
-	// opened without following a link, that it is a directory the broker
-	// made, no reparse point, and canonically dir, and, with a callerSID,
-	// that its DACL carries that caller's entry (VMDir wrote it: the
-	// directory is that caller's team's). Entries are opened the same way
-	// and deleted through their handles, so a link inside is deleted as
-	// a link and never followed.
-	RemoveVMDir(dir, callerSID string) error
-	// DeleteFile deletes p, a file in a VM directory, through a handle
-	// opened without following a link (a link is deleted as the link);
-	// nothing at p is no error.
+	// Stat reports the plain file at p; an error wrapping
+	// fs.ErrNotExist when nothing is there.
+	Stat(p string) (FileInfo, error)
+	// Open opens the plain file at p for reading until release.
+	Open(p string) (r io.ReaderAt, size int64, release func(), err error)
+	// CopyFile copies size bytes of src into dst, a new file (anything
+	// at dst, a link included, fails it), flushes it and reports the
+	// bytes copied to m as it goes. A src that reads a sparse file stays
+	// sparse: only its allocated ranges are copied, into a sparse dst. A
+	// copy that fails or is cancelled (ctx) deletes dst.
+	CopyFile(ctx context.Context, src io.ReaderAt, size int64, dst string, m *Meter) error
+	// CheckDynamicVHDX refuses p unless it is a dynamic VHDX with no
+	// parent (an error wrapping errNotDynamic): its region table,
+	// metadata and block table read through a handle, and then the
+	// virtual disk opened without opening any parent its locator names
+	// (which replays the VHDX's log) and its subtype read through that
+	// handle.
+	CheckDynamicVHDX(p string) error
+	// CompactVHDX compacts the dynamic VHDX at p and gives the file's
+	// size before and after: the virtual disk is opened without opening
+	// any parent its locator names, refused through that handle unless
+	// it is a dynamic VHDX (an error wrapping errNotDynamic), and
+	// compacted through it, until ctx ends; m reads the compaction's
+	// progress while it runs.
+	CompactVHDX(ctx context.Context, p string, m *Meter) (before, after int64, err error)
+	// Rename moves src to dst durably (MOVEFILE_WRITE_THROUGH),
+	// replacing a file at dst only with replace (ErrExists otherwise).
+	Rename(src, dst string, replace bool) error
+	// DeleteFile deletes p, through a handle opened on it (a link is
+	// deleted as the link); nothing at p is no error.
 	DeleteFile(p string) error
+	// RemoveVMDir deletes the VM directory dir (a canonical VM directory)
+	// and everything in it, after checking, on a handle opened without
+	// following a link, that it is a directory the broker made, no
+	// reparse point, and canonically dir, and, with a callerSID, that it
+	// was made for that caller (DirAccount). Entries are opened the same
+	// way and deleted through their handles, so a link inside is deleted
+	// as a link and never followed.
+	RemoveVMDir(dir, callerSID string) error
 	// RootDisk checks the broker's root disk at p (Server.Root) and
 	// returns its canonical path: p made canonical (Canonical), opened as
 	// a VHDX for its metadata only and without opening any parent its
@@ -132,6 +121,56 @@ type Files interface {
 	// it names; the install directory's DACL is what keeps one out, and
 	// this check is a second line.
 	RootDisk(p string) (string, error)
+}
+
+// ErrExists is Files.Rename's answer when something is at the
+// destination and it may not be replaced.
+var ErrExists = errors.New("something already exists there")
+
+// Meter is how far one long disk operation has got, which POST
+// /v1/vhd/progress reads while it runs: either the operation sets it as
+// it goes (Set), or it gives a function that reads its progress on
+// demand (Reader), which is called under the meter's lock, so an
+// operation that detaches it (Reader(nil)) before it frees what the
+// function reads is never read after. A nil Meter takes nothing.
+type Meter struct {
+	mu          sync.Mutex
+	done, total int64
+	read        func() (done, total int64)
+}
+
+// Set records done of total.
+func (m *Meter) Set(done, total int64) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	m.done, m.total = done, total
+	m.mu.Unlock()
+}
+
+// Reader makes read the source of the progress; nil detaches it,
+// keeping the last value read.
+func (m *Meter) Reader(read func() (done, total int64)) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	m.read = read
+	m.mu.Unlock()
+}
+
+// Get is the progress now.
+func (m *Meter) Get() (done, total int64) {
+	if m == nil {
+		return 0, 0
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.read != nil {
+		m.done, m.total = m.read()
+	}
+	return m.done, m.total
 }
 
 // Runner runs one of the broker's embedded PowerShell scripts (by name)
@@ -169,6 +208,36 @@ type Server struct {
 
 	mu    sync.Mutex
 	locks map[string]*sync.Mutex
+
+	// running is the long disk operation in flight on each VM directory
+	// (by config directory key), for POST /v1/vhd/progress, which must
+	// not wait for the VM's lock that operation holds.
+	runningMu sync.Mutex
+	running   map[string]*inflight
+}
+
+// inflight is one long disk operation as POST /v1/vhd/progress reports
+// it: what it is, the account whose request runs it, and its meter.
+type inflight struct {
+	op, sid string
+	meter   *Meter
+}
+
+// track records a long operation on the VM directory of key, run for
+// sid, until the returned function is called.
+func (s *Server) track(key, op, sid string) (*Meter, func()) {
+	m := &Meter{}
+	s.runningMu.Lock()
+	if s.running == nil {
+		s.running = map[string]*inflight{}
+	}
+	s.running[key] = &inflight{op: op, sid: sid, meter: m}
+	s.runningMu.Unlock()
+	return m, func() {
+		s.runningMu.Lock()
+		delete(s.running, key)
+		s.runningMu.Unlock()
+	}
 }
 
 // OptimizeTimeout bounds a compaction. It moves the blocks after a
@@ -178,6 +247,14 @@ type Server struct {
 // generous because the compaction is cancelled past it, and a
 // compaction cut short is left to the VHDX's own log to tidy.
 const OptimizeTimeout = 20 * time.Minute
+
+// ImportTimeout bounds an import's copy (and SnapshotTimeout an upgrade
+// snapshot's): the whole of a full 64 GiB disk at 30 MB/s, a slow hard
+// disk's rate, is about 40 minutes. A copy cut short is deleted.
+const (
+	ImportTimeout   = 60 * time.Minute
+	SnapshotTimeout = 60 * time.Minute
+)
 
 // How long each script may run.
 var scriptTimeouts = map[string]time.Duration{
@@ -302,7 +379,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/vm/{name}/stop", s.handle(s.stopVM))
 	mux.HandleFunc("DELETE /v1/vm/{name}", s.handle(s.removeVM))
 	mux.HandleFunc("POST /v1/vhd", s.handle(s.newVHD))
+	mux.HandleFunc("DELETE /v1/vhd", s.handle(s.deleteVHD))
 	mux.HandleFunc("POST /v1/vhd/optimize", s.handle(s.optimizeVHD))
+	mux.HandleFunc("POST /v1/vhd/import", s.handle(s.importVHD))
+	mux.HandleFunc("POST /v1/vhd/snapshot", s.handle(s.snapshotVHD))
+	mux.HandleFunc("DELETE /v1/vhd/snapshot", s.handle(s.deleteSnapshot))
+	mux.HandleFunc("POST /v1/vhd/restore", s.handle(s.restoreVHD))
+	mux.HandleFunc("POST /v1/vhd/progress", s.handle(s.vhdProgress))
 	mux.HandleFunc("GET /v1/setup", s.handle(s.setupStatus))
 	mux.HandleFunc("POST /v1/setup", s.handle(s.setupApply))
 	return mux
@@ -330,7 +413,11 @@ func (s *Server) handle(fn func(r *http.Request, c Caller) (any, error)) http.Ha
 			http.Error(w, e.Msg, e.Status)
 			return
 		}
-		s.logf("%s %s by %s: ok", r.Method, r.URL.Path, c.SID())
+		// A progress query comes every second while an import or a
+		// compaction runs; only its refusals are logged.
+		if r.URL.Path != "/v1/vhd/progress" {
+			s.logf("%s %s by %s: ok", r.Method, r.URL.Path, c.SID())
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(res)
 	}
@@ -502,28 +589,22 @@ func (s *Server) ensureVM(r *http.Request, c Caller) (any, error) {
 		}
 	}
 	running := cur.Exists && cur.State != StateOff
-	dataAccess := AccessWrite
-	if running {
-		// A running VM holds its disks; only their names are compared.
-		dataAccess = AccessName
-	}
-	data, err := c.File(req.DataVHDX, dataAccess)
-	if err != nil {
-		return nil, refused("data_vhdx", err)
-	}
-	// Directly inside, so every later request can re-derive the config
-	// directory, and so the VM, from the disk alone.
-	if !strings.EqualFold(winDir(data), cfg) {
-		return nil, answer(http.StatusForbidden, "refused: data_vhdx %s is not in %s", data, cfg)
-	}
-	if strings.EqualFold(root, data) {
-		return nil, answer(http.StatusForbidden, "refused: data_vhdx %s is the broker's root disk", data)
-	}
 	vmDir, release, err := s.Files.VMDir(key, c.SID())
 	if err != nil {
 		return nil, refused("the VM directory", err)
 	}
 	defer release()
+	// The data disk is the broker's own file in the VM directory, which
+	// the caller can read and never write (POST /v1/vhd made it, or POST
+	// /v1/vhd/import copied it there).
+	data := winJoin(vmDir, DataDiskName)
+	if !running {
+		if _, err := s.Files.Stat(data); errors.Is(err, fs.ErrNotExist) {
+			return nil, answer(http.StatusConflict, "%s has no data disk; make one with POST /v1/vhd, or import one with POST /v1/vhd/import", req.Name)
+		} else if err != nil {
+			return nil, answer(http.StatusInternalServerError, "the data disk %s: %v", data, err)
+		}
+	}
 
 	args := configureArgs{
 		Name:        req.Name,
@@ -577,31 +658,28 @@ func (s *Server) getVM(r *http.Request, c Caller) (any, error) {
 }
 
 // checkDisks re-derives, before a start, that the VM's disks are still
-// the ones its configuration checked: the data disk a file the caller
-// can write, directly inside the config directory of the VM's key, and
-// the root disk the broker's differencing child in that directory's vm
-// folder. Between requests nothing is pinned, so a start checks again.
-func (s *Server) checkDisks(c Caller, name string, cur vmInfo) error {
+// the ones its configuration attached: both, canonically, the broker's
+// own files in the VM directory of the VM's key, the root disk's
+// differencing child and the data disk, which the caller cannot write.
+// Between requests nothing is pinned, so a start checks again.
+func (s *Server) checkDisks(name string, cur vmInfo) error {
 	key := KeyOf(name)
 	root, okRoot := cur.disk(0)
 	data, okData := cur.disk(1)
 	if !okRoot || !okData {
 		return errors.New("its disks are not the two the broker attaches")
 	}
-	dataPath, err := c.File(data.Path, AccessWrite)
-	if err != nil {
-		return fmt.Errorf("the data disk: %w", err)
-	}
-	cfg := winDir(dataPath)
-	if host.DirKey(cfg) != key {
-		return fmt.Errorf("the data disk %s is not in the config directory of %s", dataPath, name)
-	}
-	child, err := s.Files.Canonical(root.Path)
-	if err != nil {
-		return fmt.Errorf("the root disk: %w", err)
-	}
-	if want := winJoin(s.Files.VMDirPath(key), ChildDiskName); !strings.EqualFold(child, want) {
-		return fmt.Errorf("the root disk is %s, not %s", child, want)
+	for _, d := range []struct{ what, path, want string }{
+		{"root disk", root.Path, winJoin(s.Files.VMDirPath(key), ChildDiskName)},
+		{"data disk", data.Path, winJoin(s.Files.VMDirPath(key), DataDiskName)},
+	} {
+		p, err := s.Files.Canonical(d.path)
+		if err != nil {
+			return fmt.Errorf("the %s: %w", d.what, err)
+		}
+		if !strings.EqualFold(p, d.want) {
+			return fmt.Errorf("the %s is %s, not %s", d.what, p, d.want)
+		}
 	}
 	if !strings.EqualFold(cur.ComPipe, ComPipe(key)) {
 		return fmt.Errorf("its console pipe is %q, not %s", cur.ComPipe, ComPipe(key))
@@ -618,7 +696,7 @@ func (s *Server) startVM(r *http.Request, c Caller) (any, error) {
 	if cur.State != StateOff {
 		return VMState{ID: cur.ID, State: cur.State, MemoryAssignedMB: cur.MemoryAssignedMB}, nil
 	}
-	if err := s.checkDisks(c, name, cur); err != nil {
+	if err := s.checkDisks(name, cur); err != nil {
 		return nil, answer(http.StatusConflict, "%s no longer matches its configuration (%v); configure it again with POST /v1/vm", name, err)
 	}
 	var st VMState
@@ -654,8 +732,8 @@ func (s *Server) stopVM(r *http.Request, c Caller) (any, error) {
 }
 
 // isVMDirOf reports whether p, a canonical path, is the broker's VM
-// directory of the VM name: a folder named vm directly inside a config
-// directory whose key is the name's.
+// directory of the VM name: the one of the name's key under the
+// broker's VM root.
 func (s *Server) isVMDirOf(p, name string) bool {
 	return strings.EqualFold(p, s.Files.VMDirPath(KeyOf(name)))
 }
@@ -664,10 +742,12 @@ func (s *Server) isVMDirOf(p, name string) bool {
 // the broker's VM directory, never the data disk. The child is deleted
 // only if it is, canonically, the broker's child in the VM directory of
 // the VM's own key; otherwise it is left where it is and the VM is
-// removed all the same. The VM directory goes last, after Remove-VM.
-// Without a VM, the VM directory of the name's key is removed on its
-// own, if it was made for the caller (removeOrphanDir: a team whose
-// first up made the data disk, and so the directory, but never the VM).
+// removed all the same. The VM directory goes last, after Remove-VM,
+// and only once it holds neither the data disk nor its snapshot
+// (holdsData): the team's data goes only with DELETE /v1/vhd. Without a
+// VM, the VM directory of the name's key is removed on its own, on the
+// same terms and if it was made for the caller (removeOrphanDir: a team
+// whose first up made the directory but never the VM).
 func (s *Server) removeVM(r *http.Request, c Caller) (any, error) {
 	defer s.lock(r.PathValue("name"))()
 	name, cur, err := s.existing(r, c, false)
@@ -701,6 +781,10 @@ func (s *Server) removeVM(r *http.Request, c Caller) (any, error) {
 	if vmDir == "" {
 		return struct{}{}, nil
 	}
+	if s.holdsData(vmDir) {
+		s.logf("%s: keeping its directory %s, which holds the team's data disk", name, vmDir)
+		return struct{}{}, nil
+	}
 	if err := s.Files.RemoveVMDir(vmDir, ""); err != nil {
 		return nil, answer(http.StatusInternalServerError, "%s is removed, but not its directory %s: %v", name, vmDir, err)
 	}
@@ -722,10 +806,25 @@ func (s *Server) removeOrphanDir(name string, c Caller) (any, error) {
 	if !strings.EqualFold(p, dir) {
 		return nil, answer(http.StatusForbidden, "refused: %s resolves to %s", dir, p)
 	}
+	if s.holdsData(p) {
+		s.logf("%s: keeping its directory %s, which holds the team's data disk", name, p)
+		return struct{}{}, nil
+	}
 	if err := s.Files.RemoveVMDir(p, c.SID()); err != nil {
 		return nil, answer(http.StatusForbidden, "refused: remove %s: %v", p, err)
 	}
 	return struct{}{}, nil
+}
+
+// holdsData reports whether the VM directory dir holds the data disk or
+// its snapshot, or might: a file that cannot be checked counts as there.
+func (s *Server) holdsData(dir string) bool {
+	for _, n := range []string{DataDiskName, SnapshotName} {
+		if _, err := s.Files.Stat(winJoin(dir, n)); !errors.Is(err, fs.ErrNotExist) {
+			return true
+		}
+	}
+	return false
 }
 
 // vmDirOf is the VM directory DELETE removes: the directory of the VM's
@@ -757,138 +856,158 @@ func (s *Server) vmDirOf(name string, cur vmInfo, child string) string {
 	return ""
 }
 
-// newDiskName is the name POST /v1/vhd creates the data disk under in
-// the broker's VM directory, before moving it into place. A file of
-// that name left by an earlier attempt that failed is replaced.
-const newDiskName = "new-data.vhdx"
+// teamDisk is what every data disk request resolves before it touches
+// anything: the team's config directory, checked as one the caller can
+// write, its key, its VM's name, and the VM's own path to its VM
+// directory.
+type teamDisk struct {
+	cfg, key, name, vmDir string
+}
 
-// newVHD is POST /v1/vhd: a new dynamic data.vhdx in a directory the
-// caller can write, where nothing is yet; the caller gets full control
-// of it.
-//
-// New-VHD runs with the broker's rights (Hyper-V's own service creates
-// the file) and follows a link at the path it is given, so it never
-// creates in the caller's directory: between the check that nothing is
-// at <dir>\data.vhdx and the creation, a caller who can make symbolic
-// links could put one there and have the broker create a file wherever
-// it pointed. The disk is made in the broker's own VM directory
-// (<dir>\vm, which the caller cannot write), granted to the caller
-// there (Files.GrantFile), moved into place by the caller, as the
-// caller (Caller.Rename: a rename never follows a link and fails if
-// anything is at the destination, and the broker, no administrator,
-// cannot write in the caller's directory anyway), and then checked to be
-// the file the broker made, where it was asked for (Files.PlacedFile).
-func (s *Server) newVHD(r *http.Request, c Caller) (any, error) {
-	var req VHDRequest
-	if err := decode(r, &req); err != nil {
-		return nil, err
+func (t teamDisk) data() string     { return winJoin(t.vmDir, DataDiskName) }
+func (t teamDisk) snapshot() string { return winJoin(t.vmDir, SnapshotName) }
+
+// diskRequest decodes a disk request into req (a DiskRequest or a
+// VHDRequest, whose config directory configDir reads) and resolves its
+// team: the config directory as the caller can write it, from which the
+// key and the VM's name are derived as POST /v1/vm derives them.
+func (s *Server) diskRequest(r *http.Request, c Caller, req interface{ Validate() error }, configDir func() string) (teamDisk, error) {
+	if err := decode(r, req); err != nil {
+		return teamDisk{}, err
 	}
 	if err := req.Validate(); err != nil {
-		return nil, answer(http.StatusBadRequest, "%v", err)
+		return teamDisk{}, answer(http.StatusBadRequest, "%v", err)
 	}
-	defer s.lock("vhd:" + strings.ToLower(req.Path))()
-	dir, err := c.WritableDir(winDir(req.Path))
+	cfg, err := c.WritableDir(configDir())
 	if err != nil {
-		return nil, refused("the disk's directory", err)
+		return teamDisk{}, refused("config_dir", err)
 	}
-	p := winJoin(dir, DataDiskName)
-	if err := c.Absent(p); err != nil {
-		return nil, refused(p, err)
-	}
-	vmDir, release, err := s.Files.VMDir(host.DirKey(dir), c.SID())
+	key := host.DirKey(cfg)
+	return teamDisk{cfg: cfg, key: key, name: VMName(key), vmDir: s.Files.VMDirPath(key)}, nil
+}
+
+// offOrAbsent refuses unless the team's VM is the caller's and, unless
+// mayRun, Off; or does not exist: a disk a VM has open is neither
+// copied, replaced, compacted nor deleted, and a VM cannot start on a
+// disk being any of those while its lock is held, so a start waits
+// rather than fails. mayRun is for a file the VM never opens (the
+// upgrade snapshot).
+func (s *Server) offOrAbsent(t teamDisk, c Caller, mayRun bool) (exists bool, err error) {
+	cur, err := s.inspect(t.name, true)
 	if err != nil {
-		return nil, refused("the VM directory", err)
+		return false, err
 	}
-	defer release()
-	made := winJoin(vmDir, newDiskName)
-	// Whatever an earlier attempt left under that name goes first,
-	// through a handle: the caller could delete it, had its move failed,
-	// but could not have turned it into a link, having no write on it;
-	// still, New-VHD, which follows a link at the path it is given, never
-	// sees one here.
-	if err := s.Files.DeleteFile(made); err != nil {
-		return nil, answer(http.StatusInternalServerError, "clear %s: %v", made, err)
+	if !cur.Exists {
+		return false, nil
+	}
+	if err := ownedBy(cur, t.name, c.SID()); err != nil {
+		return true, err
+	}
+	if cur.State != StateOff && !mayRun {
+		return true, answer(http.StatusConflict, "%s is %s; its data disk is changed only while it is off", t.name, cur.State)
+	}
+	return true, nil
+}
+
+// lockedDisk is the start of every data disk request that changes a
+// disk: the request resolved (diskRequest), the VM's lock taken, the VM
+// checked (offOrAbsent), and the VM directory made or opened for the
+// caller (Files.VMDir, which refuses one made for another account). The
+// returned function releases the directory and then the lock.
+func (s *Server) lockedDisk(r *http.Request, c Caller, req interface{ Validate() error }, configDir func() string, mayRun bool) (teamDisk, func(), error) {
+	t, err := s.diskRequest(r, c, req, configDir)
+	if err != nil {
+		return t, nil, err
+	}
+	unlock := s.lock(t.name)
+	if _, err := s.offOrAbsent(t, c, mayRun); err != nil {
+		unlock()
+		return t, nil, err
+	}
+	vmDir, release, err := s.Files.VMDir(t.key, c.SID())
+	if err != nil {
+		unlock()
+		return t, nil, refused("the VM directory", err)
+	}
+	t.vmDir = vmDir
+	return t, func() { release(); unlock() }, nil
+}
+
+// fileExists reports whether a plain file is at p; an error for
+// anything but its absence.
+func (s *Server) fileExists(p string) (bool, error) {
+	_, err := s.Files.Stat(p)
+	switch {
+	case err == nil:
+		return true, nil
+	case errors.Is(err, fs.ErrNotExist):
+		return false, nil
+	}
+	return false, answer(http.StatusInternalServerError, "%s: %v", p, err)
+}
+
+// newVHD is POST /v1/vhd: a new dynamic data disk in the team's VM
+// directory, made by New-VHD as the broker. The directory is the
+// broker's own and the caller cannot write in it, so nothing at the
+// path New-VHD is given (which it would follow) is a link the caller
+// planted, and the disk is never a file the caller can write: the
+// caller reads it (the directory's DACL passes that on), and only the
+// broker changes it.
+func (s *Server) newVHD(r *http.Request, c Caller) (any, error) {
+	var req VHDRequest
+	t, done, err := s.lockedDisk(r, c, &req, func() string { return req.ConfigDir }, false)
+	if err != nil {
+		return nil, err
+	}
+	defer done()
+	there, err := s.fileExists(t.data())
+	if err != nil {
+		return nil, err
+	}
+	if there {
+		if !req.Replace {
+			return nil, answer(http.StatusConflict, "%s already has a data disk", t.name)
+		}
+		if err := s.Files.DeleteFile(t.data()); err != nil {
+			return nil, answer(http.StatusInternalServerError, "delete the data disk %s: %v", t.data(), err)
+		}
 	}
 	err = s.run(scriptNewVHD, struct {
 		Path      string `json:"path"`
 		SizeBytes int64  `json:"size_bytes"`
-	}{made, req.SizeBytes}, nil)
+	}{t.data(), req.SizeBytes}, nil)
 	if err != nil {
 		return nil, err
 	}
-	id, err := s.Files.GrantFile(made, c.SID())
-	if err != nil {
-		return nil, answer(http.StatusInternalServerError, "grant the new disk %s: %v", made, err)
-	}
-	if err := c.Rename(made, p); err != nil {
-		// The disk that did not move is deleted (through a handle, as
-		// the link it could have become): nothing the caller can delete
-		// but not write stays in the broker's directory.
-		_ = s.Files.DeleteFile(made)
-		if errors.Is(err, ErrExists) {
-			return nil, answer(http.StatusConflict, "%s: %v", p, err)
-		}
-		return nil, refused("move the new disk into place", err)
-	}
-	if err := s.Files.PlacedFile(p, id, c.SID()); err != nil {
-		return nil, answer(http.StatusInternalServerError, "the new disk at %s: %v", p, err)
-	}
-	return VHDResult{Path: p}, nil
+	return VHDResult{Path: t.data()}, nil
 }
 
-// optimizeVHD is POST /v1/vhd/optimize: the caller's own data disk,
-// compacted while the VM of its directory is off. The disk must be
-// data.vhdx directly inside a directory the caller can write, a regular
-// file the caller can write, pinned by the caller's handle for the
-// request (Caller.File), so the compaction runs on the file that was
-// checked. The VM of that directory, if it exists, must be the caller's
-// and Off: a disk a running VM holds cannot be compacted, and a VM
-// cannot start on a disk being compacted, so the VM's lock is held
-// meanwhile and a start of it waits rather than fails. The caller writes
-// the file's bytes, and opening a differencing disk would open the
-// parent its locator names (a share on another host as easily as a
-// local file); so the broker reads the file's metadata through the
-// pinning handle and refuses anything but a dynamic VHDX with no parent,
-// and then compacts it through the virtual disk API itself
-// (Caller.CompactVHDX): opened as the caller and without parents, its
-// kind checked again on that very handle, and compacted through it, so
-// no parent is opened whatever the file says by then.
+// optimizeVHD is POST /v1/vhd/optimize: the team's data disk, the
+// broker's own file, compacted while the VM is off (offOrAbsent). The
+// broker compacts it through the virtual disk API itself
+// (Files.CompactVHDX): opened without parents, refused on that handle
+// unless it is a dynamic VHDX, and compacted through it, so no parent is
+// opened whatever the file says. Its progress is POST
+// /v1/vhd/progress's while it runs.
 func (s *Server) optimizeVHD(r *http.Request, c Caller) (any, error) {
-	var req OptimizeRequest
-	if err := decode(r, &req); err != nil {
-		return nil, err
-	}
-	if err := req.Validate(); err != nil {
-		return nil, answer(http.StatusBadRequest, "%v", err)
-	}
-	dir, err := c.WritableDir(winDir(req.Path))
-	if err != nil {
-		return nil, refused("the disk's directory", err)
-	}
-	name := VMName(host.DirKey(dir))
-	defer s.lock(name)()
-	p, err := c.File(winJoin(dir, DataDiskName), AccessWrite)
-	if err != nil {
-		return nil, refused("the data disk", err)
-	}
-	cur, err := s.inspect(name, true)
+	var req DiskRequest
+	t, done, err := s.lockedDisk(r, c, &req, func() string { return req.ConfigDir }, false)
 	if err != nil {
 		return nil, err
 	}
-	if cur.Exists {
-		if err := ownedBy(cur, name, c.SID()); err != nil {
-			return nil, err
-		}
-		if cur.State != StateOff {
-			return nil, answer(http.StatusConflict, "%s is %s; its data disk is compacted only while it is off", name, cur.State)
-		}
+	defer done()
+	there, err := s.fileExists(t.data())
+	if err != nil {
+		return nil, err
 	}
-	if err := dynamicNoParent(c, p); err != nil {
-		return nil, refused("the data disk", err)
+	if !there {
+		return nil, answer(http.StatusNotFound, "%s has no data disk", t.name)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), OptimizeTimeout)
+	m, untrack := s.track(t.key, OpCompact, c.SID())
+	defer untrack()
+	ctx, cancel := context.WithTimeout(r.Context(), OptimizeTimeout)
 	defer cancel()
-	before, after, err := c.CompactVHDX(ctx, p)
+	before, after, err := s.Files.CompactVHDX(ctx, t.data(), m)
 	if errors.Is(err, errNotDynamic) {
 		return nil, refused("the data disk", err)
 	}
@@ -898,21 +1017,243 @@ func (s *Server) optimizeVHD(r *http.Request, c Caller) (any, error) {
 	return OptimizeResult{SizeBefore: before, SizeAfter: after}, nil
 }
 
-// dynamicNoParent reads the VHDX the caller pinned at p (its region
-// table, metadata and block table; never a parent locator) and refuses
-// it unless it is a dynamic disk: a differencing disk, a fixed one or a
-// file that is no VHDX is not the data disk the backend made.
-func dynamicNoParent(c Caller, p string) error {
-	f, size, err := c.Contents(p)
+// importVHD is POST /v1/vhd/import: data.vhdx in the config directory,
+// where the data disk was kept before the broker kept it, copied into
+// the team's VM directory as its data disk, with the VM off.
+//
+// The source is the caller's file, which the caller can rewrite at
+// will, so the broker reads it only through a handle opened as the
+// caller (Caller.File: what the caller could not read is not read, and
+// the file is pinned while it is copied), checks its metadata through
+// that handle (a dynamic VHDX with no parent, and nothing else, is
+// copied), and never opens it as a virtual disk: Hyper-V or virtdisk
+// opening a differencing disk opens the parent its locator names, a
+// share on another host as easily as a local file. The copy, import.vhdx,
+// is the broker's own file, which the caller cannot write; it is checked
+// again (Files.CheckDynamicVHDX: the VHDX's log replayed and its subtype
+// read without parents) and only then renamed to data.vhdx, never over
+// one: a data disk already there is an earlier import that finished, and
+// the answer is 409 AlreadyImported. A copy left by an import that was
+// cut short is deleted first, and one that fails or is cancelled is
+// deleted. Its progress is POST /v1/vhd/progress's while it runs.
+func (s *Server) importVHD(r *http.Request, c Caller) (any, error) {
+	var req DiskRequest
+	t, done, err := s.lockedDisk(r, c, &req, func() string { return req.ConfigDir }, false)
 	if err != nil {
-		return err
+		return nil, err
 	}
+	defer done()
+	there, err := s.fileExists(t.data())
+	if err != nil {
+		return nil, err
+	}
+	if there {
+		return nil, answer(http.StatusConflict, "%s: %s holds a data disk already", AlreadyImported, t.vmDir)
+	}
+	src, err := c.File(winJoin(t.cfg, DataDiskName))
+	if err != nil {
+		return nil, refused("the data disk to import", err)
+	}
+	in, size, err := c.Contents(src)
+	if err != nil {
+		return nil, refused("the data disk to import", err)
+	}
+	if err := dynamicNoParent(in, size); err != nil {
+		return nil, refused("the data disk to import", fmt.Errorf("%s: %w", src, err))
+	}
+	tmp := winJoin(t.vmDir, importName)
+	if err := s.Files.DeleteFile(tmp); err != nil {
+		return nil, answer(http.StatusInternalServerError, "clear %s: %v", tmp, err)
+	}
+	m, untrack := s.track(t.key, OpImport, c.SID())
+	defer untrack()
+	ctx, cancel := context.WithTimeout(r.Context(), ImportTimeout)
+	defer cancel()
+	if err := s.Files.CopyFile(ctx, in, size, tmp, m); err != nil {
+		_ = s.Files.DeleteFile(tmp)
+		return nil, answer(http.StatusInternalServerError, "copy %s: %v", src, err)
+	}
+	if err := s.Files.CheckDynamicVHDX(tmp); err != nil {
+		_ = s.Files.DeleteFile(tmp)
+		return nil, refused("the copied data disk", err)
+	}
+	if err := s.Files.Rename(tmp, t.data(), false); err != nil {
+		_ = s.Files.DeleteFile(tmp)
+		if errors.Is(err, ErrExists) {
+			return nil, answer(http.StatusConflict, "%s: %s holds a data disk already", AlreadyImported, t.vmDir)
+		}
+		return nil, answer(http.StatusInternalServerError, "put the copy in place: %v", err)
+	}
+	return ImportResult{Path: t.data(), CopiedBytes: size}, nil
+}
+
+// snapshotVHD is POST /v1/vhd/snapshot: the data disk copied to its
+// upgrade snapshot beside it (replacing an earlier one), flushed before
+// the answer, with the VM off.
+func (s *Server) snapshotVHD(r *http.Request, c Caller) (any, error) {
+	var req DiskRequest
+	t, done, err := s.lockedDisk(r, c, &req, func() string { return req.ConfigDir }, false)
+	if err != nil {
+		return nil, err
+	}
+	defer done()
+	in, size, release, err := s.Files.Open(t.data())
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, answer(http.StatusNotFound, "%s has no data disk", t.name)
+	}
+	if err != nil {
+		return nil, answer(http.StatusInternalServerError, "open the data disk: %v", err)
+	}
+	defer release()
+	if err := s.Files.DeleteFile(t.snapshot()); err != nil {
+		return nil, answer(http.StatusInternalServerError, "clear %s: %v", t.snapshot(), err)
+	}
+	m, untrack := s.track(t.key, OpSnapshot, c.SID())
+	defer untrack()
+	ctx, cancel := context.WithTimeout(r.Context(), SnapshotTimeout)
+	defer cancel()
+	if err := s.Files.CopyFile(ctx, in, size, t.snapshot(), m); err != nil {
+		_ = s.Files.DeleteFile(t.snapshot())
+		return nil, answer(http.StatusInternalServerError, "snapshot the data disk: %v", err)
+	}
+	return SnapshotResult{CopiedBytes: size}, nil
+}
+
+// restoreVHD is POST /v1/vhd/restore: the upgrade snapshot renamed over
+// the data disk, durably, with the VM off. Without a snapshot the
+// answer is 404 and nothing changes.
+func (s *Server) restoreVHD(r *http.Request, c Caller) (any, error) {
+	var req DiskRequest
+	t, done, err := s.lockedDisk(r, c, &req, func() string { return req.ConfigDir }, false)
+	if err != nil {
+		return nil, err
+	}
+	defer done()
+	there, err := s.fileExists(t.snapshot())
+	if err != nil {
+		return nil, err
+	}
+	if !there {
+		return nil, answer(http.StatusNotFound, "%s has no snapshot of its data disk", t.name)
+	}
+	if err := s.Files.Rename(t.snapshot(), t.data(), true); err != nil {
+		return nil, answer(http.StatusInternalServerError, "restore the snapshot: %v", err)
+	}
+	return struct{}{}, nil
+}
+
+// deleteFiles deletes the files named in the VM directory and gives the
+// bytes they held.
+func (s *Server) deleteFiles(t teamDisk, names ...string) (int64, error) {
+	var freed int64
+	for _, n := range names {
+		p := winJoin(t.vmDir, n)
+		fi, err := s.Files.Stat(p)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return freed, answer(http.StatusInternalServerError, "%s: %v", p, err)
+		}
+		if err := s.Files.DeleteFile(p); err != nil {
+			return freed, answer(http.StatusInternalServerError, "delete %s: %v", p, err)
+		}
+		freed += fi.Used
+	}
+	return freed, nil
+}
+
+// deleteSnapshot is DELETE /v1/vhd/snapshot: the upgrade snapshot
+// deleted. The VM never opens the snapshot, so it may be running (an
+// upgrade deletes the snapshot once the new release is up). No snapshot
+// is no error.
+func (s *Server) deleteSnapshot(r *http.Request, c Caller) (any, error) {
+	var req DiskRequest
+	t, done, err := s.lockedDisk(r, c, &req, func() string { return req.ConfigDir }, true)
+	if err != nil {
+		return nil, err
+	}
+	defer done()
+	freed, err := s.deleteFiles(t, SnapshotName)
+	if err != nil {
+		return nil, err
+	}
+	return DeleteResult{FreedBytes: freed}, nil
+}
+
+// deleteVHD is DELETE /v1/vhd: the team's data disk, its snapshot and
+// any copy an import left, deleted with the VM off, and then the VM
+// directory too when there is no VM (a destroy removes the VM first). A
+// VM directory that is not there is nothing to delete; one made for
+// another account is refused (Files.VMDir).
+func (s *Server) deleteVHD(r *http.Request, c Caller) (any, error) {
+	var req DiskRequest
+	t, err := s.diskRequest(r, c, &req, func() string { return req.ConfigDir })
+	if err != nil {
+		return nil, err
+	}
+	unlock := s.lock(t.name)
+	defer unlock()
+	exists, err := s.offOrAbsent(t, c, false)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := s.Files.Canonical(t.vmDir); errors.Is(err, fs.ErrNotExist) {
+		return DeleteResult{}, nil
+	}
+	vmDir, release, err := s.Files.VMDir(t.key, c.SID())
+	if err != nil {
+		return nil, refused("the VM directory", err)
+	}
+	t.vmDir = vmDir
+	freed, err := s.deleteFiles(t, DataDiskName, SnapshotName, importName)
+	release()
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
+		if err := s.Files.RemoveVMDir(vmDir, c.SID()); err != nil {
+			return nil, answer(http.StatusInternalServerError, "the data disk is deleted, but not its directory %s: %v", vmDir, err)
+		}
+	}
+	return DeleteResult{FreedBytes: freed}, nil
+}
+
+// vhdProgress is POST /v1/vhd/progress: how far the long operation on
+// the team's data disk has got (an import's or a snapshot's bytes
+// copied, a compaction's progress as the virtual disk API counts it),
+// or no operation. It takes no lock: the operation holds the VM's. The
+// operation must be one the caller's own request runs.
+func (s *Server) vhdProgress(r *http.Request, c Caller) (any, error) {
+	var req DiskRequest
+	t, err := s.diskRequest(r, c, &req, func() string { return req.ConfigDir })
+	if err != nil {
+		return nil, err
+	}
+	s.runningMu.Lock()
+	op := s.running[t.key]
+	s.runningMu.Unlock()
+	if op == nil {
+		return VHDProgress{}, nil
+	}
+	if !strings.EqualFold(op.sid, c.SID()) {
+		return nil, answer(http.StatusForbidden, "refused: the operation on %s is another account's", t.name)
+	}
+	done, total := op.meter.Get()
+	return VHDProgress{Op: op.op, Done: done, Total: total}, nil
+}
+
+// dynamicNoParent reads a VHDX's region table, metadata and block table
+// (never a parent locator) and refuses it unless it is a dynamic disk: a
+// differencing disk, a fixed one or a file that is no VHDX is not the
+// data disk the backend made.
+func dynamicNoParent(f io.ReaderAt, size int64) error {
 	l, err := vhdx.Read(f, size)
 	if err != nil {
-		return fmt.Errorf("%s: %w", p, err)
+		return fmt.Errorf("%w: %w", errNotDynamic, err)
 	}
 	if l.Fixed {
-		return fmt.Errorf("%s: a fixed disk, not a dynamic one", p)
+		return fmt.Errorf("%w: a fixed disk", errNotDynamic)
 	}
 	return nil
 }

@@ -6,7 +6,7 @@
 
 use kivali_desktop_lib::orgurl;
 use kivali_desktop_lib::supervisor::sidecar::{Sidecar, Stopped, STOP_TIMEOUTS};
-use kivali_desktop_lib::supervisor::wire::{check_status, OrgState, SetupRequest};
+use kivali_desktop_lib::supervisor::wire::{check_status, stage, OrgState, SetupRequest, StageProgress};
 use kivali_desktop_lib::supervisor::{UpRequest, Error, Supervisor};
 use std::path::{Path, PathBuf};
 
@@ -88,6 +88,25 @@ fn create_check_credential_upgrade_destroy_against_the_fake() {
 
     let st = sup.upgrade(&mut |_| {}).unwrap();
     assert_eq!(st.kivali.as_deref(), Some("0.17.0"));
+
+    // A team whose data disk an earlier version kept in the config
+    // directory: the next resume moves it first, reporting the copy's
+    // and then the compaction's progress, each in its stage, and the
+    // disk left behind is gone once the team is up.
+    sup.down(false, &mut |_| {}).unwrap();
+    let legacy = dir.path().join("data.vhdx");
+    std::fs::write(&legacy, b"a data disk").unwrap();
+    let mut seen = Vec::new();
+    sup.up(&UpRequest::default(), &mut |p| seen.push(p)).unwrap();
+    let mut stages: Vec<_> = seen.iter().filter_map(|p| p.stage.clone()).collect();
+    stages.dedup();
+    assert_eq!(stages, ["updating-data", "making-room", "starting", "setting-up"]);
+    let reports: Vec<_> = seen.iter().filter(|p| p.label.is_empty()).map(|p| (p.stage.clone().unwrap(), p.progress.unwrap())).collect();
+    let copy: Vec<_> = reports.iter().filter(|(s, _)| s == stage::UPDATING_DATA).map(|(_, p)| *p).collect();
+    assert_eq!((copy.first(), copy.last()), (Some(&StageProgress { done: 0, total: 8 << 30 }), Some(&StageProgress { done: 8 << 30, total: 8 << 30 })));
+    assert!(copy.windows(2).all(|w| w[0].done <= w[1].done), "{copy:?}");
+    assert!(reports.iter().any(|(s, p)| s == stage::MAKING_ROOM && p.total == 100), "{reports:?}");
+    assert!(!legacy.exists() && !dir.path().join("data.vhdx.migrated").exists());
 
     // Delete: destroy with exit ends serve, so the stop finds it gone.
     sup.destroy(true, &mut |_| {}).unwrap();

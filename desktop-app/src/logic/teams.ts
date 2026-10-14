@@ -3,7 +3,7 @@
 // dialogs' words. Pure (teams.test.ts).
 
 import type { Snapshot, Team, TeamState } from "../types";
-import { ago, deviceName, formatBytes, formatMemory, shortDate, shortVersion, sinceWhen } from "./format";
+import { ago, deviceName, formatBytes, formatBytesOf, formatMemory, shortDate, shortVersion, sinceWhen } from "./format";
 import { clampPercent } from "./setup";
 
 /** The dot's class and the word beside it. */
@@ -126,8 +126,18 @@ export function teamPage(team: Team | undefined, snap: Pick<Snapshot, "teams" | 
     case "deleting":
       return { kind: "progress", title: `Deleting ${name}`, body: remaining, percent, step: null };
     default:
-      return { kind: "progress", title: `Waking ${name} up`, body: remaining, percent, step: null };
+      return { kind: "progress", title: `Waking ${name} up`, body: remaining, percent, step: measuredStep(op) };
   }
+}
+
+/** The caption under the bar while a stage reports how far it has got:
+ *  "Updating team data · 3.2 of 8 GB", "Making room · 40%"; null
+ *  otherwise. */
+export function measuredStep(op: Team["op"]): string | null {
+  const m = op?.running ? op.stage_progress : null;
+  if (!op?.stage || !m || m.total <= 0) return null;
+  if (m.bytes) return `${op.stage} · ${formatBytesOf(m.done, m.total)}`;
+  return `${op.stage} · ${clampPercent(Math.floor((m.done / m.total) * 100))}%`;
 }
 
 /** "3 agents working", "1 agent working"; null when none are or it isn't known

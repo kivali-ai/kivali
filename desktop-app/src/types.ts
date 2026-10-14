@@ -36,6 +36,17 @@ export interface OpView {
   percent: number;
   /** "about 40 seconds", or null when the shell has no estimate. */
   remaining: string | null;
+  /** How far the current stage's measurable work has got, while it has
+   *  any: bytes of the team's data copied (`bytes`), or a share of a
+   *  compaction. */
+  stage_progress: StageMeasure | null;
+}
+
+/** view.rs `StageMeasure`. */
+export interface StageMeasure {
+  done: number;
+  total: number;
+  bytes: boolean;
 }
 
 export interface AiView {

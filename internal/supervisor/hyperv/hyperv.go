@@ -8,8 +8,10 @@
 // design; it mirrors the macOS backend (internal/supervisor/vz).
 //
 // The VM boots a differencing child of the broker's root.vhdx (the one
-// installed beside it, never one this process names) and a
-// dynamic data.vhdx, on Hyper-V's Default Switch, with COM1 on a named
+// installed beside it, never one this process names) and a dynamic
+// data.vhdx in the team's VM directory under the broker's own
+// (broker.VMRoot), which this account can read but only the broker can
+// write, on Hyper-V's Default Switch, with COM1 on a named
 // pipe (the marker lines out, the poweroff verb and the first-boot
 // format answer in) and the guest agent reached over a Hyper-V socket
 // to vsock port 1024. The broker derives the VM's name, MAC and console
@@ -53,8 +55,10 @@ const (
 	RootFile = broker.RootFile
 	// VersionFile holds the image's version ("dev" without one).
 	VersionFile = "VERSION"
-	// DataDiskFile is the data disk's name in the config directory.
-	DataDiskFile = "data.vhdx"
+	// DataDiskFile is the data disk's name: in the team's VM directory
+	// (DataDiskPath), and in the config directory, where earlier
+	// versions kept it (LegacyDataDiskPath).
+	DataDiskFile = broker.DataDiskName
 )
 
 // The guest's console verbs.
@@ -88,9 +92,12 @@ const (
 // Backend creates Hyper-V machines through a broker client.
 type Backend struct {
 	Client *broker.Client
-	// Clock times the compaction's progress lines; nil is the system
-	// clock.
+	// Clock times the progress queries and lines of a long disk
+	// operation (a compaction, an import); nil is the system clock.
 	Clock clock.Clock
+	// VMRoot is the broker's root of VM directories, where the data disk
+	// is read (DataDiskPath); "" is broker.VMRoot, the broker's own.
+	VMRoot string
 
 	// guestShutdown, for tests, replaces the guest agent's shutdown in
 	// StopLeftover (there is no VM to dial).
@@ -102,6 +109,8 @@ var (
 	_ supervisor.MachineRemover    = Backend{}
 	_ supervisor.LeftoverStopper   = Backend{}
 	_ supervisor.DataDiskCompactor = Backend{}
+	_ supervisor.DataDiskMigrator  = Backend{}
+	_ supervisor.DataDiskKeeper    = Backend{}
 )
 
 // compactThreshold is the discarded space below which the data disk is
@@ -116,14 +125,26 @@ var (
 // back in about a second on an SSD.
 const compactThreshold = 1 << 30
 
-// compactTimeout bounds one compaction as the client: longer than the
-// broker's own bound on the compaction (broker.OptimizeTimeout), so
-// what comes back is the broker's answer.
-const compactTimeout = broker.OptimizeTimeout + 5*time.Minute
+// compactTimeout bounds one compaction as the client, and importTimeout
+// and snapshotTimeout an import's and a snapshot's copy: longer than the
+// broker's own bounds (broker.OptimizeTimeout, broker.ImportTimeout,
+// broker.SnapshotTimeout), so what comes back is the broker's answer.
+const (
+	compactTimeout  = broker.OptimizeTimeout + 5*time.Minute
+	importTimeout   = broker.ImportTimeout + 5*time.Minute
+	snapshotTimeout = broker.SnapshotTimeout + 5*time.Minute
+)
 
-// compactHeartbeat is how often a compaction still running says so:
-// inside the desktop app's 30 s idle limit on an operation.
-const compactHeartbeat = 10 * time.Second
+// progressPoll is how often a long disk operation (a compaction, an
+// import) asks the broker how far it has got, for the desktop app's
+// progress bar; a query reads a counter in the broker and runs no
+// script. compactHeartbeat is how often such an operation still running
+// says so in a line: inside the desktop app's 30 s idle limit on an
+// operation.
+const (
+	progressPoll     = time.Second
+	compactHeartbeat = 10 * time.Second
+)
 
 func (b Backend) clock() clock.Clock {
 	if b.Clock != nil {
@@ -132,19 +153,60 @@ func (b Backend) clock() clock.Clock {
 	return clock.System{}
 }
 
+// longOp runs call, a broker request that takes long (an import, a
+// compaction), with a goroutine that meanwhile asks the broker every
+// progressPoll how far its operation op on the team's data disk has got
+// (POST /v1/vhd/progress), reporting that to progress, and logs the
+// waiting line every compactHeartbeat. It returns once call has and the
+// goroutine is done, so nothing is reported after.
+func (b Backend) longOp(ctx context.Context, configDir, op string, progress supervisor.Progress, logf supervisor.Logf, waiting string, call func(ctx context.Context) error) error {
+	clk := b.clock()
+	start := clk.Now()
+	tick := clk.NewTicker(progressPoll)
+	callCtx, cancel := context.WithCancel(ctx)
+	quiet := make(chan struct{})
+	go func() {
+		defer close(quiet)
+		beat := start
+		for {
+			select {
+			case <-callCtx.Done():
+				return
+			case now := <-tick.C():
+				qctx, qcancel := context.WithTimeout(callCtx, stateQueryTimeout)
+				p, err := b.Client.VHDProgress(qctx, configDir)
+				qcancel()
+				if err == nil && p.Op == op && p.Total > 0 && progress != nil {
+					progress(p.Done, p.Total)
+				}
+				if now.Sub(beat) >= compactHeartbeat {
+					beat = now
+					logf("%s (%s so far)", waiting, now.Sub(start).Round(time.Second))
+				}
+			}
+		}
+	}()
+	err := call(callCtx)
+	tick.Stop()
+	cancel()
+	<-quiet
+	return err
+}
+
 // CompactDataDisk reads the data disk's block allocation table (a few
-// dozen KiB, whatever the disk's size) and, when the blocks the guest
-// discarded still hold compactThreshold or more of the file, has the
-// broker compact it (POST /v1/vhd/optimize: CompactVirtualDisk with no
-// zero scan, as Optimize-VHD's Quick mode, which drops those blocks and
-// moves the rest down). It is called with
-// the VM off, before a start and after a clean stop, and calls began
-// once a compaction is under way; while one runs it logs a line every
+// dozen KiB, whatever the disk's size; this account can read the
+// broker's file) and, when the blocks the guest discarded still hold
+// compactThreshold or more of the file, has the broker compact it (POST
+// /v1/vhd/optimize: CompactVirtualDisk with no zero scan, as
+// Optimize-VHD's Quick mode, which drops those blocks and moves the rest
+// down). It is called with the VM off, before a start and after a clean
+// stop, and calls began once a compaction is under way; while one runs
+// it reports the broker's progress and logs a line every
 // compactHeartbeat. The disk's content is the same before and after;
 // its file is as small as what the disk holds.
-func (b Backend) CompactDataDisk(ctx context.Context, path string, began func(), logf supervisor.Logf) error {
-	path = plainPath(path)
-	l, err := vhdx.ReadFile(path)
+func (b Backend) CompactDataDisk(ctx context.Context, configDir string, began func(), progress supervisor.Progress, logf supervisor.Logf) error {
+	configDir = plainPath(configDir)
+	l, err := vhdx.ReadFile(b.DataDiskPath(configDir))
 	if err != nil {
 		return fmt.Errorf("read the data disk's block table: %w", err)
 	}
@@ -155,29 +217,17 @@ func (b Backend) CompactDataDisk(ctx context.Context, path string, began func(),
 	logf("the data disk's file holds %s of blocks the guest discarded; compacting it", gib(l.DiscardedBytes()))
 	ctx, cancel := context.WithTimeout(ctx, compactTimeout)
 	defer cancel()
-	clk := b.clock()
-	start := clk.Now()
-	beat := clk.NewTicker(compactHeartbeat)
-	quiet := make(chan struct{})
-	go func() {
-		defer close(quiet)
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case now := <-beat.C():
-				logf("waiting for the data disk's compaction to finish (%s so far)", now.Sub(start).Round(time.Second))
-			}
-		}
-	}()
-	res, err := b.Client.OptimizeVHD(ctx, path)
-	beat.Stop()
-	cancel()
-	<-quiet
+	start := b.clock().Now()
+	var res broker.OptimizeResult
+	err = b.longOp(ctx, configDir, broker.OpCompact, progress, logf, "waiting for the data disk's compaction to finish", func(ctx context.Context) error {
+		var err error
+		res, err = b.Client.OptimizeVHD(ctx, configDir)
+		return err
+	})
 	if err != nil {
 		return fmt.Errorf("compact the data disk: %w", err)
 	}
-	logf("the data disk's file is compacted: %s to %s in %s", gib(res.SizeBefore), gib(res.SizeAfter), clk.Now().Sub(start).Round(time.Second))
+	logf("the data disk's file is compacted: %s to %s in %s", gib(res.SizeBefore), gib(res.SizeAfter), b.clock().Now().Sub(start).Round(time.Second))
 	return nil
 }
 
@@ -203,43 +253,113 @@ func (Backend) Image(dir string) (supervisor.ImageInfo, error) {
 	return info, nil
 }
 
-// DataDiskPath is data.vhdx in the config directory.
-func (Backend) DataDiskPath(configDir string) string {
+// vmRoot is the broker's root of VM directories: VMRoot, else the
+// broker's own (ProgramData\Kivali\broker\vm).
+func (b Backend) vmRoot() string {
+	if b.VMRoot != "" {
+		return b.VMRoot
+	}
+	if root, err := broker.VMRoot(); err == nil {
+		return root
+	}
+	return filepath.Join(os.Getenv("ProgramData"), "Kivali", "broker", broker.VMDirName)
+}
+
+// DataDiskPath is data.vhdx in the team's VM directory, the broker's
+// <VM root>\<config directory key>, where the broker keeps it: this
+// account can read it (its size, its block table) and never write it.
+func (b Backend) DataDiskPath(configDir string) string {
+	return filepath.Join(b.vmRoot(), host.DirKey(plainPath(configDir)), DataDiskFile)
+}
+
+// LegacyDataDiskPath is data.vhdx in the config directory, where earlier
+// versions kept the data disk (ImportDataDisk moves it).
+func (Backend) LegacyDataDiskPath(configDir string) string {
 	return filepath.Join(configDir, DataDiskFile)
 }
 
-// CreateDataDisk removes any file at p and asks the broker for a new
-// dynamic VHDX of size bytes there. The supervisor owns the file (the
-// broker grants it full control), so the supervisor removes any
-// existing one itself; the broker refuses to create over anything present.
-func (b Backend) CreateDataDisk(p string, size int64) error {
-	if err := os.Remove(p); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return err
-	}
+// CreateDataDisk asks the broker for a new dynamic VHDX of size bytes
+// as the team's data disk (POST /v1/vhd), replacing the one there.
+func (b Backend) CreateDataDisk(configDir string, size int64) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	_, err := b.Client.NewVHD(ctx, p, size)
+	_, err := b.Client.NewVHD(ctx, plainPath(configDir), size, true)
 	return err
+}
+
+// ImportDataDisk has the broker copy the data disk an earlier version
+// kept in the config directory into the team's VM directory (POST
+// /v1/vhd/import), with the VM off; while the copy runs it reports the
+// bytes copied and logs a line every compactHeartbeat. A data disk the
+// broker already has is supervisor.ErrAlreadyImported.
+func (b Backend) ImportDataDisk(ctx context.Context, configDir string, progress supervisor.Progress, logf supervisor.Logf) error {
+	configDir = plainPath(configDir)
+	ctx, cancel := context.WithTimeout(ctx, importTimeout)
+	defer cancel()
+	start := b.clock().Now()
+	var res broker.ImportResult
+	err := b.longOp(ctx, configDir, broker.OpImport, progress, logf, "copying the data disk", func(ctx context.Context) error {
+		var err error
+		res, err = b.Client.ImportVHD(ctx, configDir)
+		return err
+	})
+	if broker.IsAlreadyImported(err) {
+		return supervisor.ErrAlreadyImported
+	}
+	if err != nil {
+		return err
+	}
+	logf("the data disk is copied: %s in %s", gib(res.CopiedBytes), b.clock().Now().Sub(start).Round(time.Second))
+	return nil
+}
+
+// SnapshotDataDisk has the broker copy the data disk to its upgrade
+// snapshot beside it (POST /v1/vhd/snapshot), flushed before it answers.
+func (b Backend) SnapshotDataDisk(ctx context.Context, configDir string) error {
+	ctx, cancel := context.WithTimeout(ctx, snapshotTimeout)
+	defer cancel()
+	_, err := b.Client.SnapshotVHD(ctx, plainPath(configDir))
+	return err
+}
+
+// RestoreDataDiskSnapshot has the broker put the upgrade snapshot in the
+// data disk's place (POST /v1/vhd/restore).
+func (b Backend) RestoreDataDiskSnapshot(ctx context.Context, configDir string) error {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	return b.Client.RestoreVHD(ctx, plainPath(configDir))
+}
+
+// DeleteDataDiskSnapshot has the broker delete the upgrade snapshot
+// (DELETE /v1/vhd/snapshot).
+func (b Backend) DeleteDataDiskSnapshot(ctx context.Context, configDir string) error {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	_, err := b.Client.DeleteSnapshot(ctx, plainPath(configDir))
+	return err
+}
+
+// DeleteDataDisk has the broker delete the data disk and its snapshot,
+// and the VM directory once the VM is gone (DELETE /v1/vhd).
+func (b Backend) DeleteDataDisk(ctx context.Context, configDir string) (int64, error) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	res, err := b.Client.DeleteVHD(ctx, plainPath(configDir))
+	return res.FreedBytes, err
 }
 
 // NewMachine derives the team's VM identity from its config directory
 // and makes the VM exist through the broker (POST /v1/vm), ready to
-// start. The config directory is the data disk's directory. The root
-// disk is the broker's own, root.vhdx installed beside it (broker.RootPath);
-// the image directory here gives only the image's version (Image).
+// start. Its disks are the broker's own: the root disk is root.vhdx
+// installed beside it (broker.RootPath), whose differencing child and
+// the data disk are in the team's VM directory; the image directory
+// here gives only the image's version (Image).
 func (b Backend) NewMachine(c supervisor.MachineConfig) (supervisor.Machine, error) {
-	dataDisk := plainPath(c.DataDisk)
-	configDir := filepath.Dir(dataDisk)
+	configDir := plainPath(c.ConfigDir)
 	key := host.DirKey(configDir)
-	// Hyper-V reaches the data disk as the broker service's account,
-	// which needs an entry on the directory the disk is in (folder.go).
-	if err := grantBrokerFolder(configDir); err != nil {
-		return nil, fmt.Errorf("let the broker reach the data disk: %w", err)
-	}
 	req := broker.VMRequest{
 		Name:      broker.VMName(key),
 		ConfigDir: configDir,
-		DataVHDX:  dataDisk,
 		CPUs:      c.CPUs,
 		MemoryMB:  c.MemoryMB,
 		MAC:       broker.MAC(key),
@@ -285,12 +405,12 @@ func (b Backend) StopLeftover(configDir string, logf supervisor.Logf) error {
 }
 
 // RemoveMachine removes the team's VM through the broker (DELETE
-// /v1/vm), which takes its differencing disk and the broker's VM
-// directory with it but never the data disk: a Hyper-V VM stays
-// registered after it stops, so destroy calls this once it is stopped.
-// The name derives from the config directory's key, as NewMachine's
-// does from the data disk's directory, which is the same one. A VM that
-// is already gone is no error.
+// /v1/vm), which takes its differencing disk with it but never the data
+// disk, and so keeps the VM directory that holds it (DeleteDataDisk
+// deletes both): a Hyper-V VM stays registered after it stops, so
+// destroy calls this once it is stopped. The name derives from the
+// config directory's key, as NewMachine's does. A VM that is already
+// gone is no error.
 func (b Backend) RemoveMachine(configDir string) error {
 	name := broker.VMName(host.DirKey(configDir))
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)

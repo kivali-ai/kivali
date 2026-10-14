@@ -180,8 +180,11 @@ holds), so every window and menu can be exercised. `FAKE_CHECK` picks
 its release verdict (`up-to-date`, `upgrade-available`,
 `desktop-update-required`, `manual-steps`, `failed`), `FAKE_STEP_MS`
 its pace, `FAKE_FAIL_UP` a failed create, `FAKE_SIGNED_IN=1` a Claude
-account already signed in. It never opens a terminal session, so
-`terminals` stays 0.
+account already signed in. A file named `data.vhdx` in a team's config
+directory stands for a data disk an earlier version kept there: the
+team's next resume moves it, as the real supervisor does on Windows,
+with the `updating-data` and `making-room` stages and their progress
+reports. It never opens a terminal session, so `terminals` stays 0.
 
 **The dev mock.** `npm --prefix desktop-app run dev` serves the pages
 at `http://localhost:1420`. In a plain browser (no Tauri), `ipc.ts`
@@ -767,17 +770,28 @@ typical length per stage for the progress bar and "about N seconds":
 | Operation (`OpKind`) | Activity | Stages shown (stage id) |
 | --- | --- | --- |
 | create | creating | Making room (`making-room`) · Starting up (`starting`) · Setting up your team (`setting-up`) · Ready |
-| resume | waking | Starting up · Setting up your team |
+| resume | waking | Updating team data (`updating-data`, only when the supervisor moves the data disk) · Making room (`making-room`, only when it compacts the data disk) · Starting up · Setting up your team |
 | update | updating | Downloading (`downloading`) · Saving a snapshot (`snapshot`) · Installing (`installing`) · Starting up |
 | pause | pausing | Pausing (`pausing`) |
 | address | applying | Applying the change (`setting-up`) |
 | delete | deleting | Deleting (`deleting`) |
 
 A line whose stage this kind does not know keeps the step it had. The
-share done counts earlier stages whole and the current one by time
-spent against its typical length, never past 95% of it, and never
-above 99% until the operation finishes. Every raw line is kept for
-"Show details".
+steps shown are the ones the operation has been in, the one it is in,
+and those ahead that every operation of its kind goes through; a step
+only some go through (`OpKind::optional`: a resume's move and
+compaction of the data disk) shows once the operation is in it, so a
+plain resume shows and times two steps. The share done counts the
+shown steps before the current one whole, and the current one by its
+measured progress when the supervisor reports one (`progress` on its
+events: the bytes of the data disk copied, or a compaction's share),
+with the time left from its rate so far; otherwise by time spent
+against its typical length, never past 95% of it. It is never above 99%
+until the operation finishes. While a step is measured, the waking page
+captions the bar with it: "Updating team data · 3.2 of 8 GB", "Making
+room · 40%" (`OpView.stage_progress`; `teams.ts` `measuredStep`). A
+progress report adds no line; every raw line is kept for "Show
+details".
 
 **Lifecycle.**
 

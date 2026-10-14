@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"golang.org/x/sys/windows"
@@ -161,90 +160,6 @@ func TestVMDirOnlyTheBrokers(t *testing.T) {
 	}
 }
 
-// A new data disk reaches the caller's directory in three steps: the
-// broker grants the caller full control of the file it made in the VM
-// directory, the caller moves it (as the caller: here, this account
-// through a pipe it is the client of), and the broker checks what landed
-// is that file. A file already at the destination, or a junction there,
-// is refused by the move, which never follows a link, and the refused
-// disk stays where the broker made it.
-func TestGrantRenamePlaced(t *testing.T) {
-	sid := ourSID(t)
-	server, _ := callerPipe(t)
-	c := &winCaller{pipe: windows.Handle(server.Fd()), sid: sid}
-	base := canonical(t, t.TempDir())
-	vmDir := filepath.Join(base, "vm")
-	src := filepath.Join(vmDir, newDiskName)
-	dst := filepath.Join(base, DataDiskName)
-
-	write(t, src, "disk")
-	id, err := (winFiles{}).GrantFile(src, sid)
-	if err != nil {
-		t.Fatalf("GrantFile: %v", err)
-	}
-	if err := c.Rename(src, dst); err != nil {
-		t.Fatalf("Rename: %v", err)
-	}
-	if err := (winFiles{}).PlacedFile(dst, id, sid); err != nil {
-		t.Fatalf("PlacedFile: %v", err)
-	}
-	if b, err := os.ReadFile(dst); err != nil || string(b) != "disk" {
-		t.Fatalf("dst = %q, %v", b, err)
-	}
-	if _, err := os.Lstat(src); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("src is still there (%v)", err)
-	}
-	sd, err := windows.GetNamedSecurityInfo(dst, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// SDDL prints a well-known account by its alias (the built-in
-	// Administrator, which a CI runner runs as, prints as LA), so the
-	// expected ACE is rendered through SDDL too.
-	want, err := windows.SecurityDescriptorFromString("D:(A;;FA;;;" + sid + ")")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if s := sd.String(); !strings.Contains(s, strings.TrimPrefix(want.String(), "D:")) {
-		t.Fatalf("the caller was not granted full control: %s", s)
-	}
-
-	// Another file put at the destination between the grant and the check.
-	write(t, src, "second")
-	id2, err := (winFiles{}).GrantFile(src, sid)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := (winFiles{}).PlacedFile(dst, id2, sid); err == nil {
-		t.Fatal("a file other than the one granted passed the placed check")
-	}
-
-	// A file already at the destination.
-	if err := c.Rename(src, dst); !errors.Is(err, ErrExists) {
-		t.Fatalf("over a file: err = %v", err)
-	}
-	if b, _ := os.ReadFile(dst); string(b) != "disk" {
-		t.Fatalf("the file at the destination changed: %q", b)
-	}
-	mustExist(t, src)
-
-	// A junction at the destination is not followed.
-	target := filepath.Join(base, "target")
-	write(t, filepath.Join(target, "keep.txt"), "keep")
-	linked := filepath.Join(base, "linked", DataDiskName)
-	if err := os.MkdirAll(filepath.Dir(linked), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	junction(t, linked, target)
-	if err := c.Rename(src, linked); !errors.Is(err, ErrExists) {
-		t.Fatalf("over a junction: err = %v", err)
-	}
-	mustExist(t, filepath.Join(target, "keep.txt"))
-	if _, err := os.Lstat(filepath.Join(target, DataDiskName)); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("the disk went through the junction (%v)", err)
-	}
-}
-
 // Contents reads a file File pinned, through the pinning handle, at any
 // offset, and nothing File did not pin.
 func TestContentsReadsThePinnedFile(t *testing.T) {
@@ -254,7 +169,7 @@ func TestContentsReadsThePinnedFile(t *testing.T) {
 	base := canonical(t, t.TempDir())
 	p := filepath.Join(base, DataDiskName)
 	write(t, p, "0123456789")
-	canon, err := c.File(p, AccessWrite)
+	canon, err := c.File(p)
 	if err != nil {
 		t.Fatalf("File: %v", err)
 	}

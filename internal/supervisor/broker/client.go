@@ -107,25 +107,81 @@ func (c *Client) Stop(ctx context.Context, name string, graceful bool) (VMState,
 }
 
 // Remove is DELETE /v1/vm/{name}: the VM, its differencing disk and
-// the broker's VM directory (never the data disk); the directory alone
-// when the VM does not exist.
+// the broker's VM directory, which stays while it holds the data disk
+// or its snapshot (DeleteVHD deletes those); the directory alone when
+// the VM does not exist.
 func (c *Client) Remove(ctx context.Context, name string) error {
 	return c.do(ctx, http.MethodDelete, "/v1/vm/"+url.PathEscape(name), nil, nil)
 }
 
-// NewVHD is POST /v1/vhd: a new dynamic data disk at path, which the
-// caller then has full control of.
-func (c *Client) NewVHD(ctx context.Context, path string, size int64) (VHDResult, error) {
+// IsAlreadyImported reports whether err is POST /v1/vhd/import's answer
+// that the VM directory holds a data disk already.
+func IsAlreadyImported(err error) bool {
+	var se *StatusError
+	return errors.As(err, &se) && se.Status == http.StatusConflict && strings.HasPrefix(se.Msg, AlreadyImported)
+}
+
+// NewVHD is POST /v1/vhd: a new dynamic data disk for the team of
+// configDir, in its VM directory, replacing one there only with
+// replace.
+func (c *Client) NewVHD(ctx context.Context, configDir string, size int64, replace bool) (VHDResult, error) {
 	var res VHDResult
-	err := c.do(ctx, http.MethodPost, "/v1/vhd", VHDRequest{Path: path, SizeBytes: size}, &res)
+	err := c.do(ctx, http.MethodPost, "/v1/vhd", VHDRequest{ConfigDir: configDir, SizeBytes: size, Replace: replace}, &res)
 	return res, err
 }
 
-// OptimizeVHD is POST /v1/vhd/optimize: the data disk at path, the
-// caller's own and its VM off, compacted.
-func (c *Client) OptimizeVHD(ctx context.Context, path string) (OptimizeResult, error) {
+// OptimizeVHD is POST /v1/vhd/optimize: the data disk of the team of
+// configDir, its VM off, compacted.
+func (c *Client) OptimizeVHD(ctx context.Context, configDir string) (OptimizeResult, error) {
 	var res OptimizeResult
-	err := c.do(ctx, http.MethodPost, "/v1/vhd/optimize", OptimizeRequest{Path: path}, &res)
+	err := c.do(ctx, http.MethodPost, "/v1/vhd/optimize", DiskRequest{ConfigDir: configDir}, &res)
+	return res, err
+}
+
+// ImportVHD is POST /v1/vhd/import: data.vhdx in configDir, the data
+// disk's place before the broker kept it, copied into the team's VM
+// directory as its data disk (IsAlreadyImported when one is there).
+func (c *Client) ImportVHD(ctx context.Context, configDir string) (ImportResult, error) {
+	var res ImportResult
+	err := c.do(ctx, http.MethodPost, "/v1/vhd/import", DiskRequest{ConfigDir: configDir}, &res)
+	return res, err
+}
+
+// SnapshotVHD is POST /v1/vhd/snapshot: the data disk copied to its
+// upgrade snapshot, its VM off.
+func (c *Client) SnapshotVHD(ctx context.Context, configDir string) (SnapshotResult, error) {
+	var res SnapshotResult
+	err := c.do(ctx, http.MethodPost, "/v1/vhd/snapshot", DiskRequest{ConfigDir: configDir}, &res)
+	return res, err
+}
+
+// RestoreVHD is POST /v1/vhd/restore: the upgrade snapshot put in the
+// data disk's place, its VM off.
+func (c *Client) RestoreVHD(ctx context.Context, configDir string) error {
+	return c.do(ctx, http.MethodPost, "/v1/vhd/restore", DiskRequest{ConfigDir: configDir}, nil)
+}
+
+// DeleteSnapshot is DELETE /v1/vhd/snapshot: the upgrade snapshot
+// deleted.
+func (c *Client) DeleteSnapshot(ctx context.Context, configDir string) (DeleteResult, error) {
+	var res DeleteResult
+	err := c.do(ctx, http.MethodDelete, "/v1/vhd/snapshot", DiskRequest{ConfigDir: configDir}, &res)
+	return res, err
+}
+
+// DeleteVHD is DELETE /v1/vhd: the data disk and its snapshot deleted,
+// and the VM directory with them when the VM is gone.
+func (c *Client) DeleteVHD(ctx context.Context, configDir string) (DeleteResult, error) {
+	var res DeleteResult
+	err := c.do(ctx, http.MethodDelete, "/v1/vhd", DiskRequest{ConfigDir: configDir}, &res)
+	return res, err
+}
+
+// VHDProgress is POST /v1/vhd/progress: how far the long operation on
+// the team's data disk has got.
+func (c *Client) VHDProgress(ctx context.Context, configDir string) (VHDProgress, error) {
+	var res VHDProgress
+	err := c.do(ctx, http.MethodPost, "/v1/vhd/progress", DiskRequest{ConfigDir: configDir}, &res)
 	return res, err
 }
 

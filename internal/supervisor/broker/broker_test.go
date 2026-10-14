@@ -124,22 +124,20 @@ func TestVMRequestValidate(t *testing.T) {
 	key := host.DirKey(cfg)
 	good := VMRequest{
 		Name: VMName(key), ConfigDir: cfg,
-		DataVHDX: `C:\Kivali\team1\data.vhdx`,
-		CPUs:     4, MemoryMB: 4096, MAC: MAC(key), ComPipe: ComPipe(key),
+		CPUs: 4, MemoryMB: 4096, MAC: MAC(key), ComPipe: ComPipe(key),
 	}
 	if err := good.Validate(); err != nil {
 		t.Fatalf("a good request did not validate: %v", err)
 	}
 	mut := func(f func(*VMRequest)) VMRequest { r := good; f(&r); return r }
 	bad := map[string]VMRequest{
-		"cpus 0":        mut(func(r *VMRequest) { r.CPUs = 0 }),
-		"cpus huge":     mut(func(r *VMRequest) { r.CPUs = 1000 }),
-		"memory small":  mut(func(r *VMRequest) { r.MemoryMB = 512 }),
-		"memory odd":    mut(func(r *VMRequest) { r.MemoryMB = 4097 }),
-		"data not vhdx": mut(func(r *VMRequest) { r.DataVHDX = `C:\Kivali\team1\data.img` }),
-		"data unc":      mut(func(r *VMRequest) { r.DataVHDX = `\\srv\share\data.vhdx` }),
-		"pipe wrong":    mut(func(r *VMRequest) { r.ComPipe = `\\.\pipe\evil` }),
-		"name form":     mut(func(r *VMRequest) { r.Name = "kivali-XYZ" }),
+		"cpus 0":       mut(func(r *VMRequest) { r.CPUs = 0 }),
+		"cpus huge":    mut(func(r *VMRequest) { r.CPUs = 1000 }),
+		"memory small": mut(func(r *VMRequest) { r.MemoryMB = 512 }),
+		"memory odd":   mut(func(r *VMRequest) { r.MemoryMB = 4097 }),
+		"config unc":   mut(func(r *VMRequest) { r.ConfigDir = `\\srv\share\team1` }),
+		"pipe wrong":   mut(func(r *VMRequest) { r.ComPipe = `\\.\pipe\evil` }),
+		"name form":    mut(func(r *VMRequest) { r.Name = "kivali-XYZ" }),
 	}
 	for why, r := range bad {
 		if err := r.Validate(); err == nil {
@@ -180,19 +178,50 @@ func TestRootPath(t *testing.T) {
 }
 
 func TestVHDRequestValidate(t *testing.T) {
-	ok := VHDRequest{Path: `C:\Kivali\team1\data.vhdx`, SizeBytes: 64 << 30}
+	ok := VHDRequest{ConfigDir: `C:\Kivali\team1`, SizeBytes: 64 << 30}
 	if err := ok.Validate(); err != nil {
 		t.Fatalf("good VHD request: %v", err)
 	}
 	for why, r := range map[string]VHDRequest{
-		"wrong name": {Path: `C:\Kivali\team1\root.vhdx`, SizeBytes: 64 << 30},
-		"too small":  {Path: `C:\Kivali\team1\data.vhdx`, SizeBytes: 1 << 20},
-		"not MiB":    {Path: `C:\Kivali\team1\data.vhdx`, SizeBytes: 64<<30 + 1},
-		"relative":   {Path: `data.vhdx`, SizeBytes: 64 << 30},
+		"too small": {ConfigDir: `C:\Kivali\team1`, SizeBytes: 1 << 20},
+		"not MiB":   {ConfigDir: `C:\Kivali\team1`, SizeBytes: 64<<30 + 1},
+		"relative":  {ConfigDir: `team1`, SizeBytes: 64 << 30},
+		"a share":   {ConfigDir: `\\srv\share\team1`, SizeBytes: 64 << 30},
 	} {
 		if err := r.Validate(); err == nil {
 			t.Errorf("VHD request accepted but should fail: %s", why)
 		}
+	}
+}
+
+// A VM directory's account is the one SID its DACL names besides the
+// broker's own and Hyper-V's virtual machines'.
+func TestDirAccount(t *testing.T) {
+	const (
+		caller = "S-1-5-21-111-222-333-1001"
+		other  = "S-1-5-21-111-222-333-2002"
+		vm     = "S-1-5-83-1-111-222-333-444"
+	)
+	own := []string{LocalSystemSID, AdministratorsSID, ServiceSID}
+	for _, tc := range []struct {
+		what string
+		sids []string
+		want string
+	}{
+		{"the caller's entry", append(own, caller), caller},
+		{"the caller's entry twice (the object's and the inherited one)", append(own, caller, caller), caller},
+		{"in another case", append(own, strings.ToLower(caller)), strings.ToLower(caller)},
+		{"a virtual machine's entry beside it", append(own, vm, caller), caller},
+		{"no account's", own, ""},
+		{"none at all", nil, ""},
+	} {
+		got, err := DirAccount(tc.sids)
+		if err != nil || got != tc.want {
+			t.Errorf("%s: DirAccount = %q, %v; want %q", tc.what, got, err, tc.want)
+		}
+	}
+	if got, err := DirAccount(append(own, caller, other)); err == nil {
+		t.Errorf("two accounts: DirAccount = %q, want an error", got)
 	}
 }
 

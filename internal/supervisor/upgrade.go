@@ -143,16 +143,8 @@ func (s *Supervisor) Upgrade(ctx context.Context, o UpgradeOptions, logf Logf) e
 	if err := s.step(StepSnapshotting); err != nil {
 		return err
 	}
-	if err := removeIfExists(snap); err != nil {
-		return err
-	}
-	err = s.o.Host.Snapshot(s.dataPath(), snap)
-	if err == nil {
-		// The snapshot must be durable before the journal says it is.
-		err = s.o.Host.SyncDir(s.dataDir())
-	}
-	if err != nil {
-		_ = removeIfExists(snap)
+	if err := s.takeSnapshot(ctx); err != nil {
+		_ = s.removeSnapshot(ctx, snap)
 		s.dropDownloads(sg, logf)
 		logf("snapshot failed: %v; starting the org as it was", err)
 		_ = s.update(func(st *State) { st.Upgrade = nil })
@@ -199,7 +191,7 @@ func (s *Supervisor) Upgrade(ctx context.Context, o UpgradeOptions, logf Logf) e
 		}
 		return fmt.Errorf("the upgrade to %s could not be recorded (%w); the org was stopped, and the next start rolls back to %s", sg.meta.Version, err, from)
 	}
-	if err := removeIfExists(snap); err != nil {
+	if err := s.removeSnapshot(ctx, snap); err != nil {
 		logf("delete snapshot: %v", err)
 	}
 	s.dropDownloads(sg, logf)
@@ -430,19 +422,21 @@ func (s *Supervisor) rollbackLocked(ctx context.Context, logf Logf) (bool, error
 		return false, err
 	}
 	j := *s.State().Upgrade
-	if err := s.restoreSnapshot(&j, logf); err != nil {
+	if err := s.restoreSnapshot(ctx, &j, logf); err != nil {
 		return false, err
 	}
 	return true, s.bootAndServe(ctx, j.From, logf)
 }
 
-// restoreSnapshot swaps the snapshot over the data disk (replacing the
-// failed disk) and closes the journal. A complete snapshot that is
-// missing is taken as already swapped back only at step rolling-back,
-// where a crash between the rename and the journal update leaves
-// exactly that; at any other step the data disk may be the half-applied
-// new release, so it refuses and keeps the journal.
-func (s *Supervisor) restoreSnapshot(j *Journal, logf Logf) error {
+// restoreSnapshot swaps the snapshot over the data disk it was taken of
+// (replacing the failed disk; putSnapshotBack) and closes the journal.
+// A complete snapshot that is missing is taken as already swapped back
+// only at step rolling-back, where a crash between the rename and the
+// journal update leaves exactly that; at any other step the data disk
+// may be the half-applied new release, so it refuses and keeps the
+// journal.
+func (s *Supervisor) restoreSnapshot(ctx context.Context, j *Journal, logf Logf) error {
+	data := s.restoreTarget(j.Snapshot)
 	switch {
 	case exists(j.Snapshot):
 		if j.Step != StepRollingBack {
@@ -450,7 +444,7 @@ func (s *Supervisor) restoreSnapshot(j *Journal, logf Logf) error {
 				return err
 			}
 		}
-		if err := s.o.Host.Rename(j.Snapshot, s.dataPath()); err != nil {
+		if err := s.putSnapshotBack(ctx, j.Snapshot); err != nil {
 			return fmt.Errorf("restore snapshot: %w", err)
 		}
 		logf("data disk restored from the snapshot")
@@ -462,8 +456,8 @@ func (s *Supervisor) restoreSnapshot(j *Journal, logf Logf) error {
 			"(a) put the snapshot file back at %s and run `kivali-supervisor up` again, which rolls back to %s; or "+
 			"(b) to boot %s as it is, edit %s so that \"upgrade\" is null, then run `kivali-supervisor up` again. "+
 			"serve does not need to be stopped for either (up re-reads local.json), but run no other command in between",
-			j.From, j.To, j.Step, j.Snapshot, s.dataPath(), j.To,
-			j.Snapshot, j.From, s.dataPath(), filepath.Join(s.o.ConfigDir, "local.json"))
+			j.From, j.To, j.Step, j.Snapshot, data, j.To,
+			j.Snapshot, j.From, data, filepath.Join(s.o.ConfigDir, "local.json"))
 	}
 	return s.update(func(st *State) { st.Upgrade = nil; st.Kivali = j.From })
 }
@@ -481,8 +475,11 @@ func (s *Supervisor) bootAndServe(ctx context.Context, chartVersion string, logf
 }
 
 // recoverLocked finishes or undoes an upgrade a crash interrupted. The
-// VM is not running.
-func (s *Supervisor) recoverLocked(logf Logf) error {
+// VM is not running. A journal from before the backend moved the data
+// disk (DataDiskMigrator) names a snapshot beside the legacy disk, and
+// is recovered there, so the disk migrateLocked then moves is the one
+// the recovery left.
+func (s *Supervisor) recoverLocked(ctx context.Context, logf Logf) error {
 	j := s.State().Upgrade
 	if j == nil {
 		return nil
@@ -495,18 +492,18 @@ func (s *Supervisor) recoverLocked(logf Logf) error {
 	}()
 	switch {
 	case j.Step == StepCommitted:
-		if err := removeIfExists(j.Snapshot); err != nil {
+		if err := s.removeSnapshot(ctx, j.Snapshot); err != nil {
 			return err
 		}
 		logf("the upgrade had committed; snapshot deleted")
 		return s.update(func(st *State) { st.Upgrade = nil; st.Kivali = j.To })
 	case j.SnapshotComplete:
 		logf("rolling back to %s", j.From)
-		return s.restoreSnapshot(j, logf)
+		return s.restoreSnapshot(ctx, j, logf)
 	default:
 		// Crashed before the snapshot completed: the data disk was
 		// never touched. Delete any partial snapshot.
-		if err := removeIfExists(j.Snapshot); err != nil {
+		if err := s.removeSnapshot(ctx, j.Snapshot); err != nil {
 			return err
 		}
 		logf("the upgrade stopped before the snapshot completed; the org is unchanged on %s", j.From)

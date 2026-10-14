@@ -15,6 +15,7 @@ export function op(o: Partial<OpView> = {}): OpView {
     started_ms: 0,
     percent: 0,
     remaining: null,
+    stage_progress: null,
     ...o,
   };
 }

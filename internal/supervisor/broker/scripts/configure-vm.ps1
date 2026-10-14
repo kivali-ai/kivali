@@ -1,8 +1,8 @@
 # configure-vm: make the VM $a.name exist, off, with exactly this
 # configuration. Every path in $a is canonical (docs/developers/supervisor.md,
-# "The broker"): the data disk was checked by the broker as the caller;
-# the VM directory, and the child in it, are the broker's own; and the
-# root is the broker's own root disk, installed beside it, which the
+# "The broker"): the VM directory, and the child and the data disk in
+# it, are the broker's own, which the caller can read but not write; and
+# the root is the broker's own root disk, installed beside it, which the
 # broker checked is a fixed or dynamic VHDX with no parent.
 $vm = Get-VM -Name $a.name -ErrorAction SilentlyContinue
 if (-not $vm) {

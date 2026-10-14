@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -56,9 +57,8 @@ func impersonateNamedPipeClient(pipe windows.Handle) error {
 // winCaller is a request's caller: the client of its pipe connection.
 // Every file check re-impersonates that client on a locked OS thread,
 // opens the path with the client's token, and holds a handle open until
-// Close, reading, so what was checked cannot be swapped (File; a
-// name-only check holds an attributes-only handle, which pins nothing).
-// The SID is read once from the impersonation token.
+// Close, reading, so what was checked cannot be swapped (File). The SID
+// is read once from the impersonation token.
 type winCaller struct {
 	pipe    windows.Handle
 	sid     string
@@ -165,55 +165,48 @@ func handleSize(h windows.Handle) (int64, error) {
 	return int64(info.FileSizeHigh)<<32 | int64(info.FileSizeLow), nil
 }
 
-// CompactVHDX compacts the VHDX File pinned at p (Caller.CompactVHDX).
-// The virtual disk is opened as the caller, impersonated on a locked
-// thread, so the open is checked against the caller's token as every
-// other open of theirs is (the broker's own account need not be able to
-// open the file); it is opened without parents
-// (OPEN_VIRTUAL_DISK_FLAG_NO_PARENTS), its kind is checked through that
-// handle, and that handle compacts it. The sizes are read through the
-// pinning handle, before the open and after the virtual disk is closed.
-func (c *winCaller) CompactVHDX(ctx context.Context, p string) (before, after int64, err error) {
-	pin, ok := c.pinned[strings.ToLower(p)]
-	if !ok {
-		return 0, 0, fmt.Errorf("%s is not pinned", p)
-	}
-	if before, err = handleSize(pin); err != nil {
-		return 0, 0, fmt.Errorf("stat %s: %w", p, err)
-	}
-	if err := c.compact(ctx, p); err != nil {
-		return 0, 0, err
-	}
-	if after, err = handleSize(pin); err != nil {
-		return 0, 0, fmt.Errorf("stat %s: %w", p, err)
-	}
-	return before, after, nil
-}
-
-func (c *winCaller) compact(ctx context.Context, p string) error {
-	var vd windows.Handle
-	err := onCallerThread(c.pipe, func() error {
-		var e error
-		vd, e = openVHDXNoParents(p, false)
-		return e
-	})
-	if err != nil {
-		return fmt.Errorf("open %s as a VHDX: %w", p, err)
-	}
-	defer func() { _ = windows.CloseHandle(vd) }()
-	if err := checkDynamicVHDX(vd); err != nil {
-		return fmt.Errorf("%s: %w", p, err)
-	}
-	if err := compactVirtualDisk(ctx, vd); err != nil {
-		return fmt.Errorf("compact %s: %w", p, err)
-	}
-	return nil
-}
-
 // handleReader reads a file at an offset through a handle opened for
 // synchronous I/O (the offset goes in the OVERLAPPED; the handle's own
-// position is not used).
+// position is not used). CopyFile asks it for the file's allocated
+// ranges (ranges).
 type handleReader struct{ h windows.Handle }
+
+// allocatedRange is FILE_ALLOCATED_RANGE_BUFFER.
+type allocatedRange struct {
+	Offset, Length int64
+}
+
+// ranges is what CopyFile copies of the file's first size bytes: its
+// allocated ranges, and true, when the file is sparse; the whole of it,
+// and false, otherwise (or when the ranges cannot be read).
+func (r handleReader) ranges(size int64) ([]allocatedRange, bool) {
+	whole := []allocatedRange{{0, size}}
+	var info windows.ByHandleFileInformation
+	if err := windows.GetFileInformationByHandle(r.h, &info); err != nil || info.FileAttributes&windows.FILE_ATTRIBUTE_SPARSE_FILE == 0 {
+		return whole, false
+	}
+	var out []allocatedRange
+	buf := make([]allocatedRange, 64)
+	q := allocatedRange{0, size}
+	for q.Length > 0 {
+		var n uint32
+		err := windows.DeviceIoControl(r.h, windows.FSCTL_QUERY_ALLOCATED_RANGES,
+			(*byte)(unsafe.Pointer(&q)), uint32(unsafe.Sizeof(q)),
+			(*byte)(unsafe.Pointer(&buf[0])), uint32(len(buf))*uint32(unsafe.Sizeof(buf[0])), &n, nil)
+		if err != nil && !errors.Is(err, windows.ERROR_MORE_DATA) {
+			return whole, false
+		}
+		got := buf[:n/uint32(unsafe.Sizeof(buf[0]))]
+		out = append(out, got...)
+		if err == nil || len(got) == 0 {
+			break
+		}
+		last := got[len(got)-1]
+		next := last.Offset + last.Length
+		q = allocatedRange{next, size - next}
+	}
+	return out, true
+}
 
 func (r handleReader) ReadAt(b []byte, off int64) (int, error) {
 	if off < 0 {
@@ -255,98 +248,18 @@ func (c *winCaller) WritableDir(dir string) (string, error) {
 }
 
 // File opens an existing regular file (one hard link, not a directory)
-// as the caller, for the asked access, and canonicalises it.
-//
-// The handle kept until Close pins the file against a rename, removal
-// or replacement while the request runs: it is opened without delete
+// as the caller, for reading, and canonicalises it (Caller.File). The
+// handle kept until Close pins the file against a rename, removal or
+// replacement while the request runs: it is opened without delete
 // sharing and reads the file's data, since only data access and delete
-// take part in sharing (an attributes-only handle pins nothing). It
-// never writes: Hyper-V opens a disk to attach or start it with a share
-// mode that admits readers but no other writer, so the attach of
-// data.vhdx failed with a sharing violation while the broker held it
-// for writing, and every attach and start since has run with a reading
-// handle held). So AccessWrite is checked with a first open that is
-// closed once a second, read-only open is confirmed to be the same file
-// (by identity: the first pins the name meanwhile, so the second cannot
-// land elsewhere). AccessName, for a disk a running VM holds, opens
-// attributes only, which that VM's own open admits, and pins nothing:
-// the names are compared, and the running VM holds the files itself.
-func (c *winCaller) File(p string, access Access) (string, error) {
-	const pinAccess = windows.FILE_READ_DATA | windows.FILE_READ_ATTRIBUTES
-	var da uint32
-	switch access {
-	case AccessRead:
-		da = pinAccess
-	case AccessWrite:
-		da = pinAccess | windows.FILE_WRITE_DATA
-	case AccessName:
-		da = windows.FILE_READ_ATTRIBUTES
-	default:
-		return "", fmt.Errorf("unknown access %d", access)
-	}
-	h, canon, err := c.open(p, da, false)
+// take part in sharing (an attributes-only handle pins nothing).
+func (c *winCaller) File(p string) (string, error) {
+	h, canon, err := c.open(p, windows.FILE_READ_DATA|windows.FILE_READ_ATTRIBUTES, false)
 	if err != nil {
 		return "", err
 	}
-	if access == AccessName {
-		c.keep(h)
-		return canon, nil
-	}
-	if access == AccessRead {
-		c.pin(h, canon)
-		return canon, nil
-	}
-	defer func() { _ = windows.CloseHandle(h) }()
-	checked, err := handleIdentity(h)
-	if err != nil {
-		return "", fmt.Errorf("stat %s: %w", p, err)
-	}
-	pin, pinCanon, err := c.open(p, pinAccess, false)
-	if err != nil {
-		return "", err
-	}
-	pinned, err := handleIdentity(pin)
-	if err != nil || pinned != checked || !strings.EqualFold(pinCanon, canon) {
-		_ = windows.CloseHandle(pin)
-		if err != nil {
-			return "", fmt.Errorf("stat %s: %w", p, err)
-		}
-		return "", fmt.Errorf("%s changed while it was being checked", p)
-	}
-	c.pin(pin, canon)
+	c.pin(h, canon)
 	return canon, nil
-}
-
-// handleIdentity is the identity of the file open as h.
-func handleIdentity(h windows.Handle) (fileIdentity, error) {
-	var info windows.ByHandleFileInformation
-	if err := windows.GetFileInformationByHandle(h, &info); err != nil {
-		return fileIdentity{}, err
-	}
-	return identityOf(&info), nil
-}
-
-// Absent succeeds only if nothing is at p as the caller sees it. A
-// dangling link counts as present: opening it with the reparse-point
-// flag opens the link itself and succeeds.
-func (c *winCaller) Absent(p string) error {
-	name, err := windows.UTF16PtrFromString(p)
-	if err != nil {
-		return err
-	}
-	return onCallerThread(c.pipe, func() error {
-		h, err := windows.CreateFile(name, windows.FILE_READ_ATTRIBUTES,
-			windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, nil,
-			windows.OPEN_EXISTING, windows.FILE_FLAG_OPEN_REPARSE_POINT|windows.FILE_FLAG_BACKUP_SEMANTICS, 0)
-		if err == nil {
-			_ = windows.CloseHandle(h)
-			return ErrExists
-		}
-		if errors.Is(err, windows.ERROR_FILE_NOT_FOUND) || errors.Is(err, windows.ERROR_PATH_NOT_FOUND) {
-			return nil
-		}
-		return err
-	})
 }
 
 // open opens p as the caller with FILE_FLAG_OPEN_REPARSE_POINT (so a
@@ -433,10 +346,11 @@ func stripNTPrefix(p string) string {
 	return strings.TrimPrefix(p, `\\?\`)
 }
 
-// winFiles does the broker's own file-system work (as the service's account, or an elevated console broker):
-// making, canonicalising and removing the per-VM directory, and putting
-// a new data disk in place. Root, when set, is where the VM directories
-// go instead of the broker's own tree (VMRoot).
+// winFiles does the broker's own file-system work (as the service's
+// account, or an elevated console broker): making, canonicalising and
+// removing the per-VM directory, and making, copying, compacting,
+// renaming and deleting the disks in it. Root, when set, is where the
+// VM directories go instead of the broker's own tree (VMRoot).
 type winFiles struct{ Root string }
 
 // errNotBrokerDir is the refusal of a VM directory the broker did not
@@ -445,18 +359,14 @@ type winFiles struct{ Root string }
 // there as itself.
 var errNotBrokerDir = errors.New("not made by the broker (its owner is neither the broker service's account, LocalSystem nor Administrators); remove it and it is made again")
 
-// VMDir makes <configDir>\vm if absent, owned by the Administrators
-// group with a protected DACL that grants SYSTEM and that group full
-// control and the owner read, opens it without delete sharing (so it
-// cannot be swapped under the request), and checks it is a real
-// directory, no reparse point, and the broker's own (brokerOwned): a
-// directory of that name the caller made first is refused, since the
-// broker creates files in it as itself.
-//
-// The owner is named rather than left to the token's default, so it is
-// the same whether the broker runs as the service or elevated with
-// --console: both tokens may name the Administrators group as owner,
-// and an ordinary account's may not.
+// errOtherAccount is the refusal of a VM directory made for another
+// account: it holds that account's team's data disk.
+var errOtherAccount = errors.New("made for another account")
+
+// VMRoot is the root of the broker's VM directories (VMRoot of
+// winFiles{}), for the supervisor, which reads the data disk there.
+func VMRoot() (string, error) { return winFiles{}.VMRoot() }
+
 // VMRoot is where the broker keeps every VM directory: a directory of
 // its own under its log directory (ProgramData\Kivali\broker\vm), made
 // as the log directories are (logDirSDDL), so the service, which is no
@@ -491,6 +401,10 @@ func (f winFiles) VMDirPath(key string) string {
 // checked to be a real directory, no reparse point, and the broker's
 // own (brokerOwned). The caller cannot write in it, so nothing there is
 // a link the caller planted: the broker creates files in it as itself.
+// A directory that exists already is bound to the account it was made
+// for: its DACL's account (DirAccount, read through the handle) must
+// be the caller, or it is refused (errOtherAccount) before anything is
+// written to it.
 //
 // The owner is named rather than left to the token's default, so it is
 // the service's account as the service and the Administrators group
@@ -533,6 +447,10 @@ func (f winFiles) VMDir(key, callerSID string) (string, func(), error) {
 		return "", nil, err
 	}
 	if err := checkBrokerOwned(h, dir); err != nil {
+		_ = windows.CloseHandle(h)
+		return "", nil, err
+	}
+	if err := checkMadeFor(h, dir, callerSID); err != nil {
 		_ = windows.CloseHandle(h)
 		return "", nil, err
 	}
@@ -624,28 +542,81 @@ func checkBrokerOwned(h windows.Handle, dir string) error {
 	return nil
 }
 
-// fileIdentity is what names a file whatever its path: its volume and
-// its file index there.
-type fileIdentity struct{ volume, high, low uint32 }
+// dirAccountOf is the account the directory open as h (with
+// READ_CONTROL) was made for: DirAccount of the SIDs its DACL's entries
+// name, each read from the entry itself, so its numeric form is
+// compared whatever alias SDDL would print for it.
+func dirAccountOf(h windows.Handle, dir string) (string, error) {
+	sd, err := windows.GetSecurityInfo(h, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
+	if err != nil {
+		return "", fmt.Errorf("read the DACL of %s: %w", dir, err)
+	}
+	dacl, _, err := sd.DACL()
+	if err != nil {
+		return "", fmt.Errorf("read the DACL of %s: %w", dir, err)
+	}
+	sids, err := aceSIDs(dacl)
+	if err != nil {
+		return "", fmt.Errorf("read the DACL of %s: %w", dir, err)
+	}
+	account, err := DirAccount(sids)
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", dir, err)
+	}
+	return account, nil
+}
 
-func identityOf(info *windows.ByHandleFileInformation) fileIdentity {
-	return fileIdentity{info.VolumeSerialNumber, info.FileIndexHigh, info.FileIndexLow}
+// aceSIDs lists the SIDs acl's allow entries grant to: every entry the
+// broker writes on a VM directory is one, and so is the entry Hyper-V
+// adds for a virtual machine. Its SID follows its mask, as
+// ACCESS_ALLOWED_ACE lays it out.
+func aceSIDs(acl *windows.ACL) ([]string, error) {
+	if acl == nil {
+		return nil, nil
+	}
+	var sids []string
+	for i := uint16(0); i < acl.AceCount; i++ {
+		var ace *windows.ACCESS_ALLOWED_ACE
+		if err := windows.GetAce(acl, uint32(i), &ace); err != nil {
+			return nil, err
+		}
+		if ace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE {
+			continue
+		}
+		sids = append(sids, (*windows.SID)(unsafe.Pointer(&ace.SidStart)).String())
+	}
+	return sids, nil
+}
+
+// checkMadeFor refuses the VM directory open as h when it was made for
+// an account other than callerSID (errOtherAccount). A directory whose
+// DACL names no account is the caller's to take: VMDir writes the
+// caller's entry into it next.
+func checkMadeFor(h windows.Handle, dir, callerSID string) error {
+	account, err := dirAccountOf(h, dir)
+	if err != nil {
+		return err
+	}
+	if account != "" && !strings.EqualFold(account, callerSID) {
+		return fmt.Errorf("%s is %w", dir, errOtherAccount)
+	}
+	return nil
 }
 
 // openPlainFile opens p without following a link at it, with access
 // and without delete sharing, and checks it is a plain file: no reparse
 // point, no directory, one link (a hard link to some other file has
-// more). It returns the handle and the file's identity.
-func openPlainFile(p string, access uint32) (windows.Handle, fileIdentity, error) {
+// more).
+func openPlainFile(p string, access uint32) (windows.Handle, error) {
 	name, err := windows.UTF16PtrFromString(p)
 	if err != nil {
-		return 0, fileIdentity{}, err
+		return 0, err
 	}
 	h, err := windows.CreateFile(name, access|windows.FILE_READ_ATTRIBUTES,
 		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE, nil,
 		windows.OPEN_EXISTING, windows.FILE_FLAG_OPEN_REPARSE_POINT|windows.FILE_FLAG_BACKUP_SEMANTICS, 0)
 	if err != nil {
-		return 0, fileIdentity{}, fmt.Errorf("open %s: %w", p, err)
+		return 0, fmt.Errorf("open %s: %w", p, err)
 	}
 	var info windows.ByHandleFileInformation
 	err = windows.GetFileInformationByHandle(h, &info)
@@ -659,95 +630,213 @@ func openPlainFile(p string, access uint32) (windows.Handle, fileIdentity, error
 	}
 	if err != nil {
 		_ = windows.CloseHandle(h)
-		return 0, fileIdentity{}, err
+		return 0, err
 	}
-	return h, identityOf(&info), nil
+	return h, nil
 }
 
-// diskDACL is the DACL a new data disk gets (GrantFile, PlacedFile):
-// SYSTEM, Administrators and the service keep full control, and the
-// caller gets it, so the supervisor can snapshot, rename and delete the
-// disk as itself. It is not protected: what the directory the disk is
-// in passes on to its files applies too.
-func diskDACL(callerSID string) (*windows.ACL, error) {
-	sd, err := windows.SecurityDescriptorFromString("D:(A;;FA;;;SY)(A;;FA;;;BA)(A;;FA;;;" + ServiceSID + ")(A;;FA;;;" + callerSID + ")")
-	if err != nil {
-		return nil, fmt.Errorf("the disk's security descriptor: %w", err)
-	}
-	dacl, _, err := sd.DACL()
-	if err != nil {
-		return nil, fmt.Errorf("the disk's security descriptor: %w", err)
-	}
-	return dacl, nil
+// fileStandardInfo is FILE_STANDARD_INFO.
+type fileStandardInfo struct {
+	AllocationSize, EndOfFile int64
+	NumberOfLinks             uint32
+	DeletePending, Directory  bool
 }
 
-// GrantFile grants callerSID what a rename needs on p, the broker's new
-// file in a VM directory (Files.GrantFile): DELETE, with the attributes
-// and synchronisation a rename's open asks for, and nothing more, through
-// a handle opened on it without following a link; it returns the file's
-// identity. The caller then moves the file into its own directory as
-// itself (Caller.Rename: the broker, no administrator, cannot write
-// there) and gets full control once it has landed (PlacedFile). A file
-// the caller could write while it sits in the broker's directory could
-// be turned into a link there, which the next New-VHD would follow.
-func (winFiles) GrantFile(p, callerSID string) (FileID, error) {
-	if err := ValidSID(callerSID); err != nil {
-		return FileID{}, err
-	}
-	// DELETE 0x10000, SYNCHRONIZE 0x100000, FILE_READ_ATTRIBUTES 0x80.
-	sd, err := windows.SecurityDescriptorFromString("D:(A;;FA;;;SY)(A;;FA;;;BA)(A;;FA;;;" + ServiceSID + ")(A;;0x110080;;;" + callerSID + ")")
+// Stat reports the plain file at p (Files.Stat), opened without
+// following a link: its size and what the volume allocates to it. A
+// missing file is an error wrapping fs.ErrNotExist (the Errno does).
+func (winFiles) Stat(p string) (FileInfo, error) {
+	h, err := openPlainFile(p, 0)
 	if err != nil {
-		return FileID{}, fmt.Errorf("the new disk's security descriptor: %w", err)
-	}
-	dacl, _, err := sd.DACL()
-	if err != nil {
-		return FileID{}, fmt.Errorf("the new disk's security descriptor: %w", err)
-	}
-	h, id, err := openPlainFile(p, windows.READ_CONTROL|windows.WRITE_DAC)
-	if err != nil {
-		return FileID{}, fmt.Errorf("the new disk: %w", err)
+		return FileInfo{}, err
 	}
 	defer func() { _ = windows.CloseHandle(h) }()
-	err = windows.SetSecurityInfo(h, windows.SE_FILE_OBJECT,
-		windows.DACL_SECURITY_INFORMATION|windows.UNPROTECTED_DACL_SECURITY_INFORMATION, nil, nil, dacl, nil)
-	if err != nil {
-		return FileID{}, fmt.Errorf("grant the caller %s: %w", p, err)
+	var si fileStandardInfo
+	if err := windows.GetFileInformationByHandleEx(h, windows.FileStandardInfo, (*byte)(unsafe.Pointer(&si)), uint32(unsafe.Sizeof(si))); err != nil {
+		return FileInfo{}, fmt.Errorf("stat %s: %w", p, err)
 	}
-	return FileID{Volume: id.volume, High: id.high, Low: id.low}, nil
+	return FileInfo{Size: si.EndOfFile, Used: si.AllocationSize}, nil
 }
 
-// PlacedFile checks that dst, opened as itself without following a link,
-// is a plain file, the very one GrantFile returned id for, and
-// canonically dst (Files.PlacedFile): the caller moved it there, and
-// could have renamed it away and put something else at dst. It then
-// applies the disk's DACL again through that handle, so what dst's
-// directory passes on to its files replaces what the VM directory did.
-func (winFiles) PlacedFile(dst string, id FileID, callerSID string) error {
-	dacl, err := diskDACL(callerSID)
+// Open opens the plain file at p for reading (Files.Open), without
+// following a link and without delete sharing, until release.
+func (winFiles) Open(p string) (io.ReaderAt, int64, func(), error) {
+	h, err := openPlainFile(p, windows.FILE_READ_DATA)
+	if err != nil {
+		return nil, 0, nil, err
+	}
+	size, err := handleSize(h)
+	if err != nil {
+		_ = windows.CloseHandle(h)
+		return nil, 0, nil, fmt.Errorf("stat %s: %w", p, err)
+	}
+	return handleReader{h}, size, func() { _ = windows.CloseHandle(h) }, nil
+}
+
+// copyChunk is how much CopyFile reads and writes at a time, and so how
+// often it reports and checks for cancellation.
+const copyChunk = 4 << 20
+
+// CopyFile copies size bytes of src into dst (Files.CopyFile), a file
+// it creates (CREATE_NEW: anything at dst, a dangling link among them,
+// fails it), as itself, so the copy inherits the VM directory's DACL:
+// the caller reads it and only the broker writes it. When src is a
+// handleReader on a sparse file, dst is made sparse and only src's
+// allocated ranges are copied; otherwise all of it is, and dst is not
+// made sparse, since Hyper-V refuses to attach a sparse virtual disk on
+// older Windows builds. dst is flushed (FlushFileBuffers) before the
+// answer; a copy that fails, or whose ctx ends, deletes it through its
+// own handle.
+func (winFiles) CopyFile(ctx context.Context, src io.ReaderAt, size int64, dst string, m *Meter) (err error) {
+	name, err := windows.UTF16PtrFromString(dst)
 	if err != nil {
 		return err
 	}
-	h, got, err := openPlainFile(dst, windows.READ_CONTROL|windows.WRITE_DAC)
+	h, err := windows.CreateFile(name, windows.GENERIC_READ|windows.GENERIC_WRITE|windows.DELETE, 0, nil,
+		windows.CREATE_NEW, windows.FILE_ATTRIBUTE_NORMAL|windows.FILE_FLAG_OPEN_REPARSE_POINT, 0)
 	if err != nil {
-		return fmt.Errorf("after the move: %w", err)
+		return fmt.Errorf("create %s: %w", dst, err)
 	}
-	defer func() { _ = windows.CloseHandle(h) }()
-	if got != (fileIdentity{id.Volume, id.High, id.Low}) {
-		return fmt.Errorf("%s is no longer the disk the broker made", dst)
+	out := os.NewFile(uintptr(h), dst)
+	defer func() {
+		if err != nil {
+			_ = deleteByHandle(h)
+		}
+		_ = out.Close()
+	}()
+	ranges := []allocatedRange{{0, size}}
+	if hr, ok := src.(handleReader); ok {
+		if r, sparse := hr.ranges(size); sparse {
+			var n uint32
+			if err := windows.DeviceIoControl(h, windows.FSCTL_SET_SPARSE, nil, 0, nil, 0, &n, nil); err == nil {
+				ranges = r
+			}
+		}
 	}
-	canon, err := finalPath(h)
-	if err != nil {
-		return fmt.Errorf("canonicalise %s: %w", dst, err)
+	if err := out.Truncate(size); err != nil {
+		return fmt.Errorf("size %s: %w", dst, err)
 	}
-	if !strings.EqualFold(canon, dst) {
-		return fmt.Errorf("%w (%s resolves to %s)", errReparseOnPath, dst, canon)
+	var total, done int64
+	for _, r := range ranges {
+		total += r.Length
 	}
-	err = windows.SetSecurityInfo(h, windows.SE_FILE_OBJECT,
-		windows.DACL_SECURITY_INFORMATION|windows.UNPROTECTED_DACL_SECURITY_INFORMATION, nil, nil, dacl, nil)
-	if err != nil {
-		return fmt.Errorf("grant the caller %s: %w", dst, err)
+	m.Set(0, total)
+	buf := make([]byte, copyChunk)
+	for _, r := range ranges {
+		for off := r.Offset; off < r.Offset+r.Length; {
+			if err := ctx.Err(); err != nil {
+				return fmt.Errorf("the copy was stopped: %w", err)
+			}
+			n := int(min(int64(len(buf)), r.Offset+r.Length-off))
+			got, err := src.ReadAt(buf[:n], off)
+			if got < n {
+				if err == nil || errors.Is(err, io.EOF) {
+					err = io.ErrUnexpectedEOF
+				}
+				return fmt.Errorf("read at %d: %w", off, err)
+			}
+			if _, err := out.WriteAt(buf[:n], off); err != nil {
+				return fmt.Errorf("write %s: %w", dst, err)
+			}
+			off += int64(n)
+			done += int64(n)
+			m.Set(done, total)
+		}
+	}
+	if err := out.Sync(); err != nil {
+		return fmt.Errorf("flush %s: %w", dst, err)
 	}
 	return nil
+}
+
+// CheckDynamicVHDX refuses p unless it is a dynamic VHDX with no parent
+// (Files.CheckDynamicVHDX): its metadata read through a handle opened
+// without following a link (dynamicNoParent), then the virtual disk
+// opened as itself without opening any parent its locator names, and
+// not for its metadata only, so that the VHDX's log is replayed as any
+// open of it would, and its subtype read through that handle
+// (checkDynamicVHDX).
+func (winFiles) CheckDynamicVHDX(p string) error {
+	h, err := openPlainFile(p, windows.FILE_READ_DATA)
+	if err != nil {
+		return err
+	}
+	size, err := handleSize(h)
+	if err == nil {
+		err = dynamicNoParent(handleReader{h}, size)
+	}
+	_ = windows.CloseHandle(h)
+	if err != nil {
+		return fmt.Errorf("%s: %w", p, err)
+	}
+	vd, err := openVHDXNoParents(p, false)
+	if err != nil {
+		return fmt.Errorf("open %s as a VHDX: %w", p, err)
+	}
+	defer func() { _ = windows.CloseHandle(vd) }()
+	if err := checkDynamicVHDX(vd); err != nil {
+		return fmt.Errorf("%s: %w", p, err)
+	}
+	return nil
+}
+
+// CompactVHDX compacts the VHDX at p (Files.CompactVHDX), the broker's
+// own file: the virtual disk is opened as itself without parents
+// (OPEN_VIRTUAL_DISK_FLAG_NO_PARENTS), its kind is checked through that
+// handle, and that handle compacts it while m reads its progress. The
+// sizes are read before the open and after the virtual disk is closed.
+func (f winFiles) CompactVHDX(ctx context.Context, p string, m *Meter) (before, after int64, err error) {
+	fi, err := f.Stat(p)
+	if err != nil {
+		return 0, 0, err
+	}
+	if err := compact(ctx, p, m); err != nil {
+		return 0, 0, err
+	}
+	if fi2, err := f.Stat(p); err == nil {
+		return fi.Size, fi2.Size, nil
+	}
+	return fi.Size, fi.Size, nil
+}
+
+func compact(ctx context.Context, p string, m *Meter) error {
+	vd, err := openVHDXNoParents(p, false)
+	if err != nil {
+		return fmt.Errorf("open %s as a VHDX: %w", p, err)
+	}
+	defer func() { _ = windows.CloseHandle(vd) }()
+	if err := checkDynamicVHDX(vd); err != nil {
+		return fmt.Errorf("%s: %w", p, err)
+	}
+	if err := compactVirtualDisk(ctx, vd, m); err != nil {
+		return fmt.Errorf("compact %s: %w", p, err)
+	}
+	return nil
+}
+
+// Rename moves src to dst as itself (Files.Rename): MoveFileEx with
+// MOVEFILE_WRITE_THROUGH, so the move is on the disk before the answer,
+// and MOVEFILE_REPLACE_EXISTING only with replace. A rename never
+// follows a link at dst; without replace, anything there fails it
+// (ErrExists).
+func (winFiles) Rename(src, dst string, replace bool) error {
+	from, err := windows.UTF16PtrFromString(src)
+	if err != nil {
+		return err
+	}
+	to, err := windows.UTF16PtrFromString(dst)
+	if err != nil {
+		return err
+	}
+	flags := uint32(windows.MOVEFILE_WRITE_THROUGH)
+	if replace {
+		flags |= windows.MOVEFILE_REPLACE_EXISTING
+	}
+	err = windows.MoveFileEx(from, to, flags)
+	if errors.Is(err, windows.ERROR_ALREADY_EXISTS) || errors.Is(err, windows.ERROR_FILE_EXISTS) {
+		return ErrExists
+	}
+	return err
 }
 
 // DeleteFile deletes p, a file in a VM directory, through a handle
@@ -774,29 +863,6 @@ func (winFiles) DeleteFile(p string) error {
 	return nil
 }
 
-// Rename moves src to dst as the caller (Caller.Rename): MoveFileEx
-// without MOVEFILE_REPLACE_EXISTING, which never follows a link at dst
-// and fails if anything is there (ErrExists). As the caller, the move
-// can land only where the caller may write, and the file was granted to
-// the caller first (GrantFile), so DELETE on it is theirs.
-func (c *winCaller) Rename(src, dst string) error {
-	from, err := windows.UTF16PtrFromString(src)
-	if err != nil {
-		return err
-	}
-	to, err := windows.UTF16PtrFromString(dst)
-	if err != nil {
-		return err
-	}
-	return onCallerThread(c.pipe, func() error {
-		err := windows.MoveFileEx(from, to, 0)
-		if errors.Is(err, windows.ERROR_ALREADY_EXISTS) || errors.Is(err, windows.ERROR_FILE_EXISTS) {
-			return ErrExists
-		}
-		return err
-	})
-}
-
 // RemoveVMDir deletes the VM directory dir and everything in it
 // (Files.RemoveVMDir): opened as itself, it must be a directory, no
 // reparse point, canonically dir and the broker's own, and it is then
@@ -816,11 +882,11 @@ func (winFiles) RemoveVMDir(dir, callerSID string) error {
 	if callerSID != "" {
 		// The directory must be the caller's own team's: VMDir wrote the
 		// caller's read entry into it when it made it.
-		sd, err := windows.GetSecurityInfo(h, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
+		account, err := dirAccountOf(h, dir)
 		if err != nil {
-			return fmt.Errorf("read the DACL of %s: %w", dir, err)
+			return err
 		}
-		if !strings.Contains(strings.ToUpper(sd.String()), ";;;"+strings.ToUpper(callerSID)+")") {
+		if !strings.EqualFold(account, callerSID) {
 			return fmt.Errorf("%s was not made for this account", dir)
 		}
 	}
@@ -949,7 +1015,7 @@ func deleteByHandle(h windows.Handle) error {
 // running VM that holds the disk. Only the locator's bytes are parsed;
 // the parent is never opened.
 func (winFiles) ParentPath(p string) (string, error) {
-	h, _, err := openPlainFile(p, windows.FILE_READ_DATA)
+	h, err := openPlainFile(p, windows.FILE_READ_DATA)
 	if err != nil {
 		return "", err
 	}

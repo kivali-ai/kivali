@@ -5,7 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -20,7 +22,7 @@ import (
 // --- fakes (the Windows-only parts the policy talks to) ---
 
 type fakeEntry struct {
-	read, write bool
+	read bool
 	// content is what Contents reads; nil reads as a dynamic VHDX with
 	// no parent, the data disk the backend makes.
 	content []byte
@@ -36,17 +38,9 @@ type fakeCaller struct {
 	sid   string
 	dirs  map[string]bool      // directories the caller can add files to
 	files map[string]fakeEntry // existing regular files
-	// renameErr is Rename's answer (nil: the move happened).
-	renameErr error
-	renames   []rename
-	// compacted lists CompactVHDX's paths; compactSizes and compactErr
-	// are its answer.
-	compacted    []string
-	compactSizes [2]int64
-	compactErr   error
+	// pinned lists the files File opened.
+	pinned []string
 }
-
-type rename struct{ src, dst string }
 
 func (c *fakeCaller) SID() string { return c.sid }
 
@@ -57,17 +51,15 @@ func (c *fakeCaller) WritableDir(dir string) (string, error) {
 	return "", errors.New("access denied")
 }
 
-func (c *fakeCaller) File(p string, access Access) (string, error) {
+func (c *fakeCaller) File(p string) (string, error) {
 	e, ok := c.files[p]
 	if !ok {
-		return "", errors.New("no such file")
+		return "", fmt.Errorf("open %s: %w", p, fs.ErrNotExist)
 	}
-	if access == AccessRead && !e.read {
+	if !e.read {
 		return "", errors.New("access denied")
 	}
-	if access == AccessWrite && !e.write {
-		return "", errors.New("access denied")
-	}
+	c.pinned = append(c.pinned, p)
 	return p, nil
 }
 
@@ -83,35 +75,12 @@ func (c *fakeCaller) Contents(p string) (io.ReaderAt, int64, error) {
 	return bytes.NewReader(b), int64(len(b)), nil
 }
 
-func (c *fakeCaller) Absent(p string) error {
-	if _, ok := c.files[p]; ok {
-		return ErrExists
-	}
-	return nil
-}
-
-func (c *fakeCaller) Rename(src, dst string) error {
-	c.renames = append(c.renames, rename{src, dst})
-	return c.renameErr
-}
-
-func (c *fakeCaller) CompactVHDX(_ context.Context, p string) (int64, int64, error) {
-	if e, ok := c.files[p]; !ok || !e.write {
-		return 0, 0, errors.New("not pinned for writing")
-	}
-	c.compacted = append(c.compacted, p)
-	if c.compactErr != nil {
-		return 0, 0, c.compactErr
-	}
-	return c.compactSizes[0], c.compactSizes[1], nil
-}
-
 func (c *fakeCaller) Close() error { return nil }
 
 // fakeFiles is the broker's own file work, recorded: the VM directories
-// it was asked to make, the files it moved into place and the VM
-// directories it removed, each with whether the script that had to run
-// first (new-vhd, remove-vm) had run when it was asked.
+// it was asked to make, the disks in them (a map of path to content),
+// and every copy, compaction, rename, deletion and removal, each with
+// whether the script that had to run first had run when it was asked.
 type fakeFiles struct {
 	runner *fakeRunner
 	canon  map[string]string
@@ -123,26 +92,42 @@ type fakeFiles struct {
 	rootErr    error
 	rootChecks []string
 
-	mu        sync.Mutex
-	vmDirs    []string // VMDir's keys
-	granted   []grant
-	placed    []placement
-	removed   []removal
-	removeErr error
+	mu sync.Mutex
+	// dirAccount binds each VM directory (by key) to the account VMDir
+	// first made it for, as the DACL entry does.
+	dirAccount map[string]string
+	vmDirs     []string // VMDir's keys
+	// disks are the files in the VM directories, by path.
+	disks map[string][]byte
+	// copyHook, when set, runs in each copy once it has begun, with its
+	// meter (a test reads the progress there, or blocks it); copyErr,
+	// when set, fails the copy after it.
+	copyHook func(ctx context.Context, m *Meter) error
+	copies   []fileCopy
+	// checkErr, when set, is CheckDynamicVHDX's refusal; without it the
+	// file's content is read as a VHDX (dynamicNoParent).
+	checkErr error
+	checked  []string
+	// compactHook, compactSizes and compactErr make CompactVHDX's
+	// answer; compacted lists its paths.
+	compactHook  func(m *Meter)
+	compactSizes [2]int64
+	compactErr   error
+	compacted    []string
+	renames      []fileRename
+	deleted      []string
+	removed      []removal
+	removeErr    error
 }
 
-// grant is a GrantFile call: the broker's new file, the caller it was
-// granted to, and whether new-vhd had made it by then.
-type grant struct {
-	src, owner string
-	created    bool
+type fileCopy struct {
+	dst  string
+	size int64
 }
 
-// placement is a PlacedFile call: the identity GrantFile returned, the
-// destination and the caller.
-type placement struct {
-	id         FileID
-	dst, owner string
+type fileRename struct {
+	src, dst string
+	replace  bool
 }
 
 type removal struct {
@@ -156,10 +141,17 @@ const fakeVMRoot = `C:\ProgramData\Kivali\broker\vm`
 // vmDirFor is the VM directory of a config directory, as the fake makes it.
 func vmDirFor(configDir string) string { return winJoin(fakeVMRoot, host.DirKey(configDir)) }
 
-func (f *fakeFiles) VMDir(key, _ string) (string, func(), error) {
+func (f *fakeFiles) VMDir(key, sid string) (string, func(), error) {
 	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.dirAccount == nil {
+		f.dirAccount = map[string]string{}
+	}
+	if a, ok := f.dirAccount[key]; ok && a != sid {
+		return "", nil, errors.New("made for another account")
+	}
+	f.dirAccount[key] = sid
 	f.vmDirs = append(f.vmDirs, key)
-	f.mu.Unlock()
 	return winJoin(fakeVMRoot, key), func() {}, nil
 }
 
@@ -168,6 +160,14 @@ func (f *fakeFiles) VMDirPath(key string) string { return winJoin(fakeVMRoot, ke
 func (f *fakeFiles) Canonical(p string) (string, error) {
 	if c, ok := f.canon[p]; ok {
 		return c, nil
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if strings.HasPrefix(p, fakeVMRoot+`\`) && strings.Count(p[len(fakeVMRoot)+1:], `\`) == 0 {
+		// A VM directory exists once VMDir made it.
+		if _, ok := f.dirAccount[p[len(fakeVMRoot)+1:]]; !ok {
+			return "", fmt.Errorf("open %s: %w", p, fs.ErrNotExist)
+		}
 	}
 	return p, nil
 }
@@ -179,27 +179,115 @@ func (f *fakeFiles) ParentPath(p string) (string, error) {
 	return "", errors.New("not a differencing disk")
 }
 
-func (f *fakeFiles) GrantFile(p, owner string) (FileID, error) {
-	var na struct {
-		Path string `json:"path"`
-	}
-	if args, ok := f.runner.lastCall(scriptNewVHD); ok {
-		_ = json.Unmarshal(args, &na)
-	}
+func (f *fakeFiles) Stat(p string) (FileInfo, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.granted = append(f.granted, grant{src: p, owner: owner, created: na.Path == p})
-	return FileID{Volume: 1, High: 0, Low: uint32(len(f.granted))}, nil
+	b, ok := f.disks[p]
+	if !ok {
+		return FileInfo{}, fmt.Errorf("open %s: %w", p, fs.ErrNotExist)
+	}
+	return FileInfo{Size: int64(len(b)), Used: int64(len(b))}, nil
 }
 
-func (f *fakeFiles) PlacedFile(dst string, id FileID, owner string) error {
+func (f *fakeFiles) Open(p string) (io.ReaderAt, int64, func(), error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.placed = append(f.placed, placement{id: id, dst: dst, owner: owner})
+	b, ok := f.disks[p]
+	if !ok {
+		return nil, 0, nil, fmt.Errorf("open %s: %w", p, fs.ErrNotExist)
+	}
+	return bytes.NewReader(b), int64(len(b)), func() {}, nil
+}
+
+func (f *fakeFiles) CopyFile(ctx context.Context, src io.ReaderAt, size int64, dst string, m *Meter) error {
+	f.mu.Lock()
+	if _, ok := f.disks[dst]; ok {
+		f.mu.Unlock()
+		return ErrExists
+	}
+	f.disks[dst] = nil
+	f.copies = append(f.copies, fileCopy{dst, size})
+	hook := f.copyHook
+	f.mu.Unlock()
+	m.Set(0, size)
+	if hook != nil {
+		if err := hook(ctx, m); err != nil {
+			f.drop(dst)
+			return err
+		}
+	}
+	b := make([]byte, size)
+	if _, err := src.ReadAt(b, 0); err != nil && !errors.Is(err, io.EOF) {
+		f.drop(dst)
+		return err
+	}
+	m.Set(size, size)
+	f.mu.Lock()
+	f.disks[dst] = b
+	f.mu.Unlock()
 	return nil
 }
 
-func (f *fakeFiles) DeleteFile(string) error { return nil }
+func (f *fakeFiles) drop(p string) {
+	f.mu.Lock()
+	delete(f.disks, p)
+	f.mu.Unlock()
+}
+
+func (f *fakeFiles) CheckDynamicVHDX(p string) error {
+	f.mu.Lock()
+	f.checked = append(f.checked, p)
+	b, ok := f.disks[p]
+	err := f.checkErr
+	f.mu.Unlock()
+	if !ok {
+		return fmt.Errorf("open %s: %w", p, fs.ErrNotExist)
+	}
+	if err != nil {
+		return err
+	}
+	return dynamicNoParent(bytes.NewReader(b), int64(len(b)))
+}
+
+func (f *fakeFiles) CompactVHDX(_ context.Context, p string, m *Meter) (int64, int64, error) {
+	f.mu.Lock()
+	f.compacted = append(f.compacted, p)
+	hook, sizes, err := f.compactHook, f.compactSizes, f.compactErr
+	f.mu.Unlock()
+	if hook != nil {
+		hook(m)
+	}
+	if err != nil {
+		return 0, 0, err
+	}
+	return sizes[0], sizes[1], nil
+}
+
+func (f *fakeFiles) Rename(src, dst string, replace bool) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.renames = append(f.renames, fileRename{src, dst, replace})
+	b, ok := f.disks[src]
+	if !ok {
+		return fmt.Errorf("rename %s: %w", src, fs.ErrNotExist)
+	}
+	if _, there := f.disks[dst]; there && !replace {
+		return ErrExists
+	}
+	delete(f.disks, src)
+	f.disks[dst] = b
+	return nil
+}
+
+func (f *fakeFiles) DeleteFile(p string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.disks[p]; ok {
+		f.deleted = append(f.deleted, p)
+		delete(f.disks, p)
+	}
+	return nil
+}
 
 func (f *fakeFiles) RootDisk(p string) (string, error) {
 	f.mu.Lock()
@@ -217,17 +305,49 @@ func (f *fakeFiles) roots() []string {
 	return append([]string(nil), f.rootChecks...)
 }
 
-func (f *fakeFiles) RemoveVMDir(dir, _ string) error {
+func (f *fakeFiles) RemoveVMDir(dir, sid string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.removed = append(f.removed, removal{dir: dir, vmRemoved: f.runner.called(scriptRemoveVM)})
-	return f.removeErr
+	if f.removeErr != nil {
+		return f.removeErr
+	}
+	key := dir[strings.LastIndexByte(dir, '\\')+1:]
+	if sid != "" && f.dirAccount[key] != sid {
+		return errors.New("not made for this account")
+	}
+	delete(f.dirAccount, key)
+	return nil
 }
 
 func (f *fakeFiles) removedDirs() []removal {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]removal(nil), f.removed...)
+}
+
+// disk is the content of the file at p in a VM directory, and whether
+// it is there.
+func (f *fakeFiles) disk(p string) ([]byte, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	b, ok := f.disks[p]
+	return b, ok
+}
+
+// putDisk puts a file at p in a VM directory (whose account becomes the
+// test caller's, as VMDir would have made it).
+func (f *fakeFiles) putDisk(p string, b []byte) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.disks[p] = b
+	dir := winDir(p)
+	if f.dirAccount == nil {
+		f.dirAccount = map[string]string{}
+	}
+	if _, ok := f.dirAccount[winBase(dir)]; !ok {
+		f.dirAccount[winBase(dir)] = testSID
+	}
 }
 
 type recorded struct {
@@ -241,6 +361,8 @@ type fakeRunner struct {
 	vm    *vmInfo                    // what get-vm returns (nil: exists:false)
 	resp  map[string]json.RawMessage // other scripts' canned output
 	errs  map[string]error
+	// files, when set, are where new-vhd creates its disk.
+	files *fakeFiles
 }
 
 func newFakeRunner() *fakeRunner {
@@ -255,12 +377,21 @@ func (r *fakeRunner) Run(_ context.Context, script string, args any) (json.RawMe
 	if e := r.errs[script]; e != nil {
 		return nil, e
 	}
-	if script == scriptGetVM {
+	switch script {
+	case scriptGetVM:
 		if r.vm == nil {
 			return json.RawMessage(`{"exists":false}`), nil
 		}
 		b, _ := json.Marshal(r.vm)
 		return b, nil
+	case scriptNewVHD:
+		var na struct {
+			Path string `json:"path"`
+		}
+		_ = json.Unmarshal(raw, &na)
+		if r.files != nil {
+			r.files.putDisk(na.Path, dynamicDisk)
+		}
 	}
 	if resp, ok := r.resp[script]; ok {
 		return resp, nil
@@ -301,6 +432,19 @@ type harness struct {
 	caller *fakeCaller
 	server *Server
 	client *Client
+
+	mu sync.Mutex
+	// finished, when set, receives the path of every request the server
+	// has finished answering, even one whose client has gone.
+	finished chan string
+}
+
+// finishedOn makes the harness report each request the server finishes.
+func (h *harness) finishedOn() chan string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.finished = make(chan string, 16)
+	return h.finished
 }
 
 func newHarness(t *testing.T) *harness {
@@ -308,9 +452,10 @@ func newHarness(t *testing.T) *harness {
 	h := &harness{
 		t:      t,
 		runner: runner,
-		files:  &fakeFiles{runner: runner, canon: map[string]string{}, parents: map[string]string{}},
+		files:  &fakeFiles{runner: runner, canon: map[string]string{}, parents: map[string]string{}, disks: map[string][]byte{}},
 		caller: &fakeCaller{sid: testSID, dirs: map[string]bool{}, files: map[string]fakeEntry{}},
 	}
+	runner.files = h.files
 	h.server = &Server{
 		Runner:   h.runner,
 		Files:    h.files,
@@ -318,7 +463,16 @@ func newHarness(t *testing.T) *harness {
 		CallerOf: func(*http.Request) (Caller, error) { return h.caller, nil },
 		Logf:     t.Logf,
 	}
-	ts := httptest.NewServer(h.server.Handler())
+	handler := h.server.Handler()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handler.ServeHTTP(w, r)
+		h.mu.Lock()
+		finished := h.finished
+		h.mu.Unlock()
+		if finished != nil {
+			finished <- r.URL.Path
+		}
+	}))
 	t.Cleanup(ts.Close)
 	addr := strings.TrimPrefix(ts.URL, "http://")
 	h.client = &Client{Dial: func(ctx context.Context) (net.Conn, error) {
@@ -333,12 +487,14 @@ const testCfg = `C:\Kivali\team1`
 // testRoot is the broker's root disk in the tests (Server.Root).
 const testRoot = `C:\Program Files\Kivali\vm\root.vhdx`
 
+// testData is the data disk of testCfg's team, in its VM directory.
+var testData = winJoin(vmDirFor(testCfg), DataDiskName)
+
 func (h *harness) req() VMRequest {
 	key := host.DirKey(testCfg)
 	return VMRequest{
 		Name:      VMName(key),
 		ConfigDir: testCfg,
-		DataVHDX:  winJoin(testCfg, DataDiskName),
 		CPUs:      4,
 		MemoryMB:  4096,
 		MAC:       MAC(key),
@@ -346,11 +502,11 @@ func (h *harness) req() VMRequest {
 	}
 }
 
-// allowCreate lets the caller write the config dir and open the data
-// disk.
+// allowCreate lets the caller write the config dir, and puts the data
+// disk in the VM directory.
 func (h *harness) allowCreate(r VMRequest) {
 	h.caller.dirs[r.ConfigDir] = true
-	h.caller.files[r.DataVHDX] = fakeEntry{read: true, write: true}
+	h.files.putDisk(testData, dynamicDisk)
 }
 
 // ownVM makes get-vm report a VM owned by the caller in the given state,
@@ -359,6 +515,16 @@ func (h *harness) allowCreate(r VMRequest) {
 func (h *harness) ownVM(state string) *vmInfo {
 	key := host.DirKey(testCfg)
 	h.files.parents[winJoin(vmDirFor(testCfg), ChildDiskName)] = testRoot
+	// The VM directory exists, made for the caller, as the VM's
+	// configuration made it.
+	h.files.mu.Lock()
+	if h.files.dirAccount == nil {
+		h.files.dirAccount = map[string]string{}
+	}
+	if _, ok := h.files.dirAccount[key]; !ok {
+		h.files.dirAccount[key] = testSID
+	}
+	h.files.mu.Unlock()
 	vm := &vmInfo{
 		Exists: true, ID: "VMID-1", State: state, Notes: OwnerNotes(testSID),
 		Path: vmDirFor(testCfg),
@@ -366,7 +532,7 @@ func (h *harness) ownVM(state string) *vmInfo {
 		MAC: MAC(key), Switch: DefaultSwitch, ComPipe: ComPipe(key),
 		Disks: []vmDisk{
 			{Controller: 0, Location: 0, Path: winJoin(vmDirFor(testCfg), ChildDiskName)},
-			{Controller: 0, Location: 1, Path: winJoin(testCfg, DataDiskName)},
+			{Controller: 0, Location: 1, Path: testData},
 		},
 	}
 	h.runner.vm = vm
@@ -407,7 +573,7 @@ func TestEnsureCreates(t *testing.T) {
 	if ca.Child != winJoin(vmDirFor(testCfg), ChildDiskName) {
 		t.Errorf("child = %q", ca.Child)
 	}
-	if ca.Data != r.DataVHDX || ca.Root != testRoot {
+	if ca.Data != testData || ca.Root != testRoot {
 		t.Errorf("disks = %q, %q", ca.Data, ca.Root)
 	}
 	if ca.MAC != strings.ToUpper(r.MAC) {
@@ -459,17 +625,41 @@ func TestEnsureRejectsMalformedRequest(t *testing.T) {
 	}
 }
 
-func TestEnsureDataDiskMustBeInConfigDir(t *testing.T) {
+// A request that names a data disk is refused before anything opens or
+// runs: the data disk is the broker's own file in the VM directory, and
+// a client that still sends one (a supervisor older than the broker)
+// learns so from the field's name.
+func TestEnsureRefusesADataDiskFromTheCaller(t *testing.T) {
 	h := newHarness(t)
 	r := h.req()
-	// A data disk that validates (ends .vhdx, local, clean) but is not
-	// inside the config directory.
-	r.DataVHDX = `C:\Elsewhere\data.vhdx`
+	h.allowCreate(r)
+	body, _ := json.Marshal(r)
+	var fields map[string]any
+	_ = json.Unmarshal(body, &fields)
+	fields["data_vhdx"] = winJoin(testCfg, DataDiskName)
+	body, _ = json.Marshal(fields)
+	status, msg := h.post("/v1/vm", string(body))
+	if status != http.StatusBadRequest || !strings.Contains(msg, "data_vhdx") {
+		t.Fatalf("answer = %d %q, want 400 naming data_vhdx", status, msg)
+	}
+	if h.runner.count() != 0 || len(h.files.roots()) != 0 {
+		t.Errorf("a refused request ran %d scripts and checked the root %d times", h.runner.count(), len(h.files.roots()))
+	}
+}
+
+// The VM attaches the data disk in its VM directory, and only once it
+// is there: without one, configuring the VM is refused, saying how to
+// make one.
+func TestEnsureNeedsTheDataDisk(t *testing.T) {
+	h := newHarness(t)
+	r := h.req()
 	h.caller.dirs[r.ConfigDir] = true
-	h.caller.files[r.DataVHDX] = fakeEntry{read: true, write: true}
 	_, err := h.client.EnsureVM(context.Background(), r)
-	if statusOf(err) != http.StatusForbidden || !strings.Contains(err.Error(), "not in") {
+	if statusOf(err) != http.StatusConflict || !strings.Contains(err.Error(), "POST /v1/vhd") {
 		t.Fatalf("err = %v (status %d)", err, statusOf(err))
+	}
+	if h.runner.called(scriptConfigureVM) {
+		t.Error("configure-vm ran without a data disk")
 	}
 }
 
@@ -477,7 +667,7 @@ func TestEnsureRefusedWhenConfigDirNotWritable(t *testing.T) {
 	h := newHarness(t)
 	r := h.req()
 	// The caller cannot write the config dir.
-	h.caller.files[r.DataVHDX] = fakeEntry{read: true, write: true}
+	h.files.putDisk(testData, dynamicDisk)
 	_, err := h.client.EnsureVM(context.Background(), r)
 	if statusOf(err) != http.StatusForbidden || !strings.Contains(err.Error(), "config_dir") {
 		t.Fatalf("err = %v (status %d)", err, statusOf(err))
@@ -521,7 +711,7 @@ func TestEnsureRunningRefusesStructuralChange(t *testing.T) {
 	r := h.req()
 	h.allowCreate(r)
 	vm := h.ownVM(StateRunning)
-	vm.Disks[1].Path = `C:\Kivali\team1\other.vhdx` // data disk differs
+	vm.Disks[1].Path = winJoin(testCfg, DataDiskName) // the data disk of an earlier layout
 	_, err := h.client.EnsureVM(context.Background(), r)
 	if statusOf(err) != http.StatusConflict || !strings.Contains(err.Error(), "data disk") {
 		t.Fatalf("err = %v (status %d)", err, statusOf(err))
@@ -696,7 +886,6 @@ func TestStartChecksDisks(t *testing.T) {
 	h := newHarness(t)
 	key := host.DirKey(testCfg)
 	h.ownVM(StateOff)
-	h.caller.files[winJoin(testCfg, DataDiskName)] = fakeEntry{read: true, write: true}
 	h.runner.resp[scriptStartVM] = json.RawMessage(`{"id":"VMID-1","state":"Running"}`)
 	st, err := h.client.Start(context.Background(), VMName(key))
 	if err != nil {
@@ -708,20 +897,36 @@ func TestStartChecksDisks(t *testing.T) {
 	if !h.runner.called(scriptStartVM) {
 		t.Error("start-vm not run")
 	}
+	if len(h.caller.pinned) != 0 {
+		t.Errorf("a start opened the caller's files: %v", h.caller.pinned)
+	}
 }
 
-func TestStartRefusesWhenDataDiskMoved(t *testing.T) {
-	h := newHarness(t)
-	key := host.DirKey(testCfg)
-	vm := h.ownVM(StateOff)
-	vm.Disks[1].Path = `C:\Elsewhere\data.vhdx`
-	h.caller.files[`C:\Elsewhere\data.vhdx`] = fakeEntry{read: true, write: true}
-	_, err := h.client.Start(context.Background(), VMName(key))
-	if statusOf(err) != http.StatusConflict {
-		t.Fatalf("err = %v (status %d)", err, statusOf(err))
-	}
-	if h.runner.called(scriptStartVM) {
-		t.Error("a VM whose disk moved was started")
+// A start refuses a VM whose data disk slot holds anything but the
+// broker's data disk in the VM directory of the VM's key: a file in the
+// config directory (where the caller could write it, as an earlier
+// layout kept it), another team's, or the right path reached through a
+// link.
+func TestStartRefusesADataDiskOutsideTheVMDir(t *testing.T) {
+	for why, set := range map[string]func(h *harness, vm *vmInfo){
+		"in the config directory": func(_ *harness, vm *vmInfo) { vm.Disks[1].Path = winJoin(testCfg, DataDiskName) },
+		"elsewhere":               func(_ *harness, vm *vmInfo) { vm.Disks[1].Path = `C:\Elsewhere\data.vhdx` },
+		"another team's": func(_ *harness, vm *vmInfo) {
+			vm.Disks[1].Path = winJoin(vmDirFor(`C:\Kivali\team2`), DataDiskName)
+		},
+		"through a link": func(h *harness, _ *vmInfo) { h.files.canon[testData] = `C:\Users\Public\data.vhdx` },
+	} {
+		t.Run(why, func(t *testing.T) {
+			h := newHarness(t)
+			set(h, h.ownVM(StateOff))
+			_, err := h.client.Start(context.Background(), VMName(host.DirKey(testCfg)))
+			if statusOf(err) != http.StatusConflict || !strings.Contains(err.Error(), "data disk") {
+				t.Fatalf("err = %v (status %d)", err, statusOf(err))
+			}
+			if h.runner.called(scriptStartVM) {
+				t.Error("a VM whose data disk is not the broker's was started")
+			}
+		})
 	}
 }
 
@@ -754,6 +959,34 @@ func TestRemoveDeletesChildNotData(t *testing.T) {
 	got := h.files.removedDirs()
 	if len(got) != 1 || got[0].dir != vmDirFor(testCfg) || !got[0].vmRemoved {
 		t.Fatalf("VM directories removed = %+v, want only %s, after remove-vm", got, vmDirFor(testCfg))
+	}
+}
+
+// The VM directory holds the team's data disk (or its snapshot): the
+// VM goes, its directory stays, with the disk, for DELETE /v1/vhd. The
+// same holds without a VM.
+func TestRemoveKeepsAVMDirHoldingData(t *testing.T) {
+	key := host.DirKey(testCfg)
+	for _, name := range []string{DataDiskName, SnapshotName} {
+		for _, vm := range []bool{true, false} {
+			h := newHarness(t)
+			if vm {
+				h.ownVM(StateOff)
+			}
+			h.files.putDisk(winJoin(vmDirFor(testCfg), name), dynamicDisk)
+			if err := h.client.Remove(context.Background(), VMName(key)); err != nil {
+				t.Fatalf("%s, VM %v: Remove: %v", name, vm, err)
+			}
+			if vm && !h.runner.called(scriptRemoveVM) {
+				t.Errorf("%s: the VM was not removed", name)
+			}
+			if got := h.files.removedDirs(); len(got) != 0 {
+				t.Errorf("%s, VM %v: removed %+v", name, vm, got)
+			}
+			if _, ok := h.files.disk(winJoin(vmDirFor(testCfg), name)); !ok {
+				t.Errorf("%s, VM %v: the disk is gone", name, vm)
+			}
+		}
 	}
 }
 
@@ -846,19 +1079,19 @@ func TestRemoveReportsVMDirRefusal(t *testing.T) {
 	}
 }
 
-// The data disk is created in the broker's VM directory, never at the
-// caller's path, and then moved to exactly <dir>\data.vhdx and granted
-// to the caller.
+// The data disk is created straight into the team's VM directory as
+// data.vhdx, as the broker: New-VHD is given that path and no other,
+// and the caller is granted nothing (the file takes the directory's
+// DACL, which lets the caller read it).
 func TestNewVHD(t *testing.T) {
 	h := newHarness(t)
-	p := winJoin(testCfg, DataDiskName)
 	h.caller.dirs[testCfg] = true
-	res, err := h.client.NewVHD(context.Background(), p, 64<<30)
+	res, err := h.client.NewVHD(context.Background(), testCfg, 64<<30, false)
 	if err != nil {
 		t.Fatalf("NewVHD: %v", err)
 	}
-	if res.Path != p {
-		t.Fatalf("path = %q", res.Path)
+	if res.Path != testData {
+		t.Fatalf("path = %q, want %s", res.Path, testData)
 	}
 	args, ok := h.runner.lastCall(scriptNewVHD)
 	if !ok {
@@ -866,57 +1099,63 @@ func TestNewVHD(t *testing.T) {
 	}
 	var na map[string]any
 	_ = json.Unmarshal(args, &na)
-	made, _ := na["path"].(string)
-	if !Under(vmDirFor(testCfg), made) || made != winJoin(vmDirFor(testCfg), newDiskName) {
-		t.Fatalf("new-vhd creates %q, not in the VM directory", made)
-	}
-	if size, _ := na["size_bytes"].(float64); size != 64<<30 {
-		t.Fatalf("size_bytes = %v", na["size_bytes"])
-	}
-	if _, ok := na["owner_sid"]; ok || len(na) != 2 {
-		t.Fatalf("new-vhd args = %v; the grant is the broker's, after the move", na)
+	if na["path"] != testData || na["size_bytes"] != float64(64<<30) || len(na) != 2 {
+		t.Fatalf("new-vhd args = %v", na)
 	}
 	if len(h.files.vmDirs) != 1 || h.files.vmDirs[0] != host.DirKey(testCfg) {
 		t.Fatalf("VM directories made = %v", h.files.vmDirs)
 	}
-	if g := (grant{src: made, owner: testSID, created: true}); len(h.files.granted) != 1 || h.files.granted[0] != g {
-		t.Fatalf("grants = %+v, want %+v", h.files.granted, g)
-	}
-	if r := (rename{made, p}); len(h.caller.renames) != 1 || h.caller.renames[0] != r {
-		t.Fatalf("renames = %+v, want %+v", h.caller.renames, r)
-	}
-	if pl := (placement{id: FileID{Volume: 1, Low: 1}, dst: p, owner: testSID}); len(h.files.placed) != 1 || h.files.placed[0] != pl {
-		t.Fatalf("placed = %+v, want %+v", h.files.placed, pl)
+	if len(h.files.renames) != 0 || len(h.caller.pinned) != 0 {
+		t.Fatalf("renames %v, caller's files opened %v: the disk is made in place", h.files.renames, h.caller.pinned)
 	}
 }
 
-func TestNewVHDRefusesExisting(t *testing.T) {
+// A data disk already there is replaced only when asked (a disk whose
+// first boot never reached READY); otherwise 409 and nothing runs.
+func TestNewVHDReplacesOnlyWhenAsked(t *testing.T) {
 	h := newHarness(t)
-	p := winJoin(testCfg, DataDiskName)
 	h.caller.dirs[testCfg] = true
-	h.caller.files[p] = fakeEntry{read: true, write: true} // already there
-	_, err := h.client.NewVHD(context.Background(), p, 64<<30)
+	h.files.putDisk(testData, []byte("the team's disk"))
+	_, err := h.client.NewVHD(context.Background(), testCfg, 64<<30, false)
 	if statusOf(err) != http.StatusConflict {
 		t.Fatalf("err = %v (status %d)", err, statusOf(err))
 	}
-	if h.runner.called(scriptNewVHD) {
-		t.Error("new-vhd ran over an existing file")
+	if b, _ := h.files.disk(testData); string(b) != "the team's disk" || h.runner.called(scriptNewVHD) {
+		t.Fatalf("the disk was touched: %q, new-vhd ran %v", b, h.runner.called(scriptNewVHD))
 	}
-	if len(h.caller.renames) != 0 {
-		t.Errorf("a move was asked for: %+v", h.caller.renames)
+	if _, err := h.client.NewVHD(context.Background(), testCfg, 64<<30, true); err != nil {
+		t.Fatalf("NewVHD with replace: %v", err)
+	}
+	if b, _ := h.files.disk(testData); !bytes.Equal(b, dynamicDisk) {
+		t.Fatalf("the disk was not replaced: %q", b)
 	}
 }
 
-// Something put at the destination after the check and before the move
-// makes the rename fail: a conflict, as if it had been there before.
-func TestNewVHDConflictAtTheMove(t *testing.T) {
-	h := newHarness(t)
-	p := winJoin(testCfg, DataDiskName)
-	h.caller.dirs[testCfg] = true
-	h.caller.renameErr = ErrExists
-	_, err := h.client.NewVHD(context.Background(), p, 64<<30)
-	if statusOf(err) != http.StatusConflict {
-		t.Fatalf("err = %v (status %d)", err, statusOf(err))
+// A disk is made only for the caller's own VM, and only while it is off
+// or absent, and only in a VM directory made for the caller.
+func TestNewVHDRefusals(t *testing.T) {
+	for _, tc := range []struct {
+		what   string
+		setup  func(h *harness)
+		status int
+	}{
+		{"a running VM", func(h *harness) { h.ownVM(StateRunning) }, http.StatusConflict},
+		{"another account's VM", func(h *harness) { h.ownVM(StateOff).Notes = OwnerNotes("S-1-5-21-111-222-333-2002") }, http.StatusForbidden},
+		{"another account's VM directory", func(h *harness) {
+			_, _, _ = h.files.VMDir(host.DirKey(testCfg), "S-1-5-21-111-222-333-2002")
+		}, http.StatusForbidden},
+		{"a config directory the caller cannot write", func(h *harness) { h.caller.dirs[testCfg] = false }, http.StatusForbidden},
+	} {
+		h := newHarness(t)
+		h.caller.dirs[testCfg] = true
+		tc.setup(h)
+		_, err := h.client.NewVHD(context.Background(), testCfg, 64<<30, true)
+		if statusOf(err) != tc.status {
+			t.Errorf("%s: err = %v (status %d), want %d", tc.what, err, statusOf(err), tc.status)
+		}
+		if h.runner.called(scriptNewVHD) {
+			t.Errorf("%s: new-vhd ran", tc.what)
+		}
 	}
 }
 
@@ -949,7 +1188,19 @@ func TestStateOnlyQueries(t *testing.T) {
 		{"stop", func(h *harness) error { _, err := h.client.Stop(context.Background(), VMName(key), true); return err }, true},
 		{"optimize", func(h *harness) error {
 			h.caller.dirs[testCfg] = true
-			_, err := h.client.OptimizeVHD(context.Background(), winJoin(testCfg, DataDiskName))
+			_, err := h.client.OptimizeVHD(context.Background(), testCfg)
+			return err
+		}, true},
+		{"import", func(h *harness) error {
+			h.caller.dirs[testCfg] = true
+			h.files.drop(testData)
+			h.caller.files[winJoin(testCfg, DataDiskName)] = fakeEntry{read: true}
+			_, err := h.client.ImportVHD(context.Background(), testCfg)
+			return err
+		}, true},
+		{"snapshot", func(h *harness) error {
+			h.caller.dirs[testCfg] = true
+			_, err := h.client.SnapshotVHD(context.Background(), testCfg)
 			return err
 		}, true},
 		{"start", func(h *harness) error { _, err := h.client.Start(context.Background(), VMName(key)); return err }, false},
@@ -963,7 +1214,7 @@ func TestStateOnlyQueries(t *testing.T) {
 	} {
 		h := newHarness(t)
 		h.ownVM(StateOff)
-		h.caller.files[winJoin(testCfg, DataDiskName)] = fakeEntry{read: true, write: true}
+		h.files.putDisk(testData, dynamicDisk)
 		if err := tc.call(h); err != nil {
 			t.Fatalf("%s: %v", tc.what, err)
 		}
@@ -998,14 +1249,16 @@ func TestSetup(t *testing.T) {
 }
 
 // Without a VM, DELETE removes the broker's VM directory of the name's
-// key (a first up that made the data disk but never the VM leaves one
+// key (a first up that made the directory but never the VM leaves one
 // behind, which the account cannot delete), if it is there and
-// canonical; RemoveVMDir then checks it was made for the caller.
+// canonical and holds no data disk; RemoveVMDir then checks it was made
+// for the caller.
 func TestRemoveOrphanVMDir(t *testing.T) {
 	key := host.DirKey(testCfg)
 	vmDir := vmDirFor(testCfg)
 	t.Run("removed", func(t *testing.T) {
 		h := newHarness(t)
+		_, _, _ = h.files.VMDir(key, testSID)
 		if err := h.client.Remove(context.Background(), VMName(key)); err != nil {
 			t.Fatalf("Remove: %v", err)
 		}
@@ -1027,9 +1280,15 @@ func TestRemoveOrphanVMDir(t *testing.T) {
 			t.Fatalf("removed %+v", got)
 		}
 	})
+	t.Run("nothing there", func(t *testing.T) {
+		h := newHarness(t)
+		if err := h.client.Remove(context.Background(), VMName(key)); !IsNotFound(err) {
+			t.Fatalf("err = %v (status %d)", err, statusOf(err))
+		}
+	})
 	t.Run("refused by the directory's own check", func(t *testing.T) {
 		h := newHarness(t)
-		h.files.removeErr = errors.New("not made for this account")
+		_, _, _ = h.files.VMDir(key, "S-1-5-21-111-222-333-2002")
 		err := h.client.Remove(context.Background(), VMName(key))
 		if statusOf(err) != http.StatusForbidden {
 			t.Fatalf("err = %v (status %d)", err, statusOf(err))

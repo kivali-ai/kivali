@@ -389,11 +389,14 @@ func (c *cli) status(args []string) int {
 	_ = fs.Parse(args)
 	ctx := context.Background()
 	if !c.client.Ping(ctx) {
-		dataDisk := ""
+		var dataDisks []string
 		if c.backend != nil {
-			dataDisk = c.backend.DataDiskPath(c.configDir)
+			dataDisks = append(dataDisks, c.backend.DataDiskPath(c.configDir))
+			if m, ok := c.backend.(supervisor.DataDiskMigrator); ok {
+				dataDisks = append(dataDisks, m.LegacyDataDiskPath(c.configDir))
+			}
 		}
-		st, err := supervisor.LoadState(c.configDir, dataDisk)
+		st, err := supervisor.LoadState(c.configDir, dataDisks...)
 		if err != nil {
 			return fail(err)
 		}

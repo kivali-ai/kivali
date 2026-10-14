@@ -158,12 +158,14 @@ func checkRootVHDX(p string) error {
 // COMPACT_VIRTUAL_DISK_FLAG_NO_ZERO_SCAN, as Optimize-VHD -Mode Quick
 // does a disk that is not mounted: the blocks the allocation table
 // marks unused (the guest's discards) are given back and the rest moved
-// down, without reading every block for zeros. It runs as an overlapped operation and waits
-// for it to end; when ctx ends first the operation is cancelled
-// (CancelIoEx) and still waited for, since virtdisk writes its outcome
-// into the OVERLAPPED, and a compaction cut short is left to the VHDX's
-// own log.
-func compactVirtualDisk(ctx context.Context, h windows.Handle) error {
+// down, without reading every block for zeros. It runs as an overlapped
+// operation and waits for it to end; meanwhile m reads its progress
+// (GetVirtualDiskOperationProgress on the handle and the OVERLAPPED, on
+// demand) and is detached before either is let go. When ctx ends first
+// the operation is cancelled (CancelIoEx) and still waited for, since
+// virtdisk writes its outcome into the OVERLAPPED, and a compaction cut
+// short is left to the VHDX's own log.
+func compactVirtualDisk(ctx context.Context, h windows.Handle, m *Meter) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -186,6 +188,12 @@ func compactVirtualDisk(ctx context.Context, h windows.Handle) error {
 	default:
 		return windows.Errno(r)
 	}
+	m.Reader(func() (done, total int64) {
+		if p, err := operationProgress(h, ov); err == nil {
+			return int64(p.CurrentValue), int64(p.CompletionValue)
+		}
+		return 0, 0
+	})
 	done := make(chan struct{})
 	watched := make(chan struct{})
 	go func() {
@@ -199,18 +207,15 @@ func compactVirtualDisk(ctx context.Context, h windows.Handle) error {
 	_, werr := windows.WaitForSingleObject(ev, windows.INFINITE)
 	close(done)
 	<-watched
+	m.Reader(nil)
 	if werr != nil {
 		return fmt.Errorf("wait for the compaction: %w", werr)
 	}
-	var prog virtualDiskProgress
-	r, _, _ = procGetVirtualDiskOperationProgress.Call(
-		uintptr(h),
-		uintptr(unsafe.Pointer(ov)),
-		uintptr(unsafe.Pointer(&prog)))
+	prog, err := operationProgress(h, ov)
 	runtime.KeepAlive(params)
 	runtime.KeepAlive(ov)
-	if r != 0 {
-		return fmt.Errorf("read the compaction's outcome: %w", windows.Errno(r))
+	if err != nil {
+		return fmt.Errorf("read the compaction's outcome: %w", err)
 	}
 	switch st := windows.Errno(prog.OperationStatus); {
 	case st == 0:
@@ -220,6 +225,20 @@ func compactVirtualDisk(ctx context.Context, h windows.Handle) error {
 	default:
 		return st
 	}
+}
+
+// operationProgress is GetVirtualDiskOperationProgress of the operation
+// running (or ended) on h with ov: its status and how far it has got.
+func operationProgress(h windows.Handle, ov *windows.Overlapped) (virtualDiskProgress, error) {
+	var prog virtualDiskProgress
+	r, _, _ := procGetVirtualDiskOperationProgress.Call(
+		uintptr(h),
+		uintptr(unsafe.Pointer(ov)),
+		uintptr(unsafe.Pointer(&prog)))
+	if r != 0 {
+		return prog, windows.Errno(r)
+	}
+	return prog, nil
 }
 
 // virtdisk.h values.
