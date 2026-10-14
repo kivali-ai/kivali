@@ -95,7 +95,12 @@ var shellCommandNames = map[string]string{
 }
 
 // shellToolkitText is the toolkit paragraph: the packages the shell
-// has, then those still being installed and those that failed.
+// has, then those it installs at start and those that failed. The
+// description is read once per MCP process, which outlives turns, so
+// nothing in it may go stale while the pod runs: an install still
+// running is worded as what holds for the pod's whole life (commands
+// wait for it, and the first command after it reports a failure), and
+// a finished install's result never changes.
 func shellToolkitText(sw ShellSoftware) string {
 	var b strings.Builder
 	if len(sw.Packages) == 0 {
@@ -111,7 +116,7 @@ func shellToolkitText(sw ShellSoftware) string {
 		b.WriteString("The shell is bash. Installed packages: " + strings.Join(names, ", ") + ".")
 	}
 	if len(sw.Installing) > 0 {
-		b.WriteString(" Being installed now: " + strings.Join(sw.Installing, ", ") + "; commands wait until the installation finishes.")
+		b.WriteString(" Also installed when the shell starts: " + strings.Join(sw.Installing, ", ") + ". Commands wait until that installation finishes, and the first command after it says if any of it could not be installed.")
 	}
 	if len(sw.Failed) > 0 {
 		parts := make([]string, len(sw.Failed))

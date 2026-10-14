@@ -142,6 +142,10 @@ when the package servers could not be reached). The first `run_shell`
 result after an install with failures carries a notice naming them:
 the agent's own command, not a subagent's, whose caller is still
 waiting for the answer; otherwise the notice waits for the next one.
+`run_shell`'s description is built once per `kivali mcp` process, which
+lives across turns, so it words an install still running as software
+installed when the shell starts, which commands wait for, and never as
+a state that ends.
 
 ### Core reads an agent's workspace through one confined primitive
 
