@@ -106,7 +106,9 @@ cuts work short. Approving an **Install software** proposal provisions an
 idle agent's pod synchronously, on a context the request cannot cancel,
 and records on the response's `software_install.outcome` what happened:
 `restarted`, `restart_when_idle` (the agent was working; its pod is
-recreated once the work has ended), `already_installed` (nothing new to
+recreated once the work has ended; if that provision then fails, the
+outcome becomes `saved_not_applied` and the agent is told so),
+`already_installed` (nothing new to
 add, no provision), or `saved_not_applied` (the provision failed; the
 next pod start installs it). The agent's and the owner's wording follow
 it.

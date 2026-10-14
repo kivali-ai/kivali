@@ -249,7 +249,7 @@ func (s *Server) ReprovisionAgentPodsAsync(slugs []string) {
 			continue
 		}
 		go func() {
-			if _, err := s.ReprovisionAgentPod(context.Background(), slug); err != nil {
+			if _, err := s.ReprovisionAgentPod(context.Background(), slug, nil); err != nil {
 				log.Printf("agentpod: reprovision %s: %v", slug, err)
 			}
 		}()

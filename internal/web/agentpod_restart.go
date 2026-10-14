@@ -49,7 +49,7 @@ const plannedDisruptionText = "Your runtime restarted mid-task to apply a change
 
 // lostRuntimeText is the row a turn whose runtime went away leaves for
 // the agent to read.
-const lostRuntimeText = "The runtime failed mid-task: the agent's runtime stopped before the turn finished. Resume your prior work per the handbook."
+const lostRuntimeText = "Your runtime stopped mid-task, before the turn finished. Resume your prior work per the handbook."
 
 // agentIdleLocked reports whether slug has no turn running or starting
 // and no subagent turn in flight. streamMu is held.
@@ -128,8 +128,9 @@ func (s *Server) holdIfIdle(slug string) bool {
 // recreated, and returns the provision's error. When the agent is
 // working it returns deferred: the provision runs once the agent's turn
 // and background tasks have ended (runOwedRestart), and turns are held
-// from then until the pod is recreated.
-func (s *Server) ReprovisionAgentPod(ctx context.Context, slug string) (deferred bool, err error) {
+// from then until the pod is recreated. A deferred provision that fails
+// is reported to onFailed (nil for none), on its own goroutine.
+func (s *Server) ReprovisionAgentPod(ctx context.Context, slug string, onFailed func(error)) (deferred bool, err error) {
 	if s.AgentPod == nil || slug == agent.CEOSlug {
 		return false, nil
 	}
@@ -139,13 +140,26 @@ func (s *Server) ReprovisionAgentPod(ctx context.Context, slug string) (deferred
 	}
 	s.streamMu.Lock()
 	if s.restartsOwed == nil {
-		s.restartsOwed = map[string]bool{}
+		s.restartsOwed = map[string]*owedRestart{}
 	}
-	s.restartsOwed[slug] = true
+	owed := s.restartsOwed[slug]
+	if owed == nil {
+		owed = &owedRestart{}
+		s.restartsOwed[slug] = owed
+	}
+	if onFailed != nil {
+		owed.onFailed = append(owed.onFailed, onFailed)
+	}
 	s.streamMu.Unlock()
 	// The agent may have gone idle since the check.
 	s.runOwedRestart(slug)
 	return true, nil
+}
+
+// owedRestart is a reprovision waiting for its agent to be idle, with
+// whoever is to hear if it fails.
+type owedRestart struct {
+	onFailed []func(error)
 }
 
 // runOwedRestart starts slug's owed reprovision if the agent is idle
@@ -155,24 +169,32 @@ func (s *Server) ReprovisionAgentPod(ctx context.Context, slug string) (deferred
 // at once restarts in between.
 func (s *Server) runOwedRestart(slug string) {
 	s.streamMu.Lock()
-	owed := s.restartsOwed[slug]
+	owed := s.restartsOwed[slug] != nil
 	s.streamMu.Unlock()
 	if !owed || !s.holdIfIdle(slug) {
 		return
 	}
 	s.streamMu.Lock()
-	owed = s.restartsOwed[slug]
+	restart := s.restartsOwed[slug]
 	delete(s.restartsOwed, slug)
 	s.streamMu.Unlock()
-	if !owed {
+	if restart == nil {
 		// Another caller took it between the two reads.
 		s.releaseTurns(slug)
 		return
 	}
 	go func() {
-		defer s.releaseTurns(slug)
+		// A failure is reported while the turns are still held, so what
+		// it delivers is in chat.jsonl before the next turn starts.
 		if err := s.ProvisionAgentPod(context.Background(), slug); err != nil {
 			log.Printf("agentpod: reprovision %s: %v", slug, err)
+			for _, f := range restart.onFailed {
+				f(err)
+			}
+		}
+		s.releaseTurns(slug)
+		if s.owedRestartDone != nil {
+			s.owedRestartDone(slug)
 		}
 	}()
 }
@@ -263,29 +285,41 @@ func (s *Server) releaseStartupHolds() {
 // turns with it. The parent turn ends as a runtime disruption (Planned
 // when Kivali recreated the pod), which the subscribe wake that follows
 // resumes on this runtime; a subagent turn fails, which its parent reads
-// as the task's result. A runtime that sent no id is never assumed to
-// replace another.
+// as the task's result.
+//
+// A turn published to a runtime that sent no id (one older than the
+// header) ends too once no such runtime is subscribed. A subscriber
+// that sends no id is never assumed to replace another. Any
+// subscription other than a reconnect of the same runtime clears the
+// planned-restart record: the restart it was for is over.
 func (s *Server) adoptRuntime(slug, runtimeID string) {
-	if runtimeID == "" {
-		return
+	idlessGone := s.AgentpodHub == nil || !s.AgentpodHub.HasRuntime(slug, "")
+	replaced := func(st *agentpodTurnState) bool {
+		if runtimeID == "" {
+			return false
+		}
+		if st.runtime == "" {
+			return idlessGone
+		}
+		return st.runtime != runtimeID
 	}
 	s.streamMu.Lock()
 	if s.runtimes == nil {
 		s.runtimes = map[string]string{}
 	}
-	prev := s.runtimes[slug]
+	prev, known := s.runtimes[slug]
 	s.runtimes[slug] = runtimeID
 	planned := s.plannedRestarts[slug]
-	if prev != runtimeID {
+	if !known || runtimeID == "" || prev != runtimeID {
 		delete(s.plannedRestarts, slug)
 	}
 	var parent *agentpodTurnState
-	if st := s.agentpodTurns[slug]; st != nil && st.runtime != "" && st.runtime != runtimeID {
+	if st := s.agentpodTurns[slug]; st != nil && replaced(st) {
 		parent = st
 	}
 	var subagents []*agentpodTurnState
 	for _, st := range s.agentpodSubagentTurns {
-		if st != nil && st.slug == slug && st.runtime != "" && st.runtime != runtimeID {
+		if st != nil && st.slug == slug && replaced(st) {
 			subagents = append(subagents, st)
 		}
 	}

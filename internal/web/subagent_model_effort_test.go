@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/kivali-ai/kivali/internal/provider"
@@ -28,8 +29,14 @@ func modelEffortService(t *testing.T) (*SubagentService, chan fakeDriveCall) {
 		t.Fatalf("store.New: %v", err)
 	}
 	calls := make(chan fakeDriveCall, 8)
+	// Every job the driver ran is waited for before the temp dir goes:
+	// a job writes its files until subagent_completed, the last thing
+	// it does that touches disk here.
+	var running sync.WaitGroup
+	t.Cleanup(running.Wait)
 	driver := &fakeSubagentDriver{
 		respond: func(c fakeDriveCall) (string, error) {
+			running.Add(1)
 			calls <- c
 			return "ok", nil
 		},
@@ -39,6 +46,11 @@ func modelEffortService(t *testing.T) (*SubagentService, chan fakeDriveCall) {
 		Store:           st,
 		Driver:          driver,
 		DeliverToParent: func(string, store.ChatMessage) error { return nil },
+		EmitToParent: func(_, kind string, _ any) {
+			if kind == "subagent_completed" {
+				running.Done()
+			}
+		},
 	}, calls
 }
 

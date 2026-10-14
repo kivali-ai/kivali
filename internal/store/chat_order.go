@@ -300,24 +300,28 @@ func HasUnansweredReceived(hist []ChatMessage) bool {
 	return false
 }
 
-// ConsecutiveRuntimeDisruptions counts how many KindRuntimeDisruption
-// entries trail at the very end of chat history, ignoring tool
-// plumbing in between. Used as a crash-loop circuit breaker: if the
-// agent has died and resumed N times in a row with no productive
-// activity between attempts, something is wrong (memory leak, poison
+// ConsecutiveRuntimeDisruptions counts the disrupted turns since the
+// agent last received something: the KindRuntimeDisruption entries
+// back to the latest received entry, ignoring tool plumbing and the
+// agent's own output in between. Used as a crash-loop circuit breaker:
+// if the agent has died and resumed N times in a row with nothing new
+// arriving between attempts, something is wrong (memory leak, poison
 // content, broken downstream) and we should stop auto-respawning.
 //
-// The count resets to 0 the moment any non-tool, non-system entry
-// lands in chat — the next agent response, the next CEO direct
-// message, anything. So a stuck agent that the operator manually
-// re-engages with (e.g., a CEO direct chat) automatically clears
-// the breaker. A Planned disruption (Kivali restarted the pod itself)
-// is walked past: it is not a crash, and it does not reset the count.
+// The agent's own output does not reset the count: a resumed turn that
+// writes a sentence and then dies again is still a crash loop. A turn
+// that finishes normally is answered, so the spawn gate does not
+// resume it; the next turn starts from a received entry, and that
+// resets the count — the next CEO direct message, a released message,
+// a task's result. So a stuck agent that the operator re-engages with
+// automatically clears the breaker. A Quiet entry is walked past, as a
+// Planned disruption (Kivali restarted the pod itself) is: neither is a
+// crash, and neither resets the count.
 func ConsecutiveRuntimeDisruptions(hist []ChatMessage) int {
 	n := 0
 	for i := len(hist) - 1; i >= 0; i-- {
 		m := hist[i]
-		if isToolPlumbing(m.Kind) {
+		if isToolPlumbing(m.Kind) || isQuiet(m) {
 			continue
 		}
 		if m.Kind == KindRuntimeDisruption && m.Planned {
@@ -325,6 +329,9 @@ func ConsecutiveRuntimeDisruptions(hist []ChatMessage) int {
 		}
 		if m.Kind == KindRuntimeDisruption {
 			n++
+			continue
+		}
+		if m.Role == RoleSent {
 			continue
 		}
 		break

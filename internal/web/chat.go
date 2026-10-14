@@ -399,10 +399,10 @@ func (s *Server) spawnChatLoopIfIdle(slug, source string) bool {
 		return s.abandonSpawn(slug, hub, source)
 	}
 	// Circuit breaker: if the agent has crashed-and-respawned three
-	// times in a row with no productive activity in between, stop
+	// times in a row with nothing received in between, stop
 	// auto-respawning. The CEO can re-engage via direct chat to
-	// reset the count (any non-system, non-tool entry resets it
-	// per store.ConsecutiveRuntimeDisruptions).
+	// reset the count (a received entry resets it per
+	// store.ConsecutiveRuntimeDisruptions).
 	if store.ConsecutiveRuntimeDisruptions(hist) >= chatHubQuarantineThreshold {
 		log.Printf("chat %s: quarantined (%d consecutive runtime disruptions); not auto-respawning", slug, store.ConsecutiveRuntimeDisruptions(hist))
 		return s.abandonSpawn(slug, hub, source)

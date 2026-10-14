@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"testing"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/kivali-ai/kivali/internal/agentpod"
 	"github.com/kivali-ai/kivali/internal/clock"
+	"github.com/kivali-ai/kivali/internal/provider"
 	"github.com/kivali-ai/kivali/internal/store"
 	"github.com/kivali-ai/kivali/internal/web/apitypes"
 )
@@ -262,21 +264,44 @@ func (p *signalingSoftwarePod) Provision(ctx context.Context, slug string) error
 	return err
 }
 
-// Approving software for an agent at work does not cut its turn short:
-// the answer says the shell restarts once the work has ended, and the
-// pod is recreated when the turn ends, before the next turn starts.
-func TestApproveSoftwareForABusyAgentRestartsWhenItsTurnEnds(t *testing.T) {
-	srv, _ := newTurnServer(t)
+// busyBuyer is a team whose buyer has a turn running on runtime-1, a
+// software proposal from it waiting, and a pod whose provisions report
+// on a channel. owedDone receives once a deferred restart has finished
+// and released its hold.
+func busyBuyer(t *testing.T, fail error) (srv *Server, pod *signalingSoftwarePod, rel string, st *agentpodTurnState, owedDone chan string) {
+	t.Helper()
+	srv, _ = newTurnServer(t)
 	srv.AgentpodHub = newAgentpodHub()
 	softwareTeam(t, srv)
-	pod := &signalingSoftwarePod{softwarePod: &softwarePod{st: srv.Store}, srv: srv, got: make(chan bool, 4)}
+	pod = &signalingSoftwarePod{softwarePod: &softwarePod{st: srv.Store, fail: fail}, srv: srv, got: make(chan bool, 4)}
 	srv.AgentPod = pod
-	rel := seedSoftwareProposal(t, srv, "buyer", "ffmpeg")
+	owedDone = make(chan string, 4)
+	srv.owedRestartDone = func(slug string) { owedDone <- slug }
+	rel = seedSoftwareProposal(t, srv, "buyer", "ffmpeg")
 	if err := srv.Store.AppendChatMessage("buyer", store.ChatMessage{Role: store.RoleReceived, Kind: "direct_chat", Content: "work on the report"}); err != nil {
 		t.Fatal(err)
 	}
 	sub, st := startTurnOn(t, srv, "buyer", "runtime-1")
-	defer srv.AgentpodHub.Unsubscribe(sub)
+	t.Cleanup(func() { srv.AgentpodHub.Unsubscribe(sub) })
+	return srv, pod, rel, st, owedDone
+}
+
+// awaitOwedRestart waits for a deferred restart to finish: its
+// provision, the release of its hold, and whatever that started.
+func awaitOwedRestart(t *testing.T, owedDone chan string) {
+	t.Helper()
+	select {
+	case <-owedDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the deferred restart never finished")
+	}
+}
+
+// Approving software for an agent at work does not cut its turn short:
+// the answer says the shell restarts once the work has ended, and the
+// pod is recreated when the turn ends, before the next turn starts.
+func TestApproveSoftwareForABusyAgentRestartsWhenItsTurnEnds(t *testing.T) {
+	srv, pod, rel, st, owedDone := busyBuyer(t, nil)
 
 	body, ct := needsForm(t, rel, "", nil)
 	rr := homeDo(t, srv, http.MethodPost, "/api/v1/needs/approve", ct, body, nil)
@@ -294,16 +319,15 @@ func TestApproveSoftwareForABusyAgentRestartsWhenItsTurnEnds(t *testing.T) {
 	}
 
 	srv.onAgentpodDone(st, agentpod.TurnEvent{Kind: agentpod.TurnEventDone})
+	awaitOwedRestart(t, owedDone)
 	select {
 	case busy := <-pod.got:
 		if busy {
 			t.Error("the pod was recreated with a turn running")
 		}
-	case <-time.After(5 * time.Second):
+	default:
 		t.Fatal("the pod was never recreated after the turn ended")
 	}
-	// The answer reached the agent; the follow-up turn that reads it
-	// starts once the pod is recreated, on the pod that is subscribed.
 	hist, _ := srv.Store.ReadChatHistory("buyer")
 	found := false
 	for _, m := range hist {
@@ -313,6 +337,166 @@ func TestApproveSoftwareForABusyAgentRestartsWhenItsTurnEnds(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("the agent was not told when its shell restarts; chat = %+v", hist)
+	}
+}
+
+// A deferred restart that fails is answered as an idle agent's failed
+// restart is: the outcome becomes saved-not-applied, and the agent is
+// told the software installs the next time its shell starts.
+func TestDeferredSoftwareRestartThatFailsIsReportedSavedNotApplied(t *testing.T) {
+	srv, _, rel, st, owedDone := busyBuyer(t, errors.New("cluster unreachable"))
+	if _, err := srv.respondAsCEO(context.Background(), responseKindApproval, boolPtr(true), rel, "", nil); err != nil {
+		t.Fatal(err)
+	}
+	srv.onAgentpodDone(st, agentpod.TurnEvent{Kind: agentpod.TurnEventDone})
+	awaitOwedRestart(t, owedDone)
+
+	if si := approvedSoftware(t, srv); si.Outcome != store.SoftwareSavedNotApplied {
+		t.Errorf("outcome after the failed restart = %q, want %q", si.Outcome, store.SoftwareSavedNotApplied)
+	}
+	hist, _ := srv.Store.ReadChatHistory("buyer")
+	told := false
+	for _, m := range hist {
+		if m.Kind == "inbox_delivery" && strings.Contains(m.Content, "It is saved and installs the next time your shell starts.") {
+			told = true
+		}
+	}
+	if !told {
+		t.Errorf("the agent was not told the software is saved but not installed; chat = %+v", hist)
+	}
+}
+
+// A restart deferred by a background task runs when the task ends: the
+// task's end is reported through NotifyWorkingChanged.
+func TestRestartDeferredByABackgroundTaskRunsWhenItEnds(t *testing.T) {
+	st, err := store.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := &SubagentService{Store: st}
+	srv, err := NewServer(&Server{Store: st, Provider: provider.MockProvider{}, SubagentService: svc})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.AgentpodHub = newAgentpodHub()
+	if err := st.CreateAgent(store.Agent{Slug: "alice", Role: "Analyst", ReportsTo: "ceo"}, "k"); err != nil {
+		t.Fatal(err)
+	}
+	pod := &signalingSoftwarePod{softwarePod: &softwarePod{st: st}, srv: srv, got: make(chan bool, 4)}
+	srv.AgentPod = pod
+	owedDone := make(chan string, 4)
+	srv.owedRestartDone = func(slug string) { owedDone <- slug }
+	registerTestJob(svc, "job-1", "alice", 1, subagentJobRunning)
+
+	deferred, err := srv.ReprovisionAgentPod(context.Background(), "alice", nil)
+	if err != nil || !deferred {
+		t.Fatalf("ReprovisionAgentPod = %v, %v; want deferred behind the running task", deferred, err)
+	}
+	select {
+	case <-pod.got:
+		t.Fatal("the pod was recreated with a background task running")
+	default:
+	}
+
+	svc.updateJob("job-1", func(j *subagentJob) { j.State = subagentJobCompleted })
+	svc.notifyWorkingChanged()
+	awaitOwedRestart(t, owedDone)
+	select {
+	case <-pod.got:
+	default:
+		t.Fatal("the pod was not recreated once the task ended")
+	}
+}
+
+// A resumed turn that writes a sentence and then dies again is still a
+// crash loop: the breaker quarantines the agent after three, whether
+// the CLI died or the runtime went away.
+func TestCrashLoopThatWritesBeforeDyingIsQuarantined(t *testing.T) {
+	for _, how := range []string{"subprocess died", "runtime lost"} {
+		t.Run(how, func(t *testing.T) {
+			srv := newChatServer(t)
+			seedOwedAgent(t, srv, "alice")
+			sub := srv.AgentpodHub.SubscribeRuntime("alice", "runtime-1")
+			defer srv.AgentpodHub.Unsubscribe(sub)
+			srv.adoptRuntime("alice", "runtime-1")
+			for i := range chatHubQuarantineThreshold {
+				if !srv.spawnChatLoopIfIdle("alice", "release") {
+					t.Fatalf("cycle %d: no turn started before the breaker's threshold", i)
+				}
+				st := srv.lookupAgentpodTurn("alice")
+				srv.onAgentpodDelta(st, agentpod.TurnEvent{Kind: agentpod.TurnEventDelta, Text: "Picking up where I left off."})
+				if how == "subprocess died" {
+					srv.onAgentpodFailed(st, agentpod.TurnEvent{Kind: agentpod.TurnEventFailed, FailedReason: agentpod.FailedReasonSubprocessDied, FailedDetail: "signal: killed"})
+				} else {
+					srv.endLostTurn(st, false)
+				}
+			}
+			if srv.spawnChatLoopIfIdle("alice", "release") {
+				t.Error("a fourth turn started; the crash loop was never quarantined")
+			}
+		})
+	}
+}
+
+// A turn on a runtime older than the runtime header (it sent no id)
+// ends once a runtime that sends one has replaced it, at subscribe or
+// when the old stream drops.
+func TestTurnOnARuntimeWithoutAnIDEndsWhenItIsReplaced(t *testing.T) {
+	t.Run("old stream already gone", func(t *testing.T) {
+		srv := newChatServer(t)
+		seedOwedAgent(t, srv, "alice")
+		old, st := startTurnOn(t, srv, "alice", "")
+		srv.AgentpodHub.Unsubscribe(old)
+		sub := srv.AgentpodHub.SubscribeRuntime("alice", "runtime-2")
+		defer srv.AgentpodHub.Unsubscribe(sub)
+		srv.adoptRuntime("alice", "runtime-2")
+		awaitHubClosed(t, st)
+		srv.wakeOnAgentpodSubscribe("alice")
+		if turns := chatTurnsQueued(t, sub); len(turns) != 1 {
+			t.Errorf("chat-turn events on the new runtime: %d, want 1", len(turns))
+		}
+	})
+	t.Run("old stream drops after", func(t *testing.T) {
+		srv := newChatServer(t)
+		fc := clock.NewFake()
+		srv.Clock = fc
+		seedOwedAgent(t, srv, "alice")
+		old, st := startTurnOn(t, srv, "alice", "")
+		sub := srv.AgentpodHub.SubscribeRuntime("alice", "runtime-2")
+		defer srv.AgentpodHub.Unsubscribe(sub)
+		srv.adoptRuntime("alice", "runtime-2")
+		if cur := srv.lookupAgentpodTurn("alice"); cur != st {
+			t.Fatal("the turn ended while its runtime was still subscribed")
+		}
+		srv.AgentpodHub.Unsubscribe(old)
+		srv.handleAgentpodDisconnect("alice")
+		fc.Advance(agentpodDisconnectGrace)
+		awaitHubClosed(t, st)
+		if rows := disruptions(t, srv, "alice"); len(rows) != 1 {
+			t.Errorf("disruption rows = %+v, want one", rows)
+		}
+	})
+}
+
+// Every new subscription ends a planned restart's record, including one
+// from a runtime that sends no id, so a later crash is not taken for
+// Kivali's own restart. A reconnect of the same runtime keeps it.
+func TestNewSubscriptionClearsAPlannedRestart(t *testing.T) {
+	srv := newChatServer(t)
+	srv.adoptRuntime("alice", "runtime-1")
+	srv.markRestartPlanned("alice")
+	srv.adoptRuntime("alice", "runtime-1")
+	if !srv.restartPlanned("alice") {
+		t.Error("a reconnect of the same runtime cleared the planned restart")
+	}
+	srv.adoptRuntime("alice", "")
+	if srv.restartPlanned("alice") {
+		t.Error("a subscription without a runtime id left the planned restart recorded")
+	}
+	srv.markRestartPlanned("bob")
+	srv.adoptRuntime("bob", "runtime-9")
+	if srv.restartPlanned("bob") {
+		t.Error("the first subscription since the server started left the planned restart recorded")
 	}
 }
 

@@ -20,11 +20,12 @@ const chatHubLingerDuration = 15 * time.Second
 // count at which spawnChatLoopIfIdle stops auto-respawning. The
 // scenario: agent OOMs mid-turn, boot scan writes a runtime-disruption
 // entry and respawns, agent OOMs again, repeat. After this many
-// consecutive disruptions without any productive entry between them,
-// something is wrong (memory leak, poison content, broken downstream)
-// and we hold off rather than burn cycles. The CEO clears it by
-// engaging via direct chat (any non-system, non-tool entry resets the
-// count via store.ConsecutiveRuntimeDisruptions).
+// consecutive disruptions with nothing received between them (the
+// agent's own partial output does not count), something is wrong
+// (memory leak, poison content, broken downstream) and we hold off
+// rather than burn cycles. The CEO clears it by engaging via direct
+// chat (a received entry resets the count; see
+// store.ConsecutiveRuntimeDisruptions).
 const chatHubQuarantineThreshold = 3
 
 // chatHub is the per-agent wrapper around hub for in-flight direct-chat

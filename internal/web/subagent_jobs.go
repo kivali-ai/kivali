@@ -185,12 +185,13 @@ func (s *SubagentService) listJobs(parent string) []subagentJob {
 
 // OutstandingSubagents reports how many of parent's jobs are still
 // running. This is what makes an agent waiting on background work
-// render as working rather than idle.
+// render as working rather than idle, and what keeps a pod restart
+// waiting (holdIfIdle): recreating the pod would kill the jobs.
 //
-// DISPLAY ONLY. It must not reach turnInFlight or deliverToAgent: an
-// agent waiting on background tasks is emphatically still able to
-// receive a message, and gating delivery on this would silently strand
-// messages behind a long batch.
+// It must not reach turnInFlight or deliverToAgent: an agent waiting
+// on background tasks is emphatically still able to receive a message,
+// and gating delivery on this would silently strand messages behind a
+// long batch.
 func (s *SubagentService) OutstandingSubagents(parent string) int {
 	if s == nil {
 		return 0
