@@ -771,7 +771,7 @@ func (b *Backend) Rename(oldPath, newPath string) error {
 	if root.Name() != srcBase {
 		return errors.New("cross-subtree renames are not allowed")
 	}
-	err = renameIn(root, srcRel, dstRel)
+	err = root.Rename(srcRel, dstRel)
 	if errors.Is(err, syscall.EXDEV) {
 		// In the agent pod /files/artifacts/ is a mount of its own
 		// (see agentpod's filesMounts), so a move between it and the

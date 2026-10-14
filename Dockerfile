@@ -7,7 +7,7 @@
 # The image tag is the unit of release; manifests pull by tag. See the
 # Makefile `release` target.
 
-ARG GO_VERSION=1.24
+ARG GO_VERSION=1.27
 # Pin the Claude Code CLI so image builds don't silently accept a new
 # upstream release. Bump intentionally. Override at build with
 # `--build-arg CLAUDE_CODE_VERSION=x.y.z`.

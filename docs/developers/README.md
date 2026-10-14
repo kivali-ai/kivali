@@ -59,7 +59,7 @@ docs/                 user docs; docs/developers/ is this guide and the referenc
 
 ## Prerequisites
 
-- **Go** at the version in `go.mod` (1.24).
+- **Go** at the version in `go.mod` (1.27).
 - **Node 22** (what CI uses) for the web app; run `make web-install`
   once per checkout (`npm ci` in `web/`, from the committed lockfile).
 - **The `claude` CLI** (`@anthropic-ai/claude-code`) — only for

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 )
 
 // Published files. Every agent's published tree lives in one directory
@@ -322,7 +323,7 @@ func copyOnePublishedAt(src, dst *os.Root, it PublishItem, limit int64) (int64, 
 	}
 	defer func() { _ = f.Close() }()
 	if d := path.Dir(it.Dest); d != "." {
-		if err := mkdirAllIn(dst, d); err != nil {
+		if err := dst.MkdirAll(d, 0o755); err != nil {
 			return 0, fmt.Errorf("publish %s: %s", it.Dest, blockedBy(err))
 		}
 	}
@@ -341,9 +342,10 @@ func copyOnePublishedAt(src, dst *os.Root, it PublishItem, limit int64) (int64, 
 
 // blockedBy words a failure to make a published directory: almost
 // always a published file where a directory of the same name is
-// wanted.
+// wanted. MkdirAll reports that as "exists" at the component itself
+// and as "not a directory" past it.
 func blockedBy(err error) string {
-	if strings.Contains(err.Error(), "not a directory") {
+	if errors.Is(err, fs.ErrExist) || errors.Is(err, syscall.ENOTDIR) {
 		return "a published file is in the way of a directory of that path; unpublish it first"
 	}
 	return err.Error()
@@ -383,7 +385,7 @@ func RemovePublished(dst *os.Root, rel string) ([]string, error) {
 	} else {
 		gone = append(gone, rel)
 	}
-	if err := removeAllIn(dst, rel); err != nil {
+	if err := dst.RemoveAll(rel); err != nil {
 		return nil, err
 	}
 	sort.Strings(gone)
@@ -415,7 +417,7 @@ func EmptyPublished(dataDir string) error {
 			return err
 		}
 		if !info.IsDir() {
-			if err := removeAllIn(pub, o.Name()); err != nil {
+			if err := pub.RemoveAll(o.Name()); err != nil {
 				return err
 			}
 			continue
@@ -435,7 +437,7 @@ func emptyDirIn(root *os.Root, rel string) error {
 		return err
 	}
 	for _, e := range entries {
-		if err := removeAllIn(root, rel+"/"+e.Name()); err != nil {
+		if err := root.RemoveAll(rel + "/" + e.Name()); err != nil {
 			return err
 		}
 	}

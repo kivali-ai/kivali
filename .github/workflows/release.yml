@@ -237,7 +237,7 @@ jobs:
 
       - uses: actions/setup-go@v6
         with:
-          go-version: '1.24'
+          go-version: '1.27'
           cache: true
 
       - name: zstd
@@ -312,7 +312,7 @@ jobs:
 
       - uses: actions/setup-go@v6
         with:
-          go-version: '1.24'
+          go-version: '1.27'
           cache: true
 
       - uses: actions/setup-node@v4
@@ -361,7 +361,7 @@ jobs:
 
       - uses: actions/setup-go@v6
         with:
-          go-version: '1.24'
+          go-version: '1.27'
           cache: true
 
       - uses: actions/download-artifact@v4
@@ -450,7 +450,7 @@ jobs:
 
       - uses: actions/setup-go@v6
         with:
-          go-version: '1.24'
+          go-version: '1.27'
           cache: true
 
       - uses: actions/setup-node@v4
@@ -603,7 +603,7 @@ jobs:
 
       - uses: actions/setup-go@v6
         with:
-          go-version: '1.24'
+          go-version: '1.27'
           cache: true
 
       - uses: actions/setup-node@v4

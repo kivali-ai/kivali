@@ -320,7 +320,7 @@ func (b *Backend) openWrite(abs, modelPath string) (*os.Root, string, error) {
 		return nil, "", err
 	}
 	if d := path.Dir(rel); d != "." {
-		if err := mkdirAllIn(root, d); err != nil {
+		if err := root.MkdirAll(d, 0o755); err != nil {
 			_ = root.Close()
 			return nil, "", confinedErr(err, modelPath)
 		}
@@ -406,7 +406,7 @@ func writeReaderAtomicIn(root *os.Root, rel string, r io.Reader, max int64) (n i
 	if err = tmp.Close(); err != nil {
 		return n, err
 	}
-	if err = renameIn(root, name, rel); err != nil {
+	if err = root.Rename(name, rel); err != nil {
 		return n, err
 	}
 	// And the directory after it, so a power cut cannot undo the rename
@@ -454,31 +454,6 @@ func tmpBase(base string) string {
 // errTooLarge is writeReaderAtomicIn's refusal of a reader longer than
 // its limit.
 var errTooLarge = errors.New("larger than the limit")
-
-// mkdirAllIn is os.MkdirAll inside root: each component is made with
-// root.Mkdir, so a symlink along the way is followed only within root.
-// (os.Root gained MkdirAll in Go 1.25; the module targets 1.24.)
-func mkdirAllIn(root *os.Root, rel string) error {
-	parts := strings.Split(path.Clean(rel), "/")
-	for i := range parts {
-		p := strings.Join(parts[:i+1], "/")
-		err := root.Mkdir(p, 0o755)
-		if err == nil {
-			continue
-		}
-		if !errors.Is(err, fs.ErrExist) {
-			return err
-		}
-		info, serr := root.Stat(p)
-		if serr != nil {
-			return serr
-		}
-		if !info.IsDir() {
-			return fmt.Errorf("%s: not a directory", p)
-		}
-	}
-	return nil
-}
 
 // writeConfined creates abs's parents and atomically writes data to
 // it, all through the write base. See openWrite.

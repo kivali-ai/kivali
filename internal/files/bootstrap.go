@@ -232,34 +232,6 @@ func readDirIn(root *os.Root, rel string) ([]fs.DirEntry, error) {
 	return entries, err
 }
 
-// removeAllIn is os.RemoveAll inside root: a link is removed as an
-// entry, never descended into, and nothing it does can leave root.
-// (os.Root gained RemoveAll in Go 1.25; the module targets 1.24.)
-func removeAllIn(root *os.Root, rel string) error {
-	info, err := root.Lstat(rel)
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return nil
-		}
-		return err
-	}
-	if info.IsDir() {
-		entries, err := readDirIn(root, rel)
-		if err != nil {
-			return err
-		}
-		for _, e := range entries {
-			if err := removeAllIn(root, rel+"/"+e.Name()); err != nil {
-				return err
-			}
-		}
-	}
-	if err := root.Remove(rel); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return err
-	}
-	return nil
-}
-
 // IsHardlinkMirrorPath reports whether rel — a DataDir-relative,
 // forward-slash path — lives inside the per-agent attachment mirror,
 // agents/<slug>/attachments/, which SyncAgentAttachmentLinks fills with
@@ -497,11 +469,8 @@ func syncPastChats(root string, opts BootstrapOptions) error {
 //
 // rel names the directory under the agent's storage root. It is made
 // a real directory first (ensureRealDir), and listing and removal go
-// through an os.Root on it, so neither can reach outside it. Readlink
-// and Symlink are by path — os.Root has them only from Go 1.25 — which
-// is safe because the directory is core's: read-only mounted in the
-// agent pod, so the agent cannot swap it for a link between the check
-// and the write.
+// through an os.Root on it, as do Readlink and Symlink, so nothing
+// here can reach outside it.
 func reconcileLinks(storage, rel string, want map[string]string) error {
 	if err := ensureRealDir(storage, rel); err != nil {
 		return err
@@ -511,7 +480,6 @@ func reconcileLinks(storage, rel string, want map[string]string) error {
 		return err
 	}
 	defer func() { _ = root.Close() }()
-	dir := filepath.Join(storage, filepath.FromSlash(rel))
 	entries, err := readDirIn(root, ".")
 	if err != nil {
 		return err
@@ -526,7 +494,7 @@ func reconcileLinks(storage, rel string, want map[string]string) error {
 			// Leave non-symlinks alone.
 			continue
 		}
-		target, rerr := os.Readlink(filepath.Join(dir, e.Name()))
+		target, rerr := root.Readlink(e.Name())
 		if rerr != nil {
 			continue
 		}
@@ -540,12 +508,11 @@ func reconcileLinks(storage, rel string, want map[string]string) error {
 		if name == "" || name == "." || name == ".." || strings.ContainsAny(name, `/\`) {
 			continue
 		}
-		link := filepath.Join(dir, name)
-		if existing, err := os.Readlink(link); err == nil && existing == target {
+		if existing, err := root.Readlink(name); err == nil && existing == target {
 			continue
 		}
 		_ = root.Remove(name)
-		if err := os.Symlink(target, link); err != nil {
+		if err := root.Symlink(target, name); err != nil {
 			return err
 		}
 	}
