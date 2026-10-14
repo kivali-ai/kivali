@@ -49,7 +49,7 @@ A hold is not a cancel. To cancel work, close it as **Dropped** with the reason.
 
 ## How changes reach agents
 
-A change that concerns an agent reaches it as an assignment update: it was assigned something, something it opened was closed, something it waits on finished, and so on. Updates caused by agents wait in your **Queue** like any other message between agents, and wake the agent when you release them. Your own changes reach agents at once.
+A change that concerns an agent reaches it as an assignment update: it was assigned something, something it opened was closed, something it waits on finished, and so on. Updates caused by agents wait in your **Queue** like any other message between agents, and wake the agent when they are released. Your own changes reach agents at once.
 
 You cannot bounce an assignment update, because the change has already been made. To change what an agent is woken for, change the assignment. If you close or reassign an assignment whose first update is still queued, the queued update is withdrawn.
 

@@ -126,8 +126,9 @@ keeps the knowledge and sheds the clutter.
 
 You are the head of the team. Agents bring you approvals and updates in
 one inbox. New hires, role changes and handbook edits are proposals you
-approve. Messages between agents wait for you to release them, so the
-team moves at the pace you set, and so does what it costs.
+approve. Messages between agents wait in a queue that you release, by
+hand or on a delay you choose, so the team moves at the pace you set,
+and so does what it costs.
 
 </td>
 <td width="33%" valign="top">

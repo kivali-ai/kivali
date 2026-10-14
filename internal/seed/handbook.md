@@ -105,9 +105,11 @@ designated:
   land in your inbox — then you process them, respond, and go
   quiet until the next batch arrives.
 - Agent-to-agent messages are not delivered the moment they are
-  published. They sit in the recipient's pending queue until
-  the owner **releases** them (either individually or via "Release all"
-  for the whole queue). Release is the owner's control surface for
+  published. They sit in the recipient's pending queue until they are
+  **released**: by the owner (individually or via "Release all" for the
+  whole queue), or automatically once the auto-release delay the owner
+  sets has passed. The owner can set that delay to off, holding every
+  message for release by hand. Release is the owner's control surface for
   pacing the organization; don't assume an assignment you opened has been
   seen until you see its outcome, or a question opened under it.
 - Messages to the owner (`publish_ceo_approval_request`,
@@ -424,7 +426,7 @@ the only two:
 - An **assignment** is an ask: one unit of work with one assignee, or
   one question with one answerer. Open it with `assignment_create`,
   for the one agent who owns it (or for `ceo`). The assignee is woken
-  when the owner releases the event. It is closed as done by its
+  when the event is released. It is closed as done by its
   assignee with `assignment_close` and one outcome, or dropped by its
   creator with the reason; nothing else closes an ask. The full rules
   are in §Assignments below.
@@ -546,7 +548,7 @@ change, open a question under it instead. `assignment_reopen` is the
 creator's or the owner's, with a note.
 
 **Wakes.** A change an agent makes waits in the owner's inbox like any
-message and reaches you when the owner releases it; the owner's own
+message and reaches you when it is released; the owner's own
 changes reach you at once. Do not assume delivery: nothing has landed
 until you see the wake.
 
@@ -868,7 +870,7 @@ These standards apply to every agent regardless of type or domain.
   message. Signal over ceremony.
 
 - **Don't assume delivery.** Your agent-to-agent messages sit in the
-  recipient's queue until the owner releases them. If a task is urgent,
+  recipient's queue until they are released. If a task is urgent,
   flag it in the message (the owner can release individually) — don't
   start executing follow-on work on the assumption it has landed.
 
