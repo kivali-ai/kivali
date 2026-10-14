@@ -308,6 +308,11 @@ func (v InboxView) decisionSpeech() string {
 					return fmt.Sprintf("%s is already in your shell.", pkgs)
 				case store.SoftwareSavedNotApplied:
 					return fmt.Sprintf("I approved installing %s. It is saved and installs the next time your shell starts.", pkgs)
+				case store.SoftwareRestartWhenIdle:
+					return fmt.Sprintf(
+						"I approved installing %s. Your shell restarts to install it once your current turn and background tasks have ended; commands you run after that wait until installation finishes. If something cannot be installed, the first command's output says which and why.",
+						pkgs,
+					)
 				}
 				return fmt.Sprintf(
 					"I approved installing %s. Your shell restarted to install it; commands you run wait until installation finishes. If something cannot be installed, the first command's output says which and why.",

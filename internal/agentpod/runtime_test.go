@@ -33,6 +33,10 @@ type fakeCore struct {
 	addr      string                 // socket path
 	srv       *http.Server
 	doneClose chan struct{}
+	// failed receives every failed TurnEvent posted, as it lands.
+	failed chan TurnEvent
+	// runtimes is the RuntimeHeader of each events stream opened.
+	runtimes []string
 }
 
 func startFakeCore(t *testing.T) *fakeCore {
@@ -49,6 +53,7 @@ func startFakeCore(t *testing.T) *fakeCore {
 		sessions:  map[string]string{},
 		addr:      filepath.Join(dir, "s"),
 		doneClose: make(chan struct{}),
+		failed:    make(chan TurnEvent, 16),
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/agent/{slug}/events", fc.handleEvents)
@@ -85,6 +90,7 @@ func (f *fakeCore) handleEvents(w http.ResponseWriter, r *http.Request) {
 	ch := make(chan Event, 8)
 	f.mu.Lock()
 	f.subs[slug] = ch
+	f.runtimes = append(f.runtimes, r.Header.Get(RuntimeHeader))
 	f.mu.Unlock()
 	defer func() {
 		f.mu.Lock()
@@ -114,6 +120,12 @@ func (f *fakeCore) handleTurnEvent(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	f.posted[turnID] = append(f.posted[turnID], ev)
 	f.mu.Unlock()
+	if ev.Kind == TurnEventFailed {
+		select {
+		case f.failed <- ev:
+		default:
+		}
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -320,6 +332,51 @@ func TestRuntimeChatTurnSubprocessDeath(t *testing.T) {
 	last := fc.postedFor("t-die")[len(fc.postedFor("t-die"))-1]
 	if last.FailedReason != FailedReasonSubprocessDied {
 		t.Errorf("FailedReason = %q, want %q", last.FailedReason, FailedReasonSubprocessDied)
+	}
+}
+
+// A runtime whose pod is shutting down mid-turn still tells core the
+// turn ended, as runtime-stopped: the post outlives the pod's context.
+// Its events stream carries the runtime's id, the same on every open.
+func TestRuntimeShuttingDownReportsTheTurnStopped(t *testing.T) {
+	fc := startFakeCore(t)
+	streamReady := make(chan struct{})
+	cc := &scriptedClaudeClient{
+		streams: func(ctx context.Context, _ provider.CompleteRequest) (provider.Stream, error) {
+			s := &cancellableStream{events: make(chan provider.StreamEvent, 4), ctx: ctx}
+			go func() {
+				s.events <- provider.StreamEvent{Kind: provider.StreamDelta, Text: "starting"}
+				close(streamReady)
+				<-ctx.Done()
+				s.errMu.Lock()
+				s.err = ctx.Err()
+				s.errMu.Unlock()
+				close(s.events)
+			}()
+			return s, nil
+		},
+	}
+	rt, cancel := startRuntime(t, fc, "alice", cc)
+	defer cancel()
+	fc.mu.Lock()
+	got := append([]string(nil), fc.runtimes...)
+	fc.mu.Unlock()
+	if len(got) != 1 || got[0] == "" || got[0] != rt.Client.RuntimeID() {
+		t.Errorf("events stream runtime ids = %q, want [%q]", got, rt.Client.RuntimeID())
+	}
+
+	body, _ := json.Marshal(ChatTurnEvent{TurnID: "t-stop", Slug: "alice"})
+	fc.publish("alice", Event{Type: EventChatTurn, Data: body})
+	<-streamReady
+	cancel() // the pod is shutting down
+
+	select {
+	case ev := <-fc.failed:
+		if ev.FailedReason != FailedReasonRuntimeStopped {
+			t.Errorf("FailedReason = %q, want %q", ev.FailedReason, FailedReasonRuntimeStopped)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the stopped turn was never reported")
 	}
 }
 

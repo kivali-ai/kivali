@@ -8,14 +8,17 @@ import "time"
 //     CEO presses Stop. Tells the next spawning agent (and the
 //     handbook) that the prior turn was halted on purpose.
 //   - KindRuntimeDisruption: written at Kivali boot when an active-turn
-//     marker file is found without a matching turn-end (subprocess died:
-//     OOM, segfault, pod restart). Tells the next spawning agent that
-//     the prior turn was halted by infrastructure, not by the CEO.
+//     marker file is found without a matching turn-end, and when an
+//     agent's CLI or runtime dies mid-turn (OOM, segfault, its pod
+//     deleted or recreated). Tells the next spawning agent that the
+//     prior turn was halted by infrastructure, not by the CEO. Planned
+//     marks one Kivali caused by recreating the agent's pod.
 //   - KindTurnError: written by the chat-turn failure path when the
 //     turn stopped on an error the runtime could not recover from and
 //     that will not clear on its own: the model call failed (a usage
-//     limit, an expired login, an API error), the transport failed, or
-//     the agent pod went away mid-turn. Unlike a runtime disruption the
+//     limit, an expired login, an API error) or the transport failed.
+//     A pod that went away mid-turn is a runtime disruption instead.
+//     Unlike a runtime disruption the
 //     agent is NOT resumed automatically — a second attempt would hit
 //     the same wall — so the gate holds it until something new arrives,
 //     exactly as it holds after Stop. Content carries the error detail
@@ -308,12 +311,16 @@ func HasUnansweredReceived(hist []ChatMessage) bool {
 // lands in chat — the next agent response, the next CEO direct
 // message, anything. So a stuck agent that the operator manually
 // re-engages with (e.g., a CEO direct chat) automatically clears
-// the breaker.
+// the breaker. A Planned disruption (Kivali restarted the pod itself)
+// is walked past: it is not a crash, and it does not reset the count.
 func ConsecutiveRuntimeDisruptions(hist []ChatMessage) int {
 	n := 0
 	for i := len(hist) - 1; i >= 0; i-- {
 		m := hist[i]
 		if isToolPlumbing(m.Kind) {
+			continue
+		}
+		if m.Kind == KindRuntimeDisruption && m.Planned {
 			continue
 		}
 		if m.Kind == KindRuntimeDisruption {

@@ -700,6 +700,8 @@ func (v *homeView) proposalOutcome(done ceoResponse) apitypes.NeedActionResponse
 				result = who + " already has this software"
 			case store.SoftwareSavedNotApplied:
 				result = "The software is saved for " + who + " and installs the next time it starts"
+			case store.SoftwareRestartWhenIdle:
+				result = who + " restarts to install the software once it has finished what it is doing"
 			}
 		}
 		return apitypes.NeedActionResponse{

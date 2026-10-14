@@ -46,7 +46,7 @@ export function SoftwarePane({ slug, name }: { slug: string; name: string }) {
   return (
     <div className="app-about-pane">
       <Text as="p" variant="label" tone="muted">
-        Software is installed when {name} starts. Changing this list restarts {name} to install it. Anything {name} is in the middle of stops.
+        Software is installed when {name} starts. Changing this list restarts {name} to install it, once {name} has finished what it is doing.
       </Text>
       {failure && (
         <Banner tone="danger" title={failure.message} onDismiss={action.dismiss}>

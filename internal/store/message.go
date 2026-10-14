@@ -289,6 +289,10 @@ const (
 	// SoftwareRestarted: the packages were added and the agent's shell
 	// was recreated to install them.
 	SoftwareRestarted SoftwareOutcome = "restarted"
+	// SoftwareRestartWhenIdle: the packages were added, and the agent's
+	// shell is recreated to install them once its current turn and
+	// background tasks have ended.
+	SoftwareRestartWhenIdle SoftwareOutcome = "restart_when_idle"
 	// SoftwareAlreadyInstalled: the shell already gets every package
 	// (org-wide or its own list), so nothing changed.
 	SoftwareAlreadyInstalled SoftwareOutcome = "already_installed"

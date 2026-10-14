@@ -67,9 +67,9 @@ type Server struct {
 	// spawnDropped, when set, runs when a spawn found no pod subscribed,
 	// while it still holds the agent's chat hub. A test seam.
 	spawnDropped func(slug string)
-	AuthMW         *auth.Middleware
-	OAuth          *auth.GoogleOAuth
-	Handoff        *auth.Handoff // GET /auth/handoff (docs/developers/auth.md); nil leaves it unregistered
+	AuthMW       *auth.Middleware
+	OAuth        *auth.GoogleOAuth
+	Handoff      *auth.Handoff // GET /auth/handoff (docs/developers/auth.md); nil leaves it unregistered
 	// DevUser, when non-empty, replaces the auth middleware with an
 	// unconditional bypass attributing every request to this email.
 	// Set only by main.go under DEV_MODE; ignored when AuthMW is set,
@@ -229,6 +229,26 @@ type Server struct {
 	agentpodTurns         map[string]*agentpodTurnState
 	agentpodSubagentTurns map[string]*agentpodTurnState // turnID → state
 
+	// Pod restarts and the turns they hold (agentpod_restart.go), all
+	// guarded by streamMu, so a spawn's hub claim and a restart's idle
+	// check cannot interleave.
+	//
+	// turnHolds counts, per slug, what keeps a new turn from starting:
+	// a pod being recreated, or the startup pass not yet done with it.
+	turnHolds map[string]int
+	// startupHolds names the slugs HoldTurnsForStartup holds until
+	// BulkProvisionAgentPods has provisioned them.
+	startupHolds map[string]bool
+	// restartsOwed names the slugs whose pod is to be reprovisioned
+	// once the agent is idle.
+	restartsOwed map[string]bool
+	// plannedRestarts names the slugs whose pod Kivali deleted or
+	// created, until a new runtime subscribes.
+	plannedRestarts map[string]bool
+	// runtimes is the runtime id each slug's latest events subscriber
+	// sent.
+	runtimes map[string]string
+
 	// unknownModelLogged tracks which model ids have already triggered
 	// a "cost=0 fallback (unknown model)" warning so we log once per
 	// id, not once per call. Set values are struct{}; presence is the
@@ -327,7 +347,12 @@ func NewServer(s *Server) (*Server, error) {
 		s.Runtime.AgentPod = agentProvisioner{s}
 	}
 	if s.SubagentService != nil && s.SubagentService.NotifyWorkingChanged == nil {
-		s.SubagentService.NotifyWorkingChanged = s.NotifyOrgState
+		// A background task's end can leave its agent idle: a pod
+		// restart owed until then runs.
+		s.SubagentService.NotifyWorkingChanged = func() {
+			s.NotifyOrgState()
+			s.runOwedRestarts()
+		}
 	}
 	if s.SubagentService != nil && s.SubagentService.WakeParent == nil {
 		// "subagent" as the spawn source: it names what triggered this

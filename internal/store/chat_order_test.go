@@ -455,6 +455,17 @@ func TestConsecutiveRuntimeDisruptions(t *testing.T) {
 			want: 3,
 		},
 		{
+			name: "planned disruptions neither count nor reset the count",
+			hist: []ChatMessage{
+				{Role: RoleReceived, Kind: KindRuntimeDisruption, TS: ts(0)},
+				{Role: RoleReceived, Kind: KindRuntimeDisruption, Planned: true, TS: ts(1)},
+				{Role: RoleReceived, Kind: KindRuntimeDisruption, TS: ts(2)},
+				{Role: RoleReceived, Kind: KindRuntimeDisruption, Planned: true, TS: ts(3)},
+				{Role: RoleReceived, Kind: KindRuntimeDisruption, Planned: true, TS: ts(4)},
+			},
+			want: 2,
+		},
+		{
 			name: "disruption then agent reply resets count",
 			hist: []ChatMessage{
 				{Role: RoleReceived, Kind: KindRuntimeDisruption, TS: ts(0)},

@@ -332,9 +332,11 @@ func (s *Server) respondAsCEO(ctx context.Context, kind responseKind, approved *
 	// Software installs: same atomicity rule as Hire. The packages are
 	// added to the proposer's own list and its shell is recreated
 	// BEFORE the approval response is written, and the response's
-	// Outcome says which of that happened: restarted, already
-	// installed (nothing new to add), or saved but not applied (the
-	// shell could not be recreated; the next pod start installs it).
+	// Outcome says which of that happened: restarted, restarts once the
+	// agent's work has ended (it was mid-turn or had background tasks
+	// running, which a restart would cut short; ReprovisionAgentPod),
+	// already installed (nothing new to add), or saved but not applied
+	// (the shell could not be recreated; the next pod start installs it).
 	// A provision error is logged, not a refusal. The provision runs
 	// on a context the request cannot cancel: the owner closing the
 	// page mid-recreate must not leave the pod deleted and never made
@@ -361,10 +363,15 @@ func (s *Server) respondAsCEO(ctx context.Context, kind responseKind, approved *
 			respSoftware.Outcome = store.SoftwareSavedNotApplied
 		default:
 			respSoftware.Packages = added
-			respSoftware.Outcome = store.SoftwareRestarted
-			if perr := s.ProvisionAgentPod(context.WithoutCancel(ctx), reqMsg.SoftwareInstall.Slug); perr != nil {
+			deferred, perr := s.ReprovisionAgentPod(context.WithoutCancel(ctx), reqMsg.SoftwareInstall.Slug)
+			switch {
+			case perr != nil:
 				log.Printf("software_install %s: provision agent pod: %v", reqMsg.SoftwareInstall.Slug, perr)
 				respSoftware.Outcome = store.SoftwareSavedNotApplied
+			case deferred:
+				respSoftware.Outcome = store.SoftwareRestartWhenIdle
+			default:
+				respSoftware.Outcome = store.SoftwareRestarted
 			}
 		}
 	}

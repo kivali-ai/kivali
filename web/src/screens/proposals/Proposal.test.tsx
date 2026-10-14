@@ -179,7 +179,7 @@ describe('Proposal page', () => {
     const { router } = await renderProposal(goSoftware);
     expect(screen.getByText('Install software')).toBeTruthy();
     expect(screen.getByText(/Buyer wants to install software/)).toBeTruthy();
-    expect(screen.getByText(/If you choose Install, Buyer restarts now to install it\. This takes a minute or two and stops anything Buyer is doing\./)).toBeTruthy();
+    expect(screen.getByText(/If you choose Install, Buyer restarts to install it once it has finished what it is doing\. This takes a minute or two\./)).toBeTruthy();
     const list = screen.getByRole('list', { name: 'Software to install' });
     expect(within(list).getByText('poppler-utils')).toBeTruthy();
     expect(screen.getByText('Vendor quotes arrive as PDFs and I need to read their text.')).toBeTruthy();

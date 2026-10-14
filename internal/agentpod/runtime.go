@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/kivali-ai/kivali/internal/provider"
 )
@@ -385,6 +386,10 @@ func (r *Runtime) handleChatTurn(ctx context.Context, ev Event) error {
 
 	stream, err := r.Claude.Stream(streamCtx, req)
 	if err != nil {
+		if ctx.Err() != nil {
+			r.postStopped(ctx, ct.TurnID, nil)
+			return nil
+		}
 		if cancelled := streamCtx.Err(); cancelled != nil {
 			// Cancel raced ahead of stream open. Treat as cancelled.
 			_ = r.postFailed(ctx, ct.TurnID, FailedReasonCancelled, "stream open cancelled: "+err.Error())
@@ -417,6 +422,10 @@ func (r *Runtime) handleChatTurn(ctx context.Context, ev Event) error {
 		// Whatever the stream captured before the failure rides back so
 		// partial usage reaches core — Anthropic billed for every
 		// assistant message that landed before the crash / Stop.
+		if ctx.Err() != nil {
+			r.postStopped(ctx, ct.TurnID, out.final)
+			return nil
+		}
 		if out.cancelled {
 			_ = r.postTurnEvent(ctx, ct.TurnID, failedEvent(FailedReasonCancelled, "cancelled by Stop", out.final))
 			return nil
@@ -714,7 +723,11 @@ func (r *Runtime) handleSubagentTurn(ctx context.Context, ev Event) error {
 		Agent:   ct.Slug,
 	})
 	if err != nil {
-		if streamCtx.Err() != nil && ctx.Err() == nil {
+		if ctx.Err() != nil {
+			r.postStopped(ctx, ct.TurnID, nil)
+			return nil
+		}
+		if streamCtx.Err() != nil {
 			_ = r.postFailed(ctx, ct.TurnID, FailedReasonCancelled, "cancelled by Stop")
 			return nil
 		}
@@ -728,8 +741,30 @@ func (r *Runtime) handleSubagentTurn(ctx context.Context, ev Event) error {
 	out := r.driveStream(ctx, ct.TurnID, stream, func(error) bool {
 		return streamCtx.Err() != nil && ctx.Err() == nil
 	})
+	if out.err != nil && ctx.Err() != nil {
+		r.postStopped(ctx, ct.TurnID, out.final)
+		return nil
+	}
 	_ = r.postTurnEvent(ctx, ct.TurnID, subagentTerminalEvent(out, model))
 	return nil
+}
+
+// stoppedPostTimeout bounds the post that reports a turn the runtime
+// gives up because it is shutting down. The pod's termination grace
+// (terminationGracePeriodSeconds, 10s) leaves room for it.
+const stoppedPostTimeout = 3 * time.Second
+
+// postStopped reports turnID failed with FailedReasonRuntimeStopped:
+// ctx, the pod's lifetime context, has ended, so the runtime is
+// shutting down and the turn cannot finish here. The post runs on a
+// context detached from ctx, bounded by stoppedPostTimeout; without
+// that it would be cancelled before it was sent, and core would learn
+// of the turn's end only when the runtime's next instance subscribes
+// or the disconnect grace runs out.
+func (r *Runtime) postStopped(ctx context.Context, turnID string, partial *provider.CompleteResponse) {
+	pctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), stoppedPostTimeout)
+	defer cancel()
+	_ = r.postTurnEvent(pctx, turnID, failedEvent(FailedReasonRuntimeStopped, "the agent runtime is shutting down", partial))
 }
 
 // subagentTerminalEvent is the done or failed event that closes a

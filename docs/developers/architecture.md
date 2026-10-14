@@ -109,14 +109,24 @@ the server provisions. At boot the server syncs each agent's filesystem and prov
 doubles from 5 s to a minute, the agents whose pod it could not create
 and that are still active, until every pod exists or the boot's five-minute deadline passes (right
 after the node boots, the API server's service address can go
-unanswered for tens of seconds); hire does the same for one. The scratch
-PVC is never diffed and survives offboarding.
+unanswered for tens of seconds); hire does the same for one. Until the
+boot pass has provisioned an agent's pod, its turns are held
+(`HoldTurnsForStartup`), so a pod left running from before the restart
+that dials in at once starts nothing the pass is about to cut short. A
+software change recreates a pod only once its agent is idle, with no
+turn running and no background task outstanding, and holds the agent's
+turns while it does (`ReprovisionAgentPod`, `internal/web/agentpod_restart.go`);
+work that arrives meanwhile stays owed and starts on the new pod. The
+scratch PVC is never diffed and survives offboarding.
 
 **The agent pod's protocol** (`internal/agentpod/protocol.go`). Core
 never dials an agent; every connection goes from the pod to
 `core.sock`:
 
 - `GET /v1/agent/{slug}/events`: a long-lived SSE stream from core.
+  The runtime sends `X-Kivali-Runtime`, an id it draws once per
+  process; a reconnect carries the same id, and a different one means
+  the earlier runtime, and any turn it was running, is gone.
   Events: `chat-turn` (drive a turn; carries the fully built model
   request), `fold-message` (splice a message into the running turn),
   `cancel-turn` (Stop), `session-reset` (a chat was archived: drop the
@@ -294,7 +304,13 @@ sequenceDiagram
    go from the CLI to `kivali mcp` and on to core or the agent-shell.
 4. On `done`, `finalizeAgentpodTurn` (`internal/web/agentpod_turn.go`)
    flushes deliveries staged during the turn and, if any arrived,
-   spawns the follow-up turn that reads them. On `failed`, core writes
+   spawns the follow-up turn that reads them. A runtime that goes away
+   mid-turn (its pod deleted or crashed) ends the turn as a
+   `runtime-disruption`, which the agent resumes from on its next pod:
+   when it reports it is shutting down (`runtime-stopped`), when a
+   different runtime subscribes for the agent, or when none of its own
+   is back within 30 s. A pod Kivali recreated itself makes the row
+   `planned`, which the crash-loop breaker does not count. On `failed`, core writes
    a `turn-error` or `runtime-disruption` marker row; an errored agent
    holds until a new message arrives.
 

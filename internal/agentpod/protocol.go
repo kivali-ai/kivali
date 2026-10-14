@@ -299,6 +299,13 @@ type Event struct {
 // path-construction bug.
 const SlugHeader = "X-Kivali-Agent"
 
+// RuntimeHeader is the HTTP header the agent runtime sets on its events
+// stream open: an id the runtime process draws once at start. A
+// reconnect from the same process carries the same id; a different id
+// is a different process, a restarted container or a new pod, and
+// whatever turn the earlier one was running is gone with it.
+const RuntimeHeader = "X-Kivali-Runtime"
+
 // SlugFromHeader returns the caller's slug header.
 func SlugFromHeader(h http.Header) string {
 	return h.Get(SlugHeader)
@@ -465,6 +472,9 @@ type TurnEvent struct {
 	//     closed the turn with is_error); same row and hold as above.
 	//   - "cancelled"       — Stop; no row, the interruption marker
 	//     was written at click time.
+	//   - "runtime-stopped" — the runtime is shutting down (its pod is
+	//     being deleted) mid-turn; core writes a KindRuntimeDisruption
+	//     row and resumes the agent once its pod is back.
 	FailedReason string `json:"failed_reason,omitempty"`
 	FailedDetail string `json:"failed_detail,omitempty"`
 }
@@ -478,10 +488,9 @@ const (
 
 	// FailedReasonOtherError marks any other unrecoverable transport
 	// or state failure mid-turn: the stream could not be opened, the
-	// payload was malformed, the CLI answered with an error, or the
-	// pod's SSE went away without a terminator. Core
+	// payload was malformed, or the CLI answered with an error. Core
 	// writes KindTurnError and holds the agent until something new
-	// arrives.
+	// arrives. A subagent turn whose pod went away fails with it too.
 	FailedReasonOtherError = "other-error"
 
 	// FailedReasonTurnError marks a turn the model call ended on an
@@ -500,6 +509,12 @@ const (
 	// disruption-row write since the user-interruption marker (set
 	// independently by handleAgentStop) is the right signal.
 	FailedReasonCancelled = "cancelled"
+
+	// FailedReasonRuntimeStopped marks a turn the runtime gave up
+	// because it is shutting down: its pod is being deleted, by Kivali
+	// to apply a change or by the cluster. Core writes
+	// KindRuntimeDisruption and the agent resumes on its next pod.
+	FailedReasonRuntimeStopped = "runtime-stopped"
 )
 
 // MemoryDispatchRequest is the JSON body of

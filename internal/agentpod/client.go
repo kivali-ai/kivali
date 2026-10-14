@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -36,6 +38,9 @@ type Client struct {
 	slug       string
 	http       *http.Client
 	cache      *Cache
+	// runtime is this process's runtime id, sent as RuntimeHeader on
+	// every events stream open; drawn once in NewClient.
+	runtime string
 
 	// clk drives the reconnect backoff in RunEvents. Defaults to the
 	// real clock; WithClock injects a fake so a test can prove the
@@ -63,6 +68,7 @@ func NewClient(socketPath, slug string) *Client {
 	return &Client{
 		socketPath: socketPath,
 		slug:       slug,
+		runtime:    newRuntimeID(),
 		clk:        clock.New(),
 		http: &http.Client{
 			Transport: &http.Transport{
@@ -76,6 +82,19 @@ func NewClient(socketPath, slug string) *Client {
 		},
 	}
 }
+
+// newRuntimeID returns 16 random hex characters.
+func newRuntimeID() string {
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return fmt.Sprintf("t%016x", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(b[:])
+}
+
+// RuntimeID is the id this client sends as RuntimeHeader when it opens
+// the events stream.
+func (c *Client) RuntimeID() string { return c.runtime }
 
 // SocketPath returns the UDS path the client dials. Exposed so test
 // fixtures and observability can derive auxiliary paths from it.
@@ -117,6 +136,7 @@ func (c *Client) OpenEvents(ctx context.Context) (<-chan Event, error) {
 	req.Header.Set("Accept", "text/event-stream")
 	req.Header.Set("Cache-Control", "no-cache")
 	req.Header.Set(SlugHeader, c.slug)
+	req.Header.Set(RuntimeHeader, c.runtime)
 
 	resp, err := c.http.Do(req)
 	if err != nil {
