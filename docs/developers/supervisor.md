@@ -425,9 +425,10 @@ vm/README.md, "What the guest init does"): Hyper-V reuses such a block
 for later writes and drops the unmapped blocks at the end of the file
 when the VM closes the disk, but one in the middle keeps its space until
 the file is compacted. With the VM off, before a start and after a clean
-`down` (never inside an upgrade or a destroy, nor after the bounded stop
-of `serve`'s exit on a signal, when the host is logging off or shutting
-down and would kill a compaction partway), the backend reads the
+`down` that leaves `serve` running (never inside an upgrade or a
+destroy, nor after a stop for `serve`'s exit, `down --exit` or a
+signal: that is the desktop app quitting, and at a logoff or a shutdown
+the host would kill a compaction partway), the backend reads the
 disk's block allocation table itself (package `vhdx`: the region
 table, the metadata and the table, a few dozen KiB whatever the disk's
 size) and, when the discarded blocks hold 1 GiB or more, asks the
@@ -436,7 +437,7 @@ broker to compact the file (`POST /v1/vhd/optimize`: virtdisk's
 does to a disk that is not mounted, which drops those blocks and moves
 the rest down; it mounts nothing and needs no partition table). `up`
 runs it before the
-boot, in the `making-room` stage, because a VM stopped without a
+boot, in the `making-room` stage, because a VM stopped without such a
 `down` (a host reboot shuts the guest down through the integration
 service, and `serve`'s exit does not compact) has had no chance since
 its last trim. A failure is logged and the start or stop goes on; while

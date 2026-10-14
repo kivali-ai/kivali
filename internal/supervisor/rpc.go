@@ -123,8 +123,13 @@ func (r *RPCServer) Handler() http.Handler {
 		return r.sup.Status(ctx), nil
 	})
 	opCtx("down", true, func() any { return &DownRequest{} }, func(ctx context.Context, b any, logf Logf) (any, error) {
-		err := r.sup.Down(ctx, logf)
-		if err == nil && b.(*DownRequest).Exit {
+		exit := b.(*DownRequest).Exit
+		down := r.sup.Down
+		if exit {
+			down = r.sup.DownToExit
+		}
+		err := down(ctx, logf)
+		if err == nil && exit {
 			logf("serve is exiting")
 			r.quitOnce.Do(func() { close(r.quit) })
 		}

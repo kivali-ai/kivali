@@ -702,8 +702,9 @@ func (s *Supervisor) compactLocked(ctx context.Context, began func(), logf Logf)
 // compactBeforeBootLocked compacts the data disk before up boots it,
 // when there is one whose first boot reached READY: a disk still to be
 // made, or one bootLocked will recreate, has nothing to give back. A VM
-// stopped without a down (a host reboot shuts it down; the app's quit
-// may not wait) is compacted here, on its next start.
+// stopped without a compacting down (a host reboot shuts it down; serve's
+// exit, DownToExit and Shutdown, compacts nothing) is compacted here, on
+// its next start.
 func (s *Supervisor) compactBeforeBootLocked(ctx context.Context, logf Logf) {
 	if _, err := os.Stat(s.dataPath()); err != nil || !s.State().DataDiskFormatted {
 		return
@@ -892,23 +893,39 @@ func (s *Supervisor) Up(ctx context.Context, o UpOptions, logf Logf) error {
 // Once Down has cancelled a running operation it always goes on to the
 // stop, whatever happens to ctx, so a cancelled up is never left without
 // one. The stop itself runs to its own bound.
+//
+// After a clean stop the data disk is compacted, while serve goes on.
 func (s *Supervisor) Down(ctx context.Context, logf Logf) error {
+	return s.down(ctx, true, logf)
+}
+
+// DownToExit is Down for a serve about to exit (`down --exit`): the
+// desktop app's quit, and its exit as the person logs off or the host
+// shuts down, when a compaction would be killed partway. It compacts
+// nothing; the next up compacts the disk before its boot
+// (compactBeforeBootLocked).
+func (s *Supervisor) DownToExit(ctx context.Context, logf Logf) error {
+	return s.down(ctx, false, logf)
+}
+
+func (s *Supervisor) down(ctx context.Context, compact bool, logf Logf) error {
 	setStage(ctx, StagePausing)
 	logf = s.tee(ctx, logf)
 	if s.cancelRunning(logf) {
 		ctx = context.WithoutCancel(ctx)
 	}
-	return s.downLocked(ctx, 0, logf)
+	return s.downLocked(ctx, 0, compact, logf)
 }
 
 // Shutdown is serve's exit on a signal: it waits for any running
 // operation however long it takes (an upgrade is never abandoned, or
 // the VM would die with serve in the middle of it), then stops the VM,
-// bounding only the stop by stopBound, counted from when it starts.
+// bounding only the stop by stopBound, counted from when it starts. It
+// compacts nothing, as DownToExit.
 func (s *Supervisor) Shutdown(stopBound time.Duration, logf Logf) error {
 	logf = s.tee(context.Background(), logf)
 	s.cancelRunning(logf)
-	return s.downLocked(context.Background(), stopBound, logf)
+	return s.downLocked(context.Background(), stopBound, false, logf)
 }
 
 // cancelRunning cancels a running cancellable operation and reports
@@ -928,9 +945,9 @@ func (s *Supervisor) cancelRunning(logf Logf) bool {
 
 // downLocked takes the operation lock (giving up only if waitCtx ends)
 // and stops the VM; a non-zero stopBound limits the stop alone (the
-// stop has its own bounds besides). After a clean stop the data disk is
-// compacted, unless stopBound is set.
-func (s *Supervisor) downLocked(waitCtx context.Context, stopBound time.Duration, logf Logf) error {
+// stop has its own bounds besides). With compact, the data disk is
+// compacted after a clean stop.
+func (s *Supervisor) downLocked(waitCtx context.Context, stopBound time.Duration, compact bool, logf Logf) error {
 	_, end, err := s.begin(waitCtx, "down", false)
 	if err != nil {
 		return fmt.Errorf("stopped waiting: %w", err)
@@ -947,13 +964,10 @@ func (s *Supervisor) downLocked(waitCtx context.Context, stopBound time.Duration
 		defer cancel()
 	}
 	clean, err := s.stopLocked(stopCtx, logf)
-	if err == nil && clean && stopBound == 0 {
+	if err == nil && clean && compact {
 		// The disk is closed and quiet: what the guest discarded (its
 		// fstrim) is given back to the host now rather than at the next
-		// start, where the person is waiting. A bounded stop is serve's
-		// exit (the host logging off or shutting down), which would kill
-		// a compaction partway, so that disk is compacted before the
-		// next boot instead (compactBeforeBootLocked).
+		// start, where the person is waiting.
 		s.compactLocked(stopCtx, func() {}, logf)
 	}
 	return err
