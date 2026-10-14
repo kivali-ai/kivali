@@ -56,12 +56,13 @@ export function SoftwarePane({ slug, name }: { slug: string; name: string }) {
       <Text as="h3" variant="label">
         For every agent
       </Text>
-      <PackageList packages={data.org} empty="Nothing is installed for every agent. You can add software on the Org page." />
+      <PackageList packages={data.org} invalid={data.invalid} empty="Nothing is installed for every agent. You can add software on the Org page." />
       <Text as="h3" variant="label">
         Only for {name}
       </Text>
       <PackageList
         packages={data.own}
+        invalid={data.invalid}
         empty={`Nothing extra for ${name} yet. ${name} can ask for software, and you decide.`}
         edit={{
           busy: action.busy,

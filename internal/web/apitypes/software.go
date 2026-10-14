@@ -12,6 +12,10 @@ package apitypes
 // packages every agent's shell gets. Always sorted, never null.
 type OrgSoftware struct {
 	Packages []string `json:"packages"`
+	// Invalid names the listed packages that are not Debian package
+	// names (a list edited by hand): they are not installed, and DELETE
+	// removes them like any other. Never null.
+	Invalid []string `json:"invalid"`
 }
 
 // SoftwareAdd is the body of POST /api/v1/org/software and of POST
@@ -33,4 +37,7 @@ type AgentSoftware struct {
 	Org []string `json:"org"`
 	// Own is the agent's own list, the part POST and DELETE change.
 	Own []string `json:"own"`
+	// Invalid names the packages on either list that are not Debian
+	// package names: they are not installed. Never null.
+	Invalid []string `json:"invalid"`
 }

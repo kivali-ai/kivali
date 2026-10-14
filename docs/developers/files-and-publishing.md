@@ -89,7 +89,12 @@ The settings API changes a list by name, never by replacing it:
 `POST /api/v1/org/software` and `POST /api/v1/agents/{slug}/software`
 take `{packages}` to add, and `DELETE .../software/{name}` removes one,
 each applied to the list as it stands on disk (the store serializes
-every `agent.yaml` and `software.yaml` read-modify-write). Each write
+every `agent.yaml` and `software.yaml` read-modify-write). A write
+checks the names it adds; a name already saved that is not a Debian
+package name (a file edited by hand) stays listed, under `invalid` in
+the answer and marked on the page as not installed, is left out of what
+the pod installs (`Store.EffectiveSoftware` logs it), and `DELETE`
+removes it like any other. Each write
 re-provisions the pods it reaches in the background. Approving an
 **Install software** proposal provisions synchronously, on a context the
 request cannot cancel, and records on the response's

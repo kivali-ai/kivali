@@ -960,14 +960,14 @@ describe('Network', () => {
 
 describe('Software', () => {
   it('lists the packages, adds several at once, and removes one', async () => {
-    const added: OrgSoftware = { packages: ['ffmpeg', 'git', 'jq', 'poppler-utils'] };
-    const removed: OrgSoftware = { packages: ['git', 'jq', 'poppler-utils'] };
+    const added: OrgSoftware = { packages: ['bad name', 'ffmpeg', 'git', 'jq', 'poppler-utils'], invalid: ['bad name'] };
+    const removed: OrgSoftware = { packages: ['bad name', 'git', 'jq', 'poppler-utils'], invalid: ['bad name'] };
     await renderOrg('/org/software', {
       desktop: true,
       routes: { 'POST /api/v1/org/software': added, 'DELETE /api/v1/org/software/ffmpeg': removed },
     });
     expect(screen.getByText('git')).toBeInTheDocument();
-    expect(screen.getByText('2 packages for every agent')).toBeInTheDocument();
+    expect(screen.getByText('3 packages for every agent')).toBeInTheDocument();
     expect(screen.getByText(/restarts the agents it affects/)).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText('Add software'), { target: { value: 'ffmpeg, poppler-utils' } });
     await click(screen.getByRole('button', { name: 'Add' }));
@@ -984,12 +984,25 @@ describe('Software', () => {
   it('says so when nothing is installed and shows the server’s refusal of a bad name', async () => {
     await renderOrg('/org/software', {
       desktop: true,
-      routes: { 'GET /api/v1/org/software': { packages: [] }, 'POST /api/v1/org/software': fail(400, '"rm -rf" is not a Debian package name', 'you') },
+      routes: { 'GET /api/v1/org/software': { packages: [], invalid: [] }, 'POST /api/v1/org/software': fail(400, '"rm -rf" is not a Debian package name', 'you') },
     });
     expect(screen.getByText(/No extra software/)).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText('Add software'), { target: { value: 'rm -rf' } });
     await click(screen.getByRole('button', { name: 'Add' }));
     expect(await screen.findByText('"rm -rf" is not a Debian package name')).toBeInTheDocument();
+  });
+
+  it('marks a listed name that is not a Debian package name as not installed, and removes it', async () => {
+    await renderOrg('/org/software', {
+      desktop: true,
+      routes: { 'DELETE /api/v1/org/software/bad%20name': { packages: ['git', 'jq'], invalid: [] } },
+    });
+    expect(screen.getByText('bad name')).toBeInTheDocument();
+    expect(screen.getAllByText('Not a Debian package name, so it is not installed')).toHaveLength(1);
+    await click(screen.getByRole('button', { name: 'Remove bad name' }));
+    expect(calls.filter((c) => c.method === 'DELETE' && c.url === '/api/v1/org/software/bad%20name')).toHaveLength(1);
+    expect(screen.queryByText('bad name')).toBeNull();
+    expect(screen.queryByText('Not a Debian package name, so it is not installed')).toBeNull();
   });
 });
 

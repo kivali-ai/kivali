@@ -3,6 +3,7 @@ package store
 import (
 	"errors"
 	"fmt"
+	"os"
 	"reflect"
 	"strings"
 	"sync"
@@ -280,5 +281,49 @@ func TestAgentYAMLSettersDoNotLoseEachOther(t *testing.T) {
 	}
 	if org, _ := s.ReadOrgSoftware(); len(org) != n {
 		t.Errorf("software.yaml lost a write: %d packages, want %d", len(org), n)
+	}
+}
+
+// A name saved by hand that is not a Debian package name breaks
+// nothing: the lists still read and change, the name stays listed until
+// it is removed, and the shell installs everything else.
+func TestSavedInvalidSoftwareNameIsListedSkippedAndRemovable(t *testing.T) {
+	s := newSoftwareStore(t)
+	if err := os.WriteFile(s.path(softwareFilename), []byte("packages: [jq, \"Bad Name\"]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.updateAgent("alice", func(a *Agent) error {
+		a.Software = []string{"ffmpeg", "x/y"}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	org, err := s.ReadOrgSoftware()
+	if err != nil || !reflect.DeepEqual(org, []string{"bad name", "jq"}) {
+		t.Fatalf("ReadOrgSoftware = %v, %v; want both names listed", org, err)
+	}
+	eff, err := s.EffectiveSoftware("alice")
+	if err != nil || !reflect.DeepEqual(eff, []string{"ffmpeg", "jq"}) {
+		t.Fatalf("EffectiveSoftware = %v, %v; want the valid names only", eff, err)
+	}
+	if got := InvalidSoftware(CleanSoftware(append(org, "x/y"))); !reflect.DeepEqual(got, []string{"bad name", "x/y"}) {
+		t.Errorf("InvalidSoftware = %v", got)
+	}
+
+	if org, err = s.AddOrgSoftware([]string{"git"}); err != nil || !reflect.DeepEqual(org, []string{"bad name", "git", "jq"}) {
+		t.Errorf("AddOrgSoftware = %v, %v; want the add kept beside the listed names", org, err)
+	}
+	if org, err = s.RemoveOrgSoftware("Bad Name"); err != nil || !reflect.DeepEqual(org, []string{"git", "jq"}) {
+		t.Errorf("RemoveOrgSoftware = %v, %v", org, err)
+	}
+	if err := s.AddAgentSoftware("alice", []string{"git"}); err != nil {
+		t.Fatalf("AddAgentSoftware beside an invalid name: %v", err)
+	}
+	if err := s.RemoveAgentSoftware("alice", "x/y"); err != nil {
+		t.Fatalf("RemoveAgentSoftware of the invalid name: %v", err)
+	}
+	if a, _ := s.GetAgent("alice"); !reflect.DeepEqual(a.Software, []string{"ffmpeg", "git"}) {
+		t.Errorf("own list = %v, want [ffmpeg git]", a.Software)
 	}
 }
