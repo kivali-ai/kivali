@@ -129,26 +129,18 @@ func TestBulkProvisionRetriesFailedPods(t *testing.T) {
 	}()
 
 	// The first wave failed alice; the retry waits bulkProvisionBackoff.
-	clk.BlockUntil(1)
+	awaitRetryWait(t, clk, bulkProvisionBackoff)
 	if got := pod.attemptsOf("alice"); got != 1 {
 		t.Fatalf("alice attempts after the first wave: %d, want 1", got)
 	}
-	clk.Advance(bulkProvisionBackoff - time.Second)
-	if got := pod.attemptsOf("alice"); got != 1 {
-		t.Fatalf("alice retried before the backoff ran out: %d attempts", got)
-	}
-	clk.Advance(time.Second)
+	clk.Advance(bulkProvisionBackoff)
 
 	// The second attempt fails too; the next wait is twice as long.
-	clk.BlockUntil(1)
+	awaitRetryWait(t, clk, 2*bulkProvisionBackoff)
 	if got := pod.attemptsOf("alice"); got != 2 {
 		t.Fatalf("alice attempts after the first retry: %d, want 2", got)
 	}
-	clk.Advance(2*bulkProvisionBackoff - time.Second)
-	if got := pod.attemptsOf("alice"); got != 2 {
-		t.Fatalf("alice retried before the doubled backoff ran out: %d attempts", got)
-	}
-	clk.Advance(time.Second)
+	clk.Advance(2 * bulkProvisionBackoff)
 
 	select {
 	case <-done:
@@ -160,6 +152,107 @@ func TestBulkProvisionRetriesFailedPods(t *testing.T) {
 	}
 	if got := pod.attemptsOf("cos"); got != 1 {
 		t.Errorf("cos was provisioned %d times, want once: a retry must only touch the agents that failed", got)
+	}
+}
+
+// awaitRetryWait waits for the sweep to arm its retry timer and fails
+// the test unless that timer is due exactly want from now. The timer is
+// the only thing that starts the next wave, so a wait of the right
+// length is what rules out a retry before the backoff runs out.
+func awaitRetryWait(t *testing.T, clk *clock.Fake, want time.Duration) {
+	t.Helper()
+	clk.BlockUntil(1)
+	got := clk.Deadlines()
+	if len(got) != 1 {
+		t.Fatalf("armed timers: %v, want one retry wait", got)
+	}
+	if wait := got[0].Sub(clk.Now()); wait != want {
+		t.Fatalf("retry wait: %s, want %s", wait, want)
+	}
+}
+
+// The doubling backoff stops growing at bulkProvisionBackoffMax.
+func TestBulkProvisionBackoffIsCapped(t *testing.T) {
+	srv := newTestServer(t)
+	clk := clock.NewFake()
+	srv.Clock = clk
+	if err := srv.Store.CreateAgent(store.Agent{Slug: "alice", Role: "alice", ReportsTo: "ceo"}, "role"); err != nil {
+		t.Fatal(err)
+	}
+	waits := []time.Duration{
+		bulkProvisionBackoff,
+		2 * bulkProvisionBackoff,
+		4 * bulkProvisionBackoff,
+		8 * bulkProvisionBackoff,
+		bulkProvisionBackoffMax,
+		bulkProvisionBackoffMax,
+	}
+	pod := &flakyAgentPod{failures: map[string]int{"alice": len(waits)}, attempts: map[string]int{}}
+	srv.AgentPod = pod
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		srv.BulkProvisionAgentPods(context.Background())
+	}()
+
+	for i, want := range waits {
+		awaitRetryWait(t, clk, want)
+		if got := pod.attemptsOf("alice"); got != i+1 {
+			t.Fatalf("alice attempts before wait %d: %d, want %d", i+1, got, i+1)
+		}
+		clk.Advance(want)
+	}
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("BulkProvisionAgentPods did not return once every pod was provisioned")
+	}
+	if got := pod.attemptsOf("alice"); got != len(waits)+1 {
+		t.Errorf("alice attempts: %d, want %d", got, len(waits)+1)
+	}
+}
+
+// An agent offboarded while the sweep waits to retry its pod is not
+// provisioned again, and its directory is not recreated; the agents
+// still active are retried as before.
+func TestBulkProvisionSkipsAgentsOffboardedDuringBackoff(t *testing.T) {
+	srv := newTestServer(t)
+	clk := clock.NewFake()
+	srv.Clock = clk
+	for _, slug := range []string{"alice", "bob"} {
+		if err := srv.Store.CreateAgent(store.Agent{Slug: slug, Role: slug, ReportsTo: "ceo"}, "role"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pod := &flakyAgentPod{failures: map[string]int{"alice": 1, "bob": 1}, attempts: map[string]int{}}
+	srv.AgentPod = pod
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		srv.BulkProvisionAgentPods(context.Background())
+	}()
+
+	awaitRetryWait(t, clk, bulkProvisionBackoff)
+	if err := srv.Store.ArchiveAgent("alice"); err != nil {
+		t.Fatal(err)
+	}
+	clk.Advance(bulkProvisionBackoff)
+
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("BulkProvisionAgentPods did not return once every active agent's pod was provisioned")
+	}
+	if got := pod.attemptsOf("alice"); got != 1 {
+		t.Errorf("alice provisioned %d times, want once: she was offboarded before the retry", got)
+	}
+	if got := pod.attemptsOf("bob"); got != 2 {
+		t.Errorf("bob attempts: %d, want 2", got)
+	}
+	if _, err := os.Stat(filepath.Join(srv.Store.Root(), "agents", "alice")); !os.IsNotExist(err) {
+		t.Errorf("agents/alice exists after the sweep (stat err %v); the offboarded agent's tree was recreated", err)
 	}
 }
 

@@ -106,8 +106,8 @@ hash of the rendered spec. `Provision` leaves a pod whose label matches
 and deletes and recreates one that differs, so a new server image or env change reaches every agent the next time
 the server provisions. At boot the server syncs each agent's filesystem and provisions every active agent
 (`BulkProvisionAgentPods`), and provisions again, after a backoff that
-doubles from 5 s to a minute, the agents whose pod it could not create,
-until every pod exists or the boot's five-minute deadline passes (right
+doubles from 5 s to a minute, the agents whose pod it could not create
+and that are still active, until every pod exists or the boot's five-minute deadline passes (right
 after the node boots, the API server's service address can go
 unanswered for tens of seconds); hire does the same for one. The scratch
 PVC is never diffed and survives offboarding.
@@ -284,7 +284,11 @@ sequenceDiagram
    holds; [knowledge-graph.md](knowledge-graph.md)), builds the
    request with `agent.Runtime` (the layering is in
    [context-serialization.md](context-serialization.md)) and publishes
-   a `chat-turn` event to the agent's pod.
+   a `chat-turn` event to the agent's pod. When no pod is subscribed
+   (a fresh hire, or a restart whose pods are not back yet) nothing
+   starts and the work stays owed in `chat.jsonl`; the pod's
+   subscription to its events stream runs the same decision again
+   and starts the turn.
 3. The runtime runs it on the warm CLI and posts every event back.
    Core persists the rows and broadcasts them to the page; tool calls
    go from the CLI to `kivali mcp` and on to core or the dev-shell.

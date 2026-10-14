@@ -489,17 +489,31 @@ func (s *Server) spawnChatLoopIfIdle(slug, source string) bool {
 	}
 	// Publish the chat-turn event to the agent pod. Returns false
 	// when no agent runtime is subscribed for slug — typically a
-	// fresh hire whose pod hasn't booted yet, or a pod restart in
-	// flight. We deliberately leave the active-turn marker on disk
-	// so the next Kivali boot's RecoverInterruptedTurns scan writes
-	// a kind:runtime-disruption row + auto-respawns once the pod
-	// subscribes. The chat hub is still closed locally so the
-	// browser doesn't sit on a stuck "thinking" indicator; the
+	// fresh hire whose pod hasn't booted yet, a pod restart in
+	// flight, or a server restart whose pods are not back yet. No
+	// turn started, so the active-turn marker is cleared: left on
+	// disk, the next boot would record a runtime disruption that
+	// never happened, and enough of those quarantine the agent. The
+	// work stays owed in chat.jsonl, and wakeOnAgentpodSubscribe
+	// starts it when the pod subscribes. The chat hub is closed so
+	// the browser doesn't sit on a stuck "thinking" indicator; the
 	// snapshot's `disconnected` flag is the user-visible explanation
 	// of why nothing came back.
 	if !s.publishAgentpodChatTurn(slug, source, hub, &req) {
-		log.Printf("chat %s: no agent-pod subscriber; dropping spawn (active-turn marker retained for recovery)", slug)
-		return s.abandonSpawn(slug, hub, source)
+		log.Printf("chat %s: no agent-pod subscriber; the turn starts when the pod subscribes", slug)
+		if err := s.Store.ClearActiveTurn(slug); err != nil {
+			log.Printf("chat %s: clear active turn after dropped spawn: %v", slug, err)
+		}
+		if s.abandonSpawn(slug, hub, source) {
+			return true
+		}
+		// A pod that subscribed while this spawn held the hub found
+		// it claimed, so its subscribe wake started nothing. The hub
+		// is released now; start the turn here instead.
+		if s.AgentpodHub != nil && s.AgentpodHub.SubscriberCount(slug) > 0 {
+			return s.spawnChatLoopIfIdle(slug, source)
+		}
+		return false
 	}
 	return true
 }
@@ -1295,7 +1309,7 @@ func (s *Server) spawnWhenSubscribed(slug, reason string) {
 	deadline := time.Now().Add(spawnRecoveredSubscribeTimeout)
 	for s.AgentpodHub.SubscriberCount(slug) == 0 {
 		if time.Now().After(deadline) {
-			log.Printf("recover-interrupted-turns %s: agent pod never subscribed within %s; giving up (next inbound chat-turn will pick up the disruption row)", slug, spawnRecoveredSubscribeTimeout)
+			log.Printf("recover-interrupted-turns %s: agent pod never subscribed within %s; giving up (the pod's subscribe wake will pick up the disruption row)", slug, spawnRecoveredSubscribeTimeout)
 			return
 		}
 		time.Sleep(spawnRecoveredSubscribePollInterval)
@@ -1303,6 +1317,20 @@ func (s *Server) spawnWhenSubscribed(slug, reason string) {
 	if !s.spawnChatLoopIfIdle(slug, reason) {
 		log.Printf("recover-interrupted-turns %s: spawn gate held off (likely quarantined: %d consecutive disruptions)", slug, store.ConsecutiveRuntimeDisruptions(s.readChatHistorySafe(slug)))
 	}
+}
+
+// wakeOnAgentpodSubscribe starts slug's chat loop when its agent pod
+// subscribes, if the agent has something to answer. A wake that came
+// while no pod was listening (a release to an agent whose pod is not up
+// yet, after a hire or a restart) was dropped, leaving the work owed in
+// chat.jsonl; this is where it runs. spawnChatLoopIfIdle applies every
+// gate a wake goes through: an offboarded agent, one already mid-turn
+// (including a turn SpawnRecovered or another wake has started), one
+// held by Stop or a turn error, a quarantined one, and one with nothing
+// unanswered all stay idle. Called by the events stream handler once
+// the subscription is registered.
+func (s *Server) wakeOnAgentpodSubscribe(slug string) {
+	s.spawnChatLoopIfIdle(slug, "release")
 }
 
 // readChatHistorySafe reads chat history but never panics or returns
