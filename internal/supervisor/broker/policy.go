@@ -1017,6 +1017,14 @@ func (s *Server) optimizeVHD(r *http.Request, c Caller) (any, error) {
 	return OptimizeResult{SizeBefore: before, SizeAfter: after}, nil
 }
 
+// TODO: remove POST /v1/vhd/import, with migrateLocked and the
+// DataDiskMigrator interface in internal/supervisor, once installs from
+// before the broker kept the data disk have resumed under this one.
+// Its only caller is that migration: a new team's disk is made by POST
+// /v1/vhd, and restoring a backup goes through the app, never a disk
+// file. It is the one endpoint that reads a disk the caller wrote, and
+// so a way in for as long as it exists.
+//
 // importVHD is POST /v1/vhd/import: data.vhdx in the config directory,
 // where the data disk was kept before the broker kept it, copied into
 // the team's VM directory as its data disk, with the VM off.

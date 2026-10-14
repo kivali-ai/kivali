@@ -32,6 +32,13 @@ const migrateSpare = 2 << 30
 // A legacy disk whose first boot never reached READY is disposable, as
 // bootLocked treats one: it is not copied, and bootLocked makes a new
 // disk in its place.
+//
+// TODO: remove migrateLocked, dropMigratedLocked, DataDiskMigrator and
+// the broker's POST /v1/vhd/import once installs from before the broker
+// kept the data disk have resumed under this one. Nothing else imports
+// a disk (a new team's disk is made in place, and a backup is restored
+// through the app), and the import is the broker's one read of a disk
+// the caller wrote.
 func (s *Supervisor) migrateLocked(ctx context.Context, logf Logf) error {
 	m, ok := s.o.Backend.(DataDiskMigrator)
 	if !ok {
