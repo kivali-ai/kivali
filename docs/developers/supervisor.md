@@ -544,7 +544,9 @@ service running as its own virtual account (`NT SERVICE\kivali-broker`,
 a member of Hyper-V Administrators whose token keeps only the
 impersonation and traverse privileges; `broker install`, run by the
 elevated installer, registers it, and `broker uninstall` removes the
-service, its event source and the group membership), or a foreground
+service, its event source and the group membership, and keeps every VM
+directory, each a team's data disk, with the broker's directory above
+them), or a foreground
 process in an elevated terminal with `--console`, serving HTTP/1.1 on
 the named pipe `\\.\pipe\kivali-broker`: `POST /v1/vm` (make the VM exist
 with exactly a configuration), `GET`/`start`/`stop`/`DELETE` on it, the

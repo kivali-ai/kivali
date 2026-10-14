@@ -94,7 +94,7 @@
     ${If} $0 != 0
       DetailPrint "Kivali could not fully remove its broker service (${KIVALI_BROKER}); see the details above"
       ${If} $PassiveMode != 1
-        MessageBox MB_ICONEXCLAMATION|MB_OK "Kivali could not fully remove its broker service (${KIVALI_BROKER}); the details above say which step failed. The uninstall goes on. Afterwards, from an administrator's terminal: if $\"sc.exe query ${KIVALI_BROKER}$\" still lists the service, $\"sc.exe delete ${KIVALI_BROKER}$\"; and a C:\ProgramData\Kivali\broker left behind holds the Hyper-V files of teams whose VMs still exist (Remove-VM in PowerShell), which can then be deleted." /SD IDOK
+        MessageBox MB_ICONEXCLAMATION|MB_OK "Kivali could not fully remove its broker service (${KIVALI_BROKER}); the details above say which step failed. The uninstall goes on. Afterwards, from an administrator's terminal: if $\"sc.exe query ${KIVALI_BROKER}$\" still lists the service, $\"sc.exe delete ${KIVALI_BROKER}$\".$\r$\n$\r$\nThe teams on this computer keep their data in C:\ProgramData\Kivali\broker\vm, which the uninstall leaves in place: installing Kivali again opens them as they were. Deleting that folder deletes their data." /SD IDOK
       ${EndIf}
     ${EndIf}
   ${EndIf}

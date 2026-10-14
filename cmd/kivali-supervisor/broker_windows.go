@@ -69,8 +69,8 @@ func (c *cli) broker(args []string) int {
 		}
 		fmt.Printf("removed the %s service\n", broker.ServiceName)
 		if len(left) > 0 {
-			dir, _ := broker.LogDir()
-			fmt.Printf("left %s: the VMs of %d team(s) are still registered in Hyper-V (%s); destroy those teams first, or remove each VM in an administrator's PowerShell (Remove-VM kivali-<key> -Force) and delete the directory\n",
+			dir, _ := broker.VMRoot()
+			fmt.Printf("kept %s: it holds the data of %d team(s) not deleted before the uninstall (%s), and installing Kivali again opens those teams as they were. Deleting it deletes their data. To remove a team for good, delete it in Kivali before uninstalling, which removes its data and its Hyper-V VM\n",
 				dir, len(left), strings.Join(left, ", "))
 		}
 		return 0
