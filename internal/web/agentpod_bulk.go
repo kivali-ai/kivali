@@ -2,6 +2,8 @@ package web
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log"
 	"slices"
 	"strings"
@@ -9,6 +11,7 @@ import (
 	"time"
 
 	"github.com/kivali-ai/kivali/internal/agent"
+	"github.com/kivali-ai/kivali/internal/store"
 )
 
 // bulkProvisionBackoff is how long BulkProvisionAgentPods waits before
@@ -163,16 +166,26 @@ func (s *Server) provisionAgentPods(ctx context.Context, slugs []string) []strin
 // succession, an approval landing during a settings reprovision, or the
 // boot pass racing either. A later call waits for the earlier one, then
 // builds the spec from the lists as they are by then, so it sees the
-// earlier call's pod and the later change as drift and applies it.
+// earlier call's pod and the later change as drift and applies it. An
+// offboard holds the same lock while it archives the agent and deletes
+// its pod (lockProvision), so a provision either finishes before the
+// archive, and the offboard then deletes its pod, or starts after it
+// and finds the agent gone: it neither syncs (which would remake
+// agents/<slug>) nor creates a pod.
 //
-// No-op when AgentPod is unwired.
+// No-op when AgentPod is unwired, or the agent is not active.
 func (s *Server) ProvisionAgentPod(ctx context.Context, slug string) error {
 	if s.AgentPod == nil {
 		return nil
 	}
-	mu, _ := s.provisionLocks.LoadOrStore(slug, &sync.Mutex{})
-	mu.(*sync.Mutex).Lock()
-	defer mu.(*sync.Mutex).Unlock()
+	defer s.lockProvision(slug)()
+	if _, err := s.Store.GetAgent(slug); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			log.Printf("agentpod: %s is not an active agent; no pod", slug)
+			return nil
+		}
+		return fmt.Errorf("read agent: %w", err)
+	}
 	if err := s.Store.SyncAgentFilesystem(slug); err != nil {
 		log.Printf("agentpod: files sync %s before provisioning: %v", slug, err)
 	}
@@ -186,6 +199,24 @@ func (s *Server) ProvisionAgentPod(ctx context.Context, slug string) error {
 	}
 	starting()
 	return s.AgentPod.Provision(ctx, slug)
+}
+
+// lockProvision takes slug's provision lock and returns its unlock:
+// ProvisionAgentPod and the offboard's archive and pod teardown run one
+// at a time for an agent.
+func (s *Server) lockProvision(slug string) (unlock func()) {
+	mu, _ := s.provisionLocks.LoadOrStore(slug, &sync.Mutex{})
+	mu.(*sync.Mutex).Lock()
+	return mu.(*sync.Mutex).Unlock
+}
+
+// agentProvisioner is the agent.Provisioner the hire path uses: the
+// server's ProvisionAgentPod, so a hire takes the same per-agent lock as
+// every other provision.
+type agentProvisioner struct{ s *Server }
+
+func (p agentProvisioner) Provision(ctx context.Context, slug string) error {
+	return p.s.ProvisionAgentPod(ctx, slug)
 }
 
 // podStartNotifier is an AgentPodLifecycle that reports when it is

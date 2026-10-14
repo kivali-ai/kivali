@@ -302,9 +302,6 @@ func main() {
 	} else {
 		log.Printf("agentpod: disabled (not running in-cluster)")
 	}
-	if rt != nil {
-		rt.AgentPod = aprov
-	}
 
 	// Routing + delivery primitives. Holds the MessageQueue mutex
 	// shared with chat-path Route calls and the release-all batch.

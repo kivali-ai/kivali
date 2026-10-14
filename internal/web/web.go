@@ -53,9 +53,10 @@ type Server struct {
 	Provider  provider.Provider
 	Runtime   *agent.Runtime       // per-agent execution; chat path drives Claude through it
 	Messenger *messaging.Messenger // routing + delivery primitives
-	// AgentPod is the per-agent Pod + PVC lifecycle manager. Both calls
-	// hang off a CEO approval: ApplyHire fires Provision, and an
-	// approved offboard fires Destroy (see respondAsCEO). Wired in
+	// AgentPod is the per-agent Pod + PVC lifecycle manager. Provision
+	// is called only through ProvisionAgentPod (a hire's too: NewServer
+	// gives the Runtime that path), and Destroy by an approved offboard
+	// (see respondAsCEO), both under the agent's provision lock. Wired in
 	// main.go via agentpod.Provisioner — interface here so tests inject
 	// a fake. nil leaves both calls no-ops (tests that don't exercise
 	// hire/offboard).
@@ -319,6 +320,11 @@ func NewServer(s *Server) (*Server, error) {
 		// falling back to winding it up — without a second delivery
 		// path to keep in sync.
 		s.SubagentService.DeliverToParent = s.deliverToAgent
+	}
+	// A hire provisions its pod through ProvisionAgentPod, under the
+	// same per-agent lock as every other provision.
+	if s.Runtime != nil && s.AgentPod != nil {
+		s.Runtime.AgentPod = agentProvisioner{s}
 	}
 	if s.SubagentService != nil && s.SubagentService.NotifyWorkingChanged == nil {
 		s.SubagentService.NotifyWorkingChanged = s.NotifyOrgState

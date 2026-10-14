@@ -297,7 +297,13 @@ func (s *Server) respondAsCEO(ctx context.Context, kind responseKind, approved *
 			inherits = a.ReportsTo
 		}
 		s.drainSlugState(slug)
+		// The archive and the pod teardown hold the agent's provision
+		// lock, so a provision in flight (a software change, the boot
+		// pass) finishes first and its pod is deleted below, and one
+		// that starts later finds the agent archived.
+		unlockProvision := s.lockProvision(slug)
 		if oerr := s.Runtime.ApplyOffboard(*reqMsg.Offboard); oerr != nil {
+			unlockProvision()
 			return refuseApply("The offboard", "offboard apply: ", oerr, proposer)
 		}
 		// An archived agent cannot be woken, so its open assignments move
@@ -320,6 +326,7 @@ func (s *Server) respondAsCEO(ctx context.Context, kind responseKind, approved *
 				log.Printf("offboard %s: destroy agent pod: %v", slug, derr)
 			}
 		}
+		unlockProvision()
 	}
 
 	// Software installs: same atomicity rule as Hire. The packages are

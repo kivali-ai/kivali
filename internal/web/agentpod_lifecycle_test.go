@@ -2,11 +2,16 @@ package web
 
 import (
 	"context"
+	"errors"
+	"io/fs"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 
 	"github.com/kivali-ai/kivali/internal/agent"
+	"github.com/kivali-ai/kivali/internal/provider"
 	"github.com/kivali-ai/kivali/internal/store"
 )
 
@@ -66,6 +71,104 @@ func TestApplyHireProvisionsAgentPod(t *testing.T) {
 	}
 	if got := pod.provisionedSlugs(); len(got) != 1 || got[0] != "alice" {
 		t.Errorf("AgentPod.Provision calls = %v, want [alice]", got)
+	}
+}
+
+// provisionLockHeld reports whether slug's provision lock is held.
+func provisionLockHeld(s *Server, slug string) bool {
+	mu, ok := s.provisionLocks.Load(slug)
+	if !ok {
+		return false
+	}
+	if mu.(*sync.Mutex).TryLock() {
+		mu.(*sync.Mutex).Unlock()
+		return false
+	}
+	return true
+}
+
+// lockCheckingPod records, for each Provision and Destroy, whether the
+// agent's provision lock was held when it ran.
+type lockCheckingPod struct {
+	srv    *Server
+	mu     sync.Mutex
+	calls  []string
+	locked []bool
+}
+
+func (p *lockCheckingPod) record(call, slug string) {
+	held := provisionLockHeld(p.srv, slug)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.calls = append(p.calls, call+" "+slug)
+	p.locked = append(p.locked, held)
+}
+
+func (p *lockCheckingPod) Provision(_ context.Context, slug string) error {
+	p.record("provision", slug)
+	return nil
+}
+
+func (p *lockCheckingPod) Destroy(_ context.Context, slug string) error {
+	p.record("destroy", slug)
+	return nil
+}
+
+// A hire provisions through ProvisionAgentPod, under the agent's
+// provision lock, like every other provision: NewServer gives the
+// Runtime that path.
+func TestHireProvisionsUnderTheProvisionLock(t *testing.T) {
+	st, err := store.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	pod := &lockCheckingPod{}
+	srv, err := NewServer(&Server{
+		Store:    st,
+		Provider: provider.MockProvider{},
+		Runtime:  agent.NewRuntime(st, agent.RuntimeDefaults{AgentModel: "mock-large-0"}),
+		AgentPod: pod,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pod.srv = srv
+	if err := st.CreateAgent(store.Agent{Slug: "chief-of-staff", Role: "CoS", ReportsTo: "ceo"}, "k"); err != nil {
+		t.Fatal(err)
+	}
+	if warn, err := srv.Runtime.ApplyHire(store.Hire{Slug: "alice", Role: "Analyst", ReportsTo: "chief-of-staff", Body: "x"}); err != nil || warn != "" {
+		t.Fatalf("ApplyHire = %q, %v", warn, err)
+	}
+	if len(pod.calls) != 1 || pod.calls[0] != "provision alice" || !pod.locked[0] {
+		t.Errorf("calls = %v, under the lock = %v; want one provision of alice under its lock", pod.calls, pod.locked)
+	}
+}
+
+// An approved offboard deletes the pod under the agent's provision
+// lock, so a provision in flight finishes first; one that starts after
+// the archive finds the agent gone and neither creates a pod nor remakes
+// the agent's directory.
+func TestOffboardAndProvisionDoNotInterleave(t *testing.T) {
+	srv, _ := newTurnServer(t)
+	_ = srv.Store.CreateAgent(store.Agent{Slug: "chief-of-staff", Role: "CoS"}, "# role\n")
+	if err := srv.Store.CreateAgent(store.Agent{Slug: "alice", Role: "Analyst", ReportsTo: "chief-of-staff"}, "k"); err != nil {
+		t.Fatalf("seed alice: %v", err)
+	}
+	pod := &lockCheckingPod{srv: srv}
+	srv.AgentPod = pod
+
+	rel := seedOffboardProposal(t, srv, "alice")
+	if rr := approve(t, srv, rel); rr.Code != http.StatusOK {
+		t.Fatalf("code = %d, body = %s", rr.Code, rr.Body.String())
+	}
+	if err := srv.ProvisionAgentPod(context.Background(), "alice"); err != nil {
+		t.Fatalf("ProvisionAgentPod after the offboard: %v", err)
+	}
+	if len(pod.calls) != 1 || pod.calls[0] != "destroy alice" || !pod.locked[0] {
+		t.Errorf("calls = %v, under the lock = %v; want only the offboard's destroy, under the lock", pod.calls, pod.locked)
+	}
+	if _, err := os.Stat(filepath.Join(srv.Store.Root(), "agents", "alice")); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("agents/alice after a provision of the archived agent: %v; want it gone", err)
 	}
 }
 
