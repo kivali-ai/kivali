@@ -186,7 +186,8 @@ jobs:
       - name: go test (broker, vhdx, hyperv)
         env:
           CGO_ENABLED: '0'
-        run: go test -count=1 ./internal/supervisor/broker/... ./internal/supervisor/vhdx/... ./internal/supervisor/hyperv/...
+          KIVALI_REQUIRE_ELEVATED: '1'
+        run: go test -count=1 -v ./internal/supervisor/broker/... ./internal/supervisor/vhdx/... ./internal/supervisor/hyperv/...
 
   desktop:
     name: Kivali Desktop (${{ matrix.name }})
