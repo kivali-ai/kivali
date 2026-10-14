@@ -6,7 +6,7 @@ import (
 )
 
 // The per-agent PVC is split: the agent container (claude CLI,
-// credentials) and the dev-shell (run_shell) each mount their own
+// credentials) and the agent-shell (run_shell) each mount their own
 // subPath at /scratch, and only the init container mounts the whole
 // volume. A shared writable directory between the two would let the
 // shell rewrite the CLI's mcp-config or the read cache.
@@ -29,7 +29,7 @@ func TestPodManifestScratchSplit(t *testing.T) {
 		m := ct.(map[string]any)
 		byName[m["name"].(string)] = m
 	}
-	for name, want := range map[string]string{"agent": ScratchAgentSubPath, "dev-shell": ScratchShellSubPath} {
+	for name, want := range map[string]string{"agent": ScratchAgentSubPath, "agent-shell": ScratchShellSubPath} {
 		got := scratchMounts(byName[name])
 		if len(got) != 1 || got[0]["mountPath"] != "/scratch" || got[0]["subPath"] != want {
 			t.Errorf("%s scratch mounts = %v, want one at /scratch from subPath %s", name, got, want)
@@ -57,13 +57,13 @@ func TestPodManifestScratchSplit(t *testing.T) {
 	}
 }
 
-// The dev-shell's mounts, in order. /files/artifacts is a RW mount of
+// The agent-shell's mounts, in order. /files/artifacts is a RW mount of
 // its own so that `mv /files/artifacts ...` fails with EBUSY instead of
 // carrying the read-only public/ and shared/ mounts away; it precedes
 // the nested mounts inside it, and /files precedes everything below
 // it. The published trees come from public/ on the data volume, not
 // from the agent's tree.
-func TestPodManifestDevShellMountOrder(t *testing.T) {
+func TestPodManifestAgentShellMountOrder(t *testing.T) {
 	c := testConfig()
 	c.FilesSubPath = func(slug string) string { return "agents/" + slug + "/files" }
 	spec := c.podManifest("alice")["spec"].(map[string]any)
@@ -80,7 +80,7 @@ func TestPodManifestDevShellMountOrder(t *testing.T) {
 		got = append(got, mount{m["mountPath"].(string), sp, ro})
 	}
 	want := []mount{
-		{"/run/kivali-dev-shell", "", false},
+		{"/run/kivali-agent-shell", "", false},
 		{"/scratch", ScratchShellSubPath, false},
 		{"/files", "agents/alice/files", false},
 		{"/files/artifacts", "agents/alice/files/artifacts", false},
@@ -97,7 +97,7 @@ func TestPodManifestDevShellMountOrder(t *testing.T) {
 		{"/data/agents/alice/chats", "agents/alice/chats", true},
 	}
 	if !reflect.DeepEqual(got, want) {
-		t.Errorf("dev-shell mounts =\n%v\nwant\n%v", got, want)
+		t.Errorf("agent-shell mounts =\n%v\nwant\n%v", got, want)
 	}
 }
 

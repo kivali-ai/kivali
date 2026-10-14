@@ -14,7 +14,7 @@ changed without walking anyone's tree.
 ## Why
 
 - **One writer per area, one set of rights.** The pod's `agent`
-  container mounts the org's Claude credentials; the `dev-shell`
+  container mounts the org's Claude credentials; the `agent-shell`
   container, where `run_shell` runs, does not. If `file_*` ran in the
   `agent` container over the same `/files` tree the shell writes, the
   shell could plant a symlink that `file_*` then followed with the
@@ -42,7 +42,7 @@ live only where that writer is the only path.
 
 ### File tools are the shell's ergonomics, not a boundary
 
-`file_*` executes inside the `dev-shell` container through its
+`file_*` executes inside the `agent-shell` container through its
 daemon, with exactly the shell's mounts and privileges. It keeps what
 the shell does badly (exact-match `str_replace`, `insert`, line-range
 and grep views, images returned as image blocks) and holds no
@@ -53,9 +53,9 @@ sockets, and nothing an agent can place a symlink in.
 
 The per-agent volume is split between the two containers. Each
 mounts its own subdirectory at `/scratch` (`.kivali-agent` in the
-`agent` container, `.kivali-shell` in `dev-shell`, whose `$HOME` is
+`agent` container, `.kivali-shell` in `agent-shell`, whose `$HOME` is
 `/scratch/home`), and nothing passes between them through it: they
-meet only at the `dev-shell` socket. An init container, the one
+meet only at the `agent-shell` socket. An init container, the one
 thing that mounts the whole volume, empties the agent half at every
 pod start (all of it is regenerable).
 

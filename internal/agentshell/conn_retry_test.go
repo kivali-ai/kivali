@@ -1,4 +1,4 @@
-package devshell
+package agentshell
 
 import (
 	"bufio"

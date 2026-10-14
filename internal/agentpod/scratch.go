@@ -19,7 +19,7 @@ import (
 // mounted beside it, and it keeps its runtime state on the PVC: the
 // CLI's --mcp-config files (the session dir and every subagent's run
 // dir), and the read cache of role, memory, skill and attachment
-// bytes. The dev-shell container runs whatever the agent's run_shell
+// bytes. The agent-shell container runs whatever the agent's run_shell
 // asks for. A shell that could reach the agent's half could rewrite an
 // mcp-config (whose "command" the CLI executes) or plant a link in the
 // cache, and so run code, or feed bytes, in the container that holds
@@ -27,12 +27,12 @@ import (
 //
 // So each mounts its own subdirectory of the volume at /scratch, and
 // neither mounts the volume's root: ScratchAgentSubPath in the agent
-// container, ScratchShellSubPath in the dev-shell, where
+// container, ScratchShellSubPath in the agent-shell, where
 // $HOME=/scratch/home. Nothing passes
-// between the two through the volume: the dev-shell writes only its
+// between the two through the volume: the agent-shell writes only its
 // own home (the BASH_ENV shim included) and whatever run_shell makes,
 // and the agent runtime reads only what it wrote itself. They meet at
-// the dev-shell socket (an emptyDir) and nowhere else.
+// the agent-shell socket (an emptyDir) and nowhere else.
 //
 // PrepareScratch runs in the pod's init container, the only thing that
 // mounts the whole volume, before either container starts.

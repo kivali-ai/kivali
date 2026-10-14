@@ -89,7 +89,7 @@ func runAgent(args []string) {
 	// The agent container mounts no store (of the Kivali PVC, only
 	// /data/claude-home, the CLI's HOME) and no /files — every
 	// authoritative read/write has to round-trip to core over UDS, and
-	// file_* / run_shell go to the dev-shell sidecar. Setting CoreUDS
+	// file_* / run_shell go to the agent-shell sidecar. Setting CoreUDS
 	// routes the spawned `kivali mcp` subprocess through agentpod.Client
 	// instead of opening a local FSStore (which would fail at startup).
 	driver := claudeagent.New(claudeagent.Options{

@@ -1,4 +1,4 @@
-package devshell
+package agentshell
 
 import (
 	"context"
@@ -32,7 +32,7 @@ const (
 // back into the parent namespace (and unmount on namespace teardown
 // could rip a still-in-use parent mount). The bind-mount itself
 // requires CAP_SYS_ADMIN, which `-r` (map-root-user inside the user
-// namespace) provides without privileges on the dev-shell sidecar's
+// namespace) provides without privileges on the agent-shell sidecar's
 // real UID.
 const overlayBindScript = `set -e
 mount --make-rprivate / 2>/tmp/.kivali-overlay-err || {

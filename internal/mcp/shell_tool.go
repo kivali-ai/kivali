@@ -28,7 +28,7 @@ func ShellTool(cfg ShellToolConfig) *Tool {
 	if cfg.Exec == nil || cfg.From == "" {
 		return nil
 	}
-	// The description names the packages the dev-shell reports having
+	// The description names the packages the agent-shell reports having
 	// (or says it could not read them); see agent.ShellPackages.
 	def := agent.ShellToolWithPackages(agent.ShellPackages(context.Background(), cfg.Exec))
 	t := Tool{

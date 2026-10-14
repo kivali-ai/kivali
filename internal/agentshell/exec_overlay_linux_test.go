@@ -1,6 +1,6 @@
 //go:build linux
 
-package devshell
+package agentshell
 
 import (
 	"context"

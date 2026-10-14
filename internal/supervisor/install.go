@@ -36,7 +36,7 @@ const PodCIDR = "10.42.0.0/16"
 const (
 	repoKivali  = "kivali"
 	repoEgress  = "kivali-egress-proxy"
-	repoShell   = "kivali-dev-shell"
+	repoShell   = "kivali-agent-shell"
 	repoBusybox = "mirrored-library-busybox"
 )
 

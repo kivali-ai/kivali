@@ -8,14 +8,14 @@ import (
 
 	"github.com/kivali-ai/kivali/internal/agent"
 	"github.com/kivali-ai/kivali/internal/agentpod"
-	"github.com/kivali-ai/kivali/internal/devshell"
+	"github.com/kivali-ai/kivali/internal/agentshell"
 	"github.com/kivali-ai/kivali/internal/files"
 	"github.com/kivali-ai/kivali/internal/mcp"
 )
 
 // Where an MCP server's run_shell and file_* tools execute.
 //
-// In an agent pod, DEV_SHELL_SOCKET names the dev-shell sidecar's
+// In an agent pod, AGENT_SHELL_SOCKET names the agent-shell sidecar's
 // socket, and both execute there: the sidecar is the only container
 // that mounts the agent's /files/. Running them in this process
 // instead, against a local tree, is for tests and fixtures only, and
@@ -25,7 +25,7 @@ import (
 // container happens to have.
 
 // LocalFilesEnv, set to "1", runs run_shell and the file_* tools in
-// this process against a local tree when DEV_SHELL_SOCKET is not set.
+// this process against a local tree when AGENT_SHELL_SOCKET is not set.
 const LocalFilesEnv = "KIVALI_MCP_LOCAL_FILES"
 
 // LocalFilesRootEnv names the durable agent's local tree when
@@ -52,9 +52,9 @@ func agentFilesRoot() string {
 // there.
 func fileToolsRefusal(local bool, root string) error {
 	if !local {
-		return fmt.Errorf("DEV_SHELL_SOCKET is not set: run_shell and the file_* tools execute in the dev-shell sidecar (%s=1 runs them in this process against a local tree, for tests)", LocalFilesEnv)
+		return fmt.Errorf("AGENT_SHELL_SOCKET is not set: run_shell and the file_* tools execute in the agent-shell sidecar (%s=1 runs them in this process against a local tree, for tests)", LocalFilesEnv)
 	}
-	return fmt.Errorf("DEV_SHELL_SOCKET is not set and %s=1, but %s does not exist: there is no local tree to run run_shell and the file_* tools against", LocalFilesEnv, root)
+	return fmt.Errorf("AGENT_SHELL_SOCKET is not set and %s=1, but %s does not exist: there is no local tree to run run_shell and the file_* tools against", LocalFilesEnv, root)
 }
 
 // localTreeExists reports whether root is a directory.
@@ -68,8 +68,8 @@ func localTreeExists(root string) bool {
 // against root.
 func agentFileTools(sock string, local bool, slug, root string) (agent.ShellExecutor, mcp.FilesDispatcher, error) {
 	if sock != "" {
-		return &devshell.SidecarShell{SocketPath: sock, Slug: slug},
-			mcp.NewSidecarFilesDispatcher(&devshell.SidecarFiles{SocketPath: sock}),
+		return &agentshell.SidecarShell{SocketPath: sock, Slug: slug},
+			mcp.NewSidecarFilesDispatcher(&agentshell.SidecarFiles{SocketPath: sock}),
 			nil
 	}
 	if !local || !localTreeExists(root) {
@@ -108,7 +108,7 @@ func subagentFileTools(sock string, local bool, parent, filesRoot string) (agent
 		// cross-subagent leakage.
 		return nil, nil, fmt.Errorf("subagent filesRoot %q must live under %s", filesRoot, filesPrefix)
 	}
-	shell := &devshell.SidecarShell{
+	shell := &agentshell.SidecarShell{
 		SocketPath: sock,
 		Slug:       parent,
 		CwdPrefix:  prefix,
@@ -121,6 +121,6 @@ func subagentFileTools(sock string, local bool, parent, filesRoot string) (agent
 		OverlayPrivate: filepath.Join(filesRoot, "artifacts", "private"),
 	}
 	return shell,
-		mcp.NewSidecarFilesDispatcher(&devshell.SidecarFiles{SocketPath: sock, Root: prefix}),
+		mcp.NewSidecarFilesDispatcher(&agentshell.SidecarFiles{SocketPath: sock, Root: prefix}),
 		nil
 }

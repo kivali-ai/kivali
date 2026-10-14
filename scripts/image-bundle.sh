@@ -7,7 +7,7 @@
 #
 # The supervisor imports ONE archive per platform
 # (internal/supervisor/release.go, guestapi/images.go): a `docker save` of
-# kivali, kivali-egress-proxy and kivali-dev-shell at the release tag, in
+# kivali, kivali-egress-proxy and kivali-agent-shell at the release tag, in
 # one tar, zstd-compressed. This loads the three tarballs into the local
 # Docker daemon, saves them together, and writes:
 #
@@ -51,7 +51,7 @@ command -v docker >/dev/null 2>&1 || { echo "image-bundle: docker not found" >&2
 command -v zstd >/dev/null 2>&1 || { echo "image-bundle: zstd not found (brew install zstd)" >&2; exit 1; }
 
 reg="${REGISTRY:-}"
-names=(kivali kivali-egress-proxy kivali-dev-shell)
+names=(kivali kivali-egress-proxy kivali-agent-shell)
 refs=()
 for n in "${names[@]}"; do
   tar="$images_dir/$n-$ARCH.tar"

@@ -14,13 +14,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kivali-ai/kivali/internal/devshell"
+	"github.com/kivali-ai/kivali/internal/agentshell"
 )
 
-// startDevShell serves the dev-shell daemon's handler on a UDS rooted
+// startAgentShell serves the agent-shell daemon's handler on a UDS rooted
 // at root and returns the socket path. /tmp keeps the path under
 // darwin's sun_path limit.
-func startDevShell(t *testing.T, root string) string {
+func startAgentShell(t *testing.T, root string) string {
 	t.Helper()
 	dir, err := os.MkdirTemp("/tmp", "mcp-ds-")
 	if err != nil {
@@ -32,7 +32,7 @@ func startDevShell(t *testing.T, root string) string {
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	srv := &http.Server{Handler: devshell.NewHandler(devshell.ServerConfig{Root: root}), ReadHeaderTimeout: 5 * time.Second}
+	srv := &http.Server{Handler: agentshell.NewHandler(agentshell.ServerConfig{Root: root}), ReadHeaderTimeout: 5 * time.Second}
 	go func() {
 		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			t.Logf("serve: %v", err)
@@ -46,11 +46,11 @@ func startDevShell(t *testing.T, root string) string {
 	return sock
 }
 
-// TestSubagentToolkitFilesRunInDevShell: the subagent toolkit's file_*
+// TestSubagentToolkitFilesRunInAgentShell: the subagent toolkit's file_*
 // tools go wherever its Files dispatcher sends them; with the sidecar
 // dispatcher that is the daemon, rooted at the subagent's view. A
 // file_view of an image comes back as a vision block.
-func TestSubagentToolkitFilesRunInDevShell(t *testing.T) {
+func TestSubagentToolkitFilesRunInAgentShell(t *testing.T) {
 	root := t.TempDir()
 	private := filepath.Join(root, "subagents", "abc", "artifacts", "private")
 	if err := os.MkdirAll(private, 0o755); err != nil {
@@ -60,12 +60,12 @@ func TestSubagentToolkitFilesRunInDevShell(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(private, "shot.png"), png, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	sock := startDevShell(t, root)
+	sock := startAgentShell(t, root)
 
 	tk := SubagentToolkit(SubagentDeps{
 		Client:     newTestClient("alice"),
 		SubagentID: "abc",
-		Files:      NewSidecarFilesDispatcher(&devshell.SidecarFiles{SocketPath: sock, Root: "subagents/abc"}),
+		Files:      NewSidecarFilesDispatcher(&agentshell.SidecarFiles{SocketPath: sock, Root: "subagents/abc"}),
 	})
 	tools := map[string]Tool{}
 	for _, tl := range tk.Tools {
@@ -73,11 +73,11 @@ func TestSubagentToolkitFilesRunInDevShell(t *testing.T) {
 	}
 
 	res, err := tools["file_create"].Handler(context.Background(),
-		json.RawMessage(`{"path":"/files/artifacts/private/out.md","file_text":"written in the dev-shell"}`))
+		json.RawMessage(`{"path":"/files/artifacts/private/out.md","file_text":"written in the agent-shell"}`))
 	if err != nil || res.IsError {
 		t.Fatalf("file_create: %+v, %v", res, err)
 	}
-	if got, err := os.ReadFile(filepath.Join(private, "out.md")); err != nil || string(got) != "written in the dev-shell" {
+	if got, err := os.ReadFile(filepath.Join(private, "out.md")); err != nil || string(got) != "written in the agent-shell" {
 		t.Errorf("out.md = %q, %v", got, err)
 	}
 

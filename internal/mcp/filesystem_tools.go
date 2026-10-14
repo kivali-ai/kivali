@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/kivali-ai/kivali/internal/devshell"
+	"github.com/kivali-ai/kivali/internal/agentshell"
 	"github.com/kivali-ai/kivali/internal/files"
 )
 
@@ -16,7 +16,7 @@ import (
 // Two implementations, both in this file:
 //
 //   - NewSidecarFilesDispatcher — what an agent pod uses. The call
-//     executes in the dev-shell container through its daemon, which
+//     executes in the agent-shell container through its daemon, which
 //     runs files.Run there against a Backend it builds itself.
 //   - NewLocalFilesDispatcher — files.Run in-process against a
 //     *files.Backend. Tests, and the no-sidecar fallback.
@@ -139,11 +139,11 @@ func (d localFilesDispatcher) DispatchFilesTool(_ context.Context, name string, 
 }
 
 // NewSidecarFilesDispatcher returns the dispatcher an agent pod's MCP
-// server uses: every file_* call executes in the dev-shell container
+// server uses: every file_* call executes in the agent-shell container
 // through its daemon, with the shell's mounts and privileges. The
 // agent container itself mounts no /files. A nil client gives a nil
 // dispatcher, which the toolkits refuse.
-func NewSidecarFilesDispatcher(c *devshell.SidecarFiles) FilesDispatcher {
+func NewSidecarFilesDispatcher(c *agentshell.SidecarFiles) FilesDispatcher {
 	if c == nil {
 		return nil
 	}
@@ -151,7 +151,7 @@ func NewSidecarFilesDispatcher(c *devshell.SidecarFiles) FilesDispatcher {
 }
 
 type sidecarFilesDispatcher struct {
-	c *devshell.SidecarFiles
+	c *agentshell.SidecarFiles
 }
 
 func (d sidecarFilesDispatcher) DispatchFilesTool(ctx context.Context, name string, raw json.RawMessage) (string, bool, *FilesImage, error) {

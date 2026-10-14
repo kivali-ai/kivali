@@ -78,14 +78,14 @@ func gz(t *testing.T, b []byte) []byte {
 
 func TestImageRefs(t *testing.T) {
 	docker := writeTar(t, map[string]string{
-		"manifest.json": `[{"RepoTags":["kivali:dev","rancher/mirrored-pause:3.10"]},{"RepoTags":["ghcr.io/kivali-ai/kivali-dev-shell:v1"]}]`,
+		"manifest.json": `[{"RepoTags":["kivali:dev","rancher/mirrored-pause:3.10"]},{"RepoTags":["ghcr.io/kivali-ai/kivali-agent-shell:v1"]}]`,
 		"blobs/x":       "layer",
 	})
 	refs, err := ImageRefs(bytes.NewReader(docker), "x.tar")
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"docker.io/library/kivali:dev", "docker.io/rancher/mirrored-pause:3.10", "ghcr.io/kivali-ai/kivali-dev-shell:v1"}
+	want := []string{"docker.io/library/kivali:dev", "docker.io/rancher/mirrored-pause:3.10", "ghcr.io/kivali-ai/kivali-agent-shell:v1"}
 	if strings.Join(refs, ",") != strings.Join(want, ",") {
 		t.Fatalf("refs %v, want %v", refs, want)
 	}

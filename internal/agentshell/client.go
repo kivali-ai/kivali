@@ -1,4 +1,4 @@
-package devshell
+package agentshell
 
 import (
 	"bytes"
@@ -17,7 +17,7 @@ import (
 )
 
 // SidecarShell implements agent.ShellExecutor by dispatching commands
-// to the dev-shell sidecar over its Unix-domain socket. The agent
+// to the agent-shell sidecar over its Unix-domain socket. The agent
 // runtime container holds no shell-exec state; bash + the dev tooling
 // live in the sidecar's image, which alone mounts the agent's /files/.
 //
@@ -66,7 +66,7 @@ type SidecarShell struct {
 // whole lifetime.
 func (s *SidecarShell) Exec(ctx context.Context, _ string, req agent.ShellRequest) (*agent.ShellResult, error) {
 	if s.SocketPath == "" {
-		return nil, errors.New("devshell.SidecarShell: SocketPath is empty")
+		return nil, errors.New("agentshell.SidecarShell: SocketPath is empty")
 	}
 	cwd := joinCwd(s.CwdPrefix, req.Cwd)
 	body, err := marshalRequest(ExecRequest{
@@ -76,7 +76,7 @@ func (s *SidecarShell) Exec(ctx context.Context, _ string, req agent.ShellReques
 		OverlayPrivate: s.OverlayPrivate,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("devshell: marshal ExecRequest: %w", err)
+		return nil, fmt.Errorf("agentshell: marshal ExecRequest: %w", err)
 	}
 
 	// The client-side context must outlast the daemon's per-command
@@ -88,9 +88,9 @@ func (s *SidecarShell) Exec(ctx context.Context, _ string, req agent.ShellReques
 	defer cancel()
 
 	hreq, err := http.NewRequestWithContext(cctx, http.MethodPost,
-		"http://dev-shell/v1/exec", bytes.NewReader(body))
+		"http://agent-shell/v1/exec", bytes.NewReader(body))
 	if err != nil {
-		return nil, fmt.Errorf("devshell: build request: %w", err)
+		return nil, fmt.Errorf("agentshell: build request: %w", err)
 	}
 	hreq.Header.Set("Content-Type", "application/json")
 
@@ -101,11 +101,11 @@ func (s *SidecarShell) Exec(ctx context.Context, _ string, req agent.ShellReques
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode/100 != 2 {
 		errBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("devshell: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(errBody)))
+		return nil, fmt.Errorf("agentshell: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(errBody)))
 	}
 	var out ExecResponse
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, fmt.Errorf("devshell: decode ExecResponse: %w", err)
+		return nil, fmt.Errorf("agentshell: decode ExecResponse: %w", err)
 	}
 	return &agent.ShellResult{
 		ExitCode:   out.ExitCode,
@@ -118,16 +118,16 @@ func (s *SidecarShell) Exec(ctx context.Context, _ string, req agent.ShellReques
 }
 
 // Packages satisfies agent.ShellPackageLister: the apt packages the
-// dev-shell image has installed, from GET /v1/packages. An empty list
+// agent-shell image has installed, from GET /v1/packages. An empty list
 // means the image records none. The call rides the same dial retry as
 // Exec, so a caller that must not wait out the startup grace bounds ctx.
 func (s *SidecarShell) Packages(ctx context.Context) ([]string, error) {
 	if s.SocketPath == "" {
-		return nil, errors.New("devshell.SidecarShell: SocketPath is empty")
+		return nil, errors.New("agentshell.SidecarShell: SocketPath is empty")
 	}
-	hreq, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://dev-shell/v1/packages", nil)
+	hreq, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://agent-shell/v1/packages", nil)
 	if err != nil {
-		return nil, fmt.Errorf("devshell: build request: %w", err)
+		return nil, fmt.Errorf("agentshell: build request: %w", err)
 	}
 	resp, err := s.connection().do(hreq)
 	if err != nil {
@@ -136,11 +136,11 @@ func (s *SidecarShell) Packages(ctx context.Context) ([]string, error) {
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode/100 != 2 {
 		errBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("devshell: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(errBody)))
+		return nil, fmt.Errorf("agentshell: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(errBody)))
 	}
 	var out PackagesResponse
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, fmt.Errorf("devshell: decode PackagesResponse: %w", err)
+		return nil, fmt.Errorf("agentshell: decode PackagesResponse: %w", err)
 	}
 	return out.Packages, nil
 }
@@ -180,7 +180,7 @@ func (s *SidecarShell) connection() *sidecarConn {
 	return s.conn
 }
 
-// SidecarFiles runs file_* tool calls in the dev-shell container
+// SidecarFiles runs file_* tool calls in the agent-shell container
 // through the daemon's POST /v1/files. The daemon builds the Backend
 // from its own --root, --agent and Root below, so the calls run with
 // exactly the shell's mounts and privileges; this side only names the
@@ -213,18 +213,18 @@ const filesCallTimeout = 2 * time.Minute
 // were malformed.
 func (f *SidecarFiles) Dispatch(ctx context.Context, tool string, input json.RawMessage) (*FilesResponse, error) {
 	if f.SocketPath == "" {
-		return nil, errors.New("devshell.SidecarFiles: SocketPath is empty")
+		return nil, errors.New("agentshell.SidecarFiles: SocketPath is empty")
 	}
 	body, err := marshalRequest(FilesRequest{Tool: tool, Input: input, Root: f.Root})
 	if err != nil {
-		return nil, fmt.Errorf("devshell: marshal FilesRequest: %w", err)
+		return nil, fmt.Errorf("agentshell: marshal FilesRequest: %w", err)
 	}
 	cctx, cancel := context.WithTimeout(ctx, filesCallTimeout)
 	defer cancel()
 	hreq, err := http.NewRequestWithContext(cctx, http.MethodPost,
-		"http://dev-shell/v1/files", bytes.NewReader(body))
+		"http://agent-shell/v1/files", bytes.NewReader(body))
 	if err != nil {
-		return nil, fmt.Errorf("devshell: build request: %w", err)
+		return nil, fmt.Errorf("agentshell: build request: %w", err)
 	}
 	hreq.Header.Set("Content-Type", "application/json")
 
@@ -240,11 +240,11 @@ func (f *SidecarFiles) Dispatch(ctx context.Context, tool string, input json.Raw
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode/100 != 2 {
 		errBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("devshell: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(errBody)))
+		return nil, fmt.Errorf("agentshell: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(errBody)))
 	}
 	var out FilesResponse
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, fmt.Errorf("devshell: decode FilesResponse: %w", err)
+		return nil, fmt.Errorf("agentshell: decode FilesResponse: %w", err)
 	}
 	if out.Err != "" {
 		return nil, errors.New(out.Err)

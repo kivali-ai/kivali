@@ -1,4 +1,4 @@
-// Package devshell is the per-agent shell-exec sidecar.
+// Package agentshell is the per-agent shell-exec sidecar.
 //
 // The agent runtime container is a slim Go runtime carrying no dev
 // tooling — no compilers, no python, no jq. Putting dev tooling into
@@ -6,20 +6,20 @@
 // release cadence and bloat every pod with utilities the runtime never
 // invokes.
 //
-// Instead, each agent pod carries a second container ("dev-shell")
+// Instead, each agent pod carries a second container ("agent-shell")
 // built from a richer Debian image. run_shell in the agent runtime
 // dispatches commands to that sidecar over a Unix-domain socket on a
 // pod-local emptyDir. The file_* tools execute there too
-// (POST /v1/files), so the dev-shell container is the only one that
+// (POST /v1/files), so the agent-shell container is the only one that
 // mounts the agent's /files/ tree: file_* and bash are one writer with
 // the same mounts and privileges, and the agent container, which holds
 // the Claude credentials, mounts nothing an agent can write.
 //
 // Wire shape: HTTP-over-UDS, mirroring the agentpod core socket. The
-// daemon binary lives at cmd/dev-shell; SidecarShell implements
+// daemon binary lives at cmd/agent-shell; SidecarShell implements
 // agent.ShellExecutor and SidecarFiles backs the file_* tools, both
 // wired in mcp_cmd.go's full-agent and subagent paths.
-package devshell
+package agentshell
 
 import "encoding/json"
 
@@ -108,17 +108,17 @@ type FilesImage struct {
 }
 
 // PackagesResponse is the body of GET /v1/packages: the apt packages
-// the dev-shell image has installed, one entry per package, as recorded
+// the agent-shell image has installed, one entry per package, as recorded
 // at build time in PackagesFileDefault. Empty when the image carries no
 // such file; the client then reports the list as unknown.
 type PackagesResponse struct {
 	Packages []string `json:"packages"`
 }
 
-// PackagesFileDefault is where Dockerfile.dev-shell records the
+// PackagesFileDefault is where Dockerfile.agent-shell records the
 // installed package list, one package per line. The daemon reads it once
 // at start (--packages-file overrides the path).
-const PackagesFileDefault = "/etc/kivali/dev-shell-packages"
+const PackagesFileDefault = "/etc/kivali/agent-shell-packages"
 
 // FilesMaxBodyBytes caps a POST /v1/files body. The arguments arrive
 // on one JSON-RPC line from the CLI, and the MCP server reads lines of
@@ -132,7 +132,7 @@ const FilesMaxBodyBytes = 16<<20 + 64<<10
 // tests that pin a temp dir. Lives on a pod-local emptyDir mount
 // distinct from /scratch so agents browsing the shell's working
 // directories don't see dispatch machinery.
-const SocketDefault = "/run/kivali-dev-shell/sock"
+const SocketDefault = "/run/kivali-agent-shell/sock"
 
 // RootDefault is the daemon's default cwd root — the agent's writable
 // /files/ workspace. Cwd values from the request are resolved relative

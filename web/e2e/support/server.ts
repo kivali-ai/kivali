@@ -196,7 +196,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     // How long the `fold` scenario keeps a folded message queued before its tool seam takes
     // it, which is how long the page shows it pending.
     FAKE_CLAUDE_FOLD_HOLD_MS: '3000',
-    // There is no dev-shell sidecar here: the MCP server runs the file tools in process, against
+    // There is no agent-shell sidecar here: the MCP server runs the file tools in process, against
     // a local tree of the run's own (a host has no /files), or it stops at start and every tool
     // call the fake makes goes unanswered.
     KIVALI_MCP_LOCAL_FILES: '1',

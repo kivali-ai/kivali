@@ -9,7 +9,7 @@
 #   - kube-router's NetworkPolicy controller is active: its
 #     KUBE-ROUTER-FORWARD chain exists in this boot's netfilter tables;
 #   - an unprivileged user can create a user + mount namespace and
-#     bind-mount inside it, as the dev-shell's `unshare -mUr` does;
+#     bind-mount inside it, as the agent-shell's `unshare -mUr` does;
 #   - with kivali.selftest=1 on the kernel command line, the Helm
 #     controller has installed the self-test chart from the static
 #     charts URL (its ConfigMap exists in namespace kivali-selftest).

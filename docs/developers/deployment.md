@@ -45,9 +45,9 @@ An org runs three images, all sharing the release tag:
 | --- | --- | --- |
 | `kivali` | The web pod *and* every per-agent agent pod (via the `kivali agent` subcommand) | `make images` |
 | `kivali-egress-proxy` | Per-pod egress allowlist enforcement | `make images` |
-| `kivali-dev-shell` | The bash sidecar in each agent pod | `make images` |
+| `kivali-agent-shell` | The bash sidecar in each agent pod | `make images` |
 
-The chart's `appVersion` is the default tag of all three; the dev-shell
+The chart's `appVersion` is the default tag of all three; the agent-shell
 tag is derived at runtime from the main image tag.
 
 **Architectures.** All three images build for `linux/amd64` and
@@ -65,25 +65,25 @@ slow for the runtime stages' apt installs; the Go and web stages
 cross-compile natively either way. `REGISTRY=ghcr.io/kivali-ai/`
 prefixes all three names; empty, the tags are the bare local names.
 
-**The dev-shell toolkit.** The dev-shell's default packages are small
+**The agent-shell toolkit.** The agent-shell's default packages are small
 and company-agnostic: bash, coreutils, ca-certificates, git, python3
 with pip and venv, jq, ripgrep, fd-find, curl, wget, tar, zip, unzip,
 less, pandoc and imagemagick. There is no compiler and no
 ffmpeg, database client or Go. To bake others in, name them in the
-`DEV_SHELL_EXTRA_PACKAGES` build arg (space-separated apt packages):
+`AGENT_SHELL_EXTRA_PACKAGES` build arg (space-separated apt packages):
 
 ```
-make images DEV_SHELL_EXTRA_PACKAGES="ffmpeg postgresql-client"
-make images DEV_SHELL_EXTRA_PACKAGES="build-essential golang-go ffmpeg"
+make images AGENT_SHELL_EXTRA_PACKAGES="ffmpeg postgresql-client"
+make images AGENT_SHELL_EXTRA_PACKAGES="build-essential golang-go ffmpeg"
 ```
 
-The image records what it installed in `/etc/kivali/dev-shell-packages`
-(one package per line); the dev-shell daemon serves that list, and each
+The image records what it installed in `/etc/kivali/agent-shell-packages`
+(one package per line); the agent-shell daemon serves that list, and each
 agent's `run_shell` tool description is built from it, so agents are
 told exactly what is installed.
 
 **Set it once per machine.** `make dev-vm`, `make dev-load` and the
-release bundles all build the dev-shell, and a build with no
+release bundles all build the agent-shell, and a build with no
 extras is the slim default, so a dev team that relies on extra tools
 would lose them silently on the next load. Put the settings in
 `local.mk` at the repo root; the Makefile includes it first and it is
@@ -91,7 +91,7 @@ gitignored:
 
 ```
 # local.mk
-DEV_SHELL_EXTRA_PACKAGES = ffmpeg postgresql-client build-essential golang-go libssl-dev libffi-dev libsqlite3-dev
+AGENT_SHELL_EXTRA_PACKAGES = ffmpeg postgresql-client build-essential golang-go libssl-dev libffi-dev libsqlite3-dev
 ```
 
 `make images` prints the extras it bakes (or `none`), so a

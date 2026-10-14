@@ -18,7 +18,7 @@ flowchart LR
     runtime[kivali agent<br/>runtime]
     cli[claude CLI]
     mcp[kivali mcp]
-    shell[dev-shell sidecar]
+    shell[agent-shell sidecar]
   end
   data[(Data PVC /data)]
   scratch[(Scratch PVC<br/>per agent)]
@@ -27,7 +27,7 @@ flowchart LR
   runtime -- HTTP over UDS<br/>core.sock --> core
   runtime --> cli --> mcp
   mcp -- core.sock --> core
-  mcp -- dev-shell socket --> shell
+  mcp -- agent-shell socket --> shell
   shell --- data
   shell --- scratch
   runtime --- scratch
@@ -86,10 +86,10 @@ lost.
 | Container | Image | What it does |
 | --- | --- | --- |
 | `prepare-scratch` (init) | `kivali` | `kivali prepare-scratch`: mounts the whole per-agent scratch PVC and creates its two halves, owned by the pod's user |
-| `agent` | `kivali` | `kivali agent --slug=<slug> --uds=<dir>/core.sock` (`agent_cmd.go`, `internal/agentpod/runtime.go`): holds the events stream to core, drives the warm `claude` CLI and its subagent CLIs. Mounts its half of scratch at `/scratch`, the UDS dir, the dev-shell socket dir, and from the data PVC only the provider home (`/data/claude-home`). The only container that sees the Claude sign-in. When the CLI's sign-in changes (what `claude auth status` reports, or `settings.json`; re-checked when `.credentials.json` or `settings.json` changes), the runner registry respawns the warm CLI with `--resume` at the agent's next turn (`internal/claudeagent/signin.go`) |
-| `dev-shell` | `kivali-dev-shell` | `cmd/dev-shell`, `internal/devshell`: an HTTP-over-UDS daemon on `/run/kivali-dev-shell/sock` (an emptyDir shared with `agent`) that runs `run_shell` and every `file_*` tool. The only container that mounts the agent's `/files/`, with `HOME=/scratch/home` on its own half of scratch |
+| `agent` | `kivali` | `kivali agent --slug=<slug> --uds=<dir>/core.sock` (`agent_cmd.go`, `internal/agentpod/runtime.go`): holds the events stream to core, drives the warm `claude` CLI and its subagent CLIs. Mounts its half of scratch at `/scratch`, the UDS dir, the agent-shell socket dir, and from the data PVC only the provider home (`/data/claude-home`). The only container that sees the Claude sign-in. When the CLI's sign-in changes (what `claude auth status` reports, or `settings.json`; re-checked when `.credentials.json` or `settings.json` changes), the runner registry respawns the warm CLI with `--resume` at the agent's next turn (`internal/claudeagent/signin.go`) |
+| `agent-shell` | `kivali-agent-shell` | `cmd/agent-shell`, `internal/agentshell`: an HTTP-over-UDS daemon on `/run/kivali-agent-shell/sock` (an emptyDir shared with `agent`) that runs `run_shell` and every `file_*` tool. The only container that mounts the agent's `/files/`, with `HOME=/scratch/home` on its own half of scratch |
 
-The dev-shell's `/files/` is the agent's tree on the data PVC
+The agent-shell's `/files/` is the agent's tree on the data PVC
 (`agents/<slug>/memory/`), with the core-managed subtrees
 (`project/`, `skills/`, `attachments/`, `past-chats/`, `episodes/`,
 `artifacts/public/`, `artifacts/shared/`) mounted read-only over it,
@@ -147,7 +147,7 @@ cleared, so a corrupt session log cannot loop.
 
 The CLI's tools come from `kivali mcp --agent <slug> --core-uds ...`
 (`mcp_cmd.go`, `internal/mcp`), an MCP server over stdio that the CLI
-starts. It dispatches `run_shell` and `file_*` to the dev-shell socket
+starts. It dispatches `run_shell` and `file_*` to the agent-shell socket
 and everything else to core over `core.sock`. The tool surface is
 listed in [context-serialization.md](context-serialization.md) and the
 model catalog lives in `internal/claudeagent/catalog.go`.
@@ -266,7 +266,7 @@ sequenceDiagram
   C->>C: persist rows in chat.jsonl
   C-->>B: SSE /agents/{slug}/stream
   L->>M: tool call (stdio)
-  M->>C: dispatch over core.sock (or dev-shell socket)
+  M->>C: dispatch over core.sock (or agent-shell socket)
   M-->>L: tool result
   R->>C: POST event done
   C->>C: finalizeAgentpodTurn: flush staged deliveries,<br/>finish a rotation, spawn a follow-up if needed
@@ -291,7 +291,7 @@ sequenceDiagram
    and starts the turn.
 3. The runtime runs it on the warm CLI and posts every event back.
    Core persists the rows and broadcasts them to the page; tool calls
-   go from the CLI to `kivali mcp` and on to core or the dev-shell.
+   go from the CLI to `kivali mcp` and on to core or the agent-shell.
 4. On `done`, `finalizeAgentpodTurn` (`internal/web/agentpod_turn.go`)
    flushes deliveries staged during the turn and, if any arrived,
    spawns the follow-up turn that reads them. On `failed`, core writes
@@ -419,7 +419,7 @@ with `cmd/devseed`, starts the server with `DEV_MODE=true` and
 `AGENTPOD_UDS_DIR` set, and starts one `kivali-e2e agent --slug <slug>
 --uds <dir>/core.sock --scratch <dir>` per agent on the host. With
 `CLAUDE=fake` (the default) `cmd/fake-claude` stands in for the CLI.
-There is no dev-shell; with `KIVALI_MCP_LOCAL_FILES=1` and
+There is no agent-shell; with `KIVALI_MCP_LOCAL_FILES=1` and
 `KIVALI_MCP_LOCAL_FILES_ROOT` set (`make run` and the e2e suite set
 both), `kivali mcp` runs `run_shell` and the `file_*` tools in-process
 against that local tree ([../../web/e2e/README.md](../../web/e2e/README.md)).

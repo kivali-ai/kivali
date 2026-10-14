@@ -10,7 +10,7 @@ import (
 
 // runPrepareScratch is `kivali prepare-scratch`, the agent pod's init
 // container: it lays out the per-agent volume so the agent and
-// dev-shell containers each mount their own half of it, and neither
+// agent-shell containers each mount their own half of it, and neither
 // can write what the other reads. See agentpod.PrepareScratch.
 func runPrepareScratch(args []string) {
 	fs := flag.NewFlagSet("prepare-scratch", flag.ExitOnError)

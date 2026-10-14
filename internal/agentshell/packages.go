@@ -1,4 +1,4 @@
-package devshell
+package agentshell
 
 import (
 	"errors"
@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// ReadPackages reads the package list Dockerfile.dev-shell records at
+// ReadPackages reads the package list Dockerfile.agent-shell records at
 // build time: one package per line. Blank lines and #-comments are
 // skipped. A missing file is not an error, it is an image with no list
 // (nil); the tool description then says the list is unknown rather than

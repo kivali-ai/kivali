@@ -7,7 +7,7 @@ SHELL := bash
 # Operator-local overrides, set once per machine and never committed
 # (gitignored). Included first so its assignments win over the `?=`
 # defaults below. Typical contents:
-#   DEV_SHELL_EXTRA_PACKAGES = ffmpeg postgresql-client build-essential golang-go
+#   AGENT_SHELL_EXTRA_PACKAGES = ffmpeg postgresql-client build-essential golang-go
 -include local.mk
 
 # An inherited GOROOT is almost always a stale one.
@@ -60,12 +60,12 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 REGISTRY         ?=
 IMAGE            ?= $(REGISTRY)kivali
 EGRESS_IMAGE     ?= $(REGISTRY)kivali-egress-proxy
-DEV_SHELL_IMAGE  ?= $(REGISTRY)kivali-dev-shell
+AGENT_SHELL_IMAGE  ?= $(REGISTRY)kivali-agent-shell
 
-# Apt packages baked into the dev-shell image on top of its small
-# default set (see Dockerfile.dev-shell). Space-separated:
-#   make images DEV_SHELL_EXTRA_PACKAGES="ffmpeg postgresql-client"
-DEV_SHELL_EXTRA_PACKAGES ?=
+# Apt packages baked into the agent-shell image on top of its small
+# default set (see Dockerfile.agent-shell). Space-separated:
+#   make images AGENT_SHELL_EXTRA_PACKAGES="ffmpeg postgresql-client"
+AGENT_SHELL_EXTRA_PACKAGES ?=
 
 # Where the per-architecture image archives of a release are written.
 IMAGES_DIR ?= dist/images
@@ -241,25 +241,25 @@ test-mac: platform-test ## Mac-only checks: supervisor + shell tests, VM image b
 	$(MAKE) -C vm image
 	$(MAKE) -C vm boottest
 
-# Builds the three images (server, egress-proxy, dev-shell) at VERSION,
+# Builds the three images (server, egress-proxy, agent-shell) at VERSION,
 # for this machine's architecture: with ENGINE=vm into the build VM's
 # containerd (scripts/build-vm.sh; KIVALI_BUILD_VM_DIR names another
 # VM, the dev team's for dev-load), with ENGINE=docker into the local
 # docker.
 BUILD_VM := scripts/build-vm.sh
 BUILD_VM_DOWN := $(if $(KIVALI_BUILD_VM_KEEP),true,$(BUILD_VM) down)
-images: ## the three images into the build VM or local docker (VERSION, DEV_SHELL_EXTRA_PACKAGES)
-	@echo "dev-shell extra packages: $(if $(strip $(DEV_SHELL_EXTRA_PACKAGES)),$(DEV_SHELL_EXTRA_PACKAGES),none)"
+images: ## the three images into the build VM or local docker (VERSION, AGENT_SHELL_EXTRA_PACKAGES)
+	@echo "agent-shell extra packages: $(if $(strip $(AGENT_SHELL_EXTRA_PACKAGES)),$(AGENT_SHELL_EXTRA_PACKAGES),none)"
 ifeq ($(ENGINE),docker)
 	docker build --build-arg VERSION=$(VERSION) -t $(IMAGE):$(VERSION) .
 	docker build -f Dockerfile.egress-proxy -t $(EGRESS_IMAGE):$(VERSION) .
-	docker build --build-arg VERSION=$(VERSION) --build-arg DEV_SHELL_EXTRA_PACKAGES="$(DEV_SHELL_EXTRA_PACKAGES)" -f Dockerfile.dev-shell -t $(DEV_SHELL_IMAGE):$(VERSION) .
+	docker build --build-arg VERSION=$(VERSION) --build-arg AGENT_SHELL_EXTRA_PACKAGES="$(AGENT_SHELL_EXTRA_PACKAGES)" -f Dockerfile.agent-shell -t $(AGENT_SHELL_IMAGE):$(VERSION) .
 else
 	$(BUILD_VM) up
 	$(BUILD_VM) put-tree . src
 	$(BUILD_VM) build $(BUILD_VM_CTX) --opt build-arg:VERSION=$(VERSION) --output type=image,name=docker.io/library/$(IMAGE):$(VERSION),unpack=true
 	$(BUILD_VM) build $(BUILD_VM_CTX) --opt filename=Dockerfile.egress-proxy --output type=image,name=docker.io/library/$(EGRESS_IMAGE):$(VERSION),unpack=true
-	$(BUILD_VM) build $(BUILD_VM_CTX) --opt filename=Dockerfile.dev-shell --opt build-arg:VERSION=$(VERSION) --opt 'build-arg:DEV_SHELL_EXTRA_PACKAGES=$(DEV_SHELL_EXTRA_PACKAGES)' --output type=image,name=docker.io/library/$(DEV_SHELL_IMAGE):$(VERSION),unpack=true
+	$(BUILD_VM) build $(BUILD_VM_CTX) --opt filename=Dockerfile.agent-shell --opt build-arg:VERSION=$(VERSION) --opt 'build-arg:AGENT_SHELL_EXTRA_PACKAGES=$(AGENT_SHELL_EXTRA_PACKAGES)' --output type=image,name=docker.io/library/$(AGENT_SHELL_IMAGE):$(VERSION),unpack=true
 	$(BUILD_VM_DOWN)
 endif
 # The tree streamed in by put-tree, as a buildctl context (the
@@ -610,8 +610,8 @@ endif
 	docker buildx build --platform linux/$(ARCH) -f Dockerfile.egress-proxy \
 		-t $(EGRESS_IMAGE):$(VERSION) -o type=docker,dest=$(IMAGES_DIR)/kivali-egress-proxy-$(ARCH).tar .
 	docker buildx build --platform linux/$(ARCH) --build-arg VERSION=$(VERSION) \
-		--build-arg DEV_SHELL_EXTRA_PACKAGES="$(DEV_SHELL_EXTRA_PACKAGES)" -f Dockerfile.dev-shell \
-		-t $(DEV_SHELL_IMAGE):$(VERSION) -o type=docker,dest=$(IMAGES_DIR)/kivali-dev-shell-$(ARCH).tar .
+		--build-arg AGENT_SHELL_EXTRA_PACKAGES="$(AGENT_SHELL_EXTRA_PACKAGES)" -f Dockerfile.agent-shell \
+		-t $(AGENT_SHELL_IMAGE):$(VERSION) -o type=docker,dest=$(IMAGES_DIR)/kivali-agent-shell-$(ARCH).tar .
 
 # One prerequisite target per architecture (rather than a shell loop that
 # calls $(MAKE)) so that `make -n release-assets` is a true dry run: make

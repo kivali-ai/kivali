@@ -14,7 +14,7 @@ import (
 
 	"github.com/kivali-ai/kivali/internal/agent"
 	"github.com/kivali-ai/kivali/internal/agentpod"
-	"github.com/kivali-ai/kivali/internal/devshell"
+	"github.com/kivali-ai/kivali/internal/agentshell"
 	"github.com/kivali-ai/kivali/internal/files"
 	"github.com/kivali-ai/kivali/internal/mcp"
 	"github.com/kivali-ai/kivali/internal/messaging"
@@ -79,10 +79,10 @@ func startFullAgentpodServer(t *testing.T) (sockPath string, srv *Server, cleanu
 	return sockPath, srv, cleanup
 }
 
-// startDevShellDaemon serves the dev-shell daemon's handler on a UDS,
+// startAgentShellDaemon serves the agent-shell daemon's handler on a UDS,
 // rooted at root, and returns the socket path. /tmp keeps the path
 // under darwin's sun_path limit.
-func startDevShellDaemon(t *testing.T, root string) string {
+func startAgentShellDaemon(t *testing.T, root string) string {
 	t.Helper()
 	dir, err := os.MkdirTemp("/tmp", "wds-")
 	if err != nil {
@@ -94,7 +94,7 @@ func startDevShellDaemon(t *testing.T, root string) string {
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	httpSrv := &http.Server{Handler: devshell.NewHandler(devshell.ServerConfig{Root: root}), ReadHeaderTimeout: 5 * time.Second}
+	httpSrv := &http.Server{Handler: agentshell.NewHandler(agentshell.ServerConfig{Root: root}), ReadHeaderTimeout: 5 * time.Second}
 	go func() {
 		if err := httpSrv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			t.Logf("serve: %v", err)
@@ -288,18 +288,18 @@ func TestAgentpodToolkitPublishNoticeRoundTrips(t *testing.T) {
 }
 
 // TestAgentpodToolkitFileViewRoundTrips: file_view in the full-agent
-// toolkit goes to the dev-shell daemon (as it does in a pod, where the
+// toolkit goes to the agent-shell daemon (as it does in a pod, where the
 // agent container mounts no /files) and returns the content the
 // daemon read from the agent's tree.
 func TestAgentpodToolkitFileViewRoundTrips(t *testing.T) {
 	sockPath, srv, cleanup := startFullAgentpodServer(t)
 	defer cleanup()
 	filesRoot := filepath.Join(srv.Store.Root(), "agents", "alice", "memory")
-	devSock := startDevShellDaemon(t, filesRoot)
+	devSock := startAgentShellDaemon(t, filesRoot)
 	c := agentpod.NewClient(sockPath, "alice")
 	tk := mcp.FullAgentToolkit(mcp.FullAgentDeps{
 		Client: c,
-		Files:  mcp.NewSidecarFilesDispatcher(&devshell.SidecarFiles{SocketPath: devSock}),
+		Files:  mcp.NewSidecarFilesDispatcher(&agentshell.SidecarFiles{SocketPath: devSock}),
 	})
 
 	// Seed an artifact in alice's writable area so file_view returns

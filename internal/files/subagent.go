@@ -14,7 +14,7 @@ import (
 // (per docs/developers/files-and-publishing.md) so file_view paths and shell paths
 // resolve to the same physical bytes.
 //
-// The subagent's file_* Backend (built by the dev-shell daemon for
+// The subagent's file_* Backend (built by the agent-shell daemon for
 // root "subagents/<id>") is rooted at this directory; run_shell's cwd
 // defaults to it. Symlink targets are relative so the
 // overlay resolves correctly when reached through either the agent

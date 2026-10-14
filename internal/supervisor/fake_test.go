@@ -252,7 +252,7 @@ func newFakeBackend() *fakeBackend {
 		baked: []string{
 			"docker.io/library/kivali:v0.15.0",
 			"docker.io/library/kivali-egress-proxy:v0.15.0",
-			"docker.io/library/kivali-dev-shell:v0.15.0",
+			"docker.io/library/kivali-agent-shell:v0.15.0",
 			"docker.io/rancher/mirrored-library-busybox:1.37.0",
 			"docker.io/rancher/mirrored-pause:3.10.2",
 		},
@@ -948,7 +948,7 @@ func writeReleaseChart(t *testing.T, dir, version, chartVersion, tag string) str
 	}
 	_ = z.Close()
 	var bundle bytes.Buffer
-	if err := writeTarTo(&bundle, map[string]string{"manifest.json": fmt.Sprintf(`[{"RepoTags":["kivali:%[1]s","kivali-egress-proxy:%[1]s","kivali-dev-shell:%[1]s"]}]`, tag)}); err != nil {
+	if err := writeTarTo(&bundle, map[string]string{"manifest.json": fmt.Sprintf(`[{"RepoTags":["kivali:%[1]s","kivali-egress-proxy:%[1]s","kivali-agent-shell:%[1]s"]}]`, tag)}); err != nil {
 		t.Fatal(err)
 	}
 	sum := func(b []byte) string { s := sha256.Sum256(b); return hex.EncodeToString(s[:]) }

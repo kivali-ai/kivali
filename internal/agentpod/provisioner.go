@@ -27,8 +27,8 @@ type ProvisionerConfig struct {
 
 	// Image is the container image for the agent pod (typically the
 	// same Kivali image used by web). The container runs
-	// `kivali agent --slug=<slug> --uds=<socket>`. The dev-shell
-	// sidecar image is derived from this — see DevShellImageFor.
+	// `kivali agent --slug=<slug> --uds=<socket>`. The agent-shell
+	// sidecar image is derived from this — see AgentShellImageFor.
 	Image string
 
 	// ImagePullPolicy (IfNotPresent for kind, Always for prod).
@@ -97,7 +97,7 @@ type ProvisionerConfig struct {
 
 	// FilesSubPath, when non-nil, returns the Kivali-PVC-relative
 	// subPath that should be mounted RW at /files in the agent pod's
-	// dev-shell container: agents/<slug>/memory (files.StorageRoot).
+	// agent-shell container: agents/<slug>/memory (files.StorageRoot).
 	//
 	// When nil, the /files mount + the matching RO globals are all
 	// omitted — fixtures + out-of-cluster invocations stay minimal.
