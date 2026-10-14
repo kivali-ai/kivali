@@ -161,7 +161,7 @@ func TestNoticeToolContract(t *testing.T) {
 		"No reply is expected and none is possible. " +
 		"Use this for findings, decisions, heads-ups, and anything the recipient should know but you are not asking them to do. " +
 		"If you need someone to act, open an assignment for them with assignment_create instead; if you are reporting on work you were given, close the assignment with assignment_close. " +
-		"Address only the agents who need this; the owner moderates every notice like any other message."
+		"Address only the agents who need this; notices are delivered like any other message."
 	if def.Description != want {
 		t.Errorf("publish_notice description drifted.\n got: %q\nwant: %q", def.Description, want)
 	}

@@ -17,7 +17,7 @@ func TestHoldThroughTheTools(t *testing.T) {
 	assignmentRefused(t, s, tr, "alice", AssignmentUpdateToolName, `{"id":1,"hold":true,"title":"Epic 2","note":"x"}`, "a hold is a change on its own")
 
 	out := assignmentCall(t, s, tr, "alice", AssignmentUpdateToolName, `{"id":1,"hold":true,"note":"Rethinking."}`)
-	if want := `Updated #1 "Epic": put on hold with everything under it. Now on hold, assignee bob. Told to stop: bob (when the owner releases it), chief-of-staff (when the owner releases it).`; out != want {
+	if want := `Updated #1 "Epic": put on hold with everything under it. Now on hold, assignee bob. Told to stop: bob (once delivered), chief-of-staff (once delivered).`; out != want {
 		t.Fatalf("hold = %q", out)
 	}
 	list := assignmentCall(t, s, tr, "chief-of-staff", AssignmentListToolName, `{}`)
@@ -32,7 +32,7 @@ func TestHoldThroughTheTools(t *testing.T) {
 		t.Fatalf("view = %s", view)
 	}
 	out = assignmentCall(t, s, tr, "alice", AssignmentUpdateToolName, `{"id":1,"hold":false,"note":"Go."}`)
-	if want := `Updated #1 "Epic": resumed with everything under it. Now blocked by #2, assignee bob. Woken: bob (when the owner releases it), chief-of-staff (when the owner releases it).`; out != want {
+	if want := `Updated #1 "Epic": resumed with everything under it. Now blocked by #2, assignee bob. Woken: bob (once delivered), chief-of-staff (once delivered).`; out != want {
 		t.Fatalf("resume = %q", out)
 	}
 	out = assignmentCall(t, s, tr, "ceo", AssignmentUpdateToolName, `{"id":1,"hold":true,"note":"Pause."}`)

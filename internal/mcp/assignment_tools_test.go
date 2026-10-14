@@ -60,12 +60,12 @@ func TestAssignmentToolsEndToEnd(t *testing.T) {
 	s, tr := assignmentFixture(t)
 	// CoS files an epic for alice.
 	ack := assignmentCall(t, s, tr, "chief-of-staff", AssignmentCreateToolName, `{"title":"v3 program","description":"Ship v3.","assignee":"alice"}`)
-	if !strings.Contains(ack, `Opened #1 "v3 program" — assignee alice, ready.`) || !strings.Contains(ack, "Woken: alice (when the owner releases it).") {
+	if !strings.Contains(ack, `Opened #1 "v3 program" — assignee alice, ready.`) || !strings.Contains(ack, "Woken: alice (once delivered).") {
 		t.Fatalf("create ack = %q", ack)
 	}
 	// Alice, the assignee, decomposes: a child for bob.
 	ack = assignmentCall(t, s, tr, "alice", AssignmentCreateToolName, `{"title":"Build script","assignee":"bob","parent":1}`)
-	if !strings.Contains(ack, "Part of #1.") || !strings.Contains(ack, "Woken: bob (when the owner releases it).") {
+	if !strings.Contains(ack, "Part of #1.") || !strings.Contains(ack, "Woken: bob (once delivered).") {
 		t.Fatalf("child ack = %q", ack)
 	}
 	// Bob asks the CEO a question under his assignment: instant CEO inbox.
@@ -107,17 +107,17 @@ func TestAssignmentToolsEndToEnd(t *testing.T) {
 	}
 	// Bob finishes; alice is woken for the rollup.
 	ack = assignmentCall(t, s, tr, "bob", AssignmentCloseToolName, `{"id":2,"resolution":"done","outcome":"Script at /files/artifacts/public/build.md"}`)
-	if !strings.Contains(ack, "Now ready: #1 \"v3 program\". Woken: alice (when the owner releases it).") {
+	if !strings.Contains(ack, "Now ready: #1 \"v3 program\". Woken: alice (once delivered).") {
 		t.Fatalf("finish ack = %q", ack)
 	}
 	// Update ack names each change.
 	ack = assignmentCall(t, s, tr, "chief-of-staff", AssignmentUpdateToolName, `{"id":1,"title":"v3 programme","note":"spelling"}`)
-	if !strings.Contains(ack, `Updated #1 "v3 programme": amended title. Now ready, assignee alice. Woken: alice (when the owner releases it).`) {
+	if !strings.Contains(ack, `Updated #1 "v3 programme": amended title. Now ready, assignee alice. Woken: alice (once delivered).`) {
 		t.Fatalf("update ack = %q", ack)
 	}
 	// Reopen by the creator.
 	ack = assignmentCall(t, s, tr, "alice", AssignmentReopenToolName, `{"id":2,"note":"The script does not build v3."}`)
-	if !strings.Contains(ack, `Reopened #2 "Build script" — assignee bob, ready. Woken: bob (when the owner releases it).`) {
+	if !strings.Contains(ack, `Reopened #2 "Build script" — assignee bob, ready. Woken: bob (once delivered).`) {
 		t.Fatalf("reopen ack = %q", ack)
 	}
 	// Bad input is a tool error, not a crash.
