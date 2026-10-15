@@ -4,22 +4,32 @@
 // architecture its pods run on.
 //
 // The Index reads the archive's own package list (the Packages index
-// apt-get update downloads) and keeps the names in memory. It is what
-// the software lists and propose_software_install check a name against
-// before it is saved; the shell checks again when it installs.
+// apt-get update downloads), keeps it in memory and a copy on disk. It
+// is what the software lists and propose_software_install check a name
+// against before it is saved; the shell checks again when it installs.
+//
+// Once one download has succeeded, checks answer from that list (kept
+// across restarts in the cache file) and a failed refresh only means
+// the list stays as it is. Only an Index that has never had a list
+// answers ErrUnavailable.
 package debian
 
 import (
 	"bufio"
 	"compress/gzip"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
+	"os"
+	"path/filepath"
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/kivali-ai/kivali/internal/clock"
@@ -34,9 +44,10 @@ const Suite = "trixie"
 const Release = "Debian 13"
 
 // PackagesURL is the Packages index of Suite's main component for
-// arch, a Go GOARCH (amd64 and arm64 are Debian's names too). The
-// image's apt sources list main only, so contrib and non-free packages
-// cannot be installed and are not in the index.
+// arch, a Go GOARCH (amd64 and arm64 are Debian's names too), on the
+// mirror the image's apt uses. The image's apt sources list main only,
+// so contrib and non-free packages cannot be installed and are not in
+// the index.
 func PackagesURL(arch string) string {
 	return fmt.Sprintf("https://deb.debian.org/debian/dists/%s/main/binary-%s/Packages.gz", Suite, arch)
 }
@@ -45,28 +56,42 @@ func PackagesURL(arch string) string {
 // server and the agent pods run on the same nodes.
 func DefaultURL() string { return PackagesURL(runtime.GOARCH) }
 
+// DefaultCachePath is where the server keeps its copy of the list:
+// under the user cache directory ($HOME/.cache on Linux, which the
+// server's image puts on the data volume, outside what backups take).
+// Empty when there is no such directory.
+func DefaultCachePath() string {
+	dir, err := os.UserCacheDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(dir, "kivali", fmt.Sprintf("debian-%s-main-%s.json.gz", Suite, runtime.GOARCH))
+}
+
 const (
-	// maxAge is how long a downloaded index is used before it is
-	// fetched again. The archive changes at point releases.
+	// maxAge is how long a list is used before it is fetched again.
+	// An older list is still used while the refresh runs, and for as
+	// long as refreshes fail.
 	maxAge = 24 * time.Hour
-	// retryAfter is how long after a failed download Check answers
-	// ErrUnavailable without trying again, so an add while the archive
-	// is unreachable does not wait for every attempt.
+	// retryAfter is how long after a failed download no new one is
+	// started.
 	retryAfter = time.Minute
+	// refreshTimeout bounds a background refresh.
+	refreshTimeout = 5 * time.Minute
 	// maxSuggestions bounds Unknown.Suggestions.
 	maxSuggestions = 3
 )
 
-// ErrUnavailable is wrapped by Check when no index could be read: the
-// archive could not be reached and nothing was downloaded before.
+// ErrUnavailable is wrapped by Check when there is no list to check
+// against: no download has ever succeeded and none is cached.
 var ErrUnavailable = errors.New("the Debian package list could not be read")
 
-// Unknown is a name that is not a package in the index.
+// Unknown is a name apt cannot install.
 type Unknown struct {
 	Name string
 	// ProvidedBy lists the packages that provide Name when it is a
-	// virtual package (a name packages declare in Provides, which apt
-	// cannot install by itself). Sorted.
+	// virtual package that more than one package provides: apt-get
+	// will not choose between them. Sorted.
 	ProvidedBy []string
 	// Suggestions are package names close to Name, closest first.
 	Suggestions []string
@@ -81,131 +106,285 @@ type Checker interface {
 
 var _ Checker = (*Index)(nil)
 
-// Index is the in-memory package list. The zero value is not usable;
-// use NewIndex. Safe for concurrent use.
+// list is one downloaded package list. Never changed once built.
+type list struct {
+	ETag    string    `json:"etag"`
+	Fetched time.Time `json:"fetched"`
+	// Names are the packages, sorted.
+	Names []string `json:"names"`
+	// Provides maps each virtual package (a name only in Provides) to
+	// the packages that provide it, sorted.
+	Provides map[string][]string `json:"provides"`
+
+	set map[string]bool
+}
+
+func (l *list) index() {
+	l.set = make(map[string]bool, len(l.Names))
+	for _, n := range l.Names {
+		l.set[n] = true
+	}
+}
+
+// Options configure an Index.
+type Options struct {
+	// URL is the Packages.gz to download.
+	URL    string
+	Client *http.Client
+	Clock  clock.Clock
+	// CachePath is the file the last good list is kept in; empty keeps
+	// it in memory only.
+	CachePath string
+}
+
+// Index is the package list. Use NewIndex. Safe for concurrent use.
 type Index struct {
-	url    string
-	client *http.Client
-	clock  clock.Clock
+	opts Options
+	// spawn runs a background refresh; a test seam.
+	spawn func(func())
 
-	// sem serializes downloads and guards the fields below; a channel
-	// so a caller waiting on someone else's download can give up with
-	// its context.
-	sem      chan struct{}
-	names    map[string]bool
-	sorted   []string
-	provides map[string][]string
-	etag     string
-	fetched  time.Time
-	failed   time.Time
-	lastErr  error
+	loadOnce sync.Once
+	// fetch serializes downloads; a channel so a caller waiting on
+	// someone else's can give up with its context.
+	fetch chan struct{}
+
+	mu         sync.Mutex
+	cur        *list
+	failed     time.Time
+	lastErr    error
+	refreshing bool
 }
 
-// NewIndex returns an Index that downloads url (a gzipped Packages
-// file) with client when first asked, and again once a day.
-func NewIndex(url string, client *http.Client, clk clock.Clock) *Index {
-	return &Index{url: url, client: client, clock: clk, sem: make(chan struct{}, 1)}
+// NewIndex returns an Index that loads opts.CachePath when first used,
+// and downloads when it has no list or one older than a day.
+func NewIndex(opts Options) *Index {
+	return &Index{opts: opts, spawn: func(f func()) { go f() }, fetch: make(chan struct{}, 1)}
 }
 
-// Warm downloads the index if it is missing or stale, so a check soon
-// after does not wait. Errors are only remembered.
+// Warm makes the list ready: it loads the cached copy, and downloads
+// when there is none or it is due for a refresh. Errors are only
+// remembered and logged.
 func (ix *Index) Warm(ctx context.Context) {
-	_ = ix.withIndex(ctx, func() {})
+	ix.load()
+	if _, due := ix.state(); due {
+		ix.refresh(ctx)
+	}
 }
 
-// Check returns the names that are not packages in the index, in the
-// order given. The error wraps ErrUnavailable when there is no index
-// to check against, or is ctx's error.
+// Check returns the names apt cannot install, in the order given: a
+// name that is neither a package nor a virtual package exactly one
+// package provides. It answers from the list it has, refreshing it in
+// the background when it is old. The error wraps ErrUnavailable when
+// there is no list at all, or is ctx's error.
 func (ix *Index) Check(ctx context.Context, names []string) ([]Unknown, error) {
+	ix.load()
+	cur, due := ix.state()
+	switch {
+	case cur != nil && due:
+		ix.startRefresh()
+	case cur == nil && due:
+		ix.refresh(ctx)
+		cur, _ = ix.state()
+	}
+	if cur == nil {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		ix.mu.Lock()
+		err := ix.lastErr
+		ix.mu.Unlock()
+		return nil, fmt.Errorf("%w: %v", ErrUnavailable, err)
+	}
 	var unknown []Unknown
-	err := ix.withIndex(ctx, func() {
-		for _, n := range names {
-			if ix.names[n] {
-				continue
-			}
-			unknown = append(unknown, Unknown{Name: n, ProvidedBy: ix.provides[n], Suggestions: ix.suggest(n)})
+	for _, n := range names {
+		if cur.set[n] {
+			continue
 		}
+		by := cur.Provides[n]
+		if len(by) == 1 {
+			continue // apt-get installs the one provider
+		}
+		unknown = append(unknown, Unknown{Name: n, ProvidedBy: by, Suggestions: suggest(cur.Names, n)})
+	}
+	return unknown, nil
+}
+
+// state is the current list and whether a download is due: the list is
+// missing or older than maxAge, and no download failed within
+// retryAfter.
+func (ix *Index) state() (*list, bool) {
+	ix.mu.Lock()
+	defer ix.mu.Unlock()
+	now := ix.opts.Clock.Now()
+	stale := ix.cur == nil || now.Sub(ix.cur.Fetched) >= maxAge
+	backingOff := !ix.failed.IsZero() && now.Sub(ix.failed) < retryAfter
+	return ix.cur, stale && !backingOff
+}
+
+// startRefresh refreshes in the background, unless a background
+// refresh is already running.
+func (ix *Index) startRefresh() {
+	ix.mu.Lock()
+	if ix.refreshing {
+		ix.mu.Unlock()
+		return
+	}
+	ix.refreshing = true
+	ix.mu.Unlock()
+	ix.spawn(func() {
+		defer func() {
+			ix.mu.Lock()
+			ix.refreshing = false
+			ix.mu.Unlock()
+		}()
+		ctx, cancel := context.WithTimeout(context.Background(), refreshTimeout)
+		defer cancel()
+		ix.refresh(ctx)
 	})
-	return unknown, err
 }
 
-// withIndex runs f holding the index, after downloading it if it is
-// missing or older than maxAge. A stale index whose refresh fails is
-// still used.
-func (ix *Index) withIndex(ctx context.Context, f func()) error {
+// refresh downloads the list unless another download, finished while
+// this one waited, made it unnecessary. A failure keeps the list there
+// is.
+func (ix *Index) refresh(ctx context.Context) {
 	select {
-	case ix.sem <- struct{}{}:
+	case ix.fetch <- struct{}{}:
 	case <-ctx.Done():
-		return ctx.Err()
+		return
 	}
-	defer func() { <-ix.sem }()
-
-	now := ix.clock.Now()
-	stale := ix.names == nil || now.Sub(ix.fetched) >= maxAge
-	recentlyFailed := !ix.failed.IsZero() && now.Sub(ix.failed) < retryAfter
-	if stale && !recentlyFailed {
-		if err := ix.fetch(ctx); err != nil {
-			ix.failed, ix.lastErr = ix.clock.Now(), err
-		} else {
-			ix.failed, ix.lastErr = time.Time{}, nil
-		}
+	defer func() { <-ix.fetch }()
+	cur, due := ix.state()
+	if !due {
+		return
 	}
-	if ix.names == nil {
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		return fmt.Errorf("%w: %v", ErrUnavailable, ix.lastErr)
+	next, err := ix.download(ctx, cur)
+	ix.mu.Lock()
+	if err != nil {
+		ix.failed, ix.lastErr = ix.opts.Clock.Now(), err
+	} else {
+		ix.cur, ix.failed, ix.lastErr = next, time.Time{}, nil
 	}
-	f()
-	return nil
+	ix.mu.Unlock()
+	if err != nil {
+		log.Printf("debian: downloading the package list: %v", err)
+		return
+	}
+	ix.save(next)
 }
 
-// fetch downloads and parses the index; the caller holds sem.
-func (ix *Index) fetch(ctx context.Context) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ix.url, nil)
+// download fetches the list; a 304 to cur's ETag renews cur.
+func (ix *Index) download(ctx context.Context, cur *list) (*list, error) {
+	url := ix.opts.URL
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if ix.names != nil && ix.etag != "" {
-		req.Header.Set("If-None-Match", ix.etag)
+	if cur != nil && cur.ETag != "" {
+		req.Header.Set("If-None-Match", cur.ETag)
 	}
-	resp, err := ix.client.Do(req)
+	resp, err := ix.opts.Client.Do(req)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
-	switch resp.StatusCode {
-	case http.StatusNotModified:
-		if ix.names == nil {
-			return fmt.Errorf("%s: not modified, but nothing was downloaded before", ix.url)
-		}
-		ix.fetched = ix.clock.Now()
-		return nil
-	case http.StatusOK:
-	default:
-		return fmt.Errorf("%s: %s", ix.url, resp.Status)
+	switch {
+	case resp.StatusCode == http.StatusNotModified && cur != nil:
+		renewed := *cur
+		renewed.Fetched = ix.opts.Clock.Now()
+		return &renewed, nil
+	case resp.StatusCode != http.StatusOK:
+		return nil, fmt.Errorf("%s: %s", url, resp.Status)
 	}
 	zr, err := gzip.NewReader(resp.Body)
 	if err != nil {
-		return fmt.Errorf("%s: %w", ix.url, err)
+		return nil, fmt.Errorf("%s: %w", url, err)
 	}
-	names, provides, err := parse(zr)
+	l, err := parse(zr)
 	if err != nil {
-		return fmt.Errorf("%s: %w", ix.url, err)
+		return nil, fmt.Errorf("%s: %w", url, err)
 	}
-	ix.names, ix.provides, ix.etag, ix.fetched = names, provides, resp.Header.Get("ETag"), ix.clock.Now()
-	ix.sorted = make([]string, 0, len(names))
-	for n := range names {
-		ix.sorted = append(ix.sorted, n)
+	l.ETag, l.Fetched = resp.Header.Get("ETag"), ix.opts.Clock.Now()
+	return l, nil
+}
+
+// cacheFile is the cache file's content.
+type cacheFile struct {
+	// URL is Options.URL: a cache written for another release or
+	// architecture is not used.
+	URL  string `json:"url"`
+	List *list  `json:"list"`
+}
+
+// load reads the cache file, once. A missing or unreadable file is no
+// list.
+func (ix *Index) load() {
+	ix.loadOnce.Do(func() {
+		if ix.opts.CachePath == "" {
+			return
+		}
+		f, err := os.Open(ix.opts.CachePath)
+		if err != nil {
+			if !errors.Is(err, os.ErrNotExist) {
+				log.Printf("debian: reading the cached package list: %v", err)
+			}
+			return
+		}
+		defer func() { _ = f.Close() }()
+		var c cacheFile
+		zr, err := gzip.NewReader(f)
+		if err == nil {
+			err = json.NewDecoder(zr).Decode(&c)
+		}
+		if err != nil || c.URL != ix.opts.URL || c.List == nil || len(c.List.Names) == 0 {
+			log.Printf("debian: ignoring the cached package list %s (%v)", ix.opts.CachePath, err)
+			return
+		}
+		c.List.index()
+		ix.mu.Lock()
+		if ix.cur == nil {
+			ix.cur = c.List
+		}
+		ix.mu.Unlock()
+	})
+}
+
+// save writes l to the cache file: a temporary file renamed into
+// place, so a reader never sees half of one.
+func (ix *Index) save(l *list) {
+	if ix.opts.CachePath == "" {
+		return
 	}
-	sort.Strings(ix.sorted)
-	return nil
+	err := func() error {
+		dir := filepath.Dir(ix.opts.CachePath)
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return err
+		}
+		tmp, err := os.CreateTemp(dir, ".tmp-debian-")
+		if err != nil {
+			return err
+		}
+		defer func() { _ = os.Remove(tmp.Name()) }()
+		zw := gzip.NewWriter(tmp)
+		err = json.NewEncoder(zw).Encode(cacheFile{URL: ix.opts.URL, List: l})
+		if err == nil {
+			err = zw.Close()
+		}
+		if cerr := tmp.Close(); err == nil {
+			err = cerr
+		}
+		if err != nil {
+			return err
+		}
+		return os.Rename(tmp.Name(), ix.opts.CachePath)
+	}()
+	if err != nil {
+		log.Printf("debian: caching the package list: %v", err)
+	}
 }
 
 // parse reads a Packages file: the Package and Provides fields of each
-// stanza. Provides names that are packages themselves are left out of
-// the result's provides.
-func parse(r io.Reader) (map[string]bool, map[string][]string, error) {
+// stanza.
+func parse(r io.Reader) (*list, error) {
 	names := map[string]bool{}
 	providers := map[string]map[string]bool{}
 	sc := bufio.NewScanner(r)
@@ -237,33 +416,37 @@ func parse(r io.Reader) (map[string]bool, map[string][]string, error) {
 		}
 	}
 	if err := sc.Err(); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	if len(names) == 0 {
-		return nil, nil, errors.New("no packages in the index")
+		return nil, errors.New("no packages in the index")
 	}
-	provides := map[string][]string{}
+	l := &list{Names: make([]string, 0, len(names)), Provides: map[string][]string{}}
+	for n := range names {
+		l.Names = append(l.Names, n)
+	}
+	sort.Strings(l.Names)
 	for v, by := range providers {
 		if names[v] {
 			continue
 		}
-		list := make([]string, 0, len(by))
-		for p := range by {
-			list = append(list, p)
+		p := make([]string, 0, len(by))
+		for n := range by {
+			p = append(p, n)
 		}
-		sort.Strings(list)
-		provides[v] = list
+		sort.Strings(p)
+		l.Provides[v] = p
 	}
-	return names, provides, nil
+	l.index()
+	return l, nil
 }
 
-// suggest returns up to maxSuggestions package names close to name:
-// those that begin with name and a '-', shortest first, then those at
-// the smallest edit distance found within a small limit. The caller
-// holds sem.
-func (ix *Index) suggest(name string) []string {
+// suggest returns up to maxSuggestions of the sorted names close to
+// name: those that begin with name and a '-', shortest first, then
+// those at the smallest edit distance found within a small limit.
+func suggest(sorted []string, name string) []string {
 	var longer []string
-	for _, n := range ix.sorted {
+	for _, n := range sorted {
 		if strings.HasPrefix(n, name+"-") {
 			longer = append(longer, n)
 		}
@@ -275,7 +458,7 @@ func (ix *Index) suggest(name string) []string {
 		limit = 1
 	}
 	var near []string
-	for _, n := range ix.sorted {
+	for _, n := range sorted {
 		if d := len(n) - len(name); d > limit || -d > limit {
 			continue
 		}
@@ -328,7 +511,7 @@ func distance(a, b string, limit int) int {
 func (u Unknown) Describe() string {
 	switch {
 	case len(u.ProvidedBy) > 0:
-		return fmt.Sprintf("%s is not a package itself in %s; it is provided by %s, so name one of those.", u.Name, Release, orList(u.ProvidedBy))
+		return fmt.Sprintf("%s is not a package itself in %s; several packages provide it (%s), so name the one you want.", u.Name, Release, orList(u.ProvidedBy))
 	case len(u.Suggestions) > 0:
 		return fmt.Sprintf("%s has no package called %s. Did you mean %s?", Release, u.Name, orList(u.Suggestions))
 	default:

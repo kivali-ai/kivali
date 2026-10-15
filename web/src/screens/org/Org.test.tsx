@@ -1011,13 +1011,13 @@ describe('Software', () => {
       desktop: true,
       routes: { 'GET /api/v1/org/software': { packages: ['git', 'jq'], invalid: [], unchecked: [] }, 'POST /api/v1/org/software': added },
     });
-    expect(screen.queryByText(/Added without checking/)).toBeNull();
+    expect(screen.queryByText(/couldn’t be reached/)).toBeNull();
     fireEvent.change(screen.getByLabelText('Add software'), { target: { value: 'ffmpg' } });
     await click(screen.getByRole('button', { name: 'Add' }));
-    expect(await screen.findByText('Added without checking ffmpg')).toBeInTheDocument();
-    expect(screen.getByText(/could not reach Debian’s package list to check this name/)).toBeInTheDocument();
+    expect(await screen.findByText('Added ffmpg')).toBeInTheDocument();
+    expect(screen.getByText(/couldn’t be reached to confirm the name/)).toBeInTheDocument();
     await click(screen.getByRole('button', { name: /dismiss/i }));
-    expect(screen.queryByText(/Added without checking/)).toBeNull();
+    expect(screen.queryByText(/couldn’t be reached/)).toBeNull();
     expect(screen.getByText('ffmpg')).toBeInTheDocument();
   });
 });
