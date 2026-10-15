@@ -41,9 +41,16 @@
 #   5. tauri.conf.json's updater public key is not the development key
 #      (scripts/check-updater-key.sh)
 #   6. the bump changes something (VERSION is not already main's)
+#   7. a patch release (Z above 0) changes nothing on the desktop side
+#      since vX.Y.0: desktop-app/, vm/, internal/supervisor/,
+#      cmd/kivali-supervisor/ and cmd/kivali-guest/, compared with both
+#      trees bumped to VERSION, so the version numbers alone pass. A
+#      desktop of X.Y.0 runs every X.Y release
+#      (docs/developers/releasing.md, "Versions and compatibility"); a
+#      change there is a new minor
 # and before tagging:
-#   7. the merge commit is on origin/main
-#   8. at that commit every versioned file says VERSION and the updater
+#   8. the merge commit is on origin/main
+#   9. at that commit every versioned file says VERSION and the updater
 #      key is the owner's
 #
 # Needs git and an authenticated gh (gh auth status). GH overrides the gh
@@ -100,10 +107,15 @@ if git rev-parse --verify --quiet "refs/tags/$VERSION" >/dev/null; then
 fi
 
 work=""
+since_work=""
 cleanup() {
   if [ -n "$work" ]; then
     git worktree remove --force "$work" >/dev/null 2>&1 || true
     work=""
+  fi
+  if [ -n "$since_work" ]; then
+    git worktree remove --force "$since_work" >/dev/null 2>&1 || true
+    since_work=""
   fi
 }
 trap cleanup EXIT
@@ -114,6 +126,45 @@ with_commit() {
   work="$(mktemp -d "${TMPDIR:-/tmp}/kivali-release.XXXXXX")"
   rmdir "$work"
   git worktree add --quiet --detach "$work" "$1"
+}
+
+# What a desktop runs a team with: the app, the VM image, the supervisor
+# and the guest agent. Guard 7 holds a patch release to these as they
+# were at vX.Y.0.
+desktop_side=(desktop-app vm internal/supervisor cmd/kivali-supervisor cmd/kivali-guest)
+
+# check_desktop_side: guard 7, on the bumped tree at $work.
+check_desktop_side() {
+  local major minor patch since tree changed n
+  IFS=. read -r major minor patch <<<"${VERSION#v}"
+  patch="${patch%%-*}"
+  if [ "$patch" = 0 ]; then
+    return 0
+  fi
+  since="v$major.$minor.0"
+  if ! git rev-parse --verify --quiet "refs/tags/$since^{commit}" >/dev/null; then
+    echo "release: $VERSION is a patch release, but there is no $since to patch" >&2
+    exit 1
+  fi
+  echo "==> checking the desktop side is as $since had it"
+  since_work="$(mktemp -d "${TMPDIR:-/tmp}/kivali-release-since.XXXXXX")"
+  rmdir "$since_work"
+  git worktree add --quiet --detach "$since_work" "$since"
+  ROOT="$since_work" bash "$top/scripts/bump-version.sh" "$VERSION" >/dev/null
+  git -C "$since_work" add -A
+  tree="$(git -C "$since_work" write-tree)"
+  changed="$(git -C "$work" diff --name-only "$tree" -- "${desktop_side[@]}")"
+  if [ -n "$changed" ]; then
+    n="$(wc -l <<<"$changed" | tr -d ' ')"
+    echo "release: $VERSION is a patch release, but the desktop side has changed since $since:" >&2
+    head -20 <<<"$changed" | sed 's/^/    /' >&2
+    if [ "$n" -gt 20 ]; then
+      echo "    … and $((n - 20)) more" >&2
+    fi
+    echo "  a desktop of $major.$minor.0 must run every $major.$minor release; release this as v$major.$((minor + 1)).0" >&2
+    echo "  (docs/developers/releasing.md, \"Versions and compatibility\")" >&2
+    exit 1
+  fi
 }
 
 # The release's pull request: the newest one from its branch that is
@@ -151,6 +202,8 @@ open_pr() {
     echo "release: main is already at $VERSION; nothing to release" >&2
     exit 1
   fi
+  # Guard 7: a patch release leaves the desktop side alone.
+  check_desktop_side
 
   # Committed on the worktree's detached HEAD and pushed straight to the
   # branch on origin: no local branch is made, so none is left behind.
@@ -183,12 +236,12 @@ tag_merge() {
     exit 1
   fi
   git fetch origin --quiet
-  # Guard 7: the merge is on main.
+  # Guard 8: the merge is on main.
   if ! git merge-base --is-ancestor "$sha" origin/main; then
     echo "release: #$number's merge commit $sha is not on origin/main" >&2
     exit 1
   fi
-  # Guard 8: what is about to be tagged says VERSION, with the owner's key.
+  # Guard 9: what is about to be tagged says VERSION, with the owner's key.
   with_commit "$sha"
   ROOT="$work" bash "$top/scripts/version-check.sh" "$VERSION"
   ROOT="$work" bash "$top/scripts/check-updater-key.sh"
