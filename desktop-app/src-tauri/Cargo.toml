@@ -136,8 +136,12 @@ tempfile = "3"
 [profile.dev.package."*"]
 debug = false
 
+# Thin LTO across the crates, in parallel codegen units: most of fat
+# LTO's inlining and dead-code removal, without one single-threaded
+# optimisation of the whole program on every build (minutes in CI, where
+# the dependencies come cached and only this pass is left). The binary
+# is a little larger; the installer is mostly the VM image.
 [profile.release]
-codegen-units = 1
-lto = true
+lto = "thin"
 opt-level = "s"
 strip = true

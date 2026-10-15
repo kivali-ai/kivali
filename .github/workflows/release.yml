@@ -33,23 +33,23 @@
 #                    updater public key is not the development one, so
 #                    none of that is discovered after the images and the
 #                    VM images have been built.
+#   chart            kivali-X.Y.Z.tgz
 #   images           one native runner per architecture: the three images
 #                    (kivali, kivali-egress-proxy, kivali-agent-shell) saved
 #                    together and zstd-compressed,
 #                    kivali-images-linux-<arch>.tar.zst, the single
-#                    archive the supervisor imports; and the Debian
-#                    package lists of kivali and kivali-agent-shell, for
-#                    SOURCES.md
-#   chart            kivali-X.Y.Z.tgz
+#                    archive the supervisor imports; the Debian package
+#                    lists of kivali and kivali-agent-shell, for
+#                    SOURCES.md; and the VM image for the desktop platform
+#                    of that architecture, with its images (uncompressed,
+#                    compressed meanwhile for the release) and the chart
+#                    baked in: arm64 for macOS (Image, initramfs.gz,
+#                    root.squashfs), amd64 for Windows (root.vhdx); each
+#                    with packages.txt and SOURCES.md
 #   licenses         THIRD_PARTY_LICENSES.txt, the notices of everything a
 #                    release ships (make third-party-licenses). The apps
 #                    bundle the same file; each image also carries its
 #                    own, written as it is built.
-#   vm               the VM image for each desktop platform, on a native
-#                    Linux runner, with that architecture's images and the
-#                    chart baked in: arm64 for macOS (Image, initramfs.gz,
-#                    root.squashfs), amd64 for Windows (root.vhdx); each
-#                    with packages.txt and SOURCES.md
 #   feed             release.json: the supervisor's update feed, with the
 #                    sha256 of the chart and the image bundles
 #   desktop-macos    Kivali.app on macos-15 (arm64): the supervisor sidecar
@@ -69,7 +69,9 @@
 #                    SOURCES.md (the GPL and LGPL sources and the written
 #                    offer) is the arm64 VM image's with the images'
 #                    Debian packages appended; vm-amd64-SOURCES.md is the
-#                    amd64 VM image's, which adds the EFI stub.
+#                    amd64 VM image's, which adds the EFI stub. The VM
+#                    images themselves are not release assets: each ships
+#                    inside its platform's installer.
 #                    A pre-release tag (vX.Y.Z-rc1) is published as a
 #                    pre-release, which GitHub's /releases/latest skips,
 #                    so the updater never offers it.
@@ -78,7 +80,7 @@
 # Virtualization.framework, which GitHub-hosted macOS runners cannot
 # offer (no nested virtualization on Apple Silicon runners), so nothing in
 # this workflow boots the image. Run `make -C vm boottest` on a Mac against
-# the vm job's arm64 artifacts before announcing a release.
+# the run's vm-arm64 artifact before announcing a release.
 #
 # The Windows installer is not Authenticode-signed: Windows SmartScreen
 # warns on its first run. Updates are verified either way, by the
@@ -215,19 +217,25 @@ jobs:
         run: bash scripts/check-updater-key.sh
 
   images:
-    name: Images (${{ matrix.arch }})
-    needs: verify
+    name: Images and VM image (${{ matrix.arch }})
+    needs: [verify, chart]
+    # One native runner per architecture, no QEMU: the images and the VM's
+    # root disk are built under Docker BuildKit for linux/<arch>. arm64's
+    # VM image is the macOS app's (Virtualization.framework boots the
+    # kernel, initramfs and squashfs), amd64's the Windows app's (Hyper-V
+    # boots root.vhdx, which holds all three).
     strategy:
       fail-fast: true
       matrix:
         include:
           - arch: amd64
             runner: ubuntu-latest
-          # Native arm64, no QEMU.
+            vm-files: root.vhdx packages.txt SOURCES.md VERSION
           - arch: arm64
             runner: ubuntu-24.04-arm
+            vm-files: Image initramfs.gz root.squashfs packages.txt SOURCES.md VERSION
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 45
+    timeout-minutes: 60
     env:
       TAG: ${{ needs.verify.outputs.version }}
     steps:
@@ -240,16 +248,11 @@ jobs:
           go-version: '1.27'
           cache: true
 
-      - name: zstd
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends zstd
-
-      # Builds the three images and saves them together, compressed:
-      # dist/kivali-images-linux-<arch>.tar.zst. The bundle script checks
-      # the archive lists all three references at the version.
-      - name: make release-bundle-${{ matrix.arch }}
-        run: make release-bundle-${{ matrix.arch }} VERSION="$TAG"
+      # Builds the three images and saves them together, uncompressed:
+      # dist/images/bundle-<arch>/kivali-images.tar. The bundle script
+      # checks it lists all three references at the version.
+      - name: make release-images-${{ matrix.arch }}
+        run: make release-images-${{ matrix.arch }} VERSION="$TAG"
 
       # The images' Debian packages, for the release's SOURCES.md. The
       # bundle script left the images loaded.
@@ -267,6 +270,50 @@ jobs:
         with:
           name: sources-${{ matrix.arch }}
           path: dist/sources/*.txt
+          retention-days: 7
+          if-no-files-found: error
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: chart
+          path: dist
+
+      # The root disk bakes the uncompressed bundle (squashfs compresses
+      # better from a plain tar) and the chart, so a first install needs
+      # no download. Compressing the bundle into the release asset,
+      # dist/kivali-images-linux-<arch>.tar.zst, takes minutes too, so it
+      # runs alongside.
+      - name: make vm-release, and release-compress-${{ matrix.arch }} alongside
+        run: |
+          make release-compress-${{ matrix.arch }} VERSION="$TAG" > "$RUNNER_TEMP/compress.log" 2>&1 &
+          compress=$!
+          make vm-release VERSION="$TAG" VM_ARCH=${{ matrix.arch }}
+          status=0
+          wait "$compress" || status=$?
+          cat "$RUNNER_TEMP/compress.log"
+          exit "$status"
+
+      - name: Collect the VM image
+        run: |
+          mkdir -p vm-artifacts vm-sources
+          for f in ${{ matrix.vm-files }}; do cp "vm/build/out/$f" vm-artifacts/; done
+          cp vm/build/out/packages.txt vm/build/out/SOURCES.md vm-sources/
+          ls -l vm-artifacts vm-sources
+
+      # The VM image, for the desktop job that bundles it.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vm-${{ matrix.arch }}
+          path: vm-artifacts/*
+          retention-days: 7
+          if-no-files-found: error
+
+      # Its package list and SOURCES.md alone, which the release
+      # publishes: publish need not download the image for them.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vm-sources-${{ matrix.arch }}
+          path: vm-sources/*
           retention-days: 7
           if-no-files-found: error
 
@@ -334,74 +381,6 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
-  vm:
-    name: VM image (${{ matrix.arch }})
-    needs: [verify, images, chart]
-    # The root disk is built under Docker BuildKit with --platform
-    # linux/<arch>: a native runner of each architecture keeps it fast.
-    # arm64 is the macOS app's (Virtualization.framework boots the kernel,
-    # initramfs and squashfs), amd64 the Windows app's (Hyper-V boots
-    # root.vhdx, which holds all three).
-    strategy:
-      fail-fast: true
-      matrix:
-        include:
-          - arch: arm64
-            runner: ubuntu-24.04-arm
-            files: Image initramfs.gz root.squashfs packages.txt SOURCES.md VERSION
-          - arch: amd64
-            runner: ubuntu-latest
-            files: root.vhdx packages.txt SOURCES.md VERSION
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 60
-    env:
-      TAG: ${{ needs.verify.outputs.version }}
-    steps:
-      - uses: actions/checkout@v6
-
-      - uses: actions/setup-go@v6
-        with:
-          go-version: '1.27'
-          cache: true
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: images-${{ matrix.arch }}
-          path: dist
-
-      # The root disk bakes the bundle uncompressed (squashfs compresses
-      # better from a plain tar), where `make vm-release` looks for it, as
-      # after a local `make release-assets`.
-      - name: Decompress the image bundle
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends zstd
-          mkdir -p dist/images/bundle-${{ matrix.arch }}
-          zstd -d -o dist/images/bundle-${{ matrix.arch }}/kivali-images.tar dist/kivali-images-linux-${{ matrix.arch }}.tar.zst
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: chart
-          path: dist
-
-      # The root disk bakes the image bundle and the chart, so a first
-      # install needs no download.
-      - name: make vm-release
-        run: make vm-release VERSION="$TAG" VM_ARCH=${{ matrix.arch }}
-
-      - name: Collect the artifacts
-        run: |
-          mkdir -p vm-artifacts
-          for f in ${{ matrix.files }}; do cp "vm/build/out/$f" vm-artifacts/; done
-          ls -l vm-artifacts
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: vm-${{ matrix.arch }}
-          path: vm-artifacts/*
-          retention-days: 7
-          if-no-files-found: error
-
   feed:
     name: release.json
     needs: [verify, images, chart]
@@ -435,7 +414,7 @@ jobs:
 
   desktop-macos:
     name: Kivali Desktop (macOS arm64)
-    needs: [verify, vm]
+    needs: [verify, images]
     runs-on: macos-15
     # Notarization is Apple's queue: usually minutes, sometimes far
     # longer, and a run that times out has to submit again.
@@ -481,7 +460,7 @@ jobs:
         if: env.DEV == 'true'
         run: bash scripts/bump-version.sh "$TAG"
 
-      # The VM image the vm job built, bundled into the app as
+      # The VM image the images job built, bundled into the app as
       # Contents/Resources/vm (desktop-app/Makefile VM_BUNDLE).
       - uses: actions/download-artifact@v4
         with:
@@ -587,7 +566,7 @@ jobs:
 
   desktop-windows:
     name: Kivali Desktop (Windows x64)
-    needs: [verify, vm]
+    needs: [verify, images]
     runs-on: windows-latest
     timeout-minutes: 90
     env:
@@ -627,10 +606,10 @@ jobs:
           workspaces: desktop-app/src-tauri
           save-if: false
 
-      # The hosted Windows image has Git Bash (bash, perl, coreutils) but
-      # no GNU make.
+      # GNU make, which the hosted Windows image lacks
+      # (.github/actions/gnu-make).
       - name: GNU make
-        run: choco install make --no-progress -y
+        uses: ./.github/actions/gnu-make
 
       - name: Dev version
         if: env.DEV == 'true'
@@ -675,7 +654,7 @@ jobs:
     name: Publish the release
     # Every build and every test must succeed: a failed or cancelled job
     # publishes nothing.
-    needs: [checks, nightly, verify, images, chart, licenses, vm, feed, desktop-macos, desktop-windows]
+    needs: [checks, nightly, verify, images, chart, licenses, feed, desktop-macos, desktop-windows]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -689,15 +668,22 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          pattern: '{images-*,chart,licenses,vm-arm64,release-json,desktop-*}'
+          pattern: '{images-*,chart,licenses,release-json,desktop-*}'
           path: assets
           merge-multiple: true
 
-      # The amd64 VM image is inside the Windows installer; only its
-      # package list and SOURCES.md are published, beside the arm64 one's.
+      # The VM images ship inside the installers; only their package lists
+      # and SOURCES.md are published: the arm64 one's as packages.txt and
+      # SOURCES.md, the amd64 one's as vm-amd64-packages.txt and
+      # vm-amd64-SOURCES.md.
       - uses: actions/download-artifact@v4
         with:
-          name: vm-amd64
+          name: vm-sources-arm64
+          path: assets
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: vm-sources-amd64
           path: vm-amd64
 
       - uses: actions/download-artifact@v4
@@ -711,7 +697,7 @@ jobs:
           cp vm-amd64/packages.txt assets/vm-amd64-packages.txt
           cp vm-amd64/SOURCES.md assets/vm-amd64-SOURCES.md
 
-      # The arm64 VM image's SOURCES.md (from the vm job) covers that VM;
+      # The arm64 VM image's SOURCES.md (from its images job) covers that VM;
       # the images' Debian packages (both architectures') and the egress
       # proxy's base are appended.
       - name: SOURCES.md

@@ -541,12 +541,14 @@ web-e2e-visual-check: web-deps web-build e2e-bins-linux
 # release.yml runs one of these per job; `make release-assets` runs the
 # Linux ones locally. docs/developers/releasing.md is the procedure.
 #
-#   release-bundle-<arch>  dist/kivali-images-linux-<arch>.tar.zst (images job)
+#   release-bundle-<arch>  dist/kivali-images-linux-<arch>.tar.zst: the
+#                          images job runs its halves, release-images-<arch>
+#                          and release-compress-<arch>
 #   chart-package          dist/kivali-X.Y.Z.tgz (chart job)
 #   release-feed           dist/release.json (feed job)
 #   vm-release             the VM image for VM_ARCH (arm64, or amd64 for
 #                          Windows) with that architecture's images and
-#                          the chart baked in (vm jobs)
+#                          the chart baked in (images jobs)
 #   desktop-release        this platform's installer and updater artifacts
 #                          (macOS: signed and notarized), when the signing
 #                          environment is present (desktop-macos and
@@ -613,13 +615,39 @@ endif
 		--build-arg AGENT_SHELL_EXTRA_PACKAGES="$(AGENT_SHELL_EXTRA_PACKAGES)" -f Dockerfile.agent-shell \
 		-t $(AGENT_SHELL_IMAGE):$(VERSION) -o type=docker,dest=$(IMAGES_DIR)/kivali-agent-shell-$(ARCH).tar .
 
+# release-images-<arch> builds the three images and saves them together,
+# uncompressed, as $(IMAGES_DIR)/bundle-<arch>/kivali-images.tar: what
+# `make vm-release` bakes. release-compress-<arch> compresses that into
+# the release asset, dist/kivali-images-linux-<arch>.tar.zst, and
+# release-bundle-<arch> does both. The images job runs the two halves
+# itself, compressing while the VM image builds.
+#
 # One prerequisite target per architecture (rather than a shell loop that
 # calls $(MAKE)) so that `make -n release-assets` is a true dry run: make
-# executes any recipe line containing $(MAKE) even under -n. Needs zstd.
-release-bundle-%: require-release-version require-explicit-version
-	mkdir -p dist
+# executes any recipe line containing $(MAKE) even under -n.
+release-images-%: require-release-version require-explicit-version
 	$(MAKE) image-tars ARCH=$* VERSION=$(VERSION)
-	bash scripts/image-bundle.sh $(VERSION) $* --images-dir $(IMAGES_DIR) --out dist
+	bash scripts/image-bundle.sh $(VERSION) $* --images-dir $(IMAGES_DIR)
+
+# zstd -16 with a 128 MiB window (--long=27): within 4% of -19's size at
+# a quarter of its time. 27 is the largest window `zstd -d` and the
+# supervisor's decoder read without being told; do not raise it.
+define release-compress
+	@test -f $(IMAGES_DIR)/bundle-$(1)/kivali-images.tar || { echo "release-compress: $(IMAGES_DIR)/bundle-$(1)/kivali-images.tar missing (make release-images-$(1) VERSION=$(VERSION))" >&2; exit 1; }
+	@mkdir -p dist
+	zstd -q -f -T0 -16 --long=27 -o dist/kivali-images-linux-$(1).tar.zst $(IMAGES_DIR)/bundle-$(1)/kivali-images.tar
+	chmod 644 dist/kivali-images-linux-$(1).tar.zst
+	ls -l dist/kivali-images-linux-$(1).tar.zst
+endef
+
+release-compress-%:
+	$(call release-compress,$*)
+
+release-bundle-%: release-images-%
+	$(call release-compress,$*)
+
+# Not an intermediate file for make to delete: no file at all.
+.PRECIOUS: release-images-%
 
 # release.json, the supervisor's update feed, from the chart and the
 # image bundles already in dist/.

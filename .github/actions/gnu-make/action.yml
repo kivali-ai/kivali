@@ -1,0 +1,37 @@
+# GNU make on a hosted Windows runner, which has Git Bash (bash, perl,
+# coreutils) but no make. Chocolatey's make package carries the binary
+# itself; its directory is cached, so the community feed (slow, and at
+# times failing) is reached only when the cache is cold. Like the other
+# caches, it is written from main only and restored everywhere.
+name: GNU make (Windows)
+description: Put GNU make on PATH on a Windows runner, from a cache or Chocolatey.
+runs:
+  using: composite
+  steps:
+    - uses: actions/cache/restore@v4
+      id: restore
+      with:
+        path: C:\ProgramData\chocolatey\lib\make
+        key: gnu-make-4.4.1-${{ runner.os }}-${{ runner.arch }}
+
+    - if: steps.restore.outputs.cache-hit != 'true'
+      shell: bash
+      run: choco install make --version 4.4.1 --no-progress -y
+
+    - if: steps.restore.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main'
+      uses: actions/cache/save@v4
+      with:
+        path: C:\ProgramData\chocolatey\lib\make
+        key: gnu-make-4.4.1-${{ runner.os }}-${{ runner.arch }}
+
+    # The package's own make.exe, not Chocolatey's shim, which a restored
+    # cache does not bring back.
+    - shell: bash
+      run: |
+        exe="$(find /c/ProgramData/chocolatey/lib/make -iname make.exe | head -n 1)"
+        if [ -z "$exe" ]; then
+          echo "::error title=GNU make::no make.exe under C:\\ProgramData\\chocolatey\\lib\\make" >&2
+          exit 1
+        fi
+        cygpath -w "$(dirname "$exe")" >> "$GITHUB_PATH"
+        "$exe" --version | head -n 1
