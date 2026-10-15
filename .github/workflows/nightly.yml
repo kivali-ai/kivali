@@ -208,11 +208,11 @@ jobs:
           workspaces: desktop-app/src-tauri
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
-      # The hosted Windows image has Git Bash (bash, perl, coreutils) but
-      # no GNU make.
+      # GNU make, which the hosted Windows image lacks
+      # (.github/actions/gnu-make).
       - name: GNU make
         if: runner.os == 'Windows'
-        run: choco install make --no-progress -y
+        uses: ./.github/actions/gnu-make
 
       - name: make -C desktop-app build-trial
         run: make -C desktop-app build-trial

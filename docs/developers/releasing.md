@@ -91,8 +91,9 @@ release needs the supervisor to have is a minor too.
    published with every asset and `/releases/latest` points at it.
 6. **Run the boot test on a Mac.** CI cannot: `make -C vm boottest` needs
    Virtualization.framework and GitHub-hosted runners have no nested
-   virtualization. Download the release's `Image`, `initramfs.gz` and
-   `root.squashfs` into a directory, put it at `vm/build/out`, and run
+   virtualization. The VM image is not a release asset (each installer
+   carries its own); it is the run's `vm-arm64` artifact, kept for 7
+   days: `gh run download <run id> -n vm-arm64 -D vm/build/out`, then
    `make -C vm boottest`. Do this before announcing the release.
 7. **Upgrade the orgs.** Each takes the release from the feed
    (`kivali-supervisor upgrade`, or Update in Kivali Desktop;
@@ -152,13 +153,12 @@ Jobs, in order (`needs` in parentheses):
 | Job | Runner | Produces |
 | --- | --- | --- |
 | `verify` | ubuntu-latest | tag equals tauri.conf.json's version; `make version-check VERSION=$tag` |
-| `images` (verify), amd64 and arm64 | ubuntu-latest, ubuntu-24.04-arm (native; no QEMU) | `kivali-images-linux-<arch>.tar.zst`; the kivali and kivali-agent-shell images' Debian package lists (for `SOURCES.md`) |
 | `chart` (verify) | ubuntu-latest | `kivali-X.Y.Z.tgz` (`make chart-package`) |
+| `images` (verify, chart), amd64 and arm64 | ubuntu-latest, ubuntu-24.04-arm (native; no QEMU) | `kivali-images-linux-<arch>.tar.zst`; the kivali and kivali-agent-shell images' Debian package lists (for `SOURCES.md`); the VM image, with that architecture's images and the chart baked in: arm64, for macOS: `Image`, `initramfs.gz`, `root.squashfs`; amd64, for Windows: `root.vhdx`; each with `packages.txt` and `SOURCES.md` |
 | `licenses` (verify) | ubuntu-latest | `THIRD_PARTY_LICENSES.txt`, the notices of everything a release ships (`make third-party-licenses`) |
-| `vm` (images, chart), arm64 and amd64 | ubuntu-24.04-arm, ubuntu-latest (native) | arm64, for macOS: `Image`, `initramfs.gz`, `root.squashfs`; amd64, for Windows: `root.vhdx`; each with `packages.txt` and `SOURCES.md`, and that architecture's images and the chart baked in |
 | `feed` (images, chart) | ubuntu-latest | `release.json` (`scripts/release-json.sh`) |
-| `desktop-macos` (verify, vm) | macos-15 (Apple Silicon) | `Kivali_X.Y.Z_aarch64.dmg`, `Kivali.app.tar.gz`, `Kivali.app.tar.gz.sig` |
-| `desktop-windows` (verify, vm) | windows-latest (x64) | `Kivali_X.Y.Z_x64-setup.exe` and its `.sig` |
+| `desktop-macos` (verify, images) | macos-15 (Apple Silicon) | `Kivali_X.Y.Z_aarch64.dmg`, `Kivali.app.tar.gz`, `Kivali.app.tar.gz.sig` |
+| `desktop-windows` (verify, images) | windows-latest (x64) | `Kivali_X.Y.Z_x64-setup.exe` and its `.sig` |
 | `publish` (all, plus `checks` and `nightly`) | ubuntu-latest | `latest.json` (both platforms, `scripts/latest-json.sh --require`); `SOURCES.md` (the arm64 VM's, with the images' Debian packages and the egress proxy's base appended), `vm-amd64-SOURCES.md` and `vm-amd64-packages.txt`; the release notes (`scripts/release-notes.sh`); one release: created as a draft, every asset uploaded, then published |
 
 Choices worth knowing:
@@ -166,21 +166,26 @@ Choices worth knowing:
 - **The image bundle** is what the supervisor imports
   (`internal/supervisor/release.go`, `guestapi/images.go`): one
   `docker save` archive holding `kivali`, `kivali-egress-proxy` and
-  `kivali-agent-shell` at `:vX.Y.Z`, zstd-compressed.
-  `scripts/image-bundle.sh` makes it from the per-image tarballs of
-  `make image-tars ARCH=<arch>` (run by `release-bundle-<arch>`) and checks all three references are listed. The
+  `kivali-agent-shell` at `:vX.Y.Z`, zstd-compressed (`-16 --long=27`:
+  within 4% of `-19`'s size at a quarter of its time; a window over 27
+  would need `--long` when decompressing). `scripts/image-bundle.sh`
+  saves it uncompressed from the per-image tarballs of
+  `make image-tars ARCH=<arch>` (run by `release-images-<arch>`) and
+  checks all three references are listed; `release-compress-<arch>`
+  compresses it (`release-bundle-<arch>` runs both). The
   archive carries the images' own names, not a registry's: the chart's
   image references (`kivali:vX.Y.Z`) resolve to what containerd imported.
-- **The VM images** are built from each architecture's *bundle
-  uncompressed* (squashfs compresses it; the `vm` job decompresses the
-  `images` job's bundle), so a first install needs no
-  download: arm64 for macOS, amd64 for Windows, where `root.vhdx` holds
-  the unified kernel image and the squashfs. The arm64 image's release
-  asset names are the ones the supervisor's `--vm-dir` expects (`Image`,
-  `initramfs.gz`, `root.squashfs`); `packages.txt` records the installed
-  packages. The amd64 image ships only inside the Windows installer; its
-  `packages.txt` and `SOURCES.md` (which adds the EFI stub's Debian
-  packages) are published as `vm-amd64-packages.txt` and
+- **The VM images** are built in the `images` job from that
+  architecture's *bundle uncompressed* (squashfs compresses it), while
+  the bundle is compressed for the release beside it, so a first
+  install needs no download: arm64 for macOS, amd64 for Windows, where
+  `root.vhdx` holds the unified kernel image and the squashfs. They are
+  not release assets: each ships inside its installer, and the run keeps
+  them for 7 days as the `vm-arm64` and `vm-amd64` artifacts (the arm64
+  one is what the boot test runs). `packages.txt` records the installed
+  packages; the arm64 image's `packages.txt` and `SOURCES.md` are
+  published as they are, and the amd64 image's (whose `SOURCES.md` adds
+  the EFI stub's Debian packages) as `vm-amd64-packages.txt` and
   `vm-amd64-SOURCES.md`.
 - **The desktop jobs** build the Go supervisor sidecar (stamped with the
   version) and the app, and bundle `vm/build/out`. Both sign the updater
@@ -252,7 +257,9 @@ Choices worth knowing:
   a copy of main's. The desktop jobs restore the release-profile Rust
   cache that `nightly.yml`'s `package` job (a release-profile bundle on
   macOS and Windows, unsigned) saves on `main`; `ci.yml`'s desktop jobs
-  keep a debug-profile one per OS, built with line tables only.
+  keep a debug-profile one per OS, built with line tables only. The
+  Windows jobs restore GNU make from a cache too
+  (`.github/actions/gnu-make`), reaching Chocolatey only when it is cold.
 
 The same scripts run locally:
 
@@ -502,12 +509,12 @@ What a maintainer sets up before a tag can publish a complete release:
   the repository secrets in "Secrets".
 - **The updater keypair**: the private key and its password as secrets,
   the public key committed to `tauri.conf.json` (see "Secrets").
-- **The `ubuntu-24.04-arm` runner** for the arm64 image and VM jobs
+- **The `ubuntu-24.04-arm` runner** for the arm64 images job
   (free for public repositories). The macOS and Windows jobs run on
   GitHub's hosted `macos-15` and `windows-latest`.
 - **Private vulnerability reporting** (Settings, Security), which
   [SECURITY.md](../../SECURITY.md) points reporters to.
 
 Then check the first signed release by hand ("Verifying the first signed
-release"), and run `make -C vm boottest` on a Mac against the `vm` job's
-artifacts: nothing in the workflow boots the VM image.
+release"), and run `make -C vm boottest` on a Mac against the run's
+`vm-arm64` artifact: nothing in the workflow boots the VM image.

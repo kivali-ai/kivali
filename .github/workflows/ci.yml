@@ -259,11 +259,11 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           cache-on-failure: true
 
-      # The hosted Windows image has Git Bash (bash, perl, coreutils) but
-      # no GNU make.
+      # GNU make, which the hosted Windows image lacks
+      # (.github/actions/gnu-make).
       - name: GNU make
         if: runner.os == 'Windows'
-        run: choco install make --no-progress -y
+        uses: ./.github/actions/gnu-make
 
       - name: make ci-desktop
         run: make ci-desktop
