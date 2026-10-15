@@ -341,6 +341,16 @@ func main() {
 	// path.
 	apHub := web.NewAgentpodHub()
 
+	// The Debian package list software names are checked against:
+	// loaded from its cache, or downloaded, before anyone adds a name.
+	packages := debian.NewIndex(debian.Options{
+		URL:       debian.DefaultURL(),
+		Client:    &http.Client{Timeout: 2 * time.Minute},
+		Clock:     clock.New(),
+		CachePath: debian.DefaultCachePath(),
+	})
+	go packages.Warm(context.Background())
+
 	srv, err := web.NewServer(&web.Server{
 		Store:           s,
 		Claude:          driver,
@@ -359,7 +369,7 @@ func main() {
 		VersionName:     version,
 		ClockCheck:      clockWatcher,
 		SubagentService: subagentService,
-		Packages:        debian.NewIndex(debian.DefaultURL(), &http.Client{Timeout: 2 * time.Minute}, clock.New()),
+		Packages:        packages,
 	})
 	if err != nil {
 		log.Fatalf("web: %v", err)

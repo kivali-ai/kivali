@@ -97,14 +97,19 @@ every `agent.yaml` and `software.yaml` read-modify-write). A write
 checks the names it adds: each must be a Debian package name, and a
 package in the index the shell installs from (`internal/debian`: the
 `main` component of `debian.Suite` for the server's architecture,
-`Packages.gz` from deb.debian.org, held in memory, revalidated with
-its ETag once a day; `debian.Suite` is tested against
-`Dockerfile.agent-shell`'s base). Opening either list warms the index
-in the background. A name the index lacks is a 400 that adds nothing,
-naming the providers of a virtual package or up to three close names.
-When the index cannot be read (no earlier download and the archive
-unreachable; a failed download is not retried for a minute) the names
-are saved and listed under `unchecked` in that answer; the shell's own
+`Packages.gz` from deb.debian.org; `debian.Suite` is tested against
+`Dockerfile.agent-shell`'s base). The index is loaded at server start
+from its cache file (`debian.DefaultCachePath`, under `$HOME/.cache`,
+which is in `claude-home` and so outside backups) or downloaded. A
+list older than a day still answers while it is revalidated with its
+ETag in the background; a failed download keeps the list there is, and
+no new one starts for a minute. A virtual package exactly one package
+provides is accepted (apt-get installs that one). A name the index
+lacks, or a virtual package several provide, is a 400 that adds
+nothing, naming the providers or up to three close names. Only when
+there has never been a list (no cache, every download failed) are the
+names saved unchecked and listed under `unchecked` in that answer; the
+shell's own
 check at install time still applies. `propose_software_install` makes
 the same check at publish time and refuses the call with the same
 wording, so the owner never sees a name Debian does not have; it too
