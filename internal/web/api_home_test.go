@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -658,6 +659,19 @@ func TestAPIHomeNeedsProposalKinds(t *testing.T) {
 		if !ok {
 			t.Errorf("unexpected need %+v", n)
 			continue
+		}
+		if kind == apitypes.ProposalKindSoftwareInstall {
+			// Answered in place, like a plain approval, with its packages.
+			if n.Kind != apitypes.NeedKindApproval || n.ProposalKind == nil || *n.ProposalKind != kind || n.ReviewPath != nil {
+				t.Errorf("software install = %+v, want an approval with proposal_kind and no review_path", n)
+			}
+			if !reflect.DeepEqual(n.Packages, []string{"ffmpeg"}) {
+				t.Errorf("software install packages = %v", n.Packages)
+			}
+			continue
+		}
+		if len(n.Packages) != 0 {
+			t.Errorf("%s: packages %v on a row that is not a software install", n.Title, n.Packages)
 		}
 		if n.Kind != apitypes.NeedKindProposal || n.ProposalKind == nil || *n.ProposalKind != kind {
 			t.Errorf("%s: kind %s proposal_kind %v, want proposal %s", n.Title, n.Kind, n.ProposalKind, kind)

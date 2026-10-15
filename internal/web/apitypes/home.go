@@ -98,6 +98,11 @@ type NeedItem struct {
 	Assignment   *AssignmentRef  `json:"assignment,omitempty"`
 	// ReviewPath is the proposal page for a proposal row.
 	ReviewPath *string `json:"review_path,omitempty"`
+	// Packages are the Debian packages an Install software request
+	// asks for. That request is an approval row, answered in place,
+	// with ProposalKind software_install; empty on every other row.
+	// Never null.
+	Packages []string `json:"packages"`
 	// Agent is the agent a needs-help row is about.
 	Agent *AgentRef `json:"agent,omitempty"`
 	// RawURL opens the message file; absent on a needs-help row.

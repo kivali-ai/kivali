@@ -206,12 +206,20 @@ func (v *homeView) needItem(it CEOInboxItem) apitypes.NeedItem {
 		At:          it.Request.Date,
 		BodyMD:      strings.TrimRight(it.Request.Body, "\n"),
 		Attachments: v.attachments(it.Request.Attachments),
+		Packages:    []string{},
 		RawURL:      &raw,
 	}
 	switch it.RequestKind {
 	case "approval":
 		n.Kind = apitypes.NeedKindApproval
-		if pk, ok := proposalKind(it.Request); ok {
+		pk, ok := proposalKind(it.Request)
+		switch {
+		case ok && pk == apitypes.ProposalKindSoftwareInstall:
+			// Short enough to answer in place: the packages and the
+			// agent's reason are the whole of it.
+			n.ProposalKind = &pk
+			n.Packages = append([]string{}, it.Request.SoftwareInstall.Packages...)
+		case ok:
 			review := proposalReviewPath(it.RequestPath)
 			n.Kind = apitypes.NeedKindProposal
 			n.ProposalKind = &pk
@@ -286,6 +294,7 @@ func (s *Server) needsHelpItem(a apitypes.SnapshotAgent) (apitypes.NeedItem, boo
 		At:          at,
 		BodyMD:      body,
 		Attachments: []apitypes.AttachmentRef{},
+		Packages:    []string{},
 		Agent:       &apitypes.AgentRef{Slug: a.Slug, Name: a.Name, State: a.State},
 	}, true
 }

@@ -32,6 +32,7 @@ const approval: NeedItem = {
   at: '2026-09-20T16:52:00Z',
   body_md: 'Hosting quote is in: **$92** a month, billed yearly.',
   attachments: [{ name: 'hosting-quote.pdf', size_bytes: 86016, url: '/attachments/3f2a' }],
+  packages: [],
   raw_url: '/messages/2026-09-28/0001-engineering-lead.md',
 };
 

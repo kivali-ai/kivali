@@ -10,6 +10,8 @@ func goldenHome() Home {
 	review := "/proposals/messages/2026-09-28/0003-chief-of-staff.md"
 	raw := "/messages/2026-09-28/0003-chief-of-staff.md"
 	rawNote := "/messages/2026-09-28/0004-engineering-lead.md"
+	software := ProposalKindSoftwareInstall
+	rawSoftware := "/messages/2026-09-28/0005-engineering-lead.md"
 	releases := t1.Add(30 * time.Second)
 	return Home{
 		Goals: []Goal{{
@@ -24,24 +26,30 @@ func goldenHome() Home {
 				Title: "Approve hire: Garden advisor", From: PersonRef{Slug: "chief-of-staff", Name: "Chief of Staff"},
 				At: t1, BodyMD: "We need someone on the garden.",
 				Attachments: []AttachmentRef{{Name: "hosting-quote.pdf", SizeBytes: 86016, URL: "/attachments/3f2a"}},
-				ReviewPath:  &review, RawURL: &raw,
+				Packages:    []string{}, ReviewPath: &review, RawURL: &raw,
 			},
 			{
 				ID: "messages/2026-09-28/0004-engineering-lead.md", Kind: NeedKindNotification,
 				Title: "Weekly report", From: PersonRef{Slug: "engineering-lead", Name: "Engineering lead"},
-				At: t1, BodyMD: "All quiet.", Attachments: []AttachmentRef{}, RawURL: &rawNote,
+				At: t1, BodyMD: "All quiet.", Attachments: []AttachmentRef{}, Packages: []string{}, RawURL: &rawNote,
 			},
 			{
 				ID: "assignment:52", Kind: NeedKindAssignment, Title: "#52 assigned to you: Budget?",
 				From: PersonRef{Slug: "buyer", Name: "Buyer"}, At: t1, BodyMD: "How much?",
-				Attachments: []AttachmentRef{}, Assignment: &AssignmentRef{ID: 52, Title: "Budget?"},
+				Attachments: []AttachmentRef{}, Packages: []string{}, Assignment: &AssignmentRef{ID: 52, Title: "Budget?"},
 			},
 			{
 				ID: "agent:tester", Kind: NeedKindNeedsHelp, Title: "tester keeps restarting",
 				From: PersonRef{Slug: "tester", Name: "tester"}, At: t0,
 				BodyMD:      "It restarted several times in a row without getting anything done.",
-				Attachments: []AttachmentRef{},
-				Agent:       &AgentRef{Slug: "tester", Name: "tester", State: AgentStateQuarantined},
+				Attachments: []AttachmentRef{}, Packages: []string{},
+				Agent: &AgentRef{Slug: "tester", Name: "tester", State: AgentStateQuarantined},
+			},
+			{
+				ID: "messages/2026-09-28/0005-engineering-lead.md", Kind: NeedKindApproval, ProposalKind: &software,
+				Title: "Install software: PDF tools", From: PersonRef{Slug: "engineering-lead", Name: "Engineering lead"},
+				At: t1, BodyMD: "To read the PDF invoices.", Attachments: []AttachmentRef{},
+				Packages: []string{"poppler-utils"}, RawURL: &rawSoftware,
 			},
 		},
 		Queue: []QueueItem{
