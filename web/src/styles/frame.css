@@ -12,6 +12,12 @@
  * the page.
  */
 body { margin: 0; }
+/*
+ * The page keeps room for its scrollbar whether or not it has one. The column is centred, so a scrollbar that
+ * came and went as views of different heights (or a view and its loading skeleton) replaced each other would
+ * move it sideways. No effect where scrollbars overlay the page. e2e/specs/layout-stability.spec.ts holds it.
+ */
+html { scrollbar-gutter: stable; }
 
 /* ---- Frame ---- */
 .app-frame {
