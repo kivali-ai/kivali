@@ -1272,7 +1272,7 @@ export interface NeedItem {
    * with ProposalKind software_install; empty on every other row.
    * Never null.
    */
-  packages: string[];
+  packages: SoftwarePackage[];
   /**
    * Agent is the agent a needs-help row is about.
    */
@@ -1872,10 +1872,10 @@ export interface ProposalSummary {
   moves: ProposalMove[];
   facts: ProposalFact[];
   /**
-   * Packages is the Debian package names a software install adds to
-   * the agent's shell; empty for any other kind.
+   * Packages is the Debian packages a software install adds to the
+   * agent's shell; empty for any other kind.
    */
-  packages: string[];
+  packages: SoftwarePackage[];
 }
 /**
  * ProposalAgent is the agent tile. For a hire it describes the agent
@@ -2220,6 +2220,33 @@ export interface OrgSoftware {
  */
 export interface SoftwareAdd {
   packages: string[];
+}
+/**
+ * SoftwarePackage is one package an Install software request asks
+ * for, as Debian's package list describes it. Version and Synopsis are
+ * absent when the list does not have them (it has not been read yet,
+ * or its entry lacks the field).
+ */
+export interface SoftwarePackage {
+  /**
+   * Name is the name the agent asked for.
+   */
+  name: string;
+  /**
+   * ProvidedBy is the package apt-get installs for Name when Name is
+   * a virtual package one package provides; Version and Synopsis are
+   * that package's.
+   */
+  provided_by?: string;
+  /**
+   * Version is the upstream version Debian 13 has, without its epoch
+   * or Debian revision.
+   */
+  version?: string;
+  /**
+   * Synopsis is the package's one-line description.
+   */
+  synopsis?: string;
 }
 /**
  * AgentSoftware is GET /api/v1/agents/{slug}/software, and the answer

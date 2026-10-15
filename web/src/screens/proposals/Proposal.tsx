@@ -11,6 +11,7 @@ import { relativeTime } from '../../lib/time';
 import { useMediaQuery } from '../../lib/useMediaQuery';
 import { routerPath } from '../../state/home';
 import '../../styles/proposals.css';
+import { SoftwarePackages } from './SoftwarePackages';
 
 const KIND_LABEL: Record<string, string> = {
   hire: 'Hire',
@@ -198,13 +199,7 @@ function Summary({ p }: { p: ProposalData }) {
               <Text variant="body">
                 {`${agent?.name ?? 'This agent'} wants to install software. If you choose Install, ${agent?.name ?? 'the agent'} restarts to install it once it has finished what it is doing. This takes a minute or two.`}
               </Text>
-              <ul className="app-proposal-packages" aria-label="Software to install">
-                {packages.map((name) => (
-                  <li key={name}>
-                    <Badge tone="neutral">{name}</Badge>
-                  </li>
-                ))}
-              </ul>
+              <SoftwarePackages packages={packages} />
             </div>
           )}
           {moves.length > 0 && (

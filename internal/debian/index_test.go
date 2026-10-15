@@ -10,9 +10,11 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/kivali-ai/kivali/internal/clock"
 )
@@ -39,7 +41,9 @@ Package: gawk
 Provides: awk (= 1:5.2.1)
 
 Package: exim4-daemon-light
+Version: 4.98.2-1+b1
 Provides: mail-transport-agent
+Description: Exim MTA (v4) daemon with basic features
 
 Package: python3
 Package-Type: deb
@@ -244,6 +248,63 @@ func TestIndexUsesItsCacheAcrossARestart(t *testing.T) {
 	other := NewIndex(Options{URL: srv.URL + "/other/Packages.gz", Client: srv.Client(), Clock: clk, CachePath: cache})
 	if _, err := other.Check(context.Background(), []string{"ffmpeg"}); !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("err = %v, want ErrUnavailable", err)
+	}
+}
+
+func TestLookupGivesVersionAndSynopsis(t *testing.T) {
+	_, srv := newArchive(t, packagesFixture)
+	ix := newTestIndex(srv, clock.NewFake(), "")
+	ix.Warm(context.Background())
+	got := ix.Lookup([]string{"ffmpeg", "postgresql-client", "mail-transport-agent", "vim", "not-a-package"})
+	want := []Package{
+		// The epoch and Debian revision are dropped; only the
+		// Description's first line is kept.
+		{Name: "ffmpeg", Version: "7.1.1", Synopsis: "Tools for transcoding, streaming and playing of multimedia files"},
+		// A native package has no revision to drop.
+		{Name: "postgresql-client", Version: "17+278"},
+		// A virtual name one package provides is described by that package.
+		{Name: "mail-transport-agent", ProvidedBy: "exim4-daemon-light", Version: "4.98.2", Synopsis: "Exim MTA (v4) daemon with basic features"},
+		{Name: "vim"},
+		{Name: "not-a-package"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Lookup =\n%+v\nwant\n%+v", got, want)
+	}
+}
+
+// Lookup never waits for the archive: without a list it has only names.
+func TestLookupWithoutAList(t *testing.T) {
+	a, srv := newArchive(t, packagesFixture)
+	a.status.Store(http.StatusServiceUnavailable)
+	ix := newTestIndex(srv, clock.NewFake(), "")
+	if got, want := ix.Lookup([]string{"ffmpeg"}), []Package{{Name: "ffmpeg"}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("Lookup = %+v, want %+v", got, want)
+	}
+}
+
+// A cache written before the list kept versions and descriptions still
+// answers checks, and is downloaded again in full, not revalidated.
+func TestIndexDownloadsAgainOverACacheWithoutInfo(t *testing.T) {
+	a, srv := newArchive(t, packagesFixture)
+	clk := clock.NewFake()
+	url := srv.URL + "/Packages.gz"
+	cache := filepath.Join(t.TempDir(), "debian.json.gz")
+	old := `{"url":` + strconv.Quote(url) + `,"list":{"etag":` + strconv.Quote(a.etag) + `,"fetched":` + strconv.Quote(clk.Now().Format(time.RFC3339Nano)) + `,"names":["ffmpeg"],"provides":{}}}`
+	var buf bytes.Buffer
+	zw := gzip.NewWriter(&buf)
+	_, _ = zw.Write([]byte(old))
+	_ = zw.Close()
+	if err := os.WriteFile(cache, buf.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	ix := newTestIndex(srv, clk, cache)
+	ix.Lookup([]string{"ffmpeg"})
+	if got := a.downloads.Load(); got != 1 {
+		t.Fatalf("downloads = %d, want 1 full download", got)
+	}
+	if got := ix.Lookup([]string{"ffmpeg"})[0].Version; got != "7.1.1" {
+		t.Fatalf("version = %q after the download", got)
 	}
 }
 

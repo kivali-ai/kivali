@@ -24,7 +24,7 @@ func goldenProposalRoleUpdate() Proposal {
 				Model:     "claude-opus-5-5", ModelLabel: "Opus 5.5", Effort: "high",
 			},
 			Moves:    []ProposalMove{},
-			Packages: []string{},
+			Packages: []SoftwarePackage{},
 			Facts: []ProposalFact{
 				{Label: "Reports to", Value: "Engineering lead"},
 				{Label: "Model", Value: "Opus 5.5 · high"},
@@ -59,7 +59,7 @@ func goldenProposalReorg() Proposal {
 				{Slug: "tester", Name: "tester", From: &from, To: PersonRef{Slug: "buyer", Name: "Buyer"}, Failed: &reason},
 			},
 			Facts:    []ProposalFact{{Label: "Changes", Value: "2 reporting lines"}},
-			Packages: []string{},
+			Packages: []SoftwarePackage{},
 		},
 		Docs:     []ProposalDoc{},
 		Resolved: &ProposalResolution{Approved: true, At: t1, Result: "1 reporting line changed and 1 could not be", Link: "/team"},
@@ -84,7 +84,7 @@ func goldenProposalOffboard() Proposal {
 				Model:     "claude-sonnet-4-6", ModelLabel: "Sonnet 4.6", Effort: "medium",
 			},
 			Moves:    []ProposalMove{},
-			Packages: []string{},
+			Packages: []SoftwarePackage{},
 			Facts: []ProposalFact{
 				{Label: "Reports to", Value: "Engineering lead"},
 				{Label: "Model", Value: "Sonnet 4.6 · medium"},
@@ -114,7 +114,7 @@ func goldenProposalSoftwareInstall() Proposal {
 			},
 			Moves:    []ProposalMove{},
 			Facts:    []ProposalFact{},
-			Packages: []string{"poppler-utils"},
+			Packages: []SoftwarePackage{{Name: "poppler-utils", Version: new("25.03.0"), Synopsis: new("PDF utilities (based on Poppler)")}},
 		},
 		Docs: []ProposalDoc{},
 	}

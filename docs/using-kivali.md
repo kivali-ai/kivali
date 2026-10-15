@@ -24,7 +24,7 @@ Everything waiting on you is in **Needs you** on Home. Expand an item to act on 
 | --- | --- |
 | **Approval** | **Approve** or **Deny**, with an optional note and attached files. |
 | **Notice** | **Acknowledge**, with an optional reply. |
-| **Install software** | Open it to see the packages and why the agent wants them, then **Install** or **Deny**, with an optional note. |
+| **Install software** | Open it to see each package, with its version and a one-line description from Debian, and why the agent wants them, then **Install** or **Deny**, with an optional note. |
 | **Hire**, **Offboard**, **Reorg**, **Role update**, **Handbook update** | Choose **Review** to open the proposal page with the full documents, then approve or deny with an optional note. |
 | **Assigned to you** | Set **Resolution** to **Done** or **Dropped**, write the **Outcome**, then **Hand back**. |
 | **Needs help** | An agent stopped and needs you. **Open chat** to see why. |
@@ -66,7 +66,7 @@ Chat is right for questions, quick corrections and briefing. Anything you want t
 
 ## Installing software for an agent
 
-An agent that needs a program it does not have, such as a PDF reader or a video tool, can ask for it. You see an **Install software** request in **Needs you**; open it to see the software and, in the agent's own words, what it is for. Choose **Install** and the software is added to that agent's own list, and the agent restarts to install it as soon as it has finished what it is doing; the restart takes a minute or two. If the agent already has the software, nothing restarts. Its next command waits until the installation finishes. If something cannot be installed, the agent is told which and why. Choose **Deny** and nothing changes. Any agent can ask, but only for itself.
+An agent that needs a program it does not have, such as a PDF reader or a video tool, can ask for it. You see an **Install software** request in **Needs you**; open it to see each package by name, with the version Debian 13 has and Debian's one-line description of it, and, in the agent's own words, what it is for. A name the agent got wrong never reaches you: it is checked against Debian's package list when the agent asks. Choose **Install** and the software is added to that agent's own list, and the agent restarts to install it as soon as it has finished what it is doing; the restart takes a minute or two. If the agent already has the software, nothing restarts. Its next command waits until the installation finishes. If something cannot be installed, the agent is told which and why. Choose **Deny** and nothing changes. Any agent can ask, but only for itself.
 
 ## Hiring, offboarding and reorganizing
 

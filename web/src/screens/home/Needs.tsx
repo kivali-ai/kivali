@@ -5,6 +5,7 @@ import { Badge, Button, EmptyState, Icon, ListRow, Select, Text, TextField } fro
 import { pickFiles } from '../../lib/pickFiles';
 import { relativeTime } from '../../lib/time';
 import { needKindLabel } from '../../state/home';
+import { SoftwarePackages } from '../proposals/SoftwarePackages';
 import { Attachments, Body, Face } from './parts';
 
 /** What an expanded Needs-you row sends. */
@@ -152,13 +153,7 @@ function NeedRow({ item, now, base, expanded, onToggle, onAct }: NeedRowProps) {
       {expanded && !review && (
         <div className="app-home-expand">
           {item.packages.length > 0 && (
-            <ul className="app-home-packages" aria-label="Software to install">
-              {item.packages.map((name) => (
-                <li key={name}>
-                  <Badge tone="neutral">{name}</Badge>
-                </li>
-              ))}
-            </ul>
+            <SoftwarePackages packages={item.packages} />
           )}
           <Body markdown={item.body_md} />
           <Attachments items={item.attachments} />

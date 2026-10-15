@@ -39,9 +39,9 @@ type ProposalSummary struct {
 	// kind.
 	Moves []ProposalMove `json:"moves"`
 	Facts []ProposalFact `json:"facts"`
-	// Packages is the Debian package names a software install adds to
-	// the agent's shell; empty for any other kind.
-	Packages []string `json:"packages"`
+	// Packages is the Debian packages a software install adds to the
+	// agent's shell; empty for any other kind.
+	Packages []SoftwarePackage `json:"packages"`
 }
 
 // ProposalAgent is the agent tile. For a hire it describes the agent

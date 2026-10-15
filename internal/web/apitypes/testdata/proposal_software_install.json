@@ -26,7 +26,11 @@
     "moves": [],
     "facts": [],
     "packages": [
-      "poppler-utils"
+      {
+        "name": "poppler-utils",
+        "version": "25.03.0",
+        "synopsis": "PDF utilities (based on Poppler)"
+      }
     ]
   },
   "docs": []

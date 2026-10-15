@@ -17,6 +17,7 @@ import (
 
 	"github.com/kivali-ai/kivali/internal/agent"
 	"github.com/kivali-ai/kivali/internal/assignments"
+	"github.com/kivali-ai/kivali/internal/debian"
 	"github.com/kivali-ai/kivali/internal/store"
 	"github.com/kivali-ai/kivali/internal/web/apitypes"
 )
@@ -637,12 +638,16 @@ func TestAPIHomeNeedsProposalKinds(t *testing.T) {
 		apitypes.ProposalKindRoleUpdate:      {Title: "Role", RoleUpdate: &store.RoleUpdate{Slug: "chief-of-staff", Body: "# new role\n"}},
 		apitypes.ProposalKindHandbookUpdate:  {Title: "Handbook", HandbookUpdate: &store.HandbookUpdate{Body: "# rules\n"}},
 		apitypes.ProposalKindOffboard:        {Title: "Offboard", Offboard: &store.Offboard{Slug: "chief-of-staff"}},
-		apitypes.ProposalKindSoftwareInstall: {Title: "Software", SoftwareInstall: &store.SoftwareInstall{Slug: "chief-of-staff", Packages: []string{"ffmpeg"}}},
+		apitypes.ProposalKindSoftwareInstall: {Title: "Software", SoftwareInstall: &store.SoftwareInstall{Slug: "chief-of-staff", Packages: []string{"ffmpeg", "awk", "jq"}}},
 		apitypes.ProposalKindReorg:           {Title: "Reorg", Reorg: &store.Reorg{Moves: []store.ReorgMove{{Slug: "chief-of-staff", NewManager: agent.CEOSlug}}}},
 	} {
 		want[seedCEORequest(t, srv, m)] = kind
 	}
 	plain := seedCEORequest(t, srv, store.Message{Title: "Spend $40"})
+	srv.Packages = fakePackages{described: map[string]debian.Package{
+		"ffmpeg": {Name: "ffmpeg", Version: "7.1.1", Synopsis: "Tools for transcoding, streaming and playing of multimedia files"},
+		"awk":    {Name: "awk", ProvidedBy: "mawk", Version: "1.3.4.20250131"},
+	}}
 
 	needs := getHome(t, srv).Needs
 	if len(needs) != len(want)+1 {
@@ -665,7 +670,13 @@ func TestAPIHomeNeedsProposalKinds(t *testing.T) {
 			if n.Kind != apitypes.NeedKindApproval || n.ProposalKind == nil || *n.ProposalKind != kind || n.ReviewPath != nil {
 				t.Errorf("software install = %+v, want an approval with proposal_kind and no review_path", n)
 			}
-			if !reflect.DeepEqual(n.Packages, []string{"ffmpeg"}) {
+			// Each with what Debian's list says about it, and a name the
+			// list says nothing about with its name alone.
+			if want := []apitypes.SoftwarePackage{
+				{Name: "ffmpeg", Version: new("7.1.1"), Synopsis: new("Tools for transcoding, streaming and playing of multimedia files")},
+				{Name: "awk", ProvidedBy: new("mawk"), Version: new("1.3.4.20250131")},
+				{Name: "jq"},
+			}; !reflect.DeepEqual(n.Packages, want) {
 				t.Errorf("software install packages = %v", n.Packages)
 			}
 			continue

@@ -182,6 +182,9 @@ describe('Proposal page', () => {
     expect(screen.getByText(/If you choose Install, Buyer restarts to install it once it has finished what it is doing\. This takes a minute or two\./)).toBeTruthy();
     const list = screen.getByRole('list', { name: 'Software to install' });
     expect(within(list).getByText('poppler-utils')).toBeTruthy();
+    // What Debian's package list says about it: its version and one-line description.
+    expect(within(list).getByText('Version 25.03.0')).toBeTruthy();
+    expect(within(list).getByText('PDF utilities (based on Poppler)')).toBeTruthy();
     expect(screen.getByText('Vendor quotes arrive as PDFs and I need to read their text.')).toBeTruthy();
     const approve = screen.getByRole('button', { name: 'Install' });
     expect(approve.className).toContain('kv-btn--primary');
