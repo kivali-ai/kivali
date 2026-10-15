@@ -176,7 +176,7 @@ const PROPOSAL_LABELS: Record<string, string> = {
 export function needKindLabel(item: NeedItem): string {
   switch (item.kind) {
     case 'approval':
-      return 'Approval';
+      return PROPOSAL_LABELS[item.proposal_kind ?? ''] ?? 'Approval';
     case 'notification':
       return 'Notice';
     case 'assignment':

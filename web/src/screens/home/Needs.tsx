@@ -29,7 +29,8 @@ function AttachedFiles({ files }: { files: File[] }) {
   );
 }
 
-function ApprovalForm({ onAct }: { onAct(a: NeedAction): void }) {
+/** The approve button's words: Install for an Install software request, as on the proposal page. */
+function ApprovalForm({ approve = 'Approve', onAct }: { approve?: string; onAct(a: NeedAction): void }) {
   const [message, setMessage] = useState('');
   const [files, setFiles] = useState<File[]>([]);
   const attach = async () => {
@@ -49,7 +50,7 @@ function ApprovalForm({ onAct }: { onAct(a: NeedAction): void }) {
           Deny
         </Button>
         <Button variant="primary" size="sm" onClick={() => onAct({ kind: 'answer', verb: 'approve', message, files })}>
-          Approve
+          {approve}
         </Button>
       </div>
     </>
@@ -150,9 +151,18 @@ function NeedRow({ item, now, base, expanded, onToggle, onAct }: NeedRowProps) {
       )}
       {expanded && !review && (
         <div className="app-home-expand">
+          {item.packages.length > 0 && (
+            <ul className="app-home-packages" aria-label="Software to install">
+              {item.packages.map((name) => (
+                <li key={name}>
+                  <Badge tone="neutral">{name}</Badge>
+                </li>
+              ))}
+            </ul>
+          )}
           <Body markdown={item.body_md} />
           <Attachments items={item.attachments} />
-          {item.kind === 'approval' && <ApprovalForm onAct={onAct} />}
+          {item.kind === 'approval' && <ApprovalForm approve={item.proposal_kind === 'software_install' ? 'Install' : 'Approve'} onAct={onAct} />}
           {item.kind === 'notification' && <AckForm onAct={onAct} />}
           {item.kind === 'assignment' && <HandBackForm assignmentId={item.assignment?.id} onAct={onAct} />}
           {item.kind === 'needs_help' && item.agent && (
