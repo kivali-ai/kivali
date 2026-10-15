@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/kivali-ai/kivali/internal/agent"
+	"github.com/kivali-ai/kivali/internal/debian"
 	"github.com/kivali-ai/kivali/internal/files"
 	"github.com/kivali-ai/kivali/internal/message"
 	"github.com/kivali-ai/kivali/internal/provider"
@@ -90,6 +91,11 @@ type StorePublishDeps struct {
 	Store             *store.FSStore
 	FilesystemBackend *files.Backend
 	From              string
+	// Packages checks the names in a propose_software_install against
+	// Debian's package list. nil, or a list that cannot be read, lets
+	// the names through unchecked; the shell checks again when it
+	// installs.
+	Packages debian.Checker
 	// ApplyRoute applies routing rules to msg, mutating q in place
 	// (typically appending msg.Path to q.Agents[msg.To].Inbox, or
 	// dead-letter handling). Called inside CommitPublish while
@@ -151,7 +157,7 @@ func (p *StorePublisher) StagePublish(ctx context.Context, toolName string, argu
 	if reason := p.checkOffboardPreconditions(msg); reason != "" {
 		return "", reason, true, nil
 	}
-	if reason := p.trimSoftwareInstall(&msg); reason != "" {
+	if reason := p.trimSoftwareInstall(ctx, &msg); reason != "" {
 		return "", reason, true, nil
 	}
 	for _, pa := range pr.Attachments {
@@ -361,10 +367,11 @@ func (p *StorePublisher) checkOffboardPreconditions(msg store.Message) string {
 // trimSoftwareInstall drops from a propose_software_install the
 // packages the agent's shell already gets (the org-wide list plus its
 // own) and returns a refusal when nothing new remains, so the owner is
-// never asked about software that is already there. A no-op for every
-// other message type. The apply step repeats the trim against the
-// state at approve time.
-func (p *StorePublisher) trimSoftwareInstall(msg *store.Message) string {
+// never asked about software that is already there. A name Debian has
+// no package for is refused too, with the names it may have meant. A
+// no-op for every other message type. The apply step repeats the trim
+// against the state at approve time.
+func (p *StorePublisher) trimSoftwareInstall(ctx context.Context, msg *store.Message) string {
 	si := msg.SoftwareInstall
 	if si == nil {
 		return ""
@@ -376,6 +383,16 @@ func (p *StorePublisher) trimSoftwareInstall(msg *store.Message) string {
 	fresh := store.SubtractSoftware(si.Packages, have)
 	if len(fresh) == 0 {
 		return fmt.Sprintf("propose_software_install: everything you named is already installed in your shell (%s). Nothing to ask the owner for.", strings.Join(si.Packages, ", "))
+	}
+	if p.deps.Packages != nil {
+		unknown, err := p.deps.Packages.Check(ctx, fresh)
+		if err == nil && len(unknown) > 0 {
+			lines := make([]string, 0, len(unknown))
+			for _, u := range unknown {
+				lines = append(lines, u.Describe())
+			}
+			return "propose_software_install: " + strings.Join(lines, " ") + " Nothing was sent to the owner. Call propose_software_install again with the package names as Debian lists them."
+		}
 	}
 	msg.SoftwareInstall = &store.SoftwareInstall{Slug: si.Slug, Packages: fresh}
 	return ""

@@ -23,6 +23,7 @@ import (
 	"github.com/kivali-ai/kivali/internal/auth"
 	"github.com/kivali-ai/kivali/internal/clock"
 	"github.com/kivali-ai/kivali/internal/clockcheck"
+	"github.com/kivali-ai/kivali/internal/debian"
 	"github.com/kivali-ai/kivali/internal/messaging"
 	"github.com/kivali-ai/kivali/internal/provider"
 	"github.com/kivali-ai/kivali/internal/store"
@@ -111,6 +112,11 @@ type Server struct {
 	// inject a clock.Fake so those intervals are driven rather than
 	// waited out.
 	Clock clock.Clock
+
+	// Packages checks names added to the software lists, and named in
+	// propose_software_install, against Debian's package list. nil
+	// accepts any well-formed name unchecked.
+	Packages debian.Checker
 
 	// SeedTimeout bounds one Chief of Staff hire, measured on Clock; a
 	// hire still running when it passes ends as failed. Zero means

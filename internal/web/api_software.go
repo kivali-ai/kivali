@@ -1,9 +1,12 @@
 package web
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
+	"time"
 
 	"github.com/kivali-ai/kivali/internal/store"
 	"github.com/kivali-ai/kivali/internal/web/apitypes"
@@ -15,7 +18,8 @@ import (
 // the list as it stands when the write lands, so two pages open at once
 // cannot undo each other's changes, and re-provisions the pods it
 // reaches in the background, so the answer comes back before the
-// shells have restarted.
+// shells have restarted. An add checks each name against Debian's
+// package list first (s.Packages).
 
 // wireAPISoftwareRoutes mounts the software routes on the API mux.
 func (s *Server) wireAPISoftwareRoutes(mux *http.ServeMux) {
@@ -49,13 +53,58 @@ func softwareNames(w http.ResponseWriter, packages []string) ([]string, bool) {
 	return clean, true
 }
 
+// packageCheckTimeout bounds how long an add waits for Debian's
+// package list before it saves the names unchecked.
+const packageCheckTimeout = 30 * time.Second
+
+// checkSoftware checks names against Debian's package list. A name
+// Debian has no package for is a 400 naming it and what it may have
+// meant; the error is written. When the list cannot be read the names
+// are returned as unchecked, and the add goes ahead: the shell checks
+// again when it installs.
+func (s *Server) checkSoftware(w http.ResponseWriter, r *http.Request, names []string) (unchecked []string, ok bool) {
+	if s.Packages == nil {
+		return []string{}, true
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), packageCheckTimeout)
+	defer cancel()
+	unknown, err := s.Packages.Check(ctx, names)
+	if err != nil {
+		return names, true
+	}
+	if len(unknown) > 0 {
+		lines := make([]string, 0, len(unknown))
+		for _, u := range unknown {
+			lines = append(lines, u.Describe())
+		}
+		writeAPIError(w, http.StatusBadRequest, strings.Join(lines, " ")+" Nothing was added.", whoYou)
+		return nil, false
+	}
+	return []string{}, true
+}
+
+// warmPackages starts reading Debian's package list in the background
+// when a software list is opened, so the add that may follow does not
+// wait for it.
+func (s *Server) warmPackages() {
+	if s.Packages == nil {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		s.Packages.Warm(ctx)
+	}()
+}
+
 func (s *Server) handleAPIOrgSoftware(w http.ResponseWriter, _ *http.Request) {
+	s.warmPackages()
 	list, err := s.Store.ReadOrgSoftware()
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, "the software list could not be read", whoDevelopers)
 		return
 	}
-	writeJSON(w, http.StatusOK, orgSoftware(list))
+	writeJSON(w, http.StatusOK, orgSoftware(list, nil))
 }
 
 func (s *Server) handleAPIOrgSoftwareAdd(w http.ResponseWriter, r *http.Request) {
@@ -67,13 +116,17 @@ func (s *Server) handleAPIOrgSoftwareAdd(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
+	unchecked, ok := s.checkSoftware(w, r, clean)
+	if !ok {
+		return
+	}
 	list, err := s.Store.AddOrgSoftware(clean)
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, "the software list could not be saved", whoDevelopers)
 		return
 	}
 	s.reprovisionEveryAgent()
-	writeJSON(w, http.StatusOK, orgSoftware(list))
+	writeJSON(w, http.StatusOK, orgSoftware(list, unchecked))
 }
 
 func (s *Server) handleAPIOrgSoftwareRemove(w http.ResponseWriter, r *http.Request) {
@@ -88,7 +141,7 @@ func (s *Server) handleAPIOrgSoftwareRemove(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	s.reprovisionEveryAgent()
-	writeJSON(w, http.StatusOK, orgSoftware(list))
+	writeJSON(w, http.StatusOK, orgSoftware(list, nil))
 }
 
 // reprovisionEveryAgent re-provisions every active agent's pod in the
@@ -128,7 +181,9 @@ func writeAgentNotFound(w http.ResponseWriter, slug string) {
 	writeAPIError(w, http.StatusNotFound, "no agent on the team is called "+slug, "whoever sent you the link")
 }
 
-func (s *Server) writeAgentSoftware(w http.ResponseWriter, slug string) {
+// writeAgentSoftware answers with the agent's lists; unchecked is what
+// this request added unchecked.
+func (s *Server) writeAgentSoftware(w http.ResponseWriter, slug string, unchecked []string) {
 	org, err := s.Store.ReadOrgSoftware()
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, "the software list could not be read", whoDevelopers)
@@ -141,15 +196,17 @@ func (s *Server) writeAgentSoftware(w http.ResponseWriter, slug string) {
 	}
 	own := store.CleanSoftware(a.Software)
 	writeJSON(w, http.StatusOK, apitypes.AgentSoftware{
-		Org:     nonNilStrings(org),
-		Own:     own,
-		Invalid: store.InvalidSoftware(store.CleanSoftware(append(append([]string{}, org...), own...))),
+		Org:       nonNilStrings(org),
+		Own:       own,
+		Invalid:   store.InvalidSoftware(store.CleanSoftware(append(append([]string{}, org...), own...))),
+		Unchecked: nonNilStrings(unchecked),
 	})
 }
 
-// orgSoftware is the org-wide list as the API answers it.
-func orgSoftware(list []string) apitypes.OrgSoftware {
-	return apitypes.OrgSoftware{Packages: nonNilStrings(list), Invalid: store.InvalidSoftware(list)}
+// orgSoftware is the org-wide list as the API answers it; unchecked is
+// what this request added unchecked.
+func orgSoftware(list, unchecked []string) apitypes.OrgSoftware {
+	return apitypes.OrgSoftware{Packages: nonNilStrings(list), Invalid: store.InvalidSoftware(list), Unchecked: nonNilStrings(unchecked)}
 }
 
 func (s *Server) handleAPIAgentSoftware(w http.ResponseWriter, r *http.Request) {
@@ -157,7 +214,8 @@ func (s *Server) handleAPIAgentSoftware(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
-	s.writeAgentSoftware(w, slug)
+	s.warmPackages()
+	s.writeAgentSoftware(w, slug, nil)
 }
 
 func (s *Server) handleAPIAgentSoftwareAdd(w http.ResponseWriter, r *http.Request) {
@@ -173,6 +231,10 @@ func (s *Server) handleAPIAgentSoftwareAdd(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
+	unchecked, ok := s.checkSoftware(w, r, clean)
+	if !ok {
+		return
+	}
 	switch err := s.Store.AddAgentSoftware(slug, clean); {
 	case errors.Is(err, store.ErrNotFound):
 		writeAgentNotFound(w, slug)
@@ -182,7 +244,7 @@ func (s *Server) handleAPIAgentSoftwareAdd(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	s.ReprovisionAgentPodsAsync([]string{slug})
-	s.writeAgentSoftware(w, slug)
+	s.writeAgentSoftware(w, slug, unchecked)
 }
 
 func (s *Server) handleAPIAgentSoftwareRemove(w http.ResponseWriter, r *http.Request) {
@@ -203,7 +265,7 @@ func (s *Server) handleAPIAgentSoftwareRemove(w http.ResponseWriter, r *http.Req
 		return
 	}
 	s.ReprovisionAgentPodsAsync([]string{slug})
-	s.writeAgentSoftware(w, slug)
+	s.writeAgentSoftware(w, slug, nil)
 }
 
 // nonNilStrings is list, or an empty list for nil: the wire never

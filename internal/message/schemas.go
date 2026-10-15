@@ -227,7 +227,7 @@ var proposeSoftwareInstallTool = ToolDef{
 	MessageType: store.MsgCEOApprovalRequest,
 	Description: `Ask the owner to install software into your own shell. Any agent can use this. The proposal lands in the owner's inbox as an "Install software" request; on approve, the server adds the packages to your own software list and restarts your shell so they install: at once if you are idle, otherwise once your current turn and background tasks have ended; the ack says which. Commands you run after the restart wait until installation finishes.
 
-Name Debian package names (what apt installs, e.g. ` + "`ffmpeg`, `poppler-utils`" + `). Names are lowercase; no version pins, options or paths. Packages already in your shell (the org-wide list or your own) are dropped; if nothing new remains the request is refused. The owner is not necessarily technical, so say in the reason, in plain words, what the software does and why you need it. For Python libraries, use pip --user in your shell instead of asking.`,
+Name Debian package names (what apt installs, e.g. ` + "`ffmpeg`, `poppler-utils`" + `). Names are lowercase; no version pins, options or paths. Packages already in your shell (the org-wide list or your own) are dropped; if nothing new remains the request is refused. Each name is checked against Debian 13's package list; a name it does not have refuses the whole request, with close names to choose from. The owner is not necessarily technical, so say in the reason, in plain words, what the software does and why you need it. For Python libraries, use pip --user in your shell instead of asking.`,
 	Schema: json.RawMessage(`{
   "type": "object",
   "properties": {

@@ -1,7 +1,7 @@
 import { apiDelete, apiPost } from '../../api/client';
 import type { AgentSoftware, SoftwareAdd } from '../../api/types.gen';
 import { Banner, Skeleton, Text } from '../../ds';
-import { PackageList } from '../org/Software';
+import { PackageList, UncheckedNotice } from '../org/Software';
 import { useAction } from '../org/useResource';
 import { useFetched } from './tabsShared';
 import '../../styles/org.css';
@@ -53,6 +53,7 @@ export function SoftwarePane({ slug, name }: { slug: string; name: string }) {
           {failure.who === 'you' ? 'Check the names, then try again.' : failure.who}
         </Banner>
       )}
+      <UncheckedNotice names={data.unchecked} onDismiss={() => set({ ...data, unchecked: [] })} />
       <Text as="h3" variant="label">
         For every agent
       </Text>

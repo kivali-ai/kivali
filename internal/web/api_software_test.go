@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kivali-ai/kivali/internal/debian"
 	"github.com/kivali-ai/kivali/internal/store"
 	"github.com/kivali-ai/kivali/internal/web/apitypes"
 )
@@ -184,4 +185,81 @@ func TestAPIAgentSoftwareRefusals(t *testing.T) {
 	assertAPIError(t, orgGet(t, srv, "/api/v1/agents/bob/software"), http.StatusNotFound)
 	assertAPIError(t, add("bob", "git"), http.StatusNotFound)
 	assertAPIError(t, softwareDelete(t, srv, "/api/v1/agents/bob/software/git"), http.StatusNotFound)
+}
+
+// fakePackages is a debian.Checker over a fixed set of names; with err
+// set, Debian's list cannot be read.
+type fakePackages struct {
+	known map[string]bool
+	err   error
+}
+
+func (f fakePackages) Check(_ context.Context, names []string) ([]debian.Unknown, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	var out []debian.Unknown
+	for _, n := range names {
+		if !f.known[n] {
+			out = append(out, debian.Unknown{Name: n, Suggestions: []string{"ffmpeg"}})
+		}
+	}
+	return out, nil
+}
+
+func (fakePackages) Warm(context.Context) {}
+
+func TestAPISoftwareAddRefusesNamesDebianDoesNotHave(t *testing.T) {
+	srv, _ := softwareServer(t)
+	srv.Packages = fakePackages{known: map[string]bool{"ffmpeg": true, "jq": true}}
+	for _, path := range []string{"/api/v1/org/software", "/api/v1/agents/alice/software"} {
+		rr := orgJSON(t, srv, http.MethodPost, path, apitypes.SoftwareAdd{Packages: []string{"jq", "ffmpg"}})
+		assertAPIError(t, rr, http.StatusBadRequest)
+		if body := rr.Body.String(); !strings.Contains(body, "Debian 13 has no package called ffmpg. Did you mean ffmpeg?") || !strings.Contains(body, "Nothing was added.") {
+			t.Errorf("%s: body = %s", path, body)
+		}
+	}
+	// Nothing was saved, not even the name Debian has.
+	if got, _ := srv.Store.ReadOrgSoftware(); len(got) != 0 {
+		t.Errorf("org list = %v, want empty", got)
+	}
+	if a, _ := srv.Store.GetAgent("alice"); len(a.Software) != 0 {
+		t.Errorf("alice's list = %v, want empty", a.Software)
+	}
+}
+
+func TestAPISoftwareAddChecksAndSaves(t *testing.T) {
+	srv, pod := softwareServer(t)
+	srv.Packages = fakePackages{known: map[string]bool{"ffmpeg": true, "jq": true}}
+	sw := orgOK[apitypes.OrgSoftware](t, orgJSON(t, srv, http.MethodPost, "/api/v1/org/software", apitypes.SoftwareAdd{Packages: []string{"jq"}}))
+	if !reflect.DeepEqual(sw.Packages, []string{"jq"}) || sw.Unchecked == nil || len(sw.Unchecked) != 0 {
+		t.Fatalf("org add = %#v", sw)
+	}
+	pod.received(2)
+	asw := orgOK[apitypes.AgentSoftware](t, orgJSON(t, srv, http.MethodPost, "/api/v1/agents/alice/software", apitypes.SoftwareAdd{Packages: []string{"ffmpeg"}}))
+	if !reflect.DeepEqual(asw.Own, []string{"ffmpeg"}) || asw.Unchecked == nil || len(asw.Unchecked) != 0 {
+		t.Fatalf("agent add = %#v", asw)
+	}
+	pod.received(1)
+}
+
+// When Debian's list cannot be read, the add is saved and the answer
+// names what went unchecked.
+func TestAPISoftwareAddUncheckedWhenDebianIsUnreachable(t *testing.T) {
+	srv, pod := softwareServer(t)
+	srv.Packages = fakePackages{err: debian.ErrUnavailable}
+	sw := orgOK[apitypes.OrgSoftware](t, orgJSON(t, srv, http.MethodPost, "/api/v1/org/software", apitypes.SoftwareAdd{Packages: []string{"jq", "ffmpg"}}))
+	if want := []string{"ffmpg", "jq"}; !reflect.DeepEqual(sw.Packages, want) || !reflect.DeepEqual(sw.Unchecked, want) {
+		t.Fatalf("org add = %#v, want both saved and unchecked", sw)
+	}
+	pod.received(2)
+	asw := orgOK[apitypes.AgentSoftware](t, orgJSON(t, srv, http.MethodPost, "/api/v1/agents/alice/software", apitypes.SoftwareAdd{Packages: []string{"zstd"}}))
+	if !reflect.DeepEqual(asw.Own, []string{"zstd"}) || !reflect.DeepEqual(asw.Unchecked, []string{"zstd"}) {
+		t.Fatalf("agent add = %#v", asw)
+	}
+	pod.received(1)
+	// A read never reports anything unchecked.
+	if got := orgOK[apitypes.OrgSoftware](t, orgGet(t, srv, "/api/v1/org/software")); got.Unchecked == nil || len(got.Unchecked) != 0 {
+		t.Fatalf("GET unchecked = %#v", got.Unchecked)
+	}
 }
