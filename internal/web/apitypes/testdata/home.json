@@ -49,6 +49,7 @@
         }
       ],
       "review_path": "/proposals/messages/2026-09-28/0003-chief-of-staff.md",
+      "packages": [],
       "raw_url": "/messages/2026-09-28/0003-chief-of-staff.md"
     },
     {
@@ -62,6 +63,7 @@
       "at": "2026-09-20T17:00:00Z",
       "body_md": "All quiet.",
       "attachments": [],
+      "packages": [],
       "raw_url": "/messages/2026-09-28/0004-engineering-lead.md"
     },
     {
@@ -78,7 +80,8 @@
       "assignment": {
         "id": 52,
         "title": "Budget?"
-      }
+      },
+      "packages": []
     },
     {
       "id": "agent:tester",
@@ -91,11 +94,29 @@
       "at": "2026-09-01T09:30:00Z",
       "body_md": "It restarted several times in a row without getting anything done.",
       "attachments": [],
+      "packages": [],
       "agent": {
         "slug": "tester",
         "name": "tester",
         "state": "quarantined"
       }
+    },
+    {
+      "id": "messages/2026-09-28/0005-engineering-lead.md",
+      "kind": "approval",
+      "proposal_kind": "software_install",
+      "title": "Install software: PDF tools",
+      "from": {
+        "slug": "engineering-lead",
+        "name": "Engineering lead"
+      },
+      "at": "2026-09-20T17:00:00Z",
+      "body_md": "To read the PDF invoices.",
+      "attachments": [],
+      "packages": [
+        "poppler-utils"
+      ],
+      "raw_url": "/messages/2026-09-28/0005-engineering-lead.md"
     }
   ],
   "queue": [

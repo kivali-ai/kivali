@@ -156,8 +156,8 @@ describe('Home renders', () => {
     expect(screen.getByText('Waiting on #45, Run the tests')).toBeInTheDocument();
 
     const needs = screen.getByRole('region', { name: 'Needs you' });
-    expect(within(needs).getByLabelText('5 waiting on you')).toHaveTextContent('5');
-    for (const kind of ['Approval', 'Hire', 'Notice', 'Assigned to you', 'Needs help']) expect(within(needs).getByText(kind)).toBeInTheDocument();
+    expect(within(needs).getByLabelText('6 waiting on you')).toHaveTextContent('6');
+    for (const kind of ['Approval', 'Hire', 'Notice', 'Assigned to you', 'Needs help', 'Install software']) expect(within(needs).getByText(kind)).toBeInTheDocument();
 
     const queue = screen.getByRole('region', { name: 'Queue' });
     expect(within(queue).getByText('3 passing through')).toBeInTheDocument();
@@ -247,9 +247,9 @@ describe('Home follows the design rules', () => {
     await renderHome(busyHome);
     const signals = document.querySelectorAll('.kv-badge--signal');
     expect(signals).toHaveLength(1);
-    expect(signals[0]).toHaveAccessibleName('5 waiting on you');
+    expect(signals[0]).toHaveAccessibleName('6 waiting on you');
     const needs = screen.getByRole('region', { name: 'Needs you' });
-    for (const kind of ['Approval', 'Hire', 'Notice', 'Assigned to you', 'Needs help']) expect(within(needs).getByText(kind)).toHaveClass('kv-badge--neutral');
+    for (const kind of ['Approval', 'Hire', 'Notice', 'Assigned to you', 'Needs help', 'Install software']) expect(within(needs).getByText(kind)).toHaveClass('kv-badge--neutral');
   });
 
   it('keeps Release all the one primary until a row opens, and Open chat secondary', async () => {
@@ -333,6 +333,28 @@ describe('Needs you', () => {
     expect(review).toHaveTextContent('Review');
   });
 
+  it('expands an Install software request in place and installs from there', async () => {
+    const software = busyHome.needs.find((n) => n.proposal_kind === 'software_install');
+    if (!software) throw new Error('fixture has no software install');
+    formMock.mockResolvedValue(goNeedAction);
+    await renderHome(busyHome);
+
+    // Closed until clicked, like any approval: no review link.
+    const head = within(rowFor('data-id', software.id)).getByRole('button', { name: /Install software: PDF tools/ });
+    expect(within(rowFor('data-id', software.id)).queryByRole('link')).toBeNull();
+    expect(screen.queryByRole('list', { name: 'Software to install' })).toBeNull();
+    fireEvent.click(head);
+    const row = within(rowFor('data-id', software.id));
+    expect(within(row.getByRole('list', { name: 'Software to install' })).getByText('poppler-utils')).toBeInTheDocument();
+    expect(row.getByText('To read the PDF invoices.')).toBeInTheDocument();
+    fireEvent.click(row.getByRole('button', { name: 'Install' }));
+    await flush();
+
+    const [url, form] = formMock.mock.calls[0] as [string, FormData];
+    expect(url).toBe('/api/v1/needs/approve');
+    expect(form.get('path')).toBe(software.id);
+  });
+
   it('approves with the message and attachments as multipart, then the row leaves', async () => {
     const file = new File(['quote'], 'po.pdf', { type: 'application/pdf' });
     vi.mocked(pickFiles).mockResolvedValue([file]);
@@ -355,7 +377,7 @@ describe('Needs you', () => {
     expect(form.get('message')).toBe('Go ahead.');
     expect((form.getAll('attachments[]')[0] as File).name).toBe('po.pdf');
     expect(document.querySelector(`[data-id="${approval.id}"]`)).toBeNull();
-    expect(screen.getByLabelText('4 waiting on you')).toBeInTheDocument();
+    expect(screen.getByLabelText('5 waiting on you')).toBeInTheDocument();
 
     // The answer's result shows as a toast with a link, and leaves on its own.
     const toast = screen.getAllByRole('status').find((el) => el.textContent?.includes('Garden advisor is hired and reports to Chief of Staff'));

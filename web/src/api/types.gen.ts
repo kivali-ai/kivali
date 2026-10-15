@@ -1267,6 +1267,13 @@ export interface NeedItem {
    */
   review_path?: string;
   /**
+   * Packages are the Debian packages an Install software request
+   * asks for. That request is an approval row, answered in place,
+   * with ProposalKind software_install; empty on every other row.
+   * Never null.
+   */
+  packages: string[];
+  /**
    * Agent is the agent a needs-help row is about.
    */
   agent?: AgentRef;
