@@ -9,5 +9,5 @@ export default defineConfig({
   clearScreen: false,
   server: { port: 1420, strictPort: true, host: "localhost", fs: { allow: [".", "../design-system"] } },
   build: { outDir: "dist", target: "safari16", emptyOutDir: true, assetsInlineLimit: 0 },
-  test: { environment: "node", include: ["src/**/*.test.ts"] },
+  test: { environment: "node", include: ["src/**/*.test.ts"], setupFiles: ["src/test-setup.ts"] },
 });
