@@ -469,8 +469,11 @@ jobs:
       # The release profile's dependencies, from nightly.yml's package
       # job on main. Never saved here: a cache written on a tag is
       # readable by that tag alone, and a dev build's branch reads main's.
+      # The key must match nightly.yml's.
       - uses: Swatinem/rust-cache@v2
         with:
+          prefix-key: v0-rust-1.99.0
+          add-rust-environment-hash-key: false
           shared-key: desktop-release
           workspaces: desktop-app/src-tauri
           save-if: false
@@ -623,6 +626,8 @@ jobs:
       # and never saved.
       - uses: Swatinem/rust-cache@v2
         with:
+          prefix-key: v0-rust-1.99.0
+          add-rust-environment-hash-key: false
           shared-key: desktop-release
           workspaces: desktop-app/src-tauri
           save-if: false

@@ -38,10 +38,13 @@ func TestWorkflowsParse(t *testing.T) {
 	}
 }
 
-// TestWorkflowsRustToolchain holds every workflow's Rust toolchain to
-// desktop-app/rust-toolchain.toml's channel. The Rust caches are keyed on
-// the compiler, so a workflow on another version builds cold and writes a
-// cache nothing else reads.
+// TestWorkflowsRustToolchain holds every workflow's Rust toolchain, and
+// every Rust cache's key, to desktop-app/rust-toolchain.toml's channel.
+// The caches are keyed on the compiler through prefix-key, so a workflow
+// on another version builds cold and writes a cache nothing else reads.
+// The cache's environment hash stays off: it covers every toolchain on
+// the runner, the image's preinstalled one among them, so a runner image
+// update would miss every cache.
 func TestWorkflowsRustToolchain(t *testing.T) {
 	b, err := os.ReadFile(filepath.Join("desktop-app", "rust-toolchain.toml"))
 	if err != nil {
@@ -57,7 +60,7 @@ func TestWorkflowsRustToolchain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pins := 0
+	pins, caches := 0, 0
 	for _, f := range files {
 		b, err := os.ReadFile(f)
 		if err != nil {
@@ -76,17 +79,28 @@ func TestWorkflowsRustToolchain(t *testing.T) {
 		}
 		for name, job := range wf.Jobs {
 			for _, step := range job.Steps {
-				if !strings.HasPrefix(step.Uses, "dtolnay/rust-toolchain@") {
-					continue
-				}
-				pins++
-				if got := step.With["toolchain"]; got != channel {
-					t.Errorf("%s, job %s: Rust toolchain %q, rust-toolchain.toml says %q", f, name, got, channel)
+				switch {
+				case strings.HasPrefix(step.Uses, "dtolnay/rust-toolchain@"):
+					pins++
+					if got := step.With["toolchain"]; got != channel {
+						t.Errorf("%s, job %s: Rust toolchain %q, rust-toolchain.toml says %q", f, name, got, channel)
+					}
+				case strings.HasPrefix(step.Uses, "Swatinem/rust-cache@"):
+					caches++
+					if got, want := step.With["prefix-key"], "v0-rust-"+channel; got != want {
+						t.Errorf("%s, job %s: rust-cache prefix-key %q, want %q", f, name, got, want)
+					}
+					if got := step.With["add-rust-environment-hash-key"]; got != "false" {
+						t.Errorf("%s, job %s: rust-cache add-rust-environment-hash-key %q, want false", f, name, got)
+					}
 				}
 			}
 		}
 	}
 	if pins == 0 {
 		t.Error("no workflow installs Rust with dtolnay/rust-toolchain")
+	}
+	if caches == 0 {
+		t.Error("no workflow caches Rust with Swatinem/rust-cache")
 	}
 }
