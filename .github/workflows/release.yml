@@ -745,6 +745,9 @@ jobs:
       # release. Re-running replaces assets (--clobber). A dev build's tag
       # does not exist yet: the release creates it on the commit built
       # when it is published.
+      # A release's generated notes start from the last published release
+      # below it, not the previous tag: a tag whose release never
+      # published shipped nothing, so its changes belong to this one.
       - name: Create the draft release
         run: |
           if gh release view "$TAG" >/dev/null 2>&1; then exit 0; fi
@@ -755,8 +758,16 @@ jobs:
           else
             pre=""
             case "$TAG" in *-*) pre="--prerelease" ;; esac
+            since="$( { gh release list --exclude-drafts --exclude-pre-releases --limit 200 \
+                          --json tagName --jq '.[].tagName'; echo "$TAG"; } |
+              sort -uV | grep -B1 -xF "$TAG" | grep -vxF "$TAG" || true)"
+            start=""
+            if [ -n "$since" ]; then
+              echo "Generated notes start from $since"
+              start="--notes-start-tag $since"
+            fi
             gh release create "$TAG" --draft --verify-tag --title "Kivali ${TAG#v}" \
-              --notes-file "$RUNNER_TEMP/notes.md" --generate-notes $pre
+              --notes-file "$RUNNER_TEMP/notes.md" --generate-notes $start $pre
           fi
 
       - name: Upload the assets

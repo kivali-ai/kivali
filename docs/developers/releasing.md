@@ -246,8 +246,10 @@ Choices worth knowing:
   platform (`scripts/release-notes.sh`, which fails the job if either is
   missing), since the release page is where people download the app and
   it carries every other asset too. A release's GitHub-generated notes
-  follow; a dev build's caveat comes first. Edit the published notes to
-  add anything more.
+  follow, starting from the highest published stable release below it
+  rather than the previous tag, so a tag whose release never published
+  has its changes listed in the next release that does. A dev build's
+  caveat comes first. Edit the published notes to add anything more.
 - **Tests gate publishing.** The workflow calls `ci.yml` (every
   per-commit check, Kivali Desktop's on macOS and Windows among them)
   and `nightly.yml` (race detector, integration suite on k3s) on the
