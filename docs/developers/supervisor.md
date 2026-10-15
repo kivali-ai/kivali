@@ -607,8 +607,10 @@ full control, the caller reading; refused if anyone else made it) is
 where it creates files as itself, and where the team's disks live. It
 belongs to the account it was first made for: every request that opens
 it reads its DACL's one account entry (the SIDs of its allow entries,
-from the entries themselves, but for the broker's own and Hyper-V's
-virtual machines', `S-1-5-83-…`) and refuses any other caller before
+from the entries themselves, but for the broker's own and the ones
+Hyper-V adds as it manages the VM made in it: its virtual machines',
+`S-1-5-83-…`, the creator SIDs, `S-1-3-…`, and its worker's app
+container capabilities, `S-1-15-…`) and refuses any other caller before
 touching it, since it holds that account's data. `DELETE /v1/vm`
 removes the directory after the VM, through handles, deleting a link
 inside as the link, unless the data disk or its snapshot is still in
