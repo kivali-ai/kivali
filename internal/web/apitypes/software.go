@@ -33,6 +33,24 @@ type SoftwareAdd struct {
 	Packages []string `json:"packages"`
 }
 
+// SoftwarePackage is one package an Install software request asks
+// for, as Debian's package list describes it. Version and Synopsis are
+// absent when the list does not have them (it has not been read yet,
+// or its entry lacks the field).
+type SoftwarePackage struct {
+	// Name is the name the agent asked for.
+	Name string `json:"name"`
+	// ProvidedBy is the package apt-get installs for Name when Name is
+	// a virtual package one package provides; Version and Synopsis are
+	// that package's.
+	ProvidedBy *string `json:"provided_by,omitempty"`
+	// Version is the upstream version Debian 13 has, without its epoch
+	// or Debian revision.
+	Version *string `json:"version,omitempty"`
+	// Synopsis is the package's one-line description.
+	Synopsis *string `json:"synopsis,omitempty"`
+}
+
 // ---- /api/v1/agents/{slug}/software ----
 
 // AgentSoftware is GET /api/v1/agents/{slug}/software, and the answer

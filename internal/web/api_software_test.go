@@ -188,10 +188,24 @@ func TestAPIAgentSoftwareRefusals(t *testing.T) {
 }
 
 // fakePackages is a debian.Checker over a fixed set of names; with err
-// set, Debian's list cannot be read.
+// set, Debian's list cannot be read. Lookup answers described's entry
+// for a name, or the name alone.
 type fakePackages struct {
-	known map[string]bool
-	err   error
+	known     map[string]bool
+	described map[string]debian.Package
+	err       error
+}
+
+func (f fakePackages) Lookup(names []string) []debian.Package {
+	out := make([]debian.Package, 0, len(names))
+	for _, n := range names {
+		p, ok := f.described[n]
+		if !ok {
+			p = debian.Package{Name: n}
+		}
+		out = append(out, p)
+	}
+	return out
 }
 
 func (f fakePackages) Check(_ context.Context, names []string) ([]debian.Unknown, error) {

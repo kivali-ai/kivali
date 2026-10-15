@@ -30,6 +30,14 @@ func (k knownPackages) Check(_ context.Context, names []string) ([]debian.Unknow
 	return out, nil
 }
 
+func (knownPackages) Lookup(names []string) []debian.Package {
+	out := make([]debian.Package, 0, len(names))
+	for _, n := range names {
+		out = append(out, debian.Package{Name: n})
+	}
+	return out
+}
+
 func (knownPackages) Warm(context.Context) {}
 
 // A propose_software_install naming a package Debian does not have is

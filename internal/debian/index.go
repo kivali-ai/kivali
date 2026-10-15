@@ -7,6 +7,8 @@
 // apt-get update downloads), keeps it in memory and a copy on disk. It
 // is what the software lists and propose_software_install check a name
 // against before it is saved; the shell checks again when it installs.
+// It also answers each package's version and one-line description, which
+// an Install software request shows the owner.
 //
 // Once one download has succeeded, checks answer from that list (kept
 // across restarts in the cache file) and a failed refresh only means
@@ -101,7 +103,24 @@ type Unknown struct {
 // own.
 type Checker interface {
 	Check(ctx context.Context, names []string) ([]Unknown, error)
+	Lookup(names []string) []Package
 	Warm(ctx context.Context)
+}
+
+// Package is what the list says about a name: the package apt-get
+// installs for it, its version and its one-line description. Fields
+// the list does not have are empty.
+type Package struct {
+	Name string
+	// ProvidedBy is the package apt-get installs when Name is a virtual
+	// package exactly one package provides; Version and Synopsis are
+	// that package's.
+	ProvidedBy string
+	// Version is the upstream version: the Debian version without its
+	// epoch or Debian revision (7:7.1.1-1+b1 is 7.1.1).
+	Version string
+	// Synopsis is the first line of the package's Description.
+	Synopsis string
 }
 
 var _ Checker = (*Index)(nil)
@@ -115,8 +134,18 @@ type list struct {
 	// Provides maps each virtual package (a name only in Provides) to
 	// the packages that provide it, sorted.
 	Provides map[string][]string `json:"provides"`
+	// Info is each package's version and synopsis, where its stanza
+	// has them.
+	Info map[string]info `json:"info"`
 
 	set map[string]bool
+}
+
+// info is one package's Version field and the first line of its
+// Description.
+type info struct {
+	Version  string `json:"v,omitempty"`
+	Synopsis string `json:"s,omitempty"`
 }
 
 func (l *list) index() {
@@ -207,6 +236,44 @@ func (ix *Index) Check(ctx context.Context, names []string) ([]Unknown, error) {
 		unknown = append(unknown, Unknown{Name: n, ProvidedBy: by, Suggestions: suggest(cur.Names, n)})
 	}
 	return unknown, nil
+}
+
+// Lookup returns what the list says about each name, in the order
+// given. It never waits for a download: with no list yet each Package
+// carries only its Name, and an old list is refreshed in the
+// background.
+func (ix *Index) Lookup(names []string) []Package {
+	ix.load()
+	cur, due := ix.state()
+	if due {
+		ix.startRefresh()
+	}
+	out := make([]Package, 0, len(names))
+	for _, n := range names {
+		p := Package{Name: n}
+		if cur != nil {
+			pkg := n
+			if by := cur.Provides[n]; !cur.set[n] && len(by) == 1 {
+				pkg, p.ProvidedBy = by[0], by[0]
+			}
+			in := cur.Info[pkg]
+			p.Version, p.Synopsis = upstreamVersion(in.Version), in.Synopsis
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
+// upstreamVersion is a Debian version without its epoch ("7:") or
+// Debian revision ("-1+b1").
+func upstreamVersion(v string) string {
+	if i := strings.IndexByte(v, ':'); i >= 0 {
+		v = v[i+1:]
+	}
+	if i := strings.LastIndexByte(v, '-'); i >= 0 {
+		v = v[:i]
+	}
+	return v
 }
 
 // state is the current list and whether a download is due: the list is
@@ -339,6 +406,11 @@ func (ix *Index) load() {
 			log.Printf("debian: ignoring the cached package list %s (%v)", ix.opts.CachePath, err)
 			return
 		}
+		if c.List.Info == nil {
+			// Written before the list kept versions and descriptions:
+			// used for checks, and downloaded again in full now.
+			c.List.Fetched, c.List.ETag = time.Time{}, ""
+		}
 		c.List.index()
 		ix.mu.Lock()
 		if ix.cur == nil {
@@ -382,10 +454,12 @@ func (ix *Index) save(l *list) {
 	}
 }
 
-// parse reads a Packages file: the Package and Provides fields of each
-// stanza.
+// parse reads a Packages file: the Package, Provides, Version and
+// Description fields of each stanza. Only Description's first line,
+// the synopsis, is kept.
 func parse(r io.Reader) (*list, error) {
 	names := map[string]bool{}
+	infos := map[string]info{}
 	providers := map[string]map[string]bool{}
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 64*1024), 4*1024*1024)
@@ -398,6 +472,14 @@ func parse(r io.Reader) (*list, error) {
 		case strings.HasPrefix(line, "Package:"):
 			pkg = strings.TrimSpace(strings.TrimPrefix(line, "Package:"))
 			names[pkg] = true
+		case strings.HasPrefix(line, "Version:") && pkg != "":
+			in := infos[pkg]
+			in.Version = strings.TrimSpace(strings.TrimPrefix(line, "Version:"))
+			infos[pkg] = in
+		case strings.HasPrefix(line, "Description:") && pkg != "":
+			in := infos[pkg]
+			in.Synopsis = strings.TrimSpace(strings.TrimPrefix(line, "Description:"))
+			infos[pkg] = in
 		case strings.HasPrefix(line, "Provides:") && pkg != "":
 			for _, p := range strings.Split(strings.TrimPrefix(line, "Provides:"), ",") {
 				// "name (= version)" or "name:any"
@@ -421,7 +503,7 @@ func parse(r io.Reader) (*list, error) {
 	if len(names) == 0 {
 		return nil, errors.New("no packages in the index")
 	}
-	l := &list{Names: make([]string, 0, len(names)), Provides: map[string][]string{}}
+	l := &list{Names: make([]string, 0, len(names)), Provides: map[string][]string{}, Info: infos}
 	for n := range names {
 		l.Names = append(l.Names, n)
 	}

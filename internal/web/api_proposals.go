@@ -104,7 +104,7 @@ func (s *Server) proposal(reqPath string, kind apitypes.ProposalKind, req store.
 		Summary: apitypes.ProposalSummary{
 			Moves:    []apitypes.ProposalMove{},
 			Facts:    []apitypes.ProposalFact{},
-			Packages: []string{},
+			Packages: []apitypes.SoftwarePackage{},
 		},
 		Docs: []apitypes.ProposalDoc{},
 	}
@@ -187,7 +187,7 @@ func (s *Server) proposal(reqPath string, kind apitypes.ProposalKind, req store.
 		si := req.SoftwareInstall
 		a := s.proposalAgent(v, si.Slug)
 		p.Summary.Agent = &a
-		p.Summary.Packages = append([]string{}, si.Packages...)
+		p.Summary.Packages = s.softwarePackages(si.Packages)
 
 	case apitypes.ProposalKindReorg:
 		failed := map[store.ReorgMove]string{}

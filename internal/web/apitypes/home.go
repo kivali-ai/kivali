@@ -102,7 +102,7 @@ type NeedItem struct {
 	// asks for. That request is an approval row, answered in place,
 	// with ProposalKind software_install; empty on every other row.
 	// Never null.
-	Packages []string `json:"packages"`
+	Packages []SoftwarePackage `json:"packages"`
 	// Agent is the agent a needs-help row is about.
 	Agent *AgentRef `json:"agent,omitempty"`
 	// RawURL opens the message file; absent on a needs-help row.

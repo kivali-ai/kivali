@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/kivali-ai/kivali/internal/agent"
+	"github.com/kivali-ai/kivali/internal/debian"
 	"github.com/kivali-ai/kivali/internal/store"
 	"github.com/kivali-ai/kivali/internal/web/apitypes"
 )
@@ -270,12 +271,15 @@ func TestAPIProposalSoftwareInstall(t *testing.T) {
 	srv, _ := newTurnServer(t)
 	softwareTeam(t, srv)
 	path := seedSoftwareProposal(t, srv, "buyer", "poppler-utils")
+	srv.Packages = fakePackages{described: map[string]debian.Package{
+		"poppler-utils": {Name: "poppler-utils", Version: "25.03.0", Synopsis: "PDF utilities (based on Poppler)"},
+	}}
 
 	p := getProposal(t, srv, path)
 	if p.Kind != apitypes.ProposalKindSoftwareInstall {
 		t.Fatalf("proposal %+v", p)
 	}
-	if p.Summary.Agent == nil || p.Summary.Agent.Slug != "buyer" || len(p.Summary.Packages) != 1 || p.Summary.Packages[0] != "poppler-utils" {
+	if p.Summary.Agent == nil || p.Summary.Agent.Slug != "buyer" || len(p.Summary.Packages) != 1 || p.Summary.Packages[0].Name != "poppler-utils" || p.Summary.Packages[0].Version == nil || *p.Summary.Packages[0].Version != "25.03.0" {
 		t.Errorf("summary = %+v", p.Summary)
 	}
 	if p.ReasonMD != "Quotes arrive as PDFs and I need to read their text." || p.Resolved != nil {

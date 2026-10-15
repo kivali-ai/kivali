@@ -206,7 +206,7 @@ func (v *homeView) needItem(it CEOInboxItem) apitypes.NeedItem {
 		At:          it.Request.Date,
 		BodyMD:      strings.TrimRight(it.Request.Body, "\n"),
 		Attachments: v.attachments(it.Request.Attachments),
-		Packages:    []string{},
+		Packages:    []apitypes.SoftwarePackage{},
 		RawURL:      &raw,
 	}
 	switch it.RequestKind {
@@ -218,7 +218,7 @@ func (v *homeView) needItem(it CEOInboxItem) apitypes.NeedItem {
 			// Short enough to answer in place: the packages and the
 			// agent's reason are the whole of it.
 			n.ProposalKind = &pk
-			n.Packages = append([]string{}, it.Request.SoftwareInstall.Packages...)
+			n.Packages = v.s.softwarePackages(it.Request.SoftwareInstall.Packages)
 		case ok:
 			review := proposalReviewPath(it.RequestPath)
 			n.Kind = apitypes.NeedKindProposal
@@ -294,7 +294,7 @@ func (s *Server) needsHelpItem(a apitypes.SnapshotAgent) (apitypes.NeedItem, boo
 		At:          at,
 		BodyMD:      body,
 		Attachments: []apitypes.AttachmentRef{},
-		Packages:    []string{},
+		Packages:    []apitypes.SoftwarePackage{},
 		Agent:       &apitypes.AgentRef{Slug: a.Slug, Name: a.Name, State: a.State},
 	}, true
 }

@@ -113,7 +113,14 @@ shell's own
 check at install time still applies. `propose_software_install` makes
 the same check at publish time and refuses the call with the same
 wording, so the owner never sees a name Debian does not have; it too
-lets names through when the index cannot be read. A name already saved that is not a Debian
+lets names through when the index cannot be read. The index also keeps
+each package's `Version` and the first line of its `Description`;
+`debian.Index.Lookup` answers them without waiting for a download, and
+the Needs-you row and the proposal page for an Install software request
+show them under each name (`SoftwarePackage`: the upstream version,
+without epoch or Debian revision, the synopsis, and for a virtual name
+the package it installs). A cache file written without them is used
+for checks and downloaded again in full at once. A name already saved that is not a Debian
 package name (a file edited by hand) stays listed, under `invalid` in
 the answer and marked on the page as not installed, is left out of what
 the pod installs (`Store.EffectiveSoftware` logs it), and `DELETE`

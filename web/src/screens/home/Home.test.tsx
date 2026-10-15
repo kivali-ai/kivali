@@ -345,7 +345,11 @@ describe('Needs you', () => {
     expect(screen.queryByRole('list', { name: 'Software to install' })).toBeNull();
     fireEvent.click(head);
     const row = within(rowFor('data-id', software.id));
-    expect(within(row.getByRole('list', { name: 'Software to install' })).getByText('poppler-utils')).toBeInTheDocument();
+    const packages = within(row.getByRole('list', { name: 'Software to install' }));
+    // The name on its own, not a badge, with Debian's version and one-line description.
+    expect(packages.getByText('poppler-utils')).not.toHaveClass('kv-badge');
+    expect(packages.getByText('Version 25.03.0')).toBeInTheDocument();
+    expect(packages.getByText('PDF utilities (based on Poppler)')).toBeInTheDocument();
     expect(row.getByText('To read the PDF invoices.')).toBeInTheDocument();
     fireEvent.click(row.getByRole('button', { name: 'Install' }));
     await flush();

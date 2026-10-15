@@ -83,6 +83,30 @@ func (s *Server) checkSoftware(w http.ResponseWriter, r *http.Request, names []s
 	return []string{}, true
 }
 
+// softwarePackages is what Debian's package list says about each
+// name an Install software request asks for: its version and
+// one-line description, so the owner knows what they are approving.
+// It never waits for the list; without one, only the names.
+func (s *Server) softwarePackages(names []string) []apitypes.SoftwarePackage {
+	out := make([]apitypes.SoftwarePackage, 0, len(names))
+	if s.Packages == nil {
+		for _, n := range names {
+			out = append(out, apitypes.SoftwarePackage{Name: n})
+		}
+		return out
+	}
+	opt := func(v string) *string {
+		if v == "" {
+			return nil
+		}
+		return &v
+	}
+	for _, p := range s.Packages.Lookup(names) {
+		out = append(out, apitypes.SoftwarePackage{Name: p.Name, ProvidedBy: opt(p.ProvidedBy), Version: opt(p.Version), Synopsis: opt(p.Synopsis)})
+	}
+	return out
+}
+
 // warmPackages starts reading Debian's package list in the background
 // when a software list is opened, so the add that may follow does not
 // wait for it.
