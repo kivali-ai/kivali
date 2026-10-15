@@ -23,10 +23,11 @@
 #
 # Fields:
 #   version              X.Y.Z (the tag without the v)
-#   min_desktop_version  MIN_DESKTOP_VERSION, default X.Y.Z. The desktop and
-#                        the org are cut together, so by default a release
-#                        asks for the desktop of the same number. Lower it
-#                        by hand only for a release the older app can run.
+#   min_desktop_version  MIN_DESKTOP_VERSION, default X.Y.0: every desktop
+#                        of the same major and minor runs every team release
+#                        of it (docs/developers/releasing.md, "Versions and
+#                        compatibility"). A pre-release of X.Y.0 itself asks
+#                        for its own version, which semver puts below X.Y.0.
 #   vm_image             VM_IMAGE_VERSION, default X.Y.Z: the VM image the
 #                        release was built with (make -C vm image VM_VERSION=...)
 #   manual_steps         true with --manual-steps, MANUAL_STEPS=1, or when the
@@ -60,6 +61,9 @@ if ! [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
   exit 1
 fi
 bare="${VERSION#v}"
+IFS=. read -r major minor patch <<<"${bare%%-*}"
+min_desktop="$major.$minor.0"
+if [ "$patch" = 0 ]; then min_desktop="$bare"; fi
 here="$(cd "$(dirname "$0")" && pwd)"
 
 command -v jq >/dev/null 2>&1 || { echo "release-json: jq not found (brew install jq)" >&2; exit 1; }
@@ -118,7 +122,7 @@ jq -n \
   --arg chart_name "$chart" --arg chart_sha "$(sha "$dir/$chart")" --argjson chart_size "$(size "$dir/$chart")" \
   --arg arm_name "$img_arm64" --arg arm_sha "$(sha "$dir/$img_arm64")" --argjson arm_size "$(size "$dir/$img_arm64")" \
   --arg amd_name "$amd64_name" --arg amd_sha "$amd64_sha" --argjson amd_size "$amd64_size" \
-  --arg min "${MIN_DESKTOP_VERSION:-$bare}" \
+  --arg min "${MIN_DESKTOP_VERSION:-$min_desktop}" \
   --arg vm "${VM_IMAGE_VERSION:-$bare}" \
   --argjson manual "$manual" \
   --arg notes "$notes" \

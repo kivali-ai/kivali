@@ -9,13 +9,59 @@ run it (the supervisor installs and upgrades them); this document covers
 producing it. A fork or a new maintainer sets up the items in "Before
 the first release" first.
 
+## Versions and compatibility
+
+A release is `MAJOR.MINOR.PATCH`. The desktop app and the team are cut
+together under that one number, but each install moves on its own: the
+app updates itself, and each team upgrades when its owner chooses.
+
+**The guarantee.** Within one major and minor, every Kivali Desktop runs
+every team release: a desktop of 1.4.0 runs a team on 1.4.7, and a
+desktop of 1.4.7 runs a team on 1.4.0. Across minors, a newer desktop
+runs an older team (a team's version is recorded on its data disk; the
+VM's root disk carries none), and a team release asks for a desktop of
+its own minor or later.
+
+**Which number moves.**
+
+| Release | When |
+| --- | --- |
+| Patch, `X.Y.(Z+1)` | Everything contained in a team: the server, the web app, agents, the chart, the container images, seed text. It breaks nothing in a team and needs no migration of a team's data. |
+| Minor, `X.(Y+1).0` | Any change on the desktop side: the desktop app, its pages and flows, the VM image, the supervisor and its broker, the guest agent, virtualization, including a dependency update in any of them. Also any team change that breaks something or needs a migration. |
+| Major, `(X+1).0.0` | A breaking change to how Kivali is built. Not planned. |
+
+The supervisor also compiles packages it shares with the server
+(`internal/auth`, `internal/claudeagent`, `internal/claudeauth`,
+`internal/provider`, `internal/clock`). A change there that a team
+release needs the supervisor to have is a minor too.
+
+**What the release machinery does.**
+
+- `release-json.sh` writes `min_desktop_version` as `X.Y.0`, so a patch
+  never asks for a desktop update and the first release of a minor asks
+  for that minor's desktop. A pre-release of `X.Y.0` asks for its own
+  version, because semver puts `X.Y.0-rc.1` below `X.Y.0`.
+  `MIN_DESKTOP_VERSION` overrides the default. Never raise it within a
+  minor: a patch that needs a newer desktop should have been a minor.
+- `release.sh` refuses a patch release whose desktop side
+  (`desktop-app/`, `vm/`, `internal/supervisor/`,
+  `cmd/kivali-supervisor/`, `cmd/kivali-guest/`) differs from `vX.Y.0`.
+  Both trees are bumped to the new version before they are compared, so
+  the version numbers alone pass. A patch also needs `vX.Y.0` to exist.
+- A patch still publishes Kivali Desktop at its number, with the
+  patch's chart and images baked into its VM image for new teams. Its
+  desktop side is `X.Y.0`'s.
+
 ## The procedure
 
-1. **Decide whether the upgrade needs steps the app cannot do.** If it
+1. **Pick the number** by "Versions and compatibility": a patch for a
+   change contained in a team, a minor for anything on the desktop side,
+   a breaking change or a migration.
+2. **Decide whether the upgrade needs steps the app cannot do.** If it
    does, add the tag (one line, `vX.Y.Z`) to `scripts/manual-steps` and
    merge that to `main` first, and write the steps in the release
    notes (see "Publishing a release that needs manual steps").
-2. **Cut it**, from any checkout of the repository with `gh` signed in:
+3. **Cut it**, from any checkout of the repository with `gh` signed in:
 
    ```
    make release VERSION=vX.Y.Z
@@ -26,10 +72,12 @@ the first release" first.
    is semver and the tag is unused, refuses unless every versioned file on
    `origin/main` agrees (`scripts/version-check.sh`) and tauri.conf.json
    carries the owner's updater public key (`scripts/check-updater-key.sh`),
-   bumps them all together (`scripts/bump-version.sh`) on a branch
-   `release/vX.Y.Z`, pushes it and opens a pull request to `main`. Then it
-   waits for that pull request to be merged.
-3. **Merge the release pull request.** Its CI runs the per-commit checks
+   bumps them all together (`scripts/bump-version.sh`), refuses a patch
+   that changes the desktop side ("Versions and compatibility"), and
+   commits the bump on a branch `release/vX.Y.Z`, pushes it and opens a
+   pull request to `main`. Then it waits for that pull request to be
+   merged.
+4. **Merge the release pull request.** Its CI runs the per-commit checks
    first. Once it is merged the script tags the commit the merge put on
    `main` (a rebase merge gives it a new hash; a later commit on `main` is
    never tagged) with an annotated `vX.Y.Z`, after checking that commit says
@@ -38,15 +86,15 @@ the first release" first.
    the script while it waits is safe: run `make release VERSION=vX.Y.Z`
    again and it carries on (`--no-wait`, passed to `scripts/release.sh`,
    stops once the pull request is open).
-4. **The tag push starts `.github/workflows/release.yml`.** Watch it
+5. **The tag push starts `.github/workflows/release.yml`.** Watch it
    under the repository's Actions tab. When it finishes the release is
    published with every asset and `/releases/latest` points at it.
-5. **Run the boot test on a Mac.** CI cannot: `make -C vm boottest` needs
+6. **Run the boot test on a Mac.** CI cannot: `make -C vm boottest` needs
    Virtualization.framework and GitHub-hosted runners have no nested
    virtualization. Download the release's `Image`, `initramfs.gz` and
    `root.squashfs` into a directory, put it at `vm/build/out`, and run
    `make -C vm boottest`. Do this before announcing the release.
-6. **Upgrade the orgs.** Each takes the release from the feed
+7. **Upgrade the orgs.** Each takes the release from the feed
    (`kivali-supervisor upgrade`, or Update in Kivali Desktop;
    [deployment.md](deployment.md)), installing the release's own chart
    and image bundle.
@@ -329,14 +377,15 @@ and the image bundle before importing anything, and refuses a chart whose
 | `version` | `X.Y.Z` |
 | `chart` | `{name: kivali-X.Y.Z.tgz, sha256, size}` |
 | `images` | `{"linux/arm64": {...}, "linux/amd64": {...}}` for the bundles (the guest runs arm64; amd64 is listed for other hosts) |
-| `min_desktop_version` | `MIN_DESKTOP_VERSION`, default `X.Y.Z`. Cut together, the org asks for the desktop of the same number; lower it only for a release an older app can run (re-run `release-json.sh` with `MIN_DESKTOP_VERSION=...` and re-upload; see below) |
+| `min_desktop_version` | `MIN_DESKTOP_VERSION`, default `X.Y.0` (a pre-release of `X.Y.0`: its own version); see "Versions and compatibility" |
 | `vm_image` | `VM_IMAGE_VERSION`, default `X.Y.Z` |
 | `manual_steps` | true when the tag is in `scripts/manual-steps` |
 | `notes_url` | the release page (override with `NOTES_URL`) |
 
 The desktop and the org version are cut together but may drift: an org
-whose release needs a newer desktop shows "Update Kivali Desktop first"; an
-older org keeps running under a newer app.
+whose release needs a newer desktop (a new minor) shows "Update Kivali
+Desktop first"; an older org keeps running under a newer app ("Versions
+and compatibility").
 
 ## Verifying the first signed release
 
@@ -414,8 +463,8 @@ then shows "needs steps the app can't do yet; see the upgrade notes"
 
   Clients re-read `release.json` on every check, so the change is live as
   soon as the asset is replaced. The same three lines, without
-  `--manual-steps` (and with `MIN_DESKTOP_VERSION=...` if needed), correct
-  any other `release.json` field.
+  `--manual-steps`, correct any other `release.json` field
+  (`MIN_DESKTOP_VERSION=...` sets the minimum desktop version).
 
 ## Rolling a release back
 
@@ -436,8 +485,9 @@ from it.
    feed only moves forward (an older `version` than installed reads as up to
    date), so cut `vX.Y.(Z+1)` with the fix.
 3. **Apps already updated** do the same: the updater only moves to a higher
-   `version`. A broken desktop build is superseded by a fixed one; never
-   re-point `latest.json` at an older version expecting a downgrade.
+   `version`. A broken desktop build is superseded by a fixed one, which,
+   being a desktop change, is the next minor; never re-point
+   `latest.json` at an older version expecting a downgrade.
 4. **Do not re-push or move the tag**; release a new version instead. The
    workflow replaces assets on a re-run (`--clobber`), but digests change
    and installs that already cached the old ones will see a mismatch.

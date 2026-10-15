@@ -80,11 +80,14 @@ the upgrade snapshot of that disk, which is deleted when the upgrade
 ends).
 
 **Two versions.** The desktop app's version and the Kivali release
-running in a team are cut together but may drift. A newer Kivali whose
-minimum desktop version is above the installed app asks for the app
-update first and does nothing else; an older Kivali keeps running
-under a newer app, because a team's version is recorded on its data
-disk and the root disk carries none. A release that needs a step the
+running in a team are cut together but may drift. Every desktop runs
+every team release of its own major and minor
+([releasing.md](releasing.md), "Versions and compatibility"), so a
+release's minimum desktop version is `X.Y.0`. A newer Kivali whose
+minimum desktop version is above the installed app (a new minor) asks
+for the app update first and does nothing else; an older Kivali keeps
+running under a newer app, because a team's version is recorded on its
+data disk and the root disk carries none. A release that needs a step the
 app cannot do sets `manual_steps` in `release.json`, and the app
 explains instead of upgrading ("Update states").
 
