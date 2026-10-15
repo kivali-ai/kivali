@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"regexp"
+	"strings"
 	"testing"
 )
 
@@ -47,5 +48,39 @@ func TestClaudeCodeVersionIsPinned(t *testing.T) {
 			"the RUN line never changes, so Docker never rebuilds the layer.\n"+
 			"Bump this deliberately, and keep it at or above the release that introduced the newest model ID\n"+
 			"in internal/claudeagent/catalog.go.", got)
+	}
+}
+
+// dockerfileInstruction is the first word of a line that starts a
+// Dockerfile instruction.
+var dockerfileInstruction = regexp.MustCompile(`^(?i)(ADD|ARG|CMD|COPY|ENTRYPOINT|ENV|EXPOSE|FROM|HEALTHCHECK|LABEL|MAINTAINER|ONBUILD|RUN|SHELL|STOPSIGNAL|USER|VOLUME|WORKDIR)(\s|$)`)
+
+// TestDockerfilesParse checks every Dockerfile the release builds for
+// lines Docker cannot parse: each line is blank, a comment, the
+// continuation of a line ending in a backslash, or the start of an
+// instruction. The images are only built at release time, so a comment
+// line that lost its # otherwise surfaces as "unknown instruction" in
+// the release job.
+func TestDockerfilesParse(t *testing.T) {
+	for _, name := range []string{"Dockerfile", "Dockerfile.agent-shell", "Dockerfile.egress-proxy", "vm/Dockerfile"} {
+		b, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		continued := false
+		for i, line := range strings.Split(string(b), "\n") {
+			trimmed := strings.TrimSpace(line)
+			if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+				// Docker skips comments inside a continued instruction too.
+				continue
+			}
+			if strings.Contains(trimmed, "<<") {
+				t.Fatalf("%s:%d: heredoc; this check does not follow heredocs, so extend it before using one", name, i+1)
+			}
+			if !continued && !dockerfileInstruction.MatchString(trimmed) {
+				t.Errorf("%s:%d: %q is not a comment, a continuation or an instruction", name, i+1, line)
+			}
+			continued = strings.HasSuffix(trimmed, `\`)
+		}
 	}
 }
