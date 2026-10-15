@@ -158,8 +158,8 @@ describe('About: software', () => {
   });
 
   it('adds and removes from the agent’s own list only', async () => {
-    const saved: AgentSoftware = { org: software.org, own: ['ffmpeg', 'git-lfs', 'poppler-utils'], invalid: [] };
-    const removed: AgentSoftware = { org: software.org, own: ['git-lfs', 'poppler-utils'], invalid: [] };
+    const saved: AgentSoftware = { org: software.org, own: ['ffmpeg', 'git-lfs', 'poppler-utils'], invalid: [], unchecked: [] };
+    const removed: AgentSoftware = { org: software.org, own: ['git-lfs', 'poppler-utils'], invalid: [], unchecked: [] };
     const { user, h } = await open({ ['POST ' + SOFTWARE]: saved, ['DELETE ' + SOFTWARE + '/ffmpeg']: removed });
     await user.type(await page().findByLabelText('Add software'), 'git-lfs');
     await user.click(page().getByRole('button', { name: 'Add' }));
@@ -177,6 +177,15 @@ describe('About: software', () => {
     await user.type(await page().findByLabelText('Add software'), 'bad');
     await user.click(page().getByRole('button', { name: 'Add' }));
     expect(await page().findByText('"bad name" is not a Debian package name')).toBeInTheDocument();
+  });
+
+  it('says which names were added without checking them', async () => {
+    const saved: AgentSoftware = { org: software.org, own: ['ffmpeg', 'zstd'], invalid: [], unchecked: ['zstd'] };
+    const { user } = await open({ ['POST ' + SOFTWARE]: saved });
+    expect(page().queryByText(/Added without checking/)).toBeNull();
+    await user.type(await page().findByLabelText('Add software'), 'zstd');
+    await user.click(page().getByRole('button', { name: 'Add' }));
+    expect(await page().findByText('Added without checking zstd')).toBeInTheDocument();
   });
 
   it('has no Software for an archived agent', async () => {

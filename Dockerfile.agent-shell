@@ -44,7 +44,9 @@
 # digest (the same one as the root Dockerfile and vm/Dockerfile) so a
 # build installs from exactly the base that SOURCES.md records, and a
 # release name never silently moves to the next Debian release the way
-# debian:stable-slim does. Multi-arch: every package below ships for
+# debian:stable-slim does. The server checks software names against
+this release's package list; internal/debian.Suite names it, and a
+test fails when the two differ. Multi-arch: every package below ships for
 # amd64 and arm64.
 #
 # The installed package list is recorded at build time in
