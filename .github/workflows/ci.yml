@@ -230,9 +230,8 @@ jobs:
           cache: npm
           cache-dependency-path: desktop-app/package-lock.json
 
-      # Pinned in lockstep with desktop-app/rust-toolchain.toml, and made
-      # the default so the cache below is keyed on the compiler that
-      # builds (a new stable release would otherwise discard it).
+      # Pinned in lockstep with desktop-app/rust-toolchain.toml (and the
+      # cache's prefix-key below), and made the default.
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: '1.99.0'
@@ -244,8 +243,16 @@ jobs:
       # and saves nothing, so the repository's cache holds one copy per
       # OS instead of one per branch. Saved on failure too, so a red lint
       # on main still warms it.
+      #
+      # Keyed on the pinned toolchain (prefix-key, held to
+      # rust-toolchain.toml by workflows_test.go) and not on the
+      # environment hash: that hash covers every toolchain installed on
+      # the runner, the image's preinstalled stable among them, so an
+      # image update would change it and miss every cache.
       - uses: Swatinem/rust-cache@v2
         with:
+          prefix-key: v0-rust-1.99.0
+          add-rust-environment-hash-key: false
           workspaces: |
             desktop-app/src-tauri
             desktop-app/fake-supervisor
