@@ -423,16 +423,21 @@ func OwnerOf(notes string) (string, bool) {
 // DirAccount is the account a VM directory was made for, from the SIDs
 // its DACL grants anything to (each in its numeric form): every one but
 // the broker's own (SYSTEM, Administrators, the service's account) and
-// Hyper-V's virtual machines' (S-1-5-83-...), whose entries Hyper-V adds
-// as it attaches a disk. VMDir writes exactly one such entry, the first
-// caller's; "" when there is none, and an error when there is more than
-// one. It is pure, so every OS tests it.
+// Hyper-V's, whose entries Hyper-V adds to the directory a VM is made
+// in and keeps adding as it manages the VM: its virtual machines'
+// (S-1-5-83-...), CREATOR OWNER and the other creator SIDs (S-1-3-...),
+// and the capability SIDs of its worker process (S-1-15-...). None of
+// those is an account a caller can be. VMDir writes exactly one such
+// entry, the first caller's; "" when there is none, and an error when
+// there is more than one. It is pure, so every OS tests it.
 func DirAccount(sids []string) (string, error) {
 	account := ""
 	for _, sid := range sids {
 		switch {
 		case strings.EqualFold(sid, LocalSystemSID), strings.EqualFold(sid, AdministratorsSID), strings.EqualFold(sid, ServiceSID),
-			strings.HasPrefix(strings.ToUpper(sid), virtualMachinesPrefix):
+			strings.HasPrefix(strings.ToUpper(sid), virtualMachinesPrefix),
+			strings.HasPrefix(strings.ToUpper(sid), creatorPrefix),
+			strings.HasPrefix(strings.ToUpper(sid), appPackagePrefix):
 		case account == "" || strings.EqualFold(account, sid):
 			account = sid
 		default:
@@ -442,6 +447,16 @@ func DirAccount(sids []string) (string, error) {
 	return account, nil
 }
 
-// virtualMachinesPrefix starts the SIDs of Hyper-V's virtual machines
-// (NT VIRTUAL MACHINE\...).
-const virtualMachinesPrefix = "S-1-5-83-"
+const (
+	// virtualMachinesPrefix starts the SIDs of Hyper-V's virtual machines
+	// (NT VIRTUAL MACHINE\...).
+	virtualMachinesPrefix = "S-1-5-83-"
+	// creatorPrefix starts the creator authority's SIDs: CREATOR OWNER
+	// (S-1-3-0), CREATOR GROUP and their server forms, which stand for
+	// whoever creates a file rather than for any account.
+	creatorPrefix = "S-1-3-"
+	// appPackagePrefix starts the app package authority's SIDs: app
+	// container packages (S-1-15-2-...) and capabilities (S-1-15-3-...),
+	// which Hyper-V's worker process runs with.
+	appPackagePrefix = "S-1-15-"
+)

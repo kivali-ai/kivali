@@ -195,12 +195,15 @@ func TestVHDRequestValidate(t *testing.T) {
 }
 
 // A VM directory's account is the one SID its DACL names besides the
-// broker's own and Hyper-V's virtual machines'.
+// broker's own and the ones Hyper-V adds: its virtual machines', the
+// creator SIDs and its worker's capabilities.
 func TestDirAccount(t *testing.T) {
 	const (
-		caller = "S-1-5-21-111-222-333-1001"
-		other  = "S-1-5-21-111-222-333-2002"
-		vm     = "S-1-5-83-1-111-222-333-444"
+		caller       = "S-1-5-21-111-222-333-1001"
+		other        = "S-1-5-21-111-222-333-2002"
+		vm           = "S-1-5-83-1-111-222-333-444"
+		creatorOwner = "S-1-3-0"
+		capability   = "S-1-15-3-1024-2268835264-3721307629-241982045-173645152-1490879176-104643441-2915960892-1612460704"
 	)
 	own := []string{LocalSystemSID, AdministratorsSID, ServiceSID}
 	for _, tc := range []struct {
@@ -212,6 +215,8 @@ func TestDirAccount(t *testing.T) {
 		{"the caller's entry twice (the object's and the inherited one)", append(own, caller, caller), caller},
 		{"in another case", append(own, strings.ToLower(caller)), strings.ToLower(caller)},
 		{"a virtual machine's entry beside it", append(own, vm, caller), caller},
+		{"the entries Hyper-V adds to the directory a VM is made in", append(own, creatorOwner, capability, vm, caller), caller},
+		{"Hyper-V's entries alone", append(own, creatorOwner, capability, vm), ""},
 		{"no account's", own, ""},
 		{"none at all", nil, ""},
 	} {
