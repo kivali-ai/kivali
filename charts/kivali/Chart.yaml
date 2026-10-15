@@ -7,6 +7,6 @@ version: 0.2.0
 # appVersion tracks the release tag (the VERSION convention: vMAJOR.MINOR.PATCH).
 # It is the default image tag for kivali, kivali-egress-proxy and the
 # kivali-agent-shell image the server derives from AGENTPOD_IMAGE.
-appVersion: v1.0.1
+appVersion: v1.0.2
 annotations:
   artifacthub.io/license: Apache-2.0
