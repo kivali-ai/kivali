@@ -1590,6 +1590,25 @@ records every step. System tools are run by full path (`$SYSDIR\net.exe`,
 `sc.exe`), never found beside the installer. A broker registered by
 hand from another path is kept as it is: `broker uninstall` it first.
 
+**The installer's wording** is Kivali's own: `customLanguageFiles`
+replaces Tauri's English strings with `src-tauri/windows/installer-english.nsh`
+(the same `LangString` names). Run over an older version, the installer's
+reinstall page selects **Install over the current version**, the path
+the updater takes (`/UPDATE`), rather than Tauri's default of
+uninstalling first: a full uninstall removes and re-registers the
+broker and offers to delete app data. `KivaliGUIInit`, in the
+same file because Tauri includes it after the page's
+`ReinstallPageCheck` variable is declared, sets that default; the hooks
+file names it as `MUI_CUSTOMFUNCTION_GUIINIT`. The uninstaller's
+checkbox, **Also delete browser data and sign-ins (teams are kept)**,
+removes `%APPDATA%\ai.kivali.desktop` and `%LOCALAPPDATA%\ai.kivali.desktop`
+(the WebView2 profile). No uninstall touches `%LOCALAPPDATA%\Kivali` or
+the teams' disks under `C:\ProgramData\Kivali\broker\vm`; `broker
+uninstall` leaves a team's VM directory in place. Tauri renames or
+adds strings across releases: after a Tauri update, compare the file
+with Tauri's `English.nsh` (a missing `LangString` shows as a
+`makensis` warning).
+
 **Hyper-V is a prerequisite** the installer checks and does not
 provide. Teams here run in Hyper-V VMs, and enabling the role takes an
 administrator and a restart (Turn Windows features on or off, Hyper-V;
