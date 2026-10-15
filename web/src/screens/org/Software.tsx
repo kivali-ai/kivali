@@ -56,9 +56,8 @@ export function PackageList({ packages, invalid = [], empty, edit }: PackageList
 export function UncheckedNotice({ names, onDismiss }: { names: readonly string[]; onDismiss(): void }) {
   if (names.length === 0) return null;
   return (
-    <Banner tone="warning" title={`Added without checking ${names.join(', ')}`} onDismiss={onDismiss}>
-      Kivali could not reach Debian’s package list to check {names.length === 1 ? 'this name' : 'these names'}. If Debian has no package by
-      that name, the shell says so when it installs.
+    <Banner tone="info" title={`Added ${names.join(', ')}`} onDismiss={onDismiss}>
+      Debian’s package list couldn’t be reached to confirm {names.length === 1 ? 'the name' : 'the names'}, so it’s worth a quick look at the spelling.
     </Banner>
   );
 }
