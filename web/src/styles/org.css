@@ -257,10 +257,19 @@
 }
 
 /* ---- Add field: text field and its button on one line ---- */
+/*
+ * The button sits on the text box's line, below the field's label: its slot is the text box's height (38px)
+ * and centres the 36px button in it.
+ */
 .app-org-add {
   display: flex;
-  align-items: flex-start;
+  align-items: flex-end;
   gap: var(--space-2);
+}
+.app-org-add-action {
+  display: flex;
+  align-items: center;
+  height: calc(var(--space-1) * 9.5);
 }
 
 .app-org-add-field {
