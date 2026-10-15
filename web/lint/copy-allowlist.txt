@@ -20,3 +20,4 @@ Org
 Background
 About
 Past chats
+Debian

@@ -1014,8 +1014,7 @@ describe('Software', () => {
     expect(screen.queryByText(/couldn’t be reached/)).toBeNull();
     fireEvent.change(screen.getByLabelText('Add software'), { target: { value: 'ffmpg' } });
     await click(screen.getByRole('button', { name: 'Add' }));
-    expect(await screen.findByText('Added ffmpg')).toBeInTheDocument();
-    expect(screen.getByText(/couldn’t be reached to confirm the name/)).toBeInTheDocument();
+    expect(await screen.findByText('Added ffmpg, but Debian’s package list couldn’t be reached to validate it')).toBeInTheDocument();
     await click(screen.getByRole('button', { name: /dismiss/i }));
     expect(screen.queryByText(/couldn’t be reached/)).toBeNull();
     expect(screen.getByText('ffmpg')).toBeInTheDocument();
