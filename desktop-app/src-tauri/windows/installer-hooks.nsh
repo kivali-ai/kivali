@@ -18,6 +18,11 @@
 
 !define KIVALI_BROKER "kivali-broker"
 
+; Defaults the upgrade page to installing over the current version;
+; the function is in installer-english.nsh, which Tauri includes after
+; the variable it sets is declared.
+!define MUI_CUSTOMFUNCTION_GUIINIT KivaliGUIInit
+
 ; $0 is 0 when the broker service is registered (sc answers 1060 when not).
 !macro KivaliBrokerRegistered
   nsExec::Exec '"$SYSDIR\sc.exe" query ${KIVALI_BROKER}'
