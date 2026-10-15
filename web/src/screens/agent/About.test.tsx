@@ -180,12 +180,12 @@ describe('About: software', () => {
   });
 
   it('says which names were added without checking them', async () => {
-    const saved: AgentSoftware = { org: software.org, own: ['ffmpeg', 'zstd'], invalid: [], unchecked: ['zstd'] };
+    const saved: AgentSoftware = { org: software.org, own: ['ffmpeg', 'xz-utils', 'zstd'], invalid: [], unchecked: ['xz-utils', 'zstd'] };
     const { user } = await open({ ['POST ' + SOFTWARE]: saved });
     expect(page().queryByText(/couldn’t be reached/)).toBeNull();
     await user.type(await page().findByLabelText('Add software'), 'zstd');
     await user.click(page().getByRole('button', { name: 'Add' }));
-    expect(await page().findByText('Added zstd')).toBeInTheDocument();
+    expect(await page().findByText('Added xz-utils and zstd, but Debian’s package list couldn’t be reached to validate them')).toBeInTheDocument();
   });
 
   it('has no Software for an archived agent', async () => {
