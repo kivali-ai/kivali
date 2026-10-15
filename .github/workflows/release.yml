@@ -448,11 +448,14 @@ jobs:
       # The release profile's dependencies, from nightly.yml's package
       # job on main. Never saved here: a cache written on a tag is
       # readable by that tag alone, and a dev build's branch reads main's.
-      # The key must match nightly.yml's.
+      # The key must match nightly.yml's, so only the pinned toolchain is
+      # installed here too.
+      - name: Only the pinned Rust toolchain
+        uses: ./.github/actions/only-pinned-rust
+
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: v0-rust-1.99.0
-          add-rust-environment-hash-key: false
           shared-key: desktop-release
           workspaces: desktop-app/src-tauri
           save-if: false
@@ -603,10 +606,12 @@ jobs:
 
       # As desktop-macos: nightly.yml's release-profile cache, restored
       # and never saved.
+      - name: Only the pinned Rust toolchain
+        uses: ./.github/actions/only-pinned-rust
+
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: v0-rust-1.99.0
-          add-rust-environment-hash-key: false
           shared-key: desktop-release
           workspaces: desktop-app/src-tauri
           save-if: false

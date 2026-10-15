@@ -42,9 +42,12 @@ func TestWorkflowsParse(t *testing.T) {
 // every Rust cache's key, to desktop-app/rust-toolchain.toml's channel.
 // The caches are keyed on the compiler through prefix-key, so a workflow
 // on another version builds cold and writes a cache nothing else reads.
-// The cache's environment hash stays off: it covers every toolchain on
-// the runner, the image's preinstalled one among them, so a runner image
-// update would miss every cache.
+// rust-cache's environment hash stays on, since turning it off drops the
+// lockfile hash with it: the key would never change with the
+// dependencies, and a cache that hits its key is never saved again. The
+// step before each cache uninstalls every toolchain but the pinned one,
+// since the hash covers every installed toolchain and the runner image's
+// preinstalled stable would change it with each image update.
 func TestWorkflowsRustToolchain(t *testing.T) {
 	b, err := os.ReadFile(filepath.Join("desktop-app", "rust-toolchain.toml"))
 	if err != nil {
@@ -78,7 +81,7 @@ func TestWorkflowsRustToolchain(t *testing.T) {
 			t.Fatalf("%s: %v", f, err)
 		}
 		for name, job := range wf.Jobs {
-			for _, step := range job.Steps {
+			for i, step := range job.Steps {
 				switch {
 				case strings.HasPrefix(step.Uses, "dtolnay/rust-toolchain@"):
 					pins++
@@ -90,8 +93,11 @@ func TestWorkflowsRustToolchain(t *testing.T) {
 					if got, want := step.With["prefix-key"], "v0-rust-"+channel; got != want {
 						t.Errorf("%s, job %s: rust-cache prefix-key %q, want %q", f, name, got, want)
 					}
-					if got := step.With["add-rust-environment-hash-key"]; got != "false" {
-						t.Errorf("%s, job %s: rust-cache add-rust-environment-hash-key %q, want false", f, name, got)
+					if got := step.With["add-rust-environment-hash-key"]; got != "" && got != "true" {
+						t.Errorf("%s, job %s: rust-cache add-rust-environment-hash-key %q: off, the key would not hash the lockfiles", f, name, got)
+					}
+					if i == 0 || job.Steps[i-1].Uses != "./.github/actions/only-pinned-rust" {
+						t.Errorf("%s, job %s: rust-cache is not right after ./.github/actions/only-pinned-rust", f, name)
 					}
 				}
 			}

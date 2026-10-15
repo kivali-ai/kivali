@@ -244,15 +244,17 @@ jobs:
       # OS instead of one per branch. Saved on failure too, so a red lint
       # on main still warms it.
       #
-      # Keyed on the pinned toolchain (prefix-key, held to
-      # rust-toolchain.toml by workflows_test.go) and not on the
-      # environment hash: that hash covers every toolchain installed on
-      # the runner, the image's preinstalled stable among them, so an
-      # image update would change it and miss every cache.
+      # The key holds the pinned toolchain (prefix-key, held to
+      # rust-toolchain.toml by workflows_test.go), then rust-cache's hash
+      # of the installed toolchains and cargo environment, then its hash
+      # of the lockfiles. Only the pinned toolchain is left installed, so
+      # a runner image update does not change the key.
+      - name: Only the pinned Rust toolchain
+        uses: ./.github/actions/only-pinned-rust
+
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: v0-rust-1.99.0
-          add-rust-environment-hash-key: false
           workspaces: |
             desktop-app/src-tauri
             desktop-app/fake-supervisor

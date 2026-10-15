@@ -198,12 +198,14 @@ jobs:
       # The release profile's dependencies, the slowest part of a release
       # (Tauri and its crates, optimized). Shared with release.yml's
       # desktop jobs by key: they restore it and never save, since a
-      # cache written on a tag is readable by that tag alone. Keyed on the
-      # pinned toolchain, not the runner's environment (as ci.yml's).
+      # cache written on a tag is readable by that tag alone. Keyed as
+      # ci.yml's, with only the pinned toolchain installed.
+      - name: Only the pinned Rust toolchain
+        uses: ./.github/actions/only-pinned-rust
+
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: v0-rust-1.99.0
-          add-rust-environment-hash-key: false
           shared-key: desktop-release
           workspaces: desktop-app/src-tauri
           save-if: ${{ github.ref == 'refs/heads/main' }}
