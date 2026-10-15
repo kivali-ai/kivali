@@ -32,9 +32,11 @@ export function AddField({ label, placeholder, button, busy, onAdd }: AddFieldPr
       <div className="app-org-add-field">
         <TextField label={label} placeholder={placeholder} value={value} onChange={(e) => setValue(e.target.value)} />
       </div>
-      <Button type="submit" variant="secondary" disabled={!trimmed || busy}>
-        {button}
-      </Button>
+      <div className="app-org-add-action">
+        <Button type="submit" variant="secondary" disabled={!trimmed || busy}>
+          {button}
+        </Button>
+      </div>
     </form>
   );
 }
