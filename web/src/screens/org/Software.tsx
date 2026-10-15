@@ -55,10 +55,13 @@ export function PackageList({ packages, invalid = [], empty, edit }: PackageList
 /** Names an add saved without checking them, because Debian's package list could not be read. */
 export function UncheckedNotice({ names, onDismiss }: { names: readonly string[]; onDismiss(): void }) {
   if (names.length === 0) return null;
+  const listed = names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
   return (
-    <Banner tone="info" title={`Added ${names.join(', ')}`} onDismiss={onDismiss}>
-      Debian’s package list couldn’t be reached to confirm {names.length === 1 ? 'the name' : 'the names'}, so it’s worth a quick look at the spelling.
-    </Banner>
+    <Banner
+      tone="warning"
+      title={`Added ${listed}, but Debian’s package list couldn’t be reached to validate ${names.length === 1 ? 'it' : 'them'}`}
+      onDismiss={onDismiss}
+    />
   );
 }
 
