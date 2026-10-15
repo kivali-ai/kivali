@@ -94,7 +94,21 @@ The settings API changes a list by name, never by replacing it:
 take `{packages}` to add, and `DELETE .../software/{name}` removes one,
 each applied to the list as it stands on disk (the store serializes
 every `agent.yaml` and `software.yaml` read-modify-write). A write
-checks the names it adds; a name already saved that is not a Debian
+checks the names it adds: each must be a Debian package name, and a
+package in the index the shell installs from (`internal/debian`: the
+`main` component of `debian.Suite` for the server's architecture,
+`Packages.gz` from deb.debian.org, held in memory, revalidated with
+its ETag once a day; `debian.Suite` is tested against
+`Dockerfile.agent-shell`'s base). Opening either list warms the index
+in the background. A name the index lacks is a 400 that adds nothing,
+naming the providers of a virtual package or up to three close names.
+When the index cannot be read (no earlier download and the archive
+unreachable; a failed download is not retried for a minute) the names
+are saved and listed under `unchecked` in that answer; the shell's own
+check at install time still applies. `propose_software_install` makes
+the same check at publish time and refuses the call with the same
+wording, so the owner never sees a name Debian does not have; it too
+lets names through when the index cannot be read. A name already saved that is not a Debian
 package name (a file edited by hand) stays listed, under `invalid` in
 the answer and marked on the page as not installed, is left out of what
 the pod installs (`Store.EffectiveSoftware` logs it), and `DELETE`

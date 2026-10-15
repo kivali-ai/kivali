@@ -16,12 +16,17 @@ type OrgSoftware struct {
 	// names (a list edited by hand): they are not installed, and DELETE
 	// removes them like any other. Never null.
 	Invalid []string `json:"invalid"`
+	// Unchecked names the packages a POST added without checking that
+	// Debian has them, because Debian's package list could not be read.
+	// Empty in every other answer. Never null.
+	Unchecked []string `json:"unchecked"`
 }
 
 // SoftwareAdd is the body of POST /api/v1/org/software and of POST
 // /api/v1/agents/{slug}/software: names to add to the list, keeping
 // what is there. Names are trimmed, lowercased and de-duplicated; a
-// name that is not a Debian package name, or an empty list, is a 400.
+// name that is not a Debian package name, a name Debian 13 has no
+// package for, or an empty list, is a 400 that adds nothing.
 // DELETE .../software/{name} removes one name; a name not on the list
 // is a 404.
 type SoftwareAdd struct {
@@ -40,4 +45,6 @@ type AgentSoftware struct {
 	// Invalid names the packages on either list that are not Debian
 	// package names: they are not installed. Never null.
 	Invalid []string `json:"invalid"`
+	// Unchecked is as for OrgSoftware: what a POST added unchecked.
+	Unchecked []string `json:"unchecked"`
 }

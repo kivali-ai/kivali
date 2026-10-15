@@ -753,6 +753,7 @@ func (s *Server) newStorePublisherFor(slug string) *mcp.StorePublisher {
 		Store:             s.Store,
 		FilesystemBackend: dispatcher.BackendFor(slug),
 		From:              slug,
+		Packages:          s.Packages,
 		ApplyRoute: func(ctx context.Context, q *store.MessageQueue, m store.Message) error {
 			out := &messaging.RouteOutcome{}
 			rerr := s.Messenger.RouteProduced(ctx, q, []store.Message{m}, out)

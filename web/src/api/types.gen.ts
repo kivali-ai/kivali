@@ -2195,12 +2195,19 @@ export interface OrgSoftware {
    * removes them like any other. Never null.
    */
   invalid: string[];
+  /**
+   * Unchecked names the packages a POST added without checking that
+   * Debian has them, because Debian's package list could not be read.
+   * Empty in every other answer. Never null.
+   */
+  unchecked: string[];
 }
 /**
  * SoftwareAdd is the body of POST /api/v1/org/software and of POST
  * /api/v1/agents/{slug}/software: names to add to the list, keeping
  * what is there. Names are trimmed, lowercased and de-duplicated; a
- * name that is not a Debian package name, or an empty list, is a 400.
+ * name that is not a Debian package name, a name Debian 13 has no
+ * package for, or an empty list, is a 400 that adds nothing.
  * DELETE .../software/{name} removes one name; a name not on the list
  * is a 404.
  */
@@ -2225,6 +2232,10 @@ export interface AgentSoftware {
    * package names: they are not installed. Never null.
    */
   invalid: string[];
+  /**
+   * Unchecked is as for OrgSoftware: what a POST added unchecked.
+   */
+  unchecked: string[];
 }
 
 //////////

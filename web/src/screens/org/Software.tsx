@@ -1,6 +1,6 @@
 import { apiDelete, apiPost } from '../../api/client';
 import type { OrgSoftware, SoftwareAdd } from '../../api/types.gen';
-import { Button, Icon, ListRow, Text } from '../../ds';
+import { Banner, Button, Icon, ListRow, Text } from '../../ds';
 import { AddField } from './Lists';
 import { ErrorBanner, None, RowList, RowSkeletons, SectionHead } from './parts';
 import type { SectionProps } from './sections';
@@ -52,6 +52,17 @@ export function PackageList({ packages, invalid = [], empty, edit }: PackageList
   );
 }
 
+/** Names an add saved without checking them, because Debian's package list could not be read. */
+export function UncheckedNotice({ names, onDismiss }: { names: readonly string[]; onDismiss(): void }) {
+  if (names.length === 0) return null;
+  return (
+    <Banner tone="warning" title={`Added without checking ${names.join(', ')}`} onDismiss={onDismiss}>
+      Kivali could not reach Debian’s package list to check {names.length === 1 ? 'this name' : 'these names'}. If Debian has no package by
+      that name, the shell says so when it installs.
+    </Banner>
+  );
+}
+
 /** Org > Software: the packages every agent's shell gets. */
 export function SoftwareSection({ showHead }: SectionProps) {
   const list = useResource<OrgSoftware>('/api/v1/org/software');
@@ -74,6 +85,7 @@ export function SoftwareSection({ showHead }: SectionProps) {
       </Text>
       <ErrorBanner error={list.error ?? action.error} {...(action.error ? { onDismiss: action.dismiss } : {})} />
       {!list.data && !list.error && <RowSkeletons />}
+      {list.data && <UncheckedNotice names={list.data.unchecked} onDismiss={() => list.data && list.set({ ...list.data, unchecked: [] })} />}
       {list.data && (
         <PackageList
           packages={list.data.packages}

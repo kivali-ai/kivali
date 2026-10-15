@@ -23,6 +23,7 @@ import (
 	"github.com/kivali-ai/kivali/internal/clock"
 	"github.com/kivali-ai/kivali/internal/clockcheck"
 	"github.com/kivali-ai/kivali/internal/config"
+	"github.com/kivali-ai/kivali/internal/debian"
 	"github.com/kivali-ai/kivali/internal/files"
 	"github.com/kivali-ai/kivali/internal/messaging"
 	"github.com/kivali-ai/kivali/internal/provider"
@@ -358,6 +359,7 @@ func main() {
 		VersionName:     version,
 		ClockCheck:      clockWatcher,
 		SubagentService: subagentService,
+		Packages:        debian.NewIndex(debian.DefaultURL(), &http.Client{Timeout: 2 * time.Minute}, clock.New()),
 	})
 	if err != nil {
 		log.Fatalf("web: %v", err)
