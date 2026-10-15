@@ -1,0 +1,21 @@
+# Uninstalls every Rust toolchain but the default one, which
+# dtolnay/rust-toolchain has just set to the pinned version. Runs before
+# Swatinem/rust-cache: its key hashes every installed toolchain, so a
+# runner image's preinstalled stable would change the key, and miss every
+# cache, whenever the image updates it. With only the pinned toolchain
+# left, the key changes with the pin, the Cargo lockfiles and the cargo
+# environment alone.
+name: Only the pinned Rust toolchain
+description: Uninstall every Rust toolchain except the default.
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        keep="$(rustup default | cut -d' ' -f1)"
+        for t in $(rustup toolchain list | cut -d' ' -f1); do
+          if [ "$t" != "$keep" ]; then
+            rustup toolchain uninstall "$t"
+          fi
+        done
+        rustup toolchain list
