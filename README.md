@@ -18,7 +18,7 @@
   <a href="docs/how-kivali-works.md">How it works</a> ·
   <a href="docs/README.md">Docs</a> ·
   <a href="docs/self-hosting.md">Self-hosting</a> ·
-  <a href="https://github.com/kivali-ai/kivali/releases">Download</a>
+  <a href="https://kivali.ai/download">Download</a>
 </p>
 
 <p align="center">
@@ -225,13 +225,14 @@ needs a yes or no lands in your inbox. Read
 Kivali Desktop runs on macOS 13 or later on Apple silicon, and on 64-bit
 Windows 10 or 11 Pro, Enterprise or Education with Hyper-V turned on.
 
-1. Install it from the
-   [latest release](https://github.com/kivali-ai/kivali/releases/latest).
-   - **macOS:** download the `.dmg` and drag Kivali to Applications.
+1. Install it.
+   - **macOS:** [download Kivali](https://kivali.ai/download/macos),
+     open the `.dmg` and drag Kivali to Applications.
    - **Windows:** turn on Hyper-V if it is not on already (**Turn
-     Windows features on or off**, **Hyper-V**, restart), then download
-     the `-setup.exe` and run it. It asks for administrator rights once,
-     to install the service that runs your teams' virtual machines.
+     Windows features on or off**, **Hyper-V**, restart), then
+     [download Kivali](https://kivali.ai/download/windows) and run the
+     installer. It asks for administrator rights once, to install the
+     service that runs your teams' virtual machines.
 2. Open Kivali and create a team. Kivali Desktop sets up a private
    virtual machine for the team and starts it.
 3. Sign in with Google, then connect Claude: a Claude subscription, an
