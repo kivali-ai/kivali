@@ -356,8 +356,15 @@ func (s *Server) subagentMetaView(parent, dir, id string, hist []store.ChatMessa
 		if job.Kind == agentpod.SubagentKindWeb {
 			out.Kind = apitypes.SubagentKindWeb
 			out.Session = ptr(job.Session)
+			if job.Site != "" {
+				out.Site = ptr(job.Site)
+			}
 			if !job.terminal() && s.Browsers != nil {
 				out.Browser = s.Browsers.StateFor(parent, job.Session)
+			}
+			if job.State == subagentJobWaiting {
+				out.WaitReason = apitypes.WebSignInReason(job.WaitReason)
+				out.Input = job.Site != ""
 			}
 		}
 		if !job.StartedAt.IsZero() {
@@ -371,7 +378,8 @@ func (s *Server) subagentMetaView(parent, dir, id string, hist []store.ChatMessa
 		}
 	}
 	out.State, out.Error = subagentState(status, errText)
-	if out.State != apitypes.SubagentTaskStateRunning && out.Ended == nil {
+	live := out.State == apitypes.SubagentTaskStateRunning || out.State == apitypes.SubagentTaskStateWaitingForSignIn
+	if !live && out.Ended == nil {
 		if t, err := time.Parse(time.RFC3339, meta.UpdatedAt); err == nil {
 			out.Ended = ptr(unixMS(t))
 		}

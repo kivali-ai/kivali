@@ -23,6 +23,14 @@ func (fakeBackend) SubagentStatus(_ context.Context, _ string) (string, error) {
 	return "no background tasks", nil
 }
 
+func (fakeBackend) WebSessions(_ context.Context, _ string) (string, error) {
+	return "sessions", nil
+}
+
+func (fakeBackend) WebSessionReset(_ context.Context, _, _ string) (string, error) {
+	return "reset", nil
+}
+
 func (fakeBackend) SubagentCancel(_ context.Context, _, _ string) (string, error) {
 	return "cancelled", nil
 }

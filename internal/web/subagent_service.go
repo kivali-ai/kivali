@@ -381,6 +381,7 @@ func (s *SubagentService) launch(parent, toolUseID string, tasks []SubagentTaskI
 			Schema:   parsedSchema(t),
 			Kind:     taskKind(t),
 			Session:  taskSession(t),
+			Site:     taskSite(t),
 			StartURL: strings.TrimSpace(t.StartURL),
 			Files:    append([]string(nil), t.Files...),
 			cancel:   cancel,
@@ -443,7 +444,17 @@ func (s *SubagentService) runJob(ctx context.Context, parent, toolUseID string, 
 		s.finishJob(job, toolUseID, index, "", "", err)
 		return
 	}
-	defer s.adm().release(parent, job.Depth)
+	// The slot is held while a run is on and given back while the task
+	// waits for a person (a web task's sign-in), so a wait of hours
+	// costs the parent nothing.
+	held := true
+	release := func() {
+		if held {
+			held = false
+			s.adm().release(parent, job.Depth)
+		}
+	}
+	defer release()
 
 	s.updateJob(id, func(j *subagentJob) {
 		j.State = subagentJobRunning
@@ -477,15 +488,6 @@ func (s *SubagentService) runJob(ctx context.Context, parent, toolUseID string, 
 	stopWatch := make(chan struct{})
 	go s.watchActivity(parent, toolUseID, index, id, stopWatch)
 
-	turnID, terr := newAgentpodTurnIDForSubagent()
-	if terr != nil {
-		close(stopWatch)
-		s.emitProgress(parent, toolUseID, index, id, "errored", "", "alloc turn-id: "+terr.Error())
-		s.writeSubagentMeta(parent, t, id, "errored", terr.Error(), "")
-		s.finishJob(job, toolUseID, index, "", "", terr)
-		return
-	}
-
 	// Depth comes from the job core registered, which was derived from
 	// the dispatching job — never from the request that asked for this
 	// work. Everything tier-dependent (which tools exist, which
@@ -513,17 +515,83 @@ func (s *SubagentService) runJob(ctx context.Context, parent, toolUseID string, 
 	}
 	if job.Kind == agentpod.SubagentKindWeb {
 		// A web task runs the browser toolkit and nothing else; its
-		// prompt says pages are untrusted and the answer is data.
+		// prompt says pages are untrusted and the answer is data. Only
+		// a task in a site session, dispatched by the agent itself, may
+		// wait for a person to sign in.
 		names := webTaskFileNames(job.Files)
+		canWait := job.Site != "" && depth == 1
 		spec.Kind = agentpod.SubagentKindWeb
 		spec.Session = job.Session
+		spec.Site = job.Site
 		spec.StartURL = job.StartURL
 		spec.Files = names
-		spec.Tools = agentpod.WebSubagentTools(job.Session)
-		spec.SystemPrompt = agentpod.WebSubagentSystemPrompt(parent, t.Description, job.Session, job.StartURL, names)
+		spec.Tools = agentpod.WebSubagentTools(job.Session, canWait)
+		spec.SystemPrompt = agentpod.WebSubagentSystemPrompt(parent, t.Description, job.Session, job.Site, job.StartURL, names, canWait)
 	}
 
-	finalText, runErr := s.Driver.DriveSubagent(ctx, parent, turnID, id, spec)
+	// One run, or several: a web task that waits for a person ends its
+	// run and runs again, in the same session, when the person is done.
+	var finalText string
+	var runErr error
+drive:
+	for {
+		turnID, terr := newAgentpodTurnIDForSubagent()
+		if terr != nil {
+			close(stopWatch)
+			s.emitProgress(parent, toolUseID, index, id, "errored", "", "alloc turn-id: "+terr.Error())
+			s.writeSubagentMeta(parent, t, id, "errored", terr.Error(), "")
+			s.finishJob(job, toolUseID, index, "", "", terr)
+			return
+		}
+		runCtx, cancelRun := context.WithCancel(ctx)
+		s.updateJob(id, func(j *subagentJob) { j.cancelRun = cancelRun })
+		finalText, runErr = s.Driver.DriveSubagent(runCtx, parent, turnID, id, spec)
+		cancelRun()
+		if !s.jobWaiting(id) {
+			break
+		}
+		release()
+		switch s.awaitSignIn(ctx, job) {
+		case signInResumed:
+			if err := s.adm().acquire(ctx, parent, job.Depth); err != nil {
+				finalText, runErr = "", err
+				break drive
+			}
+			held = true
+			var sid string
+			s.updateJob(id, func(j *subagentJob) {
+				sid = j.CLISession
+				j.State = subagentJobRunning
+				j.WaitReason = ""
+				j.WaitSince = time.Time{}
+			})
+			s.patchSubagentMeta(parent, id, map[string]any{"status": "running", "wait_reason": nil})
+			s.notifyWorkingChanged()
+			if s.Browsers != nil {
+				s.Browsers.BroadcastState(parent, job.Session, id, false)
+			}
+			if sid == "" {
+				const why = "the task could not be resumed: its run reported no session"
+				s.updateJob(id, func(j *subagentJob) { j.endReason = why })
+				finalText, runErr = "", errors.New(why)
+				break drive
+			}
+			spec.Resume = sid
+			spec.UserPrompt = signInResumeLine
+		case signInTimedOut:
+			// Nobody came: core writes the answer.
+			s.updateJob(id, func(j *subagentJob) {
+				j.State = subagentJobRunning
+				j.WaitReason = ""
+				j.Result = structured.Blocked(structured.BlockedUserDidNotRespond).Body()
+			})
+			finalText, runErr = "", nil
+			break drive
+		case signInCancelled:
+			finalText, runErr = "", context.Canceled
+			break drive
+		}
+	}
 
 	close(stopWatch)
 
@@ -569,12 +637,29 @@ func taskKind(t SubagentTaskInput) string {
 }
 
 // taskSession is the web session a task runs in, empty for a general
-// task.
+// task: open, or a site session named by its site (validation accepted
+// the name, so a site is what webSessionSite makes of it).
 func taskSession(t SubagentTaskInput) string {
 	if !t.web() {
 		return ""
 	}
+	if site := taskSite(t); site != "" {
+		return site
+	}
 	return t.session()
+}
+
+// taskSite is the site a web task's session is locked to, empty for
+// the open session and for a general task.
+func taskSite(t SubagentTaskInput) string {
+	if !t.web() {
+		return ""
+	}
+	site, err := webSessionSite(t.session())
+	if err != nil {
+		return ""
+	}
+	return site
 }
 
 // webTaskFileNames are the names a web task's files are uploaded by:
@@ -1284,24 +1369,17 @@ func (s *SubagentService) browserStateChanged(slug, session string, state apityp
 // setSubagentMetaBrowser writes a task's browser state into its
 // meta.json, leaving the rest of the file as it is.
 func (s *SubagentService) setSubagentMetaBrowser(parent, id string, state apitypes.BrowserState) {
-	path := subagentMetaPath(s.Store.Root(), parent, id)
-	body, err := os.ReadFile(path)
+	body, err := os.ReadFile(subagentMetaPath(s.Store.Root(), parent, id))
 	if err != nil {
 		return
 	}
-	var meta map[string]any
-	if json.Unmarshal(body, &meta) != nil {
+	var cur struct {
+		Browser string `json:"browser"`
+	}
+	if json.Unmarshal(body, &cur) == nil && cur.Browser == string(state) {
 		return
 	}
-	if cur, _ := meta["browser"].(string); cur == string(state) {
-		return
-	}
-	meta["browser"] = state
-	out, err := json.MarshalIndent(meta, "", "  ")
-	if err != nil {
-		return
-	}
-	_ = os.WriteFile(path, out, 0o644)
+	s.patchSubagentMeta(parent, id, map[string]any{"browser": state})
 }
 
 // newSubagentID returns a short hex id for a new subagent.

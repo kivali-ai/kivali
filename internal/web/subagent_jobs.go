@@ -27,6 +27,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/kivali-ai/kivali/internal/clock"
 	"github.com/kivali-ai/kivali/internal/structured"
 )
 
@@ -76,6 +77,16 @@ type subagentJob struct {
 	WaitReason string
 	WaitSince  time.Time
 	CLISession string
+	// cancelRun ends the task's current run and nothing else; a task
+	// that waits for a person ends its run this way and runs again
+	// later. resumed is closed when the wait is over; resumeDone says
+	// it has been (both under jobsMu, so the close happens once).
+	cancelRun  context.CancelFunc
+	resumed    chan struct{}
+	resumeDone bool
+	// waitTimer ends the wait at signInWaitLimit; started as the wait
+	// begins, so the limit counts from then.
+	waitTimer clock.Timer
 
 	// Depth is how far below the durable agent this job sits. 1 is a
 	// subagent the agent dispatched itself; 2 is a worker dispatched

@@ -64,7 +64,7 @@ func TestBrowserRegistryWindowFollowsAGroup(t *testing.T) {
 	ctx := context.Background()
 	b, link := f.running(ctx, "job1")
 
-	w, err := f.reg.Watch(ctx, "alice", "vendor.example", "job1")
+	w, err := f.reg.Watch(ctx, "alice", "vendor.example", "job1", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +106,7 @@ func TestBrowserRegistryWindowFollowsAGroup(t *testing.T) {
 
 	// A second window that never reads: frames keep flowing to the
 	// first, and the pod is asked for nothing more.
-	slow, err := f.reg.Watch(ctx, "alice", "vendor.example", "job1")
+	slow, err := f.reg.Watch(ctx, "alice", "vendor.example", "job1", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +129,7 @@ func TestBrowserRegistryWindowFollowsAGroup(t *testing.T) {
 		t.Errorf("screencast switched off before the grace: %d switches", n)
 	}
 	// A window back within the grace reuses the running screencast.
-	again, err := f.reg.Watch(ctx, "alice", "vendor.example", "job1")
+	again, err := f.reg.Watch(ctx, "alice", "vendor.example", "job1", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,7 +170,7 @@ func TestBrowserRegistryWindowEndsWithTheTaskOrTheBrowser(t *testing.T) {
 	f := newBrowserFixture(t)
 	ctx := context.Background()
 	b, link := f.running(ctx, "job1")
-	w, err := f.reg.Watch(ctx, "alice", "vendor.example", "job1")
+	w, err := f.reg.Watch(ctx, "alice", "vendor.example", "job1", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,12 +188,12 @@ func TestBrowserRegistryWindowEndsWithTheTaskOrTheBrowser(t *testing.T) {
 	if states := f.reg.states(); states["alice/vendor.example"] != string(browserIdle) {
 		t.Errorf("state after release under a window = %v, want idle", states)
 	}
-	if _, err := f.reg.Watch(ctx, "alice", "vendor.example", "job1"); err == nil || !strings.Contains(err.Error(), "has ended") {
+	if _, err := f.reg.Watch(ctx, "alice", "vendor.example", "job1", false); err == nil || !strings.Contains(err.Error(), "has ended") {
 		t.Errorf("watch after release: %v", err)
 	}
 
 	// A second task's window, then the browser is lost.
-	w2, err := f.reg.Watch(ctx, "alice", "vendor.example", "job2")
+	w2, err := f.reg.Watch(ctx, "alice", "vendor.example", "job2", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -244,7 +244,7 @@ func TestBrowserRegistryRefusesAnOversizedFrame(t *testing.T) {
 	f := newBrowserFixture(t)
 	ctx := context.Background()
 	b, link := f.running(ctx, "job1")
-	w, err := f.reg.Watch(ctx, "alice", "vendor.example", "job1")
+	w, err := f.reg.Watch(ctx, "alice", "vendor.example", "job1", false)
 	if err != nil {
 		t.Fatal(err)
 	}

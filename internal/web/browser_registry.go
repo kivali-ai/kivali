@@ -30,6 +30,7 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -309,6 +310,10 @@ type browserRegistry struct {
 	// OnState, when set, hears every change of a browser's wire state,
 	// outside the registry's lock: starting, running, stopped.
 	OnState func(slug, session string, state apitypes.BrowserState)
+	// OnWindowsClosed, when set, hears that a group's last window has
+	// been gone for the grace, outside the lock: a task waiting for a
+	// person in that window resumes.
+	OnWindowsClosed func(slug, session, group string)
 
 	wake chan struct{}
 	// booted is closed once the boot cleanup has run; a start waits
@@ -614,8 +619,10 @@ func (r *browserRegistry) acquire(ctx context.Context, slug, session string) (*b
 			tabs: map[string]string{}, pending: map[string]chan browserpod.Message{},
 		}
 		ephemeral := ephemeralSession(session)
-		if bs, found, err := r.store.ReadBrowserSession(slug, session); err == nil && found && !ephemeral {
-			b.site = bs.Site
+		if !ephemeral {
+			// A site session's name is its site: the registrable domain
+			// its browser is locked to.
+			b.site = session
 		}
 		r.browsers[b.key()] = b
 		r.mu.Unlock()
@@ -627,7 +634,7 @@ func (r *browserRegistry) acquire(ctx context.Context, slug, session string) (*b
 			if err := r.store.DeleteBrowserSession(slug, session); err != nil {
 				r.logf("browser %s: delete the stored session: %v", b.key(), err)
 			}
-		} else if _, err := r.store.EnsureBrowserSession(slug, session, "", r.clk.Now()); err != nil {
+		} else if _, err := r.store.EnsureBrowserSession(slug, session, session, r.clk.Now()); err != nil {
 			r.failStart(b, fmt.Errorf("browser session: %w", err))
 			return nil, err
 		}
@@ -676,11 +683,12 @@ func (r *browserRegistry) StateFor(slug, session string) apitypes.BrowserState {
 
 // Watch attaches a browser window to group's tabs in the browser of
 // (slug, session), starting the browser when none runs, and returns
-// the watcher the window reads from. The first window on a group turns
-// the group's screencast on; the browser counts the group as a window,
-// which keeps it from going idle, until the last window has been gone
-// for browserWindowGrace.
-func (r *browserRegistry) Watch(ctx context.Context, slug, session, group string) (*browserWatcher, error) {
+// the watcher the window reads from. input is whether the window takes
+// input now; the first state event says so. The first window on a
+// group turns the group's screencast on; the browser counts the group
+// as a window, which keeps it from going idle, until the last window
+// has been gone for browserWindowGrace.
+func (r *browserRegistry) Watch(ctx context.Context, slug, session, group string, input bool) (*browserWatcher, error) {
 	b, err := r.acquire(ctx, slug, session)
 	if err != nil {
 		return nil, err
@@ -707,7 +715,7 @@ func (r *browserRegistry) Watch(ctx context.Context, slug, session, group string
 		b.windows++
 	}
 	link := b.link
-	w.event(apitypes.BrowserWindowEvent{Type: apitypes.BrowserWindowEventTypeState, Browser: apitypes.BrowserStateRunning})
+	w.event(apitypes.BrowserWindowEvent{Type: apitypes.BrowserWindowEventTypeState, Browser: apitypes.BrowserStateRunning, Input: input, Site: b.site})
 	if g.shownTab != "" {
 		w.event(tabEvent(g.shownTab, g.tabInfo[g.shownTab]))
 	}
@@ -759,6 +767,72 @@ func (r *browserRegistry) closeWindow(b *browser, group string) {
 			_ = link.send(sctx, browserpod.Message{Type: browserpod.TypeScreencast, Group: group, OK: false}, nil)
 		}()
 	}
+	if r.OnWindowsClosed != nil {
+		r.OnWindowsClosed(b.slug, b.session, group)
+	}
+}
+
+// Input sends one event from a window to the tab it shows. Only the
+// window's handler calls it, and only while the window takes input.
+func (r *browserRegistry) Input(w *browserWatcher, in apitypes.BrowserInput) error {
+	r.mu.Lock()
+	var tab string
+	if g, ok := w.b.groups[w.group]; ok {
+		tab = g.shownTab
+	}
+	link := w.b.link
+	r.mu.Unlock()
+	if link == nil {
+		return errors.New("the browser is not running")
+	}
+	if tab == "" {
+		return errors.New("no tab is shown yet")
+	}
+	args, err := json.Marshal(in)
+	if err != nil {
+		return err
+	}
+	sctx, cancel := sendCtx(browserSendTimeout)
+	defer cancel()
+	return link.send(sctx, browserpod.Message{Type: browserpod.TypeInput, Group: w.group, Tab: tab, Args: args}, nil)
+}
+
+// BroadcastState sends every window on a group the browser's state
+// again, with whether the window takes input now: the service calls it
+// when the group's task starts or stops waiting for a person.
+func (r *browserRegistry) BroadcastState(slug, session, group string, input bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	b, ok := r.browsers[browserKey(slug, session)]
+	if !ok {
+		return
+	}
+	g, ok := b.groups[group]
+	if !ok {
+		return
+	}
+	ev := apitypes.BrowserWindowEvent{Type: apitypes.BrowserWindowEventTypeState, Browser: wireState(b.state), Input: input, Site: b.site}
+	for w := range g.watchers {
+		w.event(ev)
+	}
+}
+
+// Reset ends a session's browser, whatever it is doing and without
+// saving, and deletes what the store holds for the session. The
+// service cancels the session's tasks first.
+func (r *browserRegistry) Reset(slug, session string) error {
+	r.mu.Lock()
+	b, ok := r.browsers[browserKey(slug, session)]
+	if ok {
+		// A profile that lands from a save already in flight is
+		// deleted again (onProfile).
+		b.offboarded = true
+	}
+	r.mu.Unlock()
+	if ok {
+		r.finish(b)
+	}
+	return r.store.DeleteBrowserSession(slug, session)
 }
 
 // onFrame hands a screencast frame to the windows on its group. The
@@ -845,6 +919,10 @@ func (r *browserRegistry) attach(ctx context.Context, b *browser) error {
 	if ephemeralSession(b.session) {
 		hello.Ephemeral = true
 	} else {
+		// A site session runs headed, under Xvfb: some sites refuse a
+		// headless browser's sign-in, and a person may be asked to sign
+		// in through the window.
+		hello.Headful = true
 		profile, size, err := r.store.OpenBrowserProfile(b.slug, b.session)
 		if err != nil {
 			return fmt.Errorf("open profile: %w", err)

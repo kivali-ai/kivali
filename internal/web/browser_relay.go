@@ -63,10 +63,16 @@ func (s *SubagentService) WebCommand(ctx context.Context, parent, id string, req
 		return refuse("no running web task %s of yours", id)
 	case j.Kind != agentpod.SubagentKindWeb:
 		return refuse("task %s is not a web task", id)
+	case j.State == subagentJobWaiting:
+		return refuse("this task is waiting for a person in the browser window; your turn is over, do nothing more")
 	case j.State != subagentJobRunning || j.cancelled || j.endReason != "" || j.Result != "":
 		return refuse("this task is no longer running; end your turn")
 	}
 	command := strings.TrimSpace(req.Command)
+	if command == agentpod.WebWaitForSignInCommand {
+		// Core's own: nothing goes to the browser.
+		return s.waitForSignIn(j, req.Args)
+	}
 	if !browserpod.KnownCommand(command) {
 		return refuse("unknown web command %q", command)
 	}

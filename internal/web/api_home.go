@@ -70,6 +70,11 @@ func (s *Server) handleAPIHome(w http.ResponseWriter, _ *http.Request) {
 			needs = append(needs, item)
 		}
 	}
+	if s.SubagentService != nil {
+		for _, j := range s.SubagentService.waitingWebJobs() {
+			needs = append(needs, s.webSignInItem(j))
+		}
+	}
 	queue := make([]apitypes.QueueItem, 0, len(pending))
 	for _, p := range pending {
 		queue = append(queue, v.queueItem(p))
@@ -243,6 +248,30 @@ func (v *homeView) needItem(it CEOInboxItem) apitypes.NeedItem {
 		}
 	}
 	return n
+}
+
+// webSignInItem is the Needs-you row for a web task waiting for a
+// person to sign in through its browser window. Every word is core's:
+// nothing the task or a page said reaches the person here.
+func (s *Server) webSignInItem(j subagentJob) apitypes.NeedItem {
+	name := j.Parent
+	if n := s.agentNames()[j.Parent]; n != "" {
+		name = n
+	}
+	return apitypes.NeedItem{
+		ID:          "web_sign_in:" + j.Parent + "/" + j.ID,
+		Kind:        apitypes.NeedKindWebSignIn,
+		Title:       name + " needs you to sign in to " + j.Site,
+		From:        apitypes.PersonRef{Slug: j.Parent, Name: name},
+		At:          j.WaitSince,
+		BodyMD:      "The page asks for " + webSignInPhrase(j.WaitReason) + ". Open the browser, sign in, then close the window; the task continues on its own.",
+		Attachments: []apitypes.AttachmentRef{},
+		Packages:    []apitypes.SoftwarePackage{},
+		Subagent: &apitypes.SubagentRef{
+			Parent: j.Parent, ID: j.ID, Description: j.Description, Site: j.Site,
+			Reason: apitypes.WebSignInReason(j.WaitReason),
+		},
+	}
 }
 
 // needsHelpItem is the Needs-you row for an agent that has stopped:

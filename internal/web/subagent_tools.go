@@ -44,13 +44,15 @@ func (s *SubagentService) SubagentStatus(parent string) string {
 	}
 
 	now := time.Now().UTC()
-	var queued, running, done []subagentJob
+	var queued, running, waiting, done []subagentJob
 	for _, j := range jobs {
 		switch {
 		case j.terminal():
 			done = append(done, j)
 		case j.State == subagentJobQueued:
 			queued = append(queued, j)
+		case j.State == subagentJobWaiting:
+			waiting = append(waiting, j)
 		default:
 			running = append(running, j)
 		}
@@ -58,6 +60,15 @@ func (s *SubagentService) SubagentStatus(parent string) string {
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "%d background task%s running, %d queued, %d finished.\n", len(running), pluralS(len(running)), len(queued), len(done))
+	if len(waiting) > 0 {
+		// A wait for a person is not a stuck task: it resumes on its own
+		// when they are done, and ends blocked if nobody comes.
+		b.WriteString("\nWAITING FOR A PERSON (a sign-in in the browser window; the task resumes on its own when they have finished, or ends blocked after 24 hours; nothing for you to do):\n")
+		for _, j := range waiting {
+			fmt.Fprintf(&b, "  %s — %s%s\n", j.ID, j.Description, depthSuffix(j))
+			fmt.Fprintf(&b, "      %s on %s · waiting %s\n", webSignInPhrase(j.WaitReason), j.Site, roundDuration(now.Sub(j.WaitSince)))
+		}
+	}
 
 	// Queued is reported separately and first, because the reflex it
 	// has to suppress is the wrong one: a task that has not started is

@@ -4,14 +4,19 @@
 package web
 
 import (
+	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"path"
 	"strings"
 
+	"golang.org/x/net/publicsuffix"
+
 	"github.com/kivali-ai/kivali/internal/agentpod"
 	"github.com/kivali-ai/kivali/internal/files"
+	"github.com/kivali-ai/kivali/internal/store"
 )
 
 // Limits on a web task's dispatch fields.
@@ -50,7 +55,9 @@ func (s *SubagentService) validateWebTask(parent string, i int, t SubagentTaskIn
 		return fmt.Errorf("tasks[%d]: a web task needs a schema; its answer comes back as data, never as the page's text", i)
 	}
 	if t.session() != agentpod.OpenWebSession {
-		return fmt.Errorf("tasks[%d].session %q: only \"open\" is available", i, t.Session)
+		if _, err := webSessionSite(t.session()); err != nil {
+			return fmt.Errorf("tasks[%d].session %q: %v", i, t.Session, err)
+		}
 	}
 	if u := strings.TrimSpace(t.StartURL); u != "" {
 		if len(u) > maxWebStartURLSize {
@@ -83,6 +90,35 @@ func (s *SubagentService) validateWebTask(parent string, i int, t SubagentTaskIn
 
 // maxWebUploadBytes bounds a file a web task may upload to a page.
 const maxWebUploadBytes = 50 << 20
+
+// webSessionSite is the site a session name stands for: its registrable
+// domain (vendor.com for shop.vendor.com), lower case, without a
+// trailing dot. The open session has none. An address, a bare public
+// suffix such as co.uk, and a name with a scheme, a path or a port are
+// refused: a session is named by a site, not by a URL.
+func webSessionSite(session string) (string, error) {
+	name := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(session), "."))
+	if name == agentpod.OpenWebSession {
+		return "", nil
+	}
+	if name == "" {
+		return "", errors.New("a session is \"open\" or a site such as vendor.com")
+	}
+	if strings.ContainsAny(name, "/:@?# \\") {
+		return "", errors.New("a site is a bare domain name, such as vendor.com, without a scheme, a port or a path")
+	}
+	if net.ParseIP(name) != nil {
+		return "", errors.New("a site is a domain name, not an address")
+	}
+	site, err := publicsuffix.EffectiveTLDPlusOne(name)
+	if err != nil {
+		return "", fmt.Errorf("%q is not a site; give its registrable domain, such as vendor.com", name)
+	}
+	if err := store.ValidBrowserSessionName(site); err != nil {
+		return "", fmt.Errorf("%q is not a site name core can keep", site)
+	}
+	return site, nil
+}
 
 // parentFileExists reports whether modelPath names a regular file the
 // parent can read through its /files/, with file_view's confinement:

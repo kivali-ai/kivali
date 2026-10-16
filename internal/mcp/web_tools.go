@@ -32,8 +32,11 @@ type WebSubagentDeps struct {
 	Client     *agentpod.Client
 	SubagentID string
 	// Session is the web session the task runs in; web_eval exists
-	// only in the open session.
+	// only in the open session. CanWait is whether the task may pause
+	// for a person to sign in (a site session, dispatched by the agent
+	// itself): web_wait_for_sign_in exists only then.
 	Session string
+	CanWait bool
 	// ResultSchema is the task's schema. A web task always has one.
 	ResultSchema *structured.Schema
 
@@ -59,7 +62,7 @@ func WebSubagentToolkit(deps WebSubagentDeps) Toolkit {
 	if submit == nil {
 		submit = NewAgentpodSubmitResultDispatcher(deps.Client, deps.SubagentID)
 	}
-	tools := WebTools(web, deps.Session)
+	tools := WebTools(web, deps.Session, deps.CanWait)
 	tools = append(tools, SubmitResultTool(SubmitResultToolConfig{Backend: submit, Schema: deps.ResultSchema}))
 	return Toolkit{Name: "web", Tools: tools}
 }
@@ -81,7 +84,7 @@ func (d agentpodWebDispatcher) WebCommand(ctx context.Context, req agentpod.WebC
 
 // WebTools returns the web_* tools for a session, each relaying to
 // backend.
-func WebTools(backend WebBackend, session string) []Tool {
+func WebTools(backend WebBackend, session string, canWait bool) []Tool {
 	tools := []Tool{
 		webTool(backend, agentpod.WebNavigateTool, webNavigateDescription, `{
   "type": "object",
@@ -161,8 +164,17 @@ func WebTools(backend WebBackend, session string) []Tool {
   },
   "required": ["ref", "file"]
 }`, false))
+	if canWait && session != agentpod.OpenWebSession {
+		tools = append(tools, webTool(backend, agentpod.WebWaitForSignInTool, webWaitForSignInDescription, `{
+  "type": "object",
+  "properties": {"reason": {"type": "string", "enum": ["sign_in", "mfa", "captcha", "consent"], "description": "what the page needs from a person"}},
+  "required": ["reason"]
+}`, false))
+	}
 	return tools
 }
+
+const webWaitForSignInDescription = `Pause this task until a person has handled the page: a sign-in, a second factor, a CAPTCHA or a consent only they can give. Your turn ends when you call it; a person is asked to do it in a browser window on your tab, and you are resumed afterwards with your tabs as they are. It costs the person's time: call it once, when the page truly needs it and after you have looked at it, never to be safe.`
 
 const webNavigateDescription = `Load a URL in your current tab and wait for the page to settle. http and https only. Returns the page's title and its final URL; take a web_snapshot to read the page.`
 
@@ -209,5 +221,5 @@ func WebCommandName(tool string) (string, bool) {
 		return "", false
 	}
 	command := strings.TrimPrefix(tool, agentpod.WebToolPrefix)
-	return command, browserpod.KnownCommand(command)
+	return command, browserpod.KnownCommand(command) || command == agentpod.WebWaitForSignInCommand
 }

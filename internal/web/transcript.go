@@ -364,6 +364,8 @@ func subagentState(status, errText string) (apitypes.SubagentTaskState, *string)
 		return apitypes.SubagentTaskStateErrored, ptr(cmp.Or(errText, "Cancelled"))
 	case "unknown":
 		return apitypes.SubagentTaskStateErrored, ptr("This task left no record")
+	case subagentJobWaiting:
+		return apitypes.SubagentTaskStateWaitingForSignIn, nil
 	default:
 		return apitypes.SubagentTaskStateRunning, nil
 	}
