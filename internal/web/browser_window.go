@@ -45,7 +45,7 @@ func (s *Server) handleBrowserWindow(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-	defer c.CloseNow()
+	defer func() { _ = c.CloseNow() }()
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 	// The page sends nothing; reading is how the socket's close is seen.
