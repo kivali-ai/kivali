@@ -162,8 +162,10 @@ function groupTask(t: LiveTask, base: string): SubagentGroupTask {
     task.id = t.id;
     task.sessionHref = base + encodeURIComponent(t.id);
   }
-  // The same mono form as the reply badge ("sonnet 4.6 · low"); the component joins the two.
+  // The same mono form as the reply badge ("sonnet 4.6 · low"); the component joins the two. A web task's pill
+  // leads with its kind and session ("web · open · sonnet 4.6 · low").
   if (t.model) task.model = modelBadge(t.model);
+  if (t.kind === 'web') task.model = ['web', t.session ?? 'open', task.model].filter(Boolean).join(' · ');
   if (t.effort) task.effort = t.effort.toLowerCase();
   if (t.state === 'running' && t.activity) task.latest = t.activity;
   if (t.state === 'errored') task.error = t.error || 'It stopped without saying why.';

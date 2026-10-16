@@ -692,7 +692,20 @@ export interface SubagentTask {
    * URL is the task transcript's JSON, present once ID is known.
    */
   url?: string;
+  /**
+   * Kind is web for a web task, with Session its web session; both
+   * absent for a general task.
+   */
+  kind?: SubagentKind;
+  session?: string;
 }
+/**
+ * SubagentKind is what a background task works with: files and a
+ * shell, or a browser. The wire carries it only for a web task.
+ */
+export const SubagentKindGeneral = "general";
+export const SubagentKindWeb = "web";
+export type SubagentKind = typeof SubagentKindGeneral | typeof SubagentKindWeb;
 /**
  * TranscriptRow is one row of a transcript. Kind says which fields are
  * set; a field not listed for a kind is absent.
@@ -904,6 +917,12 @@ export interface SubagentMeta {
    * Activity is what a running task is doing now ("running Bash").
    */
   activity?: string;
+  /**
+   * Kind is web for a web task, with Session its web session; both
+   * absent for a general task.
+   */
+  kind?: SubagentKind;
+  session?: string;
 }
 /**
  * SubagentTranscript is GET /api/v1/agents/{slug}/subagents/{id}.

@@ -664,6 +664,11 @@ function onSubagentStarted(state: TranscriptState, d: Obj, at: number): Transcri
       const patch: Partial<LiveTask> = { ...sessionPatch(text(t.id)), title: text(t.description) };
       if (text(t.model)) patch.model = text(t.model);
       if (text(t.effort)) patch.effort = text(t.effort);
+      // A web task says so from its first row; a general task carries no kind.
+      if (text(t.kind) === 'web') {
+        patch.kind = 'web';
+        patch.session = text(t.session) || 'open';
+      }
       out = upsertTask(out, index, patch);
     }
     return out;
@@ -719,6 +724,10 @@ function wireTask(v: unknown): LiveTask {
   if (text(o.error)) t.error = text(o.error);
   if (text(o.output_md)) t.output_md = text(o.output_md);
   if (text(o.url)) t.url = text(o.url);
+  if (text(o.kind) === 'web') {
+    t.kind = 'web';
+    t.session = text(o.session) || 'open';
+  }
   return t;
 }
 

@@ -234,7 +234,9 @@
           "effort": "medium",
           "state": "errored",
           "error": "The agent pod went away",
-          "url": "/api/v1/agents/engineering-lead/subagents/bbbb2222"
+          "url": "/api/v1/agents/engineering-lead/subagents/bbbb2222",
+          "kind": "web",
+          "session": "open"
         },
         {
           "index": 2,

@@ -19,7 +19,7 @@ func goldenTranscript() []TranscriptRow {
 		{Index: 0, ID: "aaaa1111", Title: "Compare hosting providers", Model: "Sonnet 4.6", Effort: "low", State: SubagentTaskStateDone,
 			OutputMD: ref("Three providers quote under $4k."), URL: ref("/api/v1/agents/engineering-lead/subagents/aaaa1111")},
 		{Index: 1, ID: "bbbb2222", Title: "Check the build logs", Model: "Haiku 4.5", Effort: "medium", State: SubagentTaskStateErrored,
-			Error: ref("The agent pod went away"), URL: ref("/api/v1/agents/engineering-lead/subagents/bbbb2222")},
+			Error: ref("The agent pod went away"), URL: ref("/api/v1/agents/engineering-lead/subagents/bbbb2222"), Kind: SubagentKindWeb, Session: ref("open")},
 		{Index: 2, ID: "", Title: "Check lead times", Model: "Sonnet 4.6", Effort: "high", State: SubagentTaskStateRunning},
 	}
 	return []TranscriptRow{
@@ -119,7 +119,7 @@ func goldenSubagentTranscript() SubagentTranscript {
 		Meta: SubagentMeta{
 			ID: "bbbb2222", Parent: "engineering-lead", State: SubagentTaskStateErrored, Model: "Haiku 4.5", Effort: "medium",
 			Description: "Check the build logs", Started: ms, Ended: ref(ms + 60000), Error: ref("The agent pod went away"),
-			Step: ref("Read the logs"), Activity: ref("running Bash"),
+			Step: ref("Read the logs"), Activity: ref("running Bash"), Kind: SubagentKindWeb, Session: ref("open"),
 		},
 		Rows: []TranscriptRow{
 			{Kind: TranscriptKindMessage, TS: ms, Role: &received, From: &vp, BodyMD: ref("Check the build logs."),

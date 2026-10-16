@@ -58,7 +58,7 @@ Open any agent from **Team** and type in its **Chat**. It is like walking into a
 
 - **While an agent is working**, a message you send waits for a moment to deliver and shows as pending. It reaches the agent at its next step. **Send now** pauses the agent's turn so it reads your message at once; **Delete** takes it back before it is delivered.
 - **Stop** ends the agent's turn and cancels its background tasks. The agent then waits for you: it does not pick its work back up until you tell it to.
-- **Background** shows the agent's subagents and their plan while they run.
+- **Background** shows the agent's subagents and their plan while they run. A task that works in a browser is marked as a web task with its session.
 - **About** shows its role, habits and memory, and the software installed for it. See [Memory](memory.md) and [Software](#software).
 - **Past chats** lists its earlier conversations.
 

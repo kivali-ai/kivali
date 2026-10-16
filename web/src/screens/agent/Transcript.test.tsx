@@ -150,6 +150,17 @@ describe('a background task’s result', () => {
     expect(within(result).getByRole('link', { name: /Open full session/, hidden: true })).toHaveAttribute('href', '/agents/engineering-lead/subagents/aaaa1111');
   });
 
+  it('leads a web task’s pill with its kind and session', () => {
+    const task = { index: 0, id: 'cccc3333', title: 'Price the renewal', model: 'Sonnet 4.6', effort: 'low', url: '/api/v1/agents/a/subagents/cccc3333' };
+    const rows = keyRows([
+      { kind: 'task_result', ts: 1, tasks: [{ ...task, kind: 'web', session: 'open', state: 'done', output_md: '```json\n{"outcome": "found"}\n```' }] },
+      { kind: 'task_result', ts: 2, tasks: [{ ...task, id: 'dddd4444', kind: 'general', state: 'done', output_md: 'Done.' }] },
+    ]);
+    renderAt(<Transcript rows={rows} agent={{ slug: 'a', name: 'A' }} now={2} />);
+    expect(screen.getByText('web · open · sonnet 4.6 · low')).toBeVisible();
+    expect(screen.getByText('sonnet 4.6 · low')).toBeVisible();
+  });
+
   it('says a failed task failed, under the same avatar as one that finished', () => {
     const task = { index: 0, id: 'bbbb2222', title: 'Check the build logs', model: 'Haiku 4.5', effort: 'medium', url: '/api/v1/agents/a/subagents/bbbb2222' };
     const rows = keyRows([

@@ -675,6 +675,22 @@ func (r *browserRegistry) finish(b *browser) {
 	r.kick()
 }
 
+// Offboard ends every browser of slug's, whatever it is doing, without
+// saving: the agent is gone and its profiles are being deleted.
+func (r *browserRegistry) Offboard(slug string) {
+	r.mu.Lock()
+	var gone []*browser
+	for _, b := range r.browsers {
+		if b.slug == slug {
+			gone = append(gone, b)
+		}
+	}
+	r.mu.Unlock()
+	for _, b := range gone {
+		r.finish(b)
+	}
+}
+
 // onLost is the connect handler's exit: the pod's connection ended.
 func (r *browserRegistry) onLost(b *browser) {
 	r.mu.Lock()

@@ -282,6 +282,19 @@ describe('background tasks (subagent-task-pills, chat-waiting-tasks)', () => {
     expect(sent(s)).toHaveLength(0);
   });
 
+  it('marks a web task from its dispatch row, and keeps the mark on the result the server emits', () => {
+    const web = { index: 0, id: 'cccc3333', description: 'Price the renewal', model: 'Sonnet 4.6', effort: 'low', kind: 'web', session: 'open' };
+    const general = { index: 1, id: 'dddd4444', description: 'Check the build logs', model: 'Haiku 4.5', effort: 'medium' };
+    let s = run(start(), [ev('subagent_started', { tool_use_id: 't', tasks: [web, general] })]);
+    expect(s.rows[0]?.tasks?.map((t) => [t.id, t.kind, t.session])).toEqual([
+      ['cccc3333', 'web', 'open'],
+      ['dddd4444', undefined, undefined],
+    ]);
+    const row = { kind: 'task_result', ts: AT + 1, tasks: [{ index: 0, id: 'cccc3333', title: 'Price the renewal', model: 'Sonnet 4.6', effort: 'low', state: 'done', kind: 'web', session: 'open', output_md: '```json\n{}\n```' }] };
+    s = run(s, [ev('chat_message', { role: 'received', kind: 'subagent_result', content: 'Background task cccc3333 (Price the renewal) finished.', ts: AT + 1, attachments: [], row })]);
+    expect(s.rows[1]?.tasks?.map((t) => [t.id, t.kind, t.session])).toEqual([['cccc3333', 'web', 'open']]);
+  });
+
   it('paints the result the server emits once, and the GET that brings the same row finds it there (chat_message_task_result.json)', () => {
     const row = goChatMessageTaskResult.row;
     if (!row) throw new Error('the golden event carries no row');

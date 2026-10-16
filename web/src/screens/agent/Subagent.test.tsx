@@ -36,6 +36,15 @@ describe('the task page: its header', () => {
     // Started 1788255000000, ended 60 s later: a finished task shows how long it took.
     expect(screen.getByText('1m')).toBeInTheDocument();
     expect(screen.getByText('The agent pod went away')).toBeInTheDocument();
+    // The fixture is a web task in the open session; a general task has no such badge.
+    expect(screen.getByText('Web task · open')).toBeInTheDocument();
+  });
+
+  it('shows no web badge on a general task', async () => {
+    const t: SubagentTranscript = { ...subagentTranscript, meta: { ...subagentTranscript.meta, kind: 'general', session: undefined } };
+    renderTabs(PATH, { routes: { ['GET ' + API]: t } });
+    await page().findByRole('heading', { name: 'Check the build logs' });
+    expect(screen.queryByText(/Web task/)).not.toBeInTheDocument();
   });
 
   it('writes a numeric step as "step 3"', async () => {

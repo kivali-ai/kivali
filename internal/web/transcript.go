@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/kivali-ai/kivali/internal/agent"
+	"github.com/kivali-ai/kivali/internal/agentpod"
 	"github.com/kivali-ai/kivali/internal/provider"
 	"github.com/kivali-ai/kivali/internal/store"
 	"github.com/kivali-ai/kivali/internal/web/apitypes"
@@ -330,6 +331,10 @@ func subagentTask(p provider.Provider, parent string, index int, v SubagentTaskV
 		Title:  v.Description,
 		Model:  provider.Label(p, v.Model),
 		Effort: v.Effort,
+	}
+	if v.Kind == agentpod.SubagentKindWeb {
+		t.Kind = apitypes.SubagentKindWeb
+		t.Session = ptr(cmp.Or(v.Session, agentpod.OpenWebSession))
 	}
 	t.State, t.Error = subagentState(v.Status, v.Error)
 	if t.State != apitypes.SubagentTaskStateRunning {

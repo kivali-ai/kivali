@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/kivali-ai/kivali/internal/agent"
+	"github.com/kivali-ai/kivali/internal/agentpod"
 	"github.com/kivali-ai/kivali/internal/store"
 	"github.com/kivali-ai/kivali/internal/web/apitypes"
 )
@@ -341,12 +342,20 @@ func (s *Server) subagentMetaView(parent, dir, id string, hist []store.ChatMessa
 		Model:       s.modelLabel(resolveSubagentModel(s.Provider, meta.Model)),
 		Effort:      resolveSubagentEffort(s.Provider, resolveSubagentModel(s.Provider, meta.Model), meta.Effort),
 	}
+	if meta.Kind == agentpod.SubagentKindWeb {
+		out.Kind = apitypes.SubagentKindWeb
+		out.Session = ptr(cmp.Or(meta.Session, agentpod.OpenWebSession))
+	}
 	if len(hist) > 0 {
 		out.Started = unixMS(hist[0].TS)
 	}
 	if job, ok := s.subagentJobByID(parent, id); ok {
 		status, errText = job.State, job.Err
 		out.Description = cmp.Or(out.Description, job.Description)
+		if job.Kind == agentpod.SubagentKindWeb {
+			out.Kind = apitypes.SubagentKindWeb
+			out.Session = ptr(job.Session)
+		}
 		if !job.StartedAt.IsZero() {
 			out.Started = unixMS(job.StartedAt)
 		}

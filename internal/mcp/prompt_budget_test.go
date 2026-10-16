@@ -30,11 +30,15 @@ const (
 	// Raised from 3600 for the structured-answers paragraph (~25
 	// tokens): the one place an agent learns it can ask for data
 	// instead of prose, which is what keeps a subagent's reading out of
-	// the agent's context.
-	maxSubagentDescChars = 3700
+	// the agent's context. Raised again to 4300 for the web-tasks
+	// paragraph (~150 tokens): what a browser task is, that it needs a
+	// schema, what it costs and when not to use it, which an agent
+	// otherwise learns from a refused dispatch or an expensive run.
+	maxSubagentDescChars = 4300
 	// A sub-lead's dispatch tool. Present only for subagents that can
-	// delegate, but then paid on every one of their turns.
-	maxNestedDescChars = 1900
+	// delegate, but then paid on every one of their turns. Raised from
+	// 1900 for the kind field's sentence.
+	maxNestedDescChars = 2100
 	// Schemas are terser than prose and grow by field, not paragraph;
 	// the ceilings are here so an added field is a visible decision.
 	//
@@ -48,9 +52,10 @@ const (
 	// Raised again (1500 to 1900, 1300 to 1700) for the schema field
 	// (~90 tokens), where the accepted subset is spelled out so an agent
 	// writes a schema core accepts the first time instead of learning
-	// the rules from a dispatch refusal.
-	maxSubagentSchemaChars = 1900
-	maxNestedSchemaChars   = 1700
+	// the rules from a dispatch refusal. And again (to 2700 and 2500)
+	// for the four web-task fields (~150 tokens).
+	maxSubagentSchemaChars = 2700
+	maxNestedSchemaChars   = 2500
 	// A subagent's whole system prompt. The most expensive of the lot
 	// in aggregate: a batch of five spawns pays it five times, and a
 	// cheap Haiku lookup pays it before earning anything.

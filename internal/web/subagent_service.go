@@ -322,6 +322,11 @@ func (s *SubagentService) StartBatch(ctx context.Context, parent string, raw jso
 			"model":       provider.Label(s.Provider, resolveSubagentModel(s.Provider, t.Model)),
 			"effort":      resolveSubagentEffort(s.Provider, resolveSubagentModel(s.Provider, t.Model), t.Effort),
 		}
+		if t.web() {
+			// The chip shows a web task as one from its first row.
+			startedTasks[i]["kind"] = agentpod.SubagentKindWeb
+			startedTasks[i]["session"] = t.session()
+		}
 	}
 	s.emit(parent, "subagent_started", map[string]any{
 		"parent":      parent,
