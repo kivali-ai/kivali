@@ -393,6 +393,27 @@ and every sibling, where `plan.md` describes the fan-out. Its tools are
 the `file_*` set, `run_shell`, publishing, `list_skills` and the graph
 reads.
 
+**Structured results.** A task may carry a `schema`: a JSON Schema in
+the subset `internal/structured` accepts (closed objects, arrays,
+numbers, integers, booleans, enums, dates, URLs, and strings with a
+required `maxLength`; the top level is an object). Core refuses any
+other schema at dispatch. The subagent then also has `submit_result`,
+the only way its answer reaches the caller: its final text is dropped.
+Each call is `POST /v1/agent/{slug}/subagents/{id}/result`; core
+validates it against the wrapper (`outcome`, `result`, `alternatives`,
+`blocked_on`, `files`) and the schema, returns the errors on a refusal,
+and ends the task after three refused calls, or when the run ends
+without an accepted one, with `outcome: failed` and a reason core
+wrote. The first accepted result is final: core ends the run a few
+seconds later, and a task Stop called off delivers nothing even with
+an accepted result. `files` names regular files the task made, as the
+subagent sees them (`/files/artifacts/private/`, `/files/background/`),
+and is delivered as the caller's paths; URLs and file names are held to
+a strict character set so neither can carry prose. The wrapper JSON is
+the body of the `subagent_result` message, and of a sub-lead's nested
+result, in place of the run's text; `meta.json` keeps it for the task
+rows.
+
 Depth is capped at two tiers (`agentpod.MaxSubagentDepth`): a
 first-tier subagent may act as a sub-lead and dispatch up to three
 workers, which blocks it until they finish; workers cannot delegate.

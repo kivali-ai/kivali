@@ -107,7 +107,7 @@ You see all of it on **Work**, grouped by goal, and you can edit, close, reopen 
 
 ## Subagents and background work
 
-Any agent can hand focused, read-heavy work to **subagents**: short-lived helpers that run in the background inside the agent's sandbox and report back when done. An agent can run several at once and plan them in a shared plan file. Subagents do not remember anything afterwards and cannot message anyone; their results come back to the agent that started them.
+Any agent can hand focused, read-heavy work to **subagents**: short-lived helpers that run in the background inside the agent's sandbox and report back when done. An agent can run several at once and plan them in a shared plan file. Subagents do not remember anything afterwards and cannot message anyone; their results come back to the agent that started them. An agent can also ask for a subagent's answer as data in a shape the agent chose, and Kivali checks the answer against that shape before the agent reads it.
 
 An agent's **Background** tab shows its plan and every subagent session, live.
 

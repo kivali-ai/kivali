@@ -8,6 +8,7 @@ import (
 	"github.com/kivali-ai/kivali/internal/agent"
 	"github.com/kivali-ai/kivali/internal/agentpod"
 	"github.com/kivali-ai/kivali/internal/provider"
+	"github.com/kivali-ai/kivali/internal/structured"
 )
 
 // Toolkit is a named bundle of MCP Tools. The MCP subprocess picks one
@@ -23,8 +24,9 @@ import (
 //   - "subagent" — the narrow surface a subagent gets: filesystem
 //     (scoped to the subagent's own root), artifact_publish /
 //     artifact_unpublish (into its parent's area), list_skills, the two
-//     read-only graph tools (graph_query, graph_node), run_shell, and
-//     `subagent` only for a tier that may delegate. Explicitly
+//     read-only graph tools (graph_query, graph_node), run_shell,
+//     `subagent` only for a tier that may delegate, and `submit_result`
+//     only for a task with a schema. Explicitly
 //     excluded: publish_*, agent_memory_*, search_past_chats,
 //     list_project_files, share_file, get_org_chart, the assignment tools,
 //     read_agent_role.
@@ -185,6 +187,16 @@ type SubagentDeps struct {
 	// Provider supplies the nested tool schema's models and efforts;
 	// required when NestedSubagent is set.
 	Provider provider.Provider
+
+	// ResultSchema, when non-nil, is the task's schema: the toolkit
+	// then carries `submit_result` built from it. Nil for a free-text
+	// task, which has nothing to submit. Enforced here for the same
+	// reason as NestedSubagent: a free-text task's MCP server does not
+	// implement the tool at all.
+	ResultSchema *structured.Schema
+	// SubmitResult is where submit_result relays to. Nil means core,
+	// through Client; tests inject a recorder.
+	SubmitResult SubmitResultBackend
 }
 
 // SubagentToolkit returns the narrow tool bundle a subagent gets. Only
@@ -229,6 +241,16 @@ func SubagentToolkit(deps SubagentDeps) Toolkit {
 		// trying to avoid). The wrapped Exec is expected to be
 		// slug-fixed to the parent already.
 		tools = append(tools, SubagentShellTool(deps.ShellExec))
+	}
+	if deps.ResultSchema != nil {
+		// A task with a schema finishes through submit_result, and
+		// only such a task has it: the tool's input schema IS the
+		// caller's schema, so there is nothing to register without one.
+		backend := deps.SubmitResult
+		if backend == nil {
+			backend = NewAgentpodSubmitResultDispatcher(deps.Client, deps.SubagentID)
+		}
+		tools = append(tools, SubmitResultTool(SubmitResultToolConfig{Backend: backend, Schema: deps.ResultSchema}))
 	}
 	return Toolkit{Name: "subagent", Tools: tools}
 }

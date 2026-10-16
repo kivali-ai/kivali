@@ -708,6 +708,19 @@ func (r *Runtime) handleSubagentTurn(ctx context.Context, ev Event) error {
 		model = r.Provider.Defaults().Subagent
 	}
 
+	// A task with a schema: the MCP server reads it from the run dir,
+	// which is this container's own half of scratch (the agent-shell
+	// does not mount it), so the shape the subagent is shown is the
+	// one core sent and nothing the shell can write.
+	var schemaPath string
+	if spec.Structured() {
+		schemaPath = filepath.Join(runDir, resultSchemaFile)
+		if err := os.WriteFile(schemaPath, spec.Schema, 0o600); err != nil {
+			_ = r.postFailed(ctx, ct.TurnID, FailedReasonOtherError, "subagent result schema: "+err.Error())
+			return nil
+		}
+	}
+
 	stream, err := r.Claude.RunSubagent(streamCtx, provider.SubagentRequest{
 		Model:  model,
 		Effort: spec.Effort,
@@ -715,7 +728,7 @@ func (r *Runtime) handleSubagentTurn(ctx context.Context, ev Event) error {
 		Prompt: spec.UserPrompt,
 		Tools:  spec.Tools,
 		MCPServers: []provider.MCPServer{
-			subagentMCPServer(r.KivaliBinary, r.CoreUDS, ct.Slug, spec.SubagentID, spec.EffectiveDepth()),
+			subagentMCPServer(r.KivaliBinary, r.CoreUDS, ct.Slug, spec.SubagentID, spec.EffectiveDepth(), schemaPath),
 		},
 		RunDir:  runDir,
 		Stderr:  stderr,
@@ -852,31 +865,42 @@ func subagentFinalText(final *provider.CompleteResponse) string {
 // into a config in the agent container's own half of /scratch, which
 // the agent-shell does not mount, so nothing the shell can write may be
 // read as the command a provider executes.
-func subagentMCPServer(kivaliBin, coreUDS, parent, id string, depth int) provider.MCPServer {
+//
+// resultSchemaPath, when set, is the file holding the task's schema;
+// the MCP server then registers submit_result with that shape.
+func subagentMCPServer(kivaliBin, coreUDS, parent, id string, depth int, resultSchemaPath string) provider.MCPServer {
+	args := []string{
+		"mcp",
+		"--toolkit", "subagent",
+		"--parent", parent,
+		"--subagent-id", id,
+		"--core-uds", coreUDS,
+		// The subagent's /files/ root in the agent-shell container. The
+		// mount (manifest.go subPath agents/<parent>/<storage>)
+		// exposes the parent's whole tree at /files/; the
+		// SubagentService overlay places the subagent-scoped subdir
+		// at /files/subagents/<id>/.
+		"--subagent-files-root", "/files/subagents/" + id,
+		// Depth decides whether this subagent's MCP child exposes
+		// `subagent` at all. It arrives as an argument the RUNTIME
+		// sets, so it is as trustworthy as the slug: the model
+		// inside the subagent can call tools, but it cannot reach
+		// the arguments its own MCP subprocess was started with.
+		"--depth", strconv.Itoa(depth),
+	}
+	if resultSchemaPath != "" {
+		args = append(args, "--result-schema", resultSchemaPath)
+	}
 	return provider.MCPServer{
 		Name:    provider.KivaliMCPServer,
 		Command: kivaliBin,
-		Args: []string{
-			"mcp",
-			"--toolkit", "subagent",
-			"--parent", parent,
-			"--subagent-id", id,
-			"--core-uds", coreUDS,
-			// The subagent's /files/ root in the agent-shell container. The
-			// mount (manifest.go subPath agents/<parent>/<storage>)
-			// exposes the parent's whole tree at /files/; the
-			// SubagentService overlay places the subagent-scoped subdir
-			// at /files/subagents/<id>/.
-			"--subagent-files-root", "/files/subagents/" + id,
-			// Depth decides whether this subagent's MCP child exposes
-			// `subagent` at all. It arrives as an argument the RUNTIME
-			// sets, so it is as trustworthy as the slug: the model
-			// inside the subagent can call tools, but it cannot reach
-			// the arguments its own MCP subprocess was started with.
-			"--depth", strconv.Itoa(depth),
-		},
+		Args:    args,
 	}
 }
+
+// resultSchemaFile is the run-dir file a structured task's schema is
+// written to for the subagent's MCP server.
+const resultSchemaFile = "result-schema.json"
 
 // turnModelUsage converts the transport's per-model split into the wire
 // shape. Returns nil for a single-model turn, where the flat Model +

@@ -26,7 +26,12 @@ import (
 const (
 	// The durable agent's dispatch tool. Read on every turn of every
 	// agent in the fleet, whether or not it delegates that day.
-	maxSubagentDescChars = 3600
+	//
+	// Raised from 3600 for the structured-answers paragraph (~25
+	// tokens): the one place an agent learns it can ask for data
+	// instead of prose, which is what keeps a subagent's reading out of
+	// the agent's context.
+	maxSubagentDescChars = 3700
 	// A sub-lead's dispatch tool. Present only for subagents that can
 	// delegate, but then paid on every one of their turns.
 	maxNestedDescChars = 1900
@@ -39,8 +44,13 @@ const (
 	// the subagent dying at spawn on a CLI error minutes later. Worth
 	// paying for; recorded here so it stays a decision rather than
 	// drift.
-	maxSubagentSchemaChars = 1500
-	maxNestedSchemaChars   = 1300
+	//
+	// Raised again (1500 to 1900, 1300 to 1700) for the schema field
+	// (~90 tokens), where the accepted subset is spelled out so an agent
+	// writes a schema core accepts the first time instead of learning
+	// the rules from a dispatch refusal.
+	maxSubagentSchemaChars = 1900
+	maxNestedSchemaChars   = 1700
 	// A subagent's whole system prompt. The most expensive of the lot
 	// in aggregate: a batch of five spawns pays it five times, and a
 	// cheap Haiku lookup pays it before earning anything.
@@ -66,12 +76,17 @@ func TestAlwaysOnPromptBudgets(t *testing.T) {
 		{"artifact_unpublish description", agent.ArtifactUnpublishTool().Description, maxArtifactUnpublishDescChars},
 		{
 			"subagent system prompt (sub-lead)",
-			agentpod.SubagentSystemPrompt("chief-of-staff", "review the draft", 1),
+			agentpod.SubagentSystemPrompt("chief-of-staff", "review the draft", 1, false),
 			maxSubagentPromptChars,
 		},
 		{
 			"subagent system prompt (leaf)",
-			agentpod.SubagentSystemPrompt("chief-of-staff", "grep the logs", agentpod.MaxSubagentDepth),
+			agentpod.SubagentSystemPrompt("chief-of-staff", "grep the logs", agentpod.MaxSubagentDepth, false),
+			maxSubagentPromptChars,
+		},
+		{
+			"subagent system prompt (structured)",
+			agentpod.SubagentSystemPrompt("chief-of-staff", "price the renewal", agentpod.MaxSubagentDepth, true),
 			maxSubagentPromptChars,
 		},
 	}
@@ -115,8 +130,8 @@ func (budgetProvider) Models() []provider.ModelInfo {
 // back into the system prompt — which costs tokens on every spawn and
 // gives the two copies somewhere to disagree.
 func TestTierPromptsDoNotDivergeInSize(t *testing.T) {
-	subLead := agentpod.SubagentSystemPrompt("cos", "review the draft", 1)
-	leaf := agentpod.SubagentSystemPrompt("cos", "grep the logs", agentpod.MaxSubagentDepth)
+	subLead := agentpod.SubagentSystemPrompt("cos", "review the draft", 1, false)
+	leaf := agentpod.SubagentSystemPrompt("cos", "grep the logs", agentpod.MaxSubagentDepth, false)
 
 	diff := len(subLead) - len(leaf)
 	if diff < 0 {

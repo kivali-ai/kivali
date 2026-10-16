@@ -51,8 +51,8 @@ func TestSubagentSpecWireIsWhatThePodDecodes(t *testing.T) {
 	}
 	spec := <-captured
 	del.waitFor(1)
-	if !reflect.DeepEqual(spec.Tools, agentpod.SubagentTools(1)) {
-		t.Errorf("core built Tools = %+v, want SubagentTools(1)", spec.Tools)
+	if !reflect.DeepEqual(spec.Tools, agentpod.SubagentTools(1, false)) {
+		t.Errorf("core built Tools = %+v, want SubagentTools(1, false)", spec.Tools)
 	}
 
 	srv := newTestServer(t)
@@ -88,7 +88,7 @@ func TestSubagentSpecWireIsWhatThePodDecodes(t *testing.T) {
 	if !slices.Equal(keys, []string{"builtins", "kivali"}) {
 		t.Errorf("tools keys = %v, want exactly [builtins kivali]: %s", keys, toolsRaw)
 	}
-	if !slices.Equal(tools["kivali"], agentpod.SubagentTools(1).Kivali) ||
+	if !slices.Equal(tools["kivali"], agentpod.SubagentTools(1, false).Kivali) ||
 		!slices.Equal(tools["builtins"], []string{"web_fetch", "web_search"}) {
 		t.Errorf("tools on the wire = %s", toolsRaw)
 	}
@@ -129,7 +129,7 @@ func TestSubagentTypedErrorFailsTheRun(t *testing.T) {
 	if err := srv.Store.CreateAgent(store.Agent{Slug: "alice", Role: "Analyst", ReportsTo: "chief-of-staff"}, "k"); err != nil {
 		t.Fatal(err)
 	}
-	spec := agentpod.SubagentSpec{SubagentID: "sub-err", UserPrompt: "go", Tools: agentpod.SubagentTools(1)}
+	spec := agentpod.SubagentSpec{SubagentID: "sub-err", UserPrompt: "go", Tools: agentpod.SubagentTools(1, false)}
 	_, st, done := startSubagentWireTurn(t, srv, "turn-err", spec)
 
 	srv.onAgentpodError(st, agentpod.TurnEvent{Kind: agentpod.TurnEventError, Text: "API Error: 529 overloaded"})

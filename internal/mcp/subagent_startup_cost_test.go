@@ -25,7 +25,7 @@ func TestReportSubagentStartupCost(t *testing.T) {
 	for _, tool := range tk.Tools {
 		toolChars += len(tool.Name) + len(tool.Description) + len(tool.InputSchema)
 	}
-	prompt := agentpod.SubagentSystemPrompt("chief-of-staff", "count severity-1 incidents", agentpod.MaxSubagentDepth)
+	prompt := agentpod.SubagentSystemPrompt("chief-of-staff", "count severity-1 incidents", agentpod.MaxSubagentDepth, false)
 
 	t.Logf("leaf subagent toolkit: %d tools, %d chars (~%d tokens)", len(tk.Tools), toolChars, toolChars/4)
 	t.Logf("leaf system prompt:              %d chars (~%d tokens)", len(prompt), len(prompt)/4)
@@ -41,8 +41,8 @@ func TestReportSubagentStartupCost(t *testing.T) {
 // tokens below it can never be reused between subagents. Two spawns of
 // the same tier must therefore share a long identical prefix.
 func TestSubagentPromptPrefixIsStableAcrossSpawns(t *testing.T) {
-	a := agentpod.SubagentSystemPrompt("chief-of-staff", "count severity-1 incidents", agentpod.MaxSubagentDepth)
-	b := agentpod.SubagentSystemPrompt("chief-of-staff", "summarise the renewal terms", agentpod.MaxSubagentDepth)
+	a := agentpod.SubagentSystemPrompt("chief-of-staff", "count severity-1 incidents", agentpod.MaxSubagentDepth, false)
+	b := agentpod.SubagentSystemPrompt("chief-of-staff", "summarise the renewal terms", agentpod.MaxSubagentDepth, false)
 
 	shared := 0
 	for shared < len(a) && shared < len(b) && a[shared] == b[shared] {

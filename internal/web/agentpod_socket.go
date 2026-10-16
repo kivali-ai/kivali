@@ -1263,6 +1263,35 @@ func (s *Server) handleAgentpodSubagentCancel(w http.ResponseWriter, r *http.Req
 	_, _ = w.Write([]byte(s.SubagentService.SubagentCancel(slug, body.ID)))
 }
 
+// subagentResultMaxBody bounds a submit_result body on the wire. Wider
+// than structured.MaxSubmissionBytes so a submission just over the
+// limit is refused with the validator's own message, which says what
+// to do, rather than a bare 413.
+const subagentResultMaxBody = 1 << 20
+
+// handleAgentpodSubagentResult is one submit_result call from a
+// subagent of the bound slug: the body is the submission as the model
+// wrote it, and the id names the task. Core validates against the
+// task's schema and answers with the tool result the subagent reads;
+// a refusal is a 200 with is_error set, so the model sees what to fix.
+func (s *Server) handleAgentpodSubagentResult(w http.ResponseWriter, r *http.Request) {
+	slug := r.PathValue("slug")
+	if !checkSlugHeader(w, r, slug) {
+		return
+	}
+	if s.SubagentService == nil {
+		http.Error(w, "subagent service not configured", http.StatusServiceUnavailable)
+		return
+	}
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, subagentResultMaxBody))
+	if err != nil {
+		http.Error(w, "read: "+err.Error(), http.StatusRequestEntityTooLarge)
+		return
+	}
+	text, isErr := s.SubagentService.SubmitResult(slug, r.PathValue("id"), body)
+	writeJSON(w, http.StatusOK, agentpod.SubagentResultResponse{Body: text, IsError: isErr})
+}
+
 // handleAgentpodSkillsList serves GET /v1/skills. Returns the
 // catalog of skills (name, description, when-to-use, file tree).
 // Globally scoped — skills are app-wide, not per-agent.

@@ -154,6 +154,11 @@ func renderNestedSubagentResults(jobs []subagentJob) string {
 	for i, j := range jobs {
 		fmt.Fprintf(&b, "\n--- %d. %s (%s) ---\n", i+1, j.Description, j.State)
 		switch {
+		case j.Result != "":
+			// A worker with a schema answers as JSON, however it ended:
+			// a failure's reason is inside the wrapper.
+			b.WriteString(resultOrText(j.Result, ""))
+			b.WriteByte('\n')
 		case j.State == subagentJobCompleted && strings.TrimSpace(j.FinalText) != "":
 			b.WriteString(strings.TrimSpace(j.FinalText))
 			b.WriteByte('\n')

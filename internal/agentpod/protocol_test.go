@@ -23,7 +23,7 @@ func TestSubagentSpecRoundTrip(t *testing.T) {
 			Model:        "claude-sonnet-4-6",
 			SystemPrompt: "you are a subagent",
 			UserPrompt:   "do it",
-			Tools:        SubagentTools(1),
+			Tools:        SubagentTools(1, false),
 			Depth:        1,
 		},
 	}

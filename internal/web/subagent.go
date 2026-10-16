@@ -77,6 +77,9 @@ type SubagentTaskView struct {
 	Status      string
 	Error       string
 	FinalText   string
+	// Result is a structured task's answer, the wrapper JSON, once it
+	// has one. Shown in place of FinalText.
+	Result string
 }
 
 // SubagentAggregateView summarizes a batch for the chip header.
@@ -149,6 +152,7 @@ func deriveSubagentTaskView(storeRoot, parent, id, description string) SubagentT
 			out.Error = meta.Error
 			out.Model = meta.Model
 			out.Effort = meta.Effort
+			out.Result = string(meta.Result)
 		}
 	} else {
 		out.Status = "unknown"
@@ -234,6 +238,10 @@ type subagentMeta struct {
 	Status      string `json:"status"`
 	Error       string `json:"error"`
 	UpdatedAt   string `json:"updated_at"`
+	// Structured marks a task with a schema; Result is its answer as
+	// the wrapper JSON, present once the task has one.
+	Structured bool            `json:"structured,omitempty"`
+	Result     json.RawMessage `json:"result,omitempty"`
 }
 
 func readSubagentMeta(path string) (subagentMeta, error) {

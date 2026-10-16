@@ -220,7 +220,19 @@ type SubagentSpec struct {
 	// describe tier-1 subagents, and defaulting keeps an in-flight
 	// deploy from spawning leaves that think they are sub-leads.
 	Depth int `json:"depth,omitempty"`
+
+	// Schema is the caller's JSON Schema for the answer, in the subset
+	// internal/structured accepts, or empty for a free-text task. Core
+	// validated it at dispatch. The pod writes it into the run dir and
+	// hands the path to the subagent's MCP server, which builds the
+	// submit_result tool's input schema from it; core, not the pod,
+	// validates every submission.
+	Schema json.RawMessage `json:"schema,omitempty"`
 }
+
+// Structured reports whether the task carries a schema, so its answer
+// comes through submit_result rather than the final message.
+func (s SubagentSpec) Structured() bool { return len(s.Schema) > 0 }
 
 // EffectiveDepth returns the spec's depth with the zero value mapped
 // to tier 1. Callers should use this rather than the field directly.

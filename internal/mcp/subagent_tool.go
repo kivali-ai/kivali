@@ -164,6 +164,7 @@ func subagentInputSchema(p provider.Provider) json.RawMessage {
         "properties": {
           "description": {"type": "string", "description": "short label (≤ 8 words) describing this task — shown in the parent's chat as a chip"},
           "prompt": {"type": "string", "description": "the actual instruction the subagent will receive verbatim. Reference your own /files/ paths inline (e.g. /files/project/data.csv) — the subagent inherits a narrowed view of your filesystem"},
+          %s,
           %s
         },
         "required": ["description", "prompt"]
@@ -172,8 +173,14 @@ func subagentInputSchema(p provider.Provider) json.RawMessage {
   },
   "required": ["tasks"]
 }`, SubagentMaxBatch, modelEffortProperties(p,
-		"Leave it unset for normal work; go lower for mechanical or lookup tasks (faster, cheaper) and to the highest levels only for genuinely hard analysis/planning where deep reasoning is worth the extra latency and tokens.")))
+		"Leave it unset for normal work; go lower for mechanical or lookup tasks (faster, cheaper) and to the highest levels only for genuinely hard analysis/planning where deep reasoning is worth the extra latency and tokens."),
+		schemaProperty))
 }
+
+// schemaProperty is the `schema` task field, shared by the agent's
+// dispatch tool and the sub-lead's: the one place the subset is spelled
+// out for the model.
+const schemaProperty = `"schema": {"type": "object", "description": "optional: a JSON Schema for the answer as data. An object of properties typed string (maxLength required; or enum; or format date, date-time or uri), number, integer, boolean, array (with items) or nested object. The subagent then finishes through submit_result and you receive JSON {outcome, result, alternatives, blocked_on, files} checked against it."}`
 
 var subagentDescription = fmt.Sprintf(`Dispatch focused subagent(s) to run IN THE BACKGROUND — a way to spend tokens without growing your own context. See handbook §Delegating with subagent for when to reach for this.
 
@@ -199,8 +206,10 @@ A subagent can split its own task further, once. So a task that is itself a smal
 
 Hand the subagent specific files by referencing them in the prompt (the paths resolve under its overlay). After it finishes, anything it wrote to /files/artifacts/private/ is reachable in YOUR /files/subagents/<id>/artifacts/private/.
 
-tasks[] is 1..%d objects: description (chip label), prompt (verbatim instruction), optional model (see the schema; omit for the default), optional effort (reasoning depth; omit for the model's default).
+tasks[] is 1..%d objects: description (chip label), prompt (verbatim instruction), optional model (see the schema; omit for the default), optional effort (reasoning depth; omit for the model's default), optional schema (an answer as data; see below).
 
 Effort is the model's default when omitted — right for most delegated work, so usually omit it. Lower levels answer faster and cost less; higher levels think longer. The levels each model takes are in the effort field's description.
 
-This call returns one line per task with its id. Each task's verbatim final answer arrives later as its own message, with a pointer to its artifacts dir. Intermediate steps are NOT in your context — see the transcript link in the chip.`, SubagentMaxBatch)
+STRUCTURED ANSWERS: give a task a schema when its answer is data rather than reading — a price, a shortlist, a pass/fail with reasons. You then receive JSON {outcome: found|partial|not_found|alternative|blocked, result, alternatives, blocked_on, files}, checked by core against your schema, and none of the subagent's prose. Keep fields few and short; long text belongs in a file the result names.
+
+This call returns one line per task with its id. Each task's answer arrives later as its own message — its verbatim final text, or the JSON for a task with a schema — with a pointer to its artifacts dir. Intermediate steps are NOT in your context — see the transcript link in the chip.`, SubagentMaxBatch)

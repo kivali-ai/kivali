@@ -13,6 +13,7 @@ import (
 	"github.com/kivali-ai/kivali/internal/claudeagent"
 	"github.com/kivali-ai/kivali/internal/controlclient"
 	"github.com/kivali-ai/kivali/internal/mcp"
+	"github.com/kivali-ai/kivali/internal/structured"
 )
 
 // runMCP is the `kivali mcp` subcommand. It launches a stdio MCP
@@ -28,8 +29,9 @@ import (
 //     scoped to the subagent's own /files/, artifact_publish /
 //     artifact_unpublish (into its parent's published area),
 //     list_skills, graph_query and graph_node, run_shell (cwd'd into a
-//     per-subagent scratch dir inside the parent's agent pod), and
-//     `subagent` only for a tier that may delegate. Explicitly
+//     per-subagent scratch dir inside the parent's agent pod),
+//     `subagent` only for a tier that may delegate, and `submit_result`
+//     only for a task with a schema (--result-schema). Explicitly
 //     excluded: publish_*, agent_memory_*, share_file,
 //     search_past_chats, list_project_files, get_org_chart, the
 //     assignment_* tools, and read_agent_role.
@@ -57,6 +59,7 @@ func runMCP(args []string) {
 	coreUDS := fs.String("core-uds", "", "path to core's UDS socket; every dispatcher routes through agentpod.Client over UDS")
 	subagentFilesRoot := fs.String("subagent-files-root", "", "[subagent] absolute path of the subagent's /files/ view, /files/subagents/<id>; file_* + run_shell both run against this directory")
 	subagentDepth := fs.Int("depth", 1, "[subagent] tier below the durable agent (1 = dispatched by the agent itself). Decides whether this subagent may delegate.")
+	resultSchemaPath := fs.String("result-schema", "", "[subagent] path of the task's result schema; when set, the toolkit carries submit_result built from it")
 	_ = fs.Parse(args)
 
 	logger := log.New(os.Stderr, "mcp: ", log.LstdFlags|log.Lmicroseconds)
@@ -69,7 +72,7 @@ func runMCP(args []string) {
 	case "full-agent", "":
 		runFullAgentMCP(logger, *coreUDS, *agentSlug)
 	case "subagent":
-		runSubagentMCP(logger, *coreUDS, *parentSlug, *subagentID, *subagentFilesRoot, *subagentDepth)
+		runSubagentMCP(logger, *coreUDS, *parentSlug, *subagentID, *subagentFilesRoot, *subagentDepth, *resultSchemaPath)
 	default:
 		logger.Fatalf("unknown --toolkit %q (want full-agent or subagent)", *toolkitName)
 	}
@@ -151,7 +154,10 @@ func runFullAgentMCP(logger *log.Logger, socketPath, agentSlug string) {
 //
 // list_skills routes through the agentpod.Client over UDS (skills
 // catalog is global, not per-subagent).
-func runSubagentMCP(logger *log.Logger, socketPath, parent, id, filesRoot string, depth int) {
+//
+// resultSchemaPath names the task's schema when the caller asked for a
+// structured answer; the toolkit then carries submit_result.
+func runSubagentMCP(logger *log.Logger, socketPath, parent, id, filesRoot string, depth int, resultSchemaPath string) {
 	if parent == "" || id == "" {
 		logger.Fatal("--parent and --subagent-id are required for --toolkit subagent")
 	}
@@ -186,6 +192,20 @@ func runSubagentMCP(logger *log.Logger, socketPath, parent, id, filesRoot string
 	// server has no way to reach for a tool its tier was not given.
 	if agentpod.CanDelegate(depth) {
 		deps.NestedSubagent = nestedSubagentBackend{client: controlclient.New(socketPath, parent)}
+	}
+	// The schema file was written by the agent runtime from the spec
+	// core sent, and core accepted the schema at dispatch; a file that
+	// does not parse here is a wiring fault, not a model's mistake.
+	if resultSchemaPath != "" {
+		raw, err := os.ReadFile(resultSchemaPath)
+		if err != nil {
+			logger.Fatalf("--result-schema %q: %v", resultSchemaPath, err)
+		}
+		schema, err := structured.Parse(raw)
+		if err != nil {
+			logger.Fatalf("--result-schema %q: %v", resultSchemaPath, err)
+		}
+		deps.ResultSchema = schema
 	}
 	tk := mcp.SubagentToolkit(deps)
 

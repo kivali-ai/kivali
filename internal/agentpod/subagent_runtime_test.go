@@ -105,7 +105,7 @@ func TestSubagentTurnRunsThroughTheDriver(t *testing.T) {
 		Effort:       "low",
 		SystemPrompt: "be brief",
 		UserPrompt:   "summarise the log",
-		Tools:        SubagentTools(2),
+		Tools:        SubagentTools(2, false),
 	}
 	if err := rt.handleSubagentTurn(context.Background(), subagentTurnEvent(t, "t-sub", 2, spec)); err != nil {
 		t.Fatal(err)
@@ -122,8 +122,8 @@ func TestSubagentTurnRunsThroughTheDriver(t *testing.T) {
 	if req.System != "be brief" || req.Prompt != "summarise the log" {
 		t.Errorf("system/prompt = %q/%q, want the spec's", req.System, req.Prompt)
 	}
-	if !reflect.DeepEqual(req.Tools, SubagentTools(2)) {
-		t.Errorf("Tools = %+v, want SubagentTools(2)", req.Tools)
+	if !reflect.DeepEqual(req.Tools, SubagentTools(2, false)) {
+		t.Errorf("Tools = %+v, want SubagentTools(2, false)", req.Tools)
 	}
 	if req.Purpose != "subagent" || req.Agent != "alice" {
 		t.Errorf("usage metadata = %q/%q, want subagent/alice", req.Purpose, req.Agent)
@@ -193,7 +193,7 @@ func TestSubagentTurnModelFallsBackToRequested(t *testing.T) {
 		},
 	}
 	rt := subagentRuntime(t, fc, mc)
-	spec := SubagentSpec{SubagentID: "sub2", UserPrompt: "hi", Tools: SubagentTools(1)}
+	spec := SubagentSpec{SubagentID: "sub2", UserPrompt: "hi", Tools: SubagentTools(1, false)}
 	if err := rt.handleSubagentTurn(context.Background(), subagentTurnEvent(t, "t-model", 1, spec)); err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +221,7 @@ func TestSubagentTurnModelFallsBackToTheProviderDefault(t *testing.T) {
 	rt := subagentRuntime(t, fc, mc)
 	rt.SubagentModel = ""
 	rt.Provider = provider.MockProvider{}
-	spec := SubagentSpec{SubagentID: "sub3", UserPrompt: "hi", Tools: SubagentTools(1)}
+	spec := SubagentSpec{SubagentID: "sub3", UserPrompt: "hi", Tools: SubagentTools(1, false)}
 	if err := rt.handleSubagentTurn(context.Background(), subagentTurnEvent(t, "t-default", 1, spec)); err != nil {
 		t.Fatal(err)
 	}
@@ -295,7 +295,7 @@ func TestSubagentTurnFailedReasons(t *testing.T) {
 			}
 			rt := subagentRuntime(t, fc, mc)
 			turnID := fmt.Sprintf("t-fail-%d", i)
-			spec := SubagentSpec{SubagentID: "sub3", UserPrompt: "go", Tools: SubagentTools(1)}
+			spec := SubagentSpec{SubagentID: "sub3", UserPrompt: "go", Tools: SubagentTools(1, false)}
 			if err := rt.handleSubagentTurn(context.Background(), subagentTurnEvent(t, turnID, 1, spec)); err != nil {
 				t.Fatal(err)
 			}
@@ -358,7 +358,7 @@ func TestSubagentTurnCancelled(t *testing.T) {
 		},
 	}
 	rt := subagentRuntime(t, fc, mc)
-	spec := SubagentSpec{SubagentID: "sub5", UserPrompt: "go", Tools: SubagentTools(1)}
+	spec := SubagentSpec{SubagentID: "sub5", UserPrompt: "go", Tools: SubagentTools(1, false)}
 	finished := make(chan error, 1)
 	go func() {
 		finished <- rt.handleSubagentTurn(context.Background(), subagentTurnEvent(t, "t-cancel-sub", 1, spec))

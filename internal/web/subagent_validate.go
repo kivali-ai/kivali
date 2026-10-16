@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/kivali-ai/kivali/internal/provider"
+	"github.com/kivali-ai/kivali/internal/structured"
 )
 
 // validateTasks rejects a batch before any subagent is spawned.
@@ -34,6 +35,14 @@ func validateTasks(p provider.Provider, tasks []SubagentTaskInput) error {
 		}
 		if err := validateTaskEffort(p, i, resolveSubagentModel(p, t.Model), t.Effort); err != nil {
 			return err
+		}
+		// A schema outside the subset is refused here, where the agent
+		// can fix it in the same turn; a string with no cap is the
+		// usual mistake, and the error says what to add.
+		if t.hasSchema() {
+			if _, err := structured.Parse(t.Schema); err != nil {
+				return fmt.Errorf("tasks[%d].%v", i, err)
+			}
 		}
 	}
 	return nil

@@ -389,11 +389,14 @@ provider serves an org.
   `<synthetic>` placeholder model (reported as the typed error, its
   tokens billed to the model that answered), and session ids.
 - **The core owns** which tools a tier gets
-  (`agentpod.SubagentTools(depth)`, bare names; the subagent tool only
-  where `CanDelegate`), the MCP server a subagent loads and its launch
+  (`agentpod.SubagentTools(depth, structured)`, bare names; the
+  subagent tool only where `CanDelegate`, `submit_result` only for a
+  task with a schema), the MCP server a subagent loads and its launch
   arguments (`kivali mcp --toolkit subagent --parent … --subagent-id …
-  --core-uds … --subagent-files-root … --depth …`, built by the agent
-  pod's runtime), and the transcript.
+  --core-uds … --subagent-files-root … --depth …`, plus
+  `--result-schema <file>` for a task with a schema, built by the agent
+  pod's runtime), the validation of every `submit_result` call
+  (`internal/structured`), and the transcript.
 
 **Verified in:** `internal/claudeagent/subagent_test.go` (flags, MCP
 config, typed error and cancel against the fake CLI),

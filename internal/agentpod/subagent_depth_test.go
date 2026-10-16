@@ -14,12 +14,12 @@ import (
 // shown a tool it will be refused for using will try it, and the
 // refusal arrives as a tool error in the middle of real work.
 func TestSubagentToolsByDepth(t *testing.T) {
-	subLead := SubagentTools(1)
+	subLead := SubagentTools(1, false)
 	if !slices.Contains(subLead.Kivali, "subagent") {
 		t.Errorf("depth 1 tools = %v, want the subagent tool present", subLead.Kivali)
 	}
 
-	leaf := SubagentTools(MaxSubagentDepth)
+	leaf := SubagentTools(MaxSubagentDepth, false)
 	if slices.Contains(leaf.Kivali, "subagent") {
 		t.Errorf("depth %d tools = %v, want no subagent tool at the last tier", MaxSubagentDepth, leaf.Kivali)
 	}
@@ -54,7 +54,7 @@ func TestSubagentToolsByDepth(t *testing.T) {
 // every spawn and gives the copies somewhere to disagree.
 // TestNestedToolStatesTheBlockingContract in internal/mcp pins it.
 func TestSubagentPromptMatchesItsTier(t *testing.T) {
-	subLead := SubagentSystemPrompt("chief-of-staff", "review the draft", 1)
+	subLead := SubagentSystemPrompt("chief-of-staff", "review the draft", 1, false)
 	if !strings.Contains(subLead, "DELEGATING") {
 		t.Error("sub-lead prompt does not offer splitting")
 	}
@@ -62,7 +62,7 @@ func TestSubagentPromptMatchesItsTier(t *testing.T) {
 		t.Error("sub-lead prompt does not point at the shared plan")
 	}
 
-	leaf := SubagentSystemPrompt("chief-of-staff", "grep the logs", MaxSubagentDepth)
+	leaf := SubagentSystemPrompt("chief-of-staff", "grep the logs", MaxSubagentDepth, false)
 	if strings.Contains(leaf, "DELEGATING") {
 		t.Error("leaf prompt offers delegation it cannot do")
 	}
