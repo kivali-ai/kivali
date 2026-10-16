@@ -176,6 +176,12 @@ func (b *browser) input(ctx context.Context, t *tab, raw json.RawMessage) error 
 		var typ string
 		switch in.Action {
 		case "down":
+			if in.Text == "" && in.Key == "Enter" {
+				// Enter acts (a form submits, a button fires) only as a
+				// character: Chromium wants the carriage return as the
+				// key's text.
+				in.Text = "\r"
+			}
 			typ = "rawKeyDown"
 			if in.Text != "" {
 				typ = "keyDown"

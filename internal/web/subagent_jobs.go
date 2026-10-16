@@ -178,7 +178,7 @@ type subagentJob struct {
 
 // terminal reports whether the job has stopped, for any reason.
 func (j *subagentJob) terminal() bool {
-	return j.State != subagentJobRunning && j.State != subagentJobQueued
+	return j.State != subagentJobRunning && j.State != subagentJobQueued && j.State != subagentJobWaiting
 }
 
 // idleFor reports how long the job's transcript has been silent, as of

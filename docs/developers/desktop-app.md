@@ -535,8 +535,9 @@ included, so it needs nothing. Nothing else is partitioned.
 (`window.open`) at `/agents/<slug>/subagents/<id>/browser` of its own
 origin (exactly that path, one segment each for slug and id; the query
 does not matter), the shell refuses the new window and opens a
-dedicated window titled "Browser" instead (`show_browser`): a watch-only
-view of a web subagent's browser. It is a `WebviewWindow` of its own
+dedicated window titled "Browser" instead (`show_browser`): a live
+view of a web subagent's browser, watch only unless the task waits for
+a person to sign in. It is a `WebviewWindow` of its own
 that uses the app's one website data store, as the team's web view
 does, so the team's session cookie signs it in. Its label is
 `browser-<hash>-<id>`, the hash the first 16 hex digits of the SHA-256
