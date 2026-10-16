@@ -26,15 +26,66 @@ const (
 	BrowserWindowEventTypeEnd BrowserWindowEventType = "end"
 )
 
-// BrowserWindowEvent is a text message on the browser window's
-// WebSocket, GET /api/v1/agents/{slug}/subagents/{id}/browser. Frames
-// travel beside it as binary messages, one JPEG of the shown tab each,
-// and nothing goes the other way: the window watches.
+// WebSignInReason is why a web task waits for a person in its browser
+// window: the page wants a sign-in, a second factor, a CAPTCHA solved
+// or a consent given.
+type WebSignInReason string
+
+const (
+	WebSignInReasonSignIn  WebSignInReason = "sign_in"
+	WebSignInReasonMFA     WebSignInReason = "mfa"
+	WebSignInReasonCaptcha WebSignInReason = "captcha"
+	WebSignInReasonConsent WebSignInReason = "consent"
+)
+
+// BrowserWindowEvent is a text message from core on the browser
+// window's WebSocket, GET /api/v1/agents/{slug}/subagents/{id}/browser.
+// Frames travel beside it as binary messages, one JPEG of the shown
+// tab each. A state event also says whether the window takes input
+// (Input: the task waits for a person to sign in, in a site session)
+// and the session's site, so the page can flag a page off it.
 type BrowserWindowEvent struct {
 	Type    BrowserWindowEventType `json:"type"`
 	Browser BrowserState           `json:"browser,omitempty"`
+	Input   bool                   `json:"input,omitempty"`
+	Site    string                 `json:"site,omitempty"`
 	Tab     *BrowserWindowTab      `json:"tab,omitempty"`
 	Reason  string                 `json:"reason,omitempty"`
+}
+
+// BrowserWindowInput is a text message from the page on the browser
+// window's WebSocket: one input event for the shown tab. Core forwards
+// it to the browser only while the window takes input, and drops it
+// otherwise.
+type BrowserWindowInput struct {
+	Type  BrowserWindowInputType `json:"type"`
+	Input BrowserInput           `json:"input"`
+}
+
+// BrowserWindowInputType discriminates BrowserWindowInput.
+type BrowserWindowInputType string
+
+const (
+	BrowserWindowInputTypeInput BrowserWindowInputType = "input"
+)
+
+// BrowserInput is one event in the shown tab, in the frame's own
+// pixels. Kind is mouse (Action pressed, released, moved or wheel, with
+// X, Y, Button and the wheel's deltas), key (Action down or up, with
+// Key, Code and Text) or paste (Text). Modifiers is a bit set: 1 alt,
+// 2 control, 4 meta, 8 shift.
+type BrowserInput struct {
+	Kind      string  `json:"kind"`
+	Action    string  `json:"action,omitempty"`
+	X         float64 `json:"x,omitempty"`
+	Y         float64 `json:"y,omitempty"`
+	Button    string  `json:"button,omitempty"`
+	DeltaX    float64 `json:"delta_x,omitempty"`
+	DeltaY    float64 `json:"delta_y,omitempty"`
+	Key       string  `json:"key,omitempty"`
+	Code      string  `json:"code,omitempty"`
+	Text      string  `json:"text,omitempty"`
+	Modifiers int     `json:"modifiers,omitempty"`
 }
 
 // BrowserWindowTab is the tab a browser window shows: its id within

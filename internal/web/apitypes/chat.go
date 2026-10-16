@@ -86,6 +86,9 @@ const (
 	SubagentTaskStateRunning SubagentTaskState = "running"
 	SubagentTaskStateDone    SubagentTaskState = "done"
 	SubagentTaskStateErrored SubagentTaskState = "errored"
+	// SubagentTaskStateWaitingForSignIn: a web task paused in a site
+	// session until a person has signed in through its browser window.
+	SubagentTaskStateWaitingForSignIn SubagentTaskState = "waiting_for_sign_in"
 )
 
 // MarkerKind is the boundary a marker row records. The four stored
@@ -335,6 +338,15 @@ type SubagentMeta struct {
 	// Browser is a running web task's browser state; absent for a
 	// general task and once a web task has ended.
 	Browser BrowserState `json:"browser,omitempty"`
+	// Site is a web task's site: the registrable domain its session is
+	// locked to. Absent in the open session.
+	Site *string `json:"site,omitempty"`
+	// WaitReason is why a web task waits for a person in its browser
+	// window, while its state is waiting_for_sign_in.
+	WaitReason WebSignInReason `json:"wait_reason,omitempty"`
+	// Input is whether the browser window takes input right now: a
+	// web task waiting for sign-in in a site session.
+	Input bool `json:"input,omitempty"`
 }
 
 // SubagentTranscript is GET /api/v1/agents/{slug}/subagents/{id}.
