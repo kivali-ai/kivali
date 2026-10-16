@@ -127,8 +127,10 @@ const (
 	TypeSave = "save"
 	// TypeClose asks the pod to exit without saving.
 	TypeClose = "close"
-	// TypeScreencast turns the screencast of a tab on or off: Tab, OK
-	// as the switch. Frames come back as TypeFrame.
+	// TypeScreencast turns a screencast on or off, OK as the switch.
+	// With Group alone it is the group's: its current tab is cast and
+	// the cast follows the group's current tab as it changes. With Tab
+	// it is that one tab's. Frames come back as TypeFrame.
 	TypeScreencast = "screencast"
 	// TypeInput is one input event from the browser window for a tab:
 	// Tab, Args as InputArgs.
@@ -165,7 +167,9 @@ const (
 	TypeProfile = "profile"
 	// TypeSaved closes a save: the profile was sent in full.
 	TypeSaved = "saved"
-	// TypeFrame is one screencast frame: Tab, Image.
+	// TypeFrame is one screencast frame: Group, Tab and Bytes, the JPEG
+	// following as binary frames. Never base64: frames are the busiest
+	// thing on the connection.
 	TypeFrame = "frame"
 	// TypeCookiesChanged tells core the profile has changed in a way
 	// worth a snapshot (a cookie was set or cleared).

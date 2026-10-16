@@ -1,9 +1,19 @@
 package browserpod
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
+)
+
+// The screencast's settings: JPEG at a quality that keeps frames small,
+// no larger than the window Chromium runs at. A browser window is
+// judged on how quickly it follows the page, not on its colours.
+const (
+	screencastQuality   = 50
+	screencastMaxWidth  = 1280
+	screencastMaxHeight = 800
 )
 
 // setScreencast starts or stops the screencast of a tab.
@@ -20,13 +30,45 @@ func (b *browser) setScreencast(ctx context.Context, t *tab, on bool) error {
 		return err
 	}
 	_, err := b.conn.Call(ctx, t.session, "Page.startScreencast", map[string]any{
-		"format": "jpeg", "quality": 60, "maxWidth": 1280, "maxHeight": 800,
+		"format": "jpeg", "quality": screencastQuality,
+		"maxWidth": screencastMaxWidth, "maxHeight": screencastMaxHeight,
 	})
 	return err
 }
 
-// onScreencastFrame sends a frame to core and acknowledges it, which
-// lets Chromium send the next.
+// watchGroup turns a group's screencast on or off. While it is on, the
+// group's current tab is cast and the cast follows that tab as the
+// group switches, opens and closes tabs.
+func (b *browser) watchGroup(ctx context.Context, name string, on bool) {
+	b.mu.Lock()
+	b.groupLocked(name).watched = on
+	b.mu.Unlock()
+	b.followWatch(ctx, name)
+}
+
+// followWatch puts a watched group's screencast on its current tab and
+// off every other tab of the group; a group nobody watches has it off
+// everywhere. Called wherever a group's current tab may have changed.
+func (b *browser) followWatch(ctx context.Context, name string) {
+	b.mu.Lock()
+	g := b.groups[name]
+	if g == nil {
+		b.mu.Unlock()
+		return
+	}
+	watched, current := g.watched, g.current
+	tabs := append([]*tab(nil), g.tabs...)
+	b.mu.Unlock()
+	for _, t := range tabs {
+		if err := b.setScreencast(ctx, t, watched && t == current); err != nil {
+			b.log.Printf("screencast %s: %v", t.id, err)
+		}
+	}
+}
+
+// onScreencastFrame sends a frame to core, the JPEG as binary frames
+// after its message, and acknowledges it, which lets Chromium send the
+// next.
 func (b *browser) onScreencastFrame(t *tab, raw json.RawMessage) {
 	var ev struct {
 		Data      string `json:"data"`
@@ -39,8 +81,11 @@ func (b *browser) onScreencastFrame(t *tab, raw json.RawMessage) {
 	on := t.screencast
 	t.mu.Unlock()
 	if on {
-		if data, err := base64.StdEncoding.DecodeString(ev.Data); err == nil {
-			b.sendMsg(Message{Type: TypeFrame, Group: t.group, Tab: t.id, Image: &Image{MIME: "image/jpeg", Data: data}})
+		if data, err := base64.StdEncoding.DecodeString(ev.Data); err == nil && len(data) > 0 {
+			msg := Message{Type: TypeFrame, Group: t.group, Tab: t.id, Bytes: int64(len(data))}
+			if err := b.send(msg, bytes.NewReader(data)); err != nil {
+				b.log.Printf("frame %s: %v", t.id, err)
+			}
 		}
 	}
 	_, _ = b.conn.Call(context.Background(), t.session, "Page.screencastFrameAck", map[string]any{"sessionId": ev.SessionID})

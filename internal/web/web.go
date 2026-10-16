@@ -334,6 +334,9 @@ func NewServer(s *Server) (*Server, error) {
 	}
 	if s.SubagentService != nil && s.SubagentService.Browsers == nil {
 		s.SubagentService.Browsers = s.Browsers
+		if s.Browsers != nil {
+			s.Browsers.OnState = s.SubagentService.browserStateChanged
+		}
 	}
 	s.orgHub = newOrgHub()
 	s.notifyCh = make(chan struct{}, 1)

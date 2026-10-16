@@ -271,6 +271,9 @@ type subagentMeta struct {
 	// in; both absent for a general task.
 	Kind    string `json:"kind,omitempty"`
 	Session string `json:"session,omitempty"`
+	// Browser is a running web task's browser state, kept here so the
+	// task's stream sees it change (setSubagentMetaBrowser).
+	Browser string `json:"browser,omitempty"`
 }
 
 func readSubagentMeta(path string) (subagentMeta, error) {

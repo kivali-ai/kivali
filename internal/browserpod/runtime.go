@@ -234,6 +234,10 @@ func (s *session) run(ctx context.Context) error {
 		case TypeScreencast:
 			m := msg
 			s.input.push(func() {
+				if m.Tab == "" {
+					s.b.watchGroup(workCtx, m.Group, m.OK)
+					return
+				}
 				if t := s.b.tabByID(m.Tab); t != nil {
 					if err := s.b.setScreencast(workCtx, t, m.OK); err != nil {
 						s.log.Printf("screencast %s: %v", m.Tab, err)

@@ -25,6 +25,7 @@ func (s *Server) wireAPIChatRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/agents/{slug}/effort", s.handleAPIEffort)
 	mux.HandleFunc("POST /api/v1/agents/{slug}/new-chat", s.handleAPINewChat)
 	mux.HandleFunc("GET /api/v1/agents/{slug}/subagents/{id}", s.handleAPISubagent)
+	mux.HandleFunc("GET /api/v1/agents/{slug}/subagents/{id}/browser", s.handleBrowserWindow)
 	mux.HandleFunc("GET /api/v1/agents/{slug}/chats", s.handleAPIPastChats)
 	mux.HandleFunc("GET /api/v1/agents/{slug}/chats/{ts}", s.handleAPIPastChat)
 	mux.HandleFunc("GET /api/v1/agents/{slug}/tool-calls/{id}", s.handleAPIToolCall)
@@ -355,6 +356,9 @@ func (s *Server) subagentMetaView(parent, dir, id string, hist []store.ChatMessa
 		if job.Kind == agentpod.SubagentKindWeb {
 			out.Kind = apitypes.SubagentKindWeb
 			out.Session = ptr(job.Session)
+			if !job.terminal() && s.Browsers != nil {
+				out.Browser = s.Browsers.StateFor(parent, job.Session)
+			}
 		}
 		if !job.StartedAt.IsZero() {
 			out.Started = unixMS(job.StartedAt)
