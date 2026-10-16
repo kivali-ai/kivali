@@ -54,13 +54,14 @@ SHELLCHECK_VERSION := v0.11.0
 #   make images VERSION=v0.1.2
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
-# Image names. REGISTRY prefixes all three (include the trailing slash)
+# Image names. REGISTRY prefixes all four (include the trailing slash)
 # once a registry exists; empty, the tags are the bare local names.
 # Nothing here pushes: a release ships the images as archives.
 REGISTRY         ?=
 IMAGE            ?= $(REGISTRY)kivali
 EGRESS_IMAGE     ?= $(REGISTRY)kivali-egress-proxy
 AGENT_SHELL_IMAGE  ?= $(REGISTRY)kivali-agent-shell
+BROWSER_IMAGE      ?= $(REGISTRY)kivali-browser
 
 # Apt packages baked into the agent-shell image on top of its small
 # default set (see Dockerfile.agent-shell). Space-separated:
@@ -241,25 +242,29 @@ test-mac: platform-test ## Mac-only checks: supervisor + shell tests, VM image b
 	$(MAKE) -C vm image
 	$(MAKE) -C vm boottest
 
-# Builds the three images (server, egress-proxy, agent-shell) at VERSION,
-# for this machine's architecture: with ENGINE=vm into the build VM's
-# containerd (scripts/build-vm.sh; KIVALI_BUILD_VM_DIR names another
+# Builds the four images (server, egress-proxy, agent-shell, browser) at
+# VERSION, for this machine's architecture: with ENGINE=vm into the build
+# VM's containerd (scripts/build-vm.sh; KIVALI_BUILD_VM_DIR names another
 # VM, the dev team's for dev-load), with ENGINE=docker into the local
-# docker.
+# docker. The browser image is built last: it copies the kivali binary
+# from the server image just built (KIVALI_IMAGE), which the build finds
+# in the local image store (image-resolve-mode=local in the VM).
 BUILD_VM := scripts/build-vm.sh
 BUILD_VM_DOWN := $(if $(KIVALI_BUILD_VM_KEEP),true,$(BUILD_VM) down)
-images: ## the three images into the build VM or local docker (VERSION, AGENT_SHELL_EXTRA_PACKAGES)
+images: ## the four images into the build VM or local docker (VERSION, AGENT_SHELL_EXTRA_PACKAGES)
 	@echo "agent-shell extra packages: $(if $(strip $(AGENT_SHELL_EXTRA_PACKAGES)),$(AGENT_SHELL_EXTRA_PACKAGES),none)"
 ifeq ($(ENGINE),docker)
 	docker build --build-arg VERSION=$(VERSION) -t $(IMAGE):$(VERSION) .
 	docker build -f Dockerfile.egress-proxy -t $(EGRESS_IMAGE):$(VERSION) .
 	docker build --build-arg VERSION=$(VERSION) --build-arg AGENT_SHELL_EXTRA_PACKAGES="$(AGENT_SHELL_EXTRA_PACKAGES)" -f Dockerfile.agent-shell -t $(AGENT_SHELL_IMAGE):$(VERSION) .
+	docker build --build-arg KIVALI_IMAGE=$(IMAGE):$(VERSION) -f Dockerfile.browser -t $(BROWSER_IMAGE):$(VERSION) .
 else
 	$(BUILD_VM) up
 	$(BUILD_VM) put-tree . src
 	$(BUILD_VM) build $(BUILD_VM_CTX) --opt build-arg:VERSION=$(VERSION) --output type=image,name=docker.io/library/$(IMAGE):$(VERSION),unpack=true
 	$(BUILD_VM) build $(BUILD_VM_CTX) --opt filename=Dockerfile.egress-proxy --output type=image,name=docker.io/library/$(EGRESS_IMAGE):$(VERSION),unpack=true
 	$(BUILD_VM) build $(BUILD_VM_CTX) --opt filename=Dockerfile.agent-shell --opt build-arg:VERSION=$(VERSION) --opt 'build-arg:AGENT_SHELL_EXTRA_PACKAGES=$(AGENT_SHELL_EXTRA_PACKAGES)' --output type=image,name=docker.io/library/$(AGENT_SHELL_IMAGE):$(VERSION),unpack=true
+	$(BUILD_VM) build $(BUILD_VM_CTX) --opt filename=Dockerfile.browser --opt build-arg:KIVALI_IMAGE=docker.io/library/$(IMAGE):$(VERSION) --opt image-resolve-mode=local --output type=image,name=docker.io/library/$(BROWSER_IMAGE):$(VERSION),unpack=true
 	$(BUILD_VM_DOWN)
 endif
 # The tree streamed in by put-tree, as a buildctl context (the
@@ -596,12 +601,15 @@ require-explicit-version:
 version-check:
 	bash scripts/version-check.sh $(if $(filter command line,$(origin VERSION)),$(VERSION))
 
-# image-tars builds all three images for ARCH (amd64 or arm64) and writes
+# image-tars builds all four images for ARCH (amd64 or arm64) and writes
 # one docker-archive tarball per image: $(IMAGES_DIR)/<name>-<arch>.tar,
 # tagged $(IMAGE):$(VERSION) etc. so `docker load -i` makes them usable.
 # A non-native architecture builds under QEMU/binfmt (the Go and web
 # stages still run natively and cross-compile; only the runtime stages'
-# package installs are emulated).
+# package installs are emulated). The browser image copies the kivali
+# binary from the server image: the server's tarball, unpacked, is an OCI
+# layout, handed to the browser build as its `kivali` stage, so no
+# builder has to find the server image in a local image store.
 image-tars:
 ifeq ($(filter $(ARCH),amd64 arm64),)
 	$(error image-tars: ARCH must be amd64 or arm64 (got '$(ARCH)'))
@@ -614,8 +622,15 @@ endif
 	docker buildx build --platform linux/$(ARCH) --build-arg VERSION=$(VERSION) \
 		--build-arg AGENT_SHELL_EXTRA_PACKAGES="$(AGENT_SHELL_EXTRA_PACKAGES)" -f Dockerfile.agent-shell \
 		-t $(AGENT_SHELL_IMAGE):$(VERSION) -o type=docker,dest=$(IMAGES_DIR)/kivali-agent-shell-$(ARCH).tar .
+	rm -rf $(IMAGES_DIR)/kivali-$(ARCH).oci && mkdir -p $(IMAGES_DIR)/kivali-$(ARCH).oci
+	tar -xf $(IMAGES_DIR)/kivali-$(ARCH).tar -C $(IMAGES_DIR)/kivali-$(ARCH).oci
+	docker buildx build --platform linux/$(ARCH) -f Dockerfile.browser \
+		--build-context kivali=oci-layout://$(abspath $(IMAGES_DIR))/kivali-$(ARCH).oci:$(VERSION) \
+		-t $(BROWSER_IMAGE):$(VERSION) -o type=docker,dest=$(IMAGES_DIR)/kivali-browser-$(ARCH).tar .
+	rm -rf $(IMAGES_DIR)/kivali-$(ARCH).oci
 
-# release-images-<arch> builds the three images and saves them together,
+# release-images-<arch> builds the images and saves the server,
+# egress-proxy and agent-shell images together (not the browser image),
 # uncompressed, as $(IMAGES_DIR)/bundle-<arch>/kivali-images.tar: what
 # `make vm-release` bakes. release-compress-<arch> compresses that into
 # the release asset, dist/kivali-images-linux-<arch>.tar.zst, and

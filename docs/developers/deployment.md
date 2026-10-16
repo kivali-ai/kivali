@@ -35,23 +35,30 @@ keep`. `make helm-lint` and `make helm-template` check the chart and
 render its examples offline; the chart itself is documented in
 [charts/kivali/README.md](../../charts/kivali/README.md).
 
-**NetworkPolicy.** The chart ships two policies (agent pods may reach
-only the egress proxy and DNS; the server's HTTP port refuses pod
-traffic), and k3s enforces them (kube-router is built in).
+**NetworkPolicy.** The chart ships three policies (agent pods and
+browser pods may reach only the egress proxy and DNS; the server's HTTP
+port refuses pod traffic), and k3s enforces them (kube-router is built
+in).
 
-An org runs three images, all sharing the release tag:
+Kivali has four images, all sharing the release tag:
 
 | Image | Role | Built by |
 | --- | --- | --- |
 | `kivali` | The web pod *and* every per-agent agent pod (via the `kivali agent` subcommand) | `make images` |
 | `kivali-egress-proxy` | Per-pod egress allowlist enforcement | `make images` |
 | `kivali-agent-shell` | The bash sidecar in each agent pod | `make images` |
+| `kivali-browser` | Chromium for a web subagent: one pod per agent web session, running `kivali browser` | `make images` |
 
-The chart's `appVersion` is the default tag of all three; the agent-shell
-tag is derived at runtime from the main image tag.
+The chart's `appVersion` is the default tag of all four; the agent-shell
+and browser tags are derived at runtime from the main image tag
+(`browser.image` overrides the browser's). The browser image is built
+with the others, after the server image, whose kivali binary it copies
+(`Dockerfile.browser`, `KIVALI_IMAGE`). It is not in the release's image
+bundle or the VM image yet: `make release-assets` builds its tarball but
+does not bundle it.
 
-**Architectures.** All three images build for `linux/amd64` and
-`linux/arm64`. `make images` builds all three for the host's own
+**Architectures.** All four images build for `linux/amd64` and
+`linux/arm64`. `make images` builds all four for the host's own
 architecture: with `ENGINE=vm` (the default on macOS and Windows) in
 the build VM, BuildKit inside a Kivali VM on this machine
 (scripts/build-vm.sh; no Docker), straight into that VM's containerd,
@@ -63,7 +70,7 @@ buildx into the release's image bundles in `dist/`; it is Docker only.
 Nothing pushes. A non-native architecture builds under QEMU, which is
 slow for the runtime stages' apt installs; the Go and web stages
 cross-compile natively either way. `REGISTRY=ghcr.io/kivali-ai/`
-prefixes all three names; empty, the tags are the bare local names.
+prefixes all four names; empty, the tags are the bare local names.
 
 **The agent-shell toolkit.** The agent-shell's default packages are small
 and company-agnostic: bash, coreutils, ca-certificates, git, python3
@@ -150,7 +157,7 @@ sup destroy --yes --exit             # delete the team and its data disk
   --config-dir ~/.kivali-dev handoff` prints a one-time token that signs
   the owner in at `http://127.0.0.1:<port>/auth/handoff?t=<token>`
   within 2 minutes.
-- **`dev-load`** is the iteration loop: it rebuilds the three `:dev`
+- **`dev-load`** is the iteration loop: it rebuilds the four `:dev`
   images inside the dev team's own VM, straight into the containerd the
   team runs on, then `restart` deletes the agent pods, restarts the
   server and waits for the rollout.
