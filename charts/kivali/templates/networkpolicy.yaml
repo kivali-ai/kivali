@@ -58,13 +58,16 @@ spec:
       app: kivali-browserpod
   policyTypes: [Egress]
   egress:
+    # The egress proxy's open listener: browser pods browse the web for
+    # web subagents and are not held to the allowlist, so they get the
+    # port that forwards to any host, and only that one.
     - to:
         - podSelector:
             matchLabels:
               app: kivali
       ports:
         - protocol: TCP
-          port: 3128
+          port: 3129
     - to:
         - namespaceSelector:
             matchLabels:
@@ -117,5 +120,14 @@ spec:
       ports:
         - protocol: TCP
           port: 3128
+    # The open listener: browser pods only. An agent pod that reached
+    # it would be past the allowlist.
+    - from:
+        - podSelector:
+            matchLabels:
+              app: kivali-browserpod
+      ports:
+        - protocol: TCP
+          port: 3129
 {{- end }}
 {{- end }}

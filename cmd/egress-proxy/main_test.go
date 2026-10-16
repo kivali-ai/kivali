@@ -263,7 +263,7 @@ func TestConnectAllowed(t *testing.T) {
 	var a Allowlist
 	a.patterns.Store(&[]string{host})
 
-	srv := httptest.NewServer(&proxy{allow: &a})
+	srv := httptest.NewServer(&proxy{allowed: a.Allowed, label: "allowlist"})
 	defer srv.Close()
 
 	conn, err := net.Dial("tcp", srv.Listener.Addr().String())
@@ -297,7 +297,7 @@ func TestConnectAllowed(t *testing.T) {
 func TestConnectDenied(t *testing.T) {
 	var a Allowlist
 	a.patterns.Store(&[]string{"allowed.example.com"})
-	srv := httptest.NewServer(&proxy{allow: &a})
+	srv := httptest.NewServer(&proxy{allowed: a.Allowed, label: "allowlist"})
 	defer srv.Close()
 	conn, err := net.Dial("tcp", srv.Listener.Addr().String())
 	if err != nil {
@@ -322,7 +322,7 @@ func TestHTTPProxyAllowed(t *testing.T) {
 	var a Allowlist
 	a.patterns.Store(&[]string{upURL.Hostname()})
 
-	proxySrv := httptest.NewServer(&proxy{allow: &a})
+	proxySrv := httptest.NewServer(&proxy{allowed: a.Allowed, label: "allowlist"})
 	defer proxySrv.Close()
 
 	client := &http.Client{
@@ -344,7 +344,7 @@ func TestHTTPProxyAllowed(t *testing.T) {
 func TestHTTPProxyDenied(t *testing.T) {
 	var a Allowlist
 	a.patterns.Store(&[]string{"nothing.example.com"})
-	proxySrv := httptest.NewServer(&proxy{allow: &a})
+	proxySrv := httptest.NewServer(&proxy{allowed: a.Allowed, label: "allowlist"})
 	defer proxySrv.Close()
 
 	client := &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(mustURL(t, proxySrv.URL))}}

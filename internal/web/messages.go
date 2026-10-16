@@ -18,8 +18,8 @@ import (
 //	?dl=1   sets Content-Disposition: attachment so the browser
 //	        downloads the file instead of rendering it inline.
 //
-// This exists primarily so the CEO can one-click download/copy cowork
-// requests from the queue view; it also works as a general raw-message
+// This exists primarily so the CEO can one-click download/copy a
+// request from the queue view; it also works as a general raw-message
 // viewer for auditing.
 func (s *Server) handleMessage(w http.ResponseWriter, r *http.Request) {
 	rel := r.PathValue("path")

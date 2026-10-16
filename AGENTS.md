@@ -10,8 +10,10 @@ full developer guide is [docs/developers/README.md](docs/developers/README.md).
   `agent`, `mcp` and `prepare-scratch` subcommands.
 - `internal/` — the Go packages. `store/` is the only writer to the data
   directory; `web/` is the JSON API and SSE streams; `agent/` and
-  `agentpod/` run agents; `claudeagent/` drives the `claude` CLI and owns
-  the model catalog; `supervisor/` runs a team's VM.
+  `agentpod/` run agents; `browserpod/` runs a web subagent's browser;
+  `structured/` checks a subagent's structured result; `claudeagent/`
+  drives the `claude` CLI and owns the model catalog; `supervisor/` runs
+  a team's VM.
 - `web/` — the React web app (TypeScript, Vite), embedded into the binary.
 - `desktop-app/` — Kivali Desktop (Tauri, Rust + TypeScript).
 - `vm/` — the VM image; `charts/kivali/` — the Helm chart.

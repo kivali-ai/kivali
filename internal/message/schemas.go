@@ -242,11 +242,11 @@ Name Debian package names (what apt installs, e.g. ` + "`ffmpeg`, `poppler-utils
 var ceoNotificationTool = ToolDef{
 	Name:        ToolCEONotification,
 	MessageType: store.MsgCEONotification,
-	Description: `Inform the owner of something with no explicit approve/deny gate — status updates, heads-ups, raised risks, and Cowork task requests (handbook §Cowork tasks for the spec format). Delivery is INSTANT: this bypasses the delivery queue, lands in the owner's inbox immediately, and the ack is delivered to your chat the moment the owner sees it. See handbook §How you communicate for notification-vs-chat-reply guidance.`,
+	Description: `Inform the owner of something with no explicit approve/deny gate — status updates, heads-ups and raised risks. Delivery is INSTANT: this bypasses the delivery queue, lands in the owner's inbox immediately, and the ack is delivered to your chat the moment the owner sees it. See handbook §How you communicate for notification-vs-chat-reply guidance.`,
 	Schema: json.RawMessage(`{
   "type": "object",
   "properties": {
-    "title": {"type": "string", "description": "short, concrete title (e.g. 'Q3 analysis drafted', 'Cowork task: Stripe MRR lookup')"},
+    "title": {"type": "string", "description": "short, concrete title (e.g. 'Q3 analysis drafted', 'Vendor quote received')"},
     "body":  {"type": "string", "description": "` + bodyDescription + `"},
     ` + attachmentsSchemaFragment + `
   },

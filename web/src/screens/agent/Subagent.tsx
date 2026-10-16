@@ -112,6 +112,7 @@ export function Subagent() {
           <Badge variant="outline" mono>
             {modelLabel(meta.model, meta.effort)}
           </Badge>
+          {meta.kind === 'web' && <Badge variant="outline">{'Web task · ' + (meta.session ?? 'open')}</Badge>}
           {meta.started > 0 && (
             <Text variant="label" tone="muted">
               {elapsedLabel(seconds, running)}

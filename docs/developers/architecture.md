@@ -414,6 +414,66 @@ the body of the `subagent_result` message, and of a sub-lead's nested
 result, in place of the run's text; `meta.json` keeps it for the task
 rows.
 
+### Web subagents and browser pods
+
+A task dispatched with `kind: "web"` is a subagent that works in a
+browser instead of a shell. It must carry a schema, names a web
+session (`open`, the only one: signed in nowhere), and may name a
+`start_url` and `files` under the caller's `/files/` it may upload.
+Its CLI runs in the parent's agent pod like any subagent, with
+`kivali mcp --toolkit web`: the `web_*` tools (`internal/mcp/web_tools.go`)
+and `submit_result`, and nothing else. Each `web_*` call is
+`POST /v1/agent/{slug}/subagents/{id}/web` to core, which checks that
+the id is the agent's running web task and that the command is one
+its session allows (`web_eval` in `open` only), hands an upload's bytes
+to the pod first, and relays the command under the task's tab group.
+The pod's answer, text and an optional image, is the tool result.
+
+The browser is a **browser pod** (`internal/browserpod`), one per
+running (agent, session), run from the `kivali-browser` image
+(`Dockerfile.browser`: Debian's Chromium, fonts, Xvfb and the `kivali`
+binary). It has no Service, no ports, no service-account token and no
+volumes beyond a memory-backed `/dev/shm` and an emptyDir `/tmp`; it is
+`restartPolicy: Never` with a 60 s stop grace, and the same required
+affinity to the server's node as agent pods, because it dials
+`core.sock`. `kivali browser` opens one WebSocket,
+`GET /v1/browser/{slug}/{session}/connect`, presenting the per-pod token
+core put in its environment, and that connection carries everything
+(`browserpod/protocol.go`): core's commands and the pod's results, tab
+and navigation events, the pod's state, downloads on their way to core,
+and the packed Chromium profile in both directions, as binary frames
+announced by a message. Chromium runs with `--remote-debugging-pipe`
+and `--password-store=basic`; the pod drives it over CDP, keeps a tab
+group per web subagent so concurrent tasks sharing a session cannot
+see each other's tabs, strips hidden content from snapshots in the
+page's isolated world, captures downloads, and packs the profile
+without its caches.
+
+Core owns the lifecycle (`internal/web/browser_registry.go`, one timer
+on the injected clock re-armed to the earliest deadline, as auto
+release does). A web subagent's first command starts the pod and waits
+for it to connect; the handshake hands over the session's saved
+profile; when no subagent uses the browser it is idle, and after ten
+minutes core asks for the profile back, writes it to the store and
+deletes the pod. A start that does not connect within five minutes
+fails the command; a lost connection fails the commands in flight and
+deletes the pod; the next use starts afresh from the saved profile.
+At most `BROWSER_MAX_PER_TEAM` browsers (3) run at once; a start
+beyond that is refused. On boot core deletes every browser pod it
+finds. Profiles and session records live in
+`/data/agents/<slug>/browser/<session>/` (`store/browser.go`), outside
+the agent's `memory/` tree, so no agent container mounts them.
+Downloads the pod sends are written to the task's
+`untrusted-downloads/` ([files-and-publishing.md](files-and-publishing.md))
+and listed in its result's `files`; the delivered result also carries
+the session, the last page's origin, the duration and the pages loaded.
+
+Browser pods browse the web for the subagent and are not held to the
+egress allowlist. They route through the egress proxy's second
+listener (port 3129, `--open-listen`), which forwards to any host; the
+chart's network policies let only browser pods reach that port and
+agent pods only the allowlisted one.
+
 Depth is capped at two tiers (`agentpod.MaxSubagentDepth`): a
 first-tier subagent may act as a sub-lead and dispatch up to three
 workers, which blocks it until they finish; workers cannot delegate.

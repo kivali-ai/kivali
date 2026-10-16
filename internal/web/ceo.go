@@ -154,8 +154,8 @@ func (s *Server) respondAsCEO(ctx context.Context, kind responseKind, approved *
 	}
 	proposer := agentDisplayName(sender)
 
-	// Optional attachments uploaded with the response (e.g. Cowork
-	// output the CEO ran externally).
+	// Optional attachments uploaded with the response (e.g. a report
+	// the CEO drafted outside Kivali).
 	var attachments []store.MessageAttachment
 	for _, fh := range files {
 		att, err := s.ingestCEOResponseAttachment(ctx, fh)
@@ -325,6 +325,15 @@ func (s *Server) respondAsCEO(ctx context.Context, kind responseKind, approved *
 			if derr := s.AgentPod.Destroy(ctx, slug); derr != nil {
 				log.Printf("offboard %s: destroy agent pod: %v", slug, derr)
 			}
+		}
+		// The agent's browsers go with it: running pods and saved
+		// profiles, which hold whatever its web sessions were signed
+		// in to.
+		if s.Browsers != nil {
+			s.Browsers.Offboard(slug)
+		}
+		if derr := s.Store.DeleteBrowserSessions(slug); derr != nil {
+			log.Printf("offboard %s: delete browser sessions: %v", slug, derr)
 		}
 		unlockProvision()
 	}

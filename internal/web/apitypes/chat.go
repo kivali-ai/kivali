@@ -120,7 +120,20 @@ type SubagentTask struct {
 	OutputMD *string `json:"output_md,omitempty"`
 	// URL is the task transcript's JSON, present once ID is known.
 	URL *string `json:"url,omitempty"`
+	// Kind is web for a web task, with Session its web session; both
+	// absent for a general task.
+	Kind    SubagentKind `json:"kind,omitempty"`
+	Session *string      `json:"session,omitempty"`
 }
+
+// SubagentKind is what a background task works with: files and a
+// shell, or a browser. The wire carries it only for a web task.
+type SubagentKind string
+
+const (
+	SubagentKindGeneral SubagentKind = "general"
+	SubagentKindWeb     SubagentKind = "web"
+)
 
 // TranscriptRow is one row of a transcript. Kind says which fields are
 // set; a field not listed for a kind is absent.
@@ -315,6 +328,10 @@ type SubagentMeta struct {
 	Step *string `json:"step,omitempty"`
 	// Activity is what a running task is doing now ("running Bash").
 	Activity *string `json:"activity,omitempty"`
+	// Kind is web for a web task, with Session its web session; both
+	// absent for a general task.
+	Kind    SubagentKind `json:"kind,omitempty"`
+	Session *string      `json:"session,omitempty"`
 }
 
 // SubagentTranscript is GET /api/v1/agents/{slug}/subagents/{id}.

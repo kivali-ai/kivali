@@ -1,12 +1,14 @@
 package web
 
 import (
+	"cmp"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 
+	"github.com/kivali-ai/kivali/internal/agentpod"
 	"github.com/kivali-ai/kivali/internal/mcp"
 	"github.com/kivali-ai/kivali/internal/provider"
 	"github.com/kivali-ai/kivali/internal/store"
@@ -28,6 +30,10 @@ type subagentTaskSpec struct {
 	Description string
 	Model       string
 	Effort      string
+	// Kind and Session are what the task was dispatched as: web with
+	// its session (open when unnamed), or general with none.
+	Kind    string
+	Session string
 }
 
 // subagentTasksFromInput parses the JSON tool_input on a subagent
@@ -40,6 +46,8 @@ func subagentTasksFromInput(p provider.Provider, raw string) []subagentTaskSpec 
 			Description string `json:"description"`
 			Model       string `json:"model"`
 			Effort      string `json:"effort"`
+			Kind        string `json:"kind"`
+			Session     string `json:"session"`
 		} `json:"tasks"`
 	}
 	if err := json.Unmarshal([]byte(raw), &in); err != nil {
@@ -47,11 +55,17 @@ func subagentTasksFromInput(p provider.Provider, raw string) []subagentTaskSpec 
 	}
 	out := make([]subagentTaskSpec, 0, len(in.Tasks))
 	for _, t := range in.Tasks {
-		out = append(out, subagentTaskSpec{
+		spec := subagentTaskSpec{
 			Description: t.Description,
 			Model:       resolveSubagentModel(p, t.Model),
 			Effort:      resolveSubagentEffort(p, resolveSubagentModel(p, t.Model), t.Effort),
-		})
+			Kind:        agentpod.SubagentKindGeneral,
+		}
+		if t.Kind == agentpod.SubagentKindWeb {
+			spec.Kind = agentpod.SubagentKindWeb
+			spec.Session = cmp.Or(strings.TrimSpace(t.Session), agentpod.OpenWebSession)
+		}
+		out = append(out, spec)
 	}
 	return out
 }
@@ -118,6 +132,8 @@ func (s *Server) subagentTaskViews(parent, toolInput, toolResultBody string) []S
 				Model:       spec.Model,
 				Effort:      spec.Effort,
 				Status:      "running",
+				Kind:        spec.Kind,
+				Session:     spec.Session,
 			})
 			continue
 		}
@@ -132,6 +148,9 @@ func (s *Server) subagentTaskViews(parent, toolInput, toolResultBody string) []S
 		}
 		if v.Effort == "" {
 			v.Effort = spec.Effort
+		}
+		if v.Kind == "" {
+			v.Kind, v.Session = spec.Kind, spec.Session
 		}
 		out = append(out, v)
 	}

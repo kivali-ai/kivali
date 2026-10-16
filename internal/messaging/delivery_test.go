@@ -80,7 +80,7 @@ func TestDeliverToAgentSkipsWakeOnPureAck(t *testing.T) {
 }
 
 // Acks with a body or attachment DO wake the recipient — the CEO may
-// be relaying something actionable (a Cowork response, a note the
+// be relaying something actionable (a report they wrote, a note the
 // agent should act on).
 func TestDeliverToAgentWakesOnAckWithBody(t *testing.T) {
 	m := newTestMessenger(t)
@@ -110,7 +110,7 @@ func TestDeliverToAgentWakesOnAckWithAttachment(t *testing.T) {
 		Title:       "Acknowledged: FYI X",
 		From:        "ceo",
 		To:          store.Recipients{"bob"},
-		Attachments: []store.MessageAttachment{{Name: "cowork-output.md", SHA: "abc"}},
+		Attachments: []store.MessageAttachment{{Name: "owner-notes.md", SHA: "abc"}},
 	}
 	_ = m.DeliverToAgent(context.Background(), "bob", msg, "messages/2026-04-18/ack.md", rec.hooks())
 	if len(rec.calls) != 1 || rec.calls[0] != "bob" {

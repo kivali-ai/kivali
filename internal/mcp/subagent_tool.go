@@ -179,8 +179,13 @@ func subagentInputSchema(p provider.Provider) json.RawMessage {
 
 // schemaProperty is the `schema` task field, shared by the agent's
 // dispatch tool and the sub-lead's: the one place the subset is spelled
-// out for the model.
-const schemaProperty = `"schema": {"type": "object", "description": "optional: a JSON Schema for the answer as data. An object of properties typed string (maxLength required; or enum; or format date, date-time or uri), number, integer, boolean, array (with items) or nested object. The subagent then finishes through submit_result and you receive JSON {outcome, result, alternatives, blocked_on, files} checked against it."}`
+// out for the model. webTaskProperties are the fields of a web task,
+// shared the same way.
+const schemaProperty = `"schema": {"type": "object", "description": "optional: a JSON Schema for the answer as data. An object of properties typed string (maxLength required; or enum; or format date, date-time or uri), number, integer, boolean, array (with items) or nested object. The subagent then finishes through submit_result and you receive JSON {outcome, result, alternatives, blocked_on, files} checked against it."},
+          "kind": {"type": "string", "enum": ["general", "web"], "description": "web runs the task in a browser instead of a shell and needs a schema; general is the default"},
+          "session": {"type": "string", "description": "web only: the web session, open (signed in nowhere); the default and the only one"},
+          "start_url": {"type": "string", "description": "web only: the http or https page to start at"},
+          "files": {"type": "array", "items": {"type": "string"}, "maxItems": 10, "description": "web only: paths under your /files/ the task may upload to a page, by name"}`
 
 var subagentDescription = fmt.Sprintf(`Dispatch focused subagent(s) to run IN THE BACKGROUND — a way to spend tokens without growing your own context. See handbook §Delegating with subagent for when to reach for this.
 
@@ -206,10 +211,12 @@ A subagent can split its own task further, once. So a task that is itself a smal
 
 Hand the subagent specific files by referencing them in the prompt (the paths resolve under its overlay). After it finishes, anything it wrote to /files/artifacts/private/ is reachable in YOUR /files/subagents/<id>/artifacts/private/.
 
-tasks[] is 1..%d objects: description (chip label), prompt (verbatim instruction), optional model (see the schema; omit for the default), optional effort (reasoning depth; omit for the model's default), optional schema (an answer as data; see below).
+tasks[] is 1..%d objects: description (chip label), prompt (verbatim instruction), optional model (see the schema; omit for the default), optional effort (reasoning depth; omit for the model's default), optional schema (an answer as data; see below), optional kind (web for a browser; see below).
 
 Effort is the model's default when omitted — right for most delegated work, so usually omit it. Lower levels answer faster and cost less; higher levels think longer. The levels each model takes are in the effort field's description.
 
 STRUCTURED ANSWERS: give a task a schema when its answer is data rather than reading — a price, a shortlist, a pass/fail with reasons. You then receive JSON {outcome: found|partial|not_found|alternative|blocked, result, alternatives, blocked_on, files}, checked by core against your schema, and none of the subagent's prose. Keep fields few and short; long text belongs in a file the result names.
+
+WEB TASKS: kind "web" runs the task in a browser instead of a shell. It reads pages as text, clicks, types and downloads, and has no files, shell or messages; it needs a schema, because pages are untrusted and its answer must be data, never a page's text. Optional start_url and files it may upload. Its one session, open, is signed in nowhere: a page behind a sign-in ends the task with blocked. Downloads land under /files/subagents/<id>/untrusted-downloads/ and are listed in the result's files. Web tasks are expensive (every page costs tokens, and a browser starts for them): use one when WebFetch and WebSearch cannot do the job.
 
 This call returns one line per task with its id. Each task's answer arrives later as its own message — its verbatim final text, or the JSON for a task with a schema — with a pointer to its artifacts dir. Intermediate steps are NOT in your context — see the transcript link in the chip.`, SubagentMaxBatch)
