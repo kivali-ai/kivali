@@ -399,7 +399,7 @@ at every launch, and starts the app with `--autostart`: the teams in
 
 ## App windows
 
-Three kinds, and a team's web app and the bundled pages never share a
+Four kinds, and a team's web app and the bundled pages never share a
 webview (`windows.rs`):
 
 | Window | Label | Size | Shows |
@@ -407,6 +407,7 @@ webview (`windows.rs`):
 | Setup | `setup` | 680 × 580, fixed | adding a team: `#/setup/welcome` (A1, first launch, "Welcome to Kivali"), `#/setup/add` (A1 as "Add a team", with Cancel), `#/setup/new` (the create steps A2–A20, "New team"), `#/connect` (B1–B6, "Connect to a team") |
 | Settings | `settings` | 880 × 640, fixed width, taller allowed | `#/settings/general` (D1, D11), `#/settings/team/<id>[/overview\|ai\|mac]` (D2–D6, or D9 for a team elsewhere), `#/settings/advanced` (D10) |
 | A team | `team-<id>` | 1200 × 760, resizable, at least 900 × 600 | two child webviews in the same place, one shown at a time (below) |
+| A browser | `browser-<hash>-<id>` | 1320 × 900, resizable | a web subagent's browser page of the team's web app ("The browser window" below) |
 
 A team's window is titled with its name, plus `· <host>` for a team
 elsewhere. It holds:
@@ -477,8 +478,10 @@ the window and opened in the system browser instead. The app's own
 origin (`tauri://`, `tauri.localhost`, `ipc.localhost`, the dev server)
 and non-web schemes (`file:`, `data:`, `asset:`, foreign `blob:`) are
 refused outright; `about:blank`/`about:srcdoc` frames and the team's own
-`blob:` URLs load. Links that open a new window go to the system
-browser. The team's own `/auth/login` (that exact path) loads only with
+`blob:` URLs load. A link that opens a new window loads in the web
+view when it is of the pinned origin (a web subagent's browser page
+opens the browser window instead, below) and goes to the system
+browser otherwise. The team's own `/auth/login` (that exact path) loads only with
 `client=desktop` in its query; without it, the shell starts the desktop
 sign-in, which loads it again with that parameter and the return
 address ("Signing in to a team" below).
@@ -527,6 +530,26 @@ ignore the port, so each team here created by this app runs with
 are `kivali_session_<id>` and `kivali_oauth_state_<id>`, and signing in
 to one team never signs another out. Local storage is per origin, port
 included, so it needs nothing. Nothing else is partitioned.
+
+**The browser window.** When a team's web app opens a new window
+(`window.open`) at `/agents/<slug>/subagents/<id>/browser` of its own
+origin (exactly that path, one segment each for slug and id; the query
+does not matter), the shell refuses the new window and opens a
+dedicated window titled "Browser" instead (`show_browser`): a watch-only
+view of a web subagent's browser. It is a `WebviewWindow` of its own
+that uses the app's one website data store, as the team's web view
+does, so the team's session cookie signs it in. Its label is
+`browser-<hash>-<id>`, the hash the first 16 hex digits of the SHA-256
+of the path, so `team_of` gives its team, and opening the same page
+again brings that window to the front instead of opening another. It
+is pinned to the team's origin as the team's web view is: the same pin,
+`team_nav` for its navigations and `frame_guard` for its frames on
+Windows (installed before its page loads), any other web page refused
+and sent to the system browser through a `BrowserGate` of its own, and
+the team's `/auth/login` refused, as signing in is the team window's.
+No capability names it, so it has no IPC, and it has no menu of its
+own. Closing the team's window (hidden or destroyed) closes its browser
+windows (`close_browsers`).
 
 The **View** menu acts on the team window in front: Reload reloads
 whichever webview shows, or, while the team serves and its web view
