@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kivali-ai/kivali/internal/kube"
 	"github.com/kivali-ai/kivali/internal/provider"
 	"github.com/kivali-ai/kivali/internal/store"
 )
@@ -161,7 +162,7 @@ func (c ProvisionerConfig) validate() error {
 // simple.
 type Provisioner struct {
 	cfg      ProvisionerConfig
-	kube     *kubeClient
+	kube     *kube.Client
 	logger   func(format string, args ...any)
 	software func(slug string) ([]string, error)
 }
@@ -220,7 +221,7 @@ func NewProvisioner(cfg ProvisionerConfig, opts ...ProvisionerOption) (*Provisio
 	for _, o := range opts {
 		o(p)
 	}
-	k, err := newKubeClient(cfg.Namespace)
+	k, err := kube.New(cfg.Namespace)
 	if err == nil {
 		p.kube = k
 	} else {
@@ -244,7 +245,7 @@ func (p *Provisioner) Enabled() bool { return p != nil && p.kube != nil }
 // Without this, every agentpod-spec change would leave a stale
 // fleet running on the previous spec until manually deleted. Kivali web
 // manages those pods; if they need a new configuration, this is
-// where it gets applied. See manifest.go::specHashLabel for the
+// where it gets applied. See kube.SpecHashLabel for the
 // label format.
 //
 // PVCs are NOT diffed — they're truly immutable from our perspective
@@ -275,13 +276,13 @@ func (p *Provisioner) ProvisionNotify(ctx context.Context, slug string, starting
 	if err != nil {
 		return err
 	}
-	if err := p.kube.ensureResource(ctx, p.kube.pvcPath(PVCName(slug)), p.kube.pvcsPath(), p.cfg.pvcManifest(slug)); err != nil {
+	if err := p.kube.EnsureResource(ctx, p.kube.PVCPath(PVCName(slug)), p.kube.PVCsPath(), p.cfg.pvcManifest(slug)); err != nil {
 		return fmt.Errorf("pvc: %w", err)
 	}
-	desired := manifest["metadata"].(map[string]any)["labels"].(map[string]string)[specHashLabel]
-	existing, err := p.kube.getPodSpecHash(ctx, PodName(slug))
+	desired := manifest["metadata"].(map[string]any)["labels"].(map[string]string)[kube.SpecHashLabel]
+	existing, err := p.kube.GetPodSpecHash(ctx, PodName(slug))
 	switch {
-	case errors.Is(err, ErrNotFound):
+	case errors.Is(err, kube.ErrNotFound):
 		// Pod doesn't exist; fall through to create.
 		starting()
 	case err != nil:
@@ -293,16 +294,16 @@ func (p *Provisioner) ProvisionNotify(ctx context.Context, slug string, starting
 		// Drift (or a pod with no spec-hash label) — recreate.
 		p.logger("agentpod: %s pod spec drift (existing=%q desired=%q); recreating", slug, existing, desired)
 		starting()
-		if derr := p.kube.deleteResource(ctx, p.kube.podPath(PodName(slug))); derr != nil && !errors.Is(derr, ErrNotFound) {
+		if derr := p.kube.DeleteResource(ctx, p.kube.PodPath(PodName(slug))); derr != nil && !errors.Is(derr, kube.ErrNotFound) {
 			return fmt.Errorf("pod: delete stale: %w", derr)
 		}
 		// terminationGracePeriodSeconds=10 in the manifest; allow ~6x
 		// for image-pull / volume detach / scheduler hesitation.
-		if werr := p.kube.waitForPodGone(ctx, PodName(slug), 60*time.Second); werr != nil {
+		if werr := p.kube.WaitForPodGone(ctx, PodName(slug), 60*time.Second); werr != nil {
 			return fmt.Errorf("pod: wait for termination: %w", werr)
 		}
 	}
-	if err := p.kube.ensureResource(ctx, p.kube.podPath(PodName(slug)), p.kube.podsPath(), manifest); err != nil {
+	if err := p.kube.EnsureResource(ctx, p.kube.PodPath(PodName(slug)), p.kube.PodsPath(), manifest); err != nil {
 		return fmt.Errorf("pod: %w", err)
 	}
 	return nil
@@ -315,7 +316,7 @@ func (p *Provisioner) Destroy(ctx context.Context, slug string) error {
 	if !p.Enabled() {
 		return nil
 	}
-	if err := p.kube.deleteResource(ctx, p.kube.podPath(PodName(slug))); err != nil && !errors.Is(err, ErrNotFound) {
+	if err := p.kube.DeleteResource(ctx, p.kube.PodPath(PodName(slug))); err != nil && !errors.Is(err, kube.ErrNotFound) {
 		return fmt.Errorf("pod: %w", err)
 	}
 	return nil
@@ -333,9 +334,9 @@ func (p *Provisioner) WaitReady(ctx context.Context, slug string, timeout time.D
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		ready, err := p.kube.getPodReady(ctx, PodName(slug))
+		ready, err := p.kube.GetPodReady(ctx, PodName(slug))
 		if err != nil {
-			if errors.Is(err, ErrNotFound) {
+			if errors.Is(err, kube.ErrNotFound) {
 				return err
 			}
 			// Transient: keep polling.
