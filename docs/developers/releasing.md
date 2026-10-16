@@ -199,16 +199,18 @@ Choices worth knowing:
   (`make desktop-release-bundle`, `tauri bundle`). Nothing is written to
   `GITHUB_ENV`, so no later step or action sees a secret.
 - **Windows** builds the per-machine NSIS installer, which is also the
-  updater's artifact. tauri signs the sidecar, `Kivali.exe`, the
-  uninstaller and the installer through its custom sign command,
-  `desktop-app/scripts/sign-windows.ps1`: SSL.com's CodeSignTool, which
-  the job downloads, signs and timestamps each file through the eSigner
-  cloud signing service with the `ESIGNER_*` secrets, so the build holds
-  no certificate file. NSIS's own plugin DLLs, which tauri hands over
-  too, are left as NSIS ships them: every signature counts against the
-  eSigner plan. SmartScreen's reputation follows the certificate and
-  grows with installs, so it may still warn on a new certificate's first
-  releases; updates are verified by the updater's signature either way.
+  updater's artifact. tauri signs the sidecar, `Kivali.exe`, NSIS's
+  plugin DLLs, the uninstaller and the installer through its custom sign
+  command, `desktop-app/scripts/sign-windows.ps1`: the Windows SDK's
+  signtool with Microsoft's Artifact Signing dlib (the
+  `Microsoft.ArtifactSigning.Client` package, which the job downloads),
+  which fetches a short-lived certificate from the account's certificate
+  profile for each signature and timestamps it with Microsoft's
+  authority, authenticating with the `AZURE_*` secrets; the build holds
+  no key and no certificate. SmartScreen's reputation follows the
+  validated identity and grows with installs, so it may still warn on a
+  new identity's first releases; updates are verified by the updater's
+  signature either way.
 - **macOS** signs with the Developer ID certificate from an imported
   temporary keychain, on the keychain search list. The step fails at once,
   naming the problem, unless `APPLE_SIGNING_IDENTITY` is a valid
@@ -340,8 +342,9 @@ push to `main`).
 
 Repository secrets (Settings, Secrets and variables, Actions). The macOS
 desktop job needs the `APPLE_*` (but one of the notarization options)
-and the two `TAURI_SIGNING_*`; the Windows one the `ESIGNER_*` and the
-two `TAURI_SIGNING_*`. `publish` uses the automatic `GITHUB_TOKEN`.
+and the two `TAURI_SIGNING_*`; the Windows one the `AZURE_*`, the
+`ARTIFACT_SIGNING_*` and the two `TAURI_SIGNING_*`. `publish` uses the
+automatic `GITHUB_TOKEN`.
 
 | Secret | What it is | Where it comes from |
 | --- | --- | --- |
@@ -359,10 +362,12 @@ two `TAURI_SIGNING_*`. `publish` uses the automatic `GITHUB_TOKEN`.
 | `APPLE_API_KEY_P8` | the downloaded `AuthKey_<id>.p8`, base64 | `base64 -i AuthKey_X.p8 \| pbcopy` |
 | `TAURI_SIGNING_PRIVATE_KEY` | the updater's private key (the file's contents) | `npx tauri signer generate -w kivali-updater.key` in `desktop-app`; keep the file somewhere safe |
 | `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | its password (may be empty) | chosen at generation |
-| `ESIGNER_USERNAME` | the SSL.com account that holds the Windows code signing certificate | SSL.com: a code signing certificate (Individual Validation for a person, Organization Validation for a company) ordered with eSigner cloud signing as its key storage; `desktop-app/scripts/sign-windows.ps1` signs through it |
-| `ESIGNER_PASSWORD` | that account's password | you |
-| `ESIGNER_TOTP_SECRET` | the eSigner signing credential's TOTP secret | SSL.com, the certificate's eSigner enrollment: the secret code shown beside the QR code |
-| `ESIGNER_CREDENTIAL_ID` | the eSigner credential id; needed only when the account holds more than one eSigner certificate | the certificate's order page, or `CodeSignTool get_credential_ids -username=... -password=...` |
+| `AZURE_TENANT_ID` | the Microsoft Entra tenant of the Azure subscription that holds the Artifact Signing account | Azure portal, Microsoft Entra ID, Overview: Tenant ID |
+| `AZURE_CLIENT_ID` | an app registration in that tenant, assigned the Artifact Signing Certificate Profile Signer role on the account | Microsoft Entra ID, App registrations, New registration: its Application (client) ID; then the account's Access control (IAM), Add role assignment, to that application |
+| `AZURE_CLIENT_SECRET` | that app registration's client secret (it expires, after 24 months at most; a new one replaces this secret) | the registration's Certificates & secrets, New client secret: the Value, shown once |
+| `ARTIFACT_SIGNING_ENDPOINT` | the account's regional endpoint, `https://<region>.codesigning.azure.net` | the region chosen when the account was created, looked up in the region table of Microsoft's Artifact Signing quickstart (East US is `https://eus.codesigning.azure.net`) |
+| `ARTIFACT_SIGNING_ACCOUNT` | the Artifact Signing account name | Azure portal, Artifact Signing Accounts |
+| `ARTIFACT_SIGNING_PROFILE` | the certificate profile name: a Public Trust profile bound to the completed identity validation, whose subject is what the signature shows | the account's Certificate profiles |
 
 Not a secret: the **public** half (`kivali-updater.key.pub`) is in
 `desktop-app/src-tauri/tauri.conf.json` under `plugins.updater.pubkey`
@@ -533,8 +538,11 @@ What a maintainer sets up before a tag can publish a complete release:
   endpoint and the `release.json` URLs assume it.
 - **The Apple Developer ID certificate and notarization credentials**, as
   the repository secrets in "Secrets".
-- **The SSL.com code signing certificate** with eSigner cloud signing,
-  and its credentials as the `ESIGNER_*` secrets in "Secrets".
+- **The Azure Artifact Signing account** (Basic), with a completed Public
+  Trust identity validation, a Public Trust certificate profile and an
+  app registration holding the Artifact Signing Certificate Profile
+  Signer role on the account, as the `AZURE_*` and `ARTIFACT_SIGNING_*`
+  secrets in "Secrets".
 - **The updater keypair**: the private key and its password as secrets,
   the public key committed to `tauri.conf.json` (see "Secrets").
 - **The `ubuntu-24.04-arm` runner** for the arm64 images job

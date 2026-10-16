@@ -89,13 +89,14 @@ endif
 
 # Authenticode: on Windows, build-bundle hands tauri a custom sign
 # command, scripts/sign-windows.ps1, which signs every binary tauri
-# bundles (the sidecar, Kivali.exe, the uninstaller, the installer)
-# through SSL.com's eSigner with the ESIGNER_* credentials in the
-# environment (docs/developers/releasing.md, "Secrets"). Only when they
-# are there: without them release-preflight refuses, and ALLOW_DEV_KEYS=1
-# bundles unsigned. build-debug and build-trial never sign.
+# bundles (the sidecar, Kivali.exe, NSIS's plugins, the uninstaller, the
+# installer) through Azure Artifact Signing with the AZURE_* and
+# ARTIFACT_SIGNING_* values in the environment
+# (docs/developers/releasing.md, "Secrets"). Only when they are there:
+# without them release-preflight refuses, and ALLOW_DEV_KEYS=1 bundles
+# unsigned. build-debug and build-trial never sign.
 ifneq ($(EXE),)
-ifneq ($(ESIGNER_USERNAME),)
+ifneq ($(AZURE_CLIENT_ID),)
   WINDOWS_SIGN := --config '{"bundle":{"windows":{"signCommand":"powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/sign-windows.ps1 %1"}}}'
 endif
 endif
@@ -168,7 +169,7 @@ dev: deps sidecar
 
 # A release build refuses development signing material: the updater key
 # in .keys/ (private, or its public half still in tauri.conf.json), the
-# ad-hoc identity on macOS, missing eSigner credentials on Windows.
+# ad-hoc identity on macOS, missing Artifact Signing values on Windows.
 # ALLOW_DEV_KEYS=1 overrides, for a local trial only. build-debug stays
 # permissive.
 release-preflight:
@@ -192,8 +193,8 @@ release-preflight:
 				p="$$p\n  - no notarization credentials, so the app would ship un-notarized (set APPLE_ID + APPLE_PASSWORD + APPLE_TEAM_ID, or APPLE_API_KEY + APPLE_API_ISSUER + APPLE_API_KEY_PATH)"; fi; \
 		fi; \
 		if [ -n "$(EXE)" ]; then \
-			if [ -z "$$ESIGNER_USERNAME" ] || [ -z "$$ESIGNER_PASSWORD" ] || [ -z "$$ESIGNER_TOTP_SECRET" ] || [ -z "$$CODE_SIGN_TOOL_PATH" ]; then \
-				p="$$p\n  - no Windows signing credentials, so the installer would ship unsigned (set ESIGNER_USERNAME, ESIGNER_PASSWORD, ESIGNER_TOTP_SECRET and CODE_SIGN_TOOL_PATH; docs/developers/releasing.md, Secrets)"; fi; \
+			if [ -z "$$AZURE_TENANT_ID" ] || [ -z "$$AZURE_CLIENT_ID" ] || [ -z "$$AZURE_CLIENT_SECRET" ] || [ -z "$$ARTIFACT_SIGNING_ENDPOINT" ] || [ -z "$$ARTIFACT_SIGNING_ACCOUNT" ] || [ -z "$$ARTIFACT_SIGNING_PROFILE" ] || [ -z "$$ARTIFACT_SIGNING_CLIENT" ]; then \
+				p="$$p\n  - no Windows signing values, so the installer would ship unsigned (set AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, ARTIFACT_SIGNING_ENDPOINT, ARTIFACT_SIGNING_ACCOUNT, ARTIFACT_SIGNING_PROFILE and ARTIFACT_SIGNING_CLIENT; docs/developers/releasing.md, Secrets)"; fi; \
 		fi; \
 		if [ -n "$$p" ]; then \
 			printf "refusing a release build with development signing material:$$p\nset ALLOW_DEV_KEYS=1 to build anyway (never for distribution); make build-debug needs none of this\n" >&2; exit 1; fi; \
