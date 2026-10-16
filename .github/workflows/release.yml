@@ -34,12 +34,12 @@
 #                    none of that is discovered after the images and the
 #                    VM images have been built.
 #   chart            kivali-X.Y.Z.tgz
-#   images           one native runner per architecture: the three images
-#                    (kivali, kivali-egress-proxy, kivali-agent-shell) saved
-#                    together and zstd-compressed,
+#   images           one native runner per architecture: the four images
+#                    (kivali, kivali-egress-proxy, kivali-agent-shell,
+#                    kivali-browser) saved together and zstd-compressed,
 #                    kivali-images-linux-<arch>.tar.zst, the single
 #                    archive the supervisor imports; the Debian package
-#                    lists of kivali and kivali-agent-shell, for
+#                    lists of kivali, kivali-agent-shell and kivali-browser, for
 #                    SOURCES.md; and the VM image for the desktop platform
 #                    of that architecture, with its images (uncompressed,
 #                    compressed meanwhile for the release) and the chart
@@ -248,9 +248,9 @@ jobs:
           go-version: '1.27'
           cache: true
 
-      # Builds the three images and saves them together, uncompressed:
+      # Builds the four images and saves them together, uncompressed:
       # dist/images/bundle-<arch>/kivali-images.tar. The bundle script
-      # checks it lists all three references at the version.
+      # checks it lists all four references at the version.
       - name: make release-images-${{ matrix.arch }}
         run: make release-images-${{ matrix.arch }} VERSION="$TAG"
 
@@ -259,7 +259,7 @@ jobs:
       - name: Package lists
         run: |
           mkdir -p dist/sources
-          for img in kivali kivali-agent-shell; do
+          for img in kivali kivali-agent-shell kivali-browser; do
             id="$(docker create "$img:$TAG")"
             docker cp "$id:/usr/share/doc/kivali/packages.txt" "dist/sources/$img-linux-${{ matrix.arch }}.txt"
             docker rm "$id"

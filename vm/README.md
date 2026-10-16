@@ -196,8 +196,10 @@ level and k3s.
 | `build/out/kernel.release` | 15 B | the kernel release, e.g. `6.18.54-0-virt` |
 
 Inside the root disk: k3s binary 71.4 MB, `k3s-images.tar` 105.1 MB,
-kernel modules ~25 MB, everything else a few MB. With the three local
-`:dev` Kivali images baked (`make dev-images`, a 797 MB tarball) the
+kernel modules ~25 MB, everything else a few MB. With the four local
+`:dev` Kivali images baked (`make dev-images`; the three without the
+browser image were a 797 MB tarball, and the browser image, Chromium
+with its fonts and Xvfb, adds about as much again) the
 root disk is 988 MB. A data disk after one boot holds ~680 MB.
 
 ### Artifacts, amd64 (`ARCH=amd64`, no Kivali images or chart baked)
@@ -257,7 +259,7 @@ The build bakes every file in `KIVALI_IMAGES_DIR` (default
 disk's `/usr/share/kivali/images/`. The release pipeline sets
 `KIVALI_IMAGES_DIR` to a directory holding its `docker save` (or
 `.tar.zst`; k3s accepts `.tar`, `.tar.gz`, `.tar.zst`, `.tar.lz4`)
-tarball of `kivali`, `kivali-egress-proxy` and `kivali-agent-shell` for
+tarball of `kivali`, `kivali-egress-proxy`, `kivali-agent-shell` and `kivali-browser` for
 the image's architecture; `make -C vm dev-images` fills the default
 with the `:dev` tags `make images VERSION=dev` built, exported from the
 build VM's containerd as an OCI tar (`ENGINE=vm`) or saved from Docker
@@ -734,8 +736,9 @@ FATAL writes its reason to `/run/kivali/fatal`.
 `VM_VERSION` is written to `/usr/share/kivali/vm-version`.
 
 A current cost: k3s re-imports **every** tarball in `agent/images` on
-**every** start (5 k3s images: ~4 s; the three Kivali `:dev` images: ~8 s
-more). The content is already in containerd, so this costs read time,
+**every** start (5 k3s images: ~4 s; the Kivali `:dev` images: ~8 s more
+for the three without the browser image, which is the largest of the
+four). The content is already in containerd, so this costs read time,
 not disk, but it grows with what is baked. The org's port reaches the host
 through the agent's vsock proxy; the NIC stays VZ NAT, outbound only.
 

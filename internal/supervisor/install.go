@@ -37,6 +37,7 @@ const (
 	repoKivali  = "kivali"
 	repoEgress  = "kivali-egress-proxy"
 	repoShell   = "kivali-agent-shell"
+	repoBrowser = "kivali-browser"
 	repoBusybox = "mirrored-library-busybox"
 )
 
@@ -160,7 +161,7 @@ type Images struct {
 	Busybox string // k3s's baked busybox helper, the init container
 }
 
-// pickImages finds Kivali's images (all three at one tag) and, with
+// pickImages finds Kivali's images (all four at one tag) and, with
 // busybox, k3s's busybox helper among refs.
 func pickImages(refs []string, busybox bool) (Images, error) {
 	byRepo := map[string][]string{} // repo name -> full refs
@@ -185,7 +186,7 @@ func pickImages(refs []string, busybox bool) (Images, error) {
 	}
 	krepo, ktag := guestapi.SplitRef(im.Kivali)
 	prefix := strings.TrimSuffix(krepo, repoKivali)
-	for _, want := range []string{repoEgress, repoShell} {
+	for _, want := range []string{repoEgress, repoShell, repoBrowser} {
 		ref := prefix + want + ":" + ktag
 		found := false
 		for _, r := range byRepo[want] {
@@ -194,7 +195,7 @@ func pickImages(refs []string, busybox bool) (Images, error) {
 			}
 		}
 		if !found {
-			return im, fmt.Errorf("image %s is missing (the three Kivali images must share one tag)", ref)
+			return im, fmt.Errorf("image %s is missing (the four Kivali images must share one tag)", ref)
 		}
 		if want == repoEgress {
 			im.Egress = ref

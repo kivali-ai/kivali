@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# image-bundle.sh — turn the three per-image tarballs `make image-tars`
+# image-bundle.sh — turn the four per-image tarballs `make image-tars`
 # writes into the release's image bundle for that architecture,
 # uncompressed.
 #
@@ -8,8 +8,9 @@
 #
 # The supervisor imports ONE archive per platform
 # (internal/supervisor/release.go, guestapi/images.go): a `docker save` of
-# kivali, kivali-egress-proxy and kivali-agent-shell at the release tag, in
-# one tar, zstd-compressed. This loads the three tarballs into the local
+# kivali, kivali-egress-proxy, kivali-agent-shell and kivali-browser at the
+# release tag, in one tar, zstd-compressed. This loads the four tarballs
+# into the local
 # Docker daemon, saves them together, and writes:
 #
 #   <images-dir>/bundle-<arch>/kivali-images.tar  a directory holding only
@@ -17,7 +18,7 @@
 #                                                 VM build's KIVALI_IMAGES_DIR
 #                                                 (squashfs compresses it)
 #
-# It then checks the bundle the way the supervisor will: all three
+# It then checks the bundle the way the supervisor will: all four
 # references are in it, at the tag. `make release-compress-<arch>`
 # compresses it into the release asset,
 # dist/kivali-images-linux-<arch>.tar.zst.
@@ -50,7 +51,7 @@ command -v docker >/dev/null 2>&1 || { echo "image-bundle: docker not found" >&2
 command -v jq >/dev/null 2>&1 || { echo "image-bundle: jq not found" >&2; exit 1; }
 
 reg="${REGISTRY:-}"
-names=(kivali kivali-egress-proxy kivali-agent-shell)
+names=(kivali kivali-egress-proxy kivali-agent-shell kivali-browser)
 refs=()
 for n in "${names[@]}"; do
   tar="$images_dir/$n-$ARCH.tar"

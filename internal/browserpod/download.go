@@ -27,12 +27,22 @@ func (b *browser) startDownloads(ctx context.Context) error {
 	if err := os.MkdirAll(b.downloadDir(), 0o700); err != nil {
 		return err
 	}
-	_, err := b.conn.Call(ctx, "", "Browser.setDownloadBehavior", map[string]any{
+	return b.setDownloadBehavior(ctx, "")
+}
+
+// setDownloadBehavior sets the download behaviour of one browser
+// context: the default one for "", else the context named. Chromium
+// keeps it per context, so a context made for a group needs its own.
+func (b *browser) setDownloadBehavior(ctx context.Context, contextID string) error {
+	params := map[string]any{
 		"behavior":      "allowAndName",
 		"downloadPath":  b.downloadDir(),
 		"eventsEnabled": true,
-	})
-	if err != nil {
+	}
+	if contextID != "" {
+		params["browserContextId"] = contextID
+	}
+	if _, err := b.conn.Call(ctx, "", "Browser.setDownloadBehavior", params); err != nil {
 		return fmt.Errorf("Browser.setDownloadBehavior: %w", err)
 	}
 	return nil

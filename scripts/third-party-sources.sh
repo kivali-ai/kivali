@@ -170,7 +170,7 @@ EOF
   tr -d '\r' < "$lock" | awk 'NF >= 2 {printf "- `%s@%s`\n", $1, $2}'
   cat <<'EOF'
 
-The kivali, kivali-egress-proxy and kivali-agent-shell images beside them
+The kivali, kivali-egress-proxy, kivali-agent-shell and kivali-browser images beside them
 carry their own SOURCES.md at /usr/share/doc/kivali/; the release's
 SOURCES.md includes their Debian packages.
 EOF

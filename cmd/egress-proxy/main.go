@@ -10,12 +10,6 @@
 // HTTP_PROXY / HTTPS_PROXY env vars pointing at the Service in front
 // of this process.
 //
-// A second listener (--open-listen) forwards to any host. It is the
-// route of browser pods, whose Chromium browses the web for a web
-// subagent and is not held to the allowlist; the chart's network
-// policies let only browser pods reach that port, and agent pods only
-// the allowlisted one.
-//
 // Enforcement is intentionally HTTP-layer only — an agent that
 // chooses to bypass $HTTP_PROXY and dial a raw socket is unaffected.
 // Hard enforcement (NetworkPolicy / DNS control) is a follow-up once
@@ -51,7 +45,6 @@ const (
 
 func main() {
 	listen := flag.String("listen", defaultListen, "address to listen on")
-	openListen := flag.String("open-listen", "", "address of a second listener that forwards to any host (browser pods); empty for none")
 	allowlistPath := flag.String("allowlist", defaultAllowlist, "path to allowlist YAML (hot-reloaded)")
 	flag.Parse()
 
@@ -63,15 +56,14 @@ func main() {
 	watcher := &Watcher{Path: *allowlistPath, Interval: 5 * time.Second}
 	go watcher.Run(&allow, log.Printf)
 
-	servers := []*http.Server{newProxyServer(*listen, &proxy{allowed: allow.Allowed, label: "allowlist"})}
-	if *openListen != "" {
-		// Any host, but only on the public internet: never this pod,
-		// the cluster or the cloud's metadata service.
-		servers = append(servers, newProxyServer(*openListen, &proxy{
-			allowed: func(string) bool { return true },
-			label:   "open",
-			dial:    guardedDialer(dialTimeout).DialContext,
-		}))
+	h := &proxy{allow: &allow}
+	srv := &http.Server{
+		Addr:              *listen,
+		Handler:           h,
+		ReadHeaderTimeout: 10 * time.Second,
+		// ConnState used for observability in the future; leaving a
+		// hook in place rather than chasing it down later.
+		ConnState: nil,
 	}
 	go func() {
 		sigs := make(chan os.Signal, 1)
@@ -79,50 +71,16 @@ func main() {
 		<-sigs
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		for _, srv := range servers {
-			_ = srv.Shutdown(ctx)
-		}
+		_ = srv.Shutdown(ctx)
 	}()
-	errs := make(chan error, len(servers))
-	for _, srv := range servers {
-		log.Printf("egress-proxy listening on %s", srv.Addr)
-		go func(srv *http.Server) { errs <- srv.ListenAndServe() }(srv)
-	}
-	for range servers {
-		if err := <-errs; err != nil && err != http.ErrServerClosed {
-			log.Fatalf("listen: %v", err)
-		}
+	log.Printf("egress-proxy listening on %s", *listen)
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		log.Fatalf("listen: %v", err)
 	}
 }
 
-func newProxyServer(addr string, h *proxy) *http.Server {
-	return &http.Server{
-		Addr:              addr,
-		Handler:           h,
-		ReadHeaderTimeout: 10 * time.Second,
-		// ConnState used for observability in the future; leaving a
-		// hook in place rather than chasing it down later.
-		ConnState: nil,
-	}
-}
-
-// proxy forwards what allowed admits, dialing upstreams with dial.
-// label names the listener in the log, so a denied host can be told
-// from an open one.
 type proxy struct {
-	allowed func(host string) bool
-	label   string
-	dial    dialFunc
-}
-
-// dialer is how this proxy reaches upstreams: dial when set, else a
-// plain dialer. The allowlisted listener dials whatever the allowlist
-// names; the open one dials only public addresses (guard.go).
-func (p *proxy) dialer() dialFunc {
-	if p.dial != nil {
-		return p.dial
-	}
-	return (&net.Dialer{Timeout: dialTimeout}).DialContext
+	allow *Allowlist
 }
 
 // ServeHTTP dispatches CONNECT (HTTPS tunnel) and plain HTTP requests
@@ -142,14 +100,14 @@ func (p *proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // host passes the allowlist check we splice TCP bytes both ways.
 func (p *proxy) handleConnect(w http.ResponseWriter, r *http.Request) {
 	host := r.Host // "example.com:443"
-	if !p.allowed(host) {
-		log.Printf("DENY CONNECT %s (%s)", host, p.label)
+	if !p.allow.Allowed(host) {
+		log.Printf("DENY CONNECT %s", host)
 		http.Error(w, "host not in allowlist", http.StatusForbidden)
 		return
 	}
-	log.Printf("ALLOW CONNECT %s (%s)", host, p.label)
+	log.Printf("ALLOW CONNECT %s", host)
 
-	upstream, err := p.dialer()(r.Context(), "tcp", host)
+	upstream, err := net.DialTimeout("tcp", host, dialTimeout)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("upstream dial: %v", err), http.StatusBadGateway)
 		return
@@ -183,12 +141,12 @@ func (p *proxy) handleConnect(w http.ResponseWriter, r *http.Request) {
 // before forwarding.
 func (p *proxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	host := r.URL.Host
-	if !p.allowed(host) {
-		log.Printf("DENY HTTP %s %s %s (%s)", r.Method, host, r.URL.Path, p.label)
+	if !p.allow.Allowed(host) {
+		log.Printf("DENY HTTP %s %s %s", r.Method, host, r.URL.Path)
 		http.Error(w, "host not in allowlist", http.StatusForbidden)
 		return
 	}
-	log.Printf("ALLOW HTTP %s %s %s (%s)", r.Method, host, r.URL.Path, p.label)
+	log.Printf("ALLOW HTTP %s %s %s", r.Method, host, r.URL.Path)
 	// Build the outbound request. Strip hop-by-hop headers; keep the
 	// absolute URL handling to net/http.
 	outReq, err := http.NewRequestWithContext(r.Context(), r.Method, r.URL.String(), r.Body)
@@ -200,7 +158,7 @@ func (p *proxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	outReq.Host = r.Host
 	tr := &http.Transport{
 		Proxy:             nil,
-		DialContext:       p.dialer(),
+		DialContext:       (&net.Dialer{Timeout: dialTimeout}).DialContext,
 		DisableKeepAlives: true, // simpler lifecycle in a short-lived proxy
 	}
 	resp, err := tr.RoundTrip(outReq)

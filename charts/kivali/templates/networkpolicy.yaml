@@ -42,9 +42,11 @@ spec:
         - protocol: TCP
           port: 53
 ---
-# 2. Browser pods: the same egress as agent pods. A browser's only route to
-#    the web is the egress proxy (Chromium runs with it as --proxy-server);
-#    the pod reaches core over the hostPath Unix socket, not the network.
+# 2. Browser pods: the web and DNS, nothing in the cluster. A browser
+#    browses the web for a web subagent and is not held to the allowlist;
+#    it reaches core over the hostPath Unix socket, not the network. The
+#    exceptions keep Chromium, and any page that drives it, off the pod
+#    network, the node, cloud metadata and every private range.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -58,16 +60,17 @@ spec:
       app: kivali-browserpod
   policyTypes: [Egress]
   egress:
-    # The egress proxy's open listener: browser pods browse the web for
-    # web subagents and are not held to the allowlist, so they get the
-    # port that forwards to any host, and only that one.
     - to:
-        - podSelector:
-            matchLabels:
-              app: kivali
-      ports:
-        - protocol: TCP
-          port: 3129
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - {{ .Values.networkPolicy.podCIDR }}
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 169.254.0.0/16
+              - 127.0.0.0/8
+              - 100.64.0.0/10
     - to:
         - namespaceSelector:
             matchLabels:
@@ -120,14 +123,5 @@ spec:
       ports:
         - protocol: TCP
           port: 3128
-    # The open listener: browser pods only. An agent pod that reached
-    # it would be past the allowlist.
-    - from:
-        - podSelector:
-            matchLabels:
-              app: kivali-browserpod
-      ports:
-        - protocol: TCP
-          port: 3129
 {{- end }}
 {{- end }}

@@ -76,10 +76,10 @@ func (p *podConn) write(msg browserpod.Message, body []byte) {
 func TestBrowserConnectOverTheWire(t *testing.T) {
 	f := newBrowserFixture(t)
 	saved := bytes.Repeat([]byte("old-profile-"), 100)
-	if _, err := f.st.EnsureBrowserSession("alice", "open", "", f.clk.Now()); err != nil {
+	if _, err := f.st.EnsureBrowserSession("alice", "vendor.example", "", f.clk.Now()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.st.WriteBrowserProfile("alice", "open", bytes.NewReader(saved), f.clk.Now()); err != nil {
+	if _, err := f.st.WriteBrowserProfile("alice", "vendor.example", bytes.NewReader(saved), f.clk.Now()); err != nil {
 		t.Fatal(err)
 	}
 	srv := &Server{Browsers: f.reg}
@@ -87,7 +87,7 @@ func TestBrowserConnectOverTheWire(t *testing.T) {
 	mux.HandleFunc("GET /v1/browser/{slug}/{session}/connect", srv.handleBrowserConnect)
 	hs := httptest.NewServer(mux)
 	defer hs.Close()
-	wsURL := "ws" + strings.TrimPrefix(hs.URL, "http") + "/v1/browser/alice/open/connect"
+	wsURL := "ws" + strings.TrimPrefix(hs.URL, "http") + "/v1/browser/alice/vendor.example/connect"
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
@@ -97,7 +97,7 @@ func TestBrowserConnectOverTheWire(t *testing.T) {
 	}
 	got := make(chan outcome, 1)
 	go func() {
-		res, err := f.reg.Command(ctx, "alice", "open", "job1", browserpod.Message{Name: browserpod.CommandNavigate, Args: json.RawMessage(`{"url":"https://x.example/"}`)})
+		res, err := f.reg.Command(ctx, "alice", "vendor.example", "job1", browserpod.Message{Name: browserpod.CommandNavigate, Args: json.RawMessage(`{"url":"https://x.example/"}`)})
 		got <- outcome{res, err}
 	}()
 	token := <-f.prov.startedC
@@ -139,7 +139,7 @@ func TestBrowserConnectOverTheWire(t *testing.T) {
 	}
 
 	// Release, reap, save: the profile the pod sends is stored.
-	facts, downloads := f.reg.ReleaseGroup("alice", "open", "job1")
+	facts, downloads := f.reg.ReleaseGroup("alice", "vendor.example", "job1")
 	if facts.Pages != 1 || facts.Origin != "https://x.example" || len(downloads) != 1 {
 		t.Errorf("facts = %+v %v", facts, downloads)
 	}
@@ -158,7 +158,7 @@ func TestBrowserConnectOverTheWire(t *testing.T) {
 	if _, _, err := c.Reader(ctx); err == nil {
 		t.Error("connection stayed open after the save")
 	}
-	r, n, err := f.st.OpenBrowserProfile("alice", "open")
+	r, n, err := f.st.OpenBrowserProfile("alice", "vendor.example")
 	if err != nil || n != int64(len(fresh)) {
 		t.Fatalf("stored profile after save = %d, %v", n, err)
 	}
@@ -167,7 +167,7 @@ func TestBrowserConnectOverTheWire(t *testing.T) {
 	if !bytes.Equal(gotProfile, fresh) {
 		t.Error("stored profile differs from what the pod sent")
 	}
-	if stopped := f.stopped(t); stopped != "alice/open" {
+	if stopped := f.stopped(t); stopped != "alice/vendor.example" {
 		t.Errorf("pod stop = %q", stopped)
 	}
 }

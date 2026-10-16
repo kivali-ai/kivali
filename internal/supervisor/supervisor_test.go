@@ -393,7 +393,11 @@ func TestPickImages(t *testing.T) {
 	if _, err := pickImages(refs, false); err == nil || !strings.Contains(err.Error(), "kivali-agent-shell:dev") {
 		t.Fatalf("missing agent-shell: %v", err)
 	}
-	refs = append(refs, "docker.io/library/kivali-agent-shell:dev", "docker.io/library/kivali:v2")
+	refs = append(refs, "docker.io/library/kivali-agent-shell:dev")
+	if _, err := pickImages(refs, false); err == nil || !strings.Contains(err.Error(), "kivali-browser:dev") {
+		t.Fatalf("missing browser: %v", err)
+	}
+	refs = append(refs, "docker.io/library/kivali-browser:dev", "docker.io/library/kivali:v2")
 	if _, err := pickImages(refs, false); err == nil || !strings.Contains(err.Error(), "several") {
 		t.Fatalf("two kivali tags: %v", err)
 	}
@@ -726,13 +730,13 @@ func TestLoadImagesAndBackup(t *testing.T) {
 	// The archive is whatever the caller hands over (a docker-archive
 	// tar here); the guest imports it as it is.
 	var archive bytes.Buffer
-	if err := writeTarTo(&archive, map[string]string{"manifest.json": `[{"RepoTags":["kivali:dev","kivali-egress-proxy:dev","kivali-agent-shell:dev"]}]`}); err != nil {
+	if err := writeTarTo(&archive, map[string]string{"manifest.json": `[{"RepoTags":["kivali:dev","kivali-egress-proxy:dev","kivali-agent-shell:dev","kivali-browser:dev"]}]`}); err != nil {
 		t.Fatal(err)
 	}
 	if err := h.sup.LoadImages(context.Background(), &archive, h.logf()); err != nil {
 		t.Fatal(err)
 	}
-	if !h.vm.imported["docker.io/library/kivali-agent-shell:dev"] {
+	if !h.vm.imported["docker.io/library/kivali-agent-shell:dev"] || !h.vm.imported["docker.io/library/kivali-browser:dev"] {
 		t.Fatalf("imported %v", h.vm.imported)
 	}
 	// restart alone, for images built straight into the VM.

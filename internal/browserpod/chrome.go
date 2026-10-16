@@ -36,7 +36,6 @@ type browserProcess interface {
 type chromeOptions struct {
 	Binary  string
 	Dir     string
-	Proxy   string
 	Headful bool
 	Logger  *log.Logger
 	Clock   clock.Clock
@@ -92,9 +91,6 @@ func chromeArgs(o chromeOptions, noSandbox bool) []string {
 	}
 	if !o.Headful {
 		args = append(args, "--headless=new")
-	}
-	if o.Proxy != "" {
-		args = append(args, "--proxy-server="+o.Proxy)
 	}
 	if noSandbox {
 		args = append(args, "--no-sandbox")

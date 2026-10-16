@@ -116,7 +116,7 @@ header() {
     kivali-agent-shell) what='the kivali-agent-shell image (the agents'"'"' shell)' ;;
     kivali-egress-proxy) what='the kivali-egress-proxy image' ;;
     kivali-browser) what='the kivali-browser image (the browser a web subagent drives)' ;;
-    release) what='Kivali: Kivali Desktop, the Kivali VM image, and the kivali, kivali-agent-shell and kivali-egress-proxy images' ;;
+    release) what='Kivali: Kivali Desktop, the Kivali VM image, and the kivali, kivali-agent-shell, kivali-browser and kivali-egress-proxy images' ;;
     *) die "unknown artifact '$artifact'" ;;
   esac
   printf 'Third-party software in %s\n%s\n\n' "$what" "$rule"
@@ -219,9 +219,10 @@ The Kivali VM image and the operating systems of the images
 
 Kivali Desktop includes the Kivali VM image: a Linux kernel and Alpine
 Linux packages, k3s and the container images k3s runs, and the kivali,
-kivali-egress-proxy and kivali-agent-shell images. The kivali and
-kivali-agent-shell images are built on Debian, the kivali-egress-proxy
-image on gcr.io/distroless/static. Much of this is licensed under the
+kivali-egress-proxy, kivali-agent-shell and kivali-browser images. The
+kivali, kivali-agent-shell and kivali-browser images are built on Debian,
+the kivali-egress-proxy image on gcr.io/distroless/static. Much of this
+is licensed under the
 GNU GPL or LGPL. Each Debian package's copyright and license are in
 /usr/share/doc/<package>/copyright inside its image. The exact packages
 and versions, where their source code is published, and Kivali's written

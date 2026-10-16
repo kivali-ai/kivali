@@ -13,7 +13,7 @@ The chart's `values.yaml` is commented key by key. These are the values most ins
 | `externalURL` | empty | The https address other computers reach the team at, such as `https://kivali.example.com`. Needed for Google sign-in at any address other than loopback. Sets `KIVALI_EXTERNAL_URL`. |
 | `models.agent` | empty | The default model for agents and new hires. Empty uses Kivali's default, Claude Opus 5.5. Sets `AGENT_MODEL`. |
 | `models.summary` | empty | The model for small housekeeping calls (file and chat summaries). Empty uses Claude Haiku 4.5. Sets `SUMMARY_MODEL`. |
-| `image.repository`, `image.tag` | `kivali`, the chart's version | The server image, also used by agent pods. The sandbox image `kivali-agent-shell` is taken from the same path and tag. |
+| `image.repository`, `image.tag` | `kivali`, the chart's version | The server image, also used by agent pods. The sandbox image `kivali-agent-shell` and the browser image `kivali-browser` are taken from the same path and tag; `browser.image` overrides the browser's. |
 | `egress.image.repository`, `egress.image.tag` | `kivali-egress-proxy`, the chart's version | The egress proxy image. |
 | `service.type`, `service.nodePort` | `NodePort`, `30080` | How the server is exposed. |
 | `persistence.size` | `10Gi` | The data volume. Everything durable lives here. |

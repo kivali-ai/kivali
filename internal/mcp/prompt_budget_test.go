@@ -34,7 +34,10 @@ const (
 	// paragraph (~150 tokens): what a browser task is, that it needs a
 	// schema, what it costs and when not to use it, which an agent
 	// otherwise learns from a refused dispatch or an expensive run.
-	maxSubagentDescChars = 4300
+	// Raised to 4350 for the open session keeping nothing between
+	// tasks (~8 tokens): an agent then knows no page a task saw can
+	// reach its next one, and that no sign-in can carry over.
+	maxSubagentDescChars = 4350
 	// A sub-lead's dispatch tool. Present only for subagents that can
 	// delegate, but then paid on every one of their turns. Raised from
 	// 1900 for the kind field's sentence.

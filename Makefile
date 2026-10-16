@@ -629,8 +629,7 @@ endif
 		-t $(BROWSER_IMAGE):$(VERSION) -o type=docker,dest=$(IMAGES_DIR)/kivali-browser-$(ARCH).tar .
 	rm -rf $(IMAGES_DIR)/kivali-$(ARCH).oci
 
-# release-images-<arch> builds the images and saves the server,
-# egress-proxy and agent-shell images together (not the browser image),
+# release-images-<arch> builds the four images and saves them together,
 # uncompressed, as $(IMAGES_DIR)/bundle-<arch>/kivali-images.tar: what
 # `make vm-release` bakes. release-compress-<arch> compresses that into
 # the release asset, dist/kivali-images-linux-<arch>.tar.zst, and

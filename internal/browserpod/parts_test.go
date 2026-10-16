@@ -311,20 +311,20 @@ func TestOnSite(t *testing.T) {
 }
 
 func TestChromeArgs(t *testing.T) {
-	o := chromeOptions{Dir: "/w", Proxy: "http://proxy:3128"}
+	o := chromeOptions{Dir: "/w"}
 	args := strings.Join(chromeArgs(o, false), " ")
-	for _, want := range []string{"--remote-debugging-pipe", "--user-data-dir=/w/profile", "--headless=new", "--proxy-server=http://proxy:3128", "--window-size=1280,800"} {
+	for _, want := range []string{"--remote-debugging-pipe", "--user-data-dir=/w/profile", "--headless=new", "--window-size=1280,800"} {
 		if !strings.Contains(args, want) {
 			t.Errorf("args lack %s: %s", want, args)
 		}
 	}
-	if strings.Contains(args, "--no-sandbox") {
-		t.Error("sandbox off by default")
+	if strings.Contains(args, "--no-sandbox") || strings.Contains(args, "--proxy-server") {
+		t.Error("sandbox off or a proxy by default")
 	}
-	o.Headful, o.Proxy = true, ""
+	o.Headful = true
 	args = strings.Join(chromeArgs(o, true), " ")
-	if strings.Contains(args, "--headless") || strings.Contains(args, "--proxy-server") || !strings.Contains(args, "--no-sandbox") {
-		t.Errorf("headful without proxy, sandbox off: %s", args)
+	if strings.Contains(args, "--headless") || !strings.Contains(args, "--no-sandbox") {
+		t.Errorf("headful, sandbox off: %s", args)
 	}
 	if !isSandboxFailure("[0101/000000.0:FATAL:zygote_host_impl_linux.cc(127)] No usable sandbox! Update your kernel") || isSandboxFailure("some other crash") {
 		t.Error("isSandboxFailure")

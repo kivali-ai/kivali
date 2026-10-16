@@ -26,10 +26,9 @@ type Runtime struct {
 	Slug    string
 	Session string
 	Token   string
-	// CoreUDS is core.sock, the only way to core.
+	// CoreUDS is browser.sock, core's socket for browser pods: the only
+	// way to core.
 	CoreUDS string
-	// Proxy is passed to Chromium as --proxy-server when set.
-	Proxy string
 	// Chromium is the browser binary.
 	Chromium string
 	// Dir holds the profile, downloads and task files while the pod
@@ -100,8 +99,9 @@ type session struct {
 	w   *wire
 	log *log.Logger
 
-	site    string
-	headful bool
+	site      string
+	headful   bool
+	ephemeral bool
 
 	proc     browserProcess
 	b        *browser
@@ -132,7 +132,7 @@ func (s *session) run(ctx context.Context) error {
 	if msg.Type != TypeHello {
 		return fmt.Errorf("browserpod: expected hello, got %q", msg.Type)
 	}
-	s.site, s.headful = msg.Site, msg.Headful
+	s.site, s.headful, s.ephemeral = msg.Site, msg.Headful, msg.Ephemeral
 	if err := s.receiveProfile(msg, body); err != nil {
 		return err
 	}
@@ -159,7 +159,7 @@ func (s *session) run(ctx context.Context) error {
 
 	s.sendState(StateStarting, "")
 	proc, err := s.r.launch(ctx, chromeOptions{
-		Binary: s.r.Chromium, Dir: s.r.Dir, Proxy: s.r.Proxy, Headful: s.headful,
+		Binary: s.r.Chromium, Dir: s.r.Dir, Headful: s.headful,
 		Logger: s.log, Clock: s.r.Clock,
 	})
 	if err != nil {
@@ -172,6 +172,7 @@ func (s *session) run(ctx context.Context) error {
 		<-proc.Done()
 	}()
 	s.b = newBrowser(proc.Conn(), s.r.Clock, s.log, s.site, s.r.Dir, s.send)
+	s.b.ephemeral = s.ephemeral
 	if err := s.b.start(ctx); err != nil {
 		s.sendState(StateStopped, err.Error())
 		return fmt.Errorf("browserpod: set up chromium: %w", err)

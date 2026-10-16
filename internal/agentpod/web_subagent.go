@@ -14,7 +14,8 @@ const (
 )
 
 // OpenWebSession is the session every agent has without naming it: a
-// browser signed in nowhere, free to go anywhere, where web_eval works.
+// browser signed in nowhere, free to go anywhere, where web_eval works,
+// and which keeps nothing between tasks.
 const OpenWebSession = "open"
 
 // The web_* tools, by bare name: the browser toolkit a web subagent

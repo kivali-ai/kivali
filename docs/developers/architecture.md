@@ -28,7 +28,7 @@ flowchart LR
   runtime --> cli --> mcp
   mcp -- core.sock --> core
   browserpod[Browser pod<br/>kivali browser, Chromium] -- WebSocket over UDS<br/>browser.sock --> core
-  browserpod -- proxy :3129 --> proxy
+  browserpod -- direct egress --> web((the web))
   mcp -- agent-shell socket --> shell
   shell --- data
   shell --- scratch
@@ -424,7 +424,8 @@ rows.
 
 A task dispatched with `kind: "web"` is a subagent that works in a
 browser instead of a shell. It must carry a schema, names a web
-session (`open`, the only one: signed in nowhere), and may name a
+session (`open`, the only one: signed in nowhere, keeping nothing
+between tasks), and may name a
 `start_url` and `files` under the caller's `/files/` it may upload.
 Its CLI runs in the parent's agent pod like any subagent, with
 `kivali mcp --toolkit web`: the `web_*` tools (`internal/mcp/web_tools.go`)
@@ -456,7 +457,10 @@ and the packed Chromium profile in both directions, as binary frames
 announced by a message. Chromium runs with `--remote-debugging-pipe`
 and `--password-store=basic`; the pod drives it over CDP, keeps a tab
 group per web subagent so concurrent tasks sharing a session cannot
-see each other's tabs, strips hidden content from snapshots in the
+see each other's tabs (in `open`, each group is a browser context of
+its own, with its own cookies, storage and cache, disposed with the
+group; core never asks an `open` browser for its profile and stores
+none), strips hidden content from snapshots in the
 page's isolated world, captures downloads, and packs the profile
 without its caches.
 
@@ -491,14 +495,11 @@ file, and may be up to 50 MB. The delivered result also carries the
 session, the last page's origin, the duration and the pages loaded.
 
 Browser pods browse the web for the subagent and are not held to the
-egress allowlist. They route through the egress proxy's second
-listener (port 3129, `--open-listen`), which forwards to any host on
-the public internet and nowhere else: it checks the address each
-connection actually dials, after DNS, and refuses loopback, link-local
-(cloud metadata), private, carrier-grade NAT and multicast ranges, so a
-page cannot reach the server pod, the cluster or the node through it.
-The chart's network policies let only browser pods reach that port and
-agent pods only the allowlisted one.
+egress allowlist: they reach the web directly, like any pod, with no
+proxy. The chart's network policy for them allows DNS and the public
+internet and excepts the pod network, the node's and cloud metadata's
+link-local range and every private range, so a page cannot reach the
+server pod, the cluster or the node through the browser.
 
 Depth is capped at two tiers (`agentpod.MaxSubagentDepth`): a
 first-tier subagent may act as a sub-lead and dispatch up to three

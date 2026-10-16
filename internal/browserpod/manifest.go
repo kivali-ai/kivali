@@ -16,7 +16,9 @@ import (
 //
 //  1. One container, `kivali browser`, from the kivali-browser image,
 //     configured entirely by env (EnvSlug, EnvSession, EnvToken,
-//     EnvCoreUDS, EnvProxy).
+//     EnvCoreUDS). It reaches the web directly, like any pod; the
+//     chart's network policy keeps it off the cluster and private
+//     networks.
 //  2. It dials browser.sock, core's socket for browser pods, in the
 //     browser subdirectory of the hostPath UDS dir, the only part of
 //     that directory it mounts, read-only; core.sock and the agent
@@ -110,9 +112,6 @@ func (c ProvisionerConfig) podManifest(slug, session, token string) map[string]a
 		{"name": EnvSession, "value": session},
 		{"name": EnvToken, "value": token},
 		{"name": EnvCoreUDS, "value": udsDir + "/" + SocketName},
-	}
-	if c.ProxyURL != "" {
-		env = append(env, map[string]any{"name": EnvProxy, "value": c.ProxyURL})
 	}
 
 	container := map[string]any{

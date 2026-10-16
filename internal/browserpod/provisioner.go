@@ -36,10 +36,6 @@ type ProvisionerConfig struct {
 	// default. Its token is never mounted.
 	ServiceAccountName string
 
-	// ProxyURL, when set, is the proxy Chromium sends all its traffic
-	// through (EnvProxy): the egress proxy.
-	ProxyURL string
-
 	// CPURequest / MemoryRequest / CPULimit / MemoryLimit size the
 	// browser container. Empty means 100m / 512Mi requests and 2 / 2Gi
 	// limits.
@@ -50,7 +46,7 @@ type ProvisionerConfig struct {
 }
 
 // DefaultsForNamespace returns a ProvisionerConfig for namespace with
-// the chart's defaults. Callers set Image and ProxyURL.
+// the chart's defaults. Callers set Image.
 func DefaultsForNamespace(namespace string) ProvisionerConfig {
 	return ProvisionerConfig{
 		Namespace:       namespace,

@@ -91,7 +91,9 @@ browser:
   # created and deleted by the server (BROWSER_IMAGE). The image copies the
   # kivali binary from the server image, so keep the two at the same tag.
   image:
-    repository: kivali-browser
+    # Empty means kivali-browser beside the server image, in
+    # image.repository's registry path.
+    repository: ""
     # Empty means the server image's tag (image.tag, else .Chart.AppVersion):
     # the browser image is built from that server image.
     tag: ""
