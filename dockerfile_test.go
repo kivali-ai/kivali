@@ -62,7 +62,7 @@ var dockerfileInstruction = regexp.MustCompile(`^(?i)(ADD|ARG|CMD|COPY|ENTRYPOIN
 // line that lost its # otherwise surfaces as "unknown instruction" in
 // the release job.
 func TestDockerfilesParse(t *testing.T) {
-	for _, name := range []string{"Dockerfile", "Dockerfile.agent-shell", "Dockerfile.egress-proxy", "vm/Dockerfile"} {
+	for _, name := range []string{"Dockerfile", "Dockerfile.agent-shell", "Dockerfile.browser", "Dockerfile.egress-proxy", "vm/Dockerfile"} {
 		b, err := os.ReadFile(name)
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)

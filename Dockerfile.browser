@@ -1,0 +1,73 @@
+# syntax=docker/dockerfile:1.7
+#
+# The browser a web subagent drives. Core starts one pod from this image
+# per agent web session (internal/browserpod/manifest.go); the pod runs
+# `kivali browser`, which starts Chromium and dials core over core.sock.
+# The pod never listens. Everything that outlives it (the profile,
+# downloads) travels to core over that one connection; while it runs the
+# pod keeps them under /tmp, an emptyDir.
+#
+# The kivali binary is the server image's own, copied from it rather
+# than built again: the server image is built first (`make images`) and
+# KIVALI_IMAGE names it. Build by hand after the server image:
+#
+#   docker build --build-arg VERSION=dev -t kivali:dev .
+#   docker build -f Dockerfile.browser --build-arg KIVALI_IMAGE=kivali:dev \
+#       -t kivali-browser:dev .
+#
+# Chromium is Debian's, with fonts for Latin, the other Noto scripts,
+# CJK and colour emoji, so pages render as a person would see them. Xvfb
+# gives Chromium a display when it runs headed. Base is debian:trixie-slim
+# pinned by digest, the same one as the root Dockerfile and
+# Dockerfile.agent-shell, so SOURCES.md names exactly what the image was
+# built from.
+#
+# The installed package list is recorded at /etc/kivali/browser-packages,
+# one package per line.
+
+ARG KIVALI_IMAGE=kivali:dev
+
+FROM ${KIVALI_IMAGE} AS kivali
+
+FROM debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f
+LABEL org.opencontainers.image.licenses="Apache-2.0"
+
+# xauth is what xvfb-run needs to hand Chromium the display.
+RUN set -eu; \
+    packages="chromium fonts-liberation fonts-noto-core fonts-noto-cjk fonts-noto-color-emoji xvfb xauth ca-certificates dumb-init"; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends $packages; \
+    mkdir -p /etc/kivali; \
+    printf '%s\n' $packages | sort -u > /etc/kivali/browser-packages; \
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*; \
+    groupadd -r -g 65532 kivali; \
+    useradd -r -u 65532 -g 65532 -m -d /home/kivali -s /usr/sbin/nologin kivali; \
+    chmod 1777 /tmp
+
+# /usr/share/doc/kivali: the installed Debian packages (packages.txt),
+# where their source is and Kivali's offer of it (SOURCES.md), and the
+# third-party notices (THIRD_PARTY_LICENSES): this image's header, then
+# the Go modules and npm packages of the kivali binary, taken from the
+# server image's notices, which list what was built into that binary.
+RUN --mount=type=bind,source=scripts/third-party-sources.sh,target=/tmp/third-party-sources.sh \
+    set -eu; \
+    d=/usr/share/doc/kivali; \
+    mkdir -p "$d"; \
+    { . /etc/os-release; echo "# $PRETTY_NAME"; dpkg-query -W -f '${Package} ${Version} ${source:Package} ${source:Version}\n' | sort; } > "$d/packages.txt"; \
+    { sh /tmp/third-party-sources.sh header "the kivali-browser image"; \
+      sh /tmp/third-party-sources.sh debian "Debian packages" "$d/packages.txt"; } > "$d/SOURCES.md"
+RUN --mount=type=bind,source=scripts/third-party-licenses.sh,target=/tmp/notices/scripts/third-party-licenses.sh \
+    --mount=type=bind,source=NOTICE,target=/tmp/notices/NOTICE \
+    --mount=type=bind,source=design-system/fonts/OFL.txt,target=/tmp/notices/design-system/fonts/OFL.txt \
+    --mount=type=bind,from=kivali,source=/usr/share/doc/kivali/THIRD_PARTY_LICENSES,target=/tmp/kivali-notices \
+    set -eu; \
+    { sh /tmp/notices/scripts/third-party-licenses.sh header kivali-browser; \
+      awk 'go { print; next } /^Go modules \(/ && prev ~ /^=+$/ { go = 1; print ""; print prev; print; next } { prev = $0 }' /tmp/kivali-notices; } \
+      > /usr/share/doc/kivali/THIRD_PARTY_LICENSES; \
+    grep -q '^Go modules (' /usr/share/doc/kivali/THIRD_PARTY_LICENSES
+COPY --from=kivali /usr/local/bin/kivali /usr/local/bin/kivali
+
+USER 65532:65532
+ENV HOME=/home/kivali
+WORKDIR /tmp
+ENTRYPOINT ["/usr/bin/dumb-init", "--", "/usr/local/bin/kivali", "browser"]
