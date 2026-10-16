@@ -14,6 +14,11 @@
 //!     show itself (paused, starting, updating, couldn't start, can't be
 //!     reached), with IPC.
 //!
+//! - A web subagent's browser window of a team, `browser-<hash>-<id>`
+//!   (1320×900), opened when the team's web app opens
+//!   `/agents/<slug>/subagents/<id>/browser`: that page alone, pinned to
+//!   the team's origin as the team's web view is, with no IPC.
+//!
 //! A team's web app and the bundled pages never share a webview, so the
 //! ACL is scoped by webview label as well as origin.
 
@@ -36,6 +41,9 @@ pub const SETTINGS: &str = "settings";
 const TEAM_PREFIX: &str = "team-";
 const WEB_PREFIX: &str = "web-";
 const PAGE_PREFIX: &str = "page-";
+const BROWSER_PREFIX: &str = "browser-";
+/// Hex digits of the path's hash in a browser window's label.
+const BROWSER_HASH_LEN: usize = 16;
 
 pub fn team_label(id: &str) -> String {
     format!("{TEAM_PREFIX}{id}")
@@ -47,12 +55,38 @@ fn page_label(id: &str) -> String {
     format!("{PAGE_PREFIX}{id}")
 }
 
+/// A team's browser window for the page at `path`:
+/// `browser-<hash>-<id>`, the hash the first 16 hex digits of the path's
+/// SHA-256, so the same page always has the same window.
+fn browser_label(id: &str, path: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(path.as_bytes());
+    let hash: String = digest.iter().take(BROWSER_HASH_LEN / 2).map(|b| format!("{b:02x}")).collect();
+    format!("{BROWSER_PREFIX}{hash}-{id}")
+}
+
+fn is_browser_label(label: &str) -> bool {
+    label.starts_with(BROWSER_PREFIX)
+}
+
 /// The team a window label belongs to.
 pub fn team_of(label: &str) -> Option<&str> {
     label
         .strip_prefix(TEAM_PREFIX)
         .or_else(|| label.strip_prefix(WEB_PREFIX))
         .or_else(|| label.strip_prefix(PAGE_PREFIX))
+        .or_else(|| {
+            let rest = label.strip_prefix(BROWSER_PREFIX)?;
+            let (hash, id) = (rest.get(..BROWSER_HASH_LEN)?, rest.get(BROWSER_HASH_LEN..)?.strip_prefix('-')?);
+            (hash.bytes().all(|b| b.is_ascii_hexdigit()) && !id.is_empty()).then_some(id)
+        })
+}
+
+/// A web subagent's browser page in a team's web app:
+/// `/agents/<slug>/subagents/<id>/browser`, nothing before or after.
+fn is_browser_path(path: &str) -> bool {
+    let seg: Vec<&str> = path.split('/').collect();
+    matches!(seg.as_slice(), ["", "agents", slug, "subagents", id, "browser"] if !slug.is_empty() && !id.is_empty())
 }
 
 /// Webviews that run the bundled pages and may call the app's commands.
@@ -772,22 +806,7 @@ fn create_team_window(app: &AppHandle, t: &Team, visible: bool) -> Option<Window
             }
         })
         .on_new_window(move |url, _features| {
-            // A page of the team's own origin (an attachment the app
-            // opens in a new tab, say) loads in this web view, where the
-            // session is; the browser has none. Loaded from another
-            // thread, as the desktop sign-in is: inside the callback
-            // that is refusing the new window, the load would run first.
-            // Any other link goes to the system browser.
-            if team_nav(&url, pin_new.lock().unwrap().as_ref()) == TeamNav::Allow {
-                let (app, id) = (app_new.clone(), id_new.clone());
-                std::thread::spawn(move || {
-                    if let Some(w) = app.get_webview(&web_label(&id)) {
-                        let _ = w.navigate(url);
-                    }
-                });
-            } else {
-                open_gated(&app_new, &gate_new, &url);
-            }
+            open_new_window(&app_new, &id_new, &pin_new, &gate_new, url);
             NewWindowResponse::Deny
         })
         .on_page_load(move |_w, payload| {
@@ -833,9 +852,11 @@ fn create_team_window(app: &AppHandle, t: &Team, visible: bool) -> Option<Window
     let w2 = window.clone();
     window.on_window_event(move |event| match event {
         tauri::WindowEvent::CloseRequested { api, .. } => {
-            // Closing a window hides it; the team keeps running.
+            // Closing a window hides it; the team keeps running. Its
+            // browser windows close with it.
             api.prevent_close();
             let _ = w2.hide();
+            close_browsers(&app2, &id);
             sync_dock(&app2, Some(w2.label()));
         }
         tauri::WindowEvent::Focused(f) => {
@@ -849,6 +870,108 @@ fn create_team_window(app: &AppHandle, t: &Team, visible: bool) -> Option<Window
         _ => {}
     });
     Some(window)
+}
+
+/// A new window a team's page asks for (`window.open`, a link with a
+/// target), always refused as a new window. A web subagent's browser
+/// page ([`is_browser_path`]) opens in its own window ([`show_browser`]);
+/// any other page of the team's own origin (an attachment the app opens
+/// in a new tab, say) loads in the team's web view, where the session
+/// is; the browser has none. Both from another thread, as the desktop
+/// sign-in is: inside the callback that is refusing the new window, the
+/// load would run first. Any other link goes to the system browser.
+fn open_new_window(app: &AppHandle, id: &str, pin: &Mutex<Option<url::Origin>>, gate: &Mutex<BrowserGate>, url: Url) {
+    if team_nav(&url, pin.lock().unwrap().as_ref()) != TeamNav::Allow {
+        open_gated(app, gate, &url);
+        return;
+    }
+    let (app, id) = (app.clone(), id.to_string());
+    std::thread::spawn(move || {
+        if is_browser_path(url.path()) {
+            show_browser(&app, &id, url);
+        } else if let Some(w) = app.get_webview(&web_label(&id)) {
+            let _ = w.navigate(url);
+        }
+    });
+}
+
+/// Opens team `id`'s browser window for `url`, a web subagent's browser
+/// page of the team's origin, or brings the one open for that page to
+/// the front. Its webview uses the app's one website data store, as the
+/// team's web view does, so the team's session cookie signs it in. It is
+/// pinned to the team's origin as the team's web view is (the same pin
+/// cell, `team_nav`, `frame_guard`; a gate of its own for the system
+/// browser), has no IPC (no capability names `browser-*`), and closes
+/// with the team's window. Called off the main thread.
+fn show_browser(app: &AppHandle, id: &str, url: Url) {
+    let label = browser_label(id, url.path());
+    if let Some(w) = app.get_webview_window(&label) {
+        let _ = w.show();
+        let _ = w.unminimize();
+        let _ = w.set_focus();
+        return;
+    }
+    to_dock(app);
+    let pin = pin_of(app, id);
+    let gate = Arc::new(Mutex::new(BrowserGate::default()));
+    gate.lock().unwrap().focus(true, Instant::now());
+    let (gate_nav, gate_new, gate_focus) = (gate.clone(), gate.clone(), gate);
+    let (app_nav, app_new) = (app.clone(), app.clone());
+    let (pin_nav, pin_new) = (pin.clone(), pin.clone());
+    let (label_nav, id_new) = (label.clone(), id.to_string());
+    let blank = Url::parse("about:blank").expect("a constant URL");
+    let built = WebviewWindowBuilder::new(app, &label, WebviewUrl::External(blank))
+        .title("Browser")
+        .inner_size(1320.0, 900.0)
+        .resizable(true)
+        .on_navigation(move |url| {
+            let pinned = pin_nav.lock().unwrap().clone();
+            match team_nav(url, pinned.as_ref()) {
+                TeamNav::Allow => true,
+                TeamNav::Browser => {
+                    open_gated(&app_nav, &gate_nav, url);
+                    false
+                }
+                // Signing in is the team window's: refused here.
+                TeamNav::DesktopLogin => {
+                    eprintln!("kivali: {label_nav} refused the team's sign-in page");
+                    false
+                }
+                TeamNav::Deny => false,
+            }
+        })
+        .on_new_window(move |url, _features| {
+            open_new_window(&app_new, &id_new, &pin_new, &gate_new, url);
+            NewWindowResponse::Deny
+        })
+        .build();
+    let w = match built {
+        Ok(w) => w,
+        Err(e) => return eprintln!("kivali: cannot open the {label} window: {e}"),
+    };
+    let (app_ev, label_ev) = (app.clone(), label.clone());
+    w.on_window_event(move |event| match event {
+        tauri::WindowEvent::Focused(f) => gate_focus.lock().unwrap().focus(*f, Instant::now()),
+        tauri::WindowEvent::Destroyed => sync_dock(&app_ev, Some(&label_ev)),
+        _ => {}
+    });
+    // The page loads once its frames are guarded (Windows): on the main
+    // thread the guard is in before the navigation is sent.
+    let web = w.as_ref().clone();
+    let guard = frame_guard(label, pin);
+    let _ = app.run_on_main_thread(move || {
+        platform::guard_frames(&web, guard);
+        let _ = web.navigate(url);
+    });
+}
+
+/// Closes team `id`'s browser windows.
+fn close_browsers(app: &AppHandle, id: &str) {
+    for (label, w) in app.webview_windows() {
+        if is_browser_label(&label) && team_of(&label) == Some(id) {
+            let _ = w.destroy();
+        }
+    }
 }
 
 /// Kivali is in the Dock only while one of its windows shows; with none,
@@ -1034,6 +1157,7 @@ pub fn close_team_window(app: &AppHandle, id: &str) {
     if let Some(w) = app.get_window(&team_label(id)) {
         let _ = w.destroy();
     }
+    close_browsers(app, id);
     sync_dock(app, Some(&team_label(id)));
     let sh = app.state::<Shell>();
     sh.pins.lock().unwrap().remove(id);
@@ -1666,5 +1790,41 @@ mod tests {
         assert!(!is_page_label("web-x") && !is_page_label("team-x"));
         assert_eq!(setup_title("welcome"), "Welcome to Kivali");
         assert_eq!(setup_title("new"), "New team");
+    }
+
+    #[test]
+    fn browser_paths() {
+        let is = |s: &str| is_browser_path(u(s).path());
+        assert!(is("http://127.0.0.1:8080/agents/a/subagents/b/browser"));
+        assert!(is("http://127.0.0.1:8080/agents/a/subagents/b/browser?tab=1#top"));
+        assert!(!is("http://127.0.0.1:8080/agents/a/subagents/b/browser/x"));
+        assert!(!is("http://127.0.0.1:8080/agents/a/subagents/b/browser/"));
+        assert!(!is("http://127.0.0.1:8080/agents/a/subagents/browser"));
+        assert!(!is("http://127.0.0.1:8080/agents//subagents/b/browser"));
+        assert!(!is("http://127.0.0.1:8080/agents/a/subagents//browser"));
+        assert!(!is("http://127.0.0.1:8080/x/agents/a/subagents/b/browser"));
+        assert!(!is("http://127.0.0.1:8080/agents/a/subagents/b"));
+        assert!(!is("http://127.0.0.1:8080/"));
+        assert!(!is("about:blank"));
+    }
+
+    #[test]
+    fn browser_labels() {
+        let path = "/agents/a/subagents/b/browser";
+        let l = browser_label("plainsong-3f2a", path);
+        assert_eq!(l, browser_label("plainsong-3f2a", path));
+        assert!(l.starts_with("browser-") && l.ends_with("-plainsong-3f2a"));
+        assert_eq!(l.len(), "browser-".len() + BROWSER_HASH_LEN + "-plainsong-3f2a".len());
+        assert_eq!(team_of(&l), Some("plainsong-3f2a"));
+        assert!(is_browser_label(&l) && !is_page_label(&l));
+        assert_ne!(l, browser_label("other-1b2c", path));
+        assert_ne!(l, browser_label("plainsong-3f2a", "/agents/a/subagents/c/browser"));
+        // Tauri allows alphanumerics, `-`, `/`, `:` and `_` in a label.
+        assert!(l.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-'));
+        assert_eq!(team_of("browser-x"), None);
+        assert_eq!(team_of("browser-0123456789abcdef"), None);
+        assert_eq!(team_of("browser-0123456789abcdef-"), None);
+        assert_eq!(team_of("browser-0123456789abcdeg-x"), None);
+        assert_eq!(team_of("browser-0123456789abcdef-x"), Some("x"));
     }
 }
