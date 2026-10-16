@@ -46,6 +46,13 @@ func goldenHome() Home {
 				Agent: &AgentRef{Slug: "tester", Name: "tester", State: AgentStateQuarantined},
 			},
 			{
+				ID: "web_sign_in:engineering-lead/bbbb2222", Kind: NeedKindWebSignIn, Title: "Engineering lead needs you to sign in to vendor.example",
+				From: PersonRef{Slug: "engineering-lead", Name: "Engineering lead"}, At: t1,
+				BodyMD:      "The page asks for a sign-in. Open the browser, sign in, then close the window; the task continues on its own.",
+				Attachments: []AttachmentRef{}, Packages: []SoftwarePackage{},
+				Subagent: &SubagentRef{Parent: "engineering-lead", ID: "bbbb2222", Description: "Check the build logs", Site: "vendor.example", Reason: WebSignInReasonSignIn},
+			},
+			{
 				ID: "messages/2026-09-28/0005-engineering-lead.md", Kind: NeedKindApproval, ProposalKind: &software,
 				Title: "Install software: PDF tools", From: PersonRef{Slug: "engineering-lead", Name: "Engineering lead"},
 				At: t1, BodyMD: "To read the PDF invoices.", Attachments: []AttachmentRef{},

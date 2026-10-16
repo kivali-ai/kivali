@@ -584,16 +584,65 @@ export const BrowserWindowEventTypeTab = "tab";
 export const BrowserWindowEventTypeEnd = "end";
 export type BrowserWindowEventType = typeof BrowserWindowEventTypeState | typeof BrowserWindowEventTypeTab | typeof BrowserWindowEventTypeEnd;
 /**
- * BrowserWindowEvent is a text message on the browser window's
- * WebSocket, GET /api/v1/agents/{slug}/subagents/{id}/browser. Frames
- * travel beside it as binary messages, one JPEG of the shown tab each,
- * and nothing goes the other way: the window watches.
+ * WebSignInReason is why a web task waits for a person in its browser
+ * window: the page wants a sign-in, a second factor, a CAPTCHA solved
+ * or a consent given.
+ */
+export const WebSignInReasonSignIn = "sign_in";
+export const WebSignInReasonMFA = "mfa";
+export const WebSignInReasonCaptcha = "captcha";
+export const WebSignInReasonConsent = "consent";
+export type WebSignInReason = typeof WebSignInReasonSignIn | typeof WebSignInReasonMFA | typeof WebSignInReasonCaptcha | typeof WebSignInReasonConsent;
+/**
+ * BrowserWindowEvent is a text message from core on the browser
+ * window's WebSocket, GET /api/v1/agents/{slug}/subagents/{id}/browser.
+ * Frames travel beside it as binary messages, one JPEG of the shown
+ * tab each. A state event also says whether the window takes input
+ * (Input: the task waits for a person to sign in, in a site session)
+ * and the session's site, so the page can flag a page off it.
  */
 export interface BrowserWindowEvent {
   type: BrowserWindowEventType;
   browser?: BrowserState;
+  input?: boolean;
+  site?: string;
   tab?: BrowserWindowTab;
   reason?: string;
+}
+/**
+ * BrowserWindowInput is a text message from the page on the browser
+ * window's WebSocket: one input event for the shown tab. Core forwards
+ * it to the browser only while the window takes input, and drops it
+ * otherwise.
+ */
+export interface BrowserWindowInput {
+  type: BrowserWindowInputType;
+  input: BrowserInput;
+}
+/**
+ * BrowserWindowInputType discriminates BrowserWindowInput.
+ */
+export type BrowserWindowInputType = string;
+export const BrowserWindowInputTypeInput: BrowserWindowInputType = "input";
+/**
+ * BrowserInput is one event in the shown tab, in the frame's own
+ * pixels. Kind is mouse (Action pressed, released, moved or wheel, with
+ * X, Y, Button and the wheel's deltas), key (Action down or up, with
+ * Key, Code and Text) or paste (Text). Modifiers is a bit set: 1 alt,
+ * 2 control, 4 meta, 8 shift.
+ */
+export interface BrowserInput {
+  kind: string;
+  action?: string;
+  x?: number /* float64 */;
+  y?: number /* float64 */;
+  button?: string;
+  delta_x?: number /* float64 */;
+  delta_y?: number /* float64 */;
+  key?: string;
+  code?: string;
+  text?: string;
+  modifiers?: number /* int */;
 }
 /**
  * BrowserWindowTab is the tab a browser window shows: its id within
@@ -702,7 +751,12 @@ export type ToolStatus = typeof ToolStatusRunning | typeof ToolStatusDone | type
 export const SubagentTaskStateRunning = "running";
 export const SubagentTaskStateDone = "done";
 export const SubagentTaskStateErrored = "errored";
-export type SubagentTaskState = typeof SubagentTaskStateRunning | typeof SubagentTaskStateDone | typeof SubagentTaskStateErrored;
+/**
+ * SubagentTaskStateWaitingForSignIn: a web task paused in a site
+ * session until a person has signed in through its browser window.
+ */
+export const SubagentTaskStateWaitingForSignIn = "waiting_for_sign_in";
+export type SubagentTaskState = typeof SubagentTaskStateRunning | typeof SubagentTaskStateDone | typeof SubagentTaskStateErrored | typeof SubagentTaskStateWaitingForSignIn;
 /**
  * MarkerKind is the boundary a marker row records. The four stored
  * kinds keep their on-disk spelling. rotation is never stored: the
@@ -981,6 +1035,21 @@ export interface SubagentMeta {
    * general task and once a web task has ended.
    */
   browser?: BrowserState;
+  /**
+   * Site is a web task's site: the registrable domain its session is
+   * locked to. Absent in the open session.
+   */
+  site?: string;
+  /**
+   * WaitReason is why a web task waits for a person in its browser
+   * window, while its state is waiting_for_sign_in.
+   */
+  wait_reason?: WebSignInReason;
+  /**
+   * Input is whether the browser window takes input right now: a
+   * web task waiting for sign-in in a site session.
+   */
+  input?: boolean;
 }
 /**
  * SubagentTranscript is GET /api/v1/agents/{slug}/subagents/{id}.
@@ -1308,7 +1377,25 @@ export const NeedKindNeedsHelp = "needs_help";
  * the proposal page (ReviewPath).
  */
 export const NeedKindProposal = "proposal";
-export type NeedKind = typeof NeedKindApproval | typeof NeedKindNotification | typeof NeedKindAssignment | typeof NeedKindNeedsHelp | typeof NeedKindProposal;
+/**
+ * NeedKindWebSignIn: a web task waits for you to sign in through
+ * its browser window; open the browser (Subagent), sign in, close
+ * the window.
+ */
+export const NeedKindWebSignIn = "web_sign_in";
+export type NeedKind = typeof NeedKindApproval | typeof NeedKindNotification | typeof NeedKindAssignment | typeof NeedKindNeedsHelp | typeof NeedKindProposal | typeof NeedKindWebSignIn;
+/**
+ * SubagentRef is the web task a web_sign_in row is about: the task's
+ * page is /agents/{parent}/subagents/{id}, its browser window the
+ * same path with /browser.
+ */
+export interface SubagentRef {
+  parent: string;
+  id: string;
+  description: string;
+  site: string;
+  reason: WebSignInReason;
+}
 /**
  * ProposalKind is which change a proposal makes.
  */
@@ -1355,7 +1442,12 @@ export interface NeedItem {
    */
   agent?: AgentRef;
   /**
-   * RawURL opens the message file; absent on a needs-help row.
+   * Subagent is the web task a web_sign_in row is about.
+   */
+  subagent?: SubagentRef;
+  /**
+   * RawURL opens the message file; absent on a needs-help row and a
+   * web_sign_in row.
    */
   raw_url?: string;
 }

@@ -239,6 +239,13 @@ type SubagentSpec struct {
 	Session  string   `json:"session,omitempty"`
 	StartURL string   `json:"start_url,omitempty"`
 	Files    []string `json:"files,omitempty"`
+	// Site is a site session's registrable domain, empty in the open
+	// session: the web subagent's prompt names it.
+	Site string `json:"site,omitempty"`
+	// Resume is the session id an earlier run of this task reported
+	// (TurnEvent.SessionID); the run continues that session and
+	// UserPrompt is its next message. Empty starts a fresh run.
+	Resume string `json:"resume,omitempty"`
 }
 
 // Structured reports whether the task carries a schema, so its answer
@@ -467,6 +474,11 @@ type TurnEvent struct {
 	CacheCreateTokens int     `json:"cache_create_tokens,omitempty"`
 	Model             string  `json:"model,omitempty"`
 	CostUSD           float64 `json:"cost_usd,omitempty"`
+	// SessionID is the provider's id for the run's session, on the
+	// first event that knows it (provider.StreamEvent.SessionID); a
+	// later subagent turn with SubagentSpec.Resume set to it continues
+	// the session.
+	SessionID string `json:"session_id,omitempty"`
 
 	// ByModel splits the token counts above by the model that served
 	// each call, in the order they answered. Present only when a turn

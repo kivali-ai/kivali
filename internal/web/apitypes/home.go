@@ -66,7 +66,22 @@ const (
 	// NeedKindProposal: an approval that changes the org; review it on
 	// the proposal page (ReviewPath).
 	NeedKindProposal NeedKind = "proposal"
+	// NeedKindWebSignIn: a web task waits for you to sign in through
+	// its browser window; open the browser (Subagent), sign in, close
+	// the window.
+	NeedKindWebSignIn NeedKind = "web_sign_in"
 )
+
+// SubagentRef is the web task a web_sign_in row is about: the task's
+// page is /agents/{parent}/subagents/{id}, its browser window the
+// same path with /browser.
+type SubagentRef struct {
+	Parent      string          `json:"parent"`
+	ID          string          `json:"id"`
+	Description string          `json:"description"`
+	Site        string          `json:"site"`
+	Reason      WebSignInReason `json:"reason"`
+}
 
 // ProposalKind is which change a proposal makes.
 type ProposalKind string
@@ -105,7 +120,10 @@ type NeedItem struct {
 	Packages []SoftwarePackage `json:"packages"`
 	// Agent is the agent a needs-help row is about.
 	Agent *AgentRef `json:"agent,omitempty"`
-	// RawURL opens the message file; absent on a needs-help row.
+	// Subagent is the web task a web_sign_in row is about.
+	Subagent *SubagentRef `json:"subagent,omitempty"`
+	// RawURL opens the message file; absent on a needs-help row and a
+	// web_sign_in row.
 	RawURL *string `json:"raw_url,omitempty"`
 }
 

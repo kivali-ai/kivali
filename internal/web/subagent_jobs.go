@@ -41,6 +41,11 @@ import (
 const (
 	subagentJobQueued    = "queued"
 	subagentJobRunning   = "running"
+	// subagentJobWaiting: a web task in a site session paused by
+	// web_wait_for_sign_in until a person has signed in through its
+	// browser window; its run has ended and resumes afterwards. Not
+	// terminal.
+	subagentJobWaiting   = "waiting_for_sign_in"
 	subagentJobCompleted = "completed"
 	subagentJobFailed    = "failed"
 	subagentJobCancelled = "cancelled"
@@ -62,6 +67,15 @@ type subagentJob struct {
 	State     string
 	StartedAt time.Time
 	EndedAt   time.Time
+
+	// Site is a web task's site session's registrable domain, empty in
+	// the open session. WaitReason and WaitSince describe a task in
+	// subagentJobWaiting. CLISession is the session id the task's run
+	// reported, what a resumed run continues.
+	Site       string
+	WaitReason string
+	WaitSince  time.Time
+	CLISession string
 
 	// Depth is how far below the durable agent this job sits. 1 is a
 	// subagent the agent dispatched itself; 2 is a worker dispatched
@@ -192,6 +206,17 @@ func (s *SubagentService) updateJob(id string, fn func(*subagentJob)) bool {
 // listJobs returns copies of parent's jobs, newest dispatch first.
 // Terminal jobs are included: an agent waking to a result wants to see
 // what else finished while it was away, not just what is still moving.
+// recordCLISession keeps the session id a task's run reported, so a
+// later run of the task can continue it.
+func (s *SubagentService) recordCLISession(id, sessionID string) {
+	if sessionID == "" {
+		return
+	}
+	s.updateJob(id, func(j *subagentJob) {
+		j.CLISession = sessionID
+	})
+}
+
 func (s *SubagentService) listJobs(parent string) []subagentJob {
 	s.jobsMu.Lock()
 	defer s.jobsMu.Unlock()

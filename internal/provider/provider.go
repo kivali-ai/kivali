@@ -128,6 +128,10 @@ type SubagentRequest struct {
 	RunDir         string    // the driver may keep its own files for this run here (config, logs)
 	Stderr         io.Writer // the subprocess's stderr, when the driver has one; nil discards
 	Purpose, Agent string    // usage metadata, as on CompleteRequest
+	// Resume is the session id of an earlier run of this subagent to
+	// continue, as its stream's events reported it; Prompt is then the
+	// next user message in that session. Empty starts a fresh session.
+	Resume string
 }
 
 // Stop reasons a driver reports on CompleteResponse.StopReason (and a
@@ -485,6 +489,12 @@ type StreamEvent struct {
 	// models between calls, so a value that only arrives at the end
 	// can label the earlier text wrong.
 	Model string
+
+	// SessionID is the driver's id for the session this run belongs
+	// to, when the transport has one (the CLI assigns it); a later
+	// SubagentRequest.Resume with it continues the session. Empty on
+	// transports without sessions.
+	SessionID string
 
 	// tool_result payload (StreamToolResult events only).
 	ToolResultText    string

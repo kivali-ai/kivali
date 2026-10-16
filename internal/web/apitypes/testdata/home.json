@@ -102,6 +102,26 @@
       }
     },
     {
+      "id": "web_sign_in:engineering-lead/bbbb2222",
+      "kind": "web_sign_in",
+      "title": "Engineering lead needs you to sign in to vendor.example",
+      "from": {
+        "slug": "engineering-lead",
+        "name": "Engineering lead"
+      },
+      "at": "2026-09-20T17:00:00Z",
+      "body_md": "The page asks for a sign-in. Open the browser, sign in, then close the window; the task continues on its own.",
+      "attachments": [],
+      "packages": [],
+      "subagent": {
+        "parent": "engineering-lead",
+        "id": "bbbb2222",
+        "description": "Check the build logs",
+        "site": "vendor.example",
+        "reason": "sign_in"
+      }
+    },
+    {
       "id": "messages/2026-09-28/0005-engineering-lead.md",
       "kind": "approval",
       "proposal_kind": "software_install",
