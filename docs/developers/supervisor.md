@@ -521,8 +521,8 @@ boot and 12 s on a later one; a clean `down` under 5 s.
 
 - No test boots a VM on Hyper-V: GitHub-hosted Windows runners may not
   offer Hyper-V under nested virtualisation.
-- No Authenticode signing, and no Defender check of the installer (a
-  `root.vhdx` holding the guest binary is not flagged).
+- No Defender check of the installer (a `root.vhdx` holding the guest
+  binary is not flagged).
 - No end-to-end test covers the desktop GUI on Windows.
 - The guest's address can change between boots: the Default Switch's
   subnet changes at a host reboot, and its lease can change while a

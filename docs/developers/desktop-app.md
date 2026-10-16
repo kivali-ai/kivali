@@ -1560,9 +1560,11 @@ asks for elevation (`RequestExecutionLevel admin`), installs into
 (`src-tauri/windows/installer-*.bmp`, rendered from the app icon), and
 stores its files uncompressed (`compression: none`): the root disk is
 a squashfs already compressed with zstd, so NSIS's default LZMA spent
-minutes extracting a gigabyte it could not shrink. What the installer
-cannot brand without an Authenticode certificate is the elevation
-prompt, which names the publisher as unknown until one signs it.
+minutes extracting a gigabyte it could not shrink. A release build
+Authenticode-signs the installer and its binaries
+([releasing.md](releasing.md), "What the workflow does"), so the
+elevation prompt names the publisher; a debug or trial build is
+unsigned, and the prompt names the publisher as unknown.
 
 Its hooks (`src-tauri/windows/installer-hooks.nsh`, Tauri's
 `NSIS_HOOK_*` macros) look after the broker, the service
@@ -1750,9 +1752,6 @@ limit is 2 GB.
 - **Code with no caller**: `updates.rs`'s labels and badge, the
   commands `open_team`, `open_team_page`, `open_settings` and
   `reorder_teams` (Settings cannot reorder teams).
-- **No Windows release.** No Windows build is code-signed (no
-  Authenticode certificate) and `latest.json` carries no
-  `windows-x86_64` entry.
 
 **Covered by unit tests only, not exercised end to end**
 

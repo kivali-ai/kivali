@@ -20,14 +20,14 @@ Kivali Desktop runs on macOS and Windows, and works the same way on both. On Lin
 
 On macOS:
 
-1. Download the latest `Kivali_<version>_aarch64.dmg` from the [releases page](https://github.com/kivali-ai/kivali/releases/latest).
+1. Download Kivali for macOS from [kivali.ai/download/macos](https://kivali.ai/download/macos).
 2. Open the `.dmg` and drag **Kivali** into **Applications**.
 3. Open Kivali from Applications.
 
 On Windows:
 
 1. Turn on Hyper-V if it is not on already: open **Turn Windows features on or off**, select **Hyper-V** and restart. Your teams run in Hyper-V virtual machines.
-2. Download the latest `Kivali_<version>_x64-setup.exe` from the [releases page](https://github.com/kivali-ai/kivali/releases/latest) and run it. It asks for administrator rights once, to install the service that runs your teams' virtual machines.
+2. Download Kivali for Windows from [kivali.ai/download/windows](https://kivali.ai/download/windows) and run the installer. It asks for administrator rights once, to install the service that runs your teams' virtual machines.
 3. Open Kivali from the Start menu.
 
 The app lives in the menu bar on macOS and in the notification area on Windows. Closing its windows leaves it running there; **Quit Kivali** pauses your teams. See [Kivali Desktop](desktop-app.md) for the full tour.

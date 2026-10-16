@@ -3,7 +3,7 @@
 One version number cuts one GitHub release. The release carries every
 artifact: the four container images (per architecture), the Helm chart,
 the VM images, Kivali Desktop for macOS (a signed, notarized dmg) and
-Windows (an NSIS installer), and the two feeds that tell running
+Windows (a signed NSIS installer), and the two feeds that tell running
 installs about it. [deployment.md](deployment.md) covers the orgs that
 run it (the supervisor installs and upgrades them); this document covers
 producing it. A fork or a new maintainer sets up the items in "Before
@@ -112,8 +112,8 @@ what it skips:
 
 - No secrets are read. The macOS app is ad-hoc signed and not notarized
   (macOS blocks its first launch until the user allows it in System
-  Settings, Privacy & Security); the Windows installer is the same as a
-  release's, which is never Authenticode-signed.
+  Settings, Privacy & Security); the Windows installer is unsigned
+  (SmartScreen warns on its first run).
 - No updater artifacts and no `latest.json`: a dev build does not update
   itself. Being a pre-release, it is skipped by `/releases/latest`, so
   no installed app or org is ever offered it.
@@ -158,7 +158,7 @@ Jobs, in order (`needs` in parentheses):
 | `licenses` (verify) | ubuntu-latest | `THIRD_PARTY_LICENSES.txt`, the notices of everything a release ships (`make third-party-licenses`) |
 | `feed` (images, chart) | ubuntu-latest | `release.json` (`scripts/release-json.sh`) |
 | `desktop-macos` (verify, images) | macos-15 (Apple Silicon) | `Kivali_X.Y.Z_aarch64.dmg`, `Kivali.app.tar.gz`, `Kivali.app.tar.gz.sig` |
-| `desktop-windows` (verify, images) | windows-latest (x64) | `Kivali_X.Y.Z_x64-setup.exe` and its `.sig` |
+| `desktop-windows` (verify, images) | windows-latest (x64) | `Kivali_X.Y.Z_x64-setup.exe`, Authenticode-signed, and its `.sig` |
 | `publish` (all, plus `checks` and `nightly`) | ubuntu-latest | `latest.json` (both platforms, `scripts/latest-json.sh --require`); `SOURCES.md` (the arm64 VM's, with the images' Debian packages and the egress proxy's base appended), `vm-amd64-SOURCES.md` and `vm-amd64-packages.txt`; the release notes (`scripts/release-notes.sh`); one release: created as a draft, every asset uploaded, then published |
 
 Choices worth knowing:
@@ -200,9 +200,18 @@ Choices worth knowing:
   (`make desktop-release-bundle`, `tauri bundle`). Nothing is written to
   `GITHUB_ENV`, so no later step or action sees a secret.
 - **Windows** builds the per-machine NSIS installer, which is also the
-  updater's artifact. It is not Authenticode-signed, so SmartScreen warns
-  on its first run; updates are verified by the updater's signature
-  either way.
+  updater's artifact. tauri signs the sidecar, `Kivali.exe`, NSIS's
+  plugin DLLs, the uninstaller and the installer through its custom sign
+  command, `desktop-app/scripts/sign-windows.ps1`: the Windows SDK's
+  signtool with Microsoft's Artifact Signing dlib (the
+  `Microsoft.ArtifactSigning.Client` package, which the job downloads),
+  which fetches a short-lived certificate from the account's certificate
+  profile for each signature and timestamps it with Microsoft's
+  authority, authenticating with the `AZURE_*` secrets; the build holds
+  no key and no certificate. SmartScreen's reputation follows the
+  validated identity and grows with installs, so it may still warn on a
+  new identity's first releases; updates are verified by the updater's
+  signature either way.
 - **macOS** signs with the Developer ID certificate from an imported
   temporary keychain, on the keychain search list. The step fails at once,
   naming the problem, unless `APPLE_SIGNING_IDENTITY` is a valid
@@ -333,9 +342,10 @@ push to `main`).
 ## Secrets
 
 Repository secrets (Settings, Secrets and variables, Actions). The macOS
-desktop job needs all of them but one of the notarization options; the
-Windows one needs the two `TAURI_SIGNING_*`. `publish` uses the automatic
-`GITHUB_TOKEN`.
+desktop job needs the `APPLE_*` (but one of the notarization options)
+and the two `TAURI_SIGNING_*`; the Windows one the `AZURE_*`, the
+`ARTIFACT_SIGNING_*` and the two `TAURI_SIGNING_*`. `publish` uses the
+automatic `GITHUB_TOKEN`.
 
 | Secret | What it is | Where it comes from |
 | --- | --- | --- |
@@ -353,6 +363,12 @@ Windows one needs the two `TAURI_SIGNING_*`. `publish` uses the automatic
 | `APPLE_API_KEY_P8` | the downloaded `AuthKey_<id>.p8`, base64 | `base64 -i AuthKey_X.p8 \| pbcopy` |
 | `TAURI_SIGNING_PRIVATE_KEY` | the updater's private key (the file's contents) | `npx tauri signer generate -w kivali-updater.key` in `desktop-app`; keep the file somewhere safe |
 | `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | its password (may be empty) | chosen at generation |
+| `AZURE_TENANT_ID` | the Microsoft Entra tenant of the Azure subscription that holds the Artifact Signing account | Azure portal, Microsoft Entra ID, Overview: Tenant ID |
+| `AZURE_CLIENT_ID` | an app registration in that tenant, assigned the Artifact Signing Certificate Profile Signer role on the account | Microsoft Entra ID, App registrations, New registration: its Application (client) ID; then the account's Access control (IAM), Add role assignment, to that application |
+| `AZURE_CLIENT_SECRET` | that app registration's client secret (it expires, after 24 months at most; a new one replaces this secret) | the registration's Certificates & secrets, New client secret: the Value, shown once |
+| `ARTIFACT_SIGNING_ENDPOINT` | the account's regional endpoint, `https://<region>.codesigning.azure.net` | the region chosen when the account was created, looked up in the region table of Microsoft's Artifact Signing quickstart (East US is `https://eus.codesigning.azure.net`) |
+| `ARTIFACT_SIGNING_ACCOUNT` | the Artifact Signing account name | Azure portal, Artifact Signing Accounts |
+| `ARTIFACT_SIGNING_PROFILE` | the certificate profile name: a Public Trust profile bound to the completed identity validation, whose subject is what the signature shows | the account's Certificate profiles |
 
 Not a secret: the **public** half (`kivali-updater.key.pub`) is in
 `desktop-app/src-tauri/tauri.conf.json` under `plugins.updater.pubkey`
@@ -418,6 +434,19 @@ belongs on the app; `spctl` on the dmg checks the dmg's own signature
 "rejected, source=Unnotarized Developer ID", notarize and staple the dmg
 too: `xcrun notarytool submit ... --wait` then `xcrun stapler staple` on it,
 and re-upload it with `gh release upload --clobber`.
+
+On Windows, download the installer and check its signature in PowerShell:
+
+```
+Get-AuthenticodeSignature .\Kivali_X.Y.Z_x64-setup.exe | Format-List Status, SignerCertificate
+# expect: Status Valid; the certificate's Subject names the publisher
+```
+
+(`osslsigncode verify Kivali_X.Y.Z_x64-setup.exe`, from Homebrew, checks
+the same on a Mac.) The elevation prompt at install names that publisher.
+SmartScreen may still show "Windows protected your PC" until the
+certificate has earned reputation from installs; that is not a signing
+failure.
 
 ## A run failed before publish
 
@@ -510,6 +539,11 @@ What a maintainer sets up before a tag can publish a complete release:
   endpoint and the `release.json` URLs assume it.
 - **The Apple Developer ID certificate and notarization credentials**, as
   the repository secrets in "Secrets".
+- **The Azure Artifact Signing account** (Basic), with a completed Public
+  Trust identity validation, a Public Trust certificate profile and an
+  app registration holding the Artifact Signing Certificate Profile
+  Signer role on the account, as the `AZURE_*` and `ARTIFACT_SIGNING_*`
+  secrets in "Secrets".
 - **The updater keypair**: the private key and its password as secrets,
   the public key committed to `tauri.conf.json` (see "Secrets").
 - **The `ubuntu-24.04-arm` runner** for the arm64 images job
