@@ -43,10 +43,9 @@ LABEL org.opencontainers.image.licenses="Apache-2.0"
 # - Mesa's llvmpipe: libgallium, the libLLVM it links and the libz3
 #   libLLVM links, 180 MB. A pod has no GPU, and Chromium draws with the
 #   SwiftShader it ships (/usr/lib/chromium/libvk_swiftshader.so):
-#   headless always; headed under Xvfb its GPU process fails to find a
-#   GL driver and Chromium renders in software, as it would on llvmpipe,
-#   which it blocklists for WebGL (--use-angle=swiftshader gives a headed
-#   Chromium SwiftShader directly). libgbm, which Chromium links, loads
+#   headless; headed under Xvfb, `kivali browser` passes --disable-gpu
+#   and Chromium renders in software, as it would on llvmpipe, which it
+#   blocklists for WebGL. libgbm, which Chromium links, loads
 #   Mesa only to open a GPU device. The packages stay installed for the
 #   dependencies they satisfy.
 # - The Vulkan validation layer, a debugging aid Chromium loads only
