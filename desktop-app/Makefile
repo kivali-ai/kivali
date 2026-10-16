@@ -2,8 +2,9 @@
 #
 #   make dev          run the app against DEV_CONFIG_DIR (default: a -dev config dir)
 #   make build        release bundles + updater artifacts (needs the real supervisor):
-#                     .app + .dmg on macOS, the per-machine NSIS installer on Windows
-#                     (tauri.windows.conf.json; it registers the broker service)
+#                     .app + .dmg on macOS, signed and notarized; the per-machine NSIS
+#                     installer on Windows (tauri.windows.conf.json; it registers the
+#                     broker service), Authenticode-signed through scripts/sign-windows.ps1
 #   make build-debug  debug bundle under src-tauri/target/debug/bundle (macOS: .app, ad-hoc signed;
 #                     Windows: NSIS); needs no updater key (without one, no updater artifacts)
 #   make build-trial  release-profile bundle for a trial install, no updater artifacts, no keys checked
@@ -86,6 +87,19 @@ ifeq ($(TAURI_SIGNING_PRIVATE_KEY)$(wildcard $(UPDATER_KEY)),)
   DEBUG_NO_UPDATER := --config '{"bundle":{"createUpdaterArtifacts":false}}'
 endif
 
+# Authenticode: on Windows, build-bundle hands tauri a custom sign
+# command, scripts/sign-windows.ps1, which signs every binary tauri
+# bundles (the sidecar, Kivali.exe, the uninstaller, the installer)
+# through SSL.com's eSigner with the ESIGNER_* credentials in the
+# environment (docs/developers/releasing.md, "Secrets"). Only when they
+# are there: without them release-preflight refuses, and ALLOW_DEV_KEYS=1
+# bundles unsigned. build-debug and build-trial never sign.
+ifneq ($(EXE),)
+ifneq ($(ESIGNER_USERNAME),)
+  WINDOWS_SIGN := --config '{"bundle":{"windows":{"signCommand":"powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/sign-windows.ps1 %1"}}}'
+endif
+endif
+
 # The VM image (`make -C vm image`; ARCH=amd64 for Windows) is bundled
 # as the `vm` resource when its root disk has been built: on Windows
 # root.vhdx (installed as <install dir>\vm, beside Kivali.exe), elsewhere
@@ -153,9 +167,10 @@ dev: deps sidecar
 	KIVALI_CONFIG_DIR="$(DEV_CONFIG_DIR)" npx tauri dev
 
 # A release build refuses development signing material: the updater key
-# in .keys/ (private, or its public half still in tauri.conf.json) and
-# the ad-hoc identity. ALLOW_DEV_KEYS=1 overrides, for a local trial only.
-# build-debug stays permissive.
+# in .keys/ (private, or its public half still in tauri.conf.json), the
+# ad-hoc identity on macOS, missing eSigner credentials on Windows.
+# ALLOW_DEV_KEYS=1 overrides, for a local trial only. build-debug stays
+# permissive.
 release-preflight:
 	@# One version: the chart and every desktop
 	@# file must agree (scripts/version-check.sh; never overridable).
@@ -176,6 +191,10 @@ release-preflight:
 			if { [ -z "$$APPLE_ID" ] || [ -z "$$APPLE_PASSWORD" ] || [ -z "$$APPLE_TEAM_ID" ]; } && { [ -z "$$APPLE_API_KEY" ] || [ -z "$$APPLE_API_ISSUER" ] || [ -z "$$APPLE_API_KEY_PATH" ]; }; then \
 				p="$$p\n  - no notarization credentials, so the app would ship un-notarized (set APPLE_ID + APPLE_PASSWORD + APPLE_TEAM_ID, or APPLE_API_KEY + APPLE_API_ISSUER + APPLE_API_KEY_PATH)"; fi; \
 		fi; \
+		if [ -n "$(EXE)" ]; then \
+			if [ -z "$$ESIGNER_USERNAME" ] || [ -z "$$ESIGNER_PASSWORD" ] || [ -z "$$ESIGNER_TOTP_SECRET" ] || [ -z "$$CODE_SIGN_TOOL_PATH" ]; then \
+				p="$$p\n  - no Windows signing credentials, so the installer would ship unsigned (set ESIGNER_USERNAME, ESIGNER_PASSWORD, ESIGNER_TOTP_SECRET and CODE_SIGN_TOOL_PATH; docs/developers/releasing.md, Secrets)"; fi; \
+		fi; \
 		if [ -n "$$p" ]; then \
 			printf "refusing a release build with development signing material:$$p\nset ALLOW_DEV_KEYS=1 to build anyway (never for distribution); make build-debug needs none of this\n" >&2; exit 1; fi; \
 	fi
@@ -186,9 +205,10 @@ release-preflight:
 # the sidecar and the license notices; it needs no secret. build-bundle
 # packages what that built, running only the tauri CLI and the
 # platform's signing tools: on macOS it signs, notarizes and staples the
-# app and builds the dmg, and it signs the updater artifacts. `build` is
-# both; the release workflow runs them as separate steps and hands the
-# secrets to the second alone.
+# app and builds the dmg; on Windows it signs the binaries and the
+# installer through scripts/sign-windows.ps1 (WINDOWS_SIGN); on both it
+# signs the updater artifacts. `build` is both; the release workflow
+# runs them as separate steps and hands the secrets to the second alone.
 build: release-preflight build-compile build-bundle
 
 build-compile: deps sidecar licenses
@@ -199,7 +219,7 @@ build-bundle: release-preflight
 		echo "no updater key: set TAURI_SIGNING_PRIVATE_KEY or run npx tauri signer generate -w .keys/updater.key" >&2; exit 1; fi
 	TAURI_SIGNING_PRIVATE_KEY="$${TAURI_SIGNING_PRIVATE_KEY:-$(UPDATER_KEY)}" \
 	TAURI_SIGNING_PRIVATE_KEY_PASSWORD="$${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}" \
-		npx tauri bundle $(VM_BUNDLE) $(LICENSES_BUNDLE)
+		npx tauri bundle $(VM_BUNDLE) $(LICENSES_BUNDLE) $(WINDOWS_SIGN)
 
 build-debug: deps sidecar licenses
 ifneq ($(DEBUG_NO_UPDATER),)

@@ -738,7 +738,7 @@ desktop-release-compile: desktop-release-check
 
 desktop-release-bundle: desktop-release-check
 	@echo "desktop-release: signing environment (names only; values are never printed):"
-	@for v in APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID APPLE_API_KEY APPLE_API_ISSUER APPLE_API_KEY_PATH TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD; do \
+	@for v in APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID APPLE_API_KEY APPLE_API_ISSUER APPLE_API_KEY_PATH ESIGNER_USERNAME ESIGNER_PASSWORD ESIGNER_TOTP_SECRET ESIGNER_CREDENTIAL_ID CODE_SIGN_TOOL_PATH TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD; do \
 		if [ -n "$${!v}" ]; then echo "  set      $$v"; else echo "  not set  $$v"; fi; done
 	@mkdir -p dist
 ifneq ($(filter 1 true,$(DEV)),)
