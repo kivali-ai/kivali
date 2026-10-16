@@ -77,6 +77,66 @@ describe('the task page: its header', () => {
   });
 });
 
+describe('the task page: its browser window', () => {
+  const web = (browser?: SubagentTranscript['meta']['browser']): SubagentTranscript => {
+    const t = running(firstRows);
+    return { ...t, meta: { ...t.meta, kind: 'web', session: 'open', ...(browser ? { browser } : {}) } };
+  };
+  const caption = /Browser starting|The browser is stopped/;
+
+  it('offers Open browser on a running web task and opens the window route under the task’s own name', async () => {
+    const open = vi.fn(() => null);
+    vi.stubGlobal('open', open);
+    const user = userEvent.setup();
+    renderTabs(PATH, { routes: { ['GET ' + API]: web('running') } });
+    await user.click(await page().findByRole('button', { name: 'Open browser' }));
+    expect(open).toHaveBeenCalledWith(PATH + '/browser', 'kivali-browser-' + ID, 'noopener,noreferrer,width=1320,height=900');
+    expect(screen.queryByText(caption)).toBeNull();
+  });
+
+  it('has no Open browser on a general task', async () => {
+    const t = running(firstRows);
+    renderTabs(PATH, { routes: { ['GET ' + API]: { ...t, meta: { ...t.meta, kind: 'general', session: undefined } } } });
+    await page().findByRole('heading', { name: 'Check the build logs' });
+    expect(page().queryByRole('button', { name: 'Open browser' })).toBeNull();
+  });
+
+  it('has no Open browser once a web task has ended', async () => {
+    // The fixture is an ended web task.
+    renderTabs(PATH, { routes: { ['GET ' + API]: subagentTranscript } });
+    await page().findByRole('heading', { name: 'Check the build logs' });
+    expect(page().queryByRole('button', { name: 'Open browser' })).toBeNull();
+  });
+
+  it('says the browser is starting', async () => {
+    renderTabs(PATH, { routes: { ['GET ' + API]: web('starting') } });
+    expect(await page().findByText('Browser starting')).toBeInTheDocument();
+    expect(page().getByRole('button', { name: 'Open browser' })).toBeEnabled();
+  });
+
+  it('says a stopped browser starts when the window opens', async () => {
+    renderTabs(PATH, { routes: { ['GET ' + API]: web('stopped') } });
+    expect(await page().findByText('The browser is stopped; opening the window starts it')).toBeInTheDocument();
+    expect(page().getByRole('button', { name: 'Open browser' })).toBeEnabled();
+  });
+
+  it('keeps the button with no caption when the browser state is absent', async () => {
+    renderTabs(PATH, { routes: { ['GET ' + API]: web() } });
+    expect(await page().findByRole('button', { name: 'Open browser' })).toBeEnabled();
+    expect(screen.queryByText(caption)).toBeNull();
+  });
+
+  it('follows the browser state as the task’s meta changes', async () => {
+    let body = web('starting');
+    const h = renderTabs(PATH, { routes: { ['GET ' + API]: () => body } });
+    expect(await page().findByText('Browser starting')).toBeInTheDocument();
+    body = web('running');
+    act(() => h.streams[0]?.emit('meta', {}));
+    await waitFor(() => expect(screen.queryByText('Browser starting')).toBeNull());
+    expect(page().getByRole('button', { name: 'Open browser' })).toBeEnabled();
+  });
+});
+
 describe('the task page: following a running task', () => {
   it('opens no stream for a task that has finished', async () => {
     const h = renderTabs(PATH, { routes: { ['GET ' + API]: subagentTranscript } });

@@ -1,0 +1,102 @@
+/* A web task's browser window: the whole viewport, a bar over a letterboxed live view. */
+.app-bw {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-page);
+  color: var(--text-primary);
+}
+.app-bw-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-4);
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--border-hairline);
+  min-width: 0;
+}
+.app-bw-where,
+.app-bw-about {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.app-bw-where {
+  flex: 1 1 320px;
+}
+.app-bw-about {
+  flex: 0 1 auto;
+  align-items: center;
+}
+.app-bw-host,
+.app-bw-url,
+.app-bw-title,
+.app-bw-task {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.app-bw-host {
+  flex: none;
+  max-width: 100%;
+}
+.app-bw-url {
+  flex: 1 1 0;
+}
+.app-bw-title {
+  max-width: calc(var(--space-8) * 10);
+}
+.app-bw-task {
+  max-width: calc(var(--space-8) * 7.5);
+}
+.app-bw-view {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--line);
+}
+/* The frame keeps its own aspect ratio at any size; the view's background shows round it. */
+.app-bw-frame {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.app-bw-status {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4);
+  text-align: center;
+  pointer-events: none;
+}
+.app-bw-status > * {
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--surface-card);
+  box-shadow: var(--shadow-sm);
+}
+.app-bw-note {
+  margin: auto;
+  padding: var(--space-4);
+  max-width: calc(var(--space-8) * 15);
+}
+@media (max-width: 640px) {
+  .app-bw-where {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0;
+  }
+  .app-bw-title,
+  .app-bw-task {
+    max-width: 50%;
+  }
+}
