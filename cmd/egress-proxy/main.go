@@ -65,7 +65,13 @@ func main() {
 
 	servers := []*http.Server{newProxyServer(*listen, &proxy{allowed: allow.Allowed, label: "allowlist"})}
 	if *openListen != "" {
-		servers = append(servers, newProxyServer(*openListen, &proxy{allowed: func(string) bool { return true }, label: "open"}))
+		// Any host, but only on the public internet: never this pod,
+		// the cluster or the cloud's metadata service.
+		servers = append(servers, newProxyServer(*openListen, &proxy{
+			allowed: func(string) bool { return true },
+			label:   "open",
+			dial:    guardedDialer(dialTimeout).DialContext,
+		}))
 	}
 	go func() {
 		sigs := make(chan os.Signal, 1)
@@ -100,11 +106,23 @@ func newProxyServer(addr string, h *proxy) *http.Server {
 	}
 }
 
-// proxy forwards what allowed admits. label names the listener in
-// the log, so a denied host can be told from an open one.
+// proxy forwards what allowed admits, dialing upstreams with dial.
+// label names the listener in the log, so a denied host can be told
+// from an open one.
 type proxy struct {
 	allowed func(host string) bool
 	label   string
+	dial    dialFunc
+}
+
+// dialer is how this proxy reaches upstreams: dial when set, else a
+// plain dialer. The allowlisted listener dials whatever the allowlist
+// names; the open one dials only public addresses (guard.go).
+func (p *proxy) dialer() dialFunc {
+	if p.dial != nil {
+		return p.dial
+	}
+	return (&net.Dialer{Timeout: dialTimeout}).DialContext
 }
 
 // ServeHTTP dispatches CONNECT (HTTPS tunnel) and plain HTTP requests
@@ -131,7 +149,7 @@ func (p *proxy) handleConnect(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Printf("ALLOW CONNECT %s (%s)", host, p.label)
 
-	upstream, err := net.DialTimeout("tcp", host, dialTimeout)
+	upstream, err := p.dialer()(r.Context(), "tcp", host)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("upstream dial: %v", err), http.StatusBadGateway)
 		return
@@ -182,7 +200,7 @@ func (p *proxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	outReq.Host = r.Host
 	tr := &http.Transport{
 		Proxy:             nil,
-		DialContext:       (&net.Dialer{Timeout: dialTimeout}).DialContext,
+		DialContext:       p.dialer(),
 		DisableKeepAlives: true, // simpler lifecycle in a short-lived proxy
 	}
 	resp, err := tr.RoundTrip(outReq)

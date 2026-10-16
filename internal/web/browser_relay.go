@@ -16,7 +16,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"os"
 	"path"
 	"strings"
 
@@ -129,18 +128,13 @@ func (s *SubagentService) sendTaskFile(ctx context.Context, j subagentJob, name 
 	if modelPath == "" {
 		return refuse(fmt.Sprintf("%q is not one of this task's files (%s)", name, strings.Join(webTaskFileNames(j.Files), ", ")))
 	}
-	host, err := s.parentFilePath(j.Parent, modelPath)
-	if err != nil {
-		return refuse("that file cannot be read")
-	}
-	f, err := os.Open(host)
-	if err != nil {
+	f, info, err := s.openParentFile(j.Parent, modelPath)
+	if err != nil || !info.Mode().IsRegular() {
 		return refuse("that file cannot be read")
 	}
 	defer func() { _ = f.Close() }()
-	info, err := f.Stat()
-	if err != nil || !info.Mode().IsRegular() {
-		return refuse("that file cannot be read")
+	if info.Size() > maxWebUploadBytes {
+		return refuse(fmt.Sprintf("%q is %d MB; a task may upload files up to %d MB", name, info.Size()>>20, maxWebUploadBytes>>20))
 	}
 	if err := s.Browsers.SendFile(ctx, j.Parent, j.Session, j.ID, name, f, info.Size()); err != nil {
 		return refuse(err.Error())

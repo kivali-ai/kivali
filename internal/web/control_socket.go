@@ -81,6 +81,14 @@ func (s *Server) StartAgentpodSocket(path string) (func(), error) {
 // StartAgentpodSocket so the route registration lives in exactly one
 // place.
 func (s *Server) startUDSListener(path string) (func(), error) {
+	mux := http.NewServeMux()
+	s.registerUDSRoutes(mux)
+	return s.startUDSListenerWith(path, mux)
+}
+
+// startUDSListenerWith binds path and serves mux on it. The browser
+// pods' socket serves a mux of its own: one route, no agent routes.
+func (s *Server) startUDSListenerWith(path string, mux *http.ServeMux) (func(), error) {
 	if path == "" {
 		return func() {}, nil
 	}
@@ -98,9 +106,6 @@ func (s *Server) startUDSListener(path string) (func(), error) {
 		_ = os.Remove(path)
 		return nil, err
 	}
-
-	mux := http.NewServeMux()
-	s.registerUDSRoutes(mux)
 
 	srv := &http.Server{
 		Handler:           mux,
@@ -220,9 +225,8 @@ func (s *Server) registerUDSRoutes(mux *http.ServeMux) {
 	// agent's task.
 	mux.HandleFunc("POST /v1/agent/{slug}/subagents/{id}/result", s.handleAgentpodSubagentResult)
 	// A web subagent's browser tools, relayed to its browser under the
-	// same binding.
+	// same binding. The browser pod's own connection is not here: it
+	// has a socket of its own (StartBrowserSocket), so a pod never
+	// reaches these routes.
 	mux.HandleFunc("POST /v1/agent/{slug}/subagents/{id}/web", s.handleAgentpodWebCommand)
-	// The browser pod's one connection. Authenticated by the per-pod
-	// token, not a slug header: the pod is core's, not an agent's.
-	mux.HandleFunc("GET /v1/browser/{slug}/{session}/connect", s.handleBrowserConnect)
 }

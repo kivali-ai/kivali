@@ -27,6 +27,8 @@ flowchart LR
   runtime -- HTTP over UDS<br/>core.sock --> core
   runtime --> cli --> mcp
   mcp -- core.sock --> core
+  browserpod[Browser pod<br/>kivali browser, Chromium] -- WebSocket over UDS<br/>browser.sock --> core
+  browserpod -- proxy :3129 --> proxy
   mcp -- agent-shell socket --> shell
   shell --- data
   shell --- scratch
@@ -60,7 +62,11 @@ server. It owns every durable byte and is the only writer to `/data`
   `$DATA_DIR/.kivali-control.sock`, reachable only from inside the
   server container, and `core.sock` in `AGENTPOD_UDS_DIR`
   (`/var/run/kivali/uds` in the chart), a hostPath directory the agent
-  pods on the same node mount. Both are mode 0600; file permissions
+  pods on the same node mount. A third socket, `browser.sock` in the
+  `browser/` subdirectory of that directory, serves only the browser
+  pods' connect route (`StartBrowserSocket`); a browser pod mounts that
+  subdirectory alone, read-only, and never sees `core.sock`. All are
+  mode 0600; file permissions
   and a matching UID are the authentication. Every agent-scoped route
   is `/v1/agent/{slug}/...` and must carry `X-Kivali-Agent: <slug>`;
   the server rejects a mismatch, and overrides any `from`/parent in a
@@ -434,9 +440,14 @@ running (agent, session), run from the `kivali-browser` image
 (`Dockerfile.browser`: Debian's Chromium, fonts, Xvfb and the `kivali`
 binary). It has no Service, no ports, no service-account token and no
 volumes beyond a memory-backed `/dev/shm` and an emptyDir `/tmp`; it is
-`restartPolicy: Never` with a 60 s stop grace, and the same required
-affinity to the server's node as agent pods, because it dials
-`core.sock`. `kivali browser` opens one WebSocket,
+`restartPolicy: Never` with a 60 s stop grace, runs as the image's user
+with every capability dropped, and has the same required affinity to
+the server's node as agent pods, because it dials a hostPath socket:
+`browser.sock`, core's socket for browser pods, in a subdirectory of
+the UDS dir that is the only part of it the pod mounts, read-only. That
+socket serves the pod's connect route and nothing else, so a pod that
+is taken over by a page has no path to the agent routes on `core.sock`.
+`kivali browser` opens one WebSocket,
 `GET /v1/browser/{slug}/{session}/connect`, presenting the per-pod token
 core put in its environment, and that connection carries everything
 (`browserpod/protocol.go`): core's commands and the pod's results, tab
@@ -459,19 +470,34 @@ deletes the pod. A start that does not connect within five minutes
 fails the command; a lost connection fails the commands in flight and
 deletes the pod; the next use starts afresh from the saved profile.
 At most `BROWSER_MAX_PER_TEAM` browsers (3) run at once; a start
-beyond that is refused. On boot core deletes every browser pod it
-finds. Profiles and session records live in
+beyond that begins the save of the longest-idle browser, if there is
+one, and is refused with a retry. A browser whose pod is being deleted
+still counts until the delete returns, so a new pod under the same
+name cannot be caught by the old delete. On boot core deletes every
+browser pod it finds. Profiles and session records live in
 `/data/agents/<slug>/browser/<session>/` (`store/browser.go`), outside
 the agent's `memory/` tree, so no agent container mounts them.
-Downloads the pod sends are written to the task's
+
+Nothing the pod sends is trusted on its own. A download must name a tab
+group core opened on that browser, fit the size it announced and the
+task's bounds (20 files, 200 MB); it is written to the task's
 `untrusted-downloads/` ([files-and-publishing.md](files-and-publishing.md))
-and listed in its result's `files`; the delivered result also carries
-the session, the last page's origin, the duration and the pages loaded.
+and listed in its result's `files`. A profile is taken only while core
+asked for one, up to 2 GiB. Every write to the pod has a time limit,
+and a pod that stops reading is dropped rather than waited on. A file
+a task uploads is read through the caller's files backend with
+`file_view`'s confinement, so a link out of the caller's tree is no
+file, and may be up to 50 MB. The delivered result also carries the
+session, the last page's origin, the duration and the pages loaded.
 
 Browser pods browse the web for the subagent and are not held to the
 egress allowlist. They route through the egress proxy's second
-listener (port 3129, `--open-listen`), which forwards to any host; the
-chart's network policies let only browser pods reach that port and
+listener (port 3129, `--open-listen`), which forwards to any host on
+the public internet and nowhere else: it checks the address each
+connection actually dials, after DNS, and refuses loopback, link-local
+(cloud metadata), private, carrier-grade NAT and multicast ranges, so a
+page cannot reach the server pod, the cluster or the node through it.
+The chart's network policies let only browser pods reach that port and
 agent pods only the allowlisted one.
 
 Depth is capped at two tiers (`agentpod.MaxSubagentDepth`): a

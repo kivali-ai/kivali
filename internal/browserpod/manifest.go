@@ -17,8 +17,12 @@ import (
 //  1. One container, `kivali browser`, from the kivali-browser image,
 //     configured entirely by env (EnvSlug, EnvSession, EnvToken,
 //     EnvCoreUDS, EnvProxy).
-//  2. It dials core.sock in the hostPath UDS dir, so it carries the
+//  2. It dials browser.sock, core's socket for browser pods, in the
+//     browser subdirectory of the hostPath UDS dir, the only part of
+//     that directory it mounts, read-only; core.sock and the agent
+//     routes stay out of its reach. The hostPath is why it carries the
 //     agent pod's required podAffinity to the Kivali web pod's node.
+//     It runs as the image's user with every capability dropped.
 //  3. No Service, no ports, no service-account token: the pod never
 //     listens and has no business with the Kubernetes API.
 //  4. No persistent volume. The profile travels over the WebSocket to
@@ -36,10 +40,6 @@ const (
 	// browserImageName is the browser image's base name, released at
 	// the server image's tag (BrowserImageFor).
 	browserImageName = "kivali-browser"
-
-	// coreSocketName is core's socket in the UDS dir, the one agent
-	// pods dial.
-	coreSocketName = "core.sock"
 
 	// browserUID is the image's kivali user (and group).
 	browserUID = 65532
@@ -94,14 +94,22 @@ func PodName(slug, session string) string {
 	return podPrefix + slug + "-" + hash
 }
 
+// browserUDSDir is the subdirectory of the UDS dir that holds
+// browser.sock: the only part of that directory a browser pod mounts,
+// read-only. core.sock, the agent pods' socket, stays out of the pod.
+func browserUDSDir(udsDir string) string {
+	return strings.TrimRight(udsDir, "/") + "/" + UDSSubdir
+}
+
 // podManifest is the pod for slug's browser session, its token in the
 // environment. The token is per pod and dies with it.
 func (c ProvisionerConfig) podManifest(slug, session, token string) map[string]any {
+	udsDir := browserUDSDir(c.UDSDir)
 	env := []map[string]any{
 		{"name": EnvSlug, "value": slug},
 		{"name": EnvSession, "value": session},
 		{"name": EnvToken, "value": token},
-		{"name": EnvCoreUDS, "value": strings.TrimRight(c.UDSDir, "/") + "/" + coreSocketName},
+		{"name": EnvCoreUDS, "value": udsDir + "/" + SocketName},
 	}
 	if c.ProxyURL != "" {
 		env = append(env, map[string]any{"name": EnvProxy, "value": c.ProxyURL})
@@ -114,14 +122,20 @@ func (c ProvisionerConfig) podManifest(slug, session, token string) map[string]a
 		"command":         []string{"kivali", "browser"},
 		"env":             env,
 		"volumeMounts": []map[string]any{
-			{"name": "uds", "mountPath": c.UDSDir},
+			{"name": "uds", "mountPath": udsDir, "readOnly": true},
 			{"name": "shm", "mountPath": "/dev/shm"},
 			{"name": "tmp", "mountPath": "/tmp"},
 		},
+		// No capabilities: Chromium's own sandbox needs none. Its
+		// seccomp profile is left to the cluster's default, because a
+		// profile that blocks user namespaces blocks that sandbox and
+		// Chromium falls back to running pages without it (chrome.go).
 		"securityContext": map[string]any{
 			"runAsUser":                browserUID,
 			"runAsGroup":               browserUID,
+			"runAsNonRoot":             true,
 			"allowPrivilegeEscalation": false,
+			"capabilities":             map[string]any{"drop": []string{"ALL"}},
 		},
 		"resources": map[string]any{
 			"requests": map[string]any{
@@ -141,7 +155,10 @@ func (c ProvisionerConfig) podManifest(slug, session, token string) map[string]a
 		"terminationGracePeriodSeconds": terminationGraceSeconds,
 		"containers":                    []any{container},
 		"volumes": []map[string]any{
-			{"name": "uds", "hostPath": map[string]any{"path": c.UDSDir, "type": "DirectoryOrCreate"}},
+			// Directory, not DirectoryOrCreate: core makes it, owned by
+			// its own user, before any pod starts; one kubelet made
+			// would be root's and unusable.
+			{"name": "uds", "hostPath": map[string]any{"path": udsDir, "type": "Directory"}},
 			{"name": "shm", "emptyDir": map[string]any{"medium": "Memory", "sizeLimit": shmSize}},
 			{"name": "tmp", "emptyDir": map[string]any{"sizeLimit": tmpSize}},
 		},

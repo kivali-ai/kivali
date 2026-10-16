@@ -210,6 +210,27 @@ func (b *Backend) openRead(abs, modelPath string) (*os.File, os.FileInfo, error)
 	return f, info, nil
 }
 
+// OpenRead opens the regular file at modelPath for reading with the
+// same confinement as file_view: links are followed only as far as the
+// read bases, and the handle is opened inside the base it resolves to.
+// A link under /files/ that points elsewhere, a directory and a path
+// that does not exist are all ErrNotFound. The caller closes the file.
+func (b *Backend) OpenRead(modelPath string) (*os.File, os.FileInfo, error) {
+	abs, _, err := b.resolveExisting(modelPath)
+	if err != nil {
+		return nil, nil, err
+	}
+	f, info, err := b.openRead(abs, modelPath)
+	if err != nil {
+		return nil, nil, err
+	}
+	if info.IsDir() {
+		_ = f.Close()
+		return nil, nil, ErrNotFound
+	}
+	return f, info, nil
+}
+
 // readFile reads the regular file abs names through openRead.
 func (b *Backend) readFile(abs, modelPath string) ([]byte, error) {
 	f, info, err := b.openRead(abs, modelPath)
