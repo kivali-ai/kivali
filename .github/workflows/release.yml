@@ -59,7 +59,10 @@
 #                    updater's Kivali.app.tar.gz and .sig
 #   desktop-windows  the per-machine NSIS installer on windows-latest
 #                    (x64): the supervisor sidecar stamped with the
-#                    version, the amd64 VM image bundled, shipped as
+#                    version, the amd64 VM image bundled, the sidecar,
+#                    Kivali.exe, the uninstaller and the installer
+#                    Authenticode-signed through SSL.com's eSigner
+#                    (desktop-app/scripts/sign-windows.ps1), shipped as
 #                    Kivali_X.Y.Z_x64-setup.exe, which is also the
 #                    updater's artifact, and its .sig
 #   publish          waits for checks and nightly as well as the builds; a
@@ -82,14 +85,15 @@
 # this workflow boots the image. Run `make -C vm boottest` on a Mac against
 # the run's vm-arm64 artifact before announcing a release.
 #
-# The Windows installer is not Authenticode-signed: Windows SmartScreen
-# warns on its first run. Updates are verified either way, by the
+# SmartScreen's reputation for the Windows installer follows the signing
+# certificate and grows with installs, so it may still warn on a new
+# certificate's first releases. Updates are verified either way, by the
 # updater's own signature.
 #
 # Secrets (Settings -> Secrets and variables -> Actions; docs/developers/releasing.md
-# says where each comes from). A release needs all of them, and the
-# verify job checks them first and lists every missing one; a dev build
-# needs none:
+# says where each comes from). A release needs all of them but
+# ESIGNER_CREDENTIAL_ID, and the verify job checks them first and lists
+# every missing one; a dev build needs none:
 #
 #   APPLE_CERTIFICATE                 base64 of the Developer ID Application .p12
 #   APPLE_CERTIFICATE_PASSWORD        the .p12's export password
@@ -101,6 +105,11 @@
 #   TAURI_SIGNING_PRIVATE_KEY         the updater's private key (the file's contents);
 #                                     both platforms' updates are signed with it
 #   TAURI_SIGNING_PRIVATE_KEY_PASSWORD  its password (may be empty)
+#   ESIGNER_USERNAME                  the SSL.com account holding the code signing certificate
+#   ESIGNER_PASSWORD                  its password
+#   ESIGNER_TOTP_SECRET               the eSigner signing credential's TOTP secret
+#   ESIGNER_CREDENTIAL_ID             the credential id; needed only when that account
+#                                     holds more than one eSigner certificate
 #
 # GITHUB_TOKEN (automatic) publishes the release.
 
@@ -195,9 +204,12 @@ jobs:
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          ESIGNER_USERNAME: ${{ secrets.ESIGNER_USERNAME }}
+          ESIGNER_PASSWORD: ${{ secrets.ESIGNER_PASSWORD }}
+          ESIGNER_TOTP_SECRET: ${{ secrets.ESIGNER_TOTP_SECRET }}
         run: |
           missing=""
-          for v in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD KEYCHAIN_PASSWORD APPLE_SIGNING_IDENTITY TAURI_SIGNING_PRIVATE_KEY; do
+          for v in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD KEYCHAIN_PASSWORD APPLE_SIGNING_IDENTITY TAURI_SIGNING_PRIVATE_KEY ESIGNER_USERNAME ESIGNER_PASSWORD ESIGNER_TOTP_SECRET; do
             if [ -z "${!v}" ]; then missing="$missing $v"; fi
           done
           if [ -z "$APPLE_ID$APPLE_PASSWORD$APPLE_TEAM_ID" ] && [ -z "$APPLE_API_KEY$APPLE_API_ISSUER$APPLE_API_KEY_P8" ]; then
@@ -640,15 +652,37 @@ jobs:
       - name: Compile
         run: make desktop-release-compile VERSION="$TAG"
 
-      # The only step that holds the updater key: the tauri CLI packages
-      # what Compile built into the NSIS installer and signs it for the
-      # updater, then Kivali_X.Y.Z_x64-setup.exe and its .sig are copied
-      # into dist/ (make desktop-release-bundle). A dev build packages the
-      # installer only, with no key (DEV=1).
+      # SSL.com's CodeSignTool, which desktop-app/scripts/sign-windows.ps1
+      # signs through, unpacked under the runner's temp dir (the zip has
+      # no top-level folder). Only a release signs; a dev build ships the
+      # installer unsigned.
+      - name: CodeSignTool
+        if: env.DEV != 'true'
+        shell: pwsh
+        run: |
+          $ProgressPreference = 'SilentlyContinue'
+          $zip = Join-Path $env:RUNNER_TEMP 'CodeSignTool.zip'
+          Invoke-WebRequest -Uri 'https://www.ssl.com/download/codesigntool-for-windows/' -OutFile $zip
+          Expand-Archive -Path $zip -DestinationPath (Join-Path $env:RUNNER_TEMP 'CodeSignTool')
+          Get-Item (Join-Path $env:RUNNER_TEMP 'CodeSignTool\CodeSignTool.bat') | Out-Null
+
+      # The only step that holds the keys: the tauri CLI packages what
+      # Compile built into the NSIS installer, Authenticode-signing the
+      # sidecar, Kivali.exe, the uninstaller and the installer through
+      # eSigner (desktop-app/scripts/sign-windows.ps1, the ESIGNER_*
+      # secrets), and signs the installer for the updater; then
+      # Kivali_X.Y.Z_x64-setup.exe and its .sig are copied into dist/
+      # (make desktop-release-bundle). A dev build packages the installer
+      # only, with no key and no signing (DEV=1).
       - name: Package and sign
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ env.DEV != 'true' && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ env.DEV != 'true' && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
+          ESIGNER_USERNAME: ${{ env.DEV != 'true' && secrets.ESIGNER_USERNAME || '' }}
+          ESIGNER_PASSWORD: ${{ env.DEV != 'true' && secrets.ESIGNER_PASSWORD || '' }}
+          ESIGNER_TOTP_SECRET: ${{ env.DEV != 'true' && secrets.ESIGNER_TOTP_SECRET || '' }}
+          ESIGNER_CREDENTIAL_ID: ${{ env.DEV != 'true' && secrets.ESIGNER_CREDENTIAL_ID || '' }}
+          CODE_SIGN_TOOL_PATH: ${{ runner.temp }}\CodeSignTool
         run: make desktop-release-bundle VERSION="$TAG" DEV=${{ env.DEV == 'true' && '1' || '' }}
 
       - uses: actions/upload-artifact@v4
