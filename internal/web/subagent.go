@@ -80,6 +80,10 @@ type SubagentTaskView struct {
 	// Result is a structured task's answer, the wrapper JSON, once it
 	// has one. Shown in place of FinalText.
 	Result string
+	// Kind is web for a web task, with Session its web session; both
+	// empty for a general task.
+	Kind    string
+	Session string
 }
 
 // SubagentAggregateView summarizes a batch for the chip header.
@@ -153,6 +157,8 @@ func deriveSubagentTaskView(storeRoot, parent, id, description string) SubagentT
 			out.Model = meta.Model
 			out.Effort = meta.Effort
 			out.Result = string(meta.Result)
+			out.Kind = meta.Kind
+			out.Session = meta.Session
 		}
 	} else {
 		out.Status = "unknown"
@@ -242,6 +248,10 @@ type subagentMeta struct {
 	// the wrapper JSON, present once the task has one.
 	Structured bool            `json:"structured,omitempty"`
 	Result     json.RawMessage `json:"result,omitempty"`
+	// Kind is web for a web task, with Session the web session it ran
+	// in; both absent for a general task.
+	Kind    string `json:"kind,omitempty"`
+	Session string `json:"session,omitempty"`
 }
 
 func readSubagentMeta(path string) (subagentMeta, error) {

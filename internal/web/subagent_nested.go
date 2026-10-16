@@ -80,6 +80,9 @@ func (s *SubagentService) RunNestedBatch(ctx context.Context, parent, callerID s
 	if err := validateTasks(s.Provider, req.Tasks); err != nil {
 		return "", err
 	}
+	if err := s.validateWebTasks(parent, req.Tasks); err != nil {
+		return "", err
+	}
 
 	taskIDs := make([]string, len(req.Tasks))
 	for i := range req.Tasks {

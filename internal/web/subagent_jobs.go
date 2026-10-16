@@ -108,6 +108,14 @@ type subagentJob struct {
 	// gets and what SubmitResult checks a submission against.
 	Schema *structured.Schema
 
+	// Kind is general or web. A web task has a Session (its browser
+	// session), a StartURL and Files it may upload, by path under the
+	// caller's /files/. Set at registration, never mutated.
+	Kind     string
+	Session  string
+	StartURL string
+	Files    []string
+
 	// Result is a structured task's answer as core delivers it: the
 	// wrapper JSON, indented. Set by SubmitResult when a submission is
 	// accepted, and by finishJob for the body core writes itself when

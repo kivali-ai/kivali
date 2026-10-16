@@ -17,6 +17,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/kivali-ai/kivali/internal/agentpod"
 )
 
 // SubagentStatusToolName / SubagentCancelToolName are the MCP-side
@@ -137,16 +139,20 @@ func (s *SubagentService) SubagentCancel(parent, id string) string {
 
 // depthSuffix labels a job that one of the agent's own subagents
 // dispatched, so the agent can tell its own tasks from its sub-leads'
-// workers. Empty for tier-1 jobs, which are the common case and need
-// no annotation.
+// workers, and a web task with its session. Empty for a tier-1 general
+// job, which is the common case and needs no annotation.
 func depthSuffix(j subagentJob) string {
+	var s string
+	if j.Kind == agentpod.SubagentKindWeb {
+		s = fmt.Sprintf(" [web, session %s]", j.Session)
+	}
 	if j.Depth <= 1 {
-		return ""
+		return s
 	}
 	if j.CallerID != "" {
-		return fmt.Sprintf(" [dispatched by %s]", j.CallerID)
+		return s + fmt.Sprintf(" [dispatched by %s]", j.CallerID)
 	}
-	return " [nested]"
+	return s + " [nested]"
 }
 
 // roundDuration renders a duration at a granularity a human (or a
