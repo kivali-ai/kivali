@@ -19,6 +19,7 @@ import (
 	"github.com/kivali-ai/kivali/internal/agent"
 	"github.com/kivali-ai/kivali/internal/agentpod"
 	"github.com/kivali-ai/kivali/internal/auth"
+	"github.com/kivali-ai/kivali/internal/browserpod"
 	"github.com/kivali-ai/kivali/internal/claudeagent"
 	"github.com/kivali-ai/kivali/internal/clock"
 	"github.com/kivali-ai/kivali/internal/clockcheck"
@@ -308,6 +309,31 @@ func main() {
 		log.Printf("agentpod: disabled (not running in-cluster)")
 	}
 
+	// Browser pods for web subagents: one per running browser session,
+	// started on demand and deleted when reaped. The image follows the
+	// server's unless BROWSER_IMAGE says otherwise. Out-of-cluster the
+	// provisioner is a no-op and web tasks are refused at dispatch.
+	bpCfg := browserpod.DefaultsForNamespace(cfg.AgentpodNamespace)
+	bpCfg.Image = cfg.BrowserImage
+	if bpCfg.Image == "" {
+		bpCfg.Image = browserpod.BrowserImageFor(cfg.AgentpodImage)
+	}
+	bpCfg.ProxyURL = cfg.EgressProxyURL
+	bpCfg.CPURequest, bpCfg.MemoryRequest = cfg.BrowserCPURequest, cfg.BrowserMemoryRequest
+	bpCfg.CPULimit, bpCfg.MemoryLimit = cfg.BrowserCPULimit, cfg.BrowserMemoryLimit
+	if cfg.AgentpodUDSDir != "" {
+		bpCfg.UDSDir = cfg.AgentpodUDSDir
+	}
+	bprov, err := browserpod.NewProvisioner(bpCfg, browserpod.WithProvisionerLogger(log.Printf))
+	if err != nil {
+		log.Fatalf("browserpod provisioner: %v", err)
+	}
+	if bprov.Enabled() {
+		log.Printf("browserpod: enabled (image=%s max_per_team=%d)", bpCfg.Image, cfg.BrowserMaxPerTeam)
+	} else {
+		log.Printf("browserpod: disabled (not running in-cluster)")
+	}
+
 	// Routing + delivery primitives. Holds the MessageQueue mutex
 	// shared with chat-path Route calls and the release-all batch.
 	var msgr *messaging.Messenger
@@ -374,6 +400,9 @@ func main() {
 		ClockCheck:      clockWatcher,
 		SubagentService: subagentService,
 		Packages:        packages,
+
+		BrowserProvisioner: bprov,
+		BrowserMaxPerTeam:  cfg.BrowserMaxPerTeam,
 	})
 	if err != nil {
 		log.Fatalf("web: %v", err)
@@ -460,6 +489,10 @@ func main() {
 	// off. Started after the socket so a release can wake a pod.
 	stopAutoRelease := srv.StartAutoRelease()
 
+	// Browser lifecycle: deletes browser pods left from before this
+	// start, then reaps idle browsers and saves their profiles.
+	stopBrowsers := srv.StartBrowsers()
+
 	idle := make(chan struct{})
 	go func() {
 		sigs := make(chan os.Signal, 1)
@@ -482,6 +515,7 @@ func main() {
 		stopAgentpodSocket()
 		stopStagedPublishJanitor()
 		stopAutoRelease()
+		stopBrowsers()
 		if err := s.Graph().Flush(); err != nil {
 			log.Printf("shutdown: graph index: %v", err)
 		}
