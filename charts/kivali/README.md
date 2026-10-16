@@ -95,8 +95,9 @@ numbers (server 200m/1Gi requests, 1000m/12Gi limits; egress 20m/32Mi,
 ## Browser values
 
 The server starts one browser pod per agent web session, from
-`browser.image` (`BROWSER_IMAGE`; `repository` default `kivali-browser`,
-an empty `tag` means the server image's, `image.tag` or else the chart's
+`browser.image` (`BROWSER_IMAGE`; an empty `repository` means
+`kivali-browser` beside the server image in `image.repository`'s path, an
+empty `tag` means the server image's, `image.tag` or else the chart's
 `appVersion`), and deletes it when the
 browser is done. `browser.resources` sizes each pod's container (default
 100m/512Mi requests, 2/2Gi limits; `BROWSER_CPU_REQUEST`,

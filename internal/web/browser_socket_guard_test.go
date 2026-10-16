@@ -24,13 +24,13 @@ func TestBrowserConnectEndsOnAnEmptyFrameFlood(t *testing.T) {
 	mux.HandleFunc("GET /v1/browser/{slug}/{session}/connect", srv.handleBrowserConnect)
 	hs := httptest.NewServer(mux)
 	defer hs.Close()
-	wsURL := "ws" + strings.TrimPrefix(hs.URL, "http") + "/v1/browser/alice/open/connect"
+	wsURL := "ws" + strings.TrimPrefix(hs.URL, "http") + "/v1/browser/alice/vendor.example/connect"
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
 	errs := make(chan error, 1)
 	go func() {
-		_, err := f.reg.Command(ctx, "alice", "open", "job1", browserpod.Message{Name: browserpod.CommandSnapshot})
+		_, err := f.reg.Command(ctx, "alice", "vendor.example", "job1", browserpod.Message{Name: browserpod.CommandSnapshot})
 		errs <- err
 	}()
 	token := <-f.prov.startedC

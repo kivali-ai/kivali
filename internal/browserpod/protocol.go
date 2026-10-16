@@ -34,9 +34,6 @@ const (
 	EnvSession = "KIVALI_BROWSER_SESSION"
 	EnvToken   = "KIVALI_BROWSER_TOKEN"
 	EnvCoreUDS = "KIVALI_BROWSER_CORE_UDS"
-	// EnvProxy is the proxy Chromium is started with (--proxy-server),
-	// when set.
-	EnvProxy = "KIVALI_BROWSER_PROXY"
 )
 
 // Message is one text frame on the WebSocket, in either direction.
@@ -95,6 +92,11 @@ type Message struct {
 	// Headful on hello asks for a visible Chromium under Xvfb instead
 	// of the new headless mode.
 	Headful bool `json:"headful,omitempty"`
+	// Ephemeral on hello: the session keeps nothing. Every tab group
+	// gets a browser context of its own, with its own cookies, storage
+	// and cache, disposed with the group, and core never asks for the
+	// profile.
+	Ephemeral bool `json:"ephemeral,omitempty"`
 }
 
 // Image is a screenshot or a screencast frame: raw bytes, base64 on
@@ -108,7 +110,8 @@ type Image struct {
 const (
 	// TypeHello opens the session once the pod has connected. Bytes is
 	// the size of the saved profile that follows as binary frames, 0
-	// for a fresh profile. Site and Headful describe the session.
+	// for a fresh profile. Site, Headful and Ephemeral describe the
+	// session.
 	TypeHello = "hello"
 	// TypeStart tells the pod the profile is complete: unpack it and
 	// start Chromium.

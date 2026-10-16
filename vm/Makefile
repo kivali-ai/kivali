@@ -52,7 +52,7 @@ K3S_IMAGES_DIR := $(BUILD)/k3s-images/$(ARCH)
 # Where Kivali image tarballs are picked up from, for ARCH. The release
 # pipeline points this at its own directory; dev-images fills the default.
 KIVALI_IMAGES_DIR ?= $(BUILD)/kivali-images/$(ARCH)
-DEV_IMAGES := kivali:dev kivali-egress-proxy:dev kivali-agent-shell:dev
+DEV_IMAGES := kivali:dev kivali-egress-proxy:dev kivali-agent-shell:dev kivali-browser:dev
 # The same images as containerd names them (what `make images` builds
 # into the build VM).
 DEV_IMAGE_REFS := $(addprefix docker.io/library/,$(DEV_IMAGES))

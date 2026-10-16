@@ -8,7 +8,10 @@
 // profile; commands are relayed under the subagent's group; when no
 // subagent uses the browser it is idle, and after browserIdleAfter core
 // asks for the profile back, writes it to the store and deletes the
-// pod. The registry is in memory: on boot every browser pod is deleted
+// pod. The open session is ephemeral (ephemeralSession): its browser
+// starts empty, each task's tabs live in a browser context of their
+// own, and no profile is asked for or stored.
+// The registry is in memory: on boot every browser pod is deleted
 // and the saved profiles are what persists.
 //
 // The pod is the least trusted thing core talks to: it runs Chromium
@@ -36,6 +39,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/kivali-ai/kivali/internal/agentpod"
 	"github.com/kivali-ai/kivali/internal/browserpod"
 	"github.com/kivali-ai/kivali/internal/clock"
 	"github.com/kivali-ai/kivali/internal/files"
@@ -150,6 +154,12 @@ type browser struct {
 func (b *browser) key() string { return b.slug + "/" + b.session }
 
 func browserKey(slug, session string) string { return slug + "/" + session }
+
+// ephemeralSession reports whether session keeps nothing between
+// tasks: the open session. Its browser starts empty, each task's tabs
+// live in a browser context of their own, and no profile is ever asked
+// for or stored.
+func ephemeralSession(session string) bool { return session == agentpod.OpenWebSession }
 
 // groupID is the shape of a group name core would have minted: one
 // path element of plain characters. A name the pod sends that does not
@@ -456,13 +466,20 @@ func (r *browserRegistry) acquire(ctx context.Context, slug, session string) (*b
 			groups: map[string]*browserGroup{}, released: map[string]bool{},
 			tabs: map[string]string{}, pending: map[string]chan browserpod.Message{},
 		}
-		if bs, found, err := r.store.ReadBrowserSession(slug, session); err == nil && found {
+		ephemeral := ephemeralSession(session)
+		if bs, found, err := r.store.ReadBrowserSession(slug, session); err == nil && found && !ephemeral {
 			b.site = bs.Site
 		}
 		r.browsers[b.key()] = b
 		r.mu.Unlock()
 		r.kick()
-		if _, err := r.store.EnsureBrowserSession(slug, session, "", r.clk.Now()); err != nil {
+		if ephemeral {
+			// Nothing of this session is kept; a record or profile
+			// stored for it goes too.
+			if err := r.store.DeleteBrowserSession(slug, session); err != nil {
+				r.logf("browser %s: delete the stored session: %v", b.key(), err)
+			}
+		} else if _, err := r.store.EnsureBrowserSession(slug, session, "", r.clk.Now()); err != nil {
 			r.failStart(b, fmt.Errorf("browser session: %w", err))
 			return nil, err
 		}
@@ -530,15 +547,20 @@ func (r *browserRegistry) attach(ctx context.Context, b *browser) error {
 	if link == nil {
 		return errors.New("no link")
 	}
-	profile, size, err := r.store.OpenBrowserProfile(b.slug, b.session)
-	if err != nil {
-		return fmt.Errorf("open profile: %w", err)
-	}
-	hello := browserpod.Message{Type: browserpod.TypeHello, Bytes: size, Site: site}
+	hello := browserpod.Message{Type: browserpod.TypeHello, Site: site}
 	var body io.Reader
-	if profile != nil {
-		defer func() { _ = profile.Close() }()
-		body = profile
+	if ephemeralSession(b.session) {
+		hello.Ephemeral = true
+	} else {
+		profile, size, err := r.store.OpenBrowserProfile(b.slug, b.session)
+		if err != nil {
+			return fmt.Errorf("open profile: %w", err)
+		}
+		if profile != nil {
+			defer func() { _ = profile.Close() }()
+			body = profile
+			hello.Bytes = size
+		}
 	}
 	sctx, cancel := context.WithTimeout(ctx, browserFileSendTimeout)
 	defer cancel()
@@ -740,6 +762,12 @@ func (r *browserRegistry) beginSave(b *browser) {
 	r.mu.Lock()
 	if b.state != browserIdle {
 		r.mu.Unlock()
+		return
+	}
+	if ephemeralSession(b.session) {
+		// Nothing to save: the session keeps nothing.
+		r.mu.Unlock()
+		r.finish(b)
 		return
 	}
 	b.state = browserSaving

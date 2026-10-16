@@ -23,6 +23,11 @@ type browser struct {
 	site  string
 	dir   string
 	send  func(msg Message, body io.Reader) error
+	// ephemeral: every group's tabs live in a browser context of the
+	// group's own, with its own cookies, storage and cache, disposed
+	// with the group; the start page stays the spare and is never
+	// handed to a group. Nothing of the session outlives its tasks.
+	ephemeral bool
 
 	mu      sync.Mutex
 	nextTab int
@@ -62,6 +67,9 @@ type group struct {
 	name    string
 	tabs    []*tab
 	current *tab
+	// contextID is the group's own browser context in an ephemeral
+	// session; empty means the default context.
+	contextID string
 }
 
 // tab is a page target in a group.
@@ -587,7 +595,7 @@ func (b *browser) createTab(ctx context.Context, groupName string) (*tab, error)
 		b.mu.Unlock()
 		return nil, failf(CodeTabLimit, "The browser already has %d tabs open, its limit; close one with web_tabs first.", MaxTabsPerBrowser)
 	}
-	if b.spare != nil {
+	if b.spare != nil && !b.ephemeral {
 		a := *b.spare
 		b.spare = nil
 		t := b.registerLocked(a, groupName, "")
@@ -603,7 +611,11 @@ func (b *browser) createTab(ctx context.Context, groupName string) (*tab, error)
 	b.creating++
 	b.mu.Unlock()
 
-	a, err := b.newTarget(ctx)
+	contextID, err := b.contextFor(ctx, groupName)
+	var a attachment
+	if err == nil {
+		a, err = b.newTarget(ctx, contextID)
+	}
 
 	b.mu.Lock()
 	b.creating--
@@ -637,8 +649,12 @@ func (b *browser) createTab(ctx context.Context, groupName string) (*tab, error)
 }
 
 // newTarget creates a blank page and waits for it to attach.
-func (b *browser) newTarget(ctx context.Context) (attachment, error) {
-	raw, err := b.conn.Call(ctx, "", "Target.createTarget", map[string]any{"url": "about:blank"})
+func (b *browser) newTarget(ctx context.Context, contextID string) (attachment, error) {
+	params := map[string]any{"url": "about:blank"}
+	if contextID != "" {
+		params["browserContextId"] = contextID
+	}
+	raw, err := b.conn.Call(ctx, "", "Target.createTarget", params)
 	if err != nil {
 		return attachment{}, err
 	}
@@ -675,6 +691,8 @@ func (b *browser) newTarget(ctx context.Context) (attachment, error) {
 
 // closeTab closes a tab. The browser's last page is kept as the spare
 // instead, at about:blank, so the browser never runs out of windows.
+// In an ephemeral session no tab is kept: its context goes with its
+// group, and the start page is the spare.
 func (b *browser) closeTab(ctx context.Context, t *tab) {
 	b.mu.Lock()
 	if _, ok := b.tabs[t.targetID]; !ok {
@@ -682,7 +700,7 @@ func (b *browser) closeTab(ctx context.Context, t *tab) {
 		return
 	}
 	b.unregisterLocked(t)
-	keep := len(b.tabs) == 0 && b.spare == nil
+	keep := !b.ephemeral && len(b.tabs) == 0 && b.spare == nil
 	if keep {
 		b.spare = &attachment{targetID: t.targetID, sessionID: t.session, url: "about:blank"}
 	}
@@ -697,12 +715,16 @@ func (b *browser) closeTab(ctx context.Context, t *tab) {
 	}
 }
 
-// closeGroup closes every tab of a group.
+// closeGroup closes every tab of a group and, in an ephemeral session,
+// disposes of the group's browser context: its cookies, storage and
+// cache go with it.
 func (b *browser) closeGroup(ctx context.Context, name string) {
 	b.mu.Lock()
 	var tabs []*tab
+	var contextID string
 	if g := b.groups[name]; g != nil {
 		tabs = append(tabs, g.tabs...)
+		contextID = g.contextID
 	}
 	delete(b.groups, name)
 	b.mu.Unlock()
@@ -714,6 +736,56 @@ func (b *browser) closeGroup(ctx context.Context, name string) {
 		delete(b.groups, name)
 	}
 	b.mu.Unlock()
+	if contextID != "" {
+		if _, err := b.conn.Call(ctx, "", "Target.disposeBrowserContext", map[string]any{"browserContextId": contextID}); err != nil {
+			b.log.Printf("dispose the context of %s: %v", name, err)
+		}
+	}
+}
+
+// contextFor is the browser context a group's tabs are created in: in
+// an ephemeral session a context of the group's own, made on first use
+// with downloads reported like the default context's; otherwise the
+// default context, "".
+func (b *browser) contextFor(ctx context.Context, groupName string) (string, error) {
+	if !b.ephemeral {
+		return "", nil
+	}
+	b.mu.Lock()
+	id := b.groupLocked(groupName).contextID
+	b.mu.Unlock()
+	if id != "" {
+		return id, nil
+	}
+	raw, err := b.conn.Call(ctx, "", "Target.createBrowserContext", map[string]any{})
+	if err != nil {
+		return "", fmt.Errorf("Target.createBrowserContext: %w", err)
+	}
+	var res struct {
+		ID string `json:"browserContextId"`
+	}
+	if err := json.Unmarshal(raw, &res); err != nil || res.ID == "" {
+		return "", fmt.Errorf("Target.createBrowserContext: no context id in %s", raw)
+	}
+	dispose := func() {
+		_, _ = b.conn.Call(ctx, "", "Target.disposeBrowserContext", map[string]any{"browserContextId": res.ID})
+	}
+	if err := b.setDownloadBehavior(ctx, res.ID); err != nil {
+		dispose()
+		return "", err
+	}
+	b.mu.Lock()
+	g := b.groupLocked(groupName)
+	if g.contextID == "" {
+		g.contextID = res.ID
+		b.mu.Unlock()
+		return res.ID, nil
+	}
+	// Another command of the group got there first.
+	id = g.contextID
+	b.mu.Unlock()
+	dispose()
+	return id, nil
 }
 
 // groupTabs is a snapshot of a group's tabs and its current one.

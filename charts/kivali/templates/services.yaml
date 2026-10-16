@@ -34,8 +34,3 @@ spec:
     - name: proxy
       port: 3128
       targetPort: 3128
-    # The open listener browser pods use; the network policies keep
-    # every other pod off it.
-    - name: browser-proxy
-      port: 3129
-      targetPort: 3129

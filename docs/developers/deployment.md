@@ -136,7 +136,7 @@ installed service's is the installed release's `root.vhdx`, so to boot
 of its own (docs/developers/supervisor.md, "The broker").
 
 ```
-make dev-vm                          # once: the three :dev images and a dev chart, baked into vm/build/out
+make dev-vm                          # once: the four :dev images and a dev chart, baked into vm/build/out
 make dev-up DEV_OWNER=you@gmail.com  # boot; the first run installs the team for that Google account
 make dev-load                        # the loop: rebuild the :dev images and import them
 sup terminal                         # Claude Code in the server container

@@ -318,7 +318,6 @@ func main() {
 	if bpCfg.Image == "" {
 		bpCfg.Image = browserpod.BrowserImageFor(cfg.AgentpodImage)
 	}
-	bpCfg.ProxyURL = cfg.BrowserProxyURL
 	bpCfg.CPURequest, bpCfg.MemoryRequest = cfg.BrowserCPURequest, cfg.BrowserMemoryRequest
 	bpCfg.CPULimit, bpCfg.MemoryLimit = cfg.BrowserCPULimit, cfg.BrowserMemoryLimit
 	if cfg.AgentpodUDSDir != "" {

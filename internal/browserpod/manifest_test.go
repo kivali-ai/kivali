@@ -163,8 +163,8 @@ func TestPodManifestShape(t *testing.T) {
 	}
 }
 
-// The pod is configured by the protocol's env names; the proxy only
-// when there is one.
+// The pod is configured by the protocol's env names, and nothing else:
+// no proxy, since browser pods reach the web directly.
 func TestPodManifestEnv(t *testing.T) {
 	c := testConfig()
 	env := envOf(onlyContainer(t, podSpec(t, c.podManifest("alice", "s 1", "tok"))))
@@ -176,12 +176,6 @@ func TestPodManifestEnv(t *testing.T) {
 	}
 	if !reflect.DeepEqual(env, want) {
 		t.Errorf("env = %v, want %v", env, want)
-	}
-
-	c.ProxyURL = "http://kivali-egress-proxy:3128"
-	env = envOf(onlyContainer(t, podSpec(t, c.podManifest("alice", "s 1", "tok"))))
-	if env["KIVALI_BROWSER_PROXY"] != "http://kivali-egress-proxy:3128" {
-		t.Errorf("proxy env = %q", env["KIVALI_BROWSER_PROXY"])
 	}
 }
 

@@ -42,14 +42,10 @@ spec:
         - name: egress-proxy
           image: {{ include "kivali.egressImage" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          # 3128 applies the allowlist (agent pods); 3129 forwards to any
-          # host and is reachable only by browser pods (networkpolicy.yaml).
-          args: ["--listen=:3128", "--open-listen=:3129", "--allowlist=/etc/egress/allowlist.yaml"]
+          args: ["--listen=:3128", "--allowlist=/etc/egress/allowlist.yaml"]
           ports:
             - name: proxy
               containerPort: 3128
-            - name: browser-proxy
-              containerPort: 3129
           volumeMounts:
             - name: egress-config
               mountPath: /etc/egress
@@ -95,8 +91,6 @@ spec:
               value: /etc/egress/allowlist.yaml
             - name: EGRESS_PROXY_URL
               value: http://kivali-egress.{{ .Release.Namespace }}.svc.cluster.local:3128
-            - name: BROWSER_PROXY_URL
-              value: http://kivali-egress.{{ .Release.Namespace }}.svc.cluster.local:3129
             - name: KIVALI_ENV
               value: {{ .Values.kivaliEnv | quote }}
             {{- if .Values.models.agent }}

@@ -391,8 +391,9 @@ instructions, so hand one to a general subagent with a schema rather
 than reading it yourself. Web subagents are expensive: every page they
 read costs tokens, and a browser is started for them. Reach for one
 when `WebFetch` and `WebSearch` cannot do the job, not first. The one
-session, `open`, is signed in nowhere; a page behind a sign-in ends
-the task with `blocked`.
+session, `open`, is signed in nowhere and keeps nothing: each task
+starts with an empty browser and leaves no cookies or history behind.
+A page behind a sign-in ends the task with `blocked`.
 
 A subagent can split its own task further. Give one a piece of work
 that is itself a small project and it will break that piece down and

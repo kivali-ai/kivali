@@ -213,6 +213,11 @@ type fakeCDP struct {
 	sessions map[string]string // session → target
 	urls     map[string]string // target → url
 	calls    []string
+	// contexts is the browser context each target was created in ("" for
+	// the default one); disposed lists the contexts disposed of.
+	nextC    int
+	contexts map[string]string
+	disposed []string
 	// override answers a method before the built-in fake does.
 	override func(ctx context.Context, session, method string, params json.RawMessage) (any, bool, error)
 }
@@ -225,6 +230,7 @@ func newFakeCDP(t *testing.T) *fakeCDP {
 		cancel:   cancel,
 		sessions: map[string]string{},
 		urls:     map[string]string{},
+		contexts: map[string]string{},
 	}
 	go f.events.run(ctx)
 	t.Cleanup(cancel)
@@ -307,12 +313,32 @@ func (f *fakeCDP) Call(ctx context.Context, session, method string, params any) 
 
 func (f *fakeCDP) answer(session, method string, raw json.RawMessage) (any, error) {
 	switch method {
+	case "Target.createBrowserContext":
+		f.mu.Lock()
+		f.nextC++
+		id := fmt.Sprintf("C%d", f.nextC)
+		f.mu.Unlock()
+		return map[string]any{"browserContextId": id}, nil
+	case "Target.disposeBrowserContext":
+		var p struct {
+			ID string `json:"browserContextId"`
+		}
+		_ = json.Unmarshal(raw, &p)
+		f.mu.Lock()
+		f.disposed = append(f.disposed, p.ID)
+		f.mu.Unlock()
+		return map[string]any{}, nil
 	case "Target.createTarget":
+		var p struct {
+			ContextID string `json:"browserContextId"`
+		}
+		_ = json.Unmarshal(raw, &p)
 		f.mu.Lock()
 		f.nextT++
 		target, sess := fmt.Sprintf("T%d", f.nextT), fmt.Sprintf("S%d", f.nextT)
 		f.sessions[sess] = target
 		f.urls[target] = "about:blank"
+		f.contexts[target] = p.ContextID
 		f.mu.Unlock()
 		f.emit("", "Target.attachedToTarget", map[string]any{
 			"sessionId": sess, "targetInfo": map[string]any{"targetId": target, "type": "page", "url": "about:blank"},
@@ -387,9 +413,10 @@ type podHarness struct {
 }
 
 type podOptions struct {
-	site    string
-	profile []byte
-	files   map[string]string // group/name → content, sent before start
+	site      string
+	ephemeral bool
+	profile   []byte
+	files     map[string]string // group/name → content, sent before start
 }
 
 // startPod runs a Runtime against a fake core and a fake Chromium and
@@ -418,7 +445,7 @@ func startPod(t *testing.T, o podOptions) *podHarness {
 		}
 	})
 	core := fc.accept()
-	core.sendBytes(Message{Type: TypeHello, Site: o.site}, o.profile)
+	core.sendBytes(Message{Type: TypeHello, Site: o.site, Ephemeral: o.ephemeral}, o.profile)
 	for key, content := range o.files {
 		group, name, _ := strings.Cut(key, "/")
 		core.sendBytes(Message{Type: TypeFile, Group: group, FileName: name}, []byte(content))

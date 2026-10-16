@@ -1,7 +1,7 @@
 # Releasing: procedure and pipeline
 
 One version number cuts one GitHub release. The release carries every
-artifact: the three container images (per architecture), the Helm chart,
+artifact: the four container images (per architecture), the Helm chart,
 the VM images, Kivali Desktop for macOS (a signed, notarized dmg) and
 Windows (a signed NSIS installer), and the two feeds that tell running
 installs about it. [deployment.md](deployment.md) covers the orgs that
@@ -154,7 +154,7 @@ Jobs, in order (`needs` in parentheses):
 | --- | --- | --- |
 | `verify` | ubuntu-latest | tag equals tauri.conf.json's version; `make version-check VERSION=$tag` |
 | `chart` (verify) | ubuntu-latest | `kivali-X.Y.Z.tgz` (`make chart-package`) |
-| `images` (verify, chart), amd64 and arm64 | ubuntu-latest, ubuntu-24.04-arm (native; no QEMU) | `kivali-images-linux-<arch>.tar.zst`; the kivali and kivali-agent-shell images' Debian package lists (for `SOURCES.md`); the VM image, with that architecture's images and the chart baked in: arm64, for macOS: `Image`, `initramfs.gz`, `root.squashfs`; amd64, for Windows: `root.vhdx`; each with `packages.txt` and `SOURCES.md` |
+| `images` (verify, chart), amd64 and arm64 | ubuntu-latest, ubuntu-24.04-arm (native; no QEMU) | `kivali-images-linux-<arch>.tar.zst`; the kivali, kivali-agent-shell and kivali-browser images' Debian package lists (for `SOURCES.md`); the VM image, with that architecture's images and the chart baked in: arm64, for macOS: `Image`, `initramfs.gz`, `root.squashfs`; amd64, for Windows: `root.vhdx`; each with `packages.txt` and `SOURCES.md` |
 | `licenses` (verify) | ubuntu-latest | `THIRD_PARTY_LICENSES.txt`, the notices of everything a release ships (`make third-party-licenses`) |
 | `feed` (images, chart) | ubuntu-latest | `release.json` (`scripts/release-json.sh`) |
 | `desktop-macos` (verify, images) | macos-15 (Apple Silicon) | `Kivali_X.Y.Z_aarch64.dmg`, `Kivali.app.tar.gz`, `Kivali.app.tar.gz.sig` |
@@ -165,13 +165,14 @@ Choices worth knowing:
 
 - **The image bundle** is what the supervisor imports
   (`internal/supervisor/release.go`, `guestapi/images.go`): one
-  `docker save` archive holding `kivali`, `kivali-egress-proxy` and
-  `kivali-agent-shell` at `:vX.Y.Z`, zstd-compressed (`-16 --long=27`:
+  `docker save` archive holding `kivali`, `kivali-egress-proxy`,
+  `kivali-agent-shell` and `kivali-browser` at `:vX.Y.Z`, zstd-compressed (`-16 --long=27`:
   within 4% of `-19`'s size at a quarter of its time; a window over 27
   would need `--long` when decompressing). `scripts/image-bundle.sh`
   saves it uncompressed from the per-image tarballs of
   `make image-tars ARCH=<arch>` (run by `release-images-<arch>`) and
-  checks all three references are listed; `release-compress-<arch>`
+  checks all four references are listed (the browser image is by far
+  the largest); `release-compress-<arch>`
   compresses it (`release-bundle-<arch>` runs both). The
   archive carries the images' own names, not a registry's: the chart's
   image references (`kivali:vX.Y.Z`) resolve to what containerd imported.
@@ -318,8 +319,8 @@ source and a written offer of it:
   the k3s and k3s-root tags; snapshot.debian.org for Debian), followed by
   the written offer. Each VM image has one at
   `/usr/share/doc/kivali/SOURCES.md` (with the GNU license texts beside it
-  in `licenses/`), the kivali and kivali-agent-shell images one for their
-  Debian packages beside `packages.txt`. The release's `SOURCES.md` is the
+  in `licenses/`), the kivali, kivali-agent-shell and kivali-browser
+  images one for their Debian packages beside `packages.txt`. The release's `SOURCES.md` is the
   arm64 VM's with the images' Debian packages appended, and
   `vm-amd64-SOURCES.md` is the amd64 VM's, which adds the EFI stub.
 

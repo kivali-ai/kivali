@@ -109,11 +109,6 @@ type Config struct {
 	// to so the embedded claude CLI's outbound HTTPS routes through
 	// the egress proxy. Empty → no proxy env is injected.
 	EgressProxyURL string
-	// BrowserProxyURL is the proxy browser pods start Chromium with:
-	// the egress proxy's open listener, which forwards to any host.
-	// Empty → Chromium connects directly. Sourced from
-	// BROWSER_PROXY_URL.
-	BrowserProxyURL string
 
 	// AgentpodNamespace is the Kubernetes namespace per-agent Pods +
 	// PVCs are created in. Defaults to "kivali-dev". Production sets
@@ -202,7 +197,6 @@ func Load() (Config, error) {
 		DevAllowNonLoopback:     envBool("DEV_MODE_ALLOW_NONLOOPBACK", false),
 		EgressAllowlistSyncPath: os.Getenv("EGRESS_ALLOWLIST_SYNC_PATH"),
 		EgressProxyURL:          os.Getenv("EGRESS_PROXY_URL"),
-		BrowserProxyURL:         strings.TrimSpace(os.Getenv("BROWSER_PROXY_URL")),
 		AgentpodNamespace:       envOr("AGENTPOD_NAMESPACE", "kivali-dev"),
 		AgentpodImage:           envOr("AGENTPOD_IMAGE", "kivali:dev"),
 		AgentpodUDSDir:          os.Getenv("AGENTPOD_UDS_DIR"),

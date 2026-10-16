@@ -20,8 +20,14 @@
 {{ .Values.egress.image.repository }}:{{ .Values.egress.image.tag | default .Chart.AppVersion }}
 {{- end -}}
 
+{{/*
+The browser image: browser.image.repository, or kivali-browser beside the
+server image (image.repository's path), at browser.image.tag, else the
+server image's tag.
+*/}}
 {{- define "kivali.browserImage" -}}
-{{ .Values.browser.image.repository }}:{{ .Values.browser.image.tag | default .Values.image.tag | default .Chart.AppVersion }}
+{{- $repo := .Values.browser.image.repository | default (printf "%skivali-browser" (regexReplaceAll "[^/]*$" .Values.image.repository "")) -}}
+{{ $repo }}:{{ .Values.browser.image.tag | default .Values.image.tag | default .Chart.AppVersion }}
 {{- end -}}
 
 {{- define "kivali.labels" -}}

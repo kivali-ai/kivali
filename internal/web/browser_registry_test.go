@@ -184,7 +184,7 @@ func (f *browserFixture) connect(ctx context.Context) (*browser, *fakeLink) {
 		f.t.Fatal("the provisioner was not asked to start a pod")
 	}
 	link := newFakeLink()
-	b := f.reg.claim("alice", "open", token, link)
+	b := f.reg.claim("alice", "vendor.example", token, link)
 	if b == nil {
 		f.t.Fatal("claim found no waiting browser")
 	}
@@ -210,7 +210,7 @@ func (f *browserFixture) running(ctx context.Context, group string) (*browser, *
 	f.t.Helper()
 	errs := make(chan error, 1)
 	go func() {
-		_, err := f.reg.Command(ctx, "alice", "open", group, browserpod.Message{Name: browserpod.CommandSnapshot})
+		_, err := f.reg.Command(ctx, "alice", "vendor.example", group, browserpod.Message{Name: browserpod.CommandSnapshot})
 		errs <- err
 	}()
 	b, link := f.connect(ctx)
@@ -240,7 +240,7 @@ func TestBrowserRegistryStartsRelaysAndReaps(t *testing.T) {
 	}
 	got := make(chan outcome, 1)
 	go func() {
-		res, err := f.reg.Command(ctx, "alice", "open", "job1", browserpod.Message{Name: browserpod.CommandSnapshot})
+		res, err := f.reg.Command(ctx, "alice", "vendor.example", "job1", browserpod.Message{Name: browserpod.CommandSnapshot})
 		got <- outcome{res, err}
 	}()
 	b, link := f.connect(ctx)
@@ -249,7 +249,7 @@ func TestBrowserRegistryStartsRelaysAndReaps(t *testing.T) {
 		t.Errorf("first hello = %+v, want no profile and no site", hello.msg)
 	}
 	link.next(t, browserpod.TypeStart)
-	if states := f.reg.states(); states["alice/open"] != string(browserStarting) {
+	if states := f.reg.states(); states["alice/vendor.example"] != string(browserStarting) {
 		t.Errorf("state before running = %v", states)
 	}
 	f.reg.onMessage(b, browserpod.Message{Type: browserpod.TypeState, State: browserpod.StateRunning}, nil)
@@ -272,37 +272,37 @@ func TestBrowserRegistryStartsRelaysAndReaps(t *testing.T) {
 		t.Errorf("download on disk = %q, %v", body, err)
 	}
 
-	facts, downloads := f.reg.ReleaseGroup("alice", "open", "job1")
+	facts, downloads := f.reg.ReleaseGroup("alice", "vendor.example", "job1")
 	if facts.Pages != 1 || facts.Origin != "https://vendor.example" || len(downloads) != 1 || downloads[0] != "quote-1.pdf" {
 		t.Errorf("ReleaseGroup = %+v, %v", facts, downloads)
 	}
 	if cg := link.next(t, browserpod.TypeCloseGroup); cg.msg.Group != "job1" {
 		t.Errorf("close-group = %+v", cg.msg)
 	}
-	if states := f.reg.states(); states["alice/open"] != string(browserIdle) {
+	if states := f.reg.states(); states["alice/vendor.example"] != string(browserIdle) {
 		t.Fatalf("state after release = %v, want idle", states)
 	}
 
 	// Short of the idle limit nothing happens; at it the reap begins.
 	f.clk.Advance(browserIdleAfter - time.Second)
 	next := f.reg.sweep(f.clk.Now())
-	if next.IsZero() || f.reg.states()["alice/open"] != string(browserIdle) {
+	if next.IsZero() || f.reg.states()["alice/vendor.example"] != string(browserIdle) {
 		t.Errorf("early sweep: next=%v states=%v", next, f.reg.states())
 	}
 	f.clk.Advance(time.Second)
 	f.clk.Advance(browserIdleAfter)
 	f.reg.sweep(f.clk.Now())
 	link.next(t, browserpod.TypeSave)
-	if states := f.reg.states(); states["alice/open"] != string(browserSaving) {
+	if states := f.reg.states(); states["alice/vendor.example"] != string(browserSaving) {
 		t.Fatalf("state after reap = %v, want saving", states)
 	}
 	profile := bytes.Repeat([]byte("p"), 5000)
 	f.reg.onMessage(b, browserpod.Message{Type: browserpod.TypeProfile, Bytes: int64(len(profile))}, bytes.NewReader(profile))
 	f.reg.onMessage(b, browserpod.Message{Type: browserpod.TypeSaved}, nil)
-	if states := f.reg.states(); states["alice/open"] != string(browserStopped) {
+	if states := f.reg.states(); states["alice/vendor.example"] != string(browserStopped) {
 		t.Errorf("state while the pod is deleted = %v, want stopped", states)
 	}
-	if stopped := f.stopped(t); stopped != "alice/open" {
+	if stopped := f.stopped(t); stopped != "alice/vendor.example" {
 		t.Errorf("pod stop = %q", stopped)
 	}
 	if states := f.reg.states(); len(states) != 0 {
@@ -314,7 +314,7 @@ func TestBrowserRegistryStartsRelaysAndReaps(t *testing.T) {
 	if !closed {
 		t.Error("link not closed after save")
 	}
-	if r, n, err := f.st.OpenBrowserProfile("alice", "open"); err != nil || n != int64(len(profile)) {
+	if r, n, err := f.st.OpenBrowserProfile("alice", "vendor.example"); err != nil || n != int64(len(profile)) {
 		t.Fatalf("stored profile = %d, %v", n, err)
 	} else {
 		_ = r.Close()
@@ -322,7 +322,7 @@ func TestBrowserRegistryStartsRelaysAndReaps(t *testing.T) {
 
 	// The next browser starts from that profile.
 	go func() {
-		res, err := f.reg.Command(ctx, "alice", "open", "job2", browserpod.Message{Name: browserpod.CommandSnapshot})
+		res, err := f.reg.Command(ctx, "alice", "vendor.example", "job2", browserpod.Message{Name: browserpod.CommandSnapshot})
 		got <- outcome{res, err}
 	}()
 	b2, link2 := f.connect(ctx)
@@ -347,7 +347,7 @@ func TestBrowserRegistryStartTimeoutLostAndCap(t *testing.T) {
 	ctx := context.Background()
 	errs := make(chan error, 1)
 	go func() {
-		_, err := f.reg.Command(ctx, "alice", "open", "job1", browserpod.Message{Name: browserpod.CommandSnapshot})
+		_, err := f.reg.Command(ctx, "alice", "vendor.example", "job1", browserpod.Message{Name: browserpod.CommandSnapshot})
 		errs <- err
 	}()
 	<-f.prov.startedC
@@ -360,7 +360,7 @@ func TestBrowserRegistryStartTimeoutLostAndCap(t *testing.T) {
 
 	// Lost mid-command.
 	go func() {
-		_, err := f.reg.Command(ctx, "alice", "open", "job1", browserpod.Message{Name: browserpod.CommandSnapshot})
+		_, err := f.reg.Command(ctx, "alice", "vendor.example", "job1", browserpod.Message{Name: browserpod.CommandSnapshot})
 		errs <- err
 	}()
 	b, link := f.connect(ctx)
@@ -378,7 +378,7 @@ func TestBrowserRegistryStartTimeoutLostAndCap(t *testing.T) {
 	// The cap.
 	f.reg.cap = 1
 	go func() {
-		_, err := f.reg.Command(ctx, "alice", "open", "job1", browserpod.Message{Name: browserpod.CommandSnapshot})
+		_, err := f.reg.Command(ctx, "alice", "vendor.example", "job1", browserpod.Message{Name: browserpod.CommandSnapshot})
 		errs <- err
 	}()
 	<-f.prov.startedC
@@ -392,7 +392,7 @@ func TestBrowserRegistryStartTimeoutLostAndCap(t *testing.T) {
 
 	// Disabled.
 	f.prov.enabled = false
-	if _, err := f.reg.Command(ctx, "alice", "open", "job1", browserpod.Message{}); err == nil || !strings.Contains(err.Error(), "not available") {
+	if _, err := f.reg.Command(ctx, "alice", "vendor.example", "job1", browserpod.Message{}); err == nil || !strings.Contains(err.Error(), "not available") {
 		t.Errorf("disabled err = %v", err)
 	}
 }
@@ -403,20 +403,20 @@ func TestBrowserRegistryClaimNeedsTheRightToken(t *testing.T) {
 	f := newBrowserFixture(t)
 	ctx := context.Background()
 	go func() {
-		_, _ = f.reg.Command(ctx, "alice", "open", "job1", browserpod.Message{Name: browserpod.CommandSnapshot})
+		_, _ = f.reg.Command(ctx, "alice", "vendor.example", "job1", browserpod.Message{Name: browserpod.CommandSnapshot})
 	}()
 	token := <-f.prov.startedC
-	if f.reg.claim("alice", "open", "wrong", newFakeLink()) != nil || f.reg.claim("bob", "open", token, newFakeLink()) != nil || f.reg.claim("alice", "open", "", newFakeLink()) != nil {
+	if f.reg.claim("alice", "vendor.example", "wrong", newFakeLink()) != nil || f.reg.claim("bob", "vendor.example", token, newFakeLink()) != nil || f.reg.claim("alice", "vendor.example", "", newFakeLink()) != nil {
 		t.Error("a wrong token, slug or empty token claimed a browser")
 	}
-	b := f.reg.claim("alice", "open", token, newFakeLink())
+	b := f.reg.claim("alice", "vendor.example", token, newFakeLink())
 	if b == nil {
 		t.Fatal("the right token did not claim")
 	}
 	if err := f.reg.attach(ctx, b); err != nil {
 		t.Fatal(err)
 	}
-	if f.reg.claim("alice", "open", token, newFakeLink()) != nil {
+	if f.reg.claim("alice", "vendor.example", token, newFakeLink()) != nil {
 		t.Error("a browser with a link was claimed again")
 	}
 	f.reg.finish(b)

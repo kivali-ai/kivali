@@ -20,7 +20,7 @@ Each release on the [releases page](https://github.com/kivali-ai/kivali/releases
 | Asset | What it is |
 | --- | --- |
 | `kivali-X.Y.Z.tgz` | The Helm chart. |
-| `kivali-images-linux-amd64.tar.zst`, `kivali-images-linux-arm64.tar.zst` | The three container images, `kivali`, `kivali-egress-proxy` and `kivali-agent-shell`, tagged `vX.Y.Z`, in one compressed archive per architecture. |
+| `kivali-images-linux-amd64.tar.zst`, `kivali-images-linux-arm64.tar.zst` | The four container images, `kivali`, `kivali-egress-proxy`, `kivali-agent-shell` and `kivali-browser`, tagged `vX.Y.Z`, in one compressed archive per architecture. |
 | `THIRD_PARTY_LICENSES.txt`, `SOURCES.md` | The license notices of the third-party software in the release, and where to get the source code of the components whose licenses offer it. |
 
 The images are not in a public registry. Load them where your cluster can pull them. On k3s, import them on the node:
@@ -29,7 +29,7 @@ The images are not in a public registry. Load them where your cluster can pull t
 zstd -dc kivali-images-linux-amd64.tar.zst | sudo k3s ctr images import -
 ```
 
-On other clusters, load them with `docker load` (after decompressing with `zstd -d`), tag them for your registry, and push all three. Set `image.repository` and `egress.image.repository` to your registry paths. The server finds the `kivali-agent-shell` image next to `kivali` in the same registry path, with the same tag, so all three must be there.
+On other clusters, load them with `docker load` (after decompressing with `zstd -d`), tag them for your registry, and push all four. Set `image.repository` and `egress.image.repository` to your registry paths. The server finds the `kivali-agent-shell` and `kivali-browser` images next to `kivali` in the same registry path, with the same tag, so all four must be there.
 
 ## Install
 
