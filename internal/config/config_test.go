@@ -17,6 +17,8 @@ func clearEnv(t *testing.T) {
 		"KIVALI_ENV",
 		"ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN",
 		"AGENTPOD_NAMESPACE", "AGENTPOD_IMAGE", "AGENTPOD_UDS_DIR",
+		"BROWSER_IMAGE", "BROWSER_MAX_PER_TEAM",
+		"BROWSER_CPU_REQUEST", "BROWSER_MEMORY_REQUEST", "BROWSER_CPU_LIMIT", "BROWSER_MEMORY_LIMIT",
 		"DEV_MODE", "DEV_USER", "DEV_MODE_ALLOW_NONLOOPBACK",
 		"KIVALI_COOKIE_SUFFIX", "KIVALI_SEED_ORG_NAME", "KIVALI_TEAM_KIND", "KIVALI_OWNER_NAME",
 		"KIVALI_EXTERNAL_URL",
@@ -241,6 +243,58 @@ func TestAgentpodHonorsOverrides(t *testing.T) {
 	}
 	if cfg.AgentpodImage != "kivali:v1.2.3" {
 		t.Errorf("AgentpodImage = %q", cfg.AgentpodImage)
+	}
+}
+
+// BrowserImage defaults to empty (derived from the agent pod image by
+// the caller) and BrowserMaxPerTeam to 3.
+func TestBrowserDefaults(t *testing.T) {
+	clearEnv(t)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.BrowserImage != "" {
+		t.Errorf("BrowserImage default = %q, want empty", cfg.BrowserImage)
+	}
+	if cfg.BrowserMaxPerTeam != 3 {
+		t.Errorf("BrowserMaxPerTeam default = %d, want 3", cfg.BrowserMaxPerTeam)
+	}
+	if cfg.BrowserCPURequest != "" || cfg.BrowserMemoryRequest != "" || cfg.BrowserCPULimit != "" || cfg.BrowserMemoryLimit != "" {
+		t.Errorf("browser resources default = %q %q %q %q, want empty", cfg.BrowserCPURequest, cfg.BrowserMemoryRequest, cfg.BrowserCPULimit, cfg.BrowserMemoryLimit)
+	}
+}
+
+func TestBrowserHonorsOverrides(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("BROWSER_IMAGE", "ghcr.io/kivali-ai/kivali-browser:v1.2.3")
+	t.Setenv("BROWSER_MAX_PER_TEAM", "5")
+	t.Setenv("BROWSER_CPU_REQUEST", "250m")
+	t.Setenv("BROWSER_MEMORY_REQUEST", "1Gi")
+	t.Setenv("BROWSER_CPU_LIMIT", "4")
+	t.Setenv("BROWSER_MEMORY_LIMIT", "3Gi")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.BrowserImage != "ghcr.io/kivali-ai/kivali-browser:v1.2.3" {
+		t.Errorf("BrowserImage = %q", cfg.BrowserImage)
+	}
+	if cfg.BrowserMaxPerTeam != 5 {
+		t.Errorf("BrowserMaxPerTeam = %d", cfg.BrowserMaxPerTeam)
+	}
+	if cfg.BrowserCPURequest != "250m" || cfg.BrowserMemoryRequest != "1Gi" || cfg.BrowserCPULimit != "4" || cfg.BrowserMemoryLimit != "3Gi" {
+		t.Errorf("browser resources = %q %q %q %q", cfg.BrowserCPURequest, cfg.BrowserMemoryRequest, cfg.BrowserCPULimit, cfg.BrowserMemoryLimit)
+	}
+}
+
+func TestBrowserMaxPerTeamRejectsNonPositive(t *testing.T) {
+	for _, v := range []string{"0", "-1", "three", "1.5"} {
+		clearEnv(t)
+		t.Setenv("BROWSER_MAX_PER_TEAM", v)
+		if _, err := Load(); err == nil {
+			t.Errorf("BROWSER_MAX_PER_TEAM=%q loaded", v)
+		}
 	}
 }
 

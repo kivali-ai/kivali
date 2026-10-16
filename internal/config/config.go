@@ -126,6 +126,24 @@ type Config struct {
 	// production the manifest sets this to "/var/run/kivali/uds".
 	AgentpodUDSDir string
 
+	// BrowserImage is the kivali-browser image browser pods run.
+	// Empty means the one released with AgentpodImage
+	// (browserpod.BrowserImageFor). Sourced from BROWSER_IMAGE.
+	BrowserImage string
+	// BrowserMaxPerTeam is how many browsers the team's agents may have
+	// running at once. Defaults to 3; at least 1. Sourced from
+	// BROWSER_MAX_PER_TEAM.
+	BrowserMaxPerTeam int
+	// BrowserCPURequest, BrowserMemoryRequest, BrowserCPULimit and
+	// BrowserMemoryLimit size each browser pod's container, as
+	// Kubernetes quantities. Empty leaves browserpod's default for that
+	// one (100m, 512Mi, 2, 2Gi). Sourced from BROWSER_CPU_REQUEST,
+	// BROWSER_MEMORY_REQUEST, BROWSER_CPU_LIMIT and BROWSER_MEMORY_LIMIT.
+	BrowserCPURequest    string
+	BrowserMemoryRequest string
+	BrowserCPULimit      string
+	BrowserMemoryLimit   string
+
 	// CookieSuffix is appended, after an underscore, to the session and
 	// sign-in state cookie names, so servers sharing a host (cookies
 	// ignore the port) keep separate sign-ins. Empty keeps the plain
@@ -182,6 +200,11 @@ func Load() (Config, error) {
 		AgentpodNamespace:       envOr("AGENTPOD_NAMESPACE", "kivali-dev"),
 		AgentpodImage:           envOr("AGENTPOD_IMAGE", "kivali:dev"),
 		AgentpodUDSDir:          os.Getenv("AGENTPOD_UDS_DIR"),
+		BrowserImage:            strings.TrimSpace(os.Getenv("BROWSER_IMAGE")),
+		BrowserCPURequest:       strings.TrimSpace(os.Getenv("BROWSER_CPU_REQUEST")),
+		BrowserMemoryRequest:    strings.TrimSpace(os.Getenv("BROWSER_MEMORY_REQUEST")),
+		BrowserCPULimit:         strings.TrimSpace(os.Getenv("BROWSER_CPU_LIMIT")),
+		BrowserMemoryLimit:      strings.TrimSpace(os.Getenv("BROWSER_MEMORY_LIMIT")),
 		CookieSuffix:            os.Getenv("KIVALI_COOKIE_SUFFIX"),
 		SeedOrgName:             strings.TrimSpace(os.Getenv("KIVALI_SEED_ORG_NAME")),
 		TeamKind:                os.Getenv("KIVALI_TEAM_KIND"),
@@ -197,6 +220,11 @@ func Load() (Config, error) {
 	if err := checkExternalURL(cfg.ExternalURL); err != nil {
 		return Config{}, err
 	}
+	maxBrowsers, err := envPositiveInt("BROWSER_MAX_PER_TEAM", 3)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.BrowserMaxPerTeam = maxBrowsers
 	switch cfg.TeamKind {
 	case "", "work", "personal":
 	default:
@@ -339,6 +367,20 @@ func splitCSV(s string) []string {
 		}
 	}
 	return out
+}
+
+// envPositiveInt is k as a whole number of at least 1, def when k is
+// unset.
+func envPositiveInt(k string, def int) (int, error) {
+	v := strings.TrimSpace(os.Getenv(k))
+	if v == "" {
+		return def, nil
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 1 {
+		return 0, fmt.Errorf("%s %q must be a whole number of at least 1", k, v)
+	}
+	return n, nil
 }
 
 func envBool(k string, def bool) bool {

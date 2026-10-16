@@ -20,6 +20,10 @@
 {{ .Values.egress.image.repository }}:{{ .Values.egress.image.tag | default .Chart.AppVersion }}
 {{- end -}}
 
+{{- define "kivali.browserImage" -}}
+{{ .Values.browser.image.repository }}:{{ .Values.browser.image.tag | default .Values.image.tag | default .Chart.AppVersion }}
+{{- end -}}
+
 {{- define "kivali.labels" -}}
 app: kivali
 app.kubernetes.io/name: kivali
