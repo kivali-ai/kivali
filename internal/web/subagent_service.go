@@ -47,6 +47,7 @@ import (
 	"github.com/kivali-ai/kivali/internal/mcp"
 	"github.com/kivali-ai/kivali/internal/provider"
 	"github.com/kivali-ai/kivali/internal/store"
+	"github.com/kivali-ai/kivali/internal/structured"
 )
 
 // subagentWatchPoll is how often each per-task watcher reads the
@@ -199,6 +200,17 @@ type SubagentTaskInput struct {
 	// defaults to the fleet default (high) at spawn. Mirrors the
 	// `effort` property in the subagent tool's input schema.
 	Effort string `json:"effort"`
+	// Schema is the caller's JSON Schema for an answer as data, in the
+	// subset internal/structured accepts, or empty for a free-text
+	// answer. Mirrors the `schema` property in the tool's input schema.
+	Schema json.RawMessage `json:"schema,omitempty"`
+}
+
+// hasSchema reports whether the task asks for a structured answer. A
+// JSON null counts as absent, the way an omitted field does.
+func (t SubagentTaskInput) hasSchema() bool {
+	trimmed := strings.TrimSpace(string(t.Schema))
+	return trimmed != "" && trimmed != "null"
 }
 
 // StartBatch is the entry point for one /run-subagent call. It
@@ -330,8 +342,11 @@ func (s *SubagentService) launch(parent, toolUseID string, tasks []SubagentTaskI
 			QueuedAt:    now,
 			Depth:       depth,
 			CallerID:    callerID,
-			cancel:      cancel,
-			done:        make(chan struct{}),
+			// validateTasks accepted the schema before launch; a task
+			// without one, or whose schema failed to parse, is free text.
+			Schema: parsedSchema(t),
+			cancel: cancel,
+			done:   make(chan struct{}),
 		}
 		jobs[i] = job
 		s.registerJob(job)
@@ -372,7 +387,7 @@ func (s *SubagentService) runJob(ctx context.Context, parent, toolUseID string, 
 	overlayRoot := subagentFilesRoot(s.Store, parent, id)
 	if err := files.BuildSubagentOverlay(files.SubagentOverlay{Root: overlayRoot}); err != nil {
 		s.emitProgress(parent, toolUseID, index, id, "errored", "", "overlay: "+err.Error())
-		s.finishJob(job, toolUseID, index, "", fmt.Errorf("overlay: %w", err))
+		s.finishJob(job, toolUseID, index, "", "", fmt.Errorf("overlay: %w", err))
 		return
 	}
 
@@ -383,11 +398,11 @@ func (s *SubagentService) runJob(ctx context.Context, parent, toolUseID string, 
 	// The wait honours ctx, so a job cancelled while queued never
 	// starts and never consumes a slot — which is what makes
 	// "dispatch five, change your mind, cancel" cost nothing.
-	s.writeSubagentMeta(parent, t, id, subagentJobQueued, "")
+	s.writeSubagentMeta(parent, t, id, subagentJobQueued, "", "")
 	s.emitProgress(parent, toolUseID, index, id, subagentJobQueued, "", "")
 	if err := s.adm().acquire(ctx, parent, job.Depth); err != nil {
-		s.writeSubagentMeta(parent, t, id, "cancelled", err.Error())
-		s.finishJob(job, toolUseID, index, "", err)
+		s.writeSubagentMeta(parent, t, id, "cancelled", err.Error(), "")
+		s.finishJob(job, toolUseID, index, "", "", err)
 		return
 	}
 	defer s.adm().release(parent, job.Depth)
@@ -396,7 +411,7 @@ func (s *SubagentService) runJob(ctx context.Context, parent, toolUseID string, 
 		j.State = subagentJobRunning
 		j.StartedAt = time.Now().UTC()
 	})
-	s.writeSubagentMeta(parent, t, id, "running", "")
+	s.writeSubagentMeta(parent, t, id, "running", "", "")
 	s.emitProgress(parent, toolUseID, index, id, "running", "", "")
 	// queued → running does not change the OUTSTANDING count, so this
 	// transition would otherwise be invisible to the agent page: its
@@ -428,8 +443,8 @@ func (s *SubagentService) runJob(ctx context.Context, parent, toolUseID string, 
 	if terr != nil {
 		close(stopWatch)
 		s.emitProgress(parent, toolUseID, index, id, "errored", "", "alloc turn-id: "+terr.Error())
-		s.writeSubagentMeta(parent, t, id, "errored", terr.Error())
-		s.finishJob(job, toolUseID, index, "", terr)
+		s.writeSubagentMeta(parent, t, id, "errored", terr.Error(), "")
+		s.finishJob(job, toolUseID, index, "", "", terr)
 		return
 	}
 
@@ -442,30 +457,257 @@ func (s *SubagentService) runJob(ctx context.Context, parent, toolUseID string, 
 	if depth < 1 {
 		depth = 1
 	}
+	// Schema is read without the lock like Model and Effort: set at
+	// registration, never mutated.
+	structuredTask := job.Schema != nil
 	spec := agentpod.SubagentSpec{
 		SubagentID:   id,
 		Description:  t.Description,
 		Model:        t.Model,
 		Effort:       t.Effort,
-		SystemPrompt: agentpod.SubagentSystemPrompt(parent, t.Description, depth),
+		SystemPrompt: agentpod.SubagentSystemPrompt(parent, t.Description, depth, structuredTask),
 		UserPrompt:   t.Prompt,
-		Tools:        agentpod.SubagentTools(depth),
+		Tools:        agentpod.SubagentTools(depth, structuredTask),
 		Depth:        depth,
+	}
+	if structuredTask {
+		spec.Schema = job.Schema.Raw
 	}
 
 	finalText, runErr := s.Driver.DriveSubagent(ctx, parent, turnID, id, spec)
 
 	close(stopWatch)
 
+	// A structured task's answer is what core accepted through
+	// submit_result, or the body core writes when it ended without one.
+	// The run's text never counts: it is the subagent's, and the
+	// caller asked for data in a shape it wrote.
+	var result string
+	if structuredTask {
+		result, runErr = s.structuredEnding(job, runErr)
+		finalText = ""
+	}
+
 	if runErr != nil {
-		s.writeSubagentMeta(parent, t, id, "errored", runErr.Error())
+		s.writeSubagentMeta(parent, t, id, "errored", runErr.Error(), result)
 		s.emitProgress(parent, toolUseID, index, id, "errored", finalText, runErr.Error())
-		s.finishJob(job, toolUseID, index, finalText, runErr)
+		s.finishJob(job, toolUseID, index, finalText, result, runErr)
 		return
 	}
-	s.writeSubagentMeta(parent, t, id, "completed", "")
-	s.emitProgress(parent, toolUseID, index, id, "completed", finalText, "")
-	s.finishJob(job, toolUseID, index, finalText, nil)
+	s.writeSubagentMeta(parent, t, id, "completed", "", result)
+	s.emitProgress(parent, toolUseID, index, id, "completed", resultOrText(result, finalText), "")
+	s.finishJob(job, toolUseID, index, finalText, result, nil)
+}
+
+// subagentResultAttempts is how many submit_result calls a task may
+// have refused before core ends it: enough to fix a shape mistake from
+// the errors, few enough that a subagent that cannot fit the schema
+// stops spending.
+const subagentResultAttempts = 3
+
+// parsedSchema is the task's schema as the job carries it, nil for a
+// free-text task. validateTasks has already refused one outside the
+// subset, so a parse failure here is treated as no schema rather than
+// a second rejection.
+func parsedSchema(t SubagentTaskInput) *structured.Schema {
+	if !t.hasSchema() {
+		return nil
+	}
+	s, err := structured.Parse(t.Schema)
+	if err != nil {
+		return nil
+	}
+	return s
+}
+
+// subagentFilesPrefix is the task's own /files/ tree as the CALLER
+// addresses it. The subagent sees the same tree at /files/.
+func subagentFilesPrefix(id string) string {
+	return "/files/subagents/" + id + "/"
+}
+
+// subagentPrivateArtifacts is the task's own scratch under its /files/,
+// the real directory files.BuildSubagentOverlay makes.
+const subagentPrivateArtifacts = "artifacts/private"
+
+// subagentFileRules are the directories a task's result may name files
+// in, as the subagent sees them, mapped to the caller's view: the
+// task's own artifacts, and the shared workspace, which both see at
+// the same path. FileExists refuses a path the task did not make: a
+// regular file at that place in the task's view, never a link.
+func (s *SubagentService) subagentFileRules(parent, id string) structured.Rules {
+	root := subagentFilesRoot(s.Store, parent, id)
+	callerPrefix := subagentFilesPrefix(id)
+	return structured.Rules{
+		Files: map[string]string{
+			"/files/" + subagentPrivateArtifacts + "/": callerPrefix + subagentPrivateArtifacts + "/",
+			"/files/" + files.SharedWorkspaceDir + "/": "/files/" + files.SharedWorkspaceDir + "/",
+		},
+		FileExists: func(callerPath string) bool {
+			var rel string
+			switch {
+			case strings.HasPrefix(callerPath, callerPrefix):
+				rel = strings.TrimPrefix(callerPath, callerPrefix)
+			case strings.HasPrefix(callerPath, "/files/"):
+				rel = strings.TrimPrefix(callerPath, "/files/")
+			default:
+				return false
+			}
+			// The task's view: artifacts/private/ is a real directory
+			// and background/ a link to the parent's, which Lstat
+			// follows on the way to the final name but not at it.
+			info, err := os.Lstat(filepath.Join(root, filepath.FromSlash(rel)))
+			return err == nil && info.Mode().IsRegular()
+		},
+	}
+}
+
+// subagentAcceptGrace is how long an accepted run keeps going before
+// core ends it: time for the tool result to reach the CLI and the
+// transcript, so the run's last row is the acceptance and not a kill.
+// Core ends it at all because an accepted result is the task's end: a
+// run that went on would spend tokens, and could change the files it
+// named, on an answer that is already on its way.
+const subagentAcceptGrace = 3 * time.Second
+
+// endRunAfterAccept stops id's run once subagentAcceptGrace has passed,
+// unless it has already ended. The result is accepted, so finishJob
+// delivers it as completed however the process exits.
+func (s *SubagentService) endRunAfterAccept(id string) {
+	t := s.clk().NewTimer(subagentAcceptGrace)
+	defer t.Stop()
+	<-t.C()
+	var end context.CancelFunc
+	s.updateJob(id, func(j *subagentJob) {
+		if j.State == subagentJobRunning && j.Result != "" {
+			end = j.cancel
+		}
+	})
+	if end != nil {
+		end()
+	}
+}
+
+// resultOrText is what a chip shows as a task's output: the JSON of a
+// structured answer, fenced, or the free-text answer.
+func resultOrText(result, finalText string) string {
+	if result != "" {
+		return "```json\n" + result + "\n```"
+	}
+	return finalText
+}
+
+// structuredEnding decides how a task with a schema ended once its run
+// is over: the body core delivers and the error to record, if any.
+// Every body is core's own text; the run's error detail stays on the
+// job record and in meta.json, never in what the caller reads.
+func (s *SubagentService) structuredEnding(job *subagentJob, runErr error) (string, error) {
+	s.jobsMu.Lock()
+	accepted, ended, cancelled := job.Result, job.endReason, job.cancelled
+	s.jobsMu.Unlock()
+	switch {
+	case cancelled:
+		// Stop or subagent_cancel: nothing is delivered, accepted or
+		// not, as for a free-text task. Canceled is what finishJob reads
+		// as cancelled, whatever error the dying run reported.
+		return "", context.Canceled
+	case accepted != "":
+		// Accepted before the run ended: the answer stands however the
+		// process then exited, including the end core gave it.
+		return accepted, nil
+	case ended != "":
+		// Core ended the task itself (the attempt cap). The cancel that
+		// stopped the run was the means; the reason is what the caller
+		// should read.
+		return structured.Failed(ended).Body(), errors.New(ended)
+	case runErr != nil && errors.Is(runErr, context.Canceled):
+		return "", runErr
+	case runErr != nil:
+		return structured.Failed("the task ended before it submitted a result").Body(), runErr
+	default:
+		err := errors.New("the task finished without calling submit_result")
+		return structured.Failed(err.Error()).Body(), err
+	}
+}
+
+// SubmitResult is one submit_result call from a running task of
+// parent's. It validates the submission against the task's schema and
+// either records it as the job's answer or returns the errors. The
+// text is the tool result the subagent reads; isError marks a
+// rejection.
+//
+// The first accepted result is final: a second call is refused, so a
+// subagent cannot replace an answer that may already be on its way.
+// After subagentResultAttempts refusals core ends the task, delivering
+// outcome failed; the subagent's submissions never reach the caller.
+func (s *SubagentService) SubmitResult(parent, id string, submission json.RawMessage) (string, bool) {
+	if s == nil {
+		return "submit_result: subagents are not available in this deployment.", true
+	}
+	s.jobsMu.Lock()
+	j, ok := s.jobs[id]
+	switch {
+	case !ok || j.Parent != parent:
+		s.jobsMu.Unlock()
+		return fmt.Sprintf("submit_result: no running task %s of yours.", id), true
+	case j.Schema == nil:
+		s.jobsMu.Unlock()
+		return "submit_result: this task has no schema; your final message is your answer.", true
+	case j.State != subagentJobRunning || j.endReason != "" || j.cancelled:
+		s.jobsMu.Unlock()
+		return "submit_result: this task is no longer running.", true
+	case j.Result != "":
+		s.jobsMu.Unlock()
+		return "submit_result: a result was already accepted for this task and is final. End your turn.", true
+	}
+	schema := j.Schema
+	s.jobsMu.Unlock()
+
+	res, errs := structured.Validate(schema, submission, s.subagentFileRules(parent, id))
+	if len(errs) > 0 {
+		var attempt int
+		var end context.CancelFunc
+		s.updateJob(id, func(j *subagentJob) {
+			j.ResultAttempts++
+			attempt = j.ResultAttempts
+			// Never past an accepted result: a model may send a valid
+			// and an invalid call in one message, and the valid one
+			// stands.
+			if attempt >= subagentResultAttempts && j.endReason == "" && j.Result == "" && j.State == subagentJobRunning && !j.cancelled {
+				// The reason names no detail from the submissions:
+				// what the subagent wrote stays with the subagent.
+				j.endReason = fmt.Sprintf("no valid result after %d submit_result calls", subagentResultAttempts)
+				end = j.cancel
+			}
+		})
+		var b strings.Builder
+		fmt.Fprintf(&b, "Result not accepted (attempt %d of %d):\n", attempt, subagentResultAttempts)
+		for _, e := range errs {
+			fmt.Fprintf(&b, "  - %s\n", e)
+		}
+		if end != nil {
+			log.Printf("subagent %s/%s: ending after %d refused results; last errors: %s", parent, id, attempt, strings.Join(errs, "; "))
+			b.WriteString("\nThat was the last attempt. The task has been ended without an answer.")
+			end()
+		} else {
+			b.WriteString("\nFix these and call submit_result again.")
+		}
+		return b.String(), true
+	}
+
+	body := res.Body()
+	accepted := false
+	s.updateJob(id, func(j *subagentJob) {
+		if j.Result == "" && j.State == subagentJobRunning && j.endReason == "" && !j.cancelled {
+			j.Result = body
+			accepted = true
+		}
+	})
+	if !accepted {
+		return "submit_result: this task already has its result or is no longer running. End your turn.", true
+	}
+	go s.endRunAfterAccept(id)
+	return fmt.Sprintf("Result accepted with outcome %q. It is final and is on its way to your caller. End your turn now: nothing else you say reaches them.", res.Outcome), false
 }
 
 // finishJob is the single exit for a background job: it moves the job
@@ -478,10 +720,14 @@ func (s *SubagentService) runJob(ctx context.Context, parent, toolUseID string, 
 // interrupt at the next clean step boundary, and one landing on an
 // idle parent writes straight in and wakes it. Nothing here needs to
 // know which case it is.
-func (s *SubagentService) finishJob(job *subagentJob, toolUseID string, index int, finalText string, runErr error) {
+//
+// result is a structured task's answer as the wrapper JSON (accepted,
+// or written by core), empty for a free-text task; finalText is the
+// run's own text, which a structured task never delivers.
+func (s *SubagentService) finishJob(job *subagentJob, toolUseID string, index int, finalText, result string, runErr error) {
 	state := subagentJobCompleted
 	switch {
-	case runErr != nil && errors.Is(runErr, context.Canceled):
+	case runErr != nil && errors.Is(runErr, context.Canceled) && result == "":
 		state = subagentJobCancelled
 	case runErr != nil:
 		state = subagentJobFailed
@@ -490,6 +736,7 @@ func (s *SubagentService) finishJob(job *subagentJob, toolUseID string, index in
 		j.State = state
 		j.EndedAt = time.Now().UTC()
 		j.FinalText = finalText
+		j.Result = result
 		j.Err = errString(runErr)
 	})
 	// Wake anything waiting on this job before any of the reporting
@@ -514,7 +761,7 @@ func (s *SubagentService) finishJob(job *subagentJob, toolUseID string, index in
 		"tasks": []map[string]any{{
 			"index":      index,
 			"id":         job.ID,
-			"final_text": finalText,
+			"final_text": resultOrText(result, finalText),
 			"error":      errString(runErr),
 		}},
 	})
@@ -551,7 +798,7 @@ func (s *SubagentService) finishJob(job *subagentJob, toolUseID string, index in
 		// disk at delivery time rather than captured at dispatch: the
 		// agent may have rewritten it since, and a stale count in the
 		// nudge would be worse than no count.
-		Content: renderSubagentResultMessage(job.ID, job.Description, state, finalText, runErr,
+		Content: renderSubagentResultMessage(job.ID, job.Description, state, finalText, result, runErr,
 			s.OutstandingSubagents(job.Parent), loadBackgroundPlan(s.Store, job.Parent)),
 		TS: time.Now().UTC(),
 	}
@@ -782,7 +1029,12 @@ func renderSubagentDispatch(parent string, tasks []SubagentTaskInput, ids []stri
 //
 // outstanding counts the agent's OTHER unfinished jobs; plan is
 // whatever is on disk at delivery time.
-func renderSubagentResultMessage(id, description, state, finalText string, runErr error, outstanding int, plan PlanView) string {
+//
+// A structured task's body is its result JSON, fenced, in place of the
+// run's text: the only words of the subagent's in it are the values
+// the caller's schema made room for. A failure's reason is inside that
+// JSON (outcome failed, error), so no separate error line repeats it.
+func renderSubagentResultMessage(id, description, state, finalText, result string, runErr error, outstanding int, plan PlanView) string {
 	var b strings.Builder
 	switch state {
 	case subagentJobCompleted:
@@ -792,12 +1044,18 @@ func renderSubagentResultMessage(id, description, state, finalText string, runEr
 	default:
 		fmt.Fprintf(&b, "Background task %s (%s) FAILED.\n\n", id, description)
 	}
-	if runErr != nil {
-		fmt.Fprintf(&b, "error: %v\n\n", runErr)
-	}
-	if strings.TrimSpace(finalText) != "" {
-		b.WriteString(strings.TrimRight(finalText, "\n"))
+	switch {
+	case result != "":
+		b.WriteString(resultOrText(result, ""))
 		b.WriteString("\n\n")
+	default:
+		if runErr != nil {
+			fmt.Fprintf(&b, "error: %v\n\n", runErr)
+		}
+		if strings.TrimSpace(finalText) != "" {
+			b.WriteString(strings.TrimRight(finalText, "\n"))
+			b.WriteString("\n\n")
+		}
 	}
 	fmt.Fprintf(&b, "Anything it wrote is at /files/subagents/%s/artifacts/private/ · full transcript: /agents/<you>/subagents/%s\n", id, id)
 
@@ -860,7 +1118,10 @@ func subagentFilesRoot(s *store.FSStore, parent, id string) string {
 // transcript's task rows and the background task transcript), so every
 // job writes its own subagents/<id>/meta.json where they look. The
 // test that follows model and effort through to the file pins it.
-func (s *SubagentService) writeSubagentMeta(parent string, t SubagentTaskInput, id, status, errMsg string) {
+//
+// result is a structured task's answer once it has one (the wrapper
+// JSON); the task rows show it in place of the run's text.
+func (s *SubagentService) writeSubagentMeta(parent string, t SubagentTaskInput, id, status, errMsg, result string) {
 	meta := map[string]any{
 		"id":          id,
 		"description": t.Description,
@@ -870,6 +1131,12 @@ func (s *SubagentService) writeSubagentMeta(parent string, t SubagentTaskInput, 
 		"status":      status,
 		"error":       errMsg,
 		"updated_at":  time.Now().UTC().Format(time.RFC3339),
+	}
+	if t.hasSchema() {
+		meta["structured"] = true
+	}
+	if result != "" && json.Valid([]byte(result)) {
+		meta["result"] = json.RawMessage(result)
 	}
 	body, err := json.MarshalIndent(meta, "", "  ")
 	if err != nil {

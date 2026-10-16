@@ -332,8 +332,12 @@ func subagentTask(p provider.Provider, parent string, index int, v SubagentTaskV
 		Effort: v.Effort,
 	}
 	t.State, t.Error = subagentState(v.Status, v.Error)
-	if v.FinalText != "" && t.State != apitypes.SubagentTaskStateRunning {
-		t.OutputMD = ptr(v.FinalText)
+	if t.State != apitypes.SubagentTaskStateRunning {
+		// A structured task's output is its result JSON, fenced, in
+		// place of whatever the run said after submitting it.
+		if out := resultOrText(v.Result, v.FinalText); out != "" {
+			t.OutputMD = ptr(out)
+		}
 	}
 	if v.ID != "" {
 		t.URL = ptr(subagentAPIURL(parent, v.ID))

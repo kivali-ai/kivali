@@ -16,7 +16,7 @@ import (
 func TestResultMessageCarriesJobStanding(t *testing.T) {
 	plan := PlanView{Present: true, Done: 1, Total: 4}
 	out := renderSubagentResultMessage("a1b2", "check the invoices", subagentJobCompleted,
-		"Seven overdue.", nil, 2, plan)
+		"Seven overdue.", "", nil, 2, plan)
 
 	if !strings.Contains(out, "Seven overdue.") {
 		t.Error("the answer itself is missing")
@@ -45,7 +45,7 @@ func TestResultMessageCarriesJobStanding(t *testing.T) {
 // sometimes report the final fragment instead of the deliverable.
 func TestResultMessageSaysWhenTheJobIsDone(t *testing.T) {
 	plan := PlanView{Present: true, Done: 4, Total: 4}
-	out := renderSubagentResultMessage("z9", "last task", subagentJobCompleted, "done", nil, 0, plan)
+	out := renderSubagentResultMessage("z9", "last task", subagentJobCompleted, "done", "", nil, 0, plan)
 
 	if !strings.Contains(out, "this was the last one") {
 		t.Error("does not say nothing else is running")
@@ -59,7 +59,7 @@ func TestResultMessageSaysWhenTheJobIsDone(t *testing.T) {
 // an agent that dispatched without writing a plan — the right call for
 // a one-off lookup, where a plan would be pure overhead.
 func TestResultMessageWithoutAPlanStillCloses(t *testing.T) {
-	out := renderSubagentResultMessage("q1", "quick lookup", subagentJobCompleted, "42", nil, 0, PlanView{})
+	out := renderSubagentResultMessage("q1", "quick lookup", subagentJobCompleted, "42", "", nil, 0, PlanView{})
 
 	if strings.Contains(out, "plan.md") {
 		t.Error("points at a plan that does not exist")
@@ -77,12 +77,12 @@ func TestResultMessageWithoutAPlanStillCloses(t *testing.T) {
 // still running would produce a deliverable built on part of the
 // evidence — the exact failure the footer exists to prevent.
 func TestResultMessageDoesNotAssemblePrematurely(t *testing.T) {
-	out := renderSubagentResultMessage("q2", "another", subagentJobCompleted, "x", nil, 3, PlanView{})
+	out := renderSubagentResultMessage("q2", "another", subagentJobCompleted, "x", "", nil, 3, PlanView{})
 	if strings.Contains(out, "assemble") {
 		t.Error("told the agent to assemble while three tasks are still running")
 	}
 
-	withPlan := renderSubagentResultMessage("q3", "another", subagentJobCompleted, "x", nil, 3,
+	withPlan := renderSubagentResultMessage("q3", "another", subagentJobCompleted, "x", "", nil, 3,
 		PlanView{Present: true, Done: 1, Total: 4})
 	if strings.Contains(withPlan, "assemble and deliver") {
 		t.Error("issued the close-out instruction with work outstanding")

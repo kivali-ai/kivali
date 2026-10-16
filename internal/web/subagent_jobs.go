@@ -26,6 +26,8 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/kivali-ai/kivali/internal/structured"
 )
 
 // Subagent job states. A job is terminal in every state except
@@ -100,6 +102,32 @@ type subagentJob struct {
 
 	FinalText string
 	Err       string
+
+	// Schema is the caller's parsed schema for a task that answers as
+	// data, nil for a free-text task. It decides which tools the run
+	// gets and what SubmitResult checks a submission against.
+	Schema *structured.Schema
+
+	// Result is a structured task's answer as core delivers it: the
+	// wrapper JSON, indented. Set by SubmitResult when a submission is
+	// accepted, and by finishJob for the body core writes itself when
+	// the task ended without one. Empty for a free-text task.
+	Result string
+
+	// ResultAttempts counts the submit_result calls that were refused.
+	// At subagentResultAttempts core ends the task.
+	ResultAttempts int
+
+	// endReason is set, under jobsMu, before core cancels a run it is
+	// ending itself, so the job's goroutine reports that reason as a
+	// failure rather than reading the cancel as a Stop.
+	endReason string
+
+	// cancelled is set, under jobsMu, when Stop or subagent_cancel
+	// called the job off. A structured task then delivers nothing,
+	// whatever it had submitted: the agent was stopped, and a result
+	// landing after that would wake it.
+	cancelled bool
 
 	// cancel stops this job's execution. Held so subagent_cancel can
 	// reach a job that no longer has anything blocking on it.
@@ -266,6 +294,7 @@ func (s *SubagentService) collectCancelsLocked(parent, rootID string) []func() {
 		frontier = frontier[1:]
 
 		if j, ok := s.jobs[id]; ok && j.Parent == parent && !j.terminal() && j.cancel != nil {
+			j.cancelled = true
 			out = append(out, j.cancel)
 		}
 		for childID, j := range s.jobs {
@@ -306,6 +335,7 @@ func (s *SubagentService) CancelAllSubagents(parent string) int {
 		if j.Parent != parent || j.terminal() || j.cancel == nil {
 			continue
 		}
+		j.cancelled = true
 		cancels = append(cancels, j.cancel)
 	}
 	s.jobsMu.Unlock()

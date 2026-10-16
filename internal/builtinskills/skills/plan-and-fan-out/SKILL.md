@@ -92,7 +92,10 @@ answer and re-dispatch that task rather than guessing for it.
 Each prompt must stand alone. A subagent sees its prompt and the shared
 workspace, and nothing of your conversation. So: point it at
 `/files/background/plan.md`, name the files it needs by path, say what
-"done" looks like, and say where to put the result.
+"done" looks like, and say where to put the result. When the result is
+data — numbers, a shortlist, pass/fail — give the task a `schema` and
+you get JSON checked against it instead of prose; the `subagent` tool's
+description has the shape.
 
 > Read /files/background/plan.md for context. You own task 2. Read every
 > support ticket in /files/project/acme-tickets.csv, and write one row

@@ -12,6 +12,7 @@ import (
 	"github.com/kivali-ai/kivali/internal/files"
 	"github.com/kivali-ai/kivali/internal/provider"
 	"github.com/kivali-ai/kivali/internal/store"
+	"github.com/kivali-ai/kivali/internal/structured"
 )
 
 // graphFixture seeds three agents and a small graph: a service design,
@@ -336,18 +337,27 @@ func TestGraphToolDefinitionsMatchAcrossTransports(t *testing.T) {
 // is shown and then refused for calling. Both lists are hand-kept.
 func TestSubagentToolsCoverTheSubagentToolkit(t *testing.T) {
 	be := &files.Backend{Root: t.TempDir()}
+	schema, err := structured.Parse([]byte(`{"type":"object","properties":{"count":{"type":"integer"}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, depth := range []int{0, 1, agentpod.MaxSubagentDepth} {
-		deps := SubagentDeps{Client: newTestClient("alice"), SubagentID: "st-1", Files: NewLocalFilesDispatcher(be), ShellExec: &fakeShellExec{}, Provider: provider.MockProvider{}}
-		if agentpod.CanDelegate(depth) {
-			deps.NestedSubagent = stubNested{}
-		}
-		allowed := map[string]bool{}
-		for _, n := range agentpod.SubagentTools(depth).Kivali {
-			allowed[n] = true
-		}
-		for _, tool := range SubagentToolkit(deps).Tools {
-			if !allowed[tool.Name] {
-				t.Errorf("depth %d: toolkit registers %q but SubagentTools omits it", depth, tool.Name)
+		for _, withSchema := range []bool{false, true} {
+			deps := SubagentDeps{Client: newTestClient("alice"), SubagentID: "st-1", Files: NewLocalFilesDispatcher(be), ShellExec: &fakeShellExec{}, Provider: provider.MockProvider{}}
+			if agentpod.CanDelegate(depth) {
+				deps.NestedSubagent = stubNested{}
+			}
+			if withSchema {
+				deps.ResultSchema = schema
+			}
+			allowed := map[string]bool{}
+			for _, n := range agentpod.SubagentTools(depth, withSchema).Kivali {
+				allowed[n] = true
+			}
+			for _, tool := range SubagentToolkit(deps).Tools {
+				if !allowed[tool.Name] {
+					t.Errorf("depth %d, schema %v: toolkit registers %q but SubagentTools omits it", depth, withSchema, tool.Name)
+				}
 			}
 		}
 	}

@@ -85,6 +85,7 @@ func nestedSubagentInputSchema(p provider.Provider) json.RawMessage {
         "properties": {
           "description": {"type": "string", "description": "short label (≤ 8 words) for this piece of work"},
           "prompt": {"type": "string", "description": "the instruction this worker receives verbatim. It sees only this prompt and the shared /files/background/ — none of your conversation — so name the files and say what output you want where."},
+          %s,
           %s
         },
         "required": ["description", "prompt"]
@@ -92,7 +93,7 @@ func nestedSubagentInputSchema(p provider.Provider) json.RawMessage {
     }
   },
   "required": ["tasks"]
-}`, agentpod.SubagentMaxNestedFanout, modelEffortProperties(p, "Go lower for mechanical or lookup work.")))
+}`, agentpod.SubagentMaxNestedFanout, modelEffortProperties(p, "Go lower for mechanical or lookup work."), schemaProperty))
 }
 
 var nestedSubagentDescription = fmt.Sprintf(`Split your task across up to %d workers running in parallel.
@@ -107,5 +108,5 @@ Workers cannot delegate further. You are the last tier that can split work.
 
 WHAT COMES BACK IS RAW MATERIAL, NOT YOUR ANSWER. Reconcile it: where two workers disagree, resolve it or say which you trust and why; where one is thin, fill the gap yourself; where one is confidently wrong, say so. Pasting their replies end to end is the one outcome that makes delegating worse than not — your caller delegated to you so that exactly one agent would be accountable for this piece.
 
-tasks[] is 1..%d objects: description (short label), prompt (verbatim instruction), optional model (omit for the default), optional effort (omit for the model's default).`,
+tasks[] is 1..%d objects: description (short label), prompt (verbatim instruction), optional model (omit for the default), optional effort (omit for the model's default), optional schema (the worker then answers through submit_result and you get JSON that fits {outcome, result, alternatives, blocked_on, files}, checked against your schema).`,
 	agentpod.SubagentMaxNestedFanout, agentpod.SubagentMaxNestedFanout)

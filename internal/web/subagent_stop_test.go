@@ -211,7 +211,7 @@ func TestFinishJobNotifiesWorkingChanged(t *testing.T) {
 	job := &subagentJob{ID: "j1", Parent: "alice", State: subagentJobRunning, done: make(chan struct{})}
 	svc.registerJob(job)
 
-	svc.finishJob(job, "tool-1", 0, "", context.Canceled)
+	svc.finishJob(job, "tool-1", 0, "", "", context.Canceled)
 
 	if notified == 0 {
 		t.Error("finishJob did not push an org-state notify; the waiting indicator " +

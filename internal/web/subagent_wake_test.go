@@ -59,7 +59,7 @@ func finishOneJob(t *testing.T, svc *SubagentService, parent string, runErr erro
 		State: subagentJobRunning, Depth: 1, done: make(chan struct{}),
 	}
 	svc.registerJob(job)
-	svc.finishJob(job, "tool-1", 0, "all done", runErr)
+	svc.finishJob(job, "tool-1", 0, "all done", "", runErr)
 }
 
 // TestFinishedSubagentWakesTheParent: an idle parent is woken by its
@@ -197,7 +197,7 @@ func TestNestedSubagentDoesNotWakeTheDurableAgent(t *testing.T) {
 		State: subagentJobRunning, Depth: 2, done: make(chan struct{}),
 	}
 	svc.registerJob(job)
-	svc.finishJob(job, "tool-1", 0, "done", nil)
+	svc.finishJob(job, "tool-1", 0, "done", "", nil)
 
 	if len(rec.events) != 0 {
 		t.Errorf("events = %v, want none for a depth-2 job", rec.events)

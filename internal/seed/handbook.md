@@ -368,6 +368,15 @@ Sharp prompt, explicit success criteria, the return format you want
 (paths + line numbers, count, pass/fail). If the answer looks off,
 re-invoke with a tighter prompt rather than trust it.
 
+When the answer is data rather than reading — a price, a shortlist, a
+pass/fail with reasons — give the task a `schema`. The subagent then
+answers through `submit_result`, Kivali checks the answer against your
+schema, and you receive JSON (`outcome`, `result`, `alternatives`,
+`blocked_on`, `files`) instead of prose: nothing the subagent read
+reaches you beyond the fields you made room for. Every string in a
+schema needs a `maxLength`; keep the fields few and short, and have
+long text written to a file the result names.
+
 A subagent can split its own task further. Give one a piece of work
 that is itself a small project and it will break that piece down and
 hand you back a single reconciled answer, rather than you holding every

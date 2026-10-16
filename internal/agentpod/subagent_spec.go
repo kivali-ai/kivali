@@ -31,15 +31,22 @@ const SubagentMaxNestedFanout = 3
 // dispatch subagents of its own.
 func CanDelegate(depth int) bool { return depth < MaxSubagentDepth }
 
+// SubmitResultToolName is the tool a subagent with a schema finishes
+// through. The subagent layer owns it: core validates every call
+// against the task's schema (internal/structured) and the accepted
+// result becomes the job's answer.
+const SubmitResultToolName = "submit_result"
+
 // SubagentTools returns the tool set a subagent at the given depth
 // runs with: the kivali MCP tools by bare name, plus the provider-side
 // web tools. The subagent tool is present only for a tier that is
 // allowed to delegate; a leaf is never shown a tool it would be refused
-// for using.
+// for using. submit_result is present only when the task carries a
+// schema (structured): a free-text task has nothing to submit.
 //
 // This is policy — which tools a tier gets — and so it lives here, in
 // neutral names. How a provider spells them is the driver's business.
-func SubagentTools(depth int) provider.ToolSet {
+func SubagentTools(depth int, structured bool) provider.ToolSet {
 	kivali := []string{
 		"file_view",
 		"file_create",
@@ -58,6 +65,9 @@ func SubagentTools(depth int) provider.ToolSet {
 	if CanDelegate(depth) {
 		kivali = append(kivali, "subagent")
 	}
+	if structured {
+		kivali = append(kivali, SubmitResultToolName)
+	}
 	return provider.ToolSet{
 		Kivali:   kivali,
 		Builtins: []string{provider.BuiltinWebFetch, provider.BuiltinWebSearch},
@@ -67,7 +77,9 @@ func SubagentTools(depth int) provider.ToolSet {
 // SubagentSystemPrompt builds the minimal-by-design system prompt the
 // subagent gets. NO handbook, NO parent persona, NO org context
 // — just the frame the subagent needs to do focused work and return
-// a clean answer.
+// a clean answer. structured is whether the task carries a schema: the
+// answer then goes through submit_result and the result contract says
+// so instead of describing a final message.
 //
 // Post docs/developers/files-and-publishing.md, the subagent inherits a narrowed view
 // of the parent's /files/ via a symlink overlay: artifacts/private/
@@ -76,10 +88,11 @@ func SubagentTools(depth int) provider.ToolSet {
 // artifacts/public/, artifacts/shared/, background/). file_view paths
 // and shell paths point at the same physical bytes — no
 // inputs[]/outputs/ shuffle, no path translation between tools.
-func SubagentSystemPrompt(parent, description string, depth int) string {
+func SubagentSystemPrompt(parent, description string, depth int, structured bool) string {
 	var b strings.Builder
 	// EVERYTHING FROM HERE TO THE TAIL IS IDENTICAL FOR EVERY SUBAGENT
-	// AT THIS TIER, and it needs to stay that way.
+	// AT THIS TIER WITH THIS KIND OF ANSWER, and it needs to stay that
+	// way.
 	//
 	// Prompt caching keys on a shared leading prefix. The caller slug
 	// and the task label change on every spawn, so they sit in a tail
@@ -105,27 +118,19 @@ func SubagentSystemPrompt(parent, description string, depth int) string {
 	b.WriteString("run_shell runs against the SAME filesystem — `cat /files/project/foo.csv` works directly, ")
 	b.WriteString("and `echo hi > /files/artifacts/private/out.txt` is what file_view sees on the next call. ")
 	b.WriteString("cwd defaults to /files/; you can pass a cwd to start somewhere else under that root.\n\n")
+	b.WriteString("You have run_shell, file_*, artifact_publish, artifact_unpublish, list_skills, graph_query, graph_node, WebFetch, WebSearch")
 	if CanDelegate(depth) {
-		b.WriteString("You have run_shell, file_*, artifact_publish, artifact_unpublish, list_skills, graph_query, graph_node, WebFetch, WebSearch, and `subagent`.\n")
-	} else {
-		b.WriteString("You have run_shell, file_*, artifact_publish, artifact_unpublish, list_skills, graph_query, graph_node, WebFetch, WebSearch.\n")
+		b.WriteString(", and `subagent`")
 	}
+	if structured {
+		b.WriteString(", and `submit_result`")
+	}
+	b.WriteString(".\n")
 	b.WriteString("graph_query and graph_node search the org's knowledge graph (every public artifact and agent, with kind, status, owner, subject); graph_query about=<id> binding=true finds what binds an object; graph_node <id>@N returns the file at version N.\n")
 	b.WriteString("artifact_publish copies a file from your workspace into your caller's published area, where every agent can read it; publish only when your task says to.\n")
 	b.WriteString("You do NOT have publish_*, agent_memory_*, share_file, past-chats, or org-state tools — those are caller-only.\n\n")
 	b.WriteString(subagentDelegationFrame(depth))
-	b.WriteString("IF YOU ARE BLOCKED: you cannot ask anyone anything — one prompt in, nothing can reach you, and you are gone once you answer. ")
-	b.WriteString("So either decide (take the most defensible reading and state the assumption in your answer), ")
-	b.WriteString("or stop early and make the question your answer — \"I cannot do this without knowing X\" is a useful result, not a failure, ")
-	b.WriteString("and your caller can get the answer and re-dispatch in seconds. Never guess silently.\n\n")
-	b.WriteString("RESULT CONTRACT: your final assistant message is what gets returned to your caller verbatim. ")
-	b.WriteString("Don't write a preamble. Don't summarize what you did. Don't say \"here's the answer:\". ")
-	b.WriteString("Just write the answer they need — directly, in full. Files you wrote under /files/artifacts/private/ ")
-	b.WriteString("are reachable by your caller via the same path; ")
-	b.WriteString("don't re-quote their contents in your final message unless the caller's request specifically asked you to.\n\n")
-	b.WriteString("LARGE ANSWERS: if your final answer would run more than a few KB (long tables, full file dumps, multi-section reports), ")
-	b.WriteString("write it to /files/artifacts/private/<name>.md and have your final message be a short pointer to that path plus the headline finding. ")
-	b.WriteString("The caller's runtime caps tool_results, so a huge inline answer becomes unreadable.\n\n")
+	b.WriteString(subagentResultContract(structured))
 	b.WriteString("EDITING FILES EFFICIENTLY: when updating an existing file, use file_str_replace or file_insert with a small diff. ")
 	b.WriteString("Reach for file_create only when creating a file from scratch. The reason: the tool input lives in your ")
 	b.WriteString("chat history and replays on every later turn — a file_create of a 60 KB body costs 60 KB on every future API ")
@@ -148,6 +153,37 @@ func SubagentSystemPrompt(parent, description string, depth int) string {
 	}
 	b.WriteString(".\n")
 	return b.String()
+}
+
+// subagentResultContract is how the answer reaches the caller: the
+// final message, verbatim, or a submit_result call that core checks
+// against the caller's schema. The blocked paragraph belongs to it
+// because what "stop early" looks like differs: a question can be a
+// free-text answer, but a structured one can only say partial,
+// not_found or blocked.
+func subagentResultContract(structured bool) string {
+	if structured {
+		return "IF YOU ARE BLOCKED: you cannot ask anyone anything — one prompt in, nothing can reach you, and you are gone once you answer. " +
+			"So either decide (take the most defensible reading), or stop early and submit what you have as `partial`, " +
+			"or `not_found` or `blocked` when that is the truth; your caller fills the gap and re-dispatches in seconds. Never guess silently.\n\n" +
+			"RESULT CONTRACT: your caller asked for data, not prose. You finish by calling `submit_result`; its input schema is the exact shape they want, " +
+			"and nothing you write as plain text reaches them. Fill the fields from what you verified and leave out a field you could not fill rather than inventing it. " +
+			"Choose the outcome honestly: found, partial, not_found, alternative (answers that fit the schema but are not the thing asked for) or blocked. " +
+			"An invalid call comes back with what to fix; the third invalid call ends the task with no answer. The first accepted result is final and ends the task, so call it once, when you are done. " +
+			"Text longer than a field allows goes in a file under /files/artifacts/private/ that you name in `files`, by the path you see it at; your caller can read it.\n\n"
+	}
+	return "IF YOU ARE BLOCKED: you cannot ask anyone anything — one prompt in, nothing can reach you, and you are gone once you answer. " +
+		"So either decide (take the most defensible reading and state the assumption in your answer), " +
+		"or stop early and make the question your answer — \"I cannot do this without knowing X\" is a useful result, not a failure, " +
+		"and your caller can get the answer and re-dispatch in seconds. Never guess silently.\n\n" +
+		"RESULT CONTRACT: your final assistant message is what gets returned to your caller verbatim. " +
+		"Don't write a preamble. Don't summarize what you did. Don't say \"here's the answer:\". " +
+		"Just write the answer they need — directly, in full. Files you wrote under /files/artifacts/private/ " +
+		"are reachable by your caller via the same path; " +
+		"don't re-quote their contents in your final message unless the caller's request specifically asked you to.\n\n" +
+		"LARGE ANSWERS: if your final answer would run more than a few KB (long tables, full file dumps, multi-section reports), " +
+		"write it to /files/artifacts/private/<name>.md and have your final message be a short pointer to that path plus the headline finding. " +
+		"The caller's runtime caps tool_results, so a huge inline answer becomes unreadable.\n\n"
 }
 
 // subagentDelegationFrame is the paragraph that makes a subagent's

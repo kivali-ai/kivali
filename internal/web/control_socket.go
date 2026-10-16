@@ -215,4 +215,8 @@ func (s *Server) registerUDSRoutes(mux *http.ServeMux) {
 	// against.
 	mux.HandleFunc("POST /v1/agent/{slug}/subagent-status", s.handleAgentpodSubagentStatus)
 	mux.HandleFunc("POST /v1/agent/{slug}/subagent-cancel", s.handleAgentpodSubagentCancel)
+	// A subagent's submit_result: the bound slug is the parent whose
+	// task the id must name, so a subagent cannot answer another
+	// agent's task.
+	mux.HandleFunc("POST /v1/agent/{slug}/subagents/{id}/result", s.handleAgentpodSubagentResult)
 }
