@@ -171,8 +171,8 @@ Choices worth knowing:
   would need `--long` when decompressing). `scripts/image-bundle.sh`
   saves it uncompressed from the per-image tarballs of
   `make image-tars ARCH=<arch>` (run by `release-images-<arch>`) and
-  checks all four references are listed (the browser image is by far
-  the largest); `release-compress-<arch>`
+  checks all four references are listed (the browser image is the
+  largest, about 670 MB unpacked); `release-compress-<arch>`
   compresses it (`release-bundle-<arch>` runs both). The
   archive carries the images' own names, not a registry's: the chart's
   image references (`kivali:vX.Y.Z`) resolve to what containerd imported.

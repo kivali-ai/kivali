@@ -15,15 +15,19 @@
 #   docker build -f Dockerfile.browser --build-arg KIVALI_IMAGE=kivali:dev \
 #       -t kivali-browser:dev .
 #
-# Chromium is Debian's, with fonts for Latin, the other Noto scripts,
-# CJK and colour emoji, so pages render as a person would see them. Xvfb
-# gives Chromium a display when it runs headed. Base is debian:trixie-slim
-# pinned by digest, the same one as the root Dockerfile and
-# Dockerfile.agent-shell, so SOURCES.md names exactly what the image was
-# built from.
+# Chromium is Debian's, with fonts for Latin (Liberation, metric-compatible
+# with Arial, Times New Roman and Courier New), the everyday scripts of
+# Noto Sans, CJK and colour emoji, so pages render legibly; the fonts and
+# libraries a pod never uses are left out (below). Xvfb gives Chromium a
+# display when it runs headed. The image is about 670 MB unpacked, of
+# which Chromium is 356 MB. Base is debian:trixie-slim pinned by digest,
+# the same one as the root Dockerfile and Dockerfile.agent-shell, so
+# SOURCES.md names exactly what the image was built from.
 #
-# The installed package list is recorded at /etc/kivali/browser-packages,
-# one package per line.
+# The packages installed by name are chromium, fonts-liberation,
+# fonts-noto-core, fonts-noto-cjk, fonts-noto-color-emoji, xvfb, xauth,
+# dbus-x11, ca-certificates and dumb-init, recorded at
+# /etc/kivali/browser-packages, one package per line.
 
 ARG KIVALI_IMAGE=kivali:dev
 
@@ -32,14 +36,57 @@ FROM ${KIVALI_IMAGE} AS kivali
 FROM debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f
 LABEL org.opencontainers.image.licenses="Apache-2.0"
 
-# xauth is what xvfb-run needs to hand Chromium the display.
+# Files dpkg leaves out, set before the install so they are never
+# unpacked (debian-slim's /etc/dpkg/dpkg.cfg.d/docker already leaves out
+# docs other than copyrights, man pages and translations):
+#
+# - Mesa's llvmpipe: libgallium, the libLLVM it links and the libz3
+#   libLLVM links, 180 MB. A pod has no GPU, and Chromium draws with the
+#   SwiftShader it ships (/usr/lib/chromium/libvk_swiftshader.so):
+#   headless always; headed under Xvfb its GPU process fails to find a
+#   GL driver and Chromium renders in software, as it would on llvmpipe,
+#   which it blocklists for WebGL (--use-angle=swiftshader gives a headed
+#   Chromium SwiftShader directly). libgbm, which Chromium links, loads
+#   Mesa only to open a GPU device. The packages stay installed for the
+#   dependencies they satisfy.
+# - The Vulkan validation layer, a debugging aid Chromium loads only
+#   when asked to.
+# - Chromium's UI translations other than en-US; it runs with
+#   --lang=en-US.
+# - The Noto fonts other than regular and bold Noto Sans for the
+#   scripts listed below, symbols, maths, colour emoji and the regular
+#   Noto Sans CJK (Chinese, Japanese and Korean in one file; bold is
+#   synthesised). Scripts left out render as missing glyphs.
+#
+# xauth is what xvfb-run needs to hand Chromium the display. dbus-x11
+# is the session bus dconf-service needs; without it apt picks
+# dbus-user-session, which pulls in systemd.
 RUN set -eu; \
-    packages="chromium fonts-liberation fonts-noto-core fonts-noto-cjk fonts-noto-color-emoji xvfb xauth ca-certificates dumb-init"; \
+    noto=/usr/share/fonts/truetype/noto; \
+    { echo "path-exclude /usr/lib/*/libgallium-*.so"; \
+      echo "path-exclude /usr/lib/*/libLLVM*"; \
+      echo "path-exclude /usr/lib/*/libz3.so*"; \
+      echo "path-exclude /usr/lib/chromium/libVkLayer_khronos_validation.so*"; \
+      echo "path-exclude /usr/lib/chromium/locales/*"; \
+      echo "path-include /usr/lib/chromium/locales/en-US.pak"; \
+      echo "path-exclude $noto/*"; \
+      for s in "" Arabic Armenian Bengali Devanagari Ethiopic Georgian Gujarati Gurmukhi Hebrew \
+               Kannada Khmer Lao Malayalam Myanmar Oriya Sinhala Symbols Tamil Telugu Thaana Thai; do \
+          echo "path-include $noto/NotoSans$s-Regular.ttf"; \
+          echo "path-include $noto/NotoSans$s-Bold.ttf"; \
+      done; \
+      echo "path-include $noto/NotoSansSymbols2-Regular.ttf"; \
+      echo "path-include $noto/NotoSansMath-Regular.ttf"; \
+      echo "path-include $noto/NotoColorEmoji.ttf"; \
+      echo "path-exclude /usr/share/fonts/opentype/noto/*"; \
+      echo "path-include /usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"; \
+    } > /etc/dpkg/dpkg.cfg.d/kivali-browser; \
+    packages="chromium fonts-liberation fonts-noto-core fonts-noto-cjk fonts-noto-color-emoji xvfb xauth dbus-x11 ca-certificates dumb-init"; \
     apt-get update; \
     apt-get install -y --no-install-recommends $packages; \
     mkdir -p /etc/kivali; \
     printf '%s\n' $packages | sort -u > /etc/kivali/browser-packages; \
-    rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*; \
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* /var/cache/debconf/*-old /var/log/apt /var/log/dpkg.log; \
     groupadd -r -g 65532 kivali; \
     useradd -r -u 65532 -g 65532 -m -d /home/kivali -s /usr/sbin/nologin kivali; \
     chmod 1777 /tmp

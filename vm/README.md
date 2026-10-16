@@ -198,8 +198,9 @@ level and k3s.
 Inside the root disk: k3s binary 71.4 MB, `k3s-images.tar` 105.1 MB,
 kernel modules ~25 MB, everything else a few MB. With the four local
 `:dev` Kivali images baked (`make dev-images`; the three without the
-browser image were a 797 MB tarball, and the browser image, Chromium
-with its fonts and Xvfb, adds about as much again) the
+browser image were a 797 MB tarball; the browser image, Chromium with
+its fonts and Xvfb, is about 670 MB unpacked and 272 MB as `docker save`
+writes it from Docker's containerd image store) the
 root disk is 988 MB. A data disk after one boot holds ~680 MB.
 
 ### Artifacts, amd64 (`ARCH=amd64`, no Kivali images or chart baked)
