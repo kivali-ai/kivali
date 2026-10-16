@@ -89,6 +89,33 @@
   padding: var(--space-4);
   max-width: calc(var(--space-8) * 15);
 }
+/* A host outside the session's site: the warning beside the host. */
+.app-bw-off {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex: none;
+  white-space: nowrap;
+}
+.app-bw-banner {
+  padding: var(--space-2) var(--space-4) 0;
+}
+/* A frame that takes input is focused by a click; the global focus ring stays for keyboard focus. */
+.app-bw-frame:focus:not(:focus-visible) {
+  box-shadow: none;
+}
+/* The right-click menu over the frame, at the pointer. */
+.app-bw-menu {
+  position: fixed;
+}
+.app-bw-menu-item {
+  width: 100%;
+  justify-content: flex-start;
+}
+.app-bw-menu-note {
+  color: var(--ink-muted);
+  cursor: default;
+}
 @media (max-width: 640px) {
   .app-bw-where {
     flex-direction: column;

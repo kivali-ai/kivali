@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useHref } from 'react-router';
 import { ApiError, apiGet } from '../../api/client';
+import type { SubagentTaskState, WebSignInReason } from '../../api/types.gen';
 import type { AgentRunState } from '../../ds';
 import { shortDate } from '../../lib/time';
 
@@ -181,6 +182,30 @@ export const SESSION_STATE: Record<SessionRunState, AgentRunState> = {
   errored: 'errored',
   cancelled: 'cancelled',
 };
+
+/**
+ * A background task's state as AgentState draws it. The design system has no waiting state: a task waiting for
+ * a person to sign in is "held" (a pause mark, "On hold"), and the page says what it waits for beside it.
+ */
+export const TASK_STATE: Record<SubagentTaskState, AgentRunState> = {
+  running: 'running',
+  done: 'done',
+  errored: 'errored',
+  waiting_for_sign_in: 'held',
+};
+
+/** What a web task's page asks of the person while the task waits for sign-in. */
+export const SIGN_IN_REASON: Record<WebSignInReason, string> = {
+  sign_in: 'a sign-in',
+  mfa: 'a second factor',
+  captcha: 'a CAPTCHA',
+  consent: 'a consent',
+};
+
+/** "Waiting for you to sign in to vendor.example": the site when the task names one. */
+export function signInWaitLine(site?: string): string {
+  return 'Waiting for you to sign in' + (site ? ' to ' + site : '');
+}
 
 /** A plan step's state as AgentState draws it: a step that needs help is the "errored" glyph and words. */
 export const STEP_STATE: Record<'done' | 'running' | 'idle' | 'needs_help', AgentRunState> = {

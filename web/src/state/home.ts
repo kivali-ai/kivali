@@ -183,6 +183,8 @@ export function needKindLabel(item: NeedItem): string {
       return 'Assigned to you';
     case 'needs_help':
       return 'Needs help';
+    case 'web_sign_in':
+      return 'Sign in';
     case 'proposal':
       return PROPOSAL_LABELS[item.proposal_kind ?? ''] ?? 'Proposal';
     default:

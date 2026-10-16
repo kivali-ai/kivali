@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router';
-import type { AssignmentResolution, NeedItem } from '../../api/types.gen';
+import { Link, useHref, useNavigate } from 'react-router';
+import type { AssignmentResolution, NeedItem, SubagentRef } from '../../api/types.gen';
+import { browserWindowName, browserWindowPath, subagentPath } from '../../app/links';
 import { Badge, Button, EmptyState, Icon, ListRow, Select, Text, TextField } from '../../ds';
 import { pickFiles } from '../../lib/pickFiles';
 import { relativeTime } from '../../lib/time';
@@ -114,6 +115,31 @@ function HandBackForm({ assignmentId, onAct }: { assignmentId: number | undefine
   );
 }
 
+/**
+ * A web task waiting for a sign-in: the task it is, the way to its browser window and the way to its page. No
+ * answer goes back; the row leaves once the task resumes or ends.
+ */
+function SignInActions({ task }: { task: SubagentRef }) {
+  const browserHref = useHref(browserWindowPath(task.parent, task.id));
+  return (
+    <>
+      <Text as="p" variant="caption" tone="muted">
+        {'Task: ' + task.description}
+      </Text>
+      <div className="app-home-actions">
+        <Link className="app-home-link" to={subagentPath(task.parent, task.id)}>
+          Open task
+        </Link>
+        <span className="app-home-spacer" />
+        {/* The task view's window: one per task under a fixed name, opened without noopener so the name finds it. */}
+        <Button variant="primary" size="sm" onClick={() => void window.open(browserHref, browserWindowName(task.id), 'width=1320,height=900')}>
+          Open browser
+        </Button>
+      </div>
+    </>
+  );
+}
+
 interface NeedRowProps {
   item: NeedItem;
   now: number;
@@ -169,6 +195,7 @@ function NeedRow({ item, now, base, expanded, onToggle, onAct }: NeedRowProps) {
               </Button>
             </div>
           )}
+          {item.kind === 'web_sign_in' && item.subagent && <SignInActions task={item.subagent} />}
         </div>
       )}
     </div>

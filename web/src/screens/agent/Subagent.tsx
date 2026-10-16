@@ -9,7 +9,7 @@ import { useOrg } from '../../state/OrgProvider';
 import { useNow } from '../home/useNow';
 import { useChatDeps } from './chatDeps';
 import { Transcript, keyRows } from './Transcript';
-import { SESSION_STATE, elapsedLabel, modelLabel, useFetched } from './tabsShared';
+import { SIGN_IN_REASON, TASK_STATE, elapsedLabel, signInWaitLine, modelLabel, useFetched } from './tabsShared';
 import '../../styles/agent-tabs.css';
 
 /** Under Open browser: what the task's browser is doing, when that is worth saying. */
@@ -41,7 +41,9 @@ export function Subagent() {
   const meta = data?.meta;
   const parentSlug = meta?.parent || slug;
   const parentName = useMemo(() => flattenTree(org.tree).find((n) => n.slug === parentSlug)?.name ?? parentSlug, [org.tree, parentSlug]);
-  const running = meta?.state === 'running';
+  const waiting = meta?.state === 'waiting_for_sign_in';
+  // A task waiting for sign-in is still under way: its stream, clock and browser window stay live.
+  const live = meta?.state === 'running' || waiting;
   const browserHref = useHref(browserWindowPath(slug, id));
 
   useFrameChrome({
@@ -62,7 +64,7 @@ export function Subagent() {
   const opened = useRef(0);
 
   useEffect(() => {
-    if (!running || !visible) return;
+    if (!live || !visible) return;
     // A reopen (after the tab was hidden) catches up on what happened meanwhile; the first open has the mount's read.
     if (opened.current++ > 0) void refresh();
     const from = received.current;
@@ -81,9 +83,9 @@ export function Subagent() {
     });
     stream.start();
     return () => stream.stop();
-  }, [running, visible, deps, slug, id, refresh]);
+  }, [live, visible, deps, slug, id, refresh]);
 
-  const now = useNow(running ? 1000 : 60_000, deps.now);
+  const now = useNow(live ? 1000 : 60_000, deps.now);
   const rows = useMemo(() => keyRows(data?.rows ?? []), [data]);
 
   if (loading) {
@@ -104,7 +106,7 @@ export function Subagent() {
   }
 
   const seconds = meta.started > 0 ? Math.max(0, ((meta.ended ?? now) - meta.started) / 1000) : 0;
-  const watchable = meta.kind === 'web' && running;
+  const watchable = meta.kind === 'web' && live;
   const browserCaption = watchable && meta.browser ? BROWSER_CAPTION[meta.browser] : undefined;
   const stateLine = 'Background task for ' + parentName + (meta.step ? ' · ' + stepPhrase(meta.step) : '');
 
@@ -115,7 +117,7 @@ export function Subagent() {
           {meta.description}
         </Text>
         <div className="app-sub-line">
-          <AgentState state={SESSION_STATE[meta.state]} />
+          <AgentState state={TASK_STATE[meta.state]} {...(waiting ? { label: signInWaitLine(meta.site) } : {})} />
           <Text variant="caption" tone="muted">
             {stateLine}
           </Text>
@@ -125,17 +127,30 @@ export function Subagent() {
           {meta.kind === 'web' && <Badge variant="outline">{'Web task · ' + (meta.session ?? 'open')}</Badge>}
           {meta.started > 0 && (
             <Text variant="label" tone="muted">
-              {elapsedLabel(seconds, running)}
+              {elapsedLabel(seconds, live)}
             </Text>
           )}
           {watchable && (
             // One window per task: the fixed name finds the window a first click opened, which it can do only
             // without noopener (that puts the window out of reach of the name). The page is Kivali's own.
-            <Button onClick={() => void window.open(browserHref, browserWindowName(id), 'width=1320,height=900')}>
+            // While the task waits for sign-in the window is where the person acts, so the button leads.
+            <Button variant={waiting ? 'primary' : 'secondary'} onClick={() => void window.open(browserHref, browserWindowName(id), 'width=1320,height=900')}>
               Open browser
             </Button>
           )}
         </div>
+        {waiting && (
+          <>
+            {meta.wait_reason && (
+              <Text as="p" variant="caption" tone="signal">
+                {'The page asks for ' + SIGN_IN_REASON[meta.wait_reason] + '.'}
+              </Text>
+            )}
+            <Text as="p" variant="caption" tone="muted">
+              Sign in, then close the window. The task continues on its own.
+            </Text>
+          </>
+        )}
         {browserCaption && (
           <Text as="p" variant="caption" tone="muted">
             {browserCaption}
@@ -146,7 +161,7 @@ export function Subagent() {
             {meta.error}
           </Text>
         )}
-        {running && meta.activity && (
+        {meta.state === 'running' && meta.activity && (
           <Text as="p" variant="caption" tone="muted">
             {meta.activity}
           </Text>
@@ -159,7 +174,7 @@ export function Subagent() {
       )}
       {rows.length === 0 ? (
         <Text as="p" variant="body" tone="muted">
-          {running ? 'Waiting for its first message.' : 'This task recorded no messages.'}
+          {live ? 'Waiting for its first message.' : 'This task recorded no messages.'}
         </Text>
       ) : (
         <Transcript rows={rows} agent={{ slug: meta.id, name: meta.description }} senderSlug={meta.parent} now={now} readOnly />
