@@ -18,6 +18,16 @@ export function serverOwned(pathname: string): boolean {
   return SERVER_PATHS.includes(pathname) || SERVER_PREFIXES.some((p) => pathname.startsWith(p)) || STREAM.test(pathname);
 }
 
+/** The router path of a web task's browser window. */
+export function browserWindowPath(slug: string, id: string): string {
+  return '/agents/' + encodeURIComponent(slug) + '/subagents/' + encodeURIComponent(id) + '/browser';
+}
+
+/** The window name a task's browser window opens under: one window per task, so a second open focuses it. */
+export function browserWindowName(id: string): string {
+  return 'kivali-browser-' + id;
+}
+
 /** The router path (basename removed) for a same-origin href inside the app, or null when the link leaves it. */
 export function internalPath(href: string, base: string, origin: string, current: string): string | null {
   let url: URL;

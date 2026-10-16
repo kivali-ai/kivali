@@ -4,6 +4,7 @@ import type { RouteObject } from 'react-router';
 import type { EventStream } from '../api/sse';
 import { Gallery } from '../screens/gallery/Gallery';
 import { Agent } from '../screens/agent/Agent';
+import { BrowserWindow } from '../screens/browser/BrowserWindow';
 import { Graph } from '../screens/graph/Graph';
 import { Home } from '../screens/home/Home';
 import { Login } from '../screens/login/Login';
@@ -50,6 +51,8 @@ export function createAppRoutes(deps: RouteDeps = {}): RouteObject[] {
         screen('login', <Login />),
         screen('_ds', <Gallery />),
         screen('setup/*', <Setup />),
+        // A task's browser window opens in its own window, with no frame round it.
+        screen('agents/:slug/subagents/:id/browser', <BrowserWindow />),
         {
           element: (
             <OrgProvider {...provider}>

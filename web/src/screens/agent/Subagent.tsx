@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useParams } from 'react-router';
-import type { SubagentTranscript } from '../../api/types.gen';
+import { useHref, useParams } from 'react-router';
+import type { BrowserState, SubagentTranscript } from '../../api/types.gen';
 import { useFrameChrome } from '../../app/chrome';
-import { AgentState, Badge, Banner, Skeleton, Text } from '../../ds';
+import { browserWindowName, browserWindowPath } from '../../app/links';
+import { AgentState, Badge, Banner, Button, Skeleton, Text } from '../../ds';
 import { flattenTree } from '../../state/org';
 import { useOrg } from '../../state/OrgProvider';
 import { useNow } from '../home/useNow';
@@ -10,6 +11,12 @@ import { useChatDeps } from './chatDeps';
 import { Transcript, keyRows } from './Transcript';
 import { SESSION_STATE, elapsedLabel, modelLabel, useFetched } from './tabsShared';
 import '../../styles/agent-tabs.css';
+
+/** Under Open browser: what the task's browser is doing, when that is worth saying. */
+const BROWSER_CAPTION: Partial<Record<BrowserState, string>> = {
+  starting: 'Browser starting',
+  stopped: 'The browser is stopped; opening the window starts it',
+};
 
 /** "step 3" for a number, the step's own words otherwise ("Read the logs"). */
 function stepPhrase(step: string): string {
@@ -35,6 +42,7 @@ export function Subagent() {
   const parentSlug = meta?.parent || slug;
   const parentName = useMemo(() => flattenTree(org.tree).find((n) => n.slug === parentSlug)?.name ?? parentSlug, [org.tree, parentSlug]);
   const running = meta?.state === 'running';
+  const browserHref = useHref(browserWindowPath(slug, id));
 
   useFrameChrome({
     title: meta?.description || 'Background task',
@@ -96,6 +104,8 @@ export function Subagent() {
   }
 
   const seconds = meta.started > 0 ? Math.max(0, ((meta.ended ?? now) - meta.started) / 1000) : 0;
+  const watchable = meta.kind === 'web' && running;
+  const browserCaption = watchable && meta.browser ? BROWSER_CAPTION[meta.browser] : undefined;
   const stateLine = 'Background task for ' + parentName + (meta.step ? ' · ' + stepPhrase(meta.step) : '');
 
   return (
@@ -118,7 +128,17 @@ export function Subagent() {
               {elapsedLabel(seconds, running)}
             </Text>
           )}
+          {watchable && (
+            <Button onClick={() => void window.open(browserHref, browserWindowName(id), 'noopener,noreferrer,width=1320,height=900')}>
+              Open browser
+            </Button>
+          )}
         </div>
+        {browserCaption && (
+          <Text as="p" variant="caption" tone="muted">
+            {browserCaption}
+          </Text>
+        )}
         {meta.state === 'errored' && meta.error && (
           <Text as="p" variant="caption" tone="danger">
             {meta.error}

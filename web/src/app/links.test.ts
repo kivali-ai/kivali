@@ -1,5 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { internalPath, serverOwned } from './links';
+import { browserWindowName, browserWindowPath, internalPath, serverOwned } from './links';
+
+describe('the browser window', () => {
+  it('lives under the task, outside the server-owned paths', () => {
+    const path = browserWindowPath('engineering-lead', 'bbbb2222');
+    expect(path).toBe('/agents/engineering-lead/subagents/bbbb2222/browser');
+    expect(serverOwned(path)).toBe(false);
+    expect(browserWindowPath('a b', 'x/y')).toBe('/agents/a%20b/subagents/x%2Fy/browser');
+  });
+
+  it('opens under one name per task', () => {
+    expect(browserWindowName('bbbb2222')).toBe('kivali-browser-bbbb2222');
+  });
+});
 
 const ORIGIN = 'http://kivali.test';
 const HERE = ORIGIN + '/team';
