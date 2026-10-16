@@ -94,6 +94,9 @@ The chart sets these to match the objects it creates. Leave them alone unless yo
 | `AGENTPOD_NAMESPACE` | Namespace for agent pods and their volumes. |
 | `AGENTPOD_IMAGE` | Image agent pods run. |
 | `AGENTPOD_UDS_DIR` | Directory on the node holding the socket agent pods use to reach the server. |
+| `BROWSER_IMAGE` | Image browser pods run. Unset, the `kivali-browser` image at the agent pod image's tag. |
+| `BROWSER_MAX_PER_TEAM` | How many browsers the team's agents may have running at once. Default 3. |
+| `BROWSER_CPU_REQUEST`, `BROWSER_MEMORY_REQUEST`, `BROWSER_CPU_LIMIT`, `BROWSER_MEMORY_LIMIT` | Each browser pod's resources. Defaults 100m, 512Mi, 2 and 2Gi. |
 | `EGRESS_ALLOWLIST_SYNC_PATH` | Where the server writes the host list for the egress proxy. |
 | `EGRESS_PROXY_URL` | The proxy agent pods send their outbound traffic through. |
 

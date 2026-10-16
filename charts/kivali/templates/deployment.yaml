@@ -75,6 +75,18 @@ spec:
               value: {{ include "kivali.image" . }}
             - name: AGENTPOD_UDS_DIR
               value: {{ .Values.udsDir }}
+            - name: BROWSER_IMAGE
+              value: {{ include "kivali.browserImage" . }}
+            - name: BROWSER_MAX_PER_TEAM
+              value: {{ .Values.browser.maxPerTeam | quote }}
+            - name: BROWSER_CPU_REQUEST
+              value: {{ .Values.browser.resources.requests.cpu | quote }}
+            - name: BROWSER_MEMORY_REQUEST
+              value: {{ .Values.browser.resources.requests.memory | quote }}
+            - name: BROWSER_CPU_LIMIT
+              value: {{ .Values.browser.resources.limits.cpu | quote }}
+            - name: BROWSER_MEMORY_LIMIT
+              value: {{ .Values.browser.resources.limits.memory | quote }}
             - name: EGRESS_ALLOWLIST_SYNC_PATH
               value: /etc/egress/allowlist.yaml
             - name: EGRESS_PROXY_URL
