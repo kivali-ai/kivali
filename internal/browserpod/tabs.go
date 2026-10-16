@@ -1,0 +1,848 @@
+package browserpod
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log"
+	"net/url"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/kivali-ai/kivali/internal/clock"
+)
+
+// browser is the pod's model of Chromium: its page targets as tabs,
+// the groups they belong to, and the downloads in flight.
+type browser struct {
+	conn  cdpConn
+	clock clock.Clock
+	log   *log.Logger
+	site  string
+	dir   string
+	send  func(msg Message, body io.Reader) error
+
+	mu      sync.Mutex
+	nextTab int
+	// tabs by target id, and by tab id.
+	tabs map[string]*tab
+	byID map[string]*tab
+	// groups by name.
+	groups map[string]*group
+	// attached holds page targets that are attached but not yet a
+	// tab: one a command is creating, waiting to be claimed.
+	attached map[string]attachment
+	// claims are commands waiting for their new target to attach.
+	claims map[string]chan struct{}
+	// creating counts commands between Target.createTarget and their
+	// claim; while it is above zero a page with no opener may be
+	// theirs.
+	creating int
+	// spare is a page in no group, kept so the browser always has a
+	// window: Chromium's start page, or the last tab after it closed.
+	spare *attachment
+
+	downloads map[string]*download
+	// front is the tab last brought to the front.
+	front *tab
+}
+
+// attachment is an attached page target.
+type attachment struct {
+	targetID  string
+	sessionID string
+	openerID  string
+	url       string
+}
+
+// group is one subagent's tabs.
+type group struct {
+	name    string
+	tabs    []*tab
+	current *tab
+}
+
+// tab is a page target in a group.
+type tab struct {
+	id       string
+	group    string
+	targetID string
+	session  string
+	opener   string
+
+	mu    sync.Mutex
+	url   string
+	title string
+	// notes are things the model should hear with the next result:
+	// a blocked redirect, a dropped download, a dialog.
+	notes []string
+	// Counters the waits compare against a mark taken before an
+	// action.
+	starts    int  // navigations requested or started in the main frame
+	loading   bool // the main frame is loading
+	popups    int  // tabs this tab's pages opened
+	navs      int  // cross-document commits in the main frame
+	navigated int  // navigated messages sent
+	// pendingNav is a commit whose navigated message waits for load.
+	pendingNav bool
+	loaderID   string
+	idleLoader string
+	changed    chan struct{}
+	world      int
+	hasRefs    bool
+	refsNav    int
+	refs       []refInfo
+	screencast bool
+	lastSent   string
+	closed     bool
+	offs       []func()
+}
+
+// refInfo is what the last snapshot said about a ref.
+type refInfo struct {
+	Role string `json:"role"`
+	Name string `json:"name"`
+}
+
+// mark is a tab's counters at one moment.
+type mark struct{ starts, navs, navigated, popups int }
+
+func newBrowser(conn cdpConn, clk clock.Clock, logger *log.Logger, site, dir string, send func(Message, io.Reader) error) *browser {
+	return &browser{
+		conn:      conn,
+		clock:     clk,
+		log:       logger,
+		site:      strings.ToLower(strings.TrimPrefix(site, ".")),
+		dir:       dir,
+		send:      send,
+		tabs:      map[string]*tab{},
+		byID:      map[string]*tab{},
+		groups:    map[string]*group{},
+		attached:  map[string]attachment{},
+		claims:    map[string]chan struct{}{},
+		downloads: map[string]*download{},
+	}
+}
+
+type targetInfo struct {
+	TargetID string `json:"targetId"`
+	Type     string `json:"type"`
+	Title    string `json:"title"`
+	URL      string `json:"url"`
+	OpenerID string `json:"openerId"`
+}
+
+// start subscribes to the browser's target and download events and
+// attaches to every page. New pages start paused (waitForDebuggerOnStart)
+// and run once the pod is watching them: a popup that is not paused
+// this way stalls its opener's input in Chromium until it is resumed.
+func (b *browser) start(ctx context.Context) error {
+	b.conn.On("", "Target.attachedToTarget", b.onAttached)
+	b.conn.On("", "Target.detachedFromTarget", b.onDetached)
+	b.conn.On("", "Target.targetDestroyed", b.onDestroyed)
+	b.conn.On("", "Browser.downloadWillBegin", b.onDownloadWillBegin)
+	b.conn.On("", "Browser.downloadProgress", b.onDownloadProgress)
+	if err := b.startDownloads(ctx); err != nil {
+		return err
+	}
+	if _, err := b.conn.Call(ctx, "", "Target.setDiscoverTargets", map[string]any{"discover": true}); err != nil {
+		return fmt.Errorf("Target.setDiscoverTargets: %w", err)
+	}
+	if _, err := b.conn.Call(ctx, "", "Target.setAutoAttach", map[string]any{
+		"autoAttach": true, "waitForDebuggerOnStart": true, "flatten": true,
+	}); err != nil {
+		return fmt.Errorf("Target.setAutoAttach: %w", err)
+	}
+	return nil
+}
+
+func (b *browser) onAttached(raw json.RawMessage) {
+	var ev struct {
+		SessionID          string     `json:"sessionId"`
+		TargetInfo         targetInfo `json:"targetInfo"`
+		WaitingForDebugger bool       `json:"waitingForDebugger"`
+	}
+	if json.Unmarshal(raw, &ev) != nil {
+		return
+	}
+	if ev.TargetInfo.Type != "page" {
+		b.resume(ev.SessionID)
+		return
+	}
+	a := attachment{targetID: ev.TargetInfo.TargetID, sessionID: ev.SessionID, openerID: ev.TargetInfo.OpenerID, url: ev.TargetInfo.URL}
+
+	b.mu.Lock()
+	if _, known := b.tabs[a.targetID]; known {
+		b.mu.Unlock()
+		return
+	}
+	if opener := b.tabs[a.openerID]; opener != nil {
+		b.mu.Unlock()
+		b.adoptPopup(a, opener)
+		return
+	}
+	if ch, ok := b.claims[a.targetID]; ok {
+		b.attached[a.targetID] = a
+		delete(b.claims, a.targetID)
+		close(ch)
+		b.mu.Unlock()
+		return
+	}
+	if b.creating > 0 {
+		b.attached[a.targetID] = a
+		b.mu.Unlock()
+		return
+	}
+	b.mu.Unlock()
+	b.orphan(a)
+}
+
+// orphan handles a page that belongs to no group: it becomes the
+// spare when the browser has no other page, and is closed otherwise.
+func (b *browser) orphan(a attachment) {
+	b.mu.Lock()
+	if b.spare == nil && len(b.tabs) == 0 {
+		b.spare = &a
+		b.mu.Unlock()
+		b.resume(a.sessionID)
+		return
+	}
+	b.mu.Unlock()
+	b.log.Printf("closing page %s: it belongs to no task", a.url)
+	_, _ = b.conn.Call(context.Background(), "", "Target.closeTarget", map[string]any{"targetId": a.targetID})
+}
+
+// adoptPopup makes a page another tab opened into a tab of the
+// opener's group.
+func (b *browser) adoptPopup(a attachment, opener *tab) {
+	b.mu.Lock()
+	if len(b.tabs) >= MaxTabsPerBrowser {
+		b.mu.Unlock()
+		opener.note(fmt.Sprintf("The page opened a new tab (%s) and it was closed: the browser holds at most %d tabs.", a.url, MaxTabsPerBrowser))
+		_, _ = b.conn.Call(context.Background(), "", "Target.closeTarget", map[string]any{"targetId": a.targetID})
+		return
+	}
+	t := b.registerLocked(a, opener.group, opener.id)
+	b.front = t
+	b.mu.Unlock()
+	opener.note(fmt.Sprintf("The page opened a new tab, %s; web_tabs switches to it.", t.id))
+	opener.update(func() { opener.popups++ })
+	b.watch(t)
+	b.enableSession(context.Background(), t.session)
+	b.resume(t.session)
+	// The page may have committed before the pod saw it.
+	if info, err := b.targetInfo(context.Background(), t.targetID); err == nil {
+		t.mu.Lock()
+		if info.URL != "" {
+			t.url = info.URL
+		}
+		t.title = info.Title
+		t.mu.Unlock()
+	}
+	b.emitTab(t)
+	t.mu.Lock()
+	u := t.url
+	t.mu.Unlock()
+	if u != "" && u != "about:blank" {
+		b.emitNavigated(t)
+	}
+}
+
+// registerLocked makes a tab of an attached page. b.mu is held.
+func (b *browser) registerLocked(a attachment, groupName, opener string) *tab {
+	b.nextTab++
+	t := &tab{
+		id:       fmt.Sprintf("t%d", b.nextTab),
+		group:    groupName,
+		targetID: a.targetID,
+		session:  a.sessionID,
+		opener:   opener,
+		url:      a.url,
+		changed:  make(chan struct{}),
+	}
+	b.tabs[a.targetID] = t
+	b.byID[t.id] = t
+	g := b.groupLocked(groupName)
+	g.tabs = append(g.tabs, t)
+	if g.current == nil {
+		g.current = t
+	}
+	return t
+}
+
+func (b *browser) groupLocked(name string) *group {
+	g := b.groups[name]
+	if g == nil {
+		g = &group{name: name}
+		b.groups[name] = g
+	}
+	return g
+}
+
+func (b *browser) emitTab(t *tab) {
+	t.mu.Lock()
+	u := t.url
+	t.mu.Unlock()
+	b.sendMsg(Message{Type: TypeTab, Group: t.group, Tab: t.id, Opener: t.opener, URL: u})
+}
+
+func (b *browser) sendMsg(m Message) {
+	if err := b.send(m, nil); err != nil {
+		b.log.Printf("send %s: %v", m.Type, err)
+	}
+}
+
+// enableSession turns on the domains the pod reads on a page.
+func (b *browser) enableSession(ctx context.Context, session string) {
+	for _, m := range []string{"Page.enable", "Runtime.enable", "DOM.enable", "Network.enable"} {
+		if _, err := b.conn.Call(ctx, session, m, nil); err != nil {
+			b.log.Printf("%s: %v", m, err)
+		}
+	}
+	if _, err := b.conn.Call(ctx, session, "Page.setLifecycleEventsEnabled", map[string]any{"enabled": true}); err != nil {
+		b.log.Printf("Page.setLifecycleEventsEnabled: %v", err)
+	}
+}
+
+// resume lets a page Chromium paused for the pod run: new targets
+// wait until the pod has subscribed to their events.
+func (b *browser) resume(session string) {
+	if _, err := b.conn.Call(context.Background(), session, "Runtime.runIfWaitingForDebugger", nil); err != nil {
+		b.log.Printf("Runtime.runIfWaitingForDebugger: %v", err)
+	}
+}
+
+func (b *browser) targetInfo(ctx context.Context, targetID string) (targetInfo, error) {
+	raw, err := b.conn.Call(ctx, "", "Target.getTargetInfo", map[string]any{"targetId": targetID})
+	if err != nil {
+		return targetInfo{}, err
+	}
+	var res struct {
+		TargetInfo targetInfo `json:"targetInfo"`
+	}
+	err = json.Unmarshal(raw, &res)
+	return res.TargetInfo, err
+}
+
+// watch subscribes to a tab's page events.
+func (b *browser) watch(t *tab) {
+	s := t.session
+	on := func(method string, fn func(json.RawMessage)) {
+		off := b.conn.On(s, method, fn)
+		t.mu.Lock()
+		t.offs = append(t.offs, off)
+		t.mu.Unlock()
+	}
+	on("Page.frameRequestedNavigation", func(raw json.RawMessage) {
+		var ev struct {
+			FrameID     string `json:"frameId"`
+			URL         string `json:"url"`
+			Disposition string `json:"disposition"`
+		}
+		if json.Unmarshal(raw, &ev) != nil || ev.FrameID != t.targetID {
+			return
+		}
+		// A navigation into a new tab or a download leaves this tab
+		// where it is.
+		if ev.Disposition != "" && ev.Disposition != "currentTab" {
+			return
+		}
+		if !b.allowed(ev.URL) {
+			t.note(fmt.Sprintf("The page tried to go to %s, which is off this session's site, and was stopped.", ev.URL))
+			_, _ = b.conn.Call(context.Background(), s, "Page.stopLoading", nil)
+		}
+		t.update(func() {
+			t.starts++
+			t.loading = true
+		})
+	})
+	on("Page.frameStartedLoading", func(raw json.RawMessage) {
+		var ev struct {
+			FrameID string `json:"frameId"`
+		}
+		if json.Unmarshal(raw, &ev) == nil && ev.FrameID == t.targetID {
+			t.update(func() {
+				t.starts++
+				t.loading = true
+			})
+		}
+	})
+	on("Page.frameStoppedLoading", func(raw json.RawMessage) {
+		var ev struct {
+			FrameID string `json:"frameId"`
+		}
+		if json.Unmarshal(raw, &ev) == nil && ev.FrameID == t.targetID {
+			t.update(func() { t.loading = false })
+		}
+	})
+	on("Page.frameNavigated", func(raw json.RawMessage) {
+		var ev struct {
+			Frame struct {
+				ID          string `json:"id"`
+				ParentID    string `json:"parentId"`
+				LoaderID    string `json:"loaderId"`
+				URL         string `json:"url"`
+				URLFragment string `json:"urlFragment"`
+			} `json:"frame"`
+			Type string `json:"type"`
+		}
+		if json.Unmarshal(raw, &ev) != nil || ev.Frame.ParentID != "" || ev.Frame.ID != t.targetID {
+			return
+		}
+		u := ev.Frame.URL + ev.Frame.URLFragment
+		if !b.allowed(u) {
+			t.note(fmt.Sprintf("The page went to %s, which is off this session's site; the tab was sent to about:blank.", u))
+			go func() {
+				_, _ = b.conn.Call(context.Background(), s, "Page.navigate", map[string]any{"url": "about:blank"})
+			}()
+		}
+		t.update(func() {
+			t.url = u
+			t.navs++
+			t.pendingNav = true
+			t.loaderID = ev.Frame.LoaderID
+			t.world = 0
+		})
+		if ev.Type == "BackForwardCacheRestore" {
+			// A page restored from the back-forward cache fires no load.
+			b.emitNavigated(t)
+		}
+	})
+	on("Page.navigatedWithinDocument", func(raw json.RawMessage) {
+		var ev struct {
+			FrameID string `json:"frameId"`
+			URL     string `json:"url"`
+		}
+		if json.Unmarshal(raw, &ev) != nil || ev.FrameID != t.targetID {
+			return
+		}
+		t.update(func() { t.url = ev.URL })
+		b.emitNavigated(t)
+	})
+	on("Page.loadEventFired", func(json.RawMessage) {
+		t.mu.Lock()
+		pending := t.pendingNav
+		t.mu.Unlock()
+		if pending {
+			b.emitNavigated(t)
+		}
+	})
+	on("Page.lifecycleEvent", func(raw json.RawMessage) {
+		var ev struct {
+			FrameID  string `json:"frameId"`
+			LoaderID string `json:"loaderId"`
+			Name     string `json:"name"`
+		}
+		if json.Unmarshal(raw, &ev) == nil && ev.FrameID == t.targetID && ev.Name == "networkIdle" {
+			t.update(func() { t.idleLoader = ev.LoaderID })
+		}
+	})
+	on("Runtime.executionContextsCleared", func(json.RawMessage) {
+		t.update(func() { t.world = 0 })
+	})
+	on("Runtime.executionContextDestroyed", func(raw json.RawMessage) {
+		var ev struct {
+			ID int `json:"executionContextId"`
+		}
+		if json.Unmarshal(raw, &ev) == nil {
+			t.update(func() {
+				if t.world == ev.ID {
+					t.world = 0
+				}
+			})
+		}
+	})
+	on("Page.javascriptDialogOpening", func(raw json.RawMessage) {
+		var ev struct {
+			Type    string `json:"type"`
+			Message string `json:"message"`
+		}
+		_ = json.Unmarshal(raw, &ev)
+		t.note(fmt.Sprintf("The page showed a %s dialog (%q); it was accepted.", ev.Type, cut(ev.Message, 200)))
+		go func() {
+			_, _ = b.conn.Call(context.Background(), s, "Page.handleJavaScriptDialog", map[string]any{"accept": true})
+		}()
+	})
+	on("Page.screencastFrame", func(raw json.RawMessage) { b.onScreencastFrame(t, raw) })
+}
+
+// emitNavigated sends navigated for the tab's current URL with the
+// page's title, once per settled navigation.
+func (b *browser) emitNavigated(t *tab) {
+	info, err := b.targetInfo(context.Background(), t.targetID)
+	t.mu.Lock()
+	if err == nil {
+		t.title = info.Title
+	}
+	u, title := t.url, t.title
+	t.mu.Unlock()
+	b.sendMsg(Message{Type: TypeNavigated, Group: t.group, Tab: t.id, URL: u, Title: title})
+	t.update(func() {
+		t.pendingNav = false
+		t.navigated++
+		t.lastSent = u
+	})
+}
+
+func (b *browser) onDetached(raw json.RawMessage) {
+	var ev struct {
+		TargetID string `json:"targetId"`
+	}
+	if json.Unmarshal(raw, &ev) == nil {
+		b.dropTarget(ev.TargetID)
+	}
+}
+
+func (b *browser) onDestroyed(raw json.RawMessage) {
+	var ev struct {
+		TargetID string `json:"targetId"`
+	}
+	if json.Unmarshal(raw, &ev) == nil {
+		b.dropTarget(ev.TargetID)
+	}
+}
+
+// dropTarget forgets a page that went away on its own.
+func (b *browser) dropTarget(targetID string) {
+	b.mu.Lock()
+	if b.spare != nil && b.spare.targetID == targetID {
+		b.spare = nil
+	}
+	t := b.tabs[targetID]
+	if t != nil {
+		b.unregisterLocked(t)
+	}
+	b.mu.Unlock()
+	if t != nil {
+		b.sendMsg(Message{Type: TypeTabClosed, Group: t.group, Tab: t.id})
+	}
+}
+
+// unregisterLocked removes a tab from the maps and its group, and
+// moves the group's current tab on. b.mu is held.
+func (b *browser) unregisterLocked(t *tab) {
+	delete(b.tabs, t.targetID)
+	delete(b.byID, t.id)
+	var offs []func()
+	t.update(func() {
+		t.closed = true
+		offs, t.offs = t.offs, nil
+	})
+	for _, off := range offs {
+		off()
+	}
+	g := b.groups[t.group]
+	if g == nil {
+		return
+	}
+	for i, x := range g.tabs {
+		if x != t {
+			continue
+		}
+		g.tabs = append(g.tabs[:i:i], g.tabs[i+1:]...)
+		if g.current == t {
+			g.current = nil
+			switch {
+			case i < len(g.tabs):
+				g.current = g.tabs[i]
+			case len(g.tabs) > 0:
+				g.current = g.tabs[len(g.tabs)-1]
+			}
+		}
+		break
+	}
+}
+
+// lookupTab finds the tab a command names in its group; empty names
+// the group's current tab, opened on first use when create is set.
+func (b *browser) lookupTab(ctx context.Context, groupName, id string, create bool) (*tab, error) {
+	b.mu.Lock()
+	if id != "" {
+		t := b.byID[id]
+		b.mu.Unlock()
+		if t == nil || t.group != groupName {
+			return nil, failf(CodeNotFound, "There is no tab %s in this task; web_tabs lists yours.", id)
+		}
+		return t, nil
+	}
+	g := b.groups[groupName]
+	if g != nil && g.current != nil {
+		t := g.current
+		b.mu.Unlock()
+		return t, nil
+	}
+	b.mu.Unlock()
+	if !create {
+		return nil, failf(CodeNotFound, "This task has no tab open.")
+	}
+	return b.createTab(ctx, groupName)
+}
+
+// createTab opens a blank tab in the group and makes it current.
+func (b *browser) createTab(ctx context.Context, groupName string) (*tab, error) {
+	b.mu.Lock()
+	if len(b.tabs)+b.creating >= MaxTabsPerBrowser {
+		b.mu.Unlock()
+		return nil, failf(CodeTabLimit, "The browser already has %d tabs open, its limit; close one with web_tabs first.", MaxTabsPerBrowser)
+	}
+	if b.spare != nil {
+		a := *b.spare
+		b.spare = nil
+		t := b.registerLocked(a, groupName, "")
+		b.groupLocked(groupName).current = t
+		b.mu.Unlock()
+		b.watch(t)
+		b.enableSession(ctx, t.session)
+		b.resume(t.session)
+		t.update(func() { t.url = "about:blank" })
+		b.emitTab(t)
+		return t, nil
+	}
+	b.creating++
+	b.mu.Unlock()
+
+	a, err := b.newTarget(ctx)
+
+	b.mu.Lock()
+	b.creating--
+	var leftover []attachment
+	if b.creating == 0 {
+		for id, x := range b.attached {
+			leftover = append(leftover, x)
+			delete(b.attached, id)
+		}
+	}
+	var t *tab
+	if err == nil {
+		t = b.registerLocked(a, groupName, "")
+		b.groupLocked(groupName).current = t
+	}
+	b.mu.Unlock()
+	for _, x := range leftover {
+		b.orphan(x)
+	}
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return nil, failf(CodeBrowser, "Could not open a tab: %v", err)
+	}
+	b.watch(t)
+	b.enableSession(ctx, t.session)
+	b.resume(t.session)
+	b.emitTab(t)
+	return t, nil
+}
+
+// newTarget creates a blank page and waits for it to attach.
+func (b *browser) newTarget(ctx context.Context) (attachment, error) {
+	raw, err := b.conn.Call(ctx, "", "Target.createTarget", map[string]any{"url": "about:blank"})
+	if err != nil {
+		return attachment{}, err
+	}
+	var res struct {
+		TargetID string `json:"targetId"`
+	}
+	if err := json.Unmarshal(raw, &res); err != nil {
+		return attachment{}, err
+	}
+	b.mu.Lock()
+	if a, ok := b.attached[res.TargetID]; ok {
+		delete(b.attached, res.TargetID)
+		b.mu.Unlock()
+		return a, nil
+	}
+	ch := make(chan struct{})
+	b.claims[res.TargetID] = ch
+	b.mu.Unlock()
+	select {
+	case <-ch:
+	case <-ctx.Done():
+		b.mu.Lock()
+		delete(b.claims, res.TargetID)
+		b.mu.Unlock()
+		_, _ = b.conn.Call(context.Background(), "", "Target.closeTarget", map[string]any{"targetId": res.TargetID})
+		return attachment{}, ctx.Err()
+	}
+	b.mu.Lock()
+	a := b.attached[res.TargetID]
+	delete(b.attached, res.TargetID)
+	b.mu.Unlock()
+	return a, nil
+}
+
+// closeTab closes a tab. The browser's last page is kept as the spare
+// instead, at about:blank, so the browser never runs out of windows.
+func (b *browser) closeTab(ctx context.Context, t *tab) {
+	b.mu.Lock()
+	if _, ok := b.tabs[t.targetID]; !ok {
+		b.mu.Unlock()
+		return
+	}
+	b.unregisterLocked(t)
+	keep := len(b.tabs) == 0 && b.spare == nil
+	if keep {
+		b.spare = &attachment{targetID: t.targetID, sessionID: t.session, url: "about:blank"}
+	}
+	b.mu.Unlock()
+	b.sendMsg(Message{Type: TypeTabClosed, Group: t.group, Tab: t.id})
+	if keep {
+		_, _ = b.conn.Call(ctx, t.session, "Page.navigate", map[string]any{"url": "about:blank"})
+		return
+	}
+	if _, err := b.conn.Call(ctx, "", "Target.closeTarget", map[string]any{"targetId": t.targetID}); err != nil {
+		b.log.Printf("close %s: %v", t.id, err)
+	}
+}
+
+// closeGroup closes every tab of a group.
+func (b *browser) closeGroup(ctx context.Context, name string) {
+	b.mu.Lock()
+	var tabs []*tab
+	if g := b.groups[name]; g != nil {
+		tabs = append(tabs, g.tabs...)
+	}
+	delete(b.groups, name)
+	b.mu.Unlock()
+	for _, t := range tabs {
+		b.closeTab(ctx, t)
+	}
+	b.mu.Lock()
+	if g := b.groups[name]; g != nil && len(g.tabs) == 0 {
+		delete(b.groups, name)
+	}
+	b.mu.Unlock()
+}
+
+// groupTabs is a snapshot of a group's tabs and its current one.
+func (b *browser) groupTabs(name string) ([]*tab, *tab) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	g := b.groups[name]
+	if g == nil {
+		return nil, nil
+	}
+	return append([]*tab(nil), g.tabs...), g.current
+}
+
+func (b *browser) setCurrent(t *tab) {
+	b.mu.Lock()
+	if g := b.groups[t.group]; g != nil {
+		g.current = t
+	}
+	b.mu.Unlock()
+}
+
+// bringToFront makes t the browser's active tab. Chromium defers
+// work in background tabs (a download a click starts, for one), and a
+// popup takes the front when it opens.
+func (b *browser) bringToFront(ctx context.Context, t *tab) {
+	b.mu.Lock()
+	if b.front == t {
+		b.mu.Unlock()
+		return
+	}
+	b.front = t
+	b.mu.Unlock()
+	if _, err := b.conn.Call(ctx, t.session, "Page.bringToFront", nil); err != nil {
+		b.log.Printf("Page.bringToFront %s: %v", t.id, err)
+	}
+}
+
+func (b *browser) tabByID(id string) *tab {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.byID[id]
+}
+
+// allowed reports whether a page may be at u: always in the open
+// session, and in a site session for non-web URLs and URLs on the
+// site or a subdomain of it.
+func (b *browser) allowed(u string) bool {
+	if b.site == "" {
+		return true
+	}
+	p, err := url.Parse(u)
+	if err != nil {
+		return false
+	}
+	if p.Scheme != "http" && p.Scheme != "https" {
+		return true
+	}
+	return onSite(b.site, p.Hostname())
+}
+
+func onSite(site, host string) bool {
+	host = strings.ToLower(strings.TrimSuffix(host, "."))
+	return host == site || strings.HasSuffix(host, "."+site)
+}
+
+// update changes a tab's state under its lock and wakes its waiters.
+func (t *tab) update(fn func()) {
+	t.mu.Lock()
+	fn()
+	close(t.changed)
+	t.changed = make(chan struct{})
+	t.mu.Unlock()
+}
+
+func (t *tab) note(s string) {
+	t.mu.Lock()
+	t.notes = append(t.notes, s)
+	t.mu.Unlock()
+}
+
+func (t *tab) takeNotes() []string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	n := t.notes
+	t.notes = nil
+	return n
+}
+
+func (t *tab) mark() mark {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return mark{starts: t.starts, navs: t.navs, navigated: t.navigated, popups: t.popups}
+}
+
+func (t *tab) where() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return where(t.url, t.title)
+}
+
+func where(u, title string) string {
+	if title == "" {
+		return u
+	}
+	return u + " — " + title
+}
+
+// waitUntil blocks until pred holds for the tab (checked under its
+// lock), reporting true; or until timeout fires, reporting false. A
+// closed tab or an ended ctx is an error. A nil timeout never fires.
+func (t *tab) waitUntil(ctx context.Context, timeout <-chan time.Time, pred func() bool) (bool, error) {
+	for {
+		t.mu.Lock()
+		if pred() {
+			t.mu.Unlock()
+			return true, nil
+		}
+		if t.closed {
+			t.mu.Unlock()
+			return false, failf(CodeNotFound, "The tab closed.")
+		}
+		ch := t.changed
+		t.mu.Unlock()
+		select {
+		case <-ch:
+		case <-timeout:
+			return false, nil
+		case <-ctx.Done():
+			return false, ctx.Err()
+		}
+	}
+}

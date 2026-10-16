@@ -5,6 +5,7 @@ go 1.27
 require (
 	github.com/Code-Hex/vz/v3 v3.7.1
 	github.com/Microsoft/go-winio v0.6.2
+	github.com/coder/websocket v1.8.15
 	github.com/creack/pty v1.1.24
 	github.com/klauspost/compress v1.18.0
 	github.com/mdlayher/vsock v1.2.1
