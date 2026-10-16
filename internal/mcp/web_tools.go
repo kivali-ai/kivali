@@ -203,19 +203,11 @@ func webTool(backend WebBackend, name, description, schema string, readOnly bool
 }
 
 // WebCommandName is the browser command a web tool's name stands for,
-// and whether the name is a web tool at all. Core uses it to check a
-// relayed command is one the toolkit offers.
+// and whether the name is a web tool at all.
 func WebCommandName(tool string) (string, bool) {
 	if !strings.HasPrefix(tool, agentpod.WebToolPrefix) {
 		return "", false
 	}
 	command := strings.TrimPrefix(tool, agentpod.WebToolPrefix)
-	switch command {
-	case browserpod.CommandNavigate, browserpod.CommandSnapshot, browserpod.CommandScreenshot,
-		browserpod.CommandClick, browserpod.CommandType, browserpod.CommandSelect, browserpod.CommandPress,
-		browserpod.CommandScroll, browserpod.CommandBack, browserpod.CommandTabs, browserpod.CommandWait,
-		browserpod.CommandEval, browserpod.CommandUpload:
-		return command, true
-	}
-	return "", false
+	return command, browserpod.KnownCommand(command)
 }

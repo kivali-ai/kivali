@@ -219,4 +219,10 @@ func (s *Server) registerUDSRoutes(mux *http.ServeMux) {
 	// task the id must name, so a subagent cannot answer another
 	// agent's task.
 	mux.HandleFunc("POST /v1/agent/{slug}/subagents/{id}/result", s.handleAgentpodSubagentResult)
+	// A web subagent's browser tools, relayed to its browser under the
+	// same binding.
+	mux.HandleFunc("POST /v1/agent/{slug}/subagents/{id}/web", s.handleAgentpodWebCommand)
+	// The browser pod's one connection. Authenticated by the per-pod
+	// token, not a slug header: the pod is core's, not an agent's.
+	mux.HandleFunc("GET /v1/browser/{slug}/{session}/connect", s.handleBrowserConnect)
 }

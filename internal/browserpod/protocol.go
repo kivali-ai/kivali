@@ -195,6 +195,17 @@ const (
 	CommandUpload     = "upload"
 )
 
+// KnownCommand reports whether name is a command a web tool stands
+// for. Core relays nothing else.
+func KnownCommand(name string) bool {
+	switch name {
+	case CommandNavigate, CommandSnapshot, CommandScreenshot, CommandClick, CommandType, CommandSelect,
+		CommandPress, CommandScroll, CommandBack, CommandTabs, CommandWait, CommandEval, CommandUpload:
+		return true
+	}
+	return false
+}
+
 // Result codes on a refused or failed command. Core reads them; the
 // model reads Error.
 const (

@@ -98,7 +98,9 @@ type Alternative struct {
 
 // Result is the wrapper every structured answer fits. A subagent
 // writes Outcome, Result, Alternatives, BlockedOn and Files through
-// submit_result; Error is core's, on a task it ended itself.
+// submit_result; Error is core's, on a task it ended itself, and the
+// WebFacts are core's on a web task. A submission that names any of
+// core's fields is refused as unknown.
 type Result struct {
 	Outcome      Outcome         `json:"outcome"`
 	Result       json.RawMessage `json:"result,omitempty"`
@@ -106,6 +108,39 @@ type Result struct {
 	BlockedOn    BlockedOn       `json:"blocked_on,omitempty"`
 	Files        []string        `json:"files,omitempty"`
 	Error        string          `json:"error,omitempty"`
+	WebFacts
+}
+
+// WebFacts are what core knows about a web task's run and adds to its
+// result: the session it ran in, the origin of the last page it
+// loaded, how long it ran and how many pages it loaded.
+type WebFacts struct {
+	Session         string `json:"session,omitempty"`
+	Origin          string `json:"origin,omitempty"`
+	DurationSeconds int    `json:"duration_seconds,omitempty"`
+	Pages           int    `json:"pages,omitempty"`
+}
+
+// WithWebFacts returns body, a result as Body rendered it, with the
+// facts set and the downloads added to its files. A body that does not
+// parse is returned as it was.
+func WithWebFacts(body string, facts WebFacts, downloads []string) string {
+	var r Result
+	if err := json.Unmarshal([]byte(body), &r); err != nil {
+		return body
+	}
+	r.WebFacts = facts
+	seen := map[string]bool{}
+	for _, f := range r.Files {
+		seen[f] = true
+	}
+	for _, d := range downloads {
+		if !seen[d] {
+			seen[d] = true
+			r.Files = append(r.Files, d)
+		}
+	}
+	return r.Body()
 }
 
 // Rules are the per-task facts validation needs beyond the schema.

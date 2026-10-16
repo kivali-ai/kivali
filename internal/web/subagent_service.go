@@ -36,6 +36,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -139,6 +140,11 @@ type SubagentService struct {
 	// flush/follow-up machinery covers it.
 	WakeParent func(parent string)
 
+	// Browsers is where web tasks' commands go and where their tabs
+	// are released when they end. Nil means web tasks cannot run; a
+	// dispatch of one is refused at validation.
+	Browsers *browserRegistry
+
 	// admissionOnce/admission bound how many subagent CLIs run at once
 	// in one agent pod. Built lazily so a directly constructed service
 	// (tests, fixtures) gets the production limits without wiring.
@@ -204,6 +210,14 @@ type SubagentTaskInput struct {
 	// subset internal/structured accepts, or empty for a free-text
 	// answer. Mirrors the `schema` property in the tool's input schema.
 	Schema json.RawMessage `json:"schema,omitempty"`
+	// Kind is general (the default) or web. A web task runs in a
+	// browser: Session names the web session (open when empty),
+	// StartURL where it starts, and Files the paths under the caller's
+	// /files/ it may upload. Mirrors the tool's input schema.
+	Kind     string   `json:"kind,omitempty"`
+	Session  string   `json:"session,omitempty"`
+	StartURL string   `json:"start_url,omitempty"`
+	Files    []string `json:"files,omitempty"`
 }
 
 // hasSchema reports whether the task asks for a structured answer. A
@@ -211,6 +225,17 @@ type SubagentTaskInput struct {
 func (t SubagentTaskInput) hasSchema() bool {
 	trimmed := strings.TrimSpace(string(t.Schema))
 	return trimmed != "" && trimmed != "null"
+}
+
+// web reports whether the task is a web task.
+func (t SubagentTaskInput) web() bool { return t.Kind == agentpod.SubagentKindWeb }
+
+// session is the web session the task runs in: the one named, or open.
+func (t SubagentTaskInput) session() string {
+	if s := strings.TrimSpace(t.Session); s != "" {
+		return s
+	}
+	return agentpod.OpenWebSession
 }
 
 // StartBatch is the entry point for one /run-subagent call. It
@@ -251,6 +276,9 @@ func (s *SubagentService) StartBatch(ctx context.Context, parent string, raw jso
 		return "", fmt.Errorf("at most %d tasks per call (got %d)", mcp.SubagentMaxBatch, len(req.Tasks))
 	}
 	if err := validateTasks(s.Provider, req.Tasks); err != nil {
+		return "", err
+	}
+	if err := s.validateWebTasks(parent, req.Tasks); err != nil {
 		return "", err
 	}
 
@@ -344,9 +372,13 @@ func (s *SubagentService) launch(parent, toolUseID string, tasks []SubagentTaskI
 			CallerID:    callerID,
 			// validateTasks accepted the schema before launch; a task
 			// without one, or whose schema failed to parse, is free text.
-			Schema: parsedSchema(t),
-			cancel: cancel,
-			done:   make(chan struct{}),
+			Schema:   parsedSchema(t),
+			Kind:     taskKind(t),
+			Session:  taskSession(t),
+			StartURL: strings.TrimSpace(t.StartURL),
+			Files:    append([]string(nil), t.Files...),
+			cancel:   cancel,
+			done:     make(chan struct{}),
 		}
 		jobs[i] = job
 		s.registerJob(job)
@@ -457,8 +489,8 @@ func (s *SubagentService) runJob(ctx context.Context, parent, toolUseID string, 
 	if depth < 1 {
 		depth = 1
 	}
-	// Schema is read without the lock like Model and Effort: set at
-	// registration, never mutated.
+	// Schema, Kind, Session, StartURL and Files are read without the
+	// lock like Model and Effort: set at registration, never mutated.
 	structuredTask := job.Schema != nil
 	spec := agentpod.SubagentSpec{
 		SubagentID:   id,
@@ -473,6 +505,17 @@ func (s *SubagentService) runJob(ctx context.Context, parent, toolUseID string, 
 	if structuredTask {
 		spec.Schema = job.Schema.Raw
 	}
+	if job.Kind == agentpod.SubagentKindWeb {
+		// A web task runs the browser toolkit and nothing else; its
+		// prompt says pages are untrusted and the answer is data.
+		names := webTaskFileNames(job.Files)
+		spec.Kind = agentpod.SubagentKindWeb
+		spec.Session = job.Session
+		spec.StartURL = job.StartURL
+		spec.Files = names
+		spec.Tools = agentpod.WebSubagentTools(job.Session)
+		spec.SystemPrompt = agentpod.WebSubagentSystemPrompt(parent, t.Description, job.Session, job.StartURL, names)
+	}
 
 	finalText, runErr := s.Driver.DriveSubagent(ctx, parent, turnID, id, spec)
 
@@ -486,6 +529,11 @@ func (s *SubagentService) runJob(ctx context.Context, parent, toolUseID string, 
 	if structuredTask {
 		result, runErr = s.structuredEnding(job, runErr)
 		finalText = ""
+	}
+	if job.Kind == agentpod.SubagentKindWeb {
+		// The browser's tabs for this task are released whatever the
+		// ending, and what core saw of the run joins a delivered body.
+		result = s.finishWebJob(job, result)
 	}
 
 	if runErr != nil {
@@ -504,6 +552,61 @@ func (s *SubagentService) runJob(ctx context.Context, parent, toolUseID string, 
 // the errors, few enough that a subagent that cannot fit the schema
 // stops spending.
 const subagentResultAttempts = 3
+
+// taskKind is the kind a task runs as: web when it says so, general
+// otherwise (validateTasks refused anything else).
+func taskKind(t SubagentTaskInput) string {
+	if t.web() {
+		return agentpod.SubagentKindWeb
+	}
+	return agentpod.SubagentKindGeneral
+}
+
+// taskSession is the web session a task runs in, empty for a general
+// task.
+func taskSession(t SubagentTaskInput) string {
+	if !t.web() {
+		return ""
+	}
+	return t.session()
+}
+
+// webTaskFileNames are the names a web task's files are uploaded by:
+// each path's last element.
+func webTaskFileNames(paths []string) []string {
+	names := make([]string, 0, len(paths))
+	for _, p := range paths {
+		names = append(names, path.Base(p))
+	}
+	return names
+}
+
+// finishWebJob releases the task's tabs in its browser and returns the
+// delivered body with core's facts about the run: the session, the
+// last page's origin, the duration, the pages loaded, and every
+// download under the task's untrusted-downloads/. A cancelled task,
+// which delivers nothing, keeps its empty body.
+func (s *SubagentService) finishWebJob(job *subagentJob, result string) string {
+	if s.Browsers == nil {
+		return result
+	}
+	facts, downloads := s.Browsers.ReleaseGroup(job.Parent, job.Session, job.ID)
+	if result == "" {
+		return result
+	}
+	facts.Session = job.Session
+	s.jobsMu.Lock()
+	started := job.StartedAt
+	s.jobsMu.Unlock()
+	if !started.IsZero() {
+		facts.DurationSeconds = int(s.clk().Now().Sub(started).Seconds())
+	}
+	callerPaths := make([]string, 0, len(downloads))
+	for _, name := range downloads {
+		callerPaths = append(callerPaths, subagentFilesPrefix(job.ID)+files.UntrustedDownloadsDir+"/"+name)
+	}
+	return structured.WithWebFacts(result, facts, callerPaths)
+}
 
 // parsedSchema is the task's schema as the job carries it, nil for a
 // free-text task. validateTasks has already refused one outside the
@@ -535,14 +638,22 @@ const subagentPrivateArtifacts = "artifacts/private"
 // task's own artifacts, and the shared workspace, which both see at
 // the same path. FileExists refuses a path the task did not make: a
 // regular file at that place in the task's view, never a link.
-func (s *SubagentService) subagentFileRules(parent, id string) structured.Rules {
+func (s *SubagentService) subagentFileRules(parent, id, kind string) structured.Rules {
 	root := subagentFilesRoot(s.Store, parent, id)
 	callerPrefix := subagentFilesPrefix(id)
+	dirs := map[string]string{
+		"/files/" + subagentPrivateArtifacts + "/": callerPrefix + subagentPrivateArtifacts + "/",
+		"/files/" + files.SharedWorkspaceDir + "/": "/files/" + files.SharedWorkspaceDir + "/",
+	}
+	if kind == agentpod.SubagentKindWeb {
+		// A web task writes nothing; what it may name is what its
+		// browser downloaded, which core wrote for it.
+		dirs = map[string]string{
+			"/files/" + files.UntrustedDownloadsDir + "/": callerPrefix + files.UntrustedDownloadsDir + "/",
+		}
+	}
 	return structured.Rules{
-		Files: map[string]string{
-			"/files/" + subagentPrivateArtifacts + "/": callerPrefix + subagentPrivateArtifacts + "/",
-			"/files/" + files.SharedWorkspaceDir + "/": "/files/" + files.SharedWorkspaceDir + "/",
-		},
+		Files: dirs,
 		FileExists: func(callerPath string) bool {
 			var rel string
 			switch {
@@ -660,10 +771,10 @@ func (s *SubagentService) SubmitResult(parent, id string, submission json.RawMes
 		s.jobsMu.Unlock()
 		return "submit_result: a result was already accepted for this task and is final. End your turn.", true
 	}
-	schema := j.Schema
+	schema, kind := j.Schema, j.Kind
 	s.jobsMu.Unlock()
 
-	res, errs := structured.Validate(schema, submission, s.subagentFileRules(parent, id))
+	res, errs := structured.Validate(schema, submission, s.subagentFileRules(parent, id, kind))
 	if len(errs) > 0 {
 		var attempt int
 		var end context.CancelFunc
@@ -1134,6 +1245,10 @@ func (s *SubagentService) writeSubagentMeta(parent string, t SubagentTaskInput, 
 	}
 	if t.hasSchema() {
 		meta["structured"] = true
+	}
+	if t.web() {
+		meta["kind"] = agentpod.SubagentKindWeb
+		meta["session"] = t.session()
 	}
 	if result != "" && json.Valid([]byte(result)) {
 		meta["result"] = json.RawMessage(result)

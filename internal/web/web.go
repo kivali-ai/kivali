@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"sync"
@@ -91,6 +92,16 @@ type Server struct {
 	// main.go alongside the claude client. Nil disables the subagent
 	// tool — main.go always wires it today, but tests omit it.
 	SubagentService *SubagentService
+
+	// BrowserProvisioner starts and stops browser pods for web tasks.
+	// Wired in main.go; nil, or one that is not Enabled, means web
+	// tasks are refused at dispatch. BrowserMaxPerTeam is how many
+	// browsers the team may have at once (BROWSER_MAX_PER_TEAM).
+	BrowserProvisioner BrowserProvisioner
+	BrowserMaxPerTeam  int
+	// Browsers is the registry NewServer builds from the two above and
+	// hands to SubagentService; StartBrowsers runs its lifecycle.
+	Browsers *browserRegistry
 
 	// Tracker is the assignment tracker bound to this server's Store,
 	// Messenger and delivery hooks. Built on first use by tracker()
@@ -316,6 +327,13 @@ func NewServer(s *Server) (*Server, error) {
 	}
 	if s.SubagentService != nil && s.SubagentService.Provider == nil {
 		s.SubagentService.Provider = s.Provider
+	}
+	if s.Browsers == nil && s.BrowserProvisioner != nil && s.Store != nil {
+		s.Browsers = newBrowserRegistry(s.Store, s.BrowserProvisioner, s.Clock, s.BrowserMaxPerTeam, log.Printf,
+			func(slug, subagentID string) string { return subagentFilesRoot(s.Store, slug, subagentID) })
+	}
+	if s.SubagentService != nil && s.SubagentService.Browsers == nil {
+		s.SubagentService.Browsers = s.Browsers
 	}
 	s.orgHub = newOrgHub()
 	s.notifyCh = make(chan struct{}, 1)

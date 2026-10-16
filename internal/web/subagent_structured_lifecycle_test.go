@@ -133,7 +133,7 @@ func TestStructuredFilesAreMappedToTheCallersView(t *testing.T) {
 		}
 		// The task's rules, probed directly: each probe would cost the
 		// task an attempt through SubmitResult.
-		rules := svc.subagentFileRules("alice", req.SubagentID)
+		rules := svc.subagentFileRules("alice", req.SubagentID, agentpod.SubagentKindGeneral)
 		schema, _ := structured.Parse([]byte(quoteSchema))
 		cases := map[string]string{
 			`["/files/artifacts/private/ghost.pdf"]`:                                  "not a file this task made",
