@@ -1,0 +1,22 @@
+[
+  {
+    "type": "state",
+    "browser": "starting"
+  },
+  {
+    "type": "state",
+    "browser": "running"
+  },
+  {
+    "type": "tab",
+    "tab": {
+      "id": "t1",
+      "url": "https://vendor.example/pricing",
+      "title": "Pricing"
+    }
+  },
+  {
+    "type": "end",
+    "reason": "The task has ended."
+  }
+]

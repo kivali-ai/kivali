@@ -60,6 +60,12 @@ func goldenFixtures() map[string]any {
 	return map[string]any{
 		"role_icons": roleicon.Icons,
 		"error":      ErrorBody{Error: "unauthenticated", Who: "sign in again"},
+		"browser_window_events": []BrowserWindowEvent{
+			{Type: BrowserWindowEventTypeState, Browser: BrowserStateStarting},
+			{Type: BrowserWindowEventTypeState, Browser: BrowserStateRunning},
+			{Type: BrowserWindowEventTypeTab, Tab: &BrowserWindowTab{ID: "t1", URL: "https://vendor.example/pricing", Title: "Pricing"}},
+			{Type: BrowserWindowEventTypeEnd, Reason: "The task has ended."},
+		},
 		"me": Me{
 			User:    MeUser{Email: "maya@example.com", Name: "Maya", Initials: "M"},
 			Org:     MeOrg{Name: "Plainsong", HasLogo: true},
