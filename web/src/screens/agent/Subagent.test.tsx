@@ -90,7 +90,7 @@ describe('the task page: its browser window', () => {
     const user = userEvent.setup();
     renderTabs(PATH, { routes: { ['GET ' + API]: web('running') } });
     await user.click(await page().findByRole('button', { name: 'Open browser' }));
-    expect(open).toHaveBeenCalledWith(PATH + '/browser', 'kivali-browser-' + ID, 'noopener,noreferrer,width=1320,height=900');
+    expect(open).toHaveBeenCalledWith(PATH + '/browser', 'kivali-browser-' + ID, 'width=1320,height=900');
     expect(screen.queryByText(caption)).toBeNull();
   });
 

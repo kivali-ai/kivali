@@ -501,6 +501,45 @@ internet and excepts the pod network, the node's and cloud metadata's
 link-local range and every private range, so a page cannot reach the
 server pod, the cluster or the node through the browser.
 
+### The browser window
+
+A person watches a running web task's browser from its view: Open
+browser opens `agents/{slug}/subagents/{id}/browser`, a page with no
+app chrome (in the web app a named window, so a second click focuses
+the first; in Kivali Desktop a window of its own, see
+[desktop-app.md](desktop-app.md)). The page holds one WebSocket,
+`GET /api/v1/agents/{slug}/subagents/{id}/browser`
+(`internal/web/browser_window.go`), under the session cookie like every
+API route. Text messages are `apitypes.BrowserWindowEvent`: the
+browser's state, the tab the window shows (sent when the window
+attaches, when the task moves to another tab and when that tab's URL
+or title changes) and an end with its reason, after which the page
+stops. Binary messages are frames, one JPEG each. Nothing goes the
+other way: the window watches.
+
+The path is built for several open windows at once. The pod sends a
+frame as bytes after a short message, never base64 or JSON, and core
+passes those bytes through untouched. Core asks the pod to screencast
+the task's tab group, not a tab, and the pod moves the cast as the
+group's current tab changes. Each window has a latest-frame slot in
+the registry: a window that falls behind sees the newest frame when it
+next reads, never a backlog, and never slows the pod or another window;
+one that cannot take a write in five seconds is dropped. The page
+decodes with `createImageBitmap` and paints a canvas at most once per
+animation frame, outside React. The screencast is JPEG at quality 50,
+at most 1280 by 800: responsiveness over colour.
+
+The first window on a task turns its group's screencast on and counts
+as a window on the browser, which keeps the browser from going idle.
+The screencast stays on for ten seconds after the last window has gone,
+so a reload or a brief disconnect costs nothing, then goes off. A
+window on a task whose browser is not running starts one. When the
+task ends, or its browser stops, every window on it is ended with the
+reason. The task's view learns the browser's state (`starting`,
+`running`, `stopped`, in `SubagentMeta.browser`) through its own
+stream: the registry reports each change and the task's meta.json
+carries it.
+
 Depth is capped at two tiers (`agentpod.MaxSubagentDepth`): a
 first-tier subagent may act as a sub-lead and dispatch up to three
 workers, which blocks it until they finish; workers cannot delegate.

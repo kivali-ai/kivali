@@ -129,7 +129,9 @@ export function Subagent() {
             </Text>
           )}
           {watchable && (
-            <Button onClick={() => void window.open(browserHref, browserWindowName(id), 'noopener,noreferrer,width=1320,height=900')}>
+            // One window per task: the fixed name finds the window a first click opened, which it can do only
+            // without noopener (that puts the window out of reach of the name). The page is Kivali's own.
+            <Button onClick={() => void window.open(browserHref, browserWindowName(id), 'width=1320,height=900')}>
               Open browser
             </Button>
           )}

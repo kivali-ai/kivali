@@ -85,11 +85,30 @@ func (s *Server) handleBrowserWindow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer s.Browsers.Unwatch(watcher)
+	// flushEvents sends every queued text message. Events are queued
+	// before the frame they describe (a tab change before that tab's
+	// first frame), so they go out before any frame, and before the
+	// close that ends the window.
+	flushEvents := func() bool {
+		for {
+			select {
+			case ev := <-watcher.Events():
+				if !write(ev) {
+					return false
+				}
+			default:
+				return true
+			}
+		}
+	}
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case frame := <-watcher.Frames():
+			if !flushEvents() {
+				return
+			}
 			wctx, wcancel := context.WithTimeout(ctx, browserWindowWriteTimeout)
 			err := c.Write(wctx, websocket.MessageBinary, frame)
 			wcancel()
@@ -101,19 +120,7 @@ func (s *Server) handleBrowserWindow(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		case <-watcher.Done():
-			// The end event is queued before done closes; send what
-			// is left, then close cleanly.
-			for {
-				select {
-				case ev := <-watcher.Events():
-					if !write(ev) {
-						return
-					}
-					continue
-				default:
-				}
-				break
-			}
+			flushEvents()
 			_ = c.Close(websocket.StatusNormalClosure, "")
 			return
 		}

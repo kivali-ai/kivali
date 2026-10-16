@@ -9,9 +9,11 @@ const outDir = '../internal/web/ui/dist';
 
 // changeOrigin stays false on purpose: the API's requireSameOrigin compares Origin with the
 // request's Host, and both must stay the dev server's (localhost:5173) for writes to pass.
-// SSE streams must not be timed out by the dev proxy (0 disables both timeouts); nothing is a websocket.
+// SSE streams must not be timed out by the dev proxy (0 disables both timeouts). The browser window's
+// route is the one websocket; it is listed ahead of /api so its entry is the one that matches.
 const stream = { target: backend, changeOrigin: false, ws: false, timeout: 0, proxyTimeout: 0 };
 const plain = { target: backend, changeOrigin: false, ws: false };
+const socket = { target: backend, changeOrigin: false, ws: true, timeout: 0, proxyTimeout: 0 };
 
 // emptyOutDir removes everything in the build output, including the tracked .gitkeep that keeps
 // `//go:embed all:dist` compiling on a clean checkout. Put it back after every build.
@@ -40,6 +42,7 @@ export default defineConfig({
   // SERVER_PREFIXES in src/app/links.ts); every other path is the app, served by Vite with index.html as fallback.
   server: {
     proxy: {
+      '^/api/v1/agents/[^/]+/subagents/[^/]+/browser$': socket,
       '/api': plain,
       '/org/stream': stream,
       '^/agents/[^/]+/stream$': stream,
