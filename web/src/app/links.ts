@@ -18,9 +18,22 @@ export function serverOwned(pathname: string): boolean {
   return SERVER_PATHS.includes(pathname) || SERVER_PREFIXES.some((p) => pathname.startsWith(p)) || STREAM.test(pathname);
 }
 
+/** The router path of a background task's page. */
+export function subagentPath(slug: string, id: string): string {
+  return '/agents/' + encodeURIComponent(slug) + '/subagents/' + encodeURIComponent(id);
+}
+
 /** The router path of a web task's browser window. */
 export function browserWindowPath(slug: string, id: string): string {
-  return '/agents/' + encodeURIComponent(slug) + '/subagents/' + encodeURIComponent(id) + '/browser';
+  return subagentPath(slug, id) + '/browser';
+}
+
+/** Whether `host` (a port is ignored) lies outside a session's `site`: neither the site nor under it. False without a site. */
+export function outsideSite(host: string, site: string | undefined): boolean {
+  if (!site) return false;
+  const h = host.replace(/:\d+$/, '').replace(/\.$/, '').toLowerCase();
+  const s = site.replace(/\.$/, '').toLowerCase();
+  return h !== s && !h.endsWith('.' + s);
 }
 
 /** The window name a task's browser window opens under: one window per task, so a second open focuses it. */

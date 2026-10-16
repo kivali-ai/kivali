@@ -98,6 +98,7 @@ async function renderHome(home: HomeData, opts: { path?: string; org?: Partial<O
     [
       { path: '/', element: <Home /> },
       { path: '/agents/:slug', element: <p>agent chat</p> },
+      { path: '/agents/:slug/subagents/:id', element: <p>task page</p> },
       { path: '/assignments/:id', element: <p>assignment</p> },
     ],
     { basename: '/', initialEntries: [(opts.path ?? '/')] },
@@ -156,8 +157,8 @@ describe('Home renders', () => {
     expect(screen.getByText('Waiting on #45, Run the tests')).toBeInTheDocument();
 
     const needs = screen.getByRole('region', { name: 'Needs you' });
-    expect(within(needs).getByLabelText('6 waiting on you')).toHaveTextContent('6');
-    for (const kind of ['Approval', 'Hire', 'Notice', 'Assigned to you', 'Needs help', 'Install software']) expect(within(needs).getByText(kind)).toBeInTheDocument();
+    expect(within(needs).getByLabelText('7 waiting on you')).toHaveTextContent('7');
+    for (const kind of ['Approval', 'Hire', 'Notice', 'Assigned to you', 'Needs help', 'Sign in', 'Install software']) expect(within(needs).getByText(kind)).toBeInTheDocument();
 
     const queue = screen.getByRole('region', { name: 'Queue' });
     expect(within(queue).getByText('3 passing through')).toBeInTheDocument();
@@ -247,9 +248,9 @@ describe('Home follows the design rules', () => {
     await renderHome(busyHome);
     const signals = document.querySelectorAll('.kv-badge--signal');
     expect(signals).toHaveLength(1);
-    expect(signals[0]).toHaveAccessibleName('6 waiting on you');
+    expect(signals[0]).toHaveAccessibleName('7 waiting on you');
     const needs = screen.getByRole('region', { name: 'Needs you' });
-    for (const kind of ['Approval', 'Hire', 'Notice', 'Assigned to you', 'Needs help', 'Install software']) expect(within(needs).getByText(kind)).toHaveClass('kv-badge--neutral');
+    for (const kind of ['Approval', 'Hire', 'Notice', 'Assigned to you', 'Needs help', 'Sign in', 'Install software']) expect(within(needs).getByText(kind)).toHaveClass('kv-badge--neutral');
   });
 
   it('keeps Release all the one primary until a row opens, and Open chat secondary', async () => {
@@ -381,7 +382,7 @@ describe('Needs you', () => {
     expect(form.get('message')).toBe('Go ahead.');
     expect((form.getAll('attachments[]')[0] as File).name).toBe('po.pdf');
     expect(document.querySelector(`[data-id="${approval.id}"]`)).toBeNull();
-    expect(screen.getByLabelText('5 waiting on you')).toBeInTheDocument();
+    expect(screen.getByLabelText('6 waiting on you')).toBeInTheDocument();
 
     // The answer's result shows as a toast with a link, and leaves on its own.
     const toast = screen.getAllByRole('status').find((el) => el.textContent?.includes('Garden advisor is hired and reports to Chief of Staff'));
@@ -439,6 +440,44 @@ describe('Needs you', () => {
     fireEvent.click(within(rowFor('data-id', needsHelp.id)).getByRole('button', { name: 'Open chat' }));
     await flush();
     expect(router.state.location.pathname).toBe('/agents/tester');
+  });
+
+  describe('a web task waiting for a sign-in (home.json)', () => {
+    const signIn = busyHome.needs.find((n) => n.kind === 'web_sign_in');
+    if (!signIn) throw new Error('fixture has no web_sign_in row');
+
+    it('shows core’s title and body, the task, and Open task and Open browser, with nothing to answer', async () => {
+      await renderHome(busyHome);
+      fireEvent.click(screen.getByRole('button', { name: /needs you to sign in to vendor\.example/ }));
+      const row = within(rowFor('data-id', signIn.id));
+      expect(row.getByText('Engineering lead needs you to sign in to vendor.example')).toBeInTheDocument();
+      expect(row.getByText(/The page asks for a sign-in\. Open the browser, sign in/)).toBeInTheDocument();
+      expect(row.getByText('Task: Check the build logs')).toBeInTheDocument();
+      expect(row.getByRole('link', { name: 'Open task' })).toHaveAttribute('href', '/agents/engineering-lead/subagents/bbbb2222');
+      expect(row.getByRole('button', { name: 'Open browser' })).toBeInTheDocument();
+      for (const verb of ['Approve', 'Deny', 'Acknowledge', 'Hand back']) expect(row.queryByRole('button', { name: verb })).toBeNull();
+    });
+
+    it('opens the task’s browser window under the task’s own name', async () => {
+      const open = vi.fn(() => null);
+      vi.stubGlobal('open', open);
+      try {
+        await renderHome(busyHome);
+        fireEvent.click(screen.getByRole('button', { name: /needs you to sign in to vendor\.example/ }));
+        fireEvent.click(within(rowFor('data-id', signIn.id)).getByRole('button', { name: 'Open browser' }));
+        expect(open).toHaveBeenCalledWith('/agents/engineering-lead/subagents/bbbb2222/browser', 'kivali-browser-bbbb2222', 'width=1320,height=900');
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it('opens the task’s page', async () => {
+      const { router } = await renderHome(busyHome);
+      fireEvent.click(screen.getByRole('button', { name: /needs you to sign in to vendor\.example/ }));
+      fireEvent.click(within(rowFor('data-id', signIn.id)).getByRole('link', { name: 'Open task' }));
+      await flush();
+      expect(router.state.location.pathname).toBe('/agents/engineering-lead/subagents/bbbb2222');
+    });
   });
 });
 

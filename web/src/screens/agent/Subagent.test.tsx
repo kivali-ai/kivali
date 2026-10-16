@@ -137,6 +137,55 @@ describe('the task page: its browser window', () => {
   });
 });
 
+describe('the task page: waiting for a sign-in', () => {
+  const waiting = (reason?: SubagentTranscript['meta']['wait_reason']): SubagentTranscript => {
+    const t = running(firstRows);
+    return {
+      ...t,
+      meta: { ...t.meta, kind: 'web', session: 'vendor.example', site: 'vendor.example', browser: 'running', state: 'waiting_for_sign_in', input: true, ...(reason ? { wait_reason: reason } : {}) },
+    };
+  };
+  const steps = 'Sign in, then close the window. The task continues on its own.';
+
+  it('says what it waits for, keeps Open browser and makes it the main action', async () => {
+    const open = vi.fn(() => null);
+    vi.stubGlobal('open', open);
+    const user = userEvent.setup();
+    const h = renderTabs(PATH, { routes: { ['GET ' + API]: waiting('sign_in') } });
+    expect(await page().findByRole('status')).toHaveTextContent('Waiting for you to sign in to vendor.example');
+    expect(page().getByText('The page asks for a sign-in.')).toBeInTheDocument();
+    expect(page().getByText(steps)).toBeInTheDocument();
+    const button = page().getByRole('button', { name: 'Open browser' });
+    expect(button).toHaveClass('kv-btn--primary');
+    await user.click(button);
+    expect(open).toHaveBeenCalledWith(PATH + '/browser', 'kivali-browser-' + ID, 'width=1320,height=900');
+    // Still under way: the page follows the task's stream.
+    expect(h.streams).toHaveLength(1);
+  });
+
+  it.each([
+    ['mfa', 'The page asks for a second factor.'],
+    ['captcha', 'The page asks for a CAPTCHA.'],
+    ['consent', 'The page asks for a consent.'],
+  ] as const)('spells out the %s reason', async (reason, words) => {
+    renderTabs(PATH, { routes: { ['GET ' + API]: waiting(reason) } });
+    expect(await page().findByText(words)).toBeInTheDocument();
+    expect(page().getByText(steps)).toBeInTheDocument();
+  });
+
+  it('goes back to a running task’s line once it resumes', async () => {
+    let body = waiting('mfa');
+    const h = renderTabs(PATH, { routes: { ['GET ' + API]: () => body } });
+    expect(await page().findByText(steps)).toBeInTheDocument();
+    const t = running(firstRows);
+    body = { ...t, meta: { ...t.meta, kind: 'web', session: 'vendor.example', site: 'vendor.example', browser: 'running' } };
+    act(() => h.streams[0]?.emit('meta', {}));
+    await waitFor(() => expect(page().queryByText(steps)).toBeNull());
+    expect(page().getByRole('status')).toHaveTextContent('Working');
+    expect(page().getByRole('button', { name: 'Open browser' })).toHaveClass('kv-btn--secondary');
+  });
+});
+
 describe('the task page: following a running task', () => {
   it('opens no stream for a task that has finished', async () => {
     const h = renderTabs(PATH, { routes: { ['GET ' + API]: subagentTranscript } });

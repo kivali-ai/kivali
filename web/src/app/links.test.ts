@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { browserWindowName, browserWindowPath, internalPath, serverOwned } from './links';
+import { browserWindowName, browserWindowPath, internalPath, outsideSite, serverOwned, subagentPath } from './links';
 
 describe('the browser window', () => {
   it('lives under the task, outside the server-owned paths', () => {
@@ -11,6 +11,32 @@ describe('the browser window', () => {
 
   it('opens under one name per task', () => {
     expect(browserWindowName('bbbb2222')).toBe('kivali-browser-bbbb2222');
+  });
+});
+
+describe('the task page', () => {
+  it('lives at the task’s path', () => {
+    expect(subagentPath('engineering-lead', 'bbbb2222')).toBe('/agents/engineering-lead/subagents/bbbb2222');
+    expect(subagentPath('a b', 'x/y')).toBe('/agents/a%20b/subagents/x%2Fy');
+  });
+});
+
+describe('outsideSite', () => {
+  it('keeps the site and its subdomains inside, ignoring a port and case', () => {
+    expect(outsideSite('vendor.example', 'vendor.example')).toBe(false);
+    expect(outsideSite('login.vendor.example', 'vendor.example')).toBe(false);
+    expect(outsideSite('Login.Vendor.Example:8443', 'vendor.example')).toBe(false);
+  });
+
+  it('flags another host, including one that only ends in the same letters', () => {
+    expect(outsideSite('accounts.idp.example', 'vendor.example')).toBe(true);
+    expect(outsideSite('evilvendor.example', 'vendor.example')).toBe(true);
+    expect(outsideSite('vendor.example.attacker.test', 'vendor.example')).toBe(true);
+  });
+
+  it('flags nothing in the open session', () => {
+    expect(outsideSite('anything.test', undefined)).toBe(false);
+    expect(outsideSite('anything.test', '')).toBe(false);
   });
 });
 

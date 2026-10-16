@@ -24,7 +24,7 @@ import { mergeLoaded, thinkingLine, toAttachmentRef, toBlocks } from '../../stat
 import type { Block, ChatRow, LiveTask, PendingView, ThinkingView } from '../../state/transcript';
 import { bareToolName } from '../../state/toolSummary';
 import { duration, fileSize, messageTime, modelBadge } from './format';
-import { asApiError } from './tabsShared';
+import { TASK_STATE, asApiError, signInWaitLine } from './tabsShared';
 import { SentRow } from './SentRow';
 
 /** Server rows (a past chat, a background task) as transcript rows: keyed, nothing live. */
@@ -157,7 +157,7 @@ function ToolRow({ row, slug }: { row: ChatRow; slug: string }) {
 
 /** A task as the task components draw it; `base` is where task sessions live. */
 function groupTask(t: LiveTask, base: string): SubagentGroupTask {
-  const task: SubagentGroupTask = { title: t.title || 'Background task', state: t.state };
+  const task: SubagentGroupTask = { title: t.title || 'Background task', state: TASK_STATE[t.state] };
   if (t.id) {
     task.id = t.id;
     task.sessionHref = base + encodeURIComponent(t.id);
@@ -170,7 +170,19 @@ function groupTask(t: LiveTask, base: string): SubagentGroupTask {
   if (t.state === 'running' && t.activity) task.latest = t.activity;
   if (t.state === 'errored') task.error = t.error || 'It stopped without saying why.';
   if (t.state === 'done' && t.output_md) task.result = <MarkdownBody md={t.output_md} />;
+  if (t.state === 'waiting_for_sign_in') {
+    task.children = (
+      <Text variant="caption" tone="signal">
+        {signInWaitLine()}
+      </Text>
+    );
+  }
   return task;
+}
+
+/** A group's header counts a task waiting for sign-in as running: it is still under way. */
+function headerTask(t: SubagentGroupTask): SubagentGroupTask {
+  return t.state === 'held' ? { ...t, state: 'running' } : t;
 }
 
 function SubagentsRow({ row, slug }: { row: ChatRow; slug: string }) {
@@ -181,7 +193,13 @@ function SubagentsRow({ row, slug }: { row: ChatRow; slug: string }) {
     const { id: _id, ...only } = tasks[0];
     return <SubagentTask {...only} />;
   }
-  return <SubagentGroup tasks={tasks} />;
+  return (
+    <SubagentGroup tasks={tasks.map(headerTask)}>
+      {tasks.map(({ id, ...t }, i) => (
+        <SubagentTask key={id || i} {...t} />
+      ))}
+    </SubagentGroup>
+  );
 }
 
 function DocRow({ row }: { row: ChatRow }) {

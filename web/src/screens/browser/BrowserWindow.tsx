@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router';
 import { apiGet } from '../../api/client';
-import type { BrowserState, BrowserWindowEvent, BrowserWindowTab, SubagentMeta, SubagentTranscript } from '../../api/types.gen';
-import { Badge, Banner, Text } from '../../ds';
+import type { BrowserInput, BrowserState, BrowserWindowEvent, BrowserWindowInput, BrowserWindowTab, SubagentMeta, SubagentTranscript } from '../../api/types.gen';
+import { outsideSite } from '../../app/links';
+import { Badge, Banner, Button, Icon, Text } from '../../ds';
 import { asApiError } from '../agent/tabsShared';
 import '../../styles/browser.css';
 
@@ -22,7 +23,7 @@ export function browserSocketUrl(slug: string, id: string, loc: Location = windo
 /** Why the window does not connect to this task, or null when it can. */
 function unavailable(meta: SubagentMeta): string | null {
   if (meta.kind !== 'web') return 'This task does not use a browser.';
-  if (meta.state !== 'running') return 'The task has ended.';
+  if (meta.state !== 'running' && meta.state !== 'waiting_for_sign_in') return 'The task has ended.';
   return null;
 }
 
@@ -32,6 +33,172 @@ function hostOf(url: string): string {
   } catch {
     return url;
   }
+}
+
+/** Whether a web page's URL lies outside the session's site. Only http and https pages are judged. */
+function offSite(url: string, site: string): boolean {
+  try {
+    const u = new URL(url);
+    return (u.protocol === 'http:' || u.protocol === 'https:') && outsideSite(u.hostname, site);
+  } catch {
+    return false;
+  }
+}
+
+/** The wire's modifier bits: 1 alt, 2 control, 4 meta, 8 shift. */
+export function modifierBits(ev: { altKey: boolean; ctrlKey: boolean; metaKey: boolean; shiftKey: boolean }): number {
+  return (ev.altKey ? 1 : 0) | (ev.ctrlKey ? 2 : 0) | (ev.metaKey ? 4 : 0) | (ev.shiftKey ? 8 : 0);
+}
+
+/** MouseEvent.button to the wire's button: 0 left, 1 middle, 2 right. */
+const BUTTON: Record<number, string> = { 0: 'left', 1: 'middle', 2: 'right' };
+
+/** The button a move drags with, from MouseEvent.buttons (1 left, 2 right, 4 middle). */
+function heldButton(buttons: number): string | undefined {
+  if (buttons & 1) return 'left';
+  if (buttons & 4) return 'middle';
+  if (buttons & 2) return 'right';
+  return undefined;
+}
+
+/** Keys the window itself would act on (scroll, move focus, press a button): they go to the task's page only. */
+const PAGE_KEYS = new Set(['Backspace', 'Tab', 'Enter', ' ', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'PageUp', 'PageDown', 'Home', 'End']);
+
+/** Cmd+V or Ctrl+V: left to the browser, which fires the paste event the window sends from. */
+function pasteShortcut(ev: KeyboardEvent): boolean {
+  return (ev.metaKey || ev.ctrlKey) && !ev.altKey && ev.key.toLowerCase() === 'v';
+}
+
+/**
+ * A point in the frame's own pixels for a point on the page. The frame is drawn with object-fit: contain, so
+ * the bitmap is scaled to fit the element's box and centred in it; the point is clamped to the bitmap.
+ */
+export function framePoint(box: DOMRect, width: number, height: number, clientX: number, clientY: number): { x: number; y: number } | null {
+  if (width <= 0 || height <= 0) return null;
+  const scale = Math.min(box.width / width, box.height / height);
+  if (!(scale > 0)) return null;
+  const left = box.left + (box.width - width * scale) / 2;
+  const top = box.top + (box.height - height * scale) / 2;
+  const clamp = (v: number, max: number) => Math.min(Math.max(v, 0), max);
+  return { x: clamp((clientX - left) / scale, width - 1), y: clamp((clientY - top) / scale, height - 1) };
+}
+
+/** Wheel deltas in pixels, whatever unit the event counts in. */
+function wheelPixels(ev: WheelEvent, height: number): { delta_x: number; delta_y: number } {
+  const unit = ev.deltaMode === 1 ? 16 : ev.deltaMode === 2 ? height : 1;
+  return { delta_x: ev.deltaX * unit, delta_y: ev.deltaY * unit };
+}
+
+/**
+ * Forwards a person's mouse, keys and pastes on the frame to the task's page, outside React: native listeners
+ * read whether the window takes input from `taking()` on every event and call `send` directly. Moves are
+ * coalesced to the newest one per animation frame; a press, release or wheel sends any held move first so
+ * the page sees them in order. Returns the function that removes the listeners.
+ */
+function relayInput(frame: HTMLElement, size: () => { width: number; height: number }, taking: () => boolean, send: (input: BrowserInput) => void, onMenu: (x: number, y: number) => void): () => void {
+  let move: BrowserInput | null = null;
+  let raf = 0;
+  const pressed = new Set<string>();
+
+  const point = (ev: MouseEvent) => {
+    const { width, height } = size();
+    return framePoint(frame.getBoundingClientRect(), width, height, ev.clientX, ev.clientY);
+  };
+  const flush = () => {
+    if (raf) cancelAnimationFrame(raf);
+    raf = 0;
+    const m = move;
+    move = null;
+    if (m && taking()) send(m);
+  };
+  const button = (ev: MouseEvent, action: 'pressed' | 'released') => {
+    const name = BUTTON[ev.button];
+    const p = point(ev);
+    if (!name || !p) return;
+    flush();
+    send({ kind: 'mouse', action, x: p.x, y: p.y, button: name, modifiers: modifierBits(ev) });
+  };
+
+  const onDown = (ev: MouseEvent) => {
+    if (!taking()) return;
+    ev.preventDefault();
+    frame.focus({ preventScroll: true });
+    const name = BUTTON[ev.button];
+    if (name) pressed.add(name);
+    button(ev, 'pressed');
+  };
+  // On the window, so a press dragged off the frame still ends.
+  const onUp = (ev: MouseEvent) => {
+    const name = BUTTON[ev.button];
+    if (!name || !pressed.delete(name) || !taking()) return;
+    button(ev, 'released');
+  };
+  const onMove = (ev: MouseEvent) => {
+    if (!taking()) return;
+    const p = point(ev);
+    if (!p) return;
+    const held = heldButton(ev.buttons);
+    move = { kind: 'mouse', action: 'moved', x: p.x, y: p.y, modifiers: modifierBits(ev), ...(held ? { button: held } : {}) };
+    if (!raf) raf = requestAnimationFrame(flush);
+  };
+  const onWheel = (ev: WheelEvent) => {
+    if (!taking()) return;
+    ev.preventDefault();
+    const p = point(ev);
+    if (!p) return;
+    flush();
+    send({ kind: 'mouse', action: 'wheel', x: p.x, y: p.y, ...wheelPixels(ev, size().height), modifiers: modifierBits(ev) });
+  };
+  const onContext = (ev: MouseEvent) => {
+    if (!taking()) return;
+    ev.preventDefault();
+    onMenu(ev.clientX, ev.clientY);
+  };
+  const key = (ev: KeyboardEvent, action: 'down' | 'up') => {
+    if (!taking() || ev.isComposing || pasteShortcut(ev)) return;
+    if (PAGE_KEYS.has(ev.key)) ev.preventDefault();
+    const printable = action === 'down' && [...ev.key].length === 1 && !ev.ctrlKey && !ev.metaKey;
+    send({ kind: 'key', action, key: ev.key, code: ev.code, ...(printable ? { text: ev.key } : {}), modifiers: modifierBits(ev) });
+  };
+  const onKeyDown = (ev: KeyboardEvent) => key(ev, 'down');
+  const onKeyUp = (ev: KeyboardEvent) => key(ev, 'up');
+  const onPaste = (ev: ClipboardEvent) => {
+    if (!taking()) return;
+    ev.preventDefault();
+    const text = ev.clipboardData?.getData('text/plain') ?? '';
+    if (text) send({ kind: 'paste', text });
+  };
+
+  frame.addEventListener('mousedown', onDown);
+  window.addEventListener('mouseup', onUp);
+  frame.addEventListener('mousemove', onMove);
+  frame.addEventListener('wheel', onWheel, { passive: false });
+  frame.addEventListener('contextmenu', onContext);
+  frame.addEventListener('keydown', onKeyDown);
+  frame.addEventListener('keyup', onKeyUp);
+  frame.addEventListener('paste', onPaste);
+  return () => {
+    if (raf) cancelAnimationFrame(raf);
+    frame.removeEventListener('mousedown', onDown);
+    window.removeEventListener('mouseup', onUp);
+    frame.removeEventListener('mousemove', onMove);
+    frame.removeEventListener('wheel', onWheel);
+    frame.removeEventListener('contextmenu', onContext);
+    frame.removeEventListener('keydown', onKeyDown);
+    frame.removeEventListener('keyup', onKeyUp);
+    frame.removeEventListener('paste', onPaste);
+  };
+}
+
+/** Where the right-click menu opened, and whether the clipboard could not be read there. */
+interface PasteMenu {
+  x: number;
+  y: number;
+  fallback: boolean;
+}
+
+function canReadClipboard(): boolean {
+  return typeof navigator.clipboard?.readText === 'function';
 }
 
 /**
@@ -112,10 +279,11 @@ class FramePainter {
 type Link = 'connecting' | 'open' | 'reconnecting' | 'ended';
 
 /**
- * A web task's browser window, outside the app frame: the tab the task's browser shows, live, watch only. It
- * reads the task's header once; a running web task gets a WebSocket that carries the tab and the browser's
- * state as text and the frames as JPEGs. A socket that closes without an end event is reopened with backoff
- * while the task still runs.
+ * A web task's browser window, outside the app frame: the tab the task's browser shows, live. It reads the
+ * task's header once; a live web task gets a WebSocket that carries the tab and the browser's state as text
+ * and the frames as JPEGs. A socket that closes without an end event is reopened with backoff while the task
+ * still runs. The window watches, and takes input only while the latest state event says so (the task waits
+ * for a person to sign in): then the person's mouse, keys and pastes on the frame go back as input messages.
  */
 export function BrowserWindow() {
   const { slug = '', id = '' } = useParams();
@@ -126,8 +294,15 @@ export function BrowserWindow() {
   const [browser, setBrowser] = useState<BrowserState | undefined>(undefined);
   const [tab, setTab] = useState<BrowserWindowTab | null>(null);
   const [framed, setFramed] = useState(false);
+  const [input, setInput] = useState(false);
+  const [site, setSite] = useState('');
+  const [menu, setMenu] = useState<PasteMenu | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  // The input path reads these, never React state: whether the window takes input, and the send to use.
+  const taking = useRef(false);
+  const sendRef = useRef<(input: BrowserInput) => void>(() => {});
   const [decodes] = useState(() => typeof createImageBitmap === 'function');
 
   const path = '/api/v1/agents/' + encodeURIComponent(slug) + '/subagents/' + encodeURIComponent(id);
@@ -139,6 +314,7 @@ export function BrowserWindow() {
         if (!live) return;
         setMeta(t.meta);
         setBrowser(t.meta.browser);
+        setSite(t.meta.site ?? '');
       },
       (err: unknown) => {
         if (live) setFailure(asApiError(err));
@@ -158,14 +334,37 @@ export function BrowserWindow() {
 
   useEffect(() => {
     if (!connect) return;
-    const painter = new FramePainter(canvasRef.current, imgRef.current, () => setFramed(true));
+    const canvas = canvasRef.current;
+    const img = imgRef.current;
+    let painted = false;
+    const painter = new FramePainter(canvas, img, () => {
+      painted = true;
+      setFramed(true);
+    });
     let ws: WebSocket | null = null;
+    let live: WebSocket | null = null;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let attempt = 0;
     let over = false;
 
+    const take = (on: boolean) => {
+      taking.current = on;
+      setInput(on);
+    };
+    const send = (input: BrowserInput) => {
+      if (!taking.current || !live) return;
+      const msg: BrowserWindowInput = { type: 'input', input };
+      live.send(JSON.stringify(msg));
+    };
+    sendRef.current = send;
+    // The frame's own pixels: the canvas takes each painted bitmap's size; before the first paint there is none.
+    const size = () => (canvas ? (painted ? { width: canvas.width, height: canvas.height } : { width: 0, height: 0 }) : { width: img?.naturalWidth ?? 0, height: img?.naturalHeight ?? 0 });
+    const frame = canvas ?? img;
+    const unrelay = frame ? relayInput(frame, size, () => taking.current, send, (x, y) => setMenu({ x, y, fallback: !canReadClipboard() })) : () => {};
+
     const finish = (reason: string) => {
       over = true;
+      take(false);
       setEnded(reason);
       setLink('ended');
     };
@@ -176,6 +375,7 @@ export function BrowserWindow() {
       sock.binaryType = 'blob';
       sock.onopen = () => {
         attempt = 0;
+        live = sock;
         setLink('open');
       };
       sock.onmessage = (ev: MessageEvent) => {
@@ -189,16 +389,22 @@ export function BrowserWindow() {
         } catch {
           return;
         }
-        if (msg.type === 'state') setBrowser(msg.browser);
-        else if (msg.type === 'tab' && msg.tab) setTab(msg.tab);
+        if (msg.type === 'state') {
+          setBrowser(msg.browser);
+          take(msg.input === true);
+          if (msg.site !== undefined) setSite(msg.site);
+        } else if (msg.type === 'tab' && msg.tab) setTab(msg.tab);
         else if (msg.type === 'end') {
           finish(msg.reason || 'The window has ended.');
           sock.close();
         }
       };
       sock.onclose = () => {
+        if (live === sock) live = null;
         if (over || ws !== sock) return;
         ws = null;
+        // A new socket's first state event says again whether the window takes input.
+        take(false);
         setLink('reconnecting');
         timer = setTimeout(retry, reconnectDelay(attempt++));
       };
@@ -222,6 +428,9 @@ export function BrowserWindow() {
     open();
     return () => {
       over = true;
+      taking.current = false;
+      live = null;
+      unrelay();
       clearTimeout(timer);
       if (ws) {
         ws.onclose = null;
@@ -230,6 +439,46 @@ export function BrowserWindow() {
       painter.stop();
     };
   }, [connect, slug, id, path]);
+
+  // The menu belongs to input: it closes when input stops, on a press anywhere outside it, and on Escape.
+  useEffect(() => {
+    if (!input) setMenu(null);
+  }, [input]);
+  const menuOpen = menu !== null;
+  // At the pointer: the menu is placed through its element, the app's styles keeping to classes.
+  useLayoutEffect(() => {
+    const el = menuRef.current;
+    if (!el || !menu) return;
+    el.style.left = menu.x + 'px';
+    el.style.top = menu.y + 'px';
+  }, [menu]);
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onDown = (ev: MouseEvent) => {
+      if (!(ev.target instanceof Node && menuRef.current?.contains(ev.target))) setMenu(null);
+    };
+    const onKey = (ev: KeyboardEvent) => {
+      if (ev.key === 'Escape') setMenu(null);
+    };
+    document.addEventListener('mousedown', onDown, true);
+    document.addEventListener('keydown', onKey, true);
+    return () => {
+      document.removeEventListener('mousedown', onDown, true);
+      document.removeEventListener('keydown', onKey, true);
+    };
+  }, [menuOpen]);
+
+  const pasteClipboard = () => {
+    const read = canReadClipboard() ? navigator.clipboard.readText() : Promise.reject(new Error('no clipboard'));
+    read.then(
+      (text) => {
+        if (text) sendRef.current({ kind: 'paste', text });
+        setMenu(null);
+        (canvasRef.current ?? imgRef.current)?.focus({ preventScroll: true });
+      },
+      () => setMenu((m) => m && { ...m, fallback: true }),
+    );
+  };
 
   if (failure) {
     return (
@@ -250,13 +499,21 @@ export function BrowserWindow() {
   else if (link === 'ended') status = ended;
   else if (!framed || browser === 'starting') status = 'Starting the browser';
 
+  const off = tab !== null && offSite(tab.url, site);
+
   return (
     <div className="app-bw">
       <header className="app-bw-bar">
         <div className="app-bw-where">
-          <Text as="h1" variant="heading" className="app-bw-host">
+          <Text as="h1" variant="heading" className="app-bw-host" {...(off ? { tone: 'signal' as const } : {})}>
             {tab ? hostOf(tab.url) : 'Browser'}
           </Text>
+          {off && (
+            <Text variant="label" tone="signal" className="app-bw-off">
+              <Icon name="triangle-alert" size={14} />
+              {'Outside ' + site}
+            </Text>
+          )}
           {tab && (
             <Text variant="caption" tone="muted" className="app-bw-url" title={tab.url}>
               {tab.url}
@@ -269,7 +526,7 @@ export function BrowserWindow() {
               {tab.title}
             </Text>
           )}
-          <Badge variant="outline">Watch only</Badge>
+          {input ? <Badge tone="signal">Taking input</Badge> : <Badge variant="outline">Watch only</Badge>}
           {meta?.description && (
             <Text variant="caption" tone="muted" className="app-bw-task">
               {meta.description}
@@ -277,8 +534,31 @@ export function BrowserWindow() {
           )}
         </div>
       </header>
+      {input && (
+        <div className="app-bw-banner">
+          <Banner tone="info" title="Sign in, then close this window. The task continues on its own." />
+        </div>
+      )}
       <main className="app-bw-view">
-        {connect && (decodes ? <canvas ref={canvasRef} className="app-bw-frame" aria-label="The task's browser" /> : <img ref={imgRef} className="app-bw-frame" alt="The task's browser" />)}
+        {connect &&
+          (decodes ? (
+            <canvas ref={canvasRef} className="app-bw-frame" aria-label="The task's browser" tabIndex={input ? 0 : undefined} />
+          ) : (
+            <img ref={imgRef} className="app-bw-frame" alt="The task's browser" tabIndex={input ? 0 : undefined} draggable={false} />
+          ))}
+        {menu && (
+          <div ref={menuRef} className="kv-menu app-bw-menu" role="menu">
+            {menu.fallback ? (
+              <div className="kv-menu-item app-bw-menu-note" role="menuitem" aria-disabled="true">
+                Use Cmd+V or Ctrl+V to paste
+              </div>
+            ) : (
+              <Button variant="ghost" size="sm" className="app-bw-menu-item" role="menuitem" onClick={pasteClipboard}>
+                Paste
+              </Button>
+            )}
+          </div>
+        )}
         {status && (
           <div className="app-bw-status" role="status">
             <Text variant="body" tone="muted">

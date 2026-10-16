@@ -1,11 +1,11 @@
-import { act, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { createMemoryRouter } from 'react-router';
 import { RouterProvider } from 'react-router/dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { BrowserWindowEvent, SubagentMeta, SubagentTranscript } from '../../api/types.gen';
+import type { BrowserInput, BrowserWindowEvent, BrowserWindowInput, SubagentMeta, SubagentTranscript } from '../../api/types.gen';
 import { createAppRoutes } from '../../app/router';
 import { subagentTranscript } from '../agent/tabsFixtures';
-import { browserSocketUrl } from './BrowserWindow';
+import { browserSocketUrl, framePoint, modifierBits } from './BrowserWindow';
 
 const SLUG = 'engineering-lead';
 const ID = 'bbbb2222';
@@ -30,7 +30,13 @@ class FakeSocket {
   accept() {
     act(() => this.onopen?.(new Event('open')));
   }
-  send(ev: BrowserWindowEvent) {
+  /** What the page sent, in order. */
+  sent: string[] = [];
+  send(data: string) {
+    this.sent.push(data);
+  }
+  /** A text message from the server. */
+  push(ev: BrowserWindowEvent) {
     act(() => this.onmessage?.(new MessageEvent('message', { data: JSON.stringify(ev) })));
   }
   frame(blob: Blob) {
@@ -154,14 +160,14 @@ describe('the browser window: the bar', () => {
   it('shows the tab’s host large, its URL and title, Watch only and the task', async () => {
     await renderWindow();
     latest()?.accept();
-    latest()?.send({ type: 'tab', tab: { id: 't1', url: 'https://shop.example.com/cart?step=2', title: 'Your cart' } });
+    latest()?.push({ type: 'tab', tab: { id: 't1', url: 'https://shop.example.com/cart?step=2', title: 'Your cart' } });
     expect(screen.getByRole('heading', { name: 'shop.example.com' })).toBeInTheDocument();
     expect(screen.getByText('https://shop.example.com/cart?step=2')).toBeInTheDocument();
     expect(screen.getByText('Your cart')).toBeInTheDocument();
     expect(screen.getByText('Watch only')).toBeInTheDocument();
     expect(screen.getByText('Check the build logs')).toBeInTheDocument();
 
-    latest()?.send({ type: 'tab', tab: { id: 't2', url: 'https://docs.example.org/', title: 'Docs' } });
+    latest()?.push({ type: 'tab', tab: { id: 't2', url: 'https://docs.example.org/', title: 'Docs' } });
     expect(screen.getByRole('heading', { name: 'docs.example.org' })).toBeInTheDocument();
     expect(screen.queryByText('Your cart')).toBeNull();
   });
@@ -172,7 +178,7 @@ describe('the browser window: frames', () => {
     await renderWindow();
     latest()?.accept();
     expect(screen.getByRole('status')).toHaveTextContent('Starting the browser');
-    latest()?.send({ type: 'state', browser: 'running' });
+    latest()?.push({ type: 'state', browser: 'running' });
     expect(screen.getByRole('status')).toHaveTextContent('Starting the browser');
 
     const blob = new Blob(['jpeg'], { type: 'image/jpeg' });
@@ -269,7 +275,7 @@ describe('the browser window: ending and reconnecting', () => {
     await renderWindow({ ...runningWeb, browser: 'running' });
     const sock = latest();
     sock?.accept();
-    sock?.send({ type: 'end', reason: 'The task has ended.' });
+    sock?.push({ type: 'end', reason: 'The task has ended.' });
     expect(screen.getByRole('status')).toHaveTextContent('The task has ended.');
     expect(sock?.closed).toBe(true);
     const before = reads;
@@ -314,5 +320,278 @@ describe('the browser window: ending and reconnecting', () => {
     expect(screen.getByRole('status')).toHaveTextContent('The task has ended.');
     await settle(60_000);
     expect(FakeSocket.all).toHaveLength(1);
+  });
+});
+
+// ---- Input: a task waiting for sign-in in a site session ----
+
+const SITE = 'vendor.example';
+const waitingWeb: SubagentMeta = { ...runningWeb, state: 'waiting_for_sign_in', session: SITE, site: SITE, browser: 'running', wait_reason: 'sign_in', input: true };
+const BANNER = 'Sign in, then close this window. The task continues on its own.';
+
+/** The canvas's CSS box: 800 × 400 at (20, 40), so a 1280 × 800 frame shows at half size, 80 px in from each side. */
+const BOX = { left: 20, top: 40, width: 800, height: 400, right: 820, bottom: 440, x: 20, y: 40, toJSON: () => ({}) } as DOMRect;
+
+const sentInputs = (): BrowserInput[] =>
+  (latest()?.sent ?? []).map((s) => {
+    const msg = JSON.parse(s) as BrowserWindowInput;
+    expect(msg.type).toBe('input');
+    return msg.input;
+  });
+
+const frameEl = () => screen.getByLabelText("The task's browser") as HTMLCanvasElement;
+
+/** Opens the window on a waiting task, paints one 1280 × 800 frame and, unless told not to, turns input on. */
+async function openForInput(input = true, m: SubagentMeta = waitingWeb) {
+  await renderWindow(m);
+  latest()?.accept();
+  latest()?.frame(new Blob(['jpeg']));
+  decodes[0]?.resolve(bitmap('one'));
+  await settle(16);
+  latest()?.push({ type: 'state', browser: 'running', input, site: SITE });
+  return frameEl();
+}
+
+/** A paste event carrying `text`, as Cmd+V or Ctrl+V fires it. */
+function pasteEvent(text: string): Event {
+  const ev = new Event('paste', { bubbles: true, cancelable: true });
+  Object.defineProperty(ev, 'clipboardData', { value: { getData: (type: string) => (type === 'text/plain' ? text : '') } });
+  return ev;
+}
+
+function stubClipboard(clipboard: Partial<Clipboard> | undefined) {
+  Object.defineProperty(navigator, 'clipboard', { value: clipboard, configurable: true });
+}
+
+describe('the browser window: input', () => {
+  const realClipboard = Object.getOwnPropertyDescriptor(navigator, 'clipboard');
+  beforeEach(() => {
+    vi.spyOn(HTMLCanvasElement.prototype, 'getBoundingClientRect').mockReturnValue(BOX);
+  });
+  afterEach(() => {
+    if (realClipboard) Object.defineProperty(navigator, 'clipboard', realClipboard);
+    else delete (navigator as { clipboard?: Clipboard }).clipboard;
+  });
+
+  it('connects to a task waiting for sign-in', async () => {
+    await renderWindow(waitingWeb);
+    expect(FakeSocket.all).toHaveLength(1);
+  });
+
+  it('sends nothing, keeps the native menu and says Watch only until a state event turns input on', async () => {
+    const canvas = await openForInput(false);
+    expect(screen.getByText('Watch only')).toBeInTheDocument();
+    expect(screen.queryByText(BANNER)).toBeNull();
+    expect(canvas).not.toHaveAttribute('tabindex');
+    fireEvent.mouseDown(canvas, { button: 0, clientX: 420, clientY: 240 });
+    fireEvent.mouseUp(canvas, { button: 0, clientX: 420, clientY: 240 });
+    fireEvent.mouseMove(canvas, { clientX: 430, clientY: 250 });
+    fireEvent.wheel(canvas, { deltaY: 100, clientX: 420, clientY: 240 });
+    fireEvent.keyDown(canvas, { key: 'a', code: 'KeyA' });
+    expect(fireEvent.contextMenu(canvas, { clientX: 420, clientY: 240 })).toBe(true);
+    const paste = pasteEvent('hunter2');
+    act(() => void canvas.dispatchEvent(paste));
+    expect(paste.defaultPrevented).toBe(false);
+    await settle(16);
+    expect(latest()?.sent).toEqual([]);
+    expect(screen.queryByRole('menu')).toBeNull();
+  });
+
+  it('says Taking input with the banner while input is on, and goes back when it turns off', async () => {
+    const canvas = await openForInput();
+    expect(screen.getByText('Taking input')).toBeInTheDocument();
+    expect(screen.queryByText('Watch only')).toBeNull();
+    expect(screen.getByText(BANNER)).toBeInTheDocument();
+    expect(canvas).toHaveAttribute('tabindex', '0');
+
+    latest()?.push({ type: 'state', browser: 'running', site: SITE });
+    expect(screen.getByText('Watch only')).toBeInTheDocument();
+    expect(screen.queryByText(BANNER)).toBeNull();
+    fireEvent.mouseDown(canvas, { button: 0, clientX: 420, clientY: 240 });
+    fireEvent.keyDown(canvas, { key: 'a', code: 'KeyA' });
+    expect(latest()?.sent).toEqual([]);
+  });
+
+  it('stops taking input when the socket drops, until the new socket’s state says so', async () => {
+    const canvas = await openForInput();
+    latest()?.drop();
+    expect(screen.getByText('Watch only')).toBeInTheDocument();
+    fireEvent.keyDown(canvas, { key: 'a', code: 'KeyA' });
+    expect(FakeSocket.all[0]?.sent).toEqual([]);
+  });
+
+  it('sends presses and releases in frame pixels, focusing the frame', async () => {
+    const canvas = await openForInput();
+    // (420, 240) is the middle of the box: the middle of the frame.
+    fireEvent.mouseDown(canvas, { button: 0, clientX: 420, clientY: 240, shiftKey: true });
+    expect(document.activeElement).toBe(canvas);
+    fireEvent.mouseUp(window, { button: 0, clientX: 120, clientY: 60 });
+    fireEvent.mouseDown(canvas, { button: 2, clientX: 420, clientY: 240 });
+    fireEvent.mouseUp(canvas, { button: 2, clientX: 420, clientY: 240 });
+    fireEvent.mouseDown(canvas, { button: 1, clientX: 420, clientY: 240 });
+    expect(sentInputs()).toEqual([
+      { kind: 'mouse', action: 'pressed', x: 640, y: 400, button: 'left', modifiers: 8 },
+      // Released on the window, not the frame: the press still ends, and (120, 60) is (40, 40) in frame pixels.
+      { kind: 'mouse', action: 'released', x: 40, y: 40, button: 'left', modifiers: 0 },
+      { kind: 'mouse', action: 'pressed', x: 640, y: 400, button: 'right', modifiers: 0 },
+      { kind: 'mouse', action: 'released', x: 640, y: 400, button: 'right', modifiers: 0 },
+      { kind: 'mouse', action: 'pressed', x: 640, y: 400, button: 'middle', modifiers: 0 },
+    ]);
+  });
+
+  it('coalesces moves to the newest one per animation frame, sent ahead of a press', async () => {
+    const canvas = await openForInput();
+    fireEvent.mouseMove(canvas, { clientX: 110, clientY: 50 });
+    fireEvent.mouseMove(canvas, { clientX: 120, clientY: 60 });
+    fireEvent.mouseMove(canvas, { clientX: 130, clientY: 70, buttons: 1 });
+    expect(latest()?.sent).toEqual([]);
+    await settle(16);
+    expect(sentInputs()).toEqual([{ kind: 'mouse', action: 'moved', x: 60, y: 60, button: 'left', modifiers: 0 }]);
+
+    fireEvent.mouseMove(canvas, { clientX: 140, clientY: 80 });
+    fireEvent.mouseDown(canvas, { button: 0, clientX: 140, clientY: 80 });
+    expect(sentInputs().slice(1)).toEqual([
+      { kind: 'mouse', action: 'moved', x: 80, y: 80, modifiers: 0 },
+      { kind: 'mouse', action: 'pressed', x: 80, y: 80, button: 'left', modifiers: 0 },
+    ]);
+    await settle(16);
+    expect(sentInputs()).toHaveLength(3);
+  });
+
+  it('sends the wheel with its deltas and keeps the window from scrolling', async () => {
+    const canvas = await openForInput();
+    const wheel = new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaX: 3, deltaY: 120, clientX: 420, clientY: 240 });
+    act(() => void canvas.dispatchEvent(wheel));
+    expect(wheel.defaultPrevented).toBe(true);
+    expect(sentInputs()).toEqual([{ kind: 'mouse', action: 'wheel', x: 640, y: 400, delta_x: 3, delta_y: 120, modifiers: 0 }]);
+  });
+
+  it('sends a key’s key, code, typed text and modifiers, down and up', async () => {
+    const canvas = await openForInput();
+    fireEvent.keyDown(canvas, { key: 'A', code: 'KeyA', shiftKey: true });
+    fireEvent.keyUp(canvas, { key: 'A', code: 'KeyA', shiftKey: true });
+    fireEvent.keyDown(canvas, { key: 'a', code: 'KeyA', ctrlKey: true, altKey: true });
+    expect(sentInputs()).toEqual([
+      { kind: 'key', action: 'down', key: 'A', code: 'KeyA', text: 'A', modifiers: 8 },
+      { kind: 'key', action: 'up', key: 'A', code: 'KeyA', modifiers: 8 },
+      // A shortcut types nothing.
+      { kind: 'key', action: 'down', key: 'a', code: 'KeyA', modifiers: 3 },
+    ]);
+  });
+
+  it('keeps the keys the window would act on for the page', async () => {
+    const canvas = await openForInput();
+    for (const [key, code] of [
+      ['Backspace', 'Backspace'],
+      ['Tab', 'Tab'],
+      ['Enter', 'Enter'],
+      [' ', 'Space'],
+      ['ArrowDown', 'ArrowDown'],
+    ] as const) {
+      expect(fireEvent.keyDown(canvas, { key, code })).toBe(false);
+    }
+    expect(sentInputs().map((i) => [i.key, i.text])).toEqual([
+      ['Backspace', undefined],
+      ['Tab', undefined],
+      ['Enter', undefined],
+      [' ', ' '],
+      ['ArrowDown', undefined],
+    ]);
+  });
+
+  it('lets Cmd+V and Ctrl+V through to the paste event, which sends the clipboard’s text', async () => {
+    const canvas = await openForInput();
+    expect(fireEvent.keyDown(canvas, { key: 'v', code: 'KeyV', metaKey: true })).toBe(true);
+    expect(fireEvent.keyDown(canvas, { key: 'v', code: 'KeyV', ctrlKey: true })).toBe(true);
+    expect(latest()?.sent).toEqual([]);
+    const paste = pasteEvent('hunter2');
+    act(() => void canvas.dispatchEvent(paste));
+    expect(paste.defaultPrevented).toBe(true);
+    expect(sentInputs()).toEqual([{ kind: 'paste', text: 'hunter2' }]);
+  });
+
+  it('offers Paste on a right-click, which reads the clipboard and sends it', async () => {
+    const readText = vi.fn(async () => 'correct horse');
+    stubClipboard({ readText });
+    const canvas = await openForInput();
+    expect(fireEvent.contextMenu(canvas, { clientX: 300, clientY: 200 })).toBe(false);
+    const menu = screen.getByRole('menu');
+    expect(menu.style.left).toBe('300px');
+    expect(menu.style.top).toBe('200px');
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Paste' }));
+    await settle();
+    expect(readText).toHaveBeenCalledTimes(1);
+    expect(sentInputs()).toEqual([{ kind: 'paste', text: 'correct horse' }]);
+    expect(screen.queryByRole('menu')).toBeNull();
+  });
+
+  it('says to use the shortcut when the clipboard cannot be read', async () => {
+    stubClipboard(undefined);
+    const canvas = await openForInput();
+    fireEvent.contextMenu(canvas, { clientX: 300, clientY: 200 });
+    expect(screen.getByRole('menuitem', { name: 'Use Cmd+V or Ctrl+V to paste' })).toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: 'Paste' })).toBeNull();
+  });
+
+  it('says to use the shortcut when reading the clipboard fails', async () => {
+    stubClipboard({ readText: vi.fn(async () => Promise.reject(new Error('denied'))) });
+    const canvas = await openForInput();
+    fireEvent.contextMenu(canvas, { clientX: 300, clientY: 200 });
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Paste' }));
+    await settle();
+    expect(screen.getByRole('menuitem', { name: 'Use Cmd+V or Ctrl+V to paste' })).toBeInTheDocument();
+    expect(latest()?.sent).toEqual([]);
+  });
+
+  it('closes the menu on a press elsewhere, and when input stops', async () => {
+    stubClipboard({ readText: vi.fn(async () => '') });
+    const canvas = await openForInput();
+    fireEvent.contextMenu(canvas, { clientX: 300, clientY: 200 });
+    fireEvent.mouseDown(screen.getByText('Taking input'));
+    expect(screen.queryByRole('menu')).toBeNull();
+
+    fireEvent.contextMenu(canvas, { clientX: 300, clientY: 200 });
+    expect(screen.getByRole('menu')).toBeInTheDocument();
+    latest()?.push({ type: 'state', browser: 'running', site: SITE });
+    expect(screen.queryByRole('menu')).toBeNull();
+  });
+});
+
+describe('the browser window: input helpers', () => {
+  it('maps a point through the letterbox to frame pixels, clamped', () => {
+    expect(framePoint(BOX, 1280, 800, 420, 240)).toEqual({ x: 640, y: 400 });
+    expect(framePoint(BOX, 1280, 800, 100, 40)).toEqual({ x: 0, y: 0 });
+    // In the left letterbox: clamped to the frame's left edge.
+    expect(framePoint(BOX, 1280, 800, 50, 240)).toEqual({ x: 0, y: 400 });
+    expect(framePoint(BOX, 1280, 800, 9999, 9999)).toEqual({ x: 1279, y: 799 });
+    expect(framePoint(BOX, 0, 0, 420, 240)).toBeNull();
+  });
+
+  it('writes modifiers as the wire’s bits', () => {
+    expect(modifierBits({ altKey: true, ctrlKey: true, metaKey: true, shiftKey: true })).toBe(15);
+    expect(modifierBits({ altKey: false, ctrlKey: false, metaKey: true, shiftKey: false })).toBe(4);
+  });
+});
+
+describe('the browser window: the session’s site', () => {
+  it('flags a host outside the site, and not the site or a subdomain of it', async () => {
+    await renderWindow(waitingWeb);
+    latest()?.accept();
+    latest()?.push({ type: 'state', browser: 'running', input: true, site: SITE });
+    latest()?.push({ type: 'tab', tab: { id: 't1', url: 'https://login.vendor.example/', title: 'Sign in' } });
+    expect(screen.queryByText(/Outside/)).toBeNull();
+    expect(screen.getByRole('heading', { name: 'login.vendor.example' })).not.toHaveClass('kv-text--signal');
+
+    latest()?.push({ type: 'tab', tab: { id: 't1', url: 'https://accounts.idp.example/auth', title: 'Sign in' } });
+    expect(screen.getByText('Outside vendor.example')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'accounts.idp.example' })).toHaveClass('kv-text--signal');
+  });
+
+  it('flags nothing in the open session', async () => {
+    await renderWindow({ ...runningWeb, browser: 'running' });
+    latest()?.accept();
+    latest()?.push({ type: 'state', browser: 'running' });
+    latest()?.push({ type: 'tab', tab: { id: 't1', url: 'https://anywhere.test/', title: 'Anywhere' } });
+    expect(screen.queryByText(/Outside/)).toBeNull();
   });
 });
