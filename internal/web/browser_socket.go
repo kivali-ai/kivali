@@ -10,7 +10,6 @@
 package web
 
 import (
-	"bytes"
 	"context"
 	"crypto/subtle"
 	"encoding/json"
@@ -195,11 +194,4 @@ func (f *frameBody) drain() error {
 		_, _ = io.Copy(io.Discard, f.cur)
 	}
 	return err
-}
-
-// marshalFrame is the text frame for msg, for tests and logs.
-func marshalFrame(msg browserpod.Message) []byte {
-	var buf bytes.Buffer
-	_ = json.NewEncoder(&buf).Encode(msg)
-	return bytes.TrimRight(buf.Bytes(), "\n")
 }

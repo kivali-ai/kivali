@@ -72,11 +72,6 @@ func (p *fakeBrowserProv) StopAll(context.Context) (int, error) {
 	p.stopAll++
 	return 0, nil
 }
-func (p *fakeBrowserProv) stops() []string {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return append([]string(nil), p.stopped...)
-}
 
 // sentFrame is one message a fake pod received, with its bytes.
 type sentFrame struct {
