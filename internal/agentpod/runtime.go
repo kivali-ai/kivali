@@ -728,7 +728,7 @@ func (r *Runtime) handleSubagentTurn(ctx context.Context, ev Event) error {
 		Prompt: spec.UserPrompt,
 		Tools:  spec.Tools,
 		MCPServers: []provider.MCPServer{
-			subagentMCPServer(r.KivaliBinary, r.CoreUDS, ct.Slug, spec.SubagentID, spec.EffectiveDepth(), schemaPath),
+			subagentMCPServer(r.KivaliBinary, r.CoreUDS, ct.Slug, spec.SubagentID, spec.EffectiveDepth(), schemaPath, spec),
 		},
 		RunDir:  runDir,
 		Stderr:  stderr,
@@ -868,25 +868,44 @@ func subagentFinalText(final *provider.CompleteResponse) string {
 //
 // resultSchemaPath, when set, is the file holding the task's schema;
 // the MCP server then registers submit_result with that shape.
-func subagentMCPServer(kivaliBin, coreUDS, parent, id string, depth int, resultSchemaPath string) provider.MCPServer {
-	args := []string{
-		"mcp",
-		"--toolkit", "subagent",
-		"--parent", parent,
-		"--subagent-id", id,
-		"--core-uds", coreUDS,
-		// The subagent's /files/ root in the agent-shell container. The
-		// mount (manifest.go subPath agents/<parent>/<storage>)
-		// exposes the parent's whole tree at /files/; the
-		// SubagentService overlay places the subagent-scoped subdir
-		// at /files/subagents/<id>/.
-		"--subagent-files-root", "/files/subagents/" + id,
-		// Depth decides whether this subagent's MCP child exposes
-		// `subagent` at all. It arrives as an argument the RUNTIME
-		// sets, so it is as trustworthy as the slug: the model
-		// inside the subagent can call tools, but it cannot reach
-		// the arguments its own MCP subprocess was started with.
-		"--depth", strconv.Itoa(depth),
+//
+// A web task's server is `kivali mcp --toolkit web`: the browser tools
+// and submit_result, relayed to core, with no files root and no depth
+// because a web subagent has no files, no shell and cannot delegate.
+func subagentMCPServer(kivaliBin, coreUDS, parent, id string, depth int, resultSchemaPath string, spec SubagentSpec) provider.MCPServer {
+	var args []string
+	if spec.Web() {
+		args = []string{
+			"mcp",
+			"--toolkit", "web",
+			"--parent", parent,
+			"--subagent-id", id,
+			"--core-uds", coreUDS,
+			// The session decides whether web_eval exists; like depth
+			// for a general subagent it is the runtime's argument, out
+			// of the model's reach.
+			"--session", spec.Session,
+		}
+	} else {
+		args = []string{
+			"mcp",
+			"--toolkit", "subagent",
+			"--parent", parent,
+			"--subagent-id", id,
+			"--core-uds", coreUDS,
+			// The subagent's /files/ root in the agent-shell container. The
+			// mount (manifest.go subPath agents/<parent>/<storage>)
+			// exposes the parent's whole tree at /files/; the
+			// SubagentService overlay places the subagent-scoped subdir
+			// at /files/subagents/<id>/.
+			"--subagent-files-root", "/files/subagents/" + id,
+			// Depth decides whether this subagent's MCP child exposes
+			// `subagent` at all. It arrives as an argument the RUNTIME
+			// sets, so it is as trustworthy as the slug: the model
+			// inside the subagent can call tools, but it cannot reach
+			// the arguments its own MCP subprocess was started with.
+			"--depth", strconv.Itoa(depth),
+		}
 	}
 	if resultSchemaPath != "" {
 		args = append(args, "--result-schema", resultSchemaPath)
