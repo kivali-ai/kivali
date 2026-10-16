@@ -1,0 +1,5 @@
+# Profiles hold real sign-ins. Never commit them.
+profiles/
+results/*.png
+bin/
+/spike

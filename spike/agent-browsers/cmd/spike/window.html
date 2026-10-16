@@ -1,0 +1,82 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Spike browser window</title>
+<style>
+  body { margin: 0; font: 14px system-ui, sans-serif; background: #222; color: #eee; }
+  #bar { display: flex; gap: 8px; align-items: center; padding: 6px 8px; background: #333; }
+  #url { flex: 1; padding: 4px 6px; font: 13px ui-monospace, monospace; background: #111; color: #eee; border: 1px solid #555; }
+  button { padding: 4px 10px; }
+  #status { font-size: 12px; color: #aaa; }
+  canvas { display: block; outline: none; cursor: default; background: #000; max-width: 100%; }
+</style>
+</head>
+<body>
+<div id="bar">
+  <input id="url" placeholder="current URL (type a URL and press Enter to go)">
+  <span id="status">connecting</span>
+  <button id="save">Save and close</button>
+</div>
+<canvas id="c" width="1280" height="800" tabindex="0"></canvas>
+<script>
+const c = document.getElementById('c'), g = c.getContext('2d');
+const urlBox = document.getElementById('url'), status = document.getElementById('status');
+let dw = 1280, dh = 800;
+const ws = new WebSocket(`ws://${location.host}/ws`);
+const send = m => { if (ws.readyState === 1) ws.send(JSON.stringify(m)); };
+ws.onopen = () => { status.textContent = 'live'; c.focus(); };
+ws.onclose = () => { status.textContent = 'closed'; };
+ws.onmessage = ev => {
+  const m = JSON.parse(ev.data);
+  if (m.type === 'frame') {
+    dw = m.dw || dw; dh = m.dh || dh;
+    const img = new Image();
+    img.onload = () => {
+      if (c.width !== img.width || c.height !== img.height) { c.width = img.width; c.height = img.height; }
+      g.drawImage(img, 0, 0);
+    };
+    img.src = 'data:image/jpeg;base64,' + m.data;
+  } else if (m.type === 'url') {
+    if (document.activeElement !== urlBox) urlBox.value = m.url;
+  }
+};
+const mods = e => (e.altKey ? 1 : 0) | (e.ctrlKey ? 2 : 0) | (e.metaKey ? 4 : 0) | (e.shiftKey ? 8 : 0);
+const pos = e => {
+  const r = c.getBoundingClientRect();
+  return { x: (e.clientX - r.left) * dw / r.width, y: (e.clientY - r.top) * dh / r.height };
+};
+const btn = b => ['left', 'middle', 'right'][b] || 'none';
+c.addEventListener('mousedown', e => { c.focus(); e.preventDefault(); send({ type: 'mouse', event: 'down', ...pos(e), button: btn(e.button), buttons: e.buttons, clicks: e.detail || 1, modifiers: mods(e) }); });
+c.addEventListener('mouseup', e => { e.preventDefault(); send({ type: 'mouse', event: 'up', ...pos(e), button: btn(e.button), buttons: e.buttons, clicks: e.detail || 1, modifiers: mods(e) }); });
+let lastMove = 0;
+c.addEventListener('mousemove', e => {
+  const now = performance.now(); if (now - lastMove < 30) return; lastMove = now;
+  send({ type: 'mouse', event: 'move', ...pos(e), button: e.buttons & 1 ? 'left' : 'none', buttons: e.buttons, modifiers: mods(e) });
+});
+c.addEventListener('contextmenu', e => e.preventDefault());
+c.addEventListener('wheel', e => { e.preventDefault(); send({ type: 'wheel', ...pos(e), dx: e.deltaX, dy: e.deltaY, modifiers: mods(e) }); }, { passive: false });
+const isPaste = e => (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'v';
+c.addEventListener('keydown', e => {
+  if (isPaste(e)) return; // let the browser fire a paste event; handled below
+  e.preventDefault();
+  send({ type: 'key', event: 'down', key: e.key, code: e.code, keyCode: e.keyCode, modifiers: mods(e) });
+});
+c.addEventListener('keyup', e => {
+  if (isPaste(e)) return;
+  e.preventDefault();
+  send({ type: 'key', event: 'up', key: e.key, code: e.code, keyCode: e.keyCode, modifiers: mods(e) });
+});
+document.addEventListener('paste', e => {
+  if (document.activeElement === urlBox) return;
+  e.preventDefault();
+  const text = (e.clipboardData || window.clipboardData).getData('text');
+  send({ type: 'paste', text });
+});
+urlBox.addEventListener('keydown', e => {
+  if (e.key === 'Enter') { let u = urlBox.value.trim(); if (!/^[a-z]+:/i.test(u)) u = 'https://' + u; send({ type: 'navigate', url: u }); c.focus(); }
+});
+document.getElementById('save').onclick = () => { send({ type: 'save' }); status.textContent = 'saving, you can close this tab'; };
+</script>
+</body>
+</html>
