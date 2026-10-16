@@ -553,6 +553,59 @@ export interface AutoReleaseResponse {
 }
 
 //////////
+// source: browser.go
+
+/**
+ * BrowserState is where a web task's browser is: starting (its pod is
+ * being created), running (frames can flow) or stopped (none runs; a
+ * window opened now starts one).
+ */
+export const BrowserStateStarting = "starting";
+export const BrowserStateRunning = "running";
+export const BrowserStateStopped = "stopped";
+export type BrowserState = typeof BrowserStateStarting | typeof BrowserStateRunning | typeof BrowserStateStopped;
+/**
+ * BrowserWindowEventType discriminates BrowserWindowEvent.
+ */
+/**
+ * BrowserWindowEventTypeState carries Browser.
+ */
+export const BrowserWindowEventTypeState = "state";
+/**
+ * BrowserWindowEventTypeTab carries Tab, the tab the window shows:
+ * sent when the window attaches, when the task moves to another
+ * tab, and when that tab's URL or title changes.
+ */
+export const BrowserWindowEventTypeTab = "tab";
+/**
+ * BrowserWindowEventTypeEnd ends the window, with Reason. Nothing
+ * follows it; the page shows the reason instead of reconnecting.
+ */
+export const BrowserWindowEventTypeEnd = "end";
+export type BrowserWindowEventType = typeof BrowserWindowEventTypeState | typeof BrowserWindowEventTypeTab | typeof BrowserWindowEventTypeEnd;
+/**
+ * BrowserWindowEvent is a text message on the browser window's
+ * WebSocket, GET /api/v1/agents/{slug}/subagents/{id}/browser. Frames
+ * travel beside it as binary messages, one JPEG of the shown tab each,
+ * and nothing goes the other way: the window watches.
+ */
+export interface BrowserWindowEvent {
+  type: BrowserWindowEventType;
+  browser?: BrowserState;
+  tab?: BrowserWindowTab;
+  reason?: string;
+}
+/**
+ * BrowserWindowTab is the tab a browser window shows: its id within
+ * the task, its URL and its title.
+ */
+export interface BrowserWindowTab {
+  id: string;
+  url: string;
+  title: string;
+}
+
+//////////
 // source: chat.go
 
 /**
@@ -923,6 +976,11 @@ export interface SubagentMeta {
    */
   kind?: SubagentKind;
   session?: string;
+  /**
+   * Browser is a running web task's browser state; absent for a
+   * general task and once a web task has ended.
+   */
+  browser?: BrowserState;
 }
 /**
  * SubagentTranscript is GET /api/v1/agents/{slug}/subagents/{id}.

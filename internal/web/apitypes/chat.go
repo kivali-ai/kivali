@@ -332,6 +332,9 @@ type SubagentMeta struct {
 	// absent for a general task.
 	Kind    SubagentKind `json:"kind,omitempty"`
 	Session *string      `json:"session,omitempty"`
+	// Browser is a running web task's browser state; absent for a
+	// general task and once a web task has ended.
+	Browser BrowserState `json:"browser,omitempty"`
 }
 
 // SubagentTranscript is GET /api/v1/agents/{slug}/subagents/{id}.
