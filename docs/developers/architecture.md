@@ -424,8 +424,9 @@ rows.
 
 A task dispatched with `kind: "web"` is a subagent that works in a
 browser instead of a shell. It must carry a schema, names a web
-session (`open`, the only one: signed in nowhere, keeping nothing
-between tasks), and may name a
+session (`open`, signed in nowhere and keeping nothing between tasks,
+or a site session, named by the registrable domain it is locked to,
+which keeps its sign-ins), and may name a
 `start_url` and `files` under the caller's `/files/` it may upload.
 Its CLI runs in the parent's agent pod like any subagent, with
 `kivali mcp --toolkit web`: the `web_*` tools (`internal/mcp/web_tools.go`)
@@ -514,8 +515,13 @@ API route. Text messages are `apitypes.BrowserWindowEvent`: the
 browser's state, the tab the window shows (sent when the window
 attaches, when the task moves to another tab and when that tab's URL
 or title changes) and an end with its reason, after which the page
-stops. Binary messages are frames, one JPEG each. Nothing goes the
-other way: the window watches.
+stops; a state event also says whether the window takes input and
+names the session's site. Binary messages are frames, one JPEG each.
+The page sends `apitypes.BrowserWindowInput` (mouse, key and paste
+events in the frame's pixels); core forwards them to the shown tab only
+while the task waits for a person in a site session and drops them
+otherwise, so a window is watch only unless the task asked for the
+person.
 
 The path is built for several open windows at once. The pod sends a
 frame as bytes after a short message, never base64 or JSON, and core
@@ -539,6 +545,49 @@ reason. The task's view learns the browser's state (`starting`,
 `running`, `stopped`, in `SubagentMeta.browser`) through its own
 stream: the registry reports each change and the task's meta.json
 carries it.
+
+### Site sessions and sign-in
+
+A web task's `session` is `open` or a site. A site is given as a domain
+and kept as its registrable domain (`webSessionSite`, on the public
+suffix list: `shop.vendor.com` is the session `vendor.com`); an
+address, a bare suffix such as `co.uk`, or anything with a scheme, a
+port or a path is refused at dispatch. The session's browser is told
+the site in its hello and runs headed under Xvfb (some sites refuse a
+headless browser's sign-in); the pod refuses `web_navigate` off the
+site and its subdomains with `off_site`, `web_eval` does not exist
+there, and the profile is saved and restored across browsers, so
+sign-ins persist. The session record and profile live beside the open
+session's under `/data/agents/<slug>/browser/<site>/`.
+
+A task in a site session that an agent dispatched itself (depth 1) has
+`web_wait_for_sign_in(reason)`: `sign_in`, `mfa`, `captcha` or
+`consent`. Core answers it without the pod (`subagent_signin.go`): the
+job becomes `waiting_for_sign_in` with the reason, the run is ended
+after a short grace so the tool's answer reaches the model, the task's
+slot in the pod is given back, and the windows on the task are told
+they take input. Home derives a `web_sign_in` need from the state
+(`webSignInItem`, every word core's) and the task's view and chip show
+it; `subagent_status` lists it under its own heading. When the task's
+last window has been gone for the window grace the task resumes: a new
+run of the same CLI session (`SubagentSpec.Resume`, the id the first
+run reported in `TurnEvent.SessionID`; `provider.SubagentRequest.Resume`
+becomes `--resume`) with one line from core as its message, its tabs
+as the task left them. After 24 hours with nobody coming core writes
+the result itself, `blocked` with `user_did_not_respond`, and the task
+ends like any other. The calling agent hears nothing until the final
+result. A task in the open session, or one a subagent dispatched, has
+no wait tool: a sign-in wall ends it `blocked`, `login_required`, and
+the agent decides whether to dispatch again with a site session.
+
+The calling agent sees its sessions through `subagent_web_sessions`
+(names, sites, last use, whether a browser runs and how many tasks are
+on each) and forgets one with `subagent_web_session_reset`, which
+cancels the session's tasks, ends its browser without saving and
+deletes its record and profile (`web_sessions.go`, over
+`POST /v1/agent/{slug}/web/sessions` and `/web/sessions/reset`). Agent-
+facing text says a web task is expensive and a sign-in very expensive,
+because it costs a person's time.
 
 Depth is capped at two tiers (`agentpod.MaxSubagentDepth`): a
 first-tier subagent may act as a sub-lead and dispatch up to three
