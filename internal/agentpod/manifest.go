@@ -1,13 +1,11 @@
 package agentpod
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"sort"
 	"strings"
 
 	"github.com/kivali-ai/kivali/internal/files"
+	"github.com/kivali-ai/kivali/internal/kube"
 )
 
 // Manifest builders for the per-agent Pod + PVC. Plain map[string]any
@@ -80,24 +78,7 @@ const agentShellImageName = "kivali-agent-shell"
 // docker's default. An empty agentpodImage returns empty (the
 // validator catches it upstream).
 func AgentShellImageFor(agentpodImage string) string {
-	if agentpodImage == "" {
-		return ""
-	}
-	// Split off the tag (last colon AFTER any registry-port colon).
-	// "registry:5000/name:v1" → name="registry:5000/name", tag="v1".
-	// strings.LastIndex gets the right colon because the path
-	// separator "/" sits between the port colon and any tag colon.
-	tag := "latest"
-	name := agentpodImage
-	if i := strings.LastIndex(agentpodImage, ":"); i > strings.LastIndex(agentpodImage, "/") {
-		name = agentpodImage[:i]
-		tag = agentpodImage[i+1:]
-	}
-	// Replace the last "/"-separated segment with agentShellImageName.
-	if i := strings.LastIndex(name, "/"); i >= 0 {
-		return name[:i+1] + agentShellImageName + ":" + tag
-	}
-	return agentShellImageName + ":" + tag
+	return kube.SiblingImage(agentpodImage, agentShellImageName)
 }
 
 // filesMounts returns the agent's /files mount (RW), then a RW mount
@@ -629,35 +610,6 @@ func (c ProvisionerConfig) podManifestWithSoftware(slug string, software []strin
 	// fleet running on the previous spec until manually deleted. With
 	// the label, Kivali web on boot recreates any pod whose label
 	// doesn't match the current manifest. See provisioner.Provision.
-	manifest["metadata"].(map[string]any)["labels"].(map[string]string)[specHashLabel] = manifestSpecHash(manifest)
+	manifest["metadata"].(map[string]any)["labels"].(map[string]string)[kube.SpecHashLabel] = kube.SpecHash(manifest)
 	return manifest
-}
-
-// specHashLabel keys the per-pod label that records the hash of the
-// manifest the pod was created from. The kivali- prefix keeps it from
-// colliding with other labels; it has no domain prefix because no
-// domain is shared by every install.
-const specHashLabel = "kivali-spec-hash"
-
-// manifestSpecHash returns a stable 12-hex-char hash of the manifest
-// content. The hash MUST be computed on a manifest that does not
-// already carry the spec-hash label (chicken-and-egg) — so callers
-// only ever invoke this on a freshly-built manifest from podManifest
-// before injection.
-//
-// json.Marshal of map[string]any emits keys in sorted order so the
-// hash is deterministic across builds and Go versions; podManifest
-// itself is pure (no randomness, no time), so the same input
-// produces the same hash.
-func manifestSpecHash(manifest map[string]any) string {
-	b, err := json.Marshal(manifest)
-	if err != nil {
-		// Should never happen — manifest is a plain map of basic types
-		// produced by podManifest. If it does, return empty so drift
-		// detection re-runs (recreate-once semantics) rather than
-		// panicking the Kivali boot path.
-		return ""
-	}
-	h := sha256.Sum256(b)
-	return hex.EncodeToString(h[:6])
 }
