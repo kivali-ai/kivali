@@ -50,8 +50,8 @@ func cmdCheck(args []string) error {
 	}
 
 	if err := appendFindings(fmt.Sprintf("\n### check %s, mode %s, %s\n\nTarget: %s\n\n"+
-		"| session | mode | restart | final URL | title | signed-in verdict | bot-wall verdict | cookies for URL | profile MB | screenshot |\n"+
-		"|---|---|---|---|---|---|---|---|---|---|\n",
+		"| session | mode | restart | final URL | title | signed-in verdict | bot-wall verdict | webdriver | cookies for URL | profile MB | screenshot |\n"+
+		"|---|---|---|---|---|---|---|---|---|---|---|\n",
 		*session, *mode, time.Now().Format(time.RFC3339), *target)); err != nil {
 		return err
 	}
@@ -60,7 +60,7 @@ func cmdCheck(args []string) error {
 		fmt.Printf("restart %d/%d\n", i, *restarts)
 		row, err := checkOnce(*session, *mode, *target, i)
 		if err != nil {
-			row = fmt.Sprintf("| %s | %s | %d | error: %s | | | | | | |\n", *session, *mode, i, mdEscape(err.Error()))
+			row = fmt.Sprintf("| %s | %s | %d | error: %s | | | | | | | |\n", *session, *mode, i, mdEscape(err.Error()))
 			fmt.Println("  error:", err)
 		}
 		fmt.Print("  ", row)
@@ -148,8 +148,8 @@ func checkOnce(session, mode, target string, i int) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("repack: %w", err)
 	}
-	return fmt.Sprintf("| %s | %s | %d | %s | %s | %s | %s | %d | %.2f | %s |\n",
-		session, mode, i, mdEscape(finalURL), mdEscape(title), verdict, mdEscape(wall), len(cookies), mb(size), shotPath), nil
+	return fmt.Sprintf("| %s | %s | %d | %s | %s | %s | %s | %s | %d | %.2f | %s |\n",
+		session, mode, i, mdEscape(finalURL), mdEscape(title), verdict, mdEscape(wall), b.Webdriver, len(cookies), mb(size), shotPath), nil
 }
 
 func mdEscape(s string) string {

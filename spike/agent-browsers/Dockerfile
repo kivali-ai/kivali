@@ -5,7 +5,7 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       chromium xvfb xauth \
       fonts-liberation fonts-noto-core fonts-noto-color-emoji \
-      ca-certificates zstd procps dumb-init socat \
+      ca-certificates zstd procps dumb-init socat jq \
  && rm -rf /var/lib/apt/lists/*
 
 RUN useradd --uid 1000 --create-home --shell /bin/sh chrome \

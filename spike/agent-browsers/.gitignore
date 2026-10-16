@@ -1,5 +1,7 @@
 # Profiles hold real sign-ins. Never commit them.
 profiles/
 results/*.png
+# Debug dumps can hold page content from signed-in sessions.
+results/dump-*/
 bin/
 /spike

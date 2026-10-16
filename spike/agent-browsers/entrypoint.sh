@@ -12,12 +12,27 @@ if [ -f /profile.tar.zst ]; then
 fi
 # Singleton* point at the old container's hostname; Chromium would refuse to start.
 rm -f /profile/SingletonLock /profile/SingletonCookie /profile/SingletonSocket
+# Unless SESSION_RESTORE=0: merge session.restore_on_startup=1 ("continue
+# where you left off") and profile.exit_type=Normal into Default/Preferences,
+# so Chromium keeps session cookies across our clean restarts.
+if [ "${SESSION_RESTORE:-1}" != "0" ]; then
+  mkdir -p /profile/Default
+  prefs=/profile/Default/Preferences
+  [ -s "$prefs" ] || echo '{}' > "$prefs"
+  if jq '. * {"session": {"restore_on_startup": 1}, "profile": {"exit_type": "Normal"}}' "$prefs" > /tmp/prefs.json; then
+    mv /tmp/prefs.json "$prefs"
+    echo "set session.restore_on_startup=1, profile.exit_type=Normal"
+  else
+    echo "could not merge Preferences; left as is"
+  fi
+fi
 chown -R chrome:chrome /profile
 rm -f /tmp/chromium-exited
 
 FLAGS="--user-data-dir=/profile --password-store=basic --no-first-run --no-default-browser-check \
 --disable-background-networking --remote-debugging-port=9222 --remote-debugging-address=0.0.0.0 \
---remote-allow-origins=* --window-size=1280,800 ${CHROMIUM_EXTRA_FLAGS:-}"
+--remote-allow-origins=* --window-size=1280,800 \
+--disable-blink-features=AutomationControlled ${CHROMIUM_EXTRA_FLAGS:-}"
 
 # Docker's default seccomp profile blocks user namespaces, so Chromium's
 # sandbox cannot start ("No usable sandbox!"). Unless SANDBOX=1 (which needs a

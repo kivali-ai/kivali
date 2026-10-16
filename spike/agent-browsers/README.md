@@ -68,6 +68,17 @@ Things to know:
   without namespace restrictions; with it the sandbox can run:
   `SPIKE_SANDBOX=1 SPIKE_DOCKER_OPTS="--security-opt seccomp=$PWD/chrome-seccomp.json" bin/spike ...`
   (not exercised in the self-test).
+- **`--disable-blink-features=AutomationControlled` is on in both modes.**
+  Without it `--headless=new` reports `navigator.webdriver === true`. The
+  harness logs `navigator.webdriver` after every start, and `check` rows and
+  window dumps record it.
+- **Session restore is on by default.** Before Chromium starts, the entrypoint
+  merges `{"session": {"restore_on_startup": 1}}` and
+  `{"profile": {"exit_type": "Normal"}}` into `Default/Preferences` (with
+  `jq`), for restored and fresh profiles alike, so Chromium keeps session
+  cookies (no expiry) across our clean restarts, like "Continue where you
+  left off". `SPIKE_NO_SESSION_RESTORE=1` turns this off, which is the way to
+  test whether a site's sign-in survives without it.
 - **Not `--disable-dev-shm-usage`.** The entrypoint runs
   `/usr/lib/chromium/chromium` directly, because Debian's `/usr/bin/chromium`
   wrapper silently adds `--disable-dev-shm-usage` whenever `/dev/shm` is under
@@ -105,6 +116,15 @@ packed size.
 Paste: press Cmd/Ctrl-V while the canvas has focus; the page's `paste` event
 sends the clipboard text as `insertText`.
 
+Debug dump: click **Dump** (or press F8 with the canvas focused) to write
+`results/dump-<session>-<n>/`: `screenshot.png` (viewport), `info.json`
+(URL, title, `navigator.webdriver`, pending network requests),
+`console.txt` (the last 200 console messages, uncaught exceptions and failed
+requests, collected from the start of the session), `pending-requests.txt`
+and `ax-stripped.txt` (the stripped accessibility snapshot, as in `attack`).
+Use it when a page seems stuck, for example Amazon sign-in where clicks after
+"Continue" appear to do nothing. Dumps are gitignored.
+
 ### `spike check --session <name> --url <account url> --mode headless|xvfb [--restarts 3]`
 
 For each restart: fresh container with the profile restored, navigate to the
@@ -112,7 +132,7 @@ URL, wait for load plus 3 s, record final URL, title, sign-in verdict
 (password input present, or final host/path contains
 login/signin/sign-in/auth/sso), bot-wall verdict (title/body contains "Just a
 moment", "Access Denied", "unusual traffic", "verify you are human",
-"captcha", "Attention Required"), the number of cookies for the final URL,
+"captcha", "Attention Required"), `navigator.webdriver`, the number of cookies for the final URL,
 and a screenshot at `results/<name>-<mode>-<i>.png`. Then close cleanly,
 re-pack the profile (the next restart uses the updated one), remove the
 container, and append a row to `results/findings.md`.
@@ -194,6 +214,8 @@ Each `check` run appends a section with one row per restart:
   the sign-in; a later restart failing means the re-pack lost it.
 - **bot-wall verdict**: "none", or the phrases found. Compare headless and
   xvfb rows for the same site (question 2).
+- **webdriver**: `navigator.webdriver` right after start; `false` is the
+  goal, `true` is an easy bot signal.
 - **cookies for URL**: cookies the browser would send to the final URL. A
   drop to 0 after restore means cookies were not restored or not decrypted.
 - **profile MB**: packed profile size after that restart (question 3).

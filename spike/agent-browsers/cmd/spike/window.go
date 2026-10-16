@@ -43,8 +43,8 @@ func startHTTP(extra map[string]http.Handler) (*http.Server, error) {
 
 // hub fans screencast frames and URL updates out to connected window pages.
 type hub struct {
-	mu      sync.Mutex
-	clients map[chan []byte]struct{}
+	mu        sync.Mutex
+	clients   map[chan []byte]struct{}
 	lastURL   []byte
 	lastFrame []byte
 }
@@ -67,6 +67,18 @@ func (h *hub) remove(c chan []byte) {
 	h.mu.Lock()
 	delete(h.clients, c)
 	h.mu.Unlock()
+}
+
+// broadcast sends without caching for late joiners.
+func (h *hub) broadcast(msg []byte) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for c := range h.clients {
+		select {
+		case c <- msg:
+		default:
+		}
+	}
 }
 
 func (h *hub) send(msg []byte, isURL bool) {
@@ -125,6 +137,7 @@ func cmdWindow(args []string) error {
 	}()
 
 	h := &hub{clients: map[chan []byte]struct{}{}}
+	rec := newRecorder()
 	ctx := b.Ctx
 	exec := func(a chromedp.Action) {
 		if err := chromedp.Run(ctx, a); err != nil {
@@ -133,6 +146,7 @@ func cmdWindow(args []string) error {
 	}
 
 	chromedp.ListenTarget(ctx, func(ev any) {
+		rec.handle(ev)
 		switch e := ev.(type) {
 		case *page.EventScreencastFrame:
 			msg, _ := json.Marshal(map[string]any{
@@ -193,6 +207,19 @@ func cmdWindow(args []string) error {
 			}
 			var m inMsg
 			if json.Unmarshal(data, &m) != nil {
+				continue
+			}
+			if m.Type == "dump" {
+				go func() {
+					dir, err := rec.dump(ctx, *session, b)
+					text := "dump saved to " + dir
+					if err != nil {
+						text = "dump failed: " + err.Error()
+					}
+					fmt.Println(" ", text)
+					msg, _ := json.Marshal(map[string]any{"type": "status", "text": text})
+					h.broadcast(msg)
+				}()
 				continue
 			}
 			if m.Type == "save" {

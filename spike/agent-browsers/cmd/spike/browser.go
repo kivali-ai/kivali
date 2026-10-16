@@ -32,6 +32,7 @@ type Browser struct {
 	Container string
 	Port      string
 	Mode      string
+	Webdriver string // navigator.webdriver right after start
 
 	allocCtx    context.Context
 	allocCancel context.CancelFunc
@@ -72,6 +73,9 @@ func StartBrowser(name, mode, profilePath string) (*Browser, error) {
 	}
 	if extra := os.Getenv("SPIKE_CHROMIUM_EXTRA_FLAGS"); extra != "" {
 		args = append(args, "-e", "CHROMIUM_EXTRA_FLAGS="+extra)
+	}
+	if os.Getenv("SPIKE_NO_SESSION_RESTORE") == "1" {
+		args = append(args, "-e", "SESSION_RESTORE=0")
 	}
 	if os.Getenv("SPIKE_SANDBOX") == "1" {
 		args = append(args, "-e", "SANDBOX=1")
@@ -131,7 +135,13 @@ func StartBrowser(name, mode, profilePath string) (*Browser, error) {
 		b.Remove()
 		return nil, fmt.Errorf("connect cdp: %w", err)
 	}
-	fmt.Printf("  container %s up (%s), devtools on 127.0.0.1:%s\n", cname, mode, b.Port)
+	var wd any
+	if err := chromedp.Run(b.Ctx, chromedp.Evaluate(`navigator.webdriver`, &wd)); err != nil {
+		b.Webdriver = "error: " + err.Error()
+	} else {
+		b.Webdriver = fmt.Sprint(wd)
+	}
+	fmt.Printf("  container %s up (%s), devtools on 127.0.0.1:%s, navigator.webdriver=%s\n", cname, mode, b.Port, b.Webdriver)
 	return b, nil
 }
 

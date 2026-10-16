@@ -19,13 +19,17 @@ func main() {
 	addr := flag.String("ws", "ws://127.0.0.1:7788/ws", "window WebSocket")
 	x := flag.Float64("x", 300, "click x")
 	y := flag.Float64("y", 330, "click y")
+	doDump := flag.Bool("dump", true, "request a debug dump before clicking")
 	flag.Parse()
+	wantDump = *doDump
 	if err := run(*addr, *x, *y); err != nil {
 		fmt.Println("SELFTEST FAIL:", err)
 		os.Exit(1)
 	}
 	fmt.Println("SELFTEST PASS")
 }
+
+var wantDump bool
 
 func run(addr string, x, y float64) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
@@ -51,15 +55,16 @@ func run(addr string, x, y float64) error {
 	frames := 0
 	url := ""
 	clicked := false
+	dumpSent, dumped := false, false
 	for {
 		_, data, err := conn.Read(ctx)
 		if err != nil {
 			return fmt.Errorf("read (frames=%d url=%q): %w", frames, url, err)
 		}
 		var m struct {
-			Type, URL, Data string
-			DW              float64 `json:"dw"`
-			DH              float64 `json:"dh"`
+			Type, URL, Data, Text string
+			DW                    float64 `json:"dw"`
+			DH                    float64 `json:"dh"`
 		}
 		_ = json.Unmarshal(data, &m)
 		switch m.Type {
@@ -68,11 +73,21 @@ func run(addr string, x, y float64) error {
 			if frames == 1 {
 				fmt.Printf("first frame: %d bytes base64 JPEG, device %vx%v\n", len(m.Data), m.DW, m.DH)
 			}
+		case "status":
+			fmt.Println("status:", m.Text)
+			if strings.HasPrefix(m.Text, "dump") {
+				dumped = true
+			}
 		case "url":
 			url = m.URL
 			fmt.Println("url:", url)
 		}
-		if !clicked && frames > 0 && strings.Contains(url, "visible.html") {
+		if wantDump && !dumpSent && frames > 0 && strings.Contains(url, "visible.html") {
+			dumpSent = true
+			_ = send(map[string]any{"type": "dump"})
+			continue
+		}
+		if !clicked && frames > 0 && strings.Contains(url, "visible.html") && (!wantDump || dumped) {
 			clicked = true
 			fmt.Printf("clicking at %v,%v\n", x, y)
 			_ = send(map[string]any{"type": "mouse", "event": "move", "x": x, "y": y})

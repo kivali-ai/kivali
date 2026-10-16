@@ -16,6 +16,7 @@
 <div id="bar">
   <input id="url" placeholder="current URL (type a URL and press Enter to go)">
   <span id="status">connecting</span>
+  <button id="dump" title="Save a debug dump (F8)">Dump</button>
   <button id="save">Save and close</button>
 </div>
 <canvas id="c" width="1280" height="800" tabindex="0"></canvas>
@@ -37,6 +38,8 @@ ws.onmessage = ev => {
       g.drawImage(img, 0, 0);
     };
     img.src = 'data:image/jpeg;base64,' + m.data;
+  } else if (m.type === 'status') {
+    status.textContent = m.text;
   } else if (m.type === 'url') {
     if (document.activeElement !== urlBox) urlBox.value = m.url;
   }
@@ -58,11 +61,13 @@ c.addEventListener('contextmenu', e => e.preventDefault());
 c.addEventListener('wheel', e => { e.preventDefault(); send({ type: 'wheel', ...pos(e), dx: e.deltaX, dy: e.deltaY, modifiers: mods(e) }); }, { passive: false });
 const isPaste = e => (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'v';
 c.addEventListener('keydown', e => {
+  if (e.key === 'F8') { e.preventDefault(); dump(); return; }
   if (isPaste(e)) return; // let the browser fire a paste event; handled below
   e.preventDefault();
   send({ type: 'key', event: 'down', key: e.key, code: e.code, keyCode: e.keyCode, modifiers: mods(e) });
 });
 c.addEventListener('keyup', e => {
+  if (e.key === 'F8') { e.preventDefault(); return; }
   if (isPaste(e)) return;
   e.preventDefault();
   send({ type: 'key', event: 'up', key: e.key, code: e.code, keyCode: e.keyCode, modifiers: mods(e) });
@@ -76,6 +81,8 @@ document.addEventListener('paste', e => {
 urlBox.addEventListener('keydown', e => {
   if (e.key === 'Enter') { let u = urlBox.value.trim(); if (!/^[a-z]+:/i.test(u)) u = 'https://' + u; send({ type: 'navigate', url: u }); c.focus(); }
 });
+function dump() { send({ type: 'dump' }); status.textContent = 'dumping'; }
+document.getElementById('dump').onclick = () => { dump(); c.focus(); };
 document.getElementById('save').onclick = () => { send({ type: 'save' }); status.textContent = 'saving, you can close this tab'; };
 </script>
 </body>
