@@ -89,7 +89,13 @@ func chromeArgs(o chromeOptions, noSandbox bool) []string {
 		// Keeps Chrome on a Mac from asking for the login keychain.
 		args = append(args, "--use-mock-keychain")
 	}
-	if !o.Headful {
+	if o.Headful {
+		// A pod has no GPU and the kivali-browser image carries no Mesa
+		// software GL, so a headed GPU process could only fail and retry.
+		// Without one Chromium renders in software; WebGL is unavailable
+		// headed either way, as Chromium blocklists software GL for it.
+		args = append(args, "--disable-gpu")
+	} else {
 		args = append(args, "--headless=new")
 	}
 	if noSandbox {

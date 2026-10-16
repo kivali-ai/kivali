@@ -321,10 +321,16 @@ func TestChromeArgs(t *testing.T) {
 	if strings.Contains(args, "--no-sandbox") || strings.Contains(args, "--proxy-server") {
 		t.Error("sandbox off or a proxy by default")
 	}
+	if strings.Contains(args, "--disable-gpu") {
+		t.Errorf("headless args disable the GPU: %s", args)
+	}
 	o.Headful = true
 	args = strings.Join(chromeArgs(o, true), " ")
 	if strings.Contains(args, "--headless") || !strings.Contains(args, "--no-sandbox") {
 		t.Errorf("headful, sandbox off: %s", args)
+	}
+	if !strings.Contains(args, "--disable-gpu") {
+		t.Errorf("headful args lack --disable-gpu: %s", args)
 	}
 	if !isSandboxFailure("[0101/000000.0:FATAL:zygote_host_impl_linux.cc(127)] No usable sandbox! Update your kernel") || isSandboxFailure("some other crash") {
 		t.Error("isSandboxFailure")
