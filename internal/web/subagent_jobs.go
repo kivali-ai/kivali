@@ -40,8 +40,8 @@ import (
 // it must stay cancellable, because "call off the batch I just sent"
 // is most useful precisely while the batch is still waiting to start.
 const (
-	subagentJobQueued    = "queued"
-	subagentJobRunning   = "running"
+	subagentJobQueued  = "queued"
+	subagentJobRunning = "running"
 	// subagentJobWaiting: a web task in a site session paused by
 	// web_wait_for_sign_in until a person has signed in through its
 	// browser window; its run has ended and resumes afterwards. Not
