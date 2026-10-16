@@ -5,6 +5,7 @@ merged, and none of the repository's conventions apply to it.** It exists to
 answer four questions before the real agent-browser feature is built:
 
 1. Does a restored Chrome profile keep sign-ins across fresh containers?
+   (Four sites, three restarts each.)
 2. Does a sign-in made through our own window survive bot detection, with
    `--headless=new` and with headful Chromium under Xvfb?
 3. How much memory do 3 browsers with several tabs use, and how big is a
@@ -13,6 +14,27 @@ answer four questions before the real agent-browser feature is built:
    accessibility-tree snapshot, versus a screenshot?
 
 It is its own Go module (`go.mod` here); the root module is untouched.
+
+## One command
+
+```sh
+cd spike/agent-browsers
+sh study.sh
+```
+
+`study.sh` runs the whole study: for each mode and each of four sites
+(github, linkedin, amazon, microsoft) it opens the window for you to sign in,
+then runs `check` with three restarts; then `memory` and `attack` in each
+mode. It builds `bin/spike` and the image if missing. A site whose profile
+already exists skips the sign-in step. Knobs (environment variables):
+
+- `SITES="github amazon"`: narrow the sites (default all four).
+- `MODES=headless`: narrow the modes (default `headless xvfb`).
+- `RESTARTS=3`: restarts per check.
+- `REDO=1`: sign in again even if the profile exists.
+- `MS_PERSONAL=1`: a personal Microsoft account (login.live.com,
+  account.microsoft.com) instead of a work one.
+- `SKIP_MEMORY=1`, `SKIP_ATTACK=1`: skip those steps.
 
 ## Build
 
@@ -121,9 +143,10 @@ text scrolled out of a larger overflow box.
 
 ## The sign-in study (questions 1 to 3)
 
-Pick five sites you have accounts on. Candidates: GitHub, LinkedIn, Amazon,
-Notion, and one Microsoft- or Okta-backed SSO login (for example a Microsoft
-365 account, or your company's Okta). **Google is out of scope.** Use test or
+The study uses four sites: GitHub, LinkedIn, Amazon, and a Microsoft login
+(a work Microsoft 365 account by default, or a personal one with
+`MS_PERSONAL=1`). **Google is out of scope.** `sh study.sh` runs all of the
+below; the individual commands are here for reruns. Use test or
 low-value accounts where you can; the profiles hold live sessions.
 
 For each site, once per mode. Example for GitHub in headless mode:
@@ -148,10 +171,10 @@ Suggested sign-in and account URLs:
 | GitHub | https://github.com/login | https://github.com/settings/profile |
 | LinkedIn | https://www.linkedin.com/login | https://www.linkedin.com/mypreferences/d/categories/account |
 | Amazon | https://www.amazon.com/gp/sign-in.html | https://www.amazon.com/gp/css/order-history |
-| Notion | https://www.notion.so/login | https://www.notion.so/profile |
-| Microsoft SSO | https://login.microsoftonline.com/ | https://myaccount.microsoft.com/ |
+| Microsoft (work) | https://login.microsoftonline.com/ | https://myaccount.microsoft.com/ |
+| Microsoft (personal) | https://login.live.com/ | https://account.microsoft.com/ |
 
-Use session names like `<site>-<mode>`; that gives 10 profiles and 30 check
+Use session names like `<site>-<mode>`; that gives 8 profiles and 24 check
 rows. Then memory, once with heavy public pages and once per mode:
 
 ```sh
