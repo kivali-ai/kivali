@@ -228,11 +228,25 @@ type SubagentSpec struct {
 	// submit_result tool's input schema from it; core, not the pod,
 	// validates every submission.
 	Schema json.RawMessage `json:"schema,omitempty"`
+
+	// Kind is SubagentKindGeneral (empty on the wire) or
+	// SubagentKindWeb. A web task runs the web toolkit: the pod starts
+	// its MCP server with --toolkit web and the session name, and Tools
+	// holds WebSubagentTools. Session is the web session the task runs
+	// in (OpenWebSession or a site), StartURL where it starts, and
+	// Files the names of the task files it may upload.
+	Kind     string   `json:"kind,omitempty"`
+	Session  string   `json:"session,omitempty"`
+	StartURL string   `json:"start_url,omitempty"`
+	Files    []string `json:"files,omitempty"`
 }
 
 // Structured reports whether the task carries a schema, so its answer
 // comes through submit_result rather than the final message.
 func (s SubagentSpec) Structured() bool { return len(s.Schema) > 0 }
+
+// Web reports whether the task is a web subagent.
+func (s SubagentSpec) Web() bool { return s.Kind == SubagentKindWeb }
 
 // EffectiveDepth returns the spec's depth with the zero value mapped
 // to tier 1. Callers should use this rather than the field directly.

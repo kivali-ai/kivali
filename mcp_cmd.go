@@ -52,14 +52,15 @@ import (
 // through controlclient (same socket).
 func runMCP(args []string) {
 	fs := flag.NewFlagSet("mcp", flag.ExitOnError)
-	toolkitName := fs.String("toolkit", "full-agent", "tool bundle to expose: full-agent | subagent")
+	toolkitName := fs.String("toolkit", "full-agent", "tool bundle to expose: full-agent | subagent | web")
 	agentSlug := fs.String("agent", "", "[full-agent] agent slug that scopes every operation")
 	parentSlug := fs.String("parent", "", "[subagent] slug of the parent agent that spawned this subagent")
 	subagentID := fs.String("subagent-id", "", "[subagent] per-call subagent id (matches the on-disk path under data/agents/<parent>/subagents/)")
 	coreUDS := fs.String("core-uds", "", "path to core's UDS socket; every dispatcher routes through agentpod.Client over UDS")
 	subagentFilesRoot := fs.String("subagent-files-root", "", "[subagent] absolute path of the subagent's /files/ view, /files/subagents/<id>; file_* + run_shell both run against this directory")
 	subagentDepth := fs.Int("depth", 1, "[subagent] tier below the durable agent (1 = dispatched by the agent itself). Decides whether this subagent may delegate.")
-	resultSchemaPath := fs.String("result-schema", "", "[subagent] path of the task's result schema; when set, the toolkit carries submit_result built from it")
+	resultSchemaPath := fs.String("result-schema", "", "[subagent, web] path of the task's result schema; when set, the toolkit carries submit_result built from it")
+	webSession := fs.String("session", "", "[web] the web session the task runs in (open, or a site)")
 	_ = fs.Parse(args)
 
 	logger := log.New(os.Stderr, "mcp: ", log.LstdFlags|log.Lmicroseconds)
@@ -73,9 +74,58 @@ func runMCP(args []string) {
 		runFullAgentMCP(logger, *coreUDS, *agentSlug)
 	case "subagent":
 		runSubagentMCP(logger, *coreUDS, *parentSlug, *subagentID, *subagentFilesRoot, *subagentDepth, *resultSchemaPath)
+	case "web":
+		runWebSubagentMCP(logger, *coreUDS, *parentSlug, *subagentID, *webSession, *resultSchemaPath)
 	default:
-		logger.Fatalf("unknown --toolkit %q (want full-agent or subagent)", *toolkitName)
+		logger.Fatalf("unknown --toolkit %q (want full-agent, subagent or web)", *toolkitName)
 	}
+}
+
+// runWebSubagentMCP wires up the web toolkit: the web_* tools and
+// submit_result, every one a relay to core over the agent pod's UDS.
+// No files root and no depth: a web subagent has no files, no shell
+// and cannot delegate.
+func runWebSubagentMCP(logger *log.Logger, socketPath, parent, id, session, resultSchemaPath string) {
+	if parent == "" || id == "" {
+		logger.Fatal("--parent and --subagent-id are required for --toolkit web")
+	}
+	if session == "" {
+		logger.Fatal("--session is required for --toolkit web")
+	}
+	if resultSchemaPath == "" {
+		logger.Fatal("--result-schema is required for --toolkit web: a web task always has a schema")
+	}
+	if _, err := os.Stat(socketPath); err != nil {
+		logger.Fatalf("--core-uds %q: %v", socketPath, err)
+	}
+	raw, err := os.ReadFile(resultSchemaPath)
+	if err != nil {
+		logger.Fatalf("--result-schema %q: %v", resultSchemaPath, err)
+	}
+	schema, err := structured.Parse(raw)
+	if err != nil {
+		logger.Fatalf("--result-schema %q: %v", resultSchemaPath, err)
+	}
+	tk := mcp.WebSubagentToolkit(mcp.WebSubagentDeps{
+		Client:       agentpod.NewClient(socketPath, parent),
+		SubagentID:   id,
+		Session:      session,
+		ResultSchema: schema,
+	})
+	server := &mcp.Server{
+		Tools:      tk.Tools,
+		ServerName: "kivali-web",
+		Version:    "0.1",
+		Logger:     logger,
+	}
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	logger.Printf("starting MCP server (web): toolkit=%s parent=%s subagent=%s session=%s core-uds=%s tools=%d",
+		tk.Name, parent, id, session, socketPath, len(tk.Tools))
+	if err := server.Serve(ctx, os.Stdin, os.Stdout); err != nil {
+		logger.Fatalf("serve: %v", err)
+	}
+	logger.Print("shutdown (EOF)")
 }
 
 // runFullAgentMCP wires up the full agent toolkit. run_shell and the

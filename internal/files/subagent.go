@@ -49,6 +49,7 @@ func SubagentParentRoot(overlayRoot string) string {
 // a test temp dir, etc.):
 //
 //	subagents/<id>/artifacts/private/    real dir (subagent's scratch)
+//	subagents/<id>/untrusted-downloads/  real dir (files a web task's browser downloaded; core writes them)
 //	subagents/<id>/artifacts/public      → ../../../artifacts/public
 //	subagents/<id>/artifacts/shared      → ../../../artifacts/shared
 //	subagents/<id>/project               → ../../project
@@ -100,6 +101,9 @@ func BuildSubagentOverlay(layout SubagentOverlay) error {
 	}
 	if err := ensureRealDir(parentRoot, rel+"/artifacts/private"); err != nil {
 		return fmt.Errorf("artifacts/private: %w", err)
+	}
+	if err := ensureRealDir(parentRoot, rel+"/"+UntrustedDownloadsDir); err != nil {
+		return fmt.Errorf("%s: %w", UntrustedDownloadsDir, err)
 	}
 	proot, err := os.OpenRoot(parentRoot)
 	if err != nil {
