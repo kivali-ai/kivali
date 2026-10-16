@@ -162,6 +162,10 @@ func composeFullAgentToolkit(d fullAgentToolkitDeps) Toolkit {
 			SubagentTool(cfg),
 			SubagentStatusTool(cfg),
 			SubagentCancelTool(cfg),
+			// The agent's web sessions: what a web task's session names,
+			// and the way to forget one.
+			WebSessionsTool(cfg),
+			WebSessionResetTool(cfg),
 		)
 	}
 	return Toolkit{Name: "full-agent", Tools: tools}
@@ -273,4 +277,9 @@ type SubagentBackend interface {
 	// described in exactly one place.
 	SubagentStatus(ctx context.Context, parent string) (rendered string, err error)
 	SubagentCancel(ctx context.Context, parent, id string) (rendered string, err error)
+	// WebSessions and WebSessionReset are the agent's web sessions:
+	// their names and states, rendered by core, and the reset that
+	// forgets one.
+	WebSessions(ctx context.Context, parent string) (rendered string, err error)
+	WebSessionReset(ctx context.Context, parent, session string) (rendered string, err error)
 }

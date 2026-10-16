@@ -36,8 +36,12 @@ const (
 	// otherwise learns from a refused dispatch or an expensive run.
 	// Raised to 4350 for the open session keeping nothing between
 	// tasks (~8 tokens): an agent then knows no page a task saw can
-	// reach its next one, and that no sign-in can carry over.
-	maxSubagentDescChars = 4350
+	// reach its next one, and that no sign-in can carry over. Raised
+	// to 4700 for site sessions (~90 tokens): what one is, that a
+	// page's sign-in pauses the task for a person, and that signing in
+	// is very expensive, which is what keeps an agent from asking a
+	// person to sign in for a task that did not need it.
+	maxSubagentDescChars = 4700
 	// A sub-lead's dispatch tool. Present only for subagents that can
 	// delegate, but then paid on every one of their turns. Raised from
 	// 1900 for the kind field's sentence.

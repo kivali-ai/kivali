@@ -881,10 +881,12 @@ func subagentMCPServer(kivaliBin, coreUDS, parent, id string, depth int, resultS
 			"--parent", parent,
 			"--subagent-id", id,
 			"--core-uds", coreUDS,
-			// The session decides whether web_eval exists; like depth
-			// for a general subagent it is the runtime's argument, out
-			// of the model's reach.
+			// The session decides whether web_eval exists, and with
+			// the depth whether web_wait_for_sign_in does; like depth
+			// for a general subagent they are the runtime's arguments,
+			// out of the model's reach.
 			"--session", spec.Session,
+			"--depth", strconv.Itoa(depth),
 		}
 	} else {
 		args = []string{

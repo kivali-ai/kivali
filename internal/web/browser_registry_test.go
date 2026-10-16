@@ -245,8 +245,9 @@ func TestBrowserRegistryStartsRelaysAndReaps(t *testing.T) {
 	}()
 	b, link := f.connect(ctx)
 	hello := link.next(t, browserpod.TypeHello)
-	if hello.msg.Bytes != 0 || hello.msg.Site != "" {
-		t.Errorf("first hello = %+v, want no profile and no site", hello.msg)
+	// A site session: the pod is told the site and runs headed.
+	if hello.msg.Bytes != 0 || hello.msg.Site != "vendor.example" || !hello.msg.Headful || hello.msg.Ephemeral {
+		t.Errorf("first hello = %+v, want no profile, the site and headful", hello.msg)
 	}
 	link.next(t, browserpod.TypeStart)
 	if states := f.reg.states(); states["alice/vendor.example"] != string(browserStarting) {

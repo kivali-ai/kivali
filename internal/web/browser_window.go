@@ -1,11 +1,14 @@
 // Package web (browser_window.go) — the browser window: a person
-// watching a web task's browser, live.
+// watching a web task's browser, live, and signing in through it when
+// the task waits for them.
 //
 // GET /api/v1/agents/{slug}/subagents/{id}/browser, upgraded to a
 // WebSocket under the session cookie like every API route. Text
-// messages are apitypes.BrowserWindowEvent; binary messages are frames,
-// one JPEG each, passed through from the pod untouched. Nothing is read
-// from the page: the window watches.
+// messages from core are apitypes.BrowserWindowEvent; binary messages
+// are frames, one JPEG each, passed through from the pod untouched.
+// Text messages from the page are apitypes.BrowserWindowInput, taken
+// only while the task waits for a person in a site session and dropped
+// otherwise: a watch-only window stays watch only whatever it sends.
 //
 // Each window has its own goroutine and its own latest-frame slot in
 // the registry, so a slow viewer sees the newest frame when it next
@@ -18,6 +21,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/coder/websocket"
@@ -28,6 +32,10 @@ import (
 
 // browserWindowWriteTimeout bounds one write to the page.
 const browserWindowWriteTimeout = 5 * time.Second
+
+// browserWindowReadLimit bounds one message from the page: an input
+// event, at most a pasted text.
+const browserWindowReadLimit = 1 << 20
 
 // handleBrowserWindow serves one browser window.
 func (s *Server) handleBrowserWindow(w http.ResponseWriter, r *http.Request) {
@@ -46,15 +54,33 @@ func (s *Server) handleBrowserWindow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer func() { _ = c.CloseNow() }()
+	c.SetReadLimit(browserWindowReadLimit)
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
-	// The page sends nothing; reading is how the socket's close is seen.
+
+	// The page's messages: input for the shown tab, taken only while
+	// the task waits for a person; reading is also how the socket's
+	// close is seen. The watcher exists only once the browser is up.
+	var watcher atomic.Pointer[browserWatcher]
 	go func() {
 		defer cancel()
 		for {
-			if _, _, err := c.Reader(ctx); err != nil {
+			typ, data, err := c.Read(ctx)
+			if err != nil {
 				return
 			}
+			if typ != websocket.MessageText {
+				continue
+			}
+			var in apitypes.BrowserWindowInput
+			if json.Unmarshal(data, &in) != nil || in.Type != apitypes.BrowserWindowInputTypeInput {
+				continue
+			}
+			w := watcher.Load()
+			if w == nil || !s.SubagentService.windowTakesInput(id) {
+				continue
+			}
+			_ = s.Browsers.Input(w, in.Input)
 		}
 	}()
 	write := func(ev apitypes.BrowserWindowEvent) bool {
@@ -66,25 +92,28 @@ func (s *Server) handleBrowserWindow(w http.ResponseWriter, r *http.Request) {
 		defer wcancel()
 		return c.Write(wctx, websocket.MessageText, body) == nil
 	}
-	if j.State != subagentJobRunning || j.cancelled || j.endReason != "" {
+	live := j.State == subagentJobRunning || j.State == subagentJobWaiting
+	if !live || j.cancelled || j.endReason != "" {
 		write(apitypes.BrowserWindowEvent{Type: apitypes.BrowserWindowEventTypeEnd, Reason: "The task has ended."})
 		_ = c.Close(websocket.StatusNormalClosure, "")
 		return
 	}
+	input := j.State == subagentJobWaiting && j.Site != ""
 	// A browser that is not up yet takes a while; the page is told so
 	// before the wait.
 	if st := s.Browsers.StateFor(slug, j.Session); st != apitypes.BrowserStateRunning {
-		if !write(apitypes.BrowserWindowEvent{Type: apitypes.BrowserWindowEventTypeState, Browser: apitypes.BrowserStateStarting}) {
+		if !write(apitypes.BrowserWindowEvent{Type: apitypes.BrowserWindowEventTypeState, Browser: apitypes.BrowserStateStarting, Input: input, Site: j.Site}) {
 			return
 		}
 	}
-	watcher, err := s.Browsers.Watch(ctx, slug, j.Session, id)
+	wt, err := s.Browsers.Watch(ctx, slug, j.Session, id, input)
 	if err != nil {
 		write(apitypes.BrowserWindowEvent{Type: apitypes.BrowserWindowEventTypeEnd, Reason: err.Error()})
 		_ = c.Close(websocket.StatusNormalClosure, "")
 		return
 	}
-	defer s.Browsers.Unwatch(watcher)
+	defer s.Browsers.Unwatch(wt)
+	watcher.Store(wt)
 	// flushEvents sends every queued text message. Events are queued
 	// before the frame they describe (a tab change before that tab's
 	// first frame), so they go out before any frame, and before the
@@ -92,7 +121,7 @@ func (s *Server) handleBrowserWindow(w http.ResponseWriter, r *http.Request) {
 	flushEvents := func() bool {
 		for {
 			select {
-			case ev := <-watcher.Events():
+			case ev := <-wt.Events():
 				if !write(ev) {
 					return false
 				}
@@ -105,7 +134,7 @@ func (s *Server) handleBrowserWindow(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-ctx.Done():
 			return
-		case frame := <-watcher.Frames():
+		case frame := <-wt.Frames():
 			if !flushEvents() {
 				return
 			}
@@ -115,11 +144,11 @@ func (s *Server) handleBrowserWindow(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				return
 			}
-		case ev := <-watcher.Events():
+		case ev := <-wt.Events():
 			if !write(ev) {
 				return
 			}
-		case <-watcher.Done():
+		case <-wt.Done():
 			flushEvents()
 			_ = c.Close(websocket.StatusNormalClosure, "")
 			return

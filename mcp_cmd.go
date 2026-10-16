@@ -75,7 +75,7 @@ func runMCP(args []string) {
 	case "subagent":
 		runSubagentMCP(logger, *coreUDS, *parentSlug, *subagentID, *subagentFilesRoot, *subagentDepth, *resultSchemaPath)
 	case "web":
-		runWebSubagentMCP(logger, *coreUDS, *parentSlug, *subagentID, *webSession, *resultSchemaPath)
+		runWebSubagentMCP(logger, *coreUDS, *parentSlug, *subagentID, *webSession, *subagentDepth, *resultSchemaPath)
 	default:
 		logger.Fatalf("unknown --toolkit %q (want full-agent, subagent or web)", *toolkitName)
 	}
@@ -85,7 +85,7 @@ func runMCP(args []string) {
 // submit_result, every one a relay to core over the agent pod's UDS.
 // No files root and no depth: a web subagent has no files, no shell
 // and cannot delegate.
-func runWebSubagentMCP(logger *log.Logger, socketPath, parent, id, session, resultSchemaPath string) {
+func runWebSubagentMCP(logger *log.Logger, socketPath, parent, id, session string, depth int, resultSchemaPath string) {
 	if parent == "" || id == "" {
 		logger.Fatal("--parent and --subagent-id are required for --toolkit web")
 	}
@@ -107,9 +107,12 @@ func runWebSubagentMCP(logger *log.Logger, socketPath, parent, id, session, resu
 		logger.Fatalf("--result-schema %q: %v", resultSchemaPath, err)
 	}
 	tk := mcp.WebSubagentToolkit(mcp.WebSubagentDeps{
-		Client:       agentpod.NewClient(socketPath, parent),
-		SubagentID:   id,
-		Session:      session,
+		Client:     agentpod.NewClient(socketPath, parent),
+		SubagentID: id,
+		Session:    session,
+		// A task the agent dispatched itself, in a site session, may
+		// pause for a person to sign in; a deeper one may not.
+		CanWait:      session != agentpod.OpenWebSession && depth == 1,
 		ResultSchema: schema,
 	})
 	server := &mcp.Server{
@@ -305,4 +308,12 @@ func (b controlSubagentBackend) SubagentStatus(ctx context.Context, parent strin
 
 func (b controlSubagentBackend) SubagentCancel(ctx context.Context, parent, id string) (string, error) {
 	return b.client.SubagentCancel(ctx, parent, id)
+}
+
+func (b controlSubagentBackend) WebSessions(ctx context.Context, parent string) (string, error) {
+	return b.client.WebSessions(ctx, parent)
+}
+
+func (b controlSubagentBackend) WebSessionReset(ctx context.Context, parent, session string) (string, error) {
+	return b.client.WebSessionReset(ctx, parent, session)
 }

@@ -55,7 +55,7 @@ func TestWebTaskDispatchBuildsTheWebSpec(t *testing.T) {
 		if !reflect.DeepEqual(spec.Files, []string{"quote.pdf"}) {
 			t.Errorf("spec.Files = %v", spec.Files)
 		}
-		if !reflect.DeepEqual(spec.Tools, agentpod.WebSubagentTools(agentpod.OpenWebSession)) {
+		if !reflect.DeepEqual(spec.Tools, agentpod.WebSubagentTools(agentpod.OpenWebSession, false)) {
 			t.Errorf("spec.Tools = %+v", spec.Tools)
 		}
 		if slices.Contains(spec.Tools.Kivali, "file_view") || slices.Contains(spec.Tools.Kivali, "run_shell") || len(spec.Tools.Builtins) != 0 {
@@ -122,7 +122,7 @@ func TestWebTaskDispatchIsRefusedWhenItCannotRun(t *testing.T) {
 		want string
 	}{
 		{"no schema", mustArgs(t, map[string]any{"description": "d", "prompt": "p", "kind": "web"}), "a web task needs a schema"},
-		{"other session", webArgs(t, map[string]any{"session": "vendor.com"}), `only "open" is available`},
+		{"bad site", webArgs(t, map[string]any{"session": "co.uk"}), "is not a site"},
 		{"bad start url", webArgs(t, map[string]any{"start_url": "ftp://x"}), "http or https URL"},
 		{"missing file", webArgs(t, map[string]any{"files": []string{"/files/artifacts/private/ghost.pdf"}}), "is not a file under your /files/"},
 		{"link out of the tree", webArgs(t, map[string]any{"files": []string{"/files/artifacts/private/leak.pdf"}}), "is not a file under your /files/"},

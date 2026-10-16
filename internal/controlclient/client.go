@@ -178,9 +178,21 @@ func (c *Client) SubagentCancel(ctx context.Context, parent, id string) (string,
 	return c.subagentControl(ctx, "subagent-cancel", map[string]any{"parent": parent, "id": id})
 }
 
-// subagentControl is the shared POST for the two job-control
-// endpoints: same slug binding, same short timeout, same "body is the
-// model-facing text" response contract.
+// WebSessions asks core for the caller's web sessions, rendered for
+// the model: names and states, never contents.
+func (c *Client) WebSessions(ctx context.Context, parent string) (string, error) {
+	return c.subagentControl(ctx, "web/sessions", map[string]any{"parent": parent})
+}
+
+// WebSessionReset asks core to forget one of the caller's web
+// sessions: its browser, its tasks and its saved sign-ins.
+func (c *Client) WebSessionReset(ctx context.Context, parent, session string) (string, error) {
+	return c.subagentControl(ctx, "web/sessions/reset", map[string]any{"parent": parent, "session": session})
+}
+
+// subagentControl is the shared POST for the job-control and web
+// session endpoints: same slug binding, same short timeout, same "body
+// is the model-facing text" response contract.
 func (c *Client) subagentControl(ctx context.Context, path string, payload map[string]any) (string, error) {
 	body, err := json.Marshal(payload)
 	if err != nil {

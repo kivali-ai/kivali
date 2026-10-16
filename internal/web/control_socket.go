@@ -229,4 +229,8 @@ func (s *Server) registerUDSRoutes(mux *http.ServeMux) {
 	// has a socket of its own (StartBrowserSocket), so a pod never
 	// reaches these routes.
 	mux.HandleFunc("POST /v1/agent/{slug}/subagents/{id}/web", s.handleAgentpodWebCommand)
+	// The agent's web sessions: subagent_web_sessions and
+	// subagent_web_session_reset.
+	mux.HandleFunc("POST /v1/agent/{slug}/web/sessions", s.handleAgentpodWebSessions)
+	mux.HandleFunc("POST /v1/agent/{slug}/web/sessions/reset", s.handleAgentpodWebSessionReset)
 }
