@@ -657,7 +657,7 @@ func (b *browser) cmdTabs(ctx context.Context, groupName, tabID string, a TabsAr
 			return result{}, err
 		}
 		*tp = t
-		b.setCurrent(t)
+		b.setCurrent(ctx, t)
 		b.bringToFront(ctx, t)
 		return result{text: fmt.Sprintf("Switched to %s: %s", t.id, t.where())}, nil
 	case TabsOpen:

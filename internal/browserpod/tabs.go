@@ -70,6 +70,9 @@ type group struct {
 	// contextID is the group's own browser context in an ephemeral
 	// session; empty means the default context.
 	contextID string
+	// watched: a browser window is on this group, so its current tab
+	// is screencast (followWatch).
+	watched bool
 }
 
 // tab is a page target in a group.
@@ -606,6 +609,7 @@ func (b *browser) createTab(ctx context.Context, groupName string) (*tab, error)
 		b.resume(t.session)
 		t.update(func() { t.url = "about:blank" })
 		b.emitTab(t)
+		b.followWatch(ctx, groupName)
 		return t, nil
 	}
 	b.creating++
@@ -645,6 +649,7 @@ func (b *browser) createTab(ctx context.Context, groupName string) (*tab, error)
 	b.enableSession(ctx, t.session)
 	b.resume(t.session)
 	b.emitTab(t)
+	b.followWatch(ctx, groupName)
 	return t, nil
 }
 
@@ -699,6 +704,9 @@ func (b *browser) closeTab(ctx context.Context, t *tab) {
 		b.mu.Unlock()
 		return
 	}
+	// The group's current tab may change here; a watched group's
+	// screencast follows it once the lock is released.
+	defer b.followWatch(ctx, t.group)
 	b.unregisterLocked(t)
 	keep := !b.ephemeral && len(b.tabs) == 0 && b.spare == nil
 	if keep {
@@ -799,12 +807,13 @@ func (b *browser) groupTabs(name string) ([]*tab, *tab) {
 	return append([]*tab(nil), g.tabs...), g.current
 }
 
-func (b *browser) setCurrent(t *tab) {
+func (b *browser) setCurrent(ctx context.Context, t *tab) {
 	b.mu.Lock()
 	if g := b.groups[t.group]; g != nil {
 		g.current = t
 	}
 	b.mu.Unlock()
+	b.followWatch(ctx, t.group)
 }
 
 // bringToFront makes t the browser's active tab. Chromium defers

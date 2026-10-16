@@ -45,6 +45,7 @@ import (
 	"github.com/kivali-ai/kivali/internal/files"
 	"github.com/kivali-ai/kivali/internal/store"
 	"github.com/kivali-ai/kivali/internal/structured"
+	"github.com/kivali-ai/kivali/internal/web/apitypes"
 )
 
 // Browser lifecycle limits.
@@ -74,6 +75,15 @@ const (
 	// Downloads one group may produce: the count and the bytes.
 	maxDownloadsPerGroup     = 20
 	maxDownloadBytesPerGroup = 200 << 20
+	// browserWindowGrace is how long a group's screencast stays on
+	// after its last window has gone: a reload or a brief disconnect
+	// does not count as closing the window.
+	browserWindowGrace = 10 * time.Second
+	// browserMaxFrameBytes bounds one screencast frame from the pod.
+	browserMaxFrameBytes = 4 << 20
+	// browserWatcherEvents is how many unread text messages a window
+	// may hold before the oldest is dropped.
+	browserWatcherEvents = 16
 )
 
 // browserState is where a browser is in its life.
@@ -107,14 +117,129 @@ type browserLink interface {
 	close()
 }
 
-// browserGroup is one web subagent's use of a browser: its tabs and
-// what core saw of its run.
+// browserGroup is one web subagent's use of a browser: its tabs, what
+// core saw of its run, and the windows watching it.
 type browserGroup struct {
 	tabs          map[string]bool
 	pages         int
 	lastURL       string
 	downloads     []string
 	downloadBytes int64
+	// tabInfo is each tab's last URL and title, for the windows.
+	tabInfo map[string]browserTabInfo
+	// watchers are the windows on this group. watching is whether the
+	// pod screencasts the group; it stays on for browserWindowGrace
+	// after the last watcher left, closeAt being when that grace ends.
+	// shownTab is the tab the last frame came from.
+	watchers map[*browserWatcher]struct{}
+	watching bool
+	closeAt  time.Time
+	shownTab string
+}
+
+// browserTabInfo is what core knows of a tab: its last URL and title.
+type browserTabInfo struct {
+	url, title string
+}
+
+func (b *browser) groupLocked(name string) *browserGroup {
+	g, ok := b.groups[name]
+	if !ok {
+		g = &browserGroup{tabs: map[string]bool{}, tabInfo: map[string]browserTabInfo{}, watchers: map[*browserWatcher]struct{}{}}
+		b.groups[name] = g
+	}
+	return g
+}
+
+// browserWatcher is one browser window on a group. frames holds the
+// latest frame only: a window that cannot keep up sees the newest frame
+// when it next reads, never a backlog, and never slows the pod or
+// another window. events are the rare text messages. done closes when
+// the window is over, after its end event was queued.
+type browserWatcher struct {
+	b      *browser
+	group  string
+	frames chan []byte
+	events chan apitypes.BrowserWindowEvent
+	done   chan struct{}
+	once   sync.Once
+}
+
+func newBrowserWatcher(b *browser, group string) *browserWatcher {
+	return &browserWatcher{
+		b: b, group: group,
+		frames: make(chan []byte, 1),
+		events: make(chan apitypes.BrowserWindowEvent, browserWatcherEvents),
+		done:   make(chan struct{}),
+	}
+}
+
+// Frames, Events and Done are what the window's handler reads.
+func (w *browserWatcher) Frames() <-chan []byte                      { return w.frames }
+func (w *browserWatcher) Events() <-chan apitypes.BrowserWindowEvent { return w.events }
+func (w *browserWatcher) Done() <-chan struct{}                      { return w.done }
+
+// offer queues a frame, replacing one the window has not read yet.
+// Frames of one browser come from its one connection goroutine, so the
+// slot cannot be refilled by anyone else between the drain and the send.
+func (w *browserWatcher) offer(frame []byte) {
+	select {
+	case w.frames <- frame:
+		return
+	default:
+	}
+	select {
+	case <-w.frames:
+	default:
+	}
+	select {
+	case w.frames <- frame:
+	default:
+	}
+}
+
+// event queues a text message; a window that has not read the last
+// browserWatcherEvents of them loses the oldest.
+func (w *browserWatcher) event(ev apitypes.BrowserWindowEvent) {
+	select {
+	case w.events <- ev:
+		return
+	default:
+	}
+	select {
+	case <-w.events:
+	default:
+	}
+	select {
+	case w.events <- ev:
+	default:
+	}
+}
+
+// end queues the window's end event, with reason, and closes done.
+func (w *browserWatcher) end(reason string) {
+	w.once.Do(func() {
+		w.event(apitypes.BrowserWindowEvent{Type: apitypes.BrowserWindowEventTypeEnd, Reason: reason})
+		close(w.done)
+	})
+}
+
+// tabEvent is the window message for a tab.
+func tabEvent(id string, info browserTabInfo) apitypes.BrowserWindowEvent {
+	return apitypes.BrowserWindowEvent{Type: apitypes.BrowserWindowEventTypeTab, Tab: &apitypes.BrowserWindowTab{ID: id, URL: info.url, Title: info.title}}
+}
+
+// wireState is a browser's state as the API reports it: idle is still
+// running (the pod is up), saving and stopped are stopped.
+func wireState(s browserState) apitypes.BrowserState {
+	switch s {
+	case browserStarting:
+		return apitypes.BrowserStateStarting
+	case browserRunning, browserIdle:
+		return apitypes.BrowserStateRunning
+	default:
+		return apitypes.BrowserStateStopped
+	}
 }
 
 // browser is one (agent, session) with a pod.
@@ -181,6 +306,9 @@ type browserRegistry struct {
 	// downloadsRoot is where a group's downloads are written: the
 	// subagent's overlay root on disk.
 	downloadsRoot func(slug, subagentID string) string
+	// OnState, when set, hears every change of a browser's wire state,
+	// outside the registry's lock: starting, running, stopped.
+	OnState func(slug, session string, state apitypes.BrowserState)
 
 	wake chan struct{}
 	// booted is closed once the boot cleanup has run; a start waits
@@ -289,9 +417,29 @@ func (r *browserRegistry) sweep(now time.Time) time.Time {
 		b    *browser
 		kind browserState
 	}
+	type window struct {
+		b     *browser
+		group string
+	}
 	var due []action
+	var closes []window
 	var next time.Time
+	earliest := func(t time.Time) {
+		if next.IsZero() || t.Before(next) {
+			next = t
+		}
+	}
 	for _, b := range r.browsers {
+		for name, g := range b.groups {
+			if !g.watching || len(g.watchers) != 0 || g.closeAt.IsZero() {
+				continue
+			}
+			if !g.closeAt.After(now) {
+				closes = append(closes, window{b, name})
+			} else {
+				earliest(g.closeAt)
+			}
+		}
 		if b.deadline.IsZero() {
 			continue
 		}
@@ -299,11 +447,12 @@ func (r *browserRegistry) sweep(now time.Time) time.Time {
 			due = append(due, action{b, b.state})
 			continue
 		}
-		if next.IsZero() || b.deadline.Before(next) {
-			next = b.deadline
-		}
+		earliest(b.deadline)
 	}
 	r.mu.Unlock()
+	for _, c := range closes {
+		r.closeWindow(c.b, c.group)
+	}
 	for _, a := range due {
 		switch a.kind {
 		case browserStarting:
@@ -315,7 +464,7 @@ func (r *browserRegistry) sweep(now time.Time) time.Time {
 			r.finish(a.b)
 		}
 	}
-	if len(due) > 0 {
+	if len(due) > 0 || len(closes) > 0 {
 		return r.sweep(now)
 	}
 	return next
@@ -350,9 +499,7 @@ func (r *browserRegistry) Command(ctx context.Context, slug, session, group stri
 	b.state = browserRunning
 	b.deadline = time.Time{}
 	b.lastUsed = r.clk.Now()
-	if _, ok := b.groups[group]; !ok {
-		b.groups[group] = &browserGroup{tabs: map[string]bool{}}
-	}
+	b.groupLocked(group)
 	b.seq++
 	id := "c" + strconv.Itoa(b.seq)
 	ch := make(chan browserpod.Message, 1)
@@ -473,6 +620,7 @@ func (r *browserRegistry) acquire(ctx context.Context, slug, session string) (*b
 		r.browsers[b.key()] = b
 		r.mu.Unlock()
 		r.kick()
+		r.notify(b, apitypes.BrowserStateStarting)
 		if ephemeral {
 			// Nothing of this session is kept; a record or profile
 			// stored for it goes too.
@@ -502,6 +650,151 @@ func (r *browserRegistry) acquire(ctx context.Context, slug, session string) (*b
 		return nil, err
 	}
 	return b, nil
+}
+
+// notify reports a browser's wire state to OnState, outside the lock.
+func (r *browserRegistry) notify(b *browser, state apitypes.BrowserState) {
+	if r.OnState != nil {
+		r.OnState(b.slug, b.session, state)
+	}
+}
+
+// StateFor is the wire state of (slug, session)'s browser: stopped
+// when none is registered.
+func (r *browserRegistry) StateFor(slug, session string) apitypes.BrowserState {
+	if r == nil {
+		return apitypes.BrowserStateStopped
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	b, ok := r.browsers[browserKey(slug, session)]
+	if !ok {
+		return apitypes.BrowserStateStopped
+	}
+	return wireState(b.state)
+}
+
+// Watch attaches a browser window to group's tabs in the browser of
+// (slug, session), starting the browser when none runs, and returns
+// the watcher the window reads from. The first window on a group turns
+// the group's screencast on; the browser counts the group as a window,
+// which keeps it from going idle, until the last window has been gone
+// for browserWindowGrace.
+func (r *browserRegistry) Watch(ctx context.Context, slug, session, group string) (*browserWatcher, error) {
+	b, err := r.acquire(ctx, slug, session)
+	if err != nil {
+		return nil, err
+	}
+	r.mu.Lock()
+	if b.state != browserRunning && b.state != browserIdle {
+		r.mu.Unlock()
+		return nil, errors.New("the browser is not running")
+	}
+	if b.released[group] {
+		r.mu.Unlock()
+		return nil, errors.New("this task has ended")
+	}
+	b.state = browserRunning
+	b.deadline = time.Time{}
+	b.lastUsed = r.clk.Now()
+	g := b.groupLocked(group)
+	w := newBrowserWatcher(b, group)
+	g.watchers[w] = struct{}{}
+	g.closeAt = time.Time{}
+	start := !g.watching
+	if start {
+		g.watching = true
+		b.windows++
+	}
+	link := b.link
+	w.event(apitypes.BrowserWindowEvent{Type: apitypes.BrowserWindowEventTypeState, Browser: apitypes.BrowserStateRunning})
+	if g.shownTab != "" {
+		w.event(tabEvent(g.shownTab, g.tabInfo[g.shownTab]))
+	}
+	r.mu.Unlock()
+	if start && link != nil {
+		go func() {
+			sctx, cancel := sendCtx(browserSendTimeout)
+			defer cancel()
+			_ = link.send(sctx, browserpod.Message{Type: browserpod.TypeScreencast, Group: group, OK: true}, nil)
+		}()
+	}
+	r.kick()
+	return w, nil
+}
+
+// Unwatch is a window leaving its group. The group's screencast stays
+// on for browserWindowGrace, so a reload or a brief disconnect costs
+// nothing; the sweep turns it off when no window has come back.
+func (r *browserRegistry) Unwatch(w *browserWatcher) {
+	r.mu.Lock()
+	if g, ok := w.b.groups[w.group]; ok {
+		delete(g.watchers, w)
+		if len(g.watchers) == 0 && g.watching {
+			g.closeAt = r.clk.Now().Add(browserWindowGrace)
+		}
+	}
+	r.mu.Unlock()
+	r.kick()
+}
+
+// closeWindow ends a group's screencast once its grace has run out
+// with no window back on it.
+func (r *browserRegistry) closeWindow(b *browser, group string) {
+	r.mu.Lock()
+	g, ok := b.groups[group]
+	if !ok || !g.watching || len(g.watchers) != 0 || g.closeAt.IsZero() || g.closeAt.After(r.clk.Now()) {
+		r.mu.Unlock()
+		return
+	}
+	g.watching = false
+	g.closeAt = time.Time{}
+	b.windows--
+	link := b.link
+	r.mu.Unlock()
+	if link != nil {
+		go func() {
+			sctx, cancel := sendCtx(browserSendTimeout)
+			defer cancel()
+			_ = link.send(sctx, browserpod.Message{Type: browserpod.TypeScreencast, Group: group, OK: false}, nil)
+		}()
+	}
+}
+
+// onFrame hands a screencast frame to the windows on its group. The
+// bytes are read only when a window is there to see them; otherwise the
+// body is left for the caller to drain. One buffer serves every window.
+func (r *browserRegistry) onFrame(b *browser, msg browserpod.Message, body io.Reader) {
+	if body == nil || msg.Bytes <= 0 || msg.Bytes > browserMaxFrameBytes {
+		return
+	}
+	r.mu.Lock()
+	g, ok := b.groups[msg.Group]
+	watched := ok && len(g.watchers) > 0
+	r.mu.Unlock()
+	if !watched {
+		return
+	}
+	buf := make([]byte, msg.Bytes)
+	if _, err := io.ReadFull(body, buf); err != nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	g, ok = b.groups[msg.Group]
+	if !ok {
+		return
+	}
+	if g.shownTab != msg.Tab {
+		g.shownTab = msg.Tab
+		ev := tabEvent(msg.Tab, g.tabInfo[msg.Tab])
+		for w := range g.watchers {
+			w.event(ev)
+		}
+	}
+	for w := range g.watchers {
+		w.offer(buf)
+	}
 }
 
 // oldestIdleLocked is the idle browser unused the longest, or nil.
@@ -590,12 +883,17 @@ func (r *browserRegistry) onMessage(b *browser, msg browserpod.Message, body io.
 		if g, ok := b.groups[msg.Group]; ok && msg.Tab != "" {
 			g.tabs[msg.Tab] = true
 			b.tabs[msg.Tab] = msg.Group
+			g.tabInfo[msg.Tab] = browserTabInfo{url: msg.URL, title: msg.Title}
 		}
 		r.mu.Unlock()
 	case browserpod.TypeTabClosed:
 		r.mu.Lock()
 		if g, ok := b.groups[msg.Group]; ok {
 			delete(g.tabs, msg.Tab)
+			delete(g.tabInfo, msg.Tab)
+			if g.shownTab == msg.Tab {
+				g.shownTab = ""
+			}
 		}
 		delete(b.tabs, msg.Tab)
 		r.mu.Unlock()
@@ -604,8 +902,18 @@ func (r *browserRegistry) onMessage(b *browser, msg browserpod.Message, body io.
 		if g, ok := b.groups[msg.Group]; ok {
 			g.pages++
 			g.lastURL = msg.URL
+			info := browserTabInfo{url: msg.URL, title: msg.Title}
+			g.tabInfo[msg.Tab] = info
+			if msg.Tab == g.shownTab {
+				ev := tabEvent(msg.Tab, info)
+				for w := range g.watchers {
+					w.event(ev)
+				}
+			}
 		}
 		r.mu.Unlock()
+	case browserpod.TypeFrame:
+		r.onFrame(b, msg, body)
 	case browserpod.TypeDownload:
 		r.onDownload(b, msg, body)
 	case browserpod.TypeProfile:
@@ -621,7 +929,9 @@ func (r *browserRegistry) onState(b *browser, msg browserpod.Message) {
 	switch msg.State {
 	case browserpod.StateRunning:
 		r.mu.Lock()
+		became := false
 		if b.state == browserStarting {
+			became = true
 			b.state = browserRunning
 			b.deadline = time.Time{}
 			// Nobody may be waiting any more: the command that started
@@ -636,6 +946,9 @@ func (r *browserRegistry) onState(b *browser, msg browserpod.Message) {
 		r.mu.Unlock()
 		if msg.Detail != "" {
 			r.logf("browser %s: running (%s)", b.key(), msg.Detail)
+		}
+		if became {
+			r.notify(b, apitypes.BrowserStateRunning)
 		}
 		r.kick()
 	case browserpod.StateStopped:
@@ -733,6 +1046,13 @@ func (r *browserRegistry) ReleaseGroup(slug, session, group string) (structured.
 		for tab := range g.tabs {
 			delete(b.tabs, tab)
 		}
+		// The windows on it end with it; close-group ends its cast.
+		for w := range g.watchers {
+			w.end("The task has ended.")
+		}
+		if g.watching {
+			b.windows--
+		}
 		delete(b.groups, group)
 	}
 	b.released[group] = true
@@ -774,6 +1094,7 @@ func (r *browserRegistry) beginSave(b *browser) {
 	b.deadline = r.clk.Now().Add(browserSaveTimeout)
 	link := b.link
 	r.mu.Unlock()
+	r.notify(b, apitypes.BrowserStateStopped)
 	r.kick()
 	if link == nil {
 		r.finish(b)
@@ -822,17 +1143,27 @@ func (r *browserRegistry) finish(b *browser) {
 		}
 		close(b.ready)
 	}
+	wasSaving := b.state == browserSaving
 	b.state = browserStopped
 	b.deadline = time.Time{}
 	for id, ch := range b.pending {
 		close(ch)
 		delete(b.pending, id)
 	}
+	for _, g := range b.groups {
+		for w := range g.watchers {
+			w.end("The browser stopped.")
+		}
+	}
 	link := b.link
 	b.link = nil
 	r.mu.Unlock()
 	if link != nil {
 		link.close()
+	}
+	if !wasSaving {
+		// A save already reported stopped when it began.
+		r.notify(b, apitypes.BrowserStateStopped)
 	}
 	r.stopWait.Add(1)
 	go func() {

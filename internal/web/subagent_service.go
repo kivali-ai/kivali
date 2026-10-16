@@ -49,6 +49,7 @@ import (
 	"github.com/kivali-ai/kivali/internal/provider"
 	"github.com/kivali-ai/kivali/internal/store"
 	"github.com/kivali-ai/kivali/internal/structured"
+	"github.com/kivali-ai/kivali/internal/web/apitypes"
 )
 
 // subagentWatchPoll is how often each per-task watcher reads the
@@ -1265,6 +1266,42 @@ func (s *SubagentService) writeSubagentMeta(parent string, t SubagentTaskInput, 
 	path := subagentMetaPath(s.Store.Root(), parent, id)
 	_ = os.MkdirAll(filepath.Dir(path), 0o755)
 	_ = os.WriteFile(path, body, 0o644)
+}
+
+// browserStateChanged is the registry's report of a browser's state
+// for (slug, session). Every running web task on that session gets it
+// in its meta.json, which the task's stream watches, so the task's
+// view learns it at once and can show Open browser accordingly.
+func (s *SubagentService) browserStateChanged(slug, session string, state apitypes.BrowserState) {
+	for _, j := range s.listJobs(slug) {
+		if j.Kind != agentpod.SubagentKindWeb || j.Session != session || j.State != subagentJobRunning {
+			continue
+		}
+		s.setSubagentMetaBrowser(slug, j.ID, state)
+	}
+}
+
+// setSubagentMetaBrowser writes a task's browser state into its
+// meta.json, leaving the rest of the file as it is.
+func (s *SubagentService) setSubagentMetaBrowser(parent, id string, state apitypes.BrowserState) {
+	path := subagentMetaPath(s.Store.Root(), parent, id)
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	var meta map[string]any
+	if json.Unmarshal(body, &meta) != nil {
+		return
+	}
+	if cur, _ := meta["browser"].(string); cur == string(state) {
+		return
+	}
+	meta["browser"] = state
+	out, err := json.MarshalIndent(meta, "", "  ")
+	if err != nil {
+		return
+	}
+	_ = os.WriteFile(path, out, 0o644)
 }
 
 // newSubagentID returns a short hex id for a new subagent.
