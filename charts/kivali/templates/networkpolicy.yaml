@@ -1,6 +1,6 @@
 {{- if .Values.networkPolicy.enabled }}
 # Agents run shell commands in pods and must not be able to act as the owner
-# by calling the server's HTTP API. Two policies; they take effect only on
+# by calling the server's HTTP API. Three policies; they take effect only on
 # a cluster whose CNI enforces NetworkPolicy (k3s's embedded network policy
 # controller does).
 #
@@ -42,7 +42,43 @@ spec:
         - protocol: TCP
           port: 53
 ---
-# 2. Server pod, defence in depth: the HTTP port only from outside the pod
+# 2. Browser pods: the same egress as agent pods. A browser's only route to
+#    the web is the egress proxy (Chromium runs with it as --proxy-server);
+#    the pod reaches core over the hostPath Unix socket, not the network.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kivali-browserpod-egress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kivali.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: kivali-browserpod
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: kivali
+      ports:
+        - protocol: TCP
+          port: 3128
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+# 3. Server pod, defence in depth: the HTTP port only from outside the pod
 #    network, the proxy port only from pods in this namespace. On k3s
 #    kube-router evaluates policy before kube-proxy's SNAT and accepts
 #    traffic from the local node ahead of every pod chain, so kubelet

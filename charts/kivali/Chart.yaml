@@ -5,8 +5,9 @@ type: application
 # Chart version: bumped when the templates or values change.
 version: 0.2.0
 # appVersion tracks the release tag (the VERSION convention: vMAJOR.MINOR.PATCH).
-# It is the default image tag for kivali, kivali-egress-proxy and the
-# kivali-agent-shell image the server derives from AGENTPOD_IMAGE.
+# It is the default image tag for kivali, kivali-egress-proxy,
+# kivali-browser and the kivali-agent-shell image the server derives from
+# AGENTPOD_IMAGE.
 appVersion: v1.1.1
 annotations:
   artifacthub.io/license: Apache-2.0

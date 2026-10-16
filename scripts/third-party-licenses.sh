@@ -18,7 +18,7 @@
 #
 #   header ARTIFACT        Kivali's NOTICE and what ARTIFACT bundles besides
 #                          (release, kivali, kivali-agent-shell,
-#                          kivali-egress-proxy)
+#                          kivali-egress-proxy, kivali-browser)
 #   go PKG...              the Go modules linked into PKG..., for the GOOS,
 #                          GOARCH and CGO_ENABLED in the environment, and the
 #                          Go standard library
@@ -115,6 +115,7 @@ header() {
     kivali) what='the kivali image (the Kivali server and its web app)' ;;
     kivali-agent-shell) what='the kivali-agent-shell image (the agents'"'"' shell)' ;;
     kivali-egress-proxy) what='the kivali-egress-proxy image' ;;
+    kivali-browser) what='the kivali-browser image (the browser a web subagent drives)' ;;
     release) what='Kivali: Kivali Desktop, the Kivali VM image, and the kivali, kivali-agent-shell and kivali-egress-proxy images' ;;
     *) die "unknown artifact '$artifact'" ;;
   esac
@@ -162,6 +163,21 @@ Debian packages
 --------------------------------------------------------------------------------
 
 The operating system and the agents' tools are Debian packages. Each
+package's copyright and license are in /usr/share/doc/<package>/copyright;
+the installed packages and the offer of their source code are in
+/usr/share/doc/kivali/packages.txt and /usr/share/doc/kivali/SOURCES.md.
+EOF
+      ;;
+    kivali-browser)
+      printf '\n%s\nSIL Open Font License 1.1 (the fonts named above)\n%s\n\n' "$thin" "$thin"
+      tr -d '\r' < "$root/design-system/fonts/OFL.txt"
+      cat <<'EOF'
+
+--------------------------------------------------------------------------------
+Debian packages
+--------------------------------------------------------------------------------
+
+The operating system, Chromium and its fonts are Debian packages. Each
 package's copyright and license are in /usr/share/doc/<package>/copyright;
 the installed packages and the offer of their source code are in
 /usr/share/doc/kivali/packages.txt and /usr/share/doc/kivali/SOURCES.md.

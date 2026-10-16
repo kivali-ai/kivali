@@ -86,6 +86,28 @@ egress:
       cpu: 200m
       memory: 128Mi
 
+browser:
+  # The browser a web subagent drives: one pod per agent web session,
+  # created and deleted by the server (BROWSER_IMAGE). The image copies the
+  # kivali binary from the server image, so keep the two at the same tag.
+  image:
+    repository: kivali-browser
+    # Empty means the server image's tag (image.tag, else .Chart.AppVersion):
+    # the browser image is built from that server image.
+    tag: ""
+  # Each browser pod's container (BROWSER_CPU_REQUEST, BROWSER_MEMORY_REQUEST,
+  # BROWSER_CPU_LIMIT, BROWSER_MEMORY_LIMIT).
+  resources:
+    requests:
+      cpu: 100m
+      memory: 512Mi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+  # How many browsers the team's agents may have running at once
+  # (BROWSER_MAX_PER_TEAM).
+  maxPerTeam: 3
+
 # initContainer that chmods/chowns the hostPath UDS dir for UID 65532.
 initImage: busybox:1.36
 

@@ -2,7 +2,7 @@
 
 The Kubernetes deployment of Kivali: the server Deployment (with its
 egress-proxy sidecar), the two Services, the data PVC, the RBAC the server
-needs to manage agent pods, and NetworkPolicies. `kivali-supervisor`
+needs to manage agent pods and browser pods, and NetworkPolicies. `kivali-supervisor`
 installs it into each org's VM as a k3s HelmChart
 (`internal/supervisor/install.go`; its values are in
 [supervisor.md, "Install values"](../../docs/developers/supervisor.md#install-values)), and
@@ -31,7 +31,8 @@ name and **fails the render unless the release is named `kivali`**:
 | Role / RoleBinding | `kivali-agentpod-manager` |
 
 The namespace comes from the release (`-n`). Agent pods are labelled
-`app=kivali-agentpod`; the hostPath UDS dir defaults to `/var/run/kivali/uds`.
+`app=kivali-agentpod` and browser pods `app=kivali-browserpod`; the
+hostPath UDS dir defaults to `/var/run/kivali/uds`.
 
 ## Install on a server
 
@@ -46,9 +47,9 @@ kubectl -n kivali create secret generic kivali-secrets \
   --from-literal=owner-emails=you@example.com \
   --from-literal=session-key=$(openssl rand -hex 32)
 
-# 2. Install (images kivali, kivali-egress-proxy and kivali-agent-shell must
-#    exist at the same tag; the server derives the agent-shell image from
-#    AGENTPOD_IMAGE, so it has no value here).
+# 2. Install (images kivali, kivali-egress-proxy, kivali-agent-shell and
+#    kivali-browser must exist at the same tag; the server derives the
+#    agent-shell image from AGENTPOD_IMAGE, so it has no value here).
 helm install kivali charts/kivali -n kivali -f charts/kivali/examples/values-prod.yaml
 
 # 3. Connect Claude: start Claude Code in the server container and pick a
@@ -91,6 +92,20 @@ numbers (server 200m/1Gi requests, 1000m/12Gi limits; egress 20m/32Mi,
 `server.resources` requests 200m/512Mi, limits 1000m/8Gi, `:dev` tags,
 `kivaliEnv: dev`, `devMode: true`.
 
+## Browser values
+
+The server starts one browser pod per agent web session, from
+`browser.image` (`BROWSER_IMAGE`; `repository` default `kivali-browser`,
+an empty `tag` means the server image's, `image.tag` or else the chart's
+`appVersion`), and deletes it when the
+browser is done. `browser.resources` sizes each pod's container (default
+100m/512Mi requests, 2/2Gi limits; `BROWSER_CPU_REQUEST`,
+`BROWSER_MEMORY_REQUEST`, `BROWSER_CPU_LIMIT`, `BROWSER_MEMORY_LIMIT`).
+`browser.maxPerTeam` (`BROWSER_MAX_PER_TEAM`, default 3, at least 1) is
+how many browsers the team's agents may have running at once. Browser pods
+run on the server's node (they reach it over the hostPath socket), keep
+nothing on a volume, and reach the web only through the egress proxy.
+
 ## Sign-in values
 
 `oauth.redirectURL` makes `OAUTH_REDIRECT_URL` a literal instead of the
@@ -114,8 +129,8 @@ by the operator, outside the chart (keys above).
 ## NetworkPolicy
 
 Agents run shell commands in pods, and the HTTP API trusts whoever reaches
-it as the owner. A pod must therefore not be able to call it. Both policies
-sit under `networkPolicy.enabled` (default true):
+it as the owner. A pod must therefore not be able to call it. All three
+policies sit under `networkPolicy.enabled` (default true):
 
 1. `kivali-agentpod-egress` (load-bearing): agent pods (`app=kivali-agentpod`)
    get egress default deny, allowing only TCP 3128 to pods labelled
@@ -123,7 +138,11 @@ sit under `networkPolicy.enabled` (default true):
    to CoreDNS in `kube-system`. Agent pods reach core over the hostPath Unix
    socket, and every outbound request of the CLI and the agent-shell already
    goes through the proxy via `HTTP_PROXY`.
-2. `kivali-server-ingress` (defence in depth): the server's HTTP port 8080
+2. `kivali-browserpod-egress` (load-bearing): browser pods
+   (`app=kivali-browserpod`) get the same egress as agent pods, the proxy
+   port and DNS. The egress proxy is a browser's only route to the web:
+   Chromium runs with it as its proxy server.
+3. `kivali-server-ingress` (defence in depth): the server's HTTP port 8080
    accepts only `0.0.0.0/0` except `networkPolicy.podCIDR`; port 3128
    accepts only pods in the namespace. On k3s, kube-router evaluates policy
    before kube-proxy's SNAT and accepts traffic from the local node ahead of

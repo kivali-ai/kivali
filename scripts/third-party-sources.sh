@@ -23,9 +23,9 @@
 #   distroless                the egress proxy's base image
 #
 # Who calls what: the VM image build (vm/Dockerfile) writes the VM's
-# SOURCES.md, the kivali and kivali-agent-shell image builds theirs from
-# the packages they install, and the release workflow publishes the VM's
-# with the images' Debian sections appended.
+# SOURCES.md, the kivali, kivali-agent-shell and kivali-browser image
+# builds theirs from the packages they install, and the release workflow
+# publishes the VM's with the images' Debian sections appended.
 #
 # POSIX sh: it runs in Alpine and Debian build stages.
 
@@ -53,9 +53,9 @@ offer() {
 Kivali includes software licensed under the GNU General Public License
 (GPL) and the GNU Lesser General Public License (LGPL): among it the
 Linux kernel, BusyBox and other Alpine Linux packages and k3s in the
-Kivali VM image, and Debian packages in the kivali and kivali-agent-shell
-images. SOURCES.md lists them, with links to the source code of the
-exact versions shipped.
+Kivali VM image, and Debian packages in the kivali, kivali-agent-shell
+and kivali-browser images. SOURCES.md lists them, with links to the
+source code of the exact versions shipped.
 
 For three years from the date of the Kivali release that contains this
 file, the Kivali authors offer to give any third party a complete

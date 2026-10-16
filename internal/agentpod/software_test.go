@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/kivali-ai/kivali/internal/kube"
 )
 
 // agentShellContainer returns the agent-shell container of a manifest.
@@ -27,7 +29,7 @@ func agentShellContainer(t *testing.T, pod map[string]any) map[string]any {
 }
 
 func specHash(pod map[string]any) string {
-	return pod["metadata"].(map[string]any)["labels"].(map[string]string)[specHashLabel]
+	return pod["metadata"].(map[string]any)["labels"].(map[string]string)[kube.SpecHashLabel]
 }
 
 // No software: the agent-shell runs as the image's user, as before,
@@ -157,7 +159,7 @@ func testProvisioner(t *testing.T, software *[]string, resolveErr *error) (*Prov
 	cfg.Namespace = "kivali"
 	p := &Provisioner{
 		cfg:    cfg,
-		kube:   &kubeClient{server: srv.URL, http: srv.Client(), namespace: "kivali"},
+		kube:   kube.NewForServer(srv.URL, srv.Client(), "kivali"),
 		logger: t.Logf,
 	}
 	WithSoftware(func(slug string) ([]string, error) {
