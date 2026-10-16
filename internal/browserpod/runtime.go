@@ -222,8 +222,14 @@ func (s *session) run(ctx context.Context) error {
 		case TypeFile:
 			s.receiveFile(msg, body)
 		case TypeCloseGroup:
+			// The group's queue goes with its tabs, after whatever is
+			// still queued on it.
 			group := msg.Group
-			s.queueFor(workCtx, group).push(func() { s.b.closeGroup(workCtx, group) })
+			q := s.queueFor(workCtx, group)
+			q.push(func() {
+				s.b.closeGroup(workCtx, group)
+				s.dropQueue(group, q)
+			})
 		case TypeScreencast:
 			m := msg
 			s.input.push(func() {
@@ -321,6 +327,18 @@ func (s *session) queueFor(ctx context.Context, group string) *serialQueue {
 	return q
 }
 
+// dropQueue forgets a group's queue and stops its goroutine, once the
+// queue has nothing left to run. A command for the group after this
+// gets a fresh queue; core refuses such commands anyway.
+func (s *session) dropQueue(group string, q *serialQueue) {
+	s.workersMu.Lock()
+	if s.workers[group] == q {
+		delete(s.workers, group)
+	}
+	s.workersMu.Unlock()
+	q.stop()
+}
+
 // enqueue runs a command on its group's queue and answers it.
 func (s *session) enqueue(ctx context.Context, msg Message) {
 	s.queueFor(ctx, msg.Group).push(func() {
@@ -384,14 +402,23 @@ func (s *session) packTo(path string) error {
 	return f.Close()
 }
 
-// serialQueue runs functions one at a time, in the order pushed.
+// serialQueue runs functions one at a time, in the order pushed, until
+// its context ends or it is stopped.
 type serialQueue struct {
-	mu    sync.Mutex
-	items []func()
-	wake  chan struct{}
+	mu       sync.Mutex
+	items    []func()
+	wake     chan struct{}
+	done     chan struct{}
+	stopOnce sync.Once
 }
 
-func newSerialQueue() *serialQueue { return &serialQueue{wake: make(chan struct{}, 1)} }
+func newSerialQueue() *serialQueue {
+	return &serialQueue{wake: make(chan struct{}, 1), done: make(chan struct{})}
+}
+
+// stop ends the queue's goroutine once it is idle. What is pushed
+// after this never runs.
+func (q *serialQueue) stop() { q.stopOnce.Do(func() { close(q.done) }) }
 
 func (q *serialQueue) push(fn func()) {
 	q.mu.Lock()
@@ -411,6 +438,8 @@ func (q *serialQueue) run(ctx context.Context) {
 			select {
 			case <-q.wake:
 				continue
+			case <-q.done:
+				return
 			case <-ctx.Done():
 				return
 			}

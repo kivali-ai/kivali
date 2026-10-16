@@ -15,7 +15,7 @@ import (
 )
 
 // maxProfileBytes bounds what an unpacked profile may hold.
-const maxProfileBytes = 2 << 30
+const maxProfileBytes = MaxProfileBytes
 
 // profileSkipDirs are directories a saved profile leaves out, at any
 // depth: caches Chromium rebuilds, models and components it downloads

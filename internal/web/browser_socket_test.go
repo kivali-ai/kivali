@@ -167,7 +167,7 @@ func TestBrowserConnectOverTheWire(t *testing.T) {
 	if !bytes.Equal(gotProfile, fresh) {
 		t.Error("stored profile differs from what the pod sent")
 	}
-	if stopped := f.prov.awaitStop(t); stopped != "alice/open" {
+	if stopped := f.stopped(t); stopped != "alice/open" {
 		t.Errorf("pod stop = %q", stopped)
 	}
 }

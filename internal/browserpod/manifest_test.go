@@ -101,7 +101,12 @@ func TestPodManifestShape(t *testing.T) {
 	if _, ok := ctr["ports"]; ok {
 		t.Errorf("container exposes ports: %v", ctr["ports"])
 	}
-	if want := map[string]any{"runAsUser": float64(65532), "runAsGroup": float64(65532), "allowPrivilegeEscalation": false}; !reflect.DeepEqual(ctr["securityContext"], want) {
+	wantSec := map[string]any{
+		"runAsUser": float64(65532), "runAsGroup": float64(65532), "runAsNonRoot": true,
+		"allowPrivilegeEscalation": false,
+		"capabilities":             map[string]any{"drop": []any{"ALL"}},
+	}
+	if !reflect.DeepEqual(ctr["securityContext"], wantSec) {
 		t.Errorf("securityContext = %v", ctr["securityContext"])
 	}
 	wantRes := map[string]any{
@@ -112,13 +117,18 @@ func TestPodManifestShape(t *testing.T) {
 		t.Errorf("resources = %v", ctr["resources"])
 	}
 
-	// Mounts: the UDS dir, memory-backed /dev/shm, and /tmp. No PVC.
+	// Mounts: the browser subdirectory of the UDS dir, read-only and
+	// never the directory with core.sock in it, memory-backed /dev/shm,
+	// and /tmp. No PVC.
 	mounts := map[string]string{}
 	for _, m := range ctr["volumeMounts"].([]any) {
 		mm := m.(map[string]any)
 		mounts[mm["mountPath"].(string)] = mm["name"].(string)
+		if mm["name"] == "uds" && mm["readOnly"] != true {
+			t.Errorf("uds mount is writable: %v", mm)
+		}
 	}
-	if want := map[string]string{"/var/run/kivali/uds": "uds", "/dev/shm": "shm", "/tmp": "tmp"}; !reflect.DeepEqual(mounts, want) {
+	if want := map[string]string{"/var/run/kivali/uds/browser": "uds", "/dev/shm": "shm", "/tmp": "tmp"}; !reflect.DeepEqual(mounts, want) {
 		t.Errorf("mounts = %v, want %v", mounts, want)
 	}
 	vols := map[string]map[string]any{}
@@ -129,7 +139,7 @@ func TestPodManifestShape(t *testing.T) {
 		}
 		vols[vm["name"].(string)] = vm
 	}
-	if want := map[string]any{"path": "/var/run/kivali/uds", "type": "DirectoryOrCreate"}; !reflect.DeepEqual(vols["uds"]["hostPath"], want) {
+	if want := map[string]any{"path": "/var/run/kivali/uds/browser", "type": "Directory"}; !reflect.DeepEqual(vols["uds"]["hostPath"], want) {
 		t.Errorf("uds volume = %v", vols["uds"])
 	}
 	if want := map[string]any{"medium": "Memory", "sizeLimit": "1Gi"}; !reflect.DeepEqual(vols["shm"]["emptyDir"], want) {
@@ -162,7 +172,7 @@ func TestPodManifestEnv(t *testing.T) {
 		"KIVALI_BROWSER_SLUG":     "alice",
 		"KIVALI_BROWSER_SESSION":  "s 1",
 		"KIVALI_BROWSER_TOKEN":    "tok",
-		"KIVALI_BROWSER_CORE_UDS": "/var/run/kivali/uds/core.sock",
+		"KIVALI_BROWSER_CORE_UDS": "/var/run/kivali/uds/browser/browser.sock",
 	}
 	if !reflect.DeepEqual(env, want) {
 		t.Errorf("env = %v, want %v", env, want)

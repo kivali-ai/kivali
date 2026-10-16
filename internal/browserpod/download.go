@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 	"unicode"
 )
 
@@ -14,6 +15,8 @@ import (
 type download struct {
 	name string
 	tab  *tab
+	// cancelled: core's limit stopped it; the tab has been told.
+	cancelled bool
 }
 
 func (b *browser) downloadDir() string { return filepath.Join(b.dir, "downloads") }
@@ -60,10 +63,20 @@ func (b *browser) onDownloadWillBegin(raw json.RawMessage) {
 
 func (b *browser) onDownloadProgress(raw json.RawMessage) {
 	var ev struct {
-		GUID  string `json:"guid"`
-		State string `json:"state"`
+		GUID          string  `json:"guid"`
+		State         string  `json:"state"`
+		TotalBytes    float64 `json:"totalBytes"`
+		ReceivedBytes float64 `json:"receivedBytes"`
 	}
 	if json.Unmarshal(raw, &ev) != nil {
+		return
+	}
+	if ev.State == "inProgress" {
+		// Stop a file that is over the limit while it is still
+		// arriving, so one large download cannot fill the pod's disk.
+		if ev.TotalBytes > MaxDownloadBytes || ev.ReceivedBytes > MaxDownloadBytes {
+			b.cancelDownload(ev.GUID)
+		}
 		return
 	}
 	if ev.State != "completed" && ev.State != "canceled" {
@@ -80,6 +93,29 @@ func (b *browser) onDownloadProgress(raw json.RawMessage) {
 	}
 	// Sending may take a while; the event loop moves on.
 	go b.deliverDownload(d, path)
+}
+
+// cancelDownload has Chromium stop a download that grew past
+// MaxDownloadBytes. The canceled progress event that follows removes
+// what was written; the tab is told once.
+func (b *browser) cancelDownload(guid string) {
+	b.mu.Lock()
+	d := b.downloads[guid]
+	if d == nil || d.cancelled {
+		b.mu.Unlock()
+		return
+	}
+	d.cancelled = true
+	b.mu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := b.conn.Call(ctx, "", "Browser.cancelDownload", map[string]any{"guid": guid}); err != nil {
+		b.log.Printf("cancel download %s: %v", guid, err)
+		return
+	}
+	if d.tab != nil {
+		d.tab.note(fmt.Sprintf("A download of %s was stopped: the limit is %d MB.", cleanFileName(d.name), MaxDownloadBytes>>20))
+	}
 }
 
 // deliverDownload sends a finished download to core, or drops one

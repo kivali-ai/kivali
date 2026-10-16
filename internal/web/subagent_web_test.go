@@ -37,6 +37,7 @@ func webService(t *testing.T, driver SubagentDriver) (*SubagentService, string, 
 	svc, st, parentRoot, _, del := newSubagentTestServiceWithDeliveries(t, driver)
 	prov := newFakeBrowserProv()
 	svc.Browsers = newBrowserRegistry(st, prov, svc.clk(), 3, t.Logf, func(slug, id string) string { return subagentFilesRoot(st, slug, id) })
+	svc.Browsers.markBooted()
 	return svc, parentRoot, del, prov
 }
 
@@ -105,7 +106,16 @@ func TestWebTaskDispatchBuildsTheWebSpec(t *testing.T) {
 // checked at dispatch with an error naming the task and the fix, and a
 // general task may not carry web fields.
 func TestWebTaskDispatchIsRefusedWhenItCannotRun(t *testing.T) {
-	svc, _, _, prov := webService(t, &fakeSubagentDriver{})
+	svc, parentRoot, _, prov := webService(t, &fakeSubagentDriver{})
+	// A link under /files/ to a file outside the parent's tree is no
+	// file of the parent's, whatever its name says.
+	outside := filepath.Join(t.TempDir(), "credentials.json")
+	if err := os.WriteFile(outside, []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(parentRoot, "artifacts", "private", "leak.pdf")); err != nil {
+		t.Fatal(err)
+	}
 	cases := []struct {
 		name string
 		args json.RawMessage
@@ -115,6 +125,7 @@ func TestWebTaskDispatchIsRefusedWhenItCannotRun(t *testing.T) {
 		{"other session", webArgs(t, map[string]any{"session": "vendor.com"}), `only "open" is available`},
 		{"bad start url", webArgs(t, map[string]any{"start_url": "ftp://x"}), "http or https URL"},
 		{"missing file", webArgs(t, map[string]any{"files": []string{"/files/artifacts/private/ghost.pdf"}}), "is not a file under your /files/"},
+		{"link out of the tree", webArgs(t, map[string]any{"files": []string{"/files/artifacts/private/leak.pdf"}}), "is not a file under your /files/"},
 		{"relative file", webArgs(t, map[string]any{"files": []string{"artifacts/private/x.pdf"}}), "absolute, clean path"},
 		{"bad kind", mustArgs(t, map[string]any{"description": "d", "prompt": "p", "kind": "browser"}), `kind "browser"`},
 		{"general with session", mustArgs(t, map[string]any{"description": "d", "prompt": "p", "session": "open"}), "set kind to \"web\""},
@@ -155,11 +166,20 @@ func TestWebCommandChecksBeforeRelaying(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(parentRoot, "artifacts", "private", "quote.pdf"), []byte("pdf"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// A declared file that turned into a link out of the tree after
+	// dispatch is read the way file_view would read it: not at all.
+	outside := filepath.Join(t.TempDir(), "credentials.json")
+	if err := os.WriteFile(outside, []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(parentRoot, "artifacts", "private", "leak.pdf")); err != nil {
+		t.Fatal(err)
+	}
 	schema, _ := structured.Parse([]byte(quoteSchema))
 	if err := files.BuildSubagentOverlay(files.SubagentOverlay{Root: subagentFilesRoot(svc.Store, "alice", "w1")}); err != nil {
 		t.Fatal(err)
 	}
-	svc.registerJob(&subagentJob{ID: "w1", Parent: "alice", Kind: agentpod.SubagentKindWeb, Session: agentpod.OpenWebSession, State: subagentJobRunning, Schema: schema, Files: []string{"/files/artifacts/private/quote.pdf"}, done: make(chan struct{})})
+	svc.registerJob(&subagentJob{ID: "w1", Parent: "alice", Kind: agentpod.SubagentKindWeb, Session: agentpod.OpenWebSession, State: subagentJobRunning, Schema: schema, Files: []string{"/files/artifacts/private/quote.pdf", "/files/artifacts/private/leak.pdf"}, done: make(chan struct{})})
 	svc.registerJob(&subagentJob{ID: "g1", Parent: "alice", Kind: agentpod.SubagentKindGeneral, State: subagentJobRunning, done: make(chan struct{})})
 	svc.registerJob(&subagentJob{ID: "s1", Parent: "alice", Kind: agentpod.SubagentKindWeb, Session: "vendor.com", State: subagentJobRunning, Schema: schema, done: make(chan struct{})})
 	ctx := context.Background()
@@ -174,6 +194,7 @@ func TestWebCommandChecksBeforeRelaying(t *testing.T) {
 		{"bad navigate", "w1", agentpod.WebCommandRequest{Command: "navigate", Args: json.RawMessage(`{"url":"file:///etc/passwd"}`)}, "http or https"},
 		{"eval off open", "s1", agentpod.WebCommandRequest{Command: "eval", Args: json.RawMessage(`{"script":"1"}`)}, "not available in this session"},
 		{"upload unknown file", "w1", agentpod.WebCommandRequest{Command: "upload", Args: json.RawMessage(`{"ref":"e1","file":"secret.pdf"}`)}, "not one of this task's files"},
+		{"upload a link out of the tree", "w1", agentpod.WebCommandRequest{Command: "upload", Args: json.RawMessage(`{"ref":"e1","file":"leak.pdf"}`)}, "cannot be read"},
 	}
 	for _, tc := range refusals {
 		t.Run(tc.name, func(t *testing.T) {
@@ -194,9 +215,12 @@ func TestWebCommandChecksBeforeRelaying(t *testing.T) {
 		got <- svc.WebCommand(ctx, "alice", "w1", agentpod.WebCommandRequest{Command: "upload", Args: json.RawMessage(`{"ref":"e3","file":"quote.pdf"}`)})
 	}()
 	token := <-prov.startedC
-	b := svc.Browsers.claim("alice", "open", token)
 	link := newFakeLink()
-	if err := svc.Browsers.attach(ctx, b, link); err != nil {
+	b := svc.Browsers.claim("alice", "open", token, link)
+	if b == nil {
+		t.Fatal("claim found no waiting browser")
+	}
+	if err := svc.Browsers.attach(ctx, b); err != nil {
 		t.Fatal(err)
 	}
 	svc.Browsers.onMessage(b, browserpod.Message{Type: browserpod.TypeState, State: browserpod.StateRunning}, nil)

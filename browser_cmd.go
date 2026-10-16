@@ -21,7 +21,7 @@ func runBrowser(args []string) {
 	slug := fs.String("slug", os.Getenv(browserpod.EnvSlug), "agent slug the browser is for")
 	session := fs.String("session", os.Getenv(browserpod.EnvSession), "web session id")
 	token := fs.String("token", os.Getenv(browserpod.EnvToken), "per-pod token core expects on connect")
-	coreUDS := fs.String("core-uds", os.Getenv(browserpod.EnvCoreUDS), "absolute path to core.sock")
+	coreUDS := fs.String("core-uds", os.Getenv(browserpod.EnvCoreUDS), "absolute path to browser.sock, core's socket for browser pods")
 	proxy := fs.String("proxy", os.Getenv(browserpod.EnvProxy), "proxy Chromium uses (--proxy-server), when set")
 	chromium := fs.String("chromium", "chromium", "Chromium binary, looked up on PATH")
 	dir := fs.String("dir", "/tmp/kivali-browser", "working directory for the profile, downloads and task files")

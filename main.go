@@ -477,6 +477,22 @@ func main() {
 		}
 		log.Printf("agentpod socket listening on %s", agentpodSocketPath)
 	}
+	// The browser pods' socket, in a subdirectory of the UDS dir that
+	// is the only part of it a browser pod mounts. It serves the pod's
+	// connect route and nothing else.
+	stopBrowserSocket := func() {}
+	if cfg.AgentpodUDSDir != "" {
+		browserUDSDir := filepath.Join(cfg.AgentpodUDSDir, browserpod.UDSSubdir)
+		if err := os.MkdirAll(browserUDSDir, 0o700); err != nil {
+			log.Fatalf("browser uds dir: %v", err)
+		}
+		browserSocketPath := filepath.Join(browserUDSDir, browserpod.SocketName)
+		stopBrowserSocket, err = srv.StartBrowserSocket(browserSocketPath)
+		if err != nil {
+			log.Fatalf("browser socket: %v", err)
+		}
+		log.Printf("browser socket listening on %s", browserSocketPath)
+	}
 
 	// Janitor for the two-phase publish flow's staged-publish records.
 	// Records older than the configured max-age (1h) get reaped on
@@ -513,6 +529,7 @@ func main() {
 		shutdownCancel()
 		stopControl()
 		stopAgentpodSocket()
+		stopBrowserSocket()
 		stopStagedPublishJanitor()
 		stopAutoRelease()
 		stopBrowsers()

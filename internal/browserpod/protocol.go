@@ -236,6 +236,19 @@ const MaxSnapshotChars = 40000
 // file is dropped and reported in the tab's next result.
 const MaxDownloadBytes = 50 << 20
 
+// MaxProfileBytes bounds a packed profile in either direction: the pod
+// refuses to unpack more, and core refuses to store more.
+const MaxProfileBytes = 2 << 30
+
+// SocketName is core's socket for browser pods, in the hostPath
+// directory UDSSubdir under the agent pods' UDS directory. It serves
+// the connect route and nothing else: a browser pod never sees the
+// socket the agent pods' routes answer on.
+const (
+	SocketName = "browser.sock"
+	UDSSubdir  = "browser"
+)
+
 // MaxEvalChars bounds the text an eval returns.
 const MaxEvalChars = 8000
 

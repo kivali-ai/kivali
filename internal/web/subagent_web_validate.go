@@ -81,20 +81,25 @@ func (s *SubagentService) validateWebTask(parent string, i int, t SubagentTaskIn
 	return nil
 }
 
-// parentFileExists reports whether modelPath names a regular file in
-// the parent's /files/, resolved the way file_view resolves it.
+// maxWebUploadBytes bounds a file a web task may upload to a page.
+const maxWebUploadBytes = 50 << 20
+
+// parentFileExists reports whether modelPath names a regular file the
+// parent can read through its /files/, with file_view's confinement:
+// a link that leaves the parent's read roots is no file.
 func (s *SubagentService) parentFileExists(parent, modelPath string) bool {
-	host, err := s.parentFilePath(parent, modelPath)
+	f, info, err := s.openParentFile(parent, modelPath)
 	if err != nil {
 		return false
 	}
-	info, err := os.Stat(host)
-	return err == nil && info.Mode().IsRegular()
+	_ = f.Close()
+	return info.Mode().IsRegular()
 }
 
-// parentFilePath resolves a path under the parent's /files/ to the
-// host path, confined to the parent's tree and its read roots.
-func (s *SubagentService) parentFilePath(parent, modelPath string) (string, error) {
+// openParentFile opens a file under the parent's /files/ the way
+// file_view reads it: confined to the parent's tree and its read
+// roots, links followed only within them.
+func (s *SubagentService) openParentFile(parent, modelPath string) (*os.File, os.FileInfo, error) {
 	backend := files.Dispatcher{DataDir: s.Store.Root()}.BackendFor(parent)
-	return backend.Resolve(modelPath)
+	return backend.OpenRead(modelPath)
 }
