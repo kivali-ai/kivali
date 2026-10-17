@@ -335,7 +335,11 @@ func NewServer(s *Server) (*Server, error) {
 	if s.SubagentService != nil && s.SubagentService.Browsers == nil {
 		s.SubagentService.Browsers = s.Browsers
 		if s.Browsers != nil {
+			// The registry reports to the service: a browser's state,
+			// for the task views, and a task's last window gone, which
+			// resumes a task waiting for a person.
 			s.Browsers.OnState = s.SubagentService.browserStateChanged
+			s.Browsers.OnWindowsClosed = s.SubagentService.windowsClosed
 		}
 	}
 	s.orgHub = newOrgHub()
@@ -361,6 +365,12 @@ func NewServer(s *Server) (*Server, error) {
 		// Same late-bind for the SubagentDriver so main.go doesn't
 		// need to know the Server's agent-pod plumbing.
 		s.SubagentService.Driver = s
+	}
+	if s.SubagentService != nil && s.SubagentService.PodConnected == nil && s.AgentpodHub != nil {
+		// A task resumed after a sign-in runs in the parent's pod;
+		// DriveSubagent fails at once without a subscriber, so the
+		// service waits for one first.
+		s.SubagentService.PodConnected = func(parent string) bool { return s.AgentpodHub.SubscriberCount(parent) > 0 }
 	}
 	if s.SubagentService != nil && s.SubagentService.DeliverToParent == nil {
 		// A finished background job reaches its parent through the

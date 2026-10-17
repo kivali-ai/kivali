@@ -146,6 +146,11 @@ type SubagentService struct {
 	// dispatch of one is refused at validation.
 	Browsers *browserRegistry
 
+	// PodConnected reports whether the parent's agent pod is connected,
+	// so a task resumed after a sign-in has somewhere to run. Wired to
+	// the agentpod hub's subscriber count; nil means always.
+	PodConnected func(parent string) bool
+
 	// admissionOnce/admission bound how many subagent CLIs run at once
 	// in one agent pod. Built lazily so a directly constructed service
 	// (tests, fixtures) gets the production limits without wiring.
@@ -326,7 +331,7 @@ func (s *SubagentService) StartBatch(ctx context.Context, parent string, raw jso
 		if t.web() {
 			// The chip shows a web task as one from its first row.
 			startedTasks[i]["kind"] = agentpod.SubagentKindWeb
-			startedTasks[i]["session"] = t.session()
+			startedTasks[i]["session"] = taskSession(t)
 		}
 	}
 	s.emit(parent, "subagent_started", map[string]any{
@@ -376,6 +381,8 @@ func (s *SubagentService) launch(parent, toolUseID string, tasks []SubagentTaskI
 			QueuedAt:    now,
 			Depth:       depth,
 			CallerID:    callerID,
+			toolUseID:   toolUseID,
+			index:       i,
 			// validateTasks accepted the schema before launch; a task
 			// without one, or whose schema failed to parse, is free text.
 			Schema:   parsedSchema(t),
@@ -551,45 +558,76 @@ drive:
 			break
 		}
 		release()
-		switch s.awaitSignIn(ctx, job) {
-		case signInResumed:
-			if err := s.adm().acquire(ctx, parent, job.Depth); err != nil {
-				finalText, runErr = "", err
+	wait:
+		for {
+			switch s.awaitSignIn(ctx, job) {
+			case signInResumed:
+				// The person is done. The task reads as running from
+				// here, so Home drops its need and the window stops
+				// taking input, while the run is brought back: first
+				// the pod it runs in, then a slot in it.
+				var sid string
+				var snapshot subagentJob
+				s.updateJob(id, func(j *subagentJob) {
+					sid = j.CLISession
+					j.State = subagentJobRunning
+					snapshot = *j
+				})
+				s.leftWait(snapshot)
+				if !s.awaitPod(ctx, parent) {
+					if ctx.Err() != nil {
+						finalText, runErr = "", context.Canceled
+						break drive
+					}
+					// Nobody to run it on within the bound: the wait
+					// goes on as it was, for the next window to close.
+					log.Printf("subagent %s/%s: agent pod not connected; the task waits on", parent, id)
+					s.reenterWait(id)
+					continue wait
+				}
+				if err := s.adm().acquire(ctx, parent, job.Depth); err != nil {
+					finalText, runErr = "", err
+					break drive
+				}
+				held = true
+				s.endWait(id)
+				s.updateJob(id, func(j *subagentJob) {
+					j.WaitReason = ""
+					j.WaitSince = time.Time{}
+				})
+				if sid == "" {
+					const why = "the task could not be resumed: its run reported no session"
+					s.updateJob(id, func(j *subagentJob) { j.endReason = why })
+					finalText, runErr = "", errors.New(why)
+					break drive
+				}
+				spec.Resume = sid
+				spec.UserPrompt = signInResumeLine
+				// The resumed run's one message is in the transcript
+				// like the first run's prompt.
+				if err := s.Store.AppendSubagentMessage(parent, id, store.ChatMessage{
+					Role:    store.RoleReceived,
+					Kind:    "direct_chat",
+					Content: signInResumeLine,
+					TS:      time.Now().UTC(),
+				}); err != nil {
+					log.Printf("subagent %s/%s: resume transcript: %v", parent, id, err)
+				}
+				break wait
+			case signInTimedOut:
+				// Nobody came: core writes the answer.
+				s.updateJob(id, func(j *subagentJob) {
+					j.State = subagentJobRunning
+					j.WaitReason = ""
+					j.Result = structured.Blocked(structured.BlockedUserDidNotRespond).Body()
+				})
+				finalText, runErr = "", nil
+				break drive
+			case signInCancelled:
+				s.endWait(id)
+				finalText, runErr = "", context.Canceled
 				break drive
 			}
-			held = true
-			var sid string
-			s.updateJob(id, func(j *subagentJob) {
-				sid = j.CLISession
-				j.State = subagentJobRunning
-				j.WaitReason = ""
-				j.WaitSince = time.Time{}
-			})
-			s.patchSubagentMeta(parent, id, map[string]any{"status": "running", "wait_reason": nil})
-			s.notifyWorkingChanged()
-			if s.Browsers != nil {
-				s.Browsers.BroadcastState(parent, job.Session, id, false)
-			}
-			if sid == "" {
-				const why = "the task could not be resumed: its run reported no session"
-				s.updateJob(id, func(j *subagentJob) { j.endReason = why })
-				finalText, runErr = "", errors.New(why)
-				break drive
-			}
-			spec.Resume = sid
-			spec.UserPrompt = signInResumeLine
-		case signInTimedOut:
-			// Nobody came: core writes the answer.
-			s.updateJob(id, func(j *subagentJob) {
-				j.State = subagentJobRunning
-				j.WaitReason = ""
-				j.Result = structured.Blocked(structured.BlockedUserDidNotRespond).Body()
-			})
-			finalText, runErr = "", nil
-			break drive
-		case signInCancelled:
-			finalText, runErr = "", context.Canceled
-			break drive
 		}
 	}
 
@@ -746,22 +784,49 @@ func (s *SubagentService) subagentFileRules(parent, id, kind string) structured.
 	return structured.Rules{
 		Files: dirs,
 		FileExists: func(callerPath string) bool {
-			var rel string
-			switch {
-			case strings.HasPrefix(callerPath, callerPrefix):
-				rel = strings.TrimPrefix(callerPath, callerPrefix)
-			case strings.HasPrefix(callerPath, "/files/"):
-				rel = strings.TrimPrefix(callerPath, "/files/")
-			default:
+			// The allowed directory the path is under, as the task's
+			// view has it, and the file's path within it.
+			var dir, rel string
+			for taskDir, callerDir := range dirs {
+				if strings.HasPrefix(callerPath, callerDir) {
+					dir, rel = strings.TrimPrefix(taskDir, "/files/"), strings.TrimPrefix(callerPath, callerDir)
+					break
+				}
+			}
+			if dir == "" || rel == "" {
 				return false
 			}
-			// The task's view: artifacts/private/ is a real directory
-			// and background/ a link to the parent's, which Lstat
-			// follows on the way to the final name but not at it.
-			info, err := os.Lstat(filepath.Join(root, filepath.FromSlash(rel)))
-			return err == nil && info.Mode().IsRegular()
+			return regularFileUnder(filepath.Join(root, filepath.FromSlash(dir)), filepath.FromSlash(rel))
 		},
 	}
+}
+
+// regularFileUnder reports whether rel names a regular file under base
+// through no link of the task's making: not at its last element
+// (Lstat), and not on the way there, since the directory holding the
+// file must resolve to a place under base's own resolution. base may
+// itself be a link core made (background/ is the parent's workspace);
+// a link planted inside it to a directory elsewhere, or a path that
+// climbs out, names no file of the task's.
+func regularFileUnder(base, rel string) bool {
+	clean := filepath.Clean(rel)
+	if clean == "." || clean == ".." || filepath.IsAbs(clean) || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return false
+	}
+	full := filepath.Join(base, clean)
+	info, err := os.Lstat(full)
+	if err != nil || !info.Mode().IsRegular() {
+		return false
+	}
+	realBase, err := filepath.EvalSymlinks(base)
+	if err != nil {
+		return false
+	}
+	realDir, err := filepath.EvalSymlinks(filepath.Dir(full))
+	if err != nil {
+		return false
+	}
+	return realDir == realBase || strings.HasPrefix(realDir, realBase+string(filepath.Separator))
 }
 
 // subagentAcceptGrace is how long an accepted run keeps going before
@@ -773,19 +838,21 @@ func (s *SubagentService) subagentFileRules(parent, id, kind string) structured.
 const subagentAcceptGrace = 3 * time.Second
 
 // endRunAfterAccept stops id's run once subagentAcceptGrace has passed,
-// unless it has already ended. The result is accepted, so finishJob
-// delivers it as completed however the process exits.
+// unless it has already ended, and with it the workers a sub-lead
+// dispatched, whose answers nobody is left to read. The result is
+// accepted, so finishJob delivers it as completed however the process
+// exits.
 func (s *SubagentService) endRunAfterAccept(id string) {
 	t := s.clk().NewTimer(subagentAcceptGrace)
 	defer t.Stop()
 	<-t.C()
-	var end context.CancelFunc
+	var ends []func()
 	s.updateJob(id, func(j *subagentJob) {
 		if j.State == subagentJobRunning && j.Result != "" {
-			end = j.cancel
+			ends = s.collectEndCancelsLocked(j.Parent, id)
 		}
 	})
-	if end != nil {
+	for _, end := range ends {
 		end()
 	}
 }
@@ -805,6 +872,10 @@ func resultOrText(result, finalText string) string {
 // job record and in meta.json, never in what the caller reads.
 func (s *SubagentService) structuredEnding(job *subagentJob, runErr error) (string, error) {
 	s.jobsMu.Lock()
+	// From here the answer is decided: a submit_result landing later
+	// is refused (SubmitResult reads closing) rather than recorded on
+	// a job whose body is already on its way.
+	job.closing = true
 	accepted, ended, cancelled := job.Result, job.endReason, job.cancelled
 	s.jobsMu.Unlock()
 	switch {
@@ -855,7 +926,7 @@ func (s *SubagentService) SubmitResult(parent, id string, submission json.RawMes
 	case j.Schema == nil:
 		s.jobsMu.Unlock()
 		return "submit_result: this task has no schema; your final message is your answer.", true
-	case j.State != subagentJobRunning || j.endReason != "" || j.cancelled:
+	case j.State != subagentJobRunning || j.endReason != "" || j.cancelled || j.closing:
 		s.jobsMu.Unlock()
 		return "submit_result: this task is no longer running.", true
 	case j.Result != "":
@@ -868,18 +939,20 @@ func (s *SubagentService) SubmitResult(parent, id string, submission json.RawMes
 	res, errs := structured.Validate(schema, submission, s.subagentFileRules(parent, id, kind))
 	if len(errs) > 0 {
 		var attempt int
-		var end context.CancelFunc
+		var ends []func()
 		s.updateJob(id, func(j *subagentJob) {
 			j.ResultAttempts++
 			attempt = j.ResultAttempts
 			// Never past an accepted result: a model may send a valid
 			// and an invalid call in one message, and the valid one
 			// stands.
-			if attempt >= subagentResultAttempts && j.endReason == "" && j.Result == "" && j.State == subagentJobRunning && !j.cancelled {
+			if attempt >= subagentResultAttempts && j.endReason == "" && j.Result == "" && j.State == subagentJobRunning && !j.cancelled && !j.closing {
 				// The reason names no detail from the submissions:
 				// what the subagent wrote stays with the subagent.
 				j.endReason = fmt.Sprintf("no valid result after %d submit_result calls", subagentResultAttempts)
-				end = j.cancel
+				// The task's run ends, and with it the workers a
+				// sub-lead dispatched: nobody is left to read them.
+				ends = s.collectEndCancelsLocked(parent, id)
 			}
 		})
 		var b strings.Builder
@@ -887,10 +960,12 @@ func (s *SubagentService) SubmitResult(parent, id string, submission json.RawMes
 		for _, e := range errs {
 			fmt.Fprintf(&b, "  - %s\n", e)
 		}
-		if end != nil {
+		if len(ends) > 0 {
 			log.Printf("subagent %s/%s: ending after %d refused results; last errors: %s", parent, id, attempt, strings.Join(errs, "; "))
 			b.WriteString("\nThat was the last attempt. The task has been ended without an answer.")
-			end()
+			for _, end := range ends {
+				end()
+			}
 		} else {
 			b.WriteString("\nFix these and call submit_result again.")
 		}
@@ -900,7 +975,7 @@ func (s *SubagentService) SubmitResult(parent, id string, submission json.RawMes
 	body := res.Body()
 	accepted := false
 	s.updateJob(id, func(j *subagentJob) {
-		if j.Result == "" && j.State == subagentJobRunning && j.endReason == "" && !j.cancelled {
+		if j.Result == "" && j.State == subagentJobRunning && j.endReason == "" && !j.cancelled && !j.closing {
 			j.Result = body
 			accepted = true
 		}
@@ -940,6 +1015,10 @@ func (s *SubagentService) finishJob(job *subagentJob, toolUseID string, index in
 		j.FinalText = finalText
 		j.Result = result
 		j.Err = errString(runErr)
+		if j.waitTimer != nil {
+			// A wait that ended with the job, however it ended.
+			j.waitTimer.Stop()
+		}
 	})
 	// Wake anything waiting on this job before any of the reporting
 	// below. A nested batch's caller is blocked here, and it should
@@ -1314,52 +1393,59 @@ func subagentFilesRoot(s *store.FSStore, parent, id string) string {
 }
 
 // writeSubagentMeta persists the subagent's meta.json snapshot, beside
-// its chat.jsonl. Best-effort.
+// its chat.jsonl: the task's facts and its status. Best-effort.
 //
-// The path comes from subagentMetaPath, shared with both readers (the
+// The path is subagentMetaPath, shared with both readers (the
 // transcript's task rows and the background task transcript), so every
 // job writes its own subagents/<id>/meta.json where they look. The
 // test that follows model and effort through to the file pins it.
 //
+// Every write to the file goes through store.UpdateSubagentMeta, so
+// this one and the patches from the HTTP and registry goroutines
+// (patchSubagentMeta) cannot lose each other's fields: what others
+// keep there (browser, site, a result) stays; wait_reason goes once
+// the status is no longer waiting.
+//
 // result is a structured task's answer once it has one (the wrapper
 // JSON); the task rows show it in place of the run's text.
 func (s *SubagentService) writeSubagentMeta(parent string, t SubagentTaskInput, id, status, errMsg, result string) {
-	meta := map[string]any{
-		"id":          id,
-		"description": t.Description,
-		"prompt":      t.Prompt,
-		"model":       t.Model,
-		"effort":      t.Effort,
-		"status":      status,
-		"error":       errMsg,
-		"updated_at":  time.Now().UTC().Format(time.RFC3339),
-	}
-	if t.hasSchema() {
-		meta["structured"] = true
-	}
-	if t.web() {
-		meta["kind"] = agentpod.SubagentKindWeb
-		meta["session"] = t.session()
-	}
-	if result != "" && json.Valid([]byte(result)) {
-		meta["result"] = json.RawMessage(result)
-	}
-	body, err := json.MarshalIndent(meta, "", "  ")
+	err := s.Store.UpdateSubagentMeta(parent, id, func(meta map[string]any) bool {
+		meta["id"] = id
+		meta["description"] = t.Description
+		meta["prompt"] = t.Prompt
+		meta["model"] = t.Model
+		meta["effort"] = t.Effort
+		meta["status"] = status
+		meta["error"] = errMsg
+		meta["updated_at"] = time.Now().UTC().Format(time.RFC3339)
+		if t.hasSchema() {
+			meta["structured"] = true
+		}
+		if t.web() {
+			meta["kind"] = agentpod.SubagentKindWeb
+			meta["session"] = taskSession(t)
+		}
+		if result != "" && json.Valid([]byte(result)) {
+			meta["result"] = json.RawMessage(result)
+		}
+		if status != subagentJobWaiting {
+			delete(meta, "wait_reason")
+		}
+		return true
+	})
 	if err != nil {
-		return
+		log.Printf("subagent %s/%s: write meta.json: %v", parent, id, err)
 	}
-	path := subagentMetaPath(s.Store.Root(), parent, id)
-	_ = os.MkdirAll(filepath.Dir(path), 0o755)
-	_ = os.WriteFile(path, body, 0o644)
 }
 
 // browserStateChanged is the registry's report of a browser's state
-// for (slug, session). Every running web task on that session gets it
-// in its meta.json, which the task's stream watches, so the task's
-// view learns it at once and can show Open browser accordingly.
+// for (slug, session). Every live web task on that session, one waiting
+// for a person included, gets it in its meta.json, which the task's
+// stream watches, so the task's view learns it at once and can show
+// Open browser accordingly.
 func (s *SubagentService) browserStateChanged(slug, session string, state apitypes.BrowserState) {
 	for _, j := range s.listJobs(slug) {
-		if j.Kind != agentpod.SubagentKindWeb || j.Session != session || j.State != subagentJobRunning {
+		if j.Kind != agentpod.SubagentKindWeb || j.Session != session || j.terminal() {
 			continue
 		}
 		s.setSubagentMetaBrowser(slug, j.ID, state)
@@ -1367,19 +1453,16 @@ func (s *SubagentService) browserStateChanged(slug, session string, state apityp
 }
 
 // setSubagentMetaBrowser writes a task's browser state into its
-// meta.json, leaving the rest of the file as it is.
+// meta.json, leaving the rest of the file as it is. A task with no
+// meta.json yet, or one already saying so, is left alone.
 func (s *SubagentService) setSubagentMetaBrowser(parent, id string, state apitypes.BrowserState) {
-	body, err := os.ReadFile(subagentMetaPath(s.Store.Root(), parent, id))
-	if err != nil {
-		return
-	}
-	var cur struct {
-		Browser string `json:"browser"`
-	}
-	if json.Unmarshal(body, &cur) == nil && cur.Browser == string(state) {
-		return
-	}
-	s.patchSubagentMeta(parent, id, map[string]any{"browser": state})
+	_ = s.Store.UpdateSubagentMeta(parent, id, func(meta map[string]any) bool {
+		if len(meta) == 0 || meta["browser"] == string(state) {
+			return false
+		}
+		meta["browser"] = string(state)
+		return true
+	})
 }
 
 // newSubagentID returns a short hex id for a new subagent.

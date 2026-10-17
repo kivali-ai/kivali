@@ -131,6 +131,15 @@ func TestStructuredFilesAreMappedToTheCallersView(t *testing.T) {
 		if err := os.Symlink("/etc/hostname", filepath.Join(overlay, "artifacts", "private", "link.txt")); err != nil {
 			t.Error(err)
 		}
+		// A link to a directory elsewhere, planted in the task's own
+		// tree: what it reaches is no file of the task's either.
+		elsewhere := t.TempDir()
+		if err := os.WriteFile(filepath.Join(elsewhere, "secret.txt"), []byte("secret"), 0o600); err != nil {
+			t.Error(err)
+		}
+		if err := os.Symlink(elsewhere, filepath.Join(overlay, "artifacts", "private", "vault")); err != nil {
+			t.Error(err)
+		}
 		// The task's rules, probed directly: each probe would cost the
 		// task an attempt through SubmitResult.
 		rules := svc.subagentFileRules("alice", req.SubagentID, agentpod.SubagentKindGeneral)
@@ -138,6 +147,7 @@ func TestStructuredFilesAreMappedToTheCallersView(t *testing.T) {
 		cases := map[string]string{
 			`["/files/artifacts/private/ghost.pdf"]`:                                  "not a file this task made",
 			`["/files/artifacts/private/link.txt"]`:                                   "not a file this task made",
+			`["/files/artifacts/private/vault/secret.txt"]`:                           "not a file this task made",
 			`["/files/artifacts/private"]`:                                            "outside the directories",
 			`["/files/subagents/` + req.SubagentID + `/artifacts/private/quote.pdf"]`: "outside the directories",
 			`["/files/project/data.csv"]`:                                             "outside the directories",
