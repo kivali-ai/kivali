@@ -11,18 +11,18 @@
 //
 // DURABILITY: the registry is in memory. Each job also writes
 // meta.json to the PVC as it goes, so a finished job's record survives,
-// but jobs in flight when core restarts are orphaned — their driving
-// goroutine is gone and the pod's completion POST lands on a turn that
-// no longer exists. The visible symptom is a meta.json stuck at
-// "running".
-// Recovery is deliberately not built here: it needs a decision about
-// whether to re-attach or fail such jobs, and that decision wants real
-// restart data behind it.
+// but a job in flight when core restarts is gone with its goroutine:
+// the pod's completion POST lands on a turn that no longer exists. At
+// boot FailOrphanedSubagents rewrites every such meta.json (queued,
+// running or waiting for a person) as errored, with
+// subagentRestartError as the reason, so nothing reads as live that
+// core no longer holds. Jobs are not re-attached.
 
 package web
 
 import (
 	"context"
+	"log"
 	"sort"
 	"sync"
 	"time"
@@ -30,6 +30,50 @@ import (
 	"github.com/kivali-ai/kivali/internal/clock"
 	"github.com/kivali-ai/kivali/internal/structured"
 )
+
+// subagentRestartError is the reason a task's record carries when core
+// restarted while the task was queued, running or waiting for a person:
+// its goroutine went with the old process, so it never finishes.
+const subagentRestartError = "Kivali restarted before the task finished"
+
+// FailOrphanedSubagents rewrites every background task's meta.json that
+// still says queued, running or waiting for a person as errored, with
+// subagentRestartError, and without the wait reason and browser state a
+// live task carries: core holds no such job after a restart, so nothing
+// should read as live. Called once at boot, before anything dispatches.
+// Returns how many records it rewrote.
+func (s *SubagentService) FailOrphanedSubagents() int {
+	if s == nil || s.Store == nil {
+		return 0
+	}
+	tasks, err := s.Store.SubagentMetaFiles()
+	if err != nil {
+		log.Printf("subagents: scan for unfinished tasks: %v", err)
+		return 0
+	}
+	n := 0
+	for _, task := range tasks {
+		parent, id := task[0], task[1]
+		err := s.Store.UpdateSubagentMeta(parent, id, func(meta map[string]any) bool {
+			switch meta["status"] {
+			case subagentJobQueued, subagentJobRunning, subagentJobWaiting:
+			default:
+				return false
+			}
+			meta["status"] = "errored"
+			meta["error"] = subagentRestartError
+			meta["updated_at"] = time.Now().UTC().Format(time.RFC3339)
+			delete(meta, "wait_reason")
+			delete(meta, "browser")
+			n++
+			return true
+		})
+		if err != nil {
+			log.Printf("subagent %s/%s: mark unfinished after restart: %v", parent, id, err)
+		}
+	}
+	return n
+}
 
 // Subagent job states. A job is terminal in every state except
 // subagentJobQueued and subagentJobRunning.
@@ -85,8 +129,11 @@ type subagentJob struct {
 	resumed    chan struct{}
 	resumeDone bool
 	// waitTimer ends the wait at signInWaitLimit; started as the wait
-	// begins, so the limit counts from then.
+	// begins, so the limit counts from then. waits counts the task's
+	// calls to web_wait_for_sign_in that were granted; at
+	// signInWaitCap the next is refused and the task ends blocked.
 	waitTimer clock.Timer
+	waits     int
 
 	// Depth is how far below the durable agent this job sits. 1 is a
 	// subagent the agent dispatched itself; 2 is a worker dispatched
@@ -95,6 +142,13 @@ type subagentJob struct {
 	// from the CALLER's recorded job, so a subagent cannot talk its
 	// way deeper than the cap by claiming a smaller number.
 	Depth int
+
+	// toolUseID and index place the job in the chip that dispatched it:
+	// the parent's subagent tool_use and the task's position in that
+	// batch, which every subagent_progress event names. Set at
+	// registration, never mutated.
+	toolUseID string
+	index     int
 
 	// CallerID is the job id of the subagent that dispatched this one,
 	// empty for a tier-1 job dispatched by the durable agent. It is
@@ -155,6 +209,11 @@ type subagentJob struct {
 	// ending itself, so the job's goroutine reports that reason as a
 	// failure rather than reading the cancel as a Stop.
 	endReason string
+
+	// closing is set, under jobsMu, as structuredEnding reads the
+	// job's answer, so a submit_result that lands after that read is
+	// refused rather than accepted into a record nothing delivers.
+	closing bool
 
 	// cancelled is set, under jobsMu, when Stop or subagent_cancel
 	// called the job off. A structured task then delivers nothing,
@@ -347,6 +406,29 @@ func (s *SubagentService) collectCancelsLocked(parent, rootID string) []func() {
 			}
 			seen[childID] = true
 			frontier = append(frontier, childID)
+		}
+	}
+	return out
+}
+
+// collectEndCancelsLocked returns the cancel funcs for ending id's run
+// as core ends it (an accepted result, the attempt cap): id's own
+// cancel, with id NOT marked cancelled, because its outcome is already
+// decided and is delivered, and every non-terminal descendant's,
+// marked cancelled, because nobody is left to read their answers.
+// jobsMu must be held.
+func (s *SubagentService) collectEndCancelsLocked(parent, id string) []func() {
+	root, ok := s.jobs[id]
+	if !ok || root.Parent != parent {
+		return nil
+	}
+	var out []func()
+	if root.cancel != nil {
+		out = append(out, root.cancel)
+	}
+	for childID, j := range s.jobs {
+		if j.CallerID == id && j.Parent == parent {
+			out = append(out, s.collectCancelsLocked(parent, childID)...)
 		}
 	}
 	return out

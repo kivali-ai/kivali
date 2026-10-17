@@ -833,6 +833,35 @@ func (r *browserRegistry) Input(w *browserWatcher, in apitypes.BrowserInput) err
 	return link.send(sctx, browserpod.Message{Type: browserpod.TypeInput, Group: w.group, Tab: tab, Args: args}, nil)
 }
 
+// CurrentPage is the URL and title of the tab a group's windows show
+// (the tab of its last frame, else the tab of its last navigation), as
+// the pod reported them; both empty when core knows no page. Page text,
+// to be shown as text.
+func (r *browserRegistry) CurrentPage(slug, session, group string) (url, title string) {
+	if r == nil {
+		return "", ""
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	b, ok := r.browsers[browserKey(slug, session)]
+	if !ok {
+		return "", ""
+	}
+	g, ok := b.groups[group]
+	if !ok {
+		return "", ""
+	}
+	if info, has := g.tabInfo[g.shownTab]; has && g.shownTab != "" {
+		return info.url, info.title
+	}
+	for _, info := range g.tabInfo {
+		if info.url == g.lastURL && g.lastURL != "" {
+			return info.url, info.title
+		}
+	}
+	return "", ""
+}
+
 // BroadcastState sends every window on a group the browser's state
 // again, with whether the window takes input now: the service calls it
 // when the group's task starts or stops waiting for a person.

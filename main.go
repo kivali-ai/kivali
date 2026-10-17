@@ -433,6 +433,11 @@ func main() {
 	// provisioning (below) so a recovered agent's first chat-turn
 	// event lands on a subscribed runtime, not a still-coming-up pod.
 	recovered := srv.RecoverInterruptedTurns()
+	// Background tasks left queued, running or waiting for a person by
+	// the last run went with it: their records say so.
+	if n := subagentService.FailOrphanedSubagents(); n > 0 {
+		log.Printf("subagents: %d task(s) left unfinished by the last run marked errored", n)
+	}
 
 	httpSrv := &http.Server{
 		Addr:              cfg.Addr,

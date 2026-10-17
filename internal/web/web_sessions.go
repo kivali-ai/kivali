@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/kivali-ai/kivali/internal/agentpod"
 	"github.com/kivali-ai/kivali/internal/web/apitypes"
@@ -126,9 +127,17 @@ func (s *SubagentService) WebSessionsText(slug string) string {
 	return b.String()
 }
 
+// webResetCancelWait bounds how long a reset waits for the session's
+// cancelled tasks to end before it ends the browser under them.
+const webResetCancelWait = 15 * time.Second
+
 // ResetWebSession forgets one of an agent's sessions: every web task
-// on it is cancelled, its browser ends without saving, and what the
-// store holds for it is deleted. The text is what the model reads.
+// on it is cancelled and ends, its browser then ends without saving,
+// and what the store holds for it is deleted. The tasks go first so
+// their windows close with the task's own reason, and their tabs are
+// released, before the browser is pulled from under them. A cancelled
+// task delivers no result, as after Stop; the text, what the model
+// reads, names the tasks it called off.
 func (s *SubagentService) ResetWebSession(slug, session string) (string, error) {
 	name := strings.TrimSpace(session)
 	if name != agentpod.OpenWebSession {
@@ -138,11 +147,23 @@ func (s *SubagentService) ResetWebSession(slug, session string) (string, error) 
 		}
 		name = site
 	}
-	cancelled := 0
+	var cancelled []subagentJob
 	for _, j := range s.listJobs(slug) {
 		if j.Kind == agentpod.SubagentKindWeb && j.Session == name && !j.terminal() {
 			if s.CancelSubagent(slug, j.ID) {
-				cancelled++
+				cancelled = append(cancelled, j)
+			}
+		}
+	}
+	if len(cancelled) > 0 {
+		limit := s.clk().NewTimer(webResetCancelWait)
+		defer limit.Stop()
+	await:
+		for _, j := range cancelled {
+			select {
+			case <-j.done:
+			case <-limit.C():
+				break await
 			}
 		}
 	}
@@ -153,8 +174,16 @@ func (s *SubagentService) ResetWebSession(slug, session string) (string, error) 
 	} else if err := s.Store.DeleteBrowserSession(slug, name); err != nil {
 		return "", fmt.Errorf("reset %s: %w", name, err)
 	}
-	if name == agentpod.OpenWebSession {
-		return fmt.Sprintf("The open session was reset: its browser stopped and %d task%s cancelled. It keeps nothing between tasks anyway.", cancelled, pluralS(cancelled)), nil
+	tasks := fmt.Sprintf("%d task%s cancelled", len(cancelled), pluralS(len(cancelled)))
+	if len(cancelled) > 0 {
+		ids := make([]string, 0, len(cancelled))
+		for _, j := range cancelled {
+			ids = append(ids, j.ID)
+		}
+		tasks += " (" + strings.Join(ids, ", ") + "; none of them will send you a result)"
 	}
-	return fmt.Sprintf("Session %s was reset: its browser stopped, %d task%s cancelled, and its saved sign-ins deleted. The next web task that names it starts afresh, signed in nowhere.", name, cancelled, pluralS(cancelled)), nil
+	if name == agentpod.OpenWebSession {
+		return fmt.Sprintf("The open session was reset: its browser stopped and %s. It keeps nothing between tasks anyway.", tasks), nil
+	}
+	return fmt.Sprintf("Session %s was reset: its browser stopped, %s, and its saved sign-ins deleted. The next web task that names it starts afresh, signed in nowhere.", name, tasks), nil
 }
