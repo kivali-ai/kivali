@@ -404,6 +404,42 @@ func TestSaveSendsTheProfile(t *testing.T) {
 	}
 }
 
+// TestSaveAfterChromiumExitedSendsNoProfile: Chromium that died before
+// core asked for a save left a profile it never closed. Whichever side
+// of the pod sees the exit first, core hears that the browser stopped
+// and gets no profile for it.
+func TestSaveAfterChromiumExitedSendsNoProfile(t *testing.T) {
+	h := startPod(t, podOptions{})
+	h.proc.Kill()
+	// The pod may already be closing the connection; a failed send is
+	// the exit having been reported first.
+	_ = h.core.w.writeMessage(context.Background(), Message{Type: TypeSave}, nil)
+	st := h.core.expectState(StateStopped)
+	if !strings.Contains(st.Detail, "chromium exited") {
+		t.Fatalf("detail: %q", st.Detail)
+	}
+	if err := h.runResult(); err == nil {
+		t.Fatal("Run returned nil after Chromium died")
+	}
+	var got []received
+	h.core.mu.Lock()
+	got = append(got, h.core.held...)
+	h.core.mu.Unlock()
+	for drained := false; !drained; {
+		select {
+		case r := <-h.core.in:
+			got = append(got, r)
+		default:
+			drained = true
+		}
+	}
+	for _, r := range got {
+		if r.err == nil && (r.Type == TypeProfile || r.Type == TypeSaved || (r.Type == TypeState && r.State == StateSaving)) {
+			t.Fatalf("after Chromium died the pod sent %+v", r.Message)
+		}
+	}
+}
+
 func TestBrowserExitIsReported(t *testing.T) {
 	h := startPod(t, podOptions{})
 	h.proc.Kill()
@@ -472,6 +508,93 @@ func TestDownloadFromAnIframeIsTheTabs(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(h.dir, "downloads", "guid-3")); !os.IsNotExist(err) {
 		t.Fatal("the dropped download was kept")
+	}
+}
+
+// TestClosingGroupClosesItsPopups: a popup that a tab opens while its
+// group is being closed (onbeforeunload, say) is closed too, not
+// adopted into a group that is going away.
+func TestClosingGroupClosesItsPopups(t *testing.T) {
+	h := startPod(t, podOptions{})
+	if res := h.core.command("g", "", CommandNavigate, NavigateArgs{URL: "https://a.test/"}); !res.OK {
+		t.Fatalf("navigate: %+v", res)
+	}
+	if res := h.core.command("g", "", CommandTabs, TabsArgs{Action: TabsOpen, URL: "https://a.test/2"}); !res.OK {
+		t.Fatalf("open: %+v", res)
+	}
+	h.core.expectType(TypeTab)
+	h.core.expectType(TypeTab)
+	second := func() string {
+		h.cdp.mu.Lock()
+		defer h.cdp.mu.Unlock()
+		for tg, u := range h.cdp.urls {
+			if u == "https://a.test/2" {
+				return tg
+			}
+		}
+		return ""
+	}()
+	// Closing the first tab, the page opens a popup from the second,
+	// still-registered tab; the pod handles it before the close returns.
+	h.cdp.setOverride(func(_ context.Context, _, method string, params json.RawMessage) (any, bool, error) {
+		if method == "Target.closeTarget" && strings.Contains(string(params), `"T1"`) {
+			h.cdp.emit("", "Target.attachedToTarget", map[string]any{
+				"sessionId": "SP", "targetInfo": map[string]any{"targetId": "P1", "type": "page", "url": "https://a.test/popup", "openerId": second},
+			})
+			handled := make(chan struct{})
+			h.cdp.events.push(func() { close(handled) })
+			<-handled
+		}
+		return nil, false, nil
+	})
+	h.core.send(Message{Type: TypeCloseGroup, Group: "g"})
+	if res := h.core.command("g", "", CommandTabs, TabsArgs{Action: TabsList}); res.Text != "This task has no tab open." {
+		t.Fatalf("after close: %q", res.Text)
+	}
+	closed := h.cdp.called("Target.closeTarget")
+	var popupClosed bool
+	for _, c := range closed {
+		if strings.Contains(c, `"P1"`) {
+			popupClosed = true
+		}
+	}
+	if !popupClosed {
+		t.Fatalf("the popup was not closed: %q", closed)
+	}
+	h.core.mu.Lock()
+	defer h.core.mu.Unlock()
+	for _, r := range h.core.held {
+		if r.Type == TypeTab && r.Opener != "" {
+			t.Fatalf("the popup was adopted: %+v", r.Message)
+		}
+	}
+}
+
+// TestLastTabClosedLeavesAFreshSpare: closing the browser's last tab
+// makes a fresh page first and keeps it as the spare, then closes the
+// tab; the next group gets that fresh page, so its web_back has none
+// of the closed tab's history to land in.
+func TestLastTabClosedLeavesAFreshSpare(t *testing.T) {
+	h := startPod(t, podOptions{})
+	if res := h.core.command("g", "", CommandNavigate, NavigateArgs{URL: "https://a.test/"}); !res.OK {
+		t.Fatalf("navigate: %+v", res)
+	}
+	if res := h.core.command("g", "", CommandTabs, TabsArgs{Action: TabsClose, Tab: "t1"}); !res.OK {
+		t.Fatalf("close: %+v", res)
+	}
+	h.core.expectType(TypeTabClosed)
+	if created, closed := h.cdp.called("Target.createTarget"), h.cdp.called("Target.closeTarget"); len(created) != 2 || len(closed) != 1 || !strings.Contains(closed[0], `"T1"`) {
+		t.Fatalf("created %q, closed %q", created, closed)
+	}
+	// The next group gets the spare and makes no page of its own.
+	if res := h.core.command("h", "", CommandNavigate, NavigateArgs{URL: "https://b.test/"}); !res.OK {
+		t.Fatalf("next group: %+v", res)
+	}
+	if created := h.cdp.called("Target.createTarget"); len(created) != 2 {
+		t.Fatalf("createTarget calls: %q", created)
+	}
+	if res := h.core.command("h", "", CommandTabs, TabsArgs{Action: TabsList}); res.Text != "* t2 https://b.test/ — Title of https://b.test/" {
+		t.Fatalf("h's tabs: %q", res.Text)
 	}
 }
 
