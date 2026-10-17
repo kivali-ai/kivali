@@ -28,6 +28,14 @@ export function browserWindowPath(slug: string, id: string): string {
   return subagentPath(slug, id) + '/browser';
 }
 
+/**
+ * The page a task's browser window loads once the person has continued the task. The desktop app closes its
+ * browser window when that window starts loading this path (`windows.rs`, `is_browser_done_path`).
+ */
+export function browserWindowDonePath(slug: string, id: string): string {
+  return browserWindowPath(slug, id) + '/done';
+}
+
 /** Whether `host` (a port is ignored) lies outside a session's `site`: neither the site nor under it. False without a site. */
 export function outsideSite(host: string, site: string | undefined): boolean {
   if (!site) return false;

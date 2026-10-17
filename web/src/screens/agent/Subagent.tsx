@@ -150,7 +150,7 @@ export function Subagent() {
               </Text>
             )}
             <Text as="p" variant="caption" tone="muted">
-              Sign in, then close the window. The task continues on its own.
+              Open the browser, do what the page asks, then choose Continue the task.
             </Text>
           </>
         )}

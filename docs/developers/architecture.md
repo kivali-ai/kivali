@@ -667,8 +667,14 @@ tasks (`sign_in_waits`) so Home refetches as one begins or ends; the
 task's view, the Background tab (`waiting`) and the chip show it
 (`subagent_progress` carries `waiting_for_sign_in` and `running`
 again on resume); `subagent_status` lists it under its own heading,
-with the page. When the task's last window has been gone for the
-window grace the task resumes: the registry reports the close
+with the page. The task resumes when the person says so in the window
+(Continue the task: `POST
+/api/v1/agents/{slug}/subagents/{id}/continue`, `continueTask`, 204
+once the task resumes or already has, 409 when it is not waiting),
+at once, and the window then loads its done page in its place, which
+closes it (the desktop app destroys its browser window on that load;
+a browser tab calls `window.close()`); or when the task's last window has been gone for the
+window grace: the registry reports the close
 (`OnWindowsClosed`); a report sooner than the grace after the wait
 began is about a window closed before the task asked for anyone and
 is ignored. The resumed task reads as running from that moment (the

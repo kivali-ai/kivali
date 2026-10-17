@@ -7,8 +7,9 @@
 // subagentJobWaiting, ends the task's run a moment later, and asks the
 // person through a web_sign_in need on Home and the task's view. The
 // browser window takes input while the task waits. When the person
-// closes the window (the last window on the task, after the grace), or
-// after signInWaitLimit with nobody coming, the task's run continues:
+// says they are done (Continue the task in the window, continueTask),
+// or closes the window (the last window on the task, after the grace),
+// or after signInWaitLimit with nobody coming, the task's run continues:
 // a resumed run of the same session with one line from core, or an end
 // core writes, outcome blocked, user_did_not_respond. The calling agent
 // is told nothing until the final result.
@@ -138,7 +139,7 @@ func (s *SubagentService) waitForSignIn(j subagentJob, args json.RawMessage) age
 	}
 	s.enteredWait(j, a.Reason)
 	go s.endRunForWait(j.ID)
-	return agentpod.WebCommandResponse{Text: fmt.Sprintf("A person is being asked to handle %s in a window on your tab. Your turn ends here: do nothing more. You will be resumed, with your tabs as they are, once they have closed the window. A task may ask for a person at most %d times.", webSignInPhrase(a.Reason), signInWaitCap)}
+	return agentpod.WebCommandResponse{Text: fmt.Sprintf("A person is being asked to handle %s in a window on your tab. Your turn ends here: do nothing more. You will be resumed, with your tabs as they are, once they say they are done or close the window. A task may ask for a person at most %d times.", webSignInPhrase(a.Reason), signInWaitCap)}
 }
 
 // enteredWait tells everything that shows a task that it waits for a
@@ -190,8 +191,8 @@ const (
 	signInCancelled
 )
 
-// awaitSignIn blocks until the person is done (the task's last window
-// closed), the wait limit passes, or the job is cancelled. The wait
+// awaitSignIn blocks until the person is done (they said so, or the
+// task's last window closed), the wait limit passes, or the job is cancelled. The wait
 // timer runs on: a wait a resume could not finish (awaitPod) is entered
 // again, and the limit still counts from the first call.
 func (s *SubagentService) awaitSignIn(ctx context.Context, job *subagentJob) signInOutcome {
@@ -235,7 +236,7 @@ func (s *SubagentService) awaitPod(ctx context.Context, parent string) bool {
 
 // reenterWait puts a task whose resume found no pod back to waiting, as
 // it was: the same reason, the same WaitSince, a fresh signal for the
-// next window to close.
+// person's next word or the next window to close.
 func (s *SubagentService) reenterWait(id string) {
 	var j subagentJob
 	s.updateJob(id, func(job *subagentJob) {
@@ -292,6 +293,45 @@ func (s *SubagentService) windowsClosed(slug, _ string, group string) {
 		j.resumeDone = true
 		close(j.resumed)
 	})
+}
+
+// signInContinue is what the person's word that they are done did.
+type signInContinue int
+
+const (
+	// signInContinued: the task resumes, or had resumed already.
+	signInContinued signInContinue = iota
+	// signInNotWaiting: the task is not waiting for a person.
+	signInNotWaiting
+	// signInNoTask: core holds no such task of that agent.
+	signInNoTask
+)
+
+// continueTask is the person's word, from the task's browser window,
+// that they have done what the page asked: a task waiting for them
+// resumes at once, as windowsClosed resumes it, without the grace.
+// A task already resumed from its wait, and not waiting again, is
+// signInContinued too, so a second press changes nothing.
+func (s *SubagentService) continueTask(slug, id string) signInContinue {
+	out := signInNoTask
+	s.updateJob(id, func(j *subagentJob) {
+		if j.Parent != slug {
+			return
+		}
+		switch {
+		case j.State == subagentJobWaiting && j.resumed != nil:
+			if !j.resumeDone {
+				j.resumeDone = true
+				close(j.resumed)
+			}
+			out = signInContinued
+		case j.State == subagentJobRunning && j.resumeDone:
+			out = signInContinued
+		default:
+			out = signInNotWaiting
+		}
+	})
+	return out
 }
 
 // waitingWebJobs are every agent's tasks waiting for a person, for

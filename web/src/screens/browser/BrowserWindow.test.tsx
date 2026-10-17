@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BrowserInput, BrowserWindowEvent, BrowserWindowInput, SubagentMeta, SubagentTranscript } from '../../api/types.gen';
 import { createAppRoutes } from '../../app/router';
 import { subagentTranscript } from '../agent/tabsFixtures';
-import { MAX_FAILED_CONNECTS, browserSocketUrl, framePoint, modifierBits } from './BrowserWindow';
+import { FINISH, MAX_FAILED_CONNECTS, browserSocketUrl, framePoint, modifierBits, windowExit } from './BrowserWindow';
 
 const SLUG = 'engineering-lead';
 const ID = 'bbbb2222';
@@ -61,6 +61,8 @@ const decodes: { blob: Blob; resolve(b: FakeBitmap): void }[] = [];
 const drawImage = vi.fn();
 let reads = 0;
 let meta: SubagentMeta;
+/** What POST …/continue answers, settled by the test; each call is recorded. */
+let continues: { resolve(res: { ok: boolean; status: number; json: () => Promise<unknown> }): void }[] = [];
 
 const SANDBOX = 'Chromium is running without its sandbox on this cluster.';
 
@@ -96,6 +98,7 @@ beforeEach(() => {
   decodes.length = 0;
   drawImage.mockClear();
   reads = 0;
+  continues = [];
   vi.stubGlobal('WebSocket', FakeSocket);
   vi.stubGlobal(
     'createImageBitmap',
@@ -111,6 +114,7 @@ beforeEach(() => {
     'fetch',
     vi.fn(async (input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.pathname : input.url;
+      if (url === API + '/continue') return new Promise((resolve) => continues.push({ resolve }));
       if (url !== API) return { ok: false, status: 404, json: async () => ({ error: 'No such task.', who: 'Nobody' }) };
       reads++;
       const body: SubagentTranscript = { meta, rows: [] };
@@ -418,7 +422,7 @@ describe('the browser window: ending and reconnecting', () => {
 
 const SITE = 'vendor.example';
 const waitingWeb: SubagentMeta = { ...runningWeb, state: 'waiting_for_sign_in', session: SITE, site: SITE, browser: 'running', wait_reason: 'sign_in' };
-const BANNER = 'Sign in, then close this window. The task continues on its own.';
+const BANNER = FINISH.sign_in;
 
 /** The canvas's CSS box: 800 × 400 at (20, 40), so a 1280 × 800 frame shows at half size, 80 px in from each side. */
 const BOX = { left: 20, top: 40, width: 800, height: 400, right: 820, bottom: 440, x: 20, y: 40, toJSON: () => ({}) } as DOMRect;
@@ -776,5 +780,82 @@ describe('the browser window: the session’s site', () => {
     latest()?.push({ type: 'state', browser: 'running' });
     latest()?.push({ type: 'tab', tab: { id: 't1', url: 'https://anywhere.test/', title: 'Anywhere' } });
     expect(screen.queryByText(/Outside/)).toBeNull();
+  });
+});
+
+describe('the browser window: continuing the task', () => {
+  const CONTINUE = { name: 'Continue the task' };
+  let leave: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    leave = vi.spyOn(windowExit, 'leave').mockImplementation(() => {});
+  });
+
+  it('words the banner for what the page asks, read again as input turns on', async () => {
+    await openForInput(true, { ...waitingWeb, wait_reason: 'sign_in' });
+    expect(screen.getByText(FINISH.sign_in)).toBeInTheDocument();
+    // A later wait, for a second factor: the header read as input turns on names it.
+    meta = { ...waitingWeb, wait_reason: 'mfa' };
+    latest()?.push({ type: 'state', browser: 'running', site: SITE });
+    latest()?.push({ type: 'state', browser: 'running', input: true, site: SITE });
+    await settle();
+    expect(screen.getByText(FINISH.mfa)).toBeInTheDocument();
+    expect(screen.getByText('Closing the window continues it too.')).toBeInTheDocument();
+    expect(screen.getByRole('button', CONTINUE)).toBeEnabled();
+  });
+
+  it('posts the person’s word, then leaves for the done page and stops watching', async () => {
+    await openForInput();
+    const sock = latest();
+    fireEvent.click(screen.getByRole('button', CONTINUE));
+    await settle();
+    expect(continues).toHaveLength(1);
+    const fetchMock = vi.mocked(fetch);
+    const call = fetchMock.mock.calls.find(([u]) => u === API + '/continue');
+    expect(call?.[1]?.method).toBe('POST');
+    // In flight: one press is all it takes.
+    expect(screen.getByRole('button', CONTINUE)).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', CONTINUE));
+    expect(continues).toHaveLength(1);
+    expect(leave).not.toHaveBeenCalled();
+
+    continues[0]?.resolve({ ok: true, status: 204, json: async () => undefined });
+    await settle();
+    expect(leave).toHaveBeenCalledWith('/agents/' + SLUG + '/subagents/' + ID + '/browser/done');
+    // Where the window stays (a tab the browser keeps open), it says the task goes on, and watches no more.
+    expect(screen.getByText('The task is continuing.')).toBeInTheDocument();
+    expect(screen.getByText('You can close this window.')).toBeInTheDocument();
+    expect(sock?.closed).toBe(true);
+    await settle(60_000);
+    expect(FakeSocket.all).toHaveLength(1);
+  });
+
+  it('shows a refusal in a banner and lets the person try again', async () => {
+    await openForInput();
+    fireEvent.click(screen.getByRole('button', CONTINUE));
+    await settle();
+    continues[0]?.resolve({ ok: false, status: 409, json: async () => ({ error: 'the task is not waiting for you', who: 'no one; reload to see what is waiting' }) });
+    await settle();
+    expect(screen.getByRole('alert')).toHaveTextContent('the task is not waiting for you');
+    expect(leave).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', CONTINUE)).toBeEnabled();
+    expect(screen.getByText('Taking input')).toBeInTheDocument();
+  });
+
+  it('has no button while the window is watch only', async () => {
+    await openForInput(false);
+    expect(screen.queryByRole('button', CONTINUE)).toBeNull();
+  });
+});
+
+describe('the browser window: the done page', () => {
+  it('closes itself, and says the task is continuing where it cannot', async () => {
+    const close = vi.spyOn(window, 'close').mockImplementation(() => {});
+    const router = createMemoryRouter(createAppRoutes(), { initialEntries: ['/agents/' + SLUG + '/subagents/' + ID + '/browser/done'] });
+    render(<RouterProvider router={router} />);
+    await settle();
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(screen.getByText('The task is continuing.')).toBeInTheDocument();
+    expect(screen.getByText('You can close this window.')).toBeInTheDocument();
+    expect(FakeSocket.all).toHaveLength(0);
   });
 });

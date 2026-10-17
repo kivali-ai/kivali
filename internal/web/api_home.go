@@ -282,14 +282,14 @@ func (s *Server) webSignInItem(j subagentJob) apitypes.NeedItem {
 // webSignInWords are a web_sign_in row's title and body: what the page
 // asks of the person, by reason, and what to do about it.
 func webSignInWords(name, site, reason string) (title, body string) {
-	const then = " then close the window; the task continues on its own."
+	const then = " then choose Continue the task."
 	switch apitypes.WebSignInReason(reason) {
 	case apitypes.WebSignInReasonMFA:
 		return name + " needs your second factor for " + site, "The page asks for a second factor. Open the browser, enter it," + then
 	case apitypes.WebSignInReasonCaptcha:
 		return name + " needs you to solve a CAPTCHA on " + site, "The page shows a CAPTCHA. Open the browser, solve it," + then
 	case apitypes.WebSignInReasonConsent:
-		return name + " needs your consent on " + site, "The page asks for a consent only a person can give. Open the browser, choose," + then
+		return name + " needs your consent on " + site, "The page asks for a consent only a person can give. Open the browser, answer it," + then
 	default:
 		return name + " needs you to sign in to " + site, "The page asks for a sign-in. Open the browser, sign in," + then
 	}
