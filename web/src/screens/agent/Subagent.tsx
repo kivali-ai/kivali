@@ -106,8 +106,11 @@ export function Subagent() {
   }
 
   const seconds = meta.started > 0 ? Math.max(0, ((meta.ended ?? now) - meta.started) / 1000) : 0;
-  const watchable = meta.kind === 'web' && live;
-  const browserCaption = watchable && meta.browser ? BROWSER_CAPTION[meta.browser] : undefined;
+  // A queued task has no start time yet (and no browser to show): the button comes with the start.
+  const started = meta.started > 0;
+  const watchable = meta.kind === 'web' && live && started;
+  let browserCaption = watchable && meta.browser ? BROWSER_CAPTION[meta.browser] : undefined;
+  if (meta.kind === 'web' && live && !started) browserCaption = 'The task has not started yet. Open browser appears once it has.';
   const stateLine = 'Background task for ' + parentName + (meta.step ? ' · ' + stepPhrase(meta.step) : '');
 
   return (

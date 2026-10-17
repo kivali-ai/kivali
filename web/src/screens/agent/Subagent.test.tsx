@@ -126,6 +126,21 @@ describe('the task page: its browser window', () => {
     expect(screen.queryByText(caption)).toBeNull();
   });
 
+  it('has no Open browser before the task has started, and says so until it does', async () => {
+    // A queued task: core holds the job with no start time and the transcript has no row yet.
+    const queued = web('stopped');
+    let body: SubagentTranscript = { meta: { ...queued.meta, started: 0 }, rows: [] };
+    const h = renderTabs(PATH, { routes: { ['GET ' + API]: () => body } });
+    expect(await page().findByText('The task has not started yet. Open browser appears once it has.')).toBeInTheDocument();
+    expect(page().queryByRole('button', { name: 'Open browser' })).toBeNull();
+    expect(screen.queryByText(caption)).toBeNull();
+    body = web('starting');
+    act(() => h.streams[0]?.emit('meta', {}));
+    expect(await page().findByRole('button', { name: 'Open browser' })).toBeEnabled();
+    expect(page().getByText('Browser starting')).toBeInTheDocument();
+    expect(screen.queryByText(/has not started/)).toBeNull();
+  });
+
   it('follows the browser state as the task’s meta changes', async () => {
     let body = web('starting');
     const h = renderTabs(PATH, { routes: { ['GET ' + API]: () => body } });
