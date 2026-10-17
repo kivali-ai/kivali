@@ -240,6 +240,7 @@ func (s *session) run(ctx context.Context) error {
 			q := s.queueFor(workCtx, group)
 			q.push(func() {
 				s.b.closeGroup(workCtx, group)
+				s.b.frontWatched(workCtx, "")
 				s.dropQueue(group, q)
 			})
 		case TypeScreencast:
@@ -259,6 +260,9 @@ func (s *session) run(ctx context.Context) error {
 			m := msg
 			s.input.push(func() {
 				if t := s.b.tabByID(m.Tab); t != nil {
+					// The person's tab takes the front for their input,
+					// even from a command's tab.
+					s.b.bringToFront(workCtx, t)
 					if err := s.b.input(workCtx, t, m.Args); err != nil {
 						s.log.Printf("input %s: %v", m.Tab, err)
 					}
@@ -360,10 +364,13 @@ func (s *session) dropQueue(group string, q *serialQueue) {
 	q.stop()
 }
 
-// enqueue runs a command on its group's queue and answers it.
+// enqueue runs a command on its group's queue and answers it. The
+// watched group's tab gets the front back once the command is done.
 func (s *session) enqueue(ctx context.Context, msg Message) {
 	s.queueFor(ctx, msg.Group).push(func() {
+		s.b.beginCommand()
 		res := s.b.runCommand(ctx, msg)
+		s.b.endCommand(ctx, msg.Group)
 		if err := s.send(res, nil); err != nil {
 			s.log.Printf("send result %s: %v", msg.ID, err)
 		}
