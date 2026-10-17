@@ -54,6 +54,9 @@ type browser struct {
 	frames map[string]*tab
 
 	downloads map[string]*download
+	// sent holds, per group, the names of the downloads sent for it, so
+	// no two of a group's downloads share a name.
+	sent map[string]map[string]bool
 	// front is the tab last brought to the front, nil when Chromium has
 	// said that tab is hidden.
 	front *tab
@@ -144,6 +147,7 @@ func newBrowser(conn cdpConn, clk clock.Clock, logger *log.Logger, site, dir str
 		claims:    map[string]chan struct{}{},
 		frames:    map[string]*tab{},
 		downloads: map[string]*download{},
+		sent:      map[string]map[string]bool{},
 	}
 }
 
@@ -833,6 +837,7 @@ func (b *browser) closeGroup(ctx context.Context, name string) {
 	if g := b.groups[name]; g != nil && len(g.tabs) == 0 {
 		delete(b.groups, name)
 	}
+	delete(b.sent, name)
 	b.mu.Unlock()
 	if contextID != "" {
 		if _, err := b.conn.Call(ctx, "", "Target.disposeBrowserContext", map[string]any{"browserContextId": contextID}); err != nil {
