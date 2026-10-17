@@ -165,6 +165,25 @@ var snapshotProbes = []probe{
 		},
 	},
 	{
+		name: "keys reach the page, browser shortcuts do not",
+		html: `<label for="t">Term</label><input id="t">`,
+		check: func(t *testing.T, p *realPod, snap string) {
+			p.step("focus", "", CommandType, TypeArgs{Ref: findRef(t, snap, `textbox "Term"`), Text: "a"})
+			p.step("press plus", "", CommandPress, PressArgs{Key: "+"})
+			p.step("press shift plus", "", CommandPress, PressArgs{Key: "Shift++"})
+			if v := p.eval(`document.getElementById('t').value`); v != `"a++"` {
+				t.Errorf("after pressing + twice: %s", v)
+			}
+			res := p.core.command("g", "", CommandPress, PressArgs{Key: "Control+w"})
+			if res.OK || res.Code != CodeBadArgs || !strings.Contains(res.Error, "shortcut the browser acts on") {
+				t.Errorf("Control+w: %+v", res)
+			}
+			if list := p.step("tabs", "", CommandTabs, TabsArgs{Action: TabsList}).Text; !strings.Contains(list, "* t1 ") {
+				t.Errorf("the tab is gone: %q", list)
+			}
+		},
+	},
+	{
 		name: "visibility and overflow clipping are judged per element",
 		html: `<div style="visibility:hidden">HIDDEN-PARENT <span style="visibility:visible">VISIBLE-CHILD</span></div>
 <div style="overflow:hidden;width:300px"><div style="display:flex;width:900px"><div style="width:300px;flex:none">SLIDE-ONE</div><div style="width:300px;flex:none">SLIDE-TWO</div></div></div>
