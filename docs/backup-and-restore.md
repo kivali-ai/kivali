@@ -17,6 +17,7 @@ Everything on the team's data volume:
 What is left out:
 
 - **Claude credentials.** Your Claude sign-in, whichever way you signed in, is not in the backup. After a restore, connect Claude again.
+- **Site sign-ins.** The browser sessions agents use for web tasks, with whatever sites they are signed in to, are not in the backup. A restored team has no site sessions: the next time an agent needs a site, it asks and you sign in again.
 - Temporary files, and copies Kivali rebuilds on its own after a restore.
 
 Each backup ends with a manifest listing every file with its size and checksum. A restore checks every file against it before it writes anything.
