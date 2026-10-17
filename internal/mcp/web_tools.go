@@ -178,7 +178,7 @@ const webWaitForSignInDescription = `Pause this task until a person has handled 
 
 const webNavigateDescription = `Load a URL in your current tab and wait for the page to settle. http and https only. Returns the page's title and its final URL; take a web_snapshot to read the page.`
 
-const webSnapshotDescription = `The current page as text: what a person would see, one element per line, with a ref like [e12] on every element you can act on (links, buttons, fields, options). Hidden text is left out. This is the default way to read a page. Refs belong to the snapshot they came from: take a new one after anything changes the page. A long page is cut at a limit and says so; scroll to read more.`
+const webSnapshotDescription = `The current page as text: what a person would see, one element per line, with a ref like [e12] on every element you can act on (links, buttons, fields, options). Hidden text is left out. A control marked hidden is not drawn but still works: web_upload for a file input, web_click for a checkbox or radio (its label toggles it). This is the default way to read a page. Refs belong to the snapshot they came from: take a new one after anything changes the page. A page over the limit shows the lines from the current scroll position down and says how many lines above and below are left out; scroll and snapshot again to read them.`
 
 const webScreenshotDescription = `The viewport as an image. For layout, charts, images and anything a snapshot cannot show; it costs more than a snapshot and has no refs.`
 

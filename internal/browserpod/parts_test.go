@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"os"
@@ -20,10 +21,10 @@ func TestFormatSnapshot(t *testing.T) {
 	d := snapshotData{
 		Title: "Plans", URL: "https://example.com/pricing", Width: 1280, Height: 800, ScrollY: 0, DocHeight: 2400,
 		Lines: []snapLine{
-			{0, `heading 2 "Plans"`},
-			{0, "list"},
-			{1, `listitem "Free"`},
-			{1, `[e1] link "Pricing" → /pricing`},
+			{0, `heading 2 "Plans"`, 0},
+			{0, "list", 40},
+			{1, `listitem "Free"`, 40},
+			{1, `[e1] link "Pricing" → /pricing`, 60},
 		},
 	}
 	want := "Page: Plans — https://example.com/pricing\n" +
@@ -37,24 +38,93 @@ func TestFormatSnapshot(t *testing.T) {
 	}
 }
 
-func TestFormatSnapshotCapsItsLength(t *testing.T) {
-	d := snapshotData{Title: "Long", URL: "https://example.com/"}
-	for i := 0; i < 5000; i++ {
-		d.Lines = append(d.Lines, snapLine{1, strings.Repeat("x", 30)})
+// longPage is a page of n lines of 30 characters, one every 20 px.
+func longPage(n int, scrollY float64) snapshotData {
+	d := snapshotData{Title: "Long", URL: "https://example.com/", Width: 1280, Height: 800, ScrollY: scrollY, DocHeight: float64(n * 20)}
+	for i := 0; i < n; i++ {
+		d.Lines = append(d.Lines, snapLine{1, fmt.Sprintf("line %04d %s", i, strings.Repeat("x", 20)), float64(i * 20)})
 	}
-	got := formatSnapshot(d, MaxSnapshotChars)
+	return d
+}
+
+func TestFormatSnapshotCapsItsLengthFromTheTop(t *testing.T) {
+	got := formatSnapshot(longPage(5000, 0), MaxSnapshotChars)
+	if len(got) > MaxSnapshotChars {
+		t.Fatalf("snapshot is %d chars, over %d", len(got), MaxSnapshotChars)
+	}
 	lines := strings.Split(got, "\n")
 	last := lines[len(lines)-1]
-	if !strings.HasPrefix(last, "… ") || !strings.HasSuffix(last, " more lines not shown; scroll, or wait for what you need, and snapshot again") {
+	if !strings.HasPrefix(last, "… ") || !strings.HasSuffix(last, " lines below not shown; scroll down, or wait for what you need, and snapshot again") {
 		t.Fatalf("last line: %q", last)
 	}
-	body := strings.Join(lines[:len(lines)-1], "\n")
-	if len(body) > MaxSnapshotChars {
-		t.Fatalf("snapshot body is %d chars, over %d", len(body), MaxSnapshotChars)
+	if !strings.Contains(lines[2], "line 0000") {
+		t.Fatalf("at the top of the page the cut starts at the first line, not %q", lines[2])
 	}
 	shown := len(lines) - 3 // header lines and the cut line
-	if !strings.Contains(last, "… "+itoa(5000-shown)+" more") {
+	if !strings.Contains(last, "… "+itoa(5000-shown)+" lines below") {
 		t.Fatalf("count: %d shown, last line %q", shown, last)
+	}
+	if strings.Contains(got, "above the current scroll position") {
+		t.Fatal("nothing is above the top of the page")
+	}
+}
+
+func TestFormatSnapshotKeepsTheScrollPosition(t *testing.T) {
+	// Scrolled to 40 000 px: line 2000 is the first at or below the
+	// top of the viewport.
+	got := formatSnapshot(longPage(5000, 40000), MaxSnapshotChars)
+	if len(got) > MaxSnapshotChars {
+		t.Fatalf("snapshot is %d chars, over %d", len(got), MaxSnapshotChars)
+	}
+	lines := strings.Split(got, "\n")
+	if !strings.HasPrefix(lines[2], "… 2000 lines above the current scroll position not shown; scroll up") {
+		t.Fatalf("above note: %q", lines[2])
+	}
+	if !strings.Contains(lines[3], "line 2000") {
+		t.Fatalf("the first shown line is %q, not the one at the scroll position", lines[3])
+	}
+	last := lines[len(lines)-1]
+	shown := len(lines) - 4
+	if !strings.HasPrefix(last, "… "+itoa(3000-shown)+" lines below not shown") {
+		t.Fatalf("below note: %q (%d shown)", last, shown)
+	}
+	if strings.Contains(got, "line 1999") {
+		t.Fatal("a line above the viewport is shown while lines below are cut")
+	}
+}
+
+func TestFormatSnapshotFillsFromAboveNearTheEnd(t *testing.T) {
+	// Scrolled so that only 100 lines are at or below the viewport's
+	// top: the rest of the room goes to the lines above them.
+	got := formatSnapshot(longPage(5000, 98000), MaxSnapshotChars)
+	if len(got) > MaxSnapshotChars {
+		t.Fatalf("snapshot is %d chars, over %d", len(got), MaxSnapshotChars)
+	}
+	if !strings.Contains(got, "line 4999") || !strings.Contains(got, "line 4900") {
+		t.Fatal("the lines at and below the scroll position are missing")
+	}
+	if !strings.Contains(got, "line 4800") {
+		t.Fatal("the lines above the scroll position were not filled in")
+	}
+	if strings.Contains(got, "lines below not shown") {
+		t.Fatal("nothing below the last line is left out")
+	}
+	if !strings.Contains(got, "lines above the current scroll position not shown") {
+		t.Fatal("the lines left out above are not noted")
+	}
+	// A page scrolled past its last line starts from the top.
+	got = formatSnapshot(longPage(5000, 200000), MaxSnapshotChars)
+	if !strings.Contains(strings.Split(got, "\n")[2], "line 0000") {
+		t.Fatalf("scrolled past the end: %q", strings.Split(got, "\n")[2])
+	}
+}
+
+func TestFormatSnapshotClampsDepth(t *testing.T) {
+	d := snapshotData{Title: "Deep", URL: "https://example.com/", Lines: []snapLine{{1 << 20, "text \"x\"", 0}, {-3, "text \"y\"", 0}}}
+	got := formatSnapshot(d, MaxSnapshotChars)
+	lines := strings.Split(got, "\n")
+	if lines[2] != strings.Repeat("  ", maxDepth)+`text "x"` || lines[3] != `text "y"` {
+		t.Fatalf("lines: %q", lines[2:])
 	}
 }
 
@@ -65,11 +135,14 @@ func itoa(n int) string {
 
 func TestSnapshotLinesDecode(t *testing.T) {
 	var d snapshotData
-	if err := json.Unmarshal([]byte(`{"title":"T","lines":[[0,"text \"a\""],[2,"[e1] button \"Go\""]],"refs":[null,{"role":"button","name":"Go"}]}`), &d); err != nil {
+	if err := json.Unmarshal([]byte(`{"title":"T","lines":[[0,"text \"a\"",12],[2,"[e1] button \"Go\"",340.5],[0,"text \"b\""]],"refs":[null,{"role":"button","name":"Go"}]}`), &d); err != nil {
 		t.Fatal(err)
 	}
-	if len(d.Lines) != 2 || d.Lines[1].Depth != 2 || d.Lines[1].Text != `[e1] button "Go"` || d.Refs[1].Name != "Go" || d.Refs[0] != nil {
+	if len(d.Lines) != 3 || d.Lines[1].Depth != 2 || d.Lines[1].Text != `[e1] button "Go"` || d.Lines[1].Top != 340.5 || d.Lines[0].Top != 12 || d.Lines[2].Top != 0 || d.Refs[1].Name != "Go" || d.Refs[0] != nil {
 		t.Fatalf("decoded: %+v", d)
+	}
+	if err := json.Unmarshal([]byte(`{"lines":[[0]]}`), &d); err == nil {
+		t.Fatal("a one-part line decoded")
 	}
 }
 

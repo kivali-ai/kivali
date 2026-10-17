@@ -467,8 +467,10 @@ see each other's tabs (in `open`, each group is a browser context of
 its own, with its own cookies, storage and cache, disposed with the
 group; core never asks an `open` browser for its profile and stores
 none), strips hidden content from snapshots in the
-page's isolated world, captures downloads, and packs the profile
-without its caches.
+page's isolated world (a snapshot over its limit keeps the lines from
+the current scroll position down and says how many are left out above
+and below), captures downloads, and packs the profile without its
+caches.
 
 Core owns the lifecycle (`internal/web/browser_registry.go`, one timer
 on the injected clock re-armed to the earliest deadline, as auto

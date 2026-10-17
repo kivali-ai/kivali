@@ -70,34 +70,26 @@ const testPageOne = `<!doctype html>
 const testPageTwo = `<!doctype html><html><head><title>Page two</title></head>
 <body><p>SECOND-PAGE</p><a href="/">Back home</a></body></html>`
 
-// TestRealChromium drives a real browser through the whole runtime.
-// It runs only when KIVALI_CHROMIUM names a Chromium or Chrome binary,
-// for example:
-//
-//	KIVALI_CHROMIUM="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
-//	  go test ./internal/browserpod/ -run TestRealChromium -v
-func TestRealChromium(t *testing.T) {
+// realPod is a pod running a real browser against a fake core, for the
+// tests that need Chromium.
+type realPod struct {
+	t    *testing.T
+	core *coreSide
+	url  string
+	done chan error
+}
+
+// realChromium starts a pod on the browser KIVALI_CHROMIUM names, or
+// skips the test when it is not set. The pod serves its pages from mux
+// and is stopped with the test.
+func realChromium(t *testing.T, mux *http.ServeMux) *realPod {
+	t.Helper()
 	bin := os.Getenv("KIVALI_CHROMIUM")
 	if bin == "" {
 		t.Skip("KIVALI_CHROMIUM is not set")
 	}
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html")
-		_, _ = io.WriteString(w, testPageOne)
-	})
-	mux.HandleFunc("/two", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html")
-		_, _ = io.WriteString(w, testPageTwo)
-	})
-	mux.HandleFunc("/report", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/octet-stream")
-		w.Header().Set("Content-Disposition", `attachment; filename="quarterly report.txt"`)
-		_, _ = io.WriteString(w, "REPORT-CONTENT")
-	})
 	site := httptest.NewServer(mux)
-	defer site.Close()
+	t.Cleanup(site.Close)
 
 	fc := newFakeCore(t)
 	rt := &Runtime{
@@ -107,9 +99,16 @@ func TestRealChromium(t *testing.T) {
 		Clock:  clock.New(),
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 	done := make(chan error, 1)
 	go func() { done <- rt.Run(ctx) }()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(failsafe):
+			t.Error("Run did not return")
+		}
+	})
 
 	core := fc.accept()
 	core.send(Message{Type: TypeHello})
@@ -117,26 +116,67 @@ func TestRealChromium(t *testing.T) {
 	core.expectState(StateStarting)
 	running := core.expectState(StateRunning)
 	t.Logf("running (detail %q)", running.Detail)
-	core.sendBytes(Message{Type: TypeFile, Group: "g", FileName: "hello.txt"}, []byte("hello"))
+	return &realPod{t: t, core: core, url: site.URL, done: done}
+}
 
-	step := func(name, tabID, cmd string, args any) Message {
-		t.Helper()
-		start := time.Now()
-		res := core.command("g", tabID, cmd, args)
-		if !res.OK {
-			t.Fatalf("%s: %s (%s)", name, res.Error, res.Code)
-		}
-		t.Logf("%s (%s): %s", name, time.Since(start).Round(time.Millisecond), firstLines(res.Text, 3))
-		return res
+// step runs a command in group g that must succeed, logging its answer
+// and how long it took.
+func (p *realPod) step(name, tabID, cmd string, args any) Message {
+	p.t.Helper()
+	start := time.Now()
+	res := p.core.command("g", tabID, cmd, args)
+	if !res.OK {
+		p.t.Fatalf("%s: %s (%s)", name, res.Error, res.Code)
 	}
-	eval := func(script string) string {
-		t.Helper()
-		return step("eval "+script, "", CommandEval, EvalArgs{Script: script}).Text
+	p.t.Logf("%s (%s): %s", name, time.Since(start).Round(time.Millisecond), firstLines(res.Text, 3))
+	return res
+}
+
+func (p *realPod) eval(script string) string {
+	p.t.Helper()
+	return p.step("eval "+script, "", CommandEval, EvalArgs{Script: script}).Text
+}
+
+// findRef is the ref of the line matching pattern in a snapshot.
+func findRef(t *testing.T, snap, pattern string) string {
+	t.Helper()
+	m := regexp.MustCompile(`\[(e\d+)\] ` + pattern).FindStringSubmatch(snap)
+	if m == nil {
+		t.Fatalf("no ref matching %q in snapshot:\n%s", pattern, snap)
 	}
+	return m[1]
+}
+
+func htmlPage(body string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = io.WriteString(w, body)
+	}
+}
+
+// TestRealChromium drives a real browser through the whole runtime.
+// It runs only when KIVALI_CHROMIUM names a Chromium or Chrome binary,
+// for example:
+//
+//	KIVALI_CHROMIUM="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+//	  go test ./internal/browserpod/ -run TestRealChromium -v
+func TestRealChromium(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", htmlPage(testPageOne))
+	mux.HandleFunc("/two", htmlPage(testPageTwo))
+	mux.HandleFunc("/report", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.Header().Set("Content-Disposition", `attachment; filename="quarterly report.txt"`)
+		_, _ = io.WriteString(w, "REPORT-CONTENT")
+	})
+	p := realChromium(t, mux)
+	core, site, done := p.core, p.url, p.done
+	core.sendBytes(Message{Type: TypeFile, Group: "g", FileName: "hello.txt"}, []byte("hello"))
+	step, eval := p.step, p.eval
 
 	// Navigate.
-	res := step("navigate", "", CommandNavigate, NavigateArgs{URL: site.URL + "/"})
-	if !strings.Contains(res.Text, "Loaded Kivali test page — "+site.URL) {
+	res := step("navigate", "", CommandNavigate, NavigateArgs{URL: site + "/"})
+	if !strings.Contains(res.Text, "Loaded Kivali test page — "+site) {
 		t.Fatalf("navigate text: %q", res.Text)
 	}
 	if tab := core.expectType(TypeTab); tab.Tab != "t1" || tab.Group != "g" {
@@ -159,14 +199,7 @@ func TestRealChromium(t *testing.T) {
 			t.Errorf("snapshot shows hidden %s", m)
 		}
 	}
-	ref := func(pattern string) string {
-		t.Helper()
-		m := regexp.MustCompile(`\[(e\d+)\] ` + pattern).FindStringSubmatch(snap)
-		if m == nil {
-			t.Fatalf("no ref matching %q in snapshot", pattern)
-		}
-		return m[1]
-	}
+	ref := func(pattern string) string { t.Helper(); return findRef(t, snap, pattern) }
 	linkRef := ref(`link "Go to page two" → /two`)
 	nameRef := ref(`textbox "Your name" value="" placeholder="Ada"`)
 	colorRef := ref(`combobox "Colour" value="r" selected="Red" options=3`)
@@ -218,14 +251,14 @@ func TestRealChromium(t *testing.T) {
 	}
 
 	list := step("tabs list", "", CommandTabs, TabsArgs{Action: TabsList}).Text
-	if !strings.Contains(list, "* t1 ") || !strings.Contains(list, popup.Tab+" "+site.URL+"/two") {
+	if !strings.Contains(list, "* t1 ") || !strings.Contains(list, popup.Tab+" "+site+"/two") {
 		t.Fatalf("tabs list: %q", list)
 	}
 	step("close popup", "", CommandTabs, TabsArgs{Action: TabsClose, Tab: popup.Tab})
 	core.next("popup closed", func(m Message) bool { return m.Type == TypeTabClosed && m.Tab == popup.Tab })
 
 	// Open, switch, close.
-	res = step("tabs open", "", CommandTabs, TabsArgs{Action: TabsOpen, URL: site.URL + "/two"})
+	res = step("tabs open", "", CommandTabs, TabsArgs{Action: TabsOpen, URL: site + "/two"})
 	opened := core.next("opened tab", func(m Message) bool { return m.Type == TypeTab && m.Opener == "" && m.Tab != "t1" })
 	if !strings.Contains(res.Text, "Page two") {
 		t.Fatalf("tabs open: %q", res.Text)
@@ -242,11 +275,11 @@ func TestRealChromium(t *testing.T) {
 
 	// Click a link: the tab navigates and core hears of it.
 	res = step("click link", "", CommandClick, ClickArgs{Ref: linkRef})
-	if !strings.Contains(res.Text, `Clicked link "Go to page two"; now at `+site.URL+"/two — Page two") {
+	if !strings.Contains(res.Text, `Clicked link "Go to page two"; now at `+site+"/two — Page two") {
 		t.Fatalf("click text: %q", res.Text)
 	}
 	core.next("navigated to two", func(m Message) bool {
-		return m.Type == TypeNavigated && m.Tab == "t1" && m.URL == site.URL+"/two" && m.Title == "Page two"
+		return m.Type == TypeNavigated && m.Tab == "t1" && m.URL == site+"/two" && m.Title == "Page two"
 	})
 	if res := core.command("g", "", CommandClick, ClickArgs{Ref: nameRef}); res.Code != CodeNotFound {
 		t.Fatalf("stale ref: %+v", res)
