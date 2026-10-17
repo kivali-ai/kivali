@@ -198,8 +198,12 @@ func (s *FSStore) WriteBrowserCookies(slug, session string, r io.Reader) (int64,
 }
 
 // writeSessionFile replaces dir/name with the bytes read from r,
-// through a temporary file and a rename, and returns the size.
+// through a temporary file and a rename, and returns the size. A
+// temporary file of the same name left by a write that did not finish
+// (core stopped mid-write) goes first; writes to one session's file are
+// never concurrent, so such a file is nobody's.
 func writeSessionFile(dir, name string, r io.Reader) (int64, error) {
+	removeSessionTemps(dir, name)
 	tmp, err := os.CreateTemp(dir, "."+name+"-*")
 	if err != nil {
 		return 0, err
@@ -234,6 +238,32 @@ func writeSessionFile(dir, name string, r io.Reader) (int64, error) {
 		return 0, err
 	}
 	return n, nil
+}
+
+// removeSessionTemps deletes the temporary files writeSessionFile makes
+// for dir/name (".<name>-*"). Errors are not reported: a file that
+// cannot be removed is found again by the next sweep.
+func removeSessionTemps(dir, name string) {
+	matches, _ := filepath.Glob(filepath.Join(dir, "."+name+"-*"))
+	for _, m := range matches {
+		_ = os.Remove(m)
+	}
+}
+
+// sweepBrowserTemps removes the temporary files of every agent's
+// browser sessions, as the store opens: what a write left when core
+// stopped before its rename. The directories are few, one per session.
+func (s *FSStore) sweepBrowserTemps() {
+	for _, pattern := range []string{
+		s.path("agents", "*", browserDirName, "*"),
+		s.path("agents", "_archived", "*", browserDirName, "*"),
+	} {
+		dirs, _ := filepath.Glob(pattern)
+		for _, dir := range dirs {
+			removeSessionTemps(dir, browserProfileFilename)
+			removeSessionTemps(dir, browserCookiesFilename)
+		}
+	}
 }
 
 // OpenBrowserProfile opens the session's saved profile for reading and

@@ -10,6 +10,74 @@ import (
 	"time"
 )
 
+// A profile or cookie write that core did not live to finish leaves
+// its temporary file in the session's directory. The next open of the
+// store sweeps them, and so does the next write of the same file.
+func TestBrowserSessionTempFilesAreSwept(t *testing.T) {
+	root := t.TempDir()
+	s, err := New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t0 := time.Date(2026, 10, 16, 9, 0, 0, 0, time.UTC)
+	if _, err := s.EnsureBrowserSession("alice", "vendor.com", "vendor.com", t0); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(root, "agents", "alice", "browser", "vendor.com")
+	archived := filepath.Join(root, "agents", "_archived", "bob", "browser", "open")
+	if err := os.MkdirAll(archived, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stale := []string{
+		filepath.Join(dir, ".profile.tar.zst-123456"),
+		filepath.Join(dir, ".cookies.json-654321"),
+		filepath.Join(archived, ".profile.tar.zst-abcdef"),
+	}
+	for _, p := range stale {
+		if err := os.WriteFile(p, []byte("half"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := New(root); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range stale {
+		if _, err := os.Stat(p); err == nil {
+			t.Errorf("%s survived the open", p)
+		}
+	}
+	if _, _, err := s.ReadBrowserSession("alice", "vendor.com"); err != nil {
+		t.Errorf("the session record was touched: %v", err)
+	}
+
+	// A write of the same file takes a leftover with it, and leaves
+	// the other file's alone until its own write.
+	leftProfile := filepath.Join(dir, ".profile.tar.zst-crash")
+	leftCookies := filepath.Join(dir, ".cookies.json-crash")
+	for _, p := range []string{leftProfile, leftCookies} {
+		if err := os.WriteFile(p, []byte("half"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.WriteBrowserProfile("alice", "vendor.com", strings.NewReader("profile"), t0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(leftProfile); err == nil {
+		t.Error("the profile's leftover survived a profile write")
+	}
+	if _, err := os.Stat(leftCookies); err != nil {
+		t.Errorf("the cookies' leftover was taken by a profile write: %v", err)
+	}
+	entries, _ := os.ReadDir(dir)
+	var names []string
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	if want := []string{".cookies.json-crash", "profile.tar.zst", "session.json"}; strings.Join(names, ",") != strings.Join(want, ",") {
+		t.Errorf("session dir = %v, want %v", names, want)
+	}
+}
+
 func TestBrowserSessionsRoundTrip(t *testing.T) {
 	s, err := New(t.TempDir())
 	if err != nil {

@@ -237,7 +237,9 @@ func New(dir string) (*FSStore, error) {
 			return nil, fmt.Errorf("store: mkdir %s: %w", p, err)
 		}
 	}
-	return &FSStore{root: dir}, nil
+	s := &FSStore{root: dir}
+	s.sweepBrowserTemps()
+	return s, nil
 }
 
 // Open returns a store rooted at dir without creating anything, for a
