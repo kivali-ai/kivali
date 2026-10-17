@@ -2,6 +2,7 @@ package browserpod
 
 import (
 	"fmt"
+	"io"
 	"net/http"
 	"regexp"
 	"strings"
@@ -210,7 +211,29 @@ func TestRealChromiumPageRules(t *testing.T) {
 	}
 	long.WriteString("</body></html>")
 	mux.HandleFunc("/long", htmlPage(long.String()))
+	mux.HandleFunc("/report", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.Header().Set("Content-Disposition", `attachment; filename="report.csv"`)
+		_, _ = io.WriteString(w, "a,b\n")
+	})
+	mux.HandleFunc("/nocontent", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	p := realChromium(t, mux)
+
+	t.Run("an aborted navigation says whether it became a download", func(t *testing.T) {
+		pt := &realPod{t: t, core: p.core, url: p.url, done: p.done}
+		pt.step("navigate", "", CommandNavigate, NavigateArgs{URL: p.url + "/probe/0"})
+		res := pt.step("navigate to a download", "", CommandNavigate, NavigateArgs{URL: p.url + "/report"})
+		if !strings.HasPrefix(res.Text, p.url+"/report started a download instead of loading as a page; the tab is at "+p.url+"/probe/0") {
+			t.Errorf("download: %q", res.Text)
+		}
+		if dl := p.core.expectType(TypeDownload); dl.FileName != "report.csv" {
+			t.Errorf("download: %+v", dl.Message)
+		}
+		res = pt.step("navigate to a 204", "", CommandNavigate, NavigateArgs{URL: p.url + "/nocontent"})
+		if !strings.HasPrefix(res.Text, "The navigation to "+p.url+"/nocontent was aborted before a page loaded") || strings.Contains(res.Text, "download") {
+			t.Errorf("204: %q", res.Text)
+		}
+	})
 
 	for i, pr := range snapshotProbes {
 		t.Run(pr.name, func(t *testing.T) {

@@ -225,6 +225,51 @@ func TestCommandTimesOutOnTheClock(t *testing.T) {
 	}
 }
 
+// abortingNavigate answers Page.navigate with net::ERR_ABORTED, as
+// Chromium does for a download, a 204 or a superseded navigation.
+func abortingNavigate(ctx context.Context, session, method string, params json.RawMessage) (any, bool, error) {
+	if method == "Page.navigate" {
+		return map[string]any{"frameId": "T1", "loaderId": "L-abort", "errorText": "net::ERR_ABORTED"}, true, nil
+	}
+	return nil, false, nil
+}
+
+func TestAbortedNavigationIsADownloadOnlyWhenOneBegins(t *testing.T) {
+	h := startPod(t, podOptions{})
+	if res := h.core.command("g", "", CommandNavigate, NavigateArgs{URL: "https://a.test/"}); !res.OK {
+		t.Fatalf("navigate: %+v", res)
+	}
+	h.cdp.setOverride(abortingNavigate)
+	// The pod's own ticker is armed already; each aborted navigation
+	// arms the command timeout and then the download wait.
+	armed := h.clk.Waiters() + 2
+	// A download announces itself on the tab's frame: the answer says so.
+	id := h.core.sendCommand("g", "", CommandNavigate, NavigateArgs{URL: "https://a.test/report.pdf"})
+	h.clk.BlockUntil(armed)
+	h.cdp.emit("", "Browser.downloadWillBegin", map[string]any{"frameId": "T1", "guid": "g1", "url": "https://a.test/report.pdf", "suggestedFilename": "report.pdf"})
+	res := h.core.result(id)
+	if !res.OK || res.Text != "https://a.test/report.pdf started a download instead of loading as a page; the tab is at https://a.test/ — Title of https://a.test/" {
+		t.Fatalf("download: %+v", res)
+	}
+	// Nothing begins: after the wait the navigation was just aborted.
+	id = h.core.sendCommand("g", "", CommandNavigate, NavigateArgs{URL: "https://a.test/204"})
+	h.clk.BlockUntil(armed)
+	h.clk.Advance(downloadWait)
+	res = h.core.result(id)
+	if !res.OK || !strings.HasPrefix(res.Text, "The navigation to https://a.test/204 was aborted before a page loaded") || strings.Contains(res.Text, "download") {
+		t.Fatalf("aborted: %+v", res)
+	}
+	// A download on another tab's frame is not this navigation's.
+	id = h.core.sendCommand("g", "", CommandNavigate, NavigateArgs{URL: "https://a.test/other"})
+	h.clk.BlockUntil(armed)
+	h.cdp.emit("", "Browser.downloadWillBegin", map[string]any{"frameId": "T9", "guid": "g2", "url": "https://a.test/x", "suggestedFilename": "x"})
+	h.clk.Advance(downloadWait)
+	res = h.core.result(id)
+	if !res.OK || !strings.Contains(res.Text, "was aborted before a page loaded") {
+		t.Fatalf("another tab's download: %+v", res)
+	}
+}
+
 func TestWaitRunsOutOnTheClock(t *testing.T) {
 	h := startPod(t, podOptions{})
 	if res := h.core.command("g", "", CommandNavigate, NavigateArgs{URL: "https://a.test/"}); !res.OK {

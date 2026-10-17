@@ -29,6 +29,9 @@ const (
 	navStartWait = time.Second
 	// idleWait is how long a loaded page gets to go network-idle.
 	idleWait = 2 * time.Second
+	// downloadWait is how long an aborted navigation waits for the
+	// download it may have become to announce itself.
+	downloadWait = time.Second
 	// maxWait bounds web_wait.
 	maxWait = 30 * time.Second
 	// waitPoll is how often web_wait checks the page.
@@ -367,6 +370,23 @@ func (b *browser) waitLoad(ctx context.Context, t *tab, m mark) error {
 
 func (b *browser) cmdNavigate(ctx context.Context, t *tab, a NavigateArgs) (result, error) {
 	m := t.mark()
+	// A navigation that becomes a download is aborted as a page load;
+	// so is one to a response with nothing to show, or one another
+	// navigation replaced. The download's event, on this tab, tells
+	// them apart.
+	downloaded := make(chan struct{}, 1)
+	off := b.conn.On("", "Browser.downloadWillBegin", func(raw json.RawMessage) {
+		var ev struct {
+			FrameID string `json:"frameId"`
+		}
+		if json.Unmarshal(raw, &ev) == nil && ev.FrameID == t.targetID {
+			select {
+			case downloaded <- struct{}{}:
+			default:
+			}
+		}
+	})
+	defer off()
 	raw, err := b.conn.Call(ctx, t.session, "Page.navigate", map[string]any{"url": a.URL})
 	if err != nil {
 		return result{}, err
@@ -378,7 +398,16 @@ func (b *browser) cmdNavigate(ctx context.Context, t *tab, a NavigateArgs) (resu
 	_ = json.Unmarshal(raw, &res)
 	switch {
 	case res.ErrorText == "net::ERR_ABORTED":
-		return result{text: fmt.Sprintf("%s did not load as a page (it may have started a download); the tab is at %s", a.URL, t.where())}, nil
+		timer := b.clock.NewTimer(downloadWait)
+		defer timer.Stop()
+		select {
+		case <-downloaded:
+			return result{text: fmt.Sprintf("%s started a download instead of loading as a page; the tab is at %s", a.URL, t.where())}, nil
+		case <-timer.C():
+			return result{text: fmt.Sprintf("The navigation to %s was aborted before a page loaded (the server sent nothing to show, or another navigation replaced it); the tab is at %s", a.URL, t.where())}, nil
+		case <-ctx.Done():
+			return result{}, ctx.Err()
+		}
 	case res.ErrorText != "":
 		return result{}, failf(CodeBrowser, "Could not load %s: %s.", a.URL, res.ErrorText)
 	}
