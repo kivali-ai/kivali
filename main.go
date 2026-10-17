@@ -40,6 +40,11 @@ import (
 // running.
 var version = "dev"
 
+// browserShutdownTimeout bounds what the browsers are given at shutdown
+// to save their profiles and report their cookies (web.Server.
+// ShutdownBrowsers); the exit waits that long at most for them.
+const browserShutdownTimeout = 20 * time.Second
+
 func main() {
 	// Subcommand dispatch. `kivali mcp ...` → runMCP; otherwise the
 	// main server. Backup and restore are the app's (Org, Backup and
@@ -539,6 +544,15 @@ func main() {
 		shutdownCancel()
 		stopControl()
 		stopAgentpodSocket()
+		// Browsers: the site sessions' idle browsers save their
+		// profiles and the running ones report their cookies, before
+		// the socket they arrive on closes and the lifecycle stops.
+		// The next boot deletes every pod, so this is the last chance
+		// to keep a sign-in made since the last save. Bounded: a pod
+		// that does not answer does not hold the exit.
+		bctx, bcancel := context.WithTimeout(context.Background(), browserShutdownTimeout)
+		srv.ShutdownBrowsers(bctx)
+		bcancel()
 		stopBrowserSocket()
 		stopStagedPublishJanitor()
 		stopAutoRelease()
