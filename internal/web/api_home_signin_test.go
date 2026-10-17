@@ -39,10 +39,10 @@ func TestAPIHomeWebSignInNeeds(t *testing.T) {
 		byID[n.ID] = n
 	}
 	want := map[string][2]string{
-		"web_sign_in:buyer/wsign_in": {"Buyer needs you to sign in to vendor.example", "The page asks for a sign-in. Open the browser, sign in, then close the window; the task continues on its own."},
-		"web_sign_in:buyer/wmfa":     {"Buyer needs your second factor for vendor.example", "The page asks for a second factor. Open the browser, enter it, then close the window; the task continues on its own."},
-		"web_sign_in:buyer/wcaptcha": {"Buyer needs you to solve a CAPTCHA on vendor.example", "The page shows a CAPTCHA. Open the browser, solve it, then close the window; the task continues on its own."},
-		"web_sign_in:buyer/wconsent": {"Buyer needs your consent on vendor.example", "The page asks for a consent only a person can give. Open the browser, choose, then close the window; the task continues on its own."},
+		"web_sign_in:buyer/wsign_in": {"Buyer needs you to sign in to vendor.example", "The page asks for a sign-in. Open the browser, sign in, then choose Continue the task."},
+		"web_sign_in:buyer/wmfa":     {"Buyer needs your second factor for vendor.example", "The page asks for a second factor. Open the browser, enter it, then choose Continue the task."},
+		"web_sign_in:buyer/wcaptcha": {"Buyer needs you to solve a CAPTCHA on vendor.example", "The page shows a CAPTCHA. Open the browser, solve it, then choose Continue the task."},
+		"web_sign_in:buyer/wconsent": {"Buyer needs your consent on vendor.example", "The page asks for a consent only a person can give. Open the browser, answer it, then choose Continue the task."},
 	}
 	if len(byID) != len(want) {
 		t.Fatalf("needs = %+v", h.Needs)

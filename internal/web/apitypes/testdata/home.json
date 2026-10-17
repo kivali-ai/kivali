@@ -110,7 +110,7 @@
         "name": "Engineering lead"
       },
       "at": "2026-09-20T17:00:00Z",
-      "body_md": "The page asks for a sign-in. Open the browser, sign in, then close the window; the task continues on its own.",
+      "body_md": "The page asks for a sign-in. Open the browser, sign in, then choose Continue the task.",
       "attachments": [],
       "packages": [],
       "subagent": {

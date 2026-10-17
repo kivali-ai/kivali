@@ -1,8 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router';
-import { apiGet } from '../../api/client';
-import type { BrowserInput, BrowserState, BrowserWindowEvent, BrowserWindowInput, BrowserWindowTab, SubagentMeta, SubagentTranscript } from '../../api/types.gen';
-import { outsideSite } from '../../app/links';
+import { apiGet, apiPost } from '../../api/client';
+import type { BrowserInput, BrowserState, BrowserWindowEvent, BrowserWindowInput, BrowserWindowTab, SubagentMeta, SubagentTranscript, WebSignInReason } from '../../api/types.gen';
+import { browserWindowDonePath, outsideSite } from '../../app/links';
 import { Badge, Banner, Button, Icon, Text } from '../../ds';
 import { asApiError } from '../agent/tabsShared';
 import '../../styles/browser.css';
@@ -12,7 +12,7 @@ export const RECONNECT_MS = [1000, 2000, 4000, 10_000];
 
 /**
  * The longest wait while the window takes input. Core resumes a waiting task once its last window has been
- * gone for ten seconds, so a window in the middle of a sign-in must be back well inside that.
+ * gone for ten seconds (or at once when the person chooses Continue the task), so a window in the middle of a sign-in must be back well inside that.
  */
 export const INPUT_RECONNECT_MAX_MS = 4000;
 
@@ -28,6 +28,49 @@ function reconnectDelay(attempt: number, input: boolean): number {
 export const MAX_FAILED_CONNECTS = 5;
 
 const UNREACHABLE = 'Kivali could not reach this task. Reopen it from the task page.';
+
+/** The banner while the window takes input: what the page asks of the person, then the way on. */
+export const FINISH: Record<WebSignInReason, string> = {
+  sign_in: 'Sign in on this page, then continue the task.',
+  mfa: 'Enter the second factor on this page, then continue the task.',
+  captcha: 'Solve the CAPTCHA on this page, then continue the task.',
+  consent: 'Answer the consent request on this page, then continue the task.',
+};
+
+/**
+ * How the window leaves once the person has continued the task: it loads the done page in its place. The
+ * desktop app closes its browser window on that load; a browser tab shows the done page, which closes the tab
+ * where the browser lets a page close it. Tests replace `leave`.
+ */
+export const windowExit = {
+  leave(path: string): void {
+    window.location.replace(path);
+  },
+};
+
+/**
+ * The window once the person's part is over: the task continues without them. It tries to close itself, which
+ * a browser allows for a window a page opened; where it stays open it says the task is continuing.
+ */
+export function BrowserWindowDone() {
+  useEffect(() => {
+    document.title = 'Browser';
+    window.close();
+  }, []);
+  return <ContinuedNote />;
+}
+
+function ContinuedNote() {
+  return (
+    <div className="app-bw">
+      <div className="app-bw-note">
+        <Banner tone="success" title="The task is continuing.">
+          You can close this window.
+        </Banner>
+      </div>
+    </div>
+  );
+}
 
 /** The same-origin WebSocket URL of a task's browser window, after the page's scheme. */
 export function browserSocketUrl(slug: string, id: string, loc: Location = window.location): string {
@@ -356,6 +399,10 @@ export function BrowserWindow() {
   const [input, setInput] = useState(false);
   const [site, setSite] = useState('');
   const [menu, setMenu] = useState<PasteMenu | null>(null);
+  const [reason, setReason] = useState<WebSignInReason | undefined>(undefined);
+  // The person's Continue the task: sending, then done once core has resumed the task.
+  const [continuing, setContinuing] = useState<'idle' | 'sending' | 'done'>('idle');
+  const [continueError, setContinueError] = useState<{ message: string; who: string } | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
   const keysRef = useRef<HTMLDivElement>(null);
@@ -379,6 +426,7 @@ export function BrowserWindow() {
         setBrowser(t.meta.browser);
         setSandboxOff(t.meta.browser_sandbox_off === true);
         setSite(t.meta.site ?? '');
+        setReason(t.meta.wait_reason);
         wantsInput.current = takesInput(t.meta);
       },
       (err: unknown) => {
@@ -394,8 +442,23 @@ export function BrowserWindow() {
     if (meta?.description) document.title = meta.description + ' · browser';
   }, [meta?.description]);
 
+  // Input turning on is a wait beginning, maybe not the one the header was read in: the header says its reason.
+  useEffect(() => {
+    if (!input) return;
+    let live = true;
+    apiGet<SubagentTranscript>(path).then(
+      (t) => {
+        if (live && t.meta.wait_reason) setReason(t.meta.wait_reason);
+      },
+      () => {},
+    );
+    return () => {
+      live = false;
+    };
+  }, [input, path]);
+
   const blocked = meta ? unavailable(meta) : null;
-  const connect = meta !== null && blocked === null;
+  const connect = meta !== null && blocked === null && continuing !== 'done';
 
   useEffect(() => {
     if (!connect) return;
@@ -563,6 +626,24 @@ export function BrowserWindow() {
     );
   };
 
+  const continueTask = () => {
+    if (continuing !== 'idle') return;
+    setContinuing('sending');
+    setContinueError(null);
+    apiPost<void>(path + '/continue').then(
+      () => {
+        setContinuing('done');
+        windowExit.leave(browserWindowDonePath(slug, id));
+      },
+      (err: unknown) => {
+        setContinuing('idle');
+        setContinueError(asApiError(err));
+      },
+    );
+  };
+
+  if (continuing === 'done') return <ContinuedNote />;
+
   if (failure) {
     return (
       <div className="app-bw">
@@ -625,7 +706,24 @@ export function BrowserWindow() {
       </header>
       {input && (
         <div className="app-bw-banner">
-          <Banner tone="info" title="Sign in, then close this window. The task continues on its own." />
+          <Banner
+            tone="info"
+            title={FINISH[reason ?? 'sign_in']}
+            action={
+              <Button variant="primary" size="sm" onClick={continueTask} disabled={continuing === 'sending'} loading={continuing === 'sending'}>
+                Continue the task
+              </Button>
+            }
+          >
+            Closing the window continues it too.
+          </Banner>
+        </div>
+      )}
+      {continueError && (
+        <div className="app-bw-banner">
+          <Banner tone="danger" title={continueError.message} onDismiss={() => setContinueError(null)}>
+            {continueError.who}
+          </Banner>
         </div>
       )}
       <main className="app-bw-view">

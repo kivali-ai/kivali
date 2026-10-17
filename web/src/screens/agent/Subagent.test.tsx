@@ -175,7 +175,7 @@ describe('the task page: waiting for a sign-in', () => {
       meta: { ...t.meta, kind: 'web', session: 'vendor.example', site: 'vendor.example', browser: 'running', state: 'waiting_for_sign_in', ...(reason ? { wait_reason: reason } : {}) },
     };
   };
-  const steps = 'Sign in, then close the window. The task continues on its own.';
+  const steps = 'Open the browser, do what the page asks, then choose Continue the task.';
 
   it('says what it waits for, keeps Open browser and makes it the main action', async () => {
     const open = vi.fn(() => null);

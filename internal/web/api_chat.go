@@ -26,6 +26,7 @@ func (s *Server) wireAPIChatRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/agents/{slug}/new-chat", s.handleAPINewChat)
 	mux.HandleFunc("GET /api/v1/agents/{slug}/subagents/{id}", s.handleAPISubagent)
 	mux.HandleFunc("GET /api/v1/agents/{slug}/subagents/{id}/browser", s.handleBrowserWindow)
+	mux.HandleFunc("POST /api/v1/agents/{slug}/subagents/{id}/continue", s.handleAPISubagentContinue)
 	mux.HandleFunc("GET /api/v1/agents/{slug}/chats", s.handleAPIPastChats)
 	mux.HandleFunc("GET /api/v1/agents/{slug}/chats/{ts}", s.handleAPIPastChat)
 	mux.HandleFunc("GET /api/v1/agents/{slug}/tool-calls/{id}", s.handleAPIToolCall)
@@ -314,6 +315,32 @@ func (s *Server) handleAPISubagent(w http.ResponseWriter, r *http.Request) {
 		Meta: meta,
 		Rows: s.subagentTranscriptRows(a.Slug, id, meta.Description, hist),
 	})
+}
+
+// handleAPISubagentContinue serves POST
+// /api/v1/agents/{slug}/subagents/{id}/continue: the person at a web
+// task's browser window says they have done what the page asked, and
+// the task waiting for them resumes at once (continueTask). 204 when it
+// resumes or already has; 409 when the task is not waiting for a
+// person; 404 when core holds no such task.
+func (s *Server) handleAPISubagentContinue(w http.ResponseWriter, r *http.Request) {
+	a, ok := s.activeChatAgent(w, r)
+	if !ok {
+		return
+	}
+	id := r.PathValue("id")
+	result := signInNoTask
+	if plainSlug(id) && s.SubagentService != nil {
+		result = s.SubagentService.continueTask(a.Slug, id)
+	}
+	switch result {
+	case signInContinued:
+		w.WriteHeader(http.StatusNoContent)
+	case signInNotWaiting:
+		writeAPIError(w, http.StatusConflict, "the task is not waiting for you", whoNoOne)
+	default:
+		writeAPIError(w, http.StatusNotFound, "no running background task is called "+id, whoLink)
+	}
 }
 
 // agentDirName is slug's directory under agents/: the slug itself, or

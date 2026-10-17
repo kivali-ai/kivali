@@ -89,6 +89,19 @@ fn is_browser_path(path: &str) -> bool {
     matches!(seg.as_slice(), ["", "agents", slug, "subagents", id, "browser"] if !slug.is_empty() && !id.is_empty())
 }
 
+/// The page a browser window loads once the person has continued the
+/// task: `/agents/<slug>/subagents/<id>/browser/done`, nothing before or
+/// after. Their part is over, so the window closes instead.
+fn is_browser_done_path(path: &str) -> bool {
+    path.strip_suffix("/done").is_some_and(is_browser_path)
+}
+
+/// Whether a browser window's navigation to `url` closes it: the done
+/// page ([`is_browser_done_path`]) of the team's own origin.
+fn closes_browser(url: &Url, pinned: Option<&url::Origin>) -> bool {
+    team_nav(url, pinned) == TeamNav::Allow && is_browser_done_path(url.path())
+}
+
 /// Webviews that run the bundled pages and may call the app's commands.
 pub fn is_page_label(label: &str) -> bool {
     label == SETUP || label == SETTINGS || label.starts_with(PAGE_PREFIX)
@@ -926,6 +939,17 @@ fn show_browser(app: &AppHandle, id: &str, url: Url) {
         .resizable(true)
         .on_navigation(move |url| {
             let pinned = pin_nav.lock().unwrap().clone();
+            if closes_browser(url, pinned.as_ref()) {
+                // From another thread, as the window cannot be destroyed
+                // inside its own navigation callback.
+                let (app, label) = (app_nav.clone(), label_nav.clone());
+                std::thread::spawn(move || {
+                    if let Some(w) = app.get_webview_window(&label) {
+                        let _ = w.destroy();
+                    }
+                });
+                return false;
+            }
             match team_nav(url, pinned.as_ref()) {
                 TeamNav::Allow => true,
                 TeamNav::Browser => {
@@ -1806,6 +1830,22 @@ mod tests {
         assert!(!is("http://127.0.0.1:8080/agents/a/subagents/b"));
         assert!(!is("http://127.0.0.1:8080/"));
         assert!(!is("about:blank"));
+    }
+
+    #[test]
+    fn browser_done_paths() {
+        let local = u("http://127.0.0.1:8080/").origin();
+        let pin = Some(&local);
+        let closes = |s: &str| closes_browser(&u(s), pin);
+        assert!(closes("http://127.0.0.1:8080/agents/a/subagents/b/browser/done"));
+        assert!(closes("http://127.0.0.1:8080/agents/a/subagents/b/browser/done?x=1"));
+        assert!(!closes("http://127.0.0.1:8080/agents/a/subagents/b/browser"));
+        assert!(!closes("http://127.0.0.1:8080/agents/a/subagents/b/browser/done/x"));
+        assert!(!closes("http://127.0.0.1:8080/agents/a/subagents//browser/done"));
+        assert!(!closes("http://127.0.0.1:8080/done"));
+        // Another origin's done page is another team's, not this window's.
+        assert!(!closes("http://127.0.0.1:8081/agents/a/subagents/b/browser/done"));
+        assert!(!closes("https://elsewhere.example/agents/a/subagents/b/browser/done"));
     }
 
     #[test]

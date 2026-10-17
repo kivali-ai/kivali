@@ -549,7 +549,13 @@ Windows (installed before its page loads), any other web page refused
 and sent to the system browser through a `BrowserGate` of its own, and
 the team's `/auth/login` refused, as signing in is the team window's.
 No capability names it, so it has no IPC, and it has no menu of its
-own. Closing the team's window (hidden or destroyed) closes its browser
+own. When the person continues a task waiting for them, the page loads
+`/agents/<slug>/subagents/<id>/browser/done` in its place; the shell
+refuses that navigation of its own origin and destroys the window
+(`closes_browser`), which is how the window closes itself without IPC
+(WKWebView ignores `window.close()`). In a browser tab the same page
+loads, calls `window.close()`, and says the task is continuing.
+Closing the team's window (hidden or destroyed) closes its browser
 windows (`close_browsers`).
 
 The **View** menu acts on the team window in front: Reload reloads
