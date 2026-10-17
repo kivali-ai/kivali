@@ -116,6 +116,55 @@ var snapshotProbes = []probe{
 		},
 	},
 	{
+		name: "typing reports what the field holds",
+		html: `<label for="d">Start</label><input type="date" id="d">
+<label for="m">Code</label><input id="m" maxlength="5">
+<label for="s">Size</label><select id="s"><option>S</option><option>M</option></select>
+<label for="k">Keep</label><input type="checkbox" id="k">
+<label for="pw">Password</label><input type="password" id="pw">
+<div contenteditable="true" aria-label="Note">old</div>
+<label for="n">Qty</label><input type="number" id="n">`,
+		check: func(t *testing.T, p *realPod, snap string) {
+			ref := func(pattern string) string { t.Helper(); return findRef(t, snap, pattern) }
+			res := p.step("type a date", "", CommandType, TypeArgs{Ref: ref(`textbox "Start"`), Text: "2024-05-01"})
+			if res.Text != `Typed "2024-05-01" into textbox "Start"` {
+				t.Errorf("date: %q", res.Text)
+			}
+			if v := p.eval(`document.getElementById('d').value`); v != `"2024-05-01"` {
+				t.Errorf("date value: %s", v)
+			}
+			if res := p.core.command("g", "", CommandType, TypeArgs{Ref: ref(`textbox "Start"`), Text: "May 1"}); res.OK || res.Code != CodeBadArgs || !strings.Contains(res.Error, `did not take "May 1"; a date input takes yyyy-mm-dd`) {
+				t.Errorf("date in the wrong format: %+v", res)
+			}
+			res = p.step("type past maxlength", "", CommandType, TypeArgs{Ref: ref(`textbox "Code"`), Text: "abcdefgh"})
+			if res.Text != `Typed "abcdefgh" into textbox "Code"; it holds "abcde" (it takes at most 5 characters)` {
+				t.Errorf("maxlength: %q", res.Text)
+			}
+			if res := p.core.command("g", "", CommandType, TypeArgs{Ref: ref(`combobox "Size"`), Text: "M"}); res.OK || !strings.Contains(res.Error, "is a select; choose an option with web_select") {
+				t.Errorf("select: %+v", res)
+			}
+			if res := p.core.command("g", "", CommandType, TypeArgs{Ref: ref(`checkbox "Keep"`), Text: "yes"}); res.OK || !strings.Contains(res.Error, "takes no text; click it instead") {
+				t.Errorf("checkbox: %+v", res)
+			}
+			res = p.step("type a password", "", CommandType, TypeArgs{Ref: ref(`textbox "Password"`), Text: "hunter2"})
+			if res.Text != `Typed 7 characters into textbox "Password"; it holds 7` {
+				t.Errorf("password: %q", res.Text)
+			}
+			res = p.step("type into contenteditable", "", CommandType, TypeArgs{Ref: ref(`textbox "Note"`), Text: "new note"})
+			if res.Text != `Typed "new note" into textbox "Note"` {
+				t.Errorf("contenteditable: %q", res.Text)
+			}
+			res = p.step("type letters into a number", "", CommandType, TypeArgs{Ref: ref(`spinbutton "Qty"`), Text: "many"})
+			if res.Text != `Typed "many" into spinbutton "Qty"; it holds ""` {
+				t.Errorf("number: %q", res.Text)
+			}
+			res = p.step("clear", "", CommandType, TypeArgs{Ref: ref(`textbox "Code"`), Text: ""})
+			if res.Text != `Cleared textbox "Code"` {
+				t.Errorf("clear: %q", res.Text)
+			}
+		},
+	},
+	{
 		name: "visibility and overflow clipping are judged per element",
 		html: `<div style="visibility:hidden">HIDDEN-PARENT <span style="visibility:visible">VISIBLE-CHILD</span></div>
 <div style="overflow:hidden;width:300px"><div style="display:flex;width:900px"><div style="width:300px;flex:none">SLIDE-ONE</div><div style="width:300px;flex:none">SLIDE-TWO</div></div></div>
