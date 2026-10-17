@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 )
 
 // probe is one page the snapshot rules are checked on: regular
@@ -33,9 +34,14 @@ var snapshotProbes = []probe{
 			"\n\\[e6\\] button \"Plain button\"",
 		},
 		check: func(t *testing.T, p *realPod, snap string) {
+			start := time.Now()
 			res := p.step("click wrapper", "", CommandClick, ClickArgs{Ref: "e1"})
 			if !strings.Contains(res.Text, `Clicked clickable "Card title Card body text Add to cart"`) {
 				t.Errorf("the wrapper's reported name: %q", res.Text)
+			}
+			// A click that navigates nowhere waits navStartWait and no more.
+			if took := time.Since(start); took > navStartWait+2*time.Second {
+				t.Errorf("a click that does not navigate took %s", took.Round(time.Millisecond))
 			}
 		},
 	},
