@@ -315,7 +315,10 @@ func (b *browser) sendMsg(m Message) {
 	}
 }
 
-// enableSession turns on the domains the pod reads on a page.
+// enableSession turns on the domains the pod reads on a page. In a site
+// session it also pauses every document request before it is sent
+// (Fetch.requestPaused, handled in watch), so a main-frame request off
+// the site, a redirect hop included, fails before anything loads.
 func (b *browser) enableSession(ctx context.Context, session string) {
 	for _, m := range []string{"Page.enable", "Runtime.enable", "DOM.enable", "Network.enable"} {
 		if _, err := b.conn.Call(ctx, session, m, nil); err != nil {
@@ -324,6 +327,13 @@ func (b *browser) enableSession(ctx context.Context, session string) {
 	}
 	if _, err := b.conn.Call(ctx, session, "Page.setLifecycleEventsEnabled", map[string]any{"enabled": true}); err != nil {
 		b.log.Printf("Page.setLifecycleEventsEnabled: %v", err)
+	}
+	if b.site != "" {
+		if _, err := b.conn.Call(ctx, session, "Fetch.enable", map[string]any{
+			"patterns": []map[string]any{{"urlPattern": "*", "resourceType": "Document", "requestStage": "Request"}},
+		}); err != nil {
+			b.log.Printf("Fetch.enable: %v", err)
+		}
 	}
 }
 
@@ -379,6 +389,36 @@ func (b *browser) watch(t *tab) {
 			t.loading = true
 		})
 	})
+	on("Fetch.requestPaused", func(raw json.RawMessage) {
+		// Site sessions only (enableSession). Every document request
+		// pauses here before it is sent; a main-frame one off the site
+		// fails, so an on-site URL that redirects off the site never
+		// loads there, and the model hears why with its next result.
+		// It fails as aborted: Chromium commits no error page for an
+		// aborted navigation, so the tab stays on the page it was on.
+		// A subframe's request is let through.
+		var ev struct {
+			RequestID    string `json:"requestId"`
+			FrameID      string `json:"frameId"`
+			ResourceType string `json:"resourceType"`
+			Request      struct {
+				URL string `json:"url"`
+			} `json:"request"`
+		}
+		if json.Unmarshal(raw, &ev) != nil || ev.RequestID == "" {
+			return
+		}
+		if ev.FrameID == t.targetID && ev.ResourceType == "Document" && !b.allowed(ev.Request.URL) {
+			t.note(fmt.Sprintf("The page tried to go to %s, which is off this session's site, and was stopped.", ev.Request.URL))
+			if _, err := b.conn.Call(context.Background(), s, "Fetch.failRequest", map[string]any{"requestId": ev.RequestID, "errorReason": "Aborted"}); err != nil {
+				b.log.Printf("Fetch.failRequest: %v", err)
+			}
+			return
+		}
+		if _, err := b.conn.Call(context.Background(), s, "Fetch.continueRequest", map[string]any{"requestId": ev.RequestID}); err != nil {
+			b.log.Printf("Fetch.continueRequest: %v", err)
+		}
+	})
 	on("Page.frameAttached", func(raw json.RawMessage) {
 		var ev struct {
 			FrameID string `json:"frameId"`
@@ -425,11 +465,12 @@ func (b *browser) watch(t *tab) {
 	on("Page.frameNavigated", func(raw json.RawMessage) {
 		var ev struct {
 			Frame struct {
-				ID          string `json:"id"`
-				ParentID    string `json:"parentId"`
-				LoaderID    string `json:"loaderId"`
-				URL         string `json:"url"`
-				URLFragment string `json:"urlFragment"`
+				ID             string `json:"id"`
+				ParentID       string `json:"parentId"`
+				LoaderID       string `json:"loaderId"`
+				URL            string `json:"url"`
+				URLFragment    string `json:"urlFragment"`
+				UnreachableURL string `json:"unreachableUrl"`
 			} `json:"frame"`
 			Type string `json:"type"`
 		}
@@ -437,7 +478,16 @@ func (b *browser) watch(t *tab) {
 			return
 		}
 		u := ev.Frame.URL + ev.Frame.URLFragment
-		if !b.allowed(u) {
+		switch {
+		case ev.Frame.UnreachableURL != "" && !b.allowed(ev.Frame.UnreachableURL):
+			// Chromium's error page for an off-site URL that failed to
+			// load: the tab goes to about:blank rather than showing it.
+			t.note(fmt.Sprintf("The page could not load %s, which is off this session's site; the tab was sent to about:blank.", ev.Frame.UnreachableURL))
+			go func() {
+				_, _ = b.conn.Call(context.Background(), s, "Page.navigate", map[string]any{"url": "about:blank"})
+			}()
+		case !b.allowed(u):
+			// The backstop for a commit the request pause did not catch.
 			t.note(fmt.Sprintf("The page went to %s, which is off this session's site; the tab was sent to about:blank.", u))
 			go func() {
 				_, _ = b.conn.Call(context.Background(), s, "Page.navigate", map[string]any{"url": "about:blank"})
