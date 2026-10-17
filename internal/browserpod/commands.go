@@ -316,7 +316,8 @@ func (b *browser) dispatch(ctx context.Context, msg Message, tp **tab) (result, 
 }
 
 // checkURL refuses what a tab may not load: anything but http(s), and
-// in a site session a host off the site.
+// in a site session a host off the site, whether or not the group is
+// unlocked: an unlock is for a person's sign-in, not for commands.
 func (b *browser) checkURL(raw string) error {
 	u, err := url.Parse(raw)
 	if err != nil || u.Host == "" {
@@ -325,7 +326,7 @@ func (b *browser) checkURL(raw string) error {
 	if u.Scheme != "http" && u.Scheme != "https" {
 		return failf(CodeBadArgs, "Only http and https URLs can be opened, not %s:.", u.Scheme)
 	}
-	if !b.allowed(raw) {
+	if b.site != "" && !b.onSiteURL(raw) {
 		return failf(CodeOffSite, "Blocked: %s is off this session's site.", raw)
 	}
 	return nil

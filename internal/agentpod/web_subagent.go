@@ -107,6 +107,7 @@ func WebSubagentSystemPrompt(parent, description, session, site, startURL string
 	case canWait:
 		b.WriteString("THIS SESSION IS LOCKED TO ONE SITE, named below, and its subdomains: `web_navigate` refuses any other site with `off_site`, and that is final. The session may already be signed in there from earlier tasks; use what is there. ")
 		b.WriteString("If a page needs a sign-in, a second factor, a CAPTCHA or a consent that only a person can give, call `web_wait_for_sign_in` with the reason. Your turn ends; a person is asked to do it in a browser window on your tab, and you are resumed afterwards with your tabs as they are. ")
+		b.WriteString("A sign-in that goes through another site, such as Google, Okta or Microsoft, is one for the person too: their window may follow it there, and a tab left off the site is back on the site's home page when you resume. ")
 		b.WriteString("It costs the person's time: call it once, when the page truly needs it and after you have looked, never to be safe. A paywall is not for a person to pay: submit `blocked` with `paywall`.\n\n")
 	default:
 		b.WriteString("THIS SESSION IS LOCKED TO ONE SITE, named below, and its subdomains: `web_navigate` refuses any other site with `off_site`, and that is final. The session may already be signed in there from earlier tasks; use what is there. ")

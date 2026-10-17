@@ -163,10 +163,11 @@ func (s *Server) handleBrowserWindow(w http.ResponseWriter, r *http.Request) {
 	defer s.Browsers.Unwatch(wt)
 	watcher.Store(wt)
 	// Watch may have waited minutes for the browser; a wait for a
-	// person that began meanwhile was broadcast only to the windows
-	// then attached. The window hears the current answer.
+	// person that began or ended meanwhile was broadcast only to the
+	// windows then attached. The group's windows, this one among them,
+	// hear the current answer, and the group's site lock follows it.
 	if now := s.SubagentService.windowTakesInput(id); now != input {
-		wt.event(apitypes.BrowserWindowEvent{Type: apitypes.BrowserWindowEventTypeState, Browser: apitypes.BrowserStateRunning, Input: now, Site: j.Site})
+		s.Browsers.BroadcastState(slug, j.Session, id, now)
 	}
 	// flushEvents sends every queued text message. Events are queued
 	// before the frame they describe (a tab change before that tab's

@@ -680,6 +680,28 @@ open session, or one a subagent dispatched, has no wait tool: a
 sign-in wall ends it `blocked`, `login_required`, and the agent
 decides whether to dispatch again with a site session.
 
+A sign-in often goes through an identity provider on another site
+(Google, Okta, Microsoft). While a task waits for a person and a
+window is on it, the registry unlocks the task's group in the pod
+(`TypeSiteLock`, `Unlocked` true): the group's main-frame navigations
+may leave the site, through the request pause and the commit
+backstop alike; subframes are let through as always, and commands
+stay on the site (core's check and the pod's `checkURL` do not
+change; a waiting task sends none). The window counts until the
+sweep closes it after the window grace, so a reload does not relock.
+When either stops holding (the task resumes, the last window's grace
+runs out, the task ends) the group is relocked: the pod sends every
+tab of the group whose page is off the site to `https://<site>/`,
+noted for the model's next result; an ended group's lock goes with
+its tabs. The registry keeps, per group, whether its windows take
+input (`Watch`, `BroadcastState`) and what the pod was last told,
+sends only on a change, one message at a time per browser
+(`syncSiteLock`), and after start tells an attaching pod, which
+starts with every group locked, each group it holds unlocked. The
+cookie snapshot is never filtered by site: an identity provider's
+cookies carry the single sign-on that later sign-ins to the site
+reuse.
+
 Every write to a task's `meta.json` goes through
 `store.UpdateSubagentMeta`, one writer per task behind a lock, written
 whole through a temp file and a rename, so the job's full writes and

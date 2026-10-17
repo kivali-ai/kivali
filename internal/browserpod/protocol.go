@@ -98,6 +98,8 @@ type Message struct {
 	// and cache, disposed with the group, and core never asks for the
 	// profile.
 	Ephemeral bool `json:"ephemeral,omitempty"`
+	// Unlocked on site-lock: the group's pages may leave the site.
+	Unlocked bool `json:"unlocked,omitempty"`
 }
 
 // Image is a screenshot or a screencast frame: raw bytes, base64 on
@@ -145,6 +147,16 @@ const (
 	// they have changed since the last it sent: a window has just
 	// closed, so a person may have signed in.
 	TypeSnapshot = "snapshot"
+	// TypeSiteLock unlocks or relocks a group of a site session: Group,
+	// Unlocked. Core unlocks a group while its task waits for a person
+	// and a browser window is on it, so a sign-in that goes through an
+	// identity provider on another site can finish; then the group's
+	// pages may go anywhere. Commands stay on the site either way. On
+	// relock every tab of the group whose page is off the site is sent
+	// to https://<site>/. A pod starts with every group locked; core
+	// sends the state only when it changes, and after start for each
+	// group it holds unlocked.
+	TypeSiteLock = "site-lock"
 )
 
 // Message types the pod sends.

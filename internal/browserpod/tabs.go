@@ -89,6 +89,10 @@ type group struct {
 	// closing: closeGroup is closing the group's tabs; a popup one of
 	// them opens meanwhile is closed, not adopted.
 	closing bool
+	// unlocked: in a site session, the group's pages may go off the
+	// site (TypeSiteLock), so a person in the window can sign in
+	// through an identity provider. Commands stay on the site.
+	unlocked bool
 }
 
 // tab is a page target in a group.
@@ -394,7 +398,7 @@ func (b *browser) watch(t *tab) {
 		if ev.Disposition != "" && ev.Disposition != "currentTab" {
 			return
 		}
-		if !b.allowed(ev.URL) {
+		if !b.allowed(t.group, ev.URL) {
 			t.note(fmt.Sprintf("The page tried to go to %s, which is off this session's site, and was stopped.", ev.URL))
 			_, _ = b.conn.Call(context.Background(), s, "Page.stopLoading", nil)
 		}
@@ -410,7 +414,8 @@ func (b *browser) watch(t *tab) {
 		// loads there, and the model hears why with its next result.
 		// It fails as aborted: Chromium commits no error page for an
 		// aborted navigation, so the tab stays on the page it was on.
-		// A subframe's request is let through.
+		// A subframe's request is let through, and so is every request
+		// of a group that is unlocked.
 		var ev struct {
 			RequestID    string `json:"requestId"`
 			FrameID      string `json:"frameId"`
@@ -422,7 +427,7 @@ func (b *browser) watch(t *tab) {
 		if json.Unmarshal(raw, &ev) != nil || ev.RequestID == "" {
 			return
 		}
-		if ev.FrameID == t.targetID && ev.ResourceType == "Document" && !b.allowed(ev.Request.URL) {
+		if ev.FrameID == t.targetID && ev.ResourceType == "Document" && !b.allowed(t.group, ev.Request.URL) {
 			t.note(fmt.Sprintf("The page tried to go to %s, which is off this session's site, and was stopped.", ev.Request.URL))
 			t.update(func() { t.stops++ })
 			if _, err := b.conn.Call(context.Background(), s, "Fetch.failRequest", map[string]any{"requestId": ev.RequestID, "errorReason": "Aborted"}); err != nil {
@@ -494,14 +499,14 @@ func (b *browser) watch(t *tab) {
 		}
 		u := ev.Frame.URL + ev.Frame.URLFragment
 		switch {
-		case ev.Frame.UnreachableURL != "" && !b.allowed(ev.Frame.UnreachableURL):
+		case ev.Frame.UnreachableURL != "" && !b.allowed(t.group, ev.Frame.UnreachableURL):
 			// Chromium's error page for an off-site URL that failed to
 			// load: the tab goes to about:blank rather than showing it.
 			t.note(fmt.Sprintf("The page could not load %s, which is off this session's site; the tab was sent to about:blank.", ev.Frame.UnreachableURL))
 			go func() {
 				_, _ = b.conn.Call(context.Background(), s, "Page.navigate", map[string]any{"url": "about:blank"})
 			}()
-		case !b.allowed(u):
+		case !b.allowed(t.group, u):
 			// The backstop for a commit the request pause did not catch.
 			t.note(fmt.Sprintf("The page went to %s, which is off this session's site; the tab was sent to about:blank.", u))
 			go func() {
@@ -862,8 +867,8 @@ func (b *browser) closeTab(ctx context.Context, t *tab) {
 // closeGroup closes every tab of a group and, in an ephemeral session,
 // disposes of the group's browser context: its cookies, storage and
 // cache go with it. The group is marked closing first, so a popup a
-// closing tab opens is closed rather than adopted, and forgotten once
-// its tabs are gone.
+// closing tab opens is closed rather than adopted, and forgotten, with
+// its site unlock, once its tabs are gone.
 func (b *browser) closeGroup(ctx context.Context, name string) {
 	b.mu.Lock()
 	g := b.groups[name]
@@ -1025,13 +1030,19 @@ func (b *browser) tabByID(id string) *tab {
 	return b.byID[id]
 }
 
-// allowed reports whether a page may be at u: always in the open
-// session, and in a site session for non-web URLs and URLs on the
-// site or a subdomain of it.
-func (b *browser) allowed(u string) bool {
-	if b.site == "" {
+// allowed reports whether a page of group may be at u: always in the
+// open session and in an unlocked group of a site session, otherwise
+// for non-web URLs and URLs on the site or a subdomain of it.
+func (b *browser) allowed(group, u string) bool {
+	if b.site == "" || b.isUnlocked(group) {
 		return true
 	}
+	return b.onSiteURL(u)
+}
+
+// onSiteURL reports whether u is a non-web URL or one on the session's
+// site or a subdomain of it.
+func (b *browser) onSiteURL(u string) bool {
 	p, err := url.Parse(u)
 	if err != nil {
 		return false
@@ -1040,6 +1051,55 @@ func (b *browser) allowed(u string) bool {
 		return true
 	}
 	return onSite(b.site, p.Hostname())
+}
+
+func (b *browser) isUnlocked(group string) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	g := b.groups[group]
+	return g != nil && g.unlocked
+}
+
+// setSiteLock unlocks or relocks a group in a site session
+// (TypeSiteLock). A relock returns the group's tabs whose page is off
+// the site, for returnToSite; nothing else does.
+func (b *browser) setSiteLock(group string, unlocked bool) []*tab {
+	if b.site == "" {
+		return nil
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	g := b.groupLocked(group)
+	was := g.unlocked
+	g.unlocked = unlocked
+	if unlocked || !was {
+		return nil
+	}
+	var off []*tab
+	for _, t := range g.tabs {
+		t.mu.Lock()
+		u := t.url
+		t.mu.Unlock()
+		if !b.onSiteURL(u) {
+			off = append(off, t)
+		}
+	}
+	return off
+}
+
+// returnToSite sends each tab to the site's root page, https://<site>/,
+// with a note for the model's next result.
+func (b *browser) returnToSite(ctx context.Context, tabs []*tab) {
+	home := "https://" + b.site + "/"
+	for _, t := range tabs {
+		t.mu.Lock()
+		u := t.url
+		t.mu.Unlock()
+		t.note(fmt.Sprintf("The tab was at %s, off this session's site, when the person finished; it was sent to %s.", u, home))
+		if _, err := b.conn.Call(ctx, t.session, "Page.navigate", map[string]any{"url": home}); err != nil {
+			b.log.Printf("return %s to the site: %v", t.id, err)
+		}
+	}
 }
 
 func onSite(site, host string) bool {

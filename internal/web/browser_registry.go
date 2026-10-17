@@ -163,6 +163,11 @@ type browserGroup struct {
 	watching bool
 	closeAt  time.Time
 	shownTab string
+	// input is whether the group's windows take input: its task waits
+	// for a person (Watch, BroadcastState). unlocked is the site lock
+	// the pod was last told for the group (syncSiteLock).
+	input    bool
+	unlocked bool
 }
 
 // browserTabInfo is what core knows of a tab: its last URL and title.
@@ -294,6 +299,8 @@ type browser struct {
 
 	pending map[string]chan browserpod.Message
 	seq     int
+	// lockMu orders the site-lock messages to the pod (syncSiteLock).
+	lockMu sync.Mutex
 	// profileSaved is set once a save's profile has been written;
 	// cookieGen counts the cookie snapshots written.
 	profileSaved bool
@@ -384,6 +391,8 @@ type browserRegistry struct {
 	booted   chan struct{}
 	bootOnce sync.Once
 	stopWait sync.WaitGroup
+	// siteLocks counts site-lock syncs in flight (awaitSiteLocks).
+	siteLocks sync.WaitGroup
 }
 
 // newBrowserRegistry wires a registry. The lifecycle runs once Run is
@@ -921,6 +930,7 @@ func (r *browserRegistry) Watch(ctx context.Context, slug, session, group string
 	w := newBrowserWatcher(b, group)
 	g.watchers[w] = struct{}{}
 	g.closeAt = time.Time{}
+	g.input = input
 	start := !g.watching
 	if start {
 		g.watching = true
@@ -940,6 +950,7 @@ func (r *browserRegistry) Watch(ctx context.Context, slug, session, group string
 			_ = link.send(browserSendTimeout, browserpod.Message{Type: browserpod.TypeScreencast, Group: group, OK: true}, nil)
 		}()
 	}
+	r.syncSiteLock(b, group)
 	r.kick()
 	return w, nil
 }
@@ -990,6 +1001,7 @@ func (r *browserRegistry) closeWindow(b *browser, group string) {
 			}
 		}()
 	}
+	r.syncSiteLock(b, group)
 	if r.OnWindowsClosed != nil {
 		r.OnWindowsClosed(b.slug, b.session, group)
 	}
@@ -1056,24 +1068,77 @@ func (r *browserRegistry) CurrentPage(slug, session, group string) (url, title s
 }
 
 // BroadcastState sends every window on a group the browser's state
-// again, with whether the window takes input now: the service calls it
-// when the group's task starts or stops waiting for a person.
+// again, with whether the window takes input now, and syncs the
+// group's site lock: the service calls it when the group's task starts
+// or stops waiting for a person.
 func (r *browserRegistry) BroadcastState(slug, session, group string, input bool) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	b, ok := r.browsers[browserKey(slug, session)]
 	if !ok {
+		r.mu.Unlock()
 		return
 	}
 	g, ok := b.groups[group]
 	if !ok {
+		r.mu.Unlock()
 		return
 	}
+	g.input = input
 	ev := apitypes.BrowserWindowEvent{Type: apitypes.BrowserWindowEventTypeState, Browser: wireState(b.state), Input: input, Site: b.site, SandboxOff: b.sandboxOff}
 	for w := range g.watchers {
 		w.event(ev)
 	}
+	r.mu.Unlock()
+	r.syncSiteLock(b, group)
 }
+
+// siteUnlockedLocked is whether a group's pages may leave the site: a
+// site session's group whose task waits for a person with a window on
+// it. The window counts until the sweep closes it, after the grace, so
+// a reload in the middle of a sign-in keeps the group unlocked. r.mu is
+// held.
+func siteUnlockedLocked(b *browser, g *browserGroup) bool {
+	return b.site != "" && g.input && g.watching
+}
+
+// syncSiteLock tells the pod a group's site lock (TypeSiteLock) when it
+// differs from what the pod was last told. It runs off the caller's
+// goroutine, one at a time per browser, and reads the state when its
+// turn comes, so the last message the pod gets is the current state and
+// a state the pod already has is not sent again. A released group is
+// not told: the pod forgets the lock with the group's tabs.
+func (r *browserRegistry) syncSiteLock(b *browser, group string) {
+	r.siteLocks.Add(1)
+	go func() {
+		defer r.siteLocks.Done()
+		b.lockMu.Lock()
+		defer b.lockMu.Unlock()
+		r.mu.Lock()
+		g, ok := b.groups[group]
+		live := b.state == browserStarting || b.state == browserRunning || b.state == browserIdle
+		if !ok || !live || b.link == nil {
+			r.mu.Unlock()
+			return
+		}
+		want := siteUnlockedLocked(b, g)
+		if want == g.unlocked {
+			r.mu.Unlock()
+			return
+		}
+		link := b.link
+		r.mu.Unlock()
+		if err := link.send(browserSendTimeout, browserpod.Message{Type: browserpod.TypeSiteLock, Group: group, Unlocked: want}, nil); err != nil {
+			r.logf("browser %s: site lock for %q: %v", b.key(), group, err)
+			return
+		}
+		r.mu.Lock()
+		g.unlocked = want
+		r.mu.Unlock()
+	}()
+}
+
+// awaitSiteLocks waits for the site-lock syncs in flight.
+func (r *browserRegistry) awaitSiteLocks() { r.siteLocks.Wait() }
 
 // Reset ends a session's browser, whatever it is doing and without
 // saving, and deletes what the store holds for the session. The
@@ -1226,7 +1291,24 @@ func (r *browserRegistry) attach(b *browser) error {
 			}
 		}
 	}
-	return link.send(browserSendTimeout, browserpod.Message{Type: browserpod.TypeStart}, nil)
+	if err := link.send(browserSendTimeout, browserpod.Message{Type: browserpod.TypeStart}, nil); err != nil {
+		return err
+	}
+	// The pod starts with every group locked: each group core holds
+	// unlocked is told again.
+	r.mu.Lock()
+	var groups []string
+	for name, g := range b.groups {
+		g.unlocked = false
+		if siteUnlockedLocked(b, g) {
+			groups = append(groups, name)
+		}
+	}
+	r.mu.Unlock()
+	for _, name := range groups {
+		r.syncSiteLock(b, name)
+	}
+	return nil
 }
 
 // onMessage handles one message from the pod. body carries the bytes

@@ -282,6 +282,69 @@ func TestSiteSessionFailsOffSiteDocumentRequests(t *testing.T) {
 	}
 }
 
+// TestSiteLockUnlocksAGroupForASignIn: an unlocked group's pages may
+// leave the site (a sign-in through an identity provider), while its
+// commands stay on the site and other groups stay locked; on relock a
+// tab left off the site is sent to the site's root page, noted for the
+// model, and off-site requests are failed again.
+func TestSiteLockUnlocksAGroupForASignIn(t *testing.T) {
+	h := startPod(t, podOptions{site: "example.com"})
+	if res := h.core.command("g", "", CommandNavigate, NavigateArgs{URL: "https://example.com/login"}); !res.OK {
+		t.Fatalf("navigate: %+v", res)
+	}
+	if res := h.core.command("other", "", CommandNavigate, NavigateArgs{URL: "https://example.com/"}); !res.OK {
+		t.Fatalf("other navigate: %+v", res)
+	}
+	// The fake numbers loaders with targets: the second tab is T3.
+	s1, s2 := sessionOf(h, "T1"), sessionOf(h, "T3")
+	h.core.send(Message{Type: TypeSiteLock, Group: "g", Unlocked: true})
+	// The read loop applies the lock before it reads the next message:
+	// a command's result orders the test after it.
+	res := h.core.command("g", "", CommandNavigate, NavigateArgs{URL: "https://idp.test/"})
+	if res.Code != CodeOffSite {
+		t.Fatalf("an unlocked group's command left the site: %+v", res)
+	}
+	rc := recordCalls(h, "Fetch.failRequest", "Fetch.continueRequest", "Page.navigate")
+	paused := func(session, id, frame, url string) {
+		h.cdp.emit(session, "Fetch.requestPaused", map[string]any{
+			"requestId": id, "frameId": frame, "resourceType": "Document",
+			"request": map[string]any{"url": url, "method": "GET"},
+		})
+	}
+	paused(s1, "R1", "T1", "https://idp.test/authorize")
+	if got := rc.next(t); got != "Fetch.continueRequest "+s1 {
+		t.Fatalf("unlocked off-site request: %q", got)
+	}
+	// The page commits there and stays: no about:blank.
+	h.cdp.emit(s1, "Page.frameNavigated", map[string]any{"frame": map[string]any{"id": "T1", "loaderId": "L-idp", "url": "https://idp.test/authorize"}})
+	paused(s2, "R2", "T3", "https://idp.test/authorize")
+	if got := rc.next(t); got != "Fetch.failRequest "+s2 {
+		t.Fatalf("another group's off-site request: %q", got)
+	}
+
+	h.core.send(Message{Type: TypeSiteLock, Group: "g", Unlocked: false})
+	if got := rc.next(t); got != "Page.navigate "+s1 {
+		t.Fatalf("relock: %q", got)
+	}
+	navs := h.cdp.called("Page.navigate")
+	if last := navs[len(navs)-1]; !strings.Contains(last, `"url":"https://example.com/"`) {
+		t.Fatalf("relock sent the tab to %s", last)
+	}
+	for _, c := range navs {
+		if strings.Contains(c, "about:blank") {
+			t.Fatalf("an unlocked page was sent away: %s", c)
+		}
+	}
+	paused(s1, "R3", "T1", "https://idp.test/again")
+	if got := rc.next(t); got != "Fetch.failRequest "+s1 {
+		t.Fatalf("relocked off-site request: %q", got)
+	}
+	res = h.core.command("g", "", CommandBack, nil)
+	if !strings.Contains(res.Text, "The tab was at https://idp.test/authorize, off this session's site, when the person finished; it was sent to https://example.com/.") {
+		t.Fatalf("notes: %q", res.Text)
+	}
+}
+
 func TestCommandTimesOutOnTheClock(t *testing.T) {
 	h := startPod(t, podOptions{})
 	hung := make(chan struct{})
