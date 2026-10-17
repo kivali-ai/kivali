@@ -25,7 +25,9 @@ type SubagentResultResponse struct {
 //
 // POST /v1/agent/{slug}/subagents/{id}/result. A non-2xx response is
 // a transport error: the subagent id was not one of this agent's
-// running tasks, or core refused the request outright.
+// running tasks, or core refused the request outright. Core may hold
+// the answer while it checks the submission, so the call runs on the
+// client with no response-header timeout; ctx bounds it.
 func (c *Client) SubmitSubagentResult(ctx context.Context, subagentID string, submission json.RawMessage) (*SubagentResultResponse, error) {
 	if strings.TrimSpace(subagentID) == "" {
 		return nil, fmt.Errorf("agentpod: SubmitSubagentResult: subagent id is required")
@@ -40,7 +42,7 @@ func (c *Client) SubmitSubagentResult(ctx context.Context, subagentID string, su
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set(SlugHeader, c.slug)
-	resp, err := c.http.Do(req)
+	resp, err := c.long.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("agentpod: SubmitSubagentResult: %w", err)
 	}
