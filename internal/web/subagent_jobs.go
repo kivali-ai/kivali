@@ -23,6 +23,7 @@ package web
 import (
 	"context"
 	"log"
+	"regexp"
 	"sort"
 	"sync"
 	"time"
@@ -273,13 +274,20 @@ func (s *SubagentService) updateJob(id string, fn func(*subagentJob)) bool {
 	return true
 }
 
-// listJobs returns copies of parent's jobs, newest dispatch first.
-// Terminal jobs are included: an agent waking to a result wants to see
-// what else finished while it was away, not just what is still moving.
+// cliSessionID is the shape of a CLI session id: a UUID. The id is
+// handed back to the CLI after --resume, so anything else, a value
+// starting with a dash above all, is not kept.
+var cliSessionID = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+
 // recordCLISession keeps the session id a task's run reported, so a
-// later run of the task can continue it.
+// later run of the task can continue it. An id that is not a UUID is
+// logged and dropped.
 func (s *SubagentService) recordCLISession(id, sessionID string) {
 	if sessionID == "" {
+		return
+	}
+	if !cliSessionID.MatchString(sessionID) {
+		log.Printf("subagent %s: ignoring a CLI session id that is not a UUID (%d bytes)", id, len(sessionID))
 		return
 	}
 	s.updateJob(id, func(j *subagentJob) {
@@ -287,6 +295,9 @@ func (s *SubagentService) recordCLISession(id, sessionID string) {
 	})
 }
 
+// listJobs returns copies of parent's jobs, newest dispatch first.
+// Terminal jobs are included: an agent waking to a result wants to see
+// what else finished while it was away, not just what is still moving.
 func (s *SubagentService) listJobs(parent string) []subagentJob {
 	s.jobsMu.Lock()
 	defer s.jobsMu.Unlock()

@@ -65,7 +65,7 @@ func startWaitingTask(t *testing.T, second func(svc *SubagentService, req fakeDr
 		if beforeWait != nil {
 			beforeWait(run)
 		}
-		run.svc.recordCLISession(req.SubagentID, "cli-session-1")
+		run.svc.recordCLISession(req.SubagentID, "5f1c7a3e-2b4d-4e6f-8a9b-0c1d2e3f4a5b")
 		resp := run.svc.WebCommand(context.Background(), "alice", req.SubagentID, agentpod.WebCommandRequest{Command: agentpod.WebWaitForSignInCommand, Args: json.RawMessage(`{"reason":"mfa"}`)})
 		if resp.IsError || !strings.Contains(resp.Text, "Your turn ends here") {
 			t.Errorf("web_wait_for_sign_in = %+v", resp)
@@ -409,7 +409,7 @@ func TestSignInWaitsAreCappedAtThree(t *testing.T) {
 // runs again in the same CLI session with core's line, to its result.
 func TestWebTaskWaitsForSignInAndResumes(t *testing.T) {
 	run := startWaitingTask(t, func(svc *SubagentService, req fakeDriveCall) (string, error) {
-		if req.Spec.Resume != "cli-session-1" || req.Spec.UserPrompt != signInResumeLine {
+		if req.Spec.Resume != "5f1c7a3e-2b4d-4e6f-8a9b-0c1d2e3f4a5b" || req.Spec.UserPrompt != signInResumeLine {
 			t.Errorf("resumed run: resume=%q prompt=%q", req.Spec.Resume, req.Spec.UserPrompt)
 		}
 		if _, isErr := svc.SubmitResult("alice", req.SubagentID, json.RawMessage(`{"outcome":"found","result":{"vendor":"Acme","price":12}}`)); isErr {
