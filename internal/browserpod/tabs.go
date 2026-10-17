@@ -48,6 +48,9 @@ type browser struct {
 	// spare is a page in no group, kept so the browser always has a
 	// window: Chromium's start page, or the last tab after it closed.
 	spare *attachment
+	// frames maps every frame below a tab's main frame to its tab, so
+	// a download an iframe starts is the tab's.
+	frames map[string]*tab
 
 	downloads map[string]*download
 	// front is the tab last brought to the front.
@@ -133,6 +136,7 @@ func newBrowser(conn cdpConn, clk clock.Clock, logger *log.Logger, site, dir str
 		groups:    map[string]*group{},
 		attached:  map[string]attachment{},
 		claims:    map[string]chan struct{}{},
+		frames:    map[string]*tab{},
 		downloads: map[string]*download{},
 	}
 }
@@ -369,6 +373,30 @@ func (b *browser) watch(t *tab) {
 			t.loading = true
 		})
 	})
+	on("Page.frameAttached", func(raw json.RawMessage) {
+		var ev struct {
+			FrameID string `json:"frameId"`
+		}
+		if json.Unmarshal(raw, &ev) == nil && ev.FrameID != "" {
+			b.mu.Lock()
+			b.frames[ev.FrameID] = t
+			b.mu.Unlock()
+		}
+	})
+	on("Page.frameDetached", func(raw json.RawMessage) {
+		var ev struct {
+			FrameID string `json:"frameId"`
+			Reason  string `json:"reason"`
+		}
+		// A frame swapped to another process is still the tab's.
+		if json.Unmarshal(raw, &ev) == nil && ev.Reason != "swap" {
+			b.mu.Lock()
+			if b.frames[ev.FrameID] == t {
+				delete(b.frames, ev.FrameID)
+			}
+			b.mu.Unlock()
+		}
+	})
 	on("Page.frameStartedLoading", func(raw json.RawMessage) {
 		var ev struct {
 			FrameID string `json:"frameId"`
@@ -536,6 +564,11 @@ func (b *browser) dropTarget(targetID string) {
 func (b *browser) unregisterLocked(t *tab) {
 	delete(b.tabs, t.targetID)
 	delete(b.byID, t.id)
+	for id, x := range b.frames {
+		if x == t {
+			delete(b.frames, id)
+		}
+	}
 	var offs []func()
 	t.update(func() {
 		t.closed = true
