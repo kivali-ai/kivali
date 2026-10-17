@@ -211,6 +211,11 @@ func (s *Server) handleAgentpodTurnEvent(w http.ResponseWriter, r *http.Request)
 		if st == nil {
 			break
 		}
+		// A subagent run names its CLI session on its first events;
+		// the job keeps it, so a task paused for a person resumes it.
+		if st.subagentID != "" && ev.SessionID != "" && s.SubagentService != nil {
+			s.SubagentService.recordCLISession(st.subagentID, ev.SessionID)
+		}
 		switch ev.Kind {
 		case agentpod.TurnEventDelta:
 			s.onAgentpodDelta(st, ev)

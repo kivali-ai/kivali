@@ -582,11 +582,11 @@ func classifyErr(err error) string {
 func streamToTurn(ev provider.StreamEvent) *TurnEvent {
 	switch ev.Kind {
 	case provider.StreamDelta:
-		return &TurnEvent{Kind: TurnEventDelta, Text: ev.Text, Model: ev.Model}
+		return &TurnEvent{Kind: TurnEventDelta, Text: ev.Text, Model: ev.Model, SessionID: ev.SessionID}
 	case provider.StreamThinking:
 		return &TurnEvent{Kind: TurnEventThinking, Text: ev.Text}
 	case provider.StreamToolUseStart:
-		return &TurnEvent{Kind: TurnEventToolUseStart, ToolUseID: ev.ToolUseID, ToolName: ev.ToolName}
+		return &TurnEvent{Kind: TurnEventToolUseStart, ToolUseID: ev.ToolUseID, ToolName: ev.ToolName, SessionID: ev.SessionID}
 	case provider.StreamToolInputDelta:
 		return &TurnEvent{Kind: TurnEventToolInputDelta, ToolUseID: ev.ToolUseID, Text: ev.Text}
 	case provider.StreamToolUseEnd:
@@ -734,6 +734,7 @@ func (r *Runtime) handleSubagentTurn(ctx context.Context, ev Event) error {
 		Stderr:  stderr,
 		Purpose: "subagent",
 		Agent:   ct.Slug,
+		Resume:  spec.Resume,
 	})
 	if err != nil {
 		if ctx.Err() != nil {

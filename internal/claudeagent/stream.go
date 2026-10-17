@@ -557,6 +557,9 @@ type subprocStream struct {
 	// echoes it back on every system event of a resumed session).
 	resumeID     string
 	sessionSaved bool
+	// sessionID is the CLI's id for this run's session, from its first
+	// system event; every event emitted after that carries it.
+	sessionID string
 
 	// stdinMirrorPath, when non-empty, is a path where feed() mirrors
 	// everything it writes to the CLI subprocess stdin. Used for
@@ -814,11 +817,14 @@ func (s *subprocStream) handleEvent(ev *streamJSONEvent) {
 			Model string `json:"model"`
 		}
 		_ = json.Unmarshal(ev.Message, &sys)
+		s.fmu.Lock()
 		if sys.Model != "" {
-			s.fmu.Lock()
 			s.model = sys.Model
-			s.fmu.Unlock()
 		}
+		if s.sessionID == "" {
+			s.sessionID = ev.SessionID
+		}
+		s.fmu.Unlock()
 		s.captureSessionID(ev.SessionID)
 	case "assistant":
 		s.handleAssistantMessage(ev.Message)
@@ -1053,6 +1059,11 @@ func (s *subprocStream) captureSessionID(id string) {
 }
 
 func (s *subprocStream) emit(ev provider.StreamEvent) {
+	if ev.SessionID == "" {
+		s.fmu.Lock()
+		ev.SessionID = s.sessionID
+		s.fmu.Unlock()
+	}
 	select {
 	case s.events <- ev:
 	case <-s.done:

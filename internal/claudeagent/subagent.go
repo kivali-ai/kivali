@@ -94,6 +94,13 @@ func (c *Driver) RunSubagent(ctx context.Context, req provider.SubagentRequest) 
 		"--system-prompt", req.System,
 		"--allowedTools", strings.Join(allowed, ","),
 	}
+	if req.Resume != "" {
+		// A continued session: the CLI reloads its log for this id
+		// from its project directory, keyed by the working directory,
+		// which is the process's own and the same for every run; the
+		// prompt is the next user message in that session.
+		args = append(args, "--resume", req.Resume)
+	}
 
 	return c.spawn(ctx, spawnSpec{
 		binary:        binary,
@@ -110,8 +117,10 @@ func (c *Driver) RunSubagent(ctx context.Context, req provider.SubagentRequest) 
 			Purpose: req.Purpose,
 			Agent:   req.Agent,
 		},
-		// No session store: a subagent run is one-shot and is never
-		// resumed, so its session id is not kept.
+		// No session store: a subagent run's session id travels on
+		// its events (StreamEvent.SessionID) and the caller passes it
+		// back as Resume to continue the session; the driver keeps
+		// nothing itself.
 		stdinMirrorPath: filepath.Join(runDir, "cli-stdin.jsonl"),
 		cleanup:         cleanup,
 	})
