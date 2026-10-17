@@ -48,14 +48,16 @@ func TestFormatSnapshot(t *testing.T) {
 }
 
 // pageBody checks that a result holds page content between the two
-// content lines and returns what lies between them.
+// content lines and returns what lies between them. The pod's own
+// notes (a download, a stopped navigation) follow the end line and are
+// not page content.
 func pageBody(t *testing.T, s string) string {
 	t.Helper()
 	body, ok := strings.CutPrefix(s, pageContentStart+"\n")
 	if !ok {
 		t.Fatalf("no page content start line: %q", firstLines(s, 2))
 	}
-	body, ok = strings.CutSuffix(body, "\n"+pageContentEnd)
+	body, _, ok = strings.Cut(body, "\n"+pageContentEnd)
 	if !ok {
 		t.Fatalf("no page content end line: %q", s[max(len(s)-80, 0):])
 	}

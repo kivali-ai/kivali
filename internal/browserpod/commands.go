@@ -387,6 +387,7 @@ func (b *browser) cmdNavigate(ctx context.Context, t *tab, a NavigateArgs) (resu
 		}
 	})
 	defer off()
+	stops := t.stopCount()
 	raw, err := b.conn.Call(ctx, t.session, "Page.navigate", map[string]any{"url": a.URL})
 	if err != nil {
 		return result{}, err
@@ -397,6 +398,10 @@ func (b *browser) cmdNavigate(ctx context.Context, t *tab, a NavigateArgs) (resu
 	}
 	_ = json.Unmarshal(raw, &res)
 	switch {
+	case res.ErrorText == "net::ERR_ABORTED" && t.stopCount() > stops:
+		// A site session stopped the request (or a redirect hop of it)
+		// before it was sent; the tab's note names the URL.
+		return result{text: fmt.Sprintf("The navigation to %s was stopped before a page loaded: it led off this session's site; the tab is at %s", a.URL, t.where())}, nil
 	case res.ErrorText == "net::ERR_ABORTED":
 		timer := b.clock.NewTimer(downloadWait)
 		defer timer.Stop()

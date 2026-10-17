@@ -49,10 +49,10 @@ func TestShouldExcludeFromBackupLeavesOutBrowserSessions(t *testing.T) {
 func TestBackupZipLeavesOutBrowserSessions(t *testing.T) {
 	root := t.TempDir()
 	for rel, body := range map[string]string{
-		"agents/alice/agent.yaml":                        "slug: alice\n",
-		"agents/alice/browser/vendor.com/session.json":   `{"name":"vendor.com"}`,
+		"agents/alice/agent.yaml":                         "slug: alice\n",
+		"agents/alice/browser/vendor.com/session.json":    `{"name":"vendor.com"}`,
 		"agents/alice/browser/vendor.com/profile.tar.zst": "SECRET-PROFILE",
-		"agents/alice/browser/vendor.com/cookies.json":   `[{"name":"sid","value":"SECRET-COOKIE"}]`,
+		"agents/alice/browser/vendor.com/cookies.json":    `[{"name":"sid","value":"SECRET-COOKIE"}]`,
 	} {
 		p := filepath.Join(root, filepath.FromSlash(rel))
 		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {

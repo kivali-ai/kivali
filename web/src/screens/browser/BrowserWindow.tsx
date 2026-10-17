@@ -469,6 +469,7 @@ export function BrowserWindow() {
           take(msg.input === true);
           if (msg.site !== undefined) setSite(msg.site);
         } else if (msg.type === 'tab' && msg.tab) setTab(msg.tab);
+        else if (msg.type === 'notice') setNote(msg.reason ?? '');
         else if (msg.type === 'end') {
           finish(msg.reason || 'The window has ended.');
           sock.close();
