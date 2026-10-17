@@ -79,6 +79,7 @@ type Message struct {
 	URL   string `json:"url,omitempty"`
 	Title string `json:"title,omitempty"`
 	// Opener is the tab that opened a new one, empty when a command did.
+	// The pod sends it; core does not read it.
 	Opener string `json:"opener,omitempty"`
 
 	// FileName names a download or an uploaded file; Bytes is how many

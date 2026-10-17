@@ -3,6 +3,7 @@ package browserpod
 import (
 	"encoding/json"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -95,7 +96,9 @@ func TestPodManifestShape(t *testing.T) {
 	if ctr["name"] != "browser" || ctr["image"] != "ghcr.io/kivali-ai/kivali-browser:test" || ctr["imagePullPolicy"] != "IfNotPresent" {
 		t.Errorf("container = %v %v %v", ctr["name"], ctr["image"], ctr["imagePullPolicy"])
 	}
-	if !reflect.DeepEqual(ctr["command"], []any{"kivali", "browser"}) {
+	// Under dumb-init, the image's init, so Chromium's orphaned helpers
+	// are reaped; `kivali browser` itself is never PID 1.
+	if !reflect.DeepEqual(ctr["command"], []any{"/usr/bin/dumb-init", "--", "kivali", "browser"}) {
 		t.Errorf("command = %v", ctr["command"])
 	}
 	if _, ok := ctr["ports"]; ok {
@@ -221,6 +224,40 @@ func TestPodName(t *testing.T) {
 	name = PodName(strings.Repeat("a", 38)+"-bbbb", "s")
 	if strings.Contains(name, "--") || len(name) > 63 {
 		t.Errorf("PodName(hyphen at cut) = %q", name)
+	}
+	// Two long slugs with one head are two pods: the cut carries a hash
+	// of the whole slug.
+	head := strings.Repeat("a", 60)
+	one, two := PodName(head+"-one", "s"), PodName(head+"-two", "s")
+	if one == two || len(one) > 63 || len(two) > 63 {
+		t.Errorf("PodName(long, one) = %q, PodName(long, two) = %q", one, two)
+	}
+	if again := PodName(head+"-one", "s"); again != one {
+		t.Errorf("PodName is not stable: %q then %q", one, again)
+	}
+	for _, n := range []string{one, two} {
+		if !regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`).MatchString(n) {
+			t.Errorf("PodName(long) = %q is not a DNS label", n)
+		}
+	}
+}
+
+// The agent label fits a label value and stays apart for long slugs
+// with one head; a slug that fits is the label as it is.
+func TestPodManifestAgentLabel(t *testing.T) {
+	c := testConfig()
+	if got := labelsOf(c.podManifest("alice", "s", "tok"))["agent"]; got != "alice" {
+		t.Errorf("agent label = %q", got)
+	}
+	head := strings.Repeat("a", 70)
+	one, two := labelsOf(c.podManifest(head+"-one", "s", "tok"))["agent"], labelsOf(c.podManifest(head+"-two", "s", "tok"))["agent"]
+	if one == two || len(one) > 63 || len(two) > 63 || !strings.HasPrefix(one, strings.Repeat("a", 50)) {
+		t.Errorf("agent labels for long slugs: %q, %q", one, two)
+	}
+	for _, v := range []string{one, two} {
+		if !regexp.MustCompile(`^[A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?$`).MatchString(v) {
+			t.Errorf("agent label %q is not a label value", v)
+		}
 	}
 }
 

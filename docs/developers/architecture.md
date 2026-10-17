@@ -445,7 +445,9 @@ The pod's answer, text and an optional image, is the tool result.
 The browser is a **browser pod** (`internal/browserpod`), one per
 running (agent, session), run from the `kivali-browser` image
 (`Dockerfile.browser`: Debian's Chromium, fonts for the everyday
-scripts, Xvfb and the `kivali` binary; about 670 MB unpacked). It has no Service, no ports, no service-account token and no
+scripts, Xvfb and the `kivali` binary, run under dumb-init so
+Chromium's helper processes are reaped once orphaned; about 670 MB
+unpacked). It has no Service, no ports, no service-account token and no
 volumes beyond a memory-backed `/dev/shm` and an emptyDir `/tmp`; it is
 `restartPolicy: Never` with a 60 s stop grace, runs as the image's user
 with every capability dropped, and has the same required affinity to

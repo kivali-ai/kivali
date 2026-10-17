@@ -193,29 +193,3 @@ func (p *Provisioner) StopAll(ctx context.Context) (int, error) {
 	}
 	return n, nil
 }
-
-// WaitReady blocks until the pod for slug's session is Running with
-// its container Ready, or the context ends or timeout elapses. It polls
-// every 500ms.
-func (p *Provisioner) WaitReady(ctx context.Context, slug, session string, timeout time.Duration) error {
-	if !p.Enabled() {
-		return nil
-	}
-	name := PodName(slug, session)
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		ready, err := p.kube.GetPodReady(ctx, name)
-		if errors.Is(err, kube.ErrNotFound) {
-			return err
-		}
-		// Any other error is transient: keep polling.
-		if ready {
-			return nil
-		}
-		time.Sleep(500 * time.Millisecond)
-	}
-	return fmt.Errorf("browser pod %q not ready within %s", name, timeout)
-}
