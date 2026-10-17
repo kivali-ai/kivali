@@ -74,6 +74,30 @@ func TestWireBytesFollowTheirMessage(t *testing.T) {
 	}
 }
 
+// TestOverLongMessageIsRefusedNotFatal: a text frame over the limit (a
+// paste no cap caught) is read to its end and refused; the session
+// answers the next command as if it had not come.
+func TestOverLongMessageIsRefusedNotFatal(t *testing.T) {
+	h := startPod(t, podOptions{})
+	if res := h.core.command("g", "", CommandNavigate, NavigateArgs{URL: "https://a.test/"}); !res.OK {
+		t.Fatalf("navigate: %+v", res)
+	}
+	paste, _ := json.Marshal(InputArgs{Kind: "paste", Text: strings.Repeat("x", maxTextFrame)})
+	raw, _ := json.Marshal(Message{Type: TypeInput, Tab: "t1", Args: paste})
+	if len(raw) <= maxTextFrame {
+		t.Fatalf("test frame is %d bytes, within the limit", len(raw))
+	}
+	if err := h.core.w.c.Write(context.Background(), websocket.MessageText, raw); err != nil {
+		t.Fatal(err)
+	}
+	if res := h.core.command("g", "", CommandTabs, TabsArgs{Action: TabsList}); !res.OK || !strings.Contains(res.Text, "t1") {
+		t.Fatalf("after the over-long frame: %+v", res)
+	}
+	if calls := h.cdp.called("Input.insertText"); len(calls) != 0 {
+		t.Fatalf("the over-long paste reached the page: %d calls", len(calls))
+	}
+}
+
 func TestSessionStartsAndAnswersCommands(t *testing.T) {
 	// A saved profile from core lands in the profile directory.
 	src := t.TempDir()

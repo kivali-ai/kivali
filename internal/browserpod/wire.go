@@ -13,8 +13,15 @@ import (
 )
 
 // maxTextFrame bounds one text frame: a Message, which carries
-// commands, results and screenshots but never bulk bytes.
-const maxTextFrame = 1 << 20
+// commands, results, screenshots and a window's input events, a paste
+// at most, but never bulk bytes. It is above core's read limit for a
+// window, so an input event core accepted still fits once wrapped.
+const maxTextFrame = 2 << 20
+
+// errMessageTooLong is readMessage's answer to a text frame over
+// maxTextFrame. The frame has been read to its end, so the connection
+// is still in step: the caller refuses that one message and reads on.
+var errMessageTooLong = errors.New("browserpod: message over the frame limit")
 
 // writeChunk is the size of the binary frames the pod writes.
 const writeChunk = 256 << 10
@@ -52,7 +59,10 @@ func (w *wire) readMessage(ctx context.Context) (Message, io.Reader, error) {
 		return Message{}, nil, err
 	}
 	if len(data) > maxTextFrame {
-		return Message{}, nil, fmt.Errorf("browserpod: message over %d bytes", maxTextFrame)
+		if _, err := io.Copy(io.Discard, r); err != nil {
+			return Message{}, nil, err
+		}
+		return Message{}, nil, errMessageTooLong
 	}
 	var msg Message
 	if err := json.Unmarshal(data, &msg); err != nil {

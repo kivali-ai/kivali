@@ -144,6 +144,10 @@ func (s *session) run(ctx context.Context) error {
 
 	for started := false; !started; {
 		msg, body, err := s.w.readMessage(ctx)
+		if errors.Is(err, errMessageTooLong) {
+			s.log.Printf("refused a message over %d bytes", maxTextFrame)
+			continue
+		}
 		if err != nil {
 			return fmt.Errorf("browserpod: waiting for start: %w", err)
 		}
@@ -219,6 +223,12 @@ func (s *session) run(ctx context.Context) error {
 
 	for {
 		msg, body, err := s.w.readMessage(loopCtx)
+		if errors.Is(err, errMessageTooLong) {
+			// One message too long to be a command or an input event
+			// (a paste beyond any cap) is refused; the session goes on.
+			s.log.Printf("refused a message over %d bytes", maxTextFrame)
+			continue
+		}
 		if err != nil {
 			if errors.Is(context.Cause(loopCtx), errBrowserExited) {
 				return fmt.Errorf("browserpod: %w: %s", errBrowserExited, proc.Detail())
