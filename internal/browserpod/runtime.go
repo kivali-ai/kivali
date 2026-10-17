@@ -286,6 +286,13 @@ func (s *session) run(ctx context.Context) error {
 					}
 				}
 			})
+		case TypeSiteLock:
+			// The lock changes here, before the next message is read;
+			// tabs a relock finds off the site go back on the control
+			// queue, off the read loop.
+			if off := s.b.setSiteLock(msg.Group, msg.Unlocked); len(off) > 0 {
+				s.control.push(func() { s.b.returnToSite(workCtx, off) })
+			}
 		case TypeInput:
 			var in InputArgs
 			_ = json.Unmarshal(msg.Args, &in)

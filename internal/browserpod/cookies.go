@@ -42,7 +42,10 @@ type cookieParam struct {
 	PartitionKey json.RawMessage `json:"partitionKey,omitempty"`
 }
 
-// cookies returns the browser's cookies as a snapshot.
+// cookies returns the browser's cookies as a snapshot: every cookie,
+// whatever its domain. A site session's sign-in may go through an
+// identity provider on another site, whose cookies carry the single
+// sign-on the next sign-in to the site reuses.
 func (b *browser) cookies(ctx context.Context) ([]byte, error) {
 	raw, err := b.conn.Call(ctx, "", "Storage.getCookies", map[string]any{})
 	if err != nil {
