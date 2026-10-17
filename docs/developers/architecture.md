@@ -437,10 +437,14 @@ Its CLI runs in the parent's agent pod like any subagent, with
 `kivali mcp --toolkit web`: the `web_*` tools (`internal/mcp/web_tools.go`)
 and `submit_result`, and nothing else. Each `web_*` call is
 `POST /v1/agent/{slug}/subagents/{id}/web` to core, which checks that
-the id is the agent's running web task and that the command is one
-its session allows (`web_eval` in `open` only), hands an upload's bytes
+the id is the agent's running web task, that the command is one
+its session allows (`web_eval` in `open` only) and that a URL to load
+(`web_navigate`, a `web_tabs` open) is http or https and, in a site
+session, on the site or a subdomain of it, hands an upload's bytes
 to the pod first, and relays the command under the task's tab group.
-The pod's answer, text and an optional image, is the tool result.
+The pod's answer, text and an optional image, is the tool result. The
+toolkit's call waits as long as core holds it (a cold browser's start,
+a navigation's settle), bounded by the tool call's own context.
 
 The browser is a **browser pod** (`internal/browserpod`), one per
 running (agent, session), run from the `kivali-browser` image
@@ -499,8 +503,12 @@ At most `BROWSER_MAX_PER_TEAM` browsers (3) run at once; a start
 beyond that begins the save of the longest-idle browser, if there is
 one, and is refused with a retry. A browser whose pod is being deleted
 still counts until the delete returns, so a new pod under the same
-name cannot be caught by the old delete. On boot core deletes every
-browser pod it finds. Profiles and session records live in
+name cannot be caught by the old delete. At shutdown core gives the
+browsers up to twenty seconds (`browserShutdownTimeout` in `main.go`):
+each idle site browser saves its profile and each running one is asked
+for its cookies, so a sign-in made since the last save survives the
+restart; a pod that does not answer does not hold the exit. On boot
+core deletes every browser pod it finds. Profiles and session records live in
 `/data/agents/<slug>/browser/<session>/` (`store/browser.go`), outside
 the agent's `memory/` tree, so no agent container mounts them.
 
@@ -510,12 +518,20 @@ task's bounds (20 files, 200 MB); it is written to the task's
 `untrusted-downloads/` ([files-and-publishing.md](files-and-publishing.md))
 and listed in its result's `files`. A profile is taken only while core
 asked for one, up to 2 GiB; a cookie snapshot only from a site
-session's running browser, up to 8 MB. Every write to the pod has a time limit,
-and a pod that stops reading is dropped rather than waited on. A file
+session's running browser, up to 8 MB; a tab is recorded only under an
+id the pod would mint, up to the pod's tab limit, with its URL and
+title cut to 2 KB. Every write to the pod has a time limit, counted
+from when the write begins after the writes queued ahead of it, and a
+pod that stops reading is dropped rather than waited on: the lifecycle
+timer never waits on a pod. A body that ends short of what its message
+announced closes the connection, as the pod does for its own. A file
 a task uploads is read through the caller's files backend with
 `file_view`'s confinement, so a link out of the caller's tree is no
-file, and may be up to 50 MB. The delivered result also carries the
-session, the last page's origin, the duration and the pages loaded.
+file, and may be up to 50 MB; for a sub-lead's task the caller is the
+sub-lead, whose view is its overlay (`files.Dispatcher.SubagentBackendFor`:
+its own `artifacts/private`, none of the agent's memory). The
+delivered result also carries the session, the last page's origin, the
+duration and the pages loaded.
 
 Browser pods browse the web for the subagent and are not held to the
 egress allowlist: they reach the web directly, like any pod, with no
@@ -534,17 +550,24 @@ the first; in Kivali Desktop a window of its own, see
 [desktop-app.md](desktop-app.md)). The page holds one WebSocket,
 `GET /api/v1/agents/{slug}/subagents/{id}/browser`
 (`internal/web/browser_window.go`), under the session cookie like every
-API route. Text messages are `apitypes.BrowserWindowEvent`: the
+API route, from a page on the request's own origin, the origin a proxy
+forwarded (`X-Forwarded-Host` and `-Proto`) or the deployment's
+configured external origin (`KIVALI_EXTERNAL_URL`). Text messages are
+`apitypes.BrowserWindowEvent`: the
 browser's state, the tab the window shows (sent when the window
 attaches, when the task moves to another tab and when that tab's URL
-or title changes) and an end with its reason, after which the page
+or title changes), a notice with its reason (an input the browser could
+not take) and an end with its reason, after which the page
 stops; a state event also says whether the window takes input and
-names the session's site. Binary messages are frames, one JPEG each.
+names the session's site. A window on a task that has not started is
+ended with that reason, not the ended task's. Binary messages are
+frames, one JPEG each.
 The page sends `apitypes.BrowserWindowInput` (mouse, key and paste
 events in the frame's pixels); core forwards them to the shown tab only
 while the task waits for a person in a site session and drops them
 otherwise, so a window is watch only unless the task asked for the
-person.
+person. A paste is at most 256 KB; a larger one, or an input before the
+browser has a page to show, is answered with a notice.
 
 The page reopens a socket that closed without an end event, waiting
 1, 2, 4 and then 10 seconds between tries (`RECONNECT_MS`); while the
@@ -592,20 +615,25 @@ saying so.
 
 A web task's `session` is `open` or a site. A site is given as a domain
 and kept as its registrable domain (`webSessionSite`, on the public
-suffix list: `shop.vendor.com` is the session `vendor.com`); an
-address, a bare suffix such as `co.uk`, or anything with a scheme, a
-port or a path is refused at dispatch. The session's browser is told
+suffix list: `shop.vendor.com` is the session `vendor.com`), under a
+top-level domain ICANN delegates; an address in any spelling a browser
+reads as one (`127.1`, `0x7f.1`), a name under no public top-level
+domain (`localhost`, `corp`), a bare suffix such as `co.uk`, or
+anything with a scheme, a port or a path is refused at dispatch, as is
+a `start_url` off the site. The session's browser is told
 the site in its hello and runs headed under Xvfb (some sites refuse a
-headless browser's sign-in); the pod refuses `web_navigate` off the
-site and its subdomains with `off_site`, `web_eval` does not exist
-there, and the profile is saved and restored across browsers, so
-sign-ins persist. Every page in a site session has its document
-requests paused before they are sent (`Fetch.requestPaused`, each
-redirect hop a request of its own); a main-frame request off the site
-is failed as aborted, so an on-site URL that redirects off the site
-loads nothing there, the tab stays on the page it was on, and the model
-reads why with its next result. Subframes are let through. A commit
-off the site that still gets past the pause is sent to about:blank. Between saves the pod sends core the session's
+headless browser's sign-in); core refuses `web_navigate` and a
+`web_tabs` open off the site and its subdomains before they reach the
+pod, and the pod refuses them again with `off_site`; `web_eval` does
+not exist there; and the profile is saved and restored across
+browsers, so sign-ins persist. Every page in a site session has its
+document requests paused before they are sent (`Fetch.requestPaused`,
+each redirect hop a request of its own); a main-frame request off the
+site is failed as aborted, so an on-site URL that redirects off the
+site loads nothing there, the tab stays on the page it was on, and the
+model reads why with its next result. Subframes are let through. A
+commit off the site that still gets past the pause is sent to
+about:blank. Between saves the pod sends core the session's
 cookies whenever they have changed, every five minutes and right
 after a window closes (`TypeCookies`; core asks with `TypeSnapshot`),
 as the array `Storage.setCookies` takes; core keeps the latest beside
