@@ -544,16 +544,26 @@ func TestSubagentTurnEventRecordsTheCLISession(t *testing.T) {
 	srv.SubagentService = svc
 	svc.registerJob(&subagentJob{ID: "job-a", Parent: "alice", State: subagentJobRunning, done: make(chan struct{})})
 	srv.installAgentpodSubagentTurn("alice", "turn-a", "job-a", "claude-test")
-	body, _ := json.Marshal(agentpod.TurnEvent{Kind: agentpod.TurnEventDelta, Text: "Reading.", SessionID: "cli-1"})
-	rr := httptest.NewRecorder()
-	req, _ := http.NewRequest(http.MethodPost, "/v1/agent/alice/chat-turn/turn-a/event", strings.NewReader(string(body)))
-	req.Header.Set(agentpod.SlugHeader, "alice")
-	srv.handleAgentpodTurnEvent(rr, req)
-	if rr.Code != http.StatusNoContent {
-		t.Fatalf("status = %d, body = %q", rr.Code, rr.Body.String())
+	post := func(sessionID string) {
+		body, _ := json.Marshal(agentpod.TurnEvent{Kind: agentpod.TurnEventDelta, Text: "Reading.", SessionID: sessionID})
+		rr := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodPost, "/v1/agent/alice/chat-turn/turn-a/event", strings.NewReader(string(body)))
+		req.Header.Set(agentpod.SlugHeader, "alice")
+		srv.handleAgentpodTurnEvent(rr, req)
+		if rr.Code != http.StatusNoContent {
+			t.Fatalf("status = %d, body = %q", rr.Code, rr.Body.String())
+		}
 	}
-	if j, ok := svc.lookupJob("job-a"); !ok || j.CLISession != "cli-1" {
-		t.Errorf("job CLISession = %q, want cli-1", j.CLISession)
+	// The id is handed back to the CLI after --resume, so only a UUID,
+	// the CLI's own shape, is kept; anything else is dropped.
+	const cli1 = "0b8f3e6a-4c2d-4f1e-9a7b-1c2d3e4f5a6b"
+	post("--dangerously-skip-permissions")
+	if j, ok := svc.lookupJob("job-a"); !ok || j.CLISession != "" {
+		t.Errorf("job CLISession = %q after an id that is not a UUID, want none", j.CLISession)
+	}
+	post(cli1)
+	if j, ok := svc.lookupJob("job-a"); !ok || j.CLISession != cli1 {
+		t.Errorf("job CLISession = %q, want %s", j.CLISession, cli1)
 	}
 }
 
