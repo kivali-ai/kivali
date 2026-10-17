@@ -404,6 +404,8 @@ const sentInputs = (): BrowserInput[] =>
   });
 
 const frameEl = () => screen.getByLabelText("The task's browser") as HTMLCanvasElement;
+/** The hidden editable the person's keys, compositions and pastes land in. */
+const keysEl = () => screen.getByRole('textbox', { name: "Keys for the task's browser" });
 
 /** Opens the window on a waiting task, paints one 1280 × 800 frame and, unless told not to, turns input on. */
 async function openForInput(input = true, m: SubagentMeta = waitingWeb) {
@@ -444,17 +446,22 @@ describe('the browser window: input', () => {
 
   it('sends nothing, keeps the native menu and says Watch only until a state event turns input on', async () => {
     const canvas = await openForInput(false);
+    const keys = keysEl();
     expect(screen.getByText('Watch only')).toBeInTheDocument();
     expect(screen.queryByText(BANNER)).toBeNull();
-    expect(canvas).not.toHaveAttribute('tabindex');
+    expect(keys).toHaveAttribute('tabindex', '-1');
+    expect(keys).toHaveAttribute('contenteditable', 'false');
     fireEvent.mouseDown(canvas, { button: 0, clientX: 420, clientY: 240 });
+    expect(document.activeElement).not.toBe(keys);
     fireEvent.mouseUp(canvas, { button: 0, clientX: 420, clientY: 240 });
     fireEvent.mouseMove(canvas, { clientX: 430, clientY: 250 });
     fireEvent.wheel(canvas, { deltaY: 100, clientX: 420, clientY: 240 });
-    fireEvent.keyDown(canvas, { key: 'a', code: 'KeyA' });
+    fireEvent.keyDown(keys, { key: 'a', code: 'KeyA' });
+    fireEvent.compositionEnd(keys, { data: 'é' });
+    fireEvent.input(keys, { data: 'é', inputType: 'insertText' });
     expect(fireEvent.contextMenu(canvas, { clientX: 420, clientY: 240 })).toBe(true);
     const paste = pasteEvent('hunter2');
-    act(() => void canvas.dispatchEvent(paste));
+    act(() => void keys.dispatchEvent(paste));
     expect(paste.defaultPrevented).toBe(false);
     await settle(16);
     expect(latest()?.sent).toEqual([]);
@@ -466,21 +473,22 @@ describe('the browser window: input', () => {
     expect(screen.getByText('Taking input')).toBeInTheDocument();
     expect(screen.queryByText('Watch only')).toBeNull();
     expect(screen.getByText(BANNER)).toBeInTheDocument();
-    expect(canvas).toHaveAttribute('tabindex', '0');
+    expect(keysEl()).toHaveAttribute('tabindex', '0');
+    expect(keysEl()).toHaveAttribute('contenteditable', 'true');
 
     latest()?.push({ type: 'state', browser: 'running', site: SITE });
     expect(screen.getByText('Watch only')).toBeInTheDocument();
     expect(screen.queryByText(BANNER)).toBeNull();
     fireEvent.mouseDown(canvas, { button: 0, clientX: 420, clientY: 240 });
-    fireEvent.keyDown(canvas, { key: 'a', code: 'KeyA' });
+    fireEvent.keyDown(keysEl(), { key: 'a', code: 'KeyA' });
     expect(latest()?.sent).toEqual([]);
   });
 
   it('stops taking input when the socket drops, until the new socket’s state says so', async () => {
-    const canvas = await openForInput();
+    await openForInput();
     latest()?.drop();
     expect(screen.getByText('Watch only')).toBeInTheDocument();
-    fireEvent.keyDown(canvas, { key: 'a', code: 'KeyA' });
+    fireEvent.keyDown(keysEl(), { key: 'a', code: 'KeyA' });
     expect(FakeSocket.all[0]?.sent).toEqual([]);
   });
 
@@ -513,11 +521,13 @@ describe('the browser window: input', () => {
     expect(FakeSocket.all).toHaveLength(9);
   });
 
-  it('sends presses and releases in frame pixels, focusing the frame', async () => {
+  it('sends presses and releases in frame pixels, focusing the keys under the pointer', async () => {
     const canvas = await openForInput();
     // (420, 240) is the middle of the box: the middle of the frame.
     fireEvent.mouseDown(canvas, { button: 0, clientX: 420, clientY: 240, shiftKey: true });
-    expect(document.activeElement).toBe(canvas);
+    const keys = keysEl();
+    expect(document.activeElement).toBe(keys);
+    expect([keys.style.left, keys.style.top]).toEqual(['400px', '200px']);
     fireEvent.mouseUp(window, { button: 0, clientX: 120, clientY: 60 });
     fireEvent.mouseDown(canvas, { button: 2, clientX: 420, clientY: 240 });
     fireEvent.mouseUp(canvas, { button: 2, clientX: 420, clientY: 240 });
@@ -559,11 +569,12 @@ describe('the browser window: input', () => {
     expect(sentInputs()).toEqual([{ kind: 'mouse', action: 'wheel', x: 640, y: 400, delta_x: 3, delta_y: 120, modifiers: 0 }]);
   });
 
-  it('sends a key’s key, code, typed text and modifiers, down and up', async () => {
-    const canvas = await openForInput();
-    fireEvent.keyDown(canvas, { key: 'A', code: 'KeyA', shiftKey: true });
-    fireEvent.keyUp(canvas, { key: 'A', code: 'KeyA', shiftKey: true });
-    fireEvent.keyDown(canvas, { key: 'a', code: 'KeyA', ctrlKey: true, altKey: true });
+  it('sends a key’s key, code, typed text and modifiers, down and up, and keeps a typed key out of the editable', async () => {
+    await openForInput();
+    const keys = keysEl();
+    expect(fireEvent.keyDown(keys, { key: 'A', code: 'KeyA', shiftKey: true })).toBe(false);
+    fireEvent.keyUp(keys, { key: 'A', code: 'KeyA', shiftKey: true });
+    expect(fireEvent.keyDown(keys, { key: 'a', code: 'KeyA', ctrlKey: true, altKey: true })).toBe(true);
     expect(sentInputs()).toEqual([
       { kind: 'key', action: 'down', key: 'A', code: 'KeyA', text: 'A', modifiers: 8 },
       { kind: 'key', action: 'up', key: 'A', code: 'KeyA', modifiers: 8 },
@@ -573,7 +584,8 @@ describe('the browser window: input', () => {
   });
 
   it('keeps the keys the window would act on for the page', async () => {
-    const canvas = await openForInput();
+    await openForInput();
+    const canvas = keysEl();
     for (const [key, code] of [
       ['Backspace', 'Backspace'],
       ['Tab', 'Tab'],
@@ -593,14 +605,64 @@ describe('the browser window: input', () => {
   });
 
   it('lets Cmd+V and Ctrl+V through to the paste event, which sends the clipboard’s text', async () => {
-    const canvas = await openForInput();
-    expect(fireEvent.keyDown(canvas, { key: 'v', code: 'KeyV', metaKey: true })).toBe(true);
-    expect(fireEvent.keyDown(canvas, { key: 'v', code: 'KeyV', ctrlKey: true })).toBe(true);
+    await openForInput();
+    const keys = keysEl();
+    expect(fireEvent.keyDown(keys, { key: 'v', code: 'KeyV', metaKey: true })).toBe(true);
+    expect(fireEvent.keyDown(keys, { key: 'v', code: 'KeyV', ctrlKey: true })).toBe(true);
     expect(latest()?.sent).toEqual([]);
     const paste = pasteEvent('hunter2');
-    act(() => void canvas.dispatchEvent(paste));
+    act(() => void keys.dispatchEvent(paste));
     expect(paste.defaultPrevented).toBe(true);
     expect(sentInputs()).toEqual([{ kind: 'paste', text: 'hunter2' }]);
+  });
+
+  it('sends a dead key’s composition as a paste once committed: Option+e, then e, types é', async () => {
+    await openForInput();
+    const keys = keysEl();
+    // The dead key and the keys under the composition are the input method's: not sent, not prevented.
+    expect(fireEvent.keyDown(keys, { key: 'Dead', code: 'KeyE', altKey: true })).toBe(true);
+    fireEvent.compositionStart(keys, { data: '' });
+    fireEvent.compositionUpdate(keys, { data: '´' });
+    fireEvent.input(keys, { data: '´', inputType: 'insertCompositionText', isComposing: true });
+    fireEvent.keyUp(keys, { key: 'Dead', code: 'KeyE', altKey: true });
+    expect(fireEvent.keyDown(keys, { key: 'e', code: 'KeyE', isComposing: true })).toBe(true);
+    fireEvent.input(keys, { data: 'é', inputType: 'insertCompositionText', isComposing: true });
+    expect(latest()?.sent).toEqual([]);
+    fireEvent.compositionEnd(keys, { data: 'é' });
+    expect(sentInputs()).toEqual([{ kind: 'paste', text: 'é' }]);
+    // Safari reports the committed text once more, after the composition: not sent twice.
+    fireEvent.input(keys, { data: 'é', inputType: 'insertFromComposition' });
+    expect(sentInputs()).toHaveLength(1);
+    expect(keys.textContent).toBe('');
+  });
+
+  it('lets an input method compose, candidates and all, and sends what it committed', async () => {
+    await openForInput();
+    const keys = keysEl();
+    // The first key of a composition arrives before compositionstart, as Process.
+    expect(fireEvent.keyDown(keys, { key: 'Process', code: 'KeyN' })).toBe(true);
+    fireEvent.compositionStart(keys, { data: '' });
+    fireEvent.keyDown(keys, { key: 'Process', code: 'KeyI', isComposing: true });
+    // Space picks a candidate: the input method's, so the window neither sends nor prevents it.
+    expect(fireEvent.keyDown(keys, { key: ' ', code: 'Space', isComposing: true })).toBe(true);
+    fireEvent.compositionEnd(keys, { data: '日本' });
+    expect(sentInputs()).toEqual([{ kind: 'paste', text: '日本' }]);
+    // After the composition, keys are keys again.
+    fireEvent.keyDown(keys, { key: 'Enter', code: 'Enter' });
+    expect(sentInputs()[1]).toMatchObject({ kind: 'key', key: 'Enter' });
+  });
+
+  it('sends text that reaches the editable without a key of its own as a paste', async () => {
+    await openForInput();
+    const keys = keysEl();
+    // The accent picker (press and hold) and an emoji picker insert text with no key behind it.
+    fireEvent.input(keys, { data: 'é', inputType: 'insertText' });
+    fireEvent.input(keys, { data: '→', inputType: 'insertText' });
+    expect(sentInputs()).toEqual([
+      { kind: 'paste', text: 'é' },
+      { kind: 'paste', text: '→' },
+    ]);
+    expect(keys.textContent).toBe('');
   });
 
   it('offers Paste on a right-click, which reads the clipboard and sends it', async () => {
@@ -616,6 +678,7 @@ describe('the browser window: input', () => {
     expect(readText).toHaveBeenCalledTimes(1);
     expect(sentInputs()).toEqual([{ kind: 'paste', text: 'correct horse' }]);
     expect(screen.queryByRole('menu')).toBeNull();
+    expect(document.activeElement).toBe(keysEl());
   });
 
   it('says to use the shortcut when the clipboard cannot be read', async () => {

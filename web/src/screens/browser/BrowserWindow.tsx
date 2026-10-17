@@ -79,6 +79,9 @@ function heldButton(buttons: number): string | undefined {
 /** Keys the window itself would act on (scroll, move focus, press a button): they go to the task's page only. */
 const PAGE_KEYS = new Set(['Backspace', 'Tab', 'Enter', ' ', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'PageUp', 'PageDown', 'Home', 'End']);
 
+/** Keys that begin a composition (a dead key such as Option+e, an input method's Process): the composition's result goes to the page, not these. */
+const COMPOSITION_KEYS = new Set(['Dead', 'Process']);
+
 /** Cmd+V or Ctrl+V: left to the browser, which fires the paste event the window sends from. */
 function pasteShortcut(ev: KeyboardEvent): boolean {
   return (ev.metaKey || ev.ctrlKey) && !ev.altKey && ev.key.toLowerCase() === 'v';
@@ -105,14 +108,19 @@ function wheelPixels(ev: WheelEvent, height: number): { delta_x: number; delta_y
 }
 
 /**
- * Forwards a person's mouse, keys and pastes on the frame to the task's page, outside React: native listeners
- * read whether the window takes input from `taking()` on every event and call `send` directly. Moves are
- * coalesced to the newest one per animation frame; a press, release or wheel sends any held move first so
- * the page sees them in order. Returns the function that removes the listeners.
+ * Forwards a person's mouse on the frame, and their keys, compositions and pastes in `keys`, to the task's
+ * page, outside React: native listeners read whether the window takes input from `taking()` on every event
+ * and call `send` directly. `keys` is a hidden editable: a press on the frame focuses it and moves it under
+ * the pointer, so an input method's candidates open there. A key the person types goes to the page as itself
+ * and is kept out of the editable; text the editable receives another way (an input method's or a dead key's
+ * composition, an accent or emoji picker, dictation) goes as a paste once committed. Moves are coalesced to
+ * the newest one per animation frame; a press, release or wheel sends any held move first so the page sees
+ * them in order. Returns the function that removes the listeners.
  */
-function relayInput(frame: HTMLElement, size: () => { width: number; height: number }, taking: () => boolean, send: (input: BrowserInput) => void, onMenu: (x: number, y: number) => void): () => void {
+function relayInput(frame: HTMLElement, keys: HTMLElement, size: () => { width: number; height: number }, taking: () => boolean, send: (input: BrowserInput) => void, onMenu: (x: number, y: number) => void): () => void {
   let move: BrowserInput | null = null;
   let raf = 0;
+  let composing = false;
   const pressed = new Set<string>();
 
   const point = (ev: MouseEvent) => {
@@ -137,7 +145,10 @@ function relayInput(frame: HTMLElement, size: () => { width: number; height: num
   const onDown = (ev: MouseEvent) => {
     if (!taking()) return;
     ev.preventDefault();
-    frame.focus({ preventScroll: true });
+    const box = frame.getBoundingClientRect();
+    keys.style.left = ev.clientX - box.left + 'px';
+    keys.style.top = ev.clientY - box.top + 'px';
+    keys.focus({ preventScroll: true });
     const name = BUTTON[ev.button];
     if (name) pressed.add(name);
     button(ev, 'pressed');
@@ -170,13 +181,32 @@ function relayInput(frame: HTMLElement, size: () => { width: number; height: num
     onMenu(ev.clientX, ev.clientY);
   };
   const key = (ev: KeyboardEvent, action: 'down' | 'up') => {
-    if (!taking() || ev.isComposing || pasteShortcut(ev)) return;
-    if (PAGE_KEYS.has(ev.key)) ev.preventDefault();
-    const printable = action === 'down' && [...ev.key].length === 1 && !ev.ctrlKey && !ev.metaKey;
-    send({ kind: 'key', action, key: ev.key, code: ev.code, ...(printable ? { text: ev.key } : {}), modifiers: modifierBits(ev) });
+    if (!taking() || pasteShortcut(ev)) return;
+    // A composition's keys are the input method's; compositionend sends what it committed.
+    if (ev.isComposing || composing || COMPOSITION_KEYS.has(ev.key)) return;
+    const printable = [...ev.key].length === 1 && !ev.ctrlKey && !ev.metaKey;
+    // The key goes to the page as itself: the window must neither act on it nor type it into the editable.
+    if (PAGE_KEYS.has(ev.key) || printable) ev.preventDefault();
+    send({ kind: 'key', action, key: ev.key, code: ev.code, ...(action === 'down' && printable ? { text: ev.key } : {}), modifiers: modifierBits(ev) });
   };
   const onKeyDown = (ev: KeyboardEvent) => key(ev, 'down');
   const onKeyUp = (ev: KeyboardEvent) => key(ev, 'up');
+  const onCompositionStart = () => {
+    composing = true;
+  };
+  const onCompositionEnd = (ev: CompositionEvent) => {
+    composing = false;
+    keys.textContent = '';
+    if (ev.data && taking()) send({ kind: 'paste', text: ev.data });
+  };
+  // Text the editable received by other means than a key already sent (an accent picker, dictation, an emoji
+  // picker). A composition's own input events are left to compositionend, whichever side of it they fall.
+  const onInput = (ev: Event) => {
+    const { isComposing, inputType, data } = ev as InputEvent;
+    if (isComposing || composing || /Composition/.test(inputType ?? '')) return;
+    keys.textContent = '';
+    if (data && taking()) send({ kind: 'paste', text: data });
+  };
   const onPaste = (ev: ClipboardEvent) => {
     if (!taking()) return;
     ev.preventDefault();
@@ -189,9 +219,12 @@ function relayInput(frame: HTMLElement, size: () => { width: number; height: num
   frame.addEventListener('mousemove', onMove);
   frame.addEventListener('wheel', onWheel, { passive: false });
   frame.addEventListener('contextmenu', onContext);
-  frame.addEventListener('keydown', onKeyDown);
-  frame.addEventListener('keyup', onKeyUp);
-  frame.addEventListener('paste', onPaste);
+  keys.addEventListener('keydown', onKeyDown);
+  keys.addEventListener('keyup', onKeyUp);
+  keys.addEventListener('compositionstart', onCompositionStart);
+  keys.addEventListener('compositionend', onCompositionEnd);
+  keys.addEventListener('input', onInput);
+  keys.addEventListener('paste', onPaste);
   return () => {
     if (raf) cancelAnimationFrame(raf);
     frame.removeEventListener('mousedown', onDown);
@@ -199,9 +232,12 @@ function relayInput(frame: HTMLElement, size: () => { width: number; height: num
     frame.removeEventListener('mousemove', onMove);
     frame.removeEventListener('wheel', onWheel);
     frame.removeEventListener('contextmenu', onContext);
-    frame.removeEventListener('keydown', onKeyDown);
-    frame.removeEventListener('keyup', onKeyUp);
-    frame.removeEventListener('paste', onPaste);
+    keys.removeEventListener('keydown', onKeyDown);
+    keys.removeEventListener('keyup', onKeyUp);
+    keys.removeEventListener('compositionstart', onCompositionStart);
+    keys.removeEventListener('compositionend', onCompositionEnd);
+    keys.removeEventListener('input', onInput);
+    keys.removeEventListener('paste', onPaste);
   };
 }
 
@@ -314,6 +350,7 @@ export function BrowserWindow() {
   const [menu, setMenu] = useState<PasteMenu | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
+  const keysRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   // The input path reads these, never React state: whether the window takes input, and the send to use.
   const taking = useRef(false);
@@ -382,7 +419,8 @@ export function BrowserWindow() {
     // The frame's own pixels: the canvas takes each painted bitmap's size; before the first paint there is none.
     const size = () => (canvas ? (painted ? { width: canvas.width, height: canvas.height } : { width: 0, height: 0 }) : { width: img?.naturalWidth ?? 0, height: img?.naturalHeight ?? 0 });
     const frame = canvas ?? img;
-    const unrelay = frame ? relayInput(frame, size, () => taking.current, send, (x, y) => setMenu({ x, y, fallback: !canReadClipboard() })) : () => {};
+    const keys = keysRef.current;
+    const unrelay = frame && keys ? relayInput(frame, keys, size, () => taking.current, send, (x, y) => setMenu({ x, y, fallback: !canReadClipboard() })) : () => {};
 
     const finish = (reason: string) => {
       over = true;
@@ -507,7 +545,7 @@ export function BrowserWindow() {
       (text) => {
         if (text) sendRef.current({ kind: 'paste', text });
         setMenu(null);
-        (canvasRef.current ?? imgRef.current)?.focus({ preventScroll: true });
+        keysRef.current?.focus({ preventScroll: true });
       },
       () => setMenu((m) => m && { ...m, fallback: true }),
     );
@@ -575,10 +613,26 @@ export function BrowserWindow() {
       <main className="app-bw-view">
         {connect &&
           (decodes ? (
-            <canvas ref={canvasRef} className="app-bw-frame" aria-label="The task's browser" tabIndex={input ? 0 : undefined} />
+            <canvas ref={canvasRef} className="app-bw-frame" aria-label="The task's browser" />
           ) : (
-            <img ref={imgRef} className="app-bw-frame" alt="The task's browser" tabIndex={input ? 0 : undefined} draggable={false} />
+            <img ref={imgRef} className="app-bw-frame" alt="The task's browser" draggable={false} />
           ))}
+        {connect && (
+          // Where keys are typed while the window takes input: hidden, focused by a press on the frame, editable
+          // so an input method can compose in it (relayInput).
+          <div
+            ref={keysRef}
+            className="app-bw-keys"
+            role="textbox"
+            aria-label="Keys for the task's browser"
+            contentEditable={input}
+            suppressContentEditableWarning
+            tabIndex={input ? 0 : -1}
+            spellCheck={false}
+            autoCapitalize="off"
+            autoCorrect="off"
+          />
+        )}
         {menu && (
           <div ref={menuRef} className="kv-menu app-bw-menu" role="menu">
             {menu.fallback ? (
