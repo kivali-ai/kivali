@@ -357,10 +357,15 @@ provider serves an org.
   `Provider` is needed.
 - **The interface.** `Stream` runs a turn (warm per-agent runner, or a
   per-call subprocess for agent-less calls); `RunSubagent` runs one
-  `SubagentRequest` — a fresh one-shot session with no history, its
-  own `ToolSet` and its own `MCPServer`s — and returns the same
-  `Stream`, so the agent pod maps a subagent's events with the code it
-  uses for a turn. `ToolSet` names tools neutrally: `Kivali` holds the
+  `SubagentRequest` — a per-call subprocess with its own `ToolSet` and
+  its own `MCPServer`s, a fresh session unless `Resume` names the CLI
+  session an earlier run of the task reported on its events, which the
+  new process continues with the prompt as its next message (a web task
+  resumed after a person's sign-in, [architecture.md](architecture.md))
+  — and returns the same `Stream`, so the agent pod maps a subagent's
+  events with the code it uses for a turn. The driver keeps no session
+  store for subagents: the id travels on `StreamEvent.SessionID` and
+  comes back as `Resume`. `ToolSet` names tools neutrally: `Kivali` holds the
   kivali MCP server's tools by bare name (`file_view`, `subagent`),
   `Builtins` holds provider-side tools by neutral id
   (`provider.BuiltinWebFetch`, `provider.BuiltinWebSearch`). `MCPServer`

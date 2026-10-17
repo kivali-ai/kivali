@@ -7,7 +7,7 @@ full developer guide is [docs/developers/README.md](docs/developers/README.md).
 ## Orientation
 
 - `main.go`, `*_cmd.go` — the `kivali` binary: the server, plus the
-  `agent`, `mcp` and `prepare-scratch` subcommands.
+  `agent`, `browser`, `mcp` and `prepare-scratch` subcommands.
 - `internal/` — the Go packages. `store/` is the only writer to the data
   directory; `web/` is the JSON API and SSE streams; `agent/` and
   `agentpod/` run agents; `browserpod/` runs a web subagent's browser;

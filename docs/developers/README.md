@@ -7,7 +7,7 @@ the pieces fit together, read [architecture.md](architecture.md) next.
 ## What is in the repository
 
 ```
-main.go               the server, and the subcommand dispatch (agent, mcp, prepare-scratch)
+main.go               the server, and the subcommand dispatch (agent, browser, mcp, prepare-scratch)
 mcp_cmd.go            `kivali mcp`: the MCP server each claude CLI process talks to
 agent_cmd.go          `kivali agent`: the per-agent runtime that runs in an agent pod
 integration_test.go   the integration suite (build tag `integration`)
@@ -230,12 +230,16 @@ supervisor's reference.
 - `kivali agent` — the per-agent runtime, the entrypoint of an agent
   pod: supervises the agent's `claude` CLI process and routes every
   authoritative read and write back to the server over UDS.
+- `kivali browser` — the entrypoint of a browser pod: starts Chromium
+  and drives it for one agent web session over one WebSocket to the
+  server (`internal/browserpod`).
 - `kivali mcp` — the stdio MCP server each `claude` process starts:
   `--toolkit full-agent` (the default) is an agent's whole tool surface
   (`file_*`, `agent_memory_*`, `publish_*`, assignments, state lookups,
   `run_shell`, `share_file`, `subagent`); `--toolkit subagent` is the
-  narrow surface a subagent gets. Calls that change state are routed to
-  the server over the control socket.
+  narrow surface a subagent gets; `--toolkit web` is a web subagent's
+  (the `web_*` tools and `submit_result`). Calls that change state are
+  routed to the server over the control socket.
 - `kivali prepare-scratch` — the agent pod's init container: prepares
   the per-agent `/scratch` volume.
 
