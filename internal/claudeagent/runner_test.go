@@ -238,7 +238,7 @@ func runFakeCLI(args []string) {
 			blockUntilSignal()
 
 		case "subagent", "subagent-error", "subagent-hang":
-			fakeSubagentRun(emit, scenario)
+			fakeSubagentRun(emit, scenario, resumeID != "")
 		}
 	}
 }

@@ -33,7 +33,11 @@ var (
 	fakeSubagentCallB = provider.TokenUsage{InputTokens: 8, OutputTokens: 60, CacheReadTokens: 1100}
 )
 
-func fakeSubagentRun(emit func(map[string]any), scenario string) {
+// resumed is whether the fake was started with --resume: then its
+// modelUsage gauge, cumulative over the session like the real CLI's,
+// starts fakeGaugeHistoryTurns turns in, while the result frame's own
+// usage stays this run's.
+func fakeSubagentRun(emit func(map[string]any), scenario string, resumed bool) {
 	assistant := func(id, model string, block map[string]any, snap provider.TokenUsage) {
 		emit(map[string]any{
 			"type": "assistant",
@@ -60,11 +64,15 @@ func fakeSubagentRun(emit func(map[string]any), scenario string) {
 		})
 		assistant("msg_s2", "claude-haiku-4-5", map[string]any{"type": "text", "text": fakeSubagentAnswer}, fakeSubagentCallB)
 		total := fakeSubagentCallA.Add(fakeSubagentCallB)
+		cumulative := 1
+		if resumed {
+			cumulative += fakeGaugeHistoryTurns
+		}
 		emit(map[string]any{
 			"type": "result", "subtype": "success", "result": fakeSubagentAnswer,
 			"total_cost_usd": 0.0042,
 			"usage":          fakeUsageBlock(total),
-			"modelUsage":     map[string]any{"claude-haiku-4-5": fakeModelUsageEntry(total, 1)},
+			"modelUsage":     map[string]any{"claude-haiku-4-5": fakeModelUsageEntry(total, cumulative)},
 		})
 	case "subagent-error":
 		assistant("msg_e1", "claude-haiku-4-5", map[string]any{"type": "text", "text": "Checking the rig."}, fakeSubagentCallA)
@@ -241,7 +249,11 @@ func TestRunSubagentSpellsTheRequestTheCLIWay(t *testing.T) {
 func TestRunSubagentResumesASession(t *testing.T) {
 	req := subagentTestRequest(t.TempDir())
 	req.Resume = "sess-prev"
-	res := runSubagentFake(t, "subagent", req, nil)
+	var rows []provider.UsageEvent
+	res := runSubagentFake(t, "subagent", req, func(ev provider.UsageEvent) error {
+		rows = append(rows, ev)
+		return nil
+	})
 	if res.err != nil {
 		t.Fatalf("Err = %v, want a clean run", res.err)
 	}
@@ -252,6 +264,18 @@ func TestRunSubagentResumesASession(t *testing.T) {
 		if ev.Kind != provider.StreamEnd && ev.SessionID != "sess-prev" {
 			t.Errorf("event %s SessionID = %q, want the resumed session", ev.Kind, ev.SessionID)
 		}
+	}
+	// A resumed process reloads the session's history into its usage
+	// gauge, so the gauge's first reading carries the earlier runs'
+	// tokens. The run's usage is this run's: the result frame's own
+	// total, never the gauge's cumulative reading.
+	want := fakeSubagentCallA.Add(fakeSubagentCallB)
+	if res.final.Usage != want {
+		t.Errorf("Usage = %+v, want this run's total %+v, not the session's", res.final.Usage, want)
+	}
+	if len(rows) != 1 || rows[0].InputTokens != want.InputTokens || rows[0].OutputTokens != want.OutputTokens ||
+		rows[0].CacheReadTokens != want.CacheReadTokens || rows[0].CacheCreateTokens != want.CacheCreateTokens {
+		t.Errorf("usage rows = %+v, want one row at this run's total %+v", rows, want)
 	}
 }
 
