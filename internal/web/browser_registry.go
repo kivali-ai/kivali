@@ -37,8 +37,10 @@ import (
 	"net/url"
 	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/kivali-ai/kivali/internal/agentpod"
 	"github.com/kivali-ai/kivali/internal/browserpod"
@@ -94,6 +96,13 @@ const (
 	// window, a paste: the message that carries it to the pod must fit
 	// the pod's text frame limit with room to spare.
 	browserInputTextMax = 256 << 10
+	// browserTabTextMax bounds a tab's URL and title as the pod reports
+	// them and core keeps them for the windows.
+	browserTabTextMax = 2048
+	// browserReleasedPerSession bounds the released groups remembered
+	// for one session (see browserRegistry.released); the oldest go
+	// first. Group ids are random, so a forgotten one is never reused.
+	browserReleasedPerSession = 1024
 )
 
 // browserState is where a browser is in its life.
@@ -274,12 +283,9 @@ type browser struct {
 	// while saving. Zero while running.
 	deadline time.Time
 
-	groups map[string]*browserGroup
-	// released holds the groups whose task has ended: a command for
-	// one is refused, so a call still in flight cannot reopen it.
-	released map[string]bool
-	tabs     map[string]string // tab id → group
-	windows  int
+	groups  map[string]*browserGroup
+	tabs    map[string]string // tab id → group
+	windows int
 
 	pending map[string]chan browserpod.Message
 	seq     int
@@ -309,10 +315,41 @@ func ephemeralSession(session string) bool { return session == agentpod.OpenWebS
 // opened on that browser.
 var groupID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
+// tabID is the shape of a tab id the pod mints: "t" and a number
+// (browserpod's registerLocked). A tab the pod names otherwise is not
+// recorded.
+var tabID = regexp.MustCompile(`^t[0-9]{1,9}$`)
+
+// releasedGroups are the groups of one (agent, session) whose task has
+// ended, in order of release, bounded by browserReleasedPerSession.
+type releasedGroups struct {
+	set   map[string]bool
+	order []string
+}
+
+func (g *releasedGroups) add(group string) {
+	if g.set[group] {
+		return
+	}
+	g.set[group] = true
+	g.order = append(g.order, group)
+	for len(g.order) > browserReleasedPerSession {
+		delete(g.set, g.order[0])
+		g.order = g.order[1:]
+	}
+}
+
 // browserRegistry holds the browsers and runs their lifecycle.
 type browserRegistry struct {
 	mu       sync.Mutex
 	browsers map[string]*browser
+	// released holds, per (agent, session) key, the groups whose task
+	// has ended: a command or window for one is refused, so a call
+	// still in flight at a task's end cannot open its group on this
+	// browser or the next. Kept apart from the browser records, which
+	// come and go: a release with no browser running must still be
+	// remembered by the browser a late call would start.
+	released map[string]*releasedGroups
 
 	store *store.FSStore
 	prov  BrowserProvisioner
@@ -351,6 +388,7 @@ func newBrowserRegistry(st *store.FSStore, prov BrowserProvisioner, clk clock.Cl
 	}
 	return &browserRegistry{
 		browsers:      map[string]*browser{},
+		released:      map[string]*releasedGroups{},
 		store:         st,
 		prov:          prov,
 		clk:           clk,
@@ -499,38 +537,81 @@ func (r *browserRegistry) sweep(now time.Time) time.Time {
 	return next
 }
 
-// Command relays one web tool call for group to the browser of
-// (slug, session), starting the browser when none runs, and returns
-// the pod's result. An error is core's refusal or a lost browser; a
-// result with OK false is the pod's refusal, which the model reads.
-func (r *browserRegistry) Command(ctx context.Context, slug, session, group string, msg browserpod.Message) (browserpod.Message, error) {
-	b, err := r.acquire(ctx, slug, session)
-	if err != nil {
-		return browserpod.Message{}, err
-	}
+// errTaskEnded refuses a call for a group whose task has ended.
+var errTaskEnded = errors.New("this task has ended")
+
+// releasedLocked reports whether group's task on (slug, session) has
+// ended. r.mu is held.
+func (r *browserRegistry) releasedLocked(slug, session, group string) bool {
+	g, ok := r.released[browserKey(slug, session)]
+	return ok && g.set[group]
+}
+
+// released reports releasedLocked under the lock.
+func (r *browserRegistry) isReleased(slug, session, group string) bool {
 	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.releasedLocked(slug, session, group)
+}
+
+// takeGroupLocked opens group on b for a call, or returns why not:
+// the browser is not running, the group's task has ended, or the
+// browser is past its lifetime and group is new to it. A new group is
+// the task's first use of the session, which the caller records on
+// the session (touch) once off the lock. r.mu is held.
+func (r *browserRegistry) takeGroupLocked(b *browser, group string) (touch bool, err error) {
 	if b.state != browserRunning && b.state != browserIdle {
-		r.mu.Unlock()
-		return browserpod.Message{}, errors.New("the browser is not running")
+		return false, errors.New("the browser is not running")
 	}
-	if b.released[group] {
-		r.mu.Unlock()
-		return browserpod.Message{}, errors.New("this task has ended")
+	if r.releasedLocked(b.slug, b.session, group) {
+		return false, errTaskEnded
 	}
-	if _, has := b.groups[group]; !has && r.expiredLocked(b) {
-		r.mu.Unlock()
-		return browserpod.Message{}, errBrowserLifetime
+	_, had := b.groups[group]
+	if !had && r.expiredLocked(b) {
+		return false, errBrowserLifetime
 	}
 	b.state = browserRunning
 	b.deadline = time.Time{}
 	b.lastUsed = r.clk.Now()
 	b.groupLocked(group)
+	return !had && !ephemeralSession(b.session), nil
+}
+
+// touch records on the session's stored record that a task has taken
+// it now. Once per task, not per command.
+func (r *browserRegistry) touch(b *browser) {
+	if err := r.store.TouchBrowserSession(b.slug, b.session, r.clk.Now()); err != nil {
+		r.logf("browser %s: record the session's use: %v", b.key(), err)
+	}
+}
+
+// Command relays one web tool call for group to the browser of
+// (slug, session), starting the browser when none runs, and returns
+// the pod's result. An error is core's refusal or a lost browser; a
+// result with OK false is the pod's refusal, which the model reads.
+func (r *browserRegistry) Command(ctx context.Context, slug, session, group string, msg browserpod.Message) (browserpod.Message, error) {
+	if r.isReleased(slug, session, group) {
+		return browserpod.Message{}, errTaskEnded
+	}
+	b, err := r.acquire(ctx, slug, session)
+	if err != nil {
+		return browserpod.Message{}, err
+	}
+	r.mu.Lock()
+	touch, err := r.takeGroupLocked(b, group)
+	if err != nil {
+		r.mu.Unlock()
+		return browserpod.Message{}, err
+	}
 	b.seq++
 	id := "c" + strconv.Itoa(b.seq)
 	ch := make(chan browserpod.Message, 1)
 	b.pending[id] = ch
 	link := b.link
 	r.mu.Unlock()
+	if touch {
+		r.touch(b)
+	}
 
 	msg.Type = browserpod.TypeCommand
 	msg.ID = id
@@ -562,19 +643,22 @@ func (r *browserRegistry) Command(ctx context.Context, slug, session, group stri
 
 // SendFile hands the pod a file group may upload.
 func (r *browserRegistry) SendFile(ctx context.Context, slug, session, group, name string, body io.Reader, size int64) error {
+	if r.isReleased(slug, session, group) {
+		return errTaskEnded
+	}
 	b, err := r.acquire(ctx, slug, session)
 	if err != nil {
 		return err
 	}
 	r.mu.Lock()
 	link := b.link
-	released := b.released[group]
+	released := r.releasedLocked(slug, session, group)
 	r.mu.Unlock()
 	if link == nil {
 		return errors.New("the browser is not running")
 	}
 	if released {
-		return errors.New("this task has ended")
+		return errTaskEnded
 	}
 	return link.send(browserFileSendTimeout, browserpod.Message{Type: browserpod.TypeFile, Group: group, FileName: name, Bytes: size}, body)
 }
@@ -630,8 +714,8 @@ func (r *browserRegistry) acquire(ctx context.Context, slug, session string) (*b
 			slug: slug, session: session, token: token,
 			state: browserStarting, ready: make(chan struct{}),
 			startedAt: now, lastUsed: now, deadline: now.Add(browserStartTimeout),
-			groups: map[string]*browserGroup{}, released: map[string]bool{},
-			tabs: map[string]string{}, pending: map[string]chan browserpod.Message{},
+			groups: map[string]*browserGroup{},
+			tabs:   map[string]string{}, pending: map[string]chan browserpod.Message{},
 		}
 		ephemeral := ephemeralSession(session)
 		if !ephemeral {
@@ -716,26 +800,19 @@ func (r *browserRegistry) SandboxOffFor(slug, session string) bool {
 // as a window, which keeps it from going idle, until the last window
 // has been gone for browserWindowGrace.
 func (r *browserRegistry) Watch(ctx context.Context, slug, session, group string, input bool) (*browserWatcher, error) {
+	if r.isReleased(slug, session, group) {
+		return nil, errTaskEnded
+	}
 	b, err := r.acquire(ctx, slug, session)
 	if err != nil {
 		return nil, err
 	}
 	r.mu.Lock()
-	if b.state != browserRunning && b.state != browserIdle {
+	touch, err := r.takeGroupLocked(b, group)
+	if err != nil {
 		r.mu.Unlock()
-		return nil, errors.New("the browser is not running")
+		return nil, err
 	}
-	if b.released[group] {
-		r.mu.Unlock()
-		return nil, errors.New("this task has ended")
-	}
-	if _, has := b.groups[group]; !has && r.expiredLocked(b) {
-		r.mu.Unlock()
-		return nil, errBrowserLifetime
-	}
-	b.state = browserRunning
-	b.deadline = time.Time{}
-	b.lastUsed = r.clk.Now()
 	g := b.groupLocked(group)
 	w := newBrowserWatcher(b, group)
 	g.watchers[w] = struct{}{}
@@ -751,6 +828,9 @@ func (r *browserRegistry) Watch(ctx context.Context, slug, session, group string
 		w.event(tabEvent(g.shownTab, g.tabInfo[g.shownTab]))
 	}
 	r.mu.Unlock()
+	if touch {
+		r.touch(b)
+	}
 	if start && link != nil {
 		go func() {
 			_ = link.send(browserSendTimeout, browserpod.Message{Type: browserpod.TypeScreencast, Group: group, OK: true}, nil)
@@ -778,11 +858,14 @@ func (r *browserRegistry) Unwatch(w *browserWatcher) {
 // closeWindow ends a group's screencast once the sweep found its grace
 // run out with no window back on it (the sweep clears closeAt as it
 // decides). A window back since, or a new grace begun since, is left
-// alone.
+// alone, as is a browser no longer running: finish ended its windows
+// itself, and a task waiting for a person is not told the person is
+// done by a browser that died under them.
 func (r *browserRegistry) closeWindow(b *browser, group string) {
 	r.mu.Lock()
 	g, ok := b.groups[group]
-	if !ok || !g.watching || len(g.watchers) != 0 || !g.closeAt.IsZero() {
+	live := b.state == browserRunning || b.state == browserIdle
+	if !ok || !live || !g.watching || len(g.watchers) != 0 || !g.closeAt.IsZero() {
 		r.mu.Unlock()
 		return
 	}
@@ -899,6 +982,7 @@ func (r *browserRegistry) Reset(slug, session string) error {
 		// deleted again (onProfile).
 		b.offboarded = true
 	}
+	delete(r.released, browserKey(slug, session))
 	r.mu.Unlock()
 	if ok {
 		r.finish(b)
@@ -910,7 +994,7 @@ func (r *browserRegistry) Reset(slug, session string) error {
 // bytes are read only when a window is there to see them; otherwise the
 // body is left for the caller to drain. One buffer serves every window.
 func (r *browserRegistry) onFrame(b *browser, msg browserpod.Message, body io.Reader) {
-	if body == nil || msg.Bytes <= 0 || msg.Bytes > browserMaxFrameBytes {
+	if body == nil || msg.Bytes <= 0 || msg.Bytes > browserMaxFrameBytes || !tabID.MatchString(msg.Tab) {
 		return
 	}
 	r.mu.Lock()
@@ -1057,11 +1141,26 @@ func (r *browserRegistry) onMessage(b *browser, msg browserpod.Message, body io.
 			ch <- msg
 		}
 	case browserpod.TypeTab:
+		// A tab the pod now tracks, or one it tracks under a new title
+		// or URL. The id must be one the pod would mint, the group one
+		// core opened, and a group holds no more tabs than the pod
+		// allows a browser; what is kept of the URL and title is
+		// bounded.
 		r.mu.Lock()
-		if g, ok := b.groups[msg.Group]; ok && msg.Tab != "" {
+		g, ok := b.groups[msg.Group]
+		if ok && tabID.MatchString(msg.Tab) && (g.tabs[msg.Tab] || len(g.tabs) < browserpod.MaxTabsPerBrowser) {
 			g.tabs[msg.Tab] = true
 			b.tabs[msg.Tab] = msg.Group
-			g.tabInfo[msg.Tab] = browserTabInfo{url: msg.URL, title: msg.Title}
+			info := browserTabInfo{url: clipText(msg.URL, browserTabTextMax), title: clipText(msg.Title, browserTabTextMax)}
+			g.tabInfo[msg.Tab] = info
+			if msg.Tab == g.shownTab {
+				// The shown tab's title changed without a navigation
+				// (a page updating its own title): the windows hear it.
+				ev := tabEvent(msg.Tab, info)
+				for w := range g.watchers {
+					w.event(ev)
+				}
+			}
 		}
 		r.mu.Unlock()
 	case browserpod.TypeTabClosed:
@@ -1079,13 +1178,15 @@ func (r *browserRegistry) onMessage(b *browser, msg browserpod.Message, body io.
 		r.mu.Lock()
 		if g, ok := b.groups[msg.Group]; ok {
 			g.pages++
-			g.lastURL = msg.URL
-			info := browserTabInfo{url: msg.URL, title: msg.Title}
-			g.tabInfo[msg.Tab] = info
-			if msg.Tab == g.shownTab {
-				ev := tabEvent(msg.Tab, info)
-				for w := range g.watchers {
-					w.event(ev)
+			g.lastURL = clipText(msg.URL, browserTabTextMax)
+			if g.tabs[msg.Tab] {
+				info := browserTabInfo{url: g.lastURL, title: clipText(msg.Title, browserTabTextMax)}
+				g.tabInfo[msg.Tab] = info
+				if msg.Tab == g.shownTab {
+					ev := tabEvent(msg.Tab, info)
+					for w := range g.watchers {
+						w.event(ev)
+					}
 				}
 			}
 		}
@@ -1191,19 +1292,36 @@ func (r *browserRegistry) onDownload(b *browser, msg browserpod.Message, body io
 		r.logf("browser %s: download %q for %q refused", b.key(), msg.FileName, msg.Group)
 		return
 	}
+	// The bytes are reserved before the write, so two downloads landing
+	// at once cannot both fit under the limit; a write that fails gives
+	// them back.
 	g.downloadBytes += msg.Bytes
 	r.mu.Unlock()
 	root := r.downloadsRoot(b.slug, msg.Group)
 	name, err := files.WriteUntrustedDownload(root, msg.FileName, io.LimitReader(body, msg.Bytes), browserpod.MaxDownloadBytes)
-	if err != nil {
-		r.logf("browser %s: download %q for %s: %v", b.key(), msg.FileName, msg.Group, err)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	g, ok = b.groups[msg.Group]
+	if !ok {
 		return
 	}
-	r.mu.Lock()
-	if g, ok := b.groups[msg.Group]; ok {
-		g.downloads = append(g.downloads, name)
+	if err != nil {
+		r.logf("browser %s: download %q for %s: %v", b.key(), msg.FileName, msg.Group, err)
+		g.downloadBytes -= msg.Bytes
+		return
 	}
-	r.mu.Unlock()
+	g.downloads = append(g.downloads, name)
+}
+
+// clipText is s cut to at most n bytes, at a character boundary.
+func clipText(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
 }
 
 // onProfile writes the profile a saving pod sent to the store. A
@@ -1240,11 +1358,20 @@ func (r *browserRegistry) onProfile(b *browser, msg browserpod.Message, body io.
 // ReleaseGroup ends a subagent's use of its browser: its tabs are
 // closed, and what core saw of its run is returned. A browser with no
 // group and no window left goes idle, to be saved and deleted after
-// browserIdleAfter.
+// browserIdleAfter. The release is remembered whether or not a browser
+// runs, so a call of the task's still in flight cannot open its group
+// on the browser it would start.
 func (r *browserRegistry) ReleaseGroup(slug, session, group string) (structured.WebFacts, []string) {
 	var facts structured.WebFacts
 	r.mu.Lock()
-	b, ok := r.browsers[browserKey(slug, session)]
+	key := browserKey(slug, session)
+	rel, ok := r.released[key]
+	if !ok {
+		rel = &releasedGroups{set: map[string]bool{}}
+		r.released[key] = rel
+	}
+	rel.add(group)
+	b, ok := r.browsers[key]
 	if !ok {
 		r.mu.Unlock()
 		return facts, nil
@@ -1266,7 +1393,6 @@ func (r *browserRegistry) ReleaseGroup(slug, session, group string) (structured.
 		}
 		delete(b.groups, group)
 	}
-	b.released[group] = true
 	link := b.link
 	idle := len(b.groups) == 0 && b.windows == 0 && b.state == browserRunning
 	if idle {
@@ -1359,11 +1485,17 @@ func (r *browserRegistry) finish(b *browser) {
 		close(ch)
 		delete(b.pending, id)
 	}
+	// The windows end here, and are forgotten: nothing is left for a
+	// sweep or a later Unwatch to act on.
 	for _, g := range b.groups {
 		for w := range g.watchers {
 			w.end("The browser stopped.")
 		}
+		g.watchers = map[*browserWatcher]struct{}{}
+		g.watching = false
+		g.closeAt = time.Time{}
 	}
+	b.windows = 0
 	link := b.link
 	b.link = nil
 	r.mu.Unlock()
@@ -1403,6 +1535,11 @@ func (r *browserRegistry) Offboard(slug string) {
 		if b.slug == slug {
 			b.offboarded = true
 			gone = append(gone, b)
+		}
+	}
+	for key := range r.released {
+		if strings.HasPrefix(key, slug+"/") {
+			delete(r.released, key)
 		}
 	}
 	r.mu.Unlock()
