@@ -2,6 +2,10 @@ package store
 
 import (
 	"errors"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -148,11 +152,34 @@ func TestArchiveAgent(t *testing.T) {
 	if err := s.CreateAgent(Agent{Slug: "dave", Role: "r"}, ""); err != nil {
 		t.Fatalf("CreateAgent: %v", err)
 	}
+	// A site session with a saved profile and a cookie snapshot: the
+	// agent's sign-ins, which must not follow it into the archive.
+	t0 := time.Date(2026, 10, 16, 9, 0, 0, 0, time.UTC)
+	if _, err := s.EnsureBrowserSession("dave", "vendor.com", "vendor.com", t0); err != nil {
+		t.Fatalf("EnsureBrowserSession: %v", err)
+	}
+	if _, err := s.WriteBrowserProfile("dave", "vendor.com", strings.NewReader("profile"), t0); err != nil {
+		t.Fatalf("WriteBrowserProfile: %v", err)
+	}
+	if _, err := s.WriteBrowserCookies("dave", "vendor.com", strings.NewReader("[]")); err != nil {
+		t.Fatalf("WriteBrowserCookies: %v", err)
+	}
 	if err := s.ArchiveAgent("dave"); err != nil {
 		t.Fatalf("Archive: %v", err)
 	}
 	if _, err := s.GetAgent("dave"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("GetAgent after archive: %v, want ErrNotFound", err)
+	}
+	for _, dir := range []string{
+		filepath.Join(s.Root(), "agents", "_archived", "dave", "browser"),
+		filepath.Join(s.Root(), "agents", "dave", "browser"),
+	} {
+		if _, err := os.Stat(dir); !errors.Is(err, fs.ErrNotExist) {
+			t.Errorf("%s after archive: %v, want it gone", dir, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(s.Root(), "agents", "_archived", "dave", "agent.yaml")); err != nil {
+		t.Errorf("archived agent.yaml: %v", err)
 	}
 	got, err := s.GetArchivedAgent("dave")
 	if err != nil {

@@ -302,6 +302,16 @@ func (s *Server) respondAsCEO(ctx context.Context, kind responseKind, approved *
 		// pass) finishes first and its pod is deleted below, and one
 		// that starts later finds the agent archived.
 		unlockProvision := s.lockProvision(slug)
+		// The agent's running browsers end first, without saving, so
+		// none writes a profile while the archive moves the agent's
+		// directory. Like the drain, this is not undone if ApplyOffboard
+		// then refuses: the saved profiles stay, so an agent that stays
+		// keeps its sign-ins and its next web task starts from them. The
+		// saved profiles go with the archive itself (store.ArchiveAgent
+		// deletes them before the move), once the preconditions pass.
+		if s.Browsers != nil {
+			s.Browsers.Offboard(slug)
+		}
 		if oerr := s.Runtime.ApplyOffboard(*reqMsg.Offboard); oerr != nil {
 			unlockProvision()
 			return refuseApply("The offboard", "offboard apply: ", oerr, proposer)
@@ -325,15 +335,6 @@ func (s *Server) respondAsCEO(ctx context.Context, kind responseKind, approved *
 			if derr := s.AgentPod.Destroy(ctx, slug); derr != nil {
 				log.Printf("offboard %s: destroy agent pod: %v", slug, derr)
 			}
-		}
-		// The agent's browsers go with it: running pods and saved
-		// profiles, which hold whatever its web sessions were signed
-		// in to.
-		if s.Browsers != nil {
-			s.Browsers.Offboard(slug)
-		}
-		if derr := s.Store.DeleteBrowserSessions(slug); derr != nil {
-			log.Printf("offboard %s: delete browser sessions: %v", slug, derr)
 		}
 		unlockProvision()
 	}
