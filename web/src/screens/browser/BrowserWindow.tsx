@@ -14,6 +14,14 @@ function reconnectDelay(attempt: number): number {
   return RECONNECT_MS[Math.min(attempt, RECONNECT_MS.length - 1)] ?? 10_000;
 }
 
+/**
+ * Consecutive connects that never opened (the socket refused, or the task's header unreadable) before the
+ * window stops trying: core no longer holds the task where the page was told it is.
+ */
+export const MAX_FAILED_CONNECTS = 5;
+
+const UNREACHABLE = 'Kivali could not reach this task. Reopen it from the task page.';
+
 /** The same-origin WebSocket URL of a task's browser window, after the page's scheme. */
 export function browserSocketUrl(slug: string, id: string, loc: Location = window.location): string {
   const scheme = loc.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -344,7 +352,10 @@ export function BrowserWindow() {
     let ws: WebSocket | null = null;
     let live: WebSocket | null = null;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    // attempt counts the closes since the last open and sets the wait; failed counts the connects since then
+    // that never opened, and ends the window at MAX_FAILED_CONNECTS.
     let attempt = 0;
+    let failed = 0;
     let over = false;
 
     const take = (on: boolean) => {
@@ -371,10 +382,13 @@ export function BrowserWindow() {
 
     const open = () => {
       const sock = new WebSocket(browserSocketUrl(slug, id));
+      let opened = false;
       ws = sock;
       sock.binaryType = 'blob';
       sock.onopen = () => {
+        opened = true;
         attempt = 0;
+        failed = 0;
         live = sock;
         setLink('open');
       };
@@ -405,6 +419,10 @@ export function BrowserWindow() {
         ws = null;
         // A new socket's first state event says again whether the window takes input.
         take(false);
+        if (!opened && ++failed >= MAX_FAILED_CONNECTS) {
+          finish(UNREACHABLE);
+          return;
+        }
         setLink('reconnecting');
         timer = setTimeout(retry, reconnectDelay(attempt++));
       };
@@ -420,7 +438,9 @@ export function BrowserWindow() {
           else open();
         },
         () => {
-          if (!over) timer = setTimeout(retry, reconnectDelay(attempt++));
+          if (over) return;
+          if (++failed >= MAX_FAILED_CONNECTS) finish(UNREACHABLE);
+          else timer = setTimeout(retry, reconnectDelay(attempt++));
         },
       );
     };
