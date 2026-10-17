@@ -60,12 +60,17 @@ server. It owns every durable byte and is the only writer to `/data`
 - **Two Unix sockets with one route table** (`internal/web/control_socket.go`,
   `registerUDSRoutes`): the control socket at
   `$DATA_DIR/.kivali-control.sock`, reachable only from inside the
-  server container, and `core.sock` in `AGENTPOD_UDS_DIR`
-  (`/var/run/kivali/uds` in the chart), a hostPath directory the agent
-  pods on the same node mount. A third socket, `browser.sock` in the
-  `browser/` subdirectory of that directory, serves only the browser
-  pods' connect route (`StartBrowserSocket`); a browser pod mounts that
-  subdirectory alone, read-only, and never sees `core.sock`. All are
+  server container, and `core.sock` in the `core/` subdirectory of
+  `AGENTPOD_UDS_DIR` (`/var/run/kivali/uds` in the chart), a hostPath
+  directory on the server's node. A third socket, `browser.sock` in the
+  `browser/` subdirectory, serves only the browser pods' connect route
+  (`StartBrowserSocket`). Each kind of pod mounts its own subdirectory
+  alone: an agent pod mounts `core/` and never sees `browser.sock`, a
+  browser pod mounts `browser/` read-only and never sees `core.sock`,
+  so neither can reach, or replace, the other's socket. Core creates
+  both subdirectories (mode 0700) when it starts listening; a pod that
+  found its subdirectory missing would only wedge on a socket that is
+  not there, so both mount with `type: Directory`. All sockets are
   mode 0600; file permissions
   and a matching UID are the authentication. Every agent-scoped route
   is `/v1/agent/{slug}/...` and must carry `X-Kivali-Agent: <slug>`;
@@ -92,7 +97,7 @@ lost.
 | Container | Image | What it does |
 | --- | --- | --- |
 | `prepare-scratch` (init) | `kivali` | `kivali prepare-scratch`: mounts the whole per-agent scratch PVC and creates its two halves, owned by the pod's user |
-| `agent` | `kivali` | `kivali agent --slug=<slug> --uds=<dir>/core.sock` (`agent_cmd.go`, `internal/agentpod/runtime.go`): holds the events stream to core, drives the warm `claude` CLI and its subagent CLIs. Mounts its half of scratch at `/scratch`, the UDS dir, the agent-shell socket dir, and from the data PVC only the provider home (`/data/claude-home`). The only container that sees the Claude sign-in. When the CLI's sign-in changes (what `claude auth status` reports, or `settings.json`; re-checked when `.credentials.json` or `settings.json` changes), the runner registry respawns the warm CLI with `--resume` at the agent's next turn (`internal/claudeagent/signin.go`) |
+| `agent` | `kivali` | `kivali agent --slug=<slug> --uds=<dir>/core/core.sock` (`agent_cmd.go`, `internal/agentpod/runtime.go`): holds the events stream to core, drives the warm `claude` CLI and its subagent CLIs. Mounts its half of scratch at `/scratch`, the UDS dir's `core/` subdirectory, the agent-shell socket dir, and from the data PVC only the provider home (`/data/claude-home`). The only container that sees the Claude sign-in. When the CLI's sign-in changes (what `claude auth status` reports, or `settings.json`; re-checked when `.credentials.json` or `settings.json` changes), the runner registry respawns the warm CLI with `--resume` at the agent's next turn (`internal/claudeagent/signin.go`) |
 | `agent-shell` | `kivali-agent-shell` | `cmd/agent-shell`, `internal/agentshell`: an HTTP-over-UDS daemon on `/run/kivali-agent-shell/sock` (an emptyDir shared with `agent`) that runs `run_shell` and every `file_*` tool. The only container that mounts the agent's `/files/`, with `HOME=/scratch/home` on its own half of scratch. Serves as 65532; with software to install it starts as root, installs it in a root child and drops before it serves ([files-and-publishing.md](files-and-publishing.md#software-in-the-agent-shell)) |
 
 The agent-shell's `/files/` is the agent's tree on the data PVC

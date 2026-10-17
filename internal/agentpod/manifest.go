@@ -17,7 +17,8 @@ import (
 //  1. Container command is `kivali agent --slug=<slug> --uds=<sock>`.
 //  2. The agent container's mounts: its own half of the per-agent PVC
 //     at /scratch (the agent-shell mounts the other half there; see
-//     scratch.go), hostPath UDS dir at /var/run/kivali/uds, the
+//     scratch.go), the core/ subdirectory of the hostPath UDS dir at
+//     /var/run/kivali/uds/core (never the directory itself), the
 //     agent-shell socket dir, and the Kivali PVC's provider home subdir
 //     (HomeSubPath, from the provider's Credentials: claude-home) at
 //     /data/<HomeSubPath>, so the embedded CLI sees the same
@@ -309,7 +310,13 @@ func (c ProvisionerConfig) podManifestWithSoftware(slug string, software []strin
 		memLim = "4Gi"
 	}
 
-	socketPath := c.UDSDir + "/" + agentpodSocketName
+	// The agent pod mounts only the core/ subdirectory of the hostPath
+	// UDS dir, at the same path it has on the node, and dials
+	// core.sock inside it. The browser pods' socket is in a sibling
+	// subdirectory this pod never sees, so nothing in an agent
+	// container can replace it.
+	udsDir := c.UDSDir + "/" + UDSSubdir
+	socketPath := udsDir + "/" + agentpodSocketName
 
 	mounts := []map[string]any{
 		// The agent runtime's half of the per-agent PVC: CLI session
@@ -321,7 +328,7 @@ func (c ProvisionerConfig) podManifestWithSoftware(slug string, software []strin
 		// connections to the socket file (and stat'ing it on
 		// startup). The socket file itself is created + owned by
 		// the Kivali web pod; the agent pod is a client.
-		{"name": "uds", "mountPath": c.UDSDir},
+		{"name": "uds", "mountPath": udsDir},
 		// Agent-shell IPC: emptyDir shared with the sidecar so the
 		// agent runtime can dial the daemon's UDS. Distinct from
 		// /scratch so agents don't see the dispatch machinery in
@@ -336,10 +343,14 @@ func (c ProvisionerConfig) podManifestWithSoftware(slug string, software []strin
 			},
 		},
 		{
+			// Directory, not DirectoryOrCreate: core makes the
+			// subdirectory (mode 0700) when it starts listening, and a
+			// pod that found it missing would only wedge on a socket
+			// that is not there.
 			"name": "uds",
 			"hostPath": map[string]any{
-				"path": c.UDSDir,
-				"type": "DirectoryOrCreate",
+				"path": udsDir,
+				"type": "Directory",
 			},
 		},
 		{

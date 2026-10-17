@@ -4,8 +4,8 @@
 //
 // Architecture overview lives in docs/developers/architecture.md. In short:
 //
-//   - Core listens on /var/run/kivali/uds/core.sock; agent runtimes
-//     always connect outbound.
+//   - Core listens on /var/run/kivali/uds/core/core.sock; agent
+//     runtimes always connect outbound.
 //   - All API endpoints are HTTP-over-UDS, slug-namespaced under
 //     /v1/agent/{slug}/... or /v1/... for content-addressed and
 //     globally-shared resources.
@@ -345,11 +345,18 @@ func SlugFromHeader(h http.Header) string {
 }
 
 // SocketName is the canonical filename of the agent-pod-facing UDS
-// socket on the shared hostPath. Mode 0700 owned by the Kivali UID.
+// socket on the shared hostPath. Mode 0600 owned by the Kivali UID.
 // Both core (listener) and the agent runtime (client) derive their
-// path by joining the hostPath dir with this name; symmetry removes
-// a class of "they disagreed on the path" failures.
+// path by joining the hostPath dir, UDSSubdir and this name; symmetry
+// removes a class of "they disagreed on the path" failures.
 const SocketName = "core.sock"
+
+// UDSSubdir is the subdirectory of the hostPath UDS dir that holds
+// core.sock: the only part of that directory an agent pod mounts.
+// The browser pods' socket lives in a sibling subdirectory that agent
+// pods do not mount, so a process in an agent container cannot
+// replace it and stand in for core to a browser pod.
+const UDSSubdir = "core"
 
 // TurnEventKind discriminates events the agent runtime POSTs back to
 // core for one in-flight chat turn. The wire shape is JSON; core's

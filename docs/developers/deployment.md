@@ -241,6 +241,14 @@ rollout done by hand has to do the same:
 kivali-supervisor exec -- k3s kubectl -n kivali delete pod -l app=kivali-agentpod
 ```
 
+A manifest change is cycled by the server itself: each agent pod carries
+a hash of the spec it was created from, and a boot that finds a pod with
+a different hash recreates it. The socket layout is one such change: the
+server listens on `core.sock` in the `core/` subdirectory of the UDS dir
+and agent pods mount that subdirectory alone, so pods created before
+that layout, which mount the directory itself, are replaced on the first
+boot after the upgrade.
+
 ## Backup and restore
 
 There is one backup and one restore: the app's. Everything else calls
