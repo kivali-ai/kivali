@@ -131,6 +131,33 @@ func TestGroupScreencastFollowsTheCurrentTab(t *testing.T) {
 	}
 }
 
+// TestScreencastFollowsAPageInitiatedClose: when the cast tab closes on
+// its own (the page closed it), the cast moves to the group's new
+// current tab.
+func TestScreencastFollowsAPageInitiatedClose(t *testing.T) {
+	h := startPod(t, podOptions{})
+	if res := h.core.command("a", "", CommandNavigate, NavigateArgs{URL: "https://a.test/"}); !res.OK {
+		t.Fatalf("navigate: %+v", res)
+	}
+	if res := h.core.command("a", "", CommandTabs, TabsArgs{Action: TabsOpen, URL: "https://a.test/2"}); !res.OK {
+		t.Fatalf("open: %+v", res)
+	}
+	s1, s2 := sessionAt(h, "https://a.test/"), sessionAt(h, "https://a.test/2")
+	sc := watchScreencastCalls(h)
+	h.core.send(Message{Type: TypeScreencast, Group: "a", OK: true})
+	if got := sc.next(t); got != "Page.startScreencast "+s2 {
+		t.Fatalf("after watch: %q", got)
+	}
+	h.cdp.mu.Lock()
+	target := h.cdp.sessions[s2]
+	h.cdp.mu.Unlock()
+	h.cdp.emit("", "Target.targetDestroyed", map[string]any{"targetId": target})
+	if got := sc.next(t); got != "Page.startScreencast "+s1 {
+		t.Fatalf("after the cast tab closed: %q", got)
+	}
+	h.core.next("tab closed", func(m Message) bool { return m.Type == TypeTabClosed && m.Tab == "t2" })
+}
+
 // TestWatchedTabIsKeptInFront: a watched group's tab is brought to the
 // front when the watch starts, back to the front after another group's
 // command, before each input event from the person's window even while

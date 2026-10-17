@@ -388,8 +388,18 @@ func (s *session) enqueue(ctx context.Context, msg Message) {
 }
 
 // save closes Chromium, sends the packed profile, and waits for core
-// to close the connection.
+// to close the connection. Chromium that had already exited on its own
+// left a profile it never closed, so none is sent: core keeps the one
+// it has, and hears that the browser stopped.
 func (s *session) save(ctx context.Context) error {
+	select {
+	case <-s.proc.Done():
+		detail := s.proc.Detail()
+		s.log.Printf("save: chromium had exited: %s", detail)
+		s.sendState(StateStopped, "chromium exited before the save: "+detail)
+		return fmt.Errorf("browserpod: %w before the save: %s", errBrowserExited, detail)
+	default:
+	}
 	s.sendState(StateSaving, "")
 	if err := s.proc.Close(ctx); err != nil {
 		s.log.Printf("save: %v", err)

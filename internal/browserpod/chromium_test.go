@@ -312,6 +312,23 @@ func TestRealChromium(t *testing.T) {
 	res = step("scroll", "", CommandScroll, ScrollArgs{Direction: "down"})
 	_ = res
 
+	// Closing the browser's last tab leaves a fresh page as the spare:
+	// the next task's tab has none of this task's pages to go back to,
+	// only the about:blank every new page starts at.
+	step("close last", "", CommandTabs, TabsArgs{Action: TabsClose, Tab: "t1"})
+	core.next("t1 closed", func(m Message) bool { return m.Type == TypeTabClosed && m.Tab == "t1" })
+	if res := core.command("g2", "", CommandNavigate, NavigateArgs{URL: site.URL + "/two"}); !res.OK {
+		t.Fatalf("next task: %+v", res)
+	}
+	res = core.command("g2", "", CommandBack, nil)
+	if !res.OK || !strings.Contains(res.Text, "Went back; now at about:blank") {
+		t.Fatalf("back in the next task: %+v", res)
+	}
+	res = core.command("g2", "", CommandBack, nil)
+	if !res.OK || !strings.Contains(res.Text, "There is nothing to go back to") {
+		t.Fatalf("second back in the next task: %+v", res)
+	}
+
 	// Save: the profile comes back and unpacks.
 	core.send(Message{Type: TypeSave})
 	core.expectState(StateSaving)

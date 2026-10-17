@@ -47,7 +47,8 @@ type browser struct {
 	// theirs.
 	creating int
 	// spare is a page in no group, kept so the browser always has a
-	// window: Chromium's start page, or the last tab after it closed.
+	// window: Chromium's start page, or a fresh page made as the last
+	// tab closed.
 	spare *attachment
 	// frames maps every frame below a tab's main frame to its tab, so
 	// a download an iframe starts is the tab's.
@@ -85,6 +86,9 @@ type group struct {
 	// watched: a browser window is on this group, so its current tab
 	// is screencast (followWatch).
 	watched bool
+	// closing: closeGroup is closing the group's tabs; a popup one of
+	// them opens meanwhile is closed, not adopted.
+	closing bool
 }
 
 // tab is a page target in a group.
@@ -235,14 +239,19 @@ func (b *browser) orphan(a attachment) {
 		return
 	}
 	b.mu.Unlock()
-	b.log.Printf("closing page %s: it belongs to no task", a.url)
+	b.log.Printf("closing a page that belongs to no task")
 	_, _ = b.conn.Call(context.Background(), "", "Target.closeTarget", map[string]any{"targetId": a.targetID})
 }
 
 // adoptPopup makes a page another tab opened into a tab of the
-// opener's group.
+// opener's group. A popup of a group that is closing is closed with it.
 func (b *browser) adoptPopup(a attachment, opener *tab) {
 	b.mu.Lock()
+	if g := b.groups[opener.group]; g == nil || g.closing {
+		b.mu.Unlock()
+		_, _ = b.conn.Call(context.Background(), "", "Target.closeTarget", map[string]any{"targetId": a.targetID})
+		return
+	}
 	if len(b.tabs) >= MaxTabsPerBrowser {
 		b.mu.Unlock()
 		opener.note(fmt.Sprintf("The page opened a new tab (%s) and it was closed: the browser holds at most %d tabs.", a.url, MaxTabsPerBrowser))
@@ -604,7 +613,9 @@ func (b *browser) onDestroyed(raw json.RawMessage) {
 	}
 }
 
-// dropTarget forgets a page that went away on its own.
+// dropTarget forgets a page that went away on its own. The group's
+// current tab may have moved on, and a watched group's screencast
+// follows it.
 func (b *browser) dropTarget(targetID string) {
 	b.mu.Lock()
 	if b.spare != nil && b.spare.targetID == targetID {
@@ -617,6 +628,7 @@ func (b *browser) dropTarget(targetID string) {
 	b.mu.Unlock()
 	if t != nil {
 		b.sendMsg(Message{Type: TypeTabClosed, Group: t.group, Tab: t.id})
+		b.followWatch(context.Background(), t.group)
 	}
 }
 
@@ -788,10 +800,12 @@ func (b *browser) newTarget(ctx context.Context, contextID string) (attachment, 
 	return a, nil
 }
 
-// closeTab closes a tab. The browser's last page is kept as the spare
-// instead, at about:blank, so the browser never runs out of windows.
-// In an ephemeral session no tab is kept: its context goes with its
-// group, and the start page is the spare.
+// closeTab closes a tab. Before the browser's last page closes a fresh
+// page is made and kept as the spare, so the browser never runs out of
+// windows and the next group's first tab carries no history of this
+// one: web_back there has nowhere to go. In an ephemeral session no
+// spare is made: a group's context goes with it, and the start page is
+// the spare.
 func (b *browser) closeTab(ctx context.Context, t *tab) {
 	b.mu.Lock()
 	if _, ok := b.tabs[t.targetID]; !ok {
@@ -801,16 +815,42 @@ func (b *browser) closeTab(ctx context.Context, t *tab) {
 	// The group's current tab may change here; a watched group's
 	// screencast follows it once the lock is released.
 	defer b.followWatch(ctx, t.group)
+	last := !b.ephemeral && len(b.tabs) == 1 && b.spare == nil
+	if last {
+		b.creating++
+	}
+	b.mu.Unlock()
+	var spare *attachment
+	if last {
+		a, err := b.newTarget(ctx, "")
+		b.mu.Lock()
+		b.creating--
+		var leftover []attachment
+		if b.creating == 0 {
+			for id, x := range b.attached {
+				leftover = append(leftover, x)
+				delete(b.attached, id)
+			}
+		}
+		b.mu.Unlock()
+		for _, x := range leftover {
+			b.orphan(x)
+		}
+		if err != nil {
+			b.log.Printf("spare page: %v", err)
+		} else {
+			spare = &a
+		}
+	}
+	b.mu.Lock()
 	b.unregisterLocked(t)
-	keep := !b.ephemeral && len(b.tabs) == 0 && b.spare == nil
-	if keep {
-		b.spare = &attachment{targetID: t.targetID, sessionID: t.session, url: "about:blank"}
+	if spare != nil {
+		b.spare = spare
 	}
 	b.mu.Unlock()
 	b.sendMsg(Message{Type: TypeTabClosed, Group: t.group, Tab: t.id})
-	if keep {
-		_, _ = b.conn.Call(ctx, t.session, "Page.navigate", map[string]any{"url": "about:blank"})
-		return
+	if spare != nil {
+		b.resume(spare.sessionID)
 	}
 	if _, err := b.conn.Call(ctx, "", "Target.closeTarget", map[string]any{"targetId": t.targetID}); err != nil {
 		b.log.Printf("close %s: %v", t.id, err)
@@ -819,22 +859,25 @@ func (b *browser) closeTab(ctx context.Context, t *tab) {
 
 // closeGroup closes every tab of a group and, in an ephemeral session,
 // disposes of the group's browser context: its cookies, storage and
-// cache go with it.
+// cache go with it. The group is marked closing first, so a popup a
+// closing tab opens is closed rather than adopted, and forgotten once
+// its tabs are gone.
 func (b *browser) closeGroup(ctx context.Context, name string) {
 	b.mu.Lock()
+	g := b.groups[name]
 	var tabs []*tab
 	var contextID string
-	if g := b.groups[name]; g != nil {
+	if g != nil {
+		g.closing = true
 		tabs = append(tabs, g.tabs...)
 		contextID = g.contextID
 	}
-	delete(b.groups, name)
 	b.mu.Unlock()
 	for _, t := range tabs {
 		b.closeTab(ctx, t)
 	}
 	b.mu.Lock()
-	if g := b.groups[name]; g != nil && len(g.tabs) == 0 {
+	if b.groups[name] == g {
 		delete(b.groups, name)
 	}
 	delete(b.sent, name)
