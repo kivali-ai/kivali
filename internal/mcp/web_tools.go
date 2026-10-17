@@ -93,7 +93,7 @@ func WebTools(backend WebBackend, session string, canWait bool) []Tool {
 }`, false),
 		webTool(backend, agentpod.WebSnapshotTool, webSnapshotDescription, `{"type": "object", "properties": {}}`, true),
 		webTool(backend, agentpod.WebScreenshotTool, webScreenshotDescription, `{"type": "object", "properties": {}}`, true),
-		webTool(backend, agentpod.WebClickTool, `Click the element with this ref from your last snapshot. Waits for a navigation it starts. Returns what was clicked and where the tab is now.`, `{
+		webTool(backend, agentpod.WebClickTool, `Click the element with this ref from your last snapshot. Waits for a navigation it starts. Returns what was clicked and where the tab is now. When another element lies over it (a dialog's backdrop, a cookie banner, a sticky header) nothing is clicked and the answer names the cover; dismiss that first.`, `{
   "type": "object",
   "properties": {"ref": {"type": "string", "description": "a ref from the last web_snapshot, such as e12"}},
   "required": ["ref"]
