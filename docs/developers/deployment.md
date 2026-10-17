@@ -260,8 +260,12 @@ memory, project files, attachments, archived generations, the published
 files (`public/<slug>/`), the knowledge graph with its version log, the
 assignment tracker. The walk carries whatever is under the data
 directory, so a new store needs no backup change; only the CLI's home
-(`claude-home/`, with the Claude sign-in) and debug dumps
-are left out. A file the walk cannot read aborts the download
+(`claude-home/`, with the Claude sign-in), every agent's browser
+sessions (`agents/<slug>/browser/`, the saved profiles and cookie
+snapshots that hold its site sign-ins; `files.BackupExcludeAgentDirs`)
+and debug dumps are left out. A restored team has no site sessions,
+and a person signs in again when an agent next needs a site. A file
+the walk cannot read aborts the download
 rather than leaving it out. Every backup ends with a manifest listing
 each file's size and SHA-256. The page's button is a plain form POST,
 so the zip goes straight to the browser's own downloads, with its

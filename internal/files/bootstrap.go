@@ -275,9 +275,26 @@ var BackupExcludePrefixes = []string{
 	"debug",
 }
 
+// BackupExcludeAgentDirs lists the directories directly under
+// `agents/<slug>/` (and `agents/_archived/<slug>/`) that backup
+// walkers drop, with everything beneath them.
+//
+//   - `browser` (internal/store/browser.go) holds the agent's web
+//     sessions: each saved Chromium profile (`profile.tar.zst`) and
+//     cookie snapshot (`cookies.json`) carries the live sign-in of a
+//     site session, in the clear. Like the Claude sign-in in
+//     `claude-home`, a sign-in is a credential, and a backup that is
+//     rsynced offsite must not carry one. The session records go with
+//     the profiles: a restored team has no site sessions, and the
+//     person signs in again when an agent next needs a site.
+var BackupExcludeAgentDirs = []string{
+	"browser",
+}
+
 // ShouldExcludeFromBackup reports whether rel (a DataDir-relative
 // path) should be dropped from a backup archive: it matches a
-// BackupExcludePrefixes entry exactly OR lives beneath one, OR its
+// BackupExcludePrefixes entry exactly OR lives beneath one, OR it is
+// or lies beneath a BackupExcludeAgentDirs entry of some agent, OR its
 // basename carries the `.tmp-` prefix.
 //
 // The `.tmp-` check covers writeAtomic's rename-based writes
@@ -297,6 +314,29 @@ func ShouldExcludeFromBackup(rel string) bool {
 	}
 	for _, p := range BackupExcludePrefixes {
 		if rel == p || strings.HasPrefix(rel, p+"/") {
+			return true
+		}
+	}
+	return isExcludedAgentDir(rel)
+}
+
+// isExcludedAgentDir reports whether rel is, or lies beneath, a
+// BackupExcludeAgentDirs entry of an active agent (agents/<slug>/<dir>)
+// or an archived one (agents/_archived/<slug>/<dir>).
+func isExcludedAgentDir(rel string) bool {
+	parts := strings.Split(rel, "/")
+	if len(parts) < 3 || parts[0] != "agents" {
+		return false
+	}
+	dir := parts[2]
+	if parts[1] == "_archived" {
+		if len(parts) < 4 {
+			return false
+		}
+		dir = parts[3]
+	}
+	for _, d := range BackupExcludeAgentDirs {
+		if dir == d {
 			return true
 		}
 	}
