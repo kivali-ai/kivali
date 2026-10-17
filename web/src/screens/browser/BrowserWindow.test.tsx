@@ -220,6 +220,16 @@ describe('the browser window: frames', () => {
     expect(drawImage).toHaveBeenCalledTimes(1);
   });
 
+  it('shows the note a state event carries in place of its own caption, until the next state event', async () => {
+    await renderWindow({ ...runningWeb, browser: 'running' });
+    latest()?.accept();
+    expect(screen.getByRole('status')).toHaveTextContent('Starting the browser');
+    latest()?.push({ type: 'state', browser: 'running', reason: 'The browser has no page to show.' });
+    expect(screen.getByRole('status')).toHaveTextContent('The browser has no page to show.');
+    latest()?.push({ type: 'state', browser: 'running' });
+    expect(screen.getByRole('status')).toHaveTextContent('Starting the browser');
+  });
+
   it('draws only the newest of two frames decoded before a paint', async () => {
     await renderWindow({ ...runningWeb, browser: 'running' });
     latest()?.accept();

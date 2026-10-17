@@ -344,6 +344,8 @@ export function BrowserWindow() {
   const [ended, setEnded] = useState('');
   const [browser, setBrowser] = useState<BrowserState | undefined>(undefined);
   const [sandboxOff, setSandboxOff] = useState(false);
+  // What the latest state event said to show in place of the page's own caption ("The browser has no page to show.").
+  const [note, setNote] = useState('');
   const [tab, setTab] = useState<BrowserWindowTab | null>(null);
   const [framed, setFramed] = useState(false);
   const [input, setInput] = useState(false);
@@ -457,6 +459,7 @@ export function BrowserWindow() {
         if (msg.type === 'state') {
           setBrowser(msg.browser);
           setSandboxOff(msg.sandbox_off === true);
+          setNote(msg.reason ?? '');
           wantsInput.current = msg.input === true;
           take(msg.input === true);
           if (msg.site !== undefined) setSite(msg.site);
@@ -571,6 +574,7 @@ export function BrowserWindow() {
   else if (!meta || link === 'connecting') status = 'Connecting to the browser';
   else if (link === 'reconnecting') status = 'Reconnecting';
   else if (link === 'ended') status = ended;
+  else if (note) status = note;
   else if (!framed || browser === 'starting') status = 'Starting the browser';
 
   const off = tab !== null && offSite(tab.url, site);
