@@ -514,7 +514,8 @@ server pod, the cluster or the node through the browser.
 ### The browser window
 
 A person watches a running web task's browser from its view: Open
-browser opens `agents/{slug}/subagents/{id}/browser`, a page with no
+browser (offered once the task has started; a queued task has no
+browser yet) opens `agents/{slug}/subagents/{id}/browser`, a page with no
 app chrome (in the web app a named window, so a second click focuses
 the first; in Kivali Desktop a window of its own, see
 [desktop-app.md](desktop-app.md)). The page holds one WebSocket,
@@ -531,6 +532,20 @@ events in the frame's pixels); core forwards them to the shown tab only
 while the task waits for a person in a site session and drops them
 otherwise, so a window is watch only unless the task asked for the
 person.
+
+The page reopens a socket that closed without an end event, waiting
+1, 2, 4 and then 10 seconds between tries (`RECONNECT_MS`); while the
+last state event said the window takes input the wait is capped at
+4 seconds (`INPUT_RECONNECT_MAX_MS`), well inside the window grace
+below, so a brief outage in the middle of a sign-in does not resume
+the task. Five connects in a row that never opened (core refusing the
+socket, or the task's header unreadable) end the page with a note to
+reopen it from the task's page (`MAX_FAILED_CONNECTS`): the task is
+not where the page was told it is, as after a core restart. Keys are
+typed into a hidden editable the page focuses on a press, so an input
+method or a dead key (Option+e, then e) can compose there; a key goes
+to the page as itself, and composed or otherwise inserted text goes as
+a paste once committed.
 
 The path is built for several open windows at once. The pod sends a
 frame as bytes after a short message, never base64 or JSON, and core
@@ -553,7 +568,12 @@ task ends, or its browser stops, every window on it is ended with the
 reason. The task's view learns the browser's state (`starting`,
 `running`, `stopped`, in `SubagentMeta.browser`) through its own
 stream: the registry reports each change and the task's meta.json
-carries it.
+carries it. A state event may carry a note (`reason`) the page shows
+in place of its own caption, and says whether Chromium runs without
+its sandbox (`sandbox_off`): the registry records the pod's
+`sandbox: off` detail on its running state, and the window and the
+task's view (`SubagentMeta.browser_sandbox_off`) each show a caption
+saying so.
 
 ### Site sessions and sign-in
 
