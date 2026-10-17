@@ -63,8 +63,10 @@ func (s *SubagentService) validateWebTask(parent, callerID string, i int, t Suba
 	if !t.hasSchema() {
 		return fmt.Errorf("tasks[%d]: a web task needs a schema; its answer comes back as data, never as the page's text", i)
 	}
+	var site string
 	if t.session() != agentpod.OpenWebSession {
-		if _, err := webSessionSite(t.session()); err != nil {
+		var err error
+		if site, err = webSessionSite(t.session()); err != nil {
 			return fmt.Errorf("tasks[%d].session %q: %v", i, t.Session, err)
 		}
 	}
@@ -75,6 +77,9 @@ func (s *SubagentService) validateWebTask(parent, callerID string, i int, t Suba
 		parsed, err := url.Parse(u)
 		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
 			return fmt.Errorf("tasks[%d].start_url must be an http or https URL", i)
+		}
+		if site != "" && !onSite(site, parsed.Hostname()) {
+			return fmt.Errorf("tasks[%d].start_url is off the session's site, %s; a task in a site session stays on it and its subdomains", i, site)
 		}
 	}
 	if len(t.Files) > maxWebTaskFiles {
@@ -102,9 +107,11 @@ const maxWebUploadBytes = 50 << 20
 
 // webSessionSite is the site a session name stands for: its registrable
 // domain (vendor.com for shop.vendor.com), lower case, without a
-// trailing dot. The open session has none. An address, a bare public
-// suffix such as co.uk, and a name with a scheme, a path or a port are
-// refused: a session is named by a site, not by a URL.
+// trailing dot. The open session has none. An address in any spelling
+// a browser reads as one, a bare public suffix such as co.uk, a name
+// under no public top-level domain (localhost, corp, a misspelt
+// suffix), and a name with a scheme, a path or a port are refused: a
+// session is named by a site on the public web, not by a URL.
 func webSessionSite(session string) (string, error) {
 	name := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(session), "."))
 	if name == agentpod.OpenWebSession {
@@ -116,17 +123,54 @@ func webSessionSite(session string) (string, error) {
 	if strings.ContainsAny(name, "/:@?# \\") {
 		return "", errors.New("a site is a bare domain name, such as vendor.com, without a scheme, a port or a path")
 	}
-	if net.ParseIP(name) != nil {
+	if readsAsAddress(name) {
 		return "", errors.New("a site is a domain name, not an address")
 	}
 	site, err := publicsuffix.EffectiveTLDPlusOne(name)
 	if err != nil {
 		return "", fmt.Errorf("%q is not a site; give its registrable domain, such as vendor.com", name)
 	}
+	// The public suffix list answers for any name, with the last label
+	// as the suffix of one it does not know; only a top-level domain
+	// ICANN delegates is a site on the public web.
+	if _, icann := publicsuffix.PublicSuffix(name[strings.LastIndex(name, ".")+1:]); !icann {
+		return "", fmt.Errorf("%q is not a site on the public web; give its registrable domain, such as vendor.com", name)
+	}
 	if err := store.ValidBrowserSessionName(site); err != nil {
 		return "", fmt.Errorf("%q is not a site name core can keep", site)
 	}
 	return site, nil
+}
+
+// readsAsAddress reports whether a browser would take name for an IP
+// address rather than look it up: an address in any notation, or a
+// name whose last label is a number (127.1, 0x7f.1, 0177.0.0.1 and
+// 2130706433 all reach 127.0.0.1), as the URL standard's host parser
+// reads it.
+func readsAsAddress(name string) bool {
+	if net.ParseIP(strings.Trim(name, "[]")) != nil {
+		return true
+	}
+	last := name[strings.LastIndex(name, ".")+1:]
+	if last == "" {
+		return false
+	}
+	digits := "0123456789"
+	if rest, ok := strings.CutPrefix(last, "0x"); ok {
+		last, digits = rest, "0123456789abcdef"
+		if last == "" {
+			return true
+		}
+	}
+	return strings.Trim(last, digits) == ""
+}
+
+// onSite reports whether host is site or a subdomain of it: the rule
+// the pod applies to every navigation in a site session, applied by
+// core before the command is relayed.
+func onSite(site, host string) bool {
+	host = strings.ToLower(strings.TrimSuffix(host, "."))
+	return host == site || strings.HasSuffix(host, "."+site)
 }
 
 // callerFileExists reports whether modelPath names a regular file the
