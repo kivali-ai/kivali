@@ -14,11 +14,12 @@ import (
 //
 // The load-bearing properties of the shape:
 //
-//  1. One container, `kivali browser`, from the kivali-browser image,
-//     configured entirely by env (EnvSlug, EnvSession, EnvToken,
-//     EnvCoreUDS). It reaches the web directly, like any pod; the
-//     chart's network policy keeps it off the cluster and private
-//     networks.
+//  1. One container, `kivali browser` under dumb-init (the image's
+//     init, which reaps Chromium's helper processes when they are
+//     orphaned), from the kivali-browser image, configured entirely by
+//     env (EnvSlug, EnvSession, EnvToken, EnvCoreUDS). It reaches the
+//     web directly, like any pod; the chart's network policy keeps it
+//     off the cluster and private networks.
 //  2. It dials browser.sock, core's socket for browser pods, in the
 //     browser subdirectory of the hostPath UDS dir, the only part of
 //     that directory it mounts, read-only; core.sock and the agent
@@ -64,8 +65,15 @@ const (
 	// podPrefix starts every browser pod's name.
 	podPrefix = "browserpod-"
 	// maxPodName is the longest pod name PodName returns: a DNS label.
-	maxPodName = 63
+	// maxLabelValue is the longest label value Kubernetes takes.
+	maxPodName    = 63
+	maxLabelValue = 63
 )
+
+// browserCommand runs the pod's one process under dumb-init, the
+// image's init: with `kivali browser` as PID 1, Chromium's helper
+// processes would go unreaped once orphaned.
+var browserCommand = []string{"/usr/bin/dumb-init", "--", "kivali", "browser"}
 
 // BrowserImageFor returns the browser image released alongside the
 // server image kivaliImage: same registry and tag, named kivali-browser.
@@ -85,15 +93,25 @@ func SessionHash(session string) string {
 }
 
 // PodName is the pod for slug's browser session:
-// browserpod-<slug>-<SessionHash(session)>. A long slug is shortened so
-// the name stays within 63 characters; the hash is never shortened.
+// browserpod-<slug>-<SessionHash(session)>. A slug too long for the 63
+// characters of a pod name is shortened (shorten), so two long slugs
+// with one head still name two pods; the session hash is never
+// shortened.
 func PodName(slug, session string) string {
 	hash := SessionHash(session)
-	room := maxPodName - len(podPrefix) - 1 - len(hash)
-	if len(slug) > room {
-		slug = strings.TrimRight(slug[:room], "-")
+	return podPrefix + shorten(slug, maxPodName-len(podPrefix)-1-len(hash)) + "-" + hash
+}
+
+// shorten fits s into max characters: s itself when it fits, else its
+// head, a dash and the first six hex characters of sha256(s), so two
+// long values with one head stay apart.
+func shorten(s string, max int) string {
+	if len(s) <= max {
+		return s
 	}
-	return podPrefix + slug + "-" + hash
+	sum := sha256.Sum256([]byte(s))
+	tail := "-" + hex.EncodeToString(sum[:3])
+	return strings.TrimRight(s[:max-len(tail)], "-") + tail
 }
 
 // browserUDSDir is the subdirectory of the UDS dir that holds
@@ -118,7 +136,7 @@ func (c ProvisionerConfig) podManifest(slug, session, token string) map[string]a
 		"name":            "browser",
 		"image":           c.Image,
 		"imagePullPolicy": c.ImagePullPolicy,
-		"command":         []string{"kivali", "browser"},
+		"command":         browserCommand,
 		"env":             env,
 		"volumeMounts": []map[string]any{
 			{"name": "uds", "mountPath": udsDir, "readOnly": true},
@@ -181,7 +199,7 @@ func (c ProvisionerConfig) podManifest(slug, session, token string) map[string]a
 
 	labels := map[string]string{
 		"app":     AppLabel,
-		"agent":   slug,
+		"agent":   shorten(slug, maxLabelValue),
 		"session": SessionHash(session),
 	}
 	manifest := map[string]any{
