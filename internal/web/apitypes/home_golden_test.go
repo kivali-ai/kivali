@@ -50,7 +50,8 @@ func goldenHome() Home {
 				From: PersonRef{Slug: "engineering-lead", Name: "Engineering lead"}, At: t1,
 				BodyMD:      "The page asks for a sign-in. Open the browser, sign in, then close the window; the task continues on its own.",
 				Attachments: []AttachmentRef{}, Packages: []SoftwarePackage{},
-				Subagent: &SubagentRef{Parent: "engineering-lead", ID: "bbbb2222", Description: "Check the build logs", Site: "vendor.example", Reason: WebSignInReasonSignIn},
+				Subagent: &SubagentRef{Parent: "engineering-lead", ID: "bbbb2222", Description: "Check the build logs", Site: "vendor.example", Reason: WebSignInReasonSignIn,
+					PageURL: "https://vendor.example/login?next=%2Fbuilds", PageTitle: "Sign in · Vendor"},
 			},
 			{
 				ID: "messages/2026-09-28/0005-engineering-lead.md", Kind: NeedKindApproval, ProposalKind: &software,

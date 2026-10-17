@@ -12,6 +12,7 @@ import {
   hasRunningCountdown,
   hide,
   needKindLabel,
+  signInPageLine,
   pruneHidden,
   queueCountdown,
   queueCountLabel,
@@ -171,5 +172,31 @@ describe('words', () => {
     expect(routerPath('/base/proposals/messages/x.md', '/base')).toBe('/proposals/messages/x.md');
     expect(routerPath('/messages/x.md', '/base')).toBe('/messages/x.md');
     expect(routerPath('/team', '')).toBe('/team');
+  });
+});
+
+describe('web tasks waiting for a sign-in', () => {
+  it('refetches when a task starts or stops waiting for a sign-in', () => {
+    const waiting = { ...ready, signInWaits: ['engineering-lead/bbbb2222'] };
+    expect(refetchDecision(ready, waiting, false).refetch).toBe(true);
+    expect(refetchDecision(waiting, ready, false).refetch).toBe(true);
+    expect(refetchDecision(waiting, { ...waiting, signInWaits: ['engineering-lead/bbbb2222'] }, false).refetch).toBe(false);
+  });
+
+  it('badges the row with what the page asks for', () => {
+    const signIn = goHome.needs.find((n) => n.kind === 'web_sign_in');
+    if (!signIn?.subagent) throw new Error('fixture has no web_sign_in row');
+    expect(needKindLabel(signIn)).toBe('Sign in');
+    expect(needKindLabel({ ...signIn, subagent: { ...signIn.subagent, reason: 'mfa' } })).toBe('Second factor');
+    expect(needKindLabel({ ...signIn, subagent: { ...signIn.subagent, reason: 'captcha' } })).toBe('CAPTCHA');
+    expect(needKindLabel({ ...signIn, subagent: { ...signIn.subagent, reason: 'consent' } })).toBe('Consent');
+  });
+
+  it('names the page as one line of text: title and address, whichever core knows', () => {
+    const signIn = goHome.needs.find((n) => n.kind === 'web_sign_in');
+    if (!signIn?.subagent) throw new Error('fixture has no web_sign_in row');
+    expect(signInPageLine(signIn.subagent)).toBe('Sign in · Vendor · https://vendor.example/login?next=%2Fbuilds');
+    expect(signInPageLine({ page_title: '', page_url: 'https://vendor.example/login' })).toBe('https://vendor.example/login');
+    expect(signInPageLine({ page_title: '', page_url: '' })).toBe('');
   });
 });

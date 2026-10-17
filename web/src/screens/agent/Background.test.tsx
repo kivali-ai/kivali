@@ -326,3 +326,26 @@ describe('sessionTree', () => {
     ]);
   });
 });
+
+describe('a task waiting for a person', () => {
+  it('reads as held, says what it waits for, counts as running and keeps its clock', async () => {
+    const waiting: BackgroundSession = {
+      id: 'cccc3333',
+      kind: 'subagent',
+      state: 'waiting',
+      title: 'Price the renewal',
+      model: 'Sonnet 4.6',
+      effort: 'low',
+      elapsed_s: 95,
+      started: '2026-09-22T16:58:25Z',
+      url: '/agents/engineering-lead/subagents/cccc3333',
+    };
+    renderTabs(PATH, { routes: { ['GET ' + API]: { sessions: [waiting] } } });
+    await screen.findByRole('heading', { name: 'No plan · 1 running' });
+    const row = screen.getByRole('link', { name: /Price the renewal/ });
+    expect(within(row).getByRole('status', { name: 'Waiting for a person' })).toBeInTheDocument();
+    expect(within(row).getByText('Waiting for you to sign in')).toBeInTheDocument();
+    expect(within(row).queryByText(/failed|without saying why/)).toBeNull();
+    expect(within(row).getByText('1:35')).toBeInTheDocument();
+  });
+});

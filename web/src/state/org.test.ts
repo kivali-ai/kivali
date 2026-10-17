@@ -10,6 +10,7 @@ describe('reduceSnapshot', () => {
     expect(s.autoRelease).toBe('30s');
     expect(s.running).toBe(true);
     expect(s.assignmentsVersion).toBe(17);
+    expect(s.signInWaits).toEqual(['engineering-lead/bbbb2222']);
     expect(s.goals).toHaveLength(2);
     expect(s.tree.map((n) => n.slug)).toEqual(['chief-of-staff']);
     // The count behind "Waiting on N tasks"; 0 when the snapshot omits it.

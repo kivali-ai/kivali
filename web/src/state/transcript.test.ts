@@ -858,3 +858,16 @@ describe('a cut tool call the stream finishes', () => {
     expect(row).toMatchObject({ input: '{"path":"a.md","content":"xyz"}', input_truncated: false, output: 'wrote a.md', output_truncated: false, status: 'done' });
   });
 });
+
+describe('a web task waiting for a sign-in in its batch', () => {
+  it('reads as waiting from the progress event, and as running again when the task resumes', () => {
+    const web = { index: 0, id: 'cccc3333', description: 'Price the renewal', model: 'Sonnet 4.6', effort: 'low', kind: 'web', session: 'vendor.example' };
+    let s = run(start(), [ev('subagent_started', { tool_use_id: 't', tasks: [web] }), ev('subagent_progress', { tool_use_id: 't', index: 0, id: 'cccc3333', status: 'running' })]);
+    s = run(s, [ev('subagent_activity', { tool_use_id: 't', index: 0, id: 'cccc3333', current_activity: 'running web_navigate' })]);
+    s = run(s, [ev('subagent_progress', { tool_use_id: 't', index: 0, id: 'cccc3333', status: 'waiting_for_sign_in' })]);
+    expect(s.rows[0]?.tasks?.map((t) => [t.id, t.state, t.activity])).toEqual([['cccc3333', 'waiting_for_sign_in', '']]);
+    s = run(s, [ev('subagent_progress', { tool_use_id: 't', index: 0, id: 'cccc3333', status: 'running' })]);
+    expect(s.rows[0]?.tasks?.[0]?.state).toBe('running');
+    expect(s.rows[0]?.tasks?.[0]?.error).toBeUndefined();
+  });
+});

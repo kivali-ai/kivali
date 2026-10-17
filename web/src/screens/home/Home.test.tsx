@@ -478,6 +478,15 @@ describe('Needs you', () => {
       await flush();
       expect(router.state.location.pathname).toBe('/agents/engineering-lead/subagents/bbbb2222');
     });
+
+    it('names the page the window shows as text, never as a link, and badges the row with what the page asks', async () => {
+      await renderHome(busyHome);
+      fireEvent.click(screen.getByRole('button', { name: /needs you to sign in to vendor\.example/ }));
+      const row = within(rowFor('data-id', signIn.id));
+      expect(row.getByText('Page: Sign in · Vendor · https://vendor.example/login?next=%2Fbuilds')).toBeInTheDocument();
+      expect(row.queryByRole('link', { name: /vendor\.example\/login/ })).toBeNull();
+      expect(row.getByText('Sign in')).toBeInTheDocument();
+    });
   });
 });
 

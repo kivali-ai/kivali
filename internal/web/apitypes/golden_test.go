@@ -88,6 +88,7 @@ func goldenFixtures() map[string]any {
 			Release:            SnapshotRelease{Running: true, ActiveAgents: 1, PendingDocs: 1},
 			MessagesTotal:      214,
 			AssignmentsVersion: 17,
+			SignInWaits:        []string{"engineering-lead/bbbb2222"},
 			Goals: []Goal{
 				{
 					ID: 40, Title: "Ship the release", Owner: "engineering-lead", Done: 7, Total: 12,
@@ -137,18 +138,19 @@ func goldenFixtures() map[string]any {
 			PendingID:   "7c1d9e4b2a6f",
 		},
 		// Agent chat and its actions: fixtures in chat_golden_test.go.
-		"chat":                     goldenChat(),
-		"chat_message":             chatMessage,
-		"chat_message_task_result": chatMessageTaskResult,
-		"subagent_transcript":      goldenSubagentTranscript(),
-		"past_chats":               PastChats{Chats: []PastChat{goldenPastChat()}},
-		"past_chat_detail":         goldenPastChatDetail(),
-		"tool_call_detail":         ToolCallDetail{ToolUseID: "toolu_06", Input: `{"path":"notes/plan.md","content":"# Plan\n\nThe whole file."}`, Output: "Wrote notes/plan.md (48213 bytes) and indexed it."},
-		"model_request":            ModelRequest{Model: "claude-opus-5-5"},
-		"effort_request":           EffortRequest{Effort: "high"},
-		"chat_settings":            ChatSettings{CurrentModel: "claude-opus-5-5", CurrentEffort: "high"},
-		"stop_response":            StopResponse{Stopped: true},
-		"new_chat_response":        NewChatResponse{Started: true},
+		"chat":                        goldenChat(),
+		"chat_message":                chatMessage,
+		"chat_message_task_result":    chatMessageTaskResult,
+		"subagent_transcript":         goldenSubagentTranscript(),
+		"subagent_transcript_waiting": goldenSubagentTranscriptWaiting(),
+		"past_chats":                  PastChats{Chats: []PastChat{goldenPastChat()}},
+		"past_chat_detail":            goldenPastChatDetail(),
+		"tool_call_detail":            ToolCallDetail{ToolUseID: "toolu_06", Input: `{"path":"notes/plan.md","content":"# Plan\n\nThe whole file."}`, Output: "Wrote notes/plan.md (48213 bytes) and indexed it."},
+		"model_request":               ModelRequest{Model: "claude-opus-5-5"},
+		"effort_request":              EffortRequest{Effort: "high"},
+		"chat_settings":               ChatSettings{CurrentModel: "claude-opus-5-5", CurrentEffort: "high"},
+		"stop_response":               StopResponse{Stopped: true},
+		"new_chat_response":           NewChatResponse{Started: true},
 		// Home and its actions: fixtures in home_golden_test.go.
 		"home":                      goldenHome(),
 		"home_history":              goldenHomeHistory(),
@@ -258,10 +260,10 @@ func (r *recorder) Errorf(format string, args ...any) {
 func TestNoNilSlicesFindsThem(t *testing.T) {
 	var r recorder
 	NoNilSlices(&r, OrgSnapshot{Goals: []Goal{{}}})
-	// agents, inbox.pending_paths, inbox.ceo_paths, goals[0].blocked,
-	// goals[0].workers.
-	if len(r.errs) != 5 {
-		t.Errorf("found %d nil slices, want 5", len(r.errs))
+	// agents, inbox.pending_paths, inbox.ceo_paths, sign_in_waits,
+	// goals[0].blocked, goals[0].workers.
+	if len(r.errs) != 6 {
+		t.Errorf("found %d nil slices, want 6", len(r.errs))
 	}
 	r = recorder{}
 	d := AgentDetail{Models: []ModelOption{}}

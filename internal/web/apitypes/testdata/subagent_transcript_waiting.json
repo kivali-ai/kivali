@@ -1,0 +1,31 @@
+{
+  "meta": {
+    "id": "cccc3333",
+    "parent": "engineering-lead",
+    "state": "waiting_for_sign_in",
+    "model": "Sonnet 4.6",
+    "effort": "low",
+    "description": "Price the renewal",
+    "started": 1788255000000,
+    "kind": "web",
+    "session": "vendor.example",
+    "browser": "running",
+    "site": "vendor.example",
+    "wait_reason": "mfa"
+  },
+  "rows": [
+    {
+      "kind": "message",
+      "ts": 1788255000000,
+      "role": "received",
+      "from": {
+        "kind": "agent",
+        "slug": "engineering-lead",
+        "name": "Engineering lead"
+      },
+      "body_md": "Price the renewal.",
+      "attachments": [],
+      "pending": false
+    }
+  ]
+}

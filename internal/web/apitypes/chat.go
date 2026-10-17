@@ -347,9 +347,6 @@ type SubagentMeta struct {
 	// WaitReason is why a web task waits for a person in its browser
 	// window, while its state is waiting_for_sign_in.
 	WaitReason WebSignInReason `json:"wait_reason,omitempty"`
-	// Input is whether the browser window takes input right now: a
-	// web task waiting for sign-in in a site session.
-	Input bool `json:"input,omitempty"`
 }
 
 // SubagentTranscript is GET /api/v1/agents/{slug}/subagents/{id}.

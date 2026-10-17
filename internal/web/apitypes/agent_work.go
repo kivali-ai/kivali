@@ -72,8 +72,11 @@ const (
 type SessionState string
 
 const (
-	SessionStateQueued    SessionState = "queued"
-	SessionStateRunning   SessionState = "running"
+	SessionStateQueued  SessionState = "queued"
+	SessionStateRunning SessionState = "running"
+	// SessionStateWaiting: a web task paused until a person has signed
+	// in through its browser window. Live, like running.
+	SessionStateWaiting   SessionState = "waiting"
 	SessionStateDone      SessionState = "done"
 	SessionStateErrored   SessionState = "errored"
 	SessionStateCancelled SessionState = "cancelled"

@@ -288,17 +288,20 @@ func normalizeStepText(s string) string {
 
 // sessionState maps a job's registry state to the app's.
 //
-//	queued    → queued
-//	running   → running
-//	completed → done
-//	failed    → errored (with the failure as Error)
-//	cancelled → cancelled
+//	queued              → queued
+//	running             → running
+//	waiting_for_sign_in → waiting
+//	completed           → done
+//	failed              → errored (with the failure as Error)
+//	cancelled           → cancelled
 func sessionState(state string) apitypes.SessionState {
 	switch state {
 	case subagentJobQueued:
 		return apitypes.SessionStateQueued
 	case subagentJobRunning:
 		return apitypes.SessionStateRunning
+	case subagentJobWaiting:
+		return apitypes.SessionStateWaiting
 	case subagentJobCompleted:
 		return apitypes.SessionStateDone
 	case subagentJobCancelled:

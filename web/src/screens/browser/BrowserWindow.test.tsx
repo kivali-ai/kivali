@@ -417,7 +417,7 @@ describe('the browser window: ending and reconnecting', () => {
 // ---- Input: a task waiting for sign-in in a site session ----
 
 const SITE = 'vendor.example';
-const waitingWeb: SubagentMeta = { ...runningWeb, state: 'waiting_for_sign_in', session: SITE, site: SITE, browser: 'running', wait_reason: 'sign_in', input: true };
+const waitingWeb: SubagentMeta = { ...runningWeb, state: 'waiting_for_sign_in', session: SITE, site: SITE, browser: 'running', wait_reason: 'sign_in' };
 const BANNER = 'Sign in, then close this window. The task continues on its own.';
 
 /** The canvas's CSS box: 800 × 400 at (20, 40), so a 1280 × 800 frame shows at half size, 80 px in from each side. */

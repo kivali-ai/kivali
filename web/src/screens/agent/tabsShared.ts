@@ -172,16 +172,25 @@ export function listItemCount(text: string): number {
 
 // ---- State vocabularies ----
 
-export type SessionRunState = 'queued' | 'running' | 'done' | 'errored' | 'cancelled';
+export type SessionRunState = 'queued' | 'running' | 'waiting' | 'done' | 'errored' | 'cancelled';
 
-/** A background session's state as the design system's AgentState draws it (the words already agree). */
+/**
+ * A background session's state as the design system's AgentState draws it (the words already agree, except
+ * waiting: a task paused for a person to sign in is "held", and the row says what it waits for beside it).
+ */
 export const SESSION_STATE: Record<SessionRunState, AgentRunState> = {
   queued: 'queued',
   running: 'running',
+  waiting: 'held',
   done: 'done',
   errored: 'errored',
   cancelled: 'cancelled',
 };
+
+/** A session's state in words where AgentState's own word does not say enough. */
+export function sessionStateLabel(state: SessionRunState): string | undefined {
+  return state === 'waiting' ? 'Waiting for a person' : undefined;
+}
 
 /**
  * A background task's state as AgentState draws it. The design system has no waiting state: a task waiting for

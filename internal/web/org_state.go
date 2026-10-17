@@ -122,6 +122,7 @@ func (s *Server) orgSnapshotValue() orgSnapshot {
 		},
 		MessagesTotal:      messagesTotal,
 		AssignmentsVersion: assignmentsVersion,
+		SignInWaits:        s.SubagentService.signInWaitKeys(),
 		Goals:              goals,
 		Readouts: apitypes.Readouts{
 			Working:    working,

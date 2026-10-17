@@ -6,6 +6,7 @@
   "release": { "running": true, "active_agents": 0, "pending_docs": 2 },
   "messages_total": 41,
   "assignments_version": 4,
+  "sign_in_waits": [],
   "goals": [],
   "readouts": { "working": 0, "blocked": 0, "closed_week": 2, "spend_today": 0.5, "spend_7d": 6 }
 }

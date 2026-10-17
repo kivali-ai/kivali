@@ -118,7 +118,9 @@
         "id": "bbbb2222",
         "description": "Check the build logs",
         "site": "vendor.example",
-        "reason": "sign_in"
+        "reason": "sign_in",
+        "page_url": "https://vendor.example/login?next=%2Fbuilds",
+        "page_title": "Sign in · Vendor"
       }
     },
     {

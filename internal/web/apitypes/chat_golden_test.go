@@ -131,6 +131,26 @@ func goldenSubagentTranscript() SubagentTranscript {
 	}
 }
 
+// goldenSubagentTranscriptWaiting is a web task in a site session
+// paused for a person: its browser runs, and the header carries the
+// site and why it waits.
+func goldenSubagentTranscriptWaiting() SubagentTranscript {
+	ms := t0.UnixMilli()
+	vp := ChatParty{Kind: PartyKindAgent, Slug: "engineering-lead", Name: "Engineering lead"}
+	received := MessageRoleReceived
+	return SubagentTranscript{
+		Meta: SubagentMeta{
+			ID: "cccc3333", Parent: "engineering-lead", State: SubagentTaskStateWaitingForSignIn, Model: "Sonnet 4.6", Effort: "low",
+			Description: "Price the renewal", Started: ms, Kind: SubagentKindWeb, Session: ref("vendor.example"),
+			Browser: BrowserStateRunning, Site: ref("vendor.example"), WaitReason: WebSignInReasonMFA,
+		},
+		Rows: []TranscriptRow{
+			{Kind: TranscriptKindMessage, TS: ms, Role: &received, From: &vp, BodyMD: ref("Price the renewal."),
+				Attachments: &[]AttachmentRef{}, Pending: ref(false)},
+		},
+	}
+}
+
 func goldenPastChat() PastChat {
 	return PastChat{
 		TS:       "20260901T093000.000000000Z",

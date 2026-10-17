@@ -86,6 +86,10 @@ type OrgSnapshot struct {
 	// AssignmentsVersion changes on every tracker write in this process. It
 	// is a counter, not a timestamp: compare for inequality only.
 	AssignmentsVersion int64 `json:"assignments_version"`
+	// SignInWaits is every web task waiting for a person to sign in, as
+	// "<parent slug>/<task id>", sorted; Home's Needs has a row for
+	// each, so a change is the client's cue to refetch Home.
+	SignInWaits []string `json:"sign_in_waits"`
 	// Goals are the open top-level assignments that have parts or
 	// Done-when conditions, ascending by id.
 	Goals    []Goal   `json:"goals"`
