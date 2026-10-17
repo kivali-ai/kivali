@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kivali-ai/kivali/internal/agentpod"
 	"github.com/kivali-ai/kivali/internal/provider"
 	"github.com/kivali-ai/kivali/internal/store"
 	"github.com/kivali-ai/kivali/internal/web/apitypes"
@@ -127,6 +128,9 @@ func TestAPIBackgroundPlanStepsAndStates(t *testing.T) {
 		{ID: "j2w", Description: "read the ticket export", State: subagentJobQueued, CallerID: "j2", Depth: 2},
 		// Step 3 by the prompt's "You own task 3", failed: needs help.
 		{ID: "j3", Description: "vendors", State: subagentJobFailed, Err: "the pod ran out of memory", EndedAt: at.Add(2 * time.Minute)},
+		// Step 4 by "task 4", a web task waiting for a person: live, and
+		// no failure.
+		{ID: "j4", Description: "price task 4 at the vendor", State: subagentJobWaiting, Kind: agentpod.SubagentKindWeb, Session: "vendor.example", Site: "vendor.example", WaitReason: "mfa", StartedAt: at},
 		// Step 5 by its text; cancelled, which does not ask for help.
 		{ID: "j5", Description: "check the  contract dates", State: subagentJobCancelled, EndedAt: at.Add(3 * time.Minute)},
 		// Names no step.
@@ -150,14 +154,14 @@ func TestAPIBackgroundPlanStepsAndStates(t *testing.T) {
 	if p.Title != "Renewal recommendation: Acme" || p.Done != 1 || p.Total != 5 {
 		t.Errorf("plan header = %q %d/%d", p.Title, p.Done, p.Total)
 	}
-	if p.Running != 2 || p.Finished != 4 || p.NeedsHelp != 1 {
-		t.Errorf("counts running=%d finished=%d needs_help=%d, want 2, 4, 1", p.Running, p.Finished, p.NeedsHelp)
+	if p.Running != 3 || p.Finished != 4 || p.NeedsHelp != 1 {
+		t.Errorf("counts running=%d finished=%d needs_help=%d, want 3, 4, 1", p.Running, p.Finished, p.NeedsHelp)
 	}
 	wantSteps := []apitypes.PlanStep{
 		{N: 1, Title: "Pull actual spend vs. contracted minimum", State: apitypes.PlanStepStateDone},
 		{N: 2, Title: "List every support incident", State: apitypes.PlanStepStateRunning},
 		{N: 3, Title: "Find two comparable vendors", State: apitypes.PlanStepStateNeedsHelp},
-		{N: 4, Title: "Write the recommendation", State: apitypes.PlanStepStateIdle},
+		{N: 4, Title: "Write the recommendation", State: apitypes.PlanStepStateRunning},
 		{N: 5, Title: "Check the contract dates", State: apitypes.PlanStepStateIdle},
 	}
 	if len(p.Steps) != len(wantSteps) {
@@ -169,10 +173,10 @@ func TestAPIBackgroundPlanStepsAndStates(t *testing.T) {
 		}
 	}
 
-	wantStep := map[string]int{"j1": 1, "j2": 2, "j2w": 2, "j3": 3, "j5": 5, "jx": 0}
+	wantStep := map[string]int{"j1": 1, "j2": 2, "j2w": 2, "j3": 3, "j4": 4, "j5": 5, "jx": 0}
 	wantState := map[string]apitypes.SessionState{
 		"j1": apitypes.SessionStateDone, "j2": apitypes.SessionStateRunning, "j2w": apitypes.SessionStateQueued,
-		"j3": apitypes.SessionStateErrored, "j5": apitypes.SessionStateCancelled, "jx": apitypes.SessionStateDone,
+		"j3": apitypes.SessionStateErrored, "j4": apitypes.SessionStateWaiting, "j5": apitypes.SessionStateCancelled, "jx": apitypes.SessionStateDone,
 	}
 	for _, sess := range bg.Sessions {
 		got := 0

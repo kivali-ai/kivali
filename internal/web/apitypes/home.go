@@ -81,6 +81,11 @@ type SubagentRef struct {
 	Description string          `json:"description"`
 	Site        string          `json:"site"`
 	Reason      WebSignInReason `json:"reason"`
+	// PageURL and PageTitle are the page the task's window shows, as
+	// the browser reported them; empty when core knows no page. Page
+	// text: shown as text, never used as a link.
+	PageURL   string `json:"page_url"`
+	PageTitle string `json:"page_title"`
 }
 
 // ProposalKind is which change a proposal makes.

@@ -6,10 +6,10 @@ import { useOrg } from '../../state/OrgProvider';
 import { useNow } from '../home/useNow';
 import { useAgentPage } from './AgentPage';
 import { useChatDeps } from './chatDeps';
-import { SESSION_STATE, STEP_STATE, elapsedLabel, modelLabel, useAppHref, useFetched } from './tabsShared';
+import { SESSION_STATE, STEP_STATE, elapsedLabel, modelLabel, sessionStateLabel, signInWaitLine, useAppHref, useFetched } from './tabsShared';
 import '../../styles/agent-tabs.css';
 
-const isLive = (s: BackgroundSession) => s.state === 'running' || s.state === 'queued';
+const isLive = (s: BackgroundSession) => s.state === 'running' || s.state === 'queued' || s.state === 'waiting';
 
 /**
  * The deepest level agent-tabs.css draws apart; a task deeper sits at it. The server allows two tiers of subagent
@@ -121,13 +121,14 @@ function TaskRow({ place, slug, indent, sinceRead }: { place: PlacedSession; slu
   const href = useAppHref();
   const { session, depth, parent } = place;
   const live = isLive(session);
-  const note = session.state === 'errored' && session.error ? session.error : live ? session.activity : undefined;
+  const note = session.state === 'errored' && session.error ? session.error : session.state === 'waiting' ? signInWaitLine() : live ? session.activity : undefined;
+  const label = sessionStateLabel(session.state);
   const cls = ['app-bg-task', 'app-bg-depth-' + Math.min(depth, DEEPEST), indent && 'app-bg-task-nested', depth > 0 && 'app-bg-task-child'].filter(Boolean).join(' ');
   return (
     <div className={cls} data-depth={depth}>
       {(depth > 0 || place.hasChildren) && <TaskRails place={place} />}
       <ListRow
-        lead={<AgentState state={SESSION_STATE[session.state]} compact />}
+        lead={<AgentState state={SESSION_STATE[session.state]} compact {...(label ? { label } : {})} />}
         title={
           <>
             {session.title}

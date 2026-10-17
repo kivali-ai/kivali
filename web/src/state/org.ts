@@ -30,6 +30,8 @@ export interface OrgState {
   ceoPaths: string[];
   messagesTotal: number;
   assignmentsVersion: number;
+  /** Web tasks waiting for the person to sign in, as "parent/id", sorted: each is a Needs-you row. */
+  signInWaits: string[];
   goals: Goal[];
   readouts: Readouts;
 }
@@ -44,6 +46,7 @@ export const initialOrgState: OrgState = {
   ceoPaths: [],
   messagesTotal: 0,
   assignmentsVersion: 0,
+  signInWaits: [],
   goals: [],
   readouts: { working: 0, blocked: 0, closed_week: 0, spend_today: 0, spend_7d: 0 },
 };
@@ -106,6 +109,7 @@ export function reduceSnapshot(prev: OrgState, snapshot: OrgSnapshot): OrgState 
     ceoPaths: snapshot.inbox.ceo_paths,
     messagesTotal: snapshot.messages_total,
     assignmentsVersion: snapshot.assignments_version,
+    signInWaits: snapshot.sign_in_waits ?? [],
     goals: snapshot.goals,
     readouts: snapshot.readouts,
   };

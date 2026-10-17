@@ -251,26 +251,47 @@ func (v *homeView) needItem(it CEOInboxItem) apitypes.NeedItem {
 }
 
 // webSignInItem is the Needs-you row for a web task waiting for a
-// person to sign in through its browser window. Every word is core's:
-// nothing the task or a page said reaches the person here.
+// person in its browser window. Every word is core's: nothing the task
+// said reaches the person here, and the page the window shows is named
+// in fields of its own, as the browser reported it, for the app to show
+// as text.
 func (s *Server) webSignInItem(j subagentJob) apitypes.NeedItem {
 	name := j.Parent
 	if n := s.agentNames()[j.Parent]; n != "" {
 		name = n
 	}
+	title, body := webSignInWords(name, j.Site, j.WaitReason)
+	pageURL, pageTitle := s.SubagentService.waitingPage(j)
 	return apitypes.NeedItem{
 		ID:          "web_sign_in:" + j.Parent + "/" + j.ID,
 		Kind:        apitypes.NeedKindWebSignIn,
-		Title:       name + " needs you to sign in to " + j.Site,
+		Title:       title,
 		From:        apitypes.PersonRef{Slug: j.Parent, Name: name},
 		At:          j.WaitSince,
-		BodyMD:      "The page asks for " + webSignInPhrase(j.WaitReason) + ". Open the browser, sign in, then close the window; the task continues on its own.",
+		BodyMD:      body,
 		Attachments: []apitypes.AttachmentRef{},
 		Packages:    []apitypes.SoftwarePackage{},
 		Subagent: &apitypes.SubagentRef{
 			Parent: j.Parent, ID: j.ID, Description: j.Description, Site: j.Site,
-			Reason: apitypes.WebSignInReason(j.WaitReason),
+			Reason:  apitypes.WebSignInReason(j.WaitReason),
+			PageURL: pageURL, PageTitle: pageTitle,
 		},
+	}
+}
+
+// webSignInWords are a web_sign_in row's title and body: what the page
+// asks of the person, by reason, and what to do about it.
+func webSignInWords(name, site, reason string) (title, body string) {
+	const then = " then close the window; the task continues on its own."
+	switch apitypes.WebSignInReason(reason) {
+	case apitypes.WebSignInReasonMFA:
+		return name + " needs your second factor for " + site, "The page asks for a second factor. Open the browser, enter it," + then
+	case apitypes.WebSignInReasonCaptcha:
+		return name + " needs you to solve a CAPTCHA on " + site, "The page shows a CAPTCHA. Open the browser, solve it," + then
+	case apitypes.WebSignInReasonConsent:
+		return name + " needs your consent on " + site, "The page asks for a consent only a person can give. Open the browser, choose," + then
+	default:
+		return name + " needs you to sign in to " + site, "The page asks for a sign-in. Open the browser, sign in," + then
 	}
 }
 

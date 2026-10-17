@@ -59,6 +59,9 @@
   },
   "messages_total": 214,
   "assignments_version": 17,
+  "sign_in_waits": [
+    "engineering-lead/bbbb2222"
+  ],
   "goals": [
     {
       "id": 40,

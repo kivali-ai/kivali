@@ -365,7 +365,6 @@ func (s *Server) subagentMetaView(parent, dir, id string, hist []store.ChatMessa
 			}
 			if job.State == subagentJobWaiting {
 				out.WaitReason = apitypes.WebSignInReason(job.WaitReason)
-				out.Input = job.Site != ""
 			}
 		}
 		if !job.StartedAt.IsZero() {

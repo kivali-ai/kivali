@@ -5,7 +5,7 @@ import { browserWindowName, browserWindowPath, subagentPath } from '../../app/li
 import { Badge, Button, EmptyState, Icon, ListRow, Select, Text, TextField } from '../../ds';
 import { pickFiles } from '../../lib/pickFiles';
 import { relativeTime } from '../../lib/time';
-import { needKindLabel } from '../../state/home';
+import { needKindLabel, signInPageLine } from '../../state/home';
 import { SoftwarePackages } from '../proposals/SoftwarePackages';
 import { Attachments, Body, Face } from './parts';
 
@@ -121,11 +121,18 @@ function HandBackForm({ assignmentId, onAct }: { assignmentId: number | undefine
  */
 function SignInActions({ task }: { task: SubagentRef }) {
   const browserHref = useHref(browserWindowPath(task.parent, task.id));
+  const page = signInPageLine(task);
   return (
     <>
       <Text as="p" variant="caption" tone="muted">
         {'Task: ' + task.description}
       </Text>
+      {page !== '' && (
+        // The page's own title and address, as the browser reported them: text to read, never a link to follow.
+        <Text as="p" variant="caption" tone="muted">
+          {'Page: ' + page}
+        </Text>
+      )}
       <div className="app-home-actions">
         <Link className="app-home-link" to={subagentPath(task.parent, task.id)}>
           Open task

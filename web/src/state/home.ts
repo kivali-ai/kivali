@@ -1,6 +1,6 @@
 // Pure helpers behind the Home screen: when to refetch /api/v1/home, the queue countdowns, the filter, the
 // selection, and hiding a row the moment it is acted on (with rollback when the server refuses).
-import type { AutoRelease, Goal, NeedItem, QueueItem, QueueReleaseAllRequest } from '../api/types.gen';
+import type { AutoRelease, Goal, NeedItem, QueueItem, QueueReleaseAllRequest, SubagentRef } from '../api/types.gen';
 import { flattenTree } from './org';
 import type { OrgState } from './org';
 
@@ -20,13 +20,17 @@ export function needsHelpSlugs(org: OrgState): string[] {
     .sort();
 }
 
-/** True when a snapshot moved something /api/v1/home draws: the queue, the inbox, messages, the tracker, or who needs help. */
+/**
+ * True when a snapshot moved something /api/v1/home draws: the queue, the inbox, messages, the tracker, who needs
+ * help, or which web tasks wait for a sign-in.
+ */
 export function homeKeysChanged(prev: OrgState, next: OrgState): boolean {
   return (
     !sameList(prev.pendingPaths, next.pendingPaths) ||
     !sameList(prev.ceoPaths, next.ceoPaths) ||
     prev.messagesTotal !== next.messagesTotal ||
     prev.assignmentsVersion !== next.assignmentsVersion ||
+    !sameList(prev.signInWaits, next.signInWaits) ||
     !sameList(needsHelpSlugs(prev), needsHelpSlugs(next))
   );
 }
@@ -172,6 +176,19 @@ const PROPOSAL_LABELS: Record<string, string> = {
   software_install: 'Install software',
 };
 
+/** What a waiting web task's page asks of the person, as its row's badge. */
+const SIGN_IN_LABELS: Record<string, string> = {
+  sign_in: 'Sign in',
+  mfa: 'Second factor',
+  captcha: 'CAPTCHA',
+  consent: 'Consent',
+};
+
+/** The page a waiting web task's window shows, as one line of text: its title, its address, or both. */
+export function signInPageLine(task: Pick<SubagentRef, 'page_url' | 'page_title'>): string {
+  return [task.page_title, task.page_url].filter((v) => v !== '').join(' · ');
+}
+
 /** The neutral kind badge on a Needs-you row. */
 export function needKindLabel(item: NeedItem): string {
   switch (item.kind) {
@@ -184,7 +201,7 @@ export function needKindLabel(item: NeedItem): string {
     case 'needs_help':
       return 'Needs help';
     case 'web_sign_in':
-      return 'Sign in';
+      return SIGN_IN_LABELS[item.subagent?.reason ?? ''] ?? 'Sign in';
     case 'proposal':
       return PROPOSAL_LABELS[item.proposal_kind ?? ''] ?? 'Proposal';
     default:

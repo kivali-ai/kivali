@@ -90,10 +90,15 @@ export type SessionKind = typeof SessionKindSubagent | typeof SessionKindAgent;
  */
 export const SessionStateQueued = "queued";
 export const SessionStateRunning = "running";
+/**
+ * SessionStateWaiting: a web task paused until a person has signed
+ * in through its browser window. Live, like running.
+ */
+export const SessionStateWaiting = "waiting";
 export const SessionStateDone = "done";
 export const SessionStateErrored = "errored";
 export const SessionStateCancelled = "cancelled";
-export type SessionState = typeof SessionStateQueued | typeof SessionStateRunning | typeof SessionStateDone | typeof SessionStateErrored | typeof SessionStateCancelled;
+export type SessionState = typeof SessionStateQueued | typeof SessionStateRunning | typeof SessionStateWaiting | typeof SessionStateDone | typeof SessionStateErrored | typeof SessionStateCancelled;
 /**
  * BackgroundSession is one dispatched background task.
  */
@@ -281,6 +286,12 @@ export interface OrgSnapshot {
    * is a counter, not a timestamp: compare for inequality only.
    */
   assignments_version: number /* int64 */;
+  /**
+   * SignInWaits is every web task waiting for a person to sign in, as
+   * "<parent slug>/<task id>", sorted; Home's Needs has a row for
+   * each, so a change is the client's cue to refetch Home.
+   */
+  sign_in_waits: string[];
   /**
    * Goals are the open top-level assignments that have parts or
    * Done-when conditions, ascending by id.
@@ -1055,11 +1066,6 @@ export interface SubagentMeta {
    * window, while its state is waiting_for_sign_in.
    */
   wait_reason?: WebSignInReason;
-  /**
-   * Input is whether the browser window takes input right now: a
-   * web task waiting for sign-in in a site session.
-   */
-  input?: boolean;
 }
 /**
  * SubagentTranscript is GET /api/v1/agents/{slug}/subagents/{id}.
@@ -1405,6 +1411,13 @@ export interface SubagentRef {
   description: string;
   site: string;
   reason: WebSignInReason;
+  /**
+   * PageURL and PageTitle are the page the task's window shows, as
+   * the browser reported them; empty when core knows no page. Page
+   * text: shown as text, never used as a link.
+   */
+  page_url: string;
+  page_title: string;
 }
 /**
  * ProposalKind is which change a proposal makes.
