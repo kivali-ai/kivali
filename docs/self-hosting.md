@@ -10,6 +10,7 @@ A self-hosted team works like any other. You can open it in a browser, or from K
 - **A CNI that enforces NetworkPolicy.** The chart's policies are what keep agents from reaching the server's API. k3s enforces them out of the box.
 - **A default StorageClass** with `ReadWriteOnce` volumes. The team's data volume is 10 GiB by default, and each agent gets a 2 GiB scratch volume.
 - **One node with room for the whole team.** Each agent runs in its own pod, and those pods must run on the same node as the server, because they reach it through a socket on that node. The server requests 200m CPU and 1 GiB of memory and may use up to 12 GiB; each agent pod may use up to 8 GiB while it works (4 GiB for the agent, 4 GiB for its sandbox).
+- **A namespace without the `restricted` Pod Security Standard.** Agent pods and browser pods set no seccomp profile (each runs as a non-root user with every capability dropped), so Pod Security Admission at the `restricted` level refuses them; `baseline` admits them. On a cluster whose default seccomp profile or kernel blocks unprivileged user namespaces, Chromium cannot start its own sandbox and runs pages without it; the server logs `running (sandbox: off)` for that browser.
 - **An https address**, if anyone will reach the team from another computer.
 - **A Google account** to sign in with, and **Claude access**: a Claude subscription, an Anthropic Console account, or Claude on Amazon Bedrock, Google Vertex AI or Microsoft Foundry.
 
