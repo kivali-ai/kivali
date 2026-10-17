@@ -65,6 +65,7 @@ const testPageOne = `<!doctype html>
   <label for="doc">Document</label> <input type="file" id="doc">
   <button onclick="window.open('/two', '_blank')">Open popup</button>
   <a href="/report" download>Download report</a>
+  <iframe id="export" style="display: none" src="about:blank"></iframe>
 </body></html>`
 
 const testPageTwo = `<!doctype html><html><head><title>Page two</title></head>
@@ -171,6 +172,11 @@ func TestRealChromium(t *testing.T) {
 		w.Header().Set("Content-Disposition", `attachment; filename="quarterly report.txt"`)
 		_, _ = io.WriteString(w, "REPORT-CONTENT")
 	})
+	mux.HandleFunc("/export", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/csv")
+		w.Header().Set("Content-Disposition", `attachment; filename="export.csv"`)
+		_, _ = io.WriteString(w, "a,b")
+	})
 	p := realChromium(t, mux)
 	core, site, done := p.core, p.url, p.done
 	core.sendBytes(Message{Type: TypeFile, Group: "g", FileName: "hello.txt"}, []byte("hello"))
@@ -250,6 +256,12 @@ func TestRealChromium(t *testing.T) {
 	dl := core.expectType(TypeDownload)
 	if dl.FileName != "quarterly-report.txt" || string(dl.data) != "REPORT-CONTENT" || dl.Tab != "t1" {
 		t.Fatalf("download: %+v %q", dl.Message, dl.data)
+	}
+	// A download a hidden iframe starts is the tab's too.
+	eval(`document.getElementById('export').src = '/export'; 'exporting'`)
+	dl = core.expectType(TypeDownload)
+	if dl.FileName != "export.csv" || string(dl.data) != "a,b" || dl.Tab != "t1" {
+		t.Fatalf("download from an iframe: %+v %q", dl.Message, dl.data)
 	}
 
 	list := step("tabs list", "", CommandTabs, TabsArgs{Action: TabsList}).Text

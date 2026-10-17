@@ -339,6 +339,65 @@ func TestBrowserExitIsReported(t *testing.T) {
 	}
 }
 
+// TestDownloadFromAnIframeIsTheTabs: a download that an iframe starts
+// is attributed to the tab holding the iframe, whether the pod saw the
+// frame attach or has to find it in the tab's frame tree.
+func TestDownloadFromAnIframeIsTheTabs(t *testing.T) {
+	h := startPod(t, podOptions{})
+	if res := h.core.command("g", "", CommandNavigate, NavigateArgs{URL: "https://a.test/"}); !res.OK {
+		t.Fatalf("navigate: %+v", res)
+	}
+	s1 := sessionOf(h, "T1")
+	h.cdp.setOverride(func(_ context.Context, session, method string, _ json.RawMessage) (any, bool, error) {
+		if method == "Page.getFrameTree" && session == s1 {
+			return map[string]any{"frameTree": map[string]any{
+				"frame":       map[string]any{"id": "T1"},
+				"childFrames": []any{map[string]any{"frame": map[string]any{"id": "F-early"}}},
+			}}, true, nil
+		}
+		return nil, false, nil
+	})
+	download := func(frameID, guid, name, content string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Join(h.dir, "downloads"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(h.dir, "downloads", guid), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		h.cdp.emit("", "Browser.downloadWillBegin", map[string]any{"frameId": frameID, "guid": guid, "url": "https://a.test/" + name, "suggestedFilename": name})
+		h.cdp.emit("", "Browser.downloadProgress", map[string]any{"guid": guid, "state": "completed", "totalBytes": len(content), "receivedBytes": len(content)})
+	}
+
+	// A frame the pod saw attach.
+	h.cdp.emit(s1, "Page.frameAttached", map[string]any{"frameId": "F1", "parentFrameId": "T1"})
+	download("F1", "guid-1", "export.csv", "a,b")
+	dl := h.core.expectType(TypeDownload)
+	if dl.Group != "g" || dl.Tab != "t1" || dl.FileName != "export.csv" || string(dl.data) != "a,b" {
+		t.Fatalf("download from a known frame: %+v %q", dl.Message, dl.data)
+	}
+
+	// A frame attached before the pod watched the tab, found in the
+	// tab's frame tree.
+	download("F-early", "guid-2", "report.pdf", "%PDF")
+	dl = h.core.expectType(TypeDownload)
+	if dl.Tab != "t1" || dl.FileName != "report.pdf" {
+		t.Fatalf("download from a frame in the tree: %+v", dl.Message)
+	}
+
+	// A detached frame is forgotten; a download from no tab is dropped,
+	// before the next event (a download of the tab's own) is handled.
+	h.cdp.emit(s1, "Page.frameDetached", map[string]any{"frameId": "F1", "reason": "remove"})
+	download("F1", "guid-3", "late.bin", "x")
+	download("T1", "guid-4", "own.txt", "own")
+	if dl = h.core.expectType(TypeDownload); dl.FileName != "own.txt" {
+		t.Fatalf("a download from a detached frame was sent: %+v", dl.Message)
+	}
+	if _, err := os.Stat(filepath.Join(h.dir, "downloads", "guid-3")); !os.IsNotExist(err) {
+		t.Fatal("the dropped download was kept")
+	}
+}
+
 func TestUploadNeedsTheFile(t *testing.T) {
 	h := startPod(t, podOptions{files: map[string]string{"g/report.pdf": "%PDF"}})
 	if b, err := os.ReadFile(filepath.Join(h.dir, "files", "g", "report.pdf")); err != nil || string(b) != "%PDF" {
