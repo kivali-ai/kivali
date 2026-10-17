@@ -593,7 +593,13 @@ export const BrowserWindowEventTypeTab = "tab";
  * follows it; the page shows the reason instead of reconnecting.
  */
 export const BrowserWindowEventTypeEnd = "end";
-export type BrowserWindowEventType = typeof BrowserWindowEventTypeState | typeof BrowserWindowEventTypeTab | typeof BrowserWindowEventTypeEnd;
+/**
+ * BrowserWindowEventTypeNotice carries Reason without ending the
+ * window: an input the browser could not take, such as a paste
+ * over the size limit or one sent before the browser has a page.
+ */
+export const BrowserWindowEventTypeNotice = "notice";
+export type BrowserWindowEventType = typeof BrowserWindowEventTypeState | typeof BrowserWindowEventTypeTab | typeof BrowserWindowEventTypeEnd | typeof BrowserWindowEventTypeNotice;
 /**
  * WebSignInReason is why a web task waits for a person in its browser
  * window: the page wants a sign-in, a second factor, a CAPTCHA solved
@@ -612,9 +618,9 @@ export type WebSignInReason = typeof WebSignInReasonSignIn | typeof WebSignInRea
  * (Input: the task waits for a person to sign in, in a site session),
  * the session's site, so the page can flag a page off it, and whether
  * Chromium runs without its sandbox (SandboxOff: the cluster would not
- * let it start one, and the page says so). Reason is an end's reason;
- * on a state event it is a note the page shows in place of its own
- * caption.
+ * let it start one, and the page says so). Reason is an end's reason
+ * and a notice's; on a state event it is a note the page shows in
+ * place of its own caption.
  */
 export interface BrowserWindowEvent {
   type: BrowserWindowEventType;

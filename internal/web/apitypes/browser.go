@@ -24,6 +24,10 @@ const (
 	// BrowserWindowEventTypeEnd ends the window, with Reason. Nothing
 	// follows it; the page shows the reason instead of reconnecting.
 	BrowserWindowEventTypeEnd BrowserWindowEventType = "end"
+	// BrowserWindowEventTypeNotice carries Reason without ending the
+	// window: an input the browser could not take, such as a paste
+	// over the size limit or one sent before the browser has a page.
+	BrowserWindowEventTypeNotice BrowserWindowEventType = "notice"
 )
 
 // WebSignInReason is why a web task waits for a person in its browser
@@ -45,9 +49,9 @@ const (
 // (Input: the task waits for a person to sign in, in a site session),
 // the session's site, so the page can flag a page off it, and whether
 // Chromium runs without its sandbox (SandboxOff: the cluster would not
-// let it start one, and the page says so). Reason is an end's reason;
-// on a state event it is a note the page shows in place of its own
-// caption.
+// let it start one, and the page says so). Reason is an end's reason
+// and a notice's; on a state event it is a note the page shows in
+// place of its own caption.
 type BrowserWindowEvent struct {
 	Type       BrowserWindowEventType `json:"type"`
 	Browser    BrowserState           `json:"browser,omitempty"`

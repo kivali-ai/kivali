@@ -64,6 +64,7 @@ func goldenFixtures() map[string]any {
 			{Type: BrowserWindowEventTypeState, Browser: BrowserStateStarting},
 			{Type: BrowserWindowEventTypeState, Browser: BrowserStateRunning, SandboxOff: true},
 			{Type: BrowserWindowEventTypeTab, Tab: &BrowserWindowTab{ID: "t1", URL: "https://vendor.example/pricing", Title: "Pricing"}},
+			{Type: BrowserWindowEventTypeNotice, Reason: "The browser has no page to show yet."},
 			{Type: BrowserWindowEventTypeEnd, Reason: "The task has ended."},
 		},
 		"me": Me{

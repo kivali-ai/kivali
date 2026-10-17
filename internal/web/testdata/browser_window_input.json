@@ -1,0 +1,43 @@
+[
+  {
+    "type": "input",
+    "input": {
+      "kind": "mouse",
+      "action": "pressed",
+      "x": 120.5,
+      "y": 44,
+      "button": "left",
+      "modifiers": 8
+    }
+  },
+  {
+    "type": "input",
+    "input": {
+      "kind": "mouse",
+      "action": "wheel",
+      "x": 10,
+      "y": 20,
+      "delta_x": -3.5,
+      "delta_y": 120,
+      "modifiers": 0
+    }
+  },
+  {
+    "type": "input",
+    "input": {
+      "kind": "key",
+      "action": "down",
+      "key": "a",
+      "code": "KeyA",
+      "text": "a",
+      "modifiers": 2
+    }
+  },
+  {
+    "type": "input",
+    "input": {
+      "kind": "paste",
+      "text": "hello"
+    }
+  }
+]
