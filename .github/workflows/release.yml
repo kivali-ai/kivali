@@ -153,7 +153,7 @@ jobs:
       version: ${{ steps.version.outputs.version }}
       dev: ${{ steps.version.outputs.dev }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Version
         id: version
@@ -257,11 +257,11 @@ jobs:
     env:
       TAG: ${{ needs.verify.outputs.version }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version: '1.27'
           cache: true
@@ -284,14 +284,14 @@ jobs:
           done
           ls -l dist/sources
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: sources-${{ matrix.arch }}
           path: dist/sources/*.txt
           retention-days: 7
           if-no-files-found: error
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: chart
           path: dist
@@ -319,7 +319,7 @@ jobs:
           ls -l vm-artifacts vm-sources
 
       # The VM image, for the desktop job that bundles it.
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: vm-${{ matrix.arch }}
           path: vm-artifacts/*
@@ -328,14 +328,14 @@ jobs:
 
       # Its package list and SOURCES.md alone, which the release
       # publishes: publish need not download the image for them.
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: vm-sources-${{ matrix.arch }}
           path: vm-sources/*
           retention-days: 7
           if-no-files-found: error
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: images-${{ matrix.arch }}
           path: dist/kivali-images-linux-${{ matrix.arch }}.tar.zst
@@ -350,17 +350,17 @@ jobs:
     env:
       TAG: ${{ needs.verify.outputs.version }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Install helm
-        uses: azure/setup-helm@v4
+        uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4
         with:
           version: v3.16.4
 
       - name: Package the chart
         run: make chart-package VERSION="$TAG"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: chart
           path: dist/kivali-*.tgz
@@ -373,14 +373,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version: '1.27'
           cache: true
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
 
@@ -392,7 +392,7 @@ jobs:
       - name: make third-party-licenses
         run: make third-party-licenses
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: licenses
           path: dist/licenses/*.txt
@@ -407,15 +407,15 @@ jobs:
     env:
       TAG: ${{ needs.verify.outputs.version }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: images-*
           path: dist
           merge-multiple: true
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: chart
           path: dist
@@ -423,7 +423,7 @@ jobs:
       - name: make release-feed
         run: make release-feed VERSION="$TAG"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-json
           path: dist/release.json
@@ -443,14 +443,14 @@ jobs:
       TAG: ${{ needs.verify.outputs.version }}
       DEV: ${{ needs.verify.outputs.dev }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version: '1.27'
           cache: true
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
           cache: npm
@@ -459,7 +459,7 @@ jobs:
             desktop-app/package-lock.json
 
       # Pinned in lockstep with desktop-app/rust-toolchain.toml.
-      - uses: dtolnay/rust-toolchain@master
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master, 2026-10-16
         with:
           toolchain: '1.99.0'
 
@@ -471,7 +471,7 @@ jobs:
       - name: Only the pinned Rust toolchain
         uses: ./.github/actions/only-pinned-rust
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           prefix-key: v0-rust-1.99.0
           shared-key: desktop-release
@@ -486,7 +486,7 @@ jobs:
 
       # The VM image the images job built, bundled into the app as
       # Contents/Resources/vm (desktop-app/Makefile VM_BUNDLE).
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: vm-arm64
           path: vm/build/out
@@ -578,7 +578,7 @@ jobs:
           security delete-keychain build.keychain || true
           rm -f "$RUNNER_TEMP/AuthKey.p8"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: desktop-macos
           path: |
@@ -602,14 +602,14 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version: '1.27'
           cache: true
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
           cache: npm
@@ -618,7 +618,7 @@ jobs:
             desktop-app/package-lock.json
 
       # Pinned in lockstep with desktop-app/rust-toolchain.toml.
-      - uses: dtolnay/rust-toolchain@master
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master, 2026-10-16
         with:
           toolchain: '1.99.0'
 
@@ -627,7 +627,7 @@ jobs:
       - name: Only the pinned Rust toolchain
         uses: ./.github/actions/only-pinned-rust
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           prefix-key: v0-rust-1.99.0
           shared-key: desktop-release
@@ -645,7 +645,7 @@ jobs:
 
       # The amd64 VM image, bundled as <install dir>\vm\root.vhdx
       # (desktop-app/Makefile VM_BUNDLE).
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: vm-amd64
           path: vm/build/out
@@ -660,16 +660,26 @@ jobs:
 
       # Microsoft's Artifact Signing client, the signtool dlib that
       # desktop-app/scripts/sign-windows.ps1 signs through: the NuGet
-      # package (a zip), pinned, unpacked under the runner's temp dir.
-      # signtool itself and the .NET 8 runtime are the image's. Only a
-      # release signs; a dev build ships the installer unsigned.
+      # package (a zip), pinned by version and by SHA-512, unpacked
+      # under the runner's temp dir. The hash is the package's as the
+      # NuGet catalog lists it (packageHash, docs/developers/releasing.md
+      # says how to read it for a new version); a download that does not
+      # match is not unpacked. signtool itself and the .NET 8 runtime are
+      # the image's. Only a release signs; a dev build ships the
+      # installer unsigned.
       - name: Artifact Signing client
         if: env.DEV != 'true'
         shell: pwsh
+        env:
+          ARTIFACT_SIGNING_CLIENT_SHA512: fc6d211bf543212ea9b16db76f9b7557f3912209f43d500eb468fdc3e8643e602e238a5e9a97f0956e741361ad1ec727cfdfb9433de16c2e2671bede8f6627d4
         run: |
           $ProgressPreference = 'SilentlyContinue'
           $zip = Join-Path $env:RUNNER_TEMP 'artifact-signing-client.zip'
-          Invoke-WebRequest -Uri 'https://www.nuget.org/api/v2/package/Microsoft.ArtifactSigning.Client/1.0.146' -OutFile $zip
+          Invoke-WebRequest -Uri 'https://api.nuget.org/v3-flatcontainer/microsoft.artifactsigning.client/1.0.146/microsoft.artifactsigning.client.1.0.146.nupkg' -OutFile $zip
+          $actual = (Get-FileHash -Algorithm SHA512 -Path $zip).Hash.ToLowerInvariant()
+          if ($actual -ne $env:ARTIFACT_SIGNING_CLIENT_SHA512) {
+            throw "Microsoft.ArtifactSigning.Client 1.0.146: SHA-512 is $actual, expected $env:ARTIFACT_SIGNING_CLIENT_SHA512"
+          }
           Expand-Archive -Path $zip -DestinationPath (Join-Path $env:RUNNER_TEMP 'artifact-signing-client')
           Get-Item (Join-Path $env:RUNNER_TEMP 'artifact-signing-client\bin\x64\Azure.CodeSigning.Dlib.dll') | Out-Null
 
@@ -695,7 +705,7 @@ jobs:
           ARTIFACT_SIGNING_CLIENT: ${{ runner.temp }}\artifact-signing-client
         run: make desktop-release-bundle VERSION="$TAG" DEV=${{ env.DEV == 'true' && '1' || '' }}
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: desktop-windows
           path: |
@@ -718,9 +728,9 @@ jobs:
       TAG: ${{ needs.verify.outputs.version }}
       DEV: ${{ needs.verify.outputs.dev }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: '{images-*,chart,licenses,release-json,desktop-*}'
           path: assets
@@ -730,17 +740,17 @@ jobs:
       # and SOURCES.md are published: the arm64 one's as packages.txt and
       # SOURCES.md, the amd64 one's as vm-amd64-packages.txt and
       # vm-amd64-SOURCES.md.
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: vm-sources-arm64
           path: assets
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: vm-sources-amd64
           path: vm-amd64
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: sources-*
           path: sources

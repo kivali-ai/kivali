@@ -204,7 +204,10 @@ Choices worth knowing:
   plugin DLLs, the uninstaller and the installer through its custom sign
   command, `desktop-app/scripts/sign-windows.ps1`: the Windows SDK's
   signtool with Microsoft's Artifact Signing dlib (the
-  `Microsoft.ArtifactSigning.Client` package, which the job downloads),
+  `Microsoft.ArtifactSigning.Client` NuGet package, which the job
+  downloads from NuGet's flat container and unpacks only when its
+  SHA-512 is the one the workflow carries, `ARTIFACT_SIGNING_CLIENT_SHA512`
+  on the step; see "Pinned actions and downloads" below),
   which fetches a short-lived certificate from the account's certificate
   profile for each signature and timestamps it with Microsoft's
   authority, authenticating with the `AZURE_*` secrets; the build holds
@@ -272,6 +275,31 @@ Choices worth knowing:
   keep a debug-profile one per OS, built with line tables only. The
   Windows jobs restore GNU make from a cache too
   (`.github/actions/gnu-make`), reaching Chocolatey only when it is cold.
+- **Pinned actions and downloads.** Every third-party action
+  `release.yml` uses is pinned to a full commit SHA, with the tag it was
+  resolved from in a trailing comment (`# v4`; `dtolnay/rust-toolchain`
+  has no release tags, so its pin names `master` and the date). A moving
+  tag could otherwise carry new code into the job that holds the Azure
+  secrets. To move a pin, resolve the tag
+  (`gh api repos/<owner>/<repo>/git/ref/tags/<tag>`; an annotated tag
+  gives a tag object, dereferenced with `git/tags/<sha>` to its commit)
+  and update the SHA and the comment together. The Artifact Signing
+  client is pinned the same way: the step downloads
+  `Microsoft.ArtifactSigning.Client` by version from NuGet's flat
+  container and unpacks it only when its SHA-512 equals
+  `ARTIFACT_SIGNING_CLIENT_SHA512`. For a new version, read `packageHash`
+  (base64, `packageHashAlgorithm` SHA512) from the package's catalog
+  entry, linked as `catalogEntry` from
+  `https://api.nuget.org/v3/registration5-gz-semver2/microsoft.artifactsigning.client/<version>.json`,
+  convert it to lower-case hex (`echo '<hash>' | base64 -d | xxd -p -c
+  256`), and confirm it against a download of your own
+  (`openssl dgst -sha512 <file>.nupkg`) before writing it into the
+  workflow.
+- **The browser image** (`Dockerfile.browser`) installs Debian stable's
+  Chromium at build time, so each release carries the Chromium Debian
+  shipped when its images were built, and a browser pod runs that version
+  until the next release's image replaces it. A Chromium security fix
+  reaches teams only through a release.
 
 The same scripts run locally:
 
