@@ -5,11 +5,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BrowserInput, BrowserWindowEvent, BrowserWindowInput, SubagentMeta, SubagentTranscript } from '../../api/types.gen';
 import { createAppRoutes } from '../../app/router';
 import { subagentTranscript } from '../agent/tabsFixtures';
-import { browserSocketUrl, framePoint, modifierBits } from './BrowserWindow';
+import { MAX_FAILED_CONNECTS, browserSocketUrl, framePoint, modifierBits } from './BrowserWindow';
 
 const SLUG = 'engineering-lead';
 const ID = 'bbbb2222';
 const API = '/api/v1/agents/' + SLUG + '/subagents/' + ID;
+const UNREACHABLE = 'Kivali could not reach this task. Reopen it from the task page.';
 
 /** A WebSocket the test drives: it records its URL and lets the test open it, push messages and drop it. */
 class FakeSocket {
@@ -320,6 +321,57 @@ describe('the browser window: ending and reconnecting', () => {
     expect(screen.getByRole('status')).toHaveTextContent('The task has ended.');
     await settle(60_000);
     expect(FakeSocket.all).toHaveLength(1);
+  });
+
+  it('gives up after five connects that never opened and says to reopen the window', async () => {
+    // Core holds no job for the task (it restarted) while the task's header still says it waits: every socket
+    // is refused before it opens, and the header read keeps saying to connect.
+    await renderWindow(waitingWeb);
+    for (const wait of [1000, 2000, 4000, 10_000]) {
+      latest()?.drop();
+      expect(screen.getByRole('status')).toHaveTextContent('Reconnecting');
+      await settle(wait);
+    }
+    expect(FakeSocket.all).toHaveLength(MAX_FAILED_CONNECTS);
+    latest()?.drop();
+    expect(screen.getByRole('status')).toHaveTextContent(UNREACHABLE);
+    expect(screen.getByText('Watch only')).toBeInTheDocument();
+    const before = reads;
+    await settle(60_000);
+    expect(FakeSocket.all).toHaveLength(MAX_FAILED_CONNECTS);
+    expect(reads).toBe(before);
+  });
+
+  it('counts a header that cannot be read as a failed connect, and starts over once a socket opens', async () => {
+    await renderWindow({ ...runningWeb, browser: 'running' });
+    latest()?.accept();
+    vi.stubGlobal('fetch', vi.fn(async () => Promise.reject(new Error('offline'))));
+    // The open socket's drop is not a failed connect; the four unreadable headers after it are.
+    latest()?.drop();
+    for (const wait of [1000, 2000, 4000, 10_000]) await settle(wait);
+    expect(FakeSocket.all).toHaveLength(1);
+    expect(screen.getByRole('status')).toHaveTextContent('Reconnecting');
+    await settle(10_000);
+    expect(screen.getByRole('status')).toHaveTextContent(UNREACHABLE);
+    await settle(60_000);
+    expect(FakeSocket.all).toHaveLength(1);
+  });
+
+  it('forgets the failures once a socket opens', async () => {
+    await renderWindow({ ...runningWeb, browser: 'running' });
+    for (const wait of [1000, 2000, 4000]) {
+      latest()?.drop();
+      await settle(wait);
+    }
+    expect(FakeSocket.all).toHaveLength(4);
+    latest()?.accept();
+    // The open socket's drop waits 1 s and counts no failure; three refused connects follow it.
+    for (const wait of [1000, 2000, 4000, 10_000]) {
+      latest()?.drop();
+      await settle(wait);
+    }
+    expect(FakeSocket.all).toHaveLength(8);
+    expect(screen.getByRole('status')).toHaveTextContent('Reconnecting');
   });
 });
 
