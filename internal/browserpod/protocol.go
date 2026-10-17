@@ -33,7 +33,10 @@ const (
 	EnvSlug    = "KIVALI_BROWSER_SLUG"
 	EnvSession = "KIVALI_BROWSER_SESSION"
 	EnvToken   = "KIVALI_BROWSER_TOKEN"
-	EnvCoreUDS = "KIVALI_BROWSER_CORE_UDS"
+	// EnvCoreToken is the token core proves itself with: its hello
+	// carries it, and the pod refuses a session whose hello does not.
+	EnvCoreToken = "KIVALI_BROWSER_CORE_TOKEN"
+	EnvCoreUDS   = "KIVALI_BROWSER_CORE_UDS"
 )
 
 // Message is one text frame on the WebSocket, in either direction.
@@ -90,6 +93,8 @@ type Message struct {
 	// Site is the session's registrable domain on hello, empty for the
 	// open session. The pod refuses to navigate a tab off it.
 	Site string `json:"site,omitempty"`
+	// CoreToken is, on hello, the token from the pod's EnvCoreToken.
+	CoreToken string `json:"coreToken,omitempty"`
 	// Headful on hello asks for a visible Chromium under Xvfb instead
 	// of the new headless mode.
 	Headful bool `json:"headful,omitempty"`
@@ -114,7 +119,7 @@ const (
 	// TypeHello opens the session once the pod has connected. Bytes is
 	// the size of the saved profile that follows as binary frames, 0
 	// for a fresh profile. Site, Headful and Ephemeral describe the
-	// session.
+	// session. CoreToken proves the sender is core.
 	TypeHello = "hello"
 	// TypeStart tells the pod the profile, and the cookies if any, are
 	// complete: unpack the profile and start Chromium. TypeCookies

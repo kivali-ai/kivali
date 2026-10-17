@@ -117,6 +117,12 @@ func TestBrowserConnectOverTheWire(t *testing.T) {
 	if hello.Type != browserpod.TypeHello || hello.Bytes != int64(len(saved)) || !bytes.Equal(profile, saved) {
 		t.Fatalf("hello = %+v with %d bytes, want the saved profile", hello, len(profile))
 	}
+	f.prov.mu.Lock()
+	coreTokens := append([]string(nil), f.prov.coreTokens...)
+	f.prov.mu.Unlock()
+	if len(coreTokens) != 1 || coreTokens[0] == "" || coreTokens[0] == token || hello.CoreToken != coreTokens[0] {
+		t.Fatalf("hello core token = %q, pod env got %q (pod token %q)", hello.CoreToken, coreTokens, token)
+	}
 	if start, _ := pod.readMessage(); start.Type != browserpod.TypeStart {
 		t.Fatalf("after hello: %+v, want start", start)
 	}

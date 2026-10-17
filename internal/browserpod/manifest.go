@@ -17,7 +17,7 @@ import (
 //  1. One container, `kivali browser` under dumb-init (the image's
 //     init, which reaps Chromium's helper processes when they are
 //     orphaned), from the kivali-browser image, configured entirely by
-//     env (EnvSlug, EnvSession, EnvToken, EnvCoreUDS). It reaches the
+//     env (EnvSlug, EnvSession, EnvToken, EnvCoreToken, EnvCoreUDS). It reaches the
 //     web directly, like any pod; the chart's network policy keeps it
 //     off the cluster and private networks.
 //  2. It dials browser.sock, core's socket for browser pods, in the
@@ -121,14 +121,16 @@ func browserUDSDir(udsDir string) string {
 	return strings.TrimRight(udsDir, "/") + "/" + UDSSubdir
 }
 
-// podManifest is the pod for slug's browser session, its token in the
-// environment. The token is per pod and dies with it.
-func (c ProvisionerConfig) podManifest(slug, session, token string) map[string]any {
+// podManifest is the pod for slug's browser session, its token and the
+// token core proves itself with in the environment. Both are per pod
+// and die with it.
+func (c ProvisionerConfig) podManifest(slug, session, token, coreToken string) map[string]any {
 	udsDir := browserUDSDir(c.UDSDir)
 	env := []map[string]any{
 		{"name": EnvSlug, "value": slug},
 		{"name": EnvSession, "value": session},
 		{"name": EnvToken, "value": token},
+		{"name": EnvCoreToken, "value": coreToken},
 		{"name": EnvCoreUDS, "value": udsDir + "/" + SocketName},
 	}
 

@@ -449,7 +449,7 @@ func startPod(t *testing.T, o podOptions) *podHarness {
 	clk := clock.NewFake()
 	dir := t.TempDir()
 	rt := &Runtime{
-		Slug: "ada", Session: "s1", Token: "tok", CoreUDS: fc.sock, Dir: dir,
+		Slug: "ada", Session: "s1", Token: "tok", CoreToken: "ctok", CoreUDS: fc.sock, Dir: dir,
 		Logger: log.New(io.Discard, "", 0), Clock: clk,
 		launch: func(context.Context, chromeOptions) (browserProcess, error) { return proc, nil },
 	}
@@ -465,7 +465,7 @@ func startPod(t *testing.T, o podOptions) *podHarness {
 		}
 	})
 	core := fc.accept()
-	core.sendBytes(Message{Type: TypeHello, Site: o.site, Ephemeral: o.ephemeral}, o.profile)
+	core.sendBytes(Message{Type: TypeHello, CoreToken: "ctok", Site: o.site, Ephemeral: o.ephemeral}, o.profile)
 	for key, content := range o.files {
 		group, name, _ := strings.Cut(key, "/")
 		core.sendBytes(Message{Type: TypeFile, Group: group, FileName: name}, []byte(content))

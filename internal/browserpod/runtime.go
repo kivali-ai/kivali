@@ -2,6 +2,7 @@ package browserpod
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -28,6 +29,9 @@ type Runtime struct {
 	Slug    string
 	Session string
 	Token   string
+	// CoreToken is what core's hello must carry; without it the
+	// session is refused.
+	CoreToken string
 	// CoreUDS is browser.sock, core's socket for browser pods: the only
 	// way to core.
 	CoreUDS string
@@ -145,6 +149,10 @@ func (s *session) run(ctx context.Context) error {
 	}
 	if msg.Type != TypeHello {
 		return fmt.Errorf("browserpod: expected hello, got %q", msg.Type)
+	}
+	if s.r.CoreToken == "" || subtle.ConstantTimeCompare([]byte(msg.CoreToken), []byte(s.r.CoreToken)) != 1 {
+		s.log.Printf("refused a hello without core's token")
+		return errors.New("browserpod: hello did not carry core's token")
 	}
 	s.site, s.headful, s.ephemeral = msg.Site, msg.Headful, msg.Ephemeral
 	if err := s.receiveProfile(msg, body); err != nil {

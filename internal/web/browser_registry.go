@@ -128,7 +128,7 @@ const (
 // browserpod.Provisioner implements it; tests inject a fake.
 type BrowserProvisioner interface {
 	Enabled() bool
-	Start(ctx context.Context, slug, session, token string) error
+	Start(ctx context.Context, slug, session, token, coreToken string) error
 	Stop(ctx context.Context, slug, session string) error
 	StopAll(ctx context.Context) (int, error)
 }
@@ -279,6 +279,7 @@ func wireState(s browserState) apitypes.BrowserState {
 type browser struct {
 	slug, session, site string
 	token               string
+	coreToken           string
 	state               browserState
 	link                browserLink
 	// ready is closed when the pod reports running, or when the start
@@ -822,9 +823,14 @@ func (r *browserRegistry) acquire(ctx context.Context, slug, session string) (*b
 			r.mu.Unlock()
 			return nil, err
 		}
+		coreToken, err := newBrowserToken()
+		if err != nil {
+			r.mu.Unlock()
+			return nil, err
+		}
 		now := r.clk.Now()
 		b = &browser{
-			slug: slug, session: session, token: token,
+			slug: slug, session: session, token: token, coreToken: coreToken,
 			state: browserStarting, ready: make(chan struct{}),
 			startedAt: now, lastUsed: now, deadline: now.Add(browserStartTimeout),
 			groups: map[string]*browserGroup{},
@@ -850,7 +856,7 @@ func (r *browserRegistry) acquire(ctx context.Context, slug, session string) (*b
 			r.failStart(b, fmt.Errorf("browser session: %w", err))
 			return nil, err
 		}
-		if err := r.prov.Start(ctx, slug, session, token); err != nil {
+		if err := r.prov.Start(ctx, slug, session, token, coreToken); err != nil {
 			r.failStart(b, fmt.Errorf("start the browser pod: %w", err))
 			return nil, err
 		}
@@ -1250,12 +1256,12 @@ func (r *browserRegistry) claim(slug, session, token string, link browserLink) *
 // comes back through onMessage.
 func (r *browserRegistry) attach(b *browser) error {
 	r.mu.Lock()
-	link, site := b.link, b.site
+	link, site, coreToken := b.link, b.site, b.coreToken
 	r.mu.Unlock()
 	if link == nil {
 		return errors.New("no link")
 	}
-	hello := browserpod.Message{Type: browserpod.TypeHello, Site: site}
+	hello := browserpod.Message{Type: browserpod.TypeHello, Site: site, CoreToken: coreToken}
 	var body io.Reader
 	if ephemeralSession(b.session) {
 		hello.Ephemeral = true

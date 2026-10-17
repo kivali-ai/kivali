@@ -21,13 +21,14 @@ func runBrowser(args []string) {
 	slug := fs.String("slug", os.Getenv(browserpod.EnvSlug), "agent slug the browser is for")
 	session := fs.String("session", os.Getenv(browserpod.EnvSession), "web session id")
 	token := fs.String("token", os.Getenv(browserpod.EnvToken), "per-pod token core expects on connect")
+	coreToken := fs.String("core-token", os.Getenv(browserpod.EnvCoreToken), "token core's hello must carry")
 	coreUDS := fs.String("core-uds", os.Getenv(browserpod.EnvCoreUDS), "absolute path to browser.sock, core's socket for browser pods")
 	chromium := fs.String("chromium", "chromium", "Chromium binary, looked up on PATH")
 	dir := fs.String("dir", "/tmp/kivali-browser", "working directory for the profile, downloads and task files")
 	_ = fs.Parse(args)
 
 	logger := log.New(os.Stderr, "browser: ", log.LstdFlags|log.Lmicroseconds)
-	for name, v := range map[string]string{"--slug": *slug, "--session": *session, "--token": *token, "--core-uds": *coreUDS} {
+	for name, v := range map[string]string{"--slug": *slug, "--session": *session, "--token": *token, "--core-token": *coreToken, "--core-uds": *coreUDS} {
 		if v == "" {
 			logger.Fatalf("%s is required", name)
 		}
@@ -38,14 +39,15 @@ func runBrowser(args []string) {
 
 	logger.Printf("starting: slug=%s session=%s uds=%s dir=%s", *slug, *session, *coreUDS, *dir)
 	rt := &browserpod.Runtime{
-		Slug:     *slug,
-		Session:  *session,
-		Token:    *token,
-		CoreUDS:  *coreUDS,
-		Chromium: *chromium,
-		Dir:      *dir,
-		Logger:   logger,
-		Clock:    clock.New(),
+		Slug:      *slug,
+		Session:   *session,
+		Token:     *token,
+		CoreToken: *coreToken,
+		CoreUDS:   *coreUDS,
+		Chromium:  *chromium,
+		Dir:       *dir,
+		Logger:    logger,
+		Clock:     clock.New(),
 	}
 	if err := rt.Run(ctx); err != nil {
 		logger.Printf("stopped: %v", err)

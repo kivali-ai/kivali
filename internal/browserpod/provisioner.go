@@ -121,19 +121,19 @@ func NewProvisioner(cfg ProvisionerConfig, opts ...ProvisionerOption) (*Provisio
 // kube client present).
 func (p *Provisioner) Enabled() bool { return p != nil && p.kube != nil }
 
-// Start creates the pod for slug's session with token in its
-// environment. A live pod of that name built from the same manifest is
+// Start creates the pod for slug's session with token and coreToken in
+// its environment. A live pod of that name built from the same manifest is
 // left running. One built from another manifest (another image, another
 // token), or one that has finished (Succeeded or Failed: restartPolicy
 // is Never, so it will not run again), is deleted and created anew once
 // it is gone.
-func (p *Provisioner) Start(ctx context.Context, slug, session, token string) error {
+func (p *Provisioner) Start(ctx context.Context, slug, session, token, coreToken string) error {
 	if !p.Enabled() {
 		p.logger("browserpod: Start(%q, %q): no-op (not in-cluster)", slug, session)
 		return nil
 	}
 	name := PodName(slug, session)
-	manifest := p.cfg.podManifest(slug, session, token)
+	manifest := p.cfg.podManifest(slug, session, token, coreToken)
 	desired := manifest["metadata"].(map[string]any)["labels"].(map[string]string)[kube.SpecHashLabel]
 	existing, err := p.kube.GetPod(ctx, name)
 	switch {
