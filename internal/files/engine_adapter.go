@@ -50,6 +50,22 @@ func (d Dispatcher) BackendFor(slug string) *Backend {
 	}
 }
 
+// SubagentBackendFor returns the Backend for one of slug's subagents,
+// as core runs it: the subagent's overlay under slug's tree as Root
+// (files.BuildSubagentOverlay), with the same read roots, aliases and
+// mounts as slug's own Backend, and slug's tree as a write root, since
+// the overlay's links (background/, artifacts/public) resolve into it.
+// It is the view the agent-shell daemon builds for the subagent's own
+// file tools (agentshell.filesBackend), so what core reads on the
+// subagent's behalf is what the subagent itself can read: its own
+// artifacts/private, never slug's, and no past-chats or episodes.
+func (d Dispatcher) SubagentBackendFor(slug, subagentID string) *Backend {
+	b := d.BackendFor(slug)
+	b.WriteRoots = []string{b.Root}
+	b.Root = filepath.Join(b.Root, "subagents", subagentID)
+	return b
+}
+
 // Dispatch routes one file_* tool call to the per-slug Backend. Used
 // by the agent-pod files dispatch UDS endpoint.
 func (d Dispatcher) Dispatch(slug, toolName string, rawInput []byte) (string, bool, error) {

@@ -119,7 +119,9 @@ func (s *SubagentService) WebCommand(ctx context.Context, parent, id string, req
 
 // sendTaskFile hands the pod one of the task's files before an upload:
 // the file the task was dispatched with under that name, read from the
-// caller's /files/ the way file_view reads it.
+// caller's /files/ the way file_view reads it. The caller is the agent,
+// or the sub-lead (j.CallerID) whose own view the path was checked in
+// at dispatch.
 func (s *SubagentService) sendTaskFile(ctx context.Context, j subagentJob, name string) (agentpod.WebCommandResponse, bool) {
 	refuse := func(text string) (agentpod.WebCommandResponse, bool) {
 		return agentpod.WebCommandResponse{Text: text, IsError: true}, false
@@ -134,7 +136,7 @@ func (s *SubagentService) sendTaskFile(ctx context.Context, j subagentJob, name 
 	if modelPath == "" {
 		return refuse(fmt.Sprintf("%q is not one of this task's files (%s)", name, strings.Join(webTaskFileNames(j.Files), ", ")))
 	}
-	f, info, err := s.openParentFile(j.Parent, modelPath)
+	f, info, err := s.openCallerFile(j.Parent, j.CallerID, modelPath)
 	if err != nil || !info.Mode().IsRegular() {
 		return refuse("that file cannot be read")
 	}
