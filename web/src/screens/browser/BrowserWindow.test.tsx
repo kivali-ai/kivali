@@ -534,7 +534,7 @@ describe('the browser window: input', () => {
     expect(FakeSocket.all).toHaveLength(5);
 
     // The task stops waiting for the person (its header and the state event agree): the waits may grow to 10 s again.
-    meta = { ...waitingWeb, state: 'running', input: false, wait_reason: undefined };
+    meta = { ...waitingWeb, state: 'running', wait_reason: undefined };
     latest()?.accept();
     latest()?.push({ type: 'state', browser: 'running', site: SITE });
     for (const wait of [1000, 2000, 4000]) {

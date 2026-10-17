@@ -35,6 +35,11 @@ export function browserSocketUrl(slug: string, id: string, loc: Location = windo
   return scheme + '//' + loc.host + '/api/v1/agents/' + encodeURIComponent(slug) + '/subagents/' + encodeURIComponent(id) + '/browser';
 }
 
+/** True when core forwards the window's input: the task waits for a person in a site session, the same rule core applies to each message. */
+function takesInput(meta: SubagentMeta): boolean {
+  return meta.state === 'waiting_for_sign_in' && !!meta.site;
+}
+
 /** Why the window does not connect to this task, or null when it can. */
 function unavailable(meta: SubagentMeta): string | null {
   if (meta.kind !== 'web') return 'This task does not use a browser.';
@@ -374,7 +379,7 @@ export function BrowserWindow() {
         setBrowser(t.meta.browser);
         setSandboxOff(t.meta.browser_sandbox_off === true);
         setSite(t.meta.site ?? '');
-        wantsInput.current = t.meta.input === true;
+        wantsInput.current = takesInput(t.meta);
       },
       (err: unknown) => {
         if (live) setFailure(asApiError(err));
@@ -490,7 +495,7 @@ export function BrowserWindow() {
         (t) => {
           if (over) return;
           const why = unavailable(t.meta);
-          wantsInput.current = t.meta.input === true;
+          wantsInput.current = takesInput(t.meta);
           if (why) finish(why);
           else open();
         },
