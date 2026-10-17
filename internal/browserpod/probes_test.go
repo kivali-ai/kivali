@@ -76,6 +76,40 @@ var snapshotProbes = []probe{
 		},
 	},
 	{
+		name: "a click on a covered element names the cover",
+		html: `<button onclick="document.getElementById('bought').textContent='BOUGHT'">Buy now</button> <span id="bought"></span>
+<div id="overlay" style="position:fixed;inset:0;background:rgba(0,0,0,.5)"><div role="dialog" aria-label="Cookie preferences" style="background:#fff;margin:100px;padding:20px">We use cookies. <button onclick="document.getElementById('overlay').remove()">Accept</button></div></div>`,
+		want: []string{`button "Buy now"`, `dialog "Cookie preferences"`},
+		check: func(t *testing.T, p *realPod, snap string) {
+			buy := findRef(t, snap, `button "Buy now"`)
+			res := p.core.command("g", "", CommandClick, ClickArgs{Ref: buy})
+			if res.OK || res.Code != CodeNotFound || !strings.Contains(res.Error, `button "Buy now" is covered by div "We use cookies. Accept", which would take the click`) {
+				t.Fatalf("click under the overlay: %+v", res)
+			}
+			if v := p.eval(`document.getElementById('bought').textContent`); v != `""` {
+				t.Errorf("the covered click landed: %s", v)
+			}
+			p.step("accept cookies", "", CommandClick, ClickArgs{Ref: findRef(t, snap, `button "Accept"`)})
+			p.step("buy", "", CommandClick, ClickArgs{Ref: buy})
+			if v := p.eval(`document.getElementById('bought').textContent`); v != `"BOUGHT"` {
+				t.Errorf("after dismissing the overlay the click did not land: %s", v)
+			}
+		},
+	},
+	{
+		name: "a hidden checkbox is clicked through its label",
+		html: `<input type="checkbox" id="c" style="display:none"><label for="c">Remember me</label>
+<input type="checkbox" id="o" style="opacity:0;position:absolute"><label for="o" style="display:inline-block;padding-left:30px">Opaque label</label>`,
+		want: []string{`\[e1\] checkbox "Remember me" hidden`, `\[e2\] checkbox "Opaque label" hidden`},
+		check: func(t *testing.T, p *realPod, snap string) {
+			p.step("click display none box", "", CommandClick, ClickArgs{Ref: "e1"})
+			p.step("click opacity 0 box", "", CommandClick, ClickArgs{Ref: "e2"})
+			if v := p.eval(`[document.getElementById('c').checked, document.getElementById('o').checked].join()`); v != `"true,true"` {
+				t.Errorf("checked: %s", v)
+			}
+		},
+	},
+	{
 		name: "visibility and overflow clipping are judged per element",
 		html: `<div style="visibility:hidden">HIDDEN-PARENT <span style="visibility:visible">VISIBLE-CHILD</span></div>
 <div style="overflow:hidden;width:300px"><div style="display:flex;width:900px"><div style="width:300px;flex:none">SLIDE-ONE</div><div style="width:300px;flex:none">SLIDE-TWO</div></div></div>

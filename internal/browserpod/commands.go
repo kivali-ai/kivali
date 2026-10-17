@@ -399,7 +399,7 @@ func (b *browser) cmdClick(ctx context.Context, t *tab, a ClickArgs) (result, er
 	if err != nil {
 		return result{}, err
 	}
-	x, y, err := b.centre(ctx, t, obj)
+	x, y, err := b.clickPoint(ctx, t, obj, info)
 	if err != nil {
 		return result{}, err
 	}
@@ -411,6 +411,81 @@ func (b *browser) cmdClick(ctx context.Context, t *tab, a ClickArgs) (result, er
 		return result{}, err
 	}
 	return result{text: fmt.Sprintf("Clicked %s %q; now at %s", info.Role, info.Name, t.where())}, nil
+}
+
+// clickPoint scrolls an element into view and returns the point a click
+// reaches it at: the centre of its box, or of its label's when it is a
+// form control hidden in place (the label passes the click on). When
+// another element would take the click there (a dialog's backdrop, a
+// cookie banner, a sticky header) the error names it, so the model can
+// dismiss it instead of reading that the click happened.
+func (b *browser) clickPoint(ctx context.Context, t *tab, obj string, info refInfo) (float64, float64, error) {
+	var res struct {
+		X, Y, W, H float64
+		Covered    string `json:"covered"`
+	}
+	err := b.callOn(ctx, t, obj, `function() {
+		const box = el => {
+			let r = el.getBoundingClientRect();
+			if (r.width === 0 || r.height === 0) {
+				const rs = el.getClientRects();
+				if (rs.length) r = rs[0];
+			}
+			return r;
+		};
+		// A form control that is not drawn is clicked through its label.
+		let target = this, r = box(this);
+		const form = ['INPUT', 'SELECT', 'TEXTAREA'].includes(this.tagName);
+		if (form && this.labels && this.labels.length && (r.width === 0 || r.height === 0 || getComputedStyle(this).opacity === '0' || getComputedStyle(this).display === 'none')) {
+			for (const lb of this.labels) {
+				const lr = box(lb);
+				if (lr.width && lr.height) { target = lb; r = lr; break; }
+			}
+		}
+		target.scrollIntoView({block: 'center', inline: 'center', behavior: 'instant'});
+		r = box(target);
+		const x = r.left + r.width / 2, y = r.top + r.height / 2;
+		const out = {X: x, Y: y, W: r.width, H: r.height, covered: ''};
+		if (r.width === 0 && r.height === 0) return out;
+		let hit = document.elementFromPoint(x, y);
+		while (hit && hit.shadowRoot) {
+			const inner = hit.shadowRoot.elementFromPoint(x, y);
+			if (!inner || inner === hit) break;
+			hit = inner;
+		}
+		if (!hit) { out.covered = 'the edge of the viewport'; return out; }
+		const within = (n, a) => {
+			for (let e = n; e; e = e.parentElement || (e.parentNode && e.parentNode.host)) if (e === a) return true;
+			return false;
+		};
+		// The click lands on the element, inside it, on a label for it,
+		// or on an ancestor that takes its pointer events.
+		if (within(hit, target) || within(hit, this) || hit.contains(target)) return out;
+		const lb = hit.closest && hit.closest('label');
+		if (lb && (lb.control === this || lb.contains(this))) return out;
+		const describe = e => {
+			const text = s => (s || '').replace(/\s+/g, ' ').trim();
+			for (let n = e, i = 0; n && n !== document.body && i < 6; n = n.parentElement, i++) {
+				const role = n.getAttribute('role') || {DIALOG: 'dialog', A: 'link', BUTTON: 'button'}[n.tagName] || '';
+				const t = text(n.getAttribute('aria-label')) || text(n.innerText);
+				if (t || role) return (role || n.tagName.toLowerCase()) + (t ? ' ' + JSON.stringify(t.length > 80 ? t.slice(0, 79) + '…' : t) : '');
+			}
+			const cls = text(e.getAttribute('class'));
+			return 'a ' + e.tagName.toLowerCase() + ' with no text' + (cls ? ' (class ' + JSON.stringify(cls.length > 60 ? cls.slice(0, 59) + '…' : cls) + ')' : '');
+		};
+		out.covered = describe(hit);
+		return out;
+	}`, &res)
+	if err != nil {
+		return 0, 0, err
+	}
+	if res.W == 0 && res.H == 0 {
+		return 0, 0, failf(CodeNotFound, "That element is not visible on the page; take a new snapshot.")
+	}
+	if res.Covered != "" {
+		return 0, 0, failf(CodeNotFound, "%s %q is covered by %s, which would take the click; dismiss or close that first, or scroll, then take a new snapshot.", info.Role, info.Name, res.Covered)
+	}
+	return res.X, res.Y, nil
 }
 
 // centre scrolls an element into view and returns its centre in
