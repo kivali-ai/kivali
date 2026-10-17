@@ -342,6 +342,55 @@ func TestCheckGivesUpWithItsContext(t *testing.T) {
 	}
 }
 
+// TestIndexRefusesAnIndexPastItsBound: a download stops at
+// maxIndexBytes, compressed or decompressed, and is a failed refresh:
+// the list there is stays, and with none the index is unavailable.
+func TestIndexRefusesAnIndexPastItsBound(t *testing.T) {
+	saved := maxIndexBytes
+	maxIndexBytes = 16 << 10
+	t.Cleanup(func() { maxIndexBytes = saved })
+
+	// Compresses to well under the bound, decompresses to past it.
+	var big strings.Builder
+	for i := 0; big.Len() <= int(maxIndexBytes); i++ {
+		big.WriteString("Package: pkg-" + strconv.Itoa(i) + "\nVersion: 1\n\n")
+	}
+	_, srv := newArchive(t, big.String())
+	ix := newTestIndex(srv, clock.NewFake(), "")
+	if _, err := ix.Check(context.Background(), []string{"pkg-1"}); !errors.Is(err, ErrUnavailable) || !strings.Contains(err.Error(), "larger than") {
+		t.Errorf("Check with an index past the bound: %v, want unavailable, larger than", err)
+	}
+
+	// A compressed body past the bound: incompressible bytes.
+	raw := make([]byte, int(maxIndexBytes)*2)
+	for i := range raw {
+		raw[i] = byte(i*7919 + i>>3)
+	}
+	_, srv = newArchive(t, string(raw))
+	ix = newTestIndex(srv, clock.NewFake(), "")
+	if _, err := ix.Check(context.Background(), []string{"pkg-1"}); !errors.Is(err, ErrUnavailable) || !strings.Contains(err.Error(), "larger than") {
+		t.Errorf("Check with a body past the bound: %v, want unavailable, larger than", err)
+	}
+
+	// A list already held stays when the refresh brings one too large.
+	clk := clock.NewFake()
+	a, srv := newArchive(t, packagesFixture)
+	ix = newTestIndex(srv, clk, "")
+	if _, err := ix.Check(context.Background(), []string{"ffmpeg"}); err != nil {
+		t.Fatal(err)
+	}
+	var zipped bytes.Buffer
+	zw := gzip.NewWriter(&zipped)
+	_, _ = zw.Write([]byte(big.String()))
+	_ = zw.Close()
+	a.body, a.etag = zipped.Bytes(), `"v2"`
+	clk.Advance(maxAge)
+	unknown, err := ix.Check(context.Background(), []string{"ffmpeg", "pkg-1"})
+	if err != nil || !reflect.DeepEqual(names(unknown), []string{"pkg-1"}) {
+		t.Errorf("after a refresh past the bound: %v, %v; want the old list kept", names(unknown), err)
+	}
+}
+
 func TestPackagesURL(t *testing.T) {
 	if got, want := PackagesURL("arm64"), "https://deb.debian.org/debian/dists/trixie/main/binary-arm64/Packages.gz"; got != want {
 		t.Fatalf("PackagesURL = %q, want %q", got, want)
