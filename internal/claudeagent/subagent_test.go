@@ -190,6 +190,11 @@ func TestRunSubagentSpellsTheRequestTheCLIWay(t *testing.T) {
 		if strings.HasPrefix(ev.ToolName, "mcp__") {
 			t.Errorf("event %s carries the CLI's tool name %q; the driver strips it", ev.Kind, ev.ToolName)
 		}
+		// The CLI announced its session on its first line; every event
+		// with content carries it, so a caller can resume the session.
+		if ev.Kind != provider.StreamEnd && ev.SessionID != "fake-session-subagent" {
+			t.Errorf("event %s SessionID = %q, want the CLI's", ev.Kind, ev.SessionID)
+		}
 	}
 	wantKinds := []provider.StreamEventKind{
 		provider.StreamDelta, provider.StreamToolUseStart, provider.StreamToolUseEnd, provider.StreamToolResult, provider.StreamDelta, provider.StreamEnd,
@@ -227,6 +232,26 @@ func TestRunSubagentSpellsTheRequestTheCLIWay(t *testing.T) {
 	}
 	if _, err := os.Stat(runDir); err != nil {
 		t.Errorf("caller's RunDir removed by the driver: %v", err)
+	}
+}
+
+// TestRunSubagentResumesASession: a request with Resume continues that
+// CLI session (--resume) with the prompt as its next message, and the
+// events name the session the CLI echoes back.
+func TestRunSubagentResumesASession(t *testing.T) {
+	req := subagentTestRequest(t.TempDir())
+	req.Resume = "sess-prev"
+	res := runSubagentFake(t, "subagent", req, nil)
+	if res.err != nil {
+		t.Fatalf("Err = %v, want a clean run", res.err)
+	}
+	if got := extractFlag(res.args, "--resume"); got != "sess-prev" || !slices.Contains(res.args, "-p") {
+		t.Errorf("args = %q, want -p and --resume sess-prev", res.args)
+	}
+	for _, ev := range res.events {
+		if ev.Kind != provider.StreamEnd && ev.SessionID != "sess-prev" {
+			t.Errorf("event %s SessionID = %q, want the resumed session", ev.Kind, ev.SessionID)
+		}
 	}
 }
 

@@ -73,7 +73,7 @@ func TestSubagentTurnRunsThroughTheDriver(t *testing.T) {
 		RunSubagentFn: func(_ context.Context, req provider.SubagentRequest) (provider.Stream, error) {
 			return provider.NewMockStream(
 				[]provider.StreamEvent{
-					{Kind: provider.StreamDelta, Text: "Reading the log.", Model: "claude-haiku-4-5"},
+					{Kind: provider.StreamDelta, Text: "Reading the log.", Model: "claude-haiku-4-5", SessionID: "cli-1"},
 					{Kind: provider.StreamToolUseStart, ToolUseID: "tu1", ToolName: "file_view"},
 					{Kind: provider.StreamToolUseEnd, ToolUseID: "tu1", ToolName: "file_view", ToolInput: json.RawMessage(`{"path":"/files/project/log.md"}`)},
 					{Kind: provider.StreamToolResult, ToolUseID: "tu1", ToolResultText: "2 reminders bounced"},
@@ -106,6 +106,7 @@ func TestSubagentTurnRunsThroughTheDriver(t *testing.T) {
 		SystemPrompt: "be brief",
 		UserPrompt:   "summarise the log",
 		Tools:        SubagentTools(2, false),
+		Resume:       "sess-prev",
 	}
 	if err := rt.handleSubagentTurn(context.Background(), subagentTurnEvent(t, "t-sub", 2, spec)); err != nil {
 		t.Fatal(err)
@@ -118,6 +119,9 @@ func TestSubagentTurnRunsThroughTheDriver(t *testing.T) {
 	req := reqs[0]
 	if req.Model != "claude-haiku-4-5" || req.Effort != "low" {
 		t.Errorf("model/effort = %q/%q, want the spec's", req.Model, req.Effort)
+	}
+	if req.Resume != "sess-prev" {
+		t.Errorf("Resume = %q, want the spec's session to continue", req.Resume)
 	}
 	if req.System != "be brief" || req.Prompt != "summarise the log" {
 		t.Errorf("system/prompt = %q/%q, want the spec's", req.System, req.Prompt)
@@ -163,6 +167,9 @@ func TestSubagentTurnRunsThroughTheDriver(t *testing.T) {
 	}
 	if got[1].ToolName != "file_view" {
 		t.Errorf("tool name = %q, want the bare name the driver emits", got[1].ToolName)
+	}
+	if got[0].SessionID != "cli-1" {
+		t.Errorf("first delta SessionID = %q, want the driver's session id posted to core", got[0].SessionID)
 	}
 	done := got[len(got)-1]
 	if done.Text != "Two reminders bounced." {

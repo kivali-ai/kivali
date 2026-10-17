@@ -535,6 +535,28 @@ func TestAgentpodRunSubagentGatedAfterStop(t *testing.T) {
 	}
 }
 
+// TestSubagentTurnEventRecordsTheCLISession: an event of a subagent's
+// turn that names the run's CLI session lands on the job, so a task
+// paused for a person can resume that session.
+func TestSubagentTurnEventRecordsTheCLISession(t *testing.T) {
+	srv := newTestServer(t)
+	svc, _, _, _ := webService(t, &fakeSubagentDriver{})
+	srv.SubagentService = svc
+	svc.registerJob(&subagentJob{ID: "job-a", Parent: "alice", State: subagentJobRunning, done: make(chan struct{})})
+	srv.installAgentpodSubagentTurn("alice", "turn-a", "job-a", "claude-test")
+	body, _ := json.Marshal(agentpod.TurnEvent{Kind: agentpod.TurnEventDelta, Text: "Reading.", SessionID: "cli-1"})
+	rr := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodPost, "/v1/agent/alice/chat-turn/turn-a/event", strings.NewReader(string(body)))
+	req.Header.Set(agentpod.SlugHeader, "alice")
+	srv.handleAgentpodTurnEvent(rr, req)
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, body = %q", rr.Code, rr.Body.String())
+	}
+	if j, ok := svc.lookupJob("job-a"); !ok || j.CLISession != "cli-1" {
+		t.Errorf("job CLISession = %q, want cli-1", j.CLISession)
+	}
+}
+
 // TestAgentpodTurnEventBadKindRejected guards the unknown-kind 400.
 func TestAgentpodTurnEventBadKindRejected(t *testing.T) {
 	srv := newTestServer(t)
