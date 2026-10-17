@@ -299,10 +299,16 @@ func TestBrowserRegistryStartsRelaysAndReaps(t *testing.T) {
 	}
 	profile := bytes.Repeat([]byte("p"), 5000)
 	f.reg.onMessage(b, browserpod.Message{Type: browserpod.TypeProfile, Bytes: int64(len(profile))}, bytes.NewReader(profile))
+	// The pod's delete is held so the record can be seen in between.
+	gate := make(chan struct{})
+	f.prov.mu.Lock()
+	f.prov.stopGate = gate
+	f.prov.mu.Unlock()
 	f.reg.onMessage(b, browserpod.Message{Type: browserpod.TypeSaved}, nil)
 	if states := f.reg.states(); states["alice/vendor.example"] != string(browserStopped) {
 		t.Errorf("state while the pod is deleted = %v, want stopped", states)
 	}
+	close(gate)
 	if stopped := f.stopped(t); stopped != "alice/vendor.example" {
 		t.Errorf("pod stop = %q", stopped)
 	}

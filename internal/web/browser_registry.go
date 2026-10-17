@@ -54,6 +54,11 @@ const (
 	// browserIdleAfter is how long a browser with no subagent and no
 	// window stays up before core saves its profile and deletes it.
 	browserIdleAfter = 10 * time.Minute
+	// browserLifetime is how long a browser runs before it is saved and
+	// started afresh: Chromium's memory grows with use. A browser past
+	// it takes no new task and is saved as soon as its last task ends,
+	// never under a task or a window.
+	browserLifetime = 2 * time.Hour
 	// browserStartTimeout bounds a pod's start: the first use pulls
 	// the image.
 	browserStartTimeout = 5 * time.Minute
@@ -501,6 +506,10 @@ func (r *browserRegistry) Command(ctx context.Context, slug, session, group stri
 		r.mu.Unlock()
 		return browserpod.Message{}, errors.New("this task has ended")
 	}
+	if _, has := b.groups[group]; !has && r.expiredLocked(b) {
+		r.mu.Unlock()
+		return browserpod.Message{}, errBrowserLifetime
+	}
 	b.state = browserRunning
 	b.deadline = time.Time{}
 	b.lastUsed = r.clk.Now()
@@ -702,6 +711,10 @@ func (r *browserRegistry) Watch(ctx context.Context, slug, session, group string
 		r.mu.Unlock()
 		return nil, errors.New("this task has ended")
 	}
+	if _, has := b.groups[group]; !has && r.expiredLocked(b) {
+		r.mu.Unlock()
+		return nil, errBrowserLifetime
+	}
 	b.state = browserRunning
 	b.deadline = time.Time{}
 	b.lastUsed = r.clk.Now()
@@ -761,10 +774,18 @@ func (r *browserRegistry) closeWindow(b *browser, group string) {
 	link := b.link
 	r.mu.Unlock()
 	if link != nil {
+		snapshot := !ephemeralSession(b.session)
 		go func() {
 			sctx, cancel := sendCtx(browserSendTimeout)
 			defer cancel()
-			_ = link.send(sctx, browserpod.Message{Type: browserpod.TypeScreencast, Group: group, OK: false}, nil)
+			if err := link.send(sctx, browserpod.Message{Type: browserpod.TypeScreencast, Group: group, OK: false}, nil); err != nil {
+				return
+			}
+			if snapshot {
+				// A person may have signed in through the window: its
+				// cookies are worth keeping now, not in minutes.
+				_ = link.send(sctx, browserpod.Message{Type: browserpod.TypeSnapshot}, nil)
+			}
 		}()
 	}
 	if r.OnWindowsClosed != nil {
@@ -871,6 +892,23 @@ func (r *browserRegistry) onFrame(b *browser, msg browserpod.Message, body io.Re
 	}
 }
 
+// errBrowserLifetime refuses a new task on a browser past its lifetime.
+var errBrowserLifetime = errors.New("the browser has run for two hours and restarts when its current tasks end; try again shortly")
+
+// expiredLocked reports whether b has run past browserLifetime.
+func (r *browserRegistry) expiredLocked(b *browser) bool {
+	return r.clk.Now().Sub(b.startedAt) >= browserLifetime
+}
+
+// idleDeadlineLocked is when an idle b is saved: after browserIdleAfter,
+// or at once past its lifetime.
+func (r *browserRegistry) idleDeadlineLocked(b *browser) time.Time {
+	if r.expiredLocked(b) {
+		return r.clk.Now()
+	}
+	return r.clk.Now().Add(browserIdleAfter)
+}
+
 // oldestIdleLocked is the idle browser unused the longest, or nil.
 func (r *browserRegistry) oldestIdleLocked() *browser {
 	var oldest *browser
@@ -938,6 +976,20 @@ func (r *browserRegistry) attach(ctx context.Context, b *browser) error {
 	if err := link.send(sctx, hello, body); err != nil {
 		return err
 	}
+	if !ephemeralSession(b.session) {
+		// The cookies reported since that profile was saved, if any:
+		// the pod sets them once Chromium is up.
+		cookies, size, err := r.store.OpenBrowserCookies(b.slug, b.session)
+		if err != nil {
+			return fmt.Errorf("open cookies: %w", err)
+		}
+		if cookies != nil {
+			defer func() { _ = cookies.Close() }()
+			if err := link.send(sctx, browserpod.Message{Type: browserpod.TypeCookies, Bytes: size}, cookies); err != nil {
+				return err
+			}
+		}
+	}
 	return link.send(sctx, browserpod.Message{Type: browserpod.TypeStart}, nil)
 }
 
@@ -998,9 +1050,41 @@ func (r *browserRegistry) onMessage(b *browser, msg browserpod.Message, body io.
 		r.onProfile(b, msg, body)
 	case browserpod.TypeSaved:
 		r.finish(b)
-	case browserpod.TypeCookiesChanged:
-		// Periodic snapshots read this; nothing acts on it yet.
+	case browserpod.TypeCookies:
+		r.onCookies(b, msg, body)
 	}
+}
+
+// onCookies keeps a cookie snapshot the pod sent: the session's
+// cookies since its profile was last saved, for the next browser to
+// start from should this one not get to save. Only a site session's,
+// only while its browser runs, and only within bounds; anything else
+// is left for the caller to drain.
+func (r *browserRegistry) onCookies(b *browser, msg browserpod.Message, body io.Reader) {
+	r.mu.Lock()
+	running := (b.state == browserRunning || b.state == browserIdle) && !b.offboarded
+	r.mu.Unlock()
+	if body == nil || !running || ephemeralSession(b.session) || msg.Bytes <= 0 || msg.Bytes > browserpod.MaxCookiesBytes {
+		r.logf("browser %s: cookies of %d bytes refused (running: %v)", b.key(), msg.Bytes, running)
+		return
+	}
+	n, err := r.store.WriteBrowserCookies(b.slug, b.session, io.LimitReader(body, msg.Bytes))
+	if err != nil {
+		r.logf("browser %s: write cookies: %v", b.key(), err)
+		return
+	}
+	r.mu.Lock()
+	offboarded := b.offboarded
+	r.mu.Unlock()
+	if offboarded {
+		// The agent was offboarded while this was being written and
+		// its sessions deleted; this one must not come back.
+		if err := r.store.DeleteBrowserSession(b.slug, b.session); err != nil {
+			r.logf("browser %s: delete cookies of an offboarded agent: %v", b.key(), err)
+		}
+		return
+	}
+	r.logf("browser %s: cookies kept (%d bytes)", b.key(), n)
 }
 
 func (r *browserRegistry) onState(b *browser, msg browserpod.Message) {
@@ -1017,7 +1101,7 @@ func (r *browserRegistry) onState(b *browser, msg browserpod.Message) {
 			// and is reaped like any other.
 			if len(b.groups) == 0 {
 				b.state = browserIdle
-				b.deadline = r.clk.Now().Add(browserIdleAfter)
+				b.deadline = r.idleDeadlineLocked(b)
 			}
 			close(b.ready)
 		}
@@ -1138,7 +1222,7 @@ func (r *browserRegistry) ReleaseGroup(slug, session, group string) (structured.
 	idle := len(b.groups) == 0 && b.windows == 0 && b.state == browserRunning
 	if idle {
 		b.state = browserIdle
-		b.deadline = r.clk.Now().Add(browserIdleAfter)
+		b.deadline = r.idleDeadlineLocked(b)
 	}
 	r.mu.Unlock()
 	if link != nil {

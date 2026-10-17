@@ -67,7 +67,7 @@ func (r *Runtime) Run(ctx context.Context) error {
 		return err
 	}
 	defer func() { _ = conn.CloseNow() }()
-	s := &session{r: r, w: newWire(conn), log: r.Logger}
+	s := &session{r: r, w: newWire(conn), log: r.Logger, snapshotReq: make(chan struct{}, 1)}
 	return s.run(ctx)
 }
 
@@ -106,6 +106,11 @@ type session struct {
 	proc     browserProcess
 	b        *browser
 	stopping atomic.Bool
+
+	// cookies is the snapshot core sent before start, set once
+	// Chromium is up; snapshotReq wakes the snapshot loop early.
+	cookies     []byte
+	snapshotReq chan struct{}
 
 	workersMu sync.Mutex
 	workers   map[string]*serialQueue
@@ -147,6 +152,8 @@ func (s *session) run(ctx context.Context) error {
 			started = true
 		case TypeFile:
 			s.receiveFile(msg, body)
+		case TypeCookies:
+			s.receiveCookies(msg, body)
 		case TypeClose:
 			return nil
 		default:
@@ -177,6 +184,7 @@ func (s *session) run(ctx context.Context) error {
 		s.sendState(StateStopped, err.Error())
 		return fmt.Errorf("browserpod: set up chromium: %w", err)
 	}
+	s.restoreCookies(ctx)
 	detail := ""
 	if proc.SandboxOff() {
 		detail = "sandbox: off"
@@ -190,6 +198,9 @@ func (s *session) run(ctx context.Context) error {
 	s.workers = map[string]*serialQueue{}
 	s.input = newSerialQueue()
 	go s.input.run(workCtx)
+	if !s.ephemeral {
+		go s.snapshots(workCtx)
+	}
 
 	go func() {
 		select {
@@ -253,6 +264,11 @@ func (s *session) run(ctx context.Context) error {
 					}
 				}
 			})
+		case TypeSnapshot:
+			select {
+			case s.snapshotReq <- struct{}{}:
+			default:
+			}
 		case TypeSave:
 			s.stopping.Store(true)
 			cancelWork()
