@@ -1268,10 +1268,10 @@ func (s *Server) handleAgentpodSubagentCancel(w http.ResponseWriter, r *http.Req
 	_, _ = w.Write([]byte(s.SubagentService.SubagentCancel(slug, body.ID)))
 }
 
-// subagentResultMaxBody bounds a submit_result body on the wire. Wider
-// than structured.MaxSubmissionBytes so a submission just over the
-// limit is refused with the validator's own message, which says what
-// to do, rather than a bare 413.
+// subagentResultMaxBody bounds what core reads of a submit_result body.
+// Wider than structured.MaxSubmissionBytes, so every submission over
+// the limit, however large, is refused the same way: by the validator,
+// whose message says what to do, with the attempt counted.
 const subagentResultMaxBody = 1 << 20
 
 // handleAgentpodSubagentResult is one submit_result call from a
@@ -1279,6 +1279,10 @@ const subagentResultMaxBody = 1 << 20
 // wrote it, and the id names the task. Core validates against the
 // task's schema and answers with the tool result the subagent reads;
 // a refusal is a 200 with is_error set, so the model sees what to fix.
+// A body beyond subagentResultMaxBody is cut there and submitted as
+// read: it is over structured.MaxSubmissionBytes by then, so the
+// validator refuses it with its size message rather than the wire
+// answering 413, which the model would not know what to do with.
 func (s *Server) handleAgentpodSubagentResult(w http.ResponseWriter, r *http.Request) {
 	slug := r.PathValue("slug")
 	if !checkSlugHeader(w, r, slug) {
@@ -1290,8 +1294,11 @@ func (s *Server) handleAgentpodSubagentResult(w http.ResponseWriter, r *http.Req
 	}
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, subagentResultMaxBody))
 	if err != nil {
-		http.Error(w, "read: "+err.Error(), http.StatusRequestEntityTooLarge)
-		return
+		var tooLarge *http.MaxBytesError
+		if !errors.As(err, &tooLarge) {
+			http.Error(w, "read: "+err.Error(), http.StatusBadRequest)
+			return
+		}
 	}
 	text, isErr := s.SubagentService.SubmitResult(slug, r.PathValue("id"), body)
 	writeJSON(w, http.StatusOK, agentpod.SubagentResultResponse{Body: text, IsError: isErr})
