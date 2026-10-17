@@ -329,6 +329,8 @@ func TestRealChromium(t *testing.T) {
 	_ = core.conn.Close(websocket.StatusNormalClosure, "")
 	select {
 	case err := <-done:
+		// The pod's exit goes back for the helper's cleanup to see.
+		done <- err
 		if err != nil {
 			t.Fatalf("Run: %v", err)
 		}

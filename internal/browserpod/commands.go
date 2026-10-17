@@ -23,8 +23,10 @@ const (
 	navTimeout = 45 * time.Second
 	cmdTimeout = 20 * time.Second
 	// navStartWait is how long an action that may navigate waits for
-	// a navigation to begin.
-	navStartWait = 5 * time.Second
+	// a navigation to begin: Chromium reports one within tens of
+	// milliseconds of the action, and every click, key and keystroke
+	// that does not navigate pays this wait in full.
+	navStartWait = time.Second
 	// idleWait is how long a loaded page gets to go network-idle.
 	idleWait = 2 * time.Second
 	// maxWait bounds web_wait.
