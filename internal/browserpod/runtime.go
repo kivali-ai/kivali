@@ -2,6 +2,7 @@ package browserpod
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"sync/atomic"
 
@@ -114,7 +116,14 @@ type session struct {
 
 	workersMu sync.Mutex
 	workers   map[string]*serialQueue
-	input     *serialQueue
+	// input runs the window's input events; control the screencast
+	// switches.
+	input   *inputQueue
+	control *serialQueue
+
+	// files is, per group, the name each stored task file was sent
+	// under, by its cleaned name. The read loop alone uses it.
+	files map[string]map[string]string
 }
 
 func (s *session) send(msg Message, body io.Reader) error {
@@ -200,8 +209,19 @@ func (s *session) run(ctx context.Context) error {
 	workCtx, cancelWork := context.WithCancel(loopCtx)
 	defer cancelWork()
 	s.workers = map[string]*serialQueue{}
-	s.input = newSerialQueue()
-	go s.input.run(workCtx)
+	s.control = newSerialQueue()
+	go s.control.run(workCtx)
+	s.input = newInputQueue()
+	go s.input.run(workCtx, func(ev inputEvent) {
+		if t := s.b.tabByID(ev.tab); t != nil {
+			// The person's tab takes the front for their input, even
+			// from a command's tab.
+			s.b.bringToFront(workCtx, t)
+			if err := s.b.input(workCtx, t, ev.args); err != nil {
+				s.log.Printf("input %s: %v", ev.tab, err)
+			}
+		}
+	})
 	if !s.ephemeral {
 		go s.snapshots(workCtx)
 	}
@@ -255,7 +275,7 @@ func (s *session) run(ctx context.Context) error {
 			})
 		case TypeScreencast:
 			m := msg
-			s.input.push(func() {
+			s.control.push(func() {
 				if m.Tab == "" {
 					s.b.watchGroup(workCtx, m.Group, m.OK)
 					return
@@ -267,17 +287,9 @@ func (s *session) run(ctx context.Context) error {
 				}
 			})
 		case TypeInput:
-			m := msg
-			s.input.push(func() {
-				if t := s.b.tabByID(m.Tab); t != nil {
-					// The person's tab takes the front for their input,
-					// even from a command's tab.
-					s.b.bringToFront(workCtx, t)
-					if err := s.b.input(workCtx, t, m.Args); err != nil {
-						s.log.Printf("input %s: %v", m.Tab, err)
-					}
-				}
-			})
+			var in InputArgs
+			_ = json.Unmarshal(msg.Args, &in)
+			s.input.push(inputEvent{tab: msg.Tab, args: msg.Args, move: in.Kind == "mouse" && in.Action == "moved"})
 		case TypeSnapshot:
 			select {
 			case s.snapshotReq <- struct{}{}:
@@ -322,10 +334,19 @@ func (s *session) receiveProfile(msg Message, body io.Reader) error {
 	return os.MkdirAll(dir, 0o700)
 }
 
-// receiveFile stores a task file for a group's uploads.
+// receiveFile stores a task file for a group's uploads, under its
+// cleaned name. Core sends a file right before each upload of it, so
+// the latest file under a name is the one the upload that follows
+// means; a file whose name cleans to another file's replaces it, and
+// the log says so. A file over MaxDownloadBytes, core's own cap on an
+// upload, is refused, and no more than the announced size is read.
 func (s *session) receiveFile(msg Message, body io.Reader) {
 	if msg.Group == "" || msg.FileName == "" {
 		s.log.Printf("file without group or name; dropped")
+		return
+	}
+	if msg.Bytes > MaxDownloadBytes {
+		s.log.Printf("file %s: %d bytes refused; the limit is %d MB", msg.FileName, msg.Bytes, MaxDownloadBytes>>20)
 		return
 	}
 	dir := filepath.Join(s.r.Dir, "files", cleanFileName(msg.Group))
@@ -333,15 +354,29 @@ func (s *session) receiveFile(msg Message, body io.Reader) {
 		s.log.Printf("file %s: %v", msg.FileName, err)
 		return
 	}
-	path := filepath.Join(dir, cleanFileName(msg.FileName))
+	name := cleanFileName(msg.FileName)
+	if s.files == nil {
+		s.files = map[string]map[string]string{}
+	}
+	if s.files[msg.Group] == nil {
+		s.files[msg.Group] = map[string]string{}
+	}
+	if prev := s.files[msg.Group][name]; prev != "" && prev != msg.FileName {
+		s.log.Printf("file %q replaces %q: both are stored as %s", msg.FileName, prev, name)
+	}
+	s.files[msg.Group][name] = msg.FileName
+	path := filepath.Join(dir, name)
 	f, err := os.Create(path)
 	if err != nil {
 		s.log.Printf("file %s: %v", msg.FileName, err)
 		return
 	}
-	_, err = io.Copy(f, body)
+	n, err := io.Copy(f, io.LimitReader(body, msg.Bytes))
 	if cerr := f.Close(); err == nil {
 		err = cerr
+	}
+	if err == nil && n < msg.Bytes {
+		err = fmt.Errorf("%d of %d bytes arrived", n, msg.Bytes)
 	}
 	if err != nil {
 		s.log.Printf("file %s: %v", msg.FileName, err)
@@ -448,6 +483,70 @@ func (s *session) packTo(path string) error {
 		return err
 	}
 	return f.Close()
+}
+
+// maxQueuedInput bounds the input queue. A window sends mouse moves
+// faster than a pod under load dispatches them; beyond the bound the
+// oldest event is dropped, so the queue never grows without end.
+const maxQueuedInput = 256
+
+// inputQueue holds the window's input events and runs them one at a
+// time, in order. Consecutive mouse moves for one tab collapse into the
+// latest, since only the last position matters.
+type inputQueue struct {
+	mu    sync.Mutex
+	items []inputEvent
+	wake  chan struct{}
+}
+
+// inputEvent is one TypeInput for a tab. move marks a mouse move,
+// which the next move for the tab replaces while it is still the last
+// event queued.
+type inputEvent struct {
+	tab  string
+	args json.RawMessage
+	move bool
+}
+
+func newInputQueue() *inputQueue {
+	return &inputQueue{wake: make(chan struct{}, 1)}
+}
+
+func (q *inputQueue) push(ev inputEvent) {
+	q.mu.Lock()
+	n := len(q.items)
+	switch {
+	case ev.move && n > 0 && q.items[n-1].move && q.items[n-1].tab == ev.tab:
+		q.items[n-1] = ev
+	case n >= maxQueuedInput:
+		q.items = append(slices.Delete(q.items, 0, 1), ev)
+	default:
+		q.items = append(q.items, ev)
+	}
+	q.mu.Unlock()
+	select {
+	case q.wake <- struct{}{}:
+	default:
+	}
+}
+
+func (q *inputQueue) run(ctx context.Context, fn func(inputEvent)) {
+	for {
+		q.mu.Lock()
+		if len(q.items) == 0 {
+			q.mu.Unlock()
+			select {
+			case <-q.wake:
+				continue
+			case <-ctx.Done():
+				return
+			}
+		}
+		ev := q.items[0]
+		q.items = slices.Delete(q.items, 0, 1)
+		q.mu.Unlock()
+		fn(ev)
+	}
 }
 
 // serialQueue runs functions one at a time, in the order pushed, until

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -595,6 +596,68 @@ func TestLastTabClosedLeavesAFreshSpare(t *testing.T) {
 	}
 	if res := h.core.command("h", "", CommandTabs, TabsArgs{Action: TabsList}); res.Text != "* t2 https://b.test/ — Title of https://b.test/" {
 		t.Fatalf("h's tabs: %q", res.Text)
+	}
+}
+
+// TestInputQueueCoalescesMovesAndIsBounded: consecutive mouse moves
+// for a tab collapse into the latest, other events keep their order,
+// and past the bound the oldest events go.
+func TestInputQueueCoalescesMovesAndIsBounded(t *testing.T) {
+	q := newInputQueue()
+	move := func(tab string, x int) inputEvent {
+		raw, _ := json.Marshal(InputArgs{Kind: "mouse", Action: "moved", X: float64(x)})
+		return inputEvent{tab: tab, args: raw, move: true}
+	}
+	other := func(tab, text string) inputEvent {
+		raw, _ := json.Marshal(InputArgs{Kind: "key", Action: "down", Key: text})
+		return inputEvent{tab: tab, args: raw}
+	}
+	for x := 1; x <= 3; x++ {
+		q.push(move("t1", x))
+	}
+	if len(q.items) != 1 || !strings.Contains(string(q.items[0].args), `"x":3`) {
+		t.Fatalf("three moves queued as %d: %v", len(q.items), q.items)
+	}
+	q.push(other("t1", "a"))
+	q.push(move("t1", 4))
+	q.push(move("t2", 5))
+	q.push(move("t2", 6))
+	if len(q.items) != 4 || !q.items[3].move || q.items[3].tab != "t2" || !strings.Contains(string(q.items[3].args), `"x":6`) {
+		t.Fatalf("mixed events queued as %d: %v", len(q.items), q.items)
+	}
+	q.items = nil
+	for i := 1; i <= maxQueuedInput+40; i++ {
+		q.push(other("t1", fmt.Sprint(i)))
+	}
+	if len(q.items) != maxQueuedInput || !strings.Contains(string(q.items[0].args), `"key":"41"`) || !strings.Contains(string(q.items[maxQueuedInput-1].args), fmt.Sprintf(`"key":"%d"`, maxQueuedInput+40)) {
+		t.Fatalf("over the bound: %d items, first %s, last %s", len(q.items), q.items[0].args, q.items[len(q.items)-1].args)
+	}
+}
+
+// TestTaskFilesAreBoundedAndTheLatestWins: a task file over the upload
+// limit is refused, one that arrives short is dropped, and the latest
+// file under a cleaned name is the one kept, as core sends a file right
+// before each upload of it.
+func TestTaskFilesAreBoundedAndTheLatestWins(t *testing.T) {
+	s := &session{r: &Runtime{Dir: t.TempDir()}, log: log.New(io.Discard, "", 0)}
+	s.receiveFile(Message{Group: "g", FileName: "big.bin", Bytes: MaxDownloadBytes + 1}, strings.NewReader("x"))
+	s.receiveFile(Message{Group: "g", FileName: "short.bin", Bytes: 5}, strings.NewReader("abc"))
+	s.receiveFile(Message{Group: "g", FileName: "a b.pdf", Bytes: 3}, strings.NewReader("one"))
+	s.receiveFile(Message{Group: "g", FileName: "a-b.pdf", Bytes: 3}, strings.NewReader("two"))
+	dir := filepath.Join(s.r.Dir, "files", "g")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	if len(names) != 1 || names[0] != "a-b.pdf" {
+		t.Fatalf("stored files: %q", names)
+	}
+	if b, _ := os.ReadFile(filepath.Join(dir, "a-b.pdf")); string(b) != "two" {
+		t.Fatalf("a-b.pdf holds %q", b)
 	}
 }
 
