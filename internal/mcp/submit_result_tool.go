@@ -76,7 +76,7 @@ Fill result from what you verified, in the schema this tool's input shows (leave
   - alternative: not the thing asked for, but alternatives (up to 5) that fit the same schema; say how each differs.
   - blocked: you could not proceed; say why in blocked_on.
 
-files lists files this task produced, by absolute path under its own /files/subagents/<id>/ tree. Text longer than a field allows goes in such a file.
+files lists files this task made, by the absolute path you see them at: under /files/artifacts/private/ or /files/background/. Text longer than a field allows goes in such a file. A web task has no files of its own: its downloads, under /files/untrusted-downloads/, are the only paths it may name, and they are added to its result for it.
 
 An invalid call comes back with what to fix. The third invalid call ends the task with no answer. The first accepted result is final, so call this once, when you are done, then end your turn.`
 

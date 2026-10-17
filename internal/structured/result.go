@@ -546,7 +546,7 @@ func ToolInputSchema(s *Schema) json.RawMessage {
       }
     },
     "blocked_on": {"type": "string", "enum": [%s], "description": "with outcome blocked only: what stopped you"},
-    "files": {"type": "array", "maxItems": %d, "items": {"type": "string", "maxLength": %d}, "description": "files this task produced, by the absolute path you see them at (under /files/artifacts/private/ or /files/background/); names use letters, digits, dots, dashes and underscores"}
+    "files": {"type": "array", "maxItems": %d, "items": {"type": "string", "maxLength": %d}, "description": "files this task made, by the absolute path you see them at (under /files/artifacts/private/ or /files/background/; a web task's downloads under /files/untrusted-downloads/); names use letters, digits, dots, dashes and underscores"}
   },
   "required": ["outcome"]
 }`,
