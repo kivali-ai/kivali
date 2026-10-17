@@ -4,7 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
+	"strconv"
 	"strings"
+	"sync"
+	"time"
 	"unicode"
 	"unicode/utf8"
 )
@@ -56,12 +60,16 @@ type chord struct {
 	key  keyDef
 }
 
-// parseChord reads "Enter", "a", "Control+a", "Shift+Tab".
+// parseChord reads "Enter", "a", "Control+a", "Shift+Tab". A chord
+// that Chromium itself acts on (browserChord) is refused.
 func parseChord(s string) (chord, error) {
 	var parts []string
-	if strings.HasSuffix(s, "++") {
+	switch {
+	case s == "+":
+		parts = []string{"+"}
+	case strings.HasSuffix(s, "++"):
 		parts = append(strings.Split(strings.TrimSuffix(s, "++"), "+"), "+")
-	} else {
+	default:
 		parts = strings.Split(s, "+")
 	}
 	var c chord
@@ -77,6 +85,9 @@ func parseChord(s string) (chord, error) {
 	if !ok {
 		return chord{}, failf(CodeBadArgs, "%q is not a key web_press knows: name one (Enter, Tab, Escape, Backspace, Delete, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Home, End, PageUp, PageDown, Space) or give one character.", name)
 	}
+	if browserChord(c.mods, k.key) {
+		return chord{}, failf(CodeBadArgs, "%q is a shortcut the browser acts on itself (its tabs, windows and pages), so the page would never get it; it is refused.", s)
+	}
 	if c.mods&modShift != 0 && utf8.RuneCountInString(k.key) == 1 {
 		up := strings.ToUpper(k.key)
 		k.key, k.text = up, up
@@ -86,6 +97,36 @@ func parseChord(s string) (chord, error) {
 	}
 	c.key = k
 	return c, nil
+}
+
+// browserChord reports a key or chord Chromium acts on itself instead
+// of handing it to the page: closing, opening and switching tabs and
+// windows, its address bar, history, downloads, bookmarks, find bar,
+// print, save and open dialogs, view-source and developer tools, going
+// back and forward, and the function keys. web_press refuses one; the
+// browser window drops one.
+func browserChord(mods int, key string) bool {
+	k := strings.ToLower(key)
+	if len(k) >= 2 && len(k) <= 3 && k[0] == 'f' {
+		if n, err := strconv.Atoi(k[1:]); err == nil && n >= 1 && n <= 12 {
+			return true
+		}
+	}
+	switch {
+	case mods&(modCtrl|modMeta) != 0:
+		switch k {
+		case "w", "t", "n", "q", "tab", "pageup", "pagedown",
+			"l", "h", "j", "d", "o", "s", "p", "u", "f", "g", "e", "k", "b", "r", "i", "delete",
+			"1", "2", "3", "4", "5", "6", "7", "8", "9", "0":
+			return true
+		}
+	case mods&modAlt != 0:
+		switch k {
+		case "arrowleft", "arrowright", "home", "d", "e", "f":
+			return true
+		}
+	}
+	return false
 }
 
 // lookupKey finds a named key (in any case) or describes a single
@@ -146,6 +187,67 @@ func (b *browser) pressKey(ctx context.Context, t *tab, c chord) error {
 	return err
 }
 
+// buttonBits is the buttons field of Input.dispatchMouseEvent for each
+// button held.
+var buttonBits = map[string]int{"left": 1, "right": 2, "middle": 4}
+
+// clickTrack is the last press on a tab from the browser window. A
+// press of the same button soon after it, at the same place, counts as
+// its double or triple click: the window's events carry no count of
+// their own, and the page sees one only through clickCount.
+type clickTrack struct {
+	button string
+	x, y   float64
+	at     time.Time
+	count  int
+}
+
+// clicks holds the last press per tab, pruned of closed tabs as it is
+// used.
+var clicks = struct {
+	sync.Mutex
+	last map[*tab]*clickTrack
+}{last: map[*tab]*clickTrack{}}
+
+const (
+	// doubleClickWithin and doubleClickSlop bound the time and the
+	// distance between two presses that make one double click.
+	doubleClickWithin = 500 * time.Millisecond
+	doubleClickSlop   = 5.0
+)
+
+// clickCount is the clickCount of a press from the window, or of the
+// release that ends it.
+func (b *browser) clickCount(t *tab, action, button string, x, y float64) int {
+	clicks.Lock()
+	defer clicks.Unlock()
+	for k := range clicks.last {
+		k.mu.Lock()
+		closed := k.closed
+		k.mu.Unlock()
+		if closed {
+			delete(clicks.last, k)
+		}
+	}
+	c := clicks.last[t]
+	if action == "released" {
+		if c != nil && c.button == button {
+			return c.count
+		}
+		return 1
+	}
+	now := b.clock.Now()
+	if c != nil && c.button == button && c.count < 3 && now.Sub(c.at) <= doubleClickWithin &&
+		math.Abs(x-c.x) <= doubleClickSlop && math.Abs(y-c.y) <= doubleClickSlop {
+		c.count++
+	} else {
+		c = &clickTrack{button: button, count: 1}
+	}
+	c.x, c.y, c.at = x, y, now
+	clicks.last[t] = c
+	return c.count
+}
+
 // input relays one event from the browser window to a tab.
 func (b *browser) input(ctx context.Context, t *tab, raw json.RawMessage) error {
 	var in InputArgs
@@ -166,13 +268,30 @@ func (b *browser) input(ctx context.Context, t *tab, raw json.RawMessage) error 
 				button = "left"
 			}
 		}
-		ev := map[string]any{"type": typ, "x": in.X, "y": in.Y, "button": button, "modifiers": in.Modifiers, "clickCount": 1}
-		if typ == "mouseWheel" {
+		ev := map[string]any{"type": typ, "x": in.X, "y": in.Y, "button": button, "modifiers": in.Modifiers}
+		switch typ {
+		case "mousePressed":
+			ev["clickCount"] = b.clickCount(t, in.Action, button, in.X, in.Y)
+			ev["buttons"] = buttonBits[button]
+		case "mouseReleased":
+			ev["clickCount"] = b.clickCount(t, in.Action, button, in.X, in.Y)
+		case "mouseMoved":
+			// The window names the button a move drags with; the page
+			// sees it held, as a drag needs.
+			if in.Button != "" {
+				ev["buttons"] = buttonBits[in.Button]
+			}
+		case "mouseWheel":
 			ev["deltaX"], ev["deltaY"] = in.DeltaX, in.DeltaY
 		}
 		_, err := b.conn.Call(ctx, t.session, "Input.dispatchMouseEvent", ev)
 		return err
 	case "key":
+		if browserChord(in.Modifiers, in.Key) {
+			// A person's habit (Ctrl+W, F5) would act on the task's
+			// browser, not the page: dropped, down and up alike.
+			return nil
+		}
 		var typ string
 		switch in.Action {
 		case "down":

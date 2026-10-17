@@ -3,6 +3,7 @@ package browserpod
 import (
 	"archive/tar"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/klauspost/compress/zstd"
 
@@ -354,6 +356,10 @@ func TestParseChord(t *testing.T) {
 		{"7", 0, keyDef{"7", "Digit7", '7', "7"}},
 		{"Space", 0, keyDef{" ", "Space", 32, " "}},
 		{"Control++", modCtrl, keyDef{"+", "", 0, ""}},
+		{"+", 0, keyDef{"+", "", 0, "+"}},
+		{"Shift++", modShift, keyDef{"+", "", 0, "+"}},
+		{"Shift+Tab", modShift, keyDef{"Tab", "Tab", 9, ""}},
+		{"Control+Enter", modCtrl, keyDef{"Enter", "Enter", 13, ""}},
 	}
 	for _, c := range cases {
 		got, err := parseChord(c.in)
@@ -365,10 +371,105 @@ func TestParseChord(t *testing.T) {
 			t.Errorf("%q: got %+v, want mods %d key %+v", c.in, got, c.mods, c.key)
 		}
 	}
-	for _, bad := range []string{"Hyper+a", "Enterr", "F13"} {
+	for _, bad := range []string{"Hyper+a", "Enterr", "F13", ""} {
 		if _, err := parseChord(bad); err == nil {
 			t.Errorf("%q parsed", bad)
 		}
+	}
+	// Chords the browser acts on itself are refused, and say so.
+	for _, chord := range []string{"Control+w", "Meta+W", "Control+Shift+t", "Control+Tab", "Control+l", "Control+1", "Alt+ArrowLeft", "Control+p"} {
+		_, err := parseChord(chord)
+		if err == nil || !strings.Contains(err.Error(), "shortcut the browser acts on") {
+			t.Errorf("%q: %v", chord, err)
+		}
+	}
+}
+
+func TestBrowserChord(t *testing.T) {
+	for key, want := range map[string]bool{"F5": true, "f12": true, "F1": true, "F13": false, "Tab": false, "a": false, "F": false} {
+		if got := browserChord(0, key); got != want {
+			t.Errorf("browserChord(0, %q) = %v", key, got)
+		}
+	}
+	for key, want := range map[string]bool{"w": true, "a": false, "c": false, "v": false, "z": false, "Enter": false, "Backspace": false, "Home": false, "ArrowLeft": false, "r": true} {
+		if got := browserChord(modCtrl, key); got != want {
+			t.Errorf("browserChord(ctrl, %q) = %v", key, got)
+		}
+	}
+	if browserChord(modShift, "Tab") || !browserChord(modCtrl|modShift, "Tab") || !browserChord(modAlt, "ArrowRight") || browserChord(modAlt, "a") {
+		t.Error("Shift+Tab, Control+Shift+Tab, Alt+ArrowRight, Alt+a")
+	}
+}
+
+// windowInput sends one browser-window event to a tab of a test
+// browser and returns what Chromium was asked to dispatch.
+func windowInput(t *testing.T, b *browser, tb *tab, in InputArgs) {
+	t.Helper()
+	raw, _ := json.Marshal(in)
+	if err := b.input(context.Background(), tb, raw); err != nil {
+		t.Fatalf("input %+v: %v", in, err)
+	}
+}
+
+func TestWindowDropsBrowserChords(t *testing.T) {
+	b, _ := testBrowser(t)
+	cdp := b.conn.(*fakeCDP)
+	tb := &tab{id: "t1", group: "g", session: "S1", changed: make(chan struct{})}
+	windowInput(t, b, tb, InputArgs{Kind: "key", Action: "down", Key: "w", Code: "KeyW", Modifiers: modCtrl})
+	windowInput(t, b, tb, InputArgs{Kind: "key", Action: "up", Key: "w", Code: "KeyW", Modifiers: modCtrl})
+	windowInput(t, b, tb, InputArgs{Kind: "key", Action: "down", Key: "F5", Code: "F5"})
+	if calls := cdp.called("Input.dispatchKeyEvent"); len(calls) != 0 {
+		t.Fatalf("browser chords reached the page: %q", calls)
+	}
+	windowInput(t, b, tb, InputArgs{Kind: "key", Action: "down", Key: "a", Code: "KeyA", Text: "a"})
+	windowInput(t, b, tb, InputArgs{Kind: "key", Action: "down", Key: "v", Code: "KeyV", Modifiers: modCtrl})
+	if calls := cdp.called("Input.dispatchKeyEvent"); len(calls) != 2 {
+		t.Fatalf("ordinary keys: %q", calls)
+	}
+}
+
+func TestWindowClicksCountAndDrag(t *testing.T) {
+	b, _ := testBrowser(t)
+	cdp := b.conn.(*fakeCDP)
+	clk := b.clock.(*clock.Fake)
+	tb := &tab{id: "t1", group: "g", session: "S1", changed: make(chan struct{})}
+	mouse := func(action, button string, x, y float64) {
+		windowInput(t, b, tb, InputArgs{Kind: "mouse", Action: action, Button: button, X: x, Y: y})
+	}
+	// Two presses close together make a double click; the release
+	// carries its press's count.
+	mouse("pressed", "left", 10, 10)
+	mouse("released", "left", 10, 10)
+	clk.Advance(120 * time.Millisecond)
+	mouse("pressed", "left", 12, 11)
+	mouse("released", "left", 12, 11)
+	// A later press starts over; another button does too.
+	clk.Advance(time.Second)
+	mouse("pressed", "left", 12, 11)
+	mouse("pressed", "right", 12, 11)
+	mouse("released", "right", 12, 11)
+	// A drag: moves name the held button, a plain move holds none.
+	mouse("moved", "left", 20, 20)
+	mouse("moved", "", 30, 30)
+	calls := cdp.called("Input.dispatchMouseEvent")
+	want := []string{
+		`"buttons":1,"clickCount":1,`, `"clickCount":1,`,
+		`"buttons":1,"clickCount":2,`, `"clickCount":2,`,
+		`"buttons":1,"clickCount":1,`,
+		`"buttons":2,"clickCount":1,`, `"clickCount":1,`,
+		`"button":"left","buttons":1,"modifiers":0,"type":"mouseMoved"`,
+		`"button":"none","modifiers":0,"type":"mouseMoved"`,
+	}
+	if len(calls) != len(want) {
+		t.Fatalf("%d events dispatched: %q", len(calls), calls)
+	}
+	for i, w := range want {
+		if !strings.Contains(calls[i], w) {
+			t.Errorf("event %d: %s\nwant it to contain %s", i, calls[i], w)
+		}
+	}
+	if strings.Contains(calls[1], `"buttons"`) || strings.Contains(calls[8], `"buttons"`) {
+		t.Errorf("a release or a plain move reports buttons held: %q, %q", calls[1], calls[8])
 	}
 }
 

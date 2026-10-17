@@ -115,7 +115,7 @@ func WebTools(backend WebBackend, session string, canWait bool) []Tool {
   },
   "required": ["ref", "value"]
 }`, false),
-		webTool(backend, agentpod.WebPressTool, `Press a key in the current tab: Enter, Tab, Escape, Backspace, Delete, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Home, End, PageUp, PageDown, Space, a single character, or a chord such as Control+a. Waits for a navigation it starts.`, `{
+		webTool(backend, agentpod.WebPressTool, `Press a key in the current tab: Enter, Tab, Escape, Backspace, Delete, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Home, End, PageUp, PageDown, Space, a single character (+ included), or a chord such as Control+a. A shortcut the browser acts on itself (Control+w, Control+t, Control+l, F5 and the like) is refused: the page would never get it. Waits for a navigation it starts.`, `{
   "type": "object",
   "properties": {"key": {"type": "string", "description": "the key or chord"}},
   "required": ["key"]
