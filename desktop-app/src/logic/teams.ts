@@ -226,36 +226,62 @@ export function statusRow(
   }
 }
 
-/** The Overview tab's update row, or null when there's no version to talk about. */
+/** The Overview tab's update row, or null when there's no version to talk about. `failed` is
+ *  why the last update didn't finish, while that update is still on offer. */
 export function updateRow(
   team: Team,
   now: Date,
-): { title: string; sub: string | null; highlight: boolean; update: boolean; notes: string | null } | null {
+): {
+  title: string;
+  sub: string | null;
+  highlight: boolean;
+  update: boolean;
+  notes: string | null;
+  failed: { title: string; body: string } | null;
+} | null {
   const u = team.update;
   const current = (u?.current ?? team.version)?.replace(/^v/, "") ?? null;
   if (!current && !u) return null;
   const title = current ? `Kivali ${current}` : "Kivali";
   const latest = u?.latest?.replace(/^v/, "") ?? null;
   const checked = u?.checked_at ? ago(u.checked_at, now) : null;
+  const plain = { failed: null };
   switch (u?.state) {
-    case "available":
+    case "available": {
+      const op = team.op;
+      const error = op && op.kind === "update" && !op.running ? op.error : null;
+      if (error) {
+        return {
+          title,
+          sub: `Couldn’t update to ${latest}`,
+          highlight: true,
+          update: true,
+          notes: u.notes_url,
+          failed: {
+            title: `${team.name} couldn’t update to ${latest}`,
+            body: `It’s still on ${current ?? "the version it had"}. The update stopped: ${error}`,
+          },
+        };
+      }
       return {
         title,
         sub: [`${latest} is available`, u.summary].filter(Boolean).join(" · "),
         highlight: true,
         update: true,
         notes: u.notes_url,
+        ...plain,
       };
+    }
     case "desktop_first":
-      return { title, sub: `${latest} is available · update this app first, in General`, highlight: true, update: false, notes: u.notes_url };
+      return { title, sub: `${latest} is available · update this app first, in General`, highlight: true, update: false, notes: u.notes_url, ...plain };
     case "manual_steps":
-      return { title, sub: `${latest} is available · it needs a few steps by hand`, highlight: true, update: false, notes: u.notes_url };
+      return { title, sub: `${latest} is available · it needs a few steps by hand`, highlight: true, update: false, notes: u.notes_url, ...plain };
     case "up_to_date":
-      return { title, sub: checked ? `Up to date · checked ${checked}` : "Up to date", highlight: false, update: false, notes: null };
+      return { title, sub: checked ? `Up to date · checked ${checked}` : "Up to date", highlight: false, update: false, notes: null, ...plain };
     case "failed":
-      return { title, sub: "Couldn’t check for updates", highlight: false, update: false, notes: null };
+      return { title, sub: "Couldn’t check for updates", highlight: false, update: false, notes: null, ...plain };
     default:
-      return { title, sub: null, highlight: false, update: false, notes: null };
+      return { title, sub: null, highlight: false, update: false, notes: null, ...plain };
   }
 }
 

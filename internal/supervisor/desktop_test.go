@@ -2,6 +2,7 @@ package supervisor
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -190,6 +191,47 @@ func TestRPCEventsCarryTheStage(t *testing.T) {
 		t.Fatal("no log lines")
 	}
 	if !slices.Contains(served.get(), "[pausing] clean shutdown requested through the guest agent") {
+		t.Fatalf("serve log %q", served.get())
+	}
+}
+
+// A failed operation's error reaches the serve log, with its stage, as
+// well as the client's final event.
+func TestRPCFailedOperationIsLogged(t *testing.T) {
+	h := newHarness(t)
+	h.mustUp(UpOptions{Install: owner})
+	served := &serveLog{}
+	h.sup.o.Logf = served.logf
+	feed := writeReleaseWith(t, filepath.Join(t.TempDir(), "rel"), "0.16.0", "0.16.0", "v0.16.0", true, repoKivali, repoEgress, repoShell)
+	srv := httptest.NewServer(NewRPCServer(h.sup).Handler())
+	defer srv.Close()
+	body, _ := json.Marshal(UpgradeOptions{Feed: feed})
+	resp, err := http.Post(srv.URL+"/v1/upgrade", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	sc := bufio.NewScanner(resp.Body)
+	var final Event
+	for sc.Scan() {
+		if err := json.Unmarshal(sc.Bytes(), &final); err != nil {
+			t.Fatal(err)
+		}
+		if final.Done {
+			break
+		}
+	}
+	want := "image docker.io/library/kivali-browser:v0.16.0 is missing"
+	if !final.Done || !strings.Contains(final.Error, want) {
+		t.Fatalf("final event %+v", final)
+	}
+	logged := false
+	for _, l := range served.get() {
+		if strings.HasPrefix(l, "[downloading] upgrade failed: ") && strings.Contains(l, want) {
+			logged = true
+		}
+	}
+	if !logged {
 		t.Fatalf("serve log %q", served.get())
 	}
 }

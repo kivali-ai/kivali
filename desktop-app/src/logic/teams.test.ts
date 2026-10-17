@@ -157,8 +157,28 @@ describe("Settings rows", () => {
       highlight: true,
       update: true,
       notes: "https://n",
+      failed: null,
     });
     expect(updateRow(team({ version: null, update: null }), now)).toBeNull();
+  });
+  it("update row after a failed update", () => {
+    const update = { state: "available" as const, current: "1.0.1", latest: "1.1.1", notes_url: null, summary: null, checked_at: null, takes: "about 3 minutes" };
+    const error = "image docker.io/library/kivali-browser:v1.1.1 is missing";
+    const t = team({ name: "Home", version: "1.0.1", update, op: op({ kind: "update", running: false, error }) });
+    expect(updateRow(t, now)).toEqual({
+      title: "Kivali 1.0.1",
+      sub: "Couldn’t update to 1.1.1",
+      highlight: true,
+      update: true,
+      notes: null,
+      failed: { title: "Home couldn’t update to 1.1.1", body: `It’s still on 1.0.1. The update stopped: ${error}` },
+    });
+    // Only a finished update's error counts: one still running, or
+    // another operation's, is no update failure.
+    expect(updateRow(team({ update, op: op({ kind: "update", running: true, error }) }), now)?.failed).toBeNull();
+    expect(updateRow(team({ update, op: op({ kind: "resume", running: false, error }) }), now)?.failed).toBeNull();
+    // Once the update is no longer on offer, the failure is not shown.
+    expect(updateRow(team({ update: { ...update, state: "up_to_date" }, op: op({ kind: "update", running: false, error }) }), now)?.failed).toBeNull();
   });
   it("memory bar", () => {
     const a = team({ id: "a", name: "Plainsong" });

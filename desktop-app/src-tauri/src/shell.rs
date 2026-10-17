@@ -90,9 +90,15 @@ impl TeamOp {
 
     /// Takes a line or a progress report: a stage the report names
     /// becomes the current one (with no progress yet), its progress the
-    /// stage's, and its line, if it has one, the newest.
+    /// stage's, and its line, if it has one, the newest. The bar never
+    /// goes back to a stage the operation has left: one that runs `up`
+    /// twice (setup boots the machine, then installs on it once the
+    /// wizard is done) hears an earlier stage again, which keeps its line
+    /// but not the bar. An earlier stage not yet seen still counts (a
+    /// resume says `starting` before it moves the data disk).
     fn progress(&mut self, p: &Progress) {
-        let index = view::stage_index(self.kind, p.stage.as_deref());
+        let index = view::stage_index(self.kind, p.stage.as_deref())
+            .filter(|&i| self.stage.is_none_or(|cur| i >= cur || !self.seen.get(i).copied().unwrap_or(false)));
         if let Some(i) = index {
             if self.stage != Some(i) {
                 self.stage = Some(i);
@@ -1437,6 +1443,7 @@ pub fn update_team(app: &AppHandle, id: &str) -> Result<(), String> {
                 Ok(())
             }
             Err(e) => {
+                eprintln!("kivali: {id}: update failed: {e}");
                 let _ = rt.refresh_status();
                 if rt.is_running() {
                     notify_background(
@@ -2319,13 +2326,31 @@ mod tests {
         let v = op.view();
         assert_eq!(v.stage.as_deref(), Some("Starting up"));
         assert_eq!(v.stage_index, 1);
-        assert_eq!(v.stages, ["Making room", "Starting up", "Setting up your team", "Ready"]);
+        assert_eq!(v.stages, ["Preparing storage", "Starting up", "Setting up your team", "Ready"]);
         assert_eq!(v.lines.len(), 3);
         assert!(v.stage_progress.is_none());
         op.running = false;
         op.finished = true;
         let v = op.view();
         assert_eq!((v.stage.as_deref(), v.percent), (Some("Ready"), 100));
+
+        // Setup's create runs `up` twice: the machine boots through
+        // setting-up while the wizard is open, then the install starts
+        // at `starting` again. The bar stays on the later stage, and
+        // the earlier stage's line is kept.
+        let mut op = TeamOp::new(OpKind::Create);
+        op.progress(&line("creating the data disk", Some("making-room")));
+        op.progress(&line("VM started", Some("starting")));
+        op.progress(&line("the VM is ready; Kivali installs once its owner is known", Some("setting-up")));
+        let at = op.view().percent;
+        op.progress(&line("the VM is already running", Some("starting")));
+        let v = op.view();
+        assert_eq!((v.stage.as_deref(), v.stage_index), (Some("Setting up your team"), 2));
+        assert!(v.percent >= at, "the bar went back from {at}% to {}%", v.percent);
+        assert_eq!(v.lines.last().map(String::as_str), Some("the VM is already running"));
+        // A measure reported for an earlier stage does not move the bar either.
+        op.progress(&Progress { label: String::new(), stage: Some("making-room".into()), progress: Some(StageProgress { done: 1, total: 10 }) });
+        assert!(op.view().stage_progress.is_none());
 
         // A plain resume shows the stages it goes through, as before.
         let mut op = TeamOp::new(OpKind::Resume);

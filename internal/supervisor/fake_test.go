@@ -964,8 +964,9 @@ func writeTarTo(w io.Writer, files map[string]string) error {
 	return tw.Close()
 }
 
-// writeRelease writes release.json, a chart and an image bundle with
-// the three Kivali images at tag into dir and returns the feed path.
+// writeRelease writes release.json, a chart with a browser section and
+// an image bundle with the four Kivali images at tag into dir and
+// returns the feed path.
 func writeRelease(t *testing.T, dir, version, tag string) string {
 	t.Helper()
 	return writeReleaseChart(t, dir, version, version, tag)
@@ -975,17 +976,35 @@ func writeRelease(t *testing.T, dir, version, tag string) string {
 // version may differ from release.json's.
 func writeReleaseChart(t *testing.T, dir, version, chartVersion, tag string) string {
 	t.Helper()
+	return writeReleaseWith(t, dir, version, chartVersion, tag, true, repoKivali, repoEgress, repoShell, repoBrowser)
+}
+
+// writeReleaseWith is writeReleaseChart with the chart's browser
+// section present or not, and the bundle holding repos at tag.
+func writeReleaseWith(t *testing.T, dir, version, chartVersion, tag string, browser bool, repos ...string) string {
+	t.Helper()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	values := "image:\n  tag: \"\"\n"
+	if browser {
+		values += "browser:\n  image:\n    tag: \"\"\n"
+	}
 	var chart bytes.Buffer
 	z := gzip.NewWriter(&chart)
-	if err := writeTarTo(z, map[string]string{"kivali/Chart.yaml": "apiVersion: v2\nname: kivali\nversion: " + chartVersion + "\nappVersion: v" + chartVersion + "\n"}); err != nil {
+	if err := writeTarTo(z, map[string]string{
+		"kivali/Chart.yaml":  "apiVersion: v2\nname: kivali\nversion: " + chartVersion + "\nappVersion: v" + chartVersion + "\n",
+		"kivali/values.yaml": values,
+	}); err != nil {
 		t.Fatal(err)
 	}
 	_ = z.Close()
+	tags := make([]string, len(repos))
+	for i, r := range repos {
+		tags[i] = fmt.Sprintf("%q", r+":"+tag)
+	}
 	var bundle bytes.Buffer
-	if err := writeTarTo(&bundle, map[string]string{"manifest.json": fmt.Sprintf(`[{"RepoTags":["kivali:%[1]s","kivali-egress-proxy:%[1]s","kivali-agent-shell:%[1]s","kivali-browser:%[1]s"]}]`, tag)}); err != nil {
+	if err := writeTarTo(&bundle, map[string]string{"manifest.json": `[{"RepoTags":[` + strings.Join(tags, ",") + `]}]`}); err != nil {
 		t.Fatal(err)
 	}
 	sum := func(b []byte) string { s := sha256.Sum256(b); return hex.EncodeToString(s[:]) }

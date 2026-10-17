@@ -327,12 +327,15 @@ function overview(ctx: Ctx, t: Team): Child[] {
                 "span",
                 { class: "row-actions" },
                 u.notes ? button("What’s new", { variant: "ghost", size: "sm", id: "whats-new", onclick: () => void ctx.act("open_external", { url: u.notes }) }) : null,
-                u.update ? button("Update…", { variant: "primary", size: "sm", id: "update", onclick: () => openDialog(ctx, "update", t.id) }) : null,
+                u.update
+                  ? button(u.failed ? "Try again…" : "Update…", { variant: "primary", size: "sm", id: "update", onclick: () => openDialog(ctx, "update", t.id) })
+                  : null,
               )
             : null,
       })
     : null;
   return [
+    u?.failed ? banner("danger", u.failed.title, u.failed.body) : null,
     h("section", { class: "stack-8" }, monoLabel("Status"), card(statusLine, updateLine)),
     card(
       row({

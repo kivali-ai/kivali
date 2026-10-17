@@ -110,7 +110,15 @@ func (r *RPCServer) Handler() http.Handler {
 				ctx = req.Context()
 			}
 			ctx, stage := withStage(ctx)
-			stream(w, stage, func(logf Logf) (any, error) { return fn(ctx, b, logf) })
+			stream(w, stage, func(logf Logf) (any, error) {
+				res, err := fn(ctx, b, logf)
+				if err != nil {
+					// The serve log keeps why an operation failed, not
+					// only the client that asked for it.
+					r.sup.tee(ctx, nil)("%s failed: %v", name, err)
+				}
+				return res, err
+			})
 		})
 	}
 	op := func(name string, body func() any, fn func(ctx context.Context, body any, logf Logf) (any, error)) {

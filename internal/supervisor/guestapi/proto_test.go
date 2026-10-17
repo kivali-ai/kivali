@@ -131,7 +131,25 @@ func TestChartInfo(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if m.Name != "kivali" || m.Version != "0.15.1" || m.AppVersion != "v0.15.1" {
+	if m.Name != "kivali" || m.Version != "0.15.1" || m.AppVersion != "v0.15.1" || m.Browser {
 		t.Fatalf("meta %+v", m)
+	}
+	// A top-level browser section in values.yaml marks a chart that
+	// runs browser pods; one nested elsewhere, or in a subchart, does not.
+	tgz = gz(t, writeTar(t, map[string]string{
+		"kivali/Chart.yaml":             "apiVersion: v2\nname: kivali\nversion: 1.2.0\n",
+		"kivali/values.yaml":            "image:\n  tag: \"\"\nbrowser:\n  image:\n    tag: \"\"\n",
+		"kivali/charts/sub/values.yaml": "other: 1\n",
+	}))
+	if m, err = ChartInfo(bytes.NewReader(tgz)); err != nil || !m.Browser {
+		t.Fatalf("browser chart: %+v, %v", m, err)
+	}
+	tgz = gz(t, writeTar(t, map[string]string{
+		"kivali/Chart.yaml":             "apiVersion: v2\nname: kivali\nversion: 1.1.1\n",
+		"kivali/values.yaml":            "image:\n  browser: x\n",
+		"kivali/charts/sub/values.yaml": "browser: {}\n",
+	}))
+	if m, err = ChartInfo(bytes.NewReader(tgz)); err != nil || m.Browser {
+		t.Fatalf("chart without browser pods: %+v, %v", m, err)
 	}
 }
