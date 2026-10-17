@@ -116,12 +116,13 @@ The server refuses to start with `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` or 
 
 ## Network policy and egress
 
-The chart installs two NetworkPolicies, on by default (`networkPolicy.enabled`):
+The chart installs three NetworkPolicies, on by default (`networkPolicy.enabled`):
 
 - **Agent pods** may reach only the egress proxy (which runs beside the server) and the cluster DNS. All of an agent's outbound traffic goes through the proxy, which allows only the hosts on your team's list in **Org**, **Network**. A new team's list allows Anthropic, the Amazon Bedrock, Google Vertex AI and Microsoft Foundry endpoints and their token services, and common package and code hosts. Add any others your agents need there.
+- **Browser pods**, which run a web subagent's browser, reach the public internet directly and the cluster DNS, and nothing else: not the pod network, the node, cloud metadata or any private range (`networkPolicy.browserEgress.except`). A browser is not held to your team's network list: a web subagent can open any public site, and what it types or uploads can reach any host.
 - **The server's HTTP port** accepts traffic from outside the pod network only, so no pod can call the server's API.
 
-The second policy also blocks in-cluster front ends, since they are pods too: k3s's Traefik ingress, cloudflared, the Tailscale operator. Admit yours with `networkPolicy.serverIngress.extraFrom`:
+The third policy also blocks in-cluster front ends, since they are pods too: k3s's Traefik ingress, cloudflared, the Tailscale operator. Admit yours with `networkPolicy.serverIngress.extraFrom`:
 
 ```yaml
 networkPolicy:

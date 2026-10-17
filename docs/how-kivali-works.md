@@ -135,7 +135,7 @@ Agents learn. Each agent keeps its own memory and habits, and folds what it lear
 
 Each agent runs in its own sandbox: a container with a shell (bash, git, Python, common command-line tools) and its own storage. Its shell commands and file tools run there, apart from Kivali itself and from other agents.
 
-Outbound network access from an agent's sandbox goes through a proxy that allows only the hosts on your team's list. A fresh team allows the hosts Claude needs for each way of signing in (Anthropic, Amazon Bedrock, Google Vertex AI and Microsoft Foundry) and common package and code hosts (Debian, PyPI, GitHub, the Go module proxy). Edit the list in **Org**, **Network**. A request to any other host is refused. See [Security and privacy](security-and-privacy.md).
+Outbound network access from an agent's sandbox goes through a proxy that allows only the hosts on your team's list. A fresh team allows the hosts Claude needs for each way of signing in (Anthropic, Amazon Bedrock, Google Vertex AI and Microsoft Foundry) and common package and code hosts (Debian, PyPI, GitHub, the Go module proxy). Edit the list in **Org**, **Network**. A request to any other host is refused. A web subagent's browser is the exception: it reaches any public site directly and is not held to the list, though it cannot reach Kivali itself, other agents or any private network. See [Security and privacy](security-and-privacy.md).
 
 ## Glossary
 

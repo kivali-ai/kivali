@@ -31,11 +31,13 @@ Each agent runs in its own sandbox: its own pod with its own storage, separate f
 - **Its shell and file tools** run in a dedicated container. They see the agent's workspace, the project files, skills, its own past chats, and everything the team has published, and nothing of the server or of other agents' workspaces. Project files, skills and published files are read-only there; only Kivali itself publishes an agent's files, when the agent asks.
 - **No way in.** An agent's pod runs no service other pods or computers can connect to, and has no access to the Kubernetes API. It reaches Kivali's server only through a private socket, and every action it takes goes through the server's checks.
 - **Network.** An agent's pod can reach only the egress proxy and the cluster's DNS. The server's web port refuses connections from any pod.
-- **Subagents** run inside their agent's sandbox, under the same limits.
+- **Subagents** run inside their agent's sandbox, under the same limits. A web subagent's browser runs in a pod of its own, described under Network access.
 
 ## Network access
 
 Every outbound connection from an agent's sandbox goes through a proxy that allows only the hosts on your team's list. Edit it in **Org**, **Network**; changes apply at once.
+
+A web subagent's browser is the exception. It runs in its own pod, which reaches any public site directly and is not held to the list: a web subagent can open any public page, and what it types into a page or uploads to one can reach any host. The browser pod cannot reach the server, other pods, the node or any private network. The sign-ins of a site session (the saved browser profile and its cookies) are stored on the team's data volume, where only the server reads them; they are deleted when the agent is offboarded or the session is reset, and are not included in backups.
 
 A new team allows:
 

@@ -35,10 +35,13 @@ keep`. `make helm-lint` and `make helm-template` check the chart and
 render its examples offline; the chart itself is documented in
 [charts/kivali/README.md](../../charts/kivali/README.md).
 
-**NetworkPolicy.** The chart ships three policies (agent pods and
-browser pods may reach only the egress proxy and DNS; the server's HTTP
-port refuses pod traffic), and k3s enforces them (kube-router is built
-in).
+**NetworkPolicy.** The chart ships three policies (agent pods may reach
+only the egress proxy and DNS; browser pods reach the public internet
+directly, with no proxy, and DNS, and are kept off the pod network, the
+node's and cloud metadata's link-local range and every private range;
+the server's HTTP port refuses pod traffic), and k3s enforces them
+(kube-router is built in). A browser pod is not held to the egress
+allowlist.
 
 Kivali has four images, all sharing the release tag:
 
@@ -53,9 +56,8 @@ The chart's `appVersion` is the default tag of all four; the agent-shell
 and browser tags are derived at runtime from the main image tag
 (`browser.image` overrides the browser's). The browser image is built
 with the others, after the server image, whose kivali binary it copies
-(`Dockerfile.browser`, `KIVALI_IMAGE`). It is not in the release's image
-bundle or the VM image yet: `make release-assets` builds its tarball but
-does not bundle it.
+(`Dockerfile.browser`, `KIVALI_IMAGE`), and is in the release's image
+bundle and the VM image like them.
 
 **Architectures.** All four images build for `linux/amd64` and
 `linux/arm64`. `make images` builds all four for the host's own
