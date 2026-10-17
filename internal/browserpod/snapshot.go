@@ -26,25 +26,39 @@ type snapshotData struct {
 	Refs      []*refInfo `json:"refs"`
 }
 
-// snapLine is one line of the page at a depth.
+// snapLine is one line of the page at a depth. Top is how far down
+// the document the line's element starts, in CSS pixels.
 type snapLine struct {
 	Depth int
 	Text  string
+	Top   float64
 }
 
 func (l *snapLine) UnmarshalJSON(b []byte) error {
-	var pair []json.RawMessage
-	if err := json.Unmarshal(b, &pair); err != nil {
+	var parts []json.RawMessage
+	if err := json.Unmarshal(b, &parts); err != nil {
 		return err
 	}
-	if len(pair) != 2 {
-		return fmt.Errorf("snapshot line has %d parts", len(pair))
+	if len(parts) != 2 && len(parts) != 3 {
+		return fmt.Errorf("snapshot line has %d parts", len(parts))
 	}
-	if err := json.Unmarshal(pair[0], &l.Depth); err != nil {
+	if err := json.Unmarshal(parts[0], &l.Depth); err != nil {
 		return err
 	}
-	return json.Unmarshal(pair[1], &l.Text)
+	if err := json.Unmarshal(parts[1], &l.Text); err != nil {
+		return err
+	}
+	if len(parts) == 3 {
+		return json.Unmarshal(parts[2], &l.Top)
+	}
+	return nil
 }
+
+// maxDepth bounds the indentation of a line, whatever the page nests.
+const maxDepth = 64
+
+// noteRoom is what a cut snapshot keeps back for its two notes.
+const noteRoom = 200
 
 func (b *browser) cmdSnapshot(ctx context.Context, t *tab) (result, error) {
 	navs := t.mark().navs
@@ -69,9 +83,12 @@ func (b *browser) cmdSnapshot(ctx context.Context, t *tab) (result, error) {
 	return result{text: formatSnapshot(d, MaxSnapshotChars)}, nil
 }
 
-// formatSnapshot renders the page header and the indented lines, cut
-// to max characters with a line saying how many were left out.
-func formatSnapshot(d snapshotData, max int) string {
+// formatSnapshot renders the page header and the indented lines. A
+// page that fits in limit characters is shown whole. One that does not
+// shows the lines from the current scroll position down, then as many
+// above as still fit, with a note at each end saying how many lines
+// were left out there.
+func formatSnapshot(d snapshotData, limit int) string {
 	var sb strings.Builder
 	title := d.Title
 	if title == "" {
@@ -83,17 +100,47 @@ func formatSnapshot(d snapshotData, max int) string {
 		sb.WriteString("\n(the page shows nothing)")
 		return sb.String()
 	}
+	rendered := make([]string, len(d.Lines))
+	total := sb.Len()
 	for i, l := range d.Lines {
-		depth := l.Depth
-		if depth < 0 {
-			depth = 0
+		depth := min(max(l.Depth, 0), maxDepth)
+		rendered[i] = "\n" + strings.Repeat("  ", depth) + l.Text
+		total += len(rendered[i])
+	}
+	if total <= limit {
+		for _, r := range rendered {
+			sb.WriteString(r)
 		}
-		line := "\n" + strings.Repeat("  ", depth) + l.Text
-		if sb.Len()+len(line) > max {
-			fmt.Fprintf(&sb, "\n… %d more lines not shown; scroll, or wait for what you need, and snapshot again", len(d.Lines)-i)
-			break
-		}
-		sb.WriteString(line)
+		return sb.String()
+	}
+	// The first line at or below the top of the viewport starts the
+	// shown range. Every line is above it only when the page has
+	// scrolled past its last line; the range then starts at the top.
+	start := 0
+	for start < len(d.Lines) && d.Lines[start].Top < d.ScrollY {
+		start++
+	}
+	if start == len(d.Lines) {
+		start = 0
+	}
+	room := limit - sb.Len() - noteRoom
+	end := start
+	for end < len(rendered) && len(rendered[end]) <= room {
+		room -= len(rendered[end])
+		end++
+	}
+	for start > 0 && len(rendered[start-1]) <= room {
+		room -= len(rendered[start-1])
+		start--
+	}
+	if start > 0 {
+		fmt.Fprintf(&sb, "\n… %d lines above the current scroll position not shown; scroll up and snapshot again to read them", start)
+	}
+	for _, r := range rendered[start:end] {
+		sb.WriteString(r)
+	}
+	if end < len(rendered) {
+		fmt.Fprintf(&sb, "\n… %d lines below not shown; scroll down, or wait for what you need, and snapshot again", len(rendered)-end)
 	}
 	return sb.String()
 }
