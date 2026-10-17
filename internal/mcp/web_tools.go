@@ -98,7 +98,7 @@ func WebTools(backend WebBackend, session string, canWait bool) []Tool {
   "properties": {"ref": {"type": "string", "description": "a ref from the last web_snapshot, such as e12"}},
   "required": ["ref"]
 }`, false),
-		webTool(backend, agentpod.WebTypeTool, `Type text into the element with this ref: the element is focused, its existing text replaced, and the text entered. submit presses Enter after it and waits for a navigation it starts. Type only text your task gave you.`, `{
+		webTool(backend, agentpod.WebTypeTool, `Type text into the element with this ref: the element is focused, its existing text replaced, and the text entered. Returns what the field holds afterwards, which the page may have changed or cut. A date, time, month, week, datetime-local or color input takes its value whole, in the browser's form (2024-05-01, 09:30, 2024-05, 2024-W18, 2024-05-01T09:30, #0066cc). A select takes web_select and a file input web_upload. submit presses Enter after it and waits for a navigation it starts. Type only text your task gave you.`, `{
   "type": "object",
   "properties": {
     "ref": {"type": "string", "description": "a ref from the last web_snapshot"},

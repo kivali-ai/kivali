@@ -527,16 +527,34 @@ func (b *browser) mouseClick(ctx context.Context, t *tab, x, y float64) error {
 	return nil
 }
 
+// valueFormats is what the inputs that take a value rather than
+// keystrokes expect.
+var valueFormats = map[string]string{
+	"date": "yyyy-mm-dd", "time": "hh:mm", "month": "yyyy-mm", "week": "yyyy-Www",
+	"datetime-local": "yyyy-mm-ddThh:mm", "color": "#rrggbb", "range": "a number",
+}
+
 func (b *browser) cmdType(ctx context.Context, t *tab, a TypeArgs) (result, error) {
 	obj, info, err := b.resolveRef(ctx, t, a.Ref)
 	if err != nil {
 		return result{}, err
 	}
-	var focused bool
-	if err := b.callOn(ctx, t, obj, `function() {
+	var f struct {
+		Refuses  string `json:"refuses"`
+		Focused  bool   `json:"focused"`
+		Direct   bool   `json:"direct"`
+		Password bool   `json:"password"`
+		Type     string `json:"type"`
+	}
+	if err := b.callOn(ctx, t, obj, `function(formats) {
+		const tag = this.tagName, type = tag === 'INPUT' ? this.type : '';
+		if (tag === 'SELECT') return {refuses: 'select'};
+		if (tag === 'INPUT' && ['checkbox', 'radio', 'submit', 'button', 'reset', 'image', 'file', 'hidden'].includes(type)) return {refuses: type};
+		if (this.readOnly) return {refuses: 'readonly'};
 		this.scrollIntoView({block: 'center', behavior: 'instant'});
 		this.focus();
-		if (this.tagName === 'INPUT' || this.tagName === 'TEXTAREA') {
+		const direct = type in formats;
+		if (!direct && (tag === 'INPUT' || tag === 'TEXTAREA')) {
 			try { this.select(); } catch (e) {}
 		} else if (this.isContentEditable) {
 			const r = document.createRange();
@@ -545,21 +563,76 @@ func (b *browser) cmdType(ctx context.Context, t *tab, a TypeArgs) (result, erro
 			s.removeAllRanges();
 			s.addRange(r);
 		}
-		return document.activeElement === this || this.contains(document.activeElement);
-	}`, &focused); err != nil {
+		return {focused: document.activeElement === this || this.contains(document.activeElement), direct, password: type === 'password', type};
+	}`, &f, valueFormats); err != nil {
 		return result{}, err
 	}
-	if !focused {
+	switch f.Refuses {
+	case "":
+	case "select":
+		return result{}, failf(CodeBadArgs, "%s %q is a select; choose an option with web_select.", info.Role, info.Name)
+	case "file":
+		return result{}, failf(CodeBadArgs, "%s %q is a file input; attach a file with web_upload.", info.Role, info.Name)
+	case "readonly":
+		return result{}, failf(CodeBadArgs, "%s %q is read-only; it takes no text.", info.Role, info.Name)
+	default:
+		return result{}, failf(CodeBadArgs, "%s %q takes no text; click it instead.", info.Role, info.Name)
+	}
+	if !f.Focused {
 		return result{}, failf(CodeNotFound, "%s %q did not take focus; it may not accept text.", info.Role, info.Name)
 	}
-	if a.Text == "" {
+	var held struct {
+		Value     string `json:"value"`
+		MaxLength int    `json:"maxLength"`
+	}
+	switch {
+	case f.Direct:
+		// These inputs ignore keystrokes: the value is set as a whole,
+		// and the page hears the events typing would have raised.
+		if err := b.callOn(ctx, t, obj, `function(v) {
+			this.value = v;
+			if (this.value === v) {
+				this.dispatchEvent(new Event('input', {bubbles: true}));
+				this.dispatchEvent(new Event('change', {bubbles: true}));
+			}
+			return {value: this.value};
+		}`, &held, a.Text); err != nil {
+			return result{}, err
+		}
+		if held.Value != a.Text {
+			return result{}, failf(CodeBadArgs, "%s %q did not take %q; a %s input takes %s.", info.Role, info.Name, a.Text, f.Type, valueFormats[f.Type])
+		}
+	case a.Text == "":
 		if err := b.pressKey(ctx, t, chord{key: namedKeys["Backspace"]}); err != nil {
 			return result{}, err
 		}
-	} else if _, err := b.conn.Call(ctx, t.session, "Input.insertText", map[string]any{"text": a.Text}); err != nil {
-		return result{}, err
+	default:
+		if _, err := b.conn.Call(ctx, t.session, "Input.insertText", map[string]any{"text": a.Text}); err != nil {
+			return result{}, err
+		}
 	}
-	text := fmt.Sprintf("Typed %d characters into %s %q", utf8.RuneCountInString(a.Text), info.Role, info.Name)
+	if !f.Direct {
+		if err := b.callOn(ctx, t, obj, `function() {
+			if (this.tagName === 'INPUT' || this.tagName === 'TEXTAREA') return {value: this.value, maxLength: this.maxLength > 0 ? this.maxLength : 0};
+			return {value: this.innerText.replace(/\n$/, '')};
+		}`, &held); err != nil {
+			return result{}, err
+		}
+	}
+	var text string
+	switch {
+	case f.Password:
+		text = fmt.Sprintf("Typed %d characters into %s %q; it holds %d", utf8.RuneCountInString(a.Text), info.Role, info.Name, utf8.RuneCountInString(held.Value))
+	case a.Text == "" && held.Value == "":
+		text = fmt.Sprintf("Cleared %s %q", info.Role, info.Name)
+	case held.Value == a.Text:
+		text = fmt.Sprintf("Typed %q into %s %q", cut(a.Text, 200), info.Role, info.Name)
+	default:
+		text = fmt.Sprintf("Typed %q into %s %q; it holds %q", cut(a.Text, 200), info.Role, info.Name, cut(held.Value, 200))
+		if held.MaxLength > 0 && utf8.RuneCountInString(a.Text) > held.MaxLength {
+			text += fmt.Sprintf(" (it takes at most %d characters)", held.MaxLength)
+		}
+	}
 	if a.Submit {
 		m := t.mark()
 		if err := b.pressKey(ctx, t, chord{key: namedKeys["Enter"]}); err != nil {
