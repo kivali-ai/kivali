@@ -26,10 +26,19 @@ const (
 )
 
 // validateWebTasks refuses a batch whose web tasks cannot run, and a
-// general task that carries web fields. Shared by both dispatch paths
-// like validateTasks. The web-only checks need the parent: a file the
-// task may upload must be a regular file in the parent's /files/.
+// general task that carries web fields, for a dispatch by the agent
+// itself. The web-only checks need the parent: a file the task may
+// upload must be a regular file in the parent's /files/.
 func (s *SubagentService) validateWebTasks(parent string, tasks []SubagentTaskInput) error {
+	return s.validateWebTasksFor(parent, "", tasks)
+}
+
+// validateWebTasksFor is validateWebTasks for a dispatch by callerID,
+// one of parent's subagents, or by parent itself when callerID is
+// empty. A file is looked for in the caller's own /files/: a sub-lead
+// names a path in its view, where artifacts/private is its own and the
+// agent's memory is absent.
+func (s *SubagentService) validateWebTasksFor(parent, callerID string, tasks []SubagentTaskInput) error {
 	for i, t := range tasks {
 		switch t.Kind {
 		case "", agentpod.SubagentKindGeneral:
@@ -37,7 +46,7 @@ func (s *SubagentService) validateWebTasks(parent string, tasks []SubagentTaskIn
 				return fmt.Errorf("tasks[%d]: session, start_url and files are for a web task; set kind to \"web\"", i)
 			}
 		case agentpod.SubagentKindWeb:
-			if err := s.validateWebTask(parent, i, t); err != nil {
+			if err := s.validateWebTask(parent, callerID, i, t); err != nil {
 				return err
 			}
 		default:
@@ -47,7 +56,7 @@ func (s *SubagentService) validateWebTasks(parent string, tasks []SubagentTaskIn
 	return nil
 }
 
-func (s *SubagentService) validateWebTask(parent string, i int, t SubagentTaskInput) error {
+func (s *SubagentService) validateWebTask(parent, callerID string, i int, t SubagentTaskInput) error {
 	if s.Browsers == nil || !s.Browsers.Enabled() {
 		return fmt.Errorf("tasks[%d]: web tasks are not available in this deployment", i)
 	}
@@ -81,7 +90,7 @@ func (s *SubagentService) validateWebTask(parent string, i int, t SubagentTaskIn
 			return fmt.Errorf("tasks[%d].files: two files are named %q; the task uploads files by name", i, name)
 		}
 		seen[name] = true
-		if !s.parentFileExists(parent, p) {
+		if !s.callerFileExists(parent, callerID, p) {
 			return fmt.Errorf("tasks[%d].files[%d]: %q is not a file under your /files/", i, j, p)
 		}
 	}
@@ -120,11 +129,11 @@ func webSessionSite(session string) (string, error) {
 	return site, nil
 }
 
-// parentFileExists reports whether modelPath names a regular file the
-// parent can read through its /files/, with file_view's confinement:
-// a link that leaves the parent's read roots is no file.
-func (s *SubagentService) parentFileExists(parent, modelPath string) bool {
-	f, info, err := s.openParentFile(parent, modelPath)
+// callerFileExists reports whether modelPath names a regular file the
+// caller can read through its /files/, with file_view's confinement:
+// a link that leaves the caller's read roots is no file.
+func (s *SubagentService) callerFileExists(parent, callerID, modelPath string) bool {
+	f, info, err := s.openCallerFile(parent, callerID, modelPath)
 	if err != nil {
 		return false
 	}
@@ -132,10 +141,16 @@ func (s *SubagentService) parentFileExists(parent, modelPath string) bool {
 	return info.Mode().IsRegular()
 }
 
-// openParentFile opens a file under the parent's /files/ the way
-// file_view reads it: confined to the parent's tree and its read
-// roots, links followed only within them.
-func (s *SubagentService) openParentFile(parent, modelPath string) (*os.File, os.FileInfo, error) {
-	backend := files.Dispatcher{DataDir: s.Store.Root()}.BackendFor(parent)
+// openCallerFile opens a file under the caller's /files/ the way
+// file_view reads it: confined to the caller's tree and its read
+// roots, links followed only within them. The caller is parent, or
+// parent's subagent callerID, whose view is its overlay
+// (files.Dispatcher.SubagentBackendFor).
+func (s *SubagentService) openCallerFile(parent, callerID, modelPath string) (*os.File, os.FileInfo, error) {
+	d := files.Dispatcher{DataDir: s.Store.Root()}
+	backend := d.BackendFor(parent)
+	if callerID != "" {
+		backend = d.SubagentBackendFor(parent, callerID)
+	}
 	return backend.OpenRead(modelPath)
 }

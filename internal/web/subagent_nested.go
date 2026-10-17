@@ -80,7 +80,9 @@ func (s *SubagentService) RunNestedBatch(ctx context.Context, parent, callerID s
 	if err := validateTasks(s.Provider, req.Tasks); err != nil {
 		return "", err
 	}
-	if err := s.validateWebTasks(parent, req.Tasks); err != nil {
+	// A web task's files are looked for in the sub-lead's own view,
+	// the same one its upload reads from (see sendTaskFile).
+	if err := s.validateWebTasksFor(parent, callerID, req.Tasks); err != nil {
 		return "", err
 	}
 
