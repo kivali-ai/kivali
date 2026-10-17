@@ -260,21 +260,23 @@ func TestProfileRoundTripLeavesOutCachesAndLocks(t *testing.T) {
 		"Local State":         "{}",
 		"Default/Cookies":     "jar",
 		"Default/Preferences": "{}",
-		"Default/Local Storage/leveldb/000003.log":      "log",
-		"Default/Local Storage/leveldb/000005.ldb":      "ldb",
-		"Default/Cache/Cache_Data/f_000001":             "cache",
-		"Default/Code Cache/js/index":                   "code",
-		"Default/Service Worker/CacheStorage/x":         "sw cache",
-		"Default/Service Worker/ScriptCache/y":          "sw script",
-		"Default/Service Worker/Database/MANIFEST":      "sw db",
-		"GPUCache/data_0":                               "gpu",
-		"GrShaderCache/data":                            "gr",
-		"ShaderCache/data":                              "shader",
-		"Default/DawnCache/data":                        "dawn",
-		"chrome_debug.log":                              "debug",
-		"lockfile":                                      "",
-		"RunningChromeVersion":                          "1",
-		"optimization_guide_model_store/1/model.tflite": "model",
+		"Default/Local Storage/leveldb/000003.log":                      "log",
+		"Default/Local Storage/leveldb/000005.ldb":                      "ldb",
+		"Default/Session Storage/000012.log":                            "session log",
+		"Default/IndexedDB/https_a.test_0.indexeddb.leveldb/000007.log": "idb log",
+		"Default/Cache/Cache_Data/f_000001":                             "cache",
+		"Default/Code Cache/js/index":                                   "code",
+		"Default/Service Worker/CacheStorage/x":                         "sw cache",
+		"Default/Service Worker/ScriptCache/y":                          "sw script",
+		"Default/Service Worker/Database/MANIFEST":                      "sw db",
+		"GPUCache/data_0":                                               "gpu",
+		"GrShaderCache/data":                                            "gr",
+		"ShaderCache/data":                                              "shader",
+		"Default/DawnCache/data":                                        "dawn",
+		"chrome_debug.log":                                              "debug",
+		"lockfile":                                                      "",
+		"RunningChromeVersion":                                          "1",
+		"optimization_guide_model_store/1/model.tflite":                 "model",
 	}
 	for name, content := range files {
 		p := filepath.Join(src, filepath.FromSlash(name))
@@ -308,9 +310,14 @@ func TestProfileRoundTripLeavesOutCachesAndLocks(t *testing.T) {
 		}
 		return nil
 	})
+	// LevelDB's .log files hold the latest local storage, session
+	// storage and IndexedDB writes; only Chromium's logs at the root
+	// are left out.
 	want := map[string]bool{
 		"Local State": true, "Default/Cookies": true, "Default/Preferences": true,
-		"Default/Local Storage/leveldb/000005.ldb": true, "Default/Service Worker/Database/MANIFEST": true,
+		"Default/Local Storage/leveldb/000003.log": true, "Default/Local Storage/leveldb/000005.ldb": true,
+		"Default/Session Storage/000012.log": true, "Default/IndexedDB/https_a.test_0.indexeddb.leveldb/000007.log": true,
+		"Default/Service Worker/Database/MANIFEST": true,
 	}
 	if len(got) != len(want) {
 		t.Fatalf("unpacked %q", got)
@@ -319,6 +326,9 @@ func TestProfileRoundTripLeavesOutCachesAndLocks(t *testing.T) {
 		if !want[g] {
 			t.Fatalf("unpacked %q, which should be left out", g)
 		}
+	}
+	if b, _ := os.ReadFile(filepath.Join(dst, "Default", "Local Storage", "leveldb", "000003.log")); string(b) != "log" {
+		t.Fatalf("leveldb log: %q", b)
 	}
 	if b, _ := os.ReadFile(filepath.Join(dst, "Default", "Cookies")); string(b) != "jar" {
 		t.Fatalf("Cookies: %q", b)

@@ -470,12 +470,16 @@ none), strips hidden content from snapshots in the
 page's isolated world (a snapshot over its limit keeps the lines from
 the current scroll position down and says how many are left out above
 and below), captures downloads, and packs the profile without its
-caches. Snapshot text and `web_eval` output reach the model between two
-fixed lines from the pod ("Content of an untrusted page follows." and
-"End of page content."), and a screenshot's text says the image is page
-content, so the model can tell the pod's words from the page's; the tool
-descriptions say that page content is untrusted and never an
-instruction.
+caches, its locks or Chromium's own logs at the profile root. The
+`.log` files below the root stay in: they are LevelDB's, holding every
+local storage, session storage and IndexedDB write since the last
+compaction, and a site that keeps its sign-in in local storage would be
+signed out on the next browser without them. Snapshot text and
+`web_eval` output reach the model between two fixed lines from the pod
+("Content of an untrusted page follows." and "End of page content."),
+and a screenshot's text says the image is page content, so the model
+can tell the pod's words from the page's; the tool descriptions say
+that page content is untrusted and never an instruction.
 
 Core owns the lifecycle (`internal/web/browser_registry.go`, one timer
 on the injected clock re-armed to the earliest deadline, as auto
