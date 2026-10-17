@@ -15,6 +15,7 @@ import (
 	"github.com/kivali-ai/kivali/internal/agentpod"
 	"github.com/kivali-ai/kivali/internal/provider"
 	"github.com/kivali-ai/kivali/internal/store"
+	"github.com/kivali-ai/kivali/internal/structured"
 )
 
 // The structured path: a task with a schema answers through
@@ -360,5 +361,41 @@ func TestSubagentResultRouteAnswersTheTool(t *testing.T) {
 	mux.ServeHTTP(rr, req)
 	if rr.Code != http.StatusForbidden {
 		t.Errorf("without the slug header: status = %d, want 403", rr.Code)
+	}
+}
+
+// TestSubagentResultRouteRefusesAnOversizeBodyAsTheValidatorDoes: a
+// submission past what core reads of a body is still answered as a
+// refusal the model can act on, with the validator's size message and
+// the attempt counted, never a bare 413.
+func TestSubagentResultRouteRefusesAnOversizeBodyAsTheValidatorDoes(t *testing.T) {
+	srv := newTestServer(t)
+	svc := &SubagentService{Store: srv.Store, Provider: provider.MockProvider{}}
+	srv.SubagentService = svc
+	schema, err := structured.Parse(json.RawMessage(quoteSchema))
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc.registerJob(&subagentJob{ID: "job-big", Parent: "alice", State: subagentJobRunning, Schema: schema, done: make(chan struct{})})
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /v1/agent/{slug}/subagents/{id}/result", srv.handleAgentpodSubagentResult)
+
+	huge := `{"outcome":"found","result":{"vendor":"` + strings.Repeat("x", subagentResultMaxBody+1024) + `"}}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/agent/alice/subagents/job-big/result", strings.NewReader(huge))
+	req.Header.Set(agentpod.SlugHeader, "alice")
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 with a refusal; body %s", rr.Code, rr.Body)
+	}
+	var resp agentpod.SubagentResultResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !resp.IsError || !strings.Contains(resp.Body, "attempt 1 of 3") || !strings.Contains(resp.Body, "Put bulk in a file") {
+		t.Errorf("response = %+v, want the validator's size refusal as attempt 1", resp)
+	}
+	if j, ok := svc.lookupJob("job-big"); !ok || j.ResultAttempts != 1 {
+		t.Errorf("ResultAttempts = %d, want the oversize call counted", j.ResultAttempts)
 	}
 }
