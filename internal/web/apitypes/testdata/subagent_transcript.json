@@ -12,7 +12,8 @@
     "step": "Read the logs",
     "activity": "running Bash",
     "kind": "web",
-    "session": "open"
+    "session": "open",
+    "browser_sandbox_off": true
   },
   "rows": [
     {

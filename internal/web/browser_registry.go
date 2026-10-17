@@ -277,6 +277,9 @@ type browser struct {
 	seq     int
 	// profileSaved is set once a save's profile has been written.
 	profileSaved bool
+	// sandboxOff: the pod reported Chromium running with --no-sandbox
+	// (the detail "sandbox: off" on its running state).
+	sandboxOff bool
 	// offboarded: the agent is gone; a profile that lands after this
 	// is deleted again, not kept.
 	offboarded bool
@@ -690,6 +693,18 @@ func (r *browserRegistry) StateFor(slug, session string) apitypes.BrowserState {
 	return wireState(b.state)
 }
 
+// SandboxOffFor reports whether (slug, session)'s browser runs
+// Chromium without its sandbox; false when none is registered.
+func (r *browserRegistry) SandboxOffFor(slug, session string) bool {
+	if r == nil {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	b, ok := r.browsers[browserKey(slug, session)]
+	return ok && b.sandboxOff
+}
+
 // Watch attaches a browser window to group's tabs in the browser of
 // (slug, session), starting the browser when none runs, and returns
 // the watcher the window reads from. input is whether the window takes
@@ -728,7 +743,7 @@ func (r *browserRegistry) Watch(ctx context.Context, slug, session, group string
 		b.windows++
 	}
 	link := b.link
-	w.event(apitypes.BrowserWindowEvent{Type: apitypes.BrowserWindowEventTypeState, Browser: apitypes.BrowserStateRunning, Input: input, Site: b.site})
+	w.event(apitypes.BrowserWindowEvent{Type: apitypes.BrowserWindowEventTypeState, Browser: apitypes.BrowserStateRunning, Input: input, Site: b.site, SandboxOff: b.sandboxOff})
 	if g.shownTab != "" {
 		w.event(tabEvent(g.shownTab, g.tabInfo[g.shownTab]))
 	}
@@ -832,7 +847,7 @@ func (r *browserRegistry) BroadcastState(slug, session, group string, input bool
 	if !ok {
 		return
 	}
-	ev := apitypes.BrowserWindowEvent{Type: apitypes.BrowserWindowEventTypeState, Browser: wireState(b.state), Input: input, Site: b.site}
+	ev := apitypes.BrowserWindowEvent{Type: apitypes.BrowserWindowEventTypeState, Browser: wireState(b.state), Input: input, Site: b.site, SandboxOff: b.sandboxOff}
 	for w := range g.watchers {
 		w.event(ev)
 	}
@@ -1091,6 +1106,7 @@ func (r *browserRegistry) onState(b *browser, msg browserpod.Message) {
 	switch msg.State {
 	case browserpod.StateRunning:
 		r.mu.Lock()
+		b.sandboxOff = b.sandboxOff || msg.Detail == "sandbox: off"
 		became := false
 		if b.state == browserStarting {
 			became = true

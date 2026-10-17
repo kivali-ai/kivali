@@ -62,8 +62,11 @@ const drawImage = vi.fn();
 let reads = 0;
 let meta: SubagentMeta;
 
+const SANDBOX = 'Chromium is running without its sandbox on this cluster.';
+
+/** The fixture's task, running in the open session on a cluster that lets Chromium keep its sandbox. */
 const runningWeb: SubagentMeta = (() => {
-  const { ended: _e, error: _r, ...m } = subagentTranscript.meta;
+  const { ended: _e, error: _r, browser_sandbox_off: _s, ...m } = subagentTranscript.meta;
   return { ...m, state: 'running', kind: 'web', session: 'open', browser: 'starting' };
 })();
 
@@ -171,6 +174,20 @@ describe('the browser window: the bar', () => {
     latest()?.push({ type: 'tab', tab: { id: 't2', url: 'https://docs.example.org/', title: 'Docs' } });
     expect(screen.getByRole('heading', { name: 'docs.example.org' })).toBeInTheDocument();
     expect(screen.queryByText('Your cart')).toBeNull();
+    expect(screen.queryByText(SANDBOX)).toBeNull();
+  });
+
+  it('says when Chromium runs without its sandbox, from the header and from each state event', async () => {
+    await renderWindow({ ...runningWeb, browser: 'running', browser_sandbox_off: true });
+    expect(screen.getByText(SANDBOX)).toBeInTheDocument();
+    latest()?.accept();
+    latest()?.push({ type: 'state', browser: 'running', sandbox_off: true });
+    expect(screen.getByText(SANDBOX)).toBeInTheDocument();
+    // A browser that came back with its sandbox: the state event says nothing of it, and the line goes.
+    latest()?.push({ type: 'state', browser: 'running' });
+    expect(screen.queryByText(SANDBOX)).toBeNull();
+    latest()?.push({ type: 'state', browser: 'running', sandbox_off: true });
+    expect(screen.getByText(SANDBOX)).toBeInTheDocument();
   });
 });
 

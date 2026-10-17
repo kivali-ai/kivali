@@ -361,6 +361,7 @@ func (s *Server) subagentMetaView(parent, dir, id string, hist []store.ChatMessa
 			}
 			if !job.terminal() && s.Browsers != nil {
 				out.Browser = s.Browsers.StateFor(parent, job.Session)
+				out.BrowserSandboxOff = s.Browsers.SandboxOffFor(parent, job.Session)
 			}
 			if job.State == subagentJobWaiting {
 				out.WaitReason = apitypes.WebSignInReason(job.WaitReason)

@@ -45,7 +45,7 @@ func TestBrowserWindowOverTheWire(t *testing.T) {
 	schema, _ := structured.Parse([]byte(quoteSchema))
 	svc.registerJob(&subagentJob{ID: "w1", Parent: "alice", Kind: agentpod.SubagentKindWeb, Session: agentpod.OpenWebSession, State: subagentJobRunning, Schema: schema, done: make(chan struct{})})
 	svc.registerJob(&subagentJob{ID: "w2", Parent: "alice", Kind: agentpod.SubagentKindWeb, Session: agentpod.OpenWebSession, State: "done", Schema: schema, done: make(chan struct{})})
-	srv := &Server{SubagentService: svc, Browsers: svc.Browsers}
+	srv := &Server{Store: svc.Store, Provider: svc.Provider, SubagentService: svc, Browsers: svc.Browsers}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/agents/{slug}/subagents/{id}/browser", srv.handleBrowserWindow)
 	hs := httptest.NewServer(mux)
@@ -84,12 +84,19 @@ func TestBrowserWindowOverTheWire(t *testing.T) {
 	if err := svc.Browsers.attach(context.Background(), b); err != nil {
 		t.Fatal(err)
 	}
-	svc.Browsers.onMessage(b, browserpod.Message{Type: browserpod.TypeState, State: browserpod.StateRunning}, nil)
+	// This cluster would not let Chromium start its sandbox: the pod says so, and so do the window and the task's header.
+	svc.Browsers.onMessage(b, browserpod.Message{Type: browserpod.TypeState, State: browserpod.StateRunning, Detail: "sandbox: off"}, nil)
 	if on := link.next(t, browserpod.TypeScreencast); on.msg.Group != "w1" || on.msg.Tab != "" || !on.msg.OK {
 		t.Fatalf("screencast switch = %+v", on.msg)
 	}
-	if ev := readEvent(t, ctx, c); ev.Type != apitypes.BrowserWindowEventTypeState || ev.Browser != apitypes.BrowserStateRunning {
-		t.Fatalf("event once running = %+v", ev)
+	if ev := readEvent(t, ctx, c); ev.Type != apitypes.BrowserWindowEventTypeState || ev.Browser != apitypes.BrowserStateRunning || !ev.SandboxOff {
+		t.Fatalf("event once running = %+v, want the sandbox off", ev)
+	}
+	if meta := srv.subagentMetaView("alice", "alice", "w1", nil); meta.Browser != apitypes.BrowserStateRunning || !meta.BrowserSandboxOff {
+		t.Errorf("task header = browser %q, sandbox off %v; want running with the sandbox off", meta.Browser, meta.BrowserSandboxOff)
+	}
+	if meta := srv.subagentMetaView("alice", "alice", "w2", nil); meta.Browser != "" || meta.BrowserSandboxOff {
+		t.Errorf("ended task's header = browser %q, sandbox off %v; want neither", meta.Browser, meta.BrowserSandboxOff)
 	}
 	svc.Browsers.onMessage(b, browserpod.Message{Type: browserpod.TypeTab, Group: "w1", Tab: "t1", URL: "https://vendor.example/", Title: "Vendor"}, nil)
 	svc.Browsers.onMessage(b, browserpod.Message{Type: browserpod.TypeFrame, Group: "w1", Tab: "t1", Bytes: 9}, strings.NewReader("jpegbytes"))

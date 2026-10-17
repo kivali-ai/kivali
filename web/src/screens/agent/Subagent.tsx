@@ -159,6 +159,11 @@ export function Subagent() {
             {browserCaption}
           </Text>
         )}
+        {watchable && meta.browser_sandbox_off && (
+          <Text as="p" variant="caption" tone="muted">
+            Chromium is running without its sandbox on this cluster.
+          </Text>
+        )}
         {meta.state === 'errored' && meta.error && (
           <Text as="p" variant="caption" tone="danger">
             {meta.error}

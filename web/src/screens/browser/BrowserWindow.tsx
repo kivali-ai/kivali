@@ -343,6 +343,7 @@ export function BrowserWindow() {
   const [link, setLink] = useState<Link>('connecting');
   const [ended, setEnded] = useState('');
   const [browser, setBrowser] = useState<BrowserState | undefined>(undefined);
+  const [sandboxOff, setSandboxOff] = useState(false);
   const [tab, setTab] = useState<BrowserWindowTab | null>(null);
   const [framed, setFramed] = useState(false);
   const [input, setInput] = useState(false);
@@ -369,6 +370,7 @@ export function BrowserWindow() {
         if (!live) return;
         setMeta(t.meta);
         setBrowser(t.meta.browser);
+        setSandboxOff(t.meta.browser_sandbox_off === true);
         setSite(t.meta.site ?? '');
         wantsInput.current = t.meta.input === true;
       },
@@ -454,6 +456,7 @@ export function BrowserWindow() {
         }
         if (msg.type === 'state') {
           setBrowser(msg.browser);
+          setSandboxOff(msg.sandbox_off === true);
           wantsInput.current = msg.input === true;
           take(msg.input === true);
           if (msg.site !== undefined) setSite(msg.site);
@@ -604,6 +607,11 @@ export function BrowserWindow() {
             </Text>
           )}
         </div>
+        {sandboxOff && (
+          <Text variant="caption" tone="muted" className="app-bw-sandbox">
+            Chromium is running without its sandbox on this cluster.
+          </Text>
+        )}
       </header>
       {input && (
         <div className="app-bw-banner">

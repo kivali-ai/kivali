@@ -5,7 +5,8 @@
   },
   {
     "type": "state",
-    "browser": "running"
+    "browser": "running",
+    "sandbox_off": true
   },
   {
     "type": "tab",
