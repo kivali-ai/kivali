@@ -49,9 +49,10 @@ type ProvisionerConfig struct {
 	// when external admission webhooks key on it.
 	ServiceAccountName string
 
-	// UDSDir is the hostPath directory holding core.sock (mode 0700).
-	// Mounted into both Kivali web and every agent pod. Default is
-	// the design-doc canonical "/var/run/kivali/uds".
+	// UDSDir is the hostPath directory whose core/ subdirectory holds
+	// core.sock (both mode 0700). Kivali web mounts the directory;
+	// every agent pod mounts only core/. Default is the design-doc
+	// canonical "/var/run/kivali/uds".
 	UDSDir string
 
 	// WebSelector is the matchLabels expression that

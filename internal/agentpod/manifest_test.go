@@ -67,7 +67,7 @@ func TestPodManifestShape(t *testing.T) {
 	wantArgs := []string{
 		"agent",
 		"--slug=market-analyst",
-		"--uds=/var/run/kivali/uds/core.sock",
+		"--uds=/var/run/kivali/uds/core/core.sock",
 	}
 	if !reflect.DeepEqual(args, wantArgs) {
 		t.Errorf("args = %v, want %v", args, wantArgs)
@@ -85,8 +85,8 @@ func TestPodManifestShape(t *testing.T) {
 	}
 	if uds, ok := mountByName["uds"]; !ok {
 		t.Error("missing uds mount")
-	} else if uds["mountPath"] != "/var/run/kivali/uds" {
-		t.Errorf("uds mountPath = %v, want /var/run/kivali/uds", uds["mountPath"])
+	} else if uds["mountPath"] != "/var/run/kivali/uds/core" {
+		t.Errorf("uds mountPath = %v, want /var/run/kivali/uds/core", uds["mountPath"])
 	}
 
 	// Volumes — PVC + hostPath. The hostPath is the load-bearing
@@ -108,8 +108,11 @@ func TestPodManifestShape(t *testing.T) {
 		t.Errorf("uds volume should be hostPath: %+v", uds)
 	} else {
 		hp := uds["hostPath"].(map[string]any)
-		if hp["path"] != "/var/run/kivali/uds" {
-			t.Errorf("hostPath path = %v, want /var/run/kivali/uds", hp["path"])
+		if hp["path"] != "/var/run/kivali/uds/core" {
+			t.Errorf("hostPath path = %v, want /var/run/kivali/uds/core", hp["path"])
+		}
+		if hp["type"] != "Directory" {
+			t.Errorf("hostPath type = %v, want Directory", hp["type"])
 		}
 	}
 
@@ -498,7 +501,7 @@ func TestPodManifestUnifiedFilesMounts(t *testing.T) {
 	for _, m := range byName["agent"]["volumeMounts"].([]map[string]any) {
 		agentPaths = append(agentPaths, m["mountPath"].(string))
 	}
-	wantAgent := []string{"/scratch", c.UDSDir, "/run/kivali-agent-shell", "/data/mock-home"}
+	wantAgent := []string{"/scratch", c.UDSDir + "/core", "/run/kivali-agent-shell", "/data/mock-home"}
 	if !reflect.DeepEqual(agentPaths, wantAgent) {
 		t.Errorf("agent container mounts = %v, want %v", agentPaths, wantAgent)
 	}

@@ -465,11 +465,16 @@ func main() {
 		srv.HoldTurnsForStartup()
 	}
 	stopAgentpodSocket := func() {}
+	// The agent pods' socket, in a subdirectory of the UDS dir that is
+	// the only part of it an agent pod mounts; the browser pods' socket
+	// has a sibling subdirectory below, so neither kind of pod can
+	// reach, or replace, the other's socket.
 	if cfg.AgentpodUDSDir != "" {
-		if err := os.MkdirAll(cfg.AgentpodUDSDir, 0o700); err != nil {
+		agentUDSDir := filepath.Join(cfg.AgentpodUDSDir, agentpod.UDSSubdir)
+		if err := os.MkdirAll(agentUDSDir, 0o700); err != nil {
 			log.Fatalf("agentpod uds dir: %v", err)
 		}
-		agentpodSocketPath := filepath.Join(cfg.AgentpodUDSDir, agentpod.SocketName)
+		agentpodSocketPath := filepath.Join(agentUDSDir, agentpod.SocketName)
 		stopAgentpodSocket, err = srv.StartAgentpodSocket(agentpodSocketPath)
 		if err != nil {
 			log.Fatalf("agentpod socket: %v", err)
