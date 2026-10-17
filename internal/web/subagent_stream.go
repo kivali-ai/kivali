@@ -46,7 +46,9 @@ const subagentStreamRetryMs = 1500
 func (s *Server) handleSubagentStream(w http.ResponseWriter, r *http.Request) {
 	parent := r.PathValue("slug")
 	id := r.PathValue("id")
-	if parent == "" || id == "" {
+	// Both become path elements under agents/: one plain segment each,
+	// as the transcript route requires (plainSlug).
+	if !plainSlug(parent) || !plainSlug(id) {
 		http.NotFound(w, r)
 		return
 	}
