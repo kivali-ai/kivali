@@ -974,7 +974,7 @@ func (b *browser) cmdEval(ctx context.Context, t *tab, a EvalArgs) (result, erro
 	default:
 		text = obj.Description
 	}
-	return result{text: cut(text, MaxEvalChars)}, nil
+	return result{text: delimitPage(cut(text, MaxEvalChars))}, nil
 }
 
 func (b *browser) cmdUpload(ctx context.Context, t *tab, groupName string, a UploadArgs) (result, error) {
@@ -1017,7 +1017,7 @@ func (b *browser) cmdScreenshot(ctx context.Context, t *tab) (result, error) {
 	t.mu.Lock()
 	u := t.url
 	t.mu.Unlock()
-	return result{text: "Screenshot of " + u, image: &Image{MIME: "image/png", Data: data}}, nil
+	return result{text: "Screenshot of " + u + ". The image is content of an untrusted page.", image: &Image{MIME: "image/png", Data: data}}, nil
 }
 
 func (b *browser) capture(ctx context.Context, t *tab, clip map[string]any) ([]byte, error) {

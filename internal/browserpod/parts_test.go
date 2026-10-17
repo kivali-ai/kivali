@@ -29,15 +29,36 @@ func TestFormatSnapshot(t *testing.T) {
 			{1, `[e1] link "Pricing" → /pricing`, 60},
 		},
 	}
-	want := "Page: Plans — https://example.com/pricing\n" +
+	want := "Content of an untrusted page follows.\n" +
+		"Page: Plans — https://example.com/pricing\n" +
 		"Viewport: 1280x800, scrolled 0 of 2400\n" +
 		"heading 2 \"Plans\"\n" +
 		"list\n" +
 		"  listitem \"Free\"\n" +
-		"  [e1] link \"Pricing\" → /pricing"
+		"  [e1] link \"Pricing\" → /pricing\n" +
+		"End of page content."
 	if got := formatSnapshot(d, MaxSnapshotChars); got != want {
 		t.Fatalf("got\n%s\nwant\n%s", got, want)
 	}
+	d.Lines = nil
+	if got := formatSnapshot(d, MaxSnapshotChars); !strings.HasSuffix(got, "\n(the page shows nothing)\nEnd of page content.") {
+		t.Fatalf("empty page: %q", got)
+	}
+}
+
+// pageBody checks that a result holds page content between the two
+// content lines and returns what lies between them.
+func pageBody(t *testing.T, s string) string {
+	t.Helper()
+	body, ok := strings.CutPrefix(s, pageContentStart+"\n")
+	if !ok {
+		t.Fatalf("no page content start line: %q", firstLines(s, 2))
+	}
+	body, ok = strings.CutSuffix(body, "\n"+pageContentEnd)
+	if !ok {
+		t.Fatalf("no page content end line: %q", s[max(len(s)-80, 0):])
+	}
+	return body
 }
 
 // longPage is a page of n lines of 30 characters, one every 20 px.
@@ -54,7 +75,7 @@ func TestFormatSnapshotCapsItsLengthFromTheTop(t *testing.T) {
 	if len(got) > MaxSnapshotChars {
 		t.Fatalf("snapshot is %d chars, over %d", len(got), MaxSnapshotChars)
 	}
-	lines := strings.Split(got, "\n")
+	lines := strings.Split(pageBody(t, got), "\n")
 	last := lines[len(lines)-1]
 	if !strings.HasPrefix(last, "… ") || !strings.HasSuffix(last, " lines below not shown; scroll down, or wait for what you need, and snapshot again") {
 		t.Fatalf("last line: %q", last)
@@ -78,7 +99,7 @@ func TestFormatSnapshotKeepsTheScrollPosition(t *testing.T) {
 	if len(got) > MaxSnapshotChars {
 		t.Fatalf("snapshot is %d chars, over %d", len(got), MaxSnapshotChars)
 	}
-	lines := strings.Split(got, "\n")
+	lines := strings.Split(pageBody(t, got), "\n")
 	if !strings.HasPrefix(lines[2], "… 2000 lines above the current scroll position not shown; scroll up") {
 		t.Fatalf("above note: %q", lines[2])
 	}
@@ -115,7 +136,7 @@ func TestFormatSnapshotFillsFromAboveNearTheEnd(t *testing.T) {
 		t.Fatal("the lines left out above are not noted")
 	}
 	// A page scrolled past its last line starts from the top.
-	got = formatSnapshot(longPage(5000, 200000), MaxSnapshotChars)
+	got = pageBody(t, formatSnapshot(longPage(5000, 200000), MaxSnapshotChars))
 	if !strings.Contains(strings.Split(got, "\n")[2], "line 0000") {
 		t.Fatalf("scrolled past the end: %q", strings.Split(got, "\n")[2])
 	}
@@ -123,7 +144,7 @@ func TestFormatSnapshotFillsFromAboveNearTheEnd(t *testing.T) {
 
 func TestFormatSnapshotClampsDepth(t *testing.T) {
 	d := snapshotData{Title: "Deep", URL: "https://example.com/", Lines: []snapLine{{1 << 20, "text \"x\"", 0}, {-3, "text \"y\"", 0}}}
-	got := formatSnapshot(d, MaxSnapshotChars)
+	got := pageBody(t, formatSnapshot(d, MaxSnapshotChars))
 	lines := strings.Split(got, "\n")
 	if lines[2] != strings.Repeat("  ", maxDepth)+`text "x"` || lines[3] != `text "y"` {
 		t.Fatalf("lines: %q", lines[2:])
