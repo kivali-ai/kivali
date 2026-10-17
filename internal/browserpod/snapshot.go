@@ -54,6 +54,18 @@ func (l *snapLine) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
+// Page content reaches the model between these two lines, so that it
+// can tell what the pod says from what the page says.
+const (
+	pageContentStart = "Content of an untrusted page follows."
+	pageContentEnd   = "End of page content."
+)
+
+// delimitPage puts page content between the two lines.
+func delimitPage(s string) string {
+	return pageContentStart + "\n" + s + "\n" + pageContentEnd
+}
+
 // maxDepth bounds the indentation of a line, whatever the page nests.
 const maxDepth = 64
 
@@ -83,12 +95,16 @@ func (b *browser) cmdSnapshot(ctx context.Context, t *tab) (result, error) {
 	return result{text: formatSnapshot(d, MaxSnapshotChars)}, nil
 }
 
-// formatSnapshot renders the page header and the indented lines. A
-// page that fits in limit characters is shown whole. One that does not
-// shows the lines from the current scroll position down, then as many
-// above as still fit, with a note at each end saying how many lines
-// were left out there.
+// formatSnapshot renders the page header and the indented lines
+// between the page content lines. A page that fits in limit characters
+// is shown whole. One that does not shows the lines from the current
+// scroll position down, then as many above as still fit, with a note
+// at each end saying how many lines were left out there.
 func formatSnapshot(d snapshotData, limit int) string {
+	return delimitPage(snapshotBody(d, limit-len(pageContentStart)-len(pageContentEnd)-2))
+}
+
+func snapshotBody(d snapshotData, limit int) string {
 	var sb strings.Builder
 	title := d.Title
 	if title == "" {

@@ -264,9 +264,20 @@ func TestRealChromiumPageRules(t *testing.T) {
 		if !strings.Contains(snap, "\ntext \"PARA-0000\"\n") || !strings.Contains(snap, " lines below not shown") || strings.Contains(snap, "above the current scroll position") {
 			t.Errorf("at the top:\n%s", firstLines(snap, 4))
 		}
+		if len(snap) > MaxSnapshotChars {
+			t.Errorf("the snapshot is %d chars, over %d", len(snap), MaxSnapshotChars)
+		}
+		// The eval's value and a screenshot's text are marked as page
+		// content too.
+		if v := pt.step("eval", "", CommandEval, EvalArgs{Script: "document.title"}).Text; v != pageContentStart+"\n\"Long\"\n"+pageContentEnd {
+			t.Errorf("eval: %q", v)
+		}
+		if res := pt.step("screenshot", "", CommandScreenshot, nil); res.Text != "Screenshot of "+p.url+"/long. The image is content of an untrusted page." {
+			t.Errorf("screenshot text: %q", res.Text)
+		}
 		pt.step("scroll", "", CommandScroll, ScrollArgs{Direction: "down", Amount: 10})
 		snap = pt.step("snapshot scrolled", "", CommandSnapshot, nil).Text
-		lines := strings.Split(snap, "\n")
+		lines := strings.Split(pageBody(t, snap), "\n")
 		m := regexp.MustCompile(`scrolled (\d+) of`).FindStringSubmatch(lines[1])
 		if m == nil {
 			t.Fatalf("viewport line: %q", lines[1])

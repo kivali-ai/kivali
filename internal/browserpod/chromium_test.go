@@ -132,9 +132,11 @@ func (p *realPod) step(name, tabID, cmd string, args any) Message {
 	return res
 }
 
+// eval runs script and returns its value, without the page content
+// lines around it.
 func (p *realPod) eval(script string) string {
 	p.t.Helper()
-	return p.step("eval "+script, "", CommandEval, EvalArgs{Script: script}).Text
+	return pageBody(p.t, p.step("eval "+script, "", CommandEval, EvalArgs{Script: script}).Text)
 }
 
 // findRef is the ref of the line matching pattern in a snapshot.
@@ -263,7 +265,7 @@ func TestRealChromium(t *testing.T) {
 	if !strings.Contains(res.Text, "Page two") {
 		t.Fatalf("tabs open: %q", res.Text)
 	}
-	if v := step("eval on opened", "", CommandEval, EvalArgs{Script: "document.title"}).Text; v != `"Page two"` {
+	if v := eval("document.title"); v != `"Page two"` {
 		t.Fatalf("the opened tab is not current: %s", v)
 	}
 	step("tabs switch", "", CommandTabs, TabsArgs{Action: TabsSwitch, Tab: "t1"})
