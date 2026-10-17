@@ -100,9 +100,17 @@
 .app-bw-banner {
   padding: var(--space-2) var(--space-4) 0;
 }
-/* A frame that takes input is focused by a click; the global focus ring stays for keyboard focus. */
-.app-bw-frame:focus:not(:focus-visible) {
-  box-shadow: none;
+/* Where keys are typed while the window takes input: a hidden editable, moved under the pointer's last press so an input method's candidates open there. */
+.app-bw-keys {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  opacity: 0;
+  white-space: nowrap;
+  pointer-events: none;
 }
 /* The right-click menu over the frame, at the pointer. */
 .app-bw-menu {
