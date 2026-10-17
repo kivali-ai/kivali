@@ -462,7 +462,11 @@ socket serves the pod's connect route and nothing else, so a pod that
 is taken over by a page has no path to the agent routes on `core.sock`.
 `kivali browser` opens one WebSocket,
 `GET /v1/browser/{slug}/{session}/connect`, presenting the per-pod token
-core put in its environment, and that connection carries everything
+core put in its environment. Core's first message, `hello`, carries a
+second per-pod token from the pod's environment
+(`KIVALI_BROWSER_CORE_TOKEN`); the pod compares it in constant time and
+closes the connection unless it matches, so a process that took over
+`browser.sock` cannot drive the pod. That connection carries everything
 (`browserpod/protocol.go`): core's commands and the pod's results, tab
 and navigation events, the pod's state, downloads on their way to core,
 and the packed Chromium profile in both directions, as binary frames

@@ -95,7 +95,7 @@ func realChromium(t *testing.T, mux *http.ServeMux) *realPod {
 
 	fc := newFakeCore(t)
 	rt := &Runtime{
-		Slug: "ada", Session: "web", Token: "tok", CoreUDS: fc.sock,
+		Slug: "ada", Session: "web", Token: "tok", CoreToken: "ctok", CoreUDS: fc.sock,
 		Chromium: bin, Dir: t.TempDir(),
 		Logger: log.New(os.Stderr, "browserpod: ", log.Lmicroseconds),
 		Clock:  clock.New(),
@@ -113,7 +113,7 @@ func realChromium(t *testing.T, mux *http.ServeMux) *realPod {
 	})
 
 	core := fc.accept()
-	core.send(Message{Type: TypeHello})
+	core.send(Message{Type: TypeHello, CoreToken: "ctok"})
 	core.send(Message{Type: TypeStart})
 	core.expectState(StateStarting)
 	running := core.expectState(StateRunning)
@@ -411,7 +411,7 @@ func TestRealChromiumSiteSession(t *testing.T) {
 		t.Helper()
 		fc := newFakeCore(t)
 		rt := &Runtime{
-			Slug: "ada", Session: "127.0.0.1", Token: "tok", CoreUDS: fc.sock,
+			Slug: "ada", Session: "127.0.0.1", Token: "tok", CoreToken: "ctok", CoreUDS: fc.sock,
 			Chromium: bin, Dir: t.TempDir(),
 			Logger: log.New(os.Stderr, "browserpod: ", log.Lmicroseconds),
 			Clock:  clock.New(),
@@ -421,7 +421,7 @@ func TestRealChromiumSiteSession(t *testing.T) {
 		done := make(chan error, 1)
 		go func() { done <- rt.Run(ctx) }()
 		core := fc.accept()
-		core.sendBytes(Message{Type: TypeHello, Site: "127.0.0.1"}, profile)
+		core.sendBytes(Message{Type: TypeHello, CoreToken: "ctok", Site: "127.0.0.1"}, profile)
 		core.send(Message{Type: TypeStart})
 		core.expectState(StateStarting)
 		core.expectState(StateRunning)

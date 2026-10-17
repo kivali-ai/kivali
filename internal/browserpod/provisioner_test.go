@@ -131,7 +131,7 @@ func TestStart(t *testing.T) {
 	ctx := context.Background()
 	name := PodName("alice", "research")
 
-	if err := p.Start(ctx, "alice", "research", "tok-1"); err != nil {
+	if err := p.Start(ctx, "alice", "research", "tok-1", "ctok-1"); err != nil {
 		t.Fatalf("first Start: %v", err)
 	}
 	if c, d := fk.counts(); c != 1 || d != 0 {
@@ -144,7 +144,7 @@ func TestStart(t *testing.T) {
 	// Same manifest, running: left alone.
 	fk.setPhase(name, "Running")
 	fk.reset()
-	if err := p.Start(ctx, "alice", "research", "tok-1"); err != nil {
+	if err := p.Start(ctx, "alice", "research", "tok-1", "ctok-1"); err != nil {
 		t.Fatalf("matching Start: %v", err)
 	}
 	if c, d := fk.counts(); c != 0 || d != 0 {
@@ -153,7 +153,7 @@ func TestStart(t *testing.T) {
 
 	// New token: drift, recreated.
 	fk.reset()
-	if err := p.Start(ctx, "alice", "research", "tok-2"); err != nil {
+	if err := p.Start(ctx, "alice", "research", "tok-2", "ctok"); err != nil {
 		t.Fatalf("drift Start: %v", err)
 	}
 	if c, d := fk.counts(); c != 1 || d != 1 {
@@ -167,7 +167,7 @@ func TestStart(t *testing.T) {
 	for _, phase := range []string{"Succeeded", "Failed"} {
 		fk.setPhase(name, phase)
 		fk.reset()
-		if err := p.Start(ctx, "alice", "research", "tok-2"); err != nil {
+		if err := p.Start(ctx, "alice", "research", "tok-2", "ctok"); err != nil {
 			t.Fatalf("Start over %s pod: %v", phase, err)
 		}
 		if c, d := fk.counts(); c != 1 || d != 1 {
@@ -179,7 +179,7 @@ func TestStart(t *testing.T) {
 func TestStop(t *testing.T) {
 	p, fk := testProvisioner(t)
 	ctx := context.Background()
-	if err := p.Start(ctx, "alice", "research", "tok"); err != nil {
+	if err := p.Start(ctx, "alice", "research", "tok", "ctok"); err != nil {
 		t.Fatal(err)
 	}
 	if err := p.Stop(ctx, "alice", "research"); err != nil {
@@ -199,7 +199,7 @@ func TestStopAll(t *testing.T) {
 	p, fk := testProvisioner(t)
 	ctx := context.Background()
 	for _, s := range []string{"a", "b"} {
-		if err := p.Start(ctx, "alice", s, "tok"); err != nil {
+		if err := p.Start(ctx, "alice", s, "tok", "ctok"); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -235,7 +235,7 @@ func TestDisabledProvisioner(t *testing.T) {
 		t.Skip("running in-cluster")
 	}
 	ctx := context.Background()
-	if err := p.Start(ctx, "a", "s", "t"); err != nil {
+	if err := p.Start(ctx, "a", "s", "t", "ctok"); err != nil {
 		t.Error(err)
 	}
 	if err := p.Stop(ctx, "a", "s"); err != nil {

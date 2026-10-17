@@ -22,14 +22,15 @@ import (
 // fakeBrowserProv stands in for the pod provisioner: it records starts
 // and stops and signals each start so a test can play the pod.
 type fakeBrowserProv struct {
-	mu       sync.Mutex
-	enabled  bool
-	startErr error
-	started  []string // slug/session/token
-	stopped  []string
-	stopAll  int
-	startedC chan string
-	stoppedC chan string
+	mu         sync.Mutex
+	enabled    bool
+	startErr   error
+	started    []string // slug/session/token
+	coreTokens []string
+	stopped    []string
+	stopAll    int
+	startedC   chan string
+	stoppedC   chan string
 	// stopGate, when set, holds every Stop until it is closed.
 	stopGate chan struct{}
 }
@@ -52,13 +53,14 @@ func (p *fakeBrowserProv) awaitStop(t *testing.T) string {
 }
 
 func (p *fakeBrowserProv) Enabled() bool { return p.enabled }
-func (p *fakeBrowserProv) Start(_ context.Context, slug, session, token string) error {
+func (p *fakeBrowserProv) Start(_ context.Context, slug, session, token, coreToken string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.startErr != nil {
 		return p.startErr
 	}
 	p.started = append(p.started, slug+"/"+session+"/"+token)
+	p.coreTokens = append(p.coreTokens, coreToken)
 	p.startedC <- token
 	return nil
 }

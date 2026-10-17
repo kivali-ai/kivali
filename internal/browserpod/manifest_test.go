@@ -61,7 +61,7 @@ func labelsOf(pod map[string]any) map[string]string {
 // nothing on a persistent volume, and kubelet never restarts it.
 func TestPodManifestShape(t *testing.T) {
 	c := testConfig()
-	pod := c.podManifest("market-analyst", "research", "tok-1")
+	pod := c.podManifest("market-analyst", "research", "tok-1", "ctok-1")
 
 	meta := pod["metadata"].(map[string]any)
 	if got, want := meta["name"], PodName("market-analyst", "research"); got != want {
@@ -170,12 +170,13 @@ func TestPodManifestShape(t *testing.T) {
 // no proxy, since browser pods reach the web directly.
 func TestPodManifestEnv(t *testing.T) {
 	c := testConfig()
-	env := envOf(onlyContainer(t, podSpec(t, c.podManifest("alice", "s 1", "tok"))))
+	env := envOf(onlyContainer(t, podSpec(t, c.podManifest("alice", "s 1", "tok", "ctok"))))
 	want := map[string]string{
-		"KIVALI_BROWSER_SLUG":     "alice",
-		"KIVALI_BROWSER_SESSION":  "s 1",
-		"KIVALI_BROWSER_TOKEN":    "tok",
-		"KIVALI_BROWSER_CORE_UDS": "/var/run/kivali/uds/browser/browser.sock",
+		"KIVALI_BROWSER_SLUG":       "alice",
+		"KIVALI_BROWSER_SESSION":    "s 1",
+		"KIVALI_BROWSER_TOKEN":      "tok",
+		"KIVALI_BROWSER_CORE_TOKEN": "ctok",
+		"KIVALI_BROWSER_CORE_UDS":   "/var/run/kivali/uds/browser/browser.sock",
 	}
 	if !reflect.DeepEqual(env, want) {
 		t.Errorf("env = %v, want %v", env, want)
@@ -186,7 +187,7 @@ func TestPodManifestResourcesFromConfig(t *testing.T) {
 	c := testConfig()
 	c.CPURequest, c.MemoryRequest, c.CPULimit, c.MemoryLimit = "1", "1Gi", "4", "8Gi"
 	c.ServiceAccountName = "kivali-browser"
-	spec := podSpec(t, c.podManifest("alice", "s", "tok"))
+	spec := podSpec(t, c.podManifest("alice", "s", "tok", "ctok"))
 	want := map[string]any{
 		"requests": map[string]any{"cpu": "1", "memory": "1Gi"},
 		"limits":   map[string]any{"cpu": "4", "memory": "8Gi"},
@@ -246,11 +247,11 @@ func TestPodName(t *testing.T) {
 // with one head; a slug that fits is the label as it is.
 func TestPodManifestAgentLabel(t *testing.T) {
 	c := testConfig()
-	if got := labelsOf(c.podManifest("alice", "s", "tok"))["agent"]; got != "alice" {
+	if got := labelsOf(c.podManifest("alice", "s", "tok", "ctok"))["agent"]; got != "alice" {
 		t.Errorf("agent label = %q", got)
 	}
 	head := strings.Repeat("a", 70)
-	one, two := labelsOf(c.podManifest(head+"-one", "s", "tok"))["agent"], labelsOf(c.podManifest(head+"-two", "s", "tok"))["agent"]
+	one, two := labelsOf(c.podManifest(head+"-one", "s", "tok", "ctok"))["agent"], labelsOf(c.podManifest(head+"-two", "s", "tok", "ctok"))["agent"]
 	if one == two || len(one) > 63 || len(two) > 63 || !strings.HasPrefix(one, strings.Repeat("a", 50)) {
 		t.Errorf("agent labels for long slugs: %q, %q", one, two)
 	}
@@ -265,16 +266,16 @@ func TestPodManifestAgentLabel(t *testing.T) {
 // token or the image, so Start replaces a pod built for another.
 func TestPodManifestSpecHash(t *testing.T) {
 	c := testConfig()
-	base := labelsOf(c.podManifest("alice", "s", "tok"))[kube.SpecHashLabel]
-	if again := labelsOf(c.podManifest("alice", "s", "tok"))[kube.SpecHashLabel]; again != base {
+	base := labelsOf(c.podManifest("alice", "s", "tok", "ctok"))[kube.SpecHashLabel]
+	if again := labelsOf(c.podManifest("alice", "s", "tok", "ctok"))[kube.SpecHashLabel]; again != base {
 		t.Errorf("hash unstable: %q then %q", base, again)
 	}
-	if other := labelsOf(c.podManifest("alice", "s", "tok2"))[kube.SpecHashLabel]; other == base {
+	if other := labelsOf(c.podManifest("alice", "s", "tok2", "ctok"))[kube.SpecHashLabel]; other == base {
 		t.Error("hash unchanged by a new token")
 	}
 	c2 := c
 	c2.Image = "ghcr.io/kivali-ai/kivali-browser:other"
-	if other := labelsOf(c2.podManifest("alice", "s", "tok"))[kube.SpecHashLabel]; other == base {
+	if other := labelsOf(c2.podManifest("alice", "s", "tok", "ctok"))[kube.SpecHashLabel]; other == base {
 		t.Error("hash unchanged by a new image")
 	}
 }
