@@ -35,7 +35,7 @@ func TestBrowserRegistryOpenSessionKeepsNothing(t *testing.T) {
 	if b == nil {
 		t.Fatal("claim found no waiting browser")
 	}
-	if err := f.reg.attach(ctx, b); err != nil {
+	if err := f.reg.attach(b); err != nil {
 		t.Fatal(err)
 	}
 	hello := link.next(t, browserpod.TypeHello)

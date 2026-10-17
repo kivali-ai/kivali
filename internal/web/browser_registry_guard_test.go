@@ -79,7 +79,7 @@ func TestBrowserRegistryIdlesABrowserNobodyWaitsFor(t *testing.T) {
 	if b == nil {
 		t.Fatal("claim found no waiting browser")
 	}
-	if err := f.reg.attach(context.Background(), b); err != nil {
+	if err := f.reg.attach(b); err != nil {
 		t.Fatal(err)
 	}
 	f.reg.onMessage(b, browserpod.Message{Type: browserpod.TypeState, State: browserpod.StateRunning}, nil)
@@ -175,7 +175,7 @@ func TestBrowserRegistryOffboardEndsBrowsersWithoutSaving(t *testing.T) {
 	}
 	link.mu.Lock()
 	defer link.mu.Unlock()
-	if !link.closed {
+	if !link.closed.Load() {
 		t.Error("link not closed")
 	}
 	for _, fr := range link.frames {

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -91,15 +92,20 @@ type fakeLink struct {
 	mu     sync.Mutex
 	frames []sentFrame
 	sentC  chan sentFrame
-	closed bool
+	closed atomic.Bool
 	err    error
 }
 
 func newFakeLink() *fakeLink { return &fakeLink{sentC: make(chan sentFrame, 64)} }
 
-func (l *fakeLink) send(_ context.Context, msg browserpod.Message, body io.Reader) error {
+func (l *fakeLink) send(_ time.Duration, msg browserpod.Message, body io.Reader) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	return l.recordLocked(msg, body)
+}
+
+// recordLocked notes a frame the pod received. l.mu is held.
+func (l *fakeLink) recordLocked(msg browserpod.Message, body io.Reader) error {
 	if l.err != nil {
 		return l.err
 	}
@@ -116,11 +122,9 @@ func (l *fakeLink) send(_ context.Context, msg browserpod.Message, body io.Reade
 	return nil
 }
 
-func (l *fakeLink) close() {
-	l.mu.Lock()
-	l.closed = true
-	l.mu.Unlock()
-}
+// close records the close. Like the real link's, it does not take the
+// write lock: a writer the pod has stopped reading from may hold it.
+func (l *fakeLink) close() { l.closed.Store(true) }
 
 // next is the next frame the pod received, of the given type, or a
 // test failure after the deadline (a deadlock diagnostic, not a wait).
@@ -172,10 +176,17 @@ func newBrowserFixture(t *testing.T) *browserFixture {
 	return &browserFixture{t: t, st: st, prov: prov, clk: clk, reg: reg, root: root}
 }
 
-// connect plays the pod's connection for the browser the last Start
-// asked for: claims it with the token, attaches a fake link and
-// reports running. It returns the browser and the link.
+// connect plays the pod's connection for the vendor.example browser
+// the last Start asked for: claims it with the token, attaches a fake
+// link and sends the handshake. It returns the browser and the link.
 func (f *browserFixture) connect(ctx context.Context) (*browser, *fakeLink) {
+	f.t.Helper()
+	link := newFakeLink()
+	return f.connectWith("vendor.example", link), link
+}
+
+// connectWith is connect for the browser of session, over link.
+func (f *browserFixture) connectWith(session string, link browserLink) *browser {
 	f.t.Helper()
 	var token string
 	select {
@@ -183,15 +194,14 @@ func (f *browserFixture) connect(ctx context.Context) (*browser, *fakeLink) {
 	case <-time.After(10 * time.Second):
 		f.t.Fatal("the provisioner was not asked to start a pod")
 	}
-	link := newFakeLink()
-	b := f.reg.claim("alice", "vendor.example", token, link)
+	b := f.reg.claim("alice", session, token, link)
 	if b == nil {
 		f.t.Fatal("claim found no waiting browser")
 	}
-	if err := f.reg.attach(ctx, b); err != nil {
+	if err := f.reg.attach(b); err != nil {
 		f.t.Fatalf("attach: %v", err)
 	}
-	return b, link
+	return b
 }
 
 // stopped waits for the provisioner to be asked to stop a pod and for
@@ -316,7 +326,7 @@ func TestBrowserRegistryStartsRelaysAndReaps(t *testing.T) {
 		t.Errorf("browser still registered after save: %v", states)
 	}
 	link.mu.Lock()
-	closed := link.closed
+	closed := link.closed.Load()
 	link.mu.Unlock()
 	if !closed {
 		t.Error("link not closed after save")
@@ -420,7 +430,7 @@ func TestBrowserRegistryClaimNeedsTheRightToken(t *testing.T) {
 	if b == nil {
 		t.Fatal("the right token did not claim")
 	}
-	if err := f.reg.attach(ctx, b); err != nil {
+	if err := f.reg.attach(b); err != nil {
 		t.Fatal(err)
 	}
 	if f.reg.claim("alice", "vendor.example", token, newFakeLink()) != nil {

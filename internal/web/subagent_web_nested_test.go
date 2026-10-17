@@ -95,7 +95,7 @@ func TestNestedWebTaskFilesAreTheSubLeadsOwn(t *testing.T) {
 	if b == nil {
 		t.Fatal("claim found no waiting browser")
 	}
-	if err := svc.Browsers.attach(ctx, b); err != nil {
+	if err := svc.Browsers.attach(b); err != nil {
 		t.Fatal(err)
 	}
 	svc.Browsers.onMessage(b, browserpod.Message{Type: browserpod.TypeState, State: browserpod.StateRunning}, nil)
