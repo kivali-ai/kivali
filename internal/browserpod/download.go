@@ -8,7 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-	"unicode"
+
+	"github.com/kivali-ai/kivali/internal/files"
 )
 
 // download is one download in flight.
@@ -186,7 +187,7 @@ func (b *browser) cancelDownload(guid string) {
 		return
 	}
 	if d.tab != nil {
-		d.tab.note(fmt.Sprintf("A download of %s was stopped: the limit is %d MB.", cleanFileName(d.name), MaxDownloadBytes>>20))
+		b.noteOn(d.tab, fmt.Sprintf("A download of %s was stopped: the limit is %d MB.", cleanFileName(d.name), MaxDownloadBytes>>20))
 	}
 }
 
@@ -206,43 +207,82 @@ func (b *browser) deliverDownload(d *download, path string) {
 		return
 	}
 	if fi.Size() > MaxDownloadBytes {
-		d.tab.note(fmt.Sprintf("A download of %s (%s) was dropped: the limit is %d MB.", name, megabytes(fi.Size()), MaxDownloadBytes>>20))
+		b.noteOn(d.tab, fmt.Sprintf("A download of %s (%s) was dropped: the limit is %d MB.", name, megabytes(fi.Size()), MaxDownloadBytes>>20))
 		return
 	}
+	name = b.uniqueName(d.tab.group, name)
 	msg := Message{Type: TypeDownload, Group: d.tab.group, Tab: d.tab.id, FileName: name, Bytes: fi.Size()}
 	if err := b.send(msg, f); err != nil {
 		b.log.Printf("download %s: %v", name, err)
 		return
 	}
-	d.tab.note(fmt.Sprintf("Downloaded %s (%s); it is with the task's files.", name, megabytes(fi.Size())))
+	b.noteOn(d.tab, fmt.Sprintf("Downloaded %s (%s); it is with the task's files.", name, megabytes(fi.Size())))
+}
+
+// noteOn notes a download on its tab or, when that tab has closed (a
+// popup Chromium closed once it had started the download), on the
+// group's current tab, else on the tab that opened it.
+func (b *browser) noteOn(t *tab, s string) {
+	t.mu.Lock()
+	closed := t.closed
+	t.mu.Unlock()
+	if !closed {
+		t.note(s)
+		return
+	}
+	b.mu.Lock()
+	var on *tab
+	if g := b.groups[t.group]; g != nil && g.current != nil {
+		on = g.current
+	} else if o := b.byID[t.opener]; o != nil {
+		on = o
+	}
+	b.mu.Unlock()
+	if on == nil {
+		b.log.Printf("download note for %s, whose tab has closed: %s", t.group, s)
+		return
+	}
+	on.note(s)
+}
+
+// uniqueName is the name a group's download is sent under: name when
+// no download of the group has had it, else stem-2.ext, stem-3.ext and
+// so on, kept within core's name length. Core writes the name as it
+// is, so the name the model reads is the file it finds.
+func (b *browser) uniqueName(group, name string) string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	taken := b.sent[group]
+	if taken == nil {
+		taken = map[string]bool{}
+		b.sent[group] = taken
+	}
+	ext := filepath.Ext(name)
+	stem := strings.TrimSuffix(name, ext)
+	out := name
+	for i := 2; taken[out]; i++ {
+		suffix := fmt.Sprintf("-%d", i)
+		s := stem
+		if room := files.MaxDownloadNameLength - len(suffix) - len(ext); len(s) > room {
+			s = strings.TrimRight(s[:room], "-.")
+		}
+		if s == "" {
+			s = "download"
+		}
+		out = s + suffix + ext
+	}
+	taken[out] = true
+	return out
 }
 
 func megabytes(n int64) string {
 	return fmt.Sprintf("%.1f MB", float64(n)/(1<<20))
 }
 
-// cleanFileName reduces a name to one safe path element: letters,
-// digits, dots, dashes and underscores, spaces turned into dashes.
-// download.bin stands in when nothing is left.
+// cleanFileName is the one name a download or a task file is known by
+// on both ends of the wire: core's cleaner (files.CleanDownloadName),
+// so the name the pod reports is the one core writes and the name core
+// sends for a task file is the one web_upload names.
 func cleanFileName(name string) string {
-	name = filepath.Base(strings.ReplaceAll(name, "\\", "/"))
-	var sb strings.Builder
-	for _, r := range name {
-		switch {
-		case r == ' ':
-			sb.WriteRune('-')
-		case r == '.' || r == '-' || r == '_':
-			sb.WriteRune(r)
-		case r < 128 && (unicode.IsLetter(r) || unicode.IsDigit(r)):
-			sb.WriteRune(r)
-		}
-	}
-	out := strings.TrimLeft(sb.String(), ".")
-	if len(out) > 200 {
-		out = out[len(out)-200:]
-	}
-	if out == "" || strings.Trim(out, "-_") == "" {
-		return "download.bin"
-	}
-	return out
+	return files.CleanDownloadName(name)
 }

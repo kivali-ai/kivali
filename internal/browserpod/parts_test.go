@@ -17,6 +17,7 @@ import (
 	"github.com/klauspost/compress/zstd"
 
 	"github.com/kivali-ai/kivali/internal/clock"
+	"github.com/kivali-ai/kivali/internal/files"
 )
 
 func TestFormatSnapshot(t *testing.T) {
@@ -169,22 +170,110 @@ func TestSnapshotLinesDecode(t *testing.T) {
 	}
 }
 
+// The pod names a download the way core will write it, so the name
+// the model reads is the file it finds; a cleaned name is never a path.
 func TestCleanFileName(t *testing.T) {
 	for in, want := range map[string]string{
 		"report.pdf":            "report.pdf",
 		"Quarterly report.xlsx": "Quarterly-report.xlsx",
-		"../../etc/passwd":      "passwd",
-		`C:\Users\a\b.txt`:      "b.txt",
-		"résumé (1).doc":        "rsum-1.doc",
 		"...":                   "download.bin",
 		"":                      "download.bin",
-		"日本語":                   "download.bin",
 		".hidden":               "hidden",
-		"a/b/":                  "b",
 	} {
 		if got := cleanFileName(in); got != want {
 			t.Errorf("cleanFileName(%q) = %q, want %q", in, got, want)
 		}
+	}
+	for _, in := range []string{"report.pdf", "../../etc/passwd", `C:\Users\a\b.txt`, "résumé (1).doc", "日本語.pdf", "a/b/", strings.Repeat("x", 300) + ".tar.gz"} {
+		got := cleanFileName(in)
+		if want := files.CleanDownloadName(in); got != want {
+			t.Errorf("cleanFileName(%q) = %q, core writes %q", in, got, want)
+		}
+		if strings.ContainsAny(got, `/\`) || got == "." || got == ".." || len(got) > files.MaxDownloadNameLength {
+			t.Errorf("cleanFileName(%q) = %q is not a plain name", in, got)
+		}
+	}
+}
+
+// TestDownloadNamesAreUniquePerGroup: two downloads of a group whose
+// names clean to the same name are sent as that name and name-2 (then
+// name-3), within core's name length and unchanged by core's cleaner,
+// so core never needs a suffix of its own; another group may reuse a
+// name.
+func TestDownloadNamesAreUniquePerGroup(t *testing.T) {
+	b, out := testBrowser(t)
+	g := &tab{id: "t1", group: "g", changed: make(chan struct{})}
+	h := &tab{id: "t2", group: "h", changed: make(chan struct{})}
+	deliver := func(tb *tab, name string) string {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), "guid")
+		if err := os.WriteFile(path, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		b.deliverDownload(&download{name: name, tab: tb}, path)
+		m := (*out)[len(*out)-1].msg
+		if m.Type != TypeDownload || m.Group != tb.group {
+			t.Fatalf("sent %+v", m)
+		}
+		if core := files.CleanDownloadName(m.FileName); core != m.FileName {
+			t.Fatalf("core would write %q as %q", m.FileName, core)
+		}
+		return m.FileName
+	}
+	long := strings.Repeat("a", files.MaxDownloadNameLength-4) + ".pdf"
+	for _, c := range []struct {
+		tab      *tab
+		in, want string
+	}{
+		{g, "a b.pdf", "a-b.pdf"},
+		{g, "a-b.pdf", "a-b-2.pdf"},
+		{g, "a b.pdf", "a-b-3.pdf"},
+		{h, "a-b.pdf", "a-b.pdf"},
+		{g, "notes", "notes"},
+		{g, "notes", "notes-2"},
+		{g, long, long},
+		{g, long, strings.Repeat("a", files.MaxDownloadNameLength-6) + "-2.pdf"},
+	} {
+		if got := deliver(c.tab, c.in); got != c.want {
+			t.Errorf("download %q for %s sent as %q, want %q", c.in, c.tab.group, got, c.want)
+		}
+	}
+	notes := g.takeNotes()
+	if len(notes) != 7 || !strings.HasPrefix(notes[1], "Downloaded a-b-2.pdf ") {
+		t.Fatalf("notes: %q", notes)
+	}
+}
+
+// TestDownloadNoteFollowsAClosedTab: a download whose tab closed before
+// it finished is noted on the group's current tab, or on the opener.
+func TestDownloadNoteFollowsAClosedTab(t *testing.T) {
+	b, out := testBrowser(t)
+	opener := &tab{id: "t1", group: "g", changed: make(chan struct{})}
+	popup := &tab{id: "t2", group: "g", opener: "t1", closed: true, changed: make(chan struct{})}
+	b.byID["t1"] = opener
+	b.groups["g"] = &group{name: "g", tabs: []*tab{opener}, current: opener}
+	path := filepath.Join(t.TempDir(), "guid")
+	if err := os.WriteFile(path, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	b.deliverDownload(&download{name: "a.pdf", tab: popup}, path)
+	if m := (*out)[0].msg; m.Group != "g" || m.Tab != "t2" || m.FileName != "a.pdf" {
+		t.Fatalf("sent %+v", m)
+	}
+	if n := opener.takeNotes(); len(n) != 1 || !strings.HasPrefix(n[0], "Downloaded a.pdf ") {
+		t.Fatalf("notes on the current tab: %q", n)
+	}
+	if n := popup.takeNotes(); len(n) != 0 {
+		t.Fatalf("notes on the closed tab: %q", n)
+	}
+	// With no current tab the opener hears it.
+	b.groups["g"].current = nil
+	if err := os.WriteFile(path, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	b.deliverDownload(&download{name: "b.pdf", tab: popup}, path)
+	if n := opener.takeNotes(); len(n) != 1 || !strings.HasPrefix(n[0], "Downloaded b.pdf ") {
+		t.Fatalf("notes on the opener: %q", n)
 	}
 }
 
