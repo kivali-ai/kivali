@@ -89,10 +89,14 @@ type group struct {
 	// closing: closeGroup is closing the group's tabs; a popup one of
 	// them opens meanwhile is closed, not adopted.
 	closing bool
-	// unlocked: in a site session, the group's pages may go off the
-	// site (TypeSiteLock), so a person in the window can sign in
-	// through an identity provider. Commands stay on the site.
+	// unlocked: in a site session, a person is attached to the group's
+	// waiting task (TypeSiteLock), so its pages may go off the site to
+	// sign in through an identity provider and its dialogs are accepted
+	// (dialogPolicy). Commands stay on the site.
 	unlocked bool
+	// acceptDialogs counts the group's commands running with
+	// accept_dialog set; while above zero its dialogs are accepted.
+	acceptDialogs int
 }
 
 // tab is a page target in a group.
@@ -569,17 +573,7 @@ func (b *browser) watch(t *tab) {
 			})
 		}
 	})
-	on("Page.javascriptDialogOpening", func(raw json.RawMessage) {
-		var ev struct {
-			Type    string `json:"type"`
-			Message string `json:"message"`
-		}
-		_ = json.Unmarshal(raw, &ev)
-		t.note(fmt.Sprintf("The page showed a %s dialog (%q); it was accepted.", ev.Type, cut(ev.Message, 200)))
-		go func() {
-			_, _ = b.conn.Call(context.Background(), s, "Page.handleJavaScriptDialog", map[string]any{"accept": true})
-		}()
-	})
+	on("Page.javascriptDialogOpening", func(raw json.RawMessage) { b.onDialog(t, s, raw) })
 	on("Page.screencastFrame", func(raw json.RawMessage) { b.onScreencastFrame(t, raw) })
 	on("Page.screencastVisibilityChanged", func(raw json.RawMessage) { b.onScreencastVisibility(t, raw) })
 }

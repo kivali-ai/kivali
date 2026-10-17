@@ -633,15 +633,24 @@ site is failed as aborted, so an on-site URL that redirects off the
 site loads nothing there, the tab stays on the page it was on, and the
 model reads why with its next result. Subframes are let through. A
 commit off the site that still gets past the pause is sent to
-about:blank. Between saves the pod sends core the session's
-cookies whenever they have changed, every five minutes and right
-after a window closes (`TypeCookies`; core asks with `TypeSnapshot`),
-as the array `Storage.setCookies` takes; core keeps the latest beside
-the profile (`cookies.json`) and hands it to the next browser after
-the profile, which sets the cookies before it reports running. A
-browser that dies before its save loses minutes of cookies, not a
-sign-in; a saved profile replaces the snapshot. The session record,
-profile and snapshot live beside the open session's under
+about:blank. A JavaScript dialog is answered by the pod
+(`dialogPolicy` in `browserpod/dialog.go`): the open session accepts
+every one; a site session accepts an alert and dismisses a confirm, a
+prompt or a beforeunload, unless the `web_click`, `web_type` or
+`web_press` that opened it set `accept_dialog` (only a site session's
+tools take it) or a person is attached to the group's waiting task
+(the group's `unlocked`). Either way the result of the command
+reports the dialog's type, what became of it and its text, cut to 500
+characters, between the page content lines. Between saves the pod
+sends core the session's cookies whenever they have changed, every
+five minutes and right after a window closes (`TypeCookies`; core
+asks with `TypeSnapshot`), as the array `Storage.setCookies` takes;
+core keeps the latest beside the profile (`cookies.json`) and hands it
+to the next browser after the profile, which sets the cookies before
+it reports running. A browser that dies before its save loses minutes
+of cookies, not a sign-in; a saved profile replaces the snapshot. The
+session record, profile and snapshot live beside the open session's
+under
 `/data/agents/<slug>/browser/<site>/`.
 
 A task in a site session that an agent dispatched itself (depth 1) has

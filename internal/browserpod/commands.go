@@ -284,6 +284,9 @@ func (b *browser) dispatch(ctx context.Context, msg Message, tp **tab) (result, 
 		return result{}, err
 	}
 	*tp = t
+	if wantsDialogAccepted(args) {
+		defer b.acceptDialogs(msg.Group)()
+	}
 	b.bringToFront(ctx, t)
 	switch a := args.(type) {
 	case NavigateArgs:

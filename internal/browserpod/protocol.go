@@ -293,8 +293,12 @@ type NavigateArgs struct {
 }
 
 // ClickArgs: click the element with this ref from the last snapshot.
+// AcceptDialog, on a click, a keystroke or a press, accepts a
+// confirm, prompt or beforeunload dialog the action opens in a site
+// session, which dismisses one otherwise.
 type ClickArgs struct {
-	Ref string `json:"ref"`
+	Ref          string `json:"ref"`
+	AcceptDialog bool   `json:"accept_dialog,omitempty"`
 }
 
 // TypeArgs: focus the element and type Text; Submit presses Enter after.
@@ -302,6 +306,8 @@ type TypeArgs struct {
 	Ref    string `json:"ref"`
 	Text   string `json:"text"`
 	Submit bool   `json:"submit,omitempty"`
+	// AcceptDialog as on ClickArgs.
+	AcceptDialog bool `json:"accept_dialog,omitempty"`
 }
 
 // SelectArgs: choose the option with this value or visible label in a
@@ -315,6 +321,8 @@ type SelectArgs struct {
 // "ArrowDown", "Control+a").
 type PressArgs struct {
 	Key string `json:"key"`
+	// AcceptDialog as on ClickArgs.
+	AcceptDialog bool `json:"accept_dialog,omitempty"`
 }
 
 // ScrollArgs: scroll the element with Ref, or the page, by Direction;
