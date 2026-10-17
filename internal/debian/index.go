@@ -84,6 +84,12 @@ const (
 	maxSuggestions = 3
 )
 
+// maxIndexBytes bounds what one download reads: the compressed body
+// and what it decompresses to, each. A Packages index is tens of
+// megabytes; a response past this is a failed refresh, not a read
+// that runs on. A variable so tests can lower it.
+var maxIndexBytes int64 = 256 << 20
+
 // ErrUnavailable is wrapped by Check when there is no list to check
 // against: no download has ever succeeded and none is cached.
 var ErrUnavailable = errors.New("the Debian package list could not be read")
@@ -362,16 +368,35 @@ func (ix *Index) download(ctx context.Context, cur *list) (*list, error) {
 	case resp.StatusCode != http.StatusOK:
 		return nil, fmt.Errorf("%s: %s", url, resp.Status)
 	}
-	zr, err := gzip.NewReader(resp.Body)
+	// Each reader stops one byte past the bound, so a body or an index
+	// that reaches it is told apart from one that fits exactly.
+	body := &countingReader{r: io.LimitReader(resp.Body, maxIndexBytes+1)}
+	zr, err := gzip.NewReader(body)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", url, err)
 	}
-	l, err := parse(zr)
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", url, err)
+	plain := &countingReader{r: io.LimitReader(zr, maxIndexBytes+1)}
+	l, perr := parse(plain)
+	if body.n > maxIndexBytes || plain.n > maxIndexBytes {
+		return nil, fmt.Errorf("%s: the index is larger than %d bytes", url, maxIndexBytes)
+	}
+	if perr != nil {
+		return nil, fmt.Errorf("%s: %w", url, perr)
 	}
 	l.ETag, l.Fetched = resp.Header.Get("ETag"), ix.opts.Clock.Now()
 	return l, nil
+}
+
+// countingReader counts the bytes read through it.
+type countingReader struct {
+	r io.Reader
+	n int64
+}
+
+func (c *countingReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.n += int64(n)
+	return n, err
 }
 
 // cacheFile is the cache file's content.
