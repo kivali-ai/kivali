@@ -21,8 +21,12 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/url"
+	"strings"
 	"sync/atomic"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/coder/websocket"
 
@@ -34,8 +38,41 @@ import (
 const browserWindowWriteTimeout = 5 * time.Second
 
 // browserWindowReadLimit bounds one message from the page: an input
-// event, at most a pasted text.
+// event, at most a pasted text (itself bounded by browserInputTextMax,
+// which Input refuses beyond with a notice).
 const browserWindowReadLimit = 1 << 20
+
+// windowAcceptOptions are the WebSocket options for a browser window.
+// The library accepts a page whose Origin host is the request's Host;
+// a proxy that rewrites Host is covered by the origin it forwards
+// (requestScheme and requestHost, as the API's same-origin check reads
+// them) and by the deployment's configured external origin. A pattern
+// with a scheme is matched against the whole origin.
+func (s *Server) windowAcceptOptions(r *http.Request) *websocket.AcceptOptions {
+	opts := &websocket.AcceptOptions{CompressionMode: websocket.CompressionDisabled}
+	if h := requestHost(r); h != "" && !strings.EqualFold(h, r.Host) {
+		opts.OriginPatterns = append(opts.OriginPatterns, requestScheme(r)+"://"+h)
+	}
+	if u, err := url.Parse(s.ExternalURL); err == nil && u.Scheme != "" && u.Host != "" {
+		opts.OriginPatterns = append(opts.OriginPatterns, u.Scheme+"://"+u.Host)
+	}
+	return opts
+}
+
+// sentence is err's text as a line for the person at the window: a
+// capital to start, a full stop to end.
+func sentence(err error) string {
+	s := strings.TrimSpace(err.Error())
+	if s == "" {
+		return ""
+	}
+	r, size := utf8.DecodeRuneInString(s)
+	s = string(unicode.ToUpper(r)) + s[size:]
+	if !strings.HasSuffix(s, ".") {
+		s += "."
+	}
+	return s
+}
 
 // handleBrowserWindow serves one browser window.
 func (s *Server) handleBrowserWindow(w http.ResponseWriter, r *http.Request) {
@@ -49,7 +86,7 @@ func (s *Server) handleBrowserWindow(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	c, err := websocket.Accept(w, r, &websocket.AcceptOptions{CompressionMode: websocket.CompressionDisabled})
+	c, err := websocket.Accept(w, r, s.windowAcceptOptions(r))
 	if err != nil {
 		return
 	}
@@ -58,9 +95,22 @@ func (s *Server) handleBrowserWindow(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
+	// write sends one event to the page. Writes come from this
+	// goroutine and the reader's; the connection serialises them.
+	write := func(ev apitypes.BrowserWindowEvent) bool {
+		body, err := json.Marshal(ev)
+		if err != nil {
+			return false
+		}
+		wctx, wcancel := context.WithTimeout(ctx, browserWindowWriteTimeout)
+		defer wcancel()
+		return c.Write(wctx, websocket.MessageText, body) == nil
+	}
 	// The page's messages: input for the shown tab, taken only while
 	// the task waits for a person; reading is also how the socket's
-	// close is seen. The watcher exists only once the browser is up.
+	// close is seen. The watcher exists only once the browser is up. An
+	// input the browser could not take is reported to the page as a
+	// notice, so it can say why nothing happened.
 	var watcher atomic.Pointer[browserWatcher]
 	go func() {
 		defer cancel()
@@ -80,22 +130,21 @@ func (s *Server) handleBrowserWindow(w http.ResponseWriter, r *http.Request) {
 			if w == nil || !s.SubagentService.windowTakesInput(id) {
 				continue
 			}
-			_ = s.Browsers.Input(w, in.Input)
+			if err := s.Browsers.Input(w, in.Input); err != nil {
+				write(apitypes.BrowserWindowEvent{Type: apitypes.BrowserWindowEventTypeNotice, Reason: sentence(err)})
+			}
 		}
 	}()
-	write := func(ev apitypes.BrowserWindowEvent) bool {
-		body, err := json.Marshal(ev)
-		if err != nil {
-			return false
-		}
-		wctx, wcancel := context.WithTimeout(ctx, browserWindowWriteTimeout)
-		defer wcancel()
-		return c.Write(wctx, websocket.MessageText, body) == nil
-	}
-	live := j.State == subagentJobRunning || j.State == subagentJobWaiting
-	if !live || j.cancelled || j.endReason != "" {
-		write(apitypes.BrowserWindowEvent{Type: apitypes.BrowserWindowEventTypeEnd, Reason: "The task has ended."})
+	end := func(reason string) {
+		write(apitypes.BrowserWindowEvent{Type: apitypes.BrowserWindowEventTypeEnd, Reason: reason})
 		_ = c.Close(websocket.StatusNormalClosure, "")
+	}
+	switch {
+	case j.State == subagentJobQueued && !j.cancelled:
+		end("The task has not started yet.")
+		return
+	case (j.State != subagentJobRunning && j.State != subagentJobWaiting) || j.cancelled || j.endReason != "":
+		end("The task has ended.")
 		return
 	}
 	input := j.State == subagentJobWaiting && j.Site != ""
@@ -108,12 +157,17 @@ func (s *Server) handleBrowserWindow(w http.ResponseWriter, r *http.Request) {
 	}
 	wt, err := s.Browsers.Watch(ctx, slug, j.Session, id, input)
 	if err != nil {
-		write(apitypes.BrowserWindowEvent{Type: apitypes.BrowserWindowEventTypeEnd, Reason: err.Error()})
-		_ = c.Close(websocket.StatusNormalClosure, "")
+		end(sentence(err))
 		return
 	}
 	defer s.Browsers.Unwatch(wt)
 	watcher.Store(wt)
+	// Watch may have waited minutes for the browser; a wait for a
+	// person that began meanwhile was broadcast only to the windows
+	// then attached. The window hears the current answer.
+	if now := s.SubagentService.windowTakesInput(id); now != input {
+		wt.event(apitypes.BrowserWindowEvent{Type: apitypes.BrowserWindowEventTypeState, Browser: apitypes.BrowserStateRunning, Input: now, Site: j.Site})
+	}
 	// flushEvents sends every queued text message. Events are queued
 	// before the frame they describe (a tab change before that tab's
 	// first frame), so they go out before any frame, and before the

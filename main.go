@@ -396,6 +396,7 @@ func main() {
 		AgentModel:      cfg.AgentModel,
 		SummaryModel:    cfg.SummaryModel,
 		VersionName:     version,
+		ExternalURL:     cfg.ExternalURL,
 		ClockCheck:      clockWatcher,
 		SubagentService: subagentService,
 		Packages:        packages,

@@ -17,6 +17,10 @@
     }
   },
   {
+    "type": "notice",
+    "reason": "The browser has no page to show yet."
+  },
+  {
     "type": "end",
     "reason": "The task has ended."
   }

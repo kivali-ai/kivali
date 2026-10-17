@@ -587,7 +587,7 @@ func TestBrowserRegistryWindowInputAndReset(t *testing.T) {
 		t.Fatalf("first state event = %+v, want input on and the site", ev)
 	}
 	press := apitypes.BrowserInput{Kind: "mouse", Action: "pressed", X: 10, Y: 20, Button: "left"}
-	if err := f.reg.Input(w, press); err == nil || !strings.Contains(err.Error(), "no tab is shown") {
+	if err := f.reg.Input(w, press); err == nil || !strings.Contains(err.Error(), "no page to show") {
 		t.Errorf("input before a frame: %v", err)
 	}
 	f.reg.onMessage(b, browserpod.Message{Type: browserpod.TypeTab, Group: "job1", Tab: "t1", URL: "https://vendor.example/login"}, nil)

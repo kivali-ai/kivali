@@ -90,6 +90,10 @@ const (
 	// browserWatcherEvents is how many unread text messages a window
 	// may hold before the oldest is dropped.
 	browserWatcherEvents = 16
+	// browserInputTextMax bounds the text of one input event from a
+	// window, a paste: the message that carries it to the pod must fit
+	// the pod's text frame limit with room to spare.
+	browserInputTextMax = 256 << 10
 )
 
 // browserState is where a browser is in its life.
@@ -806,7 +810,12 @@ func (r *browserRegistry) closeWindow(b *browser, group string) {
 
 // Input sends one event from a window to the tab it shows. Only the
 // window's handler calls it, and only while the window takes input.
+// An error says, for the person at the window, why the input was not
+// taken.
 func (r *browserRegistry) Input(w *browserWatcher, in apitypes.BrowserInput) error {
+	if len(in.Text) > browserInputTextMax {
+		return fmt.Errorf("the pasted text is longer than %d KB; paste less at a time", browserInputTextMax>>10)
+	}
 	r.mu.Lock()
 	var tab string
 	if g, ok := w.b.groups[w.group]; ok {
@@ -818,13 +827,16 @@ func (r *browserRegistry) Input(w *browserWatcher, in apitypes.BrowserInput) err
 		return errors.New("the browser is not running")
 	}
 	if tab == "" {
-		return errors.New("no tab is shown yet")
+		return errors.New("the browser has no page to show yet")
 	}
 	args, err := json.Marshal(in)
 	if err != nil {
 		return err
 	}
-	return link.send(browserSendTimeout, browserpod.Message{Type: browserpod.TypeInput, Group: w.group, Tab: tab, Args: args}, nil)
+	if err := link.send(browserSendTimeout, browserpod.Message{Type: browserpod.TypeInput, Group: w.group, Tab: tab, Args: args}, nil); err != nil {
+		return errors.New("the browser did not take the input")
+	}
+	return nil
 }
 
 // CurrentPage is the URL and title of the tab a group's windows show

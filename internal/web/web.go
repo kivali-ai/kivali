@@ -134,6 +134,12 @@ type Server struct {
 	// defaultSeedTimeout.
 	SeedTimeout time.Duration
 
+	// ExternalURL is the https origin other computers reach this
+	// deployment at (KIVALI_EXTERNAL_URL), or empty. A browser window's
+	// WebSocket accepts a page from that origin besides the request's
+	// own host, for a proxy that rewrites Host.
+	ExternalURL string
+
 	// ClockCheck reports the latest drift between the host clock and a
 	// public time reference. Surfaced on /healthz (the watcher logs a
 	// large drift itself). nil ⇒ no clock check is running (tests, dev
