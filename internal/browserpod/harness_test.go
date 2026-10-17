@@ -218,6 +218,8 @@ type fakeCDP struct {
 	nextC    int
 	contexts map[string]string
 	disposed []string
+	// jar is what Storage.getCookies answers.
+	jar []map[string]any
 	// override answers a method before the built-in fake does.
 	override func(ctx context.Context, session, method string, params json.RawMessage) (any, bool, error)
 }
@@ -377,12 +379,27 @@ func (f *fakeCDP) answer(session, method string, raw json.RawMessage) (any, erro
 		f.emit(session, "Page.lifecycleEvent", map[string]any{"frameId": target, "loaderId": loader, "name": "networkIdle"})
 		f.emit(session, "Page.frameStoppedLoading", map[string]any{"frameId": target})
 		return map[string]any{"frameId": target, "loaderId": loader}, nil
+	case "Storage.getCookies":
+		f.mu.Lock()
+		jar := f.jar
+		f.mu.Unlock()
+		if jar == nil {
+			jar = []map[string]any{}
+		}
+		return map[string]any{"cookies": jar}, nil
 	case "Page.createIsolatedWorld":
 		return map[string]any{"executionContextId": 7}, nil
 	case "Runtime.evaluate":
 		return map[string]any{"result": map[string]any{"type": "boolean", "value": false}}, nil
 	}
 	return map[string]any{}, nil
+}
+
+// setJar is what the browser's cookies become.
+func (f *fakeCDP) setJar(cookies ...map[string]any) {
+	f.mu.Lock()
+	f.jar = cookies
+	f.mu.Unlock()
 }
 
 // fakeProc is a browserProcess around a fakeCDP.
@@ -416,6 +433,8 @@ type podOptions struct {
 	site      string
 	ephemeral bool
 	profile   []byte
+	cookies   []byte            // a cookie snapshot, sent before start
+	jar       []map[string]any  // the browser's cookies from the start
 	files     map[string]string // group/name → content, sent before start
 }
 
@@ -425,6 +444,7 @@ func startPod(t *testing.T, o podOptions) *podHarness {
 	t.Helper()
 	fc := newFakeCore(t)
 	cdp := newFakeCDP(t)
+	cdp.setJar(o.jar...)
 	proc := &fakeProc{conn: cdp, done: make(chan struct{})}
 	clk := clock.NewFake()
 	dir := t.TempDir()
@@ -449,6 +469,9 @@ func startPod(t *testing.T, o podOptions) *podHarness {
 	for key, content := range o.files {
 		group, name, _ := strings.Cut(key, "/")
 		core.sendBytes(Message{Type: TypeFile, Group: group, FileName: name}, []byte(content))
+	}
+	if o.cookies != nil {
+		core.sendBytes(Message{Type: TypeCookies}, o.cookies)
 	}
 	core.send(Message{Type: TypeStart})
 	core.expectState(StateStarting)

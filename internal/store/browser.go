@@ -16,14 +16,16 @@ import (
 // Browser sessions are the saved Chromium profiles an agent's web
 // subagents run in: one directory per session under
 // agents/<slug>/browser/<session>/, holding profile.tar.zst (the
-// packed profile, absent until a browser has been saved) and
-// session.json. The directory sits outside the agent's memory/ tree,
-// so neither the agent container nor its shell mounts it; only core
-// reads and writes it, and the browser pod receives the profile over
-// its connection to core.
+// packed profile, absent until a browser has been saved), cookies.json
+// (the cookies a browser reported since that profile was saved, gone
+// once a profile is) and session.json. The directory sits outside the
+// agent's memory/ tree, so neither the agent container nor its shell
+// mounts it; only core reads and writes it, and the browser pod
+// receives the profile and the cookies over its connection to core.
 const (
 	browserDirName         = "browser"
 	browserProfileFilename = "profile.tar.zst"
+	browserCookiesFilename = "cookies.json"
 	browserSessionFilename = "session.json"
 )
 
@@ -156,8 +158,9 @@ func (s *FSStore) TouchBrowserSession(slug, session string, now time.Time) error
 }
 
 // WriteBrowserProfile replaces the session's saved profile with the
-// bytes read from r, through a temporary file and a rename, and
-// records the size on the session. The session must exist.
+// bytes read from r, through a temporary file and a rename, records
+// the size on the session and drops the cookie snapshot, which the
+// profile now holds. The session must exist.
 func (s *FSStore) WriteBrowserProfile(slug, session string, r io.Reader, now time.Time) (int64, error) {
 	bs, ok, err := s.ReadBrowserSession(slug, session)
 	if err != nil {
@@ -167,7 +170,37 @@ func (s *FSStore) WriteBrowserProfile(slug, session string, r io.Reader, now tim
 		return 0, fmt.Errorf("browser session %s/%s does not exist", slug, session)
 	}
 	dir := s.browserSessionDir(slug, session)
-	tmp, err := os.CreateTemp(dir, ".profile-*")
+	n, err := writeSessionFile(dir, browserProfileFilename, r)
+	if err != nil {
+		return 0, err
+	}
+	if err := os.Remove(filepath.Join(dir, browserCookiesFilename)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return 0, err
+	}
+	bs.ProfileBytes = n
+	bs.LastUsed = now.UTC()
+	return n, s.WriteBrowserSession(slug, bs)
+}
+
+// WriteBrowserCookies replaces the session's cookie snapshot with the
+// bytes read from r: the cookies a browser reported since its profile
+// was saved, for the next browser to start from should this one not
+// get to save. The session must exist.
+func (s *FSStore) WriteBrowserCookies(slug, session string, r io.Reader) (int64, error) {
+	_, ok, err := s.ReadBrowserSession(slug, session)
+	if err != nil {
+		return 0, err
+	}
+	if !ok {
+		return 0, fmt.Errorf("browser session %s/%s does not exist", slug, session)
+	}
+	return writeSessionFile(s.browserSessionDir(slug, session), browserCookiesFilename, r)
+}
+
+// writeSessionFile replaces dir/name with the bytes read from r,
+// through a temporary file and a rename, and returns the size.
+func writeSessionFile(dir, name string, r io.Reader) (int64, error) {
+	tmp, err := os.CreateTemp(dir, "."+name+"-*")
 	if err != nil {
 		return 0, err
 	}
@@ -193,16 +226,14 @@ func (s *FSStore) WriteBrowserProfile(slug, session string, r io.Reader, now tim
 	if err := os.Chmod(tmpPath, 0o600); err != nil {
 		return 0, err
 	}
-	if err := os.Rename(tmpPath, filepath.Join(dir, browserProfileFilename)); err != nil {
+	if err := os.Rename(tmpPath, filepath.Join(dir, name)); err != nil {
 		return 0, err
 	}
 	committed = true
 	if err := syncDir(dir); err != nil {
 		return 0, err
 	}
-	bs.ProfileBytes = n
-	bs.LastUsed = now.UTC()
-	return n, s.WriteBrowserSession(slug, bs)
+	return n, nil
 }
 
 // OpenBrowserProfile opens the session's saved profile for reading and
@@ -212,7 +243,23 @@ func (s *FSStore) OpenBrowserProfile(slug, session string) (io.ReadCloser, int64
 	if err := ValidBrowserSessionName(session); err != nil {
 		return nil, 0, err
 	}
-	f, err := os.Open(filepath.Join(s.browserSessionDir(slug, session), browserProfileFilename))
+	return openSessionFile(filepath.Join(s.browserSessionDir(slug, session), browserProfileFilename))
+}
+
+// OpenBrowserCookies opens the session's cookie snapshot for reading
+// and returns its size. A session with none returns a nil reader and
+// no error.
+func (s *FSStore) OpenBrowserCookies(slug, session string) (io.ReadCloser, int64, error) {
+	if err := ValidBrowserSessionName(session); err != nil {
+		return nil, 0, err
+	}
+	return openSessionFile(filepath.Join(s.browserSessionDir(slug, session), browserCookiesFilename))
+}
+
+// openSessionFile opens one file of a session for reading with its
+// size; a file that does not exist is a nil reader and no error.
+func openSessionFile(path string) (io.ReadCloser, int64, error) {
+	f, err := os.Open(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, 0, nil
 	}

@@ -113,8 +113,10 @@ const (
 	// for a fresh profile. Site, Headful and Ephemeral describe the
 	// session.
 	TypeHello = "hello"
-	// TypeStart tells the pod the profile is complete: unpack it and
-	// start Chromium.
+	// TypeStart tells the pod the profile, and the cookies if any, are
+	// complete: unpack the profile and start Chromium. TypeCookies
+	// before it carries the session's last cookie snapshot, which the
+	// pod sets once Chromium is up.
 	TypeStart = "start"
 	// TypeCommand is one web tool call: ID, Group, Tab, Name, Args.
 	TypeCommand = "command"
@@ -138,6 +140,10 @@ const (
 	// TypeCloseGroup closes every tab of a group, when its subagent
 	// has finished.
 	TypeCloseGroup = "close-group"
+	// TypeSnapshot asks the pod for its cookies now (TypeCookies) if
+	// they have changed since the last it sent: a window has just
+	// closed, so a person may have signed in.
+	TypeSnapshot = "snapshot"
 )
 
 // Message types the pod sends.
@@ -171,9 +177,14 @@ const (
 	// following as binary frames. Never base64: frames are the busiest
 	// thing on the connection.
 	TypeFrame = "frame"
-	// TypeCookiesChanged tells core the profile has changed in a way
-	// worth a snapshot (a cookie was set or cleared).
-	TypeCookiesChanged = "cookies-changed"
+	// TypeCookies carries a site session's cookies as JSON, the array
+	// Storage.setCookies takes: Bytes, then the bytes. The pod sends it
+	// when the cookies have changed since the last it sent, every
+	// snapshotEvery and at once on TypeSnapshot; core keeps the latest
+	// beside the profile and sends it back before TypeStart on the
+	// next browser. A browser that dies before its save loses minutes
+	// of cookies, not a sign-in.
+	TypeCookies = "cookies"
 )
 
 // Pod states, on TypeState.

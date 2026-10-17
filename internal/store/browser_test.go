@@ -62,6 +62,32 @@ func TestBrowserSessionsRoundTrip(t *testing.T) {
 		t.Errorf("session dir holds %d entries, want session.json and the profile", len(entries))
 	}
 
+	// A cookie snapshot lives beside the profile until a profile is
+	// saved, which holds the cookies itself.
+	if _, err := s.WriteBrowserCookies("alice", "nowhere.example", strings.NewReader("[]")); err == nil {
+		t.Error("WriteBrowserCookies for a session that does not exist succeeded")
+	}
+	jar := []byte(`[{"name":"sid","value":"1"}]`)
+	if n, err := s.WriteBrowserCookies("alice", "open", bytes.NewReader(jar)); err != nil || n != int64(len(jar)) {
+		t.Fatalf("WriteBrowserCookies = %d, %v", n, err)
+	}
+	if r, size, err := s.OpenBrowserCookies("alice", "open"); err != nil || size != int64(len(jar)) {
+		t.Fatalf("OpenBrowserCookies = %d, %v", size, err)
+	} else if got, _ := io.ReadAll(r); !bytes.Equal(got, jar) {
+		t.Errorf("cookies read back = %q", got)
+	} else {
+		_ = r.Close()
+	}
+	if _, err := s.WriteBrowserProfile("alice", "open", bytes.NewReader(payload), later); err != nil {
+		t.Fatal(err)
+	}
+	if r, _, err := s.OpenBrowserCookies("alice", "open"); err != nil || r != nil {
+		t.Errorf("cookies survive a profile save: %v, %v", r, err)
+	}
+	if r, _, err := s.OpenBrowserCookies("alice", "vendor.com"); err != nil || r != nil {
+		t.Errorf("a session with no snapshot: %v, %v", r, err)
+	}
+
 	list, err := s.ListBrowserSessions("alice")
 	if err != nil || len(list) != 2 || list[0].Name != "open" || list[1].Name != "vendor.com" || list[1].Site != "vendor.com" {
 		t.Errorf("ListBrowserSessions = %+v, %v", list, err)

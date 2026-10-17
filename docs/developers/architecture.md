@@ -471,7 +471,10 @@ release does). A web subagent's first command starts the pod and waits
 for it to connect; the handshake hands over the session's saved
 profile; when no subagent uses the browser it is idle, and after ten
 minutes core asks for the profile back, writes it to the store and
-deletes the pod. A start that does not connect within five minutes
+deletes the pod. A browser that has run for two hours
+(`browserLifetime`) takes no new task and is saved as soon as its last
+task ends, never under a task or a window, so Chromium's memory does
+not grow without bound. A start that does not connect within five minutes
 fails the command; a lost connection fails the commands in flight and
 deletes the pod; the next use starts afresh from the saved profile.
 At most `BROWSER_MAX_PER_TEAM` browsers (3) run at once; a start
@@ -488,7 +491,8 @@ group core opened on that browser, fit the size it announced and the
 task's bounds (20 files, 200 MB); it is written to the task's
 `untrusted-downloads/` ([files-and-publishing.md](files-and-publishing.md))
 and listed in its result's `files`. A profile is taken only while core
-asked for one, up to 2 GiB. Every write to the pod has a time limit,
+asked for one, up to 2 GiB; a cookie snapshot only from a site
+session's running browser, up to 8 MB. Every write to the pod has a time limit,
 and a pod that stops reading is dropped rather than waited on. A file
 a task uploads is read through the caller's files backend with
 `file_view`'s confinement, so a link out of the caller's tree is no
@@ -557,8 +561,16 @@ the site in its hello and runs headed under Xvfb (some sites refuse a
 headless browser's sign-in); the pod refuses `web_navigate` off the
 site and its subdomains with `off_site`, `web_eval` does not exist
 there, and the profile is saved and restored across browsers, so
-sign-ins persist. The session record and profile live beside the open
-session's under `/data/agents/<slug>/browser/<site>/`.
+sign-ins persist. Between saves the pod sends core the session's
+cookies whenever they have changed, every five minutes and right
+after a window closes (`TypeCookies`; core asks with `TypeSnapshot`),
+as the array `Storage.setCookies` takes; core keeps the latest beside
+the profile (`cookies.json`) and hands it to the next browser after
+the profile, which sets the cookies before it reports running. A
+browser that dies before its save loses minutes of cookies, not a
+sign-in; a saved profile replaces the snapshot. The session record,
+profile and snapshot live beside the open session's under
+`/data/agents/<slug>/browser/<site>/`.
 
 A task in a site session that an agent dispatched itself (depth 1) has
 `web_wait_for_sign_in(reason)`: `sign_in`, `mfa`, `captcha` or
