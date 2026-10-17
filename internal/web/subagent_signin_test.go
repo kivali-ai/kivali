@@ -578,19 +578,19 @@ func TestBrowserRegistryWindowInputAndReset(t *testing.T) {
 	f := newBrowserFixture(t)
 	ctx := context.Background()
 	b, link := f.running(ctx, "job1")
-	w, err := f.reg.Watch(ctx, "alice", "vendor.com", "job1", true)
+	w, err := f.reg.Watch(ctx, "alice", "vendor.example", "job1", true)
 	if err != nil {
 		t.Fatal(err)
 	}
 	link.next(t, browserpod.TypeScreencast)
-	if ev := nextEvent(t, w); !ev.Input || ev.Site != "vendor.com" {
+	if ev := nextEvent(t, w); !ev.Input || ev.Site != "vendor.example" {
 		t.Fatalf("first state event = %+v, want input on and the site", ev)
 	}
 	press := apitypes.BrowserInput{Kind: "mouse", Action: "pressed", X: 10, Y: 20, Button: "left"}
 	if err := f.reg.Input(w, press); err == nil || !strings.Contains(err.Error(), "no page to show") {
 		t.Errorf("input before a frame: %v", err)
 	}
-	f.reg.onMessage(b, browserpod.Message{Type: browserpod.TypeTab, Group: "job1", Tab: "t1", URL: "https://vendor.com/login"}, nil)
+	f.reg.onMessage(b, browserpod.Message{Type: browserpod.TypeTab, Group: "job1", Tab: "t1", URL: "https://vendor.example/login"}, nil)
 	f.reg.onMessage(b, browserpod.Message{Type: browserpod.TypeFrame, Group: "job1", Tab: "t1", Bytes: 1}, strings.NewReader("x"))
 	nextEvent(t, w)
 	nextFrame(t, w)
@@ -601,14 +601,14 @@ func TestBrowserRegistryWindowInputAndReset(t *testing.T) {
 	if in.msg.Group != "job1" || in.msg.Tab != "t1" || !strings.Contains(string(in.msg.Args), `"kind":"mouse"`) || !strings.Contains(string(in.msg.Args), `"button":"left"`) {
 		t.Errorf("input frame = %+v %s", in.msg, in.msg.Args)
 	}
-	f.reg.BroadcastState("alice", "vendor.com", "job1", false)
-	if ev := nextEvent(t, w); ev.Type != apitypes.BrowserWindowEventTypeState || ev.Input || ev.Site != "vendor.com" {
+	f.reg.BroadcastState("alice", "vendor.example", "job1", false)
+	if ev := nextEvent(t, w); ev.Type != apitypes.BrowserWindowEventTypeState || ev.Input || ev.Site != "vendor.example" {
 		t.Errorf("broadcast state = %+v", ev)
 	}
-	if _, err := f.st.EnsureBrowserSession("alice", "vendor.com", "vendor.com", f.clk.Now()); err != nil {
+	if _, err := f.st.EnsureBrowserSession("alice", "vendor.example", "vendor.example", f.clk.Now()); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.reg.Reset("alice", "vendor.com"); err != nil {
+	if err := f.reg.Reset("alice", "vendor.example"); err != nil {
 		t.Fatal(err)
 	}
 	if ev := nextEvent(t, w); ev.Type != apitypes.BrowserWindowEventTypeEnd {
