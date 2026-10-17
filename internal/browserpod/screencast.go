@@ -38,12 +38,42 @@ func (b *browser) setScreencast(ctx context.Context, t *tab, on bool) error {
 
 // watchGroup turns a group's screencast on or off. While it is on, the
 // group's current tab is cast and the cast follows that tab as the
-// group switches, opens and closes tabs.
+// group switches, opens and closes tabs. A hidden tab casts no frames,
+// so a group that is now watched is brought to the front, unless a
+// command is running: its end does that.
 func (b *browser) watchGroup(ctx context.Context, name string, on bool) {
 	b.mu.Lock()
 	b.groupLocked(name).watched = on
+	busy := b.running > 0
 	b.mu.Unlock()
 	b.followWatch(ctx, name)
+	if on && !busy {
+		b.frontWatched(ctx, name)
+	}
+}
+
+// onScreencastVisibility hears that a cast tab was shown or hidden. A
+// hidden tab has lost the front to another tab and casts no frames, so
+// the watched group's current tab is brought back: now when no command
+// runs, else when the running command ends.
+func (b *browser) onScreencastVisibility(t *tab, raw json.RawMessage) {
+	var ev struct {
+		Visible bool `json:"visible"`
+	}
+	if json.Unmarshal(raw, &ev) != nil || ev.Visible {
+		return
+	}
+	b.mu.Lock()
+	if b.front == t {
+		b.front = nil
+	}
+	g := b.groups[t.group]
+	shown := g != nil && g.watched && g.current == t
+	busy := b.running > 0
+	b.mu.Unlock()
+	if shown && !busy {
+		b.bringToFront(context.Background(), t)
+	}
 }
 
 // followWatch puts a watched group's screencast on its current tab and

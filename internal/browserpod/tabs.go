@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/url"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -53,8 +54,13 @@ type browser struct {
 	frames map[string]*tab
 
 	downloads map[string]*download
-	// front is the tab last brought to the front.
+	// front is the tab last brought to the front, nil when Chromium has
+	// said that tab is hidden.
 	front *tab
+	// running counts commands in flight. While one runs, a watched tab
+	// that loses the front is brought back when the command ends, not
+	// at once: the command's own tab needs the front meanwhile.
+	running int
 }
 
 // attachment is an attached page target.
@@ -505,6 +511,7 @@ func (b *browser) watch(t *tab) {
 		}()
 	})
 	on("Page.screencastFrame", func(raw json.RawMessage) { b.onScreencastFrame(t, raw) })
+	on("Page.screencastVisibilityChanged", func(raw json.RawMessage) { b.onScreencastVisibility(t, raw) })
 }
 
 // emitNavigated sends navigated for the tab's current URL with the
@@ -862,6 +869,53 @@ func (b *browser) bringToFront(ctx context.Context, t *tab) {
 	b.mu.Unlock()
 	if _, err := b.conn.Call(ctx, t.session, "Page.bringToFront", nil); err != nil {
 		b.log.Printf("Page.bringToFront %s: %v", t.id, err)
+	}
+}
+
+// beginCommand and endCommand bracket a command. Commands bring their
+// tab to the front, and a popup one opens takes it; after a command the
+// watched group's current tab is brought back, so a person's window on
+// it keeps its frames and its input. A command whose own group is
+// watched keeps that group in front.
+func (b *browser) beginCommand() {
+	b.mu.Lock()
+	b.running++
+	b.mu.Unlock()
+}
+
+func (b *browser) endCommand(ctx context.Context, group string) {
+	b.mu.Lock()
+	b.running--
+	b.mu.Unlock()
+	b.frontWatched(ctx, group)
+}
+
+// frontWatched brings a watched group's current tab to the front:
+// prefer's when that group is watched, else the first watched group by
+// name. With no group watched it does nothing.
+func (b *browser) frontWatched(ctx context.Context, prefer string) {
+	b.mu.Lock()
+	g := b.groups[prefer]
+	if g == nil || !g.watched {
+		g = nil
+		var names []string
+		for name, x := range b.groups {
+			if x.watched {
+				names = append(names, name)
+			}
+		}
+		if len(names) > 0 {
+			sort.Strings(names)
+			g = b.groups[names[0]]
+		}
+	}
+	var t *tab
+	if g != nil {
+		t = g.current
+	}
+	b.mu.Unlock()
+	if t != nil {
+		b.bringToFront(ctx, t)
 	}
 }
 
