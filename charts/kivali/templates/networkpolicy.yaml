@@ -42,11 +42,13 @@ spec:
         - protocol: TCP
           port: 53
 ---
-# 2. Browser pods: the web and DNS, nothing in the cluster. A browser
-#    browses the web for a web subagent and is not held to the allowlist;
-#    it reaches core over the hostPath Unix socket, not the network. The
-#    exceptions keep Chromium, and any page that drives it, off the pod
-#    network, the node, cloud metadata and every private range.
+# 2. Browser pods: the web and DNS, nothing in the cluster, and no
+#    ingress at all. A browser browses the web for a web subagent directly,
+#    with no proxy, and is not held to the allowlist; it reaches core over
+#    the hostPath Unix socket, not the network. The exceptions keep
+#    Chromium, and any page that drives it, off the pod network, the node,
+#    cloud metadata (the link-local range and Azure's WireServer) and every
+#    private range.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -58,19 +60,16 @@ spec:
   podSelector:
     matchLabels:
       app: kivali-browserpod
-  policyTypes: [Egress]
+  policyTypes: [Ingress, Egress]
   egress:
     - to:
         - ipBlock:
             cidr: 0.0.0.0/0
             except:
               - {{ .Values.networkPolicy.podCIDR }}
-              - 10.0.0.0/8
-              - 172.16.0.0/12
-              - 192.168.0.0/16
-              - 169.254.0.0/16
-              - 127.0.0.0/8
-              - 100.64.0.0/10
+              {{- range .Values.networkPolicy.browserEgress.except }}
+              - {{ . }}
+              {{- end }}
     - to:
         - namespaceSelector:
             matchLabels:

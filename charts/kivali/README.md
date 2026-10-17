@@ -105,7 +105,8 @@ browser is done. `browser.resources` sizes each pod's container (default
 `browser.maxPerTeam` (`BROWSER_MAX_PER_TEAM`, default 3, at least 1) is
 how many browsers the team's agents may have running at once. Browser pods
 run on the server's node (they reach it over the hostPath socket), keep
-nothing on a volume, and reach the web only through the egress proxy.
+nothing on a volume, and reach the web directly, with no proxy: a browser
+is not held to the egress allowlist (see NetworkPolicy below).
 
 ## Sign-in values
 
@@ -140,9 +141,19 @@ policies sit under `networkPolicy.enabled` (default true):
    socket, and every outbound request of the CLI and the agent-shell already
    goes through the proxy via `HTTP_PROXY`.
 2. `kivali-browserpod-egress` (load-bearing): browser pods
-   (`app=kivali-browserpod`) get the same egress as agent pods, the proxy
-   port and DNS. The egress proxy is a browser's only route to the web:
-   Chromium runs with it as its proxy server.
+   (`app=kivali-browserpod`) get egress to `0.0.0.0/0` except the ranges
+   in `networkPolicy.browserEgress.except`, and TCP/UDP 53 to CoreDNS in
+   `kube-system`; no ingress at all (`policyTypes` names Ingress with no
+   rules). A browser browses the web for a web subagent directly, with no
+   proxy, and is not held to the egress allowlist; the exceptions keep
+   Chromium, and any page that drives it, off the pod network
+   (`networkPolicy.podCIDR`, always excepted), the node, cloud metadata
+   (the link-local range and Azure's WireServer `168.63.129.16/32`) and
+   every private range. The default list is `10.0.0.0/8`,
+   `172.16.0.0/12`, `192.168.0.0/16`, `169.254.0.0/16`, `127.0.0.0/8`,
+   `100.64.0.0/10` and `168.63.129.16/32`; a cluster whose nodes or
+   services sit elsewhere adds their ranges. A browser reaches core over
+   the hostPath Unix socket, not the network.
 3. `kivali-server-ingress` (defence in depth): the server's HTTP port 8080
    accepts only `0.0.0.0/0` except `networkPolicy.podCIDR`; port 3128
    accepts only pods in the namespace. On k3s, kube-router evaluates policy
