@@ -165,7 +165,7 @@ run: web-deps web-build e2e-bins ## a team locally, no auth (DEMO_SCENARIO=demo|
 		case "$$s" in ceo|_archived|.*) continue ;; esac; \
 		[ -d "$$root/scratch/$$s" ] && continue; \
 		mkdir -p "$$root/scratch/$$s"; \
-		bin/kivali-e2e agent --slug "$$s" --uds "$$root/uds/core.sock" --scratch "$$root/scratch/$$s" & pids+=($$!); \
+		bin/kivali-e2e agent --slug "$$s" --uds "$$root/uds/core/core.sock" --scratch "$$root/scratch/$$s" & pids+=($$!); \
 	done; \
 	echo "Kivali demo: http://127.0.0.1:$(DEMO_PORT)/  (data: $$root/data)"; \
 	wait

@@ -24,8 +24,9 @@ type ProvisionerConfig struct {
 	// ImagePullPolicy (IfNotPresent for kind, Always for prod).
 	ImagePullPolicy string
 
-	// UDSDir is the hostPath directory holding core.sock, the one agent
-	// pods mount. The pod dials <UDSDir>/core.sock.
+	// UDSDir is the hostPath UDS directory core's sockets live under.
+	// The pod mounts only its UDSSubdir and dials
+	// <UDSDir>/<UDSSubdir>/<SocketName>.
 	UDSDir string
 
 	// WebSelector is the matchLabels expression of the Kivali web pod.

@@ -227,7 +227,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     for (const slug of slugs) {
       const scratch = join(root, 'scratch', slug);
       mkdirSync(scratch, { recursive: true });
-      const rt = spawn(serverBin, ['agent', '--slug', slug, '--uds', join(uds, 'core.sock'), '--scratch', scratch], {
+      const rt = spawn(serverBin, ['agent', '--slug', slug, '--uds', join(uds, 'core', 'core.sock'), '--scratch', scratch], {
         cwd: scratch,
         env,
         stdio: ['ignore', 'pipe', 'pipe'],
