@@ -14,20 +14,31 @@ import (
 // stuckLink is a fakeLink whose pod stops reading at the first message
 // of type stuckOn: that send, and every send queued behind it, blocks
 // until release is closed, as a write to a hung pod does until its
-// limit. stuck is closed once a send has blocked.
+// limit. stuck is closed once a send has blocked; queued is closed once
+// a later send has arrived to wait behind it.
 type stuckLink struct {
 	*fakeLink
-	stuckOn string
-	release chan struct{}
-	stuck   chan struct{}
-	once    sync.Once
+	stuckOn    string
+	release    chan struct{}
+	stuck      chan struct{}
+	queued     chan struct{}
+	once       sync.Once
+	queuedOnce sync.Once
 }
 
 func newStuckLink(stuckOn string) *stuckLink {
-	return &stuckLink{fakeLink: newFakeLink(), stuckOn: stuckOn, release: make(chan struct{}), stuck: make(chan struct{})}
+	return &stuckLink{
+		fakeLink: newFakeLink(), stuckOn: stuckOn,
+		release: make(chan struct{}), stuck: make(chan struct{}), queued: make(chan struct{}),
+	}
 }
 
 func (l *stuckLink) send(_ time.Duration, msg browserpod.Message, body io.Reader) error {
+	select {
+	case <-l.stuck:
+		l.queuedOnce.Do(func() { close(l.queued) })
+	default:
+	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if msg.Type == l.stuckOn {
@@ -45,6 +56,16 @@ func (l *stuckLink) awaitStuck(t *testing.T) {
 	case <-l.stuck:
 	case <-time.After(10 * time.Second):
 		t.Fatal("no send blocked on the pod")
+	}
+}
+
+// awaitQueued waits until a send has arrived behind the blocked one.
+func (l *stuckLink) awaitQueued(t *testing.T) {
+	t.Helper()
+	select {
+	case <-l.queued:
+	case <-time.After(10 * time.Second):
+		t.Fatal("no send queued behind the blocked one")
 	}
 }
 
@@ -87,6 +108,9 @@ func TestBrowserRegistryFinishDoesNotWaitOnAStuckPod(t *testing.T) {
 		_, err := f.reg.Command(ctx, "alice", "vendor.example", "job1", browserpod.Message{Name: browserpod.CommandSnapshot})
 		cmdErr <- err
 	}()
+	// The command has the browser and waits behind the upload before
+	// the connection goes; arriving later, it would start a new one.
+	link.awaitQueued(t)
 
 	// The connection is lost while the upload's writer is held: the
 	// browser is finished and its pod deleted without waiting on it.
