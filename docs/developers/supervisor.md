@@ -1089,7 +1089,7 @@ the fake VM (`TestRecover*` in `internal/supervisor`).
 | Who owns the VM | `serve`, one process; the rest are RPC clients; `up` autostarts `serve` | each subcommand booting its own VM: the VM dies with the process and two processes would fight over the disk |
 | READY/FATAL | marker lines for the boot (the console on macOS), then the agent's recorded state | agent only: no signal at all if the agent is broken; console only: no way to ask later |
 | Chart at install | baked into the VM image next to the image tarballs, `--chart` override | from `dist/` on the host: a desktop app has no repo; download: first boot must be offline |
-| Image tags | read from the baked tarballs' manifests, all three Kivali images at one tag | a version file written at build time: can drift from what is actually baked |
+| Image tags | read from the baked tarballs' manifests, all four Kivali images at one tag | a version file written at build time: can drift from what is actually baked |
 | Upgrade values | rewrite the manifest found on the data disk | keep install values in local.json: would put the owner's session key outside the org's disk |
 | Session key | generated once at install, lives only in the manifest/Secret | regenerating per upgrade: logs everyone out and rolls the pod |
 | Long ops vs. `down` | `down` cancels up/install/load-images, waits for upgrade (saying so, abandonable) | uncancellable: a Stop click would wait out a 10-minute bound |
