@@ -103,6 +103,11 @@ const (
 	// for one session (see browserRegistry.released); the oldest go
 	// first. Group ids are random, so a forgotten one is never reused.
 	browserReleasedPerSession = 1024
+	// browserShutdownSnapshotGrace is how long Shutdown waits for a
+	// running browser's cookie snapshot. The pod sends one only when
+	// the cookies have changed since its last, so a browser with
+	// nothing new to report is given up on after this.
+	browserShutdownSnapshotGrace = 5 * time.Second
 )
 
 // browserState is where a browser is in its life.
@@ -289,11 +294,13 @@ type browser struct {
 
 	pending map[string]chan browserpod.Message
 	seq     int
-	// profileSaved is set once a save's profile has been written.
+	// profileSaved is set once a save's profile has been written;
+	// cookieGen counts the cookie snapshots written.
 	profileSaved bool
 	// sandboxOff: the pod reported Chromium running with --no-sandbox
 	// (the detail "sandbox: off" on its running state).
 	sandboxOff bool
+	cookieGen  int
 	// offboarded: the agent is gone; a profile that lands after this
 	// is deleted again, not kept.
 	offboarded bool
@@ -369,6 +376,9 @@ type browserRegistry struct {
 	OnWindowsClosed func(slug, session, group string)
 
 	wake chan struct{}
+	// changed is closed, and replaced, under mu whenever a browser
+	// stops or a cookie snapshot is written: what Shutdown waits on.
+	changed chan struct{}
 	// booted is closed once the boot cleanup has run; a start waits
 	// for it, so the cleanup cannot delete a pod it just created.
 	booted   chan struct{}
@@ -396,13 +406,30 @@ func newBrowserRegistry(st *store.FSStore, prov BrowserProvisioner, clk clock.Cl
 		logf:          logf,
 		downloadsRoot: downloadsRoot,
 		wake:          make(chan struct{}, 1),
+		changed:       make(chan struct{}),
 		booted:        make(chan struct{}),
 	}
+}
+
+// changedLocked wakes whoever waits on changed. r.mu is held.
+func (r *browserRegistry) changedLocked() {
+	close(r.changed)
+	r.changed = make(chan struct{})
 }
 
 // Enabled reports whether browsers can run here at all.
 func (r *browserRegistry) Enabled() bool {
 	return r != nil && r.prov != nil && r.prov.Enabled()
+}
+
+// ShutdownBrowsers keeps what the running browsers can still give
+// before the process exits (browserRegistry.Shutdown); it is called
+// before the browser socket closes and the lifecycle stops. A no-op
+// without a registry.
+func (s *Server) ShutdownBrowsers(ctx context.Context) {
+	if s.Browsers != nil {
+		s.Browsers.Shutdown(ctx)
+	}
 }
 
 // StartBrowsers runs the browser lifecycle until the returned stop
@@ -455,6 +482,83 @@ func (r *browserRegistry) Run(ctx context.Context) {
 			return
 		case <-r.wake:
 		case <-timer.C():
+		}
+	}
+}
+
+// Shutdown keeps what it can of the site sessions before the process
+// exits, since the next boot deletes every pod: each idle browser
+// begins its save, each running browser is asked for a cookie
+// snapshot, and Shutdown returns once the saves have finished and each
+// snapshot has landed or had browserShutdownSnapshotGrace, or when ctx
+// ends. A browser still starting, and the open session's, have
+// nothing to keep. Run must be running, and the browser socket open:
+// the saves' timers are Run's and the profiles arrive on the socket.
+func (r *browserRegistry) Shutdown(ctx context.Context) {
+	r.mu.Lock()
+	var saves, snaps []*browser
+	before := map[*browser]int{}
+	for _, b := range r.browsers {
+		if ephemeralSession(b.session) {
+			continue
+		}
+		switch b.state {
+		case browserIdle, browserSaving:
+			saves = append(saves, b)
+		case browserRunning:
+			snaps = append(snaps, b)
+			before[b] = b.cookieGen
+		}
+	}
+	r.mu.Unlock()
+	if len(saves)+len(snaps) == 0 {
+		return
+	}
+	r.logf("browser: shutdown: saving %d idle browser(s), asking %d running one(s) for their cookies", len(saves), len(snaps))
+	for _, b := range saves {
+		r.beginSave(b)
+	}
+	for _, b := range snaps {
+		r.mu.Lock()
+		link := b.link
+		r.mu.Unlock()
+		if link != nil {
+			go func() {
+				_ = link.send(browserSendTimeout, browserpod.Message{Type: browserpod.TypeSnapshot}, nil)
+			}()
+		}
+	}
+	grace := r.clk.NewTimer(browserShutdownSnapshotGrace)
+	defer grace.Stop()
+	graceOver := false
+	for {
+		r.mu.Lock()
+		done := true
+		for _, b := range saves {
+			if b.state != browserStopped {
+				done = false
+			}
+		}
+		if !graceOver {
+			for _, b := range snaps {
+				if b.cookieGen == before[b] && b.state != browserStopped {
+					done = false
+				}
+			}
+		}
+		changed := r.changed
+		r.mu.Unlock()
+		if done {
+			r.logf("browser: shutdown: done")
+			return
+		}
+		select {
+		case <-changed:
+		case <-grace.C():
+			graceOver = true
+		case <-ctx.Done():
+			r.logf("browser: shutdown: %v before every browser was saved", ctx.Err())
+			return
 		}
 	}
 }
@@ -1223,7 +1327,9 @@ func (r *browserRegistry) onCookies(b *browser, msg browserpod.Message, body io.
 		return
 	}
 	r.mu.Lock()
+	b.cookieGen++
 	offboarded := b.offboarded
+	r.changedLocked()
 	r.mu.Unlock()
 	if offboarded {
 		// The agent was offboarded while this was being written and
@@ -1498,6 +1604,7 @@ func (r *browserRegistry) finish(b *browser) {
 	b.windows = 0
 	link := b.link
 	b.link = nil
+	r.changedLocked()
 	r.mu.Unlock()
 	if link != nil {
 		link.close()
