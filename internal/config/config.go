@@ -225,6 +225,16 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	cfg.BrowserMaxPerTeam = maxBrowsers
+	for _, q := range []struct{ name, value string }{
+		{"BROWSER_CPU_REQUEST", cfg.BrowserCPURequest},
+		{"BROWSER_MEMORY_REQUEST", cfg.BrowserMemoryRequest},
+		{"BROWSER_CPU_LIMIT", cfg.BrowserCPULimit},
+		{"BROWSER_MEMORY_LIMIT", cfg.BrowserMemoryLimit},
+	} {
+		if err := checkQuantity(q.name, q.value); err != nil {
+			return Config{}, err
+		}
+	}
 	switch cfg.TeamKind {
 	case "", "work", "personal":
 	default:
@@ -234,6 +244,22 @@ func Load() (Config, error) {
 		cfg.SessionKey = []byte(key)
 	}
 	return cfg, nil
+}
+
+// quantityPattern is the Kubernetes resource quantity grammar: a
+// decimal number with an optional fraction or exponent, and an optional
+// suffix (m, k, M, G, T, P, E, or Ki, Mi, Gi, Ti, Pi, Ei). A value that
+// Kubernetes would refuse fails every browser start at the first web
+// task, so it is refused at boot instead.
+var quantityPattern = regexp.MustCompile(`^[0-9]+(\.[0-9]*)?([eE][-+]?[0-9]+|m|k|M|G|T|P|E|Ki|Mi|Gi|Ti|Pi|Ei)?$|^\.[0-9]+(m|k|M|G|T|P|E|Ki|Mi|Gi|Ti|Pi|Ei)?$`)
+
+// checkQuantity accepts an empty value (browserpod's default stands)
+// or a Kubernetes quantity.
+func checkQuantity(name, value string) error {
+	if value == "" || quantityPattern.MatchString(value) {
+		return nil
+	}
+	return fmt.Errorf("%s %q must be a Kubernetes quantity such as 500m, 2 or 1Gi", name, value)
 }
 
 // checkExternalURL accepts an empty KIVALI_EXTERNAL_URL or an https

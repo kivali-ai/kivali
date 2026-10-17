@@ -288,6 +288,31 @@ func TestBrowserHonorsOverrides(t *testing.T) {
 	}
 }
 
+// A browser resource that is not a Kubernetes quantity would fail every
+// browser start at the first web task; it is refused at boot instead.
+func TestBrowserResourcesMustBeQuantities(t *testing.T) {
+	for _, v := range []string{"500m", "0.5", ".5", "2", "1Gi", "512Mi", "1e3", "1.5G", "3k"} {
+		clearEnv(t)
+		t.Setenv("BROWSER_CPU_LIMIT", v)
+		t.Setenv("BROWSER_MEMORY_LIMIT", v)
+		if _, err := Load(); err != nil {
+			t.Errorf("quantity %q refused: %v", v, err)
+		}
+	}
+	for _, name := range []string{"BROWSER_CPU_REQUEST", "BROWSER_MEMORY_REQUEST", "BROWSER_CPU_LIMIT", "BROWSER_MEMORY_LIMIT"} {
+		for _, v := range []string{"2 Gi", "1GB", "1gi", "abc", "-1", "1Gi2", "Gi", "1.2.3", "1m1"} {
+			clearEnv(t)
+			t.Setenv(name, v)
+			_, err := Load()
+			if err == nil {
+				t.Errorf("%s=%q loaded", name, v)
+			} else if !strings.Contains(err.Error(), name) || !strings.Contains(err.Error(), "Kubernetes quantity") {
+				t.Errorf("%s=%q: error %q does not name the variable and the shape", name, v, err)
+			}
+		}
+	}
+}
+
 func TestBrowserMaxPerTeamRejectsNonPositive(t *testing.T) {
 	for _, v := range []string{"0", "-1", "three", "1.5"} {
 		clearEnv(t)
