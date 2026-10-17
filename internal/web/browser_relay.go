@@ -90,9 +90,18 @@ func (s *SubagentService) WebCommand(ctx context.Context, parent, id string, req
 		if err := json.Unmarshal(args, &a); err != nil || strings.TrimSpace(a.URL) == "" {
 			return refuse("web_navigate needs a url")
 		}
-		u, err := url.Parse(strings.TrimSpace(a.URL))
-		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-			return refuse("web_navigate takes an http or https URL")
+		if resp, ok := taskURLAllowed(j, "web_navigate", a.URL); !ok {
+			return resp
+		}
+	case browserpod.CommandTabs:
+		var a browserpod.TabsArgs
+		if err := json.Unmarshal(args, &a); err != nil {
+			return refuse("web_tabs needs an action")
+		}
+		if a.Action == browserpod.TabsOpen && strings.TrimSpace(a.URL) != "" {
+			if resp, ok := taskURLAllowed(j, "web_tabs", a.URL); !ok {
+				return resp
+			}
 		}
 	case browserpod.CommandUpload:
 		var a browserpod.UploadArgs
@@ -115,6 +124,24 @@ func (s *SubagentService) WebCommand(ctx context.Context, parent, id string, req
 		out.Image = &agentpod.WebImage{MIME: res.Image.MIME, Data: res.Image.Data}
 	}
 	return out
+}
+
+// taskURLAllowed checks a URL a task asks its browser to load, for
+// tool: http or https, and in a site session on the site or one of its
+// subdomains, the rule the pod applies too. The refusal is the tool
+// result the model reads.
+func taskURLAllowed(j subagentJob, tool, raw string) (agentpod.WebCommandResponse, bool) {
+	refuse := func(text string) (agentpod.WebCommandResponse, bool) {
+		return agentpod.WebCommandResponse{Text: text, IsError: true}, false
+	}
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return refuse(tool + " takes an http or https URL")
+	}
+	if j.Site != "" && !onSite(j.Site, u.Hostname()) {
+		return refuse(fmt.Sprintf("Blocked: %s is off this session's site, %s. A task in a site session stays on it and its subdomains.", strings.TrimSpace(raw), j.Site))
+	}
+	return agentpod.WebCommandResponse{}, true
 }
 
 // sendTaskFile hands the pod one of the task's files before an upload:
