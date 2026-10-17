@@ -120,7 +120,12 @@ func (c *Driver) RunSubagent(ctx context.Context, req provider.SubagentRequest) 
 		// No session store: a subagent run's session id travels on
 		// its events (StreamEvent.SessionID) and the caller passes it
 		// back as Resume to continue the session; the driver keeps
-		// nothing itself.
+		// nothing itself. The resumed id still has to be known here:
+		// a resumed process's usage gauge starts with the earlier
+		// runs' tokens in it, so its baseline is unknown until the
+		// first reading (usageGauge), and the run's usage row is
+		// reconstructed from the frame's own total instead.
+		resumeID:        req.Resume,
 		stdinMirrorPath: filepath.Join(runDir, "cli-stdin.jsonl"),
 		cleanup:         cleanup,
 	})
