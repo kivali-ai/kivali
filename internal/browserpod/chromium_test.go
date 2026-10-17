@@ -65,6 +65,7 @@ const testPageOne = `<!doctype html>
   <label for="doc">Document</label> <input type="file" id="doc">
   <button onclick="window.open('/two', '_blank')">Open popup</button>
   <a href="/report" download>Download report</a>
+  <a href="/bounce">Bounce</a>
   <iframe id="export" style="display: none" src="about:blank"></iframe>
 </body></html>`
 
@@ -374,9 +375,18 @@ func TestRealChromiumSiteSession(t *testing.T) {
 		_, _ = io.WriteString(w, testPageTwo)
 	})
 	// The server answers on 127.0.0.1, the session's site; the same
-	// server as localhost is another host, off the site.
+	// server as localhost is another host, off the site. /bounce is on
+	// the site and redirects, through a second on-site hop, off it.
+	var offSite string
+	mux.HandleFunc("/bounce", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/bounce2", http.StatusFound)
+	})
+	mux.HandleFunc("/bounce2", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, offSite+"/two", http.StatusFound)
+	})
 	site := httptest.NewServer(mux)
 	defer site.Close()
+	offSite = strings.Replace(site.URL, "127.0.0.1", "localhost", 1)
 
 	// run takes one browser through hello (with profile), start, fn and
 	// save, and returns the saved profile.
@@ -428,7 +438,42 @@ func TestRealChromiumSiteSession(t *testing.T) {
 		if res := core.command("g", "", CommandNavigate, NavigateArgs{URL: site.URL + "/"}); !res.OK {
 			t.Fatalf("navigate: %+v", res)
 		}
+		core.expectType(TypeTab)
+		core.expectType(TypeNavigated)
 		eval(`localStorage.setItem('kivali-session', 'kept'); 'set'`)
+
+		// An on-site URL that redirects off the site is stopped at the
+		// off-site hop: nothing loads there, the tab stays where it
+		// was, and the model hears why.
+		stopped := offSite + "/two, which is off this session's site, and was stopped"
+		res := core.command("g", "", CommandNavigate, NavigateArgs{URL: site.URL + "/bounce"})
+		t.Logf("redirect off site: ok=%v code=%q text=%q error=%q", res.OK, res.Code, res.Text, res.Error)
+		if !res.OK || !strings.Contains(res.Text, "did not load as a page") || !strings.Contains(res.Text, "the tab is at "+site.URL+"/ — Kivali test page") || !strings.Contains(res.Text, stopped) {
+			t.Fatalf("redirect off site: %+v", res)
+		}
+		// A link the page follows there is stopped the same way.
+		snap := core.command("g", "", CommandSnapshot, nil)
+		m := regexp.MustCompile(`\[(e\d+)\] link "Bounce" → /bounce`).FindStringSubmatch(snap.Text)
+		if m == nil {
+			t.Fatalf("no bounce link in the snapshot: %+v", snap)
+		}
+		res = core.command("g", "", CommandClick, ClickArgs{Ref: m[1]})
+		t.Logf("link redirecting off site: ok=%v code=%q text=%q error=%q", res.OK, res.Code, res.Text, res.Error)
+		if !res.OK || !strings.Contains(res.Text, `Clicked link "Bounce"; now at `+site.URL+"/ — Kivali test page") || !strings.Contains(res.Text, stopped) {
+			t.Fatalf("link redirecting off site: %+v", res)
+		}
+		if v := eval("location.href"); v != `"`+site.URL+`/"` {
+			t.Fatalf("the tab after the blocks is at %s", v)
+		}
+		// Core never hears of a page loaded off the site, nor of any
+		// navigation: the blocked ones committed nothing.
+		core.mu.Lock()
+		for _, r := range core.held {
+			if r.Type == TypeNavigated {
+				t.Errorf("navigated after the blocks: %+v", r.Message)
+			}
+		}
+		core.mu.Unlock()
 	})
 	t.Logf("saved profile: %d bytes packed", len(saved))
 

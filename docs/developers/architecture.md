@@ -597,7 +597,13 @@ the site in its hello and runs headed under Xvfb (some sites refuse a
 headless browser's sign-in); the pod refuses `web_navigate` off the
 site and its subdomains with `off_site`, `web_eval` does not exist
 there, and the profile is saved and restored across browsers, so
-sign-ins persist. Between saves the pod sends core the session's
+sign-ins persist. Every page in a site session has its document
+requests paused before they are sent (`Fetch.requestPaused`, each
+redirect hop a request of its own); a main-frame request off the site
+is failed as aborted, so an on-site URL that redirects off the site
+loads nothing there, the tab stays on the page it was on, and the model
+reads why with its next result. Subframes are let through. A commit
+off the site that still gets past the pause is sent to about:blank. Between saves the pod sends core the session's
 cookies whenever they have changed, every five minutes and right
 after a window closes (`TypeCookies`; core asks with `TypeSnapshot`),
 as the array `Storage.setCookies` takes; core keeps the latest beside

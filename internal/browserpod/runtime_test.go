@@ -204,6 +204,59 @@ func TestSiteSessionRefusesOffSiteNavigation(t *testing.T) {
 	}
 }
 
+// TestSiteSessionFailsOffSiteDocumentRequests: in a site session every
+// page pauses its document requests (Fetch); a main-frame request off
+// the site, a redirect hop included, is failed and noted for the model,
+// an on-site one and a subframe's go on. An open session pauses nothing.
+func TestSiteSessionFailsOffSiteDocumentRequests(t *testing.T) {
+	h := startPod(t, podOptions{site: "example.com"})
+	if res := h.core.command("g", "", CommandNavigate, NavigateArgs{URL: "https://example.com/"}); !res.OK {
+		t.Fatalf("navigate: %+v", res)
+	}
+	s1 := sessionOf(h, "T1")
+	enabled := h.cdp.called("Fetch.enable")
+	if len(enabled) != 1 || !strings.Contains(enabled[0], `"resourceType":"Document"`) || !strings.Contains(enabled[0], `"requestStage":"Request"`) {
+		t.Fatalf("Fetch.enable calls: %q", enabled)
+	}
+	rc := recordCalls(h, "Fetch.failRequest", "Fetch.continueRequest")
+	paused := func(id, frame, typ, url string) {
+		h.cdp.emit(s1, "Fetch.requestPaused", map[string]any{
+			"requestId": id, "frameId": frame, "resourceType": typ,
+			"request": map[string]any{"url": url, "method": "GET"},
+		})
+	}
+	// The first hop is on the site; the second is not.
+	paused("R1", "T1", "Document", "https://example.com/bounce")
+	if got := rc.next(t); got != "Fetch.continueRequest "+s1 {
+		t.Fatalf("on-site hop: %q", got)
+	}
+	paused("R2", "T1", "Document", "https://evil.test/two")
+	if got := rc.next(t); got != "Fetch.failRequest "+s1 {
+		t.Fatalf("off-site hop: %q", got)
+	}
+	if calls := h.cdp.called("Fetch.failRequest"); len(calls) != 1 || !strings.Contains(calls[0], `"errorReason":"Aborted"`) || !strings.Contains(calls[0], `"requestId":"R2"`) {
+		t.Fatalf("failRequest: %q", calls)
+	}
+	// A subframe's document is not the tab's navigation.
+	paused("R3", "F1", "Document", "https://evil.test/frame")
+	if got := rc.next(t); got != "Fetch.continueRequest "+s1 {
+		t.Fatalf("subframe: %q", got)
+	}
+	// The next command on the tab carries the note.
+	res := h.core.command("g", "", CommandBack, nil)
+	if !strings.Contains(res.Text, "The page tried to go to https://evil.test/two, which is off this session's site, and was stopped.") || strings.Contains(res.Text, "evil.test/frame") {
+		t.Fatalf("notes: %q", res.Text)
+	}
+
+	open := startPod(t, podOptions{})
+	if res := open.core.command("g", "", CommandNavigate, NavigateArgs{URL: "https://example.com/"}); !res.OK {
+		t.Fatalf("open navigate: %+v", res)
+	}
+	if calls := open.cdp.called("Fetch.enable"); len(calls) != 0 {
+		t.Fatalf("an open session enabled Fetch: %q", calls)
+	}
+}
+
 func TestCommandTimesOutOnTheClock(t *testing.T) {
 	h := startPod(t, podOptions{})
 	hung := make(chan struct{})
