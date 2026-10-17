@@ -341,6 +341,95 @@ func TestRealChromium(t *testing.T) {
 	}
 }
 
+// TestRealChromiumSiteSession drives a real browser in a site session,
+// twice: the first browser signs the test page in with a value in local
+// storage and saves its profile; the second starts from that profile
+// and must still find the value. It runs like TestRealChromium, when
+// KIVALI_CHROMIUM names a browser.
+func TestRealChromiumSiteSession(t *testing.T) {
+	bin := os.Getenv("KIVALI_CHROMIUM")
+	if bin == "" {
+		t.Skip("KIVALI_CHROMIUM is not set")
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = io.WriteString(w, testPageOne)
+	})
+	mux.HandleFunc("/two", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = io.WriteString(w, testPageTwo)
+	})
+	// The server answers on 127.0.0.1, the session's site; the same
+	// server as localhost is another host, off the site.
+	site := httptest.NewServer(mux)
+	defer site.Close()
+
+	// run takes one browser through hello (with profile), start, fn and
+	// save, and returns the saved profile.
+	run := func(profile []byte, fn func(core *coreSide, eval func(string) string)) []byte {
+		t.Helper()
+		fc := newFakeCore(t)
+		rt := &Runtime{
+			Slug: "ada", Session: "127.0.0.1", Token: "tok", CoreUDS: fc.sock,
+			Chromium: bin, Dir: t.TempDir(),
+			Logger: log.New(os.Stderr, "browserpod: ", log.Lmicroseconds),
+			Clock:  clock.New(),
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		done := make(chan error, 1)
+		go func() { done <- rt.Run(ctx) }()
+		core := fc.accept()
+		core.sendBytes(Message{Type: TypeHello, Site: "127.0.0.1"}, profile)
+		core.send(Message{Type: TypeStart})
+		core.expectState(StateStarting)
+		core.expectState(StateRunning)
+		eval := func(script string) string {
+			t.Helper()
+			res := core.command("g", "", CommandEval, EvalArgs{Script: script})
+			if !res.OK {
+				t.Fatalf("eval %s: %s (%s)", script, res.Error, res.Code)
+			}
+			return res.Text
+		}
+		fn(core, eval)
+		core.send(Message{Type: TypeSave})
+		core.expectState(StateSaving)
+		prof := core.expectType(TypeProfile)
+		core.expectType(TypeSaved)
+		core.expectState(StateStopped)
+		_ = core.conn.Close(websocket.StatusNormalClosure, "")
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+		case <-time.After(failsafe):
+			t.Fatal("Run did not return after save")
+		}
+		return prof.data
+	}
+
+	saved := run(nil, func(core *coreSide, eval func(string) string) {
+		if res := core.command("g", "", CommandNavigate, NavigateArgs{URL: site.URL + "/"}); !res.OK {
+			t.Fatalf("navigate: %+v", res)
+		}
+		eval(`localStorage.setItem('kivali-session', 'kept'); 'set'`)
+	})
+	t.Logf("saved profile: %d bytes packed", len(saved))
+
+	run(saved, func(core *coreSide, eval func(string) string) {
+		if res := core.command("g", "", CommandNavigate, NavigateArgs{URL: site.URL + "/"}); !res.OK {
+			t.Fatalf("navigate: %+v", res)
+		}
+		if v := eval(`localStorage.getItem('kivali-session')`); v != `"kept"` {
+			t.Fatalf("local storage after the profile round trip: %s", v)
+		}
+	})
+}
+
 func firstLines(s string, n int) string {
 	lines := strings.SplitN(s, "\n", n+1)
 	if len(lines) > n {

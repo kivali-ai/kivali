@@ -28,12 +28,18 @@ var profileSkipDirs = []string{
 	"optimization_guide_model_store", "component_crx_cache", "extensions_crx_cache", "Crashpad",
 }
 
-// profileSkipFiles are files a saved profile leaves out: locks and
-// logs of the run that wrote it.
+// profileSkipFiles are files a saved profile leaves out: locks of the
+// run that wrote it.
 var profileSkipFiles = []string{"SingletonLock", "SingletonSocket", "SingletonCookie", "lockfile", "RunningChromeVersion"}
 
 // skipInProfile reports whether rel (slash-separated, relative to
-// the profile root) stays out of a saved profile.
+// the profile root) stays out of a saved profile. Chromium's own logs
+// (chrome_debug.log and friends) sit at the profile root and are left
+// out; a .log below the root is data. LevelDB, which holds local
+// storage, session storage and IndexedDB, keeps every write since its
+// last compaction in a .log file and does not fold it into a table on
+// close, so dropping those logs would sign a site out of a session it
+// keeps in local storage.
 func skipInProfile(rel string, dir bool) bool {
 	base := path.Base(rel)
 	if dir {
@@ -48,7 +54,7 @@ func skipInProfile(rel string, dir bool) bool {
 		}
 		return false
 	}
-	if strings.HasSuffix(base, ".log") {
+	if rel == base && strings.HasSuffix(base, ".log") {
 		return true
 	}
 	for _, s := range profileSkipFiles {
@@ -60,7 +66,8 @@ func skipInProfile(rel string, dir bool) bool {
 }
 
 // packProfile writes dir as a zstd-compressed tar, leaving out caches,
-// locks and logs. Symlinks and other special files are left out too.
+// locks and Chromium's logs. Symlinks and other special files are left
+// out too.
 func packProfile(dir string, w io.Writer) error {
 	zw, err := zstd.NewWriter(w, zstd.WithEncoderLevel(zstd.EncoderLevelFromZstd(3)))
 	if err != nil {
