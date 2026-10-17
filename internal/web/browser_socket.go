@@ -19,10 +19,13 @@ import (
 	"io"
 	"net/http"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/coder/websocket"
 
 	"github.com/kivali-ai/kivali/internal/browserpod"
+	"github.com/kivali-ai/kivali/internal/clock"
 )
 
 // browserSocketReadLimit bounds one text frame from the pod: a result
@@ -53,7 +56,7 @@ func (s *Server) handleBrowserConnect(w http.ResponseWriter, r *http.Request) {
 	// Claim before the upgrade: a connection nobody is waiting for is
 	// refused as plain HTTP, and two connections with one token cannot
 	// both be taken, because the link is bound under the claim's lock.
-	link := &wsLink{}
+	link := &wsLink{clk: s.Browsers.clk}
 	b := s.Browsers.claim(slug, session, token, link)
 	if b == nil {
 		http.Error(w, "no browser is waiting for this connection", http.StatusForbidden)
@@ -71,7 +74,7 @@ func (s *Server) handleBrowserConnect(w http.ResponseWriter, r *http.Request) {
 	c.SetReadLimit(browserSocketReadLimit)
 	link.set(c)
 	ctx := r.Context()
-	if err := s.Browsers.attach(ctx, b); err != nil {
+	if err := s.Browsers.attach(b); err != nil {
 		s.Browsers.logf("browser %s: handshake: %v", b.key(), err)
 		s.Browsers.failStart(b, fmt.Errorf("handshake: %w", err))
 		return
@@ -107,32 +110,42 @@ func (s *Server) handleBrowserConnect(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// wsLink sends to the pod. Writes are serialised: several goroutines
-// relay commands at once, and a message's binary frames must follow
-// it with nothing between. The connection is set once the upgrade has
-// happened; a send before that fails.
+// wsLink sends to the pod. Writes are serialised by mu: several
+// goroutines relay commands at once, and a message's binary frames
+// must follow it with nothing between. A write's time limit counts
+// from when it takes mu, after any write ahead of it, so a command
+// queued behind a long upload is not failed for the upload's time.
+// The connection is set once the upgrade has happened; a send before
+// that fails. close does not take mu: a pod that has stopped reading
+// holds a writer until that writer's limit, and must not hold the
+// close with it.
 type wsLink struct {
-	mu sync.Mutex
-	c  *websocket.Conn
+	clk clock.Clock
+	mu  sync.Mutex
+	c   atomic.Pointer[websocket.Conn]
 }
 
-func (l *wsLink) set(c *websocket.Conn) {
-	l.mu.Lock()
-	l.c = c
-	l.mu.Unlock()
-}
+func (l *wsLink) set(c *websocket.Conn) { l.c.Store(c) }
 
-func (l *wsLink) send(ctx context.Context, msg browserpod.Message, body io.Reader) error {
+// send writes msg and then, when msg announces bytes, that many bytes
+// of body as binary frames, within limit of taking the write lock. A
+// body that ends short leaves the stream out of step, so the
+// connection is closed, as the pod does for its own short body: the
+// read loop sees the close and the registry ends the browser.
+func (l *wsLink) send(limit time.Duration, msg browserpod.Message, body io.Reader) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if l.c == nil {
+	c := l.c.Load()
+	if c == nil {
 		return errors.New("the pod is not connected")
 	}
 	text, err := json.Marshal(msg)
 	if err != nil {
 		return err
 	}
-	if err := l.c.Write(ctx, websocket.MessageText, text); err != nil {
+	ctx, cancel := l.deadline(limit)
+	defer cancel()
+	if err := c.Write(ctx, websocket.MessageText, text); err != nil {
 		return err
 	}
 	if msg.Bytes <= 0 || body == nil {
@@ -147,7 +160,7 @@ func (l *wsLink) send(ctx context.Context, msg browserpod.Message, body io.Reade
 		}
 		n, rerr := io.ReadFull(body, buf[:want])
 		if n > 0 {
-			if err := l.c.Write(ctx, websocket.MessageBinary, buf[:n]); err != nil {
+			if err := c.Write(ctx, websocket.MessageBinary, buf[:n]); err != nil {
 				return err
 			}
 			sent += int64(n)
@@ -156,18 +169,39 @@ func (l *wsLink) send(ctx context.Context, msg browserpod.Message, body io.Reade
 			if sent == msg.Bytes {
 				break
 			}
+			_ = c.Close(websocket.StatusInternalError, "short body")
 			return fmt.Errorf("body ended after %d of %d bytes: %w", sent, msg.Bytes, rerr)
 		}
 	}
 	return nil
 }
 
+// deadline is the context a write runs under: detached from any
+// caller, because the WebSocket library closes the connection when a
+// write's context ends and a caller's cancellation must never reach a
+// write that other groups share, and ended by the clock after limit.
+// The returned cancel releases the timer.
+func (l *wsLink) deadline(limit time.Duration) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(context.Background())
+	t := l.clk.NewTimer(limit)
+	go func() {
+		select {
+		case <-t.C():
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+	return ctx, func() {
+		t.Stop()
+		cancel()
+	}
+}
+
+// close ends the connection at once, without the close handshake and
+// without waiting for a write in progress, which fails.
 func (l *wsLink) close() {
-	l.mu.Lock()
-	c := l.c
-	l.mu.Unlock()
-	if c != nil {
-		_ = c.Close(websocket.StatusNormalClosure, "")
+	if c := l.c.Load(); c != nil {
+		_ = c.CloseNow()
 	}
 }
 

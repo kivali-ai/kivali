@@ -116,10 +116,14 @@ type BrowserProvisioner interface {
 }
 
 // browserLink is a connected pod as the registry uses it: it sends a
-// message, with the bytes that follow it, and closes. The WebSocket
-// handler in browser_socket.go implements it; tests inject a fake.
+// message, with the bytes that follow it, and closes. A send's limit
+// counts from when its write begins, after the writes queued ahead of
+// it; a pod that stops reading fails the write at the limit. close
+// ends the connection at once, whatever a writer is doing. The
+// WebSocket handler in browser_socket.go implements it; tests inject a
+// fake.
 type browserLink interface {
-	send(ctx context.Context, msg browserpod.Message, body io.Reader) error
+	send(limit time.Duration, msg browserpod.Message, body io.Reader) error
 	close()
 }
 
@@ -422,8 +426,12 @@ func (r *browserRegistry) kick() {
 }
 
 // sweep acts on every browser whose deadline has passed and returns
-// the earliest deadline left, or zero. Nothing here waits on a pod:
-// what it starts runs on its own goroutine.
+// the earliest deadline left, or zero. A deadline that is due is taken
+// under the lock, so no later sweep acts on it again, and what it
+// calls for runs on a goroutine of its own: nothing on the lifecycle
+// goroutine waits on a pod, a store or a listener, so one stuck pod
+// holds up no other browser's timer. Each action kicks Run when it
+// has set a new deadline.
 func (r *browserRegistry) sweep(now time.Time) time.Time {
 	r.mu.Lock()
 	type action struct {
@@ -448,6 +456,10 @@ func (r *browserRegistry) sweep(now time.Time) time.Time {
 				continue
 			}
 			if !g.closeAt.After(now) {
+				// Decided here; closeWindow carries it out. A window
+				// back before then is seen by its watcher, a new grace
+				// by its closeAt.
+				g.closeAt = time.Time{}
 				closes = append(closes, window{b, name})
 			} else {
 				earliest(g.closeAt)
@@ -458,37 +470,29 @@ func (r *browserRegistry) sweep(now time.Time) time.Time {
 		}
 		if !b.deadline.After(now) {
 			due = append(due, action{b, b.state})
+			b.deadline = time.Time{}
 			continue
 		}
 		earliest(b.deadline)
 	}
 	r.mu.Unlock()
 	for _, c := range closes {
-		r.closeWindow(c.b, c.group)
+		go r.closeWindow(c.b, c.group)
 	}
 	for _, a := range due {
 		switch a.kind {
 		case browserStarting:
-			r.failStart(a.b, errors.New("the browser did not start in time"))
+			go r.failStart(a.b, errors.New("the browser did not start in time"))
 		case browserIdle:
-			r.beginSave(a.b)
+			go r.beginSave(a.b)
 		case browserSaving:
-			r.logf("browser %s: save did not finish in time", a.b.key())
-			r.finish(a.b)
+			go func(b *browser) {
+				r.logf("browser %s: save did not finish in time", b.key())
+				r.finish(b)
+			}(a.b)
 		}
 	}
-	if len(due) > 0 || len(closes) > 0 {
-		return r.sweep(now)
-	}
 	return next
-}
-
-// sendCtx is the context a write to the pod runs under: detached from
-// the caller, bounded by d. The WebSocket library closes the
-// connection when a write's context ends, so a caller's cancellation
-// must never reach a write that other groups share.
-func sendCtx(d time.Duration) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(context.Background(), d)
 }
 
 // Command relays one web tool call for group to the browser of
@@ -527,10 +531,7 @@ func (r *browserRegistry) Command(ctx context.Context, slug, session, group stri
 	msg.Type = browserpod.TypeCommand
 	msg.ID = id
 	msg.Group = group
-	sctx, cancel := sendCtx(browserSendTimeout)
-	err = link.send(sctx, msg, nil)
-	cancel()
-	if err != nil {
+	if err := link.send(browserSendTimeout, msg, nil); err != nil {
 		r.dropPending(b, id)
 		return browserpod.Message{}, fmt.Errorf("the browser connection failed: %w", err)
 	}
@@ -571,9 +572,7 @@ func (r *browserRegistry) SendFile(ctx context.Context, slug, session, group, na
 	if released {
 		return errors.New("this task has ended")
 	}
-	sctx, cancel := sendCtx(browserFileSendTimeout)
-	defer cancel()
-	return link.send(sctx, browserpod.Message{Type: browserpod.TypeFile, Group: group, FileName: name, Bytes: size}, body)
+	return link.send(browserFileSendTimeout, browserpod.Message{Type: browserpod.TypeFile, Group: group, FileName: name, Bytes: size}, body)
 }
 
 func (r *browserRegistry) dropPending(b *browser, id string) {
@@ -750,9 +749,7 @@ func (r *browserRegistry) Watch(ctx context.Context, slug, session, group string
 	r.mu.Unlock()
 	if start && link != nil {
 		go func() {
-			sctx, cancel := sendCtx(browserSendTimeout)
-			defer cancel()
-			_ = link.send(sctx, browserpod.Message{Type: browserpod.TypeScreencast, Group: group, OK: true}, nil)
+			_ = link.send(browserSendTimeout, browserpod.Message{Type: browserpod.TypeScreencast, Group: group, OK: true}, nil)
 		}()
 	}
 	r.kick()
@@ -774,32 +771,31 @@ func (r *browserRegistry) Unwatch(w *browserWatcher) {
 	r.kick()
 }
 
-// closeWindow ends a group's screencast once its grace has run out
-// with no window back on it.
+// closeWindow ends a group's screencast once the sweep found its grace
+// run out with no window back on it (the sweep clears closeAt as it
+// decides). A window back since, or a new grace begun since, is left
+// alone.
 func (r *browserRegistry) closeWindow(b *browser, group string) {
 	r.mu.Lock()
 	g, ok := b.groups[group]
-	if !ok || !g.watching || len(g.watchers) != 0 || g.closeAt.IsZero() || g.closeAt.After(r.clk.Now()) {
+	if !ok || !g.watching || len(g.watchers) != 0 || !g.closeAt.IsZero() {
 		r.mu.Unlock()
 		return
 	}
 	g.watching = false
-	g.closeAt = time.Time{}
 	b.windows--
 	link := b.link
 	r.mu.Unlock()
 	if link != nil {
 		snapshot := !ephemeralSession(b.session)
 		go func() {
-			sctx, cancel := sendCtx(browserSendTimeout)
-			defer cancel()
-			if err := link.send(sctx, browserpod.Message{Type: browserpod.TypeScreencast, Group: group, OK: false}, nil); err != nil {
+			if err := link.send(browserSendTimeout, browserpod.Message{Type: browserpod.TypeScreencast, Group: group, OK: false}, nil); err != nil {
 				return
 			}
 			if snapshot {
 				// A person may have signed in through the window: its
 				// cookies are worth keeping now, not in minutes.
-				_ = link.send(sctx, browserpod.Message{Type: browserpod.TypeSnapshot}, nil)
+				_ = link.send(browserSendTimeout, browserpod.Message{Type: browserpod.TypeSnapshot}, nil)
 			}
 		}()
 	}
@@ -828,9 +824,7 @@ func (r *browserRegistry) Input(w *browserWatcher, in apitypes.BrowserInput) err
 	if err != nil {
 		return err
 	}
-	sctx, cancel := sendCtx(browserSendTimeout)
-	defer cancel()
-	return link.send(sctx, browserpod.Message{Type: browserpod.TypeInput, Group: w.group, Tab: tab, Args: args}, nil)
+	return link.send(browserSendTimeout, browserpod.Message{Type: browserpod.TypeInput, Group: w.group, Tab: tab, Args: args}, nil)
 }
 
 // CurrentPage is the URL and title of the tab a group's windows show
@@ -989,7 +983,7 @@ func (r *browserRegistry) claim(slug, session, token string, link browserLink) *
 // attach sends the claimed pod its session: hello with the saved
 // profile, then start. The pod's running state, which closes ready,
 // comes back through onMessage.
-func (r *browserRegistry) attach(ctx context.Context, b *browser) error {
+func (r *browserRegistry) attach(b *browser) error {
 	r.mu.Lock()
 	link, site := b.link, b.site
 	r.mu.Unlock()
@@ -1015,9 +1009,7 @@ func (r *browserRegistry) attach(ctx context.Context, b *browser) error {
 			hello.Bytes = size
 		}
 	}
-	sctx, cancel := context.WithTimeout(ctx, browserFileSendTimeout)
-	defer cancel()
-	if err := link.send(sctx, hello, body); err != nil {
+	if err := link.send(browserFileSendTimeout, hello, body); err != nil {
 		return err
 	}
 	if !ephemeralSession(b.session) {
@@ -1029,12 +1021,12 @@ func (r *browserRegistry) attach(ctx context.Context, b *browser) error {
 		}
 		if cookies != nil {
 			defer func() { _ = cookies.Close() }()
-			if err := link.send(sctx, browserpod.Message{Type: browserpod.TypeCookies, Bytes: size}, cookies); err != nil {
+			if err := link.send(browserFileSendTimeout, browserpod.Message{Type: browserpod.TypeCookies, Bytes: size}, cookies); err != nil {
 				return err
 			}
 		}
 	}
-	return link.send(sctx, browserpod.Message{Type: browserpod.TypeStart}, nil)
+	return link.send(browserSendTimeout, browserpod.Message{Type: browserpod.TypeStart}, nil)
 }
 
 // onMessage handles one message from the pod. body carries the bytes
@@ -1273,9 +1265,7 @@ func (r *browserRegistry) ReleaseGroup(slug, session, group string) (structured.
 	if link != nil {
 		// Off this goroutine: a job's end must not wait on the pod.
 		go func() {
-			sctx, cancel := sendCtx(browserSendTimeout)
-			defer cancel()
-			_ = link.send(sctx, browserpod.Message{Type: browserpod.TypeCloseGroup, Group: group}, nil)
+			_ = link.send(browserSendTimeout, browserpod.Message{Type: browserpod.TypeCloseGroup, Group: group}, nil)
 		}()
 	}
 	if idle {
@@ -1307,12 +1297,10 @@ func (r *browserRegistry) beginSave(b *browser) {
 		r.finish(b)
 		return
 	}
-	// Off the lifecycle goroutine: a pod that has stopped reading must
-	// not stop every other browser's timers with it.
+	// Off the caller's goroutine: a pod that has stopped reading must
+	// not hold a start at the cap.
 	go func() {
-		sctx, cancel := sendCtx(browserSendTimeout)
-		defer cancel()
-		if err := link.send(sctx, browserpod.Message{Type: browserpod.TypeSave}, nil); err != nil {
+		if err := link.send(browserSendTimeout, browserpod.Message{Type: browserpod.TypeSave}, nil); err != nil {
 			r.logf("browser %s: ask for save: %v", b.key(), err)
 			r.finish(b)
 		}
@@ -1337,7 +1325,9 @@ func (r *browserRegistry) failStart(b *browser, err error) {
 // fail, the link closes, the pod is deleted. The record stays, as
 // stopped, until the delete has returned, and only then goes, so the
 // next start under the same name cannot be killed by this delete and
-// the cap counts the pod until it is gone.
+// the cap counts the pod until it is gone. Nothing here waits on the
+// pod: the link's close is immediate, and the delete runs on its own
+// goroutine.
 func (r *browserRegistry) finish(b *browser) {
 	r.mu.Lock()
 	if b.state == browserStopped {

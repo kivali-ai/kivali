@@ -81,7 +81,7 @@ func TestBrowserWindowOverTheWire(t *testing.T) {
 	if b == nil {
 		t.Fatal("claim found no waiting browser")
 	}
-	if err := svc.Browsers.attach(context.Background(), b); err != nil {
+	if err := svc.Browsers.attach(b); err != nil {
 		t.Fatal(err)
 	}
 	// This cluster would not let Chromium start its sandbox: the pod says so, and so do the window and the task's header.
