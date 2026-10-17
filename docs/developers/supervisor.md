@@ -821,7 +821,9 @@ logical size, the Host's `FileUsage`; 0 without a disk).
 
 **Stages.** Every log line of an operation carries the stage it belongs
 to (the serve log shows it in brackets), so the shell can draw steps
-without parsing lines:
+without parsing lines. An operation that fails ends with the error on
+its final event and, in the serve log, a line `<operation> failed:
+<error>` under the stage it reached:
 
 | Operation | Stages, in order |
 | --- | --- |
@@ -1019,7 +1021,11 @@ An upgrade, with `local.json`'s `upgrade` as the journal:
    (a file appears under its name only once verified), read the chart's
    `Chart.yaml` (its version must equal release.json's `version`, or the
    release is refused, naming both) and the bundle's image refs, import,
-   check `ctr images ls` lists every ref. Nothing has changed yet; a
+   check `ctr images ls` lists every ref. The bundle must hold `kivali`,
+   `kivali-egress-proxy` and `kivali-agent-shell` at one tag, plus
+   `kivali-browser` when the chart's `values.yaml` has a top-level
+   `browser` section: a release from before browser pods ships three
+   images and upgrades all the same. Nothing has changed yet; a
    failure here needs no rollback.
 3. Journal `{from, to, step: prepared, snapshot, started}`.
 4. `quiescing`: delete agent pods with a wait, clean shutdown.

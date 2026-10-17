@@ -821,11 +821,17 @@ next read instead). On Windows the real `serve` only looks for a
 (`run_op`, on its own thread); asking for a second while one runs is
 refused, as is any operation once Quit has begun. `view.rs` maps the
 supervisor's stage ids to the words and steps the pages show, with a
-typical length per stage for the progress bar and "about N seconds":
+typical length per stage for the progress bar and "about N seconds".
+Within one operation the bar never goes back to a stage it has left:
+setup's create runs `up` twice (the machine boots while the wizard is
+open, then the install), and the second `up`'s `starting` keeps its
+line but leaves the bar on Setting up your team. An earlier stage not
+yet seen still counts, as when a resume says `starting` before it moves
+the data disk.
 
 | Operation (`OpKind`) | Activity | Stages shown (stage id) |
 | --- | --- | --- |
-| create | creating | Making room (`making-room`) · Starting up (`starting`) · Setting up your team (`setting-up`) · Ready |
+| create | creating | Preparing storage (`making-room`: the data disk made and formatted on the first boot) · Starting up (`starting`) · Setting up your team (`setting-up`) · Ready |
 | resume | waking | Updating team data (`updating-data`, only when the supervisor moves the data disk) · Making room (`making-room`, only when it compacts the data disk) · Starting up · Setting up your team |
 | update | updating | Downloading (`downloading`) · Saving a snapshot (`snapshot`) · Installing (`installing`) · Starting up |
 | pause | pausing | Pausing (`pausing`) |
@@ -988,7 +994,7 @@ team's progress comes from the snapshot.
    Foundry…** (the Foundry sheet, `pages/foundry.ts`, which applies a
    sign-in setup through `POST /v1/credential/setup`; also in Settings →
    AI), and once signed in shows what the team bills (`ai.billing`). The
-   getting-ready bar (Making room · Starting up · Setting up your team ·
+   getting-ready bar (Preparing storage · Starting up · Setting up your team ·
    Ready; clicking it shows the raw lines) sits above the footer from
    here to the end.
 4. *Ready* (A18 work, A19 personal): **Open** (`finish_setup`) hides
@@ -1090,6 +1096,13 @@ with Update, Cancel and What's new; the length is `view::typical` of
 the update's stages (the snapshot's `update.takes`), in the page and
 the native alert alike. The update operation runs
 `POST /v1/upgrade` with C6's steps, then checks for releases again.
+An update that fails leaves the team running on its version; the shell
+logs `update failed: <error>` to `shell.log`, and while the update is
+still available Settings → team → Overview shows a danger banner,
+"Plainsong couldn't update to 0.17.0", with the supervisor's error, the
+update line reads "Couldn't update to 0.17.0" and its button
+Try again… (the error is the last operation's, `op.error`, until the
+team's next operation).
 
 **Deleting a team here** (Settings → team → Overview, below a divider;
 nowhere else):

@@ -38,7 +38,7 @@ function op(o: Partial<OpView>): OpView {
   };
 }
 
-const CREATE_STAGES = ["Making room", "Starting up", "Setting up your team", "Ready"];
+const CREATE_STAGES = ["Preparing storage", "Starting up", "Setting up your team", "Ready"];
 const UPDATE_STAGES = ["Downloading", "Saving a snapshot", "Installing", "Starting up"];
 const CREATE_LINES = [
   "creating the data disk · done",

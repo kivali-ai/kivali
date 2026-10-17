@@ -148,15 +148,21 @@ func ShortRepo(repo string) string {
 // ghcr.io/kivali-ai/kivali).
 func RepoName(repo string) string { return path.Base(repo) }
 
-// ChartMeta is what the supervisor needs from a chart's Chart.yaml.
+// ChartMeta is what the supervisor needs from a chart's Chart.yaml and
+// values.yaml.
 type ChartMeta struct {
 	Name       string `yaml:"name" json:"name"`
 	Version    string `yaml:"version" json:"version"`
 	AppVersion string `yaml:"appVersion" json:"app_version"`
+	// Browser is whether the chart's values.yaml has a top-level browser
+	// section, so the release runs browser pods from the kivali-browser
+	// image. ChartInfo reads it from the archive; it is never sent.
+	Browser bool `yaml:"-" json:"-"`
 }
 
-// ChartInfo reads Chart.yaml from a packaged chart (a gzip tar whose
-// top-level directory is the chart).
+// ChartInfo reads Chart.yaml, and whether values.yaml has a browser
+// section, from a packaged chart (a gzip tar whose top-level directory
+// is the chart).
 func ChartInfo(r io.Reader) (ChartMeta, error) {
 	z, err := gzip.NewReader(r)
 	if err != nil {
@@ -164,27 +170,45 @@ func ChartInfo(r io.Reader) (ChartMeta, error) {
 	}
 	defer func() { _ = z.Close() }()
 	tr := tar.NewReader(z)
+	var (
+		m        ChartMeta
+		haveMeta bool
+		browser  bool
+	)
 	for {
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {
-			return ChartMeta{}, errors.New("chart: no Chart.yaml in the archive")
+			break
 		}
 		if err != nil {
 			return ChartMeta{}, fmt.Errorf("chart: %w", err)
 		}
 		dir, file := path.Split(path.Clean(hdr.Name))
-		if file != "Chart.yaml" || strings.Count(strings.Trim(dir, "/"), "/") != 0 || dir == "" {
+		if strings.Count(strings.Trim(dir, "/"), "/") != 0 || dir == "" {
 			continue
 		}
-		var m ChartMeta
-		if err := yaml.NewDecoder(tr).Decode(&m); err != nil {
-			return ChartMeta{}, fmt.Errorf("chart: Chart.yaml: %w", err)
+		switch file {
+		case "Chart.yaml":
+			if err := yaml.NewDecoder(tr).Decode(&m); err != nil {
+				return ChartMeta{}, fmt.Errorf("chart: Chart.yaml: %w", err)
+			}
+			haveMeta = true
+		case "values.yaml":
+			var top map[string]any
+			if err := yaml.NewDecoder(tr).Decode(&top); err != nil && !errors.Is(err, io.EOF) {
+				return ChartMeta{}, fmt.Errorf("chart: values.yaml: %w", err)
+			}
+			_, browser = top["browser"]
 		}
-		if m.Name == "" || m.Version == "" {
-			return ChartMeta{}, errors.New("chart: Chart.yaml has no name or version")
-		}
-		return m, nil
 	}
+	if !haveMeta {
+		return ChartMeta{}, errors.New("chart: no Chart.yaml in the archive")
+	}
+	if m.Name == "" || m.Version == "" {
+		return ChartMeta{}, errors.New("chart: Chart.yaml has no name or version")
+	}
+	m.Browser = browser
+	return m, nil
 }
 
 // ChartInfoFile is ChartInfo on a file.

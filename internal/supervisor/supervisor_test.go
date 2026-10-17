@@ -390,16 +390,50 @@ func TestSetOverridesAndHelmFailure(t *testing.T) {
 
 func TestPickImages(t *testing.T) {
 	refs := []string{"docker.io/library/kivali:dev", "docker.io/library/kivali-egress-proxy:dev"}
-	if _, err := pickImages(refs, false); err == nil || !strings.Contains(err.Error(), "kivali-agent-shell:dev") {
+	if _, err := pickImages(refs, false, false); err == nil || !strings.Contains(err.Error(), "kivali-agent-shell:dev") {
 		t.Fatalf("missing agent-shell: %v", err)
 	}
 	refs = append(refs, "docker.io/library/kivali-agent-shell:dev")
-	if _, err := pickImages(refs, false); err == nil || !strings.Contains(err.Error(), "kivali-browser:dev") {
+	// A chart without browser pods needs no browser image.
+	if _, err := pickImages(refs, false, false); err != nil {
+		t.Fatalf("three images, no browser wanted: %v", err)
+	}
+	if _, err := pickImages(refs, true, false); err == nil || !strings.Contains(err.Error(), "kivali-browser:dev") || !strings.Contains(err.Error(), "the 4 Kivali images") {
 		t.Fatalf("missing browser: %v", err)
 	}
 	refs = append(refs, "docker.io/library/kivali-browser:dev", "docker.io/library/kivali:v2")
-	if _, err := pickImages(refs, false); err == nil || !strings.Contains(err.Error(), "several") {
+	if _, err := pickImages(refs, true, false); err == nil || !strings.Contains(err.Error(), "several") {
 		t.Fatalf("two kivali tags: %v", err)
+	}
+}
+
+// TestUpgradeToAReleaseWithoutBrowserPods: a release whose chart has no
+// browser section ships three images, and upgrading to it succeeds.
+func TestUpgradeToAReleaseWithoutBrowserPods(t *testing.T) {
+	h := newHarness(t)
+	h.mustUp(UpOptions{Install: owner})
+	feed := writeReleaseWith(t, filepath.Join(t.TempDir(), "rel"), "0.16.0", "0.16.0", "v0.16.0", false, repoKivali, repoEgress, repoShell)
+	if err := h.sup.Upgrade(context.Background(), UpgradeOptions{Feed: feed}, h.logf()); err != nil {
+		t.Fatalf("upgrade: %v", err)
+	}
+	if st := h.sup.State(); st.Kivali != "0.16.0" || st.Upgrade != nil {
+		t.Fatalf("state %+v", st)
+	}
+}
+
+// TestUpgradeRefusesAReleaseMissingItsBrowserImage: a chart with a
+// browser section needs the browser image in the bundle; without it
+// the upgrade stops before touching the org.
+func TestUpgradeRefusesAReleaseMissingItsBrowserImage(t *testing.T) {
+	h := newHarness(t)
+	h.mustUp(UpOptions{Install: owner})
+	feed := writeReleaseWith(t, filepath.Join(t.TempDir(), "rel"), "0.16.0", "0.16.0", "v0.16.0", true, repoKivali, repoEgress, repoShell)
+	err := h.sup.Upgrade(context.Background(), UpgradeOptions{Feed: feed}, h.logf())
+	if err == nil || !strings.Contains(err.Error(), "kivali-browser:v0.16.0 is missing") {
+		t.Fatalf("upgrade: %v", err)
+	}
+	if h.sup.State().Upgrade != nil || len(h.vm.boots) != 1 {
+		t.Fatalf("a refused release touched the org: %+v, %d boots", h.sup.State(), len(h.vm.boots))
 	}
 }
 

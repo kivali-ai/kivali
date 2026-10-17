@@ -58,8 +58,10 @@ impl OpKind {
     /// typical length (for the bar and "about N seconds").
     pub fn stages(self) -> &'static [(&'static str, &'static str, u64)] {
         match self {
+            // A new team's first stage makes its data disk and boots
+            // the VM for the first time, which formats the disk.
             OpKind::Create => &[
-                ("making-room", "Making room", 12),
+                ("making-room", "Preparing storage", 12),
                 ("starting", "Starting up", 20),
                 ("setting-up", "Setting up your team", 25),
                 ("ready", "Ready", 0),

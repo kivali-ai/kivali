@@ -161,9 +161,12 @@ type Images struct {
 	Busybox string // k3s's baked busybox helper, the init container
 }
 
-// pickImages finds Kivali's images (all four at one tag) and, with
-// busybox, k3s's busybox helper among refs.
-func pickImages(refs []string, busybox bool) (Images, error) {
+// pickImages finds Kivali's images among refs, all at one tag: the
+// server, the egress proxy, the agent shell and, with browser, the
+// browser image. browser follows the chart being installed
+// (ChartMeta.Browser), since a release from before browser pods ships
+// three images. With busybox it also finds k3s's busybox helper.
+func pickImages(refs []string, browser, busybox bool) (Images, error) {
 	byRepo := map[string][]string{} // repo name -> full refs
 	for _, r := range refs {
 		repo, t := guestapi.SplitRef(r)
@@ -186,7 +189,11 @@ func pickImages(refs []string, busybox bool) (Images, error) {
 	}
 	krepo, ktag := guestapi.SplitRef(im.Kivali)
 	prefix := strings.TrimSuffix(krepo, repoKivali)
-	for _, want := range []string{repoEgress, repoShell, repoBrowser} {
+	wants := []string{repoEgress, repoShell}
+	if browser {
+		wants = append(wants, repoBrowser)
+	}
+	for _, want := range wants {
 		ref := prefix + want + ":" + ktag
 		found := false
 		for _, r := range byRepo[want] {
@@ -195,7 +202,7 @@ func pickImages(refs []string, busybox bool) (Images, error) {
 			}
 		}
 		if !found {
-			return im, fmt.Errorf("image %s is missing (the four Kivali images must share one tag)", ref)
+			return im, fmt.Errorf("image %s is missing (the %d Kivali images must share one tag)", ref, len(wants)+1)
 		}
 		if want == repoEgress {
 			im.Egress = ref
@@ -370,7 +377,7 @@ func (s *Supervisor) installLocked(ctx context.Context, o InstallOptions, logf L
 	if err != nil {
 		return err
 	}
-	im, err := pickImages(st.BakedImages, true)
+	im, err := pickImages(st.BakedImages, true, true)
 	if err != nil {
 		return err
 	}

@@ -264,7 +264,7 @@ func (s *Supervisor) stage(ctx context.Context, g Guest, feed string, rel Releas
 	if err != nil {
 		return sg, err
 	}
-	im, err := pickImages(refs, false)
+	im, err := pickImages(refs, meta.Browser, false)
 	if err != nil {
 		return sg, fmt.Errorf("image bundle: %w", err)
 	}
