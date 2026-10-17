@@ -40,7 +40,10 @@ type WebImage struct {
 //
 // POST /v1/agent/{slug}/subagents/{id}/web. A non-2xx response is a
 // transport error: the id is not one of this agent's running web
-// tasks, or core refused the request outright.
+// tasks, or core refused the request outright. Core answers only once
+// the browser has: the first command on a cold browser waits for its
+// pod to start, a navigate for the page to settle. The call runs on
+// the client with no response-header timeout, so only ctx bounds it.
 func (c *Client) WebCommand(ctx context.Context, subagentID string, req WebCommandRequest) (*WebCommandResponse, error) {
 	if strings.TrimSpace(subagentID) == "" {
 		return nil, fmt.Errorf("agentpod: WebCommand: subagent id is required")
@@ -59,7 +62,7 @@ func (c *Client) WebCommand(ctx context.Context, subagentID string, req WebComma
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set(SlugHeader, c.slug)
-	resp, err := c.http.Do(httpReq)
+	resp, err := c.long.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("agentpod: WebCommand: %w", err)
 	}

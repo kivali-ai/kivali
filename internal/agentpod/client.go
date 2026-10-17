@@ -37,7 +37,15 @@ type Client struct {
 	socketPath string
 	slug       string
 	http       *http.Client
-	cache      *Cache
+	// long is the client for the calls core may hold for minutes before
+	// it answers: a web command waits on the browser (a cold pod takes
+	// up to its start timeout, a navigate up to a minute), and a result
+	// submission on its validation. Same dialer as http, no
+	// response-header timeout; the caller's context bounds each call.
+	// The events stream and the short calls stay on http, whose header
+	// timeout turns a wedged core into an error instead of a hang.
+	long  *http.Client
+	cache *Cache
 	// runtime is this process's runtime id, sent as RuntimeHeader on
 	// every events stream open; drawn once in NewClient.
 	runtime string
@@ -61,6 +69,17 @@ func (c *Client) WithClock(clk clock.Clock) *Client {
 // Connection establishment + handshake costs are amortized across
 // requests by the http.Transport's connection pool.
 func NewClient(socketPath, slug string) *Client {
+	return newClientWithHeaderTimeout(socketPath, slug, responseHeaderTimeout)
+}
+
+// responseHeaderTimeout is how long a short call waits for core's
+// response headers before core is taken as wedged.
+const responseHeaderTimeout = 10 * time.Second
+
+// newClientWithHeaderTimeout is NewClient with the short client's
+// header timeout chosen by the caller. Tests pass a small one to show
+// which calls it bounds and which it does not.
+func newClientWithHeaderTimeout(socketPath, slug string, headerTimeout time.Duration) *Client {
 	dial := func(ctx context.Context, _, _ string) (net.Conn, error) {
 		var d net.Dialer
 		return d.DialContext(ctx, "unix", socketPath)
@@ -74,11 +93,17 @@ func NewClient(socketPath, slug string) *Client {
 			Transport: &http.Transport{
 				DialContext:           dial,
 				IdleConnTimeout:       30 * time.Second,
-				ResponseHeaderTimeout: 10 * time.Second,
+				ResponseHeaderTimeout: headerTimeout,
 			},
 			// No top-level Timeout — the events stream is long-lived
 			// (server pushes with no overall deadline), and per-call
 			// requests rely on the caller's ctx for cancellation.
+		},
+		long: &http.Client{
+			Transport: &http.Transport{
+				DialContext:     dial,
+				IdleConnTimeout: 30 * time.Second,
+			},
 		},
 	}
 }
