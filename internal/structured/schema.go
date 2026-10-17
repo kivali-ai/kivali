@@ -127,6 +127,16 @@ func Parse(raw json.RawMessage) (*Schema, error) {
 	if len(raw) > MaxSchemaBytes {
 		return nil, fmt.Errorf("schema is %d bytes; the limit is %d", len(raw), MaxSchemaBytes)
 	}
+	// Raw is embedded in the tool schema as written, so a key written
+	// twice would reach the subagent twice, whichever one the parser
+	// took. Such a schema is refused instead.
+	if where, key, ok := duplicateKey(raw); ok {
+		at := "schema"
+		if where != "" {
+			at = "schema at " + where
+		}
+		return nil, fmt.Errorf("%s: %q appears twice", at, key)
+	}
 	p := &parser{}
 	s, err := p.node(raw, "", 1)
 	if err != nil {
@@ -136,6 +146,78 @@ func Parse(raw json.RawMessage) (*Schema, error) {
 		return nil, fmt.Errorf("schema: the top level must be an object with properties, not %s", s.Kind)
 	}
 	return s, nil
+}
+
+// duplicateKey walks raw and reports the first object key that appears
+// twice in one object, with the path of that object (empty at the top
+// level). Malformed JSON is left for the parser to report.
+func duplicateKey(raw json.RawMessage) (where, key string, found bool) {
+	type frame struct {
+		path  string
+		array bool
+		seen  map[string]bool
+		// key is the object key whose value comes next; expectKey is
+		// whether the next string in an object is a key, not a value.
+		key       string
+		expectKey bool
+		index     int
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	var stack []*frame
+	// valuePath names the value about to be read in the innermost
+	// container: dotted keys and [i] for array items.
+	valuePath := func() string {
+		if len(stack) == 0 {
+			return ""
+		}
+		top := stack[len(stack)-1]
+		if top.array {
+			return fmt.Sprintf("%s[%d]", top.path, top.index)
+		}
+		if top.path == "" {
+			return top.key
+		}
+		return top.path + "." + top.key
+	}
+	// valueDone records that the innermost container has read a value.
+	valueDone := func() {
+		if len(stack) == 0 {
+			return
+		}
+		top := stack[len(stack)-1]
+		if top.array {
+			top.index++
+		} else {
+			top.expectKey = true
+		}
+	}
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			return "", "", false
+		}
+		if d, ok := tok.(json.Delim); ok {
+			switch d {
+			case '{', '[':
+				stack = append(stack, &frame{path: valuePath(), array: d == '[', seen: map[string]bool{}, expectKey: d == '{'})
+			case '}', ']':
+				stack = stack[:len(stack)-1]
+				valueDone()
+			}
+			continue
+		}
+		if s, ok := tok.(string); ok && len(stack) > 0 && !stack[len(stack)-1].array && stack[len(stack)-1].expectKey {
+			top := stack[len(stack)-1]
+			if top.seen[s] {
+				return top.path, s, true
+			}
+			top.seen[s] = true
+			top.key = s
+			top.expectKey = false
+			continue
+		}
+		valueDone()
+	}
 }
 
 type parser struct{ properties int }
@@ -472,11 +554,9 @@ func (s *Schema) validateValue(v any, path string, w *walker) {
 			at("%s is not a usable number", num)
 			return
 		}
-		if s.Kind == KindInteger {
-			if _, err := num.Int64(); err != nil {
-				at("%s is not an integer", num)
-				return
-			}
+		if s.Kind == KindInteger && !isIntegral(num, f) {
+			at("%s is not an integer", num)
+			return
 		}
 		if s.Minimum != nil && f < *s.Minimum {
 			at("%s is below the minimum of %g", num, *s.Minimum)
@@ -489,6 +569,17 @@ func (s *Schema) validateValue(v any, path string, w *walker) {
 			at("expected true or false")
 		}
 	}
+}
+
+// isIntegral reports whether a number written by the subagent is an
+// integer: its text parses as an int64, or its value f is whole and
+// within int64, as JSON Schema counts 1.0 and 1e1 as integers. The
+// canonical re-encoding writes such a value as its integer.
+func isIntegral(num json.Number, f float64) bool {
+	if _, err := num.Int64(); err == nil {
+		return true
+	}
+	return !math.IsInf(f, 0) && f == math.Trunc(f) && f >= math.MinInt64 && f < -math.MinInt64
 }
 
 // validateString checks a string against its enum, its format and its

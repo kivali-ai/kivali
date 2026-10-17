@@ -87,6 +87,10 @@ func TestParseRefusesWhatIsOutsideTheSubset(t *testing.T) {
 		{"min above max", `{"type":"object","properties":{"a":{"type":"number","minimum":5,"maximum":1}}}`, `"minimum" is above "maximum"`},
 		{"too deep", deep, "nested deeper than"},
 		{"path in error", `{"type":"object","properties":{"outer":{"type":"object","properties":{"inner":{"type":"string"}}}}}`, "schema at outer.inner:"},
+		// A key written twice would reach the subagent twice through
+		// the embedded schema, whichever the parser took.
+		{"duplicate key", `{"type":"object","properties":{"a":{"type":"boolean"}},"properties":{"b":{"type":"boolean"}}}`, `schema: "properties" appears twice`},
+		{"duplicate key nested", `{"type":"object","properties":{"a":{"type":"string","maxLength":5,"description":"one","description":"two"}}}`, `schema at properties.a: "description" appears twice`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -193,10 +197,23 @@ func TestValidateKeepsTextAsWrittenAndNumbersCanonical(t *testing.T) {
 	if !strings.Contains(body, `"i": 12`) {
 		t.Errorf("integer lost: %s", body)
 	}
-	// An integer field takes an integer literal, not a float that
-	// happens to be whole.
-	if _, errs := validate(t, s, `{"outcome":"found","result":{"i":1.2e1}}`); len(errs) == 0 {
-		t.Error("1.2e1 accepted as an integer")
+	// An integer field takes any number whose value is whole and within
+	// int64, as JSON Schema counts integers, and the delivered form is
+	// the integer.
+	for written, want := range map[string]string{"1.2e1": `"i": 12`, "1.0": `"i": 1`, "1e1": `"i": 10`, "-7.0": `"i": -7`} {
+		res, errs := validate(t, s, `{"outcome":"found","result":{"i":`+written+`}}`)
+		if len(errs) > 0 {
+			t.Errorf("%s refused as an integer: %v", written, errs)
+			continue
+		}
+		if body := res.Body(); !strings.Contains(body, want) {
+			t.Errorf("%s delivered as %s, want %s", written, body, want)
+		}
+	}
+	for _, written := range []string{"1.5", "1e30", "-1e19"} {
+		if _, errs := validate(t, s, `{"outcome":"found","result":{"i":`+written+`}}`); len(errs) == 0 || !strings.Contains(errs[0], "is not an integer") {
+			t.Errorf("%s accepted as an integer: %v", written, errs)
+		}
 	}
 	// Nothing may follow the one object.
 	if _, errs := validate(t, s, `{"outcome":"not_found"} {"outcome":"found"}`); len(errs) == 0 || !strings.Contains(errs[0], "nothing after it") {
