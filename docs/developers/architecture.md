@@ -611,27 +611,56 @@ job becomes `waiting_for_sign_in` with the reason, the run is ended
 after a short grace so the tool's answer reaches the model, the task's
 slot in the pod is given back, and the windows on the task are told
 they take input. Home derives a `web_sign_in` need from the state
-(`webSignInItem`, every word core's) and the task's view and chip show
-it; `subagent_status` lists it under its own heading. When the task's
-last window has been gone for the window grace the task resumes: a new
-run of the same CLI session (`SubagentSpec.Resume`, the id the first
-run reported in `TurnEvent.SessionID`; `provider.SubagentRequest.Resume`
-becomes `--resume`) with one line from core as its message, its tabs
-as the task left them. After 24 hours with nobody coming core writes
-the result itself, `blocked` with `user_did_not_respond`, and the task
-ends like any other. The calling agent hears nothing until the final
-result. A task in the open session, or one a subagent dispatched, has
-no wait tool: a sign-in wall ends it `blocked`, `login_required`, and
-the agent decides whether to dispatch again with a site session.
+(`webSignInItem`, every word core's, worded for the reason, and naming
+the page the window shows, URL and title as the browser reported them,
+in fields the app shows as text); the org snapshot lists the waiting
+tasks (`sign_in_waits`) so Home refetches as one begins or ends; the
+task's view, the Background tab (`waiting`) and the chip show it
+(`subagent_progress` carries `waiting_for_sign_in` and `running`
+again on resume); `subagent_status` lists it under its own heading,
+with the page. When the task's last window has been gone for the
+window grace the task resumes: the registry reports the close
+(`OnWindowsClosed`); a report sooner than the grace after the wait
+began is about a window closed before the task asked for anyone and
+is ignored. The resumed task reads as running from that moment (the
+need is gone); core waits up to three minutes for the agent pod to
+be connected, else the wait goes on as it was, then takes a slot and
+starts a new run of the same CLI session (`SubagentSpec.Resume`, the
+id the first run reported in `TurnEvent.SessionID`;
+`provider.SubagentRequest.Resume` becomes `--resume`) with one line
+from core as its message, also appended to the task's transcript, its
+tabs as the task left them. After 24 hours with nobody coming core
+writes the result itself, `blocked` with `user_did_not_respond`, and
+the task ends like any other. A task may wait three times
+(`signInWaitCap`); the fourth call is refused, saying so, and core
+ends the task `blocked` on what the page still asked for (the reason
+as a `blocked_on`: `login_required`, `mfa`, `captcha` or `consent`).
+The calling agent hears nothing until the final result. A task in the
+open session, or one a subagent dispatched, has no wait tool: a
+sign-in wall ends it `blocked`, `login_required`, and the agent
+decides whether to dispatch again with a site session.
+
+Every write to a task's `meta.json` goes through
+`store.UpdateSubagentMeta`, one writer per task behind a lock, written
+whole through a temp file and a rename, so the job's full writes and
+the patches from the HTTP and registry goroutines (status, wait
+reason, site, browser state) keep each other's fields. Jobs live in
+memory: at boot `FailOrphanedSubagents` rewrites every record left
+queued, running or waiting for a person by the last run as errored,
+"Kivali restarted before the task finished", without its wait reason
+and browser state, so nothing reads as live that core no longer holds.
 
 The calling agent sees its sessions through `subagent_web_sessions`
 (names, sites, last use, whether a browser runs and how many tasks are
 on each) and forgets one with `subagent_web_session_reset`, which
-cancels the session's tasks, ends its browser without saving and
-deletes its record and profile (`web_sessions.go`, over
-`POST /v1/agent/{slug}/web/sessions` and `/web/sessions/reset`). Agent-
-facing text says a web task is expensive and a sign-in very expensive,
-because it costs a person's time.
+cancels the session's tasks and waits for them to end (their windows
+close with the task's own reason, bounded by `webResetCancelWait`),
+then ends its browser without saving and deletes its record and
+profile (`web_sessions.go`, over `POST /v1/agent/{slug}/web/sessions`
+and `/web/sessions/reset`); the tool's answer names the tasks called
+off, which deliver no result, as after Stop. Agent-facing text says a
+web task is expensive and a sign-in very expensive, because it costs a
+person's time.
 
 Depth is capped at two tiers (`agentpod.MaxSubagentDepth`): a
 first-tier subagent may act as a sub-lead and dispatch up to three
