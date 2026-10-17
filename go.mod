@@ -9,6 +9,7 @@ require (
 	github.com/creack/pty v1.1.24
 	github.com/klauspost/compress v1.18.0
 	github.com/mdlayher/vsock v1.2.1
+	golang.org/x/net v0.40.0
 	golang.org/x/sys v0.33.0
 	golang.org/x/term v0.32.0
 	golang.org/x/text v0.25.0
@@ -24,7 +25,6 @@ require (
 	github.com/spf13/cobra v1.3.0 // indirect
 	github.com/spf13/pflag v1.0.5 // indirect
 	golang.org/x/mod v0.24.0 // indirect
-	golang.org/x/net v0.40.0 // indirect
 	golang.org/x/sync v0.14.0 // indirect
 	golang.org/x/tools v0.33.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
