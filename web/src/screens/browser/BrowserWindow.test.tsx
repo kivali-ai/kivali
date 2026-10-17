@@ -309,6 +309,17 @@ describe('the browser window: ending and reconnecting', () => {
     latest()?.drop();
     await settle(1000);
     expect(FakeSocket.all).toHaveLength(4);
+
+    // Watch only: the wait grows to 10 s and stays there.
+    latest()?.drop();
+    await settle(2000);
+    latest()?.drop();
+    await settle(4000);
+    latest()?.drop();
+    await settle(9999);
+    expect(FakeSocket.all).toHaveLength(6);
+    await settle(1);
+    expect(FakeSocket.all).toHaveLength(7);
   });
 
   it('stops reconnecting once the task has ended', async () => {
@@ -327,7 +338,8 @@ describe('the browser window: ending and reconnecting', () => {
     // Core holds no job for the task (it restarted) while the task's header still says it waits: every socket
     // is refused before it opens, and the header read keeps saying to connect.
     await renderWindow(waitingWeb);
-    for (const wait of [1000, 2000, 4000, 10_000]) {
+    // The header says the window takes input, so no wait is longer than 4 s.
+    for (const wait of [1000, 2000, 4000, 4000]) {
       latest()?.drop();
       expect(screen.getByRole('status')).toHaveTextContent('Reconnecting');
       await settle(wait);
@@ -470,6 +482,35 @@ describe('the browser window: input', () => {
     expect(screen.getByText('Watch only')).toBeInTheDocument();
     fireEvent.keyDown(canvas, { key: 'a', code: 'KeyA' });
     expect(FakeSocket.all[0]?.sent).toEqual([]);
+  });
+
+  it('waits at most 4 s between reconnects while the window takes input, so the task is not resumed meanwhile', async () => {
+    await openForInput();
+    expect(screen.getByText('Taking input')).toBeInTheDocument();
+    for (const wait of [1000, 2000, 4000]) {
+      latest()?.drop();
+      await settle(wait);
+    }
+    expect(FakeSocket.all).toHaveLength(4);
+    latest()?.drop();
+    await settle(3999);
+    expect(FakeSocket.all).toHaveLength(4);
+    await settle(1);
+    expect(FakeSocket.all).toHaveLength(5);
+
+    // The task stops waiting for the person (its header and the state event agree): the waits may grow to 10 s again.
+    meta = { ...waitingWeb, state: 'running', input: false, wait_reason: undefined };
+    latest()?.accept();
+    latest()?.push({ type: 'state', browser: 'running', site: SITE });
+    for (const wait of [1000, 2000, 4000]) {
+      latest()?.drop();
+      await settle(wait);
+    }
+    latest()?.drop();
+    await settle(9999);
+    expect(FakeSocket.all).toHaveLength(8);
+    await settle(1);
+    expect(FakeSocket.all).toHaveLength(9);
   });
 
   it('sends presses and releases in frame pixels, focusing the frame', async () => {
