@@ -10,8 +10,15 @@ import '../../styles/browser.css';
 /** Waits before each reconnect, by attempt: 1 s, 2 s, 4 s, then every 10 s. */
 export const RECONNECT_MS = [1000, 2000, 4000, 10_000];
 
-function reconnectDelay(attempt: number): number {
-  return RECONNECT_MS[Math.min(attempt, RECONNECT_MS.length - 1)] ?? 10_000;
+/**
+ * The longest wait while the window takes input. Core resumes a waiting task once its last window has been
+ * gone for ten seconds, so a window in the middle of a sign-in must be back well inside that.
+ */
+export const INPUT_RECONNECT_MAX_MS = 4000;
+
+function reconnectDelay(attempt: number, input: boolean): number {
+  const wait = RECONNECT_MS[Math.min(attempt, RECONNECT_MS.length - 1)] ?? 10_000;
+  return input ? Math.min(wait, INPUT_RECONNECT_MAX_MS) : wait;
 }
 
 /**
@@ -311,6 +318,9 @@ export function BrowserWindow() {
   // The input path reads these, never React state: whether the window takes input, and the send to use.
   const taking = useRef(false);
   const sendRef = useRef<(input: BrowserInput) => void>(() => {});
+  // The last word on whether the window takes input, from the header or a state event: while the socket is
+  // down it decides how long a reconnect may wait.
+  const wantsInput = useRef(false);
   const [decodes] = useState(() => typeof createImageBitmap === 'function');
 
   const path = '/api/v1/agents/' + encodeURIComponent(slug) + '/subagents/' + encodeURIComponent(id);
@@ -323,6 +333,7 @@ export function BrowserWindow() {
         setMeta(t.meta);
         setBrowser(t.meta.browser);
         setSite(t.meta.site ?? '');
+        wantsInput.current = t.meta.input === true;
       },
       (err: unknown) => {
         if (live) setFailure(asApiError(err));
@@ -405,6 +416,7 @@ export function BrowserWindow() {
         }
         if (msg.type === 'state') {
           setBrowser(msg.browser);
+          wantsInput.current = msg.input === true;
           take(msg.input === true);
           if (msg.site !== undefined) setSite(msg.site);
         } else if (msg.type === 'tab' && msg.tab) setTab(msg.tab);
@@ -424,7 +436,7 @@ export function BrowserWindow() {
           return;
         }
         setLink('reconnecting');
-        timer = setTimeout(retry, reconnectDelay(attempt++));
+        timer = setTimeout(retry, reconnectDelay(attempt++, wantsInput.current));
       };
     };
 
@@ -434,13 +446,14 @@ export function BrowserWindow() {
         (t) => {
           if (over) return;
           const why = unavailable(t.meta);
+          wantsInput.current = t.meta.input === true;
           if (why) finish(why);
           else open();
         },
         () => {
           if (over) return;
           if (++failed >= MAX_FAILED_CONNECTS) finish(UNREACHABLE);
-          else timer = setTimeout(retry, reconnectDelay(attempt++));
+          else timer = setTimeout(retry, reconnectDelay(attempt++, wantsInput.current));
         },
       );
     };
