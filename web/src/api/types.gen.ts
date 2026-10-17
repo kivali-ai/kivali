@@ -598,14 +598,19 @@ export type WebSignInReason = typeof WebSignInReasonSignIn | typeof WebSignInRea
  * window's WebSocket, GET /api/v1/agents/{slug}/subagents/{id}/browser.
  * Frames travel beside it as binary messages, one JPEG of the shown
  * tab each. A state event also says whether the window takes input
- * (Input: the task waits for a person to sign in, in a site session)
- * and the session's site, so the page can flag a page off it.
+ * (Input: the task waits for a person to sign in, in a site session),
+ * the session's site, so the page can flag a page off it, and whether
+ * Chromium runs without its sandbox (SandboxOff: the cluster would not
+ * let it start one, and the page says so). Reason is an end's reason;
+ * on a state event it is a note the page shows in place of its own
+ * caption.
  */
 export interface BrowserWindowEvent {
   type: BrowserWindowEventType;
   browser?: BrowserState;
   input?: boolean;
   site?: string;
+  sandbox_off?: boolean;
   tab?: BrowserWindowTab;
   reason?: string;
 }
@@ -1035,6 +1040,11 @@ export interface SubagentMeta {
    * general task and once a web task has ended.
    */
   browser?: BrowserState;
+  /**
+   * BrowserSandboxOff is whether that browser runs Chromium without
+   * its sandbox: the cluster would not let it start one.
+   */
+  browser_sandbox_off?: boolean;
   /**
    * Site is a web task's site: the registrable domain its session is
    * locked to. Absent in the open session.

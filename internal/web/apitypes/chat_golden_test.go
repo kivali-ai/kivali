@@ -120,6 +120,7 @@ func goldenSubagentTranscript() SubagentTranscript {
 			ID: "bbbb2222", Parent: "engineering-lead", State: SubagentTaskStateErrored, Model: "Haiku 4.5", Effort: "medium",
 			Description: "Check the build logs", Started: ms, Ended: ref(ms + 60000), Error: ref("The agent pod went away"),
 			Step: ref("Read the logs"), Activity: ref("running Bash"), Kind: SubagentKindWeb, Session: ref("open"),
+			BrowserSandboxOff: true,
 		},
 		Rows: []TranscriptRow{
 			{Kind: TranscriptKindMessage, TS: ms, Role: &received, From: &vp, BodyMD: ref("Check the build logs."),

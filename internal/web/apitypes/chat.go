@@ -338,6 +338,9 @@ type SubagentMeta struct {
 	// Browser is a running web task's browser state; absent for a
 	// general task and once a web task has ended.
 	Browser BrowserState `json:"browser,omitempty"`
+	// BrowserSandboxOff is whether that browser runs Chromium without
+	// its sandbox: the cluster would not let it start one.
+	BrowserSandboxOff bool `json:"browser_sandbox_off,omitempty"`
 	// Site is a web task's site: the registrable domain its session is
 	// locked to. Absent in the open session.
 	Site *string `json:"site,omitempty"`

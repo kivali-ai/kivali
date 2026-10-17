@@ -89,6 +89,10 @@
   padding: var(--space-4);
   max-width: calc(var(--space-8) * 15);
 }
+/* The browser runs Chromium without its sandbox: a line of its own under the bar's first. */
+.app-bw-sandbox {
+  flex: 1 0 100%;
+}
 /* A host outside the session's site: the warning beside the host. */
 .app-bw-off {
   display: inline-flex;

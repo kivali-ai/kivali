@@ -62,7 +62,7 @@ func goldenFixtures() map[string]any {
 		"error":      ErrorBody{Error: "unauthenticated", Who: "sign in again"},
 		"browser_window_events": []BrowserWindowEvent{
 			{Type: BrowserWindowEventTypeState, Browser: BrowserStateStarting},
-			{Type: BrowserWindowEventTypeState, Browser: BrowserStateRunning},
+			{Type: BrowserWindowEventTypeState, Browser: BrowserStateRunning, SandboxOff: true},
 			{Type: BrowserWindowEventTypeTab, Tab: &BrowserWindowTab{ID: "t1", URL: "https://vendor.example/pricing", Title: "Pricing"}},
 			{Type: BrowserWindowEventTypeEnd, Reason: "The task has ended."},
 		},

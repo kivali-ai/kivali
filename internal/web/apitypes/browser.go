@@ -42,15 +42,20 @@ const (
 // window's WebSocket, GET /api/v1/agents/{slug}/subagents/{id}/browser.
 // Frames travel beside it as binary messages, one JPEG of the shown
 // tab each. A state event also says whether the window takes input
-// (Input: the task waits for a person to sign in, in a site session)
-// and the session's site, so the page can flag a page off it.
+// (Input: the task waits for a person to sign in, in a site session),
+// the session's site, so the page can flag a page off it, and whether
+// Chromium runs without its sandbox (SandboxOff: the cluster would not
+// let it start one, and the page says so). Reason is an end's reason;
+// on a state event it is a note the page shows in place of its own
+// caption.
 type BrowserWindowEvent struct {
-	Type    BrowserWindowEventType `json:"type"`
-	Browser BrowserState           `json:"browser,omitempty"`
-	Input   bool                   `json:"input,omitempty"`
-	Site    string                 `json:"site,omitempty"`
-	Tab     *BrowserWindowTab      `json:"tab,omitempty"`
-	Reason  string                 `json:"reason,omitempty"`
+	Type       BrowserWindowEventType `json:"type"`
+	Browser    BrowserState           `json:"browser,omitempty"`
+	Input      bool                   `json:"input,omitempty"`
+	Site       string                 `json:"site,omitempty"`
+	SandboxOff bool                   `json:"sandbox_off,omitempty"`
+	Tab        *BrowserWindowTab      `json:"tab,omitempty"`
+	Reason     string                 `json:"reason,omitempty"`
 }
 
 // BrowserWindowInput is a text message from the page on the browser

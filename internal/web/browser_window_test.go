@@ -71,8 +71,8 @@ func TestBrowserRegistryWindowFollowsAGroup(t *testing.T) {
 	if on := link.next(t, browserpod.TypeScreencast); on.msg.Group != "job1" || on.msg.Tab != "" || !on.msg.OK {
 		t.Fatalf("screencast switch = %+v, want the group's, on", on.msg)
 	}
-	if ev := nextEvent(t, w); ev.Type != apitypes.BrowserWindowEventTypeState || ev.Browser != apitypes.BrowserStateRunning {
-		t.Fatalf("first event = %+v, want state running", ev)
+	if ev := nextEvent(t, w); ev.Type != apitypes.BrowserWindowEventTypeState || ev.Browser != apitypes.BrowserStateRunning || ev.SandboxOff {
+		t.Fatalf("first event = %+v, want state running with the sandbox on", ev)
 	}
 
 	f.reg.onMessage(b, browserpod.Message{Type: browserpod.TypeTab, Group: "job1", Tab: "t1", URL: "about:blank"}, nil)
@@ -235,6 +235,45 @@ func TestBrowserRegistryReportsBrowserState(t *testing.T) {
 	}
 	if st := f.reg.StateFor("alice", agentpod.OpenWebSession); st != apitypes.BrowserStateStopped {
 		t.Errorf("StateFor with no browser = %s, want stopped", st)
+	}
+}
+
+// TestBrowserRegistryReportsTheSandbox: a pod that reports running
+// with the detail "sandbox: off" marks its browser; every window on it
+// hears so on each state event, and the task's header can ask.
+func TestBrowserRegistryReportsTheSandbox(t *testing.T) {
+	f := newBrowserFixture(t)
+	ctx := context.Background()
+	errs := make(chan error, 1)
+	go func() {
+		_, err := f.reg.Command(ctx, "alice", "vendor.example", "job1", browserpod.Message{Name: browserpod.CommandSnapshot})
+		errs <- err
+	}()
+	b, link := f.connect(ctx)
+	link.next(t, browserpod.TypeStart)
+	f.reg.onMessage(b, browserpod.Message{Type: browserpod.TypeState, State: browserpod.StateRunning, Detail: "sandbox: off"}, nil)
+	cmd := link.next(t, browserpod.TypeCommand)
+	f.reg.onMessage(b, browserpod.Message{Type: browserpod.TypeResult, ID: cmd.msg.ID, OK: true, Text: "ok"}, nil)
+	if err := <-errs; err != nil {
+		t.Fatalf("first command: %v", err)
+	}
+	if !f.reg.SandboxOffFor("alice", "vendor.example") {
+		t.Error("SandboxOffFor = false after the pod reported the sandbox off")
+	}
+	if f.reg.SandboxOffFor("alice", agentpod.OpenWebSession) {
+		t.Error("SandboxOffFor = true with no browser")
+	}
+	w, err := f.reg.Watch(ctx, "alice", "vendor.example", "job1", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	link.next(t, browserpod.TypeScreencast)
+	if ev := nextEvent(t, w); ev.Type != apitypes.BrowserWindowEventTypeState || !ev.SandboxOff {
+		t.Fatalf("first event = %+v, want state with the sandbox off", ev)
+	}
+	f.reg.BroadcastState("alice", "vendor.example", "job1", true)
+	if ev := nextEvent(t, w); ev.Type != apitypes.BrowserWindowEventTypeState || !ev.SandboxOff || !ev.Input {
+		t.Fatalf("broadcast state = %+v, want the sandbox off and input on", ev)
 	}
 }
 

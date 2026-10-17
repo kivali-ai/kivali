@@ -20,9 +20,9 @@ afterEach(() => {
 const [dispatch, ...rest] = subagentTranscript.rows;
 const firstRows: TranscriptRow[] = dispatch ? [dispatch] : [];
 
+/** The fixture's task, running (started 50 s before the page's clock) on a cluster that lets Chromium keep its sandbox. */
 function running(rows: TranscriptRow[]): SubagentTranscript {
-  const { ended: _ended, error: _error, ...meta } = subagentTranscript.meta;
-  // Started 50 s before the page's clock.
+  const { ended: _ended, error: _error, browser_sandbox_off: _sandbox, ...meta } = subagentTranscript.meta;
   return { meta: { ...meta, state: 'running', started: NOW - 50_000 }, rows };
 }
 
@@ -118,6 +118,21 @@ describe('the task page: its browser window', () => {
     renderTabs(PATH, { routes: { ['GET ' + API]: web('stopped') } });
     expect(await page().findByText('The browser is stopped; opening the window starts it')).toBeInTheDocument();
     expect(page().getByRole('button', { name: 'Open browser' })).toBeEnabled();
+  });
+
+  it('says when the task’s browser runs Chromium without its sandbox', async () => {
+    const t = web('running');
+    renderTabs(PATH, { routes: { ['GET ' + API]: { ...t, meta: { ...t.meta, browser_sandbox_off: true } } } });
+    expect(await page().findByText('Chromium is running without its sandbox on this cluster.')).toBeInTheDocument();
+    expect(page().getByRole('button', { name: 'Open browser' })).toBeEnabled();
+  });
+
+  it('says nothing of the sandbox once the task has ended', async () => {
+    // The fixture is an ended web task on such a cluster.
+    expect(subagentTranscript.meta.browser_sandbox_off).toBe(true);
+    renderTabs(PATH, { routes: { ['GET ' + API]: subagentTranscript } });
+    await page().findByRole('heading', { name: 'Check the build logs' });
+    expect(screen.queryByText('Chromium is running without its sandbox on this cluster.')).toBeNull();
   });
 
   it('keeps the button with no caption when the browser state is absent', async () => {
