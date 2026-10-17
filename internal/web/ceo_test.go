@@ -1,8 +1,11 @@
 package web
 
 import (
+	"errors"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -117,6 +120,14 @@ func TestCEOApproveOffboardArchivesAgent(t *testing.T) {
 	srv, _ := newTurnServer(t)
 	_ = srv.Store.CreateAgent(store.Agent{Slug: "chief-of-staff", Role: "CoS"}, "# role\n")
 	_ = srv.Store.CreateAgent(store.Agent{Slug: "market-analyst", Role: "Analyst", ReportsTo: "chief-of-staff"}, "# Analyst\n")
+	// A site session with a saved profile: the agent's sign-ins.
+	t0 := time.Now().UTC()
+	if _, err := srv.Store.EnsureBrowserSession("market-analyst", "vendor.com", "vendor.com", t0); err != nil {
+		t.Fatalf("EnsureBrowserSession: %v", err)
+	}
+	if _, err := srv.Store.WriteBrowserProfile("market-analyst", "vendor.com", strings.NewReader("profile"), t0); err != nil {
+		t.Fatalf("WriteBrowserProfile: %v", err)
+	}
 	rel := seedOffboardProposal(t, srv, "market-analyst")
 
 	if rr := approve(t, srv, rel); rr.Code != http.StatusOK {
@@ -128,6 +139,16 @@ func TestCEOApproveOffboardArchivesAgent(t *testing.T) {
 	}
 	if _, err := srv.Store.GetArchivedAgent("market-analyst"); err != nil {
 		t.Errorf("market-analyst should be archived, not deleted: %v", err)
+	}
+	// The sign-ins do not follow the agent into the archive, and are
+	// not left behind under the old path either.
+	for _, dir := range []string{
+		filepath.Join(srv.Store.Root(), "agents", "_archived", "market-analyst", "browser"),
+		filepath.Join(srv.Store.Root(), "agents", "market-analyst", "browser"),
+	} {
+		if _, err := os.Stat(dir); !errors.Is(err, fs.ErrNotExist) {
+			t.Errorf("%s after offboard: %v, want it gone", dir, err)
+		}
 	}
 
 	// The response carries the slug (so the paraphrase can name who
@@ -209,6 +230,9 @@ func TestCEOApproveOffboardRefusesWhenAgentHasDirectReports(t *testing.T) {
 	_ = srv.Store.CreateAgent(store.Agent{Slug: "chief-of-staff", Role: "CoS"}, "# role\n")
 	_ = srv.Store.CreateAgent(store.Agent{Slug: "manager", Role: "Lead", ReportsTo: "chief-of-staff"}, "# Lead\n")
 	_ = srv.Store.CreateAgent(store.Agent{Slug: "bob", Role: "IC", ReportsTo: "manager"}, "# IC\n")
+	if _, err := srv.Store.EnsureBrowserSession("manager", "vendor.com", "vendor.com", time.Now().UTC()); err != nil {
+		t.Fatalf("EnsureBrowserSession: %v", err)
+	}
 	rel := seedOffboardProposal(t, srv, "manager")
 
 	rr := approve(t, srv, rel)
@@ -223,6 +247,10 @@ func TestCEOApproveOffboardRefusesWhenAgentHasDirectReports(t *testing.T) {
 	}
 	if _, err := srv.Store.GetAgent("manager"); err != nil {
 		t.Errorf("manager must stay active after a refused offboard: %v", err)
+	}
+	// An agent that stays keeps its sign-ins.
+	if _, ok, err := srv.Store.ReadBrowserSession("manager", "vendor.com"); err != nil || !ok {
+		t.Errorf("a refused offboard must keep the agent's web sessions: ok=%v err=%v", ok, err)
 	}
 	// No response written — the request is still actionable.
 	resps, _ := srv.Store.ListMessages(store.MessageFilter{Type: store.MsgCEOApprovalResponse})

@@ -400,6 +400,12 @@ func (s *FSStore) archiveAgent(slug string) error {
 	a.Status = StatusArchived
 	a.ArchivedAt = &now
 	src := s.path("agents", slug)
+	// The agent's browser sessions hold whatever its web sessions were
+	// signed in to (saved profiles and cookie snapshots). They go
+	// before the directory moves, so the archive never carries them.
+	if err := s.DeleteBrowserSessions(slug); err != nil {
+		return err
+	}
 	meta, err := yaml.Marshal(a)
 	if err != nil {
 		return err
