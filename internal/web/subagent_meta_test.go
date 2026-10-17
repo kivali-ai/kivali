@@ -34,11 +34,11 @@ func readMetaMap(t *testing.T, st *store.FSStore, parent, id string) map[string]
 // wait.
 func TestSubagentMetaWritersKeepEachOthersFields(t *testing.T) {
 	svc, st, _, _ := newSubagentTestService(t, &fakeSubagentDriver{})
-	task := SubagentTaskInput{Description: "price it", Prompt: "find the price", Model: "m", Effort: "high", Kind: agentpod.SubagentKindWeb, Session: "Shop.Vendor.example", Schema: json.RawMessage(quoteSchema)}
+	task := SubagentTaskInput{Description: "price it", Prompt: "find the price", Model: "m", Effort: "high", Kind: agentpod.SubagentKindWeb, Session: "Shop.Vendor.com", Schema: json.RawMessage(quoteSchema)}
 	for i := 0; i < 40; i++ {
 		id := fmt.Sprintf("job%02d", i)
 		svc.writeSubagentMeta("alice", task, id, subagentJobRunning, "", "")
-		svc.patchSubagentMeta("alice", id, map[string]any{"status": subagentJobWaiting, "wait_reason": "mfa", "site": "vendor.example"})
+		svc.patchSubagentMeta("alice", id, map[string]any{"status": subagentJobWaiting, "wait_reason": "mfa", "site": "vendor.com"})
 		var wg sync.WaitGroup
 		wg.Add(2)
 		go func() {
@@ -51,7 +51,7 @@ func TestSubagentMetaWritersKeepEachOthersFields(t *testing.T) {
 		}()
 		wg.Wait()
 		meta := readMetaMap(t, st, "alice", id)
-		if meta["status"] != "completed" || meta["result"] == nil || meta["browser"] != "running" || meta["site"] != "vendor.example" || meta["session"] != "vendor.example" {
+		if meta["status"] != "completed" || meta["result"] == nil || meta["browser"] != "running" || meta["site"] != "vendor.com" || meta["session"] != "vendor.com" {
 			t.Fatalf("meta after interleaved writes = %v", meta)
 		}
 		if _, has := meta["wait_reason"]; has {
@@ -70,12 +70,12 @@ func TestSubagentMetaWritersKeepEachOthersFields(t *testing.T) {
 // person included, and not in a finished task's.
 func TestBrowserStateReachesWaitingTasks(t *testing.T) {
 	svc, st, _, _ := newSubagentTestService(t, &fakeSubagentDriver{})
-	task := SubagentTaskInput{Description: "price it", Prompt: "p", Kind: agentpod.SubagentKindWeb, Session: "vendor.example"}
+	task := SubagentTaskInput{Description: "price it", Prompt: "p", Kind: agentpod.SubagentKindWeb, Session: "vendor.com"}
 	for id, state := range map[string]string{"waiting": subagentJobWaiting, "running": subagentJobRunning, "done": subagentJobCompleted} {
-		svc.registerJob(&subagentJob{ID: id, Parent: "alice", Kind: agentpod.SubagentKindWeb, Session: "vendor.example", Site: "vendor.example", State: state, done: make(chan struct{})})
+		svc.registerJob(&subagentJob{ID: id, Parent: "alice", Kind: agentpod.SubagentKindWeb, Session: "vendor.com", Site: "vendor.com", State: state, done: make(chan struct{})})
 		svc.writeSubagentMeta("alice", task, id, state, "", "")
 	}
-	svc.browserStateChanged("alice", "vendor.example", apitypes.BrowserStateRunning)
+	svc.browserStateChanged("alice", "vendor.com", apitypes.BrowserStateRunning)
 	for id, want := range map[string]any{"waiting": "running", "running": "running", "done": nil} {
 		if got := readMetaMap(t, st, "alice", id)["browser"]; got != want {
 			t.Errorf("%s task's browser = %v, want %v", id, got, want)
@@ -93,7 +93,7 @@ func TestWebTaskSessionIsItsSiteOnTheWire(t *testing.T) {
 	svc, st, _, rec, _ := newSubagentTestServiceWithDeliveries(t, driver)
 	svc.Browsers = newBrowserRegistry(st, newFakeBrowserProv(), svc.clk(), 3, t.Logf, func(slug, id string) string { return subagentFilesRoot(st, slug, id) })
 	svc.Browsers.markBooted()
-	if _, err := svc.StartBatch(context.Background(), "alice", webArgs(t, map[string]any{"session": "Shop.Vendor.example"})); err != nil {
+	if _, err := svc.StartBatch(context.Background(), "alice", webArgs(t, map[string]any{"session": "Shop.Vendor.com"})); err != nil {
 		t.Fatal(err)
 	}
 	id := svc.listJobs("alice")[0].ID
@@ -111,10 +111,10 @@ func TestWebTaskSessionIsItsSiteOnTheWire(t *testing.T) {
 		t.Fatal("no subagent_started event")
 	}
 	tasks := started["tasks"].([]any)
-	if first := tasks[0].(map[string]any); first["session"] != "vendor.example" || first["kind"] != agentpod.SubagentKindWeb {
+	if first := tasks[0].(map[string]any); first["session"] != "vendor.com" || first["kind"] != agentpod.SubagentKindWeb {
 		t.Errorf("started row = %v", first)
 	}
-	if meta := readMetaMap(t, st, "alice", id); meta["session"] != "vendor.example" {
+	if meta := readMetaMap(t, st, "alice", id); meta["session"] != "vendor.com" {
 		t.Errorf("meta session = %v", meta["session"])
 	}
 }
@@ -130,11 +130,11 @@ func TestFailOrphanedSubagentsMarksUnfinishedTasks(t *testing.T) {
 	if err := st.CreateAgent(store.Agent{Slug: "bob", Role: "Buyer", ReportsTo: "chief-of-staff"}, "role"); err != nil {
 		t.Fatal(err)
 	}
-	task := SubagentTaskInput{Description: "d", Prompt: "p", Kind: agentpod.SubagentKindWeb, Session: "vendor.example"}
+	task := SubagentTaskInput{Description: "d", Prompt: "p", Kind: agentpod.SubagentKindWeb, Session: "vendor.com"}
 	svc.writeSubagentMeta("alice", task, "queued1", subagentJobQueued, "", "")
 	svc.writeSubagentMeta("alice", task, "running1", subagentJobRunning, "", "")
 	svc.writeSubagentMeta("alice", task, "waiting1", subagentJobRunning, "", "")
-	svc.patchSubagentMeta("alice", "waiting1", map[string]any{"status": subagentJobWaiting, "wait_reason": "mfa", "site": "vendor.example", "browser": "running"})
+	svc.patchSubagentMeta("alice", "waiting1", map[string]any{"status": subagentJobWaiting, "wait_reason": "mfa", "site": "vendor.com", "browser": "running"})
 	svc.writeSubagentMeta("alice", task, "done1", "completed", "", `{"outcome":"found"}`)
 	svc.writeSubagentMeta("alice", task, "failed1", "errored", "the pod went away", "")
 	svc.writeSubagentMeta("bob", task, "bobrun", subagentJobRunning, "", "")
@@ -159,7 +159,7 @@ func TestFailOrphanedSubagentsMarksUnfinishedTasks(t *testing.T) {
 			t.Errorf("%s keeps its browser state", id)
 		}
 	}
-	if meta := readMetaMap(t, st, "alice", "waiting1"); meta["site"] != "vendor.example" {
+	if meta := readMetaMap(t, st, "alice", "waiting1"); meta["site"] != "vendor.com" {
 		t.Errorf("the site went with the restart: %v", meta)
 	}
 	if meta := readMetaMap(t, st, "alice", "done1"); meta["status"] != "completed" || meta["updated_at"] != before {
