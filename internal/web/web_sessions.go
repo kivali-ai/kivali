@@ -1,7 +1,7 @@
 // Package web (web_sessions.go) — an agent's web sessions as the agent
 // sees them: names and states, never contents.
 //
-// GET /v1/agent/{slug}/web/sessions and POST /v1/agent/{slug}/web/sessions/reset
+// POST /v1/agent/{slug}/web/sessions and POST /v1/agent/{slug}/web/sessions/reset
 // on the agent socket serve subagent_web_sessions and
 // subagent_web_session_reset. Core renders the text, so a session is
 // described in one place.

@@ -16,6 +16,10 @@ func TestCleanDownloadName(t *testing.T) {
 		"":                                 "download.bin",
 		"...":                              "download.bin",
 		".env":                             "env",
+		"résumé.pdf":                       "résumé.pdf",
+		"四半期レポート.xlsx":                     "四半期レポート.xlsx",
+		"a b.pdf":                          "a-b.pdf",
+		strings.Repeat("é", 100) + ".pdf":  strings.Repeat("é", (MaxDownloadNameLength-4)/2) + ".pdf",
 		strings.Repeat("a", 200) + ".pdf":  strings.Repeat("a", MaxDownloadNameLength-4) + ".pdf",
 	}
 	for in, want := range cases {

@@ -108,6 +108,7 @@ type tab struct {
 	// Counters the waits compare against a mark taken before an
 	// action.
 	starts    int  // navigations requested or started in the main frame
+	stops     int  // main-frame requests off the site failed before they were sent
 	loading   bool // the main frame is loading
 	popups    int  // tabs this tab's pages opened
 	navs      int  // cross-document commits in the main frame
@@ -423,6 +424,7 @@ func (b *browser) watch(t *tab) {
 		}
 		if ev.FrameID == t.targetID && ev.ResourceType == "Document" && !b.allowed(ev.Request.URL) {
 			t.note(fmt.Sprintf("The page tried to go to %s, which is off this session's site, and was stopped.", ev.Request.URL))
+			t.update(func() { t.stops++ })
 			if _, err := b.conn.Call(context.Background(), s, "Fetch.failRequest", map[string]any{"requestId": ev.RequestID, "errorReason": "Aborted"}); err != nil {
 				b.log.Printf("Fetch.failRequest: %v", err)
 			}
@@ -1072,6 +1074,14 @@ func (t *tab) mark() mark {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return mark{starts: t.starts, navs: t.navs, navigated: t.navigated, popups: t.popups}
+}
+
+// stopCount is how many main-frame requests off the site this tab has
+// had stopped before they were sent.
+func (t *tab) stopCount() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.stops
 }
 
 func (t *tab) where() string {

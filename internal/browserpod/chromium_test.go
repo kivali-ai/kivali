@@ -317,7 +317,7 @@ func TestRealChromium(t *testing.T) {
 	// only the about:blank every new page starts at.
 	step("close last", "", CommandTabs, TabsArgs{Action: TabsClose, Tab: "t1"})
 	core.next("t1 closed", func(m Message) bool { return m.Type == TypeTabClosed && m.Tab == "t1" })
-	if res := core.command("g2", "", CommandNavigate, NavigateArgs{URL: site.URL + "/two"}); !res.OK {
+	if res := core.command("g2", "", CommandNavigate, NavigateArgs{URL: site + "/two"}); !res.OK {
 		t.Fatalf("next task: %+v", res)
 	}
 	res = core.command("g2", "", CommandBack, nil)
@@ -431,7 +431,7 @@ func TestRealChromiumSiteSession(t *testing.T) {
 			if !res.OK {
 				t.Fatalf("eval %s: %s (%s)", script, res.Error, res.Code)
 			}
-			return res.Text
+			return pageBody(t, res.Text)
 		}
 		fn(core, eval)
 		core.send(Message{Type: TypeSave})
@@ -465,7 +465,7 @@ func TestRealChromiumSiteSession(t *testing.T) {
 		stopped := offSite + "/two, which is off this session's site, and was stopped"
 		res := core.command("g", "", CommandNavigate, NavigateArgs{URL: site.URL + "/bounce"})
 		t.Logf("redirect off site: ok=%v code=%q text=%q error=%q", res.OK, res.Code, res.Text, res.Error)
-		if !res.OK || !strings.Contains(res.Text, "did not load as a page") || !strings.Contains(res.Text, "the tab is at "+site.URL+"/ — Kivali test page") || !strings.Contains(res.Text, stopped) {
+		if !res.OK || !strings.Contains(res.Text, "was stopped before a page loaded") || !strings.Contains(res.Text, "the tab is at "+site.URL+"/ — Kivali test page") || !strings.Contains(res.Text, stopped) {
 			t.Fatalf("redirect off site: %+v", res)
 		}
 		// A link the page follows there is stopped the same way.

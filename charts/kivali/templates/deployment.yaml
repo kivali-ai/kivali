@@ -26,6 +26,10 @@ spec:
       {{- end }}
     spec:
       serviceAccountName: kivali
+      # The server saves idle site browsers and takes running ones'
+      # cookies on shutdown (up to 20 s) after draining HTTP (10 s);
+      # Kubernetes' default 30 s would cut the save short.
+      terminationGracePeriodSeconds: 60
       # Chowns the hostPath UDS dir to the kivali UID so the unprivileged
       # main container can bind core.sock there. hostPath volumes ignore
       # fsGroup; a short-lived root container is the cleanest fix. Idempotent.

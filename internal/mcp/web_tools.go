@@ -174,7 +174,7 @@ func WebTools(backend WebBackend, session string, canWait bool) []Tool {
 	return tools
 }
 
-const webWaitForSignInDescription = `Pause this task until a person has handled the page: a sign-in, a second factor, a CAPTCHA or a consent only they can give. Your turn ends when you call it; a person is asked to do it in a browser window on your tab, and you are resumed afterwards with your tabs as they are. It costs the person's time: call it once, when the page truly needs it and after you have looked at it, never to be safe.`
+const webWaitForSignInDescription = `Pause this task until a person has handled the page: a sign-in, a second factor, a CAPTCHA or a consent only they can give. Your turn ends when you call it; a person is asked to do it in a browser window on your tab, and you are resumed afterwards with your tabs as they are. It costs the person's time: call it once, when the page truly needs it and after you have looked at it, never to be safe. A task may call it at most three times; a fourth call ends the task with outcome blocked.`
 
 const webNavigateDescription = `Load a URL in your current tab and wait for the page to settle. http and https only. Returns the page's title and its final URL; take a web_snapshot to read the page.`
 

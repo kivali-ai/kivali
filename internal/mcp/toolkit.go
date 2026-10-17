@@ -15,7 +15,7 @@ import (
 // at startup based on the --toolkit flag, then registers the bundle's
 // Tools on its server.
 //
-// Two toolkits exist today:
+// Three toolkits exist today:
 //
 //   - "full-agent" — what every Kivali agent gets: filesystem,
 //     artifact_publish / artifact_unpublish, agent_memory, state
@@ -30,6 +30,10 @@ import (
 //     excluded: publish_*, agent_memory_*, search_past_chats,
 //     list_project_files, share_file, get_org_chart, the assignment tools,
 //     read_agent_role.
+//   - "web" — what a web subagent gets: the web_* tools that drive its
+//     browser through core, web_wait_for_sign_in for a task an agent
+//     dispatched itself in a site session, and `submit_result`. Nothing
+//     else.
 //
 // The split is enforced here rather than at the CLI's --allowedTools
 // layer alone so a toolkit mismatch can never accidentally expose a

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 )
 
 // UntrustedDownloadsDir is the directory in a subagent's view that
@@ -25,7 +26,7 @@ const MaxDownloadNameLength = 120
 // dots, dashes and underscores. Anything else in the browser's
 // suggested name becomes a dash, so a name is never a path and never
 // prose.
-var downloadNameChars = regexp.MustCompile(`[^A-Za-z0-9._-]+`)
+var downloadNameChars = regexp.MustCompile(`[^\p{L}\p{N}._-]+`)
 
 // CleanDownloadName turns the browser's suggested file name into one
 // the overlay accepts: a single plain name, extension kept, with
@@ -42,7 +43,11 @@ func CleanDownloadName(suggested string) string {
 		if len(ext) > 16 {
 			ext = ""
 		}
-		name = name[:MaxDownloadNameLength-len(ext)] + ext
+		stem := name[:MaxDownloadNameLength-len(ext)]
+		for !utf8.ValidString(stem) {
+			stem = stem[:len(stem)-1]
+		}
+		name = stem + ext
 	}
 	if name == "" || name == "." || name == ".." {
 		return "download.bin"

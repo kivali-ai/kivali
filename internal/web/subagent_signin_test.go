@@ -164,7 +164,7 @@ func (run *signInRun) playBrowser(t *testing.T) *fakeLink {
 	if b == nil {
 		t.Fatal("claim found no waiting browser")
 	}
-	if err := run.reg.attach(context.Background(), b); err != nil {
+	if err := run.reg.attach(b); err != nil {
 		t.Fatal(err)
 	}
 	link.next(t, browserpod.TypeStart)
