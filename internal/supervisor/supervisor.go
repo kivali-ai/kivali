@@ -72,6 +72,9 @@ type Options struct {
 
 	// terminalsChanged sees the terminal count change, in tests.
 	terminalsChanged func(n int)
+	// bindErr, in tests, is asked about every forward's port before it
+	// is bound; an error stands for the bind's.
+	bindErr func(port int) error
 }
 
 // Supervisor owns the VM and local.json. One operation that changes
@@ -747,6 +750,11 @@ func (s *Supervisor) ensureForwardLocked(port int, logf Logf) error {
 		return nil
 	}
 	s.dropForward()
+	if s.o.bindErr != nil {
+		if err := s.o.bindErr(port); err != nil {
+			return fmt.Errorf("forward: %w", err)
+		}
+	}
 	f, err := StartForward(port, func(ctx context.Context) (net.Conn, error) {
 		return g.Proxy(ctx, NodePort)
 	}, s.o.Logf)
@@ -761,12 +769,14 @@ func (s *Supervisor) ensureForwardLocked(port int, logf Logf) error {
 }
 
 // forwardForUpLocked starts the forward on the recorded port (the
-// default until the first forward records one). When another program
-// holds that port and this up did not ask for it by name, the forward
-// takes a free port and the choice is recorded, so a desktop whose 8080
-// is busy still comes up; the shell reads the port from status, and the
-// next up tries the chosen port first. A port given explicitly is never
-// moved.
+// default until the first forward records one). When that port cannot
+// be bound, because another program holds it or because the system has
+// reserved it (Hyper-V and WinNAT exclude new port ranges on every
+// Windows boot), and this up did not ask for it by name, the forward
+// takes the first free port from FirstFallbackPort and the choice is
+// recorded, so a desktop whose 8080 is busy still comes up; the shell
+// reads the port from status, and the next up tries the chosen port
+// first. A port given explicitly is never moved.
 func (s *Supervisor) forwardForUpLocked(explicit bool, logf Logf) error {
 	st := s.State()
 	port := st.port()
@@ -774,17 +784,34 @@ func (s *Supervisor) forwardForUpLocked(explicit bool, logf Logf) error {
 	if err == nil && st.Port == 0 {
 		return s.update(func(st *State) { st.Port = port })
 	}
-	if err == nil || explicit || !s.o.Host.AddrInUse(err) {
+	if err == nil || explicit || !s.o.Host.PortUnavailable(err) {
 		return err
 	}
-	logf("127.0.0.1:%d is in use by another program; taking a free port instead", port)
-	if err := s.ensureForwardLocked(0, logf); err != nil {
+	logf("127.0.0.1:%d cannot be used (%v); taking a free port from %d instead", port, err, FirstFallbackPort)
+	chosen, err := s.fallbackForwardLocked(port, logf)
+	if err != nil {
 		return err
 	}
-	s.mu.Lock()
-	chosen := s.fwd.Port()
-	s.mu.Unlock()
 	return s.update(func(st *State) { st.Port = chosen })
+}
+
+// fallbackForwardLocked starts the forward on the first port from
+// FirstFallbackPort, below the dynamic range, that can be bound, skipping
+// the one that just failed.
+func (s *Supervisor) fallbackForwardLocked(failed int, logf Logf) (int, error) {
+	for p := FirstFallbackPort; p < DynamicPortsStart; p++ {
+		if p == failed {
+			continue
+		}
+		err := s.ensureForwardLocked(p, logf)
+		if err == nil {
+			return p, nil
+		}
+		if !s.o.Host.PortUnavailable(err) {
+			return 0, err
+		}
+	}
+	return 0, fmt.Errorf("forward: no free port on 127.0.0.1 from %d to %d", FirstFallbackPort, DynamicPortsStart-1)
 }
 
 func (s *Supervisor) baseURL() string {

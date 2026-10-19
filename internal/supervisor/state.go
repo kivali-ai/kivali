@@ -18,6 +18,16 @@ const (
 	DefaultMemoryMB = 4096
 	DefaultCPUs     = 4
 	DefaultPort     = 8080
+	// FirstFallbackPort is where up looks for a free port when the
+	// recorded one cannot be had. The search stays below
+	// DynamicPortsStart: the dynamic range is where the system hands out
+	// ephemeral ports, and where Hyper-V and WinNAT reserve blocks of
+	// ports anew on every Windows boot, so a port taken from it can be
+	// forbidden after the next reboot.
+	FirstFallbackPort = 18080
+	// DynamicPortsStart is the first port of the IANA dynamic range,
+	// Windows' default ephemeral range (49152-65535).
+	DynamicPortsStart = 49152
 	// DataDiskSize is the data disk's size: it grows to this.
 	DataDiskSize = 64 << 30
 	// SnapshotSuffix makes the upgrade snapshot's name from the data

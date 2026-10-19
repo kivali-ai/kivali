@@ -41,6 +41,10 @@ const CREDENTIAL_EVERY: Duration = Duration::from_secs(5 * 60);
 const SIGNIN_WAIT: Duration = Duration::from_secs(15 * 60);
 /// The first port a team on this computer is offered.
 const FIRST_PORT: u16 = 8080;
+/// The first port of the dynamic range (49152-65535), which hints stay
+/// below: Windows hands out ephemeral ports from it, and Hyper-V and
+/// WinNAT reserve blocks of it anew on every boot.
+const DYNAMIC_PORTS: u16 = 49152;
 
 fn now_rfc3339() -> String {
     OffsetDateTime::now_utc()
@@ -796,13 +800,14 @@ impl Shell {
         Ok(())
     }
 
-    /// A port for a new team: the first from 8080 that no other team
-    /// here has recorded (the supervisor still moves off one that some
-    /// other program holds).
+    /// A port for a new team: the first from 8080, below the dynamic
+    /// range, that no other team here has recorded (the supervisor still
+    /// moves off one that some other program holds or the system has
+    /// reserved).
     fn port_hint_except(&self, id: &str) -> u16 {
         let used: Vec<u16> =
             self.teams.lock().unwrap().teams.iter().filter(|t| t.id != id).filter_map(|t| t.local().map(|l| l.port)).collect();
-        (FIRST_PORT..u16::MAX).find(|p| !used.contains(p)).unwrap_or(0)
+        (FIRST_PORT..DYNAMIC_PORTS).find(|p| !used.contains(p)).unwrap_or(0)
     }
 
     /// What `up` is sent for a team here: always the owner and the

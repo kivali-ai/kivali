@@ -187,7 +187,10 @@ type Host interface {
 	LockServe(dir string) (release func(), err error)
 	// Detach prepares cmd to outlive its parent without a window.
 	Detach(cmd *exec.Cmd)
-	AddrInUse(err error) bool
+	// PortUnavailable reports whether err is a bind refused for the port
+	// itself (held by another program, or reserved by the system), so
+	// another port may succeed.
+	PortUnavailable(err error) bool
 }
 
 var _ Host = host.Default()

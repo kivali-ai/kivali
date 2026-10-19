@@ -93,6 +93,9 @@ func (OS) FileUsage(p string) (used, size int64, err error) {
 	return int64(st.Blocks) * 512, st.Size, nil
 }
 
-// AddrInUse reports whether err is a bind to a port another program
-// holds.
-func (OS) AddrInUse(err error) bool { return errors.Is(err, syscall.EADDRINUSE) }
+// PortUnavailable reports whether err is a bind refused for the port
+// itself: another program holds it (EADDRINUSE), or this user may not
+// bind it (EACCES, a privileged port).
+func (OS) PortUnavailable(err error) bool {
+	return errors.Is(err, syscall.EADDRINUSE) || errors.Is(err, syscall.EACCES)
+}

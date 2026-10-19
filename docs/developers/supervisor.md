@@ -93,7 +93,7 @@ no backend: the client subcommands work, `serve` refuses.
 | `Listen`/`Dial`/`Endpoint` | `supervisor.sock`, mode 0600 | `host.PipeName`: `\\.\pipe\kivali-` and the first 8 hex characters of the SHA-256 of the lower-cased, cleaned absolute config directory (the shell computes the same); a DACL granting only the current user. Every dial checks the server process's user SID against the current one (`GetNamedPipeServerProcessId`), since any account can create the name first: a client refuses another account's pipe ("the supervisor pipe is held by another account"), and `Listen` reports when such a squatter keeps it from creating the pipe. The owner keeps `WRITE_DAC` and an administrator can take ownership, so the pipe is closed to other ordinary accounts, not to an administrator | as macOS |
 | `LockServe` | `flock` on `serve.lock` | `LockFileEx` on `serve.lock` | as macOS |
 | `Detach` | `setsid` | `DETACHED_PROCESS`, `CREATE_NO_WINDOW`, own process group | as macOS |
-| `AddrInUse` | `EADDRINUSE` | `WSAEADDRINUSE` | `EADDRINUSE` |
+| `PortUnavailable` (a bind refused for the port itself) | `EADDRINUSE`, `EACCES` | `WSAEADDRINUSE`, `WSAEACCES` (a port in a range Hyper-V or WinNAT excluded) | as macOS |
 
 The config directory rule is the shell's too; `$KIVALI_CONFIG_DIR` and
 `--config-dir` override it.
@@ -925,14 +925,21 @@ what makes this path work while every pod is fenced off.
 The port is `local.json`'s; an org with none recorded yet starts on
 `up`'s `port_hint` (the shell gives each team's org its own), else 8080,
 and the first forward records it. A hint is ignored once a port is
-recorded. When another program
-holds it and `up` was not given `--port`, `up` logs that, takes a free
-port instead and records it, so the org still comes up on a machine
-whose 8080 is busy (the Host's `AddrInUse` recognises the error); the
-shell reads the port from `status`, and the next
-`up` tries the recorded port first. A hinted port moves like the
+recorded. When the port cannot be bound, because another program holds
+it or because the system has reserved it, and `up` was not given
+`--port`, `up` logs that, takes the first free port from 18080
+(`FirstFallbackPort`) instead and records it, so the org still comes up
+on a machine whose 8080 is busy (the Host's `PortUnavailable`
+recognises both errors); the shell reads the port from `status`, and
+the next `up` tries the recorded port first. The fallback stays below
+49152, the dynamic port range: Windows hands out ephemeral ports from
+it, and Hyper-V and WinNAT reserve blocks of 100 ports in it anew on
+every boot (`netsh interface ipv4 show excludedportrange
+protocol=tcp`), so a port taken from it can be forbidden after the next
+reboot. A recorded port that has become reserved fails with
+`WSAEACCES` and moves the same way. A hinted port moves like the
 default. A port asked for by name (`up --port`, `forward --port`) is
-never moved: that `up` fails with the address-in-use error.
+never moved: that `up` fails with the bind's error.
 
 Each forward is bound to the guest of the boot it was started for: its
 connections dial that guest directly and never take the supervisor's
