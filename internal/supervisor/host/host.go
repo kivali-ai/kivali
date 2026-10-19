@@ -1,7 +1,7 @@
 // Package host is the supervisor's operating system: the config
 // directory, the data disk snapshot, durability, backup exclusion, free
 // space, the owner-only RPC endpoint, the serve lock, detaching serve
-// and recognising a busy port. OS implements
+// and recognising a port that cannot be bound. OS implements
 // supervisor.Host on macOS (host_darwin.go), Linux (host_linux.go) and
 // Windows (host_windows.go); host_unix.go holds what macOS and Linux
 // share. It imports nothing from the supervisor, which depends on it.
@@ -25,3 +25,16 @@ var ErrServeRunning = errors.New("another kivali-supervisor serve owns this conf
 // so two serves started at once cannot both probe the endpoint, find it
 // dead, and remove each other's.
 const lockName = "serve.lock"
+
+// PortRefusal is why a bind was refused for the port itself, as
+// OS.BindRefusal reads the error.
+type PortRefusal int
+
+const (
+	// PortNotRefused: the error is not a refusal of the port (or is nil).
+	PortNotRefused PortRefusal = iota
+	// PortBusy: another program holds the port.
+	PortBusy
+	// PortForbidden: the system will not give the port to this program.
+	PortForbidden
+)

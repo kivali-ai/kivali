@@ -335,11 +335,17 @@ func (OS) Detach(cmd *exec.Cmd) {
 	}
 }
 
-// PortUnavailable reports whether err is a bind refused for the port
-// itself: another program holds it (WSAEADDRINUSE), or it lies in a
-// range the system has excluded (WSAEACCES; Hyper-V and WinNAT reserve
-// such ranges, listed by `netsh interface ipv4 show excludedportrange
+// BindRefusal reads a bind's error: PortBusy when another program holds
+// the port (WSAEADDRINUSE), PortForbidden when it lies in a range the
+// system has excluded (WSAEACCES; Hyper-V and WinNAT reserve such
+// ranges, listed by `netsh interface ipv4 show excludedportrange
 // protocol=tcp`).
-func (OS) PortUnavailable(err error) bool {
-	return errors.Is(err, windows.WSAEADDRINUSE) || errors.Is(err, windows.WSAEACCES)
+func (OS) BindRefusal(err error) PortRefusal {
+	switch {
+	case errors.Is(err, windows.WSAEADDRINUSE):
+		return PortBusy
+	case errors.Is(err, windows.WSAEACCES):
+		return PortForbidden
+	}
+	return PortNotRefused
 }

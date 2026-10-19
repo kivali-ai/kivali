@@ -93,9 +93,15 @@ func (OS) FileUsage(p string) (used, size int64, err error) {
 	return int64(st.Blocks) * 512, st.Size, nil
 }
 
-// PortUnavailable reports whether err is a bind refused for the port
-// itself: another program holds it (EADDRINUSE), or this user may not
-// bind it (EACCES, a privileged port).
-func (OS) PortUnavailable(err error) bool {
-	return errors.Is(err, syscall.EADDRINUSE) || errors.Is(err, syscall.EACCES)
+// BindRefusal reads a bind's error: PortBusy when another program holds
+// the port (EADDRINUSE), PortForbidden when this user may not bind it
+// (EACCES, a privileged port).
+func (OS) BindRefusal(err error) PortRefusal {
+	switch {
+	case errors.Is(err, syscall.EADDRINUSE):
+		return PortBusy
+	case errors.Is(err, syscall.EACCES):
+		return PortForbidden
+	}
+	return PortNotRefused
 }

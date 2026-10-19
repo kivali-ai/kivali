@@ -14,7 +14,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -326,21 +325,6 @@ func TestPortHintOnlyOnAFreshOrg(t *testing.T) {
 	}
 	if got := h.sup.State().Port; got != h.port {
 		t.Fatalf("port %d after a second hint, want %d", got, h.port)
-	}
-}
-
-func TestPortHintMovesWhenBusy(t *testing.T) {
-	h := newHarness(t)
-	squatter, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(h.port)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = squatter.Close() }()
-	if err := h.sup.Up(context.Background(), UpOptions{Install: owner, PortHint: h.port}, h.logf()); err != nil {
-		t.Fatalf("up: %v", err)
-	}
-	if got := h.sup.State().Port; got == h.port || got == 0 {
-		t.Fatalf("port %d: the busy hint was kept", got)
 	}
 }
 

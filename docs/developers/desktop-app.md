@@ -769,9 +769,14 @@ Everything local goes through `src-tauri/src/supervisor/`, one
 resume, retry): the owner, the team's memory and CPUs, and while the
 team has no port yet a `port_hint`, the first port from 8080, below the
 dynamic range that starts at 49152, that no other team in teams.json
-has recorded (the supervisor still moves off one some other program
-holds or the system has reserved, and records what it used; the shell then
-writes it to teams.json). For a team in `teams/<id>` it also sends the
+has recorded (on that first start the supervisor still moves off one
+some other program holds or the system has reserved, and records what
+it used; the shell then writes it to teams.json). Once recorded, the
+port is the team's for good: when it cannot be bound, `up` fails, the
+report's `forward_error` becomes the status message, and the team's
+page shows it as the couldn't-start reason (which way to move the team
+with `kivali-supervisor up --port`, and to update what points at the
+old port). Moving a team's port has no UI; it takes that command. For a team in `teams/<id>` it also sends the
 server environment `KIVALI_SEED_ORG_NAME=<name>`,
 `KIVALI_TEAM_KIND=work|personal` and `KIVALI_COOKIE_SUFFIX=<id>`
 ([../configuration.md](../configuration.md)); the supervisor uses the install fields only on
@@ -1723,9 +1728,10 @@ limit is 2 GB.
   or a reverse proxy), after `set_public_url` checks that it answers
   `GET /api/v1/login` as this team; it is stored as `public_url` in
   teams.json and shown with Copy. The connect side accepts only https
-  off loopback. The team's port stays put while nothing else takes it,
-  but if the supervisor has to move it (another program holds it) the
-  operator's proxy must follow. The team's own sign-in accepts only
+  off loopback. The team's port never moves on its own: if another
+  program holds it or Windows reserves it, the team doesn't start and
+  says so, and moving it (`kivali-supervisor up --port`, no UI yet)
+  means the operator's proxy must follow. The team's own sign-in accepts only
   loopback and this one external name ([auth.md](auth.md)): the address
   is handed to the team's server as `KIVALI_EXTERNAL_URL` (the
   supervisor's `POST /v1/address`, the chart's `externalURL`) when it is

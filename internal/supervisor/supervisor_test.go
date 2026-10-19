@@ -125,7 +125,36 @@ func TestSecondUpDoesNotFormat(t *testing.T) {
 	}
 }
 
-func TestUpTakesAFreePortWhenTheRecordedOneIsBusy(t *testing.T) {
+// upFailsOnTheRecordedPort runs up on an org whose recorded port cannot
+// be bound and checks that up fails with a PortError of that kind, the
+// port stays recorded, nothing else was bound, and status carries the
+// message for the shell.
+func (h *harness) upFailsOnTheRecordedPort(forbidden bool, says string) {
+	h.t.Helper()
+	err := h.sup.Up(context.Background(), UpOptions{}, h.logf())
+	var perr *PortError
+	if !errors.As(err, &perr) || perr.Port != h.port || perr.Forbidden != forbidden {
+		h.t.Fatalf("up: %v, want a PortError for %d (forbidden %v)", err, h.port, forbidden)
+	}
+	for _, want := range []string{says, "up --port <port>", h.dir, "Tailscale Serve"} {
+		if !strings.Contains(err.Error(), want) {
+			h.t.Errorf("message %q lacks %q", err, want)
+		}
+	}
+	if got := h.sup.State().Port; got != h.port {
+		h.t.Fatalf("port %d recorded, want %d kept", got, h.port)
+	}
+	r := h.sup.Status(context.Background())
+	if !r.Running || r.Forward != "" || r.ForwardError != err.Error() {
+		h.t.Fatalf("status running %v, forward %q, forward_error %q", r.Running, r.Forward, r.ForwardError)
+	}
+	h.restart()
+	if got := h.sup.State().Port; got != h.port {
+		h.t.Fatalf("port %d on disk, want %d kept", got, h.port)
+	}
+}
+
+func TestUpFailsWhenTheRecordedPortIsBusy(t *testing.T) {
 	h := newHarness(t)
 	h.mustUp(UpOptions{Install: owner})
 	if err := h.sup.Down(context.Background(), h.logf()); err != nil {
@@ -138,14 +167,7 @@ func TestUpTakesAFreePortWhenTheRecordedOneIsBusy(t *testing.T) {
 	}
 	defer func() { _ = squatter.Close() }()
 	h.restart()
-
-	// A port asked for by name is never moved.
-	err = h.sup.Up(context.Background(), UpOptions{Port: h.port}, h.logf())
-	if !h.sup.o.Host.PortUnavailable(err) {
-		t.Fatalf("explicit busy port: %v", err)
-	}
-	// Without one, up takes a free port, records it, and serves there.
-	h.upMovesOff(h.port)
+	h.upFailsOnTheRecordedPort(false, "Another program is using port "+strconv.Itoa(h.port))
 }
 
 // forbiddenBind is the error of a bind to a port the system will not
@@ -159,53 +181,88 @@ func forbiddenBind(port int) error {
 	return &net.OpError{Op: "listen", Net: "tcp", Addr: &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: port}, Err: os.NewSyscallError("bind", errno)}
 }
 
-func TestUpTakesAFreePortWhenTheRecordedOneIsForbidden(t *testing.T) {
+func TestUpFailsWhenTheRecordedPortIsForbidden(t *testing.T) {
 	h := newHarness(t)
 	h.mustUp(UpOptions{Install: owner})
 	if err := h.sup.Down(context.Background(), h.logf()); err != nil {
 		t.Fatal(err)
 	}
 	// After a reboot, Hyper-V has reserved a range holding the recorded
-	// port, and the first fallback port too.
+	// port.
 	h.bindErr = func(port int) error {
-		if port == h.port || port == FirstFallbackPort {
+		if port == h.port {
 			return forbiddenBind(port)
 		}
 		return nil
 	}
 	h.restart()
-
-	err := h.sup.Up(context.Background(), UpOptions{Port: h.port}, h.logf())
-	if err == nil || !h.sup.o.Host.PortUnavailable(err) {
-		t.Fatalf("explicit forbidden port: %v", err)
+	says := "won't let Kivali use port "
+	if runtime.GOOS == "windows" {
+		says = "Windows has reserved port "
 	}
-	if got := h.upMovesOff(h.port); got == FirstFallbackPort {
-		t.Fatalf("took the forbidden port %d", got)
+	h.upFailsOnTheRecordedPort(true, says+strconv.Itoa(h.port))
+}
+
+func TestFirstUpTakesAFreePortBelowTheDynamicRange(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	// The hint is busy and the first fallback port is reserved.
+	squatter, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(h.port)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = squatter.Close() }()
+	h.bindErr = func(port int) error {
+		if port == FirstFallbackPort {
+			return forbiddenBind(port)
+		}
+		return nil
+	}
+	h.restart()
+	if err := h.sup.Up(ctx, UpOptions{Install: owner, PortHint: h.port}, h.logf()); err != nil {
+		t.Fatalf("up: %v", err)
+	}
+	got := h.sup.State().Port
+	if got <= FirstFallbackPort || got >= DynamicPortsStart {
+		t.Fatalf("port %d recorded, want one in (%d, %d)", got, FirstFallbackPort, DynamicPortsStart)
+	}
+	if r := h.sup.Status(ctx); r.Forward != net.JoinHostPort("127.0.0.1", strconv.Itoa(got)) || r.ForwardError != "" {
+		t.Fatalf("forward %q, forward_error %q", r.Forward, r.ForwardError)
+	}
+	// The next up uses the chosen port, even with the hint free again.
+	if err := h.sup.Down(ctx, h.logf()); err != nil {
+		t.Fatal(err)
+	}
+	_ = squatter.Close()
+	h.restart()
+	if err := h.sup.Up(ctx, UpOptions{PortHint: h.port}, h.logf()); err != nil {
+		t.Fatalf("second up: %v", err)
+	}
+	if r := h.sup.Status(ctx); h.sup.State().Port != got || r.Forward != net.JoinHostPort("127.0.0.1", strconv.Itoa(got)) {
+		t.Fatalf("second up on %q, recorded %d, want %d", r.Forward, h.sup.State().Port, got)
 	}
 }
 
-// upMovesOff runs up and checks that it left port for one from
-// FirstFallbackPort, below the dynamic range, recorded it and serves
-// there.
-func (h *harness) upMovesOff(port int) int {
-	h.t.Helper()
-	if err := h.sup.Up(context.Background(), UpOptions{}, h.logf()); err != nil {
-		h.t.Fatalf("up: %v", err)
+func TestUpPortMovesTheOrg(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	h.mustUp(UpOptions{Install: owner})
+	other := freePort(t)
+	if err := h.sup.Up(ctx, UpOptions{Port: other}, h.logf()); err != nil {
+		t.Fatalf("up --port: %v", err)
 	}
-	got := h.sup.State().Port
-	if got == port || got < FirstFallbackPort || got >= DynamicPortsStart {
-		h.t.Fatalf("port %d recorded, want one in [%d, %d) other than %d", got, FirstFallbackPort, DynamicPortsStart, port)
+	if got := h.sup.State().Port; got != other {
+		t.Fatalf("port %d recorded, want %d", got, other)
 	}
-	c, err := net.Dial("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(got)))
+	c, err := net.Dial("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(other)))
 	if err != nil {
-		h.t.Fatalf("forward not listening on the chosen port: %v", err)
+		t.Fatalf("forward not listening on the new port: %v", err)
 	}
 	_ = c.Close()
 	h.restart()
-	if h.sup.State().Port != got {
-		h.t.Fatalf("chosen port not persisted: %d", h.sup.State().Port)
+	if got := h.sup.State().Port; got != other {
+		t.Fatalf("port %d on disk, want %d", got, other)
 	}
-	return got
 }
 
 func TestFailedFirstBootRecreatesDataDisk(t *testing.T) {

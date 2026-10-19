@@ -168,6 +168,10 @@ pub struct Report {
     pub guest: Option<GuestStatus>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub guest_error: Option<String>,
+    /// Why the forward is down while the VM runs: the team's recorded
+    /// port could not be bound, in words for the person.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub forward_error: Option<String>,
     #[serde(default)]
     pub state: LocalState,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -464,6 +468,8 @@ impl Status {
             }
         } else if let Some(f) = fatal {
             (OrgState::Failed, Some(f))
+        } else if let Some(e) = r.forward_error.clone().filter(|e| !e.is_empty()) {
+            (OrgState::Failed, Some(e))
         } else if r.state.upgrade.is_some() {
             (OrgState::Upgrading, None)
         } else if r.guest.as_ref().is_some_and(|g| g.state == "ready") && kivali.is_some() && r.forward.is_some() {
