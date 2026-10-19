@@ -767,9 +767,10 @@ Everything local goes through `src-tauri/src/supervisor/`, one
 
 **What `up` is sent** (`Shell::up_request`), on every start (create,
 resume, retry): the owner, the team's memory and CPUs, and while the
-team has no port yet a `port_hint`, the first port from 8080 that no
-other team in teams.json has recorded (the supervisor still moves off
-one some other program holds, and records what it used; the shell then
+team has no port yet a `port_hint`, the first port from 8080, below the
+dynamic range that starts at 49152, that no other team in teams.json
+has recorded (the supervisor still moves off one some other program
+holds or the system has reserved, and records what it used; the shell then
 writes it to teams.json). For a team in `teams/<id>` it also sends the
 server environment `KIVALI_SEED_ORG_NAME=<name>`,
 `KIVALI_TEAM_KIND=work|personal` and `KIVALI_COOKIE_SUFFIX=<id>`

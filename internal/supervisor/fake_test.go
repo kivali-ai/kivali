@@ -762,6 +762,9 @@ type harness struct {
 
 	// terminals, when set, receives the terminal count at every change.
 	terminals chan int
+	// bindErr, when set, is asked about every forward's port first; an
+	// error fails the bind.
+	bindErr func(port int) error
 
 	mu sync.Mutex
 	// renamed and freeDirs record the host's Rename targets and
@@ -894,6 +897,12 @@ func (h *harness) restart() {
 			if h.terminals != nil {
 				h.terminals <- n
 			}
+		},
+		bindErr: func(port int) error {
+			if h.bindErr != nil {
+				return h.bindErr(port)
+			}
+			return nil
 		},
 	})
 	if err != nil {

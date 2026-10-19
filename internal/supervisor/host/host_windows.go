@@ -335,6 +335,11 @@ func (OS) Detach(cmd *exec.Cmd) {
 	}
 }
 
-// AddrInUse reports whether err is a bind to a port another program
-// holds.
-func (OS) AddrInUse(err error) bool { return errors.Is(err, windows.WSAEADDRINUSE) }
+// PortUnavailable reports whether err is a bind refused for the port
+// itself: another program holds it (WSAEADDRINUSE), or it lies in a
+// range the system has excluded (WSAEACCES; Hyper-V and WinNAT reserve
+// such ranges, listed by `netsh interface ipv4 show excludedportrange
+// protocol=tcp`).
+func (OS) PortUnavailable(err error) bool {
+	return errors.Is(err, windows.WSAEADDRINUSE) || errors.Is(err, windows.WSAEACCES)
+}

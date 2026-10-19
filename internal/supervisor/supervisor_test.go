@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -140,26 +141,71 @@ func TestUpTakesAFreePortWhenTheRecordedOneIsBusy(t *testing.T) {
 
 	// A port asked for by name is never moved.
 	err = h.sup.Up(context.Background(), UpOptions{Port: h.port}, h.logf())
-	if !h.sup.o.Host.AddrInUse(err) {
+	if !h.sup.o.Host.PortUnavailable(err) {
 		t.Fatalf("explicit busy port: %v", err)
 	}
 	// Without one, up takes a free port, records it, and serves there.
+	h.upMovesOff(h.port)
+}
+
+// forbiddenBind is the error of a bind to a port the system will not
+// give this program: on Windows a port in an excluded range (WSAEACCES),
+// elsewhere a privileged port (EACCES).
+func forbiddenBind(port int) error {
+	errno := syscall.EACCES
+	if runtime.GOOS == "windows" {
+		errno = syscall.Errno(10013) // WSAEACCES
+	}
+	return &net.OpError{Op: "listen", Net: "tcp", Addr: &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: port}, Err: os.NewSyscallError("bind", errno)}
+}
+
+func TestUpTakesAFreePortWhenTheRecordedOneIsForbidden(t *testing.T) {
+	h := newHarness(t)
+	h.mustUp(UpOptions{Install: owner})
+	if err := h.sup.Down(context.Background(), h.logf()); err != nil {
+		t.Fatal(err)
+	}
+	// After a reboot, Hyper-V has reserved a range holding the recorded
+	// port, and the first fallback port too.
+	h.bindErr = func(port int) error {
+		if port == h.port || port == FirstFallbackPort {
+			return forbiddenBind(port)
+		}
+		return nil
+	}
+	h.restart()
+
+	err := h.sup.Up(context.Background(), UpOptions{Port: h.port}, h.logf())
+	if err == nil || !h.sup.o.Host.PortUnavailable(err) {
+		t.Fatalf("explicit forbidden port: %v", err)
+	}
+	if got := h.upMovesOff(h.port); got == FirstFallbackPort {
+		t.Fatalf("took the forbidden port %d", got)
+	}
+}
+
+// upMovesOff runs up and checks that it left port for one from
+// FirstFallbackPort, below the dynamic range, recorded it and serves
+// there.
+func (h *harness) upMovesOff(port int) int {
+	h.t.Helper()
 	if err := h.sup.Up(context.Background(), UpOptions{}, h.logf()); err != nil {
-		t.Fatalf("up: %v", err)
+		h.t.Fatalf("up: %v", err)
 	}
 	got := h.sup.State().Port
-	if got == h.port || got == 0 {
-		t.Fatalf("port %d still recorded", got)
+	if got == port || got < FirstFallbackPort || got >= DynamicPortsStart {
+		h.t.Fatalf("port %d recorded, want one in [%d, %d) other than %d", got, FirstFallbackPort, DynamicPortsStart, port)
 	}
 	c, err := net.Dial("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(got)))
 	if err != nil {
-		t.Fatalf("forward not listening on the chosen port: %v", err)
+		h.t.Fatalf("forward not listening on the chosen port: %v", err)
 	}
 	_ = c.Close()
 	h.restart()
 	if h.sup.State().Port != got {
-		t.Fatalf("chosen port not persisted: %d", h.sup.State().Port)
+		h.t.Fatalf("chosen port not persisted: %d", h.sup.State().Port)
 	}
+	return got
 }
 
 func TestFailedFirstBootRecreatesDataDisk(t *testing.T) {
