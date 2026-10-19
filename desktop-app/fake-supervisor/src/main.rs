@@ -136,6 +136,7 @@ impl Fake {
             url: running.then(|| format!("http://127.0.0.1:{}/", p.port)),
             guest: running.then(|| GuestStatus { state: "ready".into(), fatal: None, node_ready: true }),
             guest_error: None,
+            forward_error: None,
             state: LocalState {
                 kivali: p.kivali,
                 data_disk_formatted: p.formatted,
