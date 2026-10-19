@@ -426,6 +426,11 @@ mod tests {
         // Guest fatal.
         let s = Status::from_report(&report(r#"{"running":true,"guest":{"state":"fatal","fatal":"no user namespaces"},"state":{}}"#));
         assert_eq!((s.state, s.message.as_deref()), (OrgState::Failed, Some("no user namespaces")));
+        // The recorded port could not be bound: the VM runs, the forward doesn't.
+        let s = Status::from_report(&report(
+            r#"{"running":true,"guest":{"state":"ready"},"forward_error":"Windows has reserved port 57518.","state":{"kivali":"0.16.0","port":57518}}"#,
+        ));
+        assert_eq!((s.state, s.port, s.message.as_deref()), (OrgState::Failed, Some(57518), Some("Windows has reserved port 57518.")));
         // Upgrade journal open.
         let s = Status::from_report(&report(r#"{"running":true,"guest":{"state":"ready"},"forward":"127.0.0.1:8080","state":{"kivali":"0.16.0","upgrade":{"from":"0.16.0","to":"0.17.0","step":"applying"}}}"#));
         assert_eq!(s.state, OrgState::Upgrading);

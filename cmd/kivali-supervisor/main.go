@@ -350,8 +350,8 @@ func installFlags(fs *flag.FlagSet) func() (supervisor.InstallOptions, error) {
 func (c *cli) up(args []string) int {
 	fs := flag.NewFlagSet("up", flag.ExitOnError)
 	inst := installFlags(fs)
-	port := fs.Int("port", 0, "host loopback port for the org (default 8080, then whatever local.json says)")
-	portHint := fs.Int("port-hint", 0, "first port of an org with none recorded yet; moved if busy")
+	port := fs.Int("port", 0, "move the org to this host loopback port and record it (default: the recorded port, else the hint or 8080)")
+	portHint := fs.Int("port-hint", 0, "first port of an org with none recorded yet; another is chosen if it cannot be bound")
 	mem := fs.Uint64("memory-mb", 0, "VM memory, MiB (default 4096)")
 	cpus := fs.Uint("cpus", 0, "VM CPUs (default 4)")
 	prepare := fs.Bool("prepare", false, "boot and forward only; install on a later up, once the owner is known")

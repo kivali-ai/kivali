@@ -208,7 +208,7 @@ func TestFileUsage(t *testing.T) {
 	}
 }
 
-func TestPortUnavailable(t *testing.T) {
+func TestBindRefusal(t *testing.T) {
 	h := Default()
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -216,8 +216,8 @@ func TestPortUnavailable(t *testing.T) {
 	}
 	defer func() { _ = l.Close() }()
 	_, err = net.Listen("tcp", l.Addr().String())
-	if err == nil || !h.PortUnavailable(err) {
-		t.Fatalf("bind to a held port: %v, PortUnavailable %v", err, h.PortUnavailable(err))
+	if r := h.BindRefusal(err); err == nil || r != PortBusy {
+		t.Fatalf("bind to a held port: %v, refusal %v", err, r)
 	}
 	// A bind the system forbids: on Windows a port in an excluded range
 	// (WSAEACCES, which no test can reserve without an administrator),
@@ -227,11 +227,11 @@ func TestPortUnavailable(t *testing.T) {
 		forbidden = syscall.Errno(10013) // WSAEACCES
 	}
 	err = &net.OpError{Op: "listen", Net: "tcp", Err: os.NewSyscallError("bind", forbidden)}
-	if !h.PortUnavailable(err) {
-		t.Fatalf("forbidden bind %v not unavailable", err)
+	if r := h.BindRefusal(err); r != PortForbidden {
+		t.Fatalf("forbidden bind %v: refusal %v", err, r)
 	}
-	if h.PortUnavailable(nil) || h.PortUnavailable(errors.New("other")) {
-		t.Fatal("PortUnavailable of an unrelated error")
+	if h.BindRefusal(nil) != PortNotRefused || h.BindRefusal(errors.New("other")) != PortNotRefused {
+		t.Fatal("an unrelated error read as a refused port")
 	}
 }
 

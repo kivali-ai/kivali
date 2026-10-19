@@ -329,7 +329,7 @@ func (s *Supervisor) apply(ctx context.Context, sg staged, logf Logf) error {
 	if err := s.bootLocked(ctx, logf); err != nil {
 		return err
 	}
-	if err := s.ensureForwardLocked(s.State().port(), logf); err != nil {
+	if err := s.forwardRecordedLocked(s.State().port(), logf); err != nil {
 		return err
 	}
 	g, err := s.running()
@@ -468,7 +468,7 @@ func (s *Supervisor) bootAndServe(ctx context.Context, chartVersion string, logf
 	if err := s.bootLocked(ctx, logf); err != nil {
 		return err
 	}
-	if err := s.ensureForwardLocked(s.State().port(), logf); err != nil {
+	if err := s.forwardRecordedLocked(s.State().port(), logf); err != nil {
 		return err
 	}
 	return s.waitServing(ctx, chartVersion, "", logf)

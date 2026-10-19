@@ -93,7 +93,7 @@ no backend: the client subcommands work, `serve` refuses.
 | `Listen`/`Dial`/`Endpoint` | `supervisor.sock`, mode 0600 | `host.PipeName`: `\\.\pipe\kivali-` and the first 8 hex characters of the SHA-256 of the lower-cased, cleaned absolute config directory (the shell computes the same); a DACL granting only the current user. Every dial checks the server process's user SID against the current one (`GetNamedPipeServerProcessId`), since any account can create the name first: a client refuses another account's pipe ("the supervisor pipe is held by another account"), and `Listen` reports when such a squatter keeps it from creating the pipe. The owner keeps `WRITE_DAC` and an administrator can take ownership, so the pipe is closed to other ordinary accounts, not to an administrator | as macOS |
 | `LockServe` | `flock` on `serve.lock` | `LockFileEx` on `serve.lock` | as macOS |
 | `Detach` | `setsid` | `DETACHED_PROCESS`, `CREATE_NO_WINDOW`, own process group | as macOS |
-| `PortUnavailable` (a bind refused for the port itself) | `EADDRINUSE`, `EACCES` | `WSAEADDRINUSE`, `WSAEACCES` (a port in a range Hyper-V or WinNAT excluded) | as macOS |
+| `BindRefusal` (a bind refused for the port itself: busy or forbidden) | busy `EADDRINUSE`, forbidden `EACCES` | busy `WSAEADDRINUSE`, forbidden `WSAEACCES` (a port in a range Hyper-V or WinNAT excluded) | as macOS |
 
 The config directory rule is the shell's too; `$KIVALI_CONFIG_DIR` and
 `--config-dir` override it.
@@ -812,7 +812,9 @@ the request.
 | `GET /v1/exec?argv=<json>` + upgrade | | the guest exec's frames |
 
 `Report` is `running`, `forward`, `url`, `guest` (the agent's status) or
-`guest_error`, `state` (`local.json`), `config_dir`,
+`guest_error`, `forward_error` (while the VM runs without a forward
+because its recorded port could not be bound: the `PortError`'s message,
+for the person), `state` (`local.json`), `config_dir`,
 `supervisor_version`, `busy`, `operation`, `terminals` (open
 `/v1/terminal` sessions: counted once attached, until the splice ends, so
 the shell sees the Terminal running `claude` login close) and
@@ -925,21 +927,36 @@ what makes this path work while every pod is fenced off.
 The port is `local.json`'s; an org with none recorded yet starts on
 `up`'s `port_hint` (the shell gives each team's org its own), else 8080,
 and the first forward records it. A hint is ignored once a port is
-recorded. When the port cannot be bound, because another program holds
-it or because the system has reserved it, and `up` was not given
-`--port`, `up` logs that, takes the first free port from 18080
-(`FirstFallbackPort`) instead and records it, so the org still comes up
-on a machine whose 8080 is busy (the Host's `PortUnavailable`
-recognises both errors); the shell reads the port from `status`, and
-the next `up` tries the recorded port first. The fallback stays below
-49152, the dynamic port range: Windows hands out ephemeral ports from
-it, and Hyper-V and WinNAT reserve blocks of 100 ports in it anew on
-every boot (`netsh interface ipv4 show excludedportrange
-protocol=tcp`), so a port taken from it can be forbidden after the next
-reboot. A recorded port that has become reserved fails with
-`WSAEACCES` and moves the same way. A hinted port moves like the
-default. A port asked for by name (`up --port`, `forward --port`) is
-never moved: that `up` fails with the bind's error.
+recorded.
+
+Only that first forward chooses. When the hint (or 8080) cannot be
+bound, because another program holds it or the system has reserved it
+(the Host's `BindRefusal`), `up` logs that, takes the first free port
+from 18080 (`FirstFallbackPort`) and records it, so a new org still
+comes up on a machine whose 8080 is busy; the shell reads the port from
+`status`. The search stays below 49152, the dynamic port range: Windows
+hands out ephemeral ports from it, and Hyper-V and WinNAT reserve
+blocks of 100 ports in it anew on every boot (`netsh interface ipv4
+show excludedportrange protocol=tcp`), so a port taken from it can be
+forbidden after the next reboot.
+
+Once recorded, the port never moves on its own: things outside Kivali
+point at it (a `tailscale serve` proxying an https name to
+`127.0.0.1:<port>`, a bookmark), and a quiet move would break them. A
+recorded port that cannot be bound fails `up` with a `PortError`, and
+`local.json` keeps the port. Its message says which case it is
+(another program is using the port, or Windows has reserved it, with
+the `netsh` command that lists reservations and restarting the
+`winnat` service as an administrator as a way to free it), names the
+command that moves the org on purpose (`kivali-supervisor --config-dir
+"<dir>" up --port <port>`), and says to update whatever points at the
+old port. The VM stays up; `status` carries the message as
+`forward_error` until a forward starts, and the desktop shows it on the
+team's couldn't-start page. A port asked for by name (`up --port`,
+`forward --port`) is recorded first and is the one way to move. An org
+recorded in 49152-65535, as an earlier fallback could leave it, fails
+this way when a reboot reserves its port; moving it once below 49152
+ends that.
 
 Each forward is bound to the guest of the boot it was started for: its
 connections dial that guest directly and never take the supervisor's

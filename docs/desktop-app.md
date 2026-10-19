@@ -102,7 +102,7 @@ Each team's disk can grow to 64 GB, but only what it uses takes space on your co
 
 A team on this computer is reachable from this computer only, until you choose otherwise.
 
-To open it from another computer, turn on **Let other computers connect to** your team under **Other devices**, and give it an **https** address that the other computer can reach. Kivali does not set up that address for you: put the team behind https yourself, for example with `tailscale serve` pointing at the team's local address, which the tab shows. Choose **Check and save**.
+To open it from another computer, turn on **Let other computers connect to** your team under **Other devices**, and give it an **https** address that the other computer can reach. Kivali does not set up that address for you: put the team behind https yourself, for example with `tailscale serve` pointing at the team's local address, which the tab shows. The team keeps that local address for good; if its port is ever taken, the team doesn't start until you free it or move it (see [Troubleshooting](troubleshooting.md#a-team-couldnt-start-because-of-its-port)). Choose **Check and save**.
 
 On the other computer, in Kivali Desktop, choose **File**, **Connect to a team…**, paste the address, and sign in with the same Google account you use on this computer. You can also open the address in any browser. See [Sign-in](sign-in.md). Other devices reach the team only while this computer is awake, the team is running, and your https address is serving.
 

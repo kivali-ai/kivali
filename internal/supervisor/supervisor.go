@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -100,6 +101,9 @@ type Supervisor struct {
 	fwd     *Forwarder
 	// fwdGuest is the guest fwd dials; a new boot needs a new forward.
 	fwdGuest Guest
+	// fwdErr is why the recorded port could not be bound (a PortError's
+	// message), until a forward starts or the forward is dropped.
+	fwdErr string
 	// opName is the running operation ("" when none).
 	opName string
 	// cancelOp cancels the running operation if it may be cancelled
@@ -176,7 +180,7 @@ func (s *Supervisor) busy() string {
 func (s *Supervisor) dropForward() {
 	s.mu.Lock()
 	f := s.fwd
-	s.fwd, s.fwdGuest = nil, nil
+	s.fwd, s.fwdGuest, s.fwdErr = nil, nil, ""
 	s.mu.Unlock()
 	if f != nil {
 		f.Close()
@@ -768,31 +772,47 @@ func (s *Supervisor) ensureForwardLocked(port int, logf Logf) error {
 	return nil
 }
 
-// forwardForUpLocked starts the forward on the recorded port (the
-// default until the first forward records one). When that port cannot
-// be bound, because another program holds it or because the system has
-// reserved it (Hyper-V and WinNAT exclude new port ranges on every
-// Windows boot), and this up did not ask for it by name, the forward
-// takes the first free port from FirstFallbackPort and the choice is
-// recorded, so a desktop whose 8080 is busy still comes up; the shell
-// reads the port from status, and the next up tries the chosen port
-// first. A port given explicitly is never moved.
-func (s *Supervisor) forwardForUpLocked(explicit bool, logf Logf) error {
-	st := s.State()
-	port := st.port()
+// forwardForUpLocked starts the forward. An org's port, once recorded,
+// is its port for good: things outside Kivali point at it (a Tailscale
+// Serve proxying to 127.0.0.1:<port>, a bookmark), so a recorded port
+// that cannot be bound fails up with a PortError and nothing moves;
+// `up --port` is the way to move on purpose. Only the first forward,
+// with no port recorded yet, chooses: hint (else DefaultPort), and when
+// that cannot be bound, because another program holds it or the system
+// has reserved it, the first free port from FirstFallbackPort. The
+// choice is recorded; the shell reads it from status.
+func (s *Supervisor) forwardForUpLocked(hint int, logf Logf) error {
+	if st := s.State(); st.Port != 0 {
+		return s.forwardRecordedLocked(st.Port, logf)
+	}
+	port := hint
+	if port == 0 {
+		port = DefaultPort
+	}
 	err := s.ensureForwardLocked(port, logf)
-	if err == nil && st.Port == 0 {
-		return s.update(func(st *State) { st.Port = port })
+	if err != nil && s.o.Host.BindRefusal(err) != host.PortNotRefused {
+		logf("127.0.0.1:%d cannot be used (%v); taking a free port from %d instead", port, err, FirstFallbackPort)
+		port, err = s.fallbackForwardLocked(port, logf)
 	}
-	if err == nil || explicit || !s.o.Host.PortUnavailable(err) {
-		return err
-	}
-	logf("127.0.0.1:%d cannot be used (%v); taking a free port from %d instead", port, err, FirstFallbackPort)
-	chosen, err := s.fallbackForwardLocked(port, logf)
 	if err != nil {
 		return err
 	}
-	return s.update(func(st *State) { st.Port = chosen })
+	return s.update(func(st *State) { st.Port = port })
+}
+
+// forwardRecordedLocked starts the forward on the org's recorded port;
+// a refused bind is a PortError, kept for status until a forward starts.
+func (s *Supervisor) forwardRecordedLocked(port int, logf Logf) error {
+	err := s.ensureForwardLocked(port, logf)
+	r := s.o.Host.BindRefusal(err)
+	if err == nil || r == host.PortNotRefused {
+		return err
+	}
+	perr := &PortError{Port: port, Forbidden: r == host.PortForbidden, ConfigDir: s.o.ConfigDir, Err: err}
+	s.mu.Lock()
+	s.fwdErr = perr.Error()
+	s.mu.Unlock()
+	return perr
 }
 
 // fallbackForwardLocked starts the forward on the first port from
@@ -807,11 +827,43 @@ func (s *Supervisor) fallbackForwardLocked(failed int, logf Logf) (int, error) {
 		if err == nil {
 			return p, nil
 		}
-		if !s.o.Host.PortUnavailable(err) {
+		if s.o.Host.BindRefusal(err) == host.PortNotRefused {
 			return 0, err
 		}
 	}
 	return 0, fmt.Errorf("forward: no free port on 127.0.0.1 from %d to %d", FirstFallbackPort, DynamicPortsStart-1)
+}
+
+// PortError is up's failure when the org's recorded port cannot be
+// bound. Its message is for the person: what happened, and what to do.
+type PortError struct {
+	Port int
+	// Forbidden: the system reserved the port; otherwise another
+	// program holds it.
+	Forbidden bool
+	// ConfigDir names the org in the command that moves it.
+	ConfigDir string
+	Err       error
+}
+
+func (e *PortError) Unwrap() error { return e.Err }
+
+func (e *PortError) Error() string {
+	move := fmt.Sprintf(`kivali-supervisor --config-dir "%s" up --port <port>`, e.ConfigDir)
+	after := fmt.Sprintf("Then point anything that used port %d, such as a Tailscale Serve or a bookmark, at the new port.", e.Port)
+	if !e.Forbidden {
+		return fmt.Sprintf("Another program is using port %d on this computer, and this team always uses port %d. "+
+			"Close that program and try again, or move the team to another port with `%s`. %s", e.Port, e.Port, move, after)
+	}
+	if runtime.GOOS == "windows" {
+		return fmt.Sprintf("Windows has reserved port %d, and this team always uses port %d. "+
+			"Windows reserves blocks of ports from 49152 up, in new places after a restart; "+
+			"`netsh interface ipv4 show excludedportrange protocol=tcp` lists them. "+
+			"Restarting the Windows NAT service as an administrator (`net stop winnat`, then `net start winnat`) often frees the port. "+
+			"Or move the team to a port below 49152 with `%s`. %s", e.Port, e.Port, move, after)
+	}
+	return fmt.Sprintf("This computer won't let Kivali use port %d, and this team always uses port %d. "+
+		"Move the team to a port from 1024 up with `%s`. %s", e.Port, e.Port, move, after)
 }
 
 func (s *Supervisor) baseURL() string {
@@ -821,11 +873,13 @@ func (s *Supervisor) baseURL() string {
 // UpOptions are the flags of `up`.
 type UpOptions struct {
 	Install InstallOptions `json:"install"`
-	// Port is recorded and never moved: up fails if it is busy.
+	// Port is recorded and never moved: up fails if it cannot be bound.
+	// It is how an org moves to another port on purpose.
 	Port int `json:"port,omitempty"`
-	// PortHint is the first port of an org with none recorded yet (the
-	// shell spreads its teams' orgs apart); unlike Port it moves to a
-	// free one when busy, and an org with a recorded port ignores it.
+	// PortHint is the first port tried by an org with none recorded yet
+	// (the shell spreads its teams' orgs apart); unlike Port it gives way
+	// to a free one when it cannot be bound, and an org with a recorded
+	// port ignores it.
 	PortHint int    `json:"port_hint,omitempty"`
 	MemoryMB uint64 `json:"memory_mb,omitempty"`
 	CPUs     uint   `json:"cpus,omitempty"`
@@ -866,8 +920,6 @@ func (s *Supervisor) Up(ctx context.Context, o UpOptions, logf Logf) error {
 	if err := s.update(func(st *State) {
 		if o.Port != 0 {
 			st.Port = o.Port
-		} else if st.Port == 0 && o.PortHint != 0 {
-			st.Port = o.PortHint
 		}
 		if o.MemoryMB != 0 {
 			st.MemoryMB = o.MemoryMB
@@ -900,7 +952,7 @@ func (s *Supervisor) Up(ctx context.Context, o UpOptions, logf Logf) error {
 	} else {
 		logf("the VM is already running")
 	}
-	if err := s.forwardForUpLocked(o.Port != 0, logf); err != nil {
+	if err := s.forwardForUpLocked(o.PortHint, logf); err != nil {
 		return err
 	}
 	setStage(ctx, StageSettingUp)
@@ -1036,10 +1088,14 @@ type Report struct {
 	URL        string           `json:"url,omitempty"`
 	Guest      *guestapi.Status `json:"guest,omitempty"`
 	GuestError string           `json:"guest_error,omitempty"`
-	State      State            `json:"state"`
-	ConfigDir  string           `json:"config_dir"`
-	Version    string           `json:"supervisor_version"`
-	Busy       bool             `json:"busy"`
+	// ForwardError is why the forward is down while the VM runs: the
+	// org's recorded port could not be bound (PortError), in words for
+	// the person.
+	ForwardError string `json:"forward_error,omitempty"`
+	State        State  `json:"state"`
+	ConfigDir    string `json:"config_dir"`
+	Version      string `json:"supervisor_version"`
+	Busy         bool   `json:"busy"`
 	// Operation is the running operation (up, down, install,
 	// load-images, forward, upgrade, credential, destroy), "" when
 	// idle.
@@ -1072,6 +1128,8 @@ func (s *Supervisor) Status(ctx context.Context) Report {
 	if s.fwd != nil {
 		r.Forward = s.fwd.Addr()
 		r.URL = "http://" + s.fwd.Addr() + "/"
+	} else {
+		r.ForwardError = s.fwdErr
 	}
 	s.mu.Unlock()
 	if m == nil {

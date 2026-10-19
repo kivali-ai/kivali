@@ -40,6 +40,14 @@ Kivali could not extract text from it. Agents can still see that it exists, and 
 
 Its window shows the reason and **Try again**. **Show details** shows what happened. If the reason is memory, Kivali offers to pause another team first. You can also lower other teams' memory in **Settings**, under each team's **This Mac** (**This PC**) tab.
 
+### A team couldn't start because of its port
+
+Each team on your computer keeps the same local port for good, so anything that points at it, such as `tailscale serve`, keeps working. If another program is using that port, or Windows has reserved it (Windows reserves blocks of ports from 49152 up, in new places after a restart), the team doesn't start, and its window says which.
+
+- Another program: close it and choose **Try again**.
+- Reserved by Windows: `netsh interface ipv4 show excludedportrange protocol=tcp` lists the reservations. Restarting the Windows NAT service in an administrator terminal (`net stop winnat`, then `net start winnat`) often frees the port; then choose **Try again**.
+- Or move the team to another port, below 49152 on Windows, with the `kivali-supervisor … up --port` command the window shows. `kivali-supervisor` is in the folder where Kivali Desktop is installed. Then point anything that used the old port, such as `tailscale serve` or a bookmark, at the new one.
+
 ### "Not enough memory" when resuming
 
 Your computer does not have the team's memory free while another team runs. Choose to pause the other team, or lower this team's memory under **This Mac** (**This PC**) (it applies the next time the team resumes).
