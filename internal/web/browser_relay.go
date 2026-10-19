@@ -2,18 +2,24 @@
 // their way to its browser.
 //
 // POST /v1/agent/{slug}/subagents/{id}/web carries one web_* call.
-// Core checks that the id is one of the agent's running web tasks and
-// that the command is one the task's session allows, hands an upload's
-// bytes to the pod first, and relays the command under the task's tab
-// group. The pod's answer, text and an optional image, is what the
-// model reads.
+// Core checks that the id is one of the agent's running web tasks,
+// that the command is one the task's session allows and that it fits
+// the web budget (subagent_web_budget.go), hands an upload's bytes to
+// the pod first, and relays the command under the task's tab group,
+// with the site the group is held to. The pod's answer, text and an
+// optional image, is what the model reads.
 
 package web
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"path"
@@ -85,6 +91,9 @@ func (s *SubagentService) WebCommand(ctx context.Context, parent, id string, req
 		if j.Session != agentpod.OpenWebSession {
 			return refuse("web_eval is not available in this session")
 		}
+		if j.LockSite != "" {
+			return refuse("web_eval is not available to a task that uploads files")
+		}
 	case browserpod.CommandNavigate:
 		var a browserpod.NavigateArgs
 		if err := json.Unmarshal(args, &a); err != nil || strings.TrimSpace(a.URL) == "" {
@@ -108,11 +117,32 @@ func (s *SubagentService) WebCommand(ctx context.Context, parent, id string, req
 		if err := json.Unmarshal(args, &a); err != nil || a.Ref == "" || a.File == "" {
 			return refuse("web_upload needs a ref and a file name")
 		}
-		if resp, ok := s.sendTaskFile(ctx, j, a.File); !ok {
+	}
+	if refusal := s.chargeWebAction(j, command, args, func() string { return s.webActionSite(j, command, args) }); refusal != "" {
+		return refuse("%s", refusal)
+	}
+	if command == browserpod.CommandUpload {
+		var a browserpod.UploadArgs
+		_ = json.Unmarshal(args, &a)
+		file, body, resp, ok := s.approvedTaskFile(j, a.File)
+		if !ok {
 			return resp
 		}
+		// A file goes only onto a page of the site the task is held
+		// to: every tab of the task must be on it, whatever the pod's
+		// hold has let a tab reach. The pod checks the tab it uploads
+		// into as well.
+		if off, ok := s.webTabsOnSite(j); !ok {
+			return refuse("web_upload puts a file only on a page of %s, and your tab is at %s. Go to a page of %s first.", j.LockSite, off, j.LockSite)
+		}
+		if err := s.Browsers.SendFile(ctx, j.Parent, j.Session, j.ID, path.Base(file.Path), bytes.NewReader(body), int64(len(body))); err != nil {
+			return refuse("%v", err)
+		}
 	}
-	res, err := s.Browsers.Command(ctx, parent, j.Session, id, browserpod.Message{Name: command, Args: args})
+	// Site holds the task's tab group to its site in the pod, the lock
+	// a site session's whole browser has: a task that uploads files
+	// stays on the site it was approved for.
+	res, err := s.Browsers.Command(ctx, parent, j.Session, id, browserpod.Message{Name: command, Args: args, Site: j.LockSite})
 	if err != nil {
 		return refuse("%v", err)
 	}
@@ -127,7 +157,8 @@ func (s *SubagentService) WebCommand(ctx context.Context, parent, id string, req
 }
 
 // taskURLAllowed checks a URL a task asks its browser to load, for
-// tool: http or https, and in a site session on the site or one of its
+// tool: http or https, and for a task held to a site (a site session's,
+// or the site an upload was approved for) on that site or one of its
 // subdomains, the rule the pod applies too. The refusal is the tool
 // result the model reads.
 func taskURLAllowed(j subagentJob, tool, raw string) (agentpod.WebCommandResponse, bool) {
@@ -138,41 +169,173 @@ func taskURLAllowed(j subagentJob, tool, raw string) (agentpod.WebCommandRespons
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return refuse(tool + " takes an http or https URL")
 	}
-	if j.Site != "" && !onSite(j.Site, u.Hostname()) {
-		return refuse(fmt.Sprintf("Blocked: %s is off this session's site, %s. A task in a site session stays on it and its subdomains.", strings.TrimSpace(raw), j.Site))
+	if site := j.lockSite(); site != "" && !onSite(site, u.Hostname()) {
+		if j.Site != "" {
+			return refuse(fmt.Sprintf("Blocked: %s is off this session's site, %s. A task in a site session stays on it and its subdomains.", strings.TrimSpace(raw), j.Site))
+		}
+		return refuse(fmt.Sprintf("Blocked: %s is off %s, the site this task is held to.", strings.TrimSpace(raw), site))
 	}
 	return agentpod.WebCommandResponse{}, true
 }
 
-// sendTaskFile hands the pod one of the task's files before an upload:
-// the file the task was dispatched with under that name, read from the
-// caller's /files/ the way file_view reads it. The caller is the agent,
-// or the sub-lead (j.CallerID) whose own view the path was checked in
-// at dispatch.
-func (s *SubagentService) sendTaskFile(ctx context.Context, j subagentJob, name string) (agentpod.WebCommandResponse, bool) {
-	refuse := func(text string) (agentpod.WebCommandResponse, bool) {
-		return agentpod.WebCommandResponse{Text: text, IsError: true}, false
+// lockSite is the site a web task is held to: LockSite, set at
+// registration, else its session's site.
+func (j subagentJob) lockSite() string {
+	if j.LockSite != "" {
+		return j.LockSite
 	}
-	var modelPath string
-	for _, p := range j.Files {
-		if path.Base(p) == name {
-			modelPath = p
-			break
+	return j.Site
+}
+
+// webActionSite is where a command's data would go, for a budget
+// notice: the site of the URL it opens, or of the page its tab is on.
+func (s *SubagentService) webActionSite(j subagentJob, command string, args json.RawMessage) string {
+	var target string
+	switch command {
+	case browserpod.CommandNavigate:
+		var a browserpod.NavigateArgs
+		_ = json.Unmarshal(args, &a)
+		target = a.URL
+	case browserpod.CommandTabs:
+		var a browserpod.TabsArgs
+		_ = json.Unmarshal(args, &a)
+		target = a.URL
+	}
+	if strings.TrimSpace(target) == "" && s.Browsers != nil {
+		target = s.Browsers.GroupURL(j.Parent, j.Session, j.ID)
+	}
+	u, err := url.Parse(strings.TrimSpace(target))
+	if err != nil || u.Hostname() == "" {
+		return ""
+	}
+	if site, err := webURLSite(target); err == nil {
+		return site
+	}
+	return strings.ToLower(u.Hostname())
+}
+
+// webTabsOnSite reports whether every tab of a held task is on its
+// site, and if not, where one is: a URL, or "no page yet".
+func (s *SubagentService) webTabsOnSite(j subagentJob) (string, bool) {
+	urls := s.Browsers.GroupTabURLs(j.Parent, j.Session, j.ID)
+	if j.LockSite == "" || len(urls) == 0 {
+		return "no page yet", false
+	}
+	for _, u := range urls {
+		if !onWebSite(j.LockSite, u) {
+			if u == "" {
+				u = "no page yet"
+			}
+			return u, false
 		}
 	}
-	if modelPath == "" {
-		return refuse(fmt.Sprintf("%q is not one of this task's files (%s)", name, strings.Join(webTaskFileNames(j.Files), ", ")))
+	return "", true
+}
+
+// webApprovedFile is one of a task's files as it was at dispatch: its
+// path under the caller's /files/, and the sha256 and size of its
+// bytes. Only the digest is kept: a person approves these bytes, and
+// the file is read again, and checked against it, whenever it is shown
+// or uploaded.
+type webApprovedFile struct {
+	Path string
+	SHA  string
+	Size int64
+}
+
+// digestWebFiles is the files a task may upload, as they are now, read
+// in the agent's own /files/: only a task the agent dispatches itself
+// may upload. A file over the upload limit is refused before it is
+// read.
+func (s *SubagentService) digestWebFiles(parent string, paths []string) ([]webApprovedFile, error) {
+	out := make([]webApprovedFile, 0, len(paths))
+	for _, p := range paths {
+		f, info, err := s.openCallerFile(parent, "", p)
+		if err != nil {
+			return nil, fmt.Errorf("%q could not be read", p)
+		}
+		regular, size := info.Mode().IsRegular(), info.Size()
+		if !regular || size > maxWebUploadBytes {
+			_ = f.Close()
+			if !regular {
+				return nil, fmt.Errorf("%q is not a file", p)
+			}
+			return nil, fmt.Errorf("%q is over %d MB, the most a task may upload", p, maxWebUploadBytes>>20)
+		}
+		h := sha256.New()
+		n, err := io.Copy(h, io.LimitReader(f, maxWebUploadBytes+1))
+		_ = f.Close()
+		if err != nil {
+			return nil, fmt.Errorf("%q could not be read", p)
+		}
+		if n > maxWebUploadBytes {
+			return nil, fmt.Errorf("%q is over %d MB, the most a task may upload", p, maxWebUploadBytes>>20)
+		}
+		out = append(out, webApprovedFile{Path: p, SHA: hex.EncodeToString(h.Sum(nil)), Size: n})
 	}
-	f, info, err := s.openCallerFile(j.Parent, j.CallerID, modelPath)
+	return out, nil
+}
+
+// errWebFileChanged is a file that is no longer the one a person
+// approved.
+var errWebFileChanged = errors.New("the file has changed since the task was dispatched")
+
+// readApprovedFile reads an approved file from the agent's /files/,
+// the way file_view reads it, and returns its bytes only when they are
+// the ones approved. The bytes returned are what is shown or sent, so
+// nothing can change between the check and their use.
+func (s *SubagentService) readApprovedFile(parent string, file webApprovedFile) ([]byte, error) {
+	f, info, err := s.openCallerFile(parent, "", file.Path)
 	if err != nil || !info.Mode().IsRegular() {
-		return refuse("that file cannot be read")
+		return nil, errors.New("that file cannot be read")
 	}
 	defer func() { _ = f.Close() }()
-	if info.Size() > maxWebUploadBytes {
-		return refuse(fmt.Sprintf("%q is %d MB; a task may upload files up to %d MB", name, info.Size()>>20, maxWebUploadBytes>>20))
+	if info.Size() != file.Size {
+		return nil, errWebFileChanged
 	}
-	if err := s.Browsers.SendFile(ctx, j.Parent, j.Session, j.ID, name, f, info.Size()); err != nil {
+	body, err := io.ReadAll(io.LimitReader(f, file.Size+1))
+	if err != nil {
+		return nil, errors.New("that file cannot be read")
+	}
+	sum := sha256.Sum256(body)
+	if int64(len(body)) != file.Size || hex.EncodeToString(sum[:]) != file.SHA {
+		return nil, errWebFileChanged
+	}
+	return body, nil
+}
+
+// webFileChanged is what the model reads when a file is not the one a
+// person approved.
+const webFileChanged = "%q has changed since a person approved this task, so it cannot be uploaded. Carry on without it, or submit what you have."
+
+// webApprovedFileNamed is the task's approved file by the name it is
+// uploaded by.
+func webApprovedFileNamed(j subagentJob, name string) (webApprovedFile, bool) {
+	for _, f := range j.ApprovedFiles {
+		if path.Base(f.Path) == name {
+			return f, true
+		}
+	}
+	return webApprovedFile{}, false
+}
+
+// approvedTaskFile is the task's file by the name it uploads it by,
+// with its bytes, when the file in the caller's /files/ is still the
+// one a person approved.
+func (s *SubagentService) approvedTaskFile(j subagentJob, name string) (webApprovedFile, []byte, agentpod.WebCommandResponse, bool) {
+	refuse := func(text string) (webApprovedFile, []byte, agentpod.WebCommandResponse, bool) {
+		return webApprovedFile{}, nil, agentpod.WebCommandResponse{Text: text, IsError: true}, false
+	}
+	file, ok := webApprovedFileNamed(j, name)
+	if !ok {
+		return refuse(fmt.Sprintf("%q is not one of this task's files (%s)", name, strings.Join(webTaskFileNames(j.Files), ", ")))
+	}
+	body, err := s.readApprovedFile(j.Parent, file)
+	if errors.Is(err, errWebFileChanged) {
+		return refuse(fmt.Sprintf(webFileChanged, name))
+	}
+	if err != nil {
 		return refuse(err.Error())
 	}
-	return agentpod.WebCommandResponse{}, true
+	return file, body, agentpod.WebCommandResponse{}, true
 }

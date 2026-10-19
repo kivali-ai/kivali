@@ -106,6 +106,29 @@ func TestLoadTeamKindAndSeedName(t *testing.T) {
 	}
 }
 
+// The egress proxy's two files and its URL come from the environment
+// as written; unset is none.
+func TestLoadEgressPaths(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("EGRESS_ALLOWLIST_SYNC_PATH", "")
+	t.Setenv("EGRESS_AGENTS_SYNC_PATH", "")
+	t.Setenv("EGRESS_PROXY_URL", "")
+	cfg, err := Load()
+	if err != nil || cfg.EgressAgentsSyncPath != "" {
+		t.Fatalf("unset: %q, %v", cfg.EgressAgentsSyncPath, err)
+	}
+	t.Setenv("EGRESS_ALLOWLIST_SYNC_PATH", "/etc/egress/allowed_egress.yaml")
+	t.Setenv("EGRESS_AGENTS_SYNC_PATH", "/etc/egress/agents.json")
+	t.Setenv("EGRESS_PROXY_URL", "http://kivali-egress:3128")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.EgressAgentsSyncPath != "/etc/egress/agents.json" || cfg.EgressAllowlistSyncPath != "/etc/egress/allowed_egress.yaml" || cfg.EgressProxyURL != "http://kivali-egress:3128" {
+		t.Fatalf("cfg = %q %q %q", cfg.EgressAgentsSyncPath, cfg.EgressAllowlistSyncPath, cfg.EgressProxyURL)
+	}
+}
+
 // KIVALI_OWNER_NAME is optional, trimmed, at most 40 characters, on
 // one line.
 func TestLoadOwnerName(t *testing.T) {

@@ -110,5 +110,5 @@ WHAT COMES BACK IS RAW MATERIAL, NOT YOUR ANSWER. Reconcile it: where two worker
 
 Worker files arrive as /files/subagents/<worker>/ paths: read them with run_shell; your result's files cannot name them.
 
-tasks[] is 1..%d objects: description (short label), prompt (verbatim instruction), optional model (omit for the default), optional effort (omit for the model's default), optional schema (the worker then answers through submit_result and you get JSON that fits {outcome, result, alternatives, blocked_on, files}, checked against your schema), optional kind (web runs the worker in a browser with no files or shell; it needs a schema, takes start_url and files it may upload, and is expensive: every page costs tokens).`,
+tasks[] is 1..%d objects: description (short label), prompt (verbatim instruction), optional model (omit for the default), optional effort (omit for the model's default), optional schema (the worker then answers through submit_result and you get JSON that fits {outcome, result, alternatives, blocked_on, files}, checked against your schema), optional kind (web: a browser worker with no files or shell; needs a schema, takes a start_url, cannot upload, has a budget on what it sends; every page costs tokens).`,
 	agentpod.SubagentMaxNestedFanout, agentpod.SubagentMaxNestedFanout)

@@ -366,6 +366,8 @@ func subagentState(status, errText string) (apitypes.SubagentTaskState, *string)
 		return apitypes.SubagentTaskStateErrored, ptr("This task left no record")
 	case subagentJobWaiting:
 		return apitypes.SubagentTaskStateWaitingForSignIn, nil
+	case subagentJobAwaitingApproval:
+		return apitypes.SubagentTaskStateAwaitingApproval, nil
 	default:
 		return apitypes.SubagentTaskStateRunning, nil
 	}

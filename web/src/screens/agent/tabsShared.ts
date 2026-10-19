@@ -194,14 +194,26 @@ export function sessionStateLabel(state: SessionRunState): string | undefined {
 
 /**
  * A background task's state as AgentState draws it. The design system has no waiting state: a task waiting for
- * a person to sign in is "held" (a pause mark, "On hold"), and the page says what it waits for beside it.
+ * a person, to sign in or to approve its uploads, is "held" (a pause mark, "On hold"), and the page says what it
+ * waits for beside it.
  */
 export const TASK_STATE: Record<SubagentTaskState, AgentRunState> = {
   running: 'running',
   done: 'done',
   errored: 'errored',
   waiting_for_sign_in: 'held',
+  awaiting_approval: 'held',
 };
+
+/** What a task waiting for a person waits for, or undefined for any other task. */
+export function personWaitLine(state: SubagentTaskState, site?: string): string | undefined {
+  if (state === 'waiting_for_sign_in') return signInWaitLine(site);
+  if (state === 'awaiting_approval') return APPROVAL_WAIT_LINE;
+  return undefined;
+}
+
+/** A web task that uploads files, before a person has approved it. */
+export const APPROVAL_WAIT_LINE = 'Waiting for you to approve its uploads';
 
 /** What a web task's page asks of the person while the task waits for sign-in. */
 export const SIGN_IN_REASON: Record<WebSignInReason, string> = {

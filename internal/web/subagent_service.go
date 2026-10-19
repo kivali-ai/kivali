@@ -151,6 +151,9 @@ type SubagentService struct {
 	// the agentpod hub's subscriber count; nil means always.
 	PodConnected func(parent string) bool
 
+	// webBudget counts what web tasks send out (subagent_web_budget.go).
+	webBudget webBudget
+
 	// admissionOnce/admission bound how many subagent CLIs run at once
 	// in one agent pod. Built lazily so a directly constructed service
 	// (tests, fixtures) gets the production limits without wiring.
@@ -224,6 +227,12 @@ type SubagentTaskInput struct {
 	Session  string   `json:"session,omitempty"`
 	StartURL string   `json:"start_url,omitempty"`
 	Files    []string `json:"files,omitempty"`
+
+	// approvedFiles are Files as core kept them at dispatch, and
+	// lockSite the site a task with files is held to, both set by
+	// StartBatch after validation; never from the request.
+	approvedFiles []webApprovedFile
+	lockSite      string
 }
 
 // hasSchema reports whether the task asks for a structured answer. A
@@ -286,6 +295,23 @@ func (s *SubagentService) StartBatch(ctx context.Context, parent string, raw jso
 	}
 	if err := s.validateWebTasks(parent, req.Tasks); err != nil {
 		return "", err
+	}
+	// The files a web task may upload are kept as they are now: a
+	// person approves these bytes, and an upload sends nothing else.
+	for i := range req.Tasks {
+		if !req.Tasks[i].web() || len(req.Tasks[i].Files) == 0 {
+			continue
+		}
+		site, err := webURLSite(strings.TrimSpace(req.Tasks[i].StartURL))
+		if err != nil || site == "" {
+			return "", fmt.Errorf("tasks[%d].start_url: a task that uploads files is held to its start URL's site, and this start URL names none", i)
+		}
+		snaps, err := s.digestWebFiles(parent, req.Tasks[i].Files)
+		if err != nil {
+			return "", fmt.Errorf("tasks[%d].files: %v", i, err)
+		}
+		req.Tasks[i].approvedFiles = snaps
+		req.Tasks[i].lockSite = site
 	}
 
 	// Look up the parent's tool_use_id for this batch. The runtime
@@ -385,14 +411,27 @@ func (s *SubagentService) launch(parent, toolUseID string, tasks []SubagentTaskI
 			index:       i,
 			// validateTasks accepted the schema before launch; a task
 			// without one, or whose schema failed to parse, is free text.
-			Schema:   parsedSchema(t),
-			Kind:     taskKind(t),
-			Session:  taskSession(t),
-			Site:     taskSite(t),
-			StartURL: strings.TrimSpace(t.StartURL),
-			Files:    append([]string(nil), t.Files...),
-			cancel:   cancel,
-			done:     make(chan struct{}),
+			Schema:        parsedSchema(t),
+			Kind:          taskKind(t),
+			Session:       taskSession(t),
+			Site:          taskSite(t),
+			StartURL:      strings.TrimSpace(t.StartURL),
+			Files:         append([]string(nil), t.Files...),
+			ApprovedFiles: append([]webApprovedFile(nil), t.approvedFiles...),
+			cancel:        cancel,
+			done:          make(chan struct{}),
+		}
+		if job.Kind == agentpod.SubagentKindWeb {
+			job.Prompt = t.Prompt
+			job.LockSite = job.Site
+			if job.needsApproval() {
+				// StartBatch worked the site out from the start URL and
+				// refused the dispatch when it could not; in a site
+				// session it is the session's.
+				job.LockSite = t.lockSite
+				s.holdForApproval(job)
+			}
+			s.chargeWebStart(parent, job.ID, job.StartURL)
 		}
 		jobs[i] = job
 		s.registerJob(job)
@@ -435,6 +474,27 @@ func (s *SubagentService) runJob(ctx context.Context, parent, toolUseID string, 
 		s.emitProgress(parent, toolUseID, index, id, "errored", "", "overlay: "+err.Error())
 		s.finishJob(job, toolUseID, index, "", "", fmt.Errorf("overlay: %w", err))
 		return
+	}
+
+	// A task that uploads files waits for a person's approval before
+	// it queues: nothing runs and no slot is held until then.
+	if job.needsApproval() {
+		s.writeSubagentMeta(parent, t, id, subagentJobAwaitingApproval, "", "")
+		s.emitProgress(parent, toolUseID, index, id, subagentJobAwaitingApproval, "", "")
+		outcome, reason := s.awaitApproval(ctx, job)
+		switch outcome {
+		case approvalCancelled:
+			s.writeSubagentMeta(parent, t, id, subagentJobCancelled, context.Canceled.Error(), "")
+			s.finishJob(job, toolUseID, index, "", "", context.Canceled)
+			return
+		case approvalDenied, approvalTimedOut:
+			result := s.finishWebJob(job, webUploadEnding(outcome, reason))
+			s.writeSubagentMeta(parent, t, id, "completed", "", result)
+			s.emitProgress(parent, toolUseID, index, id, "completed", result, "")
+			s.finishJob(job, toolUseID, index, "", result, nil)
+			return
+		}
+		s.notifyWorkingChanged()
 	}
 
 	// Wait for a slot in the pod before forking anything. Everything
@@ -524,16 +584,17 @@ func (s *SubagentService) runJob(ctx context.Context, parent, toolUseID string, 
 		// A web task runs the browser toolkit and nothing else; its
 		// prompt says pages are untrusted and the answer is data. Only
 		// a task in a site session, dispatched by the agent itself, may
-		// wait for a person to sign in.
+		// wait for a person to sign in. The site it is held to is its
+		// session's, or for a task with files its approved site.
 		names := webTaskFileNames(job.Files)
 		canWait := job.Site != "" && depth == 1
 		spec.Kind = agentpod.SubagentKindWeb
 		spec.Session = job.Session
-		spec.Site = job.Site
+		spec.Site = job.LockSite
 		spec.StartURL = job.StartURL
 		spec.Files = names
-		spec.Tools = agentpod.WebSubagentTools(job.Session, canWait)
-		spec.SystemPrompt = agentpod.WebSubagentSystemPrompt(parent, t.Description, job.Session, job.Site, job.StartURL, names, canWait)
+		spec.Tools = agentpod.WebSubagentTools(job.Session, job.LockSite, canWait)
+		spec.SystemPrompt = agentpod.WebSubagentSystemPrompt(parent, t.Description, job.Session, job.LockSite, job.StartURL, names, canWait)
 	}
 
 	// One run, or several: a web task that waits for a person ends its
@@ -716,6 +777,7 @@ func webTaskFileNames(paths []string) []string {
 // download under the task's untrusted-downloads/. A cancelled task,
 // which delivers nothing, keeps its empty body.
 func (s *SubagentService) finishWebJob(job *subagentJob, result string) string {
+	s.forgetWebTask(job.ID)
 	if s.Browsers == nil {
 		return result
 	}
@@ -1285,6 +1347,11 @@ func renderSubagentDispatch(parent string, tasks []SubagentTaskInput, ids []stri
 		fmt.Fprintf(&b, "  %s — %s\n", ids[i], t.Description)
 		fmt.Fprintf(&b, "      transcript: /agents/%s/subagents/%s · artifacts: /files/subagents/%s/artifacts/private/\n",
 			parent, ids[i], ids[i])
+		if t.web() && len(t.Files) > 0 {
+			site, _ := webURLSite(strings.TrimSpace(t.StartURL))
+			fmt.Fprintf(&b, "      waits for a person to approve uploading %d file%s to %s; it starts once they do and stays on that site\n",
+				len(t.Files), pluralS(len(t.Files)), site)
+		}
 	}
 	b.WriteString("\nEach task's answer arrives as a separate message when it finishes, so do NOT re-dispatch these ")
 	b.WriteString("and do not wait for them in this turn. Finish what you can without them and end your turn; ")

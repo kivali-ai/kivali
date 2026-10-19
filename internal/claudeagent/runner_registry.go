@@ -66,7 +66,7 @@ func newRunnerRegistry(opts Options, kivaliBin, sessionDir string, shutdownCtx c
 		opts:       opts,
 		kivaliBin:  kivaliBin,
 		sessionDir: sessionDir,
-		signIn:     newSignInWatch(opts.ClaudeBinary, opts.HomeDir),
+		signIn:     newSignInWatch(opts.ClaudeBinary, opts.HomeDir, append(append([]string(nil), cliRunEnv...), opts.Env...), opts.Scrubber),
 		runners:    make(map[string]*runner),
 		closed:     make(chan struct{}),
 	}

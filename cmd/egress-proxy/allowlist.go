@@ -172,10 +172,16 @@ func isIPLiteral(pat string) bool {
 	return net.ParseIP(p) != nil
 }
 
-// Watcher periodically re-reads the allowlist from disk so edits made
-// by the Kivali pod (via the shared volume) take effect without a
-// proxy restart. Interval is short enough for snappy UI feedback,
-// long enough not to thrash the file.
+// loader is a file the Watcher keeps loaded: the allowlist or the
+// agents file. Load treats a missing file as empty.
+type loader interface {
+	Load(path string) error
+}
+
+// Watcher periodically re-reads a file from disk so edits made by the
+// Kivali pod (via the shared volume) take effect without a proxy
+// restart. Interval is short enough for snappy UI feedback, long
+// enough not to thrash the file.
 type Watcher struct {
 	Path     string
 	Interval time.Duration
@@ -183,8 +189,10 @@ type Watcher struct {
 	// Clock drives the poll interval. Nil means the real clock.
 	Clock clock.Clock
 
-	mu      sync.Mutex
-	lastMod time.Time
+	mu sync.Mutex
+	// info is the file as last loaded; nil before the first load and
+	// while the file is missing.
+	info os.FileInfo
 }
 
 // clk is the watcher's time source, defaulting to the real clock.
@@ -195,36 +203,38 @@ func (w *Watcher) clk() clock.Clock {
 	return w.Clock
 }
 
-func (w *Watcher) pollOnce(a *Allowlist) error {
-	info, err := os.Stat(w.Path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return err
-	}
+// pollOnce reloads l when the file is not the one last loaded: a new
+// inode, modification time or size, or a file that has gone.
+func (w *Watcher) pollOnce(l loader) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if !info.ModTime().After(w.lastMod) {
+	info, err := os.Stat(w.Path)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return err
+		}
+		info = nil
+	}
+	if sameFile(w.info, info) {
 		return nil
 	}
-	if err := a.Load(w.Path); err != nil {
+	if err := l.Load(w.Path); err != nil {
 		return err
 	}
-	w.lastMod = info.ModTime()
+	w.info = info
 	return nil
 }
 
-// Run loops until ctx is done, polling pollOnce.
-func (w *Watcher) Run(a *Allowlist, log func(string, ...any)) {
+// Run polls pollOnce every Interval, forever.
+func (w *Watcher) Run(l loader, log func(string, ...any)) {
 	if w.Interval == 0 {
 		w.Interval = 5 * time.Second
 	}
 	t := w.clk().NewTicker(w.Interval)
 	defer t.Stop()
 	for range t.C() {
-		if err := w.pollOnce(a); err != nil {
-			log("allowlist reload error: %v", err)
+		if err := w.pollOnce(l); err != nil {
+			log("reload %s: %v", w.Path, err)
 		}
 	}
 }

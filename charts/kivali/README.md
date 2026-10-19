@@ -105,8 +105,9 @@ browser is done. `browser.resources` sizes each pod's container (default
 `browser.maxPerTeam` (`BROWSER_MAX_PER_TEAM`, default 3, at least 1) is
 how many browsers the team's agents may have running at once. Browser pods
 run on the server's node (they reach it over the hostPath socket), keep
-nothing on a volume, and reach the web directly, with no proxy: a browser
-is not held to the egress allowlist (see NetworkPolicy below).
+nothing on a volume, and reach the public web directly, with no proxy, and
+nothing in the cluster: a browser is not held to the egress allowlist
+(see NetworkPolicy below).
 
 ## Sign-in values
 
@@ -130,16 +131,32 @@ by the operator, outside the chart (keys above).
 
 ## NetworkPolicy
 
-Agents run shell commands in pods, and the HTTP API trusts whoever reaches
-it as the owner. A pod must therefore not be able to call it. All three
-policies sit under `networkPolicy.enabled` (default true):
+Agents run shell commands in pods. These policies keep agent and browser
+pods off the cluster, the node and cloud metadata, and hold an agent's
+traffic to the egress proxy. The HTTP API is not open to pods by default:
+every route needs a Google session (`internal/web/web.go`), and the only
+routes open without one are login, the OAuth callback and the
+loopback-only, signed, single-use Desktop handoff
+([auth.md](../../docs/developers/auth.md)). All three policies sit under
+`networkPolicy.enabled` (default true):
 
 1. `kivali-agentpod-egress` (load-bearing): agent pods (`app=kivali-agentpod`)
    get egress default deny, allowing only TCP 3128 to pods labelled
-   `app=kivali` (the proxy sidecar lives in the server pod) and TCP/UDP 53
-   to CoreDNS in `kube-system`. Agent pods reach core over the hostPath Unix
-   socket, and every outbound request of the CLI and the agent-shell already
-   goes through the proxy via `HTTP_PROXY`.
+   `app=kivali` (the proxy sidecar lives in the server pod). No DNS: the
+   server resolves the proxy Service to its cluster IP when it creates a
+   pod, and a client that honours the proxy hands it host names. Agent pods
+   reach core over the hostPath Unix socket. The proxy holds the agent's
+   shell (no credential) to the team's host list, and lets the agent's own
+   fetches and model calls (a per-pod credential) reach any public host. The
+   proxy refuses, for every agent request, loopback, link-local and cloud
+   metadata, `networkPolicy.podCIDR`, `networkPolicy.serviceCIDR` and the
+   node's own address (`status.hostIP`, passed as `--deny-cidr`), and, for
+   hosts not on the list, private ranges. The proxy container also takes
+   `--agents` (`/etc/egress/agents.json`, written by the server from
+   `EGRESS_AGENTS_SYNC_PATH`) and its budget flags, whose defaults the chart
+   keeps: 32 KB per connection, 256 KB per 10 minutes and 4 MB a day, counted
+   and logged without refusing (`--enforce-budget` is off). See
+   [architecture.md](../../docs/developers/architecture.md#the-egress-proxy-and-the-fence).
 2. `kivali-browserpod-egress` (load-bearing): browser pods
    (`app=kivali-browserpod`) get egress to `0.0.0.0/0` except the ranges
    in `networkPolicy.browserEgress.except`, and TCP/UDP 53 to CoreDNS in
@@ -153,16 +170,21 @@ policies sit under `networkPolicy.enabled` (default true):
    `172.16.0.0/12`, `192.168.0.0/16`, `169.254.0.0/16`, `127.0.0.0/8`,
    `100.64.0.0/10` and `168.63.129.16/32`; a cluster whose nodes or
    services sit elsewhere adds their ranges. A browser reaches core over
-   the hostPath Unix socket, not the network.
+   the hostPath Unix socket, not the network. Core holds what a web task
+   can send out (approval for uploads, a budget for the rest), and the
+   egress proxy refuses the same ranges for the agent's own fetches
+   (`--open-deny-cidr`).
 3. `kivali-server-ingress` (defence in depth): the server's HTTP port 8080
    accepts only `0.0.0.0/0` except `networkPolicy.podCIDR`; port 3128
-   accepts only pods in the namespace. On k3s, kube-router evaluates policy
+   accepts only pods in the namespace. This is defence in depth, because
+   the API checks a session on every request. On k3s, kube-router evaluates policy
    before kube-proxy's SNAT and accepts traffic from the local node ahead of
    every pod chain, so kubelet probes and host-forwarded NodePort traffic
    are admitted, while a pod's request to the NodePort is dropped with its
    real pod address. `podCIDR` defaults to k3s's `10.42.0.0/16`; set it
-   to the cluster's pod network elsewhere (`examples/values-dev.yaml`
-   sets `10.244.0.0/16`).
+   to the cluster's pod network elsewhere, and `serviceCIDR` (default k3s's
+   `10.43.0.0/16`) to its Service network (`examples/values-dev.yaml` sets
+   `10.244.0.0/16` and `10.96.0.0/12`).
 
    The cost: any in-cluster front end (k3s's Traefik ingress, cloudflared,
    Tailscale operator pods) is a pod and is blocked on a server install.
@@ -217,6 +239,11 @@ standalone install does it by hand:
 - Dev-style installs (mutable `:dev` tag, so the upgrade changes nothing
   until the pod restarts): run it **after** `helm upgrade`, then
   `kubectl rollout restart deploy/kivali`.
+
+The release that gives agent pods the proxy by IP changes every pod's
+spec, so the server recreates each agent pod once on that upgrade. The
+egress proxy reloads its agents file when a pod registers, so a recreated
+pod needs no further step.
 
 A change to a chart-managed Secret rolls the server pod (checksum
 annotation); cycle agent pods the same way.

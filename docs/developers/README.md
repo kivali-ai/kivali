@@ -42,7 +42,7 @@ internal/
   web/ui/             the embedded web app build and its SPA handler
 cmd/
   agent-shell/          the per-agent shell sidecar
-  egress-proxy/       the egress proxy (per-agent domain allowlist)
+  egress-proxy/       the egress proxy (shell allowlist, agent credentials, budget)
   devseed/            seeds a data directory (demo, empty, setup scenarios)
   fake-claude/        a scripted stand-in for the claude CLI (local runs, e2e)
   inspect_request/    prints the request the server would send for an agent

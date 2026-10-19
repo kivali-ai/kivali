@@ -12,6 +12,7 @@ import (
 
 	"github.com/kivali-ai/kivali/internal/agentpod"
 	"github.com/kivali-ai/kivali/internal/claudeagent"
+	"github.com/kivali-ai/kivali/internal/egresscred"
 	"github.com/kivali-ai/kivali/internal/provider"
 )
 
@@ -79,6 +80,34 @@ func runAgent(args []string) {
 		logger.Fatalf("os.Executable: %v", err)
 	}
 
+	// The egress proxy credential: a secret drawn here and held in
+	// memory, its hash registered with core before any CLI starts and
+	// again each time the events stream reconnects. The CLIs get it in
+	// their proxy URL (driver Options.Env) and reach the public
+	// internet; the agent-shell container keeps the bare proxy URL and
+	// stays on the allowlist. Scrubbed of it: the body and query of
+	// every request udsClient sends core, and each CLI's stderr and
+	// stdin mirror as the driver writes them (to disk and to this
+	// process's stderr). The `kivali mcp` servers the CLIs start
+	// inherit it and scrub their own requests (mcp_cmd.go). No
+	// HTTPS_PROXY in this container means no proxy: nothing to
+	// register. Why open egress is safe for this container's processes:
+	// see SetUpEgressCredential.
+	cred, err := agentpod.SetUpEgressCredential(ctx, udsClient, os.Getenv("HTTPS_PROXY"))
+	if err != nil {
+		if ctx.Err() != nil {
+			logger.Print("shutdown before the egress credential was registered")
+			return
+		}
+		logger.Fatalf("egress credential: %v", err)
+	}
+	var cliEnv []string
+	var scrubber *egresscred.Scrubber
+	if cred != nil {
+		cliEnv, scrubber = cred.Env(), cred.Scrubber
+		logger.Print("egress credential registered")
+	}
+
 	// The driver is chosen here and nowhere else: the runtime below talks
 	// to whatever provider.Client it is handed, for parent turns and
 	// subagent runs alike, asks the same value (as provider.Provider)
@@ -99,6 +128,8 @@ func runAgent(args []string) {
 		SessionDir:   sessionDir,
 		Sessions:     udsClient.SessionStore(),
 		HomeDir:      os.Getenv("HOME"),
+		Env:          cliEnv,
+		Scrubber:     scrubber,
 		ShutdownCtx:  ctx,
 	})
 

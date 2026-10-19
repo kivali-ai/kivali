@@ -14,6 +14,7 @@ import (
 
 	"github.com/kivali-ai/kivali/internal/agent"
 	"github.com/kivali-ai/kivali/internal/clock"
+	"github.com/kivali-ai/kivali/internal/egresscred"
 )
 
 // SidecarShell implements agent.ShellExecutor by dispatching commands
@@ -56,6 +57,11 @@ type SidecarShell struct {
 	// no-such-file before giving up on the socket. Zero → 30s, which
 	// covers a slow sidecar image pull.
 	StartupGrace time.Duration
+
+	// Scrubber, when set, replaces the agent's egress proxy credential
+	// in every request to the daemon: the shell never receives it,
+	// even in a command the model wrote.
+	Scrubber *egresscred.Scrubber
 
 	connOnce sync.Once
 	conn     *sidecarConn
@@ -184,7 +190,7 @@ func joinCwd(prefix, userCwd string) string {
 // literal.
 func (s *SidecarShell) connection() *sidecarConn {
 	s.connOnce.Do(func() {
-		s.conn = newSidecarConn(s.SocketPath, s.Clock, s.DialTimeout, s.StartupGrace)
+		s.conn = newSidecarConn(s.SocketPath, s.Clock, s.DialTimeout, s.StartupGrace, s.Scrubber)
 	})
 	return s.conn
 }
@@ -202,10 +208,12 @@ type SidecarFiles struct {
 	// FilesRequest.Root).
 	Root string
 
-	// Clock, DialTimeout and StartupGrace are as on SidecarShell.
+	// Clock, DialTimeout, StartupGrace and Scrubber are as on
+	// SidecarShell.
 	Clock        clock.Clock
 	DialTimeout  time.Duration
 	StartupGrace time.Duration
+	Scrubber     *egresscred.Scrubber
 
 	connOnce sync.Once
 	conn     *sidecarConn
@@ -238,7 +246,7 @@ func (f *SidecarFiles) Dispatch(ctx context.Context, tool string, input json.Raw
 	hreq.Header.Set("Content-Type", "application/json")
 
 	f.connOnce.Do(func() {
-		f.conn = newSidecarConn(f.SocketPath, f.Clock, f.DialTimeout, f.StartupGrace)
+		f.conn = newSidecarConn(f.SocketPath, f.Clock, f.DialTimeout, f.StartupGrace, f.Scrubber)
 	})
 	// Retry during the startup grace like run_shell: a fresh pod's
 	// first tool call may well be a file_view.

@@ -150,6 +150,12 @@ describe('the browser window: connecting', () => {
     expect(FakeSocket.all).toHaveLength(0);
   });
 
+  it('opens no socket for a task awaiting approval of its uploads', async () => {
+    await renderWindow({ ...runningWeb, state: 'awaiting_approval', browser: undefined });
+    expect(screen.getByRole('status')).toHaveTextContent('The task has not started. It starts once you approve its uploads.');
+    expect(FakeSocket.all).toHaveLength(0);
+  });
+
   it('opens no socket for a task that has ended', async () => {
     await renderWindow(subagentTranscript.meta);
     expect(screen.getByRole('status')).toHaveTextContent('The task has ended.');

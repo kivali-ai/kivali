@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/kivali-ai/kivali/internal/builtinskills"
+	"github.com/kivali-ai/kivali/internal/egresscred"
 	"github.com/kivali-ai/kivali/internal/store"
 )
 
@@ -90,6 +91,11 @@ func TestRestoreDoesWhatABootDoes(t *testing.T) {
 	if err := src.Store.WriteEgressAllowlist(al); err != nil {
 		t.Fatal(err)
 	}
+	// The source's egress credentials stay behind: they belong to its
+	// runtimes.
+	if err := src.Store.SetEgressAgentCredential("alice", egresscred.Hash("source")); err != nil {
+		t.Fatal(err)
+	}
 	if err := src.Store.InstallBuiltinSkills(); err != nil {
 		t.Fatal(err)
 	}
@@ -106,6 +112,14 @@ func TestRestoreDoesWhatABootDoes(t *testing.T) {
 	dst.AgentPod = pods
 	proxyCopy := filepath.Join(t.TempDir(), "allowed_egress.yaml")
 	dst.Store.SetEgressSyncPath(proxyCopy)
+	agentsCopy := filepath.Join(t.TempDir(), "agents.json")
+	dst.Store.SetEgressAgentsSyncPath(agentsCopy)
+	if err := dst.Store.SetEgressAgentCredential("chief-of-staff", egresscred.Hash("running")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(agentsCopy); err != nil {
+		t.Fatal(err)
+	}
 	select { // the scheduler's wake channel holds one; empty it
 	case <-dst.autoReleaseCh:
 	default:
@@ -139,6 +153,12 @@ func TestRestoreDoesWhatABootDoes(t *testing.T) {
 
 	if b, err := os.ReadFile(proxyCopy); err != nil || !strings.Contains(string(b), "restored.example.org") {
 		t.Errorf("the proxy's allowlist = %q (%v), want the restored host", b, err)
+	}
+	// The proxy's agents file is written again, with the running
+	// pod's registration and none of the source's.
+	if b, err := os.ReadFile(agentsCopy); err != nil ||
+		!strings.Contains(string(b), egresscred.Hash("running")) || strings.Contains(string(b), egresscred.Hash("source")) {
+		t.Errorf("the proxy's agents file = %q (%v), want this deployment's registration only", b, err)
 	}
 
 	select {

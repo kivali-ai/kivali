@@ -24,7 +24,7 @@ import { mergeLoaded, thinkingLine, toAttachmentRef, toBlocks } from '../../stat
 import type { Block, ChatRow, LiveTask, PendingView, ThinkingView } from '../../state/transcript';
 import { bareToolName } from '../../state/toolSummary';
 import { duration, fileSize, messageTime, modelBadge } from './format';
-import { TASK_STATE, asApiError, signInWaitLine } from './tabsShared';
+import { TASK_STATE, asApiError, personWaitLine } from './tabsShared';
 import { SentRow } from './SentRow';
 
 /** Server rows (a past chat, a background task) as transcript rows: keyed, nothing live. */
@@ -170,17 +170,18 @@ function groupTask(t: LiveTask, base: string): SubagentGroupTask {
   if (t.state === 'running' && t.activity) task.latest = t.activity;
   if (t.state === 'errored') task.error = t.error || 'It stopped without saying why.';
   if (t.state === 'done' && t.output_md) task.result = <MarkdownBody md={t.output_md} />;
-  if (t.state === 'waiting_for_sign_in') {
+  const waitLine = personWaitLine(t.state);
+  if (waitLine) {
     task.children = (
       <Text variant="caption" tone="signal">
-        {signInWaitLine()}
+        {waitLine}
       </Text>
     );
   }
   return task;
 }
 
-/** A group's header counts a task waiting for sign-in as running: it is still under way. */
+/** A group's header counts a task waiting for a person as running: it is still under way. */
 function headerTask(t: SubagentGroupTask): SubagentGroupTask {
   return t.state === 'held' ? { ...t, state: 'running' } : t;
 }

@@ -452,7 +452,7 @@ clean shutdown.
 data disk. After an **unclean** stop (hard power cut, host crash) they
 are still in the cluster, and at the next boot kubelet can start them
 a few seconds before kube-router has programmed the NetworkPolicy
-rules, so for that window an agent pod could reach the server's API.
+rules, so for that window an agent pod could reach the cluster, the node and the open internet instead of only the egress proxy.
 The clean shutdown above deletes every Kivali pod first, which is why
 that window normally cannot occur; READY additionally waits for the
 policy controller.

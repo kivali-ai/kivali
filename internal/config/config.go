@@ -105,9 +105,16 @@ type Config struct {
 	// copy of allowed_egress.yaml for the egress-proxy sidecar to
 	// read. When empty, sync is disabled (useful in tests).
 	EgressAllowlistSyncPath string
-	// EgressProxyURL is what agent pods set HTTP_PROXY / HTTPS_PROXY
-	// to so the embedded claude CLI's outbound HTTPS routes through
-	// the egress proxy. Empty → no proxy env is injected.
+	// EgressAgentsSyncPath is where the Kivali container mirrors the
+	// agent runtimes' egress credential hashes and the model
+	// provider's hosts (store.EgressAgents) for the egress proxy to
+	// read. When empty, nothing is mirrored and the model hosts are not
+	// worked out. Sourced from EGRESS_AGENTS_SYNC_PATH.
+	EgressAgentsSyncPath string
+	// EgressProxyURL is the egress proxy agent pods route their
+	// outbound traffic through. Agent pods get it by IP (the host is
+	// resolved when the pod is provisioned) as HTTP_PROXY /
+	// HTTPS_PROXY. Empty → no proxy env is injected.
 	EgressProxyURL string
 
 	// AgentpodNamespace is the Kubernetes namespace per-agent Pods +
@@ -196,6 +203,7 @@ func Load() (Config, error) {
 		DevUser:                 envOr("DEV_USER", "dev@localhost"),
 		DevAllowNonLoopback:     envBool("DEV_MODE_ALLOW_NONLOOPBACK", false),
 		EgressAllowlistSyncPath: os.Getenv("EGRESS_ALLOWLIST_SYNC_PATH"),
+		EgressAgentsSyncPath:    os.Getenv("EGRESS_AGENTS_SYNC_PATH"),
 		EgressProxyURL:          os.Getenv("EGRESS_PROXY_URL"),
 		AgentpodNamespace:       envOr("AGENTPOD_NAMESPACE", "kivali-dev"),
 		AgentpodImage:           envOr("AGENTPOD_IMAGE", "kivali:dev"),

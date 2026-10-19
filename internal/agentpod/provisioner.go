@@ -4,6 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
+	"net/netip"
+	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -62,9 +66,13 @@ type ProvisionerConfig struct {
 	// label in the chart's Deployment (charts/kivali/templates/deployment.yaml).
 	WebSelector map[string]string
 
-	// ProxyURL, when non-empty, is written into each agent pod's env
-	// as HTTP_PROXY / HTTPS_PROXY / http_proxy / https_proxy so the
-	// claude CLI's outbound HTTPS routes through the egress proxy.
+	// ProxyURL, when non-empty, is the egress proxy. Provision writes
+	// it into both containers' env as HTTP_PROXY / HTTPS_PROXY /
+	// http_proxy / https_proxy with its host resolved to an IP (agent
+	// pods have no DNS) and no credentials: the agent-shell's traffic
+	// stays on the allowlist, and the agent runtime adds its own
+	// credential for the agent processes it starts
+	// (SetUpEgressCredential).
 	ProxyURL string
 
 	// CPURequest / MemoryRequest / CPULimit / MemoryLimit override
@@ -166,6 +174,7 @@ type Provisioner struct {
 	kube     *kube.Client
 	logger   func(format string, args ...any)
 	software func(slug string) ([]string, error)
+	resolve  func(ctx context.Context, host string) ([]string, error)
 }
 
 // ProvisionerOption configures a Provisioner. Functional options keep
@@ -186,10 +195,23 @@ func WithSoftware(fn func(slug string) ([]string, error)) ProvisionerOption {
 	return func(p *Provisioner) { p.software = fn }
 }
 
-// manifestFor is slug's pod manifest with its current software. A name
-// that is not a Debian package name never reaches the pod: it is left
-// out and logged, and the rest of the list installs.
-func (p *Provisioner) manifestFor(slug string) (map[string]any, error) {
+// WithResolver replaces the DNS lookup Provision resolves the proxy's
+// host with (net.DefaultResolver.LookupHost). Test seam.
+func WithResolver(fn func(ctx context.Context, host string) ([]string, error)) ProvisionerOption {
+	return func(p *Provisioner) { p.resolve = fn }
+}
+
+// manifestFor is slug's pod manifest with its current software and the
+// proxy by IP. A name that is not a Debian package name never reaches
+// the pod: it is left out and logged, and the rest of the list
+// installs. A proxy host that does not resolve fails it.
+func (p *Provisioner) manifestFor(ctx context.Context, slug string) (map[string]any, error) {
+	cfg := p.cfg
+	proxy, err := proxyByIP(ctx, cfg.ProxyURL, p.resolve)
+	if err != nil {
+		return nil, err
+	}
+	cfg.ProxyURL = proxy
 	var software []string
 	if p.software != nil {
 		listed, err := p.software(slug)
@@ -204,7 +226,71 @@ func (p *Provisioner) manifestFor(slug string) (map[string]any, error) {
 			software = append(software, n)
 		}
 	}
-	return p.cfg.podManifestWithSoftware(slug, software), nil
+	return cfg.podManifestWithSoftware(slug, software), nil
+}
+
+// lowestAddr is the lowest IPv4 address in addrs, else the lowest
+// IPv6 one, else nil. Lowest rather than first: a name with several
+// records resolves in any order, and the pick lands in the pod spec,
+// whose hash must not change from one lookup to the next.
+func lowestAddr(addrs []string) net.IP {
+	var v4, v6 []netip.Addr
+	for _, a := range addrs {
+		ip, err := netip.ParseAddr(a)
+		if err != nil {
+			continue
+		}
+		if ip = ip.Unmap(); ip.Is4() {
+			v4 = append(v4, ip)
+		} else {
+			v6 = append(v6, ip.WithZone(""))
+		}
+	}
+	for _, set := range [][]netip.Addr{v4, v6} {
+		if len(set) > 0 {
+			slices.SortFunc(set, netip.Addr.Compare)
+			return net.IP(set[0].AsSlice())
+		}
+	}
+	return nil
+}
+
+// proxyByIP is raw, the configured proxy URL, as an agent pod gets it:
+// scheme, the host resolved to an IP (lowestAddr), and the port. A host
+// that is already an IP is kept. Empty raw is no proxy.
+func proxyByIP(ctx context.Context, raw string, resolve func(context.Context, string) ([]string, error)) (string, error) {
+	if strings.TrimSpace(raw) == "" {
+		return "", nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" || u.Hostname() == "" {
+		return "", fmt.Errorf("egress proxy URL %q: want scheme://host:port", raw)
+	}
+	if u.User != nil {
+		return "", fmt.Errorf("egress proxy URL carries credentials; agent pods get the proxy without them")
+	}
+	host, port := u.Hostname(), u.Port()
+	ip := net.ParseIP(host)
+	if ip == nil {
+		if resolve == nil {
+			resolve = net.DefaultResolver.LookupHost
+		}
+		addrs, err := resolve(ctx, host)
+		if err != nil {
+			return "", fmt.Errorf("egress proxy: resolve %s: %w", host, err)
+		}
+		ip = lowestAddr(addrs)
+		if ip == nil {
+			return "", fmt.Errorf("egress proxy: %s resolves to no address", host)
+		}
+	}
+	addr := ip.String()
+	if port != "" {
+		addr = net.JoinHostPort(addr, port)
+	} else if ip.To4() == nil {
+		addr = "[" + addr + "]"
+	}
+	return (&url.URL{Scheme: u.Scheme, Host: addr}).String(), nil
 }
 
 // NewProvisioner returns a Provisioner. The k8s client is
@@ -273,7 +359,7 @@ func (p *Provisioner) ProvisionNotify(ctx context.Context, slug string, starting
 		starting()
 		return nil
 	}
-	manifest, err := p.manifestFor(slug)
+	manifest, err := p.manifestFor(ctx, slug)
 	if err != nil {
 		return err
 	}

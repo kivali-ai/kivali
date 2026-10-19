@@ -67,6 +67,9 @@ const (
 	// BlockedUserDidNotRespond is written by core alone, when a task
 	// waited for a person who never came.
 	BlockedUserDidNotRespond BlockedOn = "user_did_not_respond"
+	// BlockedUploadDenied is written by core alone, when a person denied
+	// a task's uploads; Reason carries what they said.
+	BlockedUploadDenied BlockedOn = "upload_denied"
 )
 
 // submittableBlockedOn are the reasons a subagent may write.
@@ -106,8 +109,12 @@ type Result struct {
 	Result       json.RawMessage `json:"result,omitempty"`
 	Alternatives []Alternative   `json:"alternatives,omitempty"`
 	BlockedOn    BlockedOn       `json:"blocked_on,omitempty"`
-	Files        []string        `json:"files,omitempty"`
-	Error        string          `json:"error,omitempty"`
+	// Reason says why a result core wrote ended as it did: a person's
+	// own words when they denied a task's uploads, or core's when a
+	// restart ended a task. A subagent cannot submit it.
+	Reason string   `json:"reason,omitempty"`
+	Files  []string `json:"files,omitempty"`
+	Error  string   `json:"error,omitempty"`
 	WebFacts
 }
 
@@ -256,8 +263,8 @@ func Validate(s *Schema, raw json.RawMessage, rules Rules) (Result, []string) {
 		str, _ := blockedVal.(string)
 		out.BlockedOn = BlockedOn(str)
 		if !containsBlocked(submittableBlockedOn, out.BlockedOn) {
-			if out.BlockedOn == BlockedUserDidNotRespond {
-				errs.add(`blocked_on "user_did_not_respond" is written only by core`)
+			if out.BlockedOn == BlockedUserDidNotRespond || out.BlockedOn == BlockedUploadDenied {
+				errs.add(fmt.Sprintf("blocked_on %q is written only by core", out.BlockedOn))
 			} else {
 				errs.add(fmt.Sprintf("blocked_on is required with outcome \"blocked\" and must be one of %s", joinBlocked(submittableBlockedOn)))
 			}
@@ -476,6 +483,12 @@ func Failed(reason string) Result {
 // who never came.
 func Blocked(on BlockedOn) Result {
 	return Result{Outcome: OutcomeBlocked, BlockedOn: on}
+}
+
+// UploadDenied is the result core writes when a person denied a task's
+// uploads, with what they said, if anything.
+func UploadDenied(reason string) Result {
+	return Result{Outcome: OutcomeBlocked, BlockedOn: BlockedUploadDenied, Reason: reason}
 }
 
 // Body renders the result as the JSON the calling agent reads: indented,

@@ -984,7 +984,7 @@ initImage: docker.io/rancher/mirrored-library-busybox:1.37.0   # from the baked 
 image: {repository: kivali, tag: dev, pullPolicy: IfNotPresent}  # from the baked Kivali images
 egress: {image: {repository: kivali-egress-proxy, tag: dev}}
 secrets: {create: true, ownerEmails: <--owner>, sessionKey: <32 random bytes, hex>}
-networkPolicy: {enabled: true, podCIDR: 10.42.0.0/16}
+networkPolicy: {enabled: true, podCIDR: 10.42.0.0/16, serviceCIDR: 10.43.0.0/16}
 oauth: {publicClientID: <--public-client-id, if given>}
 extraEnv: <--env>
 # then every --set

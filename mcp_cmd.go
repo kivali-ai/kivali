@@ -12,6 +12,7 @@ import (
 	"github.com/kivali-ai/kivali/internal/agentpod"
 	"github.com/kivali-ai/kivali/internal/claudeagent"
 	"github.com/kivali-ai/kivali/internal/controlclient"
+	"github.com/kivali-ai/kivali/internal/egresscred"
 	"github.com/kivali-ai/kivali/internal/mcp"
 	"github.com/kivali-ai/kivali/internal/structured"
 )
@@ -61,6 +62,7 @@ func runMCP(args []string) {
 	subagentDepth := fs.Int("depth", 1, "[subagent] tier below the durable agent (1 = dispatched by the agent itself). Decides whether this subagent may delegate.")
 	resultSchemaPath := fs.String("result-schema", "", "[subagent, web] path of the task's result schema; when set, the toolkit carries submit_result built from it")
 	webSession := fs.String("session", "", "[web] the web session the task runs in (open, or a site)")
+	webSite := fs.String("site", "", "[web] the site the task is held to: its session's, or the site its uploads were approved for; empty for none")
 	_ = fs.Parse(args)
 
 	logger := log.New(os.Stderr, "mcp: ", log.LstdFlags|log.Lmicroseconds)
@@ -75,7 +77,7 @@ func runMCP(args []string) {
 	case "subagent":
 		runSubagentMCP(logger, *coreUDS, *parentSlug, *subagentID, *subagentFilesRoot, *subagentDepth, *resultSchemaPath)
 	case "web":
-		runWebSubagentMCP(logger, *coreUDS, *parentSlug, *subagentID, *webSession, *subagentDepth, *resultSchemaPath)
+		runWebSubagentMCP(logger, *coreUDS, *parentSlug, *subagentID, *webSession, *webSite, *subagentDepth, *resultSchemaPath)
 	default:
 		logger.Fatalf("unknown --toolkit %q (want full-agent, subagent or web)", *toolkitName)
 	}
@@ -85,7 +87,7 @@ func runMCP(args []string) {
 // submit_result, every one a relay to core over the agent pod's UDS.
 // No files root and no depth: a web subagent has no files, no shell
 // and cannot delegate.
-func runWebSubagentMCP(logger *log.Logger, socketPath, parent, id, session string, depth int, resultSchemaPath string) {
+func runWebSubagentMCP(logger *log.Logger, socketPath, parent, id, session, site string, depth int, resultSchemaPath string) {
 	if parent == "" || id == "" {
 		logger.Fatal("--parent and --subagent-id are required for --toolkit web")
 	}
@@ -107,9 +109,10 @@ func runWebSubagentMCP(logger *log.Logger, socketPath, parent, id, session strin
 		logger.Fatalf("--result-schema %q: %v", resultSchemaPath, err)
 	}
 	tk := mcp.WebSubagentToolkit(mcp.WebSubagentDeps{
-		Client:     agentpod.NewClient(socketPath, parent),
+		Client:     coreClient(socketPath, parent),
 		SubagentID: id,
 		Session:    session,
+		Site:       site,
 		// A task the agent dispatched itself, in a site session, may
 		// pause for a person to sign in; a deeper one may not.
 		CanWait:      session != agentpod.OpenWebSession && depth == 1,
@@ -148,13 +151,13 @@ func runFullAgentMCP(logger *log.Logger, socketPath, agentSlug string) {
 	if _, err := os.Stat(socketPath); err != nil {
 		logger.Fatalf("--core-uds %q: %v", socketPath, err)
 	}
-	client := agentpod.NewClient(socketPath, agentSlug)
+	client := coreClient(socketPath, agentSlug)
 	isCoS := agentSlug == "chief-of-staff"
 
 	// Subagent backend goes through controlclient against the same
 	// socket. Publishes don't go through controlclient; the publish
 	// dispatcher routes server-side.
-	subagentBackend := controlSubagentBackend{client: controlclient.New(socketPath, agentSlug)}
+	subagentBackend := controlSubagentBackend{client: controlClient(socketPath, agentSlug)}
 
 	// run_shell and the file_* tools both execute in the agent-shell
 	// sidecar, reached over its per-pod UDS. The sidecar carries the
@@ -220,7 +223,7 @@ func runSubagentMCP(logger *log.Logger, socketPath, parent, id, filesRoot string
 	if _, err := os.Stat(socketPath); err != nil {
 		logger.Fatalf("--core-uds %q: %v", socketPath, err)
 	}
-	client := agentpod.NewClient(socketPath, parent)
+	client := coreClient(socketPath, parent)
 	// Shell cwd and the file_* root are the subagent's narrowed
 	// /files/ view. In the agent pod both execute in the agent-shell
 	// sidecar (AGENT_SHELL_SOCKET is set on `kivali agent`), named by
@@ -244,7 +247,7 @@ func runSubagentMCP(logger *log.Logger, socketPath, parent, id, filesRoot string
 	// wrote this process's arguments, so the model running above this
 	// server has no way to reach for a tool its tier was not given.
 	if agentpod.CanDelegate(depth) {
-		deps.NestedSubagent = nestedSubagentBackend{client: controlclient.New(socketPath, parent)}
+		deps.NestedSubagent = nestedSubagentBackend{client: controlClient(socketPath, parent)}
 	}
 	// The schema file was written by the agent runtime from the spec
 	// core sent, and core accepted the schema at dispatch; a file that
@@ -316,4 +319,22 @@ func (b controlSubagentBackend) WebSessions(ctx context.Context, parent string) 
 
 func (b controlSubagentBackend) WebSessionReset(ctx context.Context, parent, session string) (string, error) {
 	return b.client.WebSessionReset(ctx, parent, session)
+}
+
+// An MCP server started by an agent pod's CLI inherits the runtime's
+// credentialed proxy URL in its environment. Every request it sends
+// over core.sock, through either client below, has that credential
+// scrubbed from its body and query: tool arguments the model wrote,
+// subagent prompts among them. Its requests to the agent-shell daemon
+// are scrubbed the same way (shellScrubber).
+
+// coreClient is the agentpod.Client an MCP server talks to core with.
+func coreClient(socketPath, slug string) *agentpod.Client {
+	return agentpod.NewClient(socketPath, slug).WithScrubber(egresscred.ScrubberFromEnv(os.Getenv))
+}
+
+// controlClient is the controlclient.Client an MCP server dispatches
+// subagents and routes messages with.
+func controlClient(socketPath, slug string) *controlclient.Client {
+	return controlclient.New(socketPath, slug).WithScrubber(egresscred.ScrubberFromEnv(os.Getenv))
 }

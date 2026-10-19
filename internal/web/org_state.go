@@ -87,6 +87,15 @@ func (s *Server) orgSnapshotValue() orgSnapshot {
 	// lands (or one resolves), which changes this list. The same
 	// cached inbox read queueStatus counted from (ceoNeeds).
 	_, ceoPaths := s.ceoNeeds()
+	// A web task's rows on Needs you (a sign-in, an upload to approve,
+	// a budget notice) come and go with no inbox entry; their IDs join
+	// the list so Home refetches for them too, and the count with them.
+	unactioned := ts.InboxUnactioned
+	if webNeeds := s.SubagentService.webNeedIDs(); len(webNeeds) > 0 {
+		ceoPaths = append(append([]string{}, ceoPaths...), webNeeds...)
+		sort.Strings(ceoPaths)
+		unactioned += len(webNeeds)
+	}
 
 	// Read the version BEFORE the set: a write landing in between
 	// leaves the cached set tagged one version behind, never ahead, so
@@ -110,7 +119,7 @@ func (s *Server) orgSnapshotValue() orgSnapshot {
 	return orgSnapshot{
 		Agents: agents,
 		Inbox: inboxLiveness{
-			Unactioned:   ts.InboxUnactioned,
+			Unactioned:   unactioned,
 			PendingPaths: pendingPaths,
 			CEOPaths:     ceoPaths,
 			AutoRelease:  apitypes.AutoRelease(autoReleaseKey(s.Store.ReadAutoRelease())),

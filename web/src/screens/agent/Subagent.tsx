@@ -9,7 +9,7 @@ import { useOrg } from '../../state/OrgProvider';
 import { useNow } from '../home/useNow';
 import { useChatDeps } from './chatDeps';
 import { Transcript, keyRows } from './Transcript';
-import { SIGN_IN_REASON, TASK_STATE, elapsedLabel, signInWaitLine, modelLabel, useFetched } from './tabsShared';
+import { SIGN_IN_REASON, TASK_STATE, elapsedLabel, personWaitLine, modelLabel, useFetched } from './tabsShared';
 import '../../styles/agent-tabs.css';
 
 /** Under Open browser: what the task's browser is doing, when that is worth saying. */
@@ -42,8 +42,10 @@ export function Subagent() {
   const parentSlug = meta?.parent || slug;
   const parentName = useMemo(() => flattenTree(org.tree).find((n) => n.slug === parentSlug)?.name ?? parentSlug, [org.tree, parentSlug]);
   const waiting = meta?.state === 'waiting_for_sign_in';
-  // A task waiting for sign-in is still under way: its stream, clock and browser window stay live.
-  const live = meta?.state === 'running' || waiting;
+  const approving = meta?.state === 'awaiting_approval';
+  // A task waiting for a person is still under way: its stream and clock stay live, and while it waits for
+  // sign-in its browser window too. A task awaiting approval has not started, so it has no browser yet.
+  const live = meta?.state === 'running' || waiting || approving;
   const browserHref = useHref(browserWindowPath(slug, id));
 
   useFrameChrome({
@@ -106,11 +108,13 @@ export function Subagent() {
   }
 
   const seconds = meta.started > 0 ? Math.max(0, ((meta.ended ?? now) - meta.started) / 1000) : 0;
-  // A queued task has no start time yet (and no browser to show): the button comes with the start.
+  // A queued task has no start time yet (and no browser to show): the button comes with the start. A task
+  // awaiting approval of its uploads has not started either, and says so itself.
   const started = meta.started > 0;
-  const watchable = meta.kind === 'web' && live && started;
+  const watchable = meta.kind === 'web' && live && started && !approving;
+  const waitLine = personWaitLine(meta.state, meta.site);
   let browserCaption = watchable && meta.browser ? BROWSER_CAPTION[meta.browser] : undefined;
-  if (meta.kind === 'web' && live && !started) browserCaption = 'The task has not started yet. Open browser appears once it has.';
+  if (meta.kind === 'web' && live && !started && !approving) browserCaption = 'The task has not started yet. Open browser appears once it has.';
   const stateLine = 'Background task for ' + parentName + (meta.step ? ' · ' + stepPhrase(meta.step) : '');
 
   return (
@@ -120,7 +124,7 @@ export function Subagent() {
           {meta.description}
         </Text>
         <div className="app-sub-line">
-          <AgentState state={TASK_STATE[meta.state]} {...(waiting ? { label: signInWaitLine(meta.site) } : {})} />
+          <AgentState state={TASK_STATE[meta.state]} {...(waitLine ? { label: waitLine } : {})} />
           <Text variant="caption" tone="muted">
             {stateLine}
           </Text>
@@ -153,6 +157,11 @@ export function Subagent() {
               Open the browser, do what the page asks, then choose Continue the task.
             </Text>
           </>
+        )}
+        {approving && (
+          <Text as="p" variant="caption" tone="muted">
+            It uploads files, so it starts once you approve it in Needs you on Home.
+          </Text>
         )}
         {browserCaption && (
           <Text as="p" variant="caption" tone="muted">

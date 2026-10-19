@@ -631,6 +631,8 @@ function taskState(status: string): SubagentTaskState | undefined {
       return 'running';
     case 'waiting_for_sign_in':
       return 'waiting_for_sign_in';
+    case 'awaiting_approval':
+      return 'awaiting_approval';
     default:
       return undefined;
   }

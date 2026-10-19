@@ -13,6 +13,7 @@ import (
 	"sync"
 
 	"github.com/kivali-ai/kivali/internal/claudeauth"
+	"github.com/kivali-ai/kivali/internal/egresscred"
 )
 
 // signInWatch tells the runner registry which sign-in the CLI would
@@ -46,13 +47,18 @@ type signInWatch struct {
 	key      string
 }
 
-func newSignInWatch(binary, home string) *signInWatch {
+// newSignInWatch asks binary for the status with env added to this
+// process's environment: the run env the CLIs it watches for get, so
+// the status sees the network they do. scrub keeps the egress proxy
+// credential env may carry out of the CLI stderr a failed status
+// quotes, which Key logs.
+func newSignInWatch(binary, home string, env []string, scrub *egresscred.Scrubber) *signInWatch {
 	if binary == "" {
 		binary = "claude"
 	}
 	return &signInWatch{
 		home:   home,
-		status: func(ctx context.Context) (claudeauth.Status, error) { return authStatus(ctx, binary) },
+		status: func(ctx context.Context) (claudeauth.Status, error) { return authStatus(ctx, binary, env, scrub) },
 	}
 }
 

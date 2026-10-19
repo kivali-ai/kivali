@@ -20,8 +20,9 @@ The chart's `values.yaml` is commented key by key. These are the values most ins
 | `persistence.storageClassName` | empty | Empty uses the cluster's default StorageClass. |
 | `persistence.keepOnUninstall` | `true` | Keep the data volume when the chart is uninstalled. |
 | `server.resources` | requests 200m, 1Gi; limits 1000m, 12Gi | Server resources. Agents run in their own pods, outside this limit. |
-| `networkPolicy.enabled` | `true` | Install the agent-pod and server-ingress policies. See [Self-hosting](self-hosting.md#network-policy-and-egress). |
-| `networkPolicy.podCIDR` | `10.42.0.0/16` | Your cluster's pod network, excluded from the server's ingress. The default is k3s's. |
+| `networkPolicy.enabled` | `true` | Install the agent-pod, browser-pod and server-ingress policies. See [Self-hosting](self-hosting.md#network-policy-and-egress). |
+| `networkPolicy.podCIDR` | `10.42.0.0/16` | Your cluster's pod network, excluded from the server's ingress and refused by the egress proxy for every agent request. The default is k3s's. |
+| `networkPolicy.serviceCIDR` | `10.43.0.0/16` | Your cluster's Service network, refused by the egress proxy for every agent request. The default is k3s's. |
 | `networkPolicy.serverIngress.enabled` | `true` | The server-ingress policy alone. |
 | `networkPolicy.serverIngress.extraFrom` | `[]` | Extra peers allowed to reach the server, such as an in-cluster ingress controller. |
 | `oauth.redirectURL` | empty | A fixed sign-in callback URL. Use only where the address is the same for everyone, such as a loopback address; otherwise use the Secret's `oauth-redirect-url`. |
@@ -100,8 +101,9 @@ The chart sets these to match the objects it creates. Leave them alone unless yo
 | `BROWSER_MEMORY_REQUEST` | Each browser pod's memory request, a Kubernetes quantity. Default `512Mi`. |
 | `BROWSER_CPU_LIMIT` | Each browser pod's CPU limit, a Kubernetes quantity. Default `2`. |
 | `BROWSER_MEMORY_LIMIT` | Each browser pod's memory limit, a Kubernetes quantity. Default `2Gi`. |
-| `EGRESS_ALLOWLIST_SYNC_PATH` | Where the server writes the host list for the egress proxy. |
-| `EGRESS_PROXY_URL` | The proxy agent pods send their outbound traffic through. |
+| `EGRESS_ALLOWLIST_SYNC_PATH` | Where the server writes the host list (agents' shells) for the egress proxy. |
+| `EGRESS_AGENTS_SYNC_PATH` | Where the server writes each agent's proxy credential hash and the model provider's hosts for the egress proxy. Empty writes nothing. The chart sets it to `/etc/egress/agents.json`. |
+| `EGRESS_PROXY_URL` | The proxy agent pods send their outbound traffic through. The server resolves its host to an address when it starts an agent pod, because agent pods have no DNS. |
 
 A browser resource that is not a Kubernetes quantity (`500m`, `2`, `1Gi`; not `1GB`) stops the server at start, rather than failing every browser at the first web task.
 

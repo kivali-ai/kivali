@@ -157,8 +157,8 @@ describe('Home renders', () => {
     expect(screen.getByText('Waiting on #45, Run the tests')).toBeInTheDocument();
 
     const needs = screen.getByRole('region', { name: 'Needs you' });
-    expect(within(needs).getByLabelText('7 waiting on you')).toHaveTextContent('7');
-    for (const kind of ['Approval', 'Hire', 'Notice', 'Assigned to you', 'Needs help', 'Sign in', 'Install software']) expect(within(needs).getByText(kind)).toBeInTheDocument();
+    expect(within(needs).getByLabelText('9 waiting on you')).toHaveTextContent('9');
+    for (const kind of ['Approval', 'Hire', 'Notice', 'Assigned to you', 'Needs help', 'Sign in', 'Install software', 'Upload', 'Web budget']) expect(within(needs).getByText(kind)).toBeInTheDocument();
 
     const queue = screen.getByRole('region', { name: 'Queue' });
     expect(within(queue).getByText('3 passing through')).toBeInTheDocument();
@@ -248,9 +248,9 @@ describe('Home follows the design rules', () => {
     await renderHome(busyHome);
     const signals = document.querySelectorAll('.kv-badge--signal');
     expect(signals).toHaveLength(1);
-    expect(signals[0]).toHaveAccessibleName('7 waiting on you');
+    expect(signals[0]).toHaveAccessibleName('9 waiting on you');
     const needs = screen.getByRole('region', { name: 'Needs you' });
-    for (const kind of ['Approval', 'Hire', 'Notice', 'Assigned to you', 'Needs help', 'Sign in', 'Install software']) expect(within(needs).getByText(kind)).toHaveClass('kv-badge--neutral');
+    for (const kind of ['Approval', 'Hire', 'Notice', 'Assigned to you', 'Needs help', 'Sign in', 'Install software', 'Upload', 'Web budget']) expect(within(needs).getByText(kind)).toHaveClass('kv-badge--neutral');
   });
 
   it('keeps Release all the one primary until a row opens, and Open chat secondary', async () => {
@@ -382,7 +382,7 @@ describe('Needs you', () => {
     expect(form.get('message')).toBe('Go ahead.');
     expect((form.getAll('attachments[]')[0] as File).name).toBe('po.pdf');
     expect(document.querySelector(`[data-id="${approval.id}"]`)).toBeNull();
-    expect(screen.getByLabelText('6 waiting on you')).toBeInTheDocument();
+    expect(screen.getByLabelText('8 waiting on you')).toBeInTheDocument();
 
     // The answer's result shows as a toast with a link, and leaves on its own.
     const toast = screen.getAllByRole('status').find((el) => el.textContent?.includes('Garden advisor is hired and reports to Chief of Staff'));
@@ -486,6 +486,82 @@ describe('Needs you', () => {
       expect(row.getByText('Page: Sign in · Vendor · https://vendor.example/login?next=%2Fbuilds')).toBeInTheDocument();
       expect(row.queryByRole('link', { name: /vendor\.example\/login/ })).toBeNull();
       expect(row.getByText('Sign in')).toBeInTheDocument();
+    });
+  });
+
+  describe('a web task that wants to upload files (home.json)', () => {
+    const upload = busyHome.needs.find((n) => n.kind === 'web_upload');
+    if (!upload) throw new Error('fixture has no web_upload row');
+
+    it('shows the files, where the task starts and its prompt as plain text, with Deny and Approve upload', async () => {
+      await renderHome(busyHome);
+      fireEvent.click(screen.getByRole('button', { name: /Upload 2 files to vendor\.example/ }));
+      const row = within(rowFor('data-id', upload.id));
+      expect(row.getByText('Upload')).toBeInTheDocument();
+      expect(row.getByText(/A web task wants to upload these files to vendor\.example/)).toBeInTheDocument();
+      expect(row.getByText('/files/artifacts/private/quote-signed.pdf')).toBeInTheDocument();
+      expect(row.getByText('/files/project/terms.pdf')).toBeInTheDocument();
+      // Each file as it was at dispatch, opened like any file an agent shares.
+      expect(row.getByRole('button', { name: /quote-signed\.pdf/ })).toBeInTheDocument();
+      expect(row.getByRole('button', { name: /terms\.pdf/ })).toBeInTheDocument();
+      expect(row.getByText(/puts the files only on its pages\. What the site does with a file after that is up to the site/)).toBeInTheDocument();
+      expect(row.getByText('https://portal.vendor.example/quotes/new')).toBeInTheDocument();
+      expect(row.getByText("Upload the signed quote and our terms to the vendor's quote form, then submit it.")).toBeInTheDocument();
+      expect(row.getByRole('link', { name: 'Send the signed quote' })).toHaveAttribute('href', '/agents/buyer/subagents/cccc3333');
+      expect(row.getByRole('button', { name: 'Deny' })).toBeInTheDocument();
+      expect(row.getByRole('button', { name: 'Approve upload' })).toBeInTheDocument();
+      expect(row.queryByRole('button', { name: 'Attach' })).toBeNull();
+    });
+
+    it('approves through the approve endpoint with the row’s id, and the row leaves', async () => {
+      formMock.mockResolvedValue({ result: 'Upload approved. The task starts now', link: '/agents/buyer/subagents/cccc3333' });
+      await renderHome(busyHome);
+      fireEvent.click(screen.getByRole('button', { name: /Upload 2 files to vendor\.example/ }));
+      fireEvent.click(within(rowFor('data-id', upload.id)).getByRole('button', { name: 'Approve upload' }));
+      await flush();
+      const [url, form] = formMock.mock.calls[0] as [string, FormData];
+      expect(url).toBe('/api/v1/needs/approve');
+      expect(form.get('path')).toBe('web_upload:buyer/cccc3333');
+      expect(form.getAll('attachments[]')).toHaveLength(0);
+      expect(document.querySelector(`[data-id="${upload.id}"]`)).toBeNull();
+      expect(screen.getByText('Upload approved. The task starts now')).toBeInTheDocument();
+    });
+
+    it('denies with the person’s reason', async () => {
+      formMock.mockResolvedValue({ result: 'Upload denied. The task ends without uploading anything' });
+      await renderHome(busyHome);
+      fireEvent.click(screen.getByRole('button', { name: /Upload 2 files to vendor\.example/ }));
+      const row = within(rowFor('data-id', upload.id));
+      fireEvent.change(row.getByLabelText('Note (optional)'), { target: { value: 'Not that vendor.' } });
+      fireEvent.click(row.getByRole('button', { name: 'Deny' }));
+      await flush();
+      const [url, form] = formMock.mock.calls[0] as [string, FormData];
+      expect(url).toBe('/api/v1/needs/deny');
+      expect(form.get('path')).toBe(upload.id);
+      expect(form.get('message')).toBe('Not that vendor.');
+    });
+  });
+
+  describe('a web task stopped by the web budget (home.json)', () => {
+    const notice = busyHome.needs.find((n) => n.kind === 'web_budget');
+    if (!notice) throw new Error('fixture has no web_budget row');
+
+    it('says what was refused, links the task and is acknowledged', async () => {
+      formMock.mockResolvedValue({});
+      await renderHome(busyHome);
+      fireEvent.click(screen.getByRole('button', { name: /tried to send 5\.1 KB to paste\.example/ }));
+      const row = within(rowFor('data-id', notice.id));
+      expect(row.getByText('Web budget')).toBeInTheDocument();
+      expect(row.getByText(/One action may send 2 KB\. .*Kivali refused the action/)).toBeInTheDocument();
+      expect(row.getByText('Task: Check the status page')).toBeInTheDocument();
+      expect(row.getByRole('link', { name: 'Open task' })).toHaveAttribute('href', '/agents/tester/subagents/dddd4444');
+      expect(row.queryByRole('button', { name: 'Approve' })).toBeNull();
+      fireEvent.click(row.getByRole('button', { name: 'Acknowledge' }));
+      await flush();
+      const [url, form] = formMock.mock.calls[0] as [string, FormData];
+      expect(url).toBe('/api/v1/needs/ack');
+      expect(form.get('path')).toBe('web_budget:tester/dddd4444');
+      expect(document.querySelector(`[data-id="${notice.id}"]`)).toBeNull();
     });
   });
 });

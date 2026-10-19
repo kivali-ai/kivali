@@ -178,6 +178,13 @@ describe('a background task’s result', () => {
     expect(screen.getByText('1 running · 1 done')).toBeVisible();
   });
 
+  it('draws a task awaiting approval of its uploads on hold, saying what it waits for', () => {
+    const task = { index: 0, id: 'cccc3333', title: 'Send the quote', model: 'Sonnet 4.6', effort: 'low', kind: 'web' as const, session: 'open', url: '/api/v1/agents/a/subagents/cccc3333' };
+    renderAt(<Transcript rows={keyRows([{ kind: 'subagents', ts: 1, tasks: [{ ...task, state: 'awaiting_approval' }] }])} agent={{ slug: 'a', name: 'A' }} now={1} />);
+    expect(screen.getByText('On hold')).toBeVisible();
+    expect(screen.getByText('Waiting for you to approve its uploads')).toBeInTheDocument();
+  });
+
   it('says a failed task failed, under the same avatar as one that finished', () => {
     const task = { index: 0, id: 'bbbb2222', title: 'Check the build logs', model: 'Haiku 4.5', effort: 'medium', url: '/api/v1/agents/a/subagents/bbbb2222' };
     const rows = keyRows([

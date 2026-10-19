@@ -46,7 +46,23 @@ spec:
         - name: egress-proxy
           image: {{ include "kivali.egressImage" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          args: ["--listen=:3128", "--allowlist=/etc/egress/allowlist.yaml"]
+          args:
+            - --listen=:3128
+            - --allowlist=/etc/egress/allowlist.yaml
+            - --agents=/etc/egress/agents.json
+            - --deny-cidr={{ .Values.networkPolicy.podCIDR }}
+            - --deny-cidr={{ .Values.networkPolicy.serviceCIDR }}
+            # The node's own address, which may be public on a cloud VM.
+            - --deny-cidr=$(HOST_IP)
+            # The agent's own fetches are held to what browser pods are.
+            {{- range .Values.networkPolicy.browserEgress.except }}
+            - --open-deny-cidr={{ . }}
+            {{- end }}
+          env:
+            - name: HOST_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
           ports:
             - name: proxy
               containerPort: 3128
@@ -93,6 +109,8 @@ spec:
               value: {{ .Values.browser.resources.limits.memory | quote }}
             - name: EGRESS_ALLOWLIST_SYNC_PATH
               value: /etc/egress/allowlist.yaml
+            - name: EGRESS_AGENTS_SYNC_PATH
+              value: /etc/egress/agents.json
             - name: EGRESS_PROXY_URL
               value: http://kivali-egress.{{ .Release.Namespace }}.svc.cluster.local:3128
             - name: KIVALI_ENV

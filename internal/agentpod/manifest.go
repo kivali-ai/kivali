@@ -30,8 +30,10 @@ import (
 //     UDS dir only exists on Kivali web's node.
 //
 // automountServiceAccountToken stays false (the agent pod has no
-// business talking to k8s API) and the egress proxy env vars are
-// kept (claude CLI's outbound HTTPS).
+// business talking to k8s API). Both containers get the egress proxy
+// env vars set to the bare proxy URL, with no credential: the agent
+// runtime adds its own for the agent processes it starts, and the
+// agent-shell never has one.
 
 const (
 	agentpodSocketName = "core.sock"
@@ -268,7 +270,9 @@ func (c ProvisionerConfig) podManifestWithSoftware(slug string, software []strin
 	envs := []map[string]any{}
 	if c.ProxyURL != "" {
 		// Both upper-case and lower-case variants so every common
-		// CLI tool picks it up without per-tool configuration.
+		// CLI tool picks it up without per-tool configuration. The
+		// same bare URL in both containers; Provision has put the
+		// proxy's IP in it.
 		for _, k := range []string{"HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"} {
 			envs = append(envs, map[string]any{"name": k, "value": c.ProxyURL})
 		}

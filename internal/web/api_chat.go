@@ -386,7 +386,7 @@ func (s *Server) subagentMetaView(parent, dir, id string, hist []store.ChatMessa
 			if job.Site != "" {
 				out.Site = ptr(job.Site)
 			}
-			if !job.terminal() && s.Browsers != nil {
+			if !job.terminal() && job.State != subagentJobAwaitingApproval && s.Browsers != nil {
 				out.Browser = s.Browsers.StateFor(parent, job.Session)
 				out.BrowserSandboxOff = s.Browsers.SandboxOffFor(parent, job.Session)
 			}
@@ -405,7 +405,7 @@ func (s *Server) subagentMetaView(parent, dir, id string, hist []store.ChatMessa
 		}
 	}
 	out.State, out.Error = subagentState(status, errText)
-	live := out.State == apitypes.SubagentTaskStateRunning || out.State == apitypes.SubagentTaskStateWaitingForSignIn
+	live := out.State == apitypes.SubagentTaskStateRunning || out.State == apitypes.SubagentTaskStateWaitingForSignIn || out.State == apitypes.SubagentTaskStateAwaitingApproval
 	if !live && out.Ended == nil {
 		if t, err := time.Parse(time.RFC3339, meta.UpdatedAt); err == nil {
 			out.Ended = ptr(unixMS(t))

@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/kivali-ai/kivali/internal/agentpod"
 )
 
 // ControlSocketName is the filename, under the data dir, of the Unix
@@ -233,4 +235,7 @@ func (s *Server) registerUDSRoutes(mux *http.ServeMux) {
 	// subagent_web_session_reset.
 	mux.HandleFunc("POST /v1/agent/{slug}/web/sessions", s.handleAgentpodWebSessions)
 	mux.HandleFunc("POST /v1/agent/{slug}/web/sessions/reset", s.handleAgentpodWebSessionReset)
+	// An agent runtime's egress proxy credential: the SHA-256 of the
+	// secret it drew at start, for the agent named by the slug header.
+	mux.HandleFunc("POST "+agentpod.EgressCredentialPath, s.handleAgentpodEgressCredential)
 }

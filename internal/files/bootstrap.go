@@ -270,9 +270,13 @@ func IsHardlinkMirrorPath(rel string) bool {
 //     regression. The operator signs Claude in again on the restored side.
 //   - `debug` — post-mortem dumps (last_req_<slug>.json) that rotate
 //     every stream. Not useful after a restore.
+//   - `egress_agents.json` — the hash of each running agent runtime's
+//     egress proxy credential. A hash belongs to the runtime that drew
+//     its secret; the restored deployment's pods register their own.
 var BackupExcludePrefixes = []string{
 	"claude-home",
 	"debug",
+	"egress_agents.json",
 }
 
 // BackupExcludeAgentDirs lists the directories directly under

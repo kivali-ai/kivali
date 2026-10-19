@@ -143,6 +143,63 @@
         }
       ],
       "raw_url": "/messages/2026-09-28/0005-engineering-lead.md"
+    },
+    {
+      "id": "web_upload:buyer/cccc3333",
+      "kind": "web_upload",
+      "title": "Upload 2 files to vendor.example",
+      "from": {
+        "slug": "buyer",
+        "name": "Buyer"
+      },
+      "at": "2026-09-20T17:00:00Z",
+      "body_md": "A web task wants to upload these files to vendor.example. It starts at the address below, stays on vendor.example and puts the files only on its pages. What the site does with a file after that is up to the site, as when you upload it yourself. Open each file to check it is the one you mean. Approve and it starts. Deny and it ends without uploading anything; the agent reads your note.",
+      "attachments": [
+        {
+          "name": "quote-signed.pdf",
+          "size_bytes": 48213,
+          "url": "/api/v1/agents/buyer/subagents/cccc3333/files/quote-signed.pdf"
+        },
+        {
+          "name": "terms.pdf",
+          "size_bytes": 12077,
+          "url": "/api/v1/agents/buyer/subagents/cccc3333/files/terms.pdf"
+        }
+      ],
+      "packages": [],
+      "web_upload": {
+        "parent": "buyer",
+        "id": "cccc3333",
+        "description": "Send the signed quote",
+        "site": "vendor.example",
+        "start_url": "https://portal.vendor.example/quotes/new",
+        "files": [
+          "/files/artifacts/private/quote-signed.pdf",
+          "/files/project/terms.pdf"
+        ],
+        "prompt": "Upload the signed quote and our terms to the vendor's quote form, then submit it."
+      }
+    },
+    {
+      "id": "web_budget:tester/dddd4444",
+      "kind": "web_budget",
+      "title": "tester's web task tried to send 5.1 KB to paste.example",
+      "from": {
+        "slug": "tester",
+        "name": "tester"
+      },
+      "at": "2026-09-20T17:00:00Z",
+      "body_md": "One action may send 2 KB. That is far more than a search or a form needs, so a page may have led the task to send out data it should not. Kivali refused the action and told the task, which carries on without it. Open the task to see what it was doing.",
+      "attachments": [],
+      "packages": [],
+      "web_budget": {
+        "parent": "tester",
+        "id": "dddd4444",
+        "description": "Check the status page",
+        "site": "paste.example",
+        "bytes": 5222,
+        "limit": "action"
+      }
     }
   ],
   "queue": [
