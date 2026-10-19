@@ -37,7 +37,7 @@ func webToolByName(t *testing.T, tools []Tool, name string) Tool {
 func TestWebActionsTakeAcceptDialogInASiteSession(t *testing.T) {
 	actions := []string{agentpod.WebClickTool, agentpod.WebTypeTool, agentpod.WebPressTool}
 	for _, session := range []string{"vendor.com", agentpod.OpenWebSession} {
-		tools := WebTools(&recordingWeb{}, session, true)
+		tools := WebTools(&recordingWeb{}, session, "", true)
 		for _, tool := range tools {
 			var schema struct {
 				Properties map[string]struct {
@@ -67,7 +67,7 @@ func TestWebActionsTakeAcceptDialogInASiteSession(t *testing.T) {
 func TestWebClickRelaysAcceptDialogAndTheReport(t *testing.T) {
 	report := "Clicked button \"Delete\"; now at https://vendor.com/\nThe page showed a confirm dialog; it was accepted. Its text:\nContent of an untrusted page follows.\nDelete it?\nEnd of page content."
 	web := &recordingWeb{resp: agentpod.WebCommandResponse{Text: report}}
-	click := webToolByName(t, WebTools(web, "vendor.com", true), agentpod.WebClickTool)
+	click := webToolByName(t, WebTools(web, "vendor.com", "vendor.com", true), agentpod.WebClickTool)
 	res, err := click.Handler(context.Background(), json.RawMessage(`{"ref":"e3","accept_dialog":true}`))
 	if err != nil || res.IsError {
 		t.Fatalf("click: %+v %v", res, err)
@@ -77,5 +77,52 @@ func TestWebClickRelaysAcceptDialogAndTheReport(t *testing.T) {
 	}
 	if len(res.Content) != 1 || res.Content[0] != report {
 		t.Fatalf("result: %q", res.Content)
+	}
+}
+
+// TestWebToolsMatchTheAllowedSet: the web tools the MCP server lists
+// for a session and site are the ones the run is allowed, so a task
+// held to a site (one that uploads files) is never shown web_eval.
+func TestWebToolsMatchTheAllowedSet(t *testing.T) {
+	cases := []struct {
+		name, session, site string
+		canWait             bool
+		eval                bool
+	}{
+		{"open, no files", agentpod.OpenWebSession, "", false, true},
+		{"open, held for an upload", agentpod.OpenWebSession, "vendor.example", false, false},
+		{"site session", "vendor.example", "vendor.example", true, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var listed []string
+			for _, tool := range WebTools(nil, tc.session, tc.site, tc.canWait) {
+				listed = append(listed, tool.Name)
+			}
+			allowed := agentpod.WebSubagentTools(tc.session, tc.site, tc.canWait).Kivali
+			allowed = slices.DeleteFunc(slices.Clone(allowed), func(n string) bool { return n == agentpod.SubmitResultToolName })
+			if !slices.Equal(listed, allowed) {
+				t.Errorf("listed %v, allowed %v", listed, allowed)
+			}
+			if got := slices.Contains(listed, agentpod.WebEvalTool); got != tc.eval {
+				t.Errorf("web_eval listed = %v, want %v", got, tc.eval)
+			}
+		})
+	}
+}
+
+// TestWebToolDescriptionsStateTheGuards: the tools a model uses to send
+// data out say that it counts, and web_upload says who approved it.
+func TestWebToolDescriptionsStateTheGuards(t *testing.T) {
+	want := map[string]string{
+		agentpod.WebNavigateTool: "budget on what it sends out",
+		agentpod.WebTypeTool:     "budget on what it sends out",
+		agentpod.WebEvalTool:     "budget on what it sends out",
+		agentpod.WebUploadTool:   "A person approved these files",
+	}
+	for _, tool := range WebTools(nil, agentpod.OpenWebSession, "", false) {
+		if phrase, ok := want[tool.Name]; ok && !strings.Contains(tool.Description, phrase) {
+			t.Errorf("%s: %q lacks %q", tool.Name, tool.Description, phrase)
+		}
 	}
 }

@@ -336,6 +336,12 @@ func (s *Server) restoreArchive(ctx context.Context, path, filename string) erro
 	if err := s.Store.SyncEgressAllowlistToProxy(); err != nil {
 		log.Printf("restore: egress allowlist: %v", err)
 	}
+	// The same for the agent credentials, which the archive does not
+	// carry: the running pods' registrations stay as they were, and
+	// the proxy's copy is written again with them.
+	if err := s.Store.SyncEgressAgentsToProxy(); err != nil {
+		log.Printf("restore: egress agents: %v", err)
+	}
 
 	// Regenerate per-agent /files/ symlinks. Backup skips
 	// non-regular files (symlinks, devices); without this pass, the

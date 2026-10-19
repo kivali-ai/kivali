@@ -91,7 +91,10 @@ type Message struct {
 	Bytes    int64  `json:"bytes,omitempty"`
 
 	// Site is the session's registrable domain on hello, empty for the
-	// open session. The pod refuses to navigate a tab off it.
+	// open session. On a command it is the site the command's group is
+	// held to, for a task that uploads files: the group keeps the first
+	// it is given until it closes. The pod refuses to navigate a tab off
+	// either.
 	Site string `json:"site,omitempty"`
 	// CoreToken is, on hello, the token from the pod's EnvCoreToken.
 	CoreToken string `json:"coreToken,omitempty"`
@@ -126,7 +129,8 @@ const (
 	// before it carries the session's last cookie snapshot, which the
 	// pod sets once Chromium is up.
 	TypeStart = "start"
-	// TypeCommand is one web tool call: ID, Group, Tab, Name, Args.
+	// TypeCommand is one web tool call: ID, Group, Tab, Name, Args, and
+	// Site when the group is held to one.
 	TypeCommand = "command"
 	// TypeFile hands the pod a file a tab may upload: Group, FileName,
 	// Bytes, then the bytes. The pod keeps it for the group.
@@ -245,7 +249,8 @@ func KnownCommand(name string) bool {
 // Result codes on a refused or failed command. Core reads them; the
 // model reads Error.
 const (
-	// CodeOffSite: the navigation would leave the session's site.
+	// CodeOffSite: the navigation would leave the site the session or
+	// the group is held to.
 	CodeOffSite = "off_site"
 	// CodeTabLimit: the browser has its full count of tabs.
 	CodeTabLimit = "tab_limit"

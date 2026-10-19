@@ -59,6 +59,29 @@ func goldenHome() Home {
 				At: t1, BodyMD: "To read the PDF invoices.", Attachments: []AttachmentRef{},
 				Packages: []SoftwarePackage{{Name: "poppler-utils", Version: new("25.03.0"), Synopsis: new("PDF utilities (based on Poppler)")}}, RawURL: &rawSoftware,
 			},
+			{
+				ID: "web_upload:buyer/cccc3333", Kind: NeedKindWebUpload, Title: "Upload 2 files to vendor.example",
+				From: PersonRef{Slug: "buyer", Name: "Buyer"}, At: t1,
+				BodyMD: "A web task wants to upload these files to vendor.example. It starts at the address below, stays on vendor.example and puts the files only on its pages. What the site does with a file after that is up to the site, as when you upload it yourself. Open each file to check it is the one you mean. Approve and it starts. Deny and it ends without uploading anything; the agent reads your note.",
+				Attachments: []AttachmentRef{
+					{Name: "quote-signed.pdf", SizeBytes: 48213, URL: "/api/v1/agents/buyer/subagents/cccc3333/files/quote-signed.pdf"},
+					{Name: "terms.pdf", SizeBytes: 12077, URL: "/api/v1/agents/buyer/subagents/cccc3333/files/terms.pdf"},
+				},
+				Packages: []SoftwarePackage{},
+				WebUpload: &WebUploadRef{
+					Parent: "buyer", ID: "cccc3333", Description: "Send the signed quote", Site: "vendor.example",
+					StartURL: "https://portal.vendor.example/quotes/new",
+					Files:    []string{"/files/artifacts/private/quote-signed.pdf", "/files/project/terms.pdf"},
+					Prompt:   "Upload the signed quote and our terms to the vendor's quote form, then submit it.",
+				},
+			},
+			{
+				ID: "web_budget:tester/dddd4444", Kind: NeedKindWebBudget, Title: "tester's web task tried to send 5.1 KB to paste.example",
+				From: PersonRef{Slug: "tester", Name: "tester"}, At: t1,
+				BodyMD:      "One action may send 2 KB. That is far more than a search or a form needs, so a page may have led the task to send out data it should not. Kivali refused the action and told the task, which carries on without it. Open the task to see what it was doing.",
+				Attachments: []AttachmentRef{}, Packages: []SoftwarePackage{},
+				WebBudget: &WebBudgetRef{Parent: "tester", ID: "dddd4444", Description: "Check the status page", Site: "paste.example", Bytes: 5222, Limit: WebBudgetLimitAction},
+			},
 		},
 		Queue: []QueueItem{
 			{

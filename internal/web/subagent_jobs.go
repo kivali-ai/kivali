@@ -14,7 +14,7 @@
 // but a job in flight when core restarts is gone with its goroutine:
 // the pod's completion POST lands on a turn that no longer exists. At
 // boot FailOrphanedSubagents rewrites every such meta.json (queued,
-// running or waiting for a person) as errored, with
+// running, waiting for a person or awaiting approval) as errored, with
 // subagentRestartError as the reason, so nothing reads as live that
 // core no longer holds. Jobs are not re-attached.
 
@@ -33,12 +33,14 @@ import (
 )
 
 // subagentRestartError is the reason a task's record carries when core
-// restarted while the task was queued, running or waiting for a person:
-// its goroutine went with the old process, so it never finishes.
+// restarted while the task was queued, running, waiting for a person or
+// awaiting approval: its goroutine went with the old process, so it
+// never finishes.
 const subagentRestartError = "Kivali restarted before the task finished"
 
 // FailOrphanedSubagents rewrites every background task's meta.json that
-// still says queued, running or waiting for a person as errored, with
+// still says queued, running, waiting for a person or awaiting approval
+// as errored, with
 // subagentRestartError, and without the wait reason and browser state a
 // live task carries: core holds no such job after a restart, so nothing
 // should read as live. Called once at boot, before anything dispatches.
@@ -57,7 +59,7 @@ func (s *SubagentService) FailOrphanedSubagents() int {
 		parent, id := task[0], task[1]
 		err := s.Store.UpdateSubagentMeta(parent, id, func(meta map[string]any) bool {
 			switch meta["status"] {
-			case subagentJobQueued, subagentJobRunning, subagentJobWaiting:
+			case subagentJobQueued, subagentJobRunning, subagentJobWaiting, subagentJobAwaitingApproval:
 			default:
 				return false
 			}
@@ -77,7 +79,8 @@ func (s *SubagentService) FailOrphanedSubagents() int {
 }
 
 // Subagent job states. A job is terminal in every state except
-// subagentJobQueued and subagentJobRunning.
+// subagentJobQueued, subagentJobRunning, subagentJobWaiting and
+// subagentJobAwaitingApproval.
 //
 // Queued is what admission control made visible: a dispatched job that
 // has not been given a slot in the pod yet. It is emphatically NOT
@@ -91,10 +94,14 @@ const (
 	// web_wait_for_sign_in until a person has signed in through its
 	// browser window; its run has ended and resumes afterwards. Not
 	// terminal.
-	subagentJobWaiting   = "waiting_for_sign_in"
-	subagentJobCompleted = "completed"
-	subagentJobFailed    = "failed"
-	subagentJobCancelled = "cancelled"
+	subagentJobWaiting = "waiting_for_sign_in"
+	// subagentJobAwaitingApproval: a web task that names files, held
+	// before it starts until a person approves its uploads. Not
+	// terminal; nothing has run and no browser is started.
+	subagentJobAwaitingApproval = "awaiting_approval"
+	subagentJobCompleted        = "completed"
+	subagentJobFailed           = "failed"
+	subagentJobCancelled        = "cancelled"
 )
 
 // subagentJob is one dispatched background task.
@@ -115,9 +122,11 @@ type subagentJob struct {
 	EndedAt   time.Time
 
 	// Site is a web task's site session's registrable domain, empty in
-	// the open session. WaitReason and WaitSince describe a task in
-	// subagentJobWaiting. CLISession is the session id the task's run
-	// reported, what a resumed run continues.
+	// the open session. WaitReason describes a task in
+	// subagentJobWaiting, and WaitSince when its current wait for a
+	// person began, in subagentJobWaiting or
+	// subagentJobAwaitingApproval. CLISession is the session id the
+	// task's run reported, what a resumed run continues.
 	Site       string
 	WaitReason string
 	WaitSince  time.Time
@@ -135,6 +144,27 @@ type subagentJob struct {
 	// signInWaitCap the next is refused and the task ends blocked.
 	waitTimer clock.Timer
 	waits     int
+
+	// LockSite is the site a web task is held to for its whole run:
+	// its session's site, or for a task that names files its start
+	// URL's site. Empty for an open-session task without files. Set at
+	// registration, never mutated.
+	LockSite string
+	// Prompt is the task's instruction, kept for the approval a person
+	// reads. Set at registration, never mutated.
+	Prompt string
+	// ApprovedFiles are the task's Files as they were at dispatch, the
+	// bytes a person approves and an upload sends. Set at registration,
+	// never mutated.
+	ApprovedFiles []webApprovedFile
+	// Approved: a person approved the task's uploads. It covers the
+	// uploads only; the web budget counts the task like any other.
+	Approved bool
+	// approval carries the person's answer to a task awaiting
+	// approval; approvalDone says one was taken (both under jobsMu, so
+	// one answer lands).
+	approval     chan webUploadAnswer
+	approvalDone bool
 
 	// Depth is how far below the durable agent this job sits. 1 is a
 	// subagent the agent dispatched itself; 2 is a worker dispatched
@@ -238,7 +268,11 @@ type subagentJob struct {
 
 // terminal reports whether the job has stopped, for any reason.
 func (j *subagentJob) terminal() bool {
-	return j.State != subagentJobRunning && j.State != subagentJobQueued && j.State != subagentJobWaiting
+	switch j.State {
+	case subagentJobRunning, subagentJobQueued, subagentJobWaiting, subagentJobAwaitingApproval:
+		return false
+	}
+	return true
 }
 
 // idleFor reports how long the job's transcript has been silent, as of

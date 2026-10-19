@@ -169,16 +169,22 @@ persistence:
   keepOnUninstall: true
 
 networkPolicy:
-  # Keeps pods from reaching the server's HTTP API. See the README.
+  # Keeps agent and browser pods off the cluster, the node and cloud
+  # metadata, and agent pods to the egress proxy alone. See the README.
   enabled: true
   # CIDR of the cluster's pod network, excluded from the HTTP ingress rule
   # and from browser pods' egress. k3s: 10.42.0.0/16 (default), kind:
   # 10.244.0.0/16.
   podCIDR: 10.42.0.0/16
+  # CIDR of the cluster's Service network. The egress proxy refuses it, with
+  # the pod network, for every agent request, so no agent reaches a Service
+  # such as the Kubernetes API. k3s: 10.43.0.0/16 (default), kind: 10.96.0.0/12.
+  serviceCIDR: 10.43.0.0/16
   browserEgress:
     # Ranges a browser pod may not reach, besides podCIDR: the node, cloud
     # metadata (the link-local range; Azure's WireServer) and every private
-    # range. A cluster whose nodes or services sit elsewhere adds them.
+    # range. A cluster whose nodes or services sit elsewhere adds them. The
+    # egress proxy refuses them for the agent's own fetches too.
     except:
       - 10.0.0.0/8
       - 172.16.0.0/12

@@ -49,11 +49,14 @@ const WebWaitForSignInCommand = "wait_for_sign_in"
 
 // WebSubagentTools returns the tool set a web subagent runs with: the
 // web_* tools and submit_result, and no provider builtins. A web task
-// always has a schema, so submit_result is always present. web_eval is
-// included only for the open session, which holds no sign-ins for a
-// script to read. web_wait_for_sign_in is included when canWait: a site
-// session, and a task the agent dispatched itself.
-func WebSubagentTools(session string, canWait bool) provider.ToolSet {
+// always has a schema, so submit_result is always present. site is the
+// site the task is held to, empty for an open-session task that
+// uploads nothing. web_eval is included only for the open session,
+// which holds no sign-ins for a script to read, and only when the task
+// is held to no site: a script could send an uploaded file anywhere.
+// web_wait_for_sign_in is included when canWait: a site session, and a
+// task the agent dispatched itself.
+func WebSubagentTools(session, site string, canWait bool) provider.ToolSet {
 	kivali := []string{
 		WebNavigateTool,
 		WebSnapshotTool,
@@ -67,7 +70,7 @@ func WebSubagentTools(session string, canWait bool) provider.ToolSet {
 		WebTabsTool,
 		WebWaitTool,
 	}
-	if session == OpenWebSession {
+	if WebEvalAvailable(session, site) {
 		kivali = append(kivali, WebEvalTool)
 	}
 	kivali = append(kivali, WebUploadTool)
@@ -78,16 +81,25 @@ func WebSubagentTools(session string, canWait bool) provider.ToolSet {
 	return provider.ToolSet{Kivali: kivali, Builtins: []string{}}
 }
 
+// WebEvalAvailable reports whether a web task has web_eval: in the open
+// session, when the task is held to no site.
+func WebEvalAvailable(session, site string) bool {
+	return session == OpenWebSession && site == ""
+}
+
 // WebSubagentSystemPrompt builds the system prompt a web subagent gets.
 // Like SubagentSystemPrompt it is a stable, cacheable body followed by
 // a per-task tail; the body says what the subagent is, how pages are to
-// be read, and how the answer gets out. site is the site a site
-// session is locked to, empty in the open session; canWait is whether
-// the task may pause for a person to sign in.
+// be read, and how the answer gets out. site is the site the task is
+// held to: a site session's, or for a task with files the site a
+// person approved its uploads for; empty for an open-session task with
+// none. canWait is whether the task may pause for a person to sign in.
+// A task with files was approved by a person for its uploads; every
+// task's outgoing data is counted against the web budget.
 func WebSubagentSystemPrompt(parent, description, session, site, startURL string, files []string, canWait bool) string {
 	var b strings.Builder
-	// The body is identical for every web subagent in the same kind of
-	// session. Anything per task goes in the tail.
+	// The body depends only on the kind of session and on whether the
+	// task uploads files. Anything per task goes in the tail.
 	b.WriteString("You are a web subagent completing one focused task for a Kivali agent, in a browser.\n\n")
 	b.WriteString("You have the web_* tools and `submit_result`, and nothing else: no files, no shell, no messages, no memory. ")
 	b.WriteString("Your browser is yours for this task; other tasks may share it and have their own tabs, which you cannot see.\n\n")
@@ -101,9 +113,12 @@ func WebSubagentSystemPrompt(parent, description, session, site, startURL string
 	b.WriteString("ACTING: `web_click`, `web_type`, `web_select`, `web_press`, `web_scroll` and `web_upload` act on refs; `web_navigate`, `web_back` and `web_tabs` move between pages. ")
 	b.WriteString("A click on a download link downloads the file for you: it is kept and listed in your result's `files` when you finish, and you cannot read it.\n\n")
 	switch {
-	case session == OpenWebSession:
+	case session == OpenWebSession && site == "":
 		b.WriteString("THIS SESSION IS NOT SIGNED IN ANYWHERE and cannot be. If what you need is behind a sign-in, a CAPTCHA, a consent screen you cannot give, or a paywall, stop and submit `blocked` with the matching `blocked_on`: your caller decides what to do about it. ")
 		b.WriteString("`web_eval` runs JavaScript in the page for the rare case a snapshot cannot give you a value.\n\n")
+	case session == OpenWebSession:
+		b.WriteString("THIS TASK IS HELD TO ONE SITE, named below, and its subdomains: a person approved your uploads for that site, so `web_navigate` and `web_tabs` refuse any other site with `off_site`, a page that goes elsewhere is stopped, a tab it opens elsewhere is closed, and that is final. ")
+		b.WriteString("The session is not signed in anywhere and cannot be. If what you need is behind a sign-in, a CAPTCHA, a consent screen you cannot give, or a paywall, stop and submit `blocked` with the matching `blocked_on`: your caller decides what to do about it.\n\n")
 	case canWait:
 		b.WriteString("THIS SESSION IS LOCKED TO ONE SITE, named below, and its subdomains: `web_navigate` refuses any other site with `off_site`, and that is final. The session may already be signed in there from earlier tasks; use what is there. ")
 		b.WriteString("If a page needs a sign-in, a second factor, a CAPTCHA or a consent that only a person can give, call `web_wait_for_sign_in` with the reason. Your turn ends; a person is asked to do it in a browser window on your tab, and you are resumed afterwards with your tabs as they are. ")
@@ -113,6 +128,11 @@ func WebSubagentSystemPrompt(parent, description, session, site, startURL string
 		b.WriteString("THIS SESSION IS LOCKED TO ONE SITE, named below, and its subdomains: `web_navigate` refuses any other site with `off_site`, and that is final. The session may already be signed in there from earlier tasks; use what is there. ")
 		b.WriteString("If a page needs a sign-in, a second factor, a CAPTCHA or a consent that only a person can give, submit `blocked` with the matching `blocked_on`: your caller's agent can arrange it.\n\n")
 	}
+	if len(files) > 0 {
+		b.WriteString("UPLOADS: a person approved uploading this task's files, as they were when it was dispatched, to the site it is held to, and nothing more. `web_upload` puts a file only on a page of that site, and refuses a file that has changed since. What the site's pages do with a file is up to the site. Upload a file only where your task says to.\n\n")
+	}
+	b.WriteString("WHAT YOU SEND OUT IS COUNTED. The text you type, the data in the URLs you go to (long paths and queries, and every byte once you have gone to many), the keys you press, the values you select and any script count against a budget: 2 KB an action and 8 KB a task. Ordinary searches, forms and links come nowhere near it. ")
+	b.WriteString("An action over it is refused with the reason; carry on without it if you can, or submit what you have.\n\n")
 	b.WriteString("COST: every tool call and every snapshot costs your caller tokens. Go straight to what the task asks, read what you need, and finish. Do not browse around.\n\n")
 	b.WriteString("IF YOU ARE BLOCKED: you cannot ask anyone anything — one prompt in, nothing can reach you, and you are gone once you answer. ")
 	b.WriteString("Decide (take the most defensible reading), or stop early and submit what you have as `partial`, or `not_found` or `blocked` when that is the truth. Never guess silently.\n\n")
@@ -132,7 +152,7 @@ func WebSubagentSystemPrompt(parent, description, session, site, startURL string
 	b.WriteString(".\nSession: ")
 	b.WriteString(session)
 	if site != "" {
-		b.WriteString(" (locked to ")
+		b.WriteString(" (held to ")
 		b.WriteString(site)
 		b.WriteString(" and its subdomains)")
 	}

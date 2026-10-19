@@ -12,6 +12,7 @@ import (
 	"path"
 	"strings"
 
+	"golang.org/x/net/idna"
 	"golang.org/x/net/publicsuffix"
 
 	"github.com/kivali-ai/kivali/internal/agentpod"
@@ -19,26 +20,51 @@ import (
 	"github.com/kivali-ai/kivali/internal/store"
 )
 
-// Limits on a web task's dispatch fields.
+// Limits on a web task's dispatch fields. A start URL within its limit
+// is within one action's web budget too; what it carries still counts
+// toward the agent's day.
 const (
 	maxWebTaskFiles    = 10
 	maxWebStartURLSize = 2048
+	// maxWebAwaitingApproval is how many of an agent's web tasks may
+	// wait for a person to approve their uploads at once: each is a row
+	// on Needs you.
+	maxWebAwaitingApproval = 5
 )
 
 // validateWebTasks refuses a batch whose web tasks cannot run, and a
 // general task that carries web fields, for a dispatch by the agent
 // itself. The web-only checks need the parent: a file the task may
-// upload must be a regular file in the parent's /files/.
+// upload must be a regular file in the parent's /files/, and a start
+// URL counts against the parent's web budget.
 func (s *SubagentService) validateWebTasks(parent string, tasks []SubagentTaskInput) error {
 	return s.validateWebTasksFor(parent, "", tasks)
 }
 
 // validateWebTasksFor is validateWebTasks for a dispatch by callerID,
 // one of parent's subagents, or by parent itself when callerID is
-// empty. A file is looked for in the caller's own /files/: a sub-lead
-// names a path in its view, where artifacts/private is its own and the
-// agent's memory is absent.
+// empty. Only parent's own dispatch may name files, since an upload
+// waits for a person; a sub-lead's web task is checked for its start
+// URL and session alone.
 func (s *SubagentService) validateWebTasksFor(parent, callerID string, tasks []SubagentTaskInput) error {
+	var startCosts []int
+	uploads := 0
+	for _, t := range tasks {
+		if t.web() && len(t.Files) > 0 {
+			uploads++
+		}
+	}
+	if uploads > 0 {
+		waiting := 0
+		for _, j := range s.listJobs(parent) {
+			if j.State == subagentJobAwaitingApproval {
+				waiting++
+			}
+		}
+		if waiting+uploads > maxWebAwaitingApproval {
+			return fmt.Errorf("you have %d web task%s waiting for a person to approve their uploads, and at most %d may wait at once; wait for an answer, or cancel one with subagent_cancel, before dispatching another that uploads files", waiting, pluralS(waiting), maxWebAwaitingApproval)
+		}
+	}
 	for i, t := range tasks {
 		switch t.Kind {
 		case "", agentpod.SubagentKindGeneral:
@@ -49,11 +75,13 @@ func (s *SubagentService) validateWebTasksFor(parent, callerID string, tasks []S
 			if err := s.validateWebTask(parent, callerID, i, t); err != nil {
 				return err
 			}
+			// A start URL is data the task sends, approved or not.
+			startCosts = append(startCosts, webURLCost(strings.TrimSpace(t.StartURL)))
 		default:
 			return fmt.Errorf("tasks[%d].kind %q: \"general\" or \"web\"", i, t.Kind)
 		}
 	}
-	return nil
+	return s.webBudgetFits(parent, startCosts)
 }
 
 func (s *SubagentService) validateWebTask(parent, callerID string, i int, t SubagentTaskInput) error {
@@ -70,7 +98,8 @@ func (s *SubagentService) validateWebTask(parent, callerID string, i int, t Suba
 			return fmt.Errorf("tasks[%d].session %q: %v", i, t.Session, err)
 		}
 	}
-	if u := strings.TrimSpace(t.StartURL); u != "" {
+	u := strings.TrimSpace(t.StartURL)
+	if u != "" {
 		if len(u) > maxWebStartURLSize {
 			return fmt.Errorf("tasks[%d].start_url is longer than %d characters", i, maxWebStartURLSize)
 		}
@@ -85,6 +114,11 @@ func (s *SubagentService) validateWebTask(parent, callerID string, i int, t Suba
 	if len(t.Files) > maxWebTaskFiles {
 		return fmt.Errorf("tasks[%d].files has %d entries; the limit is %d", i, len(t.Files), maxWebTaskFiles)
 	}
+	if len(t.Files) > 0 && callerID != "" {
+		// An upload waits for a person's approval, and a sub-lead's
+		// dispatch may not wait for a person (as with a sign-in).
+		return fmt.Errorf("tasks[%d].files: a task dispatched by a subagent cannot upload files; an upload needs a person's approval, which only your caller's agent can ask for", i)
+	}
 	seen := map[string]bool{}
 	for j, p := range t.Files {
 		if !strings.HasPrefix(p, files.ModelRootPath+"/") || path.Clean(p) != p {
@@ -95,8 +129,24 @@ func (s *SubagentService) validateWebTask(parent, callerID string, i int, t Suba
 			return fmt.Errorf("tasks[%d].files: two files are named %q; the task uploads files by name", i, name)
 		}
 		seen[name] = true
-		if !s.callerFileExists(parent, callerID, p) {
+		size, ok := s.callerFileSize(parent, callerID, p)
+		if !ok {
 			return fmt.Errorf("tasks[%d].files[%d]: %q is not a file under your /files/", i, j, p)
+		}
+		if size > maxWebUploadBytes {
+			return fmt.Errorf("tasks[%d].files[%d]: %q is %d MB; a task may upload files up to %d MB", i, j, p, size>>20, maxWebUploadBytes>>20)
+		}
+	}
+	if len(t.Files) > 0 {
+		// Uploads are approved by a person for one site, and the task
+		// stays on that site for its whole run.
+		if u == "" {
+			return fmt.Errorf("tasks[%d]: a web task that uploads files needs a start_url on the site it uploads to; a person approves the upload for that site and the task stays on it", i)
+		}
+		// In a site session the start URL was checked against the
+		// session's site above.
+		if _, err := webURLSite(u); err != nil {
+			return fmt.Errorf("tasks[%d].start_url: %v", i, err)
 		}
 	}
 	return nil
@@ -106,10 +156,10 @@ func (s *SubagentService) validateWebTask(parent, callerID string, i int, t Suba
 const maxWebUploadBytes = 50 << 20
 
 // webSessionSite is the site a session name stands for: its registrable
-// domain (vendor.com for shop.vendor.com), lower case, without a
-// trailing dot. The open session has none. An address in any spelling
-// a browser reads as one, a bare public suffix such as co.uk, a name
-// under no public top-level domain (localhost, corp, a misspelt
+// domain (vendor.com for shop.vendor.com), lower case, in punycode,
+// without a trailing dot. The open session has none. An address in any
+// spelling a browser reads as one, a bare public suffix such as co.uk,
+// a name under no public top-level domain (localhost, corp, a misspelt
 // suffix), and a name with a scheme, a path or a port are refused: a
 // session is named by a site on the public web, not by a URL.
 func webSessionSite(session string) (string, error) {
@@ -126,6 +176,13 @@ func webSessionSite(session string) (string, error) {
 	if readsAsAddress(name) {
 		return "", errors.New("a site is a domain name, not an address")
 	}
+	// Sites are compared as the browser names hosts: an international
+	// name in its punycode (xn--) form.
+	ascii, err := idna.ToASCII(name)
+	if err != nil {
+		return "", fmt.Errorf("%q is not a domain name", name)
+	}
+	name = ascii
 	site, err := publicsuffix.EffectiveTLDPlusOne(name)
 	if err != nil {
 		return "", fmt.Errorf("%q is not a site; give its registrable domain, such as vendor.com", name)
@@ -165,24 +222,53 @@ func readsAsAddress(name string) bool {
 	return strings.Trim(last, digits) == ""
 }
 
-// onSite reports whether host is site or a subdomain of it: the rule
-// the pod applies to every navigation in a site session, applied by
-// core before the command is relayed.
+// onSite reports whether host is site or a subdomain of it, compared
+// in punycode as the browser names hosts: the rule the pod applies to
+// every navigation of a held task, applied by core before the command
+// is relayed.
 func onSite(site, host string) bool {
-	host = strings.ToLower(strings.TrimSuffix(host, "."))
+	host, err := idna.ToASCII(strings.ToLower(strings.TrimSuffix(host, ".")))
+	if err != nil || host == "" || site == "" {
+		return false
+	}
 	return host == site || strings.HasSuffix(host, "."+site)
 }
 
-// callerFileExists reports whether modelPath names a regular file the
-// caller can read through its /files/, with file_view's confinement:
-// a link that leaves the caller's read roots is no file.
-func (s *SubagentService) callerFileExists(parent, callerID, modelPath string) bool {
-	f, info, err := s.openCallerFile(parent, callerID, modelPath)
+// webURLSite is the site a URL is on: its host's registrable domain,
+// as webSessionSite makes of a session name. A URL whose host is an
+// address or a bare public suffix is on none.
+func webURLSite(raw string) (string, error) {
+	u, err := url.Parse(raw)
+	if err != nil || u.Hostname() == "" {
+		return "", errors.New("it names no host")
+	}
+	site, err := webSessionSite(u.Hostname())
+	if err != nil {
+		return "", fmt.Errorf("its host %q is not on a site: %v", u.Hostname(), err)
+	}
+	return site, nil
+}
+
+// onWebSite reports whether raw is a URL on site or a subdomain of it,
+// by onSite's rule.
+func onWebSite(site, raw string) bool {
+	u, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil {
 		return false
 	}
+	return onSite(site, u.Hostname())
+}
+
+// callerFileSize is the size of the regular file modelPath names under
+// the caller's /files/, read with file_view's confinement: a link that
+// leaves the caller's read roots is no file, and ok is false.
+func (s *SubagentService) callerFileSize(parent, callerID, modelPath string) (int64, bool) {
+	f, info, err := s.openCallerFile(parent, callerID, modelPath)
+	if err != nil {
+		return 0, false
+	}
 	_ = f.Close()
-	return info.Mode().IsRegular()
+	return info.Size(), info.Mode().IsRegular()
 }
 
 // openCallerFile opens a file under the caller's /files/ the way

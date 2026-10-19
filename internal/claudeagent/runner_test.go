@@ -65,6 +65,11 @@ func runFakeCLI(args []string) {
 	// runs before a turn: a fixed subscription sign-in, outside every
 	// scenario and every capture file.
 	if strings.Join(args, " ") == strings.Join(claudeauth.Args(), " ") {
+		// A failing status when asked: this on stderr, no JSON, exit 1.
+		if msg := os.Getenv("GO_FAKE_CLAUDE_AUTH_STDERR"); msg != "" {
+			_, _ = os.Stderr.WriteString(msg + "\n")
+			os.Exit(1)
+		}
 		fmt.Println(`{"loggedIn":true,"authMethod":"claude.ai","apiProvider":"firstParty","email":"fake@example.com"}`)
 		os.Exit(0)
 	}
@@ -91,6 +96,12 @@ func runFakeCLI(args []string) {
 	// inherits — the deployment's credential reaches it this way.
 	if ef := os.Getenv("GO_FAKE_CLAUDE_ENV_FILE"); ef != "" {
 		_ = os.WriteFile(ef, []byte(strings.Join(os.Environ(), "\n")+"\n"), 0o644)
+	}
+	// Write a line to stderr, in two writes split mid-way, when asked:
+	// lets tests see what the driver does with a CLI's stderr.
+	if line := os.Getenv("GO_FAKE_CLAUDE_STDERR"); line != "" {
+		_, _ = os.Stderr.WriteString(line[:len(line)/2])
+		_, _ = os.Stderr.WriteString(line[len(line)/2:] + "\n")
 	}
 
 	resumeID := extractFlag(args, "--resume")

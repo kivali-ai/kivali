@@ -1,7 +1,7 @@
 # Security policy
 
 Kivali runs AI agents that execute shell commands, reach the internet
-through an allowlist and read your files, so we take security reports
+through a proxy and read your files, so we take security reports
 seriously.
 
 ## Reporting a vulnerability
@@ -33,8 +33,9 @@ and self-hosted installs should upgrade to the latest chart.
 ## Scope
 
 In scope: anything that lets someone sign in who should not, read or
-change a team's data without permission, escape an agent's sandbox or its
-egress allowlist, get an agent to act past an approval it needs, or
+change a team's data without permission, escape an agent's sandbox or the egress
+proxy's limits (the shell allowlist, the address guard, the credential
+that separates an agent's own traffic from its shell's), get an agent to act past an approval it needs, or
 tamper with updates and release artifacts.
 
 How Kivali isolates agents and what leaves your machine is described in

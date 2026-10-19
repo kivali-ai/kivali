@@ -476,7 +476,7 @@ func TestAPISkills(t *testing.T) {
 func TestAPINetwork(t *testing.T) {
 	srv := newTestServer(t)
 	n := orgOK[apitypes.Network](t, orgGet(t, srv, "/api/v1/org/network"))
-	if !hasHost(n, "api.anthropic.com") {
+	if !hasHost(n, "deb.debian.org") || hasHost(n, "api.anthropic.com") {
 		t.Fatalf("default hosts = %+v", n)
 	}
 	n = orgOK[apitypes.Network](t, orgJSON(t, srv, http.MethodPost, "/api/v1/org/network", apitypes.NetworkAdd{Host: " Example.COM "}))
@@ -485,7 +485,7 @@ func TestAPINetwork(t *testing.T) {
 	}
 	assertAPIError(t, orgJSON(t, srv, http.MethodPost, "/api/v1/org/network", apitypes.NetworkAdd{Host: "https://example.org/x"}), http.StatusBadRequest)
 	n = orgOK[apitypes.Network](t, orgDo(t, srv, "", http.MethodDelete, "/api/v1/org/network/example.com", "", nil))
-	if hasHost(n, "example.com") || !hasHost(n, "api.anthropic.com") {
+	if hasHost(n, "example.com") || !hasHost(n, "deb.debian.org") {
 		t.Errorf("after remove = %+v", n)
 	}
 	assertAPIError(t, orgDo(t, srv, "", http.MethodDelete, "/api/v1/org/network/example.com", "", nil), http.StatusNotFound)

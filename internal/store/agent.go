@@ -379,11 +379,18 @@ func (s *FSStore) SetAgentReportsTo(slug, newManager string) error {
 // then archived ones under it, and a rename landing between the two
 // lists would show the agent twice. The graph hears of the archive
 // once the move is done.
+//
+// The agent's egress proxy credential goes with it: from then on the
+// proxy refuses whatever still presents it. A failure to drop it is
+// logged, not returned, since the agent is archived either way.
 func (s *FSStore) ArchiveAgent(slug string) error {
 	if err := s.archiveAgent(slug); err != nil {
 		return err
 	}
 	s.Graph().OrgChanged()
+	if err := s.DropEgressAgentCredential(slug); err != nil {
+		log.Printf("store: archive %s: drop its egress credential: %v", slug, err)
+	}
 	return nil
 }
 

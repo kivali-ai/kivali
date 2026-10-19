@@ -35,20 +35,20 @@ keep`. `make helm-lint` and `make helm-template` check the chart and
 render its examples offline; the chart itself is documented in
 [charts/kivali/README.md](../../charts/kivali/README.md).
 
-**NetworkPolicy.** The chart ships three policies (agent pods may reach
-only the egress proxy and DNS; browser pods reach the public internet
-directly, with no proxy, and DNS, and are kept off the pod network, the
-node's and cloud metadata's link-local range and every private range;
-the server's HTTP port refuses pod traffic), and k3s enforces them
-(kube-router is built in). A browser pod is not held to the egress
-allowlist.
+**NetworkPolicy.** The chart ships three policies (agent pods may
+reach only the egress proxy, by IP, with no DNS; browser pods reach the
+public internet directly, with no proxy, and DNS, and are kept off the
+pod network, the node's and cloud metadata's link-local range and every
+private range; the server's HTTP port refuses pod traffic), and k3s
+enforces them (kube-router is built in). A browser pod is not held to
+the egress allowlist.
 
 Kivali has four images, all sharing the release tag:
 
 | Image | Role | Built by |
 | --- | --- | --- |
 | `kivali` | The web pod *and* every per-agent agent pod (via the `kivali agent` subcommand) | `make images` |
-| `kivali-egress-proxy` | Per-pod egress allowlist enforcement | `make images` |
+| `kivali-egress-proxy` | The egress proxy: the shell allowlist, and the guard and budget on agents' own fetches | `make images` |
 | `kivali-agent-shell` | The bash sidecar in each agent pod | `make images` |
 | `kivali-browser` | Chromium for a web subagent: one pod per agent web session, running `kivali browser` | `make images` |
 

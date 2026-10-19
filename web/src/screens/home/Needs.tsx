@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useHref, useNavigate } from 'react-router';
-import type { AssignmentResolution, NeedItem, SubagentRef } from '../../api/types.gen';
+import type { AssignmentResolution, NeedItem, SubagentRef, WebBudgetRef, WebUploadRef } from '../../api/types.gen';
 import { browserWindowName, browserWindowPath, subagentPath } from '../../app/links';
 import { Badge, Button, EmptyState, Icon, ListRow, Select, Text, TextField } from '../../ds';
 import { pickFiles } from '../../lib/pickFiles';
@@ -147,6 +147,74 @@ function SignInActions({ task }: { task: SubagentRef }) {
   );
 }
 
+/**
+ * A web task that wants to upload files: what it uploads, where it starts and the prompt its agent gave it, then
+ * deny or approve with a note. The prompt is the agent's words, shown as plain text.
+ */
+function UploadApproval({ upload, onAct }: { upload: WebUploadRef; onAct(a: NeedAction): void }) {
+  const [message, setMessage] = useState('');
+  return (
+    <>
+      <dl className="app-home-upload">
+        <dt>Task</dt>
+        <dd>
+          <Link className="app-home-link" to={subagentPath(upload.parent, upload.id)}>
+            {upload.description}
+          </Link>
+        </dd>
+        <dt>Files</dt>
+        <dd>
+          {upload.files.map((f) => (
+            <Badge key={f} variant="outline" mono>
+              {f}
+            </Badge>
+          ))}
+        </dd>
+        <dt>Starts at</dt>
+        <dd>
+          <Text variant="code">{upload.start_url}</Text>
+        </dd>
+        <dt>Prompt</dt>
+        <dd>
+          <Text as="p" variant="caption" className="app-home-prompt">
+            {upload.prompt}
+          </Text>
+        </dd>
+      </dl>
+      <TextField label="Note (optional)" multiline rows={2} placeholder="Say why, if you deny it." value={message} onChange={(e) => setMessage(e.currentTarget.value)} />
+      <div className="app-home-actions">
+        <span className="app-home-spacer" />
+        <Button variant="secondary" size="sm" onClick={() => onAct({ kind: 'answer', verb: 'deny', message, files: [] })}>
+          Deny
+        </Button>
+        <Button variant="primary" size="sm" onClick={() => onAct({ kind: 'answer', verb: 'approve', message, files: [] })}>
+          Approve upload
+        </Button>
+      </div>
+    </>
+  );
+}
+
+/** A web task refused an action over the web budget: the task, then acknowledge. Every word is the server's. */
+function BudgetNotice({ notice, onAct }: { notice: WebBudgetRef; onAct(a: NeedAction): void }) {
+  return (
+    <>
+      <Text as="p" variant="caption" tone="muted">
+        {'Task: ' + notice.description}
+      </Text>
+      <div className="app-home-actions">
+        <Link className="app-home-link" to={subagentPath(notice.parent, notice.id)}>
+          Open task
+        </Link>
+        <span className="app-home-spacer" />
+        <Button variant="primary" size="sm" onClick={() => onAct({ kind: 'answer', verb: 'ack', message: '', files: [] })}>
+          Acknowledge
+        </Button>
+      </div>
+    </>
+  );
+}
+
 interface NeedRowProps {
   item: NeedItem;
   now: number;
@@ -203,6 +271,8 @@ function NeedRow({ item, now, base, expanded, onToggle, onAct }: NeedRowProps) {
             </div>
           )}
           {item.kind === 'web_sign_in' && item.subagent && <SignInActions task={item.subagent} />}
+          {item.kind === 'web_upload' && item.web_upload && <UploadApproval upload={item.web_upload} onAct={onAct} />}
+          {item.kind === 'web_budget' && item.web_budget && <BudgetNotice notice={item.web_budget} onAct={onAct} />}
         </div>
       )}
     </div>

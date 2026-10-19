@@ -23,7 +23,7 @@ import (
 //	claude -p
 //	  --tools <Builtins as CLI names>
 //	  --output-format stream-json --input-format stream-json --verbose
-//	  --mcp-config <RunDir>/mcp-config.json
+//	  --mcp-config <RunDir>/mcp-config.json --strict-mcp-config
 //	  --model <Model> --effort <Effort>
 //	  --system-prompt <System>
 //	  --allowedTools <mcp__kivali__<Kivali>..., Builtins as CLI names>
@@ -87,6 +87,9 @@ func (c *Driver) RunSubagent(ctx context.Context, req provider.SubagentRequest) 
 		"--input-format", "stream-json",
 		"--verbose",
 		"--mcp-config", mcpConfigPath,
+		// Only the servers the request names: nothing from user or
+		// project scope, and no claude.ai connectors.
+		"--strict-mcp-config",
 		"--model", stripName(model),
 		// Reasoning depth — validated, defaults to high (the fleet
 		// default) when the request leaves it empty.

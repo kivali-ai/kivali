@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/kivali-ai/kivali/internal/agentpod"
+	"github.com/kivali-ai/kivali/internal/egresscred"
 	"github.com/kivali-ai/kivali/internal/store"
 )
 
@@ -76,6 +77,17 @@ func New(socketPath, slug string) *Client {
 			Transport: &http.Transport{DialContext: dial},
 		},
 	}
+}
+
+// WithScrubber has every request c sends, on both its transports,
+// scrubbed of the credential s knows (egresscred.Scrubber.RoundTripper).
+// Must be called before the first request. A nil s changes nothing.
+func (c *Client) WithScrubber(s *egresscred.Scrubber) *Client {
+	if s != nil {
+		c.http.Transport = s.RoundTripper(c.http.Transport)
+		c.blocking.Transport = s.RoundTripper(c.blocking.Transport)
+	}
+	return c
 }
 
 // RunSubagent is the MCP-side entry to the parent web process's

@@ -45,6 +45,11 @@ var version = "dev"
 // ShutdownBrowsers); the exit waits that long at most for them.
 const browserShutdownTimeout = 20 * time.Second
 
+// modelHostsCheckInterval is how often the server looks at the CLI's
+// sign-in files for a change that moves the model provider's hosts.
+// The proxy picks up the result on its own next reload.
+const modelHostsCheckInterval = 10 * time.Second
+
 func main() {
 	// Subcommand dispatch. `kivali mcp ...` → runMCP; otherwise the
 	// main server. Backup and restore are the app's (Org, Backup and
@@ -195,6 +200,25 @@ func main() {
 		} else {
 			log.Printf("egress: synced allowlist to %s", cfg.EgressAllowlistSyncPath)
 		}
+	}
+	// The proxy's agents file: each agent runtime's credential hash
+	// (registered over core.sock, kept in the data dir) and the model
+	// provider's hosts, worked out from the CLI's sign-in now and again
+	// whenever it changes.
+	if cfg.EgressAgentsSyncPath != "" {
+		s.SetEgressAgentsSyncPath(cfg.EgressAgentsSyncPath)
+		if err := s.SyncEgressAgentsToProxy(); err != nil {
+			log.Printf("egress: initial agents sync: %v", err)
+		} else {
+			log.Printf("egress: synced agent credentials to %s", cfg.EgressAgentsSyncPath)
+		}
+		go driver.WatchModelHosts(shutdownCtx, modelHostsCheckInterval, func(hosts []string) {
+			if err := s.SetEgressModelHosts(hosts); err != nil {
+				log.Printf("egress: model hosts: %v", err)
+				return
+			}
+			log.Printf("egress: model hosts %v", hosts)
+		})
 	}
 
 	codec, err := auth.NewCodec(cfg.SessionKey)

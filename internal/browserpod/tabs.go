@@ -83,6 +83,9 @@ type group struct {
 	// contextID is the group's own browser context in an ephemeral
 	// session; empty means the default context.
 	contextID string
+	// site is the registrable domain the group's tabs are held to in a
+	// browser whose session is not locked (holdGroup); empty for none.
+	site string
 	// watched: a browser window is on this group, so its current tab
 	// is screencast (followWatch).
 	watched bool
@@ -253,8 +256,19 @@ func (b *browser) orphan(a attachment) {
 }
 
 // adoptPopup makes a page another tab opened into a tab of the
-// opener's group. A popup of a group that is closing is closed with it.
+// opener's group. A popup of a group that is closing is closed with it,
+// and a popup off the site the group is held to is closed and never
+// becomes a tab, so nothing the task does can reach it.
 func (b *browser) adoptPopup(a attachment, opener *tab) {
+	at := a.url
+	if info, err := b.targetInfo(context.Background(), a.targetID); err == nil && info.URL != "" {
+		at = info.URL
+	}
+	if !b.allowed(opener.group, a.url) || !b.allowed(opener.group, at) {
+		opener.note(fmt.Sprintf("The page opened a new tab at %s, which is off the site this task is held to; it was closed.", at))
+		_, _ = b.conn.Call(context.Background(), "", "Target.closeTarget", map[string]any{"targetId": a.targetID})
+		return
+	}
 	b.mu.Lock()
 	if g := b.groups[opener.group]; g == nil || g.closing {
 		b.mu.Unlock()
@@ -273,7 +287,7 @@ func (b *browser) adoptPopup(a attachment, opener *tab) {
 	opener.note(fmt.Sprintf("The page opened a new tab, %s; web_tabs switches to it.", t.id))
 	opener.update(func() { opener.popups++ })
 	b.watch(t)
-	b.enableSession(context.Background(), t.session)
+	b.enableSession(context.Background(), t.session, t.group)
 	b.resume(t.session)
 	// The page may have committed before the pod saw it.
 	if info, err := b.targetInfo(context.Background(), t.targetID); err == nil {
@@ -284,13 +298,40 @@ func (b *browser) adoptPopup(a attachment, opener *tab) {
 		t.title = info.Title
 		t.mu.Unlock()
 	}
-	b.emitTab(t)
 	t.mu.Lock()
 	u := t.url
 	t.mu.Unlock()
+	if !b.allowed(t.group, u) {
+		// It went off the site before its navigations were watched.
+		opener.note(fmt.Sprintf("The page opened a new tab at %s, which is off the site this task is held to; it was closed.", u))
+		b.closeTab(context.Background(), t)
+		return
+	}
+	b.emitTab(t)
 	if u != "" && u != "about:blank" {
 		b.emitNavigated(t)
 	}
+}
+
+// closeOffSitePopup closes a popup whose page heads off the site its
+// group is held to: a page opened with window.open attaches blank and
+// navigates only once resumed, so this is where most are caught. The
+// note goes to the tab that opened it. Reports whether t was a popup.
+func (b *browser) closeOffSitePopup(t *tab, u string) bool {
+	if t.opener == "" {
+		return false
+	}
+	b.mu.Lock()
+	opener := b.byID[t.opener]
+	b.mu.Unlock()
+	note := fmt.Sprintf("The page opened a new tab at %s, which is off the site this task is held to; it was closed.", u)
+	if opener != nil {
+		opener.note(note)
+	} else {
+		t.note(note)
+	}
+	b.closeTab(context.Background(), t)
+	return true
 }
 
 // registerLocked makes a tab of an attached page. b.mu is held.
@@ -337,11 +378,13 @@ func (b *browser) sendMsg(m Message) {
 	}
 }
 
-// enableSession turns on the domains the pod reads on a page. In a site
-// session it also pauses every document request before it is sent
-// (Fetch.requestPaused, handled in watch), so a main-frame request off
-// the site, a redirect hop included, fails before anything loads.
-func (b *browser) enableSession(ctx context.Context, session string) {
+// enableSession turns on the domains the pod reads on a page of group.
+// Where a site holds the page (a site session's, or the one a task that
+// uploads files is held to) it also pauses every document request
+// before it is sent (Fetch.requestPaused, handled in watch), so a
+// main-frame request off the site, a redirect hop included, fails
+// before anything loads.
+func (b *browser) enableSession(ctx context.Context, session, group string) {
 	for _, m := range []string{"Page.enable", "Runtime.enable", "DOM.enable", "Network.enable"} {
 		if _, err := b.conn.Call(ctx, session, m, nil); err != nil {
 			b.log.Printf("%s: %v", m, err)
@@ -350,7 +393,7 @@ func (b *browser) enableSession(ctx context.Context, session string) {
 	if _, err := b.conn.Call(ctx, session, "Page.setLifecycleEventsEnabled", map[string]any{"enabled": true}); err != nil {
 		b.log.Printf("Page.setLifecycleEventsEnabled: %v", err)
 	}
-	if b.site != "" {
+	if b.heldSite(group) != "" {
 		if _, err := b.conn.Call(ctx, session, "Fetch.enable", map[string]any{
 			"patterns": []map[string]any{{"urlPattern": "*", "resourceType": "Document", "requestStage": "Request"}},
 		}); err != nil {
@@ -403,8 +446,13 @@ func (b *browser) watch(t *tab) {
 			return
 		}
 		if !b.allowed(t.group, ev.URL) {
-			t.note(fmt.Sprintf("The page tried to go to %s, which is off this session's site, and was stopped.", ev.URL))
 			_, _ = b.conn.Call(context.Background(), s, "Page.stopLoading", nil)
+			// A group held to a site for its uploads loses an off-site
+			// popup; a site session's stays, stopped, like any page.
+			if b.site == "" && b.closeOffSitePopup(t, ev.URL) {
+				return
+			}
+			t.note(fmt.Sprintf("The page tried to go to %s, which is off %s, and was stopped.", ev.URL, b.offSiteName()))
 		}
 		t.update(func() {
 			t.starts++
@@ -412,7 +460,7 @@ func (b *browser) watch(t *tab) {
 		})
 	})
 	on("Fetch.requestPaused", func(raw json.RawMessage) {
-		// Site sessions only (enableSession). Every document request
+		// Held tabs only (enableSession). Every document request
 		// pauses here before it is sent; a main-frame one off the site
 		// fails, so an on-site URL that redirects off the site never
 		// loads there, and the model hears why with its next result.
@@ -432,7 +480,7 @@ func (b *browser) watch(t *tab) {
 			return
 		}
 		if ev.FrameID == t.targetID && ev.ResourceType == "Document" && !b.allowed(t.group, ev.Request.URL) {
-			t.note(fmt.Sprintf("The page tried to go to %s, which is off this session's site, and was stopped.", ev.Request.URL))
+			t.note(fmt.Sprintf("The page tried to go to %s, which is off %s, and was stopped.", ev.Request.URL, b.offSiteName()))
 			t.update(func() { t.stops++ })
 			if _, err := b.conn.Call(context.Background(), s, "Fetch.failRequest", map[string]any{"requestId": ev.RequestID, "errorReason": "Aborted"}); err != nil {
 				b.log.Printf("Fetch.failRequest: %v", err)
@@ -506,13 +554,16 @@ func (b *browser) watch(t *tab) {
 		case ev.Frame.UnreachableURL != "" && !b.allowed(t.group, ev.Frame.UnreachableURL):
 			// Chromium's error page for an off-site URL that failed to
 			// load: the tab goes to about:blank rather than showing it.
-			t.note(fmt.Sprintf("The page could not load %s, which is off this session's site; the tab was sent to about:blank.", ev.Frame.UnreachableURL))
+			t.note(fmt.Sprintf("The page could not load %s, which is off %s; the tab was sent to about:blank.", ev.Frame.UnreachableURL, b.offSiteName()))
 			go func() {
 				_, _ = b.conn.Call(context.Background(), s, "Page.navigate", map[string]any{"url": "about:blank"})
 			}()
 		case !b.allowed(t.group, u):
 			// The backstop for a commit the request pause did not catch.
-			t.note(fmt.Sprintf("The page went to %s, which is off this session's site; the tab was sent to about:blank.", u))
+			if b.site == "" && b.closeOffSitePopup(t, u) {
+				return
+			}
+			t.note(fmt.Sprintf("The page went to %s, which is off %s; the tab was sent to about:blank.", u, b.offSiteName()))
 			go func() {
 				_, _ = b.conn.Call(context.Background(), s, "Page.navigate", map[string]any{"url": "about:blank"})
 			}()
@@ -712,7 +763,7 @@ func (b *browser) createTab(ctx context.Context, groupName string) (*tab, error)
 		b.groupLocked(groupName).current = t
 		b.mu.Unlock()
 		b.watch(t)
-		b.enableSession(ctx, t.session)
+		b.enableSession(ctx, t.session, groupName)
 		b.resume(t.session)
 		t.update(func() { t.url = "about:blank" })
 		b.emitTab(t)
@@ -753,7 +804,7 @@ func (b *browser) createTab(ctx context.Context, groupName string) (*tab, error)
 		return nil, failf(CodeBrowser, "Could not open a tab: %v", err)
 	}
 	b.watch(t)
-	b.enableSession(ctx, t.session)
+	b.enableSession(ctx, t.session, groupName)
 	b.resume(t.session)
 	b.emitTab(t)
 	b.followWatch(ctx, groupName)
@@ -1024,19 +1075,60 @@ func (b *browser) tabByID(id string) *tab {
 	return b.byID[id]
 }
 
-// allowed reports whether a page of group may be at u: always in the
-// open session and in an unlocked group of a site session, otherwise
-// for non-web URLs and URLs on the site or a subdomain of it.
-func (b *browser) allowed(group, u string) bool {
-	if b.site == "" || b.isUnlocked(group) {
-		return true
+// holdGroup holds a group's tabs to site, a registrable domain, from
+// now until the group closes: core names it on every command of a task
+// that uploads files. A group already held keeps its site, and an
+// empty site changes nothing.
+func (b *browser) holdGroup(name, site string) {
+	site = strings.ToLower(strings.TrimPrefix(site, "."))
+	if site == "" {
+		return
 	}
-	return b.onSiteURL(u)
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if g := b.groupLocked(name); g.site == "" {
+		g.site = site
+	}
 }
 
-// onSiteURL reports whether u is a non-web URL or one on the session's
-// site or a subdomain of it.
-func (b *browser) onSiteURL(u string) bool {
+// heldSite is the site a group's tabs are held to: the session's, else
+// the group's own; empty for none.
+func (b *browser) heldSite(groupName string) string {
+	if b.site != "" {
+		return b.site
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if g := b.groups[groupName]; g != nil {
+		return g.site
+	}
+	return ""
+}
+
+// offSiteName names the site a page went off, for a note: the
+// session's, or the one a task is held to.
+func (b *browser) offSiteName() string {
+	if b.site != "" {
+		return "this session's site"
+	}
+	return "the site this task is held to"
+}
+
+// allowed reports whether a page of the group may be at u: non-web
+// URLs always, and web URLs on the site the session is locked to or
+// the group is held to, or a subdomain of it. With neither, or in a
+// site session's group a person has unlocked, anywhere.
+func (b *browser) allowed(groupName, u string) bool {
+	site := b.heldSite(groupName)
+	if site == "" || b.isUnlocked(groupName) {
+		return true
+	}
+	return onSiteURL(site, u)
+}
+
+// onSiteURL reports whether u is a non-web URL or one on site or a
+// subdomain of it.
+func onSiteURL(site, u string) bool {
 	p, err := url.Parse(u)
 	if err != nil {
 		return false
@@ -1044,7 +1136,7 @@ func (b *browser) onSiteURL(u string) bool {
 	if p.Scheme != "http" && p.Scheme != "https" {
 		return true
 	}
-	return onSite(b.site, p.Hostname())
+	return onSite(site, p.Hostname())
 }
 
 func (b *browser) isUnlocked(group string) bool {
@@ -1074,7 +1166,7 @@ func (b *browser) setSiteLock(group string, unlocked bool) []*tab {
 		t.mu.Lock()
 		u := t.url
 		t.mu.Unlock()
-		if !b.onSiteURL(u) {
+		if !onSiteURL(b.site, u) {
 			off = append(off, t)
 		}
 	}

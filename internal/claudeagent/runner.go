@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/kivali-ai/kivali/internal/clock"
+	"github.com/kivali-ai/kivali/internal/egresscred"
 	"github.com/kivali-ai/kivali/internal/provider"
 )
 
@@ -126,9 +127,11 @@ type runner struct {
 	cmd         *exec.Cmd
 	stdin       io.WriteCloser // the actual cmd.StdinPipe — closed on shutdown
 	stdout      io.ReadCloser
-	stderrFile  *os.File  // best-effort; may be nil if open failed
-	stdinMirror *os.File  // best-effort; may be nil
-	stdinW      io.Writer // = MultiWriter(stdin, stdinMirror) when mirror is open
+	stderrFile  *os.File           // best-effort; may be nil if open failed
+	stderrW     *egresscred.Writer // the subprocess's stderr, scrubbed
+	stdinMirror *os.File           // best-effort; may be nil
+	mirrorW     *egresscred.Writer // stdinMirror, scrubbed; nil with it
+	stdinW      io.Writer          // = MultiWriter(stdin, mirrorW) when mirror is open
 
 	// stdinMu serializes whole-line writes to stdinW. Two writers now
 	// share the pipe — the per-turn user message (RunTurn) and the
@@ -335,16 +338,19 @@ func newRunner(opts Options, slug, kivaliBin, sessionDir, resumeID string, req p
 	// any single request's ctx. A request ctx cancellation must not
 	// kill a runner that other turns will reuse.
 	cmd := exec.Command(binary, args...)
-	// Inherit the environment unchanged so the CLI sees the same
-	// credential the server runs with (see Stream).
-	cmd.Env = append(os.Environ(), "NODE_OPTIONS=--max-old-space-size=4096")
+	cmd.Env = cliEnv(opts, 4096)
 
+	// stderr and the stdin mirror pass through the scrubber, which
+	// holds back a possible partial credential until supervisor
+	// flushes them at exit.
 	stderrFile, _ := os.OpenFile(filepath.Join(dir, "stderr.log"), os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
+	var stderrW *egresscred.Writer
 	if stderrFile != nil {
-		cmd.Stderr = io.MultiWriter(os.Stderr, stderrFile)
+		stderrW = opts.Scrubber.Writer(io.MultiWriter(os.Stderr, stderrFile))
 	} else {
-		cmd.Stderr = os.Stderr
+		stderrW = opts.Scrubber.Writer(os.Stderr)
 	}
+	cmd.Stderr = stderrW
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -364,8 +370,10 @@ func newRunner(opts Options, slug, kivaliBin, sessionDir, resumeID string, req p
 
 	stdinMirror, _ := os.OpenFile(filepath.Join(dir, "stdin-mirror.jsonl"), os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
 	var stdinW io.Writer = stdin
+	var mirrorW *egresscred.Writer
 	if stdinMirror != nil {
-		stdinW = io.MultiWriter(stdin, stdinMirror)
+		mirrorW = opts.Scrubber.Writer(stdinMirror)
+		stdinW = io.MultiWriter(stdin, mirrorW)
 	}
 
 	if err := cmd.Start(); err != nil {
@@ -391,7 +399,9 @@ func newRunner(opts Options, slug, kivaliBin, sessionDir, resumeID string, req p
 		stdin:       stdin,
 		stdout:      stdout,
 		stderrFile:  stderrFile,
+		stderrW:     stderrW,
 		stdinMirror: stdinMirror,
+		mirrorW:     mirrorW,
 		stdinW:      stdinW,
 		dir:         dir,
 		spawnedAt:   clk.Now(),
@@ -1404,8 +1414,12 @@ func (r *runner) supervisor() {
 	}
 	r.mu.Unlock()
 
+	_ = r.stderrW.Flush()
 	if r.stderrFile != nil {
 		_ = r.stderrFile.Close()
+	}
+	if r.mirrorW != nil {
+		_ = r.mirrorW.Flush()
 	}
 	if r.stdinMirror != nil {
 		_ = r.stdinMirror.Close()

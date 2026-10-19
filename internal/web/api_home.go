@@ -7,6 +7,8 @@ import (
 	"mime"
 	"mime/multipart"
 	"net/http"
+	"net/url"
+	"path"
 	"sort"
 	"strconv"
 	"strings"
@@ -34,6 +36,7 @@ func (s *Server) wireAPIHomeRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/needs/approve", s.handleAPINeedsResponse(responseKindApproval, boolPtr(true)))
 	mux.HandleFunc("POST /api/v1/needs/deny", s.handleAPINeedsResponse(responseKindApproval, boolPtr(false)))
 	mux.HandleFunc("POST /api/v1/needs/ack", s.handleAPINeedsResponse(responseKindAck, nil))
+	mux.HandleFunc("GET /api/v1/agents/{slug}/subagents/{id}/files/{name}", s.handleAPIWebTaskFile)
 	mux.HandleFunc("POST /api/v1/assignments/{id}/close", s.handleAPIAssignmentClose)
 }
 
@@ -73,6 +76,12 @@ func (s *Server) handleAPIHome(w http.ResponseWriter, _ *http.Request) {
 	if s.SubagentService != nil {
 		for _, j := range s.SubagentService.waitingWebJobs() {
 			needs = append(needs, s.webSignInItem(j))
+		}
+		for _, j := range s.SubagentService.awaitingApprovalJobs() {
+			needs = append(needs, s.webUploadItem(j))
+		}
+		for _, n := range s.SubagentService.webBudgetNotices() {
+			needs = append(needs, s.webBudgetItem(n))
 		}
 	}
 	queue := make([]apitypes.QueueItem, 0, len(pending))
@@ -263,7 +272,7 @@ func (s *Server) webSignInItem(j subagentJob) apitypes.NeedItem {
 	title, body := webSignInWords(name, j.Site, j.WaitReason)
 	pageURL, pageTitle := s.SubagentService.waitingPage(j)
 	return apitypes.NeedItem{
-		ID:          "web_sign_in:" + j.Parent + "/" + j.ID,
+		ID:          webSignInNeedPrefix + j.Parent + "/" + j.ID,
 		Kind:        apitypes.NeedKindWebSignIn,
 		Title:       title,
 		From:        apitypes.PersonRef{Slug: j.Parent, Name: name},
@@ -293,6 +302,178 @@ func webSignInWords(name, site, reason string) (title, body string) {
 	default:
 		return name + " needs you to sign in to " + site, "The page asks for a sign-in. Open the browser, sign in," + then
 	}
+}
+
+// webUploadItem is the Needs-you row for a web task awaiting approval
+// of its uploads: what it would upload, to which site, where it starts
+// and the prompt its agent gave it. The words around them are core's.
+func (s *Server) webUploadItem(j subagentJob) apitypes.NeedItem {
+	name := j.Parent
+	if n := s.agentNames()[j.Parent]; n != "" {
+		name = n
+	}
+	files := append([]string{}, j.Files...)
+	// Each file as it was at dispatch, the bytes an upload sends, as a
+	// download like any file on a request.
+	atts := make([]apitypes.AttachmentRef, 0, len(j.ApprovedFiles))
+	for _, f := range j.ApprovedFiles {
+		atts = append(atts, apitypes.AttachmentRef{Name: path.Base(f.Path), SizeBytes: f.Size, URL: webTaskFileURL(j.Parent, j.ID, path.Base(f.Path))})
+	}
+	return apitypes.NeedItem{
+		ID:          webUploadNeedPrefix + j.Parent + "/" + j.ID,
+		Kind:        apitypes.NeedKindWebUpload,
+		Title:       fmt.Sprintf("Upload %d file%s to %s", len(files), pluralS(len(files)), j.LockSite),
+		From:        apitypes.PersonRef{Slug: j.Parent, Name: name},
+		At:          j.WaitSince,
+		BodyMD:      webUploadBody(j.LockSite),
+		Attachments: atts,
+		Packages:    []apitypes.SoftwarePackage{},
+		WebUpload: &apitypes.WebUploadRef{
+			Parent: j.Parent, ID: j.ID, Description: j.Description, Site: j.LockSite,
+			StartURL: j.StartURL, Files: files, Prompt: j.Prompt,
+		},
+	}
+}
+
+// webTaskFileURL is where a person downloads one of a web task's files
+// to check it before approving the upload.
+func webTaskFileURL(parent, id, name string) string {
+	return "/api/v1/agents/" + url.PathEscape(parent) + "/subagents/" + url.PathEscape(id) + "/files/" + url.PathEscape(name)
+}
+
+// handleAPIWebTaskFile serves one file a web task may upload as a
+// download: the bytes approved at dispatch, read again from the
+// agent's /files/ and checked against their digest. A file changed
+// since is refused, as the task's upload of it would be.
+func (s *Server) handleAPIWebTaskFile(w http.ResponseWriter, r *http.Request) {
+	slug, id, name := r.PathValue("slug"), r.PathValue("id"), r.PathValue("name")
+	var job subagentJob
+	found := false
+	if s.SubagentService != nil {
+		job, found = s.SubagentService.lookupJob(id)
+	}
+	if !found || job.Parent != slug {
+		writeAPIError(w, http.StatusNotFound, "That task is no longer on file", whoNoOne)
+		return
+	}
+	file, ok := webApprovedFileNamed(job, name)
+	if !ok {
+		writeAPIError(w, http.StatusNotFound, "That file is not one the task may upload", whoNoOne)
+		return
+	}
+	body, err := s.SubagentService.readApprovedFile(slug, file)
+	switch {
+	case errors.Is(err, errWebFileChanged):
+		writeAPIError(w, http.StatusConflict, "This file has changed since the task was dispatched, so the task will not upload it", "the agent, which can dispatch the task again")
+		return
+	case err != nil:
+		writeAPIError(w, http.StatusNotFound, "That file cannot be read", whoNoOne)
+		return
+	}
+	// Always a download, never rendered: the bytes are an agent's.
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+sanitizeDownloadName(name)+`"`)
+	_, _ = w.Write(body)
+}
+
+// webUploadBody is a web_upload row's text: what approving lets the
+// task do, and what it does not decide.
+func webUploadBody(site string) string {
+	return fmt.Sprintf("A web task wants to upload these files to %s. It starts at the address below, stays on %s and puts the files only on its pages. What the site does with a file after that is up to the site, as when you upload it yourself. Open each file to check it is the one you mean. Approve and it starts. Deny and it ends without uploading anything; the agent reads your note.", site, site)
+}
+
+// maxWebDenyNote bounds the note a person sends with an answer to a
+// web_upload row; the agent reads it.
+const maxWebDenyNote = 2 << 10
+
+// webBudgetPhrases say each limit, for a web_budget row.
+var webBudgetPhrases = map[webBudgetLimit]string{
+	webBudgetLimitAction: "One action may send " + byteSize(webBudgetPerAction) + ".",
+	webBudgetLimitTask:   "One task may send " + byteSize(webBudgetPerTask) + ".",
+	webBudgetLimitDay:    "An agent's web tasks may send " + byteSize(webBudgetPerDay) + " a day.",
+}
+
+// webBudgetItem is the Needs-you row for a web task refused an action
+// over the web budget. Every word is core's.
+func (s *Server) webBudgetItem(n webBudgetNotice) apitypes.NeedItem {
+	name := n.Parent
+	if an := s.agentNames()[n.Parent]; an != "" {
+		name = an
+	}
+	title := fmt.Sprintf("%s's web task tried to send %s out", name, byteSize(n.Bytes))
+	if n.Site != "" {
+		title = fmt.Sprintf("%s's web task tried to send %s to %s", name, byteSize(n.Bytes), n.Site)
+	}
+	return apitypes.NeedItem{
+		ID:          webBudgetNeedPrefix + n.Parent + "/" + n.ID,
+		Kind:        apitypes.NeedKindWebBudget,
+		Title:       title,
+		From:        apitypes.PersonRef{Slug: n.Parent, Name: name},
+		At:          n.At,
+		BodyMD:      webBudgetPhrases[n.Limit] + " That is far more than a search or a form needs, so a page may have led the task to send out data it should not. Kivali refused the action and told the task, which carries on without it. Open the task to see what it was doing.",
+		Attachments: []apitypes.AttachmentRef{},
+		Packages:    []apitypes.SoftwarePackage{},
+		WebBudget: &apitypes.WebBudgetRef{
+			Parent: n.Parent, ID: n.ID, Description: n.Description, Site: n.Site,
+			Bytes: n.Bytes, Limit: apitypes.WebBudgetLimit(n.Limit),
+		},
+	}
+}
+
+// The ID prefixes of a web task's Needs-you rows. A web_upload or
+// web_budget row takes an answer through POST /api/v1/needs/*.
+const (
+	webSignInNeedPrefix = "web_sign_in:"
+	webUploadNeedPrefix = "web_upload:"
+	webBudgetNeedPrefix = "web_budget:"
+)
+
+// answerWebNeed answers a web task's Needs-you row when path names one:
+// approve or deny a web_upload, acknowledge a web_budget. handled is
+// false for any other path, which is a message's.
+func (s *Server) answerWebNeed(kind responseKind, approved *bool, path, message string) (handled bool, out apitypes.NeedActionResponse, err error) {
+	var rest string
+	var upload bool
+	switch {
+	case strings.HasPrefix(path, webUploadNeedPrefix):
+		rest, upload = strings.TrimPrefix(path, webUploadNeedPrefix), true
+	case strings.HasPrefix(path, webBudgetNeedPrefix):
+		rest = strings.TrimPrefix(path, webBudgetNeedPrefix)
+	default:
+		return false, out, nil
+	}
+	parent, id, ok := strings.Cut(rest, "/")
+	if !ok || s.SubagentService == nil {
+		return true, out, errWebNeedGone
+	}
+	if !upload {
+		if kind != responseKindAck {
+			return true, out, &ceoRefusal{Status: http.StatusBadRequest, Msg: "web_budget takes ack",
+				Words: "That is a notice, so it can only be acknowledged", Who: whoDevelopers}
+		}
+		if !s.SubagentService.ackWebBudgetNotice(parent, id) {
+			return true, out, errWebNeedGone
+		}
+		return true, out, nil
+	}
+	if kind != responseKindApproval || approved == nil {
+		return true, out, &ceoRefusal{Status: http.StatusBadRequest, Msg: "web_upload takes approve or deny",
+			Words: "That request is an approval, so it can only be approved or denied", Who: whoDevelopers}
+	}
+	note := strings.TrimSpace(message)
+	if len(note) > maxWebDenyNote {
+		return true, out, &ceoRefusal{Status: http.StatusBadRequest, Msg: "web_upload note over 2 KB",
+			Words: "The note is over 2 KB; shorten it", Who: whoYou}
+	}
+	if err := s.SubagentService.answerWebUpload(parent, id, *approved, note); err != nil {
+		return true, out, err
+	}
+	if *approved {
+		return true, apitypes.NeedActionResponse{Result: "Upload approved. The task starts now", Link: "/agents/" + parent + "/subagents/" + id}, nil
+	}
+	return true, apitypes.NeedActionResponse{Result: "Upload denied. The task ends without uploading anything"}, nil
 }
 
 // needsHelpItem is the Needs-you row for an agent that has stopped:
@@ -660,6 +841,14 @@ func (s *Server) handleAPINeedsResponse(kind responseKind, approved *bool) http.
 			for _, f := range needsAttachmentFields {
 				files = append(files, r.MultipartForm.File[f]...)
 			}
+		}
+		if handled, out, err := s.answerWebNeed(kind, approved, r.FormValue("path"), r.FormValue("message")); handled {
+			if err != nil {
+				writeNeedsError(w, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, out)
+			return
 		}
 		v := s.newHomeView()
 		done, err := s.respondAsCEO(r.Context(), kind, approved, r.FormValue("path"), r.FormValue("message"), files)

@@ -21,7 +21,9 @@ server:
 # no key in it is required, so it is empty here.
 secrets:
   create: true
-# Set to the cluster's pod network; 10.244.0.0/16 is a common CNI default.
-# The chart default is k3s's 10.42.0.0/16.
+# Set to the cluster's pod and Service networks; 10.244.0.0/16 and
+# 10.96.0.0/12 are common defaults (kind). The chart defaults are k3s's
+# 10.42.0.0/16 and 10.43.0.0/16.
 networkPolicy:
   podCIDR: 10.244.0.0/16
+  serviceCIDR: 10.96.0.0/12

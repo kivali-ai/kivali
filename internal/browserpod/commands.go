@@ -156,6 +156,7 @@ func (b *browser) dispatch(ctx context.Context, msg Message, tp **tab) (result, 
 	if msg.Group == "" {
 		return result{}, failf(CodeBadArgs, "The command names no group.")
 	}
+	b.holdGroup(msg.Group, msg.Site)
 	if msg.Name == CommandTabs {
 		var a TabsArgs
 		if err := decodeArgs(msg.Args, &a); err != nil {
@@ -174,7 +175,7 @@ func (b *browser) dispatch(ctx context.Context, msg Message, tp **tab) (result, 
 		if err := need("url", a.URL); err != nil {
 			return result{}, err
 		}
-		if err := b.checkURL(a.URL); err != nil {
+		if err := b.checkURL(msg.Group, a.URL); err != nil {
 			return result{}, err
 		}
 		args = a
@@ -318,10 +319,11 @@ func (b *browser) dispatch(ctx context.Context, msg Message, tp **tab) (result, 
 	}
 }
 
-// checkURL refuses what a tab may not load: anything but http(s), and
-// in a site session a host off the site, whether or not the group is
-// unlocked: an unlock is for a person's sign-in, not for commands.
-func (b *browser) checkURL(raw string) error {
+// checkURL refuses what a group's tab may not load: anything but
+// http(s), and a host off the site the session or the group is held
+// to, whether or not the group is unlocked: an unlock is for a person's
+// sign-in, not for commands.
+func (b *browser) checkURL(groupName, raw string) error {
 	u, err := url.Parse(raw)
 	if err != nil || u.Host == "" {
 		return failf(CodeBadArgs, "%q is not a full URL; include https://.", raw)
@@ -329,8 +331,8 @@ func (b *browser) checkURL(raw string) error {
 	if u.Scheme != "http" && u.Scheme != "https" {
 		return failf(CodeBadArgs, "Only http and https URLs can be opened, not %s:.", u.Scheme)
 	}
-	if b.site != "" && !b.onSiteURL(raw) {
-		return failf(CodeOffSite, "Blocked: %s is off this session's site.", raw)
+	if site := b.heldSite(groupName); site != "" && !onSiteURL(site, raw) {
+		return failf(CodeOffSite, "Blocked: %s is off %s.", raw, b.offSiteName())
 	}
 	return nil
 }
@@ -443,6 +445,9 @@ func (b *browser) cmdClick(ctx context.Context, t *tab, a ClickArgs) (result, er
 	if err != nil {
 		return result{}, err
 	}
+	if err := b.checkHit(ctx, t, obj, x, y); err != nil {
+		return result{}, err
+	}
 	m := t.mark()
 	if err := b.mouseClick(ctx, t, x, y); err != nil {
 		return result{}, err
@@ -526,6 +531,112 @@ func (b *browser) clickPoint(ctx context.Context, t *tab, obj string, info refIn
 		return 0, 0, failf(CodeNotFound, "%s %q is covered by %s, which would take the click; dismiss or close that first, or scroll, then take a new snapshot.", info.Role, info.Name, res.Covered)
 	}
 	return res.X, res.Y, nil
+}
+
+// The hold on embedded frames. A held tab's page may embed frames from
+// other sites, and they load as the page asks: the pod blocks no
+// subresource. What it stops is the task's own actions landing in one:
+// a click whose point an off-site frame covers, and text or keys while
+// the focus is inside one, which a page can move there at any time.
+
+// frameAtJS reports where the point (x, y) lands, looking through open
+// shadow roots: "" on a page element, the frame's URL on an embedded
+// frame the page can read, "cross:<src>" on one it cannot (another
+// origin). A frame inside the element itself counts like any other.
+const frameAtJS = `function(x, y) { /* kivali-frame */
+	let h = document.elementFromPoint(x, y);
+	for (let i = 0; h && h.shadowRoot && i < 32; i++) {
+		const inner = h.shadowRoot.elementFromPoint(x, y);
+		if (!inner || inner === h) break;
+		h = inner;
+	}
+	if (!h || (h.tagName !== 'IFRAME' && h.tagName !== 'FRAME')) return '';
+	try { const d = h.contentDocument; return d ? d.location.href : 'cross:' + (h.src || ''); } catch (e) { return 'cross:' + (h.src || ''); }
+}`
+
+// focusJS reports where keyboard input would land, looking through
+// open shadow roots: "" in the page itself, the URL of the innermost
+// embedded frame the focus is in when the page can read it,
+// "cross:<src>" when it cannot.
+const focusJS = `/* kivali-frame */ (() => {
+	let d = document, href = '';
+	for (let i = 0; i < 8; i++) {
+		let el = d.activeElement;
+		for (let j = 0; el && el.shadowRoot && el.shadowRoot.activeElement && j < 32; j++) el = el.shadowRoot.activeElement;
+		if (!el || (el.tagName !== 'IFRAME' && el.tagName !== 'FRAME')) return href;
+		let inner = null;
+		try { inner = el.contentDocument; } catch (e) { inner = null; }
+		if (!inner) return 'cross:' + (el.src || '');
+		d = inner;
+		href = d.location.href;
+	}
+	return 'cross:';
+})()`
+
+// insertTextJS puts text into the element, replacing what is selected
+// in it (all of it, after cmdType focuses it), as typing would: through
+// the editing command when the focus is in the element, so the page
+// hears the input as typed, else by setting its value and raising the
+// events a page listens for. It never reaches another document.
+const insertTextJS = `function(text) { /* kivali-insert */
+	const here = () => document.activeElement === this || this.contains(document.activeElement) || (this.shadowRoot && this.shadowRoot.activeElement);
+	let ok = false;
+	if (here()) {
+		try { ok = document.execCommand(text === '' ? 'delete' : 'insertText', false, text); } catch (e) { ok = false; }
+	}
+	if (ok) return true;
+	if (this.tagName === 'INPUT' || this.tagName === 'TEXTAREA') {
+		const proto = this.tagName === 'INPUT' ? HTMLInputElement.prototype : HTMLTextAreaElement.prototype;
+		Object.getOwnPropertyDescriptor(proto, 'value').set.call(this, text);
+	} else if (this.isContentEditable) {
+		this.textContent = text;
+	} else {
+		return false;
+	}
+	this.dispatchEvent(new InputEvent('input', {bubbles: true, inputType: 'insertText', data: text}));
+	this.dispatchEvent(new Event('change', {bubbles: true}));
+	return true;
+}`
+
+// frameRefusal is the refusal for an action that would land in an
+// embedded frame off the held site, or nil.
+func (b *browser) frameRefusal(group, where, action string) error {
+	if where == "" {
+		return nil
+	}
+	if src, cross := strings.CutPrefix(where, "cross:"); cross || !b.allowed(group, where) {
+		if !cross {
+			src = where
+		}
+		return failf(CodeOffSite, "Blocked: %s would land in an embedded frame from another site (%s), off the site this task is held to; nothing was sent. Use a field on the page itself.", action, src)
+	}
+	return nil
+}
+
+// checkHit refuses a click in a held tab whose point an embedded frame
+// off the site covers.
+func (b *browser) checkHit(ctx context.Context, t *tab, obj string, x, y float64) error {
+	if b.heldSite(t.group) == "" {
+		return nil
+	}
+	var where string
+	if err := b.callOn(ctx, t, obj, frameAtJS, &where, x, y); err != nil {
+		return err
+	}
+	return b.frameRefusal(t.group, where, "the click")
+}
+
+// checkFocus refuses typing or a key in a held tab while the focus is
+// inside an embedded frame off the site.
+func (b *browser) checkFocus(ctx context.Context, t *tab) error {
+	if b.heldSite(t.group) == "" {
+		return nil
+	}
+	var where string
+	if err := b.evalValue(ctx, t, focusJS, &where); err != nil {
+		return err
+	}
+	return b.frameRefusal(t.group, where, "the input")
 }
 
 // centre scrolls an element into view and returns its centre in
@@ -623,6 +734,7 @@ func (b *browser) cmdType(ctx context.Context, t *tab, a TypeArgs) (result, erro
 		Value     string `json:"value"`
 		MaxLength int    `json:"maxLength"`
 	}
+	onHeldSite := b.heldSite(t.group) != ""
 	switch {
 	case f.Direct:
 		// These inputs ignore keystrokes: the value is set as a whole,
@@ -639,6 +751,16 @@ func (b *browser) cmdType(ctx context.Context, t *tab, a TypeArgs) (result, erro
 		}
 		if held.Value != a.Text {
 			return result{}, failf(CodeBadArgs, "%s %q did not take %q; a %s input takes %s.", info.Role, info.Name, a.Text, f.Type, valueFormats[f.Type])
+		}
+	case onHeldSite:
+		// Into the element itself, in its own document: whatever the
+		// page does with the focus, the text cannot land in a frame.
+		var took bool
+		if err := b.callOn(ctx, t, obj, insertTextJS, &took, a.Text); err != nil {
+			return result{}, err
+		}
+		if !took {
+			return result{}, failf(CodeNotFound, "%s %q did not take the text; it may not accept text.", info.Role, info.Name)
 		}
 	case a.Text == "":
 		if err := b.pressKey(ctx, t, chord{key: namedKeys["Backspace"]}); err != nil {
@@ -672,6 +794,9 @@ func (b *browser) cmdType(ctx context.Context, t *tab, a TypeArgs) (result, erro
 		}
 	}
 	if a.Submit {
+		if err := b.checkFocus(ctx, t); err != nil {
+			return result{}, err
+		}
 		m := t.mark()
 		if err := b.pressKey(ctx, t, chord{key: namedKeys["Enter"]}); err != nil {
 			return result{}, err
@@ -731,6 +856,9 @@ func quoteAll(ss []string) string {
 func (b *browser) cmdPress(ctx context.Context, t *tab, a PressArgs) (result, error) {
 	c, err := parseChord(a.Key)
 	if err != nil {
+		return result{}, err
+	}
+	if err := b.checkFocus(ctx, t); err != nil {
 		return result{}, err
 	}
 	m := t.mark()
@@ -850,7 +978,7 @@ func (b *browser) cmdTabs(ctx context.Context, groupName, tabID string, a TabsAr
 		return result{text: fmt.Sprintf("Switched to %s: %s", t.id, t.where())}, nil
 	case TabsOpen:
 		if a.URL != "" {
-			if err := b.checkURL(a.URL); err != nil {
+			if err := b.checkURL(groupName, a.URL); err != nil {
 				return result{}, err
 			}
 		}
@@ -991,6 +1119,19 @@ func (b *browser) cmdUpload(ctx context.Context, t *tab, groupName string, a Upl
 	path := filepath.Join(b.dir, "files", cleanFileName(groupName), name)
 	if fi, err := os.Stat(path); err != nil || fi.IsDir() {
 		return result{}, failf(CodeNotFound, "There is no task file %q to upload.", a.File)
+	}
+	// A file goes onto a web page, and in a held tab only one on the site.
+	t.mu.Lock()
+	at := t.url
+	t.mu.Unlock()
+	// The site is checked directly, not through allowed: a person's
+	// sign-in unlock is for the person, never for a file.
+	site := b.heldSite(t.group)
+	if p, err := url.Parse(at); err != nil || (p.Scheme != "http" && p.Scheme != "https") || (site != "" && !onSiteURL(site, at)) {
+		if at == "" {
+			at = "no page"
+		}
+		return result{}, failf(CodeOffSite, "Blocked: a file goes only onto a web page of the site this task is held to, and this tab is at %s.", at)
 	}
 	obj, info, err := b.resolveRef(ctx, t, a.Ref)
 	if err != nil {

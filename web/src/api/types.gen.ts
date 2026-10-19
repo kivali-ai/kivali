@@ -778,7 +778,12 @@ export const SubagentTaskStateErrored = "errored";
  * session until a person has signed in through its browser window.
  */
 export const SubagentTaskStateWaitingForSignIn = "waiting_for_sign_in";
-export type SubagentTaskState = typeof SubagentTaskStateRunning | typeof SubagentTaskStateDone | typeof SubagentTaskStateErrored | typeof SubagentTaskStateWaitingForSignIn;
+/**
+ * SubagentTaskStateAwaitingApproval: a web task that uploads files,
+ * not started, until a person approves its uploads.
+ */
+export const SubagentTaskStateAwaitingApproval = "awaiting_approval";
+export type SubagentTaskState = typeof SubagentTaskStateRunning | typeof SubagentTaskStateDone | typeof SubagentTaskStateErrored | typeof SubagentTaskStateWaitingForSignIn | typeof SubagentTaskStateAwaitingApproval;
 /**
  * MarkerKind is the boundary a marker row records. The four stored
  * kinds keep their on-disk spelling. rotation is never stored: the
@@ -1405,7 +1410,65 @@ export const NeedKindProposal = "proposal";
  * the window.
  */
 export const NeedKindWebSignIn = "web_sign_in";
-export type NeedKind = typeof NeedKindApproval | typeof NeedKindNotification | typeof NeedKindAssignment | typeof NeedKindNeedsHelp | typeof NeedKindProposal | typeof NeedKindWebSignIn;
+/**
+ * NeedKindWebUpload: a web task waits, before it starts, for you to
+ * approve uploading files to a site (WebUpload). Approve or deny,
+ * with a reason the task's agent reads, through
+ * POST /api/v1/needs/approve and /deny with the row's ID as path.
+ */
+export const NeedKindWebUpload = "web_upload";
+/**
+ * NeedKindWebBudget: a web task was refused an action that would
+ * have sent more data out than web tasks may (WebBudget).
+ * Acknowledge it through POST /api/v1/needs/ack with the row's ID
+ * as path.
+ */
+export const NeedKindWebBudget = "web_budget";
+export type NeedKind = typeof NeedKindApproval | typeof NeedKindNotification | typeof NeedKindAssignment | typeof NeedKindNeedsHelp | typeof NeedKindProposal | typeof NeedKindWebSignIn | typeof NeedKindWebUpload | typeof NeedKindWebBudget;
+/**
+ * WebUploadRef is the upload a web_upload row asks you to approve: the
+ * task (its page is /agents/{parent}/subagents/{id}), the site it is
+ * held to, where it starts, the files it may upload (paths under the
+ * agent's /files/) and the task's prompt, the agent's words.
+ */
+export interface WebUploadRef {
+  parent: string;
+  id: string;
+  description: string;
+  site: string;
+  start_url: string;
+  files: string[];
+  prompt: string;
+}
+/**
+ * WebBudgetLimit is the limit a refused web action went over.
+ */
+/**
+ * WebBudgetLimitAction: one action may send 2 KB.
+ */
+export const WebBudgetLimitAction = "action";
+/**
+ * WebBudgetLimitTask: one task may send 8 KB.
+ */
+export const WebBudgetLimitTask = "task";
+/**
+ * WebBudgetLimitDay: an agent's web tasks may send 32 KB a day.
+ */
+export const WebBudgetLimitDay = "day";
+export type WebBudgetLimit = typeof WebBudgetLimitAction | typeof WebBudgetLimitTask | typeof WebBudgetLimitDay;
+/**
+ * WebBudgetRef is what a web_budget row reports: the task, the site
+ * the data would have gone to (empty when core cannot tell), the size
+ * of the refused action in bytes and the limit it went over.
+ */
+export interface WebBudgetRef {
+  parent: string;
+  id: string;
+  description: string;
+  site: string;
+  bytes: number /* int */;
+  limit: WebBudgetLimit;
+}
 /**
  * SubagentRef is the web task a web_sign_in row is about: the task's
  * page is /agents/{parent}/subagents/{id}, its browser window the
@@ -1443,8 +1506,11 @@ export interface NeedItem {
   /**
    * ID is what the actions take: the request's message path for
    * approval, notification and proposal rows (the `path` field of
-   * POST /api/v1/needs/*), "assignment:<id>" for an assignment, and
-   * "agent:<slug>" for a needs-help row.
+   * POST /api/v1/needs/*), "assignment:<id>" for an assignment,
+   * "agent:<slug>" for a needs-help row, and
+   * "web_sign_in:<agent>/<task>", "web_upload:<agent>/<task>" and
+   * "web_budget:<agent>/<task>" for a web task's rows; the last two
+   * are the path POST /api/v1/needs/* takes for them.
    */
   id: string;
   kind: NeedKind;
@@ -1475,8 +1541,16 @@ export interface NeedItem {
    */
   subagent?: SubagentRef;
   /**
+   * WebUpload is the upload a web_upload row asks you to approve.
+   */
+  web_upload?: WebUploadRef;
+  /**
+   * WebBudget is what a web_budget row reports.
+   */
+  web_budget?: WebBudgetRef;
+  /**
    * RawURL opens the message file; absent on a needs-help row and a
-   * web_sign_in row.
+   * web task's rows.
    */
   raw_url?: string;
 }

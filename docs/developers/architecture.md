@@ -33,7 +33,9 @@ flowchart LR
   shell --- data
   shell --- scratch
   runtime --- scratch
-  cli -- HTTP_PROXY --> proxy --> internet((allowlisted hosts))
+  cli -- proxy + credential --> proxy
+  shell -- proxy, no credential --> proxy
+  proxy --> internet((the public web:<br/>the shell only reaches listed hosts))
 ```
 
 ### The server (core)
@@ -190,7 +192,9 @@ the CLI's own answer: `claude auth status --json`, parsed by
 `internal/claudeauth`, for the server's setup state
 (`Credentials().Status`) and the supervisor's `GET /v1/credential`.
 Agent pods reach Bedrock, Vertex AI and Foundry through the egress
-proxy; the default allowlist carries their hosts.
+proxy, as the agent's own traffic (below): the agent's CLI carries the
+runtime's credential, and the proxy leaves the provider's exact hosts
+out of the agent's byte budget.
 
 The server also calls the model itself for short jobs that are not an
 agent's turn: the setup briefing, inbox summaries and episode digests.
@@ -199,22 +203,129 @@ Every call appends a record to `/data/usage.jsonl`.
 ### The egress proxy and the fence
 
 `cmd/egress-proxy` runs as a sidecar in the server pod on port 3128,
-behind the `kivali-egress` Service. It forwards HTTP and HTTPS
-(CONNECT) only to hosts on the allowlist, a file the server writes from
-`/data/allowed_egress.yaml` (Org → Network) into a shared emptyDir; the
-proxy hot-reloads it. Agent containers get `HTTP_PROXY`/`HTTPS_PROXY`
-pointing at it. A pattern covers its name and every subdomain; one with
-`*` or `[...]` after an optional leading `*.` is a per-label glob
-(`path.Match` on each label, so a wildcard never crosses a dot), which
-is how the defaults reach every region's Bedrock and Vertex AI endpoint
-without allowing all of `amazonaws.com` or `googleapis.com`. The
-defaults are written once, when a team's list does not exist yet.
+behind the `kivali-egress` Service. Agent pods get `HTTP_PROXY` and
+`HTTPS_PROXY` pointing at it, with the Service's cluster IP as the host:
+`Provision` resolves the name once and writes the address, because an
+agent pod has no DNS. A client that honours the proxy sends host names
+to it and never resolves them. The pod's spec carries the address, so
+changing it changes the spec hash and every agent pod is recreated once
+on the upgrade that introduces it.
+
+The proxy serves two kinds of request, told apart by
+`Proxy-Authorization`:
+
+- **Allowlist mode**, with no credential: the agent's shell. The host
+  must match the allowlist, a file the server writes from
+  `/data/allowed_egress.yaml` (Org → Network) into a shared emptyDir;
+  the proxy hot-reloads it. A pattern covers its name and every
+  subdomain; one with `*` or `[...]` after an optional leading `*.` is
+  a per-label glob (`path.Match` on each label, so a wildcard never
+  crosses a dot). The defaults, written once when a team's list does not
+  exist yet, are the dev tooling hosts (Debian, PyPI, GitHub, the Go
+  module proxy) and no model provider host: a shell never calls the
+  model, and a provider's API is somewhere to upload data to. An
+  existing list is left as it is.
+- **Open mode**, with a valid credential: the agent's own fetches and
+  model calls. Any public host is reached, and so is any host on the
+  allowlist, under the allowlist's address rules. What the agent sends
+  is counted against a budget.
+
+A credential that is present but wrong gets 407. In both modes the proxy
+resolves the host once, checks every address and dials only one that
+passed (`guard.go`), for CONNECT and plain HTTP alike. Always refused:
+loopback, link-local (cloud metadata) and the ranges named by
+`--deny-cidr`, which the chart sets to the pod CIDR, the Service CIDR
+(`networkPolicy.podCIDR`, `networkPolicy.serviceCIDR`) and the node's
+own address (`HOST_IP`, from the downward API). Open mode also refuses
+private, carrier-grade NAT, multicast and reserved ranges and the IPv6
+forms that embed an IPv4 address. Allowlist mode lets the private ranges
+through, and so does open mode for a host on the allowlist, so an
+operator can list an intranet host. A listed name may
+resolve to a private address, and a wildcard DNS service on the list
+reaches any of them; that is accepted and stated in
+[../security-and-privacy.md](../security-and-privacy.md). `--open-deny-cidr` adds ranges refused in open mode only; the chart
+passes `networkPolicy.browserEgress.except`, so the agent's own fetches
+are kept off what browser pods are, Azure's WireServer included, which
+the proxy also refuses in both modes as metadata.
+
+**The credential.** When `kivali agent` starts it draws a 32-byte random
+secret (`internal/egresscred`) and registers its SHA-256 with core over
+`core.sock` (`POST /v1/egress/credential`, retried until core answers).
+A new registration replaces the agent's old one. Core keeps the hashes
+in `/data/egress_agents.json` (excluded from backups, since a hash
+belongs to the runtime that drew its secret; dropped when the agent is
+offboarded) and mirrors them, with the model provider's exact hosts, to
+`EGRESS_AGENTS_SYNC_PATH` (`/etc/egress/agents.json` in the chart) for
+the proxy, which hot-reloads the file and re-reads it on an unknown
+credential before refusing, so a new pod's first call does not wait for
+the poll. The model hosts come from the CLI's own sign-in status
+(`internal/claudeauth/hosts.go`), re-worked whenever the sign-in files
+change.
+
+The secret lives in the runtime's memory and in the environment of the
+processes the runtime starts: `HTTPS_PROXY=http://<slug>:<secret>@<ip>`
+for each Claude CLI run (`Options.Env`). Never the pod spec, so never
+the Kubernetes API. The agent-shell container has the bare proxy URL
+and no secret. The runtime scrubs the secret from every request it
+sends to core, and from the CLI's stderr and the stdin mirror it writes
+to disk, because the shell can read the agent's chats and an error
+message could quote the proxy URL.
+
+Every Claude CLI run, the agent's and each subagent's, gets
+`--strict-mcp-config`, `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` and
+`ENABLE_CLAUDEAI_MCP_SERVERS=false` (`internal/claudeagent/client.go`).
+The first and last keep the connectors of the signed-in claude.ai
+account out of agents; the second stops telemetry, error reports and
+auto-updates, which would otherwise go out through the open path.
+
+**The invariant.** The agent container never runs model-written
+commands, and no tool in it sends arbitrary headers or bodies:
+WebFetch is GET-only, WebSearch runs server-side inside the model call,
+and no shell builtin is mapped. That is why the container can hold the
+credential, and why the model provider's exempt hosts, which anyone can
+hold an account on, cannot carry data out from it. A future agent
+runtime must keep its agent's own shell tool off for the same reason,
+and a new tool in the agent container needs the same test.
+
+Check that the secret stays out of the model's sight when the CLI
+version changes. With Claude CLI 2.1.303 and a credentialed
+`HTTPS_PROXY`, a proxy that refused a WebFetch host with 407, 403, 502
+or a dropped connection left the secret and its base64 form out of the
+stream-json output and stderr; the model saw only "proxy refused the
+connection" or "Proxy connection ended before receiving CONNECT
+response". After a CLI upgrade, run WebFetch through a proxy that
+refuses and grep the output for the secret.
+
+**The budget** (`budget.go`) counts, per agent, the bytes the agent
+sends up its open-mode connections as they are written, plus host names
+(counted before the name is resolved, since a lookup itself carries the
+name to whoever runs the nameserver). Traffic to the model provider's
+exact hosts is exempt, and only for a CONNECT tunnel whose first TLS
+record is a ClientHello naming that host; a tunnel that names another
+host or sends anything else is counted from its first byte (a `COUNT`
+line). The proxy sees the TLS server name, not the HTTP host inside the
+tunnel, so this stops domain fronting on a CDN only because the CDN
+requires the two to agree. Flags: `--budget-conn` (32 KB per connection),
+`--budget-10m` (256 KB), `--budget-day` (4 MB) and `--enforce-budget`,
+off by default. Off, the proxy counts and logs; on, an agent over a
+window limit is held and its new open-mode connections are refused, and
+a connection over its cap is closed. The proxy logs one line per
+connection and refusal on stdout: `CONN` (agent, mode, host, bytes up
+and down), `DENY` (the reason) and `OVER` (the limit crossed, once per
+crossing). `--max-conns-per-source` (256) caps the connections open
+from each pod address; one over the cap gets a 503 and a
+`DENY source=... reason=connections` line. A client's idle keep-alive
+connection is closed after two minutes, and a tunnel lives at most ten.
 
 The proxy alone would be advisory. The chart's NetworkPolicy
 (`charts/kivali/templates/networkpolicy.yaml`) makes it binding: agent
-pods may reach only port 3128 on the server pod and DNS, so a raw
-socket goes nowhere, and the server's HTTP port refuses pod addresses,
-because the API trusts whoever reaches it as the owner. Details in
+pods may reach only port 3128 on the server pod, with no DNS, so a raw
+socket goes nowhere. Browser pods are outside the proxy and reach the
+public web directly (below). The server's HTTP port also refuses pod
+addresses, but that is defence in depth: every route needs a Google
+session (`internal/web/web.go`, the protected mux), and the only ones
+open without one are login, the OAuth callback and the loopback-only,
+signed, single-use Desktop handoff ([auth.md](auth.md)). Details in
 [../../charts/kivali/README.md](../../charts/kivali/README.md).
 
 ### Around the server
@@ -244,7 +355,8 @@ There is no database. Everything durable is a plain file under
   skills/                     uploaded and built-in skills
   skill_settings.json         which skills are enabled
   usage.jsonl                 one record per model call: tokens and cost
-  allowed_egress.yaml         the egress allowlist
+  allowed_egress.yaml         the allowlist for agents' shells
+  egress_agents.json          each agent runtime's proxy credential hash (not backed up)
   branding/                   org name, logo and derived favicons
   claude-home/                the CLI's HOME: its sign-in and settings
   agents/<slug>/              one directory per agent (below)
@@ -432,19 +544,23 @@ browser instead of a shell. It must carry a schema, names a web
 session (`open`, signed in nowhere and keeping nothing between tasks,
 or a site session, named by the registrable domain it is locked to,
 which keeps its sign-ins), and may name a
-`start_url` and `files` under the caller's `/files/` it may upload.
+`start_url` and `files` under the caller's `/files/` it may upload once
+a person approves (below).
 Its CLI runs in the parent's agent pod like any subagent, with
 `kivali mcp --toolkit web`: the `web_*` tools (`internal/mcp/web_tools.go`)
 and `submit_result`, and nothing else. Each `web_*` call is
 `POST /v1/agent/{slug}/subagents/{id}/web` to core, which checks that
 the id is the agent's running web task, that the command is one
-its session allows (`web_eval` in `open` only) and that a URL to load
-(`web_navigate`, a `web_tabs` open) is http or https and, in a site
-session, on the site or a subdomain of it, hands an upload's bytes
-to the pod first, and relays the command under the task's tab group.
-The pod's answer, text and an optional image, is the tool result. The
-toolkit's call waits as long as core holds it (a cold browser's start,
-a navigation's settle), bounded by the tool call's own context.
+its session allows (`web_eval` in `open` only, and not to a task that
+uploads files) and that a URL to load (`web_navigate`, a `web_tabs`
+open) is http or https and, for a task held to a site (a site
+session's, or the one an upload was approved for), on the site or a
+subdomain of it; it charges the action to the web budget (below), hands
+an upload's bytes to the pod first, and relays the command under the
+task's tab group. The pod's answer, text and an optional image, is the
+tool result. The toolkit's call waits as long as core holds it (a cold
+browser's start, a navigation's settle), bounded by the tool call's own
+context.
 
 The browser is a **browser pod** (`internal/browserpod`), one per
 running (agent, session), run from the `kivali-browser` image
@@ -538,11 +654,76 @@ delivered result also carries the session, the last page's origin, the
 duration and the pages loaded.
 
 Browser pods browse the web for the subagent and are not held to the
-egress allowlist: they reach the web directly, like any pod, with no
+shell allowlist: they reach the web directly, like any pod, with no
 proxy. The chart's network policy for them allows DNS and the public
 internet and excepts the pod network, the node's and cloud metadata's
 link-local range and every private range, so a page cannot reach the
 server pod, the cluster or the node through the browser.
+
+### Upload approval and the web budget
+
+Two guards sit on what a web task can send out, both in core, because
+every `web_*` call passes through it.
+
+**Upload approval** (`subagent_web_approval.go`). A task that names
+`files` must have a `start_url` (dispatch refuses it otherwise), cannot
+be dispatched by a subagent (an approval is asked of a person on behalf
+of the caller's agent), names no two files alike, and is held to the
+registrable domain of its start URL for its whole run with the
+site-session lock. At most five of an agent's tasks may await approval
+at once; a dispatch past that is refused. Dispatch records each file's
+sha256 and size and keeps nothing else: no copy goes to the attachment
+store. A file over 50 MB is refused from its size alone. Whenever a
+person opens a file or the task uploads it, core reads it again from the
+agent's `/files/`, checks it against the digest and uses those bytes;
+a file that has changed is refused.
+
+The job registers in `awaiting_approval` with no browser, and Home
+derives a `web_upload` need, "Upload N files to <site>", from it, with
+the start URL and the task's prompt. Each file in the row links to
+`GET /api/v1/agents/{slug}/subagents/{id}/files/{name}`, always a
+download and a 409 if the file has changed. Approve queues the task for
+a slot like any other. Deny ends it `blocked` with `upload_denied` and
+the person's words in `reason`. After 24 hours with no answer core
+writes `blocked`, `user_did_not_respond`. The calling agent hears
+nothing until the result, and a subagent cannot submit either reason.
+The task's page and chip show that it is waiting for approval. An
+approved task has no `web_eval` and keeps the web budget: the approval
+covers the upload of those bytes to that site, nothing else.
+
+The site lock is enforced twice. Core refuses navigate and tab-open off
+the site, and refuses an upload unless every tab of the task is on the
+site. The pod stops off-site navigations, popups and subframes, refuses
+an upload unless the tab it uploads into is on the site, and keeps the
+model's input out of other sites' frames: typing goes into the resolved
+element itself, and a click or key press is refused when an off-site
+frame holds the focus or covers the point, shadow DOM included. A frame
+inside a closed shadow root is invisible to page script, so `web_press`
+cannot detect focus there; typing is unaffected. The lock binds the
+task's own actions, not the requests the site's pages make, so what a
+site's page does with a file is the site's.
+
+Waits live in memory. At boot `FailOrphanedSubagents` marks a web task
+an earlier run left awaiting approval errored, as it does every task
+left queued, running or waiting for a sign-in.
+
+**Web budget** (`subagent_web_budget.go`). Every web task, approved or
+not, is charged for the strings its model passes to a web action, except
+element references: the data in the URLs it navigates to, typed text,
+key presses, selected values, wait text and `web_eval` scripts, and its
+start URL at dispatch. A URL's path and query together are free up to 64
+bytes, its host name up to 48, and a fragment up to 64; beyond that
+every byte counts, however it is split into segments, labels or
+parameters, and user info counts in full. Those allowances draw on a 1 KB
+pool per task, the start URL included. Once the pool is spent, every
+host, path and query byte counts. At most 1 KB per task can therefore
+leave in URLs uncounted. What a person does in the browser window is not
+counted. The limits are 2 KB per action, 8 KB per task and 32 KB per
+agent per rolling day, on the injected clock and in memory, so a core
+restart resets them. An action over a limit is refused with a reason the
+model reads, and the first refusal in a task posts one `web_budget` need
+to Home ("<agent>'s web task tried to send N out"), which a person
+acknowledges.
 
 ### The browser window
 
@@ -630,7 +811,8 @@ headless browser's sign-in); core refuses `web_navigate` and a
 `web_tabs` open off the site and its subdomains before they reach the
 pod, and the pod refuses them again with `off_site`; `web_eval` does
 not exist there; and the profile is saved and restored across
-browsers, so sign-ins persist. Every page in a site session has its
+browsers, so sign-ins persist. Every page a site holds, in a site
+session or in the tab group of a task held for an upload, has its
 document requests paused before they are sent (`Fetch.requestPaused`,
 each redirect hop a request of its own); a main-frame request off the
 site is failed as aborted, so an on-site URL that redirects off the

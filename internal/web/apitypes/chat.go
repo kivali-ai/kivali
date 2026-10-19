@@ -89,6 +89,9 @@ const (
 	// SubagentTaskStateWaitingForSignIn: a web task paused in a site
 	// session until a person has signed in through its browser window.
 	SubagentTaskStateWaitingForSignIn SubagentTaskState = "waiting_for_sign_in"
+	// SubagentTaskStateAwaitingApproval: a web task that uploads files,
+	// not started, until a person approves its uploads.
+	SubagentTaskStateAwaitingApproval SubagentTaskState = "awaiting_approval"
 )
 
 // MarkerKind is the boundary a marker row records. The four stored

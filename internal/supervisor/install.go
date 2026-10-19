@@ -29,8 +29,12 @@ const (
 )
 
 // PodCIDR is k3s's default pod network, excluded from the server's
-// ingress rule.
+// ingress rule and refused by the egress proxy.
 const PodCIDR = "10.42.0.0/16"
+
+// ServiceCIDR is k3s's default Service network, refused by the egress
+// proxy.
+const ServiceCIDR = "10.43.0.0/16"
 
 // Image repository names the install looks for among the baked images.
 const (
@@ -245,8 +249,9 @@ func InstallValues(o InstallOptions, im Images, sessionKey string) (map[string]a
 		"egress":    map[string]any{"image": map[string]any{"repository": guestapi.ShortRepo(erepo), "tag": etag}},
 		"secrets":   secrets,
 		"networkPolicy": map[string]any{
-			"enabled": true,
-			"podCIDR": PodCIDR,
+			"enabled":     true,
+			"podCIDR":     PodCIDR,
+			"serviceCIDR": ServiceCIDR,
 		},
 	}
 	if o.PublicClientID != "" {

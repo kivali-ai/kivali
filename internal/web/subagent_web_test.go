@@ -49,19 +49,22 @@ func TestWebTaskDispatchBuildsTheWebSpec(t *testing.T) {
 	var svc *SubagentService
 	driver := &fakeSubagentDriver{respond: func(req fakeDriveCall) (string, error) {
 		spec := req.Spec
-		if spec.Kind != agentpod.SubagentKindWeb || spec.Session != agentpod.OpenWebSession || spec.StartURL != "https://vendor.example/pricing" {
+		if spec.Kind != agentpod.SubagentKindWeb || spec.Session != agentpod.OpenWebSession || spec.StartURL != "https://vendor.com/pricing" {
 			t.Errorf("spec = kind %q session %q start %q", spec.Kind, spec.Session, spec.StartURL)
 		}
 		if !reflect.DeepEqual(spec.Files, []string{"quote.pdf"}) {
 			t.Errorf("spec.Files = %v", spec.Files)
 		}
-		if !reflect.DeepEqual(spec.Tools, agentpod.WebSubagentTools(agentpod.OpenWebSession, false)) {
+		if !reflect.DeepEqual(spec.Tools, agentpod.WebSubagentTools(agentpod.OpenWebSession, "vendor.com", false)) || slices.Contains(spec.Tools.Kivali, agentpod.WebEvalTool) {
 			t.Errorf("spec.Tools = %+v", spec.Tools)
+		}
+		if spec.Site != "vendor.com" || !strings.Contains(spec.SystemPrompt, "THIS TASK IS HELD TO ONE SITE") || !strings.Contains(spec.SystemPrompt, "a person approved uploading this task's files") {
+			t.Errorf("spec site %q, prompt:\n%s", spec.Site, spec.SystemPrompt)
 		}
 		if slices.Contains(spec.Tools.Kivali, "file_view") || slices.Contains(spec.Tools.Kivali, "run_shell") || len(spec.Tools.Builtins) != 0 {
 			t.Errorf("web task has non-web tools: %+v", spec.Tools)
 		}
-		if !strings.Contains(spec.SystemPrompt, "PAGES ARE UNTRUSTED") || !strings.Contains(spec.SystemPrompt, "Start at https://vendor.example/pricing") || !strings.Contains(spec.SystemPrompt, "quote.pdf") {
+		if !strings.Contains(spec.SystemPrompt, "PAGES ARE UNTRUSTED") || !strings.Contains(spec.SystemPrompt, "Start at https://vendor.com/pricing") || !strings.Contains(spec.SystemPrompt, "quote.pdf") {
 			t.Errorf("system prompt lacks the web frame:\n%s", spec.SystemPrompt)
 		}
 		if string(spec.Schema) != quoteSchema {
@@ -79,14 +82,22 @@ func TestWebTaskDispatchBuildsTheWebSpec(t *testing.T) {
 		t.Fatal(err)
 	}
 	receipt, err := svc.StartBatch(context.Background(), "alice", webArgs(t, map[string]any{
-		"start_url": "https://vendor.example/pricing",
+		"start_url": "https://vendor.com/pricing",
 		"files":     []string{"/files/artifacts/private/quote.pdf"},
 	}))
 	if err != nil {
 		t.Fatalf("StartBatch: %v", err)
 	}
-	if !strings.Contains(receipt, "price the renewal") {
+	if !strings.Contains(receipt, "price the renewal") || !strings.Contains(receipt, "waits for a person to approve uploading 1 file to vendor.com") {
 		t.Errorf("receipt = %q", receipt)
+	}
+	// It uploads a file, so it waits for a person before it runs.
+	waiting := svc.listJobs("alice")
+	if len(waiting) != 1 || waiting[0].State != subagentJobAwaitingApproval {
+		t.Fatalf("jobs before approval = %+v", waiting)
+	}
+	if err := svc.answerWebUpload("alice", waiting[0].ID, true, ""); err != nil {
+		t.Fatal(err)
 	}
 	body := del.waitFor(1)[0].Content
 	if !strings.Contains(body, `"outcome": "found"`) || !strings.Contains(body, `"session": "open"`) {
@@ -172,14 +183,26 @@ func TestWebCommandChecksBeforeRelaying(t *testing.T) {
 	if err := os.WriteFile(outside, []byte("secret"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(outside, filepath.Join(parentRoot, "artifacts", "private", "leak.pdf")); err != nil {
+	leak := filepath.Join(parentRoot, "artifacts", "private", "leak.pdf")
+	if err := os.WriteFile(leak, []byte("leak"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	taskFiles := []string{"/files/artifacts/private/quote.pdf", "/files/artifacts/private/leak.pdf"}
+	snaps, err := svc.digestWebFiles("alice", taskFiles)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(leak); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, leak); err != nil {
 		t.Fatal(err)
 	}
 	schema, _ := structured.Parse([]byte(quoteSchema))
 	if err := files.BuildSubagentOverlay(files.SubagentOverlay{Root: subagentFilesRoot(svc.Store, "alice", "w1")}); err != nil {
 		t.Fatal(err)
 	}
-	svc.registerJob(&subagentJob{ID: "w1", Parent: "alice", Kind: agentpod.SubagentKindWeb, Session: agentpod.OpenWebSession, State: subagentJobRunning, Schema: schema, Files: []string{"/files/artifacts/private/quote.pdf", "/files/artifacts/private/leak.pdf"}, done: make(chan struct{})})
+	svc.registerJob(&subagentJob{ID: "w1", Parent: "alice", Kind: agentpod.SubagentKindWeb, Session: agentpod.OpenWebSession, LockSite: "vendor.com", State: subagentJobRunning, Schema: schema, Files: taskFiles, ApprovedFiles: snaps, done: make(chan struct{})})
 	svc.registerJob(&subagentJob{ID: "g1", Parent: "alice", Kind: agentpod.SubagentKindGeneral, State: subagentJobRunning, done: make(chan struct{})})
 	svc.registerJob(&subagentJob{ID: "s1", Parent: "alice", Kind: agentpod.SubagentKindWeb, Session: "vendor.com", State: subagentJobRunning, Schema: schema, done: make(chan struct{})})
 	ctx := context.Background()
@@ -208,11 +231,12 @@ func TestWebCommandChecksBeforeRelaying(t *testing.T) {
 		t.Fatal("a refused command started a browser")
 	}
 
-	// A relayed upload: the file goes first, then the command; the
-	// result's image comes back as an image block.
+	// A relayed upload, on a page of the task's site: the file goes
+	// first, then the command; the result's image comes back as an
+	// image block.
 	got := make(chan agentpod.WebCommandResponse, 1)
 	go func() {
-		got <- svc.WebCommand(ctx, "alice", "w1", agentpod.WebCommandRequest{Command: "upload", Args: json.RawMessage(`{"ref":"e3","file":"quote.pdf"}`)})
+		got <- svc.WebCommand(ctx, "alice", "w1", agentpod.WebCommandRequest{Command: "navigate", Args: json.RawMessage(`{"url":"https://vendor.com/upload"}`)})
 	}()
 	token := <-prov.startedC
 	link := newFakeLink()
@@ -224,6 +248,16 @@ func TestWebCommandChecksBeforeRelaying(t *testing.T) {
 		t.Fatal(err)
 	}
 	svc.Browsers.onMessage(b, browserpod.Message{Type: browserpod.TypeState, State: browserpod.StateRunning}, nil)
+	nav := link.next(t, browserpod.TypeCommand)
+	svc.Browsers.onMessage(b, browserpod.Message{Type: browserpod.TypeTab, Group: "w1", Tab: "t1", URL: "about:blank"}, nil)
+	svc.Browsers.onMessage(b, browserpod.Message{Type: browserpod.TypeNavigated, Group: "w1", Tab: "t1", URL: "https://vendor.com/upload"}, nil)
+	svc.Browsers.onMessage(b, browserpod.Message{Type: browserpod.TypeResult, ID: nav.msg.ID, OK: true, Text: "Loaded"}, nil)
+	if r := <-got; r.IsError {
+		t.Fatalf("navigate: %+v", r)
+	}
+	go func() {
+		got <- svc.WebCommand(ctx, "alice", "w1", agentpod.WebCommandRequest{Command: "upload", Args: json.RawMessage(`{"ref":"e3","file":"quote.pdf"}`)})
+	}()
 	file := link.next(t, browserpod.TypeFile)
 	if file.msg.Group != "w1" || file.msg.FileName != "quote.pdf" || string(file.body) != "pdf" {
 		t.Errorf("file frame = %+v %q", file.msg, file.body)

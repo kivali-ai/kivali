@@ -9,6 +9,7 @@ import (
 	"github.com/kivali-ai/kivali/internal/agent"
 	"github.com/kivali-ai/kivali/internal/agentpod"
 	"github.com/kivali-ai/kivali/internal/agentshell"
+	"github.com/kivali-ai/kivali/internal/egresscred"
 	"github.com/kivali-ai/kivali/internal/files"
 	"github.com/kivali-ai/kivali/internal/mcp"
 )
@@ -68,8 +69,9 @@ func localTreeExists(root string) bool {
 // against root.
 func agentFileTools(sock string, local bool, slug, root string) (agent.ShellExecutor, mcp.FilesDispatcher, error) {
 	if sock != "" {
-		return &agentshell.SidecarShell{SocketPath: sock, Slug: slug},
-			mcp.NewSidecarFilesDispatcher(&agentshell.SidecarFiles{SocketPath: sock}),
+		scrub := shellScrubber()
+		return &agentshell.SidecarShell{SocketPath: sock, Slug: slug, Scrubber: scrub},
+			mcp.NewSidecarFilesDispatcher(&agentshell.SidecarFiles{SocketPath: sock, Scrubber: scrub}),
 			nil
 	}
 	if !local || !localTreeExists(root) {
@@ -108,10 +110,12 @@ func subagentFileTools(sock string, local bool, parent, filesRoot string) (agent
 		// cross-subagent leakage.
 		return nil, nil, fmt.Errorf("subagent filesRoot %q must live under %s", filesRoot, filesPrefix)
 	}
+	scrub := shellScrubber()
 	shell := &agentshell.SidecarShell{
 		SocketPath: sock,
 		Slug:       parent,
 		CwdPrefix:  prefix,
+		Scrubber:   scrub,
 		// Daemon bind-mounts this over /files/artifacts/private inside
 		// a per-call mount namespace so absolute "/files/artifacts/private/…"
 		// writes from bash land in the subagent's overlay rather than
@@ -121,6 +125,14 @@ func subagentFileTools(sock string, local bool, parent, filesRoot string) (agent
 		OverlayPrivate: filepath.Join(filesRoot, "artifacts", "private"),
 	}
 	return shell,
-		mcp.NewSidecarFilesDispatcher(&agentshell.SidecarFiles{SocketPath: sock, Root: prefix}),
+		mcp.NewSidecarFilesDispatcher(&agentshell.SidecarFiles{SocketPath: sock, Root: prefix, Scrubber: scrub}),
 		nil
+}
+
+// shellScrubber keeps the agent's egress proxy credential, which this
+// process inherited from the CLI that started it, out of everything it
+// sends the agent-shell daemon: a command or file the model wrote
+// cannot hand it to the shell. Nil when the environment carries none.
+func shellScrubber() *egresscred.Scrubber {
+	return egresscred.ScrubberFromEnv(os.Getenv)
 }

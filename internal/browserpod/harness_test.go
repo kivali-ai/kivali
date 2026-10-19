@@ -390,6 +390,10 @@ func (f *fakeCDP) answer(session, method string, raw json.RawMessage) (any, erro
 	case "Page.createIsolatedWorld":
 		return map[string]any{"executionContextId": 7}, nil
 	case "Runtime.evaluate":
+		if strings.Contains(string(raw), "kivali-frame") {
+			// Where input would land: in the page itself.
+			return map[string]any{"result": map[string]any{"type": "string", "value": ""}}, nil
+		}
 		return map[string]any{"result": map[string]any{"type": "boolean", "value": false}}, nil
 	}
 	return map[string]any{}, nil

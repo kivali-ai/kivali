@@ -11,16 +11,18 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// EgressAllowlist is the hostname-pattern set the egress proxy uses
-// to gate outbound HTTPS from the Kivali pod's egress sidecar — and
-// every per-agent pod's claude CLI traffic (agent pods set
-// HTTP(S)_PROXY to the same sidecar). Each pattern
-// covers itself and everything below it — "pypi.org" allows the apex
-// and every subdomain, "files.pypi.org" allows that subtree only. A
+// EgressAllowlist is the hostname-pattern set the egress proxy holds
+// the agent shells to: what a command in an agent's agent-shell
+// container (curl, pip, git, apt) may reach. A request that presents an
+// agent runtime's credential (the agent's own CLI and its subagents,
+// see internal/egresscred) is not held to it. Each pattern covers
+// itself and everything below it — "pypi.org" allows the apex and
+// every subdomain, "files.pypi.org" allows that subtree only. A
 // leading "*." is accepted and means the same as the bare form; IP
 // literals match exactly. A pattern holding "*" or "[" past that is a
-// per-label glob (cmd/egress-proxy, matchGlob). Kept order-independent — we sort on write
-// so diffs in the YAML file stay readable.
+// per-label glob (cmd/egress-proxy, matchGlob). Kept
+// order-independent — we sort on write so diffs in the YAML file stay
+// readable.
 type EgressAllowlist struct {
 	Patterns []string `yaml:"patterns"`
 }
@@ -30,54 +32,18 @@ type EgressAllowlist struct {
 // and hot-reloads on mtime change.
 const egressAllowlistFilename = "allowed_egress.yaml"
 
-// defaultEgressPatterns seeds a fresh install with a working baseline,
-// written once when the file does not exist yet. Two groups:
+// defaultEgressPatterns seeds a fresh install's agent shell list,
+// written once when the file does not exist yet: the dev tooling hosts
+// (Debian apt, PyPI, GitHub, Go module proxy) shell commands tend to
+// reach for. Kept liberal because the owner can prune them in
+// Org → Network; missing entries are more disruptive than over-broad
+// ones.
 //
-//   - The hosts the embedded `claude` CLI calls for each way it can be
-//     signed in. Anthropic (a subscription or a Console
-//     account): api.anthropic.com for the Messages API,
-//     platform.claude.com for OAuth refresh and session validation.
-//     Amazon Bedrock: each region's bedrock-runtime (inference) and
-//     bedrock (inference profiles, model checks), STS (credential
-//     checks), and the IAM Identity Center portal and OIDC hosts an
-//     SSO profile resolves and refreshes role credentials through.
-//     Google Vertex AI: the global, regional and multi-region
-//     aiplatform hosts, and the OAuth, STS and IAM credentials hosts
-//     Application Default Credentials refresh through. The region
-//     globs match region-shaped labels only, so no S3 bucket name
-//     under amazonaws.com fits them. Microsoft Foundry: every
-//     resource's <resource>.services.ai.azure.com (the "*." form
-//     covers all names under services.ai.azure.com and nothing
-//     outside it), and login.microsoftonline.com, where a service
-//     principal gets its Entra ID token. Without these, every agent
-//     pod boots signed in but the proxy denies CONNECT and the CLI
-//     fails to authenticate on the first chat-turn.
-//   - Common dev tooling hosts (Debian apt, PyPI, GitHub, Go module
-//     proxy) that agent shell tools tend to reach for. Kept liberal
-//     because the operator can prune via /settings/egress; missing
-//     entries are way more disruptive than over-broad ones.
-//
-// Telemetry endpoints are intentionally NOT seeded — the CLI does
-// fire `http-intake.logs.us5.datadoghq.com` etc, but those are
-// non-functional and the operator should opt in deliberately.
+// No model provider host is seeded. A shell never calls the model (the
+// agent's CLI does, with its runtime's credential), and a provider's
+// API is a way out for data: a key planted in the shell could upload
+// files to its holder's own account.
 var defaultEgressPatterns = []string{
-	"api.anthropic.com",
-	"platform.claude.com",
-	"bedrock-runtime.[a-z][a-z]-*-[0-9].amazonaws.com",
-	"bedrock.[a-z][a-z]-*-[0-9].amazonaws.com",
-	"sts.amazonaws.com",
-	"sts.[a-z][a-z]-*-[0-9].amazonaws.com",
-	"portal.sso.[a-z][a-z]-*-[0-9].amazonaws.com",
-	"oidc.[a-z][a-z]-*-[0-9].amazonaws.com",
-	"aiplatform.googleapis.com",
-	"*-aiplatform.googleapis.com",
-	"aiplatform.*.rep.googleapis.com",
-	"oauth2.googleapis.com",
-	"sts.googleapis.com",
-	"iamcredentials.googleapis.com",
-	"www.googleapis.com",
-	"*.services.ai.azure.com",
-	"login.microsoftonline.com",
 	"deb.debian.org",
 	"security.debian.org",
 	"*.pypi.org",

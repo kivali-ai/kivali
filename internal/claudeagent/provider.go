@@ -5,11 +5,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
 
 	"github.com/kivali-ai/kivali/internal/claudeauth"
+	"github.com/kivali-ai/kivali/internal/egresscred"
 	"github.com/kivali-ai/kivali/internal/provider"
 )
 
@@ -234,7 +236,7 @@ const authStatusTimeout = 15 * time.Second
 // Status asks the CLI, run as this process with its environment and
 // HOME (the ones every model call runs with), how it is signed in.
 func (c claudeCredentials) Status(ctx context.Context) (provider.CredentialStatus, error) {
-	st, err := authStatus(ctx, c.binary)
+	st, err := authStatus(ctx, c.binary, nil, nil)
 	if err != nil {
 		return provider.CredentialStatus{}, err
 	}
@@ -242,11 +244,16 @@ func (c claudeCredentials) Status(ctx context.Context) (provider.CredentialStatu
 }
 
 // authStatus runs `claude auth status --json` with binary, as this
-// process with its environment and HOME, and parses what it prints.
-func authStatus(ctx context.Context, binary string) (claudeauth.Status, error) {
+// process with its environment and HOME plus env, and parses what it
+// prints. The CLI's stderr, quoted in the error, passes through scrub
+// first: env may carry the egress proxy credential.
+func authStatus(ctx context.Context, binary string, env []string, scrub *egresscred.Scrubber) (claudeauth.Status, error) {
 	ctx, cancel := context.WithTimeout(ctx, authStatusTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, binary, claudeauth.Args()...)
+	if len(env) > 0 {
+		cmd.Env = append(os.Environ(), env...)
+	}
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
@@ -258,7 +265,7 @@ func authStatus(ctx context.Context, binary string) (claudeauth.Status, error) {
 	st, perr := claudeauth.Parse(out)
 	if perr != nil {
 		if err != nil {
-			return claudeauth.Status{}, fmt.Errorf("claude auth status: %w: %s", err, strings.TrimSpace(stderr.String()))
+			return claudeauth.Status{}, fmt.Errorf("claude auth status: %w: %s", err, strings.TrimSpace(scrub.String(stderr.String())))
 		}
 		return claudeauth.Status{}, perr
 	}

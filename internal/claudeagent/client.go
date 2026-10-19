@@ -34,8 +34,28 @@ import (
 	"sync"
 
 	"github.com/kivali-ai/kivali/internal/clock"
+	"github.com/kivali-ai/kivali/internal/egresscred"
 	"github.com/kivali-ai/kivali/internal/provider"
 )
+
+// cliRunEnv is set on every CLI run the driver starts. Nonessential
+// traffic (telemetry, error reports, update checks) stays off, and the
+// claude.ai connectors of the signed-in account are not loaded: an
+// agent's tools are the --mcp-config the driver writes and nothing
+// else (every spawn also passes --strict-mcp-config).
+var cliRunEnv = []string{
+	"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1",
+	"ENABLE_CLAUDEAI_MCP_SERVERS=false",
+}
+
+// cliEnv is the environment of one CLI run: this process's, the V8
+// old-space ceiling, cliRunEnv, then opts.Env. The CLI inherits HOME
+// with the rest, so it bills whatever the CLI is signed in to there.
+func cliEnv(opts Options, maxOldSpaceMB int) []string {
+	env := append(os.Environ(), fmt.Sprintf("NODE_OPTIONS=--max-old-space-size=%d", maxOldSpaceMB))
+	env = append(env, cliRunEnv...)
+	return append(env, opts.Env...)
+}
 
 // SessionStore persists the Claude Code CLI session_id per agent so
 // we can resume the same CLI-owned conversation on subsequent streams
@@ -110,6 +130,18 @@ type Options struct {
 	// Defaults to os.Getenv("HOME"). Empty disables the probe — we
 	// trust the stored id.
 	HomeDir string
+
+	// Env is added to the environment of every CLI the driver starts,
+	// after this process's own, so a variable named here wins. The
+	// agent runtime puts its egress proxy credential here
+	// (egresscred.Credential.Env): it reaches the CLIs it starts and
+	// nothing else.
+	Env []string
+
+	// Scrubber replaces the egress proxy credential in what the driver
+	// writes to disk or to this process's stderr: each CLI's stderr and
+	// the mirror of its stdin. Nil writes them as they are.
+	Scrubber *egresscred.Scrubber
 
 	// ShutdownCtx, when non-nil, drains the registry when canceled.
 	// Plumb the process-wide shutdown ctx here so SIGTERM cleanly

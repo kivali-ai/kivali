@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/kivali-ai/kivali/internal/agent"
+	"github.com/kivali-ai/kivali/internal/egresscred"
 )
 
 // LocalShell is the in-pod shell executor. It implements
@@ -129,8 +130,11 @@ func runCommand(ctx context.Context, cwd, command string, timeout time.Duration)
 		"LANG=C.UTF-8",
 		"LC_ALL=C.UTF-8",
 	}
+	// The proxy variables without user info: this process may be a
+	// child of an agent CLI holding the runtime's egress credential,
+	// and a shell never gets it.
 	for _, k := range []string{"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"} {
-		if v := os.Getenv(k); v != "" {
+		if v := egresscred.BareProxyURL(os.Getenv(k)); v != "" {
 			env = append(env, k+"="+v)
 		}
 	}

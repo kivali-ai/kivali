@@ -36,6 +36,7 @@ import (
 	"io"
 	"net/url"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -909,6 +910,49 @@ func (r *browserRegistry) SandboxOffFor(slug, session string) bool {
 	defer r.mu.Unlock()
 	b, ok := r.browsers[browserKey(slug, session)]
 	return ok && b.sandboxOff
+}
+
+// GroupURL is the URL group's tabs last navigated to in the browser of
+// (slug, session), empty when it has none.
+func (r *browserRegistry) GroupURL(slug, session, group string) string {
+	if r == nil {
+		return ""
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	b, ok := r.browsers[browserKey(slug, session)]
+	if !ok {
+		return ""
+	}
+	if g, found := b.groups[group]; found {
+		return g.lastURL
+	}
+	return ""
+}
+
+// GroupTabURLs are the URLs group's tabs are at in the browser of
+// (slug, session), each as the pod last reported it ("" for a tab that
+// has loaded nothing), sorted; none when the group has no tab.
+func (r *browserRegistry) GroupTabURLs(slug, session, group string) []string {
+	if r == nil {
+		return nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	b, ok := r.browsers[browserKey(slug, session)]
+	if !ok {
+		return nil
+	}
+	g, found := b.groups[group]
+	if !found {
+		return nil
+	}
+	out := make([]string, 0, len(g.tabs))
+	for tab := range g.tabs {
+		out = append(out, g.tabInfo[tab].url)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // Watch attaches a browser window to group's tabs in the browser of

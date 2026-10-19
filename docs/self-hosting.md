@@ -119,9 +119,11 @@ The server refuses to start with `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` or 
 
 The chart installs three NetworkPolicies, on by default (`networkPolicy.enabled`):
 
-- **Agent pods** may reach only the egress proxy (which runs beside the server) and the cluster DNS. All of an agent's outbound traffic goes through the proxy, which allows only the hosts on your team's list in **Org**, **Network**. A new team's list allows Anthropic, the Amazon Bedrock, Google Vertex AI and Microsoft Foundry endpoints and their token services, and common package and code hosts. Add any others your agents need there.
-- **Browser pods**, which run a web subagent's browser, reach the public internet directly and the cluster DNS, and nothing else: not the pod network, the node, cloud metadata or any private range (`networkPolicy.browserEgress.except`). A browser is not held to your team's network list: a web subagent can open any public site, and what it types or uploads can reach any host.
-- **The server's HTTP port** accepts traffic from outside the pod network only, so no pod can call the server's API.
+- **Agent pods** may reach only the egress proxy (which runs beside the server), by its address. They have no DNS. All of an agent's outbound traffic goes through the proxy, which treats two kinds of traffic differently:
+  - **The agent's shell** (`curl`, `pip`, `git`, `apt` and any other command) reaches only the hosts on your team's list in **Org**, **Network**. A new team's list allows Debian's package servers, PyPI, GitHub and the Go module proxy, and no model provider host. A team created earlier keeps its list, which still holds the Anthropic, Amazon Bedrock, Google Vertex AI and Microsoft Foundry hosts; a shell does not need them, so you can remove them. Add any other hosts your agents need.
+  - **The agent's own fetches and model calls** reach any public host, with a credential only the agent's process holds. They never reach the pod network, the Service network (`networkPolicy.serviceCIDR`), the node's own address, loopback, link-local addresses and cloud metadata, private ranges, or the ranges in `networkPolicy.browserEgress.except`, except a host that is on your list. The proxy counts what each agent sends out this way; see [Security and privacy](security-and-privacy.md#network-access).
+- **Browser pods**, which run a web subagent's browser, reach the public internet directly and the cluster DNS, and nothing else: not the pod network, the node, cloud metadata or any private range (`networkPolicy.browserEgress.except`). A browser is not held to your team's network list and does not use the proxy; an upload from it needs your approval and stays on one site, and what it types counts against its budget.
+- **The server's HTTP port** accepts traffic from outside the pod network only. Every request to the server needs a signed-in session anyway; this keeps pods from even trying.
 
 The third policy also blocks in-cluster front ends, since they are pods too: k3s's Traefik ingress, cloudflared, the Tailscale operator. Admit yours with `networkPolicy.serverIngress.extraFrom`:
 
@@ -137,10 +139,12 @@ networkPolicy:
             app.kubernetes.io/name: traefik
 ```
 
-or turn that policy off with `networkPolicy.serverIngress.enabled=false`. Set `networkPolicy.podCIDR` to your cluster's pod network if it is not k3s's `10.42.0.0/16`.
+or turn that policy off with `networkPolicy.serverIngress.enabled=false`. Set `networkPolicy.podCIDR` to your cluster's pod network if it is not k3s's `10.42.0.0/16`, and `networkPolicy.serviceCIDR` to its Service network if it is not k3s's `10.43.0.0/16` (kind uses `10.244.0.0/16` and `10.96.0.0/12`). The proxy refuses both for every agent request, so a wrong value leaves a Service such as the Kubernetes API reachable from an agent's own fetches.
 
 > [!WARNING]
-> The agent-pod policy is what keeps agents' shell commands away from the server's API, which acts as you. Keep it on, and run the chart on a cluster whose CNI enforces it.
+> The agent-pod policy is what keeps an agent's commands on the egress proxy and off your cluster, your nodes and the open internet. Keep it on, and run the chart on a cluster whose CNI enforces it.
+
+The list and the proxy's budget make it harder for an agent to send data out, not impossible. Read [what the network limits do not stop](security-and-privacy.md#what-this-does-not-stop). If you need a hard limit, enforce it in your own network.
 
 ## Upgrades
 
@@ -148,7 +152,7 @@ The chart has no upgrade hooks. A restarted server adopts the agent pods it find
 
 1. Take a [backup](backup-and-restore.md).
 2. Load the new release's images, as above.
-3. Delete the agent pods:
+3. Delete the agent pods (the first upgrade to a release that changes the proxy's address recreates each one in any case):
 
    ```sh
    kubectl -n kivali delete pod -l app=kivali-agentpod --wait

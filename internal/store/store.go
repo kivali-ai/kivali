@@ -52,6 +52,12 @@ type FSStore struct {
 	root           string
 	egressSyncPath string
 
+	// egressAgentsMu serialises egress_agents.json's read-modify-writes
+	// and guards the two fields below it.
+	egressAgentsMu       sync.Mutex
+	egressAgentsSyncPath string
+	egressModelHosts     []string
+
 	// messageQueueMu serializes read-modify-write of message_queue.json
 	// across every caller — Messenger.Route / RouteProduced / Bounce /
 	// ReleaseAll and the tracker's queue prune. Each caller holds this lock

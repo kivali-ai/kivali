@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/kivali-ai/kivali/internal/egresscred"
 )
 
 // shell-exec caps. The same values as agentpod.LocalShell's, so a
@@ -149,8 +151,10 @@ func bashEnv() []string {
 	if be := os.Getenv("BASH_ENV"); be != "" {
 		env = append(env, "BASH_ENV="+be)
 	}
+	// The proxy variables without user info: a shell's traffic stays on
+	// the allowlist, so it never carries an egress credential.
 	for _, k := range []string{"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"} {
-		if v := os.Getenv(k); v != "" {
+		if v := egresscred.BareProxyURL(os.Getenv(k)); v != "" {
 			env = append(env, k+"="+v)
 		}
 	}

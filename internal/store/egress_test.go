@@ -3,6 +3,7 @@ package store
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -19,24 +20,11 @@ func TestReadEgressAllowlistSeedsDefaults(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(s.Root(), "allowed_egress.yaml")); err != nil {
 		t.Errorf("file not created: %v", err)
 	}
-	// Anthropic hosts MUST be in the seed — without them an agent
-	// pod boots with credentials mounted but the egress proxy denies
-	// CONNECT to api.anthropic.com / platform.claude.com and the CLI
-	// errors "Failed to authenticate" on the first chat-turn. Pin the
-	// load-bearing entries explicitly so a future seed reorg can't
-	// silently drop them.
-	// The same goes for the Bedrock and Vertex endpoints a `claude
-	// login` to either bills through, and for Microsoft Foundry's.
+	// The shell's dev tooling hosts are in the seed.
 	want := map[string]bool{
-		"api.anthropic.com":   false,
-		"platform.claude.com": false,
-		"bedrock-runtime.[a-z][a-z]-*-[0-9].amazonaws.com": false,
-		"sts.amazonaws.com":           false,
-		"*-aiplatform.googleapis.com": false,
-		"aiplatform.googleapis.com":   false,
-		"oauth2.googleapis.com":       false,
-		"*.services.ai.azure.com":     false,
-		"login.microsoftonline.com":   false,
+		"deb.debian.org": false,
+		"*.pypi.org":     false,
+		"github.com":     false,
 	}
 	// The globs survive the YAML round trip.
 	again, err := s.ReadEgressAllowlist()
@@ -53,6 +41,32 @@ func TestReadEgressAllowlistSeedsDefaults(t *testing.T) {
 		if !present {
 			t.Errorf("default seed missing required host %q (full seed: %v)", host, al.Patterns)
 		}
+	}
+	// No model provider host: the shell does not call the model, and a
+	// provider's API could carry data out to a planted key's account.
+	for _, p := range al.Patterns {
+		for _, provider := range []string{"anthropic", "claude.com", "bedrock", "sts.", "aiplatform", "googleapis.com", "azure.com", "microsoftonline", "sso.", "oidc."} {
+			if strings.Contains(p, provider) {
+				t.Errorf("default seed holds model provider host %q", p)
+			}
+		}
+	}
+}
+
+// An existing list keeps its model provider hosts: only a fresh
+// install gets the new defaults.
+func TestReadEgressAllowlistKeepsAnExistingList(t *testing.T) {
+	s := mustStore(t)
+	old := []string{"api.anthropic.com", "deb.debian.org", "platform.claude.com"}
+	if err := s.WriteEgressAllowlist(EgressAllowlist{Patterns: old}); err != nil {
+		t.Fatal(err)
+	}
+	al, err := s.ReadEgressAllowlist()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(al.Patterns, ",") != strings.Join(old, ",") {
+		t.Fatalf("patterns = %v, want %v", al.Patterns, old)
 	}
 }
 

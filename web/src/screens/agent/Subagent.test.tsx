@@ -216,6 +216,28 @@ describe('the task page: waiting for a sign-in', () => {
   });
 });
 
+describe('the task page: awaiting approval of its uploads', () => {
+  const approving = (): SubagentTranscript => {
+    const t = running(firstRows);
+    return { ...t, meta: { ...t.meta, kind: 'web', session: 'open', state: 'awaiting_approval', started: 0 } };
+  };
+
+  it('says it waits for your approval, offers no browser and follows its stream until it starts', async () => {
+    let body = approving();
+    const h = renderTabs(PATH, { routes: { ['GET ' + API]: () => body } });
+    expect(await page().findByRole('status')).toHaveTextContent('Waiting for you to approve its uploads');
+    expect(page().getByText('It uploads files, so it starts once you approve it in Needs you on Home.')).toBeInTheDocument();
+    expect(page().queryByRole('button', { name: 'Open browser' })).toBeNull();
+    expect(h.streams).toHaveLength(1);
+
+    const t = running(firstRows);
+    body = { ...t, meta: { ...t.meta, kind: 'web', session: 'open', browser: 'running' } };
+    act(() => h.streams[0]?.emit('meta', {}));
+    await waitFor(() => expect(page().getByRole('status')).toHaveTextContent('Working'));
+    expect(page().getByRole('button', { name: 'Open browser' })).toBeInTheDocument();
+  });
+});
+
 describe('the task page: following a running task', () => {
   it('opens no stream for a task that has finished', async () => {
     const h = renderTabs(PATH, { routes: { ['GET ' + API]: subagentTranscript } });

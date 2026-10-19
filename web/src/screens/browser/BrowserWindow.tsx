@@ -86,6 +86,7 @@ function takesInput(meta: SubagentMeta): boolean {
 /** Why the window does not connect to this task, or null when it can. */
 function unavailable(meta: SubagentMeta): string | null {
   if (meta.kind !== 'web') return 'This task does not use a browser.';
+  if (meta.state === 'awaiting_approval') return 'The task has not started. It starts once you approve its uploads.';
   if (meta.state !== 'running' && meta.state !== 'waiting_for_sign_in') return 'The task has ended.';
   return null;
 }

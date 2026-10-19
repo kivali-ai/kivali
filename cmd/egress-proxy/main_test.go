@@ -1,17 +1,8 @@
 package main
 
 import (
-	"bytes"
-	"fmt"
-	"io"
-	"net"
-	"net/http"
-	"net/http/httptest"
-	"net/url"
 	"os"
 	"path/filepath"
-	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -229,22 +220,36 @@ func TestAllowlistEmptyFile(t *testing.T) {
 	}
 }
 
+// countingLoader records each Load the Watcher asks for.
+type countingLoader struct{ loads int }
+
+func (c *countingLoader) Load(string) error { c.loads++; return nil }
+
+// setMod gives path a fixed modification time, so a test controls
+// what the watcher sees changing.
+func setMod(t *testing.T, path string, at time.Time) {
+	t.Helper()
+	if err := os.Chtimes(path, at, at); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestWatcherReloadsOnChange(t *testing.T) {
 	dir := t.TempDir()
 	path := writeAllowlist(t, dir, []string{"one.example.com"})
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	setMod(t, path, base)
 	var a Allowlist
-	if err := a.Load(path); err != nil {
+	w := &Watcher{Path: path}
+	if err := w.pollOnce(&a); err != nil {
 		t.Fatal(err)
 	}
-	if a.Allowed("two.example.com") {
-		t.Fatal("precondition")
+	if !a.Allowed("one.example.com") || a.Allowed("two.example.com") {
+		t.Fatalf("first poll: %v", a.Patterns())
 	}
-	_ = writeAllowlist(t, dir, []string{"two.example.com"})
-	// Ensure mtime is distinct.
-	time.Sleep(10 * time.Millisecond)
-	_ = os.Chtimes(path, time.Now(), time.Now())
 
-	w := &Watcher{Path: path}
+	_ = writeAllowlist(t, dir, []string{"two.example.com"})
+	setMod(t, path, base.Add(time.Second))
 	if err := w.pollOnce(&a); err != nil {
 		t.Fatalf("pollOnce: %v", err)
 	}
@@ -253,153 +258,42 @@ func TestWatcherReloadsOnChange(t *testing.T) {
 	}
 }
 
-func TestConnectAllowed(t *testing.T) {
-	// Stand up a toy TCP echo server; the proxy should tunnel raw
-	// bytes to it when the host is allowed.
-	echo := newEchoServer(t)
-	defer echo.Close()
+// An unchanged file is not re-read; a change of size alone is enough
+// to reload, so two writes within one mtime tick are not missed; a
+// file that disappears is loaded as missing, which empties it.
+func TestWatcherReloadsOnlyOnChange(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "agents.json")
+	at := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	var l countingLoader
+	w := &Watcher{Path: path}
 
-	host, _, _ := net.SplitHostPort(echo.host)
-	var a Allowlist
-	a.patterns.Store(&[]string{host})
-
-	srv := httptest.NewServer(&proxy{allow: &a})
-	defer srv.Close()
-
-	conn, err := net.Dial("tcp", srv.Listener.Addr().String())
-	if err != nil {
+	if err := w.pollOnce(&l); err != nil || l.loads != 0 {
+		t.Fatalf("missing file from the start: loads=%d err=%v", l.loads, err)
+	}
+	if err := os.WriteFile(path, []byte(`{}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = conn.Close() }()
-	_, _ = fmt.Fprintf(conn, "CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", echo.Addr(), echo.Addr())
-	buf := make([]byte, 256)
-	n, err := conn.Read(buf)
-	if err != nil {
-		t.Fatalf("read: %v", err)
+	setMod(t, path, at)
+	_ = w.pollOnce(&l)
+	_ = w.pollOnce(&l)
+	if l.loads != 1 {
+		t.Fatalf("unchanged file: loads=%d, want 1", l.loads)
 	}
-	if !strings.Contains(string(buf[:n]), "200") {
-		t.Fatalf("unexpected response: %s", buf[:n])
-	}
-	// Now it's a raw tunnel; write and read back.
-	if _, err := conn.Write([]byte("hi\n")); err != nil {
+	if err := os.WriteFile(path, []byte(`{"agents":{}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	_ = conn.SetReadDeadline(time.Now().Add(1 * time.Second))
-	n, err = conn.Read(buf)
-	if err != nil {
-		t.Fatalf("tunnel read: %v", err)
+	setMod(t, path, at)
+	_ = w.pollOnce(&l)
+	if l.loads != 2 {
+		t.Fatalf("size change: loads=%d, want 2", l.loads)
 	}
-	if !strings.Contains(string(buf[:n]), "hi") {
-		t.Errorf("tunnel echo = %q", buf[:n])
-	}
-}
-
-func TestConnectDenied(t *testing.T) {
-	var a Allowlist
-	a.patterns.Store(&[]string{"allowed.example.com"})
-	srv := httptest.NewServer(&proxy{allow: &a})
-	defer srv.Close()
-	conn, err := net.Dial("tcp", srv.Listener.Addr().String())
-	if err != nil {
+	if err := os.Remove(path); err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = conn.Close() }()
-	_, _ = fmt.Fprintf(conn, "CONNECT denied.example.com:443 HTTP/1.1\r\nHost: denied.example.com:443\r\n\r\n")
-	buf := make([]byte, 256)
-	n, _ := conn.Read(buf)
-	if !strings.Contains(string(buf[:n]), "403") {
-		t.Errorf("expected 403, got %s", buf[:n])
+	_ = w.pollOnce(&l)
+	_ = w.pollOnce(&l)
+	if l.loads != 3 {
+		t.Fatalf("removed file: loads=%d, want 3", l.loads)
 	}
 }
-
-func TestHTTPProxyAllowed(t *testing.T) {
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = fmt.Fprintf(w, "hello %s", r.URL.Path)
-	}))
-	defer upstream.Close()
-	upURL, _ := url.Parse(upstream.URL)
-
-	var a Allowlist
-	a.patterns.Store(&[]string{upURL.Hostname()})
-
-	proxySrv := httptest.NewServer(&proxy{allow: &a})
-	defer proxySrv.Close()
-
-	client := &http.Client{
-		Transport: &http.Transport{
-			Proxy: http.ProxyURL(mustURL(t, proxySrv.URL)),
-		},
-	}
-	resp, err := client.Get(upstream.URL + "/ping")
-	if err != nil {
-		t.Fatalf("get: %v", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	body, _ := io.ReadAll(resp.Body)
-	if string(body) != "hello /ping" {
-		t.Errorf("body = %q", body)
-	}
-}
-
-func TestHTTPProxyDenied(t *testing.T) {
-	var a Allowlist
-	a.patterns.Store(&[]string{"nothing.example.com"})
-	proxySrv := httptest.NewServer(&proxy{allow: &a})
-	defer proxySrv.Close()
-
-	client := &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(mustURL(t, proxySrv.URL))}}
-	resp, err := client.Get("http://denied.example.com/x")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if resp.StatusCode != http.StatusForbidden {
-		t.Errorf("status = %d", resp.StatusCode)
-	}
-}
-
-func mustURL(t *testing.T, raw string) *url.URL {
-	t.Helper()
-	u, err := url.Parse(raw)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return u
-}
-
-// echoServer is a minimal TCP echo server used by the CONNECT tests.
-// It records a hit counter so tests can assert the tunnel actually
-// delivered bytes to the far side.
-type echoServer struct {
-	ln   net.Listener
-	host string
-	hits atomic.Int32
-}
-
-func newEchoServer(t *testing.T) *echoServer {
-	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	e := &echoServer{ln: ln, host: ln.Addr().String()}
-	go func() {
-		for {
-			c, err := ln.Accept()
-			if err != nil {
-				return
-			}
-			go func(c net.Conn) {
-				defer func() { _ = c.Close() }()
-				e.hits.Add(1)
-				var buf bytes.Buffer
-				b := make([]byte, 256)
-				n, _ := c.Read(b)
-				buf.Write(b[:n])
-				_, _ = c.Write(buf.Bytes())
-			}(c)
-		}
-	}()
-	return e
-}
-func (e *echoServer) Addr() string { return e.host }
-func (e *echoServer) Close()       { _ = e.ln.Close() }

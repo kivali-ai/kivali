@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/kivali-ai/kivali/internal/egresscred"
 	"github.com/kivali-ai/kivali/internal/provider"
 )
 
@@ -116,6 +117,9 @@ func (c *Driver) Stream(ctx context.Context, req provider.CompleteRequest) (prov
 		"--input-format", "stream-json",
 		"--verbose",
 		"--mcp-config", mcpConfigPath,
+		// Only the config just written: no MCP servers from user or
+		// project scope, and no claude.ai connectors.
+		"--strict-mcp-config",
 	}
 	if resumeID != "" {
 		args = append(args, "--resume", resumeID)
@@ -213,10 +217,20 @@ func (c *Driver) spawn(ctx context.Context, sp spawnSpec) (*subprocStream, error
 		return nil, err
 	}
 	cmd := exec.CommandContext(ctx, sp.binary, sp.args...)
-	// The CLI inherits this process's environment unchanged, HOME
-	// included: it bills whatever the CLI is signed in to there.
-	cmd.Env = append(os.Environ(), fmt.Sprintf("NODE_OPTIONS=--max-old-space-size=%d", sp.maxOldSpaceMB))
-	cmd.Stderr = sp.stderr
+	cmd.Env = cliEnv(c.opts, sp.maxOldSpaceMB)
+	if sp.stderr != nil {
+		// The scrubbed stderr holds back a possible partial credential
+		// until the subprocess has exited; cleanup writes it.
+		sw := c.opts.Scrubber.Writer(sp.stderr)
+		cmd.Stderr = sw
+		inner := sp.cleanup
+		sp.cleanup = func() {
+			_ = sw.Flush()
+			if inner != nil {
+				inner()
+			}
+		}
+	}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return fail(fmt.Errorf("claudeagent: stdin pipe: %w", err))
@@ -241,6 +255,7 @@ func (c *Driver) spawn(ctx context.Context, sp spawnSpec) (*subprocStream, error
 		resumeID:        sp.resumeID,
 		gauge:           newUsageGauge(sp.resumeID == ""),
 		stdinMirrorPath: sp.stdinMirrorPath,
+		scrubber:        c.opts.Scrubber,
 		cleanup:         sp.cleanup,
 	}
 	go s.feed()
@@ -465,8 +480,7 @@ func allowedToolNames(tools []provider.Tool) []string {
 	// without naming them in --allowedTools as well, the CLI's hard
 	// whitelist excludes them and the agent gets a "tool not allowed"
 	// error when it tries to call either. Anthropic runs web_search
-	// server-side, so the only egress they generate is
-	// already-allowlisted api.anthropic.com.
+	// server-side, inside the model call.
 	return append(names, cliWebFetch, cliWebSearch)
 }
 
@@ -565,6 +579,9 @@ type subprocStream struct {
 	// everything it writes to the CLI subprocess stdin. Used for
 	// post-mortem diagnosis of stream-json rejections.
 	stdinMirrorPath string
+	// scrubber replaces the egress proxy credential in the stdin
+	// mirror.
+	scrubber *egresscred.Scrubber
 
 	// cleanup, when non-nil, runs once after the subprocess exits:
 	// closing a stderr log, removing a run's temporary config dir.
@@ -653,7 +670,9 @@ func (s *subprocStream) feed() {
 	}
 	var w io.Writer = s.stdin
 	if mirrorFile != nil {
-		w = io.MultiWriter(s.stdin, mirrorFile)
+		mirror := s.scrubber.Writer(mirrorFile)
+		defer func() { _ = mirror.Flush() }()
+		w = io.MultiWriter(s.stdin, mirror)
 	}
 	enc := json.NewEncoder(w)
 

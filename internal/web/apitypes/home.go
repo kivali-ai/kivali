@@ -70,7 +70,55 @@ const (
 	// its browser window; open the browser (Subagent), sign in, close
 	// the window.
 	NeedKindWebSignIn NeedKind = "web_sign_in"
+	// NeedKindWebUpload: a web task waits, before it starts, for you to
+	// approve uploading files to a site (WebUpload). Approve or deny,
+	// with a reason the task's agent reads, through
+	// POST /api/v1/needs/approve and /deny with the row's ID as path.
+	NeedKindWebUpload NeedKind = "web_upload"
+	// NeedKindWebBudget: a web task was refused an action that would
+	// have sent more data out than web tasks may (WebBudget).
+	// Acknowledge it through POST /api/v1/needs/ack with the row's ID
+	// as path.
+	NeedKindWebBudget NeedKind = "web_budget"
 )
+
+// WebUploadRef is the upload a web_upload row asks you to approve: the
+// task (its page is /agents/{parent}/subagents/{id}), the site it is
+// held to, where it starts, the files it may upload (paths under the
+// agent's /files/) and the task's prompt, the agent's words.
+type WebUploadRef struct {
+	Parent      string   `json:"parent"`
+	ID          string   `json:"id"`
+	Description string   `json:"description"`
+	Site        string   `json:"site"`
+	StartURL    string   `json:"start_url"`
+	Files       []string `json:"files"`
+	Prompt      string   `json:"prompt"`
+}
+
+// WebBudgetLimit is the limit a refused web action went over.
+type WebBudgetLimit string
+
+const (
+	// WebBudgetLimitAction: one action may send 2 KB.
+	WebBudgetLimitAction WebBudgetLimit = "action"
+	// WebBudgetLimitTask: one task may send 8 KB.
+	WebBudgetLimitTask WebBudgetLimit = "task"
+	// WebBudgetLimitDay: an agent's web tasks may send 32 KB a day.
+	WebBudgetLimitDay WebBudgetLimit = "day"
+)
+
+// WebBudgetRef is what a web_budget row reports: the task, the site
+// the data would have gone to (empty when core cannot tell), the size
+// of the refused action in bytes and the limit it went over.
+type WebBudgetRef struct {
+	Parent      string         `json:"parent"`
+	ID          string         `json:"id"`
+	Description string         `json:"description"`
+	Site        string         `json:"site"`
+	Bytes       int            `json:"bytes"`
+	Limit       WebBudgetLimit `json:"limit"`
+}
 
 // SubagentRef is the web task a web_sign_in row is about: the task's
 // page is /agents/{parent}/subagents/{id}, its browser window the
@@ -105,8 +153,11 @@ const (
 type NeedItem struct {
 	// ID is what the actions take: the request's message path for
 	// approval, notification and proposal rows (the `path` field of
-	// POST /api/v1/needs/*), "assignment:<id>" for an assignment, and
-	// "agent:<slug>" for a needs-help row.
+	// POST /api/v1/needs/*), "assignment:<id>" for an assignment,
+	// "agent:<slug>" for a needs-help row, and
+	// "web_sign_in:<agent>/<task>", "web_upload:<agent>/<task>" and
+	// "web_budget:<agent>/<task>" for a web task's rows; the last two
+	// are the path POST /api/v1/needs/* takes for them.
 	ID           string          `json:"id"`
 	Kind         NeedKind        `json:"kind"`
 	ProposalKind *ProposalKind   `json:"proposal_kind,omitempty"`
@@ -127,8 +178,12 @@ type NeedItem struct {
 	Agent *AgentRef `json:"agent,omitempty"`
 	// Subagent is the web task a web_sign_in row is about.
 	Subagent *SubagentRef `json:"subagent,omitempty"`
+	// WebUpload is the upload a web_upload row asks you to approve.
+	WebUpload *WebUploadRef `json:"web_upload,omitempty"`
+	// WebBudget is what a web_budget row reports.
+	WebBudget *WebBudgetRef `json:"web_budget,omitempty"`
 	// RawURL opens the message file; absent on a needs-help row and a
-	// web_sign_in row.
+	// web task's rows.
 	RawURL *string `json:"raw_url,omitempty"`
 }
 

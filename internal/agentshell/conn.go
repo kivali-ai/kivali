@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/kivali-ai/kivali/internal/clock"
+	"github.com/kivali-ai/kivali/internal/egresscred"
 )
 
 // sidecarConn is the HTTP-over-UDS connection to the daemon that
@@ -21,6 +22,7 @@ type sidecarConn struct {
 	clk          clock.Clock
 	dialTimeout  time.Duration
 	startupGrace time.Duration
+	scrubber     *egresscred.Scrubber
 
 	once  sync.Once
 	httpC *http.Client
@@ -28,8 +30,9 @@ type sidecarConn struct {
 
 // newSidecarConn fills in the defaults: the real clock, a 5s dial
 // timeout, and a 30s startup grace, which covers a slow sidecar image
-// pull.
-func newSidecarConn(socketPath string, clk clock.Clock, dialTimeout, startupGrace time.Duration) *sidecarConn {
+// pull. A non-nil scrubber replaces the egress proxy credential in
+// every request sent.
+func newSidecarConn(socketPath string, clk clock.Clock, dialTimeout, startupGrace time.Duration, scrubber *egresscred.Scrubber) *sidecarConn {
 	if clk == nil {
 		clk = clock.New()
 	}
@@ -44,6 +47,7 @@ func newSidecarConn(socketPath string, clk clock.Clock, dialTimeout, startupGrac
 		clk:          clk,
 		dialTimeout:  dialTimeout,
 		startupGrace: startupGrace,
+		scrubber:     scrubber,
 	}
 }
 
@@ -119,11 +123,11 @@ func (c *sidecarConn) httpClient() *http.Client {
 			return d.DialContext(ctx, "unix", c.socketPath)
 		}
 		c.httpC = &http.Client{
-			Transport: &http.Transport{
+			Transport: c.scrubber.RoundTripper(&http.Transport{
 				DialContext:           dial,
 				IdleConnTimeout:       30 * time.Second,
 				ResponseHeaderTimeout: 0, // commands can take up to MaxTimeout (10 min)
-			},
+			}),
 			// No top-level Timeout — per-request timeouts ride on ctx.
 		}
 	})

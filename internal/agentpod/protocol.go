@@ -231,16 +231,19 @@ type SubagentSpec struct {
 
 	// Kind is SubagentKindGeneral (empty on the wire) or
 	// SubagentKindWeb. A web task runs the web toolkit: the pod starts
-	// its MCP server with --toolkit web and the session name, and Tools
-	// holds WebSubagentTools. Session is the web session the task runs
-	// in (OpenWebSession or a site), StartURL where it starts, and
-	// Files the names of the task files it may upload.
+	// its MCP server with --toolkit web, the session name and the site,
+	// and Tools holds WebSubagentTools. Session is the web session the
+	// task runs in (OpenWebSession or a site), StartURL where it starts,
+	// and Files the names of the task files it may upload.
 	Kind     string   `json:"kind,omitempty"`
 	Session  string   `json:"session,omitempty"`
 	StartURL string   `json:"start_url,omitempty"`
 	Files    []string `json:"files,omitempty"`
-	// Site is a site session's registrable domain, empty in the open
-	// session: the web subagent's prompt names it.
+	// Site is the registrable domain the task is held to: a site
+	// session's, or for a task with files the site a person approved
+	// its uploads for. Empty for an open-session task without files.
+	// The web subagent's prompt names it, and it decides whether the
+	// task has web_eval.
 	Site string `json:"site,omitempty"`
 	// Resume is the session id an earlier run of this task reported
 	// (TurnEvent.SessionID); the run continues that session and

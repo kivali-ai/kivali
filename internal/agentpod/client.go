@@ -54,6 +54,12 @@ type Client struct {
 	// real clock; WithClock injects a fake so a test can prove the
 	// retry behaviour without waiting seconds for it.
 	clk clock.Clock
+
+	// egressHash is the egress credential hash core accepted from
+	// SetUpEgressCredential, sent again on every reconnect of the
+	// events stream. Set before RunEvents starts; empty when the pod
+	// has no proxy.
+	egressHash string
 }
 
 // WithClock returns c with a different time source. Test seam.
@@ -200,6 +206,7 @@ func (c *Client) RunEvents(ctx context.Context, handle func(Event) error) error 
 	const maxBackoff = 5 * time.Second
 
 	backoff := minBackoff
+	opened := false
 	for {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -225,6 +232,13 @@ func (c *Client) RunEvents(ctx context.Context, handle func(Event) error) error 
 		}
 		// Stream is up — reset backoff for the next reconnect cycle.
 		backoff = minBackoff
+		// A reconnect: core may have restarted, or another pod's
+		// registration replaced this one's hash. Register it again
+		// before any event is handled.
+		if opened {
+			c.reregisterEgressCredential(ctx)
+		}
+		opened = true
 		for ev := range evs {
 			if err := handle(ev); err != nil {
 				return err
