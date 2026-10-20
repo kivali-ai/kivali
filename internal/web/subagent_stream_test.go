@@ -80,6 +80,38 @@ func TestJSONLTailerYieldsCompleteLines(t *testing.T) {
 	}
 }
 
+// TestMetaIsTerminalCoversEveryJobState: a task's stream sends done and
+// closes once meta.json records an ended task. If a state that ends a
+// task is missing from metaIsTerminal (a cancelled task was), the
+// stream of a task its owner stopped never ends: the page keeps its
+// connection open and reconnects for as long as it is shown. A live
+// state it counts as ended would cut the stream short instead, so each
+// state is held to job.terminal() as well.
+func TestMetaIsTerminalCoversEveryJobState(t *testing.T) {
+	want := map[string]bool{
+		subagentJobQueued:           false,
+		subagentJobRunning:          false,
+		subagentJobWaiting:          false,
+		subagentJobAwaitingApproval: false,
+		subagentJobCompleted:        true,
+		subagentJobFailed:           true,
+		subagentJobCancelled:        true,
+	}
+	checkEveryJobStateHasAnExpectation(t, "stream end", want)
+	for state, terminal := range want {
+		if got := metaIsTerminal([]byte(`{"status":"` + state + `"}`)); got != terminal {
+			t.Errorf("metaIsTerminal(%q) = %v, want %v", state, got, terminal)
+		}
+		if got := (&subagentJob{State: state}).terminal(); got != terminal {
+			t.Errorf("job in %q: terminal() = %v, want %v", state, got, terminal)
+		}
+	}
+	// The status a task records when its run errors is not a job state.
+	if !metaIsTerminal([]byte(`{"status":"errored"}`)) {
+		t.Error(`metaIsTerminal("errored") = false, want true`)
+	}
+}
+
 func TestMetaIsTerminal(t *testing.T) {
 	cases := []struct {
 		body string

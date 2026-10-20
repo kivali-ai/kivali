@@ -27,6 +27,23 @@ function stepRow(title: RegExp): HTMLElement {
   return row;
 }
 
+/** A web task held for a person, of plan step `step`. */
+function waitingSession(id: string, wait: 'sign_in' | 'approval', step: number): BackgroundSession {
+  return {
+    id,
+    kind: 'subagent',
+    state: 'waiting',
+    wait,
+    title: 'Task ' + id,
+    model: 'Sonnet 4.6',
+    effort: 'low',
+    elapsed_s: 5,
+    step,
+    started: '2026-09-22T16:58:25Z',
+    url: '/agents/engineering-lead/subagents/' + id,
+  };
+}
+
 describe('Background with a plan (background.json)', () => {
   it('heads the list with the plan, its progress and the counts', async () => {
     renderTabs(PATH, { routes: { ['GET ' + API]: background } });
@@ -70,6 +87,23 @@ describe('Background with a plan (background.json)', () => {
     expect(within(stepRow(/2 · List every/)).getByText('1 running · 1 queued')).toBeInTheDocument();
     expect(within(stepRow(/3 · Find two/)).getByText('1 needs help')).toBeInTheDocument();
     expect(screen.getByText('Not started')).toBeInTheDocument();
+  });
+
+  // A step holding only waiting tasks (for a sign-in or for an upload approval) used to read "1 session", the
+  // fallback for a count nothing matched, which says nothing about the person being needed. If this is deleted, a
+  // plan step blocked on its owner looks like any idle one.
+  it('counts the tasks of a step that wait for a person', async () => {
+    const one: Background = { ...background, sessions: [waitingSession('eeee0001', 'approval', 4)] };
+    renderTabs(PATH, { routes: { ['GET ' + API]: one } });
+    await loaded();
+    expect(within(stepRow(/4 · Write the recommendation/)).getByText('1 waiting')).toBeInTheDocument();
+  });
+
+  it('counts waiting tasks of both kinds beside the ones running', async () => {
+    const two: Background = { ...background, sessions: [...background.sessions, waitingSession('eeee0002', 'sign_in', 2), waitingSession('eeee0003', 'approval', 2)] };
+    renderTabs(PATH, { routes: { ['GET ' + API]: two } });
+    await loaded();
+    expect(within(stepRow(/2 · List every/)).getByText('1 running · 2 waiting · 1 queued')).toBeInTheDocument();
   });
 
   it('indents a step’s tasks and lists the tasks of no step after them', async () => {
