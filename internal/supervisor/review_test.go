@@ -246,6 +246,43 @@ func TestUpgradeDeletesDownloads(t *testing.T) {
 	}
 }
 
+// A download or verification that fails part way deletes what the
+// upgrade had downloaded so far. Without it, every failed attempt left
+// the chart and the image bundle (about 0.6 GB) in downloads/ on the
+// person's drive, with nothing to delete them until an upgrade to that
+// same version succeeded.
+func TestUpgradeFailureBeforeTheJournalDeletesDownloads(t *testing.T) {
+	h := newHarness(t)
+	h.mustUp(UpOptions{Install: owner})
+	cases := map[string]func(dir string) string{
+		// The chart is downloaded, then the bundle fails its digest.
+		"bundle digest": func(dir string) string {
+			feed := writeRelease(t, dir, "0.16.0", "v0.16.0")
+			if err := os.WriteFile(filepath.Join(dir, "kivali-images-linux-"+fakeArch+".tar"), []byte("tampered"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			return feed
+		},
+		// Both are downloaded and verified; the bundle lacks an image
+		// the chart needs.
+		"missing image": func(dir string) string {
+			return writeReleaseWith(t, dir, "0.16.0", "0.16.0", "v0.16.0", true, repoKivali, repoEgress, repoShell)
+		},
+	}
+	for name, feed := range cases {
+		err := h.sup.Upgrade(context.Background(), UpgradeOptions{Feed: feed(filepath.Join(t.TempDir(), "rel"))}, h.logf())
+		if err == nil {
+			t.Fatalf("%s: the upgrade succeeded", name)
+		}
+		if exists(filepath.Join(h.dir, "downloads", "0.16.0")) {
+			t.Fatalf("%s: downloads kept after %v", name, err)
+		}
+		if h.sup.State().Upgrade != nil {
+			t.Fatalf("%s: a journal after a failed download", name)
+		}
+	}
+}
+
 func TestRollbackBootFailureWording(t *testing.T) {
 	h := newHarness(t)
 	h.mustUp(UpOptions{Install: owner})
