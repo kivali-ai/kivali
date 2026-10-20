@@ -250,12 +250,18 @@ func TestListenNeedsAnOwnerAnOrdinaryAccountCannotName(t *testing.T) {
 	}
 }
 
-// A pipe nobody serves is the ordinary dial error, not a refusal.
+// A pipe nobody serves is the ordinary dial error, not a refusal. It is
+// also the error pipeMissing must recognise, or Dial would stop looking
+// for a broker that is still starting at the first try
+// (TestDialWaitsForAPipeStillBeingCreated drives the wait itself).
 func TestDialNoBroker(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	_, err := Dial(ctx, fmt.Sprintf(`\\.\pipe\kivali-broker-test-absent-%d`, os.Getpid()))
 	if err == nil || errors.Is(err, ErrNotBroker) {
 		t.Fatalf("err = %v", err)
+	}
+	if !pipeMissing(err) {
+		t.Errorf("pipeMissing(%v) = false, want true for a pipe nobody created", err)
 	}
 }

@@ -587,7 +587,10 @@ the broker service's account, LocalSystem or the Administrators group
 (the service names its own account, an elevated console broker the
 group) and an ordinary account can name none; anything else, such as a
 squatter that created the pipe first, is refused, as is an owner that
-cannot be read.
+cannot be read. A pipe that does not exist yet is looked for again
+every 250 ms for up to 5 seconds, since Kivali started at sign-in can
+ask before Windows has started the service; one still missing after
+that is the ordinary dial error.
 
 The pipe's DACL lets Authenticated Users connect (read and write data)
 but not add an instance to the pipe, since every instance shares the
