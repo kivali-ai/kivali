@@ -12,8 +12,8 @@
 //! quitting state only once the download is done and the install starts.
 //! Quit during the download stops it.
 
-use crate::platform;
 use crate::shell::{self, AppUpdateView, Shell};
+use crate::{menus, platform, windows};
 use std::sync::atomic::Ordering;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -63,6 +63,10 @@ fn add_progress(u: &mut AppUpdateView, got: usize, total: Option<u64>) {
     }
 }
 
+/// The teams that ran when the before-exit hook paused them for the
+/// installer; taken back if the installer could not start.
+static HANDED_OVER: Mutex<Option<Vec<String>>> = Mutex::new(None);
+
 /// The updater every check and download uses: the stall timeout, and
 /// what runs before an installer that ends the process.
 fn updater(app: &AppHandle) -> UpdaterBuilder {
@@ -71,12 +75,42 @@ fn updater(app: &AppHandle) -> UpdaterBuilder {
         .configure_client(|c| c.read_timeout(STALL_TIMEOUT).connect_timeout(CONNECT_TIMEOUT));
     if platform::INSTALL_EXITS {
         let app = app.clone();
-        builder = builder.on_before_exit(move || {
-            shell::pause_all_for_exit(&app);
-            app.cleanup_before_exit();
-        });
+        builder = builder.on_before_exit(move || step_aside(&app));
     }
     builder
+}
+
+/// Before the installer starts (Windows: the plugin then exits the
+/// process): every team pauses, as at Quit, and the tray icon and the
+/// windows go, so none is left behind by the exit. Not Tauri's
+/// `cleanup_before_exit`: if the installer cannot start, Kivali carries
+/// on ([`put_back`]), and that cleanup leaves the app unfit to.
+fn step_aside(app: &AppHandle) {
+    let running = shell::pause_all_for_exit(app);
+    *HANDED_OVER.lock().unwrap() = Some(running);
+    // On the main thread, where Tauri keeps the tray, and waited for: the
+    // plugin ends the process as soon as this returns.
+    let (done, wait) = std::sync::mpsc::channel();
+    let a = app.clone();
+    let on_main = app.run_on_main_thread(move || {
+        drop(a.remove_tray_by_id(menus::TRAY_ID));
+        for w in a.windows().into_values() {
+            let _ = w.hide();
+        }
+        let _ = done.send(());
+    });
+    if on_main.is_ok() {
+        let _ = wait.recv();
+    }
+}
+
+/// The installer could not start after [`step_aside`] (the permission
+/// prompt answered No, a standard user): the tray comes back, the teams
+/// that ran resume, and Settings → General says why.
+fn put_back(app: &AppHandle, running: &[String]) {
+    shell::resume_after_failed_install(app, running);
+    let a = app.clone();
+    let _ = app.run_on_main_thread(move || menus::restore_tray(&a));
 }
 
 pub fn check_desktop_update(app: &AppHandle) {
@@ -171,8 +205,11 @@ fn install(app: &AppHandle, got: Result<Option<(Update, Vec<u8>)>, String>) {
         u.total = None;
     }
     shell::changed(app);
-    // On Windows a successful install runs the installer and ends the
-    // process inside this call; it returns only when it failed.
+    // On Windows the install writes the installer to a file, runs the
+    // before-exit hook ([`step_aside`]) and starts the installer, which
+    // ends the process inside this call; it returns only with an error:
+    // before the hook (writing the file) or after it (the installer did
+    // not start, ShellExecuteW's error).
     match update.install(bytes) {
         Ok(()) => {
             shell::pause_all_for_exit(app);
@@ -180,7 +217,12 @@ fn install(app: &AppHandle, got: Result<Option<(Update, Vec<u8>)>, String>) {
         }
         Err(e) => {
             sh.quitting.store(false, Ordering::SeqCst);
+            let handed_over = HANDED_OVER.lock().unwrap().take();
+            if let Some(running) = handed_over {
+                put_back(app, &running);
+            }
             fail(app, e.to_string());
+            windows::show_settings(app, "general");
         }
     }
 }
