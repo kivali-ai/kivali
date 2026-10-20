@@ -155,6 +155,24 @@ func (p *Provisioner) Start(ctx context.Context, slug, session, token, coreToken
 	return nil
 }
 
+// Unschedulable is the scheduler's message while the pod for slug's
+// session cannot be placed on a node ("0/1 nodes are available: 1
+// Insufficient memory. ..."), empty while it can or has been, and when
+// there is no such pod.
+func (p *Provisioner) Unschedulable(ctx context.Context, slug, session string) (string, error) {
+	if !p.Enabled() {
+		return "", nil
+	}
+	pod, err := p.kube.GetPod(ctx, PodName(slug, session))
+	if errors.Is(err, kube.ErrNotFound) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("browser pod: read: %w", err)
+	}
+	return pod.Unschedulable, nil
+}
+
 // Stop deletes the pod for slug's session and waits until it is gone.
 // A pod that does not exist is already stopped.
 func (p *Provisioner) Stop(ctx context.Context, slug, session string) error {

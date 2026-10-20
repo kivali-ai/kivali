@@ -65,6 +65,13 @@ const (
 	// browserStartTimeout bounds a pod's start: the first use pulls
 	// the image.
 	browserStartTimeout = 5 * time.Minute
+	// browserScheduleGrace is how long a starting browser's pod may go
+	// unplaced for want of memory before its start fails: the 60 s stop
+	// grace of a pod being deleted, whose memory is free once it has
+	// gone, and room to spare. From then core asks every
+	// browserScheduleCheck while the browser starts.
+	browserScheduleGrace = 90 * time.Second
+	browserScheduleCheck = 15 * time.Second
 	// browserSaveTimeout bounds a save: a clean close and the profile
 	// upload. Longer than the pod's stop grace so a slow upload is not
 	// cut short by core.
@@ -132,6 +139,9 @@ type BrowserProvisioner interface {
 	Start(ctx context.Context, slug, session, token, coreToken string) error
 	Stop(ctx context.Context, slug, session string) error
 	StopAll(ctx context.Context) (int, error)
+	// Unschedulable is the scheduler's message while the session's pod
+	// cannot be placed on a node, empty otherwise.
+	Unschedulable(ctx context.Context, slug, session string) (string, error)
 }
 
 // browserLink is a connected pod as the registry uses it: it sends a
@@ -302,6 +312,9 @@ type browser struct {
 	// timeout while starting, the reap while idle, the save timeout
 	// while saving. Zero while running.
 	deadline time.Time
+	// scheduleAt is, while the browser starts, when core next asks
+	// whether its pod can be placed (checkScheduling).
+	scheduleAt time.Time
 
 	groups  map[string]*browserGroup
 	tabs    map[string]string // tab id → group
@@ -609,6 +622,7 @@ func (r *browserRegistry) sweep(now time.Time) time.Time {
 	}
 	var due []action
 	var closes []window
+	var checks []*browser
 	var next time.Time
 	earliest := func(t time.Time) {
 		if next.IsZero() || t.Before(next) {
@@ -630,6 +644,14 @@ func (r *browserRegistry) sweep(now time.Time) time.Time {
 				earliest(g.closeAt)
 			}
 		}
+		if b.state == browserStarting && !b.scheduleAt.IsZero() {
+			if !b.scheduleAt.After(now) {
+				b.scheduleAt = time.Time{}
+				checks = append(checks, b)
+			} else {
+				earliest(b.scheduleAt)
+			}
+		}
 		if b.deadline.IsZero() {
 			continue
 		}
@@ -643,6 +665,9 @@ func (r *browserRegistry) sweep(now time.Time) time.Time {
 	r.mu.Unlock()
 	for _, c := range closes {
 		go r.closeWindow(c.b, c.group)
+	}
+	for _, b := range checks {
+		go r.checkScheduling(b)
 	}
 	for _, a := range due {
 		switch a.kind {
@@ -658,6 +683,36 @@ func (r *browserRegistry) sweep(now time.Time) time.Time {
 		}
 	}
 	return next
+}
+
+// errBrowserNoMemory is a start that failed because no node has the
+// memory a browser pod requests. Its words are for the person and for
+// the calling agent alike: the cause, and where the team's memory is
+// raised, in Kivali Desktop or by whoever runs the server.
+var errBrowserNoMemory = errors.New("the browser could not start because the team does not have enough memory for it. The owner can give the team more memory in Kivali Desktop (Settings, the team's This Mac or This PC tab), or ask whoever runs this Kivali server for more")
+
+// checkScheduling asks whether a starting browser's pod can be placed.
+// One the scheduler leaves unplaced for want of memory fails its start
+// with errBrowserNoMemory, rather than at the start timeout with no
+// reason; otherwise core asks again after browserScheduleCheck.
+func (r *browserRegistry) checkScheduling(b *browser) {
+	ctx, cancel := context.WithTimeout(context.Background(), browserSendTimeout)
+	msg, err := r.prov.Unschedulable(ctx, b.slug, b.session)
+	cancel()
+	if err != nil {
+		r.logf("browser %s: read the pod's scheduling: %v", b.key(), err)
+	}
+	if err == nil && strings.Contains(msg, "Insufficient memory") {
+		r.logf("browser %s: the pod cannot be placed: %s", b.key(), msg)
+		r.failStart(b, errBrowserNoMemory)
+		return
+	}
+	r.mu.Lock()
+	if b.state == browserStarting {
+		b.scheduleAt = r.clk.Now().Add(browserScheduleCheck)
+	}
+	r.mu.Unlock()
+	r.kick()
 }
 
 // errTaskEnded refuses a call for a group whose task has ended.
@@ -888,8 +943,9 @@ func (r *browserRegistry) newBrowserLocked(slug, session string) (*browser, erro
 		slug: slug, session: session, token: token, coreToken: coreToken,
 		state: browserStarting, ready: make(chan struct{}), startDone: make(chan struct{}),
 		startedAt: now, lastUsed: now, deadline: now.Add(browserStartTimeout),
-		groups: map[string]*browserGroup{},
-		tabs:   map[string]string{}, pending: map[string]chan browserpod.Message{},
+		scheduleAt: now.Add(browserScheduleGrace),
+		groups:     map[string]*browserGroup{},
+		tabs:       map[string]string{}, pending: map[string]chan browserpod.Message{},
 	}
 	if !ephemeralSession(session) {
 		// A site session's name is its site: the registrable domain

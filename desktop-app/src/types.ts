@@ -201,6 +201,8 @@ export interface Snapshot {
   platform: "macos" | "windows" | "linux";
   teams: Team[];
   host: { memory_mb: number; cpus: number; vm_support: VmSupport };
+  /** The least memory a team needs for a web task; Settings warns below it. */
+  web_memory_mb: number;
   settings: { start_at_login: boolean; ask_before_quit: boolean };
   app_update: AppUpdate;
   owner_signin: OwnerSignin;

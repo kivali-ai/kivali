@@ -124,6 +124,10 @@ Kivali lost contact with the agent's sandbox. In Kivali Desktop, pause and resum
 
 Agents can reach only the hosts on your team's list. Add the host in **Org**, **Network**. An entry covers itself and everything under it, so `example.com` is enough for `api.example.com`.
 
+### A web task ended: "the team does not have enough memory"
+
+The task's browser could not start because the team had no memory left for it: each browser needs 512 MB beside the server and the agents. In Kivali Desktop, give the team more memory in **Settings**, under the team's **This Mac** (**This PC**) tab; it applies the next time the team resumes. On a self-hosted team, give the server's node more memory.
+
 ### "… is in the middle of a turn, so a new chat cannot start yet"
 
 Wait for the agent to finish, or choose **Stop**, then start the new chat.

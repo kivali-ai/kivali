@@ -17,6 +17,7 @@ import {
   memoryOptions,
   measuredStep,
   memoryUse,
+  memoryWarning,
   osPromptLine,
   placeLine,
   shouldPoll,
@@ -252,6 +253,13 @@ describe("Settings rows", () => {
     expect(memoryOptions(16384, 3072).map((o) => o.label)).toEqual(["3 GB", "4 GB", "6 GB", "8 GB"]);
     expect(cpuOptions(8, 4).map((o) => o.label)).toEqual(["2", "4", "6", "8"]);
     expect(cpuOptions(4, 4).map((o) => o.label)).toEqual(["2", "4"]);
+  });
+  // Guards the memory setting's warning: a team below what a web task needs (an agent and a browser beside the
+  // server, the shell's web_memory_mb) has every web task fail short of memory, and 2 GB is still offered.
+  it("memory warning below what a web task needs", () => {
+    expect(memoryWarning(team({ name: "Home", memory_mb: 2048 }), 2122)).toBe("Web tasks need at least 3 GB. With 2 GB, Home can’t start a browser for them.");
+    expect(memoryWarning(team({ memory_mb: 3072 }), 2122)).toBeNull();
+    expect(memoryWarning(team({ memory_mb: 4096 }), 2122)).toBeNull();
   });
   it("disk card", () => {
     expect(diskLines(team({ disk_used_bytes: 18 * GB, disk_size_bytes: 64 * GB }))).toEqual({

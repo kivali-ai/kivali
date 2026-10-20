@@ -492,6 +492,9 @@ pub struct Snapshot {
     pub platform: &'static str,
     pub teams: Vec<TeamView>,
     pub host: HostView,
+    /// The least memory a team needs for a web task
+    /// (`teams::WEB_TASK_MEMORY_MB`): Settings warns below it.
+    pub web_memory_mb: u32,
     pub settings: SettingsView,
     pub app_update: AppUpdateView,
     pub owner_signin: OwnerSigninView,
@@ -854,6 +857,7 @@ impl Shell {
             },
             teams: views,
             host: HostView { memory_mb: hostinfo::memory_mb(), cpus: hostinfo::cpus(), vm_support: platform::vm_support() },
+            web_memory_mb: crate::teams::WEB_TASK_MEMORY_MB,
             settings: SettingsView { start_at_login: teams.start_at_login, ask_before_quit: teams.ask_before_quit },
             app_update,
             owner_signin: owner,
@@ -2401,7 +2405,7 @@ mod tests {
         });
         let v = rx.recv_timeout(Duration::from_secs(10)).expect("snapshot() did not return: a lock is taken twice");
         // The keys src/types.ts reads.
-        for k in ["app_version", "platform", "teams", "host", "settings", "app_update", "owner_signin", "connect", "config_dir", "logs_dir", "last_deleted"] {
+        for k in ["app_version", "platform", "teams", "host", "web_memory_mb", "settings", "app_update", "owner_signin", "connect", "config_dir", "logs_dir", "last_deleted"] {
             assert!(v.get(k).is_some(), "snapshot lacks {k}");
         }
         let t = &v["teams"][0];

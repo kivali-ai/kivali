@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -93,5 +94,34 @@ func TestGetAndListPods(t *testing.T) {
 	}
 	if _, err := k.GetPodSpecHash(ctx, "missing"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("GetPodSpecHash(missing) err = %v, want ErrNotFound", err)
+	}
+}
+
+// TestPodReadsTheSchedulersRefusal guards how a browser pod that cannot
+// be placed is told apart: without the PodScheduled condition's message
+// a start short of memory waits out its whole timeout and ends with no
+// reason. A condition that is True, or False for another reason, is no
+// refusal.
+func TestPodReadsTheSchedulersRefusal(t *testing.T) {
+	const msg = "0/1 nodes are available: 1 Insufficient memory. preemption: 0/1 nodes are available: 1 No preemption victims found for incoming pod."
+	conditions := map[string][]any{
+		"refused": {map[string]any{"type": "PodScheduled", "status": "False", "reason": "Unschedulable", "message": msg}},
+		"placed":  {map[string]any{"type": "PodScheduled", "status": "True"}},
+		"gated":   {map[string]any{"type": "PodScheduled", "status": "False", "reason": "SchedulingGated", "message": "gated"}},
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		name := strings.TrimPrefix(r.URL.Path, "/api/v1/namespaces/ns/pods/")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"metadata": map[string]any{"name": name},
+			"status":   map[string]any{"phase": "Pending", "conditions": conditions[name]},
+		})
+	}))
+	t.Cleanup(srv.Close)
+	k := NewForServer(srv.URL, srv.Client(), "ns")
+	for name, want := range map[string]string{"refused": msg, "placed": "", "gated": ""} {
+		pod, err := k.GetPod(context.Background(), name)
+		if err != nil || pod.Unschedulable != want {
+			t.Errorf("GetPod(%s).Unschedulable = %q, %v; want %q", name, pod.Unschedulable, err, want)
+		}
 	}
 }

@@ -323,6 +323,13 @@ function trimGb(mb: number): string {
   return formatMemory(mb).replace(/ GB$/, "");
 }
 
+/** This Mac tab's warning under the memory select: below what a web task needs (the shell's `web_memory_mb`), its browser can't start. */
+export function memoryWarning(team: Team, needMb: number): string | null {
+  if (team.memory_mb >= needMb) return null;
+  const need = Math.ceil(needMb / 1024) * 1024;
+  return `Web tasks need at least ${formatMemory(need)}. With ${formatMemory(team.memory_mb)}, ${team.name} can’t start a browser for them.`;
+}
+
 /** This Mac tab's select options: the usual sizes that fit, plus the current value. */
 export function memoryOptions(hostMb: number, current: number): { value: number; label: string }[] {
   const cap = Math.max(2048, hostMb / 2);
