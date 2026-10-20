@@ -24,10 +24,17 @@ import (
 // end at keep (just past the last '\n', 0 if none), and the bytes after
 // them: a row whose append was cut short, or nil.
 func jsonlTail(f *os.File, size int64) (keep int64, tail []byte, err error) {
+	return jsonlTailFrom(f, 0, size)
+}
+
+// jsonlTailFrom is jsonlTail for the bytes from offset from on, which
+// must be the start of a line: keep is from when they hold no '\n'.
+func jsonlTailFrom(f *os.File, from, size int64) (keep int64, tail []byte, err error) {
 	const chunk = 64 << 10
+	keep = from
 	end := size
-	for end > 0 {
-		start := max(end-chunk, 0)
+	for end > from {
+		start := max(end-chunk, from)
 		buf := make([]byte, end-start)
 		if _, err := f.ReadAt(buf, start); err != nil && !errors.Is(err, io.EOF) {
 			return 0, nil, err
@@ -94,7 +101,7 @@ func ReadChatFile(path string) ([]ChatMessage, error) {
 	}
 	defer func() { _ = f.Close() }()
 	var out []ChatMessage
-	err = jsonlLines(f, 16*1024*1024, func(line []byte) error {
+	err = jsonlLines(f, chatFileMaxLine, func(line []byte) error {
 		var m ChatMessage
 		if err := json.Unmarshal(line, &m); err != nil {
 			return fmt.Errorf("transcript %s: %w", path, err)
