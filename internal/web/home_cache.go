@@ -250,7 +250,9 @@ func groupHistoryThreads(heads []messageHead, excludePaths map[string]bool) []hi
 }
 
 // loadHistoryThread reads a thread's root and replies, for a page that
-// shows it.
+// shows it. A message moved away (MoveToRedacted) since ref was listed
+// is out of every view: a reply is left out, and a root is
+// store.ErrNotFound, the whole thread gone from this page.
 func (s *Server) loadHistoryThread(ref historyThreadRef) (historyThread, error) {
 	root, err := s.Store.ReadMessage(filepath.Join(s.Store.Root(), ref.RootPath))
 	if err != nil {
@@ -264,6 +266,9 @@ func (s *Server) loadHistoryThread(ref historyThreadRef) (historyThread, error) 
 	}
 	for _, p := range ref.ReplyPaths {
 		m, err := s.Store.ReadMessage(filepath.Join(s.Store.Root(), p))
+		if errors.Is(err, store.ErrNotFound) {
+			continue
+		}
 		if err != nil {
 			return historyThread{}, err
 		}
