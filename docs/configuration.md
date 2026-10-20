@@ -126,7 +126,7 @@ These live with the team's data, are changed in the app, and are included in bac
 | Name, logo, what agents call you | **Org**, **Organization** |
 | Handbook | **Org**, **Handbook** |
 | Project files, skills | **Org**, **Project files** and **Skills** |
-| Hosts agents can reach | **Org**, **Network** |
+| Hosts agent shells can reach | **Org**, **Network** |
 | Software installed for every agent | **Org**, **Software** |
 | Software installed for one agent | The agent's **About** tab, **Software** |
 | Auto-release | **Home**, the Queue |
