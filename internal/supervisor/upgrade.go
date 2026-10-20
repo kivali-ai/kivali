@@ -108,6 +108,7 @@ func (s *Supervisor) Upgrade(ctx context.Context, o UpgradeOptions, logf Logf) e
 	if err := s.update(func(st *State) {
 		st.Upgrade = &Journal{From: from, To: sg.meta.Version, Step: StepPrepared, Snapshot: snap, Started: s.o.Clock.Now().UTC()}
 	}); err != nil {
+		s.dropDownloads(sg, logf)
 		return err
 	}
 	logf("journal: upgrading %s -> %s (snapshot %s)", from, sg.meta.Version, snap)
@@ -219,9 +220,11 @@ func (s *Supervisor) step(name string) error {
 }
 
 // stage is step 2: download and verify the chart and the image bundle,
-// import the images and check containerd has them.
-func (s *Supervisor) stage(ctx context.Context, g Guest, feed string, rel Release, logf Logf) (staged, error) {
-	sg := staged{rel: rel}
+// import the images and check containerd has them. A failure once the
+// release's directory is made deletes it; on success it is the
+// upgrade's to delete (dropDownloads).
+func (s *Supervisor) stage(ctx context.Context, g Guest, feed string, rel Release, logf Logf) (sg staged, err error) {
+	sg = staged{rel: rel}
 	img, ok := rel.Images[s.platform()]
 	if !ok {
 		return sg, fmt.Errorf("release %s has no images for %s", rel.Version, s.platform())
@@ -236,6 +239,11 @@ func (s *Supervisor) stage(ctx context.Context, g Guest, feed string, rel Releas
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return sg, err
 	}
+	defer func() {
+		if err != nil {
+			s.dropDownloads(staged{dir: dir}, logf)
+		}
+	}()
 	// Release assets are no secret, but nothing under the config
 	// directory belongs in a backup.
 	if err := s.o.Host.ExcludeFromBackup(downloads); err != nil {

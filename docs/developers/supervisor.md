@@ -1063,7 +1063,7 @@ An upgrade, with `local.json`'s `upgrade` as the journal:
    `kivali-browser` when the chart's `values.yaml` has a top-level
    `browser` section: a release from before browser pods ships three
    images and upgrades all the same. Nothing has changed yet; a
-   failure here needs no rollback.
+   failure here needs no rollback, and deletes `downloads/<version>/`.
 3. Journal `{from, to, step: prepared, snapshot, started}`.
 4. `quiescing`: delete agent pods with a wait, clean shutdown.
 5. `snapshotting`: remove any stale snapshot, the Host's `Snapshot` of
