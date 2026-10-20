@@ -591,6 +591,7 @@ func (s *Set) Blocked(id int) bool { return len(s.Blockers(id)) > 0 }
 // hold. A hold travels down the parent edge only: a child is part of
 // its parent's work, so pausing the parent pauses the part; an assignment
 // in another tree that waits on a held assignment was waiting already.
+// A parent missing from the set, its file gone, holds nothing.
 func (s *Set) HeldBy(id int) int {
 	iss, ok := s.byID[id]
 	if !ok || !iss.Open() {
@@ -600,7 +601,7 @@ func (s *Set) HeldBy(id int) int {
 		return id
 	}
 	for _, a := range s.Ancestors(id) {
-		if p := s.byID[a]; p.Held && p.Open() {
+		if p, ok := s.byID[a]; ok && p.Held && p.Open() {
 			return a
 		}
 	}

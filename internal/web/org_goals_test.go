@@ -91,6 +91,22 @@ func TestGoalsAndAssignmentReadouts(t *testing.T) {
 	}
 }
 
+// TestReadoutsSurviveAPartWithoutItsParent guards the org snapshot,
+// which runs on a goroutine of its own: a set holding a part whose
+// parent is missing (a file deleted by hand, or a store read while a
+// test's directory was being removed) crashed the process from there.
+// The part is not a goal, and still counts as blocked.
+func TestReadoutsSurviveAPartWithoutItsParent(t *testing.T) {
+	set := assignments.Build([]*assignments.Assignment{
+		openAssignment(2, "Orphaned part", "dev", 1, 3), // #1 is not in the set
+		openAssignment(3, "Fix the build", "dev", 0),
+	})
+	goals, blocked, _ := goalsAndAssignmentReadouts(set, goalsNow, func(slug string) apitypes.PersonRef { return personNamed(nil, slug) })
+	if len(goals) != 0 || blocked != 1 {
+		t.Errorf("goals %#v blocked %d, want none and 1", goals, blocked)
+	}
+}
+
 func TestGoalsEmptySet(t *testing.T) {
 	goals, blocked, closedWeek := goalsAndAssignmentReadouts(assignments.Build(nil), goalsNow, func(slug string) apitypes.PersonRef { return personNamed(nil, slug) })
 	if goals == nil || len(goals) != 0 || blocked != 0 || closedWeek != 0 {
