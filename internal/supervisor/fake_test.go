@@ -127,9 +127,14 @@ type fakeBackend struct {
 	// install job behaves as k3s's does: its pod's helm container fails
 	// once more each time it is looked at and restarts in place
 	// (restartPolicy OnFailure), so the job's .status.failed stays 0.
-	// helmRuns counts those failed runs; under mu.
+	// helmRuns counts those failed runs; under mu. helmErrors are the
+	// helm errors of the first failed runs, in order (a cluster still
+	// starting): the job fails while any is left, even for a chart
+	// that installs, and a broken chart's later runs fail with
+	// helmDefaultError.
 	helmBroken map[string]bool
 	helmRuns   int
+	helmErrors []string
 	// applied is the chart file the deployment was last seen at; under
 	// mu.
 	applied string
@@ -284,6 +289,16 @@ func (h *fakeBackend) machineRemovals() []machineRemoval {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return append([]machineRemoval(nil), h.removals...)
+}
+
+// helmDefaultError is the helm error of a broken chart's failed runs.
+const helmDefaultError = "Error: INSTALLATION FAILED: duplicate entries\n  .env: duplicate key"
+
+// helmFailingLocked reports whether the install job of chart file fails
+// its next run: the chart is broken, or a run is left of helmErrors.
+// f.mu held.
+func (f *fakeBackend) helmFailingLocked(file string) bool {
+	return f.helmBroken[file] || f.helmRuns < len(f.helmErrors)
 }
 
 func newFakeBackend() *fakeBackend {
@@ -690,17 +705,12 @@ func (g fakeGuest) kubectl(args []string, stdin io.Reader, stdout, stderr io.Wri
 		}
 		_, _ = io.WriteString(stdout, `{"type":"result","is_error":false,"result":"OK"}`)
 		return 0, nil
-	case strings.Contains(joined, "get job helm-install-kivali"):
-		// k3s's job with restartPolicy OnFailure: its failed runs
-		// restart the container, and no pod fails.
-		_, _ = io.WriteString(stdout, "")
-		return 0, nil
 	case strings.Contains(joined, "get pods -l batch.kubernetes.io/job-name=helm-install-kivali"):
 		manifest, _ := g.file(ManifestRel)
 		file, _, _ := ParseManifest([]byte(manifest))
 		vm.mu.Lock()
 		defer vm.mu.Unlock()
-		if !vm.helmBroken[file] {
+		if !vm.helmFailingLocked(file) {
 			// The last install's pod: finished, after restarts the
 			// install got past.
 			return 0, json.NewEncoder(stdout).Encode(map[string]any{"items": []any{map[string]any{
@@ -720,7 +730,13 @@ func (g fakeGuest) kubectl(args []string, stdin io.Reader, stdout, stderr io.Wri
 			}}},
 		}}})
 	case strings.Contains(joined, "logs helm-install-kivali-x7k2p -c helm --tail=40 --previous"):
-		_, _ = io.WriteString(stdout, "+ helm install kivali\nError: INSTALLATION FAILED: duplicate entries\n  .env: duplicate key\n+ exit\n")
+		vm.mu.Lock()
+		msg := helmDefaultError
+		if n := vm.helmRuns; n >= 1 && n <= len(vm.helmErrors) {
+			msg = vm.helmErrors[n-1]
+		}
+		vm.mu.Unlock()
+		_, _ = fmt.Fprintf(stdout, "+ helm install kivali\n%s\n+ exit\n", msg)
 		return 0, nil
 	case strings.Contains(joined, "-n kube-system logs "):
 		// The current run, which has not failed yet.
@@ -737,7 +753,7 @@ func (g fakeGuest) kubectl(args []string, stdin io.Reader, stdout, stderr io.Wri
 			return -1, err
 		}
 		vm.mu.Lock()
-		if vm.helmBroken[file] {
+		if vm.helmFailingLocked(file) {
 			file = vm.applied
 		} else {
 			vm.applied = file

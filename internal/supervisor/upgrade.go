@@ -137,7 +137,7 @@ func (s *Supervisor) Upgrade(ctx context.Context, o UpgradeOptions, logf Logf) e
 	if gs.State != guestapi.StateReady || !gs.NodeReady {
 		return fmt.Errorf("preflight: the VM is not healthy (state %s, node ready %v)", gs.State, gs.NodeReady)
 	}
-	if err := deploymentState(ctx, g, "", ""); err != nil {
+	if err := deploymentState(ctx, g, "", "", nil); err != nil {
 		return fmt.Errorf("preflight: the org is not healthy: %w", err)
 	}
 	if err := s.upgradeRoom(uint64(rel.Chart.Size+rel.Images[s.platform()].Size), nothingChanged, logf); err != nil {
