@@ -9,9 +9,12 @@ import (
 	"log"
 	"net"
 	"sync/atomic"
+	"time"
 
 	"github.com/Microsoft/go-winio"
 	"golang.org/x/sys/windows"
+
+	"github.com/kivali-ai/kivali/internal/clock"
 )
 
 // Dial connects to the broker's pipe (PipeName, or the dev run's
@@ -40,8 +43,13 @@ import (
 // instance of the real pipe would otherwise show the broker's owner. An
 // owner that cannot be read is a refusal too. A refusal closes the
 // connection unused and is ErrNotBroker, logged once per process.
+//
+// A pipe that does not exist yet is looked for again for a few seconds
+// (dialWhenListening), since the service may still be starting.
 func Dial(ctx context.Context, pipe string) (net.Conn, error) {
-	c, err := dialPipe(ctx, pipe)
+	c, err := dialWhenListening(ctx, clock.System{}, pipeWait, pipeRetry, func(ctx context.Context) (net.Conn, error) {
+		return dialPipe(ctx, pipe)
+	}, pipeMissing)
 	if err != nil {
 		return nil, err
 	}
@@ -56,6 +64,16 @@ func Dial(ctx context.Context, pipe string) (net.Conn, error) {
 	return c, nil
 }
 
+// pipeWait is how long Dial waits for the broker's pipe when it is not
+// there yet, and pipeRetry how often it looks again meanwhile. The
+// broker service starts with Windows, and Kivali started at sign-in can
+// resume a team before the service has created its pipe; a pipe still
+// missing after pipeWait is the ordinary dial error.
+const (
+	pipeWait  = 5 * time.Second
+	pipeRetry = 250 * time.Millisecond
+)
+
 // clientAccess is what Dial opens the pipe for: reading (which includes
 // READ_CONTROL, for the owner check) and writing data, and not
 // GENERIC_WRITE, which would also ask for FILE_CREATE_PIPE_INSTANCE, the
@@ -66,6 +84,13 @@ const clientAccess = windows.FILE_GENERIC_READ | windows.FILE_WRITE_DATA
 // without checking it.
 func dialPipe(ctx context.Context, pipe string) (net.Conn, error) {
 	return winio.DialPipeAccessImpLevel(ctx, pipe, clientAccess, winio.PipeImpLevelImpersonation)
+}
+
+// pipeMissing reports whether a dialPipe error means no server has
+// created the pipe (go-winio returns CreateFile's error in an
+// *os.PathError, and retries a busy pipe itself).
+func pipeMissing(err error) bool {
+	return errors.Is(err, windows.ERROR_FILE_NOT_FOUND)
 }
 
 // refusalLogged makes Dial log a refused server once: every request
