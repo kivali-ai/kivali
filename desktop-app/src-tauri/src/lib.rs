@@ -159,7 +159,7 @@ pub fn run() {
     log_to_file(&dir);
     // The login item starts the app with --autostart: resume the teams
     // that were running and sit in the tray without opening a window.
-    let autostarted = std::env::args().any(|a| a == "--autostart");
+    let autostart_arg = std::env::args().any(|a| a == "--autostart");
 
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_autostart::init(
@@ -192,6 +192,10 @@ pub fn run() {
                 return Ok(());
             };
             app.manage(lock);
+            // An update's relaunch keeps the arguments Kivali had,
+            // --autostart included, and opens the window like any other
+            // launch (appupdate.rs).
+            let autostarted = !appupdate::take_relaunch_mark(&dir) && autostart_arg;
             let (teams, report) = TeamsFile::load(&dir, now_unix())?;
             for r in &report.repairs {
                 eprintln!("kivali: teams.json: {r}");

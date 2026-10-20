@@ -1202,7 +1202,12 @@ running team gets its credential checked and its release check
 started), resume every team in `running_at_quit` that is not running
 (each through the memory check), and start the watch loop. Unless
 started with `--autostart`, the `last_open` team's window opens (setup
-when there are no teams). The app update check runs at every launch,
+when there are no teams). An update's relaunch keeps the arguments of
+the process it replaces, `--autostart` included (macOS: `app.restart()`
+passes Tauri's `Env::args_os`; Windows: the updater hands them to the
+installer's `/ARGS`, which relaunches with them), so the update marks
+the relaunch with `.relaunch-after-update` in the config directory and
+the launch that finds it opens the window anyway (`appupdate.rs`). The app update check runs at every launch,
 then once a day while Kivali runs ("Update states").
 
 **Quit** (the tray, the menu bar with ⌘Q) asks first (E2, a native
