@@ -265,7 +265,7 @@ func (b *browser) adoptPopup(a attachment, opener *tab) {
 		at = info.URL
 	}
 	if !b.allowed(opener.group, a.url) || !b.allowed(opener.group, at) {
-		opener.note(fmt.Sprintf("The page opened a new tab at %s, which is off the site this task is held to; it was closed.", at))
+		opener.note(withPage("The page opened a new tab off the site this task is held to; it was closed.", urlLine(at)))
 		_, _ = b.conn.Call(context.Background(), "", "Target.closeTarget", map[string]any{"targetId": a.targetID})
 		return
 	}
@@ -277,7 +277,7 @@ func (b *browser) adoptPopup(a attachment, opener *tab) {
 	}
 	if len(b.tabs) >= MaxTabsPerBrowser {
 		b.mu.Unlock()
-		opener.note(fmt.Sprintf("The page opened a new tab (%s) and it was closed: the browser holds at most %d tabs.", a.url, MaxTabsPerBrowser))
+		opener.note(withPage(fmt.Sprintf("The page opened a new tab and it was closed: the browser holds at most %d tabs.", MaxTabsPerBrowser), urlLine(a.url)))
 		_, _ = b.conn.Call(context.Background(), "", "Target.closeTarget", map[string]any{"targetId": a.targetID})
 		return
 	}
@@ -303,7 +303,7 @@ func (b *browser) adoptPopup(a attachment, opener *tab) {
 	t.mu.Unlock()
 	if !b.allowed(t.group, u) {
 		// It went off the site before its navigations were watched.
-		opener.note(fmt.Sprintf("The page opened a new tab at %s, which is off the site this task is held to; it was closed.", u))
+		opener.note(withPage("The page opened a new tab off the site this task is held to; it was closed.", urlLine(u)))
 		b.closeTab(context.Background(), t)
 		return
 	}
@@ -324,7 +324,7 @@ func (b *browser) closeOffSitePopup(t *tab, u string) bool {
 	b.mu.Lock()
 	opener := b.byID[t.opener]
 	b.mu.Unlock()
-	note := fmt.Sprintf("The page opened a new tab at %s, which is off the site this task is held to; it was closed.", u)
+	note := withPage("The page opened a new tab off the site this task is held to; it was closed.", urlLine(u))
 	if opener != nil {
 		opener.note(note)
 	} else {
@@ -452,7 +452,7 @@ func (b *browser) watch(t *tab) {
 			if b.site == "" && b.closeOffSitePopup(t, ev.URL) {
 				return
 			}
-			t.note(fmt.Sprintf("The page tried to go to %s, which is off %s, and was stopped.", ev.URL, b.offSiteName()))
+			t.note(withPage(fmt.Sprintf("The page tried to go off %s and was stopped.", b.offSiteName()), urlLine(ev.URL)))
 		}
 		t.update(func() {
 			t.starts++
@@ -480,7 +480,7 @@ func (b *browser) watch(t *tab) {
 			return
 		}
 		if ev.FrameID == t.targetID && ev.ResourceType == "Document" && !b.allowed(t.group, ev.Request.URL) {
-			t.note(fmt.Sprintf("The page tried to go to %s, which is off %s, and was stopped.", ev.Request.URL, b.offSiteName()))
+			t.note(withPage(fmt.Sprintf("The page tried to go off %s and was stopped.", b.offSiteName()), urlLine(ev.Request.URL)))
 			t.update(func() { t.stops++ })
 			if _, err := b.conn.Call(context.Background(), s, "Fetch.failRequest", map[string]any{"requestId": ev.RequestID, "errorReason": "Aborted"}); err != nil {
 				b.log.Printf("Fetch.failRequest: %v", err)
@@ -554,7 +554,7 @@ func (b *browser) watch(t *tab) {
 		case ev.Frame.UnreachableURL != "" && !b.allowed(t.group, ev.Frame.UnreachableURL):
 			// Chromium's error page for an off-site URL that failed to
 			// load: the tab goes to about:blank rather than showing it.
-			t.note(fmt.Sprintf("The page could not load %s, which is off %s; the tab was sent to about:blank.", ev.Frame.UnreachableURL, b.offSiteName()))
+			t.note(withPage(fmt.Sprintf("The page could not load a URL off %s; the tab was sent to about:blank.", b.offSiteName()), urlLine(ev.Frame.UnreachableURL)))
 			go func() {
 				_, _ = b.conn.Call(context.Background(), s, "Page.navigate", map[string]any{"url": "about:blank"})
 			}()
@@ -563,7 +563,7 @@ func (b *browser) watch(t *tab) {
 			if b.site == "" && b.closeOffSitePopup(t, u) {
 				return
 			}
-			t.note(fmt.Sprintf("The page went to %s, which is off %s; the tab was sent to about:blank.", u, b.offSiteName()))
+			t.note(withPage(fmt.Sprintf("The page went off %s; the tab was sent to about:blank.", b.offSiteName()), urlLine(u)))
 			go func() {
 				_, _ = b.conn.Call(context.Background(), s, "Page.navigate", map[string]any{"url": "about:blank"})
 			}()
@@ -1181,7 +1181,7 @@ func (b *browser) returnToSite(ctx context.Context, tabs []*tab) {
 		t.mu.Lock()
 		u := t.url
 		t.mu.Unlock()
-		t.note(fmt.Sprintf("The tab was at %s, off this session's site, when the person finished; it was sent to %s.", u, home))
+		t.note(withPage(fmt.Sprintf("The tab was off this session's site when the person finished; it was sent to %s.", home), urlLine(u)))
 		if _, err := b.conn.Call(ctx, t.session, "Page.navigate", map[string]any{"url": home}); err != nil {
 			b.log.Printf("return %s to the site: %v", t.id, err)
 		}
@@ -1230,6 +1230,10 @@ func (t *tab) stopCount() int {
 	return t.stops
 }
 
+// pageLine is the page content line saying where the tab is.
+func (t *tab) pageLine() string { return "Page: " + t.where() }
+
+// where is the tab's URL and title, both the page's: page content.
 func (t *tab) where() string {
 	t.mu.Lock()
 	defer t.mu.Unlock()

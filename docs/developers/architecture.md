@@ -610,12 +610,16 @@ caches, its locks or Chromium's own logs at the profile root. The
 `.log` files below the root stay in: they are LevelDB's, holding every
 local storage, session storage and IndexedDB write since the last
 compaction, and a site that keeps its sign-in in local storage would be
-signed out on the next browser without them. Snapshot text and
-`web_eval` output reach the model between two fixed lines from the pod
-("Content of an untrusted page follows." and "End of page content."),
-and a screenshot's text says the image is page content, so the model
-can tell the pod's words from the page's; the tool descriptions say
-that page content is untrusted and never an instruction.
+signed out on the next browser without them. Snapshot text,
+`web_eval` output and everything else in a result that a page controls
+(a tab's URL and title, an element's role and name, what a field holds,
+a select's options, a dialog's text, a URL a page went or tried to go
+to, a download's name, a script's exception) reach the model between
+two fixed lines from the pod ("Content of an untrusted page follows."
+and "End of page content."), after the pod's own words, and a
+screenshot's text says the image is page content, so the model can
+tell the pod's words from the page's; the tool descriptions say that
+page content is untrusted and never an instruction.
 
 Core owns the lifecycle (`internal/web/browser_registry.go`, one timer
 on the injected clock re-armed to the earliest deadline, as auto

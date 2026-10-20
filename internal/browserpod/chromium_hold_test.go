@@ -141,7 +141,7 @@ func TestRealChromiumSiteHold(t *testing.T) {
 	}
 
 	// A link off the site does not take the tab there.
-	if res := cmd(CommandClick, ClickArgs{Ref: refIn(snap, `link "Go elsewhere"`)}); strings.Contains(res.Text, "OTHER-SITE") || strings.Contains(res.Text, "now at "+other.URL) {
+	if res := cmd(CommandClick, ClickArgs{Ref: refIn(snap, `link "Go elsewhere"`)}); strings.Contains(res.Text, "OTHER-SITE") || strings.Contains(res.Text, "Page: "+other.URL) {
 		t.Errorf("the link left the site: %+v", res)
 	}
 
