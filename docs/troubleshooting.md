@@ -50,7 +50,7 @@ Each team on your computer keeps the same local port for good, so anything that 
 
 - Another program: close it and choose **Try again**.
 - Reserved by Windows: `netsh interface ipv4 show excludedportrange protocol=tcp` lists the reservations. Restarting the Windows NAT service in an administrator terminal (`net stop winnat`, then `net start winnat`) often frees the port; then choose **Try again**.
-- Or move the team to another port, below 49152 on Windows, with the `kivali-supervisor … up --port` command the window shows. `kivali-supervisor` is in the folder where Kivali Desktop is installed. Then point anything that used the old port, such as `tailscale serve` or a bookmark, at the new one.
+- Or move the team to another port, below 49152 on Windows, with the `kivali-supervisor … up --port` command the window shows. `kivali-supervisor` is in the folder where Kivali Desktop is installed. The team's window opens on the new port within a minute. Then point anything that used the old port, such as `tailscale serve` or a bookmark, at the new one.
 
 ### "Not enough memory" when resuming
 

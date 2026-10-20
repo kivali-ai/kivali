@@ -388,8 +388,10 @@ because the command-line supervisor uses it without the shell.
   it. A file that is not a JSON object is renamed to
   `teams.json.unreadable-<unix seconds>` and Kivali starts with no
   teams. Keys this version does not know are kept.
-- A team here's port follows what its supervisor reports after each
-  start.
+- A team here's port follows what its supervisor reports, after each
+  start and at each status read of the watch loop, so a port moved with
+  `kivali-supervisor up --port` reaches teams.json and the team's window
+  without a pause and resume.
 
 **`local.json`** is each supervisor's. The shell never reads it
 directly; it gets the same facts from `GET /v1/status`.
@@ -953,7 +955,7 @@ word beside its dot, never colour alone:
 | running | the supervisor reports running | the last check reached it (or none has run yet) | success teal |
 | starting | an operation runs (any kind, including pause and delete), or the supervisor reports starting or upgrading | | the paused grey, pulsing in the pages |
 | paused | stopped, absent, or no supervisor answering | the last check did not reach it | ink-faint grey |
-| couldn't start (`failed`) | the last start failed (until the next succeeds), or the supervisor reports failed | | danger red |
+| couldn't start (`failed`) | the last start failed (until the next succeeds; one that failed on the team's port, also until the supervisor reports it running), or the supervisor reports failed | | danger red |
 
 The phrase beside it (tray rows, the tooltip, Settings) is "running"
 ("3 agents working" or "1 agent working" when the team API says some
