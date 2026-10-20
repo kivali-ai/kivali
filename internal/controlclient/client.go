@@ -31,13 +31,15 @@ import (
 // Client wraps an http.Client whose transport dials the control
 // socket.
 //
-// Most calls share one short timeout: they are fast RPCs where a hang
-// should surface as a failure rather than a wedge. RunNestedSubagent
-// is the single exception and uses the unbounded `blocking` client,
-// because a sub-lead's dispatch really does wait for the work — see
-// that method. Adding a second long-running endpoint here should mean
-// justifying it the same way, not reaching for `blocking` because it
-// happens to exist.
+// Most calls share one short timeout (shortTimeout): they are fast RPCs
+// where a hang should surface as a failure rather than a wedge. Two are
+// exceptions. RunSubagent has the `dispatch` client, bounded by
+// dispatchTimeout, because core reads and hashes a dispatch's upload
+// files before it answers. RunNestedSubagent uses the unbounded
+// `blocking` client, because a sub-lead's dispatch really does wait for
+// the work — see that method. Adding another long-running endpoint here
+// should mean justifying it the same way, not reaching for `blocking`
+// because it happens to exist.
 //
 // The slug field is the bound caller identity: every MCP subprocess
 // is launched with `--agent <slug>` and constructs its Client with
@@ -52,11 +54,35 @@ type Client struct {
 	slug string
 	http *http.Client
 
+	// dispatch is the same transport bounded by dispatchTimeout, used
+	// only by RunSubagent.
+	dispatch *http.Client
+
 	// blocking is the same transport with no timeout, used only by
 	// RunNestedSubagent. See that method for why one call needs it
 	// and why every other call must not have it.
 	blocking *http.Client
 }
+
+// shortTimeout bounds every control call but the two dispatches.
+const shortTimeout = 10 * time.Second
+
+// dispatchReadFloor is the slowest rate, in bytes a second, at which
+// core is taken to read and hash a dispatch's upload files: well below
+// what a slow virtual disk and SHA-256 without hardware help manage
+// together.
+const dispatchReadFloor = 20 << 20
+
+// dispatchMaxUploadBytes is the most one dispatch can have core read:
+// a full batch whose every task names its most files, each at the
+// upload limit. StartBatch enforces all three limits.
+const dispatchMaxUploadBytes = int64(agentpod.SubagentMaxBatch) * agentpod.WebTaskMaxFiles * agentpod.WebUploadMaxBytes
+
+// dispatchTimeout bounds RunSubagent: the short timeout for the rest of
+// a dispatch, plus the time to read dispatchMaxUploadBytes at
+// dispatchReadFloor. Finite, so a wedged core still surfaces as an
+// error.
+const dispatchTimeout = shortTimeout + time.Duration(dispatchMaxUploadBytes/dispatchReadFloor)*time.Second
 
 // New returns a Client that talks to the control socket at socketPath
 // on behalf of slug. The Client itself does no I/O — pass the path;
@@ -71,7 +97,11 @@ func New(socketPath, slug string) *Client {
 		slug: slug,
 		http: &http.Client{
 			Transport: &http.Transport{DialContext: dial},
-			Timeout:   10 * time.Second,
+			Timeout:   shortTimeout,
+		},
+		dispatch: &http.Client{
+			Transport: &http.Transport{DialContext: dial},
+			Timeout:   dispatchTimeout,
 		},
 		blocking: &http.Client{
 			Transport: &http.Transport{DialContext: dial},
@@ -79,12 +109,13 @@ func New(socketPath, slug string) *Client {
 	}
 }
 
-// WithScrubber has every request c sends, on both its transports,
+// WithScrubber has every request c sends, on each of its transports,
 // scrubbed of the credential s knows (egresscred.Scrubber.RoundTripper).
 // Must be called before the first request. A nil s changes nothing.
 func (c *Client) WithScrubber(s *egresscred.Scrubber) *Client {
 	if s != nil {
 		c.http.Transport = s.RoundTripper(c.http.Transport)
+		c.dispatch.Transport = s.RoundTripper(c.dispatch.Transport)
 		c.blocking.Transport = s.RoundTripper(c.blocking.Transport)
 	}
 	return c
@@ -98,10 +129,14 @@ func (c *Client) WithScrubber(s *egresscred.Scrubber) *Client {
 // the MCP handler to echo back to Claude Code — the jobs themselves
 // run on past this call.
 //
-// On the short client: dispatch returns as soon as the jobs are
-// registered, so the 10s timeout is ample and an unbounded wait would
-// only serve to hide a wedged core as an agent hanging forever on a
-// tool call.
+// On the dispatch client, bounded by dispatchTimeout. Before core
+// answers it reads and hashes every file a web task names to upload,
+// up to dispatchMaxUploadBytes in one call, so the short timeout would
+// fail a large batch every time, the agent's retry included. The bound
+// covers that read at dispatchReadFloor and stays finite: an unbounded
+// wait would only hide a wedged core as an agent hanging forever on a
+// tool call. If the client gives up anyway, core starts nothing from
+// the call (StartBatch checks its request context).
 func (c *Client) RunSubagent(ctx context.Context, parent string, arguments json.RawMessage) (string, error) {
 	body, err := json.Marshal(map[string]any{
 		"parent":    parent,
@@ -117,7 +152,7 @@ func (c *Client) RunSubagent(ctx context.Context, parent string, arguments json.
 	}
 	req.Header.Set("content-type", "application/json")
 	req.Header.Set(agentpod.SlugHeader, c.slug)
-	resp, err := c.http.Do(req)
+	resp, err := c.dispatch.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("controlclient: run-subagent: %w", err)
 	}

@@ -689,13 +689,17 @@ site-session lock. At most five of an agent's tasks may await approval
 at once; a dispatch past that is refused. Dispatch records each file's
 sha256 and size and keeps nothing else: no copy goes to the attachment
 store. A file over 50 MB is refused from its size alone. Reading the
-files is the slow part of a dispatch, and the control client gives up
-after 10 seconds; a dispatch whose caller has gone by then starts
-nothing, so the failure the agent reads is true and its retry does not
-ask for a second approval. Whenever a
-person opens a file or the task uploads it, core reads it again from the
-agent's `/files/`, checks it against the digest and uses those bytes;
-a file that has changed is refused.
+files is the slow part of a dispatch: up to five tasks of ten 50 MB
+files, 2.5 GB in one call. The control client gives the dispatch call
+its own bound (`dispatchTimeout` in `internal/controlclient`): its
+10-second timeout for the rest, plus that most at a floor of 20 MB/s,
+135 seconds in all, sized from the same limits StartBatch enforces
+(`agentpod.SubagentMaxBatch`, `WebTaskMaxFiles`, `WebUploadMaxBytes`).
+A dispatch whose caller has gone anyway starts nothing, so the failure
+the agent reads is true and its retry does not ask for a second
+approval. Whenever a person opens a file or the task uploads it, core
+reads it again from the agent's `/files/`, checks it against the digest
+and uses those bytes; a file that has changed is refused.
 
 The job registers in `awaiting_approval` with no browser, and Home
 derives a `web_upload` need, "Upload N files to <site>", from it, with

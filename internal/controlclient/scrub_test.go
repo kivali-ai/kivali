@@ -18,7 +18,7 @@ import (
 )
 
 // Subagent prompts the model wrote reach core scrubbed of the agent's
-// egress proxy credential, on the short client and the blocking one.
+// egress proxy credential, on the dispatch client and the blocking one.
 func TestWithScrubberScrubsBothTransports(t *testing.T) {
 	const secret = "Y29udHJvbC1jbGllbnQtc2VjcmV0LXZhbHVlLWZvci10ZXN0cw"
 	credURL := "http://alice:" + secret + "@10.43.0.12:3128"

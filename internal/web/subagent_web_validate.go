@@ -24,7 +24,7 @@ import (
 // is within one action's web budget too; what it carries still counts
 // toward the agent's day.
 const (
-	maxWebTaskFiles    = 10
+	maxWebTaskFiles    = agentpod.WebTaskMaxFiles
 	maxWebStartURLSize = 2048
 	// maxWebAwaitingApproval is how many of an agent's web tasks may
 	// wait for a person to approve their uploads at once: each is a row
@@ -153,7 +153,7 @@ func (s *SubagentService) validateWebTask(parent, callerID string, i int, t Suba
 }
 
 // maxWebUploadBytes bounds a file a web task may upload to a page.
-const maxWebUploadBytes = 50 << 20
+const maxWebUploadBytes = agentpod.WebUploadMaxBytes
 
 // webSessionSite is the site a session name stands for: its registrable
 // domain (vendor.com for shop.vendor.com), lower case, in punycode,
