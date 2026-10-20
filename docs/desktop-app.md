@@ -91,7 +91,7 @@ Sometimes a team update needs a newer app first ("update this app first", with *
 
 Each team has its own memory and CPU allowance, set in Settings, under the team's **This Mac** (**This PC**) tab:
 
-- **Memory**: 4 GB by default, up to half your computer's memory or 16 GB, whichever is less.
+- **Memory**: 4 GB by default, up to half your computer's memory or 16 GB, whichever is less. Below 3 GB the setting warns that web tasks can't start a browser: there is room for the team and an agent, but not for the browser a web task runs.
 - **CPUs**: 4 by default.
 
 Changes apply the next time the team resumes. The tab shows how much of your computer's memory the running teams use together.

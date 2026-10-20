@@ -10,7 +10,7 @@ import { appUpdateLine } from "../logic/appupdate";
 import { ago, deviceName, deviceShort, formatBytes, formatMemory, normalizeAddress, tildePath } from "../logic/format";
 import { routeHash, type TeamTab } from "../logic/route";
 import { errorText } from "../logic/setup";
-import { claudeLine, cpuOptions, devicesHint, devicesView, diskLines, memoryConflict, signedOutLine, signInLine, memoryOptions, memoryUse, placeLine, statusRow, thisComputer, updateRow } from "../logic/teams";
+import { claudeLine, cpuOptions, devicesHint, devicesView, diskLines, memoryConflict, signedOutLine, signInLine, memoryOptions, memoryUse, memoryWarning, placeLine, statusRow, thisComputer, updateRow } from "../logic/teams";
 import type { DialogId } from "../preset";
 import type { Snapshot, Team } from "../types";
 import { banner, button, caption, card, dot, field, monoLabel, orgMark, progress, row, select, settingsButtonLabel, switchRow } from "../ui";
@@ -431,6 +431,7 @@ function macTab(ctx: Ctx, t: Team): Child[] {
         options: memoryOptions(s.host.memory_mb, t.memory_mb),
         value: t.memory_mb,
         onchange: (v) => setRes(Number(v), t.cpus),
+        warning: memoryWarning(t, s.web_memory_mb),
       }),
       select({ id: "cpus", label: "CPUs", options: cpuOptions(s.host.cpus, t.cpus), value: t.cpus, onchange: (v) => setRes(t.memory_mb, Number(v)) }),
     ),

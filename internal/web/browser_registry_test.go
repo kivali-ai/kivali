@@ -38,6 +38,10 @@ type fakeBrowserProv struct {
 	// Start that is held.
 	startGate chan struct{}
 	startingC chan string
+	// unschedulable is the scheduler's message Unschedulable reports;
+	// asked counts the calls.
+	unschedulable string
+	asked         int
 }
 
 func newFakeBrowserProv() *fakeBrowserProv {
@@ -91,6 +95,12 @@ func (p *fakeBrowserProv) Stop(_ context.Context, slug, session string) error {
 		<-gate
 	}
 	return nil
+}
+func (p *fakeBrowserProv) Unschedulable(context.Context, string, string) (string, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.asked++
+	return p.unschedulable, nil
 }
 func (p *fakeBrowserProv) StopAll(context.Context) (int, error) {
 	p.mu.Lock()
@@ -593,6 +603,75 @@ func TestBrowserRegistryResetGivesAWaiterTheNextBrowser(t *testing.T) {
 	if err := <-task; err != nil {
 		t.Errorf("the waiting task's command = %v, want the next browser's result", err)
 	}
+}
+
+// TestBrowserRegistryFailsAStartShortOfMemory guards web tasks on a
+// team short of memory. A browser pod the scheduler could not place
+// ended only at the five-minute start timeout, as "the browser did not
+// start in time", which says neither why nor what to do. A pod left
+// unplaced for want of memory past browserScheduleGrace must fail the
+// start with errBrowserNoMemory; one unplaced for another reason, or
+// for less than the grace, must not.
+func TestBrowserRegistryFailsAStartShortOfMemory(t *testing.T) {
+	f := newBrowserFixture(t)
+	errs := make(chan error, 1)
+	go func() {
+		_, err := f.reg.Command(context.Background(), "alice", "vendor.example", "job1", browserpod.Message{Name: browserpod.CommandSnapshot})
+		errs <- err
+	}()
+	<-f.prov.startedC
+	setUnschedulable := func(msg string) {
+		f.prov.mu.Lock()
+		f.prov.unschedulable = msg
+		f.prov.mu.Unlock()
+	}
+	asked := func() int {
+		f.prov.mu.Lock()
+		defer f.prov.mu.Unlock()
+		return f.prov.asked
+	}
+	// checked sweeps at the current time and returns once the check it
+	// started has rescheduled itself (it kicks the lifecycle when done).
+	checked := func() {
+		t.Helper()
+		select {
+		case <-f.reg.wake:
+		default:
+		}
+		f.reg.sweep(f.clk.Now())
+		select {
+		case <-f.reg.wake:
+		case <-time.After(10 * time.Second):
+			t.Fatal("the scheduling check never finished")
+		}
+	}
+
+	// Within the grace a pod being deleted may still hold the memory:
+	// nobody asks.
+	setUnschedulable("0/1 nodes are available: 1 Insufficient memory.")
+	f.clk.Advance(browserScheduleGrace - time.Second)
+	f.reg.sweep(f.clk.Now())
+	if n := asked(); n != 0 {
+		t.Fatalf("asked %d time(s) within the grace", n)
+	}
+
+	// Unplaced for another reason: the start goes on.
+	setUnschedulable("0/1 nodes are available: 1 node(s) had untolerated taint {node.kubernetes.io/not-ready: }.")
+	f.clk.Advance(time.Second)
+	checked()
+	if n := asked(); n != 1 || f.reg.states()["alice/vendor.example"] != string(browserStarting) {
+		t.Fatalf("after a check that found no memory shortage: asked=%d states=%v", n, f.reg.states())
+	}
+
+	// Short of memory at the next check: the start fails, saying so.
+	setUnschedulable("0/1 nodes are available: 1 Insufficient memory. preemption: 0/1 nodes are available: 1 No preemption victims found for incoming pod.")
+	f.clk.Advance(browserScheduleCheck)
+	f.reg.sweep(f.clk.Now())
+	err := <-errs
+	if !isBrowserStartError(err) || !errors.Is(err, errBrowserNoMemory) {
+		t.Errorf("start short of memory: err = %v, want errBrowserNoMemory as a start failure", err)
+	}
+	f.stopped(t)
 }
 
 // TestBrowserRegistryClaimNeedsTheRightToken: a connection is accepted

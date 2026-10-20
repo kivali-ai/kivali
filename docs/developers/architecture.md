@@ -640,6 +640,15 @@ come up, or it is not running within five minutes) ends the web task
 waiting on it: core writes `outcome: failed` with "the browser could
 not start", the way it ends a task at the `submit_result` attempt cap,
 and the tool result, so the task's transcript, says what stopped it.
+A pod no node has the memory for is told apart: from 90 seconds into
+the start (`browserScheduleGrace`, long enough for a pod being deleted
+to free its memory) core reads the pod's `PodScheduled` condition every
+15 seconds (`Provisioner.Unschedulable`), and a scheduler message of
+`Insufficient memory` fails the start with `errBrowserNoMemory`: the
+task's reason then says the team does not have enough memory for a
+browser, and where the owner raises it (Kivali Desktop's memory
+setting, or whoever runs the server). Kivali Desktop warns in that
+setting below what the server, one agent and one browser request.
 A lost connection fails the commands in flight and deletes the pod;
 the next use starts afresh from the saved profile.
 At most `BROWSER_MAX_PER_TEAM` browsers (3) run at once; a start

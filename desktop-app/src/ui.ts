@@ -105,8 +105,11 @@ export function select(o: {
   value: number | string;
   onchange: (v: string) => void;
   disabled?: boolean;
+  /** A warning under the field: the value is allowed, but something won't work with it. */
+  warning?: string | null;
 }): HTMLDivElement {
-  const sel = h("select", { id: o.id, class: "kv-input", disabled: o.disabled });
+  const msg = o.warning ? `${o.id}-msg` : null;
+  const sel = h("select", { id: o.id, class: "kv-input", disabled: o.disabled, "aria-describedby": msg });
   for (const opt of o.options) {
     const el = h("option", { value: String(opt.value) }, opt.label);
     if (String(opt.value) === String(o.value)) el.selected = true;
@@ -118,6 +121,7 @@ export function select(o: {
     { class: "kv-field" },
     h("label", { class: "kv-field-label", for: o.id }, o.label),
     h("span", { class: "kv-select" }, sel, icon("chevron-down", 16)),
+    o.warning ? h("p", { class: "kv-field-hint attention", id: msg }, icon("triangle-alert", 14), o.warning) : null,
   );
 }
 

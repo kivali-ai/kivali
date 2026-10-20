@@ -32,6 +32,24 @@ pub const TEAMS_DIR: &str = "teams";
 pub const DEFAULT_MEMORY_MB: u32 = 4096;
 pub const DEFAULT_CPUS: u32 = 4;
 
+/// The least memory, in MiB, a team needs for an agent's web task: what
+/// the server, one agent and one browser request of the node, and what
+/// k3s itself keeps. Below it the scheduler has no room for a browser
+/// and a web task ends saying the team is short of memory, so Settings
+/// warns. A test checks each part against the chart and the agent pod
+/// manifest.
+pub const WEB_TASK_MEMORY_MB: u32 = SERVER_POD_MB + AGENT_POD_MB + BROWSER_POD_MB + K3S_KEPT_MB;
+/// The server pod: the chart's `server` and `egress` memory requests.
+const SERVER_POD_MB: u32 = 1024 + 32;
+/// One agent pod: its agent and agent-shell containers' memory requests
+/// (internal/agentpod/manifest.go).
+const AGENT_POD_MB: u32 = 128 + 256;
+/// One browser pod: the chart's `browser` memory request.
+const BROWSER_POD_MB: u32 = 512;
+/// k3s's own: CoreDNS's 70 MiB request and the kubelet's default
+/// eviction threshold, 100 MiB the node keeps free.
+const K3S_KEPT_MB: u32 = 70 + 100;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Kind {
@@ -447,6 +465,64 @@ fn fnv1a(bytes: &[u8]) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A memory quantity as the chart and the manifest write it, in MiB.
+    fn mib(q: &str) -> u32 {
+        let q = q.trim().trim_matches('"');
+        if let Some(n) = q.strip_suffix("Gi") {
+            n.parse::<u32>().unwrap() * 1024
+        } else if let Some(n) = q.strip_suffix("Mi") {
+            n.parse().unwrap()
+        } else {
+            panic!("not a Mi or Gi quantity: {q}")
+        }
+    }
+
+    /// The value at a dotted path of a YAML file of nested maps, as the
+    /// chart's values.yaml is.
+    fn yaml_at(text: &str, path: &str) -> String {
+        let want: Vec<&str> = path.split('.').collect();
+        let mut stack: Vec<(usize, String)> = Vec::new();
+        for line in text.lines() {
+            let body = line.trim_start();
+            if body.is_empty() || body.starts_with('#') {
+                continue;
+            }
+            let indent = line.len() - body.len();
+            let Some((key, value)) = body.split_once(':') else { continue };
+            while stack.last().is_some_and(|(i, _)| *i >= indent) {
+                stack.pop();
+            }
+            stack.push((indent, key.trim().to_string()));
+            if stack.iter().map(|(_, k)| k.as_str()).eq(want.iter().copied()) {
+                return value.trim().to_string();
+            }
+        }
+        panic!("{path} is not in the file")
+    }
+
+    // Guards the warning in Settings: WEB_TASK_MEMORY_MB is what a team
+    // needs before a web task's browser can be scheduled. A chart or
+    // agent pod whose requests grew without it would let Settings stay
+    // quiet on a team where every web task fails short of memory.
+    #[test]
+    fn web_task_memory_follows_the_requests() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let values = std::fs::read_to_string(root.join("charts/kivali/values.yaml")).unwrap();
+        let req = |p: &str| mib(&yaml_at(&values, p));
+        assert_eq!(SERVER_POD_MB, req("server.resources.requests.memory") + req("egress.resources.requests.memory"));
+        assert_eq!(BROWSER_POD_MB, req("browser.resources.requests.memory"));
+        let manifest = std::fs::read_to_string(root.join("internal/agentpod/manifest.go")).unwrap();
+        let agent = manifest.lines().find_map(|l| l.trim().strip_prefix("memReq = ")).expect("the agent container's default memory request");
+        let shell = manifest
+            .lines()
+            .find_map(|l| l.trim().strip_prefix(r#""requests": map[string]any{"cpu": "100m", "memory": "#))
+            .and_then(|r| r.strip_suffix("},"))
+            .expect("the agent-shell container's memory request");
+        assert_eq!(AGENT_POD_MB, mib(agent) + mib(shell));
+        // 2 GB, which Settings still offers, has no room for a browser.
+        const { assert!(WEB_TASK_MEMORY_MB > 2048) };
+    }
 
     const EXAMPLE: &str = r#"{
       "teams": [

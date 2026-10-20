@@ -172,7 +172,8 @@ const browserStartFailed = "the browser could not start"
 
 // endForBrowserStart ends a web task whose browser could not start, as
 // core ends a task at the submit_result attempt cap: the caller gets
-// outcome failed with browserStartFailed, rather than a reason the
+// outcome failed with browserStartFailed, or errBrowserNoMemory's words
+// when the team had no memory for it, rather than a reason the
 // subagent made up for a failure it cannot see. The tool result keeps
 // what stopped the browser, so the task's transcript shows it.
 func (s *SubagentService) endForBrowserStart(j subagentJob, err error) agentpod.WebCommandResponse {
@@ -180,6 +181,11 @@ func (s *SubagentService) endForBrowserStart(j subagentJob, err error) agentpod.
 	s.updateJob(j.ID, func(job *subagentJob) {
 		if job.endReason == "" && job.Result == "" && job.State == subagentJobRunning && !job.cancelled && !job.closing {
 			job.endReason = browserStartFailed
+			if errors.Is(err, errBrowserNoMemory) {
+				// The cause, and where the owner raises the team's
+				// memory: a reason the caller and the person can act on.
+				job.endReason = errBrowserNoMemory.Error()
+			}
 			// The task's run ends, and with it the workers a sub-lead
 			// dispatched: nobody is left to read them.
 			ends = s.collectEndCancelsLocked(j.Parent, j.ID)

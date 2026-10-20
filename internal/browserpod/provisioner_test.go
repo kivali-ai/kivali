@@ -194,6 +194,35 @@ func TestStop(t *testing.T) {
 	}
 }
 
+// TestUnschedulableReadsThePodsScheduling guards the provisioner's half
+// of a start short of memory: core asks it whether the pod can be
+// placed, and without the scheduler's message the start only ends at
+// its timeout, with no reason. A pod that is placed, or gone, says
+// nothing.
+func TestUnschedulableReadsThePodsScheduling(t *testing.T) {
+	p, fk := testProvisioner(t)
+	ctx := context.Background()
+	if msg, err := p.Unschedulable(ctx, "alice", "research"); msg != "" || err != nil {
+		t.Errorf("no pod: Unschedulable = %q, %v", msg, err)
+	}
+	if err := p.Start(ctx, "alice", "research", "tok", "ctok"); err != nil {
+		t.Fatal(err)
+	}
+	if msg, err := p.Unschedulable(ctx, "alice", "research"); msg != "" || err != nil {
+		t.Errorf("pending pod: Unschedulable = %q, %v", msg, err)
+	}
+	const refusal = "0/1 nodes are available: 1 Insufficient memory."
+	name := PodName("alice", "research")
+	fk.mu.Lock()
+	fk.objects[podsPath+"/"+name]["status"] = map[string]any{"phase": "Pending", "conditions": []any{
+		map[string]any{"type": "PodScheduled", "status": "False", "reason": "Unschedulable", "message": refusal},
+	}}
+	fk.mu.Unlock()
+	if msg, err := p.Unschedulable(ctx, "alice", "research"); msg != refusal || err != nil {
+		t.Errorf("refused pod: Unschedulable = %q, %v; want the scheduler's message", msg, err)
+	}
+}
+
 // StopAll deletes browser pods and nothing else.
 func TestStopAll(t *testing.T) {
 	p, fk := testProvisioner(t)

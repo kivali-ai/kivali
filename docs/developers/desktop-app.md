@@ -1181,6 +1181,11 @@ host's total in whole gigabytes, CPUs from 1 to the host's count
 (`set_resources` refuses anything else), stored in teams.json and sent
 with the next `up`: "Changes apply the next time Plainsong resumes."
 The page shows how the host's memory is shared and the disk's use.
+Below `teams::WEB_TASK_MEMORY_MB` (what the server, one agent and one
+browser request of the node, plus what k3s keeps: 2122 MiB, checked
+against the chart and the agent pod manifest by a test) the memory
+select warns that web tasks can't start a browser (`memoryWarning`);
+the size is still allowed, so a team already on 2 GB keeps it.
 
 **The watch loop** (`start_loops`, one thread, started at launch). It
 wakes every 5 seconds, or every 3 while someone signs in to Claude
@@ -1559,6 +1564,7 @@ welcome screen.
 | `app_version`, `platform` | this app's version; `macos`, `windows` or `linux` |
 | `teams[]` | per team: `id`, `name`, `kind`, `place` (`here`/`elsewhere`), `url`, `device`, `state`, `activity`, `phrase`, `reason`, `pause_first` (the team to pause when memory stopped a start), `op` (the current or last operation: kind, running, error, finished, raw lines, stage, stage index, stages, start time, percent, time left), `version`, `update` (above, plus `takes`, an update's typical length in words, "about 4 minutes", from its stages), `ai` (`provider`, `signed_in`, `email` and `billing` as `claude auth status` reports them, `terminal_open`, `signin`, `signed_out_at` while Claude is signed out), `owner`, `memory_mb`, `cpus`, `disk_used_bytes`, `disk_size_bytes`, `paused_since`, `last_reached`, `provisional`, `agents`, `working` (only while running), `files`, `signed_in_as` ("The team API"; null until read), `memory_free_mb` (a team here: `view::memory_free_mb` beside the other teams running now, E5's "2 GB free"; null elsewhere) |
 | `host` | this computer's memory and CPUs, and `vm_support`: whether a team's VM can run here (`ready`, `hyperv_off`, `windows_home`, `virtualization_off`, `in_vm`; `platform::vm_support`) |
+| `web_memory_mb` | the least memory a team needs for a web task (`teams::WEB_TASK_MEMORY_MB`); the memory select warns below it |
 | `settings` | `start_at_login`, `ask_before_quit` |
 | `app_update` | the app update's state, version, check time, error |
 | `owner_signin` | the setup sign-in: `idle`, `waiting`, `signed_in` (with the email), `failed` |

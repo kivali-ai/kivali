@@ -183,6 +183,11 @@ type Pod struct {
 	// Phase is the pod's status.phase: Pending, Running, Succeeded,
 	// Failed or Unknown.
 	Phase string
+	// Unschedulable is the scheduler's message while the pod's
+	// PodScheduled condition is False for reason Unschedulable ("0/1
+	// nodes are available: 1 Insufficient memory. ..."), empty
+	// otherwise.
+	Unschedulable string
 }
 
 // SpecHash is the pod's spec-hash label, "" when it carries none.
@@ -203,11 +208,26 @@ type podObject struct {
 		ContainerStatuses []struct {
 			Ready bool `json:"ready"`
 		} `json:"containerStatuses"`
+		Conditions []struct {
+			Type    string `json:"type"`
+			Status  string `json:"status"`
+			Reason  string `json:"reason"`
+			Message string `json:"message"`
+		} `json:"conditions"`
 	} `json:"status"`
 }
 
 func (o podObject) pod() Pod {
-	return Pod{Name: o.Metadata.Name, Labels: o.Metadata.Labels, Phase: o.Status.Phase}
+	p := Pod{Name: o.Metadata.Name, Labels: o.Metadata.Labels, Phase: o.Status.Phase}
+	for _, c := range o.Status.Conditions {
+		if c.Type == "PodScheduled" && c.Status == "False" && c.Reason == "Unschedulable" {
+			p.Unschedulable = c.Message
+			if p.Unschedulable == "" {
+				p.Unschedulable = c.Reason
+			}
+		}
+	}
+	return p
 }
 
 // getPodObject fetches the named Pod, or ErrNotFound.

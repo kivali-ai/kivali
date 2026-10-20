@@ -293,6 +293,41 @@ func TestWebCommandChecksBeforeRelaying(t *testing.T) {
 	}
 }
 
+// TestWebTaskEndsSayingTheTeamIsShortOfMemory guards what the caller
+// and the person read when a web task's browser cannot be placed for
+// want of memory: "the browser could not start" alone gave neither the
+// cause nor where to raise the team's memory, so the task failed again
+// on every retry. The end reason names both.
+func TestWebTaskEndsSayingTheTeamIsShortOfMemory(t *testing.T) {
+	var svc *SubagentService
+	driver := &fakeSubagentDriver{respond: func(req fakeDriveCall) (string, error) {
+		resp := svc.WebCommand(context.Background(), "alice", req.SubagentID, agentpod.WebCommandRequest{Command: "navigate", Args: json.RawMessage(`{"url":"https://github.com/"}`)})
+		if !resp.IsError || !strings.Contains(resp.Text, "This task has ended") || !strings.Contains(resp.Text, "not have enough memory") {
+			t.Errorf("tool result = %+v, want the end and the memory shortage", resp)
+		}
+		return "", context.Canceled
+	}}
+	var del *deliveryRecorder
+	var prov *fakeBrowserProv
+	svc, _, del, prov = webService(t, driver)
+	if _, err := svc.StartBatch(context.Background(), "alice", webArgs(t, nil)); err != nil {
+		t.Fatalf("StartBatch: %v", err)
+	}
+	<-prov.startedC
+	prov.mu.Lock()
+	prov.unschedulable = "0/1 nodes are available: 1 Insufficient memory."
+	prov.mu.Unlock()
+	svc.Browsers.mu.Lock()
+	b := svc.Browsers.browsers["alice/"+agentpod.OpenWebSession]
+	svc.Browsers.mu.Unlock()
+	svc.Browsers.checkScheduling(b)
+
+	body := del.waitFor(1)[0].Content
+	if !strings.Contains(body, `"outcome": "failed"`) || !strings.Contains(body, "does not have enough memory") || !strings.Contains(body, "Kivali Desktop (Settings, the team's This Mac or This PC tab)") || !strings.Contains(body, "whoever runs this Kivali server") {
+		t.Errorf("delivered body:\n%s", body)
+	}
+}
+
 // TestWebTaskEndsFailedWhenItsBrowserCannotStart guards what a caller
 // reads when a web task's browser never comes up. Left to the
 // subagent, a Chromium crash at start came back as blocked on
