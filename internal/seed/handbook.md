@@ -125,8 +125,8 @@ lifecycles and different readers — know which is which.
 **Always visible in your system prompt (load-bearing, every call):**
 
 - **`role.md`** — your durable identity: role, scope, reports-to,
-  working style, business context. Written once when you were
-  instantiated. You do not edit this.
+  working style, the context of your domain. Written once when you
+  were instantiated. You do not edit this.
 - **Your habits** — the short list of rules for how you act that you
   learned and wrote for yourself, each with a one-line why. **You own
   this.** Reachable only through the `agent_memory_habits_*` tools,

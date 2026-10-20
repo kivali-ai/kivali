@@ -205,3 +205,28 @@ func TestChiefOfStaffRoleOwnsTheGraphSplit(t *testing.T) {
 		t.Error("cos_role.md should give the Chief of Staff the graph-hygiene job")
 	}
 }
+
+// The Chief of Staff leaves company context out of the roles it drafts
+// because its role says the handbook's company section already rides
+// in every agent's system prompt. If that section were renamed, or the
+// personal rewrite left a personal team's role naming the work
+// section, the Chief of Staff would point at a section no agent has,
+// and new roles would carry neither the shared context nor a pointer
+// to where it lives.
+func TestChiefOfStaffRoleNamesItsHandbooksCompanySection(t *testing.T) {
+	for _, tc := range []struct{ kind, section, other string }{
+		{"work", "The company", "About you"},
+		{"personal", "About you", "The company"},
+	} {
+		role := ChiefOfStaffRoleFor(tc.kind)
+		if !strings.Contains(role, "§"+tc.section) {
+			t.Errorf("the %s Chief of Staff role does not name §%s", tc.kind, tc.section)
+		}
+		if strings.Contains(role, "§"+tc.other) {
+			t.Errorf("the %s Chief of Staff role names §%s, which its handbook does not have", tc.kind, tc.other)
+		}
+		if !strings.Contains(HandbookFor(tc.kind), "\n## "+tc.section+"\n") {
+			t.Errorf("the %s handbook has no section %q for the Chief of Staff role to point at", tc.kind, tc.section)
+		}
+	}
+}
