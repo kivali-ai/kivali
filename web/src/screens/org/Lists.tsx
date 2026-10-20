@@ -56,10 +56,10 @@ export function NetworkSection({ showHead }: SectionProps) {
   const n = list.data?.hosts.length;
   return (
     <>
-      <SectionHead title="Network" show={showHead} meta={n === undefined ? undefined : `${n} ${n === 1 ? 'host' : 'hosts'} agents can reach · changes apply at once`} />
+      <SectionHead title="Network" show={showHead} meta={n === undefined ? undefined : `${n} ${n === 1 ? 'host' : 'hosts'} agent shells can reach · changes apply at once`} />
       <ErrorBanner error={list.error ?? action.error} {...(action.error ? { onDismiss: action.dismiss } : {})} />
       {!list.data && !list.error && <RowSkeletons />}
-      {list.data && list.data.hosts.length === 0 && <None>No extra hosts. Agents reach only what Kivali already allows.</None>}
+      {list.data && list.data.hosts.length === 0 && <None>No extra hosts. Agent shells reach only what Kivali already allows.</None>}
       {list.data && list.data.hosts.length > 0 && (
         <RowList>
           {list.data.hosts.map((h) => (

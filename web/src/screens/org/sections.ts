@@ -23,7 +23,7 @@ export const SECTIONS: readonly SectionInfo[] = [
   { key: 'handbook', label: 'Handbook', icon: 'scroll-text', blurb: 'How every agent works' },
   { key: 'files', label: 'Project files', icon: 'folder', blurb: 'Documents agents can read' },
   { key: 'skills', label: 'Skills', icon: 'puzzle', blurb: 'What agents know how to do' },
-  { key: 'network', label: 'Network', icon: 'globe', blurb: 'Hosts agents can reach' },
+  { key: 'network', label: 'Network', icon: 'globe', blurb: 'Hosts agent shells can reach' },
   { key: 'software', label: 'Software', icon: 'download', blurb: 'Programs installed for every agent' },
   { key: 'backup', label: 'Backup and restore', icon: 'archive', blurb: 'A copy of everything, as one file' },
   { key: 'about', label: 'About', icon: 'info', blurb: 'This Kivali server' },

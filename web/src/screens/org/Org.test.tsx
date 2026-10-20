@@ -946,7 +946,7 @@ describe('Network', () => {
       routes: { 'POST /api/v1/org/network': added, 'DELETE /api/v1/org/network/api.anthropic.com': { hosts: [goNetwork.hosts[0]!, added.hosts[2]!] } },
     });
     expect(screen.getByText('*.pypi.org')).toBeInTheDocument();
-    expect(screen.getByText('2 hosts agents can reach · changes apply at once')).toBeInTheDocument();
+    expect(screen.getByText('2 hosts agent shells can reach · changes apply at once')).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText('Allow a host'), { target: { value: 'api.github.com' } });
     await click(screen.getByRole('button', { name: 'Allow' }));
     expect(screen.getByText('api.github.com')).toBeInTheDocument();
