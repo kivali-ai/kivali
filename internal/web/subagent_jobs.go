@@ -16,7 +16,8 @@
 // boot FailOrphanedSubagents rewrites every such meta.json (queued,
 // running, waiting for a person or awaiting approval) as errored, with
 // subagentRestartError as the reason, so nothing reads as live that
-// core no longer holds. Jobs are not re-attached.
+// core no longer holds, and tells each agent that dispatched one. Jobs
+// are not re-attached.
 
 package web
 
@@ -24,11 +25,14 @@ import (
 	"context"
 	"log"
 	"regexp"
+	"slices"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/kivali-ai/kivali/internal/clock"
+	"github.com/kivali-ai/kivali/internal/store"
 	"github.com/kivali-ai/kivali/internal/structured"
 )
 
@@ -40,23 +44,36 @@ const subagentRestartError = "Kivali restarted before the task finished"
 
 // FailOrphanedSubagents rewrites every background task's meta.json that
 // still says queued, running, waiting for a person or awaiting approval
-// as errored, with
-// subagentRestartError, and without the wait reason and browser state a
-// live task carries: core holds no such job after a restart, so nothing
-// should read as live. Called once at boot, before anything dispatches.
-// Returns how many records it rewrote.
-func (s *SubagentService) FailOrphanedSubagents() int {
+// as errored, with subagentRestartError, and without the wait reason and
+// browser state a live task carries: core holds no such job after a
+// restart, so nothing should read as live. Called at boot, and by a
+// restore, before anything dispatches.
+//
+// Each active agent that dispatched one of those tasks itself is then
+// told, in one subagent_result message through DeliverToParent, the
+// door finishJob delivers through: an agent that ended its turn to wait
+// for the results would otherwise wait for good. A worker's record
+// (one with a caller) is rewritten but not reported: its answer was
+// owed to the sub-lead that dispatched it, whose run ended with it. An
+// archived agent, or one whose record is gone, is told nothing.
+//
+// Returns how many records it rewrote and the agents it told. Nothing
+// here wakes them: the caller does, once their pods are up
+// (Server.RecoverInterruptedWork).
+func (s *SubagentService) FailOrphanedSubagents() (int, []string) {
 	if s == nil || s.Store == nil {
-		return 0
+		return 0, nil
 	}
 	tasks, err := s.Store.SubagentMetaFiles()
 	if err != nil {
 		log.Printf("subagents: scan for unfinished tasks: %v", err)
-		return 0
+		return 0, nil
 	}
 	n := 0
+	lost := map[string][]lostSubagent{}
 	for _, task := range tasks {
 		parent, id := task[0], task[1]
+		var ended *lostSubagent
 		err := s.Store.UpdateSubagentMeta(parent, id, func(meta map[string]any) bool {
 			switch meta["status"] {
 			case subagentJobQueued, subagentJobRunning, subagentJobWaiting, subagentJobAwaitingApproval:
@@ -69,13 +86,88 @@ func (s *SubagentService) FailOrphanedSubagents() int {
 			delete(meta, "wait_reason")
 			delete(meta, "browser")
 			n++
+			if caller, _ := meta["caller"].(string); caller == "" {
+				description, _ := meta["description"].(string)
+				isStructured, _ := meta["structured"].(bool)
+				ended = &lostSubagent{id: id, description: description, structured: isStructured}
+			}
 			return true
 		})
 		if err != nil {
 			log.Printf("subagent %s/%s: mark unfinished after restart: %v", parent, id, err)
+			continue
+		}
+		if ended != nil {
+			lost[parent] = append(lost[parent], *ended)
 		}
 	}
-	return n
+	return n, s.tellLostSubagents(lost)
+}
+
+// lostSubagent is a task FailOrphanedSubagents rewrote, as its agent is
+// told about it.
+type lostSubagent struct {
+	id          string
+	description string
+	structured  bool
+}
+
+// tellLostSubagents delivers to each agent in lost one subagent_result
+// message naming the tasks the restart ended, and returns the agents it
+// reached, sorted.
+func (s *SubagentService) tellLostSubagents(lost map[string][]lostSubagent) []string {
+	parents := make([]string, 0, len(lost))
+	for parent := range lost {
+		parents = append(parents, parent)
+	}
+	sort.Strings(parents)
+	var told []string
+	for _, parent := range parents {
+		// An archived agent's records sit under _archived/<slug>, and
+		// GetAgent would find its archived record there.
+		if strings.Contains(parent, "/") {
+			continue
+		}
+		if _, err := s.Store.GetAgent(parent); err != nil {
+			continue
+		}
+		if s.DeliverToParent == nil {
+			log.Printf("subagents %s: no delivery hook; restart notice stranded", parent)
+			continue
+		}
+		msg := store.ChatMessage{
+			Role:    store.RoleReceived,
+			Kind:    store.KindSubagentResult,
+			Content: renderSubagentRestartMessage(lost[parent], loadBackgroundPlan(s.Store, parent)),
+			TS:      time.Now().UTC(),
+		}
+		if err := s.DeliverToParent(parent, msg); err != nil {
+			log.Printf("subagents %s: deliver restart notice: %v", parent, err)
+			continue
+		}
+		told = append(told, parent)
+	}
+	return told
+}
+
+// RecoverInterruptedWork is what a boot, and a restore, do with the work
+// the last run left unfinished: background tasks are marked errored and
+// their agents told (FailOrphanedSubagents), then interrupted turns get
+// their disruption rows (RecoverInterruptedTurns). Returns every agent
+// to wake once its pod is up, each once, for SpawnRecovered, which
+// applies the spawn gate.
+func (s *Server) RecoverInterruptedWork() []string {
+	n, told := s.SubagentService.FailOrphanedSubagents()
+	if n > 0 {
+		log.Printf("subagents: %d task(s) left unfinished by the last run marked errored; %d agent(s) told", n, len(told))
+	}
+	wake := s.RecoverInterruptedTurns()
+	for _, slug := range told {
+		if !slices.Contains(wake, slug) {
+			wake = append(wake, slug)
+		}
+	}
+	return wake
 }
 
 // Subagent job states. A job is terminal in every state except

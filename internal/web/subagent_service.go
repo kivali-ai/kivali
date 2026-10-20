@@ -233,6 +233,10 @@ type SubagentTaskInput struct {
 	// StartBatch after validation; never from the request.
 	approvedFiles []webApprovedFile
 	lockSite      string
+	// caller is the job id of the sub-lead that dispatched the task,
+	// empty for a task the agent dispatched itself. Set by launch from
+	// the caller's registered job; never from the request.
+	caller string
 }
 
 // hasSchema reports whether the task asks for a structured answer. A
@@ -389,6 +393,7 @@ func (s *SubagentService) launch(parent, toolUseID string, tasks []SubagentTaskI
 	jobs := make([]*subagentJob, len(tasks))
 	for i, t := range tasks {
 		i, t := i, t
+		t.caller = callerID
 		// context.WithCancel off Background, NOT off ctx — see the
 		// lifetime note on StartBatch.
 		jobCtx, cancel := context.WithCancel(context.Background())
@@ -1383,6 +1388,40 @@ func renderSubagentDispatch(parent string, tasks []SubagentTaskInput, ids []stri
 // the caller's schema made room for. A failure's reason is inside that
 // JSON (outcome failed, error), so no separate error line repeats it.
 func renderSubagentResultMessage(id, description, state, finalText, result string, runErr error, outstanding int, plan PlanView) string {
+	return renderSubagentOutcome(id, description, state, finalText, result, errString(runErr)) + renderJobStanding(outstanding, plan)
+}
+
+// renderSubagentRestartMessage is the subagent_result an agent reads
+// when a restart of core ended background tasks it dispatched: each
+// task's outcome as finishJob would report a failure, with
+// subagentRestartError as the reason (inside the result JSON for a task
+// with a schema), and the job's standing once. Nothing of the agent's
+// is running after a restart, so the standing counts none.
+func renderSubagentRestartMessage(lost []lostSubagent, plan PlanView) string {
+	var b strings.Builder
+	if len(lost) == 1 {
+		b.WriteString("Kivali restarted, which ended 1 of your background tasks before it finished.\n\n")
+	} else {
+		fmt.Fprintf(&b, "Kivali restarted, which ended %d of your background tasks before they finished.\n\n", len(lost))
+	}
+	for i, t := range lost {
+		if i > 0 {
+			b.WriteString("\n")
+		}
+		var result string
+		if t.structured {
+			result = structured.Failed(subagentRestartError).Body()
+		}
+		b.WriteString(renderSubagentOutcome(t.id, t.description, subagentJobFailed, "", result, subagentRestartError))
+	}
+	b.WriteString(renderJobStanding(0, plan))
+	return b.String()
+}
+
+// renderSubagentOutcome is one task's part of a subagent_result: how it
+// ended, its answer or error (errText, empty for none), and where its
+// files are.
+func renderSubagentOutcome(id, description, state, finalText, result, errText string) string {
 	var b strings.Builder
 	switch state {
 	case subagentJobCompleted:
@@ -1397,8 +1436,8 @@ func renderSubagentResultMessage(id, description, state, finalText, result strin
 		b.WriteString(resultOrText(result, ""))
 		b.WriteString("\n\n")
 	default:
-		if runErr != nil {
-			fmt.Fprintf(&b, "error: %v\n\n", runErr)
+		if errText != "" {
+			fmt.Fprintf(&b, "error: %s\n\n", errText)
 		}
 		if strings.TrimSpace(finalText) != "" {
 			b.WriteString(strings.TrimRight(finalText, "\n"))
@@ -1406,8 +1445,6 @@ func renderSubagentResultMessage(id, description, state, finalText, result strin
 		}
 	}
 	fmt.Fprintf(&b, "Anything it wrote is at /files/subagents/%s/artifacts/private/ · full transcript: /agents/<you>/subagents/%s\n", id, id)
-
-	b.WriteString(renderJobStanding(outstanding, plan))
 	return b.String()
 }
 
@@ -1491,6 +1528,11 @@ func (s *SubagentService) writeSubagentMeta(parent string, t SubagentTaskInput, 
 		if t.web() {
 			meta["kind"] = agentpod.SubagentKindWeb
 			meta["session"] = taskSession(t)
+		}
+		if t.caller != "" {
+			// A worker's record says whose it is, so a restart that
+			// ends it reports it to nobody (FailOrphanedSubagents).
+			meta["caller"] = t.caller
 		}
 		if result != "" && json.Valid([]byte(result)) {
 			meta["result"] = json.RawMessage(result)

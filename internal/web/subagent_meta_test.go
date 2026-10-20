@@ -144,7 +144,7 @@ func TestFailOrphanedSubagentsMarksUnfinishedTasks(t *testing.T) {
 	}
 	before := readMetaMap(t, st, "alice", "done1")["updated_at"]
 
-	if n := svc.FailOrphanedSubagents(); n != 4 {
+	if n, _ := svc.FailOrphanedSubagents(); n != 4 {
 		t.Errorf("marked %d records, want 4", n)
 	}
 	for _, id := range []string{"queued1", "running1", "waiting1"} {
@@ -175,7 +175,7 @@ func TestFailOrphanedSubagentsMarksUnfinishedTasks(t *testing.T) {
 		t.Errorf("archived agent's finished task = %v", meta)
 	}
 	// A second boot finds nothing to do.
-	if n := svc.FailOrphanedSubagents(); n != 0 {
+	if n, _ := svc.FailOrphanedSubagents(); n != 0 {
 		t.Errorf("second pass marked %d records", n)
 	}
 	// The task's view reads the record as a failure with the reason.

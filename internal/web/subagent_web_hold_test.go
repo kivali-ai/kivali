@@ -250,7 +250,7 @@ func TestRestartFailsAWebTaskAwaitingApproval(t *testing.T) {
 	if err := os.WriteFile(path, body, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if n := svc.FailOrphanedSubagents(); n != 1 {
+	if n, _ := svc.FailOrphanedSubagents(); n != 1 {
 		t.Fatalf("marked %d, want 1", n)
 	}
 	meta, err := readSubagentMeta(path)
