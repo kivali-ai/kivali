@@ -126,7 +126,7 @@ function base(): Snapshot {
     teams: [plainsong(), home(), studio()],
     host: { memory_mb: 16384, cpus: 8, vm_support: "ready" },
     settings: { start_at_login: true, ask_before_quit: true },
-    app_update: { state: "up_to_date", version: null, checked_at: iso(3 * HOUR), error: null },
+    app_update: { state: "up_to_date", version: null, checked_at: iso(3 * HOUR), error: null, downloaded: null, total: null },
     owner_signin: { state: "signed_in", email: "dana@example.com", error: null },
     connect: { state: "idle", origin: null, name: null, error: null, team_id: null, email: null },
     config_dir: "/Users/dana/Library/Application Support/Kivali",
@@ -491,9 +491,9 @@ export function installMock() {
     set_resources: (a) => (Object.assign(find(a.id)!, { memory_mb: a.memory_mb, cpus: a.cpus }), null),
     set_setting: (a) => (((snap.settings as Record<string, boolean>)[a.key] = a.value), null),
     check_app_update: () => {
-      snap.app_update = { state: "checking", version: null, checked_at: null, error: null };
+      snap.app_update = { state: "checking", version: null, checked_at: null, error: null, downloaded: null, total: null };
       setTimeout(() => {
-        snap.app_update = { state: "up_to_date", version: null, checked_at: new Date().toISOString(), error: null };
+        snap.app_update = { state: "up_to_date", version: null, checked_at: new Date().toISOString(), error: null, downloaded: null, total: null };
         changed();
       }, 1200);
       return null;

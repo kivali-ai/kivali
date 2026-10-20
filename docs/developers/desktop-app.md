@@ -1225,14 +1225,22 @@ owned supervisor the same RPC-first way, in parallel. That path does
 not rewrite `running_at_quit`, so the next launch resumes what the last
 Quit recorded.
 
-**Updating the app** (E4): "Restart to update Kivali? Kivali 0.18.0 is
-ready. Running teams pause and resume after the restart." with Restart
-and Later. Restart downloads and installs the update, then pauses every
-team as Quit does (so they resume after the restart) and restarts
-(macOS: the install returns first). On Windows the installer ends the
+**Updating the app** (E4, `appupdate.rs`): "Update Kivali to 0.18.0?
+Kivali 0.18.0 is available. It downloads while your teams keep working,
+then Kivali restarts to install it. Running teams pause and resume after
+the restart." with Update and Later. Update downloads the update while
+the teams keep working; Settings → General shows its bytes against its
+length, and Quit stops the download and quits. A request that receives
+nothing for a minute gives up (`STALL_TIMEOUT`, reqwest's read timeout,
+which starts again after every read), so a slow download that keeps
+moving is never cut off. Once the download is done Kivali enters the
+quitting state, installs the update, pauses every team as Quit does (so
+they resume after the restart) and restarts (macOS: the install returns
+first). On Windows the installer ends the
 process inside the install call, so the teams pause in the updater's
-before-exit hook (`platform::INSTALL_EXITS`). A failed install puts the
-app back to normal with the error in Settings → General.
+before-exit hook (`platform::INSTALL_EXITS`). A failed download or
+install puts the app back to normal with the error in Settings →
+General.
 
 ## Menus, tray, alerts and notifications
 
@@ -1466,7 +1474,7 @@ computes one-line labels and a badge, which no surface reads.)
 checked at every launch and on **Check for updates** (the Kivali menu,
 Settings → General). Settings → General shows "Checking for updates…",
 "Up to date · checked …", "0.18.0 is available" with Update… (E4),
-"Installing 0.18.0…", "Couldn't check for updates · <error>" (state
+"Downloading 0.18.0…" with a progress bar, "Installing 0.18.0…", "Couldn't check for updates · <error>" (state
 `failed`, a check that could not finish) or "Couldn't update to 0.18.0 ·
 <error>" with Try again… (state `update_failed`, an update that could
 not download or install; it stays on offer); the tray offers the update

@@ -23,7 +23,7 @@ Closing a window does not stop anything. Kivali keeps running in the menu bar on
 
 ## The Kivali icon and the menus
 
-Kivali's icon, in the menu bar on macOS and in the notification area on Windows, lists every team with its state ("3 agents working", "paused", "Claude isn't signed in"). Choose a team to open its window. The icon's menu also offers **Open Kivali**, **New team…**, **Connect to a team…**, **Settings…**, an update when one is ready, and **Quit Kivali**.
+Kivali's icon, in the menu bar on macOS and in the notification area on Windows, lists every team with its state ("3 agents working", "paused", "Claude isn't signed in"). Choose a team to open its window. The icon's menu also offers **Open Kivali**, **New team…**, **Connect to a team…**, **Settings…**, an update when one is available, and **Quit Kivali**.
 
 The menus add:
 
@@ -79,7 +79,7 @@ Click a notification to go straight to the team or the setting it concerns.
 
 There are two things to keep current: the Kivali app, and each team's Kivali.
 
-**The app** checks for updates each time it opens; **Check for updates…** checks now. When one is ready, choose **Update…**. Kivali asks to restart; running teams pause and resume after the restart.
+**The app** checks for updates each time it opens; **Check for updates…** checks now. When one is available, choose **Update…**. The update downloads while your teams keep working, and **Settings**, **General** shows how far it has got; quitting Kivali stops the download. Once it has downloaded, Kivali restarts to install it; running teams pause and resume after the restart.
 
 On Windows you can also run a newer installer yourself. It finds the version already there and selects **Install over the current version (recommended)**, which is what **Update…** does. **Uninstall the current version first** keeps your teams too. Uninstalling never deletes your teams: the uninstaller's **Also delete browser data and sign-ins** removes saved sign-ins, not teams.
 

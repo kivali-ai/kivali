@@ -659,13 +659,24 @@ fn confirm_update(app: &AppHandle, id: &str) {
     );
 }
 
-/// Restart to update the app.
+/// Update the app (E4). Once it is downloading, its progress in Settings →
+/// General instead.
 pub fn confirm_app_update(app: &AppHandle) {
-    let ver = app.state::<Shell>().app_update.lock().unwrap().version.clone().unwrap_or_default();
+    let (state, ver) = {
+        let u = app.state::<Shell>().app_update.lock().unwrap().clone();
+        (u.state, u.version.unwrap_or_default())
+    };
+    if matches!(state, "downloading" | "installing") {
+        open_off_main(app, |app| windows::show_settings(app, "general"));
+        return;
+    }
     let spec = platform::AlertSpec {
-        title: "Restart to update Kivali?".into(),
-        message: format!("Kivali {ver} is ready. Running teams pause and resume after the restart."),
-        buttons: vec!["Restart".into(), "Later".into()],
+        title: format!("Update Kivali to {ver}?"),
+        message: format!(
+            "Kivali {ver} is available. It downloads while your teams keep working, then Kivali restarts to install it. \
+             Running teams pause and resume after the restart."
+        ),
+        buttons: vec!["Update".into(), "Later".into()],
         destructive: None,
         suppression: None,
     };

@@ -62,7 +62,7 @@ export function snapshot(o: Partial<Snapshot> = {}): Snapshot {
     teams: [],
     host: { memory_mb: 16384, cpus: 8, vm_support: "ready" },
     settings: { start_at_login: true, ask_before_quit: true },
-    app_update: { state: "not_checked", version: null, checked_at: null, error: null },
+    app_update: { state: "not_checked", version: null, checked_at: null, error: null, downloaded: null, total: null },
     owner_signin: { state: "idle", email: null, error: null },
     connect: { state: "idle", origin: null, name: null, error: null, team_id: null, email: null },
     config_dir: "/x",

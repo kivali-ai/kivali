@@ -410,6 +410,10 @@ pub struct AppUpdateView {
     pub version: Option<String>,
     pub checked_at: Option<String>,
     pub error: Option<String>,
+    /// While downloading: the bytes so far, and the download's length
+    /// when the server gave one.
+    pub downloaded: Option<u64>,
+    pub total: Option<u64>,
 }
 
 pub struct Shell {
@@ -2275,6 +2279,7 @@ fn do_quit(app: &AppHandle) {
     if sh.quitting.swap(true, Ordering::SeqCst) {
         return;
     }
+    crate::appupdate::cancel_download();
     changed(app);
     let app = app.clone();
     std::thread::spawn(move || {

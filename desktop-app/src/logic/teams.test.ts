@@ -317,4 +317,11 @@ describe("shouldPoll", () => {
     expect(shouldPoll(snapshot({ owner_signin: { state: "waiting", email: null, error: null } }))).toBe(true);
     expect(shouldPoll(snapshot({ teams: [team({ ai: { provider: "claude", signed_in: false, email: null, billing: null, terminal_open: true, signin: "waiting", signed_out_at: null } })] }))).toBe(true);
   });
+  // The app's download moves its bytes without a shell-changed event (one
+  // per chunk would redraw every menu thousands of times). Without polling,
+  // Settings → General's bar would sit at 0% until the download ended.
+  it("while the app's update downloads", () => {
+    const app_update = { state: "downloading" as const, version: "1.2.0", checked_at: null, error: null, downloaded: 1, total: 2 };
+    expect(shouldPoll(snapshot({ app_update }))).toBe(true);
+  });
 });
