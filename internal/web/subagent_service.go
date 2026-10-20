@@ -951,9 +951,9 @@ func (s *SubagentService) structuredEnding(job *subagentJob, runErr error) (stri
 		// process then exited, including the end core gave it.
 		return accepted, nil
 	case ended != "":
-		// Core ended the task itself (the attempt cap). The cancel that
-		// stopped the run was the means; the reason is what the caller
-		// should read.
+		// Core ended the task itself (the attempt cap, a web task's
+		// browser that could not start). The cancel that stopped the
+		// run was the means; the reason is what the caller should read.
 		return structured.Failed(ended).Body(), errors.New(ended)
 	case runErr != nil && errors.Is(runErr, context.Canceled):
 		return "", runErr

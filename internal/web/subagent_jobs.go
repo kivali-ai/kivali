@@ -457,11 +457,11 @@ func (s *SubagentService) collectCancelsLocked(parent, rootID string) []func() {
 }
 
 // collectEndCancelsLocked returns the cancel funcs for ending id's run
-// as core ends it (an accepted result, the attempt cap): id's own
-// cancel, with id NOT marked cancelled, because its outcome is already
-// decided and is delivered, and every non-terminal descendant's,
-// marked cancelled, because nobody is left to read their answers.
-// jobsMu must be held.
+// as core ends it (an accepted result, the attempt cap, a browser that
+// could not start): id's own cancel, with id NOT marked cancelled,
+// because its outcome is already decided and is delivered, and every
+// non-terminal descendant's, marked cancelled, because nobody is left
+// to read their answers. jobsMu must be held.
 func (s *SubagentService) collectEndCancelsLocked(parent, id string) []func() {
 	root, ok := s.jobs[id]
 	if !ok || root.Parent != parent {

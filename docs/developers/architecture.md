@@ -621,9 +621,14 @@ minutes core asks for the profile back, writes it to the store and
 deletes the pod. A browser that has run for two hours
 (`browserLifetime`) takes no new task and is saved as soon as its last
 task ends, never under a task or a window, so Chromium's memory does
-not grow without bound. A start that does not connect within five minutes
-fails the command; a lost connection fails the commands in flight and
-deletes the pod; the next use starts afresh from the saved profile.
+not grow without bound. A browser that does not start (its pod cannot
+be made, it reports stopped while starting, as when Chromium does not
+come up, or it is not running within five minutes) ends the web task
+waiting on it: core writes `outcome: failed` with "the browser could
+not start", the way it ends a task at the `submit_result` attempt cap,
+and the tool result, so the task's transcript, says what stopped it.
+A lost connection fails the commands in flight and deletes the pod;
+the next use starts afresh from the saved profile.
 At most `BROWSER_MAX_PER_TEAM` browsers (3) run at once; a start
 beyond that begins the save of the longest-idle browser, if there is
 one, and is refused with a retry. A browser whose pod is being deleted

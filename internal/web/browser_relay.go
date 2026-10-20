@@ -7,7 +7,8 @@
 // the web budget (subagent_web_budget.go), hands an upload's bytes to
 // the pod first, and relays the command under the task's tab group,
 // with the site the group is held to. The pod's answer, text and an
-// optional image, is what the model reads.
+// optional image, is what the model reads. A browser that could not
+// start ends the task, outcome failed.
 
 package web
 
@@ -20,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"path"
@@ -136,6 +138,9 @@ func (s *SubagentService) WebCommand(ctx context.Context, parent, id string, req
 			return refuse("web_upload puts a file only on a page of %s, and your tab is at %s. Go to a page of %s first.", j.LockSite, off, j.LockSite)
 		}
 		if err := s.Browsers.SendFile(ctx, j.Parent, j.Session, j.ID, path.Base(file.Path), bytes.NewReader(body), int64(len(body))); err != nil {
+			if isBrowserStartError(err) {
+				return s.endForBrowserStart(j, err)
+			}
 			return refuse("%v", err)
 		}
 	}
@@ -144,6 +149,9 @@ func (s *SubagentService) WebCommand(ctx context.Context, parent, id string, req
 	// stays on the site it was approved for.
 	res, err := s.Browsers.Command(ctx, parent, j.Session, id, browserpod.Message{Name: command, Args: args, Site: j.LockSite})
 	if err != nil {
+		if isBrowserStartError(err) {
+			return s.endForBrowserStart(j, err)
+		}
 		return refuse("%v", err)
 	}
 	out := agentpod.WebCommandResponse{Text: res.Text, IsError: !res.OK}
@@ -154,6 +162,36 @@ func (s *SubagentService) WebCommand(ctx context.Context, parent, id string, req
 		out.Image = &agentpod.WebImage{MIME: res.Image.MIME, Data: res.Image.Data}
 	}
 	return out
+}
+
+// browserStartFailed is the reason a web task's caller reads when the
+// task's browser could not start. What stopped it is in the task's
+// tool result and core's log: the pod's part of that is free text for
+// a log line, not for the caller.
+const browserStartFailed = "the browser could not start"
+
+// endForBrowserStart ends a web task whose browser could not start, as
+// core ends a task at the submit_result attempt cap: the caller gets
+// outcome failed with browserStartFailed, rather than a reason the
+// subagent made up for a failure it cannot see. The tool result keeps
+// what stopped the browser, so the task's transcript shows it.
+func (s *SubagentService) endForBrowserStart(j subagentJob, err error) agentpod.WebCommandResponse {
+	var ends []func()
+	s.updateJob(j.ID, func(job *subagentJob) {
+		if job.endReason == "" && job.Result == "" && job.State == subagentJobRunning && !job.cancelled && !job.closing {
+			job.endReason = browserStartFailed
+			// The task's run ends, and with it the workers a sub-lead
+			// dispatched: nobody is left to read them.
+			ends = s.collectEndCancelsLocked(j.Parent, j.ID)
+		}
+	})
+	if len(ends) > 0 {
+		log.Printf("subagent %s/%s: ending: %v", j.Parent, j.ID, err)
+	}
+	for _, end := range ends {
+		end()
+	}
+	return agentpod.WebCommandResponse{Text: fmt.Sprintf("This task has ended without an answer: its browser could not start. End your turn.\n%v", err), IsError: true}
 }
 
 // taskURLAllowed checks a URL a task asks its browser to load, for

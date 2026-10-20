@@ -292,3 +292,62 @@ func TestWebCommandChecksBeforeRelaying(t *testing.T) {
 		t.Errorf("download not on disk: %v", err)
 	}
 }
+
+// TestWebTaskEndsFailedWhenItsBrowserCannotStart guards what a caller
+// reads when a web task's browser never comes up. Left to the
+// subagent, a Chromium crash at start came back as blocked on
+// not_reachable, which reads as the site being down. Core ends the task
+// instead: the caller reads outcome failed and core's reason, and the
+// pod's detail stays in the tool result, out of the caller's context.
+func TestWebTaskEndsFailedWhenItsBrowserCannotStart(t *testing.T) {
+	const detail = "chromium exited at start: exit status 13: Remote debugging pipe file descriptors are not open."
+	var svc *SubagentService
+	driver := &fakeSubagentDriver{respond: func(req fakeDriveCall) (string, error) {
+		resp := svc.WebCommand(context.Background(), "alice", req.SubagentID, agentpod.WebCommandRequest{Command: "navigate", Args: json.RawMessage(`{"url":"https://github.com/"}`)})
+		if !resp.IsError || !strings.Contains(resp.Text, "This task has ended") || !strings.Contains(resp.Text, detail) {
+			t.Errorf("tool result = %+v, want the end and what stopped the browser", resp)
+		}
+		j, _ := svc.lookupJob(req.SubagentID)
+		if j.endReason != browserStartFailed {
+			t.Errorf("endReason = %q", j.endReason)
+		}
+		// The task is over: another command and a result are refused.
+		if resp := svc.WebCommand(context.Background(), "alice", req.SubagentID, agentpod.WebCommandRequest{Command: "snapshot"}); !resp.IsError || !strings.Contains(resp.Text, "no longer running") {
+			t.Errorf("a command after the end = %+v", resp)
+		}
+		if text, isErr := svc.SubmitResult("alice", req.SubagentID, json.RawMessage(`{"outcome":"blocked","blocked_on":"not_reachable"}`)); !isErr {
+			t.Errorf("a result after the end was accepted: %q", text)
+		}
+		// Core cancelled the run; the pod reports it as such.
+		return "", context.Canceled
+	}}
+	var del *deliveryRecorder
+	var prov *fakeBrowserProv
+	svc, _, del, prov = webService(t, driver)
+	if _, err := svc.StartBatch(context.Background(), "alice", webArgs(t, nil)); err != nil {
+		t.Fatalf("StartBatch: %v", err)
+	}
+	// Play the pod: it connects, then Chromium dies before it runs.
+	token := <-prov.startedC
+	link := newFakeLink()
+	b := svc.Browsers.claim("alice", agentpod.OpenWebSession, token, link)
+	if b == nil {
+		t.Fatal("claim found no waiting browser")
+	}
+	if err := svc.Browsers.attach(b); err != nil {
+		t.Fatal(err)
+	}
+	svc.Browsers.onMessage(b, browserpod.Message{Type: browserpod.TypeState, State: browserpod.StateStopped, Detail: detail}, nil)
+
+	body := del.waitFor(1)[0].Content
+	if !strings.Contains(body, `"outcome": "failed"`) || !strings.Contains(body, `"error": "the browser could not start"`) {
+		t.Errorf("delivered body:\n%s", body)
+	}
+	if strings.Contains(body, "exit status") || strings.Contains(body, "not_reachable") {
+		t.Errorf("the pod's detail or the subagent's guess reached the caller:\n%s", body)
+	}
+	jobs := svc.listJobs("alice")
+	if len(jobs) != 1 || jobs[0].State != subagentJobFailed {
+		t.Errorf("job = %+v", jobs)
+	}
+}
