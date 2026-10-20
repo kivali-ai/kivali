@@ -52,10 +52,11 @@ import (
 	"github.com/kivali-ai/kivali/internal/web/apitypes"
 )
 
-// subagentWatchPoll is how often each per-task watcher reads the
-// subagent's chat.jsonl tail to decide what `current_activity` to
-// publish. Same cadence as the existing transcript SSE handler.
-const subagentWatchPoll = 250 * time.Millisecond
+// subagentWatchPoll is how often each per-task watcher reads what was
+// appended to the subagent's chat.jsonl to decide what
+// `current_activity` to publish. Once a second is as often as a status
+// line needs to move, and a team runs up to six watchers per agent.
+const subagentWatchPoll = time.Second
 
 // SubagentDriver runs one subagent end-to-end: installs the per-
 // turn-id state, publishes the ChatTurnKindSubagent event at the
@@ -1212,7 +1213,8 @@ func newAgentpodTurnIDForSubagent() (string, error) {
 
 // watchActivity polls the subagent's chat.jsonl until stop fires, and
 // emits subagent_progress events whose `current_activity` reflects
-// the latest meaningful entry. Heuristics:
+// the latest meaningful entry. Each poll parses only the rows appended
+// since the last one (subagentActivity). Heuristics:
 //   - last entry is a tool_use with no matching tool_result yet →
 //     "running <toolname>"
 //   - last entry is a tool_result → "thinking" (model is between
@@ -1228,7 +1230,7 @@ func (s *SubagentService) watchActivity(parent, toolUseID string, index int, id 
 	// subagent's /files/ root (…/<storage>/subagents/<id>/), which the
 	// agent writes: a chat.jsonl there is the agent's, and a link or
 	// FIFO planted under that name would be followed, or block, here.
-	chatPath := subagentChatPath(s.Store.Root(), parent, id)
+	transcript := newSubagentActivity(subagentChatPath(s.Store.Root(), parent, id))
 	tk := s.clk().NewTicker(subagentWatchPoll)
 	defer tk.Stop()
 	var lastActivity string
@@ -1237,7 +1239,7 @@ func (s *SubagentService) watchActivity(parent, toolUseID string, index int, id 
 		case <-stop:
 			return
 		case <-tk.C():
-			activity := deriveCurrentActivity(chatPath)
+			activity := transcript.current()
 			if activity == lastActivity {
 				continue
 			}
@@ -1263,27 +1265,54 @@ func (s *SubagentService) watchActivity(parent, toolUseID string, index int, id 
 	}
 }
 
-// deriveCurrentActivity walks the subagent's chat.jsonl backward to
-// the most recent meaningful entry and returns a human-readable
-// activity string ("running file_view", "thinking", "responding",
-// or empty when there's nothing yet).
-func deriveCurrentActivity(chatPath string) string {
-	hist, err := readSubagentHistory(chatPath)
-	if err != nil || len(hist) == 0 {
+// subagentActivity follows one subagent transcript as it grows. It
+// keeps only what the activity line is derived from: the tool_use ids
+// that have a tool_result somewhere in the transcript, and its newest
+// row.
+type subagentActivity struct {
+	tail      *store.ChatTail
+	completed map[string]bool
+	last      *store.ChatMessage
+}
+
+func newSubagentActivity(chatPath string) *subagentActivity {
+	return &subagentActivity{tail: store.NewChatFileTail(chatPath), completed: map[string]bool{}}
+}
+
+// current reads what was appended since the last call and returns the
+// human-readable activity ("running file_view", "thinking",
+// "responding"), or "" when there is nothing yet or the transcript
+// cannot be read.
+func (a *subagentActivity) current() string {
+	r, err := a.tail.Read()
+	if r.Reset {
+		a.completed, a.last = map[string]bool{}, nil
+	}
+	if err != nil {
 		return ""
 	}
-	// Track tool_use ids we've seen tool_results for, scanning forward.
-	completed := map[string]bool{}
-	for _, m := range hist {
+	for _, m := range r.Rows {
 		if m.Kind == "tool_result" && m.ToolUseID != "" {
-			completed[m.ToolUseID] = true
+			a.completed[m.ToolUseID] = true
 		}
 	}
-	// Walk backward to the most recent entry.
-	last := hist[len(hist)-1]
+	if n := len(r.Rows); n > 0 {
+		newest := r.Rows[n-1] // a copy: the rest of the batch is let go
+		a.last = &newest
+	}
+	// An unterminated final row is the newest row for this read only.
+	// It need not join completed: that is consulted only when the
+	// newest row is a tool_use, and then this row is that tool_use.
+	last := a.last
+	if r.Tail != nil {
+		last = r.Tail
+	}
+	if last == nil {
+		return ""
+	}
 	switch last.Kind {
 	case "tool_use":
-		if completed[last.ToolUseID] {
+		if a.completed[last.ToolUseID] {
 			return "thinking"
 		}
 		if last.ToolName != "" {

@@ -148,15 +148,15 @@ func TestSubagentTypedErrorFailsTheRun(t *testing.T) {
 	}
 }
 
-// TestDeriveCurrentActivityBareToolName: rows the driver writes now
+// TestSubagentActivityBareToolName: rows the driver writes now
 // carry bare names, and the activity line reads them as they are.
-func TestDeriveCurrentActivityBareToolName(t *testing.T) {
+func TestSubagentActivityBareToolName(t *testing.T) {
 	path := t.TempDir() + "/chat.jsonl"
 	body, _ := json.Marshal(store.ChatMessage{Role: store.RoleSent, Kind: "tool_use", ToolUseID: "u1", ToolName: "run_shell"})
 	if err := os.WriteFile(path, append(body, '\n'), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if got := deriveCurrentActivity(path); got != "running run_shell" {
+	if got := newSubagentActivity(path).current(); got != "running run_shell" {
 		t.Errorf("activity = %q, want running run_shell", got)
 	}
 }
