@@ -351,6 +351,22 @@ impl Runtime {
         }
     }
 
+    /// Records why `up` failed, kept until the next start succeeds. A team
+    /// that can't be reached on its port has its VM stopped too: nobody
+    /// can use it, and a team that couldn't start counts for no memory and
+    /// has no Pause. Moving the port (`up --port`) or Try again starts it
+    /// again.
+    fn failed_up(&self, e: &SupError, progress: &mut dyn FnMut(Progress)) {
+        *self.failure.lock().unwrap() = Some(e.to_string());
+        let Some(why) = self.refresh_status().ok().as_ref().and_then(port_failure) else { return };
+        *self.failure.lock().unwrap() = Some(format!("{PORT_FAILURE}{why}"));
+        progress(label("Stopping the team, since it can't be reached on its port"));
+        if let Err(e) = self.supervisor.down(false, progress) {
+            eprintln!("kivali: {}: stopping after the port failed: {e}", self.id);
+        }
+        let _ = self.refresh_status();
+    }
+
     fn wait_idle(&self) {
         let mut op = self.op.lock().unwrap();
         while op.as_ref().is_some_and(|o| o.running) {
@@ -696,6 +712,9 @@ impl Shell {
                         ))
                     }
                     None if failure.as_deref() == Some(VM_FAILURE) => view::vm_reason(platform::vm_support()),
+                    None if failure.as_deref().is_some_and(|f| f.starts_with(PORT_FAILURE)) => {
+                        failure.as_deref().and_then(|f| f.strip_prefix(PORT_FAILURE)).map(str::to_string)
+                    }
                     None => status.as_ref().and_then(|s| s.message.clone()).filter(|_| state == TeamState::Failed),
                 };
                 let facts = rt.as_ref().and_then(|r| r.facts.lock().unwrap().clone());
@@ -1063,10 +1082,7 @@ fn boot(app: &AppHandle, sh: &Shell, rt: &Runtime, req: UpRequest, progress: &mu
         Ok(st) => st,
         Err(e) => {
             eprintln!("kivali: {}: up failed: {e}", rt.id);
-            *rt.failure.lock().unwrap() = Some(e.to_string());
-            if let Some(why) = rt.refresh_status().ok().as_ref().and_then(port_failure) {
-                *rt.failure.lock().unwrap() = Some(format!("{PORT_FAILURE}{why}"));
-            }
+            rt.failed_up(&e, progress);
             return Err(sup_err(e));
         }
     };
@@ -2696,5 +2712,51 @@ mod tests {
         assert_eq!(rt.state().0, TeamState::Failed);
         // A report with no running VM never names a port failure.
         assert_eq!(port_failure(&Report { forward_error: Some("port 8080".into()), ..Default::default() }), None);
+    }
+
+    /// A team whose recorded port another program holds: the supervisor
+    /// fails `up` and keeps the VM running. Without the stop that follows,
+    /// the team showed couldn't start with its VM still using its memory,
+    /// uncounted when another team resumed, and with no Pause to stop it.
+    /// The reason stays on the couldn't-start page after the VM stops.
+    #[test]
+    fn a_port_failure_leaves_nothing_running() {
+        let fake = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join("fake-supervisor/target/debug")
+            .join(format!("kivali-supervisor{}", std::env::consts::EXE_SUFFIX));
+        assert!(fake.exists(), "build the fake first: cargo build --manifest-path fake-supervisor/Cargo.toml");
+        std::env::set_var("FAKE_STEP_MS", "0");
+        let dir = tempfile::tempdir().unwrap();
+        let mut teams = TeamsFile::default();
+        let a = teams.add_here("A", Kind::Work, "a@example.com", &mut || 1);
+        let sh = Shell::new(dir.path().to_path_buf(), "0.15.1".into(), teams, None);
+        let rt = sh.runtime(&a).unwrap();
+        std::fs::create_dir_all(&rt.dir).unwrap();
+        let probe = Supervisor::new(&rt.dir);
+        let sc = Sidecar::start(&fake, &rt.dir, None, &|| probe.is_listening(), &std::thread::yield_now, &Instant::now).unwrap();
+
+        // The machine prepared on a free port, which is then recorded, and
+        // another program takes the port before the team installs.
+        let port = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap().local_addr().unwrap().port();
+        let prepare = UpRequest { port_hint: port, prepare: true, ..Default::default() };
+        assert_eq!(rt.supervisor.up(&prepare, &mut |_| {}).unwrap().port, Some(port));
+        rt.supervisor.down(false, &mut |_| {}).unwrap();
+        let _other = std::net::TcpListener::bind(("127.0.0.1", port)).unwrap();
+        let req = UpRequest { owner: Some("a@example.com".into()), ..Default::default() };
+        let e = rt.supervisor.up(&req, &mut |_| {}).unwrap_err();
+        assert!(rt.refresh_status().unwrap().running, "the supervisor leaves the VM running");
+
+        let mut lines = Vec::new();
+        rt.failed_up(&e, &mut |p| lines.push(p.label));
+        assert!(!rt.refresh_status().unwrap().running, "the VM still runs");
+        assert!(lines.iter().any(|l| l.contains("can't be reached on its port")), "{lines:?}");
+        let v = sh.team_view(&sh.team(&a).unwrap());
+        assert_eq!(v.state, TeamState::Failed);
+        assert!(v.reason.as_deref().is_some_and(|r| r.contains(&format!("port {port}"))), "{:?}", v.reason);
+        assert_eq!(sh.running_memory_mb("").0, 0);
+
+        sc.stop(&mut || rt.supervisor.down(true, &mut |_| {}).map_err(|e| e.to_string()), STOP_TIMEOUTS);
     }
 }

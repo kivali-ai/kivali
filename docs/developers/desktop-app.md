@@ -178,8 +178,9 @@ of log lines carrying the real stage ids, answers the credential
 status (signed out, or with `FAKE_SIGNED_IN=1` signed in as the owner,
 billing `FAKE_BILLING` or "Claude Max"), and serves a stand-in page plus `GET /api/v1/login`
 on the team's port (the shell's port hint, else `FAKE_PORT`, default
-18080; like the real supervisor it moves off a port another program
-holds), so every window and menu can be exercised. `FAKE_CHECK` picks
+18080; like the real supervisor it moves a team's first port off one
+another program holds, and fails `up` with `forward_error` when the
+port it recorded is held), so every window and menu can be exercised. `FAKE_CHECK` picks
 its release verdict (`up-to-date`, `upgrade-available`,
 `desktop-update-required`, `manual-steps`, `failed`), `FAKE_STEP_MS`
 its pace, `FAKE_FAIL_UP` a failed create, `FAKE_SIGNED_IN=1` a Claude
@@ -777,11 +778,15 @@ dynamic range that starts at 49152, that no other team in teams.json
 has recorded (on that first start the supervisor still moves off one
 some other program holds or the system has reserved, and records what
 it used; the shell then writes it to teams.json). Once recorded, the
-port is the team's for good: when it cannot be bound, `up` fails, the
-report's `forward_error` becomes the status message, and the team's
-page shows it as the couldn't-start reason (which way to move the team
-with `kivali-supervisor up --port`, and to update what points at the
-old port). Moving a team's port has no UI; it takes that command. For a team in `teams/<id>` it also sends the
+port is the team's for good: when it cannot be bound, `up` fails with
+the VM still running and the report's `forward_error` saying why. The
+shell then stops the VM (`Runtime::failed_up`), since nobody can reach
+the team: a team that couldn't start holds no memory the memory check
+misses and needs no Pause. It keeps the `forward_error` as the
+couldn't-start reason (which way to move the team with
+`kivali-supervisor up --port`, and to update what points at the old
+port); moving it starts the VM again, and the watch loop then opens the
+team on the new port. Moving a team's port has no UI; it takes that command. For a team in `teams/<id>` it also sends the
 server environment `KIVALI_SEED_ORG_NAME=<name>`,
 `KIVALI_TEAM_KIND=work|personal` and `KIVALI_COOKIE_SUFFIX=<id>`
 ([../configuration.md](../configuration.md)); the supervisor uses the install fields only on

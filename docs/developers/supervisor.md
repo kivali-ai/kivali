@@ -951,7 +951,8 @@ the `netsh` command that lists reservations and restarting the
 command that moves the org on purpose (`kivali-supervisor --config-dir
 "<dir>" up --port <port>`), and says to update whatever points at the
 old port. The VM stays up; `status` carries the message as
-`forward_error` until a forward starts, and the desktop shows it on the
+`forward_error` until a forward starts or the VM stops. The desktop
+then stops the VM, which nobody can reach, and shows the message on the
 team's couldn't-start page. A port asked for by name (`up --port`,
 `forward --port`) is recorded first and is the one way to move. An org
 recorded in 49152-65535, as an earlier fallback could leave it, fails
