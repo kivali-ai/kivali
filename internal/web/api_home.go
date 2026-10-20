@@ -306,7 +306,8 @@ func webSignInWords(name, site, reason string) (title, body string) {
 
 // webUploadItem is the Needs-you row for a web task awaiting approval
 // of its uploads: what it would upload, to which site, where it starts
-// and the prompt its agent gave it. The words around them are core's.
+// and the prompt its agent gave it. It has no body: the title and the
+// task's details say it all.
 func (s *Server) webUploadItem(j subagentJob) apitypes.NeedItem {
 	name := j.Parent
 	if n := s.agentNames()[j.Parent]; n != "" {
@@ -325,7 +326,6 @@ func (s *Server) webUploadItem(j subagentJob) apitypes.NeedItem {
 		Title:       fmt.Sprintf("Upload %d file%s to %s", len(files), pluralS(len(files)), j.LockSite),
 		From:        apitypes.PersonRef{Slug: j.Parent, Name: name},
 		At:          j.WaitSince,
-		BodyMD:      webUploadBody(j.LockSite),
 		Attachments: atts,
 		Packages:    []apitypes.SoftwarePackage{},
 		WebUpload: &apitypes.WebUploadRef{
@@ -376,12 +376,6 @@ func (s *Server) handleAPIWebTaskFile(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Disposition", `attachment; filename="`+sanitizeDownloadName(name)+`"`)
 	_, _ = w.Write(body)
-}
-
-// webUploadBody is a web_upload row's text: what approving lets the
-// task do, and what it does not decide.
-func webUploadBody(site string) string {
-	return fmt.Sprintf("A web task wants to upload these files to %s. It starts at the address below, stays on %s and puts the files only on its pages. What the site does with a file after that is up to the site, as when you upload it yourself. Open each file to check it is the one you mean. Approve and it starts. Deny and it ends without uploading anything; the agent reads your note.", site, site)
 }
 
 // maxWebDenyNote bounds the note a person sends with an answer to a

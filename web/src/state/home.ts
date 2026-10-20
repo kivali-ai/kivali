@@ -203,7 +203,7 @@ export function needKindLabel(item: NeedItem): string {
     case 'web_sign_in':
       return SIGN_IN_LABELS[item.subagent?.reason ?? ''] ?? 'Sign in';
     case 'web_upload':
-      return 'Upload';
+      return 'Upload request';
     case 'web_budget':
       return 'Web budget';
     case 'proposal':

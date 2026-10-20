@@ -158,7 +158,7 @@ describe('Home renders', () => {
 
     const needs = screen.getByRole('region', { name: 'Needs you' });
     expect(within(needs).getByLabelText('9 waiting on you')).toHaveTextContent('9');
-    for (const kind of ['Approval', 'Hire', 'Notice', 'Assigned to you', 'Needs help', 'Sign in', 'Install software', 'Upload', 'Web budget']) expect(within(needs).getByText(kind)).toBeInTheDocument();
+    for (const kind of ['Approval', 'Hire', 'Notice', 'Assigned to you', 'Needs help', 'Sign in', 'Install software', 'Upload request', 'Web budget']) expect(within(needs).getByText(kind)).toBeInTheDocument();
 
     const queue = screen.getByRole('region', { name: 'Queue' });
     expect(within(queue).getByText('3 passing through')).toBeInTheDocument();
@@ -250,7 +250,7 @@ describe('Home follows the design rules', () => {
     expect(signals).toHaveLength(1);
     expect(signals[0]).toHaveAccessibleName('9 waiting on you');
     const needs = screen.getByRole('region', { name: 'Needs you' });
-    for (const kind of ['Approval', 'Hire', 'Notice', 'Assigned to you', 'Needs help', 'Sign in', 'Install software', 'Upload', 'Web budget']) expect(within(needs).getByText(kind)).toHaveClass('kv-badge--neutral');
+    for (const kind of ['Approval', 'Hire', 'Notice', 'Assigned to you', 'Needs help', 'Sign in', 'Install software', 'Upload request', 'Web budget']) expect(within(needs).getByText(kind)).toHaveClass('kv-badge--neutral');
   });
 
   it('keeps Release all the one primary until a row opens, and Open chat secondary', async () => {
@@ -493,20 +493,24 @@ describe('Needs you', () => {
     const upload = busyHome.needs.find((n) => n.kind === 'web_upload');
     if (!upload) throw new Error('fixture has no web_upload row');
 
-    it('shows the files, where the task starts and its prompt as plain text, with Deny and Approve upload', async () => {
+    it('shows the files, where the task starts and its prompt as plain text, the downloads above the note, with Deny and Approve upload', async () => {
       await renderHome(busyHome);
       fireEvent.click(screen.getByRole('button', { name: /Upload 2 files to vendor\.example/ }));
       const row = within(rowFor('data-id', upload.id));
-      expect(row.getByText('Upload')).toBeInTheDocument();
-      expect(row.getByText(/A web task wants to upload these files to vendor\.example/)).toBeInTheDocument();
+      expect(row.getByText('Upload request')).toBeInTheDocument();
+      // No intro text: the title and the task's details say it all.
+      expect(row.queryByText(/wants to upload/)).toBeNull();
       expect(row.getByText('/files/artifacts/private/quote-signed.pdf')).toBeInTheDocument();
       expect(row.getByText('/files/project/terms.pdf')).toBeInTheDocument();
-      // Each file as it was at dispatch, opened like any file an agent shares.
-      expect(row.getByRole('button', { name: /quote-signed\.pdf/ })).toBeInTheDocument();
-      expect(row.getByRole('button', { name: /terms\.pdf/ })).toBeInTheDocument();
-      expect(row.getByText(/puts the files only on its pages\. What the site does with a file after that is up to the site/)).toBeInTheDocument();
+      // Each file as it was at dispatch, opened like any file an agent shares, after the prompt and just above the note.
+      const prompt = row.getByText("Upload the signed quote and our terms to the vendor's quote form, then submit it.");
+      const note = row.getByLabelText('Note (optional)');
+      for (const name of [/quote-signed\.pdf/, /terms\.pdf/]) {
+        const download = row.getByRole('button', { name });
+        expect(prompt.compareDocumentPosition(download) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+        expect(download.compareDocumentPosition(note) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      }
       expect(row.getByText('https://portal.vendor.example/quotes/new')).toBeInTheDocument();
-      expect(row.getByText("Upload the signed quote and our terms to the vendor's quote form, then submit it.")).toBeInTheDocument();
       expect(row.getByRole('link', { name: 'Send the signed quote' })).toHaveAttribute('href', '/agents/buyer/subagents/cccc3333');
       expect(row.getByRole('button', { name: 'Deny' })).toBeInTheDocument();
       expect(row.getByRole('button', { name: 'Approve upload' })).toBeInTheDocument();
