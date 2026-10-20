@@ -61,7 +61,7 @@ describe("teamPage", () => {
       stages: ["Updating team data", "Starting up", "Setting up your team"],
       percent: 30,
       remaining: "about 80 seconds",
-      stage_progress: { done: 3.2 * 1024 ** 3, total: 8 * 1024 ** 3, bytes: true },
+      stage_progress: { done: 3.2 * 1024 ** 3, total: 8 * 1024 ** 3, unit: "bytes" },
     });
     expect(teamPage(team({ name: "Home", state: "starting", activity: "waking", op: moving }), snap, now)).toEqual({
       kind: "progress",
@@ -70,14 +70,14 @@ describe("teamPage", () => {
       percent: 30,
       step: "Updating team data · 3.2 of 8 GB",
     });
-    const compacting = op({ kind: "resume", stage: "Making room", percent: 85, stage_progress: { done: 40, total: 100, bytes: false } });
+    const compacting = op({ kind: "resume", stage: "Making room", percent: 85, stage_progress: { done: 40, total: 100, unit: "share" } });
     const v = teamPage(team({ state: "starting", activity: "waking", op: compacting }), snap, now);
     expect(v.kind === "progress" && v.step).toBe("Making room · 40%");
     // No caption without a measure, once the operation has ended, or for
     // a measure with no total.
     expect(measuredStep(op({ kind: "resume", stage: "Starting up" }))).toBeNull();
     expect(measuredStep({ ...moving, running: false })).toBeNull();
-    expect(measuredStep(op({ stage: "Making room", stage_progress: { done: 0, total: 0, bytes: false } }))).toBeNull();
+    expect(measuredStep(op({ stage: "Making room", stage_progress: { done: 0, total: 0, unit: "share" } }))).toBeNull();
   });
   it("updating, with the step line", () => {
     const t = team({
@@ -93,6 +93,28 @@ describe("teamPage", () => {
       percent: 35,
       step: "Saving a snapshot · step 2 of 4",
     });
+  });
+  // The download, the snapshot's copy and the agents' start say how far
+  // they have got, and a failed update says it is going back. Without it
+  // the caption showed only a step name through minutes of copying, and
+  // "Starting up · step 4 of 4" while the update went back to the version
+  // it was on.
+  it("updating, with the measured step and the way back", () => {
+    const update = { state: "available" as const, current: "0.16.0", latest: "0.17.0", notes_url: null, summary: null, checked_at: null, takes: "about 5 minutes" };
+    const stages = ["Downloading", "Saving a snapshot", "Installing", "Starting up", "Starting your agents"];
+    const downloading = op({ kind: "update", stages, stage: "Downloading", stage_index: 0, percent: 12, stage_progress: { done: 256 * 1024 ** 2, total: 512 * 1024 ** 2, unit: "bytes" } });
+    let v = teamPage(team({ state: "starting", activity: "updating", update, op: downloading }), snap, now);
+    expect(v.kind === "progress" && v.step).toBe("Downloading · 256 of 512 MB · step 1 of 5");
+    const copying = op({ kind: "update", stages, stage: "Saving a snapshot", stage_index: 1, percent: 40, stage_progress: { done: 3.2 * 1024 ** 3, total: 8 * 1024 ** 3, unit: "bytes" } });
+    v = teamPage(team({ state: "starting", activity: "updating", update, op: copying }), snap, now);
+    expect(v.kind === "progress" && v.step).toBe("Saving a snapshot · 3.2 of 8 GB · step 2 of 5");
+    const agents = op({ kind: "update", stages, stage: "Starting your agents", stage_index: 4, percent: 90, stage_progress: { done: 3, total: 5, unit: "agents" } });
+    v = teamPage(team({ state: "starting", activity: "updating", update, op: agents }), snap, now);
+    expect(v.kind === "progress" && v.step).toBe("Starting your agents · 3 of 5 · step 5 of 5");
+    const back = ["Downloading", "Saving a snapshot", "Installing", "Going back to the previous version"];
+    const rolling = op({ kind: "update", stages: back, stage: "Going back to the previous version", stage_index: 3, percent: 80 });
+    v = teamPage(team({ state: "starting", activity: "updating", update, op: rolling }), snap, now);
+    expect(v.kind === "progress" && v.step).toBe("Going back to the previous version · step 4 of 4");
   });
   it("pausing, in the same voice", () => {
     const v = teamPage(team({ state: "starting", activity: "pausing", op: op({ kind: "pause" }) }), snap, now);

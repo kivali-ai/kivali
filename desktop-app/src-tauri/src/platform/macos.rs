@@ -140,6 +140,8 @@ pub fn open_terminal(binary: &Path, dir: &Path) -> Result<(), String> {
 pub const TRAY_ICONS: TrayIcons = tray_set!("tray");
 pub const TRAY_AREA: &str = "menu bar";
 pub const THIS_COMPUTER: &str = "this Mac";
+/// An update's snapshot of the data disk is an APFS clone, made at once.
+pub const UPDATE_COPIES_DATA_DISK: bool = false;
 
 /// `kern.hv_support`: the Hypervisor framework, which
 /// Virtualization.framework runs on, can run a VM here. It is 0 when

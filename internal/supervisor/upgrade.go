@@ -185,7 +185,7 @@ func (s *Supervisor) Upgrade(ctx context.Context, o UpgradeOptions, logf Logf) e
 	if err := s.step(StepSnapshotting); err != nil {
 		return err
 	}
-	if err := s.takeSnapshot(ctx); err != nil {
+	if err := s.takeSnapshot(ctx, logf); err != nil {
 		_ = s.removeSnapshot(ctx, snap)
 		s.dropDownloads(sg, logf)
 		logf("snapshot failed: %v; starting the org as it was", err)
@@ -290,7 +290,8 @@ func (s *Supervisor) stage(ctx context.Context, g Guest, feed string, rel Releas
 	if err := s.o.Host.ExcludeFromBackup(downloads); err != nil {
 		logf("exclude %s from backups: %v", downloads, err)
 	}
-	chart, err := s.download(ctx, feed, rel.Chart, dir)
+	fetched := newProgressWriter(rel.Chart.Size, img.Size, progressOf(ctx))
+	chart, err := s.download(ctx, feed, rel.Chart, dir, fetched)
 	if err != nil {
 		return sg, fmt.Errorf("chart: %w", err)
 	}
@@ -305,7 +306,7 @@ func (s *Supervisor) stage(ctx context.Context, g Guest, feed string, rel Releas
 		return sg, fmt.Errorf("release.json says version %s but its chart's Chart.yaml says %s; refusing the release", want, meta.Version)
 	}
 	logf("chart %s %s verified", meta.Name, meta.Version)
-	bundle, err := s.download(ctx, feed, img, dir)
+	bundle, err := s.download(ctx, feed, img, dir, fetched)
 	if err != nil {
 		return sg, fmt.Errorf("images: %w", err)
 	}
@@ -332,6 +333,37 @@ func (s *Supervisor) stage(ctx context.Context, g Guest, feed string, rel Releas
 	}
 	sg.chart, sg.meta, sg.images, sg.dir = chart, meta, im, dir
 	return sg, nil
+}
+
+// progressWriter counts the bytes of a release's downloads written
+// through it against their sizes in release.json, and reports them to
+// progress at every hundredth of the whole and at the end. Without a
+// size for each asset it reports nothing: a total short of the bytes
+// would hold the bar full for the rest of the download.
+type progressWriter struct {
+	progress          Progress
+	done, total, next int64
+}
+
+func newProgressWriter(chart, bundle int64, progress Progress) *progressWriter {
+	w := &progressWriter{progress: progress}
+	if chart > 0 && bundle > 0 {
+		w.total = chart + bundle
+	}
+	return w
+}
+
+func (w *progressWriter) Write(p []byte) (int, error) {
+	if w.total <= 0 || w.done >= w.total {
+		return len(p), nil
+	}
+	w.done += int64(len(p))
+	if w.done >= w.next || w.done >= w.total {
+		w.progress(w.done, w.total)
+		step := max(w.total/100, 1)
+		w.next = (w.done/step + 1) * step
+	}
+	return len(p), nil
 }
 
 // kubectlLikeCtr lists containerd's images in the CRI namespace.
@@ -411,6 +443,7 @@ func (s *Supervisor) apply(ctx context.Context, sg staged, logf Logf) error {
 	if err := s.waitServing(ctx, sg.meta.Version, sg.images.Kivali, logf); err != nil {
 		return err
 	}
+	setStage(ctx, StageAgents)
 	return s.waitAgents(ctx, sg.images.Kivali, logf)
 }
 

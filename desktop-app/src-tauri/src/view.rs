@@ -74,11 +74,16 @@ impl OpKind {
                 ("starting", "Starting up", 12),
                 ("setting-up", "Setting up your team", 18),
             ],
+            // An update that fails goes back to the version it was on.
+            // The snapshot's length grows with the data disk where the
+            // snapshot copies it ([`lengths`]).
             OpKind::Update => &[
                 ("downloading", "Downloading", 60),
                 ("snapshot", "Saving a snapshot", 30),
                 ("installing", "Installing", 50),
                 ("starting", "Starting up", 40),
+                ("starting-agents", "Starting your agents", 60),
+                ("rolling-back", "Going back to the previous version", 60),
             ],
             OpKind::Pause => &[("pausing", "Pausing", 15)],
             OpKind::Address => &[("setting-up", "Applying the change", 30)],
@@ -88,11 +93,13 @@ impl OpKind {
 
     /// The stages an operation of this kind goes through only sometimes
     /// (a resume moves the data disk once, and compacts it only when the
-    /// guest has freed enough): they are shown, and count toward the bar,
-    /// only once the operation is in them.
+    /// guest has freed enough; an update goes back only when it fails):
+    /// they are shown, and count toward the bar, only once the operation
+    /// is in them.
     pub fn optional(self) -> &'static [&'static str] {
         match self {
             OpKind::Resume => &["updating-data", "making-room"],
+            OpKind::Update => &["rolling-back"],
             _ => &[],
         }
     }
@@ -124,20 +131,55 @@ pub struct OpView {
 }
 
 /// A stage's measured progress as the pages show it: `done` of `total`,
-/// in bytes when `bytes` (the data disk's copy), else in units that
-/// only make a share (a compaction).
+/// in `unit`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct StageMeasure {
     pub done: u64,
     pub total: u64,
-    pub bytes: bool,
+    pub unit: MeasureUnit,
+}
+
+/// What a stage's measure counts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MeasureUnit {
+    /// Bytes: a copy of the data disk, an update's download.
+    Bytes,
+    /// Agents connected, of those with a pod: an update's last wait.
+    Agents,
+    /// Units that only make a share: a compaction.
+    Share,
 }
 
 /// The measure of the stage at `index` of `kind`, from the supervisor's
 /// report.
 pub fn measure(kind: OpKind, index: usize, p: StageProgress) -> StageMeasure {
     let id = kind.stages().get(index).map(|s| s.0).unwrap_or("");
-    StageMeasure { done: p.done.min(p.total), total: p.total, bytes: id == stage::UPDATING_DATA }
+    let unit = match id {
+        stage::UPDATING_DATA | stage::DOWNLOADING | stage::SNAPSHOT => MeasureUnit::Bytes,
+        stage::STARTING_AGENTS => MeasureUnit::Agents,
+        _ => MeasureUnit::Share,
+    };
+    StageMeasure { done: p.done.min(p.total), total: p.total, unit }
+}
+
+/// How fast the data disk is copied for an update's snapshot where the
+/// snapshot is a copy (`platform::UPDATE_COPIES_DATA_DISK`), for the
+/// estimate before the copy reports its own rate. Not measured: set so
+/// that the copy adds about a minute for a data disk of 4 GB and four
+/// for 15 GB, in line with the 4 to 8 minutes updates of such teams
+/// took on Windows.
+pub const SNAPSHOT_COPY_BYTES_PER_SEC: u64 = 64 << 20;
+
+/// The typical length, in seconds, of each of `kind`'s stages in order:
+/// [`OpKind::stages`]' own, with an update's snapshot longer by the time
+/// to copy `copy_bytes` (the data disk's used bytes where the snapshot
+/// copies it, 0 where it is a clone).
+pub fn lengths(kind: OpKind, copy_bytes: u64) -> Vec<u64> {
+    kind.stages()
+        .iter()
+        .map(|&(id, _, secs)| if kind == OpKind::Update && id == stage::SNAPSHOT { secs + copy_bytes / SNAPSHOT_COPY_BYTES_PER_SEC } else { secs })
+        .collect()
 }
 
 /// Where an operation is: which stage, from the supervisor's stage id
@@ -167,12 +209,12 @@ pub fn shown_stages(kind: OpKind, seen: &[bool], index: usize) -> Vec<usize> {
 /// one by its measured progress when it has some (and the time left from
 /// its rate so far), else by time spent against its typical length
 /// (never past 95% of it, so a slow stage does not read as done).
-pub fn progress(kind: OpKind, shown: &[usize], index: usize, in_stage: Duration, measured: Option<StageProgress>, finished: bool) -> (u8, Option<String>) {
+/// `lengths` are the stages' typical lengths ([`lengths`]).
+pub fn progress(lengths: &[u64], shown: &[usize], index: usize, in_stage: Duration, measured: Option<StageProgress>, finished: bool) -> (u8, Option<String>) {
     if finished {
         return (100, None);
     }
-    let stages = kind.stages();
-    let secs = |i: usize| stages.get(i).map(|s| s.2).unwrap_or(0) as f64;
+    let secs = |i: usize| lengths.get(i).copied().unwrap_or(0) as f64;
     let total = shown.iter().map(|&i| secs(i)).sum::<f64>().max(1.0);
     let before: f64 = shown.iter().filter(|&&i| i < index).map(|&i| secs(i)).sum();
     let after: f64 = shown.iter().filter(|&&i| i > index).map(|&i| secs(i)).sum();
@@ -261,10 +303,13 @@ pub fn pause_message(working: Option<u64>) -> String {
     }
 }
 
-/// How long an operation of this kind typically takes, in words: "about
-/// 3 minutes" for an update.
-pub fn typical(kind: OpKind) -> String {
-    about(kind.stages().iter().filter(|s| !kind.optional().contains(&s.0)).map(|s| s.2).sum::<u64>() as f64)
+/// How long an operation of this kind typically takes, in words, over
+/// the stages every one goes through: "about 4 minutes" for an update
+/// whose snapshot copies nothing; `copy_bytes` as for [`lengths`].
+pub fn typical(kind: OpKind, copy_bytes: u64) -> String {
+    let optional = kind.optional();
+    let secs: u64 = kind.stages().iter().zip(lengths(kind, copy_bytes)).filter(|(s, _)| !optional.contains(&s.0)).map(|(_, l)| l).sum();
+    about(secs as f64)
 }
 
 /// Memory a team may use on this computer: what is left of the host's
@@ -362,8 +407,8 @@ mod tests {
         assert_eq!(pause_message(Some(1)), "1 agent is working. It stops mid-task and picks up where it left off when you resume.");
         assert!(pause_message(Some(0)).starts_with("No agents are working right now."));
         assert!(pause_message(None).starts_with("Agents that are working stop mid-task"));
-        // The update dialog: "It takes about 3 minutes."
-        assert_eq!(typical(OpKind::Update), "about 3 minutes");
+        // The update dialog: "It takes about 4 minutes."
+        assert_eq!(typical(OpKind::Update, 0), "about 4 minutes");
     }
 
     #[test]
@@ -372,14 +417,14 @@ mod tests {
         assert_eq!(stage_index(OpKind::Create, Some("bogus")), None);
         assert_eq!(stage_index(OpKind::Update, Some("snapshot")), Some(1));
         let all = |kind: OpKind| (0..kind.stages().len()).collect::<Vec<_>>();
-        let (p, left) = progress(OpKind::Create, &all(OpKind::Create), 1, Duration::from_secs(10), None, false);
+        let (p, left) = progress(&lengths(OpKind::Create, 0), &all(OpKind::Create), 1, Duration::from_secs(10), None, false);
         // 12 + 10 of 57 seconds.
         assert_eq!(p, 38);
         assert_eq!(left.as_deref(), Some("about 40 seconds"));
         // A slow stage never reads as past 95% of itself.
-        let (p, _) = progress(OpKind::Pause, &[0], 0, Duration::from_secs(600), None, false);
+        let (p, _) = progress(&lengths(OpKind::Pause, 0), &[0], 0, Duration::from_secs(600), None, false);
         assert_eq!(p, 95);
-        assert_eq!(progress(OpKind::Create, &all(OpKind::Create), 2, Duration::ZERO, None, true), (100, None));
+        assert_eq!(progress(&lengths(OpKind::Create, 0), &all(OpKind::Create), 2, Duration::ZERO, None, true), (100, None));
         assert_eq!(about(170.0), "about 3 minutes");
         assert_eq!(about(4.0), "a few seconds");
     }
@@ -393,12 +438,12 @@ mod tests {
         assert_eq!(ids, ["updating-data", "making-room", "starting", "setting-up"]);
         assert_eq!(OpKind::Resume.first_stage(), 2);
         assert_eq!(OpKind::Create.first_stage(), 0);
-        assert_eq!(typical(OpKind::Resume), "about 30 seconds");
+        assert_eq!(typical(OpKind::Resume, 0), "about 30 seconds");
 
         // A plain resume: starting, then setting up, 12 and 18 seconds.
         let mut seen = [false, false, true, false];
         assert_eq!(shown_stages(OpKind::Resume, &seen, 2), [2, 3]);
-        let (p, left) = progress(OpKind::Resume, &[2, 3], 2, Duration::from_secs(6), None, false);
+        let (p, left) = progress(&lengths(OpKind::Resume, 0), &[2, 3], 2, Duration::from_secs(6), None, false);
         assert_eq!((p, left.as_deref()), (20, Some("about 30 seconds")));
 
         // The supervisor moves the disk: every stage from there on shows.
@@ -418,22 +463,71 @@ mod tests {
         let shown = [0, 2, 3]; // updating-data 120, starting 12, setting-up 18
         let three_of_eight = Some(StageProgress { done: 3 << 30, total: 8 << 30 });
         // 3/8 of 120 seconds' share = 45 of 150.
-        let (p, left) = progress(OpKind::Resume, &shown, 0, Duration::from_secs(30), three_of_eight, false);
+        let (p, left) = progress(&lengths(OpKind::Resume, 0), &shown, 0, Duration::from_secs(30), three_of_eight, false);
         assert_eq!(p, 30);
         // 30 s for 3/8: 50 s more, and 30 s of the stages after.
         assert_eq!(left.as_deref(), Some("about 80 seconds"));
         // However long it has taken, done is done.
-        let (p, _) = progress(OpKind::Resume, &shown, 0, Duration::from_secs(600), Some(StageProgress { done: 8, total: 8 }), false);
+        let (p, _) = progress(&lengths(OpKind::Resume, 0), &shown, 0, Duration::from_secs(600), Some(StageProgress { done: 8, total: 8 }), false);
         assert_eq!(p, 80);
         // Without a report, time against the typical length, as before.
-        let (p, _) = progress(OpKind::Resume, &shown, 0, Duration::from_secs(30), None, false);
+        let (p, _) = progress(&lengths(OpKind::Resume, 0), &shown, 0, Duration::from_secs(30), None, false);
         assert_eq!(p, 20);
         // A report with no total is no measure.
-        let (p, _) = progress(OpKind::Resume, &shown, 0, Duration::from_secs(30), Some(StageProgress { done: 0, total: 0 }), false);
+        let (p, _) = progress(&lengths(OpKind::Resume, 0), &shown, 0, Duration::from_secs(30), Some(StageProgress { done: 0, total: 0 }), false);
         assert_eq!(p, 20);
         // The copy is measured in bytes; a compaction only makes a share.
-        assert_eq!(measure(OpKind::Resume, 0, StageProgress { done: 9, total: 8 }), StageMeasure { done: 8, total: 8, bytes: true });
-        assert_eq!(measure(OpKind::Resume, 1, StageProgress { done: 40, total: 100 }), StageMeasure { done: 40, total: 100, bytes: false });
+        assert_eq!(measure(OpKind::Resume, 0, StageProgress { done: 9, total: 8 }), StageMeasure { done: 8, total: 8, unit: MeasureUnit::Bytes });
+        assert_eq!(measure(OpKind::Resume, 1, StageProgress { done: 40, total: 100 }), StageMeasure { done: 40, total: 100, unit: MeasureUnit::Share });
+    }
+
+    /// An update's download and snapshot report bytes, and its wait for
+    /// the agents counts agents, each captioned as such; without it the
+    /// caption read "Downloading · 40%" against the supervisor's byte
+    /// counts, or nothing at all.
+    #[test]
+    fn update_measures() {
+        let ids: Vec<_> = OpKind::Update.stages().iter().map(|s| s.0).collect();
+        assert_eq!(ids, [stage::DOWNLOADING, stage::SNAPSHOT, stage::INSTALLING, stage::STARTING, stage::STARTING_AGENTS, stage::ROLLING_BACK]);
+        let p = StageProgress { done: 3 << 30, total: 8 << 30 };
+        assert_eq!(measure(OpKind::Update, 0, p).unit, MeasureUnit::Bytes);
+        assert_eq!(measure(OpKind::Update, 1, p).unit, MeasureUnit::Bytes);
+        assert_eq!(measure(OpKind::Update, 4, StageProgress { done: 3, total: 5 }), StageMeasure { done: 3, total: 5, unit: MeasureUnit::Agents });
+    }
+
+    /// A failed update goes back to its version in a stage of its own,
+    /// shown only once it is in it. Without it the bar read "Starting up
+    /// · step 4 of 4" through the whole rollback.
+    #[test]
+    fn update_rollback_stage() {
+        assert_eq!(OpKind::Update.first_stage(), 0);
+        let mut seen = [true, true, true, false, false, false];
+        // A plain update never shows it.
+        assert_eq!(shown_stages(OpKind::Update, &seen, 2), [0, 1, 2, 3, 4]);
+        // A failure while installing goes back from there.
+        seen[5] = true;
+        assert_eq!(shown_stages(OpKind::Update, &seen, 5), [0, 1, 2, 5]);
+        assert_eq!(stage_index(OpKind::Update, Some(stage::ROLLING_BACK)), Some(5));
+        assert_eq!(OpKind::Update.stages()[5].1, "Going back to the previous version");
+    }
+
+    /// Where the snapshot copies the data disk, the update's length grows
+    /// with the disk, and so does the snapshot's share of the bar; a
+    /// clone adds nothing; the wait for the agents counts on both.
+    /// Without it the dialog said "about 3 minutes" for an update that
+    /// took 4 to 8 on Windows.
+    #[test]
+    fn update_length_follows_the_copy() {
+        assert_eq!(typical(OpKind::Update, 0), "about 4 minutes");
+        assert_eq!(typical(OpKind::Update, 4 << 30), "about 6 minutes");
+        assert_eq!(typical(OpKind::Update, 15 << 30), "about 8 minutes");
+        assert_eq!(lengths(OpKind::Update, 4 << 30), [60, 94, 50, 40, 60, 60]);
+        // Only an update's snapshot grows.
+        assert_eq!(lengths(OpKind::Resume, 4 << 30), lengths(OpKind::Resume, 0));
+        // Halfway through a 4 GB copy: 60 + 47 of 304 seconds.
+        let half = Some(StageProgress { done: 2 << 30, total: 4 << 30 });
+        let (p, _) = progress(&lengths(OpKind::Update, 4 << 30), &[0, 1, 2, 3, 4], 1, Duration::from_secs(47), half, false);
+        assert_eq!(p, 35);
     }
 
     #[test]

@@ -39,7 +39,7 @@ function op(o: Partial<OpView>): OpView {
 }
 
 const CREATE_STAGES = ["Preparing storage", "Starting up", "Setting up your team", "Ready"];
-const UPDATE_STAGES = ["Downloading", "Saving a snapshot", "Installing", "Starting up"];
+const UPDATE_STAGES = ["Downloading", "Saving a snapshot", "Installing", "Starting up", "Starting your agents"];
 const CREATE_LINES = [
   "creating the data disk · done",
   "booting the VM · done",
@@ -60,7 +60,7 @@ function team(o: Partial<Team> & Pick<Team, "id" | "name">): Team {
     pause_first: null,
     op: null,
     version: "0.17.0",
-    update: { state: "up_to_date", current: "0.17.0", latest: "0.17.0", notes_url: null, summary: null, checked_at: iso(3 * HOUR), takes: "about 3 minutes" },
+    update: { state: "up_to_date", current: "0.17.0", latest: "0.17.0", notes_url: null, summary: null, checked_at: iso(3 * HOUR), takes: "about 4 minutes" },
     ai: { provider: "claude", signed_in: true, email: "dana@example.com", billing: "Claude Max", terminal_open: false, signin: "idle", signed_out_at: null },
     owner: "dana@example.com",
     memory_mb: 4096,
@@ -259,7 +259,7 @@ const FIXTURES: Record<string, Fixture> = {
           remaining: "about 80 seconds",
           stage: "Updating team data",
           stages: ["Updating team data", "Starting up", "Setting up your team"],
-          stage_progress: { done: 3.2 * 1024 ** 3, total: 8 * 1024 ** 3, bytes: true },
+          stage_progress: { done: 3.2 * 1024 ** 3, total: 8 * 1024 ** 3, unit: "bytes" },
         }),
       });
     },
@@ -273,8 +273,8 @@ const FIXTURES: Record<string, Fixture> = {
         activity: "updating",
         phrase: "updating",
         version: "0.16.0",
-        update: { state: "available", current: "0.16.0", latest: "0.17.0", notes_url: "https://kivali.ai/notes/0.17", summary: null, checked_at: iso(HOUR), takes: "about 3 minutes" },
-        op: op({ kind: "update", stages: UPDATE_STAGES, stage: "Saving a snapshot", stage_index: 1, percent: 35, remaining: "about 3 minutes" }),
+        update: { state: "available", current: "0.16.0", latest: "0.17.0", notes_url: "https://kivali.ai/notes/0.17", summary: null, checked_at: iso(HOUR), takes: "about 4 minutes" },
+        op: op({ kind: "update", stages: UPDATE_STAGES, stage: "Saving a snapshot", stage_index: 1, percent: 35, remaining: "about 4 minutes" }),
       });
     },
   },
@@ -304,7 +304,7 @@ const FIXTURES: Record<string, Fixture> = {
           notes_url: "https://kivali.ai/notes/0.17",
           summary: "new knowledge graph view, faster startup",
           checked_at: iso(HOUR),
-          takes: "about 3 minutes",
+          takes: "about 4 minutes",
         },
       }),
   },
@@ -334,7 +334,7 @@ const FIXTURES: Record<string, Fixture> = {
     snap: (s) =>
       Object.assign(s.teams[0], {
         version: "0.16.0",
-        update: { state: "available", current: "0.16.0", latest: "0.17.0", notes_url: "https://kivali.ai/notes/0.17", summary: null, checked_at: iso(HOUR), takes: "about 3 minutes" },
+        update: { state: "available", current: "0.16.0", latest: "0.17.0", notes_url: "https://kivali.ai/notes/0.17", summary: null, checked_at: iso(HOUR), takes: "about 4 minutes" },
       }),
     preset: { dialog: { id: "update", team: "plainsong" } },
   },

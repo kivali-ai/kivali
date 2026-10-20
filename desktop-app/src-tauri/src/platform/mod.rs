@@ -26,6 +26,7 @@
 //! | wording | [`TRAY_AREA`], [`THIS_COMPUTER`] | menu bar, this Mac | notification area, this PC |
 //! | second launch | [`SECOND_LAUNCH_FOCUSES`], [`notify_running_instance`], [`on_second_launch`], [`is_reopen`] | a dialog; Dock reopen | the running instance is focused |
 //! | updater | [`INSTALL_EXITS`] | stop, install, restart | stop in the updater's before-exit hook; resume if the installer cannot start |
+//! | a team update's snapshot | [`UPDATE_COPIES_DATA_DISK`] | an APFS clone, at once | the broker copies all of `data.vhdx` |
 //! | the shell's log | [`stderr_is_seen`], [`redirect_output`], [`attach_terminal`] | stderr not a terminal: `dup2` onto fd 2 | no console and no open stderr: `SetStdHandle` (stdout and stderr); a flag run from a console attaches to it |
 //!
 //! The Windows pipe stream is a synchronous handle: one blocking call
@@ -74,7 +75,7 @@ pub use os::{
     alert, app_is_active, authenticate, guard_frames, is_reopen, mark_app_menus, menu_bar_dark, menu_shortcuts,
     menus_dark, notify_running_instance, on_second_launch, open_terminal, parent_pid, peer_pid, press_keys,
     reduce_motion, start_time, vm_support, wait_exit, watch_loads, APP_MENU, INSTALL_EXITS, SECOND_LAUNCH_FOCUSES,
-    THIS_COMPUTER, TRAY_AREA, TRAY_ICONS, WINDOW_MENU,
+    THIS_COMPUTER, TRAY_AREA, TRAY_ICONS, UPDATE_COPIES_DATA_DISK, WINDOW_MENU,
 };
 pub use notify::{notify, on_notification_click, NotifyTarget};
 pub use shared::{
@@ -314,7 +315,7 @@ const _: () = {
     let _: fn(&tauri::Webview, Box<dyn Fn(&str) -> bool + Send>) = menu_shortcuts;
     let _: fn(&str) = press_keys;
     let _: fn(&tauri::Webview, Box<dyn Fn(LoadEnd) + Send>) -> bool = watch_loads;
-    let _: bool = APP_MENU || WINDOW_MENU || SECOND_LAUNCH_FOCUSES || INSTALL_EXITS;
+    let _: bool = APP_MENU || WINDOW_MENU || SECOND_LAUNCH_FOCUSES || INSTALL_EXITS || UPDATE_COPIES_DATA_DISK;
     let _: &str = TRAY_AREA;
     let _: &str = THIS_COMPUTER;
 };

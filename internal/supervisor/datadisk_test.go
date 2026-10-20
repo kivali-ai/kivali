@@ -2,6 +2,7 @@ package supervisor
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -31,6 +32,9 @@ type keeperBackend struct {
 	// it copies.
 	importErr      error
 	importProgress [][2]int64
+	// snapshotProgress is what the upgrade's snapshot reports as it
+	// copies.
+	snapshotProgress [][2]int64
 }
 
 type keeperOp struct {
@@ -104,8 +108,14 @@ func (k *keeperBackend) ImportDataDisk(_ context.Context, configDir string, prog
 	return copyFile(k.LegacyDataDiskPath(configDir), data)
 }
 
-func (k *keeperBackend) SnapshotDataDisk(_ context.Context, configDir string) error {
+func (k *keeperBackend) SnapshotDataDisk(_ context.Context, configDir string, progress Progress, _ Logf) error {
 	k.record("snapshot")
+	k.mu.Lock()
+	steps := k.snapshotProgress
+	k.mu.Unlock()
+	for _, s := range steps {
+		progress(s[0], s[1])
+	}
 	p := k.DataDiskPath(configDir)
 	return copyFile(p, p+SnapshotSuffix)
 }
@@ -752,4 +762,82 @@ func TestRPCEventsCarryProgress(t *testing.T) {
 		}
 	}
 	_, _ = io.Copy(io.Discard, resp.Body)
+}
+
+// Over the RPC, an upgrade reports the bytes it has downloaded against
+// release.json's sizes in downloading, and the bytes the backend's
+// snapshot has copied in snapshot, and the agents connected in
+// starting-agents. Without them the desktop app's bar guessed by time
+// through the slow stages of an update and sat near each one's end.
+func TestRPCUpgradeCarriesProgress(t *testing.T) {
+	h, k := keeperHarness(t)
+	h.mustUp(UpOptions{Install: owner})
+	k.snapshotProgress = [][2]int64{{2 << 30, 8 << 30}, {8 << 30, 8 << 30}}
+	feed := writeRelease(t, filepath.Join(t.TempDir(), "rel"), "0.16.0", "v0.16.0")
+	b, err := os.ReadFile(feed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rel Release
+	if err := json.Unmarshal(b, &rel); err != nil {
+		t.Fatal(err)
+	}
+	chart, total := rel.Chart.Size, rel.Chart.Size+rel.Images[h.sup.platform()].Size
+	srv := httptest.NewServer(NewRPCServer(h.sup).Handler())
+	defer srv.Close()
+	body, _ := json.Marshal(UpgradeOptions{Feed: feed})
+	resp, err := http.Post(srv.URL+"/v1/upgrade", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	var reports []string
+	sc := bufio.NewScanner(resp.Body)
+	for sc.Scan() {
+		var ev Event
+		if err := json.Unmarshal(sc.Bytes(), &ev); err != nil {
+			t.Fatal(err)
+		}
+		if ev.Done {
+			if ev.Error != "" {
+				t.Fatalf("upgrade: %s", ev.Error)
+			}
+			break
+		}
+		if ev.Log == "" && ev.Progress != nil {
+			reports = append(reports, fmt.Sprintf("%s %d/%d", ev.Stage, ev.Progress.Done, ev.Progress.Total))
+		}
+	}
+	want := []string{
+		fmt.Sprintf("downloading %d/%d", chart, total), fmt.Sprintf("downloading %d/%d", total, total),
+		"snapshot 2147483648/8589934592", "snapshot 8589934592/8589934592", "starting-agents 1/1",
+	}
+	if !slices.Equal(reports, want) {
+		t.Fatalf("progress events %v, want %v", reports, want)
+	}
+}
+
+// The download's progress goes in hundredths of the whole, ends with the
+// whole, and says nothing without both sizes: a release.json without
+// them would otherwise hold the bar full, or flood the desktop app with
+// an event for every buffer read.
+func TestProgressWriterSteps(t *testing.T) {
+	var got [][2]int64
+	w := newProgressWriter(100, 900, func(d, t int64) { got = append(got, [2]int64{d, t}) })
+	for range 250 {
+		_, _ = w.Write(make([]byte, 4))
+	}
+	if len(got) != 101 || got[0] != [2]int64{4, 1000} || got[len(got)-1] != [2]int64{1000, 1000} {
+		t.Fatalf("%d reports, first %v, last %v", len(got), got[0], got[len(got)-1])
+	}
+	_, _ = w.Write(make([]byte, 4))
+	if len(got) != 101 {
+		t.Fatal("a report past the whole")
+	}
+	got = nil
+	w = newProgressWriter(100, 0, func(d, t int64) { got = append(got, [2]int64{d, t}) })
+	_, _ = w.Write(make([]byte, 50))
+	if len(got) != 0 {
+		t.Fatalf("reports without a bundle size: %v", got)
+	}
 }

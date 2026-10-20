@@ -850,7 +850,7 @@ the data disk.
 | --- | --- | --- |
 | create | creating | Preparing storage (`making-room`: the data disk made and formatted on the first boot) · Starting up (`starting`) · Setting up your team (`setting-up`) · Ready |
 | resume | waking | Updating team data (`updating-data`, only when the supervisor moves the data disk) · Making room (`making-room`, only when it compacts the data disk) · Starting up · Setting up your team |
-| update | updating | Downloading (`downloading`) · Saving a snapshot (`snapshot`) · Installing (`installing`) · Starting up |
+| update | updating | Downloading (`downloading`; with progress, the bytes downloaded) · Saving a snapshot (`snapshot`; with progress where the snapshot copies the data disk, the bytes copied) · Installing (`installing`) · Starting up · Starting your agents (`starting-agents`; with progress, the agents connected of those with a pod) · Going back to the previous version (`rolling-back`, only when the update failed) |
 | pause | pausing | Pausing (`pausing`) |
 | address | applying | Applying the change (`setting-up`) |
 | delete | deleting | Deleting (`deleting`) |
@@ -859,16 +859,19 @@ A line whose stage this kind does not know keeps the step it had. The
 steps shown are the ones the operation has been in, the one it is in,
 and those ahead that every operation of its kind goes through; a step
 only some go through (`OpKind::optional`: a resume's move and
-compaction of the data disk) shows once the operation is in it, so a
+compaction of the data disk, an update's way back) shows once the operation is in it, so a
 plain resume shows and times two steps. The share done counts the
 shown steps before the current one whole, and the current one by its
 measured progress when the supervisor reports one (`progress` on its
-events: the bytes of the data disk copied, or a compaction's share),
+events: the bytes of the data disk copied, of an update's download, or
+a compaction's share),
 with the time left from its rate so far; otherwise by time spent
 against its typical length, never past 95% of it. It is never above 99%
-until the operation finishes. While a step is measured, the waking page
-captions the bar with it: "Updating team data · 3.2 of 8 GB", "Making
-room · 40%" (`OpView.stage_progress`; `teams.ts` `measuredStep`). A
+until the operation finishes. While a step is measured, the waking and
+updating pages caption the bar with it: "Updating team data · 3.2 of 8
+GB", "Making room · 40%", "Downloading · 256 of 512 MB · step 1 of 5", "Starting your
+agents · 3 of 5 · step 5 of 5"
+(`OpView.stage_progress`; `teams.ts` `measuredStep`). A
 progress report adds no line; every raw line is kept for "Show
 details".
 
@@ -1125,11 +1128,17 @@ supervisor: the team couldn't start (failure `vm`, `reason` from
 in place of Resume or Try again.
 
 **Updating a team** (E3, from the tray or Settings → team → Update…):
-"Update Plainsong to 0.17? It takes about 3 minutes. Agents pause while
+"Update Plainsong to 0.17? It takes about 4 minutes. Agents pause while
 it updates. If anything goes wrong, Plainsong goes back to 0.16."
 with Update, Cancel and What's new; the length is `view::typical` of
 the update's stages (the snapshot's `update.takes`), in the page and
-the native alert alike. The update operation runs
+the native alert alike. Where the update's snapshot copies the data
+disk (`platform::UPDATE_COPIES_DATA_DISK`: Windows, where the broker
+copies all of `data.vhdx`; a clone on macOS costs no time), the
+snapshot's length grows with the disk's used bytes at
+`view::SNAPSHOT_COPY_BYTES_PER_SEC`, so the sentence is that
+computer's own: about 4 minutes on macOS, about 6 on Windows with a
+4 GB data disk and about 8 with 15 GB. The bar uses the same lengths. The update operation runs
 `POST /v1/upgrade` with C6's steps, then checks for releases again.
 An update that fails leaves the team running on its version; the shell
 logs `update failed: <error>` to `shell.log`, and while the update is
@@ -1548,7 +1557,7 @@ welcome screen.
 | Key | What |
 | --- | --- |
 | `app_version`, `platform` | this app's version; `macos`, `windows` or `linux` |
-| `teams[]` | per team: `id`, `name`, `kind`, `place` (`here`/`elsewhere`), `url`, `device`, `state`, `activity`, `phrase`, `reason`, `pause_first` (the team to pause when memory stopped a start), `op` (the current or last operation: kind, running, error, finished, raw lines, stage, stage index, stages, start time, percent, time left), `version`, `update` (above, plus `takes`, an update's typical length in words, "about 3 minutes", from its stages), `ai` (`provider`, `signed_in`, `email` and `billing` as `claude auth status` reports them, `terminal_open`, `signin`, `signed_out_at` while Claude is signed out), `owner`, `memory_mb`, `cpus`, `disk_used_bytes`, `disk_size_bytes`, `paused_since`, `last_reached`, `provisional`, `agents`, `working` (only while running), `files`, `signed_in_as` ("The team API"; null until read), `memory_free_mb` (a team here: `view::memory_free_mb` beside the other teams running now, E5's "2 GB free"; null elsewhere) |
+| `teams[]` | per team: `id`, `name`, `kind`, `place` (`here`/`elsewhere`), `url`, `device`, `state`, `activity`, `phrase`, `reason`, `pause_first` (the team to pause when memory stopped a start), `op` (the current or last operation: kind, running, error, finished, raw lines, stage, stage index, stages, start time, percent, time left), `version`, `update` (above, plus `takes`, an update's typical length in words, "about 4 minutes", from its stages), `ai` (`provider`, `signed_in`, `email` and `billing` as `claude auth status` reports them, `terminal_open`, `signin`, `signed_out_at` while Claude is signed out), `owner`, `memory_mb`, `cpus`, `disk_used_bytes`, `disk_size_bytes`, `paused_since`, `last_reached`, `provisional`, `agents`, `working` (only while running), `files`, `signed_in_as` ("The team API"; null until read), `memory_free_mb` (a team here: `view::memory_free_mb` beside the other teams running now, E5's "2 GB free"; null elsewhere) |
 | `host` | this computer's memory and CPUs, and `vm_support`: whether a team's VM can run here (`ready`, `hyperv_off`, `windows_home`, `virtualization_off`, `in_vm`; `platform::vm_support`) |
 | `settings` | `start_at_login`, `ask_before_quit` |
 | `app_update` | the app update's state, version, check time, error |

@@ -74,10 +74,14 @@ pub struct TeamOp {
     pub seen: Vec<bool>,
     /// The current stage's last progress report, while it has any.
     pub measured: Option<StageProgress>,
+    /// The stages' typical lengths on this computer (`view::lengths`).
+    pub lengths: Vec<u64>,
 }
 
 impl TeamOp {
-    fn new(kind: OpKind) -> TeamOp {
+    /// `copy_bytes` is what an update's snapshot copies
+    /// ([`snapshot_copy_bytes`]).
+    fn new(kind: OpKind, copy_bytes: u64) -> TeamOp {
         TeamOp {
             kind,
             running: true,
@@ -89,6 +93,7 @@ impl TeamOp {
             started_ms: unix_ms(),
             seen: vec![false; kind.stages().len()],
             measured: None,
+            lengths: view::lengths(kind, copy_bytes),
         }
     }
 
@@ -124,7 +129,7 @@ impl TeamOp {
         let index = if self.finished { stages.len().saturating_sub(1) } else { self.stage.unwrap_or(self.kind.first_stage()) };
         let shown = view::shown_stages(self.kind, &self.seen, index);
         let measured = self.measured.filter(|_| self.running && self.stage == Some(index));
-        let (percent, remaining) = view::progress(self.kind, &shown, index, self.stage_since.elapsed(), measured, self.finished);
+        let (percent, remaining) = view::progress(&self.lengths, &shown, index, self.stage_since.elapsed(), measured, self.finished);
         OpView {
             kind: self.kind,
             running: self.running,
@@ -539,7 +544,7 @@ pub struct TeamUpdateView {
     pub notes_url: Option<String>,
     pub summary: Option<String>,
     pub checked_at: Option<String>,
-    /// How long an update typically takes, "about 3 minutes".
+    /// How long an update typically takes, "about 4 minutes".
     pub takes: String,
 }
 
@@ -582,7 +587,25 @@ pub struct TeamView {
     pub memory_free_mb: Option<u64>,
 }
 
-fn update_view(check: Option<&CheckReport>, app_version: &str, now: OffsetDateTime) -> TeamUpdateView {
+/// What an update's snapshot copies on this computer, in bytes: the
+/// data disk's used bytes where the snapshot is a copy
+/// (`platform::UPDATE_COPIES_DATA_DISK`), none where it is a clone or
+/// the size is not known.
+pub fn snapshot_copy_bytes(report: Option<&Report>) -> u64 {
+    copy_bytes(platform::UPDATE_COPIES_DATA_DISK, report)
+}
+
+fn copy_bytes(copies: bool, report: Option<&Report>) -> u64 {
+    if copies {
+        report.map(|r| r.disk_used_bytes).unwrap_or(0)
+    } else {
+        0
+    }
+}
+
+/// `copy_bytes` is what an update's snapshot copies
+/// ([`snapshot_copy_bytes`]), for its length.
+fn update_view(check: Option<&CheckReport>, app_version: &str, now: OffsetDateTime, copy_bytes: u64) -> TeamUpdateView {
     use updates::UpdateState as U;
     let state = updates::decide(check, true, app_version);
     let checked_at = check.and_then(|c| c.checked_at.clone());
@@ -596,7 +619,7 @@ fn update_view(check: Option<&CheckReport>, app_version: &str, now: OffsetDateTi
     };
     let _ = now;
     let bare = |v: Option<String>| v.map(|v| v.trim_start_matches('v').to_string()).filter(|v| !v.is_empty());
-    TeamUpdateView { state: s, current: bare(current), latest: bare(latest), notes_url: notes, summary: None, checked_at, takes: view::typical(OpKind::Update) }
+    TeamUpdateView { state: s, current: bare(current), latest: bare(latest), notes_url: notes, summary: None, checked_at, takes: view::typical(OpKind::Update, copy_bytes) }
 }
 
 impl Shell {
@@ -744,7 +767,7 @@ impl Shell {
                     pause_first,
                     op,
                     version: status.as_ref().and_then(|s| s.kivali.clone()),
-                    update: Some(update_view(check.as_ref(), &self.app_version, now)),
+                    update: Some(update_view(check.as_ref(), &self.app_version, now, snapshot_copy_bytes(report.as_ref()))),
                     ai: Some(AiView {
                         provider: "claude",
                         signed_in,
@@ -1027,12 +1050,13 @@ where
     if shell(app).quitting.load(Ordering::SeqCst) {
         return Err("Kivali is quitting.".into());
     }
+    let copy = snapshot_copy_bytes(rt.report.lock().unwrap().as_ref());
     {
         let mut op = rt.op.lock().unwrap();
         if let Some(o) = op.as_ref().filter(|o| o.running) {
             return Err(format!("{} is busy ({:?}).", rt.id, o.kind).to_lowercase());
         }
-        *op = Some(TeamOp::new(kind));
+        *op = Some(TeamOp::new(kind, copy));
     }
     changed(app);
     let app = app.clone();
@@ -2391,7 +2415,7 @@ mod tests {
         for k in ["provider", "signed_in", "email", "billing", "terminal_open", "signin", "signed_out_at"] {
             assert!(t["ai"].get(k).is_some(), "ai lacks {k}");
         }
-        assert_eq!(t["update"]["takes"], "about 3 minutes");
+        assert_eq!(t["update"]["takes"], "about 4 minutes");
         assert!(v["connect"].get("email").is_some(), "connect lacks email");
         for k in ["memory_mb", "cpus", "vm_support"] {
             assert!(v["host"].get(k).is_some(), "host lacks {k}");
@@ -2406,7 +2430,7 @@ mod tests {
     #[test]
     fn op_view_stages() {
         let line = |label: &str, stage: Option<&str>| Progress { label: label.into(), stage: stage.map(Into::into), progress: None };
-        let mut op = TeamOp::new(OpKind::Create);
+        let mut op = TeamOp::new(OpKind::Create, 0);
         op.progress(&line("creating the data disk", Some("making-room")));
         op.progress(&line("VM started", Some("starting")));
         op.progress(&line("no stage", None));
@@ -2425,7 +2449,7 @@ mod tests {
         // setting-up while the wizard is open, then the install starts
         // at `starting` again. The bar stays on the later stage, and
         // the earlier stage's line is kept.
-        let mut op = TeamOp::new(OpKind::Create);
+        let mut op = TeamOp::new(OpKind::Create, 0);
         op.progress(&line("creating the data disk", Some("making-room")));
         op.progress(&line("VM started", Some("starting")));
         op.progress(&line("the VM is ready; Kivali installs once its owner is known", Some("setting-up")));
@@ -2440,7 +2464,7 @@ mod tests {
         assert!(op.view().stage_progress.is_none());
 
         // A plain resume shows the stages it goes through, as before.
-        let mut op = TeamOp::new(OpKind::Resume);
+        let mut op = TeamOp::new(OpKind::Resume, 0);
         let v = op.view();
         assert_eq!(v.stage.as_deref(), Some("Starting up"));
         assert_eq!(v.stages, ["Starting up", "Setting up your team"]);
@@ -2454,7 +2478,7 @@ mod tests {
     /// stage starts with no measure until it reports one.
     #[test]
     fn op_view_stage_progress() {
-        let mut op = TeamOp::new(OpKind::Resume);
+        let mut op = TeamOp::new(OpKind::Resume, 0);
         op.progress(&Progress { label: "the VM is not running".into(), stage: Some("starting".into()), progress: None });
         op.progress(&Progress { label: "updating the team's data".into(), stage: Some("updating-data".into()), progress: None });
         let v = op.view();
@@ -2465,7 +2489,7 @@ mod tests {
         let three = StageProgress { done: 3 << 30, total: 8 << 30 };
         op.progress(&Progress { label: String::new(), stage: Some("updating-data".into()), progress: Some(three) });
         let v = op.view();
-        assert_eq!(v.stage_progress, Some(view::StageMeasure { done: 3 << 30, total: 8 << 30, bytes: true }));
+        assert_eq!(v.stage_progress, Some(view::StageMeasure { done: 3 << 30, total: 8 << 30, unit: view::MeasureUnit::Bytes }));
         // 3/8 of the 120 seconds' share of 150.
         assert_eq!(v.percent, 30);
         assert_eq!(v.lines, ["the VM is not running", "updating the team's data"]);
@@ -2475,11 +2499,59 @@ mod tests {
         assert_eq!((v.stage.as_deref(), v.stage_progress), (Some("Making room"), None));
         assert_eq!(v.stages, ["Updating team data", "Making room", "Starting up", "Setting up your team"]);
         op.progress(&Progress { label: String::new(), stage: Some("making-room".into()), progress: Some(StageProgress { done: 40, total: 100 }) });
-        assert_eq!(op.view().stage_progress, Some(view::StageMeasure { done: 40, total: 100, bytes: false }));
+        assert_eq!(op.view().stage_progress, Some(view::StageMeasure { done: 40, total: 100, unit: view::MeasureUnit::Share }));
 
         op.progress(&Progress { label: "VM started".into(), stage: Some("starting".into()), progress: None });
         let v = op.view();
         assert_eq!((v.stage.as_deref(), v.stage_index, v.stage_progress), (Some("Starting up"), 2, None));
+    }
+
+    /// An update's download and snapshot captions count bytes, its wait
+    /// for the agents counts agents, and one that fails moves to a step
+    /// of its own. Without it the bar guessed through both copies and the
+    /// agents' start, and read "Starting up · step 4 of 4" while the
+    /// update went back to the earlier version.
+    #[test]
+    fn op_view_update_progress_and_rollback() {
+        let mut op = TeamOp::new(OpKind::Update, 4 << 30);
+        let half = StageProgress { done: 256 << 20, total: 512 << 20 };
+        op.progress(&Progress { label: String::new(), stage: Some("downloading".into()), progress: Some(half) });
+        let v = op.view();
+        assert_eq!(v.stage_progress, Some(view::StageMeasure { done: 256 << 20, total: 512 << 20, unit: view::MeasureUnit::Bytes }));
+        assert_eq!(v.stages, ["Downloading", "Saving a snapshot", "Installing", "Starting up", "Starting your agents"]);
+        // Half of 60 seconds' share of 304 (the 4 GB copy lengthens the snapshot).
+        assert_eq!(v.percent, 9);
+
+        let copied = StageProgress { done: 1 << 30, total: 4 << 30 };
+        op.progress(&Progress { label: String::new(), stage: Some("snapshot".into()), progress: Some(copied) });
+        assert_eq!(op.view().stage_progress, Some(view::StageMeasure { done: 1 << 30, total: 4 << 30, unit: view::MeasureUnit::Bytes }));
+
+        op.progress(&Progress { label: "HelmChart now points at kivali-0.17.0.tgz".into(), stage: Some("installing".into()), progress: None });
+        op.progress(&Progress { label: "rolling back to 0.16.0".into(), stage: Some("rolling-back".into()), progress: None });
+        let v = op.view();
+        assert_eq!(v.stage.as_deref(), Some("Going back to the previous version"));
+        assert_eq!(v.stages, ["Downloading", "Saving a snapshot", "Installing", "Going back to the previous version"]);
+        assert_eq!(v.stage_index, 3);
+
+        // An update that gets to its agents counts them as they connect.
+        let mut op = TeamOp::new(OpKind::Update, 0);
+        op.progress(&Progress { label: "waiting for the agents to connect to the server".into(), stage: Some("starting-agents".into()), progress: None });
+        op.progress(&Progress { label: String::new(), stage: Some("starting-agents".into()), progress: Some(StageProgress { done: 3, total: 5 }) });
+        let v = op.view();
+        assert_eq!(v.stage.as_deref(), Some("Starting your agents"));
+        assert_eq!(v.stage_progress, Some(view::StageMeasure { done: 3, total: 5, unit: view::MeasureUnit::Agents }));
+    }
+
+    /// An update's snapshot costs time for the data disk's bytes only
+    /// where it copies the disk: on macOS the estimate stays the same
+    /// whatever the disk holds.
+    #[test]
+    fn snapshot_copy_bytes_follows_the_platform() {
+        let r = Report { disk_used_bytes: 9 << 30, ..Default::default() };
+        assert_eq!(copy_bytes(true, Some(&r)), 9 << 30);
+        assert_eq!(copy_bytes(false, Some(&r)), 0);
+        assert_eq!(copy_bytes(true, None), 0);
+        assert_eq!(snapshot_copy_bytes(Some(&r)), if platform::UPDATE_COPIES_DATA_DISK { 9 << 30 } else { 0 });
     }
 
     /// What resumes at the next launch follows what runs: added when a

@@ -112,7 +112,7 @@ export function teamPage(team: Team | undefined, snap: Pick<Snapshot, "teams" | 
       const to = shortVersion(team.update?.latest ?? null);
       const step =
         op?.running && op.stage && op.stages.length
-          ? `${op.stage} · step ${Math.min(op.stage_index + 1, op.stages.length)} of ${op.stages.length}`
+          ? `${measuredStep(op) ?? op.stage} · step ${Math.min(op.stage_index + 1, op.stages.length)} of ${op.stages.length}`
           : (op?.stage ?? null);
       return {
         kind: "progress",
@@ -142,12 +142,13 @@ export function teamPage(team: Team | undefined, snap: Pick<Snapshot, "teams" | 
 }
 
 /** The caption under the bar while a stage reports how far it has got:
- *  "Updating team data · 3.2 of 8 GB", "Making room · 40%"; null
- *  otherwise. */
+ *  "Updating team data · 3.2 of 8 GB", "Starting your agents · 3 of 5",
+ *  "Making room · 40%"; null otherwise. */
 export function measuredStep(op: Team["op"]): string | null {
   const m = op?.running ? op.stage_progress : null;
   if (!op?.stage || !m || m.total <= 0) return null;
-  if (m.bytes) return `${op.stage} · ${formatBytesOf(m.done, m.total)}`;
+  if (m.unit === "bytes") return `${op.stage} · ${formatBytesOf(m.done, m.total)}`;
+  if (m.unit === "agents") return `${op.stage} · ${m.done.toLocaleString("en-US")} of ${m.total.toLocaleString("en-US")}`;
   return `${op.stage} · ${clampPercent(Math.floor((m.done / m.total) * 100))}%`;
 }
 

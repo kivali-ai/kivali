@@ -188,8 +188,9 @@ func assetRef(feed string, a Asset) (string, error) {
 }
 
 // download fetches an asset into dir, verifying its digest; the file
-// appears under its name only once verified.
-func (s *Supervisor) download(ctx context.Context, feed string, a Asset, dir string) (string, error) {
+// appears under its name only once verified. Every byte read is also
+// written to fetched, which counts them.
+func (s *Supervisor) download(ctx context.Context, feed string, a Asset, dir string, fetched io.Writer) (string, error) {
 	if len(a.SHA256) != 64 {
 		return "", fmt.Errorf("asset %s has no sha256", a.Name)
 	}
@@ -216,7 +217,7 @@ func (s *Supervisor) download(ctx context.Context, feed string, a Asset, dir str
 	}
 	defer func() { _ = os.Remove(tmp.Name()) }()
 	h := sha256.New()
-	if _, err := io.Copy(io.MultiWriter(tmp, h), rc); err != nil {
+	if _, err := io.Copy(io.MultiWriter(tmp, h, fetched), rc); err != nil {
 		_ = tmp.Close()
 		return "", fmt.Errorf("download %s: %w", ref, err)
 	}
