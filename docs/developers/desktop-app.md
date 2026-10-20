@@ -1466,8 +1466,11 @@ computes one-line labels and a badge, which no surface reads.)
 checked at every launch and on **Check for updates** (the Kivali menu,
 Settings → General). Settings → General shows "Checking for updates…",
 "Up to date · checked …", "0.18.0 is available" with Update… (E4),
-"Installing 0.18.0…" or "Couldn't check for updates · <error>"; the
-tray offers the update item. Installing is E4 ("Launch and quit"). The
+"Installing 0.18.0…", "Couldn't check for updates · <error>" (state
+`failed`, a check that could not finish) or "Couldn't update to 0.18.0 ·
+<error>" with Try again… (state `update_failed`, an update that could
+not download or install; it stays on offer); the tray offers the update
+item. Installing is E4 ("Launch and quit"). The
 release's `latest.json` must carry, per platform it ships, an entry
 whose `url` is the updater artifact the bundler writes with
 `createUpdaterArtifacts` and whose `signature` is the contents of its
