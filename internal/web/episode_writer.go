@@ -73,13 +73,22 @@ func (s *Server) NotifyEpisode(slug, ts string) {
 // sweep starts from whatever is still missing), and runs the same
 // code path as steady state. Then one digest per rotation notification,
 // with a retry sweep armed whenever a call fails.
-func (s *Server) runEpisodeWriter() {
+//
+// The loop returns when stop closes, between digests, so a caller that
+// waits for it to return knows nothing is still writing. NewServer
+// passes a nil stop: an interrupted digest is harmless (the write is
+// atomic and the next sweep redoes it), so the process does not wait
+// on a model call to exit.
+func (s *Server) runEpisodeWriter(stop <-chan struct{}) {
 	timer := s.clk().NewTimer(episodeRetryDelay)
 	if !s.sweepMissingEpisodes() {
 		timer.Stop()
 	}
 	for {
 		select {
+		case <-stop:
+			timer.Stop()
+			return
 		case req := <-s.episodeCh:
 			wrote, err := s.writeEpisode(req.slug, req.ts)
 			if err != nil {
