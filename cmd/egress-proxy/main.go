@@ -192,6 +192,11 @@ func (p *proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// allowlistRefusal follows the host name in the body of an allowlist
+// mode refusal. Only an agent's shell is in allowlist mode, so it
+// names what the agent can do instead.
+const allowlistRefusal = " is not on the team's allow list, which limits shell commands; the owner edits it in Org, Network. WebFetch and WebSearch are not limited to it."
+
 // admit decides a request's mode and whether it may go on to the
 // dialer, writing the refusal itself when it may not. host is the
 // "host:port" the client asked for. tunnel marks a CONNECT, whose
@@ -214,7 +219,7 @@ func (p *proxy) admit(w http.ResponseWriter, r *http.Request, host string, tunne
 	if !s.open {
 		if !s.listed {
 			p.logf("DENY agent=- mode=allowlist host=%s reason=allowlist", host)
-			http.Error(w, "host not in allowlist", http.StatusForbidden)
+			http.Error(w, hostOnly(host)+allowlistRefusal, http.StatusForbidden)
 			return s, false
 		}
 		return s, true

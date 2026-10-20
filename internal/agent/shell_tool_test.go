@@ -33,6 +33,39 @@ func TestShellToolSoftwareParagraph(t *testing.T) {
 	}
 }
 
+// The network paragraph says the shell is held to the allow list and
+// the web tools are not.
+func TestShellToolNetworkParagraph(t *testing.T) {
+	d := ShellTool().Description
+	for _, want := range []string{"team's allow list", "you cannot read", "403", "WebFetch and WebSearch are not limited"} {
+		if !strings.Contains(d, want) {
+			t.Errorf("description lacks %q:\n%s", want, d)
+		}
+	}
+}
+
+// A proxy refusal is named whichever client hit it and whichever
+// stream it printed to; a site's own 403 is not.
+func TestShellNetworkNotice(t *testing.T) {
+	refused := map[string][2]string{
+		"curl":      {"", "curl: (56) CONNECT tunnel failed, response 403\n"},
+		"git":       {"", "fatal: unable to access 'https://python.org/x.git/': CONNECT tunnel failed, response 403\n"},
+		"old git":   {"", "fatal: unable to access 'https://python.org/': Received HTTP code 403 from proxy after CONNECT\n"},
+		"python":    {"", "urllib.error.URLError: <urlopen error Tunnel connection failed: 403 Forbidden>\n"},
+		"on stdout": {"Tunnel connection failed: 403 Forbidden\n", ""},
+	}
+	for name, out := range refused {
+		if got := ShellNetworkNotice(out[0], out[1]); got != ShellProxyRefusalNotice {
+			t.Errorf("%s: notice = %q", name, got)
+		}
+	}
+	for _, out := range []string{"", "HTTP/1.1 403 Forbidden\n", "curl: (22) The requested URL returned error: 403\n", "CONNECT tunnel failed, response 407\n"} {
+		if got := ShellNetworkNotice("", out); got != "" {
+			t.Errorf("%q: notice = %q, want none", out, got)
+		}
+	}
+}
+
 // Packages still being installed and ones that failed are named, with
 // the reason for each failure. The description outlives the install, so
 // what it says about one still running holds once it has finished.
