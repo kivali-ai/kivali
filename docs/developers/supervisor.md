@@ -1005,16 +1005,22 @@ the same tag and prefix, else the install refuses. The install waits for the dep
 complete) and then `/readyz` through the forward. It fails fast when a
 `kivali` pod waits on `ErrImagePull`, `ImagePullBackOff`,
 `ErrImageNeverPull` or `InvalidImageName`, when the Helm controller's
-`helm-install-kivali` job has failed 3 times, or when the chart's label
-matches but it renders another image. The controller's job runs its pod
-with `restartPolicy: OnFailure` (and `backoffLimit: 1000`), so a failed
-helm run restarts the container in place and the job's `.status.failed`
-stays 0: the failures counted are the job's failed pods plus its running
-pod's container restarts (and the last run while it waits in
-`CrashLoopBackOff`), and the error carries helm's own `Error:` lines
-from that failed run's log (`logs --previous`), else its termination
-message. A broken chart or values file is caught in a few polls, so an
-upgrade rolls back without waiting out the 10-minute rollout timeout.
+`helm-install-kivali` job has failed 3 times with the same helm error,
+or when the chart's label matches but it renders another image. The
+controller's job runs its pod with `restartPolicy: OnFailure` (and
+`backoffLimit: 1000`), so a failed helm run restarts the container in
+place and the job's `.status.failed` stays 0. The wait follows the
+job's running pod across its polls: each new failed run (a container
+restart, or the last run while it waits in `CrashLoopBackOff`) has its
+error read once, helm's own `Error:` lines from that run's log (`logs
+--previous`), else its termination message, and the install fails when
+3 runs have failed with the same error, which the failure then carries.
+A run with another error (a cluster still starting fails some other
+way each time), one whose error cannot be read, and one the polls
+missed count for nothing; the 10-minute rollout timeout ends those. A
+broken chart or values file fails the same way every run and is caught
+in a few polls, so an upgrade rolls back without waiting out the
+timeout.
 
 ## Release feed
 

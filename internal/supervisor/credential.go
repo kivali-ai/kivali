@@ -97,13 +97,14 @@ func (s *Supervisor) credentialOn(ctx context.Context, g Guest) (CredentialStatu
 // to apply them (the deployment's next generation: until then the old
 // one is still ready) and for the server to serve again.
 func (s *Supervisor) awaitNewValues(ctx context.Context, g Guest, gen int64, logf Logf) error {
+	hw := newHelmWatch()
 	if err := poll(ctx, s.o.Clock, deployTimeout, pollInterval, "the Helm controller to apply the new values", func(ctx context.Context) error {
 		got, err := deploymentGeneration(ctx, g)
 		if err != nil {
 			return err
 		}
 		if got <= gen {
-			if jerr := helmJobFailed(ctx, g); jerr != nil {
+			if jerr := hw.check(ctx, g); jerr != nil {
 				return permanent(jerr)
 			}
 			return errNotYet

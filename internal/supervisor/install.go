@@ -506,12 +506,13 @@ var fatalWaiting = map[string]bool{
 
 // deploymentState checks the server deployment once. chartVersion and
 // image, when set, must match (the helm.sh/chart label and the kivali
-// container's image).
-func deploymentState(ctx context.Context, g Guest, chartVersion, image string) error {
+// container's image). hw, when set, follows the Helm install job across
+// the wait's polls (helmWatch).
+func deploymentState(ctx context.Context, g Guest, chartVersion, image string, hw *helmWatch) error {
 	out, err := kubectl(ctx, g, "-n", Namespace, "get", "deployment", "kivali", "-o", "json")
 	if err != nil {
 		if strings.Contains(err.Error(), "NotFound") {
-			if jerr := helmJobFailed(ctx, g); jerr != nil {
+			if jerr := hw.check(ctx, g); jerr != nil {
 				return permanent(jerr)
 			}
 			return errors.New("deployment kivali does not exist yet")
@@ -524,7 +525,7 @@ func deploymentState(ctx context.Context, g Guest, chartVersion, image string) e
 	}
 	if chartVersion != "" {
 		if got := d.Metadata.Labels["helm.sh/chart"]; got != "kivali-"+chartVersion {
-			if jerr := helmJobFailed(ctx, g); jerr != nil {
+			if jerr := hw.check(ctx, g); jerr != nil {
 				return permanent(jerr)
 			}
 			return fmt.Errorf("deployment is at chart %q, waiting for kivali-%s", got, chartVersion)
@@ -584,8 +585,9 @@ func deploymentState(ctx context.Context, g Guest, chartVersion, image string) e
 }
 
 // helmJobFailures is how many failed runs of the Helm controller's job
-// count as a failed install: it retries without end, and a chart or
-// values error fails the same way every time.
+// with the same helm error count as a failed install: it retries without
+// end, and a chart or values error fails the same way every time, while
+// a run that fails on a cluster still starting fails some other way.
 const helmJobFailures = 3
 
 // helmJob is the Helm controller's install job of the kivali HelmChart,
@@ -640,7 +642,7 @@ func (c containerStatus) failedRuns() (n int, previous bool, last *terminatedSta
 	return n, previous, last
 }
 
-// helmPodList is the part of the install job's pods helmJobFailed reads.
+// helmPodList is the part of the install job's pods helmWatch reads.
 type helmPodList struct {
 	Items []struct {
 		Metadata struct {
@@ -653,11 +655,12 @@ type helmPodList struct {
 	} `json:"items"`
 }
 
-// helmRun is the install job's container that has failed the most
-// times.
+// helmRun is a container of the install job's unfinished pods and its
+// latest failed run.
 type helmRun struct {
 	pod, container string
-	failures       int
+	// failures is how many runs of the container have failed.
+	failures int
 	// previous is whether the latest failed run is the container's
 	// previous instance rather than its current one.
 	previous bool
@@ -665,31 +668,32 @@ type helmRun struct {
 	message string
 }
 
-// failedHelmRuns finds the container of the install job's unfinished
-// pods that has failed the most times. The Helm controller's job runs
+// failedHelmRuns lists the containers of the install job's unfinished
+// pods that have failed at least once. The Helm controller's job runs
 // its pod with restartPolicy OnFailure, so a failed helm run restarts
 // the container in place and the job's .status.failed stays 0: the
 // failures are the container's (containerStatus.failedRuns).
-func failedHelmRuns(pl helmPodList) helmRun {
-	var worst helmRun
+func failedHelmRuns(pl helmPodList) []helmRun {
+	var runs []helmRun
 	for _, p := range pl.Items {
 		if p.Status.Phase == "Succeeded" || p.Status.Phase == "Failed" {
-			// An earlier install's pod, or one the job's .status.failed
-			// already counts.
+			// An earlier install's pod, or one past the job's
+			// backoffLimit, which no longer runs.
 			continue
 		}
 		for _, c := range p.Status.ContainerStatuses {
 			n, previous, last := c.failedRuns()
-			if n <= worst.failures {
+			if n == 0 {
 				continue
 			}
-			worst = helmRun{pod: p.Metadata.Name, container: c.Name, failures: n, previous: previous}
+			r := helmRun{pod: p.Metadata.Name, container: c.Name, failures: n, previous: previous}
 			if last != nil {
-				worst.message = last.Message
+				r.message = last.Message
 			}
+			runs = append(runs, r)
 		}
 	}
-	return worst
+	return runs
 }
 
 // helmError is helm's own error in an install job's log: from the last
@@ -709,52 +713,67 @@ func helmError(logs []byte) string {
 	return strings.Join(lines, " ")
 }
 
-// helmJobFailed reports the Helm controller's install job as failed,
-// with helm's own error, once its runs have failed helmJobFailures
-// times: the job's failed pods plus the failed runs of its unfinished
-// pod.
-func helmJobFailed(ctx context.Context, g Guest) error {
-	out, err := kubectl(ctx, g, "-n", "kube-system", "get", "job", helmJob, "-o", "jsonpath={.status.failed}")
+// helmWatch follows the Helm controller's install job across the polls
+// of one wait, and reads each failed run's helm error once.
+type helmWatch struct {
+	// seen is, per pod/container, how many of its failed runs have been
+	// looked at.
+	seen map[string]int
+	// errs counts the failed runs seen with each helm error.
+	errs map[string]int
+}
+
+func newHelmWatch() *helmWatch {
+	return &helmWatch{seen: map[string]int{}, errs: map[string]int{}}
+}
+
+// check reports the install job as failed, with helm's own error, once
+// helmJobFailures of its runs have failed with that same error; a nil
+// watch reports nothing. Each
+// new failed run's error is read from its own log (logs --previous once
+// the container has restarted or waits to; the current instance may be
+// a fresh run that has not failed yet), else its termination message. A
+// run whose error cannot be read, and a run that polls missed (only the
+// latest failed run's log is kept), count for nothing: the wait's
+// timeout ends those.
+func (w *helmWatch) check(ctx context.Context, g Guest) error {
+	if w == nil {
+		return nil
+	}
+	out, err := kubectl(ctx, g, "-n", "kube-system", "get", "pods", "-l", helmJobPods, "-o", "json")
 	if err != nil {
 		return nil
 	}
-	var failed int
-	if s := strings.TrimSpace(string(out)); s != "" {
-		if _, err := fmt.Sscan(s, &failed); err != nil {
-			return nil
-		}
-	}
-	var run helmRun
-	if out, err := kubectl(ctx, g, "-n", "kube-system", "get", "pods", "-l", helmJobPods, "-o", "json"); err == nil {
-		var pl helmPodList
-		if json.Unmarshal(out, &pl) == nil {
-			run = failedHelmRuns(pl)
-		}
-	}
-	failed += run.failures
-	if failed < helmJobFailures {
+	var pl helmPodList
+	if json.Unmarshal(out, &pl) != nil {
 		return nil
 	}
-	// The failed run's own log: the current instance may be a fresh
-	// run that has not failed yet.
-	logArgs := []string{"-n", "kube-system", "logs", "job/" + helmJob, "--tail=40"}
-	if run.pod != "" {
-		logArgs = []string{"-n", "kube-system", "logs", run.pod, "-c", run.container, "--tail=40"}
-		if run.previous {
-			logArgs = append(logArgs, "--previous")
+	for _, r := range failedHelmRuns(pl) {
+		key := r.pod + "/" + r.container
+		if r.failures <= w.seen[key] {
+			continue
+		}
+		w.seen[key] = r.failures
+		args := []string{"-n", "kube-system", "logs", r.pod, "-c", r.container, "--tail=40"}
+		if r.previous {
+			args = append(args, "--previous")
+		}
+		var reason string
+		if logs, err := kubectl(ctx, g, args...); err == nil {
+			reason = helmError(logs)
+		}
+		if reason == "" {
+			reason = strings.TrimSpace(r.message)
+		}
+		if reason == "" {
+			continue
+		}
+		w.errs[reason]++
+		if w.errs[reason] >= helmJobFailures {
+			return fmt.Errorf("the Helm controller failed to install the chart %d times with the same error: %s", w.errs[reason], reason)
 		}
 	}
-	var reason string
-	if logs, err := kubectl(ctx, g, logArgs...); err == nil {
-		reason = helmError(logs)
-	}
-	if reason == "" {
-		reason = strings.TrimSpace(run.message)
-	}
-	if reason == "" {
-		reason = "see `k3s kubectl -n kube-system logs job/" + helmJob + "`"
-	}
-	return fmt.Errorf("the Helm controller failed to install the chart %d times: %s", failed, reason)
+	return nil
 }
 
 // waitServing waits for the deployment (at chartVersion and image, when
@@ -770,8 +789,9 @@ func (s *Supervisor) waitServing(ctx context.Context, chartVersion, image string
 		what = "the server deployment to roll out at chart " + chartVersion
 	}
 	logf("waiting for %s", what)
+	hw := newHelmWatch()
 	if err := poll(ctx, s.o.Clock, deployTimeout, pollInterval, what, func(ctx context.Context) error {
-		return deploymentState(ctx, g, chartVersion, image)
+		return deploymentState(ctx, g, chartVersion, image, hw)
 	}); err != nil {
 		return err
 	}

@@ -473,13 +473,16 @@ func TestInstallValuesClientAndEnv(t *testing.T) {
 	}
 }
 
+// A first install whose values Helm refuses fails on the third run with
+// the same helm error, three looks in, and says helm's error: without
+// that the person waits ten minutes for an error naming nothing.
 func TestSetOverridesAndHelmFailure(t *testing.T) {
 	h := newHarness(t)
 	h.vm.helmBroken["kivali-0.15.0.tgz"] = true
 	o := owner
 	o.Set = []string{"secrets.oauthRedirectURL=http://127.0.0.1:1/auth/callback", "networkPolicy.serverIngress.enabled=false"}
 	err := h.up(UpOptions{Install: o})
-	if err == nil || !strings.Contains(err.Error(), "failed to install the chart 3 times: Error: INSTALLATION FAILED: duplicate entries .env: duplicate key") {
+	if err == nil || !strings.Contains(err.Error(), "failed to install the chart 3 times with the same error: Error: INSTALLATION FAILED: duplicate entries .env: duplicate key") {
 		t.Fatalf("up: %v", err)
 	}
 	if h.vm.helmRuns != helmJobFailures {
@@ -607,7 +610,8 @@ func TestUpgradeRollsBackABrokenRelease(t *testing.T) {
 }
 
 // A release whose chart or values Helm refuses must roll back as soon as
-// the install job has failed a few times, with helm's own error. k3s's
+// the install job has failed three times with the same error (three
+// looks), with helm's own error. k3s's
 // install job restarts its container in place and never counts a failed
 // pod, so without this the update waited out the whole rollout timeout
 // (about 11 minutes with the rollback) and named only the chart label.
@@ -649,10 +653,51 @@ func TestFailedHelmRuns(t *testing.T) {
 		if err := json.Unmarshal([]byte(c.pods), &pl); err != nil {
 			t.Fatal(err)
 		}
-		r := failedHelmRuns(pl)
+		var r helmRun
+		if runs := failedHelmRuns(pl); len(runs) > 0 {
+			r = runs[0]
+		}
 		if r.failures != c.failures || (r.failures > 0 && r.previous != c.previous) {
 			t.Errorf("%s: %+v, want %d failures (previous %v)", c.name, r, c.failures, c.previous)
 		}
+	}
+}
+
+// Helm runs that fail while the cluster is still starting fail each
+// with some other error, and the install then goes through. Counting
+// them as a broken chart would abort a healthy install or roll back a
+// good update on a slow first boot.
+func TestHelmInstallGetsPastDifferentTransientErrors(t *testing.T) {
+	h := newHarness(t)
+	h.vm.helmErrors = []string{
+		"Error: Kubernetes cluster unreachable: the server is currently unable to handle the request",
+		"Error: failed to create resource: etcdserver: request timed out",
+		"Error: INSTALLATION FAILED: Internal error occurred: failed calling webhook",
+	}
+	if err := h.up(UpOptions{Install: owner}); err != nil {
+		t.Fatalf("up: %v", err)
+	}
+	if h.vm.helmRuns != 3 || h.sup.State().Kivali != "0.15.0" {
+		t.Fatalf("%d failed runs, state %+v", h.vm.helmRuns, h.sup.State())
+	}
+}
+
+// Transient failures before a broken chart's own error neither end the
+// wait nor delay its end: it fails on the third run with the chart's
+// error, not on the third failed run, and not after the timeout.
+func TestHelmFailsOnTheThirdIdenticalError(t *testing.T) {
+	h := newHarness(t)
+	h.vm.helmBroken["kivali-0.15.0.tgz"] = true
+	h.vm.helmErrors = []string{
+		"Error: Kubernetes cluster unreachable: the server is currently unable to handle the request",
+		"Error: failed to create resource: etcdserver: request timed out",
+	}
+	err := h.up(UpOptions{Install: owner})
+	if err == nil || !strings.Contains(err.Error(), "failed to install the chart 3 times with the same error: Error: INSTALLATION FAILED: duplicate entries .env: duplicate key") {
+		t.Fatalf("up: %v", err)
+	}
+	if h.vm.helmRuns != 5 {
+		t.Fatalf("the install job's pod was looked at %d times; the fifth run, the third identical failure, should end the wait", h.vm.helmRuns)
 	}
 }
 
