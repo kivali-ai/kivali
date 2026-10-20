@@ -438,10 +438,10 @@ func (h *harness) importedNew() bool {
 // refusedForRoom checks an upgrade refused for room touched nothing:
 // no journal, no snapshot, the org still running on its version, and
 // nothing left in downloads.
-func refusedForRoom(t *testing.T, h *harness, err error, free uint64) {
+func refusedForRoom(t *testing.T, h *harness, err error, free uint64, outcome string) {
 	t.Helper()
 	if err == nil || !strings.Contains(err.Error(), "updating this team needs") || !strings.Contains(err.Error(), "only "+gb(free)+" is free") ||
-		!strings.Contains(err.Error(), "then update it again; nothing was changed") {
+		!strings.Contains(err.Error(), "then update it again; "+outcome) {
 		t.Fatalf("upgrade: %v", err)
 	}
 	if st := h.sup.State(); st.Upgrade != nil || st.Kivali != "0.15.0" || exists(h.snapPath()) {
@@ -474,7 +474,7 @@ func TestUpgradeRoomCountsTheSnapshotCopy(t *testing.T) {
 	h.freeBytes = func(string) (uint64, error) { return need - 1, nil }
 	h.mu.Unlock()
 	err = h.sup.Upgrade(context.Background(), UpgradeOptions{Feed: feed}, h.logf())
-	refusedForRoom(t, h, err, need-1)
+	refusedForRoom(t, h, err, need-1, nothingChanged)
 	if !strings.Contains(err.Error(), "needs "+gb(need)+" free") {
 		t.Fatalf("upgrade: %v, want %s needed", err, gb(need))
 	}
@@ -502,7 +502,7 @@ func TestUpgradeRoomForAClone(t *testing.T) {
 	h.freeBytes = func(string) (uint64, error) { return need - 1, nil }
 	h.mu.Unlock()
 	err := h.sup.Upgrade(context.Background(), UpgradeOptions{Feed: feed}, h.logf())
-	refusedForRoom(t, h, err, need-1)
+	refusedForRoom(t, h, err, need-1, nothingChanged)
 	h.mu.Lock()
 	h.freeBytes = func(string) (uint64, error) { return need, nil }
 	h.mu.Unlock()
@@ -531,7 +531,7 @@ func TestUpgradeRoomIsCheckedAgainAfterTheImport(t *testing.T) {
 	}
 	h.mu.Unlock()
 	err := h.sup.Upgrade(context.Background(), UpgradeOptions{Feed: feed}, h.logf())
-	refusedForRoom(t, h, err, 1<<30)
+	refusedForRoom(t, h, err, 1<<30, stillRunning)
 	if !h.importedNew() || len(k.opNames()) != 0 {
 		t.Fatalf("want a refusal after the import and before the snapshot: ops %v", k.opNames())
 	}

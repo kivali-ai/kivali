@@ -97,7 +97,7 @@ func (s *Supervisor) migrateLocked(ctx context.Context, logf Logf) error {
 		// With a data disk in place already, the import copies nothing
 		// (ErrAlreadyImported), so it needs no room.
 		if !exists(s.dataPath()) {
-			if err := s.needRoom(s.dataDir(), uint64(used)+migrateSpare, "updating this team's data", "resume the team"); err != nil {
+			if err := s.needRoom(s.dataDir(), uint64(used)+migrateSpare, "updating this team's data", "resume the team", nothingChanged); err != nil {
 				return err
 			}
 		}
@@ -189,7 +189,7 @@ func existingDir(dir string) string {
 // less than need bytes free: the sentence says how much it needs, where,
 // how much to free, and that the person can then (then) again. A volume
 // whose free space cannot be read refuses nothing.
-func (s *Supervisor) needRoom(dir string, need uint64, what, then string) error {
+func (s *Supervisor) needRoom(dir string, need uint64, what, then, outcome string) error {
 	dir = existingDir(dir)
 	free, err := s.o.Host.FreeBytes(dir)
 	if err != nil || free >= need {
@@ -200,8 +200,8 @@ func (s *Supervisor) needRoom(dir string, need uint64, what, then string) error 
 		where = "drive " + v
 	}
 	return fmt.Errorf("%s needs %s free on %s, and only %s is free. "+
-		"Free up %s there, then %s; nothing was changed",
-		what, gb(need), where, gb(free), gb(need-free), then)
+		"Free up %s there, then %s; %s",
+		what, gb(need), where, gb(free), gb(need-free), then, outcome)
 }
 
 // gb is n bytes as GB with one decimal, as the desktop app writes sizes.
