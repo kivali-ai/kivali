@@ -468,6 +468,11 @@ func allowedToolNames(tools []provider.Tool) []string {
 		"subagent",
 		"subagent_status",
 		"subagent_cancel",
+		// The agent's web sessions are registered with the subagent
+		// trio: what a web task's session names, and the way to
+		// forget one.
+		"subagent_web_sessions",
+		"subagent_web_session_reset",
 		// CoS-only on the MCP side; harmless to whitelist on every
 		// agent because the MCP server itself refuses non-CoS callers.
 		"read_agent_role",
