@@ -23,11 +23,46 @@ type UpgradeOptions struct {
 	Force bool `json:"force,omitempty"`
 }
 
-// minFreeBytes is the host free space the upgrade insists on beyond
-// the downloads: the snapshot itself may cost nothing until blocks
-// diverge (an APFS clone on macOS), which the new release's first
-// writes make happen.
+// minFreeBytes is the host free space the upgrade leaves beside the
+// data disk once the release is downloaded and the snapshot taken: what
+// the new release writes first, and the system's own needs. The Host's
+// snapshot (an APFS clone on macOS) costs nothing until blocks diverge,
+// which those first writes make happen; a snapshot the backend copies
+// (DataDiskKeeper) costs the data disk's allocated bytes besides
+// (snapshotCost).
 const minFreeBytes = 2 << 30
+
+// upgradeRoom refuses an upgrade the host has no room for: beside the
+// data disk, minFreeBytes and what the snapshot costs; in downloads,
+// pending, the bytes still to download. On one volume the two add up.
+// The preflight asks before anything is downloaded.
+func (s *Supervisor) upgradeRoom(pending uint64, logf Logf) error {
+	const what, then = "updating this team", "update it again"
+	near := minFreeBytes + s.snapshotCost(logf)
+	downloads := filepath.Join(s.o.ConfigDir, "downloads")
+	if filepath.VolumeName(s.dataDir()) == filepath.VolumeName(downloads) {
+		return s.needRoom(s.dataDir(), near+pending, what, then)
+	}
+	if err := s.needRoom(s.dataDir(), near, what, then); err != nil {
+		return err
+	}
+	return s.needRoom(downloads, pending, what, then)
+}
+
+// snapshotCost is the host space the upgrade's snapshot takes: the data
+// disk's allocated bytes where the backend copies the disk
+// (DataDiskKeeper), nothing for the Host's clone.
+func (s *Supervisor) snapshotCost(logf Logf) uint64 {
+	if s.keeper(s.snapshotPath()) == nil {
+		return 0
+	}
+	used, _, err := s.o.Host.FileUsage(s.dataPath())
+	if err != nil {
+		logf("the data disk's size: %v", err)
+		return 0
+	}
+	return uint64(used)
+}
 
 // staged is everything step 2 produced.
 type staged struct {
@@ -92,8 +127,8 @@ func (s *Supervisor) Upgrade(ctx context.Context, o UpgradeOptions, logf Logf) e
 	if err := deploymentState(ctx, g, "", ""); err != nil {
 		return fmt.Errorf("preflight: the org is not healthy: %w", err)
 	}
-	if free, err := s.o.Host.FreeBytes(s.dataDir()); err == nil && free < minFreeBytes {
-		return fmt.Errorf("preflight: %d MiB free in %s; the upgrade needs at least %d MiB", free>>20, s.dataDir(), minFreeBytes>>20)
+	if err := s.upgradeRoom(uint64(rel.Chart.Size+rel.Images[s.platform()].Size), logf); err != nil {
+		return err
 	}
 
 	// 2. Fetch, verify and import. The org keeps running.

@@ -1117,8 +1117,8 @@ func writeReleaseWith(t *testing.T, dir, version, chartVersion, tag string, brow
 	}
 	rel := Release{
 		Version: version,
-		Chart:   Asset{Name: chartName, SHA256: sum(chart.Bytes())},
-		Images:  map[string]Asset{"linux/" + fakeArch: {Name: bundleName, SHA256: sum(bundle.Bytes())}},
+		Chart:   Asset{Name: chartName, SHA256: sum(chart.Bytes()), Size: int64(chart.Len())},
+		Images:  map[string]Asset{"linux/" + fakeArch: {Name: bundleName, SHA256: sum(bundle.Bytes()), Size: int64(bundle.Len())}},
 	}
 	b, _ := json.Marshal(rel)
 	feed := filepath.Join(dir, "release.json")
