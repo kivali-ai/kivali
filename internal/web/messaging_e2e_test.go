@@ -1113,7 +1113,7 @@ func TestE2E_RouteConcurrentPublishersUnderContention(t *testing.T) {
 
 // TestE2E_InboxHandlesDanglingInReplyTo covers the case where a
 // reply's InReplyTo points at a message file that no longer exists
-// (or never did). buildHistoryThreads's rootOf walks the chain via
+// (or never did). groupHistoryThreads's rootOf walks the chain via
 // byPath lookups; a missing parent must break the walk gracefully
 // rather than panicking, and the /inbox page must still render the
 // orphan reply (anchoring at the orphan's own path as the thread

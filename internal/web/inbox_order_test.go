@@ -17,7 +17,7 @@ import (
 //  2. CEO inbox History — `buildCEOInbox`. Sort key is max(Request.Date,
 //     Response.Date) so a freshly-resolved old request outranks a
 //     stale-resolved newer one.
-//  3. Message history threads — `buildHistoryThreads`. Sort key is the
+//  3. Message history threads — `groupHistoryThreads`. Sort key is the
 //     thread's LastActivity (root + any reply), so an old root with a
 //     fresh reply outranks a brand-new root that has no replies.
 //
@@ -94,11 +94,11 @@ func TestInboxOrderingNewestFirst(t *testing.T) {
 	oldRoot := writeTaskRequestAt(t, srv, "chief-of-staff", "alice", "old root", now.Add(-20*time.Hour))
 	writeStatusReplyAt(t, srv, "alice", "chief-of-staff", oldRoot, now.Add(-15*time.Minute))
 
-	all, err := srv.Store.ListMessages(store.MessageFilter{})
+	heads, err := srv.messageHeads()
 	if err != nil {
-		t.Fatalf("ListMessages: %v", err)
+		t.Fatalf("messageHeads: %v", err)
 	}
-	threads, _ := srv.buildHistoryThreads(all, nil, 100)
+	threads := groupHistoryThreads(heads, nil)
 	posOld, posFresh := -1, -1
 	for i, th := range threads {
 		switch th.RootPath {
@@ -237,7 +237,7 @@ func writeTaskRequestAt(t *testing.T, srv *Server, from, to, title string, when 
 }
 
 // writeStatusReplyAt writes a notice with InReplyTo pointing at
-// `inReplyTo` so buildHistoryThreads groups it under that root.
+// `inReplyTo` so groupHistoryThreads groups it under that root.
 // Returns the new message's relative path.
 func writeStatusReplyAt(t *testing.T, srv *Server, from, to, inReplyTo string, when time.Time) string {
 	t.Helper()

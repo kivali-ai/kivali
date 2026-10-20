@@ -1,12 +1,9 @@
 package web
 
 import (
-	"errors"
-	"path/filepath"
 	"sort"
 	"time"
 
-	"github.com/kivali-ai/kivali/internal/agent"
 	"github.com/kivali-ai/kivali/internal/assignments"
 	"github.com/kivali-ai/kivali/internal/store"
 )
@@ -79,8 +76,10 @@ func decisionLabel(msg store.Message) string {
 // are treated as "skip this item" rather than a hard error — the inbox
 // view is a structural projection, not a full log.
 func (s *Server) buildCEOInbox(page int) (CEOInboxView, error) {
-	hist, err := s.Store.ReadChatHistory(agent.CEOSlug)
-	if err != nil && !errors.Is(err, store.ErrNotFound) {
+	// The chat's inbox rows and the messages they point to, parsed only
+	// where they changed since the last build (home_cache.go).
+	hist, msgs, err := s.ceoInboxRead()
+	if err != nil {
 		return CEOInboxView{}, err
 	}
 
@@ -95,8 +94,8 @@ func (s *Server) buildCEOInbox(page int) (CEOInboxView, error) {
 		if e.Kind != "ceo_reply" || e.MessageRef == "" {
 			continue
 		}
-		resp, err := s.Store.ReadMessage(filepath.Join(s.Store.Root(), e.MessageRef))
-		if err != nil {
+		resp, ok := msgs[e.MessageRef]
+		if !ok {
 			continue
 		}
 		if resp.InReplyTo == "" {
@@ -113,7 +112,7 @@ func (s *Server) buildCEOInbox(page int) (CEOInboxView, error) {
 	// their assignment rather than failing the whole inbox.
 	var assignmentSet *assignments.Set
 	if tr := s.tracker(); tr != nil {
-		assignmentSet, _ = tr.Set()
+		assignmentSet, _ = s.currentAssignmentSet()
 	}
 
 	// Walk the ceo_inbox entries in order (they're the "received"
@@ -123,8 +122,8 @@ func (s *Server) buildCEOInbox(page int) (CEOInboxView, error) {
 		if e.Kind != "ceo_inbox" || e.MessageRef == "" {
 			continue
 		}
-		req, err := s.Store.ReadMessage(filepath.Join(s.Store.Root(), e.MessageRef))
-		if err != nil {
+		req, ok := msgs[e.MessageRef]
+		if !ok {
 			continue
 		}
 		item := CEOInboxItem{
@@ -164,7 +163,7 @@ func (s *Server) buildCEOInbox(page int) (CEOInboxView, error) {
 	// Newest-activity-first within each bucket. "Activity" is the most
 	// recent of (request date, response date): a stale request that
 	// just got a fresh reply ranks above a more recently-filed but
-	// stale-resolved one. Mirrors buildHistoryThreads's LastActivity
+	// stale-resolved one. Mirrors groupHistoryThreads's LastActivity
 	// sort so Needs you and Home's history follow the same rule. The
 	// Needs bucket is
 	// always Resolved=false, so its sort key reduces to Request.Date —
