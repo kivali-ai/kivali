@@ -2,6 +2,7 @@ package web
 
 import (
 	"bytes"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -199,6 +200,48 @@ func TestHomeHistoryParsesEachMessageOnce(t *testing.T) {
 	}
 	if len(heads) != 2 || heads[0].Path != a || heads[1].Path != b {
 		t.Errorf("heads = %+v, want %s then %s", heads, a, b)
+	}
+}
+
+// The history page groups threads from a listing of message files,
+// then reads the messages of the threads it shows. A bounce or the
+// tracker can move a message away (MoveToRedacted) in between, and the
+// move itself makes Home refetch the page, so a request already in
+// flight met a missing file and the whole page failed ("the message
+// history could not be read"). A reply moved away since the listing is
+// left out of its thread; a root moved away is store.ErrNotFound, which
+// the page skips.
+func TestHistoryThreadLeavesOutAMessageMovedAwaySinceTheListing(t *testing.T) {
+	srv, _ := newTurnServer(t)
+	now := time.Now().UTC()
+	a := writeTaskRequestAt(t, srv, "chief-of-staff", "alice", "root A", now.Add(-3*time.Hour))
+	r1 := writeStatusReplyAt(t, srv, "alice", "chief-of-staff", a, now.Add(-2*time.Hour))
+	r2 := writeStatusReplyAt(t, srv, "alice", "chief-of-staff", a, now.Add(-time.Hour))
+	heads, err := srv.messageHeads()
+	if err != nil {
+		t.Fatal(err)
+	}
+	threads := groupHistoryThreads(heads, nil)
+	if len(threads) != 1 || len(threads[0].ReplyPaths) != 2 {
+		t.Fatalf("threads = %+v, want %s with two replies", threads, a)
+	}
+
+	if _, err := srv.Store.MoveToRedacted(filepath.Join(srv.Store.Root(), r1)); err != nil {
+		t.Fatal(err)
+	}
+	th, err := srv.loadHistoryThread(threads[0])
+	if err != nil {
+		t.Fatalf("a reply moved away since the listing: %v", err)
+	}
+	if len(th.Replies) != 1 || th.Replies[0].Path != r2 {
+		t.Errorf("replies = %+v, want only %s", th.Replies, r2)
+	}
+
+	if _, err := srv.Store.MoveToRedacted(filepath.Join(srv.Store.Root(), a)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := srv.loadHistoryThread(threads[0]); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("a root moved away since the listing: err %v, want store.ErrNotFound", err)
 	}
 }
 

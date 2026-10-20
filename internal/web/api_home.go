@@ -663,6 +663,9 @@ func (s *Server) handleAPIHomeHistory(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, ref := range threads[start:end] {
 		t, err := s.loadHistoryThread(ref)
+		if errors.Is(err, store.ErrNotFound) {
+			continue // its root moved away since the listing
+		}
 		if err != nil {
 			writeAPIError(w, http.StatusInternalServerError, "the message history could not be read", whoServer)
 			return
