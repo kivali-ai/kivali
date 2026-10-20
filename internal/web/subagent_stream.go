@@ -237,8 +237,10 @@ func (t *jsonlTailer) readNew() ([][]byte, error) {
 	return out, nil
 }
 
-// metaIsTerminal reports whether a meta.json body indicates the
-// subagent is done (either way) or is still running.
+// metaIsTerminal reports whether a meta.json body records a task that
+// has ended, however it ended (completed, errored, failed or
+// cancelled), as opposed to one that is queued, running or waiting for
+// a person.
 func metaIsTerminal(body []byte) bool {
 	var m struct {
 		Status string `json:"status"`
@@ -247,7 +249,7 @@ func metaIsTerminal(body []byte) bool {
 		return false
 	}
 	switch m.Status {
-	case "completed", "errored":
+	case subagentJobCompleted, "errored", subagentJobFailed, subagentJobCancelled:
 		return true
 	default:
 		return false

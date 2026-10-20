@@ -60,16 +60,18 @@ export function sessionTree(sessions: readonly BackgroundSession[]): PlacedSessi
   return out;
 }
 
-/** "2 running · 1 done · 1 needs help", or what a step with no sessions says about itself. */
+/** "2 running · 1 waiting · 1 done · 1 needs help", or what a step with no sessions says about itself. */
 function stepMeta(step: PlanStep, sessions: readonly BackgroundSession[]): string {
   if (sessions.length === 0) return step.state === 'done' ? 'Done' : step.state === 'needs_help' ? 'Needs help' : 'Not started';
   const count = (test: (s: BackgroundSession) => boolean) => sessions.filter(test).length;
   const parts: string[] = [];
   const running = count((s) => s.state === 'running');
+  const waiting = count((s) => s.state === 'waiting');
   const queued = count((s) => s.state === 'queued');
   const done = count((s) => s.state === 'done');
   const errored = count((s) => s.state === 'errored');
   if (running) parts.push(running + ' running');
+  if (waiting) parts.push(waiting + ' waiting');
   if (queued) parts.push(queued + ' queued');
   if (done) parts.push(done + ' done');
   if (errored) parts.push(errored + ' needs help');
