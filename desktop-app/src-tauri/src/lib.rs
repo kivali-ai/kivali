@@ -195,7 +195,7 @@ pub fn run() {
             // An update's relaunch keeps the arguments Kivali had,
             // --autostart included, and opens the window like any other
             // launch (appupdate.rs).
-            let autostarted = !appupdate::take_relaunch_mark(&dir) && autostart_arg;
+            let autostarted = !appupdate::take_relaunch_mark(&dir, now_unix()) && autostart_arg;
             let (teams, report) = TeamsFile::load(&dir, now_unix())?;
             for r in &report.repairs {
                 eprintln!("kivali: teams.json: {r}");

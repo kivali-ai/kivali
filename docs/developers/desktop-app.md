@@ -1220,8 +1220,10 @@ when there are no teams). An update's relaunch keeps the arguments of
 the process it replaces, `--autostart` included (macOS: `app.restart()`
 passes Tauri's `Env::args_os`; Windows: the updater hands them to the
 installer's `/ARGS`, which relaunches with them), so the update marks
-the relaunch with `.relaunch-after-update` in the config directory and
-the launch that finds it opens the window anyway (`appupdate.rs`). The app update check runs at every launch,
+the relaunch with `.relaunch-after-update` in the config directory,
+stamped with the time, and the launch that finds a mark at most an hour
+old opens the window anyway (`appupdate.rs`); an older one, left by an
+installer cancelled partway, is removed and ignored. The app update check runs at every launch,
 then once a day while Kivali runs ("Update states").
 
 **Quit** (the tray, the menu bar with ⌘Q) asks first (E2, a native
