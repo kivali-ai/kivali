@@ -71,7 +71,10 @@ Every role should include:
 - **Working style** — communication norms, cadence, escalation triggers.
 - **Business context** — the load-bearing parts of the biz plan /
   market / product for *this* role. Embed directly; don't defer.
-- **Initial priorities** — what to work on first.
+
+A role says who the agent is, not what it should do first. Leave out
+tasks and priorities: once it is hired, its work comes as assignments
+from whoever needs it.
 
 Keep roles focused. Not every agent needs the whole biz plan.
 
