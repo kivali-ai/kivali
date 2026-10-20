@@ -161,8 +161,10 @@ The chart has no upgrade hooks. A restarted server adopts the agent pods it find
 4. Upgrade the chart:
 
    ```sh
-   helm upgrade kivali kivali-X.Y.Z.tgz -n kivali --reuse-values
+   helm upgrade kivali kivali-X.Y.Z.tgz -n kivali --reset-then-reuse-values
    ```
+
+   `--reset-then-reuse-values` (Helm 3.14 or later) starts from the new chart's defaults and applies the values you set on earlier installs and upgrades over them. Do not use `--reuse-values`: it keeps the old release's values whole and skips the new chart's defaults, so a value the new chart added is missing and the upgrade fails. With an older Helm, repeat the flags you installed with instead (for example `--set externalURL=https://kivali.example.com`).
 
 If the upgrade did not restart the server (only values changed, same image tag), restart it with `kubectl -n kivali rollout restart deploy/kivali` after deleting the agent pods. The server recreates agent pods as agents are needed.
 
