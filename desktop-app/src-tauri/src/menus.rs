@@ -677,7 +677,7 @@ pub fn confirm_app_update(app: &AppHandle) {
         spec,
         Box::new(move |a| {
             if a.button == 0 {
-                shell::install_app_update(&app2);
+                crate::appupdate::install_app_update(&app2);
             }
         }),
     );
@@ -719,7 +719,7 @@ fn command(app: &AppHandle, id: &str) {
         "connect" => open_off_main(app, |app| windows::show_setup(app, "connect")),
         "settings" => open_off_main(app, |app| windows::show_settings(app, "general")),
         "check-updates" => {
-            shell::check_desktop_update(app);
+            crate::appupdate::check_desktop_update(app);
             open_off_main(app, |app| windows::show_settings(app, "general"));
         }
         "app-update" => confirm_app_update(app),
