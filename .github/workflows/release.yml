@@ -306,7 +306,7 @@ jobs:
       # bundle from running it out.
       - name: Free the disk the images build used
         run: |
-          rm -f dist/images/kivali-*-${{ matrix.arch }}.tar
+          rm -f dist/images/kivali-${{ matrix.arch }}.tar dist/images/kivali-*-${{ matrix.arch }}.tar
           docker image prune -af
           docker buildx prune -af
           df -h /
