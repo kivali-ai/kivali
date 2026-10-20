@@ -40,11 +40,42 @@
   ${EndIf}
 !macroend
 
+; Shuts down the teams' VMs that are running (kivali- and 8 hex digits,
+; broker.VMName) the way the broker's own stop does, through Hyper-V's
+; shutdown integration service, never turning one off, and waits up to
+; two minutes for them. A running VM holds vm\root.vhdx open, the parent
+; of its root disk, so the copy over it would stop at "Error opening
+; file for writing". Pausing the teams before an update stops their VMs
+; through their supervisors, but a VM outlives a stop that failed or
+; timed out (the supervisor is then terminated) until its team next
+; starts. A paused VM (Hyper-V pauses one whose disk is full) is left
+; as it is. Run only where Hyper-V's management service exists; its
+; cmdlets are 64-bit only and the installer is a 32-bit process, so the
+; 64-bit PowerShell runs, with file system redirection off for the call.
+; A failure is written to the details and the install goes on.
+!macro KivaliStopTeamVMs
+  nsExec::Exec '"$SYSDIR\sc.exe" query vmms'
+  Pop $0
+  ${If} $0 == 0
+    DetailPrint "Shutting down the teams' virtual machines"
+    ${DisableX64FSRedirection}
+    nsExec::ExecToLog `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$$vms = @(Get-VM | Where-Object { $$_.Name -match '^kivali-[0-9a-f]{8}$$' -and $$_.State -eq 'Running' }); if ($$vms.Count -gt 0) { $$job = Stop-VM -VM $$vms -Confirm:$$false -AsJob; if (-not (Wait-Job -Job $$job -Timeout 120)) { exit 1 }; Receive-Job -Job $$job -ErrorAction Stop }"`
+    Pop $0
+    ${EnableX64FSRedirection}
+    ${If} $0 != 0
+      DetailPrint "Kivali could not shut down every team's virtual machine; see the details above"
+    ${EndIf}
+  ${EndIf}
+!macroend
+
 ; Before the files are copied: an upgrade replaces kivali-supervisor.exe,
-; which the running broker holds open.
+; which the running broker holds open, and vm\root.vhdx, which a running
+; team's VM holds open. The broker stops first, so nothing starts a VM
+; meanwhile.
 !macro NSIS_HOOK_PREINSTALL
   !insertmacro CheckIfAppIsRunning "$INSTDIR\${MAINBINARYNAME}.exe" "${PRODUCTNAME}"
   !insertmacro KivaliBrokerStop
+  !insertmacro KivaliStopTeamVMs
 !macroend
 
 ; After the files: register the service and start it. `broker install`
