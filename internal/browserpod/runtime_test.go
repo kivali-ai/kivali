@@ -416,9 +416,10 @@ func TestWaitRunsOutOnTheClock(t *testing.T) {
 	if res := h.core.command("g", "", CommandNavigate, NavigateArgs{URL: "https://a.test/"}); !res.OK {
 		t.Fatalf("navigate: %+v", res)
 	}
-	id := h.core.sendCommand("g", "", CommandWait, WaitArgs{For: WaitText, Value: "Welcome", TimeoutMS: 5000})
 	// The command timeout, the wait's own timer and its poll ticker.
-	h.clk.BlockUntil(3)
+	armed := h.clk.Waiters() + 3
+	id := h.core.sendCommand("g", "", CommandWait, WaitArgs{For: WaitText, Value: "Welcome", TimeoutMS: 5000})
+	h.clk.BlockUntil(armed)
 	h.clk.Advance(5 * time.Second)
 	res := h.core.result(id)
 	if res.Code != CodeTimeout || !strings.Contains(res.Error, "https://a.test/") {
@@ -431,8 +432,10 @@ func TestOneGroupWaitingDoesNotBlockAnother(t *testing.T) {
 	if res := h.core.command("slow", "", CommandNavigate, NavigateArgs{URL: "https://a.test/"}); !res.OK {
 		t.Fatalf("navigate: %+v", res)
 	}
+	// The command timeout and the wait's own timer.
+	armed := h.clk.Waiters() + 2
 	waitID := h.core.sendCommand("slow", "", CommandWait, WaitArgs{For: WaitNavigation})
-	h.clk.BlockUntil(2)
+	h.clk.BlockUntil(armed)
 	if res := h.core.command("fast", "", CommandNavigate, NavigateArgs{URL: "https://b.test/"}); !res.OK {
 		t.Fatalf("other group blocked: %+v", res)
 	}
