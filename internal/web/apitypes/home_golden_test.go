@@ -62,7 +62,6 @@ func goldenHome() Home {
 			{
 				ID: "web_upload:buyer/cccc3333", Kind: NeedKindWebUpload, Title: "Upload 2 files to vendor.example",
 				From: PersonRef{Slug: "buyer", Name: "Buyer"}, At: t1,
-				BodyMD: "A web task wants to upload these files to vendor.example. It starts at the address below, stays on vendor.example and puts the files only on its pages. What the site does with a file after that is up to the site, as when you upload it yourself. Open each file to check it is the one you mean. Approve and it starts. Deny and it ends without uploading anything; the agent reads your note.",
 				Attachments: []AttachmentRef{
 					{Name: "quote-signed.pdf", SizeBytes: 48213, URL: "/api/v1/agents/buyer/subagents/cccc3333/files/quote-signed.pdf"},
 					{Name: "terms.pdf", SizeBytes: 12077, URL: "/api/v1/agents/buyer/subagents/cccc3333/files/terms.pdf"},

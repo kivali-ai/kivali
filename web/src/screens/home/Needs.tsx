@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useHref, useNavigate } from 'react-router';
-import type { AssignmentResolution, NeedItem, SubagentRef, WebBudgetRef, WebUploadRef } from '../../api/types.gen';
+import type { AssignmentResolution, AttachmentRef, NeedItem, SubagentRef, WebBudgetRef, WebUploadRef } from '../../api/types.gen';
 import { browserWindowName, browserWindowPath, subagentPath } from '../../app/links';
 import { Badge, Button, EmptyState, Icon, ListRow, Select, Text, TextField } from '../../ds';
 import { pickFiles } from '../../lib/pickFiles';
@@ -148,10 +148,10 @@ function SignInActions({ task }: { task: SubagentRef }) {
 }
 
 /**
- * A web task that wants to upload files: what it uploads, where it starts and the prompt its agent gave it, then
- * deny or approve with a note. The prompt is the agent's words, shown as plain text.
+ * A web task that wants to upload files: what it uploads, where it starts and the prompt its agent gave it, a
+ * download of each file just above the note, then deny or approve. The prompt is the agent's words, shown as plain text.
  */
-function UploadApproval({ upload, onAct }: { upload: WebUploadRef; onAct(a: NeedAction): void }) {
+function UploadApproval({ upload, files, onAct }: { upload: WebUploadRef; files: readonly AttachmentRef[]; onAct(a: NeedAction): void }) {
   const [message, setMessage] = useState('');
   return (
     <>
@@ -181,6 +181,7 @@ function UploadApproval({ upload, onAct }: { upload: WebUploadRef; onAct(a: Need
           </Text>
         </dd>
       </dl>
+      <Attachments items={files} />
       <TextField label="Note (optional)" multiline rows={2} placeholder="Say why, if you deny it." value={message} onChange={(e) => setMessage(e.currentTarget.value)} />
       <div className="app-home-actions">
         <span className="app-home-spacer" />
@@ -257,7 +258,7 @@ function NeedRow({ item, now, base, expanded, onToggle, onAct }: NeedRowProps) {
             <SoftwarePackages packages={item.packages} />
           )}
           <Body markdown={item.body_md} />
-          <Attachments items={item.attachments} />
+          {item.kind !== 'web_upload' && <Attachments items={item.attachments} />}
           {item.kind === 'approval' && <ApprovalForm approve={item.proposal_kind === 'software_install' ? 'Install' : 'Approve'} onAct={onAct} />}
           {item.kind === 'notification' && <AckForm onAct={onAct} />}
           {item.kind === 'assignment' && <HandBackForm assignmentId={item.assignment?.id} onAct={onAct} />}
@@ -271,7 +272,7 @@ function NeedRow({ item, now, base, expanded, onToggle, onAct }: NeedRowProps) {
             </div>
           )}
           {item.kind === 'web_sign_in' && item.subagent && <SignInActions task={item.subagent} />}
-          {item.kind === 'web_upload' && item.web_upload && <UploadApproval upload={item.web_upload} onAct={onAct} />}
+          {item.kind === 'web_upload' && item.web_upload && <UploadApproval upload={item.web_upload} files={item.attachments} onAct={onAct} />}
           {item.kind === 'web_budget' && item.web_budget && <BudgetNotice notice={item.web_budget} onAct={onAct} />}
         </div>
       )}

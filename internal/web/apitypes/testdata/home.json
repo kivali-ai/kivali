@@ -153,7 +153,7 @@
         "name": "Buyer"
       },
       "at": "2026-09-20T17:00:00Z",
-      "body_md": "A web task wants to upload these files to vendor.example. It starts at the address below, stays on vendor.example and puts the files only on its pages. What the site does with a file after that is up to the site, as when you upload it yourself. Open each file to check it is the one you mean. Approve and it starts. Deny and it ends without uploading anything; the agent reads your note.",
+      "body_md": "",
       "attachments": [
         {
           "name": "quote-signed.pdf",

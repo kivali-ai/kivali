@@ -193,7 +193,7 @@ func TestWebUploadWaitsForApprovalThenRuns(t *testing.T) {
 	if !ok {
 		t.Fatalf("Home lists no %s", id)
 	}
-	if need.Kind != apitypes.NeedKindWebUpload || need.Title != "Upload 1 file to vendor.com" || need.From.Name != "Analyst" || need.WebUpload == nil ||
+	if need.Kind != apitypes.NeedKindWebUpload || need.Title != "Upload 1 file to vendor.com" || need.BodyMD != "" || need.From.Name != "Analyst" || need.WebUpload == nil ||
 		need.WebUpload.StartURL != "https://portal.vendor.com/quotes/new" || !slices.Equal(need.WebUpload.Files, []string{"/files/artifacts/private/quote.pdf"}) ||
 		need.WebUpload.Prompt != "find the price" || need.WebUpload.Site != "vendor.com" || need.WebUpload.Description != "price the renewal" {
 		t.Errorf("web_upload row = %+v %+v", need, need.WebUpload)
@@ -228,9 +228,6 @@ func TestWebUploadWaitsForApprovalThenRuns(t *testing.T) {
 	}
 	if err := os.WriteFile(quotePath, []byte("pdf"), 0o644); err != nil {
 		t.Fatal(err)
-	}
-	if !strings.Contains(need.BodyMD, "puts the files only on its pages. What the site does with a file after that is up to the site") {
-		t.Errorf("body = %s", need.BodyMD)
 	}
 	if snap := srv.orgSnapshotValue(); !slices.Contains(snap.Inbox.CEOPaths, id) || snap.Inbox.Unactioned < 1 {
 		t.Errorf("snapshot inbox = %+v", snap.Inbox)
