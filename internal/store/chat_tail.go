@@ -27,10 +27,12 @@ const (
 // append completes it: it is read again then, as a row.
 //
 // A chat file only grows, except that a cut append is truncated away
-// (past every complete line, so past what was read) and a rotation moves
-// the file away for a new one. A file that is no longer the one read so
-// far, or is shorter than what was read, is read again from the top, and
-// the Read says so.
+// (past every complete line, so past what was read), a rotation moves
+// the file away for a new one, and a restore writes it over in place. A
+// Read starts again from the top, and says so, when the file is no
+// longer the one read so far, is shorter than what was read, or holds
+// other bytes than the ones read just before where the last read
+// stopped.
 //
 // A ChatTail is not safe for concurrent use.
 type ChatTail struct {
@@ -38,10 +40,19 @@ type ChatTail struct {
 	label   string
 	maxLine int
 	// off is just past the last complete line read; fi is the file it
-	// was read from, nil before the first read.
-	off int64
-	fi  os.FileInfo
+	// was read from, nil before the first read; mark is the file's last
+	// bytes before off (up to chatTailMarkLen), as read.
+	off  int64
+	fi   os.FileInfo
+	mark []byte
 }
+
+// chatTailMarkLen is how much of a chat ChatTail checks before reading
+// on: the end of the last row read. A row's end carries its timestamp
+// and the message path it points at, so a chat written over with other
+// rows differs there; one written over with the same rows reads on
+// from the same place.
+const chatTailMarkLen = 256
 
 // ChatTailRead is what one Read found.
 type ChatTailRead struct {
@@ -75,7 +86,7 @@ func (t *ChatTail) Read() (ChatTailRead, error) {
 	f, err := os.Open(t.path)
 	if errors.Is(err, os.ErrNotExist) {
 		r.Reset = t.fi != nil
-		t.off, t.fi = 0, nil
+		t.off, t.fi, t.mark = 0, nil, nil
 		return r, ErrNotFound
 	}
 	if err != nil {
@@ -86,9 +97,18 @@ func (t *ChatTail) Read() (ChatTailRead, error) {
 	if err != nil {
 		return r, err
 	}
-	if t.fi != nil && (!os.SameFile(t.fi, fi) || fi.Size() < t.off) {
-		r.Reset = true
-		t.off = 0
+	if t.fi != nil {
+		r.Reset = !os.SameFile(t.fi, fi) || fi.Size() < t.off
+		if !r.Reset {
+			at, err := readAtMost(f, t.off-int64(len(t.mark)), len(t.mark))
+			if err != nil {
+				return r, err
+			}
+			r.Reset = !bytes.Equal(at, t.mark)
+		}
+		if r.Reset {
+			t.off, t.mark = 0, nil
+		}
 	}
 	t.fi = fi
 	keep, tail, err := jsonlTailFrom(f, t.off, fi.Size())
@@ -120,7 +140,25 @@ func (t *ChatTail) Read() (ChatTailRead, error) {
 		}
 		r.Tail = &m
 	}
+	if keep != t.off {
+		n := min(keep, chatTailMarkLen)
+		mark, err := readAtMost(f, keep-n, int(n))
+		if err != nil {
+			return r, err
+		}
+		t.mark = mark
+	}
 	t.off = keep
 	r.Rows = rows
 	return r, nil
+}
+
+// readAtMost reads n bytes of f at off, fewer when the file ends first.
+func readAtMost(f *os.File, off int64, n int) ([]byte, error) {
+	buf := make([]byte, n)
+	got, err := f.ReadAt(buf, off)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return nil, err
+	}
+	return buf[:got], nil
 }
