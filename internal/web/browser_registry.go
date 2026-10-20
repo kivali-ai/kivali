@@ -287,6 +287,14 @@ type browser struct {
 	// failed; startErr says which.
 	ready    chan struct{}
 	startErr error
+	// stopStart cancels the pod's start (startPod), which runs apart
+	// from every caller; startDone is closed once it has returned, so
+	// the pod's delete cannot run ahead of its create.
+	stopStart context.CancelFunc
+	startDone chan struct{}
+	// reset: Reset ended this browser. A caller waiting for it to start
+	// is given the next browser of the session instead (acquire).
+	reset bool
 
 	startedAt time.Time
 	lastUsed  time.Time
@@ -785,7 +793,10 @@ func (r *browserRegistry) dropPending(b *browser, id string) {
 }
 
 // acquire returns the running browser for (slug, session), starting
-// one when none exists and waiting for it to report running.
+// one when none exists and waiting for it to report running. The start
+// runs apart from every caller (startPod): ctx ends only this caller's
+// wait, never the start other callers are waiting on. A caller whose
+// browser was reset while it waited is given the session's next one.
 func (r *browserRegistry) acquire(ctx context.Context, slug, session string) (*browser, error) {
 	if !r.Enabled() {
 		return nil, errors.New("browsers are not available in this deployment")
@@ -795,89 +806,129 @@ func (r *browserRegistry) acquire(ctx context.Context, slug, session string) (*b
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
-	r.mu.Lock()
-	b, ok := r.browsers[browserKey(slug, session)]
-	switch {
-	case ok && b.state == browserSaving:
-		// A reap in progress: the next browser starts from the profile
-		// this one is saving.
-		r.mu.Unlock()
-		return nil, errors.New("the browser is being saved; try again in a moment")
-	case ok && b.state == browserStopped:
-		r.mu.Unlock()
-		return nil, errors.New("the previous browser is still stopping; try again in a moment")
-	}
-	if !ok {
-		if len(r.browsers) >= r.cap {
-			// An idle browser holds a slot another agent needs: save
-			// it now rather than at its idle deadline.
-			victim := r.oldestIdleLocked()
+	for {
+		r.mu.Lock()
+		b, ok := r.browsers[browserKey(slug, session)]
+		switch {
+		case ok && b.state == browserSaving:
+			// A reap in progress: the next browser starts from the profile
+			// this one is saving.
 			r.mu.Unlock()
-			if victim != nil {
-				r.beginSave(victim)
-				return nil, fmt.Errorf("all %d browsers are in use; an idle one is being saved to make room, try again shortly", r.cap)
+			return nil, errors.New("the browser is being saved; try again in a moment")
+		case ok && b.state == browserStopped && b.reset:
+			// A reset browser's pod is being deleted: the next one starts
+			// once the record has gone.
+			changed := r.changed
+			r.mu.Unlock()
+			select {
+			case <-changed:
+				continue
+			case <-ctx.Done():
+				return nil, ctx.Err()
 			}
-			return nil, fmt.Errorf("all %d browsers are in use; try again shortly", r.cap)
-		}
-		token, err := newBrowserToken()
-		if err != nil {
+		case ok && b.state == browserStopped:
 			r.mu.Unlock()
+			return nil, errors.New("the previous browser is still stopping; try again in a moment")
+		}
+		if !ok {
+			if len(r.browsers) >= r.cap {
+				// An idle browser holds a slot another agent needs: save
+				// it now rather than at its idle deadline.
+				victim := r.oldestIdleLocked()
+				r.mu.Unlock()
+				if victim != nil {
+					r.beginSave(victim)
+					return nil, fmt.Errorf("all %d browsers are in use; an idle one is being saved to make room, try again shortly", r.cap)
+				}
+				return nil, fmt.Errorf("all %d browsers are in use; try again shortly", r.cap)
+			}
+			var err error
+			if b, err = r.newBrowserLocked(slug, session); err != nil {
+				r.mu.Unlock()
+				return nil, err
+			}
+			r.mu.Unlock()
+			r.kick()
+			r.notify(b, apitypes.BrowserStateStarting)
+			go r.startPod(b)
+		} else {
+			r.mu.Unlock()
+		}
+		select {
+		case <-b.ready:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+		r.mu.Lock()
+		err, reset := b.startErr, b.reset
+		r.mu.Unlock()
+		if err != nil && reset {
+			continue
+		}
+		if err != nil {
 			return nil, err
 		}
-		coreToken, err := newBrowserToken()
-		if err != nil {
-			r.mu.Unlock()
-			return nil, err
-		}
-		now := r.clk.Now()
-		b = &browser{
-			slug: slug, session: session, token: token, coreToken: coreToken,
-			state: browserStarting, ready: make(chan struct{}),
-			startedAt: now, lastUsed: now, deadline: now.Add(browserStartTimeout),
-			groups: map[string]*browserGroup{},
-			tabs:   map[string]string{}, pending: map[string]chan browserpod.Message{},
-		}
-		ephemeral := ephemeralSession(session)
-		if !ephemeral {
-			// A site session's name is its site: the registrable domain
-			// its browser is locked to.
-			b.site = session
-		}
-		r.browsers[b.key()] = b
-		r.mu.Unlock()
-		r.kick()
-		r.notify(b, apitypes.BrowserStateStarting)
-		if ephemeral {
-			// Nothing of this session is kept; a record or profile
-			// stored for it goes too.
-			if err := r.store.DeleteBrowserSession(slug, session); err != nil {
-				r.logf("browser %s: delete the stored session: %v", b.key(), err)
-			}
-		} else if _, err := r.store.EnsureBrowserSession(slug, session, session, r.clk.Now()); err != nil {
-			err = fmt.Errorf("browser session: %w", err)
-			r.failStart(b, err)
-			return nil, &browserStartError{err}
-		}
-		if err := r.prov.Start(ctx, slug, session, token, coreToken); err != nil {
-			err = fmt.Errorf("start the browser pod: %w", err)
-			r.failStart(b, err)
-			return nil, &browserStartError{err}
-		}
-	} else {
-		r.mu.Unlock()
+		return b, nil
 	}
-	select {
-	case <-b.ready:
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	}
-	r.mu.Lock()
-	err := b.startErr
-	r.mu.Unlock()
+}
+
+// newBrowserLocked registers a starting browser for (slug, session),
+// its start deadline browserStartTimeout away. r.mu is held.
+func (r *browserRegistry) newBrowserLocked(slug, session string) (*browser, error) {
+	token, err := newBrowserToken()
 	if err != nil {
 		return nil, err
 	}
+	coreToken, err := newBrowserToken()
+	if err != nil {
+		return nil, err
+	}
+	now := r.clk.Now()
+	b := &browser{
+		slug: slug, session: session, token: token, coreToken: coreToken,
+		state: browserStarting, ready: make(chan struct{}), startDone: make(chan struct{}),
+		startedAt: now, lastUsed: now, deadline: now.Add(browserStartTimeout),
+		groups: map[string]*browserGroup{},
+		tabs:   map[string]string{}, pending: map[string]chan browserpod.Message{},
+	}
+	if !ephemeralSession(session) {
+		// A site session's name is its site: the registrable domain
+		// its browser is locked to.
+		b.site = session
+	}
+	r.browsers[b.key()] = b
 	return b, nil
+}
+
+// startPod prepares the session's stored record and has the pod made,
+// on a context of its own: no caller's cancel reaches it, and it is
+// bounded by browserStartTimeout. The sweep's start deadline fails the
+// start on the injected clock, and finish cancels it. A failure reaches
+// the waiters through failStart.
+func (r *browserRegistry) startPod(b *browser) {
+	defer close(b.startDone)
+	ctx, cancel := context.WithTimeout(context.Background(), browserStartTimeout)
+	defer cancel()
+	r.mu.Lock()
+	if b.state != browserStarting {
+		r.mu.Unlock()
+		return
+	}
+	b.stopStart = cancel
+	r.mu.Unlock()
+	if ephemeralSession(b.session) {
+		// Nothing of this session is kept; a record or profile
+		// stored for it goes too.
+		if err := r.store.DeleteBrowserSession(b.slug, b.session); err != nil {
+			r.logf("browser %s: delete the stored session: %v", b.key(), err)
+		}
+	} else if _, err := r.store.EnsureBrowserSession(b.slug, b.session, b.session, r.clk.Now()); err != nil {
+		r.failStart(b, fmt.Errorf("browser session: %w", err))
+		return
+	}
+	if err := r.prov.Start(ctx, b.slug, b.session, b.token, b.coreToken); err != nil {
+		r.failStart(b, fmt.Errorf("start the browser pod: %w", err))
+	}
 }
 
 // notify reports a browser's wire state to OnState, outside the lock.
@@ -1195,20 +1246,27 @@ func (r *browserRegistry) awaitSiteLocks() { r.siteLocks.Wait() }
 // Reset ends a session's browser, whatever it is doing and without
 // saving, and deletes what the store holds for the session. The
 // service cancels the session's tasks first.
+//
+// A caller waiting for the browser to start is given the session's next
+// browser, started once this one's pod is gone. The store is cleared
+// before the browser ends, so that start finds nothing of the old
+// session.
 func (r *browserRegistry) Reset(slug, session string) error {
 	r.mu.Lock()
 	b, ok := r.browsers[browserKey(slug, session)]
-	if ok {
+	if ok && b.state != browserStopped {
 		// A profile that lands from a save already in flight is
 		// deleted again (onProfile).
 		b.offboarded = true
+		b.reset = true
 	}
 	delete(r.released, browserKey(slug, session))
 	r.mu.Unlock()
+	err := r.store.DeleteBrowserSession(slug, session)
 	if ok {
 		r.finish(b)
 	}
-	return r.store.DeleteBrowserSession(slug, session)
+	return err
 }
 
 // onFrame hands a screencast frame to the windows on its group. The
@@ -1734,6 +1792,7 @@ func (r *browserRegistry) finish(b *browser) {
 		close(b.ready)
 	}
 	wasSaving := b.state == browserSaving
+	stopStart, startDone := b.stopStart, b.startDone
 	b.state = browserStopped
 	b.deadline = time.Time{}
 	for id, ch := range b.pending {
@@ -1758,6 +1817,9 @@ func (r *browserRegistry) finish(b *browser) {
 	if link != nil {
 		link.close()
 	}
+	if stopStart != nil {
+		stopStart()
+	}
 	if !wasSaving {
 		// A save already reported stopped when it began.
 		r.notify(b, apitypes.BrowserStateStopped)
@@ -1765,6 +1827,11 @@ func (r *browserRegistry) finish(b *browser) {
 	r.stopWait.Add(1)
 	go func() {
 		defer r.stopWait.Done()
+		if startDone != nil {
+			// A cancelled start returns at once; a create still in flight
+			// lands before the delete, or the pod would outlive it.
+			<-startDone
+		}
 		if r.Enabled() {
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 			defer cancel()
@@ -1775,6 +1842,8 @@ func (r *browserRegistry) finish(b *browser) {
 		r.mu.Lock()
 		if r.browsers[b.key()] == b {
 			delete(r.browsers, b.key())
+			// A caller waiting on a reset browser starts the next one.
+			r.changedLocked()
 		}
 		r.mu.Unlock()
 		r.kick()

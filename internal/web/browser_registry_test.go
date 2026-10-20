@@ -33,6 +33,11 @@ type fakeBrowserProv struct {
 	stoppedC   chan string
 	// stopGate, when set, holds every Stop until it is closed.
 	stopGate chan struct{}
+	// startGate, when set, holds every Start, as a slow create does,
+	// until it is closed or Start's context ends; startingC hears each
+	// Start that is held.
+	startGate chan struct{}
+	startingC chan string
 }
 
 func newFakeBrowserProv() *fakeBrowserProv {
@@ -53,7 +58,18 @@ func (p *fakeBrowserProv) awaitStop(t *testing.T) string {
 }
 
 func (p *fakeBrowserProv) Enabled() bool { return p.enabled }
-func (p *fakeBrowserProv) Start(_ context.Context, slug, session, token, coreToken string) error {
+func (p *fakeBrowserProv) Start(ctx context.Context, slug, session, token, coreToken string) error {
+	p.mu.Lock()
+	gate := p.startGate
+	p.mu.Unlock()
+	if gate != nil {
+		p.startingC <- token
+		select {
+		case <-gate:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.startErr != nil {
@@ -487,6 +503,96 @@ func TestBrowserRegistryTellsAStartFailureApart(t *testing.T) {
 		t.Errorf("lost mid-command: err = %v, want an error that is not a start failure", err)
 	}
 	f.stopped(t)
+}
+
+// TestBrowserRegistryStartOutlivesItsFirstCaller guards the tasks that
+// share a starting browser. The pod's start ran under the first
+// caller's request, so a first caller that went away while the pod was
+// being made (a window closed, a task stopped) failed the start for
+// every other waiter, and a start failure ends a web task: one task's
+// cancel ended its siblings as "the browser could not start".
+func TestBrowserRegistryStartOutlivesItsFirstCaller(t *testing.T) {
+	f := newBrowserFixture(t)
+	gate := make(chan struct{})
+	f.prov.mu.Lock()
+	f.prov.startGate, f.prov.startingC = gate, make(chan string, 1)
+	f.prov.mu.Unlock()
+
+	// A window starts the browser and is closed while the pod is made.
+	window, closeWindow := context.WithCancel(context.Background())
+	windowErr := make(chan error, 1)
+	go func() {
+		_, err := f.reg.Watch(window, "alice", "vendor.example", "job1", false)
+		windowErr <- err
+	}()
+	select {
+	case <-f.prov.startingC:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the provisioner was not asked to start a pod")
+	}
+	task := make(chan error, 1)
+	go func() {
+		_, err := f.reg.Command(context.Background(), "alice", "vendor.example", "job2", browserpod.Message{Name: browserpod.CommandSnapshot})
+		task <- err
+	}()
+	closeWindow()
+	if err := <-windowErr; !errors.Is(err, context.Canceled) {
+		t.Errorf("the closed window's wait = %v, want its own cancel", err)
+	}
+
+	// The pod is made and comes up: the task's command goes through.
+	close(gate)
+	b, link := f.connect(context.Background())
+	link.next(t, browserpod.TypeStart)
+	f.reg.onMessage(b, browserpod.Message{Type: browserpod.TypeState, State: browserpod.StateRunning}, nil)
+	cmd := link.next(t, browserpod.TypeCommand)
+	if cmd.msg.Group != "job2" {
+		t.Fatalf("command frame = %+v, want the task's", cmd.msg)
+	}
+	f.reg.onMessage(b, browserpod.Message{Type: browserpod.TypeResult, ID: cmd.msg.ID, OK: true, Text: "ok"}, nil)
+	if err := <-task; err != nil {
+		t.Errorf("the task's command = %v, want its result", err)
+	}
+	f.prov.mu.Lock()
+	stopped := len(f.prov.stopped)
+	f.prov.mu.Unlock()
+	if stopped != 0 {
+		t.Errorf("the browser was stopped %d time(s) for a caller that went away", stopped)
+	}
+}
+
+// TestBrowserRegistryResetGivesAWaiterTheNextBrowser guards a task that
+// asked for a browser just as its session was reset: the reset ended
+// the starting browser with a start failure, which ends a web task as
+// "the browser could not start". The task asked for a browser; it must
+// be given the session's next one, started once the reset browser's
+// pod is gone.
+func TestBrowserRegistryResetGivesAWaiterTheNextBrowser(t *testing.T) {
+	f := newBrowserFixture(t)
+	ctx := context.Background()
+	task := make(chan error, 1)
+	go func() {
+		_, err := f.reg.Command(ctx, "alice", "vendor.example", "job1", browserpod.Message{Name: browserpod.CommandSnapshot})
+		task <- err
+	}()
+	first := <-f.prov.startedC
+	if err := f.reg.Reset("alice", "vendor.example"); err != nil {
+		t.Fatal(err)
+	}
+	if stopped := f.prov.awaitStop(t); stopped != "alice/vendor.example" {
+		t.Fatalf("stopped %q", stopped)
+	}
+	b, link := f.connect(ctx)
+	if b.token == first {
+		t.Fatal("the reset browser was connected, not the next one")
+	}
+	link.next(t, browserpod.TypeStart)
+	f.reg.onMessage(b, browserpod.Message{Type: browserpod.TypeState, State: browserpod.StateRunning}, nil)
+	cmd := link.next(t, browserpod.TypeCommand)
+	f.reg.onMessage(b, browserpod.Message{Type: browserpod.TypeResult, ID: cmd.msg.ID, OK: true, Text: "ok"}, nil)
+	if err := <-task; err != nil {
+		t.Errorf("the waiting task's command = %v, want the next browser's result", err)
+	}
 }
 
 // TestBrowserRegistryClaimNeedsTheRightToken: a connection is accepted
