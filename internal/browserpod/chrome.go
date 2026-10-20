@@ -168,13 +168,20 @@ func startChrome(ctx context.Context, o chromeOptions, noSandbox bool) (*chromeP
 	bin := chromiumBinary(o.Binary)
 	args := chromeArgs(o, noSandbox)
 	name := bin
+	// Chromium reads CDP from fd 3 and writes it to fd 4. The pipe is
+	// handed over at fd 3+pipeAt.
+	pipeAt := 0
 	if o.Headful {
 		if xvfb, err := exec.LookPath("xvfb-run"); err == nil {
+			// xvfb-run takes fd 3 for its own output and closes it for
+			// the command it runs, so the pipe goes through it on fds 5
+			// and 6 and a shell moves it back to 3 and 4 for Chromium.
 			name = xvfb
-			args = append([]string{"-a", "-s", "-screen 0 1280x800x24", bin}, args...)
+			args = append([]string{"-a", "-s", "-screen 0 1280x800x24",
+				"/bin/sh", "-c", `exec "$0" "$@" 3<&5 4>&6 5<&- 6>&-`, bin}, args...)
+			pipeAt = 2
 		}
 	}
-	// Chromium reads CDP from fd 3 and writes it to fd 4.
 	toChromeR, toChromeW, err := os.Pipe()
 	if err != nil {
 		return nil, err
@@ -186,7 +193,9 @@ func startChrome(ctx context.Context, o chromeOptions, noSandbox bool) (*chromeP
 		return nil, err
 	}
 	cmd := exec.Command(name, args...)
-	cmd.ExtraFiles = []*os.File{toChromeR, fromChromeW}
+	// ExtraFiles entry i is fd 3+i; a nil entry leaves that fd closed.
+	cmd.ExtraFiles = make([]*os.File, pipeAt+2)
+	cmd.ExtraFiles[pipeAt], cmd.ExtraFiles[pipeAt+1] = toChromeR, fromChromeW
 	ownProcessGroup(cmd)
 	ring := newRingBuffer(16 << 10)
 	cmd.Stderr = ring
