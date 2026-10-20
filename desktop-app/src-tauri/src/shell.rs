@@ -441,6 +441,19 @@ const PREPARED_MARKER: &str = ".prepared";
 /// the check itself.
 const VM_FAILURE: &str = "vm";
 
+/// A team's recorded failure when it couldn't be reached on its port:
+/// this prefix, then the supervisor's words (`forward_error`). It ends
+/// when the supervisor reports the team running, however it got there
+/// (`Shell::follow_status`): moving the port takes `kivali-supervisor up
+/// --port`, outside Kivali.
+const PORT_FAILURE: &str = "port:";
+
+/// The supervisor's words when a report says the VM runs but the team's
+/// recorded port could not be bound (`forward_error`).
+fn port_failure(r: &Report) -> Option<String> {
+    r.forward_error.as_deref().map(str::trim).filter(|e| r.running && !e.is_empty()).map(str::to_string)
+}
+
 /// What the pages render (types.ts `Snapshot`).
 #[derive(Serialize)]
 pub struct Snapshot {
@@ -810,9 +823,10 @@ impl Shell {
         }
     }
 
-    /// Records a team's port when the supervisor reports a different one.
-    fn record_port(&self, id: &str, st: &Status) -> Result<(), String> {
-        let Some(port) = st.port else { return Ok(()) };
+    /// Records a team's port when the supervisor reports a different one;
+    /// true when it did.
+    fn record_port(&self, id: &str, st: &Status) -> Result<bool, String> {
+        let Some(port) = st.port else { return Ok(false) };
         let changed = {
             let mut t = self.teams.lock().unwrap();
             match t.get_mut(id).and_then(Team::local_mut) {
@@ -826,7 +840,31 @@ impl Shell {
         if changed {
             self.save_teams()?;
         }
-        Ok(())
+        Ok(changed)
+    }
+
+    /// Follows a status read outside a start (the watch loop): the port
+    /// the supervisor reports becomes the team's, and a port failure ends
+    /// once the team runs, as after `kivali-supervisor up --port` moved
+    /// it. Answers (port moved, failure ended).
+    fn follow_status(&self, rt: &Runtime) -> (bool, bool) {
+        let Some(st) = rt.status() else { return (false, false) };
+        let moved = self.record_port(&rt.id, &st).unwrap_or_else(|e| {
+            eprintln!("kivali: {}: recording the port: {e}", rt.id);
+            false
+        });
+        let ended = st.state == OrgState::Running && {
+            let mut failure = rt.failure.lock().unwrap();
+            let port = failure.as_deref().is_some_and(|f| f.starts_with(PORT_FAILURE));
+            if port {
+                *failure = None;
+            }
+            port
+        };
+        if ended {
+            self.set_running_at_quit(&rt.id, true);
+        }
+        (moved, ended)
     }
 
     /// A port for a new team: the first from 8080, below the dynamic
@@ -1026,7 +1064,9 @@ fn boot(app: &AppHandle, sh: &Shell, rt: &Runtime, req: UpRequest, progress: &mu
         Err(e) => {
             eprintln!("kivali: {}: up failed: {e}", rt.id);
             *rt.failure.lock().unwrap() = Some(e.to_string());
-            let _ = rt.refresh_status();
+            if let Some(why) = rt.refresh_status().ok().as_ref().and_then(port_failure) {
+                *rt.failure.lock().unwrap() = Some(format!("{PORT_FAILURE}{why}"));
+            }
             return Err(sup_err(e));
         }
     };
@@ -2072,7 +2112,11 @@ fn watch_team(app: &AppHandle, rt: &Runtime) -> bool {
     let _ = rt.refresh_status();
     let now = rt.status().map(|s| s.state);
     let name = shell(app).team(&rt.id).map(|t| t.name).unwrap_or_default();
-    let mut dirty = was != now;
+    let (moved, ended) = shell(app).follow_status(rt);
+    if ended {
+        after_started(app, rt);
+    }
+    let mut dirty = was != now || moved || ended;
     if was == Some(OrgState::Running) && now != Some(OrgState::Running) && !shell(app).quitting.load(Ordering::SeqCst) {
         notify_background(
             app,
@@ -2582,5 +2626,75 @@ mod tests {
         assert_eq!(clean_call_me("`>Jane\u{202E}\u{200D}\n"), "Jane");
         assert_eq!(clean_call_me(&"x".repeat(50)).len(), 40);
         assert_eq!(clean_call_me(" : "), "");
+    }
+
+    /// A report of a running team: guest ready, Kivali installed,
+    /// forwarding on `port`.
+    fn running_on(port: u16) -> Report {
+        Report {
+            running: true,
+            forward: Some(format!("127.0.0.1:{port}")),
+            guest: Some(crate::supervisor::wire::GuestStatus { state: "ready".into(), ..Default::default() }),
+            state: crate::supervisor::wire::LocalState { kivali: "0.17.0".into(), port, ..Default::default() },
+            ..Default::default()
+        }
+    }
+
+    /// Someone moves a team that couldn't start on its port with
+    /// `kivali-supervisor up --port`, as the couldn't-start page says.
+    /// Without the watch loop following the status, the window kept the
+    /// old port and showed couldn't start until the team was paused and
+    /// resumed.
+    #[test]
+    fn a_port_moved_by_hand_is_followed() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut teams = TeamsFile::default();
+        let a = teams.add_here("A", Kind::Work, "a@example.com", &mut || 1);
+        teams.get_mut(&a).and_then(Team::local_mut).unwrap().port = 8080;
+        let sh = Shell::new(dir.path().to_path_buf(), "0.15.1".into(), teams, None);
+        let rt = sh.runtime(&a).unwrap();
+
+        // Still failing on its port: the failure stays, the port too.
+        let failing = Report {
+            running: true,
+            forward: None,
+            forward_error: Some("Another program is using port 8080 on this computer.".into()),
+            ..running_on(8080)
+        };
+        assert!(port_failure(&failing).is_some());
+        *rt.failure.lock().unwrap() = port_failure(&failing).map(|w| format!("{PORT_FAILURE}{w}"));
+        *rt.report.lock().unwrap() = Some(failing);
+        assert_eq!(sh.follow_status(&rt), (false, false));
+        assert_eq!(rt.state().0, TeamState::Failed);
+
+        // Moved and running: the new port is the team's, on disk too,
+        // and the team runs.
+        *rt.report.lock().unwrap() = Some(running_on(18090));
+        assert_eq!(sh.follow_status(&rt), (true, true));
+        assert_eq!(rt.state().0, TeamState::Running);
+        assert_eq!(sh.team(&a).unwrap().origin().as_deref(), Some("http://127.0.0.1:18090"));
+        let (on_disk, _) = TeamsFile::load(dir.path(), 0).unwrap();
+        assert_eq!(on_disk.get(&a).unwrap().local().unwrap().port, 18090);
+        assert_eq!(on_disk.running_at_quit, std::slice::from_ref(&a));
+        assert_eq!(sh.follow_status(&rt), (false, false));
+    }
+
+    /// Only a port failure ends when the status says running: a start
+    /// that failed some other way (the server never served) keeps its
+    /// couldn't-start page and Try again, though the VM still reports
+    /// running.
+    #[test]
+    fn other_failures_outlast_a_running_status() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut teams = TeamsFile::default();
+        let a = teams.add_here("A", Kind::Work, "a@example.com", &mut || 1);
+        let sh = Shell::new(dir.path().to_path_buf(), "0.15.1".into(), teams, None);
+        let rt = sh.runtime(&a).unwrap();
+        *rt.failure.lock().unwrap() = Some("Kivali did not start serving in time".into());
+        *rt.report.lock().unwrap() = Some(running_on(8080));
+        assert_eq!(sh.follow_status(&rt), (true, false));
+        assert_eq!(rt.state().0, TeamState::Failed);
+        // A report with no running VM never names a port failure.
+        assert_eq!(port_failure(&Report { forward_error: Some("port 8080".into()), ..Default::default() }), None);
     }
 }
