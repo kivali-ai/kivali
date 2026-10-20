@@ -94,10 +94,13 @@ endif
 # ARTIFACT_SIGNING_* values in the environment
 # (docs/developers/releasing.md, "Secrets"). Only when they are there:
 # without them release-preflight refuses, and ALLOW_DEV_KEYS=1 bundles
-# unsigned. build-debug and build-trial never sign.
+# unsigned. build-debug and build-trial never sign. Tauri runs the sign
+# command from src-tauri, so the script is named relative to that
+# (../scripts); tauri makes a relative argument that exists absolute,
+# which the uninstaller's sign step needs.
 ifneq ($(EXE),)
 ifneq ($(AZURE_CLIENT_ID),)
-  WINDOWS_SIGN := --config '{"bundle":{"windows":{"signCommand":"powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/sign-windows.ps1 %1"}}}'
+  WINDOWS_SIGN := --config '{"bundle":{"windows":{"signCommand":"powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ../scripts/sign-windows.ps1 %1"}}}'
 endif
 endif
 
