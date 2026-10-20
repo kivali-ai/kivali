@@ -171,21 +171,68 @@ fn put_back(app: &AppHandle, running: &[String]) {
     let _ = app.run_on_main_thread(move || menus::restore_tray(&a));
 }
 
-/// At launch: the first check, then one a day while Kivali runs.
+/// At launch: the first check, then one a day while Kivali runs; and
+/// the installers earlier updates left in the temporary directory go.
 pub fn start(app: &AppHandle) {
     check_desktop_update(app);
     let app = app.clone();
-    let daily = std::thread::Builder::new().name("kivali-app-update".into()).spawn(move || loop {
-        std::thread::sleep(CHECK_TICK);
-        let quitting = app.state::<Shell>().quitting.load(Ordering::SeqCst);
-        let last = *LAST_CHECK.lock().unwrap();
-        if !quitting && check_due(last, OffsetDateTime::now_utc()) {
-            check_desktop_update(&app);
+    let daily = std::thread::Builder::new().name("kivali-app-update".into()).spawn(move || {
+        let name = app.package_info().name.clone();
+        let mut leftovers = true;
+        loop {
+            // The installer that relaunched Kivali may still be running
+            // from its file, which cannot be removed until it ends: tried
+            // again at each tick until none is left. Never while an update
+            // writes its own.
+            if leftovers && !busy(&app.state::<Shell>().app_update.lock().unwrap()) {
+                leftovers = remove_updater_leftovers(&std::env::temp_dir(), &name);
+            }
+            std::thread::sleep(CHECK_TICK);
+            let quitting = app.state::<Shell>().quitting.load(Ordering::SeqCst);
+            let last = *LAST_CHECK.lock().unwrap();
+            if !quitting && check_due(last, OffsetDateTime::now_utc()) {
+                check_desktop_update(&app);
+            }
         }
     });
     if let Err(e) = daily {
         eprintln!("kivali: the daily app update check: {e}");
     }
+}
+
+/// A folder the Windows updater made for an update's installer:
+/// `<app>-<version>-updater-<6 letters or digits>` (tauri-plugin-updater's
+/// `make_temp_dir`, a `tempfile` directory it keeps). The installer,
+/// `<app>-<version>-installer.exe` (about 850 MB), is written inside it
+/// and would go when dropped, but the plugin ends the process with
+/// `process::exit` once the installer starts, so it stays, and the
+/// folder stays either way. (macOS: the plugin extracts and swaps the
+/// bundle in `tempfile` directories it removes before returning.)
+fn is_updater_leftover(folder: &str, app_name: &str) -> bool {
+    let Some(rest) = folder.strip_prefix(app_name).and_then(|r| r.strip_prefix('-')) else { return false };
+    let Some((version, random)) = rest.rsplit_once("-updater-") else { return false };
+    !version.is_empty() && random.len() == 6 && random.chars().all(|c| c.is_ascii_alphanumeric())
+}
+
+/// Removes the updater's leftover folders from `temp`. Returns whether
+/// any could not be removed yet.
+fn remove_updater_leftovers(temp: &Path, app_name: &str) -> bool {
+    let Ok(entries) = std::fs::read_dir(temp) else { return false };
+    let mut left = false;
+    for e in entries.flatten() {
+        let is_dir = e.file_type().is_ok_and(|t| t.is_dir());
+        if !is_dir || !e.file_name().to_str().is_some_and(|n| is_updater_leftover(n, app_name)) {
+            continue;
+        }
+        match std::fs::remove_dir_all(e.path()) {
+            Ok(()) => eprintln!("kivali: removed an earlier update's installer: {}", e.path().display()),
+            Err(err) => {
+                eprintln!("kivali: removing {}: {err}", e.path().display());
+                left = true;
+            }
+        }
+    }
+    left
 }
 
 /// A team's check found a release that needs a newer app (shell.rs,
@@ -431,6 +478,37 @@ mod tests {
         mark_relaunch(dir.path());
         unmark_relaunch(dir.path());
         assert!(!take_relaunch_mark(dir.path()));
+    }
+
+    // On Windows every update left its installer, about 850 MB, in %TEMP%:
+    // the updater ends the process before its own cleanup runs. Without
+    // this the space is lost for good, one installer per update. Only the
+    // updater's own folders go; anything else in the temporary directory
+    // stays.
+    #[test]
+    fn an_earlier_updates_installer_is_removed() {
+        let temp = tempfile::tempdir().unwrap();
+        let make = |name: &str| {
+            let d = temp.path().join(name);
+            std::fs::create_dir(&d).unwrap();
+            std::fs::write(d.join("Kivali-1.2.0-installer.exe"), b"MZ").unwrap();
+        };
+        make("Kivali-1.2.0-updater-a1B2c3");
+        make("Kivali-1.3.0-rc.1-updater-ZZ9zz9");
+        let keep = ["Kivali-notes", "Other-1.2.0-updater-a1B2c3", "Kivali-1.2.0-updater-a1B2c", "Kivali--updater-a1B2c3"];
+        for k in keep {
+            make(k);
+        }
+        std::fs::write(temp.path().join("Kivali-1.1.0-updater-q1w2e3"), b"a file, not the updater's folder").unwrap();
+
+        assert!(!remove_updater_leftovers(temp.path(), "Kivali"), "nothing left over");
+        let mut after: Vec<String> =
+            std::fs::read_dir(temp.path()).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
+        after.sort();
+        let mut want: Vec<String> = keep.iter().map(|k| k.to_string()).collect();
+        want.push("Kivali-1.1.0-updater-q1w2e3".into());
+        want.sort();
+        assert_eq!(after, want);
     }
 
     // A check started while the update downloads (Check for updates in
