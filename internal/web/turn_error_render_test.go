@@ -22,7 +22,7 @@ func seedErroredAgent(t *testing.T, srv *Server) {
 	for _, m := range []store.ChatMessage{
 		{Role: store.RoleReceived, Kind: "direct_chat", Content: "go"},
 		{Role: store.RoleSent, Kind: "direct_chat", Content: "starting", Model: "mock-large-0"},
-		{Role: store.RoleReceived, Kind: store.KindTurnError, Content: "The previous turn was stopped by an error and did not complete: Claude AI usage limit reached|1759100000. The Kivali server is still running; resume your prior work per the handbook."},
+		{Role: store.RoleReceived, Kind: store.KindTurnError, Content: "The previous turn was stopped by an error and did not complete: Claude AI usage limit reached|1759100000. The Kivali server is still running; resume your prior work as Kivali OS says under When you're interrupted."},
 	} {
 		if err := srv.Store.AppendChatMessage("alice", m); err != nil {
 			t.Fatalf("seed: %v", err)

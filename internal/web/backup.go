@@ -17,6 +17,7 @@ import (
 	"github.com/kivali-ai/kivali/internal/agentpod"
 	"github.com/kivali-ai/kivali/internal/backup"
 	"github.com/kivali-ai/kivali/internal/files"
+	"github.com/kivali-ai/kivali/internal/seed"
 	"github.com/kivali-ai/kivali/internal/store"
 )
 
@@ -399,6 +400,14 @@ func (s *Server) restoreArchive(ctx context.Context, path, filename string) erro
 	}
 	if err != nil {
 		log.Printf("restore: upgrade model pins: %v", err)
+	}
+	// An archive from before the runtime's rules moved into Kivali OS
+	// carries a handbook without the four sections; the same pass as
+	// boot sets it aside for the Chief of Staff and writes the default.
+	if up, err := s.Store.UpgradeHandbook(seed.Handbook, s.clk().Now()); err != nil {
+		log.Printf("restore: upgrade handbook: %v", err)
+	} else if up.Replaced {
+		log.Printf("restore: handbook replaced by the default; the previous one is attachment %s", up.AttachmentSHA)
 	}
 	// The archive replaced the assignment files without going through
 	// WriteAssignment, so the store's post-write hook never fired; the

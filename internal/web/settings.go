@@ -8,14 +8,16 @@ import (
 	"strings"
 
 	"github.com/kivali-ai/kivali/internal/graph"
+	"github.com/kivali-ai/kivali/internal/handbook"
 	"github.com/kivali-ai/kivali/internal/store"
 )
 
-// saveHandbook replaces the handbook. A blank one is refused:
-// every agent's system prompt opens with it.
+// saveHandbook replaces the handbook. One without the four sections
+// (internal/handbook) is refused with the reason, so an edit in Org
+// is held to the shape the Chief of Staff's proposals are.
 func (s *Server) saveHandbook(body string) error {
-	if strings.TrimSpace(body) == "" {
-		return refuse(http.StatusBadRequest, "the handbook is empty")
+	if err := handbook.Validate(body); err != nil {
+		return refuse(http.StatusBadRequest, err.Error())
 	}
 	return s.Store.WriteHandbook(body)
 }

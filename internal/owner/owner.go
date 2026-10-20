@@ -137,7 +137,6 @@ var personalRules = []rule{
 	{regexp.MustCompile(`understand the business deeply`), `understand the owner's life and priorities`},
 	{regexp.MustCompile(`true about the business\)`), `true about the owner and their world)`},
 	{regexp.MustCompile(`the load-bearing parts of the biz plan /(\s+)market / product for`), `the load-bearing parts of what you know about the owner for`},
-	{regexp.MustCompile(`§The company`), `§About you`},
 	{regexp.MustCompile(`Not every agent needs the whole biz plan\.`), `Not every agent needs everything you know.`},
 	{regexp.MustCompile(`business(\s+)context`), `context`},
 }

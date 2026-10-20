@@ -45,11 +45,11 @@ const (
 
 // plannedDisruptionText is the row a turn interrupted by Kivali's own
 // pod restart leaves for the agent to read.
-const plannedDisruptionText = "Your runtime restarted mid-task to apply a change to it, such as your shell's software. Resume your prior work per the handbook."
+const plannedDisruptionText = "Your runtime restarted mid-task to apply a change to it, such as your shell's software. Resume your prior work as Kivali OS says under When you're interrupted."
 
 // lostRuntimeText is the row a turn whose runtime went away leaves for
 // the agent to read.
-const lostRuntimeText = "Your runtime stopped mid-task, before the turn finished. Resume your prior work per the handbook."
+const lostRuntimeText = "Your runtime stopped mid-task, before the turn finished. Resume your prior work as Kivali OS says under When you're interrupted."
 
 // agentIdleLocked reports whether slug has no turn running or starting
 // and no subagent turn in flight. streamMu is held.

@@ -22,7 +22,7 @@ import (
 //     pointing at a /files/ artifact the agent drafted first.
 //
 // The shared attachmentsSchemaFragment defines the attachment shape
-// once. See handbook §How you communicate for the runtime
+// once. See Kivali OS §How you communicate for the runtime
 // pattern; here we surface only what the parser enforces.
 
 // attachmentsSchemaFragment is the JSON Schema fragment for the
@@ -31,8 +31,8 @@ import (
 // server reads the bytes at publish time and content-addresses
 // them. There is no inline content, base64 or zip-bundling: the
 // agent writes the bytes under /files/artifacts/private/ first
-// (file_create or run_shell) and attaches by path. See handbook
-// §Attachments.
+// (file_create or run_shell) and attaches by path. See Kivali OS
+// §How you communicate, Attachments.
 const attachmentsSchemaFragment = `"attachments": {
       "type": "array",
       "description": "Files to attach. Each item references a file already on disk by /files/ path; the server reads the bytes at publish time. To attach text or binary you produced this turn, write it via file_create or run_shell first, then attach by path.",
@@ -160,14 +160,14 @@ Draft the replacement role under /files/artifacts/private/ first, then point ` +
 var proposeHandbookUpdateTool = ToolDef{
 	Name:        ToolProposeHandbookUpdate,
 	MessageType: store.MsgCEOApprovalRequest,
-	Description: `Propose a change to the org-wide handbook. Chief of Staff only. The proposal lands in the owner's inbox as an approval request; on approve, the server overwrites the handbook atomically before the ack lands in your chat, and every subsequent agent call reads the new handbook from their system prompt. Full workflow (copy current, edit in place, submit replacement) is in cos_role.md §Updating the handbook.
+	Description: `Propose a change to the team's handbook. Chief of Staff only. The proposal lands in the owner's inbox as an approval request; on approve, the server overwrites the handbook atomically before the ack lands in your chat, and every subsequent agent call reads the new handbook from their system prompt. The handbook has four sections, About, Values, Communicating and Working together, as ` + "`## `" + ` headings in that order; a draft with another section at that level, or one missing, is refused here with the section named. Full workflow (copy current, edit in place, submit replacement) is in cos_role.md §Updating the handbook.
 
 Draft the replacement under /files/artifacts/private/ first, then point ` + "`handbook_path`" + ` at it. The owner's review page shows a diff against the current file, so targeted edits read as targeted edits.`,
 	Schema: json.RawMessage(`{
   "type": "object",
   "properties": {
     "title":             {"type": "string", "description": "short approval title shown in the owner's inbox"},
-    "handbook_path": {"type": "string", "description": "/files/ path to the drafted replacement handbook. FULL replacement — there is no patch/merge step."},
+    "handbook_path": {"type": "string", "description": "/files/ path to the drafted replacement handbook, with its four sections. FULL replacement — there is no patch/merge step."},
     "rationale":         {"type": "string", "description": "` + rationaleDescription + `"}
   },
   "required": ["title", "handbook_path"]
@@ -242,7 +242,7 @@ Name Debian package names (what apt installs, e.g. ` + "`ffmpeg`, `poppler-utils
 var ceoNotificationTool = ToolDef{
 	Name:        ToolCEONotification,
 	MessageType: store.MsgCEONotification,
-	Description: `Inform the owner of something with no explicit approve/deny gate — status updates, heads-ups and raised risks. Delivery is INSTANT: this bypasses the delivery queue, lands in the owner's inbox immediately, and the ack is delivered to your chat the moment the owner sees it. See handbook §How you communicate for notification-vs-chat-reply guidance.`,
+	Description: `Inform the owner of something with no explicit approve/deny gate — status updates, heads-ups and raised risks. Delivery is INSTANT: this bypasses the delivery queue, lands in the owner's inbox immediately, and the ack is delivered to your chat the moment the owner sees it. See Kivali OS §How you communicate for notification-vs-chat-reply guidance.`,
 	Schema: json.RawMessage(`{
   "type": "object",
   "properties": {

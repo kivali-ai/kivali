@@ -36,7 +36,7 @@ func TestRestoreStagesTheUploadOnTheDataVolumeNotInTemp(t *testing.T) {
 		t.Skip("root writes into a read-only directory")
 	}
 	src := newTestServer(t)
-	writeFile(t, filepath.Join(src.Store.Root(), "handbook.md"), "# the rules")
+	writeFile(t, filepath.Join(src.Store.Root(), "handbook.md"), shapedHandbook)
 	zipBytes := backupZip(t, src).Body.Bytes()
 	dst := newTestServer(t)
 	bad := newTestServer(t)
@@ -51,7 +51,7 @@ func TestRestoreStagesTheUploadOnTheDataVolumeNotInTemp(t *testing.T) {
 	if rr := restoreZip(t, dst, "backup.zip", zipBytes); rr.Code != http.StatusOK {
 		t.Fatalf("restore with an unwritable temp dir: %d %s", rr.Code, rr.Body.String())
 	}
-	if got, _ := dst.Store.ReadHandbook(); got != "# the rules" {
+	if got, _ := dst.Store.ReadHandbook(); got != shapedHandbook {
 		t.Errorf("restored handbook = %q", got)
 	}
 	if left := stagedRestores(t, dst); len(left) > 0 {

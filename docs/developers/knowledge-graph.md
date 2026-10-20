@@ -396,16 +396,13 @@ descriptions; `internal/mcp/graph_tools.go` serves them. The wake note is built 
 and appended in `web.spawnChatLoopIfIdle`. The CEO page is
 `internal/web/graph.go` and `api_graph.go`.
 
-Prompt surfaces, and which reach an existing install on upgrade:
-`renderGraphSection` and `renderFilesystemSection` in
-`internal/agent/agent.go`, the `artifact_publish` / `artifact_unpublish`
-and graph tool descriptions, the `file_*` and `run_shell` descriptions,
-the subagent tool descriptions and prompt, and the
-wake note ship in the binary and are current everywhere the moment it
-runs. `internal/seed/handbook.md` §The
-knowledge graph and `internal/seed/cos_role.md` item 5 are copied into
-an install once, when it is seeded; an existing install keeps its
-copies until they are edited into `data/handbook.md` and the Chief of
-Staff's `role.md`.
-Tests in `internal/agent/filesystem_prompt_test.go` and
-`internal/seed/seed_test.go` pin every surface to `graph.Kinds`.
+Prompt surfaces: Kivali OS §The knowledge graph
+(`internal/agent/kivali_os.md`, the full rules), the `artifact_publish`
+/ `artifact_unpublish` and graph tool descriptions, the `file_*` and
+`run_shell` descriptions, the subagent tool descriptions and prompt,
+and the wake note all ship in the binary and are current everywhere
+the moment it runs. Only `internal/seed/cos_role.md` item 5 is copied
+into an install once, when it is seeded; an existing install keeps its
+copy until it is edited into the Chief of Staff's `role.md`.
+Tests in `internal/agent/kivali_os_test.go` pin Kivali OS to
+`graph.Kinds` and `graph.DeclaredStatuses`.

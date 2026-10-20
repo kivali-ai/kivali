@@ -223,7 +223,7 @@ func labelForType(t store.MessageType, decision string) string {
 // CEO reply read as reported speech with the decision foregrounded,
 // which closes the class of "model saw Approved but didn't realize
 // the side-effect fired" misreads without needing prompt-level
-// guardrails in the handbook.
+// guardrails in Kivali OS.
 func (v InboxView) RenderText() string {
 	lead := v.naturalLead()
 	body := v.assembleBody()
@@ -422,7 +422,7 @@ func (v InboxView) naturalLead() string {
 		// (approved / denied, plus hire provisioning facts) lives
 		// in the quoted body via decisionSpeech(), so the model
 		// always sees the outcome inside the quote — no defensive
-		// language needed in the system prompt or handbook.
+		// language needed in the system prompt or Kivali OS.
 		return ceoReplyLead("approval request", stripDecisionPrefix(v.Title), v.InReplyTo)
 
 	case store.MsgCEONotificationAck:

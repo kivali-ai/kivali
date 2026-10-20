@@ -410,7 +410,7 @@ type attachmentLink struct {
 // Why walk archives too: a chat rotation moves the live chat.jsonl
 // into chats/<ts>/, leaving a fresh empty file. If we only looked at
 // the live chat, /files/attachments/ would clear on every rotation
-// (P05) — violating the handbook's /files/ durability model.
+// (P05) — violating Kivali OS's /files/ durability model.
 //
 // Names collide on purpose: we want stable "nice" filenames in
 // /files/attachments/. Iteration order is live chat (oldest entry
@@ -576,7 +576,7 @@ func shortSHA(sha string) string {
 // reconcile set (SyncAgentAttachmentLinks). Returns an empty (not
 // nil) map when the agent has no chat history yet.
 //
-// Why archives are included: the handbook's model treats /files/
+// Why archives are included: Kivali OS's model treats /files/
 // as durable storage. A chat rotation must not revoke an agent's
 // access to attachments it has already received — see P05.
 func (s *FSStore) AttachmentSHAsForAgent(slug string) (map[string]bool, error) {

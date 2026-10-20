@@ -303,12 +303,14 @@ func TestAPIHandbook(t *testing.T) {
 	}
 
 	c = orgOK[apitypes.Handbook](t, orgJSON(t, srv, http.MethodPut, "/api/v1/org/handbook",
-		apitypes.HandbookPut{Content: "We ship.\n\n## Money\n- Under budget\n\n- On time\n## Hiring\nSlowly.\n"}))
+		apitypes.HandbookPut{Content: "We ship.\n\n## About\n- Under budget\n\n- On time\n## Values\nSlowly.\n## Communicating\nPlainly.\n## Working together\n### Money\nCarefully.\n"}))
 	// line_count leaves blank lines out; lines keeps them.
 	want := []apitypes.DocSection{
 		{Title: "Opening", Lines: []string{"We ship.", ""}, LineCount: 1},
-		{Title: "Money", Lines: []string{"- Under budget", "", "- On time"}, LineCount: 2},
-		{Title: "Hiring", Lines: []string{"Slowly.", ""}, LineCount: 1},
+		{Title: "About", Lines: []string{"- Under budget", "", "- On time"}, LineCount: 2},
+		{Title: "Values", Lines: []string{"Slowly."}, LineCount: 1},
+		{Title: "Communicating", Lines: []string{"Plainly."}, LineCount: 1},
+		{Title: "Working together", Lines: []string{"### Money", "Carefully.", ""}, LineCount: 2},
 	}
 	if c.Draft || c.UpdatedAt == nil || !reflect.DeepEqual(c.Sections, want) {
 		t.Errorf("saved = draft:%v updated:%v sections:%+v", c.Draft, c.UpdatedAt, c.Sections)
@@ -317,6 +319,19 @@ func TestAPIHandbook(t *testing.T) {
 		t.Errorf("stored = %q", got)
 	}
 	assertAPIError(t, orgJSON(t, srv, http.MethodPut, "/api/v1/org/handbook", apitypes.HandbookPut{Content: "  \n"}), http.StatusBadRequest)
+	// An edit in Org is held to the four sections like a proposal is,
+	// with the section at fault in the answer: without this the owner
+	// could save a handbook the Chief of Staff could never propose
+	// again, and the sections the setup message and the docs name
+	// would be gone.
+	rr := orgJSON(t, srv, http.MethodPut, "/api/v1/org/handbook", apitypes.HandbookPut{Content: "We ship.\n\n## Money\n- Under budget\n"})
+	assertAPIError(t, rr, http.StatusBadRequest)
+	if !strings.Contains(rr.Body.String(), "`## Money`") {
+		t.Errorf("refusal does not name the section: %s", rr.Body.String())
+	}
+	if got, _ := srv.Store.ReadHandbook(); !strings.HasPrefix(got, "We ship.\n\n## About") {
+		t.Errorf("a refused edit changed the stored handbook: %q", got)
+	}
 }
 
 // splitDocSections follows DocDiff.splitSections line for line; these
@@ -511,7 +526,7 @@ func hasHost(n apitypes.Network, host string) bool {
 func TestAPIBackupAndRestore(t *testing.T) {
 	src := newTestServer(t)
 	src.Clock = clock.NewFakeAt(orgNow)
-	if err := src.Store.WriteHandbook("# the rules\n"); err != nil {
+	if err := src.Store.WriteHandbook(shapedHandbook); err != nil {
 		t.Fatal(err)
 	}
 	if err := src.Store.AppendUsage(store.UsageRecord{TS: orgNow.Add(-time.Hour), Agent: "a", Model: provider.MockModelLarge, InputTokens: 1_000}); err != nil {
@@ -534,7 +549,7 @@ func TestAPIBackupAndRestore(t *testing.T) {
 	assertAPIError(t, orgDo(t, dst, "", http.MethodPost, "/api/v1/org/restore", "application/json", []byte(`{}`)), http.StatusUnsupportedMediaType)
 	body, ct := orgMultipart(t, []multipartFile{{"archive", "backup.zip", bk.Body.Bytes()}}, nil)
 	orgOK[apitypes.Empty](t, orgDo(t, dst, "", http.MethodPost, "/api/v1/org/restore", ct, body))
-	if got, _ := dst.Store.ReadHandbook(); got != "# the rules\n" {
+	if got, _ := dst.Store.ReadHandbook(); got != shapedHandbook {
 		t.Errorf("restored handbook = %q", got)
 	}
 	if u := orgOK[apitypes.Usage](t, orgGet(t, dst, "/api/v1/org/usage")); u.Tiles.Today.Calls != 1 {

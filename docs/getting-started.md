@@ -79,7 +79,7 @@ The first time a team opens, it asks a few short questions before your first hir
 
 **Project files.** Drop in anything that explains your business or your life: a plan, a deck, pricing, contracts, notes. PDF, Markdown, CSV, slides, office documents and images all work. Your Chief of Staff reads these to learn how things work, and every agent can read them later.
 
-On a work team, tick **Write the handbook from these files?** to have your Chief of Staff draft a handbook for your business once it has read them. It sends the draft to you to approve. If the files are thin, it asks you a few questions first. On a personal team, files are optional: your Chief of Staff asks you a few questions either way and drafts an "About you" section of the handbook.
+On a work team, tick **Write the handbook from these files?** to have your Chief of Staff draft the handbook's About section for your business once it has read them, along with anything else the files settle. It sends the draft to you to approve. If the files are thin, it asks you a few questions first. On a personal team, files are optional: your Chief of Staff asks you a few questions either way and drafts the About section of the handbook.
 
 **Hire your Chief of Staff.** Your first agent. It starts with a default role and a default handbook, which you can read and edit here. Most people leave them as they are. Choose **Hire Chief of Staff**. Hiring takes 30 to 60 seconds; you can leave the page while it runs.
 

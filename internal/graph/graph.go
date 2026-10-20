@@ -49,11 +49,11 @@ const (
 
 // Kinds is the allow list, in the order prompt surfaces enumerate it.
 // A manifest naming any other kind is rejected. Adding a kind means
-// adding a rule in checkKindRules and a line to the handbook.
+// adding a rule in checkKindRules and a line to Kivali OS (internal/agent/kivali_os.md).
 var Kinds = []Kind{KindRequirement, KindDecision, KindCertificate, KindReference}
 
 // KindDescriptions is what each kind means, one line each, for the
-// tool descriptions and the handbook. Kept beside Kinds so a new
+// tool descriptions and Kivali OS. Kept beside Kinds so a new
 // kind cannot ship without its sentence.
 var KindDescriptions = map[Kind]string{
 	KindRequirement: "a constraint on an object, stated so an implementation can violate it; `about` required, optional `check`",

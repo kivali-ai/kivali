@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/kivali-ai/kivali/internal/handbook"
 	"github.com/kivali-ai/kivali/internal/message"
 	"github.com/kivali-ai/kivali/internal/roleicon"
 	"github.com/kivali-ai/kivali/internal/store"
@@ -324,12 +325,14 @@ func (r *Runtime) checkReorgCycle(target, newManager string) error {
 // ack landing in the proposer's chat is itself the signal that the
 // new handbook is live. Mirrors ApplyRoleUpdate.
 //
-// Refuses to write on empty body. Store.WriteHandbook is
-// rename-based (atomic at the filesystem layer); a crash mid-write
-// leaves the prior file intact.
+// Refuses a body without the handbook's four sections: the proposal
+// tool checks the same rule, so this catches only a proposal that
+// predates the rule and would otherwise write a handbook no door then
+// accepts. Store.WriteHandbook is rename-based (atomic at the
+// filesystem layer); a crash mid-write leaves the prior file intact.
 func (r *Runtime) ApplyHandbookUpdate(u store.HandbookUpdate) error {
-	if strings.TrimSpace(u.Body) == "" {
-		return fmt.Errorf("handbook_update: body is required")
+	if err := handbook.Validate(u.Body); err != nil {
+		return fmt.Errorf("handbook_update: %w; a proposal from before the handbook had these sections cannot be applied, ask the Chief of Staff to propose it again", err)
 	}
 	if err := r.Store.WriteHandbook(u.Body); err != nil {
 		return fmt.Errorf("handbook_update: write: %w", err)

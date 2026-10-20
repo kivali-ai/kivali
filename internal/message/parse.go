@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kivali-ai/kivali/internal/handbook"
 	"github.com/kivali-ai/kivali/internal/provider"
 	"github.com/kivali-ai/kivali/internal/roleicon"
 	"github.com/kivali-ai/kivali/internal/store"
@@ -618,8 +619,11 @@ func parseProposeHandbookUpdate(raw json.RawMessage, ctx ParseContext) (ParseRes
 	if err != nil {
 		return ParseResult{}, fmt.Errorf("%s: %w", tool, err)
 	}
-	if strings.TrimSpace(body) == "" {
-		return ParseResult{}, fmt.Errorf("%s: %s resolves to empty content; the handbook must be non-empty", tool, field)
+	// The shape is checked here, where the Chief of Staff gets the
+	// answer at once, rather than at approval, where the owner would
+	// be the one to see a draft that cannot be applied.
+	if err := handbook.Validate(body); err != nil {
+		return ParseResult{}, fmt.Errorf("%s: %s: %w", tool, field, err)
 	}
 	rationale, err := validateMessageField("rationale", in.Rationale)
 	if err != nil {

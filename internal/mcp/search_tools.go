@@ -260,4 +260,4 @@ func renderPastChatSearchResults(query string, matches []pastChatMatch, chatsSea
 }
 
 // Description kept verbatim aligned with internal/agent/state_tools.go.
-const searchPastChatsDescription = `Grep-style search across your OWN archived past chats (case-insensitive substring on Content fields only — not tool_name or tool_input). Returns matching snippets grouped by chat with the path you can then open via file_view. Newest-first. See handbook §/files/past-chats/ for when to reach for this. Inputs: query (required, keep it specific — common words flood), max_results (optional, default 30).`
+const searchPastChatsDescription = `Grep-style search across your OWN archived past chats (case-insensitive substring on Content fields only — not tool_name or tool_input). Returns matching snippets grouped by chat with the path you can then open via file_view. Newest-first. See Kivali OS §/files/past-chats/ for when to reach for this. Inputs: query (required, keep it specific — common words flood), max_results (optional, default 30).`

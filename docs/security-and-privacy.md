@@ -15,7 +15,7 @@ That data includes everything your agents know and everything you gave them: cha
 
 | Where to | What | Why |
 | --- | --- | --- |
-| **Anthropic, or Amazon Bedrock, Google Vertex AI or Microsoft Foundry** | Every model call: the handbook, the agent's role, habits and memory, its chat, and whatever files and tool results the agent reads in that turn. It goes to whichever service your Claude sign-in uses. | This is how agents think. The terms of your Claude subscription, Anthropic Console account, or cloud provider govern this data. |
+| **Anthropic, or Amazon Bedrock, Google Vertex AI or Microsoft Foundry** | Every model call: Kivali's instructions to the agent, the handbook, the agent's role, habits and memory, its chat, and whatever files and tool results the agent reads in that turn. It goes to whichever service your Claude sign-in uses. | This is how agents think. The terms of your Claude subscription, Anthropic Console account, or cloud provider govern this data. |
 | **Google** | Your sign-in. Kivali reads only the email address Google confirms. | Signing in. |
 | **The sign-in relay at kivali.ai** | The one-time code from a Google sign-in, when you use Kivali's built-in sign-in client. It returns Google's signed identity token, which your server verifies against Google's keys. Not used when you [use your own OAuth client](sign-in.md#use-your-own-google-oauth-client). | Exchanging the sign-in code needs the client secret, which only the relay holds. |
 | **GitHub** | Update checks, from Kivali Desktop only: a check for a new app at launch, and a check for a new team version once a day while each team runs. Updates download from the project's GitHub releases. A self-hosted server makes no update checks. | Updates. |

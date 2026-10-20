@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kivali-ai/kivali/internal/agent"
 	"github.com/kivali-ai/kivali/internal/provider"
 	"github.com/kivali-ai/kivali/internal/seed"
 	"github.com/kivali-ai/kivali/internal/store"
@@ -200,11 +201,14 @@ func TestSeedCoS(t *testing.T) {
 	if captured.Purpose != "seed" {
 		t.Errorf("purpose = %q", captured.Purpose)
 	}
-	if len(captured.System) != 2 {
+	if len(captured.System) != 3 {
 		t.Fatalf("system layers = %d", len(captured.System))
 	}
-	if !strings.Contains(captured.System[0].Text, "# Rules") {
-		t.Error("system[0] should include handbook")
+	if captured.System[0].Text != agent.KivaliOS {
+		t.Error("system[0] should be Kivali OS")
+	}
+	if !strings.Contains(captured.System[1].Text, "# Rules") {
+		t.Error("system[1] should include handbook")
 	}
 	// All content blocks should be text; no message/file_id blocks.
 	if len(captured.Messages) != 1 {
@@ -303,7 +307,7 @@ func TestSeedCoSUsesEditedRole(t *testing.T) {
 	if got, _ := srv.Store.ReadRole("chief-of-staff"); got != role {
 		t.Errorf("role = %q", got)
 	}
-	if len(capturedReq.System) < 2 || capturedReq.System[1].Text != role {
-		t.Errorf("system[1] = %+v", capturedReq.System)
+	if len(capturedReq.System) < 3 || capturedReq.System[2].Text != role {
+		t.Errorf("system[2] = %+v", capturedReq.System)
 	}
 }

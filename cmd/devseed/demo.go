@@ -69,24 +69,29 @@ const (
 
 const handbook = `# Plainsong
 
+## About
+
 Plainsong runs Plainsong Rota, a plain online service that lets food
 banks, shelters and community groups schedule volunteer shifts and send
 shift reminders by email. Small groups use it free; everyone else pays
 one flat, modest price.
 
-## How we work
+## Values
 
 - Ship small, ship often. A fix that reaches customers beats a perfect
   one that does not.
-- Every piece of work lives in the assignment tracker, with a clear owner
-  and a clear "done when".
-- Spend under $500 needs no approval. Anything above goes to the CEO.
 - Customer data stays inside Plainsong. Nothing leaves without the
   CEO's say-so.
 
-## Tone
+## Communicating
 
 Plain words, short answers, numbers over adjectives.
+
+## Working together
+
+- Every piece of work lives in the assignment tracker, with a clear owner
+  and a clear "done when".
+- Spend under $500 needs no approval. Anything above goes to the CEO.
 `
 
 const cosRole = `# Chief of Staff

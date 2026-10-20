@@ -15,7 +15,6 @@ import (
 	"strings"
 
 	"github.com/kivali-ai/kivali/internal/files"
-	"github.com/kivali-ai/kivali/internal/graph"
 	"github.com/kivali-ai/kivali/internal/message"
 	"github.com/kivali-ai/kivali/internal/owner"
 	"github.com/kivali-ai/kivali/internal/provider"
@@ -65,6 +64,9 @@ type Context struct {
 	Agent          store.Agent
 	IsChiefOfStaff bool
 
+	// Handbook is the team's handbook (store.ReadHandbook), rendered
+	// after Kivali OS and the owner section. Kivali OS itself is the
+	// package-level KivaliOS, the same for every agent.
 	Handbook string
 	// Owner is what the team calls its person, read from the stored
 	// name each turn. BuildRequest renders it as the system prompt's
@@ -101,14 +103,12 @@ type Context struct {
 	// agent's chat-history access set on the underlying SHA either way.
 	IncludeShareFileTool bool
 	// IncludeFilesystemTools injects the file_* tool family into the
-	// request and sets the context-management beta header. When true,
-	// the project-files section renders as a listing only (no inlined
-	// content) and a new "Filesystem" block tells the agent where
-	// things live.
+	// request and sets the context-management beta header. Kivali OS
+	// tells the agent where things live under /files/ either way.
 	IncludeFilesystemTools bool
 	// FilesystemAvailable mirrors IncludeFilesystemTools but is also true
-	// for test and preview paths that want the listing rendered
-	// without registering the tools. Callers
+	// for test and preview paths that want attachments listed by their
+	// /files/attachments/ path without registering the tools. Callers
 	// usually set both together.
 	FilesystemAvailable bool
 
@@ -142,18 +142,14 @@ func FileTextFn(ctx context.Context, s interface {
 // BuildRequest produces a provider.CompleteRequest reflecting the context.
 // System prompt layers are ordered stable-to-volatile. Layout:
 //
-//  1. Handbook
-//  2. Org chart                            (invalidated on hire/offboard)
-//  3. Project files (listing)              (invalidated on upload) — CACHED
-//  4. Filesystem (file_*) section (if available)
-//  5. Skills section (if any)
-//  6. Agent identity: role + agent memory (per-agent) — CACHED
+//  1. Kivali OS                            (the same for every agent; changes with a release)
+//  2. Owner section                        (changes on a rename)
+//  3. Handbook                             (changes on an approved proposal or an edit)
+//  4. Agent identity: role + habits + agent memory (per-agent) — CACHED
 //
 // Anthropic's prompt-caching API caps cache_control markers at 4 per
 // request. The budget here is:
 //
-//   - end of shared-stable prefix (project files listing) — caches
-//     [handbook + org chart + files listing] as one prefix.
 //   - end of system prompt (agent identity) — caches the full system
 //     prompt per-agent; invalidates on agent_memory rewrite or role
 //     edit.
@@ -180,9 +176,10 @@ func (c Context) BuildRequest() provider.CompleteRequest {
 		Agent:       c.Agent.Slug,
 	}
 
-	// System prompt carries only invariants: the handbook, the
-	// filesystem (file_*) help, and the agent's own persona (role.md +
-	// agent_memory.md). Mutating state — the org chart, open
+	// System prompt carries only invariants: Kivali OS (how the
+	// runtime works, the same for every agent of every team), who the
+	// owner is, the team's handbook, and the agent's own persona
+	// (role.md + agent_memory.md). Mutating state — the org chart, open
 	// assignments, project-files listing, and skills — is reached
 	// through on-demand MCP tools (get_org_chart, assignment_list) and
 	// filesystem listings under /files/. Models interpret
@@ -192,11 +189,9 @@ func (c Context) BuildRequest() provider.CompleteRequest {
 	// hire approval). Tool_results, by contrast, read
 	// as "snapshot I computed at time T" — the right semantics for
 	// mutable state.
-	req.System = append(req.System, provider.SystemBlock{Text: c.Handbook})
+	req.System = append(req.System, provider.SystemBlock{Text: KivaliOS})
 	req.System = append(req.System, provider.SystemBlock{Text: c.Owner.Section()})
-	if c.FilesystemAvailable {
-		req.System = append(req.System, provider.SystemBlock{Text: c.renderFilesystemSection()})
-	}
+	req.System = append(req.System, provider.SystemBlock{Text: c.Handbook})
 	req.System = append(req.System, provider.SystemBlock{Text: renderPersonaIdentity(c.Agent, c.Role, c.AgentHabits, c.AgentMemory), Cache: true})
 
 	req.Messages = append(req.Messages, c.chatHistoryToMessages()...)
@@ -355,53 +350,6 @@ func writeChildren(b *strings.Builder, children map[string][]store.Agent, parent
 	}
 }
 
-// renderFilesystemSection introduces the /files/ directory layout so
-// the model knows what's available without having to list everything
-// at release start. Short by design — each subtree has a purpose, the
-// model can file_view to learn more.
-func (c Context) renderFilesystemSection() string {
-	return `## Filesystem (/files/)
-
-Distinct from your "Agent memory" block above (which is a curated summary inlined into every prompt and edited only via the agent_memory_* tools), you also have a file-backed virtual filesystem rooted at /files/, edited via the file_* tools:
-
-**Read-only:**
-- /files/project/                    — project files uploaded by the owner.
-- /files/past-chats/                 — your own archived chat generations.
-- /files/episodes/<ts>.md            — one digest per archived generation: what was asked, done, concluded, left open. Grep here before opening a raw transcript, and when an agent-memory entry cites [[ep:<ts>]].
-- /files/skills/<name>/              — shared org skills. Each skill is a directory; read /files/skills/<name>/SKILL.md first, then browse the rest of the dir for scripts and assets. Run scripts directly with run_shell (e.g. bash /files/skills/<name>/scripts/foo.sh).
-- /files/attachments/                — files attached to recent chat/inbox messages.
-- /files/artifacts/public/           — what you have published for other agents to read, visible to them as /files/artifacts/shared/<your-slug>/<name>. Only artifact_publish and artifact_unpublish change it.
-- /files/artifacts/shared/<slug>/    — every agent's published artifacts, by owner.
-
-**Read/write — your workspace** (these two, and anything else you create under /files/ outside the read-only list above):
-- /files/artifacts/private/  — drafts, working notes, anything only you (and the owner) should see; publish from here. Other agents cannot read it.
-- /files/background/        — your background workspace, shared with your subagents and only them: the plan for one fan-out (plan.md) and what its workers produce. Other agents cannot see it.
-
-Use the file_* tools (file_view, file_create, file_str_replace, file_insert, file_delete, file_rename, file_copy) to build and organize artifacts. Most artifacts fit in a single file_create call; for very long messages that would exceed the per-response output budget, draft a skeleton first and extend section-by-section with file_str_replace / file_insert. The tool-loop will call you back with each result, so iterative builds are natural when needed.
-
-**When to use artifacts vs Agent memory:** artifacts hold standalone messages (role drafts, specs, reports, research). Agent memory holds your curated running summary. Don't duplicate — point at the artifact from memory if it matters long-term.
-
-**run_shell shares this filesystem.** The file_* tools and run_shell run in the same sandbox with the same privileges, so they see the same files and neither can write a read-only path. Bash reads /files/foo.csv directly and writes to /files/artifacts/private/out.txt directly — the next file_view sees the result. cwd defaults to /files/; pass a relative cwd to start somewhere else under that root.
-
-**Publishing.** Nothing you write is visible to other agents until you publish it: artifact_publish copies a file or directory from your workspace into /files/artifacts/public/, and artifact_unpublish removes one. To send a file to another agent, publish it and cite /files/artifacts/shared/<your-slug>/<path>, or attach it to a message by its /files/artifacts/private/ path (a file elsewhere in your workspace, such as /files/background/, is copied there first).
-
-` + renderGraphSection()
-}
-
-// renderGraphSection is the knowledge-graph paragraph of the
-// filesystem help: what a node is, the kinds, and the two read tools.
-// It ships in the binary, so it reaches every install on deploy; the
-// handbook carries the full rules but is seeded once and needs a
-// splice to catch up. Kinds are read from graph.Kinds so this text
-// cannot fall behind the allow list.
-func renderGraphSection() string {
-	kinds := make([]string, 0, len(graph.Kinds))
-	for _, k := range graph.Kinds {
-		kinds = append(kinds, string(k))
-	}
-	return `**Knowledge graph.** Every published file (yours under /files/artifacts/public/, peers' under /files/artifacts/shared/<owner>/) and every project file is a node in the org's knowledge graph; agents are nodes too. A markdown file there with YAML front matter carries the node's id (stable across renames; without one, the path is the name), kind (one of: ` + strings.Join(kinds, ", ") + `, or none for authored primary material), about (the node this concerns), status (draft | provisional | current | withdrawn; current when absent; provisional requires a condition), condition, depends_on, supersedes, file (one payload beside it), check, source, evidence and summary. Decisions and requirements are nodes, one per file, a few lines each; a message about one names its id instead of restating it. Find nodes with ` + GraphQueryToolName + ` (by owner, about, kind, status) and inspect one with ` + GraphNodeToolName + ` (edges both ways, versions, the file_view path to its body). Each kind's rule is in ` + GraphQueryToolName + `'s description; the handbook's "The knowledge graph" section, where present, has the longer form. The index checks the rules when you publish: artifact_publish's reply gives each file's node id, version, status and anything the index could not accept. Your next wake reports what changed in the graph since your last turn.`
-}
-
 // resolveAttachmentLinks asks the store for this agent's sha → on-disk
 // attachment filename map. Best-effort: on any error (or a store that
 // doesn't implement the lookup, as in older test fakes) we return nil
@@ -529,7 +477,7 @@ func renderPersonaIdentity(a store.Agent, role, habits, agentMemory string) stri
 	hasHabits := strings.TrimSpace(habits) != ""
 	hasMemory := strings.TrimSpace(agentMemory) != ""
 	if hasHabits || hasMemory {
-		b.WriteString("\nPrecedence: the handbook and your role override your habits; your habits override your agent memory; your agent memory is belief, not instruction — the current message wins when they conflict, and a correction from the owner is accepted and applied.\n")
+		b.WriteString("\nPrecedence: Kivali OS says how the runtime works and nothing overrides it; the handbook and your role say what to do and override your habits; your habits override your agent memory; your agent memory is belief, not instruction — the current message wins when they conflict, and a correction from the owner is accepted and applied.\n")
 	}
 	if hasHabits {
 		b.WriteString("\n## Habits\n\n")

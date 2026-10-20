@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kivali-ai/kivali/internal/agent"
 	"github.com/kivali-ai/kivali/internal/provider"
 	"github.com/kivali-ai/kivali/internal/web/apitypes"
 )
@@ -70,7 +71,7 @@ func TestBootstrapFlow(t *testing.T) {
 	}
 
 	// 4. Hire the Chief of Staff with an edited handbook.
-	const myHandbook = "# My handbook\n\nAgents follow these rules. Test-specific marker: XYZZY.\n"
+	myHandbook := shapedHandbookWith("Agents follow these rules. Test-specific marker: XYZZY.")
 	handbook := myHandbook
 	if rr := seedCoS(t, srv, apitypes.SeedCoSRequest{HandbookMD: &handbook}); rr.Code != http.StatusAccepted {
 		t.Fatalf("POST setup/seed-cos: code=%d body=%s", rr.Code, rr.Body.String())
@@ -137,14 +138,19 @@ func TestBootstrapFlow(t *testing.T) {
 	if call == nil {
 		t.Fatalf("no seed call captured; got %d call(s) with purposes %v", len(mock.Calls), callPurposes(mock.Calls))
 	}
-	if len(call.System) < 2 {
-		t.Fatalf("system blocks = %d, want ≥ 2", len(call.System))
+	if len(call.System) < 3 {
+		t.Fatalf("system blocks = %d, want ≥ 3", len(call.System))
 	}
-	if !strings.Contains(call.System[0].Text, "XYZZY") {
-		t.Errorf("system[0] missing handbook marker")
+	// The seed call opens like every turn: Kivali OS, then the
+	// handbook, then the role.
+	if call.System[0].Text != agent.KivaliOS {
+		t.Errorf("system[0] is not Kivali OS")
 	}
-	if !strings.Contains(call.System[1].Text, "Chief of Staff") {
-		t.Errorf("system[1] missing role template")
+	if !strings.Contains(call.System[1].Text, "XYZZY") {
+		t.Errorf("system[1] missing handbook marker")
+	}
+	if !strings.Contains(call.System[2].Text, "Chief of Staff") {
+		t.Errorf("system[2] missing role template")
 	}
 	var joined strings.Builder
 	for _, m := range call.Messages {

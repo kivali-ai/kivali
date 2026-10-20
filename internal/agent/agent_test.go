@@ -12,18 +12,19 @@ import (
 )
 
 func TestBuildRequestSystemLayers(t *testing.T) {
-	// The system prompt carries only invariants: handbook, agent
-	// persona (role.md + agent_memory). Mutating state — org chart,
-	// pending work, project files, skills — lives on on-demand MCP
-	// tools (get_org_chart, assignment_list) or filesystem listings
-	// (file_view /files/project/).
-	// Expected layers: handbook, persona (2 when the file_* tools
-	// are off). With them enabled, the filesystem help block also
-	// appears for a total of 3.
+	// The system prompt carries only invariants: Kivali OS, the owner
+	// section, the team's handbook and the agent's persona (role.md +
+	// agent_memory). Mutating state — org chart, pending work, project
+	// files, skills — lives on on-demand MCP tools (get_org_chart,
+	// assignment_list) or filesystem listings (file_view
+	// /files/project/). Kivali OS comes first: it is the same bytes for
+	// every agent of every team, so it is the shared prompt prefix,
+	// and agents are told it says what is before the handbook says
+	// what to do.
 	ctx := Context{
 		Agent:          store.Agent{Slug: "cos", Role: "Chief of Staff", ReportsTo: "ceo"},
 		IsChiefOfStaff: true,
-		Handbook:       "# Handbook",
+		Handbook:       "# Handbook\n\n## About\n\nUs.",
 		Role:           "# Role",
 		AgentMemory:    "notes",
 		Model:          "claude-opus-4-7",
@@ -35,26 +36,26 @@ func TestBuildRequestSystemLayers(t *testing.T) {
 	if req.Model != "claude-opus-4-7" || req.Agent != "cos" {
 		t.Errorf("req meta: %+v", req)
 	}
-	if len(req.System) != 3 {
-		t.Fatalf("system layers = %d, want 3 (handbook + owner + persona)", len(req.System))
+	if len(req.System) != 4 {
+		t.Fatalf("system layers = %d, want 4 (Kivali OS + owner + handbook + persona)", len(req.System))
+	}
+	if req.System[0].Text != KivaliOS || req.System[0].Cache {
+		t.Errorf("system[0] = %q, want Kivali OS with no cache marker (subsumed by the persona breakpoint)", req.System[0].Text)
 	}
 	// The zero Owner is a work team with no name chosen.
 	if req.System[1].Text != owner.For("", "").Section() || req.System[1].Cache {
 		t.Errorf("system[1] = %q, want the owner section with no cache marker", req.System[1].Text)
 	}
-	if !strings.Contains(req.System[0].Text, "Handbook") {
-		t.Errorf("system[0] = %q", req.System[0].Text)
+	if req.System[2].Text != ctx.Handbook || req.System[2].Cache {
+		t.Errorf("system[2] = %q, want the handbook with no cache marker", req.System[2].Text)
 	}
-	if req.System[0].Cache {
-		t.Error("handbook should not carry a cache marker (subsumed by persona breakpoint)")
+	if !strings.Contains(req.System[3].Text, "You are cos") {
+		t.Errorf("system[3] = %q", req.System[3].Text)
 	}
-	if !strings.Contains(req.System[2].Text, "You are cos") {
-		t.Errorf("system[2] = %q", req.System[2].Text)
+	if !strings.Contains(req.System[3].Text, "Agent memory") {
+		t.Errorf("agent memory not included: %q", req.System[3].Text)
 	}
-	if !strings.Contains(req.System[2].Text, "Agent memory") {
-		t.Errorf("agent memory not included: %q", req.System[2].Text)
-	}
-	if !req.System[2].Cache {
+	if !req.System[3].Cache {
 		t.Error("persona (role + agent_memory) should be the per-agent cache breakpoint")
 	}
 	// No more org-chart / project-files / pending-work blocks in the

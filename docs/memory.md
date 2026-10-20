@@ -29,7 +29,7 @@ It edits its memory and habits accordingly, then the old chat moves to **Past ch
 
 Agents do not edit their memory or habits in the middle of a chat. Anything worth keeping is already in the chat, and the new-chat step reads it.
 
-Agents keep memory lean on purpose. Memory and habits ride along on every call, so every line costs a little on every turn. The handbook asks agents to keep the two together under about 32 KB, to prune rather than grow, and to record how to look a fact up rather than the fact itself when it changes often.
+Agents keep memory lean on purpose. Memory and habits ride along on every call, so every line costs a little on every turn. Kivali asks agents to keep the two together under about 32 KB, to prune rather than grow, and to record how to look a fact up rather than the fact itself when it changes often.
 
 ## Past chats and episodes
 

@@ -16,6 +16,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/kivali-ai/kivali/internal/handbook"
 	"github.com/kivali-ai/kivali/internal/provider"
 	"github.com/kivali-ai/kivali/internal/seed"
 	"github.com/kivali-ai/kivali/internal/store"
@@ -462,7 +463,7 @@ func (e *seedTimeoutError) words() string {
 // first message, which has it ask the CEO a few questions and then
 // draft the "About you" section.
 func (s *Server) cosSeedFromRequest(w http.ResponseWriter, req apitypes.SeedCoSRequest) (cosSeed, bool) {
-	handbook, err := s.Store.ReadHandbook()
+	current, err := s.Store.ReadHandbook()
 	stored := err == nil
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		writeAPIError(w, http.StatusInternalServerError, "could not read the handbook: "+err.Error(), whoServer)
@@ -471,7 +472,7 @@ func (s *Server) cosSeedFromRequest(w http.ResponseWriter, req apitypes.SeedCoSR
 	kind := s.teamKind()
 	personal := kind == store.TeamKindPersonal
 	plan := cosSeed{
-		Handbook:      handbook,
+		Handbook:      current,
 		WriteHandbook: !stored,
 		Role:          seed.ChiefOfStaffRoleFor(kind),
 		Instruction:   defaultSeedInstruction,
@@ -483,8 +484,8 @@ func (s *Server) cosSeedFromRequest(w http.ResponseWriter, req apitypes.SeedCoSR
 		plan.Handbook = seed.HandbookFor(kind)
 	}
 	if req.HandbookMD != nil {
-		if strings.TrimSpace(*req.HandbookMD) == "" {
-			writeAPIError(w, http.StatusBadRequest, "the handbook is empty", whoYou)
+		if err := handbook.Validate(*req.HandbookMD); err != nil {
+			writeAPIError(w, http.StatusBadRequest, err.Error(), whoYou)
 			return cosSeed{}, false
 		}
 		plan.Handbook, plan.WriteHandbook = *req.HandbookMD, true

@@ -366,7 +366,11 @@ func (s *Server) buildCoSSeedRequest(ctx context.Context, handbook, roleTemplate
 		MaxTokens: 8192,
 		Purpose:   "seed",
 		Agent:     "chief-of-staff",
+		// The same opening as every turn's prompt: how the runtime
+		// works, then the team's handbook, then the role the Chief of
+		// Staff is about to have.
 		System: []provider.SystemBlock{
+			{Text: agent.KivaliOS, Cache: true},
 			{Text: handbook, Cache: true},
 			{Text: roleTemplate, Cache: true},
 		},

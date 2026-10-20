@@ -74,7 +74,7 @@ Stored the first time the server starts with them, and never over a value alread
 | Variable | What it does |
 | --- | --- |
 | `KIVALI_SEED_ORG_NAME` | The team's name, at most 64 characters. |
-| `KIVALI_TEAM_KIND` | `work` or `personal`. A personal team's setup treats files as optional, and its handbook has an "About you" section in place of "The company". Unset behaves as `work`. |
+| `KIVALI_TEAM_KIND` | `work` or `personal`. A personal team's setup treats files as optional, and its default handbook is written for a person's life rather than a business. Unset behaves as `work`. |
 | `KIVALI_OWNER_NAME` | What agents call you, such as "Jane" or "CEO". At most 40 characters on one line, without `:`, `` ` `` or `>`. Change it later in **Org**, **Organization**. |
 
 ### Server

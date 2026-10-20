@@ -353,7 +353,7 @@ There is no database. Everything durable is a plain file under
 
 ```
 /data/
-  handbook.md                 the rules every agent works under, inlined into every call
+  handbook.md                 the team's handbook: About, Values, Communicating, Working together; inlined into every call
   message_queue.json          each agent's queue of unreleased messages
   messages/<YYYY-MM-DD>/      the message ledger, one Markdown file per message, UTC days
   messages/.redacted/         bounced messages, kept out of the live ledger

@@ -28,6 +28,7 @@ import (
 	"github.com/kivali-ai/kivali/internal/files"
 	"github.com/kivali-ai/kivali/internal/messaging"
 	"github.com/kivali-ai/kivali/internal/provider"
+	"github.com/kivali-ai/kivali/internal/seed"
 	"github.com/kivali-ai/kivali/internal/store"
 	"github.com/kivali-ai/kivali/internal/web"
 )
@@ -183,6 +184,16 @@ func main() {
 	}
 	if err != nil {
 		log.Printf("upgrade model pins: %v", err)
+	}
+	// A handbook written before the runtime's rules moved into Kivali
+	// OS is set aside for the Chief of Staff and the default takes its
+	// place. Every boot, like the model pins, and a no-op once the
+	// handbook has the four sections. The restore handler runs the
+	// same pass on uploaded data.
+	if up, err := s.UpgradeHandbook(seed.Handbook, time.Now()); err != nil {
+		log.Printf("upgrade handbook: %v", err)
+	} else if up.Replaced {
+		log.Printf("handbook: replaced by the default; the previous one is attachment %s (told the Chief of Staff: %v)", up.AttachmentSHA, up.ToldChiefOfStaff)
 	}
 	// Make sure HOME exists for the claude CLI. The image sets HOME
 	// to a PVC-backed path so the CLI's sign-in persists, but

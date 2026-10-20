@@ -133,7 +133,7 @@ func Build(in Input) *Index {
 
 // notePointedAtPathIds attaches a problem to every node whose id is
 // derived from its path and that some other node points at. The
-// handbook asks owners to declare an id for anything a peer will
+// Kivali OS asks owners to declare an id for anything a peer will
 // point at; the owner of a bare release zip cannot know a peer pinned
 // it, and the day they replace the file under a new name the pin
 // dangles and the pinner is flagged for a retraction that never

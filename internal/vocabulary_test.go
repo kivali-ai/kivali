@@ -31,7 +31,7 @@ import (
 //	grep -rn -i -E 'issue|principle|initiative|\bchild|children|\bfired\b|errored|constitution' internal/seed internal/builtinskills
 func TestAgentFacingProseUsesTheVocabulary(t *testing.T) {
 	var failures []string
-	for _, file := range globAll(t, "seed/*.md", "builtinskills/skills/*/SKILL.md") {
+	for _, file := range globAll(t, "seed/*.md", "agent/kivali_os.md", "builtinskills/skills/*/SKILL.md") {
 		body, err := os.ReadFile(file)
 		if err != nil {
 			t.Fatal(err)
@@ -52,7 +52,7 @@ func TestAgentFacingProseUsesTheVocabulary(t *testing.T) {
 		"assignments/*.go", "tracker/*.go",
 		"agent/chat.go", "agent/provisioning.go", "message/message.go", "messaging/*.go",
 		"web/api_setup.go", "web/api_org.go", "web/api_home.go", "web/api_proposals.go",
-		"web/onboarding.go", "web/chat.go", "store/handbook.go", "store/message.go",
+		"web/onboarding.go", "web/chat.go", "store/handbook.go", "store/handbook_upgrade.go", "handbook/*.go", "store/message.go",
 		"store/graph_index.go", "web/episode_writer.go",
 	) {
 		if strings.HasSuffix(file, "_test.go") {
