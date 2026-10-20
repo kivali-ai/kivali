@@ -697,7 +697,9 @@ a slot like any other. Deny ends it `blocked` with `upload_denied` and
 the person's words in `reason`. After 24 hours with no answer core
 writes `blocked`, `user_did_not_respond`. The calling agent hears
 nothing until the result, and a subagent cannot submit either reason.
-The task's page and chip show that it is waiting for approval. An
+The task's page and chip show that it is waiting for approval, and the
+Background tab lists it as a `waiting` session whose `wait` is
+`approval` (`sign_in` for a sign-in wait). An
 approved task has no `web_eval` and keeps the web budget: the approval
 covers the upload of those bytes to that site, nothing else.
 

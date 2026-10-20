@@ -74,12 +74,24 @@ type SessionState string
 const (
 	SessionStateQueued  SessionState = "queued"
 	SessionStateRunning SessionState = "running"
-	// SessionStateWaiting: a web task paused until a person has signed
-	// in through its browser window. Live, like running.
+	// SessionStateWaiting: a web task held until a person acts, to sign
+	// in through its browser window or to approve its uploads; the
+	// session's Wait says which. Live, like running.
 	SessionStateWaiting   SessionState = "waiting"
 	SessionStateDone      SessionState = "done"
 	SessionStateErrored   SessionState = "errored"
 	SessionStateCancelled SessionState = "cancelled"
+)
+
+// SessionWait is what a waiting session waits for a person to do.
+type SessionWait string
+
+const (
+	// SessionWaitSignIn: sign in through the task's browser window.
+	SessionWaitSignIn SessionWait = "sign_in"
+	// SessionWaitApproval: approve the files the task uploads, before
+	// it starts.
+	SessionWaitApproval SessionWait = "approval"
 )
 
 // BackgroundSession is one dispatched background task.
@@ -87,6 +99,8 @@ type BackgroundSession struct {
 	ID    string       `json:"id"`
 	Kind  SessionKind  `json:"kind"`
 	State SessionState `json:"state"`
+	// Wait is what a person is asked to do, on a waiting session only.
+	Wait SessionWait `json:"wait,omitempty"`
 	// Title is the description the agent gave the task.
 	Title string `json:"title"`
 	// Model is the friendly name ("Opus 5.5"); Effort the level.

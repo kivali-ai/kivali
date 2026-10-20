@@ -290,17 +290,22 @@ func normalizeStepText(s string) string {
 //
 //	queued              → queued
 //	running             → running
-//	waiting_for_sign_in → waiting
+//	waiting_for_sign_in → waiting (Wait: sign_in)
+//	awaiting_approval   → waiting (Wait: approval)
 //	completed           → done
 //	failed              → errored (with the failure as Error)
 //	cancelled           → cancelled
+//
+// Any other state reads as errored, which is what failed maps to;
+// TestSessionStateCoversEveryJobState fails when a job state is added
+// without a decision about it.
 func sessionState(state string) apitypes.SessionState {
 	switch state {
 	case subagentJobQueued:
 		return apitypes.SessionStateQueued
 	case subagentJobRunning:
 		return apitypes.SessionStateRunning
-	case subagentJobWaiting:
+	case subagentJobWaiting, subagentJobAwaitingApproval:
 		return apitypes.SessionStateWaiting
 	case subagentJobCompleted:
 		return apitypes.SessionStateDone
@@ -309,6 +314,18 @@ func sessionState(state string) apitypes.SessionState {
 	default:
 		return apitypes.SessionStateErrored
 	}
+}
+
+// sessionWait is what a person is asked to do for a job in a waiting
+// state, and empty for a job in any other.
+func sessionWait(state string) apitypes.SessionWait {
+	switch state {
+	case subagentJobWaiting:
+		return apitypes.SessionWaitSignIn
+	case subagentJobAwaitingApproval:
+		return apitypes.SessionWaitApproval
+	}
+	return ""
 }
 
 // backgroundSession is one job as the app shows it. Its clock runs
@@ -333,6 +350,7 @@ func backgroundSession(slug string, j subagentJob, now time.Time) apitypes.Backg
 		ID:       j.ID,
 		Kind:     apitypes.SessionKindSubagent,
 		State:    sessionState(j.State),
+		Wait:     sessionWait(j.State),
 		Title:    j.Description,
 		Model:    j.Model, // the id; backgroundView labels it
 		Effort:   j.Effort,
