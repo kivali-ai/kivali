@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -73,6 +74,18 @@ func (f *egressCore) serve(t *testing.T) string {
 		f.mu.Unlock()
 		w.WriteHeader(http.StatusNoContent)
 	})
+	// A web command and a result submission are recorded like turn
+	// events and answered with an empty result.
+	for _, route := range []string{"POST /v1/agent/{slug}/subagents/{id}/web", "POST /v1/agent/{slug}/subagents/{id}/result"} {
+		mux.HandleFunc(route, func(w http.ResponseWriter, r *http.Request) {
+			b, _ := io.ReadAll(r.Body)
+			f.mu.Lock()
+			f.bodies = append(f.bodies, string(b))
+			f.mu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, "{}")
+		})
+	}
 	ln, err := net.Listen("unix", path)
 	if err != nil {
 		t.Fatal(err)
@@ -122,6 +135,63 @@ func TestSetUpEgressCredentialRegistersTheHashAndScrubsRelays(t *testing.T) {
 	}
 	if !strings.Contains(core.bodies[0], egresscred.Placeholder) {
 		t.Fatalf("body has no placeholder: %s", core.bodies[0])
+	}
+}
+
+// A web subagent's commands and its result submission carry what the
+// model wrote, which can quote the proxy URL; they run on the client
+// with no header timeout. Without this test that client could send
+// them to core unscrubbed, where the agent shell can read them.
+func TestSetUpEgressCredentialScrubsWebCommandsAndResults(t *testing.T) {
+	core := &egressCore{}
+	c := NewClient(core.serve(t), "alice")
+	cred, err := SetUpEgressCredential(context.Background(), c, "http://10.43.0.12:3128")
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, _ := url.Parse(cred.URL)
+	secret, _ := u.User.Password()
+	leak, _ := json.Marshal(map[string]string{"text": "proxy " + cred.URL + " secret " + secret})
+	if _, err := c.WebCommand(context.Background(), "sub-1", WebCommandRequest{Command: "type", Args: leak}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.SubmitSubagentResult(context.Background(), "sub-1", leak); err != nil {
+		t.Fatal(err)
+	}
+	core.mu.Lock()
+	defer core.mu.Unlock()
+	if len(core.bodies) != 2 {
+		t.Fatalf("bodies = %v", core.bodies)
+	}
+	for i, b := range core.bodies {
+		if strings.Contains(b, secret) || !strings.Contains(b, egresscred.Placeholder) {
+			t.Errorf("request %d reached core as %s", i, b)
+		}
+	}
+}
+
+// A client to core added to Client later would skip the scrubber unless
+// WithScrubber wraps it too. This test fails for any *http.Client field
+// whose transport WithScrubber leaves bare.
+func TestWithScrubberWrapsEveryTransport(t *testing.T) {
+	const secret = "c2VjcmV0LWZvci10cmFuc3BvcnQtY2hlY2s"
+	s := egresscred.NewScrubber("alice", secret, "http://alice:"+secret+"@10.43.0.12:3128")
+	scrubbed := reflect.TypeOf(s.RoundTripper(http.DefaultTransport))
+	c := NewClient(filepath.Join(t.TempDir(), "s"), "alice").WithScrubber(s)
+	v := reflect.ValueOf(c).Elem()
+	clients := 0
+	for i := 0; i < v.NumField(); i++ {
+		f := v.Field(i)
+		if f.Type() != reflect.TypeOf(&http.Client{}) {
+			continue
+		}
+		clients++
+		if got := f.Elem().FieldByName("Transport").Elem().Type(); got != scrubbed {
+			t.Errorf("Client.%s sends through %v, not the scrubber", v.Type().Field(i).Name, got)
+		}
+	}
+	if clients < 2 {
+		t.Fatalf("found %d http clients on Client, want the short one and the long one", clients)
 	}
 }
 

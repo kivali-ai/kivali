@@ -30,14 +30,16 @@ type EgressCredentialRequest struct {
 // hash is malformed, which no retry changes.
 var ErrEgressCredentialRefused = errors.New("agentpod: core refused the egress credential")
 
-// WithScrubber has every request c sends to core scrubbed of the
-// credential s knows (egresscred.Scrubber.RoundTripper): stream
-// events, tool results, error strings and everything else the runtime
-// relays. Must be called before the first request. A nil s changes
-// nothing.
+// WithScrubber has every request c sends to core, on both its
+// transports, scrubbed of the credential s knows
+// (egresscred.Scrubber.RoundTripper): stream events, tool results,
+// web commands, result submissions, error strings and everything else
+// the runtime relays. Must be called before the first request. A nil
+// s changes nothing.
 func (c *Client) WithScrubber(s *egresscred.Scrubber) *Client {
 	if s != nil {
 		c.http.Transport = s.RoundTripper(c.http.Transport)
+		c.long.Transport = s.RoundTripper(c.long.Transport)
 	}
 	return c
 }
