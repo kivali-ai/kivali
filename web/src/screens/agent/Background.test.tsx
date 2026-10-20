@@ -348,4 +348,28 @@ describe('a task waiting for a person', () => {
     expect(within(row).queryByText(/failed|without saying why/)).toBeNull();
     expect(within(row).getByText('1:35')).toBeInTheDocument();
   });
+
+  // A web task held for upload approval arrives as a waiting session with wait "approval". If this is deleted, such
+  // a row can be given the sign-in line ("Waiting for you to sign in") and the owner goes looking for a sign-in
+  // that does not exist, while the approval that would start the task sits unanswered.
+  it('says an upload approval is what a task waits for, not a sign-in', async () => {
+    const approving: BackgroundSession = {
+      id: 'dddd4444',
+      kind: 'subagent',
+      state: 'waiting',
+      wait: 'approval',
+      title: 'Upload the signed contract',
+      model: 'Sonnet 4.6',
+      effort: 'low',
+      elapsed_s: 12,
+      started: '2026-09-22T16:58:25Z',
+      url: '/agents/engineering-lead/subagents/dddd4444',
+    };
+    renderTabs(PATH, { routes: { ['GET ' + API]: { sessions: [approving] } } });
+    await screen.findByRole('heading', { name: 'No plan · 1 running' });
+    const row = screen.getByRole('link', { name: /Upload the signed contract/ });
+    expect(within(row).getByRole('status', { name: 'Waiting for a person' })).toBeInTheDocument();
+    expect(within(row).getByText('Waiting for you to approve its uploads')).toBeInTheDocument();
+    expect(within(row).queryByText(/sign in|failed|without saying why/)).toBeNull();
+  });
 });

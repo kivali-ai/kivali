@@ -255,6 +255,59 @@ func TestBuildBackgroundElapsed(t *testing.T) {
 	}
 }
 
+// TestSessionStateCoversEveryJobState walks every job state the
+// registry defines and checks what the Background tab is told. If it
+// is deleted, a state added to subagent_jobs.go falls into
+// sessionState's default and the tab shows a perfectly healthy task as
+// "errored · The task failed without saying why" (as awaiting_approval
+// did, for a web task waiting on a person to approve its uploads).
+func TestSessionStateCoversEveryJobState(t *testing.T) {
+	type shown struct {
+		state apitypes.SessionState
+		wait  apitypes.SessionWait
+	}
+	want := map[string]shown{
+		subagentJobQueued:           {apitypes.SessionStateQueued, ""},
+		subagentJobRunning:          {apitypes.SessionStateRunning, ""},
+		subagentJobWaiting:          {apitypes.SessionStateWaiting, apitypes.SessionWaitSignIn},
+		subagentJobAwaitingApproval: {apitypes.SessionStateWaiting, apitypes.SessionWaitApproval},
+		subagentJobCompleted:        {apitypes.SessionStateDone, ""},
+		subagentJobFailed:           {apitypes.SessionStateErrored, ""},
+		subagentJobCancelled:        {apitypes.SessionStateCancelled, ""},
+	}
+	checkEveryJobStateHasAnExpectation(t, "session state", want)
+	for state, w := range want {
+		if got := sessionState(state); got != w.state {
+			t.Errorf("sessionState(%q) = %q, want %q", state, got, w.state)
+		}
+		if got := sessionWait(state); got != w.wait {
+			t.Errorf("sessionWait(%q) = %q, want %q", state, got, w.wait)
+		}
+	}
+}
+
+// TestBackgroundSessionAwaitingApprovalIsWaitingNotFailed: a web task
+// held for upload approval reaches the Background tab as a live waiting
+// session that says what it waits for, with no failure text. If it
+// regresses, the owner sees "errored · The task failed without saying
+// why" on a task that is only waiting for them, and nothing tells them
+// to approve it.
+func TestBackgroundSessionAwaitingApprovalIsWaitingNotFailed(t *testing.T) {
+	at := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	j := subagentJob{ID: "w", Description: "upload the report", State: subagentJobAwaitingApproval, QueuedAt: at, WaitSince: at}
+	bg := buildBackground("alice", PlanView{}, []subagentJob{j}, nil, at.Add(time.Minute))
+	if len(bg.Sessions) != 1 {
+		t.Fatalf("sessions = %+v", bg.Sessions)
+	}
+	s := bg.Sessions[0]
+	if s.State != apitypes.SessionStateWaiting || s.Wait != apitypes.SessionWaitApproval || s.Error != nil || s.Ended != nil {
+		t.Errorf("session = state %q wait %q error %v ended %v, want waiting for approval, no error, not ended", s.State, s.Wait, s.Error, s.Ended)
+	}
+	if s.ElapsedS != 60 {
+		t.Errorf("elapsed = %d, want 60: a waiting task's clock is still running", s.ElapsedS)
+	}
+}
+
 // TestMatchPlanStepDateIsNotAStep: a description opening with a date
 // ("2. October review") is not a claim on step 2; a numbered one is.
 func TestMatchPlanStepDateIsNotAStep(t *testing.T) {

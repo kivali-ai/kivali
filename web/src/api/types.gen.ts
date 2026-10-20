@@ -91,8 +91,9 @@ export type SessionKind = typeof SessionKindSubagent | typeof SessionKindAgent;
 export const SessionStateQueued = "queued";
 export const SessionStateRunning = "running";
 /**
- * SessionStateWaiting: a web task paused until a person has signed
- * in through its browser window. Live, like running.
+ * SessionStateWaiting: a web task held until a person acts, to sign
+ * in through its browser window or to approve its uploads; the
+ * session's Wait says which. Live, like running.
  */
 export const SessionStateWaiting = "waiting";
 export const SessionStateDone = "done";
@@ -100,12 +101,29 @@ export const SessionStateErrored = "errored";
 export const SessionStateCancelled = "cancelled";
 export type SessionState = typeof SessionStateQueued | typeof SessionStateRunning | typeof SessionStateWaiting | typeof SessionStateDone | typeof SessionStateErrored | typeof SessionStateCancelled;
 /**
+ * SessionWait is what a waiting session waits for a person to do.
+ */
+/**
+ * SessionWaitSignIn: sign in through the task's browser window.
+ */
+export const SessionWaitSignIn = "sign_in";
+/**
+ * SessionWaitApproval: approve the files the task uploads, before
+ * it starts.
+ */
+export const SessionWaitApproval = "approval";
+export type SessionWait = typeof SessionWaitSignIn | typeof SessionWaitApproval;
+/**
  * BackgroundSession is one dispatched background task.
  */
 export interface BackgroundSession {
   id: string;
   kind: SessionKind;
   state: SessionState;
+  /**
+   * Wait is what a person is asked to do, on a waiting session only.
+   */
+  wait?: SessionWait;
   /**
    * Title is the description the agent gave the task.
    */

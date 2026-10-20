@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useHref } from 'react-router';
 import { ApiError, apiGet } from '../../api/client';
-import type { SubagentTaskState, WebSignInReason } from '../../api/types.gen';
+import type { SessionState, SessionWait, SubagentTaskState, WebSignInReason } from '../../api/types.gen';
 import type { AgentRunState } from '../../ds';
 import { shortDate } from '../../lib/time';
 
@@ -172,11 +172,11 @@ export function listItemCount(text: string): number {
 
 // ---- State vocabularies ----
 
-export type SessionRunState = 'queued' | 'running' | 'waiting' | 'done' | 'errored' | 'cancelled';
+export type SessionRunState = SessionState;
 
 /**
  * A background session's state as the design system's AgentState draws it (the words already agree, except
- * waiting: a task paused for a person to sign in is "held", and the row says what it waits for beside it).
+ * waiting: a task paused for a person to sign in or approve its uploads is "held", and the row says what it waits for beside it).
  */
 export const SESSION_STATE: Record<SessionRunState, AgentRunState> = {
   queued: 'queued',
@@ -214,6 +214,11 @@ export function personWaitLine(state: SubagentTaskState, site?: string): string 
 
 /** A web task that uploads files, before a person has approved it. */
 export const APPROVAL_WAIT_LINE = 'Waiting for you to approve its uploads';
+
+/** What a waiting background session waits for; a session that names none waits for a sign-in. */
+export function sessionWaitLine(wait?: SessionWait): string {
+  return wait === 'approval' ? APPROVAL_WAIT_LINE : signInWaitLine();
+}
 
 /** What a web task's page asks of the person while the task waits for sign-in. */
 export const SIGN_IN_REASON: Record<WebSignInReason, string> = {
