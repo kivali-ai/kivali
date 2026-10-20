@@ -114,13 +114,15 @@ func (s *Server) ceoNeeds() (count int, paths []string) {
 	return entry.count, entry.paths
 }
 
-// forgetSnapshotCache drops every cached snapshot fact: a restore puts
-// back files whose stamps an entry could mistake for its own.
+// forgetSnapshotCache drops every cached snapshot fact, and what Home's
+// inbox and history keep: a restore puts back files whose stamps an
+// entry could mistake for its own.
 func (s *Server) forgetSnapshotCache() {
 	c := &s.snapshotCache
 	c.mu.Lock()
 	c.agents = nil
 	c.ceo = nil
 	c.mu.Unlock()
+	s.forgetHomeCaches()
 	s.Store.ForgetReadCaches()
 }

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -198,5 +199,72 @@ func TestHomeHistoryParsesEachMessageOnce(t *testing.T) {
 	}
 	if len(heads) != 2 || heads[0].Path != a || heads[1].Path != b {
 		t.Errorf("heads = %+v, want %s then %s", heads, a, b)
+	}
+}
+
+// A restore writes the CEO's chat over in place, where every other
+// write appends to it, and Home's inbox follows that chat from where its
+// last read stopped. On a deployment whose CEO chat already had rows,
+// read once before the restore, the inbox went on reading the restored
+// chat from the old offset: mid-line, every Home load failed ("the
+// requests waiting on you could not be read") and Needs you counted 0;
+// on a line boundary, the restored requests before it were missing and
+// the old ones stayed. Both lasted until the server restarted. After a
+// restore, Home must read the restored files as a server that has just
+// started would. TestChatTailStartsOverAfterARewriteInPlace covers the
+// tail on its own.
+func TestRestoreLeavesHomeReadingTheRestoredFiles(t *testing.T) {
+	src := newTestServer(t)
+	var want []string
+	for _, title := range []string{"Approve A", "Approve B", "Approve C"} {
+		want = append(want, seedCEOApprovalRequest(t, src, "chief-of-staff", title, "..."))
+	}
+	dl := backupZip(t, src)
+	if dl.Code != http.StatusOK {
+		t.Fatalf("backup code = %d", dl.Code)
+	}
+
+	dst := newTestServer(t)
+	seedCEOApprovalRequest(t, dst, "chief-of-staff", "Asked before the restore", "...")
+	if v, err := dst.buildCEOInbox(1); err != nil || len(v.Needs) != 1 {
+		t.Fatalf("before the restore: %v, needs %+v", err, v.Needs)
+	}
+	if _, err := dst.messageHeads(); err != nil {
+		t.Fatal(err)
+	}
+	if rr := restoreZip(t, dst, "backup.zip", dl.Body.Bytes()); rr.Code != http.StatusOK {
+		t.Fatalf("restore code = %d, body = %s", rr.Code, rr.Body.String())
+	}
+
+	warm, err := dst.buildCEOInbox(1)
+	if err != nil {
+		t.Fatalf("after the restore: %v", err)
+	}
+	cold, err := coldServer(dst).buildCEOInbox(1)
+	if err != nil {
+		t.Fatalf("cold build: %v", err)
+	}
+	if !reflect.DeepEqual(warm, cold) {
+		t.Fatalf("after the restore, the inbox differs from a cold read\ncached: %+v\ncold:   %+v", warm, cold)
+	}
+	var got []string
+	for _, it := range warm.Needs {
+		got = append(got, it.RequestPath)
+	}
+	sort.Strings(got)
+	sort.Strings(want)
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("needs after the restore = %v, want the archive's %v", got, want)
+	}
+	warmHeads, err := dst.messageHeads()
+	if err != nil {
+		t.Fatal(err)
+	}
+	coldHeads, err := coldServer(dst).messageHeads()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(warmHeads, coldHeads) {
+		t.Errorf("after the restore, the history heads differ from a cold read\ncached: %+v\ncold:   %+v", warmHeads, coldHeads)
 	}
 }
