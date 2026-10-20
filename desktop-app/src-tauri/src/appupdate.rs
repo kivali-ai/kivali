@@ -19,6 +19,7 @@ use std::sync::Mutex;
 use std::time::Duration;
 use tauri::{AppHandle, Manager};
 use tauri_plugin_updater::{Update, UpdaterBuilder, UpdaterExt};
+use time::OffsetDateTime;
 
 /// How long a request may go without receiving a byte before it is given
 /// up (reqwest's read timeout, which starts again after every read). Not a
@@ -61,6 +62,34 @@ fn add_progress(u: &mut AppUpdateView, got: usize, total: Option<u64>) {
     if total.is_some() {
         u.total = total;
     }
+}
+
+/// The version on offer, for the tray's update item: one found by a check,
+/// or one that could not install and can be tried again.
+pub fn offered(u: &AppUpdateView) -> Option<String> {
+    matches!(u.state, "available" | "update_failed").then(|| u.version.clone()).flatten()
+}
+
+/// A team's release needs a newer app: worth a check unless one is under
+/// way or an update is already known.
+fn team_wants_check(u: &AppUpdateView) -> bool {
+    matches!(u.state, "not_checked" | "up_to_date" | "failed")
+}
+
+/// How often the app checks for itself while it runs.
+const CHECK_EVERY: time::Duration = time::Duration::hours(24);
+/// How often the daily check looks at the clock: the wall clock, not
+/// the time Kivali has been awake, so a computer asleep overnight checks
+/// soon after it wakes.
+const CHECK_TICK: Duration = Duration::from_secs(10 * 60);
+
+/// When the last check started, by the wall clock.
+static LAST_CHECK: Mutex<Option<OffsetDateTime>> = Mutex::new(None);
+
+/// The daily check is due at `now`: no check yet, a day since the last,
+/// or a clock set back past it.
+fn check_due(last: Option<OffsetDateTime>, now: OffsetDateTime) -> bool {
+    last.is_none_or(|l| now < l || now - l >= CHECK_EVERY)
 }
 
 /// The teams that ran when the before-exit hook paused them for the
@@ -113,6 +142,33 @@ fn put_back(app: &AppHandle, running: &[String]) {
     let _ = app.run_on_main_thread(move || menus::restore_tray(&a));
 }
 
+/// At launch: the first check, then one a day while Kivali runs.
+pub fn start(app: &AppHandle) {
+    check_desktop_update(app);
+    let app = app.clone();
+    let daily = std::thread::Builder::new().name("kivali-app-update".into()).spawn(move || loop {
+        std::thread::sleep(CHECK_TICK);
+        let quitting = app.state::<Shell>().quitting.load(Ordering::SeqCst);
+        let last = *LAST_CHECK.lock().unwrap();
+        if !quitting && check_due(last, OffsetDateTime::now_utc()) {
+            check_desktop_update(&app);
+        }
+    });
+    if let Err(e) = daily {
+        eprintln!("kivali: the daily app update check: {e}");
+    }
+}
+
+/// A team's check found a release that needs a newer app (shell.rs,
+/// `run_check_blocking`): look for one now rather than at the next
+/// launch, so General and the tray offer it.
+pub fn check_for_team(app: &AppHandle) {
+    let wants = team_wants_check(&app.state::<Shell>().app_update.lock().unwrap());
+    if wants {
+        check_desktop_update(app);
+    }
+}
+
 pub fn check_desktop_update(app: &AppHandle) {
     {
         let sh = app.state::<Shell>();
@@ -122,6 +178,7 @@ pub fn check_desktop_update(app: &AppHandle) {
         }
         *u = AppUpdateView { state: "checking", ..Default::default() };
     }
+    *LAST_CHECK.lock().unwrap() = Some(OffsetDateTime::now_utc());
     shell::changed(app);
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
@@ -280,6 +337,52 @@ mod tests {
         // A failure drops the bar and keeps the version on offer.
         let f = update_failed(&u, "timed out".into());
         assert_eq!((f.downloaded, f.total, f.version.as_deref()), (None, None, Some("1.2.0")));
+    }
+
+    // Kivali often stays in the tray for weeks; checking only at launch
+    // left a new app unnoticed for as long. The daily check comes a day
+    // after the last check of any kind (launch, Check for updates, a
+    // team's), by the wall clock, so a computer asleep past the day checks
+    // at the next look; a clock set back does not hold it off.
+    #[test]
+    fn the_app_checks_once_a_day() {
+        let t0 = OffsetDateTime::from_unix_timestamp(1_792_000_000).unwrap();
+        let h = time::Duration::hours;
+        assert!(check_due(None, t0));
+        assert!(!check_due(Some(t0), t0));
+        assert!(!check_due(Some(t0), t0 + h(24) - time::Duration::seconds(1)));
+        assert!(check_due(Some(t0), t0 + h(24)));
+        assert!(check_due(Some(t0), t0 + h(72)));
+        assert!(check_due(Some(t0), t0 - h(1)));
+    }
+
+    // The tray's update item: an update found by any check, the daily one
+    // included, and one that could not install (it can be tried again).
+    // Without it an update found while Kivali sits in the tray shows only
+    // in Settings, where nobody is looking.
+    #[test]
+    fn the_tray_offers_a_known_update() {
+        let v = |state| AppUpdateView { state, version: Some("1.2.0".into()), ..Default::default() };
+        assert_eq!(offered(&v("available")).as_deref(), Some("1.2.0"));
+        assert_eq!(offered(&v("update_failed")).as_deref(), Some("1.2.0"));
+        for s in ["not_checked", "checking", "up_to_date", "downloading", "installing", "failed"] {
+            assert_eq!(offered(&v(s)), None, "{s}");
+        }
+    }
+
+    // A team's check that says the app must update first asks the app's
+    // updater too, so General and the tray offer the app's update at once
+    // instead of saying "Up to date · checked 4 days ago" beside it. Not
+    // while a check or the update is under way, nor when it is known.
+    #[test]
+    fn a_team_that_needs_a_newer_app_starts_a_check() {
+        let v = |state| AppUpdateView { state, ..Default::default() };
+        for s in ["not_checked", "up_to_date", "failed"] {
+            assert!(team_wants_check(&v(s)), "{s}");
+        }
+        for s in ["checking", "available", "downloading", "installing", "update_failed"] {
+            assert!(!team_wants_check(&v(s)), "{s}");
+        }
     }
 
     // A check started while the update downloads (Check for updates in

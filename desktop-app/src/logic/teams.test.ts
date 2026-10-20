@@ -198,6 +198,21 @@ describe("Settings rows", () => {
     // Once the update is no longer on offer, the failure is not shown.
     expect(updateRow(team({ update: { ...update, state: "up_to_date" }, op: op({ kind: "update", running: false, error }) }), now)?.failed).toBeNull();
   });
+  // A team that needs a newer app offers the app's update on its own row
+  // (E4, as General's Update…). Without it the row only names a setting
+  // elsewhere, and a team stays behind on an update the person never saw.
+  it("update row when the app must update first", () => {
+    const update = { state: "desktop_first" as const, current: "1.1.1", latest: "1.2.0", notes_url: null, summary: null, checked_at: null, takes: "about 3 minutes" };
+    expect(updateRow(team({ version: "1.1.1", update }), now)).toEqual({
+      title: "Kivali 1.1.1",
+      sub: "1.2.0 is available · update this app first",
+      highlight: true,
+      update: false,
+      app: true,
+      notes: null,
+      failed: null,
+    });
+  });
   it("memory bar", () => {
     const a = team({ id: "a", name: "Plainsong" });
     const b = team({ id: "b", name: "Home" });

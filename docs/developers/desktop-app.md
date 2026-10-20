@@ -1202,7 +1202,8 @@ running team gets its credential checked and its release check
 started), resume every team in `running_at_quit` that is not running
 (each through the memory check), and start the watch loop. Unless
 started with `--autostart`, the `last_open` team's window opens (setup
-when there are no teams). The app update check runs at every launch.
+when there are no teams). The app update check runs at every launch,
+then once a day while Kivali runs ("Update states").
 
 **Quit** (the tray, the menu bar with ⌘Q) asks first (E2, a native
 alert, a sheet on the window in front on macOS) when `ask_before_quit`
@@ -1459,7 +1460,7 @@ item:
 | `not_checked` (no check yet, or Kivali not installed) | Kivali 0.16.0 | |
 | `up_to_date` | Up to date · checked 3 hours ago | |
 | `available` | 0.17.0 is available, with Update… (E3) and What's new | Update Plainsong to 0.17… |
-| `desktop_first` | 0.17.0 is available · update this app first, in General | |
+| `desktop_first` | 0.17.0 is available · update this app first, with Update Kivali… (E4) | |
 | `manual_steps` | 0.17.0 is available · it needs a few steps by hand, with What's new | |
 | `failed` | Couldn't check for updates | |
 
@@ -1475,14 +1476,22 @@ computes one-line labels and a badge, which no surface reads.)
 
 **The app's own updates** use `tauri-plugin-updater` against
 `https://github.com/kivali-ai/kivali/releases/latest/download/latest.json`,
-checked at every launch and on **Check for updates** (the Kivali menu,
-Settings → General). Settings → General shows "Checking for updates…",
+checked at every launch, a day after the last check while Kivali runs
+(`appupdate::start`: every 10 minutes it compares the wall clock with
+the last check, so a computer asleep past the day checks soon after it
+wakes), on **Check for updates** (the Kivali menu, Settings → General),
+and when a team's check says `desktop_first` and no app update is known
+or under way. Settings → General shows "Checking for updates…",
 "Up to date · checked …", "0.18.0 is available" with Update… (E4),
-"Downloading 0.18.0…" with a progress bar, "Installing 0.18.0…", "Couldn't check for updates · <error>" (state
+"Downloading 0.18.0…" with a progress bar, "Installing 0.18.0…",
+"Couldn't check for updates · <error>" (state
 `failed`, a check that could not finish) or "Couldn't update to 0.18.0 ·
 <error>" with Try again… (state `update_failed`, an update that could
-not download or install; it stays on offer); the tray offers the update
-item. Installing is E4 ("Launch and quit"). The
+not download or install; it stays on offer). Whichever check found it,
+an update on offer (`available` or `update_failed`) is the tray's update
+item, "Update Kivali to 0.18.0…". A team's Update Kivali… is E4 too;
+with no app update known yet it checks and opens Settings → General.
+Installing is E4 ("Launch and quit"). The
 release's `latest.json` must carry, per platform it ships, an entry
 whose `url` is the updater artifact the bundler writes with
 `createUpdaterArtifacts` and whose `signature` is the contents of its

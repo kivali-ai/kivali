@@ -107,10 +107,7 @@ fn view(app: &AppHandle) -> View {
     let teams = sh.teams.lock().unwrap().teams.clone();
     let rows = teams.into_iter().map(|t| row(&sh, t)).collect();
     let front = windows::front_team_window(app).map(|(id, _)| id);
-    let app_update = {
-        let u = sh.app_update.lock().unwrap();
-        (u.state == "available").then(|| u.version.clone()).flatten()
-    };
+    let app_update = crate::appupdate::offered(&sh.app_update.lock().unwrap());
     View { rows, front, app_update }
 }
 
@@ -685,6 +682,13 @@ pub fn confirm_app_update(app: &AppHandle) {
         (u.state, u.version.unwrap_or_default())
     };
     if matches!(state, "downloading" | "installing") {
+        open_off_main(app, |app| windows::show_settings(app, "general"));
+        return;
+    }
+    // No update known (a team's Update Kivali… before the app's check
+    // found one): look, in General.
+    if !matches!(state, "available" | "update_failed") {
+        crate::appupdate::check_desktop_update(app);
         open_off_main(app, |app| windows::show_settings(app, "general"));
         return;
     }
