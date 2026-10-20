@@ -366,7 +366,7 @@ func NewServer(s *Server) (*Server, error) {
 		// call. Tests and local boots without a backend skip it, and
 		// episodes/ stays unpopulated (NotifyEpisode checks for a
 		// backend at call time, so nothing queues either).
-		go s.runEpisodeWriter()
+		go s.runEpisodeWriter(nil)
 	}
 	if s.SubagentService != nil && s.SubagentService.EmitToParent == nil {
 		// Late-bind the hub emitter — SubagentService can't be

@@ -63,6 +63,28 @@ func newEpisodeHarness(t *testing.T) *episodeHarness {
 	return h
 }
 
+// startWriter runs the writer until the test ends, then stops it and
+// waits for it to return. A test's last wait sees the episode linked
+// under /files/episodes/, but linkEpisodes goes on to sync the rest of
+// the agent's /files/ (skills/, attachments/) after that link exists.
+// Without this wait the writer was still making directories under
+// agents/alice/ while t.TempDir's cleanup removed it, which failed the
+// test with "directory not empty". The cleanup is registered after
+// newTestServer's TempDir, so it runs first.
+func (h *episodeHarness) startWriter(t *testing.T) {
+	t.Helper()
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		h.srv.runEpisodeWriter(stop)
+	}()
+	t.Cleanup(func() {
+		close(stop)
+		<-done
+	})
+}
+
 // chat appends a transcript to alice's live chat: the CEO asking, the
 // agent reading a file, the answer — plus the rotation prompt, which
 // the writer must strip.
@@ -157,7 +179,7 @@ func TestEpisodeWriterBootSweepDigestsExistingArchive(t *testing.T) {
 	// The archive alone produces nothing.
 	h.assertNoCall(t, "archive with no writer running")
 
-	go h.srv.runEpisodeWriter()
+	h.startWriter(t)
 	req := h.awaitCall(t)
 	if req.Purpose != "episode" || req.Model != h.srv.SummaryModel {
 		t.Errorf("request purpose=%q model=%q", req.Purpose, req.Model)
@@ -195,7 +217,7 @@ func TestEpisodeWriterBootSweepDigestsExistingArchive(t *testing.T) {
 // costs no call.
 func TestEpisodeWriterNotificationIsIdempotent(t *testing.T) {
 	h := newEpisodeHarness(t)
-	go h.srv.runEpisodeWriter()
+	h.startWriter(t)
 	waitForWaiters(t, h.fake, 0)
 	h.assertNoCall(t, "boot sweep with nothing archived")
 
@@ -230,7 +252,7 @@ func TestEpisodeWriterRetriesAfterAFailedCall(t *testing.T) {
 	ts := h.archive(t)
 	h.fail.Store(true)
 
-	go h.srv.runEpisodeWriter()
+	h.startWriter(t)
 	h.awaitCall(t)
 	waitForWaiters(t, h.fake, 1) // retry armed
 	if h.srv.Store.HasEpisode("alice", ts) {
@@ -249,7 +271,7 @@ func TestEpisodeWriterRetriesAfterAFailedCall(t *testing.T) {
 func TestEpisodeWriterSkipsEmptyTranscript(t *testing.T) {
 	h := newEpisodeHarness(t)
 	ts := h.archive(t)
-	go h.srv.runEpisodeWriter()
+	h.startWriter(t)
 	waitForWaiters(t, h.fake, 0)
 	h.assertNoCall(t, "boot sweep over an empty transcript")
 	h.srv.NotifyEpisode("alice", ts)
@@ -262,8 +284,7 @@ func TestEpisodeWriterSkipsEmptyTranscript(t *testing.T) {
 	if prompt := promptText(h.awaitCall(t)); !strings.Contains(prompt, "how's Q3?") {
 		t.Fatalf("empty generation produced a call:\n%s", prompt)
 	}
-	// Let the real generation land before the temp dir is torn down
-	// under the writer's link step.
+	// The real generation is digested and linked; the empty one is not.
 	waitForEpisode(t, h.srv, "alice", ts2)
 	if h.srv.Store.HasEpisode("alice", ts) {
 		t.Fatal("empty transcript was digested")
