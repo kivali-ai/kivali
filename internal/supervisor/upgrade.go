@@ -324,7 +324,8 @@ func (s *Supervisor) importFile(ctx context.Context, g Guest, p string, logf Log
 }
 
 // apply is steps 6 and 7: boot (the old release comes up first), place
-// the new chart, rewrite the manifest and wait for the new release.
+// the new chart, rewrite the manifest and wait for the new release: its
+// server, then its agents.
 func (s *Supervisor) apply(ctx context.Context, sg staged, logf Logf) error {
 	if err := s.bootLocked(ctx, logf); err != nil {
 		return err
@@ -358,7 +359,10 @@ func (s *Supervisor) apply(ctx context.Context, sg staged, logf Logf) error {
 	}
 	logf("HelmChart now points at %s, images %s", chartFileName(sg.meta), ktag)
 	setStage(ctx, StageStarting)
-	return s.waitServing(ctx, sg.meta.Version, sg.images.Kivali, logf)
+	if err := s.waitServing(ctx, sg.meta.Version, sg.images.Kivali, logf); err != nil {
+		return err
+	}
+	return s.waitAgents(ctx, sg.images.Kivali, logf)
 }
 
 // readManifest reads the HelmChart manifest from the data disk.

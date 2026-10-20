@@ -202,13 +202,20 @@ func (s *Server) ProvisionAgentPod(ctx context.Context, slug string) error {
 		s.markRestartPlanned(slug)
 		if s.AgentpodHub != nil {
 			s.AgentpodHub.MarkStarting(slug, s.clk().Now())
+			s.AgentpodHub.MarkPodStarted(slug)
 		}
 	}
+	var err error
 	if n, ok := s.AgentPod.(podStartNotifier); ok {
-		return n.ProvisionNotify(ctx, slug, starting)
+		err = n.ProvisionNotify(ctx, slug, starting)
+	} else {
+		starting()
+		err = s.AgentPod.Provision(ctx, slug)
 	}
-	starting()
-	return s.AgentPod.Provision(ctx, slug)
+	if err == nil {
+		s.markPodProvisioned(slug)
+	}
+	return err
 }
 
 // lockProvision takes slug's provision lock and returns its unlock:

@@ -130,7 +130,12 @@ software change recreates a pod only once its agent is idle, with no
 turn running and no background task outstanding, and holds the agent's
 turns while it does (`ReprovisionAgentPod`, `internal/web/agentpod_restart.go`);
 work that arrives meanwhile stays owed and starts on the new pod. The
-scratch PVC is never diffed and survives offboarding.
+scratch PVC is never diffed and survives offboarding. `GET
+/readyz/agents` counts the agents with a pod and those whose pod this
+server has provisioned and whose runtime has opened its events stream
+since the pod was last created or recreated; it answers 200 once the two
+match (`internal/web/agentpod_ready.go`), and a team update commits only
+then.
 
 **The agent pod's protocol** (`internal/agentpod/protocol.go`). Core
 never dials an agent; every connection goes from the pod to

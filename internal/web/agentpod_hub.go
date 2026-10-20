@@ -41,6 +41,10 @@ type agentpodHub struct {
 	// starting holds when each slug's pod was provisioned, until its
 	// first subscriber dials in (Starting).
 	starting map[string]time.Time
+	// podStarted holds, per slug, seq as it was when the slug's pod was
+	// last created or recreated (MarkPodStarted): a subscriber numbered
+	// above it is that pod's runtime.
+	podStarted map[string]uint64
 	// cancelGrace stops each slug's grace timer: closed when a
 	// subscriber dials in or the slug is marked starting again.
 	cancelGrace map[string]chan struct{}
@@ -70,7 +74,7 @@ type agentpodSubscriber struct {
 // tests; main.go calls NewAgentpodHub instead so the type can stay
 // package-private while still being constructable cross-package.
 func newAgentpodHub() *agentpodHub {
-	return &agentpodHub{subs: map[string]map[*agentpodSubscriber]struct{}{}, starting: map[string]time.Time{}, cancelGrace: map[string]chan struct{}{}}
+	return &agentpodHub{subs: map[string]map[*agentpodSubscriber]struct{}{}, starting: map[string]time.Time{}, podStarted: map[string]uint64{}, cancelGrace: map[string]chan struct{}{}}
 }
 
 // SetGraceExpiry arms a timer on c for every MarkStarting: when the
@@ -114,6 +118,30 @@ func (h *agentpodHub) MarkStarting(slug string, now time.Time) {
 			expired()
 		}
 	}()
+}
+
+// MarkPodStarted records that slug's pod is about to be created or
+// recreated: from now on only a runtime that subscribes later is that
+// pod's (ConnectedSincePodStart).
+func (h *agentpodHub) MarkPodStarted(slug string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.podStarted[slug] = h.seq
+}
+
+// ConnectedSincePodStart reports whether a runtime has subscribed for
+// slug since its pod was last created or recreated, and is subscribed
+// still: the pod's own runtime is connected and taking events. Before
+// any MarkPodStarted every subscriber counts.
+func (h *agentpodHub) ConnectedSincePodStart(slug string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for sub := range h.subs[slug] {
+		if sub.seq > h.podStarted[slug] {
+			return true
+		}
+	}
+	return false
 }
 
 // stopGraceLocked cancels slug's grace timer, if one runs. h.mu held.

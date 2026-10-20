@@ -833,7 +833,7 @@ its final event and, in the serve log, a line `<operation> failed:
 | `up`, fresh disk | `making-room` (creating the disk, its first boot to READY), `starting` (guest agent, forward), `setting-up` (install, rollout, `/readyz`) |
 | `up`, installed | `updating-data` (moving the data disk from where an earlier version kept it, only once, on Windows: "Moving the data disk"; with progress, the bytes copied), `making-room` (compacting the data disk, only when the Windows backend compacts it before the boot; with progress, in virtdisk's own units), `starting` (boot to READY, guest agent, forward), `setting-up` (rollout, `/readyz`) |
 | `install`, `address` | `setting-up` |
-| `upgrade` | `downloading` (preflight, fetch, verify, import), `snapshot` (journal, quiesce, stop, snapshot), `installing` (boot, chart, HelmChart rewrite), `starting` (rollout, `/readyz`); on failure `rolling-back` |
+| `upgrade` | `downloading` (preflight, fetch, verify, import), `snapshot` (journal, quiesce, stop, snapshot), `installing` (boot, chart, HelmChart rewrite), `starting` (rollout, `/readyz`, the agents connecting); on failure `rolling-back` |
 | `down` | `pausing` |
 | `destroy` | `deleting` |
 
@@ -1076,7 +1076,29 @@ An upgrade, with `local.json`'s `upgrade` as the journal:
    rewrite the manifest from the one on the data disk (only the chart URL
    and the two image tags change, so the owner and session key never
    leave the org's disk).
-7. Wait for label, image, rollout, `/readyz`.
+7. Wait for label, image, rollout, `/readyz`, then for the agents
+   (`waitAgents`): until the server's `GET /readyz/agents` answers 200,
+   that is, every active agent but the CEO (which runs in the server)
+   has a pod this server has provisioned on its spec, and that pod's
+   `kivali agent` runtime has opened its events stream to core since the
+   pod was last created or recreated: running, connected and ready for
+   commands. A runtime of a pod from before the recreate does not count.
+   The body is `{"agent_pods": N, "connected": M}` (200 when M = N, 503
+   until then; unauthenticated, so it names no agent). A team with no
+   agent pods answers 200 at once. Paused agents and a team with no
+   Claude sign-in yet still have pods whose runtimes connect, so they
+   are waited for like any other. Browser pods are not: the server
+   deletes them all at start and makes them only for web tasks. Each
+   poll also reads the agent pods (`app=kivali-agentpod`) whose `agent`
+   container runs the release's image, and fails at once on a container
+   or init container waiting on `ErrImagePull`, `ImagePullBackOff`,
+   `ErrImageNeverPull`, `InvalidImageName` or
+   `CreateContainerConfigError`, or one that has failed 3 times
+   (`CrashLoopBackOff`), with the pod, container and reason. A pod on
+   another image is the previous release's, about to be recreated.
+   Agents that are not all connected within 10 minutes fail the update;
+   a server that answers 404 (a release from before `/readyz/agents`)
+   is not waited for.
 8. `committed` (and `kivali` = to), delete the snapshot and
    `downloads/<version>/`, clear the journal.
 

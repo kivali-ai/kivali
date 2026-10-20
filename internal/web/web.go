@@ -66,6 +66,11 @@ type Server struct {
 	// provisionLocks holds a *sync.Mutex per slug: ProvisionAgentPod
 	// runs one at a time for an agent (agentpod_bulk.go).
 	provisionLocks sync.Map
+	// podsProvisioned names the slugs whose pod this process has
+	// provisioned: created, recreated or found matching its spec
+	// (agentPodsReadiness). Under podsProvisionedMu.
+	podsProvisioned   map[string]bool
+	podsProvisionedMu sync.Mutex
 	// spawnDropped, when set, runs when a spawn found no pod subscribed,
 	// while it still holds the agent's chat hub. A test seam.
 	spawnDropped func(slug string)
@@ -490,6 +495,7 @@ func (s *Server) wireRoutes() {
 	// Health / readiness (unauthenticated).
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
 	mux.HandleFunc("GET /readyz", s.handleReadyz)
+	mux.HandleFunc("GET /readyz/agents", s.handleReadyzAgents)
 
 	// Sign-in (unauthenticated). /login is the web app's sign-in
 	// screen, so it serves the app like any other route; the screen
