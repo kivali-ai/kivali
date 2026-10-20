@@ -127,13 +127,15 @@ func (s *session) restoreCookies(ctx context.Context) {
 // snapshots sends core the cookies whenever they have changed: every
 // snapshotEvery, and at once when core asks. The first look, right
 // after start, is the baseline, so a jar nobody touched sends nothing.
+// The ticker is armed after the baseline: a clock waiter on it means
+// any change to the jar from then on is a change from the baseline.
 func (s *session) snapshots(ctx context.Context) {
-	ticker := s.r.Clock.NewTicker(snapshotEvery)
-	defer ticker.Stop()
 	var last [sha256.Size]byte
 	if data, err := s.b.cookies(ctx); err == nil {
 		last = sha256.Sum256(data)
 	}
+	ticker := s.r.Clock.NewTicker(snapshotEvery)
+	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():

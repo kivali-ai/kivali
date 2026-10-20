@@ -31,8 +31,8 @@ func cookieFrames(h *podHarness) int {
 // changed sends nothing.
 func TestCookieSnapshotsFollowChanges(t *testing.T) {
 	h := startPod(t, podOptions{site: "vendor.example", jar: []map[string]any{themeCookie}})
-	h.clk.BlockUntil(1) // the snapshot ticker is armed
-	// The jar the browser started with is the baseline.
+	// The jar the browser started with is the baseline: startPod
+	// returns once the snapshot loop has looked at it.
 	h.clk.Advance(snapshotEvery)
 	// A sign-in sets a cookie: the next look sends the jar.
 	h.cdp.setJar(themeCookie, sidCookie)

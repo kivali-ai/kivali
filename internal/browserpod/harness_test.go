@@ -480,6 +480,13 @@ func startPod(t *testing.T, o podOptions) *podHarness {
 	core.send(Message{Type: TypeStart})
 	core.expectState(StateStarting)
 	core.expectState(StateRunning)
+	if !o.ephemeral {
+		// The cookie snapshot loop arms its ticker once its baseline
+		// look is taken. Waiting for it here means a test starts from
+		// a known jar baseline and a known count of the clock's
+		// waiters, whatever order the pod's goroutines ran in.
+		clk.BlockUntil(1)
+	}
 	return &podHarness{t: t, core: core, fc: fc, cdp: cdp, proc: proc, clk: clk, dir: dir, done: done}
 }
 
