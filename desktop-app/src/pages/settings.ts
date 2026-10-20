@@ -317,7 +317,7 @@ function overview(ctx: Ctx, t: Team): Child[] {
         sub: u.sub,
         cls: u.highlight ? "is-highlight" : undefined,
         trail:
-          u.notes || u.update
+          u.notes || u.update || u.app
             ? h(
                 "span",
                 { class: "row-actions" },
@@ -325,6 +325,7 @@ function overview(ctx: Ctx, t: Team): Child[] {
                 u.update
                   ? button(u.failed ? "Try again…" : "Update…", { variant: "primary", size: "sm", id: "update", onclick: () => openDialog(ctx, "update", t.id) })
                   : null,
+                u.app ? button("Update Kivali…", { variant: "primary", size: "sm", id: "update-app", onclick: () => void ctx.act("install_app_update") }) : null,
               )
             : null,
       })

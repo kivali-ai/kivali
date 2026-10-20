@@ -1803,8 +1803,13 @@ pub fn run_check_blocking(app: &AppHandle, rt: &Runtime) {
             }
         }
     };
+    let desktop_first =
+        matches!(updates::decide(Some(&report), true, &shell(app).app_version), updates::UpdateState::DesktopFirst { .. });
     *rt.check.lock().unwrap() = Some(report);
     changed(app);
+    if desktop_first {
+        crate::appupdate::check_for_team(app);
+    }
 }
 
 fn check_now(app: &AppHandle, rt: &Runtime) {

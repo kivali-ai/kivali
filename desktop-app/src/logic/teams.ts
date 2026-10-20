@@ -247,6 +247,8 @@ export function updateRow(
   sub: string | null;
   highlight: boolean;
   update: boolean;
+  /** The team needs a newer app first: Update Kivali (E4) on the row. */
+  app?: boolean;
   notes: string | null;
   failed: { title: string; body: string } | null;
 } | null {
@@ -284,7 +286,7 @@ export function updateRow(
       };
     }
     case "desktop_first":
-      return { title, sub: `${latest} is available · update this app first, in General`, highlight: true, update: false, notes: u.notes_url, ...plain };
+      return { title, sub: `${latest} is available · update this app first`, highlight: true, update: false, app: true, notes: u.notes_url, ...plain };
     case "manual_steps":
       return { title, sub: `${latest} is available · it needs a few steps by hand`, highlight: true, update: false, notes: u.notes_url, ...plain };
     case "up_to_date":

@@ -242,7 +242,7 @@ pub fn run() {
                     windows::show_setup(handle, "welcome");
                 }
             }
-            appupdate::check_desktop_update(handle);
+            appupdate::start(handle);
             // Started at login, nothing opens: Kivali starts in the menu
             // bar alone (a window shown later puts it in the Dock).
             if autostarted {
