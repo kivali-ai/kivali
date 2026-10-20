@@ -9,9 +9,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kivali-ai/kivali/internal/agentpod"
 	"github.com/kivali-ai/kivali/internal/builtinskills"
 	"github.com/kivali-ai/kivali/internal/egresscred"
 	"github.com/kivali-ai/kivali/internal/store"
+	"github.com/kivali-ai/kivali/internal/web/apitypes"
 )
 
 // stagedRestores lists what a restore staged in the data directory and
@@ -71,6 +73,9 @@ func TestRestoreStagesTheUploadOnTheDataVolumeNotInTemp(t *testing.T) {
 //   - the restored agents get their pods (a turn for an agent with no
 //     pod is dropped), and an agent the backup caught mid-turn gets the
 //     disruption row and is resumed;
+//   - a background task the backup caught running reads errored, not
+//     running for good with an Open browser button for a browser that
+//     is gone, and its agent is told it ended;
 //   - the archive's built-in skills, written by another version, are
 //     replaced by this binary's;
 //   - the restored egress allowlist reaches the proxy's copy;
@@ -105,9 +110,13 @@ func TestRestoreDoesWhatABootDoes(t *testing.T) {
 		return filepath.Join(srv.Store.Root(), "skills", skill, filepath.FromSlash(skillFile.Path))
 	}
 	writeFile(t, skillPath(src), "another version of this skill")
+	srcTasks := &SubagentService{Store: src.Store}
+	srcTasks.writeSubagentMeta("alice", SubagentTaskInput{Description: "price the parts", Prompt: "p", Kind: agentpod.SubagentKindWeb, Session: "vendor.com"}, "lost0001", subagentJobRunning, "", "")
+	srcTasks.setSubagentMetaBrowser("alice", "lost0001", apitypes.BrowserStateRunning)
 	zipBytes := backupZip(t, src).Body.Bytes()
 
 	dst := e2eServer(t)
+	dst.SubagentService = &SubagentService{Store: dst.Store, DeliverToParent: dst.deliverToAgent}
 	pods := &fakeAgentPodLifecycle{}
 	dst.AgentPod = pods
 	proxyCopy := filepath.Join(t.TempDir(), "allowed_egress.yaml")
@@ -145,6 +154,19 @@ func TestRestoreDoesWhatABootDoes(t *testing.T) {
 	}
 	if m, _ := dst.Store.ReadActiveTurn("alice"); !m.StartedAt.IsZero() {
 		t.Errorf("alice's active-turn marker survived the restore: %+v", m)
+	}
+
+	if meta := readMetaMap(t, dst.Store, "alice", "lost0001"); meta["status"] != "errored" || meta["error"] != subagentRestartError || meta["browser"] != nil {
+		t.Errorf("the restored running task = %v, want errored by the restart without a browser", meta)
+	}
+	told := false
+	for _, m := range hist {
+		if m.Kind == store.KindSubagentResult && strings.Contains(m.Content, "lost0001") {
+			told = true
+		}
+	}
+	if !told {
+		t.Errorf("alice's chat after the restore = %+v, want a subagent_result naming lost0001", hist)
 	}
 
 	if b, _ := os.ReadFile(skillPath(dst)); string(b) != string(skillFile.Data) {

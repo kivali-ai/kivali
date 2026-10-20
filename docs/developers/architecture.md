@@ -925,10 +925,11 @@ Every write to a task's `meta.json` goes through
 whole through a temp file and a rename, so the job's full writes and
 the patches from the HTTP and registry goroutines (status, wait
 reason, site, browser state) keep each other's fields. Jobs live in
-memory: at boot `FailOrphanedSubagents` rewrites every record left
-queued, running or waiting for a person by the last run as errored,
-"Kivali restarted before the task finished", without its wait reason
-and browser state, so nothing reads as live that core no longer holds.
+memory: at boot, and after a restore, `FailOrphanedSubagents` rewrites
+every record left queued, running or waiting for a person by the last
+run as errored, "Kivali restarted before the task finished", without
+its wait reason and browser state, so nothing reads as live that core
+no longer holds.
 Each active agent that dispatched one of those tasks itself then gets
 one `subagent_result` naming them, through the same delivery as
 `finishJob`, and is woken with the recovered agents once its pod is up,

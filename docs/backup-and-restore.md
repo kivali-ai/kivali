@@ -44,7 +44,7 @@ Restore is offered only on a **fresh** team: one with no agents other than its C
 3. Choose **Restore from a backup**, and drop the `.zip` file.
 4. When it says **Backup restored**, choose **Reload**.
 
-The restored team picks up where the backup left off: its agents, chats, assignments, files and settings.
+The restored team picks up where the backup left off: its agents, chats, assignments, files and settings. Background tasks that were running when the backup was taken do not carry on: they show as ended, and each agent is told which of its tasks ended.
 
 A restore needs room: the upload, and then everything it unpacks to, must fit on the team's disk with some to spare. If it does not, the restore is refused before anything is written.
 
