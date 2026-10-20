@@ -402,6 +402,105 @@ func TestMoveNeedsRoom(t *testing.T) {
 	}
 }
 
+// releaseBytes is the chart's and the image bundle's sizes in the
+// release.json at feed.
+func releaseBytes(t *testing.T, h *harness, feed string) uint64 {
+	t.Helper()
+	b, err := os.ReadFile(feed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rel Release
+	if err := json.Unmarshal(b, &rel); err != nil {
+		t.Fatal(err)
+	}
+	return uint64(rel.Chart.Size + rel.Images[h.sup.platform()].Size)
+}
+
+// importedNew reports whether release 0.16.0's server image was
+// imported into the guest.
+func (h *harness) importedNew() bool {
+	h.vm.mu.Lock()
+	defer h.vm.mu.Unlock()
+	return h.vm.imported["docker.io/library/kivali:v0.16.0"]
+}
+
+// refusedForRoom checks an upgrade refused for room touched nothing:
+// no journal, no snapshot, the org still running on its version, and
+// nothing left in downloads.
+func refusedForRoom(t *testing.T, h *harness, err error, free uint64) {
+	t.Helper()
+	if err == nil || !strings.Contains(err.Error(), "updating this team needs") || !strings.Contains(err.Error(), "only "+gb(free)+" is free") ||
+		!strings.Contains(err.Error(), "then update it again; nothing was changed") {
+		t.Fatalf("upgrade: %v", err)
+	}
+	if st := h.sup.State(); st.Upgrade != nil || st.Kivali != "0.15.0" || exists(h.snapPath()) {
+		t.Fatalf("after the refusal: %+v, snapshot %v", st, exists(h.snapPath()))
+	}
+	if m, _ := h.sup.current(); m == nil || len(h.vm.boots) != 1 {
+		t.Fatalf("the org was stopped or booted again (%d boots)", len(h.vm.boots))
+	}
+	if exists(filepath.Join(h.dir, "downloads", "0.16.0")) {
+		t.Fatal("downloads kept after the refusal")
+	}
+}
+
+// Where the backend copies the data disk for the upgrade's snapshot
+// (Windows: the broker copies all of data.vhdx), the preflight asks for
+// the disk's allocated bytes, the downloads and 2 GiB, and refuses
+// short of that before anything is downloaded or stopped. Without it, a
+// team on a nearly full drive was stopped, the copy filled the drive,
+// and the update failed only then.
+func TestUpgradeRoomCountsTheSnapshotCopy(t *testing.T) {
+	h, k := keeperHarness(t)
+	h.mustUp(UpOptions{Install: owner})
+	feed := writeRelease(t, filepath.Join(t.TempDir(), "rel"), "0.16.0", "v0.16.0")
+	used, _, err := h.sup.o.Host.FileUsage(h.dataPath())
+	if err != nil || used == 0 {
+		t.Fatalf("data disk usage %d, %v", used, err)
+	}
+	need := uint64(used) + releaseBytes(t, h, feed) + minFreeBytes
+	h.mu.Lock()
+	h.freeBytes = func(string) (uint64, error) { return need - 1, nil }
+	h.mu.Unlock()
+	err = h.sup.Upgrade(context.Background(), UpgradeOptions{Feed: feed}, h.logf())
+	refusedForRoom(t, h, err, need-1)
+	if !strings.Contains(err.Error(), "needs "+gb(need)+" free") {
+		t.Fatalf("upgrade: %v, want %s needed", err, gb(need))
+	}
+	if h.importedNew() || len(k.opNames()) != 0 {
+		t.Fatalf("the refusal came after the import or the snapshot: ops %v", k.opNames())
+	}
+	h.mu.Lock()
+	h.freeBytes = func(string) (uint64, error) { return need, nil }
+	h.mu.Unlock()
+	if err := h.sup.Upgrade(context.Background(), UpgradeOptions{Feed: feed}, h.logf()); err != nil {
+		t.Fatalf("upgrade with room: %v", err)
+	}
+}
+
+// Where the snapshot is the Host's clone (macOS), the preflight asks
+// for the downloads and 2 GiB, not the data disk's size: a clone costs
+// nothing until blocks diverge, and asking for the disk's size would
+// refuse updates that fit.
+func TestUpgradeRoomForAClone(t *testing.T) {
+	h := newHarness(t)
+	h.mustUp(UpOptions{Install: owner})
+	feed := writeRelease(t, filepath.Join(t.TempDir(), "rel"), "0.16.0", "v0.16.0")
+	need := releaseBytes(t, h, feed) + minFreeBytes
+	h.mu.Lock()
+	h.freeBytes = func(string) (uint64, error) { return need - 1, nil }
+	h.mu.Unlock()
+	err := h.sup.Upgrade(context.Background(), UpgradeOptions{Feed: feed}, h.logf())
+	refusedForRoom(t, h, err, need-1)
+	h.mu.Lock()
+	h.freeBytes = func(string) (uint64, error) { return need, nil }
+	h.mu.Unlock()
+	if err := h.sup.Upgrade(context.Background(), UpgradeOptions{Feed: feed}, h.logf()); err != nil {
+		t.Fatalf("upgrade with room: %v", err)
+	}
+}
+
 // A legacy disk the backend refuses to import (a differencing disk, say)
 // fails the up with the backend's reason, and the disk stays.
 func TestMoveOfAnInvalidDiskIsRefused(t *testing.T) {

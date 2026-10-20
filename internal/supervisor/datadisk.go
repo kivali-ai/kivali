@@ -96,16 +96,10 @@ func (s *Supervisor) migrateLocked(ctx context.Context, logf Logf) error {
 		}
 		// With a data disk in place already, the import copies nothing
 		// (ErrAlreadyImported), so it needs no room.
-		dir := existingDir(s.dataDir())
-		if free, err := s.o.Host.FreeBytes(dir); err == nil && free < uint64(used)+migrateSpare && !exists(s.dataPath()) {
-			need := uint64(used) + migrateSpare
-			where := dir
-			if v := filepath.VolumeName(dir); v != "" {
-				where = "drive " + v
+		if !exists(s.dataPath()) {
+			if err := s.needRoom(s.dataDir(), uint64(used)+migrateSpare, "updating this team's data", "resume the team"); err != nil {
+				return err
 			}
-			return fmt.Errorf("updating this team's data needs %s free on %s, and only %s is free. "+
-				"Free up %s there, then resume the team; nothing was changed",
-				gb(need), where, gb(free), gb(need-free))
 		}
 		logf("updating the team's data: copying the data disk %s (%s) to %s", legacy, gb(uint64(used)), s.dataPath())
 		err = m.ImportDataDisk(ctx, s.o.ConfigDir, progressOf(ctx), logf)
@@ -188,6 +182,26 @@ func existingDir(dir string) string {
 		}
 		d = parent
 	}
+}
+
+// needRoom refuses what (an operation, as the person reads it) when the
+// volume that holds dir, or will once dir is made (existingDir), has
+// less than need bytes free: the sentence says how much it needs, where,
+// how much to free, and that the person can then (then) again. A volume
+// whose free space cannot be read refuses nothing.
+func (s *Supervisor) needRoom(dir string, need uint64, what, then string) error {
+	dir = existingDir(dir)
+	free, err := s.o.Host.FreeBytes(dir)
+	if err != nil || free >= need {
+		return nil
+	}
+	where := dir
+	if v := filepath.VolumeName(dir); v != "" {
+		where = "drive " + v
+	}
+	return fmt.Errorf("%s needs %s free on %s, and only %s is free. "+
+		"Free up %s there, then %s; nothing was changed",
+		what, gb(need), where, gb(free), gb(need-free), then)
 }
 
 // gb is n bytes as GB with one decimal, as the desktop app writes sizes.

@@ -1051,9 +1051,19 @@ An upgrade, with `local.json`'s `upgrade` as the journal:
 
 1. Preflight: no open journal; the release is newer (or `--force`), not
    `manual_steps`, not above our version; guest `ready`, node Ready,
-   deployment healthy; 2 GiB free (the Host's `FreeBytes`) in the data
-   disk's directory (on Windows the broker's VM directory, on
-   ProgramData's volume).
+   deployment healthy; room on the host (the Host's `FreeBytes`), before
+   anything is downloaded: the chart's and the bundle's sizes from
+   release.json, plus 2 GiB beside the data disk (on Windows the
+   broker's VM directory, on ProgramData's volume), plus, where the
+   backend copies the data disk for the snapshot (`DataDiskKeeper`, on
+   Windows), the disk's allocated bytes (the Host's `FileUsage`). On
+   macOS the snapshot is a clone, which costs nothing until blocks
+   diverge. The downloads and the data disk's room add up when they are
+   on one volume, and are checked apart otherwise. Short of it, the
+   upgrade refuses with what it needs, where, and how much to free
+   ("updating this team needs 9.4 GB free on drive C:, and only 6.1 GB
+   is free. Free up 3.3 GB there, then update it again; nothing was
+   changed"), worded as the move of the data disk is.
 2. Download chart and bundle into `downloads/<version>/`, verify SHA-256
    (a file appears under its name only once verified), read the chart's
    `Chart.yaml` (its version must equal release.json's `version`, or the
