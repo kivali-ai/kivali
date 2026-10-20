@@ -175,6 +175,46 @@ var missingMarks = []string{
 	"deployment for this resource does not exist",
 }
 
+// signedOutMarks are what the CLI's text for a failed model call holds
+// when it has no credential it can use: "Not logged in · Please run
+// /login", "Invalid API key · Please run /login", "Session expired.
+// Please run /login to sign in again.", "Failed to authenticate. …",
+// "Authentication required · Sign in again to continue", "OAuth token
+// has expired. …".
+var signedOutMarks = []string{
+	"not logged in",
+	"/login",
+	"invalid api key",
+	"failed to authenticate",
+	"authentication required",
+	"oauth token has expired",
+}
+
+// Call failure kinds (ClassifyCallFailure).
+const (
+	CallSignedOut    = "signed_out"
+	CallModelMissing = "model_missing"
+	CallOther        = "other"
+)
+
+// ClassifyCallFailure reads the text the CLI ended a failed model call
+// with: model missing when the provider serves no model by that name to
+// this sign-in, signed out when the CLI has no credential it can use,
+// and otherwise other.
+func ClassifyCallFailure(text string) string {
+	lower := strings.ToLower(text)
+	holds := func(marks []string) bool {
+		return slices.ContainsFunc(marks, func(m string) bool { return strings.Contains(lower, m) })
+	}
+	switch {
+	case holds(missingMarks):
+		return CallModelMissing
+	case holds(signedOutMarks):
+		return CallSignedOut
+	}
+	return CallOther
+}
+
 // ClassifyProbe reads a check's output (`--output-format json`'s
 // result): ok when the CLI answered without an error, missing when the
 // error is a missing model, and otherwise error with a short reason.

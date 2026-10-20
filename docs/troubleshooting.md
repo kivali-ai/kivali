@@ -4,9 +4,9 @@ Symptoms you may run into, what causes them, and how to fix them. If nothing her
 
 ## Setting up
 
-### "No model is connected yet" when hiring the Chief of Staff
+### "Claude isn't signed in" when hiring the Chief of Staff
 
-The team is not signed in to Claude. Everything you entered is saved. In Kivali Desktop, open **Settings**, the team, then **AI**, and choose **Sign in…**. Then choose **Try again** on the setup screen.
+The team is not signed in to Claude, so the hire cannot start. Everything you entered is saved. In Kivali Desktop, open **Settings**, the team, then **AI**, and choose **Sign in…**. Then choose **Try again** on the setup screen.
 
 On a self-hosted team, run `claude` in the server container and sign in. See [Self-hosting](self-hosting.md#connect-claude).
 
@@ -24,7 +24,11 @@ The browser did not come back to Kivali. Choose **Continue with Google** again a
 
 ### The Chief of Staff could not start
 
-The hiring screen says what happened and who can fix it. Most often the Claude connection is not working; fix it as above and choose **Try again**.
+The hiring screen says what happened and who can fix it. Everything you entered is saved, and **Try again** starts the hire over.
+
+- **"…because Claude is not signed in"**: Claude's sign-in is missing or has expired. Sign in as above, then choose **Try again**.
+- **"…because Opus 5.5 is not available on this Claude sign-in"** (or another model): the account Claude is signed in with cannot use the model the Chief of Staff runs on. In Kivali Desktop, open **Settings**, the team, then **AI**, and choose **Sign in again…** with an account that can use it. On Amazon Bedrock or Google Vertex AI, enable the model for your account as above. On a self-hosted team, you can instead set a different default model with `AGENT_MODEL` (see [Configuration](configuration.md)).
+- **"…because the call to Claude failed"**: anything else, often a passing problem on Claude's side. Choose **Try again**. If it keeps failing, save a diagnostics file (**Settings**, **Advanced**, **Diagnostics**).
 
 ### The handbook draft has not arrived
 

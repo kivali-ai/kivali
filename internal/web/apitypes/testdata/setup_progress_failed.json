@@ -15,6 +15,6 @@
     }
   ],
   "elapsed_s": 61,
-  "error": "your Chief of Staff could not write its first briefing because the model call failed",
-  "who": "you, by trying again, or whoever runs this Kivali server if it keeps failing"
+  "error": "Your Chief of Staff could not write its first briefing because Claude is not signed in",
+  "who": "you, by signing Claude in from Kivali Desktop (Settings, this team, AI) and trying again, or whoever runs this Kivali server"
 }

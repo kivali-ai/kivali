@@ -77,6 +77,12 @@ pub fn open_terminal(_binary: &Path, _dir: &Path) -> Result<(), String> {
 
 pub const TRAY_ICONS: TrayIcons = tray_set!("tray");
 pub const TRAY_AREA: &str = "system tray";
+pub const THIS_COMPUTER: &str = "this computer";
+
+/// Not a shipped platform: no check.
+pub fn vm_support() -> super::VmSupport {
+    super::VmSupport::Ready
+}
 pub const APP_MENU: bool = false;
 pub const WINDOW_MENU: bool = false;
 pub const SECOND_LAUNCH_FOCUSES: bool = false;

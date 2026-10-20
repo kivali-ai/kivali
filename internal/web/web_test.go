@@ -17,6 +17,10 @@ import (
 // mint session cookies for this email and attach them to requests.
 const testOwnerEmail = "test@kivali.local"
 
+// signedInMock is the mock provider signed in, as a working
+// deployment's provider is: setup lets the Chief of Staff hire run.
+var signedInMock = provider.MockProvider{Cred: provider.CredentialStatus{Present: true}}
+
 func newTestServer(t *testing.T) *Server {
 	t.Helper()
 	dir := t.TempDir()
@@ -28,7 +32,7 @@ func newTestServer(t *testing.T) *Server {
 	al := auth.NewAllowlist(testOwnerEmail)
 	srv, err := NewServer(&Server{
 		Store:    s,
-		Provider: provider.MockProvider{},
+		Provider: signedInMock,
 		AuthMW:   &auth.Middleware{Codec: codec, Allowlist: al},
 	})
 	if err != nil {

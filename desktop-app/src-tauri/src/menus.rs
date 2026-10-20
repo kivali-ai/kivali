@@ -591,9 +591,10 @@ pub fn resume_or_ask(app: &AppHandle, id: &str) {
             let spec = platform::AlertSpec {
                 title: format!("Not enough memory for {}", t.name),
                 message: format!(
-                    "{} needs {}, and this Mac has {} free while {} runs. Pause {} to resume {}?",
+                    "{} needs {}, and {} has {} free while {} runs. Pause {} to resume {}?",
                     t.name,
                     view::gb(need),
+                    platform::THIS_COMPUTER,
                     view::gb(free),
                     o.name,
                     o.name,
@@ -778,7 +779,7 @@ mod tests {
 
     fn row(name: &str, here: bool, state: TeamState, phrase: &str) -> Row {
         let place = if here {
-            Place::Here(crate::teams::Local { dir: format!("teams/{name}"), port: 0, owner: None, memory_mb: 4096, cpus: 4, public_url: None, call_me: None, signed_out_at: None })
+            Place::Here(crate::teams::Local { dir: format!("teams/{name}"), port: 0, owner: None, memory_mb: 4096, cpus: 4, public_url: None, call_me: None, signed_out_at: None, provisional: false })
         } else {
             Place::Elsewhere { url: format!("https://{name}.example.com") }
         };

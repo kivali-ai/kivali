@@ -3,6 +3,11 @@
 // src-tauri/src/shell.rs; a test there serializes a snapshot and checks
 // the keys this file names.
 
+/** Whether this computer can run a team's virtual machine, or what stands
+ *  in the way (platform::VmSupport): Hyper-V turned off, Windows Home,
+ *  virtualization off in the firmware, macOS itself in a VM. */
+export type VmSupport = "ready" | "hyperv_off" | "windows_home" | "virtualization_off" | "in_vm";
+
 /** A team's state everywhere: tray, Settings, its window. */
 export type TeamState = "running" | "starting" | "paused" | "failed";
 
@@ -188,7 +193,7 @@ export interface Snapshot {
   app_version: string;
   platform: "macos" | "windows" | "linux";
   teams: Team[];
-  host: { memory_mb: number; cpus: number };
+  host: { memory_mb: number; cpus: number; vm_support: VmSupport };
   settings: { start_at_login: boolean; ask_before_quit: boolean };
   app_update: AppUpdate;
   owner_signin: OwnerSignin;

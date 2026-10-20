@@ -90,8 +90,10 @@ type SetupCoS struct {
 // SetupCredential says whether the model is connected and how calls
 // are paid for.
 type SetupCredential struct {
-	// Ready is true when the server has a model driver; seeding needs
-	// one.
+	// Ready is true when seeding can run: the server has a model driver
+	// and the provider has not said it is signed out. A status that
+	// could not be read leaves it true; whether the credential works
+	// then shows on the first call.
 	Ready bool `json:"ready"`
 	// Provider names the org's model provider ("claude").
 	Provider string `json:"provider"`
@@ -103,8 +105,9 @@ type SetupCredential struct {
 	// ("Claude Max", "Anthropic Console", "Amazon Bedrock", "Google
 	// Vertex AI"); empty when not signed in or not reported.
 	Billing string `json:"billing"`
-	// Guidance is one plain sentence saying what is missing and who can
-	// fix it. Empty when Ready.
+	// Guidance is one plain sentence on how to connect the model and
+	// who can: the provider's own words, opened with "No model is
+	// connected yet" when the server has no driver. Empty when Ready.
 	Guidance string `json:"guidance"`
 }
 

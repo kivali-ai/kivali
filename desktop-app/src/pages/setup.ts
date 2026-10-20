@@ -19,14 +19,17 @@ import {
   opensWhen,
   ownerSigninErrorText,
   readyBar,
+  resumeSetup,
+  retryCommand,
   setupScreen,
   stepOf,
   type SetupScreen,
   type SetupState,
 } from "../logic/setup";
 import { thisComputer } from "../logic/teams";
+import { vmHelp } from "../logic/vmhelp";
 import type { Kind, Team } from "../types";
-import { banner, button, caption, disc, field, orgMark, personAvatar, progress, radioMark, readyDot } from "../ui";
+import { banner, button, caption, disc, field, orgMark, personAvatar, progress, radioMark, readyDot, steps, vmHelpPanel } from "../ui";
 import { foundryDialog, openFoundry } from "./foundry";
 
 let s: SetupState = newSetup();
@@ -46,6 +49,18 @@ export function render(ctx: Ctx): Node[] {
   }
   const r = ctx.route;
   if (r.page !== "setup" || r.mode !== "new") return [welcome(ctx, r.page === "setup" && r.mode === "add")];
+  // The shell opens #/setup/new/<id> instead of the window of a team whose
+  // setup didn't finish (a restart, a closed window): pick it up at
+  // Claude's sign-in, starting it again when nothing runs it.
+  if (r.team && s.teamId !== r.team) {
+    const t = ctx.snap.teams.find((x) => x.id === r.team && x.provisional);
+    if (t) {
+      if (s.teamId === null) void ctx.act("discard_prepared");
+      s = resumeSetup(t);
+      seenTeam = t.id;
+      if (t.state === "paused" && !t.op?.running) void ctx.act("retry_team", { id: t.id });
+    }
+  }
   // A team that disappeared (abandoned elsewhere) takes setup back to step
   // 2: only one this page has seen in a snapshot. A snapshot from before
   // create_team returned does not list it yet, and forgetting it then made
@@ -136,6 +151,9 @@ function welcome(ctx: Ctx, add: boolean): HTMLElement {
   };
   const card = (iconName: IconName, title: string, desc: string, hash: string, id: string) =>
     choiceCard({ id, icon: icon(iconName, 20), title: [title], desc, trail: h("span", { class: "choice-chev" }, icon("chevron-right", 20)), onclick: () => go(hash) });
+  // A computer that can't run a team's VM says why and how to fix it in
+  // place of Create a team, which would fail on its first step.
+  const help = vmHelp(ctx.snap.host.vm_support);
   const body = [
     h(
       "span",
@@ -147,7 +165,9 @@ function welcome(ctx: Ctx, add: boolean): HTMLElement {
     h(
       "div",
       { class: "stack-12" },
-      card("laptop", "Create a team", `It runs on ${thisComputer(ctx.snap.platform)}. Your agents work while it’s awake.`, "#/setup/new", "pick-create"),
+      help
+        ? vmHelpPanel(help)
+        : card("laptop", "Create a team", `It runs on ${thisComputer(ctx.snap.platform)}. Your agents work while it’s awake.`, "#/setup/new", "pick-create"),
       card("globe", "Connect to a team", "Already running on another computer or a server? Connect to it with its address.", "#/connect", "pick-connect"),
     ),
   ];
@@ -189,21 +209,30 @@ function screenView(ctx: Ctx, screen: SetupScreen): HTMLElement {
         step,
         buttons: [button(`Open ${t?.name ?? s.name}`, { variant: "primary", id: "open-team", onclick: () => void finish(ctx) })],
       });
-    case "create-failed":
+    case "create-failed": {
+      // Until this computer can run the VM, trying again can't work: the
+      // steps say what to do instead.
+      const blocked = vmHelp(ctx.snap.host.vm_support) !== null;
+      const details = !!t?.op && (t.op.lines.length > 0 || !!t.op.error);
       return frame(ctx, stepFailed(ctx, t!), {
         step: null,
-        buttons: [
-          button(s.detailsOpen ? "Hide details" : "Show details", {
-            variant: "ghost",
-            id: "details",
-            onclick: () => {
-              s.detailsOpen = !s.detailsOpen;
-              ctx.rerender();
-            },
-          }),
-          button("Try again", { variant: "primary", id: "retry", loading: s.busy, onclick: () => void retry(ctx) }),
-        ],
+        buttons: blocked
+          ? []
+          : [
+              details
+                ? button(s.detailsOpen ? "Hide details" : "Show details", {
+                    variant: "ghost",
+                    id: "details",
+                    onclick: () => {
+                      s.detailsOpen = !s.detailsOpen;
+                      ctx.rerender();
+                    },
+                  })
+                : null,
+              button("Try again", { variant: "primary", id: "retry", loading: s.busy, onclick: () => void retry(ctx) }),
+            ],
       });
+    }
   }
 }
 
@@ -406,16 +435,12 @@ function stepSignin(ctx: Ctx, screen: SetupScreen, t: Team): Child[] {
       "Claude Code’s sign-in opens in Terminal. Use a Claude subscription, an Anthropic Console account, Amazon Bedrock or Google Vertex AI. Kivali never sees what you type there.",
     ),
   ];
-  const steps = () =>
-    h(
-      "ol",
-      { class: "steps" },
-      ...[
-        `Terminal opens and starts Claude inside ${name}.`,
-        "Choose how to sign in. Amazon Bedrock and Google Vertex AI are under 3rd-party platform.",
-        "Follow Claude’s steps. For a subscription or Console account, open the link it shows and paste the code back into Terminal.",
-      ].map((text, i) => h("li", {}, h("span", { class: "step-num" }, String(i + 1)), h("span", { class: "step-text" }, text))),
-    );
+  const signinSteps = () =>
+    steps([
+      `Terminal opens and starts Claude inside ${name}.`,
+      "Choose how to sign in. Amazon Bedrock and Google Vertex AI are under 3rd-party platform.",
+      "Follow Claude’s steps. For a subscription or Console account, open the link it shows and paste the code back into Terminal.",
+    ]);
   const foundry = () =>
     statusCard(
       disc(icon("key", 18)),
@@ -425,14 +450,14 @@ function stepSignin(ctx: Ctx, screen: SetupScreen, t: Team): Child[] {
     );
   switch (screen) {
     case "account-preparing":
-      out.push(steps(), h("div", { class: "action-block" }, button("Open Claude sign-in", { variant: "primary", id: "open-signin", disabled: true }), caption(opensWhen(t, name))));
+      out.push(signinSteps(), h("div", { class: "action-block" }, button("Open Claude sign-in", { variant: "primary", id: "open-signin", disabled: true }), caption(opensWhen(t, name))));
       break;
     case "account-ready":
-      out.push(steps(), h("div", { class: "action-block" }, button("Open Claude sign-in", { variant: "primary", id: "open-signin", onclick: open }), caption("Opens Terminal.")), foundry());
+      out.push(signinSteps(), h("div", { class: "action-block" }, button("Open Claude sign-in", { variant: "primary", id: "open-signin", onclick: open }), caption("Opens Terminal.")), foundry());
       break;
     case "account-waiting":
       out.push(
-        steps(),
+        signinSteps(),
         statusCard(
           disc(icon("terminal", 18)),
           "Finish signing in in Terminal",
@@ -495,17 +520,28 @@ async function finish(ctx: Ctx) {
 
 // A20.
 function stepFailed(ctx: Ctx, t: Team): Child[] {
+  const help = vmHelp(ctx.snap.host.vm_support);
+  if (help) return [disc(icon("triangle-alert", 20)), heading(`${t.name} can’t start`), vmHelpPanel(help)];
   return [
     disc(icon("triangle-alert", 20)),
     heading(`${t.name} couldn’t be set up`, `Nothing was changed on ${thisComputer(ctx.snap.platform)}. Trying again usually works; if it doesn’t, the details help us find out why.`),
-    h("pre", { class: "lines", id: "fail-lines", "data-keep-scroll": true }, failureText(t.op!, s.detailsOpen)),
+    h("pre", { class: "lines", id: "fail-lines", "data-keep-scroll": true }, failureText(t, s.detailsOpen)),
   ];
 }
 
 async function retry(ctx: Ctx) {
-  if (!s.teamId) return;
+  const t = team(ctx);
+  if (!s.teamId || !t) return;
   s.busy = true;
   ctx.rerender();
+  if (retryCommand(t) === "retry_team") {
+    await ctx.act("retry_team", { id: s.teamId });
+    s.busy = false;
+    s.detailsOpen = false;
+    s.step = 3;
+    ctx.rerender();
+    return;
+  }
   const id = await ctx.act<string>("retry_create", { id: s.teamId });
   s.busy = false;
   if (id) {

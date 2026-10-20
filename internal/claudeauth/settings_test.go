@@ -260,6 +260,27 @@ func TestClassifyProbe(t *testing.T) {
 	}
 }
 
+// The texts are the CLI's own (2.1.304) for a failed model call.
+func TestClassifyCallFailure(t *testing.T) {
+	for _, tc := range []struct{ text, want string }{
+		{"Not logged in · Please run /login", CallSignedOut},
+		{"Invalid API key · Please run /login", CallSignedOut},
+		{"Session expired. Please run /login to sign in again.", CallSignedOut},
+		{"Failed to authenticate. API Error: 401 {\"type\":\"error\"}", CallSignedOut},
+		{"Authentication required · Sign in again to continue", CallSignedOut},
+		{"OAuth token has expired. Please obtain a new token or refresh your existing token.", CallSignedOut},
+		{"There's an issue with the selected model (claude-opus-5-5). It may not exist or you may not have access to it. Run /model to pick a different model.", CallModelMissing},
+		{"The model claude-sonnet-5 is not available on your foundry deployment. Try --model to switch to claude-sonnet-4-6, or ask your admin to enable this model.", CallModelMissing},
+		{"API Error: 529 Overloaded. This is a server-side issue.", CallOther},
+		{"Credit balance is too low", CallOther},
+		{"", CallOther},
+	} {
+		if got := ClassifyCallFailure(tc.text); got != tc.want {
+			t.Errorf("ClassifyCallFailure(%q) = %q, want %q", tc.text, got, tc.want)
+		}
+	}
+}
+
 func TestProbeArgsStayTiny(t *testing.T) {
 	a := strings.Join(ProbeArgs("claude-haiku-4-5"), " ")
 	for _, want := range []string{"-p ", "--model claude-haiku-4-5", "--max-turns 1", "--no-session-persistence", "--output-format json"} {

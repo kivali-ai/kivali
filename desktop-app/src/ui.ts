@@ -7,6 +7,7 @@ import { cx, h, type Child } from "./h";
 import { icon, type IconName } from "./icons";
 import { initials } from "./logic/format";
 import { dotOf } from "./logic/teams";
+import type { VmHelp } from "./logic/vmhelp";
 import type { TeamState } from "./types";
 
 export type Variant = "primary" | "secondary" | "ghost" | "danger";
@@ -314,6 +315,26 @@ export function sheet(o: SheetOpts): HTMLElement {
 
 export function closeSheet() {
   lastSheetKey = null;
+}
+
+/** A numbered list of steps (setup's Claude sign-in, the VM help). */
+export function steps(texts: string[]): HTMLElement {
+  return h(
+    "ol",
+    { class: "steps" },
+    ...texts.map((text, i) => h("li", {}, h("span", { class: "step-num" }, String(i + 1)), h("span", { class: "step-text" }, text))),
+  );
+}
+
+/** What to do when this computer can't run a team's VM (logic/vmhelp.ts). */
+export function vmHelpPanel(help: VmHelp, id = "vm-help"): HTMLElement {
+  return h(
+    "div",
+    { class: "vm-help", id, role: "status" },
+    h("div", { class: "vm-help-head" }, h("strong", {}, help.title), h("span", { class: "muted" }, help.body)),
+    help.steps.length ? steps(help.steps) : null,
+    help.note ? caption(help.note) : null,
+  );
 }
 
 export function caption(text: Child, cls = ""): HTMLElement {

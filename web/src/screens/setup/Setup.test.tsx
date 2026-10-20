@@ -298,18 +298,27 @@ describe('Project files', () => {
 });
 
 describe('Chief of Staff', () => {
-  it('says it cannot start yet, in the server’s words, when no model is connected', async () => {
+  it('says it cannot start yet, in the server’s words, when Claude is not signed in', async () => {
     serve({ ...goSetup, step: 'cos' });
     await renderSetup();
     expect(screen.getByRole('heading', { level: 1, name: 'Your Chief of Staff can’t start yet' })).toBeInTheDocument();
-    expect(screen.getByText('No model is connected yet')).toBeInTheDocument();
+    expect(screen.getByText('Claude isn’t signed in')).toBeInTheDocument();
     expect(screen.getByText(goSetup.credential.guidance, { exact: false })).toBeInTheDocument();
     expect(screen.getByText(/Everything you entered here is saved/)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Hire Chief of Staff' })).toBeNull();
     expect(screen.getByText('Step 4 of 4')).toBeInTheDocument();
   });
 
-  it('checks again on Try again and moves on once a model is connected', async () => {
+  it('says no model is connected when the server has none, though signed in', async () => {
+    const guidance = 'No model is connected yet; whoever runs this Kivali server can connect one.';
+    serve({ ...goSetup, step: 'cos', credential: { ...goSetup.credential, ready: false, present: true, guidance } });
+    await renderSetup();
+    expect(screen.getByText('No model is connected yet')).toBeInTheDocument();
+    expect(screen.queryByText('Claude isn’t signed in')).toBeNull();
+    expect(screen.getByText(guidance, { exact: false })).toBeInTheDocument();
+  });
+
+  it('checks again on Try again and moves on once Claude is signed in', async () => {
     serve({ ...goSetup, step: 'cos' });
     await renderSetup();
     serve({ ...ready, step: 'cos' });
@@ -317,7 +326,7 @@ describe('Chief of Staff', () => {
     await flush();
     expect(screen.getByRole('heading', { level: 1, name: 'Hire your Chief of Staff' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Hire Chief of Staff' })).toBeEnabled();
-    expect(screen.queryByText('No model is connected yet')).toBeNull();
+    expect(screen.queryByText('Claude isn’t signed in')).toBeNull();
   });
 
   it('keeps the edited documents across Back and Continue', async () => {
@@ -483,8 +492,8 @@ describe('Hiring', () => {
     serve({ ...ready, step: 'cos' }, [goProgressFailed]);
     click('Hire Chief of Staff');
     await flush();
-    expect(screen.getByText(goProgressFailed.error!)).toBeInTheDocument();
-    expect(screen.getByText(/Who can fix it: you, by trying again/)).toBeInTheDocument();
+    expect(screen.getByText(goProgressFailed.error! + '.')).toBeInTheDocument();
+    expect(screen.getByText(/Who can fix it: you, by signing Claude in from Kivali Desktop/)).toBeInTheDocument();
     expect(screen.getByRole('status', { name: 'Needs help' })).toBeInTheDocument();
     const calls = () => getMock.mock.calls.filter(([p]) => p === '/api/v1/setup/progress').length;
     const n = calls();
@@ -497,7 +506,7 @@ describe('Hiring', () => {
     click('Try again');
     await flush();
     expect(postMock).toHaveBeenCalledTimes(2);
-    expect(screen.queryByText(goProgressFailed.error!)).toBeNull();
+    expect(screen.queryByText(goProgressFailed.error! + '.')).toBeNull();
     expect(screen.getByRole('status', { name: 'Working' })).toBeInTheDocument();
   });
 
@@ -530,6 +539,12 @@ describe('Hiring', () => {
     });
     expect(calls()).toBeGreaterThanOrEqual(n + 2);
     expect(screen.getByText('Hiring your Chief of Staff')).toBeInTheDocument();
+  });
+
+  it('shows a failure the server words in lower case as a sentence', async () => {
+    serve({ ...ready, step: 'cos' }, [{ ...goProgressFailed, error: 'hiring your Chief of Staff failed' }]);
+    await renderSetup();
+    expect(screen.getByText('Hiring your Chief of Staff failed.')).toBeInTheDocument();
   });
 
   it('goes back to the step from a failure', async () => {

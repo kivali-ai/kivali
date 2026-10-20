@@ -147,6 +147,16 @@ const (
 	StopError     = "error"
 )
 
+// Failure kinds a driver reports on CompleteResponse.Failure, for a run
+// that stopped with StopError.
+const (
+	// FailureSignedOut: the provider has no credential it can use.
+	FailureSignedOut = "signed_out"
+	// FailureModelUnavailable: the provider does not serve the requested
+	// model to this sign-in.
+	FailureModelUnavailable = "model_unavailable"
+)
+
 // UsageDisplay is what the driver wants the UI to show as the
 // post-message "what did that cost" footer. Fields is a flat list
 // of (label, value) pairs. Narrative is optional free text shown
@@ -296,6 +306,11 @@ type CompleteResponse struct {
 	// else what the driver knows of the cause (an error result's kind,
 	// an exit status). Never the agent speaking: it is not in Content.
 	Error string
+
+	// Failure is the kind of failure Error describes, when the driver
+	// can tell (FailureSignedOut, FailureModelUnavailable); empty
+	// otherwise, and whenever StopReason is not StopError.
+	Failure string
 
 	// ByModel splits Usage by the model that actually served each call,
 	// in first-seen order. Summing it reproduces Usage exactly.

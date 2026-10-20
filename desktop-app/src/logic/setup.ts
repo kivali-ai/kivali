@@ -2,7 +2,7 @@
 // answers and the shell's snapshot, the getting-ready bar, and when Back
 // abandons the team.
 
-import type { ConnectError, Kind, OpView, Snapshot, Team } from "../types";
+import type { ConnectError, Kind, Snapshot, Team } from "../types";
 
 export type Step = 1 | 2 | 3 | 4;
 
@@ -51,8 +51,30 @@ export function teamReady(team: Team | undefined | null): boolean {
   return !team.op || !team.op.running;
 }
 
+/** Setup can't go on: getting the team ready failed. That is its create,
+ *  or, for a team whose setup was left unfinished (a restart, a closed
+ *  window), the resume that starts it again, which may also fail before
+ *  any operation runs (memory, or a computer that can't run its VM). */
 export function createFailed(team: Team | undefined | null): boolean {
-  return !!team?.op && team.op.kind === "create" && !team.op.running && !!team.op.error;
+  if (!team) return false;
+  const op = team.op;
+  if (op && !op.running && op.error && (op.kind === "create" || op.kind === "resume")) return true;
+  return team.state === "failed";
+}
+
+/** Try again on the failure screen: a create made in this run starts over
+ *  with the same answers (`retry_create`); a team whose setup was left
+ *  unfinished in an earlier run is started again (`retry_team`), since
+ *  its owner's Google sign-in isn't held any more. */
+export function retryCommand(team: Team): "retry_create" | "retry_team" {
+  return team.op?.kind === "create" ? "retry_create" : "retry_team";
+}
+
+/** Setup picked up again for a team it made and never finished: at Claude's
+ *  sign-in, the step setup never got past. */
+export function resumeSetup(team: Team): SetupState {
+  const kind = team.kind ?? "work";
+  return { ...newSetup(), step: 3, kind, name: team.name, teamId: team.id, created: { name: team.name, kind, callMe: "" } };
 }
 
 export function setupScreen(s: SetupState, snap: Pick<Snapshot, "teams" | "owner_signin">): SetupScreen {
@@ -156,8 +178,11 @@ export function clampPercent(p: number): number {
   return Math.max(0, Math.min(100, Math.round(p)));
 }
 
-/** The create-failed box: the last few lines then the error, indented. */
-export function failureText(op: OpView, all: boolean): string {
+/** The create-failed box: the last few lines then the error, indented;
+ *  the team's reason when no operation ran. */
+export function failureText(team: Pick<Team, "op" | "reason">, all: boolean): string {
+  const op = team.op;
+  if (!op) return team.reason ?? "";
   const lines = all ? op.lines : op.lines.slice(-3);
   const out = [...lines];
   if (op.error) out.push(`  ${op.error}`);

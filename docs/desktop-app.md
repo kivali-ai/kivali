@@ -2,7 +2,7 @@
 
 Kivali Desktop runs your teams on your computer and opens teams that run elsewhere. This page covers teams and their windows, the menu bar and the notification area, notifications, updates, pausing and resuming, resources, opening a team from other computers, and uninstalling.
 
-Kivali Desktop runs on macOS 13 or later on Apple silicon, and on 64-bit Windows 10 or 11 Pro, Enterprise or Education with Hyper-V turned on. It works the same way on both; where they differ, this page says so. Keyboard shortcuts are written for macOS: on Windows, use Ctrl where macOS uses ⌘.
+Kivali Desktop runs on macOS 13 or later on Apple silicon, and on 64-bit Windows 10 or 11 Pro, Enterprise or Education with Hyper-V turned on. It works the same way on both; where they differ, this page says so. When this computer can't run a team (Hyper-V off, Windows Home, virtualization turned off in the firmware, or macOS running in a virtual machine), Kivali says so and lists the steps to fix it, both in its first window and in the window of any team on this computer. Teams on other computers work either way. Keyboard shortcuts are written for macOS: on Windows, use Ctrl where macOS uses ⌘.
 
 ## Teams
 

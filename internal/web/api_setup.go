@@ -16,6 +16,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/kivali-ai/kivali/internal/provider"
 	"github.com/kivali-ai/kivali/internal/seed"
 	"github.com/kivali-ai/kivali/internal/store"
 	"github.com/kivali-ai/kivali/internal/web/apitypes"
@@ -129,27 +130,44 @@ func setupStep(hired, hiring, named, hasFiles bool) apitypes.SetupStep {
 }
 
 // setupCredential says whether a model is connected and how calls are
-// paid for, and when no model is connected, who can fix it, in words:
-// the provider's Credentials.Status and Guidance. Ready is whether a
-// driver is wired (s.Claude is nil only in tests); whether its
-// credential works is only known on the first call.
+// paid for, and when the hire cannot run, how to fix it, in words: the
+// provider's Credentials.Status and Guidance. Ready is whether a driver
+// is wired (s.Claude is nil only in tests) and the provider has not
+// said it is signed out. A status that cannot be read leaves Ready as
+// the driver has it: whether the credential works then shows on the
+// first call.
 func (s *Server) setupCredential(ctx context.Context) apitypes.SetupCredential {
 	creds := s.Provider.Credentials()
 	st, err := creds.Status(ctx)
 	if err != nil {
 		log.Printf("setup: credential status: %v", err)
 	}
+	signedOut := err == nil && !st.Present
 	c := apitypes.SetupCredential{
-		Ready:    s.Claude != nil,
+		Ready:    s.Claude != nil && !signedOut,
 		Provider: s.Provider.Name(),
 		Present:  st.Present,
 		Who:      st.Who,
 		Billing:  st.Billing,
 	}
-	if !c.Ready {
+	switch {
+	case s.Claude == nil:
 		c.Guidance = notConnectedGuidance(creds.Guidance())
+	case signedOut:
+		c.Guidance = creds.Guidance()
 	}
 	return c
+}
+
+// signedOut reports whether the provider says it is not signed in. A
+// status that cannot be read is not taken as signed out.
+func (s *Server) signedOut(ctx context.Context) bool {
+	st, err := s.Provider.Credentials().Status(ctx)
+	if err != nil {
+		log.Printf("setup: credential status: %v", err)
+		return false
+	}
+	return !st.Present
 }
 
 // notConnectedGuidance is the one sentence setup shows while no model
@@ -322,7 +340,8 @@ func multipartFiles(r *http.Request, fields []string) []*multipart.FileHeader {
 // handleAPISetupSeedCoS starts hiring the Chief of Staff in the
 // background and answers 202; GET /api/v1/setup/progress follows it.
 // One hire at a time: a second request while one runs, or after the
-// Chief of Staff exists, is a 409.
+// Chief of Staff exists, is a 409. With no model connected, or a
+// provider that says it is signed out, it is a 503 and nothing runs.
 func (s *Server) handleAPISetupSeedCoS(w http.ResponseWriter, r *http.Request) {
 	var req apitypes.SeedCoSRequest
 	if !decodeJSONOrError(w, r, &req) {
@@ -330,6 +349,10 @@ func (s *Server) handleAPISetupSeedCoS(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.Claude == nil {
 		writeAPIError(w, http.StatusServiceUnavailable, "no model is connected yet", whoServer)
+		return
+	}
+	if s.signedOut(r.Context()) {
+		writeAPIError(w, http.StatusServiceUnavailable, "Claude is not signed in", s.Provider.Credentials().Guidance())
 		return
 	}
 	plan, ok := s.cosSeedFromRequest(w, req)
@@ -618,30 +641,50 @@ func (t *seedTracker) progress(now time.Time, hired bool) apitypes.SetupProgress
 }
 
 // seedFailureWords says what stopped a hire and who can fix it, for
-// the hiring panel. The underlying error goes to the log, not the page.
+// the hiring panel: what is the panel's title, so it starts with a
+// capital; who follows "Who can fix it:". The underlying error goes to
+// the log, not the page.
 func seedFailureWords(err error) (what, who string) {
 	var f *seedFailure
 	if !errors.As(err, &f) {
-		return "hiring your Chief of Staff failed", whoServer
+		return "Hiring your Chief of Staff failed", whoServer
 	}
 	var timeout *seedTimeoutError
 	if errors.As(err, &timeout) {
 		retry := "you, by trying again, or whoever runs this Kivali server if it keeps happening"
 		if f.Stage == seedStageBrief {
-			return "your Chief of Staff could not write its first briefing because the model did not answer within " +
+			return "Your Chief of Staff could not write its first briefing because the model did not answer within " +
 				timeout.words(), retry
 		}
-		return "hiring your Chief of Staff stopped because it did not finish within " + timeout.words(), retry
+		return "Hiring your Chief of Staff stopped because it did not finish within " + timeout.words(), retry
 	}
 	switch f.Stage {
 	case seedStageRead:
-		return "could not read the project files", whoServer
+		return "Could not read the project files", whoServer
 	case seedStageBrief:
-		return "your Chief of Staff could not write its first briefing because the model call failed",
-			"you, by trying again, or whoever runs this Kivali server if it keeps failing"
+		return briefFailureWords(f)
 	case seedStageFirstMessage:
-		return "your Chief of Staff is hired, but its first message could not be sent", "you, by messaging it from its chat"
+		return "Your Chief of Staff is hired, but its first message could not be sent", "you, by messaging it from its chat"
 	default:
-		return "could not save your Chief of Staff", whoServer
+		return "Could not save your Chief of Staff", whoServer
 	}
+}
+
+// briefFailureWords says why the briefing call failed, by the kind of
+// failure the provider reported: no sign-in, a model the sign-in
+// cannot use, or anything else.
+func briefFailureWords(f *seedFailure) (what, who string) {
+	const lead = "Your Chief of Staff could not write its first briefing because "
+	switch f.Failure {
+	case provider.FailureSignedOut:
+		return lead + "Claude is not signed in",
+			"you, by signing Claude in from Kivali Desktop (Settings, this team, AI) and trying again, " +
+				"or whoever runs this Kivali server"
+	case provider.FailureModelUnavailable:
+		model := cmp.Or(f.Model, "the model it runs on")
+		return lead + model + " is not available on this Claude sign-in",
+			"you, by signing Claude in with an account that can use " + model +
+				" (Kivali Desktop: Settings, this team, AI), or whoever runs this Kivali server"
+	}
+	return lead + "the call to Claude failed", "you, by trying again, or whoever runs this Kivali server if it keeps failing"
 }

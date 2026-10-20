@@ -272,7 +272,27 @@ func authStatus(ctx context.Context, binary string, env []string, scrub *egressc
 	return st, nil
 }
 
+// Guidance names both ways a team is signed in to Claude: Kivali
+// Desktop's AI tab for the team, and whoever runs a self-hosted server.
 func (claudeCredentials) Guidance() string {
-	return "Whoever runs this Kivali server can sign it in to Claude."
+	return "To sign Claude in, open Settings in Kivali Desktop, choose this team, then AI. " +
+		"On a self-hosted team, whoever runs this Kivali server signs it in."
+}
+
+// callFailure is CompleteResponse.Failure for a run that stopped with
+// stopReason and detail: the kind of the CLI's text for the failed call
+// (claudeauth.ClassifyCallFailure), or empty when the run did not fail
+// or the kind is neither signed out nor a missing model.
+func callFailure(stopReason, detail string) string {
+	if stopReason != provider.StopError {
+		return ""
+	}
+	switch claudeauth.ClassifyCallFailure(detail) {
+	case claudeauth.CallSignedOut:
+		return provider.FailureSignedOut
+	case claudeauth.CallModelMissing:
+		return provider.FailureModelUnavailable
+	}
+	return ""
 }
 func (claudeCredentials) HomeDir() string { return HomeDirName }

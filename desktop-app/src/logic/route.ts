@@ -4,7 +4,9 @@ export type SetupMode = "welcome" | "add" | "new";
 export type TeamTab = "overview" | "ai" | "mac" | "devices";
 
 export type Route =
-  | { page: "setup"; mode: SetupMode }
+  /** `team`: the new-team path for a team whose setup didn't finish
+   *  (#/setup/new/<id>, which the shell opens instead of its window). */
+  | { page: "setup"; mode: SetupMode; team?: string }
   | { page: "connect" }
   | { page: "settings"; section: "general" | "advanced" }
   | { page: "settings"; section: "team"; id: string; tab: TeamTab }
@@ -22,6 +24,7 @@ export function parseRoute(hash: string): Route {
     .map((p) => decodeURIComponent(p));
   const [a, b, c, d] = parts;
   if (a === "setup") {
+    if (b === "new" && c) return { page: "setup", mode: "new", team: c };
     if (b === "add" || b === "new") return { page: "setup", mode: b };
     return { page: "setup", mode: "welcome" };
   }
@@ -41,7 +44,7 @@ export function parseRoute(hash: string): Route {
 export function routeHash(r: Route): string {
   switch (r.page) {
     case "setup":
-      return `#/setup/${r.mode}`;
+      return r.team ? `#/setup/${r.mode}/${encodeURIComponent(r.team)}` : `#/setup/${r.mode}`;
     case "connect":
       return "#/connect";
     case "team":

@@ -113,6 +113,24 @@ describe("teamPage", () => {
     expect(g.kind === "failed" && [g.body, g.action.label, g.details]).toEqual(["Something went wrong while starting.", "Try again", null]);
     const r = teamPage(team({ state: "failed", reason: "the disk is full" }), snap, now);
     expect(r.kind === "failed" && r.body).toBe("The disk is full.");
+    // The memory line names this computer as its platform does.
+    const w = teamPage(t, snapshot({ platform: "windows", teams: [t, home] }), now);
+    expect(w.kind === "failed" && w.body).toBe("This PC is low on memory. Home is using 4 GB.");
+    expect(statusRow(t, snapshot({ platform: "windows", teams: [t, home] }), now).sub).toBe("This PC is low on memory. Home is using 4 GB.");
+  });
+  it("can't start while this computer can't run the team's VM: the steps, no button", () => {
+    const off = snapshot({ platform: "windows", host: { memory_mb: 16384, cpus: 8, vm_support: "hyperv_off" } });
+    for (const state of ["paused", "failed"] as const) {
+      const v = teamPage(team({ state, reason: "Hyper-V is turned off on this PC." }), off, now);
+      expect(v.kind).toBe("vm");
+      if (v.kind !== "vm") continue;
+      expect(v.title).toBe("Plainsong can’t start");
+      expect(v.help.title).toBe("Turn on Hyper-V to run a team on this PC");
+      expect(v.help.steps.length).toBeGreaterThan(0);
+    }
+    // A running team, a team elsewhere and one that is starting show as before.
+    expect(teamPage(team({ state: "running" }), off, now).kind).toBe("progress");
+    expect(teamPage(team({ place: "elsewhere", device: "dana-imac.local", state: "paused" }), off, now).kind).toBe("unreachable");
   });
   it("can't reach", () => {
     const t = team({ name: "Studio", place: "elsewhere", device: "dana-imac.local", state: "paused", last_reached: new Date(2026, 9, 5, 13, 0).toISOString() });
@@ -280,10 +298,11 @@ describe("Other devices", () => {
     expect(devicesView({ public_url: "https://a.ts.net" }, { ...off, editing: true })).toBe("form");
   });
   it("the hint names the local address, or says it hasn't one", () => {
-    expect(devicesHint({ url: "http://127.0.0.1:18080" }).join("")).toBe(
+    expect(devicesHint({ url: "http://127.0.0.1:18080" }, "macos").join("")).toBe(
       "Kivali doesn’t set this up. Put this Mac’s team behind https yourself, for example with tailscale serve, pointing at http://127.0.0.1:18080.",
     );
-    expect(devicesHint({ url: null })[2]).toBe(", pointing at its local address.");
+    expect(devicesHint({ url: "http://127.0.0.1:18080" }, "windows")[0]).toBe("Kivali doesn’t set this up. Put this PC’s team behind https yourself, for example with ");
+    expect(devicesHint({ url: null }, "macos")[2]).toBe(", pointing at its local address.");
   });
   it("who can sign in", () => {
     expect(signInLine({ owner: "dana@example.com" })).toBe("dana@example.com");

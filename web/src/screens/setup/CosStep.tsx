@@ -97,15 +97,16 @@ export interface CosStepProps {
 }
 
 /**
- * Step 4: the default role and handbook, closed and read-only until Edit; one primary. With no model
- * connected it is canvas 6j instead: what is missing, who can fix it (the server's words), and Try again.
+ * Step 4: the default role and handbook, closed and read-only until Edit; one primary. When the hire cannot run
+ * (no model connected, or Claude not signed in) it is canvas 6j instead: what is missing, how to fix it and who
+ * can (the server's words), and Try again.
  */
 export function CosStep({ setup, fromFiles, drafts, onDrafts, error, hiring, checking = false, onBack, onHire, onRecheck }: CosStepProps) {
   if (!setup.credential.ready) {
     return (
       <>
         <StepHead title="Your Chief of Staff can’t start yet" />
-        <Banner tone="warning" title="No model is connected yet">
+        <Banner tone="warning" title={setup.credential.present ? 'No model is connected yet' : 'Claude isn’t signed in'}>
           {(setup.credential.guidance ? setup.credential.guidance + ' ' : '') + 'Everything you entered here is saved, so you can come back and try again.'}
         </Banner>
         {error != null && <ErrorBanner error={error} />}

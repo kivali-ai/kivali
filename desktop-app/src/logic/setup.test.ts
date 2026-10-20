@@ -8,6 +8,8 @@ import {
   opensWhen,
   ownerSigninErrorText,
   readyBar,
+  resumeSetup,
+  retryCommand,
   setupScreen,
   stepOf,
   type SetupState,
@@ -53,9 +55,31 @@ describe("setupScreen", () => {
     const failed = team({ id: "n", state: "failed", op: op({ running: false, finished: true, error: "boom" }) });
     expect(setupScreen(st({ step: 3, teamId: "n" }), snapshot({ teams: [failed] }))).toBe("create-failed");
   });
+  it("create-failed too when restarting a team whose setup was left unfinished fails", () => {
+    const s = st({ step: 3, teamId: "n" });
+    const resumeFailed = team({ id: "n", state: "failed", provisional: true, op: op({ kind: "resume", running: false, finished: true, error: "boom" }) });
+    expect(setupScreen(s, snapshot({ teams: [resumeFailed] }))).toBe("create-failed");
+    // Refused before an operation ran (memory, a computer that can't run the VM).
+    const refused = team({ id: "n", state: "failed", provisional: true, op: null, reason: "Hyper-V is turned off on this PC." });
+    expect(setupScreen(s, snapshot({ teams: [refused] }))).toBe("create-failed");
+  });
   it("a team not listed yet keeps step 2's screen", () => {
     const signedIn = snapshot({ owner_signin: { state: "signed_in", email: "a@b.co", error: null } });
     expect(setupScreen(st({ step: 3, teamId: "gone" }), signedIn)).toBe("owner-signed-in");
+  });
+});
+
+describe("picking setup up again", () => {
+  it("starts at Claude's sign-in for the team setup made", () => {
+    const left = team({ id: "home-1", name: "Home", kind: "personal", provisional: true, state: "paused" });
+    expect(resumeSetup(left)).toMatchObject({ step: 3, kind: "personal", name: "Home", teamId: "home-1", created: { name: "Home", kind: "personal", callMe: "" } });
+    // Back from there removes the team, as it does in one sitting.
+    expect(backFrom(resumeSetup(left))).toEqual({ step: 2, abandon: true });
+  });
+  it("tries again by creating afresh in the same sitting, by starting the team otherwise", () => {
+    expect(retryCommand(team({ op: op({ kind: "create", running: false, error: "x" }) }))).toBe("retry_create");
+    expect(retryCommand(team({ op: op({ kind: "resume", running: false, error: "x" }) }))).toBe("retry_team");
+    expect(retryCommand(team({ op: null }))).toBe("retry_team");
   });
 });
 
@@ -93,9 +117,11 @@ describe("the getting-ready bar", () => {
     expect(opensWhen(team({ op: op({ remaining: null }) }), "Plainsong")).toBe("Opens when Plainsong is ready");
   });
   it("the create-failed box: last lines then the indented error", () => {
-    const o = op({ lines: ["a", "b", "c", "d"], error: "image pull timed out" });
-    expect(failureText(o, false)).toBe("b\nc\nd\n  image pull timed out");
-    expect(failureText(o, true)).toBe("a\nb\nc\nd\n  image pull timed out");
+    const t = team({ op: op({ lines: ["a", "b", "c", "d"], error: "image pull timed out" }) });
+    expect(failureText(t, false)).toBe("b\nc\nd\n  image pull timed out");
+    expect(failureText(t, true)).toBe("a\nb\nc\nd\n  image pull timed out");
+    // A start refused before any operation ran: the team's reason.
+    expect(failureText(team({ op: null, reason: "This PC is low on memory." }), false)).toBe("This PC is low on memory.");
   });
 });
 

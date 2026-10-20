@@ -2350,8 +2350,10 @@ export interface SetupCoS {
  */
 export interface SetupCredential {
   /**
-   * Ready is true when the server has a model driver; seeding needs
-   * one.
+   * Ready is true when seeding can run: the server has a model driver
+   * and the provider has not said it is signed out. A status that
+   * could not be read leaves it true; whether the credential works
+   * then shows on the first call.
    */
   ready: boolean;
   /**
@@ -2373,8 +2375,9 @@ export interface SetupCredential {
    */
   billing: string;
   /**
-   * Guidance is one plain sentence saying what is missing and who can
-   * fix it. Empty when Ready.
+   * Guidance is one plain sentence on how to connect the model and
+   * who can: the provider's own words, opened with "No model is
+   * connected yet" when the server has no driver. Empty when Ready.
    */
   guidance: string;
 }

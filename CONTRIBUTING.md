@@ -6,8 +6,8 @@ fixes and code are all welcome.
 ## Before you start
 
 - **Bugs.** Open an issue with what you did, what you expected and what
-  happened. Include where you run Kivali (Kivali Desktop on macOS, or
-  your own Kubernetes), the Kivali version, and any error text.
+  happened. Include where you run Kivali (Kivali Desktop on macOS or
+  Windows, or your own Kubernetes), the Kivali version, and any error text.
 - **Features and larger changes.** Open an issue to talk it through before
   writing code, so we can agree on the shape first.
 - **Security problems.** Do not open a public issue. Follow
@@ -31,6 +31,12 @@ make ci      # everything CI runs (needs helm, shellcheck, cargo and jq)
   and why.
 - Add or update tests. Tests are deterministic: no sleeps, no polling.
 - Update the docs your change affects, in the same pull request.
+- Kivali Desktop changes land on macOS and Windows alike: a feature or a
+  bug fix made for one is made for the other in the same pull request,
+  and a bug found on one is checked for on the other. Platform-specific
+  code is fine. A difference in what people can do or see between the two
+  needs a maintainer's approval before you build it, and the answer is
+  usually no.
 - Run `make ci` before you push. CI runs the same targets.
 - UI text follows the voice in [design-system/README.md](design-system/README.md);
   `make test` checks it.

@@ -1,12 +1,13 @@
 import type { ReactNode } from 'react';
 import { ApiError } from '../../api/client';
 import { Banner, Text } from '../../ds';
+import { asSentence } from '../../state/home';
 
 /** What a failed call says: what happened, then who can fix it. */
 export function ErrorBanner({ error }: { error: unknown }) {
   if (error instanceof ApiError) {
     return (
-      <Banner tone="danger" title={error.message}>
+      <Banner tone="danger" title={asSentence(error.message)}>
         {error.who}
       </Banner>
     );

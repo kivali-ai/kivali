@@ -146,6 +146,7 @@ func (t *runnerTurn) Final() *provider.CompleteResponse {
 		Model:         t.model,
 		StopReason:    t.stopReason,
 		Error:         t.errText,
+		Failure:       callFailure(t.stopReason, t.errText),
 		Content:       content,
 		Usage:         t.usage.Total(),
 		ByModel:       t.usage.Split(),

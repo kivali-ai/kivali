@@ -60,7 +60,7 @@ export function snapshot(o: Partial<Snapshot> = {}): Snapshot {
     app_version: "0.17.1",
     platform: "macos",
     teams: [],
-    host: { memory_mb: 16384, cpus: 8 },
+    host: { memory_mb: 16384, cpus: 8, vm_support: "ready" },
     settings: { start_at_login: true, ask_before_quit: true },
     app_update: { state: "not_checked", version: null, checked_at: null, error: null },
     owner_signin: { state: "idle", email: null, error: null },

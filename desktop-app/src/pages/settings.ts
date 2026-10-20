@@ -466,7 +466,7 @@ function devicesTab(ctx: Ctx, t: Team): Child[] {
     }),
   ];
   if (view === "form") {
-    const [before, cmd, after] = devicesHint(t);
+    const [before, cmd, after] = devicesHint(t, ctx.snap.platform);
     const f = field({
       id: "public-address",
       label: "Address",

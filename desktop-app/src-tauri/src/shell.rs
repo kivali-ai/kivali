@@ -184,8 +184,9 @@ pub struct Runtime {
     op_done: Condvar,
     pub credential: Mutex<Option<CredentialStatus>>,
     credential_at: Mutex<Option<Instant>>,
-    /// Created in this run's setup, which has not finished (`finish_setup`):
-    /// setup may still remove it (Back, Try again).
+    /// Made by setup, which has not finished (`finish_setup`): setup may
+    /// still remove it (Back, Try again). Mirrors teams.json's
+    /// `provisional`, which keeps it across launches.
     pub provisional: AtomicBool,
     /// Why the last start failed; cleared by the next success.
     pub failure: Mutex<Option<String>>,
@@ -435,6 +436,11 @@ struct Prepared {
 /// launch is left over from a setup that never finished.
 const PREPARED_MARKER: &str = ".prepared";
 
+/// A team's recorded failure when this computer can't run its VM
+/// (platform::vm_support): the reason and the pages' steps come from
+/// the check itself.
+const VM_FAILURE: &str = "vm";
+
 /// What the pages render (types.ts `Snapshot`).
 #[derive(Serialize)]
 pub struct Snapshot {
@@ -455,6 +461,8 @@ pub struct Snapshot {
 pub struct HostView {
     pub memory_mb: u64,
     pub cpus: u64,
+    /// Whether a team's VM can run here (platform::vm_support).
+    pub vm_support: platform::VmSupport,
 }
 
 #[derive(Serialize)]
@@ -574,13 +582,18 @@ impl Shell {
             loops: AtomicBool::new(false),
             prepared: Mutex::new(None),
         };
-        let here: Vec<(String, PathBuf)> = {
+        let here: Vec<(String, PathBuf, bool)> = {
             let t = shell.teams.lock().unwrap();
-            t.teams.iter().filter_map(|t| t.dir(&shell.dir).map(|d| (t.id.clone(), d))).collect()
+            t.teams
+                .iter()
+                .filter_map(|t| t.dir(&shell.dir).map(|d| (t.id.clone(), d, t.local().is_some_and(|l| l.provisional))))
+                .collect()
         };
         let mut rts = shell.runtimes.lock().unwrap();
-        for (id, d) in here {
-            rts.insert(id.clone(), Arc::new(Runtime::new(&id, d)));
+        for (id, d, provisional) in here {
+            let rt = Runtime::new(&id, d);
+            rt.provisional.store(provisional, Ordering::SeqCst);
+            rts.insert(id.clone(), Arc::new(rt));
         }
         drop(rts);
         shell
@@ -663,8 +676,13 @@ impl Shell {
                     Some(other) => {
                         let other_name = self.teams.lock().unwrap().get(other).map(|o| o.name.clone()).unwrap_or_default();
                         let other_mb = self.teams.lock().unwrap().get(other).and_then(|o| o.local().map(|l| l.memory_mb)).unwrap_or(0);
-                        Some(format!("This Mac is low on memory. {other_name} is using {}.", view::gb(u64::from(other_mb))))
+                        Some(format!(
+                            "{} is low on memory. {other_name} is using {}.",
+                            view::capitalized(platform::THIS_COMPUTER),
+                            view::gb(u64::from(other_mb))
+                        ))
                     }
+                    None if failure.as_deref() == Some(VM_FAILURE) => view::vm_reason(platform::vm_support()),
                     None => status.as_ref().and_then(|s| s.message.clone()).filter(|_| state == TeamState::Failed),
                 };
                 let facts = rt.as_ref().and_then(|r| r.facts.lock().unwrap().clone());
@@ -770,7 +788,7 @@ impl Shell {
                 "linux"
             },
             teams: views,
-            host: HostView { memory_mb: hostinfo::memory_mb(), cpus: hostinfo::cpus() },
+            host: HostView { memory_mb: hostinfo::memory_mb(), cpus: hostinfo::cpus(), vm_support: platform::vm_support() },
             settings: SettingsView { start_at_login: teams.start_at_login, ask_before_quit: teams.ask_before_quit },
             app_update,
             owner_signin: owner,
@@ -778,6 +796,17 @@ impl Shell {
             config_dir: self.dir.display().to_string(),
             logs_dir: self.dir.join("logs").display().to_string(),
             last_deleted: last_deleted.map(|(name, freed_bytes)| DeletedView { name, freed_bytes }),
+        }
+    }
+
+    /// The team is no longer setup's: in this run and in teams.json.
+    fn end_setup(&self, id: &str) {
+        if let Some(rt) = self.runtime(id) {
+            rt.provisional.store(false, Ordering::SeqCst);
+        }
+        set_provisional(&mut self.teams.lock().unwrap(), id, false);
+        if let Err(e) = self.save_teams() {
+            eprintln!("kivali: {id}: finishing setup: {e}");
         }
     }
 
@@ -975,10 +1004,21 @@ fn sup_err(e: SupError) -> String {
     e.to_string()
 }
 
+/// The error for a team id that names no team on this computer.
+pub fn no_team_here() -> String {
+    format!("no such team on {}", platform::THIS_COMPUTER)
+}
+
 /// Boots a team (creating it on the first call) and records what came
 /// back. Used by create, resume and retry.
 fn boot(app: &AppHandle, sh: &Shell, rt: &Runtime, req: UpRequest, progress: &mut dyn FnMut(Progress)) -> Result<(), String> {
     *rt.failure.lock().unwrap() = None;
+    // No supervisor at all while this computer can't run the VM: the team
+    // shows couldn't start, with the steps (types.ts `VmSupport`).
+    if let Some(why) = view::vm_reason(platform::vm_support()) {
+        *rt.failure.lock().unwrap() = Some(VM_FAILURE.into());
+        return Err(why);
+    }
     rt.ensure_supervisor(sh.vm_dir.as_deref())?;
     let result = rt.supervisor.up(&req, progress);
     let st = match result {
@@ -1024,10 +1064,11 @@ pub struct NewTeam {
 /// "Create a team" chosen: starts booting a machine for it at once, so
 /// setup's own steps overlap the wait. It installs nothing until
 /// `create_team` names the owner. Quietly does nothing when one is
-/// already preparing or would not fit in memory.
+/// already preparing, would not fit in memory, or this computer can't
+/// run its VM (the welcome screen says so instead).
 pub fn prepare_team(app: &AppHandle) -> Result<(), String> {
     let sh = shell(app);
-    if sh.quitting.load(Ordering::SeqCst) {
+    if sh.quitting.load(Ordering::SeqCst) || platform::vm_support() != platform::VmSupport::Ready {
         return Ok(());
     }
     let (running, _) = sh.running_memory_mb("");
@@ -1162,12 +1203,16 @@ pub fn create_team(app: &AppHandle, t: NewTeam) -> Result<String, String> {
     if name.chars().count() > 64 {
         return Err("Keep the name under 64 characters.".into());
     }
+    if let Some(why) = view::vm_reason(platform::vm_support()) {
+        return Err(why);
+    }
     let (running, _) = sh.running_memory_mb("");
     let free = view::memory_free_mb(hostinfo::memory_mb(), running);
     let has_prepared = sh.prepared.lock().unwrap().is_some();
     if !has_prepared && u64::from(crate::teams::DEFAULT_MEMORY_MB) > free {
         return Err(format!(
-            "This Mac doesn't have {} free for another team while the others run. Pause one first.",
+            "{} doesn't have {} free for another team while the others run. Pause one first.",
+            view::capitalized(platform::THIS_COMPUTER),
             view::gb(u64::from(crate::teams::DEFAULT_MEMORY_MB))
         ));
     }
@@ -1188,6 +1233,7 @@ pub fn create_team(app: &AppHandle, t: NewTeam) -> Result<String, String> {
         };
         let id = teams.add_here(&name, t.kind, &owner, &mut rnd);
         set_call_me(&mut teams, &id, &t.call_me);
+        set_provisional(&mut teams, &id, true);
         teams.last_open = Some(id.clone());
         id
     };
@@ -1202,6 +1248,19 @@ pub fn create_team(app: &AppHandle, t: NewTeam) -> Result<String, String> {
         boot(app, sh, rt, req, progress)
     })?;
     Ok(id)
+}
+
+/// Marks a team as setup's until setup finishes (teams.json `provisional`).
+fn set_provisional(teams: &mut TeamsFile, id: &str, on: bool) {
+    if let Some(l) = teams.get_mut(id).and_then(Team::local_mut) {
+        l.provisional = on;
+    }
+}
+
+/// Whether a team here is still setup's: its window is setup, at the
+/// Claude sign-in (windows::show_team).
+pub fn setup_unfinished(sh: &Shell, id: &str) -> bool {
+    sh.teams.lock().unwrap().get(id).and_then(Team::local).is_some_and(|l| l.provisional)
 }
 
 /// Records setup's "What should your agents call you?" on a new team
@@ -1250,6 +1309,7 @@ fn adopt_prepared(app: &AppHandle, sh: &Shell, name: &str, kind: Kind, owner: &s
         let mut teams = sh.teams.lock().unwrap();
         teams.add_here_as(&p.id, name, kind, owner);
         set_call_me(&mut teams, &p.id, call_me);
+        set_provisional(&mut teams, &p.id, true);
         teams.last_open = Some(p.id.clone());
     }
     let req = sh.up_request(&p.id);
@@ -1332,9 +1392,7 @@ pub fn retry_create(app: &AppHandle, id: &str) -> Result<String, String> {
 /// "Open <team>" at the end of setup: the team is no longer setup's to
 /// remove.
 pub fn finish_setup(app: &AppHandle, id: &str) {
-    if let Some(rt) = shell(app).runtime(id) {
-        rt.provisional.store(false, Ordering::SeqCst);
-    }
+    shell(app).end_setup(id);
     changed(app);
 }
 
@@ -1355,7 +1413,7 @@ fn remove_team_files(sh: &Shell, team: &Team) {
 /// would not fit beside the ones running.
 pub fn resume_team(app: &AppHandle, id: &str) -> Result<(), String> {
     let sh = shell(app);
-    let rt = sh.runtime(id).ok_or("no such team on this Mac")?;
+    let rt = sh.runtime(id).ok_or_else(no_team_here)?;
     if rt.is_running() && rt.failure.lock().unwrap().is_none() {
         return Ok(());
     }
@@ -1413,7 +1471,7 @@ pub fn pause_and_resume(app: &AppHandle, pause: &str, resume: &str) -> Result<()
 }
 
 pub fn pause_team(app: &AppHandle, id: &str) -> Result<(), String> {
-    let rt = shell(app).runtime(id).ok_or("no such team on this Mac")?;
+    let rt = shell(app).runtime(id).ok_or_else(no_team_here)?;
     run_op(app, rt, OpKind::Pause, |_app, sh, rt, progress| {
         *rt.failure.lock().unwrap() = None;
         if rt.supervisor.is_listening() {
@@ -1427,7 +1485,7 @@ pub fn pause_team(app: &AppHandle, id: &str) -> Result<(), String> {
 }
 
 pub fn update_team(app: &AppHandle, id: &str) -> Result<(), String> {
-    let rt = shell(app).runtime(id).ok_or("no such team on this Mac")?;
+    let rt = shell(app).runtime(id).ok_or_else(no_team_here)?;
     let id = id.to_string();
     run_op(app, rt, OpKind::Update, move |app, sh, rt, progress| {
         let before = rt.status().and_then(|s| s.kivali);
@@ -1486,7 +1544,7 @@ pub fn short_version(v: &str) -> String {
 /// supervisor: never call it on the main thread.
 pub fn open_claude_signin(app: &AppHandle, id: &str) -> Result<(), String> {
     let sh = shell(app);
-    let rt = sh.runtime(id).ok_or("no such team on this Mac")?;
+    let rt = sh.runtime(id).ok_or_else(no_team_here)?;
     if !rt.is_running() {
         return Err("Claude's sign-in opens once the team is running.".into());
     }
@@ -1510,7 +1568,7 @@ pub fn open_claude_signin(app: &AppHandle, id: &str) -> Result<(), String> {
 /// and the setup saved now, without its secrets. Blocks on the
 /// supervisor.
 pub fn credential_setup(app: &AppHandle, id: &str) -> Result<SetupInfo, String> {
-    let rt = shell(app).runtime(id).ok_or("no such team on this Mac")?;
+    let rt = shell(app).runtime(id).ok_or_else(no_team_here)?;
     if !rt.is_running() {
         return Err("This can be set up once the team is running.".into());
     }
@@ -1523,7 +1581,7 @@ pub fn credential_setup(app: &AppHandle, id: &str) -> Result<SetupInfo, String> 
 /// on the supervisor for as long as the checks take.
 pub fn apply_credential_setup(app: &AppHandle, id: &str, req: SetupRequest) -> Result<SetupResult, String> {
     let sh = shell(app);
-    let rt = sh.runtime(id).ok_or("no such team on this Mac")?;
+    let rt = sh.runtime(id).ok_or_else(no_team_here)?;
     if !rt.is_running() {
         return Err("This can be set up once the team is running.".into());
     }
@@ -1542,7 +1600,7 @@ pub fn apply_credential_setup(app: &AppHandle, id: &str, req: SetupRequest) -> R
 pub fn delete_team(app: &AppHandle, id: &str) -> Result<(), String> {
     let sh = shell(app);
     let team = sh.team(id).ok_or("no such team")?;
-    let rt = sh.runtime(id).ok_or("only a team on this Mac can be deleted")?;
+    let rt = sh.runtime(id).ok_or_else(|| format!("only a team on {} can be deleted", platform::THIS_COMPUTER))?;
     let name = team.name.clone();
     let id = id.to_string();
     run_op(app, rt, OpKind::Delete, move |app, sh, rt, progress| {
@@ -1566,7 +1624,7 @@ pub fn remove_team(app: &AppHandle, id: &str) -> Result<(), String> {
     let sh = shell(app);
     let t = sh.team(id).ok_or("no such team")?;
     if t.is_here() {
-        return Err("A team on this Mac is deleted, not removed.".into());
+        return Err(format!("A team on {} is deleted, not removed.", platform::THIS_COMPUTER));
     }
     sh.teams.lock().unwrap().remove(id);
     sh.save_teams()?;
@@ -1588,7 +1646,7 @@ pub async fn set_public_url(app: AppHandle, id: String, address: Option<String>)
     let sh = app.state::<Shell>();
     let team = sh.team(&id).ok_or("no such team")?;
     if !team.is_here() {
-        return Err("Only a team on this Mac has other devices.".into());
+        return Err(format!("Only a team on {} has other devices.", platform::THIS_COMPUTER));
     }
     let url = match address.as_deref().map(str::trim).filter(|a| !a.is_empty()) {
         None => None,
@@ -1601,7 +1659,7 @@ pub async fn set_public_url(app: AppHandle, id: String, address: Option<String>)
                 if e.starts_with("That address answers") {
                     e
                 } else {
-                    format!("{e} Check it's set up to reach {} on this Mac.", team.name)
+                    format!("{e} Check it's set up to reach {} on {}.", team.name, platform::THIS_COMPUTER)
                 }
             })?;
             if !info.org_name.is_empty() && info.org_name != team.name {
@@ -1612,7 +1670,7 @@ pub async fn set_public_url(app: AppHandle, id: String, address: Option<String>)
     };
     {
         let mut t = sh.teams.lock().unwrap();
-        let l = t.get_mut(&id).and_then(Team::local_mut).ok_or("no such team on this Mac")?;
+        let l = t.get_mut(&id).and_then(Team::local_mut).ok_or_else(no_team_here)?;
         l.public_url = url.clone();
     }
     sh.save_teams()?;
@@ -1643,7 +1701,7 @@ pub fn set_resources(app: &AppHandle, id: &str, memory_mb: u32, cpus: u32) -> Re
     }
     {
         let mut t = sh.teams.lock().unwrap();
-        let l = t.get_mut(id).and_then(Team::local_mut).ok_or("no such team on this Mac")?;
+        let l = t.get_mut(id).and_then(Team::local_mut).ok_or_else(no_team_here)?;
         l.memory_mb = memory_mb;
         l.cpus = cpus;
     }
@@ -2315,6 +2373,10 @@ mod tests {
         }
         assert_eq!(t["update"]["takes"], "about 3 minutes");
         assert!(v["connect"].get("email").is_some(), "connect lacks email");
+        for k in ["memory_mb", "cpus", "vm_support"] {
+            assert!(v["host"].get(k).is_some(), "host lacks {k}");
+        }
+        assert!(v["host"]["vm_support"].is_string());
         assert_eq!(t["state"], "paused");
         assert_eq!(t["place"], "here");
         assert_eq!(v["teams"][1]["place"], "elsewhere");
@@ -2416,6 +2478,33 @@ mod tests {
         assert_eq!(on_disk.running_at_quit, std::slice::from_ref(&a));
         sh.set_running_at_quit(&a, false);
         assert!(sh.teams.lock().unwrap().running_at_quit.is_empty());
+    }
+
+    /// A team setup made and never finished stays setup's across launches:
+    /// the next shell reads it back, opens setup for it rather than its
+    /// window, and lets setup remove it; finishing ends that on disk too.
+    #[test]
+    fn unfinished_setup_survives_a_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut teams = TeamsFile::default();
+        let a = teams.add_here("A", Kind::Work, "a@example.com", &mut || 1);
+        let b = teams.add_here("B", Kind::Work, "a@example.com", &mut || 2);
+        set_provisional(&mut teams, &a, true);
+        teams.save(dir.path()).unwrap();
+
+        let (loaded, _) = TeamsFile::load(dir.path(), 0).unwrap();
+        let sh = Shell::new(dir.path().to_path_buf(), "0.15.1".into(), loaded, None);
+        assert!(setup_unfinished(&sh, &a));
+        assert!(!setup_unfinished(&sh, &b));
+        assert!(sh.runtime(&a).unwrap().provisional.load(Ordering::SeqCst));
+        assert!(!sh.runtime(&b).unwrap().provisional.load(Ordering::SeqCst));
+        assert!(sh.team_view(&sh.team(&a).unwrap()).provisional);
+
+        sh.end_setup(&a);
+        assert!(!setup_unfinished(&sh, &a));
+        assert!(!sh.runtime(&a).unwrap().provisional.load(Ordering::SeqCst));
+        let (on_disk, _) = TeamsFile::load(dir.path(), 0).unwrap();
+        assert!(!on_disk.get(&a).unwrap().local().unwrap().provisional);
     }
 
     /// The signed-out date: stamped when Claude goes from signed in to signed out,

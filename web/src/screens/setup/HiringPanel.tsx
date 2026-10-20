@@ -2,6 +2,7 @@ import { AgentAvatar, AgentState, Banner, Button, Progress, Text } from '../../d
 import type { AgentRunState } from '../../ds';
 import type { SetupProgress } from '../../api/types.gen';
 import { CHIEF_OF_STAFF } from '../../lib/agentIdentity';
+import { asSentence } from '../../state/home';
 import { formatElapsed } from './format';
 import { Actions, StepHead } from './parts';
 
@@ -51,7 +52,7 @@ export function HiringPanel({ progress, retrying = false, onBack, onRetry }: Hir
       </div>
       {failed ? (
         <>
-          <Banner tone="danger" title={progress?.error || 'Your Chief of Staff could not start.'}>
+          <Banner tone="danger" title={progress?.error ? asSentence(progress.error) : 'Your Chief of Staff could not start.'}>
             {progress?.who ? 'Who can fix it: ' + progress.who + '.' : undefined}
           </Banner>
           <Actions>

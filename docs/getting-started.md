@@ -30,6 +30,8 @@ On Windows:
 2. Download Kivali for Windows from [kivali.ai/download/windows](https://kivali.ai/download/windows) and run the installer. It asks for administrator rights once, to install the service that runs your teams' virtual machines.
 3. Open Kivali from the Start menu.
 
+If this computer can't run a team yet, the first window says why and lists the steps in place of **Create a team**: on Windows when Hyper-V is off, when the edition is Windows Home (which has no Hyper-V), or when virtualization is turned off in the computer's firmware; on a Mac when macOS itself runs in a virtual machine. **Connect to a team** works either way.
+
 The app lives in the menu bar on macOS and in the notification area on Windows. Closing its windows leaves it running there; **Quit Kivali** pauses your teams. See [Kivali Desktop](desktop-app.md) for the full tour.
 
 ## 2. Create a team
@@ -56,6 +58,8 @@ Choose **Create a team**. Setup has four steps. Your team's machine starts getti
 | **Amazon Bedrock**, under 3rd-party platform | Your AWS account. Use a Bedrock API key or an access key; the team has no AWS CLI to sign in with. |
 | **Google Vertex AI**, under 3rd-party platform | Your Google Cloud project, through a service account key file the team can read. |
 
+Every team connects Claude before it opens. If you close the setup window, quit Kivali or restart your computer before this step is done, opening the team brings you back here.
+
 For a subscription or a Console account, Claude shows a link: open it, sign in, and paste the code Claude gives you back into the terminal window. For Bedrock and Vertex AI, Claude asks for your credentials, region and models. Kivali never sees what you type there. When the sign-in is done, the step shows what the team bills, such as **Claude Max** or **Amazon Bedrock**.
 
 **Microsoft Foundry** isn't in Claude's sign-in. Choose **Use Microsoft Foundry…** on the same step instead, and enter your resource's name and its API key, or a service principal's tenant ID, client ID and client secret. Kivali saves them in Claude Code's settings inside the team, then checks each model: name each deployment in your resource after the model it runs, as the form lists them. A missing deployment doesn't undo the setup; the form names it so you can add it.
@@ -79,7 +83,7 @@ On a work team, tick **Write the handbook from these files?** to have your Chief
 
 **Hire your Chief of Staff.** Your first agent. It starts with a default role and a default handbook, which you can read and edit here. Most people leave them as they are. Choose **Hire Chief of Staff**. Hiring takes 30 to 60 seconds; you can leave the page while it runs.
 
-If this step says **No model is connected yet**, Claude is not signed in. Everything you entered is saved: connect Claude in Kivali Desktop's **Settings**, on the team's **AI** tab, then choose **Try again**.
+If this step says **Claude isn’t signed in**, everything you entered is saved: sign Claude in from Kivali Desktop's **Settings**, on the team's **AI** tab, then choose **Try again**.
 
 ## 5. Your first conversation
 

@@ -7,7 +7,7 @@ import type { Ctx } from "../ctx";
 import { h, type Child } from "../h";
 import { takePreset } from "../ipc";
 import { memoryConflict, teamPage } from "../logic/teams";
-import { banner, button, caption, orgMark, progress } from "../ui";
+import { banner, button, caption, orgMark, progress, vmHelpPanel } from "../ui";
 import { memorySheet } from "./dialogs";
 
 let detailsOpen = false;
@@ -77,6 +77,9 @@ export function render(ctx: Ctx): Node[] {
         button("Try again", { variant: "secondary", id: "retry", onclick: () => void ctx.act("retry_team", { id: r.id }) }),
         view.last ? caption(view.last) : null,
       );
+      break;
+    case "vm":
+      body.push(titles(view.title, null), vmHelpPanel(view.help));
       break;
     case "gone":
       body.splice(0, 1);
