@@ -416,6 +416,79 @@ func TestBrowserRegistryStartTimeoutLostAndCap(t *testing.T) {
 	}
 }
 
+// TestBrowserRegistryTellsAStartFailureApart guards how a web task
+// learns its browser could not start: every way a start fails must
+// read as a start failure, which ends the task, or the subagent is
+// left to name a cause it cannot see (it once reported a Chromium
+// crash as the site being unreachable). A refusal worth retrying, or a
+// browser lost after it ran, must not, or it would end a task that
+// could go on.
+func TestBrowserRegistryTellsAStartFailureApart(t *testing.T) {
+	f := newBrowserFixture(t)
+	ctx := context.Background()
+	command := func(group string) <-chan error {
+		errs := make(chan error, 1)
+		go func() {
+			_, err := f.reg.Command(ctx, "alice", "vendor.example", group, browserpod.Message{Name: browserpod.CommandSnapshot})
+			errs <- err
+		}()
+		return errs
+	}
+	wantStart := func(name string, err error, text string) {
+		t.Helper()
+		if err == nil || !isBrowserStartError(err) || !strings.Contains(err.Error(), text) {
+			t.Errorf("%s: err = %v, want a start failure naming %q", name, err, text)
+		}
+		f.stopped(t)
+	}
+
+	// The pod could not be made.
+	f.prov.mu.Lock()
+	f.prov.startErr = errors.New("quota exceeded")
+	f.prov.mu.Unlock()
+	wantStart("pod not made", <-command("job1"), "start the browser pod: quota exceeded")
+	f.prov.mu.Lock()
+	f.prov.startErr = nil
+	f.prov.mu.Unlock()
+
+	// The pod reported stopped while starting: Chromium did not come up.
+	errs := command("job1")
+	b, link := f.connect(ctx)
+	link.next(t, browserpod.TypeStart)
+	f.reg.onMessage(b, browserpod.Message{Type: browserpod.TypeState, State: browserpod.StateStopped, Detail: "chromium exited at start: exit status 13"}, nil)
+	wantStart("chromium exited", <-errs, "the browser could not start: chromium exited at start")
+
+	// The pod never connected.
+	errs = command("job1")
+	<-f.prov.startedC
+	f.clk.Advance(browserStartTimeout)
+	f.reg.sweep(f.clk.Now())
+	wantStart("start timeout", <-errs, "the browser did not start in time")
+
+	// The connection was lost before the pod reported running.
+	errs = command("job1")
+	b, _ = f.connect(ctx)
+	f.reg.onLost(b)
+	wantStart("lost while starting", <-errs, "the browser was lost before it started")
+
+	// The cap: try again shortly.
+	f.reg.cap = 0
+	if err := <-command("job1"); err == nil || isBrowserStartError(err) {
+		t.Errorf("cap: err = %v, want a refusal that is not a start failure", err)
+	}
+	f.reg.cap = 3
+
+	// Lost after it ran: the next use starts afresh.
+	b, link = f.running(ctx, "job1")
+	errs = command("job1")
+	link.next(t, browserpod.TypeCommand)
+	f.reg.onLost(b)
+	if err := <-errs; err == nil || isBrowserStartError(err) {
+		t.Errorf("lost mid-command: err = %v, want an error that is not a start failure", err)
+	}
+	f.stopped(t)
+}
+
 // TestBrowserRegistryClaimNeedsTheRightToken: a connection is accepted
 // only for the browser waiting for this token, once.
 func TestBrowserRegistryClaimNeedsTheRightToken(t *testing.T) {

@@ -854,12 +854,14 @@ func (r *browserRegistry) acquire(ctx context.Context, slug, session string) (*b
 				r.logf("browser %s: delete the stored session: %v", b.key(), err)
 			}
 		} else if _, err := r.store.EnsureBrowserSession(slug, session, session, r.clk.Now()); err != nil {
-			r.failStart(b, fmt.Errorf("browser session: %w", err))
-			return nil, err
+			err = fmt.Errorf("browser session: %w", err)
+			r.failStart(b, err)
+			return nil, &browserStartError{err}
 		}
 		if err := r.prov.Start(ctx, slug, session, token, coreToken); err != nil {
-			r.failStart(b, fmt.Errorf("start the browser pod: %w", err))
-			return nil, err
+			err = fmt.Errorf("start the browser pod: %w", err)
+			r.failStart(b, err)
+			return nil, &browserStartError{err}
 		}
 	} else {
 		r.mu.Unlock()
@@ -1683,6 +1685,21 @@ func (r *browserRegistry) beginSave(b *browser) {
 	}()
 }
 
+// browserStartError is why a browser never became running: its pod
+// could not be made, it reported stopped while starting, it did not
+// start in time, or its connection was lost first.
+type browserStartError struct{ err error }
+
+func (e *browserStartError) Error() string { return e.err.Error() }
+func (e *browserStartError) Unwrap() error { return e.err }
+
+// isBrowserStartError reports whether err says a browser never became
+// running.
+func isBrowserStartError(err error) bool {
+	var start *browserStartError
+	return errors.As(err, &start)
+}
+
 // failStart ends a browser that never became running: waiters get
 // err, the pod is deleted, the record goes.
 func (r *browserRegistry) failStart(b *browser, err error) {
@@ -1691,7 +1708,7 @@ func (r *browserRegistry) failStart(b *browser, err error) {
 		r.mu.Unlock()
 		return
 	}
-	b.startErr = err
+	b.startErr = &browserStartError{err}
 	r.mu.Unlock()
 	r.logf("browser %s: %v", b.key(), err)
 	r.finish(b)
@@ -1712,7 +1729,7 @@ func (r *browserRegistry) finish(b *browser) {
 	}
 	if b.state == browserStarting {
 		if b.startErr == nil {
-			b.startErr = errors.New("the browser was lost before it started")
+			b.startErr = &browserStartError{errors.New("the browser was lost before it started")}
 		}
 		close(b.ready)
 	}
