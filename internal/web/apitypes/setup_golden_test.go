@@ -14,7 +14,7 @@ func goldenSetup() Setup {
 		CoS: SetupCoS{
 			Exists:            false,
 			DefaultRoleMD:     "# Chief of Staff\n\nYou run the org day to day.\n",
-			DefaultHandbookMD: "# Handbook\n\n## The company\n\nThis section is a placeholder.\n",
+			DefaultHandbookMD: "# Handbook\n\n## About\n\nThis section is a placeholder.\n",
 		},
 		Credential: SetupCredential{
 			Ready:    false,

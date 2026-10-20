@@ -323,7 +323,7 @@ func TestIsFreshForRestoreRejectsExtraAgents(t *testing.T) {
 func TestRestoreRoundTrip(t *testing.T) {
 	src := newTestServer(t)
 	writeFile(t, filepath.Join(src.Store.Root(), "agents", "alice", "chat.jsonl"), `{"role":"received","content":"hi"}`)
-	writeFile(t, filepath.Join(src.Store.Root(), "handbook.md"), "# the rules")
+	writeFile(t, filepath.Join(src.Store.Root(), "handbook.md"), shapedHandbook)
 
 	downloadRR := backupZip(t, src)
 	if downloadRR.Code != http.StatusOK {
@@ -347,7 +347,7 @@ func TestRestoreRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read restored handbook: %v", err)
 	}
-	if string(got) != "# the rules" {
+	if string(got) != shapedHandbook {
 		t.Errorf("handbook content = %q", string(got))
 	}
 	chat, err := os.ReadFile(filepath.Join(dst.Store.Root(), "agents", "alice", "chat.jsonl"))

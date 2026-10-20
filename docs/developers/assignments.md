@@ -346,7 +346,7 @@ engineering-lead/session-expiry passes.
 
 There are no task-request or status-update messages. `publish_notice`
 and the CEO-bound tools are the only messages an agent sends; the
-handbook's communication rule is: tell with a notice, ask by opening
+Kivali OS's communication rule is: tell with a notice, ask by opening
 an assignment.
 
 ## Orientation
@@ -362,8 +362,9 @@ and the JSON API under `/api/v1/assignments/{id}` (`api_work.go`,
 `api_home.go`); an agent reads an assignment event through
 `internal/agent/inbox.go` like every other message.
 
-Prompt surfaces: the tool descriptions and `renderFilesystemSection`
-ship in the binary; `internal/seed/handbook.md` §Assignments and
-`internal/seed/cos_role.md` are copied into an install once, when it is
-seeded, so a change to them reaches an existing install only by editing
-its `handbook.md` and the Chief of Staff's `role.md`.
+Prompt surfaces: the tool descriptions and Kivali OS §Assignments
+(`internal/agent/kivali_os.md`, the full rules) ship in the binary and
+reach every install the moment it runs; `internal/seed/cos_role.md` is
+copied into an install once, when it is seeded, so a change to it
+reaches an existing install only by editing the Chief of Staff's
+`role.md`.

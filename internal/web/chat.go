@@ -554,7 +554,7 @@ func (s *Server) spawnChatLoopIfIdle(slug, source string) bool {
 // agentpod_turn.go).
 func (s *Server) finalizeSubprocessDisruption(slug string, hub *chatHub, cause error) {
 	content := fmt.Sprintf(
-		"The runtime failed mid-task: the underlying claude CLI subprocess died (%v). The Kivali server is still running; resume your prior work per the handbook.",
+		"The runtime failed mid-task: the underlying claude CLI subprocess died (%v). The Kivali server is still running; resume your prior work as Kivali OS says under When you're interrupted.",
 		cause,
 	)
 	s.finalizeRuntimeDisruption(slug, hub, content, false)
@@ -591,7 +591,7 @@ func (s *Server) finalizeTurnError(slug string, hub *chatHub, detail string) {
 		detail = "no detail was reported"
 	}
 	content := fmt.Sprintf(
-		"The previous turn was stopped by an error and did not complete: %s. The Kivali server is still running; resume your prior work per the handbook.",
+		"The previous turn was stopped by an error and did not complete: %s. The Kivali server is still running; resume your prior work as Kivali OS says under When you're interrupted.",
 		detail,
 	)
 	msg := store.ChatMessage{
@@ -979,7 +979,7 @@ func (s *Server) offerFold(slug, turnID string, bd bufferedDelivery) {
 // creates the links it names. A fold has neither. The message is not
 // on disk yet, and the running turn was synced before it existed, so
 // folding the bare content told the model nothing about the files —
-// and a path it inferred from the handbook did not resolve until
+// and a path it inferred from Kivali OS did not resolve until
 // the next turn: not for its own file_view, and not for a subagent
 // handed that path, which reported the file absent as a finding
 // rather than as a failed read. So the links are made here, before
@@ -1208,7 +1208,7 @@ func (s *Server) ChatHubActive(slug string) bool {
 // an orphan active_turn.json marker, this writes a
 // kind:runtime-disruption system entry to chat.jsonl with diagnostic
 // content (when the turn started, what source triggered it, what
-// model) and removes the marker. The handbook tells the agent
+// model) and removes the marker. Kivali OS tells the agent
 // that this means "the runtime failed mid-task; resume your prior
 // work."
 //
@@ -1238,7 +1238,7 @@ func (s *Server) RecoverInterruptedTurns() []string {
 		// Plain prose, not JSON, since this is read by the model
 		// via BuildRequest like any other ChatMessage.Content.
 		content := fmt.Sprintf(
-			"The runtime failed mid-task at an unknown point after %s (source: %s). Kivali has restarted; resume your prior work per the handbook.",
+			"The runtime failed mid-task at an unknown point after %s (source: %s). Kivali has restarted; resume your prior work as Kivali OS says under When you're interrupted.",
 			marker.StartedAt.UTC().Format(time.RFC3339),
 			marker.Source,
 		)

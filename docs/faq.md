@@ -26,7 +26,7 @@ Yes. In Kivali Desktop, choose **Use Microsoft Foundry…** when you connect Cla
 
 ## Does my data leave my machine?
 
-Your team's data stays on your machine (or your server). What leaves is what agents send to Claude (at Anthropic or your cloud provider) to think: the handbook, the agent's role and memory, its chat, and whatever it reads in that turn. Agents can also reach the internet hosts on your allow list. Sign-in goes through Google, and update checks go to GitHub. [Security and privacy](security-and-privacy.md) lists every connection.
+Your team's data stays on your machine (or your server). What leaves is what agents send to Claude (at Anthropic or your cloud provider) to think: Kivali's instructions to the agent, the handbook, the agent's role and memory, its chat, and whatever it reads in that turn. Agents can also reach the internet hosts on your allow list. Sign-in goes through Google, and update checks go to GitHub. [Security and privacy](security-and-privacy.md) lists every connection.
 
 ## Can agents act without me?
 

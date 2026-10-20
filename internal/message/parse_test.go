@@ -600,7 +600,7 @@ func TestParseProposeHandbookUpdateProducesApprovalRequest(t *testing.T) {
 		"rationale":     "Customer issues need a stricter escalation path.",
 	})
 	ctx := ctxWithFiles(map[string]string{
-		"/files/artifacts/private/handbook-v2.md": "# Handbook\nRevised rules.\n",
+		"/files/artifacts/private/handbook-v2.md": "# Handbook\n\n## About\n\nRevised rules.\n\n## Values\n\nV.\n\n## Communicating\n\nC.\n\n## Working together\n\nW.\n",
 	})
 	res, err := Parse(block, ctx)
 	if err != nil {
@@ -645,8 +645,9 @@ func TestParseProposeHandbookUpdateRejectsNonCoSCaller(t *testing.T) {
 
 func TestParseProposeHandbookUpdateRequiresFields(t *testing.T) {
 	files := map[string]string{
-		"/files/artifacts/private/c.md":     "# Handbook\n",
-		"/files/artifacts/private/empty.md": "   ",
+		"/files/artifacts/private/c.md":         "# Handbook\n\n## About\n\nA.\n\n## Values\n\nV.\n\n## Communicating\n\nC.\n\n## Working together\n\nW.\n",
+		"/files/artifacts/private/empty.md":     "   ",
+		"/files/artifacts/private/shapeless.md": "# Handbook\n\n## About\n\nA.\n\n## Money\n\nM.\n",
 	}
 	for name, tc := range map[string]map[string]any{
 		"missing title": {
@@ -657,6 +658,12 @@ func TestParseProposeHandbookUpdateRequiresFields(t *testing.T) {
 		},
 		"handbook_path resolves empty": {
 			"title": "x", "handbook_path": "/files/artifacts/private/empty.md", "rationale": "r",
+		},
+		// The shape is the Chief of Staff's to get right before the
+		// owner sees the proposal: a draft with a section of its own, or
+		// one missing, is refused here with the section named.
+		"handbook_path lacks the four sections": {
+			"title": "x", "handbook_path": "/files/artifacts/private/shapeless.md", "rationale": "r",
 		},
 		"rejects body field (dropped)": {
 			"title": "x", "body": "# r\n", "handbook_path": "/files/artifacts/private/c.md", "rationale": "r",

@@ -189,7 +189,7 @@ const schemaProperty = `"schema": {"type": "object", "description": "optional: a
           "start_url": {"type": "string", "description": "web only: the http or https page to start at; needed with files"},
           "files": {"type": "array", "items": {"type": "string"}, "maxItems": 10, "description": "web only: paths under your /files/ the task may upload to a page, by name, once a person approves"}`
 
-var subagentDescription = fmt.Sprintf(`Dispatch focused subagent(s) to run IN THE BACKGROUND — a way to spend tokens without growing your own context. See handbook §Delegating with subagent for when to reach for this.
+var subagentDescription = fmt.Sprintf(`Dispatch focused subagent(s) to run IN THE BACKGROUND — a way to spend tokens without growing your own context. See Kivali OS §Delegating with subagent for when to use it.
 
 THIS CALL RETURNS IMMEDIATELY WITH A RECEIPT, NOT AN ANSWER. The tasks are still running when you read the result. Each one's answer arrives later as a separate message, and you will be woken for it if you have finished your turn. So:
   - Do NOT re-dispatch a task because the receipt contained no answer.
@@ -205,7 +205,7 @@ A subagent runs as a fresh model conversation with a minimal system prompt and a
   - /files/background/              — your shared workspace, WRITABLE by you and by every subagent you dispatch. Same directory for all of them.
   - run_shell and file_* share this filesystem; bash and file_view see the same paths.
 
-/files/background/ is shared with every subagent you dispatch: point prompts at files there, and collect their output from there rather than from returned messages. For work worth planning, see handbook §Breaking work down.
+/files/background/ is shared with every subagent you dispatch: point prompts at files there, and collect their output from there rather than from returned messages. For work worth planning, see Kivali OS §Breaking work down.
 
 It does NOT have access to: your chat history, past chats, the org chart, publish_*, agent_memory_*, or share_file.
 

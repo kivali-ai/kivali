@@ -686,7 +686,7 @@ func TestCEOApproveRoleUpdateOverwritesRoleMd(t *testing.T) {
 func TestCEOApproveHandbookUpdateOverwritesHandbook(t *testing.T) {
 	srv, _ := newTurnServer(t)
 	_ = srv.Store.CreateAgent(store.Agent{Slug: "chief-of-staff", Role: "CoS"}, "# role\n")
-	if err := srv.Store.WriteHandbook("# Handbook\n\nOriginal rules.\n"); err != nil {
+	if err := srv.Store.WriteHandbook(shapedHandbookWith("Original rules.")); err != nil {
 		t.Fatalf("seed handbook: %v", err)
 	}
 
@@ -698,7 +698,7 @@ func TestCEOApproveHandbookUpdateOverwritesHandbook(t *testing.T) {
 		Date:  time.Now().UTC(),
 		Body:  "Customer issues need a stricter escalation path.",
 		HandbookUpdate: &store.HandbookUpdate{
-			Body: "# Handbook\n\nOriginal rules plus stricter escalation.\n",
+			Body: shapedHandbookWith("Original rules plus stricter escalation."),
 		},
 	}
 	abs, err := srv.Store.WriteMessage(req)
@@ -756,6 +756,60 @@ func TestCEOApproveHandbookUpdateOverwritesHandbook(t *testing.T) {
 	}
 	if !strings.Contains(last.Content, "now live") {
 		t.Errorf("delivery should state the handbook is live: %q", last.Content)
+	}
+}
+
+// A handbook proposal written before the four sections existed (one
+// still waiting in the inbox across the upgrade) is refused on
+// approve, with the reason, and the handbook is left as it is: the
+// proposal tool now refuses such a draft, so this is the one way one
+// can reach the apply step, and applying it would write a handbook no
+// door accepts again.
+func TestCEOApproveHandbookUpdateRefusesAShapelessProposal(t *testing.T) {
+	srv, _ := newTurnServer(t)
+	_ = srv.Store.CreateAgent(store.Agent{Slug: "chief-of-staff", Role: "CoS"}, "# role\n")
+	if err := srv.Store.WriteHandbook(shapedHandbook); err != nil {
+		t.Fatalf("seed handbook: %v", err)
+	}
+	req := store.Message{
+		Type:           store.MsgCEOApprovalRequest,
+		Title:          "Handbook: from before the upgrade",
+		From:           "chief-of-staff",
+		To:             store.Recipients{agent.CEOSlug},
+		Date:           time.Now().UTC(),
+		Body:           "An older draft.",
+		HandbookUpdate: &store.HandbookUpdate{Body: "# Handbook\n\nOne big rulebook.\n"},
+	}
+	abs, err := srv.Store.WriteMessage(req)
+	if err != nil {
+		t.Fatalf("write req: %v", err)
+	}
+	relPath, _ := filepath.Rel(srv.Store.Root(), abs)
+	_ = srv.Store.CreateAgent(store.Agent{Slug: agent.CEOSlug, Role: "CEO"}, "")
+	_ = srv.Store.AppendChatMessage(agent.CEOSlug, store.ChatMessage{
+		Role: store.RoleReceived, Content: req.Title,
+		Kind: "ceo_inbox", MessageRef: relPath,
+	})
+
+	form := strings.NewReader("path=" + relPath + "&message=looks+good")
+	r := httptest.NewRequest(http.MethodPost, "/api/v1/needs/approve", form)
+	r.Header.Set("content-type", "application/x-www-form-urlencoded")
+	r.Header.Set("Sec-Fetch-Site", "same-origin")
+	rr := httptest.NewRecorder()
+	authedHandler(t, srv).ServeHTTP(rr, r)
+	if rr.Code == http.StatusOK {
+		t.Fatalf("a proposal without the four sections was applied: %s", rr.Body.String())
+	}
+	for _, want := range []string{"`## About`", "propose it again"} {
+		if !strings.Contains(rr.Body.String(), want) {
+			t.Errorf("refusal does not say %q: %s", want, rr.Body.String())
+		}
+	}
+	if got, _ := srv.Store.ReadHandbook(); got != shapedHandbook {
+		t.Errorf("handbook changed by a refused approval: %q", got)
+	}
+	if resps, _ := srv.Store.ListMessages(store.MessageFilter{Type: store.MsgCEOApprovalResponse}); len(resps) != 0 {
+		t.Errorf("a refused approval wrote %d response(s)", len(resps))
 	}
 }
 

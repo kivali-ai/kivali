@@ -7,7 +7,7 @@
 // The layout is stable and part of the store's contract:
 //
 //	<root>/
-//	  handbook.md                    the handbook, app-wide rules
+//	  handbook.md                    the team's handbook: About, Values, Communicating, Working together
 //	  org_chart.yaml                 materialized org projection
 //	  message_queue.json             per-agent inboxes awaiting release
 //	  usage.jsonl                    append-only API-call cost log

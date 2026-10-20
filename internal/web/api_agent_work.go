@@ -427,8 +427,8 @@ func (s *Server) handleAPIAgentDocGet(w http.ResponseWriter, r *http.Request) {
 // The body is held to decodeJSON's apiMaxJSONBody (1 MB), deliberately
 // not raised here: every one of these documents is inlined into each
 // Claude call's system prompt, so one near 1 MB (~250k tokens) is
-// already unusable, and the largest shipped document, the seed
-// handbook, is about 42 KB. Line endings are stored as sent; a
+// already unusable, and the largest shipped document, Kivali OS, is
+// about 40 KB. Line endings are stored as sent; a
 // JSON client sending a textarea's value sends LF, since only a form
 // submission converts it to CRLF.
 func (s *Server) handleAPIAgentDocPut(w http.ResponseWriter, r *http.Request) {

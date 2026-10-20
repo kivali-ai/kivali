@@ -6,87 +6,42 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kivali-ai/kivali/internal/graph"
+	"github.com/kivali-ai/kivali/internal/handbook"
 	"github.com/kivali-ai/kivali/internal/owner"
 )
 
-// The handbook is the one place the full graph rules live for an
-// agent, and it is seeded once, so what it says about the kinds has to
-// match the allow list the index enforces or an agent is taught a kind
-// that is rejected on write. Driven off graph.Kinds so a new kind fails
-// here until the handbook catches up.
-func TestHandbookNamesEveryGraphKindAndBothTools(t *testing.T) {
-	if !strings.Contains(Handbook, "## The knowledge graph") {
-		t.Fatal("handbook has no knowledge graph section")
-	}
-	for _, k := range graph.Kinds {
-		if !strings.Contains(Handbook, "`"+string(k)+"`") {
-			t.Errorf("handbook does not describe kind %q", k)
+// Both default handbooks have the shape every write door enforces
+// (internal/handbook): a default that failed it could not be seeded,
+// proposed or saved, and a team would start with no handbook at all.
+func TestDefaultHandbooksHaveTheShape(t *testing.T) {
+	for _, tc := range []struct{ name, text string }{
+		{"work", Handbook},
+		{"personal", PersonalHandbook},
+	} {
+		if err := handbook.Validate(tc.text); err != nil {
+			t.Errorf("the %s handbook: %v", tc.name, err)
 		}
-	}
-	for _, tool := range []string{"graph_query", "graph_node"} {
-		if !strings.Contains(Handbook, "`"+tool+"`") {
-			t.Errorf("handbook never names %s", tool)
-		}
-	}
-	for _, status := range graph.DeclaredStatuses {
-		if !strings.Contains(Handbook, "`"+string(status)+"`") {
-			t.Errorf("handbook does not describe status %q", status)
+		if got := strings.Join(handbook.Headings(tc.text), "|"); got != strings.Join(handbook.Sections, "|") {
+			t.Errorf("the %s handbook's sections are %q", tc.name, got)
 		}
 	}
 }
 
-// The handbook carries the full assignment rules
-// (docs/developers/assignments.md) and names every tool an agent
-// reaches for.
-func TestHandbookTeachesTheTracker(t *testing.T) {
-	if !strings.Contains(Handbook, "### Assignments") {
-		t.Fatal("handbook has no assignments section")
-	}
-	for _, tool := range []string{"assignment_create", "assignment_update", "assignment_close", "assignment_reopen", "assignment_list", "assignment_view", "publish_notice"} {
-		if !strings.Contains(Handbook, "`"+tool+"`") {
-			t.Errorf("handbook never names %s", tool)
-		}
-	}
-}
-
-// The handbook-from-files first message points the Chief of Staff
-// at a section and at tools by name; each must still exist where the
-// message says it is, or the Chief of Staff is sent after nothing.
-func TestHandbookFromFilesMessageNamesWhatExists(t *testing.T) {
-	msg := HandbookFromFilesMessage
-	if strings.TrimSpace(msg) == "" {
-		t.Fatal("message is empty")
-	}
-	if !strings.Contains(msg, `"The company"`) || !strings.Contains(Handbook, "\n## The company\n") {
-		t.Error(`message and the default handbook must agree on the section "The company"`)
-	}
-	for _, tool := range []string{"list_project_files", "file_view", "publish_ceo_notification"} {
-		if !strings.Contains(msg, "`"+tool+"`") {
-			t.Errorf("message never names %s", tool)
-		}
-		if !strings.Contains(Handbook, tool) {
-			t.Errorf("message names %s, which the handbook does not teach", tool)
-		}
-	}
-	if !strings.Contains(msg, "`propose_handbook_update`") || !strings.Contains(ChiefOfStaffRole, "propose_handbook_update") {
-		t.Error("message and cos_role.md must both name propose_handbook_update")
-	}
-	if strings.Contains(msg, "!") {
-		t.Error("message has an exclamation mark")
-	}
-}
-
-// The work handbook is handbook.md byte for byte; the personal one
-// swaps only what comes before the operating sections, which both
-// share, and then speaks of the person in a personal team's words.
+// The work handbook is handbook.md byte for byte and the personal one
+// handbook_personal.md; a team that never set a kind gets the work
+// one, as every team did before kinds existed.
 func TestHandbookKinds(t *testing.T) {
-	raw, err := os.ReadFile("handbook.md")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if Handbook != string(raw) {
-		t.Fatal("the work handbook is not handbook.md byte for byte")
+	for _, tc := range []struct{ file, text string }{
+		{"handbook.md", Handbook},
+		{"handbook_personal.md", PersonalHandbook},
+	} {
+		raw, err := os.ReadFile(tc.file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if tc.text != string(raw) {
+			t.Errorf("%s is not embedded byte for byte", tc.file)
+		}
 	}
 	for _, kind := range []string{"", "work"} {
 		if HandbookFor(kind) != Handbook {
@@ -96,31 +51,65 @@ func TestHandbookKinds(t *testing.T) {
 	if HandbookFor("personal") != PersonalHandbook {
 		t.Error(`HandbookFor("personal") is not the personal handbook`)
 	}
-	assembled := personalHandbook(Handbook)
-	i := strings.Index(Handbook, operatingSectionsStart)
-	if i < 0 {
-		t.Fatal("handbook.md has no operating sections heading")
+	if Handbook == PersonalHandbook {
+		t.Error("the personal handbook is the work handbook")
 	}
-	if !strings.HasSuffix(assembled, Handbook[i:]) {
-		t.Error("the personal handbook does not end with the shared operating sections")
-	}
-	if strings.Count(PersonalHandbook, operatingSectionsStart) != 1 {
-		t.Error("the personal handbook repeats the operating sections")
-	}
-	head := strings.TrimSuffix(assembled, Handbook[i+1:])
-	if !strings.HasSuffix(head, "\n\n") {
-		t.Error("the personal head must end with a blank line before the operating sections")
-	}
-	for _, want := range []string{"# Kivali Handbook\n", "\n## What this is\n", "\n## About you\n", "A person\nruns parts of their life with a team of agents"} {
-		if !strings.Contains(PersonalHandbook, want) {
-			t.Errorf("the personal handbook lacks %q", want)
+}
+
+// The handbook is the team's, not the runtime's: the sections that
+// moved into Kivali OS must not grow back here, or an owner would be
+// shown runtime rules as something to edit and a release could not
+// update them.
+func TestHandbooksCarryNoRuntimeRules(t *testing.T) {
+	for _, tc := range []struct{ name, text string }{
+		{"work", Handbook},
+		{"personal", PersonalHandbook},
+	} {
+		for _, gone := range []string{"## How the org works", "## How time works", "## Your memory and storage", "## The knowledge graph", "### Assignments", "## Behavior rules", "## The company", "## About you"} {
+			if strings.Contains(tc.text, gone) {
+				t.Errorf("the %s handbook still has %q", tc.name, gone)
+			}
+		}
+		for _, tool := range []string{"assignment_create", "graph_query", "artifact_publish", "subagent"} {
+			if strings.Contains(tc.text, "`"+tool+"`") {
+				t.Errorf("the %s handbook teaches %s, which is Kivali OS's job", tc.name, tool)
+			}
+		}
+		if !strings.Contains(tc.text, "Kivali OS") {
+			t.Errorf("the %s handbook does not say that Kivali OS carries the runtime rules", tc.name)
 		}
 	}
-	if strings.Contains(PersonalHandbook, "\n## The company\n") {
-		t.Error(`the personal handbook keeps "The company"`)
+}
+
+// Each first message points the Chief of Staff at a section and at
+// tools by name; each must still exist where the message says it is,
+// or the Chief of Staff is sent after nothing. Both say "About", the
+// one section a team fills in during setup.
+func TestFirstMessagesNameWhatExists(t *testing.T) {
+	for _, tc := range []struct{ name, msg, handbook string }{
+		{"files message", HandbookFromFilesMessage, Handbook},
+		{"personal first message", PersonalFirstMessage, PersonalHandbook},
+	} {
+		if strings.TrimSpace(tc.msg) == "" {
+			t.Fatalf("%s is empty", tc.name)
+		}
+		if !strings.Contains(tc.msg, `"About"`) || !strings.Contains(tc.handbook, "\n## About\n") {
+			t.Errorf(`%s and its handbook must agree on the section "About"`, tc.name)
+		}
+		for _, tool := range []string{"list_project_files", "file_view", "publish_ceo_notification"} {
+			if !strings.Contains(tc.msg, "`"+tool+"`") {
+				t.Errorf("%s never names %s", tc.name, tool)
+			}
+		}
+		if !strings.Contains(tc.msg, "`propose_handbook_update`") || !strings.Contains(ChiefOfStaffRole, "propose_handbook_update") {
+			t.Errorf("%s and cos_role.md must both name propose_handbook_update", tc.name)
+		}
+		if strings.Contains(tc.msg, "!") {
+			t.Errorf("%s has an exclamation mark", tc.name)
+		}
 	}
-	if !strings.Contains(PersonalHandbook, "\n## Behavior rules\n") {
-		t.Error("the personal handbook lost the last operating section")
+	if !strings.Contains(HandbookFromFilesMessage, `"Values"`) {
+		t.Error("the files message does not say where a company's values go")
 	}
 }
 
@@ -151,12 +140,6 @@ func TestSeedTextSaysTheOwner(t *testing.T) {
 			t.Errorf("%s never says the owner", name)
 		}
 	}
-	rule := "Notes the owner\n  adds to a message appear under a line starting with `>` and their\n  name (your system prompt says what they are called)"
-	for _, kind := range []string{"work", "personal"} {
-		if !strings.Contains(HandbookFor(kind), rule) {
-			t.Errorf("the %s handbook lost the markup rule that points at the system prompt", kind)
-		}
-	}
 	role := ChiefOfStaffRoleFor("personal")
 	for _, w := range []string{"business", "biz plan"} {
 		if strings.Contains(strings.ToLower(role), w) {
@@ -174,59 +157,37 @@ func TestSeedTextSaysTheOwner(t *testing.T) {
 	}
 }
 
-// The personal first message names a section and tools; each must
-// exist where it says.
-func TestPersonalFirstMessageNamesWhatExists(t *testing.T) {
-	msg := PersonalFirstMessage
-	if strings.TrimSpace(msg) == "" {
-		t.Fatal("message is empty")
-	}
-	if !strings.Contains(msg, `"About you"`) || !strings.Contains(PersonalHandbook, "\n## About you\n") {
-		t.Error(`message and the personal handbook must agree on the section "About you"`)
-	}
-	for _, tool := range []string{"list_project_files", "file_view", "publish_ceo_notification"} {
-		if !strings.Contains(msg, "`"+tool+"`") {
-			t.Errorf("message never names %s", tool)
-		}
-		if !strings.Contains(PersonalHandbook, tool) {
-			t.Errorf("message names %s, which the personal handbook does not teach", tool)
-		}
-	}
-	if !strings.Contains(msg, "`propose_handbook_update`") || !strings.Contains(ChiefOfStaffRole, "propose_handbook_update") {
-		t.Error("message and cos_role.md must both name propose_handbook_update")
-	}
-	if strings.Contains(msg, "!") || strings.Contains(handbookPersonalHead, "!") {
-		t.Error("personal seed text has an exclamation mark")
-	}
-}
-
 func TestChiefOfStaffRoleOwnsTheGraphSplit(t *testing.T) {
 	if !strings.Contains(ChiefOfStaffRole, "knowledge graph") {
 		t.Error("cos_role.md should give the Chief of Staff the graph-hygiene job")
 	}
 }
 
-// The Chief of Staff leaves company context out of the roles it drafts
-// because its role says the handbook's company section already rides
-// in every agent's system prompt. If that section were renamed, or the
-// personal rewrite left a personal team's role naming the work
-// section, the Chief of Staff would point at a section no agent has,
-// and new roles would carry neither the shared context nor a pointer
-// to where it lives.
-func TestChiefOfStaffRoleNamesItsHandbooksCompanySection(t *testing.T) {
-	for _, tc := range []struct{ kind, section, other string }{
-		{"work", "The company", "About you"},
-		{"personal", "About you", "The company"},
-	} {
-		role := ChiefOfStaffRoleFor(tc.kind)
-		if !strings.Contains(role, "§"+tc.section) {
-			t.Errorf("the %s Chief of Staff role does not name §%s", tc.kind, tc.section)
+// The Chief of Staff leaves shared context out of the roles it drafts
+// because its role says the handbook's §About already rides in every
+// agent's system prompt, and it is told the handbook's four sections
+// by name when it is asked to update one. If a section were renamed,
+// the Chief of Staff would point at a section no agent has, and new
+// roles would carry neither the shared context nor a pointer to
+// where it lives.
+func TestChiefOfStaffRoleNamesTheHandbooksSections(t *testing.T) {
+	for _, kind := range []string{"work", "personal"} {
+		role := ChiefOfStaffRoleFor(kind)
+		if !strings.Contains(role, "§About") {
+			t.Errorf("the %s Chief of Staff role does not name §About", kind)
 		}
-		if strings.Contains(role, "§"+tc.other) {
-			t.Errorf("the %s Chief of Staff role names §%s, which its handbook does not have", tc.kind, tc.other)
+		for _, s := range handbook.Sections {
+			if !strings.Contains(role, "`## "+s+"`") {
+				t.Errorf("the %s Chief of Staff role does not name the section `## %s`", kind, s)
+			}
 		}
-		if !strings.Contains(HandbookFor(tc.kind), "\n## "+tc.section+"\n") {
-			t.Errorf("the %s handbook has no section %q for the Chief of Staff role to point at", tc.kind, tc.section)
+		for _, old := range []string{"§The company", "§About you"} {
+			if strings.Contains(role, old) {
+				t.Errorf("the %s Chief of Staff role names %s, which no handbook has", kind, old)
+			}
 		}
+	}
+	if !strings.Contains(ChiefOfStaffRole, "Kivali OS") {
+		t.Error("cos_role.md does not tell the Chief of Staff that the runtime rules are Kivali OS, not the handbook")
 	}
 }

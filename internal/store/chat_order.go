@@ -6,7 +6,7 @@ import "time"
 //
 //   - KindUserInterruption: written by the chat-stop handler when the
 //     CEO presses Stop. Tells the next spawning agent (and the
-//     handbook) that the prior turn was halted on purpose.
+//     Kivali OS) that the prior turn was halted on purpose.
 //   - KindRuntimeDisruption: written at Kivali boot when an active-turn
 //     marker file is found without a matching turn-end, and when an
 //     agent's CLI or runtime dies mid-turn (OOM, segfault, its pod
@@ -26,7 +26,7 @@ import "time"
 //     its next wake.
 //
 // None is "tool plumbing"; all interact with the spawn gate (see
-// SpawnDecision below) and the handbook's "When you're interrupted"
+// SpawnDecision below) and Kivali OS's "When you're interrupted"
 // section.
 const (
 	KindUserInterruption  = "user-interruption"

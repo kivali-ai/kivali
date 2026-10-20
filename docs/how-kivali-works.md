@@ -67,11 +67,13 @@ Kivali applies the change the moment you approve. There is no other way for an a
 
 ## The handbook
 
-The handbook is the set of rules every agent works under: how the team is organized, how to communicate, how to use memory and files, how to behave. Every agent reads it on every turn.
+The handbook is your team's: what it is for, what it values, how it communicates and how it works together. Every agent reads it on every turn, on top of the rules Kivali gives every agent for how messages, assignments, files and memory work.
 
-It ships with a general default and one section about you: "The company" on a work team, "About you" on a personal team. That section starts as a placeholder, and filling it in is the most useful edit you can make. Your Chief of Staff can draft it for you from your project files or from a few questions.
+It has four sections, always in this order: **About**, **Values**, **Communicating** and **Working together**. You can add subsections under any of them, but not a fifth section, and none can be dropped; an edit or a proposal that changes the shape is refused and says which section is at fault. About starts as a placeholder, and filling it in is the most useful edit you can make. Your Chief of Staff can draft it for you from your project files or from a few questions. The other three start with sensible defaults, written for a business on a work team and for a person's life on a personal one.
 
 Read or edit the handbook in **Org**, **Handbook**. Most changes come as proposals from your Chief of Staff. Agents read the saved text from their next turn.
+
+A team set up before the handbook had these sections takes on the default handbook when it updates. Its previous handbook is kept whole for its Chief of Staff to read, and the Chief of Staff can propose bringing back whatever the team still needs; ask it to compare the two.
 
 ## Home: Needs you and the Queue
 
@@ -151,7 +153,7 @@ Outbound network access from an agent's sandbox goes through a proxy. The comman
 | Episode | The short summary written for each past chat. |
 | Goal | An assignment that is part of nothing else. |
 | Habits | Rules an agent learned for how it acts, each with a reason. |
-| Handbook | The rules every agent works under, read on every turn. |
+| Handbook | Your team's About, Values, Communicating and Working together, read by every agent on every turn. |
 | Hold | A pause on an assignment and everything under it. |
 | Knowledge graph | Every published file, with what it is about and what it rests on. |
 | Memory | What an agent knows to be true, kept in its own words. |

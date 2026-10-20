@@ -299,7 +299,7 @@ Start with ` + "`agent_memory_view`" + ` and ` + "`agent_memory_habits_view`" + 
 2. **What did I learn that is atemporal?** Add it to semantic memory with its provenance: ` + "`[[ep:{{ts}}]]`" + ` for something learned in this chat, ` + "`[[stated]]`" + ` for something a person told you. If it only holds for one environment, one agent, or one project, say so in the entry — most apparent contradictions are missing qualifiers, not disagreements. Prefer rewriting a related entry over adding a sibling.
 3. **What changed about how I should act?** Habits only, each with a why. Revoking one is as valid as adding one. Any entry in semantic memory that is a rule rather than a fact belongs here — move it.
 
-When entries conflict: a newer observation beats an older one; what a person stated beats what you concluded; the handbook and your role beat everything in memory; "dev does X" and "prod does X" are not a conflict — scope both.
+When entries conflict: a newer observation beats an older one; what a person stated beats what you concluded; Kivali OS, the handbook and your role beat everything in memory; "dev does X" and "prod does X" are not a conflict — scope both.
 
 Keep both tiers in your own voice, first person where natural, and lean: semantic memory rides in every future call, so every byte costs on every reply, and habits are a short list or they are not habits.
 

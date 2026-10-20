@@ -20,7 +20,7 @@ export interface SectionInfo {
 export const SECTIONS: readonly SectionInfo[] = [
   { key: 'usage', label: 'Usage', icon: 'history', blurb: 'Spend per day and who spent it' },
   { key: 'organization', label: 'Organization', icon: 'settings', blurb: 'Name and logo' },
-  { key: 'handbook', label: 'Handbook', icon: 'scroll-text', blurb: 'How every agent works' },
+  { key: 'handbook', label: 'Handbook', icon: 'scroll-text', blurb: 'How your team works together' },
   { key: 'files', label: 'Project files', icon: 'folder', blurb: 'Documents agents can read' },
   { key: 'skills', label: 'Skills', icon: 'puzzle', blurb: 'What agents know how to do' },
   { key: 'network', label: 'Network', icon: 'globe', blurb: 'Hosts agent shells can reach' },

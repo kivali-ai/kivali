@@ -27,15 +27,26 @@ timestamp T" phrasing so stale lookups are visibly stale.
 
 **Parts, in order:**
 
-1. `handbook` — the org-wide rules (from `Store.ReadHandbook`).
+1. Kivali OS — how the runtime works: what wakes an agent, how
+   messages and assignments move, the `/files/` tree and memory, the
+   knowledge graph, subagents, and what each tool is for
+   (`agent.KivaliOS`, embedded from `internal/agent/kivali_os.md`).
+   The same bytes for every agent of every team, shipped in the
+   binary, so a release updates it everywhere at once; agents are
+   told it says what is and that nothing overrides it. Tests in
+   `internal/agent/kivali_os_test.go` and
+   `internal/claudeagent/allowed_tools_test.go` hold it to the
+   registered tools, the graph's kinds and the `/files/` subtrees.
 2. Owner section — `## The owner`: what the person is called and the
    marker their markup appears under (`owner.Term.Section`, from the
    name in `branding/branding.yaml`). Identity-shaped, so it belongs here; it
    changes only on a rename, and the runner's respawn on prompt drift
    carries a rename to the next turn. Stored text never carries the
    name.
-3. Filesystem help — the description of the `file_*` tools when the
-   agent has them (`FilesystemAvailable`).
+3. The team's handbook — About, Values, Communicating and Working
+   together (from `Store.ReadHandbook`; the shape is
+   `internal/handbook`, the defaults `internal/seed`). Agents are told
+   it and their role say what to do.
 4. Agent persona — `role.md`, then habits (`agent_memory_habits.md`)
    above `agent_memory.md`, inlined so the agent always has its own
    durable identity, rules and evolving summary. This block is the

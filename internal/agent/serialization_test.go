@@ -110,21 +110,24 @@ func TestDanglingToolUseIsClosedBeforeTheNextText(t *testing.T) {
 // ---- 1. System prompt composition ------------------------------------
 
 // TestSystemPromptComposition locks in the rule: the system prompt
-// carries ONLY invariants (handbook, filesystem help, agent
-// persona). It must NOT contain mutable state — those moved to MCP
-// tools (get_org_chart, assignment_list) so the model reads them
-// as snapshots-at-lookup-time instead of invariant background facts.
+// carries ONLY invariants (Kivali OS, the owner section, the team's
+// handbook, agent persona). It must NOT contain mutable state — those
+// moved to MCP tools (get_org_chart, assignment_list) so the model
+// reads them as snapshots-at-lookup-time instead of invariant
+// background facts.
 func TestSystemPromptComposition(t *testing.T) {
 	ctx := makeCtx(nil)
 	req := ctx.BuildRequest()
 
-	if len(req.System) < 4 {
-		t.Fatalf("want 4+ system blocks, got %d", len(req.System))
+	if len(req.System) != 4 {
+		t.Fatalf("want 4 system blocks, got %d", len(req.System))
 	}
 
-	// Block 0 = handbook.
-	if !strings.Contains(req.System[0].Text, "HANDBOOK") {
-		t.Errorf("block 0 should carry the handbook, got %q", req.System[0].Text)
+	// Block 0 = Kivali OS, the bytes the binary ships: how the runtime
+	// works, the same for every agent, so the one surface a release
+	// updates everywhere at once.
+	if req.System[0].Text != KivaliOS || !strings.Contains(req.System[0].Text, "/files/") {
+		t.Errorf("block 0 should carry Kivali OS, got %q", req.System[0].Text)
 	}
 	// Block 1 = the owner section: what the person is called and their
 	// markup marker, rendered from the stored name each turn. The one
@@ -133,9 +136,9 @@ func TestSystemPromptComposition(t *testing.T) {
 	if !strings.HasPrefix(req.System[1].Text, "## The owner\n") {
 		t.Errorf("block 1 should carry the owner section, got %q", req.System[1].Text)
 	}
-	// Block 2 = filesystem (file_*) help (only when IncludeFilesystemTools set).
-	if !strings.Contains(req.System[2].Text, "/files/") {
-		t.Errorf("block 2 should carry filesystem help, got %q", req.System[2].Text)
+	// Block 2 = the team's handbook.
+	if !strings.Contains(req.System[2].Text, "HANDBOOK") {
+		t.Errorf("block 2 should carry the handbook, got %q", req.System[2].Text)
 	}
 	// Final block = persona (role + agent_memory, cached).
 	persona := req.System[len(req.System)-1]

@@ -82,7 +82,7 @@ export function HandbookSection({ showHead }: SectionProps) {
       <ErrorBanner error={action.error} onDismiss={action.dismiss} />
       {draft !== null ? (
         <div className="app-org-editor">
-          <TextField multiline rows={16} label="Handbook" value={draft} onChange={(e) => setDraft(e.target.value)} hint="Markdown. Agents read the saved text on their next turn." />
+          <TextField multiline rows={16} label="Handbook" value={draft} onChange={(e) => setDraft(e.target.value)} hint="Markdown, in four sections: About, Values, Communicating, Working together. Agents read the saved text on their next turn." />
           <div className="app-org-actions">
             <Button variant="primary" onClick={() => void save()} disabled={action.busy || draft === data.content}>
               Save

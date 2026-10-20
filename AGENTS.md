@@ -45,7 +45,8 @@ when it is not the version CI pins (`GOLANGCI_VERSION` in the Makefile).
 - **Both sides of the wire.** A field the Go server emits and the web app
   or desktop app reads needs a test on each side. Shapes live in
   `internal/web/apitypes`; regenerate TypeScript with `make api-types`.
-- **Agent-facing text states only what is.** The handbook, role templates
+- **Agent-facing text states only what is.** Kivali OS, the default
+  handbooks, role templates
   and tool descriptions in `internal/seed/`, `internal/agent/` and
   `internal/mcp/` describe current behaviour. No history, no "there is no longer an X".
 - **Desktop parity.** Kivali Desktop supports macOS and Windows equally,

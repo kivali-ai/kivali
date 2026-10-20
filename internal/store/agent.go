@@ -497,7 +497,7 @@ func (s *FSStore) StrReplaceAgentMemory(slug, oldStr, newStr string) error {
 
 // AgentMemoryHabitsFilename holds the agent's habits — the short list
 // of learned rules of behaviour that sits above semantic
-// memory in the system prompt and below the handbook and role. A
+// memory in the system prompt and below Kivali OS, the handbook and role. A
 // separate file from agent_memory.md so the rotation-only write gate
 // and the archive snapshot can treat it on its own, and prefixed
 // agent_memory_ so a directory listing keeps the memory family

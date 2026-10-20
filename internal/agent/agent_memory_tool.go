@@ -61,7 +61,7 @@ type AgentMemoryStore interface {
 // enforces it.
 const (
 	AgentMemoryViewDescription       = `Return the current contents of your agent memory. Use this when you need to see what's there before deciding whether to append or str_replace — especially when an str_replace failed because old_str didn't match. No input parameters.`
-	AgentMemoryAppendDescription     = `Append text to your own agent memory (separated from prior content by a blank line). Your agent memory is inlined into your system prompt on every future call; target under 32 KB total and prefer agent_memory_str_replace over unbounded growth. Rewritten only at chat rotation — see handbook §Keep your agent memory lean and load-bearing for when to reach for this.`
+	AgentMemoryAppendDescription     = `Append text to your own agent memory (separated from prior content by a blank line). Your agent memory is inlined into your system prompt on every future call; target under 32 KB total and prefer agent_memory_str_replace over unbounded growth. Rewritten only at chat rotation — see Kivali OS §Keep your agent memory lean and load-bearing for when to reach for this.`
 	AgentMemoryStrReplaceDescription = `Replace a unique substring inside your own agent memory. Fails if old_str occurs zero times or more than once. Use to update, correct, or prune (pass empty new_str to delete). When old_str isn't unique, expand it to include enough surrounding context to match exactly once. Match is byte-exact (after Unicode NFC normalization): if old_str contains characters like em dashes, curly quotes, or non-breaking spaces, copy them verbatim from a prior agent_memory_view instead of retyping — the dash you type may not be the dash already in memory.`
 
 	AgentHabitsViewDescription       = `Return the current contents of your habits — the short list of learned rules for how you act, inlined into your system prompt above your agent memory. No input parameters.`
@@ -73,7 +73,7 @@ const (
 // agent curate its own memory. Both
 // documents are rewritten at chat rotation and only there — semantic
 // memory by prompt, habits by the dispatch endpoint's gate as well. Policy lives in the
-// handbook under "Keep your agent memory lean and load-bearing";
+// Kivali OS under "Keep your agent memory lean and load-bearing";
 // descriptions here cover mechanics only.
 func AgentMemoryTools() []provider.Tool {
 	return []provider.Tool{

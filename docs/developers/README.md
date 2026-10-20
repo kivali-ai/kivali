@@ -34,7 +34,8 @@ internal/
   owner/              names the person a team works for
   tracker/            applies a change to the assignment tracker end to end
   provider/           the provider-neutral seam: Client, Provider, request and usage shapes
-  seed/               first-run handbook and Chief of Staff role templates
+  handbook/           the team handbook's shape: four sections, and the check every write door runs
+  seed/               default team handbooks (work, personal) and the Chief of Staff role template
   store/              the filesystem store, the only writer to /data
   supervisor/         kivali-supervisor: VM backends, guest agent protocol, install, upgrade
   web/                JSON API (/api/v1), SSE hubs, agent-pod surfaces

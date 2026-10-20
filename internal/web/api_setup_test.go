@@ -442,12 +442,12 @@ func TestAPISetupSeedCoSHandbookFromFilesSendsTheFirstMessage(t *testing.T) {
 	if m.Content != strings.TrimSpace(seed.HandbookFromFilesMessage) {
 		t.Errorf("first message = %q, want seed.HandbookFromFilesMessage", m.Content)
 	}
-	for _, want := range []string{"propose_handbook_update", "publish_ceo_notification", `"The company"`} {
+	for _, want := range []string{"propose_handbook_update", "publish_ceo_notification", `"About"`} {
 		if !strings.Contains(m.Content, want) {
 			t.Errorf("first message never says %s", want)
 		}
 	}
-	// The stored handbook is the default, whose company section the
+	// The stored handbook is the default, whose About section the
 	// Chief of Staff is asked to replace.
 	if c, _ := srv.Store.ReadHandbook(); c != seed.Handbook {
 		t.Error("handbook_from_files should store the default handbook as the starting point")
@@ -477,20 +477,29 @@ func TestAPISetupSeedCoSKeepsAMovedSlider(t *testing.T) {
 
 func TestAPISetupSeedCoSEditedHandbookAndRefusals(t *testing.T) {
 	srv, _ := newSetupServer(t, nil)
-	edited := "# Our rules"
+	edited := shapedHandbookWith("Our rules.")
 	// No model connected.
 	assertAPIError(t, setupJSON(t, srv, http.MethodPost, "/api/v1/setup/seed-cos", apitypes.SeedCoSRequest{}), http.StatusServiceUnavailable)
 
 	srv, _ = newSetupServer(t, seedReply("briefing", nil, nil))
 	blank := "  "
 	assertAPIError(t, setupJSON(t, srv, http.MethodPost, "/api/v1/setup/seed-cos", apitypes.SeedCoSRequest{HandbookMD: &blank}), http.StatusBadRequest)
+	// The wizard's edit is a write door like the others: a handbook
+	// without the four sections is refused with the section named,
+	// before the hire starts.
+	shapeless := "# Our rules"
+	rr := setupJSON(t, srv, http.MethodPost, "/api/v1/setup/seed-cos", apitypes.SeedCoSRequest{HandbookMD: &shapeless})
+	assertAPIError(t, rr, http.StatusBadRequest)
+	if !strings.Contains(rr.Body.String(), "`## About`") {
+		t.Errorf("refusal does not name the missing section: %s", rr.Body.String())
+	}
 	assertAPIError(t, setupJSON(t, srv, http.MethodPost, "/api/v1/setup/seed-cos", apitypes.SeedCoSRequest{RoleMD: &blank}), http.StatusBadRequest)
 	assertAPIError(t, setupDo(t, srv, http.MethodPost, "/api/v1/setup/seed-cos", "application/json", strings.NewReader(`{"surprise":true}`)), http.StatusBadRequest)
 	if srv.seedTracker().current() != nil {
 		t.Fatal("a refused request must not start a hire")
 	}
 
-	rr := setupJSON(t, srv, http.MethodPost, "/api/v1/setup/seed-cos", apitypes.SeedCoSRequest{HandbookMD: &edited})
+	rr = setupJSON(t, srv, http.MethodPost, "/api/v1/setup/seed-cos", apitypes.SeedCoSRequest{HandbookMD: &edited})
 	if rr.Code != http.StatusAccepted {
 		t.Fatalf("POST = %d: %s", rr.Code, rr.Body.String())
 	}

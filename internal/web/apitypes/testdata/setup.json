@@ -23,7 +23,7 @@
   "cos": {
     "exists": false,
     "default_role_md": "# Chief of Staff\n\nYou run the org day to day.\n",
-    "default_handbook_md": "# Handbook\n\n## The company\n\nThis section is a placeholder.\n"
+    "default_handbook_md": "# Handbook\n\n## About\n\nThis section is a placeholder.\n"
   },
   "credential": {
     "ready": false,
