@@ -563,6 +563,14 @@ func (s *SubagentService) collectEndCancelsLocked(parent, id string) []func() {
 	if root.cancel != nil {
 		out = append(out, root.cancel)
 	}
+	return append(out, s.collectWorkerCancelsLocked(parent, id)...)
+}
+
+// collectWorkerCancelsLocked returns the cancel funcs for every
+// non-terminal descendant of id, each marked cancelled: once id's run
+// is over, nobody is left to read their answers. jobsMu must be held.
+func (s *SubagentService) collectWorkerCancelsLocked(parent, id string) []func() {
+	var out []func()
 	for childID, j := range s.jobs {
 		if j.CallerID == id && j.Parent == parent {
 			out = append(out, s.collectCancelsLocked(parent, childID)...)

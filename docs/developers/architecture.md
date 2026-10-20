@@ -953,6 +953,9 @@ person's time.
 Depth is capped at two tiers (`agentpod.MaxSubagentDepth`): a
 first-tier subagent may act as a sub-lead and dispatch up to three
 workers, which blocks it until they finish; workers cannot delegate.
+A sub-lead whose run ends, however it ends, or whose dispatch call
+ends before its workers do, cancels the workers still going: nothing
+is left to read their answers (`finishJob`, `RunNestedBatch`).
 Admission bounds cost (`internal/web/subagent_admission.go`): at most
 six subagent CLIs per pod, of which at most four are first-tier, so a
 worker can always be admitted and blocked sub-leads cannot deadlock the

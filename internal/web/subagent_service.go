@@ -1076,6 +1076,7 @@ func (s *SubagentService) finishJob(job *subagentJob, toolUseID string, index in
 	case runErr != nil:
 		state = subagentJobFailed
 	}
+	var workers []func()
 	s.updateJob(job.ID, func(j *subagentJob) {
 		j.State = state
 		j.EndedAt = time.Now().UTC()
@@ -1086,7 +1087,18 @@ func (s *SubagentService) finishJob(job *subagentJob, toolUseID string, index in
 			// A wait that ended with the job, however it ended.
 			j.waitTimer.Stop()
 		}
+		// A sub-lead's workers answer to its blocked dispatch, which
+		// ends with its run. However the run ended (an error, a crash,
+		// a cap, or an answer), workers still going would hold slots
+		// and spend tokens on answers nobody reads, so they are
+		// cancelled as a Stop cancels them.
+		workers = s.collectWorkerCancelsLocked(j.Parent, j.ID)
 	})
+	// Outside the lock: a cancel unwinds the worker's DriveSubagent, and
+	// its goroutine takes jobsMu on the way out.
+	for _, cancel := range workers {
+		cancel()
+	}
 	// Wake anything waiting on this job before any of the reporting
 	// below. A nested batch's caller is blocked here, and it should
 	// not be held up by chip emission or message delivery.

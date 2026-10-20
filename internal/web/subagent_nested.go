@@ -101,14 +101,20 @@ func (s *SubagentService) RunNestedBatch(ctx context.Context, parent, callerID s
 	// where they are labelled with the caller that dispatched them.
 	jobs := s.launch(parent, "", req.Tasks, taskIDs, depth, callerID)
 
-	// Wait for every worker. ctx is the sub-lead's turn: if the CEO
-	// stops the agent, that cancellation has already cascaded to these
-	// jobs through the pod's cancel path, and this wait unblocks too
-	// rather than holding a control-socket request open forever.
+	// Wait for every worker. ctx is the sub-lead's dispatch call: if the
+	// CEO stops the agent, that cancellation has already cascaded to
+	// these jobs through the pod's cancel path, and this wait unblocks
+	// too rather than holding a control-socket request open forever.
+	// However else the call ends (the sub-lead's process died, or it
+	// stopped waiting), nothing is left to read the workers' answers,
+	// so the ones still going are cancelled.
 	for _, j := range jobs {
 		select {
 		case <-j.done:
 		case <-ctx.Done():
+			for _, w := range jobs {
+				s.CancelSubagent(parent, w.ID)
+			}
 			return "", ctx.Err()
 		}
 	}
