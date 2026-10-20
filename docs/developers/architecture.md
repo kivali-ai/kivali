@@ -929,6 +929,13 @@ memory: at boot `FailOrphanedSubagents` rewrites every record left
 queued, running or waiting for a person by the last run as errored,
 "Kivali restarted before the task finished", without its wait reason
 and browser state, so nothing reads as live that core no longer holds.
+Each active agent that dispatched one of those tasks itself then gets
+one `subagent_result` naming them, through the same delivery as
+`finishJob`, and is woken with the recovered agents once its pod is up,
+through the spawn gate (`RecoverInterruptedWork`). A worker's record
+carries its sub-lead's id as `caller` and is not reported: its sub-lead
+ended with it and is reported itself. An archived agent is told
+nothing.
 
 The calling agent sees its sessions through `subagent_web_sessions`
 (names, sites, last use, whether a browser runs and how many tasks are
