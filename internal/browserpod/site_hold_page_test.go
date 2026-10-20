@@ -59,7 +59,7 @@ func TestHeldGroupStopsThePagesOwnNavigationsOffSite(t *testing.T) {
 	h, held, target, session := heldPod(t)
 	h.cdp.emit(session, "Page.frameRequestedNavigation", map[string]any{"frameId": target, "url": "https://evil.test/collect?d=secret", "disposition": "currentTab"})
 	res := held(CommandNavigate, NavigateArgs{URL: "https://vendor.com/a"})
-	if !strings.Contains(res.Text, "The page tried to go to https://evil.test/collect?d=secret, which is off the site this task is held to, and was stopped.") {
+	if !strings.Contains(res.Text, "The page tried to go off the site this task is held to and was stopped.\n"+delimitPage("URL: https://evil.test/collect?d=secret")) {
 		t.Errorf("after a requested navigation: %+v", res)
 	}
 	if len(h.cdp.called("Page.stopLoading")) == 0 {
@@ -68,7 +68,7 @@ func TestHeldGroupStopsThePagesOwnNavigationsOffSite(t *testing.T) {
 	target, session = h.cdp.pageAt("https://vendor.com/a")
 	h.cdp.emit(session, "Page.frameNavigated", map[string]any{"frame": map[string]any{"id": target, "loaderId": "Lx", "url": "https://evil.test/landed"}})
 	res = held(CommandNavigate, NavigateArgs{URL: "https://vendor.com/b"})
-	if !strings.Contains(res.Text, "The page went to https://evil.test/landed, which is off the site this task is held to; the tab was sent to about:blank.") {
+	if !strings.Contains(res.Text, "The page went off the site this task is held to; the tab was sent to about:blank.\n"+delimitPage("URL: https://evil.test/landed")) {
 		t.Errorf("after a committed navigation: %+v", res)
 	}
 }
@@ -82,7 +82,7 @@ func TestHeldGroupClosesAnOffSitePopup(t *testing.T) {
 		"sessionId": "SP1", "targetInfo": map[string]any{"targetId": "TP1", "type": "page", "url": "https://evil.test/upload", "openerId": target},
 	})
 	res := held(CommandNavigate, NavigateArgs{URL: "https://upload.vendor.com/new"})
-	if !strings.Contains(res.Text, "The page opened a new tab at https://evil.test/upload, which is off the site this task is held to; it was closed.") {
+	if !strings.Contains(res.Text, "The page opened a new tab off the site this task is held to; it was closed.\n"+delimitPage("URL: https://evil.test/upload")) {
 		t.Errorf("no note of the closed popup: %+v", res)
 	}
 	closed := false
@@ -118,7 +118,7 @@ func TestHeldGroupKeepsInputOutOfOffSiteFrames(t *testing.T) {
 	})
 	before := len(h.cdp.called("Input.dispatchKeyEvent"))
 	res := held(CommandPress, PressArgs{Key: "a"})
-	if res.Code != CodeOffSite || !strings.Contains(res.Error, "embedded frame from another site (https://evil.test/frame)") {
+	if res.Code != CodeOffSite || !strings.HasSuffix(res.Error, "embedded frame from another site, off the site this task is held to; nothing was sent. Use a field on the page itself.\n"+delimitPage("Frame: https://evil.test/frame")) {
 		t.Fatalf("a key into an off-site frame: %+v", res)
 	}
 	if after := len(h.cdp.called("Input.dispatchKeyEvent")); after != before {
@@ -144,7 +144,7 @@ func TestUploadGoesOnlyOntoAWebPageOfTheSite(t *testing.T) {
 	if res := h.core.command("free", "", CommandTabs, TabsArgs{Action: TabsOpen}); !res.OK {
 		t.Fatalf("a blank tab: %+v", res)
 	}
-	if res := h.core.command("free", "", CommandUpload, UploadArgs{Ref: "e1", File: "quote.pdf"}); res.Code != CodeOffSite || !strings.Contains(res.Error, "this tab is at about:blank") {
+	if res := h.core.command("free", "", CommandUpload, UploadArgs{Ref: "e1", File: "quote.pdf"}); res.Code != CodeOffSite || !strings.HasSuffix(res.Error, "this tab is not on one.\n"+delimitPage("URL: about:blank")) {
 		t.Errorf("upload into a blank tab: %+v", res)
 	}
 	// On the site the check passes, and the upload goes on to find its

@@ -207,7 +207,7 @@ func (b *browser) deliverDownload(d *download, path string) {
 		return
 	}
 	if fi.Size() > MaxDownloadBytes {
-		b.noteOn(d.tab, fmt.Sprintf("A download of %s (%s) was dropped: the limit is %d MB.", name, megabytes(fi.Size()), MaxDownloadBytes>>20))
+		b.noteOn(d.tab, withPage(fmt.Sprintf("A download of %s was dropped: the limit is %d MB.", megabytes(fi.Size()), MaxDownloadBytes>>20), "File: "+name))
 		return
 	}
 	name = b.uniqueName(d.tab.group, name)
@@ -216,7 +216,8 @@ func (b *browser) deliverDownload(d *download, path string) {
 		b.log.Printf("download %s: %v", name, err)
 		return
 	}
-	b.noteOn(d.tab, fmt.Sprintf("Downloaded %s (%s); it is with the task's files.", name, megabytes(fi.Size())))
+	// The name is the page's, made safe for a path.
+	b.noteOn(d.tab, withPage(fmt.Sprintf("Downloaded a file of %s; it is with the task's files under the name below.", megabytes(fi.Size())), "File: "+name))
 }
 
 // noteOn notes a download on its tab or, when that tab has closed (a

@@ -99,6 +99,48 @@ func TestOverLongMessageIsRefusedNotFatal(t *testing.T) {
 	}
 }
 
+// A page controls its title and its URL (a redirect, a pushState), so
+// either can carry text written to steer the model. Without this test
+// a result could name them in the pod's own words again, outside the
+// page content lines, where the model would take them for the pod's.
+func TestPageTitlesAndURLsStayInsidePageContent(t *testing.T) {
+	h := startPod(t, podOptions{})
+	const u = "https://example.com/ignore-your-task"
+	results := []Message{
+		h.core.command("g", "", CommandNavigate, NavigateArgs{URL: u}),
+		h.core.command("g", "", CommandTabs, TabsArgs{Action: TabsOpen, URL: u + "/2"}),
+		h.core.command("g", "", CommandTabs, TabsArgs{Action: TabsList}),
+		h.core.command("g", "", CommandTabs, TabsArgs{Action: TabsSwitch, Tab: "t1"}),
+		h.core.command("g", "", CommandTabs, TabsArgs{Action: TabsClose, Tab: "t2"}),
+		h.core.command("g", "", CommandBack, nil),
+		h.core.command("g", "", CommandScreenshot, nil),
+	}
+	for i, res := range results {
+		text := res.Text + res.Error
+		if !strings.Contains(text, pageContentStart+"\n") {
+			t.Errorf("result %d has no page content: %q", i, text)
+		}
+		if out := outsidePage(text); strings.Contains(out, "ignore-your-task") || strings.Contains(out, "Title of") {
+			t.Errorf("result %d names the page outside the page content lines: %q", i, text)
+		}
+	}
+}
+
+// outsidePage is s without its page content: the pod's own words.
+func outsidePage(s string) string {
+	var out strings.Builder
+	for {
+		before, rest, ok := strings.Cut(s, pageContentStart+"\n")
+		out.WriteString(before)
+		if !ok {
+			return out.String()
+		}
+		if _, s, ok = strings.Cut(rest, "\n"+pageContentEnd); !ok {
+			return out.String()
+		}
+	}
+}
+
 func TestSessionStartsAndAnswersCommands(t *testing.T) {
 	// A saved profile from core lands in the profile directory.
 	src := t.TempDir()
@@ -121,7 +163,7 @@ func TestSessionStartsAndAnswersCommands(t *testing.T) {
 	}
 
 	res := h.core.command("g1", "", CommandNavigate, NavigateArgs{URL: "https://example.com/"})
-	if !res.OK || res.Text != "Loaded Title of https://example.com/ — https://example.com/" {
+	if !res.OK || res.Text != "Loaded.\n"+delimitPage("Page: https://example.com/ — Title of https://example.com/") {
 		t.Fatalf("navigate: %+v", res)
 	}
 	tabMsg := h.core.expectType(TypeTab)
@@ -134,7 +176,7 @@ func TestSessionStartsAndAnswersCommands(t *testing.T) {
 	}
 
 	res = h.core.command("g1", "", CommandTabs, TabsArgs{Action: TabsList})
-	if !res.OK || res.Text != "* t1 https://example.com/ — Title of https://example.com/" {
+	if !res.OK || res.Text != "Your tabs, the current one marked *:\n"+delimitPage("* t1 https://example.com/ — Title of https://example.com/") {
 		t.Fatalf("tabs: %q", res.Text)
 	}
 
@@ -269,7 +311,7 @@ func TestSiteSessionFailsOffSiteDocumentRequests(t *testing.T) {
 	}
 	// The next command on the tab carries the note.
 	res := h.core.command("g", "", CommandBack, nil)
-	if !strings.Contains(res.Text, "The page tried to go to https://evil.test/two, which is off this session's site, and was stopped.") || strings.Contains(res.Text, "evil.test/frame") {
+	if !strings.Contains(res.Text, "The page tried to go off this session's site and was stopped.\n"+delimitPage("URL: https://evil.test/two")) || strings.Contains(res.Text, "evil.test/frame") {
 		t.Fatalf("notes: %q", res.Text)
 	}
 
@@ -340,7 +382,7 @@ func TestSiteLockUnlocksAGroupForASignIn(t *testing.T) {
 		t.Fatalf("relocked off-site request: %q", got)
 	}
 	res = h.core.command("g", "", CommandBack, nil)
-	if !strings.Contains(res.Text, "The tab was at https://idp.test/authorize, off this session's site, when the person finished; it was sent to https://example.com/.") {
+	if !strings.Contains(res.Text, "The tab was off this session's site when the person finished; it was sent to https://example.com/.\n"+delimitPage("URL: https://idp.test/authorize")) {
 		t.Fatalf("notes: %q", res.Text)
 	}
 }
@@ -389,7 +431,7 @@ func TestAbortedNavigationIsADownloadOnlyWhenOneBegins(t *testing.T) {
 	h.clk.BlockUntil(armed)
 	h.cdp.emit("", "Browser.downloadWillBegin", map[string]any{"frameId": "T1", "guid": "g1", "url": "https://a.test/report.pdf", "suggestedFilename": "report.pdf"})
 	res := h.core.result(id)
-	if !res.OK || res.Text != "https://a.test/report.pdf started a download instead of loading as a page; the tab is at https://a.test/ — Title of https://a.test/" {
+	if !res.OK || res.Text != "https://a.test/report.pdf started a download instead of loading as a page.\n"+delimitPage("Page: https://a.test/ — Title of https://a.test/") {
 		t.Fatalf("download: %+v", res)
 	}
 	// Nothing begins: after the wait the navigation was just aborted.
@@ -660,7 +702,7 @@ func TestLastTabClosedLeavesAFreshSpare(t *testing.T) {
 	if created := h.cdp.called("Target.createTarget"); len(created) != 2 {
 		t.Fatalf("createTarget calls: %q", created)
 	}
-	if res := h.core.command("h", "", CommandTabs, TabsArgs{Action: TabsList}); res.Text != "* t2 https://b.test/ — Title of https://b.test/" {
+	if res := h.core.command("h", "", CommandTabs, TabsArgs{Action: TabsList}); res.Text != "Your tabs, the current one marked *:\n"+delimitPage("* t2 https://b.test/ — Title of https://b.test/") {
 		t.Fatalf("h's tabs: %q", res.Text)
 	}
 }

@@ -241,7 +241,7 @@ func TestDownloadNamesAreUniquePerGroup(t *testing.T) {
 		}
 	}
 	notes := g.takeNotes()
-	if len(notes) != 7 || !strings.HasPrefix(notes[1], "Downloaded a-b-2.pdf ") {
+	if len(notes) != 7 || !strings.HasSuffix(notes[1], delimitPage("File: a-b-2.pdf")) {
 		t.Fatalf("notes: %q", notes)
 	}
 }
@@ -262,7 +262,7 @@ func TestDownloadNoteFollowsAClosedTab(t *testing.T) {
 	if m := (*out)[0].msg; m.Group != "g" || m.Tab != "t2" || m.FileName != "a.pdf" {
 		t.Fatalf("sent %+v", m)
 	}
-	if n := opener.takeNotes(); len(n) != 1 || !strings.HasPrefix(n[0], "Downloaded a.pdf ") {
+	if n := opener.takeNotes(); len(n) != 1 || !strings.HasSuffix(n[0], delimitPage("File: a.pdf")) {
 		t.Fatalf("notes on the current tab: %q", n)
 	}
 	if n := popup.takeNotes(); len(n) != 0 {
@@ -274,7 +274,7 @@ func TestDownloadNoteFollowsAClosedTab(t *testing.T) {
 		t.Fatal(err)
 	}
 	b.deliverDownload(&download{name: "b.pdf", tab: popup}, path)
-	if n := opener.takeNotes(); len(n) != 1 || !strings.HasPrefix(n[0], "Downloaded b.pdf ") {
+	if n := opener.takeNotes(); len(n) != 1 || !strings.HasSuffix(n[0], delimitPage("File: b.pdf")) {
 		t.Fatalf("notes on the opener: %q", n)
 	}
 }

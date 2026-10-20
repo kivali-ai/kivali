@@ -185,7 +185,7 @@ func TestRealChromium(t *testing.T) {
 
 	// Navigate.
 	res := step("navigate", "", CommandNavigate, NavigateArgs{URL: site + "/"})
-	if !strings.Contains(res.Text, "Loaded Kivali test page — "+site) {
+	if !strings.Contains(res.Text, "Loaded.\n"+delimitPage("Page: "+site+"/ — Kivali test page")) {
 		t.Fatalf("navigate text: %q", res.Text)
 	}
 	if tab := core.expectType(TypeTab); tab.Tab != "t1" || tab.Group != "g" {
@@ -290,7 +290,7 @@ func TestRealChromium(t *testing.T) {
 
 	// Click a link: the tab navigates and core hears of it.
 	res = step("click link", "", CommandClick, ClickArgs{Ref: linkRef})
-	if !strings.Contains(res.Text, `Clicked link "Go to page two"; now at `+site+"/two — Page two") {
+	if !strings.Contains(res.Text, "Clicked "+linkRef+".\n"+delimitPage(`Element: link "Go to page two"`+"\nPage: "+site+"/two — Page two")) {
 		t.Fatalf("click text: %q", res.Text)
 	}
 	core.next("navigated to two", func(m Message) bool {
@@ -321,7 +321,7 @@ func TestRealChromium(t *testing.T) {
 		t.Fatalf("next task: %+v", res)
 	}
 	res = core.command("g2", "", CommandBack, nil)
-	if !res.OK || !strings.Contains(res.Text, "Went back; now at about:blank") {
+	if !res.OK || !strings.Contains(res.Text, "Went back.\n"+pageContentStart+"\nPage: about:blank") {
 		t.Fatalf("back in the next task: %+v", res)
 	}
 	res = core.command("g2", "", CommandBack, nil)
@@ -462,10 +462,10 @@ func TestRealChromiumSiteSession(t *testing.T) {
 		// An on-site URL that redirects off the site is stopped at the
 		// off-site hop: nothing loads there, the tab stays where it
 		// was, and the model hears why.
-		stopped := offSite + "/two, which is off this session's site, and was stopped"
+		stopped := "The page tried to go off this session's site and was stopped.\n" + delimitPage("URL: "+offSite+"/two")
 		res := core.command("g", "", CommandNavigate, NavigateArgs{URL: site.URL + "/bounce"})
 		t.Logf("redirect off site: ok=%v code=%q text=%q error=%q", res.OK, res.Code, res.Text, res.Error)
-		if !res.OK || !strings.Contains(res.Text, "was stopped before a page loaded") || !strings.Contains(res.Text, "the tab is at "+site.URL+"/ — Kivali test page") || !strings.Contains(res.Text, stopped) {
+		if !res.OK || !strings.Contains(res.Text, "was stopped before a page loaded") || !strings.Contains(res.Text, delimitPage("Page: "+site.URL+"/ — Kivali test page")) || !strings.Contains(res.Text, stopped) {
 			t.Fatalf("redirect off site: %+v", res)
 		}
 		// A link the page follows there is stopped the same way.
@@ -476,7 +476,7 @@ func TestRealChromiumSiteSession(t *testing.T) {
 		}
 		res = core.command("g", "", CommandClick, ClickArgs{Ref: m[1]})
 		t.Logf("link redirecting off site: ok=%v code=%q text=%q error=%q", res.OK, res.Code, res.Text, res.Error)
-		if !res.OK || !strings.Contains(res.Text, `Clicked link "Bounce"; now at `+site.URL+"/ — Kivali test page") || !strings.Contains(res.Text, stopped) {
+		if !res.OK || !strings.Contains(res.Text, "Clicked "+m[1]+".\n"+delimitPage(`Element: link "Bounce"`+"\nPage: "+site.URL+"/ — Kivali test page")) || !strings.Contains(res.Text, stopped) {
 			t.Fatalf("link redirecting off site: %+v", res)
 		}
 		if v := eval("location.href"); v != `"`+site.URL+`/"` {

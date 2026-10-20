@@ -112,7 +112,7 @@ func (b *browser) runCommand(parent context.Context, msg Message) Message {
 			out.Code = CodeTimeout
 			out.Error = fmt.Sprintf("The %s command ran out of time after %d s.", msg.Name, int(d/time.Second))
 			if t != nil {
-				out.Error += " The tab is at " + t.where() + "."
+				out.Error = withPage(out.Error, t.pageLine())
 			}
 		case parent.Err() != nil:
 			out.Code, out.Error = CodeBrowser, "The browser is shutting down."
@@ -407,15 +407,15 @@ func (b *browser) cmdNavigate(ctx context.Context, t *tab, a NavigateArgs) (resu
 	case res.ErrorText == "net::ERR_ABORTED" && t.stopCount() > stops:
 		// A site session stopped the request (or a redirect hop of it)
 		// before it was sent; the tab's note names the URL.
-		return result{text: fmt.Sprintf("The navigation to %s was stopped before a page loaded: it led off this session's site; the tab is at %s", a.URL, t.where())}, nil
+		return result{text: withPage(fmt.Sprintf("The navigation to %s was stopped before a page loaded: it led off this session's site.", a.URL), t.pageLine())}, nil
 	case res.ErrorText == "net::ERR_ABORTED":
 		timer := b.clock.NewTimer(downloadWait)
 		defer timer.Stop()
 		select {
 		case <-downloaded:
-			return result{text: fmt.Sprintf("%s started a download instead of loading as a page; the tab is at %s", a.URL, t.where())}, nil
+			return result{text: withPage(fmt.Sprintf("%s started a download instead of loading as a page.", a.URL), t.pageLine())}, nil
 		case <-timer.C():
-			return result{text: fmt.Sprintf("The navigation to %s was aborted before a page loaded (the server sent nothing to show, or another navigation replaced it); the tab is at %s", a.URL, t.where())}, nil
+			return result{text: withPage(fmt.Sprintf("The navigation to %s was aborted before a page loaded (the server sent nothing to show, or another navigation replaced it).", a.URL), t.pageLine())}, nil
 		case <-ctx.Done():
 			return result{}, ctx.Err()
 		}
@@ -427,13 +427,7 @@ func (b *browser) cmdNavigate(ctx context.Context, t *tab, a NavigateArgs) (resu
 			return result{}, err
 		}
 	}
-	t.mu.Lock()
-	u, title := t.url, t.title
-	t.mu.Unlock()
-	if title == "" {
-		title = "(untitled)"
-	}
-	return result{text: fmt.Sprintf("Loaded %s — %s", title, u)}, nil
+	return result{text: withPage("Loaded.", t.pageLine())}, nil
 }
 
 func (b *browser) cmdClick(ctx context.Context, t *tab, a ClickArgs) (result, error) {
@@ -455,7 +449,7 @@ func (b *browser) cmdClick(ctx context.Context, t *tab, a ClickArgs) (result, er
 	if err := b.settle(ctx, t, m); err != nil {
 		return result{}, err
 	}
-	return result{text: fmt.Sprintf("Clicked %s %q; now at %s", info.Role, info.Name, t.where())}, nil
+	return result{text: withPage(fmt.Sprintf("Clicked %s.", a.Ref), elementLine(info), t.pageLine())}, nil
 }
 
 // clickPoint scrolls an element into view and returns the point a click
@@ -528,7 +522,7 @@ func (b *browser) clickPoint(ctx context.Context, t *tab, obj string, info refIn
 		return 0, 0, failf(CodeNotFound, "That element is not visible on the page; take a new snapshot.")
 	}
 	if res.Covered != "" {
-		return 0, 0, failf(CodeNotFound, "%s %q is covered by %s, which would take the click; dismiss or close that first, or scroll, then take a new snapshot.", info.Role, info.Name, res.Covered)
+		return 0, 0, failPage(CodeNotFound, "The element is covered by another, which would take the click; dismiss or close that first, or scroll, then take a new snapshot.", elementLine(info), "Covered by: "+res.Covered)
 	}
 	return res.X, res.Y, nil
 }
@@ -608,7 +602,7 @@ func (b *browser) frameRefusal(group, where, action string) error {
 		if !cross {
 			src = where
 		}
-		return failf(CodeOffSite, "Blocked: %s would land in an embedded frame from another site (%s), off the site this task is held to; nothing was sent. Use a field on the page itself.", action, src)
+		return failPage(CodeOffSite, fmt.Sprintf("Blocked: %s would land in an embedded frame from another site, off the site this task is held to; nothing was sent. Use a field on the page itself.", action), "Frame: "+src)
 	}
 	return nil
 }
@@ -719,16 +713,16 @@ func (b *browser) cmdType(ctx context.Context, t *tab, a TypeArgs) (result, erro
 	switch f.Refuses {
 	case "":
 	case "select":
-		return result{}, failf(CodeBadArgs, "%s %q is a select; choose an option with web_select.", info.Role, info.Name)
+		return result{}, failPage(CodeBadArgs, a.Ref+" is a select; choose an option with web_select.", elementLine(info))
 	case "file":
-		return result{}, failf(CodeBadArgs, "%s %q is a file input; attach a file with web_upload.", info.Role, info.Name)
+		return result{}, failPage(CodeBadArgs, a.Ref+" is a file input; attach a file with web_upload.", elementLine(info))
 	case "readonly":
-		return result{}, failf(CodeBadArgs, "%s %q is read-only; it takes no text.", info.Role, info.Name)
+		return result{}, failPage(CodeBadArgs, a.Ref+" is read-only; it takes no text.", elementLine(info))
 	default:
-		return result{}, failf(CodeBadArgs, "%s %q takes no text; click it instead.", info.Role, info.Name)
+		return result{}, failPage(CodeBadArgs, a.Ref+" takes no text; click it instead.", elementLine(info))
 	}
 	if !f.Focused {
-		return result{}, failf(CodeNotFound, "%s %q did not take focus; it may not accept text.", info.Role, info.Name)
+		return result{}, failPage(CodeNotFound, a.Ref+" did not take focus; it may not accept text.", elementLine(info))
 	}
 	var held struct {
 		Value     string `json:"value"`
@@ -750,7 +744,7 @@ func (b *browser) cmdType(ctx context.Context, t *tab, a TypeArgs) (result, erro
 			return result{}, err
 		}
 		if held.Value != a.Text {
-			return result{}, failf(CodeBadArgs, "%s %q did not take %q; a %s input takes %s.", info.Role, info.Name, a.Text, f.Type, valueFormats[f.Type])
+			return result{}, failPage(CodeBadArgs, fmt.Sprintf("%s did not take %q; a %s input takes %s.", a.Ref, a.Text, f.Type, valueFormats[f.Type]), elementLine(info))
 		}
 	case onHeldSite:
 		// Into the element itself, in its own document: whatever the
@@ -760,7 +754,7 @@ func (b *browser) cmdType(ctx context.Context, t *tab, a TypeArgs) (result, erro
 			return result{}, err
 		}
 		if !took {
-			return result{}, failf(CodeNotFound, "%s %q did not take the text; it may not accept text.", info.Role, info.Name)
+			return result{}, failPage(CodeNotFound, a.Ref+" did not take the text; it may not accept text.", elementLine(info))
 		}
 	case a.Text == "":
 		if err := b.pressKey(ctx, t, chord{key: namedKeys["Backspace"]}); err != nil {
@@ -780,18 +774,22 @@ func (b *browser) cmdType(ctx context.Context, t *tab, a TypeArgs) (result, erro
 		}
 	}
 	var text string
+	lines := []string{elementLine(info)}
 	switch {
 	case f.Password:
-		text = fmt.Sprintf("Typed %d characters into %s %q; it holds %d", utf8.RuneCountInString(a.Text), info.Role, info.Name, utf8.RuneCountInString(held.Value))
+		text = fmt.Sprintf("Typed %d characters into %s; it holds %d", utf8.RuneCountInString(a.Text), a.Ref, utf8.RuneCountInString(held.Value))
 	case a.Text == "" && held.Value == "":
-		text = fmt.Sprintf("Cleared %s %q", info.Role, info.Name)
+		text = "Cleared " + a.Ref
 	case held.Value == a.Text:
-		text = fmt.Sprintf("Typed %q into %s %q", cut(a.Text, 200), info.Role, info.Name)
+		text = fmt.Sprintf("Typed %q into %s", cut(a.Text, 200), a.Ref)
 	default:
-		text = fmt.Sprintf("Typed %q into %s %q; it holds %q", cut(a.Text, 200), info.Role, info.Name, cut(held.Value, 200))
+		// What the field holds is the page's doing: it may have
+		// changed or cut the text.
+		text = fmt.Sprintf("Typed %q into %s; it holds something else", cut(a.Text, 200), a.Ref)
 		if held.MaxLength > 0 && utf8.RuneCountInString(a.Text) > held.MaxLength {
 			text += fmt.Sprintf(" (it takes at most %d characters)", held.MaxLength)
 		}
+		lines = append(lines, fmt.Sprintf("Holds: %q", cut(held.Value, 200)))
 	}
 	if a.Submit {
 		if err := b.checkFocus(ctx, t); err != nil {
@@ -804,9 +802,10 @@ func (b *browser) cmdType(ctx context.Context, t *tab, a TypeArgs) (result, erro
 		if err := b.settle(ctx, t, m); err != nil {
 			return result{}, err
 		}
-		text += " and pressed Enter; now at " + t.where()
+		text += " and pressed Enter"
+		lines = append(lines, t.pageLine())
 	}
-	return result{text: text}, nil
+	return result{text: withPage(text+".", lines...)}, nil
 }
 
 func (b *browser) cmdSelect(ctx context.Context, t *tab, a SelectArgs) (result, error) {
@@ -835,11 +834,11 @@ func (b *browser) cmdSelect(ctx context.Context, t *tab, a SelectArgs) (result, 
 	}
 	switch {
 	case res.NotSelect:
-		return result{}, failf(CodeBadArgs, "%s %q is not a select element; click it instead.", info.Role, info.Name)
+		return result{}, failPage(CodeBadArgs, a.Ref+" is not a select element; click it instead.", elementLine(info))
 	case res.Missing:
-		return result{}, failf(CodeNotFound, "%s %q has no option %q. Its options: %s.", info.Role, info.Name, a.Value, cut(strings.Join(res.Options, ", "), 1000))
+		return result{}, failPage(CodeNotFound, fmt.Sprintf("%s has no option %q.", a.Ref, a.Value), elementLine(info), "Options: "+cut(strings.Join(res.Options, ", "), 1000))
 	}
-	return result{text: fmt.Sprintf("Selected %s in %s %q", quoteAll(res.Selected), info.Role, info.Name)}, nil
+	return result{text: withPage(fmt.Sprintf("Selected %q in %s.", a.Value, a.Ref), elementLine(info), "Selected: "+quoteAll(res.Selected))}, nil
 }
 
 func quoteAll(ss []string) string {
@@ -868,7 +867,7 @@ func (b *browser) cmdPress(ctx context.Context, t *tab, a PressArgs) (result, er
 	if err := b.settle(ctx, t, m); err != nil {
 		return result{}, err
 	}
-	return result{text: fmt.Sprintf("Pressed %s; now at %s", a.Key, t.where())}, nil
+	return result{text: withPage(fmt.Sprintf("Pressed %s.", a.Key), t.pageLine())}, nil
 }
 
 func (b *browser) cmdScroll(ctx context.Context, t *tab, a ScrollArgs) (result, error) {
@@ -942,7 +941,7 @@ func (b *browser) cmdBack(ctx context.Context, t *tab) (result, error) {
 		return result{}, err
 	}
 	if h.CurrentIndex <= 0 || h.CurrentIndex > len(h.Entries) {
-		return result{text: "There is nothing to go back to; the tab is at " + t.where()}, nil
+		return result{text: withPage("There is nothing to go back to.", t.pageLine())}, nil
 	}
 	m := t.mark()
 	if _, err := b.conn.Call(ctx, t.session, "Page.navigateToHistoryEntry", map[string]any{"entryId": h.Entries[h.CurrentIndex-1].ID}); err != nil {
@@ -953,7 +952,7 @@ func (b *browser) cmdBack(ctx context.Context, t *tab) (result, error) {
 	if _, err := t.waitUntil(ctx, nil, func() bool { return t.navigated > m.navigated }); err != nil {
 		return result{}, err
 	}
-	return result{text: "Went back; now at " + t.where()}, nil
+	return result{text: withPage("Went back.", t.pageLine())}, nil
 }
 
 func (b *browser) cmdTabs(ctx context.Context, groupName, tabID string, a TabsArgs, tp **tab) (result, error) {
@@ -975,7 +974,7 @@ func (b *browser) cmdTabs(ctx context.Context, groupName, tabID string, a TabsAr
 		*tp = t
 		b.setCurrent(ctx, t)
 		b.bringToFront(ctx, t)
-		return result{text: fmt.Sprintf("Switched to %s: %s", t.id, t.where())}, nil
+		return result{text: withPage(fmt.Sprintf("Switched to %s.", t.id), t.pageLine())}, nil
 	case TabsOpen:
 		if a.URL != "" {
 			if err := b.checkURL(groupName, a.URL); err != nil {
@@ -1010,7 +1009,7 @@ func (b *browser) cmdTabs(ctx context.Context, groupName, tabID string, a TabsAr
 			return result{text: fmt.Sprintf("Closed %s; this task has no tab open now", t.id)}, nil
 		}
 		*tp = cur
-		return result{text: fmt.Sprintf("Closed %s; current tab is %s: %s", t.id, cur.id, cur.where())}, nil
+		return result{text: withPage(fmt.Sprintf("Closed %s; the current tab is %s.", t.id, cur.id), cur.pageLine())}, nil
 	}
 	return result{}, failf(CodeBadArgs, "The action %q is not list, switch, open or close.", a.Action)
 }
@@ -1020,18 +1019,15 @@ func (b *browser) listTabs(groupName string) string {
 	if len(tabs) == 0 {
 		return "This task has no tab open."
 	}
-	var sb strings.Builder
+	lines := make([]string, len(tabs))
 	for i, t := range tabs {
-		if i > 0 {
-			sb.WriteByte('\n')
-		}
 		marker := " "
 		if t == cur {
 			marker = "*"
 		}
-		fmt.Fprintf(&sb, "%s %s %s", marker, t.id, t.where())
+		lines[i] = marker + " " + t.id + " " + t.where()
 	}
-	return sb.String()
+	return withPage("Your tabs, the current one marked *:", lines...)
 }
 
 func (b *browser) cmdWait(ctx context.Context, t *tab, a WaitArgs) (result, error) {
@@ -1042,7 +1038,7 @@ func (b *browser) cmdWait(ctx context.Context, t *tab, a WaitArgs) (result, erro
 	timer := b.clock.NewTimer(d)
 	defer timer.Stop()
 	timedOut := func() (result, error) {
-		return result{}, failf(CodeTimeout, "Waited %s and it did not happen; the page shows %s.", d, t.where())
+		return result{}, failPage(CodeTimeout, fmt.Sprintf("Waited %s and it did not happen.", d), t.pageLine())
 	}
 	switch a.For {
 	case WaitNavigation:
@@ -1054,7 +1050,7 @@ func (b *browser) cmdWait(ctx context.Context, t *tab, a WaitArgs) (result, erro
 		if !ok {
 			return timedOut()
 		}
-		return result{text: "Navigated; now at " + t.where()}, nil
+		return result{text: withPage("Navigated.", t.pageLine())}, nil
 	}
 	ticker := b.clock.NewTicker(waitPoll)
 	defer ticker.Stop()
@@ -1076,9 +1072,9 @@ func (b *browser) cmdWait(ctx context.Context, t *tab, a WaitArgs) (result, erro
 		}
 		if found {
 			if a.For == WaitText {
-				return result{text: fmt.Sprintf("The page shows %q; it is at %s", a.Value, t.where())}, nil
+				return result{text: withPage(fmt.Sprintf("The page shows %q.", a.Value), t.pageLine())}, nil
 			}
-			return result{text: fmt.Sprintf("%s is on the page; it is at %s", a.Value, t.where())}, nil
+			return result{text: withPage(fmt.Sprintf("%s is on the page.", a.Value), t.pageLine())}, nil
 		}
 		select {
 		case <-ticker.C():
@@ -1129,9 +1125,9 @@ func (b *browser) cmdUpload(ctx context.Context, t *tab, groupName string, a Upl
 	site := b.heldSite(t.group)
 	if p, err := url.Parse(at); err != nil || (p.Scheme != "http" && p.Scheme != "https") || (site != "" && !onSiteURL(site, at)) {
 		if at == "" {
-			at = "no page"
+			return result{}, failf(CodeOffSite, "Blocked: a file goes only onto a web page of the site this task is held to, and this tab is at no page.")
 		}
-		return result{}, failf(CodeOffSite, "Blocked: a file goes only onto a web page of the site this task is held to, and this tab is at %s.", at)
+		return result{}, failPage(CodeOffSite, "Blocked: a file goes only onto a web page of the site this task is held to, and this tab is not on one.", urlLine(at))
 	}
 	obj, info, err := b.resolveRef(ctx, t, a.Ref)
 	if err != nil {
@@ -1142,12 +1138,12 @@ func (b *browser) cmdUpload(ctx context.Context, t *tab, groupName string, a Upl
 		return result{}, err
 	}
 	if !isFile {
-		return result{}, failf(CodeBadArgs, "%s %q is not a file input.", info.Role, info.Name)
+		return result{}, failPage(CodeBadArgs, a.Ref+" is not a file input.", elementLine(info))
 	}
 	if _, err := b.conn.Call(ctx, t.session, "DOM.setFileInputFiles", map[string]any{"files": []string{path}, "objectId": obj}); err != nil {
 		return result{}, err
 	}
-	return result{text: fmt.Sprintf("Set %s %q to %s", info.Role, info.Name, name)}, nil
+	return result{text: withPage(fmt.Sprintf("Set %s to %s.", a.Ref, name), elementLine(info))}, nil
 }
 
 func (b *browser) cmdScreenshot(ctx context.Context, t *tab) (result, error) {
@@ -1164,10 +1160,7 @@ func (b *browser) cmdScreenshot(ctx context.Context, t *tab) (result, error) {
 			}
 		}
 	}
-	t.mu.Lock()
-	u := t.url
-	t.mu.Unlock()
-	return result{text: "Screenshot of " + u + ". The image is content of an untrusted page.", image: &Image{MIME: "image/png", Data: data}}, nil
+	return result{text: withPage("Screenshot of the tab. The image is content of an untrusted page.", t.pageLine()), image: &Image{MIME: "image/png", Data: data}}, nil
 }
 
 func (b *browser) capture(ctx context.Context, t *tab, clip map[string]any) ([]byte, error) {

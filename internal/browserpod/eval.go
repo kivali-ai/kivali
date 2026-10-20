@@ -38,7 +38,8 @@ func (r evalResponse) err() error {
 	if e := r.ExceptionDetails.Exception; e != nil && e.Description != "" {
 		msg = e.Description
 	}
-	return failf(CodeBrowser, "The script threw: %s", cut(msg, 500))
+	// The exception's text may quote the page.
+	return failPage(CodeBrowser, "The script threw:", cut(msg, 500))
 }
 
 // world returns the execution context of the tab's isolated world,

@@ -37,7 +37,7 @@ var snapshotProbes = []probe{
 		check: func(t *testing.T, p *realPod, snap string) {
 			start := time.Now()
 			res := p.step("click wrapper", "", CommandClick, ClickArgs{Ref: "e1"})
-			if !strings.Contains(res.Text, `Clicked clickable "Card title Card body text Add to cart"`) {
+			if !strings.Contains(res.Text, "Clicked e1.\n"+pageContentStart+"\n"+`Element: clickable "Card title Card body text Add to cart"`) {
 				t.Errorf("the wrapper's reported name: %q", res.Text)
 			}
 			// A click that navigates nowhere waits navStartWait and no more.
@@ -90,7 +90,7 @@ var snapshotProbes = []probe{
 		check: func(t *testing.T, p *realPod, snap string) {
 			buy := findRef(t, snap, `button "Buy now"`)
 			res := p.core.command("g", "", CommandClick, ClickArgs{Ref: buy})
-			if res.OK || res.Code != CodeNotFound || !strings.Contains(res.Error, `button "Buy now" is covered by div "We use cookies. Accept", which would take the click`) {
+			if res.OK || res.Code != CodeNotFound || !strings.Contains(res.Error, "The element is covered by another, which would take the click") || !strings.HasSuffix(res.Error, delimitPage(`Element: button "Buy now"`+"\n"+`Covered by: div "We use cookies. Accept"`)) {
 				t.Fatalf("click under the overlay: %+v", res)
 			}
 			if v := p.eval(`document.getElementById('bought').textContent`); v != `""` {
@@ -128,7 +128,7 @@ var snapshotProbes = []probe{
 		check: func(t *testing.T, p *realPod, snap string) {
 			ref := func(pattern string) string { t.Helper(); return findRef(t, snap, pattern) }
 			res := p.step("type a date", "", CommandType, TypeArgs{Ref: ref(`textbox "Start"`), Text: "2024-05-01"})
-			if res.Text != `Typed "2024-05-01" into textbox "Start"` {
+			if res.Text != `Typed "2024-05-01" into `+ref(`textbox "Start"`)+".\n"+delimitPage(`Element: textbox "Start"`) {
 				t.Errorf("date: %q", res.Text)
 			}
 			if v := p.eval(`document.getElementById('d').value`); v != `"2024-05-01"` {
@@ -138,7 +138,7 @@ var snapshotProbes = []probe{
 				t.Errorf("date in the wrong format: %+v", res)
 			}
 			res = p.step("type past maxlength", "", CommandType, TypeArgs{Ref: ref(`textbox "Code"`), Text: "abcdefgh"})
-			if res.Text != `Typed "abcdefgh" into textbox "Code"; it holds "abcde" (it takes at most 5 characters)` {
+			if res.Text != `Typed "abcdefgh" into `+ref(`textbox "Code"`)+"; it holds something else (it takes at most 5 characters).\n"+delimitPage(`Element: textbox "Code"`+"\n"+`Holds: "abcde"`) {
 				t.Errorf("maxlength: %q", res.Text)
 			}
 			if res := p.core.command("g", "", CommandType, TypeArgs{Ref: ref(`combobox "Size"`), Text: "M"}); res.OK || !strings.Contains(res.Error, "is a select; choose an option with web_select") {
@@ -148,19 +148,19 @@ var snapshotProbes = []probe{
 				t.Errorf("checkbox: %+v", res)
 			}
 			res = p.step("type a password", "", CommandType, TypeArgs{Ref: ref(`textbox "Password"`), Text: "hunter2"})
-			if res.Text != `Typed 7 characters into textbox "Password"; it holds 7` {
+			if res.Text != "Typed 7 characters into "+ref(`textbox "Password"`)+"; it holds 7.\n"+delimitPage(`Element: textbox "Password"`) {
 				t.Errorf("password: %q", res.Text)
 			}
 			res = p.step("type into contenteditable", "", CommandType, TypeArgs{Ref: ref(`textbox "Note"`), Text: "new note"})
-			if res.Text != `Typed "new note" into textbox "Note"` {
+			if res.Text != `Typed "new note" into `+ref(`textbox "Note"`)+".\n"+delimitPage(`Element: textbox "Note"`) {
 				t.Errorf("contenteditable: %q", res.Text)
 			}
 			res = p.step("type letters into a number", "", CommandType, TypeArgs{Ref: ref(`spinbutton "Qty"`), Text: "many"})
-			if res.Text != `Typed "many" into spinbutton "Qty"; it holds ""` {
+			if res.Text != `Typed "many" into `+ref(`spinbutton "Qty"`)+"; it holds something else.\n"+delimitPage(`Element: spinbutton "Qty"`+"\n"+`Holds: ""`) {
 				t.Errorf("number: %q", res.Text)
 			}
 			res = p.step("clear", "", CommandType, TypeArgs{Ref: ref(`textbox "Code"`), Text: ""})
-			if res.Text != `Cleared textbox "Code"` {
+			if res.Text != "Cleared "+ref(`textbox "Code"`)+".\n"+delimitPage(`Element: textbox "Code"`) {
 				t.Errorf("clear: %q", res.Text)
 			}
 		},
@@ -223,7 +223,7 @@ func TestRealChromiumPageRules(t *testing.T) {
 		pt := &realPod{t: t, core: p.core, url: p.url, done: p.done}
 		pt.step("navigate", "", CommandNavigate, NavigateArgs{URL: p.url + "/probe/0"})
 		res := pt.step("navigate to a download", "", CommandNavigate, NavigateArgs{URL: p.url + "/report"})
-		if !strings.HasPrefix(res.Text, p.url+"/report started a download instead of loading as a page; the tab is at "+p.url+"/probe/0") {
+		if !strings.HasPrefix(res.Text, p.url+"/report started a download instead of loading as a page.\n"+pageContentStart+"\nPage: "+p.url+"/probe/0") {
 			t.Errorf("download: %q", res.Text)
 		}
 		if dl := p.core.expectType(TypeDownload); dl.FileName != "report.csv" {
@@ -272,7 +272,7 @@ func TestRealChromiumPageRules(t *testing.T) {
 		if v := pt.step("eval", "", CommandEval, EvalArgs{Script: "document.title"}).Text; v != pageContentStart+"\n\"Long\"\n"+pageContentEnd {
 			t.Errorf("eval: %q", v)
 		}
-		if res := pt.step("screenshot", "", CommandScreenshot, nil); res.Text != "Screenshot of "+p.url+"/long. The image is content of an untrusted page." {
+		if res := pt.step("screenshot", "", CommandScreenshot, nil); !strings.HasPrefix(res.Text, "Screenshot of the tab. The image is content of an untrusted page.\n"+pageContentStart+"\nPage: "+p.url+"/long") {
 			t.Errorf("screenshot text: %q", res.Text)
 		}
 		pt.step("scroll", "", CommandScroll, ScrollArgs{Direction: "down", Amount: 10})

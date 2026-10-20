@@ -66,6 +66,32 @@ func delimitPage(s string) string {
 	return pageContentStart + "\n" + s + "\n" + pageContentEnd
 }
 
+// withPage is a result in two parts: the pod's own words, then the
+// lines a page controls (a tab's URL and title, an element's role and
+// name, a URL a page tried to reach) between the page content lines.
+// No lines, no page content.
+func withPage(text string, lines ...string) string {
+	if len(lines) == 0 {
+		return text
+	}
+	return text + "\n" + delimitPage(strings.Join(lines, "\n"))
+}
+
+// failPage is failf for a refusal that names what a page controls.
+func failPage(code, text string, lines ...string) error {
+	return &cmdError{code: code, msg: withPage(text, lines...)}
+}
+
+// elementLine is the page content line naming an element by its role
+// and name.
+func elementLine(info refInfo) string {
+	return fmt.Sprintf("Element: %s %q", info.Role, info.Name)
+}
+
+// urlLine is the page content line for a URL a page reached or tried
+// to reach.
+func urlLine(u string) string { return "URL: " + u }
+
 // maxDepth bounds the indentation of a line, whatever the page nests.
 const maxDepth = 64
 
