@@ -263,7 +263,9 @@ func (t SubagentTaskInput) session() string {
 // WITHOUT waiting for any of them.
 //
 // The ctx argument is the inbound HTTP request's, and is used only for
-// validation-time work. Jobs deliberately do NOT inherit it: it is
+// validation-time work: a dispatch whose caller has gone by the time
+// that work is done starts nothing. Jobs deliberately do NOT inherit
+// it: it is
 // cancelled the moment this handler returns, which under the old
 // blocking contract was the right lifetime and under this one would
 // kill every job at dispatch. Each job gets its own cancellable
@@ -302,9 +304,15 @@ func (s *SubagentService) StartBatch(ctx context.Context, parent string, raw jso
 	}
 	// The files a web task may upload are kept as they are now: a
 	// person approves these bytes, and an upload sends nothing else.
+	// Reading them is the slow part of a dispatch, up to
+	// maxWebTaskFiles files of maxWebUploadBytes for each task, so it
+	// stops once the caller has given up (see below).
 	for i := range req.Tasks {
 		if !req.Tasks[i].web() || len(req.Tasks[i].Files) == 0 {
 			continue
+		}
+		if err := ctx.Err(); err != nil {
+			return "", err
 		}
 		site, err := webURLSite(strings.TrimSpace(req.Tasks[i].StartURL))
 		if err != nil || site == "" {
@@ -326,6 +334,16 @@ func (s *SubagentService) StartBatch(ctx context.Context, parent string, raw jso
 	// chip JS falls back to heuristic matching ("the most recent
 	// non-terminal is-subagent chip").
 	toolUseID := s.findPendingSubagentToolUseID(parent, 500*time.Millisecond)
+
+	// Nothing has started yet. A caller that gave up waiting (the
+	// control client's timeout) has told its agent the dispatch failed,
+	// and the agent dispatches again: tasks started now would run
+	// twice, and an upload task would ask a person to approve its
+	// uploads twice. So a dispatch whose caller is gone starts nothing,
+	// and the failure the agent read is true.
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 
 	// Allocate per-task IDs upfront so the subagent_started event can
 	// carry the full task list — the chip JS uses the IDs to subscribe

@@ -688,7 +688,11 @@ registrable domain of its start URL for its whole run with the
 site-session lock. At most five of an agent's tasks may await approval
 at once; a dispatch past that is refused. Dispatch records each file's
 sha256 and size and keeps nothing else: no copy goes to the attachment
-store. A file over 50 MB is refused from its size alone. Whenever a
+store. A file over 50 MB is refused from its size alone. Reading the
+files is the slow part of a dispatch, and the control client gives up
+after 10 seconds; a dispatch whose caller has gone by then starts
+nothing, so the failure the agent reads is true and its retry does not
+ask for a second approval. Whenever a
 person opens a file or the task uploads it, core reads it again from the
 agent's `/files/`, checks it against the digest and uses those bytes;
 a file that has changed is refused.
