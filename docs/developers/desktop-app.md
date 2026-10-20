@@ -1261,8 +1261,8 @@ updater's before-exit hook (`platform::INSTALL_EXITS`), starts the
 installer with `ShellExecuteW` and ends the process: the hook pauses the
 teams, removes the tray icon and hides the windows. When the installer
 cannot start (the permission prompt answered No, or a standard user),
-`ShellExecuteW` fails and the install returns its error: the tray comes
-back and the teams that ran resume. The installer file (about 850 MB, in
+`ShellExecuteW` fails and the install returns its error: the tray and
+the windows that showed come back, and the teams that ran resume. The installer file (about 850 MB, in
 `%TEMP%\Kivali-<version>-updater-<6 random characters>\`) outlives the
 process the plugin ends; the next launch removes such folders, again
 every 10 minutes while one is still in use by the installer that

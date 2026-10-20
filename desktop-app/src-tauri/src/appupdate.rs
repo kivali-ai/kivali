@@ -119,9 +119,22 @@ pub fn take_relaunch_mark(dir: &Path) -> bool {
     std::fs::remove_file(dir.join(RELAUNCH_MARK)).is_ok()
 }
 
-/// The teams that ran when the before-exit hook paused them for the
-/// installer; taken back if the installer could not start.
-static HANDED_OVER: Mutex<Option<Vec<String>>> = Mutex::new(None);
+/// What the before-exit hook put aside for the installer, given back if
+/// the installer could not start ([`put_back`]).
+struct HandedOver {
+    /// The teams that ran.
+    running: Vec<String>,
+    /// The windows that showed, by label.
+    shown: Vec<String>,
+}
+
+static HANDED_OVER: Mutex<Option<HandedOver>> = Mutex::new(None);
+
+/// Of the app's windows (label, showing), the ones to hide now and show
+/// again if the installer cannot start: those that show.
+fn shown_windows(windows: impl IntoIterator<Item = (String, bool)>) -> Vec<String> {
+    windows.into_iter().filter(|(_, showing)| *showing).map(|(label, _)| label).collect()
+}
 
 /// The updater every check and download uses: the stall timeout, and
 /// what runs before an installer that ends the process.
@@ -143,7 +156,6 @@ fn updater(app: &AppHandle) -> UpdaterBuilder {
 /// on ([`put_back`]), and that cleanup leaves the app unfit to.
 fn step_aside(app: &AppHandle) {
     let running = shell::pause_all_for_exit(app);
-    *HANDED_OVER.lock().unwrap() = Some(running);
     mark_relaunch(&app.state::<Shell>().dir);
     // On the main thread, where Tauri keeps the tray, and waited for: the
     // plugin ends the process as soon as this returns.
@@ -151,24 +163,40 @@ fn step_aside(app: &AppHandle) {
     let a = app.clone();
     let on_main = app.run_on_main_thread(move || {
         drop(a.remove_tray_by_id(menus::TRAY_ID));
-        for w in a.windows().into_values() {
-            let _ = w.hide();
+        let windows = a.windows();
+        let shown = shown_windows(windows.iter().map(|(label, w)| (label.clone(), w.is_visible().unwrap_or(false))));
+        for label in &shown {
+            if let Some(w) = windows.get(label) {
+                let _ = w.hide();
+            }
+        }
+        let _ = done.send(shown);
+    });
+    let shown = if on_main.is_ok() { wait.recv().unwrap_or_default() } else { Vec::new() };
+    *HANDED_OVER.lock().unwrap() = Some(HandedOver { running, shown });
+}
+
+/// The installer could not start after [`step_aside`] (the permission
+/// prompt answered No, a standard user): the tray and the windows that
+/// showed come back and the teams that ran resume. Waits for the windows,
+/// so Settings → General, opened next with why, comes in front of them.
+fn put_back(app: &AppHandle, handed: HandedOver) {
+    unmark_relaunch(&app.state::<Shell>().dir);
+    shell::resume_after_failed_install(app, &handed.running);
+    let (done, wait) = std::sync::mpsc::channel();
+    let a = app.clone();
+    let on_main = app.run_on_main_thread(move || {
+        menus::restore_tray(&a);
+        for label in &handed.shown {
+            if let Some(w) = a.get_window(label) {
+                let _ = w.show();
+            }
         }
         let _ = done.send(());
     });
     if on_main.is_ok() {
         let _ = wait.recv();
     }
-}
-
-/// The installer could not start after [`step_aside`] (the permission
-/// prompt answered No, a standard user): the tray comes back, the teams
-/// that ran resume, and Settings → General says why.
-fn put_back(app: &AppHandle, running: &[String]) {
-    unmark_relaunch(&app.state::<Shell>().dir);
-    shell::resume_after_failed_install(app, running);
-    let a = app.clone();
-    let _ = app.run_on_main_thread(move || menus::restore_tray(&a));
 }
 
 /// At launch: the first check, then one a day while Kivali runs; and
@@ -352,8 +380,8 @@ fn install(app: &AppHandle, got: Result<Option<(Update, Vec<u8>)>, String>) {
         Err(e) => {
             sh.quitting.store(false, Ordering::SeqCst);
             let handed_over = HANDED_OVER.lock().unwrap().take();
-            if let Some(running) = handed_over {
-                put_back(app, &running);
+            if let Some(handed) = handed_over {
+                put_back(app, handed);
             }
             fail(app, e.to_string());
             windows::show_settings(app, "general");
@@ -460,6 +488,18 @@ mod tests {
         for s in ["checking", "available", "downloading", "installing", "update_failed"] {
             assert!(!team_wants_check(&v(s)), "{s}");
         }
+    }
+
+    // When the Windows installer cannot start, the windows the update hid
+    // come back with the tray. Only those that showed: a window the person
+    // had closed (Kivali hides it) stays closed rather than popping up.
+    // Without the record a team window open before the attempt stayed
+    // hidden until reopened from the tray.
+    #[test]
+    fn the_windows_that_showed_come_back() {
+        let windows = [("team-a".to_string(), true), ("settings".to_string(), false), ("team-b".to_string(), true)];
+        assert_eq!(shown_windows(windows), ["team-a", "team-b"]);
+        assert!(shown_windows(Vec::new()).is_empty());
     }
 
     // Kivali started at login relaunches after an update with --autostart
