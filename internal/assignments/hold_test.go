@@ -201,3 +201,26 @@ func TestAncestorCreatorMayDrop(t *testing.T) {
 		t.Fatalf("dropping the epic woke %s", got)
 	}
 }
+
+// TestHeldBySkipsAParentNotInTheSet guards against a part whose parent
+// is missing from the set: its file deleted by hand, or read while its
+// directory was being removed. HeldBy dereferenced the missing parent,
+// and the panic, in the org snapshot's goroutine, took the whole
+// process down.
+func TestHeldBySkipsAParentNotInTheSet(t *testing.T) {
+	s := Build([]*Assignment{
+		{ID: 2, Status: StatusOpen, Parent: 1}, // #1 is not in the set
+		{ID: 3, Status: StatusOpen, Parent: 2},
+		{ID: 4, Status: StatusOpen, Held: true},
+		{ID: 5, Status: StatusOpen, Parent: 4},
+	})
+	if got := s.HeldBy(2); got != 0 {
+		t.Errorf("HeldBy(2) = %d, want 0", got)
+	}
+	if s.Held(3) {
+		t.Error("a part under a missing parent reads as held")
+	}
+	if got := s.HeldBy(5); got != 4 {
+		t.Errorf("HeldBy(5) = %d, want its held parent 4", got)
+	}
+}
