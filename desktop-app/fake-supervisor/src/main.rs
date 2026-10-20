@@ -29,6 +29,10 @@
 //!                   setup's model check reports missing
 //!   FAKE_SETUP_REFUSED  1 makes every model check a refused sign-in
 //!
+//! A port is chosen only the first time, moving off one another program
+//! holds; once recorded, a held port fails `up` as the real supervisor's
+//! does (`forward_error`, the VM left running), and `up --port` moves it.
+//!
 //! A file named `data.vhdx` in the config directory is a data disk an
 //! earlier version kept there, as Hyper-V's was: the next `up` of a
 //! formatted team moves it, as the real supervisor does (the
@@ -86,6 +90,9 @@ struct Fake {
     busy: AtomicBool,
     http_started: AtomicBool,
     serving: Arc<AtomicBool>,
+    /// Why the recorded port could not be bound, until a forward starts
+    /// or the VM stops (the real supervisor's `forward_error`).
+    fwd_err: Mutex<Option<String>>,
     last_ok: Mutex<Option<CheckResult>>,
     step: Duration,
     quit: AtomicBool,
@@ -130,13 +137,15 @@ impl Fake {
     fn report(&self) -> Report {
         let p = self.persisted.lock().unwrap().clone();
         let running = self.running.load(Ordering::SeqCst);
+        let fwd_err = self.fwd_err.lock().unwrap().clone();
+        let forwarding = running && fwd_err.is_none();
         Report {
             running,
-            forward: running.then(|| format!("127.0.0.1:{}", p.port)),
-            url: running.then(|| format!("http://127.0.0.1:{}/", p.port)),
+            forward: forwarding.then(|| format!("127.0.0.1:{}", p.port)),
+            url: forwarding.then(|| format!("http://127.0.0.1:{}/", p.port)),
             guest: running.then(|| GuestStatus { state: "ready".into(), fatal: None, node_ready: true }),
             guest_error: None,
-            forward_error: None,
+            forward_error: fwd_err,
             state: LocalState {
                 kivali: p.kivali,
                 data_disk_formatted: p.formatted,
@@ -235,6 +244,7 @@ impl Fake {
         let _ = self.logs(out, stage::DELETING, &lines);
         self.running.store(false, Ordering::SeqCst);
         self.serving.store(false, Ordering::SeqCst);
+        *self.fwd_err.lock().unwrap() = None;
         if let Err(e) = std::fs::remove_file(&self.state_file) {
             if e.kind() != std::io::ErrorKind::NotFound {
                 return Err(format!("delete {}: {e}", self.state_file.display()));
@@ -306,7 +316,7 @@ impl Fake {
             return Err("Kivali is not installed and no owner was given: pass the owner's Google account".into());
         }
         let already = self.running.load(Ordering::SeqCst);
-        if already && !creating {
+        if already && !creating && self.fwd_err.lock().unwrap().is_none() {
             let _ = self.logs(out, stage::STARTING, &["the VM is already running"]);
             return Ok(Some(serde_json::to_value(self.report()).unwrap()));
         }
@@ -322,9 +332,10 @@ impl Fake {
                 let _ = std::fs::remove_file(dir.join(format!("{LEGACY_DISK}.migrated")));
             }
         }
-        {
+        let held = {
             let mut p = self.persisted.lock().unwrap();
             p.formatted = true;
+            let free = |port: u16| self.http_started.load(Ordering::SeqCst) || TcpListener::bind(("127.0.0.1", port)).is_ok();
             if p.port == 0 {
                 p.port = if o.port != 0 {
                     o.port
@@ -333,16 +344,32 @@ impl Fake {
                 } else {
                     env_or("FAKE_PORT", 18080)
                 };
+                // As the real supervisor does, the first port moves off one
+                // another program holds.
+                if o.port == 0 && !free(p.port) {
+                    p.port = free_port_from(p.port);
+                }
+                None
             } else if o.port != 0 {
                 p.port = o.port;
+                None
+            } else {
+                // A recorded port never moves on its own (the fake's own
+                // server, once started, keeps its port).
+                (!free(p.port)).then_some(p.port)
             }
-            // As the real supervisor does, move off a port another program
-            // holds (the fake's own server, once started, keeps its port).
-            if o.port == 0 && !self.http_started.load(Ordering::SeqCst) {
-                p.port = free_port_from(p.port);
-            }
-        }
+        };
         self.save();
+        if let Some(port) = held {
+            let e = format!(
+                "Another program is using port {port} on this computer, and this team always uses port {port}. \
+                 Close that program and try again, or move the team to another port with `kivali-supervisor up --port <port>`."
+            );
+            *self.fwd_err.lock().unwrap() = Some(e.clone());
+            self.running.store(true, Ordering::SeqCst);
+            return Err(e);
+        }
+        *self.fwd_err.lock().unwrap() = None;
         if !already {
             let _ = self.logs(out, stage::STARTING, &["guest agent ready", "forwarding the org's port"]);
         }
@@ -533,6 +560,7 @@ fn handle(fake: &Fake, mut conn: impl Read + Write) -> std::io::Result<()> {
             }
             fake.running.store(false, Ordering::SeqCst);
             fake.serving.store(false, Ordering::SeqCst);
+            *fake.fwd_err.lock().unwrap() = None;
             if d.exit {
                 let _ = fake.logs(&mut conn, stage::PAUSING, &["serve is exiting"]);
                 fake.quit.store(true, Ordering::SeqCst);
@@ -658,6 +686,7 @@ fn new_fake(dir: &Path) -> Arc<Fake> {
         busy: AtomicBool::new(false),
         http_started: AtomicBool::new(false),
         serving: Arc::new(AtomicBool::new(false)),
+        fwd_err: Mutex::new(None),
         last_ok: Mutex::new(None),
         step: Duration::from_millis(env_or("FAKE_STEP_MS", 600)),
         quit: AtomicBool::new(false),
