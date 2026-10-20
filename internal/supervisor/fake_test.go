@@ -121,9 +121,18 @@ type fakeBackend struct {
 	slowShutdown bool
 	// hardStops counts HardStop calls: power cuts on the data disk.
 	hardStops int
-	// helmFails is the Helm install job's failure count; while set, no
-	// deployment exists.
-	helmFails int
+	// helmBroken are chart files the Helm controller cannot install.
+	// While the manifest names one, the deployment stays as the last
+	// chart that installed left it (absent on a first install), and the
+	// install job behaves as k3s's does: its pod's helm container fails
+	// once more each time it is looked at and restarts in place
+	// (restartPolicy OnFailure), so the job's .status.failed stays 0.
+	// helmRuns counts those failed runs; under mu.
+	helmBroken map[string]bool
+	helmRuns   int
+	// applied is the chart file the deployment was last seen at; under
+	// mu.
+	applied string
 	// renderSuffix is appended to the server image the "chart" renders
 	// (a chart that ignores the image values).
 	renderSuffix string
@@ -269,8 +278,9 @@ func (h *fakeBackend) machineRemovals() []machineRemoval {
 
 func newFakeBackend() *fakeBackend {
 	return &fakeBackend{
-		imported: map[string]bool{},
-		broken:   map[string]bool{},
+		imported:   map[string]bool{},
+		broken:     map[string]bool{},
+		helmBroken: map[string]bool{},
 		baked: []string{
 			"docker.io/library/kivali:v0.15.0",
 			"docker.io/library/kivali-egress-proxy:v0.15.0",
@@ -671,20 +681,61 @@ func (g fakeGuest) kubectl(args []string, stdin io.Reader, stdout, stderr io.Wri
 		_, _ = io.WriteString(stdout, `{"type":"result","is_error":false,"result":"OK"}`)
 		return 0, nil
 	case strings.Contains(joined, "get job helm-install-kivali"):
-		_, _ = fmt.Fprintf(stdout, "%d", g.m.vm.helmFails)
+		// k3s's job with restartPolicy OnFailure: its failed runs
+		// restart the container, and no pod fails.
+		_, _ = io.WriteString(stdout, "")
 		return 0, nil
-	case strings.Contains(joined, "logs job/helm-install-kivali"):
+	case strings.Contains(joined, "get pods -l batch.kubernetes.io/job-name=helm-install-kivali"):
+		manifest, _ := g.file(ManifestRel)
+		file, _, _ := ParseManifest([]byte(manifest))
+		vm.mu.Lock()
+		defer vm.mu.Unlock()
+		if !vm.helmBroken[file] {
+			// The last install's pod: finished, after restarts the
+			// install got past.
+			return 0, json.NewEncoder(stdout).Encode(map[string]any{"items": []any{map[string]any{
+				"metadata": map[string]string{"name": "helm-install-kivali-old"},
+				"status": map[string]any{"phase": "Succeeded", "containerStatuses": []any{map[string]any{
+					"name": "helm", "restartCount": 4, "state": map[string]any{"terminated": map[string]any{"exitCode": 0}},
+				}}},
+			}}})
+		}
+		vm.helmRuns++
+		return 0, json.NewEncoder(stdout).Encode(map[string]any{"items": []any{map[string]any{
+			"metadata": map[string]string{"name": "helm-install-kivali-x7k2p"},
+			"status": map[string]any{"phase": "Running", "containerStatuses": []any{map[string]any{
+				"name": "helm", "restartCount": vm.helmRuns - 1,
+				"state":     map[string]any{"waiting": map[string]any{"reason": "CrashLoopBackOff"}},
+				"lastState": map[string]any{"terminated": map[string]any{"exitCode": 1, "reason": "Error"}},
+			}}},
+		}}})
+	case strings.Contains(joined, "logs helm-install-kivali-x7k2p -c helm --tail=40 --previous"):
 		_, _ = io.WriteString(stdout, "+ helm install kivali\nError: INSTALLATION FAILED: duplicate entries\n  .env: duplicate key\n+ exit\n")
+		return 0, nil
+	case strings.Contains(joined, "-n kube-system logs "):
+		// The current run, which has not failed yet.
+		_, _ = io.WriteString(stdout, "+ helm install kivali\n")
 		return 0, nil
 	case strings.Contains(joined, "get deployment kivali"):
 		manifest, ok := g.file(ManifestRel)
-		if !ok || g.m.vm.helmFails > 0 {
+		if !ok {
 			_, _ = io.WriteString(stderr, `Error from server (NotFound): deployments.apps "kivali" not found`)
 			return 1, nil
 		}
 		file, vals, err := ParseManifest([]byte(manifest))
 		if err != nil {
 			return -1, err
+		}
+		vm.mu.Lock()
+		if vm.helmBroken[file] {
+			file = vm.applied
+		} else {
+			vm.applied = file
+		}
+		vm.mu.Unlock()
+		if file == "" {
+			_, _ = io.WriteString(stderr, `Error from server (NotFound): deployments.apps "kivali" not found`)
+			return 1, nil
 		}
 		image := vals["image"].(map[string]any)
 		ref := fmt.Sprintf("%s:%s", image["repository"], image["tag"])

@@ -1000,8 +1000,16 @@ the same tag and prefix, else the install refuses. The install waits for the dep
 complete) and then `/readyz` through the forward. It fails fast when a
 `kivali` pod waits on `ErrImagePull`, `ImagePullBackOff`,
 `ErrImageNeverPull` or `InvalidImageName`, when the Helm controller's
-`helm-install-kivali` job has failed 3 times (with helm's error), or when
-the chart's label matches but it renders another image.
+`helm-install-kivali` job has failed 3 times, or when the chart's label
+matches but it renders another image. The controller's job runs its pod
+with `restartPolicy: OnFailure` (and `backoffLimit: 1000`), so a failed
+helm run restarts the container in place and the job's `.status.failed`
+stays 0: the failures counted are the job's failed pods plus its running
+pod's container restarts (and the last run while it waits in
+`CrashLoopBackOff`), and the error carries helm's own `Error:` lines
+from that failed run's log (`logs --previous`), else its termination
+message. A broken chart or values file is caught in a few polls, so an
+upgrade rolls back without waiting out the 10-minute rollout timeout.
 
 ## Release feed
 
