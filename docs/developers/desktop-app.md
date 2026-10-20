@@ -137,6 +137,7 @@ desktop-app/
       diagnostics.rs       Settings → Advanced → Diagnostics
       orgurl.rs            team addresses, the GET /api/v1/login check
       updates.rs           the Kivali release verdict
+      appupdate.rs         the app's own updates: checking, installing (E4)
       paths.rs             file names, atomic writes
       platform/            everything OS-specific ("Platform"): mod.rs, macos.rs, unix.rs,
                            notify.rs, notify_macos.rs, windows.rs, windows_terminal.rs,

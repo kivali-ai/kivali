@@ -354,7 +354,7 @@ pub fn set_setting(webview: Webview, app: AppHandle, key: String, value: bool) -
 #[tauri::command]
 pub fn check_app_update(webview: Webview, app: AppHandle) -> Res {
     guard(&webview)?;
-    shell::check_desktop_update(&app);
+    crate::appupdate::check_desktop_update(&app);
     Ok(())
 }
 
