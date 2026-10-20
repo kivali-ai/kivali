@@ -185,10 +185,13 @@ export interface ConnectState {
 export interface AppUpdate {
   /** `failed`: a check could not finish. `update_failed`: an update
    *  could not install, and is still on offer (`version`). */
-  state: "not_checked" | "checking" | "up_to_date" | "available" | "installing" | "failed" | "update_failed";
+  state: "not_checked" | "checking" | "up_to_date" | "available" | "downloading" | "installing" | "failed" | "update_failed";
   version: string | null;
   checked_at: string | null;
   error: string | null;
+  /** While downloading: the bytes so far, and the length when known. */
+  downloaded: number | null;
+  total: number | null;
 }
 
 export interface Snapshot {

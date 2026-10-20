@@ -400,7 +400,7 @@ export function memoryDialog(team: Team, other: Team | undefined, platform: Snap
 export function shouldPoll(snap: Snapshot): boolean {
   if (snap.owner_signin.state === "waiting") return true;
   if (snap.connect.state === "signing_in") return true;
-  if (snap.app_update.state === "checking" || snap.app_update.state === "installing") return true;
+  if (["checking", "downloading", "installing"].includes(snap.app_update.state)) return true;
   return snap.teams.some((t) => t.op?.running || t.ai?.signin === "waiting" || t.state === "starting");
 }
 

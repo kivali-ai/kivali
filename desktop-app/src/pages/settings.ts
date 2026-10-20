@@ -13,7 +13,7 @@ import { errorText } from "../logic/setup";
 import { claudeLine, cpuOptions, devicesHint, devicesView, diskLines, memoryConflict, signedOutLine, signInLine, memoryOptions, memoryUse, placeLine, statusRow, thisComputer, updateRow } from "../logic/teams";
 import type { DialogId } from "../preset";
 import type { Snapshot, Team } from "../types";
-import { banner, button, caption, card, dot, field, monoLabel, orgMark, row, select, settingsButtonLabel, switchRow } from "../ui";
+import { banner, button, caption, card, dot, field, monoLabel, orgMark, progress, row, select, settingsButtonLabel, switchRow } from "../ui";
 import { confirmDeleteSheet, deleteSheet, memorySheet, pauseSheet, removeSheet, updateSheet, type Facts } from "./dialogs";
 import { foundryDialog, openFoundry } from "./foundry";
 import { isFoundry } from "../logic/foundry";
@@ -180,7 +180,14 @@ function appUpdate(ctx: Ctx): HTMLElement {
     "section",
     { class: "stack-8" },
     monoLabel("Kivali"),
-    card(row({ title: `Kivali ${s.app_version}`, sub: line.sub, trail: action, cls: line.highlight ? "is-highlight" : undefined })),
+    card(
+      row({
+        title: `Kivali ${s.app_version}`,
+        sub: [line.sub, line.progress ? progress(line.progress.percent, "cobalt", line.progress.label) : null],
+        trail: action,
+        cls: line.highlight ? "is-highlight" : undefined,
+      }),
+    ),
   );
 }
 
