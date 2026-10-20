@@ -588,33 +588,171 @@ func deploymentState(ctx context.Context, g Guest, chartVersion, image string) e
 // values error fails the same way every time.
 const helmJobFailures = 3
 
+// helmJob is the Helm controller's install job of the kivali HelmChart,
+// and helmJobPods selects its pods.
+const (
+	helmJob     = "helm-install-kivali"
+	helmJobPods = "batch.kubernetes.io/job-name=" + helmJob
+)
+
+// terminatedState is a container's terminated state.
+type terminatedState struct {
+	ExitCode int    `json:"exitCode"`
+	Reason   string `json:"reason"`
+	Message  string `json:"message"`
+}
+
+// waitingState is a container's waiting state.
+type waitingState struct {
+	Reason  string `json:"reason"`
+	Message string `json:"message"`
+}
+
+// containerStatus is the part of a pod's container status the waits
+// read.
+type containerStatus struct {
+	Name         string `json:"name"`
+	RestartCount int    `json:"restartCount"`
+	State        struct {
+		Waiting    *waitingState    `json:"waiting"`
+		Terminated *terminatedState `json:"terminated"`
+	} `json:"state"`
+	LastState struct {
+		Terminated *terminatedState `json:"terminated"`
+	} `json:"lastState"`
+}
+
+// failedRuns counts the container's failed runs: restartCount (the runs
+// before the current one), plus the last run while it is a failure the
+// container has not restarted from (terminated, or waiting to restart
+// in CrashLoopBackOff). previous is whether the latest failed run is
+// the container's previous instance rather than its current one, and
+// last is that run's terminated state (nil when none is known).
+func (c containerStatus) failedRuns() (n int, previous bool, last *terminatedState) {
+	n, previous, last = c.RestartCount, true, c.LastState.Terminated
+	switch now := c.State.Terminated; {
+	case now != nil && now.ExitCode != 0:
+		n++
+		previous, last = false, now
+	case c.State.Waiting != nil && last != nil && last.ExitCode != 0:
+		n++
+	}
+	return n, previous, last
+}
+
+// helmPodList is the part of the install job's pods helmJobFailed reads.
+type helmPodList struct {
+	Items []struct {
+		Metadata struct {
+			Name string `json:"name"`
+		} `json:"metadata"`
+		Status struct {
+			Phase             string            `json:"phase"`
+			ContainerStatuses []containerStatus `json:"containerStatuses"`
+		} `json:"status"`
+	} `json:"items"`
+}
+
+// helmRun is the install job's container that has failed the most
+// times.
+type helmRun struct {
+	pod, container string
+	failures       int
+	// previous is whether the latest failed run is the container's
+	// previous instance rather than its current one.
+	previous bool
+	// message is that run's termination message.
+	message string
+}
+
+// failedHelmRuns finds the container of the install job's unfinished
+// pods that has failed the most times. The Helm controller's job runs
+// its pod with restartPolicy OnFailure, so a failed helm run restarts
+// the container in place and the job's .status.failed stays 0: the
+// failures are the container's (containerStatus.failedRuns).
+func failedHelmRuns(pl helmPodList) helmRun {
+	var worst helmRun
+	for _, p := range pl.Items {
+		if p.Status.Phase == "Succeeded" || p.Status.Phase == "Failed" {
+			// An earlier install's pod, or one the job's .status.failed
+			// already counts.
+			continue
+		}
+		for _, c := range p.Status.ContainerStatuses {
+			n, previous, last := c.failedRuns()
+			if n <= worst.failures {
+				continue
+			}
+			worst = helmRun{pod: p.Metadata.Name, container: c.Name, failures: n, previous: previous}
+			if last != nil {
+				worst.message = last.Message
+			}
+		}
+	}
+	return worst
+}
+
+// helmError is helm's own error in an install job's log: from the last
+// line starting "Error:" to the end, without the shell's trace lines.
+func helmError(logs []byte) string {
+	var lines []string
+	capture := false
+	for _, l := range strings.Split(string(logs), "\n") {
+		if strings.HasPrefix(l, "Error:") {
+			capture = true
+			lines = lines[:0]
+		}
+		if capture && !strings.HasPrefix(l, "+") && strings.TrimSpace(l) != "" {
+			lines = append(lines, strings.TrimSpace(l))
+		}
+	}
+	return strings.Join(lines, " ")
+}
+
 // helmJobFailed reports the Helm controller's install job as failed,
-// with helm's own error, once it has failed helmJobFailures times.
+// with helm's own error, once its runs have failed helmJobFailures
+// times: the job's failed pods plus the failed runs of its unfinished
+// pod.
 func helmJobFailed(ctx context.Context, g Guest) error {
-	out, err := kubectl(ctx, g, "-n", "kube-system", "get", "job", "helm-install-kivali", "-o", "jsonpath={.status.failed}")
+	out, err := kubectl(ctx, g, "-n", "kube-system", "get", "job", helmJob, "-o", "jsonpath={.status.failed}")
 	if err != nil {
 		return nil
 	}
 	var failed int
-	if _, err := fmt.Sscan(strings.TrimSpace(string(out)), &failed); err != nil || failed < helmJobFailures {
+	if s := strings.TrimSpace(string(out)); s != "" {
+		if _, err := fmt.Sscan(s, &failed); err != nil {
+			return nil
+		}
+	}
+	var run helmRun
+	if out, err := kubectl(ctx, g, "-n", "kube-system", "get", "pods", "-l", helmJobPods, "-o", "json"); err == nil {
+		var pl helmPodList
+		if json.Unmarshal(out, &pl) == nil {
+			run = failedHelmRuns(pl)
+		}
+	}
+	failed += run.failures
+	if failed < helmJobFailures {
 		return nil
 	}
-	reason := "see `k3s kubectl -n kube-system logs job/helm-install-kivali`"
-	if logs, err := kubectl(ctx, g, "-n", "kube-system", "logs", "job/helm-install-kivali", "--tail=40"); err == nil {
-		var lines []string
-		capture := false
-		for _, l := range strings.Split(string(logs), "\n") {
-			if strings.HasPrefix(l, "Error:") {
-				capture = true
-				lines = lines[:0]
-			}
-			if capture && !strings.HasPrefix(l, "+") {
-				lines = append(lines, strings.TrimSpace(l))
-			}
+	// The failed run's own log: the current instance may be a fresh
+	// run that has not failed yet.
+	logArgs := []string{"-n", "kube-system", "logs", "job/" + helmJob, "--tail=40"}
+	if run.pod != "" {
+		logArgs = []string{"-n", "kube-system", "logs", run.pod, "-c", run.container, "--tail=40"}
+		if run.previous {
+			logArgs = append(logArgs, "--previous")
 		}
-		if len(lines) > 0 {
-			reason = strings.Join(lines, " ")
-		}
+	}
+	var reason string
+	if logs, err := kubectl(ctx, g, logArgs...); err == nil {
+		reason = helmError(logs)
+	}
+	if reason == "" {
+		reason = strings.TrimSpace(run.message)
+	}
+	if reason == "" {
+		reason = "see `k3s kubectl -n kube-system logs job/" + helmJob + "`"
 	}
 	return fmt.Errorf("the Helm controller failed to install the chart %d times: %s", failed, reason)
 }

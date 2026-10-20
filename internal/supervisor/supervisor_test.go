@@ -475,12 +475,15 @@ func TestInstallValuesClientAndEnv(t *testing.T) {
 
 func TestSetOverridesAndHelmFailure(t *testing.T) {
 	h := newHarness(t)
-	h.vm.helmFails = 3
+	h.vm.helmBroken["kivali-0.15.0.tgz"] = true
 	o := owner
 	o.Set = []string{"secrets.oauthRedirectURL=http://127.0.0.1:1/auth/callback", "networkPolicy.serverIngress.enabled=false"}
 	err := h.up(UpOptions{Install: o})
 	if err == nil || !strings.Contains(err.Error(), "failed to install the chart 3 times: Error: INSTALLATION FAILED: duplicate entries .env: duplicate key") {
 		t.Fatalf("up: %v", err)
+	}
+	if h.vm.helmRuns != helmJobFailures {
+		t.Fatalf("the install job's pod was looked at %d times; the third failure should end the wait", h.vm.helmRuns)
 	}
 	_, v := h.manifestValues()
 	if getPath(t, v, "secrets", "oauthRedirectURL") != "http://127.0.0.1:1/auth/callback" || getPath(t, v, "networkPolicy", "serverIngress", "enabled") != false {
@@ -600,6 +603,56 @@ func TestUpgradeRollsBackABrokenRelease(t *testing.T) {
 	}
 	if m, _ := h.sup.current(); m == nil {
 		t.Fatal("VM not running after the rollback")
+	}
+}
+
+// A release whose chart or values Helm refuses must roll back as soon as
+// the install job has failed a few times, with helm's own error. k3s's
+// install job restarts its container in place and never counts a failed
+// pod, so without this the update waited out the whole rollout timeout
+// (about 11 minutes with the rollback) and named only the chart label.
+func TestUpgradeRollsBackAChartHelmCannotInstall(t *testing.T) {
+	h := newHarness(t)
+	h.mustUp(UpOptions{Install: owner})
+	before := h.disk()[ManifestRel]
+	h.vm.helmBroken["kivali-0.16.0.tgz"] = true
+	feed := writeRelease(t, filepath.Join(t.TempDir(), "rel"), "0.16.0", "v0.16.0")
+	err := h.sup.Upgrade(context.Background(), UpgradeOptions{Feed: feed}, h.logf())
+	if err == nil || !strings.Contains(err.Error(), "still on 0.15.0") || !strings.Contains(err.Error(), "Error: INSTALLATION FAILED: duplicate entries .env: duplicate key") {
+		t.Fatalf("upgrade: %v", err)
+	}
+	// One look per poll: the third failure ends the wait, seconds in.
+	if h.vm.helmRuns != helmJobFailures {
+		t.Fatalf("the install job's pod was looked at %d times; the third failure should end the wait", h.vm.helmRuns)
+	}
+	if h.sup.State().Kivali != "0.15.0" || h.disk()[ManifestRel] != before {
+		t.Fatalf("not rolled back: %+v", h.sup.State())
+	}
+}
+
+// failedHelmRuns must count a failed run whichever state the container
+// is in, and never an earlier install's finished pod: a miscount either
+// lets a broken chart wait out the rollout timeout or rolls back an
+// update whose install got past a few transient failures.
+func TestFailedHelmRuns(t *testing.T) {
+	for _, c := range []struct {
+		name, pods string
+		failures   int
+		previous   bool
+	}{
+		{"waiting in CrashLoopBackOff after its third failure", `{"items":[{"metadata":{"name":"p"},"status":{"phase":"Running","containerStatuses":[{"name":"helm","restartCount":2,"state":{"waiting":{"reason":"CrashLoopBackOff"}},"lastState":{"terminated":{"exitCode":1}}}]}}]}`, 3, true},
+		{"terminated, not yet restarted", `{"items":[{"metadata":{"name":"p"},"status":{"phase":"Running","containerStatuses":[{"name":"helm","restartCount":2,"state":{"terminated":{"exitCode":1,"message":"boom"}},"lastState":{"terminated":{"exitCode":1}}}]}}]}`, 3, false},
+		{"running again after two failures", `{"items":[{"metadata":{"name":"p"},"status":{"phase":"Running","containerStatuses":[{"name":"helm","restartCount":2,"state":{"running":{}},"lastState":{"terminated":{"exitCode":1}}}]}}]}`, 2, true},
+		{"an earlier install's finished pod", `{"items":[{"metadata":{"name":"p"},"status":{"phase":"Succeeded","containerStatuses":[{"name":"helm","restartCount":5,"state":{"terminated":{"exitCode":0}}}]}}]}`, 0, false},
+	} {
+		var pl helmPodList
+		if err := json.Unmarshal([]byte(c.pods), &pl); err != nil {
+			t.Fatal(err)
+		}
+		r := failedHelmRuns(pl)
+		if r.failures != c.failures || (r.failures > 0 && r.previous != c.previous) {
+			t.Errorf("%s: %+v, want %d failures (previous %v)", c.name, r, c.failures, c.previous)
+		}
 	}
 }
 
