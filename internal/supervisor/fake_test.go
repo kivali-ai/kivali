@@ -133,6 +133,16 @@ type fakeBackend struct {
 	// applied is the chart file the deployment was last seen at; under
 	// mu.
 	applied string
+	// agentContainer, when set, is the JSON status of the agent
+	// container of the one agent pod `get pods -l app=kivali-agentpod`
+	// lists; agentPodImage, when set, is the image that pod runs, else
+	// the server image the manifest names. Unset, the container runs.
+	agentContainer, agentPodImage string
+	// readyzAgents, when set, answers GET /readyz/agents on look n
+	// (1-based, counted in readyzAgentsLooks): status code and body.
+	// Unset, the one agent pod is connected. Under mu.
+	readyzAgents      func(n int) (int, string)
+	readyzAgentsLooks int
 	// renderSuffix is appended to the server image the "chart" renders
 	// (a chart that ignores the image values).
 	renderSuffix string
@@ -757,6 +767,21 @@ func (g fakeGuest) kubectl(args []string, stdin io.Reader, stdout, stderr io.Wri
 			"status": map[string]any{"observedGeneration": gen, "replicas": 1, "updatedReplicas": 1, "readyReplicas": ready, "availableReplicas": ready},
 		}
 		return 0, json.NewEncoder(stdout).Encode(d)
+	case strings.Contains(joined, "get pods -l app=kivali-agentpod"):
+		image := g.m.vm.agentPodImage
+		if image == "" {
+			manifest, _ := g.file(ManifestRel)
+			_, vals, _ := ParseManifest([]byte(manifest))
+			if im, ok := vals["image"].(map[string]any); ok {
+				image = fmt.Sprintf("%s:%s", im["repository"], im["tag"])
+			}
+		}
+		status := g.m.vm.agentContainer
+		if status == "" {
+			status = `{"name":"agent","restartCount":0,"state":{"running":{}}}`
+		}
+		_, _ = fmt.Fprintf(stdout, `{"items":[{"metadata":{"name":"agentpod-chief-of-staff"},"spec":{"containers":[{"name":"agent","image":%q},{"name":"agent-shell","image":"x"}]},"status":{"containerStatuses":[%s]}}]}`, image, status)
+		return 0, nil
 	case strings.Contains(joined, "get pods -l app=kivali"):
 		manifest, _ := g.file(ManifestRel)
 		_, vals, _ := ParseManifest([]byte(manifest))
@@ -783,13 +808,28 @@ func (g fakeGuest) kubectl(args []string, stdin io.Reader, stdout, stderr io.Wri
 	return 1, nil
 }
 
-type okReadyz struct{}
+// okReadyz is the server through the forward: /readyz answers 200, and
+// /readyz/agents as the backend's readyzAgents says.
+type okReadyz struct{ vm *fakeBackend }
 
-func (okReadyz) RoundTrip(r *http.Request) (*http.Response, error) {
-	if r.URL.Path != "/readyz" {
-		return &http.Response{StatusCode: 404, Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
+func (o okReadyz) RoundTrip(r *http.Request) (*http.Response, error) {
+	reply := func(code int, body string) (*http.Response, error) {
+		return &http.Response{StatusCode: code, Status: fmt.Sprintf("%d %s", code, http.StatusText(code)), Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
 	}
-	return &http.Response{StatusCode: 200, Status: "200 OK", Body: io.NopCloser(strings.NewReader("ok")), Request: r}, nil
+	switch r.URL.Path {
+	case "/readyz":
+		return reply(200, "ok")
+	case "/readyz/agents":
+		o.vm.mu.Lock()
+		o.vm.readyzAgentsLooks++
+		n, answer := o.vm.readyzAgentsLooks, o.vm.readyzAgents
+		o.vm.mu.Unlock()
+		if answer == nil {
+			return reply(200, `{"agent_pods":1,"connected":1}`)
+		}
+		return reply(answer(n))
+	}
+	return reply(404, "")
 }
 
 // harness is one config directory with the fakes around a Supervisor.
@@ -941,7 +981,7 @@ func (h *harness) restart() {
 		Host:      testHost{Host: host.Default(), h: h},
 		GuestFor:  func(m Machine) Guest { return fakeGuest{m.(*fakeMachine)} },
 		Clock:     h.clock,
-		HTTP:      &http.Client{Transport: okReadyz{}},
+		HTTP:      &http.Client{Transport: okReadyz{h.vm}},
 		Version:   "0.15.0",
 		Models:    testModels,
 		terminalsChanged: func(n int) {

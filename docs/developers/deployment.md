@@ -226,7 +226,9 @@ rejected loudly, because VERSION would otherwise silently fall back to
 verifies the release's chart and image bundle, imports the images,
 deletes the agent pods, stops the VM cleanly, snapshots the data disk,
 boots, rewrites the HelmChart to the new chart and image tags, and waits
-for the rollout and `/readyz`. A failure rolls back to the snapshot. The
+for the rollout, `/readyz`, and every agent pod's runtime to be running
+on the new release and connected to the server (`/readyz/agents`). A
+failure rolls back to the snapshot. The
 journal and its recovery rules are in [supervisor.md](supervisor.md),
 "Upgrade journal".
 
