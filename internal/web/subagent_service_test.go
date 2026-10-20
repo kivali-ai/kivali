@@ -351,12 +351,12 @@ func TestSubagentServiceBuildsOverlayAndPersistsArtifacts(t *testing.T) {
 	}
 }
 
-// TestDeriveCurrentActivityFromTranscript locks in the activity-string
+// TestSubagentActivityFromTranscript locks in the activity-string
 // derivation so the next refactor of the chat.jsonl shape catches if
 // the watcher silently regresses to "running…" forever (which is what
 // happened the first time we shipped — the watcher polled the wrong
 // path and there was no test to catch it).
-func TestDeriveCurrentActivityFromTranscript(t *testing.T) {
+func TestSubagentActivityFromTranscript(t *testing.T) {
 	dir := t.TempDir()
 	chatPath := filepath.Join(dir, "chat.jsonl")
 	write := func(msgs []store.ChatMessage) {
@@ -375,11 +375,11 @@ func TestDeriveCurrentActivityFromTranscript(t *testing.T) {
 	}
 
 	// Empty / missing file → "".
-	if got := deriveCurrentActivity(filepath.Join(dir, "missing.jsonl")); got != "" {
+	if got := newSubagentActivity(filepath.Join(dir, "missing.jsonl")).current(); got != "" {
 		t.Errorf("missing file: got %q, want empty", got)
 	}
 	write(nil)
-	if got := deriveCurrentActivity(chatPath); got != "" {
+	if got := newSubagentActivity(chatPath).current(); got != "" {
 		t.Errorf("empty: got %q", got)
 	}
 
@@ -388,7 +388,7 @@ func TestDeriveCurrentActivityFromTranscript(t *testing.T) {
 		{Role: store.RoleReceived, Kind: "direct_chat", Content: "go", TS: time.Now()},
 		{Role: store.RoleSent, Kind: "tool_use", ToolUseID: "u1", ToolName: "run_shell", TS: time.Now()},
 	})
-	if got := deriveCurrentActivity(chatPath); got != "running run_shell" {
+	if got := newSubagentActivity(chatPath).current(); got != "running run_shell" {
 		t.Errorf("in-flight tool_use: got %q, want %q", got, "running run_shell")
 	}
 
@@ -398,7 +398,7 @@ func TestDeriveCurrentActivityFromTranscript(t *testing.T) {
 		{Role: store.RoleSent, Kind: "tool_use", ToolUseID: "u1", ToolName: "run_shell", TS: time.Now()},
 		{Role: store.RoleReceived, Kind: "tool_result", ToolUseID: "u1", Content: "ok", TS: time.Now()},
 	})
-	if got := deriveCurrentActivity(chatPath); got != "thinking" {
+	if got := newSubagentActivity(chatPath).current(); got != "thinking" {
 		t.Errorf("post-tool_result: got %q, want thinking", got)
 	}
 
@@ -406,7 +406,7 @@ func TestDeriveCurrentActivityFromTranscript(t *testing.T) {
 	write([]store.ChatMessage{
 		{Role: store.RoleReceived, Kind: "tool_result", ToolUseID: "u1", Content: "ok", TS: time.Now()},
 	})
-	if got := deriveCurrentActivity(chatPath); got != "thinking" {
+	if got := newSubagentActivity(chatPath).current(); got != "thinking" {
 		t.Errorf("tool_result tail: got %q, want thinking", got)
 	}
 
@@ -414,7 +414,7 @@ func TestDeriveCurrentActivityFromTranscript(t *testing.T) {
 	write([]store.ChatMessage{
 		{Role: store.RoleSent, Kind: "direct_chat", Content: "answer", TS: time.Now()},
 	})
-	if got := deriveCurrentActivity(chatPath); got != "responding" {
+	if got := newSubagentActivity(chatPath).current(); got != "responding" {
 		t.Errorf("final text: got %q, want responding", got)
 	}
 }
