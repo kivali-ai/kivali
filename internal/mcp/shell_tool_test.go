@@ -149,6 +149,28 @@ func TestShellToolRendersTheNotice(t *testing.T) {
 	}
 }
 
+// A proxy refusal in the output gets the allow-list notice, after the
+// shell's own notice, from both the agent's and a subagent's run_shell.
+func TestShellToolNamesAProxyRefusal(t *testing.T) {
+	exec := &fakeShellExec{res: &agent.ShellResult{
+		ExitCode: 56,
+		Stderr:   "curl: (56) CONNECT tunnel failed, response 403\n",
+		Notice:   "shell notice",
+	}}
+	for name, tool := range map[string]*Tool{
+		"agent":    ShellTool(ShellToolConfig{Exec: exec, From: "alice"}),
+		"subagent": func() *Tool { t := SubagentShellTool(exec); return &t }(),
+	} {
+		res, err := tool.Handler(context.Background(), json.RawMessage(`{"command":"curl https://python.org"}`))
+		if err != nil {
+			t.Fatalf("%s: Handler: %v", name, err)
+		}
+		if want := "--- notice ---\nshell notice\n" + agent.ShellProxyRefusalNotice + "\n"; !strings.Contains(res.Content[0], want) {
+			t.Errorf("%s: rendered body lacks %q:\n%s", name, want, res.Content[0])
+		}
+	}
+}
+
 // TestSubagentShellToolForwards mirrors TestShellToolForwardsCommandAndRenders
 // for the subagent variant, which takes the same schema.
 func TestSubagentShellToolForwards(t *testing.T) {

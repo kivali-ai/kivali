@@ -132,6 +132,33 @@ func shellToolkitText(sw ShellSoftware) string {
 // an agent that has propose_software_install.
 const ShellSoftwareText = `SOFTWARE. System software (Debian packages) is installed by the owner; apt-get does not work in this shell. To get a package you need, call propose_software_install with the Debian package names, and say in plain words what the software is for. Once the owner approves, your shell restarts and installs it, and your commands wait until the installation finishes. For Python libraries use "pip install --user <pkg>" or a venv instead.`
 
+// ShellNetworkText is run_shell's paragraph on reaching the internet.
+const ShellNetworkText = `NETWORK. Commands reach only the hosts on the team's allow list, which the owner edits and you cannot read; the proxy refuses any other host with 403, before it reaches the site. WebFetch and WebSearch are not limited to the list.`
+
+// shellProxyRefusals are what common clients print when the proxy
+// refuses an HTTPS host: curl and git (two libcurl wordings) and
+// Python. None of them shows the proxy's own message.
+var shellProxyRefusals = []string{
+	"CONNECT tunnel failed, response 403",
+	"Received HTTP code 403 from proxy after CONNECT",
+	"Tunnel connection failed: 403",
+}
+
+// ShellProxyRefusalNotice is the shell's notice for a command whose
+// output shows the proxy refusing a host.
+const ShellProxyRefusalNotice = "A 403 from the proxy in this output is the team's allow list refusing the host, not the site: commands reach only the hosts on that list, which the owner edits. WebFetch and WebSearch are not limited to it."
+
+// ShellNetworkNotice returns ShellProxyRefusalNotice when stdout or
+// stderr shows the proxy refusing a host, and "" otherwise.
+func ShellNetworkNotice(stdout, stderr string) string {
+	for _, s := range shellProxyRefusals {
+		if strings.Contains(stderr, s) || strings.Contains(stdout, s) {
+			return ShellProxyRefusalNotice
+		}
+	}
+	return ""
+}
+
 // ShellToolWithPackages is ShellTool with the toolkit paragraph naming
 // the software sw reports. With no package list it gets the fallback
 // sentence.
@@ -151,6 +178,8 @@ PERSISTENT ENVIRONMENT. Each run_shell call is a fresh bash subprocess, but $HOM
 - Cwd does NOT persist between calls — each command starts at the cwd you pass (or /files/). If you want a series of commands in one place, prepend "cd <path> && " to each, or chain inside one command with && / newlines.
 
 ` + ShellSoftwareText + `
+
+` + ShellNetworkText + `
 
 Use this for: running tests, experimenting with libraries, document conversion, image processing, processing data, prototyping scripts, anything that wants a shell. Chain steps inside a single "command" with && / ; / newlines. stdout and stderr are each capped at 256KB with a truncation marker. Both are persisted in your chat history as a tool_result and replay on every subsequent turn until your chat rotates — treat each large output like spending tokens. For commands that produce a lot, redirect to a file in /files/artifacts/private/ and read just the section you need (grep -n, head, sed -n 'A,Bp') on a subsequent call. Default timeout is 60 seconds; raise it with "timeout_seconds" up to 600.
 

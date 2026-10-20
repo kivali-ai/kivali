@@ -64,10 +64,18 @@ func ShellTool(cfg ShellToolConfig) *Tool {
 }
 
 // renderShellResult formats a ShellResult as a compact tool_result
-// body: exit/timing, the shell's notice when it has one, and capped
+// body: exit/timing, the shell's notice when it has one (with a line
+// saying a proxy refusal in the output is the allow list), and capped
 // stdout/stderr. Files the command wrote are on disk under /files/,
 // where any follow-up tool reads them.
 func renderShellResult(r *agent.ShellResult) string {
+	notice := r.Notice
+	if n := agent.ShellNetworkNotice(r.Stdout, r.Stderr); n != "" {
+		if notice != "" {
+			notice += "\n"
+		}
+		notice += n
+	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "exit_code=%d duration_ms=%d", r.ExitCode, r.DurationMs)
 	if r.TimedOut {
@@ -77,9 +85,9 @@ func renderShellResult(r *agent.ShellResult) string {
 		fmt.Fprintf(&b, " err=%q", r.Err)
 	}
 	b.WriteByte('\n')
-	if r.Notice != "" {
+	if notice != "" {
 		b.WriteString("--- notice ---\n")
-		b.WriteString(r.Notice)
+		b.WriteString(notice)
 		b.WriteByte('\n')
 	}
 	if r.Stdout != "" {
