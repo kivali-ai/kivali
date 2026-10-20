@@ -1092,7 +1092,7 @@ func (s *FSStore) ReadChatHistory(slug string) ([]ChatMessage, error) {
 	}
 	defer func() { _ = f.Close() }()
 	var out []ChatMessage
-	err = jsonlLines(f, 8*1024*1024, func(line []byte) error {
+	err = jsonlLines(f, chatHistoryMaxLine, func(line []byte) error {
 		var m ChatMessage
 		if err := json.Unmarshal(line, &m); err != nil {
 			return fmt.Errorf("chat.jsonl %s: %w", slug, err)
