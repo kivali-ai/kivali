@@ -94,6 +94,21 @@ func (s *Server) ceoInboxRead() ([]store.ChatMessage, map[string]store.Message, 
 	return rows, msgs, nil
 }
 
+// forgetHomeCaches drops what Home's inbox and history keep, for a
+// restore: it writes the CEO's chat over in place, and the files it puts
+// back are not the ones the kept rows, heads and messages were read
+// from.
+func (s *Server) forgetHomeCaches() {
+	c := &s.ceoInboxCache
+	c.mu.Lock()
+	c.tail, c.rows, c.msgs = nil, nil, nil
+	c.mu.Unlock()
+	h := &s.historyCache
+	h.mu.Lock()
+	h.heads = nil
+	h.mu.Unlock()
+}
+
 // historyCache keeps, for every message on disk, the little the
 // history's thread order needs: what it replies to and when it was
 // sent. A message's head is read once; a message moved away drops out
