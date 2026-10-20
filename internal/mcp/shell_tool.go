@@ -55,7 +55,7 @@ func ShellTool(cfg ShellToolConfig) *Tool {
 				return &ToolResult{IsError: true, Content: []string{"exec: " + err.Error()}}, nil
 			}
 			return &ToolResult{
-				Content: []string{renderShellResult(res)},
+				Content: []string{renderShellResult(res, agent.ShellProxyRefusalNotice)},
 				IsError: res.ExitCode != 0 || res.TimedOut || res.Err != "",
 			}, nil
 		},
@@ -64,17 +64,17 @@ func ShellTool(cfg ShellToolConfig) *Tool {
 }
 
 // renderShellResult formats a ShellResult as a compact tool_result
-// body: exit/timing, the shell's notice when it has one (with a line
-// saying a proxy refusal in the output is the allow list), and capped
-// stdout/stderr. Files the command wrote are on disk under /files/,
-// where any follow-up tool reads them.
-func renderShellResult(r *agent.ShellResult) string {
+// body: exit/timing, the shell's notice when it has one (with refused,
+// the caller's line on a proxy refusal, when the output shows one), and
+// capped stdout/stderr. Files the command wrote are on disk under
+// /files/, where any follow-up tool reads them.
+func renderShellResult(r *agent.ShellResult, refused string) string {
 	notice := r.Notice
-	if n := agent.ShellNetworkNotice(r.Stdout, r.Stderr); n != "" {
+	if agent.ShellProxyRefused(r.Stdout, r.Stderr) {
 		if notice != "" {
 			notice += "\n"
 		}
-		notice += n
+		notice += refused
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "exit_code=%d duration_ms=%d", r.ExitCode, r.DurationMs)
@@ -112,11 +112,12 @@ func renderShellResult(r *agent.ShellResult) string {
 const subagentShellSoftwareText = `SOFTWARE. System software (Debian packages) is installed by the owner; apt-get does not work in this shell. If you need a package that is not installed, say so to your caller, naming the Debian package and what it is for. For Python libraries use "pip install --user <pkg>" or a venv instead.`
 
 // subagentShellDescription is run_shell's description with the
-// paragraphs that name tools a subagent does not have (publish_*,
-// share_file, assignments, propose_software_install) swapped for ones
-// that fit it.
+// paragraphs that name tools or people a subagent cannot reach
+// (publish_*, share_file, assignments, propose_software_install, the
+// owner) swapped for ones that fit it.
 func subagentShellDescription(d string) string {
 	d = strings.Replace(d, agent.ShellSoftwareText, subagentShellSoftwareText, 1)
+	d = strings.Replace(d, agent.ShellNetworkText, agent.SubagentShellNetworkText, 1)
 	d = strings.Replace(d, agent.ShellHandOffText, "To hand a file the command produced to your caller, write it under /files/artifacts/private/. No need to base64-encode or content-address it yourself.", 1)
 	return strings.Replace(d, agent.ShellClosingText, "You see the tool_result and can iterate — a typical flow is: run → inspect output → fix something → run again.", 1)
 }
@@ -152,7 +153,7 @@ func SubagentShellTool(exec agent.ShellExecutor) Tool {
 				return &ToolResult{IsError: true, Content: []string{"exec: " + err.Error()}}, nil
 			}
 			return &ToolResult{
-				Content: []string{renderShellResult(res)},
+				Content: []string{renderShellResult(res, agent.SubagentShellProxyRefusalNotice)},
 				IsError: res.ExitCode != 0 || res.TimedOut || res.Err != "",
 			}, nil
 		},

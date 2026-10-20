@@ -261,12 +261,11 @@ func TestAllowlistChecksBeforeResolving(t *testing.T) {
 	if r2.StatusCode != 403 {
 		t.Fatalf("http status = %d", r2.StatusCode)
 	}
-	// The shell reads the refusal: it names the host, the list and
-	// the tools the list does not hold.
-	for _, want := range []string{"secret-data.attacker.test is not on the team's allow list", "WebFetch"} {
-		if !strings.Contains(body, want) {
-			t.Errorf("refusal %q lacks %q", body, want)
-		}
+	// The shell reads the refusal: it names the host and the list and
+	// no other way out. run_shell's notice matches its wording
+	// (internal/agent's ShellProxyRefusals).
+	if want := "secret-data.attacker.test is not on the team's allow list.\n"; body != want {
+		t.Errorf("refusal = %q, want %q", body, want)
 	}
 	if asked := h.res.asked(); len(asked) != 0 {
 		t.Fatalf("resolved %v", asked)
