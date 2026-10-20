@@ -32,23 +32,34 @@ type UpgradeOptions struct {
 // (snapshotCost).
 const minFreeBytes = 2 << 30
 
+// How a refusal for room ends: nothingChanged where it comes before
+// anything was written, stillRunning once an upgrade has imported its
+// images (the data disk holds them, unused, and the team runs on as it
+// was).
+const (
+	nothingChanged = "nothing was changed"
+	stillRunning   = "the team is still running as before"
+)
+
 // upgradeRoom refuses an upgrade the host has no room for: beside the
 // data disk, minFreeBytes and what the snapshot costs; in downloads,
 // pending, the bytes still to download. On one volume the two add up.
 // The preflight asks before anything is downloaded, and the upgrade asks
 // again once the images are imported (which grows the data disk), while
-// the org still runs.
-func (s *Supervisor) upgradeRoom(pending uint64, logf Logf) error {
+// the org still runs. outcome ends the refusal: what became of the team
+// (nothingChanged before the download; after the import the images are
+// in, but the team still runs on its version).
+func (s *Supervisor) upgradeRoom(pending uint64, outcome string, logf Logf) error {
 	const what, then = "updating this team", "update it again"
 	near := minFreeBytes + s.snapshotCost(logf)
 	downloads := filepath.Join(s.o.ConfigDir, "downloads")
 	if filepath.VolumeName(s.dataDir()) == filepath.VolumeName(downloads) {
-		return s.needRoom(s.dataDir(), near+pending, what, then)
+		return s.needRoom(s.dataDir(), near+pending, what, then, outcome)
 	}
-	if err := s.needRoom(s.dataDir(), near, what, then); err != nil {
+	if err := s.needRoom(s.dataDir(), near, what, then, outcome); err != nil {
 		return err
 	}
-	return s.needRoom(downloads, pending, what, then)
+	return s.needRoom(downloads, pending, what, then, outcome)
 }
 
 // snapshotCost is the host space the upgrade's snapshot takes: the data
@@ -129,7 +140,7 @@ func (s *Supervisor) Upgrade(ctx context.Context, o UpgradeOptions, logf Logf) e
 	if err := deploymentState(ctx, g, "", ""); err != nil {
 		return fmt.Errorf("preflight: the org is not healthy: %w", err)
 	}
-	if err := s.upgradeRoom(uint64(rel.Chart.Size+rel.Images[s.platform()].Size), logf); err != nil {
+	if err := s.upgradeRoom(uint64(rel.Chart.Size+rel.Images[s.platform()].Size), nothingChanged, logf); err != nil {
 		return err
 	}
 
@@ -138,7 +149,7 @@ func (s *Supervisor) Upgrade(ctx context.Context, o UpgradeOptions, logf Logf) e
 	if err != nil {
 		return err
 	}
-	if err := s.upgradeRoom(0, logf); err != nil {
+	if err := s.upgradeRoom(0, stillRunning, logf); err != nil {
 		s.dropDownloads(sg, logf)
 		return err
 	}
