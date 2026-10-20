@@ -27,6 +27,18 @@ const MaxSubagentDepth = 2
 // holds one too.
 const SubagentMaxNestedFanout = 3
 
+// SubagentMaxBatch caps how many tasks a durable agent may dispatch in
+// one call. Kept here, beside the upload limits, because the control
+// client sizes the dispatch call's timeout from all three.
+const SubagentMaxBatch = 5
+
+// WebTaskMaxFiles is how many files one web task may name to upload.
+const WebTaskMaxFiles = 10
+
+// WebUploadMaxBytes bounds one file a web task may upload to a page.
+// Core reads and hashes each named file at dispatch.
+const WebUploadMaxBytes = 50 << 20
+
 // CanDelegate reports whether a subagent at this depth is allowed to
 // dispatch subagents of its own.
 func CanDelegate(depth int) bool { return depth < MaxSubagentDepth }

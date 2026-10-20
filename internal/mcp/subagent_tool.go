@@ -5,14 +5,16 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/kivali-ai/kivali/internal/agentpod"
 	"github.com/kivali-ai/kivali/internal/provider"
 )
 
 // SubagentMaxBatch is the cap on tasks per single batched subagent call.
 // Surfaced in the tool description so the model doesn't learn it from
 // rejection. Five is a guess — measure and adjust if real workloads
-// pile up against the ceiling.
-const SubagentMaxBatch = 5
+// pile up against the ceiling (agentpod.SubagentMaxBatch, which the
+// control client's dispatch timeout is sized from).
+const SubagentMaxBatch = agentpod.SubagentMaxBatch
 
 // SubagentToolName is the MCP-side name, and the bare name core sees
 // on every event: how a provider spells it on its own wire is the
