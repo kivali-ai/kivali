@@ -348,9 +348,12 @@ func NewServer(s *Server) (*Server, error) {
 		if s.Browsers != nil {
 			// The registry reports to the service: a browser's state,
 			// for the task views, and a task's last window gone, which
-			// resumes a task waiting for a person.
+			// resumes a task waiting for a person, and a browser
+			// lost under a task waiting for a person, which opens it
+			// again.
 			s.Browsers.OnState = s.SubagentService.browserStateChanged
 			s.Browsers.OnWindowsClosed = s.SubagentService.windowsClosed
+			s.Browsers.OnLost = s.SubagentService.browserLost
 		}
 	}
 	s.orgHub = newOrgHub()

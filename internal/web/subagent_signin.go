@@ -25,6 +25,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"sort"
 	"strings"
 	"time"
@@ -49,8 +50,11 @@ const (
 	signInResumePodWait = 3 * time.Minute
 	signInResumePodPoll = 2 * time.Second
 	// signInResumeLine is the one user message a resumed run gets: core's
-	// words, never the person's or the page's.
-	signInResumeLine = "The person has finished in the browser window. Continue your task from the page as it is now, with your tabs as you left them. If the page still needs a sign-in, call web_wait_for_sign_in again; otherwise do not call it."
+	// words, never the person's or the page's. signInReopenedLine
+	// replaces it when the task's browser was lost during the wait and
+	// opened again at the site's root page, %s.
+	signInResumeLine   = "The person has finished in the browser window. Continue your task from the page as it is now, with your tabs as you left them. If the page still needs a sign-in, call web_wait_for_sign_in again; otherwise do not call it."
+	signInReopenedLine = "The person has finished in the browser window. The browser closed while you waited and was opened again, so your earlier tabs are gone: the person was given a new tab at %s. Continue your task from the page as it is now. If the page still needs a sign-in, call web_wait_for_sign_in again; otherwise do not call it."
 	// signInPageTextMax bounds a page's title in core's text about it.
 	signInPageTextMax = 120
 )
@@ -123,6 +127,10 @@ func (s *SubagentService) waitForSignIn(j subagentJob, args json.RawMessage) age
 		}
 		entered = true
 		job.waits++
+		job.reopens = 0
+		job.tabs = tabsKept
+		job.lost = make(chan struct{})
+		job.lostDone = false
 		job.State = subagentJobWaiting
 		job.WaitReason = a.Reason
 		job.WaitSince = s.clk().Now()
@@ -139,7 +147,7 @@ func (s *SubagentService) waitForSignIn(j subagentJob, args json.RawMessage) age
 	}
 	s.enteredWait(j, a.Reason)
 	go s.endRunForWait(j.ID)
-	return agentpod.WebCommandResponse{Text: fmt.Sprintf("A person is being asked to handle %s in a window on your tab. Your turn ends here: do nothing more. You will be resumed, with your tabs as they are, once they say they are done or close the window. A task may ask for a person at most %d times.", webSignInPhrase(a.Reason), signInWaitCap)}
+	return agentpod.WebCommandResponse{Text: fmt.Sprintf("A person is being asked to handle %s in a window on your tab. Your turn ends here: do nothing more. You will be resumed once they say they are done or close the window, with your tabs as they are; if the browser closes meanwhile, the message that resumes you says what became of them. A task may ask for a person at most %d times.", webSignInPhrase(a.Reason), signInWaitCap)}
 }
 
 // enteredWait tells everything that shows a task that it waits for a
@@ -189,24 +197,116 @@ const (
 	signInResumed signInOutcome = iota
 	signInTimedOut
 	signInCancelled
+	// signInBrowserLost: the task's browser ended under the wait.
+	signInBrowserLost
+	// signInBrowserReopened: core opened it again; the wait goes on.
+	signInBrowserReopened
+)
+
+// waitTabs is what became of a waiting task's tabs.
+type waitTabs int
+
+const (
+	// tabsKept: the browser ran through the wait, tabs and all.
+	tabsKept waitTabs = iota
+	// tabsReopened: the browser was lost and opened again at the
+	// site's root page.
+	tabsReopened
+	// tabsGone: the browser was lost and is not back.
+	tabsGone
 )
 
 // awaitSignIn blocks until the person is done (they said so, or the
-// task's last window closed), the wait limit passes, or the job is cancelled. The wait
-// timer runs on: a wait a resume could not finish (awaitPod) is entered
-// again, and the limit still counts from the first call.
+// task's last window closed), the wait limit passes, the task's browser
+// is lost, or the job is cancelled. The wait timer runs on: a wait a
+// resume could not finish (awaitPod) is entered again, and the limit
+// still counts from the first call.
 func (s *SubagentService) awaitSignIn(ctx context.Context, job *subagentJob) signInOutcome {
 	s.jobsMu.Lock()
-	resumed, t := job.resumed, job.waitTimer
+	resumed, lost, t := job.resumed, job.lost, job.waitTimer
 	s.jobsMu.Unlock()
 	select {
 	case <-resumed:
 		return signInResumed
+	case <-lost:
+		return signInBrowserLost
 	case <-t.C():
 		return signInTimedOut
 	case <-ctx.Done():
 		return signInCancelled
 	}
+}
+
+// browserLost is the registry's report that a site session's running
+// browser ended without being asked to. Each task waiting for a person
+// on it has lost its tabs, and its wait hears of it, so its browser is
+// opened again (reopenForWait). Other tasks are unmoved: a running
+// task's next command starts a browser of its own accord.
+func (s *SubagentService) browserLost(slug, session string) {
+	s.jobsMu.Lock()
+	defer s.jobsMu.Unlock()
+	for _, j := range s.jobs {
+		if j.Parent != slug || j.Kind != agentpod.SubagentKindWeb || j.Session != session || j.State != subagentJobWaiting {
+			continue
+		}
+		j.tabs = tabsGone
+		if j.lost != nil && !j.lostDone {
+			j.lostDone = true
+			close(j.lost)
+		}
+	}
+}
+
+// reopenForWait gives a waiting task whose browser was lost a browser
+// again, with a tab at its site's root page, so the person can carry on
+// in the window; the task's turn is over, so nothing else would start
+// one, and a window would open an empty browser. A wait whose browser
+// is back does not count toward signInWaitCap: the person lost their
+// work there, and the task may need to ask again. Only one browser is
+// opened per wait.
+func (s *SubagentService) reopenForWait(ctx context.Context, job *subagentJob) signInOutcome {
+	var j subagentJob
+	s.updateJob(job.ID, func(job *subagentJob) {
+		// A fresh signal for the next loss.
+		job.lost = make(chan struct{})
+		job.lostDone = false
+		j = *job
+	})
+	if s.Browsers == nil || j.reopens > 0 {
+		log.Printf("subagent %s/%s: the browser was lost again during the wait", j.Parent, j.ID)
+		return signInBrowserReopened
+	}
+	if err := s.Browsers.Reopen(ctx, j.Parent, j.Session, j.ID); err != nil {
+		if ctx.Err() != nil {
+			return signInCancelled
+		}
+		log.Printf("subagent %s/%s: reopen the browser lost during the wait: %v", j.Parent, j.ID, err)
+		return signInBrowserReopened
+	}
+	s.updateJob(j.ID, func(job *subagentJob) {
+		job.reopens++
+		job.tabs = tabsReopened
+		if job.waits > 0 {
+			job.waits--
+		}
+	})
+	// The new browser's windows take input, and its group is unlocked
+	// while one is on it, as for the browser the wait began on.
+	s.Browsers.BroadcastState(j.Parent, j.Session, j.ID, true)
+	return signInBrowserReopened
+}
+
+// resumeLine is the line a task's resumed run gets, for what became of
+// its tabs during the wait, which it then forgets.
+func (s *SubagentService) resumeLine(id string) string {
+	line := signInResumeLine
+	s.updateJob(id, func(j *subagentJob) {
+		if j.tabs == tabsReopened {
+			line = fmt.Sprintf(signInReopenedLine, "https://"+j.Site+"/")
+		}
+		j.tabs = tabsKept
+	})
+	return line
 }
 
 // awaitPod blocks until the parent's agent pod is connected, so a
@@ -243,6 +343,8 @@ func (s *SubagentService) reenterWait(id string) {
 		job.State = subagentJobWaiting
 		job.resumed = make(chan struct{})
 		job.resumeDone = false
+		job.lost = make(chan struct{})
+		job.lostDone = false
 		j = *job
 	})
 	s.enteredWait(j, j.WaitReason)

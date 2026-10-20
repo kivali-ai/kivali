@@ -236,6 +236,15 @@ type subagentJob struct {
 	// signInWaitCap the next is refused and the task ends blocked.
 	waitTimer clock.Timer
 	waits     int
+	// lost is closed when the task's browser ends under it while it
+	// waits for a person (browserLost); lostDone says it has been (both
+	// under jobsMu). reopens counts the browsers core opened again for
+	// the current wait, and tabs says what became of the task's tabs,
+	// for the line its resumed run gets.
+	lost     chan struct{}
+	lostDone bool
+	reopens  int
+	tabs     waitTabs
 
 	// LockSite is the site a web task is held to for its whole run:
 	// its session's site, or for a task that names files its start
