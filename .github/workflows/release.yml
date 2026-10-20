@@ -269,8 +269,14 @@ jobs:
       # Builds the four images and saves them together, uncompressed:
       # dist/images/bundle-<arch>/kivali-images.tar. The bundle script
       # checks it lists all four references at the version.
+      - name: Disk before the images build
+        run: df -h /
+
       - name: make release-images-${{ matrix.arch }}
         run: make release-images-${{ matrix.arch }} VERSION="$TAG"
+
+      - name: Disk after the images build
+        run: df -h /
 
       # The images' Debian packages, for the release's SOURCES.md. The
       # bundle script left the images loaded.
@@ -291,6 +297,21 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
+      # What the rest of the job reads from the images build is the
+      # uncompressed bundle (the VM image bakes it, the compression
+      # reads it). The four per-image tars, the images loaded into
+      # Docker for the bundle and the package lists, and BuildKit's cache
+      # are finished with, and a hosted runner has little more disk free
+      # than the build needs: this keeps the VM build's copies of the
+      # bundle from running it out.
+      - name: Free the disk the images build used
+        run: |
+          rm -f dist/images/kivali-*-${{ matrix.arch }}.tar
+          docker image prune -af
+          docker buildx prune -af
+          df -h /
+          du -sh dist/images/bundle-${{ matrix.arch }}
+
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: chart
@@ -310,6 +331,9 @@ jobs:
           wait "$compress" || status=$?
           cat "$RUNNER_TEMP/compress.log"
           exit "$status"
+
+      - name: Disk after the VM image build
+        run: df -h /
 
       - name: Collect the VM image
         run: |
