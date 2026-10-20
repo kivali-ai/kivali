@@ -139,6 +139,25 @@ pub fn open_terminal(binary: &Path, dir: &Path) -> Result<(), String> {
 /// dark inks. The tray crate draws them 18 pt tall.
 pub const TRAY_ICONS: TrayIcons = tray_set!("tray");
 pub const TRAY_AREA: &str = "menu bar";
+pub const THIS_COMPUTER: &str = "this Mac";
+
+/// `kern.hv_support`: the Hypervisor framework, which
+/// Virtualization.framework runs on, can run a VM here. It is 0 when
+/// macOS itself runs in a virtual machine that offers none; unreadable
+/// counts as able.
+pub fn vm_support() -> super::VmSupport {
+    let mut v: libc::c_int = 0;
+    let mut len = std::mem::size_of::<libc::c_int>();
+    // SAFETY: sysctlbyname into a correctly sized int.
+    let r = unsafe {
+        libc::sysctlbyname(c"kern.hv_support".as_ptr(), &mut v as *mut libc::c_int as *mut libc::c_void, &mut len, std::ptr::null_mut(), 0)
+    };
+    if r == 0 && v == 0 {
+        super::VmSupport::InVm
+    } else {
+        super::VmSupport::Ready
+    }
+}
 /// The application menu (Kivali, File, Edit, View, Team, Window, Help)
 /// in the menu bar.
 pub const APP_MENU: bool = true;

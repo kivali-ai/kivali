@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"mime/multipart"
@@ -155,12 +156,16 @@ func (c cosSeed) stageLabels() []string {
 }
 
 // seedFailure is a seed that stopped at Stage. Status is what the form
-// handler answers with; Error() keeps the form's wording.
+// handler answers with; Error() keeps the form's wording. A failed
+// briefing call also carries the provider's failure kind
+// (CompleteResponse.Failure) and the label of the model it ran on.
 type seedFailure struct {
-	Stage  int
-	Status int
-	Msg    string
-	Err    error
+	Stage   int
+	Status  int
+	Msg     string
+	Err     error
+	Failure string
+	Model   string
 }
 
 func (f *seedFailure) Error() string {
@@ -188,8 +193,22 @@ func (s *Server) seedCoS(ctx context.Context, c cosSeed, stage func(int)) error 
 
 	stage(seedStageBrief)
 	resp, err := s.Claude.Complete(ctx, req)
+	// briefFailed carries the provider's account of a failed call: its
+	// text joins the error, so the log has it, and its kind picks the
+	// words the hiring panel shows.
+	briefFailed := func(msg string, err error) error {
+		f := &seedFailure{Stage: seedStageBrief, Status: http.StatusBadGateway, Msg: msg, Err: err,
+			Model: provider.Label(s.Provider, req.Model)}
+		if resp != nil {
+			f.Failure = resp.Failure
+			if resp.Error != "" {
+				f.Err = errors.Join(err, errors.New(resp.Error))
+			}
+		}
+		return f
+	}
 	if err != nil {
-		return &seedFailure{Stage: seedStageBrief, Status: http.StatusBadGateway, Msg: "seed call failed", Err: err}
+		return briefFailed("seed call failed", err)
 	}
 	// A reply that lands after the hire was cancelled (its deadline
 	// passed, or the form's request ended) is not used: the hire stops
@@ -199,7 +218,7 @@ func (s *Server) seedCoS(ctx context.Context, c cosSeed, stage func(int)) error 
 	}
 	memory := concatText(resp.Content)
 	if memory == "" {
-		return &seedFailure{Stage: seedStageBrief, Status: http.StatusBadGateway, Msg: "seed call produced no text"}
+		return briefFailed("seed call produced no text", nil)
 	}
 
 	stage(seedStageHire)

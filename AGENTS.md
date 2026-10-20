@@ -48,6 +48,17 @@ when it is not the version CI pins (`GOLANGCI_VERSION` in the Makefile).
 - **Agent-facing text states only what is.** The handbook, role templates
   and tool descriptions in `internal/seed/`, `internal/agent/` and
   `internal/mcp/` describe current behaviour. No history, no "there is no longer an X".
+- **Desktop parity.** Kivali Desktop supports macOS and Windows equally,
+  with no second-class platform. Every feature and every bug fix lands on
+  both in the same change. A bug found on one is checked for on the other,
+  along with its counterpart there (a Hyper-V check on Windows means a
+  hypervisor check on macOS). Platform-specific code is expected, behind
+  `desktop-app/src-tauri/src/platform/`; what a person can do and what they
+  see must match. A change that would make the functionality or the
+  experience differ between the platforms needs the maintainers' explicit
+  approval before it is built, and the answer is usually no. Wording that
+  names the computer goes through `platform::THIS_COMPUTER` and
+  `thisComputer()`, never a hand-written "Mac" or "PC".
 - **Company-agnostic.** Kivali ships knowing nothing about any company.
   Anything specific to a business arrives through the setup wizard and
   project files, never through code or seed text.

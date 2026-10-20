@@ -276,6 +276,27 @@ pub fn memory_free_mb(host_mb: u64, running_mb: u64) -> u64 {
 }
 
 /// "4 GB" for a memory size in MiB.
+/// `s` with its first letter upper-cased, to start a sentence with
+/// platform wording ("This PC").
+pub fn capitalized(s: &str) -> String {
+    let mut c = s.chars();
+    c.next().map(|f| f.to_uppercase().chain(c).collect()).unwrap_or_default()
+}
+
+/// Why a team here can't start while this computer can't run its VM, in
+/// one sentence; None when it can. The pages add the steps
+/// (logic/vmhelp.ts).
+pub fn vm_reason(v: crate::platform::VmSupport) -> Option<String> {
+    use crate::platform::VmSupport::*;
+    match v {
+        Ready => None,
+        HypervOff => Some("Hyper-V is turned off on this PC.".into()),
+        WindowsHome => Some("Teams on this PC run in Hyper-V, which Windows Home doesn't include.".into()),
+        VirtualizationOff => Some("Hyper-V can't run because virtualization is turned off on this PC.".into()),
+        InVm => Some("This Mac can't run virtual machines.".into()),
+    }
+}
+
 pub fn gb(mb: u64) -> String {
     let g = mb as f64 / 1024.0;
     if (g - g.round()).abs() < 0.05 {
@@ -288,6 +309,23 @@ pub fn gb(mb: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn capitalized_starts_a_sentence() {
+        assert_eq!(capitalized("this PC"), "This PC");
+        assert_eq!(capitalized("this Mac"), "This Mac");
+        assert_eq!(capitalized(""), "");
+    }
+
+    #[test]
+    fn vm_reasons_are_sentences_and_ready_has_none() {
+        use crate::platform::VmSupport::*;
+        assert_eq!(vm_reason(Ready), None);
+        for v in [HypervOff, WindowsHome, VirtualizationOff, InVm] {
+            let r = vm_reason(v).unwrap();
+            assert!(r.ends_with('.') && r.chars().next().unwrap().is_uppercase(), "{r}");
+        }
+    }
 
     fn st(s: OrgState) -> Status {
         Status { state: s, port: None, kivali: None, message: None }

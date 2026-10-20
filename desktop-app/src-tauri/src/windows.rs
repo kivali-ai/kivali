@@ -1027,10 +1027,16 @@ fn to_dock(app: &AppHandle) {
     let _ = app;
 }
 
-/// Opens a team's window, or brings it to the front.
+/// Opens a team's window, or brings it to the front. A team whose setup
+/// has not finished opens setup instead, at its Claude sign-in: its own
+/// window would show the team with no Claude to run its agents.
 pub fn show_team(app: &AppHandle, id: &str) {
     let sh = app.state::<Shell>();
     let Some(t) = sh.team(id) else { return };
+    if shell::setup_unfinished(&sh, id) {
+        show_setup(app, &format!("new/{id}"));
+        return;
+    }
     {
         let mut teams = sh.teams.lock().unwrap();
         if teams.get(id).is_some() && teams.last_open.as_deref() != Some(id) {
@@ -1428,6 +1434,9 @@ pub fn toggle_fullscreen(app: &AppHandle) {
 /// Opens a path of a team's web app in its window (Other devices' "Open Team page").
 pub fn open_team_path(app: &AppHandle, id: &str, path: &str) {
     show_team(app, id);
+    if shell::setup_unfinished(&app.state::<Shell>(), id) {
+        return;
+    }
     let Some(t) = app.state::<Shell>().team(id) else { return };
     let Some(origin) = t.origin() else { return };
     if !path.starts_with('/') || path.starts_with("//") {

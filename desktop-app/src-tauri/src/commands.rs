@@ -293,7 +293,7 @@ pub struct TeamFacts {
 #[tauri::command]
 pub async fn team_facts(webview: Webview, app: AppHandle, id: String) -> Res<TeamFacts> {
     guard(&webview)?;
-    let rt = app.state::<Shell>().runtime(&id).ok_or("no such team on this Mac")?;
+    let rt = app.state::<Shell>().runtime(&id).ok_or_else(shell::no_team_here)?;
     let facts = match crate::teamapi::load(&app, &id).await {
         Some(f) => Some(f),
         None => rt.facts.lock().unwrap().clone(),

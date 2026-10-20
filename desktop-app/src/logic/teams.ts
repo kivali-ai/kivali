@@ -5,6 +5,7 @@
 import type { Snapshot, Team, TeamState } from "../types";
 import { ago, deviceName, formatBytes, formatBytesOf, formatMemory, shortDate, shortVersion, sinceWhen } from "./format";
 import { clampPercent } from "./setup";
+import { vmHelp, type VmHelp } from "./vmhelp";
 
 /** The dot's class and the word beside it. */
 export function dotOf(state: TeamState): { cls: string; word: string } {
@@ -43,7 +44,14 @@ export type TeamPage =
       details: string | null;
     }
   | { kind: "unreachable"; title: string; body: string; last: string | null }
+  /** This computer can't run the team's VM: what to do, no button. */
+  | { kind: "vm"; title: string; help: VmHelp }
   | { kind: "gone"; title: string; body: string };
+
+/** "This Mac is low on memory. Home is using 8 GB." */
+function lowMemory(platform: Snapshot["platform"], other: Team): string {
+  return sentence(`${thisComputer(platform)} is low on memory. ${other.name} is using ${formatMemory(other.memory_mb)}`);
+}
 
 function sentence(s: string): string {
   const t = s.trim();
@@ -53,7 +61,7 @@ function sentence(s: string): string {
 }
 
 /** The Kivali page shown in a team's window when the team can't show itself. */
-export function teamPage(team: Team | undefined, snap: Pick<Snapshot, "teams" | "platform">, now: Date): TeamPage {
+export function teamPage(team: Team | undefined, snap: Pick<Snapshot, "teams" | "platform" | "host">, now: Date): TeamPage {
   if (!team) return { kind: "gone", title: "This team isn’t here anymore", body: "It was deleted or removed from this computer." };
   const name = team.name;
   if (team.place === "elsewhere") {
@@ -66,12 +74,15 @@ export function teamPage(team: Team | undefined, snap: Pick<Snapshot, "teams" | 
     };
   }
   const op = team.op;
+  // Resuming would fail on its first step until the computer can run it.
+  const help = vmHelp(snap.host.vm_support);
+  if (help && (team.state === "failed" || team.state === "paused")) return { kind: "vm", title: `${name} can’t start`, help };
   if (team.state === "failed") {
     const other = team.pause_first ? snap.teams.find((t) => t.id === team.pause_first) : undefined;
     const updateFailed = op?.kind === "update";
     let body: string;
     if (team.reason) body = sentence(team.reason);
-    else if (other) body = `This Mac is low on memory. ${other.name} is using ${formatMemory(other.memory_mb)}.`;
+    else if (other) body = lowMemory(snap.platform, other);
     else if (updateFailed && team.version) body = `The update didn’t finish, so ${name} went back to ${shortVersion(team.version)}.`;
     else body = "Something went wrong while starting.";
     const title = updateFailed && !other ? `${name} couldn’t update` : `${name} couldn’t start`;
@@ -183,7 +194,7 @@ export function claudeLine(team: Team): string {
 /** The Overview tab's status row: the word, the line under it, and its button. */
 export function statusRow(
   team: Team,
-  snap: Pick<Snapshot, "teams">,
+  snap: Pick<Snapshot, "teams" | "platform">,
   now: Date,
 ): { cls: string; word: string; sub: string | null; action: "pause" | "resume" | "retry" | null; actionLabel: string | null } {
   const { cls, word } = dotOf(team.state);
@@ -205,7 +216,7 @@ export function statusRow(
       return {
         cls,
         word,
-        sub: team.reason ?? (other ? `This Mac is low on memory. ${other.name} is using ${formatMemory(other.memory_mb)}.` : null),
+        sub: team.reason ?? (other ? lowMemory(snap.platform, other) : null),
         action: "retry",
         actionLabel: other ? `Pause ${other.name} and try again` : "Try again",
       };
@@ -408,9 +419,9 @@ export function devicesView(team: Pick<Team, "public_url">, local: DevicesLocal)
 }
 
 /** The field's hint, in three parts so the command can be set in mono. */
-export function devicesHint(team: Pick<Team, "url">): [string, string, string] {
+export function devicesHint(team: Pick<Team, "url">, platform: Snapshot["platform"]): [string, string, string] {
   return [
-    "Kivali doesn’t set this up. Put this Mac’s team behind https yourself, for example with ",
+    `Kivali doesn’t set this up. Put ${thisComputer(platform)}’s team behind https yourself, for example with `,
     "tailscale serve",
     `, pointing at ${team.url ?? "its local address"}.`,
   ];

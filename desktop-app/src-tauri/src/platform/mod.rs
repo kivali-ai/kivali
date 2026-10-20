@@ -8,6 +8,7 @@
 //! | instance lock | [`InstanceLock`] | flock on `shell.lock` | exclusive open of `shell.lock` |
 //! | RPC transport | [`endpoint`], [`is_listening`], [`connect`], [`connect_timeout`] | Unix socket | named pipe ([`pipe_name`]) |
 //! | VM image, broker | [`VM_ROOT_FILE`], [`broker_listening`] | `root.squashfs`; no broker | `root.vhdx`; whether `\\.\pipe\kivali-broker` exists |
+//! | can a VM run here | [`vm_support`] | `kern.hv_support` | Hyper-V's `vmms` service, the edition, CPUID's hypervisor bit |
 //! | who owns serve | [`peer_pid`], [`parent_pid`], [`start_time`], [`is_orphan`] | `LOCAL_PEERPID`, `proc_pidinfo`, re-parented to launchd | `GetNamedPipeServerProcessId`, `GetProcessTimes`, parent gone |
 //! | starting serve | [`spawn_serve`] | plain spawn | `CREATE_NO_WINDOW`, detached |
 //! | stopping serve | [`request_stop`], [`kill`] | SIGTERM, SIGKILL | nothing (the RPC is the request), `TerminateProcess` |
@@ -22,7 +23,7 @@
 //! | team window loads | [`watch_loads`] | nothing: a failed load never finishes | WebView2's `NavigationCompleted`: a load that could not reach the server failed, though it finishes on an error page |
 //! | app menu | [`APP_MENU`] | the application menu | none |
 //! | window menu | [`WINDOW_MENU`], [`menu_shortcuts`], [`press_keys`] | none (the application menu) | a menu bar in each team window; WebView2's `AcceleratorKeyPressed` hands it the webview's keys |
-//! | wording | [`TRAY_AREA`] | menu bar | notification area |
+//! | wording | [`TRAY_AREA`], [`THIS_COMPUTER`] | menu bar, this Mac | notification area, this PC |
 //! | second launch | [`SECOND_LAUNCH_FOCUSES`], [`notify_running_instance`], [`on_second_launch`], [`is_reopen`] | a dialog; Dock reopen | the running instance is focused |
 //! | updater | [`INSTALL_EXITS`] | stop, install, restart | stop in the updater's before-exit hook |
 //! | the shell's log | [`stderr_is_seen`], [`redirect_output`], [`attach_terminal`] | stderr not a terminal: `dup2` onto fd 2 | no console and no open stderr: `SetStdHandle` (stdout and stderr); a flag run from a console attaches to it |
@@ -72,8 +73,8 @@ use windows as shared;
 pub use os::{
     alert, app_is_active, authenticate, guard_frames, is_reopen, mark_app_menus, menu_bar_dark, menu_shortcuts,
     menus_dark, notify_running_instance, on_second_launch, open_terminal, parent_pid, peer_pid, press_keys,
-    reduce_motion, start_time, wait_exit, watch_loads, APP_MENU, INSTALL_EXITS, SECOND_LAUNCH_FOCUSES, TRAY_AREA,
-    TRAY_ICONS, WINDOW_MENU,
+    reduce_motion, start_time, vm_support, wait_exit, watch_loads, APP_MENU, INSTALL_EXITS, SECOND_LAUNCH_FOCUSES,
+    THIS_COMPUTER, TRAY_AREA, TRAY_ICONS, WINDOW_MENU,
 };
 pub use notify::{notify, on_notification_click, NotifyTarget};
 pub use shared::{
@@ -163,6 +164,44 @@ pub enum LoadEnd {
     Failed,
 }
 
+/// Whether this computer can run a team's virtual machine, or what
+/// stands in the way ([`vm_support`]). The pages show the steps for each
+/// (logic/vmhelp.ts); the shell refuses to start a team here until it is
+/// `Ready`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VmSupport {
+    Ready,
+    /// Windows: Hyper-V is not turned on (its management service,
+    /// `vmms`, is not installed), or it is and Windows has not restarted
+    /// since.
+    HypervOff,
+    /// Windows Home, which has no Hyper-V to turn on.
+    WindowsHome,
+    /// Windows: Hyper-V is on but its hypervisor is not running:
+    /// virtualization is off in the firmware, or Windows is set not to
+    /// start it (`hypervisorlaunchtype off`).
+    VirtualizationOff,
+    /// macOS: the Mac cannot run a virtual machine (`kern.hv_support` is
+    /// 0), which happens when macOS itself runs in one.
+    InVm,
+}
+
+/// What Windows' facts mean for a team's VM: whether Hyper-V's
+/// management service is installed, the edition (`EditionID`: Home is
+/// `Core`, `CoreN`, `CoreSingleLanguage`, `CoreCountrySpecific`) and
+/// whether a hypervisor runs. A fact the shell could not read never
+/// blocks. Pure, so every OS tests it.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) fn hyperv_support(vmms: Option<bool>, edition: Option<&str>, hypervisor: Option<bool>) -> VmSupport {
+    match (vmms, hypervisor) {
+        (Some(false), _) if edition.is_some_and(|e| e.starts_with("Core")) => VmSupport::WindowsHome,
+        (Some(false), _) => VmSupport::HypervOff,
+        (Some(true), Some(false)) => VmSupport::VirtualizationOff,
+        _ => VmSupport::Ready,
+    }
+}
+
 /// A native alert. `buttons` are in order: the first is
 /// the default (Return), one titled exactly "Cancel" answers Escape.
 /// An empty list shows a single OK.
@@ -240,6 +279,7 @@ const _: () = {
     let _: fn(&Path) -> PathBuf = endpoint;
     let _: fn(&Path) -> bool = is_listening;
     let _: fn() -> Option<bool> = broker_listening;
+    let _: fn() -> VmSupport = vm_support;
     let _: &str = VM_ROOT_FILE;
     let _: fn(&Path) -> std::io::Result<Box<dyn Stream>> = connect;
     let _: fn(&Path, std::time::Duration) -> std::io::Result<Box<dyn Stream>> = connect_timeout;
@@ -276,6 +316,7 @@ const _: () = {
     let _: fn(&tauri::Webview, Box<dyn Fn(LoadEnd) + Send>) -> bool = watch_loads;
     let _: bool = APP_MENU || WINDOW_MENU || SECOND_LAUNCH_FOCUSES || INSTALL_EXITS;
     let _: &str = TRAY_AREA;
+    let _: &str = THIS_COMPUTER;
 };
 
 /// The named pipe the supervisor serves for config directory `dir` on
@@ -471,6 +512,35 @@ mod tests {
         assert_eq!(TRAY_FRAMES as u64 * TRAY_FRAME_MS, 1600);
         // This platform's set is one of the two.
         assert!(sets.iter().any(|(s, _)| s.light.running == TRAY_ICONS.light.running));
+    }
+
+    #[test]
+    fn hyperv_facts_judged() {
+        use VmSupport::*;
+        // Hyper-V on and its hypervisor running.
+        assert_eq!(hyperv_support(Some(true), None, Some(true)), Ready);
+        // Not turned on: Pro and the rest can turn it on, Home cannot.
+        assert_eq!(hyperv_support(Some(false), Some("Professional"), None), HypervOff);
+        assert_eq!(hyperv_support(Some(false), Some("Enterprise"), None), HypervOff);
+        assert_eq!(hyperv_support(Some(false), None, None), HypervOff);
+        for home in ["Core", "CoreN", "CoreSingleLanguage", "CoreCountrySpecific"] {
+            assert_eq!(hyperv_support(Some(false), Some(home), None), WindowsHome, "{home}");
+        }
+        // On, but the hypervisor isn't running.
+        assert_eq!(hyperv_support(Some(true), Some("Professional"), Some(false)), VirtualizationOff);
+        // What the shell could not read never blocks.
+        assert_eq!(hyperv_support(None, Some("Core"), Some(false)), Ready);
+        assert_eq!(hyperv_support(Some(true), None, None), Ready);
+    }
+
+    #[test]
+    fn vm_support_serializes_as_the_pages_name_it() {
+        let names: Vec<String> = [VmSupport::Ready, VmSupport::HypervOff, VmSupport::WindowsHome, VmSupport::VirtualizationOff, VmSupport::InVm]
+            .iter()
+            .map(|v| serde_json::to_string(v).unwrap())
+            .collect();
+        // types.ts `VmSupport`.
+        assert_eq!(names, ["\"ready\"", "\"hyperv_off\"", "\"windows_home\"", "\"virtualization_off\"", "\"in_vm\""]);
     }
 
     #[test]

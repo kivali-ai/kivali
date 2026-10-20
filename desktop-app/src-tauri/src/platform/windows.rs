@@ -197,6 +197,92 @@ pub fn broker_listening() -> Option<bool> {
     Some(pipe_exists(Path::new(BROKER_PIPE)))
 }
 
+/// Hyper-V, as an ordinary account can tell without PowerShell: its
+/// management service (`vmms`, which the installer asks `sc.exe` about
+/// too) installed, the edition when it is not, and whether the
+/// hypervisor runs when it is (CPUID's hypervisor-present bit, which a
+/// running Hyper-V's root partition sees). Asked once: each changes only
+/// with a restart.
+pub fn vm_support() -> super::VmSupport {
+    static ONCE: std::sync::OnceLock<super::VmSupport> = std::sync::OnceLock::new();
+    *ONCE.get_or_init(|| {
+        let vmms = service_installed("vmms");
+        let edition = if vmms == Some(false) { edition_id() } else { None };
+        let hypervisor = if vmms == Some(true) { hypervisor_present() } else { None };
+        super::hyperv_support(vmms, edition.as_deref(), hypervisor)
+    })
+}
+
+/// Whether a service is installed; None when the service manager would
+/// not say.
+fn service_installed(name: &str) -> Option<bool> {
+    use windows_sys::Win32::Foundation::ERROR_SERVICE_DOES_NOT_EXIST;
+    use windows_sys::Win32::System::Services::{
+        CloseServiceHandle, OpenSCManagerW, OpenServiceW, SC_MANAGER_CONNECT, SERVICE_QUERY_STATUS,
+    };
+    let name = wide(OsStr::new(name));
+    // SAFETY: a NUL-terminated wide name; each handle opened here is
+    // closed here, and the error is read right after the call that set it.
+    unsafe {
+        let scm = OpenSCManagerW(std::ptr::null(), std::ptr::null(), SC_MANAGER_CONNECT);
+        if scm.is_null() {
+            return None;
+        }
+        let svc = OpenServiceW(scm, name.as_ptr(), SERVICE_QUERY_STATUS);
+        let out = if !svc.is_null() {
+            CloseServiceHandle(svc);
+            Some(true)
+        } else if GetLastError() == ERROR_SERVICE_DOES_NOT_EXIST {
+            Some(false)
+        } else {
+            None
+        };
+        CloseServiceHandle(scm);
+        out
+    }
+}
+
+/// `EditionID` under HKLM\…\Windows NT\CurrentVersion ("Professional",
+/// "Core" for Home).
+fn edition_id() -> Option<String> {
+    use windows_sys::Win32::System::Registry::{RegGetValueW, HKEY_LOCAL_MACHINE, RRF_RT_REG_SZ};
+    let key = wide(OsStr::new(r"SOFTWARE\Microsoft\Windows NT\CurrentVersion"));
+    let name = wide(OsStr::new("EditionID"));
+    let mut buf = [0u16; 128];
+    let mut size = std::mem::size_of_val(&buf) as u32;
+    // SAFETY: NUL-terminated names and a buffer of `size` bytes.
+    let r = unsafe {
+        RegGetValueW(
+            HKEY_LOCAL_MACHINE,
+            key.as_ptr(),
+            name.as_ptr(),
+            RRF_RT_REG_SZ,
+            std::ptr::null_mut(),
+            buf.as_mut_ptr().cast(),
+            &mut size,
+        )
+    };
+    if r != 0 {
+        return None;
+    }
+    let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+    Some(String::from_utf16_lossy(&buf[..len]))
+}
+
+/// CPUID leaf 1, ECX bit 31: a hypervisor runs beneath Windows. Leaf 1
+/// exists on every x86-64 processor, the only kind Kivali ships for.
+fn hypervisor_present() -> Option<bool> {
+    #[cfg(target_arch = "x86_64")]
+    #[allow(unused_unsafe)]
+    {
+        // SAFETY: CPUID leaf 1 is always available on x86-64.
+        let ecx = unsafe { std::arch::x86_64::__cpuid(1) }.ecx;
+        Some(ecx & (1 << 31) != 0)
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    None
+}
+
 /// Whether a pipe of that name exists, asked without connecting, so the
 /// probe takes none of the server's instances: `WaitNamedPipeW` answers
 /// at once when there is no such pipe, and times out when every
@@ -513,6 +599,7 @@ pub fn open_terminal(binary: &Path, dir: &Path) -> Result<(), String> {
 /// unless the person chose light ([`menu_bar_dark`]).
 pub const TRAY_ICONS: TrayIcons = tray_set!("tray-win");
 pub const TRAY_AREA: &str = "notification area";
+pub const THIS_COMPUTER: &str = "this PC";
 /// No application menu: each team window has a menu bar of its own
 /// ([`WINDOW_MENU`]).
 pub const APP_MENU: bool = false;

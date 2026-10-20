@@ -266,6 +266,7 @@ own build.
 | RPC transport | `endpoint`, `is_listening`, `connect` | Unix socket `<team dir>/supervisor.sock`, mode 0600 | named pipe `\\.\pipe\kivali-<hash>` of the team's folder (`pipe_name`), owner-only ACL, its server checked to run as this user |
 | HTTP over it | `supervisor/http.rs` (common) | the shell's own HTTP/1.1 client: requests, `Content-Length`, chunked and close-delimited bodies, NDJSON streams, `101` upgrades | same |
 | VM image, broker | `VM_ROOT_FILE`, `broker_listening` | `root.squashfs` in `Contents/Resources/vm`; no broker (`None`) | `root.vhdx` in `<install dir>\vm`; whether `\\.\pipe\kivali-broker` exists (`WaitNamedPipeW`, no connection: its server is LocalSystem, so the owner check does not apply) |
+| can a VM run here | `vm_support`, `VmSupport` | `kern.hv_support`; 0 (macOS itself in a virtual machine that offers no hypervisor) is `in_vm` | Hyper-V's management service `vmms` installed, asked of the service manager as the installer's `sc query vmms` does; when it is not, `windows_home` if `EditionID` starts with `Core`, else `hyperv_off`; when it is but CPUID's hypervisor-present bit is clear, `virtualization_off` (off in the firmware, or `hypervisorlaunchtype off`). Asked once per run: each changes only with a restart. A fact it could not read never blocks |
 | who owns serve | `peer_pid`, `parent_pid`, `start_time`, `is_orphan` | `LOCAL_PEERPID`, `proc_pidinfo`; orphan = re-parented to launchd | `GetNamedPipeServerProcessId`, process snapshot, `GetProcessTimes`; orphan = parent gone or started after it |
 | starting serve | `spawn_serve` | plain spawn | `CREATE_NO_WINDOW`, `DETACHED_PROCESS` |
 | stopping serve | `request_stop`, `kill`, `connect_timeout` | `down --exit` over the RPC (given up after 30 s of silence), then SIGTERM, then SIGKILL | `down --exit` over the RPC (given up after 30 s of silence), then `TerminateProcess`; when `down` failed or timed out, that leaves the VM running until the next start handles it |
@@ -280,7 +281,7 @@ own build.
 | team window loads | `watch_loads`, `LoadEnd` | nothing (returns false): a failed load never finishes, so wry's `Finished` is a page shown | WebView2's `NavigationCompleted`, hooked the same way: a load that could not reach the server (refused, reset, timed out, disconnected, name not found) is `Failed` though it finishes on an error page; a cancelled one reports nothing; anything else is `Shown` |
 | app menu | `APP_MENU` | the menu bar (F1) | none |
 | window menu | `WINDOW_MENU`, `menu_shortcuts`, `press_keys` | none (the menu bar is the app's) | a menu bar in each team window (Tauri's per-window menu); WebView2's `AcceleratorKeyPressed` hands it the webview's keys; the Edit items type their shortcut into the webview (`SendInput`) |
-| wording | `TRAY_AREA` | menu bar | notification area |
+| wording | `TRAY_AREA`, `THIS_COMPUTER` | menu bar; this Mac | notification area; this PC |
 | second launch | `SECOND_LAUNCH_FOCUSES`, `notify_running_instance`, `on_second_launch`, `is_reopen` | refused with a dialog; the Dock's reopen opens Kivali | refused; the running shell opens Kivali (a named event, `Local\kivali-shell-<hash>`) |
 | updater | `INSTALL_EXITS` | install, pause the teams, restart | the installer ends the process: the teams pause in the updater's before-exit hook |
 | file modes | `owner_only_dir`, `file_mode` | 0700 directories, 0600/0700 files | none (the profile's ACL) |
@@ -361,7 +362,9 @@ because the command-line supervisor uses it without the shell.
   4096 MB and 4), its kind (`work` or `personal`) and when it was last
   paused; also, when known, when Claude signed out (`signed_out_at`,
   D4: stamped by the watch loop on a signed-in to signed-out change,
-  cleared by any sign-in). A team **elsewhere** has only its origin.
+  cleared by any sign-in), and `provisional: true` while the setup that
+  made it has not finished ("The flows"). A team **elsewhere** has only
+  its origin.
 - New ids are the name's ASCII letters and digits, lower-cased,
   non-alphanumerics folded to single dashes, at most 16 characters,
   then four random hex digits (`plainsong-3f2a`; `team-<hex>` when
@@ -404,7 +407,7 @@ webview (`windows.rs`):
 
 | Window | Label | Size | Shows |
 | --- | --- | --- | --- |
-| Setup | `setup` | 680 × 580, fixed | adding a team: `#/setup/welcome` (A1, first launch, "Welcome to Kivali"), `#/setup/add` (A1 as "Add a team", with Cancel), `#/setup/new` (the create steps A2–A20, "New team"), `#/connect` (B1–B6, "Connect to a team") |
+| Setup | `setup` | 680 × 580, fixed | adding a team: `#/setup/welcome` (A1, first launch, "Welcome to Kivali"), `#/setup/add` (A1 as "Add a team", with Cancel), `#/setup/new` (the create steps A2–A20, "New team"), `#/setup/new/<id>` (the same, picked up at step 3 for a team whose setup didn't finish), `#/connect` (B1–B6, "Connect to a team") |
 | Settings | `settings` | 880 × 640, fixed width, taller allowed | `#/settings/general` (D1, D11), `#/settings/team/<id>[/overview\|ai\|mac]` (D2–D6, or D9 for a team elsewhere), `#/settings/advanced` (D10) |
 | A team | `team-<id>` | 1200 × 760, resizable, at least 900 × 600 | two child webviews in the same place, one shown at a time (below) |
 | A browser | `browser-<hash>-<id>` | 1320 × 900, resizable | a web subagent's browser page of the team's web app ("The browser window" below) |
@@ -975,7 +978,12 @@ memory says so on C7 and in Settings, with "Pause X and resume".
 ## The flows
 
 **First launch** (no teams) opens the setup window on
-A1 with two choices: set up a new team, or connect to one.
+A1 with two choices: set up a new team, or connect to one. When this
+computer can't run a team's VM (`host.vm_support` is not `ready`: Hyper-V
+off, Windows Home, virtualization off in the firmware, macOS in a
+virtual machine), A1 shows what to do in numbered steps
+(`logic/vmhelp.ts`) in place of **Create a team**; **Connect to a
+team** still works. `prepare_team` and `create_team` refuse too.
 
 **Setting up a team** (`#/setup/new`, `pages/setup.ts`, decisions in
 `logic/setup.ts`). The step and the answers live in the page; the
@@ -988,9 +996,18 @@ team's progress comes from the snapshot.
    `create_team`: the team is written to teams.json under a new id and
    folder and its create operation starts (the supervisor, then `up`),
    so it gets ready while the remaining steps are answered. The team is
-   *provisional* until setup finishes (`finish_setup`). Going back past
-   this step abandons it; changing the name or kind and continuing again
-   abandons it and creates another; the same answers reuse it.
+   *provisional* until setup finishes (`finish_setup`), and teams.json
+   keeps the mark, so it outlasts a closed setup window, a quit or a
+   restart. Going back past this step abandons it; changing the name or
+   kind and continuing again abandons it and creates another; the same
+   answers reuse it. Opening a provisional team any other way (the
+   tray, the Kivali window, a notification, the next launch's
+   `last_open`) opens setup at step 3 for it (`#/setup/new/<id>`,
+   `windows::show_team`) instead of its window, so a team never opens
+   its web app before Claude is connected; setup starts it again when
+   nothing runs it. When that start fails, the create-failed screen's
+   **Try again** resumes the team (`retry_team`) rather than creating it
+   afresh, since the owner's Google sign-in from the earlier run is gone.
 3. *Connect Claude* (A11–A15): Claude Code's own sign-in in Terminal
    ("Claude's sign-in in Terminal" below). **Open Claude sign-in** is
    offered once the team is running; Continue is disabled until the
@@ -1093,7 +1110,11 @@ resume the teams in `running_at_quit` ("Launch and quit").
 Settings) runs `down` without `exit`: the VM stops, the supervisor
 keeps serving, and `paused_at` is recorded. Resume (C4, the menus,
 Settings) is the memory check, then `up` with the progress page (C5).
-A team that couldn't start offers Try again, which is resume.
+A team that couldn't start offers Try again, which is resume. While
+this computer can't run the VM, `boot` refuses before it starts a
+supervisor: the team couldn't start (failure `vm`, `reason` from
+`view::vm_reason`), and its page shows the steps from `logic/vmhelp.ts`
+in place of Resume or Try again.
 
 **Updating a team** (E3, from the tray or Settings → team → Update…):
 "Update Plainsong to 0.17? It takes about 3 minutes. Agents pause while
@@ -1486,7 +1507,7 @@ welcome screen.
 | --- | --- |
 | `app_version`, `platform` | this app's version; `macos`, `windows` or `linux` |
 | `teams[]` | per team: `id`, `name`, `kind`, `place` (`here`/`elsewhere`), `url`, `device`, `state`, `activity`, `phrase`, `reason`, `pause_first` (the team to pause when memory stopped a start), `op` (the current or last operation: kind, running, error, finished, raw lines, stage, stage index, stages, start time, percent, time left), `version`, `update` (above, plus `takes`, an update's typical length in words, "about 3 minutes", from its stages), `ai` (`provider`, `signed_in`, `email` and `billing` as `claude auth status` reports them, `terminal_open`, `signin`, `signed_out_at` while Claude is signed out), `owner`, `memory_mb`, `cpus`, `disk_used_bytes`, `disk_size_bytes`, `paused_since`, `last_reached`, `provisional`, `agents`, `working` (only while running), `files`, `signed_in_as` ("The team API"; null until read), `memory_free_mb` (a team here: `view::memory_free_mb` beside the other teams running now, E5's "2 GB free"; null elsewhere) |
-| `host` | this computer's memory and CPUs |
+| `host` | this computer's memory and CPUs, and `vm_support`: whether a team's VM can run here (`ready`, `hyperv_off`, `windows_home`, `virtualization_off`, `in_vm`; `platform::vm_support`) |
 | `settings` | `start_at_login`, `ask_before_quit` |
 | `app_update` | the app update's state, version, check time, error |
 | `owner_signin` | the setup sign-in: `idle`, `waiting`, `signed_in` (with the email), `failed` |
@@ -1666,7 +1687,11 @@ administrator and a restart (Turn Windows features on or off, Hyper-V;
 or `Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V
 -All`). When Hyper-V's management service (`vmms`) is missing after the
 install, the installer says so. The broker installs and runs either way;
-teams elsewhere need none of it.
+teams elsewhere need none of it. The app checks again at every launch
+(`platform::vm_support`): with Hyper-V off, on Windows Home, or with
+virtualization off in the firmware, its first window shows the steps
+in place of **Create a team**, and a team here shows them instead of
+starting.
 
 **No MSI.** The Windows target is NSIS only: Tauri's WiX bundle has no
 hook that runs `broker install`, and an install without the service

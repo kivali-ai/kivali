@@ -88,6 +88,12 @@ pub struct Local {
     /// loop saw it. Cleared by the next sign-in.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signed_out_at: Option<String>,
+    /// Made by setup, which has not finished (its "Open <team>"): opening
+    /// the team goes back to setup's Claude sign-in for it, and setup may
+    /// still remove it. Kept across launches, so a restart or a closed
+    /// setup window never opens a team that skipped the sign-in.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub provisional: bool,
 }
 
 fn default_memory() -> u32 {
@@ -362,6 +368,7 @@ impl TeamsFile {
                 public_url: None,
                 call_me: None,
                 signed_out_at: None,
+                provisional: false,
             }),
             paused_at: None,
         });
@@ -532,6 +539,23 @@ mod tests {
         f.last_open = Some(a.clone());
         assert!(f.remove(&a).is_some());
         assert!(f.running_at_quit.is_empty() && f.last_open.is_none());
+    }
+
+    /// Setup's mark is written only while it is set, and a file from
+    /// before it existed reads as finished.
+    #[test]
+    fn provisional_is_written_only_while_set() {
+        let mut f = TeamsFile::default();
+        let a = f.add_here("Plainsong", Kind::Work, "dana@example.com", &mut || 1);
+        let off = serde_json::to_value(&f.teams[0]).unwrap();
+        assert!(off.get("provisional").is_none(), "{off}");
+        f.get_mut(&a).unwrap().local_mut().unwrap().provisional = true;
+        let on = serde_json::to_value(&f.teams[0]).unwrap();
+        assert_eq!(on["provisional"], true);
+        let back: Team = serde_json::from_value(on).unwrap();
+        assert!(back.local().unwrap().provisional);
+        let old: Team = serde_json::from_str(r#"{"id":"a","name":"A","place":"here","dir":"teams/a"}"#).unwrap();
+        assert!(!old.local().unwrap().provisional);
     }
 
     #[test]

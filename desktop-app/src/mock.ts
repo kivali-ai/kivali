@@ -124,7 +124,7 @@ function base(): Snapshot {
     app_version: "0.17.1",
     platform: "macos",
     teams: [plainsong(), home(), studio()],
-    host: { memory_mb: 16384, cpus: 8 },
+    host: { memory_mb: 16384, cpus: 8, vm_support: "ready" },
     settings: { start_at_login: true, ask_before_quit: true },
     app_update: { state: "up_to_date", version: null, checked_at: iso(3 * HOUR), error: null },
     owner_signin: { state: "signed_in", email: "dana@example.com", error: null },
@@ -170,6 +170,12 @@ const step3: Preset = {
 
 const FIXTURES: Record<string, Fixture> = {
   "welcome": { hash: "#/setup/welcome", snap: (s) => ((s.teams = []), (s.owner_signin = { state: "idle", email: null, error: null })) },
+  // This computer can't run a team's VM: the welcome says why and how.
+  "welcome-hyperv-off": { hash: "#/setup/welcome", snap: (s) => ((s.platform = "windows"), (s.teams = []), (s.host.vm_support = "hyperv_off")) },
+  "welcome-windows-home": { hash: "#/setup/welcome", snap: (s) => ((s.platform = "windows"), (s.teams = []), (s.host.vm_support = "windows_home")) },
+  "welcome-virtualization-off": { hash: "#/setup/welcome", snap: (s) => ((s.platform = "windows"), (s.teams = []), (s.host.vm_support = "virtualization_off")) },
+  "welcome-in-vm": { hash: "#/setup/welcome", snap: (s) => ((s.teams = []), (s.host.vm_support = "in_vm")) },
+  "team-hyperv-off": { hash: "#/team/home", snap: (s) => ((s.platform = "windows"), (s.host.vm_support = "hyperv_off")) },
   "kind": { hash: "#/setup/new", snap: (s) => (s.teams = []), preset: { setup: { step: 1 } } },
   "kind-work": { hash: "#/setup/new", snap: (s) => (s.teams = []), preset: { setup: { step: 1, kind: "work", name: "Plainsong" } } },
   "kind-personal": { hash: "#/setup/new", snap: (s) => (s.teams = []), preset: { setup: { step: 1, kind: "personal", name: "Home" } } },

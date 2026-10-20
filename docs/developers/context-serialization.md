@@ -291,7 +291,7 @@ provider serves an org.
   things: `Client`, `Stream`, `Folder`, the request/response, message,
   content-block, tool, stream-event and usage shapes (`TokenUsage`,
   `ModelUsage`, `UsageDisplay`, `UsageRecorder`), `ToolSet`,
-  `MCPServer`, `SubagentRequest`, the `Stop*` constants,
+  `MCPServer`, `SubagentRequest`, the `Stop*` and `Failure*` constants,
   `ErrSubprocessExited` / `ErrUserCancelled`, `Provider`, `ModelInfo`,
   `Effort`, `Defaults`, `Credentials`, `CredentialStatus`, a few
   helpers (`Label`, `EffortIDs`, `DefaultEffort`), and the mocks (`MockClient`,

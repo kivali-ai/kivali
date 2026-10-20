@@ -629,6 +629,7 @@ func (s *subprocStream) Final() *provider.CompleteResponse {
 		Model:         s.model,
 		StopReason:    s.stopReason,
 		Error:         s.errText,
+		Failure:       callFailure(s.stopReason, s.errText),
 		Content:       content,
 		Usage:         s.usage.Total(),
 		ByModel:       s.usage.Split(),

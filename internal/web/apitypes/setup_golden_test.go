@@ -1,7 +1,7 @@
 package apitypes
 
 // goldenSetup is setup on its last step, with one read file and one
-// that is named only, and no model connected.
+// that is named only, and Claude not signed in.
 func goldenSetup() Setup {
 	return Setup{
 		Needed: true,
@@ -22,7 +22,7 @@ func goldenSetup() Setup {
 			Present:  false,
 			Who:      "",
 			Billing:  "",
-			Guidance: "No model is connected yet; whoever runs this Kivali server can sign it in to Claude.",
+			Guidance: "To sign Claude in, open Settings in Kivali Desktop, choose this team, then AI. On a self-hosted team, whoever runs this Kivali server signs it in.",
 		},
 		RestoreAvailable: true,
 	}
@@ -56,7 +56,7 @@ func goldenSetupProgressFailed() SetupProgress {
 			{Label: "Hiring", State: SetupStageStateQueued},
 		},
 		ElapsedS: 61,
-		Error:    "your Chief of Staff could not write its first briefing because the model call failed",
-		Who:      "you, by trying again, or whoever runs this Kivali server if it keeps failing",
+		Error:    "Your Chief of Staff could not write its first briefing because Claude is not signed in",
+		Who:      "you, by signing Claude in from Kivali Desktop (Settings, this team, AI) and trying again, or whoever runs this Kivali server",
 	}
 }

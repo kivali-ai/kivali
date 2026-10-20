@@ -212,6 +212,52 @@ func TestErrorResultWithoutSentinelHasDetail(t *testing.T) {
 	}
 }
 
+// TestFinalNamesTheFailureKind: a run the CLI closed on a failed call
+// reports, besides the text, whether it was a missing sign-in or a
+// model this sign-in cannot use, in both readers; any other failure,
+// and a completed run, report no kind.
+func TestFinalNamesTheFailureKind(t *testing.T) {
+	sentinel := func(text string) json.RawMessage {
+		raw, err := json.Marshal(map[string]any{
+			"role":    "assistant",
+			"model":   "<synthetic>",
+			"content": []map[string]any{{"type": "text", "text": text}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return raw
+	}
+	for _, tc := range []struct{ text, want string }{
+		{"Not logged in · Please run /login", provider.FailureSignedOut},
+		{"There's an issue with the selected model (claude-opus-5-5). It may not exist or you may not have access to it. Run /model to pick a different model.", provider.FailureModelUnavailable},
+		{"API Error: 529 Overloaded. This is a server-side issue.", ""},
+	} {
+		result := &streamJSONEvent{Type: "result", Subtype: "success", IsError: true, Result: tc.text}
+
+		tn := newRunnerTurn(provider.CompleteRequest{Model: "claude-opus-5-5"}, nil, nil, "alice", "", nil)
+		tn.handleAssistantMessage(sentinel(tc.text))
+		tn.recordResult(result, nil)
+		if f := tn.Final(); f.StopReason != provider.StopError || f.Error != tc.text || f.Failure != tc.want {
+			t.Errorf("runner %q: stop/error/failure = %q/%q/%q, want error, the text and %q", tc.text, f.StopReason, f.Error, f.Failure, tc.want)
+		}
+
+		s := newTestSubprocStream("claude-opus-5-5")
+		s.handleAssistantMessage(sentinel(tc.text))
+		s.handleEvent(result)
+		if f := s.Final(); f.StopReason != provider.StopError || f.Failure != tc.want {
+			t.Errorf("stream %q: stop/failure = %q/%q, want error and %q", tc.text, f.StopReason, f.Failure, tc.want)
+		}
+	}
+
+	done := newRunnerTurn(provider.CompleteRequest{Model: "claude-opus-5-5"}, nil, nil, "alice", "", nil)
+	done.handleAssistantMessage(sentinel("Not logged in · Please run /login"))
+	done.recordResult(&streamJSONEvent{Type: "result", Subtype: "success", Result: "done"}, nil)
+	if f := done.Final(); f.Failure != "" {
+		t.Errorf("completed run failure = %q, want none", f.Failure)
+	}
+}
+
 // TestSettleExit: held sentinel text with no result frame is the error
 // when the process failed, dropped when it exited cleanly; a StopError
 // with no detail takes the exit's text.

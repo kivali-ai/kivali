@@ -190,7 +190,12 @@ refuses to start with `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` or
 `CLAUDE_CODE_OAUTH_TOKEN` set. Whether it is signed in, and to what, is
 the CLI's own answer: `claude auth status --json`, parsed by
 `internal/claudeauth`, for the server's setup state
-(`Credentials().Status`) and the supervisor's `GET /v1/credential`.
+(`Credentials().Status`; setup does not start the Chief of Staff hire
+while it reports signed out) and the supervisor's `GET /v1/credential`.
+A model call that fails for want of a sign-in, or on a model the
+sign-in cannot use, says which on `CompleteResponse.Failure`: the
+driver reads the CLI's text with `claudeauth.ClassifyCallFailure`, and
+the setup hiring panel words each case.
 Agent pods reach Bedrock, Vertex AI and Foundry through the egress
 proxy, as the agent's own traffic (below): the agent's CLI carries the
 runtime's credential, and the proxy leaves the provider's exact hosts

@@ -6,6 +6,7 @@ describe("parseRoute", () => {
     expect(parseRoute("#/setup/welcome")).toEqual({ page: "setup", mode: "welcome" });
     expect(parseRoute("#/setup/add")).toEqual({ page: "setup", mode: "add" });
     expect(parseRoute("#/setup/new")).toEqual({ page: "setup", mode: "new" });
+    expect(parseRoute("#/setup/new/home-3f2a")).toEqual({ page: "setup", mode: "new", team: "home-3f2a" });
     expect(parseRoute("#/connect")).toEqual({ page: "connect" });
     expect(parseRoute("#/settings/general")).toEqual({ page: "settings", section: "general" });
     expect(parseRoute("#/settings/advanced")).toEqual({ page: "settings", section: "advanced" });
@@ -21,13 +22,14 @@ describe("parseRoute", () => {
     expect(parseRoute("#/settings")).toEqual({ page: "settings", section: "general" });
   });
   it("round-trips", () => {
-    for (const h of ["#/setup/new", "#/connect", "#/settings/team/x%20y/mac", "#/team/home", "#/settings/advanced"])
+    for (const h of ["#/setup/new", "#/setup/new/home-3f2a", "#/connect", "#/settings/team/x%20y/mac", "#/team/home", "#/settings/advanced"])
       expect(routeHash(parseRoute(h))).toBe(h);
   });
   it("titles the setup window", () => {
     expect(setupTitle(parseRoute("#/setup/welcome"))).toBe("Welcome to Kivali");
     expect(setupTitle(parseRoute("#/setup/add"))).toBe("Add a team");
     expect(setupTitle(parseRoute("#/setup/new"))).toBe("New team");
+    expect(setupTitle(parseRoute("#/setup/new/home-3f2a"))).toBe("New team");
     expect(setupTitle(parseRoute("#/connect"))).toBe("Connect to a team");
     expect(setupTitle(parseRoute("#/team/x"))).toBeNull();
   });

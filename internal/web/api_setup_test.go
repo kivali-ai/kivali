@@ -36,7 +36,7 @@ func newSetupServer(t *testing.T, c provider.Client) (*Server, *clock.Fake) {
 	srv, err := NewServer(&Server{
 		Store:    st,
 		Claude:   c,
-		Provider: provider.MockProvider{},
+		Provider: signedInMock,
 		Clock:    fake,
 	})
 	if err != nil {
@@ -312,19 +312,24 @@ func TestAPISetupCredentialGuidance(t *testing.T) {
 	// variables or paths.
 	machinery := regexp.MustCompile("[`$/=]|[A-Z_]{4,}")
 	signedIn := provider.CredentialStatus{Present: true, Who: "ops@example.com", Billing: "Mock Max"}
+	unreadable := errors.New("claude auth status: signal: killed")
 	cases := []struct {
-		status provider.CredentialStatus
-		client provider.Client
-		want   apitypes.SetupCredential
+		status  provider.CredentialStatus
+		credErr error
+		client  provider.Client
+		want    apitypes.SetupCredential
 	}{
-		{provider.CredentialStatus{}, nil, apitypes.SetupCredential{}},
-		{signedIn, nil, apitypes.SetupCredential{Present: true, Who: "ops@example.com", Billing: "Mock Max"}},
-		{provider.CredentialStatus{}, &provider.MockClient{}, apitypes.SetupCredential{Ready: true}},
-		{signedIn, &provider.MockClient{}, apitypes.SetupCredential{Ready: true, Present: true, Who: "ops@example.com", Billing: "Mock Max"}},
+		{provider.CredentialStatus{}, nil, nil, apitypes.SetupCredential{}},
+		{signedIn, nil, nil, apitypes.SetupCredential{Present: true, Who: "ops@example.com", Billing: "Mock Max"}},
+		// Signed out: the hire cannot run, so setup is not ready.
+		{provider.CredentialStatus{}, nil, &provider.MockClient{}, apitypes.SetupCredential{}},
+		// A status that cannot be read is not taken as signed out.
+		{provider.CredentialStatus{}, unreadable, &provider.MockClient{}, apitypes.SetupCredential{Ready: true}},
+		{signedIn, nil, &provider.MockClient{}, apitypes.SetupCredential{Ready: true, Present: true, Who: "ops@example.com", Billing: "Mock Max"}},
 	}
 	for _, tc := range cases {
 		srv, _ := newSetupServer(t, tc.client)
-		srv.Provider = provider.MockProvider{Cred: tc.status}
+		srv.Provider = provider.MockProvider{Cred: tc.status, CredErr: tc.credErr}
 		got := getSetup(t, srv).Credential
 		if got.Ready != tc.want.Ready || got.Present != tc.want.Present || got.Who != tc.want.Who ||
 			got.Billing != tc.want.Billing || got.Provider != "mock" {
@@ -530,6 +535,84 @@ func TestAPISetupSeedCoSFailureIsReportedAndRetryable(t *testing.T) {
 	waitSeed(t, srv)
 	if p := getProgress(t, srv); p.State != apitypes.SetupProgressStateDone {
 		t.Errorf("retry: %s", p.State)
+	}
+}
+
+// A hire asked for while the provider says it is signed out is refused
+// before any model call, in the provider's words; once it is signed
+// in, the hire runs.
+func TestAPISetupSeedCoSRefusedWhileSignedOut(t *testing.T) {
+	calls := 0
+	mock := &provider.MockClient{CompleteFn: func(ctx context.Context, req provider.CompleteRequest) (*provider.CompleteResponse, error) {
+		calls++
+		return &provider.CompleteResponse{Content: []provider.ContentBlock{{Type: provider.ContentText, Text: "briefing"}}}, nil
+	}}
+	srv, _ := newSetupServer(t, mock)
+	srv.Provider = provider.MockProvider{}
+	if st := getSetup(t, srv); st.Credential.Ready || st.Credential.Guidance == "" {
+		t.Errorf("signed out: credential %+v, want not ready with guidance", st.Credential)
+	}
+	e := assertAPIError(t, setupJSON(t, srv, http.MethodPost, "/api/v1/setup/seed-cos", apitypes.SeedCoSRequest{}), http.StatusServiceUnavailable)
+	if e.Error != "Claude is not signed in" || e.Who != srv.Provider.Credentials().Guidance() {
+		t.Errorf("refusal = %q / %q, want the sign-in words and the provider's guidance", e.Error, e.Who)
+	}
+	if calls != 0 || srv.seedTracker().current() != nil {
+		t.Fatalf("a refused hire ran: %d calls, run %v", calls, srv.seedTracker().current())
+	}
+
+	srv.Provider = signedInMock
+	if rr := setupJSON(t, srv, http.MethodPost, "/api/v1/setup/seed-cos", apitypes.SeedCoSRequest{}); rr.Code != http.StatusAccepted {
+		t.Fatalf("signed in: POST = %d: %s", rr.Code, rr.Body.String())
+	}
+	waitSeed(t, srv)
+	if p := getProgress(t, srv); p.State != apitypes.SetupProgressStateDone {
+		t.Errorf("signed in: %s, want done", p.State)
+	}
+}
+
+// A briefing call the provider ended on a failure it can name is
+// reported in words for that failure: no sign-in, or a model the
+// sign-in cannot use, named by its label. The provider's own text goes
+// to the run's error, for the log, never to the page.
+func TestAPISetupSeedCoSBriefFailureWords(t *testing.T) {
+	cases := []struct {
+		name, failure, text string
+		wantError, wantWho  string
+	}{
+		{
+			"signed out", provider.FailureSignedOut, "Not logged in · Please run /login",
+			"Your Chief of Staff could not write its first briefing because Claude is not signed in",
+			"you, by signing Claude in from Kivali Desktop (Settings, this team, AI) and trying again, or whoever runs this Kivali server",
+		},
+		{
+			"model unavailable", provider.FailureModelUnavailable, "There's an issue with the selected model (mock-large). It may not exist or you may not have access to it.",
+			"Your Chief of Staff could not write its first briefing because Mock Large is not available on this Claude sign-in",
+			"you, by signing Claude in with an account that can use Mock Large (Kivali Desktop: Settings, this team, AI), or whoever runs this Kivali server",
+		},
+		{
+			"other", "", "API Error: 529 Overloaded. This is a server-side issue.",
+			"Your Chief of Staff could not write its first briefing because the call to Claude failed",
+			"you, by trying again, or whoever runs this Kivali server if it keeps failing",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mock := &provider.MockClient{CompleteFn: func(ctx context.Context, req provider.CompleteRequest) (*provider.CompleteResponse, error) {
+				return &provider.CompleteResponse{StopReason: provider.StopError, Error: tc.text, Failure: tc.failure}, nil
+			}}
+			srv, _ := newSetupServer(t, mock)
+			if rr := setupJSON(t, srv, http.MethodPost, "/api/v1/setup/seed-cos", apitypes.SeedCoSRequest{}); rr.Code != http.StatusAccepted {
+				t.Fatalf("POST = %d: %s", rr.Code, rr.Body.String())
+			}
+			waitSeed(t, srv)
+			p := getProgress(t, srv)
+			if p.State != apitypes.SetupProgressStateFailed || p.Error != tc.wantError || p.Who != tc.wantWho {
+				t.Errorf("progress %s %q / %q, want failed %q / %q", p.State, p.Error, p.Who, tc.wantError, tc.wantWho)
+			}
+			if err := srv.seedTracker().current().err; err == nil || !strings.Contains(err.Error(), tc.text) {
+				t.Errorf("run error %v, want the provider's text for the log", err)
+			}
+		})
 	}
 }
 
