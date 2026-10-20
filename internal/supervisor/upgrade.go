@@ -35,7 +35,9 @@ const minFreeBytes = 2 << 30
 // upgradeRoom refuses an upgrade the host has no room for: beside the
 // data disk, minFreeBytes and what the snapshot costs; in downloads,
 // pending, the bytes still to download. On one volume the two add up.
-// The preflight asks before anything is downloaded.
+// The preflight asks before anything is downloaded, and the upgrade asks
+// again once the images are imported (which grows the data disk), while
+// the org still runs.
 func (s *Supervisor) upgradeRoom(pending uint64, logf Logf) error {
 	const what, then = "updating this team", "update it again"
 	near := minFreeBytes + s.snapshotCost(logf)
@@ -134,6 +136,10 @@ func (s *Supervisor) Upgrade(ctx context.Context, o UpgradeOptions, logf Logf) e
 	// 2. Fetch, verify and import. The org keeps running.
 	sg, err := s.stage(ctx, g, feed, rel, logf)
 	if err != nil {
+		return err
+	}
+	if err := s.upgradeRoom(0, logf); err != nil {
+		s.dropDownloads(sg, logf)
 		return err
 	}
 

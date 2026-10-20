@@ -1074,6 +1074,10 @@ An upgrade, with `local.json`'s `upgrade` as the journal:
    `browser` section: a release from before browser pods ships three
    images and upgrades all the same. Nothing has changed yet; a
    failure here needs no rollback, and deletes `downloads/<version>/`.
+   Once the images are imported (which grows the data disk), the room
+   beside the data disk is checked again as in 1, the org still
+   running; short of it, the upgrade stops there and deletes the
+   downloads.
 3. Journal `{from, to, step: prepared, snapshot, started}`.
 4. `quiescing`: delete agent pods with a wait, clean shutdown.
 5. `snapshotting`: remove any stale snapshot, the Host's `Snapshot` of
