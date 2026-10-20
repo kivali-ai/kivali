@@ -624,8 +624,12 @@ page content is untrusted and never an instruction.
 Core owns the lifecycle (`internal/web/browser_registry.go`, one timer
 on the injected clock re-armed to the earliest deadline, as auto
 release does). A web subagent's first command starts the pod and waits
-for it to connect; the handshake hands over the session's saved
-profile; when no subagent uses the browser it is idle, and after ten
+for it to connect. The start runs on its own, bounded by the five
+minute start timeout: a caller that goes away (a window closed, a task
+stopped) ends only its own wait, never the start other tasks wait on,
+and a caller waiting on a browser its session's reset ended is given
+the session's next browser. The handshake hands over the session's
+saved profile; when no subagent uses the browser it is idle, and after ten
 minutes core asks for the profile back, writes it to the store and
 deletes the pod. A browser that has run for two hours
 (`browserLifetime`) takes no new task and is saved as soon as its last
