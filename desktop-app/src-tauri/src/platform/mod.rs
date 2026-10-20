@@ -25,7 +25,7 @@
 //! | window menu | [`WINDOW_MENU`], [`menu_shortcuts`], [`press_keys`] | none (the application menu) | a menu bar in each team window; WebView2's `AcceleratorKeyPressed` hands it the webview's keys |
 //! | wording | [`TRAY_AREA`], [`THIS_COMPUTER`] | menu bar, this Mac | notification area, this PC |
 //! | second launch | [`SECOND_LAUNCH_FOCUSES`], [`notify_running_instance`], [`on_second_launch`], [`is_reopen`] | a dialog; Dock reopen | the running instance is focused |
-//! | updater | [`INSTALL_EXITS`] | stop, install, restart | stop in the updater's before-exit hook |
+//! | updater | [`INSTALL_EXITS`] | stop, install, restart | stop in the updater's before-exit hook; resume if the installer cannot start |
 //! | the shell's log | [`stderr_is_seen`], [`redirect_output`], [`attach_terminal`] | stderr not a terminal: `dup2` onto fd 2 | no console and no open stderr: `SetStdHandle` (stdout and stderr); a flag run from a console attaches to it |
 //!
 //! The Windows pipe stream is a synchronous handle: one blocking call

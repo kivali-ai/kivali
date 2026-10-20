@@ -79,7 +79,7 @@ Click a notification to go straight to the team or the setting it concerns.
 
 There are two things to keep current: the Kivali app, and each team's Kivali.
 
-**The app** checks for updates each time it opens; **Check for updates…** checks now. When one is available, choose **Update…**. The update downloads while your teams keep working, and **Settings**, **General** shows how far it has got; quitting Kivali stops the download. Once it has downloaded, Kivali restarts to install it; running teams pause and resume after the restart.
+**The app** checks for updates each time it opens; **Check for updates…** checks now. When one is available, choose **Update…**. The update downloads while your teams keep working, and **Settings**, **General** shows how far it has got; quitting Kivali stops the download. Once it has downloaded, Kivali restarts to install it; running teams pause and resume after the restart. If it can't install, for example because the permission prompt was answered No, Kivali carries on where it was, running teams resume, and **Settings**, **General** says why.
 
 On Windows you can also run a newer installer yourself. It finds the version already there and selects **Install over the current version (recommended)**, which is what **Update…** does. **Uninstall the current version first** keeps your teams too. Uninstalling never deletes your teams: the uninstaller's **Also delete browser data and sign-ins** removes saved sign-ins, not teams.
 

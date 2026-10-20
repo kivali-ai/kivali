@@ -315,6 +315,12 @@ impl Runtime {
         owned.sidecar.take()
     }
 
+    /// Undoes [`Self::close_sidecar`]: a supervisor started from now on
+    /// is kept again.
+    fn reopen(&self) {
+        self.sidecar.lock().unwrap().closed = false;
+    }
+
     fn stop_owned(&self, sc: Sidecar, progress: &mut dyn FnMut(Progress)) {
         let how = sc.stop(
             &mut || {
@@ -2194,8 +2200,9 @@ pub fn launch(app: &AppHandle) {
 }
 
 /// Records which teams run (they resume next launch), waits for running
-/// operations, and stops every team here, in parallel.
-pub(crate) fn pause_all_for_exit(app: &AppHandle) {
+/// operations, and stops every team here, in parallel. Returns the teams
+/// that ran.
+pub(crate) fn pause_all_for_exit(app: &AppHandle) -> Vec<String> {
     let sh = shell(app);
     discard_prepared(&sh);
     let rts = sh.runtimes();
@@ -2220,6 +2227,22 @@ pub(crate) fn pause_all_for_exit(app: &AppHandle) {
         .collect();
     for h in handles {
         let _ = h.join();
+    }
+    running
+}
+
+/// An app update paused every team for its installer, which then could
+/// not start (appupdate.rs): the runtimes take supervisors again and the
+/// teams that ran resume.
+pub(crate) fn resume_after_failed_install(app: &AppHandle, running: &[String]) {
+    let sh = shell(app);
+    for rt in sh.runtimes() {
+        rt.reopen();
+    }
+    for id in running {
+        if let Err(e) = resume_or_record(app, id) {
+            eprintln!("kivali: {id}: resuming after the app update: {e}");
+        }
     }
 }
 
@@ -2470,6 +2493,24 @@ mod tests {
         assert_eq!(on_disk.running_at_quit, std::slice::from_ref(&a));
         sh.set_running_at_quit(&a, false);
         assert!(sh.teams.lock().unwrap().running_at_quit.is_empty());
+    }
+
+    // An app update closes every runtime before its installer starts. On
+    // Windows the installer can fail to start (the permission prompt
+    // answered No, a standard user): if the runtimes stayed closed, every
+    // Resume afterwards would stop the supervisor it had just started and
+    // answer "Kivali is quitting." until Kivali was quit and reopened.
+    #[test]
+    fn a_closed_runtime_opens_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut teams = TeamsFile::default();
+        let a = teams.add_here("A", Kind::Work, "a@example.com", &mut || 1);
+        let sh = Shell::new(dir.path().to_path_buf(), "0.15.1".into(), teams, None);
+        let rt = sh.runtime(&a).unwrap();
+        assert!(rt.close_sidecar().is_none());
+        assert!(rt.sidecar.lock().unwrap().closed);
+        rt.reopen();
+        assert!(!rt.sidecar.lock().unwrap().closed);
     }
 
     /// A team setup made and never finished stays setup's across launches:

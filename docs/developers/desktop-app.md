@@ -285,7 +285,7 @@ own build.
 | window menu | `WINDOW_MENU`, `menu_shortcuts`, `press_keys` | none (the menu bar is the app's) | a menu bar in each team window (Tauri's per-window menu); WebView2's `AcceleratorKeyPressed` hands it the webview's keys; the Edit items type their shortcut into the webview (`SendInput`) |
 | wording | `TRAY_AREA`, `THIS_COMPUTER` | menu bar; this Mac | notification area; this PC |
 | second launch | `SECOND_LAUNCH_FOCUSES`, `notify_running_instance`, `on_second_launch`, `is_reopen` | refused with a dialog; the Dock's reopen opens Kivali | refused; the running shell opens Kivali (a named event, `Local\kivali-shell-<hash>`) |
-| updater | `INSTALL_EXITS` | install, pause the teams, restart | the installer ends the process: the teams pause in the updater's before-exit hook |
+| updater | `INSTALL_EXITS` | install, pause the teams, restart | the installer ends the process: the teams pause in the updater's before-exit hook, and resume if the installer cannot start |
 | file modes | `owner_only_dir`, `file_mode` | 0700 directories, 0600/0700 files | none (the profile's ACL) |
 | the shell's log | `stderr_is_seen`, `redirect_output`, `attach_terminal` | stderr not a terminal (`isatty`): `logs/shell.log` `dup2`'d onto fd 2 | no console window (`GetConsoleWindow`) and no open standard error handle: `logs/shell.log` made standard output and error (`SetStdHandle`); a flag run from a console attaches to it (`AttachConsole(ATTACH_PARENT_PROCESS)`) |
 
@@ -1236,11 +1236,15 @@ which starts again after every read), so a slow download that keeps
 moving is never cut off. Once the download is done Kivali enters the
 quitting state, installs the update, pauses every team as Quit does (so
 they resume after the restart) and restarts (macOS: the install returns
-first). On Windows the installer ends the
-process inside the install call, so the teams pause in the updater's
-before-exit hook (`platform::INSTALL_EXITS`). A failed download or
-install puts the app back to normal with the error in Settings →
-General.
+first). On Windows the plugin writes the installer to a file, runs the
+updater's before-exit hook (`platform::INSTALL_EXITS`), starts the
+installer with `ShellExecuteW` and ends the process: the hook pauses the
+teams, removes the tray icon and hides the windows. When the installer
+cannot start (the permission prompt answered No, or a standard user),
+`ShellExecuteW` fails and the install returns its error: the tray comes
+back and the teams that ran resume. A failed download leaves the app as
+it was with the error in Settings → General; a failed install does too,
+and opens Settings → General.
 
 ## Menus, tray, alerts and notifications
 

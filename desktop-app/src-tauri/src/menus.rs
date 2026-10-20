@@ -473,8 +473,31 @@ pub fn install(app: &AppHandle) -> R<TrayIcon> {
     if platform::APP_MENU {
         app.set_menu(app_menu(app, &v)?)?;
     }
-    let tray = TrayIconBuilder::with_id(TRAY_ID)
-        .menu(&tray_menu(app, &v)?)
+    let tray = build_tray(app, &v)?;
+    let driver = TrayIconDriver::new(app.clone(), TRAY_ID);
+    let (st, tip) = icon(&v);
+    driver.set(st, &tip);
+    app.manage(driver);
+    Ok(tray)
+}
+
+/// The tray again, after an app update removed it for its installer and
+/// the installer could not start (appupdate.rs). Main thread only.
+pub fn restore_tray(app: &AppHandle) {
+    if app.tray_by_id(TRAY_ID).is_some() {
+        return;
+    }
+    if let Err(e) = build_tray(app, &view(app)) {
+        eprintln!("kivali: tray: {e}");
+        return;
+    }
+    *LAST_MENUS.lock().unwrap() = None;
+    refresh(app);
+}
+
+fn build_tray(app: &AppHandle, v: &View) -> R<TrayIcon> {
+    TrayIconBuilder::with_id(TRAY_ID)
+        .menu(&tray_menu(app, v)?)
         .show_menu_on_left_click(true)
         .on_tray_icon_event(|tray, event| {
             // Opening the menu is the moment someone looks: refresh.
@@ -490,12 +513,7 @@ pub fn install(app: &AppHandle) -> R<TrayIcon> {
                 });
             }
         })
-        .build(app)?;
-    let driver = TrayIconDriver::new(app.clone(), TRAY_ID);
-    let (st, tip) = icon(&v);
-    driver.set(st, &tip);
-    app.manage(driver);
-    Ok(tray)
+        .build(app)
 }
 
 /// What the menus show, as text: they are replaced only when it changes.

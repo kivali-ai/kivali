@@ -609,7 +609,8 @@ pub const WINDOW_MENU: bool = true;
 /// A second launch is refused and the running instance shows itself.
 pub const SECOND_LAUNCH_FOCUSES: bool = true;
 /// The updater runs the installer and exits the process inside
-/// `install`: the org is stopped in its before-exit hook.
+/// `install`: the teams are paused in its before-exit hook, and resumed
+/// when the installer cannot start (`install` then returns its error).
 pub const INSTALL_EXITS: bool = true;
 
 /// The event a second launch sets to wake the first:
