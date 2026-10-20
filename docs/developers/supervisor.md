@@ -723,8 +723,9 @@ line: what keeps a hostile root out is the install directory's DACL,
 which the broker does not inspect. `configure-vm` makes the child
 with that canonical path as its parent and makes it again when the
 child's parent is another path or `Test-VHD` fails, which is what an
-update does: the installer stops the service, replaces `root.vhdx` at
-the same path and starts it again, and each team's child is made anew
+update does: the installer stops the service, shuts down any team's VM
+still running (one holds `root.vhdx` open), replaces `root.vhdx` at the
+same path and starts the service again, and each team's child is made anew
 at its next configuration while off. A running VM whose child has
 another parent is a change of its root disk, left for a stop.
 

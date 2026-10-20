@@ -1649,7 +1649,14 @@ Its hooks (`src-tauri/windows/installer-hooks.nsh`, Tauri's
 own virtual account ([supervisor.md](supervisor.md), "The broker"):
 
 - Before the files are copied, the broker is stopped (`net stop`, which
-  waits for it), since an upgrade replaces the binary it runs.
+  waits for it), since an upgrade replaces the binary it runs. Then any
+  team's VM still running (`kivali-` and 8 hex digits) is shut down
+  through Hyper-V's shutdown integration service (`Stop-VM`, never
+  turned off; paused ones are left), waiting up to two minutes, since a
+  running VM holds `vm\root.vhdx`, the parent of its root disk, open and
+  the copy over it would stop at "Error opening file for writing". The
+  teams' pause before an update stops their VMs, but one outlives a stop
+  that failed or timed out. A failure is written to the details.
 - After, it is registered unless it already is (`kivali-supervisor.exe
   broker install`: automatic start, its event-log source) and started
   (`net start`). An upgrade keeps the registration, whose path does not
@@ -1824,7 +1831,8 @@ limit is 2 GB.
   the last Quit wrote it.
 - **A terminated `serve` on Windows leaves its VM running.** When
   `down --exit` fails or times out, the stop ends in `TerminateProcess`;
-  the next start has to deal with the VM left behind.
+  the next start has to deal with the VM left behind (an app update's
+  installer shuts it down first).
 - **The pipe is a synchronous handle.** A relay over an upgraded stream
   (terminal, exec) that reads and writes on two threads needs
   overlapped I/O or two handles on Windows; nothing relays over it.
