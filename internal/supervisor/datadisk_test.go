@@ -501,6 +501,32 @@ func TestUpgradeRoomForAClone(t *testing.T) {
 	}
 }
 
+// The import grows the data disk, so the room is measured again once
+// the images are in, while the org still runs: short of it, the upgrade
+// stops there, deletes its downloads and leaves the org running.
+// Without it, a disk the import grew past the preflight's figure was
+// stopped and copied onto a drive without room for it.
+func TestUpgradeRoomIsCheckedAgainAfterTheImport(t *testing.T) {
+	h, k := keeperHarness(t)
+	h.mustUp(UpOptions{Install: owner})
+	feed := writeRelease(t, filepath.Join(t.TempDir(), "rel"), "0.16.0", "v0.16.0")
+	calls := 0
+	h.mu.Lock()
+	h.freeBytes = func(string) (uint64, error) {
+		calls++
+		if calls == 1 {
+			return 100 << 30, nil
+		}
+		return 1 << 30, nil
+	}
+	h.mu.Unlock()
+	err := h.sup.Upgrade(context.Background(), UpgradeOptions{Feed: feed}, h.logf())
+	refusedForRoom(t, h, err, 1<<30)
+	if !h.importedNew() || len(k.opNames()) != 0 {
+		t.Fatalf("want a refusal after the import and before the snapshot: ops %v", k.opNames())
+	}
+}
+
 // A legacy disk the backend refuses to import (a differencing disk, say)
 // fails the up with the backend's reason, and the disk stays.
 func TestMoveOfAnInvalidDiskIsRefused(t *testing.T) {

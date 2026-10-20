@@ -115,7 +115,8 @@ func TestNewNeedsABackend(t *testing.T) {
 }
 
 // The snapshot sits next to the data disk, wherever the backend keeps
-// it, and an upgrade's free-space check measures that directory.
+// it, and an upgrade's free-space checks (before the download and after
+// the import) measure that directory.
 func TestSnapshotFollowsTheDataDisk(t *testing.T) {
 	h := newHarness(t)
 	h.mustUp(UpOptions{Install: owner})
@@ -132,7 +133,7 @@ func TestSnapshotFollowsTheDataDisk(t *testing.T) {
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if len(h.freeDirs) != 1 || h.freeDirs[0] != filepath.Dir(h.dataPath()) {
+	if len(h.freeDirs) != 2 || h.freeDirs[0] != filepath.Dir(h.dataPath()) || h.freeDirs[1] != filepath.Dir(h.dataPath()) {
 		t.Fatalf("free space measured in %v, want the data disk's directory %s", h.freeDirs, filepath.Dir(h.dataPath()))
 	}
 }
