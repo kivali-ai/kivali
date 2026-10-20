@@ -99,11 +99,25 @@ fn check_due(last: Option<OffsetDateTime>, now: OffsetDateTime) -> bool {
 /// the same arguments to the installer, whose `/ARGS` relaunches Kivali
 /// with them), `--autostart` included when the login item started it, and
 /// neither can be told otherwise. The mark makes that launch open the
-/// window like any other ([`take_relaunch_mark`], lib.rs).
+/// window like any other ([`take_relaunch_mark`], lib.rs). It holds the
+/// time it was written, in Unix seconds.
 const RELAUNCH_MARK: &str = ".relaunch-after-update";
 
+/// How old a mark the launch still takes for an update's relaunch. On
+/// Windows the mark is written just before the installer is started, so
+/// the relaunch follows after the permission prompt is answered (a person
+/// may be away from it for a while) and the installer has run (minutes).
+/// An hour covers that; an installer cancelled or failed partway never
+/// relaunches Kivali, and its mark is long stale by the next login.
+const RELAUNCH_WITHIN_SECS: u64 = 60 * 60;
+
 fn mark_relaunch(dir: &Path) {
-    if let Err(e) = crate::paths::write_atomic(&dir.join(RELAUNCH_MARK), b"", 0o600) {
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    mark_relaunch_at(dir, now);
+}
+
+fn mark_relaunch_at(dir: &Path, now_unix: u64) {
+    if let Err(e) = crate::paths::write_atomic(&dir.join(RELAUNCH_MARK), now_unix.to_string().as_bytes(), 0o600) {
         eprintln!("kivali: marking the relaunch after the update: {e}");
     }
 }
@@ -112,11 +126,15 @@ fn unmark_relaunch(dir: &Path) {
     let _ = std::fs::remove_file(dir.join(RELAUNCH_MARK));
 }
 
-/// At launch: whether this is an update's relaunch, which opens the
-/// window even when started with `--autostart`. The mark goes, so the
-/// next launch is itself again.
-pub fn take_relaunch_mark(dir: &Path) -> bool {
-    std::fs::remove_file(dir.join(RELAUNCH_MARK)).is_ok()
+/// At launch (`now_unix`): whether this is an update's relaunch, which
+/// opens the window even when started with `--autostart`: a mark written
+/// within [`RELAUNCH_WITHIN_SECS`]. The mark goes either way, so the next
+/// launch is itself again.
+pub fn take_relaunch_mark(dir: &Path, now_unix: u64) -> bool {
+    let path = dir.join(RELAUNCH_MARK);
+    let written = std::fs::read_to_string(&path).ok().and_then(|t| t.trim().parse::<u64>().ok());
+    let _ = std::fs::remove_file(&path);
+    written.is_some_and(|w| now_unix >= w && now_unix - w <= RELAUNCH_WITHIN_SECS)
 }
 
 /// What the before-exit hook put aside for the installer, given back if
@@ -510,14 +528,36 @@ mod tests {
     #[test]
     fn the_relaunch_after_an_update_opens_the_window() {
         let dir = tempfile::tempdir().unwrap();
-        assert!(!take_relaunch_mark(dir.path()), "an ordinary launch");
-        mark_relaunch(dir.path());
-        assert!(take_relaunch_mark(dir.path()), "the relaunch");
-        assert!(!take_relaunch_mark(dir.path()), "the launch after it is ordinary again");
+        let t = 1_792_000_000;
+        assert!(!take_relaunch_mark(dir.path(), t), "an ordinary launch");
+        mark_relaunch_at(dir.path(), t);
+        assert!(take_relaunch_mark(dir.path(), t + 5 * 60), "the relaunch");
+        assert!(!take_relaunch_mark(dir.path(), t + 5 * 60), "the launch after it is ordinary again");
         // An installer that could not start takes the mark back.
-        mark_relaunch(dir.path());
+        mark_relaunch_at(dir.path(), t);
         unmark_relaunch(dir.path());
-        assert!(!take_relaunch_mark(dir.path()));
+        assert!(!take_relaunch_mark(dir.path(), t));
+    }
+
+    // On Windows the mark is written before the installer starts. An
+    // installer cancelled or failed partway never relaunches Kivali, and
+    // without a bound on the mark's age the next login would open the
+    // window once, unasked. A stale mark (or one from a clock set back, or
+    // unreadable) does not count, and still goes.
+    #[test]
+    fn a_stale_relaunch_mark_is_dropped() {
+        let dir = tempfile::tempdir().unwrap();
+        let t = 1_792_000_000;
+        mark_relaunch_at(dir.path(), t);
+        assert!(take_relaunch_mark(dir.path(), t + RELAUNCH_WITHIN_SECS), "an hour on, still the relaunch");
+        mark_relaunch_at(dir.path(), t);
+        assert!(!take_relaunch_mark(dir.path(), t + RELAUNCH_WITHIN_SECS + 1), "the next morning's login");
+        assert!(!dir.path().join(RELAUNCH_MARK).exists(), "the stale mark goes");
+        mark_relaunch_at(dir.path(), t);
+        assert!(!take_relaunch_mark(dir.path(), t - 1), "written in the future");
+        std::fs::write(dir.path().join(RELAUNCH_MARK), b"").unwrap();
+        assert!(!take_relaunch_mark(dir.path(), t), "unreadable");
+        assert!(!dir.path().join(RELAUNCH_MARK).exists());
     }
 
     // On Windows every update left its installer, about 850 MB, in %TEMP%:
