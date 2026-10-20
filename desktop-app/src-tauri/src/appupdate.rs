@@ -14,6 +14,7 @@
 
 use crate::shell::{self, AppUpdateView, Shell};
 use crate::{menus, platform, windows};
+use std::path::Path;
 use std::sync::atomic::Ordering;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -92,6 +93,32 @@ fn check_due(last: Option<OffsetDateTime>, now: OffsetDateTime) -> bool {
     last.is_none_or(|l| now < l || now - l >= CHECK_EVERY)
 }
 
+/// Marks, in the config directory, that the next launch is an update's
+/// relaunch. The relaunch carries the arguments this process had (macOS:
+/// `app.restart()` passes Tauri's `Env::args_os`; Windows: the plugin hands
+/// the same arguments to the installer, whose `/ARGS` relaunches Kivali
+/// with them), `--autostart` included when the login item started it, and
+/// neither can be told otherwise. The mark makes that launch open the
+/// window like any other ([`take_relaunch_mark`], lib.rs).
+const RELAUNCH_MARK: &str = ".relaunch-after-update";
+
+fn mark_relaunch(dir: &Path) {
+    if let Err(e) = crate::paths::write_atomic(&dir.join(RELAUNCH_MARK), b"", 0o600) {
+        eprintln!("kivali: marking the relaunch after the update: {e}");
+    }
+}
+
+fn unmark_relaunch(dir: &Path) {
+    let _ = std::fs::remove_file(dir.join(RELAUNCH_MARK));
+}
+
+/// At launch: whether this is an update's relaunch, which opens the
+/// window even when started with `--autostart`. The mark goes, so the
+/// next launch is itself again.
+pub fn take_relaunch_mark(dir: &Path) -> bool {
+    std::fs::remove_file(dir.join(RELAUNCH_MARK)).is_ok()
+}
+
 /// The teams that ran when the before-exit hook paused them for the
 /// installer; taken back if the installer could not start.
 static HANDED_OVER: Mutex<Option<Vec<String>>> = Mutex::new(None);
@@ -117,6 +144,7 @@ fn updater(app: &AppHandle) -> UpdaterBuilder {
 fn step_aside(app: &AppHandle) {
     let running = shell::pause_all_for_exit(app);
     *HANDED_OVER.lock().unwrap() = Some(running);
+    mark_relaunch(&app.state::<Shell>().dir);
     // On the main thread, where Tauri keeps the tray, and waited for: the
     // plugin ends the process as soon as this returns.
     let (done, wait) = std::sync::mpsc::channel();
@@ -137,6 +165,7 @@ fn step_aside(app: &AppHandle) {
 /// prompt answered No, a standard user): the tray comes back, the teams
 /// that ran resume, and Settings → General says why.
 fn put_back(app: &AppHandle, running: &[String]) {
+    unmark_relaunch(&app.state::<Shell>().dir);
     shell::resume_after_failed_install(app, running);
     let a = app.clone();
     let _ = app.run_on_main_thread(move || menus::restore_tray(&a));
@@ -270,6 +299,7 @@ fn install(app: &AppHandle, got: Result<Option<(Update, Vec<u8>)>, String>) {
     match update.install(bytes) {
         Ok(()) => {
             shell::pause_all_for_exit(app);
+            mark_relaunch(&sh.dir);
             app.restart();
         }
         Err(e) => {
@@ -383,6 +413,24 @@ mod tests {
         for s in ["checking", "available", "downloading", "installing", "update_failed"] {
             assert!(!team_wants_check(&v(s)), "{s}");
         }
+    }
+
+    // Kivali started at login relaunches after an update with --autostart
+    // still in its arguments (on Windows the installer passes them on as
+    // they were), which alone would bring back only the tray icon, on
+    // Windows 11 perhaps hidden in the overflow. The mark makes that launch
+    // open the window, once.
+    #[test]
+    fn the_relaunch_after_an_update_opens_the_window() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!take_relaunch_mark(dir.path()), "an ordinary launch");
+        mark_relaunch(dir.path());
+        assert!(take_relaunch_mark(dir.path()), "the relaunch");
+        assert!(!take_relaunch_mark(dir.path()), "the launch after it is ordinary again");
+        // An installer that could not start takes the mark back.
+        mark_relaunch(dir.path());
+        unmark_relaunch(dir.path());
+        assert!(!take_relaunch_mark(dir.path()));
     }
 
     // A check started while the update downloads (Check for updates in
