@@ -110,3 +110,33 @@ func TestWorkflowsRustToolchain(t *testing.T) {
 		t.Error("no workflow caches Rust with Swatinem/rust-cache")
 	}
 }
+
+// TestWindowsSignCommandFindsItsScript resolves the script that
+// desktop-app/Makefile's WINDOWS_SIGN names from src-tauri, the directory
+// the tauri CLI runs its sign command in. Nothing else exercises the
+// command before a release (dev builds never sign), and a path that does
+// not resolve there makes "Package and sign" fail on the first file an
+// hour after the tag push.
+func TestWindowsSignCommandFindsItsScript(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("desktop-app", "Makefile"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var line string
+	for _, l := range strings.Split(string(b), "\n") {
+		if strings.Contains(l, "WINDOWS_SIGN :=") {
+			line = l
+		}
+	}
+	if line == "" {
+		t.Fatal("desktop-app/Makefile has no WINDOWS_SIGN")
+	}
+	m := regexp.MustCompile(`-File (\S+\.ps1)`).FindStringSubmatch(line)
+	if m == nil {
+		t.Fatalf("WINDOWS_SIGN has no -File <script>: %s", line)
+	}
+	script := filepath.Join("desktop-app", "src-tauri", filepath.FromSlash(m[1]))
+	if _, err := os.Stat(script); err != nil {
+		t.Errorf("WINDOWS_SIGN names %s, which does not exist from src-tauri (%s): %v", m[1], script, err)
+	}
+}
