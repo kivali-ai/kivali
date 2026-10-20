@@ -143,31 +143,42 @@ func TestShellToolRendersTheNotice(t *testing.T) {
 	if !strings.Contains(body, "ok") {
 		t.Errorf("rendered body lacks stdout:\n%s", body)
 	}
-	plain := renderShellResult(&agent.ShellResult{Stdout: "ok\n"})
+	plain := renderShellResult(&agent.ShellResult{Stdout: "ok\n"}, agent.ShellProxyRefusalNotice)
 	if strings.Contains(plain, "notice") {
 		t.Errorf("result without a notice renders one:\n%s", plain)
 	}
 }
 
 // A proxy refusal in the output gets the allow-list notice, after the
-// shell's own notice, from both the agent's and a subagent's run_shell.
+// shell's own notice: the agent's run_shell sends it to the owner and a
+// subagent's to its answer, as their descriptions do.
 func TestShellToolNamesAProxyRefusal(t *testing.T) {
 	exec := &fakeShellExec{res: &agent.ShellResult{
 		ExitCode: 56,
 		Stderr:   "curl: (56) CONNECT tunnel failed, response 403\n",
 		Notice:   "shell notice",
 	}}
-	for name, tool := range map[string]*Tool{
-		"agent":    ShellTool(ShellToolConfig{Exec: exec, From: "alice"}),
-		"subagent": func() *Tool { t := SubagentShellTool(exec); return &t }(),
+	sub := SubagentShellTool(exec)
+	for _, c := range []struct {
+		name, notice, network string
+		tool                  *Tool
+	}{
+		{"agent", agent.ShellProxyRefusalNotice, agent.ShellNetworkText, ShellTool(ShellToolConfig{Exec: exec, From: "alice"})},
+		{"subagent", agent.SubagentShellProxyRefusalNotice, agent.SubagentShellNetworkText, &sub},
 	} {
-		res, err := tool.Handler(context.Background(), json.RawMessage(`{"command":"curl https://python.org"}`))
+		res, err := c.tool.Handler(context.Background(), json.RawMessage(`{"command":"curl https://python.org"}`))
 		if err != nil {
-			t.Fatalf("%s: Handler: %v", name, err)
+			t.Fatalf("%s: Handler: %v", c.name, err)
 		}
-		if want := "--- notice ---\nshell notice\n" + agent.ShellProxyRefusalNotice + "\n"; !strings.Contains(res.Content[0], want) {
-			t.Errorf("%s: rendered body lacks %q:\n%s", name, want, res.Content[0])
+		if want := "--- notice ---\nshell notice\n" + c.notice + "\n"; !strings.Contains(res.Content[0], want) {
+			t.Errorf("%s: rendered body lacks %q:\n%s", c.name, want, res.Content[0])
 		}
+		if !strings.Contains(c.tool.Description, c.network) {
+			t.Errorf("%s: description lacks its network paragraph:\n%s", c.name, c.tool.Description)
+		}
+	}
+	if strings.Contains(sub.Description, "tell the owner") {
+		t.Errorf("subagent description sends it to the owner:\n%s", sub.Description)
 	}
 }
 

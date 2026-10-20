@@ -193,9 +193,11 @@ func (p *proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // allowlistRefusal follows the host name in the body of an allowlist
-// mode refusal. Only an agent's shell is in allowlist mode, so it
-// names what the agent can do instead.
-const allowlistRefusal = " is not on the team's allow list, which limits shell commands; the owner edits it in Org, Network. WebFetch and WebSearch are not limited to it."
+// mode refusal, which only an agent's shell gets. It names the cause
+// and nothing else: no list and no other way out, which planted
+// instructions would look for. run_shell's notice matches it
+// (internal/agent's ShellProxyRefusals) and says what to do.
+const allowlistRefusal = " is not on the team's allow list."
 
 // admit decides a request's mode and whether it may go on to the
 // dialer, writing the refusal itself when it may not. host is the
