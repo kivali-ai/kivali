@@ -567,8 +567,10 @@ const (
 // homeHistoryThreads is every history thread, newest activity first:
 // every message on disk grouped by thread, leaving out what is still
 // queued or still waiting on the CEO (the Queue and Needs you show
-// those), exactly as the inbox's history section does.
-func (s *Server) homeHistoryThreads(q store.MessageQueue, ceoView CEOInboxView) ([]historyThread, error) {
+// those), exactly as the inbox's history section does. Only the
+// messages' heads are read (home_cache.go); loadHistoryThread reads a
+// thread's messages for the page that shows it.
+func (s *Server) homeHistoryThreads(q store.MessageQueue, ceoView CEOInboxView) ([]historyThreadRef, error) {
 	exclude := map[string]bool{}
 	for _, p := range pendingPathsOf(q) {
 		exclude[p] = true
@@ -576,19 +578,18 @@ func (s *Server) homeHistoryThreads(q store.MessageQueue, ceoView CEOInboxView) 
 	for _, it := range ceoView.Needs {
 		exclude[it.RequestPath] = true
 	}
-	all, err := s.Store.ListMessages(store.MessageFilter{})
+	heads, err := s.messageHeads()
 	if err != nil {
 		return nil, err
 	}
-	threads, _ := s.buildHistoryThreads(all, exclude, 0)
-	return threads, nil
+	return groupHistoryThreads(heads, exclude), nil
 }
 
 // historyCursor is a thread's place in the newest-first order, as the
 // opaque next_before string: the thread's last activity in Unix
 // nanoseconds, a colon, its root path. Parsing splits at the first
 // colon, so a root path holding one still round-trips.
-func historyCursor(t historyThread) string {
+func historyCursor(t historyThreadRef) string {
 	return strconv.FormatInt(t.LastActivity.UnixNano(), 10) + ":" + t.RootPath
 }
 
@@ -642,7 +643,7 @@ func (s *Server) handleAPIHomeHistory(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusInternalServerError, "the message history could not be read", whoServer)
 		return
 	}
-	// buildHistoryThreads orders by last activity, newest first, then
+	// groupHistoryThreads orders by last activity, newest first, then
 	// root path: the cursor's order.
 	start := 0
 	if hasBefore {
@@ -660,7 +661,12 @@ func (s *Server) handleAPIHomeHistory(w http.ResponseWriter, r *http.Request) {
 		Threads: make([]apitypes.HistoryThread, 0, end-start),
 		Total:   len(threads),
 	}
-	for _, t := range threads[start:end] {
+	for _, ref := range threads[start:end] {
+		t, err := s.loadHistoryThread(ref)
+		if err != nil {
+			writeAPIError(w, http.StatusInternalServerError, "the message history could not be read", whoServer)
+			return
+		}
 		out.Threads = append(out.Threads, v.historyThread(t))
 	}
 	if end < len(threads) && end > start {

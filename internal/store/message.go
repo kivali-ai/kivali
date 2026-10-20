@@ -525,6 +525,37 @@ type MessageFilter struct {
 // ListMessages returns messages matching the filter, sorted by path
 // (which sorts first by release, then by timestamp embedded in the filename).
 func (s *FSStore) ListMessages(f MessageFilter) ([]Message, error) {
+	paths, err := s.ListMessagePaths()
+	if err != nil {
+		return nil, err
+	}
+	var out []Message
+	for _, p := range paths {
+		message, err := s.ReadMessage(p)
+		if err != nil {
+			return nil, err
+		}
+		if f.From != "" && message.From != f.From {
+			continue
+		}
+		if f.To != "" && !message.To.Contains(f.To) {
+			continue
+		}
+		if f.Type != "" && message.Type != f.Type {
+			continue
+		}
+		out = append(out, message)
+	}
+	return out, nil
+}
+
+// MessageStamp stamps the message file at path, the file ReadMessage
+// reads. Take it before the read.
+func (s *FSStore) MessageStamp(path string) FileStamp { return stampOf(path) }
+
+// ListMessagePaths returns the absolute path of every message
+// ListMessages reads, sorted, without reading any of them.
+func (s *FSStore) ListMessagePaths() ([]string, error) {
 	root := s.path("messages")
 	var paths []string
 	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, walkErr error) error {
@@ -553,24 +584,7 @@ func (s *FSStore) ListMessages(f MessageFilter) ([]Message, error) {
 		return nil, err
 	}
 	sort.Strings(paths)
-	var out []Message
-	for _, p := range paths {
-		message, err := s.ReadMessage(p)
-		if err != nil {
-			return nil, err
-		}
-		if f.From != "" && message.From != f.From {
-			continue
-		}
-		if f.To != "" && !message.To.Contains(f.To) {
-			continue
-		}
-		if f.Type != "" && message.Type != f.Type {
-			continue
-		}
-		out = append(out, message)
-	}
-	return out, nil
+	return paths, nil
 }
 
 // MoveToRedacted relocates a message from messages/<bucket>/foo.md to

@@ -300,6 +300,12 @@ type Server struct {
 	snapshotCache   snapshotCache
 	assignmentCache assignmentSetCache
 
+	// ceoInboxCache and historyCache keep what Home's CEO inbox and
+	// message history read, so a refresh parses only what changed. See
+	// home_cache.go.
+	ceoInboxCache ceoInboxCache
+	historyCache  historyCache
+
 	// usageVersion counts usage.jsonl appends; spendCache holds the
 	// priced usage window read under a given version, for the
 	// snapshot's spend readouts. See org_goals.go.
