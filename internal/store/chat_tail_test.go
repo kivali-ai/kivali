@@ -3,6 +3,7 @@ package store
 import (
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -107,6 +108,78 @@ func TestChatTailStartsOverAfterARotation(t *testing.T) {
 	got, r := st.read(t, ct)
 	if !r.Reset || strings.Join(got, ",") != "fresh" {
 		t.Fatalf("after a rotation: reset %v, rows %q; want a reset and only the new chat", r.Reset, got)
+	}
+}
+
+// A restore writes a chat over in place: the same file, truncated and
+// written again from the top (backup.Restore opens it O_TRUNC). When
+// the restored chat is at least as long as what the tail had read, the
+// file is neither a new one nor a shorter one, so the tail took it for
+// growth and read on from its old offset in rows it never read. Landing
+// on a line boundary, it kept the old rows and missed the restored ones
+// before the offset, silently; landing mid-line, every later read
+// failed on the cut row. Home's Needs you showed the wrong requests, or
+// failed to load, until the server restarted. The tail must start over
+// as a whole read would. TestRestoreLeavesHomeReadingTheRestoredFiles
+// covers the restore end to end.
+func TestChatTailStartsOverAfterARewriteInPlace(t *testing.T) {
+	rows := func(contents ...string) string {
+		var b strings.Builder
+		for _, c := range contents {
+			b.WriteString(`{"role":"received","content":"` + c + `"}` + "\n")
+		}
+		return b.String()
+	}
+	for _, tc := range []struct {
+		name     string
+		restored string
+	}{
+		// "uno" and "dos" are as long as "one" and "two": the old
+		// offset falls on a line boundary of the restored chat.
+		{"the old offset on a line boundary", rows("uno", "dos", "tres")},
+		{"the old offset mid-line", rows("first", "second", "third")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newStoreForMemoryTest(t)
+			path := s.path("agents", "alice", "chat.jsonl")
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte(rows("one", "two")), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			ct := s.ChatHistoryTail("alice")
+			var st tailState
+			st.read(t, ct)
+			before, err := os.Stat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			f, err := os.OpenFile(path, os.O_WRONLY|os.O_TRUNC, 0o644)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := f.WriteString(tc.restored); err != nil {
+				t.Fatal(err)
+			}
+			if err := f.Close(); err != nil {
+				t.Fatal(err)
+			}
+			after, err := os.Stat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !os.SameFile(before, after) || after.Size() < before.Size() {
+				t.Fatal("the rewrite made a new or shorter file, which the tail already catches")
+			}
+
+			got, r := st.read(t, ct)
+			want := chatContents(t, s, "alice")
+			if !r.Reset || strings.Join(got, ",") != strings.Join(want, ",") {
+				t.Fatalf("after a rewrite in place: reset %v, tail holds %q; want a reset and %q", r.Reset, got, want)
+			}
+		})
 	}
 }
 
