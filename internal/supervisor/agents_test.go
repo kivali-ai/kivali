@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -43,6 +44,48 @@ func TestUpgradeWaitsForTheAgentsBeforeCommitting(t *testing.T) {
 	}
 	if st := h.sup.State(); st.Kivali != "0.16.0" || st.Upgrade != nil {
 		t.Fatalf("state %+v", st)
+	}
+}
+
+// The wait for the agents is a stage of its own, starting-agents, that
+// reports each change in how many agents are connected of how many have
+// a pod. Without it the desktop app's bar stood still on "Starting up"
+// for the minutes every agent pod takes to come back.
+func TestUpgradeReportsTheAgentsConnecting(t *testing.T) {
+	h := newHarness(t)
+	h.mustUp(UpOptions{Install: owner})
+	h.vm.mu.Lock()
+	h.vm.readyzAgentsLooks = 0
+	h.vm.readyzAgents = func(n int) (int, string) {
+		switch n {
+		case 1, 2:
+			return http.StatusServiceUnavailable, `{"agent_pods":2,"connected":0}`
+		case 3:
+			return http.StatusServiceUnavailable, `{"agent_pods":2,"connected":1}`
+		}
+		return http.StatusOK, `{"agent_pods":2,"connected":2}`
+	}
+	h.vm.mu.Unlock()
+	ctx, l := newStageLog()
+	var reports []string
+	l.h.setEmit(func(ev Event) {
+		reports = append(reports, fmt.Sprintf("%s %d/%d", ev.Stage, ev.Progress.Done, ev.Progress.Total))
+	})
+	feed := writeRelease(t, filepath.Join(t.TempDir(), "rel"), "0.16.0", "v0.16.0")
+	if err := h.sup.Upgrade(ctx, UpgradeOptions{Feed: feed}, l.logf); err != nil {
+		t.Fatalf("upgrade: %v", err)
+	}
+	var agents []string
+	for _, r := range reports {
+		if strings.HasPrefix(r, StageAgents) {
+			agents = append(agents, r)
+		}
+	}
+	if want := []string{"starting-agents 0/2", "starting-agents 1/2", "starting-agents 2/2"}; !slices.Equal(agents, want) {
+		t.Fatalf("agent reports %v, want %v", agents, want)
+	}
+	if !slices.Contains(l.stages, StageAgents) {
+		t.Fatalf("no line in starting-agents: %v", l.sequence())
 	}
 }
 

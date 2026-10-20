@@ -254,6 +254,48 @@ func TestImportDataDisk(t *testing.T) {
 	}
 }
 
+// The upgrade's snapshot reports the bytes the broker has copied, on the
+// clock, and logs what it copied. Without it, the desktop app's bar sat
+// still through a copy of all of data.vhdx, minutes on a team in use.
+func TestSnapshotDataDiskReportsProgress(t *testing.T) {
+	fb := &fakeBroker{snapshotEntered: make(chan struct{}), snapshotWait: make(chan struct{}),
+		snapshotResult: broker.SnapshotResult{CopiedBytes: 8 << 30}}
+	copied := int64(0)
+	fb.progress = func(broker.DiskRequest) broker.VHDProgress {
+		copied += 1 << 30
+		return broker.VHDProgress{Op: broker.OpSnapshot, Done: copied, Total: 8 << 30}
+	}
+	clk := clock.NewFake()
+	b := Backend{Client: serveBroker(t, fb), Clock: clk}
+	reports := make(chan [2]int64)
+	var log logLines
+	done := make(chan error, 1)
+	go func() {
+		done <- b.SnapshotDataDisk(context.Background(), `\\?\`+testConfigDir, func(d, t int64) { reports <- [2]int64{d, t} }, log.logf)
+	}()
+	<-fb.snapshotEntered
+	clk.BlockUntil(1)
+	for i := int64(1); i <= 3; i++ {
+		clk.Advance(progressPoll)
+		if r := <-reports; r != [2]int64{i << 30, 8 << 30} {
+			t.Fatalf("report %d = %v", i, r)
+		}
+	}
+	close(fb.snapshotWait)
+	if err := <-done; err != nil {
+		t.Fatalf("SnapshotDataDisk: %v", err)
+	}
+	fb.mu.Lock()
+	calls := fb.diskCalls
+	fb.mu.Unlock()
+	if len(calls) != 1 || calls[0] != "POST /v1/vhd/snapshot "+testConfigDir {
+		t.Fatalf("broker calls = %q", calls)
+	}
+	if l := log.get(); len(l) != 1 || !strings.Contains(l[0], "8.0 GiB in 3s") {
+		t.Fatalf("log = %q", l)
+	}
+}
+
 // The broker's already-imported answer is supervisor.ErrAlreadyImported;
 // any other refusal is the error, with its sentence.
 func TestImportDataDiskAnswers(t *testing.T) {

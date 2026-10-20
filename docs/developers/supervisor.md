@@ -783,7 +783,9 @@ HTTP/1.1 over the RPC endpoint (`supervisor.sock` on macOS, the named
 pipe on Windows). Operations are `POST /v1/<name>` with a
 JSON body and answer NDJSON: `{"log": "...", "stage": "..."}` lines, then
 one `{"done": true, "error": "...", "result": {...}}`. While a stage has
-measurable work (moving the data disk, compacting it; "Stages" below),
+measurable work (moving the data disk, compacting it, an upgrade's
+download, its copy of the data disk and its agents connecting;
+"Stages" below),
 its progress arrives as a line of its own,
 `{"stage": "...", "progress": {"done": n, "total": n}}`, at each change,
 and the stage's later log lines carry the last one; `progress` is absent
@@ -836,7 +838,7 @@ its final event and, in the serve log, a line `<operation> failed:
 | `up`, fresh disk | `making-room` (creating the disk, its first boot to READY), `starting` (guest agent, forward), `setting-up` (install, rollout, `/readyz`) |
 | `up`, installed | `updating-data` (moving the data disk from where an earlier version kept it, only once, on Windows: "Moving the data disk"; with progress, the bytes copied), `making-room` (compacting the data disk, only when the Windows backend compacts it before the boot; with progress, in virtdisk's own units), `starting` (boot to READY, guest agent, forward), `setting-up` (rollout, `/readyz`) |
 | `install`, `address` | `setting-up` |
-| `upgrade` | `downloading` (preflight, fetch, verify, import), `snapshot` (journal, quiesce, stop, snapshot), `installing` (boot, chart, HelmChart rewrite), `starting` (rollout, `/readyz`, the agents connecting); on failure `rolling-back` |
+| `upgrade` | `downloading` (preflight, fetch, verify, import; with progress, the bytes downloaded against release.json's sizes, at each hundredth), `snapshot` (journal, quiesce, stop, snapshot; with progress where the backend copies the data disk, on Windows, the bytes copied), `installing` (boot, chart, HelmChart rewrite), `starting` (rollout, `/readyz`), `starting-agents` (every agent pod up on the new release and connected, `waitAgents`; with progress, the agents connected of the agent pods, at each change); on failure `rolling-back` |
 | `down` | `pausing` |
 | `destroy` | `deleting` |
 
@@ -1023,8 +1025,8 @@ supervisor reads):
 ```json
 {
   "version": "1.2.1",
-  "chart": {"name": "kivali-1.2.1.tgz", "sha256": "…"},
-  "images": {"linux/arm64": {"name": "kivali-images-linux-arm64.tar.zst", "sha256": "…"}},
+  "chart": {"name": "kivali-1.2.1.tgz", "sha256": "…", "size": 41234},
+  "images": {"linux/arm64": {"name": "kivali-images-linux-arm64.tar.zst", "sha256": "…", "size": 512345678}},
   "min_desktop_version": "1.2.0",
   "vm_image": "1.2.1",
   "manual_steps": false,
@@ -1032,6 +1034,9 @@ supervisor reads):
 }
 ```
 
+An asset's `size` (bytes) is what the upgrade's free-space check and
+its download progress count; without it the check leaves that asset
+out, and the download reports no progress.
 Asset names resolve against the feed's own URL (or directory, for a local
 path or `file://` feed); an asset may carry an absolute `url`. Bundles may
 be `.tar`, `.tar.gz` or `.tar.zst` (decompressed on the host, streamed to
@@ -1085,7 +1090,9 @@ An upgrade, with `local.json`'s `upgrade` as the journal:
    data.img.upgrade)`), then the Host's `SyncDir` on that directory (on
    macOS `F_FULLFSYNC`) so the snapshot is on the drive before the journal
    says so; on Windows the broker's `POST /v1/vhd/snapshot`, which
-   flushes the copy before it answers (`DataDiskKeeper`). Then
+   flushes the copy before it answers (`DataDiskKeeper`); meanwhile the
+   backend asks `POST /v1/vhd/progress` every second and reports the
+   bytes copied as the stage's progress, and logs a line every 10 s. Then
    `snapshot_complete: true`, step `snapshotted`. A failed
    snapshot deletes the partial file, clears the journal and starts the
    org unchanged.
@@ -1115,7 +1122,8 @@ An upgrade, with `local.json`'s `upgrade` as the journal:
    another image is the previous release's, about to be recreated.
    Agents that are not all connected within 10 minutes fail the update;
    a server that answers 404 (a release from before `/readyz/agents`)
-   is not waited for.
+   is not waited for. The wait is the `starting-agents` stage, and each
+   change in M or N is its progress, M of N.
 8. `committed` (and `kivali` = to), delete the snapshot and
    `downloads/<version>/`, clear the journal.
 

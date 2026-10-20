@@ -51,7 +51,9 @@ export interface OpView {
 export interface StageMeasure {
   done: number;
   total: number;
-  bytes: boolean;
+  /** view.rs `MeasureUnit`: bytes (a copy, a download), agents (connected
+   *  of those with a pod), or a share (a compaction). */
+  unit: "bytes" | "agents" | "share";
 }
 
 export interface AiView {

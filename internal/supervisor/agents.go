@@ -153,7 +153,8 @@ func (s *Supervisor) agentReadiness(ctx context.Context) (agentPodsReadiness, er
 // 200). A team with no agent pods passes at once. It fails at once when
 // an agent pod on image cannot start for a reason the release causes
 // (agentPodsBroken), and when deployTimeout passes. A server that does
-// not answer /readyz/agents is not waited for.
+// not answer /readyz/agents is not waited for. Each change in the count
+// is reported as the stage's progress: agents connected of agent pods.
 func (s *Supervisor) waitAgents(ctx context.Context, image string, logf Logf) error {
 	g, err := s.running()
 	if err != nil {
@@ -163,6 +164,7 @@ func (s *Supervisor) waitAgents(ctx context.Context, image string, logf Logf) er
 	what := "the agents to connect to the server"
 	logf("waiting for %s", what)
 	var connected agentPodsReadiness
+	progress := progressOf(ctx)
 	err = poll(ctx, s.o.Clock, deployTimeout, pollInterval, what, func(ctx context.Context) error {
 		var pending []string
 		if out, err := kubectl(ctx, g, "-n", Namespace, "get", "pods", "-l", agentPodLabel, "-o", "json"); err == nil {
@@ -180,6 +182,9 @@ func (s *Supervisor) waitAgents(ctx context.Context, image string, logf Logf) er
 				return permanent(err)
 			}
 			return err
+		}
+		if r != connected {
+			progress(int64(r.Connected), int64(r.AgentPods))
 		}
 		connected = r
 		if r.Connected >= r.AgentPods {

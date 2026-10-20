@@ -136,7 +136,7 @@ func TestUpgradeStages(t *testing.T) {
 	if err := h.sup.Upgrade(ctx, UpgradeOptions{Feed: feed}, l.logf); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{StageDownloading, StageSnapshot, StageInstalling, StageStarting}
+	want := []string{StageDownloading, StageSnapshot, StageInstalling, StageStarting, StageAgents}
 	if got := l.sequence(); !slices.Equal(got, want) {
 		t.Fatalf("upgrade stages %v, want %v\n%s", got, want, strings.Join(l.lines, "\n"))
 	}

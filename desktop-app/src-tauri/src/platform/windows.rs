@@ -600,6 +600,9 @@ pub fn open_terminal(binary: &Path, dir: &Path) -> Result<(), String> {
 pub const TRAY_ICONS: TrayIcons = tray_set!("tray-win");
 pub const TRAY_AREA: &str = "notification area";
 pub const THIS_COMPUTER: &str = "this PC";
+/// An update's snapshot of the data disk is the broker's copy of all of
+/// data.vhdx, which takes as long as the disk is big.
+pub const UPDATE_COPIES_DATA_DISK: bool = true;
 /// No application menu: each team window has a menu bar of its own
 /// ([`WINDOW_MENU`]).
 pub const APP_MENU: bool = false;

@@ -314,12 +314,25 @@ func (b Backend) ImportDataDisk(ctx context.Context, configDir string, progress 
 }
 
 // SnapshotDataDisk has the broker copy the data disk to its upgrade
-// snapshot beside it (POST /v1/vhd/snapshot), flushed before it answers.
-func (b Backend) SnapshotDataDisk(ctx context.Context, configDir string) error {
+// snapshot beside it (POST /v1/vhd/snapshot), flushed before it answers;
+// while the copy runs it reports the bytes copied and logs a line every
+// compactHeartbeat, as an import does.
+func (b Backend) SnapshotDataDisk(ctx context.Context, configDir string, progress supervisor.Progress, logf supervisor.Logf) error {
+	configDir = plainPath(configDir)
 	ctx, cancel := context.WithTimeout(ctx, snapshotTimeout)
 	defer cancel()
-	_, err := b.Client.SnapshotVHD(ctx, plainPath(configDir))
-	return err
+	start := b.clock().Now()
+	var res broker.SnapshotResult
+	err := b.longOp(ctx, configDir, broker.OpSnapshot, progress, logf, "copying the data disk for the snapshot", func(ctx context.Context) error {
+		var err error
+		res, err = b.Client.SnapshotVHD(ctx, configDir)
+		return err
+	})
+	if err != nil {
+		return err
+	}
+	logf("the data disk is copied for the snapshot: %s in %s", gib(res.CopiedBytes), b.clock().Now().Sub(start).Round(time.Second))
+	return nil
 }
 
 // RestoreDataDiskSnapshot has the broker put the upgrade snapshot in the

@@ -9,16 +9,17 @@ import (
 // belongs to (Event.Stage), so the shell can draw a step list without
 // parsing the lines (docs/developers/supervisor.md, "Stages").
 const (
-	StageUpdatingData = "updating-data" // up: the data disk moved to where the backend now keeps it
-	StageMakingRoom   = "making-room"   // up: creating the data disk, its first boot to READY; compacting the data disk before a boot
-	StageStarting     = "starting"      // booting to READY, the guest agent, the forward
-	StageSettingUp    = "setting-up"    // install, rollout, /readyz; a credential change
-	StageDownloading  = "downloading"   // upgrade: preflight, fetch, verify, import
-	StageSnapshot     = "snapshot"      // upgrade: journal, quiesce, stop, snapshot
-	StageInstalling   = "installing"    // upgrade: boot, new chart, HelmChart rewrite
-	StageRollingBack  = "rolling-back"  // upgrade: the snapshot goes back
-	StagePausing      = "pausing"       // down
-	StageDeleting     = "deleting"      // destroy
+	StageUpdatingData = "updating-data"   // up: the data disk moved to where the backend now keeps it
+	StageMakingRoom   = "making-room"     // up: creating the data disk, its first boot to READY; compacting the data disk before a boot
+	StageStarting     = "starting"        // booting to READY, the guest agent, the forward
+	StageSettingUp    = "setting-up"      // install, rollout, /readyz; a credential change
+	StageDownloading  = "downloading"     // upgrade: preflight, fetch, verify, import
+	StageSnapshot     = "snapshot"        // upgrade: journal, quiesce, stop, snapshot
+	StageInstalling   = "installing"      // upgrade: boot, new chart, HelmChart rewrite
+	StageAgents       = "starting-agents" // upgrade: agent pods up and connected (waitAgents); progress: connected of agent pods
+	StageRollingBack  = "rolling-back"    // upgrade: the snapshot goes back
+	StagePausing      = "pausing"         // down
+	StageDeleting     = "deleting"        // destroy
 )
 
 type stageKey struct{}

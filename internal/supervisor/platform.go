@@ -71,10 +71,11 @@ var ErrAlreadyImported = errors.New("the data disk is already in its place")
 // snapshot, its rollback and its cleanup, and destroy's deletion of the
 // disk, go through it instead of the Host's file operations. The
 // snapshot is at DataDiskPath with SnapshotSuffix, as the Host's is; each
-// runs with the VM off. DeleteDataDisk deletes the disk and its snapshot
-// and gives the bytes they held.
+// runs with the VM off. SnapshotDataDisk copies the disk, reporting the
+// bytes copied as it goes. DeleteDataDisk deletes the disk and its
+// snapshot and gives the bytes they held.
 type DataDiskKeeper interface {
-	SnapshotDataDisk(ctx context.Context, configDir string) error
+	SnapshotDataDisk(ctx context.Context, configDir string, progress Progress, logf Logf) error
 	RestoreDataDiskSnapshot(ctx context.Context, configDir string) error
 	DeleteDataDiskSnapshot(ctx context.Context, configDir string) error
 	DeleteDataDisk(ctx context.Context, configDir string) (freed int64, err error)

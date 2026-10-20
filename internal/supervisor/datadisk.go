@@ -220,11 +220,12 @@ func (s *Supervisor) keeper(p string) DataDiskKeeper {
 
 // takeSnapshot copies the data disk to its snapshot, durably: the
 // backend's (DataDiskKeeper) where it keeps the disk, else the Host's
-// copy and SyncDir.
-func (s *Supervisor) takeSnapshot(ctx context.Context) error {
+// copy and SyncDir. The backend's copy reports its progress as the
+// stage's.
+func (s *Supervisor) takeSnapshot(ctx context.Context, logf Logf) error {
 	snap := s.snapshotPath()
 	if k := s.keeper(snap); k != nil {
-		return k.SnapshotDataDisk(ctx, s.o.ConfigDir)
+		return k.SnapshotDataDisk(ctx, s.o.ConfigDir, progressOf(ctx), logf)
 	}
 	if err := removeIfExists(snap); err != nil {
 		return err

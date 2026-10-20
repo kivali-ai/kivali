@@ -78,6 +78,11 @@ type fakeBroker struct {
 	// "METHOD path config_dir"; deleteResult answers the deletions.
 	diskCalls    []string
 	deleteResult broker.DeleteResult
+	// snapshotResult answers the snapshot; snapshotEntered and
+	// snapshotWait, when set, hold it as importEntered and importWait
+	// hold an import.
+	snapshotResult                broker.SnapshotResult
+	snapshotEntered, snapshotWait chan struct{}
 }
 
 func (f *fakeBroker) handler() http.Handler {
@@ -184,8 +189,18 @@ func (f *fakeBroker) handler() http.Handler {
 			_ = json.NewDecoder(r.Body).Decode(&dr)
 			f.mu.Lock()
 			f.diskCalls = append(f.diskCalls, route+" "+dr.ConfigDir)
-			res := f.deleteResult
+			var res any = f.deleteResult
+			entered, wait := f.snapshotEntered, f.snapshotWait
+			if route == "POST /v1/vhd/snapshot" {
+				res = f.snapshotResult
+			} else {
+				entered, wait = nil, nil
+			}
 			f.mu.Unlock()
+			if entered != nil {
+				close(entered)
+				<-wait
+			}
 			writeJSON(w, res)
 		})
 	}
@@ -628,7 +643,7 @@ func TestKeeperAsksTheBroker(t *testing.T) {
 	b := Backend{Client: serveBroker(t, fb)}
 	dir := `C:\Users\Maya\AppData\Local\Kivali`
 	ctx := context.Background()
-	if err := b.SnapshotDataDisk(ctx, dir); err != nil {
+	if err := b.SnapshotDataDisk(ctx, dir, func(int64, int64) {}, func(string, ...any) {}); err != nil {
 		t.Fatal(err)
 	}
 	if err := b.RestoreDataDiskSnapshot(ctx, dir); err != nil {

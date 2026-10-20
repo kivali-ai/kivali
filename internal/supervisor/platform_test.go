@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -76,7 +77,7 @@ func TestAssetNames(t *testing.T) {
 	}
 	// A URL asset's name is still the downloaded file's name.
 	h := newHarness(t)
-	_, err = h.sup.download(context.Background(), feed, Asset{Name: `..\evil`, URL: "file:///nonexistent", SHA256: strings.Repeat("0", 64)}, t.TempDir())
+	_, err = h.sup.download(context.Background(), feed, Asset{Name: `..\evil`, URL: "file:///nonexistent", SHA256: strings.Repeat("0", 64)}, t.TempDir(), io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "asset name") {
 		t.Fatalf("download with a separator in its name: %v", err)
 	}

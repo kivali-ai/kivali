@@ -90,12 +90,19 @@ pub mod stage {
     pub const STARTING: &str = "starting";
     /// Install, rollout and `/readyz`.
     pub const SETTING_UP: &str = "setting-up";
-    /// Upgrade: preflight, fetch, verify, import.
+    /// Upgrade: preflight, fetch, verify, import (with progress: bytes
+    /// downloaded).
     pub const DOWNLOADING: &str = "downloading";
-    /// Upgrade: journal, quiesce, stop, snapshot.
+    /// Upgrade: journal, quiesce, stop, snapshot (with progress where the
+    /// snapshot is a copy: bytes copied).
     pub const SNAPSHOT: &str = "snapshot";
     /// Upgrade: boot, the new chart, the HelmChart rewrite.
     pub const INSTALLING: &str = "installing";
+    /// Upgrade: every agent pod up on the new release and connected to
+    /// the server (with progress: agents connected of agent pods).
+    pub const STARTING_AGENTS: &str = "starting-agents";
+    /// Upgrade, once it failed: the snapshot put back, the earlier
+    /// version started again.
     pub const ROLLING_BACK: &str = "rolling-back";
     /// `down`.
     pub const PAUSING: &str = "pausing";

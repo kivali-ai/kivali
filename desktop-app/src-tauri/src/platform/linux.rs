@@ -78,6 +78,7 @@ pub fn open_terminal(_binary: &Path, _dir: &Path) -> Result<(), String> {
 pub const TRAY_ICONS: TrayIcons = tray_set!("tray");
 pub const TRAY_AREA: &str = "system tray";
 pub const THIS_COMPUTER: &str = "this computer";
+pub const UPDATE_COPIES_DATA_DISK: bool = false;
 
 /// Not a shipped platform: no check.
 pub fn vm_support() -> super::VmSupport {

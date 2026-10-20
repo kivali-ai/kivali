@@ -589,11 +589,17 @@ fn handle(fake: &Fake, mut conn: impl Read + Write) -> std::io::Result<()> {
                 let _ = fake.logs(
                     &mut conn,
                     stage::DOWNLOADING,
-                    &["fetching release.json", "downloading the chart and images; verifying sha256", "importing the images"],
+                    &["fetching release.json", "downloading the chart and images; verifying sha256"],
                 );
-                let _ = fake.logs(&mut conn, stage::SNAPSHOT, &["journal: prepared", "deleting the agent pods; stopping the VM", "cloning the data disk"]);
+                let _ = fake.reports(&mut conn, stage::DOWNLOADING, 512 << 20, 8);
+                let _ = fake.logs(&mut conn, stage::DOWNLOADING, &["importing the images"]);
+                let _ = fake.logs(&mut conn, stage::SNAPSHOT, &["journal: prepared", "deleting the agent pods; stopping the VM", "copying the data disk for the snapshot"]);
+                let _ = fake.reports(&mut conn, stage::SNAPSHOT, 4 << 30, 8);
                 let _ = fake.logs(&mut conn, stage::INSTALLING, &["starting the VM", "HelmChart now points at kivali-0.17.0.tgz"]);
-                let _ = fake.logs(&mut conn, stage::STARTING, &["waiting for the new server", "journal: committed; snapshot deleted"]);
+                let _ = fake.logs(&mut conn, stage::STARTING, &["waiting for the new server"]);
+                let _ = fake.logs(&mut conn, stage::STARTING_AGENTS, &["waiting for the agents to connect to the server"]);
+                let _ = fake.reports(&mut conn, stage::STARTING_AGENTS, 3, 3);
+                let _ = fake.logs(&mut conn, stage::STARTING_AGENTS, &["journal: committed; snapshot deleted"]);
                 fake.persisted.lock().unwrap().kivali = LATEST.into();
                 fake.save();
                 Ok(Some(serde_json::to_value(fake.report()).unwrap()))
