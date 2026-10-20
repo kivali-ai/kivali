@@ -606,7 +606,12 @@ function onFileShared(state: TranscriptState, d: Obj, at: number): TranscriptSta
 
 // ---- Background tasks ----
 
-/** The batch a task event belongs to: by tool_use_id, else the newest batch still running. */
+/** A task that has not ended: running, or held for a person to sign in or to approve its uploads. */
+function underway(t: LiveTask): boolean {
+  return t.state === 'running' || t.state === 'waiting_for_sign_in' || t.state === 'awaiting_approval';
+}
+
+/** The batch a task event belongs to: by tool_use_id, else the newest batch with a task still under way. */
 function findBatch(rows: readonly ChatRow[], toolUseId: string): ChatRow | undefined {
   if (toolUseId) {
     const hit = rows.find((r) => r.kind === 'subagents' && r.tool_use_id === toolUseId);
@@ -614,7 +619,7 @@ function findBatch(rows: readonly ChatRow[], toolUseId: string): ChatRow | undef
   }
   for (let i = rows.length - 1; i >= 0; i--) {
     const r = rows[i];
-    if (r?.kind === 'subagents' && (r.tasks ?? []).some((t) => t.state === 'running')) return r;
+    if (r?.kind === 'subagents' && (r.tasks ?? []).some(underway)) return r;
   }
   return undefined;
 }
@@ -744,7 +749,7 @@ function foldTaskResult(state: TranscriptState, content: string, reported: LiveT
   for (const r of state.rows) {
     if (r.kind !== 'subagents') continue;
     for (const t of r.tasks ?? []) {
-      if (!t.id || t.state !== 'running') continue;
+      if (!t.id || !underway(t)) continue;
       if (reported?.id ? t.id !== reported.id : !content.includes(t.id)) continue;
       const patch: Partial<LiveTask> = { state: reported?.state === 'errored' ? 'errored' : 'done', activity: '' };
       if (reported?.output_md) patch.output_md = reported.output_md;

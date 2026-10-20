@@ -282,6 +282,16 @@ describe('background tasks (subagent-task-pills, chat-waiting-tasks)', () => {
     expect(sent(s)).toHaveLength(0);
   });
 
+  // A web task held for a person (sign-in or upload approval) is under way. If a report that names it does not end
+  // it here, its pill keeps saying "On hold" under a result that says it finished or was cancelled.
+  it.each(['waiting_for_sign_in', 'awaiting_approval'])('ends a task held as %s when its result arrives', (status) => {
+    const web = { index: 0, id: 'cccc3333', description: 'Price the renewal', model: 'Sonnet 4.6', effort: 'low', kind: 'web', session: 'open' };
+    let s = run(start(), [ev('subagent_started', { tool_use_id: 't', tasks: [web] }), ev('subagent_progress', { tool_use_id: 't', index: 0, id: 'cccc3333', status })]);
+    expect(s.rows[0]?.tasks?.[0]?.state).toBe(status);
+    s = run(s, [ev('chat_message', { role: 'received', kind: 'subagent_result', content: 'Background task cccc3333 (Price the renewal) was cancelled before it finished.', ts: AT + 1, attachments: [], row: { kind: 'task_result', ts: AT + 1, tasks: [] } })]);
+    expect(s.rows[0]?.tasks?.[0]?.state).toBe('done');
+  });
+
   it('marks a web task from its dispatch row, and keeps the mark on the result the server emits', () => {
     const web = { index: 0, id: 'cccc3333', description: 'Price the renewal', model: 'Sonnet 4.6', effort: 'low', kind: 'web', session: 'open' };
     const general = { index: 1, id: 'dddd4444', description: 'Check the build logs', model: 'Haiku 4.5', effort: 'medium' };
