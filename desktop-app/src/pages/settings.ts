@@ -6,6 +6,7 @@ import type { Ctx } from "../ctx";
 import { cx, h, type Child } from "../h";
 import { icon } from "../icons";
 import { takePreset } from "../ipc";
+import { appUpdateLine } from "../logic/appupdate";
 import { ago, deviceName, deviceShort, formatBytes, formatMemory, normalizeAddress, tildePath } from "../logic/format";
 import { routeHash, type TeamTab } from "../logic/route";
 import { errorText } from "../logic/setup";
@@ -162,37 +163,24 @@ function general(ctx: Ctx): Child[] {
 
 function appUpdate(ctx: Ctx): HTMLElement {
   const s = ctx.snap;
-  const u = s.app_update;
-  const checked = u.checked_at ? ago(u.checked_at, ctx.now) : null;
-  let sub: string;
-  let action: Child = button("Check for updates", { variant: "secondary", size: "sm", id: "app-check", onclick: () => void ctx.act("check_app_update") });
-  switch (u.state) {
-    case "checking":
-      sub = "Checking for updates…";
-      action = button("Check for updates", { variant: "secondary", size: "sm", id: "app-check", loading: true });
-      break;
-    case "up_to_date":
-      sub = checked ? `Up to date · checked ${checked}` : "Up to date";
-      break;
-    case "available":
-      sub = `${u.version} is available`;
-      action = button("Update…", { variant: "primary", size: "sm", id: "app-install", onclick: () => void ctx.act("install_app_update") });
-      break;
-    case "installing":
-      sub = `Installing ${u.version ?? "the update"}…`;
-      action = null;
-      break;
-    case "failed":
-      sub = u.error ? `Couldn’t check for updates · ${u.error}` : "Couldn’t check for updates";
-      break;
-    default:
-      sub = "Not checked yet";
-  }
+  const line = appUpdateLine(s.app_update, ctx.now);
+  const check = () => void ctx.act("check_app_update");
+  const install = () => void ctx.act("install_app_update");
+  const action: Child =
+    line.action === "check"
+      ? button("Check for updates", { variant: "secondary", size: "sm", id: "app-check", onclick: check })
+      : line.action === "checking"
+        ? button("Check for updates", { variant: "secondary", size: "sm", id: "app-check", loading: true })
+        : line.action === "update"
+          ? button("Update…", { variant: "primary", size: "sm", id: "app-install", onclick: install })
+          : line.action === "retry"
+            ? button("Try again…", { variant: "primary", size: "sm", id: "app-install", onclick: install })
+            : null;
   return h(
     "section",
     { class: "stack-8" },
     monoLabel("Kivali"),
-    card(row({ title: `Kivali ${s.app_version}`, sub, trail: action, cls: u.state === "available" ? "is-highlight" : undefined })),
+    card(row({ title: `Kivali ${s.app_version}`, sub: line.sub, trail: action, cls: line.highlight ? "is-highlight" : undefined })),
   );
 }
 

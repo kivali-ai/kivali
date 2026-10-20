@@ -183,7 +183,9 @@ export interface ConnectState {
 }
 
 export interface AppUpdate {
-  state: "not_checked" | "checking" | "up_to_date" | "available" | "installing" | "failed";
+  /** `failed`: a check could not finish. `update_failed`: an update
+   *  could not install, and is still on offer (`version`). */
+  state: "not_checked" | "checking" | "up_to_date" | "available" | "installing" | "failed" | "update_failed";
   version: string | null;
   checked_at: string | null;
   error: string | null;
