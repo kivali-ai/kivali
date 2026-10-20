@@ -92,6 +92,13 @@ func elementLine(info refInfo) string {
 // to reach.
 func urlLine(u string) string { return "URL: " + u }
 
+// WithPage is withPage for core, whose own refusals can name what a
+// page controls (a tab's URL) and keep it between the same lines.
+func WithPage(text string, lines ...string) string { return withPage(text, lines...) }
+
+// URLLine is urlLine for core.
+func URLLine(u string) string { return urlLine(u) }
+
 // maxDepth bounds the indentation of a line, whatever the page nests.
 const maxDepth = 64
 

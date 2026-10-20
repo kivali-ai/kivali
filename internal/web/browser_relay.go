@@ -135,7 +135,12 @@ func (s *SubagentService) WebCommand(ctx context.Context, parent, id string, req
 		// hold has let a tab reach. The pod checks the tab it uploads
 		// into as well.
 		if off, ok := s.webTabsOnSite(j); !ok {
-			return refuse("web_upload puts a file only on a page of %s, and your tab is at %s. Go to a page of %s first.", j.LockSite, off, j.LockSite)
+			if off == webNoPageYet {
+				return refuse("web_upload puts a file only on a page of %s, and your tab is at %s. Go to a page of %s first.", j.LockSite, off, j.LockSite)
+			}
+			// The tab's URL is the page's to set, so it goes between
+			// the page content lines, not in core's own sentence.
+			return refuse("%s", browserpod.WithPage(fmt.Sprintf("web_upload puts a file only on a page of %s, and a tab of yours is on another page. Go to a page of %s first.", j.LockSite, j.LockSite), browserpod.URLLine(off)))
 		}
 		if err := s.Browsers.SendFile(ctx, j.Parent, j.Session, j.ID, path.Base(file.Path), bytes.NewReader(body), int64(len(body))); err != nil {
 			if isBrowserStartError(err) {
@@ -258,17 +263,20 @@ func (s *SubagentService) webActionSite(j subagentJob, command string, args json
 	return strings.ToLower(u.Hostname())
 }
 
+// webNoPageYet is where webTabsOnSite says a tab is when it has none.
+const webNoPageYet = "no page yet"
+
 // webTabsOnSite reports whether every tab of a held task is on its
-// site, and if not, where one is: a URL, or "no page yet".
+// site, and if not, where one is: a URL, or webNoPageYet.
 func (s *SubagentService) webTabsOnSite(j subagentJob) (string, bool) {
 	urls := s.Browsers.GroupTabURLs(j.Parent, j.Session, j.ID)
 	if j.LockSite == "" || len(urls) == 0 {
-		return "no page yet", false
+		return webNoPageYet, false
 	}
 	for _, u := range urls {
 		if !onWebSite(j.LockSite, u) {
 			if u == "" {
-				u = "no page yet"
+				u = webNoPageYet
 			}
 			return u, false
 		}

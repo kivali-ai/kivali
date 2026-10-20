@@ -124,7 +124,7 @@ func TestApprovedWebTaskIsHeldAndCounted(t *testing.T) {
 		t.Errorf("command frame = %+v", cmd.msg)
 	}
 	svc.Browsers.onMessage(b, browserpod.Message{Type: browserpod.TypeTab, Group: "u1", Tab: "t1", URL: "about:blank"}, nil)
-	if r := svc.WebCommand(ctx, "alice", "u1", agentpod.WebCommandRequest{Command: browserpod.CommandUpload, Args: json.RawMessage(`{"ref":"e1","file":"quote.pdf"}`)}); !r.IsError || !strings.Contains(r.Text, "your tab is at about:blank") {
+	if r := svc.WebCommand(ctx, "alice", "u1", agentpod.WebCommandRequest{Command: browserpod.CommandUpload, Args: json.RawMessage(`{"ref":"e1","file":"quote.pdf"}`)}); !r.IsError || !urlInPageContent(r.Text, "about:blank") {
 		t.Errorf("upload into a blank tab: %+v", r)
 	}
 	svc.Browsers.onMessage(b, browserpod.Message{Type: browserpod.TypeNavigated, Group: "u1", Tab: "t1", URL: "https://portal.vendor.com/quotes/new"}, nil)
@@ -162,7 +162,7 @@ func TestApprovedWebTaskIsHeldAndCounted(t *testing.T) {
 	// whatever the pod did, even when the last navigation was on it.
 	svc.Browsers.onMessage(b, browserpod.Message{Type: browserpod.TypeTab, Group: "u1", Tab: "t2", Opener: "t1", URL: "https://evil.test/drop"}, nil)
 	svc.Browsers.onMessage(b, browserpod.Message{Type: browserpod.TypeNavigated, Group: "u1", Tab: "t1", URL: "https://portal.vendor.com/done"}, nil)
-	if r := do(browserpod.CommandUpload, `{"ref":"e1","file":"quote.pdf"}`); !r.IsError || !strings.Contains(r.Text, "your tab is at https://evil.test/drop") {
+	if r := do(browserpod.CommandUpload, `{"ref":"e1","file":"quote.pdf"}`); !r.IsError || !urlInPageContent(r.Text, "https://evil.test/drop") {
 		t.Errorf("upload with a tab off the site: %+v", r)
 	}
 	svc.Browsers.onMessage(b, browserpod.Message{Type: browserpod.TypeTabClosed, Group: "u1", Tab: "t2"}, nil)
@@ -260,4 +260,14 @@ func TestRestartFailsAWebTaskAwaitingApproval(t *testing.T) {
 	if body, _ := os.ReadFile(path); strings.Contains(string(body), "wait_reason") {
 		t.Errorf("the wait reason stayed: %s", body)
 	}
+}
+
+// urlInPageContent reports whether a refusal names u once, on a URL
+// line between the page content lines at its end. A tab's URL is the
+// page's to set (a redirect, pushState), so a refusal that puts it in
+// core's own sentence lets a page write text the model reads as
+// Kivali's; the upload refusals above would then carry it.
+func urlInPageContent(text, u string) bool {
+	tail := strings.TrimPrefix(browserpod.WithPage("x", browserpod.URLLine(u)), "x")
+	return strings.HasSuffix(text, tail) && strings.Count(text, u) == 1
 }
