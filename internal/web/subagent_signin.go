@@ -52,9 +52,11 @@ const (
 	// signInResumeLine is the one user message a resumed run gets: core's
 	// words, never the person's or the page's. signInReopenedLine
 	// replaces it when the task's browser was lost during the wait and
-	// opened again at the site's root page, %s.
-	signInResumeLine   = "The person has finished in the browser window. Continue your task from the page as it is now, with your tabs as you left them. If the page still needs a sign-in, call web_wait_for_sign_in again; otherwise do not call it."
-	signInReopenedLine = "The person has finished in the browser window. The browser closed while you waited and was opened again, so your earlier tabs are gone: the person was given a new tab at %s. Continue your task from the page as it is now. If the page still needs a sign-in, call web_wait_for_sign_in again; otherwise do not call it."
+	// opened again at the site's root page, %s, and signInBrowserGoneLine
+	// when it could not be: then core ended the wait itself.
+	signInResumeLine      = "The person has finished in the browser window. Continue your task from the page as it is now, with your tabs as you left them. If the page still needs a sign-in, call web_wait_for_sign_in again; otherwise do not call it."
+	signInReopenedLine    = "The person has finished in the browser window. The browser closed while you waited and was opened again, so your earlier tabs are gone: the person was given a new tab at %s. Continue your task from the page as it is now. If the page still needs a sign-in, call web_wait_for_sign_in again; otherwise do not call it."
+	signInBrowserGoneLine = "The browser closed while you waited for the person and could not be opened again: your tabs are gone, and the person may not have finished. Decide what to do from here: a web command starts a new browser, or call submit_result with what you have, or with outcome blocked if the page still needs a person."
 	// signInPageTextMax bounds a page's title in core's text about it.
 	signInPageTextMax = 120
 )
@@ -262,8 +264,13 @@ func (s *SubagentService) browserLost(slug, session string) {
 // in the window; the task's turn is over, so nothing else would start
 // one, and a window would open an empty browser. A wait whose browser
 // is back does not count toward signInWaitCap: the person lost their
-// work there, and the task may need to ask again. Only one browser is
-// opened per wait.
+// work there, and the task may need to ask again.
+//
+// Only one browser is opened per wait. When none can be (its start
+// fails or is refused), or the one opened is lost too, the wait is over
+// for good: the task resumes (signInResumed) with signInBrowserGoneLine,
+// so Home's need goes and the task decides what to report, rather than
+// leaving a person a row whose browser cannot come back.
 func (s *SubagentService) reopenForWait(ctx context.Context, job *subagentJob) signInOutcome {
 	var j subagentJob
 	s.updateJob(job.ID, func(job *subagentJob) {
@@ -273,15 +280,15 @@ func (s *SubagentService) reopenForWait(ctx context.Context, job *subagentJob) s
 		j = *job
 	})
 	if s.Browsers == nil || j.reopens > 0 {
-		log.Printf("subagent %s/%s: the browser was lost again during the wait", j.Parent, j.ID)
-		return signInBrowserReopened
+		log.Printf("subagent %s/%s: the browser was lost again during the wait; the task resumes", j.Parent, j.ID)
+		return signInResumed
 	}
 	if err := s.Browsers.Reopen(ctx, j.Parent, j.Session, j.ID); err != nil {
 		if ctx.Err() != nil {
 			return signInCancelled
 		}
-		log.Printf("subagent %s/%s: reopen the browser lost during the wait: %v", j.Parent, j.ID, err)
-		return signInBrowserReopened
+		log.Printf("subagent %s/%s: the browser lost during the wait could not be opened again (%v); the task resumes", j.Parent, j.ID, err)
+		return signInResumed
 	}
 	s.updateJob(j.ID, func(job *subagentJob) {
 		job.reopens++
@@ -301,8 +308,11 @@ func (s *SubagentService) reopenForWait(ctx context.Context, job *subagentJob) s
 func (s *SubagentService) resumeLine(id string) string {
 	line := signInResumeLine
 	s.updateJob(id, func(j *subagentJob) {
-		if j.tabs == tabsReopened {
+		switch j.tabs {
+		case tabsReopened:
 			line = fmt.Sprintf(signInReopenedLine, "https://"+j.Site+"/")
+		case tabsGone:
+			line = signInBrowserGoneLine
 		}
 		j.tabs = tabsKept
 	})

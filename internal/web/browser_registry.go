@@ -1374,8 +1374,9 @@ func (r *browserRegistry) onFrame(b *browser, msg browserpod.Message, body io.Re
 // Reopen gives group a browser again in a site session whose browser
 // was lost: it starts the session's browser when none runs and opens a
 // tab of the group's at the site's root page, https://<site>/, where a
-// relock sends a tab that left the site. The page's own answer does
-// not matter; an error is why the group has no browser.
+// relock sends a tab that left the site. An error is why there is no
+// browser: its start failed or was refused. Once the browser runs, how
+// the page answers does not matter.
 func (r *browserRegistry) Reopen(ctx context.Context, slug, session, group string) error {
 	if ephemeralSession(session) {
 		return errors.New("the open session has no site to reopen")
@@ -1397,12 +1398,17 @@ func (r *browserRegistry) Reopen(ctx context.Context, slug, session, group strin
 			return ctx.Err()
 		}
 	}
+	if _, err := r.acquire(ctx, slug, session); err != nil {
+		return err
+	}
 	args, err := json.Marshal(browserpod.NavigateArgs{URL: "https://" + session + "/"})
 	if err != nil {
 		return err
 	}
-	_, err = r.Command(ctx, slug, session, group, browserpod.Message{Name: browserpod.CommandNavigate, Args: args})
-	return err
+	if _, err := r.Command(ctx, slug, session, group, browserpod.Message{Name: browserpod.CommandNavigate, Args: args}); err != nil {
+		r.logf("browser %s: open %s for %s: %v", browserKey(slug, session), args, group, err)
+	}
+	return nil
 }
 
 // errBrowserLifetime refuses a new task on a browser past its lifetime.

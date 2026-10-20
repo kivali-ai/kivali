@@ -926,7 +926,11 @@ with a tab of the task's at `https://<site>/`, the page a relock sends
 a tab to (`reopenForWait`, `browserRegistry.Reopen`), so the person
 can carry on from Home's Open browser; that wait does not count toward
 the three, and the resumed run's line says the earlier tabs are gone
-and where the new tab was opened. Core opens one browser per wait.
+and where the new tab was opened. Core opens one browser per wait:
+when it cannot (the start fails or is refused) or the reopened browser
+is lost too, the wait ends there, as though the person were done, and
+the resumed run is told the browser closed and could not be opened
+again, so Home's need goes and the task decides what to report.
 The calling agent hears nothing until the final result. A task in the
 open session, or one a subagent dispatched, has no wait tool: a
 sign-in wall ends it `blocked`, `login_required`, and the agent

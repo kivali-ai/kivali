@@ -340,6 +340,70 @@ func TestABrowserLostDuringASignInIsReopenedAtTheSite(t *testing.T) {
 	}
 }
 
+// goneRun is a resumed run that checks it was told its browser could
+// not be brought back, and submits blocked.
+func goneRun(t *testing.T) func(svc *SubagentService, req fakeDriveCall) (string, error) {
+	return func(svc *SubagentService, req fakeDriveCall) (string, error) {
+		if req.Spec.UserPrompt != signInBrowserGoneLine {
+			t.Errorf("resumed run's line = %q, want the browser-gone line", req.Spec.UserPrompt)
+		}
+		if _, isErr := svc.SubmitResult("alice", req.SubagentID, json.RawMessage(`{"outcome":"blocked","blocked_on":"mfa"}`)); isErr {
+			t.Error("a valid result was refused")
+		}
+		return "", nil
+	}
+}
+
+// TestASignInWaitEndsWhenItsBrowserCannotComeBack guards the person at
+// Home when a waiting task's browser dies and cannot be started again:
+// the wait went on for up to 24 hours behind a Needs you row whose
+// browser never opened, which only Stop cleared. The wait now ends, and
+// the task resumes told its browser could not be opened again, so the
+// row goes and the task decides what to report.
+func TestASignInWaitEndsWhenItsBrowserCannotComeBack(t *testing.T) {
+	run := startWaitingTask(t, goneRun(t), nil)
+	w := run.openWindow(t, true)
+	nextEvent(t, w)
+	run.prov.mu.Lock()
+	run.prov.startErr = errors.New("quota exceeded")
+	run.prov.mu.Unlock()
+	run.loseBrowser(t)
+	body := run.del.waitFor(1)[0].Content
+	if !strings.Contains(body, `"blocked"`) {
+		t.Errorf("delivered = %s", body)
+	}
+	if keys := run.svc.signInWaitKeys(); len(keys) != 0 {
+		t.Errorf("signInWaitKeys = %v, want the need gone", keys)
+	}
+	hist, err := readSubagentHistory(subagentChatPath(run.svc.Store.Root(), "alice", run.id))
+	if err != nil || len(hist) == 0 || hist[len(hist)-1].Content != signInBrowserGoneLine {
+		t.Errorf("transcript lacks core's line: %+v, %v", hist, err)
+	}
+}
+
+// TestASignInWaitEndsWhenItsReopenedBrowserIsLostToo: core opens one
+// browser per wait. One lost as well ends the wait the same way, or a
+// browser that keeps dying would be started again and again for a
+// day.
+func TestASignInWaitEndsWhenItsReopenedBrowserIsLostToo(t *testing.T) {
+	run := startWaitingTask(t, goneRun(t), nil)
+	run.openWindow(t, true)
+	run.loseBrowser(t)
+	run.answerReopen(t)
+	run.reg.awaitStops()
+	// The reopened browser is lost too.
+	run.loseBrowser(t)
+	if body := run.del.waitFor(1)[0].Content; !strings.Contains(body, `"blocked"`) {
+		t.Errorf("delivered = %s", body)
+	}
+	run.prov.mu.Lock()
+	starts := len(run.prov.started)
+	run.prov.mu.Unlock()
+	if starts != 2 {
+		t.Errorf("browsers started = %d, want the first and one reopen", starts)
+	}
+}
+
 // TestWindowClosedBeforeTheWaitBeganDoesNotResume: a window that went
 // before the task asked for anyone is not a person who has signed in.
 // The report of its close, which comes the grace after it went, is
