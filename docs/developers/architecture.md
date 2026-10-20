@@ -918,6 +918,15 @@ the task ends like any other. A task may wait three times
 (`signInWaitCap`); the fourth call is refused, saying so, and core
 ends the task `blocked` on what the page still asked for (the reason
 as a `blocked_on`: `login_required`, `mfa`, `captcha` or `consent`).
+A browser lost during the wait (its connection or pod gone, or
+Chromium stopped; a reset, a save or the server's shutdown is no loss)
+ends its windows with "The browser stopped." and the registry reports
+it (`OnLost`). Core then opens the session's browser again at once,
+with a tab of the task's at `https://<site>/`, the page a relock sends
+a tab to (`reopenForWait`, `browserRegistry.Reopen`), so the person
+can carry on from Home's Open browser; that wait does not count toward
+the three, and the resumed run's line says the earlier tabs are gone
+and where the new tab was opened. Core opens one browser per wait.
 The calling agent hears nothing until the final result. A task in the
 open session, or one a subagent dispatched, has no wait tool: a
 sign-in wall ends it `blocked`, `login_required`, and the agent

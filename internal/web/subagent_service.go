@@ -644,7 +644,13 @@ drive:
 		release()
 	wait:
 		for {
-			switch s.awaitSignIn(ctx, job) {
+			outcome := s.awaitSignIn(ctx, job)
+			if outcome == signInBrowserLost {
+				outcome = s.reopenForWait(ctx, job)
+			}
+			switch outcome {
+			case signInBrowserReopened:
+				continue wait
 			case signInResumed:
 				// The person is done. The task reads as running from
 				// here, so Home drops its need and the window stops
@@ -686,13 +692,13 @@ drive:
 					break drive
 				}
 				spec.Resume = sid
-				spec.UserPrompt = signInResumeLine
+				spec.UserPrompt = s.resumeLine(id)
 				// The resumed run's one message is in the transcript
 				// like the first run's prompt.
 				if err := s.Store.AppendSubagentMessage(parent, id, store.ChatMessage{
 					Role:    store.RoleReceived,
 					Kind:    "direct_chat",
-					Content: signInResumeLine,
+					Content: spec.UserPrompt,
 					TS:      time.Now().UTC(),
 				}); err != nil {
 					log.Printf("subagent %s/%s: resume transcript: %v", parent, id, err)

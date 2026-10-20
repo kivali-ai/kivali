@@ -187,3 +187,63 @@ func TestBrowserRegistryOffboardEndsBrowsersWithoutSaving(t *testing.T) {
 		t.Errorf("a profile was stored: %d bytes, %v", n, err)
 	}
 }
+
+// TestBrowserRegistryReportsOnlyALostBrowser guards what opens a
+// waiting task's browser again. OnLost must hear a running browser that
+// died (its connection lost, Chromium stopped), or a person in the
+// middle of a sign-in is left with no browser; it must not hear one
+// core ended itself (a reset, an offboarding, a save, the server's
+// shutdown), or core would start a browser nobody asked for.
+func TestBrowserRegistryReportsOnlyALostBrowser(t *testing.T) {
+	f := newBrowserFixture(t)
+	ctx := context.Background()
+	lost := make(chan string, 8)
+	f.reg.OnLost = func(slug, session string) { lost <- slug + "/" + session }
+	reported := func(name string, want bool) {
+		t.Helper()
+		f.stopped(t)
+		select {
+		case got := <-lost:
+			if !want || got != "alice/vendor.example" {
+				t.Errorf("%s: reported %q as lost", name, got)
+			}
+		default:
+			if want {
+				t.Errorf("%s: not reported as lost", name)
+			}
+		}
+	}
+
+	b, _ := f.running(ctx, "job1")
+	f.reg.onLost(b)
+	reported("connection lost", true)
+
+	b, _ = f.running(ctx, "job1")
+	f.reg.onMessage(b, browserpod.Message{Type: browserpod.TypeState, State: browserpod.StateStopped, Detail: "chromium exited"}, nil)
+	reported("chromium stopped", true)
+
+	f.running(ctx, "job1")
+	if err := f.reg.Reset("alice", "vendor.example"); err != nil {
+		t.Fatal(err)
+	}
+	reported("reset", false)
+
+	f.running(ctx, "job1")
+	f.reg.Offboard("alice")
+	reported("offboarded", false)
+
+	b, link := f.running(ctx, "job1")
+	f.reg.ReleaseGroup("alice", "vendor.example", "job1")
+	f.clk.Advance(browserIdleAfter)
+	f.reg.sweep(f.clk.Now())
+	link.next(t, browserpod.TypeSave)
+	f.reg.onMessage(b, browserpod.Message{Type: browserpod.TypeSaved}, nil)
+	reported("saved", false)
+
+	b, _ = f.running(ctx, "job2")
+	done, cancel := context.WithCancel(ctx)
+	cancel()
+	f.reg.Shutdown(done)
+	f.reg.onLost(b)
+	reported("shutting down", false)
+}

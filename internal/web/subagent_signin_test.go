@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"sync"
@@ -87,6 +88,7 @@ func startWaitingTask(t *testing.T, second func(svc *SubagentService, req fakeDr
 	run.reg.markBooted()
 	run.reg.OnState = svc.browserStateChanged
 	run.reg.OnWindowsClosed = svc.windowsClosed
+	run.reg.OnLost = svc.browserLost
 	svc.Browsers = run.reg
 	svc.EmitToParent = func(_, kind string, payload any) {
 		if kind != "subagent_progress" {
@@ -225,7 +227,7 @@ func TestNewServerWiresTheRegistryToTheService(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if srv.Browsers == nil || srv.Browsers.OnState == nil || srv.Browsers.OnWindowsClosed == nil {
+	if srv.Browsers == nil || srv.Browsers.OnState == nil || srv.Browsers.OnWindowsClosed == nil || srv.Browsers.OnLost == nil {
 		t.Fatal("the registry does not report to the service")
 	}
 	if srv.SubagentService.PodConnected == nil || srv.SubagentService.PodConnected("alice") {
@@ -254,6 +256,87 @@ func TestWindowClosedThroughTheRegistryResumesTheTask(t *testing.T) {
 	}
 	if run.runs() != 2 {
 		t.Errorf("runs = %d, want 2", run.runs())
+	}
+}
+
+// loseBrowser plays the waiting task's browser dying under it, its
+// connection lost as when the pod is killed, and returns the window
+// that was on it, ended.
+func (run *signInRun) loseBrowser(t *testing.T) {
+	t.Helper()
+	run.mu.Lock()
+	b := run.browser
+	run.mu.Unlock()
+	run.reg.onLost(b)
+}
+
+// answerReopen plays the browser core starts again for the waiting
+// task up to running and answers its navigation, and returns the URL
+// it was sent to.
+func (run *signInRun) answerReopen(t *testing.T) string {
+	t.Helper()
+	link := run.playBrowser(t)
+	cmd := link.next(t, browserpod.TypeCommand)
+	var a browserpod.NavigateArgs
+	if err := json.Unmarshal(cmd.msg.Args, &a); err != nil || cmd.msg.Name != browserpod.CommandNavigate || cmd.msg.Group != run.id {
+		t.Fatalf("reopen command = %+v (%v)", cmd.msg, err)
+	}
+	run.mu.Lock()
+	b := run.browser
+	run.mu.Unlock()
+	run.reg.onMessage(b, browserpod.Message{Type: browserpod.TypeTab, Group: run.id, Tab: "t1", URL: a.URL}, nil)
+	run.reg.onMessage(b, browserpod.Message{Type: browserpod.TypeNavigated, Group: run.id, Tab: "t1", URL: a.URL, Title: "Vendor"}, nil)
+	run.reg.onMessage(b, browserpod.Message{Type: browserpod.TypeResult, ID: cmd.msg.ID, OK: true, Text: "Page: Vendor"}, nil)
+	return a.URL
+}
+
+// TestABrowserLostDuringASignInIsReopenedAtTheSite guards a person
+// signing in when the task's browser dies under them. The browser was
+// not started again until a window asked, and then empty: the person
+// had no page to sign in on, Continue told the task its tabs were as it
+// left them, and the task, finding the sign-in still needed, spent a
+// second of its three waits. Core now opens the browser again at the
+// site's root page, the wait does not count, and the resumed run is
+// told its earlier tabs are gone.
+func TestABrowserLostDuringASignInIsReopenedAtTheSite(t *testing.T) {
+	run := startWaitingTask(t, func(svc *SubagentService, req fakeDriveCall) (string, error) {
+		if want := fmt.Sprintf(signInReopenedLine, "https://vendor.com/"); req.Spec.UserPrompt != want {
+			t.Errorf("resumed run's line = %q, want %q", req.Spec.UserPrompt, want)
+		}
+		if j, _ := svc.lookupJob(req.SubagentID); j.waits != 0 {
+			t.Errorf("waits after the reopened wait = %d, want it not counted", j.waits)
+		}
+		if _, isErr := svc.SubmitResult("alice", req.SubagentID, json.RawMessage(`{"outcome":"found","result":{"vendor":"Acme","price":12}}`)); isErr {
+			t.Error("a valid result was refused")
+		}
+		return "", nil
+	}, nil)
+	w := run.openWindow(t, true)
+	nextEvent(t, w)
+	run.loseBrowser(t)
+	if ev := nextEvent(t, w); ev.Type != apitypes.BrowserWindowEventTypeEnd {
+		t.Fatalf("the window on the lost browser = %+v, want its end", ev)
+	}
+	if url := run.answerReopen(t); url != "https://vendor.com/" {
+		t.Errorf("reopened at %q, want the site's root page", url)
+	}
+	run.reg.awaitStops()
+
+	// The wait goes on, not counted, and a window shows the new tab and
+	// takes input.
+	w = run.openWindow(t, false)
+	if ev := nextEvent(t, w); ev.Type != apitypes.BrowserWindowEventTypeState || !ev.Input {
+		t.Errorf("the window on the reopened browser = %+v, want input on", ev)
+	}
+	if j, _ := run.svc.lookupJob(run.id); j.State != subagentJobWaiting {
+		t.Errorf("after the reopen: state=%s, want waiting", j.State)
+	}
+	if url, _ := run.reg.CurrentPage("alice", "vendor.com", run.id); url != "https://vendor.com/" {
+		t.Errorf("the window's page = %q", url)
+	}
+	run.closeWindowThroughRegistry(w)
+	if body := run.del.waitFor(1)[0].Content; !strings.Contains(body, `"Acme"`) {
+		t.Errorf("delivered = %s", body)
 	}
 }
 

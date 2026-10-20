@@ -404,6 +404,15 @@ type browserRegistry struct {
 	// been gone for the grace, outside the lock: a task waiting for a
 	// person in that window resumes.
 	OnWindowsClosed func(slug, session, group string)
+	// OnLost, when set, hears that a running browser ended without
+	// being asked to (Chromium stopped, the pod or its connection was
+	// lost), outside the lock: a task waiting for a person on it has
+	// its browser opened again (Reopen). A reset, an offboarding, a
+	// save and the server's own shutdown are not losses.
+	OnLost func(slug, session string)
+	// closing is set by Shutdown: the browsers end with the process,
+	// and none is reported lost.
+	closing bool
 
 	wake chan struct{}
 	// changed is closed, and replaced, under mu whenever a browser
@@ -528,6 +537,7 @@ func (r *browserRegistry) Run(ctx context.Context) {
 // the saves' timers are Run's and the profiles arrive on the socket.
 func (r *browserRegistry) Shutdown(ctx context.Context) {
 	r.mu.Lock()
+	r.closing = true
 	var saves, snaps []*browser
 	before := map[*browser]int{}
 	for _, b := range r.browsers {
@@ -1361,6 +1371,40 @@ func (r *browserRegistry) onFrame(b *browser, msg browserpod.Message, body io.Re
 	}
 }
 
+// Reopen gives group a browser again in a site session whose browser
+// was lost: it starts the session's browser when none runs and opens a
+// tab of the group's at the site's root page, https://<site>/, where a
+// relock sends a tab that left the site. The page's own answer does
+// not matter; an error is why the group has no browser.
+func (r *browserRegistry) Reopen(ctx context.Context, slug, session, group string) error {
+	if ephemeralSession(session) {
+		return errors.New("the open session has no site to reopen")
+	}
+	// The lost browser's pod is still being deleted: the new one starts
+	// once it has gone.
+	for {
+		r.mu.Lock()
+		b, ok := r.browsers[browserKey(slug, session)]
+		if !ok || b.state != browserStopped {
+			r.mu.Unlock()
+			break
+		}
+		changed := r.changed
+		r.mu.Unlock()
+		select {
+		case <-changed:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	args, err := json.Marshal(browserpod.NavigateArgs{URL: "https://" + session + "/"})
+	if err != nil {
+		return err
+	}
+	_, err = r.Command(ctx, slug, session, group, browserpod.Message{Name: browserpod.CommandNavigate, Args: args})
+	return err
+}
+
 // errBrowserLifetime refuses a new task on a browser past its lifetime.
 var errBrowserLifetime = errors.New("the browser has run for two hours and restarts when its current tasks end; try again shortly")
 
@@ -1848,6 +1892,7 @@ func (r *browserRegistry) finish(b *browser) {
 		close(b.ready)
 	}
 	wasSaving := b.state == browserSaving
+	lost := b.state == browserRunning && !b.offboarded && !r.closing
 	stopStart, startDone := b.stopStart, b.startDone
 	b.state = browserStopped
 	b.deadline = time.Time{}
@@ -1879,6 +1924,9 @@ func (r *browserRegistry) finish(b *browser) {
 	if !wasSaving {
 		// A save already reported stopped when it began.
 		r.notify(b, apitypes.BrowserStateStopped)
+	}
+	if lost && r.OnLost != nil {
+		r.OnLost(b.slug, b.session)
 	}
 	r.stopWait.Add(1)
 	go func() {
