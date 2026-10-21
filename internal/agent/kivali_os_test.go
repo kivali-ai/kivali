@@ -98,7 +98,7 @@ func TestKivaliOSHasTheSectionsOtherTextPointsAt(t *testing.T) {
 		"## How you communicate",
 		"### Assignments",
 		"### When you're interrupted",
-		"## Working with the owner",
+		"## Owner interaction",
 	} {
 		if !strings.Contains(KivaliOS, "\n"+h+"\n") && !strings.HasPrefix(KivaliOS, h+"\n") {
 			t.Errorf("Kivali OS has no heading %q", h)
