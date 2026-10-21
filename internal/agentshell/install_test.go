@@ -2,6 +2,7 @@ package agentshell
 
 import (
 	"context"
+	"net"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -114,8 +115,17 @@ func (f fakeApt) envVars() []string {
 	return []string{"PATH=/usr/bin:/bin", "FAKE_APT_LOG=" + f.log, "FAKE_APT_ENV=" + f.env, "FAKE_APT_CACHE_LOG=" + f.cacheLog}
 }
 
+// installer is an Installer on the fakes whose proxy wait, when
+// extraEnv names a proxy, is answered at once (dialAnswering).
 func (f fakeApt) installer(extraEnv ...string) Installer {
-	return Installer{AptGet: f.bin, AptCache: f.cache, Env: append(f.envVars(), extraEnv...)}
+	return Installer{AptGet: f.bin, AptCache: f.cache, Env: append(f.envVars(), extraEnv...), Dial: dialAnswering}
+}
+
+// dialAnswering is an Installer.Dial that accepts every connection.
+func dialAnswering(context.Context, string, string) (net.Conn, error) {
+	c1, c2 := net.Pipe()
+	_ = c2.Close()
+	return c1, nil
 }
 
 // lookups returns the names apt-cache was asked about.

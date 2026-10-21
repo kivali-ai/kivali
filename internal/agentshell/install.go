@@ -7,12 +7,16 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
+	"net/url"
 	"os/exec"
 	"regexp"
 	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/kivali-ai/kivali/internal/clock"
 )
 
 // InstallSubcommand is the agent-shell subcommand that installs
@@ -104,6 +108,14 @@ type Installer struct {
 	// for its output to close: a process a maintainer script left
 	// running may hold it open. Zero means 10s.
 	OutputGrace time.Duration
+	// ProxyWait is how long Install waits for the proxy in Env to
+	// accept a connection before it runs apt-get update. Zero means
+	// 2 minutes.
+	ProxyWait time.Duration
+	// Dial opens the connections of that wait. Nil means a net.Dialer.
+	Dial func(ctx context.Context, network, addr string) (net.Conn, error)
+	// Clock paces that wait. Nil means the system clock.
+	Clock clock.Clock
 }
 
 // Install runs `apt-get update`, keeps the names that are exactly a
@@ -116,10 +128,15 @@ type Installer struct {
 // an argument that matches no package name as a pattern, so "lib.."
 // would install whatever it matches.
 //
+// The update waits first for the proxy in Env to accept a connection
+// (awaitProxy): the install runs when the pod starts, which at the
+// server's boot can be before the proxy is reachable.
+//
 // An update that fails does not stop the install: the lists already
 // on disk may have the package. Its reason goes with every failure,
 // as does the reason apt-get update gives, while still succeeding,
-// for a package server it could not reach.
+// for a package server it could not reach. A proxy wait that ran out
+// goes before either.
 func (in Installer) Install(ctx context.Context, pkgs []string) InstallResult {
 	res := InstallResult{Installed: []string{}, Failed: []PackageFailure{}}
 	var valid []string
@@ -133,10 +150,14 @@ func (in Installer) Install(ctx context.Context, pkgs []string) InstallResult {
 	if len(valid) == 0 {
 		return res
 	}
+	proxyFailure := in.awaitProxy(ctx)
 	updateStderr, err := in.run(ctx, "update")
 	updateFailure := updateFetchFailure(updateStderr)
 	if err != nil {
 		updateFailure = failureReason(updateStderr, err)
+	}
+	if updateFailure != "" && proxyFailure != "" {
+		updateFailure = proxyFailure + "; " + updateFailure
 	}
 	fail := func(name, reason string) {
 		if updateFailure != "" {
@@ -171,6 +192,91 @@ func (in Installer) Install(ctx context.Context, pkgs []string) InstallResult {
 		}
 	}
 	return res
+}
+
+// proxyWaitDefault is Installer.ProxyWait when zero.
+const proxyWaitDefault = 2 * time.Minute
+
+// proxyDialTimeout bounds one attempt of the proxy wait.
+const proxyDialTimeout = 5 * time.Second
+
+// proxyRetryInterval is the pause between attempts of the proxy wait.
+const proxyRetryInterval = time.Second
+
+// awaitProxy waits until the proxy in Env accepts a TCP connection,
+// trying every proxyRetryInterval for ProxyWait, and returns "" when
+// it did, or when Env names no proxy. Otherwise it returns a reason,
+// also written to Log. The wait has its own bound so a proxy that
+// never answers still leaves the update and the install their time.
+func (in Installer) awaitProxy(ctx context.Context) string {
+	addr := proxyHostPort(in.Env)
+	if addr == "" {
+		return ""
+	}
+	clk := in.Clock
+	if clk == nil {
+		clk = clock.New()
+	}
+	dial := in.Dial
+	if dial == nil {
+		dial = (&net.Dialer{}).DialContext
+	}
+	bound := in.ProxyWait
+	if bound <= 0 {
+		bound = proxyWaitDefault
+	}
+	start := clk.Now()
+	for {
+		dctx, cancel := context.WithTimeout(ctx, proxyDialTimeout)
+		conn, err := dial(dctx, "tcp", addr)
+		cancel()
+		if err == nil {
+			_ = conn.Close()
+			return ""
+		}
+		reason := fmt.Sprintf("the egress proxy at %s accepted no connection in %s: %v", addr, bound, err)
+		if ctx.Err() == nil && clock.Since(clk, start) < bound {
+			t := clk.NewTimer(proxyRetryInterval)
+			select {
+			case <-t.C():
+				continue
+			case <-ctx.Done():
+				t.Stop()
+			}
+		}
+		if in.Log != nil {
+			_, _ = fmt.Fprintf(in.Log, "agent-shell install-software: %s\n", reason)
+		}
+		return reason
+	}
+}
+
+// proxyHostPort is the "host:port" of the proxy the environment names:
+// the first of https_proxy, HTTPS_PROXY, http_proxy and HTTP_PROXY
+// that is set to a URL with a host, or "" when none is. A URL with no
+// port gets its scheme's.
+func proxyHostPort(env []string) string {
+	for _, k := range []string{"https_proxy", "HTTPS_PROXY", "http_proxy", "HTTP_PROXY"} {
+		for _, kv := range env {
+			v, ok := strings.CutPrefix(kv, k+"=")
+			if !ok || v == "" {
+				continue
+			}
+			u, err := url.Parse(v)
+			if err != nil || u.Host == "" {
+				continue
+			}
+			if u.Port() != "" {
+				return u.Host
+			}
+			port := "80"
+			if u.Scheme == "https" {
+				port = "443"
+			}
+			return net.JoinHostPort(u.Hostname(), port)
+		}
+	}
+	return ""
 }
 
 // lookup reports whether name is exactly a name in the package lists.
