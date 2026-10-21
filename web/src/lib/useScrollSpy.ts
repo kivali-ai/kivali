@@ -11,6 +11,12 @@ export interface ScrollSpyOptions {
   offset?: number;
   /** Id of an element at the very end of the page. While it is on screen the last section wins. */
   endId?: string;
+  /**
+   * Id of the section the page scrolled to on purpose, until the reader scrolls themselves. While `endId` is on
+   * screen it wins over the last section unless a section after it has passed the line: the page may have been too
+   * short to bring it up to the line, and it is still the one asked for. An id that is not one of `ids` is ignored.
+   */
+  prefer?: string | undefined;
   /** Off: report the fallback and observe nothing. */
   enabled?: boolean;
   /** The IntersectionObserver constructor; tests pass a fake. Defaults to the window's. */
@@ -33,14 +39,19 @@ function scrollMargin(el: Element): number {
  * Which section the reader is in: the last one whose top has passed a line near the top of the viewport. The line
  * is `offset` plus the sections' scroll-margin-top (where scrollIntoView leaves a section), so a section scrolled to
  * is the one reported. Above the first section the first wins; while `endId` is on screen (the page cannot scroll
- * further) the last wins even if its top never reaches the line.
+ * further) the last wins even if its top never reaches the line, or `prefer` when the page scrolled to it and the
+ * reader has not scrolled on past it.
  *
  * One IntersectionObserver watches a 1px strip at the line: a section enters or leaves it exactly when its top or
  * bottom crosses the line, and the entry's rectangle says which. No scroll listeners, no timers. A window resize
- * rebuilds the strip, whose bottom margin is in px.
+ * rebuilds the strip, whose bottom margin is in px. The observers only record what they see (the section last
+ * passed, whether the end is on screen); which section to report is decided from that at render, so a change of
+ * `prefer` rebuilds nothing.
  */
-export function useScrollSpy({ ids, fallback, offset = 0, endId, enabled = true, Observer }: ScrollSpyOptions): string {
-  const [active, setActive] = useState<string | null>(null);
+export function useScrollSpy({ ids, fallback, offset = 0, endId, prefer, enabled = true, Observer }: ScrollSpyOptions): string {
+  // The last section whose top has passed the line (the first when none has); null until the observer has spoken.
+  const [reached, setReached] = useState<string | null>(null);
+  const [atEnd, setAtEnd] = useState(false);
   const [height, setHeight] = useState(() => (typeof window === 'undefined' ? 0 : window.innerHeight));
   const Ctor = Observer ?? defaultObserver();
   const key = ids.join('\n');
@@ -60,19 +71,6 @@ export function useScrollSpy({ ids, fallback, offset = 0, endId, enabled = true,
 
     const idOf = new Map<Element, string>(elements.map((el) => [el, el.id]));
     const passed = new Map<string, boolean>();
-    let atEnd = false;
-    let seen = false;
-
-    const report = () => {
-      if (atEnd) {
-        setActive(order[order.length - 1] ?? null);
-        return;
-      }
-      if (!seen) return;
-      let current = order[0] ?? null;
-      for (const id of order) if (passed.get(id)) current = id;
-      setActive(current);
-    };
 
     const line = offset + scrollMargin(elements[0]!) + SLACK;
     const below = Math.max(0, height - line - 1);
@@ -84,8 +82,9 @@ export function useScrollSpy({ ids, fallback, offset = 0, endId, enabled = true,
           // Crossing the strip: inside means the top is above the line; outside, the rectangle says above or below.
           passed.set(id, entry.isIntersecting || entry.boundingClientRect.top < line);
         }
-        seen = true;
-        report();
+        let current = order[0] ?? null;
+        for (const id of order) if (passed.get(id)) current = id;
+        setReached(current);
       },
       { rootMargin: `-${line}px 0% -${below}px 0%`, threshold: 0 },
     );
@@ -95,8 +94,7 @@ export function useScrollSpy({ ids, fallback, offset = 0, endId, enabled = true,
     const tail = end
       ? new Ctor((entries) => {
           const last = entries[entries.length - 1];
-          if (last) atEnd = last.isIntersecting;
-          report();
+          if (last) setAtEnd(last.isIntersecting);
         })
       : null;
     if (end && tail) tail.observe(end);
@@ -108,5 +106,12 @@ export function useScrollSpy({ ids, fallback, offset = 0, endId, enabled = true,
   }, [enabled, Ctor, key, offset, endId, height]);
 
   if (!enabled || !Ctor) return fallback;
-  return active ?? fallback;
+  if (atEnd) {
+    // The bottom of the page belongs to the last section, unless the page scrolled to one on purpose and the reader
+    // has not gone on past it.
+    const asked = prefer !== undefined && ids.includes(prefer) ? prefer : null;
+    const past = asked !== null && reached !== null && ids.indexOf(reached) > ids.indexOf(asked);
+    return asked !== null && !past ? asked : (ids[ids.length - 1] ?? fallback);
+  }
+  return reached ?? fallback;
 }
