@@ -1,6 +1,6 @@
 # Integrations
 
-An integration is an external service your agents can act on, such as a CRM, a blog or a ticket tracker. Each one is installed from a bundle, connected with a token you paste, and given to agents one at a time, each with its own access. This page covers installing one, connecting and testing it, giving agents access, its log, and switching it off or removing it.
+An integration is an external service your agents can act on, such as a CRM, a blog or a ticket tracker. Each one is installed from a bundle, connected with a token you paste, and given to agents one at a time, each with its own access. This page covers installing one, connecting and testing it, giving agents access, what an agent then sees, the record of their calls, its log, and switching it off or removing it.
 
 Integrations are under **Org**, **Integrations**.
 
@@ -9,9 +9,6 @@ Integrations are under **Org**, **Integrations**.
 An integration gives agents **actions**: things they can do in the service, such as "create a blog post" or "list contacts". Its **connection** is how it signs in to the service: a token or key you copy from the service's settings, and sometimes a field or two more, such as an account name. Its **access** is what one agent may do with it, chosen on a form the integration describes: which blogs, which projects, whether it may publish.
 
 An integration is installed one **version** at a time. Nothing in a version runs until you approve it. Once approved and switched on, it runs on its own, apart from Kivali and from your agents, and reaches only the hosts its install screen listed.
-
-> [!NOTE]
-> In this release, agents cannot call an integration's actions yet. You can install, connect and test an integration, and give agents access, now; the actions follow in a later release.
 
 ## Install an integration
 
@@ -63,6 +60,18 @@ Under **Access**, choose an agent and **Give access**. The form is the integrati
 Each agent's access is shown in words, on the integration's page and on the agent's **Integrations** tab. When a new version changes the form so that an agent's access no longer fits, the access is marked invalid and gives nothing until you set it again.
 
 An agent that is offboarded loses its access to every integration.
+
+## What an agent sees
+
+An agent with access to a running integration has its actions as tools, named after the integration and the action: `hubspot_create_post` for HubSpot's "create post". It has only the actions its access lets the integration offer it, among those the install screen listed, and is told that you decide what it may do with each integration. An agent without access, or with access that no longer applies, has none of them.
+
+Kivali checks every call against the agent's access before the integration sees it, and tells the integration which agent is calling and with what access. A call Kivali refuses (no access, the integration switched off or not running, an action the agent's access does not include) tells the agent why and to ask you. What comes back is the integration's text, with the connection's secrets replaced by `[secret]`; images and other content that is not text are not passed on in this release.
+
+A change to an agent's access, given or taken away, changes its tools from its next turn. Access you take away is refused from the next call, even in the middle of a turn.
+
+## Latest calls
+
+**Latest calls** on an integration's page lists the latest calls through it, newest first: when, which agent, the action, whether Kivali let it through and, for a call that was refused or failed, why, and how long it took. Your own Test connection and the options an access form loads are in it too, under your name. Calls an agent made are listed whether Kivali allowed them or not.
 
 ## Switch it off or remove it
 

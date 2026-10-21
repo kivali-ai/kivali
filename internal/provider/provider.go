@@ -282,6 +282,12 @@ type Tool struct {
 	// wire form. Set it on the LAST tool the caller wants cached so
 	// the entire tool-definition block becomes a cacheable prefix.
 	Cache bool
+
+	// Integration marks an action of an integration the agent has
+	// access to (named <integration>_<action>): the set of these a
+	// turn carries is the agent's grants at that turn, so a driver that
+	// fixes its tools when it starts starts again when the set changes.
+	Integration bool `json:",omitempty"`
 }
 
 // CompleteResponse is the decoded model output.

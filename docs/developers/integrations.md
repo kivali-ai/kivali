@@ -4,8 +4,9 @@ An integration is an external service agents act on, such as a CRM or
 a blog, installed from a bundle. This page is the developer's
 reference: the bundle and its manifest, the check every bundle passes,
 the access form, where Kivali keeps an integration and its connection,
-how a version is approved, and how an approved version runs. What the
-owner sees is in [../integrations.md](../integrations.md).
+how a version is approved, how an approved version runs, and how
+agents call it. What the owner sees is in
+[../integrations.md](../integrations.md).
 
 The words, as the owner reads them: an **integration** is the
 installed thing; a **version** is one stored bundle of it; its
@@ -22,6 +23,8 @@ everything is kept), `internal/secrets` (the connection's secret
 fields), `internal/integrationpod` (the pod, its provisioner and the
 shim that runs in it), `internal/web/integration_registry.go` and
 `integration_socket.go` (core's side of a running integration),
+`internal/web/integration_tools.go` and `internal/mcp/integration_tools.go`
+(agents' calls, core's side and the agent's MCP server's),
 `internal/web/api_integrations.go` (the API) and
 `internal/web/apitypes/integrations.go` (the wire types).
 `cmd/fake-integration` is a stdio MCP server for tests
@@ -261,7 +264,8 @@ object whose `options` is one. Both write an audit row for the owner
 (agent `ceo`, the tool as the action, the integration's words as the
 reason when it failed), and both answer 409 "the integration is not
 running" while no shim is connected. The audit lists what is in
-`audit.jsonl`, which the integration's calls append to.
+`audit.jsonl`, which these calls and agents' calls
+([The audit](#the-audit)) append to.
 
 ## Installing a version
 
@@ -297,8 +301,9 @@ An integration that should run (an approved version, switched on, not
 built in) runs in a pod of its own, `integrationpod-<name>`, which core
 keeps up while it should (`internal/integrationpod`, `manifest.go` and
 `provisioner.go`). Core talks MCP to the integration's server through a
-shim in the pod. Agents' calls are not routed yet; core's own calls
-(Test connection, the options a field lists, `tools/list`, `ping`)
+shim in the pod. An agent's calls carry the agent and its access
+([Agents' calls](#agents-calls)); core's own calls (Test connection,
+the options a field lists, the `tools/list` at each connect, `ping`)
 carry no agent.
 
 ### The pod
@@ -438,6 +443,128 @@ reconcile, which makes its pod again if it is gone. A shim's stream that
 ends makes the integration not running; requests waiting on it fail at
 once. A request waits 60 s for a `tools/call` and 20 s for anything
 else.
+
+## Agents' calls
+
+An agent calls an integration's actions as tools of its own
+`kivali mcp`, named with the integration's tool prefix
+(`hubspot_create_post`). Only the full-agent toolkit has them;
+subagents and web subagents have none. Core is the only place access
+is enforced (`internal/web/integration_tools.go`): the integration
+never authenticates an agent, and reads who is calling, with what
+access, from the call's `_meta`.
+
+### What an agent may call
+
+`Server.agentIntegrationTools(slug)` takes each integration that has
+an approved version, is switched on, is running (its shim connected)
+and has a valid access row for the agent, and asks it for its
+`tools/list` for that agent. Of the answer it keeps the tools the
+approved version's manifest declares, the actions its install screen
+listed, whose input schema is an object's (a tool with none gets
+`{"type":"object"}`; one with another schema is left out and logged).
+Each becomes a tool named prefix and tool, with the server's
+description and one sentence added: "Through the <display name>
+integration; the owner decides what you may do with it." The list is
+sorted by name; when two integrations' prefixes overlap and name two
+actions alike, the first is kept. The integrations are asked at once,
+and one that does not answer within 20 s is left out and logged.
+
+An agent's `tools/list` answer is kept on the link it came through, by
+agent and the SHA-256 of its access (`integrationRegistry.AgentTools`).
+It is asked for again when the agent's access changes, when the
+connection changes (the server restarts with the new values), and when
+the shim connects again: a new pod, a new version, a reconnect.
+
+### The stamp
+
+Every `tools/list` and `tools/call` core sends for an agent carries
+
+```json
+"_meta": { "kivali": { "agent": "dana", "access": { "blogs": ["Marketing"] } } }
+```
+
+`access` is the agent's filled access form, `{}` for an integration
+without one. Core's own requests carry no `_meta.kivali`. An
+integration that holds an agent to its access reads it here: which
+tools to list, what a call may touch.
+
+### When a grant lands
+
+The chat turn's request (`spawnChatLoopIfIdle`, `internal/web/chat.go`)
+carries the agent's actions after Kivali's own tools, each marked
+`provider.Tool.Integration`, and they ride into the CLI's
+`--allowedTools`. The runner keeps the sorted set it was spawned with
+(`internal/claudeagent/runner.go`), and a turn that carries another set
+is spawn-time drift: the runner respawns with `--resume`, the new CLI
+starts a new `kivali mcp`, and that lists the actions from core once,
+when it starts (`POST /v1/agent/{slug}/integrations/tools`; a failure,
+or no answer within 10 s, starts it with none, and the model is shown
+none until the CLI next respawns). There is no mid-turn
+`tools/list_changed`:
+access given lands at the agent's next turn. Access taken away is
+refused from the next call, since core checks every call, and its
+tools leave the agent's list at its next turn.
+
+### The routes
+
+On `core.sock`, bound to the slug header like every agent route:
+
+| Route | Body | Answer |
+| --- | --- | --- |
+| `POST /v1/agent/{slug}/integrations/tools` | `{}` | `agentpod.IntegrationToolsResponse`: `{tools: [{name, description, input_schema}]}` |
+| `POST /v1/agent/{slug}/integrations/call` | `agentpod.IntegrationCallRequest`: `{name, arguments}`, the prefixed name | `agentpod.IntegrationCallResponse`: `{content: [text, ...], is_error}` |
+
+A refusal or the integration's error is a 200 with `is_error`; a
+non-2xx answer is a transport error, which the MCP tool reports as
+"The call did not reach Kivali: ...".
+
+### A call
+
+Core matches the prefixed name against what the agent may call now,
+worked out again from the store and the integration's list for the
+agent, never from anything else in the request. Each integration whose
+prefix the name starts with is tried, the longest prefix first. A
+match goes to the integration as `tools/call` with `{name, arguments,
+_meta}` and waits up to 60 s, which the MCP server's context bounds
+too. Without a match the call is refused with the first cause found,
+in words that name the cause and the owner and nothing else:
+
+| Cause | The agent reads |
+| --- | --- |
+| No approved version | The <integration> integration has no approved version. Ask the owner if your work needs it. |
+| Switched off | The <integration> integration is switched off. Ask the owner if your work needs it. |
+| No access | You have no access to the <integration> integration. Ask the owner if your work needs it. |
+| Access that no longer applies | Your access to the <integration> integration no longer applies (why). Ask the owner to set it again. |
+| Not running | The <integration> integration is not running right now; try again later or tell the owner. |
+| An action the agent's list does not have | Your access to the <integration> integration does not include <action>. Ask the owner if your work needs it. |
+
+A name that starts with no integration's prefix is answered "No
+integration has an action named <name>." and has no audit row.
+
+### The answer
+
+Each `text` block of the result is one content string; a result with
+none passes its `structuredContent` as JSON text. `isError` is the
+answer's `is_error`. Every other block (an image, audio, a resource)
+is left out in this version, and a last line names what was: "The
+answer also held content Kivali does not pass on (image)." A JSON-RPC
+error is an error with its message; no answer within 60 s, or a shim
+that goes before it answers, is an error that says so. Every string
+goes through the connection's secret scrubber, each secret value
+becoming `[secret]` as in the log, before it reaches the agent; when
+the connection's secrets cannot be read, the answer is held back.
+
+### The audit
+
+Every call whose name matches an integration, allowed or refused,
+appends a row to that integration's `audit.jsonl`: `{at, agent,
+action, allowed, reason, duration_ms}`, the action without the prefix.
+A refused call is `allowed: false` with the cause as its reason (`no
+access`, `the integration is off`, `the agent's access does not
+include it`, ...). An allowed call that failed keeps the
+integration's words, scrubbed, as its reason. The owner's own calls
+are rows for `ceo`.
 
 ## The API
 

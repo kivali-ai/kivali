@@ -235,6 +235,12 @@ func (s *Server) registerUDSRoutes(mux *http.ServeMux) {
 	// subagent_web_session_reset.
 	mux.HandleFunc("POST /v1/agent/{slug}/web/sessions", s.handleAgentpodWebSessions)
 	mux.HandleFunc("POST /v1/agent/{slug}/web/sessions/reset", s.handleAgentpodWebSessionReset)
+	// The agent's integration actions: the list its MCP server
+	// registers when it starts, and each call, which core checks
+	// against the bound agent's access as it stands before the
+	// integration sees it (integration_tools.go).
+	mux.HandleFunc("POST /v1/agent/{slug}"+agentpod.IntegrationToolsPath, s.handleAgentpodIntegrationTools)
+	mux.HandleFunc("POST /v1/agent/{slug}"+agentpod.IntegrationCallPath, s.handleAgentpodIntegrationCall)
 	// An agent runtime's egress proxy credential: the SHA-256 of the
 	// secret it drew at start, for the agent named by the slug header.
 	mux.HandleFunc("POST "+agentpod.EgressCredentialPath, s.handleAgentpodEgressCredential)

@@ -126,9 +126,10 @@ func (r *runnerRegistry) Acquire(ctx context.Context, slug, resumeID string, req
 			}
 			// Config drift: the CEO changed this agent's Model or
 			// Effort, or its handbook / role / agent_memory (all
-			// carried in the system prompt) was edited, or the CLI
-			// was signed in another way. The CLI pins model, effort,
-			// system prompt and sign-in per subprocess. Evict
+			// carried in the system prompt) was edited, or its
+			// integration grants changed, or the CLI was signed in
+			// another way. The CLI pins model, effort, system prompt,
+			// allowed tools and sign-in per subprocess. Evict
 			// the live runner
 			// so the spawn below respawns with the new flags. The
 			// conversation is NOT lost — resumeID carries the stored
@@ -137,9 +138,10 @@ func (r *runnerRegistry) Acquire(ctx context.Context, slug, resumeID string, req
 			// Synchronous Close here can block on graceful SIGTERM, but
 			// it's bounded and only fires on an explicit settings/content
 			// change (rare), not the hot path.
-			log.Printf("claudeagent: %s runner config drift (model %q→%q, effort %q→%q, system-prompt changed=%v, sign-in changed=%v); respawning with --resume",
+			log.Printf("claudeagent: %s runner config drift (model %q→%q, effort %q→%q, system-prompt changed=%v, integration actions %q→%q, sign-in changed=%v); respawning with --resume",
 				slug, existing.spawnModel, req.Model, existing.spawnEffort, normalizeEffort(req.Effort),
-				existing.spawnSystemHash != systemPromptHash(req), existing.spawnSignIn != signIn)
+				existing.spawnSystemHash != systemPromptHash(req),
+				existing.spawnIntegrationTools, integrationToolNames(req.Tools), existing.spawnSignIn != signIn)
 			delete(r.runners, slug)
 			_ = existing.Close()
 		} else {

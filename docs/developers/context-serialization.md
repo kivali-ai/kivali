@@ -412,7 +412,15 @@ provider serves an org.
   --core-uds … --subagent-files-root … --depth …`, plus
   `--result-schema <file>` for a task with a schema, built by the agent
   pod's runtime), the validation of every `submit_result` call
-  (`internal/structured`), and the transcript.
+  (`internal/structured`), and the transcript. For an agent's turn it
+  also owns the integration family: the actions of each integration
+  the agent has access to, `<integration>_<action>`, which the chat
+  turn appends to `req.Tools` after Kivali's own, each marked
+  `provider.Tool.Integration`. The driver hands them to
+  `--allowedTools` by name like any other tool, and keeps the set it
+  spawned with: a turn with another set respawns the runner with
+  `--resume`, so a grant given or taken away lands on the next turn
+  ([integrations.md](integrations.md)). Subagents get none.
 
 **Verified in:** `internal/claudeagent/subagent_test.go` (flags, MCP
 config, typed error and cancel against the fake CLI),
@@ -424,7 +432,11 @@ provider's rows, spellings, prices, efforts and credentials),
 `internal/web/agent_setmodel_test.go` and
 `internal/web/subagent_validate_test.go` (the picker and the dispatch
 schemas from the mock provider), `internal/provider_imports_test.go`
-(the import rule).
+(the import rule), `internal/claudeagent/runner_test.go`
+(`TestConfigMatchesIntegrationActions`) and
+`internal/web/integration_tools_test.go`
+(`TestChatTurnCarriesTheAgentsIntegrationActions`) for the
+integration family.
 
 ---
 

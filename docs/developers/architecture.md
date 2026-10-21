@@ -110,8 +110,12 @@ connection's values over `integration.sock` when it does, and carries
 JSON-RPC between the server and core
 (`internal/web/integration_registry.go`). Its server reaches the
 egress proxy alone, with a scoped credential that admits only the hosts
-the approved version names. [integrations.md](integrations.md) is the
-reference.
+the approved version names. An agent with access has the integration's
+actions as tools of its `kivali mcp`; every call goes through core,
+which checks the agent's access, stamps the call with the agent and its
+access (`_meta.kivali`), forwards it to the integration and writes an
+audit row (`internal/web/integration_tools.go`).
+[integrations.md](integrations.md) is the reference.
 
 ### Agent pods
 
@@ -194,16 +198,22 @@ stdin stays open across turns (`runner.go`). A turn writes one user
 line; the stream-json output is translated into provider stream
 events. The runner is spawned with `--resume <session-id>` when one is
 stored, so a restarted pod continues the conversation. Model, effort
-and system prompt are spawn-time flags: when any of them differs from
-the next request the runner respawns with `--resume`, which is how an
-edit to the handbook, role or memory lands on the next turn. A runner
+and system prompt are spawn-time flags, and so is the set of
+integration actions the request carries (`provider.Tool.Integration`,
+in `--allowedTools`): when any of them differs from the next request
+the runner respawns with `--resume`, which is how an edit to the
+handbook, role or memory, or access to an integration given or taken
+away, lands on the next turn. A runner
 that dies within seconds of a `--resume` spawn has its session id
 cleared, so a corrupt session log cannot loop.
 
 The CLI's tools come from `kivali mcp --agent <slug> --core-uds ...`
 (`mcp_cmd.go`, `internal/mcp`), an MCP server over stdio that the CLI
 starts. It dispatches `run_shell` and `file_*` to the agent-shell socket
-and everything else to core over `core.sock`. The tool surface is
+and everything else to core over `core.sock`. It also registers the
+actions of the integrations the agent has access to, which it lists
+from core once when it starts; a respawned CLI starts a new one. The
+tool surface is
 listed in [context-serialization.md](context-serialization.md) and the
 model catalog lives in `internal/claudeagent/catalog.go`.
 
@@ -513,7 +523,9 @@ sequenceDiagram
    row). It appends the wake note (what changed and what the agent
    holds; [knowledge-graph.md](knowledge-graph.md)), builds the
    request with `agent.Runtime` (the layering is in
-   [context-serialization.md](context-serialization.md)) and publishes
+   [context-serialization.md](context-serialization.md)), adds the
+   integration actions the agent may call now
+   ([integrations.md](integrations.md)) and publishes
    a `chat-turn` event to the agent's pod. When no pod is subscribed
    (a fresh hire, or a restart whose pods are not back yet) nothing
    starts and the work stays owed in `chat.jsonl`; the pod's

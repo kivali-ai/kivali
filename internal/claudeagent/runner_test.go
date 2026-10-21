@@ -1013,6 +1013,43 @@ func TestConfigMatchesSystemPrompt(t *testing.T) {
 	}
 }
 
+// Why this test exists: the CLI allows and the MCP server registers
+// an agent's integration actions once, when the runner spawns, so a
+// grant the owner gives or takes away reaches the agent only through a
+// respawn. Without the comparison a new grant would stay out of
+// --allowedTools (the CLI refusing every call to it) and a removed one
+// would stay listed until the runner happened to respawn for another
+// reason. The same set listed in another order must not respawn, or
+// every turn would.
+func TestConfigMatchesIntegrationActions(t *testing.T) {
+	kivali := provider.Tool{Name: "get_org_chart"}
+	echo := provider.Tool{Name: "fake_echo", Integration: true}
+	whoami := provider.Tool{Name: "fake_whoami", Integration: true}
+	req := func(tools ...provider.Tool) provider.CompleteRequest {
+		return provider.CompleteRequest{Model: "claude-opus-4-8", Effort: "high", Tools: tools}
+	}
+	spawned := req(kivali, echo)
+	r := &runner{
+		spawnModel:            spawned.Model,
+		spawnEffort:           normalizeEffort(spawned.Effort),
+		spawnSystemHash:       systemPromptHash(spawned),
+		spawnIntegrationTools: integrationToolNames(spawned.Tools),
+	}
+	if !r.configMatches(req(echo, kivali)) {
+		t.Error("the same actions in another order look like drift")
+	}
+	if r.configMatches(req(kivali, echo, whoami)) {
+		t.Error("a new grant's action did not respawn the runner")
+	}
+	if r.configMatches(req(kivali)) {
+		t.Error("an action taken away did not respawn the runner")
+	}
+	// A Kivali tool of the same name is not an integration action.
+	if r.configMatches(req(kivali, provider.Tool{Name: "fake_echo"})) {
+		t.Error("an unmarked tool counted as an integration action")
+	}
+}
+
 // readSpawnArgs parses the fake CLI's args-capture file into one
 // []string arg-vector per spawn, in spawn order.
 func readSpawnArgs(t *testing.T, path string) [][]string {

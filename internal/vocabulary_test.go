@@ -53,7 +53,7 @@ func TestAgentFacingProseUsesTheVocabulary(t *testing.T) {
 		"agent/chat.go", "agent/provisioning.go", "message/message.go", "messaging/*.go",
 		"web/api_setup.go", "web/api_org.go", "web/api_home.go", "web/api_proposals.go",
 		"web/onboarding.go", "web/chat.go", "store/handbook.go", "store/handbook_upgrade.go", "handbook/*.go", "store/message.go",
-		"store/graph_index.go", "web/episode_writer.go",
+		"store/graph_index.go", "web/episode_writer.go", "web/integration_tools.go",
 	) {
 		if strings.HasSuffix(file, "_test.go") {
 			continue

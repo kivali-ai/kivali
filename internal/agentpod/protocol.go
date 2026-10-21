@@ -736,3 +736,49 @@ type StateDispatchResponse struct {
 	Body    string `json:"body,omitempty"`
 	IsError bool   `json:"is_error,omitempty"`
 }
+
+// IntegrationToolsPath and IntegrationCallPath are the core.sock
+// routes of an agent's integration actions, under /v1/agent/{slug}:
+// the agent's MCP server lists them once when it starts and relays
+// each call. Both are POSTs bound to the slug header.
+const (
+	IntegrationToolsPath = "/integrations/tools"
+	IntegrationCallPath  = "/integrations/call"
+)
+
+// IntegrationTool is one action of an integration the agent has
+// access to, as its MCP server registers it: the action's name behind
+// the integration's tool prefix (integration.ToolPrefix), its
+// description and its input schema.
+type IntegrationTool struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description"`
+	InputSchema json.RawMessage `json:"input_schema"`
+}
+
+// IntegrationToolsResponse answers POST
+// /v1/agent/{slug}/integrations/tools: the actions of every running
+// integration the agent has valid access to, as each lists them for
+// that access, sorted by name. Empty when it has none.
+type IntegrationToolsResponse struct {
+	Tools []IntegrationTool `json:"tools"`
+}
+
+// IntegrationCallRequest is the body of POST
+// /v1/agent/{slug}/integrations/call: one call of an action by its
+// prefixed name, with the arguments as the model wrote them. Core
+// works out the integration and the action from the agent's access as
+// it stands at the call, never from anything else in the request.
+type IntegrationCallRequest struct {
+	Name      string          `json:"name"`
+	Arguments json.RawMessage `json:"arguments,omitempty"`
+}
+
+// IntegrationCallResponse is the call's result as the model reads it:
+// the text of the integration's answer, block by block, or why the
+// call was refused. IsError marks a refusal or the integration's
+// error.
+type IntegrationCallResponse struct {
+	Content []string `json:"content"`
+	IsError bool     `json:"is_error,omitempty"`
+}

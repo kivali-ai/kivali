@@ -115,10 +115,13 @@ const (
 //     drift in any of the three and respawns with --resume, preserving
 //     the conversation. So edits to model/effort or to the system prompt
 //     (handbook / role / agent_memory) land on the next turn.
-//   - --mcp-config and --allowedTools are spawn-time too and are not
-//     drift-checked: they change only with the agent's role (CoS vs
-//     not) or a code change, and are silently inherited until the
-//     runner respawns for another reason.
+//   - --mcp-config and --allowedTools are spawn-time too. Kivali's own
+//     tools change only with the agent's role (CoS vs not) or a code
+//     change and are not drift-checked; the integration actions the
+//     request carries (provider.Tool.Integration) are: a grant given
+//     or taken away changes their set, configMatches sees it, and the
+//     respawn starts a new `kivali mcp`, which lists them afresh, so
+//     the change lands on the next turn.
 type runner struct {
 	slug string
 	opts Options
@@ -192,6 +195,12 @@ type runner struct {
 	// turn instead of waiting for a chat rotation. Hashed rather than
 	// stored verbatim: the prompt is multi-KB and we only ever compare.
 	spawnSystemHash string
+
+	// spawnIntegrationTools is the integration actions this runner was
+	// born with (integrationToolNames): its --allowedTools carries them
+	// and its `kivali mcp` registered them at start, so a turn that
+	// carries another set respawns it.
+	spawnIntegrationTools string
 
 	// spawnSignIn is the sign-in key (signInWatch) the registry read
 	// before spawning this runner; Acquire respawns it when the key
@@ -410,7 +419,8 @@ func newRunner(opts Options, slug, kivaliBin, sessionDir, resumeID string, req p
 		spawnModel:  req.Model,
 		spawnEffort: normalizeEffort(req.Effort),
 
-		spawnSystemHash: systemPromptHash(req),
+		spawnSystemHash:       systemPromptHash(req),
+		spawnIntegrationTools: integrationToolNames(req.Tools),
 
 		// A fresh session starts the CLI's gauge at zero, so the first
 		// frame's reading is already a delta. A resumed one reloads
@@ -1442,11 +1452,15 @@ func (r *runner) isDead() bool {
 // request can't spuriously look like drift against a runner already on
 // the default; the system prompt is compared by hash so an edit to the
 // handbook / role / agent_memory respawns, while the same content
-// rebuilt fresh each turn does not.
+// rebuilt fresh each turn does not. The integration actions are
+// compared as a set (integrationToolNames): the CLI allows them and
+// the MCP server registers them at launch, so a grant given or taken
+// away respawns, while the same grants listed in another order do not.
 func (r *runner) configMatches(req provider.CompleteRequest) bool {
 	return r.spawnModel == req.Model &&
 		r.spawnEffort == normalizeEffort(req.Effort) &&
-		r.spawnSystemHash == systemPromptHash(req)
+		r.spawnSystemHash == systemPromptHash(req) &&
+		r.spawnIntegrationTools == integrationToolNames(req.Tools)
 }
 
 // systemPromptHash is the identity of a request's --system-prompt: the

@@ -483,6 +483,10 @@ func (s *Server) spawnChatLoopIfIdle(slug, source string) bool {
 	// chat header and the bubble show).
 	actx.Effort = s.effectiveEffort(actx.Model, actx.Effort)
 	req := actx.BuildRequest()
+	// The integration actions the agent may call now: their set is
+	// part of the runner's spawn-time config, so a grant given or taken
+	// away since the last turn respawns the CLI with them.
+	req.Tools = append(req.Tools, s.integrationTurnTools(slug)...)
 	req.Purpose = "chat"
 	if req.MaxTokens < 32768 {
 		req.MaxTokens = 32768

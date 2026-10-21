@@ -246,7 +246,9 @@ supervisor's reference.
 - `kivali mcp` — the stdio MCP server each `claude` process starts:
   `--toolkit full-agent` (the default) is an agent's whole tool surface
   (`file_*`, `agent_memory_*`, `publish_*`, assignments, state lookups,
-  `run_shell`, `share_file`, `subagent`); `--toolkit subagent` is the
+  `run_shell`, `share_file`, `subagent`, and the actions of the
+  integrations the agent has access to, `<integration>_<action>`,
+  listed from the server at start); `--toolkit subagent` is the
   narrow surface a subagent gets; `--toolkit web` is a web subagent's
   (the `web_*` tools and `submit_result`). Calls that change state are
   routed to the server over the control socket.

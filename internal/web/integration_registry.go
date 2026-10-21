@@ -6,9 +6,10 @@
 // shim dials integration.sock with the per-pod token core minted for
 // it. The registry keeps the token, the connected shim (the link: its
 // events stream), the requests core is waiting on, the last tools/list
-// the server answered, and its health. Core talks MCP to the server
-// through the link: Call sends a JSON-RPC request as an rpc event and
-// waits for the response the shim posts back.
+// the server answered, each agent's tools/list (AgentTools, kept on the
+// link), and its health. Core talks MCP to the server through the link:
+// Call sends a JSON-RPC request as an rpc event and waits for the
+// response the shim posts back.
 //
 // Every pod operation runs on one goroutine (Run): a reconcile after
 // boot and after each change, and the health check every 30 seconds,
@@ -24,6 +25,7 @@ package web
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
@@ -128,13 +130,30 @@ type integrationLink struct {
 	events    chan integrationpod.Event
 	closed    chan struct{}
 	once      sync.Once
+
+	// agentTools is each agent's tools/list answer through this link,
+	// by slug, with the hash of the access it was asked with; a new
+	// link (a new pod, a new version, a reconnect) starts with none.
+	// toolsGen counts the times it was emptied, so the answer to a
+	// request sent before is not kept. Both guarded by the registry's
+	// mu.
+	agentTools map[string]agentToolsAnswer
+	toolsGen   int
+}
+
+// agentToolsAnswer is one agent's tools/list answer and the hash of
+// the access it was asked with.
+type agentToolsAnswer struct {
+	accessHash string
+	tools      json.RawMessage
 }
 
 func newIntegrationLink(name, version, proxyHash string) *integrationLink {
 	return &integrationLink{
 		name: name, version: version, proxyHash: proxyHash,
-		events: make(chan integrationpod.Event, integrationLinkBuffer),
-		closed: make(chan struct{}),
+		events:     make(chan integrationpod.Event, integrationLinkBuffer),
+		closed:     make(chan struct{}),
+		agentTools: map[string]agentToolsAnswer{},
 	}
 }
 
@@ -627,6 +646,59 @@ func (r *integrationRegistry) Tools(name string) json.RawMessage {
 	return nil
 }
 
+// kivaliMeta is the _meta core puts on what it sends a server for an
+// agent: the agent's slug and its access, the filled access form.
+// Core's own requests (Test connection, the options a field lists,
+// ping, the tools/list at connect) carry none.
+func kivaliMeta(slug string, access json.RawMessage) map[string]any {
+	return map[string]any{"kivali": map[string]any{"agent": slug, "access": access}}
+}
+
+// AgentTools is name's tools/list answer for one agent, asked with the
+// agent's _meta, and kept for the link it came through until the
+// agent's access or the connection changes, so a turn asks again only
+// after a change. errIntegrationNotRunning without a shim.
+func (r *integrationRegistry) AgentTools(ctx context.Context, name, slug string, access json.RawMessage) (json.RawMessage, error) {
+	if r == nil {
+		return nil, errIntegrationNotRunning
+	}
+	sum := sha256.Sum256(access)
+	hash := hex.EncodeToString(sum[:])
+	r.mu.Lock()
+	e := r.entries[name]
+	if e == nil || e.link == nil {
+		r.mu.Unlock()
+		return nil, errIntegrationNotRunning
+	}
+	link := e.link
+	if a, ok := link.agentTools[slug]; ok && a.accessHash == hash {
+		r.mu.Unlock()
+		return a.tools, nil
+	}
+	gen := link.toolsGen
+	r.mu.Unlock()
+	res, err := r.Call(ctx, name, "tools/list", map[string]any{"_meta": kivaliMeta(slug, access)})
+	if err != nil {
+		return nil, err
+	}
+	r.mu.Lock()
+	// Kept only on the link it was asked through, unemptied since.
+	if e := r.entries[name]; e != nil && e.link == link && link.toolsGen == gen {
+		link.agentTools[slug] = agentToolsAnswer{accessHash: hash, tools: res}
+	}
+	r.mu.Unlock()
+	return res, nil
+}
+
+// forgetAgentToolsLocked empties the tools/list answers kept on name's
+// link. r.mu is held.
+func (r *integrationRegistry) forgetAgentToolsLocked(name string) {
+	if e := r.entries[name]; e != nil && e.link != nil {
+		e.link.agentTools = map[string]agentToolsAnswer{}
+		e.link.toolsGen++
+	}
+}
+
 // Running reports whether name's shim is connected.
 func (r *integrationRegistry) Running(name string) bool {
 	if r == nil {
@@ -726,8 +798,8 @@ func (r *integrationRegistry) sendEvent(name string, ev integrationpod.Event) bo
 }
 
 // ConnectionChanged is a write or removal of name's connection: the
-// log scrubber is built again, and the shim restarts the server with
-// the new values.
+// log scrubber is built again, the agents' tools/list answers are
+// forgotten, and the shim restarts the server with the new values.
 func (r *integrationRegistry) ConnectionChanged(name string) {
 	if r == nil {
 		return
@@ -736,6 +808,7 @@ func (r *integrationRegistry) ConnectionChanged(name string) {
 	if e := r.entries[name]; e != nil {
 		e.scrub = nil
 	}
+	r.forgetAgentToolsLocked(name)
 	r.mu.Unlock()
 	r.sendEvent(name, integrationpod.Event{Type: integrationpod.EventRestart, Data: []byte("{}")})
 }
@@ -842,11 +915,23 @@ func (r *integrationRegistry) credential(ctx context.Context, name string) (*int
 	return &integrationpod.Credential{Env: integration.ServerEnv(m, values), Fields: fields}, nil
 }
 
-// newScrubber replaces each secret value, longest first.
+// scrubMinLen is the shortest secret value the scrubber replaces. A
+// value shorter than this would be replaced wherever its letters happen
+// to occur and mangle every line; no token or key is that short.
+const scrubMinLen = 6
+
+// newScrubber replaces each secret value of scrubMinLen or more
+// characters, longest first.
 func newScrubber(values []string) *strings.Replacer {
-	sort.Slice(values, func(i, j int) bool { return len(values[i]) > len(values[j]) })
-	pairs := make([]string, 0, 2*len(values))
+	kept := make([]string, 0, len(values))
 	for _, v := range values {
+		if len(v) >= scrubMinLen {
+			kept = append(kept, v)
+		}
+	}
+	sort.Slice(kept, func(i, j int) bool { return len(kept[i]) > len(kept[j]) })
+	pairs := make([]string, 0, 2*len(kept))
+	for _, v := range kept {
 		pairs = append(pairs, v, integrationSecretPlaceholder)
 	}
 	return strings.NewReplacer(pairs...)

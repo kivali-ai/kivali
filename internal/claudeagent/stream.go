@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -487,6 +488,21 @@ func allowedToolNames(tools []provider.Tool) []string {
 	// error when it tries to call either. Anthropic runs web_search
 	// server-side, inside the model call.
 	return append(names, cliWebFetch, cliWebSearch)
+}
+
+// integrationToolNames is the sorted set of the integration actions in
+// tools (provider.Tool.Integration), joined by commas: the part of
+// --allowedTools that changes with the agent's grants. The runner
+// compares it at each turn and respawns when it differs.
+func integrationToolNames(tools []provider.Tool) string {
+	var names []string
+	for _, t := range tools {
+		if t.Integration {
+			names = append(names, t.Name)
+		}
+	}
+	sort.Strings(names)
+	return strings.Join(names, ",")
 }
 
 // The CLI's names for the built-in tools Kivali keeps, and the --tools
