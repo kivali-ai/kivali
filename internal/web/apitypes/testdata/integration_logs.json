@@ -1,0 +1,14 @@
+{
+  "lines": [
+    {
+      "at": "2026-10-21T09:30:00Z",
+      "level": "info",
+      "message": "server started"
+    },
+    {
+      "at": "2026-10-21T10:00:00Z",
+      "level": "stderr",
+      "message": "token [secret] accepted"
+    }
+  ]
+}
