@@ -201,6 +201,8 @@ func proposalKind(m store.Message) (apitypes.ProposalKind, bool) {
 		return apitypes.ProposalKindReorg, true
 	case m.SoftwareInstall != nil:
 		return apitypes.ProposalKindSoftwareInstall, true
+	case m.IntegrationInstall != nil:
+		return apitypes.ProposalKindIntegrationInstall, true
 	}
 	return "", false
 }
@@ -233,6 +235,14 @@ func (v *homeView) needItem(it CEOInboxItem) apitypes.NeedItem {
 			// agent's reason are the whole of it.
 			n.ProposalKind = &pk
 			n.Packages = v.s.softwarePackages(it.Request.SoftwareInstall.Packages)
+		case ok && pk == apitypes.ProposalKindIntegrationInstall:
+			// Reviewed on the version's install screen, which says
+			// what it reaches, holds and does.
+			ii := it.Request.IntegrationInstall
+			review := integrationVersionPath(ii.Name, ii.Version)
+			n.Kind = apitypes.NeedKindProposal
+			n.ProposalKind = &pk
+			n.ReviewPath = &review
 		case ok:
 			review := proposalReviewPath(it.RequestPath)
 			n.Kind = apitypes.NeedKindProposal
@@ -964,6 +974,13 @@ func (v *homeView) proposalOutcome(done ceoResponse) apitypes.NeedActionResponse
 			return apitypes.NeedActionResponse{Result: "The reporting lines stay as they were"}
 		}
 		return apitypes.NeedActionResponse{Result: reorgOutcome(done.Response.Reorg), Link: "/team"}
+	case req.IntegrationInstall != nil:
+		ii := req.IntegrationInstall
+		what := v.s.integrationWords(ii.Name, ii.Version)
+		if !approved {
+			return apitypes.NeedActionResponse{Result: what + " is rejected"}
+		}
+		return apitypes.NeedActionResponse{Result: what + " is approved", Link: "/org/integrations/" + url.PathEscape(ii.Name)}
 	}
 	return apitypes.NeedActionResponse{}
 }

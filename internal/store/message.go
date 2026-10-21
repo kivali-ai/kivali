@@ -282,6 +282,18 @@ type SoftwareInstall struct {
 	Outcome SoftwareOutcome `yaml:"outcome,omitempty" json:"outcome,omitempty"`
 }
 
+// IntegrationInstall is the embedded proposal on a
+// `ceo_approval_request` asking the owner to approve one stored
+// version of an integration. On approve the server approves the
+// version (it becomes the one in use) BEFORE writing the response; on
+// deny it rejects it. The response carries the same struct, naming the
+// version answered, on both outcomes. Its review page is the version's
+// install screen.
+type IntegrationInstall struct {
+	Name    string `yaml:"name" json:"name"`
+	Version string `yaml:"version" json:"version"`
+}
+
 // SoftwareOutcome is what approving a SoftwareInstall did.
 type SoftwareOutcome string
 
@@ -361,6 +373,11 @@ type Message struct {
 	// the matching approval response. The server applies it on approve
 	// before writing the response.
 	SoftwareInstall *SoftwareInstall `yaml:"software_install,omitempty"`
+	// IntegrationInstall is non-nil on ceo_approval_request messages
+	// that ask for a version of an integration to be approved, and on
+	// the matching response. The server approves or rejects the
+	// version before writing the response.
+	IntegrationInstall *IntegrationInstall `yaml:"integration_install,omitempty"`
 	// Assignment is non-nil only on an assignment event: the
 	// assignment and log entry the wake reports. The inbox links the
 	// card to the assignment with it.
@@ -414,23 +431,24 @@ func (s *FSStore) WriteMessage(d Message) (string, error) {
 	}
 	path := filepath.Join(dir, messageFilename(d))
 	header, err := yaml.Marshal(struct {
-		Type            MessageType         `yaml:"type"`
-		Title           string              `yaml:"title"`
-		From            string              `yaml:"from"`
-		To              Recipients          `yaml:"to"`
-		Date            time.Time           `yaml:"date"`
-		InReplyTo       string              `yaml:"in_reply_to,omitempty"`
-		Quiet           bool                `yaml:"quiet,omitempty"`
-		Approved        *bool               `yaml:"approved,omitempty"`
-		Hire            *Hire               `yaml:"hire,omitempty"`
-		RoleUpdate      *RoleUpdate         `yaml:"role_update,omitempty"`
-		HandbookUpdate  *HandbookUpdate     `yaml:"handbook_update,omitempty"`
-		Reorg           *Reorg              `yaml:"reorg,omitempty"`
-		Offboard        *Offboard           `yaml:"offboard,omitempty"`
-		SoftwareInstall *SoftwareInstall    `yaml:"software_install,omitempty"`
-		Assignment      *AssignmentRef      `yaml:"assignment,omitempty"`
-		Attachments     []MessageAttachment `yaml:"attachments,omitempty"`
-	}{d.Type, d.Title, d.From, d.To, d.Date, d.InReplyTo, d.Quiet, d.Approved, d.Hire, d.RoleUpdate, d.HandbookUpdate, d.Reorg, d.Offboard, d.SoftwareInstall, d.Assignment, d.Attachments})
+		Type               MessageType         `yaml:"type"`
+		Title              string              `yaml:"title"`
+		From               string              `yaml:"from"`
+		To                 Recipients          `yaml:"to"`
+		Date               time.Time           `yaml:"date"`
+		InReplyTo          string              `yaml:"in_reply_to,omitempty"`
+		Quiet              bool                `yaml:"quiet,omitempty"`
+		Approved           *bool               `yaml:"approved,omitempty"`
+		Hire               *Hire               `yaml:"hire,omitempty"`
+		RoleUpdate         *RoleUpdate         `yaml:"role_update,omitempty"`
+		HandbookUpdate     *HandbookUpdate     `yaml:"handbook_update,omitempty"`
+		Reorg              *Reorg              `yaml:"reorg,omitempty"`
+		Offboard           *Offboard           `yaml:"offboard,omitempty"`
+		SoftwareInstall    *SoftwareInstall    `yaml:"software_install,omitempty"`
+		IntegrationInstall *IntegrationInstall `yaml:"integration_install,omitempty"`
+		Assignment         *AssignmentRef      `yaml:"assignment,omitempty"`
+		Attachments        []MessageAttachment `yaml:"attachments,omitempty"`
+	}{d.Type, d.Title, d.From, d.To, d.Date, d.InReplyTo, d.Quiet, d.Approved, d.Hire, d.RoleUpdate, d.HandbookUpdate, d.Reorg, d.Offboard, d.SoftwareInstall, d.IntegrationInstall, d.Assignment, d.Attachments})
 	if err != nil {
 		return "", err
 	}
@@ -472,46 +490,48 @@ func parseMessage(path string, raw []byte) (Message, error) {
 		return Message{}, fmt.Errorf("message %s: no frontmatter", path)
 	}
 	var meta struct {
-		Type            MessageType         `yaml:"type"`
-		Title           string              `yaml:"title"`
-		From            string              `yaml:"from"`
-		To              Recipients          `yaml:"to"`
-		Date            time.Time           `yaml:"date"`
-		InReplyTo       string              `yaml:"in_reply_to"`
-		Quiet           bool                `yaml:"quiet"`
-		Approved        *bool               `yaml:"approved"`
-		Hire            *Hire               `yaml:"hire"`
-		RoleUpdate      *RoleUpdate         `yaml:"role_update"`
-		HandbookUpdate  *HandbookUpdate     `yaml:"handbook_update"`
-		Reorg           *Reorg              `yaml:"reorg"`
-		Offboard        *Offboard           `yaml:"offboard"`
-		SoftwareInstall *SoftwareInstall    `yaml:"software_install"`
-		Assignment      *AssignmentRef      `yaml:"assignment"`
-		Attachments     []MessageAttachment `yaml:"attachments"`
+		Type               MessageType         `yaml:"type"`
+		Title              string              `yaml:"title"`
+		From               string              `yaml:"from"`
+		To                 Recipients          `yaml:"to"`
+		Date               time.Time           `yaml:"date"`
+		InReplyTo          string              `yaml:"in_reply_to"`
+		Quiet              bool                `yaml:"quiet"`
+		Approved           *bool               `yaml:"approved"`
+		Hire               *Hire               `yaml:"hire"`
+		RoleUpdate         *RoleUpdate         `yaml:"role_update"`
+		HandbookUpdate     *HandbookUpdate     `yaml:"handbook_update"`
+		Reorg              *Reorg              `yaml:"reorg"`
+		Offboard           *Offboard           `yaml:"offboard"`
+		SoftwareInstall    *SoftwareInstall    `yaml:"software_install"`
+		IntegrationInstall *IntegrationInstall `yaml:"integration_install"`
+		Assignment         *AssignmentRef      `yaml:"assignment"`
+		Attachments        []MessageAttachment `yaml:"attachments"`
 	}
 	if err := yaml.Unmarshal(m[1], &meta); err != nil {
 		return Message{}, fmt.Errorf("message %s: frontmatter: %w", path, err)
 	}
 	body := strings.TrimLeft(string(m[2]), "\n")
 	return Message{
-		Type:            meta.Type,
-		Title:           meta.Title,
-		From:            meta.From,
-		To:              meta.To,
-		Date:            meta.Date,
-		InReplyTo:       meta.InReplyTo,
-		Quiet:           meta.Quiet,
-		Approved:        meta.Approved,
-		Hire:            meta.Hire,
-		RoleUpdate:      meta.RoleUpdate,
-		HandbookUpdate:  meta.HandbookUpdate,
-		Reorg:           meta.Reorg,
-		Offboard:        meta.Offboard,
-		SoftwareInstall: meta.SoftwareInstall,
-		Assignment:      meta.Assignment,
-		Attachments:     meta.Attachments,
-		Body:            body,
-		Path:            path,
+		Type:               meta.Type,
+		Title:              meta.Title,
+		From:               meta.From,
+		To:                 meta.To,
+		Date:               meta.Date,
+		InReplyTo:          meta.InReplyTo,
+		Quiet:              meta.Quiet,
+		Approved:           meta.Approved,
+		Hire:               meta.Hire,
+		RoleUpdate:         meta.RoleUpdate,
+		HandbookUpdate:     meta.HandbookUpdate,
+		Reorg:              meta.Reorg,
+		Offboard:           meta.Offboard,
+		SoftwareInstall:    meta.SoftwareInstall,
+		IntegrationInstall: meta.IntegrationInstall,
+		Assignment:         meta.Assignment,
+		Attachments:        meta.Attachments,
+		Body:               body,
+		Path:               path,
 	}, nil
 }
 

@@ -29,6 +29,12 @@
 //	    meta.json                    is by reference
 //	  public/<slug>/                 each agent's published files; core
 //	                                 is the only writer (publish.go)
+//	  integrations/<name>/           one installed integration (integrations.go)
+//	    integration.yaml             name, display name, current version, on or off
+//	    versions/<version>/          version.yaml, manifest.json, bundle/
+//	    connections/<id>.yaml        a connection's fields that are not secret
+//	    access/<slug>.yaml           one agent's access
+//	    audit.jsonl                  one row per call through it
 package store
 
 import (
@@ -136,6 +142,11 @@ type FSStore struct {
 
 	// orgSoftwareMu serializes read-modify-writes of software.yaml.
 	orgSoftwareMu sync.Mutex
+
+	// integrationLocks holds a *sync.Mutex per integration name: every
+	// write under integrations/<name>/ is a read-modify-write under it
+	// (lockIntegration, integrations.go).
+	integrationLocks sync.Map
 
 	// assignmentsMu serializes every change to an assignment file. Ids and log
 	// sequence numbers are derived from the files, so two changes

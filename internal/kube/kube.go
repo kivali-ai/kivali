@@ -2,7 +2,9 @@
 // provisioners share (internal/agentpod, internal/browserpod): create,
 // get, list and delete on Pods and PVCs in one namespace, plus the
 // spec-hash label a provisioner stamps on each pod it creates so it can
-// tell a pod built from an older manifest.
+// tell a pod built from an older manifest. It also gets, writes and
+// deletes the Secrets that hold integration connections
+// (internal/secrets).
 package kube
 
 import (
@@ -24,9 +26,10 @@ import (
 )
 
 // Client is a minimal HTTPS client for the in-cluster Kubernetes API.
-// It exposes only the verbs the provisioners need: create / get / list
-// / delete on Pods and PVCs in one namespace. No Services (neither
-// agent pods nor browser pods run a listener) and no Endpoints.
+// It exposes only the verbs Kivali needs: create / get / list / delete
+// on Pods and PVCs in one namespace, and get / create / update /
+// delete on Secrets. No Services (neither agent pods nor browser pods
+// run a listener) and no Endpoints.
 //
 // Credentials come from the Kivali web pod's ServiceAccount mount
 // (the client runs inside the pod that owns the kube credentials):
@@ -342,8 +345,9 @@ func (k *Client) GetPodReady(ctx context.Context, name string) (bool, error) {
 }
 
 // PodsPath is the API path of the namespace's Pod collection. The
-// client handles two kinds, Pods and PVCs; Services are absent because
-// no provisioned pod owns a listener, so RBAC needs no Service grants.
+// client handles three kinds, Pods, PVCs and Secrets; Services are
+// absent because no provisioned pod owns a listener, so RBAC needs no
+// Service grants.
 func (k *Client) PodsPath() string {
 	return fmt.Sprintf("/api/v1/namespaces/%s/pods", k.namespace)
 }
@@ -361,6 +365,79 @@ func (k *Client) PVCsPath() string {
 // PVCPath is the API path of the named PVC.
 func (k *Client) PVCPath(name string) string {
 	return fmt.Sprintf("/api/v1/namespaces/%s/persistentvolumeclaims/%s", k.namespace, name)
+}
+
+// SecretsPath is the API path of the namespace's Secret collection.
+func (k *Client) SecretsPath() string {
+	return fmt.Sprintf("/api/v1/namespaces/%s/secrets", k.namespace)
+}
+
+// SecretPath is the API path of the named Secret.
+func (k *Client) SecretPath(name string) string {
+	return fmt.Sprintf("/api/v1/namespaces/%s/secrets/%s", k.namespace, url.PathEscape(name))
+}
+
+// secretObject is the wire form of an Opaque Secret. The API carries
+// data base64-encoded, which encoding/json does for []byte.
+type secretObject struct {
+	APIVersion string `json:"apiVersion"`
+	Kind       string `json:"kind"`
+	Metadata   struct {
+		Name      string            `json:"name"`
+		Namespace string            `json:"namespace,omitempty"`
+		Labels    map[string]string `json:"labels,omitempty"`
+	} `json:"metadata"`
+	Type string            `json:"type,omitempty"`
+	Data map[string][]byte `json:"data"`
+}
+
+// GetSecret returns the named Secret's data, or ErrNotFound.
+func (k *Client) GetSecret(ctx context.Context, name string) (map[string][]byte, error) {
+	resp, err := k.do(ctx, http.MethodGet, k.SecretPath(name), nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if err := k.checkErr(resp); err != nil {
+		return nil, err
+	}
+	var obj secretObject
+	if err := json.NewDecoder(resp.Body).Decode(&obj); err != nil {
+		return nil, err
+	}
+	if obj.Data == nil {
+		obj.Data = map[string][]byte{}
+	}
+	return obj.Data, nil
+}
+
+// PutSecret writes the named Opaque Secret with labels and data,
+// replacing what it held: an update, or a create when there is none.
+func (k *Client) PutSecret(ctx context.Context, name string, labels map[string]string, data map[string][]byte) error {
+	var obj secretObject
+	obj.APIVersion, obj.Kind, obj.Type = "v1", "Secret", "Opaque"
+	obj.Metadata.Name, obj.Metadata.Namespace, obj.Metadata.Labels = name, k.namespace, labels
+	obj.Data = data
+	resp, err := k.do(ctx, http.MethodPut, k.SecretPath(name), obj)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusNotFound {
+		return k.checkErr(resp)
+	}
+	created, err := k.do(ctx, http.MethodPost, k.SecretsPath(), obj)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = created.Body.Close() }()
+	return k.checkErr(created)
+}
+
+// DeleteSecret deletes the named Secret; one that does not exist is no
+// error.
+func (k *Client) DeleteSecret(ctx context.Context, name string) error {
+	return k.DeleteResource(ctx, k.SecretPath(name))
 }
 
 // SpecHashLabel keys the per-pod label that records the hash of the

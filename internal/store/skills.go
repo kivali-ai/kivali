@@ -19,6 +19,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/kivali-ai/kivali/internal/builtinskills"
+	"github.com/kivali-ai/kivali/internal/zipsafe"
 )
 
 // Skill is one standard procedure / body-of-knowledge agents can
@@ -619,36 +620,11 @@ func replaceSkillDir(dir string, build func(stage string) error) error {
 //
 // Rejects archives that have SKILL.md at neither location.
 func detectSkillZipPrefix(zr *zip.Reader) (string, error) {
-	// Pass 1: is SKILL.md at the flat root?
-	for _, f := range zr.File {
-		if !f.FileInfo().IsDir() && path.Clean(f.Name) == SkillManifestName {
-			return "", nil
-		}
-	}
-	// Pass 2: is there exactly one top-level dir and does it hold SKILL.md?
-	topDirs := map[string]bool{}
-	for _, f := range zr.File {
-		name := strings.TrimLeft(path.Clean(f.Name), "/")
-		if name == "" || name == "." {
-			continue
-		}
-		first := name
-		if i := strings.IndexByte(name, '/'); i >= 0 {
-			first = name[:i]
-		}
-		if first == "__MACOSX" { // macOS zip turds — ignore
-			continue
-		}
-		topDirs[first] = true
-	}
-	if len(topDirs) != 1 {
+	prefix, ok := zipsafe.Prefix(zr, SkillManifestName)
+	if !ok {
 		return "", fmt.Errorf("skill zip: expected %s at the archive root or inside a single top-level folder", SkillManifestName)
 	}
-	var only string
-	for k := range topDirs {
-		only = k
-	}
-	return only + "/", nil
+	return prefix, nil
 }
 
 // zipContainsManifest reports whether SKILL.md exists directly under
@@ -656,90 +632,21 @@ func detectSkillZipPrefix(zr *zip.Reader) (string, error) {
 // prefix that technically fits the shape rule but where SKILL.md is
 // buried deeper, which we still reject.
 func zipContainsManifest(zr *zip.Reader, prefix string) bool {
-	want := prefix + SkillManifestName
-	for _, f := range zr.File {
-		if path.Clean(f.Name) == want && !f.FileInfo().IsDir() {
-			return true
-		}
-	}
-	return false
+	return zipsafe.Contains(zr, prefix, SkillManifestName)
 }
+
+// skillZipLimits caps a skill bundle at 10 MB per file and 200 MB in
+// all: generous, but no reasonable skill comes near, and a crafted zip
+// cannot fill the disk.
+var skillZipLimits = zipsafe.Limits{PerFile: 10 << 20, Total: 200 << 20}
 
 // extractZipInto writes every zip entry whose name starts with
 // prefix into dst (with the prefix stripped). Mode bits are
 // preserved for regular files. Directories are created on demand.
-// Rejects: absolute paths, `..` traversal, symlinks, hard links,
-// special files (device nodes etc.). Skips __MACOSX/ metadata.
+// Rejects: absolute paths, `..` traversal, symlinks, special files
+// (device nodes etc.). Skips __MACOSX/ metadata.
 func extractZipInto(zr *zip.Reader, prefix, dst string) error {
-	// 10 MB per file, 200 MB total bundle — generous but not a
-	// reasonable skill. Prevents a crafted zip from filling disk.
-	const perFileCap = 10 << 20
-	const totalCap = 200 << 20
-	var total int64
-	for _, f := range zr.File {
-		cleanedName := path.Clean(f.Name)
-		if strings.HasPrefix(cleanedName, "__MACOSX") || strings.Contains(cleanedName, "/__MACOSX/") {
-			continue
-		}
-		if prefix != "" && !strings.HasPrefix(cleanedName, prefix) {
-			// Entry outside our single top-level dir — shouldn't
-			// happen after detectSkillZipPrefix, but belt + braces.
-			continue
-		}
-		rel := strings.TrimPrefix(cleanedName, prefix)
-		if rel == "" || rel == "." {
-			continue
-		}
-		if strings.HasPrefix(rel, "/") || strings.HasPrefix(rel, "../") || strings.Contains(rel, "/../") || rel == ".." {
-			return fmt.Errorf("skill zip: unsafe path %q", f.Name)
-		}
-		mode := f.Mode()
-		if mode&(os.ModeSymlink|os.ModeDevice|os.ModeNamedPipe|os.ModeSocket|os.ModeCharDevice) != 0 {
-			return fmt.Errorf("skill zip: %q has unsupported file type", f.Name)
-		}
-		target := filepath.Join(dst, filepath.FromSlash(rel))
-		// Re-verify the computed path stays under dst even after
-		// filepath.Join resolves any symbolic `..` that slipped through.
-		if !strings.HasPrefix(target, dst+string(filepath.Separator)) && target != dst {
-			return fmt.Errorf("skill zip: unsafe path %q", f.Name)
-		}
-		if f.FileInfo().IsDir() {
-			if err := os.MkdirAll(target, 0o755); err != nil {
-				return err
-			}
-			continue
-		}
-		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-			return err
-		}
-		// Honor exec bit; ignore writeability flags — everything
-		// lands as user-writable for the Kivali process.
-		perm := os.FileMode(0o644)
-		if mode.Perm()&0o111 != 0 {
-			perm = 0o755
-		}
-		rc, err := f.Open()
-		if err != nil {
-			return fmt.Errorf("skill zip: open %q: %w", f.Name, err)
-		}
-		limited := io.LimitReader(rc, perFileCap+1)
-		buf, err := io.ReadAll(limited)
-		_ = rc.Close()
-		if err != nil {
-			return fmt.Errorf("skill zip: read %q: %w", f.Name, err)
-		}
-		if int64(len(buf)) > perFileCap {
-			return fmt.Errorf("skill zip: %q exceeds %d-byte per-file cap", f.Name, perFileCap)
-		}
-		total += int64(len(buf))
-		if total > totalCap {
-			return fmt.Errorf("skill zip: bundle exceeds %d-byte total cap", totalCap)
-		}
-		if err := os.WriteFile(target, buf, perm); err != nil {
-			return err
-		}
-	}
-	return nil
+	return zipsafe.Extract(zr, prefix, dst, skillZipLimits, "skill zip")
 }
 
 // safeSkillRel cleans a forward-slash skill-relative path and

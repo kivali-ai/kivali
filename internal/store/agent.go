@@ -395,7 +395,8 @@ func (s *FSStore) SetAgentReportsTo(slug, newManager string) error {
 // credential. The drop runs after archiveAgent has released
 // agentYAMLMu, since the proxy sync it triggers reads agent.yaml files
 // under egressAgentsMu. A failure to drop is logged, not returned,
-// since the agent is archived either way.
+// since the agent is archived either way. Its access to every
+// integration goes the same way.
 func (s *FSStore) ArchiveAgent(slug string) error {
 	if err := s.archiveAgent(slug); err != nil {
 		return err
@@ -403,6 +404,12 @@ func (s *FSStore) ArchiveAgent(slug string) error {
 	s.Graph().OrgChanged()
 	if err := s.DropEgressAgentCredential(slug); err != nil {
 		log.Printf("store: archive %s: drop its egress credentials: %v", slug, err)
+	}
+	// After the move and outside orgMu: each integration's lock is
+	// taken alone, and SetIntegrationAccess, holding it, finds the
+	// agent gone.
+	if err := s.ClearAgentIntegrationAccess(slug); err != nil {
+		log.Printf("store: archive %s: clear its integration access: %v", slug, err)
 	}
 	return nil
 }

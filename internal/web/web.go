@@ -27,6 +27,7 @@ import (
 	"github.com/kivali-ai/kivali/internal/debian"
 	"github.com/kivali-ai/kivali/internal/messaging"
 	"github.com/kivali-ai/kivali/internal/provider"
+	"github.com/kivali-ai/kivali/internal/secrets"
 	"github.com/kivali-ai/kivali/internal/store"
 	"github.com/kivali-ai/kivali/internal/tracker"
 	"github.com/kivali-ai/kivali/internal/web/ui"
@@ -133,6 +134,14 @@ type Server struct {
 	// propose_software_install, against Debian's package list. nil
 	// accepts any well-formed name unchecked.
 	Packages debian.Checker
+
+	// Secrets holds the secret fields of integration connections:
+	// Kubernetes Secrets in a cluster, memory outside one (main.go).
+	// NewServer gives a Server without one a secrets.Memory.
+	Secrets secrets.Store
+	// integrationsMu serialises the integration writes that span the
+	// store and Secrets (api_integrations.go).
+	integrationsMu sync.Mutex
 
 	// SeedTimeout bounds one Chief of Staff hire, measured on Clock; a
 	// hire still running when it passes ends as failed. Zero means
@@ -338,6 +347,9 @@ func NewServer(s *Server) (*Server, error) {
 	// Default the time source so no handler has to nil-check it.
 	if s.Clock == nil {
 		s.Clock = clock.New()
+	}
+	if s.Secrets == nil {
+		s.Secrets = secrets.NewMemory()
 	}
 	if s.SubagentService != nil && s.SubagentService.Clock == nil {
 		s.SubagentService.Clock = s.Clock

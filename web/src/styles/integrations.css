@@ -1,0 +1,211 @@
+/*
+ * Integrations: the rows of Org's Integrations section, an integration's page, a version's install screen, the
+ * access dialog and the agent's Integrations tab. Tokens only; rows, tables, fields and dialogs come from the
+ * design system. Values that are not a token are calc() over the 4px step (--space-1).
+ */
+
+/* ---- Org > Integrations: a row, and under it the version waiting for approval ---- */
+/* The item carries the hairline, so a row and its waiting version read as one entry. */
+.app-int-item {
+  display: flex;
+  flex-direction: column;
+  border-bottom: 1px solid var(--line);
+}
+
+.app-int-item > .app-int-row {
+  border-bottom: 0;
+}
+
+/* Lined up under the row's title: the row's 12px padding, the 20px icon and the 12px gap. */
+.app-int-pending {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: var(--space-1);
+  padding: 0 calc(var(--space-2) + var(--space-1)) calc(var(--space-2) + var(--space-1) / 2) calc(var(--space-1) * 11);
+  font: var(--type-caption);
+  color: var(--link);
+}
+
+.app-int-findings {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding-left: var(--space-4);
+}
+
+/* ---- An integration's page and a version's install screen ---- */
+.app-int {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  min-width: 0;
+}
+
+.app-int-head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.app-int-head-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(var(--space-2) + var(--space-1));
+}
+
+.app-int-spacer {
+  flex: 1;
+}
+
+.app-int-block {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-2) + var(--space-1));
+  min-width: 0;
+}
+
+.app-int-block-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.app-int-block-title {
+  flex: 1;
+}
+
+.app-int-facts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.app-int-fact {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-1) / 2);
+}
+
+.app-int-fact-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.app-int-decision {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: calc(var(--space-2) + var(--space-1));
+}
+
+/* The notes' last paragraph ends the block; the block's gap does the spacing. */
+.app-int-notes > :last-child {
+  margin-bottom: 0;
+}
+
+.app-int-excerpt {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---- Connection and access forms ---- */
+.app-int-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.app-int-status {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-1) / 2);
+}
+
+/* An access cell: the access in words, and under it why it no longer fits, at a readable width (see below). */
+.app-int-cell {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-1) / 2);
+  min-width: calc(var(--space-8) * 6);
+}
+
+.app-int-row-actions {
+  display: inline-flex;
+  gap: var(--space-2);
+}
+
+/*
+ * Table cells keep their shape on a narrow screen: dates, names and buttons stay on one line and the sentences
+ * keep a readable width, so the table scrolls sideways in its container instead of squeezing a word per line.
+ */
+.app-int-nowrap {
+  white-space: nowrap;
+}
+
+.app-int-wide {
+  display: block;
+  min-width: calc(var(--space-8) * 6);
+}
+
+.app-int-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.app-int-fieldset {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+/* The fieldset's name, set like the field labels around it. */
+.app-int-legend {
+  padding: 0;
+  margin-bottom: var(--space-1);
+  font: var(--type-caption);
+  font-weight: 500;
+  color: var(--ink);
+}
+
+.app-int-load {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.app-int-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* ---- The agent's Integrations tab ---- */
+.app-int-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.app-int-none {
+  padding: var(--space-4);
+}

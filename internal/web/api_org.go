@@ -22,7 +22,8 @@ import (
 )
 
 // The Org page's API: usage, the organization's name and logo, the
-// handbook, project files, skills, network, and backup/restore. Every
+// handbook, project files, skills, network, integrations
+// (api_integrations.go), and backup/restore. Every
 // mutation runs through a method that owns the rule (saveHandbook,
 // installSkill, …); these
 // handlers only translate between JSON or multipart and those methods. List mutations answer
@@ -58,6 +59,7 @@ func (s *Server) wireAPIOrgRoutes(mux *http.ServeMux) {
 
 	s.wireAPISoftwareRoutes(mux)
 	s.wireAPIAgentNetworkRoutes(mux)
+	s.wireAPIIntegrationRoutes(mux)
 
 	mux.HandleFunc("POST /api/v1/org/backup", s.handleBackupDownload)
 	mux.HandleFunc("POST /api/v1/org/restore", s.handleAPIRestore)

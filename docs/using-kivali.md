@@ -1,6 +1,6 @@
 # Using Kivali
 
-This page covers the day to day: working through Home, releasing messages, talking to agents, growing and reshaping the team, starting new chats, project files, skills, models, and keeping an eye on cost. If you have not read [How Kivali works](how-kivali-works.md), start there.
+This page covers the day to day: working through Home, releasing messages, talking to agents, growing and reshaping the team, starting new chats, project files, skills, integrations, models, and keeping an eye on cost. If you have not read [How Kivali works](how-kivali-works.md), start there.
 
 ## The screens
 
@@ -12,7 +12,7 @@ The sidebar has five destinations:
 | **Team** | Your agents by reporting line, what each is doing, and archived agents. Open an agent to chat with it. |
 | **Work** | Every assignment, grouped by goal. See [Assignments](assignments.md). |
 | **Graph** | Everything your agents published. See [The knowledge graph](knowledge-graph.md). |
-| **Org** | Settings for the whole team: usage, name and logo, handbook, project files, skills, network, software, backup, and about. |
+| **Org** | Settings for the whole team: usage, name and logo, handbook, project files, skills, integrations, network, software, backup, and about. |
 
 The sidebar shows how many items wait on you, and every count updates live.
 
@@ -26,6 +26,7 @@ Everything waiting on you is in **Needs you** on Home. Expand an item to act on 
 | **Notice** | **Acknowledge**, with an optional reply. |
 | **Install software** | Open it to see each package, with its version and a one-line description from Debian, and why the agent wants them, then **Install** or **Deny**, with an optional note. |
 | **Hire**, **Offboard**, **Reorg**, **Role update**, **Handbook update** | Choose **Review** to open the proposal page with the full documents, then approve or deny with an optional note. |
+| **Install an integration** | Choose **Review** to open the version's install screen, then **Approve and install** or **Reject**. See [Integrations](#integrations). |
 | **Assigned to you** | Set **Resolution** to **Done** or **Dropped**, write the **Outcome**, then **Hand back**. |
 | **Needs help** | An agent stopped and needs you. **Open chat** to see why. |
 
@@ -62,6 +63,7 @@ Open any agent from **Team** and type in its **Chat**. It is like walking into a
 
 A web task that uploads the agent's files waits for you before it starts. Home shows an **Upload N files to site** row with a link to download each file, the address the task starts at and what it was asked to do, and the task's page says it is waiting for approval. Open the files first: if one changed after the agent dispatched the task, its link and the task's upload are refused. Choose **Approve upload** and it starts, held to that site for its whole run, or **Deny**, with a note the agent reads, and it ends without uploading anything. A task nobody answers within a day ends the same way; one still waiting when Kivali restarts ends like any unfinished task. Every web task, an approved one too, has a budget on what it sends out: 2 KB for one action, 8 KB for one task and 32 KB a day for each agent. A task that goes over is refused that action and Home shows a **web budget** notice.
 - **About** shows its role, habits and memory, the software installed for it, and, under **Security**, where its commands can connect beyond the team's list. See [Memory](memory.md), [Software](#software) and [Network](#network).
+- **Integrations** shows the integrations the agent can act on, with its access to each in words, and the installed ones it cannot. Each opens the integration's page under **Org**, where you change access. See [Integrations](#integrations).
 - **Past chats** lists its earlier conversations.
 
 Chat is right for questions, quick corrections and briefing. Anything you want to hear back about, ask the agent to send to you as a notice, so it lands in **Needs you** instead of scrolling away in a chat.
@@ -104,6 +106,12 @@ Keep long background here rather than in the handbook. The handbook is read on e
 - Turn a skill off with its switch, or remove it. Built-in skills can be turned off but not removed.
 
 Agents see the name and description of every enabled skill and read the full instructions when they need them.
+
+## Integrations
+
+**Org**, **Integrations** lists the services your agents can act on, each with its version, whether it is connected, and how many agents have access. An integration comes as a bundle, a `.zip`: one an agent publishes, or one you add with **Upload a bundle**. Nothing in a bundle runs until you approve it. A new version reaches you in **Needs you** as **Install an integration**, and its install screen says what it reaches, what its connection holds and what it does: every host, every secret by name, every action, and what the access form asks. Choose **Approve and install**, or **Reject**.
+
+An integration's page has its switch, its connection (enter the token and settings; a secret is never shown again, and leaving it blank keeps the stored one), which agents have access and how far (**Give access** opens the form the integration describes), its actions, its versions and its latest calls. See [Integrations](integrations.md) for the whole picture.
 
 ## Models and effort
 

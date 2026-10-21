@@ -1,5 +1,7 @@
-# Lets the kivali pod manage per-agent pods and PVCs in its own namespace.
-# No cluster-scoped permissions, no access to secrets/configmaps.
+# Lets the kivali pod manage per-agent pods and PVCs in its own namespace,
+# and the Secrets that hold integration connections' secret fields
+# (kivali-connection-<integration>-<id>, internal/secrets). No
+# cluster-scoped permissions, no configmaps, no Secret list or watch.
 # PVC delete is intentionally absent: Provisioner.Destroy preserves a fired
 # agent's PVC for forensics.
 apiVersion: v1
@@ -24,6 +26,9 @@ rules:
   - apiGroups: [""]
     resources: ["persistentvolumeclaims"]
     verbs: ["get", "list", "create"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "create", "update", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

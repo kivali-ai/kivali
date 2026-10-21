@@ -50,8 +50,9 @@ func (s *Server) handleAPIProposal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	kind, isProposal := proposalKind(req)
-	if req.Type != store.MsgCEOApprovalRequest || !isProposal {
-		// A plain approval is answered on Home, not here.
+	if req.Type != store.MsgCEOApprovalRequest || !isProposal || kind == apitypes.ProposalKindIntegrationInstall {
+		// A plain approval is answered on Home, not here, and an
+		// integration install on its version's install screen.
 		notFound()
 		return
 	}

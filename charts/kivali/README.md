@@ -2,7 +2,8 @@
 
 The Kubernetes deployment of Kivali: the server Deployment (with its
 egress-proxy sidecar), the two Services, the data PVC, the RBAC the server
-needs to manage agent pods and browser pods, and NetworkPolicies. `kivali-supervisor`
+needs to manage agent pods, browser pods and integration connections'
+Secrets, and NetworkPolicies. `kivali-supervisor`
 installs it into each org's VM as a k3s HelmChart
 (`internal/supervisor/install.go`; its values are in
 [supervisor.md, "Install values"](../../docs/developers/supervisor.md#install-values)), and
@@ -33,6 +34,17 @@ name and **fails the render unless the release is named `kivali`**:
 The namespace comes from the release (`-n`). Agent pods are labelled
 `app=kivali-agentpod` and browser pods `app=kivali-browserpod`; the
 hostPath UDS dir defaults to `/var/run/kivali/uds`.
+
+The Role `kivali-agentpod-manager` grants, in the release's namespace
+only: get, list, create and delete on pods; get, list and create on
+PVCs (no delete: an offboarded agent's PVC is kept); and get, create,
+update and delete on Secrets, for the Secret each integration
+connection keeps its secret fields in (`kivali-connection-<integration>-<id>`,
+labelled `app=kivali` and `kivali.ai/integration=<name>`). Secrets have
+no list or watch, so the server reads only Secrets it names. Kubernetes
+cannot limit create to a name, so the grant covers every Secret in the
+namespace, `kivali-secrets` included, which the server already has as
+its environment.
 
 ## Install on a server
 

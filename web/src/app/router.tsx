@@ -9,6 +9,8 @@ import { Graph } from '../screens/graph/Graph';
 import { Home } from '../screens/home/Home';
 import { Login } from '../screens/login/Login';
 import { NotFound } from '../screens/notfound/NotFound';
+import { InstallScreen } from '../screens/org/InstallScreen';
+import { IntegrationPage } from '../screens/org/IntegrationPage';
 import { Org } from '../screens/org/Org';
 import { Proposal } from '../screens/proposals/Proposal';
 import { Setup } from '../screens/setup/Setup';
@@ -67,6 +69,7 @@ export function createAppRoutes(deps: RouteDeps = {}): RouteObject[] {
             screen('agents/:slug', <Agent section="chat" />),
             screen('agents/:slug/background', <Agent section="background" />),
             screen('agents/:slug/about', <Agent section="about" />),
+            screen('agents/:slug/integrations', <Agent section="integrations" />),
             screen('agents/:slug/chats', <Agent section="chats" />),
             screen('agents/:slug/chats/:ts', <Agent section="past-chat" />),
             screen('agents/:slug/subagents/:id', <Agent section="subagent" />),
@@ -76,6 +79,8 @@ export function createAppRoutes(deps: RouteDeps = {}): RouteObject[] {
             screen('graph', <Graph />),
             screen('org', <Org />),
             screen('org/:section', <Org />),
+            screen('org/integrations/:name', <IntegrationPage />),
+            screen('org/integrations/:name/versions/:version', <InstallScreen />),
           ],
         },
         screen('*', <NotFound />),

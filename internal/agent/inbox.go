@@ -89,6 +89,11 @@ type InboxView struct {
 	// paraphrase names the packages and says the shell was restarted
 	// to install them.
 	SoftwareInstall *store.SoftwareInstall
+	// IntegrationInstall is non-nil on the same two message types when
+	// the approval asks for a version of an integration to be
+	// approved. The paraphrase names the version and what the answer
+	// did to it.
+	IntegrationInstall *store.IntegrationInstall
 	// Assignment is non-nil on an assignment event: the assignment the
 	// wake is about. The UI links the bubble and the inbox card to
 	// /assignments/<id>.
@@ -109,21 +114,22 @@ type InboxView struct {
 // isn't relevant to the rendering they need.
 func BuildInboxView(d store.Message, relPath string) InboxView {
 	v := InboxView{
-		Type:            string(d.Type),
-		From:            d.From,
-		To:              d.To,
-		Title:           d.Title,
-		Body:            strings.TrimRight(d.Body, "\n"),
-		Approved:        d.Approved,
-		InReplyTo:       d.InReplyTo,
-		Path:            relPath,
-		Hire:            d.Hire,
-		RoleUpdate:      d.RoleUpdate,
-		HandbookUpdate:  d.HandbookUpdate,
-		Offboard:        d.Offboard,
-		SoftwareInstall: d.SoftwareInstall,
-		Assignment:      d.Assignment,
-		Attachments:     d.Attachments,
+		Type:               string(d.Type),
+		From:               d.From,
+		To:                 d.To,
+		Title:              d.Title,
+		Body:               strings.TrimRight(d.Body, "\n"),
+		Approved:           d.Approved,
+		InReplyTo:          d.InReplyTo,
+		Path:               relPath,
+		Hire:               d.Hire,
+		RoleUpdate:         d.RoleUpdate,
+		HandbookUpdate:     d.HandbookUpdate,
+		Offboard:           d.Offboard,
+		SoftwareInstall:    d.SoftwareInstall,
+		IntegrationInstall: d.IntegrationInstall,
+		Assignment:         d.Assignment,
+		Attachments:        d.Attachments,
 	}
 	if d.Type == store.MsgCEOApprovalResponse {
 		if d.Approved != nil && *d.Approved {
@@ -319,6 +325,9 @@ func (v InboxView) decisionSpeech() string {
 					pkgs,
 				)
 			}
+			if ii := v.IntegrationInstall; ii != nil {
+				return fmt.Sprintf("I approved version %s of the `%s` integration. It is the version in use.", ii.Version, ii.Name)
+			}
 			return "I approved your request."
 		case "denied":
 			if v.Hire != nil {
@@ -339,6 +348,9 @@ func (v InboxView) decisionSpeech() string {
 			}
 			if v.SoftwareInstall != nil {
 				return fmt.Sprintf("I denied installing %s. Your shell is unchanged.", softwareList(v.SoftwareInstall.Packages))
+			}
+			if ii := v.IntegrationInstall; ii != nil {
+				return fmt.Sprintf("I rejected version %s of the `%s` integration. That version does not run.", ii.Version, ii.Name)
 			}
 			return "I denied your request."
 		}

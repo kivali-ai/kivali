@@ -14,6 +14,7 @@ import { useOrg } from '../../state/OrgProvider';
 import { AboutSection, versionLabel } from './About';
 import { HandbookSection } from './Handbook';
 import { FilesSection } from './Files';
+import { IntegrationsSection } from './Integrations';
 import { NetworkSection } from './Lists';
 import { OrganizationSection } from './Organization';
 import { SkillsSection } from './Skills';
@@ -31,6 +32,7 @@ const BODIES: Record<SectionKey, ComponentType<SectionProps>> = {
   handbook: HandbookSection,
   files: FilesSection,
   skills: SkillsSection,
+  integrations: IntegrationsSection,
   network: NetworkSection,
   software: SoftwareSection,
   backup: BackupSection,

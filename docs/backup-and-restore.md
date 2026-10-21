@@ -12,12 +12,14 @@ Everything on the team's data volume:
 - everything agents published, and the knowledge graph with its version history;
 - every assignment and its history;
 - every message between agents and to you;
-- your org's name and logo, the network list, auto-release, and the usage record.
+- your org's name and logo, the network list, auto-release, and the usage record;
+- every integration: its versions, its connection's fields that are not secret, and each agent's access.
 
 What is left out:
 
 - **Claude credentials.** Your Claude sign-in, whichever way you signed in, is not in the backup. After a restore, connect Claude again.
 - **Site sign-ins.** The browser sessions agents use for web tasks, with whatever sites they are signed in to, are not in the backup. A restored team has no site sessions: the next time an agent needs a site, it asks and you sign in again.
+- **Integration secrets.** The tokens and keys you entered for an integration's connection are kept outside the data volume and are not in the backup. After a restore, an integration whose secrets are not there says **Reconnect needed** on its page until you enter them again.
 - Temporary files, and copies Kivali rebuilds on its own after a restore.
 
 Each backup ends with a manifest listing every file with its size and checksum. A restore checks every file against it before it writes anything.

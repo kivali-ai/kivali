@@ -86,6 +86,20 @@ bounce) → `internal/web` (HTTP, hubs, turn orchestration). The model is
 reached through `internal/provider`, a provider-neutral seam, whose one
 implementation is `internal/claudeagent`.
 
+### Integrations
+
+An integration is an external service agents act on, installed from a
+bundle: a zip with an MCPB manifest that has a `kivali` section
+(`internal/integration`). An upload stores a version as pending under
+`integrations/<name>/`; the owner approves it on its install screen,
+or from Needs you when a `ceo_approval_request` carrying
+`integration_install` asks for it. A connection's
+fields that are not secret are in the store; its secret fields are a
+Kubernetes Secret per connection in the server's namespace
+(`internal/secrets`), never in `/data`, so never in a backup. Each
+agent's access is a row checked against the approved version's access
+form. [integrations.md](integrations.md) is the reference.
+
 ### Agent pods
 
 Every agent except the CEO runs in its own pod, `agentpod-<slug>`,
@@ -413,6 +427,8 @@ There is no database. Everything durable is a plain file under
   allowed_egress.yaml         the allowlist for agents' shells
   egress_agents.json          each agent runtime's two proxy credential hashes, its own and its shell's (not backed up)
   branding/                   org name, logo and derived favicons
+  integrations/<name>/        one installed integration: its versions (manifest and unpacked bundle), its
+                              connection's fields that are not secret, each agent's access, its audit (integrations.md)
   claude-home/                the CLI's HOME: its sign-in and settings
   agents/<slug>/              one directory per agent (below)
   agents/_archived/<slug>/    offboarded agents; nothing is deleted

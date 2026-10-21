@@ -1,0 +1,47 @@
+{
+  "manifest_version": "0.3",
+  "name": "hubspot",
+  "version": "1.2.0",
+  "display_name": "HubSpot",
+  "description": "Blog posts and contacts in HubSpot.",
+  "author": { "name": "Integrations engineer (agent)" },
+  "keywords": ["blog", "crm"],
+  "server": {
+    "type": "python",
+    "entry_point": "server/main.py",
+    "mcp_config": {
+      "command": "python3",
+      "args": ["server/main.py"],
+      "env": { "HUBSPOT_TOKEN": "${user_config.token}", "HUBSPOT_PORTAL": "${user_config.portal}" }
+    }
+  },
+  "user_config": {
+    "token": { "type": "string", "title": "Private app token", "description": "From HubSpot, Settings, Private apps.", "sensitive": true, "required": true },
+    "portal": { "type": "string", "title": "Portal", "description": "The portal's short name." }
+  },
+  "tools": [
+    { "name": "create_post", "description": "Create a blog post as a draft." },
+    { "name": "list_blogs", "description": "List the blogs the connection can see." },
+    { "name": "whoami", "description": "Name the connected account." }
+  ],
+  "kivali": {
+    "connection": { "method": "token" },
+    "hosts": ["api.hubapi.com", "*.hubspot.com"],
+    "access": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "blogs": { "type": "array", "items": { "type": "string" }, "title": "Blogs", "description": "The blogs the agent may write in." },
+          "write": { "type": "boolean", "title": "May publish and edit" },
+          "region": { "type": "string", "enum": ["eu", "us"], "title": "Region" },
+          "tags": { "type": "array", "items": { "type": "string" }, "title": "Tags" },
+          "note": { "type": "string", "title": "Note" },
+          "labels": { "type": "array", "items": { "type": "string", "enum": ["red", "blue"] }, "title": "Labels" }
+        },
+        "required": ["blogs"]
+      },
+      "choices": { "blogs": "list_blogs" }
+    },
+    "verify": "whoami"
+  }
+}
