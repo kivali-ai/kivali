@@ -22,6 +22,7 @@ That data includes everything your agents know and everything you gave them: cha
 | **Time servers** | A request to `www.google.com`, `www.cloudflare.com` or `gsa.apple.com`, to compare the server's clock with the outside world. | Message records are filed by date, so a wrong clock matters. |
 | **Hosts on your network list** | Whatever an agent's shell commands send from its sandbox, such as a download or a package install. | Agents' own work. See [Network access](#network-access). |
 | **Public websites** | What an agent's own web fetches and searches send, and what a web task's browser loads and types. | Agents reading the web. Limited by a budget on what they send out. See [Network access](#network-access). |
+| **An integration's hosts** | What an approved integration sends the service it connects to: its connection, and what it is asked to do there, such as a Test connection. Only to the hosts its install screen listed. | The integration's work. See [Integrations](#integrations). |
 
 Kivali's own housekeeping (summaries of project files and past chats) is model calls too, billed to the same Claude sign-in.
 
@@ -83,17 +84,20 @@ The list and the budgets make leaks harder, not impossible. Know these limits wh
 - **A web task can carry up to 1 KB per task out in its addresses.** The first 64 bytes of each path and query and the first 48 of each host name go uncounted, up to a pool of 1 KB per task, so a task can encode that much data in the addresses it visits.
 - **An agent's own fetches can carry data out, up to the budget.** A web page can lead an agent to send a short secret in an address it fetches. The budget bounds how much, and for now only counts and logs.
 - **An agent with its network limits removed can send anything it can read to any public host.** Its commands can upload its files, and nothing counts what they send.
+- **An integration can send what it holds to the hosts it names.** Its connection and whatever it is asked to do reach those hosts, uncounted. A listed host that anyone can hold an account on is as open a door as it is for a shell, so read the hosts on the install screen with that in mind.
 
 If you need a hard limit, enforce it in your own network, for example with firewall rules on the cluster's outbound traffic.
 
-The proxy applies to agents' sandboxes. Kivali's server, which makes the connections in the table above, is not behind it.
+The proxy applies to agents' and integrations' sandboxes. Kivali's server, which makes the connections in the table above, is not behind it.
 
 ## Integrations
 
 An [integration](integrations.md) is installed from a bundle, one version at a time, and nothing in a version runs until you approve it.
 
 - **The install screen is the review.** Before you approve a version, its install screen shows who built and published it, every host it says it reaches, every field its connection needs with the secrets marked, every action it gives agents, what its access form asks, and the bundle's size. Kivali checks each bundle when it arrives: that it says these things, that its access form is one Kivali can show, and that its files unpack safely (no links, no paths that leave the bundle, at most 5000 files and 64 MiB). That check reads the bundle; it does not judge what the code does. Approve a version only when you trust whoever built it with what the screen lists.
-- **Connection secrets** (tokens, keys) are kept in a Kubernetes Secret of their own in the team's cluster: inside the team's virtual machine with Kivali Desktop, in the team's namespace when self-hosted. They are never on the team's data volume, never in a backup, never in a log, and never shown again once saved. Kivali's server can read, write and delete Secrets in its own namespace for this, and nothing outside it.
+- **An integration runs on its own.** An approved, switched-on integration runs in a sandbox of its own: its own pod, apart from Kivali's server and from every agent, with no access to the Kubernetes API, no service other pods can connect to, and nothing of the team's data volume but its own bundle, read-only. It reaches Kivali's server only through a private socket of its own, which agents' sandboxes cannot see.
+- **It reaches only its hosts.** Its pod can reach nothing but the egress proxy, and the proxy holds it, by a credential of its own, to the hosts its install screen listed. Your team's network list does not apply to it, and an agent's network switch cannot open it to more. What it sends to those hosts is not counted against the agents' budget.
+- **Connection secrets** (tokens, keys) are kept in a Kubernetes Secret of their own in the team's cluster: inside the team's virtual machine with Kivali Desktop, in the team's namespace when self-hosted. They are never on the team's data volume, never in a backup, never in a log, and never shown again once saved. Kivali's server can read, write and delete Secrets in its own namespace for this, and nothing outside it. When the integration starts, Kivali's server reads them from the Secret and hands them to it over its private socket, holding them in memory only while it answers; the integration's server then has them in its environment, inside its sandbox. The integration's pod description names no Secret and carries no value. Kivali replaces each secret value with `[secret]` in the integration's log before keeping a line.
 - **Access is per agent.** An agent can use an integration only with the access you gave it there. Access set for an earlier connection, or that a newer version's form no longer accepts, gives nothing until you set it again. Offboarding an agent removes its access everywhere.
 
 ## What needs your approval

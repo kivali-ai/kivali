@@ -214,3 +214,31 @@ func TestPodReadsTheSchedulersRefusal(t *testing.T) {
 		}
 	}
 }
+
+// A pod's literal env values are read by container: core takes on an
+// integration pod after a restart by its token, which only the spec
+// holds. A value from a reference (valueFrom) reads as empty, and so
+// does another container's variable, so a token is never read from the
+// wrong place.
+func TestPodEnvByContainer(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"metadata": map[string]any{"name": "p"},
+			"spec": map[string]any{"containers": []any{
+				map[string]any{"name": "shim", "env": []any{map[string]any{"name": "TOKEN", "value": "wrong"}}},
+				map[string]any{"name": "integration", "env": []any{
+					map[string]any{"name": "TOKEN", "value": "right"},
+					map[string]any{"name": "REF", "valueFrom": map[string]any{"fieldRef": map[string]any{"fieldPath": "status.hostIP"}}},
+				}},
+			}},
+		})
+	}))
+	t.Cleanup(srv.Close)
+	pod, err := NewForServer(srv.URL, srv.Client(), "ns").GetPod(context.Background(), "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pod.Env("integration", "TOKEN") != "right" || pod.Env("shim", "TOKEN") != "wrong" || pod.Env("integration", "REF") != "" || pod.Env("nope", "TOKEN") != "" {
+		t.Errorf("env = %+v", pod)
+	}
+}

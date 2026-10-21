@@ -147,6 +147,10 @@ type FSStore struct {
 	// write under integrations/<name>/ is a read-modify-write under it
 	// (lockIntegration, integrations.go).
 	integrationLocks sync.Map
+	// integrationLogLines holds each integration's log.jsonl line
+	// count, an int read once from the file and kept under the
+	// integration's lock (integration_logs.go).
+	integrationLogLines sync.Map
 
 	// assignmentsMu serializes every change to an assignment file. Ids and log
 	// sequence numbers are derived from the files, so two changes

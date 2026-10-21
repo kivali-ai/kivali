@@ -5,6 +5,7 @@ import goAccessWriteJson from '../../../../internal/web/apitypes/testdata/access
 import goConnectionWriteJson from '../../../../internal/web/apitypes/testdata/connection_write.json';
 import goHandbookJson from '../../../../internal/web/apitypes/testdata/handbook.json';
 import goIntegrationAuditJson from '../../../../internal/web/apitypes/testdata/integration_audit.json';
+import goIntegrationLogsJson from '../../../../internal/web/apitypes/testdata/integration_logs.json';
 import goIntegrationPageJson from '../../../../internal/web/apitypes/testdata/integration_page.json';
 import goIntegrationUploadRefusedJson from '../../../../internal/web/apitypes/testdata/integration_upload_refused.json';
 import goIntegrationVersionJson from '../../../../internal/web/apitypes/testdata/integration_version.json';
@@ -23,6 +24,7 @@ import type {
   ConnectionWrite,
   Handbook,
   IntegrationAudit,
+  IntegrationLogs,
   IntegrationPage,
   IntegrationUploadRefused,
   IntegrationVersion,
@@ -63,6 +65,7 @@ export const goIntegrations = (goIntegrationsJson satisfies Wire<Integrations>) 
 export const goIntegrationPage = (goIntegrationPageJson satisfies Wire<IntegrationPage>) as IntegrationPage;
 export const goIntegrationVersion = (goIntegrationVersionJson satisfies Wire<IntegrationVersion>) as IntegrationVersion;
 export const goIntegrationUploadRefused = (goIntegrationUploadRefusedJson satisfies Wire<IntegrationUploadRefused>) as IntegrationUploadRefused;
+export const goIntegrationLogs = (goIntegrationLogsJson satisfies Wire<IntegrationLogs>) as IntegrationLogs;
 export const goIntegrationAudit = (goIntegrationAuditJson satisfies Wire<IntegrationAudit>) as IntegrationAudit;
 /** Request bodies and the options answer, as the Go server's goldens have them. */
 export const goConnectionWrite = (goConnectionWriteJson satisfies Wire<ConnectionWrite>) as ConnectionWrite;

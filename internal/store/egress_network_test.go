@@ -168,6 +168,7 @@ func TestEgressAgentsSyncFileShape(t *testing.T) {
 		AgentHosts: map[string][]string{"carol": {"good.example"}},
 		Exempt:     []string{"bob"},
 		ModelHosts: []string{},
+		Scoped:     map[string]EgressScoped{},
 	}
 	if !reflect.DeepEqual(p, want) {
 		t.Fatalf("proxy copy = %+v, want %+v", p, want)

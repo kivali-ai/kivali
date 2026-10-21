@@ -29,13 +29,15 @@ flowchart LR
   mcp -- core.sock --> core
   browserpod[Browser pod<br/>kivali browser, Chromium] -- WebSocket over UDS<br/>browser.sock --> core
   browserpod -- direct egress --> web((the web))
+  integrationpod[Integration pod, one per integration<br/>kivali integration-shim, the server] -- HTTP over UDS<br/>integration.sock --> core
+  integrationpod -- proxy + scoped credential --> proxy
   mcp -- agent-shell socket --> shell
   shell --- data
   shell --- scratch
   runtime --- scratch
   cli -- proxy + credential --> proxy
   shell -- proxy + shell credential --> proxy
-  proxy --> internet((the public web:<br/>the shell reaches listed hosts,<br/>unless its agent is exempt))
+  proxy --> internet((the public web:<br/>the shell reaches listed hosts,<br/>unless its agent is exempt;<br/>an integration its own hosts))
 ```
 
 ### The server (core)
@@ -66,14 +68,17 @@ server. It owns every durable byte and is the only writer to `/data`
   `AGENTPOD_UDS_DIR` (`/var/run/kivali/uds` in the chart), a hostPath
   directory on the server's node. A third socket, `browser.sock` in the
   `browser/` subdirectory, serves only the browser pods' connect route
-  (`StartBrowserSocket`). Each kind of pod mounts its own subdirectory
-  alone: an agent pod mounts `core/` and never sees `browser.sock`, a
-  browser pod mounts `browser/` read-only and never sees `core.sock`,
-  so neither can reach, or replace, the other's socket. Core creates
-  both subdirectories (mode 0700) when it starts listening; a pod that
-  found its subdirectory missing would only wedge on a socket that is
-  not there, so both mount with `type: Directory`. All sockets are
-  mode 0600; file permissions
+  (`StartBrowserSocket`), and a fourth, `integration.sock` in the
+  `integration/` subdirectory, only the integration pods' events stream
+  and posts (`StartIntegrationSocket`). Each kind of pod mounts its own
+  subdirectory alone: an agent pod mounts `core/` and never sees
+  `browser.sock` or `integration.sock`, a browser pod mounts `browser/`
+  read-only and an integration pod `integration/` read-only, and
+  neither sees `core.sock`, so no kind can reach, or replace, another's
+  socket. Core creates each subdirectory (mode 0700) when it starts
+  listening; a pod that found its subdirectory missing would only wedge
+  on a socket that is not there, so each mounts with `type: Directory`.
+  All sockets are mode 0600; file permissions
   and a matching UID are the authentication. Every agent-scoped route
   is `/v1/agent/{slug}/...` and must carry `X-Kivali-Agent: <slug>`;
   the server rejects a mismatch, and overrides any `from`/parent in a
@@ -98,7 +103,15 @@ fields that are not secret are in the store; its secret fields are a
 Kubernetes Secret per connection in the server's namespace
 (`internal/secrets`), never in `/data`, so never in a backup. Each
 agent's access is a row checked against the approved version's access
-form. [integrations.md](integrations.md) is the reference.
+form. An approved, switched-on integration runs in a pod of its own
+(`internal/integrationpod`): the `kivali integration-shim` process
+starts the bundle's server in the agent-shell image, asks core for the
+connection's values over `integration.sock` when it does, and carries
+JSON-RPC between the server and core
+(`internal/web/integration_registry.go`). Its server reaches the
+egress proxy alone, with a scoped credential that admits only the hosts
+the approved version names. [integrations.md](integrations.md) is the
+reference.
 
 ### Agent pods
 
@@ -235,7 +248,7 @@ to it and never resolves them. The pod's spec carries the address, so
 changing it changes the spec hash and every agent pod is recreated once
 on the upgrade that introduces it.
 
-The proxy serves four kinds of request, told apart by
+The proxy serves five kinds of request, told apart by
 `Proxy-Authorization`:
 
 - **Allowlist mode**, with no credential: the agent-shell container's
@@ -276,6 +289,12 @@ The proxy serves four kinds of request, told apart by
   Org → Network lists these agents (`Network.Exempt` on
   `GET /api/v1/org/network`) and the Team page marks them
   (`AgentSummary.NetworkExempt`).
+- **Scoped mode**, with an integration's credential
+  (`integration-<name>` and the secret its shim drew): the integration's
+  server. The host must match one of the hosts its approved version
+  names, under the allowlist's address rules; never the team's list,
+  and no agent's exemption reaches it. A refusal reads `<host> is not a
+  host this integration reaches.` Nothing is counted.
 
 A credential that is present but wrong gets 407. In every mode the proxy
 resolves the host once, checks every address and dials only one that
@@ -309,8 +328,12 @@ dropped when the agent is offboarded) and mirrors them to
 the proxy, with what the proxy needs beside them (`store.EgressAgents`):
 `agent_hosts`, each active agent's own hosts; `exempt`, the active
 agents with no network limits; and `model_hosts`, the model provider's
-exact hosts. Core writes the mirror again on every registration and
-every change to an agent's network settings. The proxy hot-reloads the
+exact hosts. An integration's shim registers its scoped credential's
+hash on its events handshake instead, which core keeps in the same file
+under `scoped`, with the approved version's hosts, and drops when the
+integration stops ([integrations.md](integrations.md#the-scoped-proxy-credential)).
+Core writes the mirror again on every registration and every change to
+an agent's network settings. The proxy hot-reloads the
 file, and re-reads it on an unknown credential before refusing, so a
 new pod's first call does not wait for the poll, and on a shell-mode
 refusal, so a host the owner has just added lets the agent's next
@@ -380,16 +403,17 @@ window limit is held and its new open-mode connections are refused, and
 a connection over its cap is closed. The proxy logs one line per
 connection and refusal on stdout: `CONN` (agent, mode, host, bytes up
 and down), `DENY` (the reason) and `OVER` (the limit crossed, once per
-crossing). The mode is one of `allowlist`, `shell`, `open` and
-`exempt`; the agent is `-` in allowlist mode. `--max-conns-per-source` (256) caps the connections open
+crossing). The mode is one of `allowlist`, `shell`, `open`, `exempt`
+and `scoped`; the agent is `-` in allowlist mode and the integration's
+user in scoped mode. `--max-conns-per-source` (256) caps the connections open
 from each pod address; one over the cap gets a 503 and a
 `DENY source=... reason=connections` line. A client's idle keep-alive
 connection is closed after two minutes, and a tunnel lives at most ten.
 
 The proxy alone would be advisory. The chart's NetworkPolicy
 (`charts/kivali/templates/networkpolicy.yaml`) makes it binding: agent
-pods may reach only port 3128 on the server pod, with no DNS, so a raw
-socket goes nowhere. Browser pods are outside the proxy and reach the
+pods and integration pods may reach only port 3128 on the server pod,
+with no DNS, so a raw socket goes nowhere. Browser pods are outside the proxy and reach the
 public web directly (below). The server's HTTP port also refuses pod
 addresses, but that is defence in depth: every route needs a Google
 session (`internal/web/web.go`, the protected mux), and the only ones
@@ -425,10 +449,12 @@ There is no database. Everything durable is a plain file under
   skill_settings.json         which skills are enabled
   usage.jsonl                 one record per model call: tokens and cost
   allowed_egress.yaml         the allowlist for agents' shells
-  egress_agents.json          each agent runtime's two proxy credential hashes, its own and its shell's (not backed up)
+  egress_agents.json          each agent runtime's two proxy credential hashes, its own and its shell's, and each
+                              running integration's scoped credential hash and hosts (not backed up)
   branding/                   org name, logo and derived favicons
   integrations/<name>/        one installed integration: its versions (manifest and unpacked bundle), its
-                              connection's fields that are not secret, each agent's access, its audit (integrations.md)
+                              connection's fields that are not secret, each agent's access, its audit, its
+                              log (log.jsonl, capped) (integrations.md)
   claude-home/                the CLI's HOME: its sign-in and settings
   agents/<slug>/              one directory per agent (below)
   agents/_archived/<slug>/    offboarded agents; nothing is deleted
@@ -1089,7 +1115,9 @@ Off the critical path, the episode writer
 Outside Kubernetes the provisioner finds no service account and is a
 no-op (`agentpod: disabled (not running in-cluster)` at boot). Chat,
 messaging and release still work as long as something dials
-`core.sock`. `make run` does exactly that: it seeds a data directory
+`core.sock`. The integration provisioner is a no-op too, so an
+approved integration reads as not running unless a shim dials
+`integration.sock` with the token core minted for it. `make run` does exactly that: it seeds a data directory
 with `cmd/devseed`, starts the server with `DEV_MODE=true` and
 `AGENTPOD_UDS_DIR` set, and starts one `kivali-e2e agent --slug <slug>
 --uds <dir>/core.sock --scratch <dir>` per agent on the host. With

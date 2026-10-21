@@ -26,6 +26,7 @@ import (
 	"github.com/kivali-ai/kivali/internal/config"
 	"github.com/kivali-ai/kivali/internal/debian"
 	"github.com/kivali-ai/kivali/internal/files"
+	"github.com/kivali-ai/kivali/internal/integrationpod"
 	"github.com/kivali-ai/kivali/internal/kube"
 	"github.com/kivali-ai/kivali/internal/messaging"
 	"github.com/kivali-ai/kivali/internal/provider"
@@ -67,6 +68,10 @@ func main() {
 	}
 	if len(os.Args) > 1 && os.Args[1] == "browser" {
 		runBrowser(os.Args[2:])
+		return
+	}
+	if len(os.Args) > 1 && os.Args[1] == "integration-shim" {
+		runIntegrationShim(os.Args[2:])
 		return
 	}
 	if len(os.Args) > 1 && os.Args[1] == "prepare-scratch" {
@@ -375,6 +380,28 @@ func main() {
 		log.Printf("browserpod: disabled (not running in-cluster)")
 	}
 
+	// Integration pods: one per approved, switched-on integration, kept
+	// running while it is. The shim comes from the server image and the
+	// server runs in the agent-shell image beside it; the bundle is
+	// read from the data PVC. Out-of-cluster the provisioner is a no-op
+	// and an integration runs only while a shim dials its socket.
+	ipCfg := integrationpod.DefaultsForNamespace(cfg.AgentpodNamespace)
+	ipCfg.Image = cfg.AgentpodImage
+	ipCfg.ProxyURL = cfg.EgressProxyURL
+	ipCfg.DataClaimName = apCfg.DataClaimName
+	if cfg.AgentpodUDSDir != "" {
+		ipCfg.UDSDir = cfg.AgentpodUDSDir
+	}
+	iprov, err := integrationpod.NewProvisioner(ipCfg, integrationpod.WithProvisionerLogger(log.Printf))
+	if err != nil {
+		log.Fatalf("integrationpod provisioner: %v", err)
+	}
+	if iprov.Enabled() {
+		log.Printf("integrationpod: enabled (image=%s)", integrationpod.AgentShellImageFor(ipCfg.Image))
+	} else {
+		log.Printf("integrationpod: disabled (not running in-cluster)")
+	}
+
 	// Integration connections' secret fields: a Kubernetes Secret per
 	// connection in the server's namespace when running in a cluster,
 	// memory otherwise (make run, DEV_MODE on a laptop), where they are
@@ -459,6 +486,8 @@ func main() {
 
 		BrowserProvisioner: bprov,
 		BrowserMaxPerTeam:  cfg.BrowserMaxPerTeam,
+
+		IntegrationProvisioner: iprov,
 	})
 	if err != nil {
 		log.Fatalf("web: %v", err)
@@ -557,6 +586,22 @@ func main() {
 		}
 		log.Printf("browser socket listening on %s", browserSocketPath)
 	}
+	// The integration pods' socket, in a subdirectory of the UDS dir
+	// that is the only part of it an integration pod mounts. It serves
+	// the pod's events stream and its posts and nothing else.
+	stopIntegrationSocket := func() {}
+	if cfg.AgentpodUDSDir != "" {
+		integrationUDSDir := filepath.Join(cfg.AgentpodUDSDir, integrationpod.UDSSubdir)
+		if err := os.MkdirAll(integrationUDSDir, 0o700); err != nil {
+			log.Fatalf("integration uds dir: %v", err)
+		}
+		integrationSocketPath := filepath.Join(integrationUDSDir, integrationpod.SocketName)
+		stopIntegrationSocket, err = srv.StartIntegrationSocket(integrationSocketPath)
+		if err != nil {
+			log.Fatalf("integration socket: %v", err)
+		}
+		log.Printf("integration socket listening on %s", integrationSocketPath)
+	}
 
 	// Janitor for the two-phase publish flow's staged-publish records.
 	// Records older than the configured max-age (1h) get reaped on
@@ -572,6 +617,11 @@ func main() {
 	// Browser lifecycle: deletes browser pods left from before this
 	// start, then reaps idle browsers and saves their profiles.
 	stopBrowsers := srv.StartBrowsers()
+
+	// Integrations: takes on the pods left from before this start,
+	// stops those of integrations no longer installed, then follows
+	// every change and checks each running server every 30 seconds.
+	stopIntegrations := srv.StartIntegrations()
 
 	idle := make(chan struct{})
 	go func() {
@@ -603,6 +653,10 @@ func main() {
 		srv.ShutdownBrowsers(bctx)
 		bcancel()
 		stopBrowserSocket()
+		// Integration pods stay up: their shims reconnect to the next
+		// server.
+		stopIntegrations()
+		stopIntegrationSocket()
 		stopStagedPublishJanitor()
 		stopAutoRelease()
 		stopBrowsers()

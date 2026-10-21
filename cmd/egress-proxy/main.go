@@ -7,7 +7,7 @@
 // hot-reloaded. Agent pods set HTTP_PROXY / HTTPS_PROXY to the Service
 // in front of this process.
 //
-// Each request is in one of four modes, decided by its
+// Each request is in one of five modes, decided by its
 // Proxy-Authorization:
 //
 //   - Allowlist mode, for a request without Proxy-Authorization: the
@@ -25,6 +25,9 @@
 //   - Exempt mode, for a request carrying either credential of an
 //     agent with no network limits: any public host, and the hosts
 //     shell mode reaches. Nothing is counted.
+//   - Scoped mode, for a request carrying an integration's user and
+//     its server's secret: the host must match one of the hosts its
+//     approved version names, never the allowlist. Nothing is counted.
 //
 // Present but invalid credentials get 407. In every mode the host is
 // resolved once and dialled by address through the guard (guard.go),
@@ -175,6 +178,9 @@ const (
 	// modeExempt is a request with either credential of an exempt
 	// agent: any public host, not counted.
 	modeExempt
+	// modeScoped is a request with an integration server's credential:
+	// the host must be among its own hosts, not counted.
+	modeScoped
 )
 
 // String is the mode as the log lines name it.
@@ -186,6 +192,8 @@ func (m requestMode) String() string {
 		return "shell"
 	case modeExempt:
 		return "exempt"
+	case modeScoped:
+		return "scoped"
 	default:
 		return "allowlist"
 	}
@@ -240,6 +248,11 @@ func (p *proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // (internal/agent's ShellProxyRefusals) and says what to do.
 const allowlistRefusal = " is not on the team's allow list."
 
+// scopedRefusal follows the host name in the body of a scoped mode
+// refusal, which an integration's server gets for a host its version
+// does not name.
+const scopedRefusal = " is not a host this integration reaches."
+
 // admit decides a request's mode and whether it may go on to the
 // dialer, writing the refusal itself when it may not. host is the
 // "host:port" the client asked for. tunnel marks a CONNECT, whose
@@ -261,6 +274,10 @@ func (p *proxy) admit(w http.ResponseWriter, r *http.Request, host string, tunne
 		}
 		s.slug = slug
 		switch {
+		case kind == credScoped:
+			// Before the exemption: an agent's switch never reaches an
+			// integration's credential, whatever its user is called.
+			s.mode = modeScoped
 		case p.agents.Exempt(slug):
 			s.mode = modeExempt
 		case kind == credShell:
@@ -268,6 +285,17 @@ func (p *proxy) admit(w http.ResponseWriter, r *http.Request, host string, tunne
 		default:
 			s.mode = modeOpen
 		}
+	}
+	if s.mode == modeScoped {
+		// Its own hosts and nothing else: the team's list is for
+		// agents' shells.
+		if !p.agents.ScopedAllowed(s.slug, host) {
+			p.logf("DENY agent=%s mode=scoped host=%s reason=hosts", s.slug, host)
+			http.Error(w, hostOnly(host)+scopedRefusal, http.StatusForbidden)
+			return s, false
+		}
+		s.listed = true
+		return s, true
 	}
 	s.listed = p.allow.Allowed(host)
 

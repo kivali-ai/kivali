@@ -1,15 +1,15 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useHref, useNavigate, useParams } from 'react-router';
-import { apiDelete, apiPost, apiPut } from '../../api/client';
-import type { AccessRow, ConnectionField, ConnectionState, ConnectionWrite, IntegrationAudit, IntegrationAuditRow, IntegrationPage as IntegrationPageData, IntegrationVersionSummary, PersonRef } from '../../api/types.gen';
+import { apiDelete, apiGet, apiPost, apiPut } from '../../api/client';
+import type { AccessRow, ConnectionField, ConnectionState, ConnectionWrite, IntegrationAudit, IntegrationAuditRow, IntegrationLogLine, IntegrationLogs, IntegrationPage as IntegrationPageData, IntegrationVersionSummary, PersonRef } from '../../api/types.gen';
 import { useFrameChrome } from '../../app/chrome';
 import { PageTitle } from '../../app/PageTitle';
 import { Badge, Banner, Button, Dialog, DialogClose, Icon, ListRow, Select, Skeleton, Switch, Table, Text, TextField } from '../../ds';
-import type { TableColumn } from '../../ds';
+import type { BadgeTone, TableColumn } from '../../ds';
 import { AccessDialog } from './AccessDialog';
 import { Block, StatusBadge, VersionBadge, actionWords, durationLabel, integrationApi, versionPath, whenLabel } from './integrationParts';
 import { ErrorBanner, None, RowList } from './parts';
-import { useAction, useResource } from './useResource';
+import { asApiError, useAction, useResource } from './useResource';
 import '../../styles/org.css';
 import '../../styles/integrations.css';
 
@@ -35,7 +35,8 @@ function connectionLines(c: ConnectionState | undefined, now: number): string[] 
   const lines = ['Connected since ' + whenLabel(c.created_at, now)];
   if (c.verified_at) {
     const said = c.verify_message ?? '';
-    lines.push(c.verified ? 'Verified ' + whenLabel(c.verified_at, now) + (said ? ': ' + said : '') : 'Could not verify' + (said ? ': ' + said : ''));
+    // A failed test shows as a banner instead (see ConnectionForm).
+    if (c.verified) lines.push('Verified ' + whenLabel(c.verified_at, now) + (said ? ': ' + said : ''));
   }
   return lines;
 }
@@ -43,6 +44,7 @@ function connectionLines(c: ConnectionState | undefined, now: number): string[] 
 interface ConnectionFormProps {
   page: IntegrationPageData;
   busy: boolean;
+  running: boolean;
   now: number;
   onSave(body: ConnectionWrite): Promise<boolean>;
   onVerify(): void;
@@ -50,7 +52,7 @@ interface ConnectionFormProps {
 }
 
 /** The connection: one field per entry the bundle asks for. A stored secret shows only that it is stored. */
-function ConnectionForm({ page, busy, now, onSave, onVerify, onDisconnect }: ConnectionFormProps) {
+function ConnectionForm({ page, busy, running, now, onSave, onVerify, onDisconnect }: ConnectionFormProps) {
   const fields = page.connection_fields;
   const [values, setValues] = useState(() => startingValues(fields));
   const connection = page.connection;
@@ -65,6 +67,11 @@ function ConnectionForm({ page, busy, now, onSave, onVerify, onDisconnect }: Con
       {connection?.reconnect_needed && (
         <Banner tone="danger" title="Reconnect needed">
           Its secrets are not stored on this Kivali server, as after a restore from a backup. Enter them again, then save the connection.
+        </Banner>
+      )}
+      {connection && connection.verified_at && !connection.verified && (
+        <Banner tone="danger" title="Could not verify the connection">
+          {connection.verify_message || 'The integration did not say why.'}
         </Banner>
       )}
       {fields.map((f) => (
@@ -93,9 +100,14 @@ function ConnectionForm({ page, busy, now, onSave, onVerify, onDisconnect }: Con
         <Button type="submit" variant="primary" disabled={busy}>
           Save connection
         </Button>
-        <Button type="button" variant="secondary" disabled={busy || !connection} onClick={onVerify}>
+        <Button type="button" variant="secondary" disabled={busy || !connection || !running} onClick={onVerify}>
           Test connection
         </Button>
+        {!running && (
+          <Text variant="caption" tone="muted">
+            Not available while it is not running.
+          </Text>
+        )}
         <Button type="button" variant="ghost" disabled={busy || !connection} onClick={onDisconnect}>
           Disconnect
         </Button>
@@ -127,6 +139,63 @@ function VersionRow({ name, v, now }: { name: string; v: IntegrationVersionSumma
 export function auditResult(row: Pick<IntegrationAuditRow, 'allowed' | 'reason'>): string {
   if (!row.allowed) return row.reason ? 'Refused: ' + row.reason : 'Refused';
   return row.reason ? 'Failed: ' + row.reason : 'Allowed';
+}
+
+const LOG_LEVEL: Record<string, BadgeTone | undefined> = { stderr: 'neutral', warning: 'signal', error: 'danger' };
+
+/** One log line: its time, its level as a small badge (none for info), its message in mono. */
+function LogRow({ line, now }: { line: IntegrationLogLine; now: number }) {
+  const tone = LOG_LEVEL[line.level];
+  return (
+    <li className="app-int-log-line">
+      <span className="app-int-nowrap app-int-log-time">{whenLabel(line.at, now)}</span>
+      <span className="app-int-log-level">{tone && <Badge tone={tone}>{line.level}</Badge>}</span>
+      <span className="app-int-log-message">{line.message}</span>
+    </li>
+  );
+}
+
+/** The integration's latest log lines, fetched on mount and again on Refresh. */
+function LogBlock({ api, now }: { api: string; now: number }) {
+  const [logs, setLogs] = useState<IntegrationLogs | null>(null);
+  const [error, setError] = useState<ReturnType<typeof asApiError> | null>(null);
+  const [seq, setSeq] = useState(0);
+  useEffect(() => {
+    const ctl = new AbortController();
+    apiGet<IntegrationLogs>(api + '/logs', { signal: ctl.signal }).then(
+      (v) => {
+        setLogs(v);
+        setError(null);
+      },
+      (err: unknown) => {
+        if (err instanceof DOMException && err.name === 'AbortError') return;
+        setError(asApiError(err));
+      },
+    );
+    return () => ctl.abort();
+  }, [api, seq]);
+  return (
+    <Block
+      label="Recent log"
+      variant="heading"
+      action={
+        <Button size="sm" variant="ghost" onClick={() => setSeq((n) => n + 1)}>
+          Refresh
+        </Button>
+      }
+    >
+      <ErrorBanner error={error} />
+      {!logs && !error && <Skeleton height={64} />}
+      {logs && logs.lines.length === 0 && <None>Nothing logged yet.</None>}
+      {logs && logs.lines.length > 0 && (
+        <ul className="app-int-log">
+          {logs.lines.map((l, i) => (
+            <LogRow key={i} line={l} now={now} />
+          ))}
+        </ul>
+      )}
+    </Block>
+  );
 }
 
 interface Grant {
@@ -258,6 +327,11 @@ export function IntegrationPage() {
             </Button>
           )}
         </div>
+        {s.status === 'not_running' && (
+          <Text as="p" variant="caption" tone="muted">
+            Kivali is starting it, or it stopped. The log below says what happened.
+          </Text>
+        )}
         {s.description && (
           <Text as="p" variant="body">
             {s.description}
@@ -287,6 +361,7 @@ export function IntegrationPage() {
             key={formSeq}
             page={p}
             busy={action.busy}
+            running={s.status !== 'not_running'}
             now={now}
             onSave={save}
             onVerify={verify}
@@ -364,8 +439,11 @@ export function IntegrationPage() {
         {audit.data && audit.data.rows.length > 0 && <Table dense columns={auditColumns} rows={audit.data.rows.map((r, i) => ({ ...r, id: i }))} />}
       </Block>
 
+      <LogBlock api={api} now={now} />
+
       {grant && (
         <AccessDialog
+          running={s.status !== 'not_running'}
           name={name}
           displayName={s.display_name}
           agent={grant.agent}

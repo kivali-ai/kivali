@@ -80,17 +80,23 @@ interface FieldProps {
   integration: string;
   load: LoadState | undefined;
   onLoad(): void;
+  /** False while the integration is not running: it cannot list anything then. */
+  running: boolean;
 }
 
 /** "Load options": asks the integration, through the connection, for the options it lists for the field. */
-function LoadOptions({ field, integration, load, onLoad }: Pick<FieldProps, 'field' | 'integration' | 'load' | 'onLoad'>) {
+function LoadOptions({ field, integration, load, onLoad, running }: Pick<FieldProps, 'field' | 'integration' | 'load' | 'onLoad' | 'running'>) {
   if (!field.choices) return null;
   return (
     <div className="app-int-load">
-      <Button variant="ghost" size="sm" icon={<Icon name="rotate-ccw" />} loading={load?.busy ?? false} disabled={load?.busy ?? false} onClick={onLoad}>
+      <Button variant="ghost" size="sm" icon={<Icon name="rotate-ccw" />} loading={load?.busy ?? false} disabled={!running || (load?.busy ?? false)} onClick={onLoad}>
         Load options
       </Button>
-      {load?.error ? (
+      {!running ? (
+        <Text variant="caption" tone="muted">
+          {integration + ' is not running, so it cannot list these.'}
+        </Text>
+      ) : load?.error ? (
         <Text variant="caption" tone="danger" role="alert">
           {load.error}
         </Text>
@@ -105,7 +111,7 @@ function LoadOptions({ field, integration, load, onLoad }: Pick<FieldProps, 'fie
   );
 }
 
-function AccessFieldInput({ field, value, onChange, integration, load, onLoad }: FieldProps) {
+function AccessFieldInput({ field, value, onChange, integration, load, onLoad, running }: FieldProps) {
   const hint = field.description || undefined;
   switch (field.kind) {
     case 'switch':
@@ -122,7 +128,7 @@ function AccessFieldInput({ field, value, onChange, integration, load, onLoad }:
             onChange={(e) => onChange(e.currentTarget.value)}
             options={[{ value: '', label: 'Not set' }, ...options.map((o) => ({ value: o, label: o }))]}
           />
-          <LoadOptions field={field} integration={integration} load={load} onLoad={onLoad} />
+          <LoadOptions field={field} integration={integration} load={load} onLoad={onLoad} running={running} />
         </div>
       );
     }
@@ -150,7 +156,7 @@ function AccessFieldInput({ field, value, onChange, integration, load, onLoad }:
               onCheckedChange={(on) => onChange(on === true ? [...chosen, o] : chosen.filter((c) => c !== o))}
             />
           ))}
-          <LoadOptions field={field} integration={integration} load={load} onLoad={onLoad} />
+          <LoadOptions field={field} integration={integration} load={load} onLoad={onLoad} running={running} />
         </fieldset>
       );
     }
@@ -202,6 +208,8 @@ export interface AccessDialogProps {
   form: AccessForm | undefined;
   /** The agent's access as it stands, when it has some. */
   access?: unknown;
+  /** False while the integration is not running; "Load options" waits for it. */
+  running?: boolean;
   onClose(): void;
   onSaved(page: IntegrationPage): void;
 }
@@ -210,7 +218,7 @@ export interface AccessDialogProps {
  * One agent's access to an integration: the form the integration describes, filled in, or a plain yes for an
  * integration whose access is all or nothing. Saving replaces the agent's access with what the form holds.
  */
-export function AccessDialog({ name, displayName, agent, form, access, onClose, onSaved }: AccessDialogProps) {
+export function AccessDialog({ name, displayName, agent, form, access, running = true, onClose, onSaved }: AccessDialogProps) {
   const [values, setValues] = useState<Values>(() => initialValues(form, access));
   const [loads, setLoads] = useState<Record<string, LoadState>>({});
   const [busy, setBusy] = useState(false);
@@ -276,6 +284,7 @@ export function AccessDialog({ name, displayName, agent, form, access, onClose, 
               integration={displayName}
               load={loads[f.key]}
               onLoad={() => void load(f.key)}
+              running={running}
             />
           ))}
         </div>

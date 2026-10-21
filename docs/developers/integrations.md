@@ -4,8 +4,8 @@ An integration is an external service agents act on, such as a CRM or
 a blog, installed from a bundle. This page is the developer's
 reference: the bundle and its manifest, the check every bundle passes,
 the access form, where Kivali keeps an integration and its connection,
-and how a version is approved. What the owner sees is in
-[../integrations.md](../integrations.md).
+how a version is approved, and how an approved version runs. What the
+owner sees is in [../integrations.md](../integrations.md).
 
 The words, as the owner reads them: an **integration** is the
 installed thing; a **version** is one stored bundle of it; its
@@ -17,10 +17,15 @@ says MCP, tool or pod.
 
 The code: `internal/integration` (the manifest, the check, the access
 form, reading and unpacking a bundle; a leaf package),
-`internal/store/integrations.go` (where everything is kept),
-`internal/secrets` (the connection's secret fields),
+`internal/store/integrations.go` and `integration_logs.go` (where
+everything is kept), `internal/secrets` (the connection's secret
+fields), `internal/integrationpod` (the pod, its provisioner and the
+shim that runs in it), `internal/web/integration_registry.go` and
+`integration_socket.go` (core's side of a running integration),
 `internal/web/api_integrations.go` (the API) and
 `internal/web/apitypes/integrations.go` (the wire types).
+`cmd/fake-integration` is a stdio MCP server for tests
+(`internal/integrationpod/fakeintegration`).
 
 ## The bundle
 
@@ -183,6 +188,7 @@ integrations/<name>/
                                     verified_at, verified, verify_message
   access/<slug>.yaml                slug, connection_id, access, set_at, set_by
   audit.jsonl                       one row per call: at, agent, action, allowed, reason, duration_ms
+  log.jsonl                         the integration's log: at, level, message (the runtime, below)
 ```
 
 A version is stored whole or not at all: it is unpacked into a staging
@@ -200,8 +206,9 @@ approved before becomes superseded. A version stored once, in any
 state, cannot be stored again: a changed bundle needs a new version
 number. A built-in integration (`builtin`, which an upload never
 sets) takes no upload and cannot be removed. Removing an integration
-deletes its directory, its connections' records, every agent's access
-and the audit; the API deletes the connections' Secrets first.
+deletes its directory, its connections' records, every agent's access,
+the audit and the log; the API deletes the connections' Secrets first,
+and the next reconcile stops its pod.
 
 An access row is checked when it is read
 (`store.ListIntegrationAccess`): it is invalid, and grants nothing,
@@ -241,11 +248,20 @@ install, or the Secret deleted by hand), `ConnectionState.ReconnectNeeded`
 is true, those fields read as not set, and the status is not
 connected until they are entered again.
 
-Test connection (`POST .../connection/verify`) and the options an
-access field lists (`GET .../choices/{key}`) call the integration, so
-they need its runtime; without it they answer 409 "the integration is
-not running yet". The audit lists what is in `audit.jsonl`, which the
-integration's calls append to.
+Test connection (`POST .../connection/verify`) calls the manifest's
+`kivali.verify` tool through the running server, with no arguments and
+no agent on the call, and keeps what it found on the connection's
+record: `verified` (the call went through and the tool's result is not
+an error), `verify_message` (the result's first text content, or the
+error's text, cut to 1000 bytes) and `verified_at`. A call not answered
+within 60 seconds is kept as failed. The options an access field lists
+(`GET .../choices/{key}`) call the field's tool the same way and read
+its result's first text content as a JSON array of strings, or an
+object whose `options` is one. Both write an audit row for the owner
+(agent `ceo`, the tool as the action, the integration's words as the
+reason when it failed), and both answer 409 "the integration is not
+running" while no shim is connected. The audit lists what is in
+`audit.jsonl`, which the integration's calls append to.
 
 ## Installing a version
 
@@ -275,6 +291,154 @@ refused. Approving or rejecting from the install screen when no
 request waits for it, or when the agent that asked has left the team,
 changes the version alone.
 
+## The runtime
+
+An integration that should run (an approved version, switched on, not
+built in) runs in a pod of its own, `integrationpod-<name>`, which core
+keeps up while it should (`internal/integrationpod`, `manifest.go` and
+`provisioner.go`). Core talks MCP to the integration's server through a
+shim in the pod. Agents' calls are not routed yet; core's own calls
+(Test connection, the options a field lists, `tools/list`, `ping`)
+carry no agent.
+
+### The pod
+
+| Container | Image | What it does |
+| --- | --- | --- |
+| `shim` (init) | `kivali` | `cp /usr/local/bin/kivali /shim/kivali`, into an emptyDir |
+| `integration` | `kivali-agent-shell` | `/shim/kivali integration-shim` (`integration_shim_cmd.go`, `internal/integrationpod/shim.go`), which starts the server: the agent shell's image has python3 |
+
+The `integration` container mounts the `shim` emptyDir at `/shim`,
+read-only; `integration/`, the UDS dir's subdirectory that holds
+`integration.sock`, read-only and with `type: Directory`; the version's
+bundle, the data PVC's subPath
+`integrations/<name>/versions/<version>/bundle`, at `/bundle`,
+read-only; and an emptyDir at `/tmp` (256 MiB), the server's HOME.
+Nothing else of the data PVC. Both containers run as 65532 with no
+privilege escalation and every capability dropped; the pod has no
+service-account token, no Service and no ports, `restartPolicy:
+Always` (kubelet starts the shim again when it exits with its server),
+a 10 s stop grace, and the agent pod's required affinity to the
+server's node. Requests 50m/128Mi, limits 1 CPU/1 GiB. Its env is
+`KIVALI_INTEGRATION_NAME`, `_VERSION`, `_TOKEN` (the per-pod token
+core minted), `_CORE_UDS`, `_BUNDLE` and the bare proxy variables, the
+proxy's host resolved to its IP when the pod is built (the pod has no
+DNS). The spec names no Secret and carries no connection value, and no
+label carries the token. The chart's network policy
+`kivali-integrationpod-egress` lets the pod reach the egress proxy's
+port and nothing else.
+
+The spec carries a hash of itself (`kivali-spec-hash`), as agent and
+browser pods do. `Start` keeps a pod whose hash matches and replaces one
+that differs: a new version, a new token or a new image is a new pod.
+
+### Reconcile and boot
+
+`internal/web/integration_registry.go` keeps one entry per integration
+that should run: its version, its pod's token, the connected shim (the
+link), the requests waiting on it, the last `tools/list` answer, and
+its health. All pod operations run on one goroutine
+(`Server.StartIntegrations`): a reconcile at boot and after every
+approval, rejection, switch, removal and connection change, which
+starts the pod of every integration that should run and stops the pod
+(and drops the proxy credential) of every one that should not. A new
+approved version gets a new token, and so a new pod. At boot core also
+stops the pods of integrations no longer installed, and takes on a pod
+left running from before the restart when it is built exactly as core
+would build it for the approved version (`Provisioner.Token` reads the
+token from the pod's spec), so pods outlive a server restart and their
+shims reconnect. Shutdown closes every link and stops no pod.
+
+### The shim and its socket
+
+`integration.sock` (`StartIntegrationSocket`,
+`internal/web/integration_socket.go`) serves two routes and nothing
+else. Every request carries `X-Kivali-Integration-Token`, which must be
+the pod's token.
+
+- `GET /v1/integration/{name}/events`: the shim's one SSE stream
+  (`event:` and a one-line JSON `data:`; comment heartbeats every 15 s).
+  The handshake also carries `X-Kivali-Integration-Version`, which must
+  be the approved version, and `X-Kivali-Integration-Proxy-Hash`. A bad
+  token or version is a 403, and the shim tries again after a wait on
+  its clock, 200 ms doubling to 5 s. A second connection for an
+  integration replaces the first. Events: `start` (sent on every
+  connect: fetch the connection's values and start the server; a shim
+  whose server runs starts it again only if the values changed),
+  `rpc` (one JSON-RPC request or notification for the server),
+  `restart` (the connection changed: stop the server, fetch the values
+  again, start it) and `shutdown` (stop the server and exit).
+- `POST /v1/integration/{name}/rpc`: one JSON-RPC message from the pod:
+  a response to core's request, matched by its id, or a request or
+  notification. A request is answered with its JSON-RPC response, and
+  anything else with 204.
+
+The shim reads `/bundle/manifest.json` (the bundle must be the name and
+version the pod was built for) and starts the server on `start`:
+`mcp_config.command` and its args in `/bundle`, with PATH, `HOME=/tmp`,
+LANG, the manifest's env with the connection's values put in, and the
+proxy variables carrying its scoped credential, and nothing else of its
+own environment. Then the MCP handshake: `initialize` with protocol
+version `2025-06-18` and client `kivali`, then
+`notifications/initialized`, within 20 s, or the shim exits non-zero.
+Core's `rpc` messages go to the server's input a line each, queued
+until the server has started; until then a call simply waits. The
+server's output is read a line at a time: a response goes to core; a
+`kivali/credential` or `kivali/log` request goes to core and core's
+answer to the server; any other request (sampling, roots, elicitation)
+is answered by the shim with -32601; notifications other than
+`kivali/log` are dropped. A line that is not JSON-RPC, or over 16 MiB,
+ends the server. The server's error output becomes `kivali/log` lines
+of level `stderr`, and the shim adds its own (`server started`,
+`server exited: ...`). The shim exits with the server's status; on
+SIGTERM it closes the server's input and kills it after 5 s.
+`KIVALI_INTEGRATION_COMMAND`, a path, replaces `mcp_config.command`:
+a test hook, which the pod spec never sets.
+
+### The pod's requests
+
+- `kivali/credential` answers `{"env": {...}, "fields": {...}}`: the
+  manifest's `mcp_config.env` with each `${user_config.<key>}` replaced
+  by the connection's value (`integration.ServerEnv`), and every field's
+  value by key. Core reads them from the connection's record and its
+  Secret at that moment and keeps none. With no connection the error is
+  -32001 "no connection", and the shim starts the server with every
+  value empty, so a connection put later restarts it with them.
+- `kivali/log`, `{"level", "message"}`, appends a line to `log.jsonl`
+  (level `info`, `warning`, `error`, `debug` or `stderr`; any other is
+  `info`; a message is cut to 8 KiB) with every secret value of the
+  connection replaced by `[secret]`. The file is capped: past 4000 lines
+  it is rewritten with the last 2000. Core adds lines of its own: a
+  restart after missed health checks, a pod that cannot be placed for
+  want of memory.
+
+### The scoped proxy credential
+
+The shim draws a 32-byte secret when it starts (`internal/egresscred`)
+and sends its SHA-256 on the events handshake. Core registers it under
+the proxy user `integration-<name>` with the hosts the approved
+version's `kivali.hosts` names (`store.SetEgressScopedCredential`; kept
+in `egress_agents.json` beside the agents' hashes, out of backups, and
+mirrored under `scoped` in the proxy's agents file), and drops it when
+the integration stops or is removed. The server's proxy variables carry
+`http://integration-<name>:<secret>@<proxy>`. In scoped mode the proxy
+admits a host only when it matches one of those hosts, in the
+allowlist's pattern language and under its address rules, never the
+team's list, and counts nothing. The shim scrubs the secret, in every
+form it can be written, from everything it sends core, the server's
+error output included.
+
+### Health
+
+Every 30 seconds core sends each connected server MCP's `ping` (20 s to
+answer; any answer counts, an error too). Three missed in a row give the
+integration a new token, and so a new pod, and say so in its log. An
+integration that should run and has had no shim for three checks gets a
+reconcile, which makes its pod again if it is gone. A shim's stream that
+ends makes the integration not running; requests waiting on it fail at
+once. A request waits 60 s for a `tools/call` and 20 s for anything
+else.
+
 ## The API
 
 Wire types in `internal/web/apitypes/integrations.go`; every route is
@@ -282,7 +446,7 @@ the owner's.
 
 | Route | Answer |
 | --- | --- |
-| `GET /api/v1/org/integrations` | `Integrations`, by display name. Status: pending (no approved version), off, connected (a connection whose secrets are all there), not connected. |
+| `GET /api/v1/org/integrations` | `Integrations`, by display name. Status: pending (no approved version), off, not running (approved and on, with no shim connected; a built-in integration is never not running), and, while it runs, connected (a connection whose secrets are all there) or not connected. |
 | `POST /api/v1/org/integrations` | multipart `file`: 201 `IntegrationVersion`; 400 `IntegrationUploadRefused`; 409 for a version already stored or a built-in name. |
 | `GET /api/v1/org/integrations/{name}` | `IntegrationPage`. |
 | `POST .../{name}/enable`, `.../disable` | `IntegrationPage`. |
@@ -291,9 +455,10 @@ the owner's.
 | `POST .../versions/{version}/approve`, `.../reject` | `IntegrationVersion`; 409 when not pending. |
 | `PUT .../connection` | `ConnectionWrite` in, `IntegrationPage` out; 409 while no version is approved. |
 | `DELETE .../connection` | `IntegrationPage`: the Secret, the record and every agent's access removed. |
-| `POST .../connection/verify` | 409 without the integration's runtime. |
+| `POST .../connection/verify` | `IntegrationPage`, with the connection's verified, verify message and verified at; 409 with no approved version, no connection, no `kivali.verify`, or while the integration is not running. |
 | `PUT .../access/{slug}` | `AccessWrite` in, `IntegrationPage` out; 404 for an agent not on the team; 409 without a connection; 400 with the field's message. |
 | `DELETE .../access/{slug}` | `IntegrationPage`. |
 | `GET .../audit?limit=` | `IntegrationAudit`, newest first; limit 100 by default, at most 1000. |
-| `GET .../choices/{key}` | 409 without the integration's runtime. |
+| `GET .../choices/{key}` | `AccessChoices`; 404 for a field that lists no options; 409 while the integration is not running; 502 for the tool's error, or a result that is not a list of names. |
+| `GET .../logs?limit=` | `IntegrationLogs`, oldest first; limit 200 by default, at most 2000. |
 | `GET /api/v1/agents/{slug}/integrations` | `AgentIntegrations`; 404 for an agent not on the team. |

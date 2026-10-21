@@ -26,6 +26,7 @@ import {
   goFiles,
   goHandbook,
   goIntegrationAudit,
+  goIntegrationLogs,
   goIntegrationPage,
   goIntegrationUploadRefused,
   goIntegrationVersion,
@@ -127,6 +128,7 @@ function defaults(): Record<string, Route> {
     'GET /api/v1/org/integrations': goIntegrations,
     'GET /api/v1/org/integrations/hubspot': goIntegrationPage,
     'GET /api/v1/org/integrations/hubspot/audit': goIntegrationAudit,
+    'GET /api/v1/org/integrations/hubspot/logs': goIntegrationLogs,
     'GET /api/v1/org/integrations/hubspot/versions/1.3.0': goIntegrationVersion,
     'GET /api/v1/setup': { credential: { ready: true, provider: 'claude', present: true, who: 'owner@example.com', billing: 'Claude Max', guidance: '' }, restore_available: false },
   };
@@ -1412,6 +1414,52 @@ describe('Integration page', () => {
     await click(screen.getByRole('button', { name: 'Remove Dana’s access' }));
     expect(called('DELETE', API + '/access/dana')).toBe(true);
     expect(screen.queryByRole('button', { name: 'Change Dana’s access' })).toBeNull();
+  });
+
+  // Guards not_running: the status reads "Not running" with its caption, and nothing that needs the process (Test
+  // connection, the access dialog's Load options) can be pressed, so a click cannot reach an integration that is down.
+  it('says when the integration is not running and disables what needs it', async () => {
+    const down = { ...goIntegrationPage, summary: { ...goIntegrationPage.summary, status: 'not_running' } };
+    await renderOrg(PATH, { routes: { ['GET ' + API]: down } });
+    expect(screen.getByText('Not running')).toHaveClass('kv-badge');
+    expect(screen.getByText('Kivali is starting it, or it stopped. The log below says what happened.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Test connection' })).toBeDisabled();
+    await click(screen.getByRole('button', { name: 'Give access' }));
+    const dialog = within(screen.getByRole('dialog'));
+    for (const b of dialog.getAllByRole('button', { name: 'Load options' })) expect(b).toBeDisabled();
+    expect(dialog.getAllByText('HubSpot is not running, so it cannot list these.').length).toBeGreaterThan(0);
+  });
+
+  // Guards the two answers of Test connection: a good one shows "Verified ...: message" as the status line; a bad
+  // one (verified false) shows its message in a danger banner rather than as a quiet line.
+  it('shows what Test connection found, good or bad', async () => {
+    const conn = goIntegrationPage.connection!;
+    const good = { ...goIntegrationPage, connection: { ...conn, verified: true, verify_message: 'Connected as Acme' } };
+    const bad = { ...goIntegrationPage, connection: { ...conn, verified: false, verify_message: 'The token was refused.' } };
+    let answerWith: unknown = good;
+    await renderOrg(PATH, { routes: { ['POST ' + API + '/connection/verify']: () => answerWith } });
+    await click(screen.getByRole('button', { name: 'Test connection' }));
+    expect(screen.getByText(/^Verified .*: Connected as Acme$/)).toBeInTheDocument();
+    answerWith = bad;
+    await click(screen.getByRole('button', { name: 'Test connection' }));
+    expect(screen.getByText('The token was refused.').closest('[role="alert"]')).toHaveClass('kv-banner--danger');
+    expect(screen.queryByText(/^Verified /)).toBeNull();
+  });
+
+  // Guards the log block (integration_logs.json): lines show time, a level badge (none for info) and the message,
+  // an empty log says so, and Refresh asks the server again and shows the new answer.
+  it('shows the recent log and refreshes it', async () => {
+    let logs: unknown = goIntegrationLogs;
+    await renderOrg(PATH, { routes: { ['GET ' + API + '/logs']: () => logs } });
+    const block = within(screen.getByRole('region', { name: 'Recent log' }));
+    expect(block.getByText('server started')).toBeInTheDocument();
+    expect(block.getByText('token [secret] accepted')).toBeInTheDocument();
+    expect(block.getByText('stderr')).toHaveClass('kv-badge');
+    expect(block.queryByText('info')).toBeNull();
+    logs = { lines: [] };
+    await click(block.getByRole('button', { name: 'Refresh' }));
+    expect(block.getByText('Nothing logged yet.')).toBeInTheDocument();
+    expect(block.queryByText('server started')).toBeNull();
   });
 
   // Guards Remove: the DELETE waits for the danger dialog's confirm, then the page goes back to the list; a built-in

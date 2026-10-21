@@ -7,7 +7,7 @@ the pieces fit together, read [architecture.md](architecture.md) next.
 ## What is in the repository
 
 ```
-main.go               the server, and the subcommand dispatch (agent, browser, mcp, prepare-scratch)
+main.go               the server, and the subcommand dispatch (agent, browser, integration-shim, mcp, prepare-scratch)
 mcp_cmd.go            `kivali mcp`: the MCP server each claude CLI process talks to
 agent_cmd.go          `kivali agent`: the per-agent runtime that runs in an agent pod
 integration_test.go   the integration suite (build tag `integration`)
@@ -29,6 +29,7 @@ internal/
   files/              the /files/ namespace behind the file_* tools (files-and-publishing.md)
   graph/              the knowledge graph over published files (knowledge-graph.md)
   integration/        integration bundles: the manifest, the check, the access form (integrations.md)
+  integrationpod/     integration pods: the pod manager, the socket protocol, the shim that runs the server
   mcp/                MCP server pieces: skills, project files, agent memory
   message/            the message file format and parser
   messaging/          the Messenger: route, release, bounce, release-all
@@ -49,6 +50,7 @@ cmd/
   egress-proxy/       the egress proxy (shell allowlist, agent credentials, budget)
   devseed/            seeds a data directory (demo, empty, setup scenarios)
   fake-claude/        a scripted stand-in for the claude CLI (local runs, e2e)
+  fake-integration/   a stdio MCP server standing in for an integration's server (tests, e2e)
   inspect_request/    prints the request the server would send for an agent
   kivali-supervisor/  runs a team: boots its VM, installs and upgrades the chart
   kivali-guest/       the agent inside that VM
@@ -237,6 +239,10 @@ supervisor's reference.
 - `kivali browser` — the entrypoint of a browser pod: starts Chromium
   and drives it for one agent web session over one WebSocket to the
   server (`internal/browserpod`).
+- `kivali integration-shim` — the entrypoint of an integration pod:
+  starts the integration's server from its bundle and carries JSON-RPC
+  between it and the server over `integration.sock`
+  (`internal/integrationpod`).
 - `kivali mcp` — the stdio MCP server each `claude` process starts:
   `--toolkit full-agent` (the default) is an agent's whole tool surface
   (`file_*`, `agent_memory_*`, `publish_*`, assignments, state lookups,
@@ -335,7 +341,7 @@ Desktop's. Install Kivali Desktop, or unpack a release's VM image into
 | [assignments.md](assignments.md) | The assignment tracker's contract: files, states, tools, events. |
 | [files-and-publishing.md](files-and-publishing.md) | The `/files/` namespace, workspaces, publishing and the shared tree. |
 | [knowledge-graph.md](knowledge-graph.md) | The graph published files form: links, indexing, queries. |
-| [integrations.md](integrations.md) | Integration bundles: the manifest, the check, the access form, storage, connection Secrets, approval, the API. |
+| [integrations.md](integrations.md) | Integration bundles: the manifest, the check, the access form, storage, connection Secrets, approval, the runtime (pod, shim, scoped proxy credential, health, log), the API. |
 | [auth.md](auth.md) | Google sign-in, the public client and relay, sessions, the allowlist, the desktop handoff. |
 | [deployment.md](deployment.md) | Teams run by the supervisor: the dev team, upgrades, backup and restore, first checks. |
 | [supervisor.md](supervisor.md) | kivali-supervisor: backends (macOS, Windows), CLI, RPC, guest protocol, install, upgrade journal. |

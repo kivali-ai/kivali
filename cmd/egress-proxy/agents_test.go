@@ -22,6 +22,15 @@ type agentsFile struct {
 	agentHosts map[string][]string
 	exempt     []string
 	modelHosts []string
+	// scoped are integrations' credentials by user, secret in the
+	// clear.
+	scoped map[string]scopedFixture
+}
+
+// scopedFixture is one scoped credential as a test writes it.
+type scopedFixture struct {
+	secret string
+	hosts  []string
 }
 
 // writeAgentsFile writes the agents file core would, in core's own
@@ -42,6 +51,10 @@ func writeAgentsFile(t *testing.T, path string, f agentsFile) {
 		AgentHosts: f.agentHosts,
 		Exempt:     f.exempt,
 		ModelHosts: f.modelHosts,
+		Scoped:     map[string]store.EgressScoped{},
+	}
+	for user, sc := range f.scoped {
+		file.Scoped[user] = store.EgressScoped{Hash: hash(map[string]string{user: sc.secret})[user], Hosts: sc.hosts}
 	}
 	b, err := json.Marshal(file)
 	if err != nil {

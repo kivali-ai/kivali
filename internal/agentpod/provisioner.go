@@ -4,10 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
-	"net/netip"
-	"net/url"
-	"slices"
 	"strings"
 	"time"
 
@@ -229,68 +225,10 @@ func (p *Provisioner) manifestFor(ctx context.Context, slug string) (map[string]
 	return cfg.podManifestWithSoftware(slug, software), nil
 }
 
-// lowestAddr is the lowest IPv4 address in addrs, else the lowest
-// IPv6 one, else nil. Lowest rather than first: a name with several
-// records resolves in any order, and the pick lands in the pod spec,
-// whose hash must not change from one lookup to the next.
-func lowestAddr(addrs []string) net.IP {
-	var v4, v6 []netip.Addr
-	for _, a := range addrs {
-		ip, err := netip.ParseAddr(a)
-		if err != nil {
-			continue
-		}
-		if ip = ip.Unmap(); ip.Is4() {
-			v4 = append(v4, ip)
-		} else {
-			v6 = append(v6, ip.WithZone(""))
-		}
-	}
-	for _, set := range [][]netip.Addr{v4, v6} {
-		if len(set) > 0 {
-			slices.SortFunc(set, netip.Addr.Compare)
-			return net.IP(set[0].AsSlice())
-		}
-	}
-	return nil
-}
-
-// proxyByIP is raw, the configured proxy URL, as an agent pod gets it:
-// scheme, the host resolved to an IP (lowestAddr), and the port. A host
-// that is already an IP is kept. Empty raw is no proxy.
+// proxyByIP is raw, the configured proxy URL, as an agent pod gets it
+// (kube.ProxyByIP): scheme, the host resolved to an IP, and the port.
 func proxyByIP(ctx context.Context, raw string, resolve func(context.Context, string) ([]string, error)) (string, error) {
-	if strings.TrimSpace(raw) == "" {
-		return "", nil
-	}
-	u, err := url.Parse(raw)
-	if err != nil || u.Scheme == "" || u.Hostname() == "" {
-		return "", fmt.Errorf("egress proxy URL %q: want scheme://host:port", raw)
-	}
-	if u.User != nil {
-		return "", fmt.Errorf("egress proxy URL carries credentials; agent pods get the proxy without them")
-	}
-	host, port := u.Hostname(), u.Port()
-	ip := net.ParseIP(host)
-	if ip == nil {
-		if resolve == nil {
-			resolve = net.DefaultResolver.LookupHost
-		}
-		addrs, err := resolve(ctx, host)
-		if err != nil {
-			return "", fmt.Errorf("egress proxy: resolve %s: %w", host, err)
-		}
-		ip = lowestAddr(addrs)
-		if ip == nil {
-			return "", fmt.Errorf("egress proxy: %s resolves to no address", host)
-		}
-	}
-	addr := ip.String()
-	if port != "" {
-		addr = net.JoinHostPort(addr, port)
-	} else if ip.To4() == nil {
-		addr = "[" + addr + "]"
-	}
-	return (&url.URL{Scheme: u.Scheme, Host: addr}).String(), nil
+	return kube.ProxyByIP(ctx, raw, resolve)
 }
 
 // NewProvisioner returns a Provisioner. The k8s client is

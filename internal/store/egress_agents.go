@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/kivali-ai/kivali/internal/egresscred"
@@ -29,7 +30,10 @@ const egressAgentsFilename = "egress_agents.json"
 // leaves ModelHosts out of the count. A request that presents an
 // agent's shell credential (Shells) reaches the team's list and that
 // agent's own hosts (AgentHosts). An exempt agent's requests, with
-// either credential, reach any public host and are not counted.
+// either credential, reach any public host and are not counted. A
+// request that presents a scoped credential (Scoped: an integration's
+// server) reaches that credential's hosts and nothing else, not even
+// the team's list, and is not counted.
 type EgressAgents struct {
 	// Agents maps an agent's slug to the lowercase hex SHA-256 of its
 	// runtime's secret.
@@ -46,15 +50,29 @@ type EgressAgents struct {
 	Exempt []string `json:"exempt"`
 	// ModelHosts are exact hostnames, sorted.
 	ModelHosts []string `json:"model_hosts"`
+	// Scoped maps a proxy user (integrationpod.ProxyUser: an
+	// integration's server) to its credential's hash and the only
+	// hosts it reaches.
+	Scoped map[string]EgressScoped `json:"scoped"`
 }
 
-// egressAgentsFile is the DataDir file's shape: the hashes only. The
-// model hosts are worked out from the sign-in at boot and whenever it
-// changes, so they are held in memory, and the agents' network settings
-// live in their agent.yaml; both are written to the sync path alone.
+// EgressScoped is one scoped credential: the lowercase hex SHA-256 of
+// its secret and the host patterns it reaches, in the allowlist's
+// language, normalized and sorted.
+type EgressScoped struct {
+	Hash  string   `json:"hash"`
+	Hosts []string `json:"hosts"`
+}
+
+// egressAgentsFile is the DataDir file's shape: the hashes, and the
+// hosts each scoped credential reaches. The model hosts are worked out
+// from the sign-in at boot and whenever it changes, so they are held in
+// memory, and the agents' network settings live in their agent.yaml;
+// both are written to the sync path alone.
 type egressAgentsFile struct {
-	Agents map[string]string `json:"agents"`
-	Shells map[string]string `json:"shells,omitempty"`
+	Agents map[string]string       `json:"agents"`
+	Shells map[string]string       `json:"shells,omitempty"`
+	Scoped map[string]EgressScoped `json:"scoped,omitempty"`
 }
 
 // SetEgressAgentsSyncPath names the file, outside DataDir, that every
@@ -153,6 +171,48 @@ func (s *FSStore) DropEgressAgentCredential(slug string) error {
 	return s.writeEgressAgentsLocked(f)
 }
 
+// SetEgressScopedCredential records sha256Hex (egresscred.Hash of the
+// secret an integration's shim drew) as the scoped credential of id
+// (integrationpod.ProxyUser), reaching hosts and nothing else,
+// replacing any earlier one, and mirrors the result to the proxy.
+func (s *FSStore) SetEgressScopedCredential(id, sha256Hex string, hosts []string) error {
+	if err := checkEgressSlug(id); err != nil {
+		return err
+	}
+	if !egresscred.ValidHash(sha256Hex) {
+		return errors.New("store: egress scoped credential: not a lowercase hex SHA-256")
+	}
+	patterns := normalizePatterns(hosts)
+	sort.Strings(patterns)
+	s.egressAgentsMu.Lock()
+	defer s.egressAgentsMu.Unlock()
+	f := s.readEgressAgentsLocked()
+	f.Scoped[id] = EgressScoped{Hash: sha256Hex, Hosts: patterns}
+	return s.writeEgressAgentsLocked(f)
+}
+
+// DropEgressScopedCredential forgets id's scoped credential, so the
+// proxy refuses it from then on, and mirrors the result. Nothing to
+// drop is not an error.
+func (s *FSStore) DropEgressScopedCredential(id string) error {
+	s.egressAgentsMu.Lock()
+	defer s.egressAgentsMu.Unlock()
+	f := s.readEgressAgentsLocked()
+	if _, ok := f.Scoped[id]; !ok {
+		return nil
+	}
+	delete(f.Scoped, id)
+	return s.writeEgressAgentsLocked(f)
+}
+
+// EgressScopedCredentials returns each scoped credential. Empty (not
+// an error) before any registration.
+func (s *FSStore) EgressScopedCredentials() map[string]EgressScoped {
+	s.egressAgentsMu.Lock()
+	defer s.egressAgentsMu.Unlock()
+	return s.readEgressAgentsLocked().Scoped
+}
+
 // SetEgressModelHosts replaces the model provider's hosts (trimmed,
 // lowercased, deduplicated, sorted) and mirrors the result to the
 // proxy.
@@ -185,7 +245,7 @@ func (s *FSStore) SyncEgressAgentsToProxy() error {
 // runtime registers again when its events stream reconnects, so the
 // hashes come back without a person.
 func (s *FSStore) readEgressAgentsLocked() egressAgentsFile {
-	empty := egressAgentsFile{Agents: map[string]string{}, Shells: map[string]string{}}
+	empty := egressAgentsFile{Agents: map[string]string{}, Shells: map[string]string{}, Scoped: map[string]EgressScoped{}}
 	b, err := os.ReadFile(s.path(egressAgentsFilename))
 	if errors.Is(err, fs.ErrNotExist) {
 		return empty
@@ -204,6 +264,9 @@ func (s *FSStore) readEgressAgentsLocked() egressAgentsFile {
 	}
 	if f.Shells == nil {
 		f.Shells = map[string]string{}
+	}
+	if f.Scoped == nil {
+		f.Scoped = map[string]EgressScoped{}
 	}
 	return f
 }
@@ -237,6 +300,7 @@ func (s *FSStore) syncEgressAgentsLocked() error {
 		AgentHosts: agentHosts,
 		Exempt:     exempt,
 		ModelHosts: hosts,
+		Scoped:     f.Scoped,
 	}, "", "  ")
 	if err != nil {
 		return err
