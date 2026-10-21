@@ -18,7 +18,11 @@ spec:
       {{- end }}
 ---
 # ClusterIP Service in front of the egress-proxy sidecar. Agent pods set
-# HTTP_PROXY to it; the proxy applies the allowlist.
+# HTTP_PROXY to it; the proxy applies the allowlist. The sidecar listens
+# before the server passes its readiness probe, and the server recreates
+# agent pods at boot, whose agent-shell runs apt-get update as soon as it
+# starts, so the Service publishes the pod's address while it is not yet
+# Ready.
 apiVersion: v1
 kind: Service
 metadata:
@@ -28,6 +32,7 @@ metadata:
     {{- include "kivali.labels" . | nindent 4 }}
 spec:
   type: ClusterIP
+  publishNotReadyAddresses: true
   selector:
     app: kivali
   ports:
