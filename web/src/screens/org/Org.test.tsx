@@ -939,20 +939,26 @@ describe('Skills', () => {
 // ---- Network ----
 
 describe('Network', () => {
-  it('allows and removes a host', async () => {
-    const added: Network = { hosts: [...goNetwork.hosts, { host: 'api.github.com' }] };
+  // The permanent host is listed and marked, with no Remove: the server
+  // refuses that removal, so a button for it would only fail.
+  it('allows and removes a host, and shows the permanent one without Remove', async () => {
+    const added: Network = { hosts: [...goNetwork.hosts, { host: 'api.github.com', permanent: false }] };
     await renderOrg('/org/network', {
       desktop: true,
-      routes: { 'POST /api/v1/org/network': added, 'DELETE /api/v1/org/network/api.anthropic.com': { hosts: [goNetwork.hosts[0]!, added.hosts[2]!] } },
+      routes: { 'POST /api/v1/org/network': added, 'DELETE /api/v1/org/network/*.pypi.org': { hosts: [goNetwork.hosts[1]!, added.hosts[2]!] } },
     });
     expect(screen.getByText('*.pypi.org')).toBeInTheDocument();
+    expect(screen.getByText('deb.debian.org')).toBeInTheDocument();
+    expect(screen.getByText('Permanent')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Remove deb.debian.org' })).toBeNull();
     expect(screen.getByText('2 hosts agent shells can reach · changes apply at once')).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText('Allow a host'), { target: { value: 'api.github.com' } });
     await click(screen.getByRole('button', { name: 'Allow' }));
     expect(screen.getByText('api.github.com')).toBeInTheDocument();
     expect(lastBody('POST', '/api/v1/org/network')).toEqual({ host: 'api.github.com' });
-    await click(screen.getByRole('button', { name: 'Remove api.anthropic.com' }));
-    expect(screen.queryByText('api.anthropic.com')).toBeNull();
+    await click(screen.getByRole('button', { name: 'Remove *.pypi.org' }));
+    expect(screen.queryByText('*.pypi.org')).toBeNull();
+    expect(screen.getByText('deb.debian.org')).toBeInTheDocument();
   });
 });
 

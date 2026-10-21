@@ -510,6 +510,19 @@ func TestAPINetwork(t *testing.T) {
 			t.Error("removed host still in the allowlist file")
 		}
 	}
+	// The permanent host is marked for the web app, which then shows no
+	// Remove for it, and a removal sent anyway is refused: without both,
+	// one click would leave software installs in agents' shells failing.
+	for _, h := range n.Hosts {
+		if h.Permanent != (h.Host == "deb.debian.org") {
+			t.Errorf("permanent flag on %+v", h)
+		}
+	}
+	assertAPIError(t, orgDo(t, srv, "", http.MethodDelete, "/api/v1/org/network/deb.debian.org", "", nil), http.StatusConflict)
+	n = orgOK[apitypes.Network](t, orgGet(t, srv, "/api/v1/org/network"))
+	if !hasHost(n, "deb.debian.org") {
+		t.Errorf("after the refused remove = %+v", n)
+	}
 }
 
 func hasHost(n apitypes.Network, host string) bool {

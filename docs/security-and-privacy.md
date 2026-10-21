@@ -42,11 +42,11 @@ Everything an agent sends out of its sandbox goes through a proxy. The proxy tre
 
 Commands the agent runs, such as `curl`, `pip`, `git` and `apt` and anything else typed into its shell, reach only the hosts on your team's list. Edit it in **Org**, **Network**; changes apply at once. A request to any other host is refused, and the agent sees the refusal.
 
-A new team's list allows Debian's package servers, PyPI, GitHub (including `api.github.com` and `*.githubusercontent.com`) and the Go module proxy, which agents' tools commonly need. It allows no model provider host: a shell never calls the model, and a provider's API is a way to send data to whoever holds an account there.
+A new team's list holds one host, `deb.debian.org`, where Kivali installs the software you approve for agents' shells. It is marked permanent in **Org**, **Network** and cannot be removed. The list allows no model provider host: a shell never calls the model, and a provider's API is a way to send data to whoever holds an account there. For the same reason it allows no code or package host such as GitHub or PyPI; add one when your agents need it.
 
-Teams created before this list changed keep the list they had. It still holds the Anthropic, Amazon Bedrock, Google Vertex AI and Microsoft Foundry hosts and their token services. A shell does not need them, so you can remove them in **Org**, **Network**.
+Teams created before this list changed keep the list they had. It may still hold GitHub, PyPI and the Go module proxy, and for older teams the Anthropic, Amazon Bedrock, Google Vertex AI and Microsoft Foundry hosts and their token services. A shell needs none of them unless your agents do, so you can remove them in **Org**, **Network**.
 
-Each entry covers itself and every name under it: `example.com` also allows `api.example.com`. Within one part of a name, `*` matches any run of characters and `[a-z]` one character, so `*-aiplatform.googleapis.com` allows `us-east5-aiplatform.googleapis.com` and nothing else under `googleapis.com`. The defaults are copied into a team when it is created; after that the list is yours. Remove anything your team does not need, and add hosts as agents need them.
+Each entry covers itself and every name under it: `example.com` also allows `api.example.com`. Within one part of a name, `*` matches any run of characters and `[a-z]` one character, so `*-aiplatform.googleapis.com` allows `us-east5-aiplatform.googleapis.com` and nothing else under `googleapis.com`. The default is copied into a team when it is created; after that the list is yours, apart from `deb.debian.org`. Remove anything your team does not need, and add hosts as agents need them.
 
 ### The agent's own fetches
 
@@ -72,7 +72,7 @@ A web task's browser runs in its own pod, which reaches the public web directly 
 
 The list and the budgets make leaks harder, not impossible. Know these limits when you choose what to allow:
 
-- **Listed hosts that anyone can hold an account on, such as GitHub and PyPI, can still carry data out from a shell.** A command can push a file to a repository its author owns.
+- **A listed host that anyone can hold an account on, such as GitHub or PyPI, can carry data out from a shell.** A command can push a file to a repository its author owns.
 - **A listed name may resolve to a private address.** The proxy refuses the cluster, loopback and metadata for every request, but it lets a listed name reach a private address on your network, because that is how you reach an intranet host. If you list a wildcard DNS service such as `nip.io`, a shell can reach any address on your network through it.
 - **A web task can carry up to 1 KB per task out in its addresses.** The first 64 bytes of each path and query and the first 48 of each host name go uncounted, up to a pool of 1 KB per task, so a task can encode that much data in the addresses it visits.
 - **An agent's own fetches can carry data out, up to the budget.** A web page can lead an agent to send a short secret in an address it fetches. The budget bounds how much, and for now only counts and logs.

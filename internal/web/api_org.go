@@ -558,7 +558,7 @@ func (s *Server) networkView() (apitypes.Network, error) {
 	}
 	out := apitypes.Network{Hosts: make([]apitypes.NetworkHost, 0, len(al.Patterns))}
 	for _, p := range al.Patterns {
-		out.Hosts = append(out.Hosts, apitypes.NetworkHost{Host: p})
+		out.Hosts = append(out.Hosts, apitypes.NetworkHost{Host: p, Permanent: store.PermanentEgressPattern(p)})
 	}
 	return out, nil
 }
@@ -606,6 +606,10 @@ func (s *Server) handleAPINetworkAdd(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleAPINetworkRemove(w http.ResponseWriter, r *http.Request) {
 	host := strings.ToLower(strings.TrimSpace(r.PathValue("host")))
+	if store.PermanentEgressPattern(host) {
+		writeAPIError(w, http.StatusConflict, host+" stays on the list: Kivali installs agents' software from it", "no one; it stays so software installs keep working")
+		return
+	}
 	al, err := s.Store.ReadEgressAllowlist()
 	if err != nil {
 		writeRefusalAPI(w, err)

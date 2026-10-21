@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { apiDelete, apiPost } from '../../api/client';
 import type { Network, NetworkAdd } from '../../api/types.gen';
-import { Button, Icon, ListRow, Text, TextField } from '../../ds';
-import { ErrorBanner, None, RowList, RowSkeletons, SectionHead } from './parts';
+import { Badge, Button, Icon, ListRow, Text, TextField } from '../../ds';
+import { ErrorBanner, RowList, RowSkeletons, SectionHead } from './parts';
 import type { SectionProps } from './sections';
 import { useAction, useResource } from './useResource';
 
@@ -59,19 +59,28 @@ export function NetworkSection({ showHead }: SectionProps) {
       <SectionHead title="Network" show={showHead} meta={n === undefined ? undefined : `${n} ${n === 1 ? 'host' : 'hosts'} agent shells can reach · changes apply at once`} />
       <ErrorBanner error={list.error ?? action.error} {...(action.error ? { onDismiss: action.dismiss } : {})} />
       {!list.data && !list.error && <RowSkeletons />}
-      {list.data && list.data.hosts.length === 0 && <None>No extra hosts. Agent shells reach only what Kivali already allows.</None>}
-      {list.data && list.data.hosts.length > 0 && (
+      {list.data && (
         <RowList>
           {list.data.hosts.map((h) => (
             <ListRow
               key={h.host}
               lead={<Icon name="globe" size={20} />}
               title={<Text variant="code">{h.host}</Text>}
-              trail={
-                <Button variant="ghost" size="sm" aria-label={`Remove ${h.host}`} onClick={() => void remove(h.host)} disabled={action.busy}>
-                  Remove
-                </Button>
-              }
+              {...(h.permanent
+                ? {
+                    meta: (
+                      <>
+                        <Badge variant="outline">Permanent</Badge> Kivali installs approved software from here
+                      </>
+                    ),
+                  }
+                : {
+                    trail: (
+                      <Button variant="ghost" size="sm" aria-label={`Remove ${h.host}`} onClick={() => void remove(h.host)} disabled={action.busy}>
+                        Remove
+                      </Button>
+                    ),
+                  })}
             />
           ))}
         </RowList>

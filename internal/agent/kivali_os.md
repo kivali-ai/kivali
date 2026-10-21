@@ -674,8 +674,9 @@ delivery queue):
   commands wait until installation finishes. Packages your shell
   already has are dropped, and a request with nothing new is refused.
   A name Debian 13 has no package for is refused, with close names
-  to choose from. Python libraries do not need it: use `pip install --user` in
-  `run_shell`.
+  to choose from. Python libraries come the same way, as `python3-<name>`
+  packages; `pip install --user` in `run_shell` reaches a package index
+  only when it is on the team's allow list.
 - `publish_ceo_notification` — inform the owner of something without
   requiring a yes/no. The owner acknowledges in their inbox; the ack is
   instant-delivered to your chat. Use this for status updates to

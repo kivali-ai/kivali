@@ -230,10 +230,14 @@ The proxy serves two kinds of request, told apart by
   the proxy hot-reloads it. A pattern covers its name and every
   subdomain; one with `*` or `[...]` after an optional leading `*.` is
   a per-label glob (`path.Match` on each label, so a wildcard never
-  crosses a dot). The defaults, written once when a team's list does not
-  exist yet, are the dev tooling hosts (Debian, PyPI, GitHub, the Go
-  module proxy) and no model provider host: a shell never calls the
-  model, and a provider's API is somewhere to upload data to. An
+  crosses a dot). The default, written once when a team's list does not
+  exist yet, is `deb.debian.org` alone, where the agent-shell
+  container's apt-get installs the owner's software at start. The store
+  keeps it in every list it reads or writes
+  (`store.PermanentEgressPattern`), the API refuses its removal with
+  409, and the web app shows it with a Permanent badge and no Remove.
+  No model provider or code host: a shell never calls the model, and a
+  host anyone can hold an account on is somewhere to upload data to. An
   existing list is left as it is.
 - **Open mode**, with a valid credential: the agent's own fetches and
   model calls. Any public host is reached, and so is any host on the
