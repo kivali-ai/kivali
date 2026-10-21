@@ -94,7 +94,7 @@ test.describe('demo screens', () => {
     await page.goto('org');
     if (isPhone(page)) {
       // The phone shows the list of sections; the desktop shows every section at once.
-      await expect(page.getByText('How every agent works')).toBeVisible();
+      await expect(page.getByText('How your team works together')).toBeVisible();
     } else {
       await expect(page.getByRole('heading', { name: 'Handbook' })).toBeVisible();
     }
