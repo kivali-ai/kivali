@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -207,20 +208,23 @@ func TestStructuredTaskFailureBeforeSubmitting(t *testing.T) {
 		t.Errorf("job record lacks the driver's error: %+v", jobs)
 	}
 
+	// The body names the task's id, a random 8-hex-digit string, so the
+	// check for the run's error is on its whole text: the exit code's
+	// digits alone can be part of an id. The id here holds them.
+	const runErr, id = "process exited 137", "a1370bcd"
 	var svc2 *SubagentService
 	driver2 := &fakeSubagentDriver{respond: func(req fakeDriveCall) (string, error) {
 		if _, isErr := svc2.SubmitResult("alice", req.SubagentID, json.RawMessage(`{"outcome":"not_found"}`)); isErr {
 			t.Error("valid not_found refused")
 		}
-		return "", fmt.Errorf("process exited 137")
+		return "", errors.New(runErr)
 	}}
 	var del2 *deliveryRecorder
 	svc2, _, _, _, del2 = newSubagentTestServiceWithDeliveries(t, driver2)
-	if _, err := svc2.StartBatch(context.Background(), "alice", structuredArgs(t, quoteSchema)); err != nil {
-		t.Fatalf("StartBatch: %v", err)
-	}
+	task := SubagentTaskInput{Description: "price the renewal", Prompt: "find the price", Schema: json.RawMessage(quoteSchema)}
+	svc2.launch("alice", "", []SubagentTaskInput{task}, []string{id}, 1, "")
 	body = del2.waitFor(1)[0].Content
-	if !strings.Contains(body, ") finished.") || !strings.Contains(body, `"outcome": "not_found"`) || strings.Contains(body, "137") {
+	if !strings.Contains(body, id+" (price the renewal) finished.") || !strings.Contains(body, `"outcome": "not_found"`) || strings.Contains(body, runErr) {
 		t.Errorf("accepted-then-died body:\n%s", body)
 	}
 }
