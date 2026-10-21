@@ -229,6 +229,162 @@ func TestAPIIntegrationApproveAndReject(t *testing.T) {
 	assertAPIError(t, orgGet(t, srv, intBase+"/nope/versions/1.0.0"), http.StatusNotFound)
 }
 
+// crmVersion2 is the fixture's crm at 2.0.0, reaching one more host
+// and with Region's options changed from eu and us to us and apac, so
+// access set for eu does not fit it.
+func crmVersion2(t *testing.T) []byte {
+	t.Helper()
+	m := integrationtest.Manifest("crm", "2.0.0")
+	k := m["kivali"].(map[string]any)
+	k["hosts"] = []any{"api.example.com", "uploads.example.com"}
+	k["access"].(map[string]any)["schema"].(map[string]any)["properties"].(map[string]any)["region"] = map[string]any{"type": "string", "enum": []any{"us", "apac"}, "title": "Region"}
+	return integrationtest.Zip(t, "", m, nil)
+}
+
+// Why this test exists: rolling back is how the owner undoes an
+// approval, and it must run the version rolled back to and nothing
+// else. A superseded version becomes the one in use, the one in use is
+// superseded, the answer is that version's install screen, and the
+// audit names both versions for the owner. Every other state is a
+// 409 that says why, so a stale click cannot run a version the owner
+// never approved, or one the owner turned down. The install screen of
+// a version that is not in use says what it changes from the one that
+// is, so the owner reads a new host before approving it or rolling
+// back to it.
+func TestAPIIntegrationRollBack(t *testing.T) {
+	srv := newTestServer(t)
+	intConnected(t, srv, "crm")
+	first := orgOK[apitypes.IntegrationVersion](t, orgGet(t, srv, intBase+"/crm/versions/1.0.0"))
+	if first.Changes == nil || len(first.Changes) != 0 {
+		t.Errorf("the version in use lists changes: %#v", first.Changes)
+	}
+	if rr := intUpload(t, srv, crmVersion2(t)); rr.Code != http.StatusCreated {
+		t.Fatalf("upload: %d %s", rr.Code, rr.Body.String())
+	}
+	pending := orgOK[apitypes.IntegrationVersion](t, orgGet(t, srv, intBase+"/crm/versions/2.0.0"))
+	if strings.Join(pending.Changes, "|") != "Hosts added: uploads.example.com" {
+		t.Errorf("2.0.0's changes from 1.0.0 = %q", pending.Changes)
+	}
+	if e := assertAPIError(t, intPost(t, srv, intBase+"/crm/versions/2.0.0/rollback"), http.StatusConflict); e.Error != "version 2.0.0 of crm has never run; approve it from its install screen instead" {
+		t.Errorf("roll back to a pending version = %+v", e)
+	}
+	intPost(t, srv, intBase+"/crm/versions/2.0.0/approve")
+	if e := assertAPIError(t, intPost(t, srv, intBase+"/crm/versions/2.0.0/rollback"), http.StatusConflict); e.Error != "version 2.0.0 of crm is the version in use" {
+		t.Errorf("roll back to the version in use = %+v", e)
+	}
+	old := orgOK[apitypes.IntegrationVersion](t, orgGet(t, srv, intBase+"/crm/versions/1.0.0"))
+	if old.State != apitypes.IntegrationVersionStateSuperseded || old.CurrentVersion == nil || *old.CurrentVersion != "2.0.0" || strings.Join(old.Changes, "|") != "Hosts removed: uploads.example.com" {
+		t.Errorf("1.0.0 under 2.0.0 = %+v", old)
+	}
+
+	rolled := orgOK[apitypes.IntegrationVersion](t, intPost(t, srv, intBase+"/crm/versions/1.0.0/rollback"))
+	if rolled.State != apitypes.IntegrationVersionStateApproved || !rolled.Current || rolled.CurrentVersion != nil || rolled.Changes == nil || len(rolled.Changes) != 0 {
+		t.Errorf("rolled back = %+v", rolled)
+	}
+	page := orgOK[apitypes.IntegrationPage](t, orgGet(t, srv, intBase+"/crm"))
+	if page.Summary.Version != "1.0.0" || strings.Join(page.Hosts, ",") != "api.example.com" {
+		t.Errorf("page after the roll back = %+v hosts %v", page.Summary, page.Hosts)
+	}
+	var states []string
+	for _, v := range page.Versions {
+		states = append(states, v.Version+"="+string(v.State))
+	}
+	if strings.Join(states, " ") != "2.0.0=superseded 1.0.0=approved" {
+		t.Errorf("versions = %v", states)
+	}
+	audit := orgOK[apitypes.IntegrationAudit](t, orgGet(t, srv, intBase+"/crm/audit"))
+	if len(audit.Rows) != 1 {
+		t.Fatalf("audit = %+v", audit.Rows)
+	}
+	if row := audit.Rows[0]; row.Agent.Slug != agent.CEOSlug || row.Action != "rollback" || !row.Allowed || row.Reason != "from version 2.0.0 to version 1.0.0" {
+		t.Errorf("audit row = %+v", row)
+	}
+
+	// Rolled back from is superseded, and can be rolled back to in turn.
+	if again := orgOK[apitypes.IntegrationVersion](t, intPost(t, srv, intBase+"/crm/versions/2.0.0/rollback")); again.State != apitypes.IntegrationVersionStateApproved {
+		t.Errorf("roll back to 2.0.0 = %+v", again)
+	}
+	if rr := intUpload(t, srv, intBundle(t, "crm", "3.0.0")); rr.Code != http.StatusCreated {
+		t.Fatal(rr.Body.String())
+	}
+	intPost(t, srv, intBase+"/crm/versions/3.0.0/reject")
+	if e := assertAPIError(t, intPost(t, srv, intBase+"/crm/versions/3.0.0/rollback"), http.StatusConflict); e.Error != "version 3.0.0 of crm was rejected and never runs" {
+		t.Errorf("roll back to a rejected version = %+v", e)
+	}
+	assertAPIError(t, intPost(t, srv, intBase+"/crm/versions/9.9.9/rollback"), http.StatusNotFound)
+	assertAPIError(t, intPost(t, srv, intBase+"/nope/versions/1.0.0/rollback"), http.StatusNotFound)
+	if it, _ := srv.Store.GetIntegration("crm"); it.CurrentVersion != "2.0.0" {
+		t.Errorf("current after the refusals = %q", it.CurrentVersion)
+	}
+}
+
+// Why this test exists: an agent's access is set once and outlives the
+// version it was set under, so approving a version or rolling back to
+// one re-checks every row against the version in use. A row the new
+// form refuses is invalid on the integration's page and on the agent's
+// own tab, with the form's reason, and is not counted as an agent with
+// access; setting it again makes it valid. Without this, the page
+// would show access that grants nothing as access that works.
+func TestAPIIntegrationAccessAfterANewVersion(t *testing.T) {
+	srv := newTestServer(t)
+	intTeam(t, srv, "dana")
+	intConnected(t, srv, "crm")
+	putAccess := func(raw string) apitypes.IntegrationPage {
+		t.Helper()
+		return orgOK[apitypes.IntegrationPage](t, orgJSON(t, srv, http.MethodPut, intBase+"/crm/access/dana", apitypes.AccessWrite{Access: []byte(raw)}))
+	}
+	danaRow := func(page apitypes.IntegrationPage) apitypes.AccessRow {
+		t.Helper()
+		if len(page.Access) != 1 {
+			t.Fatalf("access = %+v", page.Access)
+		}
+		return page.Access[0]
+	}
+	tabInvalid := func() string {
+		t.Helper()
+		tab := orgOK[apitypes.AgentIntegrations](t, orgGet(t, srv, "/api/v1/agents/dana/integrations"))
+		if len(tab.Connected) != 1 {
+			t.Fatalf("tab = %+v", tab)
+		}
+		if tab.Connected[0].Invalid == nil {
+			return ""
+		}
+		return *tab.Connected[0].Invalid
+	}
+	if row := danaRow(putAccess(`{"blogs":["M"],"region":"eu"}`)); row.Invalid != nil {
+		t.Fatalf("under 1.0.0: %+v", row)
+	}
+	intUpload(t, srv, crmVersion2(t))
+	intPost(t, srv, intBase+"/crm/versions/2.0.0/approve")
+	page := orgOK[apitypes.IntegrationPage](t, orgGet(t, srv, intBase+"/crm"))
+	if row := danaRow(page); row.Invalid == nil || *row.Invalid != "Region must be one of us, apac" || row.Summary != "Blogs: M · Region: eu" {
+		t.Errorf("under 2.0.0: %+v", row)
+	}
+	if page.Summary.Agents != 0 {
+		t.Errorf("an invalid row counts as an agent with access: %d", page.Summary.Agents)
+	}
+	if got := tabInvalid(); got != "Region must be one of us, apac" {
+		t.Errorf("tab under 2.0.0: %q", got)
+	}
+
+	page = putAccess(`{"blogs":["M"],"region":"apac"}`)
+	if row := danaRow(page); row.Invalid != nil || page.Summary.Agents != 1 {
+		t.Errorf("set again: %+v, agents %d", row, page.Summary.Agents)
+	}
+	if got := tabInvalid(); got != "" {
+		t.Errorf("tab after setting it again: %q", got)
+	}
+
+	intPost(t, srv, intBase+"/crm/versions/1.0.0/rollback")
+	page = orgOK[apitypes.IntegrationPage](t, orgGet(t, srv, intBase+"/crm"))
+	if row := danaRow(page); row.Invalid == nil || *row.Invalid != "Region must be one of eu, us" {
+		t.Errorf("rolled back to 1.0.0: %+v", row)
+	}
+	if got := tabInvalid(); got != "Region must be one of eu, us" {
+		t.Errorf("tab after the roll back: %q", got)
+	}
+}
+
 // seedIntegrationInstallRequest files an install request from the
 // Integrations engineer in Needs you, as a publish will.
 func seedIntegrationInstallRequest(t *testing.T, srv *Server, name, version string) string {

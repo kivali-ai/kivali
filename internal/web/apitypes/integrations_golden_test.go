@@ -9,6 +9,7 @@ import (
 // set somewhere, so the TypeScript side sees each shape once.
 
 var (
+	integrationEarlier   = time.Date(2026, 10, 20, 9, 0, 0, 0, time.UTC)
 	integrationNow       = time.Date(2026, 10, 21, 9, 30, 0, 0, time.UTC)
 	integrationLater     = time.Date(2026, 10, 21, 10, 0, 0, 0, time.UTC)
 	integrationVersion2  = "1.3.0"
@@ -89,6 +90,8 @@ func goldenIntegrationPage() IntegrationPage {
 		Versions: []IntegrationVersionSummary{
 			{Version: "1.3.0", State: IntegrationVersionStatePending, PublishedAt: integrationLater, PublishedBy: PersonRef{Slug: "integrations-engineer", Name: "Integrations engineer"}, NotesMD: "Adds contacts."},
 			{Version: "1.2.0", State: IntegrationVersionStateApproved, PublishedAt: integrationNow, PublishedBy: PersonRef{Slug: "ceo", Name: "Evan"}, ApprovedAt: &integrationLater, NotesMD: ""},
+			{Version: "1.1.1", State: IntegrationVersionStateRejected, PublishedAt: integrationEarlier, PublishedBy: PersonRef{Slug: "integrations-engineer", Name: "Integrations engineer"}, NotesMD: "Reaches a reporting host."},
+			{Version: "1.1.0", State: IntegrationVersionStateSuperseded, PublishedAt: integrationEarlier, PublishedBy: PersonRef{Slug: "integrations-engineer", Name: "Integrations engineer"}, ApprovedAt: &integrationEarlier, NotesMD: "Blog posts only."},
 		},
 		CanRemove: true,
 	}
@@ -115,6 +118,7 @@ func goldenIntegrationVersion() IntegrationVersion {
 		FileCount:        12,
 		Current:          false,
 		CurrentVersion:   &integrationCurrent,
+		Changes:          []string{"Hosts added: api.hubapi.com", "Access form fields added: Tags, Note"},
 		Findings:         []string{"tools[2] (whoami) has no description"},
 	}
 }
@@ -123,6 +127,7 @@ func goldenIntegrationAudit() IntegrationAudit {
 	return IntegrationAudit{Rows: []IntegrationAuditRow{
 		{At: integrationLater, Agent: PersonRef{Slug: "dana", Name: "Dana"}, Action: "create_post", Allowed: true, Reason: "", DurationMS: 812},
 		{At: integrationNow, Agent: PersonRef{Slug: "lee", Name: "Lee"}, Action: "create_post", Allowed: false, Reason: "Lee has no access to the Marketing blog", DurationMS: 3},
+		{At: integrationEarlier, Agent: PersonRef{Slug: "ceo", Name: "Evan"}, Action: "rollback", Allowed: true, Reason: "from version 1.2.0 to version 1.1.0", DurationMS: 0},
 	}}
 }
 

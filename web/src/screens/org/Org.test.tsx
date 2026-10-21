@@ -1174,9 +1174,9 @@ describe('Integration install screen', () => {
   const PATH = '/org/integrations/hubspot/versions/1.3.0';
   const API = '/api/v1/org/integrations/hubspot/versions/1.3.0';
 
-  // Guards the review itself (integration_version.json): every host, each connection field with Secret on the
-  // sensitive one, each action in words, what the access form asks, the bundle's size, what it replaces and what
-  // the check noted. A fact the person would approve without seeing fails here.
+  // Guards the review itself (integration_version.json): what it changes from the version in use, every host, each
+  // connection field with Secret on the sensitive one, each action in words, what the access form asks, the bundle's
+  // size, what it replaces and what the check noted. A fact the person would approve without seeing fails here.
   it('shows what the version reaches, holds and does before anything runs', async () => {
     const h = await renderOrg(PATH, { desktop: true });
     expect(h.chrome.at(-1)).toEqual({ title: 'HubSpot 1.3.0', back: { to: '/org/integrations/hubspot', label: 'HubSpot' } });
@@ -1185,6 +1185,8 @@ describe('Integration install screen', () => {
     expect(within(screen.getByRole('region', { name: 'Who built it' })).getByText('Integrations engineer (agent)')).toBeInTheDocument();
     expect(within(screen.getByRole('region', { name: 'Version' })).getByText('Replaces version 1.2.0')).toBeInTheDocument();
     expect(within(screen.getByRole('region', { name: 'Version notes' })).getByText('Adds contacts. Reaches one more host.')).toBeInTheDocument();
+    const changes = within(screen.getByRole('region', { name: 'What changes from version 1.2.0' }));
+    expect(changes.getAllByRole('listitem').map((li) => li.textContent)).toEqual(goIntegrationVersion.changes);
     expect(within(screen.getByRole('region', { name: 'Reaches these hosts' })).getByText('api.hubapi.com')).toBeInTheDocument();
 
     const connection = within(screen.getByRole('region', { name: 'The connection needs' }));
@@ -1220,7 +1222,47 @@ describe('Integration install screen', () => {
     expect(h.chrome.at(-1)).toEqual({ title: 'HubSpot 1.3.0', back: { to: '/org/integrations', label: 'Integrations' } });
     expect(within(screen.getByRole('region', { name: 'Access form asks' })).getByText('Access is all or nothing.')).toBeInTheDocument();
     expect(screen.queryByText(/^Replaces version/)).toBeNull();
+    expect(screen.queryByRole('region', { name: /^What changes from version/ })).toBeNull();
     expect(screen.queryByRole('region', { name: 'The check noted' })).toBeNull();
+  });
+
+  // Guards the empty diff: a later version that changes none of what the screen lists says so in one line, rather
+  // than an empty block the person might read as not loaded.
+  it('says when a later version changes no host, secret, action or access field', async () => {
+    await renderOrg(PATH, { routes: { ['GET ' + API]: { ...goIntegrationVersion, changes: [] } } });
+    const changes = within(screen.getByRole('region', { name: 'What changes from version 1.2.0' }));
+    expect(changes.getByText('No change to hosts, secrets, actions or the access form.')).toBeInTheDocument();
+    expect(changes.queryByRole('listitem')).toBeNull();
+  });
+
+  // Guards rolling back from a superseded version's screen: Roll back is its one button (no Approve, no Reject), it
+  // opens the dialog naming the version that stops, the post waits for the confirm, and the screen then opens the
+  // integration's page, where any access that no longer fits is marked.
+  it('rolls back to a superseded version from its screen', async () => {
+    const OLD = '/api/v1/org/integrations/hubspot/versions/1.1.0';
+    const superseded = { ...goIntegrationVersion, version: '1.1.0', state: 'superseded', notes_md: 'Blog posts only.' };
+    const h = await renderOrg('/org/integrations/hubspot/versions/1.1.0', {
+      routes: { ['GET ' + OLD]: superseded, ['POST ' + OLD + '/rollback']: { ...superseded, state: 'approved', current: true, current_version: undefined, changes: [] } },
+    });
+    expect(screen.getByText('Replaced')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Approve and install' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Reject' })).toBeNull();
+    await click(screen.getByRole('button', { name: 'Roll back' }));
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).getByText('Roll back to version 1.1.0?')).toBeInTheDocument();
+    expect(within(dialog).getByText(/^Version 1\.2\.0 stops and 1\.1\.0 runs in its place\./)).toBeInTheDocument();
+    expect(called('POST', OLD + '/rollback')).toBe(false);
+    await click(within(dialog).getByRole('button', { name: 'Roll back' }));
+    expect(called('POST', OLD + '/rollback')).toBe(true);
+    expect(h.router.state.location.pathname).toBe('/org/integrations/hubspot');
+  });
+
+  // Guards a rejected version's screen: it says Rejected and offers nothing to press, since a rejected version never
+  // runs and cannot be rolled back to.
+  it('shows a rejected version with no buttons', async () => {
+    await renderOrg(PATH, { routes: { ['GET ' + API]: { ...goIntegrationVersion, state: 'rejected' } } });
+    expect(screen.getByText('Rejected')).toBeInTheDocument();
+    expect(screen.queryAllByRole('button')).toEqual([]);
   });
 
   // Guards approval: nothing is posted until Approve and install is clicked, which posts .../approve and lands on
@@ -1484,25 +1526,123 @@ describe('Integration page', () => {
   });
 
   // Guards the history blocks: the waiting version's banner leads to its install screen, versions are listed newest
-  // first with their state, each linking to its install screen, and the latest calls say who called, what, and how
-  // it went (integration_audit.json).
+  // first with their state (integration_page.json has one of each), each linking to its install screen, only the
+  // superseded one offers Roll back, and the latest calls say who called, what, and how it went
+  // (integration_audit.json), with your roll back named as one rather than read as a failed call.
   it('shows the waiting version, every version and the latest calls', async () => {
     const h = await renderOrg(PATH);
     const versions = within(screen.getByRole('region', { name: 'Versions' }));
     const links = versions.getAllByRole('link');
-    expect(links.map((l) => l.getAttribute('href'))).toEqual(['/org/integrations/hubspot/versions/1.3.0', '/org/integrations/hubspot/versions/1.2.0']);
+    expect(links.map((l) => l.getAttribute('href'))).toEqual([
+      '/org/integrations/hubspot/versions/1.3.0',
+      '/org/integrations/hubspot/versions/1.2.0',
+      '/org/integrations/hubspot/versions/1.1.1',
+      '/org/integrations/hubspot/versions/1.1.0',
+    ]);
     expect(within(links[0]!).getByText('Needs your approval')).toBeInTheDocument();
     expect(within(links[0]!).getByText('Adds contacts.')).toBeInTheDocument();
     expect(within(links[1]!).getByText('In use')).toHaveClass('kv-badge--success');
+    expect(within(links[2]!).getByText('Rejected')).toBeInTheDocument();
+    expect(within(links[3]!).getByText('Replaced')).toBeInTheDocument();
+    // Roll back sits beside the superseded version's link, never inside one, and nowhere else.
+    expect(versions.getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual(['Roll back to version 1.1.0']);
+    for (const l of links) expect(within(l).queryByRole('button')).toBeNull();
 
     const calls = within(screen.getByRole('region', { name: 'Latest calls' }));
     expect(calls.getAllByText('Create post')).toHaveLength(2);
     expect(calls.getByText('Allowed')).toBeInTheDocument();
     expect(calls.getByText('Refused: Lee has no access to the Marketing blog')).toBeInTheDocument();
     expect(calls.getByText('812 ms')).toBeInTheDocument();
+    const rollback = calls.getByText('Roll back').closest('tr') as HTMLElement;
+    expect(within(rollback).getByText('From version 1.2.0 to version 1.1.0')).toBeInTheDocument();
+    expect(within(rollback).getByText('Evan')).toBeInTheDocument();
+    expect(calls.queryByText(/^Failed: from version/)).toBeNull();
 
     await click(screen.getByRole('button', { name: 'Review' }));
     expect(h.router.state.location.pathname).toBe('/org/integrations/hubspot/versions/1.3.0');
+  });
+
+  // Guards rolling back from the page: Roll back only opens the dialog, which names the version that stops and the one
+  // that runs and says access stays as it is; the post waits for its confirm, then the page and the latest calls are
+  // read again, so the list shows the version rolled back to in use and Roll back moves to the version it replaced.
+  it('rolls back to a superseded version after asking, and the versions list follows', async () => {
+    const versionsAfter = goIntegrationPage.versions.map((v) =>
+      v.version === '1.1.0' ? { ...v, state: 'approved' } : v.version === '1.2.0' ? { ...v, state: 'superseded' } : v,
+    );
+    const rolledBack = { ...goIntegrationPage, summary: { ...goIntegrationPage.summary, version: '1.1.0' }, versions: versionsAfter };
+    let pageNow: unknown = goIntegrationPage;
+    await renderOrg(PATH, {
+      routes: {
+        ['GET ' + API]: () => pageNow,
+        ['POST ' + API + '/versions/1.1.0/rollback']: () => {
+          pageNow = rolledBack;
+          return { ...goIntegrationVersion, version: '1.1.0', state: 'approved', current: true, current_version: undefined, changes: [] };
+        },
+      },
+    });
+    const auditReads = () => calls.filter((c) => c.method === 'GET' && c.url === API + '/audit').length;
+    const readsBefore = auditReads();
+    await click(screen.getByRole('button', { name: 'Roll back to version 1.1.0' }));
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).getByText('Roll back to version 1.1.0?')).toBeInTheDocument();
+    expect(
+      within(dialog).getByText('Version 1.2.0 stops and 1.1.0 runs in its place. Agents’ access stays as it is; rows that no longer fit 1.1.0’s access form are marked.'),
+    ).toBeInTheDocument();
+    expect(called('POST', API + '/versions/1.1.0/rollback')).toBe(false);
+    await click(within(dialog).getByRole('button', { name: 'Roll back' }));
+    expect(called('POST', API + '/versions/1.1.0/rollback')).toBe(true);
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(within(document.querySelector('header.app-int-head') as HTMLElement).getByText('Version 1.1.0')).toBeInTheDocument();
+    const versions = within(screen.getByRole('region', { name: 'Versions' }));
+    const links = versions.getAllByRole('link');
+    expect(within(links[3]!).getByText('In use')).toBeInTheDocument();
+    expect(within(links[1]!).getByText('Replaced')).toBeInTheDocument();
+    expect(versions.getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual(['Roll back to version 1.2.0']);
+    expect(auditReads()).toBe(readsBefore + 1);
+  });
+
+  // Guards a refused roll back (a 409, such as a version answered in another tab): the dialog stays open with the
+  // server's sentence, so the click does not look like it worked.
+  it('keeps the roll back dialog open with the refusal', async () => {
+    await renderOrg(PATH, { routes: { ['POST ' + API + '/versions/1.1.0/rollback']: fail(409, 'version 1.1.0 of hubspot is the version in use', 'no one; reload to see what is waiting') } });
+    await click(screen.getByRole('button', { name: 'Roll back to version 1.1.0' }));
+    await click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Roll back' }));
+    expect(within(screen.getByRole('dialog')).getByText(/version 1\.1\.0 of hubspot is the version in use/i)).toBeInTheDocument();
+  });
+
+  // Guards the banner over access that no longer fits the version in use: it counts the invalid rows in words (one,
+  // or several), asks for them to be set again, and is gone when every row fits. integration_page.json has one.
+  it('says how many access rows no longer fit the version in use', async () => {
+    const one = '1 access row no longer fits this version’s access form. Set it again.';
+    let h = await renderOrg(PATH);
+    expect(screen.getByText(one).closest('[role="alert"]')).toHaveClass('kv-banner--warning');
+    h.unmount();
+
+    const invalid = goIntegrationPage.access[1]!.invalid;
+    const both = { ...goIntegrationPage, access: goIntegrationPage.access.map((r) => ({ ...r, invalid })) };
+    h = await renderOrg(PATH, { routes: { ['GET ' + API]: both } });
+    expect(screen.getByText('2 access rows no longer fit this version’s access form. Set them again.')).toBeInTheDocument();
+    h.unmount();
+
+    const fits = { ...goIntegrationPage, access: [goIntegrationPage.access[0]!] };
+    await renderOrg(PATH, { routes: { ['GET ' + API]: fits } });
+    expect(screen.queryByText(/no longer fits? this version’s access form/)).toBeNull();
+  });
+
+  // Guards Setting the row again: a Change that the server accepts answers with the page, whose row is no longer
+  // invalid, and the banner goes with it.
+  it('clears the banner once the invalid row is set again', async () => {
+    const fixed = { ...goIntegrationPage, access: goIntegrationPage.access.map((r) => ({ ...r, invalid: undefined })) };
+    await renderOrg(PATH, { routes: { ['PUT ' + API + '/access/lee']: fixed } });
+    expect(screen.getByText(/^1 access row no longer fits/)).toBeInTheDocument();
+    await click(screen.getByRole('button', { name: 'Change Lee’s access' }));
+    const dialog = within(screen.getByRole('dialog'));
+    fireEvent.change(dialog.getByRole('textbox', { name: 'Tags (optional)' }), { target: { value: 'launch' } });
+    await click(dialog.getByRole('button', { name: 'Add' }));
+    await click(dialog.getByRole('button', { name: 'Save access' }));
+    expect(called('PUT', API + '/access/lee')).toBe(true);
+    expect(screen.queryByText(/^1 access row no longer fits/)).toBeNull();
+    expect(screen.queryByText(/^Invalid: /)).toBeNull();
   });
 });
 

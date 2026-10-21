@@ -31,6 +31,10 @@ import (
 //	audit.jsonl                      one row per call (IntegrationAuditRow)
 //	log.jsonl                        its log, capped (IntegrationLogRow, integration_logs.go)
 //
+// Every version stored is kept, its bundle with it, whatever its state,
+// until the integration is removed: rolling back runs a superseded
+// version's bundle again.
+//
 // A connection's secret fields are never here: they live in a
 // Kubernetes Secret the record names (internal/secrets). Every write
 // is a read-modify-write under the integration's own lock.
@@ -48,6 +52,9 @@ var (
 	// ErrIntegrationVersionNotPending refuses approving or rejecting a
 	// version that is not waiting for approval.
 	ErrIntegrationVersionNotPending = errors.New("the version is not waiting for approval")
+	// ErrIntegrationVersionNotSuperseded refuses rolling back to a
+	// version that a later one did not replace in use.
+	ErrIntegrationVersionNotSuperseded = errors.New("the version is not one a later version replaced")
 	// ErrIntegrationNotApproved is returned where an approved version
 	// is needed and there is none.
 	ErrIntegrationNotApproved = errors.New("no version of the integration is approved")
@@ -89,9 +96,10 @@ const (
 	IntegrationVersionPending IntegrationVersionState = "pending"
 	// IntegrationVersionApproved is the version in use.
 	IntegrationVersionApproved IntegrationVersionState = "approved"
-	// IntegrationVersionRejected was turned down.
+	// IntegrationVersionRejected was turned down; it never runs.
 	IntegrationVersionRejected IntegrationVersionState = "rejected"
-	// IntegrationVersionSuperseded was in use before a later approval.
+	// IntegrationVersionSuperseded was in use before another version
+	// was approved or rolled back to; it can be rolled back to.
 	IntegrationVersionSuperseded IntegrationVersionState = "superseded"
 )
 
@@ -449,29 +457,53 @@ func (s *FSStore) StoreIntegrationVersion(name string, b *integration.Bundle, re
 // follow it. A version that is not pending is
 // ErrIntegrationVersionNotPending.
 func (s *FSStore) ApproveIntegrationVersion(name, version string, now time.Time) error {
+	_, err := s.makeIntegrationVersionCurrent(name, version, IntegrationVersionPending, ErrIntegrationVersionNotPending, now)
+	return err
+}
+
+// RollBackIntegrationVersion makes a superseded version the one in use
+// again, as approving does: it becomes approved at now, the version in
+// use becomes superseded, and the integration's current version and
+// display name follow it. It returns the version it replaced. The
+// bundle that runs is the one stored with it: every version is kept,
+// in every state, until the integration is removed. A version that is
+// not superseded is ErrIntegrationVersionNotSuperseded.
+func (s *FSStore) RollBackIntegrationVersion(name, version string, now time.Time) (replaced string, err error) {
+	return s.makeIntegrationVersionCurrent(name, version, IntegrationVersionSuperseded, ErrIntegrationVersionNotSuperseded, now)
+}
+
+// makeIntegrationVersionCurrent makes version, which must be in state
+// from (or it is notFrom), the approved version in use, superseding
+// the one in use before it, and returns that one's version ("" for
+// none).
+func (s *FSStore) makeIntegrationVersionCurrent(name, version string, from IntegrationVersionState, notFrom error, now time.Time) (string, error) {
 	unlock := s.lockIntegration(name)
 	defer unlock()
 	it, err := s.GetIntegration(name)
 	if err != nil {
-		return err
+		return "", err
 	}
 	v, m, err := s.GetIntegrationVersion(name, version)
 	if err != nil {
-		return err
+		return "", err
 	}
-	if v.State != IntegrationVersionPending {
-		return fmt.Errorf("%s %s is %s: %w", name, version, v.State, ErrIntegrationVersionNotPending)
+	if v.State != from {
+		return "", fmt.Errorf("%s %s is %s: %w", name, version, v.State, notFrom)
 	}
 	at := now.UTC()
 	v.State, v.ApprovedAt = IntegrationVersionApproved, &at
 	if err := s.writeIntegrationVersion(name, v); err != nil {
-		return err
+		return "", err
 	}
-	if prev := it.CurrentVersion; prev != "" && prev != version {
+	prev := it.CurrentVersion
+	if prev == version {
+		prev = ""
+	}
+	if prev != "" {
 		if pv, _, err := s.GetIntegrationVersion(name, prev); err == nil && pv.State == IntegrationVersionApproved {
 			pv.State = IntegrationVersionSuperseded
 			if err := s.writeIntegrationVersion(name, pv); err != nil {
-				return err
+				return "", err
 			}
 		}
 	}
@@ -479,7 +511,10 @@ func (s *FSStore) ApproveIntegrationVersion(name, version string, now time.Time)
 	if m.DisplayName != "" {
 		it.DisplayName = m.DisplayName
 	}
-	return s.writeIntegration(it)
+	if err := s.writeIntegration(it); err != nil {
+		return "", err
+	}
+	return prev, nil
 }
 
 // RejectIntegrationVersion turns a pending version down at now. A
@@ -519,10 +554,10 @@ func (s *FSStore) SetIntegrationEnabled(name string, enabled bool) error {
 	return s.writeIntegration(it)
 }
 
-// RemoveIntegration deletes an integration: every version, its
-// connections' records, every agent's access, its audit and its log. The
-// connections' Secrets are the caller's to delete first. A built-in
-// integration is ErrIntegrationBuiltin.
+// RemoveIntegration deletes an integration: every version, whatever its
+// state, its connections' records, every agent's access, its audit and
+// its log. The connections' Secrets are the caller's to delete first.
+// A built-in integration is ErrIntegrationBuiltin.
 func (s *FSStore) RemoveIntegration(name string) error {
 	unlock := s.lockIntegration(name)
 	defer unlock()

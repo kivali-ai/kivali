@@ -268,8 +268,8 @@ func (r *integrationRegistry) Run(ctx context.Context) {
 	}
 }
 
-// Changed asks Run for a reconcile: after an approval, a rejection, the
-// switch, a removal or a connection change.
+// Changed asks Run for a reconcile: after an approval, a rejection, a
+// roll back, the switch, a removal or a connection change.
 func (r *integrationRegistry) Changed() {
 	if r == nil {
 		return

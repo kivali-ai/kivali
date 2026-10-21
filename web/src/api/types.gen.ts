@@ -1971,9 +1971,9 @@ export interface AccessRow {
   summary: string;
   set_at: string /* RFC 3339 */;
   /**
-   * Invalid says why this row no longer fits the integration's
-   * access form (a newer version changed it). An invalid row grants
-   * nothing until it is set again.
+   * Invalid says why this row no longer fits the access form of the
+   * version in use (a version approved or rolled back to changed
+   * it). An invalid row grants nothing until it is set again.
    */
   invalid?: string;
 }
@@ -2038,7 +2038,11 @@ export interface IntegrationVersionSummary {
  * screen. It says, in words, what the version is, who built it, every
  * host it reaches, every secret the connection needs, every action,
  * what the access form asks, and the bundle's size. Approving runs it;
- * nothing runs before.
+ * nothing runs before. It is also the answer of POST
+ * .../versions/{version}/approve and .../reject (a pending version),
+ * and of POST .../versions/{version}/rollback, which makes a
+ * superseded version the one in use again in place of the current one
+ * (409 for any other state).
  */
 export interface IntegrationVersion {
   name: string;
@@ -2075,6 +2079,14 @@ export interface IntegrationVersion {
    */
   current_version?: string;
   /**
+   * Changes is what this version changes from CurrentVersion, in
+   * words, one line each: hosts, connection fields, actions and
+   * access form fields added or removed ("Hosts added:
+   * api.example.com"). Empty without a CurrentVersion, and when none
+   * of those differ.
+   */
+  changes: string[];
+  /**
    * Findings are what the bundle check reported for this version:
    * warnings only, since a bundle with an error is never stored.
    */
@@ -2098,20 +2110,26 @@ export interface IntegrationAudit {
   rows: IntegrationAuditRow[];
 }
 /**
- * IntegrationAuditRow is one call through the integration.
+ * IntegrationAuditRow is one call through the integration, or your
+ * roll back to another version.
  */
 export interface IntegrationAuditRow {
   at: string /* RFC 3339 */;
   /**
-   * Agent is who called; you, for Test connection and the options an
-   * access form lists.
+   * Agent is who called; you, for Test connection, the options an
+   * access form lists and a roll back.
    */
   agent: PersonRef;
+  /**
+   * Action is the action called, without the integration's prefix;
+   * rollback, with you as the agent, for a roll back.
+   */
   action: string;
   allowed: boolean;
   /**
    * Reason says why a call was refused, or what failed; empty when
-   * the call went through.
+   * the call went through. For a roll back it names the versions:
+   * "from version 1.1.0 to version 1.0.0".
    */
   reason: string;
   duration_ms: number /* int64 */;

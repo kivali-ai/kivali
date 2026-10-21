@@ -96,9 +96,10 @@ A bundle is a directory, kept under
 
 Versions are `MAJOR.MINOR.PATCH`. A version you publish waits for the
 owner, and the version in use stays until the owner approves a newer
-one. A version number already stored, in any state, is refused, so
-every change gets a new number. To go back to earlier code, publish it
-again under a higher number.
+one. The owner can also roll back to an earlier version from the
+integration's page, and that version's code runs again in place of the
+one in use. A version number already stored, in any state, is still
+refused, so every change gets a new number.
 
 ## When something is wrong
 

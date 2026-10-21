@@ -112,6 +112,21 @@
   margin-bottom: 0;
 }
 
+/* A superseded version: its row, and Roll back beside the row's link. The wrapper carries the hairline. */
+.app-int-version {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-right: calc(var(--space-2) + var(--space-1));
+  border-bottom: 1px solid var(--line);
+}
+
+.app-int-version > .app-int-row {
+  flex: 1;
+  min-width: 0;
+  border-bottom: 0;
+}
+
 .app-int-excerpt {
   min-width: 0;
   overflow: hidden;

@@ -180,9 +180,9 @@ type AccessRow struct {
 	// own page.
 	Summary string    `json:"summary"`
 	SetAt   time.Time `json:"set_at"`
-	// Invalid says why this row no longer fits the integration's
-	// access form (a newer version changed it). An invalid row grants
-	// nothing until it is set again.
+	// Invalid says why this row no longer fits the access form of the
+	// version in use (a version approved or rolled back to changed
+	// it). An invalid row grants nothing until it is set again.
 	Invalid *string `json:"invalid,omitempty"`
 }
 
@@ -235,7 +235,11 @@ type IntegrationVersionSummary struct {
 // screen. It says, in words, what the version is, who built it, every
 // host it reaches, every secret the connection needs, every action,
 // what the access form asks, and the bundle's size. Approving runs it;
-// nothing runs before.
+// nothing runs before. It is also the answer of POST
+// .../versions/{version}/approve and .../reject (a pending version),
+// and of POST .../versions/{version}/rollback, which makes a
+// superseded version the one in use again in place of the current one
+// (409 for any other state).
 type IntegrationVersion struct {
 	Name        string                  `json:"name"`
 	DisplayName string                  `json:"display_name"`
@@ -262,6 +266,12 @@ type IntegrationVersion struct {
 	// CurrentVersion is the version in use now, when there is one and
 	// it is not this one, so the screen can say what approving replaces.
 	CurrentVersion *string `json:"current_version,omitempty"`
+	// Changes is what this version changes from CurrentVersion, in
+	// words, one line each: hosts, connection fields, actions and
+	// access form fields added or removed ("Hosts added:
+	// api.example.com"). Empty without a CurrentVersion, and when none
+	// of those differ.
+	Changes []string `json:"changes"`
 	// Findings are what the bundle check reported for this version:
 	// warnings only, since a bundle with an error is never stored.
 	Findings []string `json:"findings"`
@@ -284,16 +294,20 @@ type IntegrationAudit struct {
 	Rows []IntegrationAuditRow `json:"rows"`
 }
 
-// IntegrationAuditRow is one call through the integration.
+// IntegrationAuditRow is one call through the integration, or your
+// roll back to another version.
 type IntegrationAuditRow struct {
 	At time.Time `json:"at"`
-	// Agent is who called; you, for Test connection and the options an
-	// access form lists.
-	Agent   PersonRef `json:"agent"`
-	Action  string    `json:"action"`
-	Allowed bool      `json:"allowed"`
+	// Agent is who called; you, for Test connection, the options an
+	// access form lists and a roll back.
+	Agent PersonRef `json:"agent"`
+	// Action is the action called, without the integration's prefix;
+	// rollback, with you as the agent, for a roll back.
+	Action  string `json:"action"`
+	Allowed bool   `json:"allowed"`
 	// Reason says why a call was refused, or what failed; empty when
-	// the call went through.
+	// the call went through. For a roll back it names the versions:
+	// "from version 1.1.0 to version 1.0.0".
 	Reason     string `json:"reason"`
 	DurationMS int64  `json:"duration_ms"`
 }
