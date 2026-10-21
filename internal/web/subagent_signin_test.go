@@ -404,6 +404,33 @@ func TestASignInWaitEndsWhenItsReopenedBrowserIsLostToo(t *testing.T) {
 	}
 }
 
+// TestAReopenedBrowserLostBeforeTheReopenIsRecordedEndsTheWait: the
+// registry's report that the reopened browser was lost can reach the
+// task before core has recorded the reopen. That browser is lost too:
+// the resumed run is told its browser could not be opened again, not
+// that the person has a new tab.
+func TestAReopenedBrowserLostBeforeTheReopenIsRecordedEndsTheWait(t *testing.T) {
+	run := startWaitingTask(t, goneRun(t), nil)
+	run.openWindow(t, true)
+	run.loseBrowser(t)
+	link := run.playBrowser(t)
+	cmd := link.next(t, browserpod.TypeCommand)
+	// The loss is reported while the reopen's navigation is in flight,
+	// then the navigation returns.
+	run.svc.browserLost("alice", "vendor.com")
+	run.mu.Lock()
+	b := run.browser
+	run.mu.Unlock()
+	run.reg.onMessage(b, browserpod.Message{Type: browserpod.TypeResult, ID: cmd.msg.ID, OK: true, Text: "Page: Vendor"}, nil)
+	if body := run.del.waitFor(1)[0].Content; !strings.Contains(body, `"blocked"`) {
+		t.Errorf("delivered = %s", body)
+	}
+	hist, err := readSubagentHistory(subagentChatPath(run.svc.Store.Root(), "alice", run.id))
+	if err != nil || len(hist) == 0 || hist[len(hist)-1].Content != signInBrowserGoneLine {
+		t.Errorf("transcript lacks core's line: %+v, %v", hist, err)
+	}
+}
+
 // TestWindowClosedBeforeTheWaitBeganDoesNotResume: a window that went
 // before the task asked for anyone is not a person who has signed in.
 // The report of its close, which comes the grace after it went, is
