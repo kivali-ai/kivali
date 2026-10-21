@@ -90,7 +90,7 @@ endif
 .DEFAULT_GOAL := help
 
 .PHONY: help build test ci licenses nightly run dev-vm dev-up dev-load test-vm test-mac \
-        images release release-assets api-types ds-sync visual-compare clean
+        images release release-assets desktop-trial api-types ds-sync visual-compare clean
 
 help: ## this list
 	@grep -hE '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  make %-15s %s\n", $$1, $$2}'
@@ -698,19 +698,20 @@ vm-release: require-release-version require-explicit-version
 # is stamped with, here and in desktop-app/Makefile).
 DESKTOP_VERSION = $(shell perl -ne 'print "$$1" and exit if /^  "version": "([^"]+)"/' desktop-app/src-tauri/tauri.conf.json)
 
-# What desktop-release builds and collects on this machine. macOS: the
+# What desktop-release and desktop-trial build and collect on this
+# machine, named by the desktop version (tauri.conf.json's). macOS: the
 # dmg, and Kivali.app.tar.gz with its .sig for the updater, from an arm64
 # VM image (root.squashfs). Windows: the NSIS installer, which is also
 # the updater's artifact, and its .sig, from an amd64 one (root.vhdx).
 ifeq ($(OS),Windows_NT)
   DESKTOP_VM_ROOT := root.vhdx
   DESKTOP_VM_ARCH := amd64
-  DESKTOP_INSTALLER = nsis/Kivali_$(VERSION:v%=%)_x64-setup.exe
-  DESKTOP_UPDATER = nsis/Kivali_$(VERSION:v%=%)_x64-setup.exe.sig
+  DESKTOP_INSTALLER = nsis/Kivali_$(DESKTOP_VERSION)_x64-setup.exe
+  DESKTOP_UPDATER = nsis/Kivali_$(DESKTOP_VERSION)_x64-setup.exe.sig
 else
   DESKTOP_VM_ROOT := root.squashfs
   DESKTOP_VM_ARCH := arm64
-  DESKTOP_INSTALLER = dmg/Kivali_$(VERSION:v%=%)_aarch64.dmg
+  DESKTOP_INSTALLER = dmg/Kivali_$(DESKTOP_VERSION)_aarch64.dmg
   DESKTOP_UPDATER = macos/Kivali.app.tar.gz macos/Kivali.app.tar.gz.sig
 endif
 
@@ -762,6 +763,21 @@ else
 	$(MAKE) -C desktop-app build-bundle
 	cp $(addprefix desktop-app/src-tauri/target/release/bundle/,$(DESKTOP_INSTALLER) $(DESKTOP_UPDATER)) dist/
 endif
+
+# desktop-trial builds this tree into an installer to try on this
+# machine, with nothing a release needs: no release version, no signing
+# material, no updater artifacts. It is dev-vm (the four :dev images and
+# the dev chart baked into a VM image for this machine's architecture;
+# ENGINE as there) and then desktop-app's build-trial, the release
+# profile around that image (macOS: ad-hoc signed, not notarized), and
+# collects the installer into dist/. With the VM image already in
+# vm/build/out, `make -C desktop-app build-trial` alone rebuilds the app.
+desktop-trial: ## an installer of this tree to try on this machine, into dist/ (dmg or exe)
+	$(MAKE) dev-vm ARCH=$(DESKTOP_VM_ARCH)
+	$(MAKE) -C desktop-app build-trial
+	@mkdir -p dist
+	cp $(addprefix desktop-app/src-tauri/target/release/bundle/,$(DESKTOP_INSTALLER)) dist/
+	@ls -l dist/$(notdir $(DESKTOP_INSTALLER))
 
 # ---- Helm chart -------------------------------------------------------
 #

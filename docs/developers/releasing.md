@@ -119,7 +119,9 @@ what it skips:
   no installed app or org is ever offered it.
 - The version is stamped into the desktop's files in the build only
   (`scripts/bump-version.sh`, not committed); `make desktop-release DEV=1`
-  builds with `desktop-app`'s `build-trial`.
+  builds with `desktop-app`'s `build-trial`. The same build of this tree
+  on this machine, with no release version, is `make desktop-trial`
+  ([desktop-app.md](desktop-app.md), "Running it").
 
 Delete a dev build when done with it: `gh release delete
 vX.Y.Z-dev.N --cleanup-tag`.

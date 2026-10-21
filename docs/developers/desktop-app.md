@@ -164,6 +164,15 @@ make -C desktop-app icons         # the app icon and the tray icons (needs rsvg-
 npm --prefix desktop-app run dev  # the bundled pages alone, in a browser, on the dev mock
 ```
 
+To try this tree as the installed app, `make desktop-trial` at the
+repository root builds the VM image from it (`make dev-vm`: the four
+`:dev` images and the dev chart, for this machine's architecture;
+`ENGINE` as there) and then `build-trial` around it, and puts the
+installer in `dist/`: `Kivali_<version>_aarch64.dmg` on macOS,
+`Kivali_<version>_x64-setup.exe` on Windows, `<version>` being
+tauri.conf.json's. With the VM image already in `vm/build/out`,
+`make -C desktop-app build-trial` alone rebuilds the app around it.
+
 The Makefile follows `TRIPLE` (the Rust host by default): a Windows
 triple gives the sidecar an `.exe` suffix, builds the real supervisor
 with `GOOS=windows CGO_ENABLED=0`, skips `codesign` and the Apple
@@ -1856,8 +1865,9 @@ limit is 2 GB.
   a pipe); started with a flag but no parent console (a shortcut), it
   prints nowhere. The debug installer's `Kivali.exe` is a console
   program, so its lines stay in its own console window, and closing that
-  window closes the app; `make build-trial` (the release profile without
-  updater artifacts) is the build to try an install with.
+  window closes the app; `make desktop-trial` at the root (`build-trial`,
+  the release profile without updater artifacts, around a VM image of
+  this tree) is the build to try an install with.
 - **The team window's frame guard.** A frame loads only what `team_nav`
   loads as is, so a team page cannot show another origin, a look-alike
   sign-in page included, inside the team window. Beyond that: on
