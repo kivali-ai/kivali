@@ -27,6 +27,40 @@ func TestDefaultHandbooksHaveTheShape(t *testing.T) {
 	}
 }
 
+// About and Values ship as placeholders, since what a team is and what
+// it values are its own and a default that presumed them would be
+// read as fact; Communicating and Working together ship as defaults a
+// team can run on from day one. The first messages send the Chief of
+// Staff after the placeholders by name, so a default that filled one
+// in, or emptied another, would leave the setup flow pointing at the
+// wrong sections.
+func TestDefaultHandbooksPlaceholderWhatIsTheTeams(t *testing.T) {
+	for _, tc := range []struct{ name, text string }{
+		{"work", Handbook},
+		{"personal", PersonalHandbook},
+	} {
+		sections := map[string]string{}
+		var cur string
+		for _, line := range strings.Split(tc.text, "\n") {
+			if rest, ok := strings.CutPrefix(line, "## "); ok {
+				cur = rest
+				continue
+			}
+			sections[cur] += line + "\n"
+		}
+		for _, s := range []string{"About", "Values"} {
+			if !strings.Contains(sections[s], "This section is a placeholder.") {
+				t.Errorf("the %s handbook's %s is not a placeholder", tc.name, s)
+			}
+		}
+		for _, s := range []string{"Communicating", "Working together"} {
+			if strings.Contains(sections[s], "placeholder") || strings.Count(sections[s], "\n- ") < 3 {
+				t.Errorf("the %s handbook's %s is not a default a team can run on", tc.name, s)
+			}
+		}
+	}
+}
+
 // The work handbook is handbook.md byte for byte and the personal one
 // handbook_personal.md; a team that never set a kind gets the work
 // one, as every team did before kinds existed.

@@ -7,7 +7,7 @@ export interface DoneStepProps {
   fileCount: number;
   /** Whether the Chief of Staff was asked to write the handbook from the files. */
   fromFiles: boolean;
-  /** A personal team: its Chief of Staff asks a few questions, then drafts About you. */
+  /** A personal team: its Chief of Staff asks a few questions, then drafts About and Values. */
   personal?: boolean;
   onHome(): void;
 }
@@ -17,7 +17,7 @@ export function DoneStep({ fileCount, fromFiles, personal = false, onHome }: Don
   const drafting = fromFiles && fileCount > 0;
   let next = 'It will introduce itself in Home, and Needs you will show its first message.';
   if (personal) {
-    next = 'It will send you a few questions in Needs you, then propose an About you section for you to approve.';
+    next = 'It will send you a few questions in Needs you, then propose the About and Values sections for you to approve.';
   } else if (drafting) {
     next =
       'It read your ' +

@@ -69,7 +69,7 @@ Kivali applies the change the moment you approve. There is no other way for an a
 
 The handbook is your team's: what it is for, what it values, how it communicates and how it works together. Every agent reads it on every turn, on top of the rules Kivali gives every agent for how messages, assignments, files and memory work.
 
-It has four sections, always in this order: **About**, **Values**, **Communicating** and **Working together**. You can add subsections under any of them, but not a fifth section, and none can be dropped; an edit or a proposal that changes the shape is refused and says which section is at fault. About starts as a placeholder, and filling it in is the most useful edit you can make. Your Chief of Staff can draft it for you from your project files or from a few questions. The other three start with sensible defaults, written for a business on a work team and for a person's life on a personal one.
+It has four sections, always in this order: **About**, **Values**, **Communicating** and **Working together**. You can add subsections under any of them, but not a fifth section, and none can be dropped; an edit or a proposal that changes the shape is refused and says which section is at fault. About and Values start as placeholders, and filling them in is the most useful edit you can make. Your Chief of Staff can draft them for you from your project files or from a few questions. Communicating and Working together start with sensible defaults, written for a business on a work team and for a person's life on a personal one.
 
 Read or edit the handbook in **Org**, **Handbook**. Most changes come as proposals from your Chief of Staff. Agents read the saved text from their next turn.
 

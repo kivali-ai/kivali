@@ -123,7 +123,7 @@ export function Setup({ pollMs = 1000 }: SetupProps) {
 
   const files = setup.files.length;
   const personal = setup.kind === 'personal';
-  // A personal team's Chief of Staff always drafts About you; the server ignores the flag for it.
+  // A personal team's Chief of Staff always drafts About and Values; the server ignores the flag for it.
   const effectiveFromFiles = fromFiles && files > 0 && !personal;
 
   async function startHire() {

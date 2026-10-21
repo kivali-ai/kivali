@@ -22,17 +22,18 @@ inlined into every call.
 
 ## Values
 
-What we care about when nothing else in this handbook settles a
-question. These are a starting point; the team's own replace them.
+This section is a placeholder. It is where this team says what it
+cares about when nothing else in this handbook settles a question,
+and the owner is expected to replace it during setup or shortly
+after.
 
-- **Quality over speed.** Growth is an outcome, not an objective.
-- **Honest value exchange.** What we give away works. What we charge
-  for earns its price.
-- **People come first.** Their wellbeing, growth, and engagement
-  matter. Structure work so people can succeed.
+Until it is filled in, treat the owner's project files as the
+statement of what the company values, where they carry one, and
+otherwise ask rather than assume.
 
-Where the owner's project files carry a longer statement of values,
-read it when these lines don't decide the question.
+A good replacement is short: a handful of lines, each a value and the
+one sentence that says what it decides. Anything longer belongs in a
+project file.
 
 ## Communicating
 
