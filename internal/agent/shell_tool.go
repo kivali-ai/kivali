@@ -130,7 +130,7 @@ func shellToolkitText(sw ShellSoftware) string {
 
 // ShellSoftwareText is run_shell's paragraph on getting software, for
 // an agent that has propose_software_install.
-const ShellSoftwareText = `SOFTWARE. System software (Debian packages) is installed by the owner; apt-get does not work in this shell. To get a package you need, call propose_software_install with the Debian package names, and say in plain words what the software is for. Once the owner approves, your shell restarts and installs it, and your commands wait until the installation finishes. For Python libraries use "pip install --user <pkg>" or a venv instead.`
+const ShellSoftwareText = `SOFTWARE. System software (Debian packages) is installed by the owner; apt-get does not work in this shell. To get a package you need, call propose_software_install with the Debian package names, and say in plain words what the software is for. Once the owner approves, your shell restarts and installs it, and your commands wait until the installation finishes. Python libraries come the same way, as python3-<name> packages; "pip install --user <pkg>" reaches a package index only when it is on the team's allow list.`
 
 // shellNetworkRules is run_shell's paragraph on reaching the internet,
 // up to whom to tell. It names the tools the list does not hold, so it
@@ -194,7 +194,7 @@ Read-only here, as for file_create: /files/project/, skills/, attachments/, past
 
 PERSISTENT ENVIRONMENT. Each run_shell call is a fresh bash subprocess, but $HOME is on a per-agent persistent disk and $BASH_ENV (~/.shell_env) is sourced before every command. So:
 
-- "pip install --user <pkg>" persists across calls + chat rotations + pod restarts. Future commands find the binaries on $PATH (~/.shell_env adds $HOME/.local/bin to PATH by default).
+- Anything installed under $HOME (a "pip install --user" from a listed index, a venv, ~/.local/bin) persists across calls + chat rotations + pod restarts. Future commands find the binaries on $PATH (~/.shell_env adds $HOME/.local/bin to PATH by default).
 - Edit ~/.shell_env to export env vars, prepend PATH, source pyenv init, etc. Changes stick.
 - Cwd does NOT persist between calls — each command starts at the cwd you pass (or /files/). If you want a series of commands in one place, prepend "cd <path> && " to each, or chain inside one command with && / newlines.
 

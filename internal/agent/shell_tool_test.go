@@ -17,11 +17,13 @@ func TestShellToolNamesTheReportedPackages(t *testing.T) {
 	}
 }
 
-// The software paragraph sends the agent to propose_software_install,
-// keeps pip --user, and names no operator build step.
+// The software paragraph sends the agent to propose_software_install
+// for Python libraries too, ties pip to the allow list (a fresh team's
+// list has no package index, so an unconditional "use pip" would send
+// every agent into a refusal), and names no operator build step.
 func TestShellToolSoftwareParagraph(t *testing.T) {
 	d := ShellTool().Description
-	for _, want := range []string{"propose_software_install", "Debian package names", "pip install --user", "your commands wait until the installation finishes"} {
+	for _, want := range []string{"propose_software_install", "Debian package names", "python3-<name>", "pip install --user", "on the team's allow list", "your commands wait until the installation finishes"} {
 		if !strings.Contains(d, want) {
 			t.Errorf("description lacks %q:\n%s", want, d)
 		}

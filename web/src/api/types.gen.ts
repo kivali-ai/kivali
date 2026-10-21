@@ -1998,10 +1998,14 @@ export interface Network {
 /**
  * NetworkHost is one allowed host. A host covers itself and every
  * subdomain; a leading "*." means the same. Past that, "*" and "[a-z]"
- * match within one label ("*-aiplatform.googleapis.com").
+ * match within one label ("*-aiplatform.googleapis.com"). Permanent
+ * marks a host Kivali itself needs (deb.debian.org, where agents'
+ * software installs come from): it is on every list, and a DELETE of
+ * it is refused with 409.
  */
 export interface NetworkHost {
   host: string;
+  permanent: boolean;
 }
 /**
  * NetworkAdd is the body of POST /api/v1/org/network.

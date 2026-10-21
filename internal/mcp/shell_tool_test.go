@@ -86,6 +86,13 @@ func TestShellToolDescriptionIsDerivedFromTheExecutor(t *testing.T) {
 			t.Errorf("%s description does not list the executor's packages:\n%s", name, d)
 		}
 	}
+	// Both tie pip to the allow list: a fresh team's list has no package
+	// index, so a plain "use pip" would send the agent into a refusal.
+	for name, d := range map[string]string{"full": full.Description, "subagent": sub.Description} {
+		if !strings.Contains(d, "python3-<name>") || !strings.Contains(d, "on the team's allow list") {
+			t.Errorf("%s description does not say where Python libraries come from:\n%s", name, d)
+		}
+	}
 	// The full agent asks for software itself; a subagent, which has no
 	// propose_* tools, asks its caller.
 	if !strings.Contains(full.Description, "propose_software_install") {

@@ -1,10 +1,12 @@
 {
   "hosts": [
     {
-      "host": "*.pypi.org"
+      "host": "*.pypi.org",
+      "permanent": false
     },
     {
-      "host": "api.anthropic.com"
+      "host": "deb.debian.org",
+      "permanent": true
     }
   ]
 }

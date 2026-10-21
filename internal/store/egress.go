@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -20,9 +21,9 @@ import (
 // every subdomain, "files.pypi.org" allows that subtree only. A
 // leading "*." is accepted and means the same as the bare form; IP
 // literals match exactly. A pattern holding "*" or "[" past that is a
-// per-label glob (cmd/egress-proxy, matchGlob). Kept
-// order-independent — we sort on write so diffs in the YAML file stay
-// readable.
+// per-label glob (cmd/egress-proxy, matchGlob). Every list holds
+// permanentEgressPatterns. Kept order-independent — we sort on write
+// so diffs in the YAML file stay readable.
 type EgressAllowlist struct {
 	Patterns []string `yaml:"patterns"`
 }
@@ -32,37 +33,47 @@ type EgressAllowlist struct {
 // and hot-reloads on mtime change.
 const egressAllowlistFilename = "allowed_egress.yaml"
 
-// defaultEgressPatterns seeds a fresh install's agent shell list,
-// written once when the file does not exist yet: the dev tooling hosts
-// (Debian apt, PyPI, GitHub, Go module proxy) shell commands tend to
-// reach for. Kept liberal because the owner can prune them in
-// Org → Network; missing entries are more disruptive than over-broad
-// ones.
+// permanentEgressPatterns are the hosts Kivali itself needs an agent
+// shell to reach, so every list holds them: deb.debian.org, where the
+// software an owner installs into agents' shells comes from (apt-get
+// runs in the shell container at start, through the proxy without a
+// credential; see Dockerfile.agent-shell). A fresh install's list is
+// exactly these. ReadEgressAllowlist and WriteEgressAllowlist put them
+// back into any list that lacks them, so no edit, hand-written file or
+// restored backup removes them. Every other host is the owner's to add
+// in Org → Network: the proxy refuses an unlisted host with its cause,
+// and the agent tells the owner.
 //
 // No model provider host is seeded. A shell never calls the model (the
 // agent's CLI does, with its runtime's credential), and a provider's
 // API is a way out for data: a key planted in the shell could upload
-// files to its holder's own account.
-var defaultEgressPatterns = []string{
-	"deb.debian.org",
-	"security.debian.org",
-	"*.pypi.org",
-	"*.pythonhosted.org",
-	"github.com",
-	"*.githubusercontent.com",
-	"api.github.com",
-	"proxy.golang.org",
-	"sum.golang.org",
+// files to its holder's own account. The same goes for any host anyone
+// can hold an account on, such as GitHub or PyPI, so none is seeded.
+var permanentEgressPatterns = []string{"deb.debian.org"}
+
+// PermanentEgressPattern reports whether p is a host every list holds.
+func PermanentEgressPattern(p string) bool {
+	return slices.Contains(permanentEgressPatterns, p)
 }
 
-// ReadEgressAllowlist returns the current allowlist. If the file does
-// not yet exist, a default is seeded to disk and returned — the proxy
-// watcher picks it up on its next poll.
+// withPermanent returns patterns plus the permanent hosts, normalized.
+// The caller's slice is left as it is.
+func withPermanent(patterns []string) []string {
+	all := make([]string, 0, len(patterns)+len(permanentEgressPatterns))
+	all = append(all, patterns...)
+	all = append(all, permanentEgressPatterns...)
+	return normalizePatterns(all)
+}
+
+// ReadEgressAllowlist returns the current allowlist, the permanent
+// hosts included. If the file does not yet exist, the default is
+// seeded to disk and returned — the proxy watcher picks it up on its
+// next poll.
 func (s *FSStore) ReadEgressAllowlist() (EgressAllowlist, error) {
 	path := s.path(egressAllowlistFilename)
 	b, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
-		al := EgressAllowlist{Patterns: append([]string(nil), defaultEgressPatterns...)}
+		al := EgressAllowlist{Patterns: withPermanent(nil)}
 		if werr := s.WriteEgressAllowlist(al); werr != nil {
 			return al, werr
 		}
@@ -75,16 +86,17 @@ func (s *FSStore) ReadEgressAllowlist() (EgressAllowlist, error) {
 	if err := yaml.Unmarshal(b, &al); err != nil {
 		return EgressAllowlist{}, err
 	}
+	al.Patterns = withPermanent(al.Patterns)
 	return al, nil
 }
 
-// WriteEgressAllowlist persists the allowlist atomically. Patterns
-// are normalized (trim, lowercase, dedup) and sorted so the YAML
-// file diffs remain readable across edits. If a sync path is
-// configured, a second copy is written there so the egress-proxy
-// sidecar can hot-reload.
+// WriteEgressAllowlist persists the allowlist atomically, with the
+// permanent hosts added. Patterns are normalized (trim, lowercase,
+// dedup) and sorted so the YAML file diffs remain readable across
+// edits. If a sync path is configured, a second copy is written there
+// so the egress-proxy sidecar can hot-reload.
 func (s *FSStore) WriteEgressAllowlist(al EgressAllowlist) error {
-	cleaned := normalizePatterns(al.Patterns)
+	cleaned := withPermanent(al.Patterns)
 	b, err := yaml.Marshal(EgressAllowlist{Patterns: cleaned})
 	if err != nil {
 		return err

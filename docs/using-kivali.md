@@ -134,7 +134,7 @@ There is no spending cap. What moves your cost:
 
 ## Network
 
-**Org**, **Network** lists the hosts an agent's shell commands can reach from its sandbox, such as a download or a package install. An agent's own web fetches are not limited to the list. Type a host under **Allow a host** and choose **Allow**: `example.com` allows it and everything under it (`api.example.com`); `api.example.com` allows only that. Changes apply at once. See [Security and privacy](security-and-privacy.md#network-access).
+**Org**, **Network** lists the hosts an agent's shell commands can reach from its sandbox, such as a download or a package install. An agent's own web fetches are not limited to the list. Type a host under **Allow a host** and choose **Allow**: `example.com` allows it and everything under it (`api.example.com`); `api.example.com` allows only that. Changes apply at once. One entry, `deb.debian.org`, is marked permanent: Kivali installs the software you approve for agents from it, so it cannot be removed. See [Security and privacy](security-and-privacy.md#network-access).
 
 ## Software
 
