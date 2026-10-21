@@ -14,9 +14,11 @@ import (
 
 // EgressAllowlist is the hostname-pattern set the egress proxy holds
 // the agent shells to: what a command in an agent's agent-shell
-// container (curl, pip, git, apt) may reach. A request that presents an
-// agent runtime's credential (the agent's own CLI and its subagents,
-// see internal/egresscred) is not held to it. Each pattern covers
+// container (curl, pip, git, apt) may reach, together with that agent's
+// own hosts (Agent.NetworkHosts, egress_network.go). A request that
+// presents an agent runtime's credential (the agent's own CLI and its
+// subagents, see internal/egresscred) is not held to it, and neither is
+// an exempt agent's (Agent.NetworkExempt). Each pattern covers
 // itself and everything below it — "pypi.org" allows the apex and
 // every subdomain, "files.pypi.org" allows that subtree only. A
 // leading "*." is accepted and means the same as the bare form; IP

@@ -34,8 +34,8 @@ flowchart LR
   shell --- scratch
   runtime --- scratch
   cli -- proxy + credential --> proxy
-  shell -- proxy, no credential --> proxy
-  proxy --> internet((the public web:<br/>the shell only reaches listed hosts))
+  shell -- proxy + shell credential --> proxy
+  proxy --> internet((the public web:<br/>the shell reaches listed hosts,<br/>unless its agent is exempt))
 ```
 
 ### The server (core)
@@ -100,7 +100,7 @@ lost.
 | --- | --- | --- |
 | `prepare-scratch` (init) | `kivali` | `kivali prepare-scratch`: mounts the whole per-agent scratch PVC and creates its two halves, owned by the pod's user |
 | `agent` | `kivali` | `kivali agent --slug=<slug> --uds=<dir>/core/core.sock` (`agent_cmd.go`, `internal/agentpod/runtime.go`): holds the events stream to core, drives the warm `claude` CLI and its subagent CLIs. Mounts its half of scratch at `/scratch`, the UDS dir's `core/` subdirectory, the agent-shell socket dir, and from the data PVC only the provider home (`/data/claude-home`). The only container that sees the Claude sign-in. When the CLI's sign-in changes (what `claude auth status` reports, or `settings.json`; re-checked when `.credentials.json` or `settings.json` changes), the runner registry respawns the warm CLI with `--resume` at the agent's next turn (`internal/claudeagent/signin.go`) |
-| `agent-shell` | `kivali-agent-shell` | `cmd/agent-shell`, `internal/agentshell`: an HTTP-over-UDS daemon on `/run/kivali-agent-shell/sock` (an emptyDir shared with `agent`) that runs `run_shell` and every `file_*` tool. The only container that mounts the agent's `/files/`, with `HOME=/scratch/home` on its own half of scratch. Serves as 65532; with software to install it starts as root, installs it in a root child and drops before it serves ([files-and-publishing.md](files-and-publishing.md#software-in-the-agent-shell)) |
+| `agent-shell` | `kivali-agent-shell` | `cmd/agent-shell`, `internal/agentshell`: an HTTP-over-UDS daemon on `/run/kivali-agent-shell/sock` (an emptyDir shared with `agent`, which also holds the shell's egress proxy credential, `proxy-credential`; see the egress proxy below) that runs `run_shell` and every `file_*` tool. The only container that mounts the agent's `/files/`, with `HOME=/scratch/home` on its own half of scratch. Serves as 65532; with software to install it starts as root, installs it in a root child and drops before it serves ([files-and-publishing.md](files-and-publishing.md#software-in-the-agent-shell)) |
 
 The agent-shell's `/files/` is the agent's tree on the data PVC
 (`agents/<slug>/memory/`), with the core-managed subtrees
@@ -221,69 +221,107 @@ to it and never resolves them. The pod's spec carries the address, so
 changing it changes the spec hash and every agent pod is recreated once
 on the upgrade that introduces it.
 
-The proxy serves two kinds of request, told apart by
+The proxy serves four kinds of request, told apart by
 `Proxy-Authorization`:
 
-- **Allowlist mode**, with no credential: the agent's shell. The host
-  must match the allowlist, a file the server writes from
-  `/data/allowed_egress.yaml` (Org → Network) into a shared emptyDir;
-  the proxy hot-reloads it. A pattern covers its name and every
-  subdomain; one with `*` or `[...]` after an optional leading `*.` is
-  a per-label glob (`path.Match` on each label, so a wildcard never
-  crosses a dot). The default, written once when a team's list does not
-  exist yet, is `deb.debian.org` alone, where the agent-shell
-  container's apt-get installs the owner's software at start. The store
-  keeps it in every list it reads or writes
-  (`store.PermanentEgressPattern`), the API refuses its removal with
-  409, and the web app shows it with a Permanent badge and no Remove.
-  No model provider or code host: a shell never calls the model, and a
-  host anyone can hold an account on is somewhere to upload data to. An
-  existing list is left as it is.
-- **Open mode**, with a valid credential: the agent's own fetches and
-  model calls. Any public host is reached, and so is any host on the
-  allowlist, under the allowlist's address rules. What the agent sends
-  is counted against a budget.
+- **Allowlist mode**, with no credential: the agent-shell container's
+  software install at start, and a shell command that runs before its
+  runtime has handed the shell its credential. The host must match the
+  allowlist, a file the server writes from `/data/allowed_egress.yaml`
+  (Org → Network) into a shared emptyDir; the proxy hot-reloads it. A
+  pattern covers its name and every subdomain; one with `*` or `[...]`
+  after an optional leading `*.` is a per-label glob (`path.Match` on
+  each label, so a wildcard never crosses a dot). The default, written
+  once when a team's list does not exist yet, is `deb.debian.org`
+  alone, where the agent-shell container's apt-get installs the owner's
+  software at start. The store keeps it in every list it reads or
+  writes (`store.PermanentEgressPattern`), the API refuses its removal
+  with 409, and the web app shows it with a Permanent badge and no
+  Remove. No model provider or code host: a shell never calls the
+  model, and a host anyone can hold an account on is somewhere to
+  upload data to. An existing list is left as it is.
+- **Shell mode**, with an agent's shell credential: a command in that
+  agent's shell. The host must match the allowlist or one of the
+  agent's own hosts, in the same pattern language: `network_hosts` in
+  its `agent.yaml`, which the owner edits on the agent's About tab,
+  under Security (`GET` and `POST /api/v1/agents/{slug}/network`,
+  `DELETE .../network/{host}`; `store.AddAgentNetworkHost`). A refusal
+  reads `<host> is not on the team's allow list.`, the same as in
+  allowlist mode, which `run_shell`'s notice matches. Nothing is
+  counted.
+- **Open mode**, with an agent runtime's own credential: the agent's
+  own fetches and model calls. Any public host is reached, and so is
+  any host on the allowlist, under the allowlist's address rules. What
+  the agent sends is counted against a budget.
+- **Exempt mode**, with either credential of an agent whose network
+  limits are off: `network_exempt` in its `agent.yaml`, the Remove all
+  network limits for this agent switch under Security
+  (`POST /api/v1/agents/{slug}/network/exempt`). Any public host is
+  reached, and so are the hosts the agent's shell mode reaches, under
+  the allowlist's address rules. Nothing is counted against the budget.
+  Org → Network lists these agents (`Network.Exempt` on
+  `GET /api/v1/org/network`) and the Team page marks them
+  (`AgentSummary.NetworkExempt`).
 
-A credential that is present but wrong gets 407. In both modes the proxy
+A credential that is present but wrong gets 407. In every mode the proxy
 resolves the host once, checks every address and dials only one that
 passed (`guard.go`), for CONNECT and plain HTTP alike. Always refused:
 loopback, link-local (cloud metadata) and the ranges named by
 `--deny-cidr`, which the chart sets to the pod CIDR, the Service CIDR
 (`networkPolicy.podCIDR`, `networkPolicy.serviceCIDR`) and the node's
-own address (`HOST_IP`, from the downward API). Open mode also refuses
-private, carrier-grade NAT, multicast and reserved ranges and the IPv6
-forms that embed an IPv4 address. Allowlist mode lets the private ranges
-through, and so does open mode for a host on the allowlist, so an
-operator can list an intranet host. A listed name may
+own address (`HOST_IP`, from the downward API). Open and exempt mode
+also refuse, for a host on no list, private, carrier-grade NAT,
+multicast and reserved ranges and the IPv6 forms that embed an IPv4
+address. Allowlist and shell mode let the private ranges through, and
+so do open and exempt mode for a listed host, so an operator can list
+an intranet host. A listed name may
 resolve to a private address, and a wildcard DNS service on the list
 reaches any of them; that is accepted and stated in
-[../security-and-privacy.md](../security-and-privacy.md). `--open-deny-cidr` adds ranges refused in open mode only; the chart
+[../security-and-privacy.md](../security-and-privacy.md). `--open-deny-cidr` adds ranges refused where open mode's address rules apply; the chart
 passes `networkPolicy.browserEgress.except`, so the agent's own fetches
 are kept off what browser pods are, Azure's WireServer included, which
-the proxy also refuses in both modes as metadata.
+the proxy also refuses in every mode as metadata.
 
-**The credential.** When `kivali agent` starts it draws a 32-byte random
-secret (`internal/egresscred`) and registers its SHA-256 with core over
-`core.sock` (`POST /v1/egress/credential`, retried until core answers).
-A new registration replaces the agent's old one. Core keeps the hashes
-in `/data/egress_agents.json` (excluded from backups, since a hash
-belongs to the runtime that drew its secret; dropped when the agent is
-offboarded) and mirrors them, with the model provider's exact hosts, to
+**The credentials.** When `kivali agent` starts it draws two 32-byte
+random secrets (`internal/egresscred`), its own and its shell's, and
+registers their SHA-256 with core over `core.sock`
+(`POST /v1/egress/credential` with `sha256` and `shell_sha256`, retried
+until core answers, and again on every events reconnect). A new
+registration replaces the agent's old one. Core keeps the hashes in
+`/data/egress_agents.json` (`agents` and `shells`; excluded from
+backups, since a hash belongs to the runtime that drew its secret;
+dropped when the agent is offboarded) and mirrors them to
 `EGRESS_AGENTS_SYNC_PATH` (`/etc/egress/agents.json` in the chart) for
-the proxy, which hot-reloads the file and re-reads it on an unknown
-credential before refusing, so a new pod's first call does not wait for
-the poll. The model hosts come from the CLI's own sign-in status
+the proxy, with what the proxy needs beside them (`store.EgressAgents`):
+`agent_hosts`, each active agent's own hosts; `exempt`, the active
+agents with no network limits; and `model_hosts`, the model provider's
+exact hosts. Core writes the mirror again on every registration and
+every change to an agent's network settings. The proxy hot-reloads the
+file, and re-reads it on an unknown credential before refusing, so a
+new pod's first call does not wait for the poll, and on a shell-mode
+refusal, so a host the owner has just added lets the agent's next
+command through. The model hosts come from the CLI's own sign-in status
 (`internal/claudeauth/hosts.go`), re-worked whenever the sign-in files
 change.
 
-The secret lives in the runtime's memory and in the environment of the
-processes the runtime starts: `HTTPS_PROXY=http://<slug>:<secret>@<ip>`
-for each Claude CLI run (`Options.Env`). Never the pod spec, so never
-the Kubernetes API. The agent-shell container has the bare proxy URL
-and no secret. The runtime scrubs the secret from every request it
-sends to core, and from the CLI's stderr and the stdin mirror it writes
-to disk, because the shell can read the agent's chats and an error
-message could quote the proxy URL.
+The runtime's own secret lives in the runtime's memory and in the
+environment of the processes the runtime starts:
+`HTTPS_PROXY=http://<slug>:<secret>@<ip>` for each Claude CLI run
+(`Options.Env`). Never the pod spec, so never the Kubernetes API. The
+agent-shell container never has it. The shell's secret lives in the
+runtime's memory; in `proxy-credential` (`agentshell.ProxyCredentialFile`),
+a 0600 file holding the credentialed proxy URL, which the runtime
+writes once core has accepted the hash into the socket directory, the
+pod-local emptyDir the two containers share as the same user; and in the
+proxy variables of each command the agent-shell daemon runs, since the
+daemon reads the file for every command (before it exists, a command
+gets the bare proxy URL). It grants only the shell's allowance: the
+team's list and the agent's own hosts, or, for an exempt agent, what
+the exemption grants. The runtime scrubs both secrets from every
+request it sends to core, and from the CLI's stderr and the stdin
+mirror it writes to disk, because the shell can read the agent's chats
+and an error message could quote the proxy URL; the daemon scrubs the
+shell's from each command's output.
 
 Every Claude CLI run, the agent's and each subagent's, gets
 `--strict-mcp-config`, `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` and
@@ -319,14 +357,17 @@ record is a ClientHello naming that host; a tunnel that names another
 host or sends anything else is counted from its first byte (a `COUNT`
 line). The proxy sees the TLS server name, not the HTTP host inside the
 tunnel, so this stops domain fronting on a CDN only because the CDN
-requires the two to agree. Flags: `--budget-conn` (32 KB per connection),
+requires the two to agree. An exempt agent's traffic is not counted at
+all, and its connections are never refused for the budget. Flags:
+`--budget-conn` (32 KB per connection),
 `--budget-10m` (256 KB), `--budget-day` (4 MB) and `--enforce-budget`,
 off by default. Off, the proxy counts and logs; on, an agent over a
 window limit is held and its new open-mode connections are refused, and
 a connection over its cap is closed. The proxy logs one line per
 connection and refusal on stdout: `CONN` (agent, mode, host, bytes up
 and down), `DENY` (the reason) and `OVER` (the limit crossed, once per
-crossing). `--max-conns-per-source` (256) caps the connections open
+crossing). The mode is one of `allowlist`, `shell`, `open` and
+`exempt`; the agent is `-` in allowlist mode. `--max-conns-per-source` (256) caps the connections open
 from each pod address; one over the cap gets a 503 and a
 `DENY source=... reason=connections` line. A client's idle keep-alive
 connection is closed after two minutes, and a tunnel lives at most ten.
@@ -370,7 +411,7 @@ There is no database. Everything durable is a plain file under
   skill_settings.json         which skills are enabled
   usage.jsonl                 one record per model call: tokens and cost
   allowed_egress.yaml         the allowlist for agents' shells
-  egress_agents.json          each agent runtime's proxy credential hash (not backed up)
+  egress_agents.json          each agent runtime's two proxy credential hashes, its own and its shell's (not backed up)
   branding/                   org name, logo and derived favicons
   claude-home/                the CLI's HOME: its sign-in and settings
   agents/<slug>/              one directory per agent (below)
@@ -379,7 +420,7 @@ There is no database. Everything durable is a plain file under
 
 ```
 /data/agents/<slug>/
-  agent.yaml                  identity and settings
+  agent.yaml                  identity and settings, its own network hosts and exemption among them
   role.md                     the role, written at hire
   agent_memory.md             what the agent knows; it edits this itself
   agent_memory_habits.md      learned rules of behaviour

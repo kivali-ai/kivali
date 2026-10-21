@@ -23,6 +23,12 @@
 // only container in the pod that mounts /files/: run_shell and the
 // file_* tools both write it from here.
 //
+// Network. A command's proxy variables carry the shell's egress proxy
+// credential, which the agent runtime writes beside the socket
+// (agentshell.ProxyCredentialFile), and its output is scrubbed of it;
+// before the file exists they carry the bare proxy URL. The software
+// install below keeps the bare URL.
+//
 // Software. With --install, the container starts as root so the
 // daemon can install those Debian packages. The order is fixed:
 //
@@ -161,6 +167,9 @@ func main() {
 			ReadRoots: readRoots,
 			Packages:  packages,
 			Install:   inst,
+			// The agent runtime writes the shell's proxy credential
+			// beside the socket, on the emptyDir both containers mount.
+			ProxyCredentialPath: filepath.Join(filepath.Dir(*socketPath), agentshell.ProxyCredentialFile),
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 	}

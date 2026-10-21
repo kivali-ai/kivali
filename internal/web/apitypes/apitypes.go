@@ -210,6 +210,9 @@ type AgentSummary struct {
 	Created    time.Time  `json:"created"`
 	// ArchivedAt is set only on archived agents.
 	ArchivedAt *time.Time `json:"archived_at,omitempty"`
+	// NetworkExempt is true when the agent has no network limits (the
+	// switch on its About tab, Security); the Team page shows a badge.
+	NetworkExempt bool `json:"network_exempt"`
 }
 
 // AgentsResponse is GET /api/v1/agents. Agents is in tree order;

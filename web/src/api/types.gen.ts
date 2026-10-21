@@ -475,6 +475,11 @@ export interface AgentSummary {
    * ArchivedAt is set only on archived agents.
    */
   archived_at?: string /* RFC 3339 */;
+  /**
+   * NetworkExempt is true when the agent has no network limits (the
+   * switch on its About tab, Security); the Team page shows a badge.
+   */
+  network_exempt: boolean;
 }
 /**
  * AgentsResponse is GET /api/v1/agents. Agents is in tree order;
@@ -1994,6 +1999,19 @@ export interface SkillDowngrade {
  */
 export interface Network {
   hosts: NetworkHost[];
+  /**
+   * Exempt lists the agents with no network limits (the switch on the
+   * agent's About tab, Security): their commands and fetches reach any
+   * public host, with no byte budget. Never null.
+   */
+  exempt: NetworkExemptAgent[];
+}
+/**
+ * NetworkExemptAgent is one agent whose network limits are off.
+ */
+export interface NetworkExemptAgent {
+  slug: string;
+  name: string;
 }
 /**
  * NetworkHost is one allowed host. A host covers itself and every
@@ -2008,10 +2026,42 @@ export interface NetworkHost {
   permanent: boolean;
 }
 /**
- * NetworkAdd is the body of POST /api/v1/org/network.
+ * NetworkAdd is the body of POST /api/v1/org/network and of POST
+ * /api/v1/agents/{slug}/network: one host to allow, under NetworkHost's
+ * rules. The team's list keeps a host it already has and answers 200;
+ * an agent's list answers 409 and adds nothing.
  */
 export interface NetworkAdd {
   host: string;
+}
+/**
+ * AgentNetwork is GET /api/v1/agents/{slug}/network and the answer to
+ * every mutation under it: where this agent's commands can connect
+ * beyond the team's list, and whether the limits apply at all.
+ */
+export interface AgentNetwork {
+  /**
+   * Team is the team's list (Org, Network), which this agent's
+   * commands reach too. Read-only here.
+   */
+  team: NetworkHost[];
+  /**
+   * Own is the agent's own additions, the part POST and DELETE
+   * .../network/{host} change. Sorted, never null.
+   */
+  own: string[];
+  /**
+   * Exempt is true when this agent has no network limits: its
+   * commands and fetches reach any public host, of any size, with no
+   * byte budget, and Kivali neither stops nor counts it.
+   */
+  exempt: boolean;
+}
+/**
+ * AgentNetworkExempt is the body of POST /api/v1/agents/{slug}/network/exempt.
+ */
+export interface AgentNetworkExempt {
+  exempt: boolean;
 }
 
 //////////

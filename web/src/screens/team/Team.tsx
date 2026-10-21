@@ -8,6 +8,7 @@ import {
   AgentAvatar,
   AgentState,
   BREAKPOINT_TABBAR,
+  Badge,
   Card,
   ContextCount,
   EmptyState,
@@ -47,6 +48,11 @@ function AgentRow({ node, summary, size }: { node: TreeNode; summary: AgentSumma
           {node.roleTitle && node.roleTitle !== node.name && <span>{node.roleTitle}</span>}
           <StateDot node={node} />
           <ContextCount value={node.contextPct} />
+          {summary?.network_exempt && (
+            <Badge tone="signal" variant="soft">
+              No network limits
+            </Badge>
+          )}
         </>
       }
       trail={caption ? <span className="app-team-caption">{caption}</span> : undefined}

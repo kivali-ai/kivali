@@ -23,7 +23,7 @@ func TestShellToolNamesTheReportedPackages(t *testing.T) {
 // every agent into a refusal), and names no operator build step.
 func TestShellToolSoftwareParagraph(t *testing.T) {
 	d := ShellTool().Description
-	for _, want := range []string{"propose_software_install", "Debian package names", "python3-<name>", "pip install --user", "on the team's allow list", "your commands wait until the installation finishes"} {
+	for _, want := range []string{"propose_software_install", "Debian package names", "python3-<name>", "pip install --user", "allows that host for your commands", "your commands wait until the installation finishes"} {
 		if !strings.Contains(d, want) {
 			t.Errorf("description lacks %q:\n%s", want, d)
 		}
@@ -75,7 +75,7 @@ func TestShellProxyRefused(t *testing.T) {
 // to reach the host.
 func TestShellProxyRefusalNotices(t *testing.T) {
 	for _, n := range []string{ShellProxyRefusalNotice, SubagentShellProxyRefusalNotice} {
-		if !strings.Contains(n, "not on the team's allow list") {
+		if !strings.Contains(n, "not one your commands may reach") {
 			t.Errorf("notice lacks the cause: %q", n)
 		}
 		for _, other := range []string{"WebFetch", "WebSearch", "web subagent", "browser"} {

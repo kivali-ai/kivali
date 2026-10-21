@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -69,11 +70,16 @@ exec bash -c "$KIVALI_USER_CMD"
 // stdout/stderr are each captured in a 256 KiB buffer; when full the
 // remainder is dropped silently and a truncation marker is appended
 // so the consumer knows the buffer isn't authoritative.
-func RunCommand(ctx context.Context, cwd, command, overlaySrc, overlayDst string, timeout time.Duration) (ExecResponse, error) {
+//
+// proxyURL, when non-empty, is the shell's credentialed proxy URL
+// (ProxyCredentialFile): the command's proxy variables carry it in
+// place of the daemon's bare one (bashEnv). The caller scrubs it from
+// the output.
+func RunCommand(ctx context.Context, cwd, command, overlaySrc, overlayDst string, timeout time.Duration, proxyURL string) (ExecResponse, error) {
 	cctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	env := bashEnv()
+	env := bashEnv(proxyURL)
 	var cmd *exec.Cmd
 	if overlaySrc == "" {
 		cmd = exec.CommandContext(cctx, "bash", "-c", command)
@@ -135,7 +141,9 @@ func RunCommand(ctx context.Context, cwd, command, overlaySrc, overlayDst string
 // file bash sources at the start of every non-interactive shell —
 // this is the hook agents use to make their environment changes
 // stick (export new vars, prepend to PATH, source pyenv init).
-func bashEnv() []string {
+//
+// shellProxyURL is the shell's credentialed proxy URL, or empty.
+func bashEnv(shellProxyURL string) []string {
 	pathEnv := os.Getenv("PATH")
 	if pathEnv == "" {
 		pathEnv = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
@@ -151,10 +159,17 @@ func bashEnv() []string {
 	if be := os.Getenv("BASH_ENV"); be != "" {
 		env = append(env, "BASH_ENV="+be)
 	}
-	// The proxy variables without user info: a shell's traffic stays on
-	// the allowlist, so it never carries an egress credential.
+	// The proxy variables. The daemon's own carry no user info, so the
+	// runtime's credential never reaches a command. With the shell's
+	// credential, the proxy URLs carry it instead, so the proxy knows
+	// which agent's shell is asking and lets it reach that agent's own
+	// hosts too; without it the command reaches the team's list.
 	for _, k := range []string{"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"} {
-		if v := egresscred.BareProxyURL(os.Getenv(k)); v != "" {
+		v := egresscred.BareProxyURL(os.Getenv(k))
+		if shellProxyURL != "" && slices.Contains(egresscred.ProxyEnvKeys, k) {
+			v = shellProxyURL
+		}
+		if v != "" {
 			env = append(env, k+"="+v)
 		}
 	}

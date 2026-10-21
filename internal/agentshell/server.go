@@ -55,6 +55,13 @@ type ServerConfig struct {
 	// means DefaultExecInstallWait and DefaultPackagesInstallWait.
 	ExecInstallWait     time.Duration
 	PackagesInstallWait time.Duration
+
+	// ProxyCredentialPath is the shell's egress proxy credential, the
+	// ProxyCredentialFile beside the socket. POST /v1/exec reads it for
+	// each command: present, the command's proxy variables carry it and
+	// its output is scrubbed of it; missing or malformed, the command
+	// gets the bare proxy URL. Empty means never read.
+	ProxyCredentialPath string
 }
 
 // DefaultPackagesInstallWait bounds how long GET /v1/packages waits for
@@ -174,10 +181,14 @@ func handleExec(cfg ServerConfig) http.HandlerFunc {
 			// subagent root, so bash-side and tool-side paths agree.
 			overlayDst = filepath.Join(cfg.Root, "artifacts", "private")
 		}
-		res, runErr := RunCommand(r.Context(), cwd, req.Command, req.OverlayPrivate, overlayDst, TimeoutFor(req.TimeoutSeconds))
+		// Read for each command: the runtime writes the file once core
+		// has the credential, which can be after the daemon starts.
+		cred := readShellCredential(cfg.ProxyCredentialPath)
+		res, runErr := RunCommand(r.Context(), cwd, req.Command, req.OverlayPrivate, overlayDst, TimeoutFor(req.TimeoutSeconds), cred.url)
 		if runErr != nil {
 			res.Err = runErr.Error()
 		}
+		cred.scrub(&res)
 		// The notice is for the agent itself, once: a subagent's command
 		// (OverlayPrivate set) or a caller that has gone away leaves it
 		// for the agent's next command.

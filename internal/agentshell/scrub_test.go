@@ -18,7 +18,7 @@ const testSecret = "c2hlbGwtbmV2ZXItc2Vlcy10aGlzLXNlY3JldC12YWx1ZQ"
 func TestBashEnvHasTheBareProxyURL(t *testing.T) {
 	t.Setenv("HTTPS_PROXY", "http://alice:"+testSecret+"@10.43.0.12:3128")
 	t.Setenv("HTTP_PROXY", "http://10.43.0.12:3128")
-	env := strings.Join(bashEnv(), "\n") + "\n"
+	env := strings.Join(bashEnv(""), "\n") + "\n"
 	if strings.Contains(env, testSecret) {
 		t.Fatalf("bash env holds the secret:\n%s", env)
 	}

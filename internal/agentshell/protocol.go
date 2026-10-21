@@ -146,6 +146,16 @@ const FilesMaxBodyBytes = 16<<20 + 64<<10
 // directories don't see dispatch machinery.
 const SocketDefault = "/run/kivali-agent-shell/sock"
 
+// ProxyCredentialFile is the file, in the socket's directory, that
+// holds the shell's egress proxy credential: one line, the pod's proxy
+// URL with `<slug>:<secret>` as its user info. The agent runtime writes
+// it (agentpod.SetUpEgressCredential) once core has the secret's hash;
+// the daemon reads it on every POST /v1/exec and gives the command that
+// URL as its proxy, so the proxy knows which agent's shell is asking.
+// The directory is the pod-local emptyDir both containers mount, as
+// the same user.
+const ProxyCredentialFile = "proxy-credential"
+
 // RootDefault is the daemon's default cwd root — the agent's writable
 // /files/ workspace. Cwd values from the request are resolved relative
 // to this, matching the unified-files contract.

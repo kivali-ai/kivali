@@ -54,7 +54,7 @@ func TestAgentsBurstOfMissesReadsOnce(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if !a.Verify("bob", "b") {
+			if !verified(a, "bob", "b") {
 				failed <- struct{}{}
 			}
 		}()
@@ -86,18 +86,18 @@ func TestAgentsBrokenFileReadOnce(t *testing.T) {
 	}
 	before := a.loads.Load()
 	for i := 0; i < 100; i++ {
-		if a.Verify("mallory", "x") {
+		if verified(a, "mallory", "x") {
 			t.Fatal("bad credentials accepted")
 		}
 	}
 	if got := a.loads.Load() - before; got != 1 {
 		t.Fatalf("broken file read %d times, want 1", got)
 	}
-	if !a.Verify("alice", "a") {
+	if !verified(a, "alice", "a") {
 		t.Fatal("last good entries dropped")
 	}
 	writeAgents(t, path, map[string]string{"alice": "a", "bob": "b"})
-	if !a.Verify("bob", "b") {
+	if !verified(a, "bob", "b") {
 		t.Fatal("fixed file not read")
 	}
 	if got := a.loads.Load() - before; got != 2 {

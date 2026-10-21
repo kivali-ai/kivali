@@ -32,8 +32,9 @@ import (
 // automountServiceAccountToken stays false (the agent pod has no
 // business talking to k8s API). Both containers get the egress proxy
 // env vars set to the bare proxy URL, with no credential: the agent
-// runtime adds its own for the agent processes it starts, and the
-// agent-shell never has one.
+// runtime adds its own for the agent processes it starts, and hands the
+// agent-shell the shell's through the shared socket directory
+// (SetUpEgressCredential). The spec carries neither.
 
 const (
 	agentpodSocketName = "core.sock"

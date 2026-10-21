@@ -1,12 +1,13 @@
-// Package egresscred is an agent pod's credential for the egress
-// proxy. The `kivali agent` runtime draws a secret when it starts,
-// registers only its SHA-256 with core, and hands the agent processes
-// it starts a proxy URL carrying `<slug>:<secret>` as its user info.
-// The proxy gives a request that presents a registered credential open
-// access to the public internet; a request without one (the agent's
-// shell) stays on the allowlist. The secret is held in memory only, and
-// a Scrubber replaces it in everything the runtime relays to core or
-// writes to disk.
+// Package egresscred is an agent pod's credentials for the egress
+// proxy. The `kivali agent` runtime draws two secrets when it starts,
+// registers only their SHA-256 with core, and builds a proxy URL
+// carrying `<slug>:<secret>` as its user info for each. The agent
+// processes the runtime starts get the first: the proxy gives a request
+// that presents it open access to the public internet. The agent's
+// shell gets the second, which grants only the shell's allowance (the
+// team's list and the agent's own hosts). The runtime holds both
+// secrets in memory, and a Scrubber replaces them in everything the
+// runtime relays to core or writes to disk.
 //
 // It imports nothing from this module.
 package egresscred

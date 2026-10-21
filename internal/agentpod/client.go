@@ -55,11 +55,11 @@ type Client struct {
 	// retry behaviour without waiting seconds for it.
 	clk clock.Clock
 
-	// egressHash is the egress credential hash core accepted from
-	// SetUpEgressCredential, sent again on every reconnect of the
-	// events stream. Set before RunEvents starts; empty when the pod
-	// has no proxy.
-	egressHash string
+	// egressReg is the egress credential registration core accepted
+	// from SetUpEgressCredential, both hashes, sent again on every
+	// reconnect of the events stream. Set before RunEvents starts; zero
+	// when the pod has no proxy.
+	egressReg EgressCredentialRequest
 }
 
 // WithClock returns c with a different time source. Test seam.

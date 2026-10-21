@@ -57,6 +57,7 @@ func (s *Server) wireAPIOrgRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/v1/org/network/{host}", s.handleAPINetworkRemove)
 
 	s.wireAPISoftwareRoutes(mux)
+	s.wireAPIAgentNetworkRoutes(mux)
 
 	mux.HandleFunc("POST /api/v1/org/backup", s.handleBackupDownload)
 	mux.HandleFunc("POST /api/v1/org/restore", s.handleAPIRestore)
@@ -552,14 +553,46 @@ func (s *Server) handleAPISkillDelete(w http.ResponseWriter, r *http.Request) {
 // ---- network ----
 
 func (s *Server) networkView() (apitypes.Network, error) {
-	al, err := s.Store.ReadEgressAllowlist()
+	hosts, err := s.networkHosts()
 	if err != nil {
 		return apitypes.Network{}, err
 	}
-	out := apitypes.Network{Hosts: make([]apitypes.NetworkHost, 0, len(al.Patterns))}
-	for _, p := range al.Patterns {
-		out.Hosts = append(out.Hosts, apitypes.NetworkHost{Host: p, Permanent: store.PermanentEgressPattern(p)})
+	exempt, err := s.networkExemptAgents()
+	if err != nil {
+		return apitypes.Network{}, err
 	}
+	return apitypes.Network{Hosts: hosts, Exempt: exempt}, nil
+}
+
+// networkHosts is the team's list as the API answers it, sorted.
+func (s *Server) networkHosts() ([]apitypes.NetworkHost, error) {
+	al, err := s.Store.ReadEgressAllowlist()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]apitypes.NetworkHost, 0, len(al.Patterns))
+	for _, p := range al.Patterns {
+		out = append(out, apitypes.NetworkHost{Host: p, Permanent: store.PermanentEgressPattern(p)})
+	}
+	return out, nil
+}
+
+// networkExemptAgents are the active agents with no network limits,
+// named as the team list names them, sorted by name. Never nil.
+func (s *Server) networkExemptAgents() ([]apitypes.NetworkExemptAgent, error) {
+	actives, err := s.Store.ListActiveAgents()
+	if err != nil {
+		return nil, err
+	}
+	out := []apitypes.NetworkExemptAgent{}
+	for _, a := range actives {
+		if a.NetworkExempt {
+			out = append(out, apitypes.NetworkExemptAgent{Slug: a.Slug, Name: agentDisplayName(a)})
+		}
+	}
+	slices.SortFunc(out, func(x, y apitypes.NetworkExemptAgent) int {
+		return cmp.Or(cmp.Compare(x.Name, y.Name), cmp.Compare(x.Slug, y.Slug))
+	})
 	return out, nil
 }
 
@@ -574,12 +607,10 @@ func (s *Server) writeNetwork(w http.ResponseWriter) {
 
 func (s *Server) handleAPINetwork(w http.ResponseWriter, _ *http.Request) { s.writeNetwork(w) }
 
-// validHost is a hostname pattern the egress proxy can use: no
-// scheme, path, port separator, whitespace or comment marker. The
-// proxy matches the host and every subdomain, and reads "*" and "[a-z]"
-// as a glob within one label.
-func validHost(h string) bool {
-	return h != "" && !strings.HasPrefix(h, "#") && !strings.ContainsAny(h, "/: \t\r\n@?")
+// writeInvalidHost answers a host the egress proxy cannot match
+// (store.ValidEgressHost) with 400, naming it as it was sent.
+func writeInvalidHost(w http.ResponseWriter, sent string) {
+	writeAPIError(w, http.StatusBadRequest, fmt.Sprintf("%q is not a host name; enter it without http:// or a path", sent), whoYou)
 }
 
 func (s *Server) handleAPINetworkAdd(w http.ResponseWriter, r *http.Request) {
@@ -587,9 +618,9 @@ func (s *Server) handleAPINetworkAdd(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSONOrError(w, r, &req) {
 		return
 	}
-	host := strings.ToLower(strings.TrimSpace(req.Host))
-	if !validHost(host) {
-		writeAPIError(w, http.StatusBadRequest, fmt.Sprintf("%q is not a host name; enter it without http:// or a path", req.Host), whoYou)
+	host := store.NormalizeEgressHost(req.Host)
+	if !store.ValidEgressHost(host) {
+		writeInvalidHost(w, req.Host)
 		return
 	}
 	al, err := s.Store.ReadEgressAllowlist()
@@ -605,7 +636,7 @@ func (s *Server) handleAPINetworkAdd(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAPINetworkRemove(w http.ResponseWriter, r *http.Request) {
-	host := strings.ToLower(strings.TrimSpace(r.PathValue("host")))
+	host := store.NormalizeEgressHost(r.PathValue("host"))
 	if store.PermanentEgressPattern(host) {
 		writeAPIError(w, http.StatusConflict, host+" stays on the list: Kivali installs agents' software from it", "no one; it stays so software installs keep working")
 		return

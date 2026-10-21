@@ -31,7 +31,9 @@ type egressCore struct {
 	attempts int
 	slugs    []string
 	hashes   []string
-	bodies   []string
+	// shellHashes holds each accepted registration's shell hash.
+	shellHashes []string
+	bodies      []string
 }
 
 func (f *egressCore) serve(t *testing.T) string {
@@ -58,6 +60,7 @@ func (f *egressCore) serve(t *testing.T) string {
 		}
 		f.slugs = append(f.slugs, SlugFromHeader(r.Header))
 		f.hashes = append(f.hashes, req.SHA256)
+		f.shellHashes = append(f.shellHashes, req.ShellSHA256)
 		w.WriteHeader(http.StatusNoContent)
 	})
 	// Each events stream sends one ping and closes, so the client
@@ -102,7 +105,7 @@ func (f *egressCore) serve(t *testing.T) string {
 func TestSetUpEgressCredentialRegistersTheHashAndScrubsRelays(t *testing.T) {
 	core := &egressCore{}
 	c := NewClient(core.serve(t), "alice")
-	cred, err := SetUpEgressCredential(context.Background(), c, "http://10.43.0.12:3128")
+	cred, err := SetUpEgressCredential(context.Background(), c, "http://10.43.0.12:3128", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +148,7 @@ func TestSetUpEgressCredentialRegistersTheHashAndScrubsRelays(t *testing.T) {
 func TestSetUpEgressCredentialScrubsWebCommandsAndResults(t *testing.T) {
 	core := &egressCore{}
 	c := NewClient(core.serve(t), "alice")
-	cred, err := SetUpEgressCredential(context.Background(), c, "http://10.43.0.12:3128")
+	cred, err := SetUpEgressCredential(context.Background(), c, "http://10.43.0.12:3128", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,7 +204,7 @@ func TestWithScrubberWrapsEveryTransport(t *testing.T) {
 func TestEventsReconnectRegistersTheCredentialAgain(t *testing.T) {
 	core := &egressCore{}
 	c := NewClient(core.serve(t), "alice").WithClock(clock.NewFake())
-	cred, err := SetUpEgressCredential(context.Background(), c, "http://10.43.0.12:3128")
+	cred, err := SetUpEgressCredential(context.Background(), c, "http://10.43.0.12:3128", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,7 +236,7 @@ func TestEventsReconnectRegistersTheCredentialAgain(t *testing.T) {
 func TestSetUpEgressCredentialWithoutAProxyDoesNothing(t *testing.T) {
 	core := &egressCore{}
 	c := NewClient(core.serve(t), "alice")
-	cred, err := SetUpEgressCredential(context.Background(), c, "")
+	cred, err := SetUpEgressCredential(context.Background(), c, "", "")
 	if err != nil || cred != nil {
 		t.Fatalf("cred %v err %v", cred, err)
 	}
@@ -248,7 +251,9 @@ func TestRegisterEgressCredentialRetriesWithBackoff(t *testing.T) {
 	clk := clock.NewFake()
 	c := NewClient(core.serve(t), "alice").WithClock(clk)
 	done := make(chan error, 1)
-	go func() { done <- c.RegisterEgressCredential(context.Background(), egresscred.Hash("x")) }()
+	go func() {
+		done <- c.RegisterEgressCredential(context.Background(), EgressCredentialRequest{SHA256: egresscred.Hash("x")})
+	}()
 
 	clk.BlockUntil(1)
 	clk.Advance(200 * time.Millisecond)
@@ -265,7 +270,7 @@ func TestRegisterEgressCredentialRetriesWithBackoff(t *testing.T) {
 func TestRegisterEgressCredentialStopsOnARefusal(t *testing.T) {
 	core := &egressCore{status: http.StatusBadRequest}
 	c := NewClient(core.serve(t), "alice").WithClock(clock.NewFake())
-	err := c.RegisterEgressCredential(context.Background(), "not-a-hash")
+	err := c.RegisterEgressCredential(context.Background(), EgressCredentialRequest{SHA256: "not-a-hash"})
 	if !errors.Is(err, ErrEgressCredentialRefused) {
 		t.Fatalf("err = %v, want ErrEgressCredentialRefused", err)
 	}
@@ -280,7 +285,7 @@ func TestRegisterEgressCredentialEndsWithItsContext(t *testing.T) {
 	c := NewClient(core.serve(t), "alice").WithClock(clk)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- c.RegisterEgressCredential(ctx, egresscred.Hash("x")) }()
+	go func() { done <- c.RegisterEgressCredential(ctx, EgressCredentialRequest{SHA256: egresscred.Hash("x")}) }()
 	clk.BlockUntil(1)
 	cancel()
 	if err := <-done; !errors.Is(err, context.Canceled) {

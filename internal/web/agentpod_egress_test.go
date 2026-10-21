@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/kivali-ai/kivali/internal/agentpod"
+	"github.com/kivali-ai/kivali/internal/agentshell"
 	"github.com/kivali-ai/kivali/internal/egresscred"
 	"github.com/kivali-ai/kivali/internal/store"
 )
@@ -99,7 +101,8 @@ func TestEgressCredentialRoundTrip(t *testing.T) {
 	}()
 	t.Cleanup(func() { _ = hs.Close() })
 
-	cred, err := agentpod.SetUpEgressCredential(context.Background(), agentpod.NewClient(sock, "alice"), "http://10.43.0.12:3128")
+	shellDir := t.TempDir()
+	cred, err := agentpod.SetUpEgressCredential(context.Background(), agentpod.NewClient(sock, "alice"), "http://10.43.0.12:3128", filepath.Join(shellDir, "sock"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,11 +110,69 @@ func TestEgressCredentialRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(b), `"alice": "`+cred.Hash+`"`) {
+	var file store.EgressAgents
+	if err := json.Unmarshal(b, &file); err != nil {
+		t.Fatal(err)
+	}
+	if file.Agents["alice"] != cred.Hash {
 		t.Fatalf("the proxy's agents file = %s, want alice's hash %s", b, cred.Hash)
 	}
 	secret := strings.TrimPrefix(strings.SplitN(cred.URL, "@", 2)[0], "http://alice:")
 	if egresscred.Hash(secret) != cred.Hash || strings.Contains(string(b), secret) {
 		t.Fatalf("the file holds the secret or not its hash: %s", b)
+	}
+	// The shell's credential, which the runtime wrote beside the
+	// agent-shell socket, is the one registered under shells.
+	shellLine, err := os.ReadFile(filepath.Join(shellDir, agentshell.ProxyCredentialFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	shellSecret := strings.TrimPrefix(strings.SplitN(strings.TrimSpace(string(shellLine)), "@", 2)[0], "http://alice:")
+	if file.Shells["alice"] != egresscred.Hash(shellSecret) || strings.Contains(string(b), shellSecret) {
+		t.Fatalf("the proxy's agents file = %s, want the hash of the shell's secret", b)
+	}
+}
+
+// The shell's hash is checked like the runtime's, may be left out
+// (which drops an earlier one), and may not equal the runtime's: the
+// proxy reads a secret that matches both as the runtime's, so the shell
+// would get open access. This fails if a bad shell hash is recorded, a
+// shell-less registration leaves the old shell hash in force, or equal
+// hashes are accepted.
+func TestEgressCredentialRouteShellHash(t *testing.T) {
+	srv := newTestServer(t)
+	if err := srv.Store.CreateAgent(store.Agent{Slug: "alice", Role: "Analyst", ReportsTo: "chief-of-staff"}, "k"); err != nil {
+		t.Fatal(err)
+	}
+	mux := udsMux(srv)
+	open, shell := egresscred.Hash("open"), egresscred.Hash("shell")
+	post := func(body string) int {
+		rr := httptest.NewRecorder()
+		mux.ServeHTTP(rr, egressCredentialRequest("alice", body))
+		return rr.Code
+	}
+	for name, body := range map[string]string{
+		"malformed shell hash":  `{"sha256":"` + open + `","shell_sha256":"ABC"}`,
+		"upper-case shell hash": `{"sha256":"` + open + `","shell_sha256":"` + strings.ToUpper(shell) + `"}`,
+		"shell hash equal":      `{"sha256":"` + open + `","shell_sha256":"` + open + `"}`,
+	} {
+		if code := post(body); code != http.StatusBadRequest {
+			t.Errorf("%s: %d, want 400", name, code)
+		}
+	}
+	if got, _ := srv.Store.EgressAgentCredentials(); len(got) != 0 {
+		t.Fatalf("a refused registration was recorded: %v", got)
+	}
+	if code := post(`{"sha256":"` + open + `","shell_sha256":"` + shell + `"}`); code != http.StatusNoContent {
+		t.Fatalf("registration with a shell hash: %d", code)
+	}
+	if got, _ := srv.Store.EgressShellCredentials(); got["alice"] != shell {
+		t.Fatalf("shell credentials = %v", got)
+	}
+	if code := post(`{"sha256":"` + open + `"}`); code != http.StatusNoContent {
+		t.Fatalf("registration without a shell hash: %d", code)
+	}
+	if got, _ := srv.Store.EgressShellCredentials(); len(got) != 0 {
+		t.Fatalf("a shell-less registration left %v", got)
 	}
 }

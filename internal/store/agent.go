@@ -47,9 +47,18 @@ type Agent struct {
 	// Software is the agent's own extra software (Debian package
 	// names), on top of the org-wide list; see software.go. Installed
 	// when the agent's pod starts.
-	Software   []string   `yaml:"software,omitempty"`
-	CreatedAt  time.Time  `yaml:"created_at"`
-	ArchivedAt *time.Time `yaml:"archived_at,omitempty"`
+	Software []string `yaml:"software,omitempty"`
+	// NetworkHosts are the hosts the agent's shell commands may reach
+	// on top of the team's list (egress_network.go): patterns as on
+	// that list, sorted. The egress proxy reads them from the agents
+	// sync file (EgressAgents.AgentHosts).
+	NetworkHosts []string `yaml:"network_hosts,omitempty"`
+	// NetworkExempt lifts the agent's network limits: its shell
+	// commands and its own fetches reach any public host, and the proxy
+	// neither holds them to a list nor counts them against a budget.
+	NetworkExempt bool       `yaml:"network_exempt,omitempty"`
+	CreatedAt     time.Time  `yaml:"created_at"`
+	ArchivedAt    *time.Time `yaml:"archived_at,omitempty"`
 }
 
 // Message role values. Named after email/memo convention rather than the
@@ -380,16 +389,20 @@ func (s *FSStore) SetAgentReportsTo(slug, newManager string) error {
 // lists would show the agent twice. The graph hears of the archive
 // once the move is done.
 //
-// The agent's egress proxy credential goes with it: from then on the
-// proxy refuses whatever still presents it. A failure to drop it is
-// logged, not returned, since the agent is archived either way.
+// The agent's egress proxy credentials go with it, its own and its
+// shell's, and so do its network settings in the proxy's agents file:
+// from then on the proxy refuses whatever still presents either
+// credential. The drop runs after archiveAgent has released
+// agentYAMLMu, since the proxy sync it triggers reads agent.yaml files
+// under egressAgentsMu. A failure to drop is logged, not returned,
+// since the agent is archived either way.
 func (s *FSStore) ArchiveAgent(slug string) error {
 	if err := s.archiveAgent(slug); err != nil {
 		return err
 	}
 	s.Graph().OrgChanged()
 	if err := s.DropEgressAgentCredential(slug); err != nil {
-		log.Printf("store: archive %s: drop its egress credential: %v", slug, err)
+		log.Printf("store: archive %s: drop its egress credentials: %v", slug, err)
 	}
 	return nil
 }

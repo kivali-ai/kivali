@@ -11,6 +11,7 @@
   "context_pct": 82,
   "state": "running",
   "created": "2026-09-01T09:30:00Z",
+  "network_exempt": false,
   "role_line": "Owns the product from plan to release.",
   "models": [
     {

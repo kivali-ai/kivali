@@ -146,8 +146,11 @@ loopback-only, signed, single-use Desktop handoff
    server resolves the proxy Service to its cluster IP when it creates a
    pod, and a client that honours the proxy hands it host names. Agent pods
    reach core over the hostPath Unix socket. The proxy holds the agent's
-   shell (no credential) to the team's host list, and lets the agent's own
-   fetches and model calls (a per-pod credential) reach any public host. The
+   shell (the shell's own per-pod credential, or none) to the team's host
+   list and that agent's own hosts, and lets the agent's own fetches and
+   model calls (a second per-pod credential) reach any public host; an agent
+   whose network limits the owner has removed reaches any public host with
+   either, uncounted. The
    proxy refuses, for every agent request, loopback, link-local and cloud
    metadata, `networkPolicy.podCIDR`, `networkPolicy.serviceCIDR` and the
    node's own address (`status.hostIP`, passed as `--deny-cidr`), and, for

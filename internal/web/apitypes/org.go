@@ -218,6 +218,16 @@ type SkillDowngrade struct {
 // mutation: the hosts agents may reach, sorted.
 type Network struct {
 	Hosts []NetworkHost `json:"hosts"`
+	// Exempt lists the agents with no network limits (the switch on the
+	// agent's About tab, Security): their commands and fetches reach any
+	// public host, with no byte budget. Never null.
+	Exempt []NetworkExemptAgent `json:"exempt"`
+}
+
+// NetworkExemptAgent is one agent whose network limits are off.
+type NetworkExemptAgent struct {
+	Slug string `json:"slug"`
+	Name string `json:"name"`
 }
 
 // NetworkHost is one allowed host. A host covers itself and every
@@ -231,7 +241,33 @@ type NetworkHost struct {
 	Permanent bool   `json:"permanent"`
 }
 
-// NetworkAdd is the body of POST /api/v1/org/network.
+// NetworkAdd is the body of POST /api/v1/org/network and of POST
+// /api/v1/agents/{slug}/network: one host to allow, under NetworkHost's
+// rules. The team's list keeps a host it already has and answers 200;
+// an agent's list answers 409 and adds nothing.
 type NetworkAdd struct {
 	Host string `json:"host"`
+}
+
+// ---- /api/v1/agents/{slug}/network ----
+
+// AgentNetwork is GET /api/v1/agents/{slug}/network and the answer to
+// every mutation under it: where this agent's commands can connect
+// beyond the team's list, and whether the limits apply at all.
+type AgentNetwork struct {
+	// Team is the team's list (Org, Network), which this agent's
+	// commands reach too. Read-only here.
+	Team []NetworkHost `json:"team"`
+	// Own is the agent's own additions, the part POST and DELETE
+	// .../network/{host} change. Sorted, never null.
+	Own []string `json:"own"`
+	// Exempt is true when this agent has no network limits: its
+	// commands and fetches reach any public host, of any size, with no
+	// byte budget, and Kivali neither stops nor counts it.
+	Exempt bool `json:"exempt"`
+}
+
+// AgentNetworkExempt is the body of POST /api/v1/agents/{slug}/network/exempt.
+type AgentNetworkExempt struct {
+	Exempt bool `json:"exempt"`
 }

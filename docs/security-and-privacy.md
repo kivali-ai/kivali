@@ -40,13 +40,15 @@ Everything an agent sends out of its sandbox goes through a proxy. The proxy tre
 
 ### The agent's shell
 
-Commands the agent runs, such as `curl`, `pip`, `git` and `apt` and anything else typed into its shell, reach only the hosts on your team's list. Edit it in **Org**, **Network**; changes apply at once. A request to any other host is refused, and the agent sees the refusal.
+Commands the agent runs, such as `curl`, `pip`, `git` and `apt` and anything else typed into its shell, reach only the hosts on your team's list and the hosts you add for that agent. Edit the team's list in **Org**, **Network**, and an agent's own hosts on its **About** tab, under **Security**; changes apply at once. A request to any other host is refused, and the agent sees the refusal.
 
 A new team's list holds one host, `deb.debian.org`, where Kivali installs the software you approve for agents' shells. It is marked permanent in **Org**, **Network** and cannot be removed. The list allows no model provider host: a shell never calls the model, and a provider's API is a way to send data to whoever holds an account there. For the same reason it allows no code or package host such as GitHub or PyPI; add one when your agents need it.
 
 Teams created before this list changed keep the list they had. It may still hold GitHub, PyPI and the Go module proxy, and for older teams the Anthropic, Amazon Bedrock, Google Vertex AI and Microsoft Foundry hosts and their token services. A shell needs none of them unless your agents do, so you can remove them in **Org**, **Network**.
 
 Each entry covers itself and every name under it: `example.com` also allows `api.example.com`. Within one part of a name, `*` matches any run of characters and `[a-z]` one character, so `*-aiplatform.googleapis.com` allows `us-east5-aiplatform.googleapis.com` and nothing else under `googleapis.com`. The default is copied into a team when it is created; after that the list is yours, apart from `deb.debian.org`. Remove anything your team does not need, and add hosts as agents need them.
+
+An agent's own hosts follow the same rules and open for that agent's shell only, which suits a host one agent needs and the rest do not. So that the proxy can tell agents' shells apart, each shell's requests carry a credential of its own. It opens nothing beyond your team's list and that agent's hosts.
 
 ### The agent's own fetches
 
@@ -59,6 +61,10 @@ When an agent fetches a web page or searches the web with its own tools, and whe
 A host that is on your list is the exception: it is reached under the list's rules, so an intranet host you list works for the agent's fetches too.
 
 The proxy counts the bytes each agent sends out this way, plus the names of the hosts it asks for, and leaves out its calls to the model provider. The limits are 32 KB on one connection, 256 KB in 10 minutes and 4 MB in a day. This release counts and logs what goes over them and does not refuse anything yet.
+
+### Removing an agent's network limits
+
+An agent's **About** tab, under **Security**, has a **Remove all network limits for this agent** switch. With it on, the agent's shell commands and its own fetches reach any public host: the proxy no longer holds them to a list, and no longer counts what they send against the byte budget. They still never reach the cluster, loopback, link-local addresses, cloud metadata or private address ranges, apart from hosts on your team's list or the agent's own. Such an agent has a **No network limits** badge on the **Team** page and is named in **Org**, **Network**. Turn the switch off to put the limits back; it applies to the agent's next request.
 
 ### Web tasks
 
@@ -76,6 +82,7 @@ The list and the budgets make leaks harder, not impossible. Know these limits wh
 - **A listed name may resolve to a private address.** The proxy refuses the cluster, loopback and metadata for every request, but it lets a listed name reach a private address on your network, because that is how you reach an intranet host. If you list a wildcard DNS service such as `nip.io`, a shell can reach any address on your network through it.
 - **A web task can carry up to 1 KB per task out in its addresses.** The first 64 bytes of each path and query and the first 48 of each host name go uncounted, up to a pool of 1 KB per task, so a task can encode that much data in the addresses it visits.
 - **An agent's own fetches can carry data out, up to the budget.** A web page can lead an agent to send a short secret in an address it fetches. The budget bounds how much, and for now only counts and logs.
+- **An agent with its network limits removed can send anything it can read to any public host.** Its commands can upload its files, and nothing counts what they send.
 
 If you need a hard limit, enforce it in your own network, for example with firewall rules on the cluster's outbound traffic.
 

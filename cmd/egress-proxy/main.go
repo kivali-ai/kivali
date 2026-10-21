@@ -7,21 +7,29 @@
 // hot-reloaded. Agent pods set HTTP_PROXY / HTTPS_PROXY to the Service
 // in front of this process.
 //
-// Each request is in one of two modes:
+// Each request is in one of four modes, decided by its
+// Proxy-Authorization:
 //
-//   - Allowlist mode, for a request without Proxy-Authorization (an
-//     agent's shell): the host must match the allowlist.
-//   - Open mode, for a request whose Proxy-Authorization carries an
-//     agent's slug and secret (the agent's own fetches and model
-//     calls): any public host, and the allowlist's hosts. What the
-//     agent sends out is counted against a byte budget (budget.go),
-//     except through a TLS tunnel to a model host that names that host
-//     in its ClientHello (sni.go).
+//   - Allowlist mode, for a request without Proxy-Authorization: the
+//     host must match the allowlist.
+//   - Shell mode, for a request carrying an agent's slug and its
+//     shell's secret (a command in the agent's shell): the host must
+//     match the allowlist or one of that agent's own patterns
+//     (agents.go). Nothing is counted.
+//   - Open mode, for a request carrying an agent's slug and its
+//     runtime's secret (the agent's own fetches and model calls): any
+//     public host, and the allowlist's hosts. What the agent sends out
+//     is counted against a byte budget (budget.go), except through a
+//     TLS tunnel to a model host that names that host in its
+//     ClientHello (sni.go).
+//   - Exempt mode, for a request carrying either credential of an
+//     agent with no network limits: any public host, and the hosts
+//     shell mode reaches. Nothing is counted.
 //
-// Present but invalid credentials get 407. In both modes the host is
+// Present but invalid credentials get 407. In every mode the host is
 // resolved once and dialled by address through the guard (guard.go),
 // which refuses loopback, link-local and the cluster's own ranges, and
-// for open-mode hosts not on the allowlist every non-public range as
+// for open and exempt mode hosts on no list every non-public range as
 // well. Each source IP may hold a bounded number of connections
 // (limit.go).
 package main
@@ -68,9 +76,9 @@ func main() {
 	allowlistPath := flag.String("allowlist", defaultAllowlist, "path to allowlist YAML (hot-reloaded)")
 	agentsPath := flag.String("agents", defaultAgents, "path to agents JSON (hot-reloaded); missing means no agents")
 	var deny cidrFlag
-	flag.Var(&deny, "deny-cidr", "cluster range or address refused in both modes (repeatable, comma-separated; empty ignored)")
+	flag.Var(&deny, "deny-cidr", "cluster range or address refused for every request (repeatable, comma-separated; empty ignored)")
 	var openDeny cidrFlag
-	flag.Var(&openDeny, "open-deny-cidr", "range or address refused in open mode only, on top of the non-public ranges (repeatable, comma-separated; empty ignored)")
+	flag.Var(&openDeny, "open-deny-cidr", "range or address refused only to open and exempt mode hosts on no list, on top of the non-public ranges (repeatable, comma-separated; empty ignored)")
 	budgetConn := flag.Int64("budget-conn", 32768, "bytes an agent may send up one open-mode connection")
 	budget10m := flag.Int64("budget-10m", 262144, "bytes an agent may send out in open mode per rolling 10 minutes")
 	budgetDay := flag.Int64("budget-day", 4194304, "bytes an agent may send out in open mode per rolling 24 hours")
@@ -89,8 +97,9 @@ func main() {
 
 	agents := &Agents{Path: *agentsPath, Logf: log.Printf}
 	if err := agents.Load(*agentsPath); err != nil {
-		// Start with no agents rather than not at all: shells keep
-		// their allowlist, and the watcher picks up the next good file.
+		// Start with no agents rather than not at all: a request
+		// without a credential keeps the allowlist, and the watcher
+		// picks up the next good file.
 		log.Printf("load agents: %v", err)
 	}
 	go (&Watcher{Path: *agentsPath, Interval: 5 * time.Second}).Run(agents, log.Printf)
@@ -149,12 +158,48 @@ func (p *proxy) requestDeadline() time.Duration {
 	return copyDeadline
 }
 
+// requestMode is how the proxy treats a request, decided by the
+// credential it presents (admit).
+type requestMode int
+
+const (
+	// modeAllowlist is a request with no credential: the host must be
+	// on the allowlist.
+	modeAllowlist requestMode = iota
+	// modeOpen is a request with an agent runtime's own credential: any
+	// public host, counted against the agent's budget.
+	modeOpen
+	// modeShell is a request with an agent shell's credential: the host
+	// must be on the allowlist or among the agent's own patterns.
+	modeShell
+	// modeExempt is a request with either credential of an exempt
+	// agent: any public host, not counted.
+	modeExempt
+)
+
+// String is the mode as the log lines name it.
+func (m requestMode) String() string {
+	switch m {
+	case modeOpen:
+		return "open"
+	case modeShell:
+		return "shell"
+	case modeExempt:
+		return "exempt"
+	default:
+		return "allowlist"
+	}
+}
+
 // session is one request's standing.
 type session struct {
-	open bool
+	mode requestMode
+	// slug is the agent whose credential the request presented; empty
+	// in allowlist mode.
 	slug string
-	// listed is set when the host matches the allowlist; the guard then
-	// applies the allowlist mode's address rules in either mode.
+	// listed is set when the host matches the allowlist, or, for an
+	// agent's shell, one of the agent's own patterns; the guard then
+	// applies the allowlist mode's address rules in any mode.
 	listed bool
 	// modelHost is set for an open-mode tunnel to a model host, exempt
 	// once its ClientHello names that host.
@@ -163,21 +208,17 @@ type session struct {
 }
 
 func (s session) agent() string {
-	if s.open {
-		return s.slug
+	if s.mode == modeAllowlist {
+		return "-"
 	}
-	return "-"
+	return s.slug
 }
 
-func (s session) mode() string {
-	if s.open {
-		return "open"
-	}
-	return "allowlist"
+// strict reports whether the guard applies open mode's address rules:
+// for a request that may reach any public host, to a host on no list.
+func (s session) strict() bool {
+	return (s.mode == modeOpen || s.mode == modeExempt) && !s.listed
 }
-
-// strict reports whether the guard applies open mode's address rules.
-func (s session) strict() bool { return s.open && !s.listed }
 
 // ServeHTTP dispatches CONNECT (HTTPS tunnel) and plain HTTP requests
 // to their respective handlers.
@@ -193,8 +234,8 @@ func (p *proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // allowlistRefusal follows the host name in the body of an allowlist
-// mode refusal, which only an agent's shell gets. It names the cause
-// and nothing else: no list and no other way out, which planted
+// or shell mode refusal, which only an agent's shell gets. It names the
+// cause and nothing else: no list and no other way out, which planted
 // instructions would look for. run_shell's notice matches it
 // (internal/agent's ShellProxyRefusals) and says what to do.
 const allowlistRefusal = " is not on the team's allow list."
@@ -208,22 +249,55 @@ func (p *proxy) admit(w http.ResponseWriter, r *http.Request, host string, tunne
 	var s session
 	if v := r.Header.Get("Proxy-Authorization"); v != "" {
 		slug, secret, ok := parseProxyAuth(v)
-		if !ok || !p.agents.Verify(slug, secret) {
+		var kind credKind
+		if ok {
+			kind, ok = p.agents.Verify(slug, secret)
+		}
+		if !ok {
 			p.logf("DENY mode=auth host=%s reason=credentials", host)
 			w.Header().Set("Proxy-Authenticate", `Basic realm="kivali"`)
 			http.Error(w, "proxy credentials not accepted", http.StatusProxyAuthRequired)
 			return s, false
 		}
-		s = session{open: true, slug: slug}
+		s.slug = slug
+		switch {
+		case p.agents.Exempt(slug):
+			s.mode = modeExempt
+		case kind == credShell:
+			s.mode = modeShell
+		default:
+			s.mode = modeOpen
+		}
 	}
 	s.listed = p.allow.Allowed(host)
 
-	if !s.open {
+	switch s.mode {
+	case modeAllowlist:
 		if !s.listed {
 			p.logf("DENY agent=- mode=allowlist host=%s reason=allowlist", host)
 			http.Error(w, hostOnly(host)+allowlistRefusal, http.StatusForbidden)
 			return s, false
 		}
+		return s, true
+	case modeShell:
+		if s.listed || p.agents.AgentAllowed(s.slug, host) {
+			s.listed = true
+			return s, true
+		}
+		// AgentAllowed re-reads a changed agents file, which may have
+		// made the agent exempt since Verify.
+		if !p.agents.Exempt(s.slug) {
+			p.logf("DENY agent=%s mode=shell host=%s reason=allowlist", s.slug, host)
+			http.Error(w, hostOnly(host)+allowlistRefusal, http.StatusForbidden)
+			return s, false
+		}
+		s.mode = modeExempt
+		return s, true
+	case modeExempt:
+		// Neither held to a list nor counted. A host on the allowlist or
+		// among the agent's own patterns keeps the allowlist's address
+		// rules, as it has for the agent's shell.
+		s.listed = s.listed || matchAny(p.agents.AgentHosts(s.slug), host)
 		return s, true
 	}
 
@@ -274,16 +348,16 @@ func (p *proxy) dial(ctx context.Context, s session, host string) (*meteredConn,
 // name the addresses the host resolved to.
 func (p *proxy) refuseDial(w http.ResponseWriter, s session, host string, err error) {
 	if errors.Is(err, errDestination) {
-		p.logf("DENY agent=%s mode=%s host=%s reason=address", s.agent(), s.mode(), host)
+		p.logf("DENY agent=%s mode=%s host=%s reason=address", s.agent(), s.mode, host)
 		http.Error(w, errDestination.Error(), http.StatusForbidden)
 		return
 	}
-	p.logf("FAIL agent=%s mode=%s host=%s reason=dial err=%q", s.agent(), s.mode(), host, err.Error())
+	p.logf("FAIL agent=%s mode=%s host=%s reason=dial err=%q", s.agent(), s.mode, host, err.Error())
 	http.Error(w, "upstream dial failed", http.StatusBadGateway)
 }
 
 func (p *proxy) logConn(s session, host string, c *meteredConn) {
-	p.logf("CONN agent=%s mode=%s host=%s up=%d down=%d", s.agent(), s.mode(), host, c.up.Load(), c.down.Load())
+	p.logf("CONN agent=%s mode=%s host=%s up=%d down=%d", s.agent(), s.mode, host, c.up.Load(), c.down.Load())
 }
 
 // bufferedConn reads through the bufio.Reader the HTTP server used for
@@ -455,7 +529,7 @@ func (p *proxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 			p.logConn(s, host, upstream)
 			http.Error(w, budgetRefusal, http.StatusForbidden)
 		default:
-			p.logf("FAIL agent=%s mode=%s host=%s reason=request err=%q", s.agent(), s.mode(), host, requestErr(err))
+			p.logf("FAIL agent=%s mode=%s host=%s reason=request err=%q", s.agent(), s.mode, host, requestErr(err))
 			if upstream != nil {
 				p.logConn(s, host, upstream)
 			}
