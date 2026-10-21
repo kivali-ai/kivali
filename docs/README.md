@@ -19,6 +19,7 @@ New to Kivali? Start with [Getting started](getting-started.md), then read [How 
 ## Use
 
 - [Using Kivali](using-kivali.md): the day to day: Home, releasing messages, talking to agents, hiring, new chats, skills, models and costs.
+- [Integrations](integrations.md): installing a service your agents act on, connecting it, and choosing what each agent may do with it.
 - [Kivali Desktop](desktop-app.md): teams, windows, the menu bar and notification area, updates, resources, other devices and uninstalling.
 
 ## Run it yourself

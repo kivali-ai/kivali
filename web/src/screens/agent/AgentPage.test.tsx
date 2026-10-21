@@ -133,7 +133,7 @@ describe('AgentPage: the pinned header', () => {
     await loaded();
     scrollPast();
     const tabs = screen.getByRole('tablist');
-    expect(within(tabs).getAllByRole('tab')).toHaveLength(4);
+    expect(within(tabs).getAllByRole('tab')).toHaveLength(5);
     await user.click(within(tabs).getByRole('tab', { name: /Background/ }));
     await waitFor(() => expect(screen.getByRole('tab', { name: /Background/ })).toHaveAttribute('aria-selected', 'true'));
     // The header stays pinned (and is watched again) on the other tabs, which share the page.

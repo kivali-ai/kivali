@@ -3,7 +3,7 @@ import { createMemoryRouter } from 'react-router';
 import { RouterProvider } from 'react-router/dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError, apiGet, apiPost, apiPostForm } from '../../api/client';
-import type { AutoRelease, HistoryResponse, Home as HomeData } from '../../api/types.gen';
+import type { AutoRelease, HistoryResponse, Home as HomeData, NeedItem } from '../../api/types.gen';
 import { AgentAvatar, TooltipProvider } from '../../ds';
 import { identityColorFor } from '../../lib/agentIdentity';
 import { pickFiles } from '../../lib/pickFiles';
@@ -332,6 +332,26 @@ describe('Needs you', () => {
     const review = within(rowFor('data-id', proposal.id)).getByRole('link', { name: /Approve hire: Garden advisor/ });
     expect(review).toHaveAttribute('href', proposal.review_path);
     expect(review).toHaveTextContent('Review');
+  });
+
+  // Guards the request to approve an integration's version (proposal_kind integration_install): it is a review row
+  // like any proposal, badged "Install an integration" and linking to the version's install screen under Org (its
+  // review_path), never expanding in place. A raw kind as the badge, or a row that expands, fails here.
+  it('badges an integration install request and links it to the version’s install screen', async () => {
+    const install = {
+      ...proposal,
+      id: 'messages/2026-09-28/0012-integrations-engineer.md',
+      title: 'Install HubSpot 1.3.0',
+      proposal_kind: 'integration_install',
+      review_path: '/org/integrations/hubspot/versions/1.3.0',
+    } satisfies NeedItem;
+    await renderHome({ ...busyHome, needs: [install] });
+    const row = within(rowFor('data-id', install.id));
+    const review = row.getByRole('link', { name: /Install HubSpot 1\.3\.0/ });
+    expect(review).toHaveAttribute('href', '/org/integrations/hubspot/versions/1.3.0');
+    expect(review).toHaveTextContent('Review');
+    expect(row.getByText('Install an integration')).toHaveClass('kv-badge');
+    expect(row.queryByRole('button')).toBeNull();
   });
 
   it('expands an Install software request in place and installs from there', async () => {

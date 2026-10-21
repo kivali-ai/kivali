@@ -1,6 +1,6 @@
 # Security and privacy
 
-This page explains where your team's data lives, what leaves your machine and where it goes, how agents are contained, which actions need your approval, where credentials are kept, and how to report a vulnerability.
+This page explains where your team's data lives, what leaves your machine and where it goes, how agents are contained, what installing an integration lets in, which actions need your approval, where credentials are kept, and how to report a vulnerability.
 
 ## Where your data lives
 
@@ -88,6 +88,14 @@ If you need a hard limit, enforce it in your own network, for example with firew
 
 The proxy applies to agents' sandboxes. Kivali's server, which makes the connections in the table above, is not behind it.
 
+## Integrations
+
+An [integration](integrations.md) is installed from a bundle, one version at a time, and nothing in a version runs until you approve it.
+
+- **The install screen is the review.** Before you approve a version, its install screen shows who built and published it, every host it says it reaches, every field its connection needs with the secrets marked, every action it gives agents, what its access form asks, and the bundle's size. Kivali checks each bundle when it arrives: that it says these things, that its access form is one Kivali can show, and that its files unpack safely (no links, no paths that leave the bundle, at most 5000 files and 64 MiB). That check reads the bundle; it does not judge what the code does. Approve a version only when you trust whoever built it with what the screen lists.
+- **Connection secrets** (tokens, keys) are kept in a Kubernetes Secret of their own in the team's cluster: inside the team's virtual machine with Kivali Desktop, in the team's namespace when self-hosted. They are never on the team's data volume, never in a backup, never in a log, and never shown again once saved. Kivali's server can read, write and delete Secrets in its own namespace for this, and nothing outside it.
+- **Access is per agent.** An agent can use an integration only with the access you gave it there. Access set for an earlier connection, or that a newer version's form no longer accepts, gives nothing until you set it again. Offboarding an agent removes its access everywhere.
+
 ## What needs your approval
 
 These cannot happen without you:
@@ -95,6 +103,7 @@ These cannot happen without you:
 - **Changing the team.** Hiring, offboarding, reorganizing, and replacing a role or the handbook all happen only when you approve a Chief of Staff proposal. Offboarding archives; nothing is deleted.
 - **Agents reaching each other.** Every message from one agent to another waits in your Queue until you release it, or until auto-release lets it through. A new team starts with auto-release at 30s; set it to Off to hold everything.
 - **Uploads from a web task.** A web task that uploads files waits in **Needs you** for you to approve the files and the site.
+- **Installing an integration.** Every version of an integration waits on its install screen until you approve it, and an agent gets an integration only when you give it access.
 - **Decisions an agent asks you for**, which wait in **Needs you**.
 
 Within its own sandbox and the hosts you allow, an agent works without asking: it runs commands, writes files, and calls the services it can reach. Choose your network list with that in mind, and read [what the network limits do not stop](#what-this-does-not-stop).
@@ -102,6 +111,7 @@ Within its own sandbox and the hosts you allow, an agent works without asking: i
 ## Credentials
 
 - **Your Claude sign-in.** What Claude Code's own sign-in stores, a subscription or Console sign-in, or the Bedrock or Vertex AI credentials you entered, is kept on the team's data volume, under Claude Code's own home directory. Kivali never sees what you type in Claude's sign-in. Microsoft Foundry's key or service principal secret goes into Claude Code's settings file there, readable only by the server's user. When you enter it in Kivali Desktop, it goes from the app straight to the team's machine and is not logged or shown again. The sign-in is used by the part of Kivali that makes model calls. Agents' shell commands and file tools run in a separate container that does not have it. Claude credentials are never included in backups.
+- **Integration connections.** The secrets you enter for an integration are kept in a Kubernetes Secret, outside the data volume and out of backups. See [Integrations](#integrations).
 - **Sign-in sessions** are signed with a key specific to each team. Sessions last 24 hours.
 - **Kivali Desktop** keeps each team's settings and disk in folders only your user account can read, and asks you to confirm it is you before deleting a team: your password or Touch ID on macOS, Windows Hello on Windows.
 

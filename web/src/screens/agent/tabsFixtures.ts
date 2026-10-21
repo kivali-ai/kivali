@@ -1,5 +1,6 @@
 // Fixtures for the Background, About, Past chats and task pages. The Go golden files are what the server
 // really emits; `satisfies Wire<T>` fails the build when one drifts from the generated types.
+import agentIntegrationsJson from '../../../../internal/web/apitypes/testdata/agent_integrations.json';
 import agentNetworkJson from '../../../../internal/web/apitypes/testdata/agent_network.json';
 import agentNetworkExemptJson from '../../../../internal/web/apitypes/testdata/agent_network_exempt.json';
 import agentSoftwareJson from '../../../../internal/web/apitypes/testdata/agent_software.json';
@@ -8,7 +9,7 @@ import agentDocEmptyHabitsJson from '../../../../internal/web/apitypes/testdata/
 import agentsJson from '../../../../internal/web/apitypes/testdata/agents.json';
 import backgroundJson from '../../../../internal/web/apitypes/testdata/background.json';
 import backgroundEmptyJson from '../../../../internal/web/apitypes/testdata/background_empty.json';
-import type { AgentDoc, AgentNetwork, AgentNetworkExempt, AgentSoftware, AgentsResponse, Background, PastChat, PastChatDetail, PastChats, SubagentTranscript } from '../../api/types.gen';
+import type { AgentDoc, AgentIntegrations, AgentNetwork, AgentNetworkExempt, AgentSoftware, AgentsResponse, Background, PastChat, PastChatDetail, PastChats, SubagentTranscript } from '../../api/types.gen';
 import type { Wire } from '../../state/fixtures/transcript';
 import { goPastChatDetail, goSubagentTranscript } from '../../state/fixtures/transcript';
 
@@ -21,6 +22,8 @@ export const agentSoftware = agentSoftwareJson satisfies Wire<AgentSoftware>;
 export const agentNetwork = agentNetworkJson satisfies Wire<AgentNetwork>;
 /** The body of POST .../network/exempt that lifts the limits, as the server's golden has it. */
 export const agentNetworkExempt = agentNetworkExemptJson satisfies Wire<AgentNetworkExempt>;
+/** The agent's Integrations tab: two connected (one of them with access that no longer fits) and one not. */
+export const agentIntegrations = (agentIntegrationsJson satisfies Wire<AgentIntegrations>) as AgentIntegrations;
 
 /** The goldens with their string unions typed. */
 export const background = goBackground as Background;

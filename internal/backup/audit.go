@@ -111,6 +111,32 @@ func auditReaders(dataDir string, inv *Inventory) {
 	fail("project_files", err)
 	_, err = s.ReadHandbook()
 	fail(store.HandbookFilename, err)
+	auditIntegrations(dataDir, s, fail)
+}
+
+// auditIntegrations reads every integration the way its page does:
+// the record, each version with its manifest, the connections, every
+// agent's access, and the audit log, every line a JSON object. The
+// connections' secret values are not in the data directory, so a
+// restore into another install asks for them again, which is not a
+// problem here.
+func auditIntegrations(dataDir string, s *store.FSStore, fail func(string, error)) {
+	its, err := s.ListIntegrations()
+	fail(store.IntegrationsDirName, err)
+	for _, it := range its {
+		dir := store.IntegrationsDirName + "/" + it.Name
+		versions, err := s.IntegrationVersions(it.Name)
+		fail(dir+"/versions", err)
+		for _, v := range versions {
+			_, _, err := s.GetIntegrationVersion(it.Name, v.Version)
+			fail(dir+"/versions/"+v.Version, err)
+		}
+		_, err = s.ListIntegrationConnections(it.Name)
+		fail(dir+"/connections", err)
+		_, err = s.ListIntegrationAccess(it.Name)
+		fail(dir+"/access", err)
+		fail(dir+"/audit.jsonl", jsonLines(filepath.Join(dataDir, store.IntegrationsDirName, it.Name, "audit.jsonl")))
+	}
 }
 
 // jsonLines checks that every non-empty line of a transcript is a JSON

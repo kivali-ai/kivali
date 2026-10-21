@@ -26,8 +26,10 @@ import (
 	"github.com/kivali-ai/kivali/internal/config"
 	"github.com/kivali-ai/kivali/internal/debian"
 	"github.com/kivali-ai/kivali/internal/files"
+	"github.com/kivali-ai/kivali/internal/kube"
 	"github.com/kivali-ai/kivali/internal/messaging"
 	"github.com/kivali-ai/kivali/internal/provider"
+	"github.com/kivali-ai/kivali/internal/secrets"
 	"github.com/kivali-ai/kivali/internal/seed"
 	"github.com/kivali-ai/kivali/internal/store"
 	"github.com/kivali-ai/kivali/internal/web"
@@ -373,6 +375,19 @@ func main() {
 		log.Printf("browserpod: disabled (not running in-cluster)")
 	}
 
+	// Integration connections' secret fields: a Kubernetes Secret per
+	// connection in the server's namespace when running in a cluster,
+	// memory otherwise (make run, DEV_MODE on a laptop), where they are
+	// gone when the server stops.
+	var connSecrets secrets.Store
+	if kc, err := kube.New(cfg.AgentpodNamespace); err == nil {
+		connSecrets = secrets.NewKube(kc)
+		log.Printf("connection secrets: Kubernetes Secrets")
+	} else {
+		connSecrets = secrets.NewMemory()
+		log.Printf("connection secrets: in memory (not in a cluster)")
+	}
+
 	// Routing + delivery primitives. Holds the MessageQueue mutex
 	// shared with chat-path Route calls and the release-all batch.
 	var msgr *messaging.Messenger
@@ -440,6 +455,7 @@ func main() {
 		ClockCheck:      clockWatcher,
 		SubagentService: subagentService,
 		Packages:        packages,
+		Secrets:         connSecrets,
 
 		BrowserProvisioner: bprov,
 		BrowserMaxPerTeam:  cfg.BrowserMaxPerTeam,

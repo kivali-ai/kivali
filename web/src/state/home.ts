@@ -174,6 +174,7 @@ const PROPOSAL_LABELS: Record<string, string> = {
   offboard: 'Offboard',
   reorg: 'Reorg',
   software_install: 'Install software',
+  integration_install: 'Install an integration',
 };
 
 /** What a waiting web task's page asks of the person, as its row's badge. */

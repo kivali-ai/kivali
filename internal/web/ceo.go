@@ -421,22 +421,46 @@ func (s *Server) respondAsCEO(ctx context.Context, kind responseKind, approved *
 		body = appendReorgSummary(body, result)
 	}
 
+	// Integration installs: same atomicity rule as Hire. Approving
+	// makes the version the one in use BEFORE the response is written;
+	// denying rejects it. An approval of the version already in use is
+	// what was asked and goes through; one of a version rejected,
+	// superseded or no longer stored is refused. A denial of a version
+	// no longer stored or already rejected has nothing left to turn
+	// down and goes through; one of the version in use is refused.
+	// Like a software install, the response names the version on both
+	// outcomes.
+	var respIntegration *store.IntegrationInstall
+	if kind == responseKindApproval && approved != nil && reqMsg.IntegrationInstall != nil {
+		ii := *reqMsg.IntegrationInstall
+		respIntegration = &ii
+		if *approved {
+			if ierr := s.acceptIntegrationInstall(ii); ierr != nil {
+				return refuseApply("The integration install", "integration_install apply: ", ierr, proposer)
+			}
+		} else if ierr := s.denyIntegrationInstall(ii); ierr != nil {
+			return refuseCEOSaying(http.StatusConflict, "integration_install reject: "+ierr.Error(),
+				"The version could not be turned down: "+plainCause(ierr), whoNoOne)
+		}
+	}
+
 	resp := store.Message{
-		Type:            respType,
-		Title:           fmt.Sprintf("%s: %s", titlePrefix, reqMsg.Title),
-		From:            agent.CEOSlug,
-		To:              store.Recipients{reqMsg.From},
-		Date:            time.Now().UTC(),
-		InReplyTo:       reqPath,
-		Approved:        approved,
-		Hire:            appliedHire,
-		RoleUpdate:      appliedRoleUpdate,
-		HandbookUpdate:  appliedHandbookUpdate,
-		Reorg:           appliedReorg,
-		Offboard:        respOffboard,
-		SoftwareInstall: respSoftware,
-		Attachments:     attachments,
-		Body:            body,
+		Type:               respType,
+		Title:              fmt.Sprintf("%s: %s", titlePrefix, reqMsg.Title),
+		From:               agent.CEOSlug,
+		To:                 store.Recipients{reqMsg.From},
+		Date:               time.Now().UTC(),
+		InReplyTo:          reqPath,
+		Approved:           approved,
+		Hire:               appliedHire,
+		RoleUpdate:         appliedRoleUpdate,
+		HandbookUpdate:     appliedHandbookUpdate,
+		Reorg:              appliedReorg,
+		Offboard:           respOffboard,
+		SoftwareInstall:    respSoftware,
+		IntegrationInstall: respIntegration,
+		Attachments:        attachments,
+		Body:               body,
 	}
 	respAbs, err := s.Store.WriteMessage(resp)
 	if err != nil {

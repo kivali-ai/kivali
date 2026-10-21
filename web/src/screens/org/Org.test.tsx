@@ -15,8 +15,28 @@ import { initialOrgState, reduceSnapshot } from '../../state/org';
 import type { OrgContextValue } from '../../state/OrgProvider';
 import { aboutLine, versionLabel } from './About';
 import { BACKUP_DEBOUNCE_MS } from './Backup';
+import { InstallScreen } from './InstallScreen';
+import { IntegrationPage } from './IntegrationPage';
 import { Org, headerMeta } from './OrgPage';
-import { goHandbook, goDowngrade, goFiles, goNetwork, goOrg, goOrgSoftware, goSkills, goSoftwareAdd, goUsage } from './orgFixtures';
+import {
+  goAccessChoices,
+  goAccessWrite,
+  goConnectionWrite,
+  goDowngrade,
+  goFiles,
+  goHandbook,
+  goIntegrationAudit,
+  goIntegrationPage,
+  goIntegrationUploadRefused,
+  goIntegrationVersion,
+  goIntegrations,
+  goNetwork,
+  goOrg,
+  goOrgSoftware,
+  goSkills,
+  goSoftwareAdd,
+  goUsage,
+} from './orgFixtures';
 import { downgradeOf } from './Skills';
 import { compact, unpricedNote } from './Usage';
 
@@ -104,6 +124,10 @@ function defaults(): Record<string, Route> {
     'GET /api/v1/org/skills': goSkills,
     'GET /api/v1/org/network': goNetwork,
     'GET /api/v1/org/software': goOrgSoftware,
+    'GET /api/v1/org/integrations': goIntegrations,
+    'GET /api/v1/org/integrations/hubspot': goIntegrationPage,
+    'GET /api/v1/org/integrations/hubspot/audit': goIntegrationAudit,
+    'GET /api/v1/org/integrations/hubspot/versions/1.3.0': goIntegrationVersion,
     'GET /api/v1/setup': { credential: { ready: true, provider: 'claude', present: true, who: 'owner@example.com', billing: 'Claude Max', guidance: '' }, restore_available: false },
   };
 }
@@ -153,6 +177,8 @@ async function renderOrg(
     [
       { path: '/org', element: <Org /> },
       { path: '/org/:section', element: <Org /> },
+      { path: '/org/integrations/:name', element: <IntegrationPage /> },
+      { path: '/org/integrations/:name/versions/:version', element: <InstallScreen /> },
     ],
     { basename: '/', initialEntries: [path] },
   );
@@ -213,7 +239,7 @@ describe('Org layout', () => {
     await renderOrg('/org');
     expect(screen.getByText('$4.25')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /Skills/ })).toHaveAttribute('href', '/org/skills');
-    for (const name of ['Organization', 'Handbook', 'Project files', 'Network', 'Software', 'Backup and restore', 'About']) {
+    for (const name of ['Organization', 'Handbook', 'Project files', 'Integrations', 'Network', 'Software', 'Backup and restore', 'About']) {
       expect(screen.getByRole('link', { name: new RegExp(name) })).toBeInTheDocument();
     }
     expect(screen.getByRole('link', { name: /About/ })).toHaveTextContent('Kivali 0.15.0');
@@ -234,7 +260,7 @@ describe('Org layout', () => {
     const scroll = vi.fn();
     Element.prototype.scrollIntoView = scroll;
     await renderOrg('/org/skills', { desktop: true });
-    const names = ['Usage', 'Organization', 'Handbook', 'Project files', 'Skills', 'Network', 'Software', 'Backup and restore', 'About'];
+    const names = ['Usage', 'Organization', 'Handbook', 'Project files', 'Skills', 'Integrations', 'Network', 'Software', 'Backup and restore', 'About'];
     expect(screen.getAllByRole('heading', { level: 2 }).map((el) => el.textContent)).toEqual(names);
     const index = screen.getByRole('navigation', { name: 'Org sections' });
     expect(within(index).getAllByRole('link').map((el) => el.textContent)).toEqual(names);
@@ -273,7 +299,7 @@ describe('Org index scroll spy', () => {
     const live = () => fake.instances.filter((o) => !o.disconnected);
     return {
       fake,
-      /** The strip observer on the nine sections. */
+      /** The strip observer on the ten sections. */
       spy: () => live().find((o) => o.targets.length > 1)!,
       /** The observer on the end-of-page marker. */
       tail: () => live().find((o) => o.targets.length === 1 && o.targets[0]!.id === 'org-end')!,
@@ -309,6 +335,7 @@ describe('Org index scroll spy', () => {
     handbook: 'below',
     files: 'below',
     skills: 'below',
+    integrations: 'below',
     network: 'below',
     software: 'below',
     backup: 'below',
@@ -323,7 +350,7 @@ describe('Org index scroll spy', () => {
     const io = install();
     const h = await renderOrg('/org/files', { desktop: true });
     expect(current()).toBe('Project files');
-    expect(io.spy().targets.map((el) => el.id)).toEqual(['usage', 'organization', 'handbook', 'files', 'skills', 'network', 'software', 'backup', 'about'].map((k) => 'org-' + k));
+    expect(io.spy().targets.map((el) => el.id)).toEqual(['usage', 'organization', 'handbook', 'files', 'skills', 'integrations', 'network', 'software', 'backup', 'about'].map((k) => 'org-' + k));
 
     at(io.spy(), ALL_BELOW);
     expect(current()).toBe('Usage');
@@ -356,11 +383,11 @@ describe('Org index scroll spy', () => {
   it('keeps the section loaded by URL current at the bottom of the page until the reader scrolls', async () => {
     const io = install();
     await renderOrg('/org/network', { desktop: true });
-    at(io.spy(), { ...ALL_BELOW, usage: 'above', organization: 'above', handbook: 'above', files: 'above', skills: 'above' });
+    at(io.spy(), { ...ALL_BELOW, usage: 'above', organization: 'above', handbook: 'above', files: 'above', skills: 'above', integrations: 'above' });
     act(() => io.tail().fire([{ target: 'org-end', isIntersecting: true, top: 700 }]));
     expect(current()).toBe('Network');
     act(() => void window.dispatchEvent(new Event('wheel')));
-    at(io.spy(), { ...ALL_BELOW, usage: 'above', organization: 'above', handbook: 'above', files: 'above', skills: 'above' });
+    at(io.spy(), { ...ALL_BELOW, usage: 'above', organization: 'above', handbook: 'above', files: 'above', skills: 'above', integrations: 'above' });
     act(() => io.tail().fire([{ target: 'org-end', isIntersecting: true, top: 700 }]));
     expect(current()).toBe('About');
   });
@@ -368,7 +395,7 @@ describe('Org index scroll spy', () => {
   it('gives About the bottom of the page even when its top never reaches the line', async () => {
     const io = install();
     await renderOrg('/org', { desktop: true });
-    at(io.spy(), { ...ALL_BELOW, usage: 'above', organization: 'above', handbook: 'above', files: 'above', skills: 'above', network: 'above', backup: 'in' });
+    at(io.spy(), { ...ALL_BELOW, usage: 'above', organization: 'above', handbook: 'above', files: 'above', skills: 'above', integrations: 'above', network: 'above', backup: 'in' });
     expect(current()).toBe('Backup and restore');
     act(() => io.tail().fire([{ target: 'org-end', isIntersecting: true, top: 700 }]));
     expect(current()).toBe('About');
@@ -400,9 +427,9 @@ describe('Org index scroll spy', () => {
     at(io.spy(), { handbook: 'above', files: 'above', skills: 'in' });
     expect(current()).toBe('Network');
     // Arrived: the spy has it, and from here it follows the scroll again.
-    at(io.spy(), { skills: 'above', network: 'in' });
+    at(io.spy(), { skills: 'above', integrations: 'above', network: 'in' });
     expect(current()).toBe('Network');
-    at(io.spy(), { network: 'below', skills: 'in' });
+    at(io.spy(), { network: 'below', integrations: 'below', skills: 'in' });
     expect(current()).toBe('Skills');
     expect(h.router.state.location.pathname).toBe('/org/network');
   });
@@ -412,7 +439,7 @@ describe('Org index scroll spy', () => {
   it('keeps the clicked section when the scroll ends short of it, until the reader scrolls on', async () => {
     const io = install();
     await renderOrg('/org', { desktop: true });
-    at(io.spy(), { ...ALL_BELOW, usage: 'above', organization: 'above', handbook: 'above', files: 'above', skills: 'above', network: 'in' });
+    at(io.spy(), { ...ALL_BELOW, usage: 'above', organization: 'above', handbook: 'above', files: 'above', skills: 'above', integrations: 'above', network: 'in' });
     expect(current()).toBe('Network');
     fireEvent.click(indexLink('Backup and restore'));
     await flush();
@@ -422,7 +449,7 @@ describe('Org index scroll spy', () => {
     act(() => void document.dispatchEvent(new Event('scrollend')));
     expect(current()).toBe('Backup and restore');
     act(() => void window.dispatchEvent(new Event('wheel')));
-    at(io.spy(), { ...ALL_BELOW, usage: 'above', organization: 'above', handbook: 'above', files: 'above', skills: 'above', network: 'in' });
+    at(io.spy(), { ...ALL_BELOW, usage: 'above', organization: 'above', handbook: 'above', files: 'above', skills: 'above', integrations: 'above', network: 'in' });
     act(() => io.tail().fire([{ target: 'org-end', isIntersecting: true, top: 700 }]));
     expect(current()).toBe('About');
   });
@@ -1064,6 +1091,370 @@ describe('Software', () => {
     await click(screen.getByRole('button', { name: /dismiss/i }));
     expect(screen.queryByText(/couldn’t be reached/)).toBeNull();
     expect(screen.getByText('ffmpg')).toBeInTheDocument();
+  });
+});
+
+// ---- Integrations ----
+
+describe('Integrations', () => {
+  // Guards the list's reading of integrations.json: each row's version, status badge and agent count, the row
+  // opening the integration's page, the version waiting for approval linking to its install screen, and the
+  // head's counts. A field the list drops, a badge in the wrong tone or a link to the wrong place fails here.
+  it('lists each integration with its version, status and agents, and links a waiting version to its install screen', async () => {
+    await renderOrg('/org/integrations', { desktop: true });
+    const section = within(screen.getByRole('region', { name: 'Integrations' }));
+    expect(section.getByText('2 installed · 1 waiting')).toBeInTheDocument();
+    const hubspot = section.getByRole('link', { name: /HubSpot/ });
+    expect(hubspot).toHaveAttribute('href', '/org/integrations/hubspot');
+    expect(within(hubspot).getByText('v1.2.0')).toBeInTheDocument();
+    expect(within(hubspot).getByText('Connected')).toHaveClass('kv-badge--success');
+    expect(within(hubspot).getByText('2 agents')).toBeInTheDocument();
+    const weather = section.getByRole('link', { name: /Weather/ });
+    expect(weather).toHaveAttribute('href', '/org/integrations/weather');
+    expect(within(weather).getByText('Pending')).toHaveClass('kv-badge--signal');
+    expect(within(weather).getByText('No agents')).toBeInTheDocument();
+    expect(section.getByRole('link', { name: 'Version 1.3.0 waits for your approval' })).toHaveAttribute('href', '/org/integrations/hubspot/versions/1.3.0');
+    expect(section.getAllByRole('link', { name: /waits for your approval/ })).toHaveLength(1);
+    expect(section.queryByText('Built in')).toBeNull();
+  });
+
+  // Guards the quiet states: a built-in integration carries the Built in badge beside its status, and an empty
+  // list says so instead of drawing an empty container.
+  it('marks a built-in integration, and says when none is installed', async () => {
+    const builtin = { integrations: [{ ...goIntegrations.integrations[1]!, builtin: true }] };
+    const h = await renderOrg('/org/integrations', { routes: { 'GET /api/v1/org/integrations': builtin } });
+    expect(within(screen.getByRole('link', { name: /Weather/ })).getByText('Built in')).toHaveClass('kv-badge--outline');
+    h.unmount();
+    await renderOrg('/org/integrations', { routes: { 'GET /api/v1/org/integrations': { integrations: [] } } });
+    expect(screen.getByText('No integrations installed.')).toBeInTheDocument();
+  });
+
+  // Guards the upload: one .zip goes up as the multipart field `file`, and the version the server stored leads
+  // straight to its install screen, where the review happens. Another field name, or landing anywhere but that
+  // version's screen, fails here.
+  it('uploads a bundle and opens the install screen of the version it stored', async () => {
+    vi.mocked(pickFiles).mockResolvedValue([new File(['zip'], 'hubspot.zip')]);
+    const h = await renderOrg('/org/integrations', { routes: { 'POST /api/v1/org/integrations': goIntegrationVersion } });
+    await click(screen.getByRole('button', { name: 'Upload a bundle' }));
+    expect(pickFiles).toHaveBeenCalledWith({ multiple: false, accept: '.zip,application/zip' });
+    expect((lastBody('POST', '/api/v1/org/integrations') as FormData).get('file')).toBeInstanceOf(File);
+    expect(h.router.state.location.pathname).toBe('/org/integrations/hubspot/versions/1.3.0');
+    expect(screen.getByRole('button', { name: 'Approve and install' })).toBeInTheDocument();
+  });
+
+  // Guards the refusal (integration_upload_refused.json): a 400 that lists findings opens a dialog naming every
+  // one, so the person can fix the bundle; a one-line banner would hide all but the headline.
+  it('names every finding when a bundle does not pass the check', async () => {
+    vi.mocked(pickFiles).mockResolvedValue([new File(['x'], 'bad.zip')]);
+    const refused = goIntegrationUploadRefused;
+    const h = await renderOrg('/org/integrations', { routes: { 'POST /api/v1/org/integrations': fail(400, refused.error, refused.who, refused) } });
+    await click(screen.getByRole('button', { name: 'Upload a bundle' }));
+    const dialog = within(screen.getByRole('dialog'));
+    expect(dialog.getByText('The bundle did not pass the check')).toBeInTheDocument();
+    for (const f of refused.findings) expect(dialog.getByText(f)).toBeInTheDocument();
+    expect(h.router.state.location.pathname).toBe('/org/integrations');
+  });
+
+  // Guards every other refusal, such as a version that is already stored (409): the server's sentence shows in the
+  // section's banner, and no findings dialog opens for a body that has none.
+  it('says in a banner when the version is already stored', async () => {
+    vi.mocked(pickFiles).mockResolvedValue([new File(['zip'], 'hubspot.zip')]);
+    await renderOrg('/org/integrations', {
+      routes: { 'POST /api/v1/org/integrations': fail(409, 'HubSpot already has version 1.3.0.', 'Raise the version in the bundle, then upload it again.') },
+    });
+    await click(screen.getByRole('button', { name: 'Upload a bundle' }));
+    expect(screen.getByText('HubSpot already has version 1.3.0.')).toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+});
+
+describe('Integration install screen', () => {
+  const PATH = '/org/integrations/hubspot/versions/1.3.0';
+  const API = '/api/v1/org/integrations/hubspot/versions/1.3.0';
+
+  // Guards the review itself (integration_version.json): every host, each connection field with Secret on the
+  // sensitive one, each action in words, what the access form asks, the bundle's size, what it replaces and what
+  // the check noted. A fact the person would approve without seeing fails here.
+  it('shows what the version reaches, holds and does before anything runs', async () => {
+    const h = await renderOrg(PATH, { desktop: true });
+    expect(h.chrome.at(-1)).toEqual({ title: 'HubSpot 1.3.0', back: { to: '/org/integrations/hubspot', label: 'HubSpot' } });
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('HubSpot 1.3.0');
+    expect(screen.getByText('Needs your approval')).toHaveClass('kv-badge--signal');
+    expect(within(screen.getByRole('region', { name: 'Who built it' })).getByText('Integrations engineer (agent)')).toBeInTheDocument();
+    expect(within(screen.getByRole('region', { name: 'Version' })).getByText('Replaces version 1.2.0')).toBeInTheDocument();
+    expect(within(screen.getByRole('region', { name: 'Version notes' })).getByText('Adds contacts. Reaches one more host.')).toBeInTheDocument();
+    expect(within(screen.getByRole('region', { name: 'Reaches these hosts' })).getByText('api.hubapi.com')).toBeInTheDocument();
+
+    const connection = within(screen.getByRole('region', { name: 'The connection needs' }));
+    const token = connection.getByText('Private app token').closest('li') as HTMLElement;
+    expect(within(token).getByText('Secret')).toBeInTheDocument();
+    expect(within(token).getByText('Required · From HubSpot, Settings, Private apps.')).toBeInTheDocument();
+    const portal = connection.getByText('Portal').closest('li') as HTMLElement;
+    expect(within(portal).queryByText('Secret')).toBeNull();
+
+    const actions = within(screen.getByRole('region', { name: 'Actions' }));
+    expect(actions.getByText('Create post')).toBeInTheDocument();
+    expect(actions.getByText('Create a blog post as a draft.')).toBeInTheDocument();
+    expect(actions.getByText('List blogs')).toBeInTheDocument();
+
+    const form = within(screen.getByRole('region', { name: 'Access form asks' }));
+    expect(form.getByText('Any number of choices, listed by HubSpot · required · The blogs the agent may write in.')).toBeInTheDocument();
+    expect(form.getByText('One choice: eu, us')).toBeInTheDocument();
+    expect(form.getByText('On or off')).toBeInTheDocument();
+    expect(form.getByText('A list of entries')).toBeInTheDocument();
+    expect(form.getByText('Text')).toBeInTheDocument();
+
+    expect(within(screen.getByRole('region', { name: 'Bundle' })).getByText('12 files, 180 KB')).toBeInTheDocument();
+    expect(within(screen.getByRole('region', { name: 'The check noted' })).getByText('tools[2] (whoami) has no description')).toBeInTheDocument();
+    expect(screen.getByText(/^The check only reads the bundle\./)).toBeInTheDocument();
+  });
+
+  // Guards a first version and an integration without an access form: with nothing approved yet the way back is
+  // the list (the integration's page has nothing to run), and the screen says access is all or nothing rather
+  // than drawing an empty list.
+  it('goes back to the list for a first version, and says when access is all or nothing', async () => {
+    const first = { ...goIntegrationVersion, current_version: undefined, access_form: undefined, findings: [] };
+    const h = await renderOrg(PATH, { routes: { ['GET ' + API]: first } });
+    expect(h.chrome.at(-1)).toEqual({ title: 'HubSpot 1.3.0', back: { to: '/org/integrations', label: 'Integrations' } });
+    expect(within(screen.getByRole('region', { name: 'Access form asks' })).getByText('Access is all or nothing.')).toBeInTheDocument();
+    expect(screen.queryByText(/^Replaces version/)).toBeNull();
+    expect(screen.queryByRole('region', { name: 'The check noted' })).toBeNull();
+  });
+
+  // Guards approval: nothing is posted until Approve and install is clicked, which posts .../approve and lands on
+  // the integration's page, where the connection is made.
+  it('approves and opens the integration’s page', async () => {
+    const h = await renderOrg(PATH, { routes: { ['POST ' + API + '/approve']: { ...goIntegrationVersion, state: 'approved', current: true } } });
+    expect(called('POST', API + '/approve')).toBe(false);
+    await click(screen.getByRole('button', { name: 'Approve and install' }));
+    expect(called('POST', API + '/approve')).toBe(true);
+    expect(h.router.state.location.pathname).toBe('/org/integrations/hubspot');
+  });
+
+  // Guards rejection: Reject only opens a danger dialog; the post waits for its confirm, and the screen then shows
+  // the version as rejected with no buttons left to press.
+  it('asks before rejecting, then shows the version rejected', async () => {
+    await renderOrg(PATH, { routes: { ['POST ' + API + '/reject']: { ...goIntegrationVersion, state: 'rejected' } } });
+    await click(screen.getByRole('button', { name: 'Reject' }));
+    const dialog = screen.getByRole('dialog');
+    expect(dialog).toHaveClass('kv-dialog--danger');
+    expect(within(dialog).getByText('Reject version 1.3.0?')).toBeInTheDocument();
+    expect(called('POST', API + '/reject')).toBe(false);
+    await click(within(dialog).getByRole('button', { name: 'Reject' }));
+    expect(called('POST', API + '/reject')).toBe(true);
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.getByText('Rejected')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Approve and install' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Reject' })).toBeNull();
+  });
+});
+
+describe('Integration page', () => {
+  const PATH = '/org/integrations/hubspot';
+  const API = '/api/v1/org/integrations/hubspot';
+
+  // Guards the switch: turning it off posts .../disable and on posts .../enable, and the page shows what each
+  // answer says (the status follows), so a switch that only moves on screen fails here.
+  it('turns the integration off and on with its switch', async () => {
+    const off = { ...goIntegrationPage, summary: { ...goIntegrationPage.summary, enabled: false, status: 'off' } };
+    const h = await renderOrg(PATH, { routes: { ['POST ' + API + '/disable']: off, ['POST ' + API + '/enable']: goIntegrationPage } });
+    expect(h.chrome.at(-1)).toEqual({ title: 'HubSpot', back: { to: '/org/integrations', label: 'Integrations' } });
+    const sw = screen.getByRole('switch', { name: 'On' });
+    expect(sw).toHaveAttribute('aria-checked', 'true');
+    await click(sw);
+    expect(called('POST', API + '/disable')).toBe(true);
+    expect(sw).toHaveAttribute('aria-checked', 'false');
+    expect(screen.getByText('Off')).toHaveClass('kv-badge');
+    await click(sw);
+    expect(called('POST', API + '/enable')).toBe(true);
+    expect(sw).toHaveAttribute('aria-checked', 'true');
+  });
+
+  // Guards ConnectionWrite's secret rule: a stored secret shows only "Stored", a secret left blank is not sent (so
+  // it keeps its value; sending "" would clear it), and a typed one is. The body is checked against
+  // connection_write.json, the shape the Go server reads.
+  it('saves the connection with only the secrets that were typed', async () => {
+    await renderOrg(PATH, { routes: { ['PUT ' + API + '/connection']: goIntegrationPage } });
+    const token = screen.getByLabelText('Private app token');
+    expect(token).toHaveAttribute('type', 'password');
+    expect(token).toHaveAttribute('placeholder', 'Stored');
+    expect(token).toHaveValue('');
+    expect(screen.getByLabelText('Portal (optional)')).toHaveValue('acme');
+    await click(screen.getByRole('button', { name: 'Save connection' }));
+    expect(lastBody('PUT', API + '/connection')).toEqual({ fields: { portal: 'acme' } });
+
+    fireEvent.change(screen.getByLabelText('Private app token'), { target: { value: 'pat-eu1-...' } });
+    await click(screen.getByRole('button', { name: 'Save connection' }));
+    expect(lastBody('PUT', API + '/connection')).toEqual(goConnectionWrite);
+    // Saved: the form starts again from what is stored, so the typed secret leaves the page.
+    expect(screen.getByLabelText('Private app token')).toHaveValue('');
+  });
+
+  // Guards the connection's standing and Test connection: the lines say since when it is connected and what the
+  // last test found, and a refused test (409 while testing is unavailable) shows the server's sentence instead of
+  // failing silently.
+  it('says how the connection stands, and why a test could not run', async () => {
+    await renderOrg(PATH, { routes: { ['POST ' + API + '/connection/verify']: fail(409, 'Testing a connection is not available yet.', 'You can still save it.') } });
+    expect(screen.getByText(/^Connected since /)).toBeInTheDocument();
+    expect(screen.getByText(/^Verified .*: Connected as Acme Marketing$/)).toBeInTheDocument();
+    await click(screen.getByRole('button', { name: 'Test connection' }));
+    expect(called('POST', API + '/connection/verify')).toBe(true);
+    expect(screen.getByText('Testing a connection is not available yet.')).toBeInTheDocument();
+  });
+
+  // Guards the two states where the form cannot be used as it is: secrets missing from this server (a danger banner
+  // asks for them again) and no approved version yet (no form at all, nothing to connect).
+  it('asks to reconnect when the secrets are missing, and waits for an approved version before any form', async () => {
+    const lost = { ...goIntegrationPage, connection: { ...goIntegrationPage.connection!, reconnect_needed: true } };
+    const h = await renderOrg(PATH, { routes: { ['GET ' + API]: lost } });
+    expect(screen.getByText('Reconnect needed').closest('[role="alert"]')).toHaveClass('kv-banner--danger');
+    h.unmount();
+
+    const pending = { ...goIntegrationPage, connection: undefined, summary: { ...goIntegrationPage.summary, version: '', status: 'pending' } };
+    await renderOrg(PATH, { routes: { ['GET ' + API]: pending, ['GET ' + API + '/audit']: { rows: [] } } });
+    expect(screen.getByText('Approve a version first.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Save connection' })).toBeNull();
+    expect(screen.getByText('No calls yet.')).toBeInTheDocument();
+  });
+
+  // Guards Disconnect: the DELETE waits for the danger dialog's confirm, and the page then shows no connection, with
+  // nothing left to test.
+  it('asks before disconnecting', async () => {
+    const disconnected = { ...goIntegrationPage, connection: undefined, summary: { ...goIntegrationPage.summary, status: 'not_connected' } };
+    await renderOrg(PATH, { routes: { ['DELETE ' + API + '/connection']: disconnected } });
+    await click(screen.getByRole('button', { name: 'Disconnect' }));
+    const dialog = screen.getByRole('dialog');
+    expect(dialog).toHaveClass('kv-dialog--danger');
+    expect(within(dialog).getByText('Disconnect HubSpot?')).toBeInTheDocument();
+    expect(called('DELETE', API + '/connection')).toBe(false);
+    await click(within(dialog).getByRole('button', { name: 'Disconnect' }));
+    expect(called('DELETE', API + '/connection')).toBe(true);
+    expect(screen.getByText('Not connected.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Test connection' })).toBeDisabled();
+  });
+
+  // Guards the access form as the bundle describes it (integration_page.json's five kinds): text is a text field,
+  // choice a select, switch a checkbox, list an entry field, and choices a checkbox per option once Load options has
+  // asked the integration for them. The PUT body must equal access_write.json; a kind drawn wrong, a live option
+  // never offered or a value sent in the wrong shape fails here.
+  it('gives an agent access through a form drawn from the integration’s fields', async () => {
+    await renderOrg(PATH, { routes: { ['GET ' + API + '/choices/blogs']: goAccessChoices, ['PUT ' + API + '/access/chief-of-staff']: goIntegrationPage } });
+    const access = within(screen.getByRole('region', { name: 'Access' }));
+    expect(access.getByRole('combobox', { name: 'Agent' })).toHaveValue('chief-of-staff');
+    await click(access.getByRole('button', { name: 'Give access' }));
+    const dialog = within(screen.getByRole('dialog'));
+    expect(dialog.getByText('Give Chief of Staff access to HubSpot')).toBeInTheDocument();
+    expect(dialog.getByRole('textbox', { name: 'Note (optional)' })).toBeInTheDocument();
+    const region = dialog.getByRole('combobox', { name: 'Region (optional)' });
+    expect(within(region).getAllByRole('option').map((o) => o.textContent)).toEqual(['Not set', 'eu', 'us']);
+    expect(dialog.getByRole('checkbox', { name: 'May publish and edit' })).toHaveAttribute('aria-checked', 'false');
+    expect(dialog.getByRole('textbox', { name: 'Tags (optional)' })).toBeInTheDocument();
+    // Blogs lists its options live, through the connection: none until asked.
+    expect(dialog.queryByRole('checkbox', { name: 'Marketing' })).toBeNull();
+    await click(dialog.getByRole('button', { name: 'Load options' }));
+    expect(called('GET', API + '/choices/blogs')).toBe(true);
+    expect(dialog.getByRole('checkbox', { name: 'Engineering' })).toBeInTheDocument();
+    await click(dialog.getByRole('checkbox', { name: 'Marketing' }));
+    await click(dialog.getByRole('checkbox', { name: 'May publish and edit' }));
+    await click(dialog.getByRole('button', { name: 'Give access' }));
+    expect(lastBody('PUT', API + '/access/chief-of-staff')).toEqual(goAccessWrite);
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  // Guards Change and its failures: the form starts from the agent's access as it stands, a list field adds entries
+  // as removable chips, a refused options lookup (409) says why inline, and a 400 keeps the dialog open with the
+  // server's sentence in it, so nothing the person typed is lost.
+  it('changes an agent’s access, and shows a refusal in the dialog', async () => {
+    await renderOrg(PATH, {
+      routes: {
+        ['GET ' + API + '/choices/blogs']: fail(409, 'Connect HubSpot before listing its options.', 'you'),
+        ['PUT ' + API + '/access/dana']: fail(400, 'Blogs needs at least one choice.', 'you'),
+      },
+    });
+    const table = within(screen.getByRole('region', { name: 'Access' })).getByRole('table');
+    expect(within(table).getByText('Blogs: Marketing · May publish and edit')).toBeInTheDocument();
+    expect(within(table).getByText(/^Invalid: Blogs lists a choice the form no longer offers/)).toHaveClass('kv-text--danger');
+
+    await click(screen.getByRole('button', { name: 'Change Dana’s access' }));
+    const dialog = within(screen.getByRole('dialog'));
+    expect(dialog.getByText('Change Dana’s access to HubSpot')).toBeInTheDocument();
+    expect(dialog.getByRole('checkbox', { name: 'Marketing' })).toHaveAttribute('aria-checked', 'true');
+    expect(dialog.getByRole('checkbox', { name: 'May publish and edit' })).toHaveAttribute('aria-checked', 'true');
+    await click(dialog.getByRole('button', { name: 'Load options' }));
+    expect(dialog.getByText('Connect HubSpot before listing its options.')).toBeInTheDocument();
+
+    fireEvent.change(dialog.getByRole('textbox', { name: 'Tags (optional)' }), { target: { value: 'launch' } });
+    await click(dialog.getByRole('button', { name: 'Add' }));
+    expect(dialog.getByRole('button', { name: 'Remove launch' })).toBeInTheDocument();
+    await click(dialog.getByRole('checkbox', { name: 'Marketing' }));
+    await click(dialog.getByRole('button', { name: 'Save access' }));
+    expect(lastBody('PUT', API + '/access/dana')).toEqual({ access: { write: true, tags: ['launch'] } });
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(dialog.getByText('Blogs needs at least one choice.')).toBeInTheDocument();
+  });
+
+  // Guards an integration whose access is all or nothing: the dialog says so and Approve sends an empty form ({}),
+  // the body AccessWrite asks for, rather than a form with nothing in it.
+  it('grants all-or-nothing access with an empty form', async () => {
+    const plain = { ...goIntegrationPage, access_form: undefined };
+    await renderOrg(PATH, { routes: { ['GET ' + API]: plain, ['PUT ' + API + '/access/chief-of-staff']: plain } });
+    await click(screen.getByRole('button', { name: 'Give access' }));
+    const dialog = within(screen.getByRole('dialog'));
+    expect(dialog.getByText('This integration’s access is all or nothing.')).toBeInTheDocument();
+    await click(dialog.getByRole('button', { name: 'Approve' }));
+    expect(lastBody('PUT', API + '/access/chief-of-staff')).toEqual({ access: {} });
+  });
+
+  // Guards taking access away: Remove beside an agent deletes that agent's access and the table follows the answer.
+  it('removes an agent’s access', async () => {
+    const without = { ...goIntegrationPage, access: [goIntegrationPage.access[1]!] };
+    await renderOrg(PATH, { routes: { ['DELETE ' + API + '/access/dana']: without } });
+    await click(screen.getByRole('button', { name: 'Remove Dana’s access' }));
+    expect(called('DELETE', API + '/access/dana')).toBe(true);
+    expect(screen.queryByRole('button', { name: 'Change Dana’s access' })).toBeNull();
+  });
+
+  // Guards Remove: the DELETE waits for the danger dialog's confirm, then the page goes back to the list; a built-in
+  // integration (can_remove false) offers no Remove at all, since the server would refuse it.
+  it('removes the integration after asking, and never offers it for a built-in one', async () => {
+    const h = await renderOrg(PATH, { routes: { ['DELETE ' + API]: null } });
+    await click(screen.getByRole('button', { name: 'Remove' }));
+    const dialog = screen.getByRole('dialog');
+    expect(dialog).toHaveClass('kv-dialog--danger');
+    expect(within(dialog).getByText('Remove HubSpot?')).toBeInTheDocument();
+    expect(within(dialog).getByText('Its connection and every agent’s access go with it. A new bundle can install it again.')).toBeInTheDocument();
+    expect(called('DELETE', API)).toBe(false);
+    await click(within(dialog).getByRole('button', { name: 'Remove' }));
+    expect(called('DELETE', API)).toBe(true);
+    expect(h.router.state.location.pathname).toBe('/org/integrations');
+    h.unmount();
+
+    const builtin = { ...goIntegrationPage, can_remove: false, summary: { ...goIntegrationPage.summary, builtin: true } };
+    await renderOrg(PATH, { routes: { ['GET ' + API]: builtin } });
+    expect(screen.getByText('Built in')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Remove' })).toBeNull();
+  });
+
+  // Guards the history blocks: the waiting version's banner leads to its install screen, versions are listed newest
+  // first with their state, each linking to its install screen, and the latest calls say who called, what, and how
+  // it went (integration_audit.json).
+  it('shows the waiting version, every version and the latest calls', async () => {
+    const h = await renderOrg(PATH);
+    const versions = within(screen.getByRole('region', { name: 'Versions' }));
+    const links = versions.getAllByRole('link');
+    expect(links.map((l) => l.getAttribute('href'))).toEqual(['/org/integrations/hubspot/versions/1.3.0', '/org/integrations/hubspot/versions/1.2.0']);
+    expect(within(links[0]!).getByText('Needs your approval')).toBeInTheDocument();
+    expect(within(links[0]!).getByText('Adds contacts.')).toBeInTheDocument();
+    expect(within(links[1]!).getByText('In use')).toHaveClass('kv-badge--success');
+
+    const calls = within(screen.getByRole('region', { name: 'Latest calls' }));
+    expect(calls.getAllByText('Create post')).toHaveLength(2);
+    expect(calls.getByText('Allowed')).toBeInTheDocument();
+    expect(calls.getByText('Refused: Lee has no access to the Marketing blog')).toBeInTheDocument();
+    expect(calls.getByText('812 ms')).toBeInTheDocument();
+
+    await click(screen.getByRole('button', { name: 'Review' }));
+    expect(h.router.state.location.pathname).toBe('/org/integrations/hubspot/versions/1.3.0');
   });
 });
 

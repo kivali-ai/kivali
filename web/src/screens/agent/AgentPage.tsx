@@ -15,9 +15,9 @@ import { flattenTree } from '../../state/org';
 import { useOrg } from '../../state/OrgProvider';
 import '../../styles/chat.css';
 
-export type AgentTab = 'chat' | 'background' | 'about' | 'chats';
+export type AgentTab = 'chat' | 'background' | 'about' | 'integrations' | 'chats';
 
-const TAB_PATH: Record<AgentTab, string> = { chat: '', background: '/background', about: '/about', chats: '/chats' };
+const TAB_PATH: Record<AgentTab, string> = { chat: '', background: '/background', about: '/about', integrations: '/integrations', chats: '/chats' };
 
 export interface AgentPageContextValue {
   slug: string;
@@ -97,7 +97,7 @@ export interface AgentPageProps {
 
 /**
  * The layout every agent tab shares: the header (avatar, name, role line, state, context, New chat, the ⋯
- * menu) and the tabs Chat · Background · About · Past chats. The tab bar hides and Team is the way back.
+ * menu) and the tabs Chat · Background · About · Integrations · Past chats. The tab bar hides and Team is the way back.
  * Header and tabs are pinned to the top of the column, so the tabs are always in reach however long the chat;
  * below 960 the header condenses to one slim row once the body is scrolled.
  */
@@ -228,6 +228,7 @@ export function AgentPage({ slug, tab, children }: AgentPageProps) {
     { value: 'chat', label: 'Chat' },
     backgroundCount !== undefined ? { value: 'background', label: 'Background', count: backgroundCount } : { value: 'background', label: 'Background' },
     { value: 'about', label: 'About' },
+    { value: 'integrations', label: 'Integrations' },
     detail ? { value: 'chats', label: 'Past chats', count: detail.counts.past_chats } : { value: 'chats', label: 'Past chats' },
   ].map((t) => (t.value === tab ? { ...t, content: body } : t));
 

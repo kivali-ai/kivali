@@ -60,6 +60,8 @@ helm install kivali kivali-X.Y.Z.tgz -n kivali \
 
 Leave out `externalURL` if you will only reach the team at a loopback address (for example through `kubectl port-forward`). The chart's `values.yaml` is commented key by key; the settings that matter most are in [Configuration](configuration.md#helm-chart-values).
 
+The chart gives the server a Role in its namespace and nothing outside it: it manages agent pods, browser pods and their volumes, and it reads, writes and deletes the Secrets that hold [integrations](integrations.md)' connection secrets, one per connection, named `kivali-connection-<integration>-<id>`. The [chart's reference](../charts/kivali/README.md#fixed-names) lists every permission.
+
 **3. Reach it.** The server is exposed as the Service `kivali`, a NodePort on port 30080 by default. Put your https front end (a reverse proxy, an ingress, Tailscale) in front of it at the address you set as `externalURL`, then open that address and sign in.
 
 **4. Set up the team.** [Connect Claude](#connect-claude) first, so the Chief of Staff can start. The first visit opens setup: your org's name and logo, project files, and hiring your Chief of Staff. See [Getting started](getting-started.md#4-set-up-your-org).
@@ -174,7 +176,7 @@ Read the release notes before upgrading.
 
 Take backups from the app: **Org**, **Backup and restore**, **Download a backup**. Restoring is offered on the first setup screen of a fresh install. See [Backup and restore](backup-and-restore.md).
 
-Everything durable is on the PersistentVolumeClaim `kivali-data`. It is kept when you `helm uninstall` (`persistence.keepOnUninstall`), so uninstalling and reinstalling keeps the team. Delete the PVC yourself to remove the data.
+Everything durable is on the PersistentVolumeClaim `kivali-data`, except the secrets of integration connections, which are Kubernetes Secrets in the namespace (`kivali-connection-*`) and never in a backup. The PVC is kept when you `helm uninstall` (`persistence.keepOnUninstall`), so uninstalling and reinstalling keeps the team; so are the Secrets, which nothing in the chart creates or deletes. Delete the PVC yourself to remove the data, and the Secrets with `kubectl -n kivali delete secret -l kivali.ai/integration`. A team restored into another install has its integrations but not their secrets: each integration's page says to enter them again.
 
 ## Single-user installs
 

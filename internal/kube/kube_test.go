@@ -97,6 +97,95 @@ func TestGetAndListPods(t *testing.T) {
 	}
 }
 
+// A connection's Secret is written with PUT and, when the API has no
+// Secret of that name, created with POST; read back with its data
+// decoded; and deleted, with a missing one no error. A PutSecret that
+// only PUT would fail every first connection with a 404; one that
+// sent the data unencoded, or as stringData, would be refused or read
+// back wrong.
+func TestSecretsPutGetDelete(t *testing.T) {
+	stored := map[string]map[string]any{}
+	var verbs []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		verbs = append(verbs, r.Method+" "+r.URL.Path)
+		const base = "/api/v1/namespaces/ns/secrets"
+		name := strings.TrimPrefix(strings.TrimPrefix(r.URL.Path, base), "/")
+		notFound := func() {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = io.WriteString(w, `{"kind":"Status","reason":"NotFound","code":404}`)
+		}
+		switch {
+		case r.Method == http.MethodPost && name == "":
+			var obj map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&obj)
+			n := obj["metadata"].(map[string]any)["name"].(string)
+			stored[n] = obj
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(obj)
+		case r.Method == http.MethodPut:
+			if _, ok := stored[name]; !ok {
+				notFound()
+				return
+			}
+			var obj map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&obj)
+			stored[name] = obj
+			_ = json.NewEncoder(w).Encode(obj)
+		case r.Method == http.MethodGet:
+			obj, ok := stored[name]
+			if !ok {
+				notFound()
+				return
+			}
+			_ = json.NewEncoder(w).Encode(obj)
+		case r.Method == http.MethodDelete:
+			if _, ok := stored[name]; !ok {
+				notFound()
+				return
+			}
+			delete(stored, name)
+			_, _ = io.WriteString(w, `{"kind":"Status","status":"Success"}`)
+		default:
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	k := NewForServer(srv.URL, srv.Client(), "ns")
+	ctx := context.Background()
+	labels := map[string]string{"app": "kivali", "kivali.ai/integration": "crm"}
+
+	if _, err := k.GetSecret(ctx, "s1"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("GetSecret(missing) = %v, want ErrNotFound", err)
+	}
+	if err := k.PutSecret(ctx, "s1", labels, map[string][]byte{"token": []byte("first")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := k.PutSecret(ctx, "s1", labels, map[string][]byte{"token": []byte("second")}); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"GET /api/v1/namespaces/ns/secrets/s1", "PUT /api/v1/namespaces/ns/secrets/s1", "POST /api/v1/namespaces/ns/secrets", "PUT /api/v1/namespaces/ns/secrets/s1"}
+	if strings.Join(verbs, ",") != strings.Join(want, ",") {
+		t.Errorf("verbs = %v, want %v", verbs, want)
+	}
+	obj := stored["s1"]
+	if obj["type"] != "Opaque" || obj["data"].(map[string]any)["token"] != "c2Vjb25k" {
+		t.Errorf("stored = %v", obj)
+	}
+	if got := obj["metadata"].(map[string]any)["labels"].(map[string]any); got["kivali.ai/integration"] != "crm" || got["app"] != "kivali" {
+		t.Errorf("labels = %v", got)
+	}
+	data, err := k.GetSecret(ctx, "s1")
+	if err != nil || string(data["token"]) != "second" {
+		t.Errorf("GetSecret = %q, %v", data, err)
+	}
+	if err := k.DeleteSecret(ctx, "s1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := k.DeleteSecret(ctx, "s1"); err != nil {
+		t.Errorf("deleting a missing Secret: %v", err)
+	}
+}
+
 // TestPodReadsTheSchedulersRefusal guards how a browser pod that cannot
 // be placed is told apart: without the PodScheduled condition's message
 // a start short of memory waits out its whole timeout and ends with no

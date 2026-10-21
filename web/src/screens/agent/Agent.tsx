@@ -6,15 +6,17 @@ import { About } from './About';
 import { Background } from './Background';
 import { Chat } from './Chat';
 import { Chats } from './Chats';
+import { IntegrationsPane } from './IntegrationsPane';
 import { PastChat } from './PastChat';
 import { Subagent } from './Subagent';
 
-export type AgentSection = 'chat' | 'background' | 'about' | 'chats' | 'past-chat' | 'subagent';
+export type AgentSection = 'chat' | 'background' | 'about' | 'integrations' | 'chats' | 'past-chat' | 'subagent';
 
 const TAB_OF: Record<Exclude<AgentSection, 'subagent'>, AgentTab> = {
   chat: 'chat',
   background: 'background',
   about: 'about',
+  integrations: 'integrations',
   chats: 'chats',
   'past-chat': 'chats',
 };
@@ -29,6 +31,9 @@ function body(section: Exclude<AgentSection, 'subagent'>, slug: string): ReactNo
     case 'about':
       tab = <About />;
       break;
+    case 'integrations':
+      tab = <IntegrationsPane />;
+      break;
     case 'chats':
       tab = <Chats />;
       break;
@@ -41,7 +46,7 @@ function body(section: Exclude<AgentSection, 'subagent'>, slug: string): ReactNo
 }
 
 /**
- * Every page under /agents/:slug. The four tabs share AgentPage (header and tabs); a background task's
+ * Every page under /agents/:slug. The five tabs share AgentPage (header and tabs); a background task's
  * session is its own page with no agent header.
  */
 export function Agent({ section }: { section: AgentSection }) {

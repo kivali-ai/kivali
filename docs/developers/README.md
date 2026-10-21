@@ -28,6 +28,7 @@ internal/
   agentshell/           the agent-shell daemon: bash and the file_* tools over UDS
   files/              the /files/ namespace behind the file_* tools (files-and-publishing.md)
   graph/              the knowledge graph over published files (knowledge-graph.md)
+  integration/        integration bundles: the manifest, the check, the access form (integrations.md)
   mcp/                MCP server pieces: skills, project files, agent memory
   message/            the message file format and parser
   messaging/          the Messenger: route, release, bounce, release-all
@@ -36,11 +37,13 @@ internal/
   provider/           the provider-neutral seam: Client, Provider, request and usage shapes
   handbook/           the team handbook's shape: four sections, and the check every write door runs
   seed/               default team handbooks (work, personal) and the Chief of Staff role template
+  secrets/            integration connections' secret fields: Kubernetes Secrets, or memory outside a cluster
   store/              the filesystem store, the only writer to /data
   supervisor/         kivali-supervisor: VM backends, guest agent protocol, install, upgrade
   web/                JSON API (/api/v1), SSE hubs, agent-pod surfaces
   web/apitypes/       the JSON wire contract; TypeScript is generated from it
   web/ui/             the embedded web app build and its SPA handler
+  zipsafe/            unpacks an uploaded zip without letting it write elsewhere (skills, integration bundles)
 cmd/
   agent-shell/          the per-agent shell sidecar
   egress-proxy/       the egress proxy (shell allowlist, agent credentials, budget)
@@ -332,6 +335,7 @@ Desktop's. Install Kivali Desktop, or unpack a release's VM image into
 | [assignments.md](assignments.md) | The assignment tracker's contract: files, states, tools, events. |
 | [files-and-publishing.md](files-and-publishing.md) | The `/files/` namespace, workspaces, publishing and the shared tree. |
 | [knowledge-graph.md](knowledge-graph.md) | The graph published files form: links, indexing, queries. |
+| [integrations.md](integrations.md) | Integration bundles: the manifest, the check, the access form, storage, connection Secrets, approval, the API. |
 | [auth.md](auth.md) | Google sign-in, the public client and relay, sessions, the allowlist, the desktop handoff. |
 | [deployment.md](deployment.md) | Teams run by the supervisor: the dev team, upgrades, backup and restore, first checks. |
 | [supervisor.md](supervisor.md) | kivali-supervisor: backends (macOS, Windows), CLI, RPC, guest protocol, install, upgrade journal. |
