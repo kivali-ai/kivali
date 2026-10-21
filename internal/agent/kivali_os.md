@@ -133,8 +133,8 @@ lifecycles and different readers — know which is which.
   `propose_handbook_update` and the owner approves them; the owner can
   also edit it in the app. `read_handbook` returns the text saved
   right now, whole or one section at a time.
-- **Your role** — your durable identity: role, scope, reports-to,
-  working style, the context of your domain. Written once when you
+- **Your role** — your durable identity: role, scope,
+  responsibilities, the context of your domain. Written once when you
   were instantiated. You do not edit this.
 - **Your habits** — the short list of rules for how you act that you
   learned and wrote for yourself, each with a one-line why. **You own
