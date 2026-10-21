@@ -76,7 +76,7 @@ An agent that needs a program it does not have, such as a PDF reader or a video 
 
 You do not create or remove agents directly. Your Chief of Staff does, through proposals you approve.
 
-**Hiring.** Ask your Chief of Staff for the role you need: what it should own and why no one else can. It drafts the role and sends a **Hire** proposal. Review it and choose **Approve hire**; the agent is created the moment you approve. Other agents can also make the case for a hire to their manager, and it reaches the Chief of Staff from there.
+**Hiring.** Ask your Chief of Staff for the role you need: what it should own and why no one else can. It drafts the role and sends a **Hire** proposal. Review it and choose **Approve hire**; the agent is created the moment you approve. Other agents can also make the case for a hire to their manager, and it reaches the Chief of Staff from there. One role ships with Kivali, the **Integrations engineer**, who builds integrations for your agents: ask for it when you want agents connected to a service, and its proposal shows Kivali's role with **Template: Integrations engineer** ([Integrations](integrations.md#have-an-integration-built)).
 
 **Offboarding.** Ask your Chief of Staff to let an agent go. Approving the **Offboard** proposal archives the agent: its role, memory and chats stay readable under **Team**, **Archived**, and its open assignments move to the agent it reported to. An agent with direct reports cannot be offboarded until those reports are moved, and the Chief of Staff cannot be offboarded.
 

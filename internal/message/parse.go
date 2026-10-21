@@ -11,6 +11,7 @@ import (
 	"github.com/kivali-ai/kivali/internal/handbook"
 	"github.com/kivali-ai/kivali/internal/provider"
 	"github.com/kivali-ai/kivali/internal/roleicon"
+	"github.com/kivali-ai/kivali/internal/seed"
 	"github.com/kivali-ai/kivali/internal/store"
 )
 
@@ -279,6 +280,9 @@ type hireInput struct {
 	ReportsTo         string `json:"reports_to"`
 	RolePath          string `json:"role_path"`
 	InitialMemoryPath string `json:"initial_memory_path"`
+	// Template names a role Kivali ships (seed.HireTemplate), which is
+	// the hire's role in place of role_path's.
+	Template string `json:"template"`
 }
 
 // ceoInput is the shared shape of CEO-bound publish tool inputs:
@@ -504,9 +508,22 @@ func parseHire(in hireInput, ctx ParseContext) (*store.Hire, error) {
 	if err := ValidateSlug(reportsTo); err != nil {
 		return nil, fmt.Errorf("reports_to: %w", err)
 	}
-	body, err := ctx.resolveArtifactPath("role_path", in.RolePath)
-	if err != nil {
-		return nil, err
+	template := strings.TrimSpace(in.Template)
+	var body string
+	if template != "" {
+		_, role, ok := seed.HireTemplate(template)
+		switch {
+		case !ok:
+			return nil, fmt.Errorf("template %q is not a role Kivali ships; the templates are %s", template, strings.Join(seed.HireTemplates, ", "))
+		case strings.TrimSpace(in.RolePath) != "":
+			return nil, errors.New("give role_path or template, not both: with a template, the role is the template's")
+		}
+		body = role
+	} else {
+		var err error
+		if body, err = ctx.resolveArtifactPath("role_path", in.RolePath); err != nil {
+			return nil, err
+		}
 	}
 	memory, err := ctx.resolveOptionalArtifactPath("initial_memory_path", in.InitialMemoryPath)
 	if err != nil {
@@ -519,6 +536,7 @@ func parseHire(in hireInput, ctx ParseContext) (*store.Hire, error) {
 		ReportsTo:          reportsTo,
 		Body:               body,
 		InitialAgentMemory: memory,
+		Template:           template,
 	}, nil
 }
 

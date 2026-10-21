@@ -782,3 +782,67 @@ type IntegrationCallResponse struct {
 	Content []string `json:"content"`
 	IsError bool     `json:"is_error,omitempty"`
 }
+
+// AgentProfilePath is the core.sock route, under /v1/agent/{slug},
+// that says which of Kivali's optional tool families the agent has.
+// The agent's MCP server reads it once when it starts (GET, bound to
+// the slug header); core checks each family again on every call.
+const AgentProfilePath = "/profile"
+
+// AgentProfile answers GET /v1/agent/{slug}/profile.
+type AgentProfile struct {
+	// IntegrationsEngineer is the agent hired from the Integrations
+	// engineer's template (store.Agent.IntegrationsEngineer): its MCP
+	// server registers the integration_* tools.
+	IntegrationsEngineer bool `json:"integrations_engineer,omitempty"`
+}
+
+// IntegrationEngineerDispatchPath is the core.sock route, under
+// /v1/agent/{slug}, of the Integrations engineer's integration_* tools:
+// a POST bound to the slug header, refused for an agent that is not
+// the engineer.
+const IntegrationEngineerDispatchPath = "/integration-engineer/dispatch"
+
+// IntegrationEngineerRequest is the body of POST
+// /v1/agent/{slug}/integration-engineer/dispatch: one integration_*
+// call, Tool and the model's arguments. integration_validate and
+// integration_publish take two requests: the first is answered with
+// the smoke test to run (IntegrationEngineerResponse.Smoke), and the
+// second carries what the agent's shell gave back.
+type IntegrationEngineerRequest struct {
+	Tool  string          `json:"tool"`
+	Input json.RawMessage `json:"input,omitempty"`
+	// SmokeResult is the smoke test's run, on the second request.
+	SmokeResult *IntegrationSmokeResult `json:"smoke_result,omitempty"`
+}
+
+// IntegrationEngineerResponse is the call's answer as the model reads
+// it, or, with Smoke set, not yet the answer: the smoke test for the
+// agent's MCP server to run in the agent's shell before it sends the
+// request again with the result.
+type IntegrationEngineerResponse struct {
+	Body    string            `json:"body,omitempty"`
+	IsError bool              `json:"is_error,omitempty"`
+	Smoke   *IntegrationSmoke `json:"smoke,omitempty"`
+}
+
+// IntegrationSmoke is the smoke test core asks the agent's shell to
+// run: a bash command, the bundle's directory it runs in (relative to
+// /files/, as a shell call's cwd) and the shell's timeout.
+type IntegrationSmoke struct {
+	Command        string `json:"command"`
+	Cwd            string `json:"cwd"`
+	TimeoutSeconds int    `json:"timeout_seconds"`
+}
+
+// IntegrationSmokeResult is what the agent's shell gave back for an
+// IntegrationSmoke, or Skipped, why nothing ran: an agent with no
+// shell.
+type IntegrationSmokeResult struct {
+	Skipped  string `json:"skipped,omitempty"`
+	Stdout   string `json:"stdout,omitempty"`
+	Stderr   string `json:"stderr,omitempty"`
+	ExitCode int    `json:"exit_code,omitempty"`
+	TimedOut bool   `json:"timed_out,omitempty"`
+	Err      string `json:"err,omitempty"`
+}

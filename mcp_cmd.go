@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/kivali-ai/kivali/internal/agent"
 	"github.com/kivali-ai/kivali/internal/agentpod"
 	"github.com/kivali-ai/kivali/internal/claudeagent"
 	"github.com/kivali-ai/kivali/internal/controlclient"
@@ -174,6 +175,15 @@ func runFullAgentMCP(logger *log.Logger, socketPath, agentSlug string) {
 		logger.Fatal(err)
 	}
 
+	profile := fullAgentProfile(logger, client)
+	// A bundle's smoke test runs only in the sidecar, where the pod's
+	// network policy gives a server started without proxy variables no
+	// network. A local shell (KIVALI_MCP_LOCAL_FILES) runs on a host
+	// whose network is open, so there the smoke test is skipped.
+	var smokeShell agent.ShellExecutor
+	if os.Getenv("AGENT_SHELL_SOCKET") != "" {
+		smokeShell = shellExec
+	}
 	tk := mcp.FullAgentToolkit(mcp.FullAgentDeps{
 		Client:         client,
 		IsChiefOfStaff: isCoS,
@@ -182,7 +192,9 @@ func runFullAgentMCP(logger *log.Logger, socketPath, agentSlug string) {
 		Subagent:       subagentBackend,
 		// The driver as Provider only: this process serves tools and
 		// makes no model call, so nothing else of it is used.
-		Provider: claudeagent.New(claudeagent.Options{}),
+		Provider:             claudeagent.New(claudeagent.Options{}),
+		IntegrationsEngineer: profile.IntegrationsEngineer,
+		SmokeShell:           smokeShell,
 	})
 	integrationTools := fullAgentIntegrationTools(logger, client)
 	tk.Tools = append(tk.Tools, mcp.IntegrationTools(client, integrationTools, tk.Tools)...)
@@ -197,12 +209,30 @@ func runFullAgentMCP(logger *log.Logger, socketPath, agentSlug string) {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	logger.Printf("starting MCP server: toolkit=%s agent=%s core-uds=%s tools=%d integration-actions=%d cos=%v",
-		tk.Name, agentSlug, socketPath, len(tk.Tools), len(integrationTools), isCoS)
+	logger.Printf("starting MCP server: toolkit=%s agent=%s core-uds=%s tools=%d integration-actions=%d cos=%v integrations-engineer=%v",
+		tk.Name, agentSlug, socketPath, len(tk.Tools), len(integrationTools), isCoS, profile.IntegrationsEngineer)
 	if err := server.Serve(ctx, os.Stdin, os.Stdout); err != nil {
 		logger.Fatalf("serve: %v", err)
 	}
 	logger.Print("shutdown (EOF)")
+}
+
+// profileTimeout bounds the start's wait for the agent's profile.
+const profileTimeout = 10 * time.Second
+
+// fullAgentProfile is which optional tool families core says the agent
+// has, read once at this server's start: the flag is set when the agent
+// is hired and never changes, and core checks it again on every call.
+// A failure is logged and starts the server with none of them.
+func fullAgentProfile(logger *log.Logger, client *agentpod.Client) agentpod.AgentProfile {
+	ctx, cancel := context.WithTimeout(context.Background(), profileTimeout)
+	defer cancel()
+	p, err := client.Profile(ctx)
+	if err != nil {
+		logger.Printf("agent profile: %v (starting without the optional tool families)", err)
+		return agentpod.AgentProfile{}
+	}
+	return *p
 }
 
 // integrationListTimeout bounds the start's wait for the agent's

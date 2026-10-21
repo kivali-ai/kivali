@@ -56,9 +56,14 @@ type Agent struct {
 	// NetworkExempt lifts the agent's network limits: its shell
 	// commands and its own fetches reach any public host, and the proxy
 	// neither holds them to a list nor counts them against a budget.
-	NetworkExempt bool       `yaml:"network_exempt,omitempty"`
-	CreatedAt     time.Time  `yaml:"created_at"`
-	ArchivedAt    *time.Time `yaml:"archived_at,omitempty"`
+	NetworkExempt bool `yaml:"network_exempt,omitempty"`
+	// IntegrationsEngineer marks the agent hired from the Integrations
+	// engineer's template (seed.IntegrationsEngineerTemplate), which
+	// ApplyHire sets and nothing else does. It gives the agent the
+	// integration_* tools, and core checks it on every call of one.
+	IntegrationsEngineer bool       `yaml:"integrations_engineer,omitempty"`
+	CreatedAt            time.Time  `yaml:"created_at"`
+	ArchivedAt           *time.Time `yaml:"archived_at,omitempty"`
 }
 
 // Message role values. Named after email/memo convention rather than the

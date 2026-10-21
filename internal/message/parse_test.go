@@ -10,6 +10,7 @@ import (
 
 	"github.com/kivali-ai/kivali/internal/provider"
 	"github.com/kivali-ai/kivali/internal/roleicon"
+	"github.com/kivali-ai/kivali/internal/seed"
 	"github.com/kivali-ai/kivali/internal/store"
 )
 
@@ -260,6 +261,61 @@ func TestParseProposeHireProducesApprovalRequestWithHire(t *testing.T) {
 	}
 	if !strings.Contains(h.InitialAgentMemory, "starting fresh") {
 		t.Errorf("hire initial memory not captured: %q", h.InitialAgentMemory)
+	}
+}
+
+// Why this test exists: the Integrations engineer is hired from a role
+// Kivali ships, so the Chief of Staff names the template and writes no
+// role, and the proposal carries the template's text for the owner to
+// read. A template with a role_path too is refused, since the Chief of
+// Staff would believe its draft was used; an unknown template is
+// refused by name, rather than hired as an agent with no role; and a
+// hire with neither still needs its role_path.
+func TestParseProposeHireFromATemplate(t *testing.T) {
+	in := map[string]any{
+		"title":      "Hire: Integrations engineer",
+		"slug":       "integrations-engineer",
+		"role":       "Integrations engineer",
+		"icon":       "user",
+		"reports_to": "chief-of-staff",
+		"template":   "integrations-engineer",
+		"rationale":  "The owner wants the CRM connected.",
+	}
+	res, err := Parse(toolUse(ToolProposeHire, in), fixedCtx())
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	h := res.Message.Hire
+	if h == nil || h.Template != "integrations-engineer" || h.Body != seed.IntegrationsEngineerRole {
+		t.Fatalf("hire = %+v", h)
+	}
+
+	in["role_path"] = "/files/artifacts/private/role.md"
+	ctx := ctxWithFiles(map[string]string{"/files/artifacts/private/role.md": "# Mine\n"})
+	if _, err := Parse(toolUse(ToolProposeHire, in), ctx); err == nil || !strings.Contains(err.Error(), "role_path or template, not both") {
+		t.Errorf("template and role_path = %v", err)
+	}
+	delete(in, "role_path")
+	in["template"] = "web-designer"
+	if _, err := Parse(toolUse(ToolProposeHire, in), fixedCtx()); err == nil || !strings.Contains(err.Error(), `template "web-designer" is not a role Kivali ships; the templates are integrations-engineer`) {
+		t.Errorf("unknown template = %v", err)
+	}
+	delete(in, "template")
+	if _, err := Parse(toolUse(ToolProposeHire, in), fixedCtx()); err == nil || !strings.Contains(err.Error(), "role_path is required") {
+		t.Errorf("neither = %v", err)
+	}
+
+	var schema struct {
+		Properties map[string]struct {
+			Enum []string `json:"enum"`
+		} `json:"properties"`
+		Required []string `json:"required"`
+	}
+	if err := json.Unmarshal(proposeHireTool.Schema, &schema); err != nil {
+		t.Fatal(err)
+	}
+	if slices.Contains(schema.Required, "role_path") || !slices.Equal(schema.Properties["template"].Enum, []string{"integrations-engineer"}) {
+		t.Errorf("schema: required %v, template %+v", schema.Required, schema.Properties["template"])
 	}
 }
 

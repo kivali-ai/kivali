@@ -1,0 +1,40 @@
+{
+  "manifest_version": "0.3",
+  "name": "echo",
+  "version": "1.0.0",
+  "display_name": "Echo",
+  "description": "A test integration that answers with what it was sent and who sent it.",
+  "author": { "name": "Kivali tests" },
+  "server": {
+    "type": "python",
+    "entry_point": "server/main.py",
+    "mcp_config": {
+      "command": "python3",
+      "args": ["server/main.py"],
+      "env": { "ECHO_TOKEN": "${user_config.token}" }
+    }
+  },
+  "user_config": {
+    "token": { "type": "string", "title": "Token", "description": "Any text: whoami names it.", "sensitive": true, "required": true }
+  },
+  "tools": [
+    { "name": "echo", "description": "Return the arguments and who called, for a color the caller's access includes." },
+    { "name": "whoami", "description": "Name the connected account." },
+    { "name": "list_colors", "description": "List the colors an agent may be given." }
+  ],
+  "kivali": {
+    "connection": { "method": "token" },
+    "hosts": ["example.com"],
+    "access": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "colors": { "type": "array", "items": { "type": "string" }, "title": "Colors", "description": "The colors the agent may echo." },
+          "loud": { "type": "boolean", "title": "May shout" }
+        }
+      },
+      "choices": { "colors": "list_colors" }
+    },
+    "verify": "whoami"
+  }
+}

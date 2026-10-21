@@ -6,8 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path"
+	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/kivali-ai/kivali/internal/zipsafe"
@@ -29,13 +32,23 @@ type Bundle struct {
 
 	manifestRaw []byte
 	zipData     []byte
+	// dir is the bundle's directory when it was read from one
+	// (ReadDirectory) rather than from a zip.
+	dir fs.FS
 }
 
 // ManifestBytes is manifest.json byte for byte.
 func (b *Bundle) ManifestBytes() []byte { return b.manifestRaw }
 
-// Extract unpacks the bundle into dir; see the package function.
-func (b *Bundle) Extract(dir string) error { return Extract(b.zipData, dir) }
+// Extract unpacks the bundle into dir: the zip, as the package
+// function does, or for a bundle read from a directory, a copy of its
+// files, under the same limits and refusals.
+func (b *Bundle) Extract(dir string) error {
+	if b.dir != nil {
+		return b.copyTo(dir)
+	}
+	return Extract(b.zipData, dir)
+}
 
 // ReadBundle reads a bundle's zip: where its root is, every file it
 // holds and its manifest. It writes nothing. A zip that is not one, or
@@ -139,4 +152,166 @@ func Extract(data []byte, dir string) error {
 		return fmt.Errorf("extract bundle: %s is not empty", dir)
 	}
 	return zipsafe.Extract(zr, prefix, dir, bundleLimits, "bundle")
+}
+
+// skippedDirs are the directories ReadDirectory leaves out: macOS's
+// metadata, as a zip's reading does, and Python's bytecode cache,
+// which running the server or its tests writes beside the code.
+var skippedDirs = map[string]bool{"__MACOSX": true, "__pycache__": true}
+
+// ReadDirectory reads a bundle from a directory, fsys rooted at the
+// bundle's root (an os.Root's FS, so nothing it opens leaves the
+// directory): every entry it holds and its manifest. It writes
+// nothing, and reads as ReadBundle reads a zip: manifest.json must be
+// a regular file at the root and valid JSON, and everything else about
+// the bundle is Validate's to say. A symlink or special file is listed
+// for Validate to name, never followed; __MACOSX and __pycache__
+// directories are left out. The walk stops past MaxBundleFiles
+// entries. The bundle's Extract copies the files then, so a bundle is
+// stored from a directory as it is from a zip.
+func ReadDirectory(fsys fs.FS) (*Bundle, error) {
+	b := &Bundle{dir: fsys}
+	errFull := errors.New("full")
+	err := fs.WalkDir(fsys, ".", func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if p == "." {
+			return nil
+		}
+		if d.IsDir() {
+			if skippedDirs[path.Base(p)] {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		var size int64
+		if info.Mode().IsRegular() {
+			size = info.Size()
+		}
+		b.Files = append(b.Files, BundleFile{Path: p, Size: size, Mode: info.Mode()})
+		b.Size += size
+		if len(b.Files) > MaxBundleFiles {
+			return errFull
+		}
+		return nil
+	})
+	switch {
+	case errors.Is(err, errFull):
+	case errors.Is(err, fs.ErrNotExist):
+		return nil, errors.New("the directory is not there")
+	case err != nil:
+		return nil, fmt.Errorf("the directory cannot be read: %w", err)
+	}
+	i := slices.IndexFunc(b.Files, func(f BundleFile) bool { return f.Path == ManifestName })
+	switch {
+	case i < 0:
+		return nil, fmt.Errorf("the bundle has no %s at its root", ManifestName)
+	case !b.Files[i].Mode.IsRegular():
+		return nil, fmt.Errorf("the bundle's %s is not a regular file", ManifestName)
+	case b.Files[i].Size > maxManifestBytes:
+		return nil, fmt.Errorf("the bundle's %s is over %d KiB", ManifestName, maxManifestBytes>>10)
+	}
+	raw, err := fs.ReadFile(fsys, ManifestName)
+	if err != nil {
+		return nil, fmt.Errorf("the bundle's %s cannot be read: %w", ManifestName, err)
+	}
+	if len(raw) > maxManifestBytes {
+		return nil, fmt.Errorf("the bundle's %s is over %d KiB", ManifestName, maxManifestBytes>>10)
+	}
+	m, err := ParseManifest(raw)
+	if err != nil {
+		return nil, err
+	}
+	b.manifestRaw, b.Manifest = raw, m
+	return b, nil
+}
+
+// copyTo copies the files a directory bundle listed into dir, which
+// must be empty or absent, under the bundle limits: a symlink or
+// special file, more files than MaxBundleFiles or more bytes than
+// MaxBundleBytes, counted as they are written, is refused. The
+// manifest is the one read, byte for byte, whatever the directory
+// holds now, so the stored bundle's manifest is the one its install
+// screen shows. On a refusal dir may hold part of the bundle, as with
+// Extract.
+func (b *Bundle) copyTo(dir string) error {
+	entries, err := os.ReadDir(dir)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return err
+		}
+	case err != nil:
+		return err
+	case len(entries) > 0:
+		return fmt.Errorf("copy bundle: %s is not empty", dir)
+	}
+	if len(b.Files) > MaxBundleFiles {
+		return fmt.Errorf("bundle: more than %d files", MaxBundleFiles)
+	}
+	total := int64(len(b.manifestRaw))
+	if err := os.WriteFile(filepath.Join(dir, ManifestName), b.manifestRaw, 0o644); err != nil {
+		return err
+	}
+	for _, f := range b.Files {
+		if f.Path == ManifestName {
+			continue
+		}
+		if !f.Mode.IsRegular() {
+			return fmt.Errorf("bundle: %s is not a regular file", f.Path)
+		}
+		n, err := copyBundleFile(b.dir, f, dir, MaxBundleBytes-total)
+		if err != nil {
+			return err
+		}
+		total += n
+	}
+	return nil
+}
+
+// copyBundleFile copies one regular file of at most limit bytes.
+func copyBundleFile(fsys fs.FS, f BundleFile, dir string, limit int64) (int64, error) {
+	if !fs.ValidPath(f.Path) {
+		return 0, fmt.Errorf("bundle: unsafe path %q", f.Path)
+	}
+	src, err := fsys.Open(f.Path)
+	if err != nil {
+		return 0, fmt.Errorf("bundle: %s: %w", f.Path, err)
+	}
+	defer func() { _ = src.Close() }()
+	info, err := src.Stat()
+	if err != nil {
+		return 0, fmt.Errorf("bundle: %s: %w", f.Path, err)
+	}
+	if !info.Mode().IsRegular() {
+		return 0, fmt.Errorf("bundle: %s is not a regular file", f.Path)
+	}
+	target := filepath.Join(dir, filepath.FromSlash(f.Path))
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		return 0, err
+	}
+	perm := os.FileMode(0o644)
+	if info.Mode().Perm()&0o111 != 0 {
+		perm = 0o755
+	}
+	dst, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, perm)
+	if err != nil {
+		return 0, err
+	}
+	n, err := io.Copy(dst, io.LimitReader(src, limit+1))
+	if cerr := dst.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return n, fmt.Errorf("bundle: %s: %w", f.Path, err)
+	}
+	if n > limit {
+		return n, fmt.Errorf("bundle: more than %d MiB", MaxBundleBytes>>20)
+	}
+	return n, nil
 }

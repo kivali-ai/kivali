@@ -55,7 +55,7 @@ Every team starts with one agent, the Chief of Staff. It runs the team day to da
 
 | Proposal | What approving does |
 | --- | --- |
-| Hire | Creates the new agent with the role the Chief of Staff wrote. |
+| Hire | Creates the new agent with the role the Chief of Staff wrote, or with the one role Kivali ships, the Integrations engineer, which builds [integrations](integrations.md#have-an-integration-built). |
 | Offboard | Archives an agent. Nothing is deleted: its role, memory and chats stay readable under **Team**, **Archived**. |
 | Reorg | Moves reporting lines. |
 | Role update | Replaces an agent's role document. |

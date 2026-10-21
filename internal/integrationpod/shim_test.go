@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -86,8 +87,8 @@ func newFakeCore(t *testing.T, m *integration.Manifest) *fakeCore {
 		t.Fatal(err)
 	}
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /v1/integration/fake/events", c.events)
-	mux.HandleFunc("POST /v1/integration/fake/rpc", c.rpc)
+	mux.HandleFunc("GET /v1/integration/"+m.Name+"/events", c.events)
+	mux.HandleFunc("POST /v1/integration/"+m.Name+"/rpc", c.rpc)
 	srv := &http.Server{Handler: mux}
 	go func() { _ = srv.Serve(ln) }()
 	t.Cleanup(func() { _ = srv.Close() })
@@ -313,14 +314,22 @@ func runShim(t *testing.T, c *fakeCore, m *integration.Manifest) (*clock.Fake, *
 	if err != nil {
 		t.Fatal(err)
 	}
+	return runShimIn(t, c, bundle, m, exe)
+}
+
+// runShimIn runs a shim on the bundle in dir, built for m's name and
+// version, against c, with command replacing mcp_config.command when
+// it is not empty.
+func runShimIn(t *testing.T, c *fakeCore, bundle string, m *integration.Manifest, command string) (*clock.Fake, *shimRun, context.CancelFunc) {
+	t.Helper()
 	clk := clock.NewFake()
 	ctx, cancel := context.WithCancel(context.Background())
 	run := &shimRun{done: make(chan struct{})}
 	shim := &Shim{
-		Name: "fake", Version: "1.0.0", Token: testToken,
+		Name: m.Name, Version: m.Version, Token: testToken,
 		CoreUDS: c.sock, Bundle: bundle,
 		ProxyURL: "http://10.43.0.12:3128",
-		Command:  exe,
+		Command:  command,
 		Path:     os.Getenv("PATH"),
 		Lang:     "C.UTF-8",
 		Clock:    clk,
@@ -583,5 +592,84 @@ func TestReadSSE(t *testing.T) {
 	}
 	if strings.Join(got, "|") != "start={}|rpc={\"a\":1}\nx" {
 		t.Errorf("events = %q", got)
+	}
+}
+
+// copyDir copies the regular files under src into a new temp
+// directory and returns it.
+func copyDir(t *testing.T, src string) string {
+	t.Helper()
+	dst := t.TempDir()
+	err := filepath.WalkDir(src, func(p string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		rel, _ := filepath.Rel(src, p)
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		if err := os.MkdirAll(filepath.Join(dst, filepath.Dir(rel)), 0o755); err != nil {
+			return err
+		}
+		return os.WriteFile(filepath.Join(dst, rel), b, 0o644)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dst
+}
+
+// Why this test exists: every other shim test runs the Go fake behind
+// a command override, which the pod never sets. The echo bundle is a
+// real Python server started as a pod starts it, by mcp_config's own
+// python3 in the bundle, with the connection's value in its env from
+// core's answer. Its whoami names the token it was started with, and
+// its echo returns the stamp a call carried and refuses a color the
+// stamped access leaves out. Without this, a shim that only worked for
+// the test binary would pass.
+func TestShimRunsThePythonEchoBundle(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("no python3 on PATH")
+	}
+	bundle := copyDir(t, filepath.Join("..", "integration", "testdata", "echo"))
+	raw, err := os.ReadFile(filepath.Join(bundle, integration.ManifestName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err := integration.ParseManifest(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := newFakeCore(t, m)
+	c.setValues(map[string]string{"token": "s3cret-echo"})
+	_, done, _ := runShimIn(t, c, bundle, m, "")
+	rc := &recorder{c: c}
+	st := c.stream()
+	st.send(EventStart, "{}")
+	rc.log("server started")
+
+	st.send(EventRPC, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"whoami","arguments":{}}}`)
+	if got := toolText(t, rc.response(1)); got != "echo as s3cret-echo" {
+		t.Errorf("whoami = %q", got)
+	}
+	stamp := `"_meta":{"kivali":{"agent":"dana","access":{"colors":["red"]}}}`
+	st.send(EventRPC, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"echo","arguments":{"color":"red"},`+stamp+`}}`)
+	if got := toolText(t, rc.response(2)); got != `{"arguments": {"color": "red"}, "kivali": {"access": {"colors": ["red"]}, "agent": "dana"}}` {
+		t.Errorf("echo red = %q", got)
+	}
+	st.send(EventRPC, `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"echo","arguments":{"color":"blue"},`+stamp+`}}`)
+	resp := rc.response(3)
+	var res struct {
+		IsError bool `json:"isError"`
+	}
+	_ = json.Unmarshal(resp.Result, &res)
+	if got := toolText(t, resp); !res.IsError || got != "blue is not one of your colors (red)" {
+		t.Errorf("echo blue = %q, isError %v", got, res.IsError)
+	}
+
+	st.send(EventShutdown, "{}")
+	if code := exitOf(t, done); code != 0 {
+		t.Errorf("exit after shutdown = %d", code)
 	}
 }

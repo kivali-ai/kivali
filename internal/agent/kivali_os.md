@@ -49,6 +49,10 @@ If you think the org needs a new role:
    — the ack landing in the Chief of Staff's chat is itself
    confirmation that the new agent is live.
 
+Kivali ships one role of its own, the Integrations engineer, who builds
+the integrations that connect agents to outside services; the Chief of
+Staff hires it with Kivali's role when the owner wants one.
+
 If you are a manager evaluating a hire request, be honest about whether
 the role is justified. Declining is cheap; a misfit agent is expensive.
 

@@ -53,26 +53,33 @@ func (stubShell) SyncSkills(context.Context, string) error { return nil }
 //
 // It builds the real toolkit with every optional tool switched on and
 // the real request an agent sends (agent.Context.BuildRequest), and
-// checks each registered tool is allowed. Both a chief of staff and an
-// ordinary agent are checked, since each gets a different tool set.
+// checks each registered tool is allowed. A chief of staff, an
+// ordinary agent and the Integrations engineer are checked, since each
+// gets a different tool set.
 func TestAllowedToolNamesCoverTheFullAgentToolkit(t *testing.T) {
 	be := &files.Backend{Root: t.TempDir()}
 	sock := filepath.Join(t.TempDir(), "core.sock") // never dialled: only names are read
 	for _, tc := range []struct {
-		slug string
-		cos  bool
+		slug     string
+		cos      bool
+		engineer bool
 	}{
 		{slug: "chief-of-staff", cos: true},
 		{slug: "alice", cos: false},
+		{slug: "integrations-engineer", engineer: true},
 	} {
 		tk := mcp.FullAgentToolkit(mcp.FullAgentDeps{
-			Client:         agentpod.NewClient(sock, tc.slug),
-			IsChiefOfStaff: tc.cos,
-			Files:          mcp.NewLocalFilesDispatcher(be),
-			ShellExec:      stubShell{},
-			Subagent:       stubSubagentBackend{},
-			Provider:       provider.MockProvider{},
+			Client:               agentpod.NewClient(sock, tc.slug),
+			IsChiefOfStaff:       tc.cos,
+			Files:                mcp.NewLocalFilesDispatcher(be),
+			ShellExec:            stubShell{},
+			Subagent:             stubSubagentBackend{},
+			Provider:             provider.MockProvider{},
+			IntegrationsEngineer: tc.engineer,
 		})
+		if tc.engineer && !slices.ContainsFunc(tk.Tools, func(t mcp.Tool) bool { return t.Name == mcp.IntegrationPublishToolName }) {
+			t.Fatal("the engineer's toolkit has no integration_publish: the fixture is not the engineer's")
+		}
 		req := agent.Context{
 			Agent:                  store.Agent{Slug: tc.slug},
 			IsChiefOfStaff:         tc.cos,
@@ -105,12 +112,13 @@ func TestKivaliOSNamesEveryRegisteredTool(t *testing.T) {
 	be := &files.Backend{Root: t.TempDir()}
 	sock := filepath.Join(t.TempDir(), "core.sock")
 	tk := mcp.FullAgentToolkit(mcp.FullAgentDeps{
-		Client:         agentpod.NewClient(sock, "chief-of-staff"),
-		IsChiefOfStaff: true,
-		Files:          mcp.NewLocalFilesDispatcher(be),
-		ShellExec:      stubShell{},
-		Subagent:       stubSubagentBackend{},
-		Provider:       provider.MockProvider{},
+		Client:               agentpod.NewClient(sock, "chief-of-staff"),
+		IsChiefOfStaff:       true,
+		Files:                mcp.NewLocalFilesDispatcher(be),
+		ShellExec:            stubShell{},
+		Subagent:             stubSubagentBackend{},
+		Provider:             provider.MockProvider{},
+		IntegrationsEngineer: true,
 	})
 	have := map[string]bool{}
 	for _, tool := range tk.Tools {
@@ -138,8 +146,13 @@ func TestKivaliOSNamesEveryRegisteredTool(t *testing.T) {
 		return false
 	}
 	// Described elsewhere, on purpose: read_agent_role is the Chief of
-	// Staff's own workflow, in cos_role.md.
+	// Staff's own workflow, in cos_role.md, and the integration_* tools
+	// the Integrations engineer's, in its role
+	// (internal/seed/integrations_engineer_role.md).
 	elsewhere := map[string]bool{"read_agent_role": true}
+	for _, name := range mcp.IntegrationEngineerToolNames {
+		elsewhere[name] = true
+	}
 	for name := range have {
 		if !covered(name) && !elsewhere[name] {
 			t.Errorf("Kivali OS never names the tool %s", name)

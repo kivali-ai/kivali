@@ -76,6 +76,11 @@ const (
 	// limits, which the model otherwise learns one refusal at a time.
 	maxArtifactPublishDescChars   = 1400
 	maxArtifactUnpublishDescChars = 400
+	// The Integrations engineer's five tools. On every turn of the one
+	// agent that has them; what a bundle is and how to build one is in
+	// its role, so each description says only what the tool does and
+	// refuses.
+	maxIntegrationEngineerDescChars = 700
 )
 
 func TestAlwaysOnPromptBudgets(t *testing.T) {
@@ -105,6 +110,13 @@ func TestAlwaysOnPromptBudgets(t *testing.T) {
 			agentpod.SubagentSystemPrompt("chief-of-staff", "price the renewal", agentpod.MaxSubagentDepth, true),
 			maxSubagentPromptChars,
 		},
+	}
+	for _, tool := range IntegrationEngineerTools(&engineerRecorder{}, nil, "integrations-engineer") {
+		cases = append(cases, struct {
+			name string
+			text string
+			max  int
+		}{tool.Name + " description", tool.Description, maxIntegrationEngineerDescChars})
 	}
 
 	for _, c := range cases {
