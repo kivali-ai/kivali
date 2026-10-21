@@ -351,6 +351,20 @@ describe('Org index scroll spy', () => {
     expect(h.router.state.historyAction).toBe('POP');
   });
 
+  // Loading a section's URL on a page too short to bring it up to the line (a Network list of two hosts) ends with
+  // the end marker on screen; the index must still show the section asked for, not About.
+  it('keeps the section loaded by URL current at the bottom of the page until the reader scrolls', async () => {
+    const io = install();
+    await renderOrg('/org/network', { desktop: true });
+    at(io.spy(), { ...ALL_BELOW, usage: 'above', organization: 'above', handbook: 'above', files: 'above', skills: 'above' });
+    act(() => io.tail().fire([{ target: 'org-end', isIntersecting: true, top: 700 }]));
+    expect(current()).toBe('Network');
+    act(() => void window.dispatchEvent(new Event('wheel')));
+    at(io.spy(), { ...ALL_BELOW, usage: 'above', organization: 'above', handbook: 'above', files: 'above', skills: 'above' });
+    act(() => io.tail().fire([{ target: 'org-end', isIntersecting: true, top: 700 }]));
+    expect(current()).toBe('About');
+  });
+
   it('gives About the bottom of the page even when its top never reaches the line', async () => {
     const io = install();
     await renderOrg('/org', { desktop: true });
@@ -393,7 +407,9 @@ describe('Org index scroll spy', () => {
     expect(h.router.state.location.pathname).toBe('/org/network');
   });
 
-  it('hands the highlight back to the spy when the scroll ends short of the clicked section', async () => {
+  // The clicked section stays current when the page cannot bring it up to the line: the reader asked for it by
+  // name, and the bottom of the page goes to About only once they scroll on themselves.
+  it('keeps the clicked section when the scroll ends short of it, until the reader scrolls on', async () => {
     const io = install();
     await renderOrg('/org', { desktop: true });
     at(io.spy(), { ...ALL_BELOW, usage: 'above', organization: 'above', handbook: 'above', files: 'above', skills: 'above', network: 'in' });
@@ -404,6 +420,10 @@ describe('Org index scroll spy', () => {
     act(() => io.tail().fire([{ target: 'org-end', isIntersecting: true, top: 700 }]));
     expect(current()).toBe('Backup and restore');
     act(() => void document.dispatchEvent(new Event('scrollend')));
+    expect(current()).toBe('Backup and restore');
+    act(() => void window.dispatchEvent(new Event('wheel')));
+    at(io.spy(), { ...ALL_BELOW, usage: 'above', organization: 'above', handbook: 'above', files: 'above', skills: 'above', network: 'in' });
+    act(() => io.tail().fire([{ target: 'org-end', isIntersecting: true, top: 700 }]));
     expect(current()).toBe('About');
   });
 

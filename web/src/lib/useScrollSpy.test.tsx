@@ -6,8 +6,8 @@ import { useScrollSpy } from './useScrollSpy';
 
 const IDS = ['s-a', 's-b', 's-c', 's-d'];
 
-function Page({ Observer, endId }: { Observer: typeof IntersectionObserver | undefined; endId?: string }) {
-  const active = useScrollSpy({ ids: IDS, fallback: 's-b', Observer, ...(endId ? { endId } : {}) });
+function Page({ Observer, endId, prefer }: { Observer: typeof IntersectionObserver | undefined; endId?: string; prefer?: string }) {
+  const active = useScrollSpy({ ids: IDS, fallback: 's-b', Observer, prefer, ...(endId ? { endId } : {}) });
   return (
     <div>
       <output>{active}</output>
@@ -86,6 +86,40 @@ describe('useScrollSpy', () => {
     expect(shown()).toBe('s-d');
     act(() => tail!.fire([{ target: 'end', isIntersecting: false, top: 1200 }]));
     expect(shown()).toBe('s-b');
+  });
+
+  // A page too short to bring the section it scrolled to up to the line ends with the end marker on screen (loading
+  // /org/network on a team with a two-host list). The last section must not take the highlight from the one asked
+  // for, until the reader scrolls on past it.
+  it('gives the preferred section the bottom of the page until a later section has passed the line', () => {
+    const fake = fakeIntersectionObserver();
+    const view = render(<Page Observer={fake.Observer} endId="end" prefer="s-c" />);
+    const [spy, tail] = fake.instances;
+    // s-c could not reach the line: s-b is the last one passed.
+    at(spy!, { 's-a': 'above', 's-b': 'above', 's-c': 'below', 's-d': 'below' });
+    expect(shown()).toBe('s-b');
+    act(() => tail!.fire([{ target: 'end', isIntersecting: true, top: 700 }]));
+    expect(shown()).toBe('s-c');
+    // The reader scrolled on past it: the last section again.
+    at(spy!, { 's-c': 'above', 's-d': 'in' });
+    expect(shown()).toBe('s-d');
+    // The page let go of the preference (the reader scrolled): s-b is the last passed, so the end goes to the last
+    // section, s-d, once more.
+    view.rerender(<Page Observer={fake.Observer} endId="end" />);
+    const [spy2, tail2] = fake.instances.filter((o) => !o.disconnected);
+    at(spy2!, { 's-a': 'above', 's-b': 'in', 's-c': 'below', 's-d': 'below' });
+    act(() => tail2!.fire([{ target: 'end', isIntersecting: true, top: 700 }]));
+    expect(shown()).toBe('s-d');
+  });
+
+  // A preference for an id that is not a section (a stale or mistyped one) must not pin the highlight to nothing.
+  it('ignores a preferred id that is not one of the sections', () => {
+    const fake = fakeIntersectionObserver();
+    render(<Page Observer={fake.Observer} endId="end" prefer="nope" />);
+    const [spy, tail] = fake.instances;
+    at(spy!, { 's-a': 'above', 's-b': 'in', 's-c': 'below', 's-d': 'below' });
+    act(() => tail!.fire([{ target: 'end', isIntersecting: true, top: 700 }]));
+    expect(shown()).toBe('s-d');
   });
 
   it('falls back to the given section without an IntersectionObserver', () => {

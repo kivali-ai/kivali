@@ -88,18 +88,21 @@ function prefersReducedMotion(): boolean {
  * section when the route changes from outside the index. A click on the index navigates and scrolls; until that
  * scroll arrives (the spy reports the clicked section, or the scroll ends) the clicked item stays highlighted, so
  * the sections passed on the way do not flicker through it. Either scroll keeps its section at the top while the
- * sections load and the page grows, until the reader scrolls. Scrolling by hand never touches the URL.
+ * sections load and the page grows, until the reader scrolls, and a section the page cannot bring up to the line
+ * stays current at the bottom of the page until then. Scrolling by hand never touches the URL.
  */
 function DesktopOrg({ routeKey }: { routeKey: SectionKey | undefined }) {
   const navigate = useNavigate();
-  const spyId = useScrollSpy({ ids: SECTION_IDS, fallback: sectionId(routeKey ?? 'usage'), endId: END_ID });
+  // Each section loads its own list, so the page grows after the first scroll; keep the scrolled-to section in place.
+  // While it is held, the spy prefers it at the bottom of the page: a page too short to bring it to the line still
+  // shows the section asked for, until the reader scrolls on.
+  const sections = useRef<HTMLDivElement>(null);
+  const { anchor, anchored } = useScrollAnchor(sections);
+  const spyId = useScrollSpy({ ids: SECTION_IDS, fallback: sectionId(routeKey ?? 'usage'), endId: END_ID, prefer: anchored?.id });
   const spied = keyOfId(spyId) ?? 'usage';
   const [picked, setPicked] = useState<SectionKey | null>(null);
   // The route change an index click is about to cause; its scroll is already under way.
   const clicked = useRef<SectionKey | null>(null);
-  // Each section loads its own list, so the page grows after the first scroll; keep the scrolled-to section in place.
-  const sections = useRef<HTMLDivElement>(null);
-  const anchor = useScrollAnchor(sections);
 
   // The travel has arrived: hand the highlight back to the spy.
   if (picked !== null && spied === picked) setPicked(null);
@@ -108,9 +111,8 @@ function DesktopOrg({ routeKey }: { routeKey: SectionKey | undefined }) {
     if (picked === null) return;
     const done = () => setPicked(null);
     // `scrollend` is missing from Safari and WKWebView before 26.2, and never fires when the click needs no scroll
-    // (the section is already at the line) or the page cannot reach it; the spy may also never report the clicked
-    // section (the bottom of the page belongs to the last one). So the hold also ends on a timeout and at the
-    // reader's first wheel, touch, scrolling key or press on the scrollbar.
+    // (the section is already at the line) or the page cannot reach it. So the hold also ends on a timeout and at
+    // the reader's first wheel, touch, scrolling key or press on the scrollbar.
     const timer = window.setTimeout(done, PICK_HOLD_MS);
     const onKey = (ev: KeyboardEvent) => {
       if (SCROLL_KEYS.has(ev.key)) done();
