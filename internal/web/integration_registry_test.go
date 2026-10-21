@@ -708,8 +708,8 @@ func TestIntegrationShutdownAndRemoval(t *testing.T) {
 }
 
 // Notify sends a notification as an rpc event with no id, and reports
-// false without a shim. tools/list's answer is kept for the agent
-// routes of the next slice. This fails if a notification carries an
+// false without a shim. The tools/list every connect asks for, with no
+// agent on it, is kept (Tools). This fails if a notification carries an
 // id, which the server would answer into nothing.
 func TestIntegrationNotifyAndTools(t *testing.T) {
 	srv := newTestServer(t)

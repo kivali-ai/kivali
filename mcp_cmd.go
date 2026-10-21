@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/kivali-ai/kivali/internal/agentpod"
 	"github.com/kivali-ai/kivali/internal/claudeagent"
@@ -24,7 +25,8 @@ import (
 //     surface: file_*, artifact_publish / artifact_unpublish,
 //     agent_memory_*, publish_*, state lookups, run_shell, share_file,
 //     search_past_chats, list_project_files, and `subagent` (the
-//     parent-side spawn-a-subagent tool).
+//     parent-side spawn-a-subagent tool), and the actions of the
+//     integrations the agent has access to, listed by core at start.
 //
 //   - --toolkit subagent — the narrow surface a subagent gets: file_*
 //     scoped to the subagent's own /files/, artifact_publish /
@@ -182,6 +184,8 @@ func runFullAgentMCP(logger *log.Logger, socketPath, agentSlug string) {
 		// makes no model call, so nothing else of it is used.
 		Provider: claudeagent.New(claudeagent.Options{}),
 	})
+	integrationTools := fullAgentIntegrationTools(logger, client)
+	tk.Tools = append(tk.Tools, mcp.IntegrationTools(client, integrationTools, tk.Tools)...)
 
 	server := &mcp.Server{
 		Tools:      tk.Tools,
@@ -193,12 +197,34 @@ func runFullAgentMCP(logger *log.Logger, socketPath, agentSlug string) {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	logger.Printf("starting MCP server: toolkit=%s agent=%s core-uds=%s tools=%d cos=%v",
-		tk.Name, agentSlug, socketPath, len(tk.Tools), isCoS)
+	logger.Printf("starting MCP server: toolkit=%s agent=%s core-uds=%s tools=%d integration-actions=%d cos=%v",
+		tk.Name, agentSlug, socketPath, len(tk.Tools), len(integrationTools), isCoS)
 	if err := server.Serve(ctx, os.Stdin, os.Stdout); err != nil {
 		logger.Fatalf("serve: %v", err)
 	}
 	logger.Print("shutdown (EOF)")
+}
+
+// integrationListTimeout bounds the start's wait for the agent's
+// integration actions: the CLI waits on this server's start, and core
+// may ask an integration for its list first.
+const integrationListTimeout = 10 * time.Second
+
+// fullAgentIntegrationTools is the agent's integration actions as core
+// lists them at this server's start: the set the turn that spawned the
+// CLI carried, which a grant given or taken away changes by respawning
+// the CLI, and so this server. A failure is logged and leaves none
+// registered: the model is shown none of them until the CLI next
+// respawns, and a call of one of their names has no tool to answer it.
+func fullAgentIntegrationTools(logger *log.Logger, client *agentpod.Client) []agentpod.IntegrationTool {
+	ctx, cancel := context.WithTimeout(context.Background(), integrationListTimeout)
+	defer cancel()
+	resp, err := client.IntegrationTools(ctx)
+	if err != nil {
+		logger.Printf("integration actions: %v (starting without them)", err)
+		return nil
+	}
+	return resp.Tools
 }
 
 // runSubagentMCP wires up the subagent toolkit. file_* and run_shell

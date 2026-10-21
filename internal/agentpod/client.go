@@ -285,6 +285,63 @@ func (c *Client) PostTurnEvent(ctx context.Context, turnID string, ev TurnEvent)
 	return nil
 }
 
+// IntegrationTools lists the integration actions the agent may call
+// now (POST /v1/agent/{slug}/integrations/tools). Core may ask a
+// running integration for its list before it answers, so the call
+// runs on the client with no response-header timeout; ctx bounds it.
+func (c *Client) IntegrationTools(ctx context.Context) (*IntegrationToolsResponse, error) {
+	var out IntegrationToolsResponse
+	if err := c.postIntegration(ctx, IntegrationToolsPath, struct{}{}, &out); err != nil {
+		return nil, fmt.Errorf("agentpod: IntegrationTools: %w", err)
+	}
+	return &out, nil
+}
+
+// IntegrationCall relays one call of an integration action, by its
+// prefixed name, to core (POST /v1/agent/{slug}/integrations/call),
+// which checks the agent's access, sends the call to the integration
+// and answers with its result or the refusal. A call waits up to a
+// minute for the integration, so it runs on the client with no
+// response-header timeout; ctx bounds it. A non-2xx response is a
+// transport error.
+func (c *Client) IntegrationCall(ctx context.Context, name string, args json.RawMessage) (*IntegrationCallResponse, error) {
+	if strings.TrimSpace(name) == "" {
+		return nil, fmt.Errorf("agentpod: IntegrationCall: name is required")
+	}
+	var out IntegrationCallResponse
+	if err := c.postIntegration(ctx, IntegrationCallPath, IntegrationCallRequest{Name: name, Arguments: args}, &out); err != nil {
+		return nil, fmt.Errorf("agentpod: IntegrationCall: %w", err)
+	}
+	return &out, nil
+}
+
+// postIntegration posts body to the agent's integration route path,
+// on the client with no response-header timeout, and decodes the
+// answer into out.
+func (c *Client) postIntegration(ctx context.Context, path string, body, out any) error {
+	b, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+	url := fmt.Sprintf("http://core/v1/agent/%s%s", c.slug, path)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(b))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(SlugHeader, c.slug)
+	resp, err := c.long.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode/100 != 2 {
+		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
+		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(errBody)))
+	}
+	return json.NewDecoder(resp.Body).Decode(out)
+}
+
 // readSSE reads SSE-framed events from r and delivers them on out.
 // Returns when r is exhausted, errors, or done is closed.
 //
