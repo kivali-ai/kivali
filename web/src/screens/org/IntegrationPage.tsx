@@ -464,7 +464,7 @@ export function IntegrationPage() {
         }}
         tone="danger"
         title={'Disconnect ' + s.display_name + '?'}
-        description="Its stored connection is deleted, and agents cannot use it until you connect it again. Their access stays."
+        description="Its stored connection is deleted, along with every agent’s access to it. Connect it again, then give access again."
         footer={
           <>
             <DialogClose>

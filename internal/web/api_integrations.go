@@ -963,6 +963,19 @@ func (s *Server) callIntegrationTool(r *http.Request, name, tool string) (res to
 		}
 	}
 	failed = clipText(failed, integrationVerifyMessageMax)
+	// The integration's words may quote a connection secret, as an
+	// agent's call's answer may: scrubbed before they are kept, shown
+	// or audited. With no scrubber (the secrets could not be read) the
+	// words are held back the way an agent's answer is.
+	if scrub := s.Integrations.scrubber(r.Context(), name); scrub != nil {
+		failed = scrub.Replace(failed)
+		for i := range res.Content {
+			res.Content[i].Text = scrub.Replace(res.Content[i].Text)
+		}
+	} else {
+		res = toolResult{}
+		failed = "Kivali could not check the integration's answer for secrets, so it held the answer back"
+	}
 	row := store.IntegrationAuditRow{
 		At:         start,
 		Agent:      agent.CEOSlug,
