@@ -1,0 +1,25 @@
+{
+  "connected": [
+    {
+      "name": "hubspot",
+      "display_name": "HubSpot",
+      "status": "connected",
+      "summary": "Blogs: Marketing · May publish and edit"
+    },
+    {
+      "name": "crm",
+      "display_name": "CRM",
+      "status": "off",
+      "summary": "Full access",
+      "invalid": "Blogs lists a choice the form no longer offers"
+    }
+  ],
+  "available": [
+    {
+      "name": "weather",
+      "display_name": "Weather",
+      "status": "pending",
+      "summary": ""
+    }
+  ]
+}

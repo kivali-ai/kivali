@@ -1,0 +1,26 @@
+{
+  "rows": [
+    {
+      "at": "2026-10-21T10:00:00Z",
+      "agent": {
+        "slug": "dana",
+        "name": "Dana"
+      },
+      "action": "create_post",
+      "allowed": true,
+      "reason": "",
+      "duration_ms": 812
+    },
+    {
+      "at": "2026-10-21T09:30:00Z",
+      "agent": {
+        "slug": "lee",
+        "name": "Lee"
+      },
+      "action": "create_post",
+      "allowed": false,
+      "reason": "Lee has no access to the Marketing blog",
+      "duration_ms": 3
+    }
+  ]
+}

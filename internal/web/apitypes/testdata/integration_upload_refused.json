@@ -1,0 +1,8 @@
+{
+  "error": "the bundle did not pass the check",
+  "who": "you",
+  "findings": [
+    "server.type must be python",
+    "kivali.hosts is empty"
+  ]
+}
