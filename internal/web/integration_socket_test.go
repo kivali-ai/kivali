@@ -269,7 +269,10 @@ func TestIntegrationEndToEnd(t *testing.T) {
 		}
 		return *page.Connection
 	}
-	if c := verify(); !*c.Verified || *c.VerifyMessage != "fake account s3cret-1" {
+	// The fake's whoami echoes its token, as a careless server might:
+	// the owner's page and the audit get the placeholder, never the
+	// value.
+	if c := verify(); !*c.Verified || *c.VerifyMessage != "fake account "+integrationSecretPlaceholder {
 		t.Errorf("verify = %+v", c)
 	}
 	if got := orgOK[apitypes.AccessChoices](t, orgGet(t, srv, intBase+"/fakecrm/choices/blogs")); strings.Join(got.Options, ",") != "red,green" {
@@ -283,7 +286,7 @@ func TestIntegrationEndToEnd(t *testing.T) {
 	}
 
 	connect("s3cret-2")
-	if c := verify(); *c.VerifyMessage != "fake account s3cret-2" {
+	if c := verify(); *c.VerifyMessage != "fake account "+integrationSecretPlaceholder {
 		t.Errorf("verify after a new connection = %+v", c)
 	}
 	logs := orgOK[apitypes.IntegrationLogs](t, orgGet(t, srv, intBase+"/fakecrm/logs"))
