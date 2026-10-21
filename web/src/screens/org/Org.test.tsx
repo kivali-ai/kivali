@@ -951,7 +951,7 @@ describe('Network', () => {
     expect(screen.getByText('deb.debian.org')).toBeInTheDocument();
     expect(screen.getByText('Permanent')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Remove deb.debian.org' })).toBeNull();
-    expect(screen.getByText('2 hosts agent shells can reach · changes apply at once')).toBeInTheDocument();
+    expect(screen.getByText('2 hosts agent shells can reach · an entry covers every name under it · changes apply at once')).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText('Allow a host'), { target: { value: 'api.github.com' } });
     await click(screen.getByRole('button', { name: 'Allow' }));
     expect(screen.getByText('api.github.com')).toBeInTheDocument();

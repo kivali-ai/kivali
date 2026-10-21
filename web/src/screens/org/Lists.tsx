@@ -56,7 +56,7 @@ export function NetworkSection({ showHead }: SectionProps) {
   const n = list.data?.hosts.length;
   return (
     <>
-      <SectionHead title="Network" show={showHead} meta={n === undefined ? undefined : `${n} ${n === 1 ? 'host' : 'hosts'} agent shells can reach · changes apply at once`} />
+      <SectionHead title="Network" show={showHead} meta={n === undefined ? undefined : `${n} ${n === 1 ? 'host' : 'hosts'} agent shells can reach · an entry covers every name under it · changes apply at once`} />
       <ErrorBanner error={list.error ?? action.error} {...(action.error ? { onDismiss: action.dismiss } : {})} />
       {!list.data && !list.error && <RowSkeletons />}
       {list.data && (
@@ -85,7 +85,7 @@ export function NetworkSection({ showHead }: SectionProps) {
           ))}
         </RowList>
       )}
-      <AddField label="Allow a host" placeholder="api.example.com or *.example.com" button="Allow" busy={action.busy} onAdd={add} />
+      <AddField label="Allow a host" placeholder="example.com" button="Allow" busy={action.busy} onAdd={add} />
     </>
   );
 }
