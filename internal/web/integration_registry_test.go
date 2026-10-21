@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -297,6 +298,25 @@ func TestIntegrationReconcileStartsAndStopsPods(t *testing.T) {
 	if got := prov.takeCalls(); !reflect.DeepEqual(got, []string{"start crm 1.1.0"}) || prov.pod("crm").token == first {
 		t.Errorf("after approving 1.1.0: %v, token kept %v", got, prov.pod("crm").token == first)
 	}
+	// A roll back is a new version in use too: the pod is built again
+	// from the version rolled back to, with a token of its own.
+	second := prov.pod("crm").token
+	if rr := intPost(t, srv, intBase+"/crm/versions/1.0.0/rollback"); rr.Code != http.StatusOK {
+		t.Fatalf("roll back: %d %s", rr.Code, rr.Body.String())
+	}
+	if err := reg.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := prov.takeCalls(); !reflect.DeepEqual(got, []string{"start crm 1.0.0"}) || prov.pod("crm").token == second || prov.pod("crm").token == first {
+		t.Errorf("after rolling back to 1.0.0: %v", got)
+	}
+	if rr := intPost(t, srv, intBase+"/crm/versions/1.1.0/rollback"); rr.Code != http.StatusOK {
+		t.Fatalf("roll back to 1.1.0: %d %s", rr.Code, rr.Body.String())
+	}
+	_ = reg.Reconcile(ctx)
+	if got := prov.takeCalls(); !reflect.DeepEqual(got, []string{"start crm 1.1.0"}) {
+		t.Errorf("after rolling back to 1.1.0: %v", got)
+	}
 
 	intPost(t, srv, intBase+"/crm/disable")
 	if err := reg.Reconcile(ctx); err != nil {
@@ -321,8 +341,9 @@ func TestIntegrationReconcileStartsAndStopsPods(t *testing.T) {
 }
 
 // Every change the owner makes asks for a reconcile: approving,
-// rejecting, the switch, removing and the connection. One that did not
-// would leave the pod as it was until the next unrelated change.
+// rejecting, rolling back, the switch, removing and the connection.
+// One that did not would leave the pod as it was until the next
+// unrelated change.
 func TestIntegrationChangesAskForAReconcile(t *testing.T) {
 	srv := newTestServer(t)
 	reg, _ := withIntegrationRegistry(srv, newFakeIntegrationProv())
@@ -336,6 +357,7 @@ func TestIntegrationChangesAskForAReconcile(t *testing.T) {
 	}
 	intUpload(t, srv, intBundle(t, "crm", "1.0.0"))
 	intUpload(t, srv, intBundle(t, "crm", "1.1.0"))
+	intUpload(t, srv, intBundle(t, "crm", "1.2.0"))
 	kicked()
 	for _, step := range []struct {
 		name string
@@ -343,6 +365,8 @@ func TestIntegrationChangesAskForAReconcile(t *testing.T) {
 	}{
 		{"approve", func() { intPost(t, srv, intBase+"/crm/versions/1.0.0/approve") }},
 		{"reject", func() { intPost(t, srv, intBase+"/crm/versions/1.1.0/reject") }},
+		{"approve a later version", func() { intPost(t, srv, intBase+"/crm/versions/1.2.0/approve") }},
+		{"roll back", func() { intPost(t, srv, intBase+"/crm/versions/1.0.0/rollback") }},
 		{"disable", func() { intPost(t, srv, intBase+"/crm/disable") }},
 		{"enable", func() { intPost(t, srv, intBase+"/crm/enable") }},
 		{"connect", func() {

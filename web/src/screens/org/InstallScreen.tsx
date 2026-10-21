@@ -5,7 +5,7 @@ import type { IntegrationVersion } from '../../api/types.gen';
 import { useFrameChrome } from '../../app/chrome';
 import { PageTitle } from '../../app/PageTitle';
 import { Badge, Banner, Button, Dialog, DialogClose, Skeleton, Text } from '../../ds';
-import { Block, Markdown, VersionBadge, actionWords, fieldKindWords, integrationApi, integrationPath, whenLabel } from './integrationParts';
+import { Block, Markdown, RollBackDialog, VersionBadge, actionWords, fieldKindWords, integrationApi, integrationPath, rollBackApi, whenLabel } from './integrationParts';
 import { ErrorBanner, formatBytes } from './parts';
 import { useAction, useResource } from './useResource';
 import '../../styles/org.css';
@@ -17,8 +17,9 @@ export function bundleLine(files: number, bytes: number): string {
 }
 
 /**
- * A version's install screen: what it is, who built it, every host it reaches, every secret its connection
- * holds, every action and what the access form asks. Approving installs it; nothing in it runs before.
+ * A version's install screen: what it is, who built it, what it changes from the version in use, every host it
+ * reaches, every secret its connection holds, every action and what the access form asks. Approving installs it;
+ * nothing in it runs before. A superseded version can be rolled back to from here.
  */
 export function InstallScreen() {
   const { name = '', version = '' } = useParams();
@@ -27,6 +28,7 @@ export function InstallScreen() {
   const res = useResource<IntegrationVersion>(path);
   const action = useAction();
   const [rejecting, setRejecting] = useState(false);
+  const [rollingBack, setRollingBack] = useState(false);
   const [now] = useState(() => Date.now());
   const v = res.data;
 
@@ -46,6 +48,12 @@ export function InstallScreen() {
     action.run(async () => {
       res.set(await apiPost<IntegrationVersion>(path + '/reject'));
       setRejecting(false);
+    });
+  // Like an approval, a roll back lands on the integration's page, which marks the access rows that no longer fit.
+  const rollBack = () =>
+    action.run(async () => {
+      await apiPost<IntegrationVersion>(rollBackApi(name, version));
+      void navigate(integrationPath(name));
     });
 
   if (!v) {
@@ -115,6 +123,24 @@ export function InstallScreen() {
           </Text>
         )}
       </Block>
+
+      {v.current_version && (
+        <Block label={'What changes from version ' + v.current_version}>
+          {v.changes.length === 0 ? (
+            <Text as="p" variant="body">
+              No change to hosts, secrets, actions or the access form.
+            </Text>
+          ) : (
+            <ul className="app-int-facts">
+              {v.changes.map((c) => (
+                <li key={c}>
+                  <Text variant="body">{c}</Text>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Block>
+      )}
 
       <Block label="Reaches these hosts">
         {v.hosts.length === 0 ? (
@@ -224,6 +250,23 @@ export function InstallScreen() {
           </Button>
         </div>
       )}
+
+      {v.state === 'superseded' && (
+        <div className="app-int-decision">
+          <Button variant="ghost" onClick={() => setRollingBack(true)} disabled={action.busy}>
+            Roll back
+          </Button>
+        </div>
+      )}
+
+      <RollBackDialog
+        version={rollingBack ? v.version : null}
+        current={v.current_version ?? ''}
+        busy={action.busy}
+        error={action.error && <ErrorBanner error={action.error} />}
+        onConfirm={() => void rollBack()}
+        onClose={() => setRollingBack(false)}
+      />
 
       <Dialog
         open={rejecting}

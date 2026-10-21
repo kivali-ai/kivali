@@ -4,8 +4,9 @@ An integration is an external service agents act on, such as a CRM or
 a blog, installed from a bundle. This page is the developer's
 reference: the bundle and its manifest, the check every bundle passes,
 the access form, where Kivali keeps an integration and its connection,
-how a version is approved, how an approved version runs, how agents
-call it, and the Integrations engineer, the agent that builds bundles.
+how a version is approved or rolled back to, how an approved version
+runs, how agents call it, and the Integrations engineer, the agent that
+builds bundles.
 What the owner sees is in
 [../integrations.md](../integrations.md).
 
@@ -18,7 +19,8 @@ and the **manifest** are developer words. Operator-facing text never
 says MCP, tool or pod.
 
 The code: `internal/integration` (the manifest, the check, the access
-form, reading and unpacking a bundle; a leaf package),
+form, reading and unpacking a bundle, what one version changes from
+another; a leaf package),
 `internal/store/integrations.go` and `integration_logs.go` (where
 everything is kept), `internal/secrets` (the connection's secret
 fields), `internal/integrationpod` (the pod, its provisioner and the
@@ -210,29 +212,40 @@ integrations/<name>/
 ```
 
 A version is stored whole or not at all: it is unpacked into a staging
-directory beside the others and renamed into place. A version's state
-moves one way:
+directory beside the others and renamed into place. A version's states
+and the moves between them:
 
-```
-pending ──approve──▶ approved ──a later approval──▶ superseded
-   │
-   └──reject──▶ rejected
-```
+- **pending**, stored and waiting: **approve** makes it approved
+  (`store.ApproveIntegrationVersion`); **reject** makes it rejected
+  (`store.RejectIntegrationVersion`).
+- **approved**, the version in use, one at a time: it becomes
+  superseded when another version is approved or rolled back to.
+- **superseded**, in use before: **roll back** makes it approved again
+  (`store.RollBackIntegrationVersion`), and the version in use becomes
+  superseded.
+- **rejected**: nothing leaves it; it never runs.
 
-Approving sets the integration's `current_version`; the version
-approved before becomes superseded. A version stored once, in any
-state, cannot be stored again: a changed bundle needs a new version
-number. A built-in integration (`builtin`, which an upload never
-sets) takes no upload and cannot be removed. Removing an integration
-deletes its directory, its connections' records, every agent's access,
-the audit and the log; the API deletes the connections' Secrets first,
-and the next reconcile stops its pod.
+Approving or rolling back sets the version's `approved_at` to that
+moment, and the integration's `current_version` and display name to
+the version's. A version stored once, in any state, cannot be stored again: a
+changed bundle needs a new version number. Every version is kept, its
+bundle with it, in every state, until the integration is removed: a
+roll back runs a superseded version's bundle again. A built-in
+integration (`builtin`, which an upload never sets) takes no upload and
+cannot be removed. Removing an integration deletes its directory (every
+version, whatever its state), its connections' records, every agent's
+access, the audit and the log; the API deletes the connections'
+Secrets first, and the next reconcile stops its pod.
 
 An access row is checked when it is read
 (`store.ListIntegrationAccess`): it is invalid, and grants nothing,
 when no version is approved, when it was set for another connection
 than the current one, or when the approved version's form refuses it.
-The reason is on the row, so the page can say why. Archiving an agent
+So approving a version or rolling back to one checks every row against
+that version's form at once, and a row it refuses is invalid until it
+is set again (`PUT .../access/{slug}`) or the version in use changes to
+one that accepts it. The reason is on the row, so the page can say why,
+and the page counts the invalid rows in a banner. Archiving an agent
 clears its access everywhere (`ArchiveAgent`); deleting the connection
 clears every agent's.
 
@@ -295,6 +308,34 @@ lets in: who built it and published it, every host, every connection
 field (secrets marked), every action, what the access form asks, the
 bundle's size and the check's warnings. Nothing runs before it is
 approved.
+
+While another version is in use (`IntegrationVersion.CurrentVersion`),
+the screen also says what this one changes from it, under "What
+changes from version X": `IntegrationVersion.Changes`, worked out by
+`integration.Diff(current, this)`, one line for each of hosts,
+connection fields, actions and access form fields added or removed
+("Hosts added: uploads.example.com", "Connection fields added: API key
+(secret)"). A host is matched by its pattern, a field by its key and an
+action by its name. With none of those changed the list is empty, and
+the screen says "No change to hosts, secrets, actions or the access
+form." The same block is on a superseded version's screen, where it
+says what rolling back to it changes.
+
+### Rolling back
+
+`POST .../versions/{version}/rollback` makes a superseded version the
+one in use again, and the version in use superseded
+([Where it is kept](#where-it-is-kept)). It answers with the version's
+install screen; any other state is a 409 that says why (the version in
+use, a pending version, which is approved instead, or a rejected one,
+which never runs). The registry reconciles: the pod's spec carries the
+version, so it is built again from the rolled-back version's bundle,
+with a new token. An audit row records it for the owner: agent `ceo`,
+action `rollback`, reason "from version 1.1.0 to version 1.0.0". Every
+agent's access stays as it is and is checked against the rolled-back
+version's form when it is next read. The web app offers **Roll back**
+on a superseded version, in the page's version list and on its install
+screen, after a dialog that names the version that stops.
 
 A request to install one comes to the owner as a
 `ceo_approval_request` carrying `integration_install: {name,
@@ -362,10 +403,11 @@ that should run: its version, its pod's token, the connected shim (the
 link), the requests waiting on it, the last `tools/list` answer, and
 its health. All pod operations run on one goroutine
 (`Server.StartIntegrations`): a reconcile at boot and after every
-approval, rejection, switch, removal and connection change, which
-starts the pod of every integration that should run and stops the pod
-(and drops the proxy credential) of every one that should not. A new
-approved version gets a new token, and so a new pod. At boot core also
+approval, rejection, roll back, switch, removal and connection change,
+which starts the pod of every integration that should run and stops the
+pod (and drops the proxy credential) of every one that should not. A
+version newly in use, approved or rolled back to, gets a new token, and
+so a new pod. At boot core also
 stops the pods of integrations no longer installed, and takes on a pod
 left running from before the restart when it is built exactly as core
 would build it for the approved version (`Provisioner.Token` reads the
@@ -584,7 +626,10 @@ A refused call is `allowed: false` with the cause as its reason (`no
 access`, `the integration is off`, `the agent's access does not
 include it`, ...). An allowed call that failed keeps the
 integration's words, scrubbed, as its reason. The owner's own calls
-are rows for `ceo`.
+are rows for `ceo`, and so is a roll back, with the action `rollback`
+and the versions as its reason ([Rolling back](#rolling-back)), which
+the page shows as "Roll back" and "From version 1.1.0 to version
+1.0.0".
 
 ## The Integrations engineer
 
@@ -707,8 +752,9 @@ the owner's.
 | `GET /api/v1/org/integrations/{name}` | `IntegrationPage`. |
 | `POST .../{name}/enable`, `.../disable` | `IntegrationPage`. |
 | `DELETE .../{name}` | 204; 409 for a built-in one. |
-| `GET .../versions/{version}` | `IntegrationVersion`. |
+| `GET .../versions/{version}` | `IntegrationVersion`, with `changes` from the version in use. |
 | `POST .../versions/{version}/approve`, `.../reject` | `IntegrationVersion`; 409 when not pending. |
+| `POST .../versions/{version}/rollback` | `IntegrationVersion`; 409 when not superseded; 404 for a version not stored. |
 | `PUT .../connection` | `ConnectionWrite` in, `IntegrationPage` out; 409 while no version is approved. |
 | `DELETE .../connection` | `IntegrationPage`: the Secret, the record and every agent's access removed. |
 | `POST .../connection/verify` | `IntegrationPage`, with the connection's verified, verify message and verified at; 409 with no approved version, no connection, no `kivali.verify`, or while the integration is not running. |

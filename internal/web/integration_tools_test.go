@@ -423,6 +423,57 @@ func TestAgentIntegrationCallsAreHeldToTheAccess(t *testing.T) {
 	}
 }
 
+// Why this test exists: an agent's access is checked against the
+// version in use on every call, so approving a version whose access
+// form refuses the agent's access, or rolling back to one, takes the
+// integration away from it at once: its calls are refused with the
+// form's reason and an audit row, never reach the integration, and its
+// list has none of the integration's actions. Rolling back to a version
+// whose form fits gives them back. Routing that read the access row
+// without its validity would let an agent act with access the version
+// running cannot express.
+func TestAgentIntegrationAccessFollowsTheVersionInUse(t *testing.T) {
+	srv := newTestServer(t)
+	withIntegrationRegistry(srv, newFakeIntegrationProv())
+	intTeam(t, srv, "dana")
+	intConnected(t, srv, "crm")
+	putIntegrationAccess(t, srv, "crm", "dana", `{"blogs":["Marketing"],"region":"eu"}`)
+	ctx := context.Background()
+	attachShim(t, srv, "crm", crmAnswer)
+	if resp := callAs(t, srv, "dana", "crm_whoami", `{}`); resp.IsError {
+		t.Fatalf("under 1.0.0 = %+v", resp)
+	}
+
+	if rr := intUpload(t, srv, crmVersion2(t)); rr.Code != http.StatusCreated {
+		t.Fatal(rr.Body.String())
+	}
+	intPost(t, srv, intBase+"/crm/versions/2.0.0/approve")
+	fs := attachShim(t, srv, "crm", crmAnswer)
+	resp := callAs(t, srv, "dana", "crm_whoami", `{}`)
+	if !resp.IsError || len(resp.Content) != 1 || resp.Content[0] != "Your access to the Test crm integration no longer applies (Region must be one of us, apac). Ask the owner to set it again." {
+		t.Errorf("under 2.0.0 = %+v", resp)
+	}
+	rows, _ := srv.Store.ReadIntegrationAuditTail("crm", 1)
+	if len(rows) != 1 || rows[0].Agent != "dana" || rows[0].Allowed || rows[0].Reason != "the access no longer applies: Region must be one of us, apac" {
+		t.Errorf("audit under 2.0.0 = %+v", rows)
+	}
+	if calls := fs.requestsOf("tools/call"); len(calls) != 0 {
+		t.Errorf("a refused call reached the integration: %d", len(calls))
+	}
+	if tools, err := srv.agentIntegrationTools(ctx, "dana"); err != nil || len(tools) != 0 {
+		t.Errorf("actions under 2.0.0 = %+v, %v", tools, err)
+	}
+
+	intPost(t, srv, intBase+"/crm/versions/1.0.0/rollback")
+	attachShim(t, srv, "crm", crmAnswer)
+	if resp := callAs(t, srv, "dana", "crm_whoami", `{}`); resp.IsError || resp.Content[0] != "signed in with [secret]" {
+		t.Errorf("rolled back to 1.0.0 = %+v", resp)
+	}
+	if tools, err := srv.agentIntegrationTools(ctx, "dana"); err != nil || len(tools) != 2 {
+		t.Errorf("actions after the roll back = %+v, %v", tools, err)
+	}
+}
+
 // Why this test exists: every turn lists the agent's actions, and a
 // turn must not cost a round trip to every integration. The list for
 // an agent is asked for once and kept, and asked for again only when

@@ -149,6 +149,162 @@ func TestIntegrationVersionStates(t *testing.T) {
 	}
 }
 
+// Why this test exists: rolling back is the second way a version comes
+// to be in use, and it must keep the state machine's promise that one
+// version is approved at a time. Only a superseded version can be
+// rolled back to; it becomes approved, the one in use becomes
+// superseded, and the integration's current version and display name
+// follow, so the pod is built from the right bundle and the page names
+// the right version. A pending version rolled back to would run code
+// the owner never approved, and a rejected one code the owner turned
+// down. Every version's bundle stays on disk whatever its state, since
+// a roll back runs it again, until the integration is removed.
+func TestRollBackIntegrationVersion(t *testing.T) {
+	s := mustStore(t)
+	storeVersion(t, s, "crm", "1.0.0")
+	if err := s.ApproveIntegrationVersion("crm", "1.0.0", intNow); err != nil {
+		t.Fatal(err)
+	}
+	m := integrationtest.Manifest("crm", "1.1.0")
+	m["display_name"] = "CRM two"
+	b, err := integration.ReadBundle(integrationtest.Zip(t, "crm", m, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.StoreIntegrationVersion("crm", b, IntegrationVersion{PublishedBy: "ceo", PublishedAt: intNow}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ApproveIntegrationVersion("crm", "1.1.0", intNow.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	storeVersion(t, s, "crm", "1.1.1")
+	if err := s.RejectIntegrationVersion("crm", "1.1.1", intNow.Add(2*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	storeVersion(t, s, "crm", "1.2.0")
+	states := func() string {
+		t.Helper()
+		vs, err := s.IntegrationVersions("crm")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, v := range vs {
+			out = append(out, v.Version+"="+string(v.State))
+		}
+		return strings.Join(out, " ")
+	}
+	if it, _ := s.GetIntegration("crm"); it.DisplayName != "CRM two" {
+		t.Fatalf("display name before = %q", it.DisplayName)
+	}
+
+	at := intNow.Add(time.Hour)
+	replaced, err := s.RollBackIntegrationVersion("crm", "1.0.0", at)
+	if err != nil || replaced != "1.1.0" {
+		t.Fatalf("roll back = %q, %v", replaced, err)
+	}
+	if got := states(); got != "1.2.0=pending 1.1.1=rejected 1.1.0=superseded 1.0.0=approved" {
+		t.Errorf("states after the roll back = %s", got)
+	}
+	it, _ := s.GetIntegration("crm")
+	if it.CurrentVersion != "1.0.0" || it.DisplayName != "Test crm" {
+		t.Errorf("integration = %+v", it)
+	}
+	if v, cur, err := s.CurrentIntegrationVersion("crm"); err != nil || cur.Version != "1.0.0" || v.ApprovedAt == nil || !v.ApprovedAt.Equal(at) {
+		t.Errorf("current = %+v, %v", v, err)
+	}
+
+	// Only a superseded version can be rolled back to, and a refusal
+	// changes nothing.
+	for _, ver := range []string{"1.0.0", "1.1.1", "1.2.0"} {
+		if _, err := s.RollBackIntegrationVersion("crm", ver, at); !errors.Is(err, ErrIntegrationVersionNotSuperseded) {
+			t.Errorf("roll back to %s: %v", ver, err)
+		}
+	}
+	if _, err := s.RollBackIntegrationVersion("crm", "9.9.9", at); !errors.Is(err, ErrNotFound) {
+		t.Errorf("roll back to a version not stored: %v", err)
+	}
+	if _, err := s.RollBackIntegrationVersion("nope", "1.0.0", at); !errors.Is(err, ErrNotFound) {
+		t.Errorf("roll back of an integration not installed: %v", err)
+	}
+	if got := states(); got != "1.2.0=pending 1.1.1=rejected 1.1.0=superseded 1.0.0=approved" {
+		t.Errorf("states after the refusals = %s", got)
+	}
+
+	// A version rolled back from can be rolled back to in turn, and an
+	// approval after a roll back supersedes the version rolled back to.
+	if replaced, err := s.RollBackIntegrationVersion("crm", "1.1.0", at); err != nil || replaced != "1.0.0" {
+		t.Errorf("roll back to 1.1.0 = %q, %v", replaced, err)
+	}
+	if err := s.ApproveIntegrationVersion("crm", "1.2.0", at); err != nil {
+		t.Fatal(err)
+	}
+	if got := states(); got != "1.2.0=approved 1.1.1=rejected 1.1.0=superseded 1.0.0=superseded" {
+		t.Errorf("states after approving 1.2.0 = %s", got)
+	}
+
+	for _, ver := range []string{"1.0.0", "1.1.0", "1.1.1", "1.2.0"} {
+		dir, _ := s.IntegrationBundleDir("crm", ver)
+		if _, err := os.Stat(filepath.Join(dir, "server", "main.py")); err != nil {
+			t.Errorf("the bundle of %s is gone: %v", ver, err)
+		}
+	}
+	if err := s.RemoveIntegration("crm"); err != nil {
+		t.Fatal(err)
+	}
+	if entries, _ := os.ReadDir(filepath.Join(s.Root(), "integrations")); len(entries) != 0 {
+		t.Errorf("integrations/ after removing holds %v", entries)
+	}
+}
+
+// Why this test exists: access is checked against the version in use
+// when it is read, never when it is written, so approving a version or
+// rolling back to one re-validates every row at once. A row the new
+// version's form refuses says why and grants nothing, and is valid
+// again under a version whose form accepts it. Checked against the
+// version a row was set under instead, an agent would keep access the
+// version in use cannot express.
+func TestIntegrationAccessFollowsTheVersionInUse(t *testing.T) {
+	s := mustStore(t)
+	mustAgent(t, s, "dana")
+	approvedWithConnection(t, s, "crm")
+	if err := s.SetIntegrationAccess("crm", IntegrationAccess{Slug: "dana", ConnectionID: "c1", Access: map[string]any{"blogs": []any{"M"}, "region": "eu"}, SetAt: intNow}); err != nil {
+		t.Fatal(err)
+	}
+	m := integrationtest.Manifest("crm", "2.0.0")
+	m["kivali"].(map[string]any)["access"].(map[string]any)["schema"].(map[string]any)["properties"].(map[string]any)["region"] = map[string]any{"type": "string", "enum": []any{"us", "apac"}, "title": "Region"}
+	b, err := integration.ReadBundle(integrationtest.Zip(t, "crm", m, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.StoreIntegrationVersion("crm", b, IntegrationVersion{PublishedBy: "ceo", PublishedAt: intNow}); err != nil {
+		t.Fatal(err)
+	}
+	invalid := func() string {
+		t.Helper()
+		rows, err := s.ListIntegrationAccess("crm")
+		if err != nil || len(rows) != 1 {
+			t.Fatalf("rows = %v, %v", rows, err)
+		}
+		return rows[0].Invalid
+	}
+	if got := invalid(); got != "" {
+		t.Errorf("under 1.0.0: %q", got)
+	}
+	if err := s.ApproveIntegrationVersion("crm", "2.0.0", intNow); err != nil {
+		t.Fatal(err)
+	}
+	if got := invalid(); got != "Region must be one of us, apac" {
+		t.Errorf("under 2.0.0: %q", got)
+	}
+	if _, err := s.RollBackIntegrationVersion("crm", "1.0.0", intNow); err != nil {
+		t.Fatal(err)
+	}
+	if got := invalid(); got != "" {
+		t.Errorf("rolled back to 1.0.0: %q", got)
+	}
+}
+
 // A bundle is stored under its manifest's name only, and a built-in
 // integration takes no upload and cannot be removed: either would let
 // an upload replace what ships with Kivali.

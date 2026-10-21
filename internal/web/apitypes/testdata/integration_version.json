@@ -105,6 +105,10 @@
   "file_count": 12,
   "current": false,
   "current_version": "1.2.0",
+  "changes": [
+    "Hosts added: api.hubapi.com",
+    "Access form fields added: Tags, Note"
+  ],
   "findings": [
     "tools[2] (whoami) has no description"
   ]

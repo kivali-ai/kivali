@@ -1,6 +1,6 @@
 # Integrations
 
-An integration is an external service your agents can act on, such as a CRM, a blog or a ticket tracker. Each one is installed from a bundle, connected with a token you paste, and given to agents one at a time, each with its own access. This page covers having one built, installing one, connecting and testing it, giving agents access, what an agent then sees, the record of their calls, its log, and switching it off or removing it.
+An integration is an external service your agents can act on, such as a CRM, a blog or a ticket tracker. Each one is installed from a bundle, connected with a token you paste, and given to agents one at a time, each with its own access. This page covers having one built, installing one and its new versions, rolling back to an earlier version, connecting and testing it, giving agents access, what an agent then sees, the record of their calls, its log, and switching it off or removing it.
 
 Integrations are under **Org**, **Integrations**.
 
@@ -41,7 +41,17 @@ Read it before you approve. The check only reads the bundle; this screen is the 
 
 ### New versions
 
-A newer version is uploaded the same way, and waits on its own install screen, which says which version it replaces. Until you approve it, the version in use stays. The integration's page lists every version with what happened to it.
+A newer version is uploaded the same way, and waits on its own install screen, which says which version it replaces. Until you approve it, the version in use stays. The integration's page lists every version with where it stands: **Needs your approval**, **In use**, **Replaced** (in use before) or **Rejected**.
+
+The install screen of a version that would replace the one in use says what is different from it, in words, under **What changes from version** and the number of the version in use: hosts it reaches that the version in use does not, or no longer reaches; connection fields added or removed, with new secrets marked; actions added or removed; and fields added to or removed from the access form. When none of those differ, it says **No change to hosts, secrets, actions or the access form.** The rest of the screen still lists everything the version holds.
+
+### Roll back to an earlier version
+
+If a new version does not work as it should, you can go back to the one it replaced. On the integration's page, under **Versions**, a version marked **Replaced** has **Roll back** beside it; its install screen has the same button, and says what rolling back to it changes from the version in use. **Roll back** asks first, naming the version that stops and the one that runs in its place.
+
+Rolling back stops the version in use and runs the earlier one again in a few seconds, from the code that was approved for it. The version you rolled back from is marked **Replaced**, and you can roll back to it in turn. A rejected version never runs, so it has no **Roll back**, and a version waiting for approval is approved, not rolled back to. The roll back is in [Latest calls](#latest-calls), under your name.
+
+Your agents' access stays as it is. Access that no longer fits the earlier version's access form is marked, as after a new version (see [Give agents access](#give-agents-access)). Every version is kept until you remove the integration, so any version that was in use can be rolled back to.
 
 ## Connect it
 
@@ -69,7 +79,7 @@ If it stays **Not running**, open **Recent log** on its page: the integration's 
 
 Under **Access**, choose an agent and **Give access**. The form is the integration's own: a list of blogs or projects to pick from, switches such as "May publish and edit", text fields. A list the integration fills in from the service, such as the blogs your connection can see, is loaded through the running integration with **Load options**, which waits while the integration is not running. An integration with no form gives an agent all of it or nothing. **Change** edits an agent's access and **Remove** takes it away.
 
-Each agent's access is shown in words, on the integration's page and on the agent's **Integrations** tab. When a new version changes the form so that an agent's access no longer fits, the access is marked invalid and gives nothing until you set it again.
+Each agent's access is shown in words, on the integration's page and on the agent's **Integrations** tab. When the version in use changes, by an approval or a roll back, so that an agent's access no longer fits the form, the access is marked invalid, with the reason, and gives nothing until you set it again with **Change**. The top of the integration's page says how many access rows no longer fit, such as "1 access row no longer fits this version's access form. Set it again.", until every row fits.
 
 An agent that is offboarded loses its access to every integration.
 
@@ -83,7 +93,7 @@ A change to an agent's access, given or taken away, changes its tools from its n
 
 ## Latest calls
 
-**Latest calls** on an integration's page lists the latest calls through it, newest first: when, which agent, the action, whether Kivali let it through and, for a call that was refused or failed, why, and how long it took. Your own Test connection and the options an access form loads are in it too, under your name. Calls an agent made are listed whether Kivali allowed them or not.
+**Latest calls** on an integration's page lists the latest calls through it, newest first: when, which agent, the action, whether Kivali let it through and, for a call that was refused or failed, why, and how long it took. Your own Test connection, the options an access form loads and your roll backs are in it too, under your name; a roll back reads **Roll back**, with the versions it went from and to. Calls an agent made are listed whether Kivali allowed them or not.
 
 ## Switch it off or remove it
 

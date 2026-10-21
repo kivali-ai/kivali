@@ -31,10 +31,10 @@ import (
 // install screen, the connection, each agent's access, and an agent's
 // Integrations tab. Installing is two steps: an upload stores a version
 // as pending, and approving it, here or from Needs you, makes it the
-// one in use. A
-// connection's secret fields go to s.Secrets and nowhere else: the
-// store keeps which are set and the Secret's name, and no answer here
-// carries a value.
+// one in use. Rolling back makes a version a later one replaced the one
+// in use again. A connection's secret fields go to s.Secrets and
+// nowhere else: the store keeps which are set and the Secret's name,
+// and no answer here carries a value.
 
 // wireAPIIntegrationRoutes mounts the integration routes on the API mux.
 func (s *Server) wireAPIIntegrationRoutes(mux *http.ServeMux) {
@@ -47,6 +47,7 @@ func (s *Server) wireAPIIntegrationRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/org/integrations/{name}/versions/{version}", s.handleAPIIntegrationVersion)
 	mux.HandleFunc("POST /api/v1/org/integrations/{name}/versions/{version}/approve", s.handleAPIIntegrationAnswer(true))
 	mux.HandleFunc("POST /api/v1/org/integrations/{name}/versions/{version}/reject", s.handleAPIIntegrationAnswer(false))
+	mux.HandleFunc("POST /api/v1/org/integrations/{name}/versions/{version}/rollback", s.handleAPIIntegrationRollBack)
 	mux.HandleFunc("PUT /api/v1/org/integrations/{name}/connection", s.handleAPIIntegrationConnectionPut)
 	mux.HandleFunc("DELETE /api/v1/org/integrations/{name}/connection", s.handleAPIIntegrationConnectionDelete)
 	mux.HandleFunc("POST /api/v1/org/integrations/{name}/connection/verify", s.handleAPIIntegrationVerify)
@@ -369,10 +370,13 @@ func (s *Server) integrationVersionView(v *integrationView, ver store.Integratio
 		BundleBytes:      ver.BundleBytes,
 		FileCount:        ver.FileCount,
 		Current:          v.it.CurrentVersion == ver.Version,
+		Changes:          []string{},
 		Findings:         nonNilStrings(slices.Clone(ver.Findings)),
 	}
 	if cur := v.it.CurrentVersion; cur != "" && cur != ver.Version {
 		out.CurrentVersion = &cur
+		// v.manifest is the version in use's while one is approved.
+		out.Changes = nonNilStrings(integration.Diff(v.manifest, m))
 	}
 	return out
 }
@@ -720,6 +724,78 @@ func (s *Server) rejectIntegrationVersion(name, version string) error {
 	}
 	s.Integrations.Changed()
 	return nil
+}
+
+// rollBackAction is the audit's action for the owner's roll back.
+const rollBackAction = "rollback"
+
+// rollBackRefusal says why version, in state, cannot be rolled back
+// to: only a version a later one replaced can be.
+func rollBackRefusal(name, version string, state store.IntegrationVersionState) string {
+	switch state {
+	case store.IntegrationVersionApproved:
+		return fmt.Sprintf("version %s of %s is the version in use", version, name)
+	case store.IntegrationVersionPending:
+		return fmt.Sprintf("version %s of %s has never run; approve it from its install screen instead", version, name)
+	case store.IntegrationVersionRejected:
+		return fmt.Sprintf("version %s of %s was rejected and never runs", version, name)
+	}
+	return fmt.Sprintf("version %s of %s cannot be rolled back to: it is %s", version, name, state)
+}
+
+// handleAPIIntegrationRollBack makes a superseded version the one in
+// use again: the version in use becomes superseded, the pod follows,
+// and the audit has a row for the owner naming both versions. Every
+// agent's access stays as it is and is checked against the version
+// rolled back to when it is next read. Any other state is a 409.
+func (s *Server) handleAPIIntegrationRollBack(w http.ResponseWriter, r *http.Request) {
+	v, ok := s.integrationOr404(w, r)
+	if !ok {
+		return
+	}
+	name, version := v.it.Name, r.PathValue("version")
+	ver, _, err := s.Store.GetIntegrationVersion(name, version)
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		writeAPIError(w, http.StatusNotFound, "version "+version+" of "+name+" is not stored", whoLink)
+		return
+	case err != nil:
+		writeAPIError(w, http.StatusInternalServerError, "the version could not be read", whoServer)
+		return
+	case ver.State != store.IntegrationVersionSuperseded:
+		writeAPIError(w, http.StatusConflict, rollBackRefusal(name, version, ver.State), whoNoOne)
+		return
+	}
+	now := s.clk().Now()
+	replaced, err := s.Store.RollBackIntegrationVersion(name, version, now)
+	switch {
+	case errors.Is(err, store.ErrIntegrationVersionNotSuperseded):
+		// Answered since it was read: another approval or roll back.
+		writeAPIError(w, http.StatusConflict, fmt.Sprintf("version %s of %s is no longer one a later version replaced", version, name), whoNoOne)
+		return
+	case errors.Is(err, store.ErrNotFound):
+		writeAPIError(w, http.StatusNotFound, "version "+version+" of "+name+" is not stored", whoLink)
+		return
+	case err != nil:
+		log.Printf("integration %s: roll back to %s: %v", name, version, err)
+		writeAPIError(w, http.StatusInternalServerError, "the roll back could not be saved", whoServer)
+		return
+	}
+	s.Integrations.Changed()
+	reason := "to version " + version
+	if replaced != "" {
+		reason = "from version " + replaced + " " + reason
+	}
+	if err := s.Store.AppendIntegrationAudit(name, store.IntegrationAuditRow{
+		At: now, Agent: agent.CEOSlug, Action: rollBackAction, Allowed: true, Reason: reason,
+	}); err != nil {
+		log.Printf("integration %s: audit: %v", name, err)
+	}
+	v, ok = s.integrationOr404(w, r)
+	if !ok {
+		return
+	}
+	s.writeIntegrationVersionView(w, r, v)
 }
 
 // denyIntegrationInstall is a denial's effect on the version it names:

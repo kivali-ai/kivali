@@ -1,13 +1,39 @@
 import { useEffect, useState } from 'react';
 import { useHref, useNavigate, useParams } from 'react-router';
 import { apiDelete, apiGet, apiPost, apiPut } from '../../api/client';
-import type { AccessRow, ConnectionField, ConnectionState, ConnectionWrite, IntegrationAudit, IntegrationAuditRow, IntegrationLogLine, IntegrationLogs, IntegrationPage as IntegrationPageData, IntegrationVersionSummary, PersonRef } from '../../api/types.gen';
+import type {
+  AccessRow,
+  ConnectionField,
+  ConnectionState,
+  ConnectionWrite,
+  IntegrationAudit,
+  IntegrationAuditRow,
+  IntegrationLogLine,
+  IntegrationLogs,
+  IntegrationPage as IntegrationPageData,
+  IntegrationVersion,
+  IntegrationVersionSummary,
+  PersonRef,
+} from '../../api/types.gen';
 import { useFrameChrome } from '../../app/chrome';
 import { PageTitle } from '../../app/PageTitle';
 import { Badge, Banner, Button, Dialog, DialogClose, Icon, ListRow, Select, Skeleton, Switch, Table, Text, TextField } from '../../ds';
 import type { BadgeTone, TableColumn } from '../../ds';
 import { AccessDialog } from './AccessDialog';
-import { Block, StatusBadge, VersionBadge, actionWords, durationLabel, integrationApi, versionPath, whenLabel } from './integrationParts';
+import {
+  Block,
+  RollBackDialog,
+  StatusBadge,
+  VersionBadge,
+  actionWords,
+  durationLabel,
+  integrationApi,
+  invalidAccessLine,
+  isRollBack,
+  rollBackApi,
+  versionPath,
+  whenLabel,
+} from './integrationParts';
 import { ErrorBanner, None, RowList } from './parts';
 import { asApiError, useAction, useResource } from './useResource';
 import '../../styles/org.css';
@@ -116,11 +142,21 @@ function ConnectionForm({ page, busy, running, now, onSave, onVerify, onDisconne
   );
 }
 
-function VersionRow({ name, v, now }: { name: string; v: IntegrationVersionSummary; now: number }) {
+interface VersionRowProps {
+  name: string;
+  v: IntegrationVersionSummary;
+  now: number;
+  busy: boolean;
+  onRollBack(): void;
+}
+
+/** One version: its row opens its install screen; a superseded one has Roll back beside it. */
+function VersionRow({ name, v, now, busy, onRollBack }: VersionRowProps) {
   const href = useHref(versionPath(name, v.version));
   const notes = v.notes_md.trim().split('\n')[0] ?? '';
-  return (
+  const row = (
     <ListRow
+      className="app-int-row"
       title={'Version ' + v.version}
       meta={
         <>
@@ -133,12 +169,33 @@ function VersionRow({ name, v, now }: { name: string; v: IntegrationVersionSumma
       href={href}
     />
   );
+  if (v.state !== 'superseded') return row;
+  // The button sits beside the row's link, never inside it.
+  return (
+    <div className="app-int-version">
+      {row}
+      <Button size="sm" variant="ghost" aria-label={'Roll back to version ' + v.version} disabled={busy} onClick={onRollBack}>
+        Roll back
+      </Button>
+    </div>
+  );
 }
 
-/** A call's outcome in words: allowed, failed with what went wrong, or refused with why. */
-export function auditResult(row: Pick<IntegrationAuditRow, 'allowed' | 'reason'>): string {
+/** "From version 1.1.0 to version 1.0.0": the audit's reason, set as a sentence. */
+function sentence(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+/** A call's outcome in words: allowed, failed with what went wrong, or refused with why; a roll back names its versions. */
+export function auditResult(row: Pick<IntegrationAuditRow, 'agent' | 'action' | 'allowed' | 'reason'>): string {
+  if (isRollBack(row)) return sentence(row.reason);
   if (!row.allowed) return row.reason ? 'Refused: ' + row.reason : 'Refused';
   return row.reason ? 'Failed: ' + row.reason : 'Allowed';
+}
+
+/** The audit's action in words: "Create post", or "Roll back" for yours. */
+function auditAction(row: Pick<IntegrationAuditRow, 'agent' | 'action'>): string {
+  return isRollBack(row) ? 'Roll back' : actionWords(row.action);
 }
 
 const LOG_LEVEL: Record<string, BadgeTone | undefined> = { stderr: 'neutral', warning: 'signal', error: 'danger' };
@@ -218,6 +275,7 @@ export function IntegrationPage() {
   const [removing, setRemoving] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
   const [grant, setGrant] = useState<Grant | null>(null);
+  const [rollingBack, setRollingBack] = useState<string | null>(null);
   const [pick, setPick] = useState('');
   // Bumped after a save so the connection form starts again from what is stored.
   const [formSeq, setFormSeq] = useState(0);
@@ -247,6 +305,14 @@ export function IntegrationPage() {
       await apiDelete(api);
       void navigate('/org/integrations');
     });
+  // The roll back answers with the version; the page and the audit (which gains a row for it) are read again.
+  const rollBack = (version: string) =>
+    action.run(async () => {
+      await apiPost<IntegrationVersion>(rollBackApi(name, version));
+      setRollingBack(null);
+      page.set(await apiGet<IntegrationPageData>(api));
+      audit.set(await apiGet<IntegrationAudit>(api + '/audit'));
+    });
 
   if (!p) {
     return (
@@ -265,6 +331,7 @@ export function IntegrationPage() {
 
   const s = p.summary;
   const pending = s.pending_version;
+  const invalid = invalidAccessLine(p.access.filter((r) => r.invalid).length);
   const chosen = p.agents_without.some((a) => a.slug === pick) ? pick : (p.agents_without[0]?.slug ?? '');
 
   const accessColumns: TableColumn<AccessRow & { id: string }>[] = [
@@ -304,7 +371,7 @@ export function IntegrationPage() {
   const auditColumns: TableColumn<IntegrationAuditRow & { id: number }>[] = [
     { key: 'at', label: 'When', mono: true, render: (r) => <span className="app-int-nowrap">{whenLabel(r.at, now)}</span> },
     { key: 'agent', label: 'Agent', render: (r) => <span className="app-int-nowrap">{r.agent.name}</span> },
-    { key: 'action', label: 'Action', render: (r) => <span className="app-int-nowrap">{actionWords(r.action)}</span> },
+    { key: 'action', label: 'Action', render: (r) => <span className="app-int-nowrap">{auditAction(r)}</span> },
     { key: 'result', label: 'Result', render: (r) => <span className="app-int-wide">{auditResult(r)}</span> },
     { key: 'duration_ms', label: 'Took', mono: true, align: 'right', render: (r) => <span className="app-int-nowrap">{durationLabel(r.duration_ms)}</span> },
   ];
@@ -354,6 +421,8 @@ export function IntegrationPage() {
           Nothing in it runs until you approve it.
         </Banner>
       )}
+
+      {invalid && <Banner tone="warning">{invalid}</Banner>}
 
       <Block label="Connection" variant="heading">
         {s.version ? (
@@ -426,7 +495,7 @@ export function IntegrationPage() {
         ) : (
           <RowList>
             {p.versions.map((v) => (
-              <VersionRow key={v.version} name={name} v={v} now={now} />
+              <VersionRow key={v.version} name={name} v={v} now={now} busy={action.busy} onRollBack={() => setRollingBack(v.version)} />
             ))}
           </RowList>
         )}
@@ -457,6 +526,16 @@ export function IntegrationPage() {
         />
       )}
 
+      <RollBackDialog
+        version={rollingBack}
+        current={s.version}
+        busy={action.busy}
+        error={action.error && <ErrorBanner error={action.error} />}
+        onConfirm={() => {
+          if (rollingBack) void rollBack(rollingBack);
+        }}
+        onClose={() => setRollingBack(null)}
+      />
       <Dialog
         open={disconnecting}
         onOpenChange={(o) => {

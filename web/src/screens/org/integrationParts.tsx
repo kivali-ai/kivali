@@ -1,8 +1,8 @@
 import { useMemo } from 'react';
 import type { ReactNode } from 'react';
 import { ApiError } from '../../api/client';
-import type { AccessField, IntegrationStatus, IntegrationUploadRefused, IntegrationVersionState } from '../../api/types.gen';
-import { Badge, Prose, Text } from '../../ds';
+import type { AccessField, IntegrationAuditRow, IntegrationStatus, IntegrationUploadRefused, IntegrationVersionState } from '../../api/types.gen';
+import { Badge, Button, Dialog, DialogClose, Prose, Text } from '../../ds';
 import type { BadgeTone } from '../../ds';
 import { renderMarkdown } from '../../lib/markdown';
 import { shortDate } from '../../lib/time';
@@ -22,6 +22,11 @@ export function integrationPath(name: string): string {
 /** The router path of a version's install screen. */
 export function versionPath(name: string, version: string): string {
   return integrationPath(name) + '/versions/' + encodeURIComponent(version);
+}
+
+/** The API path that rolls back to a version: a superseded one becomes the one in use again. */
+export function rollBackApi(name: string, version: string): string {
+  return integrationApi(name) + '/versions/' + encodeURIComponent(version) + '/rollback';
 }
 
 const STATUS: Record<IntegrationStatus, { label: string; tone: BadgeTone }> = {
@@ -55,6 +60,18 @@ export function VersionBadge({ state }: { state: IntegrationVersionState }) {
 export function actionWords(name: string): string {
   const words = name.replace(/_/g, ' ').trim();
   return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+/** Your roll back to another version is in the audit as the action `rollback`, with you as the agent. */
+export function isRollBack(row: Pick<IntegrationAuditRow, 'agent' | 'action'>): boolean {
+  return row.action === 'rollback' && row.agent.slug === 'ceo';
+}
+
+/** What the page says when access rows no longer fit the version in use; empty when none. */
+export function invalidAccessLine(count: number): string {
+  if (count === 0) return '';
+  if (count === 1) return '1 access row no longer fits this version’s access form. Set it again.';
+  return count + ' access rows no longer fit this version’s access form. Set them again.';
 }
 
 /** "1 agent", "3 agents", "No agents". */
@@ -125,6 +142,47 @@ export function Block({ label, children, action, variant = 'label' }: BlockProps
       </div>
       {children}
     </section>
+  );
+}
+
+interface RollBackDialogProps {
+  /** The version to roll back to; the dialog is open while it is set. */
+  version: string | null;
+  /** The version in use, which stops. */
+  current: string;
+  busy: boolean;
+  /** The failure of the last try, shown in the dialog so it stays open. */
+  error: ReactNode;
+  onConfirm(): void;
+  onClose(): void;
+}
+
+/** The confirm before a roll back: which version stops, which runs in its place, and what happens to access. */
+export function RollBackDialog({ version, current, busy, error, onConfirm, onClose }: RollBackDialogProps) {
+  const v = version ?? '';
+  return (
+    <Dialog
+      open={version !== null}
+      onOpenChange={(o) => {
+        if (!o) onClose();
+      }}
+      title={'Roll back to version ' + v + '?'}
+      description={
+        'Version ' + current + ' stops and ' + v + ' runs in its place. Agents’ access stays as it is; rows that no longer fit ' + v + '’s access form are marked.'
+      }
+      footer={
+        <>
+          <DialogClose>
+            <Button variant="secondary">Cancel</Button>
+          </DialogClose>
+          <Button variant="primary" onClick={onConfirm} loading={busy} disabled={busy}>
+            Roll back
+          </Button>
+        </>
+      }
+    >
+      {error}
+    </Dialog>
   );
 }
 
