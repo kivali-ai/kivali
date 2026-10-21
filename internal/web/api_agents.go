@@ -148,18 +148,19 @@ func (s *Server) activeAgentSummary(slug string) (apitypes.AgentSummary, error) 
 // fleet default.
 func (s *Server) agentSummary(a store.Agent, l agentLiveness) apitypes.AgentSummary {
 	return apitypes.AgentSummary{
-		Slug:       a.Slug,
-		Name:       l.Name,
-		RoleTitle:  l.RoleTitle,
-		Icon:       l.Icon,
-		ReportsTo:  l.ReportsTo,
-		Depth:      l.Depth,
-		Model:      cmp.Or(a.Model, s.AgentModel),
-		ModelLabel: s.modelLabel(cmp.Or(a.Model, s.AgentModel)),
-		Effort:     s.effectiveEffort(cmp.Or(a.Model, s.AgentModel), a.Effort),
-		ContextPct: l.ContextPct,
-		State:      l.State,
-		Created:    a.CreatedAt,
+		Slug:          a.Slug,
+		Name:          l.Name,
+		RoleTitle:     l.RoleTitle,
+		Icon:          l.Icon,
+		ReportsTo:     l.ReportsTo,
+		Depth:         l.Depth,
+		Model:         cmp.Or(a.Model, s.AgentModel),
+		ModelLabel:    s.modelLabel(cmp.Or(a.Model, s.AgentModel)),
+		Effort:        s.effectiveEffort(cmp.Or(a.Model, s.AgentModel), a.Effort),
+		ContextPct:    l.ContextPct,
+		State:         l.State,
+		Created:       a.CreatedAt,
+		NetworkExempt: a.NetworkExempt,
 	}
 }
 
@@ -167,17 +168,18 @@ func (s *Server) agentSummary(a store.Agent, l agentLiveness) apitypes.AgentSumm
 // in the tree and nothing running, so depth 0 and state idle.
 func (s *Server) archivedAgentSummary(a store.Agent) apitypes.AgentSummary {
 	return apitypes.AgentSummary{
-		Slug:       a.Slug,
-		Name:       agentDisplayName(a),
-		RoleTitle:  a.Role,
-		Icon:       a.Icon,
-		ReportsTo:  cmp.Or(a.ReportsTo, agent.CEOSlug),
-		Model:      cmp.Or(a.Model, s.AgentModel),
-		ModelLabel: s.modelLabel(cmp.Or(a.Model, s.AgentModel)),
-		Effort:     s.effectiveEffort(cmp.Or(a.Model, s.AgentModel), a.Effort),
-		State:      apitypes.AgentStateIdle,
-		Created:    a.CreatedAt,
-		ArchivedAt: a.ArchivedAt,
+		Slug:          a.Slug,
+		Name:          agentDisplayName(a),
+		RoleTitle:     a.Role,
+		Icon:          a.Icon,
+		ReportsTo:     cmp.Or(a.ReportsTo, agent.CEOSlug),
+		Model:         cmp.Or(a.Model, s.AgentModel),
+		ModelLabel:    s.modelLabel(cmp.Or(a.Model, s.AgentModel)),
+		Effort:        s.effectiveEffort(cmp.Or(a.Model, s.AgentModel), a.Effort),
+		State:         apitypes.AgentStateIdle,
+		Created:       a.CreatedAt,
+		ArchivedAt:    a.ArchivedAt,
+		NetworkExempt: a.NetworkExempt,
 	}
 }
 

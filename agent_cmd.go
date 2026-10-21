@@ -80,20 +80,22 @@ func runAgent(args []string) {
 		logger.Fatalf("os.Executable: %v", err)
 	}
 
-	// The egress proxy credential: a secret drawn here and held in
-	// memory, its hash registered with core before any CLI starts and
-	// again each time the events stream reconnects. The CLIs get it in
-	// their proxy URL (driver Options.Env) and reach the public
-	// internet; the agent-shell container keeps the bare proxy URL and
-	// stays on the allowlist. Scrubbed of it: the body and query of
+	// The egress proxy credentials: two secrets drawn here and held in
+	// memory, their hashes registered with core before any CLI starts
+	// and again each time the events stream reconnects. The CLIs get
+	// the first in their proxy URL (driver Options.Env) and reach the
+	// public internet. The second is the shell's: it is written beside
+	// the agent-shell socket (AGENT_SHELL_SOCKET) for the daemon to put
+	// in each command's proxy URL, and grants only the team's list and
+	// this agent's own hosts. Scrubbed of both: the body and query of
 	// every request udsClient sends core, and each CLI's stderr and
 	// stdin mirror as the driver writes them (to disk and to this
 	// process's stderr). The `kivali mcp` servers the CLIs start
-	// inherit it and scrub their own requests (mcp_cmd.go). No
+	// inherit the first and scrub their own requests (mcp_cmd.go). No
 	// HTTPS_PROXY in this container means no proxy: nothing to
 	// register. Why open egress is safe for this container's processes:
 	// see SetUpEgressCredential.
-	cred, err := agentpod.SetUpEgressCredential(ctx, udsClient, os.Getenv("HTTPS_PROXY"))
+	cred, err := agentpod.SetUpEgressCredential(ctx, udsClient, os.Getenv("HTTPS_PROXY"), os.Getenv("AGENT_SHELL_SOCKET"))
 	if err != nil {
 		if ctx.Err() != nil {
 			logger.Print("shutdown before the egress credential was registered")

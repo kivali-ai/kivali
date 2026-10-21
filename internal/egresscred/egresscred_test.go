@@ -253,3 +253,29 @@ func TestBareProxyURLDropsUserInfo(t *testing.T) {
 		}
 	}
 }
+
+// A runtime holding two credentials scrubs both, each in every form,
+// with one scrubber; nils are skipped. Without Combine the shell's
+// credential would reach core unscrubbed whenever a relay quoted it.
+// This fails if either credential, its base64 form or its URL survives,
+// or if nothing but nils yields a scrubber.
+func TestCombineScrubsEveryCredential(t *testing.T) {
+	open, openSecret := fixture(t)
+	const shellSecret = "c2hlbGwtc2VjcmV0LWZvci1jb21iaW5lLXRlc3QtdmFsdWU"
+	shell, err := newCredential("http://10.43.0.12:3128", "alice", shellSecret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := Combine(nil, open.Scrubber, shell.Scrubber)
+	basic := func(secret string) string { return base64.StdEncoding.EncodeToString([]byte("alice:" + secret)) }
+	for _, in := range []string{
+		openSecret, shellSecret, open.URL, shell.URL, basic(openSecret), basic(shellSecret),
+	} {
+		if out := s.String("x " + in + " y"); out != "x "+Placeholder+" y" {
+			t.Errorf("String(%q) = %q", in, out)
+		}
+	}
+	if Combine(nil, nil) != nil || Combine() != nil {
+		t.Fatal("a scrubber from no credential")
+	}
+}

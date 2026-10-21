@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router';
 import { apiPut } from '../../api/client';
 import type { ApiError } from '../../api/client';
 import type { AgentDoc, AgentDocKind } from '../../api/types.gen';
@@ -6,6 +7,7 @@ import { Banner, Button, Icon, Prose, Skeleton, Text, TextField } from '../../ds
 import { renderMarkdown } from '../../lib/markdown';
 import { useAgentPage } from './AgentPage';
 import { useChatDeps } from './chatDeps';
+import { SecurityPane } from './SecurityPane';
 import { SoftwarePane } from './SoftwarePane';
 import { agoPhrase, asApiError, listItemCount, stripProvenance, useFetched } from './tabsShared';
 import '../../styles/agent-tabs.css';
@@ -149,27 +151,58 @@ function DocPane({ slug, name, kind, label, archived }: { slug: string; name: st
   );
 }
 
-type AboutView = AgentDocKind | 'software';
+type AboutView = AgentDocKind | 'software' | 'security';
+
+const SHELL_VIEWS: readonly { kind: AboutView; label: string }[] = [
+  { kind: 'software', label: 'Software' },
+  { kind: 'security', label: 'Security' },
+];
 
 /**
- * About: Role, Habits and Memory, one at a time, each read first with Edit swapping in the editor, and Software,
- * the programs installed in the agent's shell. An archived agent has no shell, so no Software.
+ * About: Role, Habits and Memory, one at a time, each read first with Edit swapping in the editor; Software, the
+ * programs installed in the agent's shell; and Security, where the agent's commands can connect beyond the team's
+ * defaults. An archived agent has no shell, so neither Software nor Security.
+ *
+ * The view is the address's `?view=` (role, habits, memory, software or security), so a link can open one; any
+ * other value, or a view the agent does not have, is Role, which has no parameter.
  */
 export function About() {
-  const { slug, name, archived } = useAgentPage();
-  const [view, setView] = useState<AboutView>('role');
-  const views: readonly { kind: AboutView; label: string }[] = archived ? KINDS : [...KINDS, { kind: 'software', label: 'Software' }];
+  const { slug, name, archived, detail } = useAgentPage();
+  const [params, setParams] = useSearchParams();
+  const views: readonly { kind: AboutView; label: string }[] = archived ? KINDS : [...KINDS, ...SHELL_VIEWS];
+  const asked = params.get('view');
+  const view: AboutView = views.find((k) => k.kind === asked)?.kind ?? 'role';
   const doc = KINDS.find((k) => k.kind === view);
+  // Until the agent's detail says whether it is archived, a shell view may be one it does not have: wait for
+  // it rather than reading the agent's shell settings and then falling back to Role.
+  const waiting = !doc && detail === null;
   return (
     <div className="app-about">
       <div className="app-about-kinds" role="group" aria-label="Document">
         {views.map((k) => (
-          <Button key={k.kind} size="sm" variant={k.kind === view ? 'secondary' : 'ghost'} aria-pressed={k.kind === view} onClick={() => setView(k.kind)}>
+          <Button
+            key={k.kind}
+            size="sm"
+            variant={k.kind === view ? 'secondary' : 'ghost'}
+            aria-pressed={k.kind === view}
+            onClick={() => setParams(k.kind === 'role' ? {} : { view: k.kind })}
+          >
             {k.label}
           </Button>
         ))}
       </div>
-      {doc ? <DocPane key={view} slug={slug} name={name} kind={doc.kind} label={doc.label} archived={archived} /> : <SoftwarePane slug={slug} name={name} />}
+      {doc ? (
+        <DocPane key={view} slug={slug} name={name} kind={doc.kind} label={doc.label} archived={archived} />
+      ) : waiting ? (
+        <div className="app-about-pane" aria-busy="true">
+          <Skeleton height={56} />
+          <Skeleton height={120} />
+        </div>
+      ) : view === 'software' ? (
+        <SoftwarePane slug={slug} name={name} />
+      ) : (
+        <SecurityPane slug={slug} name={name} />
+      )}
     </div>
   );
 }

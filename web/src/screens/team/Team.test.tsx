@@ -11,10 +11,10 @@ const API = '/api/v1/agents';
 const agents: AgentsResponse = {
   agents: [
     { ...(goAgents.agents[0] as AgentsResponse['agents'][number]), state: 'running' },
-    { slug: 'chief-of-staff', name: 'Chief of Staff', role_title: 'Chief of Staff', icon: 'compass', reports_to: 'ceo', depth: 1, model: 'claude-opus-5-5', model_label: 'Opus 5.5', effort: 'medium', context_pct: 41, state: 'waiting', created: '2026-09-01T09:30:00Z' },
+    { slug: 'chief-of-staff', name: 'Chief of Staff', role_title: 'Chief of Staff', icon: 'compass', reports_to: 'ceo', depth: 1, model: 'claude-opus-5-5', model_label: 'Opus 5.5', effort: 'medium', context_pct: 41, state: 'waiting', created: '2026-09-01T09:30:00Z', network_exempt: false },
   ],
   archived: [
-    { slug: 'grant-writer', name: 'Grant writer', role_title: 'Writes grant applications', icon: 'file-text', reports_to: 'chief-of-staff', depth: 0, model: 'claude-opus-5-5', model_label: 'Opus 5.5', effort: 'high', context_pct: 0, state: 'idle', created: '2026-08-01T09:30:00Z', archived_at: '2026-09-03T12:00:00Z' },
+    { slug: 'grant-writer', name: 'Grant writer', role_title: 'Writes grant applications', icon: 'file-text', reports_to: 'chief-of-staff', depth: 0, model: 'claude-opus-5-5', model_label: 'Opus 5.5', effort: 'high', context_pct: 0, state: 'idle', created: '2026-08-01T09:30:00Z', archived_at: '2026-09-03T12:00:00Z', network_exempt: false },
   ],
 };
 
@@ -110,6 +110,37 @@ describe('Team on a phone', () => {
     expect(indent(/Chief of Staff/)).toContain('app-team-indent-1');
     expect(indent(/Engineering lead/)).toContain('app-team-indent-2');
     expect(indent(/Buyer/)).toContain('app-team-indent-3');
+  });
+});
+
+describe('Team: network limits', () => {
+  const exemptEngineering: AgentsResponse = { ...agents, agents: agents.agents.map((a) => (a.slug === 'engineering-lead' ? { ...a, network_exempt: true } : a)) };
+
+  // Guards the Team page's warning: an agent whose network limits are off must say so on its own row, and no
+  // other row may. A badge that never shows, or one on every agent's row, fails this.
+  it('badges only the agents with no network limits', async () => {
+    await open(goSnapshot, exemptEngineering);
+    const row = page().getByRole('link', { name: /Engineering lead/ });
+    expect(await within(row).findByText('No network limits')).toBeInTheDocument();
+    expect(page().getAllByText('No network limits')).toHaveLength(1);
+    expect(within(page().getByRole('link', { name: /^Chief of Staff/ })).queryByText('No network limits')).toBeNull();
+  });
+
+  // Guards the phone layout, which draws its own list of rows: the badge must show there too. A badge only
+  // on the wide layout fails this.
+  it('badges them on a phone too', async () => {
+    screenWide(false);
+    renderTabs('/team', { routes: { ['GET ' + API]: exemptEngineering } });
+    const list = await page().findByRole('region', { name: 'Reporting lines' });
+    expect(await within(within(list).getByRole('link', { name: /Engineering lead/ })).findByText('No network limits')).toBeInTheDocument();
+    expect(within(list).getAllByText('No network limits')).toHaveLength(1);
+  });
+
+  // Guards the quiet default: with every agent limited (the golden agents.json), no row carries the badge.
+  it('shows no badge when every agent has its limits', async () => {
+    await open();
+    await within(page().getByRole('link', { name: /Engineering lead/ })).findByText('Opus 5.5 · high');
+    expect(page().queryByText('No network limits')).toBeNull();
   });
 });
 

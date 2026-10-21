@@ -102,7 +102,7 @@ The chart sets these to match the objects it creates. Leave them alone unless yo
 | `BROWSER_CPU_LIMIT` | Each browser pod's CPU limit, a Kubernetes quantity. Default `2`. |
 | `BROWSER_MEMORY_LIMIT` | Each browser pod's memory limit, a Kubernetes quantity. Default `2Gi`. |
 | `EGRESS_ALLOWLIST_SYNC_PATH` | Where the server writes the host list (agents' shells) for the egress proxy. |
-| `EGRESS_AGENTS_SYNC_PATH` | Where the server writes each agent's proxy credential hash and the model provider's hosts for the egress proxy. Empty writes nothing. The chart sets it to `/etc/egress/agents.json`. |
+| `EGRESS_AGENTS_SYNC_PATH` | Where the server writes, for the egress proxy, each agent's two proxy credential hashes (its own and its shell's), each agent's own network hosts, the agents with no network limits, and the model provider's hosts. Empty writes nothing. The chart sets it to `/etc/egress/agents.json`. |
 | `EGRESS_PROXY_URL` | The proxy agent pods send their outbound traffic through. The server resolves its host to an address when it starts an agent pod, because agent pods have no DNS. |
 
 A browser resource that is not a Kubernetes quantity (`500m`, `2`, `1Gi`; not `1GB`) stops the server at start, rather than failing every browser at the first web task.

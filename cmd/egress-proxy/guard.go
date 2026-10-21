@@ -31,16 +31,16 @@ type guard struct {
 	resolver Resolver
 	dial     dialFunc
 	// deny holds the cluster's own ranges (pod and service CIDRs, the
-	// node's address), refused in both modes (--deny-cidr).
+	// node's address), refused for every request (--deny-cidr).
 	deny []netip.Prefix
-	// openDeny holds ranges refused in open mode only, on top of
-	// openRefused (--open-deny-cidr): the chart passes the ranges browser
-	// pods may not reach, so the agent's own fetches are held to the
-	// same.
+	// openDeny holds ranges refused under open mode's address rules
+	// only, on top of openRefused (--open-deny-cidr): the chart passes
+	// the ranges browser pods may not reach, so the agent's own fetches
+	// are held to the same.
 	openDeny []netip.Prefix
 }
 
-// alwaysRefused are ranges no request reaches, in either mode. The
+// alwaysRefused are ranges no request reaches, in any mode. The
 // proxy runs inside the server pod, so loopback there is the Kivali
 // server itself; link-local holds cloud metadata (169.254.169.254), and
 // Azure's WireServer is metadata at a public address.
@@ -54,9 +54,10 @@ var alwaysRefused = mustPrefixes(
 	"fe80::/10",        // link-local
 )
 
-// openRefused are the ranges refused on top of alwaysRefused in open
-// mode, where the destination is any public host. Allowlist mode lets
-// these through so operators can list intranet hosts.
+// openRefused are the ranges refused on top of alwaysRefused under open
+// mode's address rules: for a request that may reach any public host
+// (open and exempt mode) to a host on no list. A listed host gets these
+// through, so operators can list intranet hosts.
 var openRefused = mustPrefixes(
 	"10.0.0.0/8",     // private
 	"172.16.0.0/12",  // private

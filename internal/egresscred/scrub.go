@@ -36,6 +36,30 @@ func NewScrubber(slug, secret, proxyURL string) *Scrubber {
 	if proxyURL != "" {
 		set[proxyURL] = true
 	}
+	return newScrubber(set)
+}
+
+// Combine is the scrubber for every credential the given scrubbers
+// know: a runtime that holds two credentials scrubs both from what it
+// relays. Nil scrubbers are skipped; nil when all are nil.
+func Combine(scrubbers ...*Scrubber) *Scrubber {
+	set := map[string]bool{}
+	for _, s := range scrubbers {
+		if s == nil {
+			continue
+		}
+		for _, n := range s.needles {
+			set[string(n)] = true
+		}
+	}
+	if len(set) == 0 {
+		return nil
+	}
+	return newScrubber(set)
+}
+
+// newScrubber replaces each needle in set.
+func newScrubber(set map[string]bool) *Scrubber {
 	needles := make([]string, 0, len(set))
 	for n := range set {
 		needles = append(needles, n)

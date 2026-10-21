@@ -12,7 +12,8 @@
       "effort": "high",
       "context_pct": 82,
       "state": "running",
-      "created": "2026-09-01T09:30:00Z"
+      "created": "2026-09-01T09:30:00Z",
+      "network_exempt": false
     }
   ],
   "archived": [
@@ -29,7 +30,8 @@
       "context_pct": 0,
       "state": "idle",
       "created": "2026-09-01T09:30:00Z",
-      "archived_at": "2026-09-20T17:00:00Z"
+      "archived_at": "2026-09-20T17:00:00Z",
+      "network_exempt": false
     }
   ]
 }

@@ -8,5 +8,11 @@
       "host": "deb.debian.org",
       "permanent": true
     }
+  ],
+  "exempt": [
+    {
+      "slug": "dana",
+      "name": "Dana"
+    }
   ]
 }

@@ -106,9 +106,9 @@ type Config struct {
 	// read. When empty, sync is disabled (useful in tests).
 	EgressAllowlistSyncPath string
 	// EgressAgentsSyncPath is where the Kivali container mirrors the
-	// agent runtimes' egress credential hashes and the model
-	// provider's hosts (store.EgressAgents) for the egress proxy to
-	// read. When empty, nothing is mirrored and the model hosts are not
+	// agent runtimes' egress credential hashes, the agents' own network
+	// settings and the model provider's hosts (store.EgressAgents) for
+	// the egress proxy to read. When empty, nothing is mirrored and the model hosts are not
 	// worked out. Sourced from EGRESS_AGENTS_SYNC_PATH.
 	EgressAgentsSyncPath string
 	// EgressProxyURL is the egress proxy agent pods route their

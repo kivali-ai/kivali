@@ -16,14 +16,22 @@ import (
 )
 
 // Agents is the hot-reloadable credentials file core writes beside the
-// allowlist:
+// allowlist (store.EgressAgents):
 //
 //	{"agents": {"<slug>": "<lowercase hex sha256 of the secret>"},
+//	 "shells": {"<slug>": "<lowercase hex sha256 of the shell's secret>"},
+//	 "agent_hosts": {"<slug>": ["api.github.com"]},
+//	 "exempt": ["<slug>"],
 //	 "model_hosts": ["api.anthropic.com"]}
 //
-// An agent that presents its slug and secret gets open mode. Model
-// hosts are exact hostnames exempt from the byte budget; they grant
-// nothing to a request without valid credentials.
+// An agent that presents its slug and secret gets open mode; one that
+// presents its slug and its shell's secret gets shell mode, where the
+// host must be on the allowlist or among that agent's agent_hosts
+// patterns. An exempt agent gets exempt mode with either credential:
+// any public host, with no budget. Model hosts are exact hostnames
+// exempt from the byte budget. None of agent_hosts, exempt and
+// model_hosts grants anything to a request without valid credentials.
+// Fields the proxy does not know are ignored.
 type Agents struct {
 	// Path is re-read on a credential miss when it has changed.
 	Path string
@@ -43,12 +51,28 @@ type Agents struct {
 }
 
 type agentsData struct {
-	hashes     map[string][]byte
+	hashes map[string][]byte
+	// shells holds each agent's shell credential hash.
+	shells map[string][]byte
+	// agentHosts holds each agent's own patterns, normalized as the
+	// allowlist's are.
+	agentHosts map[string][]string
+	exempt     map[string]struct{}
 	modelHosts map[string]struct{}
 	// info describes the file these entries were read from; nil when
 	// it was missing.
 	info os.FileInfo
 }
+
+// credKind is which of an agent's credentials a request presented.
+type credKind int
+
+const (
+	// credOpen is the agent runtime's own credential.
+	credOpen credKind = iota + 1
+	// credShell is the credential the runtime hands the agent's shell.
+	credShell
+)
 
 // Load reads the agents file at path. A missing file means no agents
 // and no model hosts. An entry whose hash is not 32 bytes of hex is
@@ -93,23 +117,32 @@ func readAgents(path string) (*agentsData, os.FileInfo, error) {
 		return nil, info, err
 	}
 	var file struct {
-		Agents     map[string]string `json:"agents"`
-		ModelHosts []string          `json:"model_hosts"`
+		Agents     map[string]string   `json:"agents"`
+		Shells     map[string]string   `json:"shells"`
+		AgentHosts map[string][]string `json:"agent_hosts"`
+		Exempt     []string            `json:"exempt"`
+		ModelHosts []string            `json:"model_hosts"`
 	}
 	if err := json.Unmarshal(b, &file); err != nil {
 		return nil, info, fmt.Errorf("agents json: %w", err)
 	}
 	d := &agentsData{
-		hashes:     make(map[string][]byte, len(file.Agents)),
+		hashes:     readHashes(file.Agents),
+		shells:     readHashes(file.Shells),
+		agentHosts: make(map[string][]string, len(file.AgentHosts)),
+		exempt:     make(map[string]struct{}, len(file.Exempt)),
 		modelHosts: make(map[string]struct{}, len(file.ModelHosts)),
 		info:       info,
 	}
-	for slug, h := range file.Agents {
-		sum, err := hex.DecodeString(strings.ToLower(strings.TrimSpace(h)))
-		if err != nil || len(sum) != sha256.Size || slug == "" {
-			continue
+	for slug, patterns := range file.AgentHosts {
+		if p := cleanPatterns(patterns); slug != "" && len(p) > 0 {
+			d.agentHosts[slug] = p
 		}
-		d.hashes[slug] = sum
+	}
+	for _, slug := range file.Exempt {
+		if slug != "" {
+			d.exempt[slug] = struct{}{}
+		}
 	}
 	for _, h := range file.ModelHosts {
 		h = strings.ToLower(strings.TrimSpace(h))
@@ -120,6 +153,20 @@ func readAgents(path string) (*agentsData, os.FileInfo, error) {
 	return d, info, nil
 }
 
+// readHashes decodes a slug-to-hash map. An entry whose hash is not 32
+// bytes of hex, or whose slug is empty, is dropped.
+func readHashes(in map[string]string) map[string][]byte {
+	out := make(map[string][]byte, len(in))
+	for slug, h := range in {
+		sum, err := hex.DecodeString(strings.ToLower(strings.TrimSpace(h)))
+		if err != nil || len(sum) != sha256.Size || slug == "" {
+			continue
+		}
+		out[slug] = sum
+	}
+	return out
+}
+
 func (a *Agents) current() *agentsData {
 	if d := a.data.Load(); d != nil {
 		return d
@@ -127,15 +174,16 @@ func (a *Agents) current() *agentsData {
 	return &agentsData{}
 }
 
-// Verify reports whether secret is slug's. On a miss it re-reads the
-// file if it has changed since it was loaded, and checks again, so a
-// pod registered moments ago is not refused while the watcher waits
-// for its next poll. A miss against an unchanged file costs one stat
-// and reads nothing, however many arrive.
-func (a *Agents) Verify(slug, secret string) bool {
+// Verify reports whether secret is one of slug's credentials, and
+// which: the runtime's own (credOpen) or its shell's (credShell). On a
+// miss it re-reads the file if it has changed since it was loaded, and
+// checks again, so a pod registered moments ago is not refused while
+// the watcher waits for its next poll. A miss against an unchanged file
+// costs one stat and reads nothing, however many arrive.
+func (a *Agents) Verify(slug, secret string) (credKind, bool) {
 	sum := sha256.Sum256([]byte(secret))
-	if a.current().match(slug, sum[:]) {
-		return true
+	if kind, ok := a.current().match(slug, sum[:]); ok {
+		return kind, true
 	}
 	// Check again even when this call did not read: another miss may
 	// have loaded the new file while this one waited for it.
@@ -143,12 +191,38 @@ func (a *Agents) Verify(slug, secret string) bool {
 	return a.current().match(slug, sum[:])
 }
 
-func (d *agentsData) match(slug string, sum []byte) bool {
-	want, ok := d.hashes[slug]
-	if !ok {
-		return false
+func (d *agentsData) match(slug string, sum []byte) (credKind, bool) {
+	if want, ok := d.hashes[slug]; ok && subtle.ConstantTimeCompare(sum, want) == 1 {
+		return credOpen, true
 	}
-	return subtle.ConstantTimeCompare(sum, want) == 1
+	if want, ok := d.shells[slug]; ok && subtle.ConstantTimeCompare(sum, want) == 1 {
+		return credShell, true
+	}
+	return 0, false
+}
+
+// AgentHosts returns slug's own patterns, which its shell reaches on
+// top of the allowlist. Nil when it has none.
+func (a *Agents) AgentHosts(slug string) []string {
+	return a.current().agentHosts[slug]
+}
+
+// Exempt reports whether slug has no network limits.
+func (a *Agents) Exempt(slug string) bool {
+	_, ok := a.current().exempt[slug]
+	return ok
+}
+
+// AgentAllowed reports whether hostport matches one of slug's own
+// patterns. On no match it re-reads the file if it has changed since it
+// was loaded, and checks again, as Verify does on a miss, so a host the
+// owner has just added lets the next command through.
+func (a *Agents) AgentAllowed(slug, hostport string) bool {
+	if matchAny(a.AgentHosts(slug), hostport) {
+		return true
+	}
+	a.reloadIfChanged()
+	return matchAny(a.AgentHosts(slug), hostport)
 }
 
 // reloadIfChanged re-reads the file when it is neither the one last

@@ -23,8 +23,13 @@ import (
 const publicIP = "203.0.113.7"
 
 type harnessConfig struct {
-	allow      []string
-	secrets    map[string]string
+	allow   []string
+	secrets map[string]string
+	// shells, agentHosts and exempt go into the agents file beside
+	// secrets (agentsFile).
+	shells     map[string]string
+	agentHosts map[string][]string
+	exempt     []string
 	modelHosts []string
 	limits     budgetLimits
 	enforce    bool
@@ -55,8 +60,14 @@ func newHarness(t *testing.T, cfg harnessConfig) *harness {
 		clk:        clock.NewFake(),
 		agentsPath: filepath.Join(t.TempDir(), "agents.json"),
 	}
-	if cfg.secrets != nil || cfg.modelHosts != nil {
-		writeAgents(t, h.agentsPath, cfg.secrets, cfg.modelHosts...)
+	if cfg.secrets != nil || cfg.shells != nil || cfg.agentHosts != nil || cfg.exempt != nil || cfg.modelHosts != nil {
+		writeAgentsFile(t, h.agentsPath, agentsFile{
+			secrets:    cfg.secrets,
+			shells:     cfg.shells,
+			agentHosts: cfg.agentHosts,
+			exempt:     cfg.exempt,
+			modelHosts: cfg.modelHosts,
+		})
 	}
 	allow := &Allowlist{}
 	patterns := append([]string(nil), cfg.allow...)

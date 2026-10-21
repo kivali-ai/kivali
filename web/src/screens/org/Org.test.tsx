@@ -962,10 +962,10 @@ describe('Network', () => {
   // The permanent host is listed and marked, with no Remove: the server
   // refuses that removal, so a button for it would only fail.
   it('allows and removes a host, and shows the permanent one without Remove', async () => {
-    const added: Network = { hosts: [...goNetwork.hosts, { host: 'api.github.com', permanent: false }] };
+    const added: Network = { ...goNetwork, hosts: [...goNetwork.hosts, { host: 'api.github.com', permanent: false }] };
     await renderOrg('/org/network', {
       desktop: true,
-      routes: { 'POST /api/v1/org/network': added, 'DELETE /api/v1/org/network/*.pypi.org': { hosts: [goNetwork.hosts[1]!, added.hosts[2]!] } },
+      routes: { 'POST /api/v1/org/network': added, 'DELETE /api/v1/org/network/*.pypi.org': { ...goNetwork, hosts: [goNetwork.hosts[1]!, added.hosts[2]!] } },
     });
     expect(screen.getByText('*.pypi.org')).toBeInTheDocument();
     expect(screen.getByText('deb.debian.org')).toBeInTheDocument();
@@ -979,6 +979,26 @@ describe('Network', () => {
     await click(screen.getByRole('button', { name: 'Remove *.pypi.org' }));
     expect(screen.queryByText('*.pypi.org')).toBeNull();
     expect(screen.getByText('deb.debian.org')).toBeInTheDocument();
+  });
+
+  // Guards the team-wide view of agents with no network limits (network.json's exempt list): each must be
+  // named, comma-separated, linking to the Security view of its About tab, where the switch is. A missing
+  // line, a name that is not a link, or a link that lands anywhere else fails this.
+  it('names the agents with no network limits, each linking to its Security view', async () => {
+    const exempt: Network = { ...goNetwork, exempt: [...goNetwork.exempt, { slug: 'engineering-lead', name: 'Engineering lead' }] };
+    await renderOrg('/org/network', { desktop: true, routes: { 'GET /api/v1/org/network': exempt } });
+    const line = screen.getByText(/^No network limits:/);
+    expect(line).toHaveTextContent('No network limits: Dana, Engineering lead');
+    expect(within(line).getByRole('link', { name: 'Dana' })).toHaveAttribute('href', '/agents/dana/about?view=security');
+    expect(within(line).getByRole('link', { name: 'Engineering lead' })).toHaveAttribute('href', '/agents/engineering-lead/about?view=security');
+  });
+
+  // Guards the quiet default: with every agent limited, the section says nothing about limits. A stray
+  // "No network limits:" with no names after it fails this.
+  it('says nothing about limits when every agent has them', async () => {
+    await renderOrg('/org/network', { desktop: true, routes: { 'GET /api/v1/org/network': { ...goNetwork, exempt: [] } } });
+    expect(screen.getByText('deb.debian.org')).toBeInTheDocument();
+    expect(screen.queryByText(/No network limits/)).toBeNull();
   });
 });
 

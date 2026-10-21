@@ -69,10 +69,10 @@ type ProvisionerConfig struct {
 	// ProxyURL, when non-empty, is the egress proxy. Provision writes
 	// it into both containers' env as HTTP_PROXY / HTTPS_PROXY /
 	// http_proxy / https_proxy with its host resolved to an IP (agent
-	// pods have no DNS) and no credentials: the agent-shell's traffic
-	// stays on the allowlist, and the agent runtime adds its own
-	// credential for the agent processes it starts
-	// (SetUpEgressCredential).
+	// pods have no DNS) and no credentials. The agent runtime adds its
+	// own credential for the agent processes it starts, and hands the
+	// agent-shell daemon the shell's credential for its commands
+	// (SetUpEgressCredential); the spec carries neither.
 	ProxyURL string
 
 	// CPURequest / MemoryRequest / CPULimit / MemoryLimit override

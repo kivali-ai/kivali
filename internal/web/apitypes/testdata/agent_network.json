@@ -1,0 +1,12 @@
+{
+  "team": [
+    {
+      "host": "deb.debian.org",
+      "permanent": true
+    }
+  ],
+  "own": [
+    "api.github.com"
+  ],
+  "exempt": false
+}

@@ -109,7 +109,7 @@ func renderShellResult(r *agent.ShellResult, refused string) string {
 
 // subagentShellSoftwareText is the software paragraph for a subagent,
 // which cannot propose an install itself.
-const subagentShellSoftwareText = `SOFTWARE. System software (Debian packages) is installed by the owner; apt-get does not work in this shell. If you need a package that is not installed, say so to your caller, naming the Debian package and what it is for. Python libraries come the same way, as python3-<name> packages; "pip install --user <pkg>" reaches a package index only when it is on the team's allow list.`
+const subagentShellSoftwareText = `SOFTWARE. System software (Debian packages) is installed by the owner; apt-get does not work in this shell. If you need a package that is not installed, say so to your caller, naming the Debian package and what it is for. Python libraries come the same way, as python3-<name> packages; "pip install --user <pkg>" reaches a package index only when the owner allows that host for your commands.`
 
 // subagentShellDescription is run_shell's description with the
 // paragraphs that name tools or people a subagent cannot reach

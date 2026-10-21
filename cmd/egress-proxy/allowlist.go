@@ -73,10 +73,17 @@ func (a *Allowlist) Load(path string) error {
 	if err := yaml.Unmarshal(b, &message); err != nil {
 		return fmt.Errorf("allowlist yaml: %w", err)
 	}
-	// Normalize: lowercase, trim, drop any :port the user included
-	// (allowlisting is port-agnostic), skip empties.
-	cleaned := make([]string, 0, len(message.Patterns))
-	for _, p := range message.Patterns {
+	cleaned := cleanPatterns(message.Patterns)
+	a.patterns.Store(&cleaned)
+	return nil
+}
+
+// cleanPatterns normalizes a pattern list: lowercase, trim, drop any
+// :port the user included (allowlisting is port-agnostic), skip empties
+// and comment lines. Never nil.
+func cleanPatterns(in []string) []string {
+	cleaned := make([]string, 0, len(in))
+	for _, p := range in {
 		p = strings.ToLower(strings.TrimSpace(p))
 		if p == "" || strings.HasPrefix(p, "#") {
 			continue
@@ -86,8 +93,7 @@ func (a *Allowlist) Load(path string) error {
 		}
 		cleaned = append(cleaned, p)
 	}
-	a.patterns.Store(&cleaned)
-	return nil
+	return cleaned
 }
 
 // Patterns returns the current pattern set (safe to read concurrently).
@@ -102,6 +108,13 @@ func (a *Allowlist) Patterns() []string {
 // Allowed reports whether host matches any pattern. Host may include
 // a port (":443") which is stripped before matching.
 func (a *Allowlist) Allowed(host string) bool {
+	return matchAny(a.Patterns(), host)
+}
+
+// matchAny reports whether host matches any of patterns (cleaned, as
+// cleanPatterns leaves them), in the language described on Allowlist.
+// Host may include a port (":443") which is stripped before matching.
+func matchAny(patterns []string, host string) bool {
 	if i := strings.LastIndex(host, ":"); i >= 0 {
 		host = host[:i]
 	}
@@ -109,7 +122,7 @@ func (a *Allowlist) Allowed(host string) bool {
 	if host == "" {
 		return false
 	}
-	for _, pat := range a.Patterns() {
+	for _, pat := range patterns {
 		if matchPattern(pat, host) {
 			return true
 		}

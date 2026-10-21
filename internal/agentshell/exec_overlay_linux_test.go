@@ -55,7 +55,7 @@ func TestRunCommandOverlayBindIsolatesPrivateDir(t *testing.T) {
 	// The subagent's bash writes to the parent-shaped path. The kernel
 	// bind-mount must redirect to the overlay.
 	cmd := "echo SUBAGENT_WROTE > " + parentPriv + "/note.txt && ls " + parentPriv
-	res, err := RunCommand(context.Background(), root, cmd, overlaySrc, parentPriv, 10*time.Second)
+	res, err := RunCommand(context.Background(), root, cmd, overlaySrc, parentPriv, 10*time.Second, "")
 	if err != nil {
 		t.Fatalf("RunCommand: %v (stderr=%q)", err, res.Stderr)
 	}
@@ -93,7 +93,7 @@ func TestRunCommandOverlayBindIsolatesPrivateDir(t *testing.T) {
 func TestRunCommandWithoutOverlayUnchanged(t *testing.T) {
 	root := t.TempDir()
 	target := filepath.Join(root, "out.txt")
-	res, err := RunCommand(context.Background(), root, "echo hi > "+target, "", "", 5*time.Second)
+	res, err := RunCommand(context.Background(), root, "echo hi > "+target, "", "", 5*time.Second, "")
 	if err != nil {
 		t.Fatalf("RunCommand: %v", err)
 	}

@@ -277,6 +277,11 @@
   min-width: 0;
 }
 
+/* A link in a section's running text: Network's line naming the agents with no network limits. */
+.app-org-link {
+  color: var(--link);
+}
+
 /* The switch is named by its hidden label ("Enable pdf"): the row's title already says which skill. */
 .app-org-switch label {
   position: absolute;
