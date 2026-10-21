@@ -1,0 +1,320 @@
+package apitypes
+
+import (
+	"encoding/json"
+	"time"
+)
+
+// Integrations: the external services agents can act on. An
+// integration is installed from a bundle (a zip the Integrations
+// engineer publishes, or one you upload), connected with a token, and
+// then granted to agents one at a time with an access form the
+// integration itself describes. Everything here is operator-facing:
+// actions in words, hosts, secrets by title, never the wire.
+
+// ---- /api/v1/org/integrations ----
+
+// Integrations is GET /api/v1/org/integrations: every installed
+// integration, sorted by display name.
+type Integrations struct {
+	Integrations []IntegrationSummary `json:"integrations"`
+}
+
+// IntegrationStatus is the one word the list shows for an integration.
+type IntegrationStatus string
+
+const (
+	// IntegrationStatusPending: no version has been approved yet.
+	IntegrationStatusPending IntegrationStatus = "pending"
+	// IntegrationStatusNotConnected: approved, on, but no connection.
+	IntegrationStatusNotConnected IntegrationStatus = "not_connected"
+	// IntegrationStatusConnected: approved, on, with a connection.
+	IntegrationStatusConnected IntegrationStatus = "connected"
+	// IntegrationStatusOff: switched off; agents cannot use it.
+	IntegrationStatusOff IntegrationStatus = "off"
+)
+
+// IntegrationSummary is one row of the list.
+type IntegrationSummary struct {
+	Name        string `json:"name"`
+	DisplayName string `json:"display_name"`
+	Description string `json:"description"`
+	// Version is the approved version in use; empty while no version
+	// has been approved.
+	Version string            `json:"version"`
+	Status  IntegrationStatus `json:"status"`
+	Enabled bool              `json:"enabled"`
+	Builtin bool              `json:"builtin"`
+	// Agents is how many agents have access.
+	Agents int `json:"agents"`
+	// PendingVersion is a version waiting for your approval, if any.
+	PendingVersion *string `json:"pending_version,omitempty"`
+}
+
+// ---- /api/v1/org/integrations/{name} ----
+
+// IntegrationPage is GET /api/v1/org/integrations/{name} and the
+// answer to every mutation on the integration: everything its page
+// draws. Connection values are never in it; a secret field says only
+// whether it is set.
+type IntegrationPage struct {
+	Summary IntegrationSummary `json:"summary"`
+	// Author is who built it, as the bundle says.
+	Author string `json:"author"`
+	// Hosts is every host the integration reaches.
+	Hosts   []string            `json:"hosts"`
+	Actions []IntegrationAction `json:"actions"`
+	// ConnectionFields is the connection form, in the bundle's order.
+	ConnectionFields []ConnectionField `json:"connection_fields"`
+	// Connection is the connection, absent while there is none.
+	Connection *ConnectionState `json:"connection,omitempty"`
+	// AccessForm is the access form one agent's grant fills in. Absent
+	// when access is all-or-nothing.
+	AccessForm *AccessForm `json:"access_form,omitempty"`
+	// Access is one row per agent with access, sorted by name.
+	Access []AccessRow `json:"access"`
+	// AgentsWithout lists the active agents with no access, sorted by
+	// name, so a row can be added for one.
+	AgentsWithout []PersonRef `json:"agents_without"`
+	// Versions is every version stored, newest first.
+	Versions []IntegrationVersionSummary `json:"versions"`
+	// CanRemove is false for a built-in integration.
+	CanRemove bool `json:"can_remove"`
+}
+
+// IntegrationAction is one tool the integration gives agents, in words.
+type IntegrationAction struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
+// ConnectionField is one field of the connection form, from the
+// bundle's user_config.
+type ConnectionField struct {
+	Key         string `json:"key"`
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	// Sensitive fields are secrets: kept in a Kubernetes Secret, never
+	// shown again. Set says whether a value is stored.
+	Sensitive bool `json:"sensitive"`
+	Required  bool `json:"required"`
+	Set       bool `json:"set"`
+	// Value is the stored value of a field that is not sensitive;
+	// absent for a sensitive field and for one not set.
+	Value *string `json:"value,omitempty"`
+}
+
+// ConnectionState is the connection's standing.
+type ConnectionState struct {
+	ID        string    `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	// VerifiedAt and Verified say what Test connection last found;
+	// absent until it has run. VerifyMessage is the integration's own
+	// words about the result.
+	VerifiedAt    *time.Time `json:"verified_at,omitempty"`
+	Verified      *bool      `json:"verified,omitempty"`
+	VerifyMessage *string    `json:"verify_message,omitempty"`
+	// ReconnectNeeded is true when the connection's secrets are not in
+	// this cluster (a backup restored into another install, or the
+	// Secret removed by hand): enter them again.
+	ReconnectNeeded bool `json:"reconnect_needed"`
+}
+
+// ConnectionWrite is the body of PUT
+// /api/v1/org/integrations/{name}/connection: field values by key.
+// A sensitive field left out keeps its stored value; an empty string
+// clears it. A field that is not sensitive is replaced by what is
+// sent. A required field with no value, stored or sent, is a 400.
+type ConnectionWrite struct {
+	Fields map[string]string `json:"fields"`
+}
+
+// AccessForm is the access form the integration describes for one
+// agent: a flat list of fields.
+type AccessForm struct {
+	Fields []AccessField `json:"fields"`
+}
+
+// AccessFieldKind is what kind of value an access field takes.
+type AccessFieldKind string
+
+const (
+	// AccessFieldKindText is one string.
+	AccessFieldKindText AccessFieldKind = "text"
+	// AccessFieldKindChoice is one string from Options.
+	AccessFieldKindChoice AccessFieldKind = "choice"
+	// AccessFieldKindSwitch is a boolean.
+	AccessFieldKindSwitch AccessFieldKind = "switch"
+	// AccessFieldKindList is a list of strings, free text.
+	AccessFieldKindList AccessFieldKind = "list"
+	// AccessFieldKindChoices is a list of strings from Options.
+	AccessFieldKindChoices AccessFieldKind = "choices"
+)
+
+// AccessField is one field of the access form.
+type AccessField struct {
+	Key         string          `json:"key"`
+	Title       string          `json:"title"`
+	Description string          `json:"description"`
+	Kind        AccessFieldKind `json:"kind"`
+	Required    bool            `json:"required"`
+	// Options are the fixed choices of a choice or choices field, from
+	// the bundle. Empty for the other kinds, and for a field whose
+	// options the integration lists itself (see Choices).
+	Options []string `json:"options"`
+	// Choices is true when the integration lists this field's options
+	// live, through GET .../choices/{key}.
+	Choices bool `json:"choices"`
+}
+
+// AccessRow is one agent's access.
+type AccessRow struct {
+	Agent PersonRef `json:"agent"`
+	// Access is the filled form, as the integration sees it.
+	Access json.RawMessage `json:"access"`
+	// Summary is the access in words, for the list and the agent's
+	// own page.
+	Summary string    `json:"summary"`
+	SetAt   time.Time `json:"set_at"`
+	// Invalid says why this row no longer fits the integration's
+	// access form (a newer version changed it). An invalid row grants
+	// nothing until it is set again.
+	Invalid *string `json:"invalid,omitempty"`
+}
+
+// AccessWrite is the body of PUT
+// /api/v1/org/integrations/{name}/access/{slug}: the filled access
+// form. For an integration without a form, send {}.
+type AccessWrite struct {
+	Access json.RawMessage `json:"access"`
+}
+
+// AccessChoices is GET /api/v1/org/integrations/{name}/choices/{key}:
+// the options the integration lists for a field, through the
+// connection.
+type AccessChoices struct {
+	Options []string `json:"options"`
+}
+
+// IntegrationVersionState is where a version stands.
+type IntegrationVersionState string
+
+const (
+	// IntegrationVersionStatePending waits for your approval.
+	IntegrationVersionStatePending IntegrationVersionState = "pending"
+	// IntegrationVersionStateApproved is the version in use.
+	IntegrationVersionStateApproved IntegrationVersionState = "approved"
+	// IntegrationVersionStateRejected was turned down and never ran.
+	IntegrationVersionStateRejected IntegrationVersionState = "rejected"
+	// IntegrationVersionStateSuperseded was in use before a later
+	// approval; it can be rolled back to.
+	IntegrationVersionStateSuperseded IntegrationVersionState = "superseded"
+)
+
+// IntegrationVersionSummary is one version in the page's list.
+type IntegrationVersionSummary struct {
+	Version     string                  `json:"version"`
+	State       IntegrationVersionState `json:"state"`
+	PublishedAt time.Time               `json:"published_at"`
+	// PublishedBy is the agent that published it, or you for an
+	// upload.
+	PublishedBy PersonRef  `json:"published_by"`
+	ApprovedAt  *time.Time `json:"approved_at,omitempty"`
+	// Notes are the publisher's version notes, Markdown.
+	NotesMD string `json:"notes_md"`
+}
+
+// ---- /api/v1/org/integrations/{name}/versions/{version} ----
+
+// IntegrationVersion is GET
+// /api/v1/org/integrations/{name}/versions/{version}: the install
+// screen. It says, in words, what the version is, who built it, every
+// host it reaches, every secret the connection needs, every action,
+// what the access form asks, and the bundle's size. Approving runs it;
+// nothing runs before.
+type IntegrationVersion struct {
+	Name        string                  `json:"name"`
+	DisplayName string                  `json:"display_name"`
+	Description string                  `json:"description"`
+	Version     string                  `json:"version"`
+	State       IntegrationVersionState `json:"state"`
+	Author      string                  `json:"author"`
+	PublishedAt time.Time               `json:"published_at"`
+	PublishedBy PersonRef               `json:"published_by"`
+	ApprovedAt  *time.Time              `json:"approved_at,omitempty"`
+	NotesMD     string                  `json:"notes_md"`
+	// Runtime is what runs the bundle: python.
+	Runtime string `json:"runtime"`
+	// ConnectionMethod is how the connection is made: token.
+	ConnectionMethod string              `json:"connection_method"`
+	Hosts            []string            `json:"hosts"`
+	ConnectionFields []ConnectionField   `json:"connection_fields"`
+	Actions          []IntegrationAction `json:"actions"`
+	AccessForm       *AccessForm         `json:"access_form,omitempty"`
+	BundleBytes      int64               `json:"bundle_bytes"`
+	FileCount        int                 `json:"file_count"`
+	// Current is true when this is the version in use now.
+	Current bool `json:"current"`
+	// CurrentVersion is the version in use now, when there is one and
+	// it is not this one, so the screen can say what approving replaces.
+	CurrentVersion *string `json:"current_version,omitempty"`
+	// Findings are what the bundle check reported for this version:
+	// warnings only, since a bundle with an error is never stored.
+	Findings []string `json:"findings"`
+}
+
+// IntegrationUploadRefused is the 400 body of POST
+// /api/v1/org/integrations when the bundle does not pass the check:
+// every finding, in words.
+type IntegrationUploadRefused struct {
+	Error    string   `json:"error"`
+	Who      string   `json:"who"`
+	Findings []string `json:"findings"`
+}
+
+// ---- /api/v1/org/integrations/{name}/audit ----
+
+// IntegrationAudit is GET /api/v1/org/integrations/{name}/audit: the
+// latest calls, newest first.
+type IntegrationAudit struct {
+	Rows []IntegrationAuditRow `json:"rows"`
+}
+
+// IntegrationAuditRow is one call through the integration.
+type IntegrationAuditRow struct {
+	At time.Time `json:"at"`
+	// Agent is who called; you, for Test connection and the options an
+	// access form lists.
+	Agent   PersonRef `json:"agent"`
+	Action  string    `json:"action"`
+	Allowed bool      `json:"allowed"`
+	// Reason says why a call was refused, or what failed; empty when
+	// the call went through.
+	Reason     string `json:"reason"`
+	DurationMS int64  `json:"duration_ms"`
+}
+
+// ---- /api/v1/agents/{slug}/integrations ----
+
+// AgentIntegrations is GET /api/v1/agents/{slug}/integrations: the
+// agent's Integrations tab. Editing happens on the integration's page
+// under Org.
+type AgentIntegrations struct {
+	// Connected is every integration this agent has access to, with
+	// its access in words.
+	Connected []AgentIntegration `json:"connected"`
+	// Available is every other installed integration.
+	Available []AgentIntegration `json:"available"`
+}
+
+// AgentIntegration is one integration as the agent's tab lists it.
+type AgentIntegration struct {
+	Name        string            `json:"name"`
+	DisplayName string            `json:"display_name"`
+	Status      IntegrationStatus `json:"status"`
+	// Summary is the agent's access in words; empty under Available.
+	Summary string `json:"summary"`
+	// Invalid is set when the agent's access no longer fits the
+	// integration's access form and grants nothing until set again.
+	Invalid *string `json:"invalid,omitempty"`
+}

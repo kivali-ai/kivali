@@ -1520,7 +1520,13 @@ export const ProposalKindHandbookUpdate = "handbook_update";
 export const ProposalKindOffboard = "offboard";
 export const ProposalKindReorg = "reorg";
 export const ProposalKindSoftwareInstall = "software_install";
-export type ProposalKind = typeof ProposalKindHire | typeof ProposalKindRoleUpdate | typeof ProposalKindHandbookUpdate | typeof ProposalKindOffboard | typeof ProposalKindReorg | typeof ProposalKindSoftwareInstall;
+/**
+ * ProposalKindIntegrationInstall asks you to approve a version of an
+ * integration; its review page is the version's install screen under
+ * Org, Integrations.
+ */
+export const ProposalKindIntegrationInstall = "integration_install";
+export type ProposalKind = typeof ProposalKindHire | typeof ProposalKindRoleUpdate | typeof ProposalKindHandbookUpdate | typeof ProposalKindOffboard | typeof ProposalKindReorg | typeof ProposalKindSoftwareInstall | typeof ProposalKindIntegrationInstall;
 /**
  * NeedItem is one row of Needs you, newest first; needs-help rows
  * follow the requests, in tree order.
@@ -1728,6 +1734,414 @@ export type AssignmentResolution = typeof AssignmentResolutionDone | typeof Assi
  * Empty is the body of a success with nothing to say.
  */
 export interface Empty {
+}
+
+//////////
+// source: integrations.go
+
+/**
+ * Integrations is GET /api/v1/org/integrations: every installed
+ * integration, sorted by display name.
+ */
+export interface Integrations {
+  integrations: IntegrationSummary[];
+}
+/**
+ * IntegrationStatus is the one word the list shows for an integration.
+ */
+/**
+ * IntegrationStatusPending: no version has been approved yet.
+ */
+export const IntegrationStatusPending = "pending";
+/**
+ * IntegrationStatusNotConnected: approved, on, but no connection.
+ */
+export const IntegrationStatusNotConnected = "not_connected";
+/**
+ * IntegrationStatusConnected: approved, on, with a connection.
+ */
+export const IntegrationStatusConnected = "connected";
+/**
+ * IntegrationStatusOff: switched off; agents cannot use it.
+ */
+export const IntegrationStatusOff = "off";
+export type IntegrationStatus = typeof IntegrationStatusPending | typeof IntegrationStatusNotConnected | typeof IntegrationStatusConnected | typeof IntegrationStatusOff;
+/**
+ * IntegrationSummary is one row of the list.
+ */
+export interface IntegrationSummary {
+  name: string;
+  display_name: string;
+  description: string;
+  /**
+   * Version is the approved version in use; empty while no version
+   * has been approved.
+   */
+  version: string;
+  status: IntegrationStatus;
+  enabled: boolean;
+  builtin: boolean;
+  /**
+   * Agents is how many agents have access.
+   */
+  agents: number /* int */;
+  /**
+   * PendingVersion is a version waiting for your approval, if any.
+   */
+  pending_version?: string;
+}
+/**
+ * IntegrationPage is GET /api/v1/org/integrations/{name} and the
+ * answer to every mutation on the integration: everything its page
+ * draws. Connection values are never in it; a secret field says only
+ * whether it is set.
+ */
+export interface IntegrationPage {
+  summary: IntegrationSummary;
+  /**
+   * Author is who built it, as the bundle says.
+   */
+  author: string;
+  /**
+   * Hosts is every host the integration reaches.
+   */
+  hosts: string[];
+  actions: IntegrationAction[];
+  /**
+   * ConnectionFields is the connection form, in the bundle's order.
+   */
+  connection_fields: ConnectionField[];
+  /**
+   * Connection is the connection, absent while there is none.
+   */
+  connection?: ConnectionState;
+  /**
+   * AccessForm is the access form one agent's grant fills in. Absent
+   * when access is all-or-nothing.
+   */
+  access_form?: AccessForm;
+  /**
+   * Access is one row per agent with access, sorted by name.
+   */
+  access: AccessRow[];
+  /**
+   * AgentsWithout lists the active agents with no access, sorted by
+   * name, so a row can be added for one.
+   */
+  agents_without: PersonRef[];
+  /**
+   * Versions is every version stored, newest first.
+   */
+  versions: IntegrationVersionSummary[];
+  /**
+   * CanRemove is false for a built-in integration.
+   */
+  can_remove: boolean;
+}
+/**
+ * IntegrationAction is one tool the integration gives agents, in words.
+ */
+export interface IntegrationAction {
+  name: string;
+  description: string;
+}
+/**
+ * ConnectionField is one field of the connection form, from the
+ * bundle's user_config.
+ */
+export interface ConnectionField {
+  key: string;
+  title: string;
+  description: string;
+  /**
+   * Sensitive fields are secrets: kept in a Kubernetes Secret, never
+   * shown again. Set says whether a value is stored.
+   */
+  sensitive: boolean;
+  required: boolean;
+  set: boolean;
+  /**
+   * Value is the stored value of a field that is not sensitive;
+   * absent for a sensitive field and for one not set.
+   */
+  value?: string;
+}
+/**
+ * ConnectionState is the connection's standing.
+ */
+export interface ConnectionState {
+  id: string;
+  created_at: string /* RFC 3339 */;
+  /**
+   * VerifiedAt and Verified say what Test connection last found;
+   * absent until it has run. VerifyMessage is the integration's own
+   * words about the result.
+   */
+  verified_at?: string /* RFC 3339 */;
+  verified?: boolean;
+  verify_message?: string;
+  /**
+   * ReconnectNeeded is true when the connection's secrets are not in
+   * this cluster (a backup restored into another install, or the
+   * Secret removed by hand): enter them again.
+   */
+  reconnect_needed: boolean;
+}
+/**
+ * ConnectionWrite is the body of PUT
+ * /api/v1/org/integrations/{name}/connection: field values by key.
+ * A sensitive field left out keeps its stored value; an empty string
+ * clears it. A field that is not sensitive is replaced by what is
+ * sent. A required field with no value, stored or sent, is a 400.
+ */
+export interface ConnectionWrite {
+  fields: { [key: string]: string};
+}
+/**
+ * AccessForm is the access form the integration describes for one
+ * agent: a flat list of fields.
+ */
+export interface AccessForm {
+  fields: AccessField[];
+}
+/**
+ * AccessFieldKind is what kind of value an access field takes.
+ */
+/**
+ * AccessFieldKindText is one string.
+ */
+export const AccessFieldKindText = "text";
+/**
+ * AccessFieldKindChoice is one string from Options.
+ */
+export const AccessFieldKindChoice = "choice";
+/**
+ * AccessFieldKindSwitch is a boolean.
+ */
+export const AccessFieldKindSwitch = "switch";
+/**
+ * AccessFieldKindList is a list of strings, free text.
+ */
+export const AccessFieldKindList = "list";
+/**
+ * AccessFieldKindChoices is a list of strings from Options.
+ */
+export const AccessFieldKindChoices = "choices";
+export type AccessFieldKind = typeof AccessFieldKindText | typeof AccessFieldKindChoice | typeof AccessFieldKindSwitch | typeof AccessFieldKindList | typeof AccessFieldKindChoices;
+/**
+ * AccessField is one field of the access form.
+ */
+export interface AccessField {
+  key: string;
+  title: string;
+  description: string;
+  kind: AccessFieldKind;
+  required: boolean;
+  /**
+   * Options are the fixed choices of a choice or choices field, from
+   * the bundle. Empty for the other kinds, and for a field whose
+   * options the integration lists itself (see Choices).
+   */
+  options: string[];
+  /**
+   * Choices is true when the integration lists this field's options
+   * live, through GET .../choices/{key}.
+   */
+  choices: boolean;
+}
+/**
+ * AccessRow is one agent's access.
+ */
+export interface AccessRow {
+  agent: PersonRef;
+  /**
+   * Access is the filled form, as the integration sees it.
+   */
+  access: any /* json.RawMessage */;
+  /**
+   * Summary is the access in words, for the list and the agent's
+   * own page.
+   */
+  summary: string;
+  set_at: string /* RFC 3339 */;
+  /**
+   * Invalid says why this row no longer fits the integration's
+   * access form (a newer version changed it). An invalid row grants
+   * nothing until it is set again.
+   */
+  invalid?: string;
+}
+/**
+ * AccessWrite is the body of PUT
+ * /api/v1/org/integrations/{name}/access/{slug}: the filled access
+ * form. For an integration without a form, send {}.
+ */
+export interface AccessWrite {
+  access: any /* json.RawMessage */;
+}
+/**
+ * AccessChoices is GET /api/v1/org/integrations/{name}/choices/{key}:
+ * the options the integration lists for a field, through the
+ * connection.
+ */
+export interface AccessChoices {
+  options: string[];
+}
+/**
+ * IntegrationVersionState is where a version stands.
+ */
+/**
+ * IntegrationVersionStatePending waits for your approval.
+ */
+export const IntegrationVersionStatePending = "pending";
+/**
+ * IntegrationVersionStateApproved is the version in use.
+ */
+export const IntegrationVersionStateApproved = "approved";
+/**
+ * IntegrationVersionStateRejected was turned down and never ran.
+ */
+export const IntegrationVersionStateRejected = "rejected";
+/**
+ * IntegrationVersionStateSuperseded was in use before a later
+ * approval; it can be rolled back to.
+ */
+export const IntegrationVersionStateSuperseded = "superseded";
+export type IntegrationVersionState = typeof IntegrationVersionStatePending | typeof IntegrationVersionStateApproved | typeof IntegrationVersionStateRejected | typeof IntegrationVersionStateSuperseded;
+/**
+ * IntegrationVersionSummary is one version in the page's list.
+ */
+export interface IntegrationVersionSummary {
+  version: string;
+  state: IntegrationVersionState;
+  published_at: string /* RFC 3339 */;
+  /**
+   * PublishedBy is the agent that published it, or you for an
+   * upload.
+   */
+  published_by: PersonRef;
+  approved_at?: string /* RFC 3339 */;
+  /**
+   * Notes are the publisher's version notes, Markdown.
+   */
+  notes_md: string;
+}
+/**
+ * IntegrationVersion is GET
+ * /api/v1/org/integrations/{name}/versions/{version}: the install
+ * screen. It says, in words, what the version is, who built it, every
+ * host it reaches, every secret the connection needs, every action,
+ * what the access form asks, and the bundle's size. Approving runs it;
+ * nothing runs before.
+ */
+export interface IntegrationVersion {
+  name: string;
+  display_name: string;
+  description: string;
+  version: string;
+  state: IntegrationVersionState;
+  author: string;
+  published_at: string /* RFC 3339 */;
+  published_by: PersonRef;
+  approved_at?: string /* RFC 3339 */;
+  notes_md: string;
+  /**
+   * Runtime is what runs the bundle: python.
+   */
+  runtime: string;
+  /**
+   * ConnectionMethod is how the connection is made: token.
+   */
+  connection_method: string;
+  hosts: string[];
+  connection_fields: ConnectionField[];
+  actions: IntegrationAction[];
+  access_form?: AccessForm;
+  bundle_bytes: number /* int64 */;
+  file_count: number /* int */;
+  /**
+   * Current is true when this is the version in use now.
+   */
+  current: boolean;
+  /**
+   * CurrentVersion is the version in use now, when there is one and
+   * it is not this one, so the screen can say what approving replaces.
+   */
+  current_version?: string;
+  /**
+   * Findings are what the bundle check reported for this version:
+   * warnings only, since a bundle with an error is never stored.
+   */
+  findings: string[];
+}
+/**
+ * IntegrationUploadRefused is the 400 body of POST
+ * /api/v1/org/integrations when the bundle does not pass the check:
+ * every finding, in words.
+ */
+export interface IntegrationUploadRefused {
+  error: string;
+  who: string;
+  findings: string[];
+}
+/**
+ * IntegrationAudit is GET /api/v1/org/integrations/{name}/audit: the
+ * latest calls, newest first.
+ */
+export interface IntegrationAudit {
+  rows: IntegrationAuditRow[];
+}
+/**
+ * IntegrationAuditRow is one call through the integration.
+ */
+export interface IntegrationAuditRow {
+  at: string /* RFC 3339 */;
+  /**
+   * Agent is who called; you, for Test connection and the options an
+   * access form lists.
+   */
+  agent: PersonRef;
+  action: string;
+  allowed: boolean;
+  /**
+   * Reason says why a call was refused, or what failed; empty when
+   * the call went through.
+   */
+  reason: string;
+  duration_ms: number /* int64 */;
+}
+/**
+ * AgentIntegrations is GET /api/v1/agents/{slug}/integrations: the
+ * agent's Integrations tab. Editing happens on the integration's page
+ * under Org.
+ */
+export interface AgentIntegrations {
+  /**
+   * Connected is every integration this agent has access to, with
+   * its access in words.
+   */
+  connected: AgentIntegration[];
+  /**
+   * Available is every other installed integration.
+   */
+  available: AgentIntegration[];
+}
+/**
+ * AgentIntegration is one integration as the agent's tab lists it.
+ */
+export interface AgentIntegration {
+  name: string;
+  display_name: string;
+  status: IntegrationStatus;
+  /**
+   * Summary is the agent's access in words; empty under Available.
+   */
+  summary: string;
+  /**
+   * Invalid is set when the agent's access no longer fits the
+   * integration's access form and grants nothing until set again.
+   */
+  invalid?: string;
 }
 
 //////////

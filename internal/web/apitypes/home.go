@@ -146,6 +146,10 @@ const (
 	ProposalKindOffboard        ProposalKind = "offboard"
 	ProposalKindReorg           ProposalKind = "reorg"
 	ProposalKindSoftwareInstall ProposalKind = "software_install"
+	// ProposalKindIntegrationInstall asks you to approve a version of an
+	// integration; its review page is the version's install screen under
+	// Org, Integrations.
+	ProposalKindIntegrationInstall ProposalKind = "integration_install"
 )
 
 // NeedItem is one row of Needs you, newest first; needs-help rows

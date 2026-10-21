@@ -1,0 +1,111 @@
+{
+  "name": "hubspot",
+  "display_name": "HubSpot",
+  "description": "Blog posts and contacts in HubSpot.",
+  "version": "1.3.0",
+  "state": "pending",
+  "author": "Integrations engineer (agent)",
+  "published_at": "2026-10-21T10:00:00Z",
+  "published_by": {
+    "slug": "integrations-engineer",
+    "name": "Integrations engineer"
+  },
+  "notes_md": "Adds contacts. Reaches one more host.",
+  "runtime": "python",
+  "connection_method": "token",
+  "hosts": [
+    "api.hubapi.com"
+  ],
+  "connection_fields": [
+    {
+      "key": "token",
+      "title": "Private app token",
+      "description": "From HubSpot, Settings, Private apps.",
+      "sensitive": true,
+      "required": true,
+      "set": true
+    },
+    {
+      "key": "portal",
+      "title": "Portal",
+      "description": "The portal's short name.",
+      "sensitive": false,
+      "required": false,
+      "set": true,
+      "value": "acme"
+    }
+  ],
+  "actions": [
+    {
+      "name": "create_post",
+      "description": "Create a blog post as a draft."
+    },
+    {
+      "name": "list_blogs",
+      "description": "List the blogs the connection can see."
+    },
+    {
+      "name": "whoami",
+      "description": "Name the connected account."
+    }
+  ],
+  "access_form": {
+    "fields": [
+      {
+        "key": "blogs",
+        "title": "Blogs",
+        "description": "The blogs the agent may write in.",
+        "kind": "choices",
+        "required": true,
+        "options": [],
+        "choices": true
+      },
+      {
+        "key": "write",
+        "title": "May publish and edit",
+        "description": "",
+        "kind": "switch",
+        "required": false,
+        "options": [],
+        "choices": false
+      },
+      {
+        "key": "region",
+        "title": "Region",
+        "description": "",
+        "kind": "choice",
+        "required": false,
+        "options": [
+          "eu",
+          "us"
+        ],
+        "choices": false
+      },
+      {
+        "key": "tags",
+        "title": "Tags",
+        "description": "",
+        "kind": "list",
+        "required": false,
+        "options": [],
+        "choices": false
+      },
+      {
+        "key": "note",
+        "title": "Note",
+        "description": "",
+        "kind": "text",
+        "required": false,
+        "options": [],
+        "choices": false
+      }
+    ]
+  },
+  "bundle_bytes": 184320,
+  "file_count": 12,
+  "current": false,
+  "current_version": "1.2.0",
+  "findings": [
+    "tools[2] (whoami) has no description"
+  ]
+}
