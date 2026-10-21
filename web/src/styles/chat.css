@@ -64,6 +64,19 @@
   top: var(--app-agent-head-h, 0);
   z-index: var(--z-sticky);
   background: var(--paper);
+  /* One row always: five tabs do not fit a phone's width, and a tab bar that wraps changes height under the
+   * pinned header, so the list scrolls sideways instead. The scrollbar stays out of sight; the row is
+   * swiped or arrow-keyed, and the active tab is brought into view by the browser's focus handling. */
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.app-agent-tabs > [role='tablist']::-webkit-scrollbar {
+  display: none;
+}
+.app-agent-tabs [role='tab'] {
+  flex: none;
+  white-space: nowrap;
 }
 /* The top of the body: AgentPage watches it leave the window to condense the phone header. */
 .app-agent-sentinel {
