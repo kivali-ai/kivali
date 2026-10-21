@@ -29,6 +29,7 @@ import (
 //	connections/<id>.yaml            a connection's fields that are not secret (IntegrationConnection)
 //	access/<slug>.yaml               one agent's access (IntegrationAccess)
 //	audit.jsonl                      one row per call (IntegrationAuditRow)
+//	log.jsonl                        its log, capped (IntegrationLogRow, integration_logs.go)
 //
 // A connection's secret fields are never here: they live in a
 // Kubernetes Secret the record names (internal/secrets). Every write
@@ -519,7 +520,7 @@ func (s *FSStore) SetIntegrationEnabled(name string, enabled bool) error {
 }
 
 // RemoveIntegration deletes an integration: every version, its
-// connections' records, every agent's access and its audit. The
+// connections' records, every agent's access, its audit and its log. The
 // connections' Secrets are the caller's to delete first. A built-in
 // integration is ErrIntegrationBuiltin.
 func (s *FSStore) RemoveIntegration(name string) error {
@@ -543,6 +544,7 @@ func (s *FSStore) RemoveIntegration(name string) error {
 		_ = os.RemoveAll(trash)
 		return err
 	}
+	s.integrationLogLines.Delete(name)
 	return os.RemoveAll(trash)
 }
 
@@ -820,8 +822,7 @@ func (s *FSStore) AppendIntegrationAudit(name string, row IntegrationAuditRow) e
 	return appendJSONL(filepath.Join(dir, "audit.jsonl"), append(line, '\n'))
 }
 
-// auditReadChunk is how much ReadIntegrationAuditTail reads at a time,
-// from the end.
+// auditReadChunk is how much tailLines reads at a time, from the end.
 var auditReadChunk = 64 << 10
 
 // ReadIntegrationAuditTail returns the integration's latest n audit
@@ -832,10 +833,32 @@ func (s *FSStore) ReadIntegrationAuditTail(name string, n int) ([]IntegrationAud
 	if err != nil {
 		return nil, ErrNotFound
 	}
+	lines, err := tailLines(filepath.Join(dir, "audit.jsonl"), n)
+	if err != nil {
+		return nil, err
+	}
+	var out []IntegrationAuditRow
+	for _, line := range lines {
+		if len(out) == n {
+			break
+		}
+		var row IntegrationAuditRow
+		if err := json.Unmarshal(line, &row); err != nil {
+			continue
+		}
+		out = append(out, row)
+	}
+	return out, nil
+}
+
+// tailLines reads the JSONL file at path back from its end until it
+// holds n whole lines, or the whole file, and returns the non-empty
+// lines it read, newest first. A missing file, or n <= 0, is none.
+func tailLines(path string, n int) ([][]byte, error) {
 	if n <= 0 {
 		return nil, nil
 	}
-	f, err := os.Open(filepath.Join(dir, "audit.jsonl"))
+	f, err := os.Open(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
 	}
@@ -847,8 +870,6 @@ func (s *FSStore) ReadIntegrationAuditTail(name string, n int) ([]IntegrationAud
 	if err != nil {
 		return nil, err
 	}
-	// Read back from the end until the buffer holds n whole lines, or
-	// the whole file.
 	var buf []byte
 	off := fi.Size()
 	for off > 0 && bytes.Count(buf, []byte{'\n'}) <= n {
@@ -867,17 +888,11 @@ func (s *FSStore) ReadIntegrationAuditTail(name string, n int) ([]IntegrationAud
 	if off > 0 {
 		lines = lines[1:] // starts mid-line
 	}
-	var out []IntegrationAuditRow
-	for i := len(lines) - 1; i >= 0 && len(out) < n; i-- {
-		line := bytes.TrimSpace(lines[i])
-		if len(line) == 0 {
-			continue
+	var out [][]byte
+	for i := len(lines) - 1; i >= 0; i-- {
+		if line := bytes.TrimSpace(lines[i]); len(line) > 0 {
+			out = append(out, line)
 		}
-		var row IntegrationAuditRow
-		if err := json.Unmarshal(line, &row); err != nil {
-			continue
-		}
-		out = append(out, row)
 	}
 	return out, nil
 }

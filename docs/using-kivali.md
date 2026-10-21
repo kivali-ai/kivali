@@ -111,7 +111,7 @@ Agents see the name and description of every enabled skill and read the full ins
 
 **Org**, **Integrations** lists the services your agents can act on, each with its version, whether it is connected, and how many agents have access. An integration comes as a bundle, a `.zip`: one an agent publishes, or one you add with **Upload a bundle**. Nothing in a bundle runs until you approve it. A new version reaches you in **Needs you** as **Install an integration**, and its install screen says what it reaches, what its connection holds and what it does: every host, every secret by name, every action, and what the access form asks. Choose **Approve and install**, or **Reject**.
 
-An integration's page has its switch, its connection (enter the token and settings; a secret is never shown again, and leaving it blank keeps the stored one), which agents have access and how far (**Give access** opens the form the integration describes), its actions, its versions and its latest calls. See [Integrations](integrations.md) for the whole picture.
+An integration's page has its switch, its connection (enter the token and settings; a secret is never shown again, and leaving it blank keeps the stored one), which agents have access and how far (**Give access** opens the form the integration describes), its actions, its versions, its latest calls and a recent log of what the integration wrote (**Refresh** reads it again). While Kivali is starting an integration, or after it stopped, its status reads **Not running**: the log says what happened, and **Test connection** and **Load options** wait until it runs. See [Integrations](integrations.md) for the whole picture.
 
 ## Models and effort
 

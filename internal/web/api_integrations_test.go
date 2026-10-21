@@ -216,7 +216,8 @@ func TestAPIIntegrationApproveAndReject(t *testing.T) {
 		t.Errorf("rejected = %+v", rejected)
 	}
 	page := orgOK[apitypes.IntegrationPage](t, orgGet(t, srv, intBase+"/crm"))
-	if page.Summary.Version != "1.0.0" || page.Summary.Status != apitypes.IntegrationStatusNotConnected || page.Summary.PendingVersion != nil {
+	// Approved and on, with no shim connected: not running.
+	if page.Summary.Version != "1.0.0" || page.Summary.Status != apitypes.IntegrationStatusNotRunning || page.Summary.PendingVersion != nil {
 		t.Errorf("summary = %+v", page.Summary)
 	}
 	if len(page.Versions) != 2 || page.Versions[0].Version != "1.1.0" {
@@ -438,6 +439,8 @@ func TestAPIIntegrationConnection(t *testing.T) {
 	if rr := intPost(t, srv, intBase+"/crm/versions/1.0.0/approve"); rr.Code != http.StatusOK {
 		t.Fatal(rr.Body.String())
 	}
+	// Connected or not is said once the integration is running.
+	attachShim(t, srv, "crm", toolTexts(nil))
 	if e := assertAPIError(t, put(map[string]string{"portal": "acme"}), http.StatusBadRequest); e.Error != "the connection needs Private app token" {
 		t.Errorf("required = %+v", e)
 	}
@@ -496,10 +499,6 @@ func TestAPIIntegrationConnection(t *testing.T) {
 	assertAPIError(t, put(map[string]string{"portal": "acme2"}), http.StatusBadRequest)
 	orgOK[apitypes.IntegrationPage](t, put(map[string]string{"token": "again", "portal": "acme2"}))
 
-	if e := assertAPIError(t, intPost(t, srv, intBase+"/crm/connection/verify"), http.StatusConflict); e.Error != "the integration is not running yet" {
-		t.Errorf("verify = %+v", e)
-	}
-
 	page = orgOK[apitypes.IntegrationPage](t, intDelete(t, srv, intBase+"/crm/connection"))
 	if page.Connection != nil || len(page.Access) != 0 || page.Summary.Status != apitypes.IntegrationStatusNotConnected {
 		t.Errorf("after disconnect: %+v", page)
@@ -545,6 +544,7 @@ func TestAPIIntegrationAccess(t *testing.T) {
 	if rr := orgJSON(t, srv, http.MethodPut, intBase+"/crm/connection", apitypes.ConnectionWrite{Fields: map[string]string{"token": "t"}}); rr.Code != http.StatusOK {
 		t.Fatal(rr.Body.String())
 	}
+	attachShim(t, srv, "crm", toolTexts(nil))
 	assertAPIError(t, putAccess("nobody", `{"blogs":["M"]}`), http.StatusNotFound)
 	assertAPIError(t, putAccess(agent.CEOSlug, `{"blogs":["M"]}`), http.StatusBadRequest)
 	if e := assertAPIError(t, putAccess("dana", `{"blogs":["M"],"region":"apac"}`), http.StatusBadRequest); e.Error != "Region must be one of eu, us" {
@@ -592,6 +592,7 @@ func TestAPIIntegrationSwitchAndRemove(t *testing.T) {
 	mem := secrets.NewMemory()
 	srv.Secrets = mem
 	intConnected(t, srv, "crm")
+	attachShim(t, srv, "crm", toolTexts(nil))
 	page := orgOK[apitypes.IntegrationPage](t, intPost(t, srv, intBase+"/crm/disable"))
 	if page.Summary.Status != apitypes.IntegrationStatusOff || page.Summary.Enabled {
 		t.Errorf("off = %+v", page.Summary)
@@ -616,8 +617,8 @@ func TestAPIIntegrationSwitchAndRemove(t *testing.T) {
 }
 
 // The audit lists what is stored, newest first, up to limit, with the
-// caller named; the options a field lists need the integration's
-// runtime, and a field that lists none is a 404.
+// caller named; the options a field lists need the integration
+// running, and a field that lists none is a 404.
 func TestAPIIntegrationAuditAndChoices(t *testing.T) {
 	srv := newTestServer(t)
 	intTeam(t, srv, "dana")
@@ -638,7 +639,7 @@ func TestAPIIntegrationAuditAndChoices(t *testing.T) {
 		t.Errorf("capped audit = %+v", a)
 	}
 	assertAPIError(t, orgGet(t, srv, intBase+"/crm/audit?limit=abc"), http.StatusBadRequest)
-	if e := assertAPIError(t, orgGet(t, srv, intBase+"/crm/choices/blogs"), http.StatusConflict); e.Error != "the integration is not running yet" {
+	if e := assertAPIError(t, orgGet(t, srv, intBase+"/crm/choices/blogs"), http.StatusConflict); e.Error != "the integration is not running" {
 		t.Errorf("choices = %+v", e)
 	}
 	assertAPIError(t, orgGet(t, srv, intBase+"/crm/choices/write"), http.StatusNotFound)

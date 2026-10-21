@@ -22,16 +22,20 @@ import (
 //	 "shells": {"<slug>": "<lowercase hex sha256 of the shell's secret>"},
 //	 "agent_hosts": {"<slug>": ["api.github.com"]},
 //	 "exempt": ["<slug>"],
-//	 "model_hosts": ["api.anthropic.com"]}
+//	 "model_hosts": ["api.anthropic.com"],
+//	 "scoped": {"integration-<name>": {"hash": "<sha256>", "hosts": ["api.example.com"]}}}
 //
 // An agent that presents its slug and secret gets open mode; one that
 // presents its slug and its shell's secret gets shell mode, where the
 // host must be on the allowlist or among that agent's agent_hosts
 // patterns. An exempt agent gets exempt mode with either credential:
 // any public host, with no budget. Model hosts are exact hostnames
-// exempt from the byte budget. None of agent_hosts, exempt and
-// model_hosts grants anything to a request without valid credentials.
-// Fields the proxy does not know are ignored.
+// exempt from the byte budget. A request that presents a scoped user
+// and its secret (an integration's server) gets scoped mode: the host
+// must be among that entry's hosts, never the allowlist, and nothing
+// is counted. None of agent_hosts, exempt and model_hosts grants
+// anything to a request without valid credentials. Fields the proxy
+// does not know are ignored.
 type Agents struct {
 	// Path is re-read on a credential miss when it has changed.
 	Path string
@@ -59,9 +63,18 @@ type agentsData struct {
 	agentHosts map[string][]string
 	exempt     map[string]struct{}
 	modelHosts map[string]struct{}
+	// scoped holds each scoped credential's hash and hosts, by user.
+	scoped map[string]scopedEntry
 	// info describes the file these entries were read from; nil when
 	// it was missing.
 	info os.FileInfo
+}
+
+// scopedEntry is one scoped credential: its hash and the patterns it
+// reaches, normalized as the allowlist's are.
+type scopedEntry struct {
+	hash  []byte
+	hosts []string
 }
 
 // credKind is which of an agent's credentials a request presented.
@@ -72,6 +85,9 @@ const (
 	credOpen credKind = iota + 1
 	// credShell is the credential the runtime hands the agent's shell.
 	credShell
+	// credScoped is an integration server's credential, held to its
+	// own hosts.
+	credScoped
 )
 
 // Load reads the agents file at path. A missing file means no agents
@@ -122,6 +138,10 @@ func readAgents(path string) (*agentsData, os.FileInfo, error) {
 		AgentHosts map[string][]string `json:"agent_hosts"`
 		Exempt     []string            `json:"exempt"`
 		ModelHosts []string            `json:"model_hosts"`
+		Scoped     map[string]struct {
+			Hash  string   `json:"hash"`
+			Hosts []string `json:"hosts"`
+		} `json:"scoped"`
 	}
 	if err := json.Unmarshal(b, &file); err != nil {
 		return nil, info, fmt.Errorf("agents json: %w", err)
@@ -132,7 +152,15 @@ func readAgents(path string) (*agentsData, os.FileInfo, error) {
 		agentHosts: make(map[string][]string, len(file.AgentHosts)),
 		exempt:     make(map[string]struct{}, len(file.Exempt)),
 		modelHosts: make(map[string]struct{}, len(file.ModelHosts)),
+		scoped:     make(map[string]scopedEntry, len(file.Scoped)),
 		info:       info,
+	}
+	for user, e := range file.Scoped {
+		sum := readHashes(map[string]string{user: e.Hash})[user]
+		if sum == nil {
+			continue
+		}
+		d.scoped[user] = scopedEntry{hash: sum, hosts: cleanPatterns(e.Hosts)}
 	}
 	for slug, patterns := range file.AgentHosts {
 		if p := cleanPatterns(patterns); slug != "" && len(p) > 0 {
@@ -175,7 +203,8 @@ func (a *Agents) current() *agentsData {
 }
 
 // Verify reports whether secret is one of slug's credentials, and
-// which: the runtime's own (credOpen) or its shell's (credShell). On a
+// which: the runtime's own (credOpen), its shell's (credShell) or, for
+// an integration's user, its scoped one (credScoped). On a
 // miss it re-reads the file if it has changed since it was loaded, and
 // checks again, so a pod registered moments ago is not refused while
 // the watcher waits for its next poll. A miss against an unchanged file
@@ -198,7 +227,16 @@ func (d *agentsData) match(slug string, sum []byte) (credKind, bool) {
 	if want, ok := d.shells[slug]; ok && subtle.ConstantTimeCompare(sum, want) == 1 {
 		return credShell, true
 	}
+	if e, ok := d.scoped[slug]; ok && subtle.ConstantTimeCompare(sum, e.hash) == 1 {
+		return credScoped, true
+	}
 	return 0, false
+}
+
+// ScopedAllowed reports whether hostport matches one of the hosts of
+// user's scoped credential.
+func (a *Agents) ScopedAllowed(user, hostport string) bool {
+	return matchAny(a.current().scoped[user].hosts, hostport)
 }
 
 // AgentHosts returns slug's own patterns, which its shell reaches on

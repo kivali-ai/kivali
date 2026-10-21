@@ -121,6 +121,17 @@ nothing on a volume, and reach the public web directly, with no proxy, and
 nothing in the cluster: a browser is not held to the egress allowlist
 (see NetworkPolicy below).
 
+## Integration pods
+
+The server keeps one pod, `integrationpod-<name>`, running for each
+approved, switched-on integration, and takes on the ones already running
+when it starts. They have no values of their own: an init container from
+the server's image copies the `kivali` binary into the pod, which runs it
+in the agent-shell image beside it (`kivali-agent-shell` at the same tag)
+with 50m/128Mi requests and 1/1Gi limits. They run on the server's node,
+mount the version's bundle read-only from `kivali-data`, and reach only the
+egress proxy (policy 4 below).
+
 ## Sign-in values
 
 `oauth.redirectURL` makes `OAUTH_REDIRECT_URL` a literal instead of the
@@ -143,13 +154,13 @@ by the operator, outside the chart (keys above).
 
 ## NetworkPolicy
 
-Agents run shell commands in pods. These policies keep agent and browser
-pods off the cluster, the node and cloud metadata, and hold an agent's
-traffic to the egress proxy. The HTTP API is not open to pods by default:
-every route needs a Google session (`internal/web/web.go`), and the only
-routes open without one are login, the OAuth callback and the
-loopback-only, signed, single-use Desktop handoff
-([auth.md](../../docs/developers/auth.md)). All three policies sit under
+Agents run shell commands in pods. These policies keep agent, browser and
+integration pods off the cluster, the node and cloud metadata, and hold an
+agent's or an integration's traffic to the egress proxy. The HTTP API is not
+open to pods by default: every route needs a Google session
+(`internal/web/web.go`), and the only routes open without one are login, the
+OAuth callback and the loopback-only, signed, single-use Desktop handoff
+([auth.md](../../docs/developers/auth.md)). All four policies sit under
 `networkPolicy.enabled` (default true):
 
 1. `kivali-agentpod-egress` (load-bearing): agent pods (`app=kivali-agentpod`)
@@ -218,6 +229,14 @@ loopback-only, signed, single-use Desktop handoff
              matchLabels:
                app.kubernetes.io/name: traefik
    ```
+4. `kivali-integrationpod-egress` (load-bearing): integration pods
+   (`app=kivali-integrationpod`, one per approved, switched-on
+   integration) get the agent pods' shape: egress default deny, allowing
+   only TCP 3128 to pods labelled `app=kivali`, and no DNS. The proxy holds
+   an integration's server, by its scoped per-pod credential, to the hosts
+   its approved version names, never the team's list. Integration pods
+   reach core over the hostPath Unix socket, not the network. See
+   [integrations.md](../../docs/developers/integrations.md#the-runtime).
 
 k3s enforces these (embedded kube-router controller), so they hold in
 every supervisor-run org. A CNI that does not enforce NetworkPolicy

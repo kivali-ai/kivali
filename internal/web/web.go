@@ -142,6 +142,13 @@ type Server struct {
 	// integrationsMu serialises the integration writes that span the
 	// store and Secrets (api_integrations.go).
 	integrationsMu sync.Mutex
+	// IntegrationProvisioner starts and stops integration pods. Wired
+	// in main.go; nil, or one that is not Enabled, runs no pod, and an
+	// integration is running only while a shim is connected.
+	IntegrationProvisioner IntegrationProvisioner
+	// Integrations is the registry NewServer builds from the store,
+	// Secrets and IntegrationProvisioner; StartIntegrations runs it.
+	Integrations *integrationRegistry
 
 	// SeedTimeout bounds one Chief of Staff hire, measured on Clock; a
 	// hire still running when it passes ends as failed. Zero means
@@ -350,6 +357,10 @@ func NewServer(s *Server) (*Server, error) {
 	}
 	if s.Secrets == nil {
 		s.Secrets = secrets.NewMemory()
+	}
+	if s.Integrations == nil && s.Store != nil {
+		// Secrets is read at each use: tests swap it after NewServer.
+		s.Integrations = newIntegrationRegistry(s.Store, func() secrets.Store { return s.Secrets }, s.IntegrationProvisioner, s.Clock, log.Printf)
 	}
 	if s.SubagentService != nil && s.SubagentService.Clock == nil {
 		s.SubagentService.Clock = s.Clock

@@ -1,8 +1,8 @@
 {{- if .Values.networkPolicy.enabled }}
-# Agents run shell commands in pods. These policies keep agent and browser
-# pods off the cluster, the node and cloud metadata. Three policies; they
-# take effect only on a cluster whose CNI enforces NetworkPolicy (k3s's
-# embedded network policy controller does).
+# Agents run shell commands in pods. These policies keep agent, browser and
+# integration pods off the cluster, the node and cloud metadata. Four
+# policies; they take effect only on a cluster whose CNI enforces
+# NetworkPolicy (k3s's embedded network policy controller does).
 #
 # 1. Agent pods: egress default deny, then only the egress proxy. This is
 #    the load-bearing one: an agent pod reaches nothing but the proxy, which
@@ -114,4 +114,31 @@ spec:
         - protocol: TCP
           port: 3128
 {{- end }}
+---
+# 4. Integration pods: egress default deny, then only the egress proxy, as
+#    for agent pods. An integration's server reaches the hosts its approved
+#    version names through the proxy, which holds its scoped credential to
+#    them, and nothing else. No DNS: the pod reaches the proxy by IP.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kivali-integrationpod-egress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kivali.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: kivali-integrationpod
+  policyTypes: [Egress]
+  egress:
+    # The egress proxy sidecar runs in the server pod. Integration pods
+    # reach core over the hostPath Unix socket, not the network.
+    - to:
+        - podSelector:
+            matchLabels:
+              app: kivali
+      ports:
+        - protocol: TCP
+          port: 3128
 {{- end }}

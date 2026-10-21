@@ -17,9 +17,11 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/kivali-ai/kivali/internal/agent"
 	"github.com/kivali-ai/kivali/internal/integration"
+	"github.com/kivali-ai/kivali/internal/integrationpod"
 	"github.com/kivali-ai/kivali/internal/secrets"
 	"github.com/kivali-ai/kivali/internal/store"
 	"github.com/kivali-ai/kivali/internal/web/apitypes"
@@ -52,15 +54,16 @@ func (s *Server) wireAPIIntegrationRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/v1/org/integrations/{name}/access/{slug}", s.handleAPIIntegrationAccessDelete)
 	mux.HandleFunc("GET /api/v1/org/integrations/{name}/audit", s.handleAPIIntegrationAudit)
 	mux.HandleFunc("GET /api/v1/org/integrations/{name}/choices/{key}", s.handleAPIIntegrationChoices)
+	mux.HandleFunc("GET /api/v1/org/integrations/{name}/logs", s.handleAPIIntegrationLogs)
 	mux.HandleFunc("GET /api/v1/agents/{slug}/integrations", s.handleAPIAgentIntegrations)
 }
 
 // whoBundle fixes what is wrong with a bundle.
 const whoBundle = "whoever built the bundle"
 
-// errNotRunning answers what needs the integration's runtime: Test
+// errNotRunning answers what needs the integration running: Test
 // connection and the options an access form lists.
-const errNotRunning = "the integration is not running yet"
+const errNotRunning = "the integration is not running"
 
 // integrationVersionPath is the web app's install screen for a version.
 func integrationVersionPath(name, version string) string {
@@ -89,6 +92,8 @@ type integrationView struct {
 	secretSet map[string]bool
 	reconnect bool
 	access    []store.IntegrationAccess
+	// running is whether the integration's shim is connected.
+	running bool
 }
 
 // loadIntegration reads one integration whole. A missing one is
@@ -98,7 +103,7 @@ func (s *Server) loadIntegration(ctx context.Context, name string) (*integration
 	if err != nil {
 		return nil, err
 	}
-	v := &integrationView{it: it, secretSet: map[string]bool{}}
+	v := &integrationView{it: it, secretSet: map[string]bool{}, running: s.Integrations.Running(name)}
 	if v.versions, err = s.Store.IntegrationVersions(name); err != nil {
 		return nil, err
 	}
@@ -162,6 +167,10 @@ func (v *integrationView) status() apitypes.IntegrationStatus {
 		return apitypes.IntegrationStatusPending
 	case !v.it.Enabled:
 		return apitypes.IntegrationStatusOff
+	case !v.it.Builtin && !v.running:
+		// Connected or not is the running server's to show: Test
+		// connection and agents' calls need it up.
+		return apitypes.IntegrationStatusNotRunning
 	case v.conn != nil && !v.reconnect:
 		return apitypes.IntegrationStatusConnected
 	}
@@ -518,6 +527,7 @@ func (s *Server) handleAPIIntegrationToggle(on bool) http.HandlerFunc {
 			writeAPIError(w, http.StatusInternalServerError, "the integration's switch could not be saved", whoServer)
 			return
 		}
+		s.Integrations.Changed()
 		s.writeIntegrationPage(w, r)
 	}
 }
@@ -543,6 +553,7 @@ func (s *Server) handleAPIIntegrationRemove(w http.ResponseWriter, r *http.Reque
 		writeAPIError(w, http.StatusInternalServerError, "the integration could not be removed", whoServer)
 		return
 	}
+	s.Integrations.Changed()
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -692,11 +703,13 @@ func integrationAnswerError(name, version string, err error) error {
 	return err
 }
 
-// approveIntegrationVersion makes a pending version the one in use.
+// approveIntegrationVersion makes a pending version the one in use,
+// and its pod follows.
 func (s *Server) approveIntegrationVersion(name, version string) error {
 	if err := s.Store.ApproveIntegrationVersion(name, version, s.clk().Now()); err != nil {
 		return integrationAnswerError(name, version, err)
 	}
+	s.Integrations.Changed()
 	return nil
 }
 
@@ -705,6 +718,7 @@ func (s *Server) rejectIntegrationVersion(name, version string) error {
 	if err := s.Store.RejectIntegrationVersion(name, version, s.clk().Now()); err != nil {
 		return integrationAnswerError(name, version, err)
 	}
+	s.Integrations.Changed()
 	return nil
 }
 
@@ -845,6 +859,9 @@ func (s *Server) handleAPIIntegrationConnectionPut(w http.ResponseWriter, r *htt
 		writeAPIError(w, http.StatusInternalServerError, "the connection could not be saved", whoServer)
 		return
 	}
+	// The running server starts again with the new values.
+	s.Integrations.ConnectionChanged(name)
+	s.Integrations.Changed()
 	s.writeIntegrationPage(w, r)
 }
 
@@ -890,16 +907,126 @@ func (s *Server) handleAPIIntegrationConnectionDelete(w http.ResponseWriter, r *
 		writeAPIError(w, http.StatusInternalServerError, "the connection could not be removed", whoServer)
 		return
 	}
+	// The running server starts again without the values.
+	s.Integrations.ConnectionChanged(v.it.Name)
+	s.Integrations.Changed()
 	s.writeIntegrationPage(w, r)
 }
 
-// handleAPIIntegrationVerify is Test connection, which calls the
-// integration's verify action and so needs its runtime.
+// integrationVerifyMessageMax bounds the integration's words kept from
+// Test connection.
+const integrationVerifyMessageMax = 1000
+
+// toolResult is the part of an MCP tools/call result Kivali reads.
+type toolResult struct {
+	Content []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	} `json:"content"`
+	IsError bool `json:"isError"`
+}
+
+// firstText is the result's first text content.
+func (t toolResult) firstText() string {
+	for _, c := range t.Content {
+		if c.Type == "text" {
+			return c.Text
+		}
+	}
+	return ""
+}
+
+// callIntegrationTool calls one of the integration's tools for the
+// owner (no agent), writes the audit row, and returns the result.
+// failed is the integration's words when the call did not go through:
+// the server's error, its tool's error result, or the deadline.
+// errIntegrationNotRunning and a caller that went away are returned as
+// err, with no audit row.
+func (s *Server) callIntegrationTool(r *http.Request, name, tool string) (res toolResult, failed string, err error) {
+	start := s.clk().Now()
+	raw, callErr := s.Integrations.Call(r.Context(), name, "tools/call", map[string]any{"name": tool, "arguments": map[string]any{}})
+	var rpcErr *integrationpod.RPCError
+	switch {
+	case errors.Is(callErr, errIntegrationNotRunning), r.Context().Err() != nil:
+		return res, "", cmp.Or(callErr, r.Context().Err())
+	case errors.Is(callErr, errIntegrationTimeout):
+		failed = fmt.Sprintf("the integration did not answer within %d seconds", int(integrationCallTimeout/time.Second))
+	case errors.As(callErr, &rpcErr):
+		failed = rpcErr.Message
+	case callErr != nil:
+		failed = callErr.Error()
+	default:
+		if json.Unmarshal(raw, &res) != nil {
+			failed = "the integration's answer is not one Kivali reads"
+		} else if res.IsError {
+			failed = cmp.Or(res.firstText(), "the integration reported an error")
+		}
+	}
+	failed = clipText(failed, integrationVerifyMessageMax)
+	row := store.IntegrationAuditRow{
+		At:         start,
+		Agent:      agent.CEOSlug,
+		Action:     tool,
+		Allowed:    true,
+		Reason:     failed,
+		DurationMS: s.clk().Now().Sub(start).Milliseconds(),
+	}
+	if err := s.Store.AppendIntegrationAudit(name, row); err != nil {
+		log.Printf("integration %s: audit: %v", name, err)
+	}
+	return res, failed, nil
+}
+
+// handleAPIIntegrationVerify is Test connection: it calls the
+// integration's verify action through the running server and keeps
+// what it found on the connection.
 func (s *Server) handleAPIIntegrationVerify(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.integrationOr404(w, r); !ok {
+	v, ok := s.integrationOr404(w, r)
+	if !ok {
 		return
 	}
-	writeAPIError(w, http.StatusConflict, errNotRunning, whoDevelopers)
+	name := v.it.Name
+	switch {
+	case v.it.CurrentVersion == "":
+		writeAPIError(w, http.StatusConflict, "approve a version of "+v.displayName()+" first", whoYou)
+		return
+	case v.conn == nil:
+		writeAPIError(w, http.StatusConflict, "connect the integration first", whoYou)
+		return
+	case v.manifest.Kivali.Verify == "":
+		writeAPIError(w, http.StatusConflict, v.displayName()+" has no connection test", whoBundle)
+		return
+	case !v.running:
+		writeAPIError(w, http.StatusConflict, errNotRunning, whoBundle)
+		return
+	}
+	connID := v.conn.ID
+	res, failed, err := s.callIntegrationTool(r, name, v.manifest.Kivali.Verify)
+	if errors.Is(err, errIntegrationNotRunning) {
+		writeAPIError(w, http.StatusConflict, errNotRunning, whoBundle)
+		return
+	}
+	if err != nil {
+		return
+	}
+	verified, message := failed == "", failed
+	if verified {
+		message = clipText(res.firstText(), integrationVerifyMessageMax)
+	}
+	unlock := s.lockIntegrations()
+	conn, err := s.Store.GetIntegrationConnection(name)
+	if err == nil && conn.ID == connID {
+		at := s.clk().Now().UTC()
+		conn.VerifiedAt, conn.Verified, conn.VerifyMessage = &at, &verified, message
+		err = s.Store.PutIntegrationConnection(name, conn)
+	}
+	unlock()
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		log.Printf("integration %s: keep the connection test: %v", name, err)
+		writeAPIError(w, http.StatusInternalServerError, "the connection test's result could not be saved", whoServer)
+		return
+	}
+	s.writeIntegrationPage(w, r)
 }
 
 // ---- access ----
@@ -1013,7 +1140,78 @@ func (s *Server) handleAPIIntegrationChoices(w http.ResponseWriter, r *http.Requ
 		writeAPIError(w, http.StatusNotFound, v.displayName()+" lists no options for "+key, whoDevelopers)
 		return
 	}
-	writeAPIError(w, http.StatusConflict, errNotRunning, whoDevelopers)
+	if !v.running {
+		writeAPIError(w, http.StatusConflict, errNotRunning, whoBundle)
+		return
+	}
+	res, failed, err := s.callIntegrationTool(r, v.it.Name, v.manifest.Kivali.Access.Choices[key])
+	if errors.Is(err, errIntegrationNotRunning) {
+		writeAPIError(w, http.StatusConflict, errNotRunning, whoBundle)
+		return
+	}
+	if err != nil {
+		return
+	}
+	if failed != "" {
+		writeAPIError(w, http.StatusBadGateway, v.displayName()+" could not list the options: "+failed, whoBundle)
+		return
+	}
+	options, ok := parseChoices(res.firstText())
+	if !ok {
+		writeAPIError(w, http.StatusBadGateway, v.displayName()+"'s options are not a list of names", whoBundle)
+		return
+	}
+	writeJSON(w, http.StatusOK, apitypes.AccessChoices{Options: options})
+}
+
+// parseChoices reads a tool's text as the options of a field: a JSON
+// array of strings, or an object whose options is one.
+func parseChoices(text string) ([]string, bool) {
+	var list []string
+	if err := json.Unmarshal([]byte(text), &list); err == nil {
+		return nonNilStrings(list), true
+	}
+	var obj struct {
+		Options *[]string `json:"options"`
+	}
+	if err := json.Unmarshal([]byte(text), &obj); err == nil && obj.Options != nil {
+		return nonNilStrings(*obj.Options), true
+	}
+	return nil, false
+}
+
+// ---- the log ----
+
+const (
+	integrationLogDefaultLimit = 200
+	integrationLogMaxLimit     = 2000
+)
+
+// handleAPIIntegrationLogs is the integration's log, oldest first.
+func (s *Server) handleAPIIntegrationLogs(w http.ResponseWriter, r *http.Request) {
+	v, ok := s.integrationOr404(w, r)
+	if !ok {
+		return
+	}
+	limit := integrationLogDefaultLimit
+	if q := r.URL.Query().Get("limit"); q != "" {
+		n, err := strconv.Atoi(q)
+		if err != nil || n < 1 {
+			writeAPIError(w, http.StatusBadRequest, fmt.Sprintf("limit must be a number from 1 to %d", integrationLogMaxLimit), whoDevelopers)
+			return
+		}
+		limit = min(n, integrationLogMaxLimit)
+	}
+	rows, err := s.Store.ReadIntegrationLogTail(v.it.Name, limit)
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "the integration's log could not be read", whoServer)
+		return
+	}
+	out := apitypes.IntegrationLogs{Lines: make([]apitypes.IntegrationLogLine, 0, len(rows))}
+	for _, row := range rows {
+		out.Lines = append(out.Lines, apitypes.IntegrationLogLine{At: row.At, Level: row.Level, Message: row.Message})
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // ---- audit ----

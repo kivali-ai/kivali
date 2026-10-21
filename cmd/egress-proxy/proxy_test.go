@@ -31,6 +31,7 @@ type harnessConfig struct {
 	agentHosts map[string][]string
 	exempt     []string
 	modelHosts []string
+	scoped     map[string]scopedFixture
 	limits     budgetLimits
 	enforce    bool
 	deny       []netip.Prefix
@@ -60,13 +61,14 @@ func newHarness(t *testing.T, cfg harnessConfig) *harness {
 		clk:        clock.NewFake(),
 		agentsPath: filepath.Join(t.TempDir(), "agents.json"),
 	}
-	if cfg.secrets != nil || cfg.shells != nil || cfg.agentHosts != nil || cfg.exempt != nil || cfg.modelHosts != nil {
+	if cfg.secrets != nil || cfg.shells != nil || cfg.agentHosts != nil || cfg.exempt != nil || cfg.modelHosts != nil || cfg.scoped != nil {
 		writeAgentsFile(t, h.agentsPath, agentsFile{
 			secrets:    cfg.secrets,
 			shells:     cfg.shells,
 			agentHosts: cfg.agentHosts,
 			exempt:     cfg.exempt,
 			modelHosts: cfg.modelHosts,
+			scoped:     cfg.scoped,
 		})
 	}
 	allow := &Allowlist{}

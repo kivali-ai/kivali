@@ -191,7 +191,14 @@ type Pod struct {
 	// nodes are available: 1 Insufficient memory. ..."), empty
 	// otherwise.
 	Unschedulable string
+	// env holds each container's env entries that carry a literal
+	// value, by container then variable name.
+	env map[string]map[string]string
 }
+
+// Env is the literal value of the variable name in the pod spec's
+// container, "" when the container or the variable is not there.
+func (p Pod) Env(container, name string) string { return p.env[container][name] }
 
 // SpecHash is the pod's spec-hash label, "" when it carries none.
 func (p Pod) SpecHash() string { return p.Labels[SpecHashLabel] }
@@ -206,6 +213,15 @@ type podObject struct {
 		Name   string            `json:"name"`
 		Labels map[string]string `json:"labels"`
 	} `json:"metadata"`
+	Spec struct {
+		Containers []struct {
+			Name string `json:"name"`
+			Env  []struct {
+				Name  string `json:"name"`
+				Value string `json:"value"`
+			} `json:"env"`
+		} `json:"containers"`
+	} `json:"spec"`
 	Status struct {
 		Phase             string `json:"phase"`
 		ContainerStatuses []struct {
@@ -222,6 +238,16 @@ type podObject struct {
 
 func (o podObject) pod() Pod {
 	p := Pod{Name: o.Metadata.Name, Labels: o.Metadata.Labels, Phase: o.Status.Phase}
+	for _, c := range o.Spec.Containers {
+		if p.env == nil {
+			p.env = map[string]map[string]string{}
+		}
+		vars := map[string]string{}
+		for _, e := range c.Env {
+			vars[e.Name] = e.Value
+		}
+		p.env[c.Name] = vars
+	}
 	for _, c := range o.Status.Conditions {
 		if c.Type == "PodScheduled" && c.Status == "False" && c.Reason == "Unschedulable" {
 			p.Unschedulable = c.Message

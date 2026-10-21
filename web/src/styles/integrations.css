@@ -209,3 +209,41 @@
 .app-int-none {
   padding: var(--space-4);
 }
+
+/* The log: one dense line per entry, time and level in narrow columns, the message in mono. */
+.app-int-log {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.app-int-log-line {
+  display: grid;
+  grid-template-columns: auto 5.5rem minmax(0, 1fr);
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: calc(var(--space-1) / 2) 0;
+}
+
+.app-int-log-time {
+  font-family: var(--font-mono);
+  font-size: var(--type-caption-size);
+  color: var(--ink-muted);
+}
+
+.app-int-log-message {
+  font-family: var(--font-mono);
+  font-size: var(--type-caption-size);
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 40rem) {
+  .app-int-log-line {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  .app-int-log-message {
+    grid-column: 1 / -1;
+  }
+}
