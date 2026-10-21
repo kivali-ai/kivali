@@ -124,7 +124,7 @@ export function CosStep({ setup, fromFiles, drafts, onDrafts, error, hiring, che
   let framing = 'It starts with a default role and handbook. Most people leave them as they are.';
   if (personal) {
     framing =
-      'It starts with a default role and handbook. Most people leave them; it asks you a few questions first, then proposes the About you section for you to approve.';
+      'It starts with a default role and handbook. Most people leave them; it asks you a few questions first, then proposes the About and Values sections for you to approve.';
   } else if (fromFiles) {
     framing =
       'It starts with a default role and handbook. Most people leave them; once it has read your files it proposes a better handbook for you to approve.';

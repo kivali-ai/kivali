@@ -16,7 +16,7 @@ export interface FilesStepProps {
 
 /**
  * Step 3: what your Chief of Staff will read, and whether it should write the handbook from it. On a personal
- * team the files are optional: its Chief of Staff asks a few questions and drafts About you either way.
+ * team the files are optional: its Chief of Staff asks a few questions and drafts About and Values either way.
  */
 export function FilesStep({ setup, fromFiles, onFromFiles, onSetup, onBack, onNext }: FilesStepProps) {
   const [busy, setBusy] = useState(false);

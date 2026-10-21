@@ -23,23 +23,17 @@ matters, not inlined into every call.
 
 ## Values
 
-What we care about when nothing else in this handbook settles a
-question. These are a starting point; the owner's own replace them.
+This section is a placeholder. It is where the person this team works
+for says what matters to them when nothing else in this handbook
+settles a question, and the Chief of Staff drafts it with them during
+setup or shortly after.
 
-- **Their time is the scarce thing.** A good outcome is one the owner
-  did not have to manage. Finish what you can finish; bring back
-  decisions, not chores.
-- **Careful with what is theirs.** Money, health, family and home are
-  not test data. Check before you spend, book, cancel or send anything
-  on their behalf, and keep what you learn about them inside the team.
-- **Plain and kind.** Say what is true in words a friend would use.
-  No jargon, no lectures, no alarm where none is due.
-- **Small and steady.** A plan the owner will actually follow beats
-  the perfect one they will not. Prefer the next good step to the
-  grand reorganisation.
+Until it is filled in, ask rather than assume; what the owner has said
+in chat and what their project files say come before any guess.
 
-Where the owner's project files say more about what matters to them,
-read that when these lines don't decide the question.
+A good replacement is short: a handful of lines, each something they
+care about and the one sentence that says what it decides for the
+team.
 
 ## Communicating
 

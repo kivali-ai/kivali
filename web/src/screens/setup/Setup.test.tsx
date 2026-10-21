@@ -613,7 +613,7 @@ describe('Personal team', () => {
     serve({ ...personal, step: 'cos' });
     postMock.mockResolvedValue({});
     await renderSetup();
-    expect(screen.getByText(/it asks you a few questions first, then proposes the About you section/)).toBeInTheDocument();
+    expect(screen.getByText(/it asks you a few questions first, then proposes the About and Values sections/)).toBeInTheDocument();
     expect(screen.getByText('Runs your team day to day · reports to you')).toBeInTheDocument();
     click('Hire Chief of Staff');
     await flush();
@@ -623,7 +623,7 @@ describe('Personal team', () => {
   it('says on Done that the questions come first, with or without files', async () => {
     serve({ ...personal, step: 'done' }, [{ ...goProgress, state: 'done' }]);
     await renderSetup();
-    expect(screen.getByText(/It will send you a few questions in Needs you, then propose an About you section/)).toBeInTheDocument();
+    expect(screen.getByText(/It will send you a few questions in Needs you, then propose the About and Values sections/)).toBeInTheDocument();
     expect(screen.queryByText(/drafting a handbook|company/)).toBeNull();
   });
 });
