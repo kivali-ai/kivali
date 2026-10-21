@@ -32,6 +32,10 @@ const (
 	IntegrationStatusConnected IntegrationStatus = "connected"
 	// IntegrationStatusOff: switched off; agents cannot use it.
 	IntegrationStatusOff IntegrationStatus = "off"
+	// IntegrationStatusNotRunning: approved and on, but the integration
+	// is not running right now (starting, or stopped after a failure);
+	// Test connection and agents' calls wait for it.
+	IntegrationStatusNotRunning IntegrationStatus = "not_running"
 )
 
 // IntegrationSummary is one row of the list.
@@ -317,4 +321,23 @@ type AgentIntegration struct {
 	// Invalid is set when the agent's access no longer fits the
 	// integration's access form and grants nothing until set again.
 	Invalid *string `json:"invalid,omitempty"`
+}
+
+// ---- /api/v1/org/integrations/{name}/logs ----
+
+// IntegrationLogs is GET /api/v1/org/integrations/{name}/logs: the
+// integration's latest log lines, oldest first, with connection secrets
+// already replaced.
+type IntegrationLogs struct {
+	Lines []IntegrationLogLine `json:"lines"`
+}
+
+// IntegrationLogLine is one line the integration, or Kivali about it,
+// wrote.
+type IntegrationLogLine struct {
+	At time.Time `json:"at"`
+	// Level is the integration's own level (info, warning, error), or
+	// stderr for a line it wrote to its error output.
+	Level   string `json:"level"`
+	Message string `json:"message"`
 }

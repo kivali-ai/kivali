@@ -1765,7 +1765,13 @@ export const IntegrationStatusConnected = "connected";
  * IntegrationStatusOff: switched off; agents cannot use it.
  */
 export const IntegrationStatusOff = "off";
-export type IntegrationStatus = typeof IntegrationStatusPending | typeof IntegrationStatusNotConnected | typeof IntegrationStatusConnected | typeof IntegrationStatusOff;
+/**
+ * IntegrationStatusNotRunning: approved and on, but the integration
+ * is not running right now (starting, or stopped after a failure);
+ * Test connection and agents' calls wait for it.
+ */
+export const IntegrationStatusNotRunning = "not_running";
+export type IntegrationStatus = typeof IntegrationStatusPending | typeof IntegrationStatusNotConnected | typeof IntegrationStatusConnected | typeof IntegrationStatusOff | typeof IntegrationStatusNotRunning;
 /**
  * IntegrationSummary is one row of the list.
  */
@@ -2142,6 +2148,27 @@ export interface AgentIntegration {
    * integration's access form and grants nothing until set again.
    */
   invalid?: string;
+}
+/**
+ * IntegrationLogs is GET /api/v1/org/integrations/{name}/logs: the
+ * integration's latest log lines, oldest first, with connection secrets
+ * already replaced.
+ */
+export interface IntegrationLogs {
+  lines: IntegrationLogLine[];
+}
+/**
+ * IntegrationLogLine is one line the integration, or Kivali about it,
+ * wrote.
+ */
+export interface IntegrationLogLine {
+  at: string /* RFC 3339 */;
+  /**
+   * Level is the integration's own level (info, warning, error), or
+   * stderr for a line it wrote to its error output.
+   */
+  level: string;
+  message: string;
 }
 
 //////////
