@@ -29,8 +29,9 @@ type EgressAllowlist struct {
 }
 
 // egressAllowlistFilename is the file under DataDir the Kivali server
-// writes. The proxy sidecar reads the same file via a shared volume
-// and hot-reloads on mtime change.
+// writes. The proxy sidecar reads the copy WriteEgressAllowlist and
+// SyncEgressAllowlistToProxy mirror to the sync path on a shared
+// volume, and hot-reloads it on mtime change.
 const egressAllowlistFilename = "allowed_egress.yaml"
 
 // permanentEgressPatterns are the hosts Kivali itself needs an agent
