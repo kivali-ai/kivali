@@ -292,7 +292,12 @@ func (s *SubagentService) reopenForWait(ctx context.Context, job *subagentJob) s
 	}
 	s.updateJob(j.ID, func(job *subagentJob) {
 		job.reopens++
-		job.tabs = tabsReopened
+		// A browser lost while it was being opened, or before this, is
+		// already marked tabsGone by browserLost: that stands, and the
+		// next pass through the wait ends it.
+		if !job.lostDone {
+			job.tabs = tabsReopened
+		}
 		if job.waits > 0 {
 			job.waits--
 		}
