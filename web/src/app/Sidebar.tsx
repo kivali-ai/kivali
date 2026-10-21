@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { AgentState, AutoRelease, OrgMark, PersonAvatar, Text } from '../ds';
 import { autoReleaseLabel, autoReleaseValue } from '../state/org';
-import { useOrg } from '../state/OrgProvider';
+import { useOrg, usePersonName } from '../state/OrgProvider';
 import { AccountMenu } from './AccountMenu';
 import { DESTINATIONS } from './nav';
 import type { DestinationKey } from './nav';
@@ -46,6 +46,8 @@ export interface SidebarProps {
 /** Desktop only (the stylesheet hides it below 960): the org's mark and name, five destinations, team tree, foot. */
 export function Sidebar({ active, activeAgent, onSignOut }: SidebarProps) {
   const { me, org, setAutoRelease } = useOrg();
+  // The tree's root is you as the org chart and your agents name you; the foot is your account.
+  const rootName = usePersonName();
   const person = me?.user.name ?? '';
 
   return (
@@ -73,7 +75,7 @@ export function Sidebar({ active, activeAgent, onSignOut }: SidebarProps) {
       </nav>
       <hr className="app-hairline" />
       <div className="app-sidebar-tree">
-        <TeamTree tree={org.tree} person={person} activeSlug={activeAgent} />
+        <TeamTree tree={org.tree} person={rootName} activeSlug={activeAgent} />
       </div>
       <div className="app-sidebar-foot">
         <AutoRelease

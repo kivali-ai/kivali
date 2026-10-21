@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { setUnauthenticatedHandler } from '../api/client';
 import { goSetup } from '../screens/setup/fixtures';
-import { busySnapshot, quietSnapshot, releaseOnlySnapshot } from '../state/fixtures';
+import { busySnapshot, goMe, quietSnapshot, releaseOnlySnapshot } from '../state/fixtures';
 import { jsonResponse, renderApp } from './test-utils';
 
 function sidebar() {
@@ -201,6 +201,16 @@ describe('Frame', () => {
     expect(await screen.findByText('The setting was not saved.')).toBeInTheDocument();
     expect(screen.getByText('Try again in a moment.')).toBeInTheDocument();
     expect(group.getByRole('radio', { name: '5m' })).toBeChecked();
+  });
+
+  it('roots the tree at the name your agents call you, and keeps your account name in the foot', async () => {
+    renderApp('/team', busySnapshot, { ...goMe, org: { ...goMe.org, owner_name: 'Boss' } });
+    await ready();
+
+    const tree = within(sidebar().getByRole('group', { name: 'Team' }));
+    expect(tree.getByText('Boss')).toBeInTheDocument();
+    expect(tree.queryByText('Maya')).toBeNull();
+    expect(sidebar().getByText('Maya', { selector: '.app-account-name' })).toBeInTheDocument();
   });
 
   it('names the org at the top of the sidebar, as plain text with no switcher', async () => {
