@@ -344,7 +344,9 @@ func TestHandbookSaveDeployed(t *testing.T) {
 	// Warm up.
 	getWithRetry(t, base+"/api/v1/org/handbook", 30*time.Second)
 
-	put, _ := json.Marshal(map[string]string{"content": "# Integration test handbook\n\nrules."})
+	// The server holds a saved handbook to its four sections, so the
+	// body carries them: a one-line handbook is refused with 400.
+	put, _ := json.Marshal(map[string]string{"content": "# Integration test handbook\n\n## About\n\nrules.\n\n## Values\n\nCare.\n\n## Communicating\n\nPlainly.\n\n## Working together\n\nKindly.\n"})
 	req, err := http.NewRequest(http.MethodPut, base+"/api/v1/org/handbook", strings.NewReader(string(put)))
 	if err != nil {
 		t.Fatalf("build PUT: %v", err)
