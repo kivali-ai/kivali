@@ -65,8 +65,8 @@ func TestSection(t *testing.T) {
 }
 
 func TestPersonalWording(t *testing.T) {
-	got := PersonalWording("understand the business deeply, with business\ncontext.")
-	if got != "understand the owner's life and priorities, with context." {
+	got := PersonalWording("understand the business deeply, and the load-bearing parts of the biz plan /\n  market / product for it.")
+	if got != "understand the owner's life and priorities, and the load-bearing parts of what you know about the owner for it." {
 		t.Errorf("PersonalWording = %q", got)
 	}
 }

@@ -68,10 +68,8 @@ Every role should include:
 
 - **Role name** and a one-sentence elevator pitch.
 - **Responsibilities** — specific, scoped, not vague.
-- **Reports to** — which existing agent (often you or the owner).
 - **Key knowledge domains** — what they should be expert in. Cite
   project files.
-- **Working style** — communication norms, cadence, escalation triggers.
 - **Domain context** — the load-bearing parts of the biz plan /
   market / product for *this* role's work. Embed directly; don't
   defer. Leave out what the handbook's §About already says.
@@ -80,11 +78,23 @@ A role says who the agent is, not what it should do first. Leave out
 tasks and priorities: once it is hired, its work comes as assignments
 from whoever needs it.
 
+A role carries no norms either: how to communicate, when to escalate,
+what cadence to keep. Norms the whole team follows belong in the
+handbook; rules one agent learns for itself belong in its habits.
+
+A role carries no org structure. The `reports_to` field at hire time
+establishes the reporting line; don't repeat it in role prose. Never
+list an agent's direct reports or name the seats under them: a
+manager's role says what they own, not who they have. Org state
+lives in `get_org_chart`, and a stale roster in a role is worse than
+none. Reporting-line changes after hire go through `propose_reorg`,
+never a role update.
+
 Keep roles focused. Not every agent needs the whole biz plan.
 
 ### Role body vs initial agent memory
 
-The `hire` object has two content fields: `role_path` (required)
+`propose_hire` has two content fields: `role_path` (required)
 and `initial_memory_path` (optional). Both are paths to drafts you
 write under `/files/artifacts/private/` first. They persist to
 different files and behave differently over time — split content
@@ -92,9 +102,8 @@ accordingly.
 
 - `role_path` → the agent's `role.md`. **Durable identity.** Never
   rewritten by chat rotations. This is the stable "who you are"
-  message: role, scope, responsibilities, reporting line, working
-  style, key knowledge domains, the domain context the agent always
-  needs.
+  message: role, scope, responsibilities, key knowledge domains, the
+  domain context the agent always needs.
 - `initial_memory_path` → seed for the agent's first agent memory.
   **Accumulated state.** Rewritten every chat rotation. Use this
   when you need the new agent to start with context a predecessor
@@ -156,8 +165,8 @@ running elsewhere (typically as a file attachment):
 
 1. Read the attachment from `/files/attachments/`.
 2. Decide what is durable identity vs accumulated state.
-   - Durable: role, mandate, reporting line, working style, core
-     knowledge, stable domain context.
+   - Durable: role, mandate, core knowledge, stable domain context.
+     The reporting line goes in `reports_to`, not the role.
    - State: what they were in the middle of, what they learned, what
      decisions have been made, open threads, who they are talking to
      about what.
@@ -169,9 +178,9 @@ running elsewhere (typically as a file attachment):
 
 ## Updating an existing agent's role
 
-Roles drift. Responsibilities expand, reporting lines move, business
-context evolves. When a role.md needs to change — yours or another
-agent's — you have two CoS-only tools:
+Roles drift. Responsibilities expand and domain context evolves.
+When a role.md needs to change — yours or another agent's — you have
+two CoS-only tools:
 
 1. `read_agent_role(slug=<target>)` — fetch the current role.md.
    Returns a timestamped snapshot. Falls back to archived agents
@@ -319,5 +328,6 @@ You cannot offboard the owner or yourself.
 - Before hiring, check overlap — reshape or decline if the role dupes
   someone else's scope.
 - Reach for `propose_role_update` only when the change is durable
-  identity (scope, reporting line, working style, knowledge domains).
-  Transient state belongs in the agent's own memory, not their role.
+  identity (scope, responsibilities, knowledge domains). Reporting
+  lines move with `propose_reorg`; norms belong in the handbook or
+  habits; transient state belongs in the agent's own memory.
