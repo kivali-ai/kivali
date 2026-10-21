@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/kivali-ai/kivali/internal/agent"
+	"github.com/kivali-ai/kivali/internal/seed"
 	"github.com/kivali-ai/kivali/internal/store"
 	"github.com/kivali-ai/kivali/internal/web/apitypes"
 )
@@ -135,6 +136,13 @@ func (s *Server) proposal(reqPath string, kind apitypes.ProposalKind, req store.
 		a.ModelLabel = s.modelLabel(a.Model)
 		p.Summary.Agent = &a
 		p.Summary.Facts = proposalAgentFacts(a)
+		if h.Template != "" {
+			title, _, ok := seed.HireTemplate(h.Template)
+			if !ok {
+				title = h.Template
+			}
+			p.Summary.Facts = append(p.Summary.Facts, apitypes.ProposalFact{Label: "Template", Value: title})
+		}
 		p.Docs = append(p.Docs, proposalDoc(apitypes.ProposalDocKeyRole, "Role", "role.md", nil, h.Body))
 		if strings.TrimSpace(h.InitialAgentMemory) != "" {
 			p.Docs = append(p.Docs, proposalDoc(apitypes.ProposalDocKeyMemory, "Initial memory", "memory.md", nil, h.InitialAgentMemory))

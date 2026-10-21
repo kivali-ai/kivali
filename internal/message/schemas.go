@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 
 	"github.com/kivali-ai/kivali/internal/roleicon"
+	"github.com/kivali-ai/kivali/internal/seed"
 	"github.com/kivali-ai/kivali/internal/store"
 )
 
@@ -113,12 +114,20 @@ Draft the role under /files/artifacts/private/ first, then point ` + "`role_path
     "role":                {"type": "string", "description": "human-readable role name (e.g. 'Market Analyst')"},
     "icon":                {"type": "string", "enum": ` + roleIconEnum() + `, "description": ` + roleIconDescription() + `},
     "reports_to":          {"type": "string", "description": "slug of the manager (often 'chief-of-staff' or 'ceo')"},
-    "role_path":           {"type": "string", "description": "/files/ path to the drafted role.md (e.g. '/files/artifacts/private/role-<slug>.md'). Becomes the new agent's role.md verbatim; not rewritten on chat rotation."},
+    "role_path":           {"type": "string", "description": "/files/ path to the drafted role.md (e.g. '/files/artifacts/private/role-<slug>.md'). Becomes the new agent's role.md verbatim; not rewritten on chat rotation. Required unless template is given."},
+    "template":            {"type": "string", "enum": ` + hireTemplateEnum() + `, "description": "Hire from a role Kivali ships. With a template, role_path is not needed: the role is the template's."},
     "initial_memory_path": {"type": "string", "description": "optional /files/ path to a seed agent memory — useful when carrying over accumulated state from a predecessor or handoff."},
     "rationale":           {"type": "string", "description": "` + rationaleDescription + `"}
   },
-  "required": ["title", "slug", "role", "icon", "reports_to", "role_path"]
+  "required": ["title", "slug", "role", "icon", "reports_to"]
 }`),
+}
+
+// hireTemplateEnum is the JSON array of the template names
+// propose_hire's template takes.
+func hireTemplateEnum() string {
+	b, _ := json.Marshal(seed.HireTemplates)
+	return string(b)
 }
 
 // roleIconEnum is the JSON array of role icon names propose_hire's

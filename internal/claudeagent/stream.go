@@ -477,6 +477,15 @@ func allowedToolNames(tools []provider.Tool) []string {
 		// CoS-only on the MCP side; harmless to whitelist on every
 		// agent because the MCP server itself refuses non-CoS callers.
 		"read_agent_role",
+		// The Integrations engineer's tools: registered only for the
+		// agent hired from its template, and refused by core for any
+		// other, so whitelisting them on every agent hands none of them
+		// to an agent that is not the engineer.
+		"integration_validate",
+		"integration_publish",
+		"integration_list",
+		"integration_versions",
+		"integration_logs",
 	)
 	for i, n := range names {
 		names[i] = cliToolName(n)

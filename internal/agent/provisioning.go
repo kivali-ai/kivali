@@ -9,6 +9,7 @@ import (
 	"github.com/kivali-ai/kivali/internal/handbook"
 	"github.com/kivali-ai/kivali/internal/message"
 	"github.com/kivali-ai/kivali/internal/roleicon"
+	"github.com/kivali-ai/kivali/internal/seed"
 	"github.com/kivali-ai/kivali/internal/store"
 )
 
@@ -51,6 +52,15 @@ func (r *Runtime) ApplyHire(h store.Hire) (warn string, err error) {
 	if h.Body == "" {
 		return "", fmt.Errorf("hire: body (role content) is required")
 	}
+	// A template is a role Kivali ships; the Integrations engineer's is
+	// the one that makes the agent the engineer. A name Kivali does not
+	// ship is refused rather than hired as an ordinary agent, since the
+	// owner approved a role that would then not be what arrives.
+	if h.Template != "" {
+		if _, _, ok := seed.HireTemplate(h.Template); !ok {
+			return "", fmt.Errorf("hire: template %q is not a role Kivali ships", h.Template)
+		}
+	}
 	// A hire without an icon applies as an agent drawn with initials.
 	if h.Icon != "" {
 		if err := roleicon.Check(h.Icon); err != nil {
@@ -61,11 +71,12 @@ func (r *Runtime) ApplyHire(h store.Hire) (warn string, err error) {
 		return "", fmt.Errorf("hire: agent %q already exists", h.Slug)
 	}
 	a := store.Agent{
-		Slug:      h.Slug,
-		Role:      h.Role,
-		Icon:      h.Icon,
-		ReportsTo: h.ReportsTo,
-		Model:     r.Defaults.AgentModel,
+		Slug:                 h.Slug,
+		Role:                 h.Role,
+		Icon:                 h.Icon,
+		ReportsTo:            h.ReportsTo,
+		Model:                r.Defaults.AgentModel,
+		IntegrationsEngineer: h.Template == seed.IntegrationsEngineerTemplate,
 	}
 	if cerr := r.Store.CreateAgent(a, h.Body); cerr != nil {
 		return "", fmt.Errorf("hire %s: create: %w", h.Slug, cerr)

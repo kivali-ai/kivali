@@ -1,6 +1,6 @@
 # Integrations
 
-An integration is an external service your agents can act on, such as a CRM, a blog or a ticket tracker. Each one is installed from a bundle, connected with a token you paste, and given to agents one at a time, each with its own access. This page covers installing one, connecting and testing it, giving agents access, what an agent then sees, the record of their calls, its log, and switching it off or removing it.
+An integration is an external service your agents can act on, such as a CRM, a blog or a ticket tracker. Each one is installed from a bundle, connected with a token you paste, and given to agents one at a time, each with its own access. This page covers having one built, installing one, connecting and testing it, giving agents access, what an agent then sees, the record of their calls, its log, and switching it off or removing it.
 
 Integrations are under **Org**, **Integrations**.
 
@@ -9,6 +9,18 @@ Integrations are under **Org**, **Integrations**.
 An integration gives agents **actions**: things they can do in the service, such as "create a blog post" or "list contacts". Its **connection** is how it signs in to the service: a token or key you copy from the service's settings, and sometimes a field or two more, such as an account name. Its **access** is what one agent may do with it, chosen on a form the integration describes: which blogs, which projects, whether it may publish.
 
 An integration is installed one **version** at a time. Nothing in a version runs until you approve it. Once approved and switched on, it runs on its own, apart from Kivali and from your agents, and reaches only the hosts its install screen listed.
+
+## Have an integration built
+
+You do not need a bundle from anyone else: an agent on your team can build one.
+
+1. Ask your Chief of Staff to hire the **Integrations engineer**, the one role Kivali ships. Its **Hire** proposal shows the role in full and says **Template: Integrations engineer**. Approve it as you would any hire.
+2. Ask the engineer for the integration: the service, what your agents should be able to do in it, and what you want to limit agent by agent, such as which blogs an agent may write in or whether it may publish.
+3. The engineer reads the service's documentation, writes the integration, and tests it against a stand-in for the service it writes itself, never against your account: it never sees your connection's secrets. Before it publishes, it checks the bundle by the rules an install checks it by, and starts it with no network to see that it answers.
+4. When it publishes a version, a request arrives in **Needs you**: **Install** and the integration's name and version, with the engineer's notes on what it does, every host it reaches, each secret it asks for and anything it can change or delete. **Review** opens the version's [install screen](#install-an-integration), which shows the notes beside everything approving lets in. Approve or reject it there or in Needs you; the engineer hears your answer in its chat.
+5. [Connect it](#connect-it), choose **Test connection**, and [give agents access](#give-agents-access). Tell the engineer what the test said. If it failed, the engineer reads the integration's [log](#its-log) and publishes a fixed version, which reaches you the same way.
+
+The engineer uses an integration only if you give it access, like any agent. Its own commands reach the hosts your team allows and the ones you add on its **Security** view, so if it needs to download a package, it asks you for that host.
 
 ## Install an integration
 

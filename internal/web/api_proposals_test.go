@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/kivali-ai/kivali/internal/agent"
+	"github.com/kivali-ai/kivali/internal/seed"
 	"github.com/kivali-ai/kivali/internal/store"
 	"github.com/kivali-ai/kivali/internal/web/apitypes"
 )
@@ -131,6 +132,30 @@ func TestAPIProposalHire(t *testing.T) {
 	// A new document has no before on the wire at all.
 	if rr := proposalDo(t, srv, "/api/v1/proposals/"+path); strings.Contains(rr.Body.String(), `"before"`) {
 		t.Errorf("hire docs carry a before: %s", rr.Body.String())
+	}
+}
+
+// Why this test exists: a hire from a template carries Kivali's role,
+// not one the Chief of Staff wrote, and the owner should know that
+// before approving; the page says so as a fact and still shows the
+// role in full, as for any hire. Without the fact, the owner would read
+// the engineer's role as the Chief of Staff's draft.
+func TestAPIProposalHireFromATemplate(t *testing.T) {
+	srv, _ := newTurnServer(t)
+	proposalTeam(t, srv)
+	path := seedProposal(t, srv, store.Message{
+		Title: "Hire: Integrations engineer",
+		Hire: &store.Hire{
+			Slug: "integrations-engineer", Role: "Integrations engineer", ReportsTo: "chief-of-staff",
+			Body: seed.IntegrationsEngineerRole, Template: seed.IntegrationsEngineerTemplate,
+		},
+	})
+	p := getProposal(t, srv, path)
+	if n := len(p.Summary.Facts); n == 0 || p.Summary.Facts[n-1] != (apitypes.ProposalFact{Label: "Template", Value: "Integrations engineer"}) {
+		t.Errorf("facts = %+v", p.Summary.Facts)
+	}
+	if len(p.Docs) != 1 || p.Docs[0].Key != apitypes.ProposalDocKeyRole || !strings.HasPrefix(p.Docs[0].After, "# Integrations engineer\n") {
+		t.Errorf("docs = %+v", p.Docs)
 	}
 }
 

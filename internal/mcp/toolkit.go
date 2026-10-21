@@ -20,7 +20,8 @@ import (
 //   - "full-agent" — what every Kivali agent gets: filesystem,
 //     artifact_publish / artifact_unpublish, agent_memory, state
 //     lookups, search, project file listing, publish_*, share_file,
-//     run_shell, plus the `subagent` tool.
+//     run_shell, plus the `subagent` tool, and the integration_* tools
+//     for the agent hired as the Integrations engineer.
 //   - "subagent" — the narrow surface a subagent gets: filesystem
 //     (scoped to the subagent's own root), artifact_publish /
 //     artifact_unpublish (into its parent's area), list_skills, the two
@@ -62,6 +63,17 @@ type FullAgentDeps struct {
 	// Provider supplies the subagent tool schema's models and efforts;
 	// required when Subagent is set.
 	Provider provider.Provider
+	// IntegrationsEngineer registers the integration_* tools: the agent
+	// was hired from the Integrations engineer's template, as core's
+	// profile route says when this server starts. Core checks it again
+	// on every call of one.
+	IntegrationsEngineer bool
+	// SmokeShell is the shell the integration_* tools start a bundle's
+	// server in for its smoke test: the agent-shell sidecar, where the
+	// pod's network policy leaves a server with no proxy variables no
+	// network at all. Nil (no sidecar) skips the smoke test, and its
+	// findings say so.
+	SmokeShell agent.ShellExecutor
 }
 
 // fullAgentToolkitDeps is the interface-bag the toolkit composer
@@ -84,6 +96,12 @@ type fullAgentToolkitDeps struct {
 	ShellExec agent.ShellExecutor
 	Subagent  SubagentBackend
 	Provider  provider.Provider
+
+	// IntegrationEngineer relays the integration_* tools; they are
+	// registered only when IntegrationsEngineer is set.
+	IntegrationsEngineer bool
+	IntegrationEngineer  IntegrationEngineerDispatcher
+	SmokeShell           agent.ShellExecutor
 }
 
 // FullAgentToolkit returns the full-agent tool bundle wired entirely
@@ -111,6 +129,10 @@ func FullAgentToolkit(deps FullAgentDeps) Toolkit {
 		ShellExec:      deps.ShellExec,
 		Subagent:       deps.Subagent,
 		Provider:       deps.Provider,
+
+		IntegrationsEngineer: deps.IntegrationsEngineer,
+		IntegrationEngineer:  c,
+		SmokeShell:           deps.SmokeShell,
 	})
 }
 
@@ -154,6 +176,9 @@ func composeFullAgentToolkit(d fullAgentToolkitDeps) Toolkit {
 	}
 	if t := ShareFileTool(d.ShareFile); t != nil {
 		tools = append(tools, *t)
+	}
+	if d.IntegrationsEngineer {
+		tools = append(tools, IntegrationEngineerTools(d.IntegrationEngineer, d.SmokeShell, d.Slug)...)
 	}
 	if d.Subagent != nil {
 		cfg := SubagentToolConfig{Backend: d.Subagent, Parent: d.Slug, Provider: d.Provider}

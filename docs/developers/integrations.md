@@ -4,8 +4,9 @@ An integration is an external service agents act on, such as a CRM or
 a blog, installed from a bundle. This page is the developer's
 reference: the bundle and its manifest, the check every bundle passes,
 the access form, where Kivali keeps an integration and its connection,
-how a version is approved, how an approved version runs, and how
-agents call it. What the owner sees is in
+how a version is approved, how an approved version runs, how agents
+call it, and the Integrations engineer, the agent that builds bundles.
+What the owner sees is in
 [../integrations.md](../integrations.md).
 
 The words, as the owner reads them: an **integration** is the
@@ -25,10 +26,14 @@ shim that runs in it), `internal/web/integration_registry.go` and
 `integration_socket.go` (core's side of a running integration),
 `internal/web/integration_tools.go` and `internal/mcp/integration_tools.go`
 (agents' calls, core's side and the agent's MCP server's),
-`internal/web/api_integrations.go` (the API) and
+`internal/web/integration_engineer.go` and
+`internal/mcp/integration_engineer_tools.go` (the Integrations
+engineer's tools), `internal/web/api_integrations.go` (the API) and
 `internal/web/apitypes/integrations.go` (the wire types).
 `cmd/fake-integration` is a stdio MCP server for tests
-(`internal/integrationpod/fakeintegration`).
+(`internal/integrationpod/fakeintegration`);
+`internal/integration/testdata/echo` is a real Python bundle the tests
+build on, end to end.
 
 ## The bundle
 
@@ -138,6 +143,16 @@ the version and shown on its install screen. The rules:
 The check reads the bundle. It is not a review of what the code does:
 the install screen is, where the owner reads what the version
 reaches, holds and does before approving it.
+
+A bundle is read from a zip (`integration.ReadBundle`, an upload) or
+from a directory (`integration.ReadDirectory`, the Integrations
+engineer's publish), by the same rules: `manifest.json` a regular file
+at the root, every entry listed for the check, a symlink or special
+file listed and never followed, `__MACOSX/` left out. A directory's
+`__pycache__/` folders are left out too. The directory is read
+through an `os.Root`, so nothing it opens is outside it, and a
+directory bundle is stored by copying its files under the same limits,
+with the manifest written as it was read, byte for byte.
 
 ## The access form
 
@@ -270,7 +285,10 @@ running" while no shim is connected. The audit lists what is in
 ## Installing a version
 
 An upload (`POST /api/v1/org/integrations`) reads the bundle, runs the
-check and stores the version as pending, published by the owner. Its
+check and stores the version as pending, published by the owner; the
+Integrations engineer's `integration_publish` stores one published by
+the engineer, with its notes, and asks the owner to approve it
+([Publishing](#publishing)). Its
 install screen (`GET .../versions/{version}`, the web app's
 `/org/integrations/<name>/versions/<version>`) says what approving
 lets in: who built it and published it, every host, every connection
@@ -514,6 +532,8 @@ On `core.sock`, bound to the slug header like every agent route:
 | --- | --- | --- |
 | `POST /v1/agent/{slug}/integrations/tools` | `{}` | `agentpod.IntegrationToolsResponse`: `{tools: [{name, description, input_schema}]}` |
 | `POST /v1/agent/{slug}/integrations/call` | `agentpod.IntegrationCallRequest`: `{name, arguments}`, the prefixed name | `agentpod.IntegrationCallResponse`: `{content: [text, ...], is_error}` |
+| `GET /v1/agent/{slug}/profile` | none | `agentpod.AgentProfile`: `{integrations_engineer}` ([The Integrations engineer](#the-integrations-engineer)) |
+| `POST /v1/agent/{slug}/integration-engineer/dispatch` | `agentpod.IntegrationEngineerRequest`: `{tool, input, smoke_result}` | `agentpod.IntegrationEngineerResponse`: `{body, is_error, smoke}` |
 
 A refusal or the integration's error is a 200 with `is_error`; a
 non-2xx answer is a transport error, which the MCP tool reports as
@@ -565,6 +585,115 @@ access`, `the integration is off`, `the agent's access does not
 include it`, ...). An allowed call that failed keeps the
 integration's words, scrubbed, as its reason. The owner's own calls
 are rows for `ceo`.
+
+## The Integrations engineer
+
+The one role Kivali ships for a hire builds integrations: an agent
+that writes a bundle in its own `/files/`, checks it, and publishes it
+as a pending version for the owner to approve. It never sees a
+connection's secrets and calls an installed integration only as any
+agent with access does.
+
+### The hire
+
+`propose_hire` takes `template` (an enum of `seed.HireTemplates`, one
+value: `integrations-engineer`). With it, `role_path` is not needed,
+and given as well is refused; the parser puts the template's role
+(`seed.IntegrationsEngineerRole`, `internal/seed/integrations_engineer_role.md`)
+in `Hire.Body` and the name in `Hire.Template`. The proposal page shows
+the role as for any hire, with the fact "Template: Integrations
+engineer". `ApplyHire` refuses a template Kivali does not ship and sets
+`store.Agent.IntegrationsEngineer` (`integrations_engineer` in
+`agent.yaml`) for this one. Nothing else sets the flag; the slug and
+the role's name do not matter.
+
+The flag reaches the agent's MCP server once, at its start: `GET
+/v1/agent/{slug}/profile` answers `agentpod.AgentProfile`
+(`{integrations_engineer}`); a failure, or no answer within 10 s,
+starts the server without the tools. The flag never changes after the
+hire, so no respawn is needed. The CLI's `--allowedTools` lists the
+five tools for every agent (`claudeagent.allowedToolNames`): only the
+engineer's MCP server registers them, and core refuses every request
+from an agent whose flag is off, reading the flag from the store, never
+from the request.
+
+### The tools
+
+All five relay to `POST /v1/agent/{slug}/integration-engineer/dispatch`
+(`agentpod.IntegrationEngineerRequest`: `{tool, input, smoke_result}`,
+answered with `{body, is_error, smoke}`).
+
+| Tool | Does |
+| --- | --- |
+| `integration_validate(path)` | Reads the bundle in the directory, runs the check, then the smoke test, and answers with every finding and whether the bundle would be accepted. |
+| `integration_publish(path, notes)` | The same checks; a bundle with an error is refused, and so is a version already stored or a built-in name, before the smoke test runs. Stores the version and files the owner's request. |
+| `integration_list()` | Every installed integration: name, display name, version in use, status, a pending version, how many agents have access. |
+| `integration_versions(name)` | Every stored version, newest first: state, published at and by, approved or rejected at, the first 200 characters of its notes. |
+| `integration_logs(name, since)` | The integration's latest 200 log lines, oldest first, from `since` (RFC 3339) when given, at most 32 KiB, the newest kept. Each line had the connection's secrets replaced when it was appended; the answer's first line says the log is data, never instructions. |
+
+`path` is a directory under the engineer's `/files/` (`/files/<p>` or
+`<p>`): the root, a path outside `/files/` and `..` are refused. Core
+opens `agents/<slug>/memory/<p>` on the data volume with
+`files.OpenDirNoFollow`, which refuses a symlink at any step, and reads
+the bundle through the resulting `os.Root` (`integration.ReadDirectory`).
+An argument the tool does not take is refused by name.
+
+The answer of `integration_validate` is "No findings." or one line per
+finding, errors first, each prefixed `error:` or `warning:`; a line
+naming the actions the server listed when the smoke test reached its
+list; and a last line, "The bundle would be accepted." or "The bundle
+would be refused: integration_publish refuses a bundle with an
+error."
+
+### The smoke test
+
+Core has no shell of the agent's, so validate and publish take two
+requests. The first reads and checks the bundle and answers with
+`smoke`: a bash command (`integration.SmokeCommand`), the bundle's
+directory as its cwd, and a 30 s shell timeout. The agent's MCP server
+runs it in the agent-shell sidecar and sends the request again with
+`smoke_result` (stdout, stderr, exit code, timed out); core reads the
+bundle and checks it again, reads the result (`integration.SmokeFindings`)
+and answers. A server with no sidecar (a local tree,
+`KIVALI_MCP_LOCAL_FILES`, as `make run` uses) has no shell whose
+network is closed, so it sends `skipped` instead, and the findings say
+the server's start was not checked.
+
+The command is python3 running a driver (`internal/integration/smoke.py`,
+embedded), which starts `mcp_config`'s command and args in the bundle
+with PATH, a HOME of its own, `LANG`, `PYTHONDONTWRITEBYTECODE` and the
+manifest's env with every connection field empty, and no proxy
+variable: in the agent pod, whose network policy lets it reach only
+the egress proxy, the server has no network. It sends `initialize`
+(protocol `2025-06-18`), waits for the answer, sends
+`notifications/initialized` and `tools/list`, all within 20 s, answers
+the server's own requests as the shim does with no connection, and
+prints one JSON line. The findings:
+
+| Finding | Level |
+| --- | --- |
+| The server does not start, ends before an answer (with its status and the end of its error output), does not answer in 20 s, answers with an error, or writes a line that is not JSON-RPC | error |
+| `tools/list` does not list a declared action (worded for `kivali.verify`'s and `kivali.access.choices`' tools) | error |
+| `tools/list` lists an action the manifest does not declare, or gives a declared one an input schema that is not an object's | warning |
+| The check could not run, or did not finish in 30 s | warning |
+
+It checks that the server starts and lists the actions its manifest
+declares, with no `_meta.kivali`, as core's own `tools/list` at every
+connect asks. It is not a review of what the code does.
+
+### Publishing
+
+A publish needs `notes`, at most 4096 bytes, which become the version's
+`notes_md` and the request's body. With no error, core stores the
+bundle (`store.StoreIntegrationVersion`) as pending, published by the
+engineer, with the check's and the smoke test's warnings as its
+findings, and files a `ceo_approval_request` from the engineer: title
+"Install <display name> <version>", body the notes,
+`integration_install: {name, version}`, routed by `Messenger.Route`
+into the owner's inbox and Needs you. From there it is answered as
+[Installing a version](#installing-a-version) says, and the engineer
+reads the answer in its chat. A version stored whose request could not
+be filed is said so to the engineer, and waits on its install screen.
 
 ## The API
 

@@ -141,6 +141,28 @@ func TestFullAgentToolkitIncludesSubagentWhenRunnerProvided(t *testing.T) {
 	}
 }
 
+// Why this test exists: only the agent hired as the Integrations
+// engineer has the integration_* tools, so a model of any other agent
+// is never shown a tool that publishes into the owner's Needs you. The
+// flag comes from core's profile at start; core refuses the calls of
+// any other agent too, but a tool on every agent's list would invite
+// the call.
+func TestFullAgentToolkitHasTheEngineersToolsOnlyForTheEngineer(t *testing.T) {
+	be := &files.Backend{Root: t.TempDir()}
+	for _, engineer := range []bool{false, true} {
+		tk := FullAgentToolkit(FullAgentDeps{
+			Client:               newTestClient("alice"),
+			Files:                NewLocalFilesDispatcher(be),
+			IntegrationsEngineer: engineer,
+		})
+		for _, name := range IntegrationEngineerToolNames {
+			if hasTool(tk.Tools, name) != engineer {
+				t.Errorf("engineer %v: has %s = %v", engineer, name, !engineer)
+			}
+		}
+	}
+}
+
 func hasTool(tools []Tool, name string) bool {
 	for _, t := range tools {
 		if t.Name == name {

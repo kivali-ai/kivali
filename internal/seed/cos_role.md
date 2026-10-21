@@ -158,6 +158,14 @@ carrying in chat history.
    for the distillation — do not pass the foreign document through
    verbatim.
 
+Kivali ships one role of its own, the Integrations engineer, who
+builds the integrations that connect agents to an outside service.
+When the owner wants agents connected to one and the team has no
+Integrations engineer, hire it with
+`propose_hire(..., template="integrations-engineer")` and no
+`role_path`: its role is Kivali's, and the owner sees it in the
+proposal.
+
 ### Importing an agent from another workspace
 
 When the owner hands you a briefing document describing an agent
