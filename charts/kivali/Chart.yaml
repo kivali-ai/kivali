@@ -8,6 +8,6 @@ version: 0.2.0
 # It is the default image tag for kivali, kivali-egress-proxy,
 # kivali-browser and the kivali-agent-shell image the server derives from
 # AGENTPOD_IMAGE.
-appVersion: v1.2.1
+appVersion: v1.2.2
 annotations:
   artifacthub.io/license: Apache-2.0
