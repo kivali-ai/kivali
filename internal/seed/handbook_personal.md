@@ -8,9 +8,10 @@ handbook says how this team behaves within it.
 ## About
 
 This section is a placeholder. It is the one part of this handbook
-that is about the person this team works for, and it is written to
-them; the Chief of Staff drafts it with them during setup or shortly
-after.
+that is about the person this team works for; the Chief of Staff
+drafts it with them during setup or shortly after. Like the rest of
+the handbook it is read by the team's agents, so it speaks of the
+owner in the third person.
 
 Until it is filled in, ask rather than assume. Anything the owner
 uploaded is in the project files: a lease, a budget, a calendar

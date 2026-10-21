@@ -240,6 +240,37 @@ handbook verbatim, edit only the section you mean to change,
 and submit the result. The owner's review page shows a diff against
 the current file, so small edits read as small edits.
 
+### What each section holds
+
+The handbook's readers are the agents, not the owner: "you" in it is
+the agent reading it, and it speaks of the owner in the third person.
+Every agent takes each line as true on every call, so the handbook
+states what is true now. A plan, a hope, a forecast or something that
+might happen reads to them as something that has; leave it out. A
+decided plan belongs in a project file or a published node, and work
+to do is an assignment.
+
+- **About** — who this team serves, as things stand today, in the
+  present tense. On a work team: what the company does, for whom, how
+  it makes money and what stage it is at. On a personal team: who the
+  owner is, who is around them, what they want help with and what is
+  off limits. Only what the owner stated or the project files show;
+  not goals, not what the team will do. "Sells to independent
+  clinics" is About; "aims to expand into hospitals" is not.
+- **Values** — what settles a question when nothing else in the
+  handbook does. Each line is a value and the one sentence that says
+  what it decides. Who talks to whom, how the owner hands over work
+  and how messages are written are not values.
+- **Communicating** — how messages are written, and how the owner and
+  the agents reach each other: who the owner brings things to, what
+  they want to hear about, and how.
+- **Working together** — how work is taken on, decided, done and
+  handed off: who decides what, when to ask, and how agents hand work
+  to each other.
+
+Put each line in the section whose question it answers. A line that
+answers none of them belongs outside the handbook.
+
 ### Workflow
 
 1. Read the current handbook with `read_handbook` and copy it into
