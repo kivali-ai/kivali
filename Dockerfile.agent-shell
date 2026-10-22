@@ -6,9 +6,18 @@
 # calls dispatched by the agent runtime.
 #
 # The image is a "real Debian" — the toolkit agents reach for via
-# run_shell lives here, not in the slim Kivali runtime image. Same
-# uid:gid (65532:65532) as the agent container so writes under
-# /files/ share ownership across containers.
+# run_shell lives here, not in the slim Kivali runtime image.
+#
+# Users. Commands run as kivali, 65532:65532, the agent container's
+# uid:gid, so files under /files/ have one owner across containers. The
+# daemon itself runs as agent-shell, 65533, in group kivali (65532),
+# with filesystem uid 65532: it reads and writes files as 65532, the
+# socket it listens on is 65533:65532 mode 0660, and a command (65532)
+# cannot trace, signal or read the /proc of the daemon (65533) that
+# runs it. The pod starts the container as root and the daemon drops
+# itself to agent-shell, keeping CAP_SETUID, CAP_SETGID and CAP_KILL
+# alone, to start each command as kivali and kill one that runs out of
+# time (internal/agentshell/privilege.go).
 #
 # Persistence model. Each shell call is a fresh bash subprocess;
 # state survives across calls + chat rotations + pod restarts via
@@ -19,18 +28,19 @@
 # parallel processes — fan-out from subagents Just Works.
 #
 # Software at runtime. The owner's software lists (org-wide and per
-# agent) reach the container as the daemon's --install flag, and then
-# the container starts as root (the pod sets runAsUser 0; see
-# internal/agentpod/manifest.go). The daemon runs apt-get in a root
-# child process (`agent-shell install-software`), drops itself to
-# 65532:65532 before it creates its socket or runs any agent command,
-# and makes commands wait until the install finishes. The child kills
-# anything apt-get left running before it reports, and policy-rc.d
-# (below) keeps maintainer scripts from starting services. Without
-# --install the container runs as 65532 from the start (USER below).
+# agent) reach the container as the daemon's --install flag; the pod
+# then gives the container the runtime's default capabilities in place
+# of the three alone (internal/agentpod/manifest.go). The daemon runs
+# apt-get in a root child process (`agent-shell install-software`),
+# drops itself to agent-shell before it creates its socket or runs any
+# agent command, and makes commands wait until the install finishes.
+# The child kills anything apt-get left running before it reports, and
+# policy-rc.d (below) keeps maintainer scripts from starting services.
 # Agents never have root: apt-get does not work from run_shell, and
 # Python packages install with `pip install --user <pkg>` (lands under
-# $HOME/.local).
+# $HOME/.local). USER below is for a container started without the
+# pod's runAsUser 0: the daemon then runs as kivali and runs commands
+# as itself.
 #
 # The default toolkit is small and company-agnostic. Anything domain
 # specific is the owner's to add at runtime as above, or the operator's
@@ -109,6 +119,7 @@ RUN set -eu; \
     rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*; \
     groupadd -r -g 65532 kivali; \
     useradd -r -u 65532 -g 65532 -s /bin/bash kivali; \
+    useradd -r -u 65533 -g 65532 -s /usr/sbin/nologin agent-shell; \
     mkdir -p /scratch /files; \
     chown 65532:65532 /scratch /files
 

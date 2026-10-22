@@ -78,7 +78,7 @@ server. It owns every durable byte and is the only writer to `/data`
   socket. Core creates each subdirectory (mode 0700) when it starts
   listening; a pod that found its subdirectory missing would only wedge
   on a socket that is not there, so each mounts with `type: Directory`.
-  All sockets are mode 0600; file permissions
+  All of core's sockets are mode 0600; file permissions
   and a matching UID are the authentication. Every agent-scoped route
   is `/v1/agent/{slug}/...` and must carry `X-Kivali-Agent: <slug>`;
   the server rejects a mismatch, and overrides any `from`/parent in a
@@ -131,7 +131,7 @@ lost.
 | --- | --- | --- |
 | `prepare-scratch` (init) | `kivali` | `kivali prepare-scratch`: mounts the whole per-agent scratch PVC and creates its two halves, owned by the pod's user |
 | `agent` | `kivali` | `kivali agent --slug=<slug> --uds=<dir>/core/core.sock` (`agent_cmd.go`, `internal/agentpod/runtime.go`): holds the events stream to core, drives the warm `claude` CLI and its subagent CLIs. Mounts its half of scratch at `/scratch`, the UDS dir's `core/` subdirectory, the agent-shell socket dir, and from the data PVC only the provider home (`/data/claude-home`). The only container that sees the Claude sign-in. When the CLI's sign-in changes (what `claude auth status` reports, or `settings.json`; re-checked when `.credentials.json` or `settings.json` changes), the runner registry respawns the warm CLI with `--resume` at the agent's next turn (`internal/claudeagent/signin.go`) |
-| `agent-shell` | `kivali-agent-shell` | `cmd/agent-shell`, `internal/agentshell`: an HTTP-over-UDS daemon on `/run/kivali-agent-shell/sock` (an emptyDir shared with `agent`, which also holds the shell's egress proxy credential, `proxy-credential`; see the egress proxy below) that runs `run_shell` and every `file_*` tool. The only container that mounts the agent's `/files/`, with `HOME=/scratch/home` on its own half of scratch. Serves as 65532; with software to install it starts as root, installs it in a root child and drops before it serves ([files-and-publishing.md](files-and-publishing.md#software-in-the-agent-shell)) |
+| `agent-shell` | `kivali-agent-shell` | `cmd/agent-shell`, `internal/agentshell`: an HTTP-over-UDS daemon on `/run/kivali-agent-shell/sock` (an emptyDir shared with `agent`, which also holds the shell's egress proxy credential, `proxy-credential`; see the egress proxy below) that runs `run_shell` and every `file_*` tool. The only container that mounts the agent's `/files/`, with `HOME=/scratch/home` on its own half of scratch. Starts as root, installs any software in a root child, and drops before it serves to its own uid 65533 (gid and filesystem uid 65532, keeping CAP_SETUID, CAP_SETGID and CAP_KILL); every command runs as 65532 ([the daemon's user](#the-agent-shell-daemons-user), [files-and-publishing.md](files-and-publishing.md#software-in-the-agent-shell)) |
 
 The agent-shell's `/files/` is the agent's tree on the data PVC
 (`agents/<slug>/memory/`), with the core-managed subtrees
@@ -144,6 +144,35 @@ and `file_view` see the same bytes at the same paths, and nothing an
 agent can write sits next to the Claude credentials.
 [files-and-publishing.md](files-and-publishing.md) has the layout and
 the publish path.
+
+#### The agent-shell daemon's user
+
+The agent-shell container starts as root and the daemon drops itself
+to a user of its own before it serves: uid 65533 (`agent-shell` in the
+image), gid 65532, no supplementary groups, and filesystem uid 65532.
+Every command it runs (`bash -c`, and `unshare -mUr` for a subagent's
+overlay) starts as 65532:65532 (`kivali`, the agent container's user)
+with no groups and, after exec, no capabilities. Because the daemon's
+filesystem uid is 65532, everything it reads and writes (the `/files/`
+tree for the `file_*` tools, `$HOME`, `proxy-credential`) it does as
+65532, and what it creates is 65532's, exactly as a command's would be.
+
+The split keeps the daemon's memory, environment and life out of a
+command's reach: a process may trace another, read its `/proc` entries
+or signal it only as the same uid, and a command is not the daemon's
+uid. It does not narrow the socket: `/run/kivali-agent-shell/sock` is
+65533:65532, mode 0660, so uid 65532 reaches it from either container,
+the agent container's `kivali mcp` processes and the daemon's own
+commands alike.
+
+The daemon keeps three capabilities, as its permitted, effective and
+bounding sets (`0xe0`), and nothing inheritable or ambient: CAP_SETUID,
+to start each command as 65532 and to set its own filesystem uid;
+CAP_SETGID, for a command's gid and empty groups; and CAP_KILL, because
+a command that runs out of time is killed with SIGKILL, which the kernel
+refuses from uid 65533 to a 65532 process otherwise. The drop sequence
+and what is verified are in
+[files-and-publishing.md](files-and-publishing.md#software-in-the-agent-shell).
 
 **Reconcile.** The pod manifest carries a `kivali-spec-hash` label, a
 hash of the rendered spec. `Provision` leaves a pod whose label matches
@@ -359,7 +388,8 @@ agent-shell container never has it. The shell's secret lives in the
 runtime's memory; in `proxy-credential` (`agentshell.ProxyCredentialFile`),
 a 0600 file holding the credentialed proxy URL, which the runtime
 writes once core has accepted the hash into the socket directory, the
-pod-local emptyDir the two containers share as the same user; and in the
+pod-local emptyDir the two containers share, where the agent-shell
+daemon reads it as 65532, its filesystem uid; and in the
 proxy variables of each command the agent-shell daemon runs, since the
 daemon reads the file for every command (before it exists, a command
 gets the bare proxy URL). It grants only the shell's allowance: the

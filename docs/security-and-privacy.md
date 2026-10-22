@@ -31,6 +31,7 @@ Kivali's own housekeeping (summaries of project files and past chats) is model c
 Each agent runs in its own sandbox: its own pod with its own storage, separate from Kivali's server and from every other agent.
 
 - **Its shell and file tools** run in a dedicated container. They see the agent's workspace, the project files, skills, its own past chats, and everything the team has published, and nothing of the server or of other agents' workspaces. Project files, skills and published files are read-only there; only Kivali itself publishes an agent's files, when the agent asks.
+- **The shell's own process**, the one that runs an agent's commands, has a user of its own, apart from the user the commands run as. A command cannot read that process's memory or environment, or stop it.
 - **No way in.** An agent's pod runs no service other pods or computers can connect to, and has no access to the Kubernetes API. It reaches Kivali's server only through a private socket, and every action it takes goes through the server's checks.
 - **Network.** An agent's pod can reach only the egress proxy, by its address. It has no DNS and no route to anything else, so a command that ignores the proxy goes nowhere. The server's web port refuses connections from any pod, and every request to it needs a signed-in session in any case.
 - **Subagents** run inside their agent's sandbox, under the same limits. A web subagent's browser runs in a pod of its own, described under Network access.

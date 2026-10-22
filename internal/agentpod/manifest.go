@@ -232,19 +232,28 @@ func (c ProvisionerConfig) podManifest(slug string) map[string]any {
 // agentShellSecurityContext is the agent-shell container's
 // securityContext. allowPrivilegeEscalation is always false: nothing in
 // the container may gain privileges through a setuid binary or file
-// capabilities (it only ever drops them: the daemon to its own uid,
-// apt-get to _apt, `unshare -mUr` into a user namespace it owns).
+// capabilities (it only ever drops them: the daemon to its own user,
+// each command to the commands' user, apt-get to _apt, `unshare -mUr`
+// into a user namespace it owns).
 //
-// With software to install the container starts as root (uid and gid
-// 0, overriding the image's USER) so the daemon can run apt-get in a
-// root child before it drops to the image's uid for good; see
-// cmd/agent-shell. Without, it runs as the image's unprivileged user
-// from the start.
+// The container always starts as root (uid and gid 0, overriding the
+// image's USER), and the daemon drops itself to the image's agent-shell
+// user, 65533, keeping CAP_SETUID, CAP_SETGID and CAP_KILL to start
+// commands as 65532 and to kill one that runs out of time; see
+// cmd/agent-shell. Starting as root is what hands it those
+// capabilities: a container that starts as another user gets them only
+// from file capabilities, which no_new_privs turns off. Without software
+// to install the container has those three and nothing else. With
+// software it keeps the runtime's default set, which apt-get and dpkg
+// need in the root child that installs it, and the daemon drops every
+// other capability from its bounding set before it serves.
 func agentShellSecurityContext(install bool) map[string]any {
-	sc := map[string]any{"allowPrivilegeEscalation": false}
-	if install {
-		sc["runAsUser"] = 0
-		sc["runAsGroup"] = 0
+	sc := map[string]any{"allowPrivilegeEscalation": false, "runAsUser": 0, "runAsGroup": 0}
+	if !install {
+		sc["capabilities"] = map[string]any{
+			"drop": []string{"ALL"},
+			"add":  []string{"SETUID", "SETGID", "KILL"},
+		}
 	}
 	return sc
 }
