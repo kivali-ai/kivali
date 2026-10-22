@@ -1189,6 +1189,18 @@ describe('Integration install screen', () => {
   const PATH = '/org/integrations/hubspot/versions/1.3.0';
   const API = '/api/v1/org/integrations/hubspot/versions/1.3.0';
 
+  // Guards the scopes a sign-in connection asks the service for, under the connection's fields: the owner approves
+  // what the integration may do at the service before any sign-in. A version that names none (a token connection, or
+  // GitHub's empty list) draws no line at all rather than an empty one.
+  it('says what a sign-in asks the service for, when it asks for anything', async () => {
+    await renderOrg(PATH, { routes: { ['GET ' + API]: { ...goIntegrationVersion, connection_method: 'device', scopes: ['repo', 'read:org'] } } });
+    expect(within(screen.getByRole('region', { name: 'The connection needs' })).getByText('Asks the service for: repo, read:org')).toBeInTheDocument();
+  });
+  it('draws no scopes line for a version that names none', async () => {
+    await renderOrg(PATH);
+    expect(screen.queryByText(/^Asks the service for/)).toBeNull();
+  });
+
   // Guards the review itself (integration_version.json): what it changes from the version in use, every host, each
   // connection field with Secret on the sensitive one, each action in words, what the access form asks, the bundle's
   // size, what it replaces and what the check noted. A fact the person would approve without seeing fails here.
@@ -2223,6 +2235,44 @@ describe('Integration page, signing in with a code', () => {
     await click(block().getByRole('button', { name: 'Sign out' }));
     expect(called('POST', API + '/connection/sign-out')).toBe(true);
     expect(block().getByRole('button', { name: 'Sign in with a code' })).toBeInTheDocument();
+  });
+
+  // Guards the scopes on the page (integration_page_sign_in.json asks for repo and read:org): the line sits with the
+  // Sign in block, so the owner sees what they are about to grant before they sign in.
+  it('says what the sign-in asks the service for', async () => {
+    await renderOrg(PATH, { routes: pageRoutes(notSignedIn) });
+    const connection = within(screen.getByRole('region', { name: 'Connection' }));
+    expect(connection.getByText('Asks the service for: repo, read:org')).toBeInTheDocument();
+  });
+
+  // Guards a manifest that names only ways this version does not sign in by: the block says so in one sentence
+  // rather than show a heading over nothing, or a button the server would refuse.
+  it('says when this version of Kivali has no way to sign in', async () => {
+    const none = { ...notSignedIn.connection!, sign_in: { ways: [], signed_in: false } };
+    await renderOrg(PATH, { routes: pageRoutes({ ...notSignedIn, connection: none, connections: [none] }) });
+    expect(block().getByText('This version of Kivali has no way to sign in to this service.')).toBeInTheDocument();
+    expect(block().queryByRole('button')).toBeNull();
+  });
+
+  // Guards the moment between the server's done and the page's re-read: the block holds "Finishing the sign-in."
+  // until the page is in, then reads Signed in. Without it the block would flash Sign in with a code, inviting a
+  // second sign-in of a connection that is already signed in.
+  it('holds a finishing line until the page is read again', async () => {
+    await renderOrg(PATH, { routes: pageRoutes(notSignedIn) });
+    await click(block().getByRole('button', { name: 'Sign in with a code' }));
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const base = vi.mocked(apiGet).getMockImplementation()!;
+    vi.mocked(apiGet).mockImplementation((path, opts) => (path === API ? (gate.then(() => base(path, opts)) as never) : base(path, opts)));
+    routes['GET ' + API] = signedIn;
+    routes['GET ' + API + '/connection/sign-in'] = { state: 'done' };
+    await tick();
+    expect(block().getByText('Finishing the sign-in.')).toBeInTheDocument();
+    expect(block().queryByRole('button', { name: 'Sign in with a code' })).toBeNull();
+    release();
+    await flush();
+    expect(block().getByRole('button', { name: 'Sign out' })).toBeInTheDocument();
+    expect(block().queryByText('Finishing the sign-in.')).toBeNull();
   });
 
   // Guards the words of a code's life, rounded to whole minutes and never under one.
