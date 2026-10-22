@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -1060,7 +1062,7 @@ func TestForwarder(t *testing.T) {
 		_, _ = b.Write(append([]byte("re:"), buf...))
 		_ = b.Close()
 	}()
-	f, err := StartForward(0, func(context.Context) (net.Conn, error) { return a, nil }, func(string, ...any) {})
+	f, err := StartForward(0, func(context.Context) (net.Conn, error) { return a, nil }, &fakeClock{}, func(string, ...any) {})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1076,6 +1078,87 @@ func TestForwarder(t *testing.T) {
 	got, _ := io.ReadAll(c)
 	if string(got) != "re:hello" {
 		t.Fatalf("got %q", got)
+	}
+}
+
+// failingListener fails its first fails accepts, as a real listener
+// does when the descriptor it just accepted is closed before Go sets
+// it non-blocking, then hands out the connections sent on conns.
+type failingListener struct {
+	fails  int
+	conns  chan net.Conn
+	closed chan struct{}
+	once   sync.Once
+}
+
+func (l *failingListener) Accept() (net.Conn, error) {
+	if l.fails > 0 {
+		l.fails--
+		return nil, errors.New("accept tcp 127.0.0.1:8080: setnonblock: bad file descriptor")
+	}
+	select {
+	case c := <-l.conns:
+		return c, nil
+	case <-l.closed:
+		return nil, net.ErrClosed
+	}
+}
+
+func (l *failingListener) Close() error {
+	l.once.Do(func() { close(l.closed) })
+	return nil
+}
+
+func (l *failingListener) Addr() net.Addr { return &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)} }
+
+// TestForwarderRetriesFailedAccept guards against an org that stops
+// answering while its VM and server are healthy. On a macOS team
+// (2026-10-21) one accept failed with "setnonblock: bad file
+// descriptor" and the forward's accept loop returned, so every request
+// from the app waited forever until the supervisor restarted. A failed
+// accept is now logged and retried, with a delay that doubles to a
+// cap, and the next connection is forwarded.
+func TestForwarderRetriesFailedAccept(t *testing.T) {
+	ln := &failingListener{fails: 10, conns: make(chan net.Conn), closed: make(chan struct{})}
+	up, guest := net.Pipe()
+	go func() {
+		buf := make([]byte, 5)
+		_, _ = io.ReadFull(guest, buf)
+		_, _ = guest.Write(append([]byte("re:"), buf...))
+		_ = guest.Close()
+	}()
+	var mu sync.Mutex
+	var logs []string
+	logf := func(format string, args ...any) {
+		mu.Lock()
+		defer mu.Unlock()
+		logs = append(logs, fmt.Sprintf(format, args...))
+	}
+	f := serveForward(ln, func(context.Context) (net.Conn, error) { return up, nil }, &fakeClock{}, logf)
+	defer f.Close()
+	stopped := make(chan struct{})
+	go func() { f.wg.Wait(); close(stopped) }()
+	client, browser := net.Pipe()
+	select {
+	case ln.conns <- browser: // accepted only once the forward has retried past every failure
+	case <-stopped:
+		t.Fatal("the forward stopped accepting after a failed accept")
+	}
+	_, _ = client.Write([]byte("hello"))
+	got, _ := io.ReadAll(client)
+	if string(got) != "re:hello" {
+		t.Fatalf("got %q after the failed accepts", got)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	want := []string{"5ms", "10ms", "20ms", "40ms", "80ms", "160ms", "320ms", "640ms", "1s", "1s"}
+	if len(logs) != len(want) {
+		t.Fatalf("logged %q, want one line per failed accept", logs)
+	}
+	for i, d := range want {
+		if !strings.HasPrefix(logs[i], "forward: accept: ") || !strings.HasSuffix(logs[i], "; retrying in "+d) {
+			t.Fatalf("log line %d = %q, want the accept error and a retry in %s", i, logs[i], d)
+		}
 	}
 }
 
