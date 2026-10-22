@@ -5,7 +5,11 @@
 // that keeps a random OAuth state, the PKCE verifier and the redirect
 // address, and answers with the vendor's sign-in page. It also sets a
 // cookie, signed with the session codec, that names the flow: the
-// sign-in finishes only in the browser that started it. The owner
+// sign-in finishes only in the browser that started it. The web app
+// sends the browser to GET /connect/start?flow=<id>, which sends it on
+// to the vendor; Kivali Desktop opens the Desktop handoff with
+// next=<id> in the system browser instead, which signs that browser in
+// and hands it the cookie on the way (handoffNext). The owner
 // approves on the vendor's site, which sends the browser back to
 // GET /connect/callback with a code and the state. The callback is part
 // of the signed-in UI, behind the session middleware, so a browser not
@@ -50,6 +54,12 @@ import (
 // after a browser sign-in: one route for every integration, the state
 // tells the sign-ins apart.
 const connectCallbackPath = "/connect/callback"
+
+// connectStartPath is where the web app sends the browser to begin a
+// browser sign-in it started: ?flow=<flow id>. Kivali Desktop knows the
+// path (desktop-app/src-tauri/src/windows.rs) and opens the handoff in
+// the system browser in its place.
+const connectStartPath = "/connect/start"
 
 // setupNotesRedirect is what a manifest's kivali.setup_notes writes
 // for the redirect address, which the page and the install screen
@@ -293,6 +303,7 @@ func (s *Server) handleAPISignInBrowser(byID bool) http.HandlerFunc {
 			writeAPIError(w, http.StatusConflict, v.displayName()+"'s sign-in address is not one Kivali can use", v.whoBuilt())
 			return
 		}
+		bf.authorizeURL = target
 		now := s.clk().Now()
 		f := s.signInFlows.start(now, name, connID, now.Add(signInFlowTTL), bf)
 		// The browser holds one sign-in cookie, and this answer replaces
@@ -303,8 +314,54 @@ func (s *Server) handleAPISignInBrowser(byID bool) http.HandlerFunc {
 			s.signInFlows.endBrowser(now, oldID, errSignInReplaced)
 		}
 		http.SetCookie(w, s.connectCookie(f.id, name, redirect))
-		writeJSON(w, http.StatusOK, apitypes.BrowserSignIn{URL: target})
+		writeJSON(w, http.StatusOK, apitypes.BrowserSignIn{URL: target, Flow: f.id})
 	}
+}
+
+// handleConnectStart is GET /connect/start?flow=<id>, where the web app
+// sends the browser to begin a browser sign-in it started: a 303 to the
+// vendor's sign-in page of that flow, while it is pending and no
+// callback has come for it. Any other flow id returns to the
+// integrations list with ?sign_in_error=start_again. It sends the browser only
+// to an address Kivali made, never to one the request names, and sets
+// no cookie: the start answer did. Kivali Desktop does not load it in
+// the team's window; it opens the handoff with next=<id> in the system
+// browser instead (handoffNext).
+func (s *Server) handleConnectStart(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	f := s.signInFlows.pendingBrowser(s.clk().Now(), r.URL.Query().Get("flow"))
+	if f == nil {
+		connectReturn(w, r, "", connectStartAgain, "")
+		return
+	}
+	http.Redirect(w, r, f.browser.authorizeURL, http.StatusSeeOther)
+}
+
+// handoffNext is the Desktop handoff's next (auth.Handoff.WithNext):
+// once a handoff token has signed the system browser in, a next that
+// names a pending browser sign-in (as handleConnectStart takes it)
+// sets that sign-in's cookie in this browser and sends it to the
+// vendor's sign-in page, so the callback, which comes to this browser
+// and not to the Desktop window that started the sign-in, passes the
+// cookie check. The cookie replaces any this browser held, as a start
+// answer's does, and the sign-in that one named ends the same way.
+// Any other next sends the browser to "/". The flow id is all the
+// request names; the address is the flow's own. A handoff token is
+// minted only by the team's supervisor and signs the browser in as the
+// owner, so the cookie it hands over is no more than the owner already
+// holds.
+func (s *Server) handoffNext(w http.ResponseWriter, r *http.Request, next string) string {
+	now := s.clk().Now()
+	f := s.signInFlows.pendingBrowser(now, next)
+	if f == nil {
+		return ""
+	}
+	if oldID, _ := s.readConnectCookie(r); oldID != "" && oldID != f.id {
+		s.signInFlows.endBrowser(now, oldID, errSignInReplaced)
+	}
+	http.SetCookie(w, s.connectCookie(f.id, f.name, f.browser.redirectURL))
+	return f.browser.authorizeURL
 }
 
 // handleConnectCallback is GET /connect/callback, where the vendor

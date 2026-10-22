@@ -2040,13 +2040,24 @@ export interface ConnectionSignIn {
 /**
  * BrowserSignIn is the answer of POST
  * /api/v1/org/integrations/{name}/connections/{id}/sign-in/browser (and
- * .../connection/sign-in/browser): the vendor's sign-in page, which
- * the page sends the browser to. The vendor sends the browser back to
+ * .../connection/sign-in/browser): the sign-in started, and the
+ * vendor's sign-in page. The page sends the browser to
+ * GET /connect/start?flow=<flow>, which sends it on to url; Kivali
+ * Desktop opens that address in the system browser instead, signed in
+ * through the handoff. The vendor sends the browser back to
  * GET /connect/callback, which finishes the sign-in and returns to the
  * integration's page.
  */
 export interface BrowserSignIn {
+  /**
+   * URL is the vendor's sign-in page for this sign-in.
+   */
   url: string;
+  /**
+   * Flow names the sign-in: GET /connect/start?flow=<flow>, and the
+   * handoff's next=<flow>, send the browser on to URL.
+   */
+  flow: string;
 }
 /**
  * DeviceSignIn is the answer of POST

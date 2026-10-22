@@ -594,10 +594,11 @@ func (s *Server) wireRoutes() {
 		mux.HandleFunc("GET /auth/login", s.OAuth.LoginHandler)
 		mux.HandleFunc("GET /auth/callback", s.OAuth.CallbackHandler)
 	}
-	// The desktop app's first open of a team it just set up
+	// The desktop app's first open of a team it just set up, and the
+	// system browser it sends a browser sign-in to, which next names
 	// (docs/developers/auth.md, Desktop handoff).
 	if s.Handoff != nil {
-		mux.Handle("GET "+auth.HandoffPath, s.Handoff)
+		mux.Handle("GET "+auth.HandoffPath, s.Handoff.WithNext(s.handoffNext))
 	}
 	mux.HandleFunc("GET /auth/logout", s.handleLogout)
 	mux.HandleFunc("GET "+auth.NotInvitedPath, auth.NotInvitedHandler)
@@ -630,6 +631,9 @@ func (s *Server) wireRoutes() {
 	// (integration_signin_browser.go): part of the signed-in UI, so a
 	// browser not signed in to Kivali signs in first.
 	protected.HandleFunc("GET "+connectCallbackPath, s.handleConnectCallback)
+	// Where the web app sends the browser to begin a browser sign-in:
+	// on to the vendor's page of the flow it names.
+	protected.HandleFunc("GET "+connectStartPath, s.handleConnectStart)
 	s.wireAPIRoutes(protected)
 	// The web app: every GET no route above claims.
 	protected.Handle("GET /{path...}", spa)
