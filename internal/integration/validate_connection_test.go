@@ -31,8 +31,7 @@ func signInManifest() map[string]any {
 }
 
 // connectionFindings is what the connection section's own check finds
-// in m, without the refusal of sign-in connections that Validate adds
-// while they are not offered.
+// in m, without the rest of the manifest's.
 func connectionFindings(t *testing.T, m map[string]any) []string {
 	t.Helper()
 	var f Findings
@@ -66,16 +65,18 @@ func TestSignInConnectionPassesAndReadsWhole(t *testing.T) {
 	}
 }
 
-// Why this test exists: until sign-in is offered on the page, a bundle
-// or built-in that declares it must not be stored, or the owner would
-// approve an integration nothing can connect. The refusal is the one
-// finding a well-formed sign-in manifest gets, in the words it has
-// always had.
-func TestValidateRefusesSignInConnectionsForNow(t *testing.T) {
-	findings := Validate(parseMap(t, signInManifest()), defaultFiles())
-	want := "kivali.connection.method: Kivali connects integrations with a pasted token; sign-in connections are not available"
-	if got := findings.Texts(); len(got) != 1 || got[0] != want {
-		t.Errorf("findings = %v", got)
+// Why this test exists: the whole check, for a bundle and for a
+// built-in, must take a well-formed sign-in manifest with no finding,
+// or no integration that connects by signing in could be stored and
+// the owner would never reach its page's Sign in.
+func TestValidateTakesSignInConnections(t *testing.T) {
+	if got := Validate(parseMap(t, signInManifest()), defaultFiles()).Texts(); len(got) != 0 {
+		t.Errorf("bundle findings = %v", got)
+	}
+	m := builtinManifest()
+	m.Kivali.Connection = parseMap(t, signInManifest()).Kivali.Connection
+	if got := ValidateBuiltin(m).Texts(); len(got) != 0 {
+		t.Errorf("built-in findings = %v", got)
 	}
 }
 

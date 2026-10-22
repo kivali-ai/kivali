@@ -344,9 +344,6 @@ func validateTools(m *Manifest, f *Findings) []string {
 
 func validateKivali(m *Manifest, tools []string, builtin bool, f *Findings) {
 	k := m.Kivali
-	if k.Connection.SignIn() {
-		f.errorf("kivali.connection.method: Kivali connects integrations with a pasted token; sign-in connections are not available")
-	}
 	validateConnection(m, f)
 	if k.Connection.Multiple && !builtin {
 		f.errorf("kivali.connection.multiple: a bundle's server takes one connection")
@@ -453,9 +450,9 @@ func validateConnection(m *Manifest, f *Findings) {
 			}
 		}
 	case "":
-		f.errorf("kivali.connection.method is missing; Kivali connects integrations with a pasted token, so it must be token")
+		f.errorf("kivali.connection.method is missing; it is token, device or browser")
 	default:
-		f.errorf("kivali.connection.method %s is not one Kivali knows; it must be token", c.Method)
+		f.errorf("kivali.connection.method %s is not one Kivali knows; it is token, device or browser", c.Method)
 	}
 	for _, e := range endpoints {
 		if e.value != "" && !validEndpoint(e.value) {

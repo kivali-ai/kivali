@@ -125,9 +125,8 @@ byte for byte.
 - `user_config` is the connection form, in the manifest's order. A
   `sensitive` field is a secret (below).
 - `kivali.connection.method` is how the connection is made: `token`,
-  fields the owner pastes. The section also describes a connection
-  made by signing in (`device`, `browser`), which this version's check
-  refuses ([The connection section](#the-connection-section)).
+  fields the owner pastes, or a sign-in, `device` or `browser`
+  ([The connection section](#the-connection-section)).
 - `kivali.connection.multiple: true` says the integration takes several
   connections (Git's GitHub and a company GitLab), each with a label,
   and each agent's access names the one its calls use
@@ -214,6 +213,7 @@ The check holds the section to these rules, for bundles and built-ins
 
 | Rule | Refused with |
 | --- | --- |
+| `method` is `token`, `device` or `browser`. | `kivali.connection.method <method> is not one Kivali knows; it is token, device or browser` (`kivali.connection.method is missing; ...` without one) |
 | A `token` connection gives no endpoint. | `kivali.connection.token_endpoint: a token connection has no endpoints` (each one named) |
 | `device` gives `device_endpoint` and `token_endpoint`; `browser` gives `authorization_endpoint` and `token_endpoint`. | `kivali.connection.<endpoint> is missing; a <method> connection needs it` |
 | Every endpoint given is an absolute `https://` address; plain `http://` only on `localhost`, `127.0.0.1` or `::1`, for a vendor run in-process in tests. | `kivali.connection.<endpoint>: "<address>" must be an https:// address` |
@@ -223,11 +223,6 @@ The check holds the section to these rules, for bundles and built-ins
 | `scopes` entries are not empty. | `kivali.connection.scopes[<n>] is empty` |
 | `extra_authorization_params` names none of `client_id`, `redirect_uri`, `response_type`, `scope`, `state`, `code_challenge`, `code_challenge_method`. | `kivali.connection.extra_authorization_params.<key>: Kivali sets <key> itself` |
 | A sign-in connection's `server.mcp_config.env` names no `${user_config.client_secret}` (it reads empty) and sets no key equal to the access token's name (the token would replace it). | `server.mcp_config.env.<key>: the client secret is Kivali's; the server asks kivali/credential for the access token`; `server.mcp_config.env.<key>: Kivali gives the access token under that name, so the env cannot set it` |
-
-In this version `Validate` and `ValidateBuiltin` refuse `device` and
-`browser` as well ("sign-in connections are not available"), since the
-page cannot yet sign in; the rules above run regardless, and their
-tests call the section's check directly.
 
 ## The check
 
@@ -248,7 +243,7 @@ the version and shown on its install screen. The rules:
 | `server.mcp_config` | `command` is `python3` or `python`; `args` is not empty; each `${user_config.<key>}` in `env` names a field of the connection form (`integration.ConnectionFields`), and `env` holds no other `${...}`. |
 | `user_config` | Each key is lowercase letters, digits and underscores, starting with a letter, and neither `oauth_access_token` nor `oauth_refresh_token`, the keys a sign-in's tokens are kept under; `type` is `string`, `number` or `boolean`; `title` is not empty; `sensitive` and `required`, when given, are booleans. |
 | `tools` | Not empty; names are unique, lowercase letters, digits and underscores starting with a letter; a tool without a description is a warning. |
-| `kivali.connection.method` | `token`. A sign-in method (`device`, `browser`) is refused. |
+| `kivali.connection.method` | `token`, `device` or `browser`. |
 | The rest of `kivali.connection` | See [The connection section](#the-connection-section). |
 | `kivali.connection.multiple` | Absent or false: "a bundle's server takes one connection". |
 | `kivali.hosts` | Not empty; each a lowercase host or pattern with no scheme, port, path, user or whitespace (`integration.ValidHost`, the rule of `store.ValidEgressHost`, which a store test holds it to); a bare `*` is refused. |
