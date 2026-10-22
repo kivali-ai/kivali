@@ -98,7 +98,7 @@ one. Fields Kivali does not read are kept as written.
 | `server.mcp_config.env` | The server's environment. `${user_config.<key>}` becomes that connection field's value; no other `${...}` is allowed. A plain value, such as the API's address, is passed as written. |
 | `user_config` | The connection form, in this order. Each key is lowercase letters, digits and underscores, starting with a letter; each field has `type` (`string`, `number` or `boolean`), `title` and `description`, `"sensitive": true` for a secret, and `"required": true` when the connection needs it. |
 | `tools` | Every action: a `name` (lowercase letters, digits and underscores, starting with a letter) and a `description` the owner reads on the install screen. |
-| `kivali.connection` | `{"method": "token"}`: fields the owner pastes. Or a connection made by signing in, `device` or `browser` ([A sign-in connection](#a-sign-in-connection)). |
+| `kivali.connection` | `{"method": "token"}`: fields the owner pastes. Or a connection made by signing in with a code, `device` ([A sign-in connection](#a-sign-in-connection)). |
 | `kivali.setup_notes` | Markdown the owner reads above the connection form: what to do on the service's side first, such as registering an app and the scopes to tick. Optional. |
 | `kivali.hosts` | Every host the server reaches; it reaches those and no other ([The network](#the-network)). Lowercase, no scheme, port or path, and never `*`. |
 | `kivali.packages` | Optional: the Debian packages the pod installs before the server starts, such as `["gh"]` ([A command-line tool](#a-command-line-tool)). Each is a package's exact name as `apt-get install` takes it: lowercase letters, digits, `+`, `-` and `.`, with no version or release, listed once. |
@@ -140,23 +140,22 @@ client secret or the refresh token.
   "device_endpoint": "https://github.com/login/device/code",
   "token_endpoint": "https://github.com/login/oauth/access_token",
   "revocation_endpoint": null,
-  "scopes": ["repo"],
+  "scopes": [],
   "client": "operator",
   "credential_keys": { "access_token": "GH_TOKEN" }
 }
 ```
 
-- `method`: `device`, a code the owner enters on the service's page,
-  where the service offers it; it needs `device_endpoint` and
-  `token_endpoint`. `browser` (the service's sign-in page and back)
-  needs `authorization_endpoint` and `token_endpoint`. A manifest may
-  give both ways' endpoints; `method` is the one the page shows first.
+- `method`: `device`, a code the owner enters on the service's page;
+  it needs `device_endpoint` and `token_endpoint`. Use it where the
+  service offers the device flow (GitHub does; on GitHub the app must
+  have it turned on).
 - Every endpoint is an `https://` address from the service's OAuth
   documentation. `revocation_endpoint` is optional: with one, signing
   out and deleting the connection revoke its tokens.
 - `scopes`: what the sign-in asks for; the owner sees them on the
-  install screen. `pkce` (default true) and
-  `extra_authorization_params` apply to browser sign-in.
+  install screen and the integration's page. Leave them empty where
+  the app's own settings decide what it may do (a GitHub App).
 - `client`: `operator` (or absent), the app the owner registers.
 - `credential_keys.access_token`: the name the access token is given
   under, capital letters, digits and underscores (`GH_TOKEN`).
