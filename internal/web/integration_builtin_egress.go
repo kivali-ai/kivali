@@ -182,7 +182,7 @@ func (s *Server) RegisterBuiltinEgress(ctx context.Context) {
 
 // builtinEgressAfterSwitch follows the integration's switch: on, its
 // connection's credential is registered (minted if need be); off, it
-// is dropped.
+// is dropped. The caller holds lockIntegrations.
 func (s *Server) builtinEgressAfterSwitch(ctx context.Context, name string, bi builtinintegrations.Integration, on bool) error {
 	if builtinHostsOf(bi) == nil {
 		return nil
@@ -190,7 +190,7 @@ func (s *Server) builtinEgressAfterSwitch(ctx context.Context, name string, bi b
 	if !on {
 		return s.dropAllBuiltinEgress(name)
 	}
-	if _, err := s.builtinProxySecret(ctx, name, bi); err != nil {
+	if _, err := s.builtinProxySecretLocked(ctx, name, bi); err != nil {
 		return fmt.Errorf("register: %w", err)
 	}
 	return nil

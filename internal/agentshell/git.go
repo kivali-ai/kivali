@@ -31,14 +31,26 @@ package agentshell
 //     without RemoteURL) would follow the config's URL: never use one.
 //     A push through an anonymous remote needs PushOptions.RemoteName
 //     "anonymous".
+//   - go-git follows no redirect: the http and https transports it uses
+//     are installed with NoFollowRedirects (init below). A host that
+//     answers with a redirect (GitHub does for a renamed or transferred
+//     repository) fails the operation, so the repository served is the
+//     one checked, at the URL checked.
 //   - The proxy is always given in code (ProxyOptions), the daemon's own
 //     bare proxy URL with the job's credential, so go-git never reads a
 //     proxy from the environment. With no proxy in the daemon's
 //     environment (tests, a laptop), the operation connects directly.
+//
+// Jobs on one working copy run one after the other (gitPathLocks): two
+// fetches into one .git at once could leave its refs half written. The
+// answer is bounded, so it always fits the agent's next request to
+// core: at most GitUpdatedMax refs (UpdatedTotal counts them all) and
+// GitErrorMaxBytes of error.
 
 import (
 	"cmp"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -49,6 +61,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -56,10 +69,37 @@ import (
 	"github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/transport"
+	gitclient "github.com/go-git/go-git/v5/plumbing/transport/client"
 	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
 
 	"github.com/kivali-ai/kivali/internal/egresscred"
 	"github.com/kivali-ai/kivali/internal/gitrepo"
+)
+
+// init installs go-git's http and https transports with redirects
+// refused. go-git's transports are process-wide; in core's process
+// gitintegration installs the same.
+func init() {
+	noRedirects := githttp.NewClientWithOptions(nil, &githttp.ClientOptions{RedirectPolicy: githttp.NoFollowRedirects})
+	gitclient.InstallProtocol("https", noRedirects)
+	gitclient.InstallProtocol("http", noRedirects)
+}
+
+// gitMovedError is what the agent reads when the host answered with a
+// redirect, which go-git is not let follow.
+const gitMovedError = "the repository moved; ask the owner to update the access"
+
+// isGitRedirect reports whether err is go-git refusing a redirect.
+func isGitRedirect(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "http redirect:")
+}
+
+// The bounds of an answer.
+const (
+	// GitUpdatedMax is the most refs a GitResponse lists.
+	GitUpdatedMax = 200
+	// GitErrorMaxBytes is the most bytes of a GitResponse's Error.
+	GitErrorMaxBytes = 4 << 10
 )
 
 // The operations POST /v1/git runs.
@@ -101,6 +141,7 @@ const gitDefaultRefSpec = "+refs/heads/*:refs/remotes/origin/*"
 const gitAnonymousRemote = "anonymous"
 
 func handleGit(cfg ServerConfig) http.HandlerFunc {
+	locks := &gitPathLocks{held: map[string]*gitPathLock{}}
 	return func(w http.ResponseWriter, r *http.Request) {
 		r.Body = http.MaxBytesReader(w, r.Body, GitMaxBodyBytes)
 		var req GitRequest
@@ -114,27 +155,79 @@ func handleGit(cfg ServerConfig) http.HandlerFunc {
 			http.Error(w, "decode GitRequest: "+err.Error(), status)
 			return
 		}
-		scrub := gitScrubber(req, cfg.GitProxyURL)
-		res := runGit(r.Context(), cfg, req)
+		scrub := GitScrubber(req, cfg.GitProxyURL)
+		res := runGit(r.Context(), cfg, locks, req)
 		res.scrub(scrub)
+		res.Error = clipUTF8(res.Error, GitErrorMaxBytes)
 		writeJSON(w, http.StatusOK, res)
 	}
 }
 
-// gitScrubber is the scrubber of req's token and proxy credential, in
-// every form egresscred's scrubbers know (the value, user:value in
-// base64, the credentialed proxy URL), and URL-escaped.
-func gitScrubber(req GitRequest, bareProxy string) *egresscred.Scrubber {
+// GitTokenPlaceholder is what a GitScrubber writes in place of the
+// token; the proxy credential becomes egresscred.Placeholder.
+const GitTokenPlaceholder = "[token]"
+
+// GitScrubber is what scrubs req's token and proxy credential from a
+// text: the token, user:token in base64 and their URL-escaped forms
+// become GitTokenPlaceholder; the proxy credential, in every form
+// egresscred's scrubbers know (the secret, user:secret in base64, the
+// credentialed proxy URL on bareProxy, which may be empty) and
+// URL-escaped, becomes egresscred.Placeholder. The agent's MCP server
+// uses it too, on an error of its own.
+func GitScrubber(req GitRequest, bareProxy string) func(string) string {
+	token := tokenReplacer(req.Auth.Username, req.Auth.Password)
 	proxyURL := ""
 	if bareProxy != "" && req.Proxy.Password != "" {
 		proxyURL, _ = egresscred.ProxyURL(bareProxy, req.Proxy.Username, req.Proxy.Password)
 	}
-	return egresscred.Combine(
-		egresscred.NewScrubber(req.Auth.Username, req.Auth.Password, ""),
-		escapedScrubber(req.Auth.Password),
+	proxy := egresscred.Combine(
 		egresscred.NewScrubber(req.Proxy.Username, req.Proxy.Password, proxyURL),
 		escapedScrubber(req.Proxy.Password),
 	)
+	return func(s string) string {
+		if token != nil {
+			s = token.Replace(s)
+		}
+		return proxy.String(s)
+	}
+}
+
+// tokenReplacer replaces token, user:token in base64 and their
+// URL-escaped forms with GitTokenPlaceholder, the longest first. Nil
+// for no token.
+func tokenReplacer(user, token string) *strings.Replacer {
+	if token == "" {
+		return nil
+	}
+	set := map[string]bool{token: true, base64.StdEncoding.EncodeToString([]byte(user + ":" + token)): true}
+	set[url.QueryEscape(token)] = true
+	set[url.PathEscape(token)] = true
+	needles := make([]string, 0, len(set))
+	for n := range set {
+		needles = append(needles, n)
+	}
+	sort.Slice(needles, func(i, j int) bool {
+		if len(needles[i]) != len(needles[j]) {
+			return len(needles[i]) > len(needles[j])
+		}
+		return needles[i] < needles[j]
+	})
+	pairs := make([]string, 0, 2*len(needles))
+	for _, n := range needles {
+		pairs = append(pairs, n, GitTokenPlaceholder)
+	}
+	return strings.NewReplacer(pairs...)
+}
+
+// clipUTF8 is s cut to at most n bytes, on a rune boundary.
+func clipUTF8(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	for n > 0 && s[n]&0xc0 == 0x80 {
+		n--
+	}
+	return s[:n]
 }
 
 // escapedScrubber scrubs secret's URL-escaped forms when they differ
@@ -149,26 +242,77 @@ func escapedScrubber(secret string) *egresscred.Scrubber {
 	return egresscred.Combine(out...)
 }
 
-func (r *GitResponse) scrub(s *egresscred.Scrubber) {
-	if s == nil {
-		return
-	}
-	r.Repository = s.String(r.Repository)
-	r.Error = s.String(r.Error)
+func (r *GitResponse) scrub(s func(string) string) {
+	r.Repository = s(r.Repository)
+	r.Error = s(r.Error)
 	for i := range r.Updated {
-		r.Updated[i].Ref = s.String(r.Updated[i].Ref)
+		r.Updated[i].Ref = s(r.Updated[i].Ref)
 	}
 }
 
-// runGit runs req under its timeout on cfg.Clock.
-func runGit(ctx context.Context, cfg ServerConfig, req GitRequest) GitResponse {
+// gitPathLocks serialises the jobs on one working copy, by its
+// resolved path.
+type gitPathLocks struct {
+	mu   sync.Mutex
+	held map[string]*gitPathLock
+}
+
+// gitPathLock is one path's turn: a job holds it while ch holds a
+// token; waiters counts the jobs that hold it or wait for it.
+type gitPathLock struct {
+	ch      chan struct{}
+	waiters int
+}
+
+// acquire waits for path's turn, or for ctx to end. onWait, when set,
+// is told the path is busy before the wait (a test hook). release
+// gives the turn to the next job.
+func (l *gitPathLocks) acquire(ctx context.Context, path string, onWait func(string)) (release func(), err error) {
+	l.mu.Lock()
+	pl := l.held[path]
+	if pl == nil {
+		pl = &gitPathLock{ch: make(chan struct{}, 1)}
+		l.held[path] = pl
+	}
+	pl.waiters++
+	busy := pl.waiters > 1
+	l.mu.Unlock()
+	done := func() {
+		l.mu.Lock()
+		pl.waiters--
+		if pl.waiters == 0 {
+			delete(l.held, path)
+		}
+		l.mu.Unlock()
+	}
+	if busy && onWait != nil {
+		onWait(path)
+	}
+	select {
+	case pl.ch <- struct{}{}:
+		return func() { <-pl.ch; done() }, nil
+	case <-ctx.Done():
+		done()
+		return nil, ctx.Err()
+	}
+}
+
+// runGit runs req under its timeout on cfg.Clock, after any other job
+// on the same working copy.
+func runGit(ctx context.Context, cfg ServerConfig, locks *gitPathLocks, req GitRequest) GitResponse {
 	start := cfg.Clock.Now()
-	res := runGitOp(ctx, cfg, req)
+	res := runGitOp(ctx, cfg, locks, req)
 	res.DurationMs = cfg.Clock.Now().Sub(start).Milliseconds()
+	if n := len(res.Updated); n > 0 {
+		res.UpdatedTotal = n
+		if n > GitUpdatedMax {
+			res.Updated = res.Updated[:GitUpdatedMax]
+		}
+	}
 	return res
 }
 
-func runGitOp(ctx context.Context, cfg ServerConfig, req GitRequest) GitResponse {
+func runGitOp(ctx context.Context, cfg ServerConfig, locks *gitPathLocks, req GitRequest) GitResponse {
 	if cfg.GitUnavailable != "" {
 		return GitResponse{Error: cfg.GitUnavailable}
 	}
@@ -199,6 +343,17 @@ func runGitOp(ctx context.Context, cfg ServerConfig, req GitRequest) GitResponse
 		case <-ctx.Done():
 		}
 	}()
+
+	// The wait for another job on the same working copy counts against
+	// the bound too.
+	release, err := locks.acquire(ctx, dir, cfg.gitWaitHook)
+	if err != nil {
+		if timedOut.Load() {
+			return GitResponse{TimedOut: true, Error: fmt.Sprintf("did not finish within %s", timeout)}
+		}
+		return GitResponse{Error: "the call ended before the operation started"}
+	}
+	defer release()
 
 	var res GitResponse
 	if req.Op == GitOpClone {
@@ -267,7 +422,11 @@ func gitClone(ctx context.Context, cfg ServerConfig, req GitRequest, host, dir s
 		ProxyOptions: proxy,
 		Tags:         git.AllTags,
 	})
-	if err != nil {
+	switch {
+	case isGitRedirect(err):
+		res.Error = gitMovedError
+		return res
+	case err != nil:
 		res.Error = "clone: " + err.Error()
 		return res
 	}
@@ -312,7 +471,10 @@ func gitFetch(ctx context.Context, cfg ServerConfig, req GitRequest, host, dir s
 		Tags:         git.AllTags,
 		Force:        req.Force,
 	})
-	if err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) {
+	switch {
+	case isGitRedirect(err):
+		res.Error = gitMovedError
+	case err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate):
 		res.Error = "fetch: " + err.Error()
 	}
 	res.Updated = refUpdates(before, refSnapshot(r))

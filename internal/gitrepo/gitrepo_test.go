@@ -2,8 +2,52 @@ package gitrepo
 
 import (
 	"errors"
+	"net"
 	"testing"
 )
+
+// Why this test exists: Test connection runs in Kivali's server, which
+// reaches its own cluster and machine directly. A connection host that
+// resolves to any loopback, private, link-local, unspecified or
+// multicast address, even one among public ones, would let Test
+// connection probe them with the owner's token; only hosts whose every
+// address is public may be reached.
+func TestPublicAddresses(t *testing.T) {
+	ips := func(ss ...string) []net.IP {
+		var out []net.IP
+		for _, s := range ss {
+			out = append(out, net.ParseIP(s))
+		}
+		return out
+	}
+	for _, c := range []struct {
+		ips  []net.IP
+		want bool
+	}{
+		{ips("140.82.112.3"), true},
+		{ips("2606:50c0:8000::153"), true},
+		{ips("140.82.112.3", "2606:50c0:8000::153"), true},
+		{nil, false},
+		{ips("127.0.0.1"), false},
+		{ips("::1"), false},
+		{ips("10.1.2.3"), false},
+		{ips("172.16.0.1"), false},
+		{ips("192.168.1.1"), false},
+		{ips("fd00::1"), false},
+		{ips("169.254.169.254"), false},
+		{ips("fe80::1"), false},
+		{ips("0.0.0.0"), false},
+		{ips("::"), false},
+		{ips("224.0.0.1"), false},
+		{ips("ff02::1"), false},
+		{ips("::ffff:10.0.0.1"), false},
+		{ips("140.82.112.3", "10.0.0.1"), false},
+	} {
+		if got := PublicAddresses(c.ips); got != c.want {
+			t.Errorf("PublicAddresses(%v) = %v, want %v", c.ips, got, c.want)
+		}
+	}
+}
 
 // Why this test exists: the host is what the token is sent to and what
 // the egress proxy admits. A host that kept a scheme, a path or user

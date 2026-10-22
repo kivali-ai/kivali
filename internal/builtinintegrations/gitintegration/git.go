@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"strings"
 
@@ -61,6 +62,9 @@ type Git struct {
 	// real ones.
 	GitHubAPI string
 	GitLabAPI string
+	// LookupIP resolves the connection's host for Test connection's
+	// check that it is public; nil is the system's resolver.
+	LookupIP func(ctx context.Context, host string) ([]net.IP, error)
 }
 
 // New is the built-in as the binary runs it.
@@ -69,7 +73,21 @@ func New() *Git { return &Git{} }
 var (
 	_ builtinintegrations.ShellJobIntegration = (*Git)(nil)
 	_ builtinintegrations.HostsOf             = (*Git)(nil)
+	_ builtinintegrations.ConnectionChecker   = (*Git)(nil)
+	_ builtinintegrations.AccessChecker       = (*Git)(nil)
 )
+
+// errBadHost is a connection whose host is not one.
+const errBadHost = ownerWords("Host is a host name such as github.com, without https:// or a path")
+
+// CheckConnection holds the connection, as the owner saves it, to a
+// host gitrepo.NormalizeHost can read.
+func (g *Git) CheckConnection(conn builtinintegrations.Connection) error {
+	if _, err := gitrepo.NormalizeHost(conn.Fields["host"]); err != nil {
+		return errBadHost
+	}
+	return nil
+}
 
 const cloneDescription = `Clones a repository with the owner's git connection into path, a directory under /files or your home that does not exist yet or is empty. url is the repository's HTTPS URL on the connection's host, or owner/name. The clone's origin is the repository's URL without the token. Afterwards use plain git in run_shell for everything local: status, branch, commit, diff, log, merge, rebase. Plain git reaches only hosts on the team's allow list; this reaches the connection's host with its token. Refused for a repository outside your access.`
 
@@ -256,7 +274,12 @@ func (g *Git) Call(_ context.Context, caller builtinintegrations.Caller, conn bu
 	} else {
 		job.RefSpecs = c.refs
 	}
-	return &builtinintegrations.Result{ShellJob: &shelljob.Job{Git: job}}, nil
+	// The audit row core writes as it hands the job out.
+	started := "started: the working copy's origin at " + clip(c.path, 200)
+	if c.hasRepo {
+		started = "started: " + c.repo.Path
+	}
+	return &builtinintegrations.Result{ShellJob: &shelljob.Job{Git: job}, Audit: started}, nil
 }
 
 // answerRefsMax and auditRefsMax bound the refs an answer and an audit
@@ -308,13 +331,14 @@ func (g *Git) Complete(_ context.Context, caller builtinintegrations.Caller, con
 		fmt.Fprintf(&b, "Fetched %s into %s.", repo, c.path)
 	}
 	updated := result.Git.Updated
-	if len(updated) == 0 {
+	// The daemon lists at most its first refs; the total counts all.
+	total := max(result.Git.UpdatedTotal, len(updated))
+	if total == 0 {
 		b.WriteString(" Nothing changed: the working copy was up to date.")
 	} else {
-		fmt.Fprintf(&b, "\n\nUpdated (%d):", len(updated))
+		fmt.Fprintf(&b, "\n\nUpdated (%d):", total)
 		for i, u := range updated {
 			if i == answerRefsMax {
-				fmt.Fprintf(&b, "\n... and %d more", len(updated)-i)
 				break
 			}
 			if u.Old == "" {
@@ -323,13 +347,17 @@ func (g *Git) Complete(_ context.Context, caller builtinintegrations.Caller, con
 				fmt.Fprintf(&b, "\n%s %s..%s", clip(u.Ref, 200), short(u.Old), short(u.New))
 			}
 		}
+		if shown := min(len(updated), answerRefsMax); total > shown {
+			fmt.Fprintf(&b, "\n... and %d more", total-shown)
+		}
 	}
-	return &builtinintegrations.Result{Content: []string{b.String()}, Audit: repo + ": " + auditRefs(updated)}, nil
+	return &builtinintegrations.Result{Content: []string{b.String()}, Audit: repo + ": " + auditRefs(updated, total)}, nil
 }
 
-// auditRefs is the refs an operation moved, as the audit names them.
-func auditRefs(updated []shelljob.GitRefUpdate) string {
-	if len(updated) == 0 {
+// auditRefs is the refs an operation moved, as the audit names them:
+// the first few of updated, and how many more of total.
+func auditRefs(updated []shelljob.GitRefUpdate, total int) string {
+	if total == 0 {
 		return "up to date"
 	}
 	names := make([]string, 0, min(len(updated), auditRefsMax))
@@ -339,9 +367,12 @@ func auditRefs(updated []shelljob.GitRefUpdate) string {
 		}
 		names = append(names, clip(u.Ref, 200))
 	}
+	if len(names) == 0 {
+		return fmt.Sprintf("updated %d refs", total)
+	}
 	s := "updated " + strings.Join(names, ", ")
-	if len(updated) > auditRefsMax {
-		s += fmt.Sprintf(" and %d more", len(updated)-auditRefsMax)
+	if total > len(names) {
+		s += fmt.Sprintf(" and %d more", total-len(names))
 	}
 	return s
 }

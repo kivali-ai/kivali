@@ -3,6 +3,7 @@ package agentshell
 import (
 	"context"
 	"encoding/base64"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/cgi"
@@ -11,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -58,24 +60,46 @@ func runGitCLI(t *testing.T, dir string, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
+// runGitCLIInput is runGitCLI with input on git's standard input.
+func runGitCLIInput(t *testing.T, dir, input string, args ...string) {
+	t.Helper()
+	cmd := exec.Command(gitCLI(t), args...)
+	cmd.Dir = dir
+	cmd.Stdin = strings.NewReader(input)
+	cmd.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+}
+
 // testGitServer is a smart-HTTP git server: git http-backend under
 // net/http/cgi, behind a check of the basic auth the Git integration
 // sends (x-access-token and the token). Its repositories are bare
-// ones under root; requests counts what reached it.
+// ones under root; requests counts what reached it, and served the
+// requests per repository path prefix the backend served.
 type testGitServer struct {
 	*httptest.Server
 	root     string
 	requests atomic.Int32
 	// block, when set, holds every request until its context ends,
-	// after closing entered once.
-	block   atomic.Bool
-	entered chan struct{}
-	once    sync.Once
+	// after closing entered once and sending on arrivals.
+	block    atomic.Bool
+	entered  chan struct{}
+	arrivals chan struct{}
+	once     sync.Once
+	// redirects maps a repository's path ("/acme/old.git") to the one
+	// its requests are sent to with a 301; set before any request.
+	redirects map[string]string
+	// pad lengthens the words of a refusal by that many bytes.
+	pad atomic.Int32
+
+	mu     sync.Mutex
+	served map[string]int
 }
 
 func newTestGitServer(t *testing.T) *testGitServer {
 	t.Helper()
-	s := &testGitServer{root: t.TempDir(), entered: make(chan struct{})}
+	s := &testGitServer{root: t.TempDir(), entered: make(chan struct{}), arrivals: make(chan struct{}, 16), served: map[string]int{}}
 	backend := cgi.Handler{
 		Path: gitCLI(t),
 		Args: []string{"http-backend"},
@@ -85,6 +109,7 @@ func newTestGitServer(t *testing.T) *testGitServer {
 		s.requests.Add(1)
 		if s.block.Load() {
 			s.once.Do(func() { close(s.entered) })
+			s.arrivals <- struct{}{}
 			<-r.Context().Done()
 			return
 		}
@@ -92,8 +117,19 @@ func newTestGitServer(t *testing.T) *testGitServer {
 		if !ok || user != "x-access-token" || pass != gitTestToken {
 			w.Header().Set("WWW-Authenticate", `Basic realm="git"`)
 			// The words quote what was sent, as a careless host's might.
-			http.Error(w, "bad credentials "+pass+" in "+r.Header.Get("Authorization"), http.StatusUnauthorized)
+			http.Error(w, "bad credentials "+pass+" in "+r.Header.Get("Authorization")+strings.Repeat("x", int(s.pad.Load())), http.StatusUnauthorized)
 			return
+		}
+		for from, to := range s.redirects {
+			if rest, ok := strings.CutPrefix(r.URL.Path, from); ok {
+				http.Redirect(w, r, to+rest+"?"+r.URL.RawQuery, http.StatusMovedPermanently)
+				return
+			}
+		}
+		if i := strings.Index(r.URL.Path, ".git/"); i >= 0 {
+			s.mu.Lock()
+			s.served[r.URL.Path[:i+4]]++
+			s.mu.Unlock()
 		}
 		h := backend
 		h.Env = append(append([]string(nil), backend.Env...), "REMOTE_USER="+user)
@@ -101,6 +137,14 @@ func newTestGitServer(t *testing.T) *testGitServer {
 	}))
 	t.Cleanup(s.Close)
 	return s
+}
+
+// servedOf is how many requests the backend served for repo's path
+// ("/acme/widgets.git").
+func (s *testGitServer) servedOf(repo string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.served[repo]
 }
 
 // host is the server's host:port, as a connection's host.
@@ -212,7 +256,7 @@ type gitDaemon struct {
 	shell      *SidecarShell
 }
 
-func newGitDaemon(t *testing.T, proxyURL string) *gitDaemon {
+func newGitDaemon(t *testing.T, proxyURL string, edits ...func(*ServerConfig)) *gitDaemon {
 	t.Helper()
 	gitCLI(t)
 	// go-git reads a global configuration from HOME: the test's own,
@@ -221,13 +265,17 @@ func newGitDaemon(t *testing.T, proxyURL string) *gitDaemon {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	d := &gitDaemon{root: t.TempDir(), home: t.TempDir(), clk: clock.NewFake()}
 	sock := shortSock(t)
-	stop := startTestDaemon(t, sock, ServerConfig{
+	cfg := ServerConfig{
 		Root:            d.root,
 		Home:            d.home,
 		GitProxyURL:     proxyURL,
 		GitInsecureHTTP: true,
 		Clock:           d.clk,
-	})
+	}
+	for _, e := range edits {
+		e(&cfg)
+	}
+	stop := startTestDaemon(t, sock, cfg)
 	t.Cleanup(stop)
 	d.shell = &SidecarShell{SocketPath: sock, Slug: "dana"}
 	return d
@@ -487,17 +535,30 @@ func TestGitFetchReachesOnlyTheCheckedURL(t *testing.T) {
 		t.Error("a hook ran")
 	}
 
-	// The control, which pins go-git's behaviour the daemon relies on:
-	// a fetch through the named remote follows the poisoned
-	// configuration to the evil server.
-	runGitCLI(t, wc, "config", "remote.origin.url", evil.URL+"/acme/widgets.git")
+	// The controls, which pin the go-git behaviour the daemon relies on.
+	// Origin is the good server and only the repository's insteadOf rule
+	// points at the evil one: a fetch through the named remote follows
+	// the rule there, while the anonymous remote's fetch just above did
+	// not.
 	r, err := git.PlainOpen(wc)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_ = r.Fetch(&git.FetchOptions{RemoteName: "origin", Auth: &githttp.BasicAuth{Username: "x-access-token", Password: gitTestToken}})
+	named := &git.FetchOptions{RemoteName: "origin", Auth: &githttp.BasicAuth{Username: "x-access-token", Password: gitTestToken}}
+	_ = r.Fetch(named)
 	if evil.requests.Load() == evilBefore {
-		t.Error("the control fetch through the named remote did not reach the evil server: the poison proves nothing")
+		t.Error("the named remote did not follow the insteadOf rule to the evil server: the rule proves nothing")
+	}
+	// Origin itself names the evil server: the named remote follows it.
+	evilBefore = evil.requests.Load()
+	runGitCLI(t, wc, "config", "--unset", "url."+evil.URL+"/.insteadOf")
+	runGitCLI(t, wc, "config", "remote.origin.url", evil.URL+"/acme/widgets.git")
+	if r, err = git.PlainOpen(wc); err != nil {
+		t.Fatal(err)
+	}
+	_ = r.Fetch(named)
+	if evil.requests.Load() == evilBefore {
+		t.Error("the named remote did not follow origin to the evil server: the poisoned origin proves nothing")
 	}
 
 	// A working copy whose .git is not a directory is refused.
@@ -598,7 +659,7 @@ func TestGitUnavailable(t *testing.T) {
 	srv := newTestGitServer(t)
 	srv.seed(t, "acme/widgets", "one")
 	cfg := ServerConfig{Root: t.TempDir(), GitInsecureHTTP: true, GitUnavailable: "not here", Clock: clock.NewFake()}
-	if res := runGit(context.Background(), cfg, cloneJob(srv, "w")); res.Error != "not here" {
+	if res := runGit(context.Background(), cfg, &gitPathLocks{held: map[string]*gitPathLock{}}, cloneJob(srv, "w")); res.Error != "not here" {
 		t.Errorf("clone = %+v", res)
 	}
 	if n := srv.requests.Load(); n != 0 {
@@ -609,7 +670,10 @@ func TestGitUnavailable(t *testing.T) {
 // Why this test exists: a git host's or a proxy's error words come
 // back to the agent, and may quote what they were sent. The token and
 // the proxy secret, raw, in basic auth's base64 or in the proxy URL,
-// must never be in the daemon's answer.
+// must never be in the daemon's answer; the token reads [token] and
+// the proxy credential [proxy credential], so the agent can tell which
+// was refused. Words longer than the answer's bound are cut, after the
+// scrubbing, so a cut never leaves part of a secret.
 func TestGitScrubsCredentials(t *testing.T) {
 	srv := newTestGitServer(t)
 	srv.seed(t, "acme/widgets", "one")
@@ -625,20 +689,133 @@ func TestGitScrubsCredentials(t *testing.T) {
 	req := cloneJob(srv, "a")
 	req.Auth.Password = gitTestToken + "-wrong"
 	res := d.run(t, req)
-	if !strings.Contains(res.Error, "bad credentials") || !strings.Contains(res.Error, egresscred.Placeholder) {
+	if !strings.Contains(res.Error, "bad credentials") || !strings.Contains(res.Error, GitTokenPlaceholder) {
 		t.Fatalf("host refusal = %q", res.Error)
 	}
+	// Long words are cut to the bound.
+	srv.pad.Store(10 << 10)
+	long := d.run(t, req)
+	if len(long.Error) != GitErrorMaxBytes || !strings.Contains(long.Error, GitTokenPlaceholder) {
+		t.Errorf("a long refusal is %d bytes: %.80q", len(long.Error), long.Error)
+	}
+	srv.pad.Store(0)
 	// The proxy refuses its credential and quotes it.
 	proxy.refuse.Store(true)
 	res2 := d.run(t, cloneJob(srv, "b"))
 	if !strings.Contains(res2.Error, "proxy refused") || !strings.Contains(res2.Error, egresscred.Placeholder) {
 		t.Fatalf("proxy refusal = %q", res2.Error)
 	}
-	for _, text := range []string{res.Error, res2.Error} {
+	for _, text := range []string{res.Error, res2.Error, long.Error} {
 		for _, leak := range leaks {
 			if strings.Contains(text, leak) {
 				t.Errorf("%q holds %q", text, leak)
 			}
 		}
+	}
+}
+
+// Why this test exists: GitHub answers a renamed or transferred
+// repository with a 301 to its new path. Followed with the token, the
+// repository served would not be the one core checked against the
+// agent's access. go-git must not follow it: the clone and the fetch
+// fail with words the agent can act on, and nothing reaches the
+// repository the redirect points at.
+func TestGitRefusesRedirects(t *testing.T) {
+	srv := newTestGitServer(t)
+	srv.seed(t, "acme/widgets", "one")
+	srv.redirects = map[string]string{"/acme/old.git": "/acme/widgets.git"}
+	d := newGitDaemon(t, "")
+
+	moved := cloneJob(srv, "w")
+	moved.URL = srv.URL + "/acme/old.git"
+	if res := d.run(t, moved); res.Error != gitMovedError {
+		t.Errorf("clone = %+v", res)
+	}
+	if res := d.run(t, cloneJob(srv, "wc")); res.Error != "" {
+		t.Fatalf("clone = %+v", res)
+	}
+	before := srv.servedOf("/acme/widgets.git")
+	fetch := GitRequest{
+		Op: GitOpFetch, Path: "wc", URL: srv.URL + "/acme/old.git", Host: srv.host(),
+		AllowedRepositories: []string{"acme/*"}, Auth: GitAuth{Username: "x-access-token", Password: gitTestToken}, TimeoutSeconds: 60,
+	}
+	if res := d.run(t, fetch); res.Error != gitMovedError {
+		t.Errorf("fetch = %+v", res)
+	}
+	if n := srv.servedOf("/acme/widgets.git") - before; n != 0 {
+		t.Errorf("%d requests reached the repository the redirect named", n)
+	}
+	if _, err := os.Stat(filepath.Join(d.root, "w")); !os.IsNotExist(err) {
+		t.Errorf("the refused clone left its directory: %v", err)
+	}
+}
+
+// Why this test exists: a clone of a repository with very many refs
+// would answer with all of them, and the agent's MCP server sends the
+// answer on to core, whose request body is bounded: past it the call
+// "did not reach Kivali" and the clone that used the token has no
+// closing audit row. The answer must list at most GitUpdatedMax refs,
+// in order, and count them all.
+func TestGitBoundsTheRefs(t *testing.T) {
+	srv := newTestGitServer(t)
+	work := srv.seed(t, "acme/widgets", "one")
+	var refs strings.Builder
+	for i := range 250 {
+		fmt.Fprintf(&refs, "create refs/tags/t%03d HEAD\n", i)
+	}
+	runGitCLIInput(t, work, refs.String(), "update-ref", "--stdin")
+	runGitCLI(t, work, "push", "-q", filepath.Join(srv.root, "acme/widgets.git"), "--tags")
+	d := newGitDaemon(t, "")
+	res := d.run(t, cloneJob(srv, "wc"))
+	// 250 tags, v1, main and origin/main.
+	if res.Error != "" || len(res.Updated) != GitUpdatedMax || res.UpdatedTotal != 253 {
+		t.Fatalf("clone = %d refs of %d, %q", len(res.Updated), res.UpdatedTotal, res.Error)
+	}
+	if !sort.SliceIsSorted(res.Updated, func(i, j int) bool { return res.Updated[i].Ref < res.Updated[j].Ref }) {
+		t.Error("the refs are not in order")
+	}
+}
+
+// Why this test exists: two jobs on one working copy at once (two
+// fetches into one .git) can leave its refs half written. The second
+// must wait until the first has ended, and only then reach the host.
+func TestGitSerialisesAWorkingCopy(t *testing.T) {
+	srv := newTestGitServer(t)
+	srv.block.Store(true)
+	waited := make(chan string, 4)
+	d := newGitDaemon(t, "", func(c *ServerConfig) { c.gitWaitHook = func(p string) { waited <- p } })
+	first, second := make(chan *GitResponse, 1), make(chan *GitResponse, 1)
+	go func() {
+		res, _ := d.shell.Git(context.Background(), cloneJob(srv, "same"))
+		first <- res
+	}()
+	<-srv.arrivals // the first holds the path, at the host
+	long := cloneJob(srv, "same")
+	long.TimeoutSeconds = 120
+	go func() {
+		res, _ := d.shell.Git(context.Background(), long)
+		second <- res
+	}()
+	select {
+	case p := <-waited:
+		if filepath.Base(p) != "same" {
+			t.Errorf("waited on %s", p)
+		}
+	case <-srv.arrivals:
+		t.Fatal("the second job reached the host while the first ran")
+	}
+	// The first times out; the second goes on to the host and times out
+	// in turn.
+	d.clk.Advance(GitTimeoutFor(GitOpClone, 60))
+	if res := <-first; res == nil || !res.TimedOut {
+		t.Fatalf("first = %+v", res)
+	}
+	<-srv.arrivals
+	d.clk.Advance(GitTimeoutFor(GitOpClone, 60))
+	if res := <-second; res == nil || !res.TimedOut {
+		t.Fatalf("second = %+v", res)
+	}
+	if n := srv.requests.Load(); n != 2 {
+		t.Errorf("%d requests", n)
 	}
 }

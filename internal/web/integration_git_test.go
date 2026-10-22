@@ -80,8 +80,8 @@ func gitRows(t *testing.T, srv *Server) []store.IntegrationAuditRow {
 // real client and MCP tools. The job must carry core's URL, the token
 // and the connection's own proxy credential (the one the store
 // registered); only the second answer may reach the model; the call
-// must leave exactly one audit row naming the repository and the refs;
-// and core must check the agent's access again on the second request,
+// must leave two audit rows, one when the job is handed out naming the
+// repository, one when it ends naming the refs; and core must check the agent's access again on the second request,
 // so access taken away while the job ran refuses it.
 func TestGitCallRelaysTheShellJob(t *testing.T) {
 	srv := newTestServer(t)
@@ -122,19 +122,21 @@ func TestGitCallRelaysTheShellJob(t *testing.T) {
 		t.Errorf("proxy credential = %+v registered %v", proxy, registered)
 	}
 	rows := gitRows(t, srv)
-	if len(rows) != 1 || rows[0].Agent != "dana" || rows[0].Action != "clone" || !rows[0].Allowed ||
-		rows[0].Reason != "acme/widgets: updated refs/remotes/origin/main" || rows[0].DurationMS < 1500 {
+	if len(rows) != 2 || rows[0].Agent != "dana" || rows[0].Action != "clone" || !rows[0].Allowed ||
+		rows[0].Reason != "acme/widgets: updated refs/remotes/origin/main" || rows[0].DurationMS < 1500 ||
+		rows[1].Action != "clone" || !rows[1].Allowed || rows[1].Reason != "started: acme/widgets" {
 		t.Errorf("audit = %+v", rows)
 	}
 
 	// The first request alone: the job, no answer for the model yet,
-	// and no audit row.
+	// and the row that says it started, so a second request that never
+	// comes still leaves the owner a row.
 	first, err := dana.IntegrationCall(ctx, agentpod.IntegrationCallRequest{Name: "git_clone", Arguments: args})
 	if err != nil || first.ShellJob == nil || first.ShellJob.Git == nil || len(first.Content) != 0 || first.IsError {
 		t.Fatalf("first request = %+v, %v", first, err)
 	}
-	if len(gitRows(t, srv)) != 1 {
-		t.Error("the first request wrote an audit row")
+	if rows := gitRows(t, srv); len(rows) != 3 || rows[0].Reason != "started: acme/widgets" {
+		t.Errorf("after the first request alone: %+v", rows)
 	}
 	// The shell's words quoting the credentials are scrubbed for the
 	// model and the audit.
@@ -145,7 +147,7 @@ func TestGitCallRelaysTheShellJob(t *testing.T) {
 		t.Errorf("second request = %+v, %v", second, err)
 	}
 	rows = gitRows(t, srv)
-	if last := rows[0]; len(rows) != 2 || strings.Contains(last.Reason, gitToken) || strings.Contains(last.Reason, secret) {
+	if last := rows[0]; len(rows) != 4 || strings.Contains(last.Reason, gitToken) || strings.Contains(last.Reason, secret) {
 		t.Errorf("audit = %+v", rows)
 	}
 
@@ -308,5 +310,43 @@ func TestGitConnectionProxyCredential(t *testing.T) {
 	}
 	if _, ok := srv.Store.EgressScopedCredentials()[builtinintegrations.ProxyUser("git", connID)]; ok {
 		t.Error("the deleted connection's credential is registered")
+	}
+}
+
+// Why this test exists: a built-in that holds its connection and its
+// access to more than the forms do must refuse what it cannot use when
+// the owner saves it, as a 400 in words for the owner, and store
+// nothing: a host with a path saved would register a proxy credential
+// that reaches nothing and refuse every agent's call later, and an
+// access entry that is no pattern would grant nothing without saying
+// so. What it can use must save as before.
+func TestGitConnectionAndAccessChecksAtSave(t *testing.T) {
+	srv := newTestServer(t)
+	withGit(t, srv)
+	intTeam(t, srv, "dana")
+
+	rr := orgJSON(t, srv, http.MethodPut, intBase+"/git/connection",
+		apitypes.ConnectionWrite{Fields: map[string]string{"host": "github.com/acme", "token": gitToken}})
+	if e := assertAPIError(t, rr, http.StatusBadRequest); e.Error != "Host is a host name such as github.com, without https:// or a path" {
+		t.Errorf("a host with a path = %+v", e)
+	}
+	if _, err := srv.Store.GetIntegrationConnection("git"); err == nil {
+		t.Error("the refused connection was stored")
+	}
+	if len(srv.Store.EgressScopedCredentials()) != 0 {
+		t.Error("the refused connection registered a proxy credential")
+	}
+
+	connectGit(t, srv, "https://github.com/")
+	rr = orgJSON(t, srv, http.MethodPut, intBase+"/git/access/dana", apitypes.AccessWrite{Access: []byte(`{"repositories":["acme/*","acme/[x"]}`)})
+	if e := assertAPIError(t, rr, http.StatusBadRequest); e.Error != "acme/[x is not a repository or a pattern" {
+		t.Errorf("a bad pattern = %+v", e)
+	}
+	if rows, _ := srv.Store.ListIntegrationAccess("git"); len(rows) != 0 {
+		t.Errorf("the refused access was stored: %+v", rows)
+	}
+	putIntegrationAccess(t, srv, "git", "dana", `{"repositories":["acme/*","acme/widgets"]}`)
+	if rows, _ := srv.Store.ListIntegrationAccess("git"); len(rows) != 1 || rows[0].Invalid != "" {
+		t.Errorf("good access = %+v", rows)
 	}
 }
