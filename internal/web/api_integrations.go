@@ -50,6 +50,7 @@ func (s *Server) wireAPIIntegrationRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/v1/org/integrations/{name}/connection", s.handleAPIIntegrationConnectionDelete)
 	mux.HandleFunc("POST /api/v1/org/integrations/{name}/connection/verify", s.handleAPIIntegrationVerify)
 	mux.HandleFunc("POST /api/v1/org/integrations/{name}/connection/sign-in/device", s.handleAPISignInDevice(false))
+	mux.HandleFunc("POST /api/v1/org/integrations/{name}/connection/sign-in/browser", s.handleAPISignInBrowser(false))
 	mux.HandleFunc("GET /api/v1/org/integrations/{name}/connection/sign-in", s.handleAPISignInProgress(false))
 	mux.HandleFunc("POST /api/v1/org/integrations/{name}/connection/sign-out", s.handleAPISignOut(false))
 	mux.HandleFunc("POST /api/v1/org/integrations/{name}/connections", s.handleAPIIntegrationConnectionCreate)
@@ -57,6 +58,7 @@ func (s *Server) wireAPIIntegrationRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/v1/org/integrations/{name}/connections/{id}", s.handleAPIIntegrationConnectionDeleteByID)
 	mux.HandleFunc("POST /api/v1/org/integrations/{name}/connections/{id}/verify", s.handleAPIIntegrationVerifyByID)
 	mux.HandleFunc("POST /api/v1/org/integrations/{name}/connections/{id}/sign-in/device", s.handleAPISignInDevice(true))
+	mux.HandleFunc("POST /api/v1/org/integrations/{name}/connections/{id}/sign-in/browser", s.handleAPISignInBrowser(true))
 	mux.HandleFunc("GET /api/v1/org/integrations/{name}/connections/{id}/sign-in", s.handleAPISignInProgress(true))
 	mux.HandleFunc("POST /api/v1/org/integrations/{name}/connections/{id}/sign-out", s.handleAPISignOut(true))
 	mux.HandleFunc("PUT /api/v1/org/integrations/{name}/access/{slug}", s.handleAPIIntegrationAccessPut)
@@ -467,8 +469,10 @@ func optString(s string) *string {
 	return &s
 }
 
-// integrationPage is the integration's page.
-func (s *Server) integrationPage(v *integrationView) apitypes.IntegrationPage {
+// integrationPage is the integration's page, as the request r reached
+// Kivali: the redirect address for browser sign-in is r's
+// (signInRedirectURL).
+func (s *Server) integrationPage(v *integrationView, r *http.Request) apitypes.IntegrationPage {
 	names := s.agentNames()
 	page := apitypes.IntegrationPage{
 		Summary:          v.summary(),
@@ -489,11 +493,16 @@ func (s *Server) integrationPage(v *integrationView) apitypes.IntegrationPage {
 	if v.manifest != nil {
 		page.Author = v.manifest.Author.Name
 		page.ConnectionMethod = v.manifest.Kivali.Connection.Method
-		page.SetupNotesMD = v.manifest.Kivali.SetupNotes
+		page.SetupNotesMD = setupNotes(v.manifest, r)
 	}
+	redirect := browserRedirectURL(v.manifest, r)
+	page.SignInRedirectURL = redirect
 	labels := map[string]string{}
 	for _, c := range v.conns {
 		state := v.connectionState(c)
+		if state.SignIn != nil {
+			state.SignIn.RedirectURL = redirect
+		}
 		labels[c.rec.ID] = state.Label
 		page.Connections = append(page.Connections, state)
 	}
@@ -545,8 +554,9 @@ func publisherNamed(names map[string]string, it store.Integration, slug string) 
 	return personNamed(names, slug)
 }
 
-// integrationVersionView is a version's install screen.
-func (s *Server) integrationVersionView(v *integrationView, ver store.IntegrationVersion, m *integration.Manifest) apitypes.IntegrationVersion {
+// integrationVersionView is a version's install screen, as the request
+// r reached Kivali (the setup notes name r's redirect address).
+func (s *Server) integrationVersionView(v *integrationView, ver store.IntegrationVersion, m *integration.Manifest, r *http.Request) apitypes.IntegrationVersion {
 	out := apitypes.IntegrationVersion{
 		Name:             v.it.Name,
 		DisplayName:      cmp.Or(m.DisplayName, v.it.Name),
@@ -561,7 +571,7 @@ func (s *Server) integrationVersionView(v *integrationView, ver store.Integratio
 		Runtime:          m.Server.Type,
 		ConnectionMethod: m.Kivali.Connection.Method,
 		Scopes:           signInScopes(m),
-		SetupNotesMD:     m.Kivali.SetupNotes,
+		SetupNotesMD:     setupNotes(m, r),
 		Hosts:            integrationHosts(m),
 		Packages:         integrationPackages(m),
 		ConnectionFields: connectionFields(m, v.first()),
@@ -615,7 +625,7 @@ func (s *Server) writeIntegrationPageStatus(w http.ResponseWriter, r *http.Reque
 	if !ok {
 		return
 	}
-	writeJSON(w, code, s.integrationPage(v))
+	writeJSON(w, code, s.integrationPage(v, r))
 }
 
 // ---- the list and upload ----
@@ -724,7 +734,7 @@ func (s *Server) handleAPIIntegrationUpload(w http.ResponseWriter, r *http.Reque
 		writeAPIError(w, http.StatusInternalServerError, "the version could not be read", whoServer)
 		return
 	}
-	writeJSON(w, http.StatusCreated, s.integrationVersionView(v, ver, m))
+	writeJSON(w, http.StatusCreated, s.integrationVersionView(v, ver, m, r))
 }
 
 // ---- one integration ----
@@ -862,7 +872,7 @@ func (s *Server) writeIntegrationVersionView(w http.ResponseWriter, r *http.Requ
 		writeAPIError(w, http.StatusInternalServerError, "the version could not be read", whoServer)
 		return
 	}
-	writeJSON(w, http.StatusOK, s.integrationVersionView(v, ver, m))
+	writeJSON(w, http.StatusOK, s.integrationVersionView(v, ver, m, r))
 }
 
 // handleAPIIntegrationAnswer approves or rejects a pending version from

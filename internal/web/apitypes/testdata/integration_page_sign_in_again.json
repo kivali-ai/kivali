@@ -52,7 +52,8 @@
     "repo",
     "read:org"
   ],
-  "setup_notes_md": "Register a GitHub App under **Settings, Developer settings**, tick *Enable Device Flow*, then paste its client id and a client secret here.",
+  "setup_notes_md": "Register a GitHub App under **Settings, Developer settings**, set its callback URL to https://kivali.example.com/connect/callback, tick *Enable Device Flow*, then paste its client id and a client secret here.",
+  "sign_in_redirect_url": "https://kivali.example.com/connect/callback",
   "connection": {
     "id": "a1b2c3d4",
     "label": "",
@@ -87,10 +88,12 @@
     "reconnect_needed": false,
     "sign_in": {
       "ways": [
-        "device"
+        "device",
+        "browser"
       ],
       "signed_in": false,
-      "error": "the vendor refused the sign-in (bad_refresh_token): The refresh token passed is incorrect or expired."
+      "error": "the vendor refused the sign-in (bad_refresh_token): The refresh token passed is incorrect or expired.",
+      "redirect_url": "https://kivali.example.com/connect/callback"
     }
   },
   "connections": [
@@ -128,10 +131,12 @@
       "reconnect_needed": false,
       "sign_in": {
         "ways": [
-          "device"
+          "device",
+          "browser"
         ],
         "signed_in": false,
-        "error": "the vendor refused the sign-in (bad_refresh_token): The refresh token passed is incorrect or expired."
+        "error": "the vendor refused the sign-in (bad_refresh_token): The refresh token passed is incorrect or expired.",
+        "redirect_url": "https://kivali.example.com/connect/callback"
       }
     }
   ],

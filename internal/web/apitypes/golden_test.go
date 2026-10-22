@@ -213,6 +213,7 @@ func goldenFixtures() map[string]any {
 		"access_choices":                 AccessChoices{Options: []string{"Engineering", "Marketing"}},
 		"integration_logs":               IntegrationLogs{Lines: []IntegrationLogLine{{At: integrationNow, Level: "info", Message: "server started"}, {At: integrationLater, Level: "stderr", Message: "token [secret] accepted"}}},
 		"device_sign_in":                 goldenDeviceSignIn(),
+		"browser_sign_in":                goldenBrowserSignIn(),
 		"sign_in_progress":               SignInProgress{State: SignInStatePending},
 		"sign_in_progress_failed":        goldenSignInFailed(),
 		// Software lists: software_golden_test.go.

@@ -52,7 +52,8 @@
     "repo",
     "read:org"
   ],
-  "setup_notes_md": "Register a GitHub App under **Settings, Developer settings**, tick *Enable Device Flow*, then paste its client id and a client secret here.",
+  "setup_notes_md": "Register a GitHub App under **Settings, Developer settings**, set its callback URL to https://kivali.example.com/connect/callback, tick *Enable Device Flow*, then paste its client id and a client secret here.",
+  "sign_in_redirect_url": "https://kivali.example.com/connect/callback",
   "connection": {
     "id": "a1b2c3d4",
     "label": "",
@@ -87,12 +88,14 @@
     "reconnect_needed": false,
     "sign_in": {
       "ways": [
-        "device"
+        "device",
+        "browser"
       ],
       "signed_in": true,
       "method": "device",
       "signed_in_at": "2026-10-21T09:30:00Z",
-      "expires_at": "2026-10-21T18:00:00Z"
+      "expires_at": "2026-10-21T18:00:00Z",
+      "redirect_url": "https://kivali.example.com/connect/callback"
     }
   },
   "connections": [
@@ -130,12 +133,14 @@
       "reconnect_needed": false,
       "sign_in": {
         "ways": [
-          "device"
+          "device",
+          "browser"
         ],
         "signed_in": true,
         "method": "device",
         "signed_in_at": "2026-10-21T09:30:00Z",
-        "expires_at": "2026-10-21T18:00:00Z"
+        "expires_at": "2026-10-21T18:00:00Z",
+        "redirect_url": "https://kivali.example.com/connect/callback"
       }
     }
   ],
