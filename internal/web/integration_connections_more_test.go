@@ -143,7 +143,7 @@ func TestGitJobTellsWhatRanThroughItsConnection(t *testing.T) {
 	withGit(t, srv)
 	intTeam(t, srv, "dana")
 	_, hub, lab := twoGitConnections(t, srv)
-	if rr := putAccessFor(t, srv, "git", "dana", `{"repositories":["acme/*"]}`, hub.ID); rr.Code != http.StatusOK {
+	if rr := putAccessFor(t, srv, "git", "dana", `{"pull_repositories":["acme/*"]}`, hub.ID); rr.Code != http.StatusOK {
 		t.Fatal(rr.Body.String())
 	}
 	dana := agentpod.NewClient(serveCoreUDS(t, srv), "dana")
@@ -153,7 +153,7 @@ func TestGitJobTellsWhatRanThroughItsConnection(t *testing.T) {
 	if err != nil || first.ShellJob == nil || first.ShellJob.Git == nil || first.ShellJob.Git.ConnectionID != hub.ID {
 		t.Fatalf("first request = %+v, %v", first, err)
 	}
-	if rr := putAccessFor(t, srv, "git", "dana", `{"repositories":["acme/*"]}`, lab.ID); rr.Code != http.StatusOK {
+	if rr := putAccessFor(t, srv, "git", "dana", `{"pull_repositories":["acme/*"]}`, lab.ID); rr.Code != http.StatusOK {
 		t.Fatal(rr.Body.String())
 	}
 	second, err := dana.IntegrationCall(ctx, agentpod.IntegrationCallRequest{Name: "git_clone", Arguments: args, ShellJobResult: &agentpod.IntegrationShellJobResult{

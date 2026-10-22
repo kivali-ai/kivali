@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/kivali-ai/kivali/internal/builtinintegrations"
@@ -123,23 +124,22 @@ const pushSchema = `{"type":"object","properties":{` +
 	`"url":{"type":"string","description":"optional: the repository's HTTPS URL on the connection's host, or owner/name; empty, the working copy's origin"}},` +
 	`"required":["path","refs"]}`
 
-// accessSchema is the access form: the repositories, then the push
-// switch, the refs it may push and the force switch. Only repositories
-// is required: a row with only repositories is valid; push, push_refs
-// and force are optional.
+// accessSchema is the access form: the repositories it may pull, the
+// ones it may push to, then the refs it may push there and the force
+// switch. No field is required: the form cannot ask for one of two
+// lists, so CheckAccess asks for a repository in either.
 const accessSchema = `{"type":"object","properties":{` +
-	`"repositories":{"type":"array","items":{"type":"string"},"title":"Repositories","description":"owner/name, or a pattern such as acme/*"},` +
-	`"push":{"type":"boolean","title":"May push","description":"Push the branches and tags below to repositories in the list."},` +
-	`"push_refs":{"type":"array","items":{"type":"string"},"title":"Branches and tags it may push","description":"A branch, a tag, or a pattern: agent/*, feature/*, tags/v*. Nothing means none."},` +
-	`"force":{"type":"boolean","title":"May force-push","description":"Overwrites history on the remote. Leave off unless the work needs it.","x-kivali-danger":true}},` +
-	`"required":["repositories"]}`
+	`"pull_repositories":{"type":"array","items":{"type":"string"},"title":"Repositories it may pull","description":"Clone and fetch. owner/name, or a pattern such as acme/*."},` +
+	`"push_repositories":{"type":"array","items":{"type":"string"},"title":"Repositories it may push to","description":"Clone, fetch and push the branches and tags below. owner/name, or a pattern such as acme/*."},` +
+	`"push_refs":{"type":"array","items":{"type":"string"},"title":"Branches and tags it may push","description":"In the repositories it may push to. A branch, a tag, or a pattern: agent/*, feature/*, tags/v*. Nothing means none."},` +
+	`"force":{"type":"boolean","title":"May force-push","description":"Overwrites history on the remote. Leave off unless the work needs it.","x-kivali-danger":true}}}`
 
 // Manifest is git's manifest.
 func (g *Git) Manifest() *integration.Manifest {
 	return &integration.Manifest{
 		ManifestVersion: "0.3",
 		Name:            Name,
-		Version:         "1.2.0",
+		Version:         "2.0.0",
 		DisplayName:     "Git",
 		Description:     "Clones, fetches and pushes repositories over HTTPS with the owner's token; agents use plain git for everything local.",
 		Author:          integration.Author{Name: "Kivali"},
@@ -152,7 +152,7 @@ func (g *Git) Manifest() *integration.Manifest {
 		Tools: []integration.Tool{
 			{Name: actionClone, Description: "Clones a repository the agent's access includes into the agent's files, with the connection's token."},
 			{Name: actionFetch, Description: "Fetches new commits and tags into a working copy of a repository the agent's access includes."},
-			{Name: actionPush, Description: "Pushes the branches and tags the agent's access allows to a repository it includes."},
+			{Name: actionPush, Description: "Pushes the branches and tags the agent's access allows to a repository it may push to."},
 		},
 		Kivali: integration.Kivali{
 			Connection: integration.Connection{Method: "token", Multiple: true},
@@ -194,9 +194,13 @@ func (g *Git) Verify(context.Context, builtinintegrations.Connection) (string, e
 
 // call is one clone, fetch or push as core checked it.
 type call struct {
-	action   string
-	host     string
-	token    string
+	action string
+	host   string
+	token  string
+	// patterns are the repositories the call may reach, the job's
+	// AllowedRepositories: the ones the access lets its agent pull or
+	// push to for a clone or a fetch, the ones it may push to for a
+	// push.
 	patterns []string
 	path     string
 	// refs are a fetch's refspecs as given, or a push's normalised
@@ -251,9 +255,11 @@ func (g *Git) check(caller builtinintegrations.Caller, conn builtinintegrations.
 	if c.token == "" {
 		return c, refuse("The Git integration's connection has no token. Ask the owner to connect it again.", "the connection has no token")
 	}
-	if c.patterns, err = repositoryPatterns(caller.Access); err != nil {
+	pull, push, err := repositoryPatterns(caller.Access)
+	if err != nil {
 		return c, refuse("Your access to the Git integration names no repositories Kivali can read. Ask the owner to set it again.", err.Error())
 	}
+	c.patterns = slices.Concat(pull, push)
 	var url string
 	dec := json.NewDecoder(strings.NewReader(string(args)))
 	dec.DisallowUnknownFields()
@@ -285,7 +291,7 @@ func (g *Git) check(caller builtinintegrations.Caller, conn builtinintegrations.
 		if c.path == "" || len(a.Refs) == 0 {
 			return c, refuse("git_push needs path and refs.", "the arguments lack path or refs")
 		}
-		if err := checkPush(&c, caller.Access, a); err != nil {
+		if err := checkPush(&c, caller.Access, push, a); err != nil {
 			return c, err
 		}
 	}
@@ -302,7 +308,12 @@ func (g *Git) check(caller builtinintegrations.Caller, conn builtinintegrations.
 		return c, refuse(fmt.Sprintf("Kivali cannot read the repository: %v. Give its HTTPS URL on %s, or owner/name.", err, host),
 			"the repository does not read")
 	}
-	if !accessIncludes(caller.Access, repo) {
+	switch {
+	case gitrepo.Match(c.patterns, repo.Key()):
+	case name == actionPush && gitrepo.Match(pull, repo.Key()):
+		return c, refuse(fmt.Sprintf("The Git integration's access for you lets you pull %s but not push to it. Ask the owner if your work needs it.", repo.Path),
+			"the access does not allow pushing to "+repo.Path)
+	default:
 		return c, refuse(fmt.Sprintf("The Git integration's access for you does not include %s. Ask the owner if your work needs it.", repo.Path),
 			"the access does not include "+repo.Path)
 	}
@@ -310,15 +321,17 @@ func (g *Git) check(caller builtinintegrations.Caller, conn builtinintegrations.
 	return c, nil
 }
 
-// checkPush holds a push's refs to the caller's access: push must be
-// on, every entry must read as a ref or a refspec that deletes nothing,
-// its destination must be one of push_refs, and a forced one (force, or
-// a + in front) needs force on. It fills c's refs, destinations and
+// checkPush holds a push's refs to the caller's access: it must name a
+// repository to push to (push, which becomes c's patterns), every
+// entry must read as a ref or a refspec that deletes nothing, its
+// destination must be one of push_refs, and a forced one (force, or a
+// + in front) needs force on. It fills c's refs, destinations and
 // force.
-func checkPush(c *call, access map[string]any, a pushArgs) error {
-	if !accessAllows(access, pushKey) {
+func checkPush(c *call, access map[string]any, push []string, a pushArgs) error {
+	if len(push) == 0 {
 		return refuse("The Git integration's access for you does not allow pushing. Ask the owner if your work needs it.", "the access does not allow pushing")
 	}
+	c.patterns = push
 	allowed, err := pushRefPatterns(access)
 	if err != nil {
 		return refuse("Your access to the Git integration names branches or tags Kivali cannot read. Ask the owner to set it again.", err.Error())

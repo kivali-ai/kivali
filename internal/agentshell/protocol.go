@@ -173,7 +173,8 @@ const RootDefault = "/files"
 // root (/files) or its HOME. URL is the repository's URL, with no user
 // info, on Host; a fetch or a push without one reads the working copy's
 // origin and uses it only when it is on Host and one of
-// AllowedRepositories. RefSpecs are a fetch's or a push's. A push's
+// AllowedRepositories: for a push, the repositories the agent may push
+// to. RefSpecs are a fetch's or a push's. A push's
 // destinations must be in AllowedRefs (patterns of branches and tags),
 // and a refspec with + needs Force; a fetch's Force lets a ref move
 // other than fast-forward. TimeoutSeconds bounds the operation (see

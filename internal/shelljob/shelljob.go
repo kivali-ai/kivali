@@ -23,7 +23,8 @@ type Job struct {
 //     the connection's host. A clone always has one. A fetch or a push
 //     without one has the daemon read the working copy's origin, which
 //     it uses only when it is on Host and one of AllowedRepositories
-//     (owner/name patterns, the agent's access).
+//     (owner/name patterns from the agent's access: the repositories it
+//     may pull or push to, or for a push only the ones it may push to).
 //   - RefSpecs are a fetch's refspecs (empty: every branch) or a push's,
 //     normalised by core ([+]src:dst, gitrepo.ParsePushRefSpec).
 //   - AllowedRefs are the branches and tags a push may write, the
