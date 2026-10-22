@@ -1355,6 +1355,18 @@ describe('Integration install screen', () => {
     expect(screen.queryAllByRole('button')).toEqual([]);
   });
 
+  // Guards the software of a shipped bundle such as GitHub, whose pod installs gh as root at every start as an
+  // upload's does: its install screen lists each package, as an upload's does, without asking the owner to read them
+  // before approving, since a shipped bundle has nothing to approve.
+  it('lists the software a shipped bundle installs, with nothing to approve', async () => {
+    await renderOrg('/org/integrations/notes/versions/1.0.0', {
+      routes: { ['GET /api/v1/org/integrations/notes/versions/1.0.0']: { ...goIntegrationVersionShipped, packages: ['gh'] } },
+    });
+    const software = within(screen.getByRole('region', { name: 'Software it installs' }));
+    expect(software.getAllByRole('listitem').map((li) => li.textContent)).toEqual(['gh']);
+    expect(software.getByText('Debian packages, fetched from Debian’s repositories and installed each time the integration starts.')).toBeInTheDocument();
+  });
+
   // Guards a rejected version's screen: it says Rejected and offers nothing to press, since a rejected version never
   // runs and cannot be rolled back to.
   it('shows a rejected version with no buttons', async () => {
@@ -1630,6 +1642,15 @@ describe('Integration page', () => {
     await renderOrg(PATH);
     expect(goIntegrationPage.packages).toEqual([]);
     expect(screen.queryByRole('region', { name: 'Software' })).toBeNull();
+  });
+
+  // Guards the Software block of an integration that ships with Kivali as a bundle, such as GitHub with gh: it is
+  // built in, and its pod still installs software as root at every start, so the page lists it as for an upload.
+  it('lists the software of a built-in that ships as a bundle', async () => {
+    const page = { ...goIntegrationPage, summary: { ...goIntegrationPage.summary, builtin: true }, packages: ['gh'] };
+    await renderOrg(PATH, { routes: { ['GET ' + API]: page } });
+    const software = within(screen.getByRole('region', { name: 'Software' }));
+    expect(software.getAllByRole('listitem').map((li) => li.textContent)).toEqual(['gh']);
   });
 
   // Guards the debug level, which apt-get's output has while an integration's software installs: it gets the

@@ -186,8 +186,9 @@ export function InstallScreen() {
         </Block>
       )}
 
-      {/* Software runs as root while it installs, at every start: the person reads each name before approving. */}
-      {!v.builtin && v.packages.length > 0 && (
+      {/* Software runs as root while it installs, at every start: the person reads each name before approving. A
+          shipped bundle's pod installs its software as an upload's does, with nothing to approve. */}
+      {!insideKivali && v.packages.length > 0 && (
         <Block label="Software it installs">
           <ul className="app-int-facts">
             {v.packages.map((p) => (
@@ -197,7 +198,9 @@ export function InstallScreen() {
             ))}
           </ul>
           <Text as="p" variant="caption" tone="muted">
-            Debian packages, fetched from Debian’s repositories and installed each time the integration starts. Read each one before you approve.
+            {v.builtin
+              ? 'Debian packages, fetched from Debian’s repositories and installed each time the integration starts.'
+              : 'Debian packages, fetched from Debian’s repositories and installed each time the integration starts. Read each one before you approve.'}
           </Text>
         </Block>
       )}

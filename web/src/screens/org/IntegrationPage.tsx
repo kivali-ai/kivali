@@ -1175,7 +1175,8 @@ export function IntegrationPage() {
         )}
       </Block>
 
-      {!s.builtin && p.packages.length > 0 && (
+      {/* A bundle's, uploaded or shipped; a built-in of Go code installs none. */}
+      {p.packages.length > 0 && (
         <Block label="Software" variant="heading">
           <ul className="app-int-facts">
             {p.packages.map((pkg) => (
