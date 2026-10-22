@@ -98,7 +98,8 @@ one. Fields Kivali does not read are kept as written.
 | `server.mcp_config.env` | The server's environment. `${user_config.<key>}` becomes that connection field's value; no other `${...}` is allowed. A plain value, such as the API's address, is passed as written. |
 | `user_config` | The connection form, in this order. Each key is lowercase letters, digits and underscores, starting with a letter; each field has `type` (`string`, `number` or `boolean`), `title` and `description`, `"sensitive": true` for a secret, and `"required": true` when the connection needs it. |
 | `tools` | Every action: a `name` (lowercase letters, digits and underscores, starting with a letter) and a `description` the owner reads on the install screen. |
-| `kivali.connection` | `{"method": "token"}`: fields the owner pastes. |
+| `kivali.connection` | `{"method": "token"}`: fields the owner pastes. Or a connection made by signing in, `device` or `browser` ([A sign-in connection](#a-sign-in-connection)). |
+| `kivali.setup_notes` | Markdown the owner reads above the connection form: what to do on the service's side first, such as registering an app and the scopes to tick. Optional. |
 | `kivali.hosts` | Every host the server reaches; it reaches those and no other ([The network](#the-network)). Lowercase, no scheme, port or path, and never `*`. |
 | `kivali.packages` | Optional: the Debian packages the pod installs before the server starts, such as `["gh"]` ([A command-line tool](#a-command-line-tool)). Each is a package's exact name as `apt-get install` takes it: lowercase letters, digits, `+`, `-` and `.`, with no version or release, listed once. |
 | `kivali.access` | The access form ([The access form](#the-access-form)). Without it, access is all or nothing. |
@@ -124,6 +125,62 @@ Nothing else: no numbers, no nested objects, no `oneOf` and the like,
 no constraints such as `minItems` or `pattern`.
 `kivali.access.choices` maps a text or list field to the action that
 lists its options through the connection, in place of a fixed enum.
+
+### A sign-in connection
+
+A service that hands out no token to paste is connected by signing in:
+the owner registers an app with the service, pastes its client id and
+secret, and approves Kivali on the service's page. Kivali runs the
+whole OAuth exchange; the server never does OAuth, and never sees the
+client secret or the refresh token.
+
+```json
+"connection": {
+  "method": "device",
+  "device_endpoint": "https://github.com/login/device/code",
+  "token_endpoint": "https://github.com/login/oauth/access_token",
+  "revocation_endpoint": null,
+  "scopes": ["repo"],
+  "client": "operator",
+  "credential_keys": { "access_token": "GH_TOKEN" }
+}
+```
+
+- `method`: `device`, a code the owner enters on the service's page,
+  where the service offers it; it needs `device_endpoint` and
+  `token_endpoint`. `browser` (the service's sign-in page and back)
+  needs `authorization_endpoint` and `token_endpoint`. A manifest may
+  give both ways' endpoints; `method` is the one the page shows first.
+- Every endpoint is an `https://` address from the service's OAuth
+  documentation. `revocation_endpoint` is optional: with one, signing
+  out and deleting the connection revoke its tokens.
+- `scopes`: what the sign-in asks for; the owner sees them on the
+  install screen. `pkce` (default true) and
+  `extra_authorization_params` apply to browser sign-in.
+- `client`: `operator` (or absent), the app the owner registers.
+- `credential_keys.access_token`: the name the access token is given
+  under, capital letters, digits and underscores (`GH_TOKEN`).
+  Required.
+- Kivali adds `client_id` and `client_secret` to the connection form
+  itself: `user_config` declares neither, nor `oauth_access_token` or
+  `oauth_refresh_token`. Declare only what else the server needs.
+- `kivali.hosts` lists the hosts the server calls, not the service's
+  sign-in hosts: Kivali talks to those.
+- `kivali.setup_notes` tells the owner how to register the app: where
+  in the service's settings, which settings to turn on (GitHub: device
+  flow), which scopes to tick.
+
+The token changes while the server runs: Kivali renews it shortly
+before it expires, without restarting the server. So the server reads
+it from `kivali/credential` on every call, as `fields[<name>]` (or
+`env[<name>]`), never from its environment at start and never kept
+from one call to the next. The answer is error -32002 while the
+connection needs the owner to sign in (never signed in, signed out, or
+the service no longer accepts the sign-in) and -32003 when the service
+did not answer Kivali's renewal: refuse the call with words that say
+so, the first with "ask the owner to sign in again", the second with
+"try again later". At start, before the owner signs in, the server
+starts with empty values like any other.
 
 ## Where the server runs
 
@@ -160,7 +217,8 @@ mounted read-only at `/bundle`.
 - **It reads the connection once.** A changed connection restarts the
   server with the new values. Put every field the server needs in
   `mcp_config.env` and the environment holds the connection as it is
-  now; `kivali/credential` adds nothing to it.
+  now; `kivali/credential` adds nothing to it. A sign-in connection's
+  token is the exception: ask for it on every call.
 - **It is stopped** by its input closing, and killed 5 seconds later
   if it has not exited. It is started again for a new version, a
   changed connection, and after three missed pings: Kivali pings every
@@ -282,7 +340,8 @@ def run_gh(args, timeout=45):
   during a call.
 - **`kivali/credential`** answers the connection's values as they are
   now, `{"env": {...}, "fields": {...}}`, or error -32001 with no
-  connection. Its answer comes on the server's input, among Kivali's
+  connection; a sign-in connection's also -32002 and -32003
+  ([A sign-in connection](#a-sign-in-connection)). Its answer comes on the server's input, among Kivali's
   requests: the reading loop hands it to whatever waits for that id,
   and a reading loop that stops to wait for it never reads it.
 
