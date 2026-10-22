@@ -251,7 +251,7 @@ test-mac: platform-test ## Mac-only checks: supervisor + shell tests, VM image b
 # in the local image store (image-resolve-mode=local in the VM).
 BUILD_VM := scripts/build-vm.sh
 BUILD_VM_DOWN := $(if $(KIVALI_BUILD_VM_KEEP),true,$(BUILD_VM) down)
-images: ## the four images into the build VM or local docker (VERSION, AGENT_SHELL_EXTRA_PACKAGES)
+images: $(if $(filter vm,$(ENGINE)),supervisor) ## the four images into the build VM or local docker (VERSION, AGENT_SHELL_EXTRA_PACKAGES)
 	@echo "agent-shell extra packages: $(if $(strip $(AGENT_SHELL_EXTRA_PACKAGES)),$(AGENT_SHELL_EXTRA_PACKAGES),none)"
 ifeq ($(ENGINE),docker)
 	docker build --build-arg VERSION=$(VERSION) -t $(IMAGE):$(VERSION) .
