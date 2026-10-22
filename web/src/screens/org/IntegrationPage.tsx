@@ -360,7 +360,7 @@ function LogBlock({ api, now }: { api: string; now: number }) {
   }, [api, seq]);
   return (
     <Block
-      label="Recent log"
+      label="Recent logs"
       variant="heading"
       action={
         <Button size="sm" variant="ghost" onClick={() => setSeq((n) => n + 1)}>
@@ -389,7 +389,7 @@ interface Grant {
 
 /**
  * An integration's page under Org: whether it is on, its connection, which agents have access and how far, its
- * actions, its versions and its latest calls. Every change answers with the whole page.
+ * actions, its versions, its recent calls and its recent logs. Every change answers with the whole page.
  */
 export function IntegrationPage() {
   const { name = '' } = useParams();
@@ -702,7 +702,7 @@ export function IntegrationPage() {
         )}
       </Block>
 
-      <Block label="Latest calls" variant="heading">
+      <Block label="Recent calls" variant="heading">
         <ErrorBanner error={audit.error} />
         {!audit.data && !audit.error && <Skeleton height={64} />}
         {audit.data && audit.data.rows.length === 0 && <None>No calls yet.</None>}

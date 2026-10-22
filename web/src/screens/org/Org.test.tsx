@@ -1552,10 +1552,10 @@ describe('Integration page', () => {
 
   // Guards the log block (integration_logs.json): lines show time, a level badge (none for info) and the message,
   // an empty log says so, and Refresh asks the server again and shows the new answer.
-  it('shows the recent log and refreshes it', async () => {
+  it('shows the recent logs and refreshes them', async () => {
     let logs: unknown = goIntegrationLogs;
     await renderOrg(PATH, { routes: { ['GET ' + API + '/logs']: () => logs } });
-    const block = within(screen.getByRole('region', { name: 'Recent log' }));
+    const block = within(screen.getByRole('region', { name: 'Recent logs' }));
     expect(block.getByText('server started')).toBeInTheDocument();
     expect(block.getByText('token [secret] accepted')).toBeInTheDocument();
     expect(block.getByText('stderr')).toHaveClass('kv-badge');
@@ -1589,9 +1589,9 @@ describe('Integration page', () => {
 
   // Guards the history blocks: the waiting version's banner leads to its install screen, versions are listed newest
   // first with their state (integration_page.json has one of each), each linking to its install screen, only the
-  // superseded one offers Roll back, and the latest calls say who called, what, and how it went
+  // superseded one offers Roll back, and the recent calls say who called, what, and how it went
   // (integration_audit.json), with your roll back named as one rather than read as a failed call.
-  it('shows the waiting version, every version and the latest calls', async () => {
+  it('shows the waiting version, every version and the recent calls', async () => {
     const h = await renderOrg(PATH);
     const versions = within(screen.getByRole('region', { name: 'Versions' }));
     const links = versions.getAllByRole('link');
@@ -1610,7 +1610,7 @@ describe('Integration page', () => {
     expect(versions.getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual(['Roll back to version 1.1.0']);
     for (const l of links) expect(within(l).queryByRole('button')).toBeNull();
 
-    const calls = within(screen.getByRole('region', { name: 'Latest calls' }));
+    const calls = within(screen.getByRole('region', { name: 'Recent calls' }));
     expect(calls.getAllByText('Create post')).toHaveLength(2);
     expect(calls.getByText('Allowed')).toBeInTheDocument();
     expect(calls.getByText('Refused: Lee has no access to the Marketing blog')).toBeInTheDocument();
@@ -1625,7 +1625,7 @@ describe('Integration page', () => {
   });
 
   // Guards rolling back from the page: Roll back only opens the dialog, which names the version that stops and the one
-  // that runs and says access stays as it is; the post waits for its confirm, then the page and the latest calls are
+  // that runs and says access stays as it is; the post waits for its confirm, then the page and the recent calls are
   // read again, so the list shows the version rolled back to in use and Roll back moves to the version it replaced.
   it('rolls back to a superseded version after asking, and the versions list follows', async () => {
     const versionsAfter = goIntegrationPage.versions.map((v) =>
