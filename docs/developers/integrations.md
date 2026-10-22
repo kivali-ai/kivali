@@ -194,6 +194,13 @@ flat form can show. The top level takes `type: object`, `properties`,
 | `boolean` | `switch` |
 | `array` of `items: {type: string}` | `list`, free text |
 | `array` with `items.enum` | `choices`, with the enum as options |
+| `boolean` with `"x-kivali-danger": true` | `switch` with `danger` (`AccessField.Danger`) |
+
+`x-kivali-danger` marks a switch whose "on" the owner should choose
+with care (Git's force-push): the access dialog draws it in the warning
+tone, its description beside a warning icon instead of a muted hint.
+It must be `true` or `false`, and it is an error on any property but a
+`boolean`.
 
 Anything else is an error naming the property: nested objects,
 numbers, combinators (`oneOf` and the like), constraints the form
@@ -213,7 +220,9 @@ For a form whose options are listed live, only the kind is checked.
 Without a form, only `{}` is valid. `integration.AccessSummary` puts
 the access in words, field by field: "Blogs: Marketing, Eng · May
 publish and edit" (a switch that is off and an empty field are left
-out; no form reads "Full access").
+out; no form reads "Full access"). A built-in that implements
+`builtinintegrations.AccessSummarizer` puts its access in words itself
+([The interface](#the-interface)).
 
 ## Where it is kept
 
@@ -719,6 +728,7 @@ type ShellJobIntegration interface {
 type HostsOf interface{ Hosts(conn Connection) []string }
 type ConnectionChecker interface{ CheckConnection(conn Connection) error }
 type AccessChecker interface{ CheckAccess(access map[string]any) error }
+type AccessSummarizer interface{ AccessSummary(access map[string]any) string }
 
 // An error of Call or Complete that refuses the call before anything ran.
 type Refusal struct{ Text, Reason string }
@@ -764,6 +774,11 @@ type Refusal struct{ Text, Reason string }
   checks and before it stores anything, and answers 400 with the
   error's words. An `AccessChecker` does the same for
   `PUT .../access/{slug}`, after `integration.ValidateAccess`.
+- An `AccessSummarizer` built-in's `AccessSummary` is the access in
+  words on the Org page and an agent's tab, in place of
+  `integration.AccessSummary`'s field by field: for an access form
+  whose fields mean something only together. It is given the stored
+  access, which may no longer fit the form.
 
 `Tools`, `Call`, `Verify` and `Choices` run concurrently: many agents
 call at once, and each agent's list is asked for in parallel with the
@@ -862,8 +877,8 @@ says agents cannot use it, and offers Remove.
 ### The git built-in
 
 Git (`internal/builtinintegrations/gitintegration`, name `git`,
-version 1.0.0) lets agents clone and fetch repositories over HTTPS with
-the owner's token. Everything local is plain git in the agent's shell,
+version 1.1.0) lets agents clone, fetch and push repositories over
+HTTPS with the owner's token. Everything local is plain git in the agent's shell,
 which reaches only the team's allow list. Its manifest:
 
 - `user_config`: `host` (required; "github.com, gitlab.com or any HTTPS
@@ -871,10 +886,21 @@ which reaches only the team's allow list. Its manifest:
   `test_repository` (optional, owner/name).
 - `kivali.connection.method: token`, no `kivali.hosts`,
   `kivali.verify: "ls_remote"` (a name for `Verify`, not a tool).
-- `kivali.access.schema`: one required list field, `repositories`
-  ("owner/name, or a pattern such as acme/*").
-- `tools`: `clone` and `fetch`, which agents call as `git_clone(url,
-  path)` and `git_fetch(path, url?, refs?)`.
+- `kivali.access.schema`, in this order: `repositories`, the one
+  required field (a list: "owner/name, or a pattern such as acme/*");
+  `push` (a switch, "May push"); `push_refs` (a list, "Branches and
+  tags it may push"); `force` (a switch, "May force-push", marked
+  `x-kivali-danger`). Only `repositories` is required, so an access set
+  under 1.0.0, which had that field alone, stays valid when boot
+  supersedes 1.0.0 with 1.1.0, and grants no push.
+- `tools`: `clone`, `fetch` and `push`, which agents call as
+  `git_clone(url, path)`, `git_fetch(path, url?, refs?)` and
+  `git_push(path, refs, force?, url?)`. All three are listed to every
+  agent with access; each call is checked against the access.
+- `Git.AccessSummary` (`AccessSummarizer`): "Repositories: acme/* ·
+  May push: agent/* · May force-push". `push_refs` without `push`, and
+  `force` without a ref to push, are left out, since they grant
+  nothing; `push` with no refs reads "May push: no branches or tags".
 
 #### Repositories and access
 
@@ -897,27 +923,59 @@ URL or by `owner/name`:
   `https://<host>/<path>.git`, and is matched in lower case.
 
 The access's `repositories` are patterns matched against the path with
-`path.Match`: `*` and `?` stand within one segment and never across a
-`/`, case is ignored, and an entry with neither is the one repository it
-names (`gitintegration/access.go`). An access whose `repositories` is
+`path.Match`: `*` is the only wildcard (`?`, `[...]` and `\` are
+refused, since a class can match a `/`), it stands within one segment
+and never across a `/`, case is ignored, and an entry without it is the
+one repository it names (`gitrepo.ValidPattern`,
+`gitintegration/access.go`). An access whose `repositories` is
 missing or empty, or holds anything but valid patterns, refuses every
 repository.
 
+#### Branches and tags a push names
+
+`internal/gitrepo/refs.go`, used by core and by the daemon alike:
+
+| Written | Is |
+| --- | --- |
+| `agent/x`, `main`, `v1.2.0` (no `refs/`) | the branch `refs/heads/<name>` |
+| `tags/v1.2.0` | the tag `refs/tags/v1.2.0` |
+| `refs/heads/...`, `refs/tags/...` | as written |
+| anything else under `refs/` (`refs/notes/x`, `refs/remotes/...`) | refused as a destination |
+| a pattern: `agent/*`, `tags/v*`, `refs/heads/*` | normalised the same way |
+| the pattern `*` | `refs/heads/*` and `refs/tags/*` |
+| `[+]<src>:<dst>` | a refspec: `dst` a branch or a tag as above; `src` a ref (`refs/...` as written, a bare name a branch, `tags/...` a tag), `HEAD`, or a 40- or 64-hex object id; `+` forces |
+| a bare ref `x` | the refspec `refs/heads/x:refs/heads/x` (a tag the same) |
+| `:<dst>` (empty `src`) | a deletion: always refused (`gitrepo.ErrDeleteRef`) |
+
+A pattern matches the whole ref with `path.Match`, with `*` as the
+only wildcard (`?` and `[...]` are refused): it stands within one
+segment, so `agent/*` matches `refs/heads/agent/x` and not
+`refs/heads/agent/a/b` (`agent/*/*` does), and case counts, as it does
+in git. A name git's `check-ref-format` refuses (`..`, `@{`, a space,
+`~^:?[]\`, a segment starting with `.` or ending `.lock`, `HEAD` or a
+leading `-` as a branch or tag name) is refused, and so are wildcards
+in a refspec. An existing tag is never moved without force: core
+cannot know the remote's tags, so the daemon refuses it. The access's `push_refs` are read with
+`gitrepo.NormalizeRefPatterns`: missing or empty grants no ref, and an
+entry that does not read refuses every ref.
+
 #### A call, in two requests
 
-Core has no shell of the agent's, so a clone or a fetch takes two
-requests on `core.sock`, as the smoke test does
+Core has no shell of the agent's, so a clone, a fetch or a push takes
+two requests on `core.sock`, as the smoke test does
 ([The smoke test](#the-smoke-test)):
 
 1. The agent's MCP server sends the call (`IntegrationCallRequest`).
    Core works it out as any call ([A call](#a-call)) and calls
    `Git.Call`, which checks the connection (a host, a token), the
-   access, the arguments and the repository, and answers with a
-   `builtinintegrations.Refusal` or a shell job. Core puts the
-   connection's proxy credential in the job, writes an audit row
-   (allowed, the action, `started: <owner/name>`, or `started: the
-   working copy's origin at <path>` for a fetch without a `url`) and
-   answers `IntegrationCallResponse{shell_job}`. A refusal is audited and
+   access, the arguments and the repository, and for a push its refs
+   (below), and answers with a `builtinintegrations.Refusal` or a shell
+   job. Core puts the connection's proxy credential in the job, writes
+   an audit row (allowed, the action, `started: <owner/name>`, or
+   `started: the working copy's origin at <path>` for a fetch or a push
+   without a `url`; a push's adds `, push of <refs>` or `, force push
+   of <refs>` from core's own reading of the refs) and answers
+   `IntegrationCallResponse{shell_job}`. A refusal is audited and
    answered at once.
 2. The MCP server converts the job to an `agentshell.GitRequest` and has
    the agent-shell daemon run it (`SidecarShell.Git`, `POST /v1/git`),
@@ -929,13 +987,32 @@ requests on `core.sock`, as the smoke test does
    access and the connection again exactly as on the first request, and
    `Git.Complete` checks the call again (access taken away while the job
    ran refuses it) and puts the result in words. That writes the call's
-   second audit row: allowed, the action `clone` or `fetch`, and the
-   reason `<owner/name>: updated <refs>` (at most ten named, then how
-   many more), `<owner/name>: up to date`, or the repository and why it
-   failed. The row counts from the job's start (the result's
-   `duration_ms`, at most 15 minutes). A second request that never
-   comes leaves the first row, so every job that carried the token out
-   is in the audit.
+   second audit row: allowed, the action `clone`, `fetch` or `push`,
+   and the reason `<owner/name>: updated <refs>` (at most ten named,
+   then how many more), `<owner/name>: up to date`, or the repository
+   and why it failed. A push's reason is `<owner/name>: pushed <refs>`
+   (`force-pushed` when it forced), `<owner/name>: up to date, <refs>`,
+   or `<owner/name>: push of <refs>: <why>` (`force push of`); the refs
+   it names are those of the shell's report that core asked for. A push
+   whose access changed while it ran, so that the check now refuses it,
+   is still audited allowed when the result says refs landed: `pushed
+   <refs> to <owner/name>; the access changed during the push`, and the
+   agent reads what landed and that its access changed; with nothing
+   landed the refusal stands. The row counts from the job's start (the
+   result's `duration_ms`, at most 15 minutes). A second request that
+   never comes leaves the first row, so every job that carried the
+   token out is in the audit.
+
+A push is checked in core, in this order, before any job is built:
+`push` must be on; `push_refs` must read; each entry of `refs` must
+read as a ref or a refspec (`gitrepo.ParsePushRefSpec`), delete
+nothing and name a destination no other entry does; each destination
+must match `push_refs`; and an entry that forces (`force: true` puts
+`+` on every entry, or the entry's own `+`) needs `force` on. The job
+carries the refspecs normalised (`[+]src:dst`), `allowed_refs` (the
+access's `push_refs` normalised) and `force` only when an entry
+forces, so the daemon can check the push again
+([The daemon's `POST /v1/git`](#the-daemons-post-v1git)).
 
 The result is untrusted text from the agent's pod: it becomes only the
 agent's answer and the audit's reason, both scrubbed of the
@@ -953,19 +1030,20 @@ The wire shapes (`internal/shelljob`, named in `agentpod` as
 ```go
 type IntegrationShellJob struct{ Git *GitJob }             // json: git
 type GitJob struct {
-	Op, Path, URL       string   // op: clone or fetch; url empty: the working copy's origin
-	RefSpecs            []string // json: refspecs; a fetch's
-	Force               bool     // a ref may move other than fast-forward
+	Op, Path, URL       string   // op: clone, fetch or push; url empty: the working copy's origin
+	RefSpecs            []string // json: refspecs; a fetch's, or a push's normalised
+	Force               bool     // a fetch: a ref may move other than fast-forward; a push: + is allowed
 	AllowedRepositories []string // the access's patterns, for the daemon's own check
+	AllowedRefs         []string // a push's: the access's push_refs, normalised
 	Host                string   // the connection's, made exact
 	Auth                GitAuth  // {username: x-access-token, password: the token}
 	Proxy               GitProxy // {username: integration-git.<id>, password: the secret}
-	TimeoutSeconds      int      // clone 900, fetch 600
+	TimeoutSeconds      int      // clone 900, fetch and push 600
 }
 type IntegrationShellJobResult struct{ Skipped string; Git *GitResult }
 type GitResult struct {
 	Repository   string
-	Updated      []GitRefUpdate // {ref, old, new}; old empty for a new ref; at most 200
+	Updated      []GitRefUpdate // {ref, old, new}; old empty for a new ref; at most 200; a push's: the remote's refs
 	UpdatedTotal int            // json: updated_total; every ref that moved
 	Error        string         // at most 4 KiB
 	DurationMs   int64
@@ -973,9 +1051,8 @@ type GitResult struct {
 }
 ```
 
-`refspecs` and `force` are carried for a push; clone and fetch set no
-`force`. Nothing on the job's path logs it: not core, not the MCP
-server, not the daemon.
+Clone and fetch set no `force` and no `allowed_refs`. Nothing on the
+job's path logs it: not core, not the MCP server, not the daemon.
 
 Git's refusals name the cause and the owner only:
 
@@ -987,13 +1064,23 @@ Git's refusals name the cause and the owner only:
 | An access that names no repositories | Your access to the Git integration names no repositories Kivali can read. Ask the owner to set it again. | the access names no repositories |
 | A connection host that is no host | The Git integration's connection has no host Kivali can use. Ask the owner to fix the connection. | the connection's host is not a host name |
 | No token | The Git integration's connection has no token. Ask the owner to connect it again. | the connection has no token |
-| Arguments the action does not take | git_clone takes url and path, both strings. (git_fetch: path, and optionally url and refs) | the arguments do not read |
+| Arguments the action does not take | git_clone takes url and path, both strings. (git_fetch: path, and optionally url and refs; git_push: path and refs, and optionally force and url) | the arguments do not read |
+| A push with `push` off | The Git integration's access for you does not allow pushing. Ask the owner if your work needs it. | the access does not allow pushing |
+| `push_refs` that do not read | Your access to the Git integration names branches or tags Kivali cannot read. Ask the owner to set it again. | the access's branches and tags do not read |
+| A ref that does not read | git_push cannot read "<ref>": <why>. Each entry is a branch (agent/x), a tag (tags/v1.2.0) or a refspec such as HEAD:refs/heads/agent/x. | a ref does not read |
+| A deletion | Deleting a remote ref is not something the Git integration does. | the call deletes a remote ref |
+| A destination twice | git_push names <ref> twice; push each destination once. | a destination is named twice |
+| A destination outside `push_refs` | The Git integration's access for you does not include refs/heads/main. Ask the owner if your work needs it. | the access does not include refs/heads/main |
+| A force without `force` | The Git integration's access for you does not allow force-pushing. Ask the owner if your work needs it. | the access does not allow force-pushing |
 
 The answers: "Cloned <owner/name> into <path>. Its origin is <url>; use
 plain git there for everything local, and git_fetch to fetch with the
 connection." or "Fetched <owner/name> into <path>.", then the refs that
 moved (at most 50, `<ref> <old>..<new>` or `<ref> new at <new>`) or
-"Nothing changed: the working copy was up to date." An error answer
+"Nothing changed: the working copy was up to date." A push answers
+"Pushed refs/heads/agent/x (new) and refs/tags/v1 to <owner/name>."
+("Force-pushed" when it forced), then the same lines, or "Nothing to
+push: <owner/name> already has <refs> as the working copy does." An error answer
 says nothing ran for want of a shell, that the operation did not finish
 in time and was stopped, or that it did not go through, with the host's
 or the daemon's words, cut to 1000 bytes.
@@ -1009,11 +1096,12 @@ next request to core, whose body is capped at 16 MiB: `updated` lists
 at most 200 refs (`GitUpdatedMax`), by name, `updated_total` counts
 every ref that moved, and `error` is cut to 4 KiB (`GitErrorMaxBytes`)
 after it is scrubbed. The bound is the request's `timeout_seconds`, at
-most 15 minutes for a clone and 10 for a fetch, 5 when it gives none,
-on the daemon's clock; past it the operation's context ends and the
-answer is `timed_out`. Jobs on one working copy run one after the
-other, by its resolved path (two fetches into one `.git` at once could
-leave its refs half written); the wait counts against the bound.
+most 15 minutes for a clone and 10 for a fetch or a push, 5 when it
+gives none, on the daemon's clock; past it the operation's context
+ends and the answer is `timed_out`. Jobs on one working copy run one
+after the other, by its resolved path (two fetches into one `.git` at
+once could leave its refs half written); the wait counts against the
+bound.
 
 - **Where.** `path` is absolute under the daemon's root (`/files`) or
   its HOME (`/scratch/home`), `~/...` for the home, or relative to the
@@ -1022,8 +1110,9 @@ leave its refs half written); the wait counts against the bound.
   symbolic links and must stay under the same base. A clone needs a
   directory that does not exist or is empty; when the clone fails,
   go-git removes that directory if it made it, or empties it if it was
-  there, and leaves any parent directories it made; a fetch needs a working copy whose `.git`
-  is a directory (a `gitdir:` file or a link is refused).
+  there, and leaves any parent directories it made; a fetch needs a
+  working copy whose `.git` is a directory (a `gitdir:` file or a link
+  is refused), and so does a push.
 - **What it reaches.** A clone's URL is the job's, parsed by the same
   rules on the job's host, and must be one of `allowed_repositories`.
   The clone's origin is that URL, with no user info, so plain git keeps
@@ -1032,35 +1121,83 @@ leave its refs half written); the wait counts against the bound.
   origin as written in `.git/config` (read raw, so no
   `url.<base>.insteadOf` rewrites it; exactly one URL), parsed by the
   same rules and refused unless it is on the job's host and one of
-  `allowed_repositories`. `.git/config` is the agent's to write, so
-  nothing else in it is read. Every request goes to that URL: go-git's
-  http and https transports are installed with
+  `allowed_repositories`. A push's URL is found as a fetch's, so
+  origin's `pushurl` is never read. `.git/config` is the agent's to
+  write, so nothing else in it is read. Every request goes to that URL:
+  go-git's http and https transports are installed with
   `githttp.NoFollowRedirects` (`client.InstallProtocol`, in the
   daemon's `init`), so a host that answers with a redirect (GitHub does
-  for a renamed or transferred repository) fails the operation, and the
-  agent reads "the repository moved; ask the owner to update the
-  access". The tests serve a 301 from one repository's path to another
-  and see nothing reach the other.
-- **How it fetches.** Through an anonymous remote
+  for a renamed or transferred repository) fails the operation, a push
+  included, and the agent reads "the repository moved; ask the owner to
+  update the access". The tests serve a 301 from one repository's path
+  to another and see nothing reach the other.
+- **How it fetches and pushes.** Through an anonymous remote
   (`CreateRemoteAnonymous` with the URL in code, and `RemoteName:
-  "anonymous"` on the fetch). The daemon's tests pin, against a
+  "anonymous"` on the fetch or the push; go-git refuses a push whose
+  `RemoteName` is not the remote's). The daemon's tests pin, against a
   poisoned working copy, that through the anonymous remote the
-  repository's own `insteadOf` rule and `[remote "origin"]` URL are
-  inert, each with a control: a fetch through the named remote follows
-  the rule to the other server when origin is the good one, and follows
-  origin when origin names the other server. They also assert that a
-  global `~/.gitconfig` rule to the other server has no effect on a
-  clone or a fetch (go-git reads no global configuration here) and that
-  no hook runs. A named remote (`RemoteName: "origin"` without
-  `RemoteURL`) follows the configuration: the daemon never uses one. A
-  push through an anonymous remote needs `PushOptions.RemoteName:
-  "anonymous"`.
+  repository's own `insteadOf` and `pushInsteadOf` rules and
+  `[remote "origin"]` URL and `pushurl` are inert, each with a
+  control: a fetch through the named remote follows the rule to the
+  other server when origin is the good one, and a fetch or a push
+  through it follows origin when origin names the other server. They
+  also assert that a global `~/.gitconfig` rule to the other server has
+  no effect on a clone, a fetch or a push (go-git reads no global
+  configuration here) and that no hook runs, a `pre-push` that refuses
+  among them. A named remote (`RemoteName: "origin"` without
+  `RemoteURL`) follows the configuration: the daemon never uses one.
 - **Refspecs.** None fetches `+refs/heads/*:refs/remotes/origin/*`.
   Each given must parse (`config.RefSpec.Validate`), have a source, and
   write under `refs/remotes/origin/` or `refs/tags/`, cleanly (no `..`),
   so a fetch never moves a local branch. Tags are fetched
   (`git.AllTags`). Already up to date is success with nothing moved. The
   refs that moved are worked out from every ref before and after.
+- **A push's refspecs.** Each is held again to the rules core held it
+  to, as the URL is to `allowed_repositories`: it parses
+  (`gitrepo.ParsePushRefSpec`), deletes nothing, writes a destination
+  `allowed_refs` matches, names a destination no other one does, and
+  has a `+` only when the job's `force` is set. None is an error. Each
+  source is resolved in the working copy first, so a source it does not
+  have is an error, not a push of nothing: a ref naming an object
+  directly is given to go-git by name (an annotated tag goes as the
+  tag), and `HEAD`, a symbolic ref or an object id as the hash of the
+  commit it names, the decoded commit's (go-git computes it from the
+  content, so a commit stored under another name is refused). go-git
+  reports no ref of a push and does not say whether the host takes an
+  atomic push, so the daemon first reads the host's receive-pack
+  advertisement (through the same transports, auth and proxy): its
+  refs, which each destination moves from, and its capabilities.
+- **What moves without force.** `PushOptions.Force` stays off; a
+  refspec forces by its own `+`. For each refspec without it whose
+  destination the remote has with another object, before anything is
+  sent: an existing tag is refused ("refs/tags/v1.2.0 exists; moving a
+  tag needs force"), since go-git checks a tag as it checks a branch;
+  and a branch must move to a descendant of the remote's commit, by the
+  daemon's own walk of parents (not go-git's) through `verifiedObjects`,
+  a storer that hashes each object it reads (`plumbing.ComputeHash`)
+  and refuses one whose content does not match its name ("the working
+  copy's objects do not match their names"). The working copy's objects
+  are the agent's to write, and go-git's storer never checks them, so
+  a forged commit claiming the remote's tip as its parent would pass
+  go-git's own check. A remote commit the walk does not reach (a
+  shallow clone without it, or a remote that moved on) is "not a
+  fast-forward".
+- **Atomic.** The push sets `PushOptions.Atomic`, so a host that
+  refuses one ref (a protected branch, its `update` or `pre-receive`
+  hook) refuses all and the audit's "push of a, b: <why>" is true.
+  go-git falls back to a plain push, ref by ref, when the host does not
+  advertise `atomic`, so the daemon refuses a push of more than one ref
+  to such a host itself ("the host does not take atomic pushes, so a
+  push of several refs could land in part; push one ref per call");
+  `git http-backend`, GitHub and GitLab advertise it.
+- **What it reports.** Each destination whose object changed, old from
+  the advertisement (empty for a new ref) and new the object pushed.
+  Already up to date is success with nothing moved. A push the host or
+  go-git refuses (the host's hooks, a token that cannot write) is the
+  answer's `error`, in their words, scrubbed (`GitScrubber`); a
+  redirect is "the repository moved; ask the owner to update the
+  access", as for a clone or a fetch. Core names in the answer and the
+  audit only the refs of the report that it asked for.
 - **The proxy.** Always given in code (`ProxyOptions`): the daemon's own
   bare proxy URL (the first of `HTTPS_PROXY`, `https_proxy`,
   `HTTP_PROXY`, `http_proxy` in its environment, without user info) with
@@ -1126,8 +1263,10 @@ connection whose host `gitrepo.NormalizeHost` cannot read (a path, user
 info, a scheme other than `https://`) is a 400, "Host is a host name
 such as github.com, without https:// or a path", and nothing is
 stored. Saving an access with a `repositories` entry that is not a
-`path.Match` pattern is a 400, "<entry> is not a repository or a
-pattern". A stored row that is not this all the same (one written
+pattern `gitrepo.ValidPattern` reads is a 400, "<entry> is not a
+repository or a pattern", and one with a `push_refs` entry that
+`gitrepo.NormalizeRefPattern` refuses is a 400, "<entry> is not a
+branch, a tag or a pattern". A stored row that is not this all the same (one written
 before the check, or by hand) refuses every repository.
 
 #### Test connection
@@ -1156,7 +1295,7 @@ test hooks (`InsecureHTTP`, `HTTPClient`, `GitHubAPI`, `GitLabAPI`,
 `LookupIP`); the tests never reach a real host.
 
 Not supported: SSH remotes, Git LFS (a clone holds the pointers),
-submodules (not cloned), and pushing through the integration.
+submodules (not cloned), and deleting a remote ref.
 
 ## The Kivali Developer
 

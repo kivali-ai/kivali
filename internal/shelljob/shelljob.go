@@ -9,7 +9,7 @@ package shelljob
 // Job is the work core asks the agent's shell to do for one call. One
 // field is set.
 type Job struct {
-	// Git is a clone or a fetch with the Git integration's connection,
+	// Git is a clone, a fetch or a push with the Git integration's connection,
 	// run by the agent-shell daemon (POST /v1/git).
 	Git *GitJob `json:"git,omitempty"`
 }
@@ -17,15 +17,21 @@ type Job struct {
 // GitJob is one git operation through a connection, as the agent-shell
 // daemon runs it (agentshell.GitRequest has the same fields).
 //
-//   - Op is clone or fetch. Path is the working copy, under /files/ or
-//     the shell's home.
+//   - Op is clone, fetch or push. Path is the working copy, under
+//     /files/ or the shell's home.
 //   - URL is the repository's URL with no user info, built by core from
-//     the connection's host. A clone always has one. A fetch without
-//     one has the daemon read the working copy's origin, which it uses
-//     only when it is on Host and one of AllowedRepositories (owner/name
-//     patterns, the agent's access).
-//   - RefSpecs and Force are a fetch's refspecs (empty: every branch)
-//     and whether a ref may move other than fast-forward.
+//     the connection's host. A clone always has one. A fetch or a push
+//     without one has the daemon read the working copy's origin, which
+//     it uses only when it is on Host and one of AllowedRepositories
+//     (owner/name patterns, the agent's access).
+//   - RefSpecs are a fetch's refspecs (empty: every branch) or a push's,
+//     normalised by core ([+]src:dst, gitrepo.ParsePushRefSpec).
+//   - AllowedRefs are the branches and tags a push may write, the
+//     access's push_refs normalised (gitrepo.NormalizeRefPatterns); the
+//     daemon refuses a push refspec whose destination is outside them.
+//   - Force on a fetch lets a ref move other than fast-forward. On a
+//     push it is the owner's permission to force: the daemon refuses a
+//     refspec with + when it is false.
 //   - Auth is the connection's token as HTTP basic auth; Proxy the
 //     connection's scoped egress proxy credential, which the daemon
 //     puts on its own bare proxy URL.
@@ -39,6 +45,7 @@ type GitJob struct {
 	RefSpecs            []string `json:"refspecs,omitempty"`
 	Force               bool     `json:"force,omitempty"`
 	AllowedRepositories []string `json:"allowed_repositories,omitempty"`
+	AllowedRefs         []string `json:"allowed_refs,omitempty"`
 	Host                string   `json:"host"`
 	Auth                GitAuth  `json:"auth"`
 	Proxy               GitProxy `json:"proxy"`
@@ -65,9 +72,10 @@ type Result struct {
 }
 
 // GitResult is a GitJob's outcome: the repository it reached
-// (owner/name), the refs it moved, its error and how long it took.
-// Updated is at most the daemon's first 200 refs by name;
-// UpdatedTotal counts every ref that moved.
+// (owner/name), the refs it moved (a push's: the remote's refs it
+// wrote), its error and how long it took. Updated is at most the
+// daemon's first 200 refs by name; UpdatedTotal counts every ref that
+// moved.
 type GitResult struct {
 	Repository   string         `json:"repository,omitempty"`
 	Updated      []GitRefUpdate `json:"updated,omitempty"`
@@ -78,7 +86,7 @@ type GitResult struct {
 }
 
 // GitRefUpdate is one ref a git operation moved: its name and the
-// commit it pointed at before (empty for a new ref) and after.
+// object it pointed at before (empty for a new ref) and after.
 type GitRefUpdate struct {
 	Ref string `json:"ref"`
 	Old string `json:"old,omitempty"`

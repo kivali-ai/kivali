@@ -3,6 +3,7 @@
     "blogs": [
       "Marketing"
     ],
-    "write": true
+    "write": true,
+    "delete": false
   }
 }

@@ -162,18 +162,21 @@ const ProxyCredentialFile = "proxy-credential"
 // to this, matching the unified-files contract.
 const RootDefault = "/files"
 
-// GitRequest is the body of POST /v1/git: one clone or fetch through
+// GitRequest is the body of POST /v1/git: one clone, fetch or push through
 // an integration's git connection (agentpod.GitJob has the same
 // fields; the agent's MCP server copies one into the other). It holds
 // the connection's token and its proxy credential, for this one
 // operation: the daemon keeps neither, writes neither to disk and
 // scrubs both from everything it answers. Nothing logs a request.
 //
-// Op is clone or fetch; Path the working copy, under the daemon's root
-// (/files) or its HOME. URL is the repository's URL, with no user info,
-// on Host; a fetch without one reads the working copy's origin and uses
-// it only when it is on Host and one of AllowedRepositories. RefSpecs
-// and Force are a fetch's. TimeoutSeconds bounds the operation (see
+// Op is clone, fetch or push; Path the working copy, under the daemon's
+// root (/files) or its HOME. URL is the repository's URL, with no user
+// info, on Host; a fetch or a push without one reads the working copy's
+// origin and uses it only when it is on Host and one of
+// AllowedRepositories. RefSpecs are a fetch's or a push's. A push's
+// destinations must be in AllowedRefs (patterns of branches and tags),
+// and a refspec with + needs Force; a fetch's Force lets a ref move
+// other than fast-forward. TimeoutSeconds bounds the operation (see
 // GitTimeoutFor).
 type GitRequest struct {
 	Op                  string   `json:"op"`
@@ -182,6 +185,7 @@ type GitRequest struct {
 	RefSpecs            []string `json:"refspecs,omitempty"`
 	Force               bool     `json:"force,omitempty"`
 	AllowedRepositories []string `json:"allowed_repositories,omitempty"`
+	AllowedRefs         []string `json:"allowed_refs,omitempty"`
 	Host                string   `json:"host"`
 	Auth                GitAuth  `json:"auth"`
 	Proxy               GitProxy `json:"proxy"`
@@ -217,7 +221,8 @@ type GitResponse struct {
 }
 
 // GitRefUpdate is one ref a git operation moved: its name and the
-// commit it pointed at before (empty for a new ref) and after.
+// object it pointed at before (empty for a new ref) and after. A push's
+// are the remote's refs it wrote.
 type GitRefUpdate struct {
 	Ref string `json:"ref"`
 	Old string `json:"old,omitempty"`

@@ -100,6 +100,7 @@ func runShellJob(ctx context.Context, shell IntegrationShell, job agentpod.Integ
 		RefSpecs:            g.RefSpecs,
 		Force:               g.Force,
 		AllowedRepositories: g.AllowedRepositories,
+		AllowedRefs:         g.AllowedRefs,
 		Host:                g.Host,
 		Auth:                agentshell.GitAuth{Username: g.Auth.Username, Password: g.Auth.Password},
 		Proxy:               agentshell.GitProxy{Username: g.Proxy.Username, Password: g.Proxy.Password},

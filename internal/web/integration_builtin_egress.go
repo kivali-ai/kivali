@@ -2,7 +2,7 @@
 // credential of a built-in integration's connection.
 //
 // A built-in whose shell jobs reach the network (builtinintegrations.HostsOf:
-// git's clone and fetch, run by the agent-shell daemon) gives each
+// git's clone, fetch and push, run by the agent-shell daemon) gives each
 // connection a proxy credential of its own: a 32-byte secret, kept in
 // the connection's Secret under builtinintegrations.ProxySecretKey,
 // whose SHA-256 is registered as the scoped proxy user

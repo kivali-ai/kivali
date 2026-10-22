@@ -126,7 +126,7 @@ func (s *SidecarShell) Exec(ctx context.Context, _ string, req agent.ShellReques
 	}, nil
 }
 
-// Git runs one clone or fetch in the daemon (POST /v1/git). The
+// Git runs one clone, fetch or push in the daemon (POST /v1/git). The
 // request holds an integration connection's token and proxy credential:
 // nothing here logs it, and the daemon scrubs both from its answer. The
 // client waits the operation's own bound (GitTimeoutFor) and 30s more,

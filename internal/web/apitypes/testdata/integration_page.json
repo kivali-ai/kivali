@@ -64,7 +64,8 @@
         "kind": "choices",
         "required": true,
         "options": [],
-        "choices": true
+        "choices": true,
+        "danger": false
       },
       {
         "key": "write",
@@ -73,7 +74,18 @@
         "kind": "switch",
         "required": false,
         "options": [],
-        "choices": false
+        "choices": false,
+        "danger": false
+      },
+      {
+        "key": "delete",
+        "title": "May delete posts",
+        "description": "Deletes posts for good.",
+        "kind": "switch",
+        "required": false,
+        "options": [],
+        "choices": false,
+        "danger": true
       },
       {
         "key": "region",
@@ -85,7 +97,8 @@
           "eu",
           "us"
         ],
-        "choices": false
+        "choices": false,
+        "danger": false
       },
       {
         "key": "tags",
@@ -94,7 +107,8 @@
         "kind": "list",
         "required": false,
         "options": [],
-        "choices": false
+        "choices": false,
+        "danger": false
       },
       {
         "key": "note",
@@ -103,7 +117,8 @@
         "kind": "text",
         "required": false,
         "options": [],
-        "choices": false
+        "choices": false,
+        "danger": false
       }
     ]
   },

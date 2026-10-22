@@ -122,7 +122,7 @@ const DefaultExecInstallWait = 10 * time.Minute
 // GET /v1/packages — the packages the shell has, and the state of the
 // install the daemon started with.
 //
-// POST /v1/git — one clone or fetch through an integration's git
+// POST /v1/git — one clone, fetch or push through an integration's git
 // connection, in this process (git.go).
 //
 // GET /healthz — k8s liveness probe.

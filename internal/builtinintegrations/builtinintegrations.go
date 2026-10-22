@@ -150,6 +150,15 @@ type AccessChecker interface {
 	CheckAccess(access map[string]any) error
 }
 
+// AccessSummarizer is an Integration that puts one agent's access in
+// words itself, for an access form whose fields mean something only
+// together (Git's push and the refs it may push). Core shows it in
+// place of integration.AccessSummary's field-by-field words. access is
+// the stored form, which may no longer fit the manifest's.
+type AccessSummarizer interface {
+	AccessSummary(access map[string]any) string
+}
+
 // ProxySecretKey is the key, in a connection's Secret, of its scoped
 // proxy credential's secret. It is not a user_config key (those have
 // no hyphen), so it is never a connection field, never in the fields

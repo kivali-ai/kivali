@@ -36,8 +36,10 @@ func dana(patterns ...any) builtinintegrations.Caller {
 // connection and access forms from and what boot writes to every team.
 // It must pass the built-in check, ask for the host, the token (a
 // secret) and the test repository in that order, take repositories as
-// its one required access field, and list exactly clone and fetch, the
-// two actions Call and Tools know.
+// its one required access field (so an access set before push stays
+// valid) followed by the push switch, its refs and the force switch
+// marked dangerous, and list exactly clone, fetch and push, the
+// actions Call and Tools know.
 func TestManifest(t *testing.T) {
 	m := New().Manifest()
 	if f := integration.ValidateBuiltin(m); len(f) != 0 {
@@ -51,11 +53,31 @@ func TestManifest(t *testing.T) {
 		t.Errorf("user_config = %+v", m.UserConfig)
 	}
 	form := integration.AccessForm(m)
-	if form == nil || len(form.Fields) != 1 || form.Fields[0].Key != "repositories" || !form.Fields[0].Required || form.Fields[0].Kind != integration.FieldList {
-		t.Errorf("access form = %+v", form)
+	if form == nil || len(form.Fields) != 4 {
+		t.Fatalf("access form = %+v", form)
+	}
+	want := []struct {
+		key      string
+		kind     integration.FieldKind
+		required bool
+		danger   bool
+	}{
+		{"repositories", integration.FieldList, true, false},
+		{"push", integration.FieldSwitch, false, false},
+		{"push_refs", integration.FieldList, false, false},
+		{"force", integration.FieldSwitch, false, true},
+	}
+	for i, w := range want {
+		f := form.Fields[i]
+		if f.Key != w.key || f.Kind != w.kind || f.Required != w.required || f.Danger != w.danger || f.Title == "" || f.Description == "" {
+			t.Errorf("access field %d = %+v, want %+v", i, f, w)
+		}
+	}
+	if m.Version != "1.1.0" {
+		t.Errorf("version = %s", m.Version)
 	}
 	tools, _ := New().Tools(context.Background(), builtinintegrations.Caller{})
-	if len(tools) != 2 || tools[0].Name != "clone" || tools[1].Name != "fetch" || len(m.Tools) != 2 {
+	if len(tools) != 3 || tools[0].Name != "clone" || tools[1].Name != "fetch" || tools[2].Name != "push" || len(m.Tools) != 3 || m.Tools[2].Name != "push" {
 		t.Errorf("tools = %+v, manifest %+v", tools, m.Tools)
 	}
 	for _, tl := range tools {
@@ -119,6 +141,103 @@ func TestCallBuildsTheJob(t *testing.T) {
 	}
 }
 
+// pusher is an agent with access to acme/* that may push agent/* and
+// every tag, and force when force is set.
+func pusher(force bool) builtinintegrations.Caller {
+	return builtinintegrations.Caller{Agent: "dana", Access: map[string]any{
+		"repositories": []any{"acme/*"}, "push": true, "push_refs": []any{"agent/*", "tags/*"}, "force": force,
+	}}
+}
+
+// Why this test exists: a push's job is what the daemon writes to the
+// owner's repository with, so core must hand it the refs normalised
+// (a bare name a branch, tags/ a tag, a bare ref pushing itself), +
+// only on what the call forces, Force only when the call forces, the
+// access's push_refs normalised for the daemon's own check, and the
+// push's bound.
+func TestCallBuildsThePushJob(t *testing.T) {
+	g := New()
+	res, err := g.Call(context.Background(), pusher(false), testConn("github.com"), "push",
+		json.RawMessage(`{"path":"~/w","refs":["agent/x","tags/v1.2.0","HEAD:refs/heads/agent/y"]}`))
+	if err != nil || res.ShellJob == nil || res.ShellJob.Git == nil {
+		t.Fatalf("push = %+v, %v", res, err)
+	}
+	want := shelljob.GitJob{
+		Op: "push", Path: "~/w", Host: "github.com",
+		RefSpecs:            []string{"refs/heads/agent/x:refs/heads/agent/x", "refs/tags/v1.2.0:refs/tags/v1.2.0", "HEAD:refs/heads/agent/y"},
+		AllowedRepositories: []string{"acme/*"}, AllowedRefs: []string{"refs/heads/agent/*", "refs/tags/*"},
+		Auth: shelljob.GitAuth{Username: "x-access-token", Password: testToken}, TimeoutSeconds: 600,
+	}
+	got, _ := json.Marshal(res.ShellJob.Git)
+	if w, _ := json.Marshal(want); string(got) != string(w) {
+		t.Errorf("push job = %s, want %s", got, w)
+	}
+
+	res, err = g.Call(context.Background(), pusher(true), testConn("github.com"), "push",
+		json.RawMessage(`{"path":"w","url":"acme/widgets","refs":["agent/x","+HEAD:agent/y"]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if j := res.ShellJob.Git; !j.Force || j.URL != "https://github.com/acme/widgets.git" ||
+		strings.Join(j.RefSpecs, " ") != "refs/heads/agent/x:refs/heads/agent/x +HEAD:refs/heads/agent/y" {
+		t.Errorf("a push with one forced ref = %+v", j)
+	}
+	res, _ = g.Call(context.Background(), pusher(true), testConn("github.com"), "push", json.RawMessage(`{"path":"w","refs":["agent/x"],"force":true}`))
+	if j := res.ShellJob.Git; !j.Force || j.RefSpecs[0] != "+refs/heads/agent/x:refs/heads/agent/x" {
+		t.Errorf("force: true = %+v", j)
+	}
+}
+
+// Why this test exists: each way a push can reach past what the owner
+// granted must be refused in core, before any job carries the token:
+// push off (or not a true switch), a destination outside push_refs (a
+// bare v1 is a branch, not the tag tags/* allows), push_refs that do
+// not read or are empty, a force without the force switch (by force or
+// by +), a deletion, a ref that does not read, a destination twice, and
+// a repository outside the access. Each names the cause and the owner
+// only, and is a Refusal so core audits it as not allowed.
+func TestPushRefusals(t *testing.T) {
+	g := New()
+	with := func(edit func(map[string]any)) builtinintegrations.Caller {
+		c := pusher(false)
+		edit(c.Access)
+		return c
+	}
+	for name, c := range map[string]struct {
+		caller builtinintegrations.Caller
+		args   string
+		words  string
+		reason string
+	}{
+		"push off":       {with(func(a map[string]any) { a["push"] = false }), `{"path":"w","refs":["agent/x"]}`, "does not allow pushing. Ask the owner", "the access does not allow pushing"},
+		"push not bool":  {with(func(a map[string]any) { a["push"] = "true" }), `{"path":"w","refs":["agent/x"]}`, "does not allow pushing", "the access does not allow pushing"},
+		"push missing":   {dana("acme/*"), `{"path":"w","refs":["agent/x"]}`, "does not allow pushing", "the access does not allow pushing"},
+		"outside refs":   {pusher(false), `{"path":"w","refs":["main"]}`, "does not include refs/heads/main. Ask the owner", "the access does not include refs/heads/main"},
+		"a bare tag":     {pusher(false), `{"path":"w","refs":["v1"]}`, "does not include refs/heads/v1", "the access does not include refs/heads/v1"},
+		"a refspec dst":  {pusher(false), `{"path":"w","refs":["HEAD:refs/heads/main"]}`, "does not include refs/heads/main", "the access does not include refs/heads/main"},
+		"no push_refs":   {with(func(a map[string]any) { delete(a, "push_refs") }), `{"path":"w","refs":["agent/x"]}`, "does not include refs/heads/agent/x", "the access does not include refs/heads/agent/x"},
+		"bad push_refs":  {with(func(a map[string]any) { a["push_refs"] = []any{"agent/*", "refs/notes/*"} }), `{"path":"w","refs":["agent/x"]}`, "names branches or tags Kivali cannot read", "the access's branches and tags do not read"},
+		"force off":      {pusher(false), `{"path":"w","refs":["agent/x"],"force":true}`, "does not allow force-pushing. Ask the owner", "the access does not allow force-pushing"},
+		"a + force off":  {pusher(false), `{"path":"w","refs":["+agent/x"]}`, "does not allow force-pushing", "the access does not allow force-pushing"},
+		"a deletion":     {pusher(true), `{"path":"w","refs":[":refs/heads/agent/x"]}`, "Deleting a remote ref is not something the Git integration does.", "the call deletes a remote ref"},
+		"does not read":  {pusher(false), `{"path":"w","refs":["agent/x..y"]}`, "git_push cannot read", "a ref does not read"},
+		"twice":          {pusher(false), `{"path":"w","refs":["agent/x","HEAD:agent/x"]}`, "names refs/heads/agent/x twice", "a destination is named twice"},
+		"no refs":        {pusher(false), `{"path":"w","refs":[]}`, "needs path and refs", "the arguments lack path or refs"},
+		"force not bool": {pusher(false), `{"path":"w","refs":["agent/x"],"force":"yes"}`, "git_push takes path and refs", "the arguments do not read"},
+		"outside repos":  {pusher(false), `{"path":"w","url":"other/x","refs":["agent/x"]}`, "does not include other/x", "the access does not include other/x"},
+	} {
+		res, err := g.Call(context.Background(), c.caller, testConn("github.com"), "push", json.RawMessage(c.args))
+		var ref *builtinintegrations.Refusal
+		if !errors.As(err, &ref) || res != nil {
+			t.Errorf("%s: = %+v, %v; want a refusal", name, res, err)
+			continue
+		}
+		if !strings.Contains(ref.Text, c.words) || ref.Reason != c.reason {
+			t.Errorf("%s: refusal %+v, want words %q and reason %q", name, ref, c.words, c.reason)
+		}
+	}
+}
+
 // Why this test exists: every way a call can be wrong must be refused
 // in core, before any job carries the token out: a URL on another host
 // (even one that only differs by a port), with user info or a query,
@@ -151,7 +270,7 @@ func TestCallRefusals(t *testing.T) {
 		"fetch no path":     {dana("acme/*"), testConn("github.com"), "fetch", clone(`{}`), "needs path"},
 		"an unknown field":  {dana("acme/*"), testConn("github.com"), "clone", clone(`{"url":"acme/widgets","path":"w","force":true}`), "takes url and path"},
 		"refs not strings":  {dana("acme/*"), testConn("github.com"), "fetch", clone(`{"path":"w","refs":[1]}`), "list of strings"},
-		"an unknown action": {dana("acme/*"), testConn("github.com"), "push", clone(`{}`), "no action push"},
+		"an unknown action": {dana("acme/*"), testConn("github.com"), "pull", clone(`{}`), "no action pull"},
 	} {
 		res, err := g.Call(context.Background(), c.caller, c.conn, c.action, c.args)
 		var ref *builtinintegrations.Refusal
@@ -233,6 +352,140 @@ func TestComplete(t *testing.T) {
 	var ref *builtinintegrations.Refusal
 	if _, err := g.Complete(ctx, dana("other/*"), testConn("github.com"), "clone", cloneArgs, ok); !errors.As(err, &ref) {
 		t.Errorf("access taken away = %v", err)
+	}
+}
+
+// Why this test exists: a push's answer tells the agent what landed on
+// the owner's repository, and its audit row is the owner's record of
+// what was written with their token. A success must name each ref,
+// new or moved, and the repository; a forced push must say so in the
+// audit; nothing to push and a host's refusal must say which refs; and
+// push or force taken away while the job ran must refuse the second
+// request.
+func TestCompletePush(t *testing.T) {
+	g := New()
+	ctx := context.Background()
+	args := json.RawMessage(`{"path":"/files/w","url":"acme/widgets","refs":["agent/x","tags/v1"]}`)
+	done := shelljob.Result{Git: &shelljob.GitResult{Repository: "acme/widgets", Updated: []shelljob.GitRefUpdate{
+		{Ref: "refs/heads/agent/x", New: "1111111aaaa"},
+		{Ref: "refs/tags/v1", Old: "2222222bbbb", New: "3333333cccc"},
+	}}}
+	res, err := g.Complete(ctx, pusher(false), testConn("github.com"), "push", args, done)
+	if err != nil || res.IsError || !strings.HasPrefix(res.Content[0], "Pushed refs/heads/agent/x (new) and refs/tags/v1 to acme/widgets.") ||
+		!strings.Contains(res.Content[0], "refs/heads/agent/x new at 1111111") || !strings.Contains(res.Content[0], "refs/tags/v1 2222222..3333333") ||
+		res.Audit != "acme/widgets: pushed refs/heads/agent/x, refs/tags/v1" {
+		t.Errorf("push = %+v, %v", res, err)
+	}
+
+	forced := json.RawMessage(`{"path":"/files/w","refs":["agent/x"],"force":true}`)
+	moved := shelljob.Result{Git: &shelljob.GitResult{Repository: "acme/widgets", Updated: []shelljob.GitRefUpdate{{Ref: "refs/heads/agent/x", Old: "1111111aaaa", New: "4444444dddd"}}}}
+	res, _ = g.Complete(ctx, pusher(true), testConn("github.com"), "push", forced, moved)
+	if res.IsError || !strings.HasPrefix(res.Content[0], "Force-pushed refs/heads/agent/x to acme/widgets.") || res.Audit != "acme/widgets: force-pushed refs/heads/agent/x" {
+		t.Errorf("force push = %+v", res)
+	}
+
+	res, _ = g.Complete(ctx, pusher(false), testConn("github.com"), "push", args, shelljob.Result{Git: &shelljob.GitResult{Repository: "acme/widgets"}})
+	if res.IsError || res.Content[0] != "Nothing to push: acme/widgets already has refs/heads/agent/x and refs/tags/v1 as the working copy does." ||
+		res.Audit != "acme/widgets: up to date, refs/heads/agent/x, refs/tags/v1" {
+		t.Errorf("up to date = %+v", res)
+	}
+
+	rejected := shelljob.Result{Git: &shelljob.GitResult{Error: "push: non-fast-forward update: refs/heads/agent/x"}}
+	res, _ = g.Complete(ctx, pusher(false), testConn("github.com"), "push", args, rejected)
+	if !res.IsError || res.Content[0] != "The push of acme/widgets did not go through: push: non-fast-forward update: refs/heads/agent/x" ||
+		res.Audit != "acme/widgets: push of refs/heads/agent/x, refs/tags/v1: push: non-fast-forward update: refs/heads/agent/x" {
+		t.Errorf("rejected = %+v", res)
+	}
+	res, _ = g.Complete(ctx, pusher(true), testConn("github.com"), "push", forced, rejected)
+	if !res.IsError || res.Audit != "the working copy's origin: force push of refs/heads/agent/x: push: non-fast-forward update: refs/heads/agent/x" {
+		t.Errorf("rejected force push = %+v", res)
+	}
+
+	// Access taken away while the job ran, and nothing landed: refused.
+	var ref *builtinintegrations.Refusal
+	if _, err := g.Complete(ctx, pusher(false), testConn("github.com"), "push", forced, rejected); !errors.As(err, &ref) || ref.Reason != "the access does not allow force-pushing" {
+		t.Errorf("force taken away, nothing landed = %v", err)
+	}
+	off := pusher(false)
+	off.Access["push"] = false
+	if _, err := g.Complete(ctx, off, testConn("github.com"), "push", args, shelljob.Result{Git: &shelljob.GitResult{Repository: "acme/widgets"}}); !errors.As(err, &ref) || ref.Reason != "the access does not allow pushing" {
+		t.Errorf("push taken away, nothing landed = %v", err)
+	}
+}
+
+// Why this test exists: the owner can turn push off or narrow
+// push_refs while a push runs. The remote is written all the same, so
+// the second request must not be audited as refused: the row must be
+// allowed and name what landed (only the refs the call asked for,
+// never one the shell's report adds), and the agent must read what
+// landed and that its access changed.
+func TestCompletePushWhenTheAccessChangedDuringIt(t *testing.T) {
+	g := New()
+	off := pusher(false)
+	off.Access["push"] = false
+	args := json.RawMessage(`{"path":"/files/w","refs":["agent/x"]}`)
+	landed := shelljob.Result{Git: &shelljob.GitResult{Repository: "acme/widgets", Updated: []shelljob.GitRefUpdate{
+		{Ref: "refs/heads/agent/x", New: "1111111aaaa"},
+		{Ref: "refs/heads/main", Old: "2222222bbbb", New: "3333333cccc"},
+	}}}
+	res, err := g.Complete(context.Background(), off, testConn("github.com"), "push", args, landed)
+	if err != nil || res.IsError {
+		t.Fatalf("landed under a changed access = %+v, %v", res, err)
+	}
+	if res.Audit != "pushed refs/heads/agent/x to acme/widgets; the access changed during the push" ||
+		!strings.HasPrefix(res.Content[0], "Pushed refs/heads/agent/x (new) to acme/widgets. Your access to the Git integration changed during the push") ||
+		strings.Contains(res.Content[0], "refs/heads/main") {
+		t.Errorf("landed under a changed access = %+v", res)
+	}
+}
+
+// Why this test exists: the result is the agent's pod's own report. A
+// push's answer and audit must name only the destinations core asked
+// for, so a report that adds a ref cannot write a row saying it was
+// pushed; and when the daemon cut its list short (UpdatedTotal above
+// the refs listed), the count must still say how many moved.
+func TestPushedNamesOnlyWhatWasAsked(t *testing.T) {
+	g := New()
+	ctx := context.Background()
+	args := json.RawMessage(`{"path":"/files/w","url":"acme/widgets","refs":["agent/x"]}`)
+	extra := shelljob.Result{Git: &shelljob.GitResult{Updated: []shelljob.GitRefUpdate{
+		{Ref: "refs/heads/main", New: "3333333cccc"},
+		{Ref: "refs/heads/agent/x", New: "1111111aaaa"},
+	}}}
+	res, _ := g.Complete(ctx, pusher(false), testConn("github.com"), "push", args, extra)
+	if res.Audit != "acme/widgets: pushed refs/heads/agent/x" || strings.Contains(res.Content[0], "main") {
+		t.Errorf("a report with a ref not asked for = %+v", res)
+	}
+	only := shelljob.Result{Git: &shelljob.GitResult{Updated: []shelljob.GitRefUpdate{{Ref: "refs/heads/main", New: "3333333cccc"}}}}
+	res, _ = g.Complete(ctx, pusher(false), testConn("github.com"), "push", args, only)
+	if !strings.HasPrefix(res.Content[0], "Nothing to push") {
+		t.Errorf("a report of only refs not asked for = %+v", res)
+	}
+
+	many := json.RawMessage(`{"path":"/files/w","url":"acme/widgets","refs":["agent/a","agent/b","agent/c"]}`)
+	cut := shelljob.Result{Git: &shelljob.GitResult{UpdatedTotal: 3, Updated: []shelljob.GitRefUpdate{{Ref: "refs/heads/agent/a", New: "1111111aaaa"}}}}
+	res, _ = g.Complete(ctx, pusher(false), testConn("github.com"), "push", many, cut)
+	if !strings.HasPrefix(res.Content[0], "Pushed refs/heads/agent/a (new) and 2 more to acme/widgets.") ||
+		res.Audit != "acme/widgets: pushed refs/heads/agent/a and 2 more" {
+		t.Errorf("a cut list = %+v", res)
+	}
+}
+
+// Why this test exists: core writes an audit row as it hands a job
+// out, so a push whose second request never comes is still on record.
+// For a push that row must name the destinations and whether it
+// forces, from core's own reading of the refs (the shell has not run
+// yet, and its report is the agent's pod's).
+func TestPushStartedRow(t *testing.T) {
+	g := New()
+	res, err := g.Call(context.Background(), pusher(true), testConn("github.com"), "push",
+		json.RawMessage(`{"path":"w","url":"acme/widgets","refs":["agent/x","+HEAD:tags/v2"]}`))
+	if err != nil || res.Audit != "started: acme/widgets, force push of refs/heads/agent/x, refs/tags/v2" {
+		t.Errorf("started = %+v, %v", res, err)
+	}
+	res, _ = g.Call(context.Background(), pusher(false), testConn("github.com"), "push", json.RawMessage(`{"path":"w","refs":["agent/x"]}`))
+	if res.Audit != "started: the working copy's origin at w, push of refs/heads/agent/x" {
+		t.Errorf("started without a url = %q", res.Audit)
 	}
 }
 

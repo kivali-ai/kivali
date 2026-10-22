@@ -14,6 +14,7 @@ import (
 	"github.com/kivali-ai/kivali/internal/builtinintegrations"
 	"github.com/kivali-ai/kivali/internal/builtinintegrations/gitintegration"
 	"github.com/kivali-ai/kivali/internal/egresscred"
+	"github.com/kivali-ai/kivali/internal/integration"
 	"github.com/kivali-ai/kivali/internal/mcp"
 	"github.com/kivali-ai/kivali/internal/store"
 	"github.com/kivali-ai/kivali/internal/web/apitypes"
@@ -93,7 +94,7 @@ func TestGitCallRelaysTheShellJob(t *testing.T) {
 	ctx := context.Background()
 
 	list, err := dana.IntegrationTools(ctx)
-	if err != nil || len(list.Tools) != 2 || list.Tools[0].Name != "git_clone" || list.Tools[1].Name != "git_fetch" {
+	if err != nil || len(list.Tools) != 3 || list.Tools[0].Name != "git_clone" || list.Tools[1].Name != "git_fetch" {
 		t.Fatalf("dana's actions = %+v, %v", list, err)
 	}
 	shell := &fakeGitShell{res: &agentshell.GitResponse{
@@ -348,5 +349,125 @@ func TestGitConnectionAndAccessChecksAtSave(t *testing.T) {
 	putIntegrationAccess(t, srv, "git", "dana", `{"repositories":["acme/*","acme/widgets"]}`)
 	if rows, _ := srv.Store.ListIntegrationAccess("git"); len(rows) != 1 || rows[0].Invalid != "" {
 		t.Errorf("good access = %+v", rows)
+	}
+}
+
+// Why this test exists: a push crosses core.sock twice like a clone,
+// and is the one Git call that writes to the owner's repository. Its
+// job must carry the refs core normalised and the access's push_refs
+// for the daemon's own check, with no force the call did not ask for;
+// the call must leave one audit row whose action is push, naming the
+// repository and the refs; a push outside push_refs must be refused
+// and audited before any job runs; and the Org page must read the
+// access as one line, with the force switch marked dangerous on the
+// wire.
+func TestGitPushRelaysTheShellJob(t *testing.T) {
+	srv := newTestServer(t)
+	withGit(t, srv)
+	intTeam(t, srv, "dana")
+	connectGit(t, srv, "github.com")
+	putIntegrationAccess(t, srv, "git", "dana", `{"repositories":["acme/*"],"push":true,"push_refs":["agent/*"],"force":true}`)
+	dana := agentpod.NewClient(serveCoreUDS(t, srv), "dana")
+	ctx := context.Background()
+	list, err := dana.IntegrationTools(ctx)
+	if err != nil || len(list.Tools) != 3 || list.Tools[2].Name != "git_push" {
+		t.Fatalf("dana's actions = %+v, %v", list, err)
+	}
+	shell := &fakeGitShell{res: &agentshell.GitResponse{
+		Repository: "acme/widgets", DurationMs: 900,
+		Updated: []agentshell.GitRefUpdate{{Ref: "refs/heads/agent/x", New: "1111111aaaa"}},
+	}}
+	push := mcp.IntegrationTools(dana, shell, list.Tools, nil)[2]
+	res, err := push.Handler(ctx, json.RawMessage(`{"path":"/files/widgets","refs":["agent/x"]}`))
+	if err != nil || res.IsError || !strings.HasPrefix(res.Content[0], "Pushed refs/heads/agent/x (new) to acme/widgets.") {
+		t.Fatalf("push = %+v, %v", res, err)
+	}
+	if len(shell.jobs) != 1 {
+		t.Fatalf("jobs = %d", len(shell.jobs))
+	}
+	if j := shell.jobs[0]; j.Op != "push" || j.URL != "" || j.Force || j.TimeoutSeconds != 600 ||
+		!slices.Equal(j.RefSpecs, []string{"refs/heads/agent/x:refs/heads/agent/x"}) ||
+		!slices.Equal(j.AllowedRefs, []string{"refs/heads/agent/*"}) || !slices.Equal(j.AllowedRepositories, []string{"acme/*"}) {
+		t.Errorf("job = %+v", j)
+	}
+	// Two rows: the start, naming what core read the push to write, and
+	// the end, backdated to the job's start.
+	rows := gitRows(t, srv)
+	if len(rows) != 2 || rows[0].Action != "push" || !rows[0].Allowed || rows[0].Reason != "acme/widgets: pushed refs/heads/agent/x" ||
+		rows[1].Reason != "started: the working copy's origin at /files/widgets, push of refs/heads/agent/x" {
+		t.Errorf("audit = %+v", rows)
+	}
+
+	res, _ = push.Handler(ctx, json.RawMessage(`{"path":"/files/widgets","refs":["HEAD:main"]}`))
+	if !res.IsError || res.Content[0] != "The Git integration's access for you does not include refs/heads/main. Ask the owner if your work needs it." {
+		t.Errorf("outside push_refs = %+v", res)
+	}
+	if len(shell.jobs) != 1 {
+		t.Error("a refused push ran a job")
+	}
+	if rows := gitRows(t, srv); len(rows) != 3 || rows[0].Action != "push" || rows[0].Allowed || rows[0].Reason != "the access does not include refs/heads/main" {
+		t.Errorf("audit = %+v", rows)
+	}
+
+	// push_refs the daemon could not read are refused at save, naming
+	// the entry, and nothing is stored.
+	rr := orgJSON(t, srv, http.MethodPut, intBase+"/git/access/dana",
+		apitypes.AccessWrite{Access: []byte(`{"repositories":["acme/*"],"push":true,"push_refs":["agent/*","agent[^x]*"]}`)})
+	if e := assertAPIError(t, rr, http.StatusBadRequest); e.Error != "agent[^x]* is not a branch, a tag or a pattern" {
+		t.Errorf("bad push_refs = %+v", e)
+	}
+
+	page := orgOK[apitypes.IntegrationPage](t, orgGet(t, srv, intBase+"/git"))
+	if len(page.Access) != 1 || page.Access[0].Summary != "Repositories: acme/* · May push: agent/* · May force-push" {
+		t.Errorf("access rows = %+v", page.Access)
+	}
+	if f := page.AccessForm; f == nil || len(f.Fields) != 4 || f.Fields[3].Key != "force" || !f.Fields[3].Danger || f.Fields[1].Danger {
+		t.Errorf("access form = %+v", f)
+	}
+}
+
+// Why this test exists: Git 1.1.0 adds push to the access form. A team
+// that set an agent's access under 1.0.0 (repositories alone) boots a
+// binary carrying 1.1.0: the store supersedes 1.0.0, and that access
+// must stay valid and keep cloning, not turn invalid and cut the agent
+// off, while granting no push.
+func TestGitAccessFromBeforePushStaysValid(t *testing.T) {
+	srv := newTestServer(t)
+	srv.BuiltinIntegrations = builtinintegrations.Registry{gitintegration.New()}
+	withIntegrationRegistry(srv, nil)
+	old := *gitintegration.New().Manifest()
+	old.Version = "1.0.0"
+	old.Tools = old.Tools[:2]
+	old.Kivali.Access = &integration.Access{Schema: json.RawMessage(`{"type":"object","properties":{` +
+		`"repositories":{"type":"array","items":{"type":"string"},"title":"Repositories","description":"owner/name, or a pattern such as acme/*"}},` +
+		`"required":["repositories"]}`)}
+	boot := time.Date(2026, 10, 21, 9, 0, 0, 0, time.UTC)
+	if err := srv.Store.InstallBuiltinIntegrations([]*integration.Manifest{&old}, boot); err != nil {
+		t.Fatal(err)
+	}
+	intTeam(t, srv, "dana")
+	connectGit(t, srv, "github.com")
+	putIntegrationAccess(t, srv, "git", "dana", `{"repositories":["acme/*"]}`)
+
+	if err := srv.Store.InstallBuiltinIntegrations(srv.BuiltinIntegrations.Manifests(), boot.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	vs, _ := srv.Store.IntegrationVersions("git")
+	if len(vs) != 2 || vs[0].Version != "1.1.0" || vs[0].State != store.IntegrationVersionApproved || vs[1].State != store.IntegrationVersionSuperseded {
+		t.Fatalf("versions = %+v", vs)
+	}
+	rows, err := srv.Store.ListIntegrationAccess("git")
+	if err != nil || len(rows) != 1 || rows[0].Invalid != "" {
+		t.Fatalf("access after 1.1.0 = %+v, %v", rows, err)
+	}
+	dana := agentpod.NewClient(serveCoreUDS(t, srv), "dana")
+	ctx := context.Background()
+	first, err := dana.IntegrationCall(ctx, agentpod.IntegrationCallRequest{Name: "git_clone", Arguments: json.RawMessage(`{"url":"acme/widgets","path":"w"}`)})
+	if err != nil || first.ShellJob == nil {
+		t.Errorf("clone under the old access = %+v, %v", first, err)
+	}
+	refused, _ := dana.IntegrationCall(ctx, agentpod.IntegrationCallRequest{Name: "git_push", Arguments: json.RawMessage(`{"path":"w","refs":["agent/x"]}`)})
+	if refused == nil || !refused.IsError || !strings.Contains(refused.Content[0], "does not allow pushing") {
+		t.Errorf("push under the old access = %+v", refused)
 	}
 }

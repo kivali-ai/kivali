@@ -111,10 +111,29 @@ function LoadOptions({ field, integration, load, onLoad, running }: Pick<FieldPr
   );
 }
 
+/**
+ * A switch the integration marks dangerous (force-push, say): drawn in the warning tone, its description beside a
+ * warning icon rather than a muted hint, so the person reads what turning it on does before they do.
+ */
+function DangerSwitch({ field, value, onChange }: Pick<FieldProps, 'field' | 'value' | 'onChange'>) {
+  return (
+    <div className="app-int-danger">
+      <Checkbox label={field.title} checked={value === true} onCheckedChange={(v) => onChange(v === true)} />
+      {field.description && (
+        <Text as="p" variant="caption" tone="signal" className="app-int-danger-note">
+          <Icon name="triangle-alert" size={14} />
+          <span>{field.description}</span>
+        </Text>
+      )}
+    </div>
+  );
+}
+
 function AccessFieldInput({ field, value, onChange, integration, load, onLoad, running }: FieldProps) {
   const hint = field.description || undefined;
   switch (field.kind) {
     case 'switch':
+      if (field.danger) return <DangerSwitch field={field} value={value} onChange={onChange} />;
       return <Checkbox label={field.title} {...(hint ? { hint } : {})} checked={value === true} onCheckedChange={(v) => onChange(v === true)} />;
     case 'choice': {
       const current = typeof value === 'string' ? value : '';

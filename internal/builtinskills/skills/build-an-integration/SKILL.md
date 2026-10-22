@@ -115,6 +115,7 @@ Each property has `type`, `title` and `description`, and is one of:
 | `string` | text |
 | `string` with `enum` | one choice of the enum |
 | `boolean` | a switch |
+| `boolean` with `"x-kivali-danger": true` | a switch shown as a risky choice, its description in view: for one the owner should turn on with care |
 | `array` with `items: {"type": "string"}` | a list, free text |
 | `array` with `items.enum` | choices of the enum |
 

@@ -1,7 +1,7 @@
 package agentshell
 
-// POST /v1/git: a clone or a fetch through an integration's git
-// connection, run in this process with go-git.
+// POST /v1/git: a clone, a fetch or a push through an integration's
+// git connection, run in this process with go-git.
 //
 // Core builds the job (agentpod.GitJob) from the agent's call, after it
 // has checked the agent's access; the agent's MCP server hands it here
@@ -18,24 +18,33 @@ package agentshell
 //     job's host, of a repository AllowedRepositories includes. The
 //     clone's origin is that URL, with no user info, so plain git keeps
 //     working for a repository the team's allow list reaches.
-//   - A fetch's URL comes from the job, by the same rules, or, when the
-//     job has none, from the working copy's origin as written in
-//     .git/config (raw: never rewritten by a url.<base>.insteadOf),
-//     parsed by the same rules, and refused unless it is on the job's
-//     host and one of AllowedRepositories. .git/config is the agent's to
-//     write, so nothing else in it is read.
-//   - A fetch goes through an anonymous remote with that URL in code.
-//     go-git then applies no insteadOf rule, from the repository's
-//     config or a global one, ignores the [remote "origin"] the config
-//     holds, and runs no hook. A named remote (RemoteName "origin"
-//     without RemoteURL) would follow the config's URL: never use one.
-//     A push through an anonymous remote needs PushOptions.RemoteName
+//   - A fetch's or a push's URL comes from the job, by the same rules,
+//     or, when the job has none, from the working copy's origin as
+//     written in .git/config (raw: never rewritten by a
+//     url.<base>.insteadOf), parsed by the same rules, and refused unless
+//     it is on the job's host and one of AllowedRepositories. .git/config
+//     is the agent's to write, so nothing else in it is read.
+//   - A fetch and a push go through an anonymous remote with that URL in
+//     code. go-git then applies no insteadOf or pushInsteadOf rule, from
+//     the repository's config or a global one, ignores the
+//     [remote "origin"] the config holds (its pushurl among it), and
+//     runs no hook. A named remote (RemoteName "origin" without
+//     RemoteURL) would follow the config's URL: never use one. A push
+//     through an anonymous remote needs PushOptions.RemoteName
 //     "anonymous".
 //   - go-git follows no redirect: the http and https transports it uses
 //     are installed with NoFollowRedirects (init below). A host that
 //     answers with a redirect (GitHub does for a renamed or transferred
 //     repository) fails the operation, so the repository served is the
 //     one checked, at the URL checked.
+//   - A push writes only the branches and tags of AllowedRefs, forces
+//     only a refspec with + and only when the job's Force allows it, and
+//     never deletes a remote ref: every refspec is held to that again
+//     here (gitrepo.ParsePushRefSpec), as the URL is to
+//     AllowedRepositories. Without +, an existing tag never moves and a
+//     branch moves only forward, by the daemon's own walk through
+//     objects checked against their names (checkPushMoves). The push is
+//     atomic, so a host that refuses one ref takes none.
 //   - The proxy is always given in code (ProxyOptions), the daemon's own
 //     bare proxy URL with the job's credential, so go-git never reads a
 //     proxy from the environment. With no proxy in the daemon's
@@ -54,6 +63,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -68,6 +78,10 @@ import (
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v5/plumbing/protocol/packp"
+	"github.com/go-git/go-git/v5/plumbing/protocol/packp/capability"
+	"github.com/go-git/go-git/v5/plumbing/storer"
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	gitclient "github.com/go-git/go-git/v5/plumbing/transport/client"
 	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
@@ -106,18 +120,20 @@ const (
 const (
 	GitOpClone = "clone"
 	GitOpFetch = "fetch"
+	GitOpPush  = "push"
 )
 
 // GitMaxBodyBytes caps a POST /v1/git body.
 const GitMaxBodyBytes = 64 << 10
 
 // The bounds of one git operation: a request's TimeoutSeconds, at most
-// GitCloneMaxTimeout for a clone and GitFetchMaxTimeout for a fetch;
-// GitDefaultTimeout when it gives none.
+// GitCloneMaxTimeout for a clone, GitFetchMaxTimeout for a fetch and
+// GitPushMaxTimeout for a push; GitDefaultTimeout when it gives none.
 const (
 	GitDefaultTimeout  = 5 * time.Minute
 	GitCloneMaxTimeout = 15 * time.Minute
 	GitFetchMaxTimeout = 10 * time.Minute
+	GitPushMaxTimeout  = 10 * time.Minute
 )
 
 // GitTimeoutFor is the bound of op given seconds.
@@ -126,8 +142,11 @@ func GitTimeoutFor(op string, seconds int) time.Duration {
 		return GitDefaultTimeout
 	}
 	max := GitFetchMaxTimeout
-	if op == GitOpClone {
+	switch op {
+	case GitOpClone:
 		max = GitCloneMaxTimeout
+	case GitOpPush:
+		max = GitPushMaxTimeout
 	}
 	return min(time.Duration(seconds)*time.Second, max)
 }
@@ -316,8 +335,8 @@ func runGitOp(ctx context.Context, cfg ServerConfig, locks *gitPathLocks, req Gi
 	if cfg.GitUnavailable != "" {
 		return GitResponse{Error: cfg.GitUnavailable}
 	}
-	if req.Op != GitOpClone && req.Op != GitOpFetch {
-		return GitResponse{Error: fmt.Sprintf("%q is not an operation: clone or fetch", req.Op)}
+	if req.Op != GitOpClone && req.Op != GitOpFetch && req.Op != GitOpPush {
+		return GitResponse{Error: fmt.Sprintf("%q is not an operation: clone, fetch or push", req.Op)}
 	}
 	host, err := gitrepo.NormalizeHost(req.Host)
 	if err != nil {
@@ -356,10 +375,13 @@ func runGitOp(ctx context.Context, cfg ServerConfig, locks *gitPathLocks, req Gi
 	defer release()
 
 	var res GitResponse
-	if req.Op == GitOpClone {
+	switch req.Op {
+	case GitOpClone:
 		res = gitClone(ctx, cfg, req, host, dir)
-	} else {
+	case GitOpFetch:
 		res = gitFetch(ctx, cfg, req, host, dir)
+	default:
+		res = gitPush(ctx, cfg, req, host, dir)
 	}
 	if timedOut.Load() {
 		res.TimedOut = true
@@ -434,20 +456,32 @@ func gitClone(ctx context.Context, cfg ServerConfig, req GitRequest, host, dir s
 	return res
 }
 
-func gitFetch(ctx context.Context, cfg ServerConfig, req GitRequest, host, dir string) GitResponse {
+// openWorkingCopy is the working copy at dir, whose .git must be a
+// directory, and the repository a fetch or a push reaches from it: the
+// job's URL, or the working copy's origin (originRepository).
+func openWorkingCopy(cfg ServerConfig, req GitRequest, host, dir string) (*git.Repository, gitrepo.Repository, error) {
 	if fi, err := os.Lstat(filepath.Join(dir, git.GitDirName)); err != nil || !fi.IsDir() {
-		return GitResponse{Error: fmt.Sprintf("%s is not a working copy (it has no .git directory)", req.Path)}
+		return nil, gitrepo.Repository{}, fmt.Errorf("%s is not a working copy (it has no .git directory)", req.Path)
 	}
 	r, err := git.PlainOpenWithOptions(dir, &git.PlainOpenOptions{})
 	if err != nil {
-		return GitResponse{Error: "open the working copy: " + err.Error()}
+		return nil, gitrepo.Repository{}, errors.New("open the working copy: " + err.Error())
 	}
 	var repo gitrepo.Repository
 	if req.URL != "" {
-		if repo, err = gitRepository(cfg, req, host); err != nil {
-			return GitResponse{Error: err.Error()}
-		}
-	} else if repo, err = originRepository(cfg, r, req, host); err != nil {
+		repo, err = gitRepository(cfg, req, host)
+	} else {
+		repo, err = originRepository(cfg, r, req, host)
+	}
+	if err != nil {
+		return nil, gitrepo.Repository{}, err
+	}
+	return r, repo, nil
+}
+
+func gitFetch(ctx context.Context, cfg ServerConfig, req GitRequest, host, dir string) GitResponse {
+	r, repo, err := openWorkingCopy(cfg, req, host, dir)
+	if err != nil {
 		return GitResponse{Error: err.Error()}
 	}
 	res := GitResponse{Repository: repo.Path}
@@ -479,6 +513,305 @@ func gitFetch(ctx context.Context, cfg ServerConfig, req GitRequest, host, dir s
 	}
 	res.Updated = refUpdates(before, refSnapshot(r))
 	return res
+}
+
+// pushSpec is one refspec of a push as the daemon checked it: what
+// go-git is given, the remote ref it writes, the object it writes there
+// and whether it may move that ref other than fast-forward.
+type pushSpec struct {
+	spec  config.RefSpec
+	dst   string
+	new   plumbing.Hash
+	force bool
+}
+
+func gitPush(ctx context.Context, cfg ServerConfig, req GitRequest, host, dir string) GitResponse {
+	r, repo, err := openWorkingCopy(cfg, req, host, dir)
+	if err != nil {
+		return GitResponse{Error: err.Error()}
+	}
+	res := GitResponse{Repository: repo.Path}
+	specs, err := pushRefSpecs(r, req)
+	if err != nil {
+		res.Error = err.Error()
+		return res
+	}
+	auth, proxy := gitTransport(cfg, req)
+	// go-git reports no ref of a push and does not say whether the host
+	// takes an atomic push: the host's receive-pack advertisement, read
+	// first, gives both, and what each ref moves from.
+	adv, err := pushAdvertisement(ctx, repo.URL(), auth, proxy)
+	switch {
+	case isGitRedirect(err):
+		res.Error = gitMovedError
+		return res
+	case err != nil:
+		res.Error = "push: " + err.Error()
+		return res
+	}
+	if len(specs) > 1 && !adv.Capabilities.Supports(capability.Atomic) {
+		res.Error = "the host does not take atomic pushes, so a push of several refs could land in part; push one ref per call"
+		return res
+	}
+	remoteRefs, err := adv.AllReferences()
+	if err != nil {
+		res.Error = "push: " + err.Error()
+		return res
+	}
+	before := map[string]plumbing.Hash{}
+	if iter, err := remoteRefs.IterReferences(); err == nil {
+		_ = iter.ForEach(func(ref *plumbing.Reference) error {
+			if ref.Type() == plumbing.HashReference {
+				before[ref.Name().String()] = ref.Hash()
+			}
+			return nil
+		})
+	}
+	if err := checkPushMoves(ctx, r, specs, before); err != nil {
+		res.Error = err.Error()
+		return res
+	}
+	remote, err := r.CreateRemoteAnonymous(&config.RemoteConfig{Name: gitAnonymousRemote, URLs: []string{repo.URL()}})
+	if err != nil {
+		res.Error = "push: " + err.Error()
+		return res
+	}
+	refspecs := make([]config.RefSpec, 0, len(specs))
+	for _, s := range specs {
+		refspecs = append(refspecs, s.spec)
+	}
+	// Force stays off: a refspec forces by its own +, which
+	// pushRefSpecs allowed only when the job's Force does. Atomic: a host
+	// that refuses one ref refuses them all, so a refused push wrote
+	// nothing.
+	err = remote.PushContext(ctx, &git.PushOptions{
+		RemoteName:   gitAnonymousRemote,
+		RefSpecs:     refspecs,
+		Auth:         auth,
+		ProxyOptions: proxy,
+		Atomic:       true,
+	})
+	switch {
+	case errors.Is(err, git.NoErrAlreadyUpToDate):
+		return res
+	case isGitRedirect(err):
+		res.Error = gitMovedError
+		return res
+	case err != nil:
+		res.Error = "push: " + err.Error()
+		return res
+	}
+	for _, s := range specs {
+		old, had := before[s.dst]
+		if had && old == s.new {
+			continue
+		}
+		u := GitRefUpdate{Ref: s.dst, New: s.new.String()}
+		if had {
+			u.Old = old.String()
+		}
+		res.Updated = append(res.Updated, u)
+	}
+	sort.Slice(res.Updated, func(i, j int) bool { return res.Updated[i].Ref < res.Updated[j].Ref })
+	return res
+}
+
+// pushAdvertisement is the host's receive-pack advertisement of the
+// repository at url: its refs and its capabilities. It goes through
+// the same transports, auth and proxy as the push.
+func pushAdvertisement(ctx context.Context, url string, auth transport.AuthMethod, proxy transport.ProxyOptions) (*packp.AdvRefs, error) {
+	ep, err := transport.NewEndpoint(url)
+	if err != nil {
+		return nil, err
+	}
+	ep.Proxy = proxy
+	c, err := gitclient.NewClient(ep)
+	if err != nil {
+		return nil, err
+	}
+	s, err := c.NewReceivePackSession(ep, auth)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = s.Close() }()
+	return s.AdvertisedReferencesContext(ctx)
+}
+
+// errObjectMismatch is an object of the working copy whose content does
+// not hash to the name it is stored under.
+var errObjectMismatch = errors.New("the working copy's objects do not match their names")
+
+// checkPushMoves holds each refspec without + to what git's own client
+// allows, before anything is sent: an existing tag never moves, and an
+// existing branch moves only to a descendant of the commit the remote
+// has. The ancestry is the daemon's own walk, through objects whose
+// content is checked against their names (verifiedObjects): go-git's
+// check reads the working copy's objects, which the agent writes, as
+// they are named.
+func checkPushMoves(ctx context.Context, r *git.Repository, specs []pushSpec, before map[string]plumbing.Hash) error {
+	objects := verifiedObjects{r.Storer}
+	for _, s := range specs {
+		old, had := before[s.dst]
+		if s.force || !had || old == s.new {
+			continue
+		}
+		if strings.HasPrefix(s.dst, gitrepo.TagPrefix) {
+			return fmt.Errorf("%s exists; moving a tag needs force", s.dst)
+		}
+		ok, err := descends(ctx, objects, s.new, old)
+		switch {
+		case errors.Is(err, errObjectMismatch):
+			return err
+		case err != nil:
+			return fmt.Errorf("%s: %v", s.dst, err)
+		case !ok:
+			return fmt.Errorf("%s: non-fast-forward update; the remote has commits the pushed one does not descend from, and pushing over them needs force", s.dst)
+		}
+	}
+	return nil
+}
+
+// descends reports whether the commit from has ancestor among its
+// ancestors, walking parents through objects.
+func descends(ctx context.Context, objects storer.EncodedObjectStorer, from, ancestor plumbing.Hash) (bool, error) {
+	seen := map[plumbing.Hash]bool{from: true}
+	queue := []plumbing.Hash{from}
+	for len(queue) > 0 {
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
+		h := queue[0]
+		queue = queue[1:]
+		c, err := object.GetCommit(objects, h)
+		switch {
+		case errors.Is(err, errObjectMismatch):
+			return false, err
+		case errors.Is(err, plumbing.ErrObjectNotFound):
+			// History the working copy does not hold (a shallow clone):
+			// the ancestor is not shown to be there.
+			continue
+		case err != nil:
+			return false, fmt.Errorf("commit %s does not read: %v", h, err)
+		}
+		for _, p := range c.ParentHashes {
+			if p == ancestor {
+				return true, nil
+			}
+			if !seen[p] {
+				seen[p] = true
+				queue = append(queue, p)
+			}
+		}
+	}
+	return false, nil
+}
+
+// verifiedObjects is a storer whose objects are checked against their
+// names: each one read is hashed (plumbing.ComputeHash) and refused
+// with errObjectMismatch when the hash is not the one asked for.
+type verifiedObjects struct {
+	storer.EncodedObjectStorer
+}
+
+func (v verifiedObjects) EncodedObject(t plumbing.ObjectType, h plumbing.Hash) (plumbing.EncodedObject, error) {
+	obj, err := v.EncodedObjectStorer.EncodedObject(t, h)
+	if err != nil {
+		return nil, err
+	}
+	rd, err := obj.Reader()
+	if err != nil {
+		return nil, err
+	}
+	content, err := io.ReadAll(rd)
+	_ = rd.Close()
+	if err != nil {
+		return nil, err
+	}
+	if plumbing.ComputeHash(obj.Type(), content) != h {
+		return nil, errObjectMismatch
+	}
+	return obj, nil
+}
+
+// pushRefSpecs is the job's push refspecs, each held again to the
+// rules core held it to: it parses (gitrepo.ParsePushRefSpec), deletes
+// nothing, writes a branch or a tag AllowedRefs includes, forces only
+// when the job's Force allows, and names a destination no other one
+// does. Each source is resolved in the working copy, so a source that
+// is not there is an error rather than a push of nothing.
+func pushRefSpecs(r *git.Repository, req GitRequest) ([]pushSpec, error) {
+	if len(req.RefSpecs) == 0 {
+		return nil, errors.New("a push needs at least one ref")
+	}
+	out := make([]pushSpec, 0, len(req.RefSpecs))
+	seen := map[string]bool{}
+	for _, raw := range req.RefSpecs {
+		p, err := gitrepo.ParsePushRefSpec(raw)
+		switch {
+		case errors.Is(err, gitrepo.ErrDeleteRef):
+			return nil, fmt.Errorf("%q deletes a remote ref, which a push here never does", raw)
+		case err != nil:
+			return nil, fmt.Errorf("%q is not a refspec of a push: %v", raw, err)
+		case !gitrepo.MatchRef(req.AllowedRefs, p.Dst):
+			return nil, fmt.Errorf("%s is not a branch or tag the access lets you push", p.Dst)
+		case p.Force && !req.Force:
+			return nil, fmt.Errorf("%q forces, and the access does not allow force-pushing", raw)
+		case seen[p.Dst]:
+			return nil, fmt.Errorf("%s is named twice", p.Dst)
+		}
+		seen[p.Dst] = true
+		src, hash, err := pushSource(r, p.Src)
+		if err != nil {
+			return nil, err
+		}
+		spec := config.RefSpec(gitrepo.PushRefSpec{Src: src, Dst: p.Dst, Force: p.Force}.String())
+		if err := spec.Validate(); err != nil {
+			return nil, fmt.Errorf("%q is not a refspec of a push: %v", raw, err)
+		}
+		out = append(out, pushSpec{spec: spec, dst: p.Dst, new: hash, force: p.Force})
+	}
+	return out, nil
+}
+
+// pushSource is src (a full ref name, HEAD or an object id) as go-git
+// is given it, and the object it pushes. A ref that names an object
+// directly is kept by name, so an annotated tag is pushed as the tag;
+// HEAD, a symbolic ref and an object id are given as the hash of the
+// commit they name, which go-git pushes only when it is a commit. That
+// hash is the decoded commit's, which go-git computes from its
+// content: one stored under another name is errObjectMismatch.
+func pushSource(r *git.Repository, src string) (name string, hash plumbing.Hash, err error) {
+	commit := func(h plumbing.Hash) (string, plumbing.Hash, error) {
+		c, err := r.CommitObject(h)
+		if err != nil {
+			return "", plumbing.ZeroHash, fmt.Errorf("%s is not a commit in the working copy", src)
+		}
+		if c.Hash != h {
+			return "", plumbing.ZeroHash, errObjectMismatch
+		}
+		return c.Hash.String(), c.Hash, nil
+	}
+	switch {
+	case src == "HEAD":
+		head, err := r.Head()
+		if err != nil {
+			return "", plumbing.ZeroHash, errors.New("HEAD names no commit in the working copy")
+		}
+		return commit(head.Hash())
+	case gitrepo.IsObjectID(src):
+		return commit(plumbing.NewHash(src))
+	}
+	ref, err := r.Reference(plumbing.ReferenceName(src), false)
+	if err != nil {
+		return "", plumbing.ZeroHash, fmt.Errorf("%s is not in the working copy", src)
+	}
+	if ref.Type() == plumbing.HashReference {
+		return src, ref.Hash(), nil
+	}
+	if ref, err = r.Reference(plumbing.ReferenceName(src), true); err != nil {
+		return "", plumbing.ZeroHash, fmt.Errorf("%s names no commit in the working copy", src)
+	}
+	return commit(ref.Hash())
 }
 
 // originRepository is the repository of the working copy's origin, read

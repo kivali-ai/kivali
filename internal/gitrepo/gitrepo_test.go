@@ -155,8 +155,10 @@ func TestMatch(t *testing.T) {
 		{[]string{"acme/*"}, "acme/sub/widgets", false},
 		{[]string{"acme/*/*"}, "acme/sub/widgets", true},
 		{[]string{"*/widgets"}, "acme/widgets", true},
-		{[]string{"acme/w?dgets"}, "acme/widgets", true},
-		{[]string{"acme/w?dgets"}, "acme/wdgets", false},
+		// * is the only wildcard: ? and a class, which path.Match lets
+		// match a /, are refused and match nothing.
+		{[]string{"acme/w?dgets"}, "acme/widgets", false},
+		{[]string{"acme[/]widgets"}, "acme/widgets", false},
 		{[]string{"acme/[a-"}, "acme/a", false},
 		{[]string{"", "  "}, "acme/widgets", false},
 		{nil, "acme/widgets", false},
@@ -166,7 +168,8 @@ func TestMatch(t *testing.T) {
 			t.Errorf("Match(%q, %q) = %v, want %v", c.patterns, c.key, got, c.want)
 		}
 	}
-	if ValidPattern("acme/[a-") || ValidPattern(" ") || !ValidPattern("acme/*") {
+	if ValidPattern("acme/[a-") || ValidPattern(" ") || ValidPattern("acme/w?dgets") || ValidPattern("acme/[wx]idgets") ||
+		ValidPattern(`acme/\*`) || !ValidPattern("acme/*") {
 		t.Error("ValidPattern")
 	}
 }

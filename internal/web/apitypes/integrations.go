@@ -175,6 +175,10 @@ type AccessField struct {
 	// Choices is true when the integration lists this field's options
 	// live, through GET .../choices/{key}.
 	Choices bool `json:"choices"`
+	// Danger is true for a switch whose "on" the owner should choose
+	// with care (the manifest's x-kivali-danger): the form draws it in
+	// a warning tone with its description in view.
+	Danger bool `json:"danger"`
 }
 
 // AccessRow is one agent's access.

@@ -104,38 +104,45 @@ The switch at the top of the integration's page turns it off for every agent at 
 
 ## Git
 
-**Git** ships with Kivali. It lets agents clone and fetch your repositories from a git host over HTTPS with a token you give it. Everything else an agent does with a repository (status, branches, commits, diffs, merges) is plain git in its own shell.
+**Git** ships with Kivali. It lets agents clone, fetch and push your repositories on a git host over HTTPS with a token you give it. Everything else an agent does with a repository (status, branches, commits, diffs, merges) is plain git in its own shell.
 
 ### The connection
 
 - **Host**: `github.com`, `gitlab.com` or your own git host that serves HTTPS, without `https://`.
-- **Access token**: a token that can read the repositories your agents will use. On GitHub, a fine-grained personal access token limited to those repositories, with read access to their contents; on GitLab, an access token with `read_repository`. Give it no more than that.
+- **Access token**: a token that can read the repositories your agents will use. On GitHub, a fine-grained personal access token limited to those repositories, with read access to their contents; on GitLab, an access token with `read_repository`. For agents that push, the token also needs write access to contents on GitHub, or `write_repository` on GitLab. Give it no more than that.
 - **Repository for Test connection** (optional): one repository, as `owner/name`.
 
 **Test connection** lists that repository's branches with your token: "Connected. 4 branches in acme/widgets." With no repository named, it asks GitHub or GitLab who the token belongs to: "Connected to github.com as octocat." For any other host, name a repository. A failed test shows the host's reason. Test connection reaches only public hosts: a host on your own network is refused. A host that is not a host name (with a path, for example) is refused when you save.
 
-The token is kept in the connection's Secret, like every connection secret. Each connection also has a network credential of its own, kept beside the token, that lets an agent's clone or fetch reach the connection's host and nothing else. Your team's allow list does not change.
+The token is kept in the connection's Secret, like every connection secret. Each connection also has a network credential of its own, kept beside the token, that lets an agent's clone, fetch or push reach the connection's host and nothing else. Your team's allow list does not change.
 
 ### Access
 
-An agent's access is a list of repositories: `owner/name`, such as `acme/widgets`, or a pattern such as `acme/*`, which covers every repository directly under `acme` but not `acme/tools/cli`. GitLab nests groups, so write `group/subgroup/*` for those. Capitals do not matter. A repository that has been renamed or moved is not followed to its new name: a clone or fetch of it fails, and the agent is told to ask you to update its access to the new name.
+An agent's access has four parts:
+
+- **Repositories**: `owner/name`, such as `acme/widgets`, or a pattern such as `acme/*`, which covers every repository directly under `acme` but not `acme/tools/cli`. `*` is the only wildcard. GitLab nests groups, so write `group/subgroup/*` for those. Capitals do not matter. A repository that has been renamed or moved is not followed to its new name: a clone, fetch or push of it fails, and the agent is told to ask you to update its access to the new name.
+- **May push**: on, the agent may push to the repositories in its list; off, it can clone and fetch but not push.
+- **Branches and tags it may push**: the only branches and tags the agent can write, in those repositories. A name is a branch: `agent/fix-1` is the branch `agent/fix-1`, and `v1.2.0` is a branch of that name too. A tag starts with `tags/`: `tags/v1.2.0`. A pattern uses `*`, the only wildcard: `agent/*` is every branch directly under `agent/`, but not `agent/a/b` (write `agent/*/*` for that level), `tags/v*` is every tag starting with `v`, and `*` alone is every branch and every tag at the top level. Capitals count, as they do in git. Empty, the agent can push nothing. Kivali refuses an entry it cannot read when you save.
+- **May force-push**: lets a push overwrite history on the remote, replacing commits other people may have built on, or move an existing tag. It is marked as a risky choice in the form and is off unless you turn it on. Leave it off unless the work needs it, and when it does, limit the branches above to ones only that agent uses, such as `agent/*`.
+
+The page sums it up in one line, such as "Repositories: acme/* · May push: agent/* · May force-push".
 
 ### What agents can do
 
-An agent with access has two actions:
+An agent with access has three actions:
 
 - **Clone** copies a repository its access includes into a new or empty directory of its files or its home.
 - **Fetch** brings new commits and tags into one of its working copies, from the repository's address or the one the working copy came from, if its access includes it.
+- **Push** sends branches and tags from one of its working copies to the repository, when its access allows pushing them there. It can push a branch to the same name or to another (its current commit to `agent/fix-1`, say) and push tags. A push that would overwrite history is refused unless the agent asks to force and you allowed force-pushing, and an existing tag is never moved without force. A push of several branches and tags lands whole or not at all: if the host refuses one, it takes none of them, so the host must accept atomic pushes (GitHub, GitLab and plain git servers do). The host's own rules (protected branches, required reviews) still apply.
 
-Both go to the connection's host with your token. The working copy is an ordinary one, whose origin is the repository's address without the token, and the agent works in it with plain git in its shell. That plain git reaches only the hosts on your team's allow list, and without your token, so a repository host that is not on the list is reachable only through these two actions.
+All three go to the connection's host with your token. The working copy is an ordinary one, whose origin is the repository's address without the token, and the agent works in it with plain git in its shell. That plain git reaches only the hosts on your team's allow list, and without your token, so a repository host that is not on the list is reachable only through these three actions.
 
-Agents cannot push through the integration.
-
-Every clone and fetch is in **Latest calls**, with the repository and the branches and tags that moved, or why it failed. Kivali checks each one against the agent's access before anything runs. Each has two rows: one when it starts and one when it ends.
+Every clone, fetch and push is in **Latest calls**, with the repository and the branches and tags that moved (a push also says when it forced), or why it failed. Kivali checks each one against the agent's access before anything runs. Each has two rows: one when it starts and one when it ends. If you change an agent's access while its push runs, the second row still records what the push wrote, and says the access changed during it.
 
 ### Not supported
 
 - SSH addresses (`git@github.com:...`): give the HTTPS address or `owner/name`.
 - Git LFS: a clone holds the LFS pointers, not the files.
 - Submodules are not cloned.
-- Very large repositories are slow, and a clone stops after 15 minutes, a fetch after 10.
+- Deleting a branch or tag on the remote: a push only adds and moves them.
+- Very large repositories are slow, and a clone stops after 15 minutes, a fetch or a push after 10.
