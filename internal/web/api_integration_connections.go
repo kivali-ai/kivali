@@ -438,19 +438,34 @@ func sortedFieldKeys(m map[string]string) []string {
 // Secrets, their records and every agent's access, which was set for
 // one of them.
 func (s *Server) handleAPIIntegrationConnectionDelete(w http.ResponseWriter, r *http.Request) {
-	defer s.lockIntegrations()()
+	unlock := s.lockIntegrations()
+	revokes, ok := s.deleteConnectionsLocked(w, r)
+	unlock()
+	// The vendor is asked to revoke a sign-in's tokens with the lock
+	// released, so a slow vendor holds up no other integration write.
+	s.revokeSignIns(r.Context(), revokes)
+	if ok {
+		s.writeIntegrationPage(w, r)
+	}
+}
+
+// deleteConnectionsLocked is the removal of every connection under
+// lockIntegrations: true once done, false with an error answered. It
+// returns the sign-in tokens to revoke.
+func (s *Server) deleteConnectionsLocked(w http.ResponseWriter, r *http.Request) (signInRevocations, bool) {
 	v, ok := s.integrationOr404(w, r)
 	if !ok {
-		return
+		return nil, false
 	}
-	if !s.deleteConnectionSecrets(w, r, v.it.Name) {
-		return
+	revokes, ok := s.deleteConnectionSecrets(w, r, v.it.Name)
+	if !ok {
+		return revokes, false
 	}
 	removed, err := s.Store.DeleteIntegrationConnection(v.it.Name)
 	if err != nil {
 		log.Printf("integration %s: delete the connection: %v", v.it.Name, err)
 		writeAPIError(w, http.StatusInternalServerError, "the connection could not be removed", whoServer)
-		return
+		return revokes, false
 	}
 	// A built-in's connection's proxy credential goes with it.
 	if err := s.dropBuiltinEgress(v.it.Name, removed); err != nil {
@@ -459,7 +474,7 @@ func (s *Server) handleAPIIntegrationConnectionDelete(w http.ResponseWriter, r *
 	// The running server starts again without the values.
 	s.Integrations.ConnectionChanged(v.it.Name)
 	s.Integrations.Changed()
-	s.writeIntegrationPage(w, r)
+	return revokes, true
 }
 
 // handleAPIIntegrationConnectionDeleteByID removes the connection {id}
@@ -467,16 +482,31 @@ func (s *Server) handleAPIIntegrationConnectionDelete(w http.ResponseWriter, r *
 // access of every agent whose row names it. The other connections, and
 // the access set for them, stay.
 func (s *Server) handleAPIIntegrationConnectionDeleteByID(w http.ResponseWriter, r *http.Request) {
-	defer s.lockIntegrations()()
+	unlock := s.lockIntegrations()
+	revokes, ok := s.deleteConnectionByIDLocked(w, r)
+	unlock()
+	// The vendor is asked to revoke a sign-in's tokens with the lock
+	// released, so a slow vendor holds up no other integration write.
+	s.revokeSignIns(r.Context(), revokes)
+	if ok {
+		s.writeIntegrationPage(w, r)
+	}
+}
+
+// deleteConnectionByIDLocked is the removal of the connection {id}
+// names under lockIntegrations: true once done, false with an error
+// answered. It returns the sign-in tokens to revoke.
+func (s *Server) deleteConnectionByIDLocked(w http.ResponseWriter, r *http.Request) (signInRevocations, bool) {
 	v, ok := s.integrationOr404(w, r)
 	if !ok {
-		return
+		return nil, false
 	}
 	c, ok := connectionOr404(w, r, v)
 	if !ok {
-		return
+		return nil, false
 	}
 	name := v.it.Name
+	var revokes signInRevocations
 	// The Secret goes first: on a failure the record stays, so the
 	// Secret is not left behind with nothing naming it.
 	if c.rec.SecretName != "" {
@@ -484,10 +514,9 @@ func (s *Server) handleAPIIntegrationConnectionDeleteByID(w http.ResponseWriter,
 		if err := s.Secrets.Delete(r.Context(), c.rec.SecretName); err != nil {
 			log.Printf("integration %s: delete Secret %s: %v", name, c.rec.SecretName, err)
 			writeAPIError(w, http.StatusInternalServerError, "the connection's secrets could not be removed, so nothing was changed", whoServer)
-			return
+			return nil, false
 		}
-		// A sign-in's tokens are revoked with the vendor, best effort.
-		s.revokeSignIn(r.Context(), name, v.manifest, c.rec, tokens)
+		revokes = revokes.add(name, v.manifest, c.rec, tokens)
 	}
 	// With its Secret gone the credential's secret is gone too, so the
 	// credential goes now, whatever the store's step does next.
@@ -497,11 +526,11 @@ func (s *Server) handleAPIIntegrationConnectionDeleteByID(w http.ResponseWriter,
 	if _, _, err := s.Store.DeleteIntegrationConnectionByID(name, c.rec.ID); err != nil && !errors.Is(err, store.ErrNotFound) {
 		log.Printf("integration %s: delete connection %s: %v", name, c.rec.ID, err)
 		writeAPIError(w, http.StatusInternalServerError, "the connection could not be removed", whoServer)
-		return
+		return revokes, false
 	}
 	s.Integrations.ConnectionChanged(name)
 	s.Integrations.Changed()
-	s.writeIntegrationPage(w, r)
+	return revokes, true
 }
 
 // integrationVerifyMessageMax bounds the integration's words kept from

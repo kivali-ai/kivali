@@ -431,3 +431,42 @@ func TestSignInDeleteRevokes(t *testing.T) {
 		t.Error("a failed revocation kept the connection")
 	}
 }
+
+// Why this test exists: a revocation waits on the vendor for up to ten
+// seconds. Made while the delete held lockIntegrations, it would stall
+// every other integration write for that long: connection saves,
+// switches, access, approvals, and the proxy credential a Git call's
+// shell job needs. Each delete route must collect the tokens under the
+// lock and ask the vendor once it is released, before it answers.
+func TestSignInRevokesWithTheLockReleased(t *testing.T) {
+	srv, vendor, _ := signInServer(t)
+	signInBundle(t, srv, vendor)
+	var free []bool
+	vendor.Set(func(k *connecttest.Knobs) {
+		k.OnRevoke = func() {
+			ok := srv.integrationsMu.TryLock()
+			if ok {
+				srv.integrationsMu.Unlock()
+			}
+			free = append(free, ok)
+		}
+	})
+	for _, del := range []func() int{
+		func() int { return intDelete(t, srv, intBase+"/crm/connections/c1").Code },
+		func() int { return intDelete(t, srv, intBase+"/crm/connection").Code },
+		func() int { return intDelete(t, srv, intBase+"/crm").Code },
+	} {
+		signedIn(t, srv, "crm", vendor.Issue())
+		if code := del(); code != http.StatusOK && code != http.StatusNoContent {
+			t.Fatalf("delete: %d", code)
+		}
+	}
+	if len(free) != 6 {
+		t.Fatalf("%d revocations, want two per delete", len(free))
+	}
+	for i, ok := range free {
+		if !ok {
+			t.Errorf("revocation %d ran while lockIntegrations was held", i)
+		}
+	}
+}
