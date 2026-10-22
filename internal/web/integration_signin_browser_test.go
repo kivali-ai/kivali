@@ -33,6 +33,12 @@ const browserSetupNotes = "Create an app, set its redirect URL to {{redirect_url
 // edit, when set, changes the connection section first.
 func browserBundle(t *testing.T, srv *Server, vendor *connecttest.FakeVendor, edit func(c *integration.Connection)) {
 	t.Helper()
+	browserBundleNamed(t, srv, vendor, "crm", edit)
+}
+
+// browserBundleNamed is browserBundle under another name.
+func browserBundleNamed(t *testing.T, srv *Server, vendor *connecttest.FakeVendor, name string, edit func(c *integration.Connection)) {
+	t.Helper()
 	ep := vendor.Endpoints()
 	c := integration.Connection{
 		Method: integration.MethodBrowser, AuthorizationEndpoint: ep.Authorization, TokenEndpoint: ep.Token, RevocationEndpoint: ep.Revocation,
@@ -42,17 +48,17 @@ func browserBundle(t *testing.T, srv *Server, vendor *connecttest.FakeVendor, ed
 	if edit != nil {
 		edit(&c)
 	}
-	m := integrationtest.Manifest("crm", "1.0.0")
+	m := integrationtest.Manifest(name, "1.0.0")
 	m["kivali"].(map[string]any)["connection"] = c
 	m["kivali"].(map[string]any)["setup_notes"] = browserSetupNotes
 	b, err := integration.ReadBundle(integrationtest.Zip(t, "", m, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := srv.Store.StoreIntegrationVersion("crm", b, store.IntegrationVersion{PublishedBy: agent.CEOSlug, PublishedAt: signInAt}); err != nil {
+	if err := srv.Store.StoreIntegrationVersion(name, b, store.IntegrationVersion{PublishedBy: agent.CEOSlug, PublishedAt: signInAt}); err != nil {
 		t.Fatal(err)
 	}
-	if err := srv.Store.ApproveIntegrationVersion("crm", "1.0.0", signInAt); err != nil {
+	if err := srv.Store.ApproveIntegrationVersion(name, "1.0.0", signInAt); err != nil {
 		t.Fatal(err)
 	}
 	vendor.Set(func(k *connecttest.Knobs) { k.AccessTTL = 30 * time.Minute })
@@ -236,7 +242,7 @@ func TestBrowserSignInEndToEnd(t *testing.T) {
 	}
 	_ = resp.Body.Close()
 	setCookie := resp.Header.Get("Set-Cookie")
-	if !strings.HasPrefix(setCookie, "kivali_connect=") || !strings.Contains(setCookie, "Path=/connect/callback") ||
+	if !strings.HasPrefix(setCookie, "kivali_connect=") || !strings.Contains(setCookie, "Path=/;") ||
 		!strings.Contains(setCookie, "HttpOnly") || !strings.Contains(setCookie, "SameSite=Lax") || strings.Contains(setCookie, "Domain=") {
 		t.Errorf("Set-Cookie = %q", setCookie)
 	}
@@ -297,6 +303,82 @@ func TestBrowserSignInEndToEnd(t *testing.T) {
 	cred, rpcErr := srv.Integrations.credential(context.Background(), "crm")
 	if rpcErr != nil || cred.Env["HUBSPOT_ACCESS_TOKEN"] != data[connect.SecretKeyAccessToken] {
 		t.Errorf("the credential = %+v, %+v", cred, rpcErr)
+	}
+}
+
+// Why this test exists: a browser holds one sign-in cookie, so of two
+// browser sign-ins started in it (two integrations' pages, two tabs)
+// only the later can finish. The earlier must end at once, and its
+// callback must land on its own page with words that say another
+// sign-in replaced it, without taking the later's cookie with it: the
+// later sign-in must still finish. Without this both would fail, the
+// first for its cookie and the second because the first callback
+// dropped it.
+func TestBrowserSignInOneAtATimePerBrowser(t *testing.T) {
+	srv, vendor, _ := signInServer(t)
+	browserBundle(t, srv, vendor, nil)
+	browserBundleNamed(t, srv, vendor, "crm2", nil)
+	for _, name := range []string{"crm", "crm2"} {
+		rr := orgJSON(t, srv, http.MethodPut, intBase+"/"+name+"/connection", apitypes.ConnectionWrite{Fields: map[string]string{
+			"token": "pasted-field-value", "client_id": connecttest.ClientID, "client_secret": connecttest.ClientSecret,
+		}})
+		if rr.Code != http.StatusOK {
+			t.Fatalf("save %s: %d %s", name, rr.Code, rr.Body.String())
+		}
+	}
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+	base, _ := url.Parse(ts.URL)
+	jar, _ := cookiejar.New(nil)
+	jar.SetCookies(base, []*http.Cookie{authCookie(t, srv)})
+	var landed *url.URL
+	browser := &http.Client{Jar: jar, CheckRedirect: func(req *http.Request, _ []*http.Request) error {
+		if strings.HasPrefix(req.URL.Path, "/org/") {
+			landed = req.URL
+			return http.ErrUseLastResponse
+		}
+		return nil
+	}}
+	start := func(name string) string {
+		req, _ := http.NewRequest(http.MethodPost, ts.URL+intBase+"/"+name+"/connection/sign-in/browser", nil)
+		req.Header.Set("Sec-Fetch-Site", "same-origin")
+		resp, err := browser.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		var bs apitypes.BrowserSignIn
+		if err := json.NewDecoder(resp.Body).Decode(&bs); err != nil || resp.StatusCode != http.StatusOK {
+			t.Fatalf("start %s: %d %v", name, resp.StatusCode, err)
+		}
+		return bs.URL
+	}
+	approveIn := func(authorize string) *url.URL {
+		landed = nil
+		resp, err := browser.Get(authorize)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		return landed
+	}
+	first, second := start("crm"), start("crm2")
+
+	to := approveIn(first)
+	rec, _ := firstConnectionSecret(t, srv)
+	if to == nil || to.Path != "/org/integrations/crm" || to.Query().Get("sign_in_failed") != rec.ID {
+		t.Fatalf("the first sign-in landed on %v", to)
+	}
+	p := orgOK[apitypes.SignInProgress](t, orgGet(t, srv, intBase+"/crm/connection/sign-in"))
+	if p.State != apitypes.SignInStateFailed || p.Error == nil || *p.Error != errSignInReplaced {
+		t.Errorf("the first sign-in reads %+v", p)
+	}
+	if n := tokenRequests(vendor); n != 0 {
+		t.Errorf("%d exchanges for the replaced sign-in", n)
+	}
+
+	if to := approveIn(second); to == nil || to.Path != "/org/integrations/crm2" || to.Query().Get("signed_in") == "" {
+		t.Errorf("the second sign-in landed on %v", to)
 	}
 }
 

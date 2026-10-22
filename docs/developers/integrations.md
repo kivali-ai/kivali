@@ -726,15 +726,19 @@ A browser sign-in (`POST .../sign-in/browser`,
    manifest's scopes and `extra_authorization_params`. Nothing is sent
    to the vendor yet.
 3. The answer sets the cookie `kivali_connect` (`kivali_connect_<suffix>`
-   with `KIVALI_COOKIE_SUFFIX`): `Path=/connect/callback`, host-only,
+   with `KIVALI_COOKIE_SUFFIX`): `Path=/`, host-only,
    `HttpOnly`, `SameSite=Lax` (the vendor's redirect back is a
    cross-site top-level GET, which Lax lets through), `Secure` when the
    redirect address is `https`, twenty minutes. Its value is
    `connect:<flow id>:<integration>`, signed with the session codec
    (`Server.SessionCodec`, else the session middleware's, else a key the
    process makes once: a flow lives no longer than the process). One
-   browser holds one: starting a second browser sign-in in it replaces
-   the first one's cookie.
+   browser holds one, so one browser sign-in at a time: the start reads
+   the cookie it replaces (hence the whole site as its path) and ends
+   the sign-in it named, of another connection, `failed` with "another
+   sign-in was started in this browser; start this one again". That
+   sign-in's callback finds it ended and redirects to its page with
+   `?sign_in_failed=<id>`, leaving the cookie for the later one.
 4. The web app sends the tab to `url` (`openSignIn`). The owner approves
    on the vendor's site, which sends the browser to `GET
    /connect/callback?code=&state=` (or `?error=&error_description=&state=`).
@@ -743,9 +747,10 @@ A browser sign-in (`POST .../sign-in/browser`,
    callback address, query included, as `next`, and comes back to it
    once signed in. It is a GET that changes things, as OAuth has it.
    The state and the code are never logged.
-6. It drops the cookie, then takes the pending flow whose state matches
-   (`signInFlows.take`, a constant-time compare): taken once, so a
-   replay finds nothing; past its ten minutes it is gone. No flow:
+6. It takes the flow whose state matches (`signInFlows.take`, a
+   constant-time compare): taken once, so a replay finds nothing; past
+   its ten minutes it is gone. It drops the cookie only when the cookie
+   names that flow. No flow:
    redirect with `?sign_in_error=start_again`, to the page of the
    integration the cookie names, or to `/org/integrations`. A cookie
    that is missing, not signed by Kivali or names another flow: the

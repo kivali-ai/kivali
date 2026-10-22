@@ -87,7 +87,7 @@ Some services sign in in your browser instead of with a code (HubSpot, Slack, No
 3. Paste the client id and the client secret into the connection form and choose **Save connection**.
 4. Under **Sign in**, choose **Sign in in your browser**. The page takes you to the service, where you approve Kivali; the service sends you back to the integration's page, which says **Signed in**.
 
-The sign-in finishes in the browser that started it, signed in to Kivali: if Kivali asks you to sign in on the way back, do, and the sign-in carries on. If you turn it down, take longer than ten minutes, or come back in another browser, the page says why and offers **Try again**.
+The sign-in finishes in the browser that started it, signed in to Kivali: if Kivali asks you to sign in on the way back, do, and the sign-in carries on. If you turn it down, take longer than ten minutes, or come back in another browser, the page says why and offers **Try again**. One browser sign-in at a time: starting another in the same browser, for any integration, ends the one before, and its page says so.
 
 Services check the redirect address exactly, character for character, and set rules for it:
 

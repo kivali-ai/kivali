@@ -78,7 +78,10 @@ const (
 	errSignInStartAgain = "the sign-in took too long or was started elsewhere; start it again"
 	errSignInNoCode     = "the service sent no sign-in code back; start it again"
 	errSignInStopped    = "the sign-in was stopped before it finished; start it again"
-	errSignInNoAddress  = "Kivali cannot tell the address it was reached at from this request"
+	// errSignInReplaced: a browser holds one sign-in cookie, so a
+	// browser sign-in started in it ends the one before.
+	errSignInReplaced  = "another sign-in was started in this browser; start this one again"
+	errSignInNoAddress = "Kivali cannot tell the address it was reached at from this request"
 )
 
 // signInRedirectURL is the redirect address for browser sign-in as r
@@ -197,13 +200,14 @@ func (s *Server) connectCodec() *auth.Codec {
 }
 
 // connectCookie is the cookie that ties the flow id of name's sign-in
-// to the browser that started it, sent only to the callback. Secure
-// when the redirect address is https.
+// to the browser that started it. Its path is the whole site, not the
+// callback alone: the next browser sign-in's start reads it to end the
+// sign-in it replaces. Secure when the redirect address is https.
 func (s *Server) connectCookie(id, name, redirectURL string) *http.Cookie {
 	return &http.Cookie{
 		Name:     s.connectCookieName(),
 		Value:    s.connectCodec().Sign([]byte(connectCookiePrefix + id + ":" + name)),
-		Path:     connectCallbackPath,
+		Path:     "/",
 		HttpOnly: true,
 		Secure:   strings.HasPrefix(redirectURL, "https://"),
 		SameSite: http.SameSiteLaxMode,
@@ -291,6 +295,13 @@ func (s *Server) handleAPISignInBrowser(byID bool) http.HandlerFunc {
 		}
 		now := s.clk().Now()
 		f := s.signInFlows.start(now, name, connID, now.Add(signInFlowTTL), bf)
+		// The browser holds one sign-in cookie, and this answer replaces
+		// it: the sign-in the one before named (another connection's; one
+		// of this connection was cancelled by start) can no longer finish
+		// here, and ends now in words that say why.
+		if oldID, _ := s.readConnectCookie(r); oldID != "" && oldID != f.id {
+			s.signInFlows.endBrowser(now, oldID, errSignInReplaced)
+		}
 		http.SetCookie(w, s.connectCookie(f.id, name, redirect))
 		writeJSON(w, http.StatusOK, apitypes.BrowserSignIn{URL: target})
 	}
@@ -317,22 +328,28 @@ func (s *Server) handleConnectCallback(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	q := r.URL.Query()
 	cookieID, cookieName := s.readConnectCookie(r)
-	// The cookie is for one sign-in; it goes whatever happens.
-	gone := s.connectCookie("", "", signInRedirectURL(r))
-	gone.Value, gone.MaxAge = "", -1
-	http.SetCookie(w, gone)
-
-	f := s.signInFlows.take(s.clk().Now(), q.Get("state"))
+	f, pending := s.signInFlows.take(s.clk().Now(), q.Get("state"))
 	if f == nil {
 		connectReturn(w, r, cookieName, connectStartAgain, "")
 		return
 	}
 	defer close(f.done)
+	if !pending {
+		// Ended before its callback came: another browser sign-in was
+		// started in this browser. Its page reads why.
+		connectReturn(w, r, f.name, connectFailed, f.connID)
+		return
+	}
 	if cookieID != f.id {
 		s.signInFlows.end(f, s.clk().Now(), apitypes.SignInStateFailed, errSignInStartAgain)
 		connectReturn(w, r, f.name, connectFailed, f.connID)
 		return
 	}
+	// The cookie was for this sign-in, and goes with it. A cookie that
+	// names another stays: that sign-in may still come back here.
+	gone := s.connectCookie("", "", signInRedirectURL(r))
+	gone.Value, gone.MaxAge = "", -1
+	http.SetCookie(w, gone)
 	switch words := s.completeBrowserSignIn(f, q); words {
 	case "":
 		connectReturn(w, r, f.name, connectSignedIn, f.connID)
