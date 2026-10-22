@@ -69,7 +69,7 @@ func TestValidateBuiltin(t *testing.T) {
 		{"no display name", func(m *Manifest) { m.DisplayName = "" }, "display_name is missing"},
 		{"no tools", func(m *Manifest) { m.Tools = nil }, "tools is empty"},
 		{"bad connection field", func(m *Manifest) { m.UserConfig[0].Type = "object" }, "type object is not supported"},
-		{"sign-in connection", func(m *Manifest) { m.Kivali.Connection.Method = "browser" }, "sign-in connections are not available"},
+		{"sign-in connection without endpoints", func(m *Manifest) { m.Kivali.Connection.Method = "browser" }, "kivali.connection.authorization_endpoint is missing; a browser connection needs it"},
 		{"hosts", func(m *Manifest) { m.Kivali.Hosts = []string{"api.example.com"} }, "a built-in integration declares no hosts; it reaches the hosts its connection names"},
 		{"packages", func(m *Manifest) { m.Kivali.Packages = []string{"gh"} }, "kivali.packages: a built-in integration runs inside Kivali and installs no software"},
 		{"a server", func(m *Manifest) { m.Server = Server{Type: "python", EntryPoint: "server/main.py"} }, "a built-in integration has no server section"},

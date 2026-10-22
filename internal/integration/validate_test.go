@@ -115,10 +115,10 @@ func TestValidateRules(t *testing.T) {
 			m["tools"] = append(m["tools"].([]any), map[string]any{"name": "whoami", "description": "x"})
 		}, nil, LevelError, "tools[3] (whoami) is listed twice"},
 		{"tool no description", func(m map[string]any) { delete(m["tools"].([]any)[2].(map[string]any), "description") }, nil, LevelWarning, "tools[2] (whoami) has no description"},
-		{"connection device", func(m map[string]any) { obj(m, "kivali", "connection")["method"] = "device" }, nil, LevelError, "Kivali connects integrations with a pasted token; sign-in connections are not available"},
-		{"connection browser", func(m map[string]any) { obj(m, "kivali", "connection")["method"] = "browser" }, nil, LevelError, "sign-in connections are not available"},
+		{"connection device", func(m map[string]any) { obj(m, "kivali", "connection")["method"] = "device" }, nil, LevelError, "kivali.connection.device_endpoint is missing; a device connection needs it"},
+		{"connection browser", func(m map[string]any) { obj(m, "kivali", "connection")["method"] = "browser" }, nil, LevelError, "kivali.connection.authorization_endpoint is missing; a browser connection needs it"},
 		{"connection missing", func(m map[string]any) { delete(obj(m, "kivali"), "connection") }, nil, LevelError, "kivali.connection.method is missing"},
-		{"connection unknown", func(m map[string]any) { obj(m, "kivali", "connection")["method"] = "oauth" }, nil, LevelError, "kivali.connection.method oauth"},
+		{"connection unknown", func(m map[string]any) { obj(m, "kivali", "connection")["method"] = "oauth" }, nil, LevelError, "kivali.connection.method oauth is not one Kivali knows; it is token, device or browser"},
 		// A bundle's pod is started with one connection's values: a bundle
 		// that said it takes several would give agents' rows connections
 		// its server never sees.
