@@ -131,15 +131,19 @@ func (s *Server) refreshSignIn(ctx context.Context, name, id string, m *integrat
 		s.auditAgentCall(name, start, agent.CEOSlug, "refresh", false, words)
 		return connect.Tokens{}, errSignInNeeded
 	}
-	tok, err := s.connectEngine().Refresh(ctx, signInEndpoints(m), signInClient(rec, data), stored.Refresh)
+	client := signInClient(rec, data)
+	tok, err := s.connectEngine().Refresh(ctx, signInEndpoints(m), client, stored.Refresh)
 	if err != nil {
+		// The vendor's words may echo what it was sent; they are shown
+		// on the page, in Needs you and in the audit.
+		words := newScrubber([]string{stored.Access, stored.Refresh, client.Secret}).Replace(err.Error())
 		var term *connect.Terminal
 		if errors.As(err, &term) {
-			s.markSignInFailed(name, id, err.Error())
+			s.markSignInFailed(name, id, words)
 		} else {
-			log.Printf("integration %s: refresh connection %s: %v", name, id, err)
+			log.Printf("integration %s: refresh connection %s: %s", name, id, words)
 		}
-		s.auditAgentCall(name, start, agent.CEOSlug, "refresh", false, err.Error())
+		s.auditAgentCall(name, start, agent.CEOSlug, "refresh", false, words)
 		return connect.Tokens{}, err
 	}
 	if tok.Scope == "" {

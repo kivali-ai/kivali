@@ -30,6 +30,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/kivali-ai/kivali/internal/clock"
 )
@@ -95,7 +96,8 @@ type Engine struct {
 type Terminal struct {
 	// Code is the vendor's error code (invalid_grant, ...).
 	Code string
-	// Description is the vendor's own words; may be empty.
+	// Description is the vendor's own words, at most
+	// MaxDescriptionRunes; may be empty.
 	Description string
 }
 
@@ -121,6 +123,22 @@ var deviceFailCodes = []string{"incorrect_device_code", "device_flow_disabled", 
 // ErrDeviceExpired ends a device flow whose code expired before the
 // owner approved it.
 var ErrDeviceExpired = errors.New("the code expired before the sign-in was approved")
+
+// MaxDescriptionRunes bounds the vendor's error_description an error
+// carries: its words become the connection's error, shown on the page,
+// in Needs you and in the audit. maxCodeRunes bounds the error code.
+const (
+	MaxDescriptionRunes = 200
+	maxCodeRunes        = 64
+)
+
+// clipRunes is s cut to at most n runes.
+func clipRunes(s string, n int) string {
+	if utf8.RuneCountInString(s) <= n {
+		return s
+	}
+	return string([]rune(s)[:n])
+}
 
 // vendorError is an error answer of a token or device endpoint:
 // RFC 6749's error object, which some vendors (GitHub) send with a 200.
@@ -211,7 +229,7 @@ func (e *Engine) post(ctx context.Context, endpoint string, form url.Values) (*t
 		}
 	}
 	if a.Error != "" {
-		return nil, &vendorError{Code: a.Error, Description: a.ErrorDescription}
+		return nil, &vendorError{Code: clipRunes(a.Error, maxCodeRunes), Description: clipRunes(a.ErrorDescription, MaxDescriptionRunes)}
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("the vendor answered %s", resp.Status)

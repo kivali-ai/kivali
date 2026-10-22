@@ -5,9 +5,11 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/kivali-ai/kivali/internal/clock"
 	"github.com/kivali-ai/kivali/internal/connect"
@@ -510,5 +512,30 @@ func TestRefresherRunOutlivesItsCaller(t *testing.T) {
 	}
 	if runErr != nil {
 		t.Errorf("the run saw its caller's cancellation: %v", runErr)
+	}
+}
+
+// Why this test exists: a vendor's error_description is the vendor's
+// to fill; one that answers with a page of text would carry it into
+// the connection's error, the page, Needs you and the audit. The words
+// an error carries are cut to MaxDescriptionRunes, in both vendor
+// styles, and multi-byte text is cut on a rune, never mid-character.
+func TestVendorWordsAreClipped(t *testing.T) {
+	for _, github := range []bool{false, true} {
+		e, v, _ := setup(t)
+		tok := v.Issue()
+		v.Set(func(k *connecttest.Knobs) {
+			k.GitHubStyle = github
+			k.RefreshError = "invalid_grant"
+			k.RefreshErrorDescription = func(url.Values) string { return strings.Repeat("é", 5000) }
+		})
+		_, err := e.Refresh(context.Background(), v.Endpoints(), v.Client(), tok.Refresh)
+		var term *connect.Terminal
+		if !errors.As(err, &term) {
+			t.Fatalf("github %v: err = %v", github, err)
+		}
+		if n := utf8.RuneCountInString(term.Description); n != connect.MaxDescriptionRunes || !utf8.ValidString(term.Description) {
+			t.Errorf("github %v: description of %d runes (valid %v)", github, n, utf8.ValidString(term.Description))
+		}
 	}
 }

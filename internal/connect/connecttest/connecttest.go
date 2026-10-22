@@ -51,6 +51,10 @@ type Knobs struct {
 	// RefreshError answers each refresh with this error code
 	// (invalid_grant, bad_refresh_token, temporarily_unavailable...).
 	RefreshError string
+	// RefreshErrorDescription, when set, is RefreshError's
+	// error_description, given the refresh request's form (a vendor
+	// that echoes what it was sent); "refused by the test" otherwise.
+	RefreshErrorDescription func(form url.Values) string
 	// RefreshStatus answers each refresh with this HTTP status and a
 	// body that is not JSON (500: a vendor that is down).
 	RefreshStatus int
@@ -349,7 +353,11 @@ func (v *FakeVendor) refreshGrant(w http.ResponseWriter, r *http.Request, k Knob
 		_, _ = w.Write([]byte("<html>maintenance</html>"))
 		return
 	case k.RefreshError != "":
-		fail(w, r, k, k.RefreshError, "refused by the test")
+		desc := "refused by the test"
+		if k.RefreshErrorDescription != nil {
+			desc = k.RefreshErrorDescription(f)
+		}
+		fail(w, r, k, k.RefreshError, desc)
 		return
 	case !v.clientOK(f, true):
 		code := "invalid_client"
