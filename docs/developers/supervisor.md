@@ -14,8 +14,8 @@ on Windows). It works from a command line; the desktop shell starts
 ```
 make supervisor            # bin/kivali-supervisor, ad-hoc signed with the virtualization entitlement
 make chart-package VERSION=vX.Y.Z
-make images VERSION=dev    # the three :dev images, built in the build VM (scripts/build-vm.sh)
-make -C vm dev-images      # export them from the build VM for baking
+make images VERSION=dev KIVALI_BUILD_VM_KEEP=1   # the three :dev images, built in the build VM (scripts/build-vm.sh), left running
+make -C vm dev-images      # export them from the build VM for baking, in the same boot
 make -C vm image KIVALI_CHART=$PWD/dist/kivali-X.Y.Z.tgz   # bake the chart too
 bin/kivali-supervisor up --owner you@example.com
 ```

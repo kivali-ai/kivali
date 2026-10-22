@@ -208,7 +208,13 @@ DEV_SUP = $(SUPERVISOR_BIN) --config-dir $(DEV_CONFIG_DIR)
 DEV_CHART_VERSION := 0.0.0-dev
 DEV_CHART := dist/dev/kivali-$(DEV_CHART_VERSION).tgz
 
-dev-vm: dev-images dev-chart ## build the dev team's VM image (:dev images + chart baked in)
+# The :dev images are built and exported in one boot of the build VM
+# (KIVALI_BUILD_VM_KEEP keeps it up in between): a boot gives a :dev name
+# back to the image of that name baked into the root disk it booted,
+# which is an older build when that disk came from an earlier dev-vm or
+# desktop-trial (scripts/build-vm-guest.sh).
+dev-vm: dev-chart ## build the dev team's VM image (:dev images + chart baked in)
+	$(MAKE) dev-images KIVALI_BUILD_VM_KEEP=1
 	$(MAKE) -C vm dev-images
 	$(MAKE) -C vm image KIVALI_CHART=$(abspath $(DEV_CHART))
 
