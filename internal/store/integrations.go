@@ -171,6 +171,10 @@ type ConnectionSignIn struct {
 	// ExpiresAt is when the access token expires; zero when the vendor
 	// gave no expiry (the token does not expire).
 	ExpiresAt time.Time `yaml:"expires_at,omitempty"`
+	// Lifetime is how long the vendor last said an access token lasts,
+	// for a refresh whose answer says nothing; zero until a refresh
+	// gave one, when ExpiresAt less SignedInAt stands for it.
+	Lifetime time.Duration `yaml:"lifetime,omitempty"`
 	// Scope is what the vendor granted, as it said it.
 	Scope string `yaml:"scope,omitempty"`
 	// Error is why the connection needs the owner to sign in again: the
