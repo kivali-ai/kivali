@@ -149,12 +149,22 @@ add, no provision), or `saved_not_applied` (the provision failed; the
 next pod start installs it). The agent's and the owner's wording follow
 it.
 
-With a non-empty list the `agent-shell` container gets
-`--install=<sorted, comma-joined names>` and `runAsUser: 0`,
-`runAsGroup: 0`; with none it runs as the image's 65532 from the start.
-`allowPrivilegeEscalation: false` is set either way: nothing in the
-container gains privileges (the daemon's drop, apt-get's switch to
-`_apt` and `unshare -mUr` only shed them). Started as root, the daemon:
+The `agent-shell` container always starts as root (`runAsUser: 0`,
+`runAsGroup: 0`) with `allowPrivilegeEscalation: false`: nothing in the
+container gains privileges (the daemon's drop, each command's start as
+65532, apt-get's switch to `_apt` and `unshare -mUr` only shed them).
+With no software it has `capabilities: {drop: [ALL], add: [SETUID,
+SETGID, KILL]}`, the three the daemon keeps. With a non-empty list it
+gets `--install=<sorted, comma-joined names>` and no `capabilities`, so
+the runtime's default set, which apt-get and dpkg need in the root
+child. Starting as root is what hands the daemon its capabilities: a
+container that starts as another user gets them only from file
+capabilities, which no_new_privs turns off.
+
+The image has two users: `kivali` (65532:65532), whom every command
+runs as, and `agent-shell` (65533, group 65532), the daemon's own; see
+[architecture.md](architecture.md#the-agent-shell-daemons-user). Started
+as root, the daemon:
 
 1. starts `agent-shell install-software <names...>` (itself, via
    `/proc/self/exe`) as a root child, with `HOME=/root`, the proxy
@@ -176,15 +186,31 @@ container gains privileges (the daemon's drop, apt-get's switch to
    scripts from starting services. The daemon waits for the result for
    at most the install's own 20-minute bound plus a grace, then counts
    every package failed ("the installation did not finish in time").
-2. drops itself to `--run-as` (65532:65532): `setgroups([])`, `setgid`,
-   `setuid`, then reads back the real, effective and saved IDs, the
-   groups and the effective and ambient capability sets
-   (`/proc/self/status`) and exits unless every ID is 65532, there are
-   no groups and both capability sets are empty;
-3. only then creates `$HOME`, the socket, and serves.
+2. drops itself to its own user (`agentshell.DropPrivileges`), on every
+   thread of the process (credentials, capability sets, keepcaps and
+   the filesystem uid are per thread; the binary is built with
+   `CGO_ENABLED=0`, where `syscall.AllThreadsSyscall` works, and the
+   daemon exits rather than serve if it does not): it drops every
+   capability but CAP_SETUID, CAP_SETGID and CAP_KILL from the bounding
+   set (`PR_CAPBSET_DROP`, while it still has CAP_SETPCAP; a container
+   started with the three alone has nothing to drop), sets
+   `PR_SET_KEEPCAPS`, `setresgid` to `--run-as`'s gid (65532),
+   `setgroups([])`, `setresuid` to `--daemon-uid` (65533), clears
+   keepcaps, `capset`s the permitted and effective sets to the three
+   (mask `0xe0`) with an empty inheritable set, and `setfsuid` to
+   `--run-as`'s uid (65532). It then reads `/proc/self/status` back and
+   exits unless it shows `Uid: 65533 65533 65533 65532`,
+   `Gid: 65532 65532 65532 65532`, no groups, `CapInh` and `CapAmb` 0,
+   and `CapPrm`, `CapEff` and `CapBnd` each `00000000000000e0`;
+3. only then creates `$HOME` (as 65532, through its filesystem uid),
+   the socket (with its filesystem uid briefly 65533, so the socket is
+   65533:65532, mode 0660), and serves. Every command it starts runs as
+   `--run-as`, 65532:65532 with no supplementary groups, and has no
+   capabilities after exec.
 
 A daemon started as root drops also without `--install`. One started
-as anyone else installs nothing and reports every name as failed.
+as anyone else changes nothing, runs commands as itself, installs
+nothing and reports every name as failed.
 
 While the install runs, `POST /v1/exec` waits for it (up to 10 minutes,
 then answers that the shell is still installing; the client allows for

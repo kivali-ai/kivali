@@ -152,8 +152,9 @@ const SocketDefault = "/run/kivali-agent-shell/sock"
 // it (agentpod.SetUpEgressCredential) once core has the secret's hash;
 // the daemon reads it on every POST /v1/exec and gives the command that
 // URL as its proxy, so the proxy knows which agent's shell is asking.
-// The directory is the pod-local emptyDir both containers mount, as
-// the same user.
+// The directory is the pod-local emptyDir both containers mount; the
+// runtime writes the file as 65532, mode 0600, and the daemon reads it
+// as 65532, its filesystem uid.
 const ProxyCredentialFile = "proxy-credential"
 
 // RootDefault is the daemon's default cwd root — the agent's writable

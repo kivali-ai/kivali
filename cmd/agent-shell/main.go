@@ -16,12 +16,22 @@
 // cd-style helpers — survives chat rotation, pod recreation, and
 // concurrent fan-out from subagents.
 //
+// Users. The container starts as root and the daemon drops itself to
+// a user of its own, --daemon-uid (65533, the image's agent-shell
+// user), with group --run-as's gid (65532) and filesystem uid --run-as's
+// uid (65532), keeping only CAP_SETUID, CAP_SETGID and CAP_KILL
+// (agentshell.DropPrivileges). Every command runs as --run-as, 65532,
+// the image's kivali user and the agent container's. So the daemon
+// reads and writes files as 65532, exactly as the commands do, while a
+// command cannot trace, signal or read the /proc of the daemon that
+// runs it.
+//
 // Trust boundary: the socket lives on a pod-local emptyDir (no other
-// agent can reach it). 0o600 + matching uid is the auth. Single-
-// tenant; serves as the same uid:gid as the agent runtime container,
-// which is what lets that container dial the 0o600 socket. It is the
-// only container in the pod that mounts /files/: run_shell and the
-// file_* tools both write it from here.
+// agent can reach it). It is the daemon's (65533), group 65532, mode
+// 0o660: uid 65532 can connect to it from either container, the agent
+// container's `kivali mcp` processes and the daemon's own commands
+// alike. Single-tenant. It is the only container in the pod that mounts
+// /files/: run_shell and the file_* tools both write it from here.
 //
 // Network. A command's proxy variables carry the shell's egress proxy
 // credential, which the agent runtime writes beside the socket
@@ -29,19 +39,18 @@
 // before the file exists they carry the bare proxy URL. The software
 // install below keeps the bare URL.
 //
-// Software. With --install, the container starts as root so the
-// daemon can install those Debian packages. The order is fixed:
+// Start-up. The order is fixed:
 //
-//  1. start `agent-shell install-software <pkgs...>` (this binary, via
-//     /proc/self/exe) as a root child, which runs apt-get and reports
-//     on a pipe;
-//  2. drop this process to --run-as (setgroups, setgid, setuid) and
-//     verify every user and group ID; a failure is fatal;
+//  1. with --install, start `agent-shell install-software <pkgs...>`
+//     (this binary, via /proc/self/exe) as a root child, which runs
+//     apt-get and reports on a pipe;
+//  2. drop this process to its own user as above and verify every user
+//     and group ID and capability set; a failure is fatal;
 //  3. only then set up HOME, create the socket and serve.
 //
-// A daemon started as root drops in step 2 also without --install: it
-// never serves or runs a command as root. Commands wait for the install
-// to finish; see agentshell.ServerConfig.Install.
+// The daemon never serves or runs a command as root. Started as anyone
+// else, it changes nothing and runs commands as itself. Commands wait
+// for the install to finish; see agentshell.ServerConfig.Install.
 package main
 
 import (
@@ -92,7 +101,8 @@ func main() {
 	agentSlug := flag.String("agent", "", "slug of the agent this pod runs; names its read-only /data mounts for /v1/files")
 	packagesFile := flag.String("packages-file", agentshell.PackagesFileDefault, "image's installed package list, one per line; served at GET /v1/packages")
 	install := flag.String("install", "", "comma-separated Debian packages to install at start; needs the daemon to start as root")
-	runAs := flag.String("run-as", agentshell.RunAsDefault, "uid:gid the daemon drops to when started as root")
+	runAs := flag.String("run-as", agentshell.RunAsDefault, "uid:gid every command runs as when the daemon started as root; also the daemon's gid and filesystem uid")
+	daemonUID := flag.Int("daemon-uid", agentshell.DaemonUIDDefault, "uid the daemon itself drops to when started as root")
 	flag.Parse()
 
 	logger := log.New(os.Stderr, "agent-shell ", log.LstdFlags|log.Lmicroseconds)
@@ -101,15 +111,26 @@ func main() {
 	if err != nil {
 		logger.Fatalf("%v", err)
 	}
+	id := agentshell.Identity{DaemonUID: *daemonUID, UID: uid, GID: gid}
+	creds := agentshell.HostCreds{}
 	// Before anything else: install as a root child if asked, then stop
 	// being root. Nothing below runs with privileges.
-	inst, err := agentshell.BecomeUnprivileged(agentshell.HostCreds{}, uid, gid,
+	inst, err := agentshell.BecomeUnprivileged(creds, id,
 		agentshell.ParseInstallList(*install), startInstall, logger.Printf)
 	if err != nil {
 		logger.Fatalf("privileges: %v", err)
 	}
-	if ids, err := (agentshell.HostCreds{}).IDs(); err == nil {
-		logger.Printf("running as %s", ids)
+	ids, idsErr := creds.IDs()
+	caps, capsErr := creds.Caps()
+	if idsErr == nil && capsErr == nil {
+		logger.Printf("running as %s caps %s", ids, caps)
+	}
+	// Dropped to its own user, the daemon starts every command as
+	// --run-as; otherwise commands run as the daemon does.
+	var commandUser *agentshell.CommandUser
+	dropped := agentshell.VerifyDaemon(creds, id) == nil
+	if dropped {
+		commandUser = &agentshell.CommandUser{UID: uint32(uid), GID: uint32(gid)}
 	}
 	if inst != nil {
 		logger.Printf("installing software: %v", inst.Requested())
@@ -146,19 +167,21 @@ func main() {
 		logger.Fatalf("bootstrap home: %v", err)
 	}
 
-	// Remove any stale socket from a crashed prior run. ENOENT is
-	// fine; anything else is a real error.
-	if err := os.Remove(*socketPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-		logger.Fatalf("remove stale socket %q: %v", *socketPath, err)
+	// The socket is the daemon's own file: dropped, it is made with the
+	// daemon's uid as its filesystem uid, so it is 65533:65532.
+	var ln net.Listener
+	listen := func() error {
+		var err error
+		ln, err = listenSocket(*socketPath)
+		return err
 	}
-	ln, err := net.Listen("unix", *socketPath)
+	if dropped {
+		err = agentshell.AsDaemonUser(creds, id, listen)
+	} else {
+		err = listen()
+	}
 	if err != nil {
-		logger.Fatalf("listen %q: %v", *socketPath, err)
-	}
-	if err := os.Chmod(*socketPath, 0o600); err != nil {
-		_ = ln.Close()
-		_ = os.Remove(*socketPath)
-		logger.Fatalf("chmod %q: %v", *socketPath, err)
+		logger.Fatalf("socket: %v", err)
 	}
 
 	srv := &http.Server{
@@ -170,6 +193,7 @@ func main() {
 			// The agent runtime writes the shell's proxy credential
 			// beside the socket, on the emptyDir both containers mount.
 			ProxyCredentialPath: filepath.Join(filepath.Dir(*socketPath), agentshell.ProxyCredentialFile),
+			CommandUser:         commandUser,
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
@@ -192,6 +216,25 @@ func main() {
 	_ = srv.Shutdown(shutCtx)
 	_ = os.Remove(*socketPath)
 	logger.Print("shutdown complete")
+}
+
+// listenSocket removes any stale socket at path from a crashed prior
+// run, listens on path and makes the socket mode 0o660: its owner and
+// group may connect, nobody else.
+func listenSocket(path string) (net.Listener, error) {
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("remove stale socket %q: %w", path, err)
+	}
+	ln, err := net.Listen("unix", path)
+	if err != nil {
+		return nil, fmt.Errorf("listen %q: %w", path, err)
+	}
+	if err := os.Chmod(path, 0o660); err != nil {
+		_ = ln.Close()
+		_ = os.Remove(path)
+		return nil, fmt.Errorf("chmod %q: %w", path, err)
+	}
+	return ln, nil
 }
 
 // startInstall starts the install child: this binary, run again as

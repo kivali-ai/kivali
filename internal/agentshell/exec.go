@@ -75,36 +75,20 @@ exec bash -c "$KIVALI_USER_CMD"
 // (ProxyCredentialFile): the command's proxy variables carry it in
 // place of the daemon's bare one (bashEnv). The caller scrubs it from
 // the output.
-func RunCommand(ctx context.Context, cwd, command, overlaySrc, overlayDst string, timeout time.Duration, proxyURL string) (ExecResponse, error) {
+//
+// user, when non-nil, is the uid and gid the command runs as, with no
+// supplementary groups: a daemon that dropped root is a user of its
+// own, apart from the commands'. Nil runs the command as the daemon.
+func RunCommand(ctx context.Context, cwd, command, overlaySrc, overlayDst string, timeout time.Duration, proxyURL string, user *CommandUser) (ExecResponse, error) {
 	cctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	env := bashEnv(proxyURL)
-	var cmd *exec.Cmd
-	if overlaySrc == "" {
-		cmd = exec.CommandContext(cctx, "bash", "-c", command)
-	} else {
-		// The wrapper script reads its inputs from env vars so the
-		// user's command (with arbitrary quoting / shell metacharacters)
-		// never has to be re-escaped through another shell layer. The
-		// caller is responsible for picking the destination path —
-		// production passes <Root>/artifacts/private (the path the
-		// file_* tools resolve under the overlay); tests
-		// pin a writable temp dir.
-		cmd = exec.CommandContext(cctx, "unshare", "-mUr", "--", "bash", "-c", overlayBindScript)
-		env = append(env,
-			"KIVALI_OVERLAY_SRC="+overlaySrc,
-			"KIVALI_OVERLAY_DST="+overlayDst,
-			"KIVALI_USER_CMD="+command,
-		)
-	}
-	cmd.Dir = cwd
+	cmd := shellCommand(cctx, cwd, command, overlaySrc, overlayDst, proxyURL, user)
 	var outBuf, errBuf cappedBuffer
 	outBuf.cap = StdStreamCap
 	errBuf.cap = StdStreamCap
 	cmd.Stdout = &outBuf
 	cmd.Stderr = &errBuf
-	cmd.Env = env
 
 	start := time.Now()
 	err := cmd.Run()
@@ -128,6 +112,49 @@ func RunCommand(ctx context.Context, cwd, command, overlaySrc, overlayDst string
 		return res, err
 	}
 	return res, nil
+}
+
+// CommandUser is the uid and gid a command runs as.
+type CommandUser struct {
+	UID, GID uint32
+}
+
+// shellCommand is RunCommand's process, not yet started: `bash -c
+// command`, or for an overlay the `unshare -mUr` wrapper around it, in
+// cwd, with bashEnv's environment, as user (see RunCommand).
+//
+// The child takes user's uid and gid between fork and exec, with the
+// daemon's CAP_SETUID and CAP_SETGID. At exec its permitted and
+// effective capability sets empty, since bash has no file capabilities
+// and nothing is ambient, and no_new_privs keeps them so. `unshare -mUr`
+// still works as that user: the user namespace it makes gives it
+// capabilities there alone.
+func shellCommand(ctx context.Context, cwd, command, overlaySrc, overlayDst, proxyURL string, user *CommandUser) *exec.Cmd {
+	env := bashEnv(proxyURL)
+	var cmd *exec.Cmd
+	if overlaySrc == "" {
+		cmd = exec.CommandContext(ctx, "bash", "-c", command)
+	} else {
+		// The wrapper script reads its inputs from env vars so the
+		// user's command (with arbitrary quoting / shell metacharacters)
+		// never has to be re-escaped through another shell layer. The
+		// caller is responsible for picking the destination path —
+		// production passes <Root>/artifacts/private (the path the
+		// file_* tools resolve under the overlay); tests
+		// pin a writable temp dir.
+		cmd = exec.CommandContext(ctx, "unshare", "-mUr", "--", "bash", "-c", overlayBindScript)
+		env = append(env,
+			"KIVALI_OVERLAY_SRC="+overlaySrc,
+			"KIVALI_OVERLAY_DST="+overlayDst,
+			"KIVALI_USER_CMD="+command,
+		)
+	}
+	cmd.Dir = cwd
+	cmd.Env = env
+	if user != nil {
+		setCommandUser(cmd, *user)
+	}
+	return cmd
 }
 
 // bashEnv builds the env every bash subprocess inherits. PATH, HOME,

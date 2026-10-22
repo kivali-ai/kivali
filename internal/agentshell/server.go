@@ -62,6 +62,11 @@ type ServerConfig struct {
 	// its output is scrubbed of it; missing or malformed, the command
 	// gets the bare proxy URL. Empty means never read.
 	ProxyCredentialPath string
+
+	// CommandUser is the uid and gid POST /v1/exec runs each command
+	// as, set when the daemon dropped root to a user of its own. Nil
+	// runs commands as the daemon.
+	CommandUser *CommandUser
 }
 
 // DefaultPackagesInstallWait bounds how long GET /v1/packages waits for
@@ -184,7 +189,7 @@ func handleExec(cfg ServerConfig) http.HandlerFunc {
 		// Read for each command: the runtime writes the file once core
 		// has the credential, which can be after the daemon starts.
 		cred := readShellCredential(cfg.ProxyCredentialPath)
-		res, runErr := RunCommand(r.Context(), cwd, req.Command, req.OverlayPrivate, overlayDst, TimeoutFor(req.TimeoutSeconds), cred.url)
+		res, runErr := RunCommand(r.Context(), cwd, req.Command, req.OverlayPrivate, overlayDst, TimeoutFor(req.TimeoutSeconds), cred.url, cfg.CommandUser)
 		if runErr != nil {
 			res.Err = runErr.Error()
 		}

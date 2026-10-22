@@ -14,8 +14,8 @@ import (
 )
 
 // InstallTimeout bounds a whole install. The install child enforces
-// it, because it is root and can stop apt-get; the daemon, unprivileged
-// by then, cannot.
+// it: it is root, apt-get's parent and the reaper of what apt-get
+// leaves, so it can stop all of it.
 const InstallTimeout = 20 * time.Minute
 
 const reasonNotRoot = "the shell does not run as root, so it cannot install software"
@@ -25,22 +25,22 @@ const reasonNotRoot = "the shell does not run as root, so it cannot install soft
 // agent. It returns the install the daemon started with (nil when
 // there is none) and an error the caller must treat as fatal.
 //
-// Started as root (any of the real, effective or saved uid 0): when
-// pkgs is non-empty it starts the install with start, which runs it in
-// a child process that stays root, then drops this process to uid:gid
-// (DropPrivileges, which verifies the result). It drops also when there
-// is nothing to install: the daemon never serves as root.
+// Started as root (any of the real, effective, saved or filesystem uid
+// 0): when pkgs is non-empty it starts the install with start, which
+// runs it in a child process that stays root, then drops this process
+// to id (DropPrivileges, which verifies the result). It drops also when
+// there is nothing to install: the daemon never serves as root.
 //
-// Started as anyone else: nothing changes. A non-empty pkgs is reported
-// as every package failed, because only root can install. Any group ID
-// of 0 is an error.
-func BecomeUnprivileged(c Creds, uid, gid int, pkgs []string, start func([]string) (*Install, error), logf func(string, ...any)) (*Install, error) {
+// Started as anyone else: nothing changes, and commands run as that
+// same user. A non-empty pkgs is reported as every package failed,
+// because only root can install. Any group ID of 0 is an error.
+func BecomeUnprivileged(c Creds, id Identity, pkgs []string, start func([]string) (*Install, error), logf func(string, ...any)) (*Install, error) {
 	ids, err := c.IDs()
 	if err != nil {
 		return nil, fmt.Errorf("read credentials: %w", err)
 	}
 	if !ids.Privileged() {
-		if ids.RGID == 0 || ids.EGID == 0 || ids.SGID == 0 {
+		if ids.RGID == 0 || ids.EGID == 0 || ids.SGID == 0 || ids.FSGID == 0 {
 			return nil, fmt.Errorf("running as %s: refusing to serve with group root", ids)
 		}
 		if len(pkgs) == 0 {
@@ -57,7 +57,7 @@ func BecomeUnprivileged(c Creds, uid, gid int, pkgs []string, start func([]strin
 			inst = FailedInstall(pkgs, "the installer could not start: "+err.Error())
 		}
 	}
-	if err := DropPrivileges(c, uid, gid); err != nil {
+	if err := DropPrivileges(c, id); err != nil {
 		return nil, err
 	}
 	return inst, nil
@@ -66,8 +66,7 @@ func BecomeUnprivileged(c Creds, uid, gid int, pkgs []string, start func([]strin
 // installResultGrace is how long past InstallTimeout the daemon waits
 // for the install child's result. The child stops apt-get at
 // InstallTimeout and reports; a child that has not reported by then is
-// stuck, and the daemon, which cannot stop a root process, stops
-// waiting for it instead.
+// stuck, and the daemon stops waiting for it; it does not kill it.
 const installResultGrace = 2 * time.Minute
 
 const reasonInstallTooLong = "the installation did not finish in time"

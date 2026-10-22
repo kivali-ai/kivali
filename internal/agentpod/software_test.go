@@ -32,14 +32,21 @@ func specHash(pod map[string]any) string {
 	return pod["metadata"].(map[string]any)["labels"].(map[string]string)[kube.SpecHashLabel]
 }
 
-// No software: the agent-shell runs as the image's user, as before,
-// with privilege escalation off and no --install.
+// agentShellCaps is the agent-shell container's capabilities without
+// software: what the daemon needs to start commands as their own user
+// and kill one that ran out of time, and nothing else.
+var agentShellCaps = map[string]any{"drop": []string{"ALL"}, "add": []string{"SETUID", "SETGID", "KILL"}}
+
+// No software: the agent-shell starts as root with the three
+// capabilities the daemon keeps and no others, privilege escalation
+// off and no --install. A missing capability would stop the daemon
+// from starting; an extra one would be the daemon's to keep.
 func TestPodManifestWithoutSoftware(t *testing.T) {
 	c := testConfig()
 	for _, sw := range [][]string{nil, {}} {
 		pod := c.podManifestWithSoftware("alice", sw)
 		dev := agentShellContainer(t, pod)
-		if want := map[string]any{"allowPrivilegeEscalation": false}; !reflect.DeepEqual(dev["securityContext"], want) {
+		if want := map[string]any{"allowPrivilegeEscalation": false, "runAsUser": 0, "runAsGroup": 0, "capabilities": agentShellCaps}; !reflect.DeepEqual(dev["securityContext"], want) {
 			t.Errorf("securityContext = %v, want %v", dev["securityContext"], want)
 		}
 		for _, a := range dev["args"].([]string) {
@@ -53,8 +60,9 @@ func TestPodManifestWithoutSoftware(t *testing.T) {
 	}
 }
 
-// Software: the container starts as root to install it, with the list
-// sorted and comma-joined, and privilege escalation still off.
+// Software: the container starts as root with the runtime's default
+// capabilities, which apt-get and dpkg need, with the list sorted and
+// comma-joined, and privilege escalation still off.
 func TestPodManifestWithSoftware(t *testing.T) {
 	c := testConfig()
 	pod := c.podManifestWithSoftware("alice", []string{"poppler-utils", "ffmpeg", "ffmpeg"})
@@ -224,14 +232,14 @@ func TestProvisionAppliesSoftware(t *testing.T) {
 		t.Errorf("agent-shell args = %v", args)
 	}
 
-	// Emptied: recreated as the image's user.
+	// Emptied: recreated with the three capabilities alone.
 	software = nil
 	if err := p.Provision(ctx, "alice"); err != nil {
 		t.Fatalf("emptied Provision: %v", err)
 	}
 	sc := agentShellContainer(t, fk.pod(t, "alice"))["securityContext"].(map[string]any)
-	if _, root := sc["runAsUser"]; root {
-		t.Errorf("securityContext = %v, want no runAsUser with no software", sc)
+	if caps, ok := sc["capabilities"].(map[string]any); !ok || !reflect.DeepEqual(caps["add"], []any{"SETUID", "SETGID", "KILL"}) {
+		t.Errorf("securityContext = %v, want the three capabilities with no software", sc)
 	}
 }
 
