@@ -600,10 +600,12 @@ the options a field lists. For a sign-in connection it
    answer"), which a later call may get past. An expired token with no
    refresh token to renew it marks the record as a refusal does. Each
    failed refresh appends an audit row for the owner: agent `ceo`,
-   action `refresh`, not allowed, the failure in words. The vendor's
-   words are cut to `connect.MaxDescriptionRunes` (200) and the
-   connection's tokens and client secret in them replaced by
-   `[secret]` before they are kept, shown or audited.
+   action `refresh`, not allowed, the failure in words. Before the
+   vendor's words are kept, shown, logged or audited, the connection's
+   tokens and client secret in them are replaced by `[secret]`, whole,
+   and only then are they cut to 200 runes (`signInWordsRunes`), so a
+   secret astride the cut leaves no piece behind. The engine bounds
+   what it carries at `connect.MaxDescriptionRunes` (2000).
 4. Puts the access token in the answer under its `credential_keys`
    name, in `fields` and `env` for a bundle (`GH_TOKEN`) and in
    `Connection.Fields` for a built-in. The client id is there; the

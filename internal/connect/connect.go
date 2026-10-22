@@ -125,10 +125,12 @@ var deviceFailCodes = []string{"incorrect_device_code", "device_flow_disabled", 
 var ErrDeviceExpired = errors.New("the code expired before the sign-in was approved")
 
 // MaxDescriptionRunes bounds the vendor's error_description an error
-// carries: its words become the connection's error, shown on the page,
-// in Needs you and in the audit. maxCodeRunes bounds the error code.
+// carries, well below what is read of an answer. It is long enough to
+// hold whole any token the vendor echoes near the start, so the caller
+// can scrub the words of its secrets before it cuts them further for
+// what it shows. maxCodeRunes bounds the error code.
 const (
-	MaxDescriptionRunes = 200
+	MaxDescriptionRunes = 2000
 	maxCodeRunes        = 64
 )
 
