@@ -36,6 +36,12 @@ import (
 //go:embed all:skills
 var embedded embed.FS
 
+// RoleIcons is the built-in skill that lists every role icon
+// (internal/roleicon) with what it pictures and suits: the list the
+// Chief of Staff picks a hire's icon from. Its icon list is rendered
+// from roleicon, and a test holds the file to that rendering.
+const RoleIcons = "role-icons"
+
 // ManifestName matches store.SkillManifestName. Duplicated rather
 // than imported because store depends on this package, and the reverse
 // import would be a cycle. It is a filename fixed by the Claude Code

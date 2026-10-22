@@ -3,7 +3,7 @@ package message
 import (
 	"encoding/json"
 
-	"github.com/kivali-ai/kivali/internal/roleicon"
+	"github.com/kivali-ai/kivali/internal/builtinskills"
 	"github.com/kivali-ai/kivali/internal/store"
 )
 
@@ -111,7 +111,7 @@ Draft the role under /files/artifacts/private/ first, then point ` + "`role_path
     "title":               {"type": "string", "description": "short approval title shown in the owner's inbox (e.g. 'Hire: Market Analyst')"},
     "slug":                {"type": "string", "description": "machine slug for the new agent (lowercase, hyphen-separated, e.g. 'market-analyst')"},
     "role":                {"type": "string", "description": "human-readable role name (e.g. 'Market Analyst')"},
-    "icon":                {"type": "string", "enum": ` + roleIconEnum() + `, "description": ` + roleIconDescription() + `},
+    "icon":                {"type": "string", "description": "the role icon the new agent's avatar shows: a name from ` + roleIconsPath + `, which says what each pictures and suits; 'user' when none fits"},
     "reports_to":          {"type": "string", "description": "slug of the manager (often 'chief-of-staff' or 'ceo')"},
     "role_path":           {"type": "string", "description": "/files/ path to the drafted role.md (e.g. '/files/artifacts/private/role-<slug>.md'). Becomes the new agent's role.md verbatim; not rewritten on chat rotation."},
     "initial_memory_path": {"type": "string", "description": "optional /files/ path to a seed agent memory — useful when carrying over accumulated state from a predecessor or handoff."},
@@ -121,23 +121,9 @@ Draft the role under /files/artifacts/private/ first, then point ` + "`role_path
 }`),
 }
 
-// roleIconEnum is the JSON array of role icon names propose_hire's
-// icon takes.
-func roleIconEnum() string {
-	names := make([]string, len(roleicon.Icons))
-	for i, ic := range roleicon.Icons {
-		names[i] = ic.Name
-	}
-	b, _ := json.Marshal(names)
-	return string(b)
-}
-
-// roleIconDescription is propose_hire's icon description as a JSON
-// string: what the icon is for, then every icon with what it shows.
-func roleIconDescription() string {
-	b, _ := json.Marshal("the role icon the new agent's avatar shows everywhere, next to its initials. Pick the one whose picture best fits the role you drafted; 'user' when none does. The icons:\n" + roleicon.Menu())
-	return string(b)
-}
+// roleIconsPath is where an agent reads the role icons propose_hire's
+// icon takes: the role-icons built-in skill, rendered from roleicon.
+const roleIconsPath = "/files/skills/" + builtinskills.RoleIcons + "/" + builtinskills.ManifestName
 
 var proposeRoleUpdateTool = ToolDef{
 	Name:        ToolProposeRoleUpdate,

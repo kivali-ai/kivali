@@ -131,15 +131,16 @@ carrying in chat history.
    `rationale` is your short note to the owner — summarize the role,
    flag tradeoffs, say why this hire and why this reports_to (4 KB
    cap; if you need to say more, that's an attachment). `icon` is the
-   picture the new agent's avatar shows everywhere: pick the one from
-   the tool's list that best fits the role you drafted.
+   picture the new agent's avatar shows everywhere: read
+   `/files/skills/role-icons/SKILL.md` and pick the one that best fits
+   the role you drafted, or `user` when none does.
 
    ```
    propose_hire(
      title="Hire: <Role>",
      slug="<slug>",
      role="<Role>",
-     icon="<an icon name from the tool's list>",
+     icon="<an icon name from the role-icons skill>",
      reports_to="ceo" | "chief-of-staff" | ...,
      role_path="/files/artifacts/private/role-<slug>.md",
      initial_memory_path="/files/artifacts/private/memory-<slug>.md",
