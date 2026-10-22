@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -87,6 +89,7 @@ func TestIntegrationToolsRunTheShellJob(t *testing.T) {
 	job := &agentpod.GitJob{
 		Op: "clone", Path: "/files/widgets", URL: "https://github.com/acme/widgets.git", Host: "github.com",
 		AllowedRepositories: []string{"acme/*"}, RefSpecs: []string{"+refs/heads/main:refs/remotes/origin/main"}, Force: true,
+		AllowedRefs:    []string{"refs/heads/agent/*"},
 		Auth:           agentpod.GitAuth{Username: "x-access-token", Password: "ghp_secret_token"},
 		Proxy:          agentpod.GitProxy{Username: "integration-git.1a2b3c4d", Password: "proxy-secret-value"},
 		TimeoutSeconds: 900,
@@ -107,7 +110,7 @@ func TestIntegrationToolsRunTheShellJob(t *testing.T) {
 	}
 	want := agentshell.GitRequest{
 		Op: job.Op, Path: job.Path, URL: job.URL, RefSpecs: job.RefSpecs, Force: true,
-		AllowedRepositories: job.AllowedRepositories, Host: job.Host,
+		AllowedRepositories: job.AllowedRepositories, AllowedRefs: job.AllowedRefs, Host: job.Host,
 		Auth:           agentshell.GitAuth{Username: "x-access-token", Password: "ghp_secret_token"},
 		Proxy:          agentshell.GitProxy{Username: "integration-git.1a2b3c4d", Password: "proxy-secret-value"},
 		TimeoutSeconds: 900,
@@ -156,5 +159,25 @@ func TestIntegrationToolsRunTheShellJob(t *testing.T) {
 	res, _ = tools[0].Handler(context.Background(), args)
 	if !res.IsError || len(c.reqs) != 2 || strings.Contains(strings.Join(res.Content, " "), "ghp_secret_token") {
 		t.Errorf("a second job = %+v after %d requests", res, len(c.reqs))
+	}
+}
+
+// Why this test exists: runShellJob copies the job core built into the
+// request the daemon reads, field by field. A field added to one shape
+// and not copied (AllowedRefs, say) would reach the daemon empty, and
+// the daemon's own check of the job would refuse every push or, for a
+// field that loosens nothing when empty, silently drop what core
+// decided. Both shapes must keep the same JSON fields.
+func TestGitJobAndGitRequestKeepTheSameFields(t *testing.T) {
+	fields := func(v any) []string {
+		var out []string
+		rt := reflect.TypeOf(v)
+		for i := range rt.NumField() {
+			out = append(out, rt.Field(i).Name+" "+rt.Field(i).Tag.Get("json"))
+		}
+		return out
+	}
+	if job, req := fields(agentpod.GitJob{}), fields(agentshell.GitRequest{}); !slices.Equal(job, req) {
+		t.Errorf("GitJob %v\nGitRequest %v", job, req)
 	}
 }

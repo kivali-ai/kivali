@@ -144,6 +144,12 @@ func TestValidateRules(t *testing.T) {
 		{"access array without items", func(m map[string]any) {
 			delete(obj(m, "kivali", "access", "schema", "properties", "blogs"), "items")
 		}, nil, LevelError, "properties.blogs: an array field needs items"},
+		{"access danger on a list", func(m map[string]any) {
+			obj(m, "kivali", "access", "schema", "properties", "blogs")["x-kivali-danger"] = true
+		}, nil, LevelError, "properties.blogs: x-kivali-danger marks a switch; it goes on a boolean field"},
+		{"access danger not a bool", func(m map[string]any) {
+			obj(m, "kivali", "access", "schema", "properties", "write")["x-kivali-danger"] = "yes"
+		}, nil, LevelError, "properties.write: x-kivali-danger must be true or false"},
 		{"access enum of numbers", func(m map[string]any) {
 			obj(m, "kivali", "access", "schema", "properties", "region")["enum"] = []any{1, 2}
 		}, nil, LevelError, "properties.region.enum must be a non-empty list of text"},

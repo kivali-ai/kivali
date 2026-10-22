@@ -1,9 +1,10 @@
 // Package gitrepo is a repository on a git host as Kivali's Git
 // integration names it: the connection's host and the repository's
 // path on it, owner/name (or group/sub/project, as GitLab nests
-// groups). Core reads an agent's call with it, and the agent-shell
-// daemon reads a working copy's origin with it, so both hold a URL to
-// the same rules. It imports nothing from this module.
+// groups), and the branches and tags a push names (refs.go). Core
+// reads an agent's call with it, and the agent-shell daemon reads a
+// working copy's origin and a push's refspecs with it, so both hold a
+// URL and a ref to the same rules. It imports nothing from this module.
 package gitrepo
 
 import (
@@ -204,10 +205,12 @@ func NormalizePattern(p string) string {
 }
 
 // ValidPattern reports whether p is a pattern Match can read: not
-// empty, and a pattern of path.Match.
+// empty, with * as its only wildcard (path.Match's ? and character
+// classes, and its \ escape, are refused: a class can match a /), and
+// a pattern of path.Match.
 func ValidPattern(p string) bool {
 	n := NormalizePattern(p)
-	if n == "" {
+	if n == "" || strings.ContainsAny(n, "?[]\\") {
 		return false
 	}
 	_, err := path.Match(n, "")
@@ -215,17 +218,17 @@ func ValidPattern(p string) bool {
 }
 
 // Match reports whether the repository with key (Repository.Key) is
-// one of patterns: each is matched with path.Match semantics, so * and
-// ? stand within one segment and never across a /, case-insensitively;
-// a pattern without * or ? is the one repository it names. A pattern
-// that does not parse matches nothing.
+// one of patterns: each is matched with path.Match semantics, so *
+// stands within one segment and never across a /, case-insensitively;
+// a pattern without * is the one repository it names. A pattern
+// ValidPattern refuses matches nothing.
 func Match(patterns []string, key string) bool {
 	key = strings.ToLower(key)
 	for _, p := range patterns {
-		n := NormalizePattern(p)
-		if n == "" {
+		if !ValidPattern(p) {
 			continue
 		}
+		n := NormalizePattern(p)
 		if ok, err := path.Match(n, key); err == nil && ok {
 			return true
 		}

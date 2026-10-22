@@ -56,6 +56,27 @@ func TestAccessFormListedChoiceAndUntitled(t *testing.T) {
 	}
 }
 
+// Why this test exists: x-kivali-danger is how a manifest marks a
+// switch the owner should turn on with care (the Git built-in's
+// force-push). Lost on the way to the form, the dialog would draw a
+// force-push like any other switch; and it must mark only the switch
+// it is on.
+func TestAccessFormDanger(t *testing.T) {
+	m := &Manifest{Kivali: Kivali{Access: &Access{
+		Schema: json.RawMessage(`{"type":"object","properties":{` +
+			`"push":{"type":"boolean","title":"May push"},` +
+			`"force":{"type":"boolean","title":"May force-push","x-kivali-danger":true},` +
+			`"quiet":{"type":"boolean","title":"Quiet","x-kivali-danger":false}}}`),
+	}}}
+	if _, f := parseSchema(m.Kivali.Access.Schema); f.HasErrors() {
+		t.Fatalf("findings: %v", f.Texts())
+	}
+	form := AccessForm(m)
+	if len(form.Fields) != 3 || form.Fields[0].Danger || !form.Fields[1].Danger || form.Fields[2].Danger || form.Fields[1].Kind != FieldSwitch {
+		t.Errorf("fields = %+v", form.Fields)
+	}
+}
+
 // Access that is all or nothing has no form, so the page shows none
 // and the summary says so.
 func TestNoAccessForm(t *testing.T) {

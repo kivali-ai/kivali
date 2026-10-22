@@ -43,8 +43,9 @@ func gitCLI(t *testing.T) string {
 	return p
 }
 
-// runGitCLI runs git in dir with no system or global configuration.
-func runGitCLI(t *testing.T, dir string, args ...string) string {
+// gitCommand is git with args in dir, with no system or global
+// configuration.
+func gitCommand(t *testing.T, dir string, args ...string) *exec.Cmd {
 	t.Helper()
 	cmd := exec.Command(gitCLI(t), args...)
 	cmd.Dir = dir
@@ -53,7 +54,13 @@ func runGitCLI(t *testing.T, dir string, args ...string) string {
 		"GIT_AUTHOR_NAME=Test", "GIT_AUTHOR_EMAIL=test@example.com",
 		"GIT_COMMITTER_NAME=Test", "GIT_COMMITTER_EMAIL=test@example.com",
 	)
-	out, err := cmd.CombinedOutput()
+	return cmd
+}
+
+// runGitCLI runs git in dir with no system or global configuration.
+func runGitCLI(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	out, err := gitCommand(t, dir, args...).CombinedOutput()
 	if err != nil {
 		t.Fatalf("git %v: %v\n%s", args, err, out)
 	}
@@ -92,6 +99,9 @@ type testGitServer struct {
 	redirects map[string]string
 	// pad lengthens the words of a refusal by that many bytes.
 	pad atomic.Int32
+	// receivePacks counts the requests of a push's receive-pack (its
+	// advertisement and the push itself).
+	receivePacks atomic.Int32
 
 	mu     sync.Mutex
 	served map[string]int
@@ -104,9 +114,15 @@ func newTestGitServer(t *testing.T) *testGitServer {
 		Path: gitCLI(t),
 		Args: []string{"http-backend"},
 		Env:  []string{"GIT_PROJECT_ROOT=" + s.root, "GIT_HTTP_EXPORT_ALL=1", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null"},
+		// The host's hooks write to stderr; the test reads the push's
+		// answer, not the log.
+		Stderr: io.Discard,
 	}
 	s.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s.requests.Add(1)
+		if strings.HasSuffix(r.URL.Path, "/git-receive-pack") || r.URL.Query().Get("service") == "git-receive-pack" {
+			s.receivePacks.Add(1)
+		}
 		if s.block.Load() {
 			s.once.Do(func() { close(s.entered) })
 			s.arrivals <- struct{}{}
@@ -404,7 +420,7 @@ func TestGitCloneRefusals(t *testing.T) {
 		"outside the access": func(r *GitRequest) { r.AllowedRepositories = []string{"other/*"} },
 		"no access":          func(r *GitRequest) { r.AllowedRepositories = nil },
 		"no URL":             func(r *GitRequest) { r.URL = "" },
-		"not an operation":   func(r *GitRequest) { r.Op = "push" },
+		"not an operation":   func(r *GitRequest) { r.Op = "pull" },
 	} {
 		req := cloneJob(srv, "w")
 		edit(&req)

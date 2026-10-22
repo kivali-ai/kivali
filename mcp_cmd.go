@@ -198,7 +198,7 @@ func runFullAgentMCP(logger *log.Logger, socketPath, agentSlug string) {
 		IsKivaliDeveloper: isDeveloper,
 		SmokeShell:        smokeShell,
 	})
-	// An integration's shell jobs (a git clone or fetch) run in the
+	// An integration's shell jobs (a git clone, fetch or push) run in the
 	// sidecar's daemon. A local shell has none, and the job is reported
 	// as skipped.
 	var integrationShell mcp.IntegrationShell

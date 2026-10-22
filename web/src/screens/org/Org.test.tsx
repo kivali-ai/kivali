@@ -1446,6 +1446,25 @@ describe('Integration page', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
+  // Guards a switch the integration marks dangerous (integration_page.json's delete, as Git's force-push is): it is
+  // drawn in the warning tone with its description beside a warning icon, not as a muted hint, while an ordinary
+  // switch keeps the plain look; and it still sends true or false like any switch. A danger flag dropped on the way to
+  // the dialog would draw a force-push as quietly as any other choice.
+  it('draws a dangerous switch in the warning tone with what it does in view', async () => {
+    await renderOrg(PATH, { routes: { ['PUT ' + API + '/access/chief-of-staff']: goIntegrationPage } });
+    await click(within(screen.getByRole('region', { name: 'Access' })).getByRole('button', { name: 'Give access' }));
+    const dialog = within(screen.getByRole('dialog'));
+    const risky = dialog.getByRole('checkbox', { name: 'May delete posts' });
+    const box = risky.closest('.app-int-danger') as HTMLElement;
+    expect(box).not.toBeNull();
+    const note = within(box).getByText('Deletes posts for good.');
+    expect(note.closest('p')).toHaveClass('kv-text--signal');
+    expect(dialog.getByRole('checkbox', { name: 'May publish and edit' }).closest('.app-int-danger')).toBeNull();
+    await click(risky);
+    await click(dialog.getByRole('button', { name: 'Give access' }));
+    expect(lastBody('PUT', API + '/access/chief-of-staff')).toEqual({ access: { write: false, delete: true } });
+  });
+
   // Guards Change and its failures: the form starts from the agent's access as it stands, a list field adds entries
   // as removable chips, a refused options lookup (409) says why inline, and a 400 keeps the dialog open with the
   // server's sentence in it, so nothing the person typed is lost.
@@ -1473,7 +1492,7 @@ describe('Integration page', () => {
     expect(dialog.getByRole('button', { name: 'Remove launch' })).toBeInTheDocument();
     await click(dialog.getByRole('checkbox', { name: 'Marketing' }));
     await click(dialog.getByRole('button', { name: 'Save access' }));
-    expect(lastBody('PUT', API + '/access/dana')).toEqual({ access: { write: true, tags: ['launch'] } });
+    expect(lastBody('PUT', API + '/access/dana')).toEqual({ access: { write: true, delete: false, tags: ['launch'] } });
     expect(screen.getByRole('dialog')).toBeInTheDocument();
     expect(dialog.getByText('Blogs needs at least one choice.')).toBeInTheDocument();
   });

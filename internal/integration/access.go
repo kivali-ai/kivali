@@ -14,8 +14,10 @@ import (
 // a string (with an optional enum of strings), a boolean, or an array
 // of strings (with an optional items.enum). Each takes a title and a
 // description, and nothing else: no nesting, no numbers, no
-// combinators, no constraints the form would not show. A manifest
-// without kivali.access grants all or nothing.
+// combinators, no constraints the form would not show. A boolean may
+// also take "x-kivali-danger": true, which the form shows as a
+// dangerous choice. A manifest without kivali.access grants all or
+// nothing.
 
 // FieldKind is what kind of value an access field takes.
 type FieldKind string
@@ -54,6 +56,9 @@ type Field struct {
 	// Choices is true when the integration lists the field's options
 	// itself, through the tool kivali.access.choices names.
 	Choices bool
+	// Danger is true for a switch the schema marks "x-kivali-danger":
+	// turning it on is a choice the owner makes with care.
+	Danger bool
 }
 
 // propType is a property's JSON type.
@@ -71,6 +76,8 @@ type property struct {
 	typ                     propType
 	// enum is a string's enum or an array's items.enum.
 	enum []string
+	// danger is a boolean's x-kivali-danger.
+	danger bool
 }
 
 // schema is a parsed access schema.
@@ -98,9 +105,12 @@ func (p property) label() string {
 
 const schemaPath = "kivali.access.schema"
 
+// dangerKeyword marks a boolean property as a dangerous choice.
+const dangerKeyword = "x-kivali-danger"
+
 var (
 	schemaKeywords   = []string{"$schema", "additionalProperties", "description", "properties", "required", "title", "type"}
-	propertyKeywords = []string{"description", "enum", "items", "title", "type"}
+	propertyKeywords = []string{"description", "enum", "items", "title", "type", dangerKeyword}
 	itemsKeywords    = []string{"enum", "type"}
 )
 
@@ -164,7 +174,7 @@ func parseProperty(key string, raw json.RawMessage) (property, Findings) {
 	}
 	for _, k := range keys {
 		if !slices.Contains(propertyKeywords, k) {
-			f.errorf("%s: %s is not supported; a field takes type, title, description, enum and items", at, k)
+			f.errorf("%s: %s is not supported; a field takes type, title, description, enum, items and %s", at, k, dangerKeyword)
 		}
 	}
 	if t, ok := kw["title"]; ok {
@@ -183,6 +193,9 @@ func parseProperty(key string, raw json.RawMessage) (property, Findings) {
 		return p, f
 	}
 	p.typ = propType(typ)
+	if _, ok := kw[dangerKeyword]; ok && p.typ != propBoolean {
+		f.errorf("%s: %s marks a switch; it goes on a boolean field", at, dangerKeyword)
+	}
 	switch p.typ {
 	case propString:
 		if _, ok := kw["items"]; ok {
@@ -195,6 +208,11 @@ func parseProperty(key string, raw json.RawMessage) (property, Findings) {
 		for _, k := range []string{"enum", "items"} {
 			if _, ok := kw[k]; ok {
 				f.errorf("%s: a boolean field takes no %s", at, k)
+			}
+		}
+		if d, ok := kw[dangerKeyword]; ok {
+			if err := json.Unmarshal(d, &p.danger); err != nil {
+				f.errorf("%s: %s must be true or false", at, dangerKeyword)
 			}
 		}
 	case propArray:
@@ -275,6 +293,7 @@ func AccessForm(m *Manifest) *Form {
 		switch {
 		case p.typ == propBoolean:
 			fd.Kind = FieldSwitch
+			fd.Danger = p.danger
 		case p.typ == propString && (len(p.enum) > 0 || listed):
 			fd.Kind = FieldChoice
 		case p.typ == propString:

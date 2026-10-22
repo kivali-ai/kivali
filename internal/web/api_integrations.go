@@ -318,6 +318,20 @@ func integrationHosts(m *integration.Manifest) []string {
 	return nonNilStrings(slices.Clone(m.Kivali.Hosts))
 }
 
+// accessSummary is one agent's access in words: the built-in's own
+// (builtinintegrations.AccessSummarizer), or the manifest's field by
+// field.
+func (v *integrationView) accessSummary(access json.RawMessage) string {
+	if s, ok := v.builtin.(builtinintegrations.AccessSummarizer); ok {
+		var m map[string]any
+		if json.Unmarshal(access, &m) != nil {
+			return integration.SummaryNothingSet
+		}
+		return s.AccessSummary(m)
+	}
+	return integration.AccessSummary(v.manifest, access)
+}
+
 // accessFormWire is m's access form on the wire, nil when access is all
 // or nothing.
 func accessFormWire(m *integration.Manifest) *apitypes.AccessForm {
@@ -335,6 +349,7 @@ func accessFormWire(m *integration.Manifest) *apitypes.AccessForm {
 			Required:    f.Required,
 			Options:     nonNilStrings(slices.Clone(f.Options)),
 			Choices:     f.Choices,
+			Danger:      f.Danger,
 		})
 	}
 	return out
@@ -380,7 +395,7 @@ func (s *Server) integrationPage(v *integrationView) apitypes.IntegrationPage {
 		page.Access = append(page.Access, apitypes.AccessRow{
 			Agent:   personNamed(names, a.Slug),
 			Access:  a.AccessJSON(),
-			Summary: integration.AccessSummary(v.manifest, a.AccessJSON()),
+			Summary: v.accessSummary(a.AccessJSON()),
 			SetAt:   a.SetAt,
 			Invalid: optString(a.Invalid),
 		})
@@ -1564,7 +1579,7 @@ func (s *Server) handleAPIAgentIntegrations(w http.ResponseWriter, r *http.Reque
 			out.Available = append(out.Available, row)
 			continue
 		}
-		row.Summary = integration.AccessSummary(v.manifest, v.access[i].AccessJSON())
+		row.Summary = v.accessSummary(v.access[i].AccessJSON())
 		row.Invalid = optString(v.access[i].Invalid)
 		out.Connected = append(out.Connected, row)
 	}

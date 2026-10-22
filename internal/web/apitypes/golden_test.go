@@ -204,7 +204,7 @@ func goldenFixtures() map[string]any {
 		"integration_audit":           goldenIntegrationAudit(),
 		"agent_integrations":          goldenAgentIntegrations(),
 		"connection_write":            ConnectionWrite{Fields: map[string]string{"token": "pat-eu1-...", "portal": "acme"}},
-		"access_write":                AccessWrite{Access: json.RawMessage(`{"blogs":["Marketing"],"write":true}`)},
+		"access_write":                AccessWrite{Access: json.RawMessage(`{"blogs":["Marketing"],"write":true,"delete":false}`)},
 		"access_choices":              AccessChoices{Options: []string{"Engineering", "Marketing"}},
 		"integration_logs":            IntegrationLogs{Lines: []IntegrationLogLine{{At: integrationNow, Level: "info", Message: "server started"}, {At: integrationLater, Level: "stderr", Message: "token [secret] accepted"}}},
 		// Software lists: software_golden_test.go.

@@ -5,7 +5,7 @@
 // POST /v1/exec runs a single bash command and returns
 // stdout/stderr/exit. POST /v1/files runs one file_* tool call against
 // the agent's /files/ (or a subagent's view of it). POST /v1/git runs
-// one clone or fetch through an integration's git connection, in this
+// one clone, fetch or push through an integration's git connection, in this
 // process. /healthz returns 200 for liveness probes.
 //
 // Each request runs in a fresh bash subprocess. Persistence across

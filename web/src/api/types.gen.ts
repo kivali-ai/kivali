@@ -1968,6 +1968,12 @@ export interface AccessField {
    * live, through GET .../choices/{key}.
    */
   choices: boolean;
+  /**
+   * Danger is true for a switch whose "on" the owner should choose
+   * with care (the manifest's x-kivali-danger): the form draws it in
+   * a warning tone with its description in view.
+   */
+  danger: boolean;
 }
 /**
  * AccessRow is one agent's access.

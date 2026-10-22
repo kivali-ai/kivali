@@ -810,7 +810,7 @@ type (
 	// IntegrationShellJobResult is what the shell gave back, or why
 	// nothing ran (shelljob.Result).
 	IntegrationShellJobResult = shelljob.Result
-	// GitJob is one clone or fetch through a git connection, with its
+	// GitJob is one clone, fetch or push through a git connection, with its
 	// credentials (shelljob.GitJob).
 	GitJob = shelljob.GitJob
 	// GitAuth is the basic auth a git operation presents to the host.
