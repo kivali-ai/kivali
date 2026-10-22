@@ -60,6 +60,8 @@ describe('internalPath', () => {
     for (const href of [
       '/login?next=%2F',
       '/auth/logout',
+      '/connect/start?flow=9f86d081',
+      '/connect/callback?code=c&state=s',
       '/api/v1/me',
       '/messages/2026-09-28/x.md?dl=1',
       '/attachments/3f2a',
