@@ -173,8 +173,9 @@ func (t *signInFlows) pruneLocked(now time.Time) {
 // one {id} names (byID), or the integration's one, the oldest. It
 // answers 404 for an id that names none, and 409 for an integration
 // whose connection is not made by signing in, one this version does
-// not carry, and one with no approved version or no connection yet.
-func (s *Server) signInTarget(w http.ResponseWriter, r *http.Request, v *integrationView, byID bool) (*connView, bool) {
+// not carry, and one with no approved version or no connection yet
+// (noConn, the route's words for that).
+func (s *Server) signInTarget(w http.ResponseWriter, r *http.Request, v *integrationView, byID bool, noConn string) (*connView, bool) {
 	switch {
 	case v.staleBuiltin():
 		writeAPIError(w, http.StatusConflict, builtinRefusal(v.displayName(), builtinNotIncluded), whoYou)
@@ -191,7 +192,7 @@ func (s *Server) signInTarget(w http.ResponseWriter, r *http.Request, v *integra
 	}
 	c := v.first()
 	if c == nil {
-		writeAPIError(w, http.StatusConflict, errSignInClientFirst, whoYou)
+		writeAPIError(w, http.StatusConflict, noConn, whoYou)
 		return nil, false
 	}
 	return c, true
@@ -211,7 +212,7 @@ func (s *Server) handleAPISignInDevice(byID bool) http.HandlerFunc {
 			unlock()
 			return
 		}
-		c, ok := s.signInTarget(w, r, v, byID)
+		c, ok := s.signInTarget(w, r, v, byID, errSignInClientFirst)
 		if !ok {
 			unlock()
 			return
@@ -222,14 +223,9 @@ func (s *Server) handleAPISignInDevice(byID bool) http.HandlerFunc {
 			writeAPIError(w, http.StatusConflict, v.displayName()+" does not sign in with a code", v.whoBuilt())
 			return
 		}
-		if !v.it.Enabled {
+		if msg := deviceStartRefusal(v, c); msg != "" {
 			unlock()
-			writeAPIError(w, http.StatusConflict, "switch "+v.displayName()+" on first", whoYou)
-			return
-		}
-		if !c.rec.NeedsSignIn(c.hasToken) {
-			unlock()
-			writeAPIError(w, http.StatusConflict, errSignInSignedIn, whoYou)
+			writeAPIError(w, http.StatusConflict, msg, whoYou)
 			return
 		}
 		rec, data, err := s.readSignIn(r.Context(), name, connID)
@@ -248,11 +244,12 @@ func (s *Server) handleAPISignInDevice(byID bool) http.HandlerFunc {
 		var term *connect.Terminal
 		switch {
 		case errors.As(err, &term):
-			writeAPIError(w, http.StatusConflict, v.displayName()+" refused to start the sign-in: "+term.Error(), whoYou)
+			writeAPIError(w, http.StatusConflict, v.displayName()+" refused to start the sign-in: "+signInFailureWords(err, connect.Tokens{}, client), whoYou)
 			return
 		case err != nil:
-			log.Printf("integration %s: start connection %s's sign-in: %v", name, connID, err)
-			writeAPIError(w, http.StatusBadGateway, v.displayName()+" did not start the sign-in: "+err.Error(), whoServer)
+			words := signInFailureWords(err, connect.Tokens{}, client)
+			log.Printf("integration %s: start connection %s's sign-in: %s", name, connID, words)
+			writeAPIError(w, http.StatusBadGateway, v.displayName()+" did not start the sign-in: "+words, whoServer)
 			return
 		}
 		now := s.clk().Now()
@@ -262,10 +259,23 @@ func (s *Server) handleAPISignInDevice(byID bool) http.HandlerFunc {
 		if limit := now.Add(signInFlowTTL); ds.ExpiresAt.IsZero() || ds.ExpiresAt.After(limit) {
 			ds.ExpiresAt = limit
 		}
+		// The vendor was asked without the lock: the connection may have
+		// gone, the integration been switched off or another sign-in
+		// finished meanwhile.
 		unlock = s.lockIntegrations()
-		if _, err := s.Store.GetIntegrationConnectionByID(name, connID); err != nil {
+		v, err = s.loadIntegration(r.Context(), name)
+		var cur *connView
+		if err == nil {
+			cur = v.connByID(connID)
+		}
+		if cur == nil {
 			unlock()
 			writeAPIError(w, http.StatusNotFound, errConnectionGone, whoLink)
+			return
+		}
+		if msg := deviceStartRefusal(v, cur); msg != "" {
+			unlock()
+			writeAPIError(w, http.StatusConflict, msg, whoYou)
 			return
 		}
 		f := s.signInFlows.start(now, name, connID, ds.ExpiresAt.Add(signInFlowTTL))
@@ -277,6 +287,18 @@ func (s *Server) handleAPISignInDevice(byID bool) http.HandlerFunc {
 		}
 		writeJSON(w, http.StatusOK, out)
 	}
+}
+
+// deviceStartRefusal is why a device sign-in of v's connection c may
+// not start, or "": v switched off, or c signed in.
+func deviceStartRefusal(v *integrationView, c *connView) string {
+	switch {
+	case !v.it.Enabled:
+		return "switch " + v.displayName() + " on first"
+	case !c.rec.NeedsSignIn(c.hasToken):
+		return errSignInSignedIn
+	}
+	return ""
 }
 
 // runDeviceSignIn is f's goroutine: it polls the vendor until the
@@ -295,8 +317,10 @@ func (s *Server) runDeviceSignIn(f *signInFlow, m *integration.Manifest, client 
 		if errors.Is(err, connect.ErrDeviceExpired) {
 			state = apitypes.SignInStateExpired
 		}
-		s.auditAgentCall(f.name, start, agent.CEOSlug, "sign_in", false, err.Error())
-		s.signInFlows.end(f, s.clk().Now(), state, err.Error())
+		// The vendor's words may echo the device code it was polled with.
+		words := signInFailureWords(err, connect.Tokens{}, client, ds.DeviceCode())
+		s.auditAgentCall(f.name, start, agent.CEOSlug, "sign_in", false, words)
+		s.signInFlows.end(f, s.clk().Now(), state, words)
 		return
 	}
 	if err := s.finishSignIn(f, m, client, integration.MethodDevice, tok, start); err != nil {
@@ -319,9 +343,9 @@ var errSignInNotKept = errors.New("the sign-in worked, but Kivali could not keep
 // and the sign-in to its record, which clears a refused refresh's
 // error (and so the Needs you row) and the last connection test. It
 // appends the owner's audit row and starts the bundle's server again,
-// which then asks for the new token. A flow cancelled meanwhile, or a
-// connection gone, keeps nothing, and the tokens are revoked with the
-// vendor, best effort.
+// which then asks for the new token. A flow cancelled meanwhile, a
+// connection gone, or a Secret or record that cannot be written keeps
+// nothing, and the tokens are revoked with the vendor, best effort.
 func (s *Server) finishSignIn(f *signInFlow, m *integration.Manifest, client connect.Client, method string, tok connect.Tokens, start time.Time) error {
 	ctx := f.ctx
 	unlock := s.lockIntegrations()
@@ -356,6 +380,9 @@ func (s *Server) finishSignIn(f *signInFlow, m *integration.Manifest, client con
 	unlock()
 	if err != nil {
 		log.Printf("integration %s: keep connection %s's sign-in: %v", f.name, f.connID, err)
+		// Tokens Kivali could not keep are of use to nobody: revoked
+		// with the vendor, best effort, as for a cancelled flow.
+		s.revokeTokens(ctx, f.name, f.connID, m, client, tok)
 		s.auditAgentCall(f.name, start, agent.CEOSlug, "sign_in", false, errSignInNotKept.Error())
 		return errSignInNotKept
 	}
@@ -390,7 +417,7 @@ func (s *Server) handleAPISignInProgress(byID bool) http.HandlerFunc {
 		if !ok {
 			return
 		}
-		c, ok := s.signInTarget(w, r, v, byID)
+		c, ok := s.signInTarget(w, r, v, byID, v.displayName()+" has no connection")
 		if !ok {
 			return
 		}
@@ -410,7 +437,8 @@ func (s *Server) handleAPISignInProgress(byID bool) http.HandlerFunc {
 // effort), appends the owner's audit row and starts the bundle's
 // server again without the token. It answers with the page. The vendor
 // is asked to revoke with lockIntegrations released, so a slow vendor
-// holds up no other integration write.
+// holds up no other integration write. Of a connection not signed in
+// that holds no tokens, only a sign-in under way is cancelled.
 func (s *Server) handleAPISignOut(byID bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		unlock := s.lockIntegrations()
@@ -430,7 +458,7 @@ func (s *Server) signOutLocked(w http.ResponseWriter, r *http.Request, byID bool
 	if !ok {
 		return nil, false
 	}
-	c, ok := s.signInTarget(w, r, v, byID)
+	c, ok := s.signInTarget(w, r, v, byID, v.displayName()+" has no connection")
 	if !ok {
 		return nil, false
 	}
@@ -442,6 +470,11 @@ func (s *Server) signOutLocked(w http.ResponseWriter, r *http.Request, byID bool
 		log.Printf("integration %s: read connection %s: %v", name, connID, err)
 		writeAPIError(w, http.StatusInternalServerError, "the connection could not be read, so nothing was changed", whoServer)
 		return nil, false
+	}
+	// Nothing signed in and no tokens: nothing to sign out of. The
+	// server keeps running and the last test stays.
+	if rec.SignIn == nil && data[connect.SecretKeyAccessToken] == "" && data[connect.SecretKeyRefreshToken] == "" {
+		return nil, true
 	}
 	kept := map[string]string{}
 	for k, val := range data {
