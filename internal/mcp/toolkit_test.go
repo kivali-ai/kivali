@@ -154,7 +154,7 @@ func TestFullAgentToolkitHasTheDevelopersToolsOnlyForTheDeveloper(t *testing.T) 
 			Files:             NewLocalFilesDispatcher(be),
 			IsKivaliDeveloper: developer,
 		})
-		for _, name := range IntegrationEngineerToolNames {
+		for _, name := range KivaliDeveloperToolNames {
 			if hasTool(tk.Tools, name) != developer {
 				t.Errorf("developer %v: has %s = %v", developer, name, !developer)
 			}

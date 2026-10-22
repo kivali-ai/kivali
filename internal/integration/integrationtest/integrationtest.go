@@ -28,7 +28,7 @@ func Manifest(name, version string) map[string]any {
 		"version":          version,
 		"display_name":     "Test " + name,
 		"description":      "Blog posts in a test service.",
-		"author":           map[string]any{"name": "Integrations engineer (agent)"},
+		"author":           map[string]any{"name": "Kivali Developer (agent)"},
 		"server": map[string]any{
 			"type":        "python",
 			"entry_point": "server/main.py",

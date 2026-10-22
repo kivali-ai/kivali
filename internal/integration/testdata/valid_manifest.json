@@ -4,7 +4,7 @@
   "version": "1.2.0",
   "display_name": "HubSpot",
   "description": "Blog posts and contacts in HubSpot.",
-  "author": { "name": "Integrations engineer (agent)" },
+  "author": { "name": "Kivali Developer (agent)" },
   "keywords": ["blog", "crm"],
   "server": {
     "type": "python",

@@ -92,7 +92,7 @@ func TestAPIIntegrationUploadIsAPendingVersion(t *testing.T) {
 	v := decodeAPI[apitypes.IntegrationVersion](t, rr)
 	if v.Name != "crm" || v.DisplayName != "Test crm" || v.Version != "1.0.0" || v.State != apitypes.IntegrationVersionStatePending ||
 		v.PublishedBy != (apitypes.PersonRef{Slug: agent.CEOSlug, Name: "You"}) || v.Runtime != "python" || v.ConnectionMethod != "token" ||
-		v.Author != "Integrations engineer (agent)" || v.Current || v.CurrentVersion != nil || v.FileCount != 2 || v.BundleBytes == 0 {
+		v.Author != "Kivali Developer (agent)" || v.Current || v.CurrentVersion != nil || v.FileCount != 2 || v.BundleBytes == 0 {
 		t.Errorf("version = %+v", v)
 	}
 	if strings.Join(v.Hosts, ",") != "api.example.com" || len(v.Actions) != 3 || v.AccessForm == nil || len(v.AccessForm.Fields) != 3 {
@@ -386,13 +386,13 @@ func TestAPIIntegrationAccessAfterANewVersion(t *testing.T) {
 }
 
 // seedIntegrationInstallRequest files an install request from the
-// Integrations engineer in Needs you, as a publish will.
+// Kivali Developer in Needs you, as a publish will.
 func seedIntegrationInstallRequest(t *testing.T, srv *Server, name, version string) string {
 	t.Helper()
 	req := store.Message{
 		Type:               store.MsgCEOApprovalRequest,
 		Title:              "Install " + name + " " + version,
-		From:               "integrations-engineer",
+		From:               "kivali-developer",
 		To:                 store.Recipients{agent.CEOSlug},
 		Date:               time.Now().UTC(),
 		Body:               "The team asked for it.",
@@ -429,7 +429,7 @@ func integrationResponse(t *testing.T, srv *Server) store.Message {
 // the version was approved, and approving it later would fail.
 func TestAPIIntegrationApproveAnswersTheRequest(t *testing.T) {
 	srv, _ := newTurnServer(t)
-	intTeam(t, srv, "integrations-engineer")
+	intTeam(t, srv, "kivali-developer")
 	intUpload(t, srv, intBundle(t, "crm", "1.0.0"))
 	rel := seedIntegrationInstallRequest(t, srv, "crm", "1.0.0")
 
@@ -455,7 +455,7 @@ func TestAPIIntegrationApproveAnswersTheRequest(t *testing.T) {
 	if resp.Approved == nil || !*resp.Approved || resp.IntegrationInstall == nil || *resp.IntegrationInstall != (store.IntegrationInstall{Name: "crm", Version: "1.0.0"}) || resp.InReplyTo != rel {
 		t.Errorf("response = %+v", resp)
 	}
-	if last := lastChat(t, srv, "integrations-engineer"); !strings.Contains(last, "I approved version 1.0.0 of the `crm` integration. It is the version in use.") {
+	if last := lastChat(t, srv, "kivali-developer"); !strings.Contains(last, "I approved version 1.0.0 of the `crm` integration. It is the version in use.") {
 		t.Errorf("publisher heard %q", last)
 	}
 	home = decodeAPI[apitypes.Home](t, homeDo(t, srv, http.MethodGet, "/api/v1/home", "", nil, nil))
@@ -470,10 +470,10 @@ func TestAPIIntegrationApproveAnswersTheRequest(t *testing.T) {
 // an offboarded publisher would leave its version unapprovable.
 func TestAPIIntegrationApproveWhenThePublisherLeft(t *testing.T) {
 	srv, _ := newTurnServer(t)
-	intTeam(t, srv, "integrations-engineer")
+	intTeam(t, srv, "kivali-developer")
 	intUpload(t, srv, intBundle(t, "crm", "1.0.0"))
 	seedIntegrationInstallRequest(t, srv, "crm", "1.0.0")
-	if err := srv.Store.ArchiveAgent("integrations-engineer"); err != nil {
+	if err := srv.Store.ArchiveAgent("kivali-developer"); err != nil {
 		t.Fatal(err)
 	}
 	v := orgOK[apitypes.IntegrationVersion](t, intPost(t, srv, intBase+"/crm/versions/1.0.0/approve"))
@@ -497,7 +497,7 @@ func serveMux(t *testing.T, mux *http.ServeMux, method, path string) *httptest.R
 // publisher would never hear that the version will not run.
 func TestAPIIntegrationRejectAnswersTheRequest(t *testing.T) {
 	srv, _ := newTurnServer(t)
-	intTeam(t, srv, "integrations-engineer")
+	intTeam(t, srv, "kivali-developer")
 	intUpload(t, srv, intBundle(t, "crm", "1.0.0"))
 	seedIntegrationInstallRequest(t, srv, "crm", "1.0.0")
 	v := orgOK[apitypes.IntegrationVersion](t, intPost(t, srv, intBase+"/crm/versions/1.0.0/reject"))
@@ -508,7 +508,7 @@ func TestAPIIntegrationRejectAnswersTheRequest(t *testing.T) {
 	if resp.Approved == nil || *resp.Approved || resp.IntegrationInstall == nil || resp.IntegrationInstall.Version != "1.0.0" {
 		t.Errorf("response = %+v", resp)
 	}
-	if last := lastChat(t, srv, "integrations-engineer"); !strings.Contains(last, "I rejected version 1.0.0 of the `crm` integration. That version does not run.") {
+	if last := lastChat(t, srv, "kivali-developer"); !strings.Contains(last, "I rejected version 1.0.0 of the `crm` integration. That version does not run.") {
 		t.Errorf("publisher heard %q", last)
 	}
 }
@@ -520,7 +520,7 @@ func TestAPIIntegrationRejectAnswersTheRequest(t *testing.T) {
 // a removed integration's request can still be cleared.
 func TestNeedsYouAnswersIntegrationInstall(t *testing.T) {
 	srv, _ := newTurnServer(t)
-	intTeam(t, srv, "integrations-engineer")
+	intTeam(t, srv, "kivali-developer")
 	intUpload(t, srv, intBundle(t, "crm", "1.0.0"))
 	intUpload(t, srv, intBundle(t, "crm", "1.1.0"))
 	approveRel := seedIntegrationInstallRequest(t, srv, "crm", "1.0.0")

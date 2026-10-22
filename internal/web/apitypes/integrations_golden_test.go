@@ -69,7 +69,7 @@ func goldenIntegrationActions() []IntegrationAction {
 func goldenIntegrationPage() IntegrationPage {
 	return IntegrationPage{
 		Summary:          goldenIntegrationSummary(),
-		Author:           "Integrations engineer (agent)",
+		Author:           "Kivali Developer (agent)",
 		Hosts:            []string{"api.hubapi.com"},
 		Actions:          goldenIntegrationActions(),
 		ConnectionFields: goldenConnectionFields(),
@@ -88,10 +88,10 @@ func goldenIntegrationPage() IntegrationPage {
 		},
 		AgentsWithout: []PersonRef{{Slug: "chief-of-staff", Name: "Chief of Staff"}},
 		Versions: []IntegrationVersionSummary{
-			{Version: "1.3.0", State: IntegrationVersionStatePending, PublishedAt: integrationLater, PublishedBy: PersonRef{Slug: "integrations-engineer", Name: "Integrations engineer"}, NotesMD: "Adds contacts."},
+			{Version: "1.3.0", State: IntegrationVersionStatePending, PublishedAt: integrationLater, PublishedBy: PersonRef{Slug: "kivali-developer", Name: "Kivali Developer"}, NotesMD: "Adds contacts."},
 			{Version: "1.2.0", State: IntegrationVersionStateApproved, PublishedAt: integrationNow, PublishedBy: PersonRef{Slug: "ceo", Name: "Evan"}, ApprovedAt: &integrationLater, NotesMD: ""},
-			{Version: "1.1.1", State: IntegrationVersionStateRejected, PublishedAt: integrationEarlier, PublishedBy: PersonRef{Slug: "integrations-engineer", Name: "Integrations engineer"}, NotesMD: "Reaches a reporting host."},
-			{Version: "1.1.0", State: IntegrationVersionStateSuperseded, PublishedAt: integrationEarlier, PublishedBy: PersonRef{Slug: "integrations-engineer", Name: "Integrations engineer"}, ApprovedAt: &integrationEarlier, NotesMD: "Blog posts only."},
+			{Version: "1.1.1", State: IntegrationVersionStateRejected, PublishedAt: integrationEarlier, PublishedBy: PersonRef{Slug: "kivali-developer", Name: "Kivali Developer"}, NotesMD: "Reaches a reporting host."},
+			{Version: "1.1.0", State: IntegrationVersionStateSuperseded, PublishedAt: integrationEarlier, PublishedBy: PersonRef{Slug: "kivali-developer", Name: "Kivali Developer"}, ApprovedAt: &integrationEarlier, NotesMD: "Blog posts only."},
 		},
 		CanRemove: true,
 	}
@@ -104,9 +104,9 @@ func goldenIntegrationVersion() IntegrationVersion {
 		Description:      "Blog posts and contacts in HubSpot.",
 		Version:          "1.3.0",
 		State:            IntegrationVersionStatePending,
-		Author:           "Integrations engineer (agent)",
+		Author:           "Kivali Developer (agent)",
 		PublishedAt:      integrationLater,
-		PublishedBy:      PersonRef{Slug: "integrations-engineer", Name: "Integrations engineer"},
+		PublishedBy:      PersonRef{Slug: "kivali-developer", Name: "Kivali Developer"},
 		NotesMD:          "Adds contacts. Reaches one more host.",
 		Runtime:          "python",
 		ConnectionMethod: "token",

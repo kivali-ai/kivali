@@ -242,8 +242,8 @@ func (s *Server) registerUDSRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/agent/{slug}"+agentpod.IntegrationToolsPath, s.handleAgentpodIntegrationTools)
 	mux.HandleFunc("POST /v1/agent/{slug}"+agentpod.IntegrationCallPath, s.handleAgentpodIntegrationCall)
 	// The Kivali Developer's integration_* tools, refused for any other
-	// agent (integration_engineer.go).
-	mux.HandleFunc("POST /v1/agent/{slug}"+agentpod.IntegrationEngineerDispatchPath, s.handleAgentpodIntegrationEngineer)
+	// agent (kivali_developer.go).
+	mux.HandleFunc("POST /v1/agent/{slug}"+agentpod.KivaliDeveloperDispatchPath, s.handleAgentpodKivaliDeveloper)
 	// An agent runtime's egress proxy credential: the SHA-256 of the
 	// secret it drew at start, for the agent named by the slug header.
 	mux.HandleFunc("POST "+agentpod.EgressCredentialPath, s.handleAgentpodEgressCredential)

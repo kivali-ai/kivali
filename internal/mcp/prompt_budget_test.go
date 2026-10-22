@@ -76,11 +76,11 @@ const (
 	// limits, which the model otherwise learns one refusal at a time.
 	maxArtifactPublishDescChars   = 1400
 	maxArtifactUnpublishDescChars = 400
-	// The Integrations engineer's five tools. On every turn of the one
+	// The Kivali Developer's five tools. On every turn of the one
 	// agent that has them; what a bundle is and how to build one is in
 	// its role, so each description says only what the tool does and
 	// refuses.
-	maxIntegrationEngineerDescChars = 700
+	maxKivaliDeveloperDescChars = 700
 )
 
 func TestAlwaysOnPromptBudgets(t *testing.T) {
@@ -111,12 +111,12 @@ func TestAlwaysOnPromptBudgets(t *testing.T) {
 			maxSubagentPromptChars,
 		},
 	}
-	for _, tool := range IntegrationEngineerTools(&engineerRecorder{}, nil, "integrations-engineer") {
+	for _, tool := range KivaliDeveloperTools(&developerRecorder{}, nil, "kivali-developer") {
 		cases = append(cases, struct {
 			name string
 			text string
 			max  int
-		}{tool.Name + " description", tool.Description, maxIntegrationEngineerDescChars})
+		}{tool.Name + " description", tool.Description, maxKivaliDeveloperDescChars})
 	}
 
 	for _, c := range cases {

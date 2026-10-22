@@ -10,7 +10,7 @@
     "agents": 2,
     "pending_version": "1.3.0"
   },
-  "author": "Integrations engineer (agent)",
+  "author": "Kivali Developer (agent)",
   "hosts": [
     "api.hubapi.com"
   ],
@@ -149,8 +149,8 @@
       "state": "pending",
       "published_at": "2026-10-21T10:00:00Z",
       "published_by": {
-        "slug": "integrations-engineer",
-        "name": "Integrations engineer"
+        "slug": "kivali-developer",
+        "name": "Kivali Developer"
       },
       "notes_md": "Adds contacts."
     },
@@ -170,8 +170,8 @@
       "state": "rejected",
       "published_at": "2026-10-20T09:00:00Z",
       "published_by": {
-        "slug": "integrations-engineer",
-        "name": "Integrations engineer"
+        "slug": "kivali-developer",
+        "name": "Kivali Developer"
       },
       "notes_md": "Reaches a reporting host."
     },
@@ -180,8 +180,8 @@
       "state": "superseded",
       "published_at": "2026-10-20T09:00:00Z",
       "published_by": {
-        "slug": "integrations-engineer",
-        "name": "Integrations engineer"
+        "slug": "kivali-developer",
+        "name": "Kivali Developer"
       },
       "approved_at": "2026-10-20T09:00:00Z",
       "notes_md": "Blog posts only."

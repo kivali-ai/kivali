@@ -28,8 +28,8 @@ shim that runs in it), `internal/web/integration_registry.go` and
 `integration_socket.go` (core's side of a running integration),
 `internal/web/integration_tools.go` and `internal/mcp/integration_tools.go`
 (agents' calls, core's side and the agent's MCP server's),
-`internal/web/integration_engineer.go` and
-`internal/mcp/integration_engineer_tools.go` (the Kivali Developer's
+`internal/web/kivali_developer.go` and
+`internal/mcp/kivali_developer_tools.go` (the Kivali Developer's
 tools), `internal/web/api_integrations.go` (the API) and
 `internal/web/apitypes/integrations.go` (the wire types).
 `cmd/fake-integration` is a stdio MCP server for tests
@@ -69,7 +69,7 @@ byte for byte.
   "version": "1.2.0",
   "display_name": "HubSpot",
   "description": "Blog posts and contacts in HubSpot.",
-  "author": { "name": "Integrations engineer (agent)" },
+  "author": { "name": "Kivali Developer (agent)" },
   "server": {
     "type": "python",
     "entry_point": "server/main.py",
@@ -574,7 +574,7 @@ On `core.sock`, bound to the slug header like every agent route:
 | --- | --- | --- |
 | `POST /v1/agent/{slug}/integrations/tools` | `{}` | `agentpod.IntegrationToolsResponse`: `{tools: [{name, description, input_schema}]}` |
 | `POST /v1/agent/{slug}/integrations/call` | `agentpod.IntegrationCallRequest`: `{name, arguments}`, the prefixed name | `agentpod.IntegrationCallResponse`: `{content: [text, ...], is_error}` |
-| `POST /v1/agent/{slug}/integration-engineer/dispatch` | `agentpod.IntegrationEngineerRequest`: `{tool, input, smoke_result}` | `agentpod.IntegrationEngineerResponse`: `{body, is_error, smoke}` |
+| `POST /v1/agent/{slug}/kivali-developer/dispatch` | `agentpod.KivaliDeveloperRequest`: `{tool, input, smoke_result}` | `agentpod.KivaliDeveloperResponse`: `{body, is_error, smoke}` |
 
 A refusal or the integration's error is a 200 with `is_error`; a
 non-2xx answer is a transport error, which the MCP tool reports as
@@ -668,8 +668,8 @@ server registers them.
 
 ### The tools
 
-All five relay to `POST /v1/agent/{slug}/integration-engineer/dispatch`
-(`agentpod.IntegrationEngineerRequest`: `{tool, input, smoke_result}`,
+All five relay to `POST /v1/agent/{slug}/kivali-developer/dispatch`
+(`agentpod.KivaliDeveloperRequest`: `{tool, input, smoke_result}`,
 answered with `{body, is_error, smoke}`).
 
 | Tool | Does |

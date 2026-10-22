@@ -10,22 +10,22 @@ import (
 	"github.com/kivali-ai/kivali/internal/agentpod"
 )
 
-// engineerRecorder answers the integration_* relay as core would: a
+// developerRecorder answers the integration_* relay as core would: a
 // first request with a smoke test to run, a second with the answer.
-type engineerRecorder struct {
-	reqs []agentpod.IntegrationEngineerRequest
+type developerRecorder struct {
+	reqs []agentpod.KivaliDeveloperRequest
 	err  error
 }
 
-func (r *engineerRecorder) IntegrationEngineerDispatch(_ context.Context, req agentpod.IntegrationEngineerRequest) (*agentpod.IntegrationEngineerResponse, error) {
+func (r *developerRecorder) KivaliDeveloperDispatch(_ context.Context, req agentpod.KivaliDeveloperRequest) (*agentpod.KivaliDeveloperResponse, error) {
 	r.reqs = append(r.reqs, req)
 	if r.err != nil {
 		return nil, r.err
 	}
 	if req.Tool == IntegrationValidateToolName && req.SmokeResult == nil {
-		return &agentpod.IntegrationEngineerResponse{Smoke: &agentpod.IntegrationSmoke{Command: "check", Cwd: "artifacts/private/integrations/echo", TimeoutSeconds: 30}}, nil
+		return &agentpod.KivaliDeveloperResponse{Smoke: &agentpod.IntegrationSmoke{Command: "check", Cwd: "artifacts/private/integrations/echo", TimeoutSeconds: 30}}, nil
 	}
-	return &agentpod.IntegrationEngineerResponse{Body: "answered"}, nil
+	return &agentpod.KivaliDeveloperResponse{Body: "answered"}, nil
 }
 
 // shellRecorder is a shell that records what it was asked to run.
@@ -49,17 +49,17 @@ func toolNamed(tools []Tool, name string) Tool {
 }
 
 // Why this test exists: the smoke test is the one part of a validate
-// or a publish that core cannot do, because the engineer's shell is in
-// the engineer's pod. The MCP server runs exactly what core asked, in
+// or a publish that core cannot do, because the developer's shell is in
+// the developer's pod. The MCP server runs exactly what core asked, in
 // the directory core named, and sends the same call again with what the
 // shell printed; a server with no shell says so instead of running
 // anything. A relay that dropped the second request would answer the
 // model with an empty body; one that ran the command elsewhere would
 // check the wrong bundle.
-func TestIntegrationEngineerToolsRunTheSmokeTestCoreAsksFor(t *testing.T) {
-	core := &engineerRecorder{}
+func TestKivaliDeveloperToolsRunTheSmokeTestCoreAsksFor(t *testing.T) {
+	core := &developerRecorder{}
 	shell := &shellRecorder{}
-	validate := toolNamed(IntegrationEngineerTools(core, shell, "integrations-engineer"), IntegrationValidateToolName)
+	validate := toolNamed(KivaliDeveloperTools(core, shell, "kivali-developer"), IntegrationValidateToolName)
 	res, err := validate.Handler(context.Background(), json.RawMessage(`{"path":"/files/x"}`))
 	if err != nil || res.IsError || res.Content[0] != "answered" {
 		t.Fatalf("validate = %+v, %v", res, err)
@@ -71,8 +71,8 @@ func TestIntegrationEngineerToolsRunTheSmokeTestCoreAsksFor(t *testing.T) {
 		t.Errorf("requests = %+v", core.reqs)
 	}
 
-	core = &engineerRecorder{}
-	validate = toolNamed(IntegrationEngineerTools(core, nil, "integrations-engineer"), IntegrationValidateToolName)
+	core = &developerRecorder{}
+	validate = toolNamed(KivaliDeveloperTools(core, nil, "kivali-developer"), IntegrationValidateToolName)
 	if _, err := validate.Handler(context.Background(), json.RawMessage(`{}`)); err != nil {
 		t.Fatal(err)
 	}
@@ -82,8 +82,8 @@ func TestIntegrationEngineerToolsRunTheSmokeTestCoreAsksFor(t *testing.T) {
 
 	// A list is one request; a core that cannot be reached is an error
 	// the model reads.
-	core = &engineerRecorder{}
-	list := toolNamed(IntegrationEngineerTools(core, shell, "integrations-engineer"), IntegrationListToolName)
+	core = &developerRecorder{}
+	list := toolNamed(KivaliDeveloperTools(core, shell, "kivali-developer"), IntegrationListToolName)
 	if res, _ := list.Handler(context.Background(), nil); res.Content[0] != "answered" || len(core.reqs) != 1 || !list.ReadOnly {
 		t.Errorf("list = %+v, %d requests", res, len(core.reqs))
 	}
