@@ -3,11 +3,13 @@ package integration
 import (
 	"fmt"
 	"io/fs"
+	"net/url"
 	"path"
 	"regexp"
 	"slices"
 	"strings"
 
+	"github.com/kivali-ai/kivali/internal/connect"
 	"github.com/kivali-ai/kivali/internal/debpkg"
 )
 
@@ -278,7 +280,7 @@ func validateServer(m *Manifest, files []BundleFile, f *Findings) {
 			switch {
 			case !ok:
 				f.errorf("server.mcp_config.env.%s: ${%s} is not a connection field; only ${user_config.<key>} is replaced", k, ph[1])
-			case !slices.ContainsFunc(m.UserConfig, func(u UserConfigField) bool { return u.Key == key }):
+			case !slices.ContainsFunc(ConnectionFields(m), func(u UserConfigField) bool { return u.Key == key }):
 				f.errorf("server.mcp_config.env.%s names user_config.%s, which user_config does not declare", k, key)
 			}
 		}
@@ -290,6 +292,9 @@ func validateUserConfig(m *Manifest, f *Findings) {
 		at := "user_config." + u.Key
 		if !configKeyRE.MatchString(u.Key) {
 			f.errorf("%s: the key must be lowercase letters, digits and underscores, starting with a letter", at)
+		}
+		if u.Key == connect.SecretKeyAccessToken || u.Key == connect.SecretKeyRefreshToken {
+			f.errorf("%s: Kivali keeps a sign-in's tokens under that key; choose another", at)
 		}
 		switch u.Type {
 		case "string", "number", "boolean":
@@ -333,15 +338,10 @@ func validateTools(m *Manifest, f *Findings) []string {
 
 func validateKivali(m *Manifest, tools []string, builtin bool, f *Findings) {
 	k := m.Kivali
-	switch k.Connection.Method {
-	case "token":
-	case "device", "browser":
+	if k.Connection.SignIn() {
 		f.errorf("kivali.connection.method: Kivali connects integrations with a pasted token; sign-in connections are not available")
-	case "":
-		f.errorf("kivali.connection.method is missing; Kivali connects integrations with a pasted token, so it must be token")
-	default:
-		f.errorf("kivali.connection.method %s is not one Kivali knows; it must be token", k.Connection.Method)
 	}
+	validateConnection(m, f)
 	if k.Connection.Multiple && !builtin {
 		f.errorf("kivali.connection.multiple: a bundle's server takes one connection")
 	}
@@ -391,6 +391,110 @@ func validateKivali(m *Manifest, tools []string, builtin bool, f *Findings) {
 	case !builtin && !slices.Contains(tools, k.Verify):
 		f.errorf("kivali.verify names %s, which is not in tools", k.Verify)
 	}
+}
+
+// reservedAuthorizationParams are the authorization address's
+// parameters core sets itself, which extra_authorization_params may
+// not name.
+var reservedAuthorizationParams = []string{
+	"client_id", "redirect_uri", "response_type", "scope", "state", "code_challenge", "code_challenge_method",
+}
+
+// envNameRE is a name an access token may be given under: an
+// environment variable's.
+var envNameRE = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
+
+// validateConnection checks the kivali.connection section for the
+// method it names: a token connection gives no endpoints; a sign-in
+// connection (device, browser) gives the endpoints its method needs,
+// each an https:// address (plain http only on loopback), names the
+// access token for the integration's calls and leaves the client id
+// and secret to core.
+func validateConnection(m *Manifest, f *Findings) {
+	c := m.Kivali.Connection
+	endpoints := []struct{ key, value string }{
+		{"device_endpoint", c.DeviceEndpoint},
+		{"authorization_endpoint", c.AuthorizationEndpoint},
+		{"token_endpoint", c.TokenEndpoint},
+		{"revocation_endpoint", c.RevocationEndpoint},
+	}
+	switch c.Method {
+	case MethodToken:
+		for _, e := range endpoints {
+			if e.value != "" {
+				f.errorf("kivali.connection.%s: a token connection has no endpoints", e.key)
+			}
+		}
+	case MethodDevice, MethodBrowser:
+		need := map[string][]string{
+			MethodDevice:  {"device_endpoint", "token_endpoint"},
+			MethodBrowser: {"authorization_endpoint", "token_endpoint"},
+		}[c.Method]
+		for _, e := range endpoints {
+			if slices.Contains(need, e.key) && e.value == "" {
+				f.errorf("kivali.connection.%s is missing; a %s connection needs it", e.key, c.Method)
+			}
+		}
+		switch key := c.CredentialKey(); {
+		case key == "":
+			f.errorf("kivali.connection.credential_keys.access_token is missing; name what the access token is given as, such as GH_TOKEN")
+		case !envNameRE.MatchString(key):
+			f.errorf("kivali.connection.credential_keys.access_token: %q must be capital letters, digits and underscores, starting with a letter", key)
+		}
+		for _, key := range []string{FieldClientID, FieldClientSecret} {
+			if _, ok := m.UserConfig.Field(key); ok {
+				f.errorf("user_config.%s: Kivali adds the client id and secret to a sign-in connection's form, so user_config does not declare them", key)
+			}
+		}
+	case "":
+		f.errorf("kivali.connection.method is missing; Kivali connects integrations with a pasted token, so it must be token")
+	default:
+		f.errorf("kivali.connection.method %s is not one Kivali knows; it must be token", c.Method)
+	}
+	for _, e := range endpoints {
+		if e.value != "" && !validEndpoint(e.value) {
+			f.errorf("kivali.connection.%s: %q must be an https:// address", e.key, e.value)
+		}
+	}
+	switch c.Client {
+	case "", "operator":
+	case "kivali":
+		f.errorf("kivali.connection.client: a client Kivali ships is not in this version of Kivali; the owner registers the app and the client is operator")
+	default:
+		f.errorf("kivali.connection.client %s is not one Kivali knows; it is operator", c.Client)
+	}
+	for _, key := range sortedKeys(c.CredentialKeys) {
+		if key != CredentialAccessToken {
+			f.errorf("kivali.connection.credential_keys.%s: only access_token can be named", key)
+		}
+	}
+	for i, s := range c.Scopes {
+		if strings.TrimSpace(s) == "" {
+			f.errorf("kivali.connection.scopes[%d] is empty", i)
+		}
+	}
+	for _, key := range sortedKeys(c.ExtraAuthorizationParams) {
+		if slices.Contains(reservedAuthorizationParams, key) {
+			f.errorf("kivali.connection.extra_authorization_params.%s: Kivali sets %s itself", key, key)
+		}
+	}
+}
+
+// validEndpoint reports whether u is an absolute https:// address, or
+// a plain http:// one on loopback (a vendor run in-process for tests).
+func validEndpoint(u string) bool {
+	p, err := url.Parse(u)
+	if err != nil || p.Host == "" || p.User != nil || p.Fragment != "" {
+		return false
+	}
+	switch p.Scheme {
+	case "https":
+		return true
+	case "http":
+		h := p.Hostname()
+		return h == "localhost" || h == "127.0.0.1" || h == "::1"
+	}
+	return false
 }
 
 func sortedKeys[V any](m map[string]V) []string {

@@ -89,17 +89,118 @@ type Kivali struct {
 	Access *Access `json:"access,omitempty"`
 	// Verify names the tool Test connection calls.
 	Verify string `json:"verify,omitempty"`
+	// SetupNotes is what to do on the vendor's side before connecting
+	// (register an app, the scopes to tick), Markdown, shown above the
+	// connection form.
+	SetupNotes string `json:"setup_notes,omitempty"`
 }
+
+// The ways a connection is made (Connection.Method).
+const (
+	// MethodToken: the owner pastes the connection's fields.
+	MethodToken = "token"
+	// MethodDevice: the owner signs in with a code shown on the page
+	// (the device authorization grant).
+	MethodDevice = "device"
+	// MethodBrowser: the owner signs in on the vendor's site, which
+	// sends the browser back to Kivali (the authorization code grant).
+	MethodBrowser = "browser"
+)
+
+// The connection fields core adds to the form of a connection made by
+// signing in: the OAuth app the owner registered with the vendor.
+const (
+	FieldClientID     = "client_id"
+	FieldClientSecret = "client_secret"
+)
+
+// CredentialAccessToken is the one key of Connection.CredentialKeys:
+// the access token's name in the answer an integration's call is
+// given.
+const CredentialAccessToken = "access_token"
 
 // Connection says how the integration is connected.
 type Connection struct {
-	// Method is "token": the owner pastes the connection's fields.
+	// Method is how the connection is made: MethodToken, MethodDevice
+	// or MethodBrowser.
 	Method string `json:"method"`
 	// Multiple says the integration takes several connections, each
 	// with a label, and each agent's access names the one it uses. Only
 	// a built-in integration may: a bundle's server is started with one
 	// connection's values.
 	Multiple bool `json:"multiple,omitempty"`
+
+	// The vendor's OAuth endpoints, for a connection made by signing
+	// in. Core talks to them; the integration never does.
+	DeviceEndpoint        string `json:"device_endpoint,omitempty"`
+	AuthorizationEndpoint string `json:"authorization_endpoint,omitempty"`
+	TokenEndpoint         string `json:"token_endpoint,omitempty"`
+	RevocationEndpoint    string `json:"revocation_endpoint,omitempty"`
+	// Scopes are what a sign-in asks the vendor for.
+	Scopes []string `json:"scopes,omitempty"`
+	// PKCE says whether browser sign-in sends a PKCE challenge; nil is
+	// true.
+	PKCE *bool `json:"pkce,omitempty"`
+	// Client is whose OAuth app signs in: "operator" (empty is the
+	// same), the app the owner registers and whose id and secret the
+	// connection form takes.
+	Client string `json:"client,omitempty"`
+	// ExtraAuthorizationParams are added to the vendor's authorization
+	// address as they are.
+	ExtraAuthorizationParams map[string]string `json:"extra_authorization_params,omitempty"`
+	// CredentialKeys names what the integration's calls are given:
+	// access_token's value is the name the access token goes under.
+	CredentialKeys map[string]string `json:"credential_keys,omitempty"`
+}
+
+// SignIn reports whether the connection is made by signing in (device
+// or browser) rather than with a pasted token.
+func (c Connection) SignIn() bool { return c.Method == MethodDevice || c.Method == MethodBrowser }
+
+// Ways is how the owner may sign in, the manifest's method first: a
+// device connection that also gives an authorization endpoint offers
+// browser too, and a browser one that gives a device endpoint offers
+// device. Empty for a token connection.
+func (c Connection) Ways() []string {
+	switch c.Method {
+	case MethodDevice:
+		if c.AuthorizationEndpoint != "" {
+			return []string{MethodDevice, MethodBrowser}
+		}
+		return []string{MethodDevice}
+	case MethodBrowser:
+		if c.DeviceEndpoint != "" {
+			return []string{MethodBrowser, MethodDevice}
+		}
+		return []string{MethodBrowser}
+	}
+	return []string{}
+}
+
+// UsesPKCE reports whether browser sign-in sends a PKCE challenge.
+func (c Connection) UsesPKCE() bool { return c.PKCE == nil || *c.PKCE }
+
+// CredentialKey is the name the access token goes under in a call's
+// answer; empty for a token connection.
+func (c Connection) CredentialKey() string { return c.CredentialKeys[CredentialAccessToken] }
+
+// ConnectionFields is the connection form: the manifest's user_config
+// followed, for a connection made by signing in, by the two fields core
+// adds, the client id and the client secret of the app the owner
+// registered with the vendor. It is what the page draws, a save writes
+// and a call reads.
+func ConnectionFields(m *Manifest) UserConfig {
+	if m == nil {
+		return nil
+	}
+	out := append(UserConfig{}, m.UserConfig...)
+	if m.Kivali.Connection.SignIn() {
+		out = append(out,
+			UserConfigField{Key: FieldClientID, Type: "string", Title: "Client id", Required: true},
+			UserConfigField{Key: FieldClientSecret, Type: "string", Title: "Client secret", Sensitive: true, Required: true},
+		)
+	}
+	return out
 }
 
 // Access is the access form: a JSON Schema of one object whose

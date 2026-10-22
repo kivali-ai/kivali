@@ -92,8 +92,9 @@ func packageItems(m *Manifest) []diffItem {
 // connectionItems are the connection's fields by title, a secret one
 // marked as the install screen marks it.
 func connectionItems(m *Manifest) []diffItem {
-	out := make([]diffItem, 0, len(m.UserConfig))
-	for _, f := range m.UserConfig {
+	fields := ConnectionFields(m)
+	out := make([]diffItem, 0, len(fields))
+	for _, f := range fields {
 		words := f.Title
 		if words == "" {
 			words = f.Key
