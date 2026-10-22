@@ -213,10 +213,10 @@ Every clone, fetch and push is in **Recent calls**, with the repository and the 
 
 GitHub is connected by [signing in](#connect-by-signing-in) with a GitHub App you register yourself, so Kivali holds no password or personal access token of yours and you choose what the app may touch. The integration's page shows the steps above the connection form; in short:
 
-1. On GitHub, in the settings of the account or organization that owns the repositories, create a GitHub App under **Developer settings**, **GitHub Apps**: with **Enable Device Flow** ticked, the webhook off, and the repository permissions Contents and Metadata read-only, Issues and Pull requests read and write.
+1. On GitHub, in the settings of the account or organization that owns the repositories, create a GitHub App under **Developer settings**, **GitHub Apps**: with the page's **Redirect address** as its callback URL, **Enable Device Flow** ticked, the webhook off, and the repository permissions Contents and Metadata read-only, Issues and Pull requests read and write.
 2. Install the app on that account or organization, for the repositories agents should reach. Agents reach only repositories the app is installed on.
 3. Paste its client id and a client secret you generate into the connection form, and choose **Save connection**.
-4. Choose **Sign in with a code** and approve the sign-in on GitHub.
+4. Choose **Sign in with a code**, or **Sign in in your browser**, and approve the sign-in on GitHub.
 
 Leave **Expire user authorization tokens** on in the app's settings: GitHub's tokens then last eight hours, and Kivali renews each one shortly before it expires, so a token that leaks stops working soon. **Test connection** names the GitHub account the connection signs in as. What agents can do is the smaller of what the app may do and what your GitHub account may do.
 
