@@ -5,7 +5,7 @@ import type { IntegrationVersion } from '../../api/types.gen';
 import { useFrameChrome } from '../../app/chrome';
 import { PageTitle } from '../../app/PageTitle';
 import { Badge, Banner, Button, Dialog, DialogClose, Skeleton, Text } from '../../ds';
-import { Block, Markdown, RollBackDialog, VersionBadge, actionWords, fieldKindWords, integrationApi, integrationPath, rollBackApi, whenLabel } from './integrationParts';
+import { Block, Markdown, RollBackDialog, ScopesLine, VersionBadge, actionWords, fieldKindWords, integrationApi, integrationPath, rollBackApi, whenLabel } from './integrationParts';
 import { ErrorBanner, formatBytes } from './parts';
 import { useAction, useResource } from './useResource';
 import '../../styles/org.css';
@@ -206,6 +206,7 @@ export function InstallScreen() {
             ))}
           </ul>
         )}
+        <ScopesLine scopes={v.scopes} />
       </Block>
 
       <Block label="Actions">

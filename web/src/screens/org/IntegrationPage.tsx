@@ -28,6 +28,7 @@ import {
   Block,
   Markdown,
   RollBackDialog,
+  ScopesLine,
   StatusBadge,
   VersionBadge,
   actionWords,
@@ -129,7 +130,7 @@ function useVisible(): boolean {
 }
 
 /** What the Sign in block of one connection is wired to: its routes, and what to do with the page they answer. */
-type SignInWiring = Pick<SignInBlockProps, 'api' | 'onPage' | 'onSignedIn'>;
+type SignInWiring = Pick<SignInBlockProps, 'api' | 'scopes' | 'onPage' | 'onSignedIn'>;
 
 interface SignInBlockProps {
   /** The connection; absent before the client id and secret are first saved. */
@@ -138,22 +139,27 @@ interface SignInBlockProps {
   fields: readonly ConnectionField[];
   /** The connection's routes: …/connection, or …/connections/{id}. */
   api: string;
+  /** What the sign-in asks the service for, shown above the block. */
+  scopes: readonly string[];
   busy: boolean;
   now: number;
   /** The page as Sign out answers it. */
   onPage(page: IntegrationPageData): void;
-  /** Reads the page again once a sign-in is done. */
-  onSignedIn(): void;
+  /** Reads the page again once a sign-in is done; settles once the page is in. */
+  onSignedIn(): Promise<unknown>;
 }
 
 /**
  * A connection made by signing in: Sign in with a code once the client id and secret are saved, then the code and
  * the service's page to enter it on while Kivali waits for the approval, asking how it stands every few seconds while
- * the tab is visible. Signed in, who the connection test found and Sign out; a sign-in that failed or expired, why,
- * and Try again.
+ * the tab is visible, and "Finishing the sign-in." once it is done until the page is read again. Signed in, who the
+ * connection test found and Sign out; a sign-in that failed or expired, why, and Try again; a connection none of
+ * whose ways this version offers, a sentence saying so. What the sign-in asks the service for is above it.
  */
-function SignInBlock({ connection, fields, api, busy, now, onPage, onSignedIn }: SignInBlockProps) {
+function SignInBlock({ connection, fields, api, scopes, busy, now, onPage, onSignedIn }: SignInBlockProps) {
   const [device, setDevice] = useState<DeviceSignIn | null>(null);
+  // Done, and the page is being read again: held so the block does not show Sign in with a code in between.
+  const [finishing, setFinishing] = useState(false);
   const [ended, setEnded] = useState<SignInProgress | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
   const [working, setWorking] = useState(false);
@@ -173,8 +179,12 @@ function SignInBlock({ connection, fields, api, busy, now, onPage, onSignedIn }:
         (p) => {
           if (stopped || p.state === 'pending') return;
           setDevice(null);
-          if (p.state === 'done') signedIn.current();
-          else setEnded(p);
+          if (p.state !== 'done') {
+            setEnded(p);
+            return;
+          }
+          setFinishing(true);
+          void signedIn.current().finally(() => setFinishing(false));
         },
         (err: unknown) => {
           if (!stopped) setError(asApiError(err));
@@ -236,8 +246,19 @@ function SignInBlock({ connection, fields, api, busy, now, onPage, onSignedIn }:
         </div>
       </>
     );
+  } else if (finishing) {
+    body = (
+      <Text as="p" variant="body" tone="muted">
+        Finishing the sign-in.
+      </Text>
+    );
   } else if (!byCode) {
-    body = null;
+    // The ways offered are this server's; a manifest may name only ways it does not have.
+    body = (
+      <Text as="p" variant="body" tone="muted">
+        This version of Kivali has no way to sign in to this service.
+      </Text>
+    );
   } else if (device) {
     const href = device.verification_url_complete ?? device.verification_url;
     body = (
@@ -293,13 +314,16 @@ function SignInBlock({ connection, fields, api, busy, now, onPage, onSignedIn }:
     );
   }
   return (
-    <section className="app-int-sign-in" aria-label="Sign in">
-      <Text as="h3" variant="label" tone="muted">
-        Sign in
-      </Text>
-      <ErrorBanner error={error} onDismiss={() => setError(null)} />
-      {body}
-    </section>
+    <>
+      <ScopesLine scopes={scopes} />
+      <section className="app-int-sign-in" aria-label="Sign in">
+        <Text as="h3" variant="label" tone="muted">
+          Sign in
+        </Text>
+        <ErrorBanner error={error} onDismiss={() => setError(null)} />
+        {body}
+      </section>
+    </>
   );
 }
 
@@ -731,7 +755,7 @@ export function IntegrationPage() {
   };
   // A sign-in or a sign-out changes the page and adds a row to the audit, which are read again.
   const signedIn = () =>
-    void action.run(async () => {
+    action.run(async () => {
       page.set(await apiGet<IntegrationPageData>(api));
       audit.set(await apiGet<IntegrationAudit>(api + '/audit'));
     });
@@ -741,7 +765,7 @@ export function IntegrationPage() {
   };
   const signInFor = (connectionApi: string): { signIn?: SignInWiring } =>
     p && (p.connection_method === 'device' || p.connection_method === 'browser')
-      ? { signIn: { api: connectionApi, onPage: signedOut, onSignedIn: signedIn } }
+      ? { signIn: { api: connectionApi, scopes: p.scopes, onPage: signedOut, onSignedIn: signedIn } }
       : {};
   const verifyConnection = (id: string) => void mutate(() => apiPost<IntegrationPageData>(connectionApi(id) + '/verify'));
   const deleteConnection = async (id: string) => {

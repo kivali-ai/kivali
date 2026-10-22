@@ -187,6 +187,22 @@ export function RollBackDialog({ version, current, busy, error, onConfirm, onClo
   );
 }
 
+/** What a sign-in connection asks the service for, in words; undefined when it names no scopes. */
+export function scopesLine(scopes: readonly string[]): string | undefined {
+  return scopes.length > 0 ? 'Asks the service for: ' + scopes.join(', ') : undefined;
+}
+
+/** The scopes line of a sign-in connection, on the install screen and the page; nothing when there are none. */
+export function ScopesLine({ scopes }: { scopes: readonly string[] }) {
+  const line = scopesLine(scopes);
+  if (!line) return null;
+  return (
+    <Text as="p" variant="caption" tone="muted">
+      {line}
+    </Text>
+  );
+}
+
 /** Version notes or a manifest's setup notes: Markdown, sanitized, set as Prose. Nothing for empty notes. */
 export function Markdown({ markdown }: { markdown: string }) {
   const html = useMemo(() => renderMarkdown(markdown), [markdown]);
