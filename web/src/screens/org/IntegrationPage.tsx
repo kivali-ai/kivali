@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import type { ReactNode } from 'react';
 import { useHref, useNavigate, useParams } from 'react-router';
 import { apiDelete, apiGet, apiPost, apiPut } from '../../api/client';
 import type {
@@ -17,7 +18,7 @@ import type {
 } from '../../api/types.gen';
 import { useFrameChrome } from '../../app/chrome';
 import { PageTitle } from '../../app/PageTitle';
-import { Badge, Banner, Button, Dialog, DialogClose, Icon, ListRow, Select, Skeleton, Switch, Table, Text, TextField } from '../../ds';
+import { Badge, Banner, Button, Card, Dialog, DialogClose, Icon, ListRow, Select, Skeleton, Switch, Table, Text, TextField } from '../../ds';
 import type { BadgeTone, TableColumn } from '../../ds';
 import { AccessDialog } from './AccessDialog';
 import {
@@ -26,6 +27,7 @@ import {
   StatusBadge,
   VersionBadge,
   actionWords,
+  agentsLabel,
   durationLabel,
   integrationApi,
   invalidAccessLine,
@@ -55,16 +57,31 @@ export function connectionBody(fields: readonly ConnectionField[], values: Recor
   return { fields: out };
 }
 
+/** What Test connection last found, when it worked. A failed test shows as a banner instead (see ConnectionForm). */
+function verifiedLine(c: ConnectionState, now: number): string | undefined {
+  if (!c.verified_at || !c.verified) return undefined;
+  const said = c.verify_message ?? '';
+  return 'Verified ' + whenLabel(c.verified_at, now) + (said ? ': ' + said : '');
+}
+
 /** The lines under the connection form: since when it is connected and what Test connection last found. */
 function connectionLines(c: ConnectionState | undefined, now: number): string[] {
   if (!c) return ['Not connected.'];
-  const lines = ['Connected since ' + whenLabel(c.created_at, now)];
-  if (c.verified_at) {
-    const said = c.verify_message ?? '';
-    // A failed test shows as a banner instead (see ConnectionForm).
-    if (c.verified) lines.push('Verified ' + whenLabel(c.verified_at, now) + (said ? ': ' + said : ''));
-  }
-  return lines;
+  const verified = verifiedLine(c, now);
+  return ['Connected since ' + whenLabel(c.created_at, now), ...(verified ? [verified] : [])];
+}
+
+/** A folded connection card's line: a badge when it needs you, then how many agents use it and since when. */
+function connectionMeta(c: ConnectionState, agents: number, now: number): ReactNode {
+  return (
+    <>
+      {c.reconnect_needed && <Badge tone="danger">Reconnect needed</Badge>}
+      {c.verified_at && c.verified === false && <Badge tone="danger">Could not verify</Badge>}
+      <span>{agentsLabel(agents)}</span>
+      <span aria-hidden="true">·</span>
+      <span>{'Connected since ' + whenLabel(c.created_at, now)}</span>
+    </>
+  );
 }
 
 interface ConnectionFormProps {
@@ -170,6 +187,10 @@ interface ConnectionCardProps {
   connection?: ConnectionState;
   /** The connection form with what this connection holds. */
   fields: readonly ConnectionField[];
+  /** How many agents' access uses the connection. */
+  agents?: number;
+  /** Whether a stored connection's card starts open; one being added is always open. */
+  open?: boolean;
   busy: boolean;
   running: boolean;
   now: number;
@@ -181,22 +202,21 @@ interface ConnectionCardProps {
 }
 
 /**
- * One of several connections, as a card: its label, its fields (a stored secret shows only that it is stored), what
- * Test connection last found, and Save, Test connection (when the integration has one) and Delete; or, for a
- * connection being added, the same form blank, with Add connection and Cancel.
+ * One of several connections, as a card that folds to its label and a line saying whether it needs you, how many
+ * agents use it and since when it is connected. Open, it holds its fields (a stored secret shows only that it is
+ * stored), what Test connection last found, and Save, Test connection (when the integration has one) and Delete. A
+ * connection being added is the same form blank, always open, with Add connection and Cancel.
  */
-function ConnectionCard({ connection, fields, busy, running, now, onSave, onVerify, onDelete, onCancel }: ConnectionCardProps) {
+function ConnectionCard({ connection, fields, agents = 0, open = false, busy, running, now, onSave, onVerify, onDelete, onCancel }: ConnectionCardProps) {
   const [label, setLabel] = useState(connection?.label ?? '');
   // The label is sent only once typed into: a label the integration derives (Git's host) is not stored, so it
   // follows the fields; sending it back on every save would fix it in place.
   const [labelEdited, setLabelEdited] = useState(false);
   const [values, setValues] = useState(() => startingValues(fields));
   const title = connection ? connection.label || 'Connection' : 'New connection';
+  const verified = connection && verifiedLine(connection, now);
   return (
-    <section className="app-int-conn" aria-label={title}>
-      <Text as="h3" variant="label">
-        {title}
-      </Text>
+    <Card title={title} {...(connection ? { collapsible: true, defaultOpen: open, meta: connectionMeta(connection, agents, now) } : {})}>
       <form
         className="app-int-form"
         onSubmit={(e) => {
@@ -235,14 +255,10 @@ function ConnectionCard({ connection, fields, busy, running, now, onSave, onVeri
             }}
           />
         ))}
-        {connection && (
-          <div className="app-int-status">
-            {connectionLines(connection, now).map((line) => (
-              <Text key={line} as="p" variant="caption" tone="muted">
-                {line}
-              </Text>
-            ))}
-          </div>
+        {verified && (
+          <Text as="p" variant="caption" tone="muted">
+            {verified}
+          </Text>
         )}
         <div className="app-org-actions">
           <Button type="submit" variant="primary" disabled={busy}>
@@ -273,7 +289,7 @@ function ConnectionCard({ connection, fields, busy, running, now, onSave, onVeri
           )}
         </div>
       </form>
-    </section>
+    </Card>
   );
 }
 
@@ -610,6 +626,9 @@ export function IntegrationPage() {
                 key={c.id + ':' + (cardSeq[c.id] ?? 0)}
                 connection={c}
                 fields={c.fields}
+                agents={p.access.filter((a) => a.connection_id === c.id).length}
+                // A card remounts after its own save (cardSeq), which it can only have while open: it stays open.
+                open={(cardSeq[c.id] ?? 0) > 0}
                 busy={action.busy}
                 running={running}
                 now={now}
