@@ -90,7 +90,7 @@ func (s *Server) builtinProxySecretLocked(ctx context.Context, name string, bi b
 	if err != nil {
 		return "", err
 	}
-	conn, secret, _, err := s.builtinConnection(ctx, name, connID)
+	conn, secret, err := s.builtinStoredConnection(ctx, name, connID)
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		return "", nil

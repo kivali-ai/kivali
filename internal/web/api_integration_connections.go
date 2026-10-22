@@ -31,6 +31,7 @@ import (
 
 	"github.com/kivali-ai/kivali/internal/agent"
 	"github.com/kivali-ai/kivali/internal/builtinintegrations"
+	"github.com/kivali-ai/kivali/internal/connect"
 	"github.com/kivali-ai/kivali/internal/egresscred"
 	"github.com/kivali-ai/kivali/internal/integration"
 	"github.com/kivali-ai/kivali/internal/integrationpod"
@@ -190,8 +191,9 @@ func (s *Server) saveConnection(w http.ResponseWriter, r *http.Request, v *integ
 		return
 	}
 	m := v.manifest
+	form := integration.ConnectionFields(m)
 	for _, k := range sortedFieldKeys(req.Fields) {
-		if _, ok := m.UserConfig.Field(k); !ok {
+		if _, ok := form.Field(k); !ok {
 			writeAPIError(w, http.StatusBadRequest, k+" is not a field of this integration's connection", whoDevelopers)
 			return
 		}
@@ -209,7 +211,7 @@ func (s *Server) saveConnection(w http.ResponseWriter, r *http.Request, v *integ
 		}
 	}
 	fields, secret := map[string]string{}, map[string]string{}
-	for _, f := range m.UserConfig {
+	for _, f := range form {
 		val, sent := req.Fields[f.Key]
 		val = strings.TrimSpace(val)
 		switch {
@@ -243,7 +245,11 @@ func (s *Server) saveConnection(w http.ResponseWriter, r *http.Request, v *integ
 	if cur != nil {
 		conn.ID = cur.rec.ID
 	}
-	for _, f := range m.UserConfig {
+	for _, f := range form {
+		if f.Key == integration.FieldClientSecret && m.Kivali.Connection.SignIn() {
+			// Core's alone, as on every call.
+			continue
+		}
 		if val := cmp.Or(fields[f.Key], secret[f.Key]); val != "" {
 			conn.Fields[f.Key] = val
 		}
@@ -257,7 +263,9 @@ func (s *Server) saveConnection(w http.ResponseWriter, r *http.Request, v *integ
 	}
 	rec := store.IntegrationConnection{ID: newConnectionID(), CreatedAt: s.clk().Now(), Fields: fields}
 	if cur != nil {
-		rec.ID, rec.CreatedAt = cur.rec.ID, cur.rec.CreatedAt
+		// A sign-in stays: saving the form changes its fields, not the
+		// tokens the owner signed in for.
+		rec.ID, rec.CreatedAt, rec.SignIn = cur.rec.ID, cur.rec.CreatedAt, cur.rec.SignIn
 	} else {
 		for v.connByID(rec.ID) != nil {
 			rec.ID = newConnectionID()
@@ -280,6 +288,13 @@ func (s *Server) saveConnection(w http.ResponseWriter, r *http.Request, v *integ
 	// among the keys the owner is shown.
 	hostsOf := builtinHostsOf(v.builtin)
 	keys := sortedFieldKeys(secret)
+	// A sign-in's tokens are kept in the same Secret, and no field of
+	// the form either.
+	for _, k := range []string{connect.SecretKeyAccessToken, connect.SecretKeyRefreshToken} {
+		if t := stored[k]; t != "" {
+			secret[k] = t
+		}
+	}
 	if hostsOf != nil {
 		proxySecret := stored[builtinintegrations.ProxySecretKey]
 		if proxySecret == "" {
@@ -440,11 +455,14 @@ func (s *Server) handleAPIIntegrationConnectionDeleteByID(w http.ResponseWriter,
 	// The Secret goes first: on a failure the record stays, so the
 	// Secret is not left behind with nothing naming it.
 	if c.rec.SecretName != "" {
+		tokens := s.revocableTokens(r.Context(), name, v.manifest, c.rec)
 		if err := s.Secrets.Delete(r.Context(), c.rec.SecretName); err != nil {
 			log.Printf("integration %s: delete Secret %s: %v", name, c.rec.SecretName, err)
 			writeAPIError(w, http.StatusInternalServerError, "the connection's secrets could not be removed, so nothing was changed", whoServer)
 			return
 		}
+		// A sign-in's tokens are revoked with the vendor, best effort.
+		s.revokeSignIn(r.Context(), name, v.manifest, c.rec, tokens)
 	}
 	// With its Secret gone the credential's secret is gone too, so the
 	// credential goes now, whatever the store's step does next.

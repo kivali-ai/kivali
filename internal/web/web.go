@@ -26,6 +26,7 @@ import (
 	"github.com/kivali-ai/kivali/internal/builtinintegrations/builtins"
 	"github.com/kivali-ai/kivali/internal/clock"
 	"github.com/kivali-ai/kivali/internal/clockcheck"
+	"github.com/kivali-ai/kivali/internal/connect"
 	"github.com/kivali-ai/kivali/internal/debian"
 	"github.com/kivali-ai/kivali/internal/messaging"
 	"github.com/kivali-ai/kivali/internal/provider"
@@ -171,6 +172,14 @@ type Server struct {
 	// Integrations is the registry NewServer builds from the store,
 	// Secrets and IntegrationProvisioner; StartIntegrations runs it.
 	Integrations *integrationRegistry
+	// Connect makes the OAuth requests of connections made by signing
+	// in (integration_signin.go). NewServer gives a Server without one
+	// an engine on Clock with a 30-second HTTP timeout; tests point one
+	// at connecttest.FakeVendor.
+	Connect *connect.Engine
+	// signInRefresher runs one refresh at a time per sign-in
+	// connection.
+	signInRefresher connect.Refresher
 
 	// SeedTimeout bounds one Chief of Staff hire, measured on Clock; a
 	// hire still running when it passes ends as failed. Zero means
@@ -389,6 +398,12 @@ func NewServer(s *Server) (*Server, error) {
 	if s.Integrations == nil && s.Store != nil {
 		// Secrets is read at each use: tests swap it after NewServer.
 		s.Integrations = newIntegrationRegistry(s.Store, func() secrets.Store { return s.Secrets }, s.shippedBundle, s.IntegrationProvisioner, s.Clock, log.Printf)
+	}
+	if s.Connect == nil {
+		s.Connect = &connect.Engine{Clock: s.Clock, HTTP: &http.Client{Timeout: connectHTTPTimeout}}
+	}
+	if s.Integrations != nil {
+		s.Integrations.signIn = s.signInAccessToken
 	}
 	if s.SubagentService != nil && s.SubagentService.Clock == nil {
 		s.SubagentService.Clock = s.Clock

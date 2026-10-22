@@ -367,14 +367,15 @@ func (s *Shim) loop(ctx context.Context, m *integration.Manifest, events <-chan 
 }
 
 // serverEnv is the manifest's env with the connection's values put
-// in, as core gives them; with no connection, every value is empty.
+// in, as core gives them; with no connection, or one that needs the
+// owner to sign in, every value is empty.
 func (s *Shim) serverEnv(ctx context.Context, m *integration.Manifest) (map[string]string, error) {
 	resp, err := s.request(ctx, MethodCredential, nil)
 	if err != nil {
 		return nil, fmt.Errorf("ask core for the connection: %w", err)
 	}
 	if resp.Error != nil {
-		if resp.Error.Code == CodeNoConnection {
+		if resp.Error.Code == CodeNoConnection || resp.Error.Code == CodeSignInNeeded {
 			return integration.ServerEnv(m, nil), nil
 		}
 		return nil, fmt.Errorf("ask core for the connection: %s", resp.Error.Message)

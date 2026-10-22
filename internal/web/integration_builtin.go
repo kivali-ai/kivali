@@ -101,7 +101,11 @@ func (s *Server) builtinConnection(ctx context.Context, name, connID string) (bu
 
 // builtinConnectionSecrets is builtinConnection with the secret values
 // themselves in place of their scrubber: the sensitive fields' values
-// and the proxy credential's secret.
+// and the proxy credential's secret. For a connection made by signing
+// in, Fields holds the current access token under its credential_keys
+// name (refreshed first when it is about to expire) and never the
+// client secret; errSignInNeeded and errVendorUnavailable say why
+// there is none.
 func (s *Server) builtinConnectionSecrets(ctx context.Context, name, connID string) (builtinintegrations.Connection, string, []string, error) {
 	_, rec, values, secretValues, proxySecret, err := s.Integrations.readConnection(ctx, name, connID)
 	if err != nil {
@@ -111,6 +115,29 @@ func (s *Server) builtinConnectionSecrets(ctx context.Context, name, connID stri
 		secretValues = append(secretValues, proxySecret)
 	}
 	return builtinintegrations.Connection{ID: rec.ID, Fields: values}, proxySecret, secretValues, nil
+}
+
+// builtinStoredConnection is builtinConnection as the connection is
+// stored, with no sign-in's access token and no refresh: for a caller
+// that holds lockIntegrations, which a refresh takes.
+func (s *Server) builtinStoredConnection(ctx context.Context, name, connID string) (builtinintegrations.Connection, string, error) {
+	_, rec, values, _, proxySecret, _, err := s.Integrations.readStoredConnection(ctx, name, connID)
+	if err != nil {
+		return builtinintegrations.Connection{}, "", err
+	}
+	return builtinintegrations.Connection{ID: rec.ID, Fields: values}, proxySecret, nil
+}
+
+// refuseSignInNeeded answers a call of a built-in whose connection
+// needs the owner to sign in again.
+func refuseSignInNeeded(display string) string {
+	return fmt.Sprintf("%s's connection needs the owner to sign in again; ask the owner.", display)
+}
+
+// refuseVendorUnavailable answers a call of a built-in whose access
+// token expired while the vendor did not answer its refresh.
+func refuseVendorUnavailable(display string) string {
+	return fmt.Sprintf("%s did not answer when Kivali renewed the connection's sign-in; try again later or tell the owner.", display)
 }
 
 // jobConnectionNote is what the audit row of a call's second request
@@ -249,6 +276,12 @@ func (s *Server) builtinAgentCall(ctx context.Context, start time.Time, slug str
 	case errors.Is(err, store.ErrNotFound):
 		s.auditAgentCall(v.name, start, slug, tool, false, "the integration has no connection")
 		return integrationError(refuseNoConnection(v.display))
+	case errors.Is(err, errSignInNeeded):
+		s.auditAgentCall(v.name, start, slug, tool, false, errSignInNeeded.Error())
+		return integrationError(refuseSignInNeeded(v.display))
+	case errors.Is(err, errVendorUnavailable):
+		s.auditAgentCall(v.name, start, slug, tool, true, "the vendor did not answer the connection's refresh")
+		return integrationError(refuseVendorUnavailable(v.display))
 	case err != nil:
 		s.auditAgentCall(v.name, start, slug, tool, true, "the connection could not be read")
 		return integrationError(fmt.Sprintf("Kivali could not read the %s integration's connection; try again later or tell the owner.", v.display))
@@ -365,6 +398,9 @@ func (s *Server) builtinOwnerCall(ctx context.Context, bi builtinintegrations.In
 	case errors.Is(err, store.ErrNotFound):
 		raw, err := builtinResultJSON(&builtinintegrations.Result{Content: []string{"the integration has no connection"}, IsError: true}, nil)
 		return raw, nil, err
+	case errors.Is(err, errSignInNeeded), errors.Is(err, errVendorUnavailable):
+		raw, err := builtinResultJSON(&builtinintegrations.Result{Content: []string{err.Error()}, IsError: true}, nil)
+		return raw, newScrubber(nil), err
 	case err != nil:
 		raw, err := builtinResultJSON(&builtinintegrations.Result{Content: []string{"the connection could not be read"}, IsError: true}, nil)
 		return raw, nil, err

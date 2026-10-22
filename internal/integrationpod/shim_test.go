@@ -57,6 +57,9 @@ type fakeCore struct {
 	// steps, when set, records each events stream opened ("events") and
 	// each log line posted ("log: <message>"), in the order they came.
 	steps *steps
+	// credCode, when set, answers the connection's values with this
+	// error code.
+	credCode int
 	// refuse is how many event streams to answer 403.
 	refuse int
 	// bodies is every post as it arrived.
@@ -171,7 +174,7 @@ func (c *fakeCore) rpc(w http.ResponseWriter, r *http.Request) {
 	}
 	c.mu.Lock()
 	c.bodies = append(c.bodies, string(body))
-	values := c.values
+	values, credCode := c.values, c.credCode
 	c.mu.Unlock()
 	if p, ok := postLog(m); ok {
 		c.record("log: " + p.Message)
@@ -183,6 +186,8 @@ func (c *fakeCore) rpc(w http.ResponseWriter, r *http.Request) {
 	}
 	var out []byte
 	switch {
+	case m.Method == MethodCredential && credCode != 0:
+		out, _ = Response(m.ID, nil, &RPCError{Code: credCode, Message: "the connection needs the owner to sign in again"})
 	case m.Method == MethodCredential && values == nil:
 		out, _ = Response(m.ID, nil, &RPCError{Code: CodeNoConnection, Message: "no connection"})
 	case m.Method == MethodCredential:
@@ -520,6 +525,29 @@ func TestShimAnswersOtherServerRequests(t *testing.T) {
 	}
 	if n := rc.count(func(m Message) bool { return m.Method == "sampling/createMessage" }); n != 0 {
 		t.Errorf("the request reached core %d times", n)
+	}
+}
+
+// Why this test exists: a connection made by signing in whose owner
+// has not signed in (or must sign in again) answers the values with
+// CodeSignInNeeded. If the shim treated that as a failure, the server
+// would never start and the pod would restart for ever; it starts the
+// server with empty values, as with no connection, and a sign-in later
+// restarts it.
+func TestShimStartsTheServerWhenSignInIsNeeded(t *testing.T) {
+	m := testManifest(map[string]string{"FAKE_TOKEN": "${user_config.token}"})
+	c := newFakeCore(t, m)
+	c.mu.Lock()
+	c.credCode = CodeSignInNeeded
+	c.mu.Unlock()
+	_, _, _ = runShim(t, c, m)
+	rc := &recorder{c: c}
+	st := c.stream()
+	st.send(EventStart, "{}")
+	rc.log("server started")
+	st.send(EventRPC, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"whoami","arguments":{}}}`)
+	if got := toolText(t, rc.response(1)); got != "fake account " {
+		t.Errorf("whoami = %q, want the server started with no token", got)
 	}
 }
 

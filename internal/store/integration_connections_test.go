@@ -153,3 +153,42 @@ func TestDeleteIntegrationConnectionByID(t *testing.T) {
 		t.Errorf("a after clearing its access: %v", err)
 	}
 }
+
+// Why this test exists: a sign-in connection's state (how and when the
+// owner signed in, when the access token expires, why it needs a new
+// sign-in) is what the credential path decides on and what the page
+// and Needs you show. Lost on the way to disk, a restart would refresh
+// a token too late or forget that the owner must sign in again; and a
+// token connection must keep no sign-in state at all.
+func TestIntegrationConnectionSignInRoundTrip(t *testing.T) {
+	s := mustStore(t)
+	multipleEcho(t, s)
+	cest := time.FixedZone("CEST", 2*60*60)
+	in := IntegrationConnection{ID: "c", Label: "GitHub app", CreatedAt: intNow, SignIn: &ConnectionSignIn{
+		Method: "device", SignedInAt: intNow.In(cest), ExpiresAt: intNow.Add(8 * time.Hour).In(cest), Scope: "repo,read:org",
+		Error: "the vendor refused it (bad_refresh_token)", ErrorAt: intNow.Add(9 * time.Hour),
+	}}
+	if err := s.PutIntegrationConnection(echotest.Name, in); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetIntegrationConnectionByID(echotest.Name, "c")
+	if err != nil {
+		t.Fatal(err)
+	}
+	si := got.SignIn
+	if si == nil || si.Method != "device" || !si.SignedInAt.Equal(intNow) || !si.ExpiresAt.Equal(intNow.Add(8*time.Hour)) ||
+		si.Scope != "repo,read:org" || si.Error != in.SignIn.Error || !si.ErrorAt.Equal(intNow.Add(9*time.Hour)) {
+		t.Errorf("sign-in read back as %+v", si)
+	}
+	if !got.NeedsSignIn(true) {
+		t.Error("a connection whose refresh was refused does not need a sign-in")
+	}
+	got.SignIn.Error = ""
+	if got.NeedsSignIn(true) || !got.NeedsSignIn(false) {
+		t.Error("a working sign-in: needs one only without its access token")
+	}
+	a, err := s.GetIntegrationConnectionByID(echotest.Name, "a")
+	if err != nil || a.SignIn != nil || !a.NeedsSignIn(true) {
+		t.Errorf("a connection never signed in: %+v, %v", a, err)
+	}
+}

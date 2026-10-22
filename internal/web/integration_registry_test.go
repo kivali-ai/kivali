@@ -115,6 +115,7 @@ func (p *fakeIntegrationProv) pod(name string) fakeIntegrationPod {
 func withIntegrationRegistry(srv *Server, prov IntegrationProvisioner) (*integrationRegistry, *clock.Fake) {
 	clk := clock.NewFake()
 	srv.Integrations = newIntegrationRegistry(srv.Store, func() secrets.Store { return srv.Secrets }, srv.shippedBundle, prov, clk, nil)
+	srv.Integrations.signIn = srv.signInAccessToken
 	return srv.Integrations, clk
 }
 
