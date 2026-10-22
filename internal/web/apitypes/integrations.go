@@ -190,6 +190,50 @@ type ConnectionSignIn struct {
 	Error *string `json:"error,omitempty"`
 }
 
+// DeviceSignIn is the answer of POST
+// /api/v1/org/integrations/{name}/connections/{id}/sign-in/device (and
+// .../connection/sign-in/device): the code the owner enters on the
+// service's page, and where. Kivali waits for the owner's approval in
+// the background; GET .../sign-in says how it went.
+type DeviceSignIn struct {
+	// UserCode is the code the owner enters, as the service gave it.
+	UserCode string `json:"user_code"`
+	// VerificationURL is the service's page the code is entered on.
+	VerificationURL string `json:"verification_url"`
+	// VerificationURLComplete is the same page with the code filled
+	// in, when the service gives one.
+	VerificationURLComplete *string `json:"verification_url_complete,omitempty"`
+	// ExpiresAt is when the code stops working.
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+// SignInState is how a sign-in under way stands.
+type SignInState string
+
+const (
+	// SignInStatePending: waiting for the owner to approve on the
+	// service's page.
+	SignInStatePending SignInState = "pending"
+	// SignInStateDone: signed in; the connection holds the tokens.
+	SignInStateDone SignInState = "done"
+	// SignInStateFailed: the service refused, or the owner said no.
+	SignInStateFailed SignInState = "failed"
+	// SignInStateExpired: the code expired before the owner approved,
+	// or Kivali has no sign-in under way for the connection (it
+	// restarted since).
+	SignInStateExpired SignInState = "expired"
+)
+
+// SignInProgress is the answer of GET
+// /api/v1/org/integrations/{name}/connections/{id}/sign-in (and
+// .../connection/sign-in): how the connection's latest sign-in stands.
+type SignInProgress struct {
+	State SignInState `json:"state"`
+	// Error says why a sign-in failed or expired, in the service's
+	// words where it gave some.
+	Error *string `json:"error,omitempty"`
+}
+
 // ConnectionWrite is the body of PUT
 // /api/v1/org/integrations/{name}/connection, POST .../connections and
 // PUT .../connections/{id}: field values by key, and the label. A

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -192,8 +191,7 @@ func TestBuiltinOwnerCallWithNoScrubberIsHeldBack(t *testing.T) {
 	srv := newTestServer(t)
 	echo := withEcho(t, srv)
 	v := &integrationView{it: store.Integration{Name: "echo"}, builtin: echo}
-	r := httptest.NewRequest(http.MethodPost, "/", nil)
-	res, failed, err := srv.callIntegrationTool(r, v, "whoami", func(context.Context) (json.RawMessage, *strings.Replacer, error) {
+	res, failed, err := srv.callIntegrationTool(context.Background(), v, "whoami", func(context.Context) (json.RawMessage, *strings.Replacer, error) {
 		return json.RawMessage(`{"content":[{"type":"text","text":"token ` + echoToken + `"}],"isError":true}`), nil, nil
 	})
 	if err != nil || len(res.Content) != 0 || failed != "Kivali could not check the integration's answer for secrets, so it held the answer back" {

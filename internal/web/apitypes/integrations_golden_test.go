@@ -327,3 +327,20 @@ func goldenAgentIntegrations() AgentIntegrations {
 		},
 	}
 }
+
+// goldenDeviceSignIn is a device sign-in just started, with the
+// service's page that has the code filled in.
+func goldenDeviceSignIn() DeviceSignIn {
+	complete := "https://github.com/login/device?user_code=WDJB-MJHT"
+	return DeviceSignIn{
+		UserCode: "WDJB-MJHT", VerificationURL: "https://github.com/login/device",
+		VerificationURLComplete: &complete, ExpiresAt: integrationLater.Add(15 * time.Minute),
+	}
+}
+
+// goldenSignInFailed is a device sign-in the owner turned down on the
+// service's page.
+func goldenSignInFailed() SignInProgress {
+	words := "the vendor refused the sign-in (access_denied): The user has denied your application access."
+	return SignInProgress{State: SignInStateFailed, Error: &words}
+}

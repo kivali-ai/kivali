@@ -307,20 +307,27 @@ func (s *Server) revokeSignIns(ctx context.Context, rs signInRevocations) {
 // revokeSignIn asks the vendor to revoke rec's tokens, found in data,
 // best effort: a manifest with no revocation endpoint, or a connection
 // that holds no tokens, sends nothing, and a failure is logged. It
-// runs once the connection is deleted, which it never holds up for
-// longer than revokeTimeout.
+// runs once the connection is deleted or signed out, which it never
+// holds up for longer than revokeTimeout.
 func (s *Server) revokeSignIn(ctx context.Context, name string, m *integration.Manifest, rec store.IntegrationConnection, data map[string]string) {
 	if m == nil || !m.Kivali.Connection.SignIn() || m.Kivali.Connection.RevocationEndpoint == "" {
 		return
 	}
 	tok := connect.Tokens{Access: data[connect.SecretKeyAccessToken], Refresh: data[connect.SecretKeyRefreshToken]}
-	if tok.Access == "" && tok.Refresh == "" {
+	s.revokeTokens(ctx, name, rec.ID, m, signInClient(rec, data), tok)
+}
+
+// revokeTokens asks the vendor to revoke tok, issued to client for
+// name's connection id, best effort, as revokeSignIn does: nothing to
+// send with no revocation endpoint or no token, a failure logged.
+func (s *Server) revokeTokens(ctx context.Context, name, id string, m *integration.Manifest, client connect.Client, tok connect.Tokens) {
+	if m.Kivali.Connection.RevocationEndpoint == "" || (tok.Access == "" && tok.Refresh == "") {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), revokeTimeout)
 	defer cancel()
-	if err := s.connectEngine().Revoke(ctx, signInEndpoints(m), signInClient(rec, data), tok); err != nil {
-		log.Printf("integration %s: revoke connection %s's tokens: %v", name, rec.ID, err)
+	if err := s.connectEngine().Revoke(ctx, signInEndpoints(m), client, tok); err != nil {
+		log.Printf("integration %s: revoke connection %s's tokens: %v", name, id, err)
 	}
 }
 

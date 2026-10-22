@@ -180,6 +180,8 @@ type Server struct {
 	// signInRefresher runs one refresh at a time per sign-in
 	// connection.
 	signInRefresher connect.Refresher
+	// signInFlows are the sign-ins under way (integration_signin_flows.go).
+	signInFlows signInFlows
 
 	// SeedTimeout bounds one Chief of Staff hire, measured on Clock; a
 	// hire still running when it passes ends as failed. Zero means

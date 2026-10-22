@@ -49,10 +49,16 @@ func (s *Server) wireAPIIntegrationRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/v1/org/integrations/{name}/connection", s.handleAPIIntegrationConnectionPut)
 	mux.HandleFunc("DELETE /api/v1/org/integrations/{name}/connection", s.handleAPIIntegrationConnectionDelete)
 	mux.HandleFunc("POST /api/v1/org/integrations/{name}/connection/verify", s.handleAPIIntegrationVerify)
+	mux.HandleFunc("POST /api/v1/org/integrations/{name}/connection/sign-in/device", s.handleAPISignInDevice(false))
+	mux.HandleFunc("GET /api/v1/org/integrations/{name}/connection/sign-in", s.handleAPISignInProgress(false))
+	mux.HandleFunc("POST /api/v1/org/integrations/{name}/connection/sign-out", s.handleAPISignOut(false))
 	mux.HandleFunc("POST /api/v1/org/integrations/{name}/connections", s.handleAPIIntegrationConnectionCreate)
 	mux.HandleFunc("PUT /api/v1/org/integrations/{name}/connections/{id}", s.handleAPIIntegrationConnectionPutByID)
 	mux.HandleFunc("DELETE /api/v1/org/integrations/{name}/connections/{id}", s.handleAPIIntegrationConnectionDeleteByID)
 	mux.HandleFunc("POST /api/v1/org/integrations/{name}/connections/{id}/verify", s.handleAPIIntegrationVerifyByID)
+	mux.HandleFunc("POST /api/v1/org/integrations/{name}/connections/{id}/sign-in/device", s.handleAPISignInDevice(true))
+	mux.HandleFunc("GET /api/v1/org/integrations/{name}/connections/{id}/sign-in", s.handleAPISignInProgress(true))
+	mux.HandleFunc("POST /api/v1/org/integrations/{name}/connections/{id}/sign-out", s.handleAPISignOut(true))
 	mux.HandleFunc("PUT /api/v1/org/integrations/{name}/access/{slug}", s.handleAPIIntegrationAccessPut)
 	mux.HandleFunc("DELETE /api/v1/org/integrations/{name}/access/{slug}", s.handleAPIIntegrationAccessDelete)
 	mux.HandleFunc("GET /api/v1/org/integrations/{name}/audit", s.handleAPIIntegrationAudit)
@@ -741,6 +747,10 @@ func (s *Server) handleAPIIntegrationToggle(on bool) http.HandlerFunc {
 			writeAPIError(w, http.StatusInternalServerError, "the integration's switch could not be saved", whoServer)
 			return
 		}
+		// A sign-in under way ends with the integration switched off.
+		if !on {
+			s.signInFlows.cancel(v.it.Name, "")
+		}
 		// A built-in's connection reaches its hosts only while it is on.
 		if err := s.builtinEgressAfterSwitch(r.Context(), v.it.Name, v.builtin, on); err != nil {
 			log.Printf("integration %s: the connection's proxy credential: %v", v.it.Name, err)
@@ -778,6 +788,7 @@ func (s *Server) removeIntegrationLocked(w http.ResponseWriter, r *http.Request)
 		writeAPIError(w, http.StatusConflict, builtinRefusal(v.displayName(), builtinRemove), whoYou)
 		return nil, false
 	}
+	s.signInFlows.cancel(v.it.Name, "")
 	revokes, ok := s.deleteConnectionSecrets(w, r, v.it.Name)
 	if !ok {
 		return revokes, false
@@ -1270,7 +1281,7 @@ func (s *Server) handleAPIIntegrationChoices(w http.ResponseWriter, r *http.Requ
 		connID = conn.rec.ID
 	}
 	listName := v.manifest.Kivali.Access.Choices[key]
-	res, failed, err := s.callIntegrationTool(r, v, listName, func(ctx context.Context) (json.RawMessage, *strings.Replacer, error) {
+	res, failed, err := s.callIntegrationTool(r.Context(), v, listName, func(ctx context.Context) (json.RawMessage, *strings.Replacer, error) {
 		return s.builtinOwnerCall(ctx, v.builtin, v.it.Name, connID, false, listName)
 	})
 	if errors.Is(err, errIntegrationNotRunning) {
