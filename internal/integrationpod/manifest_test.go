@@ -2,6 +2,7 @@ package integrationpod
 
 import (
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 
@@ -52,7 +53,7 @@ func containerNamed(t *testing.T, spec map[string]any, key, name string) map[str
 // node. This fails when any of those changes.
 func TestPodManifestLoadBearingProperties(t *testing.T) {
 	const token = "tok-0123456789abcdef"
-	m := asJSON(t, testConfig().podManifest("hubspot", "1.2.0", token))
+	m := asJSON(t, testConfig().podManifest("hubspot", "1.2.0", token, false))
 	raw, _ := json.Marshal(m)
 	for _, ref := range []string{"secretKeyRef", "secretRef", `"secret":`, "envFrom"} {
 		if strings.Contains(string(raw), ref) {
@@ -170,7 +171,7 @@ func TestPodManifestLoadBearingProperties(t *testing.T) {
 func TestPodManifestSpecHash(t *testing.T) {
 	cfg := testConfig()
 	hash := func(c ProvisionerConfig, version, token string) string {
-		return specHashOf(c.podManifest("hubspot", version, token))
+		return specHashOf(c.podManifest("hubspot", version, token, false))
 	}
 	base := hash(cfg, "1.2.0", "a")
 	if base != hash(cfg, "1.2.0", "a") {
@@ -186,6 +187,74 @@ func TestPodManifestSpecHash(t *testing.T) {
 		if h == base {
 			t.Errorf("a new %s keeps the hash", name)
 		}
+	}
+}
+
+// A version that installs no software gets exactly the pod it got
+// before kivali.packages existed, pinned byte for byte in testdata: a
+// change here would replace every running integration's pod at the
+// next reconcile, and one that loosened the security context would let
+// a server run with more than it needs. The golden was written by the
+// manifest code as it stood without packages; it changes only on
+// purpose.
+func TestPodWithoutPackagesIsUnchanged(t *testing.T) {
+	want, err := os.ReadFile("testdata/pod_without_packages.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := json.MarshalIndent(testConfig().podManifest("hubspot", "1.2.0", "tok-0123456789abcdef", false), "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(append(got, '\n')) != string(want) {
+		t.Errorf("the pod without packages changed:\n%s", got)
+	}
+}
+
+// A version that installs software starts its integration container as
+// root, for apt-get, and nothing else of the pod changes: still no
+// privilege escalation, every capability dropped but the ones apt-get
+// and dpkg need (and SETPCAP, for the shim to leave root with an empty
+// bounding set), the init container still the images' user. A pod
+// that stayed non-root would fail every install; one that kept the
+// runtime's default capabilities, or allowed escalation, would hand
+// more to whatever ran as root than the install needs. The spec hash
+// moves, so a version that adds software gets the root pod.
+func TestPodWithPackagesStartsAsRoot(t *testing.T) {
+	cfg := testConfig()
+	plain := asJSON(t, cfg.podManifest("hubspot", "1.2.0", "tok", false))
+	root := asJSON(t, cfg.podManifest("hubspot", "1.2.0", "tok", true))
+	spec := root["spec"].(map[string]any)
+	sc := containerNamed(t, spec, "containers", "integration")["securityContext"].(map[string]any)
+	if sc["runAsUser"] != float64(0) || sc["runAsGroup"] != float64(0) || sc["runAsNonRoot"] != false || sc["allowPrivilegeEscalation"] != false {
+		t.Errorf("integration securityContext = %v", sc)
+	}
+	caps := sc["capabilities"].(map[string]any)
+	if got := strings.Join(toStrings(caps["drop"]), ","); got != "ALL" {
+		t.Errorf("drop = %s", got)
+	}
+	if got := strings.Join(toStrings(caps["add"]), ","); got != "CHOWN,DAC_OVERRIDE,FOWNER,FSETID,KILL,SETGID,SETPCAP,SETUID" {
+		t.Errorf("add = %s", got)
+	}
+	shim := containerNamed(t, spec, "initContainers", "shim")["securityContext"].(map[string]any)
+	if shim["runAsUser"] != float64(65532) || shim["runAsNonRoot"] != true {
+		t.Errorf("init securityContext = %v", shim)
+	}
+
+	// Everything else is the pod without packages.
+	strip := func(m map[string]any) {
+		delete(m["metadata"].(map[string]any)["labels"].(map[string]any), kube.SpecHashLabel)
+		delete(containerNamed(t, m["spec"].(map[string]any), "containers", "integration"), "securityContext")
+	}
+	if specHashOf(cfg.podManifest("hubspot", "1.2.0", "tok", true)) == specHashOf(cfg.podManifest("hubspot", "1.2.0", "tok", false)) {
+		t.Error("software keeps the spec hash")
+	}
+	strip(plain)
+	strip(root)
+	a, _ := json.Marshal(plain)
+	b, _ := json.Marshal(root)
+	if string(a) != string(b) {
+		t.Errorf("software changed more than the security context:\n%s\n%s", a, b)
 	}
 }
 

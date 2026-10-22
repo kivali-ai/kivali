@@ -35,6 +35,12 @@ import (
 //     other.
 //  6. restartPolicy Always: the shim exits when its server dies, and
 //     kubelet starts it again.
+//  7. Both containers run as the images' user with every capability
+//     dropped, except when the version's manifest declares packages
+//     (kivali.packages): then the integration container starts as root
+//     with what apt-get and dpkg need (installSecurityContext), and the
+//     shim installs them in a root child and leaves root for good
+//     before anything of the bundle runs (Shim.Software).
 
 const (
 	// agentShellImageName is the image the server runs in: the agent
@@ -99,9 +105,37 @@ func securityContext() map[string]any {
 	}
 }
 
+// installCapabilities are the integration container's capabilities
+// while it installs software, the rest dropped: what apt-get and dpkg
+// need as root. CHOWN, DAC_OVERRIDE, FOWNER and FSETID for dpkg to
+// unpack files with their owners and modes (setuid bits included) and
+// for apt-get to use its _apt-owned download directories; SETUID and
+// SETGID for apt-get to fetch as _apt, and for the shim to become the
+// images' user; KILL for the install to stop what a package's scripts
+// left running, whoever runs it; SETPCAP for the shim to empty its
+// bounding set as it leaves root.
+var installCapabilities = []string{"CHOWN", "DAC_OVERRIDE", "FOWNER", "FSETID", "KILL", "SETGID", "SETPCAP", "SETUID"}
+
+// installSecurityContext is the integration container's when the
+// version installs software: it starts as root, still with no
+// privilege escalation, and with installCapabilities alone. The shim
+// runs apt-get in a root child, then drops to podUID with no
+// capability and an empty bounding set before it starts the server.
+func installSecurityContext() map[string]any {
+	return map[string]any{
+		"runAsUser":                0,
+		"runAsGroup":               0,
+		"runAsNonRoot":             false,
+		"allowPrivilegeEscalation": false,
+		"capabilities":             map[string]any{"drop": []string{"ALL"}, "add": installCapabilities},
+	}
+}
+
 // podManifest is the pod for name at version, with token in its
-// environment. c.ProxyURL is the proxy by IP (Provisioner.config).
-func (c ProvisionerConfig) podManifest(name, version, token string) map[string]any {
+// environment. software says the version's manifest declares packages,
+// which the integration container installs as root when it starts.
+// c.ProxyURL is the proxy by IP (Provisioner.config).
+func (c ProvisionerConfig) podManifest(name, version, token string, software bool) map[string]any {
 	udsDir := integrationUDSDir(c.UDSDir)
 	env := []map[string]any{
 		{"name": EnvName, "value": name},
@@ -132,6 +166,10 @@ func (c ProvisionerConfig) podManifest(name, version, token string) map[string]a
 			"limits":   map[string]any{"cpu": "200m", "memory": "128Mi"},
 		},
 	}
+	containerSecurity := securityContext()
+	if software {
+		containerSecurity = installSecurityContext()
+	}
 	container := map[string]any{
 		"name":            "integration",
 		"image":           AgentShellImageFor(c.Image),
@@ -144,7 +182,7 @@ func (c ProvisionerConfig) podManifest(name, version, token string) map[string]a
 			{"name": "bundle", "mountPath": DefaultBundle, "subPath": BundleSubPath(name, version), "readOnly": true},
 			{"name": "tmp", "mountPath": "/tmp"},
 		},
-		"securityContext": securityContext(),
+		"securityContext": containerSecurity,
 		"resources": map[string]any{
 			"requests": map[string]any{
 				"cpu":    orDefault(c.CPURequest, defaultCPURequest),

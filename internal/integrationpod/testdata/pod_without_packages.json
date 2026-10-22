@@ -1,0 +1,191 @@
+{
+  "apiVersion": "v1",
+  "kind": "Pod",
+  "metadata": {
+    "labels": {
+      "app": "kivali-integrationpod",
+      "integration": "hubspot",
+      "kivali-spec-hash": "913d606ad257"
+    },
+    "name": "integrationpod-hubspot",
+    "namespace": "kivali"
+  },
+  "spec": {
+    "affinity": {
+      "podAffinity": {
+        "requiredDuringSchedulingIgnoredDuringExecution": [
+          {
+            "labelSelector": {
+              "matchLabels": {
+                "app": "kivali"
+              }
+            },
+            "topologyKey": "kubernetes.io/hostname"
+          }
+        ]
+      }
+    },
+    "automountServiceAccountToken": false,
+    "containers": [
+      {
+        "command": [
+          "/shim/kivali",
+          "integration-shim"
+        ],
+        "env": [
+          {
+            "name": "KIVALI_INTEGRATION_NAME",
+            "value": "hubspot"
+          },
+          {
+            "name": "KIVALI_INTEGRATION_VERSION",
+            "value": "1.2.0"
+          },
+          {
+            "name": "KIVALI_INTEGRATION_TOKEN",
+            "value": "tok-0123456789abcdef"
+          },
+          {
+            "name": "KIVALI_INTEGRATION_CORE_UDS",
+            "value": "/var/run/kivali/uds/integration/integration.sock"
+          },
+          {
+            "name": "KIVALI_INTEGRATION_BUNDLE",
+            "value": "/bundle"
+          },
+          {
+            "name": "HTTP_PROXY",
+            "value": "http://10.43.0.12:3128"
+          },
+          {
+            "name": "HTTPS_PROXY",
+            "value": "http://10.43.0.12:3128"
+          },
+          {
+            "name": "http_proxy",
+            "value": "http://10.43.0.12:3128"
+          },
+          {
+            "name": "https_proxy",
+            "value": "http://10.43.0.12:3128"
+          }
+        ],
+        "image": "ghcr.io/kivali-ai/kivali-agent-shell:v1.2.0",
+        "imagePullPolicy": "IfNotPresent",
+        "name": "integration",
+        "resources": {
+          "limits": {
+            "cpu": "1",
+            "memory": "1Gi"
+          },
+          "requests": {
+            "cpu": "50m",
+            "memory": "128Mi"
+          }
+        },
+        "securityContext": {
+          "allowPrivilegeEscalation": false,
+          "capabilities": {
+            "drop": [
+              "ALL"
+            ]
+          },
+          "runAsGroup": 65532,
+          "runAsNonRoot": true,
+          "runAsUser": 65532
+        },
+        "volumeMounts": [
+          {
+            "mountPath": "/shim",
+            "name": "shim",
+            "readOnly": true
+          },
+          {
+            "mountPath": "/var/run/kivali/uds/integration",
+            "name": "uds",
+            "readOnly": true
+          },
+          {
+            "mountPath": "/bundle",
+            "name": "bundle",
+            "readOnly": true,
+            "subPath": "integrations/hubspot/versions/1.2.0/bundle"
+          },
+          {
+            "mountPath": "/tmp",
+            "name": "tmp"
+          }
+        ]
+      }
+    ],
+    "initContainers": [
+      {
+        "command": [
+          "cp",
+          "/usr/local/bin/kivali",
+          "/shim/kivali"
+        ],
+        "image": "ghcr.io/kivali-ai/kivali:v1.2.0",
+        "imagePullPolicy": "IfNotPresent",
+        "name": "shim",
+        "resources": {
+          "limits": {
+            "cpu": "200m",
+            "memory": "128Mi"
+          },
+          "requests": {
+            "cpu": "10m",
+            "memory": "16Mi"
+          }
+        },
+        "securityContext": {
+          "allowPrivilegeEscalation": false,
+          "capabilities": {
+            "drop": [
+              "ALL"
+            ]
+          },
+          "runAsGroup": 65532,
+          "runAsNonRoot": true,
+          "runAsUser": 65532
+        },
+        "volumeMounts": [
+          {
+            "mountPath": "/shim",
+            "name": "shim"
+          }
+        ]
+      }
+    ],
+    "restartPolicy": "Always",
+    "terminationGracePeriodSeconds": 10,
+    "volumes": [
+      {
+        "emptyDir": {
+          "sizeLimit": "256Mi"
+        },
+        "name": "shim"
+      },
+      {
+        "hostPath": {
+          "path": "/var/run/kivali/uds/integration",
+          "type": "Directory"
+        },
+        "name": "uds"
+      },
+      {
+        "name": "bundle",
+        "persistentVolumeClaim": {
+          "claimName": "kivali-data",
+          "readOnly": true
+        }
+      },
+      {
+        "emptyDir": {
+          "sizeLimit": "256Mi"
+        },
+        "name": "tmp"
+      }
+    ]
+  }
+}
