@@ -1687,7 +1687,9 @@ What the owner sees:
   page says Kivali is starting it), then connected or not connected.
 - Its install screen (`IntegrationVersion.Builtin` and `.Shipped`)
   says it ships with Kivali and, as for an upload, carries its runtime
-  (`python`) and shows the hosts it reaches and its bundle's size. `Shipped` is
+  (`python`) and shows the hosts it reaches, the software its pod
+  installs (with no "read each one before you approve") and its
+  bundle's size. Its page lists that software as an upload's does. `Shipped` is
   read from the version (it holds a bundle), so a stale record's
   version still shows as one.
 
