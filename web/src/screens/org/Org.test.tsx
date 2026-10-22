@@ -15,7 +15,7 @@ import { initialOrgState, reduceSnapshot } from '../../state/org';
 import type { OrgContextValue } from '../../state/OrgProvider';
 import { aboutLine, versionLabel } from './About';
 import { BACKUP_DEBOUNCE_MS } from './Backup';
-import { InstallScreen } from './InstallScreen';
+import { InstallScreen, bundleLine } from './InstallScreen';
 import { IntegrationPage, deleteConnectionWords } from './IntegrationPage';
 import { Org, headerMeta } from './OrgPage';
 import {
@@ -33,6 +33,7 @@ import {
   goIntegrationUploadRefused,
   goIntegrationVersion,
   goIntegrationVersionBuiltin,
+  goIntegrationVersionShipped,
   goIntegrations,
   goNetwork,
   goOrg,
@@ -1312,6 +1313,25 @@ describe('Integration install screen', () => {
     expect(screen.queryByText(/^Replaces version/)).toBeNull();
     expect(screen.queryByRole('region', { name: /^What changes from version/ })).toBeNull();
     expect(screen.queryByText('Actions added: Push')).toBeNull();
+    expect(screen.queryAllByRole('button')).toEqual([]);
+  });
+
+  // Guards the install screen of an integration that ships with Kivali as a bundle (integration_version_shipped.json):
+  // it runs in a pod of its own and reaches only the hosts its manifest lists, so the owner must see those hosts and
+  // the bundle's size as for an upload, not "Reaches the hosts its connection names.", while it still says it ships
+  // with Kivali and offers nothing to press, since the server refuses every answer to a built-in (409).
+  it('shows a shipped bundle\'s hosts and bundle, says it ships with Kivali and offers nothing to press', async () => {
+    await renderOrg('/org/integrations/notes/versions/1.0.0', {
+      routes: { ['GET /api/v1/org/integrations/notes/versions/1.0.0']: goIntegrationVersionShipped },
+    });
+    const who = within(screen.getByRole('region', { name: 'Who built it' }));
+    expect(who.getByText('Ships with Kivali')).toBeInTheDocument();
+    expect(screen.getByText('This integration ships with Kivali. It needs no install, and Kivali’s updates bring its new versions.')).toBeInTheDocument();
+    const hosts = within(screen.getByRole('region', { name: 'Reaches these hosts' }));
+    expect(hosts.getByText('api.notes.example.com')).toBeInTheDocument();
+    expect(hosts.queryByText('Reaches the hosts its connection names.')).toBeNull();
+    const bundle = within(screen.getByRole('region', { name: 'Bundle' }));
+    expect(bundle.getByText(bundleLine(3, 4096))).toBeInTheDocument();
     expect(screen.queryAllByRole('button')).toEqual([]);
   });
 

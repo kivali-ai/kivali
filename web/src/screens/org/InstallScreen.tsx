@@ -20,7 +20,9 @@ export function bundleLine(files: number, bytes: number): string {
  * A version's install screen: what it is, who built it, what it changes from the version in use, every host it
  * reaches, the software it installs, every secret its connection holds, every action and what the access form asks. Approving installs it;
  * nothing in it runs before. A superseded version can be rolled back to from here. A version of an integration that
- * ships with Kivali says so, and offers none of these: its versions come with Kivali.
+ * ships with Kivali says so, and offers none of these: its versions come with Kivali. One that ships as a bundle
+ * (shipped) runs in a pod of its own, so its hosts and its bundle are shown as an upload's are; one that runs inside
+ * Kivali has neither.
  */
 export function InstallScreen() {
   const { name = '', version = '' } = useParams();
@@ -73,6 +75,8 @@ export function InstallScreen() {
   }
 
   const fields = v.access_form?.fields ?? [];
+  // A built-in that runs inside Kivali has no host list and no bundle; a bundle, uploaded or shipped, has both.
+  const insideKivali = v.builtin && !v.shipped;
   return (
     <div className="app-int">
       <header className="app-int-head">
@@ -147,7 +151,7 @@ export function InstallScreen() {
       )}
 
       <Block label="Reaches these hosts">
-        {v.builtin ? (
+        {insideKivali ? (
           <Text as="p" variant="body">
             Reaches the hosts its connection names.
           </Text>
@@ -244,7 +248,7 @@ export function InstallScreen() {
         )}
       </Block>
 
-      {!v.builtin && (
+      {!insideKivali && (
         <Block label="Bundle">
           <Text as="p" variant="body">
             {bundleLine(v.file_count, v.bundle_bytes)}
