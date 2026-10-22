@@ -409,6 +409,10 @@ function SignInBlock({ connection, fields, api, scopes, signInAt, busy, now, onP
         <Text as="p" variant="caption" tone="muted">
           Waiting for your approval.
         </Text>
+        {/* Kivali Desktop opens no browser for a team elsewhere (it could not finish there): this says what to do. */}
+        <Text as="p" variant="caption" tone="muted">
+          If no browser opened, open the team in your browser and sign in from there.
+        </Text>
         <div className="app-org-actions">
           <Button type="button" variant="secondary" disabled={disabled} onClick={() => void startBrowser()}>
             Start again
