@@ -540,3 +540,29 @@ func TestVendorWordsAreClipped(t *testing.T) {
 		}
 	}
 }
+
+// Why this test exists: the page sends the owner's browser to the
+// vendor's verification addresses. One that is not an absolute
+// http(s) address (javascript:, a bare path) must end the start with
+// words rather than reach the page as a link, where a vendor's bad
+// answer would run script in Kivali's page or send the owner nowhere.
+func TestStartDeviceRefusesAPageThatIsNotOne(t *testing.T) {
+	for _, c := range []struct{ page, complete string }{
+		{"javascript:alert(1)", ""},
+		{"/activate", ""},
+		{"", "javascript:alert(1)"},
+		{"", "activate?user_code=WDJB-MJHT"},
+	} {
+		e, v, _ := setup(t)
+		v.Set(func(k *connecttest.Knobs) { k.DeviceVerificationURI, k.DeviceVerificationURIComplete = c.page, c.complete })
+		ds, err := e.StartDevice(context.Background(), v.Endpoints(), v.Client(), nil)
+		if err == nil || err.Error() != "the vendor's answer has no page to show" {
+			t.Errorf("%+v: start = %+v, %v", c, ds, err)
+		}
+	}
+	e, v, _ := setup(t)
+	ds, err := e.StartDevice(context.Background(), v.Endpoints(), v.Client(), nil)
+	if err != nil || ds.DeviceCode() == "" || ds.VerificationURIComplete == "" {
+		t.Errorf("the vendor's own pages: %+v, %v", ds, err)
+	}
+}

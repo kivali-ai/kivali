@@ -75,6 +75,9 @@ type Knobs struct {
 	// DeviceExpiresIn and DeviceInterval are the device answer's
 	// expires_in and interval; zero sends 900 and 5.
 	DeviceExpiresIn, DeviceInterval time.Duration
+	// DeviceVerificationURI and DeviceVerificationURIComplete replace
+	// the device answer's pages; empty sends the vendor's own.
+	DeviceVerificationURI, DeviceVerificationURIComplete string
 
 	// RevokeStatus answers each revocation with this status; zero is
 	// 200.
@@ -402,6 +405,13 @@ func (v *FakeVendor) deviceStart(w http.ResponseWriter, r *http.Request) {
 	if interval == 0 {
 		interval = 5 * time.Second
 	}
+	page, complete := v.URL+"/activate", v.URL+"/activate?user_code=WDJB-MJHT"
+	if k.DeviceVerificationURI != "" {
+		page = k.DeviceVerificationURI
+	}
+	if k.DeviceVerificationURIComplete != "" {
+		complete = k.DeviceVerificationURIComplete
+	}
 	v.mu.Lock()
 	code := v.nextLocked("device")
 	v.devices[code] = &device{expiresAt: v.clk.Now().Add(expires)}
@@ -409,8 +419,8 @@ func (v *FakeVendor) deviceStart(w http.ResponseWriter, r *http.Request) {
 	answer(w, r, http.StatusOK, map[string]any{
 		"device_code":               code,
 		"user_code":                 "WDJB-MJHT",
-		"verification_uri":          v.URL + "/activate",
-		"verification_uri_complete": v.URL + "/activate?user_code=WDJB-MJHT",
+		"verification_uri":          page,
+		"verification_uri_complete": complete,
 		"expires_in":                int(expires / time.Second),
 		"interval":                  int(interval / time.Second),
 	})
