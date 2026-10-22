@@ -81,11 +81,23 @@ const reasonInstallTooLong = "the installation did not finish in time"
 // pipe passed as InstallResultFD. The packages are arguments, never
 // shell text.
 func StartInstallChild(exe string, pkgs []string, env []string, log io.Writer, clk clock.Clock) (*Install, error) {
+	return StartInstallCommand([]string{exe, InstallSubcommand}, pkgs, env, log, clk)
+}
+
+// StartInstallCommand is StartInstallChild for a binary whose install
+// subcommand sits elsewhere on its command line: argv is the binary and
+// the arguments before the packages, which name a subcommand that runs
+// RunInstallSubcommand (`kivali integration-shim install-software` for
+// an integration's pod).
+func StartInstallCommand(argv []string, pkgs []string, env []string, log io.Writer, clk clock.Clock) (*Install, error) {
+	if len(argv) == 0 {
+		return nil, errors.New("no installer command")
+	}
 	r, w, err := os.Pipe()
 	if err != nil {
 		return nil, err
 	}
-	cmd := exec.Command(exe, append([]string{InstallSubcommand}, pkgs...)...)
+	cmd := exec.Command(argv[0], append(append([]string{}, argv[1:]...), pkgs...)...)
 	cmd.Env = env
 	cmd.Dir = "/"
 	cmd.Stdout = log

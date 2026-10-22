@@ -61,6 +61,10 @@ const (
 // a method that does not exist. The server's error output becomes log
 // lines. The shim exits when the server does, with its status.
 //
+// Started as root, for a version whose manifest declares packages, the
+// shim installs them and leaves root for good before it opens the
+// events stream (prepare, Software); the server never runs as root.
+//
 // The server gets PATH, HOME=/tmp, LANG, the manifest's env with the
 // connection's values put in, and the proxy variables carrying the
 // scoped credential the shim draws at start, and nothing else of the
@@ -85,6 +89,11 @@ type Shim struct {
 	// Path and Lang are the server's PATH and LANG.
 	Path string
 	Lang string
+	// Software is set when the shim starts as root, which the pod does
+	// only for a version that declares packages: before it dials core's
+	// events stream the shim installs them and leaves root through it
+	// (prepare). Nil for a shim that does not start as root.
+	Software Software
 	// Clock times the handshake, the stop and the reconnect backoff.
 	Clock clock.Clock
 	// Logf is the shim's own log, which goes to the container's log.
@@ -99,7 +108,8 @@ type Shim struct {
 
 // Run runs the shim until the server exits, core says shutdown, or ctx
 // ends (SIGTERM), and returns the exit status: the server's when it
-// exits on its own, 1 when the shim cannot start it.
+// exits on its own, 1 when the shim cannot start it or cannot install
+// the integration's software.
 func (s *Shim) Run(ctx context.Context) int {
 	if s.Clock == nil {
 		s.Clock = clock.New()
@@ -124,6 +134,12 @@ func (s *Shim) Run(ctx context.Context) int {
 		s.cred, s.scrub = cred, cred.Scrubber
 	}
 	s.clients()
+	if !s.prepare(ctx, m) {
+		if ctx.Err() != nil {
+			return 0
+		}
+		return 1
+	}
 
 	evCtx, cancel := context.WithCancel(ctx)
 	defer cancel()

@@ -23,10 +23,16 @@ import (
 
 // TestMain runs the test binary as the fake integration's server when
 // the shim starts it: the test manifests put the marker in the server's
-// env, the only environment the shim passes on.
+// env, the only environment the shim passes on. Run with InstallArgs
+// and installChildEnv set, it is the shim's install child instead
+// (installChildMain).
 func TestMain(m *testing.M) {
 	if os.Getenv(fakeintegration.EnvMarker) == "1" {
 		os.Exit(fakeintegration.Main())
+	}
+	if mode := os.Getenv(installChildEnv); mode != "" && len(os.Args) > len(InstallArgs) &&
+		os.Args[1] == InstallArgs[0] && os.Args[2] == InstallArgs[1] {
+		os.Exit(installChildMain(mode, os.Args[3:]))
 	}
 	os.Exit(m.Run())
 }
@@ -48,6 +54,9 @@ type fakeCore struct {
 	mu sync.Mutex
 	// values is the connection, by user_config key; nil is none.
 	values map[string]string
+	// steps, when set, records each events stream opened ("events") and
+	// each log line posted ("log: <message>"), in the order they came.
+	steps *steps
 	// refuse is how many event streams to answer 403.
 	refuse int
 	// bodies is every post as it arrived.
@@ -101,6 +110,19 @@ func (c *fakeCore) setValues(v map[string]string) {
 	c.values = v
 }
 
+func (c *fakeCore) setSteps(s *steps) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.steps = s
+}
+
+func (c *fakeCore) record(step string) {
+	c.mu.Lock()
+	s := c.steps
+	c.mu.Unlock()
+	s.add(step)
+}
+
 func (c *fakeCore) events(w http.ResponseWriter, r *http.Request) {
 	if r.Header.Get(TokenHeader) != testToken {
 		http.Error(w, "bad token", http.StatusForbidden)
@@ -121,6 +143,7 @@ func (c *fakeCore) events(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	w.(http.Flusher).Flush()
 	st := &fakeStream{hdr: r.Header.Clone(), out: make(chan string, 16), end: make(chan struct{})}
+	c.record("events")
 	c.streams <- st
 	for {
 		select {
@@ -150,6 +173,9 @@ func (c *fakeCore) rpc(w http.ResponseWriter, r *http.Request) {
 	c.bodies = append(c.bodies, string(body))
 	values := c.values
 	c.mu.Unlock()
+	if p, ok := postLog(m); ok {
+		c.record("log: " + p.Message)
+	}
 	c.posts <- m
 	if !m.IsRequest() {
 		w.WriteHeader(http.StatusNoContent)
@@ -317,10 +343,28 @@ func runShim(t *testing.T, c *fakeCore, m *integration.Manifest) (*clock.Fake, *
 	return runShimIn(t, c, bundle, m, exe)
 }
 
+// runShimWith is runShim with set applied to the shim before it runs.
+func runShimWith(t *testing.T, c *fakeCore, m *integration.Manifest, set func(*Shim)) (*clock.Fake, *shimRun, context.CancelFunc) {
+	t.Helper()
+	bundle := t.TempDir()
+	raw, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bundle, integration.ManifestName), raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return runShimIn(t, c, bundle, m, exe, set)
+}
+
 // runShimIn runs a shim on the bundle in dir, built for m's name and
 // version, against c, with command replacing mcp_config.command when
 // it is not empty.
-func runShimIn(t *testing.T, c *fakeCore, bundle string, m *integration.Manifest, command string) (*clock.Fake, *shimRun, context.CancelFunc) {
+func runShimIn(t *testing.T, c *fakeCore, bundle string, m *integration.Manifest, command string, set ...func(*Shim)) (*clock.Fake, *shimRun, context.CancelFunc) {
 	t.Helper()
 	clk := clock.NewFake()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -334,6 +378,9 @@ func runShimIn(t *testing.T, c *fakeCore, bundle string, m *integration.Manifest
 		Lang:     "C.UTF-8",
 		Clock:    clk,
 		Logf:     t.Logf,
+	}
+	for _, f := range set {
+		f(shim)
 	}
 	go func() {
 		run.code = shim.Run(ctx)

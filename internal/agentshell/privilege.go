@@ -308,6 +308,100 @@ func VerifyDaemon(c Creds, id Identity) error {
 	return nil
 }
 
+// LeaveRoot makes the process, started as root, uid and gid for good,
+// with nothing of root left: no capability in any set, no supplementary
+// groups and no_new_privs set, so neither it nor anything it starts can
+// gain one back. An integration's shim calls it after installing the
+// integration's software and before it starts the integration's server.
+// The order:
+//
+//  1. every capability leaves the bounding set, while the process still
+//     has CAP_SETPCAP (only those the set holds);
+//  2. no_new_privs;
+//  3. PR_SET_KEEPCAPS cleared, so the uid change empties the permitted
+//     and effective sets;
+//  4. setresgid and setgroups([]), while still root;
+//  5. setresuid to uid;
+//  6. capset to nothing, which empties the inheritable set too.
+//
+// It then reads the credentials back (VerifyUser). A caller that gets
+// an error must not go on: the process may still be root.
+func LeaveRoot(c Creds, uid, gid int) error {
+	if uid <= 0 || gid <= 0 {
+		return fmt.Errorf("leave root: refusing uid %d gid %d", uid, gid)
+	}
+	caps, err := c.Caps()
+	if err != nil {
+		return fmt.Errorf("leave root: read capabilities: %w", err)
+	}
+	last, err := c.CapLastCap()
+	if err != nil {
+		return fmt.Errorf("leave root: cap_last_cap: %w", err)
+	}
+	if last < 0 || last > 63 {
+		return fmt.Errorf("leave root: cap_last_cap %d out of range", last)
+	}
+	for capability := 0; capability <= last; capability++ {
+		if caps.Bnd&(uint64(1)<<capability) == 0 {
+			continue
+		}
+		if err := c.DropBoundingCap(capability); err != nil {
+			return fmt.Errorf("leave root: drop capability %d from the bounding set: %w", capability, err)
+		}
+	}
+	if err := c.SetNoNewPrivs(); err != nil {
+		return fmt.Errorf("leave root: set no_new_privs: %w", err)
+	}
+	if err := c.SetKeepCaps(false); err != nil {
+		return fmt.Errorf("leave root: clear keepcaps: %w", err)
+	}
+	if err := c.Setresgid(gid, gid, gid); err != nil {
+		return fmt.Errorf("leave root: setresgid %d: %w", gid, err)
+	}
+	if err := c.Setgroups([]int{}); err != nil {
+		return fmt.Errorf("leave root: setgroups: %w", err)
+	}
+	if err := c.Setresuid(uid, uid, uid); err != nil {
+		return fmt.Errorf("leave root: setresuid %d: %w", uid, err)
+	}
+	if err := c.Capset(Caps{}); err != nil {
+		return fmt.Errorf("leave root: capset: %w", err)
+	}
+	return VerifyUser(c, uid, gid)
+}
+
+// VerifyUser returns an error unless the process's real, effective,
+// saved and filesystem uid are uid and its gids gid; it has no
+// supplementary groups; every capability set, the bounding and ambient
+// sets included, is empty; and no_new_privs is set.
+func VerifyUser(c Creds, uid, gid int) error {
+	ids, err := c.IDs()
+	if err != nil {
+		return fmt.Errorf("verify privileges: %w", err)
+	}
+	if ids.RUID != uid || ids.EUID != uid || ids.SUID != uid || ids.FSUID != uid ||
+		ids.RGID != gid || ids.EGID != gid || ids.SGID != gid || ids.FSGID != gid {
+		return fmt.Errorf("verify privileges: %s, want uid %d gid %d throughout", ids, uid, gid)
+	}
+	if ids.Privileged() || gid == 0 {
+		return fmt.Errorf("verify privileges: %s is root", ids)
+	}
+	if len(ids.Groups) != 0 {
+		return fmt.Errorf("verify privileges: %s, want no supplementary groups", ids)
+	}
+	if !ids.NoNewPrivs {
+		return fmt.Errorf("verify privileges: %s, want no_new_privs set", ids)
+	}
+	caps, err := c.Caps()
+	if err != nil {
+		return fmt.Errorf("verify privileges: capabilities: %w", err)
+	}
+	if caps != (Caps{}) {
+		return fmt.Errorf("verify privileges: capabilities %s, want none", caps)
+	}
+	return nil
+}
+
 // AsDaemonUser runs f with the filesystem uid id.DaemonUID, so a file f
 // creates is the daemon's own, then sets it back to id.UID and checks
 // it. Nothing else may touch files meanwhile: the filesystem uid is the

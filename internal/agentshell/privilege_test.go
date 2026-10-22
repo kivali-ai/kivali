@@ -350,6 +350,92 @@ func TestDropPrivilegesRefusesBadIdentity(t *testing.T) {
 	}
 }
 
+// installPodCaps is an integration pod's set while it installs
+// software (integrationpod's installCapabilities): CHOWN, DAC_OVERRIDE,
+// FOWNER, FSETID, KILL, SETGID, SETUID and SETPCAP.
+const installPodCaps uint64 = 0x1fb
+
+// An integration's shim leaves root before its server starts, from the
+// install pod's capabilities: each leaves the bounding set while
+// CAP_SETPCAP is effective, then the uid change empties the rest. The
+// server would otherwise run as root, or keep a capability it could
+// use; the order is the only one in which every call succeeds.
+func TestLeaveRootOrderAndResult(t *testing.T) {
+	var log []string
+	c := rootCreds(&log, installPodCaps)
+	c.caps.Inh = 1 << capKill
+	if err := LeaveRoot(c, 65532, 65532); err != nil {
+		t.Fatalf("LeaveRoot: %v", err)
+	}
+	want := []string{
+		"capbset drop 0", "capbset drop 1", "capbset drop 3", "capbset drop 4", "capbset drop 5",
+		"capbset drop 6", "capbset drop 7", "capbset drop 8",
+		"no_new_privs",
+		"keepcaps false",
+		"setresgid 65532 65532 65532",
+		"setgroups []",
+		"setresuid 65532 65532 65532",
+		"capset prm=0 eff=0 inh=0",
+	}
+	if !reflect.DeepEqual(log, want) {
+		t.Errorf("calls = %q\nwant  %q", log, want)
+	}
+	wantIDs := IDs{RUID: 65532, EUID: 65532, SUID: 65532, FSUID: 65532, RGID: 65532, EGID: 65532, SGID: 65532, FSGID: 65532, Groups: []int{}, NoNewPrivs: true}
+	if !reflect.DeepEqual(c.ids, wantIDs) {
+		t.Errorf("ids = %s, want %s", c.ids, wantIDs)
+	}
+	if c.caps != (Caps{}) {
+		t.Errorf("caps = %s, want none", c.caps)
+	}
+}
+
+// Every way leaving root can fall short is an error, so the shim never
+// starts an integration's server that still holds part of root: a
+// failing call, one that claims success and changed nothing, a saved
+// uid left at 0, a permitted set kept through the uid change and not
+// cleared after, a capability left in any set. And a target of root
+// itself is refused before anything changes.
+func TestLeaveRootFailures(t *testing.T) {
+	cases := map[string]func(c *fakeCreds){
+		"caps unreadable":        func(c *fakeCreds) { c.fail["caps"] = errors.New("EIO") },
+		"cap_last_cap fails":     func(c *fakeCreds) { c.fail["caplastcap"] = errors.New("ENOENT") },
+		"bounding drop fails":    func(c *fakeCreds) { c.fail["capbsetdrop"] = errors.New("EPERM") },
+		"bounding drop lies":     func(c *fakeCreds) { c.lie["capbsetdrop"] = true },
+		"no CAP_SETPCAP to drop": func(c *fakeCreds) { c.caps.Eff &^= 1 << capSetpcap },
+		"no_new_privs fails":     func(c *fakeCreds) { c.fail["nonewprivs"] = errors.New("EINVAL") },
+		"no_new_privs lies":      func(c *fakeCreds) { c.lie["nonewprivs"] = true },
+		"keepcaps fails":         func(c *fakeCreds) { c.fail["keepcaps"] = errors.New("EINVAL") },
+		"keepcaps and capset lie": func(c *fakeCreds) {
+			c.keepCaps = true
+			c.lie["keepcaps"], c.lie["capset"] = true, true
+		},
+		"setresgid fails":   func(c *fakeCreds) { c.fail["setresgid"] = errors.New("EPERM") },
+		"setgroups lies":    func(c *fakeCreds) { c.lie["setgroups"] = true },
+		"setresuid fails":   func(c *fakeCreds) { c.fail["setresuid"] = errors.New("EPERM") },
+		"setresuid lies":    func(c *fakeCreds) { c.lie["setresuid"] = true },
+		"saved uid kept":    func(c *fakeCreds) { c.keepSaved = true },
+		"capset lies":       func(c *fakeCreds) { c.caps.Inh = 1; c.lie["capset"] = true },
+		"bounding cap kept": func(c *fakeCreds) { c.lastCap = 6 }, // 7 and 8 stay
+		"ids unreadable":    func(c *fakeCreds) { c.fail["ids"] = errors.New("EIO") },
+	}
+	for name, setup := range cases {
+		t.Run(name, func(t *testing.T) {
+			var log []string
+			c := rootCreds(&log, installPodCaps)
+			setup(c)
+			if err := LeaveRoot(c, 65532, 65532); err == nil {
+				t.Errorf("LeaveRoot succeeded with ids %s caps %s; calls %q", c.ids, c.caps, log)
+			}
+		})
+	}
+	for _, id := range [][2]int{{0, 65532}, {65532, 0}} {
+		var log []string
+		if err := LeaveRoot(rootCreds(&log, installPodCaps), id[0], id[1]); err == nil || len(log) != 0 {
+			t.Errorf("LeaveRoot(%v) = %v, calls %q", id, err, log)
+		}
+	}
+}
+
 // The socket is made with the daemon's own filesystem uid, and the
 // commands' is back before anything else touches a file.
 func TestAsDaemonUser(t *testing.T) {
