@@ -9,6 +9,7 @@ package gitrepo
 import (
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"path"
 	"strconv"
@@ -175,6 +176,23 @@ func cleanPath(p string) (string, error) {
 		}
 	}
 	return p, nil
+}
+
+// PublicAddresses reports whether every one of ips, a host's addresses,
+// is public: none loopback, private (RFC 1918, fc00::/7), link-local
+// (169.254.0.0/16, fe80::/10), unspecified or multicast. No addresses
+// is not public.
+func PublicAddresses(ips []net.IP) bool {
+	if len(ips) == 0 {
+		return false
+	}
+	for _, ip := range ips {
+		if ip == nil || ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
+			ip.IsUnspecified() || ip.IsMulticast() {
+			return false
+		}
+	}
+	return true
 }
 
 // NormalizePattern is an access pattern as Match reads it: slashes

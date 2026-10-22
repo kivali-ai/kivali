@@ -3,10 +3,10 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"strings"
 
 	"github.com/kivali-ai/kivali/internal/agentpod"
 	"github.com/kivali-ai/kivali/internal/agentshell"
-	"github.com/kivali-ai/kivali/internal/egresscred"
 )
 
 // IntegrationCaller relays one call of an integration action to core,
@@ -93,7 +93,7 @@ func runShellJob(ctx context.Context, shell IntegrationShell, job agentpod.Integ
 		return &agentpod.IntegrationShellJobResult{Skipped: shellJobSkippedNoShell}
 	}
 	g := job.Git
-	res, err := shell.Git(ctx, agentshell.GitRequest{
+	req := agentshell.GitRequest{
 		Op:                  g.Op,
 		Path:                g.Path,
 		URL:                 g.URL,
@@ -104,19 +104,21 @@ func runShellJob(ctx context.Context, shell IntegrationShell, job agentpod.Integ
 		Auth:                agentshell.GitAuth{Username: g.Auth.Username, Password: g.Auth.Password},
 		Proxy:               agentshell.GitProxy{Username: g.Proxy.Username, Password: g.Proxy.Password},
 		TimeoutSeconds:      g.TimeoutSeconds,
-	})
+	}
+	res, err := shell.Git(ctx, req)
 	if err != nil {
-		scrub := egresscred.Combine(
-			egresscred.NewScrubber(g.Auth.Username, g.Auth.Password, ""),
-			egresscred.NewScrubber(g.Proxy.Username, g.Proxy.Password, ""),
-		)
-		return &agentpod.IntegrationShellJobResult{Git: &agentpod.GitResult{Error: scrub.String(err.Error())}}
+		msg := agentshell.GitScrubber(req, "")(err.Error())
+		if len(msg) > agentshell.GitErrorMaxBytes {
+			msg = strings.ToValidUTF8(msg[:agentshell.GitErrorMaxBytes], "")
+		}
+		return &agentpod.IntegrationShellJobResult{Git: &agentpod.GitResult{Error: msg}}
 	}
 	out := &agentpod.GitResult{
-		Repository: res.Repository,
-		Error:      res.Error,
-		DurationMs: res.DurationMs,
-		TimedOut:   res.TimedOut,
+		Repository:   res.Repository,
+		UpdatedTotal: res.UpdatedTotal,
+		Error:        res.Error,
+		DurationMs:   res.DurationMs,
+		TimedOut:     res.TimedOut,
 	}
 	for _, u := range res.Updated {
 		out.Updated = append(out.Updated, agentpod.GitRefUpdate{Ref: u.Ref, Old: u.Old, New: u.New})

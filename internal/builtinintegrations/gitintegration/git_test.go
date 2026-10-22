@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"net"
 	"net/http"
 	"net/http/cgi"
 	"net/http/httptest"
@@ -12,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/kivali-ai/kivali/internal/builtinintegrations"
@@ -93,6 +96,10 @@ func TestCallBuildsTheJob(t *testing.T) {
 	if w, _ := json.Marshal(want); string(got) != string(w) {
 		t.Errorf("clone job = %s, want %s", got, w)
 	}
+	// The row core writes as it hands the job out names the repository.
+	if res.Audit != "started: Acme/Widgets" {
+		t.Errorf("started row = %q", res.Audit)
+	}
 
 	res, err = g.Call(context.Background(), dana("acme/widgets"), testConn("github.com"), "fetch",
 		json.RawMessage(`{"path":"~/w","refs":["+refs/heads/main:refs/remotes/origin/main"]}`))
@@ -102,6 +109,9 @@ func TestCallBuildsTheJob(t *testing.T) {
 	if j := res.ShellJob.Git; j.Op != "fetch" || j.URL != "" || j.Path != "~/w" || j.TimeoutSeconds != 600 ||
 		len(j.RefSpecs) != 1 || len(j.AllowedRepositories) != 1 || j.AllowedRepositories[0] != "acme/widgets" {
 		t.Errorf("fetch job = %+v", j)
+	}
+	if res.Audit != "started: the working copy's origin at ~/w" {
+		t.Errorf("started row of a fetch from origin = %q", res.Audit)
 	}
 	res, err = g.Call(context.Background(), dana("acme/widgets"), testConn("github.com"), "fetch", json.RawMessage(`{"path":"w","url":"acme/widgets"}`))
 	if err != nil || res.ShellJob.Git.URL != "https://github.com/acme/widgets.git" {
@@ -187,6 +197,17 @@ func TestComplete(t *testing.T) {
 	if res.IsError || !strings.Contains(res.Content[0], "up to date") || res.Audit != "acme/widgets: up to date" {
 		t.Errorf("up to date = %+v", res)
 	}
+	// The daemon lists only its first refs of a large clone; the answer
+	// and the audit count every ref that moved.
+	many := shelljob.Result{Git: &shelljob.GitResult{Repository: "acme/widgets", UpdatedTotal: 150000}}
+	for i := range 200 {
+		many.Git.Updated = append(many.Git.Updated, shelljob.GitRefUpdate{Ref: fmt.Sprintf("refs/tags/v%d", i), New: "3333333cccc"})
+	}
+	res, _ = g.Complete(ctx, dana("acme/*"), testConn("github.com"), "clone", cloneArgs, many)
+	if res.IsError || !strings.Contains(res.Content[0], "Updated (150000):") || !strings.Contains(res.Content[0], "... and 149950 more") ||
+		!strings.HasSuffix(res.Audit, " and 149990 more") || len(res.Content[0]) > 8<<10 {
+		t.Errorf("a large clone = %q, audit %q", res.Content[0][:min(300, len(res.Content[0]))], res.Audit)
+	}
 
 	long := strings.Repeat("x", 5000)
 	for name, c := range map[string]struct {
@@ -237,10 +258,18 @@ func runGit(t *testing.T, dir string, args ...string) {
 	}
 }
 
+// publicIP is a resolver hook that finds every host public, so a test
+// reaches its httptest server on 127.0.0.1 past the check.
+func publicIP(context.Context, string) ([]net.IP, error) {
+	return []net.IP{net.ParseIP("140.82.112.3")}, nil
+}
+
 // Why this test exists: Test connection with a repository named lists
 // it from core with the token, over the smart HTTP protocol, and the
 // owner reads the branch count; a token the host refuses must fail
-// with the host's words, never quoting the token back.
+// with the host's words, never quoting the token back; and a redirect
+// (a renamed or transferred repository) must fail rather than be
+// followed with the token to a repository nobody named.
 func TestVerifyListsTheRepository(t *testing.T) {
 	root := t.TempDir()
 	work := t.TempDir()
@@ -256,27 +285,107 @@ func TestVerifyListsTheRepository(t *testing.T) {
 	runGit(t, work, "push", "-q", bare, "main", "dev")
 	backend := cgi.Handler{Path: gitCLI(t), Args: []string{"http-backend"},
 		Env: []string{"GIT_PROJECT_ROOT=" + root, "GIT_HTTP_EXPORT_ALL=1", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null", "REMOTE_USER=x"}}
+	var widgets atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if u, p, _ := r.BasicAuth(); u != "x-access-token" || p != testToken {
 			w.Header().Set("WWW-Authenticate", `Basic realm="git"`)
 			http.Error(w, "bad credentials "+p, http.StatusUnauthorized)
 			return
 		}
+		if rest, ok := strings.CutPrefix(r.URL.Path, "/acme/old.git"); ok {
+			http.Redirect(w, r, "/acme/widgets.git"+rest+"?"+r.URL.RawQuery, http.StatusMovedPermanently)
+			return
+		}
+		widgets.Add(1)
 		backend.ServeHTTP(w, r)
 	}))
 	defer srv.Close()
 	u, _ := url.Parse(srv.URL)
-	g := &Git{InsecureHTTP: true}
+	g := &Git{InsecureHTTP: true, LookupIP: publicIP}
 	conn := testConn(u.Host)
 	conn.Fields["test_repository"] = "acme/widgets"
 	msg, err := g.Verify(context.Background(), conn)
 	if err != nil || msg != "Connected. 2 branches in acme/widgets." {
 		t.Fatalf("verify = %q, %v", msg, err)
 	}
+	conn.Fields["test_repository"] = "acme/old"
+	before := widgets.Load()
+	_, err = g.Verify(context.Background(), conn)
+	if err == nil || !strings.Contains(err.Error(), "the repository moved") || widgets.Load() != before {
+		t.Errorf("a redirect = %v, %d requests reached the target", err, widgets.Load()-before)
+	}
+	conn.Fields["test_repository"] = "acme/widgets"
 	conn.Fields["token"] = testToken + "-wrong"
 	_, err = g.Verify(context.Background(), conn)
-	if err == nil || !strings.Contains(err.Error(), "did not list acme/widgets") || strings.Contains(err.Error(), testToken) {
+	if err == nil || !strings.Contains(err.Error(), "did not list acme/widgets") || strings.Contains(err.Error(), testToken) ||
+		!strings.Contains(err.Error(), tokenPlaceholder) {
 		t.Errorf("a wrong token = %v", err)
+	}
+}
+
+// Why this test exists: Test connection runs in Kivali's server, which
+// can reach the cluster and the machine it runs on. A connection host
+// that names, or resolves to, a loopback, private or link-local address
+// (a metadata service, the cluster's API) must be refused before any
+// request, the token in it, is sent; so must a host that does not
+// resolve.
+func TestVerifyReachesOnlyPublicHosts(t *testing.T) {
+	var hits atomic.Int32
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		_, _ = w.Write([]byte(`{"login":"octo"}`))
+	}))
+	defer api.Close()
+	private := func(context.Context, string) ([]net.IP, error) {
+		return []net.IP{net.ParseIP("140.82.112.3"), net.ParseIP("10.0.0.7")}, nil
+	}
+	unknown := func(context.Context, string) ([]net.IP, error) { return nil, errors.New("no such host") }
+	for name, c := range map[string]struct {
+		g     *Git
+		host  string
+		words string
+	}{
+		"resolves privately": {&Git{HTTPClient: api.Client(), GitHubAPI: api.URL, LookupIP: private}, "github.com", "Test connection reaches only public hosts."},
+		"loopback literal":   {&Git{HTTPClient: api.Client(), GitHubAPI: api.URL}, "127.0.0.1", "Test connection reaches only public hosts."},
+		"metadata literal":   {&Git{HTTPClient: api.Client(), GitHubAPI: api.URL}, "169.254.169.254", "Test connection reaches only public hosts."},
+		"does not resolve":   {&Git{HTTPClient: api.Client(), GitHubAPI: api.URL, LookupIP: unknown}, "github.com", "github.com does not resolve"},
+	} {
+		conn := testConn(c.host)
+		conn.Fields["test_repository"] = "acme/widgets"
+		if _, err := c.g.Verify(context.Background(), conn); err == nil || err.Error() != c.words {
+			t.Errorf("%s = %v", name, err)
+		}
+		if _, err := c.g.Verify(context.Background(), testConn(c.host)); err == nil || err.Error() != c.words {
+			t.Errorf("%s, no repository = %v", name, err)
+		}
+	}
+	if n := hits.Load(); n != 0 {
+		t.Errorf("%d requests were sent", n)
+	}
+}
+
+// Why this test exists: a connection is checked when it is saved, so a
+// host the integration could never reach is a 400 the owner reads at
+// once rather than every agent's call refused later; and an access
+// entry that is not a repository or a pattern is refused the same way,
+// rather than stored and granting nothing.
+func TestCheckConnectionAndAccess(t *testing.T) {
+	g := New()
+	for _, ok := range []string{"github.com", "https://GitLab.com/", "git.acme.io:8443"} {
+		if err := g.CheckConnection(testConn(ok)); err != nil {
+			t.Errorf("%q = %v", ok, err)
+		}
+	}
+	for _, bad := range []string{"", "github.com/acme", "user@github.com", "http://github.com"} {
+		if err := g.CheckConnection(testConn(bad)); err == nil || err.Error() != "Host is a host name such as github.com, without https:// or a path" {
+			t.Errorf("%q = %v", bad, err)
+		}
+	}
+	if err := g.CheckAccess(map[string]any{"repositories": []any{"acme/widgets", "acme/*"}}); err != nil {
+		t.Errorf("good access = %v", err)
+	}
+	if err := g.CheckAccess(map[string]any{"repositories": []any{"acme/*", "acme/[x"}}); err == nil || err.Error() != "acme/[x is not a repository or a pattern" {
+		t.Errorf("a bad pattern = %v", err)
 	}
 }
 
@@ -301,7 +410,7 @@ func TestVerifyAccountEndpoints(t *testing.T) {
 		}
 	}))
 	defer api.Close()
-	g := &Git{HTTPClient: api.Client(), GitHubAPI: api.URL + "/gh", GitLabAPI: api.URL + "/gl"}
+	g := &Git{HTTPClient: api.Client(), GitHubAPI: api.URL + "/gh", GitLabAPI: api.URL + "/gl", LookupIP: publicIP}
 	if msg, err := g.Verify(context.Background(), testConn("github.com")); err != nil || msg != "Connected to github.com as octo." {
 		t.Errorf("github = %q, %v (headers %v)", msg, err, seen)
 	}

@@ -86,6 +86,10 @@ type ServerConfig struct {
 	// Either would hand a git job's token to the agent's commands.
 	GitUnavailable string
 
+	// gitWaitHook, when set, is told a /v1/git job waits for another on
+	// the same working copy: a test hook.
+	gitWaitHook func(path string)
+
 	// GitInsecureHTTP lets POST /v1/git reach a repository over http://.
 	// For tests only, whose git server is an httptest one; an agent pod
 	// never sets it, and anything but https is refused.

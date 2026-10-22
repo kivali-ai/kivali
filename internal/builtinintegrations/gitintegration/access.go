@@ -2,6 +2,7 @@ package gitintegration
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/kivali-ai/kivali/internal/gitrepo"
 )
@@ -14,10 +15,25 @@ const accessKey = "repositories"
 // read: missing, empty, or holding anything but patterns.
 var errNoRepositories = errors.New("the access names no repositories")
 
+// CheckAccess holds an agent's access, as the owner saves it, to
+// repositories gitrepo.Match can read: each entry a repository or a
+// pattern. The form has made sure the entries are strings.
+func (g *Git) CheckAccess(access map[string]any) error {
+	raw, _ := access[accessKey].([]any)
+	for _, v := range raw {
+		if s, _ := v.(string); !gitrepo.ValidPattern(s) {
+			return fmt.Errorf("%v is not a repository or a pattern", v)
+		}
+	}
+	return nil
+}
+
 // repositoryPatterns is the access's repositories: a list of one or
 // more strings, each a pattern gitrepo.Match reads (owner/name, or a
-// pattern such as acme/*). Anything else in it refuses every
-// repository, rather than granting what the rest names.
+// pattern such as acme/*). The API refuses an access that is not this
+// when it is saved (CheckAccess, and the form's own check); a stored
+// row that is anything else all the same refuses every repository,
+// rather than granting what the rest names.
 func repositoryPatterns(access map[string]any) ([]string, error) {
 	raw, ok := access[accessKey].([]any)
 	if !ok || len(raw) == 0 {

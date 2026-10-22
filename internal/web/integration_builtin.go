@@ -215,7 +215,7 @@ func (s *Server) builtinAgentCall(ctx context.Context, start time.Time, slug str
 			s.auditAgentCall(v.name, start, slug, tool, true, "the integration asked for a second shell job")
 			return integrationError(fmt.Sprintf("The %s integration did not finish the call; tell the owner.", v.display))
 		}
-		return s.builtinShellJob(ctx, start, slug, v, tool, conn, proxySecret, res.ShellJob)
+		return s.builtinShellJob(ctx, start, slug, v, tool, conn, proxySecret, res.ShellJob, scrub.Replace(res.Audit))
 	}
 	raw, callErr := builtinResultJSON(res, callErr)
 	resp, failed := integrationCallAnswer(v.display, raw, callErr)
@@ -231,9 +231,13 @@ func (s *Server) builtinAgentCall(ctx context.Context, start time.Time, slug str
 
 // builtinShellJob is the first request's answer for a call whose
 // built-in asked for job: the job, with the connection's scoped proxy
-// credential added to a git one. Not yet the call's answer, so no audit
-// row is written; one that cannot be completed is.
-func (s *Server) builtinShellJob(ctx context.Context, start time.Time, slug string, v agentIntegration, tool string, conn builtinintegrations.Connection, proxySecret string, job *agentpod.IntegrationShellJob) agentpod.IntegrationCallResponse {
+// credential added to a git one. It is not yet the call's answer, but
+// the job carries the token out, so it writes an audit row of its own,
+// with started (the built-in's Result.Audit, "started: <owner/name>"
+// for git) as its reason: a second request that never comes still
+// leaves the owner a row. The second request writes the row of how it
+// ended.
+func (s *Server) builtinShellJob(ctx context.Context, start time.Time, slug string, v agentIntegration, tool string, conn builtinintegrations.Connection, proxySecret string, job *agentpod.IntegrationShellJob, started string) agentpod.IntegrationCallResponse {
 	if job.Git != nil {
 		if _, ok := v.builtin.(builtinintegrations.HostsOf); ok && proxySecret == "" {
 			var err error
@@ -247,6 +251,10 @@ func (s *Server) builtinShellJob(ctx context.Context, start time.Time, slug stri
 			job.Git.Proxy = agentpod.GitProxy{Username: builtinintegrations.ProxyUser(v.name, conn.ID), Password: proxySecret}
 		}
 	}
+	if started == "" {
+		started = "started"
+	}
+	s.auditAgentCall(v.name, start, slug, tool, true, started)
 	return agentpod.IntegrationCallResponse{Content: []string{}, ShellJob: job}
 }
 

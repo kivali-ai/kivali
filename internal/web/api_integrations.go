@@ -593,6 +593,10 @@ func (s *Server) handleAPIIntegration(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleAPIIntegrationToggle(on bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// Under the lock a connection's save takes, so a save racing the
+		// switch registers or drops the proxy credential by the switch as
+		// it ends up.
+		defer s.lockIntegrations()()
 		v, ok := s.integrationOr404(w, r)
 		if !ok {
 			return
@@ -1012,10 +1016,29 @@ func (s *Server) handleAPIIntegrationConnectionPut(w http.ResponseWriter, r *htt
 			return
 		}
 	}
+	// The connection as a built-in reads it: every field, secrets
+	// included.
+	conn := builtinintegrations.Connection{Fields: map[string]string{}}
+	if v.conn != nil {
+		conn.ID = v.conn.ID
+	}
+	for _, f := range m.UserConfig {
+		if val := cmp.Or(fields[f.Key], secret[f.Key]); val != "" {
+			conn.Fields[f.Key] = val
+		}
+	}
+	// A built-in may hold the connection to more than its form does.
+	if c, ok := v.builtin.(builtinintegrations.ConnectionChecker); ok {
+		if err := c.CheckConnection(conn); err != nil {
+			writeAPIError(w, http.StatusBadRequest, err.Error(), whoYou)
+			return
+		}
+	}
 	rec := store.IntegrationConnection{ID: newConnectionID(), CreatedAt: s.clk().Now(), Fields: fields}
 	if v.conn != nil {
 		rec.ID, rec.CreatedAt = v.conn.ID, v.conn.CreatedAt
 	}
+	conn.ID = rec.ID
 	secretName := secrets.ConnectionSecretName(name, rec.ID)
 	if v.conn != nil && v.conn.SecretName != "" {
 		secretName = v.conn.SecretName
@@ -1060,12 +1083,6 @@ func (s *Server) handleAPIIntegrationConnectionPut(w http.ResponseWriter, r *htt
 	// Registered on every save, so the proxy admits the host as it now
 	// stands; only while the integration is on.
 	if hostsOf != nil && v.it.Enabled {
-		conn := builtinintegrations.Connection{ID: rec.ID, Fields: map[string]string{}}
-		for _, f := range m.UserConfig {
-			if val := cmp.Or(fields[f.Key], secret[f.Key]); val != "" {
-				conn.Fields[f.Key] = val
-			}
-		}
 		if err := s.registerBuiltinEgress(name, hostsOf, conn, secret[builtinintegrations.ProxySecretKey]); err != nil {
 			log.Printf("integration %s: register the connection's proxy credential: %v", name, err)
 			writeAPIError(w, http.StatusInternalServerError, "the connection was saved, but its network access could not be set up; save it again", whoServer)
@@ -1332,6 +1349,13 @@ func (s *Server) handleAPIIntegrationAccessPut(w http.ResponseWriter, r *http.Re
 	if len(req.Access) > 0 && string(req.Access) != "null" {
 		if err := json.Unmarshal(req.Access, &access); err != nil {
 			writeAPIError(w, http.StatusBadRequest, "the access must be an object of field values", whoDevelopers)
+			return
+		}
+	}
+	// A built-in may hold the access to more than its form does.
+	if c, ok := v.builtin.(builtinintegrations.AccessChecker); ok {
+		if err := c.CheckAccess(access); err != nil {
+			writeAPIError(w, http.StatusBadRequest, err.Error(), whoYou)
 			return
 		}
 	}

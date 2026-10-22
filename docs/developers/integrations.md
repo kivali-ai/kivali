@@ -668,7 +668,12 @@ action, allowed, reason, duration_ms}`, the action without the prefix.
 A refused call is `allowed: false` with the cause as its reason (`no
 access`, `the integration is off`, `the agent's access does not
 include it`, ...). An allowed call that failed keeps the
-integration's words, scrubbed, as its reason. The owner's own calls
+integration's words, scrubbed, as its reason. A call that runs a job
+in the agent's shell ([The git built-in](#the-git-built-in)) appends
+two rows: one when core hands the job out, with the built-in's
+`Result.Audit` as its reason (`started: acme/widgets`), and one when
+the second request ends it, with how it ended; a second request that
+never comes leaves the first row alone. The owner's own calls
 are rows for `ceo`, and so is a roll back, with the action `rollback`
 and the versions as its reason ([Rolling back](#rolling-back)), which
 the page shows as "Roll back" and "From version 1.1.0 to version
@@ -712,6 +717,8 @@ type ShellJobIntegration interface {
 	Complete(ctx context.Context, caller Caller, conn Connection, name string, args json.RawMessage, result shelljob.Result) (*Result, error)
 }
 type HostsOf interface{ Hosts(conn Connection) []string }
+type ConnectionChecker interface{ CheckConnection(conn Connection) error }
+type AccessChecker interface{ CheckAccess(access map[string]any) error }
 
 // An error of Call or Complete that refuses the call before anything ran.
 type Refusal struct{ Text, Reason string }
@@ -745,12 +752,18 @@ type Refusal struct{ Text, Reason string }
   function's own failure, as above. `Result.Audit`, when set, is the
   audit row's reason in place of the failure's words.
 - A `ShellJobIntegration` runs part of an action in the agent's shell:
-  its `Call` answers with `Result.ShellJob`, and `Complete` puts the
-  shell's result in words on the call's second request
-  ([The git built-in](#the-git-built-in)).
+  its `Call` answers with `Result.ShellJob` (and `Result.Audit`, the
+  reason of the row core writes as it hands the job out), and
+  `Complete` puts the shell's result in words on the call's second
+  request ([The git built-in](#the-git-built-in)).
 - A `HostsOf` built-in's shell jobs reach the network through the
   egress proxy: each of its connections gets a scoped proxy credential
   admitted to `Hosts(conn)` and nothing else.
+- A `ConnectionChecker` holds a connection to more than its form:
+  `PUT .../connection` calls `CheckConnection` after the form's own
+  checks and before it stores anything, and answers 400 with the
+  error's words. An `AccessChecker` does the same for
+  `PUT .../access/{slug}`, after `integration.ValidateAccess`.
 
 `Tools`, `Call`, `Verify` and `Choices` run concurrently: many agents
 call at once, and each agent's list is asked for in parallel with the
@@ -901,9 +914,11 @@ requests on `core.sock`, as the smoke test does
    `Git.Call`, which checks the connection (a host, a token), the
    access, the arguments and the repository, and answers with a
    `builtinintegrations.Refusal` or a shell job. Core puts the
-   connection's proxy credential in the job and answers
-   `IntegrationCallResponse{shell_job}`. No audit row is written yet; a
-   refusal is audited and answered at once.
+   connection's proxy credential in the job, writes an audit row
+   (allowed, the action, `started: <owner/name>`, or `started: the
+   working copy's origin at <path>` for a fetch without a `url`) and
+   answers `IntegrationCallResponse{shell_job}`. A refusal is audited and
+   answered at once.
 2. The MCP server converts the job to an `agentshell.GitRequest` and has
    the agent-shell daemon run it (`SidecarShell.Git`, `POST /v1/git`),
    waiting the operation's own bound and 30 s more, as `SidecarShell.Exec`
@@ -914,10 +929,13 @@ requests on `core.sock`, as the smoke test does
    access and the connection again exactly as on the first request, and
    `Git.Complete` checks the call again (access taken away while the job
    ran refuses it) and puts the result in words. That writes the call's
-   one audit row: allowed, the action `clone` or `fetch`, and the reason
-   `<owner/name>: updated <refs>` (at most ten named), `<owner/name>: up
-   to date`, or the repository and why it failed. The row counts from
-   the job's start (the result's `duration_ms`, at most 15 minutes).
+   second audit row: allowed, the action `clone` or `fetch`, and the
+   reason `<owner/name>: updated <refs>` (at most ten named, then how
+   many more), `<owner/name>: up to date`, or the repository and why it
+   failed. The row counts from the job's start (the result's
+   `duration_ms`, at most 15 minutes). A second request that never
+   comes leaves the first row, so every job that carried the token out
+   is in the audit.
 
 The result is untrusted text from the agent's pod: it becomes only the
 agent's answer and the audit's reason, both scrubbed of the
@@ -946,11 +964,12 @@ type GitJob struct {
 }
 type IntegrationShellJobResult struct{ Skipped string; Git *GitResult }
 type GitResult struct {
-	Repository string
-	Updated    []GitRefUpdate // {ref, old, new}; old empty for a new ref
-	Error      string
-	DurationMs int64
-	TimedOut   bool
+	Repository   string
+	Updated      []GitRefUpdate // {ref, old, new}; old empty for a new ref; at most 200
+	UpdatedTotal int            // json: updated_total; every ref that moved
+	Error        string         // at most 4 KiB
+	DurationMs   int64
+	TimedOut     bool
 }
 ```
 
@@ -984,18 +1003,26 @@ or the daemon's words, cut to 1000 bytes.
 `internal/agentshell/git.go` runs the operation in the daemon's own
 process with go-git v5 (`github.com/go-git/go-git/v5`). The body is a
 `GitRequest` (64 KiB at most), the answer a `GitResponse`
-(`{repository, updated, error, duration_ms, timed_out}`). The bound is
-the request's `timeout_seconds`, at most 15 minutes for a clone and 10
-for a fetch, 5 when it gives none, on the daemon's clock; past it the
-operation's context ends and the answer is `timed_out`.
+(`{repository, updated, updated_total, error, duration_ms,
+timed_out}`). The answer is bounded so it always fits the agent's
+next request to core, whose body is capped at 16 MiB: `updated` lists
+at most 200 refs (`GitUpdatedMax`), by name, `updated_total` counts
+every ref that moved, and `error` is cut to 4 KiB (`GitErrorMaxBytes`)
+after it is scrubbed. The bound is the request's `timeout_seconds`, at
+most 15 minutes for a clone and 10 for a fetch, 5 when it gives none,
+on the daemon's clock; past it the operation's context ends and the
+answer is `timed_out`. Jobs on one working copy run one after the
+other, by its resolved path (two fetches into one `.git` at once could
+leave its refs half written); the wait counts against the bound.
 
 - **Where.** `path` is absolute under the daemon's root (`/files`) or
   its HOME (`/scratch/home`), `~/...` for the home, or relative to the
   root, as a command's cwd is; the root and the home themselves are
   refused. The existing part of the path is resolved through its
   symbolic links and must stay under the same base. A clone needs a
-  directory that does not exist or is empty, and go-git removes what it
-  made when the clone fails; a fetch needs a working copy whose `.git`
+  directory that does not exist or is empty; when the clone fails,
+  go-git removes that directory if it made it, or empties it if it was
+  there, and leaves any parent directories it made; a fetch needs a working copy whose `.git`
   is a directory (a `gitdir:` file or a link is refused).
 - **What it reaches.** A clone's URL is the job's, parsed by the same
   rules on the job's host, and must be one of `allowed_repositories`.
@@ -1006,20 +1033,28 @@ operation's context ends and the answer is `timed_out`.
   `url.<base>.insteadOf` rewrites it; exactly one URL), parsed by the
   same rules and refused unless it is on the job's host and one of
   `allowed_repositories`. `.git/config` is the agent's to write, so
-  nothing else in it is read. The daemon never follows a URL it did not
-  derive and check this way.
+  nothing else in it is read. Every request goes to that URL: go-git's
+  http and https transports are installed with
+  `githttp.NoFollowRedirects` (`client.InstallProtocol`, in the
+  daemon's `init`), so a host that answers with a redirect (GitHub does
+  for a renamed or transferred repository) fails the operation, and the
+  agent reads "the repository moved; ask the owner to update the
+  access". The tests serve a 301 from one repository's path to another
+  and see nothing reach the other.
 - **How it fetches.** Through an anonymous remote
   (`CreateRemoteAnonymous` with the URL in code, and `RemoteName:
-  "anonymous"` on the fetch). go-git then applies no `insteadOf` rule,
-  from the repository's configuration or a global `~/.gitconfig`,
-  ignores the `[remote "origin"]` the configuration holds, and runs no
-  hook; the daemon's tests pin all of it against a poisoned working copy
-  (a rule and an origin to another server, the same rule in the global
-  file, hooks that leave a mark), with a control that shows a fetch
-  through the named remote follows the poison. A named remote
-  (`RemoteName: "origin"` without `RemoteURL`) follows the
-  configuration's URL: the daemon never uses one. A push through an
-  anonymous remote needs `PushOptions.RemoteName: "anonymous"`.
+  "anonymous"` on the fetch). The daemon's tests pin, against a
+  poisoned working copy, that through the anonymous remote the
+  repository's own `insteadOf` rule and `[remote "origin"]` URL are
+  inert, each with a control: a fetch through the named remote follows
+  the rule to the other server when origin is the good one, and follows
+  origin when origin names the other server. They also assert that a
+  global `~/.gitconfig` rule to the other server has no effect on a
+  clone or a fetch (go-git reads no global configuration here) and that
+  no hook runs. A named remote (`RemoteName: "origin"` without
+  `RemoteURL`) follows the configuration: the daemon never uses one. A
+  push through an anonymous remote needs `PushOptions.RemoteName:
+  "anonymous"`.
 - **Refspecs.** None fetches `+refs/heads/*:refs/remotes/origin/*`.
   Each given must parse (`config.RefSpec.Validate`), have a source, and
   write under `refs/remotes/origin/` or `refs/tags/`, cleanly (no `..`),
@@ -1037,9 +1072,11 @@ operation's context ends and the answer is `timed_out`.
   any user). It and the proxy credential live in the request for the
   one operation, are never written to disk (`.git/config` holds neither,
   which the tests check) and are scrubbed from every string of the
-  answer: the value, `user:value` in base64, the credentialed proxy URL
-  and their URL-escaped forms. The MCP server scrubs its own transport
-  error the same way before it sends it to core.
+  answer: the token, `user:token` in base64 and their URL-escaped forms
+  become `[token]`; the proxy secret, `user:secret` in base64, the
+  credentialed proxy URL and their URL-escaped forms become `[proxy
+  credential]` (`agentshell.GitScrubber`). The MCP server scrubs its
+  own transport error the same way before it sends it to core.
 - **Whose files.** The daemon runs it with its filesystem uid, 65532, so
   a clone is owned as every file the shell writes is.
 - **When it runs nothing.** A daemon that did not drop to its own user
@@ -1073,17 +1110,38 @@ scoped proxy credential of its own (`internal/web/integration_builtin_egress.go`
   while the integration is on, so a changed host is registered at once.
   Deleting the connection, switching the integration off and removing it
   drop it (`DropEgressScopedCredential`); switching it on registers it
-  again. Every boot (`Server.RegisterBuiltinEgress` in `main.go`) and
-  every restore registers each switched-on built-in's connection again
-  from its Secret, since `egress_agents.json` is out of backups and the
-  Secret is not, and drops the credentials of those switched off. A job
-  whose connection's Secret holds no secret mints and registers one
-  first.
+  again. The switch takes the same lock (`lockIntegrations`) as the
+  save, so a save racing a switch registers or drops the credential by
+  the switch as it ends up. Every boot (`Server.RegisterBuiltinEgress`
+  in `main.go`) and every restore registers each switched-on built-in's
+  connection again from its Secret, since `egress_agents.json` is out
+  of backups and the Secret is not, and drops the credentials of those
+  switched off. A job whose connection's Secret holds no secret mints
+  and registers one first.
+
+#### Checks at save
+
+Git is a `ConnectionChecker` and an `AccessChecker`. Saving a
+connection whose host `gitrepo.NormalizeHost` cannot read (a path, user
+info, a scheme other than `https://`) is a 400, "Host is a host name
+such as github.com, without https:// or a path", and nothing is
+stored. Saving an access with a `repositories` entry that is not a
+`path.Match` pattern is a 400, "<entry> is not a repository or a
+pattern". A stored row that is not this all the same (one written
+before the check, or by hand) refuses every repository.
 
 #### Test connection
 
 `Git.Verify` runs in core, which reaches the host directly (the
-server's container has no egress proxy). With `test_repository` set it
+server's container has no egress proxy). It first resolves the
+connection's host and refuses, before any request, a host with any
+address that is loopback, private (RFC 1918, fc00::/7), link-local
+(169.254.0.0/16, fe80::/10), unspecified or multicast, an IP-literal
+host the same way: "Test connection reaches only public hosts."
+(`gitrepo.PublicAddresses`; `Git.LookupIP` is the test hook for the
+resolver). go-git follows no redirect here either (`gitintegration`'s
+`init` installs the same transports as the daemon): a repository that
+moved fails with words saying so. With `test_repository` set it
 lists the repository in memory with the token
 (`git.NewRemote(memory.NewStorage(), ...)` and `ListContext` with basic
 auth) and answers "Connected. <n> branches in <owner/name>." Without it,
@@ -1093,9 +1151,9 @@ and for `gitlab.com` `https://gitlab.com/api/v4/user` with
 `PRIVATE-TOKEN` ("Connected to gitlab.com as <username>."); any other
 host is the error "Name a repository for Test connection: this host
 has no account endpoint Kivali knows." A failure is the host's words
-with the token taken out. The `Git` struct's fields are test hooks
-(`InsecureHTTP`, `HTTPClient`, `GitHubAPI`, `GitLabAPI`); the tests
-never reach a real host.
+with the token taken out (`[token]`). The `Git` struct's fields are
+test hooks (`InsecureHTTP`, `HTTPClient`, `GitHubAPI`, `GitLabAPI`,
+`LookupIP`); the tests never reach a real host.
 
 Not supported: SSH remotes, Git LFS (a clone holds the pointers),
 submodules (not cloned), and pushing through the integration.

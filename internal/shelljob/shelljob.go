@@ -66,12 +66,15 @@ type Result struct {
 
 // GitResult is a GitJob's outcome: the repository it reached
 // (owner/name), the refs it moved, its error and how long it took.
+// Updated is at most the daemon's first 200 refs by name;
+// UpdatedTotal counts every ref that moved.
 type GitResult struct {
-	Repository string         `json:"repository,omitempty"`
-	Updated    []GitRefUpdate `json:"updated,omitempty"`
-	Error      string         `json:"error,omitempty"`
-	DurationMs int64          `json:"duration_ms,omitempty"`
-	TimedOut   bool           `json:"timed_out,omitempty"`
+	Repository   string         `json:"repository,omitempty"`
+	Updated      []GitRefUpdate `json:"updated,omitempty"`
+	UpdatedTotal int            `json:"updated_total,omitempty"`
+	Error        string         `json:"error,omitempty"`
+	DurationMs   int64          `json:"duration_ms,omitempty"`
+	TimedOut     bool           `json:"timed_out,omitempty"`
 }
 
 // GitRefUpdate is one ref a git operation moved: its name and the

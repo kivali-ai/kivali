@@ -103,7 +103,9 @@ type Tool struct {
 // ShellJob, set by Call of a ShellJobIntegration, is work for the
 // agent's shell: core hands it to the agent's MCP server, which runs it
 // and sends the call again with the result, and core then calls
-// Complete. Content, IsError and Audit are not read then.
+// Complete. Content and IsError are not read then; Audit is the reason
+// of the row core writes as it hands the job out ("started: ..."), and
+// Complete's Result gives the reason of the row that ends the call.
 type Result struct {
 	Content  []string
 	IsError  bool
@@ -130,6 +132,22 @@ type ShellJobIntegration interface {
 // job.
 type HostsOf interface {
 	Hosts(conn Connection) []string
+}
+
+// ConnectionChecker is an Integration that holds a connection to more
+// than its form does. PUT .../connection calls CheckConnection after
+// the form's own checks and before it stores anything; an error is a
+// 400 with its words, a sentence for the owner. conn.ID is empty for a
+// first connection.
+type ConnectionChecker interface {
+	CheckConnection(conn Connection) error
+}
+
+// AccessChecker is an Integration that holds an agent's access to more
+// than its form does. PUT .../access/{slug} calls CheckAccess after
+// integration.ValidateAccess; an error is a 400 with its words.
+type AccessChecker interface {
+	CheckAccess(access map[string]any) error
 }
 
 // ProxySecretKey is the key, in a connection's Secret, of its scoped

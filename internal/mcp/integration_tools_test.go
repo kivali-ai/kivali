@@ -96,7 +96,7 @@ func TestIntegrationToolsRunTheShellJob(t *testing.T) {
 		{Content: []string{"Cloned acme/widgets."}},
 	}}
 	shell := &recordingShell{res: &agentshell.GitResponse{
-		Repository: "acme/widgets", DurationMs: 1200,
+		Repository: "acme/widgets", DurationMs: 1200, UpdatedTotal: 901,
 		Updated: []agentshell.GitRefUpdate{{Ref: "refs/remotes/origin/main", New: "abc"}},
 	}}
 	tools := IntegrationTools(c, shell, []agentpod.IntegrationTool{{Name: "git_clone"}}, nil)
@@ -123,7 +123,7 @@ func TestIntegrationToolsRunTheShellJob(t *testing.T) {
 		t.Fatalf("requests = %+v", c.reqs)
 	}
 	r := c.reqs[1].ShellJobResult.Git
-	if r == nil || r.Repository != "acme/widgets" || r.DurationMs != 1200 || len(r.Updated) != 1 || r.Updated[0] != (agentpod.GitRefUpdate{Ref: "refs/remotes/origin/main", New: "abc"}) {
+	if r == nil || r.Repository != "acme/widgets" || r.DurationMs != 1200 || r.UpdatedTotal != 901 || len(r.Updated) != 1 || r.Updated[0] != (agentpod.GitRefUpdate{Ref: "refs/remotes/origin/main", New: "abc"}) {
 		t.Errorf("result sent = %+v", r)
 	}
 
@@ -135,7 +135,7 @@ func TestIntegrationToolsRunTheShellJob(t *testing.T) {
 		t.Fatal(err)
 	}
 	e := c.reqs[1].ShellJobResult.Git.Error
-	if strings.Contains(e, "ghp_secret_token") || strings.Contains(e, "proxy-secret-value") || !strings.Contains(e, "HTTP 400") {
+	if strings.Contains(e, "ghp_secret_token") || strings.Contains(e, "proxy-secret-value") || !strings.Contains(e, "HTTP 400") || !strings.Contains(e, agentshell.GitTokenPlaceholder) {
 		t.Errorf("error sent = %q", e)
 	}
 

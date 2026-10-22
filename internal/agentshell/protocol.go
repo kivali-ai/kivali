@@ -204,13 +204,16 @@ type GitProxy struct {
 // GitResponse is a git operation's outcome: the repository it reached
 // (owner/name), the refs it moved, why it failed, how long it took and
 // whether its timeout ended it. Every string is scrubbed of the
-// request's token and proxy credential.
+// request's token and proxy credential. Updated lists at most
+// GitUpdatedMax refs, by name, and UpdatedTotal counts every ref that
+// moved; Error is at most GitErrorMaxBytes.
 type GitResponse struct {
-	Repository string         `json:"repository,omitempty"`
-	Updated    []GitRefUpdate `json:"updated,omitempty"`
-	Error      string         `json:"error,omitempty"`
-	DurationMs int64          `json:"duration_ms,omitempty"`
-	TimedOut   bool           `json:"timed_out,omitempty"`
+	Repository   string         `json:"repository,omitempty"`
+	Updated      []GitRefUpdate `json:"updated,omitempty"`
+	UpdatedTotal int            `json:"updated_total,omitempty"`
+	Error        string         `json:"error,omitempty"`
+	DurationMs   int64          `json:"duration_ms,omitempty"`
+	TimedOut     bool           `json:"timed_out,omitempty"`
 }
 
 // GitRefUpdate is one ref a git operation moved: its name and the

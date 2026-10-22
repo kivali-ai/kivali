@@ -112,13 +112,13 @@ The switch at the top of the integration's page turns it off for every agent at 
 - **Access token**: a token that can read the repositories your agents will use. On GitHub, a fine-grained personal access token limited to those repositories, with read access to their contents; on GitLab, an access token with `read_repository`. Give it no more than that.
 - **Repository for Test connection** (optional): one repository, as `owner/name`.
 
-**Test connection** lists that repository's branches with your token: "Connected. 4 branches in acme/widgets." With no repository named, it asks GitHub or GitLab who the token belongs to: "Connected to github.com as octocat." For any other host, name a repository. A failed test shows the host's reason.
+**Test connection** lists that repository's branches with your token: "Connected. 4 branches in acme/widgets." With no repository named, it asks GitHub or GitLab who the token belongs to: "Connected to github.com as octocat." For any other host, name a repository. A failed test shows the host's reason. Test connection reaches only public hosts: a host on your own network is refused. A host that is not a host name (with a path, for example) is refused when you save.
 
 The token is kept in the connection's Secret, like every connection secret. Each connection also has a network credential of its own, kept beside the token, that lets an agent's clone or fetch reach the connection's host and nothing else. Your team's allow list does not change.
 
 ### Access
 
-An agent's access is a list of repositories: `owner/name`, such as `acme/widgets`, or a pattern such as `acme/*`, which covers every repository directly under `acme` but not `acme/tools/cli`. GitLab nests groups, so write `group/subgroup/*` for those. Capitals do not matter.
+An agent's access is a list of repositories: `owner/name`, such as `acme/widgets`, or a pattern such as `acme/*`, which covers every repository directly under `acme` but not `acme/tools/cli`. GitLab nests groups, so write `group/subgroup/*` for those. Capitals do not matter. A repository that has been renamed or moved is not followed to its new name: a clone or fetch of it fails, and the agent is told to ask you to update its access to the new name.
 
 ### What agents can do
 
@@ -131,7 +131,7 @@ Both go to the connection's host with your token. The working copy is an ordinar
 
 Agents cannot push through the integration.
 
-Every clone and fetch is in **Latest calls**, with the repository and the branches and tags that moved, or why it failed. Kivali checks each one against the agent's access before anything runs.
+Every clone and fetch is in **Latest calls**, with the repository and the branches and tags that moved, or why it failed. Kivali checks each one against the agent's access before anything runs. Each has two rows: one when it starts and one when it ends.
 
 ### Not supported
 
