@@ -1705,7 +1705,7 @@ The hosts are `api.github.com` and `github.com`.
 
 - **The connection** is a [sign-in connection](#sign-in-connections):
   `method: device` with GitHub's device, authorization and token
-  endpoints, `client: operator` (a GitHub App the owner registers, its
+  endpoints, so both ways are offered, a code first; `client: operator` (a GitHub App the owner registers, its
   steps in `kivali.setup_notes`), no scopes (a GitHub App's token has
   the app's permissions), and `credential_keys` naming the token
   `GH_TOKEN`. `user_config` is empty: the form is the client id and
