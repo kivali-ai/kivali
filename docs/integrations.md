@@ -97,6 +97,16 @@ Services check the redirect address exactly, character for character, and set ru
 
 A Kivali server you run yourself therefore needs a real host name with a certificate for browser sign-in. Tailscale is the easy way: its MagicDNS name for the server, under `ts.net`, is a real name with a certificate Tailscale issues, reachable only from your tailnet. [Self-hosting](self-hosting.md#sign-in-to-integrations-in-the-browser) says how.
 
+**In Kivali Desktop**, **Sign in in your browser** opens your computer's default browser, not the team's window, which many services refuse to sign in inside. The browser arrives already signed in to the team, goes on to the service, and comes back to the integration's page there; the team's window says **Signed in** within a few seconds, and you can close the browser tab. While it waits, the team's window offers **Start again**, for a browser that did not open.
+
+For a team on your computer, the redirect address is the team's own address there, `http://127.0.0.1:<port>/connect/callback`, with the port the page shows:
+
+- GitHub accepts `http://127.0.0.1/connect/callback` registered once, whatever the port.
+- Most other services need the exact address, port included: register the one the page shows. The team keeps its port for good.
+- A service that allows no plain `http` address, such as Slack, cannot sign in to a team on your computer this way. Use **Sign in with a code** where the integration offers it, or give the team an `https` address under **Other devices** in the team's settings and sign in from a browser at that address.
+
+A team elsewhere that you open in Kivali Desktop signs in from a browser at the team's own address: open it there (**Open in browser**) and sign in from its page.
+
 Kivali keeps the sign-in fresh: the integration never sees the client secret or what Kivali renews the sign-in with, only a token that works at the moment of each call, which Kivali renews shortly before it expires. When the service no longer accepts the sign-in (you revoked the app, or changed its secret), the connection reads **Sign in again** with the service's reason, the integration reads not connected, and **Needs you** on Home lists it until you sign in again from its page.
 
 While a connection needs you to sign in, an agent's call through it is refused with words that say the connection needs you to sign in again and to ask you; nothing reaches the service.
