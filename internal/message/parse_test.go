@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kivali-ai/kivali/internal/builtinskills"
 	"github.com/kivali-ai/kivali/internal/provider"
 	"github.com/kivali-ai/kivali/internal/roleicon"
 	"github.com/kivali-ai/kivali/internal/store"
@@ -357,7 +358,10 @@ func TestParseProposeHireRefusesReservedSlugs(t *testing.T) {
 }
 
 // The icon is the hiring agent's pick from the role icon set; a name
-// outside it is refused, and the error lists the choices.
+// outside it is refused, and the error lists the choices and names the
+// file that says what each pictures. The schema carries no enum, so
+// this refusal is the only thing that keeps an unknown icon out of a
+// hire, and what it says is how the agent gets the next call right.
 func TestParseProposeHireRefusesAnUnknownIcon(t *testing.T) {
 	block := toolUse(ToolProposeHire, map[string]any{
 		"title":      "Hire: Market Analyst",
@@ -374,6 +378,9 @@ func TestParseProposeHireRefusesAnUnknownIcon(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), `"robot" is not a role icon`) || !strings.Contains(err.Error(), "chart-line") {
 		t.Errorf("error should name the bad icon and the choices, got %q", err)
+	}
+	if !strings.Contains(err.Error(), "/files/skills/role-icons/SKILL.md") {
+		t.Errorf("error should name the role-icons skill, got %q", err)
 	}
 }
 
@@ -913,10 +920,14 @@ func TestParseCEOApprovalRequestNoHire(t *testing.T) {
 	}
 }
 
-// The hiring agent chooses from propose_hire's schema: icon is
-// required, its enum is exactly the role icon set, and its description
-// carries every icon with what it shows.
-func TestProposeHireSchemaOffersEveryRoleIcon(t *testing.T) {
+// Why this test exists: propose_hire's schema is read on every turn of
+// the Chief of Staff, so the icon list lives in the role-icons skill
+// and the icon field only points at it. A pointer to a file Kivali does
+// not ship leaves the hiring agent guessing names; an icon that is not
+// required lets a hire through with no icon; and the list or its
+// descriptions creeping back into the field puts them on every turn
+// again.
+func TestProposeHireIconPointsAtTheRoleIconsSkill(t *testing.T) {
 	var schema struct {
 		Properties map[string]struct {
 			Enum        []string `json:"enum"`
@@ -930,16 +941,22 @@ func TestProposeHireSchemaOffersEveryRoleIcon(t *testing.T) {
 	if !slices.Contains(schema.Required, "icon") {
 		t.Errorf("icon is not required: %v", schema.Required)
 	}
-	icon := schema.Properties["icon"]
-	if len(icon.Enum) != len(roleicon.Icons) {
-		t.Fatalf("enum has %d names, want %d", len(icon.Enum), len(roleicon.Icons))
+	if roleIconsPath != "/files/skills/role-icons/SKILL.md" || !builtinskills.Has(builtinskills.RoleIcons) {
+		t.Errorf("icon points at %s, not a built-in skill's SKILL.md", roleIconsPath)
 	}
-	for i, ic := range roleicon.Icons {
-		if icon.Enum[i] != ic.Name {
-			t.Errorf("enum[%d] = %q, want %q", i, icon.Enum[i], ic.Name)
-		}
-		if !strings.Contains(icon.Description, "- "+ic.Name+": "+ic.Description+"\n") {
-			t.Errorf("description lacks %q", ic.Name)
+	icon := schema.Properties["icon"]
+	if !strings.Contains(icon.Description, roleIconsPath) {
+		t.Errorf("icon's description does not name %s: %q", roleIconsPath, icon.Description)
+	}
+	if !strings.Contains(icon.Description, "'user'") {
+		t.Errorf("icon's description does not name the fallback icon: %q", icon.Description)
+	}
+	if len(icon.Enum) > 0 {
+		t.Errorf("icon carries an enum of %d names; the names are in %s", len(icon.Enum), roleIconsPath)
+	}
+	for _, ic := range roleicon.Icons {
+		if strings.Contains(icon.Description, ic.Description) {
+			t.Errorf("icon's description carries %q's description; it belongs in %s", ic.Name, roleIconsPath)
 		}
 	}
 }

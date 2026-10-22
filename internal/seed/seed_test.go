@@ -199,6 +199,20 @@ func TestChiefOfStaffRoleOwnsTheGraphSplit(t *testing.T) {
 	}
 }
 
+// Why this test exists: propose_hire's schema names no icons, so the
+// hiring flow in the Chief of Staff's role is where it learns to read
+// the role-icons skill before it hires. A role that stopped pointing
+// there, or pointed at a skill Kivali does not ship, leaves the Chief of
+// Staff guessing icon names and learning them from refusals.
+func TestChiefOfStaffRolePointsAtTheRoleIcons(t *testing.T) {
+	for _, kind := range []string{"work", "personal"} {
+		role := ChiefOfStaffRoleFor(kind)
+		if !builtinskills.Has(builtinskills.RoleIcons) || !strings.Contains(role, "`/files/skills/"+builtinskills.RoleIcons+"/SKILL.md`") {
+			t.Errorf("the %s Chief of Staff role does not point at /files/skills/%s/SKILL.md, a skill Kivali ships", kind, builtinskills.RoleIcons)
+		}
+	}
+}
+
 // The Chief of Staff leaves shared context out of the roles it drafts
 // because its role says the handbook's §About already rides in every
 // agent's system prompt, and it is told the handbook's four sections

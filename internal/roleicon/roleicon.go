@@ -3,6 +3,11 @@
 // `icon`) from these names and descriptions, with the role in hand;
 // the agent keeps it, and the web app draws exactly that icon.
 //
+// The Chief of Staff reads the list in the role-icons built-in skill
+// (internal/builtinskills/skills/role-icons/SKILL.md), whose icon list
+// is Menu(); a builtinskills test holds the file to it and rewrites it
+// with -update.
+//
 // The web app holds the drawings (web/src/ds/AgentAvatar/roleIcons.ts,
 // Lucide icons). The apitypes golden test writes this list to
 // internal/web/apitypes/testdata/role_icons.json, and a web test checks
@@ -111,8 +116,8 @@ func Check(name string) error {
 	return fmt.Errorf("%q is not a role icon; pick one of: %s", name, strings.Join(names, ", "))
 }
 
-// Menu is the list for a tool description: one "name: description"
-// line per icon.
+// Menu is the icon list the role-icons skill carries: one
+// "- name: description" line per icon.
 func Menu() string {
 	var b strings.Builder
 	for _, i := range Icons {

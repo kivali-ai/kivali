@@ -499,7 +499,7 @@ func parseHire(in hireInput, ctx ParseContext) (*store.Hire, error) {
 		return nil, err
 	}
 	if err := roleicon.Check(in.Icon); err != nil {
-		return nil, fmt.Errorf("icon: %w", err)
+		return nil, fmt.Errorf("icon: %w; %s says what each pictures and suits", err, roleIconsPath)
 	}
 	if err := ValidateSlug(slug); err != nil {
 		return nil, fmt.Errorf("slug: %w", err)

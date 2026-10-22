@@ -1,10 +1,12 @@
 package mcp
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/kivali-ai/kivali/internal/agent"
 	"github.com/kivali-ai/kivali/internal/agentpod"
+	"github.com/kivali-ai/kivali/internal/message"
 	"github.com/kivali-ai/kivali/internal/provider"
 )
 
@@ -81,6 +83,14 @@ const (
 	// the build-an-integration skill its role points at, so each
 	// description says only what the tool does and refuses.
 	maxKivaliDeveloperDescChars = 700
+	// The Chief of Staff's hiring tool. On every turn of the Chief of
+	// Staff, whether or not it hires anyone that day. The icon field
+	// names the role-icons skill, where every icon is listed with what
+	// it pictures and suits, and the server refuses a name outside the
+	// set; a list of icons or their descriptions in the schema would be
+	// paid on every turn for a choice made once per hire.
+	maxProposeHireDescChars   = 700
+	maxProposeHireSchemaChars = 1600
 )
 
 func TestAlwaysOnPromptBudgets(t *testing.T) {
@@ -111,6 +121,19 @@ func TestAlwaysOnPromptBudgets(t *testing.T) {
 			maxSubagentPromptChars,
 		},
 	}
+	hire := slices.IndexFunc(message.ProposeTools(), func(d message.ToolDef) bool { return d.Name == message.ToolProposeHire })
+	if hire < 0 {
+		t.Fatalf("%s is not among the Chief of Staff's proposals", message.ToolProposeHire)
+	}
+	proposeHire := message.ProposeTools()[hire]
+	cases = append(cases, []struct {
+		name string
+		text string
+		max  int
+	}{
+		{"propose_hire description", proposeHire.Description, maxProposeHireDescChars},
+		{"propose_hire schema", string(proposeHire.Schema), maxProposeHireSchemaChars},
+	}...)
 	for _, tool := range KivaliDeveloperTools(&developerRecorder{}, nil, "kivali-developer") {
 		cases = append(cases, struct {
 			name string
