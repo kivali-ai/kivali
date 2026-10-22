@@ -554,7 +554,9 @@ func TestStartDeviceRefusesAPageThatIsNotOne(t *testing.T) {
 		{"", "activate?user_code=WDJB-MJHT"},
 	} {
 		e, v, _ := setup(t)
-		v.Set(func(k *connecttest.Knobs) { k.DeviceVerificationURI, k.DeviceVerificationURIComplete = c.page, c.complete })
+		v.Set(func(k *connecttest.Knobs) {
+			k.DeviceVerificationURI, k.DeviceVerificationURIComplete = c.page, c.complete
+		})
 		ds, err := e.StartDevice(context.Background(), v.Endpoints(), v.Client(), nil)
 		if err == nil || err.Error() != "the vendor's answer has no page to show" {
 			t.Errorf("%+v: start = %+v, %v", c, ds, err)
