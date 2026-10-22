@@ -80,6 +80,10 @@ type Kivali struct {
 	// Hosts is every host the integration reaches, in the egress
 	// allowlist's pattern language.
 	Hosts []string `json:"hosts"`
+	// Packages is the Debian packages the integration's pod installs
+	// each time it starts, before the server runs: a CLI the server
+	// runs per call, say. A built-in integration declares none.
+	Packages []string `json:"packages,omitempty"`
 	// Access is the form one agent's grant fills in; nil means access
 	// is all or nothing.
 	Access *Access `json:"access,omitempty"`

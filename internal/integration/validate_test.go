@@ -130,6 +130,15 @@ func TestValidateRules(t *testing.T) {
 		{"host path", func(m map[string]any) { obj(m, "kivali")["hosts"] = []any{"api.example.com/v1"} }, nil, LevelError, "is not a host name"},
 		{"host space", func(m map[string]any) { obj(m, "kivali")["hosts"] = []any{"api example.com"} }, nil, LevelError, "is not a host name"},
 		{"host uppercase", func(m map[string]any) { obj(m, "kivali")["hosts"] = []any{"API.example.com"} }, nil, LevelError, "must be lowercase"},
+		// Each package name reaches apt-get as root, as an argument: an
+		// option, a removal (a trailing '-') or a pinned version must be
+		// refused before the owner is ever asked.
+		{"package option", func(m map[string]any) { obj(m, "kivali")["packages"] = []any{"gh", "-y"} }, nil, LevelError, `kivali.packages: "-y" is not a Debian package name`},
+		{"package removal", func(m map[string]any) { obj(m, "kivali")["packages"] = []any{"gh-"} }, nil, LevelError, `kivali.packages: "gh-" is not a Debian package name`},
+		{"package pinned", func(m map[string]any) { obj(m, "kivali")["packages"] = []any{"gh=2.46.0"} }, nil, LevelError, `"gh=2.46.0" is not a Debian package name`},
+		{"package uppercase", func(m map[string]any) { obj(m, "kivali")["packages"] = []any{"GH"} }, nil, LevelError, `"GH" is not a Debian package name`},
+		{"package empty", func(m map[string]any) { obj(m, "kivali")["packages"] = []any{""} }, nil, LevelError, `"" is not a Debian package name`},
+		{"package duplicate", func(m map[string]any) { obj(m, "kivali")["packages"] = []any{"gh", "jq", "gh"} }, nil, LevelError, "kivali.packages: gh is listed twice"},
 		{"access schema missing", func(m map[string]any) { delete(obj(m, "kivali", "access"), "schema") }, nil, LevelError, "kivali.access.schema must be a JSON Schema of an object"},
 		{"access schema not object", func(m map[string]any) { obj(m, "kivali", "access", "schema")["type"] = "array" }, nil, LevelError, "kivali.access.schema: type must be object"},
 		{"access schema combinator", func(m map[string]any) { obj(m, "kivali", "access", "schema")["oneOf"] = []any{} }, nil, LevelError, "kivali.access.schema: oneOf is not supported"},
@@ -214,6 +223,22 @@ func TestValidateRules(t *testing.T) {
 			}
 			t.Errorf("no finding contains %q; got %v", c.want, findings.Texts())
 		})
+	}
+}
+
+// A bundle that wraps a CLI declares the CLI's package. If the rule
+// refused real Debian names, such a bundle could never be published;
+// if the parser dropped the field, the pod would start without the
+// software and every call that runs it would fail.
+func TestValidPackagesPassAndRead(t *testing.T) {
+	raw := integrationtest.Manifest("crm", "1.0.0")
+	obj(raw, "kivali")["packages"] = []any{"gh", "poppler-utils", "libc++-dev"}
+	m := parseMap(t, raw)
+	if f := Validate(m, defaultFiles()); len(f) != 0 {
+		t.Fatalf("findings: %v", f.Texts())
+	}
+	if got := strings.Join(m.Kivali.Packages, " "); got != "gh poppler-utils libc++-dev" {
+		t.Errorf("packages read as %q", got)
 	}
 }
 

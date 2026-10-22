@@ -35,8 +35,9 @@ func builtinManifest() *Manifest {
 // ValidateBuiltin, a built-in with no server and no hosts would fail
 // the bundle's check, and with a check that skipped everything a
 // built-in could ship a manifest the Org page cannot draw. A built-in
-// that declared hosts or a server would show the owner a host list or
-// a runtime that nothing enforces: it runs inside Kivali.
+// that declared hosts, software or a server would show the owner a
+// host list, packages or a runtime that nothing enforces: it runs
+// inside Kivali, which has no pod to install software into.
 func TestValidateBuiltin(t *testing.T) {
 	if f := ValidateBuiltin(builtinManifest()); len(f) != 0 {
 		t.Fatalf("findings on a good built-in manifest: %v", f.Texts())
@@ -70,6 +71,7 @@ func TestValidateBuiltin(t *testing.T) {
 		{"bad connection field", func(m *Manifest) { m.UserConfig[0].Type = "object" }, "type object is not supported"},
 		{"sign-in connection", func(m *Manifest) { m.Kivali.Connection.Method = "browser" }, "sign-in connections are not available"},
 		{"hosts", func(m *Manifest) { m.Kivali.Hosts = []string{"api.example.com"} }, "a built-in integration declares no hosts; it reaches the hosts its connection names"},
+		{"packages", func(m *Manifest) { m.Kivali.Packages = []string{"gh"} }, "kivali.packages: a built-in integration runs inside Kivali and installs no software"},
 		{"a server", func(m *Manifest) { m.Server = Server{Type: "python", EntryPoint: "server/main.py"} }, "a built-in integration has no server section"},
 		{"a server's env only", func(m *Manifest) { m.Server.MCPConfig.Env = map[string]string{"T": "x"} }, "a built-in integration has no server section"},
 		{"bad access form", func(m *Manifest) {
