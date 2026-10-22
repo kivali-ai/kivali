@@ -7,6 +7,7 @@ import goHandbookJson from '../../../../internal/web/apitypes/testdata/handbook.
 import goIntegrationAuditJson from '../../../../internal/web/apitypes/testdata/integration_audit.json';
 import goIntegrationLogsJson from '../../../../internal/web/apitypes/testdata/integration_logs.json';
 import goConnectionCreateJson from '../../../../internal/web/apitypes/testdata/connection_create.json';
+import goDeviceSignInJson from '../../../../internal/web/apitypes/testdata/device_sign_in.json';
 import goIntegrationPageJson from '../../../../internal/web/apitypes/testdata/integration_page.json';
 import goIntegrationPageMultipleJson from '../../../../internal/web/apitypes/testdata/integration_page_multiple.json';
 import goIntegrationPageSignInJson from '../../../../internal/web/apitypes/testdata/integration_page_sign_in.json';
@@ -15,6 +16,8 @@ import goIntegrationUploadRefusedJson from '../../../../internal/web/apitypes/te
 import goIntegrationVersionJson from '../../../../internal/web/apitypes/testdata/integration_version.json';
 import goIntegrationVersionBuiltinJson from '../../../../internal/web/apitypes/testdata/integration_version_builtin.json';
 import goIntegrationVersionShippedJson from '../../../../internal/web/apitypes/testdata/integration_version_shipped.json';
+import goSignInProgressJson from '../../../../internal/web/apitypes/testdata/sign_in_progress.json';
+import goSignInProgressFailedJson from '../../../../internal/web/apitypes/testdata/sign_in_progress_failed.json';
 import goIntegrationsJson from '../../../../internal/web/apitypes/testdata/integrations.json';
 import goNetworkJson from '../../../../internal/web/apitypes/testdata/network.json';
 import goOrgJson from '../../../../internal/web/apitypes/testdata/org.json';
@@ -28,6 +31,7 @@ import type {
   AccessChoices,
   AccessWrite,
   ConnectionWrite,
+  DeviceSignIn,
   Handbook,
   IntegrationAudit,
   IntegrationLogs,
@@ -39,6 +43,7 @@ import type {
   Org,
   OrgSoftware,
   ProjectFiles,
+  SignInProgress,
   SkillDowngrade,
   Skills,
   SoftwareAdd,
@@ -75,6 +80,12 @@ export const goIntegrationPageMultiple = (goIntegrationPageMultipleJson satisfie
 export const goIntegrationPageSignIn = (goIntegrationPageSignInJson satisfies Wire<IntegrationPage>) as IntegrationPage;
 /** The same connection after the vendor refused a refresh: the owner must sign in again. */
 export const goIntegrationPageSignInAgain = (goIntegrationPageSignInAgainJson satisfies Wire<IntegrationPage>) as IntegrationPage;
+/** A device sign-in just started: the code, the service's page, and when the code stops working. */
+export const goDeviceSignIn = (goDeviceSignInJson satisfies Wire<DeviceSignIn>) as DeviceSignIn;
+/** A sign-in still waiting for the owner's approval. */
+export const goSignInProgress = (goSignInProgressJson satisfies Wire<SignInProgress>) as SignInProgress;
+/** A sign-in the owner turned down on the service's page, with the service's words. */
+export const goSignInProgressFailed = (goSignInProgressFailedJson satisfies Wire<SignInProgress>) as SignInProgress;
 export const goIntegrationVersion = (goIntegrationVersionJson satisfies Wire<IntegrationVersion>) as IntegrationVersion;
 /** A version of an integration that ships with Kivali. */
 export const goIntegrationVersionBuiltin = (goIntegrationVersionBuiltinJson satisfies Wire<IntegrationVersion>) as IntegrationVersion;

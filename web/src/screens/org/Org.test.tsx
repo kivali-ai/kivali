@@ -16,7 +16,7 @@ import type { OrgContextValue } from '../../state/OrgProvider';
 import { aboutLine, versionLabel } from './About';
 import { BACKUP_DEBOUNCE_MS } from './Backup';
 import { InstallScreen, bundleLine } from './InstallScreen';
-import { IntegrationPage, deleteConnectionWords, signInLine } from './IntegrationPage';
+import { IntegrationPage, SIGN_IN_POLL_MS, clientSaved, codeLifeWords, deleteConnectionWords, signInLine } from './IntegrationPage';
 import { whenLabel } from './integrationParts';
 import { Org, headerMeta } from './OrgPage';
 import {
@@ -33,6 +33,9 @@ import {
   goIntegrationPageMultiple,
   goIntegrationPageSignIn,
   goIntegrationPageSignInAgain,
+  goDeviceSignIn,
+  goSignInProgress,
+  goSignInProgressFailed,
   goIntegrationUploadRefused,
   goIntegrationVersion,
   goIntegrationVersionBuiltin,
@@ -2100,6 +2103,133 @@ describe('Integration page, a connection made by signing in', () => {
     const { expires_at: _expires, ...noExpiry } = c.sign_in!;
     expect(signInLine({ ...c, sign_in: noExpiry }, now)?.text).toBe('Signed in ' + whenLabel(c.sign_in!.signed_in_at!, now));
     expect(signInLine(goIntegrationPageSignInAgain.connection, now)?.danger).toBe(true);
+  });
+});
+
+describe('Integration page, signing in with a code', () => {
+  const PATH = '/org/integrations/github';
+  const API = '/api/v1/org/integrations/github';
+  const signedIn = goIntegrationPageSignIn;
+  // The same connection never signed in: its client id and secret stored, no tokens.
+  const notSignedIn: typeof signedIn = {
+    ...signedIn,
+    summary: { ...signedIn.summary, status: 'not_connected' },
+    connection: { ...signedIn.connection!, sign_in: { ways: ['device'], signed_in: false } },
+    connections: [{ ...signedIn.connection!, sign_in: { ways: ['device'], signed_in: false } }],
+  };
+  const pageRoutes = (page: typeof signedIn) => ({
+    ['GET ' + API]: page,
+    ['GET ' + API + '/audit']: { rows: [] },
+    ['GET ' + API + '/logs']: { lines: [] },
+    ['POST ' + API + '/connection/sign-in/device']: goDeviceSignIn,
+    ['GET ' + API + '/connection/sign-in']: goSignInProgress,
+  });
+  const block = () => within(screen.getByRole('region', { name: 'Sign in' }));
+  const polls = () => calls.filter((c) => c.method === 'GET' && c.url === API + '/connection/sign-in').length;
+  const tick = async () => {
+    act(() => void vi.advanceTimersByTime(SIGN_IN_POLL_MS));
+    await flush();
+  };
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
+    // The fixture's code was issued at 10:00 and works until 10:15.
+    vi.setSystemTime(new Date('2026-10-21T10:00:00Z'));
+  });
+  afterEach(() => {
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
+  });
+
+  // Guards the owner's device sign-in on the page, against device_sign_in.json and sign_in_progress.json: Sign in with
+  // a code posts to the connection's route; the code is shown with a Copy button, the service's page is a link that
+  // opens in a new tab without handing it this page (noopener), and the code's life is said in minutes from the
+  // server's expiry. The page asks how the sign-in stands every few seconds, and once the server says done it reads
+  // the page again, which now says Signed in with who the connection test found, and offers Sign out. A page that
+  // never asked again would leave the owner looking at a code long after they approved it.
+  it('shows the code and the page to enter it on, waits, then reads itself again once signed in', async () => {
+    await renderOrg(PATH, { routes: pageRoutes(notSignedIn) });
+    await click(block().getByRole('button', { name: 'Sign in with a code' }));
+    expect(called('POST', API + '/connection/sign-in/device')).toBe(true);
+    expect(block().getByLabelText('Sign-in code')).toHaveTextContent('WDJB-MJHT');
+    expect(block().getByRole('button', { name: 'Copy code' })).toBeInTheDocument();
+    const link = block().getByRole('link', { name: goDeviceSignIn.verification_url });
+    expect(link).toHaveAttribute('href', goDeviceSignIn.verification_url_complete);
+    expect(link).toHaveAttribute('target', '_blank');
+    expect(link).toHaveAttribute('rel', 'noopener');
+    expect(block().getByText('The code works for 15 minutes. Waiting for your approval.')).toBeInTheDocument();
+
+    await tick();
+    expect(polls()).toBe(1);
+    expect(block().getByLabelText('Sign-in code')).toBeInTheDocument();
+
+    routes['GET ' + API] = { ...signedIn, connection: { ...signedIn.connection!, verified: true, verify_message: 'Signed in as octocat' } };
+    routes['GET ' + API + '/connection/sign-in'] = { state: 'done' };
+    await tick();
+    expect(block().getByText('Signed in. Signed in as octocat')).toBeInTheDocument();
+    expect(block().getByRole('button', { name: 'Sign out' })).toBeInTheDocument();
+    expect(block().queryByLabelText('Sign-in code')).toBeNull();
+    await tick();
+    expect(polls()).toBe(2);
+  });
+
+  // Guards the wait while the tab is hidden: the page asks nothing then, and asks again once the tab shows. A page that
+  // kept asking from a background tab would load the server for nobody.
+  it('asks nothing while the tab is hidden', async () => {
+    await renderOrg(PATH, { routes: pageRoutes(notSignedIn) });
+    await click(block().getByRole('button', { name: 'Sign in with a code' }));
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
+    act(() => void document.dispatchEvent(new Event('visibilitychange')));
+    await tick();
+    await tick();
+    expect(polls()).toBe(0);
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
+    act(() => void document.dispatchEvent(new Event('visibilitychange')));
+    await tick();
+    expect(polls()).toBe(1);
+  });
+
+  // Guards a sign-in that ended without tokens (sign_in_progress_failed.json): the page stops asking, says the sign-in
+  // did not work in the service's words, and offers Try again, which starts a new one. A page that kept the code up
+  // would have the owner enter a code nothing waits for.
+  it('says why a sign-in did not work and offers Try again', async () => {
+    await renderOrg(PATH, { routes: { ...pageRoutes(notSignedIn), ['GET ' + API + '/connection/sign-in']: goSignInProgressFailed } });
+    await click(block().getByRole('button', { name: 'Sign in with a code' }));
+    await tick();
+    expect(block().getByText('The sign-in did not work')).toBeInTheDocument();
+    expect(block().getByText(goSignInProgressFailed.error!)).toBeInTheDocument();
+    expect(block().queryByLabelText('Sign-in code')).toBeNull();
+    await tick();
+    expect(polls()).toBe(1);
+    await click(block().getByRole('button', { name: 'Try again' }));
+    expect(calls.filter((c) => c.method === 'POST' && c.url === API + '/connection/sign-in/device')).toHaveLength(2);
+    expect(block().getByLabelText('Sign-in code')).toBeInTheDocument();
+  });
+
+  // Guards the order the owner must follow: without the client id and secret saved there is nothing to sign in with,
+  // so the page says to save them and offers no button that would only get a refusal.
+  it('asks for the client id and secret before a sign-in', async () => {
+    const unsaved = notSignedIn.connection_fields.map((f) => (f.key === 'client_secret' ? { ...f, set: false } : f));
+    await renderOrg(PATH, { routes: pageRoutes({ ...notSignedIn, connection_fields: unsaved, connection: { ...notSignedIn.connection!, fields: unsaved } }) });
+    expect(block().getByText('Save the client id and secret first.')).toBeInTheDocument();
+    expect(block().queryByRole('button', { name: 'Sign in with a code' })).toBeNull();
+    expect(clientSaved(unsaved)).toBe(false);
+    expect(clientSaved(notSignedIn.connection_fields)).toBe(true);
+  });
+
+  // Guards Sign out: it posts to the connection's route and the page it answers replaces this one, so the block offers
+  // Sign in with a code again rather than still reading Signed in.
+  it('signs out', async () => {
+    await renderOrg(PATH, { routes: { ...pageRoutes(signedIn), ['POST ' + API + '/connection/sign-out']: notSignedIn } });
+    await click(block().getByRole('button', { name: 'Sign out' }));
+    expect(called('POST', API + '/connection/sign-out')).toBe(true);
+    expect(block().getByRole('button', { name: 'Sign in with a code' })).toBeInTheDocument();
+  });
+
+  // Guards the words of a code's life, rounded to whole minutes and never under one.
+  it('words how long a code works', () => {
+    const now = Date.parse('2026-10-21T10:00:00Z');
+    expect(codeLifeWords('2026-10-21T10:10:00Z', now)).toBe('The code works for 10 minutes.');
+    expect(codeLifeWords('2026-10-21T10:00:20Z', now)).toBe('The code works for 1 minute.');
   });
 });
 

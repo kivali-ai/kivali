@@ -1,12 +1,14 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { useHref, useNavigate, useParams } from 'react-router';
 import { apiDelete, apiGet, apiPost, apiPut } from '../../api/client';
+import type { ApiError } from '../../api/client';
 import type {
   AccessRow,
   ConnectionField,
   ConnectionState,
   ConnectionWrite,
+  DeviceSignIn,
   IntegrationAudit,
   IntegrationAuditRow,
   IntegrationLogLine,
@@ -15,6 +17,7 @@ import type {
   IntegrationVersion,
   IntegrationVersionSummary,
   PersonRef,
+  SignInProgress,
 } from '../../api/types.gen';
 import { useFrameChrome } from '../../app/chrome';
 import { PageTitle } from '../../app/PageTitle';
@@ -99,6 +102,207 @@ function SignInLine({ connection, now }: { connection: ConnectionState | undefin
   );
 }
 
+/** How often the page asks how a sign-in under way stands, while the tab is visible. */
+export const SIGN_IN_POLL_MS = 3000;
+
+/** How long a sign-in's code works, from its expiry: "The code works for 10 minutes." */
+export function codeLifeWords(expiresAt: string, now: number): string {
+  const minutes = Math.max(1, Math.round((Date.parse(expiresAt) - now) / 60_000));
+  return 'The code works for ' + minutes + (minutes === 1 ? ' minute.' : ' minutes.');
+}
+
+/** Whether a sign-in connection's form holds both the client id and the client secret, which a sign-in needs. */
+export function clientSaved(fields: readonly ConnectionField[]): boolean {
+  const set = (key: string) => fields.some((f) => f.key === key && f.set);
+  return set('client_id') && set('client_secret');
+}
+
+/** Whether the tab is showing; a hidden one asks the server nothing. */
+function useVisible(): boolean {
+  const [visible, setVisible] = useState(() => document.visibilityState !== 'hidden');
+  useEffect(() => {
+    const onVisibility = () => setVisible(document.visibilityState !== 'hidden');
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => document.removeEventListener('visibilitychange', onVisibility);
+  }, []);
+  return visible;
+}
+
+/** What the Sign in block of one connection is wired to: its routes, and what to do with the page they answer. */
+type SignInWiring = Pick<SignInBlockProps, 'api' | 'onPage' | 'onSignedIn'>;
+
+interface SignInBlockProps {
+  /** The connection; absent before the client id and secret are first saved. */
+  connection: ConnectionState | undefined;
+  /** Its form, with what it holds. */
+  fields: readonly ConnectionField[];
+  /** The connection's routes: …/connection, or …/connections/{id}. */
+  api: string;
+  busy: boolean;
+  now: number;
+  /** The page as Sign out answers it. */
+  onPage(page: IntegrationPageData): void;
+  /** Reads the page again once a sign-in is done. */
+  onSignedIn(): void;
+}
+
+/**
+ * A connection made by signing in: Sign in with a code once the client id and secret are saved, then the code and
+ * the service's page to enter it on while Kivali waits for the approval, asking how it stands every few seconds while
+ * the tab is visible. Signed in, who the connection test found and Sign out; a sign-in that failed or expired, why,
+ * and Try again.
+ */
+function SignInBlock({ connection, fields, api, busy, now, onPage, onSignedIn }: SignInBlockProps) {
+  const [device, setDevice] = useState<DeviceSignIn | null>(null);
+  const [ended, setEnded] = useState<SignInProgress | null>(null);
+  const [error, setError] = useState<ApiError | null>(null);
+  const [working, setWorking] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const visible = useVisible();
+  const signedIn = useRef(onSignedIn);
+  useEffect(() => {
+    signedIn.current = onSignedIn;
+  });
+  const s = connection?.sign_in;
+
+  useEffect(() => {
+    if (!device || !visible) return;
+    let stopped = false;
+    const timer = setInterval(() => {
+      apiGet<SignInProgress>(api + '/sign-in').then(
+        (p) => {
+          if (stopped || p.state === 'pending') return;
+          setDevice(null);
+          if (p.state === 'done') signedIn.current();
+          else setEnded(p);
+        },
+        (err: unknown) => {
+          if (!stopped) setError(asApiError(err));
+        },
+      );
+    }, SIGN_IN_POLL_MS);
+    return () => {
+      stopped = true;
+      clearInterval(timer);
+    };
+  }, [device, visible, api]);
+
+  const start = async () => {
+    setWorking(true);
+    setError(null);
+    setEnded(null);
+    setCopied(false);
+    try {
+      setDevice(await apiPost<DeviceSignIn>(api + '/sign-in/device'));
+    } catch (err) {
+      setError(asApiError(err));
+    } finally {
+      setWorking(false);
+    }
+  };
+  const signOut = async () => {
+    setWorking(true);
+    setError(null);
+    try {
+      onPage(await apiPost<IntegrationPageData>(api + '/sign-out'));
+    } catch (err) {
+      setError(asApiError(err));
+    } finally {
+      setWorking(false);
+    }
+  };
+  const copy = () => {
+    if (!device) return;
+    void navigator.clipboard?.writeText(device.user_code).then(
+      () => setCopied(true),
+      () => setCopied(false),
+    );
+  };
+
+  const disabled = busy || working;
+  const byCode = !s || s.ways.includes('device');
+  let body: ReactNode;
+  if (s?.signed_in) {
+    const who = connection?.verified && connection.verify_message;
+    body = (
+      <>
+        <Text as="p" variant="body">
+          {who ? 'Signed in. ' + who : 'Signed in.'}
+        </Text>
+        <div className="app-org-actions">
+          <Button type="button" variant="secondary" disabled={disabled} onClick={() => void signOut()}>
+            Sign out
+          </Button>
+        </div>
+      </>
+    );
+  } else if (!byCode) {
+    body = null;
+  } else if (device) {
+    const href = device.verification_url_complete ?? device.verification_url;
+    body = (
+      <div className="app-int-device">
+        <Text as="p" variant="body">
+          Enter this code on the service’s page, then approve the sign-in there. Kivali finishes it here once you do.
+        </Text>
+        <div className="app-int-device-code">
+          <Text variant="display" className="app-int-code" aria-label="Sign-in code">
+            {device.user_code}
+          </Text>
+          <Button type="button" size="sm" variant="ghost" icon={<Icon name={copied ? 'check' : 'copy'} />} onClick={copy}>
+            {copied ? 'Copied' : 'Copy code'}
+          </Button>
+        </div>
+        <Text as="p" variant="body">
+          {/* eslint-disable-next-line react/forbid-elements -- external */}
+          <a href={href} target="_blank" rel="noopener">
+            {device.verification_url}
+          </a>
+        </Text>
+        <Text as="p" variant="caption" tone="muted">
+          {codeLifeWords(device.expires_at, now) + ' Waiting for your approval.'}
+        </Text>
+      </div>
+    );
+  } else if (ended) {
+    body = (
+      <>
+        <Banner tone="danger" title={ended.state === 'expired' ? 'The sign-in expired' : 'The sign-in did not work'}>
+          {ended.error ?? 'The service did not say why.'}
+        </Banner>
+        <div className="app-org-actions">
+          <Button type="button" variant="primary" disabled={disabled} onClick={() => void start()}>
+            Try again
+          </Button>
+        </div>
+      </>
+    );
+  } else if (connection && clientSaved(fields)) {
+    body = (
+      <div className="app-org-actions">
+        <Button type="button" variant="primary" disabled={disabled} onClick={() => void start()}>
+          Sign in with a code
+        </Button>
+      </div>
+    );
+  } else {
+    body = (
+      <Text as="p" variant="body" tone="muted">
+        Save the client id and secret first.
+      </Text>
+    );
+  }
+  return (
+    <section className="app-int-sign-in" aria-label="Sign in">
+      <Text as="h3" variant="label" tone="muted">
+        Sign in
+      </Text>
+      <ErrorBanner error={error} onDismiss={() => setError(null)} />
+      {body}
+    </section>
+  );
+}
+
 /** A folded connection card's line: a badge when it needs you, then how many agents use it and since when. */
 function connectionMeta(c: ConnectionState, agents: number, now: number): ReactNode {
   return (
@@ -122,75 +326,80 @@ interface ConnectionFormProps {
   /** Test connection; absent when the integration has no connection test, and so no button. */
   onVerify?(): void;
   onDisconnect(): void;
+  /** The Sign in block's routes and answers, for a connection made by signing in; absent otherwise. */
+  signIn?: SignInWiring;
 }
 
 /** The connection: one field per entry the bundle asks for. A stored secret shows only that it is stored. */
-function ConnectionForm({ page, busy, running, now, onSave, onVerify, onDisconnect }: ConnectionFormProps) {
+function ConnectionForm({ page, busy, running, now, onSave, onVerify, onDisconnect, signIn }: ConnectionFormProps) {
   const fields = page.connection_fields;
   const [values, setValues] = useState(() => startingValues(fields));
   const connection = page.connection;
   return (
-    <form
-      className="app-int-form"
-      onSubmit={(e) => {
-        e.preventDefault();
-        void onSave(connectionBody(fields, values));
-      }}
-    >
-      {connection?.reconnect_needed && (
-        <Banner tone="danger" title="Reconnect needed">
-          Its secrets are not stored on this Kivali server, as after a restore from a backup. Enter them again, then save the connection.
-        </Banner>
-      )}
-      {connection && connection.verified_at && !connection.verified && (
-        <Banner tone="danger" title="Could not verify the connection">
-          {connection.verify_message || 'The integration did not say why.'}
-        </Banner>
-      )}
-      {fields.map((f) => (
-        <TextField
-          key={f.key}
-          label={f.required ? f.title : f.title + ' (optional)'}
-          {...(f.description ? { hint: f.description } : {})}
-          type={f.sensitive ? 'password' : 'text'}
-          autoComplete="off"
-          {...(f.sensitive && f.set ? { placeholder: 'Stored' } : {})}
-          value={values[f.key] ?? ''}
-          onChange={(e) => {
-            const v = e.currentTarget.value;
-            setValues((m) => ({ ...m, [f.key]: v }));
-          }}
-        />
-      ))}
-      <div className="app-int-status">
-        {connectionLines(connection, now).map((line) => (
-          <Text key={line} as="p" variant="caption" tone="muted">
-            {line}
-          </Text>
-        ))}
-        <SignInLine connection={connection} now={now} />
-      </div>
-      <div className="app-org-actions">
-        <Button type="submit" variant="primary" disabled={busy}>
-          Save connection
-        </Button>
-        {onVerify && (
-          <>
-            <Button type="button" variant="secondary" disabled={busy || !connection || !running} onClick={onVerify}>
-              Test connection
-            </Button>
-            {!running && (
-              <Text variant="caption" tone="muted">
-                Not available while it is not running.
-              </Text>
-            )}
-          </>
+    <>
+      <form
+        className="app-int-form"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void onSave(connectionBody(fields, values));
+        }}
+      >
+        {connection?.reconnect_needed && (
+          <Banner tone="danger" title="Reconnect needed">
+            Its secrets are not stored on this Kivali server, as after a restore from a backup. Enter them again, then save the connection.
+          </Banner>
         )}
-        <Button type="button" variant="ghost" disabled={busy || !connection} onClick={onDisconnect}>
-          Disconnect
-        </Button>
-      </div>
-    </form>
+        {connection && connection.verified_at && !connection.verified && (
+          <Banner tone="danger" title="Could not verify the connection">
+            {connection.verify_message || 'The integration did not say why.'}
+          </Banner>
+        )}
+        {fields.map((f) => (
+          <TextField
+            key={f.key}
+            label={f.required ? f.title : f.title + ' (optional)'}
+            {...(f.description ? { hint: f.description } : {})}
+            type={f.sensitive ? 'password' : 'text'}
+            autoComplete="off"
+            {...(f.sensitive && f.set ? { placeholder: 'Stored' } : {})}
+            value={values[f.key] ?? ''}
+            onChange={(e) => {
+              const v = e.currentTarget.value;
+              setValues((m) => ({ ...m, [f.key]: v }));
+            }}
+          />
+        ))}
+        <div className="app-int-status">
+          {connectionLines(connection, now).map((line) => (
+            <Text key={line} as="p" variant="caption" tone="muted">
+              {line}
+            </Text>
+          ))}
+          <SignInLine connection={connection} now={now} />
+        </div>
+        <div className="app-org-actions">
+          <Button type="submit" variant="primary" disabled={busy}>
+            Save connection
+          </Button>
+          {onVerify && (
+            <>
+              <Button type="button" variant="secondary" disabled={busy || !connection || !running} onClick={onVerify}>
+                Test connection
+              </Button>
+              {!running && (
+                <Text variant="caption" tone="muted">
+                  Not available while it is not running.
+                </Text>
+              )}
+            </>
+          )}
+          <Button type="button" variant="ghost" disabled={busy || !connection} onClick={onDisconnect}>
+            Disconnect
+          </Button>
+        </div>
+      </form>
+      {signIn && <SignInBlock connection={connection} fields={fields} busy={busy} now={now} {...signIn} />}
+    </>
   );
 }
 
@@ -229,6 +438,8 @@ interface ConnectionCardProps {
   onVerify?(): void;
   onDelete?(): void;
   onCancel?(): void;
+  /** The Sign in block's routes and answers, for a stored connection made by signing in; absent otherwise. */
+  signIn?: SignInWiring;
 }
 
 /**
@@ -237,7 +448,7 @@ interface ConnectionCardProps {
  * stored), what Test connection last found, and Save, Test connection (when the integration has one) and Delete. A
  * connection being added is the same form blank, always open, with Add connection and Cancel.
  */
-function ConnectionCard({ connection, fields, agents = 0, open = false, busy, running, now, onSave, onVerify, onDelete, onCancel }: ConnectionCardProps) {
+function ConnectionCard({ connection, fields, agents = 0, open = false, busy, running, now, onSave, onVerify, onDelete, onCancel, signIn }: ConnectionCardProps) {
   const [label, setLabel] = useState(connection?.label ?? '');
   // The label is sent only once typed into: a label the integration derives (Git's host) is not stored, so it
   // follows the fields; sending it back on every save would fix it in place.
@@ -320,6 +531,7 @@ function ConnectionCard({ connection, fields, agents = 0, open = false, busy, ru
           )}
         </div>
       </form>
+      {signIn && connection && <SignInBlock connection={connection} fields={fields} busy={busy} now={now} {...signIn} />}
     </Card>
   );
 }
@@ -517,6 +729,20 @@ export function IntegrationPage() {
     }
     return ok;
   };
+  // A sign-in or a sign-out changes the page and adds a row to the audit, which are read again.
+  const signedIn = () =>
+    void action.run(async () => {
+      page.set(await apiGet<IntegrationPageData>(api));
+      audit.set(await apiGet<IntegrationAudit>(api + '/audit'));
+    });
+  const signedOut = (next: IntegrationPageData) => {
+    page.set(next);
+    void apiGet<IntegrationAudit>(api + '/audit').then(audit.set, () => {});
+  };
+  const signInFor = (connectionApi: string): { signIn?: SignInWiring } =>
+    p && (p.connection_method === 'device' || p.connection_method === 'browser')
+      ? { signIn: { api: connectionApi, onPage: signedOut, onSignedIn: signedIn } }
+      : {};
   const verifyConnection = (id: string) => void mutate(() => apiPost<IntegrationPageData>(connectionApi(id) + '/verify'));
   const deleteConnection = async (id: string) => {
     await mutate(() => apiDelete<IntegrationPageData>(connectionApi(id)));
@@ -680,6 +906,7 @@ export function IntegrationPage() {
                 onSave={(body) => saveConnection(c.id, body)}
                 {...(p.connection_test ? { onVerify: () => verifyConnection(c.id) } : {})}
                 onDelete={() => setDeleting(c)}
+                {...signInFor(connectionApi(c.id))}
               />
             ))}
             {adding ? (
@@ -710,6 +937,7 @@ export function IntegrationPage() {
             onSave={save}
             {...(p.connection_test ? { onVerify: verify } : {})}
             onDisconnect={() => setDisconnecting(true)}
+            {...signInFor(api + '/connection')}
           />
         ) : (
           <Text as="p" variant="body" tone="muted">

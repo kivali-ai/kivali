@@ -154,6 +154,31 @@
   gap: calc(var(--space-1) / 2);
 }
 
+/* A sign-in connection's Sign in block, under its form: the code, where to enter it, and how long it works. */
+.app-int-sign-in,
+.app-int-device {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.app-int-sign-in {
+  margin-top: var(--space-4);
+}
+
+.app-int-device-code {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* The code is read off the screen and typed elsewhere: mono, never broken. */
+.app-int-code {
+  font-family: var(--font-mono);
+  white-space: nowrap;
+}
+
 /* An access cell: the access in words, and under it why it no longer fits, at a readable width (see below). */
 .app-int-cell {
   display: flex;
