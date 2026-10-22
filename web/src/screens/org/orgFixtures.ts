@@ -72,6 +72,7 @@ export const goIntegrationPageMultiple = (goIntegrationPageMultipleJson satisfie
 export const goIntegrationVersion = (goIntegrationVersionJson satisfies Wire<IntegrationVersion>) as IntegrationVersion;
 /** A version of an integration that ships with Kivali. */
 export const goIntegrationVersionBuiltin = (goIntegrationVersionBuiltinJson satisfies Wire<IntegrationVersion>) as IntegrationVersion;
+/** A version of an integration that ships with Kivali as a bundle: its runtime, hosts and bundle are an upload's. */
 export const goIntegrationVersionShipped = (goIntegrationVersionShippedJson satisfies Wire<IntegrationVersion>) as IntegrationVersion;
 export const goIntegrationUploadRefused = (goIntegrationUploadRefusedJson satisfies Wire<IntegrationUploadRefused>) as IntegrationUploadRefused;
 export const goIntegrationLogs = (goIntegrationLogsJson satisfies Wire<IntegrationLogs>) as IntegrationLogs;
