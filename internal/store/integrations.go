@@ -2,6 +2,8 @@ package store
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -23,7 +25,7 @@ import (
 // integrations/<name>/:
 //
 //	integration.yaml                 the record (Integration)
-//	versions/<version>/version.yaml  one stored version (IntegrationVersion)
+//	versions/<version>/version.yaml  one stored version (IntegrationVersion), with its bundle's digest
 //	versions/<version>/manifest.json the bundle's manifest, byte for byte
 //	versions/<version>/bundle/       the bundle, unpacked
 //	connections/<id>.yaml            a connection's fields that are not secret (IntegrationConnection)
@@ -118,6 +120,11 @@ type IntegrationVersion struct {
 	RejectedAt  *time.Time `yaml:"rejected_at,omitempty"`
 	BundleBytes int64      `yaml:"bundle_bytes"`
 	FileCount   int        `yaml:"file_count"`
+	// BundleDigest is the digest of the bundle's files as stored
+	// (BundleDigest, the function), written with them; empty for a
+	// version with no bundle. The pod's spec carries it, so a pod built
+	// from other files is replaced, not taken on.
+	BundleDigest string `yaml:"bundle_digest,omitempty"`
 	// Findings are the bundle check's warnings; a bundle with an error
 	// is never stored.
 	Findings []string `yaml:"findings,omitempty"`
@@ -451,6 +458,9 @@ func (s *FSStore) StoreIntegrationVersion(name string, b *integration.Bundle, re
 	rec.ApprovedAt, rec.RejectedAt = nil, nil
 	rec.BundleBytes = b.Size
 	rec.FileCount = len(b.Files)
+	if rec.BundleDigest, err = BundleDigest(filepath.Join(stage, "bundle")); err != nil {
+		return err
+	}
 	if err := writeYAMLFile(filepath.Join(stage, "version.yaml"), rec); err != nil {
 		return err
 	}
@@ -458,6 +468,77 @@ func (s *FSStore) StoreIntegrationVersion(name string, b *integration.Bundle, re
 		return err
 	}
 	return syncDir(versions)
+}
+
+// BundleDigest is the digest of the bundle unpacked in dir: a SHA-256
+// over every regular file's path, size and bytes, in path order. Two
+// bundles with the same files have the same digest wherever they are.
+// A missing dir is "": a version with no bundle. A symlink or special
+// file is an error: no stored bundle holds one.
+func BundleDigest(dir string) (string, error) {
+	if _, err := os.Stat(dir); errors.Is(err, fs.ErrNotExist) {
+		return "", nil
+	}
+	var paths []string
+	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		switch {
+		case err != nil:
+			return err
+		case d.IsDir():
+			return nil
+		case !d.Type().IsRegular():
+			return fmt.Errorf("bundle: %s is not a regular file", p)
+		}
+		rel, err := filepath.Rel(dir, p)
+		if err != nil {
+			return err
+		}
+		paths = append(paths, filepath.ToSlash(rel))
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	sort.Strings(paths)
+	h := sha256.New()
+	for _, rel := range paths {
+		b, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(rel)))
+		if err != nil {
+			return "", err
+		}
+		_, _ = fmt.Fprintf(h, "%s\x00%d\x00", rel, len(b))
+		h.Write(b)
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// IntegrationBundleDigest is the digest of a stored version's bundle,
+// what its pod's spec carries. A version stored before digests were
+// kept has none in its record: it is worked out from the files on disk
+// and written then. "" for a version with no bundle.
+func (s *FSStore) IntegrationBundleDigest(name, version string) (string, error) {
+	vdir, err := s.integrationVersionDir(name, version)
+	if err != nil {
+		return "", err
+	}
+	unlock := s.lockIntegration(name)
+	defer unlock()
+	var v IntegrationVersion
+	if err := readYAMLFile(filepath.Join(vdir, "version.yaml"), &v); err != nil {
+		return "", err
+	}
+	if v.BundleDigest != "" {
+		return v.BundleDigest, nil
+	}
+	digest, err := BundleDigest(filepath.Join(vdir, "bundle"))
+	if err != nil || digest == "" {
+		return "", err
+	}
+	v.Version, v.BundleDigest = version, digest
+	if err := s.writeIntegrationVersion(name, v); err != nil {
+		return "", err
+	}
+	return digest, nil
 }
 
 // ApproveIntegrationVersion makes a pending version the one in use:

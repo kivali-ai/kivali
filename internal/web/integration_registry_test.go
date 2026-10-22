@@ -38,8 +38,8 @@ type fakeIntegrationProv struct {
 }
 
 type fakeIntegrationPod struct {
-	version, token string
-	software       bool
+	version, digest, token string
+	software               bool
 }
 
 func newFakeIntegrationProv() *fakeIntegrationProv {
@@ -48,13 +48,13 @@ func newFakeIntegrationProv() *fakeIntegrationProv {
 
 func (p *fakeIntegrationProv) Enabled() bool { return true }
 
-func (p *fakeIntegrationProv) Start(_ context.Context, name, version, token string, software bool) error {
+func (p *fakeIntegrationProv) Start(_ context.Context, name, version, digest, token string, software bool) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if cur, ok := p.pods[name]; ok && cur == (fakeIntegrationPod{version, token, software}) {
+	if cur, ok := p.pods[name]; ok && cur == (fakeIntegrationPod{version, digest, token, software}) {
 		return nil
 	}
-	p.pods[name] = fakeIntegrationPod{version, token, software}
+	p.pods[name] = fakeIntegrationPod{version, digest, token, software}
 	p.calls = append(p.calls, "start "+name+" "+version)
 	return nil
 }
@@ -80,10 +80,10 @@ func (p *fakeIntegrationProv) List(context.Context) ([]string, error) {
 	return out, nil
 }
 
-func (p *fakeIntegrationProv) Token(_ context.Context, name, version string, software bool) (string, error) {
+func (p *fakeIntegrationProv) Token(_ context.Context, name, version, digest string, software bool) (string, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if pod, ok := p.pods[name]; ok && pod.version == version && pod.software == software {
+	if pod, ok := p.pods[name]; ok && pod.version == version && pod.digest == digest && pod.software == software {
 		return pod.token, nil
 	}
 	return "", nil
@@ -397,7 +397,11 @@ func TestIntegrationBootTakesOnRunningPods(t *testing.T) {
 	srv := newTestServer(t)
 	intInstalled(t, srv, "crm", "1.0.0")
 	prov := newFakeIntegrationProv()
-	prov.pods["crm"] = fakeIntegrationPod{version: "1.0.0", token: "token-from-before"}
+	digest, err := srv.Store.IntegrationBundleDigest("crm", "1.0.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	prov.pods["crm"] = fakeIntegrationPod{version: "1.0.0", digest: digest, token: "token-from-before"}
 	prov.pods["gone"] = fakeIntegrationPod{version: "1.0.0", token: "x"}
 	syncPath := filepath.Join(t.TempDir(), "agents.json")
 	srv.Store.SetEgressAgentsSyncPath(syncPath)

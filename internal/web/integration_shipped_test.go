@@ -38,15 +38,15 @@ func shippedNotes(t *testing.T, version, main string) fs.FS {
 }
 
 // installShipped makes fsys srv's shipped notes bundle and installs it
-// as boot does, returning the names boot wrote again.
-func installShipped(t *testing.T, srv *Server, fsys fs.FS) []string {
+// as boot does, telling srv what was installed.
+func installShipped(t *testing.T, srv *Server, fsys fs.FS) {
 	t.Helper()
 	srv.ShippedBundles = builtinintegrations.ShippedBundles{{Name: "notes", FS: fsys}}
-	re, err := srv.Store.InstallShippedBundles(srv.ShippedBundles.ByName(), shippedAt)
+	installed, err := srv.Store.InstallShippedBundles(srv.ShippedBundles.ByName(), shippedAt)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return re
+	srv.SetShippedBundlesInstalled(installed)
 }
 
 func connectNotes(t *testing.T, srv *Server, token string) {
@@ -289,10 +289,11 @@ func TestShippedBundleNotInThisKivali(t *testing.T) {
 // Why this test exists: a backup holds a shipped bundle's record,
 // versions and files as the binary that wrote it had them, or none
 // from a Kivali before it shipped. The restore must write this
-// binary's version and files over them, keeping the owner's switch, and
-// a pod must not go on with files the restore replaced under the same
-// version; otherwise the restored team runs code other than the code
-// this Kivali carries until the next restart.
+// binary's version and files over them, keeping the owner's switch,
+// with the digest of the files written so a pod built from the
+// archive's files is not taken on, and record it as installed;
+// otherwise the restored team runs code other than the code this
+// Kivali carries, or nothing, until the next restart.
 func TestRestoreInstallsShippedBundles(t *testing.T) {
 	src := newTestServer(t)
 	installShipped(t, src, shippedNotes(t, "1.0.0", "print('one')\n"))
@@ -317,8 +318,13 @@ func TestRestoreInstallsShippedBundles(t *testing.T) {
 	if b, err := os.ReadFile(filepath.Join(dir, "server", "main.py")); err != nil || string(b) != "print('two')\n" {
 		t.Errorf("restored server = %q, %v", b, err)
 	}
-	if e, ok := entryOf(dst.Integrations, "notes"); !ok || !e.replace {
-		t.Errorf("the pod is not renewed: %+v, %v", e, ok)
+	if v, _, _ := dst.Store.GetIntegrationVersion("notes", "1.0.0"); v.BundleDigest == "" {
+		t.Errorf("no digest after the restore: %+v", v)
+	} else if src1, _, _ := src.Store.GetIntegrationVersion("notes", "1.0.0"); src1.BundleDigest == v.BundleDigest {
+		t.Errorf("the restored files kept the archive's digest, so a pod running them would be taken on")
+	}
+	if !dst.shippedBundle(it) {
+		t.Errorf("the restore did not record it as installed")
 	}
 
 	// From a Kivali that shipped none, the restore installs it.
@@ -334,43 +340,122 @@ func TestRestoreInstallsShippedBundles(t *testing.T) {
 }
 
 // Why this test exists: pods outlive core, and at boot core takes on a
-// pod built as it would build it for the version in use. When boot
-// wrote a shipped bundle's files again under the same version, that
-// pod runs the files from before; Renew must make the next reconcile
-// start a new pod with a new token instead of taking that one on, or
-// a fix shipped under the same version would never run.
-func TestRenewReplacesAPodBootWouldTakeOn(t *testing.T) {
+// pod built as it would build it. When a boot wrote a shipped bundle's
+// files again under the same version, a pod left running mounts files
+// that are gone; and core may die before it replaces it. The pod's spec
+// carries the digest of its files, and the store keeps the digest of
+// the files on disk, so every later boot must replace that pod, while a
+// pod whose files are unchanged must be taken on, or every restart
+// would restart every integration. Each registry here is a new boot of
+// core; the pods are the cluster's, kept across them.
+func TestABootThatRewroteTheFilesReplacesThePod(t *testing.T) {
+	srv := newTestServer(t)
+	prov := newFakeIntegrationProv()
+	boot := func(fsys fs.FS) integrationEntry {
+		t.Helper()
+		installShipped(t, srv, fsys)
+		reg, _ := withIntegrationRegistry(srv, prov)
+		if err := reg.reconcile(context.Background(), true); err != nil {
+			t.Fatal(err)
+		}
+		e, _ := entryOf(reg, "notes")
+		return e
+	}
+	first := boot(shippedNotes(t, "1.0.0", "print('one')\n"))
+	if calls := prov.takeCalls(); strings.Join(calls, ",") != "start notes 1.0.0" {
+		t.Fatalf("first boot = %v", calls)
+	}
+
+	// The same files: the pod is taken on.
+	if e := boot(shippedNotes(t, "1.0.0", "print('one')\n")); e.token != first.token {
+		t.Errorf("the pod was not taken on: %q, was %q", e.token, first.token)
+	}
+	if calls := prov.takeCalls(); len(calls) != 0 {
+		t.Errorf("a boot with the same files = %v", calls)
+	}
+
+	// A boot that rewrote the files and died before its reconcile: the
+	// next boot finds the files right, and still replaces the pod.
+	installShipped(t, srv, shippedNotes(t, "1.0.0", "print('two')\n"))
+	second := boot(shippedNotes(t, "1.0.0", "print('two')\n"))
+	if second.token == first.token || prov.pod("notes").token != second.token {
+		t.Errorf("the pod on the old files was taken on: %+v, pod %+v", second, prov.pod("notes"))
+	}
+	if calls := prov.takeCalls(); strings.Join(calls, ",") != "start notes 1.0.0" {
+		t.Errorf("after the rewrite = %v", calls)
+	}
+
+	// A version record lost with the files changed under the same
+	// version: the version is stored whole again, and its digest still
+	// moves the pod.
+	vdir := filepath.Join(srv.Store.Root(), store.IntegrationsDirName, "notes", "versions", "1.0.0")
+	if err := os.Remove(filepath.Join(vdir, "version.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	third := boot(shippedNotes(t, "1.0.0", "print('three')\n"))
+	if third.token == second.token || prov.pod("notes").token != third.token {
+		t.Errorf("the pod was taken on after the record was lost: %+v", third)
+	}
+}
+
+// Why this test exists: a built-in record's name alone does not make
+// it the binary's. When boot cannot install a shipped bundle (its
+// record does not read, its files cannot be written, or a restore
+// left a version the binary does not carry in use), the record's
+// version in use is not the binary's: running it would start a pod
+// with files and hosts the owner never saw and Kivali never shipped.
+// It must get no pod and read as not in this version of Kivali, and run
+// once an install succeeds.
+func TestAShippedBundleWhoseInstallFailedDoesNotRun(t *testing.T) {
 	srv := newTestServer(t)
 	prov := newFakeIntegrationProv()
 	reg, _ := withIntegrationRegistry(srv, prov)
-	installShipped(t, srv, shippedNotes(t, "1.0.0", integrationtest.MainPy))
-	prov.pods["notes"] = fakeIntegrationPod{version: "1.0.0", token: "from-before"}
-
-	reg.Renew("notes")
-	if err := reg.reconcile(context.Background(), true); err != nil {
+	// A restored record in use at a version this binary does not ship.
+	installShipped(t, srv, shippedNotes(t, "9.9.9", integrationtest.MainPy))
+	vdir := filepath.Join(srv.Store.Root(), store.IntegrationsDirName, "notes", "versions", "1.0.0")
+	// The binary's version cannot be written: its directory's path is
+	// taken by a file.
+	if err := os.WriteFile(vdir, []byte("in the way"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	e, _ := entryOf(reg, "notes")
-	if e.token == "from-before" || e.token == "" || e.replace {
-		t.Errorf("entry = %+v", e)
+	srv.ShippedBundles = builtinintegrations.ShippedBundles{{Name: "notes", FS: shippedNotes(t, "1.0.0", integrationtest.MainPy)}}
+	installed, err := srv.Store.InstallShippedBundles(srv.ShippedBundles.ByName(), shippedAt)
+	if err == nil || len(installed) != 0 {
+		t.Fatalf("install = %v, %v", installed, err)
 	}
-	if pod := prov.pod("notes"); pod.token != e.token {
-		t.Errorf("pod = %+v, entry token %q", pod, e.token)
+	srv.SetShippedBundlesInstalled(installed)
+
+	if err := reg.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
 	}
-	if calls := prov.takeCalls(); strings.Join(calls, ",") != "start notes 1.0.0" {
+	if calls := prov.takeCalls(); len(calls) != 0 {
 		t.Errorf("pods = %v", calls)
 	}
+	if page := orgOK[apitypes.IntegrationPage](t, orgGet(t, srv, intBase+"/notes")); page.Summary.Status != apitypes.IntegrationStatusNotIncluded || page.Summary.Version != "9.9.9" {
+		t.Errorf("page = %+v", page.Summary)
+	}
 
-	// Without Renew, the pod from before is taken on.
-	srv2 := newTestServer(t)
-	prov2 := newFakeIntegrationProv()
-	reg2, _ := withIntegrationRegistry(srv2, prov2)
-	installShipped(t, srv2, shippedNotes(t, "1.0.0", integrationtest.MainPy))
-	prov2.pods["notes"] = fakeIntegrationPod{version: "1.0.0", token: "from-before"}
-	if err := reg2.reconcile(context.Background(), true); err != nil {
+	// Installed with another version than the record's: still not run.
+	srv.SetShippedBundlesInstalled(map[string]string{"notes": "1.0.0"})
+	if err := reg.Reconcile(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if e, _ := entryOf(reg2, "notes"); e.token != "from-before" {
-		t.Errorf("the pod from before was not taken on: %+v", e)
+	if calls := prov.takeCalls(); len(calls) != 0 {
+		t.Errorf("pods with another version installed = %v", calls)
+	}
+
+	// Once the install succeeds, it runs.
+	if err := os.RemoveAll(vdir); err != nil {
+		t.Fatal(err)
+	}
+	installShipped(t, srv, shippedNotes(t, "1.0.0", integrationtest.MainPy))
+	if err := reg.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if calls := prov.takeCalls(); strings.Join(calls, ",") != "start notes 1.0.0" {
+		t.Errorf("pods after the install = %v", calls)
+	}
+	if page := orgOK[apitypes.IntegrationPage](t, orgGet(t, srv, intBase+"/notes")); page.Summary.Status != apitypes.IntegrationStatusNotRunning {
+		t.Errorf("page after the install = %+v", page.Summary)
 	}
 }

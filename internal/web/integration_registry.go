@@ -87,15 +87,16 @@ var (
 // integrationpod.Provisioner implements it; tests inject a fake.
 type IntegrationProvisioner interface {
 	Enabled() bool
-	// Start makes the pod for name at version run with token; software
-	// says the version's manifest declares packages, which the pod
-	// installs as root when it starts.
-	Start(ctx context.Context, name, version, token string, software bool) error
+	// Start makes sure name's pod runs version, its bundle's files of
+	// digest (store.IntegrationVersion.BundleDigest), with token;
+	// software says the version's manifest declares packages, which
+	// the pod installs as root when it starts.
+	Start(ctx context.Context, name, version, digest, token string, software bool) error
 	Stop(ctx context.Context, name string) error
 	List(ctx context.Context) ([]string, error)
 	// Token is the token of a live pod built as Start would build it
-	// for version and software, empty when there is none.
-	Token(ctx context.Context, name, version string, software bool) (string, error)
+	// for version, digest and software, empty when there is none.
+	Token(ctx context.Context, name, version, digest string, software bool) (string, error)
 	// Unschedulable is the scheduler's message while the pod cannot be
 	// placed on a node, empty otherwise.
 	Unschedulable(ctx context.Context, name string) (string, error)
@@ -385,8 +386,15 @@ func (r *integrationRegistry) reconcile(ctx context.Context, boot bool) error {
 
 // ensureRunning gives name a pod for version: the one it has when it
 // matches, one taken on from before a restart, or a new one with a new
-// token.
+// token. A pod's spec carries the digest of the files it runs, so one
+// built from other files than the ones stored now (a shipped bundle
+// whose files boot wrote again under the same version) is never taken
+// on, and Start replaces it.
 func (r *integrationRegistry) ensureRunning(ctx context.Context, name, version string) error {
+	digest, err := r.store.IntegrationBundleDigest(name, version)
+	if err != nil {
+		return fmt.Errorf("the bundle's digest: %w", err)
+	}
 	r.mu.Lock()
 	e := r.entries[name]
 	if e == nil {
@@ -394,7 +402,7 @@ func (r *integrationRegistry) ensureRunning(ctx context.Context, name, version s
 		r.entries[name] = e
 	}
 	e.version = version
-	adopt := e.token == "" && !e.replace
+	adopt := e.token == ""
 	r.mu.Unlock()
 
 	// The pod starts as root only when the version installs software.
@@ -406,7 +414,7 @@ func (r *integrationRegistry) ensureRunning(ctx context.Context, name, version s
 
 	adopted := ""
 	if adopt && r.provEnabled() {
-		tok, err := r.prov.Token(ctx, name, version, software)
+		tok, err := r.prov.Token(ctx, name, version, digest, software)
 		if err != nil {
 			r.logf("integration %s: read its pod: %v", name, err)
 		}
@@ -433,30 +441,7 @@ func (r *integrationRegistry) ensureRunning(ctx context.Context, name, version s
 	}
 	// A new token is a new spec: Start replaces the pod with the old
 	// one.
-	return r.prov.Start(ctx, name, version, token, software)
-}
-
-// Renew asks for a new pod for each of names, even one that matches
-// the pod core would build for its version: boot wrote the files of
-// its version in use again (store.InstallShippedBundles), so a pod
-// left running from before runs the files from before. The next
-// reconcile replaces it with a new token, or stops it when the
-// integration should not run.
-func (r *integrationRegistry) Renew(names ...string) {
-	if r == nil || len(names) == 0 {
-		return
-	}
-	r.mu.Lock()
-	for _, name := range names {
-		e := r.entries[name]
-		if e == nil {
-			e = &integrationEntry{name: name}
-			r.entries[name] = e
-		}
-		e.replace = true
-	}
-	r.mu.Unlock()
-	r.Changed()
+	return r.prov.Start(ctx, name, version, digest, token, software)
 }
 
 // ensureStopped takes name down: its link, its pod and its proxy

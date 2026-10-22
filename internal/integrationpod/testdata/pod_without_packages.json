@@ -5,7 +5,7 @@
     "labels": {
       "app": "kivali-integrationpod",
       "integration": "hubspot",
-      "kivali-spec-hash": "913d606ad257"
+      "kivali-spec-hash": "16fe85aae3c4"
     },
     "name": "integrationpod-hubspot",
     "namespace": "kivali"
@@ -52,6 +52,10 @@
           {
             "name": "KIVALI_INTEGRATION_BUNDLE",
             "value": "/bundle"
+          },
+          {
+            "name": "KIVALI_INTEGRATION_BUNDLE_DIGEST",
+            "value": "d1"
           },
           {
             "name": "HTTP_PROXY",

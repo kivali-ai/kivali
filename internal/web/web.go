@@ -163,6 +163,11 @@ type Server struct {
 	// builtins.Shipped(); it is read at each use, so tests set it after
 	// NewServer.
 	ShippedBundles builtinintegrations.ShippedBundles
+	// shippedInstalled is each shipped bundle boot (or a restore)
+	// installed, with the version it made the one in use
+	// (SetShippedBundlesInstalled); guarded by shippedMu.
+	shippedMu        sync.Mutex
+	shippedInstalled map[string]string
 	// Integrations is the registry NewServer builds from the store,
 	// Secrets and IntegrationProvisioner; StartIntegrations runs it.
 	Integrations *integrationRegistry

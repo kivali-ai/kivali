@@ -254,7 +254,7 @@ integration's writes under its own lock:
 integrations/<name>/
   integration.yaml                  name, display_name, current_version, enabled, builtin, installed_at, installed_by
   versions/<version>/version.yaml   version, state, notes_md, published_by, published_at, approved_at, rejected_at,
-                                    bundle_bytes, file_count, findings (the check's warnings)
+                                    bundle_bytes, file_count, bundle_digest, findings (the check's warnings)
   versions/<version>/manifest.json  the manifest, byte for byte
   versions/<version>/bundle/        the bundle, unpacked (none for a built-in of Go code)
   connections/<id>.yaml             id, label, created_at, fields (not secret), secret_keys, secret_name,
@@ -263,6 +263,12 @@ integrations/<name>/
   audit.jsonl                       one row per call: at, agent, action, allowed, reason, duration_ms
   log.jsonl                         the integration's log: at, level, message (the runtime, below)
 ```
+
+A version's `bundle_digest` (`store.BundleDigest`) is a SHA-256 over
+every file of its `bundle/`, path, size and bytes, in path order,
+written with the files; a version stored before digests were kept gets
+it from its files the first time core asks for it
+(`store.IntegrationBundleDigest`). A version with no bundle has none.
 
 A version is stored whole or not at all: it is unpacked into a staging
 directory beside the others and renamed into place. A version's states
@@ -527,7 +533,9 @@ Always` (kubelet starts the shim again when it exits with its server),
 a 10 s stop grace, and the agent pod's required affinity to the
 server's node. Requests 50m/128Mi, limits 1 CPU/1 GiB. Its env is
 `KIVALI_INTEGRATION_NAME`, `_VERSION`, `_TOKEN` (the per-pod token
-core minted), `_CORE_UDS`, `_BUNDLE` and the bare proxy variables, the
+core minted), `_CORE_UDS`, `_BUNDLE`, `_BUNDLE_DIGEST` (the version's
+`bundle_digest`, which the shim does not read) and the bare proxy
+variables, the
 proxy's host resolved to its IP when the pod is built (the pod has no
 DNS). The spec names no Secret and carries no connection value, and no
 label carries the token. The chart's network policy
@@ -541,7 +549,8 @@ answer), which is why a bundle cannot say `kivali.connection.multiple`.
 
 The spec carries a hash of itself (`kivali-spec-hash`), as agent and
 browser pods do. `Start` keeps a pod whose hash matches and replaces one
-that differs: a new version, a new token or a new image is a new pod.
+that differs: a new version, new files (another digest), a new token
+or a new image is a new pod.
 The registry reads the version's manifest and tells `Start` and `Token`
 whether it declares packages, so a pod built without software is never
 taken on for a version that installs some. A version without packages
@@ -622,9 +631,10 @@ version newly in use, approved or rolled back to, gets a new token, and
 so a new pod. At boot core also
 stops the pods of integrations no longer installed, and takes on a pod
 left running from before the restart when it is built exactly as core
-would build it for the approved version (`Provisioner.Token` reads the
-token from the pod's spec), so pods outlive a server restart and their
-shims reconnect. Shutdown closes every link and stops no pod.
+would build it for the approved version and its files
+(`Provisioner.Token` reads the token from the pod's spec), so pods
+outlive a server restart and their shims reconnect, and a pod built
+from other files than the ones stored now is replaced. Shutdown closes every link and stops no pod.
 
 ### The shim and its socket
 
@@ -1109,19 +1119,23 @@ while the others are installed. It writes:
   one keeps the owner's switch.
 - The manifest's version, `approved`, published by `kivali`, notes
   "Ships with Kivali.", its manifest byte for byte, its bundle unpacked
-  in `bundle/` and its size, file count and warnings, staged and
-  renamed into place as an upload's version is.
+  in `bundle/` and its size, file count, digest and warnings, staged
+  and renamed into place as an upload's version is. The digest is
+  worked out from the files on disk at every boot.
 - When the version differs from the one in use, the one in use becomes
   superseded and the binary's is the one in use: a new version is a new
   pod.
 - When the version is stored with files other than the binary's (the
   same version string, changed bytes), its manifest and bundle are
   written again, the new bundle unpacked beside the old and renamed
-  into its place. The call returns the names whose version in use was
-  written again, and core gives each a new pod
-  (`integrationRegistry.Renew`): a pod left running from before is
-  built as core would build it for that version, and would otherwise be
-  taken on with the old files.
+  into its place (the old one is put back when that rename fails). The
+  new files have a new digest, so a pod left running on the old ones,
+  whose spec carries the old digest, is replaced rather than taken on,
+  at this boot or any later one.
+
+It returns each shipped bundle it installed with the version it made
+the one in use, and the Server keeps that
+(`Server.SetShippedBundlesInstalled`, at boot and after a restore).
 
 An installed integration of the same name that is not built in is
 left as it is, as for a built-in of Go code.
@@ -1129,8 +1143,13 @@ left as it is, as for a built-in of Go code.
 The binary's lists, not the record, say which kind a built-in record
 is: `Server.builtinFor` finds its Go code, `Server.shippedBundle` that
 the binary ships it as a bundle (its name in `Server.ShippedBundles`
-and not in `Server.BuiltinIntegrations`), and one that is neither is a
-record this binary does not carry (`integrationView.staleBuiltin`). The
+and not in `Server.BuiltinIntegrations`, installed at this boot or
+restore with the version the record has in use), and one that is
+neither is a record this binary does not carry
+(`integrationView.staleBuiltin`). So a record whose install failed, or
+whose version in use is not the binary's (a restore that left another),
+runs nothing and reads as not in this version of Kivali; boot's log
+says why. The
 reconcile runs a pod for a built-in record only when it is a shipped
 bundle, so a stale one's pod is stopped. Everything else is a bundle's:
 `Integrations.Running`, the shim's connect and `tools/list`, Test

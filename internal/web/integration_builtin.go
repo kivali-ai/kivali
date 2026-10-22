@@ -49,10 +49,27 @@ func (s *Server) builtinFor(it store.Integration) builtinintegrations.Integratio
 }
 
 // shippedBundle reports whether it ships with Kivali as a bundle this
-// binary carries: its record is built in, its name is in
-// ShippedBundles, and no built-in of Go code has it.
+// binary carries and installed: its record is built in, its name is in
+// ShippedBundles and no built-in of Go code has it, and boot (or a
+// restore) installed it with the version the record has in use. One
+// whose install failed, or whose record names another version, runs
+// nothing: what it would run is not the binary's.
 func (s *Server) shippedBundle(it store.Integration) bool {
-	return it.Builtin && s.BuiltinIntegrations.Lookup(it.Name) == nil && s.ShippedBundles.Has(it.Name)
+	if !it.Builtin || it.CurrentVersion == "" || s.BuiltinIntegrations.Lookup(it.Name) != nil || !s.ShippedBundles.Has(it.Name) {
+		return false
+	}
+	s.shippedMu.Lock()
+	defer s.shippedMu.Unlock()
+	return s.shippedInstalled[it.Name] == it.CurrentVersion
+}
+
+// SetShippedBundlesInstalled records the shipped bundles boot or a
+// restore installed (store.InstallShippedBundles), by name, with the
+// version each made the one in use. main.go calls it at boot.
+func (s *Server) SetShippedBundlesInstalled(installed map[string]string) {
+	s.shippedMu.Lock()
+	defer s.shippedMu.Unlock()
+	s.shippedInstalled = installed
 }
 
 // integrationRunning reports whether it can be called now: a built-in

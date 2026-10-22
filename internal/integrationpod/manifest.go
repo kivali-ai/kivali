@@ -16,7 +16,9 @@ import (
 //     kivali binary into an emptyDir; the one container runs the
 //     agent-shell image (which has python3) with that binary as its
 //     command: `kivali integration-shim`, configured entirely by env
-//     (EnvName, EnvVersion, EnvToken, EnvCoreUDS, EnvBundle).
+//     (EnvName, EnvVersion, EnvToken, EnvCoreUDS, EnvBundle), and
+//     carrying the bundle's digest (EnvBundleDigest) so the spec hash
+//     moves with the files it runs.
 //  2. It dials integration.sock, in the integration subdirectory of the
 //     hostPath UDS dir, the only part of that directory it mounts,
 //     read-only; core.sock and the browser pods' socket stay out of its
@@ -133,11 +135,12 @@ func installSecurityContext() map[string]any {
 	}
 }
 
-// podManifest is the pod for name at version, with token in its
-// environment. software says the version's manifest declares packages,
-// which the integration container installs as root when it starts.
+// podManifest is the pod for name at version, whose bundle's files
+// have digest, with token in its environment. software says the
+// version's manifest declares packages, which the integration container
+// installs as root when it starts.
 // c.ProxyURL is the proxy by IP (Provisioner.config).
-func (c ProvisionerConfig) podManifest(name, version, token string, software bool) map[string]any {
+func (c ProvisionerConfig) podManifest(name, version, digest, token string, software bool) map[string]any {
 	udsDir := integrationUDSDir(c.UDSDir)
 	env := []map[string]any{
 		{"name": EnvName, "value": name},
@@ -145,6 +148,7 @@ func (c ProvisionerConfig) podManifest(name, version, token string, software boo
 		{"name": EnvToken, "value": token},
 		{"name": EnvCoreUDS, "value": udsDir + "/" + SocketName},
 		{"name": EnvBundle, "value": DefaultBundle},
+		{"name": EnvBundleDigest, "value": digest},
 	}
 	if c.ProxyURL != "" {
 		// Bare: the shim draws the credential the server's own

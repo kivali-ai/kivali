@@ -53,7 +53,7 @@ func containerNamed(t *testing.T, spec map[string]any, key, name string) map[str
 // node. This fails when any of those changes.
 func TestPodManifestLoadBearingProperties(t *testing.T) {
 	const token = "tok-0123456789abcdef"
-	m := asJSON(t, testConfig().podManifest("hubspot", "1.2.0", token, false))
+	m := asJSON(t, testConfig().podManifest("hubspot", "1.2.0", "d1", token, false))
 	raw, _ := json.Marshal(m)
 	for _, ref := range []string{"secretKeyRef", "secretRef", `"secret":`, "envFrom"} {
 		if strings.Contains(string(raw), ref) {
@@ -112,7 +112,7 @@ func TestPodManifestLoadBearingProperties(t *testing.T) {
 	}
 	want := map[string]string{
 		EnvName: "hubspot", EnvVersion: "1.2.0", EnvToken: token,
-		EnvCoreUDS: "/var/run/kivali/uds/integration/integration.sock", EnvBundle: "/bundle",
+		EnvCoreUDS: "/var/run/kivali/uds/integration/integration.sock", EnvBundle: "/bundle", EnvBundleDigest: "d1",
 		"HTTPS_PROXY": "http://10.43.0.12:3128", "https_proxy": "http://10.43.0.12:3128",
 		"HTTP_PROXY": "http://10.43.0.12:3128", "http_proxy": "http://10.43.0.12:3128",
 	}
@@ -163,26 +163,28 @@ func TestPodManifestLoadBearingProperties(t *testing.T) {
 }
 
 // The spec hash moves with what makes a pod another pod (the version,
-// the token, the image) and not between two builds of the same one:
+// the bundle's files, the token, the image) and not between two builds
+// of the same one:
 // Start keeps a pod whose hash matches and replaces the rest, so a hash
 // that moved on its own would restart every integration at every
 // reconcile, and one that did not move would leave an old version
 // running.
 func TestPodManifestSpecHash(t *testing.T) {
 	cfg := testConfig()
-	hash := func(c ProvisionerConfig, version, token string) string {
-		return specHashOf(c.podManifest("hubspot", version, token, false))
+	hash := func(c ProvisionerConfig, version, digest, token string) string {
+		return specHashOf(c.podManifest("hubspot", version, digest, token, false))
 	}
-	base := hash(cfg, "1.2.0", "a")
-	if base != hash(cfg, "1.2.0", "a") {
+	base := hash(cfg, "1.2.0", "d1", "a")
+	if base != hash(cfg, "1.2.0", "d1", "a") {
 		t.Fatal("two builds of one pod differ")
 	}
 	other := cfg
 	other.Image = "ghcr.io/kivali-ai/kivali:v1.3.0"
 	for name, h := range map[string]string{
-		"version": hash(cfg, "1.2.1", "a"),
-		"token":   hash(cfg, "1.2.0", "b"),
-		"image":   hash(other, "1.2.0", "a"),
+		"version": hash(cfg, "1.2.1", "d1", "a"),
+		"digest":  hash(cfg, "1.2.0", "d2", "a"),
+		"token":   hash(cfg, "1.2.0", "d1", "b"),
+		"image":   hash(other, "1.2.0", "d1", "a"),
 	} {
 		if h == base {
 			t.Errorf("a new %s keeps the hash", name)
@@ -202,7 +204,7 @@ func TestPodWithoutPackagesIsUnchanged(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := json.MarshalIndent(testConfig().podManifest("hubspot", "1.2.0", "tok-0123456789abcdef", false), "", "  ")
+	got, err := json.MarshalIndent(testConfig().podManifest("hubspot", "1.2.0", "d1", "tok-0123456789abcdef", false), "", "  ")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,8 +224,8 @@ func TestPodWithoutPackagesIsUnchanged(t *testing.T) {
 // moves, so a version that adds software gets the root pod.
 func TestPodWithPackagesStartsAsRoot(t *testing.T) {
 	cfg := testConfig()
-	plain := asJSON(t, cfg.podManifest("hubspot", "1.2.0", "tok", false))
-	root := asJSON(t, cfg.podManifest("hubspot", "1.2.0", "tok", true))
+	plain := asJSON(t, cfg.podManifest("hubspot", "1.2.0", "d1", "tok", false))
+	root := asJSON(t, cfg.podManifest("hubspot", "1.2.0", "d1", "tok", true))
 	spec := root["spec"].(map[string]any)
 	sc := containerNamed(t, spec, "containers", "integration")["securityContext"].(map[string]any)
 	if sc["runAsUser"] != float64(0) || sc["runAsGroup"] != float64(0) || sc["runAsNonRoot"] != false || sc["allowPrivilegeEscalation"] != false {
@@ -246,7 +248,7 @@ func TestPodWithPackagesStartsAsRoot(t *testing.T) {
 		delete(m["metadata"].(map[string]any)["labels"].(map[string]any), kube.SpecHashLabel)
 		delete(containerNamed(t, m["spec"].(map[string]any), "containers", "integration"), "securityContext")
 	}
-	if specHashOf(cfg.podManifest("hubspot", "1.2.0", "tok", true)) == specHashOf(cfg.podManifest("hubspot", "1.2.0", "tok", false)) {
+	if specHashOf(cfg.podManifest("hubspot", "1.2.0", "d1", "tok", true)) == specHashOf(cfg.podManifest("hubspot", "1.2.0", "d1", "tok", false)) {
 		t.Error("software keeps the spec hash")
 	}
 	strip(plain)

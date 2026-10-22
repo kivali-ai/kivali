@@ -47,6 +47,11 @@ const (
 	EnvToken   = "KIVALI_INTEGRATION_TOKEN"
 	EnvCoreUDS = "KIVALI_INTEGRATION_CORE_UDS"
 	EnvBundle  = "KIVALI_INTEGRATION_BUNDLE"
+	// EnvBundleDigest is the digest of the bundle's files as core
+	// stored them (store.IntegrationVersion.BundleDigest). The shim
+	// does not read it: it is in the spec so a pod built from other
+	// files has another spec hash, and is replaced, not taken on.
+	EnvBundleDigest = "KIVALI_INTEGRATION_BUNDLE_DIGEST"
 	// EnvCommand, when set, replaces the manifest's mcp_config.command
 	// with a path. A test hook: the pod spec never sets it.
 	EnvCommand = "KIVALI_INTEGRATION_COMMAND"

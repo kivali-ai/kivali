@@ -190,10 +190,11 @@ func main() {
 	// And the integrations that ship as bundles: each one's record, its
 	// version in use and its files, checked as an upload is. Logged
 	// rather than fatal, for the same reason: one that cannot be
-	// installed is named, and the others are installed.
-	shippedRewritten, err := s.InstallShippedBundles(builtins.Shipped().ByName(), time.Now())
+	// installed is named, and the others are installed. Only the ones
+	// installed run (web.Server.SetShippedBundlesInstalled).
+	shippedInstalled, err := s.InstallShippedBundles(builtins.Shipped().ByName(), time.Now())
 	if err != nil {
-		log.Printf("install shipped integrations: %v", err)
+		log.Printf("install shipped integrations: %v; Kivali does not run these until they install", err)
 	}
 	// Model pins follow their lineage. An agent pinned to a model the
 	// catalog has since retired moves to the newest model of the same
@@ -643,9 +644,7 @@ func main() {
 	// Integrations: takes on the pods left from before this start,
 	// stops those of integrations no longer installed, then follows
 	// every change and checks each running server every 30 seconds.
-	// A shipped bundle whose files boot wrote again under the same
-	// version gets a new pod, not the one left running the old files.
-	srv.Integrations.Renew(shippedRewritten...)
+	srv.SetShippedBundlesInstalled(shippedInstalled)
 	stopIntegrations := srv.StartIntegrations()
 
 	idle := make(chan struct{})
