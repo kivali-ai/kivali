@@ -104,10 +104,10 @@ func TestEveryShippedBundlePassesTheCheck(t *testing.T) {
 	checkShipped(t, builtins.Shipped(), builtins.All())
 }
 
-// Why this test exists: the check above runs on an empty list until a
-// bundle ships. A test bundle laid out as an embedded one is held to it
-// here, so the check is known to read a bundle directory and pass a
-// good one before a real bundle depends on it.
+// Why this test exists: the check above passes only as long as every
+// bundle the binary ships does. A test bundle laid out as an embedded
+// one is held to it here, so the check is known to read a bundle
+// directory and pass a good one whatever the binary ships.
 func TestShippedBundleCheckReadsADirectory(t *testing.T) {
 	fsys := integrationtest.Dir(t, integrationtest.Manifest("notes", "1.0.0"), nil)
 	checkShipped(t, builtinintegrations.ShippedBundles{{Name: "notes", FS: fsys}}, builtins.All())
