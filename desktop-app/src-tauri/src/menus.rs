@@ -513,19 +513,31 @@ fn build_tray(app: &AppHandle, v: &View) -> R<TrayIcon> {
         .build(app)
 }
 
-/// What the menus show, as text: they are replaced only when it changes.
-/// Replacing a menu that is open closes it under the person's cursor, and
+/// What each menu shows, as text: a menu is replaced only when its own
+/// text changes. Replacing a menu that is open closes it under the
+/// person's cursor (muda cancels a menu's tracking as it drops it), and
 /// the shell redraws on every progress line of every team.
-fn signature(v: &View) -> String {
-    let mut s = String::new();
-    for r in &v.rows {
-        s.push_str(&format!("{}|{}|{:?}|{}|{:?}|{}\n", r.team.id, r.team.name, r.state, r.phrase, r.update, r.team.is_here()));
-    }
-    s.push_str(&format!("front={:?} app={:?}", v.front, v.app_update));
-    s
+#[derive(Clone, PartialEq)]
+struct Signatures {
+    /// The tray menu's: no team in front, which it does not show. Hiding
+    /// a team window changes the team in front with no refresh, and the
+    /// next refresh is the tray click's, with the tray menu open.
+    tray: String,
+    /// The app menu's, whose Team menu is the team in front's.
+    app: String,
 }
 
-static LAST_MENUS: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+fn signatures(v: &View) -> Signatures {
+    let mut tray = String::new();
+    for r in &v.rows {
+        tray.push_str(&format!("{}|{}|{:?}|{}|{:?}|{}\n", r.team.id, r.team.name, r.state, r.phrase, r.update, r.team.is_here()));
+    }
+    tray.push_str(&format!("app={:?}", v.app_update));
+    let app = format!("{tray} front={:?}", v.front);
+    Signatures { tray, app }
+}
+
+static LAST_MENUS: Mutex<Option<Signatures>> = Mutex::new(None);
 
 /// Rebuilds the menus (when what they show changed) and sets the tray
 /// icon from the current state. Main thread only.
@@ -535,23 +547,22 @@ pub fn refresh(app: &AppHandle) {
         let (st, tip) = icon(&v);
         driver.set(st, &tip);
     }
-    let sig = signature(&v);
-    {
-        let mut last = LAST_MENUS.lock().unwrap();
-        if last.as_deref() == Some(sig.as_str()) {
-            return;
-        }
-        *last = Some(sig);
+    let sigs = signatures(&v);
+    let last = LAST_MENUS.lock().unwrap().replace(sigs.clone());
+    if last.as_ref() == Some(&sigs) {
+        return;
     }
-    if let Some(tray) = app.tray_by_id(TRAY_ID) {
-        match tray_menu(app, &v) {
-            Ok(m) => {
-                let _ = tray.set_menu(Some(m));
+    if last.as_ref().map(|l| &l.tray) != Some(&sigs.tray) {
+        if let Some(tray) = app.tray_by_id(TRAY_ID) {
+            match tray_menu(app, &v) {
+                Ok(m) => {
+                    let _ = tray.set_menu(Some(m));
+                }
+                Err(e) => eprintln!("kivali: tray menu: {e}"),
             }
-            Err(e) => eprintln!("kivali: tray menu: {e}"),
         }
     }
-    if platform::APP_MENU {
+    if platform::APP_MENU && last.as_ref().map(|l| &l.app) != Some(&sigs.app) {
         match app_menu(app, &v) {
             Ok(m) => {
                 let _ = app.set_menu(m);
@@ -831,6 +842,26 @@ mod tests {
         assert_eq!(tip, "Kivali · Plainsong running · Home paused");
         let none = View { rows: vec![], front: None, app_update: None };
         assert_eq!(icon(&none), (TrayState::Paused, "Kivali".to_string()));
+    }
+
+    /// A tray click refreshes the menus with the tray menu open, and
+    /// replacing an open menu closes it. Closing a team window only hides
+    /// it, so the team in front changes with no refresh; were it in the
+    /// tray's signature, the first tray click after closing a window would
+    /// close its own menu at once, and the next one would stay open. The
+    /// app menu, whose Team menu follows the team in front, still changes.
+    #[test]
+    fn the_tray_menu_stays_when_only_the_team_in_front_changes() {
+        let plainsong = || vec![row("Plainsong", true, TeamState::Running, "running")];
+        let shown = signatures(&View { rows: plainsong(), front: Some("Plainsong".into()), app_update: None });
+        let hidden = signatures(&View { rows: plainsong(), front: None, app_update: None });
+        assert_eq!(shown.tray, hidden.tray);
+        assert_ne!(shown.app, hidden.app);
+        // What the tray shows still replaces it.
+        let paused = signatures(&View { rows: vec![row("Plainsong", true, TeamState::Paused, "paused")], front: None, app_update: None });
+        assert_ne!(paused.tray, hidden.tray);
+        let update = signatures(&View { rows: plainsong(), front: None, app_update: Some("1.3.0".into()) });
+        assert_ne!(update.tray, hidden.tray);
     }
 
     /// A key press in a team window names the item of that window's menu:
