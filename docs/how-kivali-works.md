@@ -117,7 +117,7 @@ An agent's **Background** tab shows its plan and every subagent session, live.
 
 ## Skills
 
-A **skill** is a shared procedure: instructions in a `SKILL.md` file, with optional scripts and assets. Every agent can list the installed skills, read one and run its scripts. Use skills for anything you would otherwise explain again in every assignment. Kivali ships with a built-in skill for planning and fanning out work to subagents. Manage skills in **Org**, **Skills**.
+A **skill** is a shared procedure: instructions in a `SKILL.md` file, with optional scripts and assets. Every agent can list the installed skills, read one and run its scripts. Use skills for anything you would otherwise explain again in every assignment. Kivali ships with two built-in skills: one for planning and fanning out work to subagents, and one the Kivali Developer builds integrations with. Manage skills in **Org**, **Skills**.
 
 ## Files and publishing
 

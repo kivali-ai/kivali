@@ -78,8 +78,8 @@ const (
 	maxArtifactUnpublishDescChars = 400
 	// The Kivali Developer's five tools. On every turn of the one
 	// agent that has them; what a bundle is and how to build one is in
-	// its role, so each description says only what the tool does and
-	// refuses.
+	// the build-an-integration skill its role points at, so each
+	// description says only what the tool does and refuses.
 	maxKivaliDeveloperDescChars = 700
 )
 

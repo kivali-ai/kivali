@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kivali-ai/kivali/internal/builtinskills"
 	"github.com/kivali-ai/kivali/internal/handbook"
 	"github.com/kivali-ai/kivali/internal/owner"
 )
@@ -235,9 +236,16 @@ func TestChiefOfStaffRoleNamesTheHandbooksSections(t *testing.T) {
 // one agent that writes code run against the owner's accounts without
 // the rule that keeps those accounts the owner's. The role must also
 // say whom the developer reports to, since Kivali, not the Chief of
-// Staff, hires it.
+// Staff, hires it. How to build a bundle is not in the role but in the
+// build-an-integration skill it points at, so the path it names must be
+// a skill Kivali ships: a pointer to nothing leaves the developer
+// writing a bundle with no contract to write it to.
 func TestKivaliDeveloperRoleNamesItsToolsAndLimits(t *testing.T) {
 	role := KivaliDeveloperRole
+	const skill = "build-an-integration"
+	if !builtinskills.Has(skill) || !strings.Contains(role, "`/files/skills/"+skill+"/SKILL.md`") {
+		t.Errorf("the role does not point at /files/skills/%s/SKILL.md, a skill Kivali ships", skill)
+	}
 	for _, tool := range []string{"integration_validate", "integration_publish", "integration_list", "integration_versions", "integration_logs"} {
 		if !strings.Contains(role, "`"+tool+"`") {
 			t.Errorf("the role does not name `%s`", tool)
