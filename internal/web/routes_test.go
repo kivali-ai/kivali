@@ -51,6 +51,7 @@ func TestServerOwnedRoutesWinOverTheApp(t *testing.T) {
 		{"GET", "/messages/2026-09-28/0001-ceo.md", "GET /messages/{path...}"},
 		{"GET", "/attachments/3f2a", "GET /attachments/{sha}"},
 		{"GET", "/admin/version", "GET /admin/version"},
+		{"GET", "/connect/start", "GET /connect/start"},
 		{"GET", "/api/v1/me", "GET /api/"},
 		{"GET", "/api/v1/nope", "GET /api/"},
 		{"POST", "/api/v1/needs/approve", "POST /api/"},
@@ -108,7 +109,7 @@ func TestAppRoutesNeedASession(t *testing.T) {
 		"/", "/agents/engineering-lead", "/work?goal=4", "/team", "/org", "/setup", "/assignments/12",
 		"/org/stream", "/agents/engineering-lead/stream", "/agents/engineering-lead/subagents/a1b2/stream",
 		"/messages/2026-09-28/0001-ceo.md", "/messages/2026-09-28/0001-ceo.md?dl=1",
-		"/attachments/3f2a", "/admin/version",
+		"/attachments/3f2a", "/admin/version", "/connect/start?flow=0000",
 		// No debug surface is served: this is just another app path.
 		"/debug/pprof/", "/debug/pprof/heap",
 	} {

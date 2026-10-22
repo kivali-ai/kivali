@@ -121,6 +121,60 @@ func TestHandoffRefusals(t *testing.T) {
 	}
 }
 
+// TestHandoffNextAfterASignInOnly guards the handoff's next against
+// becoming a way around the token: Kivali Desktop opens
+// /auth/handoff?t=<token>&next=<flow> in the system browser, and the
+// server's resolver may set a sign-in cookie and send the browser to a
+// vendor. If it ran for a refused, replayed or non-loopback token, any
+// page could hand a browser that cookie, or bounce it through Kivali
+// to a vendor, without the supervisor's token. A next the resolver
+// does not know must still land on "/" signed in.
+func TestHandoffNextAfterASignInOnly(t *testing.T) {
+	now := time.Now()
+	h := handoffAt(t, &now, "")
+	var asked []string
+	handler := h.WithNext(func(w http.ResponseWriter, r *http.Request, next string) string {
+		asked = append(asked, next)
+		if next == "known" {
+			http.SetCookie(w, &http.Cookie{Name: "resolved", Value: "1"})
+			return "https://vendor.example/authorize?state=s"
+		}
+		return ""
+	})
+	redeem := func(host, token, next string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, HandoffPath+"?t="+token+"&next="+next, nil)
+		req.Host = host
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		return rr
+	}
+	tok := mint(t, handoffKey, "owner@example.com", now.Add(HandoffTTL))
+
+	rr := redeem("127.0.0.1:18081", tok, "known")
+	if rr.Code != http.StatusFound || rr.Header().Get("Location") != "https://vendor.example/authorize?state=s" {
+		t.Fatalf("known next: %d to %q", rr.Code, rr.Header().Get("Location"))
+	}
+	if cookieNamed(rr, CookieName) == nil || cookieNamed(rr, "resolved") == nil {
+		t.Fatal("known next: the session or the resolver's cookie was not set")
+	}
+	// The same token again: refused, and the resolver is not asked.
+	if rr := redeem("127.0.0.1:18081", tok, "known"); rr.Header().Get("Location") != "/" || cookieNamed(rr, "resolved") != nil {
+		t.Fatalf("replay with next: to %q", rr.Header().Get("Location"))
+	}
+	// Not loopback: no route, no resolver.
+	other := mint(t, handoffKey, "owner@example.com", now.Add(HandoffTTL))
+	if rr := redeem("kivali.example.com", other, "known"); rr.Code != http.StatusNotFound {
+		t.Fatalf("non-loopback with next: %d", rr.Code)
+	}
+	// A next the resolver does not know: signed in, to "/".
+	if got := signedInAs(t, redeem("127.0.0.1:18081", other, "unknown"), h); got != "owner@example.com" {
+		t.Fatalf("unknown next signed in as %q", got)
+	}
+	if strings.Join(asked, ",") != "known,unknown" {
+		t.Fatalf("the resolver was asked for %v, want only the two signed-in requests", asked)
+	}
+}
+
 // mustSession is a valid session cookie value: never a handoff token.
 func mustSession(t *testing.T, c *Codec) string {
 	t.Helper()

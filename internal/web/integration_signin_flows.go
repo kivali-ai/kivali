@@ -102,6 +102,9 @@ type browserFlow struct {
 	// redirectURL is the redirect address the vendor was given, which
 	// the code exchange must name again.
 	redirectURL string
+	// authorizeURL is the vendor's sign-in page for this sign-in, where
+	// GET /connect/start and the handoff send the browser.
+	authorizeURL string
 }
 
 // signInFlows are the sign-ins under way, by id. The zero value is
@@ -196,6 +199,23 @@ func (t *signInFlows) endBrowser(now time.Time, id, words string) {
 		return
 	}
 	f.state, f.err, f.until = apitypes.SignInStateFailed, words, now.Add(signInFlowTTL)
+}
+
+// pendingBrowser is the browser sign-in with flow id id, still pending,
+// not yet taken by a callback and not past its time: nil when there is
+// none. It leaves the flow as it is.
+func (t *signInFlows) pendingBrowser(now time.Time, id string) *signInFlow {
+	if id == "" {
+		return nil
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.pruneLocked(now)
+	f := t.flows[id]
+	if f == nil || f.browser == nil || f.taken || f.state != apitypes.SignInStatePending {
+		return nil
+	}
+	return f
 }
 
 // cancel cancels and forgets name's flows: those of its connection

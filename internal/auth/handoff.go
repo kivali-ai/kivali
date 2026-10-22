@@ -120,10 +120,29 @@ func (h *Handoff) now() time.Time {
 	return time.Now()
 }
 
+// HandoffNext resolves a handoff's next query parameter once its token
+// has signed the browser in: where to send the browser, an address the
+// server itself made and never one taken from the request, or "" for
+// "/". It may set cookies on w.
+type HandoffNext func(w http.ResponseWriter, r *http.Request, next string) string
+
 // ServeHTTP signs the request in on a valid token and redirects to "/".
 // Any failure redirects to "/" without a session, where the ordinary
 // sign-in takes over. The token is never logged.
 func (h *Handoff) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	h.serve(w, r, nil)
+}
+
+// WithNext is the handoff route with next resolved by resolve: a
+// request whose token signs the browser in and that carries a next is
+// sent where resolve says. A refused token ignores next.
+func (h *Handoff) WithNext(resolve HandoffNext) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h.serve(w, r, resolve)
+	})
+}
+
+func (h *Handoff) serve(w http.ResponseWriter, r *http.Request, resolve HandoffNext) {
 	if !isLocal(r) {
 		http.NotFound(w, r)
 		return
@@ -143,7 +162,13 @@ func (h *Handoff) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	setSessionCookie(w, r, h.CookieSuffix, signed)
-	http.Redirect(w, r, "/", http.StatusFound)
+	target := "/"
+	if next := r.URL.Query().Get("next"); next != "" && resolve != nil {
+		if to := resolve(w, r, next); to != "" {
+			target = to
+		}
+	}
+	http.Redirect(w, r, target, http.StatusFound)
 }
 
 // redeem verifies token, spends its nonce and checks the allowlist.

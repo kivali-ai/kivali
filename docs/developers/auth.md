@@ -288,6 +288,23 @@ an ordinary sign-in would leave.
   is a 302 to `/` with no session, where the ordinary sign-in follows,
   and one fixed log line ("auth handoff: refused a handoff token");
   the token is never logged.
+- **`next`:** `GET /auth/handoff?t=<token>&next=<flow id>` is how the
+  app opens an integration's browser sign-in in the system browser
+  ([integrations.md](integrations.md#in-kivali-desktop)). Once the
+  token has signed the browser in, and only then, the server looks
+  `next` up as a browser sign-in under way (`auth.Handoff.WithNext`,
+  `handoffNext` in `internal/web/integration_signin_browser.go`): for
+  one that is pending, not yet taken by a callback and inside its ten
+  minutes, it sets that sign-in's `kivali_connect` cookie in this
+  browser (replacing any it held, whose sign-in ends as a second start
+  in one browser ends the first) and the 302 goes to the vendor's
+  sign-in page the flow keeps.
+  Any other `next` is a 302 to `/`, signed in. `next` is never an
+  address, so the route redirects only to one the server made. A token
+  that is refused, replayed or sent to a host that is not loopback
+  ignores `next` entirely: no cookie, no lookup. The answer carries
+  `Referrer-Policy: no-referrer`, so the vendor's page never sees the
+  token.
 
 The route exists whenever sign-in is enforced (not under `DEV_MODE`),
 with or without a Google client.

@@ -355,9 +355,6 @@ func goldenSignInFailed() SignInProgress {
 	return SignInProgress{State: SignInStateFailed, Error: &words}
 }
 
-// goldenBrowserSignIn is a browser sign-in just started: the vendor's
-// sign-in page with the client id, the redirect address, the scopes,
-// the state and the PKCE challenge.
 // goldenIntegrationVersionSignIn is the install screen of a HubSpot
 // bundle that connects by signing in in the browser: the scopes it
 // asks for and the hosts its sign-in goes to.
@@ -373,6 +370,10 @@ func goldenIntegrationVersionSignIn() IntegrationVersion {
 	return v
 }
 
+// goldenBrowserSignIn is a browser sign-in just started: the vendor's
+// sign-in page with the client id, the redirect address, the scopes,
+// the state and the PKCE challenge, and the flow id the page sends the
+// browser there by.
 func goldenBrowserSignIn() BrowserSignIn {
-	return BrowserSignIn{URL: "https://app.hubspot.com/oauth/authorize?client_id=7fff1e36-2d40-4ae1-bbb1-5266d59564fb&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256&redirect_uri=https%3A%2F%2Fkivali.example.com%2Fconnect%2Fcallback&response_type=code&scope=content&state=3q2-7wEBAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhs"}
+	return BrowserSignIn{Flow: "9f86d081884c7d659a2feaa0c55ad015", URL: "https://app.hubspot.com/oauth/authorize?client_id=7fff1e36-2d40-4ae1-bbb1-5266d59564fb&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256&redirect_uri=https%3A%2F%2Fkivali.example.com%2Fconnect%2Fcallback&response_type=code&scope=content&state=3q2-7wEBAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhs"}
 }

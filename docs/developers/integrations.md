@@ -727,10 +727,11 @@ A browser sign-in (`POST .../sign-in/browser`,
    it, as it does a device sign-in.
 2. It registers a flow with a fresh state, a verifier from
    `connect.NewPKCEVerifier` unless the manifest says `pkce: false`,
-   and the redirect address, and answers `BrowserSignIn` (`url`): the
+   and the redirect address, and answers `BrowserSignIn`: `url`, the
    vendor's authorization address from `Engine.AuthorizeURL`, with the
-   manifest's scopes and `extra_authorization_params`. Nothing is sent
-   to the vendor yet.
+   manifest's scopes and `extra_authorization_params`, which the flow
+   keeps too, and `flow`, the flow's id. Nothing is sent to the vendor
+   yet.
 3. The answer sets the cookie `kivali_connect` (`kivali_connect_<suffix>`
    with `KIVALI_COOKIE_SUFFIX`): `Path=/`, host-only,
    `HttpOnly`, `SameSite=Lax` (the vendor's redirect back is a
@@ -745,8 +746,14 @@ A browser sign-in (`POST .../sign-in/browser`,
    sign-in was started in this browser; start this one again". That
    sign-in's callback finds it ended and redirects to its page with
    `?sign_in_failed=<id>`, leaving the cookie for the later one.
-4. The web app sends the tab to `url` (`openSignIn`). The owner approves
-   on the vendor's site, which sends the browser to `GET
+4. The web app sends the tab to `GET /connect/start?flow=<flow>`
+   (`openSignIn`), on the protected mux, which answers a 303 to the
+   flow's `url` while the flow is pending and not yet taken, and
+   otherwise returns to `/org/integrations?sign_in_error=start_again`.
+   It sets no cookie and takes no address from the request. (Kivali
+   Desktop does not load this address in a team's window: [In Kivali
+   Desktop](#in-kivali-desktop) below.) The owner approves on the
+   vendor's site, which sends the browser to `GET
    /connect/callback?code=&state=` (or `?error=&error_description=&state=`).
 5. The callback is on the protected mux, behind the session middleware:
    a browser not signed in to Kivali is sent to `/login` with the whole
@@ -800,6 +807,45 @@ is a client id to save) and `ConnectionSignIn.redirect_url`, whenever
 the manifest offers browser sign-in, and `{{redirect_url}}` in
 `kivali.setup_notes` is replaced with it on the page and the install
 screen.
+
+#### In Kivali Desktop
+
+The team's window is a webview: the start answer's cookie lands there,
+and a vendor's page loaded there is refused and opened in the system
+browser, which holds neither the Kivali session nor that cookie, so
+the callback would ask the owner to sign in and then refuse the
+sign-in as started elsewhere. The team's web view has no IPC
+([desktop-app.md](desktop-app.md), "Capabilities: why team web apps
+get nothing"), so the web app does not call the app: the shell
+recognises the navigation to the team's own `/connect/start?flow=<id>`
+(that exact path, one `flow` of 32 lowercase hex digits; `team_nav`
+answers `ConnectSignIn`) and, for a team here on its loopback origin,
+refuses it in the window, mints a handoff token from the team's
+supervisor and opens `<origin>/auth/handoff?t=<token>&next=<id>` in the
+system browser through the window's browser gate
+(`open_connect_sign_in` in `desktop-app/src-tauri/src/windows.rs`). The
+handoff signs that browser in as the owner and, for a pending flow,
+sets the flow's `kivali_connect` cookie there before its 302 to the
+vendor ([auth.md](auth.md#desktop-handoff), `next`). The callback then
+comes to a browser that passes both checks. The page in the window
+stays, says the sign-in goes on in the browser with **Start again**,
+asks `GET .../sign-in` every few seconds while visible, as for a device
+sign-in, and reads itself again once it says `done`; a `failed` one
+shows why, with Try again in the browser.
+
+Both browsers then hold a cookie for the flow; the callback takes the
+state once, so only one of them can finish it. A team elsewhere (no
+supervisor here, and its handoff answers loopback only) loads
+`/connect/start` in the window like any page, and its sign-in finishes
+only from a browser at the team's own address.
+
+On Desktop's loopback the redirect address is
+`http://127.0.0.1:<port>/connect/callback`, the request's own host.
+GitHub accepts a registered `http://127.0.0.1/connect/callback` at any
+port of the loopback address; most vendors need the exact address;
+vendors that allow no plain `http` (Slack) cannot sign in to a team
+here: the code sign-in where the vendor has it, or an `https` address
+under Other devices.
 
 ### Sign out
 
@@ -2266,7 +2312,7 @@ the owner's.
 | `POST .../connections/{id}/verify` | `IntegrationPage`, with that connection's verified, verify message and verified at; 404 for an id that names none; 409 as for `.../connection/verify`. |
 | `POST .../connection/sign-in/device`, `.../connections/{id}/sign-in/device` | `DeviceSignIn`: a device sign-in started ([Signing in](#signing-in)); 409 for a token connection ("<integration> is not connected by signing in"), one this binary does not carry, with no approved version, without a connection or the client id and secret stored ("save the client id and secret first"), for a manifest that offers no device sign-in ("<integration> does not sign in with a code"), and, checked again once the vendor answers, while switched off ("switch <integration> on first") or for a connection signed in ("the connection is signed in; sign out first"); 409 with the vendor's words when it refuses to start, 502 when it does not answer or its answer has no code or page to show; 404 for an id that names none, or a connection gone while the vendor answered. |
 | `GET .../connection/sign-in`, `.../connections/{id}/sign-in` | `SignInProgress` of the connection's latest sign-in: `pending`, `done`, `failed` or `expired` with the words; `expired` with "Kivali has no sign-in under way for this connection, as after a restart; start it again" when there is none; 409 for a token connection, one this binary does not carry, with no approved version or without a connection ("<integration> has no connection"); 404 for an id that names none. |
-| `POST .../connection/sign-in/browser`, `.../connections/{id}/sign-in/browser` | `BrowserSignIn`: a browser sign-in started, `url` the vendor's authorization address, and the `kivali_connect` cookie set ([Signing in](#signing-in)); 409 as the device route, for a manifest that offers no browser sign-in, and for a request that names no host ("Kivali cannot tell the address it was reached at from this request"); 404 for an id that names none. |
+| `POST .../connection/sign-in/browser`, `.../connections/{id}/sign-in/browser` | `BrowserSignIn`: a browser sign-in started, `url` the vendor's authorization address, `flow` its id, and the `kivali_connect` cookie set ([Signing in](#signing-in)); 409 as the device route, for a manifest that offers no browser sign-in, and for a request that names no host ("Kivali cannot tell the address it was reached at from this request"); 404 for an id that names none. |
 | `POST .../connection/sign-out`, `.../connections/{id}/sign-out` | `IntegrationPage`, the connection signed out ([Sign out](#sign-out)); 409 for a token connection ("<integration> is not connected by signing in"), one this binary does not carry, with no approved version, or without a connection ("<integration> has no connection"); 404 for an id that names none; 500 when the tokens or the record could not be written. |
 | `PUT .../access/{slug}` | `AccessWrite` in, `IntegrationPage` out; 404 for an agent not on the team; 409 without a connection; 400 with the field's message, or "choose a connection" when `connection_id` is missing with more than one connection or names none. |
 | `DELETE .../access/{slug}` | `IntegrationPage`. |
@@ -2275,3 +2321,4 @@ the owner's.
 | `GET .../logs?limit=` | `IntegrationLogs`, oldest first; limit 200 by default, at most 2000. |
 | `GET /api/v1/agents/{slug}/integrations` | `AgentIntegrations`; 404 for an agent not on the team. |
 | `GET /connect/callback?code=&state=` | Not under `/api`: the signed-in UI's route a vendor sends the browser back to. A 303 to `/org/integrations/<name>?signed_in=<id>`, `?sign_in_failed=<id>` (the words are `GET .../connections/{id}/sign-in`'s) or `?sign_in_error=start_again`, or `/org/integrations?sign_in_error=start_again` for a state that names no sign-in and no cookie that names an integration ([Signing in](#signing-in)). |
+| `GET /connect/start?flow=` | Not under `/api`: the signed-in UI's route the web app sends the browser to, to begin a browser sign-in. A 303 to the vendor's authorization address of the pending flow `flow` names, or to `/org/integrations?sign_in_error=start_again` for any other ([Signing in](#signing-in)). Kivali Desktop opens the handoff with `next=<flow>` in its place ([In Kivali Desktop](#in-kivali-desktop)). |

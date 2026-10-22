@@ -17,6 +17,11 @@ import (
 // mint session cookies for this email and attach them to requests.
 const testOwnerEmail = "test@kivali.local"
 
+// testSessionKey is every test server's SESSION_KEY: its session codec
+// signs with it, and a test mints handoff tokens from it as the
+// supervisor does.
+const testSessionKey = "01234567890123456789012345678901"
+
 // signedInMock is the mock provider signed in, as a working
 // deployment's provider is: setup lets the Chief of Staff hire run.
 var signedInMock = provider.MockProvider{Cred: provider.CredentialStatus{Present: true}}
@@ -28,7 +33,7 @@ func newTestServer(t *testing.T) *Server {
 	if err != nil {
 		t.Fatalf("store: %v", err)
 	}
-	codec, _ := auth.NewCodec([]byte("01234567890123456789012345678901"))
+	codec, _ := auth.NewCodec([]byte(testSessionKey))
 	al := auth.NewAllowlist(testOwnerEmail)
 	srv, err := NewServer(&Server{
 		Store:    s,
