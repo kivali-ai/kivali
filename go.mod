@@ -31,3 +31,9 @@ require (
 )
 
 tool github.com/gzuidhof/tygo
+
+// Code-Hex/vz v3 closes the vsock descriptor that Virtualization.framework
+// owns, so every vsock connection's descriptor is closed twice
+// (https://github.com/Code-Hex/vz/issues/268). The fork is v3.7.1 plus one
+// commit that wraps a duplicate of the descriptor instead.
+replace github.com/Code-Hex/vz/v3 => github.com/kivali-ai/vz/v3 v3.7.2-0.20261022023143-5e450bbf9bf9
