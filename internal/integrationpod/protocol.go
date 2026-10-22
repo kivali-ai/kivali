@@ -119,7 +119,8 @@ type Event struct {
 const (
 	// MethodCredential asks for the connection's values. The result
 	// is a Credential; with no connection the error is
-	// CodeNoConnection.
+	// CodeNoConnection, and for a sign-in connection that needs the
+	// owner to sign in, CodeSignInNeeded.
 	MethodCredential = "kivali/credential"
 	// MethodLog is one line for the integration's log: LogParams.
 	MethodLog = "kivali/log"
@@ -129,6 +130,13 @@ const (
 const (
 	// CodeNoConnection: the integration has no connection.
 	CodeNoConnection = -32001
+	// CodeSignInNeeded: the connection is made by signing in, and the
+	// owner must sign in (again) before it can be used.
+	CodeSignInNeeded = -32002
+	// CodeVendorUnavailable: the connection's access token has expired
+	// and the vendor did not answer the refresh; asking again later
+	// may work.
+	CodeVendorUnavailable = -32003
 	// CodeMethodNotFound is JSON-RPC's own.
 	CodeMethodNotFound = -32601
 	// CodeInvalidRequest is JSON-RPC's own.
@@ -145,6 +153,9 @@ type Credential struct {
 	// values put in (integration.ServerEnv).
 	Env map[string]string `json:"env"`
 	// Fields is every connection field's value by user_config key.
+	// For a sign-in connection it holds the client id, never the
+	// client secret, and the current access token under the name the
+	// manifest's credential_keys gives it, which Env holds too.
 	Fields map[string]string `json:"fields"`
 }
 

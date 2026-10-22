@@ -75,6 +75,11 @@ type Knobs struct {
 	// RevokeStatus answers each revocation with this status; zero is
 	// 200.
 	RevokeStatus int
+
+	// OnRefresh, when set, runs as a refresh request arrives, before it
+	// is answered: a test holds the answer back with it to have other
+	// callers arrive while the refresh is in flight.
+	OnRefresh func()
 }
 
 // Request is one request the vendor took: its path, form and Accept
@@ -329,6 +334,9 @@ func (v *FakeVendor) token(w http.ResponseWriter, r *http.Request) {
 }
 
 func (v *FakeVendor) refreshGrant(w http.ResponseWriter, r *http.Request, k Knobs, f url.Values) {
+	if k.OnRefresh != nil {
+		k.OnRefresh()
+	}
 	switch {
 	case k.RefreshStatus != 0:
 		http.Error(w, "the vendor is down", k.RefreshStatus)

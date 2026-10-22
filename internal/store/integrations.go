@@ -155,6 +155,37 @@ type IntegrationConnection struct {
 	VerifiedAt    *time.Time `yaml:"verified_at,omitempty"`
 	Verified      *bool      `yaml:"verified,omitempty"`
 	VerifyMessage string     `yaml:"verify_message,omitempty"`
+	// SignIn is the state of a connection made by signing in (a
+	// manifest whose kivali.connection.method is device or browser);
+	// nil for a token connection, and for a sign-in connection the
+	// owner has not signed in with yet. The tokens themselves are in
+	// the Secret (internal/connect's SecretKey constants), never here.
+	SignIn *ConnectionSignIn `yaml:"sign_in,omitempty"`
+}
+
+// ConnectionSignIn is a sign-in connection's state.
+type ConnectionSignIn struct {
+	// Method is how the owner signed in: device or browser.
+	Method     string    `yaml:"method"`
+	SignedInAt time.Time `yaml:"signed_in_at"`
+	// ExpiresAt is when the access token expires; zero when the vendor
+	// gave no expiry (the token does not expire).
+	ExpiresAt time.Time `yaml:"expires_at,omitempty"`
+	// Scope is what the vendor granted, as it said it.
+	Scope string `yaml:"scope,omitempty"`
+	// Error is why the connection needs the owner to sign in again: the
+	// last refresh's failure in words. Empty while the tokens work.
+	Error   string    `yaml:"error,omitempty"`
+	ErrorAt time.Time `yaml:"error_at,omitempty"`
+}
+
+// NeedsSignIn reports whether c, a connection made by signing in,
+// needs the owner to sign in: it never has (no SignIn), its Secret
+// holds no access token (hasToken false: a Secret lost or removed), or
+// its last refresh was refused for good (SignIn.Error). It is the
+// caller's to ask only of a sign-in connection.
+func (c IntegrationConnection) NeedsSignIn(hasToken bool) bool {
+	return c.SignIn == nil || !hasToken || c.SignIn.Error != ""
 }
 
 // IntegrationAccess is access/<slug>.yaml: what one agent may do
@@ -795,6 +826,11 @@ func (s *FSStore) PutIntegrationConnection(name string, c IntegrationConnection)
 		return err
 	}
 	c.CreatedAt = c.CreatedAt.UTC()
+	if c.SignIn != nil {
+		si := *c.SignIn
+		si.SignedInAt, si.ExpiresAt, si.ErrorAt = si.SignedInAt.UTC(), si.ExpiresAt.UTC(), si.ErrorAt.UTC()
+		c.SignIn = &si
+	}
 	return writeYAMLFile(filepath.Join(dir, "connections", c.ID+".yaml"), c)
 }
 

@@ -40,6 +40,7 @@ import (
 
 	"github.com/kivali-ai/kivali/internal/builtinintegrations"
 	"github.com/kivali-ai/kivali/internal/clock"
+	"github.com/kivali-ai/kivali/internal/connect"
 	"github.com/kivali-ai/kivali/internal/integration"
 	"github.com/kivali-ai/kivali/internal/integrationpod"
 	"github.com/kivali-ai/kivali/internal/secrets"
@@ -212,6 +213,11 @@ type integrationRegistry struct {
 	// onConnect, when set, runs once a shim's link is in place. A test
 	// seam.
 	onConnect func(name string)
+	// signIn is a sign-in connection's current access token, refreshed
+	// first when it is about to expire (Server.signInAccessToken), given
+	// its manifest, its record and its Secret's data. NewServer sets
+	// it.
+	signIn func(ctx context.Context, name string, m *integration.Manifest, conn store.IntegrationConnection, data map[string]string) (string, error)
 }
 
 func newIntegrationRegistry(st *store.FSStore, sec func() secrets.Store, shipped func(store.Integration) bool, prov IntegrationProvisioner, clk clock.Clock, logf func(string, ...any)) *integrationRegistry {
@@ -908,10 +914,44 @@ func (r *integrationRegistry) connectionValues(ctx context.Context, name string)
 // connection's scoped proxy credential (a built-in's, kept in its
 // Secret under builtinintegrations.ProxySecretKey; "" for none), which
 // is never one of the values.
+//
+// For a connection made by signing in, the values hold a current
+// access token under the name the manifest's credential_keys gives it,
+// refreshed first when it is about to expire (signIn), and never the
+// client secret; the error is errSignInNeeded when the owner must sign
+// in (again), errVendorUnavailable when the token has expired and the
+// vendor did not answer its refresh. A refresh may write the
+// connection, so no caller holds lockIntegrations.
 func (r *integrationRegistry) readConnection(ctx context.Context, name, connID string) (*integration.Manifest, store.IntegrationConnection, map[string]string, []string, string, error) {
+	m, conn, values, secretValues, proxySecret, data, err := r.readStoredConnection(ctx, name, connID)
+	if err != nil || !m.Kivali.Connection.SignIn() {
+		return m, conn, values, secretValues, proxySecret, err
+	}
+	token := data[connect.SecretKeyAccessToken]
+	if r.signIn != nil {
+		token, err = r.signIn(ctx, name, m, conn, data)
+	} else if token == "" || conn.NeedsSignIn(true) {
+		err = errSignInNeeded
+	}
+	if err != nil {
+		return m, conn, nil, nil, "", err
+	}
+	if key := m.Kivali.Connection.CredentialKey(); key != "" {
+		values[key] = token
+	}
+	secretValues = append(secretValues, token)
+	return m, conn, values, secretValues, proxySecret, nil
+}
+
+// readStoredConnection is readConnection as the connection is stored,
+// with no sign-in's refresh, and the Secret's data: for a caller that
+// holds lockIntegrations, and for the log scrubber, which must not
+// reach a vendor for every line. The secret values include a sign-in's
+// stored tokens; the values hold neither them nor the client secret.
+func (r *integrationRegistry) readStoredConnection(ctx context.Context, name, connID string) (*integration.Manifest, store.IntegrationConnection, map[string]string, []string, string, map[string]string, error) {
 	_, m, err := r.store.CurrentIntegrationVersion(name)
 	if err != nil {
-		return nil, store.IntegrationConnection{}, nil, nil, "", err
+		return nil, store.IntegrationConnection{}, nil, nil, "", nil, err
 	}
 	var conn store.IntegrationConnection
 	if connID == "" {
@@ -920,7 +960,7 @@ func (r *integrationRegistry) readConnection(ctx context.Context, name, connID s
 		conn, err = r.store.GetIntegrationConnectionByID(name, connID)
 	}
 	if err != nil {
-		return m, conn, nil, nil, "", err
+		return m, conn, nil, nil, "", nil, err
 	}
 	values := map[string]string{}
 	for k, v := range conn.Fields {
@@ -928,43 +968,66 @@ func (r *integrationRegistry) readConnection(ctx context.Context, name, connID s
 	}
 	var secretValues []string
 	proxySecret := ""
+	data := map[string]string{}
 	if conn.SecretName != "" {
-		data, err := r.secrets().Get(ctx, conn.SecretName)
+		got, err := r.secrets().Get(ctx, conn.SecretName)
 		switch {
 		case errors.Is(err, secrets.ErrNotFound):
 		case err != nil:
-			return m, conn, nil, nil, "", err
+			return m, conn, nil, nil, "", nil, err
+		default:
+			data = got
 		}
+		fields := integration.ConnectionFields(m)
 		for k, v := range data {
-			if f, ok := m.UserConfig.Field(k); ok && f.Sensitive && v != "" {
+			if f, ok := fields.Field(k); ok && f.Sensitive && v != "" {
 				values[k] = v
+				secretValues = append(secretValues, v)
+			}
+		}
+		for _, k := range []string{connect.SecretKeyAccessToken, connect.SecretKeyRefreshToken} {
+			if v := data[k]; v != "" {
 				secretValues = append(secretValues, v)
 			}
 		}
 		proxySecret = data[builtinintegrations.ProxySecretKey]
 	}
-	return m, conn, values, secretValues, proxySecret, nil
+	// The client secret is core's alone: an integration is never given
+	// it.
+	delete(values, integration.FieldClientSecret)
+	return m, conn, values, secretValues, proxySecret, data, nil
 }
 
 // credential is the kivali/credential answer: the server's env with
-// the connection's values put in, and the values themselves.
+// the connection's values put in, and the values themselves. For a
+// connection made by signing in both carry the current access token
+// under its credential_keys name.
 func (r *integrationRegistry) credential(ctx context.Context, name string) (*integrationpod.Credential, *integrationpod.RPCError) {
 	m, values, secretValues, err := r.connectionValues(ctx, name)
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		return nil, &integrationpod.RPCError{Code: integrationpod.CodeNoConnection, Message: "no connection"}
+	case errors.Is(err, errSignInNeeded):
+		return nil, &integrationpod.RPCError{Code: integrationpod.CodeSignInNeeded, Message: errSignInNeeded.Error()}
+	case errors.Is(err, errVendorUnavailable):
+		return nil, &integrationpod.RPCError{Code: integrationpod.CodeVendorUnavailable, Message: errVendorUnavailable.Error()}
 	case err != nil:
 		r.logf("integration %s: the connection's values: %v", name, err)
 		return nil, &integrationpod.RPCError{Code: -32603, Message: "the connection could not be read"}
 	}
 	r.setScrub(name, secretValues)
 	fields := map[string]string{}
-	for _, f := range m.UserConfig {
+	for _, f := range integration.ConnectionFields(m) {
 		if v, ok := values[f.Key]; ok {
 			fields[f.Key] = v
 		}
 	}
-	return &integrationpod.Credential{Env: integration.ServerEnv(m, values), Fields: fields}, nil
+	env := integration.ServerEnv(m, values)
+	if key := m.Kivali.Connection.CredentialKey(); key != "" && m.Kivali.Connection.SignIn() {
+		fields[key] = values[key]
+		env[key] = values[key]
+	}
+	return &integrationpod.Credential{Env: env, Fields: fields}, nil
 }
 
 // scrubMinLen is the shortest secret value the scrubber replaces. A
@@ -1010,7 +1073,10 @@ func (r *integrationRegistry) scrubber(ctx context.Context, name string) *string
 	if scrub != nil {
 		return scrub
 	}
-	_, _, values, err := r.connectionValues(ctx, name)
+	// As stored: a log line never sends a vendor a refresh. The stored
+	// tokens are among the values; one refreshed since is added when
+	// the credential is next answered (setScrub).
+	_, _, _, values, _, _, err := r.readStoredConnection(ctx, name, "")
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		// Not knowing the secrets is no reason to keep the line: it
 		// may quote one.

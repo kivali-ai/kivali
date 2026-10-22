@@ -340,7 +340,7 @@ func connectionFields(m *integration.Manifest, c *connView) []apitypes.Connectio
 	if m == nil {
 		return out
 	}
-	for _, f := range m.UserConfig {
+	for _, f := range integration.ConnectionFields(m) {
 		cf := apitypes.ConnectionField{
 			Key:         f.Key,
 			Title:       f.Title,
@@ -755,22 +755,27 @@ func (s *Server) handleAPIIntegrationRemove(w http.ResponseWriter, r *http.Reque
 // deleteConnectionSecrets deletes the Secret of every connection the
 // integration has. On a failure it answers 500 and returns false, and
 // the records stay, so the Secret is not left behind with nothing
-// naming it.
+// naming it. A sign-in connection's tokens are revoked with the vendor
+// once its Secret is gone, best effort (revokeSignIn).
 func (s *Server) deleteConnectionSecrets(w http.ResponseWriter, r *http.Request, name string) bool {
 	conns, err := s.Store.ListIntegrationConnections(name)
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, "the connection could not be read", whoServer)
 		return false
 	}
+	// nil while no version is approved: nothing was signed in with.
+	_, m, _ := s.Store.CurrentIntegrationVersion(name)
 	for _, c := range conns {
 		if c.SecretName == "" {
 			continue
 		}
+		tokens := s.revocableTokens(r.Context(), name, m, c)
 		if err := s.Secrets.Delete(r.Context(), c.SecretName); err != nil {
 			log.Printf("integration %s: delete Secret %s: %v", name, c.SecretName, err)
 			writeAPIError(w, http.StatusInternalServerError, "the connection's secrets could not be removed, so nothing was changed", whoServer)
 			return false
 		}
+		s.revokeSignIn(r.Context(), name, m, c, tokens)
 	}
 	return true
 }

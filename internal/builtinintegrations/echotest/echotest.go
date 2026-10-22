@@ -37,9 +37,13 @@ const FailGreeting = "fail"
 // Echo is the built-in. Version is its manifest's version; a test
 // changes it to see boot supersede the version before. Multiple makes
 // its manifest take several connections (kivali.connection.multiple).
+// SignIn, when set, is its manifest's connection section in place of a
+// token connection's: a connection made by signing in, for tests of
+// core's credential path (Multiple still applies).
 type Echo struct {
 	Version  string
 	Multiple bool
+	SignIn   *integration.Connection
 
 	mu    sync.Mutex
 	calls []Seen
@@ -71,6 +75,11 @@ func (e *Echo) see(action string, caller builtinintegrations.Caller, conn builti
 
 // Manifest is echo's manifest.
 func (e *Echo) Manifest() *integration.Manifest {
+	conn := integration.Connection{Method: "token", Multiple: e.Multiple}
+	if e.SignIn != nil {
+		conn = *e.SignIn
+		conn.Multiple = e.Multiple
+	}
 	return &integration.Manifest{
 		ManifestVersion: "0.3",
 		Name:            Name,
@@ -87,7 +96,7 @@ func (e *Echo) Manifest() *integration.Manifest {
 			{Name: "whoami", Description: "Say the greeting and the token's start."},
 		},
 		Kivali: integration.Kivali{
-			Connection: integration.Connection{Method: "token", Multiple: e.Multiple},
+			Connection: conn,
 			Access: &integration.Access{
 				Schema: json.RawMessage(`{"type":"object","properties":{` +
 					`"colors":{"type":"array","items":{"type":"string"},"title":"Colors"},` +

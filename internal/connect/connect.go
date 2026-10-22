@@ -101,9 +101,9 @@ type Terminal struct {
 
 func (t *Terminal) Error() string {
 	if t.Description != "" {
-		return "the vendor refused it: " + t.Description + " (" + t.Code + ")"
+		return "the vendor refused the sign-in (" + t.Code + "): " + t.Description
 	}
-	return "the vendor refused it (" + t.Code + ")"
+	return "the vendor refused the sign-in (" + t.Code + ")"
 }
 
 // terminalCodes are the token endpoint's error codes after which the
