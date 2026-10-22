@@ -139,10 +139,10 @@ func (s *Server) EnsureKivaliDeveloper() (created bool, err error) {
 // RefreshKivaliRoles writes Kivali's role (seed.KivaliRole) as the
 // role.md of the Chief of Staff and the Kivali Developer wherever it
 // differs, so both run on the role this binary ships for the team's
-// kind. Boot and a restore call it after EnsureKivaliDeveloper.
-// rewritten names the agents whose role it wrote; an agent the team
-// does not have yet is skipped. An error for one agent does not stop
-// the other.
+// kind. Boot and a restore call it after EnsureKivaliDeveloper, and a
+// change of the team's kind does. rewritten names the agents whose role
+// it wrote; an agent the team does not have yet is skipped. An error
+// for one agent does not stop the other.
 func (s *Server) RefreshKivaliRoles() (rewritten []string, err error) {
 	kind := s.teamKind()
 	var errs []error

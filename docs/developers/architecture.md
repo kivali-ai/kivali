@@ -496,8 +496,8 @@ hires itself, and their roles are Kivali's, not the team's.
 `internal/seed/kivali_developer_role.md`. `Server.RefreshKivaliRoles`
 (`internal/web/onboarding.go`) writes it as the agent's `role.md`
 wherever it differs: at boot and after a restore, right after
-`EnsureKivaliDeveloper`. A change to either file reaches every team on
-its next boot, and
+`EnsureKivaliDeveloper`, and when the Org page changes the team's
+kind. A change to either file reaches every team on its next boot, and
 the agent's next wake note says its role changed (the role fingerprint
 in `internal/agent/wake_update.go`).
 

@@ -8,6 +8,7 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"log"
 	"net/http"
 	"strings"
 
@@ -91,12 +92,20 @@ func (s *Server) teamKind() string {
 }
 
 // setTeamKind changes the org's kind. Anything but work or personal is
-// refused.
+// refused. The Chief of Staff's role follows the kind
+// (seed.ChiefOfStaffRoleFor), so it is written again here; a failure
+// to is logged, and the next boot writes it.
 func (s *Server) setTeamKind(kind string) error {
 	if !store.ValidTeamKind(kind) {
 		return refuse(http.StatusBadRequest, "the kind must be work or personal")
 	}
-	return s.Store.WriteTeamKind(kind)
+	if err := s.Store.WriteTeamKind(kind); err != nil {
+		return err
+	}
+	if _, err := s.RefreshKivaliRoles(); err != nil {
+		log.Printf("team kind: write Kivali's roles: %v", err)
+	}
+	return nil
 }
 
 // setLogo validates an uploaded logo and derives the favicon asset set
