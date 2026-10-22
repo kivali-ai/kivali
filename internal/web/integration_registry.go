@@ -86,12 +86,15 @@ var (
 // integrationpod.Provisioner implements it; tests inject a fake.
 type IntegrationProvisioner interface {
 	Enabled() bool
-	Start(ctx context.Context, name, version, token string) error
+	// Start makes the pod for name at version run with token; software
+	// says the version's manifest declares packages, which the pod
+	// installs as root when it starts.
+	Start(ctx context.Context, name, version, token string, software bool) error
 	Stop(ctx context.Context, name string) error
 	List(ctx context.Context) ([]string, error)
 	// Token is the token of a live pod built as Start would build it
-	// for version, empty when there is none.
-	Token(ctx context.Context, name, version string) (string, error)
+	// for version and software, empty when there is none.
+	Token(ctx context.Context, name, version string, software bool) (string, error)
 	// Unschedulable is the scheduler's message while the pod cannot be
 	// placed on a node, empty otherwise.
 	Unschedulable(ctx context.Context, name string) (string, error)
@@ -384,9 +387,16 @@ func (r *integrationRegistry) ensureRunning(ctx context.Context, name, version s
 	adopt := e.token == ""
 	r.mu.Unlock()
 
+	// The pod starts as root only when the version installs software.
+	_, m, err := r.store.GetIntegrationVersion(name, version)
+	if err != nil {
+		return fmt.Errorf("read version %s: %w", version, err)
+	}
+	software := len(m.Kivali.Packages) > 0
+
 	adopted := ""
 	if adopt && r.provEnabled() {
-		tok, err := r.prov.Token(ctx, name, version)
+		tok, err := r.prov.Token(ctx, name, version, software)
 		if err != nil {
 			r.logf("integration %s: read its pod: %v", name, err)
 		}
@@ -413,7 +423,7 @@ func (r *integrationRegistry) ensureRunning(ctx context.Context, name, version s
 	}
 	// A new token is a new spec: Start replaces the pod with the old
 	// one.
-	return r.prov.Start(ctx, name, version, token)
+	return r.prov.Start(ctx, name, version, token, software)
 }
 
 // ensureStopped takes name down: its link, its pod and its proxy

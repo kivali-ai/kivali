@@ -16,6 +16,7 @@ import (
 
 	"github.com/kivali-ai/kivali/internal/clock"
 	"github.com/kivali-ai/kivali/internal/egresscred"
+	"github.com/kivali-ai/kivali/internal/integration/integrationtest"
 	"github.com/kivali-ai/kivali/internal/integrationpod"
 	"github.com/kivali-ai/kivali/internal/secrets"
 	"github.com/kivali-ai/kivali/internal/store"
@@ -27,8 +28,8 @@ import (
 const failsafeWait = 10 * time.Second
 
 // fakeIntegrationProv records the pods it is asked for. A pod is its
-// version and token; Token takes one on as integrationpod's does, by
-// version.
+// version, token and whether it installs software; Token takes one on
+// as integrationpod's does, by version and software.
 type fakeIntegrationProv struct {
 	mu      sync.Mutex
 	pods    map[string]fakeIntegrationPod
@@ -36,7 +37,10 @@ type fakeIntegrationProv struct {
 	unsched map[string]string
 }
 
-type fakeIntegrationPod struct{ version, token string }
+type fakeIntegrationPod struct {
+	version, token string
+	software       bool
+}
 
 func newFakeIntegrationProv() *fakeIntegrationProv {
 	return &fakeIntegrationProv{pods: map[string]fakeIntegrationPod{}, unsched: map[string]string{}}
@@ -44,13 +48,13 @@ func newFakeIntegrationProv() *fakeIntegrationProv {
 
 func (p *fakeIntegrationProv) Enabled() bool { return true }
 
-func (p *fakeIntegrationProv) Start(_ context.Context, name, version, token string) error {
+func (p *fakeIntegrationProv) Start(_ context.Context, name, version, token string, software bool) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if cur, ok := p.pods[name]; ok && cur == (fakeIntegrationPod{version, token}) {
+	if cur, ok := p.pods[name]; ok && cur == (fakeIntegrationPod{version, token, software}) {
 		return nil
 	}
-	p.pods[name] = fakeIntegrationPod{version, token}
+	p.pods[name] = fakeIntegrationPod{version, token, software}
 	p.calls = append(p.calls, "start "+name+" "+version)
 	return nil
 }
@@ -76,10 +80,10 @@ func (p *fakeIntegrationProv) List(context.Context) ([]string, error) {
 	return out, nil
 }
 
-func (p *fakeIntegrationProv) Token(_ context.Context, name, version string) (string, error) {
+func (p *fakeIntegrationProv) Token(_ context.Context, name, version string, software bool) (string, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if pod, ok := p.pods[name]; ok && pod.version == version {
+	if pod, ok := p.pods[name]; ok && pod.version == version && pod.software == software {
 		return pod.token, nil
 	}
 	return "", nil
@@ -393,8 +397,8 @@ func TestIntegrationBootTakesOnRunningPods(t *testing.T) {
 	srv := newTestServer(t)
 	intInstalled(t, srv, "crm", "1.0.0")
 	prov := newFakeIntegrationProv()
-	prov.pods["crm"] = fakeIntegrationPod{"1.0.0", "token-from-before"}
-	prov.pods["gone"] = fakeIntegrationPod{"1.0.0", "x"}
+	prov.pods["crm"] = fakeIntegrationPod{version: "1.0.0", token: "token-from-before"}
+	prov.pods["gone"] = fakeIntegrationPod{version: "1.0.0", token: "x"}
 	syncPath := filepath.Join(t.TempDir(), "agents.json")
 	srv.Store.SetEgressAgentsSyncPath(syncPath)
 	if err := srv.Store.SetEgressScopedCredential(integrationpod.ProxyUser("gone"), egresscred.Hash("s"), []string{"api.gone.test"}); err != nil {
@@ -412,6 +416,37 @@ func TestIntegrationBootTakesOnRunningPods(t *testing.T) {
 	}
 	if got := srv.Store.EgressScopedCredentials(); len(got) != 0 {
 		t.Errorf("scoped credentials left: %v", got)
+	}
+}
+
+// The pod starts as root only for a version whose manifest declares
+// packages, so the shim can install them before it leaves root. A
+// version without packages must get today's pod, never root; one with
+// them must get the root pod, or its software is never installed and
+// every call that runs it fails. Approving a version that adds
+// software makes a new pod.
+func TestIntegrationPodRunsAsRootOnlyForSoftware(t *testing.T) {
+	srv := newTestServer(t)
+	prov := newFakeIntegrationProv()
+	reg, _ := withIntegrationRegistry(srv, prov)
+	intInstalled(t, srv, "crm", "1.0.0")
+	if err := reg.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if pod := prov.pod("crm"); pod.version != "1.0.0" || pod.software {
+		t.Errorf("without packages: %+v", pod)
+	}
+	m := integrationtest.Manifest("crm", "1.1.0")
+	m["kivali"].(map[string]any)["packages"] = []any{"gh"}
+	if rr := intUpload(t, srv, integrationtest.Zip(t, "", m, nil)); rr.Code != http.StatusCreated {
+		t.Fatalf("upload: %d %s", rr.Code, rr.Body.String())
+	}
+	intPost(t, srv, intBase+"/crm/versions/1.1.0/approve")
+	if err := reg.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if pod := prov.pod("crm"); pod.version != "1.1.0" || !pod.software {
+		t.Errorf("with packages: %+v", pod)
 	}
 }
 
