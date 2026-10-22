@@ -7,6 +7,7 @@ import goHandbookJson from '../../../../internal/web/apitypes/testdata/handbook.
 import goIntegrationAuditJson from '../../../../internal/web/apitypes/testdata/integration_audit.json';
 import goIntegrationLogsJson from '../../../../internal/web/apitypes/testdata/integration_logs.json';
 import goConnectionCreateJson from '../../../../internal/web/apitypes/testdata/connection_create.json';
+import goBrowserSignInJson from '../../../../internal/web/apitypes/testdata/browser_sign_in.json';
 import goDeviceSignInJson from '../../../../internal/web/apitypes/testdata/device_sign_in.json';
 import goIntegrationPageJson from '../../../../internal/web/apitypes/testdata/integration_page.json';
 import goIntegrationPageMultipleJson from '../../../../internal/web/apitypes/testdata/integration_page_multiple.json';
@@ -30,6 +31,7 @@ import goSoftwareAddJson from '../../../../internal/web/apitypes/testdata/softwa
 import type {
   AccessChoices,
   AccessWrite,
+  BrowserSignIn,
   ConnectionWrite,
   DeviceSignIn,
   Handbook,
@@ -80,6 +82,8 @@ export const goIntegrationPageMultiple = (goIntegrationPageMultipleJson satisfie
 export const goIntegrationPageSignIn = (goIntegrationPageSignInJson satisfies Wire<IntegrationPage>) as IntegrationPage;
 /** The same connection after the vendor refused a refresh: the owner must sign in again. */
 export const goIntegrationPageSignInAgain = (goIntegrationPageSignInAgainJson satisfies Wire<IntegrationPage>) as IntegrationPage;
+/** A browser sign-in just started: the service's sign-in page to send the browser to. */
+export const goBrowserSignIn = (goBrowserSignInJson satisfies Wire<BrowserSignIn>) as BrowserSignIn;
 /** A device sign-in just started: the code, the service's page, and when the code stops working. */
 export const goDeviceSignIn = (goDeviceSignInJson satisfies Wire<DeviceSignIn>) as DeviceSignIn;
 /** A sign-in still waiting for the owner's approval. */

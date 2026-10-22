@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { useHref, useNavigate, useParams } from 'react-router';
+import { useHref, useLocation, useNavigate, useParams } from 'react-router';
 import { apiDelete, apiGet, apiPost, apiPut } from '../../api/client';
 import type { ApiError } from '../../api/client';
 import type {
   AccessRow,
+  BrowserSignIn,
   ConnectionField,
   ConnectionState,
   ConnectionWrite,
@@ -118,6 +119,32 @@ export function clientSaved(fields: readonly ConnectionField[]): boolean {
   return set('client_id') && set('client_secret');
 }
 
+/**
+ * Sends the browser to the service's sign-in page for a browser sign-in. The one place the page leaves for the
+ * service, so Kivali Desktop can open the system browser instead.
+ */
+export function openSignIn(url: string): void {
+  window.location.assign(url);
+}
+
+/** How a browser sign-in came back to the page: the connection it signed in, or why it did not. */
+export interface SignInReturn {
+  /** The connection the sign-in was for; absent when the server could not tell. */
+  id?: string;
+  /** Why the sign-in did not work; absent once signed in. */
+  error?: string;
+}
+
+/** The page's query after a browser sign-in: ?signed_in=<id>, or ?sign_in_error=<words>&connection=<id>. */
+export function signInReturnOf(search: string): SignInReturn | null {
+  const q = new URLSearchParams(search);
+  const error = q.get('sign_in_error');
+  const id = q.get('connection') ?? undefined;
+  if (error !== null) return id ? { id, error } : { error };
+  const signedIn = q.get('signed_in');
+  return signedIn ? { id: signedIn } : null;
+}
+
 /** Whether the tab is showing; a hidden one asks the server nothing. */
 function useVisible(): boolean {
   const [visible, setVisible] = useState(() => document.visibilityState !== 'hidden');
@@ -130,7 +157,7 @@ function useVisible(): boolean {
 }
 
 /** What the Sign in block of one connection is wired to: its routes, and what to do with the page they answer. */
-type SignInWiring = Pick<SignInBlockProps, 'api' | 'scopes' | 'onPage' | 'onSignedIn'>;
+type SignInWiring = Pick<SignInBlockProps, 'api' | 'scopes' | 'onPage' | 'onSignedIn' | 'returned'>;
 
 interface SignInBlockProps {
   /** The connection; absent before the client id and secret are first saved. */
@@ -147,20 +174,26 @@ interface SignInBlockProps {
   onPage(page: IntegrationPageData): void;
   /** Reads the page again once a sign-in is done; settles once the page is in. */
   onSignedIn(): Promise<unknown>;
+  /** How a browser sign-in of this connection came back to the page, when it just did. */
+  returned?: SignInReturn | null;
 }
 
 /**
- * A connection made by signing in: Sign in with a code once the client id and secret are saved, then the code and
- * the service's page to enter it on while Kivali waits for the approval, asking how it stands every few seconds while
- * the tab is visible, and "Finishing the sign-in." once it is done until the page is read again. Signed in, who the
- * connection test found and Sign out; a sign-in that failed or expired, why, and Try again; a connection none of
- * whose ways this version offers, a sentence saying so. What the sign-in asks the service for is above it.
+ * A connection made by signing in, once the client id and secret are saved: Sign in with a code, Sign in in your
+ * browser, or both, the manifest's way first. With a code, the code and the service's page to enter it on while Kivali
+ * waits for the approval, asking how it stands every few seconds while the tab is visible, and "Finishing the
+ * sign-in." once it is done until the page is read again. In the browser, the page leaves for the service's
+ * (openSignIn), which sends the browser back here through Kivali with how it went (returned). Signed in, who the
+ * connection test found and Sign out; a sign-in that failed or expired, why, and Try again the same way; a connection
+ * none of whose ways this version offers, a sentence saying so. What the sign-in asks the service for is above it.
  */
-function SignInBlock({ connection, fields, api, scopes, busy, now, onPage, onSignedIn }: SignInBlockProps) {
+function SignInBlock({ connection, fields, api, scopes, busy, now, onPage, onSignedIn, returned }: SignInBlockProps) {
   const [device, setDevice] = useState<DeviceSignIn | null>(null);
   // Done, and the page is being read again: held so the block does not show Sign in with a code in between.
   const [finishing, setFinishing] = useState(false);
-  const [ended, setEnded] = useState<SignInProgress | null>(null);
+  const [ended, setEnded] = useState<SignInProgress | null>(() => (returned?.error ? { state: 'failed', error: returned.error } : null));
+  // The way the sign-in that ended went, which Try again takes again.
+  const [endedWay, setEndedWay] = useState<'device' | 'browser'>(returned?.error ? 'browser' : 'device');
   const [error, setError] = useState<ApiError | null>(null);
   const [working, setWorking] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -180,6 +213,7 @@ function SignInBlock({ connection, fields, api, scopes, busy, now, onPage, onSig
           if (stopped || p.state === 'pending') return;
           setDevice(null);
           if (p.state !== 'done') {
+            setEndedWay('device');
             setEnded(p);
             return;
           }
@@ -210,6 +244,18 @@ function SignInBlock({ connection, fields, api, scopes, busy, now, onPage, onSig
       setWorking(false);
     }
   };
+  const startBrowser = async () => {
+    setWorking(true);
+    setError(null);
+    setEnded(null);
+    try {
+      const { url } = await apiPost<BrowserSignIn>(api + '/sign-in/browser');
+      openSignIn(url);
+    } catch (err) {
+      setError(asApiError(err));
+      setWorking(false);
+    }
+  };
   const signOut = async () => {
     setWorking(true);
     setError(null);
@@ -230,12 +276,27 @@ function SignInBlock({ connection, fields, api, scopes, busy, now, onPage, onSig
   };
 
   const disabled = busy || working;
-  const byCode = !s || s.ways.includes('device');
+  const ways = s?.ways ?? ['device'];
+  const wayButton = (way: string, i: number) =>
+    way === 'browser' ? (
+      <Button key={way} type="button" variant={i === 0 ? 'primary' : 'secondary'} disabled={disabled} onClick={() => void startBrowser()}>
+        Sign in in your browser
+      </Button>
+    ) : (
+      <Button key={way} type="button" variant={i === 0 ? 'primary' : 'secondary'} disabled={disabled} onClick={() => void start()}>
+        Sign in with a code
+      </Button>
+    );
   let body: ReactNode;
   if (s?.signed_in) {
     const who = connection?.verified && connection.verify_message;
     body = (
       <>
+        {returned && !returned.error && (
+          <Text as="p" variant="caption" tone="muted">
+            You signed in in your browser.
+          </Text>
+        )}
         <Text as="p" variant="body">
           {who ? 'Signed in. ' + who : 'Signed in.'}
         </Text>
@@ -252,7 +313,7 @@ function SignInBlock({ connection, fields, api, scopes, busy, now, onPage, onSig
         Finishing the sign-in.
       </Text>
     );
-  } else if (!byCode) {
+  } else if (ways.length === 0) {
     // The ways offered are this server's; a manifest may name only ways it does not have.
     body = (
       <Text as="p" variant="body" tone="muted">
@@ -292,20 +353,14 @@ function SignInBlock({ connection, fields, api, scopes, busy, now, onPage, onSig
           {ended.error ?? 'The service did not say why.'}
         </Banner>
         <div className="app-org-actions">
-          <Button type="button" variant="primary" disabled={disabled} onClick={() => void start()}>
+          <Button type="button" variant="primary" disabled={disabled} onClick={() => void (endedWay === 'browser' ? startBrowser() : start())}>
             Try again
           </Button>
         </div>
       </>
     );
   } else if (connection && clientSaved(fields)) {
-    body = (
-      <div className="app-org-actions">
-        <Button type="button" variant="primary" disabled={disabled} onClick={() => void start()}>
-          Sign in with a code
-        </Button>
-      </div>
-    );
+    body = <div className="app-org-actions">{ways.map(wayButton)}</div>;
   } else {
     body = (
       <Text as="p" variant="body" tone="muted">
@@ -324,6 +379,25 @@ function SignInBlock({ connection, fields, api, scopes, busy, now, onPage, onSig
         {body}
       </section>
     </>
+  );
+}
+
+/** The redirect address to register with the service for browser sign-in, read-only, with Copy. */
+function RedirectAddress({ url }: { url: string }) {
+  const [copied, setCopied] = useState(false);
+  const copy = () => {
+    void navigator.clipboard?.writeText(url).then(
+      () => setCopied(true),
+      () => setCopied(false),
+    );
+  };
+  return (
+    <div className="app-int-redirect">
+      <TextField label="Redirect address" hint="Register this address as the app’s callback URL." value={url} readOnly onFocus={(e) => e.currentTarget.select()} />
+      <Button type="button" variant="secondary" icon={<Icon name={copied ? 'check' : 'copy'} />} onClick={copy}>
+        {copied ? 'Copied' : 'Copy'}
+      </Button>
+    </div>
   );
 }
 
@@ -699,6 +773,10 @@ interface Grant {
 export function IntegrationPage() {
   const { name = '' } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
+  // How a browser sign-in came back here, read once: the query is taken off the address so a reload does not show it
+  // again.
+  const [returned] = useState(() => signInReturnOf(location.search));
   const api = integrationApi(name);
   const page = useResource<IntegrationPageData>(api);
   const audit = useResource<IntegrationAudit>(api + '/audit');
@@ -720,6 +798,9 @@ export function IntegrationPage() {
   const p = page.data;
 
   useFrameChrome({ title: p?.summary.display_name ?? 'Integration', back: { to: '/org/integrations', label: 'Integrations' } });
+  useEffect(() => {
+    if (returned && location.search) void navigate({ pathname: location.pathname, search: '' }, { replace: true });
+  }, [returned, location.search, location.pathname, navigate]);
 
   const mutate = (fn: () => Promise<IntegrationPageData>) =>
     action.run(async () => {
@@ -763,9 +844,11 @@ export function IntegrationPage() {
     page.set(next);
     void apiGet<IntegrationAudit>(api + '/audit').then(audit.set, () => {});
   };
-  const signInFor = (connectionApi: string): { signIn?: SignInWiring } =>
+  // A browser sign-in that came back goes to its connection's block: the one connection's, or the one it names.
+  const returnedTo = (id: string | undefined) => (returned && (!p?.multiple || returned.id === id) ? returned : null);
+  const signInFor = (connectionApi: string, id?: string): { signIn?: SignInWiring } =>
     p && (p.connection_method === 'device' || p.connection_method === 'browser')
-      ? { signIn: { api: connectionApi, scopes: p.scopes, onPage: signedOut, onSignedIn: signedIn } }
+      ? { signIn: { api: connectionApi, scopes: p.scopes, onPage: signedOut, onSignedIn: signedIn, returned: returnedTo(id) } }
       : {};
   const verifyConnection = (id: string) => void mutate(() => apiPost<IntegrationPageData>(connectionApi(id) + '/verify'));
   const deleteConnection = async (id: string) => {
@@ -913,6 +996,12 @@ export function IntegrationPage() {
       <Block label={p.multiple ? 'Connections' : 'Connection'} variant="heading">
         {/* What to do on the vendor's side first, from the manifest; nothing when it has none. */}
         {s.version && <Markdown markdown={p.setup_notes_md} />}
+        {s.version && p.sign_in_redirect_url && <RedirectAddress url={p.sign_in_redirect_url} />}
+        {p.multiple && returned?.error && !p.connections.some((c) => c.id === returned.id) && (
+          <Banner tone="danger" title="The sign-in did not work">
+            {returned.error}
+          </Banner>
+        )}
         {s.version && p.multiple ? (
           <div className="app-int-conns">
             {p.connections.length === 0 && !adding && <None>No connections yet.</None>}
@@ -930,7 +1019,7 @@ export function IntegrationPage() {
                 onSave={(body) => saveConnection(c.id, body)}
                 {...(p.connection_test ? { onVerify: () => verifyConnection(c.id) } : {})}
                 onDelete={() => setDeleting(c)}
-                {...signInFor(connectionApi(c.id))}
+                {...signInFor(connectionApi(c.id), c.id)}
               />
             ))}
             {adding ? (
