@@ -137,4 +137,7 @@ pub fn watch_loads(_webview: &tauri::Webview, _ended: Box<dyn Fn(super::LoadEnd)
 /// No menus in the windows ([`WINDOW_MENU`]).
 pub fn menu_shortcuts(_webview: &tauri::Webview, _shortcut: Box<dyn Fn(&str) -> bool + Send>) {}
 
+/// Nothing to contain: Linux is not a shipped platform.
+pub fn contain_keys(_webview: &tauri::Webview) {}
+
 pub fn press_keys(_chord: &str) {}

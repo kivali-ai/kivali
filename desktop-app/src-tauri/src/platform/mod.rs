@@ -20,6 +20,7 @@
 //! | owner check | [`authenticate`] | LocalAuthentication (Touch ID or password) | Windows Hello, else a confirmation |
 //! | notifications | [`notify`], [`on_notification_click`] | UNUserNotificationCenter, clicks routed (the plugin outside an app bundle) | the notification plugin, clicks only bring Kivali forward |
 //! | team window frames | [`guard_frames`] | nothing: WKWebView asks wry about frames too | WebView2's `FrameNavigationStarting`, a refused frame cancelled |
+//! | team window keys | [`contain_keys`] | a responder between each child webview and tao's view ends the keys the webview leaves unhandled, which tao's text input would type back into its focused field | nothing: WebView2 keeps a webview's keys in its own process |
 //! | team window loads | [`watch_loads`] | nothing: a failed load never finishes | WebView2's `NavigationCompleted`: a load that could not reach the server failed, though it finishes on an error page |
 //! | app menu | [`APP_MENU`] | the application menu | none |
 //! | window menu | [`WINDOW_MENU`], [`menu_shortcuts`], [`press_keys`] | none (the application menu) | a menu bar in each team window; WebView2's `AcceleratorKeyPressed` hands it the webview's keys |
@@ -72,10 +73,10 @@ use windows as os;
 use windows as shared;
 
 pub use os::{
-    alert, app_is_active, authenticate, guard_frames, is_reopen, mark_app_menus, menu_bar_dark, menu_shortcuts,
-    menus_dark, notify_running_instance, on_second_launch, open_terminal, parent_pid, peer_pid, press_keys,
-    reduce_motion, start_time, vm_support, wait_exit, watch_loads, APP_MENU, INSTALL_EXITS, SECOND_LAUNCH_FOCUSES,
-    THIS_COMPUTER, TRAY_AREA, TRAY_ICONS, UPDATE_COPIES_DATA_DISK, WINDOW_MENU,
+    alert, app_is_active, authenticate, contain_keys, guard_frames, is_reopen, mark_app_menus, menu_bar_dark,
+    menu_shortcuts, menus_dark, notify_running_instance, on_second_launch, open_terminal, parent_pid, peer_pid,
+    press_keys, reduce_motion, start_time, vm_support, wait_exit, watch_loads, APP_MENU, INSTALL_EXITS,
+    SECOND_LAUNCH_FOCUSES, THIS_COMPUTER, TRAY_AREA, TRAY_ICONS, UPDATE_COPIES_DATA_DISK, WINDOW_MENU,
 };
 pub use notify::{notify, on_notification_click, NotifyTarget};
 pub use shared::{
@@ -313,6 +314,7 @@ const _: () = {
     let _: fn() -> bool = app_is_active;
     let _: fn(&tauri::Webview, Box<dyn Fn(&str) -> bool + Send>) = guard_frames;
     let _: fn(&tauri::Webview, Box<dyn Fn(&str) -> bool + Send>) = menu_shortcuts;
+    let _: fn(&tauri::Webview) = contain_keys;
     let _: fn(&str) = press_keys;
     let _: fn(&tauri::Webview, Box<dyn Fn(LoadEnd) + Send>) -> bool = watch_loads;
     let _: bool = APP_MENU || WINDOW_MENU || SECOND_LAUNCH_FOCUSES || INSTALL_EXITS || UPDATE_COPIES_DATA_DISK;
