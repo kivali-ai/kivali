@@ -79,8 +79,9 @@ const (
 
 // signInRedirectURL is the redirect address for browser sign-in as r
 // reached Kivali: <scheme>://<host>/connect/callback. The scheme is
-// X-Forwarded-Proto's first value when it is http or https, else https
-// for a TLS connection and http otherwise; the host is
+// the one the API's same-origin check reads (requestScheme): https on
+// a TLS connection, else X-Forwarded-Proto's first value when it is
+// https, else http; the host is
 // X-Forwarded-Host's first value when it is a host, else r.Host,
 // lower-cased and without the scheme's default port. Empty when
 // neither is a host.
@@ -90,12 +91,9 @@ const (
 // only to the browser that asks, which carries the cookie the
 // callback checks.
 func signInRedirectURL(r *http.Request) string {
-	scheme := "http"
-	if r.TLS != nil {
-		scheme = "https"
-	}
-	if p := strings.ToLower(firstForwarded(r.Header.Get("X-Forwarded-Proto"))); p == "http" || p == "https" {
-		scheme = p
+	scheme := requestScheme(r)
+	if scheme != "https" {
+		scheme = "http"
 	}
 	host := ""
 	if fwd := r.Header.Get("X-Forwarded-Host"); fwd != "" {

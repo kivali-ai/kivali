@@ -472,8 +472,9 @@ func TestBrowserSignInWithoutPKCE(t *testing.T) {
 // owner must register with the vendor exactly. Behind a reverse proxy
 // (Tailscale serve, a TLS terminator) the request Kivali sees is not
 // the address the browser used, so it must be read from
-// X-Forwarded-Proto and X-Forwarded-Host when they are set, the first
-// value when a proxy appended, without a default port, and fall back to
+// X-Forwarded-Proto and X-Forwarded-Host when they are set (a TLS
+// connection is https whatever the header says), the first value when
+// a proxy appended, without a default port, and fall back to
 // the request's own when a header is not a host. A wrong address here
 // is a vendor that refuses every sign-in.
 func TestSignInRedirectURL(t *testing.T) {
@@ -489,6 +490,7 @@ func TestSignInRedirectURL(t *testing.T) {
 		{"default http port", "kivali.local:80", "", "", false, "http://kivali.local/connect/callback"},
 		{"ipv6 loopback", "[::1]:8080", "", "", false, "http://[::1]:8080/connect/callback"},
 		{"junk proto", "127.0.0.1:8080", "gopher", "", false, "http://127.0.0.1:8080/connect/callback"},
+		{"tls wins over the header", "kivali.example.com", "http", "", true, "https://kivali.example.com/connect/callback"},
 		{"junk host", "127.0.0.1:8080", "", "evil.example/x?y", false, "http://127.0.0.1:8080/connect/callback"},
 		{"no host", "", "", "", false, ""},
 	} {
