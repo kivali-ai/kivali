@@ -78,6 +78,13 @@ type Knobs struct {
 	// DeviceVerificationURI and DeviceVerificationURIComplete replace
 	// the device answer's pages; empty sends the vendor's own.
 	DeviceVerificationURI, DeviceVerificationURIComplete string
+	// DeviceErrorEchoesCode puts the device code polled with in
+	// DeviceError's description, as a vendor that quotes its request
+	// would.
+	DeviceErrorEchoesCode bool
+	// OnDeviceStart, when set, runs as a device start arrives, before it
+	// is answered.
+	OnDeviceStart func()
 
 	// RevokeStatus answers each revocation with this status; zero is
 	// 200.
@@ -398,6 +405,9 @@ func (v *FakeVendor) deviceStart(w http.ResponseWriter, r *http.Request) {
 		fail(w, r, k, "invalid_client", "unknown client")
 		return
 	}
+	if k.OnDeviceStart != nil {
+		k.OnDeviceStart()
+	}
 	expires, interval := k.DeviceExpiresIn, k.DeviceInterval
 	if expires == 0 {
 		expires = 900 * time.Second
@@ -454,7 +464,11 @@ func (v *FakeVendor) deviceGrant(w http.ResponseWriter, r *http.Request, k Knobs
 		return
 	case k.DeviceError != "":
 		v.mu.Unlock()
-		fail(w, r, k, k.DeviceError, "ended by the test")
+		desc := "ended by the test"
+		if k.DeviceErrorEchoesCode {
+			desc += " for " + f.Get("device_code")
+		}
+		fail(w, r, k, k.DeviceError, desc)
 		return
 	}
 	delete(v.devices, f.Get("device_code"))

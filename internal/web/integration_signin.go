@@ -176,13 +176,14 @@ func (s *Server) refreshSignIn(ctx context.Context, name, id string, m *integrat
 // they are shown on the page, in Needs you and in the audit.
 const signInWordsRunes = 200
 
-// signInFailureWords is a refresh's failure err in words to keep, log
+// signInFailureWords is a sign-in's or a refresh's failure err in words to keep, log
 // and audit. The vendor's words may echo what it was sent, so they are
 // scrubbed of the stored tokens and the client secret first, whole,
 // and only then cut to signInWordsRunes: cut first, a secret astride
-// the cut would leave a piece no scrubber knows.
-func signInFailureWords(err error, stored connect.Tokens, client connect.Client) string {
-	scrub := newScrubber([]string{stored.Access, stored.Refresh, client.Secret})
+// the cut would leave a piece no scrubber knows. more are other values
+// the vendor was sent that are scrubbed too, such as a device code.
+func signInFailureWords(err error, stored connect.Tokens, client connect.Client, more ...string) string {
+	scrub := newScrubber(append([]string{stored.Access, stored.Refresh, client.Secret}, more...))
 	var term *connect.Terminal
 	if errors.As(err, &term) {
 		clean := &connect.Terminal{Code: scrub.Replace(term.Code), Description: clipRunes(scrub.Replace(term.Description), signInWordsRunes)}

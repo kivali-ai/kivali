@@ -360,6 +360,12 @@ func (s *Server) saveConnection(w http.ResponseWriter, r *http.Request, v *integ
 			return
 		}
 	}
+	// A sign-in under way was started with the app's old client id and
+	// secret: its tokens would be the old app's.
+	if cur != nil && m.Kivali.Connection.SignIn() &&
+		(cur.rec.Fields[integration.FieldClientID] != fields[integration.FieldClientID] || stored[integration.FieldClientSecret] != secret[integration.FieldClientSecret]) {
+		s.signInFlows.cancel(name, cur.rec.ID)
+	}
 	// The running server starts again with the new values.
 	s.Integrations.ConnectionChanged(name)
 	s.Integrations.Changed()
