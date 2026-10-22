@@ -99,6 +99,14 @@ func refuseNotIncluded(display, tool string) string {
 	return fmt.Sprintf("Your access to the %s integration does not include %s. Ask the owner if your work needs it.", display, tool)
 }
 
+// reasonNoShellJob is the audit's reason for a request that carries a
+// shell job's result for a call that asked for no job.
+const reasonNoShellJob = "a shell job's result for a call that asked for none"
+
+func refuseNoShellJob(display string) string {
+	return fmt.Sprintf("The %s integration asked your shell for nothing in this call, so its result was not read. Call the action again.", display)
+}
+
 // agentIntegrationFor is it as slug's calls find it: refused when no
 // version is approved, it is switched off, the agent has no access or
 // access that no longer applies, or it is not running.
@@ -329,7 +337,7 @@ func (s *Server) handleAgentpodIntegrationCall(w http.ResponseWriter, r *http.Re
 		http.Error(w, "decode IntegrationCallRequest: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	writeJSON(w, http.StatusOK, s.callAgentIntegration(r.Context(), slug, req.Name, req.Arguments))
+	writeJSON(w, http.StatusOK, s.callAgentIntegrationJob(r.Context(), slug, req.Name, req.Arguments, req.ShellJobResult))
 }
 
 // integrationCallRefusal is a call refused before it reached the
@@ -350,6 +358,15 @@ type integrationCallRefusal struct {
 // found. Every call, allowed or refused, appends a row to its
 // integration's audit.
 func (s *Server) callAgentIntegration(ctx context.Context, slug, name string, args json.RawMessage) agentpod.IntegrationCallResponse {
+	return s.callAgentIntegrationJob(ctx, slug, name, args, nil)
+}
+
+// callAgentIntegrationJob is callAgentIntegration for a request that
+// may carry what the agent's shell gave back for the job the call's
+// first request was answered with (result). The call is worked out
+// again exactly as on the first request; result reaches only the
+// integration the name matches.
+func (s *Server) callAgentIntegrationJob(ctx context.Context, slug, name string, args json.RawMessage, result *agentpod.IntegrationShellJobResult) agentpod.IntegrationCallResponse {
 	start := s.clk().Now()
 	its, err := s.Store.ListIntegrations()
 	if err != nil {
@@ -400,7 +417,7 @@ func (s *Server) callAgentIntegration(ctx context.Context, slug, name string, ar
 			refuse(integrationCallRefusal{it.Name, tool, refuseNotIncluded(v.display, tool), "the agent's access does not include it"})
 			continue
 		}
-		return s.runAgentIntegrationCall(ctx, start, slug, v, tool, args)
+		return s.runAgentIntegrationCall(ctx, start, slug, v, tool, args, result)
 	}
 	s.auditAgentCall(refused.integration, start, slug, refused.tool, false, refused.reason)
 	return integrationError(refused.text)
@@ -409,8 +426,10 @@ func (s *Server) callAgentIntegration(ctx context.Context, slug, name string, ar
 // runAgentIntegrationCall sends v's server the call of tool for slug,
 // stamped with the agent and its access, and returns its result for the
 // model, scrubbed of the connection's secrets, with the audit row
-// written.
-func (s *Server) runAgentIntegrationCall(ctx context.Context, start time.Time, slug string, v agentIntegration, tool string, args json.RawMessage) agentpod.IntegrationCallResponse {
+// written. result is a shell job's outcome, on the second request of a
+// call whose first was answered with a job; only a built-in asks for
+// one, so a bundle's call that carries one is refused.
+func (s *Server) runAgentIntegrationCall(ctx context.Context, start time.Time, slug string, v agentIntegration, tool string, args json.RawMessage, result *agentpod.IntegrationShellJobResult) agentpod.IntegrationCallResponse {
 	if len(args) == 0 {
 		args = json.RawMessage(`{}`)
 	}
@@ -419,7 +438,11 @@ func (s *Server) runAgentIntegrationCall(ctx context.Context, start time.Time, s
 		return integrationError("The arguments are not JSON.")
 	}
 	if v.builtin != nil {
-		return s.builtinAgentCall(ctx, start, slug, v, tool, args)
+		return s.builtinAgentCall(ctx, start, slug, v, tool, args, result)
+	}
+	if result != nil {
+		s.auditAgentCall(v.name, start, slug, tool, false, reasonNoShellJob)
+		return integrationError(refuseNoShellJob(v.display))
 	}
 	raw, callErr := s.Integrations.Call(ctx, v.name, "tools/call", map[string]any{
 		"name":      tool,

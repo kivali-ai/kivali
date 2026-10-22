@@ -1,6 +1,6 @@
 # Integrations
 
-An integration is an external service your agents can act on, such as a CRM, a blog or a ticket tracker. Each one is installed from a bundle or ships with Kivali, is connected with a token you paste, and is given to agents one at a time, each with its own access. This page covers having one built, installing one and its new versions, rolling back to an earlier version, connecting and testing it, giving agents access, what an agent then sees, the record of their calls, its log, and switching it off or removing it.
+An integration is an external service your agents can act on, such as a CRM, a blog or a ticket tracker. Each one is installed from a bundle or ships with Kivali, is connected with a token you paste, and is given to agents one at a time, each with its own access. This page covers having one built, installing one and its new versions, rolling back to an earlier version, connecting and testing it, giving agents access, what an agent then sees, the record of their calls, its log, switching it off or removing it, and the [Git](#git) integration that ships with Kivali.
 
 Integrations are under **Org**, **Integrations**.
 
@@ -101,3 +101,41 @@ A change to an agent's access, given or taken away, changes its tools from its n
 The switch at the top of the integration's page turns it off for every agent at once and stops it running, keeping the connection and everyone's access for when you turn it back on.
 
 **Remove** deletes the integration: every version, the connection and its secrets, every agent's access and its log, and stops it running. Uploading a bundle installs it again from scratch. An integration that ships with Kivali cannot be removed; switch it off instead.
+
+## Git
+
+**Git** ships with Kivali. It lets agents clone and fetch your repositories from a git host over HTTPS with a token you give it. Everything else an agent does with a repository (status, branches, commits, diffs, merges) is plain git in its own shell.
+
+### The connection
+
+- **Host**: `github.com`, `gitlab.com` or your own git host that serves HTTPS, without `https://`.
+- **Access token**: a token that can read the repositories your agents will use. On GitHub, a fine-grained personal access token limited to those repositories, with read access to their contents; on GitLab, an access token with `read_repository`. Give it no more than that.
+- **Repository for Test connection** (optional): one repository, as `owner/name`.
+
+**Test connection** lists that repository's branches with your token: "Connected. 4 branches in acme/widgets." With no repository named, it asks GitHub or GitLab who the token belongs to: "Connected to github.com as octocat." For any other host, name a repository. A failed test shows the host's reason.
+
+The token is kept in the connection's Secret, like every connection secret. Each connection also has a network credential of its own, kept beside the token, that lets an agent's clone or fetch reach the connection's host and nothing else. Your team's allow list does not change.
+
+### Access
+
+An agent's access is a list of repositories: `owner/name`, such as `acme/widgets`, or a pattern such as `acme/*`, which covers every repository directly under `acme` but not `acme/tools/cli`. GitLab nests groups, so write `group/subgroup/*` for those. Capitals do not matter.
+
+### What agents can do
+
+An agent with access has two actions:
+
+- **Clone** copies a repository its access includes into a new or empty directory of its files or its home.
+- **Fetch** brings new commits and tags into one of its working copies, from the repository's address or the one the working copy came from, if its access includes it.
+
+Both go to the connection's host with your token. The working copy is an ordinary one, whose origin is the repository's address without the token, and the agent works in it with plain git in its shell. That plain git reaches only the hosts on your team's allow list, and without your token, so a repository host that is not on the list is reachable only through these two actions.
+
+Agents cannot push through the integration.
+
+Every clone and fetch is in **Latest calls**, with the repository and the branches and tags that moved, or why it failed. Kivali checks each one against the agent's access before anything runs.
+
+### Not supported
+
+- SSH addresses (`git@github.com:...`): give the HTTPS address or `owner/name`.
+- Git LFS: a clone holds the LFS pointers, not the files.
+- Submodules are not cloned.
+- Very large repositories are slow, and a clone stops after 15 minutes, a fetch after 10.

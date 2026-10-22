@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/kivali-ai/kivali/internal/builtinintegrations"
+	"github.com/kivali-ai/kivali/internal/builtinintegrations/builtins"
 	"github.com/kivali-ai/kivali/internal/builtinintegrations/echotest"
 	"github.com/kivali-ai/kivali/internal/integration"
 )
@@ -50,7 +51,7 @@ func checkRegistry(t *testing.T, r builtinintegrations.Registry, strictTools boo
 // name, would put a record on every team that the page cannot draw or
 // that core cannot tell apart.
 func TestEveryBuiltinPassesTheCheck(t *testing.T) {
-	checkRegistry(t, builtinintegrations.All(), true)
+	checkRegistry(t, builtins.All(), true)
 }
 
 // Why this test exists: the test built-in is what the server's tests
@@ -58,7 +59,7 @@ func TestEveryBuiltinPassesTheCheck(t *testing.T) {
 // make those tests prove something no real built-in could ship.
 func TestEchoPassesTheCheck(t *testing.T) {
 	checkRegistry(t, builtinintegrations.Registry{echotest.New()}, false)
-	if builtinintegrations.All().Lookup(echotest.Name) != nil {
+	if builtins.All().Lookup(echotest.Name) != nil {
 		t.Errorf("the test built-in is in the binary's list")
 	}
 }

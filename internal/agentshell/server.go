@@ -67,6 +67,29 @@ type ServerConfig struct {
 	// as, set when the daemon dropped root to a user of its own. Nil
 	// runs commands as the daemon.
 	CommandUser *CommandUser
+
+	// Home is the shell's home directory ($HOME, /scratch/home in an
+	// agent pod): POST /v1/git works in a directory under Root or under
+	// it. Empty, only Root.
+	Home string
+
+	// GitProxyURL is the daemon's bare egress proxy URL, from its own
+	// environment: POST /v1/git gives it to go-git with the request's
+	// proxy credential. Empty (no proxy in the environment), an
+	// operation connects directly.
+	GitProxyURL string
+
+	// GitUnavailable, when set, is why POST /v1/git runs nothing here:
+	// the daemon did not drop to a user of its own, so a command could
+	// read its memory, or the socket's directory is not protected
+	// (ProtectSocketDir), so a command could stand in for the daemon.
+	// Either would hand a git job's token to the agent's commands.
+	GitUnavailable string
+
+	// GitInsecureHTTP lets POST /v1/git reach a repository over http://.
+	// For tests only, whose git server is an httptest one; an agent pod
+	// never sets it, and anything but https is refused.
+	GitInsecureHTTP bool
 }
 
 // DefaultPackagesInstallWait bounds how long GET /v1/packages waits for
@@ -95,6 +118,9 @@ const DefaultExecInstallWait = 10 * time.Minute
 // GET /v1/packages — the packages the shell has, and the state of the
 // install the daemon started with.
 //
+// POST /v1/git — one clone or fetch through an integration's git
+// connection, in this process (git.go).
+//
 // GET /healthz — k8s liveness probe.
 //
 // Anything else returns 404.
@@ -121,6 +147,7 @@ func NewHandler(cfg ServerConfig) http.Handler {
 	mux.HandleFunc("POST /v1/exec", handleExec(cfg))
 	mux.HandleFunc("POST /v1/files", handleFiles(cfg))
 	mux.HandleFunc("GET /v1/packages", handlePackages(cfg))
+	mux.HandleFunc("POST /v1/git", handleGit(cfg))
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))

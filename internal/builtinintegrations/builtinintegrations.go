@@ -22,7 +22,8 @@
 //   - While the binary carries it, it cannot be removed or replaced by an
 //     upload; it can be switched off.
 //
-// To add one, implement Integration and list it in All.
+// To add one, implement Integration in a package of its own and list it
+// in builtins.All (internal/builtinintegrations/builtins).
 package builtinintegrations
 
 import (
@@ -30,6 +31,7 @@ import (
 	"encoding/json"
 
 	"github.com/kivali-ai/kivali/internal/integration"
+	"github.com/kivali-ai/kivali/internal/shelljob"
 )
 
 // Integration is one built-in integration. Core calls every method
@@ -93,10 +95,67 @@ type Tool struct {
 
 // Result is a call's answer: each string one text content for the
 // agent, and whether the call failed.
+//
+// Audit, when set, is what the owner's audit keeps as the call's
+// reason; empty, it keeps the answer's words when the call failed, as
+// for a bundle.
+//
+// ShellJob, set by Call of a ShellJobIntegration, is work for the
+// agent's shell: core hands it to the agent's MCP server, which runs it
+// and sends the call again with the result, and core then calls
+// Complete. Content, IsError and Audit are not read then.
 type Result struct {
-	Content []string
-	IsError bool
+	Content  []string
+	IsError  bool
+	Audit    string
+	ShellJob *shelljob.Job
 }
+
+// ShellJobIntegration is an Integration that runs part of an action in
+// the agent's shell: its Call answers with Result.ShellJob, and Complete
+// turns what the shell gave back into the answer. Core calls Complete
+// with the agent, its access and the connection worked out again on
+// the second request, exactly as for Call, and with the same name and
+// arguments; result is untrusted text from the agent's pod, which
+// Complete only puts in words.
+type ShellJobIntegration interface {
+	Integration
+	Complete(ctx context.Context, caller Caller, conn Connection, name string, args json.RawMessage, result shelljob.Result) (*Result, error)
+}
+
+// HostsOf is an Integration whose shell jobs reach the network through
+// the egress proxy: Hosts is what its connection reaches. Core gives
+// each of its connections a scoped proxy credential of its own,
+// admitted to those hosts and no others (ProxyUser), and puts it in the
+// job.
+type HostsOf interface {
+	Hosts(conn Connection) []string
+}
+
+// ProxySecretKey is the key, in a connection's Secret, of its scoped
+// proxy credential's secret. It is not a user_config key (those have
+// no hyphen), so it is never a connection field, never in the fields
+// a built-in is given and never listed to the owner.
+const ProxySecretKey = "kivali-proxy-secret"
+
+// ProxyUser is the egress proxy user of name's connection id: the
+// "integration-" a bundle's server has, then the name, a dot and the
+// id. An integration name has no dot, so no bundle's proxy user
+// (integration-<name>) is ever one of these.
+func ProxyUser(name, connID string) string {
+	return "integration-" + name + "." + connID
+}
+
+// Refusal is an error of Call or Complete that refuses the call before
+// anything ran: core audits it as not allowed, with Reason, and answers
+// the agent with Text and no more. Text names only the cause and who
+// can change it.
+type Refusal struct {
+	Text   string
+	Reason string
+}
+
+func (r *Refusal) Error() string { return r.Text }
 
 // Registry is a set of built-in integrations.
 type Registry []Integration
@@ -118,9 +177,4 @@ func (r Registry) Manifests() []*integration.Manifest {
 		out = append(out, bi.Manifest())
 	}
 	return out
-}
-
-// All is the built-in integrations compiled into this binary.
-func All() Registry {
-	return Registry{}
 }

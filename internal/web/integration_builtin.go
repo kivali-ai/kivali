@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -50,14 +51,19 @@ func refuseNoConnection(display string) string {
 }
 
 // builtinConnection is name's connection for a built-in's function:
-// its id and every field's value by key, secrets included, and the
-// scrubber of those secrets. store.ErrNotFound with no connection.
-func (s *Server) builtinConnection(ctx context.Context, name string) (builtinintegrations.Connection, *strings.Replacer, error) {
-	_, rec, values, secretValues, err := s.Integrations.readConnection(ctx, name)
+// its id and every field's value by key, secrets included; the secret
+// of its scoped proxy credential ("" for none), which is not a field
+// and which core alone puts in a shell job; and the scrubber of all of
+// these secrets. store.ErrNotFound with no connection.
+func (s *Server) builtinConnection(ctx context.Context, name string) (builtinintegrations.Connection, string, *strings.Replacer, error) {
+	_, rec, values, secretValues, proxySecret, err := s.Integrations.readConnection(ctx, name)
 	if err != nil {
-		return builtinintegrations.Connection{}, nil, err
+		return builtinintegrations.Connection{}, "", nil, err
 	}
-	return builtinintegrations.Connection{ID: rec.ID, Fields: values}, newScrubber(secretValues), nil
+	if proxySecret != "" {
+		secretValues = append(secretValues, proxySecret)
+	}
+	return builtinintegrations.Connection{ID: rec.ID, Fields: values}, proxySecret, newScrubber(secretValues), nil
 }
 
 // callerOf is the agent and its access as a built-in reads them.
@@ -156,8 +162,21 @@ func (s *Server) builtinListedTools(ctx context.Context, v agentIntegration, slu
 // connection as it stands, and answers as runAgentIntegrationCall does
 // for a pod: scrubbed of the connection's secrets, with the audit row
 // written.
-func (s *Server) builtinAgentCall(ctx context.Context, start time.Time, slug string, v agentIntegration, tool string, args json.RawMessage) agentpod.IntegrationCallResponse {
-	conn, scrub, err := s.builtinConnection(ctx, v.name)
+//
+// A built-in that runs part of an action in the agent's shell
+// (builtinintegrations.ShellJobIntegration) answers the first request
+// with a job: core adds the connection's scoped proxy credential to it
+// and hands it to the agent's MCP server, with no audit row yet. The
+// second request carries result, what the shell gave back; core has
+// worked out the integration, the agent's access and the connection
+// again exactly as for any call, and the built-in's Complete puts the
+// result in words. That writes the call's one audit row. A Refusal, on
+// either request, is audited as not allowed and answered at once.
+//
+// Each request is a call of its own under integrationCallTimeout; the
+// job runs between them in the shell, under the job's own bound.
+func (s *Server) builtinAgentCall(ctx context.Context, start time.Time, slug string, v agentIntegration, tool string, args json.RawMessage, result *agentpod.IntegrationShellJobResult) agentpod.IntegrationCallResponse {
+	conn, proxySecret, scrub, err := s.builtinConnection(ctx, v.name)
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		s.auditAgentCall(v.name, start, slug, tool, false, "the integration has no connection")
@@ -167,16 +186,84 @@ func (s *Server) builtinAgentCall(ctx context.Context, start time.Time, slug str
 		return integrationError(fmt.Sprintf("Kivali could not read the %s integration's connection; try again later or tell the owner.", v.display))
 	}
 	caller := callerOf(slug, v.access)
-	res, callErr := runBuiltin(ctx, s.clk(), integrationCallTimeout, func(ctx context.Context) (*builtinintegrations.Result, error) {
+	run := func(ctx context.Context) (*builtinintegrations.Result, error) {
 		return v.builtin.Call(ctx, caller, conn, tool, args)
-	})
+	}
+	if result != nil {
+		sj, ok := v.builtin.(builtinintegrations.ShellJobIntegration)
+		if !ok {
+			s.auditAgentCall(v.name, start, slug, tool, false, reasonNoShellJob)
+			return integrationError(refuseNoShellJob(v.display))
+		}
+		// The result is text from the agent's pod. Nothing in core acts
+		// on it: it only becomes the agent's answer and the audit's
+		// reason, both scrubbed, so nothing binds it to the job the
+		// first request handed out. The row counts from the job's start.
+		start = start.Add(-shellJobDuration(*result))
+		run = func(ctx context.Context) (*builtinintegrations.Result, error) {
+			return sj.Complete(ctx, caller, conn, tool, args, *result)
+		}
+	}
+	res, callErr := runBuiltin(ctx, s.clk(), integrationCallTimeout, run)
+	var refusal *builtinintegrations.Refusal
+	if errors.As(callErr, &refusal) {
+		s.auditAgentCall(v.name, start, slug, tool, false, scrub.Replace(refusal.Reason))
+		return integrationError(scrub.Replace(refusal.Text))
+	}
+	if callErr == nil && res != nil && res.ShellJob != nil {
+		if result != nil {
+			s.auditAgentCall(v.name, start, slug, tool, true, "the integration asked for a second shell job")
+			return integrationError(fmt.Sprintf("The %s integration did not finish the call; tell the owner.", v.display))
+		}
+		return s.builtinShellJob(ctx, start, slug, v, tool, conn, proxySecret, res.ShellJob)
+	}
 	raw, callErr := builtinResultJSON(res, callErr)
 	resp, failed := integrationCallAnswer(v.display, raw, callErr)
 	for i := range resp.Content {
 		resp.Content[i] = scrub.Replace(resp.Content[i])
 	}
+	if callErr == nil && res != nil && res.Audit != "" {
+		failed = res.Audit
+	}
 	s.auditAgentCall(v.name, start, slug, tool, true, scrub.Replace(failed))
 	return resp
+}
+
+// builtinShellJob is the first request's answer for a call whose
+// built-in asked for job: the job, with the connection's scoped proxy
+// credential added to a git one. Not yet the call's answer, so no audit
+// row is written; one that cannot be completed is.
+func (s *Server) builtinShellJob(ctx context.Context, start time.Time, slug string, v agentIntegration, tool string, conn builtinintegrations.Connection, proxySecret string, job *agentpod.IntegrationShellJob) agentpod.IntegrationCallResponse {
+	if job.Git != nil {
+		if _, ok := v.builtin.(builtinintegrations.HostsOf); ok && proxySecret == "" {
+			var err error
+			if proxySecret, err = s.builtinProxySecret(ctx, v.name, v.builtin); err != nil {
+				log.Printf("integration %s: the connection's proxy credential: %v", v.name, err)
+				s.auditAgentCall(v.name, start, slug, tool, true, "the connection's proxy credential could not be made")
+				return integrationError(fmt.Sprintf("Kivali could not prepare the %s integration's connection; try again later or tell the owner.", v.display))
+			}
+		}
+		if proxySecret != "" {
+			job.Git.Proxy = agentpod.GitProxy{Username: builtinintegrations.ProxyUser(v.name, conn.ID), Password: proxySecret}
+		}
+	}
+	return agentpod.IntegrationCallResponse{Content: []string{}, ShellJob: job}
+}
+
+// shellJobMaxDuration bounds the duration a shell job's result reports,
+// which the audit row counts.
+const shellJobMaxDuration = 15 * time.Minute
+
+// shellJobDuration is how long result says its job ran, within
+// [0, shellJobMaxDuration].
+func shellJobDuration(result agentpod.IntegrationShellJobResult) time.Duration {
+	switch {
+	case result.Git == nil || result.Git.DurationMs <= 0:
+		return 0
+	case result.Git.DurationMs >= shellJobMaxDuration.Milliseconds():
+		return shellJobMaxDuration
+	}
+	return time.Duration(result.Git.DurationMs) * time.Millisecond
 }
 
 // builtinOwnerCall is the owner's call of a built-in for Test
@@ -185,7 +272,7 @@ func (s *Server) builtinAgentCall(ctx context.Context, start time.Time, slug str
 // words as a text block, its error as an error result. With no
 // connection the error says so.
 func (s *Server) builtinOwnerCall(ctx context.Context, bi builtinintegrations.Integration, name string, verify bool, choices string) (json.RawMessage, error) {
-	conn, _, err := s.builtinConnection(ctx, name)
+	conn, _, _, err := s.builtinConnection(ctx, name)
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		return builtinResultJSON(&builtinintegrations.Result{Content: []string{"the integration has no connection"}, IsError: true}, nil)

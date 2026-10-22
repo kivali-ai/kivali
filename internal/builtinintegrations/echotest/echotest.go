@@ -1,6 +1,6 @@
 // Package echotest is a built-in integration for tests: echo, which
 // answers with what core gave it. Only tests import it; it is never in
-// builtinintegrations.All.
+// builtins.All.
 //
 // Its manifest has a sensitive token and a greeting that is not
 // secret; an access form of a list field, colors, whose options it
