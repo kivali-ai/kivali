@@ -20,6 +20,7 @@ type Forwarder struct {
 	ln   net.Listener
 	port int
 	dial func(ctx context.Context) (net.Conn, error)
+	clk  Clock
 	logf Logf
 	// ctx ends on Close, abandoning dials still in progress.
 	ctx    context.Context
@@ -32,17 +33,32 @@ type Forwarder struct {
 
 // StartForward binds 127.0.0.1:port. The bind is loopback only, by
 // construction: a local org has no network-facing sign-in story.
-func StartForward(port int, dial func(ctx context.Context) (net.Conn, error), logf Logf) (*Forwarder, error) {
+func StartForward(port int, dial func(ctx context.Context) (net.Conn, error), clk Clock, logf Logf) (*Forwarder, error) {
 	ln, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
 	if err != nil {
 		return nil, fmt.Errorf("forward: %w", err)
 	}
+	return serveForward(ln, dial, clk, logf), nil
+}
+
+// serveForward forwards the connections ln accepts.
+func serveForward(ln net.Listener, dial func(ctx context.Context) (net.Conn, error), clk Clock, logf Logf) *Forwarder {
 	ctx, cancel := context.WithCancel(context.Background())
-	f := &Forwarder{ln: ln, port: ln.Addr().(*net.TCPAddr).Port, dial: dial, logf: logf, ctx: ctx, cancel: cancel, conns: map[net.Conn]struct{}{}}
+	f := &Forwarder{ln: ln, dial: dial, clk: clk, logf: logf, ctx: ctx, cancel: cancel, conns: map[net.Conn]struct{}{}}
+	if a, ok := ln.Addr().(*net.TCPAddr); ok {
+		f.port = a.Port
+	}
 	f.wg.Add(1)
 	go f.serve()
-	return f, nil
+	return f
 }
+
+// Accept retry delays: the first after a failed accept, and the most
+// it doubles to while accepts keep failing.
+const (
+	acceptRetryFirst = 5 * time.Millisecond
+	acceptRetryMax   = time.Second
+)
 
 // Port is the bound port.
 func (f *Forwarder) Port() int { return f.port }
@@ -50,16 +66,33 @@ func (f *Forwarder) Port() int { return f.port }
 // Addr is host:port.
 func (f *Forwarder) Addr() string { return f.ln.Addr().String() }
 
+// serve accepts until Close. A failed accept is retried after a delay
+// that doubles while accepts keep failing, so one bad accept never
+// ends the forward and a listener that keeps failing (no descriptors
+// left) does not spin.
 func (f *Forwarder) serve() {
 	defer f.wg.Done()
+	var delay time.Duration
 	for {
 		c, err := f.ln.Accept()
 		if err != nil {
-			if !errors.Is(err, net.ErrClosed) {
-				f.logf("forward: accept: %v", err)
+			if errors.Is(err, net.ErrClosed) {
+				return
 			}
-			return
+			if delay == 0 {
+				delay = acceptRetryFirst
+			} else if delay = 2 * delay; delay > acceptRetryMax {
+				delay = acceptRetryMax
+			}
+			f.logf("forward: accept: %v; retrying in %v", err, delay)
+			select {
+			case <-f.ctx.Done():
+				return
+			case <-f.clk.After(delay):
+			}
+			continue
 		}
+		delay = 0
 		f.track(c, true)
 		f.wg.Add(1)
 		go func() {

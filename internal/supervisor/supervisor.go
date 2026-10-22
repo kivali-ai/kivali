@@ -761,7 +761,7 @@ func (s *Supervisor) ensureForwardLocked(port int, logf Logf) error {
 	}
 	f, err := StartForward(port, func(ctx context.Context) (net.Conn, error) {
 		return g.Proxy(ctx, NodePort)
-	}, s.o.Logf)
+	}, s.o.Clock, s.o.Logf)
 	if err != nil {
 		return err
 	}
