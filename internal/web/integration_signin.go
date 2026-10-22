@@ -41,8 +41,10 @@ var (
 	errVendorUnavailable = errors.New("the vendor did not answer")
 )
 
-// connectHTTPTimeout bounds one request to a vendor's OAuth endpoint.
-const connectHTTPTimeout = 30 * time.Second
+// connectHTTPTimeout bounds one request to a vendor's OAuth endpoint:
+// one small POST. A refresh runs inside a pod's kivali/credential
+// request, which the shim waits 10 seconds for, so it ends first.
+const connectHTTPTimeout = 8 * time.Second
 
 // revokeTimeout bounds the revocation a delete or a disconnect asks
 // for, best effort, while it holds lockIntegrations.
