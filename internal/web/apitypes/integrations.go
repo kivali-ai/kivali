@@ -127,9 +127,11 @@ type ConnectionField struct {
 // ConnectionState is one connection's standing.
 type ConnectionState struct {
 	ID string `json:"id"`
-	// Label is what the owner calls the connection ("Company GitLab");
-	// empty for a connection of an integration that takes one, which
-	// the page does not ask to name.
+	// Label is what the owner calls the connection ("Company GitLab"),
+	// or, for an integration that takes several, the one the
+	// integration derives from its fields when the owner gave none
+	// (Git: its host). The page of an integration that takes one
+	// connection does not ask for a label, so it is usually empty there.
 	Label     string    `json:"label"`
 	CreatedAt time.Time `json:"created_at"`
 	// Fields is the connection form with what this connection holds:
@@ -379,9 +381,13 @@ type AgentIntegrations struct {
 
 // AgentIntegration is one integration as the agent's tab lists it.
 type AgentIntegration struct {
-	Name        string            `json:"name"`
-	DisplayName string            `json:"display_name"`
-	Status      IntegrationStatus `json:"status"`
+	Name        string `json:"name"`
+	DisplayName string `json:"display_name"`
+	// Status is the integration's. Under Connected, for an integration
+	// that takes several connections, connected or not connected is the
+	// connection's the agent's access names: not connected while that
+	// one needs its secrets again.
+	Status IntegrationStatus `json:"status"`
 	// Summary is the agent's access in words; empty under Available.
 	Summary string `json:"summary"`
 	// ConnectionLabel is the label of the connection the agent's access

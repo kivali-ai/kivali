@@ -48,6 +48,19 @@ describe('Integrations tab', () => {
     expect(within(connected).getByText('HubSpot')).toBeInTheDocument();
   });
 
+  // Guards the status of a row on one of several connections: the server gives the status of the connection the
+  // agent's access names, so a GitLab connection that needs its secrets again reads Not connected on this agent's row
+  // while the integration, through GitHub, is connected. A row showing the integration's status would hide that this
+  // agent's calls fail.
+  it('shows the status of the connection the agent uses', async () => {
+    const lost = { ...agentIntegrations, connected: agentIntegrations.connected.map((i) => (i.name === 'git' ? { ...i, status: 'not_connected' as const } : i)) };
+    renderTabs(PATH, { routes: { ['GET ' + API]: lost } });
+    const connected = await page().findByRole('region', { name: 'Connected to Engineering lead' });
+    const git = within(connected).getByRole('link', { name: /Git \(Company GitLab\)/ });
+    expect(within(git).getByText('Not connected')).toHaveClass('kv-badge');
+    expect(within(within(connected).getByRole('link', { name: /HubSpot/ })).getByText('Connected')).toBeInTheDocument();
+  });
+
   // Guards an agent with no access anywhere: the connected list says so in words instead of drawing an empty
   // container, and the integrations it could be given still follow.
   it('says when the agent is connected to nothing', async () => {

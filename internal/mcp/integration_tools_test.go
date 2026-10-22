@@ -81,8 +81,9 @@ func TestIntegrationToolsRelayToCore(t *testing.T) {
 // Why this test exists: a git clone runs in two requests to core with
 // the job between them in the agent's shell. The job must reach the
 // daemon field for field (the URL, the access's patterns, the token,
-// the proxy credential, the bound), the second request must carry the
-// same name and arguments with what the shell gave back, ref for ref,
+// the proxy credential, the bound, the connection), the second request
+// must carry the same name and arguments with what the shell gave back,
+// ref for ref, with the connection the daemon echoed,
 // and only core's second answer may reach the model: never the job,
 // which holds the token.
 func TestIntegrationToolsRunTheShellJob(t *testing.T) {
@@ -93,6 +94,7 @@ func TestIntegrationToolsRunTheShellJob(t *testing.T) {
 		Auth:           agentpod.GitAuth{Username: "x-access-token", Password: "ghp_secret_token"},
 		Proxy:          agentpod.GitProxy{Username: "integration-git.1a2b3c4d", Password: "proxy-secret-value"},
 		TimeoutSeconds: 900,
+		ConnectionID:   "1a2b3c4d",
 	}
 	c := &recordingCaller{resps: []*agentpod.IntegrationCallResponse{
 		{ShellJob: &agentpod.IntegrationShellJob{Git: job}},
@@ -100,7 +102,8 @@ func TestIntegrationToolsRunTheShellJob(t *testing.T) {
 	}}
 	shell := &recordingShell{res: &agentshell.GitResponse{
 		Repository: "acme/widgets", DurationMs: 1200, UpdatedTotal: 901,
-		Updated: []agentshell.GitRefUpdate{{Ref: "refs/remotes/origin/main", New: "abc"}},
+		ConnectionID: "1a2b3c4d",
+		Updated:      []agentshell.GitRefUpdate{{Ref: "refs/remotes/origin/main", New: "abc"}},
 	}}
 	tools := IntegrationTools(c, shell, []agentpod.IntegrationTool{{Name: "git_clone"}}, nil)
 	args := json.RawMessage(`{"url":"acme/widgets","path":"/files/widgets"}`)
@@ -114,6 +117,7 @@ func TestIntegrationToolsRunTheShellJob(t *testing.T) {
 		Auth:           agentshell.GitAuth{Username: "x-access-token", Password: "ghp_secret_token"},
 		Proxy:          agentshell.GitProxy{Username: "integration-git.1a2b3c4d", Password: "proxy-secret-value"},
 		TimeoutSeconds: 900,
+		ConnectionID:   "1a2b3c4d",
 	}
 	if len(shell.jobs) != 1 {
 		t.Fatalf("jobs = %+v", shell.jobs)
@@ -126,7 +130,7 @@ func TestIntegrationToolsRunTheShellJob(t *testing.T) {
 		t.Fatalf("requests = %+v", c.reqs)
 	}
 	r := c.reqs[1].ShellJobResult.Git
-	if r == nil || r.Repository != "acme/widgets" || r.DurationMs != 1200 || r.UpdatedTotal != 901 || len(r.Updated) != 1 || r.Updated[0] != (agentpod.GitRefUpdate{Ref: "refs/remotes/origin/main", New: "abc"}) {
+	if r == nil || r.Repository != "acme/widgets" || r.ConnectionID != "1a2b3c4d" || r.DurationMs != 1200 || r.UpdatedTotal != 901 || len(r.Updated) != 1 || r.Updated[0] != (agentpod.GitRefUpdate{Ref: "refs/remotes/origin/main", New: "abc"}) {
 		t.Errorf("result sent = %+v", r)
 	}
 
@@ -138,6 +142,9 @@ func TestIntegrationToolsRunTheShellJob(t *testing.T) {
 		t.Fatal(err)
 	}
 	e := c.reqs[1].ShellJobResult.Git.Error
+	if got := c.reqs[1].ShellJobResult.Git.ConnectionID; got != "1a2b3c4d" {
+		t.Errorf("an unreached daemon's result names connection %q", got)
+	}
 	if strings.Contains(e, "ghp_secret_token") || strings.Contains(e, "proxy-secret-value") || !strings.Contains(e, "HTTP 400") || !strings.Contains(e, agentshell.GitTokenPlaceholder) {
 		t.Errorf("error sent = %q", e)
 	}

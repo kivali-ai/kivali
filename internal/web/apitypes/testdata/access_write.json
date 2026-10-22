@@ -1,10 +1,9 @@
 {
   "access": {
-    "blogs": [
-      "Marketing"
+    "repositories": [
+      "eng/*"
     ],
-    "write": true,
-    "delete": false
+    "push": false
   },
-  "connection_id": "c7f3a1b2"
+  "connection_id": "e5f6a7b8"
 }

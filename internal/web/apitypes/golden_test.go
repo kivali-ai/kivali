@@ -206,7 +206,7 @@ func goldenFixtures() map[string]any {
 		"agent_integrations":          goldenAgentIntegrations(),
 		"connection_write":            ConnectionWrite{Fields: map[string]string{"token": "pat-eu1-...", "portal": "acme"}},
 		"connection_create":           ConnectionWrite{Label: "Staging GitLab", Fields: map[string]string{"host": "gitlab-staging.example.com", "token": "glpat-...", "test_repository": ""}},
-		"access_write":                AccessWrite{Access: json.RawMessage(`{"blogs":["Marketing"],"write":true,"delete":false}`), ConnectionID: "c7f3a1b2"},
+		"access_write":                AccessWrite{Access: json.RawMessage(`{"repositories":["eng/*"],"push":false}`), ConnectionID: "e5f6a7b8"},
 		"access_choices":              AccessChoices{Options: []string{"Engineering", "Marketing"}},
 		"integration_logs":            IntegrationLogs{Lines: []IntegrationLogLine{{At: integrationNow, Level: "info", Message: "server started"}, {At: integrationLater, Level: "stderr", Message: "token [secret] accepted"}}},
 		// Software lists: software_golden_test.go.

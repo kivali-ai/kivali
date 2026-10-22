@@ -101,7 +101,8 @@ func TestManifest(t *testing.T) {
 // URL core built from the connection's host and the repository's
 // owner/name (case kept, no user info), the access's patterns for the
 // daemon's own check, the bound, the token under the user GitHub
-// expects, and no proxy credential (core adds the connection's).
+// expects, the connection it runs through (which the second request
+// reads back), and no proxy credential (core adds the connection's).
 func TestCallBuildsTheJob(t *testing.T) {
 	g := New()
 	res, err := g.Call(context.Background(), dana("acme/*"), testConn("github.com"), "clone",
@@ -112,7 +113,7 @@ func TestCallBuildsTheJob(t *testing.T) {
 	want := shelljob.GitJob{
 		Op: "clone", Path: "/files/widgets", URL: "https://github.com/Acme/Widgets.git", Host: "github.com",
 		AllowedRepositories: []string{"acme/*"}, Auth: shelljob.GitAuth{Username: "x-access-token", Password: testToken},
-		TimeoutSeconds: 900,
+		TimeoutSeconds: 900, ConnectionID: "1a2b3c4d",
 	}
 	got, _ := json.Marshal(res.ShellJob.Git)
 	if w, _ := json.Marshal(want); string(got) != string(w) {
@@ -166,7 +167,7 @@ func TestCallBuildsThePushJob(t *testing.T) {
 		Op: "push", Path: "~/w", Host: "github.com",
 		RefSpecs:            []string{"refs/heads/agent/x:refs/heads/agent/x", "refs/tags/v1.2.0:refs/tags/v1.2.0", "HEAD:refs/heads/agent/y"},
 		AllowedRepositories: []string{"acme/*"}, AllowedRefs: []string{"refs/heads/agent/*", "refs/tags/*"},
-		Auth: shelljob.GitAuth{Username: "x-access-token", Password: testToken}, TimeoutSeconds: 600,
+		Auth: shelljob.GitAuth{Username: "x-access-token", Password: testToken}, TimeoutSeconds: 600, ConnectionID: "1a2b3c4d",
 	}
 	got, _ := json.Marshal(res.ShellJob.Git)
 	if w, _ := json.Marshal(want); string(got) != string(w) {

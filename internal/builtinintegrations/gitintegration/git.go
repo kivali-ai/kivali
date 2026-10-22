@@ -369,6 +369,7 @@ func (g *Git) Call(_ context.Context, caller builtinintegrations.Caller, conn bu
 		AllowedRepositories: c.patterns,
 		Auth:                shelljob.GitAuth{Username: tokenUser, Password: c.token},
 		TimeoutSeconds:      fetchTimeoutSeconds,
+		ConnectionID:        conn.ID,
 	}
 	if c.hasRepo {
 		job.URL = c.repo.URL()
@@ -416,7 +417,17 @@ const (
 // access while the job ran, may have written the remote all the same:
 // when the result says refs landed, the answer and the audit say what
 // landed and that the access changed (pushedUnderOldAccess).
+//
+// A job that ran through another connection than the one the agent's
+// access names now (the owner moved the access to another connection
+// while it ran: result.Git.ConnectionID is not conn.ID) is never
+// refused: it is told as it ran, and the audit says the access changed
+// (ranThroughAnotherConnection). conn's host and token are not the
+// job's, so the call is not checked against them.
 func (g *Git) Complete(_ context.Context, caller builtinintegrations.Caller, conn builtinintegrations.Connection, name string, args json.RawMessage, result shelljob.Result) (*builtinintegrations.Result, error) {
+	if r := result.Git; r != nil && r.ConnectionID != "" && r.ConnectionID != conn.ID {
+		return ranThroughAnotherConnection(name, r), nil
+	}
 	c, err := g.check(caller, conn, name, args)
 	if err != nil {
 		var ref *builtinintegrations.Refusal
@@ -541,6 +552,42 @@ func pushed(repo string, c call, r *shelljob.GitResult) *builtinintegrations.Res
 	fmt.Fprintf(&b, "%s %s to %s.\n", strings.ToUpper(verb[:1])+verb[1:], joinNames(newMarked(updated), total, answerRefsMax), repo)
 	writeRefLines(&b, updated, total)
 	return &builtinintegrations.Result{Content: []string{b.String()}, Audit: repo + ": " + verb + " " + auditNames(refNames(updated), total)}
+}
+
+// ranThroughAnotherConnection is the answer to a call whose job ran
+// through a connection the agent's access no longer names: what ran,
+// or why it did not, as the result says, and that the access changed
+// during it. Its audit row is allowed, since the job ran as the access
+// allowed when it was handed out.
+func ranThroughAnotherConnection(name string, r *shelljob.GitResult) *builtinintegrations.Result {
+	verb, done := "fetch", "Fetched"
+	switch name {
+	case actionClone:
+		verb, done = "clone", "Cloned"
+	case actionPush:
+		verb, done = "push", "Pushed to"
+	}
+	repo := "the repository"
+	if r.Repository != "" {
+		repo = clip(r.Repository, 200)
+	}
+	note := fmt.Sprintf("Your access to the Git integration changed to another connection during the %s; what it allows now is what your next call gets.", verb)
+	changed := "; the access changed during the " + verb
+	switch {
+	case r.TimedOut:
+		return &builtinintegrations.Result{Content: []string{fmt.Sprintf("The %s of %s did not finish in time and was stopped. %s", verb, repo, note)}, IsError: true, Audit: repo + ": did not finish in time" + changed}
+	case r.Error != "":
+		words := clip(r.Error, errorMax)
+		return &builtinintegrations.Result{Content: []string{fmt.Sprintf("The %s of %s did not go through: %s\n\n%s", verb, repo, words, note)}, IsError: true, Audit: repo + ": " + words + changed}
+	}
+	total := max(r.UpdatedTotal, len(r.Updated))
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s %s. %s", done, repo, note)
+	if total > 0 {
+		fmt.Fprintf(&b, "\n\nUpdated (%d):", total)
+		writeRefLines(&b, r.Updated, total)
+	}
+	return &builtinintegrations.Result{Content: []string{b.String()}, Audit: repo + ": " + auditRefs(r.Updated, total) + changed}
 }
 
 // pushedUnderOldAccess is the answer to a push whose second request

@@ -1906,9 +1906,11 @@ export interface ConnectionField {
 export interface ConnectionState {
   id: string;
   /**
-   * Label is what the owner calls the connection ("Company GitLab");
-   * empty for a connection of an integration that takes one, which
-   * the page does not ask to name.
+   * Label is what the owner calls the connection ("Company GitLab"),
+   * or, for an integration that takes several, the one the
+   * integration derives from its fields when the owner gave none
+   * (Git: its host). The page of an integration that takes one
+   * connection does not ask for a label, so it is usually empty there.
    */
   label: string;
   created_at: string /* RFC 3339 */;
@@ -2234,6 +2236,12 @@ export interface AgentIntegrations {
 export interface AgentIntegration {
   name: string;
   display_name: string;
+  /**
+   * Status is the integration's. Under Connected, for an integration
+   * that takes several connections, connected or not connected is the
+   * connection's the agent's access names: not connected while that
+   * one needs its secrets again.
+   */
   status: IntegrationStatus;
   /**
    * Summary is the agent's access in words; empty under Available.

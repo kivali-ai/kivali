@@ -1,8 +1,10 @@
 package agentshell
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -680,6 +682,25 @@ func TestGitUnavailable(t *testing.T) {
 	}
 	if n := srv.requests.Load(); n != 0 {
 		t.Errorf("%d requests reached the host", n)
+	}
+}
+
+// Why this test exists: the call's second request tells core which
+// connection the job ran through, from the daemon's answer. A
+// connection id the daemon dropped, on the wire either way, would have
+// core scrub and audit a job moved to another connection as if it ran
+// through the one the access names now.
+func TestGitEchoesTheConnection(t *testing.T) {
+	srv := newTestGitServer(t)
+	cfg := ServerConfig{Root: t.TempDir(), GitInsecureHTTP: true, GitUnavailable: "not here", Clock: clock.NewFake()}
+	job := cloneJob(srv, "w")
+	job.ConnectionID = "1a2b3c4d"
+	body, _ := json.Marshal(job)
+	rr := httptest.NewRecorder()
+	handleGit(cfg)(rr, httptest.NewRequest(http.MethodPost, "/v1/git", bytes.NewReader(body)))
+	var res GitResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &res); err != nil || rr.Code != http.StatusOK || res.ConnectionID != "1a2b3c4d" || res.Error != "not here" {
+		t.Errorf("answer = %d %s (%v)", rr.Code, rr.Body.String(), err)
 	}
 }
 

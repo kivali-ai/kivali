@@ -145,7 +145,7 @@ func TestDeleteIntegrationConnectionByID(t *testing.T) {
 	// Clearing by connection alone leaves the connection and the other
 	// rows.
 	setAccessFor(t, s, echotest.Name, "lee", "a")
-	cleared, err = s.ClearIntegrationAccessForConnection(echotest.Name, "a")
+	cleared, err = s.clearIntegrationAccessForConnectionLocked(echotest.Name, "a")
 	if err != nil || !slices.Equal(cleared, []string{"dana", "lee"}) {
 		t.Errorf("cleared = %v, %v", cleared, err)
 	}

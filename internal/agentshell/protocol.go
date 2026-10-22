@@ -177,7 +177,8 @@ const RootDefault = "/files"
 // destinations must be in AllowedRefs (patterns of branches and tags),
 // and a refspec with + needs Force; a fetch's Force lets a ref move
 // other than fast-forward. TimeoutSeconds bounds the operation (see
-// GitTimeoutFor).
+// GitTimeoutFor). ConnectionID names the connection the job runs
+// through; the daemon only echoes it in its response.
 type GitRequest struct {
 	Op                  string   `json:"op"`
 	Path                string   `json:"path"`
@@ -190,6 +191,7 @@ type GitRequest struct {
 	Auth                GitAuth  `json:"auth"`
 	Proxy               GitProxy `json:"proxy"`
 	TimeoutSeconds      int      `json:"timeout_seconds,omitempty"`
+	ConnectionID        string   `json:"connection_id,omitempty"`
 }
 
 // GitAuth is the HTTP basic auth a git operation presents to the host.
@@ -207,7 +209,8 @@ type GitProxy struct {
 
 // GitResponse is a git operation's outcome: the repository it reached
 // (owner/name), the refs it moved, why it failed, how long it took and
-// whether its timeout ended it. Every string is scrubbed of the
+// whether its timeout ended it, with the request's ConnectionID
+// echoed. Every string is scrubbed of the
 // request's token and proxy credential. Updated lists at most
 // GitUpdatedMax refs, by name, and UpdatedTotal counts every ref that
 // moved; Error is at most GitErrorMaxBytes.
@@ -218,6 +221,7 @@ type GitResponse struct {
 	Error        string         `json:"error,omitempty"`
 	DurationMs   int64          `json:"duration_ms,omitempty"`
 	TimedOut     bool           `json:"timed_out,omitempty"`
+	ConnectionID string         `json:"connection_id,omitempty"`
 }
 
 // GitRefUpdate is one ref a git operation moved: its name and the

@@ -804,18 +804,10 @@ func (s *FSStore) readIntegrationAccessRows(name string) ([]IntegrationAccess, e
 	return rows, nil
 }
 
-// ClearIntegrationAccessForConnection removes the access of every agent
-// whose row names the connection id, and returns their slugs, sorted.
-// Rows set for another connection stay.
-func (s *FSStore) ClearIntegrationAccessForConnection(name, id string) ([]string, error) {
-	unlock := s.lockIntegration(name)
-	defer unlock()
-	if _, err := s.GetIntegration(name); err != nil {
-		return nil, err
-	}
-	return s.clearIntegrationAccessForConnectionLocked(name, id)
-}
-
+// clearIntegrationAccessForConnectionLocked removes the access of every
+// agent whose row names the connection id, and returns their slugs,
+// sorted. Rows set for another connection stay. The caller holds the
+// integration's lock.
 func (s *FSStore) clearIntegrationAccessForConnectionLocked(name, id string) ([]string, error) {
 	rows, err := s.readIntegrationAccessRows(name)
 	if err != nil {

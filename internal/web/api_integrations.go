@@ -213,11 +213,31 @@ func (v *integrationView) status() apitypes.IntegrationStatus {
 		// always running while its code is in the binary.
 		return apitypes.IntegrationStatusNotRunning
 	}
-	// Connected once any connection has all its secrets.
-	for _, c := range v.conns {
+	// Connected once a connection agents can use has all its secrets:
+	// any of several, or the one, the oldest.
+	conns := v.conns
+	if !v.multiple() && len(conns) > 1 {
+		conns = conns[:1]
+	}
+	for _, c := range conns {
 		if !c.reconnect {
 			return apitypes.IntegrationStatusConnected
 		}
+	}
+	return apitypes.IntegrationStatusNotConnected
+}
+
+// agentStatus is v's status for an agent whose access names the
+// connection connID: for an integration that takes several
+// connections, while v is connected or not, whether that connection
+// has all its secrets; v's own status otherwise.
+func (v *integrationView) agentStatus(connID string) apitypes.IntegrationStatus {
+	st := v.status()
+	if !v.multiple() || (st != apitypes.IntegrationStatusConnected && st != apitypes.IntegrationStatusNotConnected) {
+		return st
+	}
+	if c := v.connByID(connID); c != nil && !c.reconnect {
+		return apitypes.IntegrationStatusConnected
 	}
 	return apitypes.IntegrationStatusNotConnected
 }
@@ -1071,7 +1091,12 @@ func (s *Server) handleAPIIntegrationAccessPut(w http.ResponseWriter, r *http.Re
 		return
 	}
 	conn := v.accessConnection(req.ConnectionID)
-	if conn == nil {
+	switch {
+	case conn == nil && !v.multiple():
+		// A page read before the one connection was replaced.
+		writeAPIError(w, http.StatusConflict, errConnectionGone, whoNoOne)
+		return
+	case conn == nil:
 		writeAPIError(w, http.StatusBadRequest, "choose a connection", whoYou)
 		return
 	}
@@ -1312,6 +1337,7 @@ func (s *Server) handleAPIAgentIntegrations(w http.ResponseWriter, r *http.Reque
 		}
 		row.Summary = v.accessSummary(v.access[i].AccessJSON())
 		row.Invalid = optString(v.access[i].Invalid)
+		row.Status = v.agentStatus(v.access[i].ConnectionID)
 		// Which of several connections the agent's calls use.
 		if c := v.connByID(v.access[i].ConnectionID); c != nil && v.multiple() {
 			row.ConnectionLabel = v.connLabel(c)
