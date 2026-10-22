@@ -81,7 +81,7 @@ The first time a team opens, it asks a few short questions before your first hir
 
 On a work team, tick **Write the handbook from these files?** to have your Chief of Staff draft the handbook's About section for your business once it has read them, along with anything else the files settle. It sends the draft to you to approve. If the files are thin, it asks you a few questions first. On a personal team, files are optional: your Chief of Staff asks you a few questions either way and drafts the About section of the handbook.
 
-**Hire your Chief of Staff.** Your first agent. It starts with a default role and a default handbook, which you can read and edit here. Most people leave them as they are. Choose **Hire Chief of Staff**. Hiring takes 30 to 60 seconds; you can leave the page while it runs.
+**Hire your Chief of Staff.** Your first agent. It starts with a default role and a default handbook, which you can read and edit here. Most people leave them as they are. Choose **Hire Chief of Staff**. Hiring takes 30 to 60 seconds; you can leave the page while it runs. Your Kivali Developer, which builds [integrations](integrations.md) for your agents, is hired with it and reports to it.
 
 If this step says **Claude isn’t signed in**, everything you entered is saved: sign Claude in from Kivali Desktop's **Settings**, on the team's **AI** tab, then choose **Try again**.
 

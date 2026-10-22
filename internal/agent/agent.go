@@ -57,6 +57,11 @@ const CEOSlug = "ceo"
 // agents.
 const ChiefOfStaffSlug = "chief-of-staff"
 
+// KivaliDeveloperSlug is the slug of the Kivali Developer, the agent
+// Kivali hires under the Chief of Staff with the team. It cannot be
+// offboarded or moved, and only it has the integration_* tools.
+const KivaliDeveloperSlug = "kivali-developer"
+
 // Context is everything needed to build a Claude request for one agent
 // on one release. The zero value is not usable; callers populate it by
 // reading from the store.

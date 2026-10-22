@@ -15,6 +15,7 @@ import (
 	"github.com/kivali-ai/kivali/internal/agent"
 	"github.com/kivali-ai/kivali/internal/convert"
 	"github.com/kivali-ai/kivali/internal/provider"
+	"github.com/kivali-ai/kivali/internal/seed"
 	"github.com/kivali-ai/kivali/internal/store"
 )
 
@@ -104,13 +105,44 @@ func (s *Server) cosExists() bool {
 	return err == nil
 }
 
+// EnsureKivaliDeveloper hires the Kivali Developer under the Chief of
+// Staff, with Kivali's role, when the team has a Chief of Staff and no
+// Kivali Developer: setup calls it right after the Chief of Staff, and
+// boot and a restore call it for a team that has none. created is
+// false when there was nothing to do. It provisions no pod: setup
+// provisions the Kivali Developer's with the Chief of Staff's, and
+// BulkProvisionAgentPods every agent's at boot and after a restore.
+func (s *Server) EnsureKivaliDeveloper() (created bool, err error) {
+	if !s.cosExists() {
+		return false, nil
+	}
+	_, err = s.Store.GetAgent(agent.KivaliDeveloperSlug)
+	if err == nil {
+		return false, nil
+	}
+	if !errors.Is(err, store.ErrNotFound) {
+		return false, err
+	}
+	if err := s.Store.CreateAgent(store.Agent{
+		Slug:      agent.KivaliDeveloperSlug,
+		Role:      "Kivali Developer",
+		Icon:      "code",
+		ReportsTo: cosSlug,
+		Model:     s.AgentModel,
+	}, seed.KivaliDeveloperRole); err != nil {
+		return false, err
+	}
+	s.NotifyOrgState()
+	return true, nil
+}
+
 // The Chief of Staff seed runs in these stages, in order; the hiring
 // panel shows one line per stage. seedStageFirstMessage runs only when
 // the seed carries a first message.
 const (
 	seedStageRead         = iota // read the handbook and every project file's text
 	seedStageBrief               // the one long model call: the Chief of Staff writes its memory
-	seedStageHire                // store the handbook, the CEO and the Chief of Staff, its role and memory
+	seedStageHire                // store the handbook, the CEO and the Chief of Staff, its role and memory, and the Kivali Developer
 	seedStageFirstMessage        // deliver the first message and wake the Chief of Staff
 )
 
@@ -245,6 +277,13 @@ func (s *Server) seedCoS(ctx context.Context, c cosSeed, stage func(int)) error 
 	if err := s.Store.WriteAgentMemory(cosSlug, memory); err != nil {
 		return hireFailed(err)
 	}
+	// The Kivali Developer, hired with the team under the Chief of
+	// Staff. A failure is logged, not fatal: the Chief of Staff is
+	// hired, so setup is done, and the next boot hires it.
+	developer, err := s.EnsureKivaliDeveloper()
+	if err != nil {
+		log.Printf("setup: hire the Kivali Developer: %v", err)
+	}
 	// The team's starting auto-release. Non-fatal: without it the Queue
 	// holds everything, which is safe, and the slider still works.
 	if err := s.Store.SeedAutoRelease(store.AutoRelease{Enabled: true, Delay: newTeamAutoRelease, Since: s.clk().Now()}); err != nil {
@@ -252,16 +291,22 @@ func (s *Server) seedCoS(ctx context.Context, c cosSeed, stage func(int)) error 
 	} else {
 		s.NotifyAutoRelease()
 	}
-	// Its pod, as every other hire gets one (ApplyHire, and the boot's
+	// Their pods, as every other hire gets one (ApplyHire, and the boot's
 	// BulkProvisionAgentPods): without it the first turn has nowhere to
 	// run and is dropped. Through ProvisionAgentPod, which syncs the
 	// agent's files first and takes the agent's provision lock. A
 	// failure is logged, not fatal: the next boot provisions it.
 	if s.AgentPod != nil {
-		if err := s.ProvisionAgentPod(ctx, cosSlug); err != nil {
-			log.Printf("agentpod: provision %s: %v", cosSlug, err)
-		} else {
-			log.Printf("agentpod: provisioned %s", cosSlug)
+		slugs := []string{cosSlug}
+		if developer {
+			slugs = append(slugs, agent.KivaliDeveloperSlug)
+		}
+		for _, slug := range slugs {
+			if err := s.ProvisionAgentPod(ctx, slug); err != nil {
+				log.Printf("agentpod: provision %s: %v", slug, err)
+			} else {
+				log.Printf("agentpod: provisioned %s", slug)
+			}
 		}
 	}
 	// Persist the seed prompt + raw response under .seed/ for post-hoc

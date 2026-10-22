@@ -11,7 +11,6 @@ import (
 	"github.com/kivali-ai/kivali/internal/handbook"
 	"github.com/kivali-ai/kivali/internal/provider"
 	"github.com/kivali-ai/kivali/internal/roleicon"
-	"github.com/kivali-ai/kivali/internal/seed"
 	"github.com/kivali-ai/kivali/internal/store"
 )
 
@@ -280,9 +279,6 @@ type hireInput struct {
 	ReportsTo         string `json:"reports_to"`
 	RolePath          string `json:"role_path"`
 	InitialMemoryPath string `json:"initial_memory_path"`
-	// Template names a role Kivali ships (seed.HireTemplate), which is
-	// the hire's role in place of role_path's.
-	Template string `json:"template"`
 }
 
 // ceoInput is the shared shape of CEO-bound publish tool inputs:
@@ -352,7 +348,7 @@ func parseProposeHire(raw json.RawMessage, ctx ParseContext) (ParseResult, error
 	if err != nil {
 		return ParseResult{}, fmt.Errorf("propose_hire: %w", err)
 	}
-	if hire.Slug == CEO || hire.Slug == ChiefOfStaff {
+	if hire.Slug == CEO || hire.Slug == ChiefOfStaff || hire.Slug == KivaliDeveloper {
 		return ParseResult{}, fmt.Errorf("propose_hire: slug %q is reserved", hire.Slug)
 	}
 	rationale, err := validateMessageField("rationale", in.Rationale)
@@ -421,6 +417,9 @@ func parseProposeOffboard(raw json.RawMessage, ctx ParseContext) (ParseResult, e
 	}
 	if slug == ChiefOfStaff {
 		return ParseResult{}, fmt.Errorf("propose_offboard: cannot offboard %q (it is load-bearing — it is the only role that can propose org changes, including this one)", ChiefOfStaff)
+	}
+	if slug == KivaliDeveloper {
+		return ParseResult{}, fmt.Errorf("propose_offboard: cannot offboard %q (Kivali hires it with the team, and it stays)", KivaliDeveloper)
 	}
 	rationale, err := validateMessageField("rationale", in.Rationale)
 	if err != nil {
@@ -508,22 +507,9 @@ func parseHire(in hireInput, ctx ParseContext) (*store.Hire, error) {
 	if err := ValidateSlug(reportsTo); err != nil {
 		return nil, fmt.Errorf("reports_to: %w", err)
 	}
-	template := strings.TrimSpace(in.Template)
-	var body string
-	if template != "" {
-		_, role, ok := seed.HireTemplate(template)
-		switch {
-		case !ok:
-			return nil, fmt.Errorf("template %q is not a role Kivali ships; the templates are %s", template, strings.Join(seed.HireTemplates, ", "))
-		case strings.TrimSpace(in.RolePath) != "":
-			return nil, errors.New("give role_path or template, not both: with a template, the role is the template's")
-		}
-		body = role
-	} else {
-		var err error
-		if body, err = ctx.resolveArtifactPath("role_path", in.RolePath); err != nil {
-			return nil, err
-		}
+	body, err := ctx.resolveArtifactPath("role_path", in.RolePath)
+	if err != nil {
+		return nil, err
 	}
 	memory, err := ctx.resolveOptionalArtifactPath("initial_memory_path", in.InitialMemoryPath)
 	if err != nil {
@@ -536,7 +522,6 @@ func parseHire(in hireInput, ctx ParseContext) (*store.Hire, error) {
 		ReportsTo:          reportsTo,
 		Body:               body,
 		InitialAgentMemory: memory,
-		Template:           template,
 	}, nil
 }
 
@@ -712,6 +697,9 @@ func parseProposeReorg(raw json.RawMessage, ctx ParseContext) (ParseResult, erro
 		}
 		if slug == CEO {
 			return ParseResult{}, fmt.Errorf("propose_reorg: moves[%d]: cannot move %q (the owner is the root)", i, CEO)
+		}
+		if slug == KivaliDeveloper {
+			return ParseResult{}, fmt.Errorf("propose_reorg: moves[%d]: cannot move %q (it always reports to the Chief of Staff)", i, KivaliDeveloper)
 		}
 		if slug == newManager {
 			return ParseResult{}, fmt.Errorf("propose_reorg: moves[%d]: cannot reparent %q under itself", i, slug)

@@ -409,6 +409,13 @@ func (s *Server) restoreArchive(ctx context.Context, path, filename string) erro
 	} else if up.Replaced {
 		log.Printf("restore: handbook replaced by the default; the previous one is attachment %s", up.AttachmentSHA)
 	}
+	// An archive from a team set up without the Kivali Developer gets
+	// it here, as boot does; its pod comes up with the others below.
+	if created, err := s.EnsureKivaliDeveloper(); err != nil {
+		log.Printf("restore: hire the Kivali Developer: %v", err)
+	} else if created {
+		log.Printf("restore: hired the Kivali Developer")
+	}
 	// The archive replaced the assignment files without going through
 	// WriteAssignment, so the store's post-write hook never fired; the
 	// snapshot's goals and the web app's work views would describe the
@@ -462,7 +469,8 @@ func asRefusal(err error) error {
 
 // IsFreshForRestore reports whether a restore would overwrite only
 // seed state. The rule: active agents are limited to {ceo,
-// chief-of-staff} and chief-of-staff's chat.jsonl has no entries.
+// chief-of-staff, kivali-developer} and the chat.jsonl of
+// chief-of-staff and kivali-developer has no entries.
 // This is the bar both GET /api/v1/setup (restore_available) and the
 // restore handler check against — the app offers restore only when
 // true, the handler 409s when false, so a stale upload can't clobber
@@ -479,20 +487,22 @@ func (s *Server) IsFreshForRestore() bool {
 		return false
 	}
 	for _, a := range actives {
-		if a.Slug == agent.CEOSlug || a.Slug == "chief-of-staff" {
+		if a.Slug == agent.CEOSlug || a.Slug == "chief-of-staff" || a.Slug == agent.KivaliDeveloperSlug {
 			continue
 		}
 		return false
 	}
-	hist, err := s.Store.ReadChatHistory("chief-of-staff")
-	if err == nil && len(hist) > 0 {
-		return false
-	}
-	// ErrNotFound (no chat file yet) reads as fresh. Any other error
-	// we treat conservatively as not-fresh so we don't overwrite
-	// potentially-populated state on a read hiccup.
-	if err != nil && !errors.Is(err, store.ErrNotFound) {
-		return false
+	for _, slug := range []string{"chief-of-staff", agent.KivaliDeveloperSlug} {
+		hist, err := s.Store.ReadChatHistory(slug)
+		if err == nil && len(hist) > 0 {
+			return false
+		}
+		// ErrNotFound (no chat file yet) reads as fresh. Any other error
+		// we treat conservatively as not-fresh so we don't overwrite
+		// potentially-populated state on a read hiccup.
+		if err != nil && !errors.Is(err, store.ErrNotFound) {
+			return false
+		}
 	}
 	return true
 }

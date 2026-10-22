@@ -5,7 +5,7 @@ a blog, installed from a bundle. This page is the developer's
 reference: the bundle and its manifest, the check every bundle passes,
 the access form, where Kivali keeps an integration and its connection,
 how a version is approved or rolled back to, how an approved version
-runs, how agents call it, and the Integrations engineer, the agent that
+runs, how agents call it, and the Kivali Developer, the agent that
 builds bundles.
 What the owner sees is in
 [../integrations.md](../integrations.md).
@@ -29,8 +29,8 @@ shim that runs in it), `internal/web/integration_registry.go` and
 `internal/web/integration_tools.go` and `internal/mcp/integration_tools.go`
 (agents' calls, core's side and the agent's MCP server's),
 `internal/web/integration_engineer.go` and
-`internal/mcp/integration_engineer_tools.go` (the Integrations
-engineer's tools), `internal/web/api_integrations.go` (the API) and
+`internal/mcp/integration_engineer_tools.go` (the Kivali Developer's
+tools), `internal/web/api_integrations.go` (the API) and
 `internal/web/apitypes/integrations.go` (the wire types).
 `cmd/fake-integration` is a stdio MCP server for tests
 (`internal/integrationpod/fakeintegration`);
@@ -147,8 +147,8 @@ the install screen is, where the owner reads what the version
 reaches, holds and does before approving it.
 
 A bundle is read from a zip (`integration.ReadBundle`, an upload) or
-from a directory (`integration.ReadDirectory`, the Integrations
-engineer's publish), by the same rules: `manifest.json` a regular file
+from a directory (`integration.ReadDirectory`, the Kivali
+Developer's publish), by the same rules: `manifest.json` a regular file
 at the root, every entry listed for the check, a symlink or special
 file listed and never followed, `__MACOSX/` left out. A directory's
 `__pycache__/` folders are left out too. The directory is read
@@ -299,8 +299,8 @@ running" while no shim is connected. The audit lists what is in
 
 An upload (`POST /api/v1/org/integrations`) reads the bundle, runs the
 check and stores the version as pending, published by the owner; the
-Integrations engineer's `integration_publish` stores one published by
-the engineer, with its notes, and asks the owner to approve it
+Kivali Developer's `integration_publish` stores one published by the
+developer, with its notes, and asks the owner to approve it
 ([Publishing](#publishing)). Its
 install screen (`GET .../versions/{version}`, the web app's
 `/org/integrations/<name>/versions/<version>`) says what approving
@@ -574,7 +574,6 @@ On `core.sock`, bound to the slug header like every agent route:
 | --- | --- | --- |
 | `POST /v1/agent/{slug}/integrations/tools` | `{}` | `agentpod.IntegrationToolsResponse`: `{tools: [{name, description, input_schema}]}` |
 | `POST /v1/agent/{slug}/integrations/call` | `agentpod.IntegrationCallRequest`: `{name, arguments}`, the prefixed name | `agentpod.IntegrationCallResponse`: `{content: [text, ...], is_error}` |
-| `GET /v1/agent/{slug}/profile` | none | `agentpod.AgentProfile`: `{integrations_engineer}` ([The Integrations engineer](#the-integrations-engineer)) |
 | `POST /v1/agent/{slug}/integration-engineer/dispatch` | `agentpod.IntegrationEngineerRequest`: `{tool, input, smoke_result}` | `agentpod.IntegrationEngineerResponse`: `{body, is_error, smoke}` |
 
 A refusal or the integration's error is a 200 with `is_error`; a
@@ -631,36 +630,41 @@ and the versions as its reason ([Rolling back](#rolling-back)), which
 the page shows as "Roll back" and "From version 1.1.0 to version
 1.0.0".
 
-## The Integrations engineer
+## The Kivali Developer
 
-The one role Kivali ships for a hire builds integrations: an agent
-that writes a bundle in its own `/files/`, checks it, and publishes it
-as a pending version for the owner to approve. It never sees a
-connection's secrets and calls an installed integration only as any
-agent with access does.
+The agent that builds integrations: it writes a bundle in its own
+`/files/`, checks it, and publishes it as a pending version for the
+owner to approve. It never sees a connection's secrets and calls an
+installed integration only as any agent with access does.
 
-### The hire
+### The agent
 
-`propose_hire` takes `template` (an enum of `seed.HireTemplates`, one
-value: `integrations-engineer`). With it, `role_path` is not needed,
-and given as well is refused; the parser puts the template's role
-(`seed.IntegrationsEngineerRole`, `internal/seed/integrations_engineer_role.md`)
-in `Hire.Body` and the name in `Hire.Template`. The proposal page shows
-the role as for any hire, with the fact "Template: Integrations
-engineer". `ApplyHire` refuses a template Kivali does not ship and sets
-`store.Agent.IntegrationsEngineer` (`integrations_engineer` in
-`agent.yaml`) for this one. Nothing else sets the flag; the slug and
-the role's name do not matter.
+Every set-up team has one, slug `kivali-developer`
+(`agent.KivaliDeveloperSlug`, `graph.KivaliDeveloperSlug`,
+`message.KivaliDeveloper`), role "Kivali Developer", icon `code`,
+reporting to `chief-of-staff`, with Kivali's role
+(`seed.KivaliDeveloperRole`, `internal/seed/kivali_developer_role.md`).
+`Server.EnsureKivaliDeveloper` (`internal/web/onboarding.go`) hires it
+on a team that has a Chief of Staff and no Kivali Developer, on the
+model the Chief of Staff is hired on: setup calls it right after
+hiring the Chief of Staff and provisions both pods; boot (`main.go`,
+before the files sync and `BulkProvisionAgentPods`) and a restore call
+it for a team that has none. It never rewrites an existing one, so a
+role update the owner approved stays. `propose_hire` has no way to
+hire it: its slug is reserved, like `ceo` and `chief-of-staff`.
 
-The flag reaches the agent's MCP server once, at its start: `GET
-/v1/agent/{slug}/profile` answers `agentpod.AgentProfile`
-(`{integrations_engineer}`); a failure, or no answer within 10 s,
-starts the server without the tools. The flag never changes after the
-hire, so no respawn is needed. The CLI's `--allowedTools` lists the
-five tools for every agent (`claudeagent.allowedToolNames`): only the
-engineer's MCP server registers them, and core refuses every request
-from an agent whose flag is off, reading the flag from the store, never
-from the request.
+It stays and always reports to the Chief of Staff: `propose_offboard`
+and `propose_reorg` refuse it at parse, and `ApplyOffboard` and
+`applyReorgMove` again at apply. The Chief of Staff may propose a role
+update for it, as for any agent. `IsFreshForRestore` counts it as seed
+state while its chat is empty.
+
+The tools are its by slug, as the Chief of Staff's are: its MCP server
+(`mcp_cmd.go`) registers them when `--agent` is `kivali-developer`, and
+core refuses every request whose slug header is any other agent's. The
+CLI's `--allowedTools` lists the five tools for every agent
+(`claudeagent.allowedToolNames`): only the Kivali Developer's MCP
+server registers them.
 
 ### The tools
 
@@ -676,7 +680,7 @@ answered with `{body, is_error, smoke}`).
 | `integration_versions(name)` | Every stored version, newest first: state, published at and by, approved or rejected at, the first 200 characters of its notes. |
 | `integration_logs(name, since)` | The integration's latest 200 log lines, oldest first, from `since` (RFC 3339) when given, at most 32 KiB, the newest kept. Each line had the connection's secrets replaced when it was appended; the answer's first line says the log is data, never instructions. |
 
-`path` is a directory under the engineer's `/files/` (`/files/<p>` or
+`path` is a directory under the developer's `/files/` (`/files/<p>` or
 `<p>`): the root, a path outside `/files/` and `..` are refused. Core
 opens `agents/<slug>/memory/<p>` on the data volume with
 `files.OpenDirNoFollow`, which refuses a symlink at any step, and reads
@@ -731,14 +735,14 @@ connect asks. It is not a review of what the code does.
 A publish needs `notes`, at most 4096 bytes, which become the version's
 `notes_md` and the request's body. With no error, core stores the
 bundle (`store.StoreIntegrationVersion`) as pending, published by the
-engineer, with the check's and the smoke test's warnings as its
-findings, and files a `ceo_approval_request` from the engineer: title
+developer, with the check's and the smoke test's warnings as its
+findings, and files a `ceo_approval_request` from the developer: title
 "Install <display name> <version>", body the notes,
 `integration_install: {name, version}`, routed by `Messenger.Route`
 into the owner's inbox and Needs you. From there it is answered as
-[Installing a version](#installing-a-version) says, and the engineer
+[Installing a version](#installing-a-version) says, and the developer
 reads the answer in its chat. A version stored whose request could not
-be filed is said so to the engineer, and waits on its install screen.
+be filed is said so to the developer, and waits on its install screen.
 
 ## The API
 

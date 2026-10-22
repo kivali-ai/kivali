@@ -54,31 +54,31 @@ func (stubShell) SyncSkills(context.Context, string) error { return nil }
 // It builds the real toolkit with every optional tool switched on and
 // the real request an agent sends (agent.Context.BuildRequest), and
 // checks each registered tool is allowed. A chief of staff, an
-// ordinary agent and the Integrations engineer are checked, since each
-// gets a different tool set.
+// ordinary agent and the Kivali Developer are checked, since each gets
+// a different tool set.
 func TestAllowedToolNamesCoverTheFullAgentToolkit(t *testing.T) {
 	be := &files.Backend{Root: t.TempDir()}
 	sock := filepath.Join(t.TempDir(), "core.sock") // never dialled: only names are read
 	for _, tc := range []struct {
-		slug     string
-		cos      bool
-		engineer bool
+		slug      string
+		cos       bool
+		developer bool
 	}{
 		{slug: "chief-of-staff", cos: true},
 		{slug: "alice", cos: false},
-		{slug: "integrations-engineer", engineer: true},
+		{slug: "kivali-developer", developer: true},
 	} {
 		tk := mcp.FullAgentToolkit(mcp.FullAgentDeps{
-			Client:               agentpod.NewClient(sock, tc.slug),
-			IsChiefOfStaff:       tc.cos,
-			Files:                mcp.NewLocalFilesDispatcher(be),
-			ShellExec:            stubShell{},
-			Subagent:             stubSubagentBackend{},
-			Provider:             provider.MockProvider{},
-			IntegrationsEngineer: tc.engineer,
+			Client:            agentpod.NewClient(sock, tc.slug),
+			IsChiefOfStaff:    tc.cos,
+			Files:             mcp.NewLocalFilesDispatcher(be),
+			ShellExec:         stubShell{},
+			Subagent:          stubSubagentBackend{},
+			Provider:          provider.MockProvider{},
+			IsKivaliDeveloper: tc.developer,
 		})
-		if tc.engineer && !slices.ContainsFunc(tk.Tools, func(t mcp.Tool) bool { return t.Name == mcp.IntegrationPublishToolName }) {
-			t.Fatal("the engineer's toolkit has no integration_publish: the fixture is not the engineer's")
+		if tc.developer && !slices.ContainsFunc(tk.Tools, func(t mcp.Tool) bool { return t.Name == mcp.IntegrationPublishToolName }) {
+			t.Fatal("the Kivali Developer's toolkit has no integration_publish: the fixture is not the developer's")
 		}
 		req := agent.Context{
 			Agent:                  store.Agent{Slug: tc.slug},
@@ -112,13 +112,13 @@ func TestKivaliOSNamesEveryRegisteredTool(t *testing.T) {
 	be := &files.Backend{Root: t.TempDir()}
 	sock := filepath.Join(t.TempDir(), "core.sock")
 	tk := mcp.FullAgentToolkit(mcp.FullAgentDeps{
-		Client:               agentpod.NewClient(sock, "chief-of-staff"),
-		IsChiefOfStaff:       true,
-		Files:                mcp.NewLocalFilesDispatcher(be),
-		ShellExec:            stubShell{},
-		Subagent:             stubSubagentBackend{},
-		Provider:             provider.MockProvider{},
-		IntegrationsEngineer: true,
+		Client:            agentpod.NewClient(sock, "chief-of-staff"),
+		IsChiefOfStaff:    true,
+		Files:             mcp.NewLocalFilesDispatcher(be),
+		ShellExec:         stubShell{},
+		Subagent:          stubSubagentBackend{},
+		Provider:          provider.MockProvider{},
+		IsKivaliDeveloper: true,
 	})
 	have := map[string]bool{}
 	for _, tool := range tk.Tools {
@@ -147,8 +147,8 @@ func TestKivaliOSNamesEveryRegisteredTool(t *testing.T) {
 	}
 	// Described elsewhere, on purpose: read_agent_role is the Chief of
 	// Staff's own workflow, in cos_role.md, and the integration_* tools
-	// the Integrations engineer's, in its role
-	// (internal/seed/integrations_engineer_role.md).
+	// the Kivali Developer's, in its role
+	// (internal/seed/kivali_developer_role.md).
 	elsewhere := map[string]bool{"read_agent_role": true}
 	for _, name := range mcp.IntegrationEngineerToolNames {
 		elsewhere[name] = true

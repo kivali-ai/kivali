@@ -8,12 +8,14 @@ import (
 	"time"
 )
 
-// CEOSlug and ChiefOfStaffSlug are the two fixed agents. Declared here
-// rather than imported so the package stays free of store and message
-// dependencies; the values are the wire format and cannot drift.
+// CEOSlug, ChiefOfStaffSlug and KivaliDeveloperSlug are the three
+// fixed agents. Declared here rather than imported so the package stays
+// free of store and message dependencies; the values are the wire
+// format and cannot drift.
 const (
-	CEOSlug          = "ceo"
-	ChiefOfStaffSlug = "chief-of-staff"
+	CEOSlug             = "ceo"
+	ChiefOfStaffSlug    = "chief-of-staff"
+	KivaliDeveloperSlug = "kivali-developer"
 )
 
 // bindingKindMaxLines is the body length above which a requirement or

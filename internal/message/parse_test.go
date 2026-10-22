@@ -10,7 +10,6 @@ import (
 
 	"github.com/kivali-ai/kivali/internal/provider"
 	"github.com/kivali-ai/kivali/internal/roleicon"
-	"github.com/kivali-ai/kivali/internal/seed"
 	"github.com/kivali-ai/kivali/internal/store"
 )
 
@@ -264,58 +263,41 @@ func TestParseProposeHireProducesApprovalRequestWithHire(t *testing.T) {
 	}
 }
 
-// Why this test exists: the Integrations engineer is hired from a role
-// Kivali ships, so the Chief of Staff names the template and writes no
-// role, and the proposal carries the template's text for the owner to
-// read. A template with a role_path too is refused, since the Chief of
-// Staff would believe its draft was used; an unknown template is
-// refused by name, rather than hired as an agent with no role; and a
-// hire with neither still needs its role_path.
-func TestParseProposeHireFromATemplate(t *testing.T) {
+// Why this test exists: every hire's role is one the Chief of Staff
+// drafted and the owner reads in the proposal. The one role Kivali
+// ships is the Kivali Developer's, which setup hires itself, so
+// propose_hire takes no role from Kivali: a call naming a template is
+// refused as a field the tool does not have, and the schema requires
+// role_path, so a model is never told it may leave the role out.
+func TestParseProposeHireNeedsADraftedRole(t *testing.T) {
 	in := map[string]any{
-		"title":      "Hire: Integrations engineer",
-		"slug":       "integrations-engineer",
-		"role":       "Integrations engineer",
-		"icon":       "user",
+		"title":      "Hire: Web Designer",
+		"slug":       "web-designer",
+		"role":       "Web Designer",
+		"icon":       "palette",
 		"reports_to": "chief-of-staff",
-		"template":   "integrations-engineer",
-		"rationale":  "The owner wants the CRM connected.",
+		"template":   "web-designer",
 	}
-	res, err := Parse(toolUse(ToolProposeHire, in), fixedCtx())
-	if err != nil {
-		t.Fatalf("Parse: %v", err)
-	}
-	h := res.Message.Hire
-	if h == nil || h.Template != "integrations-engineer" || h.Body != seed.IntegrationsEngineerRole {
-		t.Fatalf("hire = %+v", h)
-	}
-
-	in["role_path"] = "/files/artifacts/private/role.md"
-	ctx := ctxWithFiles(map[string]string{"/files/artifacts/private/role.md": "# Mine\n"})
-	if _, err := Parse(toolUse(ToolProposeHire, in), ctx); err == nil || !strings.Contains(err.Error(), "role_path or template, not both") {
-		t.Errorf("template and role_path = %v", err)
-	}
-	delete(in, "role_path")
-	in["template"] = "web-designer"
-	if _, err := Parse(toolUse(ToolProposeHire, in), fixedCtx()); err == nil || !strings.Contains(err.Error(), `template "web-designer" is not a role Kivali ships; the templates are integrations-engineer`) {
-		t.Errorf("unknown template = %v", err)
+	if _, err := Parse(toolUse(ToolProposeHire, in), fixedCtx()); err == nil || !strings.Contains(err.Error(), "template") {
+		t.Errorf("a template = %v", err)
 	}
 	delete(in, "template")
 	if _, err := Parse(toolUse(ToolProposeHire, in), fixedCtx()); err == nil || !strings.Contains(err.Error(), "role_path is required") {
-		t.Errorf("neither = %v", err)
+		t.Errorf("no role_path = %v", err)
 	}
 
 	var schema struct {
-		Properties map[string]struct {
-			Enum []string `json:"enum"`
-		} `json:"properties"`
-		Required []string `json:"required"`
+		Properties map[string]json.RawMessage `json:"properties"`
+		Required   []string                   `json:"required"`
 	}
 	if err := json.Unmarshal(proposeHireTool.Schema, &schema); err != nil {
 		t.Fatal(err)
 	}
-	if slices.Contains(schema.Required, "role_path") || !slices.Equal(schema.Properties["template"].Enum, []string{"integrations-engineer"}) {
-		t.Errorf("schema: required %v, template %+v", schema.Required, schema.Properties["template"])
+	if !slices.Contains(schema.Required, "role_path") {
+		t.Errorf("schema: required %v has no role_path", schema.Required)
+	}
+	if _, ok := schema.Properties["template"]; ok {
+		t.Error("schema: propose_hire offers a template")
 	}
 }
 
@@ -353,8 +335,12 @@ func TestParseProposeHireRefusesNonChiefOfStaff(t *testing.T) {
 	}
 }
 
+// Why this test exists: the owner, the Chief of Staff and the Kivali
+// Developer are the agents Kivali itself puts on a team. A hire into
+// one of their slugs would collide with the agent already there, or,
+// for the Kivali Developer, with the one boot hires.
 func TestParseProposeHireRefusesReservedSlugs(t *testing.T) {
-	for _, slug := range []string{CEO, ChiefOfStaff} {
+	for _, slug := range []string{CEO, ChiefOfStaff, KivaliDeveloper} {
 		block := toolUse(ToolProposeHire, map[string]any{
 			"title":      "Hire: shadow",
 			"slug":       slug,
@@ -447,11 +433,13 @@ func TestParseProposeOffboardRefusesNonChiefOfStaff(t *testing.T) {
 	}
 }
 
-// The two slugs that cannot be offboarded. CoS proposing its own
+// The slugs that cannot be offboarded. CoS proposing its own
 // offboard is the interesting one — it would leave the org with
-// no way to propose anything, including undoing it.
+// no way to propose anything, including undoing it. The Kivali
+// Developer stays with the team as the Chief of Staff does: offboarding
+// it would leave no agent able to build an integration.
 func TestParseProposeOffboardRefusesLoadBearingSlugs(t *testing.T) {
-	for _, slug := range []string{CEO, ChiefOfStaff} {
+	for _, slug := range []string{CEO, ChiefOfStaff, KivaliDeveloper} {
 		block := toolUse(ToolProposeOffboard, map[string]any{
 			"title": "Offboard",
 			"slug":  slug,
@@ -834,6 +822,11 @@ func TestParseProposeReorgValidation(t *testing.T) {
 		"moving ceo": {
 			"title": "x",
 			"moves": []any{map[string]any{"slug": "ceo", "new_manager": "alice"}},
+		},
+		// The Kivali Developer always reports to the Chief of Staff.
+		"moving the kivali developer": {
+			"title": "x",
+			"moves": []any{map[string]any{"slug": "kivali-developer", "new_manager": "alice"}},
 		},
 		"duplicate target": {
 			"title": "x",

@@ -80,6 +80,11 @@ const CEO = "ceo"
 // org-mutating propose_* proposals. Every parsePropose* gates on it.
 const ChiefOfStaff = "chief-of-staff"
 
+// KivaliDeveloper is the slug of the Kivali Developer, the agent Kivali
+// hires under the Chief of Staff. Its slug is reserved, and no proposal
+// offboards it or moves it to another manager.
+const KivaliDeveloper = "kivali-developer"
+
 // ToolDef bundles everything needed to expose one publish tool to Claude
 // and to parse its output back into a store.Message.
 type ToolDef struct {

@@ -21,12 +21,11 @@ import (
 	"github.com/kivali-ai/kivali/internal/integration"
 	"github.com/kivali-ai/kivali/internal/integrationpod"
 	"github.com/kivali-ai/kivali/internal/mcp"
-	"github.com/kivali-ai/kivali/internal/seed"
 	"github.com/kivali-ai/kivali/internal/store"
 	"github.com/kivali-ai/kivali/internal/web/apitypes"
 )
 
-const engineerSlug = "integrations-engineer"
+const engineerSlug = agent.KivaliDeveloperSlug
 
 // echoTestdata is the echo bundle every slice's tests run.
 var echoTestdata = filepath.Join("..", "integration", "testdata", "echo")
@@ -40,19 +39,17 @@ func havePython() bool {
 	return true
 }
 
-// hireEngineer hires the Integrations engineer from its template, as
-// an approved propose_hire does, and returns its /files/ on the data
-// volume.
+// hireEngineer hires the Kivali Developer under the Chief of Staff, as
+// setup does, and returns its /files/ on the data volume.
 func hireEngineer(t *testing.T, srv *Server) string {
 	t.Helper()
-	if srv.Runtime == nil {
-		srv.Runtime = agent.NewRuntime(srv.Store, agent.RuntimeDefaults{AgentModel: "mock-large-0"})
+	if _, err := srv.Store.GetAgent(agent.ChiefOfStaffSlug); err != nil {
+		if err := srv.Store.CreateAgent(store.Agent{Slug: agent.ChiefOfStaffSlug, Role: "Chief of Staff", ReportsTo: agent.CEOSlug}, "# role\n"); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if _, err := srv.Runtime.ApplyHire(store.Hire{
-		Slug: engineerSlug, Role: "Integrations engineer", ReportsTo: agent.CEOSlug,
-		Body: seed.IntegrationsEngineerRole, Template: seed.IntegrationsEngineerTemplate,
-	}); err != nil {
-		t.Fatal(err)
+	if created, err := srv.EnsureKivaliDeveloper(); err != nil || !created {
+		t.Fatalf("EnsureKivaliDeveloper = %v, %v", created, err)
 	}
 	return files.StorageRoot(filepath.Join(srv.Store.Root(), "agents", engineerSlug))
 }
@@ -155,9 +152,9 @@ func pythonIntegrationAnswer(t *testing.T, dir string, env ...string) shimAnswer
 	}
 }
 
-// Why this test exists: it is the whole path the Integrations engineer
-// exists for, on the real core.sock and the engineer's real MCP tools.
-// The engineer, hired from its template, validates the echo bundle in
+// Why this test exists: it is the whole path the Kivali Developer
+// exists for, on the real core.sock and the developer's real MCP tools.
+// The developer, hired as setup hires it, validates the echo bundle in
 // its own /files/ (the smoke test starting the real Python server in a
 // local shell when the host has python3) and publishes it; the version
 // is pending, published by the engineer with its notes, and the owner
@@ -259,22 +256,14 @@ func TestIntegrationsEngineerBuildsAndTheOwnerInstalls(t *testing.T) {
 // Why this test exists: the integration_* tools read any directory of
 // the caller's tree and store what they read as a version the owner is
 // asked to install, so who may call them is core's to decide, from the
-// store, on every call. An agent that is not the engineer is refused
-// whatever its MCP server registered, its profile says so, and the
-// slug in the path is the one the header binds. Without this, any agent
-// could publish a bundle into the owner's Needs you.
+// slug, on every call. An agent that is not the Kivali Developer is
+// refused whatever its MCP server registered, and the slug in the path
+// is the one the header binds. Without this, any agent could publish a
+// bundle into the owner's Needs you.
 func TestIntegrationEngineerToolsAreTheEngineersOnly(t *testing.T) {
 	srv, _ := newTurnServer(t)
 	intTeam(t, srv, "dana")
 	hireEngineer(t, srv)
-	sock := serveCoreUDS(t, srv)
-	ctx := context.Background()
-	if p, err := agentpod.NewClient(sock, engineerSlug).Profile(ctx); err != nil || !p.IntegrationsEngineer {
-		t.Errorf("engineer's profile = %+v, %v", p, err)
-	}
-	if p, err := agentpod.NewClient(sock, "dana").Profile(ctx); err != nil || p.IntegrationsEngineer {
-		t.Errorf("dana's profile = %+v, %v", p, err)
-	}
 
 	dana := engineerTools(t, srv, "dana", nil)
 	for name, args := range map[string]string{

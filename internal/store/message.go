@@ -181,10 +181,6 @@ type Hire struct {
 	ReportsTo          string `yaml:"reports_to"`
 	Body               string `yaml:"body,omitempty"`
 	InitialAgentMemory string `yaml:"initial_agent_memory,omitempty"`
-	// Template names the role Kivali ships that the hire takes
-	// (seed.HireTemplate), whose text Body then holds; empty for a role
-	// the Chief of Staff wrote.
-	Template string `yaml:"template,omitempty"`
 }
 
 // RoleUpdate is the embedded proposal on a `ceo_approval_request` of

@@ -1,7 +1,6 @@
 // Package seed holds the default content Kivali ships with — the team
-// handbook for each kind of team, the Chief of Staff role template and
-// the Integrations engineer's role, the one role a hire can take from
-// Kivali.
+// handbook for each kind of team and the roles of the two agents
+// Kivali hires itself: the Chief of Staff and the Kivali Developer.
 //
 // The handbook is the team's: its About, Values, Communicating and
 // Working together sections (internal/handbook holds the shape). How
@@ -87,31 +86,12 @@ var ChiefOfStaffRole string
 //go:embed handbook_from_files.md
 var HandbookFromFilesMessage string
 
-// IntegrationsEngineerRole is the Integrations engineer's role: the
-// one role Kivali ships for a hire, which builds the integrations that
-// connect agents to outside services. The Chief of Staff hires it with
-// propose_hire's template (IntegrationsEngineerTemplate) and writes no
-// role of its own; ApplyHire marks the agent it creates as the
-// engineer, which is what gives it the integration_* tools.
-// Edit internal/seed/integrations_engineer_role.md to change it.
+// KivaliDeveloperRole is the Kivali Developer's role: the agent Kivali
+// hires under the Chief of Staff with the team, which builds the
+// integrations that connect agents to outside services. Setup writes
+// it as the agent's role.md, and boot does for a team that has a Chief
+// of Staff but no Kivali Developer.
+// Edit internal/seed/kivali_developer_role.md to change it.
 //
-//go:embed integrations_engineer_role.md
-var IntegrationsEngineerRole string
-
-// IntegrationsEngineerTemplate is the template propose_hire names for
-// the Integrations engineer.
-const IntegrationsEngineerTemplate = "integrations-engineer"
-
-// HireTemplates is every template a hire can name, for propose_hire's
-// schema.
-var HireTemplates = []string{IntegrationsEngineerTemplate}
-
-// HireTemplate is the role a hire template names: its title in words
-// for the owner and the role.md the agent gets. ok is false for a name
-// Kivali does not ship.
-func HireTemplate(name string) (title, role string, ok bool) {
-	if name == IntegrationsEngineerTemplate {
-		return "Integrations engineer", IntegrationsEngineerRole, true
-	}
-	return "", "", false
-}
+//go:embed kivali_developer_role.md
+var KivaliDeveloperRole string

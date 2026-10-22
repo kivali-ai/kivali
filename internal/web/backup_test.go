@@ -305,6 +305,33 @@ func TestIsFreshForRestore(t *testing.T) {
 	}
 }
 
+// Why this test exists: setup hires the Kivali Developer with the Chief
+// of Staff, so a team just set up has three agents. Counting the
+// developer as an extra agent would take restore away from every new
+// team; ignoring its chat would let a restore overwrite a conversation
+// the owner had with it.
+func TestIsFreshForRestoreWithTheKivaliDeveloper(t *testing.T) {
+	srv := newTestServer(t)
+	for _, a := range []store.Agent{
+		{Slug: "ceo", Role: "CEO"},
+		{Slug: "chief-of-staff", Role: "Chief of Staff", ReportsTo: "ceo"},
+	} {
+		if err := srv.Store.CreateAgent(a, "k"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := srv.EnsureKivaliDeveloper(); err != nil {
+		t.Fatal(err)
+	}
+	if !srv.IsFreshForRestore() {
+		t.Error("a team just set up, Kivali Developer and all, should be fresh")
+	}
+	_ = srv.Store.AppendChatMessage("kivali-developer", store.ChatMessage{Role: store.RoleReceived, Content: "hi"})
+	if srv.IsFreshForRestore() {
+		t.Error("a Kivali Developer with chat history should NOT be fresh")
+	}
+}
+
 func TestIsFreshForRestoreRejectsExtraAgents(t *testing.T) {
 	srv := newTestServer(t)
 	if err := srv.Store.CreateAgent(store.Agent{Slug: "ceo", Role: "CEO"}, ""); err != nil {
@@ -405,6 +432,11 @@ func TestRestoreRejectsTraversalEntry(t *testing.T) {
 func TestRestoreCarriesGraphAndAssignments(t *testing.T) {
 	src := e2eServer(t)
 	if err := src.Store.CreateAgent(store.Agent{Slug: "alice", Role: "Analyst", ReportsTo: "chief-of-staff"}, "# role\n"); err != nil {
+		t.Fatal(err)
+	}
+	// A current team has its Kivali Developer, so the restore has no
+	// one to hire and the org it restores is the one backed up.
+	if _, err := src.EnsureKivaliDeveloper(); err != nil {
 		t.Fatal(err)
 	}
 	ctx := context.Background()

@@ -12,15 +12,14 @@ An integration is installed one **version** at a time. Nothing in a version runs
 
 ## Have an integration built
 
-You do not need a bundle from anyone else: an agent on your team can build one.
+You do not need a bundle from anyone else: every team has a **Kivali Developer**, an agent that builds them. Kivali hires it with the team, under your Chief of Staff, and it stays: it cannot be let go or moved to another manager.
 
-1. Ask your Chief of Staff to hire the **Integrations engineer**, the one role Kivali ships. Its **Hire** proposal shows the role in full and says **Template: Integrations engineer**. Approve it as you would any hire.
-2. Ask the engineer for the integration: the service, what your agents should be able to do in it, and what you want to limit agent by agent, such as which blogs an agent may write in or whether it may publish.
-3. The engineer reads the service's documentation, writes the integration, and tests it against a stand-in for the service it writes itself, never against your account: it never sees your connection's secrets. Before it publishes, it checks the bundle by the rules an install checks it by, and starts it with no network to see that it answers.
-4. When it publishes a version, a request arrives in **Needs you**: **Install** and the integration's name and version, with the engineer's notes on what it does, every host it reaches, each secret it asks for and anything it can change or delete. **Review** opens the version's [install screen](#install-an-integration), which shows the notes beside everything approving lets in. Approve or reject it there or in Needs you; the engineer hears your answer in its chat.
-5. [Connect it](#connect-it), choose **Test connection**, and [give agents access](#give-agents-access). Tell the engineer what the test said. If it failed, the engineer reads the integration's [log](#its-log) and publishes a fixed version, which reaches you the same way.
+1. Ask the Kivali Developer for the integration, in its chat or through your Chief of Staff: the service, what your agents should be able to do in it, and what you want to limit agent by agent, such as which blogs an agent may write in or whether it may publish.
+2. The Kivali Developer reads the service's documentation, writes the integration, and tests it against a stand-in for the service it writes itself, never against your account: it never sees your connection's secrets. Before it publishes, it checks the bundle by the rules an install checks it by, and starts it with no network to see that it answers.
+3. When it publishes a version, a request arrives in **Needs you**: **Install** and the integration's name and version, with the Kivali Developer's notes on what it does, every host it reaches, each secret it asks for and anything it can change or delete. **Review** opens the version's [install screen](#install-an-integration), which shows the notes beside everything approving lets in. Approve or reject it there or in Needs you; the Kivali Developer hears your answer in its chat.
+4. [Connect it](#connect-it), choose **Test connection**, and [give agents access](#give-agents-access). Tell the Kivali Developer what the test said. If it failed, the Kivali Developer reads the integration's [log](#its-log) and publishes a fixed version, which reaches you the same way.
 
-The engineer uses an integration only if you give it access, like any agent. Its own commands reach the hosts your team allows and the ones you add on its **Security** view, so if it needs to download a package, it asks you for that host.
+The Kivali Developer uses an integration only if you give it access, like any agent. Its own commands reach the hosts your team allows and the ones you add on its **Security** view, so if it needs to download a package, it asks you for that host.
 
 ## Install an integration
 

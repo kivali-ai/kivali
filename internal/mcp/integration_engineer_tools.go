@@ -9,13 +9,12 @@ import (
 	"github.com/kivali-ai/kivali/internal/agentpod"
 )
 
-// The Integrations engineer's tools: the agent hired from the
-// Integrations engineer's template has them, and no other agent does.
+// The Kivali Developer's tools: it has them, and no other agent does.
 // Each is a relay to core, which checks on every call that the caller
-// is the engineer (internal/web/integration_engineer.go).
+// is the Kivali Developer (internal/web/integration_engineer.go).
 // integration_validate and integration_publish read the bundle from
-// the engineer's own /files/ tree on core; core then hands back the
-// server's smoke test, which runs here, in the engineer's shell, and
+// the developer's own /files/ tree on core; core then hands back the
+// server's smoke test, which runs here, in the developer's shell, and
 // the call goes to core again with what the shell gave back.
 const (
 	IntegrationValidateToolName = "integration_validate"

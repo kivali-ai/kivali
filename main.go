@@ -697,6 +697,14 @@ func main() {
 		}
 	}()
 
+	// The Kivali Developer, for a team set up without one. Before the
+	// files sync and the pods below, which take it in with the others.
+	if created, err := srv.EnsureKivaliDeveloper(); err != nil {
+		log.Printf("hire the Kivali Developer: %v", err)
+	} else if created {
+		log.Printf("hired the Kivali Developer")
+	}
+
 	// Hydrate every active agent's /files/ view so the file_* tools
 	// have project/ and past-chats/ populated on first use. Before the
 	// pods below: they mount subPaths of these trees, and kubelet makes
