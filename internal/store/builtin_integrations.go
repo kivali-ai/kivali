@@ -121,6 +121,18 @@ func (s *FSStore) installBuiltinIntegration(m *integration.Manifest, at time.Tim
 			return err
 		}
 	}
+	// An earlier binary may have shipped this name and version as a
+	// bundle: a version of Go code holds none, and its install screen
+	// must not read as one that does.
+	if v.FileCount != 0 || v.BundleBytes != 0 || v.BundleDigest != "" {
+		v.Version, v.FileCount, v.BundleBytes, v.BundleDigest = m.Version, 0, 0, ""
+		if err := s.writeIntegrationVersion(m.Name, v); err != nil {
+			return err
+		}
+	}
+	if err := os.RemoveAll(filepath.Join(vdir, "bundle")); err != nil {
+		return err
+	}
 	if prev := it.CurrentVersion; prev != "" && prev != m.Version {
 		if pv, _, err := s.GetIntegrationVersion(m.Name, prev); err == nil && pv.State == IntegrationVersionApproved {
 			pv.State = IntegrationVersionSuperseded

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kivali-ai/kivali/internal/builtinintegrations/echotest"
 	"github.com/kivali-ai/kivali/internal/integration"
 	"github.com/kivali-ai/kivali/internal/integration/integrationtest"
 )
@@ -307,5 +308,32 @@ func TestShippedBundleRefusesTheOwnersMoves(t *testing.T) {
 	// such a record could never leave the team.
 	if err := s.RemoveStaleBuiltinIntegration("notes"); err != nil {
 		t.Errorf("remove a stale one: %v", err)
+	}
+}
+
+// Why this test exists: a later binary may carry as Go code a name and
+// version an earlier one shipped as a bundle. The version must then
+// hold no bundle: the install screen reads a stored bundle as a
+// shipped one, and would show a built-in of Go code with hosts and a
+// bundle size it does not have.
+func TestBuiltinInstallClearsABundleShippedUnderItsVersion(t *testing.T) {
+	s := mustStore(t)
+	echo := echotest.New()
+	if _, err := s.InstallShippedBundles(map[string]fs.FS{echotest.Name: shippedFS(t, echotest.Name, echo.Version, "print(1)\n")}, intNow); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.InstallBuiltinIntegrations([]*integration.Manifest{echo.Manifest()}, intNow); err != nil {
+		t.Fatal(err)
+	}
+	v, m, err := s.GetIntegrationVersion(echotest.Name, echo.Version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.FileCount != 0 || v.BundleBytes != 0 || v.BundleDigest != "" || m.Server.Type != "" {
+		t.Errorf("version = %+v, manifest server = %+v", v, m.Server)
+	}
+	dir, _ := s.IntegrationBundleDir(echotest.Name, echo.Version)
+	if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the bundle is still there: %v", err)
 	}
 }
