@@ -555,9 +555,16 @@ it does, it is not connected (the list, the page and an agent's tab);
 `reconnect_needed` stays what it is for any connection, the form's
 secrets missing. The page's `ConnectionState.sign_in`
 (`apitypes.ConnectionSignIn`) carries `ways` (the manifest's method
-first), `signed_in`, and while signed in `method`, `signed_in_at` and
+first, those this server signs in by: [Signing in](#signing-in)),
+`signed_in`, and while signed in `method`, `signed_in_at` and
 `expires_at`, or the `error`. The page draws "Signed in <when> · token
-refreshes <when>", or "Needs you to sign in again: <error>".
+refreshes <when>", or "Needs you to sign in again: <error>", and under
+the form a **Sign in** block: Sign in with a code (once the client id
+and secret are saved), the code and the service's page while a
+sign-in waits, Signed in with the connection test's words and Sign
+out, or a failed sign-in's words and Try again. The sign-in routes'
+shapes are `DeviceSignIn` and `SignInProgress` (`state`: `pending`,
+`done`, `failed`, `expired`; `error`).
 
 ### The credential path
 
@@ -624,17 +631,93 @@ credential is next answered. A caller that holds `lockIntegrations`
 (the proxy credential's registration) reads the connection as stored
 (`readStoredConnection`), with no token and no refresh.
 
+### Signing in
+
+The page signs a connection in through the routes in
+[The API](#the-api) (`internal/web/integration_signin_flows.go`), each
+in a singular form that acts on the integration's one connection, the
+oldest, and a plural one under `.../connections/{id}`. The page is
+offered the ways `ConnectionSignIn.ways` lists: the manifest's
+`Connection.Ways`, kept to those this server signs in by
+(`signInWaysOffered`, `device` for now; browser sign-in joins it once
+its routes are in place).
+
+A sign-in under way is a `signInFlow` in the server's memory
+(`Server.signInFlows`), never in the store:
+
+| Kept | What |
+| --- | --- |
+| Key | A random id (16 bytes, hex). |
+| Per connection | At most one: a new start cancels and forgets the one before. |
+| State | `pending`, then `done`, `failed` (the vendor's words) or `expired`. |
+| Life | Pending until its code expires: the vendor's `expires_in`, at most `signInFlowTTL` (ten minutes) on the server's clock, which is also the expiry the page is given. Kept `signInFlowTTL` once it ended, for the page to read, then forgotten. |
+| Ends early | Deleting the connection, disconnecting, removing the integration, switching it off and Sign out cancel its flows; a cancelled flow keeps nothing. |
+| After a restart | Gone. `GET .../sign-in` answers `expired` with words that say so, and the page offers Try again. |
+
+A device sign-in (`POST .../sign-in/device`):
+
+1. Under `lockIntegrations`, the route checks the integration
+   (approved, a sign-in connection, on, offering device sign-in), the
+   connection (it needs a sign-in: never signed in, its tokens gone, or
+   a refused refresh to mend) and that the client id (record) and
+   client secret (Secret) are stored.
+2. Outside the lock, `Engine.StartDevice` posts the client id and the
+   manifest's scopes to the device endpoint. The answer's expiry is cut
+   to ten minutes; the route registers the flow under the lock, once
+   the connection is found still there, and answers `DeviceSignIn`
+   (`user_code`, `verification_url`, `verification_url_complete` when
+   the vendor gives one, `expires_at`).
+3. A goroutine runs `Engine.PollDevice` with the flow's context on the
+   server's clock: the vendor's interval, five seconds more for good on
+   each `slow_down`, until the code expires.
+4. On approval (`finishSignIn`), under `lockIntegrations`, the tokens
+   go to the connection's Secret beside its other values (no refresh
+   token in the answer drops a stored one), and the record gets
+   `sign_in` (`method: device`, `signed_in_at`, `expires_at`, `scope`)
+   with any refused refresh's `error` gone, which clears the
+   [Needs you](#needs-you-sign-in-again) row, and the last connection
+   test cleared. The owner's audit gains `sign_in` (agent `ceo`,
+   allowed). `ConnectionChanged` restarts the bundle's server, which
+   asks `kivali/credential` again and starts with the token (a server
+   started while the connection needed a sign-in has empty values).
+   A flow cancelled meanwhile, or a connection gone, keeps nothing and
+   revokes the new tokens, best effort.
+5. When the manifest names `kivali.verify` and the integration runs,
+   the connection test runs (`testConnection`, what Test connection
+   runs) and its result is kept on the record, so the page names who
+   signed in. Then the flow is `done`.
+6. A refusal (`access_denied` and the other codes `PollDevice` ends
+   on) ends the flow `failed` with the vendor's words; `expired_token`
+   or the code's expiry ends it `expired`. Either appends an audit row
+   `sign_in`, not allowed, with the words.
+
+The page polls `GET .../sign-in` every three seconds while the tab is
+visible, and reads the page again once it says `done`.
+
+### Sign out
+
+`POST .../sign-out` cancels the connection's flow, removes
+`oauth_access_token` and `oauth_refresh_token` from its Secret (its
+fields, the client id and secret among them, stay), clears `sign_in`
+and the last connection test from the record, asks the vendor to
+revoke the tokens ([Revocation](#revocation)), appends the owner's
+audit row `sign_out`, restarts the bundle's server without the token,
+and answers the page. The connection then needs a sign-in, so the
+integration is not connected.
+
 ### Revocation
 
-Deleting a connection (`DELETE .../connections/{id}`), disconnecting
-(`DELETE .../connection`) and removing the integration ask the vendor
-to revoke each sign-in connection's tokens once its Secret is gone,
-when the manifest gives a revocation endpoint: the refresh token, then
-the access token, with the client's credentials, best effort within
-ten seconds. The tokens are collected under `lockIntegrations` and
-revoked once it is released, before the route answers, so a slow
-vendor holds up no other integration write. A failure is logged and
-the delete goes on.
+Signing out, deleting a connection (`DELETE .../connections/{id}`),
+disconnecting (`DELETE .../connection`) and removing the integration
+ask the vendor to revoke each sign-in connection's tokens once they
+are gone from its Secret, when the manifest gives a revocation
+endpoint: the refresh token, then the access token, with the client's
+credentials, best effort within ten seconds. The tokens are collected
+under `lockIntegrations` and revoked once it is released, before the
+route answers, so a slow vendor holds up no other integration write.
+A failure is logged and the sign-out or delete goes on. Deleting,
+disconnecting and removing also cancel the connection's sign-ins
+under way ([Signing in](#signing-in)).
 
 ### Needs you: sign in again
 
@@ -2061,12 +2144,15 @@ the owner's.
 | `POST .../versions/{version}/approve`, `.../reject` | `IntegrationVersion`; 409 when not pending, or for a built-in integration. |
 | `POST .../versions/{version}/rollback` | `IntegrationVersion`; 409 when not superseded, or for a built-in integration; 404 for a version not stored. |
 | `PUT .../connection` | `ConnectionWrite` in, `IntegrationPage` out: the one connection, the oldest, written or made; 409 while no version is approved. |
-| `DELETE .../connection` | `IntegrationPage`: every connection's Secret, scoped proxy credential and record, and every agent's access, removed. |
+| `DELETE .../connection` | `IntegrationPage`: every connection's Secret, scoped proxy credential and record, and every agent's access, removed, and their sign-ins under way cancelled. |
 | `POST .../connection/verify` | `IntegrationPage`, with the oldest connection's verified, verify message and verified at; 409 with no approved version, no connection, no `kivali.verify`, while the integration is not running, or for a built-in one this binary does not carry. |
 | `POST .../connections` | `ConnectionWrite` in, 201 `IntegrationPage`: a new connection; 409 while no version is approved, for an integration that takes one connection and has it ("<integration> takes one connection") or a label another connection has; 400 for a missing label where one is needed. |
 | `PUT .../connections/{id}` | `ConnectionWrite` in, `IntegrationPage` out: that connection written; a sensitive field left out keeps its value, an empty label keeps the label; 404 for an id that names none; 409 as for `POST`. |
 | `DELETE .../connections/{id}` | `IntegrationPage`: that connection's Secret, scoped proxy credential and record, and the access of every agent whose row names it, removed; the other connections and their access stay; 404 for an id that names none. |
 | `POST .../connections/{id}/verify` | `IntegrationPage`, with that connection's verified, verify message and verified at; 404 for an id that names none; 409 as for `.../connection/verify`. |
+| `POST .../connection/sign-in/device`, `.../connections/{id}/sign-in/device` | `DeviceSignIn`: a device sign-in started ([Signing in](#signing-in)); 409 for a token connection ("<integration> is not connected by signing in"), with no approved version, while switched off, without the client id and secret stored ("save the client id and secret first"), for a connection signed in ("the connection is signed in; sign out first") or a manifest that offers no device sign-in; 409 with the vendor's words when it refuses to start, 502 when it does not answer; 404 for an id that names none. |
+| `GET .../connection/sign-in`, `.../connections/{id}/sign-in` | `SignInProgress` of the connection's latest sign-in: `pending`, `done`, `failed` or `expired` with the words; `expired` with "Kivali has no sign-in under way for this connection, as after a restart; start it again" when there is none. |
+| `POST .../connection/sign-out`, `.../connections/{id}/sign-out` | `IntegrationPage`, the connection signed out ([Sign out](#sign-out)); 409 for a token connection. |
 | `PUT .../access/{slug}` | `AccessWrite` in, `IntegrationPage` out; 404 for an agent not on the team; 409 without a connection; 400 with the field's message, or "choose a connection" when `connection_id` is missing with more than one connection or names none. |
 | `DELETE .../access/{slug}` | `IntegrationPage`. |
 | `GET .../audit?limit=` | `IntegrationAudit`, newest first; limit 100 by default, at most 1000. |

@@ -67,6 +67,23 @@ Saving a connection restarts the integration with the new values, which takes a 
 
 **Disconnect** removes the connection and every agent's access, which was given for it.
 
+### Connect by signing in
+
+Some services hand out no token to paste: you connect them by signing in to the service and approving Kivali there. The integration's install screen and page say so, list the scopes it asks the service for, and show the service's own setup steps above the connection form.
+
+1. Register an app with the service, as its setup steps say (on GitHub, a GitHub App under Settings, Developer settings, with device flow turned on). The service gives the app a client id and a client secret.
+2. On the integration's page, paste the client id and the client secret into the connection form, with any other field it asks for, and choose **Save connection**. The client secret is kept like any other secret field and never shown again.
+3. Under **Sign in**, choose **Sign in with a code**. The page shows a code, a **Copy code** button, the service's page to enter it on (it opens in a new tab), and how long the code works, at most ten minutes.
+4. Enter the code on the service's page and approve the sign-in there. The integration's page notices within a few seconds and shows **Signed in**, with the account you signed in as when the integration has a connection test. The integration restarts with the sign-in, which takes a few seconds.
+
+If you turn the sign-in down on the service's page, or the code runs out before you approve it, the page says so and offers **Try again**. A sign-in waits in Kivali's memory only: if Kivali restarts meanwhile, start it again.
+
+Kivali keeps the sign-in fresh: the integration never sees the client secret or what Kivali renews the sign-in with, only a token that works at the moment of each call, which Kivali renews shortly before it expires. When the service no longer accepts the sign-in (you revoked the app, or changed its secret), the connection reads **Sign in again** with the service's reason, the integration reads not connected, and **Needs you** on Home lists it until you sign in again from its page.
+
+While a connection needs you to sign in, an agent's call through it is refused with words that say the connection needs you to sign in again and to ask you; nothing reaches the service.
+
+**Sign out** ends the sign-in: Kivali forgets the tokens and asks the service to revoke them where the service allows it. The client id and secret stay, so **Sign in with a code** works again at once. **Disconnect**, deleting the connection and removing the integration revoke the tokens the same way. Switching the integration off, signing out, disconnecting and removing it end a sign-in that is waiting for your approval.
+
 ### Several connections
 
 Most integrations take one connection. Some that ship with Kivali, such as [Git](#git), take several: one for each account or host you connect, such as GitHub and your company's GitLab. Their page has **Connections** in place of **Connection**: one card per connection, folded to its label (what you call it, such as "Company GitLab") and a line saying how many agents use it and since when it is connected, with a **Reconnect needed** or **Could not verify** badge when it needs you. Open a card to see its own fields, **Save connection** and **Delete**, and **Test connection** when the integration has a connection test; the others stay folded. **Add a connection** opens a blank form with a **Label** field. Labels are unique within the integration, whatever their capitals.
