@@ -425,8 +425,9 @@ type IntegrationLogs struct {
 // wrote.
 type IntegrationLogLine struct {
 	At time.Time `json:"at"`
-	// Level is the integration's own level (info, warning, error), or
-	// stderr for a line it wrote to its error output.
+	// Level is the integration's own level (info, warning, error, or
+	// debug for detail, such as apt-get's output while its software
+	// installs), or stderr for a line it wrote to its error output.
 	Level   string `json:"level"`
 	Message string `json:"message"`
 }

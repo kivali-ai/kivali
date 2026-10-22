@@ -190,12 +190,12 @@ func TestPodManifestSpecHash(t *testing.T) {
 	}
 }
 
-// A version that installs no software gets exactly the pod it got
-// before kivali.packages existed, pinned byte for byte in testdata: a
-// change here would replace every running integration's pod at the
+// A version that installs no software gets exactly the pod in
+// testdata/pod_without_packages.json, byte for byte: its integration
+// container runs as the images' user with every capability dropped.
+// A change here would replace every running integration's pod at the
 // next reconcile, and one that loosened the security context would let
-// a server run with more than it needs. The golden was written by the
-// manifest code as it stood without packages; it changes only on
+// a server run with more than it needs. The golden changes only on
 // purpose.
 func TestPodWithoutPackagesIsUnchanged(t *testing.T) {
 	want, err := os.ReadFile("testdata/pod_without_packages.json")

@@ -295,10 +295,22 @@ func TestRootSoftwareGivesUpOnTime(t *testing.T) {
 	got := make(chan agentshell.InstallResult, 1)
 	go func() { got <- r.Install(context.Background(), []string{"gh"}, io.Discard) }()
 	t.Cleanup(func() {
-		// Let the child go. Non-blocking: a child that never opened the
-		// FIFO leaves the test nothing to wait for.
-		if f, err := os.OpenFile(fifo, os.O_WRONLY|syscall.O_NONBLOCK, 0); err == nil {
-			_ = f.Close()
+		// Let the child go: a blocking open for writing pairs with the
+		// child's open for reading whenever it gets there, and closing it
+		// is the child's end of file. It runs on a goroutine bounded by
+		// the failsafe, so a child that never opens the FIFO cannot hang
+		// the test.
+		released := make(chan struct{})
+		go func() {
+			defer close(released)
+			if f, err := os.OpenFile(fifo, os.O_WRONLY, 0); err == nil {
+				_ = f.Close()
+			}
+		}()
+		select {
+		case <-released:
+		case <-time.After(failsafe):
+			t.Error("the install child never opened its FIFO")
 		}
 	})
 

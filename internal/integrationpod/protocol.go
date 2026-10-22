@@ -145,8 +145,9 @@ type Credential struct {
 
 // LogParams is MethodLog's params.
 type LogParams struct {
-	// Level is info, warning or error, or stderr for a line the server
-	// wrote to its error output.
+	// Level is info, warning, error or debug (detail, such as apt-get's
+	// output while the integration's software installs), or stderr for a
+	// line the server wrote to its error output.
 	Level   string `json:"level"`
 	Message string `json:"message"`
 }
