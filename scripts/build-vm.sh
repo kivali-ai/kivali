@@ -176,7 +176,9 @@ export)
   [ $# -ge 2 ] || die "usage: export <file> <ref>..."
   out=$(abs "$1")
   shift
-  guest export "$@" >"$out.part"
+  # A failed export leaves nothing: `make -C vm image` bakes every file
+  # next to the tarball.
+  guest export "$@" >"$out.part" || { rm -f "$out.part"; exit 1; }
   mv "$out.part" "$out"
   ;;
 arch)
