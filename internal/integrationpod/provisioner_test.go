@@ -104,21 +104,21 @@ func testProvisioner(t *testing.T) (*Provisioner, *fakeKube) {
 func TestProvisionerStart(t *testing.T) {
 	p, fk := testProvisioner(t)
 	ctx := context.Background()
-	if err := p.Start(ctx, "crm", "1.0.0", "tok-1", false); err != nil {
+	if err := p.Start(ctx, "crm", "1.0.0", "d1", "tok-1", false); err != nil {
 		t.Fatal(err)
 	}
 	if c, d := fk.counts(); c != 1 || d != 0 {
 		t.Fatalf("first Start: creates=%d deletes=%d", c, d)
 	}
 	fk.setStatus("integrationpod-crm", map[string]any{"phase": "Running"})
-	if err := p.Start(ctx, "crm", "1.0.0", "tok-1", false); err != nil {
+	if err := p.Start(ctx, "crm", "1.0.0", "d1", "tok-1", false); err != nil {
 		t.Fatal(err)
 	}
 	if c, d := fk.counts(); c != 0 || d != 0 {
 		t.Errorf("matching Start: creates=%d deletes=%d", c, d)
 	}
 	for _, step := range []struct{ version, token string }{{"1.1.0", "tok-1"}, {"1.1.0", "tok-2"}} {
-		if err := p.Start(ctx, "crm", step.version, step.token, false); err != nil {
+		if err := p.Start(ctx, "crm", step.version, "d1", step.token, false); err != nil {
 			t.Fatal(err)
 		}
 		if c, d := fk.counts(); c != 1 || d != 1 {
@@ -126,7 +126,7 @@ func TestProvisionerStart(t *testing.T) {
 		}
 	}
 	fk.setStatus("integrationpod-crm", map[string]any{"phase": "Failed"})
-	if err := p.Start(ctx, "crm", "1.1.0", "tok-2", false); err != nil {
+	if err := p.Start(ctx, "crm", "1.1.0", "d1", "tok-2", false); err != nil {
 		t.Fatal(err)
 	}
 	if c, d := fk.counts(); c != 1 || d != 1 {
@@ -136,33 +136,38 @@ func TestProvisionerStart(t *testing.T) {
 
 // Token gives core, after a restart, the token of a pod built exactly
 // as it would build it, and nothing for a pod built for another
-// version or by another configuration. Without it every restart of the
+// version, from other files or by another configuration. Without it every restart of the
 // server would replace every integration pod; with a looser check core
 // would take on a pod that runs a version no longer approved.
 func TestProvisionerToken(t *testing.T) {
 	p, _ := testProvisioner(t)
 	ctx := context.Background()
-	if tok, err := p.Token(ctx, "crm", "1.0.0", false); tok != "" || err != nil {
+	if tok, err := p.Token(ctx, "crm", "1.0.0", "d1", false); tok != "" || err != nil {
 		t.Fatalf("no pod: %q, %v", tok, err)
 	}
-	if err := p.Start(ctx, "crm", "1.0.0", "tok-1", false); err != nil {
+	if err := p.Start(ctx, "crm", "1.0.0", "d1", "tok-1", false); err != nil {
 		t.Fatal(err)
 	}
-	if tok, err := p.Token(ctx, "crm", "1.0.0", false); tok != "tok-1" || err != nil {
+	if tok, err := p.Token(ctx, "crm", "1.0.0", "d1", false); tok != "tok-1" || err != nil {
 		t.Errorf("matching pod: %q, %v", tok, err)
 	}
-	if tok, _ := p.Token(ctx, "crm", "1.1.0", false); tok != "" {
+	if tok, _ := p.Token(ctx, "crm", "1.1.0", "d1", false); tok != "" {
 		t.Errorf("another version: %q", tok)
+	}
+	// Other files under the same version: a pod still running the
+	// files from before is not taken on.
+	if tok, _ := p.Token(ctx, "crm", "1.0.0", "d2", false); tok != "" {
+		t.Errorf("other files: %q", tok)
 	}
 	// A pod built without software is not the pod for a version that
 	// installs some: taken on, it would run without root and never
 	// install it.
-	if tok, _ := p.Token(ctx, "crm", "1.0.0", true); tok != "" {
+	if tok, _ := p.Token(ctx, "crm", "1.0.0", "d1", true); tok != "" {
 		t.Errorf("software: %q", tok)
 	}
 	other := *p
 	other.cfg.Image = "ghcr.io/kivali-ai/kivali:v9.9.9"
-	if tok, _ := other.Token(ctx, "crm", "1.0.0", false); tok != "" {
+	if tok, _ := other.Token(ctx, "crm", "1.0.0", "d1", false); tok != "" {
 		t.Errorf("another image: %q", tok)
 	}
 }
@@ -175,7 +180,7 @@ func TestProvisionerStopListUnschedulable(t *testing.T) {
 	p, fk := testProvisioner(t)
 	ctx := context.Background()
 	for _, n := range []string{"crm", "blog"} {
-		if err := p.Start(ctx, n, "1.0.0", "tok", false); err != nil {
+		if err := p.Start(ctx, n, "1.0.0", "d1", "tok", false); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -216,7 +221,7 @@ func TestProvisionerConfig(t *testing.T) {
 		t.Skip("running in a cluster")
 	}
 	ctx := context.Background()
-	if err := p.Start(ctx, "crm", "1.0.0", "t", false); err != nil {
+	if err := p.Start(ctx, "crm", "1.0.0", "d1", "t", false); err != nil {
 		t.Error(err)
 	}
 	if names, err := p.List(ctx); names != nil || err != nil {
@@ -238,7 +243,7 @@ func TestProvisionerConfig(t *testing.T) {
 	bad.ProxyURL = "http://user:pw@proxy:3128"
 	fp, _ := testProvisioner(t)
 	fp.cfg = bad
-	if err := fp.Start(ctx, "crm", "1.0.0", "t", false); err == nil || errors.Is(err, kube.ErrNotFound) {
+	if err := fp.Start(ctx, "crm", "1.0.0", "d1", "t", false); err == nil || errors.Is(err, kube.ErrNotFound) {
 		t.Errorf("a proxy URL with credentials: %v", err)
 	}
 }

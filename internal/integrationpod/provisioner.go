@@ -139,35 +139,37 @@ func NewProvisioner(cfg ProvisionerConfig, opts ...ProvisionerOption) (*Provisio
 // kube client present).
 func (p *Provisioner) Enabled() bool { return p != nil && p.kube != nil }
 
-// manifestFor is the pod for name at version with token, the proxy by
-// IP; software says the version installs packages.
-func (p *Provisioner) manifestFor(ctx context.Context, name, version, token string, software bool) (map[string]any, error) {
+// manifestFor is the pod for name at version, its bundle's files of
+// digest, with token, the proxy by IP; software says the version
+// installs packages.
+func (p *Provisioner) manifestFor(ctx context.Context, name, version, digest, token string, software bool) (map[string]any, error) {
 	cfg := p.cfg
 	proxy, err := kube.ProxyByIP(ctx, cfg.ProxyURL, p.resolve)
 	if err != nil {
 		return nil, err
 	}
 	cfg.ProxyURL = proxy
-	return cfg.podManifest(name, version, token, software), nil
+	return cfg.podManifest(name, version, digest, token, software), nil
 }
 
 func specHashOf(manifest map[string]any) string {
 	return manifest["metadata"].(map[string]any)["labels"].(map[string]string)[kube.SpecHashLabel]
 }
 
-// Start makes sure the pod for name at version, with token in its
-// environment, is there; software says the version's manifest declares
-// packages, which the pod installs as root when it starts. A live pod
-// of that name built from the same manifest is left running. One built
-// from another manifest (another image, version or token), or one that
-// has finished, is deleted and created anew once it is gone.
-func (p *Provisioner) Start(ctx context.Context, name, version, token string, software bool) error {
+// Start makes sure the pod for name at version, its bundle's files of
+// digest, with token in its environment, is there; software says the
+// version's manifest declares packages, which the pod installs as root
+// when it starts. A live pod of that name built from the same manifest
+// is left running. One built from another manifest (another image,
+// version, digest or token), or one that has finished, is deleted and
+// created anew once it is gone.
+func (p *Provisioner) Start(ctx context.Context, name, version, digest, token string, software bool) error {
 	if !p.Enabled() {
 		p.logger("integrationpod: Start(%q, %q): no-op (not in-cluster)", name, version)
 		return nil
 	}
 	pod := PodName(name)
-	manifest, err := p.manifestFor(ctx, name, version, token, software)
+	manifest, err := p.manifestFor(ctx, name, version, digest, token, software)
 	if err != nil {
 		return fmt.Errorf("integration pod: %w", err)
 	}
@@ -192,10 +194,11 @@ func (p *Provisioner) Start(ctx context.Context, name, version, token string, so
 }
 
 // Token is the token in the environment of a live pod for name that
-// is built exactly as Start would build it for version and software
-// with that token, so core, after a restart, can take the pod on rather
-// than replace it. Empty when there is no such pod.
-func (p *Provisioner) Token(ctx context.Context, name, version string, software bool) (string, error) {
+// is built exactly as Start would build it for version, digest and
+// software with that token, so core, after a restart, can take the pod
+// on rather than replace it. Empty when there is no such pod: a pod
+// built from other files than the ones stored now is never taken on.
+func (p *Provisioner) Token(ctx context.Context, name, version, digest string, software bool) (string, error) {
 	if !p.Enabled() {
 		return "", nil
 	}
@@ -210,7 +213,7 @@ func (p *Provisioner) Token(ctx context.Context, name, version string, software 
 	if token == "" || pod.Finished() {
 		return "", nil
 	}
-	manifest, err := p.manifestFor(ctx, name, version, token, software)
+	manifest, err := p.manifestFor(ctx, name, version, digest, token, software)
 	if err != nil {
 		return "", fmt.Errorf("integration pod: %w", err)
 	}

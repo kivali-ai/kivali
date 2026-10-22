@@ -39,26 +39,35 @@ func readBundleFile(t *testing.T, s *FSStore, name, version, rel string) string 
 // Why this test exists: boot writes every bundle shipped in the binary
 // on every start, and core runs the files it writes. A first boot must
 // install it on, approved and published by Kivali, with its bundle
-// where the pod mounts it; a later boot must keep the owner's switch
-// (one switched off that came back on at the next restart would hand
-// agents an integration the owner turned off); files that changed
-// under the same version must be written again and named, or the pod
-// would go on running the old code; and a new version must supersede
-// the one in use as an approval does, or two versions would be in use
-// at once.
+// where the pod mounts it and the files' digest beside it; a later boot
+// must keep the owner's switch (one switched off that came back on at
+// the next restart would hand agents an integration the owner turned
+// off); files that changed under the same version must be written
+// again with a new digest, or the pod, whose spec carries the digest,
+// would be taken on still running the old code; and a new version must
+// supersede the one in use as an approval does, or two versions would
+// be in use at once.
 func TestInstallShippedBundles(t *testing.T) {
 	s := mustStore(t)
-	install := func(fsys fs.FS, at time.Time) []string {
+	install := func(fsys fs.FS, at time.Time, version string) {
 		t.Helper()
-		re, err := s.InstallShippedBundles(map[string]fs.FS{"notes": fsys}, at)
+		installed, err := s.InstallShippedBundles(map[string]fs.FS{"notes": fsys}, at)
 		if err != nil {
 			t.Fatal(err)
 		}
-		return re
+		if len(installed) != 1 || installed["notes"] != version {
+			t.Errorf("installed = %v", installed)
+		}
 	}
-	if re := install(shippedFS(t, "notes", "1.0.0", "print('one')\n"), intNow); len(re) != 0 {
-		t.Errorf("a first install rewrote %v", re)
+	digest := func(version string) string {
+		t.Helper()
+		v, _, err := s.GetIntegrationVersion("notes", version)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return v.BundleDigest
 	}
+	install(shippedFS(t, "notes", "1.0.0", "print('one')\n"), intNow, "1.0.0")
 	it, err := s.GetIntegration("notes")
 	if err != nil {
 		t.Fatal(err)
@@ -75,52 +84,69 @@ func TestInstallShippedBundles(t *testing.T) {
 		v.ApprovedAt == nil || !v.ApprovedAt.Equal(intNow) || v.FileCount != 2 || v.BundleBytes == 0 || m.Server.Type != "python" {
 		t.Errorf("version = %+v, manifest = %+v", v, m)
 	}
+	dir, _ := s.IntegrationBundleDir("notes", "1.0.0")
+	if d, err := BundleDigest(dir); err != nil || len(v.BundleDigest) != 64 || v.BundleDigest != d {
+		t.Errorf("digest = %q, of the files %q, %v", v.BundleDigest, d, err)
+	}
 	if got := readBundleFile(t, s, "notes", "1.0.0", "server/main.py"); got != "print('one')\n" {
 		t.Errorf("bundle's server = %q", got)
 	}
 	if got := readBundleFile(t, s, "notes", "1.0.0", integration.ManifestName); !strings.Contains(got, `"name": "notes"`) {
 		t.Errorf("bundle's manifest = %q", got)
 	}
+	one := digest("1.0.0")
 
 	// The owner switches it off; the same binary boots again.
 	if err := s.SetIntegrationEnabled("notes", false); err != nil {
 		t.Fatal(err)
 	}
 	later := intNow.Add(time.Hour)
-	if re := install(shippedFS(t, "notes", "1.0.0", "print('one')\n"), later); len(re) != 0 {
-		t.Errorf("the same files were rewritten: %v", re)
-	}
+	install(shippedFS(t, "notes", "1.0.0", "print('one')\n"), later, "1.0.0")
 	if it, _ := s.GetIntegration("notes"); it.Enabled || !it.InstalledAt.Equal(intNow) {
 		t.Errorf("after a second boot = %+v", it)
 	}
-
-	// The same version with other files: written again, and named.
-	if re := install(shippedFS(t, "notes", "1.0.0", "print('two')\n"), later); strings.Join(re, ",") != "notes" {
-		t.Errorf("rewritten = %v", re)
+	if digest("1.0.0") != one {
+		t.Errorf("the same files changed the digest")
 	}
+
+	// The same version with other files: written again, a new digest.
+	install(shippedFS(t, "notes", "1.0.0", "print('two')\n"), later, "1.0.0")
 	if got := readBundleFile(t, s, "notes", "1.0.0", "server/main.py"); got != "print('two')\n" {
 		t.Errorf("bundle's server after a rewrite = %q", got)
 	}
-	// A file the binary no longer has is gone with the old bundle.
-	extra := integrationtest.Dir(t, integrationtest.Manifest("notes", "1.0.0"), map[string]integrationtest.File{"server/extra.py": {Body: "x = 1\n"}})
-	install(extra, later)
-	if re := install(shippedFS(t, "notes", "1.0.0", "print('two')\n"), later); len(re) != 1 {
-		t.Errorf("dropping a file rewrote %v", re)
+	two := digest("1.0.0")
+	if two == one {
+		t.Errorf("other files kept the digest")
 	}
-	dir, _ := s.IntegrationBundleDir("notes", "1.0.0")
+	// A file the binary no longer has is gone with the old bundle.
+	extra := integrationtest.Dir(t, integrationtest.Manifest("notes", "1.0.0"), map[string]integrationtest.File{
+		"server/main.py": {Body: "print('two')\n"}, "server/extra.py": {Body: "x = 1\n"},
+	})
+	install(extra, later, "1.0.0")
+	install(shippedFS(t, "notes", "1.0.0", "print('two')\n"), later, "1.0.0")
 	if _, err := os.Stat(filepath.Join(dir, "server", "extra.py")); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("a file the binary dropped is still there: %v", err)
 	}
-	if v, _, _ := s.GetIntegrationVersion("notes", "1.0.0"); v.FileCount != 2 {
-		t.Errorf("file count after the rewrite = %d", v.FileCount)
+	if v, _, _ := s.GetIntegrationVersion("notes", "1.0.0"); v.FileCount != 2 || v.BundleDigest != two {
+		t.Errorf("after dropping a file = %+v", v)
 	}
 
-	// A binary with a new version: the old one is superseded, the
-	// owner's switch stays, and nothing is named, since a new version
-	// is a new pod anyway.
-	if re := install(shippedFS(t, "notes", "1.1.0", "print('three')\n"), later); len(re) != 0 {
-		t.Errorf("a new version was named rewritten: %v", re)
+	// A boot cut short after the files and before the record: the
+	// next boot finds the files right and writes their digest.
+	vpath := filepath.Join(filepath.Dir(dir), "version.yaml")
+	v, _, _ = s.GetIntegrationVersion("notes", "1.0.0")
+	v.BundleDigest = one
+	if err := writeYAMLFile(vpath, v); err != nil {
+		t.Fatal(err)
 	}
+	install(shippedFS(t, "notes", "1.0.0", "print('two')\n"), later, "1.0.0")
+	if digest("1.0.0") != two {
+		t.Errorf("a stale digest was kept")
+	}
+
+	// A binary with a new version: the old one is superseded and the
+	// owner's switch stays.
+	install(shippedFS(t, "notes", "1.1.0", "print('three')\n"), later, "1.1.0")
 	it, _ = s.GetIntegration("notes")
 	if it.CurrentVersion != "1.1.0" || it.Enabled {
 		t.Errorf("record after a new version = %+v", it)
@@ -134,10 +160,75 @@ func TestInstallShippedBundles(t *testing.T) {
 	}
 
 	// An older binary makes its version the one in use again.
-	install(shippedFS(t, "notes", "1.0.0", "print('two')\n"), later)
+	install(shippedFS(t, "notes", "1.0.0", "print('two')\n"), later, "1.0.0")
 	vs, _ = s.IntegrationVersions("notes")
 	if it, _ := s.GetIntegration("notes"); it.CurrentVersion != "1.0.0" || vs[0].State != IntegrationVersionSuperseded || vs[1].State != IntegrationVersionApproved {
 		t.Errorf("after an older binary = %+v, %+v", it, vs)
+	}
+}
+
+// Why this test exists: a rewrite moves the version's bundle aside and
+// renames the new one into its place. When that rename fails, the old
+// bundle must go back: a version left with no bundle/ would start a
+// pod that mounts nothing, and a removed one could not be rolled back
+// to.
+func TestRewriteShippedBundleKeepsTheOldOneOnAFailure(t *testing.T) {
+	s := mustStore(t)
+	if _, err := s.InstallShippedBundles(map[string]fs.FS{"notes": shippedFS(t, "notes", "1.0.0", "print('one')\n")}, intNow); err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	shippedRename = func(from, to string) error {
+		calls++
+		if calls == 2 {
+			return errors.New("injected")
+		}
+		return os.Rename(from, to)
+	}
+	t.Cleanup(func() { shippedRename = os.Rename })
+	if _, err := s.InstallShippedBundles(map[string]fs.FS{"notes": shippedFS(t, "notes", "1.0.0", "print('two')\n")}, intNow); err == nil {
+		t.Fatal("the rewrite did not fail")
+	}
+	if got := readBundleFile(t, s, "notes", "1.0.0", "server/main.py"); got != "print('one')\n" {
+		t.Errorf("bundle after a failed rewrite = %q", got)
+	}
+	entries, _ := os.ReadDir(filepath.Join(s.Root(), IntegrationsDirName, "notes", "versions", "1.0.0"))
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".") {
+			t.Errorf("left behind: %s", e.Name())
+		}
+	}
+}
+
+// Why this test exists: a pod's spec carries its bundle's digest, so
+// every stored bundle needs one. An upload must record it with its
+// files, and a version stored before digests were kept must get it
+// from its files the first time it is asked for, or core could not
+// tell its pod from one built from other files.
+func TestIntegrationBundleDigest(t *testing.T) {
+	s := mustStore(t)
+	storeVersion(t, s, "crm", "1.0.0")
+	v, _, _ := s.GetIntegrationVersion("crm", "1.0.0")
+	dir, _ := s.IntegrationBundleDir("crm", "1.0.0")
+	want, err := BundleDigest(dir)
+	if err != nil || len(want) != 64 || v.BundleDigest != want {
+		t.Fatalf("upload's digest = %q, of the files %q, %v", v.BundleDigest, want, err)
+	}
+	v.BundleDigest = ""
+	if err := writeYAMLFile(filepath.Join(filepath.Dir(dir), "version.yaml"), v); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.IntegrationBundleDigest("crm", "1.0.0"); err != nil || got != want {
+		t.Errorf("digest of an old record = %q, %v", got, err)
+	}
+	if v, _, _ := s.GetIntegrationVersion("crm", "1.0.0"); v.BundleDigest != want {
+		t.Errorf("the digest was not written: %+v", v)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "server", "main.py"), []byte("print('other')\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if d, _ := BundleDigest(dir); d == want {
+		t.Errorf("other bytes have the same digest")
 	}
 }
 
@@ -210,6 +301,10 @@ func TestShippedBundleRefusesTheOwnersMoves(t *testing.T) {
 	if err := s.RemoveIntegration("notes"); !errors.Is(err, ErrIntegrationBuiltin) {
 		t.Errorf("remove: %v", err)
 	}
+	// The owner's own Remove is refused above; the API removes a
+	// record the binary no longer ships through this call, which must
+	// take a shipped bundle's record as it takes a Go built-in's, or
+	// such a record could never leave the team.
 	if err := s.RemoveStaleBuiltinIntegration("notes"); err != nil {
 		t.Errorf("remove a stale one: %v", err)
 	}
