@@ -70,6 +70,14 @@ The chart gives the server a Role in its namespace and nothing outside it: it ma
 
 Out of the box, sign-in uses Google through the public client Kivali ships with. You register nothing. It accepts sign-ins at loopback addresses and at `externalURL`, so set `externalURL` to the https address you use. Only the accounts in `owner-emails` can sign in. See [Sign-in](sign-in.md).
 
+### Sign in to integrations in the browser
+
+An integration that connects by [signing in in your browser](integrations.md#in-your-browser) gives the service a redirect address on the team, `https://<your address>/connect/callback`, and the service sends your browser back there. Services accept only `https` addresses with a real host name for this (a bare IP address or a name under `.local` or `.internal` is refused by some), apart from `localhost` and `127.0.0.1`. So reach the team at an `https` address with a real host name and a certificate, set as `externalURL`, and open Kivali at that address when you copy the redirect address from the integration's page.
+
+Tailscale is the easy way: `tailscale serve` on a machine on your tailnet, or the Tailscale operator in the cluster, gives the team a MagicDNS name under `ts.net` with a certificate Tailscale issues, reachable only from your tailnet. Set that name as `externalURL`.
+
+Kivali reads the address from the request your browser makes. Behind a reverse proxy, make sure it passes the public host name in `Host` or `X-Forwarded-Host`, and `https` in `X-Forwarded-Proto` when it ends TLS itself.
+
 ## Connect Claude
 
 Sign the server in once with Claude Code's own sign-in, by starting Claude inside the server container:
