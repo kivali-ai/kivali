@@ -217,6 +217,38 @@ func goldenBuiltinIntegrationVersion() IntegrationVersion {
 	}
 }
 
+// goldenShippedIntegrationVersion is the install screen of a version
+// of an integration that ships with Kivali as a bundle: built in, with
+// a bundle's runtime, hosts and size.
+func goldenShippedIntegrationVersion() IntegrationVersion {
+	return IntegrationVersion{
+		Name:             "notes",
+		DisplayName:      "Notes",
+		Description:      "Notes in a notes service.",
+		Version:          "1.0.0",
+		State:            IntegrationVersionStateApproved,
+		Author:           "Kivali",
+		PublishedAt:      integrationEarlier,
+		PublishedBy:      PersonRef{Slug: "kivali", Name: "Kivali"},
+		ApprovedAt:       &integrationEarlier,
+		NotesMD:          "Ships with Kivali.",
+		Runtime:          "python",
+		ConnectionMethod: "token",
+		Hosts:            []string{"api.notes.example.com"},
+		Packages:         []string{},
+		ConnectionFields: []ConnectionField{{Key: "token", Title: "API token", Description: "", Sensitive: true, Required: true, Set: false}},
+		Actions:          []IntegrationAction{{Name: "create_note", Description: "Create a note."}},
+		AccessForm:       nil,
+		BundleBytes:      4096,
+		FileCount:        3,
+		Current:          true,
+		Builtin:          true,
+		Shipped:          true,
+		Changes:          []string{},
+		Findings:         []string{},
+	}
+}
+
 func goldenIntegrationAudit() IntegrationAudit {
 	return IntegrationAudit{Rows: []IntegrationAuditRow{
 		{At: integrationLater, Agent: PersonRef{Slug: "dana", Name: "Dana"}, Action: "create_post", Allowed: true, Reason: "", DurationMS: 812},

@@ -597,7 +597,7 @@ func (s *Server) verifyConnection(w http.ResponseWriter, r *http.Request, v *int
 		writeAPIError(w, http.StatusConflict, v.displayName()+" has no connection test", v.whoBuilt())
 		return
 	case !v.running:
-		writeAPIError(w, http.StatusConflict, errNotRunning, whoBundle)
+		writeAPIError(w, http.StatusConflict, errNotRunning, v.whoBuilt())
 		return
 	}
 	connID := c.rec.ID

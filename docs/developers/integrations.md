@@ -175,7 +175,9 @@ The check reads the bundle. It is not a review of what the code does:
 the install screen is, where the owner reads what the version
 reaches, holds and does before approving it.
 
-A built-in integration's manifest is checked by
+A shipped bundle ([Shipped bundles](#shipped-bundles)) is a bundle,
+checked by `integration.Validate` at every boot as an upload is. A
+built-in integration of Go code's manifest is checked by
 `integration.ValidateBuiltin(manifest)` by the same rules, with four
 differences. There is no bundle. A `server` section is refused, and so
 is any `kivali.hosts` or `kivali.packages` entry: a built-in runs
@@ -254,7 +256,7 @@ integrations/<name>/
   versions/<version>/version.yaml   version, state, notes_md, published_by, published_at, approved_at, rejected_at,
                                     bundle_bytes, file_count, findings (the check's warnings)
   versions/<version>/manifest.json  the manifest, byte for byte
-  versions/<version>/bundle/        the bundle, unpacked (none for a built-in integration)
+  versions/<version>/bundle/        the bundle, unpacked (none for a built-in of Go code)
   connections/<id>.yaml             id, label, created_at, fields (not secret), secret_keys, secret_name,
                                     verified_at, verified, verify_message (one file per connection)
   access/<slug>.yaml                slug, connection_id, access, set_at, set_by
@@ -493,8 +495,9 @@ changes the version alone.
 
 ## The runtime
 
-An integration that should run (an approved version, switched on, not
-built in) runs in a pod of its own, `integrationpod-<name>`, which core
+An integration that should run (an approved version, switched on, and
+a bundle: uploaded, or [shipped with Kivali](#shipped-bundles) and
+carried by this binary) runs in a pod of its own, `integrationpod-<name>`, which core
 keeps up while it should (`internal/integrationpod`, `manifest.go` and
 `provisioner.go`). Core talks MCP to the integration's server through a
 shim in the pod. An agent's calls carry the agent and its access
@@ -868,8 +871,17 @@ a manifest of the same shape (name, display_name, description,
 user_config, tools, `kivali.connection`, `kivali.access`,
 `kivali.verify`), so the Org page, the install screen, the connection
 form and the access form are drawn by the same code and every agent's
-access is checked by the same core. Its actions are Go functions core
-calls directly: no pod, no shim, no Python.
+access is checked by the same core. It comes in two kinds:
+
+- A built-in of Go code, most of this section: its actions are Go
+  functions core calls directly, with no pod, no shim and no Python.
+- A [shipped bundle](#shipped-bundles): a bundle embedded in the
+  binary, which core runs in a pod of its own exactly as an uploaded
+  bundle.
+
+Both are built in to the owner: no approval, no removal while the
+binary carries it, no upload or publish under its name, and a version
+that follows the binary.
 
 ### The interface
 
@@ -997,10 +1009,13 @@ right after the built-in skills (`main.go`), and after a restore
 An installed integration of the same name that is not built in is left
 as it is, and the built-in is not installed; boot logs it. A backup
 carries the records like any integration's, and the restore writes the
-binary's versions over them.
+binary's versions over them. Shipped bundles are installed next to
+them, by `store.InstallShippedBundles`
+([Shipped bundles](#shipped-bundles)).
 
-A built-in record whose code the binary does not carry (another
-version of Kivali shipped it) is left as it is: nothing runs it, its
+A built-in record whose code the binary does not carry, as Go code or
+as a shipped bundle (another version of Kivali shipped it), is left as
+it is: nothing runs it, its
 status is not included, agents' calls of it are refused as not
 running, and Test connection and its options answer 409 "<integration>
 is not in this version of Kivali, so nothing runs it; you can remove
@@ -1019,12 +1034,13 @@ Every one of these names the integration by its display name
 
 ### Dispatch
 
-A built-in is an integration whose record is built in and whose name
-is in `Server.BuiltinIntegrations` (`Server.builtinFor`). Where core
-would reach a pod, it calls the function instead
-(`internal/web/integration_builtin.go`):
+A built-in of Go code is an integration whose record is built in and
+whose name is in `Server.BuiltinIntegrations` (`Server.builtinFor`).
+Where core would reach a pod, it calls the function instead
+(`internal/web/integration_builtin.go`). A shipped bundle is dispatched
+as a bundle, in the first column:
 
-| Where | A bundle | A built-in |
+| Where | A bundle (uploaded or shipped) | A built-in of Go code |
 | --- | --- | --- |
 | Running | its shim is connected | while its code is in the binary |
 | An agent's list | `tools/list` with `_meta`, kept on the link | `Tools(caller)`, every time |
@@ -1045,17 +1061,96 @@ so the agent, the scrubber and the audit see what they see for a pod.
 ### What the owner sees
 
 The list and the page show a "Built in" badge and no Remove. The
-status is connected, not connected or off: never pending, never not
-running. Test connection, for a built-in that has one, works once
-there is a connection. The
+status of a built-in of Go code is connected, not connected or off:
+never pending, never not running. Test connection, for a built-in that
+has one, works once there is a connection. A shipped bundle's status
+is a bundle's, so it can be not running ([Shipped
+bundles](#shipped-bundles)). The
 version is the built-in's manifest's, published by Kivali; the
 install screen (`IntegrationVersion.Builtin`) says it ships with
-Kivali, that it reaches the hosts its connection names, shows no
-bundle and no "Replaces version" line or "What changes from version"
-block, and offers no Approve, Reject or Roll back; the page's version
+Kivali, shows no "Replaces version" line or "What changes from
+version" block, and offers no Approve, Reject or Roll back; for a
+built-in of Go code it says it reaches the hosts its connection names
+and shows no bundle; the page's version
 list offers no Roll back. A built-in record this binary does not carry
 shows "Not in this version of Kivali" (`IntegrationStatusNotIncluded`),
 says agents cannot use it, and offers Remove.
+
+### Shipped bundles
+
+A shipped bundle is an integration that ships with Kivali whose
+implementation is a bundle embedded in the binary, run in an
+integration pod like any uploaded bundle, in place of Go functions in
+core. It is built in to the owner, as above; to core it is a bundle.
+
+`builtinintegrations.ShippedBundle{Name, FS}` is one: its name and its
+files, laid out exactly as a bundle's (`manifest.json` at the root,
+the server's files beside it), an `embed.FS` directory embedded with
+the `all:` prefix so a file whose name starts with `_` or `.` is kept.
+`builtins.Shipped()` is the ones compiled into the binary, empty until
+one ships; to add one, embed its directory in a package of its own and
+list it there. `Server.ShippedBundles` is the ones core runs
+(`builtins.Shipped()` unless a test sets others); a test bundle built
+from `integrationtest.Dir` and the fake integration's server is the one
+the tests register. A test holds every entry of `Shipped()` to the
+bundle check, to a manifest that names its own name, and to a name no
+other entry and no built-in of Go code has.
+
+`store.InstallShippedBundles(bundles, now)` runs at every boot, right
+after `InstallBuiltinIntegrations` (`main.go`), and after a restore. For
+each shipped bundle it reads the files (`integration.ReadDirectory`)
+and holds them to `integration.Validate`, as an upload is held; one
+that does not read, does not pass, or whose manifest names another
+integration is not installed, and boot logs it with every finding,
+while the others are installed. It writes:
+
+- `integration.yaml` with `builtin: true`, as for a built-in of Go
+  code: a new record switched on, installed by `kivali`; an existing
+  one keeps the owner's switch.
+- The manifest's version, `approved`, published by `kivali`, notes
+  "Ships with Kivali.", its manifest byte for byte, its bundle unpacked
+  in `bundle/` and its size, file count and warnings, staged and
+  renamed into place as an upload's version is.
+- When the version differs from the one in use, the one in use becomes
+  superseded and the binary's is the one in use: a new version is a new
+  pod.
+- When the version is stored with files other than the binary's (the
+  same version string, changed bytes), its manifest and bundle are
+  written again, the new bundle unpacked beside the old and renamed
+  into its place. The call returns the names whose version in use was
+  written again, and core gives each a new pod
+  (`integrationRegistry.Renew`): a pod left running from before is
+  built as core would build it for that version, and would otherwise be
+  taken on with the old files.
+
+An installed integration of the same name that is not built in is
+left as it is, as for a built-in of Go code.
+
+The binary's lists, not the record, say which kind a built-in record
+is: `Server.builtinFor` finds its Go code, `Server.shippedBundle` that
+the binary ships it as a bundle (its name in `Server.ShippedBundles`
+and not in `Server.BuiltinIntegrations`), and one that is neither is a
+record this binary does not carry (`integrationView.staleBuiltin`). The
+reconcile runs a pod for a built-in record only when it is a shipped
+bundle, so a stale one's pod is stopped. Everything else is a bundle's:
+`Integrations.Running`, the shim's connect and `tools/list`, Test
+connection and the options a field lists through the shim (409 "the
+integration is not running" while no shim is connected, for Kivali's
+developers to fix), `kivali/credential`, the log, health, and the pod's
+scoped proxy credential, admitted to the manifest's `kivali.hosts`.
+
+What the owner sees:
+
+- The "Built in" badge and no Remove, Approve, Reject or Roll back, as
+  for any built-in; Remove, an upload and a publish under its name
+  answer the same 409s.
+- Its status is a bundle's: not running until its shim connects (the
+  page says Kivali is starting it), then connected or not connected.
+- Its install screen (`IntegrationVersion.Builtin` and `.Shipped`)
+  says it ships with Kivali and, as for an upload, carries its runtime
+  (`python`) and shows the hosts it reaches and its bundle's size. `Shipped` is
+  read from the version (it holds a bundle), so a stale record's
+  version still shows as one.
 
 ### The git built-in
 
@@ -1665,12 +1760,12 @@ the owner's.
 
 | Route | Answer |
 | --- | --- |
-| `GET /api/v1/org/integrations` | `Integrations`, by display name. Status: not included (a built-in integration this binary does not carry), pending (no approved version), off, not running (approved and on, with no shim connected; a built-in integration is never not running while its code is in the binary), and, while it runs, connected (a connection whose secrets are all there) or not connected. |
+| `GET /api/v1/org/integrations` | `Integrations`, by display name. Status: not included (a built-in integration this binary does not carry), pending (no approved version), off, not running (approved and on, with no shim connected; a built-in of Go code is never not running while its code is in the binary, and a shipped bundle is not running as an uploaded one is), and, while it runs, connected (a connection whose secrets are all there) or not connected. |
 | `POST /api/v1/org/integrations` | multipart `file`: 201 `IntegrationVersion`; 400 `IntegrationUploadRefused`; 409 for a version already stored or a built-in name. |
 | `GET /api/v1/org/integrations/{name}` | `IntegrationPage`. |
 | `POST .../{name}/enable`, `.../disable` | `IntegrationPage`. |
 | `DELETE .../{name}` | 204; 409 for a built-in one this binary carries. |
-| `GET .../versions/{version}` | `IntegrationVersion`, with `changes` from the version in use, and `builtin` for a built-in integration's version. |
+| `GET .../versions/{version}` | `IntegrationVersion`, with `changes` from the version in use, `builtin` for a built-in integration's version, and `shipped` for one that ships as a bundle. |
 | `POST .../versions/{version}/approve`, `.../reject` | `IntegrationVersion`; 409 when not pending, or for a built-in integration. |
 | `POST .../versions/{version}/rollback` | `IntegrationVersion`; 409 when not superseded, or for a built-in integration; 404 for a version not stored. |
 | `PUT .../connection` | `ConnectionWrite` in, `IntegrationPage` out: the one connection, the oldest, written or made; 409 while no version is approved. |
