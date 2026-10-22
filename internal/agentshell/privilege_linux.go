@@ -63,6 +63,12 @@ func (HostCreds) DropBoundingCap(capability int) error {
 	return allThreadsPrctl(unix.PR_CAPBSET_DROP, uintptr(capability))
 }
 
+// SetNoNewPrivs is PR_SET_NO_NEW_PRIVS, 1, on every thread. It cannot be
+// unset, and setting it again changes nothing.
+func (HostCreds) SetNoNewPrivs() error {
+	return allThreadsPrctl(unix.PR_SET_NO_NEW_PRIVS, 1)
+}
+
 // SetKeepCaps is PR_SET_KEEPCAPS on every thread.
 func (HostCreds) SetKeepCaps(keep bool) error {
 	var v uintptr

@@ -149,7 +149,8 @@ the publish path.
 
 The agent-shell container starts as root and the daemon drops itself
 to a user of its own before it serves: uid 65533 (`agent-shell` in the
-image), gid 65532, no supplementary groups, and filesystem uid 65532.
+image), gid 65532, no supplementary groups, filesystem uid 65532, and
+no_new_privs set.
 Every command it runs (`bash -c`, and `unshare -mUr` for a subagent's
 overlay) starts as 65532:65532 (`kivali`, the agent container's user)
 with no groups and, after exec, no capabilities. Because the daemon's
@@ -170,7 +171,11 @@ bounding sets (`0xe0`), and nothing inheritable or ambient: CAP_SETUID,
 to start each command as 65532 and to set its own filesystem uid;
 CAP_SETGID, for a command's gid and empty groups; and CAP_KILL, because
 a command that runs out of time is killed with SIGKILL, which the kernel
-refuses from uid 65533 to a 65532 process otherwise. The drop sequence
+refuses from uid 65533 to a 65532 process otherwise. The daemon sets
+no_new_privs itself rather than rely on the pod's
+`allowPrivilegeEscalation: false`: a command that execs a setuid-root
+binary from the image would otherwise get uid 0 with the daemon's
+bounding set. The drop sequence
 and what is verified are in
 [files-and-publishing.md](files-and-publishing.md#software-in-the-agent-shell).
 

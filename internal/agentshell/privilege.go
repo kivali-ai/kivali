@@ -49,12 +49,15 @@ type IDs struct {
 	RUID, EUID, SUID, FSUID int
 	RGID, EGID, SGID, FSGID int
 	Groups                  []int
+	// NoNewPrivs is the no_new_privs flag: set, an exec cannot gain
+	// privileges (a setuid or file-capability binary).
+	NoNewPrivs bool
 }
 
 // String formats ids for a log line.
 func (ids IDs) String() string {
-	return fmt.Sprintf("uid=%d/%d/%d/%d gid=%d/%d/%d/%d groups=%v",
-		ids.RUID, ids.EUID, ids.SUID, ids.FSUID, ids.RGID, ids.EGID, ids.SGID, ids.FSGID, ids.Groups)
+	return fmt.Sprintf("uid=%d/%d/%d/%d gid=%d/%d/%d/%d groups=%v no_new_privs=%t",
+		ids.RUID, ids.EUID, ids.SUID, ids.FSUID, ids.RGID, ids.EGID, ids.SGID, ids.FSGID, ids.Groups, ids.NoNewPrivs)
 }
 
 // Privileged reports whether any of the user IDs is root.
@@ -84,6 +87,10 @@ type Creds interface {
 	// DropBoundingCap removes capability from the bounding set
 	// (PR_CAPBSET_DROP; needs CAP_SETPCAP in the effective set).
 	DropBoundingCap(capability int) error
+	// SetNoNewPrivs sets no_new_privs (PR_SET_NO_NEW_PRIVS, 1), which
+	// the process and everything it starts keep for good. Setting it
+	// when it is already set is not an error.
+	SetNoNewPrivs() error
 	// SetKeepCaps sets or clears PR_SET_KEEPCAPS: with it set, the
 	// permitted set survives a change from uid 0 to nonzero uids.
 	SetKeepCaps(keep bool) error
@@ -99,8 +106,8 @@ type Creds interface {
 
 // ParseProcStatus reads the credentials and capability sets from the
 // text of /proc/<pid>/status: the Uid and Gid lines (real, effective,
-// saved, filesystem), Groups, and CapInh, CapPrm, CapEff and CapBnd,
-// which must all be there. A kernel without ambient capabilities has no
+// saved, filesystem), Groups, NoNewPrivs, and CapInh, CapPrm, CapEff
+// and CapBnd, which must all be there. A kernel without ambient capabilities has no
 // CapAmb line, which is an empty set.
 func ParseProcStatus(status string) (IDs, Caps, error) {
 	var ids IDs
@@ -140,6 +147,12 @@ func ParseProcStatus(status string) (IDs, Caps, error) {
 				}
 				ids.Groups = append(ids.Groups, v)
 			}
+		case "NoNewPrivs":
+			v, err := strconv.Atoi(val)
+			if err != nil {
+				return IDs{}, Caps{}, fmt.Errorf("%s: %w", key, err)
+			}
+			ids.NoNewPrivs = v != 0
 		case "CapInh", "CapPrm", "CapEff", "CapBnd", "CapAmb":
 			v, err := strconv.ParseUint(val, 16, 64)
 			if err != nil {
@@ -162,7 +175,7 @@ func ParseProcStatus(status string) (IDs, Caps, error) {
 		}
 		seen[key] = true
 	}
-	for _, k := range []string{"Uid", "Gid", "Groups", "CapInh", "CapPrm", "CapEff", "CapBnd"} {
+	for _, k := range []string{"Uid", "Gid", "Groups", "NoNewPrivs", "CapInh", "CapPrm", "CapEff", "CapBnd"} {
 		if !seen[k] {
 			return IDs{}, Caps{}, fmt.Errorf("no %s line", k)
 		}
@@ -187,17 +200,23 @@ func ParseRunAs(s string) (uid, gid int, err error) {
 
 // DropPrivileges makes the process, started as root, id.DaemonUID with
 // group id.GID, no supplementary groups, filesystem uid id.UID, and
-// DaemonCaps alone. The order is the only one that works:
+// DaemonCaps alone, with no_new_privs set. The order is the only one
+// that works:
 //
 //  1. every capability but DaemonCaps leaves the bounding set, while
 //     the process still has CAP_SETPCAP (only those the set holds: a
 //     container started with DaemonCaps alone has nothing to drop);
-//  2. PR_SET_KEEPCAPS, so the permitted set survives the uid change;
-//  3. setresgid and setgroups([]), while still root;
-//  4. setresuid to id.DaemonUID, which empties the effective set, and
+//  2. no_new_privs, which the daemon sets itself so that it does not
+//     depend on the pod spec alone: a command that execs a setuid-root
+//     binary from the image would otherwise get uid 0 with the
+//     daemon's bounding set. Set here, every later step and every
+//     child has it;
+//  3. PR_SET_KEEPCAPS, so the permitted set survives the uid change;
+//  4. setresgid and setgroups([]), while still root;
+//  5. setresuid to id.DaemonUID, which empties the effective set, and
 //     PR_SET_KEEPCAPS cleared again;
-//  5. capset: permitted and effective DaemonCaps, inheritable empty;
-//  6. setfsuid(id.UID), which needs CAP_SETUID.
+//  6. capset: permitted and effective DaemonCaps, inheritable empty;
+//  7. setfsuid(id.UID), which needs CAP_SETUID.
 //
 // It then reads the credentials back (VerifyDaemon). A caller that gets
 // an error must not go on: the process may still be root.
@@ -224,6 +243,9 @@ func DropPrivileges(c Creds, id Identity) error {
 		if err := c.DropBoundingCap(capability); err != nil {
 			return fmt.Errorf("drop privileges: drop capability %d from the bounding set: %w", capability, err)
 		}
+	}
+	if err := c.SetNoNewPrivs(); err != nil {
+		return fmt.Errorf("drop privileges: set no_new_privs: %w", err)
 	}
 	if err := c.SetKeepCaps(true); err != nil {
 		return fmt.Errorf("drop privileges: set keepcaps: %w", err)
@@ -253,7 +275,8 @@ func DropPrivileges(c Creds, id Identity) error {
 // and saved uid are id.DaemonUID and its filesystem uid id.UID; its
 // real, effective, saved and filesystem gid id.GID; it has no
 // supplementary groups; its permitted, effective and bounding sets are
-// exactly DaemonCaps; and its inheritable and ambient sets are empty.
+// exactly DaemonCaps; its inheritable and ambient sets are empty; and
+// no_new_privs is set.
 func VerifyDaemon(c Creds, id Identity) error {
 	ids, err := c.IDs()
 	if err != nil {
@@ -271,6 +294,9 @@ func VerifyDaemon(c Creds, id Identity) error {
 	}
 	if len(ids.Groups) != 0 {
 		return fmt.Errorf("verify privileges: %s, want no supplementary groups", ids)
+	}
+	if !ids.NoNewPrivs {
+		return fmt.Errorf("verify privileges: %s, want no_new_privs set", ids)
 	}
 	caps, err := c.Caps()
 	if err != nil {

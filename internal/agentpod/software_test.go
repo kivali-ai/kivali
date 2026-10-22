@@ -40,7 +40,9 @@ var agentShellCaps = map[string]any{"drop": []string{"ALL"}, "add": []string{"SE
 // No software: the agent-shell starts as root with the three
 // capabilities the daemon keeps and no others, privilege escalation
 // off and no --install. A missing capability would stop the daemon
-// from starting; an extra one would be the daemon's to keep.
+// from starting; an extra one would stop it too, since dropping it from
+// the bounding set needs CAP_SETPCAP, which this container does not
+// have.
 func TestPodManifestWithoutSoftware(t *testing.T) {
 	c := testConfig()
 	for _, sw := range [][]string{nil, {}} {

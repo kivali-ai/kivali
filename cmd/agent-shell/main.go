@@ -19,19 +19,21 @@
 // Users. The container starts as root and the daemon drops itself to
 // a user of its own, --daemon-uid (65533, the image's agent-shell
 // user), with group --run-as's gid (65532) and filesystem uid --run-as's
-// uid (65532), keeping only CAP_SETUID, CAP_SETGID and CAP_KILL
-// (agentshell.DropPrivileges). Every command runs as --run-as, 65532,
-// the image's kivali user and the agent container's. So the daemon
-// reads and writes files as 65532, exactly as the commands do, while a
-// command cannot trace, signal or read the /proc of the daemon that
-// runs it.
+// uid (65532), keeping only CAP_SETUID, CAP_SETGID and CAP_KILL, with
+// no_new_privs set (agentshell.DropPrivileges). Every command runs as
+// --run-as, 65532, the image's kivali user and the agent container's.
+// So the daemon reads and writes files as 65532, exactly as the
+// commands do, while a command cannot trace, signal or read the /proc
+// of the daemon that runs it.
 //
 // Trust boundary: the socket lives on a pod-local emptyDir (no other
 // agent can reach it). It is the daemon's (65533), group 65532, mode
 // 0o660: uid 65532 can connect to it from either container, the agent
 // container's `kivali mcp` processes and the daemon's own commands
-// alike. Single-tenant. It is the only container in the pod that mounts
-// /files/: run_shell and the file_* tools both write it from here.
+// alike. A daemon that did not drop root keeps the socket to itself,
+// mode 0o600: its only clients are its own uid. Single-tenant. It is
+// the only container in the pod that mounts /files/: run_shell and the
+// file_* tools both write it from here.
 //
 // Network. A command's proxy variables carry the shell's egress proxy
 // credential, which the agent runtime writes beside the socket
@@ -168,11 +170,18 @@ func main() {
 	}
 
 	// The socket is the daemon's own file: dropped, it is made with the
-	// daemon's uid as its filesystem uid, so it is 65533:65532.
+	// daemon's uid as its filesystem uid, so it is 65533:65532. Dropped,
+	// the agent container's uid 65532 connects through the
+	// socket's group; otherwise the socket is the same uid as its only
+	// clients.
+	socketMode := os.FileMode(0o600)
+	if dropped {
+		socketMode = 0o660
+	}
 	var ln net.Listener
 	listen := func() error {
 		var err error
-		ln, err = listenSocket(*socketPath)
+		ln, err = listenSocket(*socketPath, socketMode)
 		return err
 	}
 	if dropped {
@@ -219,9 +228,9 @@ func main() {
 }
 
 // listenSocket removes any stale socket at path from a crashed prior
-// run, listens on path and makes the socket mode 0o660: its owner and
-// group may connect, nobody else.
-func listenSocket(path string) (net.Listener, error) {
+// run, listens on path and makes the socket mode: 0o660 lets its owner
+// and group connect, 0o600 its owner alone, nobody else either way.
+func listenSocket(path string, mode os.FileMode) (net.Listener, error) {
 	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, fmt.Errorf("remove stale socket %q: %w", path, err)
 	}
@@ -229,7 +238,7 @@ func listenSocket(path string) (net.Listener, error) {
 	if err != nil {
 		return nil, fmt.Errorf("listen %q: %w", path, err)
 	}
-	if err := os.Chmod(path, 0o660); err != nil {
+	if err := os.Chmod(path, mode); err != nil {
 		_ = ln.Close()
 		_ = os.Remove(path)
 		return nil, fmt.Errorf("chmod %q: %w", path, err)

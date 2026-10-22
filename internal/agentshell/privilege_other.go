@@ -32,6 +32,9 @@ func (HostCreds) CapLastCap() (int, error) { return 0, ErrNoPrivilegeDrop }
 // DropBoundingCap refuses: see HostCreds.
 func (HostCreds) DropBoundingCap(int) error { return ErrNoPrivilegeDrop }
 
+// SetNoNewPrivs refuses: see HostCreds.
+func (HostCreds) SetNoNewPrivs() error { return ErrNoPrivilegeDrop }
+
 // SetKeepCaps refuses: see HostCreds.
 func (HostCreds) SetKeepCaps(bool) error { return ErrNoPrivilegeDrop }
 
