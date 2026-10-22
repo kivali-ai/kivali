@@ -209,7 +209,8 @@ func (s *Server) storeSignInTokens(ctx context.Context, name, id string, tok con
 }
 
 // markSignInFailed records on name's connection id that the owner must
-// sign in again, and why, which raises its Needs you row.
+// sign in again, and why, which raises its Needs you row. A connection
+// with no sign-in (signed out since) is left as it is.
 func (s *Server) markSignInFailed(name, id, words string) {
 	defer s.lockIntegrations()()
 	rec, err := s.Store.GetIntegrationConnectionByID(name, id)
@@ -220,7 +221,9 @@ func (s *Server) markSignInFailed(name, id, words string) {
 		return
 	}
 	if rec.SignIn == nil {
-		rec.SignIn = &store.ConnectionSignIn{}
+		// Signed out while the refresh ran: nothing to sign in again
+		// to, and no row to raise.
+		return
 	}
 	rec.SignIn.Error, rec.SignIn.ErrorAt = words, s.clk().Now()
 	if err := s.Store.PutIntegrationConnection(name, rec); err != nil {
