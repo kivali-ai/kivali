@@ -89,20 +89,17 @@ func goldenGitConnectionFields(host string) []ConnectionField {
 	return []ConnectionField{
 		{Key: "host", Title: "Host", Description: "github.com, gitlab.com or any HTTPS git host, without https://", Sensitive: false, Required: true, Set: true, Value: &host},
 		{Key: "token", Title: "Access token", Description: "A token that can read the repositories agents will use.", Sensitive: true, Required: true, Set: true},
-		{Key: "test_repository", Title: "Repository for Test connection", Description: "owner/name.", Sensitive: false, Required: false, Set: false},
 	}
 }
 
 // goldenIntegrationPageMultiple is Git's page with two connections,
-// GitHub and a company GitLab (whose last test failed and whose
-// secrets are needed again), and one agent's access on each.
+// GitHub and a company GitLab (whose secrets are needed again), and
+// one agent's access on each. Git has no connection test.
 func goldenIntegrationPageMultiple() IntegrationPage {
-	failed := false
-	refused := "The host refused the token."
 	return IntegrationPage{
 		Summary: IntegrationSummary{
 			Name: "git", DisplayName: "Git", Description: "Clones, fetches and pushes repositories over HTTPS.",
-			Version: "1.1.0", Status: IntegrationStatusConnected, Enabled: true, Builtin: true, Agents: 2,
+			Version: "1.2.0", Status: IntegrationStatusConnected, Enabled: true, Builtin: true, Agents: 2,
 		},
 		Author:           "Kivali",
 		Hosts:            []string{},
@@ -110,20 +107,13 @@ func goldenIntegrationPageMultiple() IntegrationPage {
 		ConnectionFields: goldenGitConnectionFields("github.com"),
 		Connection: &ConnectionState{
 			ID: "a1b2c3d4", Label: "GitHub", CreatedAt: integrationEarlier, Fields: goldenGitConnectionFields("github.com"),
-			VerifiedAt: &integrationLater, Verified: &integrationVerified, VerifyMessage: &integrationVerifyMsg,
 		},
 		Connections: []ConnectionState{
-			{
-				ID: "a1b2c3d4", Label: "GitHub", CreatedAt: integrationEarlier, Fields: goldenGitConnectionFields("github.com"),
-				VerifiedAt: &integrationLater, Verified: &integrationVerified, VerifyMessage: &integrationVerifyMsg,
-			},
-			{
-				ID: "e5f6a7b8", Label: "Company GitLab", CreatedAt: integrationNow, Fields: goldenGitConnectionFields("gitlab.example.com"),
-				VerifiedAt: &integrationLater, Verified: &failed, VerifyMessage: &refused, ReconnectNeeded: true,
-			},
+			{ID: "a1b2c3d4", Label: "GitHub", CreatedAt: integrationEarlier, Fields: goldenGitConnectionFields("github.com")},
+			{ID: "e5f6a7b8", Label: "Company GitLab", CreatedAt: integrationNow, Fields: goldenGitConnectionFields("gitlab.example.com"), ReconnectNeeded: true},
 		},
 		Multiple:       true,
-		ConnectionTest: true,
+		ConnectionTest: false,
 		AccessForm: &AccessForm{Fields: []AccessField{
 			{Key: "repositories", Title: "Repositories", Description: "owner/name, or a pattern such as acme/*", Kind: AccessFieldKindList, Required: true, Options: []string{}, Choices: false},
 			{Key: "push", Title: "May push", Description: "", Kind: AccessFieldKindSwitch, Required: false, Options: []string{}, Choices: false},
@@ -134,7 +124,7 @@ func goldenIntegrationPageMultiple() IntegrationPage {
 		},
 		AgentsWithout: []PersonRef{{Slug: "chief-of-staff", Name: "Chief of Staff"}},
 		Versions: []IntegrationVersionSummary{
-			{Version: "1.1.0", State: IntegrationVersionStateApproved, PublishedAt: integrationEarlier, PublishedBy: PersonRef{Slug: "kivali", Name: "Kivali"}, ApprovedAt: &integrationEarlier, NotesMD: "Ships with Kivali."},
+			{Version: "1.2.0", State: IntegrationVersionStateApproved, PublishedAt: integrationEarlier, PublishedBy: PersonRef{Slug: "kivali", Name: "Kivali"}, ApprovedAt: &integrationEarlier, NotesMD: "Ships with Kivali."},
 		},
 		CanRemove: false,
 	}

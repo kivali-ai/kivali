@@ -426,11 +426,11 @@ func TestGitPushRelaysTheShellJob(t *testing.T) {
 	}
 }
 
-// Why this test exists: Git 1.1.0 adds push to the access form. A team
+// Why this test exists: Git 1.1.0 added push to the access form. A team
 // that set an agent's access under 1.0.0 (repositories alone) boots a
-// binary carrying 1.1.0: the store supersedes 1.0.0, and that access
-// must stay valid and keep cloning, not turn invalid and cut the agent
-// off, while granting no push.
+// binary carrying a later version: the store supersedes 1.0.0, and that
+// access must stay valid and keep cloning, not turn invalid and cut the
+// agent off, while granting no push.
 func TestGitAccessFromBeforePushStaysValid(t *testing.T) {
 	srv := newTestServer(t)
 	srv.BuiltinIntegrations = builtinintegrations.Registry{gitintegration.New()}
@@ -453,12 +453,12 @@ func TestGitAccessFromBeforePushStaysValid(t *testing.T) {
 		t.Fatal(err)
 	}
 	vs, _ := srv.Store.IntegrationVersions("git")
-	if len(vs) != 2 || vs[0].Version != "1.1.0" || vs[0].State != store.IntegrationVersionApproved || vs[1].State != store.IntegrationVersionSuperseded {
+	if len(vs) != 2 || vs[0].Version != gitintegration.New().Manifest().Version || vs[0].State != store.IntegrationVersionApproved || vs[1].State != store.IntegrationVersionSuperseded {
 		t.Fatalf("versions = %+v", vs)
 	}
 	rows, err := srv.Store.ListIntegrationAccess("git")
 	if err != nil || len(rows) != 1 || rows[0].Invalid != "" {
-		t.Fatalf("access after 1.1.0 = %+v, %v", rows, err)
+		t.Fatalf("access after the upgrade = %+v, %v", rows, err)
 	}
 	dana := agentpod.NewClient(serveCoreUDS(t, srv), "dana")
 	ctx := context.Background()
@@ -469,5 +469,61 @@ func TestGitAccessFromBeforePushStaysValid(t *testing.T) {
 	refused, _ := dana.IntegrationCall(ctx, agentpod.IntegrationCallRequest{Name: "git_push", Arguments: json.RawMessage(`{"path":"w","refs":["agent/x"]}`)})
 	if refused == nil || !refused.IsError || !strings.Contains(refused.Content[0], "does not allow pushing") {
 		t.Errorf("push under the old access = %+v", refused)
+	}
+}
+
+// Why this test exists: Git 1.1.0 had a Test connection and a
+// "Repository for Test connection" field; later versions have neither.
+// A team that saved a connection with that field and tested it boots a
+// binary without them. Its page must not draw the field, offer Test
+// connection or show the old result, and saving the connection again
+// must succeed and drop the field's value rather than refuse a key the
+// form no longer has.
+func TestGitConnectionFromBeforeTheTestWasDropped(t *testing.T) {
+	srv := newTestServer(t)
+	srv.BuiltinIntegrations = builtinintegrations.Registry{gitintegration.New()}
+	withIntegrationRegistry(srv, nil)
+	old := *gitintegration.New().Manifest()
+	old.Version = "1.1.0"
+	old.UserConfig = append(slices.Clone(old.UserConfig), integration.UserConfigField{Key: "test_repository", Type: "string", Title: "Repository for Test connection"})
+	old.Kivali.Verify = "ls_remote"
+	boot := time.Date(2026, 10, 21, 9, 0, 0, 0, time.UTC)
+	if err := srv.Store.InstallBuiltinIntegrations([]*integration.Manifest{&old}, boot); err != nil {
+		t.Fatal(err)
+	}
+	page := orgOK[apitypes.IntegrationPage](t, orgJSON(t, srv, http.MethodPut, intBase+"/git/connection",
+		apitypes.ConnectionWrite{Fields: map[string]string{"host": "github.com", "token": gitToken, "test_repository": "acme/widgets"}}))
+	conn, err := srv.Store.GetIntegrationConnectionByID("git", page.Connection.ID)
+	if err != nil || conn.Fields["test_repository"] != "acme/widgets" {
+		t.Fatalf("connection under 1.1.0 = %+v, %v", conn, err)
+	}
+	verified := true
+	conn.VerifiedAt, conn.Verified, conn.VerifyMessage = &boot, &verified, "Connected to github.com as octo."
+	if err := srv.Store.PutIntegrationConnection("git", conn); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := srv.Store.InstallBuiltinIntegrations(srv.BuiltinIntegrations.Manifests(), boot.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	page = orgOK[apitypes.IntegrationPage](t, orgGet(t, srv, intBase+"/git"))
+	if page.ConnectionTest {
+		t.Error("connection_test after the upgrade")
+	}
+	var keys []string
+	for _, f := range page.Connections[0].Fields {
+		keys = append(keys, f.Key)
+	}
+	if strings.Join(keys, ",") != "host,token" {
+		t.Errorf("fields after the upgrade = %v", keys)
+	}
+	if c := page.Connections[0]; c.Verified != nil || c.VerifiedAt != nil || c.VerifyMessage != nil {
+		t.Errorf("the old result reached the page: %+v", c)
+	}
+	orgOK[apitypes.IntegrationPage](t, orgJSON(t, srv, http.MethodPut, intBase+"/git/connections/"+conn.ID,
+		apitypes.ConnectionWrite{Fields: map[string]string{"host": "github.com"}}))
+	conn, err = srv.Store.GetIntegrationConnectionByID("git", conn.ID)
+	if _, kept := conn.Fields["test_repository"]; err != nil || kept {
+		t.Errorf("connection after a save = %+v, %v", conn, err)
 	}
 }

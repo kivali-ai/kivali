@@ -62,13 +62,13 @@ Secret fields, such as tokens, are never shown again once saved: the page says o
 
 Saving a connection restarts the integration with the new values, which takes a few seconds.
 
-**Test connection** asks the integration to sign in to the service with the connection you saved, and shows what it found under the form: whether it worked, the integration's own words (such as the account it signed in as), and when you last tested. A failed test keeps the integration's reason, so you can see what to fix. Saving the connection again clears the last result. An integration that has no connection test has no **Test connection**.
+**Test connection** asks the integration to sign in to the service with the connection you saved, and shows what it found under the form: whether it worked, the integration's own words (such as the account it signed in as), and when you last tested. A failed test keeps the integration's reason, so you can see what to fix. Saving the connection again clears the last result. An integration that has no connection test, such as [Git](#git), has no **Test connection**.
 
 **Disconnect** removes the connection and every agent's access, which was given for it.
 
 ### Several connections
 
-Most integrations take one connection. Some that ship with Kivali, such as [Git](#git), take several: one for each account or host you connect, such as GitHub and your company's GitLab. Their page has **Connections** in place of **Connection**: one card per connection, each with its label (what you call it, such as "Company GitLab"), its own fields, **Save connection**, **Test connection** and **Delete**. **Add a connection** opens a blank form with a **Label** field. Labels are unique within the integration, whatever their capitals.
+Most integrations take one connection. Some that ship with Kivali, such as [Git](#git), take several: one for each account or host you connect, such as GitHub and your company's GitLab. Their page has **Connections** in place of **Connection**: one card per connection, each with its label (what you call it, such as "Company GitLab"), its own fields, **Save connection** and **Delete**, and **Test connection** when the integration has a connection test. **Add a connection** opens a blank form with a **Label** field. Labels are unique within the integration, whatever their capitals.
 
 Each agent's access then names the connection its calls use: **Give access** asks for a **Connection** first, and the access table, like the agent's **Integrations** tab ("Git (Company GitLab)"), says which one each agent uses. **Delete** asks first, naming the agents whose access uses that connection: their access goes with it, and the other connections and the access given for them stay.
 
@@ -114,11 +114,10 @@ The switch at the top of the integration's page turns it off for every agent at 
 
 ### The connection
 
-- **Host**: `github.com`, `gitlab.com` or your own git host that serves HTTPS, without `https://`.
+- **Host**: `github.com`, `gitlab.com` or your own git host that serves HTTPS, without `https://`. A host that is not a host name (with a path, for example) is refused when you save.
 - **Access token**: a token that can read the repositories your agents will use. On GitHub, a fine-grained personal access token limited to those repositories, with read access to their contents; on GitLab, an access token with `read_repository`. For agents that push, the token also needs write access to contents on GitHub, or `write_repository` on GitLab. Give it no more than that.
-- **Repository for Test connection** (optional): one repository, as `owner/name`.
 
-**Test connection** lists that repository's branches with your token: "Connected. 4 branches in acme/widgets." With no repository named, it asks GitHub or GitLab who the token belongs to: "Connected to github.com as octocat." For any other host, name a repository. A failed test shows the host's reason. Test connection reaches only public hosts: a host on your own network is refused. A host that is not a host name (with a path, for example) is refused when you save.
+Git has no **Test connection**. An agent's first clone shows whether the token works: every clone, fetch and push is in **Latest calls**, with why it failed when it did.
 
 Git takes [several connections](#several-connections), one per host: connect GitHub and your company's GitLab side by side, each with its own token. A connection you leave without a label is named after its host, such as `github.com`. Each agent's access names one connection, and its clones, fetches and pushes go to that connection's host with that connection's token. An agent has one access to Git, so it works on one host at a time: the one its access names.
 

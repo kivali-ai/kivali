@@ -845,7 +845,8 @@ type Refusal struct{ Text, Reason string }
   failure the agent should read is a `Result` with `IsError`; an error
   is the function's own failure.
 - `Verify` is Test connection: a nil error with what it found, or an
-  error in words for the owner.
+  error in words for the owner. Core calls it only when the manifest
+  names `kivali.verify`.
 - `Choices` lists an access field's options: `name` is what
   `kivali.access.choices` maps the field to, which need not be a tool.
 - `Connection` is the connection the call is for: for an agent's call,
@@ -966,7 +967,8 @@ so the agent, the scrubber and the audit see what they see for a pod.
 
 The list and the page show a "Built in" badge and no Remove. The
 status is connected, not connected or off: never pending, never not
-running. Test connection works once there is a connection. The
+running. Test connection, for a built-in that has one, works once
+there is a connection. The
 version is the built-in's manifest's, published by Kivali; the
 install screen (`IntegrationVersion.Builtin`) says it ships with
 Kivali, that it reaches the hosts its connection names, shows no
@@ -979,19 +981,18 @@ says agents cannot use it, and offers Remove.
 ### The git built-in
 
 Git (`internal/builtinintegrations/gitintegration`, name `git`,
-version 1.1.0) lets agents clone, fetch and push repositories over
+version 1.2.0) lets agents clone, fetch and push repositories over
 HTTPS with the owner's token. Everything local is plain git in the agent's shell,
 which reaches only the team's allow list. Its manifest:
 
 - `user_config`: `host` (required; "github.com, gitlab.com or any HTTPS
-  git host, without https://"), `token` (sensitive, required) and
-  `test_repository` (optional, owner/name).
+  git host, without https://") and `token` (sensitive, required).
 - `kivali.connection.method: token` and `kivali.connection.multiple:
   true`: a connection per host (GitHub, a company GitLab), each agent's
   access naming the one it uses; `Git.ConnectionLabel`
   (`ConnectionLabeler`) names a connection saved with no label by its
-  host. No `kivali.hosts`; `kivali.verify: "ls_remote"` (a name for
-  `Verify`, not a tool).
+  host. No `kivali.hosts`, and no `kivali.verify` ([No Test
+  connection](#no-test-connection)).
 - `kivali.access.schema`, in this order: `repositories`, the one
   required field (a list: "owner/name, or a pattern such as acme/*");
   `push` (a switch, "May push"); `push_refs` (a list, "Branches and
@@ -1394,30 +1395,16 @@ repository or a pattern", and one with a `push_refs` entry that
 branch, a tag or a pattern". A stored row that is not this all the same (one written
 before the check, or by hand) refuses every repository.
 
-#### Test connection
+#### No Test connection
 
-`Git.Verify` runs in core, which reaches the host directly (the
-server's container has no egress proxy). It first resolves the
-connection's host and refuses, before any request, a host with any
-address that is loopback, private (RFC 1918, fc00::/7), link-local
-(169.254.0.0/16, fe80::/10), unspecified or multicast, an IP-literal
-host the same way: "Test connection reaches only public hosts."
-(`gitrepo.PublicAddresses`; `Git.LookupIP` is the test hook for the
-resolver). go-git follows no redirect here either (`gitintegration`'s
-`init` installs the same transports as the daemon): a repository that
-moved fails with words saying so. With `test_repository` set it
-lists the repository in memory with the token
-(`git.NewRemote(memory.NewStorage(), ...)` and `ListContext` with basic
-auth) and answers "Connected. <n> branches in <owner/name>." Without it,
-for `github.com` it asks `https://api.github.com/user` with
-`Authorization: Bearer <token>` ("Connected to github.com as <login>.")
-and for `gitlab.com` `https://gitlab.com/api/v4/user` with
-`PRIVATE-TOKEN` ("Connected to gitlab.com as <username>."); any other
-host is the error "Name a repository for Test connection: this host
-has no account endpoint Kivali knows." A failure is the host's words
-with the token taken out (`[token]`). The `Git` struct's fields are
-test hooks (`InsecureHTTP`, `HTTPClient`, `GitHubAPI`, `GitLabAPI`,
-`LookupIP`); the tests never reach a real host.
+Git's manifest names no `kivali.verify`, so its page offers no Test
+connection, and core never reaches a git host itself: every request
+that carries the token leaves from the agent-shell daemon through the
+egress proxy, held to the connection's host. Whether a connection
+works shows in an agent's first clone, fetch or push, and in its audit
+row. `Git.Verify` exists only because `builtinintegrations.Integration`
+requires it, and answers an error. The `Git` struct's one field,
+`InsecureHTTP`, is a test hook; the tests never reach a real host.
 
 Not supported: SSH remotes, Git LFS (a clone holds the pointers),
 submodules (not cloned), and deleting a remote ref.
