@@ -517,7 +517,8 @@ way, to the browser through the gate below.
 | Navigation in a team's web view | What happens |
 | --- | --- |
 | the pinned origin, `/auth/login` without `client=desktop` | refused; the desktop sign-in starts its listener and loads it again with `client=desktop`, `return_port` and `return_token` |
-| the pinned origin, any other path (including `/auth/login?…client=desktop`, as is, and `/auth/callback`) | loads |
+| the pinned origin, `/connect/start?flow=<32 hex digits>`, a team here | refused; the system browser opens the team's handoff with `next=<flow>` ("Signing in to an integration" below) |
+| the pinned origin, any other path (including `/auth/login?…client=desktop`, as is, `/auth/callback`, and a team elsewhere's `/connect/start`) | loads |
 | `about:blank`, `about:srcdoc`, the pinned origin's `blob:` | loads |
 | any other `http`/`https` page (another team, another port, Google) | refused, opened in the system browser |
 | the app's origin, `file:`, `data:`, `asset:`, foreign `blob:` | refused |
@@ -638,6 +639,36 @@ system, so `make dev` exercises the same flow as the packaged app.
 
 **Signing out of a team elsewhere** (D9 Sign out) loads the team's own
 `/auth/logout` in its window.
+
+## Signing in to an integration
+
+An integration's browser sign-in runs the other way round from the
+team's: the vendor sends the code back to the team's own
+`/connect/callback`, which must come to a browser signed in to the team
+and holding the cookie the sign-in started with
+([integrations.md](integrations.md#in-kivali-desktop)). The web app
+begins every one at `/connect/start?flow=<id>` of the team's origin.
+In a team's window `team_nav` answers `ConnectSignIn` for that exact
+path with a single `flow` of 32 lowercase hex digits (`connect_flow`),
+and `open_connect_sign_in`, for a team here whose origin the
+navigation is on and which is loopback, refuses it and, through the
+window's browser gate, fetches a handoff token from the team's
+supervisor off the main thread (`POST /v1/handoff`, as the first open
+does) and opens `<origin>/auth/handoff?t=<token>&next=<id>` in the
+system browser (`connect_sign_in_url`, which refuses any origin that
+is not loopback, so the token never leaves the computer). The server
+signs that browser in, hands it the sign-in's cookie and sends it to
+the vendor ([auth.md](auth.md#desktop-handoff)). The web view stays on
+its page, which asks the server how the sign-in stands. The token is
+never logged; a failure logs one line naming the team. A team
+elsewhere, with no supervisor here, loads `/connect/start` in its
+window as any page; the vendor's page then goes to the system browser,
+and that sign-in finishes only from a browser at the team's address.
+A browser window refuses it (signing in is the team window's), a
+`window.open` of it takes the team window's way, and a frame never
+loads it. A device sign-in's link to the vendor's page is another site,
+opened in the system browser through the gate like any other. Nothing
+here is platform-specific: macOS and Windows behave the same.
 
 ## The team API
 
