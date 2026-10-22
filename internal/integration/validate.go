@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+
+	"github.com/kivali-ai/kivali/internal/debpkg"
 )
 
 // Level is how serious a finding is.
@@ -141,14 +143,31 @@ func Validate(m *Manifest, files []BundleFile) Findings {
 	validateServer(m, files, &f)
 	tools := validateTools(m, &f)
 	validateKivali(m, tools, false, &f)
+	validatePackages(m, &f)
 	return f
+}
+
+// validatePackages checks kivali.packages: each a Debian package name
+// (debpkg.ValidName, the rule the agent shell's software is held to),
+// each once. A name reaches apt-get as an argument.
+func validatePackages(m *Manifest, f *Findings) {
+	seen := map[string]bool{}
+	for _, p := range m.Kivali.Packages {
+		switch {
+		case !debpkg.ValidName(p):
+			f.errorf("kivali.packages: %q is not a Debian package name; give the package's name alone, lowercase, with no version, release or option", p)
+		case seen[p]:
+			f.errorf("kivali.packages: %s is listed twice", p)
+		}
+		seen[p] = true
+	}
 }
 
 // ValidateBuiltin checks a built-in integration's manifest
 // (internal/builtinintegrations) by the rules Validate holds a bundle's
 // to, except what a built-in has no use for. It has no bundle and no
-// server section, and declares no hosts: it runs inside Kivali and
-// reaches the hosts its connection names. The names kivali.verify and
+// server section, and declares no hosts and no packages: it runs inside
+// Kivali and reaches the hosts its connection names. The names kivali.verify and
 // kivali.access.choices give are passed to its Go functions, so they
 // need not name a tool.
 func ValidateBuiltin(m *Manifest) Findings {
@@ -164,6 +183,9 @@ func ValidateBuiltin(m *Manifest) Findings {
 	}
 	if len(m.Kivali.Hosts) > 0 {
 		f.errorf("kivali.hosts: a built-in integration declares no hosts; it reaches the hosts its connection names")
+	}
+	if len(m.Kivali.Packages) > 0 {
+		f.errorf("kivali.packages: a built-in integration runs inside Kivali and installs no software")
 	}
 	tools := validateTools(m, &f)
 	validateKivali(m, tools, true, &f)

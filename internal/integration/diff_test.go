@@ -6,6 +6,12 @@ import (
 	"testing"
 )
 
+// withPackages is m with kivali.packages set to pkgs.
+func withPackages(m *Manifest, pkgs ...string) *Manifest {
+	m.Kivali.Packages = pkgs
+	return m
+}
+
 // diffManifest is a manifest with these hosts, connection fields
 // (user_config's JSON object), actions and access schema properties
 // (a JSON object, or "" for access that is all or nothing).
@@ -44,7 +50,9 @@ func diffManifest(t *testing.T, hosts []string, userConfig string, tools []strin
 // host, a new secret, a new action or a new access field that Diff
 // missed would be let in unread; a field matched by its title instead
 // of its key would read as removed and added when only its words
-// changed. Each case is one kind of change; going from access that is
+// changed. Software is the same: a package the pod would newly install
+// as root, missed here, would be let in unread. Each case is one kind
+// of change; going from access that is
 // all or nothing to a form names the form's fields; and an unchanged
 // manifest, or a nil one, gives no lines at all, which the screen
 // shows as no change.
@@ -63,6 +71,9 @@ func TestDiff(t *testing.T) {
 		{"hosts", func() *Manifest {
 			return diffManifest(t, []string{"*.example.com", "uploads.example.com"}, uc, tools, access)
 		}, []string{"Hosts added: *.example.com, uploads.example.com", "Hosts removed: api.example.com"}},
+		{"software", func() *Manifest {
+			return withPackages(diffManifest(t, h, uc, tools, access), "gh", "jq")
+		}, []string{"Software added: gh, jq"}},
 		{"connection fields, a secret marked", func() *Manifest {
 			return diffManifest(t, h, `{"key":{"type":"string","title":"API key","sensitive":true},"portal":{"type":"string","title":"Portal name"},"region":{"type":"string"}}`, tools, access)
 		}, []string{"Connection fields added: API key (secret), region", "Connection fields removed: Private app token (secret)"}},
@@ -86,6 +97,14 @@ func TestDiff(t *testing.T) {
 		if got := Diff(from, c.to()); !reflect.DeepEqual(got, c.want) {
 			t.Errorf("%s: Diff =\n%q\nwant\n%q", c.name, got, c.want)
 		}
+	}
+	// From software to other software, and to none.
+	gh := withPackages(diffManifest(t, h, uc, tools, access), "gh", "jq")
+	if got := Diff(gh, withPackages(diffManifest(t, h, uc, tools, access), "jq", "poppler-utils")); !reflect.DeepEqual(got, []string{"Software added: poppler-utils", "Software removed: gh"}) {
+		t.Errorf("software changed: %q", got)
+	}
+	if got := Diff(gh, from); !reflect.DeepEqual(got, []string{"Software removed: gh, jq"}) {
+		t.Errorf("software removed: %q", got)
 	}
 	plain := diffManifest(t, h, uc, tools, "")
 	if got := Diff(plain, from); !reflect.DeepEqual(got, []string{"Access form fields added: Blogs, May publish"}) {

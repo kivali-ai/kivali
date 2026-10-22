@@ -7,11 +7,12 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/kivali-ai/kivali/internal/debpkg"
 )
 
 // Software is extra software installed into an agent's shell: Debian
@@ -26,22 +27,14 @@ type Software struct {
 // softwareFilename is the org-wide list under DataDir.
 const softwareFilename = "software.yaml"
 
-// softwareNameRE is Debian Policy §5.6.1's package name: lowercase
-// letters, digits, '+', '-' and '.', at least two characters, starting
-// with a letter or digit. Nothing else reaches apt-get: no option (a
-// leading '-'), no removal (apt-get install reads a trailing '-' as
-// "remove this package", so a name may not end with one), no version
-// pin ('='), no release ('/'), no path.
-var softwareNameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9+.-]*[a-z0-9+.]$`)
-
 // ErrInvalidSoftware is wrapped by NormalizeSoftware for a name that is
 // not a Debian package name.
 var ErrInvalidSoftware = errors.New("not a Debian package name")
 
-// ValidSoftwareName reports whether name is a Debian package name.
-func ValidSoftwareName(name string) bool {
-	return len(name) <= 128 && softwareNameRE.MatchString(name)
-}
+// ValidSoftwareName reports whether name is a Debian package name
+// (debpkg.ValidName, Debian Policy §5.6.1). Nothing else reaches
+// apt-get.
+func ValidSoftwareName(name string) bool { return debpkg.ValidName(name) }
 
 // NormalizeSoftware trims, lowercases, de-duplicates and sorts names,
 // dropping blanks. Any name that is not a Debian package name fails the

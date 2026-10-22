@@ -10,13 +10,13 @@ import (
 	"net"
 	"net/url"
 	"os/exec"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
 
 	"github.com/kivali-ai/kivali/internal/clock"
+	"github.com/kivali-ai/kivali/internal/debpkg"
 )
 
 // InstallSubcommand is the agent-shell subcommand that installs
@@ -46,18 +46,13 @@ type PackageFailure struct {
 	Error string `json:"error"`
 }
 
-// packageNameRE is Debian Policy §5.6.1's package name, the same rule
-// store.ValidSoftwareName applies when a list is saved: lowercase
-// letters, digits, '+', '-' and '.', at least two characters, starting
-// with a letter or digit and not ending in '-'. Checked again here
-// because a name reaches apt-get as an argument: one that starts with
-// '-' would be an option, and apt-get reads a trailing '-' as "remove".
-var packageNameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9+.-]*[a-z0-9+.]$`)
-
-// ValidPackageName reports whether name is a Debian package name.
-func ValidPackageName(name string) bool {
-	return len(name) <= 128 && packageNameRE.MatchString(name)
-}
+// ValidPackageName reports whether name is a Debian package name
+// (debpkg.ValidName), the rule store.ValidSoftwareName applies when a
+// list is saved and integration.Validate when a manifest declares
+// packages. Checked again here because a name reaches apt-get as an
+// argument: one that starts with '-' would be an option, and apt-get
+// reads a trailing '-' as "remove".
+func ValidPackageName(name string) bool { return debpkg.ValidName(name) }
 
 // ParseInstallList splits the daemon's --install value (comma-separated
 // package names) into a sorted, de-duplicated list. Blanks are dropped.
