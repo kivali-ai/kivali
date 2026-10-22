@@ -371,8 +371,13 @@ func (e *Engine) StartDevice(ctx context.Context, ep Endpoints, c Client, scopes
 	if uri == "" {
 		uri = a.VerificationURL
 	}
-	if a.DeviceCode == "" || a.UserCode == "" || uri == "" {
+	if a.DeviceCode == "" || a.UserCode == "" {
 		return nil, errors.New("the vendor's answer has no code to show")
+	}
+	// The owner's browser is sent to these: an address that is not an
+	// absolute http(s) one (javascript:, a relative path) is no page.
+	if !webAddress(uri) || (a.VerificationURIComplete != "" && !webAddress(a.VerificationURIComplete)) {
+		return nil, errors.New("the vendor's answer has no page to show")
 	}
 	ds := &DeviceStart{
 		UserCode:                a.UserCode,
@@ -388,6 +393,17 @@ func (e *Engine) StartDevice(ctx context.Context, ep Endpoints, c Client, scopes
 		ds.ExpiresAt = e.now().Add(d)
 	}
 	return ds, nil
+}
+
+// DeviceCode is the code the vendor gave ds to poll with: never shown,
+// and scrubbed from the vendor's words should they echo it.
+func (ds *DeviceStart) DeviceCode() string { return ds.deviceCode }
+
+// webAddress reports whether u is an absolute http:// or https://
+// address with a host.
+func webAddress(u string) bool {
+	p, err := url.Parse(u)
+	return err == nil && (p.Scheme == "https" || p.Scheme == "http") && p.Host != ""
 }
 
 // PollDevice polls the token endpoint for ds on the clock, at its
