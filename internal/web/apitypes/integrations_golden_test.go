@@ -235,16 +235,18 @@ func goldenSignInConnectionFields() []ConnectionField {
 }
 
 // goldenIntegrationPageSignIn is a GitHub bundle's page, connected by
-// signing in with the device flow, its token
-// refreshed before it expires. needsSignIn makes it the page of the
-// same connection after the vendor refused a refresh.
+// signing in with the device flow (browser offered too, with the
+// redirect address to register), its token refreshed before it
+// expires. needsSignIn makes it the page of the same connection after
+// the vendor refused a refresh.
 func goldenIntegrationPageSignIn(needsSignIn bool) IntegrationPage {
 	expires := integrationLater.Add(8 * time.Hour)
-	sign := &ConnectionSignIn{Ways: []string{"device"}, SignedIn: true, Method: "device", SignedInAt: &integrationNow, ExpiresAt: &expires}
+	redirect := "https://kivali.example.com/connect/callback"
+	sign := &ConnectionSignIn{Ways: []string{"device", "browser"}, SignedIn: true, Method: "device", SignedInAt: &integrationNow, ExpiresAt: &expires, RedirectURL: &redirect}
 	status := IntegrationStatusConnected
 	if needsSignIn {
 		refused := "the vendor refused the sign-in (bad_refresh_token): The refresh token passed is incorrect or expired."
-		sign = &ConnectionSignIn{Ways: []string{"device"}, SignedIn: false, Error: &refused}
+		sign = &ConnectionSignIn{Ways: []string{"device", "browser"}, SignedIn: false, Error: &refused, RedirectURL: &redirect}
 		status = IntegrationStatusNotConnected
 	}
 	conn := ConnectionState{ID: "a1b2c3d4", Label: "", CreatedAt: integrationNow, Fields: goldenSignInConnectionFields(), SignIn: sign}
@@ -253,20 +255,21 @@ func goldenIntegrationPageSignIn(needsSignIn bool) IntegrationPage {
 			Name: "github", DisplayName: "GitHub", Description: "Issues and pull requests on GitHub.",
 			Version: "1.0.0", Status: status, Enabled: true, Agents: 0,
 		},
-		Author:           "Kivali Developer (agent)",
-		Hosts:            []string{"api.github.com"},
-		Packages:         []string{},
-		Actions:          []IntegrationAction{{Name: "list_issues", Description: "List a repository's open issues."}},
-		ConnectionFields: goldenSignInConnectionFields(),
-		ConnectionMethod: "device",
-		Scopes:           []string{"repo", "read:org"},
-		SetupNotesMD:     "Register a GitHub App under **Settings, Developer settings**, tick *Enable Device Flow*, then paste its client id and a client secret here.",
-		Connection:       &conn,
-		Connections:      []ConnectionState{conn},
-		Multiple:         false,
-		ConnectionTest:   false,
-		Access:           []AccessRow{},
-		AgentsWithout:    []PersonRef{{Slug: "dana", Name: "Dana"}},
+		Author:            "Kivali Developer (agent)",
+		Hosts:             []string{"api.github.com"},
+		Packages:          []string{},
+		Actions:           []IntegrationAction{{Name: "list_issues", Description: "List a repository's open issues."}},
+		ConnectionFields:  goldenSignInConnectionFields(),
+		ConnectionMethod:  "device",
+		Scopes:            []string{"repo", "read:org"},
+		SetupNotesMD:      "Register a GitHub App under **Settings, Developer settings**, set its callback URL to " + redirect + ", tick *Enable Device Flow*, then paste its client id and a client secret here.",
+		SignInRedirectURL: &redirect,
+		Connection:        &conn,
+		Connections:       []ConnectionState{conn},
+		Multiple:          false,
+		ConnectionTest:    false,
+		Access:            []AccessRow{},
+		AgentsWithout:     []PersonRef{{Slug: "dana", Name: "Dana"}},
 		Versions: []IntegrationVersionSummary{
 			{Version: "1.0.0", State: IntegrationVersionStateApproved, PublishedAt: integrationEarlier, PublishedBy: PersonRef{Slug: "kivali-developer", Name: "Kivali Developer"}, ApprovedAt: &integrationEarlier, NotesMD: ""},
 		},
@@ -343,4 +346,11 @@ func goldenDeviceSignIn() DeviceSignIn {
 func goldenSignInFailed() SignInProgress {
 	words := "the vendor refused the sign-in (access_denied): The user has denied your application access."
 	return SignInProgress{State: SignInStateFailed, Error: &words}
+}
+
+// goldenBrowserSignIn is a browser sign-in just started: the vendor's
+// sign-in page with the client id, the redirect address, the scopes,
+// the state and the PKCE challenge.
+func goldenBrowserSignIn() BrowserSignIn {
+	return BrowserSignIn{URL: "https://app.hubspot.com/oauth/authorize?client_id=7fff1e36-2d40-4ae1-bbb1-5266d59564fb&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256&redirect_uri=https%3A%2F%2Fkivali.example.com%2Fconnect%2Fcallback&response_type=code&scope=content&state=3q2-7wEBAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhs"}
 }

@@ -88,8 +88,15 @@ type IntegrationPage struct {
 	Scopes []string `json:"scopes"`
 	// SetupNotesMD is the manifest's kivali.setup_notes: what to do on
 	// the vendor's side, Markdown, shown above the connection form.
-	// Empty when the manifest has none.
+	// Empty when the manifest has none. The literal {{redirect_url}} in
+	// it is replaced with the redirect address.
 	SetupNotesMD string `json:"setup_notes_md"`
+	// SignInRedirectURL is the redirect address to register with the
+	// vendor for browser sign-in, as each connection's sign-in carries
+	// it, here before any connection is saved: the owner registers it
+	// with the vendor before they have a client id to save. Present when
+	// the manifest offers browser sign-in.
+	SignInRedirectURL *string `json:"sign_in_redirect_url,omitempty"`
 	// Connection is the first connection (the oldest), absent while
 	// there is none: the one connection of an integration that takes
 	// one.
@@ -188,6 +195,21 @@ type ConnectionSignIn struct {
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 	// Error says why the connection needs the owner to sign in again.
 	Error *string `json:"error,omitempty"`
+	// RedirectURL is the exact address to register with the vendor for
+	// browser sign-in, from the address the request reached Kivali at:
+	// <scheme>://<host>/connect/callback. Present when browser is among
+	// Ways.
+	RedirectURL *string `json:"redirect_url,omitempty"`
+}
+
+// BrowserSignIn is the answer of POST
+// /api/v1/org/integrations/{name}/connections/{id}/sign-in/browser (and
+// .../connection/sign-in/browser): the vendor's sign-in page, which
+// the page sends the browser to. The vendor sends the browser back to
+// GET /connect/callback, which finishes the sign-in and returns to the
+// integration's page.
+type BrowserSignIn struct {
+	URL string `json:"url"`
 }
 
 // DeviceSignIn is the answer of POST
@@ -394,6 +416,8 @@ type IntegrationVersion struct {
 	Scopes []string `json:"scopes"`
 	// SetupNotesMD is the manifest's kivali.setup_notes: what to do on
 	// the vendor's side, Markdown. Empty when the manifest has none.
+	// The literal {{redirect_url}} in it is replaced with the redirect
+	// address.
 	SetupNotesMD string   `json:"setup_notes_md"`
 	Hosts        []string `json:"hosts"`
 	// Packages is the Debian packages the pod installs from Debian's

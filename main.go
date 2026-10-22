@@ -492,6 +492,8 @@ func main() {
 		DevUser:         devUser(cfg),
 		OAuth:           oauth,
 		Handoff:         handoff,
+		SessionCodec:    codec,
+		CookieSuffix:    cfg.CookieSuffix,
 		Env:             cfg.Env,
 		AgentModel:      cfg.AgentModel,
 		SummaryModel:    cfg.SummaryModel,

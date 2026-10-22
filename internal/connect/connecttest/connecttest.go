@@ -86,6 +86,13 @@ type Knobs struct {
 	// is answered.
 	OnDeviceStart func()
 
+	// AuthorizeError sends the browser back from the authorization
+	// page with this error code (access_denied, invalid_scope...) and
+	// the state, in place of a code: the owner said no, or the vendor
+	// refused the request. AuthorizeErrorDescription is its
+	// error_description; none is sent when it is empty.
+	AuthorizeError, AuthorizeErrorDescription string
+
 	// RevokeStatus answers each revocation with this status; zero is
 	// 200.
 	RevokeStatus int
@@ -480,24 +487,33 @@ func (v *FakeVendor) deviceGrant(w http.ResponseWriter, r *http.Request, k Knobs
 // authorize stands for the owner approving on the vendor's site: it
 // sends the browser back to redirect_uri with a code and the state.
 func (v *FakeVendor) authorize(w http.ResponseWriter, r *http.Request) {
-	_, _ = v.record(r)
+	k, _ := v.record(r)
 	q := r.URL.Query()
 	if q.Get("client_id") != v.clientID || q.Get("response_type") != "code" || q.Get("redirect_uri") == "" {
 		http.Error(w, "bad authorization request", http.StatusBadRequest)
 		return
 	}
-	v.mu.Lock()
-	code := v.nextLocked("code")
-	v.codes[code] = authCode{clientID: q.Get("client_id"), redirect: q.Get("redirect_uri"), challenge: q.Get("code_challenge"), method: q.Get("code_challenge_method")}
-	v.mu.Unlock()
 	back, err := url.Parse(q.Get("redirect_uri"))
 	if err != nil {
 		http.Error(w, "bad redirect", http.StatusBadRequest)
 		return
 	}
 	bq := back.Query()
-	bq.Set("code", code)
 	bq.Set("state", q.Get("state"))
+	if k.AuthorizeError != "" {
+		bq.Set("error", k.AuthorizeError)
+		if k.AuthorizeErrorDescription != "" {
+			bq.Set("error_description", k.AuthorizeErrorDescription)
+		}
+		back.RawQuery = bq.Encode()
+		http.Redirect(w, r, back.String(), http.StatusFound)
+		return
+	}
+	v.mu.Lock()
+	code := v.nextLocked("code")
+	v.codes[code] = authCode{clientID: q.Get("client_id"), redirect: q.Get("redirect_uri"), challenge: q.Get("code_challenge"), method: q.Get("code_challenge_method")}
+	v.mu.Unlock()
+	bq.Set("code", code)
 	back.RawQuery = bq.Encode()
 	http.Redirect(w, r, back.String(), http.StatusFound)
 }

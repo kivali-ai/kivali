@@ -1,6 +1,6 @@
 // Package web (integration_signin_flows.go) — signing a connection in
 // and out: the sign-ins under way, the device flow's routes, and Sign
-// out.
+// out. Browser sign-in's routes are in integration_signin_browser.go.
 //
 // A sign-in under way is a signInFlow, kept in memory on the Server
 // (signInFlows) under a random id, at most one per connection: a new
@@ -21,6 +21,7 @@ package web
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"errors"
 	"log"
@@ -44,9 +45,8 @@ const signInFlowTTL = 10 * time.Minute
 
 // signInWaysOffered are the ways this server signs a connection in by,
 // of those a manifest may offer (integration.Connection.Ways): the
-// page is offered only these. Browser sign-in joins once its routes
-// are in place.
-var signInWaysOffered = []string{integration.MethodDevice}
+// page is offered only these.
+var signInWaysOffered = []string{integration.MethodDevice, integration.MethodBrowser}
 
 // offeredSignInWays is c's ways that this server signs in by, the
 // manifest's method first.
@@ -74,14 +74,34 @@ type signInFlow struct {
 	id, name, connID string
 	ctx              context.Context
 	cancel           context.CancelFunc
-	// done is closed once the flow's goroutine has ended.
+	// done is closed once the flow's goroutine has ended: a device
+	// sign-in's poll, a browser sign-in's callback.
 	done chan struct{}
+	// browser is a browser sign-in's own; nil for a device sign-in.
+	browser *browserFlow
 
 	// Guarded by signInFlows.mu.
 	state apitypes.SignInState
 	err   string
 	// until is when the flow is forgotten.
 	until time.Time
+	// taken is true once a browser sign-in's callback came for it:
+	// its state is good for one callback.
+	taken bool
+}
+
+// browserFlow is what a browser sign-in keeps between sending the
+// owner to the vendor and the vendor sending them back.
+type browserFlow struct {
+	// state is the OAuth state the vendor passes back, which finds the
+	// flow: 32 random bytes, base64url.
+	state string
+	// verifier is the PKCE code verifier; empty for a manifest with
+	// pkce false.
+	verifier string
+	// redirectURL is the redirect address the vendor was given, which
+	// the code exchange must name again.
+	redirectURL string
 }
 
 // signInFlows are the sign-ins under way, by id. The zero value is
@@ -100,11 +120,12 @@ func newSignInFlowID() string {
 
 // start begins a flow for name's connection connID that is forgotten
 // at until, cancelling and forgetting any other of that connection.
-func (t *signInFlows) start(now time.Time, name, connID string, until time.Time) *signInFlow {
+// browser is a browser sign-in's own, nil for a device sign-in.
+func (t *signInFlows) start(now time.Time, name, connID string, until time.Time, browser *browserFlow) *signInFlow {
 	ctx, cancel := context.WithCancel(context.Background())
 	f := &signInFlow{
 		id: newSignInFlowID(), name: name, connID: connID, ctx: ctx, cancel: cancel,
-		done: make(chan struct{}), state: apitypes.SignInStatePending, until: until,
+		done: make(chan struct{}), browser: browser, state: apitypes.SignInStatePending, until: until,
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -139,6 +160,29 @@ func (t *signInFlows) end(f *signInFlow, now time.Time, state apitypes.SignInSta
 		return
 	}
 	f.state, f.err, f.until = state, words, now.Add(signInFlowTTL)
+}
+
+// take is the browser sign-in whose OAuth state is state, still
+// pending, not yet taken and not past its time, marked taken so no
+// other callback finds it: nil when there is none. The flow stays in
+// the table, so a delete or a sign-out still cancels it.
+func (t *signInFlows) take(now time.Time, state string) *signInFlow {
+	if state == "" {
+		return nil
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.pruneLocked(now)
+	for _, f := range t.flows {
+		if f.browser == nil || f.taken || f.state != apitypes.SignInStatePending {
+			continue
+		}
+		if subtle.ConstantTimeCompare([]byte(f.browser.state), []byte(state)) == 1 {
+			f.taken = true
+			return f
+		}
+	}
+	return nil
 }
 
 // cancel cancels and forgets name's flows: those of its connection
@@ -278,7 +322,7 @@ func (s *Server) handleAPISignInDevice(byID bool) http.HandlerFunc {
 			writeAPIError(w, http.StatusConflict, msg, whoYou)
 			return
 		}
-		f := s.signInFlows.start(now, name, connID, ds.ExpiresAt.Add(signInFlowTTL))
+		f := s.signInFlows.start(now, name, connID, ds.ExpiresAt.Add(signInFlowTTL), nil)
 		unlock()
 		go s.runDeviceSignIn(f, m, client, ds)
 		out := apitypes.DeviceSignIn{

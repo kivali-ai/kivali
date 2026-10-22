@@ -1861,9 +1861,18 @@ export interface IntegrationPage {
   /**
    * SetupNotesMD is the manifest's kivali.setup_notes: what to do on
    * the vendor's side, Markdown, shown above the connection form.
-   * Empty when the manifest has none.
+   * Empty when the manifest has none. The literal {{redirect_url}} in
+   * it is replaced with the redirect address.
    */
   setup_notes_md: string;
+  /**
+   * SignInRedirectURL is the redirect address to register with the
+   * vendor for browser sign-in, as each connection's sign-in carries
+   * it, here before any connection is saved: the owner registers it
+   * with the vendor before they have a client id to save. Present when
+   * the manifest offers browser sign-in.
+   */
+  sign_in_redirect_url?: string;
   /**
    * Connection is the first connection (the oldest), absent while
    * there is none: the one connection of an integration that takes
@@ -2008,6 +2017,24 @@ export interface ConnectionSignIn {
    * Error says why the connection needs the owner to sign in again.
    */
   error?: string;
+  /**
+   * RedirectURL is the exact address to register with the vendor for
+   * browser sign-in, from the address the request reached Kivali at:
+   * <scheme>://<host>/connect/callback. Present when browser is among
+   * Ways.
+   */
+  redirect_url?: string;
+}
+/**
+ * BrowserSignIn is the answer of POST
+ * /api/v1/org/integrations/{name}/connections/{id}/sign-in/browser (and
+ * .../connection/sign-in/browser): the vendor's sign-in page, which
+ * the page sends the browser to. The vendor sends the browser back to
+ * GET /connect/callback, which finishes the sign-in and returns to the
+ * integration's page.
+ */
+export interface BrowserSignIn {
+  url: string;
 }
 /**
  * DeviceSignIn is the answer of POST
@@ -2281,6 +2308,8 @@ export interface IntegrationVersion {
   /**
    * SetupNotesMD is the manifest's kivali.setup_notes: what to do on
    * the vendor's side, Markdown. Empty when the manifest has none.
+   * The literal {{redirect_url}} in it is replaced with the redirect
+   * address.
    */
   setup_notes_md: string;
   hosts: string[];

@@ -182,6 +182,17 @@ type Server struct {
 	signInRefresher connect.Refresher
 	// signInFlows are the sign-ins under way (integration_signin_flows.go).
 	signInFlows signInFlows
+	// SessionCodec is the session cookie's codec, which also signs the
+	// browser sign-in cookie (integration_signin_browser.go). Without
+	// one the session middleware's is used, and without that a key of
+	// the server's own, made once.
+	SessionCodec     *auth.Codec
+	connectCodecOnce sync.Once
+	connectCodecOwn  *auth.Codec
+	// CookieSuffix is KIVALI_COOKIE_SUFFIX: the browser sign-in cookie
+	// is named with it, as the session cookie is. Empty takes the
+	// session middleware's.
+	CookieSuffix string
 
 	// SeedTimeout bounds one Chief of Staff hire, measured on Clock; a
 	// hire still running when it passes ends as failed. Zero means
@@ -615,6 +626,10 @@ func (s *Server) wireRoutes() {
 	// prompt rather than an in-browser view.
 	protected.HandleFunc("GET /messages/{path...}", s.handleMessage)
 	protected.HandleFunc("GET /admin/version", s.handleAdminVersion)
+	// Where a vendor sends the browser back after a browser sign-in
+	// (integration_signin_browser.go): part of the signed-in UI, so a
+	// browser not signed in to Kivali signs in first.
+	protected.HandleFunc("GET "+connectCallbackPath, s.handleConnectCallback)
 	s.wireAPIRoutes(protected)
 	// The web app: every GET no route above claims.
 	protected.Handle("GET /{path...}", spa)
