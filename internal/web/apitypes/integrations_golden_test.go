@@ -108,6 +108,7 @@ func goldenIntegrationPageMultiple() IntegrationPage {
 		ConnectionFields: goldenGitConnectionFields("github.com"),
 		ConnectionMethod: "token",
 		Scopes:           []string{},
+		SignInHosts:      []string{},
 		Connection: &ConnectionState{
 			ID: "a1b2c3d4", Label: "GitHub", CreatedAt: integrationEarlier, Fields: goldenGitConnectionFields("github.com"),
 		},
@@ -143,6 +144,7 @@ func goldenIntegrationPage() IntegrationPage {
 		ConnectionFields: goldenConnectionFields(),
 		ConnectionMethod: "token",
 		Scopes:           []string{},
+		SignInHosts:      []string{},
 		Connection:       goldenConnectionState(),
 		Connections:      []ConnectionState{*goldenConnectionState()},
 		Multiple:         false,
@@ -177,6 +179,7 @@ func goldenIntegrationVersion() IntegrationVersion {
 		Runtime:          "python",
 		ConnectionMethod: "token",
 		Scopes:           []string{},
+		SignInHosts:      []string{},
 		Hosts:            []string{"api.hubapi.com"},
 		Packages:         []string{"gh"},
 		ConnectionFields: goldenConnectionFields(),
@@ -209,6 +212,7 @@ func goldenBuiltinIntegrationVersion() IntegrationVersion {
 		Runtime:          "",
 		ConnectionMethod: "token",
 		Scopes:           []string{},
+		SignInHosts:      []string{},
 		Hosts:            []string{},
 		Packages:         []string{},
 		ConnectionFields: []ConnectionField{{Key: "token", Title: "Access token", Description: "", Sensitive: true, Required: true, Set: false}},
@@ -262,6 +266,8 @@ func goldenIntegrationPageSignIn(needsSignIn bool) IntegrationPage {
 		ConnectionFields:  goldenSignInConnectionFields(),
 		ConnectionMethod:  "device",
 		Scopes:            []string{"repo", "read:org"},
+		SignInHosts:       []string{"github.com"},
+		SignInAt:          map[string]string{"device": "github.com", "browser": "github.com"},
 		SetupNotesMD:      "Register a GitHub App under **Settings, Developer settings**, set its callback URL to " + redirect + ", tick *Enable Device Flow*, then paste its client id and a client secret here.",
 		SignInRedirectURL: &redirect,
 		Connection:        &conn,
@@ -295,6 +301,7 @@ func goldenShippedIntegrationVersion() IntegrationVersion {
 		Runtime:          "python",
 		ConnectionMethod: "token",
 		Scopes:           []string{},
+		SignInHosts:      []string{},
 		Hosts:            []string{"api.notes.example.com"},
 		Packages:         []string{},
 		ConnectionFields: []ConnectionField{{Key: "token", Title: "API token", Description: "", Sensitive: true, Required: true, Set: false}},
@@ -351,6 +358,21 @@ func goldenSignInFailed() SignInProgress {
 // goldenBrowserSignIn is a browser sign-in just started: the vendor's
 // sign-in page with the client id, the redirect address, the scopes,
 // the state and the PKCE challenge.
+// goldenIntegrationVersionSignIn is the install screen of a HubSpot
+// bundle that connects by signing in in the browser: the scopes it
+// asks for and the hosts its sign-in goes to.
+func goldenIntegrationVersionSignIn() IntegrationVersion {
+	v := goldenIntegrationVersion()
+	v.ConnectionMethod = "browser"
+	v.Scopes = []string{"content"}
+	v.SignInHosts = []string{"api.hubapi.com", "app.hubspot.com"}
+	v.ConnectionFields = []ConnectionField{
+		{Key: "client_id", Title: "Client id", Description: "", Sensitive: false, Required: true, Set: false},
+		{Key: "client_secret", Title: "Client secret", Description: "", Sensitive: true, Required: true, Set: false},
+	}
+	return v
+}
+
 func goldenBrowserSignIn() BrowserSignIn {
 	return BrowserSignIn{URL: "https://app.hubspot.com/oauth/authorize?client_id=7fff1e36-2d40-4ae1-bbb1-5266d59564fb&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256&redirect_uri=https%3A%2F%2Fkivali.example.com%2Fconnect%2Fcallback&response_type=code&scope=content&state=3q2-7wEBAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhs"}
 }

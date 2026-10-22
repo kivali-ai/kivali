@@ -410,6 +410,36 @@ func signInScopes(m *integration.Manifest) []string {
 	return nonNilStrings(slices.Clone(m.Kivali.Connection.Scopes))
 }
 
+// signInHosts are the hosts m's sign-in connection talks to
+// (Connection.SignInHosts); empty for a token connection.
+func signInHosts(m *integration.Manifest) []string {
+	if m == nil || !m.Kivali.Connection.SignIn() {
+		return []string{}
+	}
+	return m.Kivali.Connection.SignInHosts()
+}
+
+// signInPagesOf is, for each way this server offers m's connection, the
+// host the sign-in goes to: the authorization endpoint's for browser,
+// the device endpoint's for device. nil for a token connection.
+func signInPagesOf(m *integration.Manifest) map[string]string {
+	if m == nil || !m.Kivali.Connection.SignIn() {
+		return nil
+	}
+	c := m.Kivali.Connection
+	out := map[string]string{}
+	for _, way := range offeredSignInWays(c) {
+		ep := c.DeviceEndpoint
+		if way == integration.MethodBrowser {
+			ep = c.AuthorizationEndpoint
+		}
+		if h := integration.EndpointHost(ep); h != "" {
+			out[way] = h
+		}
+	}
+	return out
+}
+
 func integrationHosts(m *integration.Manifest) []string {
 	if m == nil {
 		return []string{}
@@ -481,6 +511,8 @@ func (s *Server) integrationPage(v *integrationView, r *http.Request) apitypes.I
 		Actions:          integrationActions(v.manifest),
 		ConnectionFields: connectionFields(v.manifest, v.first()),
 		Scopes:           signInScopes(v.manifest),
+		SignInHosts:      signInHosts(v.manifest),
+		SignInAt:         signInPagesOf(v.manifest),
 		Connections:      []apitypes.ConnectionState{},
 		Multiple:         v.multiple(),
 		ConnectionTest:   v.connectionTest(),
@@ -571,6 +603,7 @@ func (s *Server) integrationVersionView(v *integrationView, ver store.Integratio
 		Runtime:          m.Server.Type,
 		ConnectionMethod: m.Kivali.Connection.Method,
 		Scopes:           signInScopes(m),
+		SignInHosts:      signInHosts(m),
 		SetupNotesMD:     setupNotes(m, r),
 		Hosts:            integrationHosts(m),
 		Packages:         integrationPackages(m),

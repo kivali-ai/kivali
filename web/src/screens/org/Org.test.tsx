@@ -16,7 +16,7 @@ import type { OrgContextValue } from '../../state/OrgProvider';
 import { aboutLine, versionLabel } from './About';
 import { BACKUP_DEBOUNCE_MS } from './Backup';
 import { InstallScreen, bundleLine } from './InstallScreen';
-import { IntegrationPage, SIGN_IN_POLL_MS, clientSaved, codeLifeWords, deleteConnectionWords, signInLine, signInReturnOf } from './IntegrationPage';
+import { IntegrationPage, SIGN_IN_POLL_MS, clientSaved, codeLifeWords, deleteConnectionWords, signInLine, signInReturnOf, signsInAt } from './IntegrationPage';
 import { whenLabel } from './integrationParts';
 import { Org, headerMeta } from './OrgPage';
 import {
@@ -41,6 +41,7 @@ import {
   goIntegrationVersion,
   goIntegrationVersionBuiltin,
   goIntegrationVersionShipped,
+  goIntegrationVersionSignIn,
   goIntegrations,
   goNetwork,
   goOrg,
@@ -2405,6 +2406,32 @@ describe('Integration page, signing in in the browser', () => {
     await renderOrg('/org/integrations?sign_in_error=' + encodeURIComponent('Call 555-0100 to restore access'));
     expect(screen.queryByText('The sign-in did not work')).toBeNull();
     expect(screen.queryByText(/555-0100/)).toBeNull();
+  });
+
+  // Guards where the owner is sent (sign_in_at in integration_page_sign_in.json): the Sign in block names the host
+  // each of its ways goes to, once, so a lookalike sign-in page named by a bundle is visible before the owner clicks.
+  it('names the host the sign-in goes to', async () => {
+    await renderOrg(PATH, { routes: pageRoutes(notSignedIn(['device', 'browser'])) });
+    expect(block().getByText('Signs in at github.com')).toBeInTheDocument();
+    expect(signsInAt(['browser', 'device'], { browser: 'app.hubspot.com', device: 'login.example.com' })).toBe(
+      'Signs in at app.hubspot.com and login.example.com',
+    );
+    expect(signsInAt(['browser'], undefined)).toBeUndefined();
+  });
+
+  // Guards the install screen of a sign-in bundle (integration_version_sign_in.json): before approving, the owner sees
+  // every host the sign-in talks to and that their browser is sent there, so a lookalike endpoint is in plain sight
+  // rather than only in the manifest. A token bundle's screen has no such block.
+  it('lists the sign-in hosts on the install screen', async () => {
+    await renderOrg('/org/integrations/hubspot/versions/1.3.0', {
+      routes: { 'GET /api/v1/org/integrations/hubspot/versions/1.3.0': goIntegrationVersionSignIn },
+    });
+    const hosts = within(screen.getByRole('region', { name: 'Signs in at' }));
+    for (const h of goIntegrationVersionSignIn.sign_in_hosts) expect(hosts.getByText(h)).toBeInTheDocument();
+    expect(screen.getByText(/sends your browser to the service’s sign-in page here/)).toBeInTheDocument();
+    cleanup();
+    await renderOrg('/org/integrations/hubspot/versions/1.3.0');
+    expect(screen.queryByText('Signs in at')).toBeNull();
   });
 
   // Guards the reading of the query: a connection signed in, one whose sign-in failed, the one code Kivali sends, and

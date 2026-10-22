@@ -170,6 +170,22 @@ export function InstallScreen() {
         )}
       </Block>
 
+      {v.sign_in_hosts.length > 0 && (
+        <Block label="Signs in at">
+          <Text as="p" variant="caption" tone="muted">
+            Signing in sends your browser to the service’s sign-in page here, and Kivali takes the sign-in from these hosts.
+            Check they are the service’s own.
+          </Text>
+          <ul className="app-int-facts">
+            {v.sign_in_hosts.map((h) => (
+              <li key={h}>
+                <Text variant="code">{h}</Text>
+              </li>
+            ))}
+          </ul>
+        </Block>
+      )}
+
       {/* Software runs as root while it installs, at every start: the person reads each name before approving. */}
       {!v.builtin && v.packages.length > 0 && (
         <Block label="Software it installs">

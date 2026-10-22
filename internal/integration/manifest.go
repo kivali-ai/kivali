@@ -20,6 +20,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
+	"slices"
+	"strings"
 )
 
 // ManifestName is the manifest's file name at the bundle's root.
@@ -175,6 +178,34 @@ func (c Connection) Ways() []string {
 		return []string{MethodBrowser}
 	}
 	return []string{}
+}
+
+// SignInHosts are the hosts of the connection's OAuth endpoints (the
+// authorization, token, device and revocation endpoints), lower-cased,
+// each once, sorted: where a sign-in sends the owner's browser and
+// where core takes the tokens from. Empty for a token connection.
+func (c Connection) SignInHosts() []string {
+	out := []string{}
+	for _, ep := range []string{c.AuthorizationEndpoint, c.TokenEndpoint, c.DeviceEndpoint, c.RevocationEndpoint} {
+		if h := EndpointHost(ep); h != "" && !slices.Contains(out, h) {
+			out = append(out, h)
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+// EndpointHost is the host (and port, when it names one) of an endpoint
+// address, lower-cased; "" for none or an address that is not one.
+func EndpointHost(endpoint string) string {
+	if endpoint == "" {
+		return ""
+	}
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		return ""
+	}
+	return strings.ToLower(u.Host)
 }
 
 // UsesPKCE reports whether browser sign-in sends a PKCE challenge.

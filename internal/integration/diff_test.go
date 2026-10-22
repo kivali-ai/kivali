@@ -47,7 +47,8 @@ func diffManifest(t *testing.T, hosts []string, userConfig string, tools []strin
 // Why this test exists: the install screen of a version that would
 // run in place of the one in use says what it changes, and the owner
 // reads those lines instead of comparing two screens by eye. A new
-// host, a new secret, a new action or a new access field that Diff
+// host, a new host a sign-in sends the owner's browser to (a lookalike
+// sign-in page slipped into an update), a new secret, a new action or a new access field that Diff
 // missed would be let in unread; a field matched by its title instead
 // of its key would read as removed and added when only its words
 // changed. Software is the same: a package the pod would newly install
@@ -91,6 +92,11 @@ func TestDiff(t *testing.T) {
 			"Actions removed: Create post, List blogs",
 			"Access form fields removed: Blogs, May publish",
 		}},
+		{"sign-in hosts", func() *Manifest {
+			m := diffManifest(t, h, uc, tools, access)
+			m.Kivali.Connection = Connection{Method: MethodBrowser, AuthorizationEndpoint: "https://app.hubspot.com/oauth/authorize", TokenEndpoint: "https://api.hubapi.com/oauth/v1/token"}
+			return m
+		}, []string{"Sign-in hosts added: api.hubapi.com, app.hubspot.com", "Connection fields added: Client id, Client secret (secret)"}},
 		{"nothing changed", func() *Manifest { return diffManifest(t, h, uc, tools, access) }, nil},
 	}
 	for _, c := range cases {

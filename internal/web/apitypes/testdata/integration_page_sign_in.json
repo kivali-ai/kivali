@@ -53,6 +53,13 @@
     "read:org"
   ],
   "setup_notes_md": "Register a GitHub App under **Settings, Developer settings**, set its callback URL to https://kivali.example.com/connect/callback, tick *Enable Device Flow*, then paste its client id and a client secret here.",
+  "sign_in_hosts": [
+    "github.com"
+  ],
+  "sign_in_at": {
+    "browser": "github.com",
+    "device": "github.com"
+  },
   "sign_in_redirect_url": "https://kivali.example.com/connect/callback",
   "connection": {
     "id": "a1b2c3d4",

@@ -1866,6 +1866,18 @@ export interface IntegrationPage {
    */
   setup_notes_md: string;
   /**
+   * SignInHosts are the hosts of the manifest's OAuth endpoints, each
+   * once, sorted: where a sign-in sends the owner's browser and where
+   * Kivali takes the tokens from. Empty for a token connection.
+   */
+  sign_in_hosts: string[];
+  /**
+   * SignInAt is, for each way the owner may sign in, the host of the
+   * page the sign-in goes to: browser, the authorization endpoint's;
+   * device, the device endpoint's. Absent for a token connection.
+   */
+  sign_in_at?: { [key: string]: string};
+  /**
    * SignInRedirectURL is the redirect address to register with the
    * vendor for browser sign-in, as each connection's sign-in carries
    * it, here before any connection is saved: the owner registers it
@@ -2312,6 +2324,12 @@ export interface IntegrationVersion {
    * address.
    */
   setup_notes_md: string;
+  /**
+   * SignInHosts are the hosts of the manifest's OAuth endpoints, each
+   * once, sorted: where a sign-in sends the owner's browser and where
+   * Kivali takes the tokens from. Empty for a token connection.
+   */
+  sign_in_hosts: string[];
   hosts: string[];
   /**
    * Packages is the Debian packages the pod installs from Debian's

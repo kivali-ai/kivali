@@ -16,6 +16,7 @@
   "connection_method": "token",
   "scopes": [],
   "setup_notes_md": "",
+  "sign_in_hosts": [],
   "hosts": [
     "api.notes.example.com"
   ],

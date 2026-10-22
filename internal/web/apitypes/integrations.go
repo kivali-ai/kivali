@@ -91,6 +91,14 @@ type IntegrationPage struct {
 	// Empty when the manifest has none. The literal {{redirect_url}} in
 	// it is replaced with the redirect address.
 	SetupNotesMD string `json:"setup_notes_md"`
+	// SignInHosts are the hosts of the manifest's OAuth endpoints, each
+	// once, sorted: where a sign-in sends the owner's browser and where
+	// Kivali takes the tokens from. Empty for a token connection.
+	SignInHosts []string `json:"sign_in_hosts"`
+	// SignInAt is, for each way the owner may sign in, the host of the
+	// page the sign-in goes to: browser, the authorization endpoint's;
+	// device, the device endpoint's. Absent for a token connection.
+	SignInAt map[string]string `json:"sign_in_at,omitempty"`
 	// SignInRedirectURL is the redirect address to register with the
 	// vendor for browser sign-in, as each connection's sign-in carries
 	// it, here before any connection is saved: the owner registers it
@@ -418,8 +426,12 @@ type IntegrationVersion struct {
 	// the vendor's side, Markdown. Empty when the manifest has none.
 	// The literal {{redirect_url}} in it is replaced with the redirect
 	// address.
-	SetupNotesMD string   `json:"setup_notes_md"`
-	Hosts        []string `json:"hosts"`
+	SetupNotesMD string `json:"setup_notes_md"`
+	// SignInHosts are the hosts of the manifest's OAuth endpoints, each
+	// once, sorted: where a sign-in sends the owner's browser and where
+	// Kivali takes the tokens from. Empty for a token connection.
+	SignInHosts []string `json:"sign_in_hosts"`
+	Hosts       []string `json:"hosts"`
 	// Packages is the Debian packages the pod installs from Debian's
 	// repositories each time it starts, before the server runs
 	// (kivali.packages); empty for none.
