@@ -331,6 +331,13 @@ func (s *Server) restoreArchive(ctx context.Context, path, filename string) erro
 	if err := s.Store.InstallBuiltinSkills(); err != nil {
 		log.Printf("restore: install built-in skills: %v", err)
 	}
+	// The same for the built-in integrations: the archive holds their
+	// records and versions as the binary that wrote it did (or none,
+	// from a Kivali before one shipped), and this binary's manifests
+	// decide the version in use. The owner's switch stays as restored.
+	if err := s.Store.InstallBuiltinIntegrations(s.BuiltinIntegrations.Manifests(), s.clk().Now()); err != nil {
+		log.Printf("restore: install built-in integrations: %v", err)
+	}
 	// The restored allowed_egress.yaml is on disk; the egress proxy
 	// reads its own copy, which boot writes and nothing else would
 	// until the next edit of the allowlist.

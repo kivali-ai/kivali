@@ -137,7 +137,42 @@ func Validate(m *Manifest, files []BundleFile) Findings {
 		f.errorf("the bundle has no %s", ManifestName)
 		return f
 	}
+	validateManifest(m, &f)
+	validateServer(m, files, &f)
+	tools := validateTools(m, &f)
+	validateKivali(m, tools, false, &f)
+	return f
+}
 
+// ValidateBuiltin checks a built-in integration's manifest
+// (internal/builtinintegrations) by the rules Validate holds a bundle's
+// to, except what a built-in has no use for. It has no bundle and no
+// server section, and declares no hosts: it runs inside Kivali and
+// reaches the hosts its connection names. The names kivali.verify and
+// kivali.access.choices give are passed to its Go functions, so they
+// need not name a tool.
+func ValidateBuiltin(m *Manifest) Findings {
+	var f Findings
+	if m == nil {
+		f.errorf("the built-in integration has no manifest")
+		return f
+	}
+	validateManifest(m, &f)
+	s := m.Server
+	if s.Type != "" || s.EntryPoint != "" || s.MCPConfig.Command != "" || len(s.MCPConfig.Args) > 0 || len(s.MCPConfig.Env) > 0 {
+		f.errorf("server: a built-in integration has no server section")
+	}
+	if len(m.Kivali.Hosts) > 0 {
+		f.errorf("kivali.hosts: a built-in integration declares no hosts; it reaches the hosts its connection names")
+	}
+	tools := validateTools(m, &f)
+	validateKivali(m, tools, true, &f)
+	return f
+}
+
+// validateManifest checks the manifest's own fields and its connection
+// form.
+func validateManifest(m *Manifest, f *Findings) {
 	switch {
 	case m.ManifestVersion == "":
 		f.errorf("manifest_version is missing")
@@ -168,12 +203,7 @@ func Validate(m *Manifest, files []BundleFile) Findings {
 	if strings.TrimSpace(m.Description) == "" {
 		f.warnf("description is empty")
 	}
-
-	validateServer(m, files, &f)
-	validateUserConfig(m, &f)
-	tools := validateTools(m, &f)
-	validateKivali(m, tools, &f)
-	return f
+	validateUserConfig(m, f)
 }
 
 func validateBundle(files []BundleFile, f *Findings) {
@@ -279,7 +309,7 @@ func validateTools(m *Manifest, f *Findings) []string {
 	return names
 }
 
-func validateKivali(m *Manifest, tools []string, f *Findings) {
+func validateKivali(m *Manifest, tools []string, builtin bool, f *Findings) {
 	k := m.Kivali
 	switch k.Connection.Method {
 	case "token":
@@ -291,7 +321,7 @@ func validateKivali(m *Manifest, tools []string, f *Findings) {
 		f.errorf("kivali.connection.method %s is not one Kivali knows; it must be token", k.Connection.Method)
 	}
 
-	if len(k.Hosts) == 0 {
+	if len(k.Hosts) == 0 && !builtin {
 		f.errorf("kivali.hosts is empty")
 	}
 	for _, h := range k.Hosts {
@@ -320,13 +350,20 @@ func validateKivali(m *Manifest, tools []string, f *Findings) {
 			case len(p.enum) > 0:
 				f.errorf("%s: the field has fixed options (enum); list its options one way, not both", at)
 			}
-			if !slices.Contains(tools, tool) {
+			switch {
+			case builtin && !toolNameRE.MatchString(tool):
+				f.errorf("%s: %q must be lowercase letters, digits and underscores, starting with a letter", at, tool)
+			case !builtin && !slices.Contains(tools, tool):
 				f.errorf("%s names %s, which is not in tools", at, tool)
 			}
 		}
 	}
 
-	if k.Verify != "" && !slices.Contains(tools, k.Verify) {
+	switch {
+	case k.Verify == "":
+	case builtin && !toolNameRE.MatchString(k.Verify):
+		f.errorf("kivali.verify: %q must be lowercase letters, digits and underscores, starting with a letter", k.Verify)
+	case !builtin && !slices.Contains(tools, k.Verify):
 		f.errorf("kivali.verify names %s, which is not in tools", k.Verify)
 	}
 }

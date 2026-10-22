@@ -20,6 +20,7 @@ import (
 	"github.com/kivali-ai/kivali/internal/agentpod"
 	"github.com/kivali-ai/kivali/internal/auth"
 	"github.com/kivali-ai/kivali/internal/browserpod"
+	"github.com/kivali-ai/kivali/internal/builtinintegrations"
 	"github.com/kivali-ai/kivali/internal/claudeagent"
 	"github.com/kivali-ai/kivali/internal/clock"
 	"github.com/kivali-ai/kivali/internal/clockcheck"
@@ -177,6 +178,14 @@ func main() {
 	// agent reaches for a skill that should be there.
 	if err := s.InstallBuiltinSkills(); err != nil {
 		log.Fatalf("install builtin skills: %v", err)
+	}
+	// The same for the integrations that ship with the binary: each
+	// one's record and its version in use, which this binary's
+	// manifest decides. Logged rather than fatal: a built-in that
+	// cannot be written (an uploaded integration has its name) leaves
+	// the rest of the team working.
+	if err := s.InstallBuiltinIntegrations(builtinintegrations.All().Manifests(), time.Now()); err != nil {
+		log.Printf("install built-in integrations: %v", err)
 	}
 	// Model pins follow their lineage. An agent pinned to a model the
 	// catalog has since retired moves to the newest model of the same

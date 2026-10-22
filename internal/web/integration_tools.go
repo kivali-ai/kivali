@@ -10,7 +10,9 @@
 // (POST /v1/agent/{slug}/integrations/tools). Every call comes back
 // here (POST /v1/agent/{slug}/integrations/call): core checks the
 // access as it stands, stamps the call with the agent and its access
-// (_meta.kivali), sends it to the integration, scrubs the answer of the
+// (_meta.kivali), sends it to the integration (or, for one that ships
+// with Kivali, calls its Go function with the agent, its access and the
+// connection: integration_builtin.go), scrubs the answer of the
 // connection's secrets and writes an audit row. The integration never
 // authenticates an agent: core is the only place access is enforced.
 
@@ -31,6 +33,7 @@ import (
 	"time"
 
 	"github.com/kivali-ai/kivali/internal/agentpod"
+	"github.com/kivali-ai/kivali/internal/builtinintegrations"
 	"github.com/kivali-ai/kivali/internal/integration"
 	"github.com/kivali-ai/kivali/internal/integrationpod"
 	"github.com/kivali-ai/kivali/internal/provider"
@@ -60,6 +63,9 @@ type agentIntegration struct {
 	// access form. Both set only when the agent may call it.
 	manifest *integration.Manifest
 	access   json.RawMessage
+	// builtin is its code when it ships with Kivali (integration_builtin.go):
+	// core calls it directly. nil for a bundle, which runs in its pod.
+	builtin builtinintegrations.Integration
 	// refusal is why the agent may not call it now, in words for the
 	// agent; reason is the same for the owner's audit. Both empty when
 	// it may.
@@ -119,24 +125,27 @@ func (s *Server) agentIntegrationFor(it store.Integration, slug string) (agentIn
 	if why := rows[i].Invalid; why != "" {
 		return refuse(refuseInvalid(v.display, why), "the access no longer applies: "+why)
 	}
-	if !s.Integrations.Running(it.Name) {
+	if !s.integrationRunning(it) {
 		return refuse(refuseNotRunning(v.display), errNotRunning)
 	}
 	_, m, err := s.Store.CurrentIntegrationVersion(it.Name)
 	if err != nil {
 		return v, err
 	}
-	v.manifest, v.access = m, rows[i].AccessJSON()
+	v.manifest, v.access, v.builtin = m, rows[i].AccessJSON(), s.builtinFor(it)
 	return v, nil
 }
 
 // listedTools is the part of an MCP tools/list result Kivali reads.
 type listedTools struct {
-	Tools []struct {
-		Name        string          `json:"name"`
-		Description string          `json:"description"`
-		InputSchema json.RawMessage `json:"inputSchema"`
-	} `json:"tools"`
+	Tools []listedTool `json:"tools"`
+}
+
+// listedTool is one tool of a tools/list result.
+type listedTool struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description"`
+	InputSchema json.RawMessage `json:"inputSchema"`
 }
 
 // objectSchema is the input schema of an action whose server gives
@@ -156,17 +165,25 @@ func isObjectSchema(raw json.RawMessage) bool {
 
 // agentToolsOf is v's actions for slug: the integration's tools/list
 // answer for the agent (asked with its _meta, kept by the registry),
-// keeping only the actions the approved version's manifest declares,
-// which are the ones its install screen listed. An action whose input
-// schema is not an object's is left out: a model cannot be given it.
+// or a built-in's Tools for the agent and its access, keeping only the
+// actions the approved version's manifest declares, which are the ones
+// its install screen listed. An action whose input schema is not an
+// object's is left out: a model cannot be given it.
 func (s *Server) agentToolsOf(ctx context.Context, v agentIntegration, slug string) ([]agentIntegrationTool, error) {
-	raw, err := s.Integrations.AgentTools(ctx, v.name, slug, v.access)
-	if err != nil {
-		return nil, err
-	}
 	var list listedTools
-	if err := json.Unmarshal(raw, &list); err != nil {
-		return nil, fmt.Errorf("the answer is not a list of actions: %w", err)
+	if v.builtin != nil {
+		var err error
+		if list, err = s.builtinListedTools(ctx, v, slug); err != nil {
+			return nil, err
+		}
+	} else {
+		raw, err := s.Integrations.AgentTools(ctx, v.name, slug, v.access)
+		if err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(raw, &list); err != nil {
+			return nil, fmt.Errorf("the answer is not a list of actions: %w", err)
+		}
 	}
 	declared := map[string]bool{}
 	for _, t := range v.manifest.Tools {
@@ -400,6 +417,9 @@ func (s *Server) runAgentIntegrationCall(ctx context.Context, start time.Time, s
 	if !json.Valid(args) {
 		s.auditAgentCall(v.name, start, slug, tool, false, "the arguments are not JSON")
 		return integrationError("The arguments are not JSON.")
+	}
+	if v.builtin != nil {
+		return s.builtinAgentCall(ctx, start, slug, v, tool, args)
 	}
 	raw, callErr := s.Integrations.Call(ctx, v.name, "tools/call", map[string]any{
 		"name":      tool,

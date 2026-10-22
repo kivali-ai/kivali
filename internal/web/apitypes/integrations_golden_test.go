@@ -38,6 +38,7 @@ func goldenIntegrations() Integrations {
 	return Integrations{Integrations: []IntegrationSummary{
 		goldenIntegrationSummary(),
 		{Name: "weather", DisplayName: "Weather", Description: "Forecasts.", Version: "", Status: IntegrationStatusPending, Enabled: true, Agents: 0},
+		{Name: "maps", DisplayName: "Maps", Description: "Places and routes.", Version: "1.0.0", Status: IntegrationStatusNotIncluded, Enabled: true, Builtin: true, Agents: 0},
 	}}
 }
 
@@ -120,6 +121,36 @@ func goldenIntegrationVersion() IntegrationVersion {
 		CurrentVersion:   &integrationCurrent,
 		Changes:          []string{"Hosts added: api.hubapi.com", "Access form fields added: Tags, Note"},
 		Findings:         []string{"tools[2] (whoami) has no description"},
+	}
+}
+
+// goldenBuiltinIntegrationVersion is the install screen of a version
+// of an integration that ships with Kivali: published by Kivali, in
+// use, with no bundle, no runtime and no hosts of its own.
+func goldenBuiltinIntegrationVersion() IntegrationVersion {
+	return IntegrationVersion{
+		Name:             "git",
+		DisplayName:      "Git",
+		Description:      "Repositories on a Git host.",
+		Version:          "1.0.0",
+		State:            IntegrationVersionStateApproved,
+		Author:           "Kivali",
+		PublishedAt:      integrationEarlier,
+		PublishedBy:      PersonRef{Slug: "kivali", Name: "Kivali"},
+		ApprovedAt:       &integrationEarlier,
+		NotesMD:          "Ships with Kivali.",
+		Runtime:          "",
+		ConnectionMethod: "token",
+		Hosts:            []string{},
+		ConnectionFields: []ConnectionField{{Key: "token", Title: "Access token", Description: "", Sensitive: true, Required: true, Set: false}},
+		Actions:          []IntegrationAction{{Name: "clone", Description: "Clone a repository."}},
+		AccessForm:       nil,
+		BundleBytes:      0,
+		FileCount:        0,
+		Current:          true,
+		Builtin:          true,
+		Changes:          []string{},
+		Findings:         []string{},
 	}
 }
 

@@ -35,6 +35,7 @@ const STATUS: Record<IntegrationStatus, { label: string; tone: BadgeTone }> = {
   connected: { label: 'Connected', tone: 'success' },
   off: { label: 'Off', tone: 'neutral' },
   not_running: { label: 'Not running', tone: 'signal' },
+  not_included: { label: 'Not in this version of Kivali', tone: 'neutral' },
 };
 
 /** The one word the list shows for an integration, as a badge. */

@@ -44,7 +44,8 @@ var (
 	// stored, whatever its state.
 	ErrIntegrationVersionExists = errors.New("that version of the integration is already stored")
 	// ErrIntegrationBuiltin refuses replacing or removing an
-	// integration that ships with Kivali.
+	// integration that ships with Kivali, and approving, rejecting or
+	// rolling back to one of its versions, which follow the binary.
 	ErrIntegrationBuiltin = errors.New("the integration ships with Kivali")
 	// ErrIntegrationNameMismatch refuses a bundle stored under another
 	// name than its manifest's.
@@ -475,13 +476,17 @@ func (s *FSStore) RollBackIntegrationVersion(name, version string, now time.Time
 // makeIntegrationVersionCurrent makes version, which must be in state
 // from (or it is notFrom), the approved version in use, superseding
 // the one in use before it, and returns that one's version ("" for
-// none).
+// none). A built-in integration's versions follow the binary
+// (InstallBuiltinIntegrations): ErrIntegrationBuiltin.
 func (s *FSStore) makeIntegrationVersionCurrent(name, version string, from IntegrationVersionState, notFrom error, now time.Time) (string, error) {
 	unlock := s.lockIntegration(name)
 	defer unlock()
 	it, err := s.GetIntegration(name)
 	if err != nil {
 		return "", err
+	}
+	if it.Builtin {
+		return "", fmt.Errorf("%s: %w", name, ErrIntegrationBuiltin)
 	}
 	v, m, err := s.GetIntegrationVersion(name, version)
 	if err != nil {
@@ -518,10 +523,18 @@ func (s *FSStore) makeIntegrationVersionCurrent(name, version string, from Integ
 }
 
 // RejectIntegrationVersion turns a pending version down at now. A
-// version that is not pending is ErrIntegrationVersionNotPending.
+// version that is not pending is ErrIntegrationVersionNotPending, and
+// a built-in integration's ErrIntegrationBuiltin.
 func (s *FSStore) RejectIntegrationVersion(name, version string, now time.Time) error {
 	unlock := s.lockIntegration(name)
 	defer unlock()
+	it, err := s.GetIntegration(name)
+	if err != nil {
+		return err
+	}
+	if it.Builtin {
+		return fmt.Errorf("%s: %w", name, ErrIntegrationBuiltin)
+	}
 	v, _, err := s.GetIntegrationVersion(name, version)
 	if err != nil {
 		return err
@@ -559,14 +572,32 @@ func (s *FSStore) SetIntegrationEnabled(name string, enabled bool) error {
 // its log. The connections' Secrets are the caller's to delete first.
 // A built-in integration is ErrIntegrationBuiltin.
 func (s *FSStore) RemoveIntegration(name string) error {
+	return s.removeIntegration(name, false)
+}
+
+// RemoveStaleBuiltinIntegration deletes a built-in integration's record
+// and everything under it, as RemoveIntegration does, for a built-in
+// this binary does not carry: a later or earlier Kivali shipped it,
+// and nothing here runs it. The caller checks that the binary has no
+// code for the name; boot would write the record again if it had. An
+// integration that is not built in is refused (ErrInvalidIntegrationName):
+// RemoveIntegration removes those.
+func (s *FSStore) RemoveStaleBuiltinIntegration(name string) error {
+	return s.removeIntegration(name, true)
+}
+
+func (s *FSStore) removeIntegration(name string, staleBuiltin bool) error {
 	unlock := s.lockIntegration(name)
 	defer unlock()
 	it, err := s.GetIntegration(name)
 	if err != nil {
 		return err
 	}
-	if it.Builtin {
+	switch {
+	case it.Builtin && !staleBuiltin:
 		return fmt.Errorf("%s: %w", name, ErrIntegrationBuiltin)
+	case !it.Builtin && staleBuiltin:
+		return fmt.Errorf("%s is not built in: %w", name, ErrInvalidIntegrationName)
 	}
 	dir, _ := s.integrationDir(name)
 	// Renamed aside first, so no reader sees half a removal: the

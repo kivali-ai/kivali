@@ -104,6 +104,7 @@
   "bundle_bytes": 184320,
   "file_count": 12,
   "current": false,
+  "builtin": false,
   "current_version": "1.2.0",
   "changes": [
     "Hosts added: api.hubapi.com",

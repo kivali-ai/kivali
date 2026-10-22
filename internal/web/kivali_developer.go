@@ -402,6 +402,8 @@ func statusWords(st apitypes.IntegrationStatus) string {
 		return "connected"
 	case apitypes.IntegrationStatusNotConnected:
 		return "not connected"
+	case apitypes.IntegrationStatusNotIncluded:
+		return "not in this version of Kivali"
 	}
 	return string(st)
 }
