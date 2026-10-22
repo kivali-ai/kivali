@@ -13,11 +13,13 @@
 package web
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
+	"slices"
 	"strings"
 	"time"
 
@@ -57,6 +59,17 @@ func refuseNoConnection(display string) string {
 // job; and the scrubber of all of these secrets. store.ErrNotFound
 // with no such connection.
 func (s *Server) builtinConnection(ctx context.Context, name, connID string) (builtinintegrations.Connection, string, *strings.Replacer, error) {
+	conn, proxySecret, secretValues, err := s.builtinConnectionSecrets(ctx, name, connID)
+	if err != nil {
+		return builtinintegrations.Connection{}, "", nil, err
+	}
+	return conn, proxySecret, newScrubber(secretValues), nil
+}
+
+// builtinConnectionSecrets is builtinConnection with the secret values
+// themselves in place of their scrubber: the sensitive fields' values
+// and the proxy credential's secret.
+func (s *Server) builtinConnectionSecrets(ctx context.Context, name, connID string) (builtinintegrations.Connection, string, []string, error) {
 	_, rec, values, secretValues, proxySecret, err := s.Integrations.readConnection(ctx, name, connID)
 	if err != nil {
 		return builtinintegrations.Connection{}, "", nil, err
@@ -64,7 +77,26 @@ func (s *Server) builtinConnection(ctx context.Context, name, connID string) (bu
 	if proxySecret != "" {
 		secretValues = append(secretValues, proxySecret)
 	}
-	return builtinintegrations.Connection{ID: rec.ID, Fields: values}, proxySecret, newScrubber(secretValues), nil
+	return builtinintegrations.Connection{ID: rec.ID, Fields: values}, proxySecret, secretValues, nil
+}
+
+// jobConnectionNote is what the audit row of a call's second request
+// adds when its job ran through another connection than the one the
+// agent's access names now, jobID, and the scrubber of both
+// connections' secrets, rowSecrets being the access's connection's. A
+// job connection that is no longer there leaves rowSecrets alone, and
+// the note says so. jobID is text from the agent's pod: it only picks
+// which secrets are scrubbed and the label the audit names.
+func (s *Server) jobConnectionNote(ctx context.Context, v agentIntegration, jobID string, rowSecrets []string) (string, *strings.Replacer) {
+	_, _, jobSecrets, err := s.builtinConnectionSecrets(ctx, v.name, jobID)
+	if err != nil {
+		return " (it ran through a connection that is no longer there, so only the current connection's secrets were scrubbed)", newScrubber(rowSecrets)
+	}
+	label := jobID
+	if rec, err := s.Store.GetIntegrationConnectionByID(v.name, jobID); err == nil {
+		label = cmp.Or(builtinConnectionLabel(v.builtin, v.manifest, rec), jobID)
+	}
+	return " (it ran through the connection " + label + ")", newScrubber(append(slices.Clone(rowSecrets), jobSecrets...))
 }
 
 // callerOf is the agent and its access as a built-in reads them.
@@ -178,7 +210,8 @@ func (s *Server) builtinListedTools(ctx context.Context, v agentIntegration, slu
 // job runs between them in the shell, under the job's own bound.
 func (s *Server) builtinAgentCall(ctx context.Context, start time.Time, slug string, v agentIntegration, tool string, args json.RawMessage, result *agentpod.IntegrationShellJobResult) agentpod.IntegrationCallResponse {
 	// The connection the agent's access names.
-	conn, proxySecret, scrub, err := s.builtinConnection(ctx, v.name, v.connID)
+	conn, proxySecret, rowSecrets, err := s.builtinConnectionSecrets(ctx, v.name, v.connID)
+	scrub := newScrubber(rowSecrets)
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		s.auditAgentCall(v.name, start, slug, tool, false, "the integration has no connection")
@@ -191,17 +224,27 @@ func (s *Server) builtinAgentCall(ctx context.Context, start time.Time, slug str
 	run := func(ctx context.Context) (*builtinintegrations.Result, error) {
 		return v.builtin.Call(ctx, caller, conn, tool, args)
 	}
+	jobNote := ""
 	if result != nil {
 		sj, ok := v.builtin.(builtinintegrations.ShellJobIntegration)
 		if !ok {
 			s.auditAgentCall(v.name, start, slug, tool, false, reasonNoShellJob)
 			return integrationError(refuseNoShellJob(v.display))
 		}
-		// The result is text from the agent's pod. Nothing in core acts
-		// on it: it only becomes the agent's answer and the audit's
-		// reason, both scrubbed, so nothing binds it to the job the
-		// first request handed out. The row counts from the job's start.
+		// The result is text from the agent's pod. It only becomes the
+		// agent's answer and the audit's reason, both scrubbed, so
+		// nothing binds it to the job the first request handed out; its
+		// connection id only widens the scrubber and names a connection
+		// in the audit (jobConnectionNote). The row counts from the
+		// job's start.
 		start = start.Add(-shellJobDuration(*result))
+		// A job that ran through another connection than the one the
+		// access names now (the owner moved the access while it ran):
+		// its words may quote that connection's secrets, and the audit
+		// row names it.
+		if g := result.Git; g != nil && g.ConnectionID != "" && g.ConnectionID != conn.ID {
+			jobNote, scrub = s.jobConnectionNote(ctx, v, g.ConnectionID, rowSecrets)
+		}
 		run = func(ctx context.Context) (*builtinintegrations.Result, error) {
 			return sj.Complete(ctx, caller, conn, tool, args, *result)
 		}
@@ -209,7 +252,7 @@ func (s *Server) builtinAgentCall(ctx context.Context, start time.Time, slug str
 	res, callErr := runBuiltin(ctx, s.clk(), integrationCallTimeout, run)
 	var refusal *builtinintegrations.Refusal
 	if errors.As(callErr, &refusal) {
-		s.auditAgentCall(v.name, start, slug, tool, false, scrub.Replace(refusal.Reason))
+		s.auditAgentCall(v.name, start, slug, tool, false, scrub.Replace(refusal.Reason)+jobNote)
 		return integrationError(scrub.Replace(refusal.Text))
 	}
 	if callErr == nil && res != nil && res.ShellJob != nil {
@@ -227,7 +270,7 @@ func (s *Server) builtinAgentCall(ctx context.Context, start time.Time, slug str
 	if callErr == nil && res != nil && res.Audit != "" {
 		failed = res.Audit
 	}
-	s.auditAgentCall(v.name, start, slug, tool, true, scrub.Replace(failed))
+	s.auditAgentCall(v.name, start, slug, tool, true, scrub.Replace(failed)+jobNote)
 	return resp
 }
 

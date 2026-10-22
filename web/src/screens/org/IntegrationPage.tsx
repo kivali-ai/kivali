@@ -181,6 +181,9 @@ interface ConnectionCardProps {
  */
 function ConnectionCard({ connection, fields, busy, running, now, onSave, onVerify, onDelete, onCancel }: ConnectionCardProps) {
   const [label, setLabel] = useState(connection?.label ?? '');
+  // The label is sent only once typed into: a label the integration derives (Git's host) is not stored, so it
+  // follows the fields; sending it back on every save would fix it in place.
+  const [labelEdited, setLabelEdited] = useState(false);
   const [values, setValues] = useState(() => startingValues(fields));
   const title = connection ? connection.label || 'Connection' : 'New connection';
   return (
@@ -192,7 +195,7 @@ function ConnectionCard({ connection, fields, busy, running, now, onSave, onVeri
         className="app-int-form"
         onSubmit={(e) => {
           e.preventDefault();
-          void onSave({ ...connectionBody(fields, values), label: label.trim() });
+          void onSave({ ...connectionBody(fields, values), ...(labelEdited ? { label: label.trim() } : {}) });
         }}
       >
         {connection?.reconnect_needed && (
@@ -205,7 +208,12 @@ function ConnectionCard({ connection, fields, busy, running, now, onSave, onVeri
             {connection.verify_message || 'The integration did not say why.'}
           </Banner>
         )}
-        <TextField label="Label" hint="What you call this connection, such as Company GitLab." autoComplete="off" value={label} onChange={(e) => setLabel(e.currentTarget.value)} />
+        <TextField label="Label" hint="What you call this connection, such as Company GitLab." autoComplete="off" value={label}
+          onChange={(e) => {
+            setLabel(e.currentTarget.value);
+            setLabelEdited(true);
+          }}
+        />
         {fields.map((f) => (
           <TextField
             key={f.key}
@@ -401,6 +409,9 @@ export function IntegrationPage() {
   const [pick, setPick] = useState('');
   // Bumped after a save so the connection form starts again from what is stored.
   const [formSeq, setFormSeq] = useState(0);
+  // The same for each connection's card, by id, and for the card that adds one.
+  const [cardSeq, setCardSeq] = useState<Record<string, number>>({});
+  const [addSeq, setAddSeq] = useState(0);
   const p = page.data;
 
   useFrameChrome({ title: p?.summary.display_name ?? 'Integration', back: { to: '/org/integrations', label: 'Integrations' } });
@@ -422,24 +433,25 @@ export function IntegrationPage() {
     if (ok) setFormSeq((n) => n + 1);
   };
   const connectionApi = (id: string) => api + '/connections/' + encodeURIComponent(id);
+  // Several connections: only the card that saved starts again from what is stored, so another card keeps what was
+  // typed into it.
   const saveConnection = async (id: string, body: ConnectionWrite) => {
     const ok = await mutate(() => apiPut<IntegrationPageData>(connectionApi(id), body));
-    if (ok) setFormSeq((n) => n + 1);
+    if (ok) setCardSeq((m) => ({ ...m, [id]: (m[id] ?? 0) + 1 }));
     return ok;
   };
   const addConnection = async (body: ConnectionWrite) => {
     const ok = await mutate(() => apiPost<IntegrationPageData>(api + '/connections', body));
     if (ok) {
       setAdding(false);
-      setFormSeq((n) => n + 1);
+      setAddSeq((n) => n + 1);
     }
     return ok;
   };
   const verifyConnection = (id: string) => void mutate(() => apiPost<IntegrationPageData>(connectionApi(id) + '/verify'));
   const deleteConnection = async (id: string) => {
-    const ok = await mutate(() => apiDelete<IntegrationPageData>(connectionApi(id)));
+    await mutate(() => apiDelete<IntegrationPageData>(connectionApi(id)));
     setDeleting(null);
-    if (ok) setFormSeq((n) => n + 1);
   };
   const revoke = (slug: string) => void mutate(() => apiDelete<IntegrationPageData>(api + '/access/' + encodeURIComponent(slug)));
   const remove = () =>
@@ -585,7 +597,7 @@ export function IntegrationPage() {
             {p.connections.length === 0 && !adding && <None>No connections yet.</None>}
             {p.connections.map((c) => (
               <ConnectionCard
-                key={c.id + ':' + formSeq}
+                key={c.id + ':' + (cardSeq[c.id] ?? 0)}
                 connection={c}
                 fields={c.fields}
                 busy={action.busy}
@@ -598,7 +610,7 @@ export function IntegrationPage() {
             ))}
             {adding ? (
               <ConnectionCard
-                key={'new:' + formSeq}
+                key={'new:' + addSeq}
                 fields={blankFields(p.connection_fields)}
                 busy={action.busy}
                 running={running}

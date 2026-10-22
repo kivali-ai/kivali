@@ -781,7 +781,9 @@ type IntegrationCallRequest struct {
 	Arguments json.RawMessage `json:"arguments,omitempty"`
 	// ShellJobResult is the shell job's outcome, on the second request.
 	// Core reads it as untrusted text: it becomes the agent's answer and
-	// the audit's reason, scrubbed, and nothing in core acts on it.
+	// the audit's reason, scrubbed, and nothing in core acts on it but
+	// the git result's connection id, which only adds that connection's
+	// secrets to the scrubber and its label to the audit.
 	ShellJobResult *IntegrationShellJobResult `json:"shell_job_result,omitempty"`
 }
 

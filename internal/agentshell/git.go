@@ -321,6 +321,7 @@ func (l *gitPathLocks) acquire(ctx context.Context, path string, onWait func(str
 func runGit(ctx context.Context, cfg ServerConfig, locks *gitPathLocks, req GitRequest) GitResponse {
 	start := cfg.Clock.Now()
 	res := runGitOp(ctx, cfg, locks, req)
+	res.ConnectionID = req.ConnectionID
 	res.DurationMs = cfg.Clock.Now().Sub(start).Milliseconds()
 	if n := len(res.Updated); n > 0 {
 		res.UpdatedTotal = n

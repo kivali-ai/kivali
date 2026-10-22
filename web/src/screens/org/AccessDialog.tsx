@@ -55,6 +55,15 @@ export function accessBody(form: AccessForm | undefined, values: Values): Record
   return out;
 }
 
+/** The values with every field whose options the integration lists live emptied: those came through a connection. */
+export function clearListedValues(form: AccessForm | undefined, values: Values): Values {
+  const out: Values = { ...values };
+  for (const f of form?.fields ?? []) {
+    if (f.choices) out[f.key] = f.kind === 'choices' ? [] : '';
+  }
+  return out;
+}
+
 /** A field's label: optional fields say so, as every form in Kivali does. A switch is never optional. */
 function fieldLabel(f: AccessField): string {
   return f.required || f.kind === 'switch' ? f.title : f.title + ' (optional)';
@@ -82,19 +91,25 @@ interface FieldProps {
   onLoad(): void;
   /** False while the integration is not running: it cannot list anything then. */
   running: boolean;
+  /** True while a connection must be chosen first: the options come through it. */
+  needsConnection: boolean;
 }
 
 /** "Load options": asks the integration, through the connection, for the options it lists for the field. */
-function LoadOptions({ field, integration, load, onLoad, running }: Pick<FieldProps, 'field' | 'integration' | 'load' | 'onLoad' | 'running'>) {
+function LoadOptions({ field, integration, load, onLoad, running, needsConnection }: Pick<FieldProps, 'field' | 'integration' | 'load' | 'onLoad' | 'running' | 'needsConnection'>) {
   if (!field.choices) return null;
   return (
     <div className="app-int-load">
-      <Button variant="ghost" size="sm" icon={<Icon name="rotate-ccw" />} loading={load?.busy ?? false} disabled={!running || (load?.busy ?? false)} onClick={onLoad}>
+      <Button variant="ghost" size="sm" icon={<Icon name="rotate-ccw" />} loading={load?.busy ?? false} disabled={!running || needsConnection || (load?.busy ?? false)} onClick={onLoad}>
         Load options
       </Button>
       {!running ? (
         <Text variant="caption" tone="muted">
           {integration + ' is not running, so it cannot list these.'}
+        </Text>
+      ) : needsConnection ? (
+        <Text variant="caption" tone="muted">
+          Choose a connection first: these are listed through it.
         </Text>
       ) : load?.error ? (
         <Text variant="caption" tone="danger" role="alert">
@@ -129,7 +144,7 @@ function DangerSwitch({ field, value, onChange }: Pick<FieldProps, 'field' | 'va
   );
 }
 
-function AccessFieldInput({ field, value, onChange, integration, load, onLoad, running }: FieldProps) {
+function AccessFieldInput({ field, value, onChange, integration, load, onLoad, running, needsConnection }: FieldProps) {
   const hint = field.description || undefined;
   switch (field.kind) {
     case 'switch':
@@ -147,7 +162,7 @@ function AccessFieldInput({ field, value, onChange, integration, load, onLoad, r
             onChange={(e) => onChange(e.currentTarget.value)}
             options={[{ value: '', label: 'Not set' }, ...options.map((o) => ({ value: o, label: o }))]}
           />
-          <LoadOptions field={field} integration={integration} load={load} onLoad={onLoad} running={running} />
+          <LoadOptions field={field} integration={integration} load={load} onLoad={onLoad} running={running} needsConnection={needsConnection} />
         </div>
       );
     }
@@ -175,7 +190,7 @@ function AccessFieldInput({ field, value, onChange, integration, load, onLoad, r
               onCheckedChange={(on) => onChange(on === true ? [...chosen, o] : chosen.filter((c) => c !== o))}
             />
           ))}
-          <LoadOptions field={field} integration={integration} load={load} onLoad={onLoad} running={running} />
+          <LoadOptions field={field} integration={integration} load={load} onLoad={onLoad} running={running} needsConnection={needsConnection} />
         </fieldset>
       );
     }
@@ -263,6 +278,8 @@ export function AccessDialog({
   const choosing = connections.length > 1;
   const [chosen, setChosen] = useState(() => (connections.some((c) => c.id === connectionId) ? (connectionId ?? '') : ''));
   const connection = choosing ? chosen : (connections[0]?.id ?? '');
+  // The id is sent only where there is a choice of connection; with one, the server uses it.
+  const sendConnection = (multiple || choosing) && connection !== '';
   const fields = form?.fields ?? [];
   const changing = access !== undefined;
 
@@ -281,7 +298,7 @@ export function AccessDialog({
     setBusy(true);
     setError(null);
     try {
-      const body: AccessWrite = { access: accessBody(form, values), ...(connection ? { connection_id: connection } : {}) };
+      const body: AccessWrite = { access: accessBody(form, values), ...(sendConnection ? { connection_id: connection } : {}) };
       const next = await apiPut<IntegrationPage>(integrationApi(name) + '/access/' + encodeURIComponent(agent.slug), body);
       onSaved(next);
     } catch (err) {
@@ -323,8 +340,10 @@ export function AccessDialog({
               value={chosen}
               onChange={(e) => {
                 setChosen(e.currentTarget.value);
-                // Options a field listed came through the connection chosen before.
+                // Options a field listed, and the values picked from them, came through the connection chosen
+                // before.
                 setLoads({});
+                setValues((m) => clearListedValues(form, m));
               }}
               options={[{ value: '', label: 'Choose a connection' }, ...connections.map((c) => ({ value: c.id, label: c.label || 'Connection' }))]}
             />
@@ -339,6 +358,7 @@ export function AccessDialog({
               load={loads[f.key]}
               onLoad={() => void load(f.key)}
               running={running}
+              needsConnection={choosing && !chosen}
             />
           ))}
         </div>

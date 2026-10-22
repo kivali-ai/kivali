@@ -105,6 +105,7 @@ func runShellJob(ctx context.Context, shell IntegrationShell, job agentpod.Integ
 		Auth:                agentshell.GitAuth{Username: g.Auth.Username, Password: g.Auth.Password},
 		Proxy:               agentshell.GitProxy{Username: g.Proxy.Username, Password: g.Proxy.Password},
 		TimeoutSeconds:      g.TimeoutSeconds,
+		ConnectionID:        g.ConnectionID,
 	}
 	res, err := shell.Git(ctx, req)
 	if err != nil {
@@ -112,7 +113,7 @@ func runShellJob(ctx context.Context, shell IntegrationShell, job agentpod.Integ
 		if len(msg) > agentshell.GitErrorMaxBytes {
 			msg = strings.ToValidUTF8(msg[:agentshell.GitErrorMaxBytes], "")
 		}
-		return &agentpod.IntegrationShellJobResult{Git: &agentpod.GitResult{Error: msg}}
+		return &agentpod.IntegrationShellJobResult{Git: &agentpod.GitResult{Error: msg, ConnectionID: g.ConnectionID}}
 	}
 	out := &agentpod.GitResult{
 		Repository:   res.Repository,
@@ -120,6 +121,7 @@ func runShellJob(ctx context.Context, shell IntegrationShell, job agentpod.Integ
 		Error:        res.Error,
 		DurationMs:   res.DurationMs,
 		TimedOut:     res.TimedOut,
+		ConnectionID: res.ConnectionID,
 	}
 	for _, u := range res.Updated {
 		out.Updated = append(out.Updated, agentpod.GitRefUpdate{Ref: u.Ref, Old: u.Old, New: u.New})

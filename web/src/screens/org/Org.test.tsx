@@ -1422,8 +1422,8 @@ describe('Integration page', () => {
 
   // Guards the access form as the bundle describes it (integration_page.json's five kinds): text is a text field,
   // choice a select, switch a checkbox, list an entry field, and choices a checkbox per option once Load options has
-  // asked the integration for them. The PUT body must equal access_write.json; a kind drawn wrong, a live option
-  // never offered or a value sent in the wrong shape fails here.
+  // asked the integration for them. The PUT body is the filled form alone, with no connection id (there is one
+  // connection); a kind drawn wrong, a live option never offered or a value sent in the wrong shape fails here.
   it('gives an agent access through a form drawn from the integration’s fields', async () => {
     await renderOrg(PATH, { routes: { ['GET ' + API + '/choices/blogs']: goAccessChoices, ['PUT ' + API + '/access/chief-of-staff']: goIntegrationPage } });
     const access = within(screen.getByRole('region', { name: 'Access' }));
@@ -1444,7 +1444,7 @@ describe('Integration page', () => {
     await click(dialog.getByRole('checkbox', { name: 'Marketing' }));
     await click(dialog.getByRole('checkbox', { name: 'May publish and edit' }));
     await click(dialog.getByRole('button', { name: 'Give access' }));
-    expect(lastBody('PUT', API + '/access/chief-of-staff')).toEqual(goAccessWrite);
+    expect(lastBody('PUT', API + '/access/chief-of-staff')).toEqual({ access: { blogs: ['Marketing'], write: true, delete: false } });
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
@@ -1464,7 +1464,7 @@ describe('Integration page', () => {
     expect(dialog.getByRole('checkbox', { name: 'May publish and edit' }).closest('.app-int-danger')).toBeNull();
     await click(risky);
     await click(dialog.getByRole('button', { name: 'Give access' }));
-    expect(lastBody('PUT', API + '/access/chief-of-staff')).toEqual({ access: { write: false, delete: true }, connection_id: 'c7f3a1b2' });
+    expect(lastBody('PUT', API + '/access/chief-of-staff')).toEqual({ access: { write: false, delete: true } });
   });
 
   // Guards Change and its failures: the form starts from the agent's access as it stands, a list field adds entries
@@ -1494,13 +1494,13 @@ describe('Integration page', () => {
     expect(dialog.getByRole('button', { name: 'Remove launch' })).toBeInTheDocument();
     await click(dialog.getByRole('checkbox', { name: 'Marketing' }));
     await click(dialog.getByRole('button', { name: 'Save access' }));
-    expect(lastBody('PUT', API + '/access/dana')).toEqual({ access: { write: true, delete: false, tags: ['launch'] }, connection_id: 'c7f3a1b2' });
+    expect(lastBody('PUT', API + '/access/dana')).toEqual({ access: { write: true, delete: false, tags: ['launch'] } });
     expect(screen.getByRole('dialog')).toBeInTheDocument();
     expect(dialog.getByText('Blogs needs at least one choice.')).toBeInTheDocument();
   });
 
   // Guards an integration whose access is all or nothing: the dialog says so and Approve sends an empty form ({}),
-  // the body AccessWrite asks for, rather than a form with nothing in it, with the one connection's id.
+  // the body AccessWrite asks for, rather than a form with nothing in it, and no connection id: with one connection the server uses it.
   it('grants all-or-nothing access with an empty form', async () => {
     const plain = { ...goIntegrationPage, access_form: undefined };
     await renderOrg(PATH, { routes: { ['GET ' + API]: plain, ['PUT ' + API + '/access/chief-of-staff']: plain } });
@@ -1508,7 +1508,7 @@ describe('Integration page', () => {
     const dialog = within(screen.getByRole('dialog'));
     expect(dialog.getByText('This integration’s access is all or nothing.')).toBeInTheDocument();
     await click(dialog.getByRole('button', { name: 'Approve' }));
-    expect(lastBody('PUT', API + '/access/chief-of-staff')).toEqual({ access: {}, connection_id: 'c7f3a1b2' });
+    expect(lastBody('PUT', API + '/access/chief-of-staff')).toEqual({ access: {} });
   });
 
   // Guards taking access away: Remove beside an agent deletes that agent's access and the table follows the answer.
@@ -1786,8 +1786,13 @@ describe('Integration page, several connections', () => {
 
     fireEvent.change(lab.getByLabelText('Host'), { target: { value: 'gitlab.example.org' } });
     await click(lab.getByRole('button', { name: 'Save connection' }));
-    expect(lastBody('PUT', API + '/connections/' + LAB.id)).toEqual({ label: 'Company GitLab', fields: { host: 'gitlab.example.org', test_repository: '' } });
+    // The label was not typed into, so it is not sent: one the integration derives keeps following the host.
+    expect(lastBody('PUT', API + '/connections/' + LAB.id)).toEqual({ fields: { host: 'gitlab.example.org', test_repository: '' } });
     expect(called('PUT', API + '/connection')).toBe(false);
+    const labAgain = within(block.getByRole('region', { name: 'Company GitLab' }));
+    fireEvent.change(labAgain.getByLabelText('Label'), { target: { value: 'GitLab' } });
+    await click(labAgain.getByRole('button', { name: 'Save connection' }));
+    expect(lastBody('PUT', API + '/connections/' + LAB.id)).toEqual({ label: 'GitLab', fields: { host: 'gitlab.example.com', test_repository: '' } });
 
     await click(within(block.getByRole('region', { name: 'GitHub' })).getByRole('button', { name: 'Test connection' }));
     expect(called('POST', API + '/connections/' + HUB.id + '/verify')).toBe(true);
@@ -1824,7 +1829,7 @@ describe('Integration page, several connections', () => {
   });
 
   // Guards the access dialog with several connections: a required Connection select comes first (Give access waits for
-  // it), the row's connection is chosen when changing it, and the body names the chosen id; the access table says
+  // it), the row's connection is chosen when changing it, and the body names the chosen id (access_write.json); the access table says
   // which connection each agent uses. Without the select an agent would be set for a connection nobody chose.
   it('asks which connection an agent uses, and shows it on each row', async () => {
     await renderOrg(PATH, {
@@ -1846,7 +1851,7 @@ describe('Integration page, several connections', () => {
     fireEvent.change(dialog.getByRole('textbox', { name: 'Repositories' }), { target: { value: 'eng/*' } });
     await click(dialog.getByRole('button', { name: 'Add' }));
     await click(dialog.getByRole('button', { name: 'Give access' }));
-    expect(lastBody('PUT', API + '/access/chief-of-staff')).toEqual({ access: { repositories: ['eng/*'], push: false }, connection_id: LAB.id });
+    expect(lastBody('PUT', API + '/access/chief-of-staff')).toEqual(goAccessWrite);
 
     await click(screen.getByRole('button', { name: 'Change Dana’s access' }));
     dialog = within(screen.getByRole('dialog'));
@@ -1855,9 +1860,57 @@ describe('Integration page, several connections', () => {
     expect(lastBody('PUT', API + '/access/dana')).toEqual({ access: { repositories: ['acme/*'], push: false }, connection_id: HUB.id });
   });
 
+  // Guards the cards against each other: saving one starts that card again from what is stored, and leaves what was
+  // typed into another card in place. A page-wide reset would throw away a token half typed into the other card.
+  it('keeps what was typed into one card when another saves', async () => {
+    await renderOrg(PATH, { routes: gitRoutes({ ['PUT ' + API + '/connections/' + LAB.id]: goIntegrationPageMultiple }) });
+    const block = within(screen.getByRole('region', { name: 'Connections' }));
+    fireEvent.change(within(block.getByRole('region', { name: 'GitHub' })).getByLabelText('Access token'), { target: { value: 'ghp-half-typed' } });
+    const lab = within(block.getByRole('region', { name: 'Company GitLab' }));
+    fireEvent.change(lab.getByLabelText('Access token'), { target: { value: 'glpat-new' } });
+    await click(lab.getByRole('button', { name: 'Save connection' }));
+    expect(within(block.getByRole('region', { name: 'GitHub' })).getByLabelText('Access token')).toHaveValue('ghp-half-typed');
+    expect(within(block.getByRole('region', { name: 'Company GitLab' })).getByLabelText('Access token')).toHaveValue('');
+  });
+
+  // Guards options listed through a connection: Load options waits until a connection is chosen, asks through the
+  // chosen one, and choosing another connection drops the options and the values picked from them, which came through
+  // the first. Otherwise an agent could be given a GitHub repository on its GitLab connection.
+  it('lists options through the chosen connection, and drops them when it changes', async () => {
+    const listed = {
+      ...goIntegrationPageMultiple,
+      access_form: {
+        fields: [{ key: 'repos', title: 'Repositories', description: '', kind: 'choices' as const, required: false, options: [], choices: true, danger: false }],
+      },
+    };
+    await renderOrg(PATH, {
+      routes: gitRoutes({
+        ['GET ' + API]: listed,
+        ['GET ' + API + '/choices/repos?connection=' + HUB.id]: { options: ['acme/widgets'] },
+        ['GET ' + API + '/choices/repos?connection=' + LAB.id]: { options: ['eng/tools'] },
+        ['PUT ' + API + '/access/chief-of-staff']: listed,
+      }),
+    });
+    await click(within(screen.getByRole('region', { name: 'Access' })).getByRole('button', { name: 'Give access' }));
+    const dialog = within(screen.getByRole('dialog'));
+    expect(dialog.getByRole('button', { name: 'Load options' })).toBeDisabled();
+    expect(dialog.getByText('Choose a connection first: these are listed through it.')).toBeInTheDocument();
+    fireEvent.change(dialog.getByRole('combobox', { name: 'Connection' }), { target: { value: HUB.id } });
+    await flush();
+    await click(dialog.getByRole('button', { name: 'Load options' }));
+    await click(dialog.getByRole('checkbox', { name: 'acme/widgets' }));
+    fireEvent.change(dialog.getByRole('combobox', { name: 'Connection' }), { target: { value: LAB.id } });
+    await flush();
+    expect(dialog.queryByRole('checkbox', { name: 'acme/widgets' })).toBeNull();
+    await click(dialog.getByRole('button', { name: 'Load options' }));
+    await click(dialog.getByRole('checkbox', { name: 'eng/tools' }));
+    await click(dialog.getByRole('button', { name: 'Give access' }));
+    expect(lastBody('PUT', API + '/access/chief-of-staff')).toEqual({ access: { repos: ['eng/tools'] }, connection_id: LAB.id });
+  });
+
   // Guards the one-connection page against the several-connection one: with one connection (integration_page.json)
-  // there is no card, no Add a connection, no Connection column and no Connection select, as before.
-  it('keeps the one-connection page as it was', async () => {
+  // there is no card, no Add a connection, no Connection column and no Connection select.
+  it('draws the one-connection page with no connection choice', async () => {
     await renderOrg('/org/integrations/hubspot');
     expect(screen.getByRole('region', { name: 'Connection' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Add a connection' })).toBeNull();

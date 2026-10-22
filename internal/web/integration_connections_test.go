@@ -77,8 +77,8 @@ func putAccessFor(t *testing.T, srv *Server, name, slug, access, connID string) 
 // stored under its own id with its own label and fields: a label left
 // empty takes the host, a label another connection has (ignoring case)
 // is a 409, and the page lists every connection, oldest first, each
-// with its own values, while Connection stays the first so the
-// one-connection page reads as before. Saving one by id must change
+// with its own values, while Connection is the first, which the
+// one-connection page reads. Saving one by id must change
 // that one alone and keep its token when the token is left out.
 func TestGitTakesSeveralConnections(t *testing.T) {
 	srv := newTestServer(t)

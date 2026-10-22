@@ -300,7 +300,7 @@ and the page counts the invalid rows in a banner. Archiving an agent
 clears its access everywhere (`ArchiveAgent`); deleting every
 connection (`store.DeleteIntegrationConnection`) clears every agent's,
 and deleting one (`store.DeleteIntegrationConnectionByID`) clears the
-rows that name it (`store.ClearIntegrationAccessForConnection`) and
+rows that name it, under the same lock and before the record goes, and
 returns their slugs, leaving the rest.
 
 ## Connections and Secrets
@@ -311,13 +311,17 @@ account the owner connects, such as GitHub and a company GitLab. Each
 connection is a record of its own under its id, with a label
 (`IntegrationConnection.Label`), what the owner calls it. The label is
 required for an integration that takes several connections and
-optional for any other, whose page does not ask; a built-in that
-implements `builtinintegrations.ConnectionLabeler` names a connection
-saved with no label (Git: its host, `github.com`), from its fields that
-are not secret, and a connection stored with none reads that way too.
-Labels are unique within the integration, ignoring case: a second
-"company gitlab" is a 409 "<integration> already has a connection
-called Company GitLab". A label is at most 64 characters.
+optional for any other, whose page does not ask. A built-in that
+implements `builtinintegrations.ConnectionLabeler` derives the label of
+a connection the owner gave none (Git: its host, `github.com`) from its
+fields that are not secret. A derived label is never stored: the record
+keeps `""` (also when the owner sends exactly the derived label) and
+every read derives it again, so a changed host renames the connection
+on the page, in the access rows and on the agent's tab. Labels are
+unique within the integration, ignoring case: a second "company gitlab"
+is a 409 "<integration> already has a connection called Company
+GitLab". A label the owner sends is at most 64 characters (400); a
+derived one is cut to 64, never refused.
 
 A connection's fields that are not sensitive are in
 `connections/<id>.yaml`. The sensitive ones are in a Kubernetes Secret
@@ -345,11 +349,16 @@ connection"), `PUT .../connections/{id}` writes it, `DELETE
 .../connections/{id}` removes it, its Secret, its scoped proxy
 credential and the access rows that name it, and `POST
 .../connections/{id}/verify` tests it. An id that names no connection
-is a 404.
+is a 404. A delete by id removes the Secret first (on a failure nothing
+changes) and drops the proxy credential as soon as the Secret is gone,
+before the store's step, so a store failure never leaves a credential
+registered whose secret is gone.
 
 A write (`ConnectionWrite`) takes the fields by key, from the approved
 version's `user_config`, and the label: sent, it replaces the stored
-one; empty, it keeps it. A field the form does not have is a 400; a
+one; empty, it keeps it. The page sends the label only once the owner
+typed into it, so saving a connection with a derived label leaves it
+derived. A field the form does not have is a 400; a
 required field with no value, sent or stored, is a 400 ("the
 connection needs <title>"); a `number` or `boolean` field must parse;
 an integration that takes several connections needs a label (400 "the
@@ -361,7 +370,8 @@ secret fields its Secret does not hold (a backup restored into another
 install, or the Secret deleted by hand), `ConnectionState.ReconnectNeeded`
 is true, those fields read as not set, and that connection is not
 connected until they are entered again. The integration's status is
-connected while any one connection has all its secrets.
+connected while a connection agents can use has all its secrets: any
+one of several, or, for an integration that takes one, the oldest.
 
 The page (`IntegrationPage`) carries `connections`, every connection
 oldest first, each with its id, label, created at, Test connection's
@@ -373,11 +383,17 @@ form with the first's values, which the one-connection page reads; and
 `connection_id` it names and that connection's `connection_label`. An
 access write (`AccessWrite`) names its connection with
 `connection_id`: required when the integration has more than one
-connection, the only one when it is left out; missing or unknown where
-it is needed is a 400 "choose a connection". An agent's Integrations
-tab gives each row of an integration that takes several connections
-the label of the one its access names (`AgentIntegration.ConnectionLabel`),
-and the tab reads "Git (Company GitLab)".
+connection, the only one when it is left out; for an integration that
+takes several, missing where it is needed or unknown is a 400 "choose
+a connection"; for one that takes one, an id that is not its connection
+is a stale page, a 409 "that connection is no longer there". The access
+dialog sends the id only for an integration that takes several, or
+has more than one connection. An agent's Integrations tab gives each
+row of an integration that takes several connections the label of the
+one its access names (`AgentIntegration.ConnectionLabel`), so the tab
+reads "Git (Company GitLab)", and that connection's status: not
+connected while it needs its secrets again, though another connection
+keeps the integration connected.
 
 Test connection (`POST .../connection/verify`, `POST
 .../connections/{id}/verify`) calls the manifest's
@@ -398,7 +414,8 @@ instead: the one the route names, and for the options the one
 `?connection=<id>` names, or the first (the options need one: 409
 "connect the integration first" without it, 404 for an id that names
 none). What a built-in answers is scrubbed of that connection's
-secrets. The audit lists what is in
+secrets; when they cannot be read, the answer is held back, never
+scrubbed with another connection's. The audit lists what is in
 `audit.jsonl`, which these calls and agents' calls
 ([The audit](#the-audit)) append to.
 
@@ -1083,10 +1100,22 @@ two requests on `core.sock`, as the smoke test does
    is still audited allowed when the result says refs landed: `pushed
    <refs> to <owner/name>; the access changed during the push`, and the
    agent reads what landed and that its access changed; with nothing
-   landed the refusal stands. The row counts from the job's start (the
-   result's `duration_ms`, at most 15 minutes). A second request that
-   never comes leaves the first row, so every job that carried the
-   token out is in the audit.
+   landed the refusal stands. A job that ran through another connection
+   than the one the agent's access names now (the job's
+   `connection_id`, which the daemon echoes in the result, is not the
+   access row's: the owner moved the access while it ran) is never
+   refused and not checked against the new connection, whose host and
+   token are not the job's: the agent reads what ran and that its
+   access changed, and the reason is `<owner/name>: <what ran>; the
+   access changed during the <clone, fetch or push>`, then `(it ran
+   through the connection <label>)`. Core scrubs the answer and the
+   reason of both connections' secrets; a job connection deleted since
+   leaves the access's connection's alone, and the reason ends `(it ran
+   through a connection that is no longer there, so only the current
+   connection's secrets were scrubbed)`. The row counts from the job's
+   start (the result's `duration_ms`, at most 15 minutes). A second
+   request that never comes leaves the first row, so every job that
+   carried the token out is in the audit.
 
 A push is checked in core, in this order, before any job is built:
 `push` must be on; `push_refs` must read; each entry of `refs` must
@@ -1102,7 +1131,9 @@ forces, so the daemon can check the push again
 The result is untrusted text from the agent's pod: it becomes only the
 agent's answer and the audit's reason, both scrubbed of the
 connection's secrets and its proxy credential, and nothing in core acts
-on it, so no nonce binds it to the job. For a fetch without a `url` the
+on it but its `connection_id`, which only adds that connection's
+secrets to the scrubber and its label to the audit, so no nonce binds
+it to the job. For a fetch without a `url` the
 repository named is the one the daemon reports. The deadlines are per
 leg: each request is a call under the 60 s `integrationCallTimeout`;
 the job runs in between under its own bound. A result sent with a call
@@ -1124,6 +1155,7 @@ type GitJob struct {
 	Auth                GitAuth  // {username: x-access-token, password: the token}
 	Proxy               GitProxy // {username: integration-git.<id>, password: the secret}
 	TimeoutSeconds      int      // clone 900, fetch and push 600
+	ConnectionID        string   // json: connection_id; the connection the job runs through
 }
 type IntegrationShellJobResult struct{ Skipped string; Git *GitResult }
 type GitResult struct {
@@ -1133,6 +1165,7 @@ type GitResult struct {
 	Error        string         // at most 4 KiB
 	DurationMs   int64
 	TimedOut     bool
+	ConnectionID string         // json: connection_id; the job's, echoed by the daemon
 }
 ```
 
@@ -1176,7 +1209,7 @@ or the daemon's words, cut to 1000 bytes.
 process with go-git v5 (`github.com/go-git/go-git/v5`). The body is a
 `GitRequest` (64 KiB at most), the answer a `GitResponse`
 (`{repository, updated, updated_total, error, duration_ms,
-timed_out}`). The answer is bounded so it always fits the agent's
+timed_out, connection_id}`, the last the request's, echoed). The answer is bounded so it always fits the agent's
 next request to core, whose body is capped at 16 MiB: `updated` lists
 at most 200 refs (`GitUpdatedMax`), by name, `updated_total` counts
 every ref that moved, and `error` is cut to 4 KiB (`GitErrorMaxBytes`)

@@ -54,15 +54,34 @@ func newConnectionID() string {
 
 // connLabel is c's label: the stored one, or, for an integration that
 // takes several connections and a connection stored with none, the one
-// the built-in gives it from its fields that are not secret.
+// the built-in derives from its fields as they are now
+// (derivedConnectionLabel), so a changed host renames it.
 func (v *integrationView) connLabel(c *connView) string {
-	if c.rec.Label != "" || !v.multiple() {
-		return c.rec.Label
+	return builtinConnectionLabel(v.builtin, v.manifest, c.rec)
+}
+
+// builtinConnectionLabel is rec's label as connLabel reads it, for the
+// built-in bi with the manifest m.
+func builtinConnectionLabel(bi builtinintegrations.Integration, m *integration.Manifest, rec store.IntegrationConnection) string {
+	if rec.Label != "" || m == nil || !m.Kivali.Connection.Multiple {
+		return rec.Label
 	}
-	if l, ok := v.builtin.(builtinintegrations.ConnectionLabeler); ok {
-		return l.ConnectionLabel(builtinintegrations.Connection{ID: c.rec.ID, Fields: c.rec.Fields})
+	return derivedConnectionLabel(bi, rec)
+}
+
+// derivedConnectionLabel is the label bi gives rec from its fields that
+// are not secret (builtinintegrations.ConnectionLabeler), cut to
+// connectionLabelMax characters; "" when it gives none.
+func derivedConnectionLabel(bi builtinintegrations.Integration, rec store.IntegrationConnection) string {
+	l, ok := bi.(builtinintegrations.ConnectionLabeler)
+	if !ok {
+		return ""
 	}
-	return ""
+	label := l.ConnectionLabel(builtinintegrations.Connection{ID: rec.ID, Fields: rec.Fields})
+	if r := []rune(label); len(r) > connectionLabelMax {
+		label = string(r[:connectionLabelMax])
+	}
+	return label
 }
 
 // connectionState is c on the wire.
@@ -298,25 +317,38 @@ func (s *Server) saveConnection(w http.ResponseWriter, r *http.Request, v *integ
 	s.writeIntegrationPageStatus(w, r, done)
 }
 
-// connectionLabelFor is the label rec is saved with: sent, trimmed; or,
-// sent empty, cur's; or, for an integration that takes several
-// connections, the built-in's ConnectionLabel from rec's fields. A
-// label that is required and missing, too long, or another
-// connection's (ignoring case) is refused with msg and code.
-func (v *integrationView) connectionLabelFor(cur *connView, sent string, rec store.IntegrationConnection) (label, msg string, code int) {
-	label = strings.TrimSpace(sent)
-	if label == "" && cur != nil {
-		label = cur.rec.Label
-	}
-	if label == "" && v.multiple() {
-		label = v.connLabel(&connView{rec: rec})
-	}
-	switch {
-	case label == "" && v.multiple():
-		return "", "the connection needs a label", http.StatusBadRequest
-	case utf8.RuneCountInString(label) > connectionLabelMax:
+// connectionLabelFor is the label rec is stored with: sent, trimmed;
+// or, sent empty, cur's. For an integration that takes several
+// connections, a label that is the one the built-in derives (from rec's
+// fields, or a kept label from cur's) is stored as "", so connLabel
+// derives it on every read and it follows the fields; with none stored,
+// the derived one is the label the checks see. A label the owner sent
+// longer than connectionLabelMax, a missing one where one is required,
+// and another connection's (ignoring case) are refused with msg and
+// code; a derived label is cut, never refused.
+func (v *integrationView) connectionLabelFor(cur *connView, sent string, rec store.IntegrationConnection) (stored, msg string, code int) {
+	sent = strings.TrimSpace(sent)
+	if utf8.RuneCountInString(sent) > connectionLabelMax {
 		return "", fmt.Sprintf("a connection's label is at most %d characters", connectionLabelMax), http.StatusBadRequest
-	case label == "":
+	}
+	stored = sent
+	if stored == "" && cur != nil {
+		stored = cur.rec.Label
+	}
+	label := stored
+	if v.multiple() {
+		derived := derivedConnectionLabel(v.builtin, rec)
+		if stored == derived || (sent == "" && cur != nil && stored == derivedConnectionLabel(v.builtin, cur.rec)) {
+			stored = ""
+		}
+		if label = stored; label == "" {
+			label = derived
+		}
+		if label == "" {
+			return "", "the connection needs a label", http.StatusBadRequest
+		}
+	}
+	if label == "" {
 		return "", "", 0
 	}
 	for _, c := range v.conns {
@@ -324,7 +356,7 @@ func (v *integrationView) connectionLabelFor(cur *connView, sent string, rec sto
 			return "", v.displayName() + " already has a connection called " + v.connLabel(c), http.StatusConflict
 		}
 	}
-	return label, "", 0
+	return stored, "", 0
 }
 
 // connectionValueProblem is what is wrong with a connection field's
@@ -405,16 +437,15 @@ func (s *Server) handleAPIIntegrationConnectionDeleteByID(w http.ResponseWriter,
 			return
 		}
 	}
-	removed, _, err := s.Store.DeleteIntegrationConnectionByID(name, c.rec.ID)
-	if err != nil && !errors.Is(err, store.ErrNotFound) {
+	// With its Secret gone the credential's secret is gone too, so the
+	// credential goes now, whatever the store's step does next.
+	if err := s.dropBuiltinEgress(name, []store.IntegrationConnection{c.rec}); err != nil {
+		log.Printf("integration %s: drop the connection's proxy credential: %v", name, err)
+	}
+	if _, _, err := s.Store.DeleteIntegrationConnectionByID(name, c.rec.ID); err != nil && !errors.Is(err, store.ErrNotFound) {
 		log.Printf("integration %s: delete connection %s: %v", name, c.rec.ID, err)
 		writeAPIError(w, http.StatusInternalServerError, "the connection could not be removed", whoServer)
 		return
-	}
-	if err == nil {
-		if err := s.dropBuiltinEgress(name, []store.IntegrationConnection{removed}); err != nil {
-			log.Printf("integration %s: drop the connection's proxy credential: %v", name, err)
-		}
 	}
 	s.Integrations.ConnectionChanged(name)
 	s.Integrations.Changed()
@@ -484,9 +515,11 @@ func (s *Server) callIntegrationTool(r *http.Request, v *integrationView, tool s
 	failed = clipText(failed, integrationVerifyMessageMax)
 	// The integration's words may quote a connection secret, as an
 	// agent's call's answer may: scrubbed before they are kept, shown
-	// or audited. With no scrubber (the secrets could not be read) the
-	// words are held back the way an agent's answer is.
-	if scrub == nil {
+	// or audited, a built-in's with the secrets of the connection it
+	// called with, a pod's with its one connection's. With no scrubber
+	// (the secrets could not be read) the words are held back the way
+	// an agent's answer is.
+	if v.builtin == nil {
 		scrub = s.Integrations.scrubber(r.Context(), name)
 	}
 	if scrub != nil {

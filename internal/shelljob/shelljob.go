@@ -36,6 +36,10 @@ type Job struct {
 //     connection's scoped egress proxy credential, which the daemon
 //     puts on its own bare proxy URL.
 //   - TimeoutSeconds bounds the operation in the daemon.
+//   - ConnectionID is the connection the job runs through, which the
+//     daemon echoes in its result (GitResult.ConnectionID), so the
+//     call's second request knows it even when the agent's access
+//     names another connection by then.
 //
 // It carries credentials: nothing on its path logs it.
 type GitJob struct {
@@ -50,6 +54,7 @@ type GitJob struct {
 	Auth                GitAuth  `json:"auth"`
 	Proxy               GitProxy `json:"proxy"`
 	TimeoutSeconds      int      `json:"timeout_seconds,omitempty"`
+	ConnectionID        string   `json:"connection_id,omitempty"`
 }
 
 // GitAuth is the HTTP basic auth a git operation presents to the host.
@@ -73,7 +78,8 @@ type Result struct {
 
 // GitResult is a GitJob's outcome: the repository it reached
 // (owner/name), the refs it moved (a push's: the remote's refs it
-// wrote), its error and how long it took. Updated is at most the
+// wrote), its error, how long it took and the connection it ran
+// through (the job's ConnectionID, echoed). Updated is at most the
 // daemon's first 200 refs by name; UpdatedTotal counts every ref that
 // moved.
 type GitResult struct {
@@ -83,6 +89,7 @@ type GitResult struct {
 	Error        string         `json:"error,omitempty"`
 	DurationMs   int64          `json:"duration_ms,omitempty"`
 	TimedOut     bool           `json:"timed_out,omitempty"`
+	ConnectionID string         `json:"connection_id,omitempty"`
 }
 
 // GitRefUpdate is one ref a git operation moved: its name and the
