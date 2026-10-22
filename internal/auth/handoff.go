@@ -121,9 +121,10 @@ func (h *Handoff) now() time.Time {
 }
 
 // HandoffNext resolves a handoff's next query parameter once its token
-// has signed the browser in: where to send the browser, an address the
-// server itself made and never one taken from the request, or "" for
-// "/". It may set cookies on w.
+// has passed: where to send the browser, an address the server itself
+// made and never one taken from the request, or "" when next names
+// nothing to go on to, which refuses the handoff. It may set cookies on
+// w.
 type HandoffNext func(w http.ResponseWriter, r *http.Request, next string) string
 
 // ServeHTTP signs the request in on a valid token and redirects to "/".
@@ -134,8 +135,10 @@ func (h *Handoff) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // WithNext is the handoff route with next resolved by resolve: a
-// request whose token signs the browser in and that carries a next is
-// sent where resolve says. A refused token ignores next.
+// request whose token passes and that carries a next is signed in and
+// sent where resolve says, or, when resolve finds nothing, refused as
+// a refused token is: no session, a 302 to "/". A refused token ignores
+// next.
 func (h *Handoff) WithNext(resolve HandoffNext) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h.serve(w, r, resolve)
@@ -161,13 +164,17 @@ func (h *Handoff) serve(w http.ResponseWriter, r *http.Request, resolve HandoffN
 		http.Redirect(w, r, "/", http.StatusFound)
 		return
 	}
-	setSessionCookie(w, r, h.CookieSuffix, signed)
 	target := "/"
 	if next := r.URL.Query().Get("next"); next != "" && resolve != nil {
-		if to := resolve(w, r, next); to != "" {
-			target = to
+		// A next with nowhere to go is no errand of the app's: refused
+		// as a refused token is, with no session.
+		if target = resolve(w, r, next); target == "" {
+			log.Printf("auth handoff: refused a handoff whose next names nothing")
+			http.Redirect(w, r, "/", http.StatusFound)
+			return
 		}
 	}
+	setSessionCookie(w, r, h.CookieSuffix, signed)
 	http.Redirect(w, r, target, http.StatusFound)
 }
 

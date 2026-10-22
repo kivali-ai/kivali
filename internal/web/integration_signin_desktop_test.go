@@ -209,37 +209,33 @@ func TestDesktopHandoffReplacesTheBrowsersSignIn(t *testing.T) {
 // an address, so the handoff cannot become an open redirect, and it
 // stays what it was: loopback only and one use per token. A next that
 // names no pending browser sign-in (an address, a path, an unknown id,
-// one a callback already took; one past its time, below) signs the browser in and
-// lands on "/" with no sign-in cookie; a replayed token signs nothing
-// in and hands no cookie over; on a host that is not loopback the
-// route does not exist.
+// one a callback already took, one that started at another address;
+// one past its time, below) is refused as a bad token is: "/" with no
+// session and no sign-in cookie, since Desktop names only a flow it
+// just saw start and anything else is no errand of the app's. A
+// replayed token signs nothing in and hands no cookie over; on a host
+// that is not loopback the route does not exist.
 func TestDesktopHandoffNextIsAPendingFlow(t *testing.T) {
 	srv, _, ts := desktopServer(t)
 	bs, _ := startInWebview(t, srv, ts)
 	base, _ := url.Parse(ts.URL)
+	host := base.Host
 
 	for _, next := range []string{"https://evil.example/", "/org/integrations", "0000"} {
-		system, jar, landed := browserJar(t)
-		resp, err := system.Get(ts.URL + auth.HandoffPath + "?t=" + url.QueryEscape(handoffToken(t, srv)) + "&next=" + url.QueryEscape(next))
-		if err != nil {
-			t.Fatal(err)
-		}
-		_ = resp.Body.Close()
-		if *landed == nil || (*landed).Path != "/" || !hasCookie(jar, base, "/", auth.CookieName) || hasCookie(jar, base, connectCallbackPath, "kivali_connect") {
-			t.Errorf("next %q: landed on %v", next, *landed)
-		}
+		assertHandoffRefused(t, serveHandoff(t, srv, host, handoffToken(t, srv), next), "next "+next)
 	}
+	// Started at 127.0.0.1:<port>: the same team reached as localhost
+	// would hold the host-only cookie where the callback never looks.
+	_, port, _ := strings.Cut(host, ":")
+	assertHandoffRefused(t, serveHandoff(t, srv, "localhost:"+port, handoffToken(t, srv), bs.Flow), "another host")
 
 	// One use per token: the replay signs nothing in, hands no cookie.
 	tok := handoffToken(t, srv)
-	first := serveHandoff(t, srv, "127.0.0.1:8080", tok, bs.Flow)
-	if first.Code != http.StatusFound || first.Header().Get("Location") != bs.URL || cookieOf(first, "kivali_connect") == nil {
+	first := serveHandoff(t, srv, host, tok, bs.Flow)
+	if first.Code != http.StatusFound || first.Header().Get("Location") != bs.URL || cookieOf(first, "kivali_connect") == nil || cookieOf(first, auth.CookieName) == nil {
 		t.Fatalf("first: %d to %q", first.Code, first.Header().Get("Location"))
 	}
-	replay := serveHandoff(t, srv, "127.0.0.1:8080", tok, bs.Flow)
-	if replay.Header().Get("Location") != "/" || cookieOf(replay, "kivali_connect") != nil || cookieOf(replay, auth.CookieName) != nil {
-		t.Errorf("replay: to %q with %v", replay.Header().Get("Location"), replay.Result().Cookies())
-	}
+	assertHandoffRefused(t, serveHandoff(t, srv, host, tok, bs.Flow), "replay")
 	// Not loopback: no such route.
 	if rr := serveHandoff(t, srv, "kivali.example.com", handoffToken(t, srv), bs.Flow); rr.Code != http.StatusNotFound {
 		t.Errorf("non-loopback: %d", rr.Code)
@@ -249,21 +245,27 @@ func TestDesktopHandoffNextIsAPendingFlow(t *testing.T) {
 	if to := callback(t, srv, vendorApprove(t, authorize), cookieOf(first, "kivali_connect")); to.Query().Get("signed_in") == "" {
 		t.Fatalf("the callback landed on %s", to)
 	}
-	if rr := serveHandoff(t, srv, "127.0.0.1:8080", handoffToken(t, srv), bs.Flow); rr.Header().Get("Location") != "/" || cookieOf(rr, "kivali_connect") != nil {
-		t.Errorf("a taken flow: to %q", rr.Header().Get("Location"))
-	}
+	assertHandoffRefused(t, serveHandoff(t, srv, host, handoffToken(t, srv), bs.Flow), "a taken flow")
 }
 
 // Why this test exists: a sign-in lasts ten minutes. A handoff for one
 // that ran out (the owner's browser slow to open, the computer asleep)
 // must not send the browser to the vendor, whose code Kivali could no
-// longer exchange: it lands on "/" signed in.
+// longer exchange: it is refused, with no session.
 func TestDesktopHandoffNextPastItsTime(t *testing.T) {
 	srv, _, ts := desktopServer(t)
 	bs, _ := startInWebview(t, srv, ts)
+	base, _ := url.Parse(ts.URL)
 	srv.Clock.(interface{ Advance(time.Duration) }).Advance(signInFlowTTL)
-	if rr := serveHandoff(t, srv, "127.0.0.1:8080", handoffToken(t, srv), bs.Flow); rr.Header().Get("Location") != "/" || cookieOf(rr, "kivali_connect") != nil {
-		t.Errorf("an expired flow: to %q", rr.Header().Get("Location"))
+	assertHandoffRefused(t, serveHandoff(t, srv, base.Host, handoffToken(t, srv), bs.Flow), "an expired flow")
+}
+
+// assertHandoffRefused fails unless rr is a refused handoff: a 302 to
+// "/" that sets neither a session nor a sign-in cookie.
+func assertHandoffRefused(t *testing.T, rr *httptest.ResponseRecorder, what string) {
+	t.Helper()
+	if rr.Code != http.StatusFound || rr.Header().Get("Location") != "/" || cookieOf(rr, auth.CookieName) != nil || cookieOf(rr, "kivali_connect") != nil {
+		t.Errorf("%s: %d to %q with %v", what, rr.Code, rr.Header().Get("Location"), rr.Result().Cookies())
 	}
 }
 

@@ -128,7 +128,8 @@ func TestHandoffRefusals(t *testing.T) {
 // vendor. If it ran for a refused, replayed or non-loopback token, any
 // page could hand a browser that cookie, or bounce it through Kivali
 // to a vendor, without the supervisor's token. A next the resolver
-// does not know must still land on "/" signed in.
+// does not know is no errand of the app's: the handoff is refused, no
+// session, as for a bad token.
 func TestHandoffNextAfterASignInOnly(t *testing.T) {
 	now := time.Now()
 	h := handoffAt(t, &now, "")
@@ -166,9 +167,15 @@ func TestHandoffNextAfterASignInOnly(t *testing.T) {
 	if rr := redeem("kivali.example.com", other, "known"); rr.Code != http.StatusNotFound {
 		t.Fatalf("non-loopback with next: %d", rr.Code)
 	}
-	// A next the resolver does not know: signed in, to "/".
-	if got := signedInAs(t, redeem("127.0.0.1:18081", other, "unknown"), h); got != "owner@example.com" {
+	// A next the resolver does not know: refused as a refused token is,
+	// with no session, so a link naming a stale or made-up flow does not
+	// sign the owner's browser in.
+	if got := signedInAs(t, redeem("127.0.0.1:18081", other, "unknown"), h); got != "" {
 		t.Fatalf("unknown next signed in as %q", got)
+	}
+	// Without next the handoff signs in as it always has.
+	if got := signedInAs(t, redeem("127.0.0.1:18081", mint(t, handoffKey, "owner@example.com", now.Add(HandoffTTL)), ""), h); got != "owner@example.com" {
+		t.Fatalf("no next signed in as %q", got)
 	}
 	if strings.Join(asked, ",") != "known,unknown" {
 		t.Fatalf("the resolver was asked for %v, want only the two signed-in requests", asked)
