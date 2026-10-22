@@ -142,6 +142,32 @@ func callback(t *testing.T, srv *Server, back *url.URL, cookies ...*http.Cookie)
 	return to
 }
 
+// failedWords is why the sign-in a callback sent the browser to as
+// failed (?sign_in_failed=<id>) did not work, as the page reads it:
+// crm's connection's GET .../sign-in.
+func failedWords(t *testing.T, srv *Server, to *url.URL) string {
+	t.Helper()
+	rec, _ := firstConnectionSecret(t, srv)
+	q := to.Query()
+	if to.Path != "/org/integrations/crm" || q.Get("sign_in_failed") != rec.ID || len(q) != 1 {
+		t.Fatalf("landed on %s, want crm's page with sign_in_failed", to)
+	}
+	p := orgOK[apitypes.SignInProgress](t, orgGet(t, srv, intBase+"/crm/connections/"+rec.ID+"/sign-in"))
+	if p.State != apitypes.SignInStateFailed || p.Error == nil {
+		t.Fatalf("the failed sign-in reads %+v", p)
+	}
+	return *p.Error
+}
+
+// startAgain fails unless a callback sent the browser to path with
+// ?sign_in_error=start_again and nothing else.
+func startAgain(t *testing.T, to *url.URL, path string) {
+	t.Helper()
+	if q := to.Query(); to.Path != path || q.Get("sign_in_error") != "start_again" || len(q) != 1 {
+		t.Errorf("landed on %s, want %s?sign_in_error=start_again", to, path)
+	}
+}
+
 // tokenRequests counts the code exchanges the vendor took.
 func tokenRequests(vendor *connecttest.FakeVendor) int {
 	n := 0
@@ -233,7 +259,7 @@ func TestBrowserSignInEndToEnd(t *testing.T) {
 		t.Fatalf("landed on %v after %d", landed, resp.StatusCode)
 	}
 	rec, data := firstConnectionSecret(t, srv)
-	if got := landed.Query(); got.Get("signed_in") != rec.ID || got.Has("sign_in_error") {
+	if got := landed.Query(); got.Get("signed_in") != rec.ID || len(got) != 1 {
 		t.Errorf("landed on %s", landed)
 	}
 	var exchange *connecttest.Request
@@ -288,10 +314,7 @@ func TestBrowserSignInStateIsSingleUse(t *testing.T) {
 	}
 	rec, data := firstConnectionSecret(t, srv)
 
-	to := callback(t, srv, back, cookie)
-	if to.Path != "/org/integrations/crm" || to.Query().Get("sign_in_error") != errSignInStartAgain || to.Query().Has("signed_in") {
-		t.Errorf("the replay landed on %s", to)
-	}
+	startAgain(t, callback(t, srv, back, cookie), "/org/integrations/crm")
 	if n := tokenRequests(vendor); n != 1 {
 		t.Errorf("%d exchanges, want 1", n)
 	}
@@ -313,10 +336,7 @@ func TestBrowserSignInExpires(t *testing.T) {
 	back := vendorApprove(t, authorize)
 	clk.Advance(signInFlowTTL)
 
-	to := callback(t, srv, back, cookie)
-	if to.Path != "/org/integrations/crm" || to.Query().Get("sign_in_error") != errSignInStartAgain {
-		t.Errorf("landed on %s", to)
-	}
+	startAgain(t, callback(t, srv, back, cookie), "/org/integrations/crm")
 	if n := tokenRequests(vendor); n != 0 {
 		t.Errorf("%d exchanges after the sign-in expired", n)
 	}
@@ -345,13 +365,11 @@ func TestBrowserSignInNeedsTheCookie(t *testing.T) {
 			authorize, cookie := startBrowser(t, srv)
 			back := vendorApprove(t, authorize)
 
-			to := callback(t, srv, back, tc.cookie(cookie)...)
-			if to.Path != "/org/integrations/crm" || to.Query().Get("sign_in_error") != errSignInStartAgain {
-				t.Errorf("landed on %s", to)
+			if words := failedWords(t, srv, callback(t, srv, back, tc.cookie(cookie)...)); words != errSignInStartAgain {
+				t.Errorf("the page reads %q", words)
 			}
-			if to := callback(t, srv, back, cookie); to.Query().Get("sign_in_error") != errSignInStartAgain {
-				t.Errorf("the right browser after a refused callback landed on %s", to)
-			}
+			// The right browser after a refused callback finds the state spent.
+			startAgain(t, callback(t, srv, back, cookie), "/org/integrations/crm")
 			if n := tokenRequests(vendor); n != 0 {
 				t.Errorf("%d exchanges without the cookie", n)
 			}
@@ -377,9 +395,8 @@ func TestBrowserSignInPassesOnTheVendorsWords(t *testing.T) {
 		vendor.Set(func(k *connecttest.Knobs) { k.AuthorizeError, k.AuthorizeErrorDescription = tc.code, tc.description })
 		authorize, cookie := startBrowser(t, srv)
 		to := callback(t, srv, vendorApprove(t, authorize), cookie)
-		rec, _ := firstConnectionSecret(t, srv)
-		if to.Path != "/org/integrations/crm" || to.Query().Get("sign_in_error") != tc.want || to.Query().Get("connection") != rec.ID {
-			t.Errorf("%s: landed on %s", tc.code, to)
+		if words := failedWords(t, srv, to); words != tc.want {
+			t.Errorf("%s: the page reads %q", tc.code, words)
 		}
 		if n := tokenRequests(vendor); n != 0 {
 			t.Errorf("%s: %d exchanges", tc.code, n)
@@ -407,7 +424,7 @@ func TestBrowserSignInScrubsTheVendorsWords(t *testing.T) {
 		k.AuthorizeErrorDescription = strings.Repeat("y", signInWordsRunes-10) + " state " + state + " and " + connecttest.ClientSecret
 	})
 	to := callback(t, srv, vendorApprove(t, authorize), cookie)
-	words := to.Query().Get("sign_in_error")
+	words := failedWords(t, srv, to)
 	if strings.Contains(words, state[:10]) || strings.Contains(words, connecttest.ClientSecret[:10]) || len([]rune(words)) > signInWordsRunes {
 		t.Errorf("the page was sent %q", words)
 	}
@@ -434,8 +451,8 @@ func TestBrowserSignInPKCEMismatch(t *testing.T) {
 
 	to := callback(t, srv, back, cookie)
 	want := "the vendor refused the sign-in (invalid_grant): the PKCE verifier does not match"
-	if to.Path != "/org/integrations/crm" || to.Query().Get("sign_in_error") != want {
-		t.Errorf("landed on %s", to)
+	if words := failedWords(t, srv, to); words != want {
+		t.Errorf("the page reads %q", words)
 	}
 	if n := tokenRequests(vendor); n != 1 {
 		t.Errorf("%d exchanges, want 1", n)
@@ -643,8 +660,5 @@ func TestConnectCallbackSignsInFirstAndComesBack(t *testing.T) {
 // integrations list, in words.
 func TestConnectCallbackUnknownState(t *testing.T) {
 	srv := newTestServer(t)
-	to := callback(t, srv, &url.URL{Path: "/connect/callback", RawQuery: "code=abc&state=nothing-like-it"})
-	if to.Path != "/org/integrations" || to.Query().Get("sign_in_error") != errSignInStartAgain {
-		t.Errorf("landed on %s", to)
-	}
+	startAgain(t, callback(t, srv, &url.URL{Path: "/connect/callback", RawQuery: "code=abc&state=nothing-like-it"}), "/org/integrations")
 }

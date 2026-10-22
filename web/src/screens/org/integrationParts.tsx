@@ -187,6 +187,19 @@ export function RollBackDialog({ version, current, busy, error, onConfirm, onClo
   );
 }
 
+/**
+ * The words of each code a browser sign-in's callback may send the page in ?sign_in_error=. The code, never words,
+ * is in the address: anyone can link the owner to a page with any query, so only Kivali's own sentences are shown.
+ */
+const SIGN_IN_ERROR_WORDS: Record<string, string> = {
+  start_again: 'The sign-in took too long or was started elsewhere. Start it again.',
+};
+
+/** The sentence for a ?sign_in_error= code; undefined for none, and for a code Kivali does not send. */
+export function signInErrorWords(code: string | null): string | undefined {
+  return code !== null && Object.hasOwn(SIGN_IN_ERROR_WORDS, code) ? SIGN_IN_ERROR_WORDS[code] : undefined;
+}
+
 /** What a sign-in connection asks the service for, in words; undefined when it names no scopes. */
 export function scopesLine(scopes: readonly string[]): string | undefined {
   return scopes.length > 0 ? 'Asks the service for: ' + scopes.join(', ') : undefined;

@@ -4,7 +4,7 @@ import { apiPostForm } from '../../api/client';
 import type { IntegrationSummary, IntegrationUploadRefused, IntegrationVersion, Integrations } from '../../api/types.gen';
 import { Badge, Banner, Button, Dialog, DialogClose, Icon, ListRow, Text } from '../../ds';
 import { pickFiles } from '../../lib/pickFiles';
-import { INTEGRATIONS_API, StatusBadge, agentsLabel, integrationPath, uploadRefusalOf, versionPath } from './integrationParts';
+import { INTEGRATIONS_API, StatusBadge, agentsLabel, integrationPath, signInErrorWords, uploadRefusalOf, versionPath } from './integrationParts';
 import { ErrorBanner, None, RowList, RowSkeletons, SectionHead } from './parts';
 import type { SectionProps } from './sections';
 import { useAction, useResource } from './useResource';
@@ -54,10 +54,10 @@ export function IntegrationsSection({ showHead }: SectionProps) {
   const action = useAction();
   const navigate = useNavigate();
   const [refused, setRefused] = useState<IntegrationUploadRefused | null>(null);
-  // A browser sign-in Kivali could not tie to an integration comes back here with why, read once and taken off the
-  // address.
+  // A browser sign-in Kivali could not tie to an integration comes back here with a code saying why (never words), read
+  // once and taken off the address.
   const location = useLocation();
-  const [signInError, setSignInError] = useState(() => new URLSearchParams(location.search).get('sign_in_error'));
+  const [signInError, setSignInError] = useState(() => signInErrorWords(new URLSearchParams(location.search).get('sign_in_error')));
   useEffect(() => {
     if (new URLSearchParams(location.search).has('sign_in_error')) void navigate({ pathname: location.pathname, search: '' }, { replace: true });
   }, [location.search, location.pathname, navigate]);
@@ -90,7 +90,7 @@ export function IntegrationsSection({ showHead }: SectionProps) {
       </Text>
       <ErrorBanner error={list.error ?? action.error} {...(action.error ? { onDismiss: action.dismiss } : {})} />
       {signInError && (
-        <Banner tone="danger" title="The sign-in did not work" onDismiss={() => setSignInError(null)}>
+        <Banner tone="danger" title="The sign-in did not work" onDismiss={() => setSignInError(undefined)}>
           {signInError}
         </Banner>
       )}

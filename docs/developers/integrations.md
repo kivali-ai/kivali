@@ -746,11 +746,11 @@ A browser sign-in (`POST .../sign-in/browser`,
 6. It drops the cookie, then takes the pending flow whose state matches
    (`signInFlows.take`, a constant-time compare): taken once, so a
    replay finds nothing; past its ten minutes it is gone. No flow:
-   redirect with "the sign-in took too long or was started elsewhere;
-   start it again", to the page of the integration the cookie names, or
-   to `/org/integrations`. A cookie that is missing, not signed by
-   Kivali or names another flow: the same words, and the flow ends
-   `failed` without an exchange.
+   redirect with `?sign_in_error=start_again`, to the page of the
+   integration the cookie names, or to `/org/integrations`. A cookie
+   that is missing, not signed by Kivali or names another flow: the
+   flow ends `failed` with "the sign-in took too long or was started
+   elsewhere; start it again", without an exchange.
 7. A vendor `error` ends the flow with its `error_description` (or
    "the service refused the sign-in (<code>)"), audited. Otherwise
    `Engine.Exchange` posts the code, the client id and secret, the
@@ -762,10 +762,17 @@ A browser sign-in (`POST .../sign-in/browser`,
    `finishSignIn` and the connection test as for a device sign-in, with
    `method: browser`.
 8. The answer is a 303 to `/org/integrations/<name>?signed_in=<id>`, or
-   `?sign_in_error=<words>&connection=<id>`. The page reads either once,
-   shows it on that connection's Sign in block (Try again starts a
-   browser sign-in again) and replaces the address without the query.
-   The integrations list shows a `sign_in_error` it is sent.
+   `?sign_in_failed=<id>` once the flow ended `failed`, or
+   `?sign_in_error=start_again` when there is no flow to read (none
+   found, or one cancelled meanwhile). The address never carries words:
+   anyone can link the owner to the page with any query. The page reads
+   the query once and replaces the address without it. For
+   `sign_in_failed` it reads the words from the connection's `GET
+   .../sign-in` (an ended flow is kept ten minutes); `start_again` is
+   the one `sign_in_error` code, which the page and the integrations
+   list put in their own sentence (`signInErrorWords`), and any other
+   value is ignored. The result shows on that connection's Sign in
+   block, where Try again starts a browser sign-in again.
 
 The redirect address is `signInRedirectURL`: `<scheme>://<host>/connect/callback`,
 the scheme `https` on a TLS connection, else `X-Forwarded-Proto`'s first
@@ -2254,4 +2261,4 @@ the owner's.
 | `GET .../choices/{key}?connection=` | `AccessChoices`, through the connection `connection` names, or the first; 404 for a field that lists no options or a connection id that names none; 409 while the integration is not running, for a built-in one without a connection, or for a built-in one this binary does not carry; 502 for the tool's error, or a result that is not a list of names. |
 | `GET .../logs?limit=` | `IntegrationLogs`, oldest first; limit 200 by default, at most 2000. |
 | `GET /api/v1/agents/{slug}/integrations` | `AgentIntegrations`; 404 for an agent not on the team. |
-| `GET /connect/callback?code=&state=` | Not under `/api`: the signed-in UI's route a vendor sends the browser back to. A 303 to `/org/integrations/<name>?signed_in=<id>`, or `?sign_in_error=<words>&connection=<id>`, or `/org/integrations?sign_in_error=<words>` for a state that names no sign-in and no cookie that names an integration ([Signing in](#signing-in)). |
+| `GET /connect/callback?code=&state=` | Not under `/api`: the signed-in UI's route a vendor sends the browser back to. A 303 to `/org/integrations/<name>?signed_in=<id>`, `?sign_in_failed=<id>` (the words are `GET .../connections/{id}/sign-in`'s) or `?sign_in_error=start_again`, or `/org/integrations?sign_in_error=start_again` for a state that names no sign-in and no cookie that names an integration ([Signing in](#signing-in)). |
