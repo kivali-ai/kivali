@@ -1,6 +1,6 @@
 # Integrations
 
-An integration is an external service your agents can act on, such as a CRM, a blog or a ticket tracker. Each one is installed from a bundle or ships with Kivali, is connected with a token you paste, and is given to agents one at a time, each with its own access. This page covers having one built, installing one and its new versions, rolling back to an earlier version, connecting and testing it, giving agents access, what an agent then sees, the record of their calls, its log, switching it off or removing it, and the [Git](#git) integration that ships with Kivali.
+An integration is an external service your agents can act on, such as a CRM, a blog or a ticket tracker. Each one is installed from a bundle or ships with Kivali, is connected with a token you paste or by signing in to the service, and is given to agents one at a time, each with its own access. This page covers having one built, installing one and its new versions, rolling back to an earlier version, connecting and testing it, giving agents access, what an agent then sees, the record of their calls, its log, switching it off or removing it, and the [Git](#git) and [GitHub](#github) integrations that ship with Kivali.
 
 Integrations are under **Org**, **Integrations**.
 
@@ -204,3 +204,43 @@ Every clone, fetch and push is in **Recent calls**, with the repository and the 
 - Submodules are not cloned.
 - Deleting a branch or tag on the remote: a push only adds and moves them.
 - Very large repositories are slow, and a clone stops after 15 minutes, a fetch or a push after 10.
+
+## GitHub
+
+**GitHub** ships with Kivali. It lets agents read and open issues, comments and pull requests in your GitHub repositories, as the GitHub account you sign in with. It runs GitHub's own `gh` tool for each action, in a place of its own apart from Kivali and your agents, and reaches only `api.github.com` and `github.com`. Its install screen lists `gh` under **Software it installs**.
+
+### The connection
+
+GitHub is connected by [signing in](#connect-by-signing-in) with a GitHub App you register yourself, so Kivali holds no password or personal access token of yours and you choose what the app may touch. The integration's page shows the steps above the connection form; in short:
+
+1. On GitHub, in the settings of the account or organization that owns the repositories, create a GitHub App under **Developer settings**, **GitHub Apps**: with **Enable Device Flow** ticked, the webhook off, and the repository permissions Contents and Metadata read-only, Issues and Pull requests read and write.
+2. Paste its client id and a client secret you generate into the connection form, and choose **Save connection**.
+3. Install the app on the account or organization, for the repositories agents should reach. Agents reach only repositories the app is installed on.
+4. Choose **Sign in with a code** and approve the sign-in on GitHub.
+
+Leave **Expire user authorization tokens** on in the app's settings: GitHub's tokens then last eight hours, and Kivali renews each one shortly before it expires, so a token that leaks stops working soon. **Test connection** names the GitHub account the connection signs in as. What agents can do is the smaller of what the app may do and what your GitHub account may do.
+
+### Access
+
+An agent's access has two parts:
+
+- **Repositories**: each `owner/name`, such as `acme/widgets`, or a pattern such as `acme/*`, which covers every repository directly under `acme`. `*` is the only wildcard, and capitals do not matter, as for [Git](#access). Name at least one.
+- **May create and comment**: lets the agent open issues and pull requests and comment on them in those repositories. Off, the agent only reads, and its tools do not include those actions.
+
+Everything an agent does is done as the account you signed in with, so GitHub shows your name on its issues, comments and pull requests.
+
+### What agents can do
+
+- List the repositories its access names, and read a repository's details, its branches, and a comparison of two branches, tags or commits (the commits and the files changed, not the changes themselves).
+- List and read issues, with the latest 20 comments, and list and read pull requests, with the diff when it asks (cut at 50,000 characters).
+- With **May create and comment**: open an issue, comment on an issue or pull request, and open a pull request from a branch already on GitHub.
+
+Each action is in **Recent calls**. A call for a repository the agent's access does not name is refused before anything reaches GitHub, and the agent is told to ask you.
+
+GitHub stays apart from [Git](#git): it moves no commits. To open a pull request from an agent's work, the agent first pushes its branch with the Git integration, through Git's own connection and access, then opens the pull request here.
+
+### Not supported
+
+- GitHub Enterprise Server and other hosts than `github.com`.
+- Cloning, pushing or any other move of commits: that is Git's.
+- Anything `gh` cannot do with a user's token from a GitHub App, such as changing the repository's settings, merging pull requests or approving reviews.

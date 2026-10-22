@@ -7,6 +7,7 @@ package builtins
 
 import (
 	"github.com/kivali-ai/kivali/internal/builtinintegrations"
+	"github.com/kivali-ai/kivali/internal/builtinintegrations/bundles/github"
 	"github.com/kivali-ai/kivali/internal/builtinintegrations/gitintegration"
 )
 
@@ -19,5 +20,5 @@ func All() builtinintegrations.Registry {
 // embedded in this binary, each run in a pod of its own. A name is in
 // All or here, never both.
 func Shipped() builtinintegrations.ShippedBundles {
-	return builtinintegrations.ShippedBundles{}
+	return builtinintegrations.ShippedBundles{github.Bundle()}
 }

@@ -1617,9 +1617,9 @@ core. It is built in to the owner, as above; to core it is a bundle.
 files, laid out exactly as a bundle's (`manifest.json` at the root,
 the server's files beside it), an `embed.FS` directory embedded with
 the `all:` prefix so a file whose name starts with `_` or `.` is kept.
-`builtins.Shipped()` is the ones compiled into the binary, empty until
-one ships; to add one, embed its directory in a package of its own and
-list it there. `Server.ShippedBundles` is the ones core runs
+`builtins.Shipped()` is the ones compiled into the binary: GitHub
+([The GitHub shipped bundle](#the-github-shipped-bundle)). To add one,
+embed its directory in a package of its own and list it there. `Server.ShippedBundles` is the ones core runs
 (`builtins.Shipped()` unless a test sets others); a test bundle built
 from `integrationtest.Dir` and the fake integration's server is the one
 the tests register. A test holds every entry of `Shipped()` to the
@@ -1692,6 +1692,59 @@ What the owner sees:
   bundle's size. Its page lists that software as an upload's does. `Shipped` is
   read from the version (it holds a bundle), so a stale record's
   version still shows as one.
+
+### The GitHub shipped bundle
+
+`internal/builtinintegrations/bundles/github` embeds the bundle
+(`manifest.json`, `server/main.py`) and gives it as `github.Bundle()`.
+The server is a stdio MCP server of Python's standard library, in the
+template's shape, and every action is one run of GitHub's `gh`, which
+the pod installs (`kivali.packages: ["gh"]`) before the server starts.
+The hosts are `api.github.com` and `github.com`.
+
+- **The connection** is a [sign-in connection](#sign-in-connections):
+  `method: device` with GitHub's device, authorization and token
+  endpoints, `client: operator` (a GitHub App the owner registers, its
+  steps in `kivali.setup_notes`), no scopes (a GitHub App's token has
+  the app's permissions), and `credential_keys` naming the token
+  `GH_TOKEN`. `user_config` is empty: the form is the client id and
+  secret core adds. `kivali.verify` is `whoami` (`gh api user`,
+  "Connected as @login").
+- **The token, per call.** Each `tools/call` sends `kivali/credential`
+  from its own thread while the reading loop goes on (the answer
+  arrives on the server's input) and takes `env.GH_TOKEN`, never kept
+  past the call. -32001, -32002 and -32003 are answered to the agent in
+  words, as an error result, with "ask the owner"; gh does not run.
+- **gh, per call**: an argument list, never a shell; values as
+  `--flag=value` and bodies on gh's input (`--body-file=-`), so nothing
+  an agent writes reads as an option; an environment of `GH_TOKEN`,
+  `GH_HOST=github.com`, `GH_CONFIG_DIR=/tmp/gh`,
+  `GH_NO_UPDATE_NOTIFIER`, `GH_PROMPT_DISABLED`, `NO_COLOR`, PATH, HOME
+  and the proxy variables, nothing else; 50 seconds at most, inside a
+  55-second budget for the whole call (Kivali waits 60). Standard
+  output is the answer, or the action's own summary of gh's JSON; a
+  non-zero exit is an error result with the end of gh's error output.
+  Long answers are cut: a body at 20,000 characters, an issue's
+  comments to the latest 20, a diff at 50,000, with a note saying so.
+- **Access, in the wrapper.** `_meta.kivali.access.repositories` are
+  patterns read by `internal/gitrepo`'s rules, ported to Python
+  (`normalize_pattern`, `valid_pattern`, `match`); a test holds the
+  port to `gitrepo.Match` case by case. A repository argument must be
+  `owner/name`, and one the patterns do not match is refused before gh
+  runs ("Your access to GitHub does not include <owner/name>; ask the
+  owner."). `create_issue`, `comment` and `create_pull_request` need
+  `write: true`; without it they are left out of the agent's
+  `tools/list` and refused by name. The owner's requests carry no
+  `_meta` and list every action; `whoami` is the owner's alone.
+- **Isolated from Git.** No action clones, pushes or otherwise moves
+  commits; `create_pull_request` opens a pull request from a head
+  branch already on GitHub.
+
+The package's tests run `python3 -I server/main.py` from the embedded
+files with a fake `gh` first on PATH that records its argv,
+environment and input, and the test as core on the server's standard
+streams; and the smoke test (`integration.SmokeCommand`) on the
+bundle.
 
 ### The git built-in
 
