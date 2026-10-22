@@ -63,6 +63,10 @@ func BecomeUnprivileged(c Creds, id Identity, pkgs []string, start func([]string
 	return inst, nil
 }
 
+// installOutputGrace is how long, once the install child has exited,
+// its output pipes may stay open before they are closed.
+const installOutputGrace = 3 * time.Second
+
 // installResultGrace is how long past InstallTimeout the daemon waits
 // for the install child's result. The child stops apt-get at
 // InstallTimeout and reports; a child that has not reported by then is
@@ -102,6 +106,14 @@ func StartInstallCommand(argv []string, pkgs []string, env []string, log io.Writ
 	cmd.Dir = "/"
 	cmd.Stdout = log
 	cmd.Stderr = log
+	// The install finishes only once the child is reaped (awaitInstallResult
+	// waits, then records the result). A process a package's scripts left
+	// behind that the child could not kill, or one on a platform where it
+	// kills none, may still hold the output pipes; without a bound, Wait
+	// would block on them, and the daemon's commands, or an integration's
+	// start, would wait with nothing in any log. WaitDelay closes the
+	// pipes that long after the child has exited.
+	cmd.WaitDelay = installOutputGrace
 	cmd.ExtraFiles = []*os.File{w} // InstallResultFD in the child
 	if err := cmd.Start(); err != nil {
 		_ = r.Close()

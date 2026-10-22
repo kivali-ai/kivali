@@ -136,6 +136,27 @@ func TestStartInstallChildWithoutAResult(t *testing.T) {
 	}
 }
 
+// A child that reports and exits while something it started still
+// holds its output finishes the install once installOutputGrace has
+// passed, not when that process ends: otherwise a leftover from a
+// package's scripts would keep the daemon's commands, or an
+// integration's start, waiting with nothing in any log.
+func TestStartInstallChildWithALeftoverHoldingItsOutput(t *testing.T) {
+	script := `(sleep 30 3>&-) & echo '{"installed":["jq"],"failed":[]}' >&3; exit 0`
+	inst, err := StartInstallCommand([]string{"/bin/sh", "-c", script}, []string{"jq"}, nil, &bytes.Buffer{}, clock.NewFake())
+	if err != nil {
+		t.Fatalf("StartInstallCommand: %v", err)
+	}
+	select {
+	case <-inst.Done():
+	case <-time.After(installOutputGrace + 10*time.Second):
+		t.Fatal("the install waited on the leftover's output")
+	}
+	if _, installed, _ := inst.State(); !reflect.DeepEqual(installed, []string{"jq"}) {
+		t.Errorf("installed = %v", installed)
+	}
+}
+
 func TestStartInstallChildCannotStart(t *testing.T) {
 	if _, err := StartInstallChild("/nonexistent/agent-shell", []string{"jq"}, nil, &bytes.Buffer{}, clock.NewFake()); err == nil {
 		t.Error("StartInstallChild of a missing binary succeeded")
