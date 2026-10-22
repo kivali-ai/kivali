@@ -100,8 +100,10 @@ func signInProgress(t *testing.T, srv *Server) apitypes.SignInProgress {
 // Kivali must poll at the vendor's pace (slow_down adds five seconds,
 // or GitHub cuts it off), send the client id and never the secret, then
 // keep the tokens in the Secret beside the connection's own values and
-// the sign-in on the record; restart the bundle's server (whose env
-// otherwise keeps no token); run the connection test so the page names
+// the sign-in on the record, with the token's lifetime (a refresh whose
+// answer names none would otherwise not know when to refresh); restart
+// the bundle's server (whose env otherwise keeps no token); run the
+// connection test so the page names
 // who signed in; audit the sign-in for the owner; and from then on
 // hand the token to the integration's calls. Before the sign-in the
 // integration reads not connected, after it connected.
@@ -150,7 +152,7 @@ func TestDeviceSignInEndToEnd(t *testing.T) {
 		t.Errorf("Secret = %v", data)
 	}
 	if si := rec.SignIn; si == nil || si.Method != "device" || !si.SignedInAt.Equal(signedInAt) ||
-		!si.ExpiresAt.Equal(signedInAt.Add(8*time.Hour)) || si.Scope != "repo" || si.Error != "" {
+		!si.ExpiresAt.Equal(signedInAt.Add(8*time.Hour)) || si.Lifetime != 8*time.Hour || si.Scope != "repo" || si.Error != "" {
 		t.Errorf("record = %+v", rec.SignIn)
 	}
 	if rec.Verified == nil || !*rec.Verified || rec.VerifyMessage != "Signed in as octocat" {

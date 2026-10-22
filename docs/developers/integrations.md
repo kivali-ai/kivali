@@ -673,7 +673,8 @@ A device sign-in (`POST .../sign-in/device`):
 4. On approval (`finishSignIn`), under `lockIntegrations`, the tokens
    go to the connection's Secret beside its other values (no refresh
    token in the answer drops a stored one), and the record gets
-   `sign_in` (`method: device`, `signed_in_at`, `expires_at`, `scope`)
+   `sign_in` (`method: device`, `signed_in_at`, `expires_at`, `lifetime`
+   when the vendor gave an expiry, `scope`)
    with any refused refresh's `error` gone, which clears the
    [Needs you](#needs-you-sign-in-again) row, and the last connection
    test cleared. The owner's audit gains `sign_in` (agent `ceo`,
