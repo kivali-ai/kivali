@@ -666,6 +666,46 @@ CLI's `--allowedTools` lists the five tools for every agent
 (`claudeagent.allowedToolNames`): only the Kivali Developer's MCP
 server registers them.
 
+### The skill
+
+The role says who the Kivali Developer is, what it owns, how it shapes
+an integration and what it never does. How to build one is the
+built-in skill `build-an-integration`
+(`internal/builtinskills/skills/build-an-integration/`), which the role
+points at and every agent can list. It holds:
+
+- `SKILL.md`: the steps, the bundle and its manifest, and the parts of
+  this page a bundle's author meets and the check cannot show: the
+  pod's environment and network, the line protocol as the shim holds
+  it, the shape of `_meta.kivali.access`, what reaches an agent from an
+  answer, and how Test connection and an access field's options read
+  theirs.
+- `template/`: a bundle for an imaginary notes service, standard
+  library only, which the developer copies to start from. Its server
+  keeps the output for JSON-RPC (descriptor 1 becomes the error
+  output), answers each `tools/call` on a thread, reaches the service
+  with `urllib.request` through the proxy, lists each agent the actions
+  its access allows, and starts with no connection.
+- `scripts/try.py`: runs a bundle's server as the pod does (no proxy
+  variable, so only a stub on the shell's own machine answers) and
+  sends what core sends, as the owner or as one agent with one access:
+  the `tools/list` at start, then `list`, `call`, `verify` and
+  `choices`. It answers `kivali/credential` and `kivali/log` as core
+  does, refuses an action missing from the agent's list as core does,
+  shows each answer as the agent or the owner reads it, and reports
+  what the check does not see: a line that is not JSON-RPC, an id that
+  core would not match, an answer later than core waits, options the
+  form cannot read. `--stub` starts a stub and stops it at the end.
+
+`internal/builtinskills/build_an_integration_test.go` holds them to
+the platform: the template passes `integration.Validate` and the smoke
+test with no finding, `try.py` drives it against a stub as the owner
+and as agents, reports the failures above, and uses the shim's
+protocol version and line limit
+(`integrationpod.ProtocolVersion`, `integrationpod.MaxLineBytes`). A
+change to what the shim, core or the check does that a bundle's author
+meets changes the skill in the same change.
+
 ### The tools
 
 All five relay to `POST /v1/agent/{slug}/kivali-developer/dispatch`

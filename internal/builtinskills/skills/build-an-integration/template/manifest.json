@@ -1,0 +1,60 @@
+{
+  "manifest_version": "0.3",
+  "name": "notes",
+  "version": "0.1.0",
+  "display_name": "Notes",
+  "description": "Find and add notes in the notebooks of a Notes account.",
+  "author": { "name": "Kivali Developer (agent)" },
+  "server": {
+    "type": "python",
+    "entry_point": "server/main.py",
+    "mcp_config": {
+      "command": "python3",
+      "args": ["server/main.py"],
+      "env": {
+        "NOTES_TOKEN": "${user_config.token}",
+        "NOTES_API": "https://api.notes.example"
+      }
+    }
+  },
+  "user_config": {
+    "token": {
+      "type": "string",
+      "title": "API token",
+      "description": "From Settings, API tokens, in the Notes account the agents should act as.",
+      "sensitive": true,
+      "required": true
+    }
+  },
+  "tools": [
+    { "name": "find_notes", "description": "Search the notes in one notebook the agent's access names. Reads only." },
+    { "name": "add_note", "description": "Add a note to a notebook the agent's access names, when its access allows adding. Creates a note in the account." },
+    { "name": "list_notebooks", "description": "List the account's notebooks, for the access form. Reads only." },
+    { "name": "whoami", "description": "Name the account the connection signs in as, for Test connection. Reads only." }
+  ],
+  "kivali": {
+    "connection": { "method": "token" },
+    "hosts": ["api.notes.example"],
+    "access": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "notebooks": {
+            "type": "array",
+            "items": { "type": "string" },
+            "title": "Notebooks",
+            "description": "The notebooks the agent may search."
+          },
+          "add": {
+            "type": "boolean",
+            "title": "May add notes",
+            "description": "Lets the agent add notes to those notebooks."
+          }
+        },
+        "required": ["notebooks"]
+      },
+      "choices": { "notebooks": "list_notebooks" }
+    },
+    "verify": "whoami"
+  }
+}
