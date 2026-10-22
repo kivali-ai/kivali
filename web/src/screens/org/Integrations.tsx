@@ -1,8 +1,8 @@
-import { useState } from 'react';
-import { Link, useHref, useNavigate } from 'react-router';
+import { useEffect, useState } from 'react';
+import { Link, useHref, useLocation, useNavigate } from 'react-router';
 import { apiPostForm } from '../../api/client';
 import type { IntegrationSummary, IntegrationUploadRefused, IntegrationVersion, Integrations } from '../../api/types.gen';
-import { Badge, Button, Dialog, DialogClose, Icon, ListRow, Text } from '../../ds';
+import { Badge, Banner, Button, Dialog, DialogClose, Icon, ListRow, Text } from '../../ds';
 import { pickFiles } from '../../lib/pickFiles';
 import { INTEGRATIONS_API, StatusBadge, agentsLabel, integrationPath, uploadRefusalOf, versionPath } from './integrationParts';
 import { ErrorBanner, None, RowList, RowSkeletons, SectionHead } from './parts';
@@ -54,6 +54,13 @@ export function IntegrationsSection({ showHead }: SectionProps) {
   const action = useAction();
   const navigate = useNavigate();
   const [refused, setRefused] = useState<IntegrationUploadRefused | null>(null);
+  // A browser sign-in Kivali could not tie to an integration comes back here with why, read once and taken off the
+  // address.
+  const location = useLocation();
+  const [signInError, setSignInError] = useState(() => new URLSearchParams(location.search).get('sign_in_error'));
+  useEffect(() => {
+    if (new URLSearchParams(location.search).has('sign_in_error')) void navigate({ pathname: location.pathname, search: '' }, { replace: true });
+  }, [location.search, location.pathname, navigate]);
 
   const upload = async () => {
     const [file] = await pickFiles({ multiple: false, accept: '.zip,application/zip' });
@@ -82,6 +89,11 @@ export function IntegrationsSection({ showHead }: SectionProps) {
         Services your agents can act on, each from a bundle you approve. You connect each one, then choose which agents may use it and how far.
       </Text>
       <ErrorBanner error={list.error ?? action.error} {...(action.error ? { onDismiss: action.dismiss } : {})} />
+      {signInError && (
+        <Banner tone="danger" title="The sign-in did not work" onDismiss={() => setSignInError(null)}>
+          {signInError}
+        </Banner>
+      )}
       {!items && !list.error && <RowSkeletons />}
       {items && items.length === 0 && <None>No integrations installed.</None>}
       {items && items.length > 0 && (

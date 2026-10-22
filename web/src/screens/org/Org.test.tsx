@@ -16,7 +16,7 @@ import type { OrgContextValue } from '../../state/OrgProvider';
 import { aboutLine, versionLabel } from './About';
 import { BACKUP_DEBOUNCE_MS } from './Backup';
 import { InstallScreen, bundleLine } from './InstallScreen';
-import { IntegrationPage, SIGN_IN_POLL_MS, clientSaved, codeLifeWords, deleteConnectionWords, signInLine } from './IntegrationPage';
+import { IntegrationPage, SIGN_IN_POLL_MS, clientSaved, codeLifeWords, deleteConnectionWords, signInLine, signInReturnOf } from './IntegrationPage';
 import { whenLabel } from './integrationParts';
 import { Org, headerMeta } from './OrgPage';
 import {
@@ -33,6 +33,7 @@ import {
   goIntegrationPageMultiple,
   goIntegrationPageSignIn,
   goIntegrationPageSignInAgain,
+  goBrowserSignIn,
   goDeviceSignIn,
   goSignInProgress,
   goSignInProgressFailed,
@@ -2280,6 +2281,119 @@ describe('Integration page, signing in with a code', () => {
     const now = Date.parse('2026-10-21T10:00:00Z');
     expect(codeLifeWords('2026-10-21T10:10:00Z', now)).toBe('The code works for 10 minutes.');
     expect(codeLifeWords('2026-10-21T10:00:20Z', now)).toBe('The code works for 1 minute.');
+  });
+});
+
+describe('Integration page, signing in in the browser', () => {
+  const PATH = '/org/integrations/github';
+  const API = '/api/v1/org/integrations/github';
+  const signedIn = goIntegrationPageSignIn;
+  const redirect = signedIn.sign_in_redirect_url!;
+  // The same connection never signed in, offered the ways given.
+  const notSignedIn = (ways: string[]): typeof signedIn => {
+    const sign_in = { ways, signed_in: false, redirect_url: redirect };
+    return {
+      ...signedIn,
+      summary: { ...signedIn.summary, status: 'not_connected' },
+      connection: { ...signedIn.connection!, sign_in },
+      connections: [{ ...signedIn.connection!, sign_in }],
+    };
+  };
+  const pageRoutes = (page: typeof signedIn) => ({
+    ['GET ' + API]: page,
+    ['GET ' + API + '/audit']: { rows: [] },
+    ['GET ' + API + '/logs']: { lines: [] },
+    ['POST ' + API + '/connection/sign-in/browser']: goBrowserSignIn,
+  });
+  const block = () => within(screen.getByRole('region', { name: 'Sign in' }));
+  const stubAssign = () => {
+    const assign = vi.fn();
+    vi.stubGlobal('location', { href: 'http://localhost' + PATH, pathname: PATH, search: '', assign });
+    return assign;
+  };
+
+  // Guards the start of a browser sign-in, against browser_sign_in.json: Sign in in your browser posts to the
+  // connection's route and sends this tab to the service's page the server built (openSignIn), the address Kivali
+  // Desktop hooks to open the system browser instead. A manifest that offers both ways shows both, its own way first
+  // as the primary button.
+  it('sends the browser to the service, beside Sign in with a code', async () => {
+    await renderOrg(PATH, { routes: pageRoutes(notSignedIn(['device', 'browser'])) });
+    const code = block().getByRole('button', { name: 'Sign in with a code' });
+    const browser = block().getByRole('button', { name: 'Sign in in your browser' });
+    expect(code.compareDocumentPosition(browser) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const assign = stubAssign();
+    await click(browser);
+    expect(called('POST', API + '/connection/sign-in/browser')).toBe(true);
+    expect(assign).toHaveBeenCalledWith(goBrowserSignIn.url);
+  });
+
+  // Guards a manifest that signs in only in the browser: no code button that would only get a 409.
+  it('offers only the browser when that is the one way', async () => {
+    await renderOrg(PATH, { routes: pageRoutes(notSignedIn(['browser'])) });
+    expect(block().getByRole('button', { name: 'Sign in in your browser' })).toBeInTheDocument();
+    expect(block().queryByRole('button', { name: 'Sign in with a code' })).toBeNull();
+  });
+
+  // Guards the address the owner registers with the service (sign_in_redirect_url in integration_page_sign_in.json):
+  // above the form, read-only so it cannot be changed by a slip before it is copied, with Copy, and the sentence that
+  // says what to do with it. A wrong address there is a service that refuses every sign-in.
+  it('shows the redirect address to copy', async () => {
+    const writeText = vi.fn(() => Promise.resolve());
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
+    await renderOrg(PATH, { routes: pageRoutes(notSignedIn(['browser'])) });
+    const field = screen.getByRole('textbox', { name: 'Redirect address' });
+    expect(field).toHaveValue(redirect);
+    expect(field).toHaveAttribute('readonly');
+    expect(screen.getByText('Register this address as the app’s callback URL.')).toBeInTheDocument();
+    await click(screen.getByRole('button', { name: 'Copy' }));
+    expect(writeText).toHaveBeenCalledWith(redirect);
+    expect(screen.getByRole('button', { name: 'Copied' })).toBeInTheDocument();
+  });
+
+  // Guards the way back from the service: Kivali's callback lands here with ?sign_in_error= (the service's words or
+  // Kivali's), which the block shows as a sign-in that did not work, with Try again taking the browser way again. The
+  // query is taken off the address, so a reload does not show an old failure as if it were new.
+  it('shows why a browser sign-in did not work and offers Try again', async () => {
+    const words = 'The user did not approve the app.';
+    const h = await renderOrg(PATH + '?sign_in_error=' + encodeURIComponent(words) + '&connection=' + signedIn.connection!.id, {
+      routes: pageRoutes(notSignedIn(['device', 'browser'])),
+    });
+    expect(block().getByText('The sign-in did not work')).toBeInTheDocument();
+    expect(block().getByText(words)).toBeInTheDocument();
+    expect(h.router.state.location.search).toBe('');
+    const assign = stubAssign();
+    await click(block().getByRole('button', { name: 'Try again' }));
+    expect(called('POST', API + '/connection/sign-in/browser')).toBe(true);
+    expect(called('POST', API + '/connection/sign-in/device')).toBe(false);
+    expect(assign).toHaveBeenCalledWith(goBrowserSignIn.url);
+  });
+
+  // Guards the way back after a sign-in that worked (?signed_in=<id>): the page, read fresh, says signed in, and a line
+  // says it was this browser sign-in that did it; the query goes from the address.
+  it('says the browser sign-in worked', async () => {
+    const h = await renderOrg(PATH + '?signed_in=' + signedIn.connection!.id, { routes: pageRoutes(signedIn) });
+    expect(block().getByText('You signed in in your browser.')).toBeInTheDocument();
+    expect(block().getByRole('button', { name: 'Sign out' })).toBeInTheDocument();
+    expect(h.router.state.location.search).toBe('');
+  });
+
+  // Guards a sign-in Kivali could not tie to any integration (it restarted, or the address was pasted): the callback
+  // lands on the integrations list, which must say what happened rather than show the list as if nothing did.
+  it('shows a sign-in error on the integrations list', async () => {
+    const words = 'the sign-in took too long or was started elsewhere; start it again';
+    const h = await renderOrg('/org/integrations?sign_in_error=' + encodeURIComponent(words));
+    expect(screen.getByText('The sign-in did not work')).toBeInTheDocument();
+    expect(screen.getByText(words)).toBeInTheDocument();
+    expect(h.router.state.location.search).toBe('');
+  });
+
+  // Guards the reading of the query: words with or without the connection they were for, a connection signed in, and
+  // a page reached any other way.
+  it('reads how a browser sign-in came back', () => {
+    expect(signInReturnOf('?sign_in_error=no&connection=c1')).toEqual({ id: 'c1', error: 'no' });
+    expect(signInReturnOf('?sign_in_error=no')).toEqual({ error: 'no' });
+    expect(signInReturnOf('?signed_in=c1')).toEqual({ id: 'c1' });
+    expect(signInReturnOf('')).toBeNull();
   });
 });
 
