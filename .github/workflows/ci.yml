@@ -142,9 +142,15 @@ jobs:
       - name: npm ci (web app)
         run: make web-install
 
+      # The headless shell, which every spec runs on, and no system
+      # packages: the hosted image already has the libraries it needs.
+      # --with-deps would add only fonts the app does not use (it ships
+      # its own), from an Ubuntu mirror that can take minutes to serve
+      # them. Should an image lack a library, the launch fails naming
+      # it, and --with-deps is the fix.
       - name: Install Chromium
         working-directory: web
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install --only-shell chromium
 
       # Functional specs and axe only. The visual spec runs when
       # KIVALI_VISUAL=1 and needs Linux baselines under
