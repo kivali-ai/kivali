@@ -66,6 +66,12 @@ Saving a connection restarts the integration with the new values, which takes a 
 
 **Disconnect** removes the connection and every agent's access, which was given for it.
 
+### Several connections
+
+Most integrations take one connection. Some that ship with Kivali, such as [Git](#git), take several: one for each account or host you connect, such as GitHub and your company's GitLab. Their page has **Connections** in place of **Connection**: one card per connection, each with its label (what you call it, such as "Company GitLab"), its own fields, **Save connection**, **Test connection** and **Delete**. **Add a connection** opens a blank form with a **Label** field. Labels are unique within the integration, whatever their capitals.
+
+Each agent's access then names the connection its calls use: **Give access** asks for a **Connection** first, and the access table, like the agent's **Integrations** tab ("Git (Company GitLab)"), says which one each agent uses. **Delete** asks first, naming the agents whose access uses that connection: their access goes with it, and the other connections and the access given for them stay.
+
 ### Not running
 
 An integration that is approved and switched on shows **Not running** while it is starting, and when it has stopped. Starting takes a few seconds. While it is not running, **Test connection** and the options in an access form are not available.
@@ -113,6 +119,8 @@ The switch at the top of the integration's page turns it off for every agent at 
 - **Repository for Test connection** (optional): one repository, as `owner/name`.
 
 **Test connection** lists that repository's branches with your token: "Connected. 4 branches in acme/widgets." With no repository named, it asks GitHub or GitLab who the token belongs to: "Connected to github.com as octocat." For any other host, name a repository. A failed test shows the host's reason. Test connection reaches only public hosts: a host on your own network is refused. A host that is not a host name (with a path, for example) is refused when you save.
+
+Git takes [several connections](#several-connections), one per host: connect GitHub and your company's GitLab side by side, each with its own token. A connection you leave without a label is named after its host, such as `github.com`. Each agent's access names one connection, and its clones, fetches and pushes go to that connection's host with that connection's token. An agent has one access to Git, so it works on one host at a time: the one its access names.
 
 The token is kept in the connection's Secret, like every connection secret. Each connection also has a network credential of its own, kept beside the token, that lets an agent's clone, fetch or push reach the connection's host and nothing else. Your team's allow list does not change.
 

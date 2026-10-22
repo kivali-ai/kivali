@@ -866,23 +866,31 @@ func (r *integrationRegistry) deliver(name string, msg integrationpod.Message) {
 
 // connectionValues are name's connection's values by user_config key,
 // with which of them are secret, from the store and the Secret. A
-// missing connection is store.ErrNotFound.
+// missing connection is store.ErrNotFound. An integration that runs in
+// a pod takes one connection, so this is the oldest: the one its
+// server starts with.
 func (r *integrationRegistry) connectionValues(ctx context.Context, name string) (*integration.Manifest, map[string]string, []string, error) {
-	m, _, values, secretValues, _, err := r.readConnection(ctx, name)
+	m, _, values, secretValues, _, err := r.readConnection(ctx, name, "")
 	return m, values, secretValues, err
 }
 
-// readConnection is connectionValues with the connection's record,
-// which a built-in integration's call needs for its id, and the secret
-// of the connection's scoped proxy credential (a built-in's, kept in
-// its Secret under builtinintegrations.ProxySecretKey; "" for none),
-// which is never one of the values.
-func (r *integrationRegistry) readConnection(ctx context.Context, name string) (*integration.Manifest, store.IntegrationConnection, map[string]string, []string, string, error) {
+// readConnection is connectionValues for the connection connID ("" for
+// the oldest), with the connection's record, which a built-in
+// integration's call needs for its id, and the secret of the
+// connection's scoped proxy credential (a built-in's, kept in its
+// Secret under builtinintegrations.ProxySecretKey; "" for none), which
+// is never one of the values.
+func (r *integrationRegistry) readConnection(ctx context.Context, name, connID string) (*integration.Manifest, store.IntegrationConnection, map[string]string, []string, string, error) {
 	_, m, err := r.store.CurrentIntegrationVersion(name)
 	if err != nil {
 		return nil, store.IntegrationConnection{}, nil, nil, "", err
 	}
-	conn, err := r.store.GetIntegrationConnection(name)
+	var conn store.IntegrationConnection
+	if connID == "" {
+		conn, err = r.store.GetIntegrationConnection(name)
+	} else {
+		conn, err = r.store.GetIntegrationConnectionByID(name, connID)
+	}
 	if err != nil {
 		return m, conn, nil, nil, "", err
 	}

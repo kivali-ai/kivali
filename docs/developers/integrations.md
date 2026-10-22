@@ -30,7 +30,9 @@ shim that runs in it), `internal/web/integration_registry.go` and
 (agents' calls, core's side and the agent's MCP server's),
 `internal/web/kivali_developer.go` and
 `internal/mcp/kivali_developer_tools.go` (the Kivali Developer's
-tools), `internal/web/api_integrations.go` (the API) and
+tools), `internal/web/api_integrations.go` and
+`api_integration_connections.go` (the API, its connections in the
+second) and
 `internal/web/apitypes/integrations.go` (the wire types).
 `internal/builtinintegrations` holds the integrations that ship with
 Kivali (each in a package of its own, listed in
@@ -119,6 +121,12 @@ byte for byte.
   `sensitive` field is a secret (below).
 - `kivali.connection.method` is how the connection is made: `token`,
   fields the owner pastes.
+- `kivali.connection.multiple: true` says the integration takes several
+  connections (Git's GitHub and a company GitLab), each with a label,
+  and each agent's access names the one its calls use
+  ([Connections and Secrets](#connections-and-secrets)). Only a
+  built-in integration may say so: a bundle's server is started with
+  one connection's values ([The pod](#the-pod)).
 - `kivali.hosts` is every host the integration reaches, in the egress
   allowlist's pattern language ([architecture.md](architecture.md),
   the egress proxy).
@@ -150,6 +158,7 @@ the version and shown on its install screen. The rules:
 | `user_config` | Each key is lowercase letters, digits and underscores, starting with a letter; `type` is `string`, `number` or `boolean`; `title` is not empty; `sensitive` and `required`, when given, are booleans. |
 | `tools` | Not empty; names are unique, lowercase letters, digits and underscores starting with a letter; a tool without a description is a warning. |
 | `kivali.connection.method` | `token`. A sign-in method (`device`, `browser`) is refused. |
+| `kivali.connection.multiple` | Absent or false: "a bundle's server takes one connection". |
 | `kivali.hosts` | Not empty; each a lowercase host or pattern with no scheme, port, path, user or whitespace (`integration.ValidHost`, the rule of `store.ValidEgressHost`, which a store test holds it to); a bare `*` is refused. |
 | `kivali.access` | See the access form. |
 | `kivali.verify` | When given, a tool in `tools`. |
@@ -160,14 +169,16 @@ the install screen is, where the owner reads what the version
 reaches, holds and does before approving it.
 
 A built-in integration's manifest is checked by
-`integration.ValidateBuiltin(manifest)` by the same rules, with three
+`integration.ValidateBuiltin(manifest)` by the same rules, with four
 differences. There is no bundle. A `server` section is refused, and so
 is any `kivali.hosts` entry: a built-in runs inside Kivali, and its
 network reach is Kivali's own. The names that `kivali.verify` and
 `kivali.access.choices` give must be lowercase letters, digits and
 underscores, but need not be in `tools`, since they are passed to the
 built-in's Go functions
-([Built-in integrations](#built-in-integrations)).
+([Built-in integrations](#built-in-integrations)). And
+`kivali.connection.multiple` is accepted: core calls a built-in with
+whichever connection the agent's access names.
 
 A bundle is read from a zip (`integration.ReadBundle`, an upload) or
 from a directory (`integration.ReadDirectory`, the Kivali
@@ -236,8 +247,8 @@ integrations/<name>/
                                     bundle_bytes, file_count, findings (the check's warnings)
   versions/<version>/manifest.json  the manifest, byte for byte
   versions/<version>/bundle/        the bundle, unpacked (none for a built-in integration)
-  connections/<id>.yaml             id, created_at, fields (not secret), secret_keys, secret_name,
-                                    verified_at, verified, verify_message
+  connections/<id>.yaml             id, label, created_at, fields (not secret), secret_keys, secret_name,
+                                    verified_at, verified, verify_message (one file per connection)
   access/<slug>.yaml                slug, connection_id, access, set_at, set_by
   audit.jsonl                       one row per call: at, agent, action, allowed, reason, duration_ms
   log.jsonl                         the integration's log: at, level, message (the runtime, below)
@@ -273,21 +284,42 @@ version, whatever its state), its connections' records, every agent's
 access, the audit and the log; the API deletes the connections'
 Secrets first, and the next reconcile stops its pod.
 
-An access row is checked when it is read
+An access row names the connection it was set for (`connection_id`),
+the one the agent's calls use. It is checked when it is read
 (`store.ListIntegrationAccess`): it is invalid, and grants nothing,
-when no version is approved, when it was set for another connection
-than the current one, or when the approved version's form refuses it.
-So approving a version or rolling back to one checks every row against
+when no version is approved, when its connection is no longer there,
+or when the approved version's form refuses it. For an integration
+that takes several connections (`kivali.connection.multiple`), its
+connection is any the integration has; for any other, it is the one
+connection, the oldest (`store.GetIntegrationConnection`). So
+approving a version or rolling back to one checks every row against
 that version's form at once, and a row it refuses is invalid until it
 is set again (`PUT .../access/{slug}`) or the version in use changes to
 one that accepts it. The reason is on the row, so the page can say why,
 and the page counts the invalid rows in a banner. Archiving an agent
-clears its access everywhere (`ArchiveAgent`); deleting the connection
-clears every agent's.
+clears its access everywhere (`ArchiveAgent`); deleting every
+connection (`store.DeleteIntegrationConnection`) clears every agent's,
+and deleting one (`store.DeleteIntegrationConnectionByID`) clears the
+rows that name it (`store.ClearIntegrationAccessForConnection`) and
+returns their slugs, leaving the rest.
 
 ## Connections and Secrets
 
-The connection's fields that are not sensitive are in
+An integration takes one connection, or, when its manifest says
+`kivali.connection.multiple` (only a built-in: Git), several: one per
+account the owner connects, such as GitHub and a company GitLab. Each
+connection is a record of its own under its id, with a label
+(`IntegrationConnection.Label`), what the owner calls it. The label is
+required for an integration that takes several connections and
+optional for any other, whose page does not ask; a built-in that
+implements `builtinintegrations.ConnectionLabeler` names a connection
+saved with no label (Git: its host, `github.com`), from its fields that
+are not secret, and a connection stored with none reads that way too.
+Labels are unique within the integration, ignoring case: a second
+"company gitlab" is a 409 "<integration> already has a connection
+called Company GitLab". A label is at most 64 characters.
+
+A connection's fields that are not sensitive are in
 `connections/<id>.yaml`. The sensitive ones are in a Kubernetes Secret
 of the server's namespace, `kivali-connection-<integration>-<id>`
 (Opaque, labelled `app=kivali` and `kivali.ai/integration=<name>`),
@@ -303,19 +335,52 @@ create, update and delete on Secrets in the namespace; the client
 (`kube.Client.GetSecret`, `PutSecret`, `DeleteSecret`) updates with
 PUT and creates with POST when there is none.
 
-`PUT .../connection` takes the fields by key, from the approved
-version's `user_config`. A field the form does not have is a 400; a
-required field with no value, sent or stored, is a 400 ("the
-connection needs <title>"); a `number` or `boolean` field must parse.
-A sensitive field left out keeps its stored value, and an empty one
-clears it; a field that is not sensitive is what is sent. A write
-clears the last Test connection result. When the record names secret
-fields its Secret does not hold (a backup restored into another
-install, or the Secret deleted by hand), `ConnectionState.ReconnectNeeded`
-is true, those fields read as not set, and the status is not
-connected until they are entered again.
+The singular routes act on the one connection, the oldest: `PUT
+.../connection` writes it (or makes it when there is none), `DELETE
+.../connection` removes every connection, and `POST
+.../connection/verify` tests it. The plural ones act on the connection
+the id names: `POST .../connections` makes one (201; for an integration
+that takes one connection and has it, 409 "<integration> takes one
+connection"), `PUT .../connections/{id}` writes it, `DELETE
+.../connections/{id}` removes it, its Secret, its scoped proxy
+credential and the access rows that name it, and `POST
+.../connections/{id}/verify` tests it. An id that names no connection
+is a 404.
 
-Test connection (`POST .../connection/verify`) calls the manifest's
+A write (`ConnectionWrite`) takes the fields by key, from the approved
+version's `user_config`, and the label: sent, it replaces the stored
+one; empty, it keeps it. A field the form does not have is a 400; a
+required field with no value, sent or stored, is a 400 ("the
+connection needs <title>"); a `number` or `boolean` field must parse;
+an integration that takes several connections needs a label (400 "the
+connection needs a label" when the owner gives none and the built-in
+gives none). A sensitive field left out keeps its stored value, and an
+empty one clears it; a field that is not sensitive is what is sent. A
+write clears the last Test connection result. When the record names
+secret fields its Secret does not hold (a backup restored into another
+install, or the Secret deleted by hand), `ConnectionState.ReconnectNeeded`
+is true, those fields read as not set, and that connection is not
+connected until they are entered again. The integration's status is
+connected while any one connection has all its secrets.
+
+The page (`IntegrationPage`) carries `connections`, every connection
+oldest first, each with its id, label, created at, Test connection's
+last result, `reconnect_needed` and `fields`, the connection form with
+that connection's values (the non-sensitive values, and which secrets
+are set); `connection`, the first of them, and `connection_fields`, the
+form with the first's values, which the one-connection page reads; and
+`multiple`, from the manifest. Each access row carries the
+`connection_id` it names and that connection's `connection_label`. An
+access write (`AccessWrite`) names its connection with
+`connection_id`: required when the integration has more than one
+connection, the only one when it is left out; missing or unknown where
+it is needed is a 400 "choose a connection". An agent's Integrations
+tab gives each row of an integration that takes several connections
+the label of the one its access names (`AgentIntegration.ConnectionLabel`),
+and the tab reads "Git (Company GitLab)".
+
+Test connection (`POST .../connection/verify`, `POST
+.../connections/{id}/verify`) calls the manifest's
 `kivali.verify` tool through the running server, with no arguments and
 no agent on the call, and keeps what it found on the connection's
 record: `verified` (the call went through and the tool's result is not
@@ -329,8 +394,11 @@ object whose `options` is one. Both write an audit row for the owner
 reason when it failed), and both answer 409 "the integration is not
 running" while no shim is connected; a built-in integration is running
 while its code is in the binary, and its `Verify` and `Choices` are called with the connection
-instead (and the options need one: 409 "connect the integration
-first" without it). The audit lists what is in
+instead: the one the route names, and for the options the one
+`?connection=<id>` names, or the first (the options need one: 409
+"connect the integration first" without it, 404 for an id that names
+none). What a built-in answers is scrubbed of that connection's
+secrets. The audit lists what is in
 `audit.jsonl`, which these calls and agents' calls
 ([The audit](#the-audit)) append to.
 
@@ -430,6 +498,11 @@ DNS). The spec names no Secret and carries no connection value, and no
 label carries the token. The chart's network policy
 `kivali-integrationpod-egress` lets the pod reach the egress proxy's
 port and nothing else.
+
+An integration that runs in a pod takes one connection: its server is
+started with one connection's values, the oldest
+(`integrationRegistry.connectionValues`, the `kivali/credential`
+answer), which is why a bundle cannot say `kivali.connection.multiple`.
 
 The spec carries a hash of itself (`kivali-spec-hash`), as agent and
 browser pods do. `Start` keeps a pod whose hash matches and replaces one
@@ -727,6 +800,7 @@ type ShellJobIntegration interface {
 }
 type HostsOf interface{ Hosts(conn Connection) []string }
 type ConnectionChecker interface{ CheckConnection(conn Connection) error }
+type ConnectionLabeler interface{ ConnectionLabel(conn Connection) string }
 type AccessChecker interface{ CheckAccess(access map[string]any) error }
 type AccessSummarizer interface{ AccessSummary(access map[string]any) string }
 
@@ -753,7 +827,10 @@ type Refusal struct{ Text, Reason string }
   error in words for the owner.
 - `Choices` lists an access field's options: `name` is what
   `kivali.access.choices` maps the field to, which need not be a tool.
-- `Connection.Fields` is every connection field by key, secrets
+- `Connection` is the connection the call is for: for an agent's call,
+  the one the agent's access row names (`connection_id`); for Test
+  connection and the options a field lists, the one the route names.
+  `Connection.Fields` is every connection field by key, secrets
   included, read from the record and its Secret at the moment of the
   call and kept by no one. The connection's proxy credential is not
   among them.
@@ -770,10 +847,14 @@ type Refusal struct{ Text, Reason string }
   egress proxy: each of its connections gets a scoped proxy credential
   admitted to `Hosts(conn)` and nothing else.
 - A `ConnectionChecker` holds a connection to more than its form:
-  `PUT .../connection` calls `CheckConnection` after the form's own
+  saving one (`PUT .../connection`, `POST .../connections`, `PUT
+  .../connections/{id}`) calls `CheckConnection` after the form's own
   checks and before it stores anything, and answers 400 with the
   error's words. An `AccessChecker` does the same for
   `PUT .../access/{slug}`, after `integration.ValidateAccess`.
+- A `ConnectionLabeler` that takes several connections names one the
+  owner saved with no label, from the connection's fields that are not
+  secret; "" leaves it unnamed, which a save refuses.
 - An `AccessSummarizer` built-in's `AccessSummary` is the access in
   words on the Org page and an agent's tab, in place of
   `integration.AccessSummary`'s field by field: for an access form
@@ -846,11 +927,11 @@ would reach a pod, it calls the function instead
 | --- | --- | --- |
 | Running | its shim is connected | while its code is in the binary |
 | An agent's list | `tools/list` with `_meta`, kept on the link | `Tools(caller)`, every time |
-| An agent's call | `tools/call` through the shim | `Call(caller, connection, name, args)` |
-| Test connection | `tools/call` of `kivali.verify` | `Verify(connection)`; the audit's action is the name `kivali.verify` gives (`whoami` for echo) |
-| An access field's options | `tools/call` of the field's tool | `Choices(connection, name)`; 409 with no connection |
+| An agent's call | `tools/call` through the shim | `Call(caller, connection, name, args)`, with the connection the agent's access row names |
+| Test connection | `tools/call` of `kivali.verify` | `Verify(connection)`, with the connection the route names; the audit's action is the name `kivali.verify` gives (`whoami` for echo) |
+| An access field's options | `tools/call` of the field's tool | `Choices(connection, name)`, with the connection `?connection=` names or the first; 409 with no connection |
 | Work in the agent's shell | none | `Call` answers with `ShellJob`, `Complete` the call's second request |
-| A connection change | the shim restarts the server | nothing to restart; a `HostsOf` built-in's proxy credential is registered again |
+| A connection change | the shim restarts the server | nothing to restart; a `HostsOf` built-in's proxy credential of that connection is registered again |
 | Reconcile | a pod while it should run | skipped |
 
 Each function runs under the same deadline a pod's request has (60 s
@@ -884,8 +965,12 @@ which reaches only the team's allow list. Its manifest:
 - `user_config`: `host` (required; "github.com, gitlab.com or any HTTPS
   git host, without https://"), `token` (sensitive, required) and
   `test_repository` (optional, owner/name).
-- `kivali.connection.method: token`, no `kivali.hosts`,
-  `kivali.verify: "ls_remote"` (a name for `Verify`, not a tool).
+- `kivali.connection.method: token` and `kivali.connection.multiple:
+  true`: a connection per host (GitHub, a company GitLab), each agent's
+  access naming the one it uses; `Git.ConnectionLabel`
+  (`ConnectionLabeler`) names a connection saved with no label by its
+  host. No `kivali.hosts`; `kivali.verify: "ls_remote"` (a name for
+  `Verify`, not a tool).
 - `kivali.access.schema`, in this order: `repositories`, the one
   required field (a list: "owner/name, or a pattern such as acme/*");
   `push` (a switch, "May push"); `push_refs` (a list, "Branches and
@@ -1242,19 +1327,22 @@ scoped proxy credential of its own (`internal/web/integration_builtin_egress.go`
   with the built-in's hosts (`store.SetEgressScopedCredential`). The
   proxy admits that user to those hosts alone and counts nothing; the
   team's allow list is not touched.
-- Saving the connection (`PUT .../connection`) mints the secret when the
-  Secret holds none, keeps it otherwise, and registers it on every save
-  while the integration is on, so a changed host is registered at once.
-  Deleting the connection, switching the integration off and removing it
-  drop it (`DropEgressScopedCredential`); switching it on registers it
-  again. The switch takes the same lock (`lockIntegrations`) as the
-  save, so a save racing a switch registers or drops the credential by
-  the switch as it ends up. Every boot (`Server.RegisterBuiltinEgress`
-  in `main.go`) and every restore registers each switched-on built-in's
-  connection again from its Secret, since `egress_agents.json` is out
-  of backups and the Secret is not, and drops the credentials of those
-  switched off. A job whose connection's Secret holds no secret mints
-  and registers one first.
+- Saving a connection (`PUT .../connection`, `POST .../connections`,
+  `PUT .../connections/{id}`) mints its secret when its Secret holds
+  none, keeps it otherwise, and registers it on every save while the
+  integration is on, so a changed host is registered at once. Deleting
+  one connection (`DELETE .../connections/{id}`) drops its credential
+  alone; deleting every connection, switching the integration off and
+  removing it drop every connection's (`DropEgressScopedCredential`);
+  switching it on registers every connection's again. The switch takes
+  the same lock (`lockIntegrations`) as the save, so a save racing a
+  switch registers or drops the credential by the switch as it ends up.
+  Every boot (`Server.RegisterBuiltinEgress` in `main.go`) and every
+  restore registers every connection of each switched-on built-in again
+  from its Secret, since `egress_agents.json` is out of backups and the
+  Secret is not, and drops the credentials of those switched off. A job
+  whose connection's Secret holds no secret mints and registers one
+  first.
 
 #### Checks at save
 
@@ -1465,12 +1553,16 @@ the owner's.
 | `GET .../versions/{version}` | `IntegrationVersion`, with `changes` from the version in use, and `builtin` for a built-in integration's version. |
 | `POST .../versions/{version}/approve`, `.../reject` | `IntegrationVersion`; 409 when not pending, or for a built-in integration. |
 | `POST .../versions/{version}/rollback` | `IntegrationVersion`; 409 when not superseded, or for a built-in integration; 404 for a version not stored. |
-| `PUT .../connection` | `ConnectionWrite` in, `IntegrationPage` out; 409 while no version is approved. |
-| `DELETE .../connection` | `IntegrationPage`: the Secret, the record and every agent's access removed. |
-| `POST .../connection/verify` | `IntegrationPage`, with the connection's verified, verify message and verified at; 409 with no approved version, no connection, no `kivali.verify`, while the integration is not running, or for a built-in one this binary does not carry. |
-| `PUT .../access/{slug}` | `AccessWrite` in, `IntegrationPage` out; 404 for an agent not on the team; 409 without a connection; 400 with the field's message. |
+| `PUT .../connection` | `ConnectionWrite` in, `IntegrationPage` out: the one connection, the oldest, written or made; 409 while no version is approved. |
+| `DELETE .../connection` | `IntegrationPage`: every connection's Secret, scoped proxy credential and record, and every agent's access, removed. |
+| `POST .../connection/verify` | `IntegrationPage`, with the oldest connection's verified, verify message and verified at; 409 with no approved version, no connection, no `kivali.verify`, while the integration is not running, or for a built-in one this binary does not carry. |
+| `POST .../connections` | `ConnectionWrite` in, 201 `IntegrationPage`: a new connection; 409 while no version is approved, for an integration that takes one connection and has it ("<integration> takes one connection") or a label another connection has; 400 for a missing label where one is needed. |
+| `PUT .../connections/{id}` | `ConnectionWrite` in, `IntegrationPage` out: that connection written; a sensitive field left out keeps its value, an empty label keeps the label; 404 for an id that names none; 409 as for `POST`. |
+| `DELETE .../connections/{id}` | `IntegrationPage`: that connection's Secret, scoped proxy credential and record, and the access of every agent whose row names it, removed; the other connections and their access stay; 404 for an id that names none. |
+| `POST .../connections/{id}/verify` | `IntegrationPage`, with that connection's verified, verify message and verified at; 404 for an id that names none; 409 as for `.../connection/verify`. |
+| `PUT .../access/{slug}` | `AccessWrite` in, `IntegrationPage` out; 404 for an agent not on the team; 409 without a connection; 400 with the field's message, or "choose a connection" when `connection_id` is missing with more than one connection or names none. |
 | `DELETE .../access/{slug}` | `IntegrationPage`. |
 | `GET .../audit?limit=` | `IntegrationAudit`, newest first; limit 100 by default, at most 1000. |
-| `GET .../choices/{key}` | `AccessChoices`; 404 for a field that lists no options; 409 while the integration is not running, for a built-in one without a connection, or for a built-in one this binary does not carry; 502 for the tool's error, or a result that is not a list of names. |
+| `GET .../choices/{key}?connection=` | `AccessChoices`, through the connection `connection` names, or the first; 404 for a field that lists no options or a connection id that names none; 409 while the integration is not running, for a built-in one without a connection, or for a built-in one this binary does not carry; 502 for the tool's error, or a result that is not a list of names. |
 | `GET .../logs?limit=` | `IntegrationLogs`, oldest first; limit 200 by default, at most 2000. |
 | `GET /api/v1/agents/{slug}/integrations` | `AgentIntegrations`; 404 for an agent not on the team. |

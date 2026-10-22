@@ -119,6 +119,10 @@ func TestValidateRules(t *testing.T) {
 		{"connection browser", func(m map[string]any) { obj(m, "kivali", "connection")["method"] = "browser" }, nil, LevelError, "sign-in connections are not available"},
 		{"connection missing", func(m map[string]any) { delete(obj(m, "kivali"), "connection") }, nil, LevelError, "kivali.connection.method is missing"},
 		{"connection unknown", func(m map[string]any) { obj(m, "kivali", "connection")["method"] = "oauth" }, nil, LevelError, "kivali.connection.method oauth"},
+		// A bundle's pod is started with one connection's values: a bundle
+		// that said it takes several would give agents' rows connections
+		// its server never sees.
+		{"connection multiple", func(m map[string]any) { obj(m, "kivali", "connection")["multiple"] = true }, nil, LevelError, "kivali.connection.multiple: a bundle's server takes one connection"},
 		{"hosts empty", func(m map[string]any) { obj(m, "kivali")["hosts"] = []any{} }, nil, LevelError, "kivali.hosts is empty"},
 		{"host star", func(m map[string]any) { obj(m, "kivali")["hosts"] = []any{"*"} }, nil, LevelError, "* would reach every host"},
 		{"host scheme", func(m map[string]any) { obj(m, "kivali")["hosts"] = []any{"https://api.example.com"} }, nil, LevelError, "is not a host name"},

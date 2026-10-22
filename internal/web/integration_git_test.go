@@ -259,7 +259,7 @@ func TestGitConnectionProxyCredential(t *testing.T) {
 	if rec, _ := srv.Store.GetIntegrationConnection("git"); !slices.Equal(rec.SecretKeys, []string{"token"}) {
 		t.Errorf("secret keys = %v", rec.SecretKeys)
 	}
-	if conn, _, _, err := srv.builtinConnection(ctx, "git"); err != nil || conn.Fields[builtinintegrations.ProxySecretKey] != "" || conn.Fields["token"] != gitToken {
+	if conn, _, _, err := srv.builtinConnection(ctx, "git", ""); err != nil || conn.Fields[builtinintegrations.ProxySecretKey] != "" || conn.Fields["token"] != gitToken {
 		t.Errorf("the built-in is given %+v, %v", conn.Fields, err)
 	}
 

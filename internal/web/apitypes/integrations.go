@@ -73,10 +73,20 @@ type IntegrationPage struct {
 	// Hosts is every host the integration reaches.
 	Hosts   []string            `json:"hosts"`
 	Actions []IntegrationAction `json:"actions"`
-	// ConnectionFields is the connection form, in the bundle's order.
+	// ConnectionFields is the connection form, in the bundle's order,
+	// with what the first connection holds.
 	ConnectionFields []ConnectionField `json:"connection_fields"`
-	// Connection is the connection, absent while there is none.
+	// Connection is the first connection (the oldest), absent while
+	// there is none: the one connection of an integration that takes
+	// one.
 	Connection *ConnectionState `json:"connection,omitempty"`
+	// Connections is every connection, oldest first; empty while there
+	// is none.
+	Connections []ConnectionState `json:"connections"`
+	// Multiple is true for an integration that takes several
+	// connections, each with a label; each agent's access names the one
+	// it uses.
+	Multiple bool `json:"multiple"`
 	// AccessForm is the access form one agent's grant fills in. Absent
 	// when access is all-or-nothing.
 	AccessForm *AccessForm `json:"access_form,omitempty"`
@@ -114,10 +124,18 @@ type ConnectionField struct {
 	Value *string `json:"value,omitempty"`
 }
 
-// ConnectionState is the connection's standing.
+// ConnectionState is one connection's standing.
 type ConnectionState struct {
-	ID        string    `json:"id"`
+	ID string `json:"id"`
+	// Label is what the owner calls the connection ("Company GitLab");
+	// empty for a connection of an integration that takes one, which
+	// the page does not ask to name.
+	Label     string    `json:"label"`
 	CreatedAt time.Time `json:"created_at"`
+	// Fields is the connection form with what this connection holds:
+	// the value of each field that is not sensitive, and which secrets
+	// are set.
+	Fields []ConnectionField `json:"fields"`
 	// VerifiedAt and Verified say what Test connection last found;
 	// absent until it has run. VerifyMessage is the integration's own
 	// words about the result.
@@ -131,11 +149,17 @@ type ConnectionState struct {
 }
 
 // ConnectionWrite is the body of PUT
-// /api/v1/org/integrations/{name}/connection: field values by key.
-// A sensitive field left out keeps its stored value; an empty string
+// /api/v1/org/integrations/{name}/connection, POST .../connections and
+// PUT .../connections/{id}: field values by key, and the label. A
+// sensitive field left out keeps its stored value; an empty string
 // clears it. A field that is not sensitive is replaced by what is
 // sent. A required field with no value, stored or sent, is a 400.
 type ConnectionWrite struct {
+	// Label is what the owner calls the connection. Required for an
+	// integration that takes several connections (a built-in may give
+	// one: Git's is the host); empty keeps the stored label. Unique
+	// within the integration, ignoring case (409).
+	Label  string            `json:"label,omitempty"`
 	Fields map[string]string `json:"fields"`
 }
 
@@ -190,22 +214,34 @@ type AccessRow struct {
 	// own page.
 	Summary string    `json:"summary"`
 	SetAt   time.Time `json:"set_at"`
+	// ConnectionID is the connection the access was set for, and the
+	// one the agent's calls use; ConnectionLabel is its label, empty
+	// when it has none or is no longer there.
+	ConnectionID    string `json:"connection_id"`
+	ConnectionLabel string `json:"connection_label"`
 	// Invalid says why this row no longer fits the access form of the
 	// version in use (a version approved or rolled back to changed
-	// it). An invalid row grants nothing until it is set again.
+	// it), or that its connection is gone. An invalid row grants
+	// nothing until it is set again.
 	Invalid *string `json:"invalid,omitempty"`
 }
 
 // AccessWrite is the body of PUT
 // /api/v1/org/integrations/{name}/access/{slug}: the filled access
-// form. For an integration without a form, send {}.
+// form, and the connection it is for. For an integration without a
+// form, send {}.
 type AccessWrite struct {
 	Access json.RawMessage `json:"access"`
+	// ConnectionID is the connection the agent's calls use. Required
+	// when the integration has more than one connection; with one, it
+	// may be left out. Missing or unknown where it is needed is a 400.
+	ConnectionID string `json:"connection_id,omitempty"`
 }
 
 // AccessChoices is GET /api/v1/org/integrations/{name}/choices/{key}:
 // the options the integration lists for a field, through the
-// connection.
+// connection (?connection=<id> names one of several; without it, the
+// first).
 type AccessChoices struct {
 	Options []string `json:"options"`
 }
@@ -348,6 +384,10 @@ type AgentIntegration struct {
 	Status      IntegrationStatus `json:"status"`
 	// Summary is the agent's access in words; empty under Available.
 	Summary string `json:"summary"`
+	// ConnectionLabel is the label of the connection the agent's access
+	// names, for an integration that takes several connections: the row
+	// reads "Git (Company GitLab)". Empty otherwise.
+	ConnectionLabel string `json:"connection_label,omitempty"`
 	// Invalid is set when the agent's access no longer fits the
 	// integration's access form and grants nothing until set again.
 	Invalid *string `json:"invalid,omitempty"`

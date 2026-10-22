@@ -91,6 +91,11 @@ type Kivali struct {
 type Connection struct {
 	// Method is "token": the owner pastes the connection's fields.
 	Method string `json:"method"`
+	// Multiple says the integration takes several connections, each
+	// with a label, and each agent's access names the one it uses. Only
+	// a built-in integration may: a bundle's server is started with one
+	// connection's values.
+	Multiple bool `json:"multiple,omitempty"`
 }
 
 // Access is the access form: a JSON Schema of one object whose

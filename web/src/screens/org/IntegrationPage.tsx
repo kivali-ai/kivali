@@ -142,6 +142,123 @@ function ConnectionForm({ page, busy, running, now, onSave, onVerify, onDisconne
   );
 }
 
+/** "Dana", "Dana and Lee", "Dana, Lee and Kim". */
+export function namesInWords(names: readonly string[]): string {
+  if (names.length <= 1) return names[0] ?? '';
+  return names.slice(0, -1).join(', ') + ' and ' + names.at(-1);
+}
+
+/** What deleting one of several connections takes with it: its secrets, and the access of the agents who use it. */
+export function deleteConnectionWords(agents: readonly string[]): string {
+  const lead = 'Its stored secrets are deleted. ';
+  if (agents.length === 0) return lead + 'No agent’s access uses it.';
+  return lead + namesInWords(agents) + (agents.length === 1 ? ' loses its access, which uses it.' : ' lose their access, which uses it.');
+}
+
+/** The form a new connection starts from: the connection form with nothing stored. */
+function blankFields(fields: readonly ConnectionField[]): ConnectionField[] {
+  return fields.map(({ value: _value, ...f }) => ({ ...f, set: false }));
+}
+
+interface ConnectionCardProps {
+  /** The connection; absent for one being added. */
+  connection?: ConnectionState;
+  /** The connection form with what this connection holds. */
+  fields: readonly ConnectionField[];
+  busy: boolean;
+  running: boolean;
+  now: number;
+  onSave(body: ConnectionWrite): Promise<boolean>;
+  onVerify?(): void;
+  onDelete?(): void;
+  onCancel?(): void;
+}
+
+/**
+ * One of several connections, as a card: its label, its fields (a stored secret shows only that it is stored), what
+ * Test connection last found, and Save, Test connection and Delete; or, for a connection being added, the same form
+ * blank, with Add connection and Cancel.
+ */
+function ConnectionCard({ connection, fields, busy, running, now, onSave, onVerify, onDelete, onCancel }: ConnectionCardProps) {
+  const [label, setLabel] = useState(connection?.label ?? '');
+  const [values, setValues] = useState(() => startingValues(fields));
+  const title = connection ? connection.label || 'Connection' : 'New connection';
+  return (
+    <section className="app-int-conn" aria-label={title}>
+      <Text as="h3" variant="label">
+        {title}
+      </Text>
+      <form
+        className="app-int-form"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void onSave({ ...connectionBody(fields, values), label: label.trim() });
+        }}
+      >
+        {connection?.reconnect_needed && (
+          <Banner tone="danger" title="Reconnect needed">
+            Its secrets are not stored on this Kivali server, as after a restore from a backup. Enter them again, then save the connection.
+          </Banner>
+        )}
+        {connection && connection.verified_at && !connection.verified && (
+          <Banner tone="danger" title="Could not verify the connection">
+            {connection.verify_message || 'The integration did not say why.'}
+          </Banner>
+        )}
+        <TextField label="Label" hint="What you call this connection, such as Company GitLab." autoComplete="off" value={label} onChange={(e) => setLabel(e.currentTarget.value)} />
+        {fields.map((f) => (
+          <TextField
+            key={f.key}
+            label={f.required ? f.title : f.title + ' (optional)'}
+            {...(f.description ? { hint: f.description } : {})}
+            type={f.sensitive ? 'password' : 'text'}
+            autoComplete="off"
+            {...(f.sensitive && f.set ? { placeholder: 'Stored' } : {})}
+            value={values[f.key] ?? ''}
+            onChange={(e) => {
+              const v = e.currentTarget.value;
+              setValues((m) => ({ ...m, [f.key]: v }));
+            }}
+          />
+        ))}
+        {connection && (
+          <div className="app-int-status">
+            {connectionLines(connection, now).map((line) => (
+              <Text key={line} as="p" variant="caption" tone="muted">
+                {line}
+              </Text>
+            ))}
+          </div>
+        )}
+        <div className="app-org-actions">
+          <Button type="submit" variant="primary" disabled={busy}>
+            {connection ? 'Save connection' : 'Add connection'}
+          </Button>
+          {connection ? (
+            <>
+              <Button type="button" variant="secondary" disabled={busy || !running} onClick={onVerify}>
+                Test connection
+              </Button>
+              {!running && (
+                <Text variant="caption" tone="muted">
+                  Not available while it is not running.
+                </Text>
+              )}
+              <Button type="button" variant="ghost" disabled={busy} onClick={onDelete}>
+                Delete
+              </Button>
+            </>
+          ) : (
+            <Button type="button" variant="ghost" disabled={busy} onClick={onCancel}>
+              Cancel
+            </Button>
+          )}
+        </div>
+      </form>
+    </section>
+  );
+}
+
 interface VersionRowProps {
   name: string;
   v: IntegrationVersionSummary;
@@ -276,6 +393,9 @@ export function IntegrationPage() {
   const [now] = useState(() => Date.now());
   const [removing, setRemoving] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
+  // Several connections: the one Delete asks about, and whether a new one is being added.
+  const [deleting, setDeleting] = useState<ConnectionState | null>(null);
+  const [adding, setAdding] = useState(false);
   const [grant, setGrant] = useState<Grant | null>(null);
   const [rollingBack, setRollingBack] = useState<string | null>(null);
   const [pick, setPick] = useState('');
@@ -299,6 +419,26 @@ export function IntegrationPage() {
   const disconnect = async () => {
     const ok = await mutate(() => apiDelete<IntegrationPageData>(api + '/connection'));
     setDisconnecting(false);
+    if (ok) setFormSeq((n) => n + 1);
+  };
+  const connectionApi = (id: string) => api + '/connections/' + encodeURIComponent(id);
+  const saveConnection = async (id: string, body: ConnectionWrite) => {
+    const ok = await mutate(() => apiPut<IntegrationPageData>(connectionApi(id), body));
+    if (ok) setFormSeq((n) => n + 1);
+    return ok;
+  };
+  const addConnection = async (body: ConnectionWrite) => {
+    const ok = await mutate(() => apiPost<IntegrationPageData>(api + '/connections', body));
+    if (ok) {
+      setAdding(false);
+      setFormSeq((n) => n + 1);
+    }
+    return ok;
+  };
+  const verifyConnection = (id: string) => void mutate(() => apiPost<IntegrationPageData>(connectionApi(id) + '/verify'));
+  const deleteConnection = async (id: string) => {
+    const ok = await mutate(() => apiDelete<IntegrationPageData>(connectionApi(id)));
+    setDeleting(null);
     if (ok) setFormSeq((n) => n + 1);
   };
   const revoke = (slug: string) => void mutate(() => apiDelete<IntegrationPageData>(api + '/access/' + encodeURIComponent(slug)));
@@ -342,6 +482,10 @@ export function IntegrationPage() {
 
   const accessColumns: TableColumn<AccessRow & { id: string }>[] = [
     { key: 'agent', label: 'Agent', render: (r) => <span className="app-int-nowrap">{r.agent.name}</span> },
+    // Which of several connections each agent's calls use.
+    ...(p.multiple
+      ? [{ key: 'connection', label: 'Connection', render: (r: AccessRow) => <span className="app-int-nowrap">{r.connection_label || 'None'}</span> }]
+      : []),
     {
       key: 'summary',
       label: 'Access',
@@ -435,8 +579,42 @@ export function IntegrationPage() {
 
       {invalid && <Banner tone="warning">{invalid}</Banner>}
 
-      <Block label="Connection" variant="heading">
-        {s.version ? (
+      <Block label={p.multiple ? 'Connections' : 'Connection'} variant="heading">
+        {s.version && p.multiple ? (
+          <div className="app-int-conns">
+            {p.connections.length === 0 && !adding && <None>No connections yet.</None>}
+            {p.connections.map((c) => (
+              <ConnectionCard
+                key={c.id + ':' + formSeq}
+                connection={c}
+                fields={c.fields}
+                busy={action.busy}
+                running={running}
+                now={now}
+                onSave={(body) => saveConnection(c.id, body)}
+                onVerify={() => verifyConnection(c.id)}
+                onDelete={() => setDeleting(c)}
+              />
+            ))}
+            {adding ? (
+              <ConnectionCard
+                key={'new:' + formSeq}
+                fields={blankFields(p.connection_fields)}
+                busy={action.busy}
+                running={running}
+                now={now}
+                onSave={addConnection}
+                onCancel={() => setAdding(false)}
+              />
+            ) : (
+              <div className="app-org-actions">
+                <Button variant="secondary" icon={<Icon name="plus" />} disabled={action.busy} onClick={() => setAdding(true)}>
+                  Add a connection
+                </Button>
+              </div>
+            )}
+          </div>
+        ) : s.version ? (
           <ConnectionForm
             key={formSeq}
             page={p}
@@ -528,7 +706,9 @@ export function IntegrationPage() {
           displayName={s.display_name}
           agent={grant.agent}
           form={p.access_form}
-          {...(grant.row ? { access: grant.row.access as unknown } : {})}
+          connections={p.connections}
+          multiple={p.multiple}
+          {...(grant.row ? { access: grant.row.access as unknown, connectionId: grant.row.connection_id } : {})}
           onClose={() => setGrant(null)}
           onSaved={(next) => {
             page.set(next);
@@ -562,6 +742,25 @@ export function IntegrationPage() {
             </DialogClose>
             <Button variant="danger" onClick={() => void disconnect()} disabled={action.busy}>
               Disconnect
+            </Button>
+          </>
+        }
+      />
+      <Dialog
+        open={deleting !== null}
+        onOpenChange={(o) => {
+          if (!o) setDeleting(null);
+        }}
+        tone="danger"
+        title={'Delete ' + (deleting?.label || 'this connection') + '?'}
+        description={deleteConnectionWords(p.access.filter((r) => r.connection_id === deleting?.id).map((r) => r.agent.name))}
+        footer={
+          <>
+            <DialogClose>
+              <Button variant="secondary">Cancel</Button>
+            </DialogClose>
+            <Button variant="danger" onClick={() => deleting && void deleteConnection(deleting.id)} disabled={action.busy}>
+              Delete
             </Button>
           </>
         }

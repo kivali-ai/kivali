@@ -69,19 +69,19 @@ func (s *Server) dropAllBuiltinEgress(name string) error {
 	return s.dropBuiltinEgress(name, conns)
 }
 
-// builtinProxySecret is the secret of name's connection's scoped proxy
-// credential: the one its Secret holds, or a new one, minted and kept
-// there now. Either way, while the integration is switched on, it is
-// registered. "" with no connection, or for a built-in whose
-// connections have none.
-func (s *Server) builtinProxySecret(ctx context.Context, name string, bi builtinintegrations.Integration) (string, error) {
+// builtinProxySecret is the secret of the scoped proxy credential of
+// name's connection connID: the one its Secret holds, or a new one,
+// minted and kept there now. Either way, while the integration is
+// switched on, it is registered. "" with no such connection, or for a
+// built-in whose connections have none.
+func (s *Server) builtinProxySecret(ctx context.Context, name string, bi builtinintegrations.Integration, connID string) (string, error) {
 	defer s.lockIntegrations()()
-	return s.builtinProxySecretLocked(ctx, name, bi)
+	return s.builtinProxySecretLocked(ctx, name, bi, connID)
 }
 
 // builtinProxySecretLocked is builtinProxySecret for a caller that
 // holds lockIntegrations: it may write the connection's Secret.
-func (s *Server) builtinProxySecretLocked(ctx context.Context, name string, bi builtinintegrations.Integration) (string, error) {
+func (s *Server) builtinProxySecretLocked(ctx context.Context, name string, bi builtinintegrations.Integration, connID string) (string, error) {
 	h := builtinHostsOf(bi)
 	if h == nil {
 		return "", nil
@@ -90,7 +90,7 @@ func (s *Server) builtinProxySecretLocked(ctx context.Context, name string, bi b
 	if err != nil {
 		return "", err
 	}
-	conn, secret, _, err := s.builtinConnection(ctx, name)
+	conn, secret, _, err := s.builtinConnection(ctx, name, connID)
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		return "", nil
@@ -98,7 +98,7 @@ func (s *Server) builtinProxySecretLocked(ctx context.Context, name string, bi b
 		return "", err
 	}
 	if secret == "" {
-		if secret, err = s.mintBuiltinProxySecret(ctx, name); err != nil {
+		if secret, err = s.mintBuiltinProxySecret(ctx, name, conn.ID); err != nil {
 			return "", err
 		}
 	}
@@ -110,11 +110,29 @@ func (s *Server) builtinProxySecretLocked(ctx context.Context, name string, bi b
 	return secret, nil
 }
 
-// mintBuiltinProxySecret draws a secret for name's connection and adds
-// it to the connection's Secret, which it names on the record when the
-// record named none.
-func (s *Server) mintBuiltinProxySecret(ctx context.Context, name string) (string, error) {
-	rec, err := s.Store.GetIntegrationConnection(name)
+// registerAllBuiltinEgressLocked registers the scoped proxy credential
+// of every connection name has, minting the ones missing, as
+// builtinProxySecretLocked does for one. The caller holds
+// lockIntegrations.
+func (s *Server) registerAllBuiltinEgressLocked(ctx context.Context, name string, bi builtinintegrations.Integration) error {
+	conns, err := s.Store.ListIntegrationConnections(name)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		return err
+	}
+	var errs []error
+	for _, c := range conns {
+		if _, err := s.builtinProxySecretLocked(ctx, name, bi, c.ID); err != nil {
+			errs = append(errs, fmt.Errorf("connection %s: %w", c.ID, err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// mintBuiltinProxySecret draws a secret for name's connection connID
+// and adds it to the connection's Secret, which it names on the record
+// when the record named none.
+func (s *Server) mintBuiltinProxySecret(ctx context.Context, name, connID string) (string, error) {
+	rec, err := s.Store.GetIntegrationConnectionByID(name, connID)
 	if err != nil {
 		return "", err
 	}
@@ -150,7 +168,7 @@ func (s *Server) mintBuiltinProxySecret(ctx context.Context, name string) (strin
 }
 
 // RegisterBuiltinEgress registers the scoped proxy credential of every
-// switched-on built-in integration's connection again, from its
+// connection of every switched-on built-in integration again, from its
 // Secret, and drops those of the ones switched off. Boot calls it
 // (main.go), and so does a restore: the proxy's credentials file is
 // not in a backup, and the Secrets are not touched by one. Failures are
@@ -174,14 +192,17 @@ func (s *Server) RegisterBuiltinEgress(ctx context.Context) {
 			}
 			continue
 		}
-		if _, err := s.builtinProxySecret(ctx, name, bi); err != nil {
+		unlock := s.lockIntegrations()
+		err = s.registerAllBuiltinEgressLocked(ctx, name, bi)
+		unlock()
+		if err != nil {
 			log.Printf("integration %s: register the connection's proxy credential: %v", name, err)
 		}
 	}
 }
 
-// builtinEgressAfterSwitch follows the integration's switch: on, its
-// connection's credential is registered (minted if need be); off, it
+// builtinEgressAfterSwitch follows the integration's switch: on, every
+// connection's credential is registered (minted if need be); off, each
 // is dropped. The caller holds lockIntegrations.
 func (s *Server) builtinEgressAfterSwitch(ctx context.Context, name string, bi builtinintegrations.Integration, on bool) error {
 	if builtinHostsOf(bi) == nil {
@@ -190,7 +211,7 @@ func (s *Server) builtinEgressAfterSwitch(ctx context.Context, name string, bi b
 	if !on {
 		return s.dropAllBuiltinEgress(name)
 	}
-	if _, err := s.builtinProxySecretLocked(ctx, name, bi); err != nil {
+	if err := s.registerAllBuiltinEgressLocked(ctx, name, bi); err != nil {
 		return fmt.Errorf("register: %w", err)
 	}
 	return nil

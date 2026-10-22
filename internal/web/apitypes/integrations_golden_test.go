@@ -68,6 +68,77 @@ func goldenIntegrationActions() []IntegrationAction {
 	}
 }
 
+// goldenConnectionState is HubSpot's one connection, which the page
+// does not ask to name.
+func goldenConnectionState() *ConnectionState {
+	return &ConnectionState{
+		ID:              "c7f3a1b2",
+		Label:           "",
+		CreatedAt:       integrationNow,
+		Fields:          goldenConnectionFields(),
+		VerifiedAt:      &integrationLater,
+		Verified:        &integrationVerified,
+		VerifyMessage:   &integrationVerifyMsg,
+		ReconnectNeeded: false,
+	}
+}
+
+// goldenGitConnectionFields is Git's connection form with what one
+// connection holds: its host, its token set.
+func goldenGitConnectionFields(host string) []ConnectionField {
+	return []ConnectionField{
+		{Key: "host", Title: "Host", Description: "github.com, gitlab.com or any HTTPS git host, without https://", Sensitive: false, Required: true, Set: true, Value: &host},
+		{Key: "token", Title: "Access token", Description: "A token that can read the repositories agents will use.", Sensitive: true, Required: true, Set: true},
+		{Key: "test_repository", Title: "Repository for Test connection", Description: "owner/name.", Sensitive: false, Required: false, Set: false},
+	}
+}
+
+// goldenIntegrationPageMultiple is Git's page with two connections,
+// GitHub and a company GitLab (whose last test failed and whose
+// secrets are needed again), and one agent's access on each.
+func goldenIntegrationPageMultiple() IntegrationPage {
+	failed := false
+	refused := "The host refused the token."
+	return IntegrationPage{
+		Summary: IntegrationSummary{
+			Name: "git", DisplayName: "Git", Description: "Clones, fetches and pushes repositories over HTTPS.",
+			Version: "1.1.0", Status: IntegrationStatusConnected, Enabled: true, Builtin: true, Agents: 2,
+		},
+		Author:           "Kivali",
+		Hosts:            []string{},
+		Actions:          []IntegrationAction{{Name: "clone", Description: "Clones a repository."}, {Name: "push", Description: "Pushes branches and tags."}},
+		ConnectionFields: goldenGitConnectionFields("github.com"),
+		Connection: &ConnectionState{
+			ID: "a1b2c3d4", Label: "GitHub", CreatedAt: integrationEarlier, Fields: goldenGitConnectionFields("github.com"),
+			VerifiedAt: &integrationLater, Verified: &integrationVerified, VerifyMessage: &integrationVerifyMsg,
+		},
+		Connections: []ConnectionState{
+			{
+				ID: "a1b2c3d4", Label: "GitHub", CreatedAt: integrationEarlier, Fields: goldenGitConnectionFields("github.com"),
+				VerifiedAt: &integrationLater, Verified: &integrationVerified, VerifyMessage: &integrationVerifyMsg,
+			},
+			{
+				ID: "e5f6a7b8", Label: "Company GitLab", CreatedAt: integrationNow, Fields: goldenGitConnectionFields("gitlab.example.com"),
+				VerifiedAt: &integrationLater, Verified: &failed, VerifyMessage: &refused, ReconnectNeeded: true,
+			},
+		},
+		Multiple: true,
+		AccessForm: &AccessForm{Fields: []AccessField{
+			{Key: "repositories", Title: "Repositories", Description: "owner/name, or a pattern such as acme/*", Kind: AccessFieldKindList, Required: true, Options: []string{}, Choices: false},
+			{Key: "push", Title: "May push", Description: "", Kind: AccessFieldKindSwitch, Required: false, Options: []string{}, Choices: false},
+		}},
+		Access: []AccessRow{
+			{Agent: PersonRef{Slug: "dana", Name: "Dana"}, Access: json.RawMessage(`{"repositories":["acme/*"]}`), Summary: "Repositories: acme/*", SetAt: integrationNow, ConnectionID: "a1b2c3d4", ConnectionLabel: "GitHub"},
+			{Agent: PersonRef{Slug: "lee", Name: "Lee"}, Access: json.RawMessage(`{"repositories":["eng/*"],"push":true}`), Summary: "Repositories: eng/* · May push: no branches or tags", SetAt: integrationNow, ConnectionID: "e5f6a7b8", ConnectionLabel: "Company GitLab"},
+		},
+		AgentsWithout: []PersonRef{{Slug: "chief-of-staff", Name: "Chief of Staff"}},
+		Versions: []IntegrationVersionSummary{
+			{Version: "1.1.0", State: IntegrationVersionStateApproved, PublishedAt: integrationEarlier, PublishedBy: PersonRef{Slug: "kivali", Name: "Kivali"}, ApprovedAt: &integrationEarlier, NotesMD: "Ships with Kivali."},
+		},
+		CanRemove: false,
+	}
+}
+
 func goldenIntegrationPage() IntegrationPage {
 	return IntegrationPage{
 		Summary:          goldenIntegrationSummary(),
@@ -75,18 +146,13 @@ func goldenIntegrationPage() IntegrationPage {
 		Hosts:            []string{"api.hubapi.com"},
 		Actions:          goldenIntegrationActions(),
 		ConnectionFields: goldenConnectionFields(),
-		Connection: &ConnectionState{
-			ID:              "c7f3a1b2",
-			CreatedAt:       integrationNow,
-			VerifiedAt:      &integrationLater,
-			Verified:        &integrationVerified,
-			VerifyMessage:   &integrationVerifyMsg,
-			ReconnectNeeded: false,
-		},
-		AccessForm: goldenAccessForm(),
+		Connection:       goldenConnectionState(),
+		Connections:      []ConnectionState{*goldenConnectionState()},
+		Multiple:         false,
+		AccessForm:       goldenAccessForm(),
 		Access: []AccessRow{
-			{Agent: PersonRef{Slug: "dana", Name: "Dana"}, Access: json.RawMessage(`{"blogs":["Marketing"],"write":true}`), Summary: "Blogs: Marketing · May publish and edit", SetAt: integrationNow},
-			{Agent: PersonRef{Slug: "lee", Name: "Lee"}, Access: json.RawMessage(`{"blogs":["Old"]}`), Summary: "Blogs: Old", SetAt: integrationNow, Invalid: &integrationInvalid},
+			{Agent: PersonRef{Slug: "dana", Name: "Dana"}, Access: json.RawMessage(`{"blogs":["Marketing"],"write":true}`), Summary: "Blogs: Marketing · May publish and edit", SetAt: integrationNow, ConnectionID: "c7f3a1b2"},
+			{Agent: PersonRef{Slug: "lee", Name: "Lee"}, Access: json.RawMessage(`{"blogs":["Old"]}`), Summary: "Blogs: Old", SetAt: integrationNow, ConnectionID: "c7f3a1b2", Invalid: &integrationInvalid},
 		},
 		AgentsWithout: []PersonRef{{Slug: "chief-of-staff", Name: "Chief of Staff"}},
 		Versions: []IntegrationVersionSummary{
@@ -168,6 +234,7 @@ func goldenAgentIntegrations() AgentIntegrations {
 		Connected: []AgentIntegration{
 			{Name: "hubspot", DisplayName: "HubSpot", Status: IntegrationStatusConnected, Summary: "Blogs: Marketing · May publish and edit"},
 			{Name: "crm", DisplayName: "CRM", Status: IntegrationStatusOff, Summary: "Full access", Invalid: &integrationInvalid},
+			{Name: "git", DisplayName: "Git", Status: IntegrationStatusConnected, Summary: "Repositories: eng/*", ConnectionLabel: "Company GitLab"},
 		},
 		Available: []AgentIntegration{
 			{Name: "weather", DisplayName: "Weather", Status: IntegrationStatusPending, Summary: ""},

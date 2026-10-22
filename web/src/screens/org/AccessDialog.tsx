@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { ApiError, apiGet, apiPut } from '../../api/client';
-import type { AccessChoices, AccessField, AccessForm, AccessWrite, IntegrationPage, PersonRef } from '../../api/types.gen';
+import type { AccessChoices, AccessField, AccessForm, AccessWrite, ConnectionState, IntegrationPage, PersonRef } from '../../api/types.gen';
 import { Banner, Button, Checkbox, Dialog, DialogClose, Icon, Select, Text, TextField } from '../../ds';
 import { integrationApi } from './integrationParts';
 import { AddField } from './Lists';
@@ -225,8 +225,13 @@ export interface AccessDialogProps {
   displayName: string;
   agent: PersonRef;
   form: AccessForm | undefined;
-  /** The agent's access as it stands, when it has some. */
+  /** The agent's access as it stands, when it has some, and the connection it was set for. */
   access?: unknown;
+  connectionId?: string;
+  /** The integration's connections, oldest first; with more than one, the dialog asks which the agent uses. */
+  connections?: readonly ConnectionState[];
+  /** True for an integration that takes several connections: the options a field lists come through the chosen one. */
+  multiple?: boolean;
   /** False while the integration is not running; "Load options" waits for it. */
   running?: boolean;
   onClose(): void;
@@ -237,18 +242,35 @@ export interface AccessDialogProps {
  * One agent's access to an integration: the form the integration describes, filled in, or a plain yes for an
  * integration whose access is all or nothing. Saving replaces the agent's access with what the form holds.
  */
-export function AccessDialog({ name, displayName, agent, form, access, running = true, onClose, onSaved }: AccessDialogProps) {
+export function AccessDialog({
+  name,
+  displayName,
+  agent,
+  form,
+  access,
+  connectionId,
+  connections = [],
+  multiple = false,
+  running = true,
+  onClose,
+  onSaved,
+}: AccessDialogProps) {
   const [values, setValues] = useState<Values>(() => initialValues(form, access));
   const [loads, setLoads] = useState<Record<string, LoadState>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<ApiError | null>(null);
+  // With several connections the person chooses one; with one, it is that one.
+  const choosing = connections.length > 1;
+  const [chosen, setChosen] = useState(() => (connections.some((c) => c.id === connectionId) ? (connectionId ?? '') : ''));
+  const connection = choosing ? chosen : (connections[0]?.id ?? '');
   const fields = form?.fields ?? [];
   const changing = access !== undefined;
 
   const load = async (key: string) => {
     setLoads((m) => ({ ...m, [key]: { options: m[key]?.options ?? [], busy: true, error: null } }));
     try {
-      const res = await apiGet<AccessChoices>(integrationApi(name) + '/choices/' + encodeURIComponent(key));
+      const through = multiple && connection ? '?connection=' + encodeURIComponent(connection) : '';
+      const res = await apiGet<AccessChoices>(integrationApi(name) + '/choices/' + encodeURIComponent(key) + through);
       setLoads((m) => ({ ...m, [key]: { options: res.options, busy: false, error: null } }));
     } catch (err) {
       setLoads((m) => ({ ...m, [key]: { options: m[key]?.options ?? [], busy: false, error: asApiError(err).message } }));
@@ -259,7 +281,7 @@ export function AccessDialog({ name, displayName, agent, form, access, running =
     setBusy(true);
     setError(null);
     try {
-      const body: AccessWrite = { access: accessBody(form, values) };
+      const body: AccessWrite = { access: accessBody(form, values), ...(connection ? { connection_id: connection } : {}) };
       const next = await apiPut<IntegrationPage>(integrationApi(name) + '/access/' + encodeURIComponent(agent.slug), body);
       onSaved(next);
     } catch (err) {
@@ -281,18 +303,31 @@ export function AccessDialog({ name, displayName, agent, form, access, running =
           <DialogClose>
             <Button variant="secondary">Cancel</Button>
           </DialogClose>
-          <Button variant="primary" loading={busy} disabled={busy} onClick={() => void save()}>
+          <Button variant="primary" loading={busy} disabled={busy || (choosing && !chosen)} onClick={() => void save()}>
             {fields.length === 0 ? 'Approve' : changing ? 'Save access' : 'Give access'}
           </Button>
         </>
       }
     >
-      {(error || fields.length > 0) && (
+      {(error || fields.length > 0 || choosing) && (
         <div className="app-int-form">
           {error && (
             <Banner tone="danger" title={error.message}>
               {error.who === 'you' ? 'Change the form, then try again.' : error.who}
             </Banner>
+          )}
+          {choosing && (
+            <Select
+              label="Connection"
+              hint={'Which ' + displayName + ' connection ' + agent.name + '’s calls use.'}
+              value={chosen}
+              onChange={(e) => {
+                setChosen(e.currentTarget.value);
+                // Options a field listed came through the connection chosen before.
+                setLoads({});
+              }}
+              options={[{ value: '', label: 'Choose a connection' }, ...connections.map((c) => ({ value: c.id, label: c.label || 'Connection' }))]}
+            />
           )}
           {fields.map((f) => (
             <AccessFieldInput

@@ -23,7 +23,7 @@ describe('Integrations tab', () => {
     expect(screen.getByRole('tab', { name: 'Integrations' })).toHaveAttribute('aria-selected', 'true');
 
     const rows = within(connected).getAllByRole('link');
-    expect(rows.map((r) => r.getAttribute('href'))).toEqual(['/org/integrations/hubspot', '/org/integrations/crm']);
+    expect(rows.map((r) => r.getAttribute('href'))).toEqual(['/org/integrations/hubspot', '/org/integrations/crm', '/org/integrations/git']);
     expect(within(rows[0]!).getByText('HubSpot')).toBeInTheDocument();
     expect(within(rows[0]!).getByText('Connected')).toHaveClass('kv-badge--success');
     expect(within(rows[0]!).getByText('Blogs: Marketing · May publish and edit')).toBeInTheDocument();
@@ -34,6 +34,18 @@ describe('Integrations tab', () => {
     const other = within(available).getByRole('link', { name: /Weather/ });
     expect(other).toHaveAttribute('href', '/org/integrations/weather');
     expect(within(other).getByText('Pending')).toHaveClass('kv-badge--signal');
+  });
+
+  // Guards which connection the agent uses, for an integration that takes several (agent_integrations.json's Git row):
+  // the row reads "Git (Company GitLab)", and a row without a connection label reads the integration's name alone. A
+  // label dropped would leave the owner unable to tell the agent's GitLab access from GitHub access.
+  it('names the connection after the integration when it takes several', async () => {
+    renderTabs(PATH, { routes: { ['GET ' + API]: agentIntegrations } });
+    const connected = await page().findByRole('region', { name: 'Connected to Engineering lead' });
+    const git = within(connected).getByRole('link', { name: /Git/ });
+    expect(within(git).getByText('Git (Company GitLab)')).toBeInTheDocument();
+    expect(within(git).getByText('Repositories: eng/*')).toBeInTheDocument();
+    expect(within(connected).getByText('HubSpot')).toBeInTheDocument();
   });
 
   // Guards an agent with no access anywhere: the connected list says so in words instead of drawing an empty

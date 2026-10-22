@@ -63,6 +63,9 @@ type agentIntegration struct {
 	// access form. Both set only when the agent may call it.
 	manifest *integration.Manifest
 	access   json.RawMessage
+	// connID is the connection the agent's access names, which a
+	// built-in's call uses; a bundle's pod runs with its one connection.
+	connID string
 	// builtin is its code when it ships with Kivali (integration_builtin.go):
 	// core calls it directly. nil for a bundle, which runs in its pod.
 	builtin builtinintegrations.Integration
@@ -140,7 +143,7 @@ func (s *Server) agentIntegrationFor(it store.Integration, slug string) (agentIn
 	if err != nil {
 		return v, err
 	}
-	v.manifest, v.access, v.builtin = m, rows[i].AccessJSON(), s.builtinFor(it)
+	v.manifest, v.access, v.connID, v.builtin = m, rows[i].AccessJSON(), rows[i].ConnectionID, s.builtinFor(it)
 	return v, nil
 }
 

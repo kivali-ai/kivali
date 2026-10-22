@@ -6,7 +6,9 @@ import goConnectionWriteJson from '../../../../internal/web/apitypes/testdata/co
 import goHandbookJson from '../../../../internal/web/apitypes/testdata/handbook.json';
 import goIntegrationAuditJson from '../../../../internal/web/apitypes/testdata/integration_audit.json';
 import goIntegrationLogsJson from '../../../../internal/web/apitypes/testdata/integration_logs.json';
+import goConnectionCreateJson from '../../../../internal/web/apitypes/testdata/connection_create.json';
 import goIntegrationPageJson from '../../../../internal/web/apitypes/testdata/integration_page.json';
+import goIntegrationPageMultipleJson from '../../../../internal/web/apitypes/testdata/integration_page_multiple.json';
 import goIntegrationUploadRefusedJson from '../../../../internal/web/apitypes/testdata/integration_upload_refused.json';
 import goIntegrationVersionJson from '../../../../internal/web/apitypes/testdata/integration_version.json';
 import goIntegrationVersionBuiltinJson from '../../../../internal/web/apitypes/testdata/integration_version_builtin.json';
@@ -64,6 +66,8 @@ export const goSoftwareAdd = (goSoftwareAddJson satisfies Wire<SoftwareAdd>) as 
 export const goNetwork =(goNetworkJson satisfies Wire<Network>) as Network;
 export const goIntegrations = (goIntegrationsJson satisfies Wire<Integrations>) as Integrations;
 export const goIntegrationPage = (goIntegrationPageJson satisfies Wire<IntegrationPage>) as IntegrationPage;
+/** Git's page: two connections, GitHub and a company GitLab, with one agent's access on each. */
+export const goIntegrationPageMultiple = (goIntegrationPageMultipleJson satisfies Wire<IntegrationPage>) as IntegrationPage;
 export const goIntegrationVersion = (goIntegrationVersionJson satisfies Wire<IntegrationVersion>) as IntegrationVersion;
 /** A version of an integration that ships with Kivali. */
 export const goIntegrationVersionBuiltin = (goIntegrationVersionBuiltinJson satisfies Wire<IntegrationVersion>) as IntegrationVersion;
@@ -72,5 +76,7 @@ export const goIntegrationLogs = (goIntegrationLogsJson satisfies Wire<Integrati
 export const goIntegrationAudit = (goIntegrationAuditJson satisfies Wire<IntegrationAudit>) as IntegrationAudit;
 /** Request bodies and the options answer, as the Go server's goldens have them. */
 export const goConnectionWrite = (goConnectionWriteJson satisfies Wire<ConnectionWrite>) as ConnectionWrite;
+/** A new connection with its label, as POST .../connections reads it. */
+export const goConnectionCreate = (goConnectionCreateJson satisfies Wire<ConnectionWrite>) as ConnectionWrite;
 export const goAccessWrite = (goAccessWriteJson satisfies Wire<AccessWrite>) as AccessWrite;
 export const goAccessChoices = (goAccessChoicesJson satisfies Wire<AccessChoices>) as AccessChoices;
