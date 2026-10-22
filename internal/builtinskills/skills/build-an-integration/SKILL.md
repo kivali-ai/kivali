@@ -150,6 +150,21 @@ client secret or the refresh token.
   it needs `device_endpoint` and `token_endpoint`. Use it where the
   service offers the device flow (GitHub does; on GitHub the app must
   have it turned on).
+- `method`: `browser`, the service's sign-in page and back to Kivali
+  (the authorization code grant); it needs `authorization_endpoint`
+  and `token_endpoint`. Use it where the service offers no device flow
+  (HubSpot, Slack, Notion). A manifest may give both ways' endpoints;
+  `method` is the one the page shows first.
+- `pkce` (default true) sends a PKCE challenge on browser sign-in; set
+  it to false only for a service that refuses one.
+  `extra_authorization_params` are added to the service's sign-in page
+  address as they are (HubSpot's `optional_scope`); they may not name
+  `client_id`, `redirect_uri`, `response_type`, `scope`, `state`,
+  `code_challenge` or `code_challenge_method`, which Kivali sets.
+- For browser sign-in the owner registers Kivali's redirect address
+  with the app: `<Kivali's address>/connect/callback`, shown on the
+  integration's page. The service must accept that address (many take
+  only `https`, or `http` on `localhost`).
 - Every endpoint is an `https://` address from the service's OAuth
   documentation. `revocation_endpoint` is optional: with one, signing
   out and deleting the connection revoke its tokens.
@@ -167,7 +182,9 @@ client secret or the refresh token.
   sign-in hosts: Kivali talks to those.
 - `kivali.setup_notes` tells the owner how to register the app: where
   in the service's settings, which settings to turn on (GitHub: device
-  flow), which scopes to tick.
+  flow), which scopes to tick. For browser sign-in, write
+  `{{redirect_url}}` where the owner enters the app's callback (or
+  redirect) URL: the page shows Kivali's own address in its place.
 
 The token changes while the server runs: Kivali renews it shortly
 before it expires, without restarting the server. So the server reads

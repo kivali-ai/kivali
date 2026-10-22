@@ -78,11 +78,29 @@ Some services hand out no token to paste: you connect them by signing in to the 
 
 If you turn the sign-in down on the service's page, or the code runs out before you approve it, the page says so and offers **Try again**. A sign-in waits in Kivali's memory only: if Kivali restarts meanwhile, start it again. Saving the connection with a new client id or secret ends a sign-in that is waiting, since it was started with the old ones.
 
+#### In your browser
+
+Some services sign in in your browser instead of with a code (HubSpot, Slack, Notion), and some offer both: the page then shows both buttons, the integration's own way first.
+
+1. Open the integration's page at the address you will keep using for Kivali. Above the connection form, the page shows a **Redirect address**, with **Copy**: Kivali's address as your browser reaches it, followed by `/connect/callback`. It is the same for every integration.
+2. Register an app with the service, as its setup steps say, and enter that redirect address exactly as the app's callback URL (some services call it the redirect URL). The service gives the app a client id and a client secret.
+3. Paste the client id and the client secret into the connection form and choose **Save connection**.
+4. Under **Sign in**, choose **Sign in in your browser**. The page takes you to the service, where you approve Kivali; the service sends you back to the integration's page, which says **Signed in**.
+
+The sign-in finishes in the browser that started it, signed in to Kivali: if Kivali asks you to sign in on the way back, do, and the sign-in carries on. If you turn it down, take longer than ten minutes, or come back in another browser, the page says why and offers **Try again**.
+
+Services check the redirect address exactly, character for character, and set rules for it:
+
+- Most require `https`. Most allow plain `http` only for `localhost` or `127.0.0.1`, at any port; some, such as Slack, allow no plain `http` at all.
+- Some, such as Google, refuse a bare IP address other than loopback and names under private suffixes such as `.local` or `.internal`, even though only your browser has to reach the address.
+
+A Kivali server you run yourself therefore needs a real host name with a certificate for browser sign-in. Tailscale is the easy way: its MagicDNS name for the server, under `ts.net`, is a real name with a certificate Tailscale issues, reachable only from your tailnet. [Self-hosting](self-hosting.md#sign-in-to-integrations-in-the-browser) says how.
+
 Kivali keeps the sign-in fresh: the integration never sees the client secret or what Kivali renews the sign-in with, only a token that works at the moment of each call, which Kivali renews shortly before it expires. When the service no longer accepts the sign-in (you revoked the app, or changed its secret), the connection reads **Sign in again** with the service's reason, the integration reads not connected, and **Needs you** on Home lists it until you sign in again from its page.
 
 While a connection needs you to sign in, an agent's call through it is refused with words that say the connection needs you to sign in again and to ask you; nothing reaches the service.
 
-**Sign out** ends the sign-in: Kivali forgets the tokens and asks the service to revoke them where the service allows it. The client id and secret stay, so **Sign in with a code** works again at once. **Disconnect**, deleting the connection and removing the integration revoke the tokens the same way. Switching the integration off, signing out, disconnecting and removing it end a sign-in that is waiting for your approval.
+**Sign out** ends the sign-in: Kivali forgets the tokens and asks the service to revoke them where the service allows it. The client id and secret stay, so you can sign in again at once. **Disconnect**, deleting the connection and removing the integration revoke the tokens the same way. Switching the integration off, signing out, disconnecting and removing it end a sign-in that is waiting for your approval.
 
 ### Several connections
 
