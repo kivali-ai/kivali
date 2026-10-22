@@ -100,6 +100,7 @@ one. Fields Kivali does not read are kept as written.
 | `tools` | Every action: a `name` (lowercase letters, digits and underscores, starting with a letter) and a `description` the owner reads on the install screen. |
 | `kivali.connection` | `{"method": "token"}`: fields the owner pastes. |
 | `kivali.hosts` | Every host the server reaches; it reaches those and no other ([The network](#the-network)). Lowercase, no scheme, port or path, and never `*`. |
+| `kivali.packages` | Optional: the Debian packages the pod installs before the server starts, such as `["gh"]` ([A command-line tool](#a-command-line-tool)). Each is a package's exact name as `apt-get install` takes it: lowercase letters, digits, `+`, `-` and `.`, with no version or release, listed once. |
 | `kivali.access` | The access form ([The access form](#the-access-form)). Without it, access is all or nothing. |
 | `kivali.verify` | The action Test connection calls. |
 
@@ -140,7 +141,8 @@ mounted read-only at `/bundle`.
   What must last lives in the service.
 - **Its Python** is the `python3` of your own shell, the same image,
   with the standard library and what the bundle carries in `vendor/`.
-  Nothing else is installed. A package your shell installed with `pip`
+  Nothing else is installed but the Debian packages `kivali.packages`
+  names. A package your shell installed with `pip`
   without `--target vendor` lives under your home; `integration_validate`
   and `try.py` start the server with a home of their own, so an import
   of it at start fails there too. A Debian package installed for your
@@ -193,6 +195,61 @@ connection.
   name under it, and check the field's value against it before calling.
 - **Kivali waits 60 seconds for an action.** Time the request to the
   service out sooner, so the agent reads your words and not Kivali's.
+
+## A command-line tool
+
+When the service has a command-line tool that does the work, such as
+GitHub's `gh`, the server can run it for each call instead of speaking
+the service's API itself.
+
+- **Declare its Debian package** in `kivali.packages`. The pod installs
+  it from Debian's repositories (Debian 13, trixie) each time it
+  starts, before the server runs; the server itself never runs as
+  root. The owner reads the list on the install screen before
+  approving. Starting takes longer while it installs, and the log says
+  "Installing gh", then "Installed gh", or which package could not be
+  installed and why, after which the integration stops and tries again
+  when it restarts. Declare only what the actions run.
+- **List the tool's hosts.** It reaches the network through the same
+  proxy, held to `kivali.hosts`, so every host it calls is listed, and
+  it must read `HTTPS_PROXY`, as Go and curl tools do.
+- **Run it per call** with `subprocess.run`: the arguments a list,
+  never a shell; `stdin=subprocess.DEVNULL`, or it reads Kivali's
+  requests from the server's input; `capture_output=True`, or what it
+  prints reaches the protocol and Kivali stops the server; a `timeout`
+  shorter than Kivali's 60 seconds; and an `env` built for that call:
+  PATH, HOME, the proxy variables, and the connection's values the tool
+  reads (`GH_TOKEN` for `gh`), from the server's environment, which
+  `mcp_config.env` fills, or from `kivali/credential`'s `fields`. Never
+  write a value to disk: no login command, no config file, nothing in
+  `/tmp`, which outlasts a changed connection.
+- **Check each argument** an agent gives before it reaches the command
+  line. To most tools a value starting with `-` is an option: refuse
+  it, or put `--` before positional values where the tool takes it. A
+  repository or project the access does not name is refused as for any
+  action.
+- **Answer from its output**: the parts of its standard output an agent
+  needs, and, when it exits non-zero, an `isError` result with the end
+  of its error output.
+- **Your shell does not have it** unless the owner installed it for your
+  shell, and `integration_validate` starts the server in your shell, so
+  never run the tool at start. To call an action that runs it with
+  `try.py`, put a stand-in script of the same name, answering as the
+  tool would, first on `PATH`
+  (`PATH=/files/background/bin:$PATH python3 $T ...`).
+
+```python
+import os, subprocess
+
+PROXY_VARS = ("HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy")
+
+def run_gh(args, timeout=45):
+    env = {"PATH": os.environ["PATH"], "HOME": os.environ.get("HOME", "/tmp"),
+           "GH_TOKEN": os.environ.get("GH_TOKEN", "")}
+    env.update({k: os.environ[k] for k in PROXY_VARS if k in os.environ})
+    return subprocess.run(["gh", *args], env=env, stdin=subprocess.DEVNULL,
+                          capture_output=True, text=True, timeout=timeout)
+```
 
 ## The protocol, as Kivali holds it
 
@@ -374,11 +431,12 @@ sends the owner the request to install it. Nothing in it runs before
 the owner approves it.
 
 The owner decides on the install screen. It lists who built the
-version, every host, every connection field with the secrets marked,
+version, every host, the software it installs, every connection field
+with the secrets marked,
 every action with the manifest's description, the access form, the
 bundle's size and the check's warnings. While another version is in
-use it also lists the hosts, connection fields, actions and access form
-fields this one adds or removes. The notes, at most 4096 bytes, are at
+use it also lists the hosts, software, connection fields, actions and
+access form fields this one adds or removes. The notes, at most 4096 bytes, are at
 the top: what the integration does, every host it reaches, each secret
 it asks for and the narrowest scopes it needs, every action that
 changes or deletes something in the service, and what a changed access
@@ -410,6 +468,8 @@ the version in use; denied, it never runs.
   - every action with no connection.
 - `kivali.hosts` holds every host the calls and their redirects reach,
   and nothing more.
+- `kivali.packages` holds every package an action runs, and nothing
+  more.
 - The version number is new.
 - The notes say what [Publishing](#publishing) lists.
 
@@ -427,6 +487,8 @@ Kivali's. Read the log first.
 | did not answer within 60 seconds | No timeout on the request to the service, an id written back as text, or calls waiting behind one slow call. |
 | `server exited` after `stderr` lines with a traceback | An import that is not in `vendor/`, or an exit at start. |
 | is not running right now | The server keeps exiting; the log's last lines say why. |
+| Could not install, then the package and a reason | A name Debian does not have, or Debian's repositories out of reach; the reason says which. |
+| `FileNotFoundError` naming a command | The package that holds it is not in `kivali.packages`. |
 | Your access no longer applies | The version in use changed the access form; the owner sets that access again. |
 | An action missing from an agent's list | The access does not allow it, its input schema is not an object's, or the manifest does not declare it. |
 

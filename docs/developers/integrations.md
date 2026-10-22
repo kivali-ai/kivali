@@ -101,6 +101,7 @@ byte for byte.
   "kivali": {
     "connection": { "method": "token" },
     "hosts": ["api.hubapi.com"],
+    "packages": ["jq"],
     "access": {
       "schema": {
         "type": "object",
@@ -130,6 +131,10 @@ byte for byte.
 - `kivali.hosts` is every host the integration reaches, in the egress
   allowlist's pattern language ([architecture.md](architecture.md),
   the egress proxy).
+- `kivali.packages`, optional, is the Debian packages the pod installs
+  from Debian's repositories each time it starts, before the server
+  runs ([Software](#software)): a CLI the server runs per call, such as
+  `gh`, without a binary in the bundle.
 - `kivali.access` is the access form (below). Without it, access is
   all or nothing: an agent has the integration or does not.
 - `kivali.verify` names the tool Test connection calls. Without it the
@@ -161,6 +166,7 @@ the version and shown on its install screen. The rules:
 | `kivali.connection.method` | `token`. A sign-in method (`device`, `browser`) is refused. |
 | `kivali.connection.multiple` | Absent or false: "a bundle's server takes one connection". |
 | `kivali.hosts` | Not empty; each a lowercase host or pattern with no scheme, port, path, user or whitespace (`integration.ValidHost`, the rule of `store.ValidEgressHost`, which a store test holds it to); a bare `*` is refused. |
+| `kivali.packages` | Each a Debian package name (`debpkg.ValidName`, Debian Policy's rule, which the agent shell's software is held to too): lowercase letters, digits, `+`, `-` and `.`, at least two characters, starting with a letter or digit and not ending in `-`, so no option, removal, version or release; none listed twice. |
 | `kivali.access` | See the access form. |
 | `kivali.verify` | When given, a tool in `tools`. |
 | The bundle | At most 5000 files and 64 MiB; no symlinks, special files, absolute paths or `..`. |
@@ -172,8 +178,9 @@ reaches, holds and does before approving it.
 A built-in integration's manifest is checked by
 `integration.ValidateBuiltin(manifest)` by the same rules, with four
 differences. There is no bundle. A `server` section is refused, and so
-is any `kivali.hosts` entry: a built-in runs inside Kivali, and its
-network reach is Kivali's own. The names that `kivali.verify` and
+is any `kivali.hosts` or `kivali.packages` entry: a built-in runs
+inside Kivali, its network reach is Kivali's own, and it installs no
+software. The names that `kivali.verify` and
 `kivali.access.choices` give must be lowercase letters, digits and
 underscores, but need not be in `tools`, since they are passed to the
 built-in's Go functions
@@ -432,21 +439,23 @@ developer, with its notes, and asks the owner to approve it
 ([Publishing](#publishing)). Its
 install screen (`GET .../versions/{version}`, the web app's
 `/org/integrations/<name>/versions/<version>`) says what approving
-lets in: who built it and published it, every host, every connection
-field (secrets marked), every action, what the access form asks, the
-bundle's size and the check's warnings. Nothing runs before it is
+lets in: who built it and published it, every host, the software its
+pod installs (`IntegrationVersion.Packages`, under "Software it
+installs", with where it comes from and when it is installed), every
+connection field (secrets marked), every action, what the access form
+asks, the bundle's size and the check's warnings. Nothing runs before it is
 approved.
 
 While another version is in use (`IntegrationVersion.CurrentVersion`),
 the screen also says what this one changes from it, under "What
 changes from version X": `IntegrationVersion.Changes`, worked out by
 `integration.Diff(current, this)`, one line for each of hosts,
-connection fields, actions and access form fields added or removed
-("Hosts added: uploads.example.com", "Connection fields added: API key
-(secret)"). A host is matched by its pattern, a field by its key and an
-action by its name. With none of those changed the list is empty, and
-the screen says "No change to hosts, secrets, actions or the access
-form." The same block is on a superseded version's screen, where it
+software, connection fields, actions and access form fields added or
+removed ("Hosts added: uploads.example.com", "Software added: gh",
+"Connection fields added: API key (secret)"). A host is matched by its
+pattern, a package and an action by their names, a field by its key.
+With none of those changed the list is empty, and the screen says "No
+change to hosts, software, secrets, actions or the access form." The same block is on a superseded version's screen, where it
 says what rolling back to it changes.
 
 ### Rolling back
@@ -507,7 +516,9 @@ bundle, the data PVC's subPath
 `integrations/<name>/versions/<version>/bundle`, at `/bundle`,
 read-only; and an emptyDir at `/tmp` (256 MiB), the server's HOME.
 Nothing else of the data PVC. Both containers run as 65532 with no
-privilege escalation and every capability dropped; the pod has no
+privilege escalation and every capability dropped, except the
+`integration` container of a version that declares packages, which
+starts as root ([Software](#software)); the pod has no
 service-account token, no Service and no ports, `restartPolicy:
 Always` (kubelet starts the shim again when it exits with its server),
 a 10 s stop grace, and the agent pod's required affinity to the
@@ -528,6 +539,70 @@ answer), which is why a bundle cannot say `kivali.connection.multiple`.
 The spec carries a hash of itself (`kivali-spec-hash`), as agent and
 browser pods do. `Start` keeps a pod whose hash matches and replaces one
 that differs: a new version, a new token or a new image is a new pod.
+The registry reads the version's manifest and tells `Start` and `Token`
+whether it declares packages, so a pod built without software is never
+taken on for a version that installs some. A version without packages
+gets the pod a version without software has always had, byte for
+byte (`internal/integrationpod/testdata/pod_without_packages.json`).
+
+### Software
+
+A version whose manifest declares `kivali.packages` has them installed
+each time its pod starts, before anything of the bundle runs.
+
+- **The pod.** The `integration` container's securityContext is
+  `runAsUser: 0`, `runAsGroup: 0`, `runAsNonRoot: false`,
+  `allowPrivilegeEscalation: false`, and capabilities `drop: [ALL]`,
+  `add:` CHOWN, DAC_OVERRIDE, FOWNER, FSETID, KILL, SETGID, SETPCAP and
+  SETUID: what apt-get and dpkg need as root, and SETPCAP for the shim
+  to empty its bounding set as it leaves root
+  (`integrationpod.installSecurityContext`). A version without
+  packages keeps the 65532 container above.
+- **The start, in order** (`Shim.prepare`, before the events stream
+  opens, so the integration is not running meanwhile, as it is while
+  any server starts):
+  1. the log gets "Installing gh, jq";
+  2. the shim runs itself again as `kivali integration-shim
+     install-software gh jq`, a root child that is the agent shell's
+     installer (`agentshell.StartInstallCommand`,
+     `RunInstallSubcommand`): `apt-get update`, a lookup that each name
+     is exactly a package's, then `apt-get install -y -q
+     --no-install-recommends` with the names as arguments, never
+     through a shell; it kills whatever a package's scripts left
+     running before it reports, and the image's `policy-rc.d` keeps
+     them from starting services. Its output goes to the log, a line
+     each, at level `debug`. The child stops apt-get after
+     `agentshell.InstallTimeout` (20 minutes), and the shim gives up on
+     a child that has not reported two minutes later, on its clock;
+  3. the log gets "Installed gh, jq", or "Could not install <name>
+     (<reason>); ... The integration stops and tries again when it
+     restarts.", the reason the end of apt-get's error output as the
+     agent shell keeps it; a failure ends the shim with status 1;
+  4. the shim leaves root for good (`agentshell.LeaveRoot`): every
+     capability out of the bounding set, no_new_privs, setresgid and
+     setgroups to 65532 and none, setresuid to 65532, every capability
+     set emptied, and all of it read back; a failure is logged and ends
+     the shim;
+  5. it opens the events stream and starts the server on `start`, as
+     for any version.
+
+  A shim that ends is started again by kubelet (`restartPolicy:
+  Always`, with its back-off), and installs again: an install that
+  keeps failing shows in Recent logs, each start's lines after the
+  last. A shim that does not start as root and finds packages in the
+  manifest logs that it cannot install them and ends.
+- **The network.** apt-get reaches `deb.debian.org` through the egress
+  proxy with no credential: the child's environment
+  (`agentshell.InstallEnv`) carries the pod's bare proxy variables,
+  not the server's scoped credential, which the shim registers with
+  core only on the events handshake. A request with no credential is
+  in the proxy's allowlist mode, held to the team's list, and every
+  list holds `deb.debian.org` (`store.PermanentEgressPattern`), as the
+  agent shell's own install relies on. So the install needs no change
+  to the proxy, the scoped credential's hosts stay the manifest's
+  `kivali.hosts`, and the install screen lists those hosts alone, with
+  the Software block saying the packages come from Debian's
+  repositories.
 
 ### Reconcile and boot
 
@@ -572,7 +647,9 @@ the pod's token.
   anything else with 204.
 
 The shim reads `/bundle/manifest.json` (the bundle must be the name and
-version the pod was built for) and starts the server on `start`:
+version the pod was built for); started as root, it installs the
+version's software and leaves root before it opens the events stream
+([Software](#software)). It starts the server on `start`:
 `mcp_config.command` and its args in `/bundle`, with PATH, `HOME=/tmp`,
 LANG, the manifest's env with the connection's values put in, and the
 proxy variables carrying its scoped credential, and nothing else of its
@@ -830,7 +907,8 @@ type Refusal struct{ Text, Reason string }
 ```
 
 - `Manifest` is the manifest, held to `integration.ValidateBuiltin`
-  ([The check](#the-check)): no server section and no `kivali.hosts`.
+  ([The check](#the-check)): no server section, no `kivali.hosts` and
+  no `kivali.packages`.
   A built-in runs inside Kivali, so its network reach is Kivali's own,
   the hosts its connection names, not a host list on its install
   screen. Its `version` is the built-in's own, semantic, bumped only

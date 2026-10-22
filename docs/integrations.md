@@ -33,6 +33,7 @@ A bundle that passes opens its **install screen**, which waits for your approval
 
 - what the integration is, who built it, and who published this version;
 - every host it reaches;
+- the software it installs, if any, under **Software it installs**: Debian packages, fetched from Debian's repositories and installed each time the integration starts, before it runs. An integration uses them to run a tool such as GitHub's `gh` for its actions. Read each name before you approve;
 - every field its connection needs, with the secrets marked;
 - every action it gives agents;
 - what its access form asks, or that access is all or nothing;
@@ -44,7 +45,7 @@ Read it before you approve. The check only reads the bundle; this screen is the 
 
 A newer version is uploaded the same way, and waits on its own install screen, which says which version it replaces. Until you approve it, the version in use stays. The integration's page lists every version with where it stands: **Needs your approval**, **In use**, **Replaced** (in use before) or **Rejected**.
 
-The install screen of a version that would replace the one in use says what is different from it, in words, under **What changes from version** and the number of the version in use: hosts it reaches that the version in use does not, or no longer reaches; connection fields added or removed, with new secrets marked; actions added or removed; and fields added to or removed from the access form. When none of those differ, it says **No change to hosts, secrets, actions or the access form.** The rest of the screen still lists everything the version holds.
+The install screen of a version that would replace the one in use says what is different from it, in words, under **What changes from version** and the number of the version in use: hosts it reaches that the version in use does not, or no longer reaches; software it installs that the version in use does not, or no longer installs; connection fields added or removed, with new secrets marked; actions added or removed; and fields added to or removed from the access form. When none of those differ, it says **No change to hosts, software, secrets, actions or the access form.** The rest of the screen still lists everything the version holds.
 
 ### Roll back to an earlier version
 
@@ -74,9 +75,9 @@ Each agent's access then names the connection its calls use: **Give access** ask
 
 ### Not running
 
-An integration that is approved and switched on shows **Not running** while it is starting, and when it has stopped. Starting takes a few seconds. While it is not running, **Test connection** and the options in an access form are not available.
+An integration that is approved and switched on shows **Not running** while it is starting, and when it has stopped. Starting takes a few seconds, or longer for one that installs software: it installs it each time it starts, before it runs, and **Recent logs** says **Installing** and the packages' names, then **Installed**, or which could not be installed and why. While it is not running, **Test connection** and the options in an access form are not available.
 
-If it stays **Not running**, open **Recent logs** on its page: the integration's own messages and Kivali's about it say what happened, such as a server that did not start or stopped answering. Kivali starts a stopped integration again by itself, and restarts one that stops answering. If the log shows the integration failing each time it starts, the version itself is at fault: ask whoever built the bundle for a fixed version, or switch it off. On a team short of memory, the log says the team does not have enough memory for it; raise the team's memory in Kivali Desktop's settings, or ask whoever runs your server.
+If it stays **Not running**, open **Recent logs** on its page: the integration's own messages and Kivali's about it say what happened, such as a server that did not start or stopped answering. Kivali starts a stopped integration again by itself, and restarts one that stops answering. If the log shows the integration failing each time it starts, the version itself is at fault: ask whoever built the bundle for a fixed version, or switch it off. An integration whose software cannot be installed stops, tries again each time Kivali starts it, and says so in its log each time: a package name Debian does not have needs a fixed version, while a failure to reach Debian's repositories may pass on its own. On a team short of memory, the log says the team does not have enough memory for it; raise the team's memory in Kivali Desktop's settings, or ask whoever runs your server.
 
 ## Its log
 
