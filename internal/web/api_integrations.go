@@ -376,6 +376,14 @@ func integrationHosts(m *integration.Manifest) []string {
 	return nonNilStrings(slices.Clone(m.Kivali.Hosts))
 }
 
+// integrationPackages is the Debian packages m's pod installs.
+func integrationPackages(m *integration.Manifest) []string {
+	if m == nil {
+		return []string{}
+	}
+	return nonNilStrings(slices.Clone(m.Kivali.Packages))
+}
+
 // accessSummary is one agent's access in words: the built-in's own
 // (builtinintegrations.AccessSummarizer), or the manifest's field by
 // field.
@@ -426,6 +434,7 @@ func (s *Server) integrationPage(v *integrationView) apitypes.IntegrationPage {
 	page := apitypes.IntegrationPage{
 		Summary:          v.summary(),
 		Hosts:            integrationHosts(v.manifest),
+		Packages:         integrationPackages(v.manifest),
 		Actions:          integrationActions(v.manifest),
 		ConnectionFields: connectionFields(v.manifest, v.first()),
 		Connections:      []apitypes.ConnectionState{},
@@ -510,6 +519,7 @@ func (s *Server) integrationVersionView(v *integrationView, ver store.Integratio
 		Runtime:          m.Server.Type,
 		ConnectionMethod: m.Kivali.Connection.Method,
 		Hosts:            integrationHosts(m),
+		Packages:         integrationPackages(m),
 		ConnectionFields: connectionFields(m, v.first()),
 		Actions:          integrationActions(m),
 		AccessForm:       accessFormWire(m),

@@ -71,8 +71,11 @@ type IntegrationPage struct {
 	// Author is who built it, as the bundle says.
 	Author string `json:"author"`
 	// Hosts is every host the integration reaches.
-	Hosts   []string            `json:"hosts"`
-	Actions []IntegrationAction `json:"actions"`
+	Hosts []string `json:"hosts"`
+	// Packages is the Debian packages its pod installs each time it
+	// starts (kivali.packages); empty for none.
+	Packages []string            `json:"packages"`
+	Actions  []IntegrationAction `json:"actions"`
 	// ConnectionFields is the connection form, in the bundle's order,
 	// with what the first connection holds.
 	ConnectionFields []ConnectionField `json:"connection_fields"`
@@ -309,8 +312,12 @@ type IntegrationVersion struct {
 	// integration, which runs inside Kivali.
 	Runtime string `json:"runtime"`
 	// ConnectionMethod is how the connection is made: token.
-	ConnectionMethod string              `json:"connection_method"`
-	Hosts            []string            `json:"hosts"`
+	ConnectionMethod string   `json:"connection_method"`
+	Hosts            []string `json:"hosts"`
+	// Packages is the Debian packages the pod installs from Debian's
+	// repositories each time it starts, before the server runs
+	// (kivali.packages); empty for none.
+	Packages         []string            `json:"packages"`
 	ConnectionFields []ConnectionField   `json:"connection_fields"`
 	Actions          []IntegrationAction `json:"actions"`
 	AccessForm       *AccessForm         `json:"access_form,omitempty"`
@@ -327,9 +334,9 @@ type IntegrationVersion struct {
 	// it is not this one, so the screen can say what approving replaces.
 	CurrentVersion *string `json:"current_version,omitempty"`
 	// Changes is what this version changes from CurrentVersion, in
-	// words, one line each: hosts, connection fields, actions and
-	// access form fields added or removed ("Hosts added:
-	// api.example.com"). Empty without a CurrentVersion, and when none
+	// words, one line each: hosts, software, connection fields, actions
+	// and access form fields added or removed ("Hosts added:
+	// api.example.com", "Software added: gh"). Empty without a CurrentVersion, and when none
 	// of those differ.
 	Changes []string `json:"changes"`
 	// Findings are what the bundle check reported for this version:

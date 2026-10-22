@@ -11,6 +11,7 @@
   },
   "author": "Kivali",
   "hosts": [],
+  "packages": [],
   "actions": [
     {
       "name": "clone",

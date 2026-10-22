@@ -103,6 +103,7 @@ func goldenIntegrationPageMultiple() IntegrationPage {
 		},
 		Author:           "Kivali",
 		Hosts:            []string{},
+		Packages:         []string{},
 		Actions:          []IntegrationAction{{Name: "clone", Description: "Clones a repository."}, {Name: "push", Description: "Pushes branches and tags."}},
 		ConnectionFields: goldenGitConnectionFields("github.com"),
 		Connection: &ConnectionState{
@@ -135,6 +136,7 @@ func goldenIntegrationPage() IntegrationPage {
 		Summary:          goldenIntegrationSummary(),
 		Author:           "Kivali Developer (agent)",
 		Hosts:            []string{"api.hubapi.com"},
+		Packages:         []string{},
 		Actions:          goldenIntegrationActions(),
 		ConnectionFields: goldenConnectionFields(),
 		Connection:       goldenConnectionState(),
@@ -171,6 +173,7 @@ func goldenIntegrationVersion() IntegrationVersion {
 		Runtime:          "python",
 		ConnectionMethod: "token",
 		Hosts:            []string{"api.hubapi.com"},
+		Packages:         []string{"gh"},
 		ConnectionFields: goldenConnectionFields(),
 		Actions:          goldenIntegrationActions(),
 		AccessForm:       goldenAccessForm(),
@@ -178,7 +181,7 @@ func goldenIntegrationVersion() IntegrationVersion {
 		FileCount:        12,
 		Current:          false,
 		CurrentVersion:   &integrationCurrent,
-		Changes:          []string{"Hosts added: api.hubapi.com", "Access form fields added: Tags, Note"},
+		Changes:          []string{"Hosts added: api.hubapi.com", "Software added: gh", "Access form fields added: Tags, Note"},
 		Findings:         []string{"tools[2] (whoami) has no description"},
 	}
 }
@@ -201,6 +204,7 @@ func goldenBuiltinIntegrationVersion() IntegrationVersion {
 		Runtime:          "",
 		ConnectionMethod: "token",
 		Hosts:            []string{},
+		Packages:         []string{},
 		ConnectionFields: []ConnectionField{{Key: "token", Title: "Access token", Description: "", Sensitive: true, Required: true, Set: false}},
 		Actions:          []IntegrationAction{{Name: "clone", Description: "Clone a repository."}},
 		AccessForm:       nil,

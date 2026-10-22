@@ -18,7 +18,7 @@ export function bundleLine(files: number, bytes: number): string {
 
 /**
  * A version's install screen: what it is, who built it, what it changes from the version in use, every host it
- * reaches, every secret its connection holds, every action and what the access form asks. Approving installs it;
+ * reaches, the software it installs, every secret its connection holds, every action and what the access form asks. Approving installs it;
  * nothing in it runs before. A superseded version can be rolled back to from here. A version of an integration that
  * ships with Kivali says so, and offers none of these: its versions come with Kivali.
  */
@@ -132,7 +132,7 @@ export function InstallScreen() {
         <Block label={'What changes from version ' + v.current_version}>
           {v.changes.length === 0 ? (
             <Text as="p" variant="body">
-              No change to hosts, secrets, actions or the access form.
+              No change to hosts, software, secrets, actions or the access form.
             </Text>
           ) : (
             <ul className="app-int-facts">
@@ -165,6 +165,22 @@ export function InstallScreen() {
           </ul>
         )}
       </Block>
+
+      {/* Software runs as root while it installs, at every start: the person reads each name before approving. */}
+      {!v.builtin && v.packages.length > 0 && (
+        <Block label="Software it installs">
+          <ul className="app-int-facts">
+            {v.packages.map((p) => (
+              <li key={p}>
+                <Text variant="code">{p}</Text>
+              </li>
+            ))}
+          </ul>
+          <Text as="p" variant="caption" tone="muted">
+            Debian packages, fetched from Debian’s repositories and installed each time the integration starts. Read each one before you approve.
+          </Text>
+        </Block>
+      )}
 
       <Block label="The connection needs">
         {v.connection_fields.length === 0 ? (

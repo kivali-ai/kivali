@@ -1234,12 +1234,27 @@ describe('Integration install screen', () => {
     expect(screen.queryByRole('region', { name: 'The check noted' })).toBeNull();
   });
 
+  // Guards the software a version's pod installs (integration_version.json's packages): it runs as root at every
+  // start, so each name is listed with where it comes from and when it is installed, and the person is told to read
+  // them. A version that installs nothing, and a built-in one, which installs nothing, draw no such block.
+  it('lists the software a version installs, and draws nothing when it installs none', async () => {
+    const h = await renderOrg(PATH);
+    const software = within(screen.getByRole('region', { name: 'Software it installs' }));
+    expect(software.getAllByRole('listitem').map((li) => li.textContent)).toEqual(goIntegrationVersion.packages);
+    expect(software.getByText(/^Debian packages, fetched from Debian’s repositories and installed each time the integration starts\./)).toBeInTheDocument();
+    expect(software.getByText(/Read each one before you approve\.$/)).toBeInTheDocument();
+    h.unmount();
+
+    await renderOrg(PATH, { routes: { ['GET ' + API]: { ...goIntegrationVersion, packages: [] } } });
+    expect(screen.queryByRole('region', { name: 'Software it installs' })).toBeNull();
+  });
+
   // Guards the empty diff: a later version that changes none of what the screen lists says so in one line, rather
   // than an empty block the person might read as not loaded.
-  it('says when a later version changes no host, secret, action or access field', async () => {
+  it('says when a later version changes no host, software, secret, action or access field', async () => {
     await renderOrg(PATH, { routes: { ['GET ' + API]: { ...goIntegrationVersion, changes: [] } } });
     const changes = within(screen.getByRole('region', { name: 'What changes from version 1.2.0' }));
-    expect(changes.getByText('No change to hosts, secrets, actions or the access form.')).toBeInTheDocument();
+    expect(changes.getByText('No change to hosts, software, secrets, actions or the access form.')).toBeInTheDocument();
     expect(changes.queryByRole('listitem')).toBeNull();
   });
 

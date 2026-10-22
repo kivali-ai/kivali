@@ -16,6 +16,9 @@
   "hosts": [
     "api.hubapi.com"
   ],
+  "packages": [
+    "gh"
+  ],
   "connection_fields": [
     {
       "key": "token",
@@ -123,6 +126,7 @@
   "current_version": "1.2.0",
   "changes": [
     "Hosts added: api.hubapi.com",
+    "Software added: gh",
     "Access form fields added: Tags, Note"
   ],
   "findings": [
