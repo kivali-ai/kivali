@@ -2,7 +2,8 @@
 // side, as core sees it.
 //
 // One entry per integration that should run: an approved version,
-// switched on, not built in. Each has a pod (integrationpod) whose
+// switched on, and a bundle (uploaded, or shipped with Kivali), not a
+// built-in of Go code. Each has a pod (integrationpod) whose
 // shim dials integration.sock with the per-pod token core minted for
 // it. The registry keeps the token, the connected shim (the link: its
 // events stream), the requests core is waiting on, the last tools/list
@@ -196,6 +197,10 @@ type integrationRegistry struct {
 
 	store   *store.FSStore
 	secrets func() secrets.Store
+	// shipped reports whether a built-in record is a bundle this
+	// binary ships (Server.shippedBundle), which runs in a pod as an
+	// uploaded bundle does.
+	shipped func(store.Integration) bool
 	prov    IntegrationProvisioner
 	clk     clock.Clock
 	logf    func(format string, args ...any)
@@ -208,15 +213,19 @@ type integrationRegistry struct {
 	onConnect func(name string)
 }
 
-func newIntegrationRegistry(st *store.FSStore, sec func() secrets.Store, prov IntegrationProvisioner, clk clock.Clock, logf func(string, ...any)) *integrationRegistry {
+func newIntegrationRegistry(st *store.FSStore, sec func() secrets.Store, shipped func(store.Integration) bool, prov IntegrationProvisioner, clk clock.Clock, logf func(string, ...any)) *integrationRegistry {
 	if logf == nil {
 		logf = func(string, ...any) {}
+	}
+	if shipped == nil {
+		shipped = func(store.Integration) bool { return false }
 	}
 	return &integrationRegistry{
 		entries: map[string]*integrationEntry{},
 		pending: map[int64]*integrationCall{},
 		store:   st,
 		secrets: sec,
+		shipped: shipped,
 		prov:    prov,
 		clk:     clk,
 		logf:    logf,
@@ -302,8 +311,9 @@ func (r *integrationRegistry) closeLinks() {
 }
 
 // Reconcile brings every integration's pod to what the store says:
-// running for an approved, switched-on integration that is not built
-// in, and stopped for every other.
+// running for an approved, switched-on bundle (uploaded, or shipped
+// with Kivali and carried by this binary), and stopped for every
+// other.
 func (r *integrationRegistry) Reconcile(ctx context.Context) error {
 	return r.reconcile(ctx, false)
 }
@@ -317,7 +327,7 @@ func (r *integrationRegistry) reconcile(ctx context.Context, boot bool) error {
 	}
 	want := map[string]string{}
 	for _, it := range its {
-		if it.Enabled && !it.Builtin && it.CurrentVersion != "" {
+		if it.Enabled && it.CurrentVersion != "" && (!it.Builtin || r.shipped(it)) {
 			want[it.Name] = it.CurrentVersion
 		}
 	}
@@ -384,7 +394,7 @@ func (r *integrationRegistry) ensureRunning(ctx context.Context, name, version s
 		r.entries[name] = e
 	}
 	e.version = version
-	adopt := e.token == ""
+	adopt := e.token == "" && !e.replace
 	r.mu.Unlock()
 
 	// The pod starts as root only when the version installs software.
@@ -424,6 +434,29 @@ func (r *integrationRegistry) ensureRunning(ctx context.Context, name, version s
 	// A new token is a new spec: Start replaces the pod with the old
 	// one.
 	return r.prov.Start(ctx, name, version, token, software)
+}
+
+// Renew asks for a new pod for each of names, even one that matches
+// the pod core would build for its version: boot wrote the files of
+// its version in use again (store.InstallShippedBundles), so a pod
+// left running from before runs the files from before. The next
+// reconcile replaces it with a new token, or stops it when the
+// integration should not run.
+func (r *integrationRegistry) Renew(names ...string) {
+	if r == nil || len(names) == 0 {
+		return
+	}
+	r.mu.Lock()
+	for _, name := range names {
+		e := r.entries[name]
+		if e == nil {
+			e = &integrationEntry{name: name}
+			r.entries[name] = e
+		}
+		e.replace = true
+	}
+	r.mu.Unlock()
+	r.Changed()
 }
 
 // ensureStopped takes name down: its link, its pod and its proxy

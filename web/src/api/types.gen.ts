@@ -2141,8 +2141,8 @@ export interface IntegrationVersion {
   approved_at?: string /* RFC 3339 */;
   notes_md: string;
   /**
-   * Runtime is what runs the bundle: python; empty for a built-in
-   * integration, which runs inside Kivali.
+   * Runtime is what runs the bundle, uploaded or shipped: python; empty
+   * for a built-in of Go code, which runs inside Kivali.
    */
   runtime: string;
   /**
@@ -2167,11 +2167,18 @@ export interface IntegrationVersion {
   current: boolean;
   /**
    * Builtin is true for a version of an integration that ships with
-   * Kivali: it has no bundle, needs no approval and comes with
-   * Kivali's updates, so it is never approved, rejected or rolled
-   * back to here (409).
+   * Kivali: it needs no approval and comes with Kivali's updates, so
+   * it is never approved, rejected or rolled back to here (409).
    */
   builtin: boolean;
+  /**
+   * Shipped is true for a built-in version that is a bundle, which
+   * runs in a pod of its own as an uploaded one does: its runtime,
+   * hosts and bundle are a bundle's. False for a built-in that runs
+   * inside Kivali, which has no runtime, no hosts and no bundle (it
+   * reaches the hosts its connection names), and for any upload.
+   */
+  shipped: boolean;
   /**
    * CurrentVersion is the version in use now, when there is one and
    * it is not this one, so the screen can say what approving replaces.

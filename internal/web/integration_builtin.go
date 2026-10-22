@@ -9,6 +9,14 @@
 // agent (each built-in answer goes through integrationCallAnswer as a
 // pod's MCP result would), the same scrubber, the same audit. It is
 // always running while its code is in the binary.
+//
+// A shipped bundle (builtinintegrations.ShippedBundle) is built in too,
+// so the owner's refusals are a built-in's, but it runs as an uploaded
+// bundle does: in its own pod, through its shim, running while the
+// shim is connected. Of a built-in record, builtinFor gives the Go
+// code, shippedBundle says the binary carries it as a bundle, and one
+// that is neither is a record this binary does not carry
+// (integrationView.staleBuiltin).
 
 package web
 
@@ -40,8 +48,16 @@ func (s *Server) builtinFor(it store.Integration) builtinintegrations.Integratio
 	return s.BuiltinIntegrations.Lookup(it.Name)
 }
 
+// shippedBundle reports whether it ships with Kivali as a bundle this
+// binary carries: its record is built in, its name is in
+// ShippedBundles, and no built-in of Go code has it.
+func (s *Server) shippedBundle(it store.Integration) bool {
+	return it.Builtin && s.BuiltinIntegrations.Lookup(it.Name) == nil && s.ShippedBundles.Has(it.Name)
+}
+
 // integrationRunning reports whether it can be called now: a built-in
-// one always, a bundle while its shim is connected.
+// one always, a bundle (a shipped one too) while its shim is
+// connected.
 func (s *Server) integrationRunning(it store.Integration) bool {
 	return s.builtinFor(it) != nil || s.Integrations.Running(it.Name)
 }

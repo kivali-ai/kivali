@@ -91,10 +91,14 @@ type integrationView struct {
 	conns  []*connView
 	access []store.IntegrationAccess
 	// running is whether the integration can be called: its shim is
-	// connected, or it ships with Kivali and this binary carries it.
+	// connected, or it is a built-in of Go code this binary carries.
 	running bool
-	// builtin is its code when it ships with Kivali; nil for a bundle.
+	// builtin is its code when it ships with Kivali as Go code; nil for
+	// a bundle, uploaded or shipped.
 	builtin builtinintegrations.Integration
+	// shipped is true when it ships with Kivali as a bundle this
+	// binary carries (Server.shippedBundle).
+	shipped bool
 }
 
 // connView is one connection as an integration's answers read it.
@@ -139,7 +143,7 @@ func (s *Server) loadIntegration(ctx context.Context, name string) (*integration
 	if err != nil {
 		return nil, err
 	}
-	v := &integrationView{it: it, running: s.integrationRunning(it), builtin: s.builtinFor(it)}
+	v := &integrationView{it: it, running: s.integrationRunning(it), builtin: s.builtinFor(it), shipped: s.shippedBundle(it)}
 	if v.versions, err = s.Store.IntegrationVersions(name); err != nil {
 		return nil, err
 	}
@@ -209,8 +213,9 @@ func (v *integrationView) status() apitypes.IntegrationStatus {
 		return apitypes.IntegrationStatusOff
 	case !v.running:
 		// Connected or not is the running server's to show: Test
-		// connection and agents' calls need it up. A built-in one is
-		// always running while its code is in the binary.
+		// connection and agents' calls need it up. A built-in of Go
+		// code is always running while its code is in the binary; a
+		// shipped bundle runs as an uploaded one does.
 		return apitypes.IntegrationStatusNotRunning
 	}
 	// Connected once a connection agents can use has all its secrets:
@@ -243,9 +248,9 @@ func (v *integrationView) agentStatus(connID string) apitypes.IntegrationStatus 
 }
 
 // staleBuiltin reports whether v is a built-in integration this binary
-// does not carry: another version of Kivali shipped it, nothing runs
-// it, and the owner may remove it.
-func (v *integrationView) staleBuiltin() bool { return v.it.Builtin && v.builtin == nil }
+// does not carry, as Go code or as a bundle: another version of Kivali
+// shipped it, nothing runs it, and the owner may remove it.
+func (v *integrationView) staleBuiltin() bool { return v.it.Builtin && v.builtin == nil && !v.shipped }
 
 // whoBuilt is who fixes what is wrong with v's code: Kivali's
 // developers for a built-in one, whoever built the bundle otherwise.
@@ -527,8 +532,12 @@ func (s *Server) integrationVersionView(v *integrationView, ver store.Integratio
 		FileCount:        ver.FileCount,
 		Current:          v.it.CurrentVersion == ver.Version,
 		Builtin:          v.it.Builtin,
-		Changes:          []string{},
-		Findings:         nonNilStrings(slices.Clone(ver.Findings)),
+		// A shipped bundle's version holds its bundle, a Go built-in's
+		// none: what the version is, whether or not this binary still
+		// carries it.
+		Shipped:  v.it.Builtin && ver.FileCount > 0,
+		Changes:  []string{},
+		Findings: nonNilStrings(slices.Clone(ver.Findings)),
 	}
 	if cur := v.it.CurrentVersion; cur != "" && cur != ver.Version {
 		out.CurrentVersion = &cur
@@ -710,14 +719,15 @@ func (s *Server) handleAPIIntegrationToggle(on bool) http.HandlerFunc {
 
 // handleAPIIntegrationRemove removes an integration: its connections'
 // Secrets first, then everything the store keeps. A built-in one this
-// binary carries is a 409; one it does not carry is removed.
+// binary carries, as Go code or as a bundle, is a 409; one it does not
+// carry is removed.
 func (s *Server) handleAPIIntegrationRemove(w http.ResponseWriter, r *http.Request) {
 	defer s.lockIntegrations()()
 	v, ok := s.integrationOr404(w, r)
 	if !ok {
 		return
 	}
-	if v.builtin != nil {
+	if v.it.Builtin && !v.staleBuiltin() {
 		writeAPIError(w, http.StatusConflict, builtinRefusal(v.displayName(), builtinRemove), whoYou)
 		return
 	}
@@ -1194,7 +1204,7 @@ func (s *Server) handleAPIIntegrationChoices(w http.ResponseWriter, r *http.Requ
 		writeAPIError(w, http.StatusConflict, builtinRefusal(v.displayName(), builtinNotIncluded), whoYou)
 		return
 	case !v.running:
-		writeAPIError(w, http.StatusConflict, errNotRunning, whoBundle)
+		writeAPIError(w, http.StatusConflict, errNotRunning, v.whoBuilt())
 		return
 	case v.builtin != nil && conn == nil:
 		writeAPIError(w, http.StatusConflict, "connect the integration first", whoYou)

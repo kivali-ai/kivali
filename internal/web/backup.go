@@ -338,6 +338,12 @@ func (s *Server) restoreArchive(ctx context.Context, path, filename string) erro
 	if err := s.Store.InstallBuiltinIntegrations(s.BuiltinIntegrations.Manifests(), s.clk().Now()); err != nil {
 		log.Printf("restore: install built-in integrations: %v", err)
 	}
+	// And the ones that ship as bundles, with this binary's files.
+	shippedRewritten, err := s.Store.InstallShippedBundles(s.ShippedBundles.ByName(), s.clk().Now())
+	if err != nil {
+		log.Printf("restore: install shipped integrations: %v", err)
+	}
+	s.Integrations.Renew(shippedRewritten...)
 	// Their connections' proxy credentials, from the Secrets the
 	// restore leaves as they were.
 	s.RegisterBuiltinEgress(ctx)

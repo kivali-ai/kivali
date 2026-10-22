@@ -308,8 +308,8 @@ type IntegrationVersion struct {
 	PublishedBy PersonRef               `json:"published_by"`
 	ApprovedAt  *time.Time              `json:"approved_at,omitempty"`
 	NotesMD     string                  `json:"notes_md"`
-	// Runtime is what runs the bundle: python; empty for a built-in
-	// integration, which runs inside Kivali.
+	// Runtime is what runs the bundle, uploaded or shipped: python; empty
+	// for a built-in of Go code, which runs inside Kivali.
 	Runtime string `json:"runtime"`
 	// ConnectionMethod is how the connection is made: token.
 	ConnectionMethod string   `json:"connection_method"`
@@ -326,10 +326,15 @@ type IntegrationVersion struct {
 	// Current is true when this is the version in use now.
 	Current bool `json:"current"`
 	// Builtin is true for a version of an integration that ships with
-	// Kivali: it has no bundle, needs no approval and comes with
-	// Kivali's updates, so it is never approved, rejected or rolled
-	// back to here (409).
+	// Kivali: it needs no approval and comes with Kivali's updates, so
+	// it is never approved, rejected or rolled back to here (409).
 	Builtin bool `json:"builtin"`
+	// Shipped is true for a built-in version that is a bundle, which
+	// runs in a pod of its own as an uploaded one does: its runtime,
+	// hosts and bundle are a bundle's. False for a built-in that runs
+	// inside Kivali, which has no runtime, no hosts and no bundle (it
+	// reaches the hosts its connection names), and for any upload.
+	Shipped bool `json:"shipped"`
 	// CurrentVersion is the version in use now, when there is one and
 	// it is not this one, so the screen can say what approving replaces.
 	CurrentVersion *string `json:"current_version,omitempty"`
