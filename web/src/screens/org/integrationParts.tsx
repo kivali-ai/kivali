@@ -187,7 +187,7 @@ export function RollBackDialog({ version, current, busy, error, onConfirm, onClo
   );
 }
 
-/** Version notes: Markdown, sanitized, set as Prose. Nothing for empty notes. */
+/** Version notes or a manifest's setup notes: Markdown, sanitized, set as Prose. Nothing for empty notes. */
 export function Markdown({ markdown }: { markdown: string }) {
   const html = useMemo(() => renderMarkdown(markdown), [markdown]);
   if (!html) return null;

@@ -200,6 +200,20 @@
         "bytes": 5222,
         "limit": "action"
       }
+    },
+    {
+      "id": "integration_sign_in:github/a1b2c3d4",
+      "kind": "integration_sign_in",
+      "title": "GitHub needs you to sign in again",
+      "from": {
+        "slug": "kivali",
+        "name": "Kivali"
+      },
+      "at": "2026-09-20T17:00:00Z",
+      "body_md": "The vendor refused the sign-in (bad_refresh_token): The refresh token passed is incorrect or expired. Agents cannot use the connection until you sign in again.",
+      "attachments": [],
+      "review_path": "/org/integrations/github",
+      "packages": []
     }
   ],
   "queue": [

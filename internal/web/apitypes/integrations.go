@@ -77,8 +77,19 @@ type IntegrationPage struct {
 	Packages []string            `json:"packages"`
 	Actions  []IntegrationAction `json:"actions"`
 	// ConnectionFields is the connection form, in the bundle's order,
-	// with what the first connection holds.
+	// with what the first connection holds. A connection made by
+	// signing in adds the client id and the client secret.
 	ConnectionFields []ConnectionField `json:"connection_fields"`
+	// ConnectionMethod is how the connection is made: token, device or
+	// browser. Empty with no version at all.
+	ConnectionMethod string `json:"connection_method"`
+	// Scopes is what a sign-in connection asks the vendor for; empty
+	// otherwise.
+	Scopes []string `json:"scopes"`
+	// SetupNotesMD is the manifest's kivali.setup_notes: what to do on
+	// the vendor's side, Markdown, shown above the connection form.
+	// Empty when the manifest has none.
+	SetupNotesMD string `json:"setup_notes_md"`
 	// Connection is the first connection (the oldest), absent while
 	// there is none: the one connection of an integration that takes
 	// one.
@@ -157,6 +168,26 @@ type ConnectionState struct {
 	// this cluster (a backup restored into another install, or the
 	// Secret removed by hand): enter them again.
 	ReconnectNeeded bool `json:"reconnect_needed"`
+	// SignIn is the sign-in state of a connection made by signing in;
+	// absent for a token connection.
+	SignIn *ConnectionSignIn `json:"sign_in,omitempty"`
+}
+
+// ConnectionSignIn is where a connection made by signing in stands.
+type ConnectionSignIn struct {
+	// Ways is how the owner may sign in, the manifest's method first:
+	// device, browser.
+	Ways []string `json:"ways"`
+	// SignedIn is true while the connection holds tokens that work.
+	SignedIn bool `json:"signed_in"`
+	// Method is the way the owner signed in; empty while not signed in.
+	Method     string     `json:"method,omitempty"`
+	SignedInAt *time.Time `json:"signed_in_at,omitempty"`
+	// ExpiresAt is when the access token expires and Kivali refreshes
+	// it; absent when it does not expire.
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	// Error says why the connection needs the owner to sign in again.
+	Error *string `json:"error,omitempty"`
 }
 
 // ConnectionWrite is the body of PUT
@@ -311,9 +342,16 @@ type IntegrationVersion struct {
 	// Runtime is what runs the bundle, uploaded or shipped: python; empty
 	// for a built-in of Go code, which runs inside Kivali.
 	Runtime string `json:"runtime"`
-	// ConnectionMethod is how the connection is made: token.
-	ConnectionMethod string   `json:"connection_method"`
-	Hosts            []string `json:"hosts"`
+	// ConnectionMethod is how the connection is made: token, device or
+	// browser.
+	ConnectionMethod string `json:"connection_method"`
+	// Scopes is what a sign-in connection asks the vendor for; empty
+	// otherwise.
+	Scopes []string `json:"scopes"`
+	// SetupNotesMD is the manifest's kivali.setup_notes: what to do on
+	// the vendor's side, Markdown. Empty when the manifest has none.
+	SetupNotesMD string   `json:"setup_notes_md"`
+	Hosts        []string `json:"hosts"`
 	// Packages is the Debian packages the pod installs from Debian's
 	// repositories each time it starts, before the server runs
 	// (kivali.packages); empty for none.

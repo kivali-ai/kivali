@@ -13,6 +13,7 @@ func goldenHome() Home {
 	software := ProposalKindSoftwareInstall
 	rawSoftware := "/messages/2026-09-28/0005-engineering-lead.md"
 	releases := t1.Add(30 * time.Second)
+	integrationPage := "/org/integrations/github"
 	return Home{
 		Goals: []Goal{{
 			ID: 40, Title: "Ship the release", Owner: "engineering-lead", Done: 7, Total: 12,
@@ -80,6 +81,12 @@ func goldenHome() Home {
 				BodyMD:      "One action may send 2 KB. That is far more than a search or a form needs, so a page may have led the task to send out data it should not. Kivali refused the action and told the task, which carries on without it. Open the task to see what it was doing.",
 				Attachments: []AttachmentRef{}, Packages: []SoftwarePackage{},
 				WebBudget: &WebBudgetRef{Parent: "tester", ID: "dddd4444", Description: "Check the status page", Site: "paste.example", Bytes: 5222, Limit: WebBudgetLimitAction},
+			},
+			{
+				ID: "integration_sign_in:github/a1b2c3d4", Kind: NeedKindIntegrationSignIn, Title: "GitHub needs you to sign in again",
+				From: PersonRef{Slug: "kivali", Name: "Kivali"}, At: t1,
+				BodyMD:      "The vendor refused the sign-in (bad_refresh_token): The refresh token passed is incorrect or expired. Agents cannot use the connection until you sign in again.",
+				Attachments: []AttachmentRef{}, Packages: []SoftwarePackage{}, ReviewPath: &integrationPage,
 			},
 		},
 		Queue: []QueueItem{

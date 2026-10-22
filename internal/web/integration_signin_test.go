@@ -26,6 +26,9 @@ import (
 // signInAt is when the sign-in tests start.
 var signInAt = time.Date(2026, 10, 22, 9, 0, 0, 0, time.UTC)
 
+// signInSetupNotes is the sign-in bundle's kivali.setup_notes.
+const signInSetupNotes = "Register an OAuth app under **Developer settings** and paste its client id and secret."
+
 // signInConnection is a device connection section against vendor that
 // names the access token GH_TOKEN.
 func signInConnection(vendor *connecttest.FakeVendor) integration.Connection {
@@ -58,6 +61,7 @@ func signInBundle(t *testing.T, srv *Server, vendor *connecttest.FakeVendor) {
 	m := integrationtest.Manifest("crm", "1.0.0")
 	c := signInConnection(vendor)
 	m["kivali"].(map[string]any)["connection"] = c
+	m["kivali"].(map[string]any)["setup_notes"] = signInSetupNotes
 	m["server"].(map[string]any)["mcp_config"].(map[string]any)["env"] = map[string]any{
 		"TOKEN": "${user_config.token}", "CLIENT": "${user_config.client_id}", "CLIENT_SECRET": "${user_config.client_secret}",
 	}

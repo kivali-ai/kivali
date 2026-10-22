@@ -106,6 +106,8 @@ func goldenIntegrationPageMultiple() IntegrationPage {
 		Packages:         []string{},
 		Actions:          []IntegrationAction{{Name: "clone", Description: "Clones a repository."}, {Name: "push", Description: "Pushes branches and tags."}},
 		ConnectionFields: goldenGitConnectionFields("github.com"),
+		ConnectionMethod: "token",
+		Scopes:           []string{},
 		Connection: &ConnectionState{
 			ID: "a1b2c3d4", Label: "GitHub", CreatedAt: integrationEarlier, Fields: goldenGitConnectionFields("github.com"),
 		},
@@ -139,6 +141,8 @@ func goldenIntegrationPage() IntegrationPage {
 		Packages:         []string{},
 		Actions:          goldenIntegrationActions(),
 		ConnectionFields: goldenConnectionFields(),
+		ConnectionMethod: "token",
+		Scopes:           []string{},
 		Connection:       goldenConnectionState(),
 		Connections:      []ConnectionState{*goldenConnectionState()},
 		Multiple:         false,
@@ -172,6 +176,7 @@ func goldenIntegrationVersion() IntegrationVersion {
 		NotesMD:          "Adds contacts. Reaches one more host.",
 		Runtime:          "python",
 		ConnectionMethod: "token",
+		Scopes:           []string{},
 		Hosts:            []string{"api.hubapi.com"},
 		Packages:         []string{"gh"},
 		ConnectionFields: goldenConnectionFields(),
@@ -203,6 +208,7 @@ func goldenBuiltinIntegrationVersion() IntegrationVersion {
 		NotesMD:          "Ships with Kivali.",
 		Runtime:          "",
 		ConnectionMethod: "token",
+		Scopes:           []string{},
 		Hosts:            []string{},
 		Packages:         []string{},
 		ConnectionFields: []ConnectionField{{Key: "token", Title: "Access token", Description: "", Sensitive: true, Required: true, Set: false}},
@@ -214,6 +220,57 @@ func goldenBuiltinIntegrationVersion() IntegrationVersion {
 		Builtin:          true,
 		Changes:          []string{},
 		Findings:         []string{},
+	}
+}
+
+// goldenSignInConnectionFields is a sign-in connection's form: the
+// manifest's field and the client id and secret core adds.
+func goldenSignInConnectionFields() []ConnectionField {
+	clientID := "Iv23liAbCdEf"
+	return []ConnectionField{
+		{Key: "org", Title: "Organization", Description: "The organization agents work in.", Sensitive: false, Required: false, Set: false},
+		{Key: "client_id", Title: "Client id", Description: "", Sensitive: false, Required: true, Set: true, Value: &clientID},
+		{Key: "client_secret", Title: "Client secret", Description: "", Sensitive: true, Required: true, Set: true},
+	}
+}
+
+// goldenIntegrationPageSignIn is a GitHub bundle's page, connected by
+// signing in with the device flow (browser offered too), its token
+// refreshed before it expires. needsSignIn makes it the page of the
+// same connection after the vendor refused a refresh.
+func goldenIntegrationPageSignIn(needsSignIn bool) IntegrationPage {
+	expires := integrationLater.Add(8 * time.Hour)
+	sign := &ConnectionSignIn{Ways: []string{"device", "browser"}, SignedIn: true, Method: "device", SignedInAt: &integrationNow, ExpiresAt: &expires}
+	status := IntegrationStatusConnected
+	if needsSignIn {
+		refused := "the vendor refused the sign-in (bad_refresh_token): The refresh token passed is incorrect or expired."
+		sign = &ConnectionSignIn{Ways: []string{"device", "browser"}, SignedIn: false, Error: &refused}
+		status = IntegrationStatusNotConnected
+	}
+	conn := ConnectionState{ID: "a1b2c3d4", Label: "", CreatedAt: integrationNow, Fields: goldenSignInConnectionFields(), SignIn: sign}
+	return IntegrationPage{
+		Summary: IntegrationSummary{
+			Name: "github", DisplayName: "GitHub", Description: "Issues and pull requests on GitHub.",
+			Version: "1.0.0", Status: status, Enabled: true, Agents: 0,
+		},
+		Author:           "Kivali Developer (agent)",
+		Hosts:            []string{"api.github.com"},
+		Packages:         []string{},
+		Actions:          []IntegrationAction{{Name: "list_issues", Description: "List a repository's open issues."}},
+		ConnectionFields: goldenSignInConnectionFields(),
+		ConnectionMethod: "device",
+		Scopes:           []string{"repo", "read:org"},
+		SetupNotesMD:     "Register a GitHub App under **Settings, Developer settings**, tick *Enable Device Flow*, then paste its client id and a client secret here.",
+		Connection:       &conn,
+		Connections:      []ConnectionState{conn},
+		Multiple:         false,
+		ConnectionTest:   false,
+		Access:           []AccessRow{},
+		AgentsWithout:    []PersonRef{{Slug: "dana", Name: "Dana"}},
+		Versions: []IntegrationVersionSummary{
+			{Version: "1.0.0", State: IntegrationVersionStateApproved, PublishedAt: integrationEarlier, PublishedBy: PersonRef{Slug: "kivali-developer", Name: "Kivali Developer"}, ApprovedAt: &integrationEarlier, NotesMD: ""},
+		},
+		CanRemove: true,
 	}
 }
 
@@ -234,6 +291,7 @@ func goldenShippedIntegrationVersion() IntegrationVersion {
 		NotesMD:          "Ships with Kivali.",
 		Runtime:          "python",
 		ConnectionMethod: "token",
+		Scopes:           []string{},
 		Hosts:            []string{"api.notes.example.com"},
 		Packages:         []string{},
 		ConnectionFields: []ConnectionField{{Key: "token", Title: "API token", Description: "", Sensitive: true, Required: true, Set: false}},
