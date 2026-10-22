@@ -94,7 +94,8 @@ func (s *Server) signInAccessToken(ctx context.Context, name string, m *integrat
 		return "", errSignInNeeded
 	case ctx.Err() != nil:
 		return "", ctx.Err()
-	case now.Before(exp):
+	case s.clk().Now().Before(exp):
+		// Still good now, after the refresh's wait on the vendor.
 		return token, nil
 	}
 	return "", errVendorUnavailable
