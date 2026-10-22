@@ -615,7 +615,7 @@ func TestAccessHoldsCallsToTheRepositoryPatterns(t *testing.T) {
 	// A repository not written as owner/name is refused before any
 	// pattern is read: gh would read a value starting with - as an
 	// option, and a path of more segments is not a GitHub repository.
-	for _, repo := range []string{"acme", "acme/widgets/extra", "-R/x", "acme/..", "acme/wid gets", "acme/widgets;id", ""} {
+	for _, repo := range []string{"acme", "acme/widgets/extra", "-R/x", "acme/..", "acme/wid gets", "acme/widgets;id", "acme/widgets\n", ""} {
 		text, isErr := s.call("get_repository", map[string]any{"repository": repo}, map[string]any{"repositories": []string{"*/*"}})
 		if !isErr || (!strings.Contains(text, "is not owner/name") && !strings.Contains(text, "Name the repository")) {
 			t.Errorf("%q: %v %s", repo, isErr, text)
@@ -718,6 +718,9 @@ func TestCredentialRefusalsReachTheAgentInWords(t *testing.T) {
 		}{
 			{"whoami", map[string]any{}, owner},
 			{"list_issues", map[string]any{"repository": "acme/widgets"}, map[string]any{"repositories": []string{"acme/*"}}},
+			// It lists owner by owner, skipping one gh cannot list; a
+			// sign-in error still refuses the whole call.
+			{"list_repositories", map[string]any{}, map[string]any{"repositories": []string{"acme/*"}}},
 		} {
 			text, isErr := s.call(call.name, call.args, call.access)
 			if !isErr || text != c.want {
@@ -876,7 +879,7 @@ func TestCreatePullRequest(t *testing.T) {
 	if len(calls) != 1 || !slices.Equal(calls[0].Argv, want) || calls[0].Stdin != "Fixes #3." {
 		t.Errorf("gh runs %+v", calls)
 	}
-	for _, head := range []string{"-x", "a..b", "a b", "owner:branch", "refs/heads/", ""} {
+	for _, head := range []string{"-x", "a..b", "a b", "owner:branch", "refs/heads/", "main\n", ""} {
 		text, isErr := s.call("create_pull_request", map[string]any{"repository": "acme/widgets", "title": "t", "head": head, "base": "main"}, writer)
 		if !isErr || !strings.Contains(text, "branch") {
 			t.Errorf("head %q: %v %s", head, isErr, text)
@@ -904,6 +907,148 @@ func TestListRepositoriesKeepsToThePatterns(t *testing.T) {
 	}
 	calls := s.ghCalls()
 	if len(calls) != 2 || !slices.Equal(calls[0].Argv, []string{"repo", "list", "acme", "--limit=100", "--json=nameWithOwner,description,isPrivate,updatedAt"}) {
+		t.Errorf("gh runs %+v", calls)
+	}
+}
+
+// Why this test exists: gh turns list_issues' search into a GitHub
+// search with repo:<the repository> added, and GitHub ORs repo:
+// qualifiers and honours org:, user: and owner:, so a search naming
+// another place would hand an agent the issues of any repository the
+// account and the app can see, past its access. Such a search is
+// refused before gh runs; and whatever gh answers, only the
+// repository's own issues reach the agent. list_pull_requests takes
+// no search at all.
+func TestListIssuesStaysInTheRepository(t *testing.T) {
+	s := startServer(t, tokens("ghu_token00000"))
+	agent := map[string]any{"repositories": []string{"acme/widgets"}}
+	for _, search := range []string{"repo:acme/secret", "crash org:acme", "-repo:acme/widgets repo:x/y", "(repo:x/y)", `"user:someone"`, "OWNER:acme", "bug\tRepo:x/y"} {
+		text, isErr := s.call("list_issues", map[string]any{"repository": "acme/widgets", "search": search}, agent)
+		if !isErr || text != "search cannot name repositories, organizations or users; the repository argument does that." {
+			t.Errorf("%q: %v %s", search, isErr, text)
+		}
+	}
+	if runs := len(s.ghCalls()); runs != 0 {
+		t.Fatalf("gh ran %d times for refused searches", runs)
+	}
+
+	s.setGH(ghRule{Argv: []string{"issue", "list"}, Stdout: `[` +
+		`{"number":1,"title":"Ours","url":"https://github.com/acme/widgets/issues/1"},` +
+		`{"number":2,"title":"Ours, capitals","url":"https://github.com/ACME/Widgets/issues/2"},` +
+		`{"number":3,"title":"Theirs","url":"https://github.com/acme/secret/issues/3"},` +
+		`{"number":4,"title":"Prefix","url":"https://github.com/acme/widgets-private/issues/4"}]`})
+	text, isErr := s.call("list_issues", map[string]any{"repository": "acme/widgets", "search": "crash in:title"}, agent)
+	if isErr {
+		t.Fatal(text)
+	}
+	var got []struct {
+		Number int `json:"number"`
+	}
+	if err := json.Unmarshal([]byte(text), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].Number != 1 || got[1].Number != 2 {
+		t.Errorf("kept %s", text)
+	}
+	if calls := s.ghCalls(); len(calls) != 1 || !slices.Contains(calls[0].Argv, "--search=crash in:title") {
+		t.Errorf("gh runs %+v", calls)
+	}
+
+	params := map[string]any{"_meta": meta(agent)}
+	var list struct {
+		Tools []struct {
+			Name        string `json:"name"`
+			InputSchema struct {
+				Properties map[string]any `json:"properties"`
+			} `json:"inputSchema"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(s.request("tools/list", params), &list); err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range list.Tools {
+		if _, ok := tool.InputSchema.Properties["search"]; ok && tool.Name != "list_issues" {
+			t.Errorf("%s takes a search", tool.Name)
+		}
+	}
+}
+
+// Why this test exists: an answer gh gives can be any size, and one
+// that fills the agent's context in a call leaves it nothing to work
+// with. Every answer is cut at 60,000 characters with a note, whatever
+// the action's own limits.
+func TestEveryAnswerIsBounded(t *testing.T) {
+	s := startServer(t, tokens("ghu_token00000"))
+	s.setGH(ghRule{Argv: []string{"repo", "view"}, Stdout: strings.Repeat("r", 70000)})
+	text, isErr := s.call("get_repository", map[string]any{"repository": "acme/widgets"}, owner)
+	note := "\n[The answer is cut to its first 60000 characters.]"
+	if isErr || text != strings.Repeat("r", 60000)+note {
+		t.Errorf("%v, %d characters, ends %q", isErr, len(text), text[max(0, len(text)-60):])
+	}
+}
+
+// Why this test exists: an agent's access may name several owners, and
+// one of them can be a wrong name or an account the GitHub App is not
+// installed on. The repositories of the others must still be listed,
+// with the owner gh could not list named, rather than the whole list
+// failing on one.
+func TestListRepositoriesSkipsAnOwnerItCannotList(t *testing.T) {
+	s := startServer(t, tokens("ghu_token00000"))
+	s.setGH(
+		ghRule{Argv: []string{"repo", "list", "acme"}, Stdout: `[{"nameWithOwner":"acme/widgets","isPrivate":true,"updatedAt":"2026-10-01T00:00:00Z"}]`},
+		ghRule{Argv: []string{"repo", "list", "nobody"}, Stderr: "GraphQL: Could not resolve to a RepositoryOwner with the login of 'nobody'.\n", Code: 1},
+	)
+	text, isErr := s.call("list_repositories", map[string]any{}, map[string]any{"repositories": []string{"nobody/*", "acme/*"}})
+	want := "acme/widgets (private, updated 2026-10-01T00:00:00Z)\nGitHub did not list the repositories of nobody: the name may be wrong, or the GitHub App not installed there."
+	if isErr || text != want {
+		t.Errorf("%v\n%s", isErr, text)
+	}
+}
+
+// Why this test exists: GitHub answers 401 when the sign-in no longer
+// works and 403 when the GitHub App lacks a permission or is not
+// installed on the repository's owner. Neither is the agent's to fix,
+// so its words end by telling it to ask the owner.
+func TestGitHubRefusalsTellTheAgentToAskTheOwner(t *testing.T) {
+	s := startServer(t, tokens("ghu_token00000"))
+	agent := map[string]any{"repositories": []string{"acme/*"}}
+	for _, c := range []struct{ stderr, want string }{
+		{"HTTP 401: Bad credentials (https://api.github.com/user)", "GitHub refused the connection's sign-in (HTTP 401): HTTP 401: Bad credentials (https://api.github.com/user). Ask the owner."},
+		{"HTTP 403: Resource not accessible by integration (https://api.github.com/repos/acme/widgets/branches)", "GitHub refused this (HTTP 403): HTTP 403: Resource not accessible by integration (https://api.github.com/repos/acme/widgets/branches). The GitHub App may lack the permission, or not be installed on the repository's owner; ask the owner."},
+	} {
+		s.setGH(ghRule{Argv: []string{"api"}, Stderr: c.stderr + "\n", Code: 1})
+		text, isErr := s.call("list_branches", map[string]any{"repository": "acme/widgets"}, agent)
+		if !isErr || text != c.want {
+			t.Errorf("%v %s", isErr, text)
+		}
+	}
+}
+
+// Why this test exists: list_branches and compare call GitHub's REST
+// API through gh api, with paths the server builds from the agent's
+// arguments. A path built wrong reads another resource or none; these
+// pin both, and what each answer keeps (no patches).
+func TestBranchesAndCompareCallTheirAPIPaths(t *testing.T) {
+	s := startServer(t, tokens("ghu_token00000"))
+	s.setGH(
+		ghRule{Argv: []string{"api", "repos/acme/widgets/branches?per_page=5"}, Stdout: `[{"name":"main","commit":{"sha":"aaa"}},{"name":"agent/fix-1","commit":{"sha":"bbb"}}]`},
+		ghRule{Argv: []string{"api", "repos/acme/widgets/compare/main...agent/fix-1"}, Stdout: `{"status":"ahead","ahead_by":1,"behind_by":0,` +
+			`"commits":[{"sha":"bbb","commit":{"message":"Fix the build\n\nLonger text","author":{"name":"Dana"}},"author":{"login":"dana"}}],` +
+			`"files":[{"filename":"a.go","status":"modified","additions":3,"deletions":1,"patch":"@@ a patch"}]}`},
+	)
+	agent := map[string]any{"repositories": []string{"acme/*"}}
+	text, isErr := s.call("list_branches", map[string]any{"repository": "acme/widgets", "limit": 5}, agent)
+	if isErr || text != "main aaa\nagent/fix-1 bbb" {
+		t.Errorf("branches: %v %s", isErr, text)
+	}
+	text, isErr = s.call("compare", map[string]any{"repository": "acme/widgets", "base": "main", "head": "agent/fix-1"}, agent)
+	want := `{"status":"ahead","ahead_by":1,"behind_by":0,"commits":[{"sha":"bbb","title":"Fix the build","author":"dana"}],"files":[{"name":"a.go","status":"modified","additions":3,"deletions":1}]}`
+	if isErr || text != want {
+		t.Errorf("compare: %v %s", isErr, text)
+	}
+	calls := s.ghCalls()
+	if len(calls) != 2 || !slices.Equal(calls[0].Argv, []string{"api", "repos/acme/widgets/branches?per_page=5"}) ||
+		!slices.Equal(calls[1].Argv, []string{"api", "repos/acme/widgets/compare/main...agent/fix-1"}) {
 		t.Errorf("gh runs %+v", calls)
 	}
 }

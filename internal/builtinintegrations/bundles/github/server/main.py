@@ -71,6 +71,9 @@ BODY_CLIP = 20000
 DIFF_CLIP = 50000
 COMMENTS_KEPT = 20
 STDERR_TAIL = 2000
+# The most an answer's text holds, whatever the action.
+ANSWER_CLIP = 60000
+# The longest text an agent may give an action.
 MAX_TEXT = 60000
 
 _write = threading.Lock()
@@ -97,8 +100,12 @@ class Refusal(Exception):
 
 
 def answer(value):
+    """An action's answer as the agent reads it: text, or compact JSON,
+    cut at ANSWER_CLIP characters with a note saying so."""
     if not isinstance(value, str):
         value = json.dumps(value, separators=(",", ":"), ensure_ascii=False)
+    if len(value) > ANSWER_CLIP:
+        value = value[:ANSWER_CLIP] + "\n[The answer is cut to its first %d characters.]" % ANSWER_CLIP
     return {"content": [{"type": "text", "text": value}], "isError": False}
 
 
@@ -173,11 +180,14 @@ class Call:
         self.deadline = time.monotonic() + CALL_BUDGET
         self.token = None
 
+    def ensure_token(self):
+        if self.token is None:
+            self.token = credential(self.deadline)
+
     def gh(self, args, stdin_text=None):
         """One gh run: args a list, never a shell. Its standard output,
         or a Refusal with the end of its error output."""
-        if self.token is None:
-            self.token = credential(self.deadline)
+        self.ensure_token()
         env = {k: os.environ[k] for k in PASSED_ENV if k in os.environ}
         env.update(GH_ENV)
         env[TOKEN_KEY] = self.token
@@ -201,6 +211,13 @@ class Call:
             raise Refusal("gh is not installed in the integration's pod; tell the owner.")
         if run.returncode != 0:
             tail = (run.stderr or "").strip()[-STDERR_TAIL:] or "no error output"
+            if "HTTP 401" in tail:
+                raise Refusal("GitHub refused the connection's sign-in (HTTP 401): %s. Ask the owner." % tail)
+            if "HTTP 403" in tail:
+                raise Refusal(
+                    "GitHub refused this (HTTP 403): %s. The GitHub App may lack the permission, or not be installed "
+                    "on the repository's owner; ask the owner." % tail
+                )
             raise Refusal("gh exited with status %d: %s" % (run.returncode, tail))
         return run.stdout
 
@@ -217,7 +234,7 @@ class Call:
 # wildcard is *, which stands within one segment and never across a /;
 # capitals do not matter.
 
-_NAME_CHARS = re.compile(r"^[A-Za-z0-9._-]+$")
+_NAME_CHARS = re.compile(r"[A-Za-z0-9._-]+")
 
 
 def clean_repository(value):
@@ -225,16 +242,16 @@ def clean_repository(value):
     trimmed; a Refusal when it is not one."""
     if not isinstance(value, str) or not value.strip():
         raise Refusal("Name the repository as owner/name.")
-    p = value.strip().strip("/")
+    p = value.strip("/")
     if p.endswith(".git"):
         p = p[: -len(".git")]
     p = p.strip("/")
     segs = p.split("/")
     if len(segs) != 2 or len(p) > 200:
-        raise Refusal("%s is not owner/name." % value)
+        raise Refusal("%s is not owner/name." % value.strip())
     for s in segs:
-        if s in ("", ".", "..") or s.startswith("-") or not _NAME_CHARS.match(s):
-            raise Refusal("%s is not owner/name." % value)
+        if s in ("", ".", "..") or s.startswith("-") or not _NAME_CHARS.fullmatch(s):
+            raise Refusal("%s is not owner/name." % value.strip())
     return p
 
 
@@ -251,7 +268,7 @@ def valid_pattern(p):
 
 
 def _pattern_regex(n):
-    return re.compile("^" + "[^/]*".join(re.escape(part) for part in n.split("*")) + "$", re.DOTALL)
+    return re.compile("[^/]*".join(re.escape(part) for part in n.split("*")), re.DOTALL)
 
 
 def match(patterns, key):
@@ -260,7 +277,7 @@ def match(patterns, key):
     for p in patterns:
         if not isinstance(p, str) or not valid_pattern(p):
             continue
-        if _pattern_regex(normalize_pattern(p)).match(key):
+        if _pattern_regex(normalize_pattern(p)).fullmatch(key):
             return True
     return False
 
@@ -322,7 +339,7 @@ def text_arg(args, name, required=False, one_line=False, most=MAX_TEXT):
     return v
 
 
-_BRANCH = re.compile(r"^[A-Za-z0-9._/+-]+$")
+_BRANCH = re.compile(r"[A-Za-z0-9._/+-]+")
 
 
 def branch_arg(args, name, required=True):
@@ -334,7 +351,7 @@ def branch_arg(args, name, required=True):
     if (
         not isinstance(v, str)
         or len(v) > 255
-        or not _BRANCH.match(v)
+        or not _BRANCH.fullmatch(v)
         or v.startswith(("-", "/", "."))
         or v.endswith(("/", ".", ".lock"))
         or ".." in v
@@ -381,10 +398,20 @@ def list_repositories(call, args, access):
             owner = normalize_pattern(p).split("/", 1)[0]
             if "*" not in owner and owner not in owners:
                 owners.append(owner)
+    # A sign-in error refuses the whole call; an owner gh cannot list
+    # (a wrong name, or one the GitHub App is not installed on) is
+    # skipped and named.
+    call.ensure_token()
     lines = []
+    unlisted = []
     for owner in owners:
         cmd = ["repo", "list"] + ([owner] if owner else []) + ["--limit=100", "--json=" + fields]
-        for r in call.gh_json(cmd) or []:
+        try:
+            repos = call.gh_json(cmd) or []
+        except Refusal:
+            unlisted.append(owner or "your account")
+            continue
+        for r in repos:
             name = r.get("nameWithOwner") or ""
             if access is not None and not match(repositories_of(access), name):
                 continue
@@ -393,13 +420,26 @@ def list_repositories(call, args, access):
                 line += ": " + first_line(r["description"])
             lines.append(line)
     if not lines:
-        return answer("No repositories found.")
+        lines.append("No repositories found.")
+    if unlisted:
+        lines.append(
+            "GitHub did not list the repositories of %s: the name may be wrong, or the GitHub App not installed there."
+            % ", ".join(unlisted)
+        )
     return answer("\n".join(lines))
 
 
 def get_repository(call, args, access):
     repo = repository_arg(args, access)
     return answer(call.gh(["repo", "view", repo, "--json=name,owner,description,defaultBranchRef,isPrivate,url,updatedAt"]).strip())
+
+
+# A search qualifier that names where to search. gh adds repo:<the
+# repository> to a search, and GitHub ORs repo: qualifiers and honours
+# the others, so one in the search would reach other repositories. A
+# qualifier counts after anything but a letter, digit or underscore: a
+# space, a parenthesis, a quote, a minus.
+_WHERE_QUALIFIER = re.compile(r"(^|[^A-Za-z0-9_])(repo|org|user|owner):", re.IGNORECASE)
 
 
 def list_issues(call, args, access):
@@ -413,8 +453,16 @@ def list_issues(call, args, access):
     cmd += ["--label=" + l for l in labels_arg(args)]
     search = text_arg(args, "search", one_line=True, most=500)
     if search:
+        if _WHERE_QUALIFIER.search(search):
+            raise Refusal("search cannot name repositories, organizations or users; the repository argument does that.")
         cmd.append("--search=" + search)
-    return answer(call.gh(cmd).strip())
+    # Only the repository's own issues, whatever GitHub's search found.
+    prefix = ("https://github.com/%s/issues/" % repo).lower()
+    issues = [
+        i for i in call.gh_json(cmd) or []
+        if isinstance(i, dict) and isinstance(i.get("url"), str) and i["url"].lower().startswith(prefix)
+    ]
+    return answer(issues)
 
 
 def get_issue(call, args, access):
@@ -580,7 +628,7 @@ def schemas():
             "state": {"type": "string", "enum": ["open", "closed", "all"], "description": "open when left out."},
             "limit": LIMIT_50,
             "labels": {"type": "array", "items": {"type": "string"}, "description": "Only issues with every one of these labels."},
-            "search": {"type": "string", "description": "GitHub search words, such as \"crash in:title\"."},
+            "search": {"type": "string", "description": "GitHub search words within this repository, such as \"crash in:title\"; it cannot name other repositories, organizations or users."},
         }, ["repository"]),
         "get_issue": schema({"repository": repo, "number": NUMBER}, ["repository", "number"]),
         "create_issue": schema({
