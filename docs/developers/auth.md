@@ -291,16 +291,20 @@ an ordinary sign-in would leave.
 - **`next`:** `GET /auth/handoff?t=<token>&next=<flow id>` is how the
   app opens an integration's browser sign-in in the system browser
   ([integrations.md](integrations.md#in-kivali-desktop)). Once the
-  token has signed the browser in, and only then, the server looks
-  `next` up as a browser sign-in under way (`auth.Handoff.WithNext`,
-  `handoffNext` in `internal/web/integration_signin_browser.go`): for
-  one that is pending, not yet taken by a callback and inside its ten
-  minutes, it sets that sign-in's `kivali_connect` cookie in this
-  browser (replacing any it held, whose sign-in ends as a second start
+  token has passed, and only then, the server looks `next` up as a
+  browser sign-in under way (`auth.Handoff.WithNext`, `handoffNext` in
+  `internal/web/integration_signin_browser.go`): for one that is
+  pending, not yet taken by a callback, inside its ten minutes and
+  started at the address this request reached Kivali at (its redirect
+  address, scheme and host, is this request's; the cookie is host-only),
+  it signs the browser in, sets that sign-in's `kivali_connect` cookie
+  (replacing any the browser held, whose sign-in ends as a second start
   in one browser ends the first) and the 302 goes to the vendor's
-  sign-in page the flow keeps.
-  Any other `next` is a 302 to `/`, signed in. `next` is never an
-  address, so the route redirects only to one the server made. A token
+  sign-in page the flow keeps. Any other `next` refuses the handoff as
+  a bad token is refused: a 302 to `/` with no session, and one fixed
+  log line. The app names only a flow it just saw start, so a `next`
+  with nowhere to go is no errand of its. `next` is never an address,
+  so the route redirects only to one the server made. A token
   that is refused, replayed or sent to a host that is not loopback
   ignores `next` entirely: no cookie, no lookup. The answer carries
   `Referrer-Policy: no-referrer`, so the vendor's page never sees the

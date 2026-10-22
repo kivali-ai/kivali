@@ -824,9 +824,10 @@ refuses it in the window, mints a handoff token from the team's
 supervisor and opens `<origin>/auth/handoff?t=<token>&next=<id>` in the
 system browser through the window's browser gate
 (`open_connect_sign_in` in `desktop-app/src-tauri/src/windows.rs`). The
-handoff signs that browser in as the owner and, for a pending flow,
-sets the flow's `kivali_connect` cookie there before its 302 to the
-vendor ([auth.md](auth.md#desktop-handoff), `next`). The callback then
+handoff, for a pending flow started at that address, signs that
+browser in as the owner and sets the flow's `kivali_connect` cookie
+there before its 302 to the vendor; for any other `next` it signs
+nothing in ([auth.md](auth.md#desktop-handoff), `next`). The callback then
 comes to a browser that passes both checks. The page in the window
 stays, says the sign-in goes on in the browser with **Start again**,
 asks `GET .../sign-in` every few seconds while visible, as for a device

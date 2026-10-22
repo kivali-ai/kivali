@@ -339,14 +339,16 @@ func (s *Server) handleConnectStart(w http.ResponseWriter, r *http.Request) {
 }
 
 // handoffNext is the Desktop handoff's next (auth.Handoff.WithNext):
-// once a handoff token has signed the system browser in, a next that
-// names a pending browser sign-in (as handleConnectStart takes it)
+// once a handoff token has passed, a next that names a pending browser
+// sign-in (as handleConnectStart takes it) that started at the address
+// this request reached Kivali at, so its callback comes back here,
 // sets that sign-in's cookie in this browser and sends it to the
 // vendor's sign-in page, so the callback, which comes to this browser
 // and not to the Desktop window that started the sign-in, passes the
 // cookie check. The cookie replaces any this browser held, as a start
 // answer's does, and the sign-in that one named ends the same way.
-// Any other next sends the browser to "/". The flow id is all the
+// Any other next answers "", and the handoff is refused: no session,
+// a 302 to "/". The flow id is all the
 // request names; the address is the flow's own. A handoff token is
 // minted only by the team's supervisor and signs the browser in as the
 // owner, so the cookie it hands over is no more than the owner already
@@ -354,7 +356,11 @@ func (s *Server) handleConnectStart(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handoffNext(w http.ResponseWriter, r *http.Request, next string) string {
 	now := s.clk().Now()
 	f := s.signInFlows.pendingBrowser(now, next)
-	if f == nil {
+	// The cookie is host-only and the vendor sends the browser back to
+	// the flow's redirect address: a handoff that reached Kivali at
+	// another address (localhost for 127.0.0.1, another port) would set
+	// it where the callback never looks.
+	if f == nil || signInRedirectURL(r) != f.browser.redirectURL {
 		return ""
 	}
 	if oldID, _ := s.readConnectCookie(r); oldID != "" && oldID != f.id {
