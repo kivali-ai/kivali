@@ -29,6 +29,7 @@ import {
   Block,
   Markdown,
   RollBackDialog,
+  signInErrorWords,
   ScopesLine,
   StatusBadge,
   VersionBadge,
@@ -127,22 +128,25 @@ export function openSignIn(url: string): void {
   window.location.assign(url);
 }
 
-/** How a browser sign-in came back to the page: the connection it signed in, or why it did not. */
-export interface SignInReturn {
-  /** The connection the sign-in was for; absent when the server could not tell. */
-  id?: string;
-  /** Why the sign-in did not work; absent once signed in. */
-  error?: string;
-}
+/**
+ * How a browser sign-in came back to the page: the connection it signed in, the connection whose sign-in failed
+ * (its words are the connection's GET …/sign-in), or that there is no sign-in to read and the owner starts again.
+ */
+export type SignInReturn = { kind: 'signed_in'; id: string } | { kind: 'failed'; id: string } | { kind: 'start_again'; words: string };
 
-/** The page's query after a browser sign-in: ?signed_in=<id>, or ?sign_in_error=<words>&connection=<id>. */
+/**
+ * The page's query after a browser sign-in: ?signed_in=<id>, ?sign_in_failed=<id> or ?sign_in_error=<code>. The query
+ * never carries words, since anyone can link to the page with any query: a code is one of signInErrorWords' and any
+ * other is ignored.
+ */
 export function signInReturnOf(search: string): SignInReturn | null {
   const q = new URLSearchParams(search);
-  const error = q.get('sign_in_error');
-  const id = q.get('connection') ?? undefined;
-  if (error !== null) return id ? { id, error } : { error };
   const signedIn = q.get('signed_in');
-  return signedIn ? { id: signedIn } : null;
+  if (signedIn) return { kind: 'signed_in', id: signedIn };
+  const failed = q.get('sign_in_failed');
+  if (failed) return { kind: 'failed', id: failed };
+  const words = signInErrorWords(q.get('sign_in_error'));
+  return words ? { kind: 'start_again', words } : null;
 }
 
 /** Whether the tab is showing; a hidden one asks the server nothing. */
@@ -191,9 +195,11 @@ function SignInBlock({ connection, fields, api, scopes, busy, now, onPage, onSig
   const [device, setDevice] = useState<DeviceSignIn | null>(null);
   // Done, and the page is being read again: held so the block does not show Sign in with a code in between.
   const [finishing, setFinishing] = useState(false);
-  const [ended, setEnded] = useState<SignInProgress | null>(() => (returned?.error ? { state: 'failed', error: returned.error } : null));
+  const [ended, setEnded] = useState<SignInProgress | null>(() =>
+    returned?.kind === 'start_again' ? { state: 'expired', error: returned.words } : null,
+  );
   // The way the sign-in that ended went, which Try again takes again.
-  const [endedWay, setEndedWay] = useState<'device' | 'browser'>(returned?.error ? 'browser' : 'device');
+  const [endedWay, setEndedWay] = useState<'device' | 'browser'>(returned && returned.kind !== 'signed_in' ? 'browser' : 'device');
   const [error, setError] = useState<ApiError | null>(null);
   const [working, setWorking] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -203,6 +209,19 @@ function SignInBlock({ connection, fields, api, scopes, busy, now, onPage, onSig
     signedIn.current = onSignedIn;
   });
   const s = connection?.sign_in;
+
+  // A browser sign-in that came back failed: why is the server's, read once from the sign-in it kept.
+  const failedRead = useRef(false);
+  useEffect(() => {
+    if (returned?.kind !== 'failed' || failedRead.current) return;
+    failedRead.current = true;
+    apiGet<SignInProgress>(api + '/sign-in').then(
+      (p) => {
+        if (p.state === 'failed' || p.state === 'expired') setEnded(p);
+      },
+      (err: unknown) => setError(asApiError(err)),
+    );
+  }, [returned, api]);
 
   useEffect(() => {
     if (!device || !visible) return;
@@ -292,7 +311,7 @@ function SignInBlock({ connection, fields, api, scopes, busy, now, onPage, onSig
     const who = connection?.verified && connection.verify_message;
     body = (
       <>
-        {returned && !returned.error && (
+        {returned?.kind === 'signed_in' && (
           <Text as="p" variant="caption" tone="muted">
             You signed in in your browser.
           </Text>
@@ -845,7 +864,8 @@ export function IntegrationPage() {
     void apiGet<IntegrationAudit>(api + '/audit').then(audit.set, () => {});
   };
   // A browser sign-in that came back goes to its connection's block: the one connection's, or the one it names.
-  const returnedTo = (id: string | undefined) => (returned && (!p?.multiple || returned.id === id) ? returned : null);
+  const returnedTo = (id: string | undefined) =>
+    returned && (!p?.multiple || (returned.kind !== 'start_again' && returned.id === id)) ? returned : null;
   const signInFor = (connectionApi: string, id?: string): { signIn?: SignInWiring } =>
     p && (p.connection_method === 'device' || p.connection_method === 'browser')
       ? { signIn: { api: connectionApi, scopes: p.scopes, onPage: signedOut, onSignedIn: signedIn, returned: returnedTo(id) } }
@@ -997,9 +1017,9 @@ export function IntegrationPage() {
         {/* What to do on the vendor's side first, from the manifest; nothing when it has none. */}
         {s.version && <Markdown markdown={p.setup_notes_md} />}
         {s.version && p.sign_in_redirect_url && <RedirectAddress url={p.sign_in_redirect_url} />}
-        {p.multiple && returned?.error && !p.connections.some((c) => c.id === returned.id) && (
+        {p.multiple && returned?.kind === 'start_again' && (
           <Banner tone="danger" title="The sign-in did not work">
-            {returned.error}
+            {returned.words}
           </Banner>
         )}
         {s.version && p.multiple ? (

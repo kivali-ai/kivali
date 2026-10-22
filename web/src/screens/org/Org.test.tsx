@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { createMemoryRouter } from 'react-router';
 import { RouterProvider } from 'react-router/dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -2350,22 +2350,38 @@ describe('Integration page, signing in in the browser', () => {
     expect(screen.getByRole('button', { name: 'Copied' })).toBeInTheDocument();
   });
 
-  // Guards the way back from the service: Kivali's callback lands here with ?sign_in_error= (the service's words or
-  // Kivali's), which the block shows as a sign-in that did not work, with Try again taking the browser way again. The
-  // query is taken off the address, so a reload does not show an old failure as if it were new.
-  it('shows why a browser sign-in did not work and offers Try again', async () => {
-    const words = 'The user did not approve the app.';
-    const h = await renderOrg(PATH + '?sign_in_error=' + encodeURIComponent(words) + '&connection=' + signedIn.connection!.id, {
-      routes: pageRoutes(notSignedIn(['device', 'browser'])),
+  // Guards the way back from the service after a failure: Kivali's callback lands here with ?sign_in_failed=<id> and
+  // no words, and the block reads why from the connection's GET …/sign-in (sign_in_progress_failed.json), shows it as
+  // a sign-in that did not work, and offers Try again, which takes the browser way again. The query is taken off the
+  // address, so a reload does not show an old failure as if it were new.
+  it('reads why a browser sign-in did not work and offers Try again', async () => {
+    const h = await renderOrg(PATH + '?sign_in_failed=' + signedIn.connection!.id, {
+      routes: { ...pageRoutes(notSignedIn(['device', 'browser'])), ['GET ' + API + '/connection/sign-in']: goSignInProgressFailed },
     });
+    expect(called('GET', API + '/connection/sign-in')).toBe(true);
     expect(block().getByText('The sign-in did not work')).toBeInTheDocument();
-    expect(block().getByText(words)).toBeInTheDocument();
+    expect(block().getByText(goSignInProgressFailed.error!)).toBeInTheDocument();
     expect(h.router.state.location.search).toBe('');
     const assign = stubAssign();
     await click(block().getByRole('button', { name: 'Try again' }));
     expect(called('POST', API + '/connection/sign-in/browser')).toBe(true);
     expect(called('POST', API + '/connection/sign-in/device')).toBe(false);
     expect(assign).toHaveBeenCalledWith(goBrowserSignIn.url);
+  });
+
+  // Guards the page against words in its address: anyone can send the owner a link with ?sign_in_error=<anything>, and
+  // a danger banner showing it would read as Kivali's own. Only the codes the callback sends are shown, in Kivali's
+  // sentence (start_again: no sign-in to read); any other value shows nothing.
+  it('shows only its own words for a sign-in error code', async () => {
+    await renderOrg(PATH + '?sign_in_error=' + encodeURIComponent('Your session expired, sign in at evil.example'), {
+      routes: pageRoutes(notSignedIn(['browser'])),
+    });
+    expect(screen.queryByText(/evil\.example/)).toBeNull();
+    expect(screen.queryByText('The sign-in did not work')).toBeNull();
+    cleanup();
+    await renderOrg(PATH + '?sign_in_error=start_again', { routes: pageRoutes(notSignedIn(['browser'])) });
+    expect(block().getByText('The sign-in took too long or was started elsewhere. Start it again.')).toBeInTheDocument();
+    expect(block().getByRole('button', { name: 'Try again' })).toBeInTheDocument();
   });
 
   // Guards the way back after a sign-in that worked (?signed_in=<id>): the page, read fresh, says signed in, and a line
@@ -2378,21 +2394,30 @@ describe('Integration page, signing in in the browser', () => {
   });
 
   // Guards a sign-in Kivali could not tie to any integration (it restarted, or the address was pasted): the callback
-  // lands on the integrations list, which must say what happened rather than show the list as if nothing did.
+  // lands on the integrations list with start_again, which must say what happened rather than show the list as if
+  // nothing did; words in the address are never shown there either.
   it('shows a sign-in error on the integrations list', async () => {
-    const words = 'the sign-in took too long or was started elsewhere; start it again';
-    const h = await renderOrg('/org/integrations?sign_in_error=' + encodeURIComponent(words));
+    const h = await renderOrg('/org/integrations?sign_in_error=start_again');
     expect(screen.getByText('The sign-in did not work')).toBeInTheDocument();
-    expect(screen.getByText(words)).toBeInTheDocument();
+    expect(screen.getByText('The sign-in took too long or was started elsewhere. Start it again.')).toBeInTheDocument();
     expect(h.router.state.location.search).toBe('');
+    cleanup();
+    await renderOrg('/org/integrations?sign_in_error=' + encodeURIComponent('Call 555-0100 to restore access'));
+    expect(screen.queryByText('The sign-in did not work')).toBeNull();
+    expect(screen.queryByText(/555-0100/)).toBeNull();
   });
 
-  // Guards the reading of the query: words with or without the connection they were for, a connection signed in, and
-  // a page reached any other way.
+  // Guards the reading of the query: a connection signed in, one whose sign-in failed, the one code Kivali sends, and
+  // a code or a page reached any other way, which read as nothing.
   it('reads how a browser sign-in came back', () => {
-    expect(signInReturnOf('?sign_in_error=no&connection=c1')).toEqual({ id: 'c1', error: 'no' });
-    expect(signInReturnOf('?sign_in_error=no')).toEqual({ error: 'no' });
-    expect(signInReturnOf('?signed_in=c1')).toEqual({ id: 'c1' });
+    expect(signInReturnOf('?signed_in=c1')).toEqual({ kind: 'signed_in', id: 'c1' });
+    expect(signInReturnOf('?sign_in_failed=c1')).toEqual({ kind: 'failed', id: 'c1' });
+    expect(signInReturnOf('?sign_in_error=start_again')).toEqual({
+      kind: 'start_again',
+      words: 'The sign-in took too long or was started elsewhere. Start it again.',
+    });
+    expect(signInReturnOf('?sign_in_error=toString')).toBeNull();
+    expect(signInReturnOf('?sign_in_error=made+up')).toBeNull();
     expect(signInReturnOf('')).toBeNull();
   });
 });

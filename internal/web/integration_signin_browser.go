@@ -14,7 +14,11 @@
 // exchanges the code and keeps the tokens as a device sign-in does
 // (finishSignIn), then sends the browser to the integration's page with
 // the result in the query: ?signed_in=<connection id>, or
-// ?sign_in_error=<words>.
+// ?sign_in_failed=<connection id>, whose words the page reads from
+// GET .../sign-in, or ?sign_in_error=start_again when there is no
+// sign-in to read. The query never carries words: anyone can link the
+// owner to the page with any query, and the page shows only what
+// Kivali said.
 //
 // The redirect address is the one the request reached Kivali at,
 // <scheme>://<host>/connect/callback, from X-Forwarded-Proto and
@@ -303,9 +307,12 @@ func (s *Server) handleAPISignInBrowser(byID bool) http.HandlerFunc {
 //
 // It answers with a redirect (303) to the integration's page
 // (connectReturn): ?signed_in=<connection id> once the tokens are kept
-// and the connection test ran, ?sign_in_error=<words> otherwise. A state that
-// names no sign-in returns to the page of the integration the cookie
-// names, or to the integrations list.
+// and the connection test ran, ?sign_in_failed=<connection id> once the
+// flow ended failed with its words, which the page reads from
+// GET .../sign-in. A state that names no sign-in, and a sign-in
+// cancelled meanwhile, answer ?sign_in_error=start_again, to the page
+// of the integration the flow or the cookie names, or to the
+// integrations list.
 func (s *Server) handleConnectCallback(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	q := r.URL.Query()
@@ -317,20 +324,24 @@ func (s *Server) handleConnectCallback(w http.ResponseWriter, r *http.Request) {
 
 	f := s.signInFlows.take(s.clk().Now(), q.Get("state"))
 	if f == nil {
-		connectReturn(w, r, cookieName, "", errSignInStartAgain)
+		connectReturn(w, r, cookieName, connectStartAgain, "")
 		return
 	}
 	defer close(f.done)
 	if cookieID != f.id {
 		s.signInFlows.end(f, s.clk().Now(), apitypes.SignInStateFailed, errSignInStartAgain)
-		connectReturn(w, r, f.name, f.connID, errSignInStartAgain)
+		connectReturn(w, r, f.name, connectFailed, f.connID)
 		return
 	}
-	if words := s.completeBrowserSignIn(f, q); words != "" {
-		connectReturn(w, r, f.name, f.connID, words)
-		return
+	switch words := s.completeBrowserSignIn(f, q); words {
+	case "":
+		connectReturn(w, r, f.name, connectSignedIn, f.connID)
+	case errSignInStopped:
+		// Cancelled and forgotten: there are no words to read.
+		connectReturn(w, r, f.name, connectStartAgain, "")
+	default:
+		connectReturn(w, r, f.name, connectFailed, f.connID)
 	}
-	connectReturn(w, r, f.name, f.connID, "")
 }
 
 // completeBrowserSignIn finishes f with the callback's query q: it
@@ -420,25 +431,33 @@ func vendorRefusalWords(code, description string, client connect.Client, more ..
 	return clipRunes("the service refused the sign-in ("+scrub.Replace(code)+")", signInWordsRunes)
 }
 
+// How a callback sends the browser back (connectReturn): the query
+// key, and for connectStartAgain its one value.
+const (
+	// connectSignedIn=<connection id>: signed in.
+	connectSignedIn = "signed_in"
+	// connectFailed=<connection id>: the sign-in ended failed; its
+	// words are the connection's GET .../sign-in.
+	connectFailed = "sign_in_failed"
+	// connectStartAgain: sign_in_error=start_again, there is no
+	// sign-in to read (it took too long, was used, was cancelled, or
+	// Kivali restarted). The page says so in its own words.
+	connectStartAgain = "start_again"
+)
+
 // connectReturn sends the browser back to name's page after a
-// callback: ?signed_in=<connID>, or ?sign_in_error=<words> with
-// &connection=<connID> when the connection is known, so a page of
-// several connections shows it on the right one. To the integrations
-// list when name is empty.
-func connectReturn(w http.ResponseWriter, r *http.Request, name, connID, words string) {
+// callback, to the integrations list when name is empty, with
+// ?<key>=<connID>, or ?sign_in_error=start_again for connectStartAgain.
+func connectReturn(w http.ResponseWriter, r *http.Request, name, key, connID string) {
 	target := "/org/integrations"
 	if name != "" {
 		target += "/" + url.PathEscape(name)
 	}
 	q := url.Values{}
-	switch {
-	case words == "":
-		q.Set("signed_in", connID)
-	case connID != "":
-		q.Set("sign_in_error", words)
-		q.Set("connection", connID)
-	default:
-		q.Set("sign_in_error", words)
+	if key == connectStartAgain {
+		q.Set("sign_in_error", connectStartAgain)
+	} else {
+		q.Set(key, connID)
 	}
 	http.Redirect(w, r, target+"?"+q.Encode(), http.StatusSeeOther)
 }
