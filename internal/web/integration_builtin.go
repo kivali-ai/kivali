@@ -148,7 +148,13 @@ func refuseVendorUnavailable(display string) string {
 // the note says so. jobID is text from the agent's pod: it only picks
 // which secrets are scrubbed and the label the audit names.
 func (s *Server) jobConnectionNote(ctx context.Context, v agentIntegration, jobID string, rowSecrets []string) (string, *strings.Replacer) {
-	_, _, jobSecrets, err := s.builtinConnectionSecrets(ctx, v.name, jobID)
+	// As stored: building a scrubber never sends a vendor a refresh.
+	// The stored tokens and the proxy credential's secret are among the
+	// secrets.
+	_, _, _, jobSecrets, proxySecret, _, err := s.Integrations.readStoredConnection(ctx, v.name, jobID)
+	if proxySecret != "" {
+		jobSecrets = append(jobSecrets, proxySecret)
+	}
 	if err != nil {
 		return " (it ran through a connection that is no longer there, so only the current connection's secrets were scrubbed)", newScrubber(rowSecrets)
 	}
