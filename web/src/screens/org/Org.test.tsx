@@ -1771,15 +1771,15 @@ describe('Integration page, several connections', () => {
     ...more,
   });
 
-  // Guards the Connections block of an integration that takes several (integration_page_multiple.json): one card per
-  // connection, named by its label and filled with its own values, each saving to and testing its own id; and Add a
-  // connection opens a blank form with a label whose body is connection_create.json. A card that saved through the
-  // singular route, or showed the first connection's host in the second, would change the wrong account.
-  it('draws a card per connection and saves, tests and adds by id', async () => {
+  // Guards the Connections block of an integration that takes several (integration_page_multiple.json, Git's page):
+  // one card per connection, named by its label and filled with its own values, each saving to its own id, with no
+  // Test connection since Git has none; and Add a connection opens a blank form with a label whose body is
+  // connection_create.json. A card that saved through the singular route, or showed the first connection's host in
+  // the second, would change the wrong account.
+  it('draws a card per connection and saves and adds by id', async () => {
     await renderOrg(PATH, {
       routes: gitRoutes({
         ['PUT ' + API + '/connections/' + LAB.id]: goIntegrationPageMultiple,
-        ['POST ' + API + '/connections/' + HUB.id + '/verify']: goIntegrationPageMultiple,
         ['POST ' + API + '/connections']: goIntegrationPageMultiple,
       }),
     });
@@ -1792,22 +1792,19 @@ describe('Integration page, several connections', () => {
     expect(lab.getByLabelText('Label')).toHaveValue('Company GitLab');
     expect(lab.getByLabelText('Access token')).toHaveAttribute('placeholder', 'Stored');
     expect(lab.getByText('Reconnect needed')).toBeInTheDocument();
-    expect(lab.getByText('The host refused the token.').closest('[role="alert"]')).toHaveClass('kv-banner--danger');
     expect(hub.queryByText('Reconnect needed')).toBeNull();
-    expect(hub.getByText(/^Verified .*: Connected as Acme Marketing$/)).toBeInTheDocument();
+    expect(block.queryByRole('button', { name: 'Test connection' })).toBeNull();
+    expect(block.queryByText(/^Verified /)).toBeNull();
 
     fireEvent.change(lab.getByLabelText('Host'), { target: { value: 'gitlab.example.org' } });
     await click(lab.getByRole('button', { name: 'Save connection' }));
     // The label was not typed into, so it is not sent: one the integration derives keeps following the host.
-    expect(lastBody('PUT', API + '/connections/' + LAB.id)).toEqual({ fields: { host: 'gitlab.example.org', test_repository: '' } });
+    expect(lastBody('PUT', API + '/connections/' + LAB.id)).toEqual({ fields: { host: 'gitlab.example.org' } });
     expect(called('PUT', API + '/connection')).toBe(false);
     const labAgain = within(block.getByRole('region', { name: 'Company GitLab' }));
     fireEvent.change(labAgain.getByLabelText('Label'), { target: { value: 'GitLab' } });
     await click(labAgain.getByRole('button', { name: 'Save connection' }));
-    expect(lastBody('PUT', API + '/connections/' + LAB.id)).toEqual({ label: 'GitLab', fields: { host: 'gitlab.example.com', test_repository: '' } });
-
-    await click(within(block.getByRole('region', { name: 'GitHub' })).getByRole('button', { name: 'Test connection' }));
-    expect(called('POST', API + '/connections/' + HUB.id + '/verify')).toBe(true);
+    expect(lastBody('PUT', API + '/connections/' + LAB.id)).toEqual({ label: 'GitLab', fields: { host: 'gitlab.example.com' } });
 
     await click(block.getByRole('button', { name: 'Add a connection' }));
     const added = within(block.getByRole('region', { name: 'New connection' }));
@@ -1822,13 +1819,29 @@ describe('Integration page, several connections', () => {
     expect(block.getByRole('button', { name: 'Add a connection' })).toBeInTheDocument();
   });
 
-  // Guards the cards of an integration with no connection test (connection_test false): no card offers Test
-  // connection, which the server can only refuse.
-  it('offers no Test connection on a card when the integration has none', async () => {
-    await renderOrg(PATH, { routes: gitRoutes({ ['GET ' + API]: { ...goIntegrationPageMultiple, connection_test: false } }) });
+  // Guards the cards of an integration that takes several connections and has a connection test (connection_test
+  // true; no built-in today, so the Git page stands in): each card shows its own last result, a failed one in a danger
+  // banner, and tests its own id. A card that tested through the singular route, or showed another card's result,
+  // would report on the wrong account.
+  it('tests each card by its id when the integration has a connection test', async () => {
+    const tested = {
+      ...goIntegrationPageMultiple,
+      connection_test: true,
+      connections: [
+        { ...HUB, verified_at: '2026-10-21T10:00:00Z', verified: true, verify_message: 'Connected as octo' },
+        { ...LAB, verified_at: '2026-10-21T10:00:00Z', verified: false, verify_message: 'The host refused the token.' },
+      ],
+    };
+    await renderOrg(PATH, { routes: gitRoutes({ ['GET ' + API]: tested, ['POST ' + API + '/connections/' + LAB.id + '/verify']: tested }) });
     const block = within(screen.getByRole('region', { name: 'Connections' }));
-    expect(block.getAllByRole('button', { name: 'Save connection' })).toHaveLength(2);
-    expect(block.queryByRole('button', { name: 'Test connection' })).toBeNull();
+    const hub = within(block.getByRole('region', { name: 'GitHub' }));
+    const lab = within(block.getByRole('region', { name: 'Company GitLab' }));
+    expect(hub.getByText(/^Verified .*: Connected as octo$/)).toBeInTheDocument();
+    expect(lab.getByText('The host refused the token.').closest('[role="alert"]')).toHaveClass('kv-banner--danger');
+    expect(lab.queryByText(/^Verified /)).toBeNull();
+    await click(lab.getByRole('button', { name: 'Test connection' }));
+    expect(called('POST', API + '/connections/' + LAB.id + '/verify')).toBe(true);
+    expect(called('POST', API + '/connections/' + HUB.id + '/verify')).toBe(false);
   });
 
   // Guards Delete on one of several connections: it waits for the danger dialog, which names the agents whose access

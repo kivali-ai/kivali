@@ -5,16 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
-	"net/http"
-	"net/http/cgi"
-	"net/http/httptest"
-	"net/url"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"testing"
 
 	"github.com/kivali-ai/kivali/internal/builtinintegrations"
@@ -34,12 +25,13 @@ func dana(patterns ...any) builtinintegrations.Caller {
 
 // Why this test exists: the manifest is what the Org page draws the
 // connection and access forms from and what boot writes to every team.
-// It must pass the built-in check, ask for the host, the token (a
-// secret) and the test repository in that order, take repositories as
-// its one required access field (so an access set before push stays
-// valid) followed by the push switch, its refs and the force switch
-// marked dangerous, and list exactly clone, fetch and push, the
-// actions Call and Tools know.
+// It must pass the built-in check, ask for the host and the token (a
+// secret) in that order, take repositories as its one required access
+// field (so an access set before push stays valid) followed by the
+// push switch, its refs and the force switch marked dangerous, list
+// exactly clone, fetch and push, the actions Call and Tools know, and
+// name no kivali.verify, so that Kivali's server never reaches a git
+// host itself.
 func TestManifest(t *testing.T) {
 	m := New().Manifest()
 	if f := integration.ValidateBuiltin(m); len(f) != 0 {
@@ -49,8 +41,11 @@ func TestManifest(t *testing.T) {
 	for _, f := range m.UserConfig {
 		keys = append(keys, f.Key)
 	}
-	if strings.Join(keys, ",") != "host,token,test_repository" || !m.UserConfig[1].Sensitive || !m.UserConfig[0].Required || m.UserConfig[2].Required {
+	if strings.Join(keys, ",") != "host,token" || !m.UserConfig[1].Sensitive || !m.UserConfig[0].Required || !m.UserConfig[1].Required {
 		t.Errorf("user_config = %+v", m.UserConfig)
+	}
+	if m.Kivali.Verify != "" {
+		t.Errorf("kivali.verify = %q", m.Kivali.Verify)
 	}
 	form := integration.AccessForm(m)
 	if form == nil || len(form.Fields) != 4 {
@@ -73,7 +68,7 @@ func TestManifest(t *testing.T) {
 			t.Errorf("access field %d = %+v, want %+v", i, f, w)
 		}
 	}
-	if m.Version != "1.1.0" {
+	if m.Version != "1.2.0" {
 		t.Errorf("version = %s", m.Version)
 	}
 	tools, _ := New().Tools(context.Background(), builtinintegrations.Caller{})
@@ -490,134 +485,6 @@ func TestPushStartedRow(t *testing.T) {
 	}
 }
 
-// gitCLI is the git binary; a test that needs it is skipped where
-// there is none.
-func gitCLI(t *testing.T) string {
-	t.Helper()
-	p, err := exec.LookPath("git")
-	if err != nil {
-		t.Skip("git is not on PATH")
-	}
-	return p
-}
-
-func runGit(t *testing.T, dir string, args ...string) {
-	t.Helper()
-	cmd := exec.Command(gitCLI(t), args...)
-	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null",
-		"GIT_AUTHOR_NAME=T", "GIT_AUTHOR_EMAIL=t@example.com", "GIT_COMMITTER_NAME=T", "GIT_COMMITTER_EMAIL=t@example.com")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git %v: %v\n%s", args, err, out)
-	}
-}
-
-// publicIP is a resolver hook that finds every host public, so a test
-// reaches its httptest server on 127.0.0.1 past the check.
-func publicIP(context.Context, string) ([]net.IP, error) {
-	return []net.IP{net.ParseIP("140.82.112.3")}, nil
-}
-
-// Why this test exists: Test connection with a repository named lists
-// it from core with the token, over the smart HTTP protocol, and the
-// owner reads the branch count; a token the host refuses must fail
-// with the host's words, never quoting the token back; and a redirect
-// (a renamed or transferred repository) must fail rather than be
-// followed with the token to a repository nobody named.
-func TestVerifyListsTheRepository(t *testing.T) {
-	root := t.TempDir()
-	work := t.TempDir()
-	runGit(t, work, "init", "-q", "-b", "main")
-	if err := os.WriteFile(filepath.Join(work, "f"), []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	runGit(t, work, "add", "f")
-	runGit(t, work, "commit", "-q", "-m", "one")
-	runGit(t, work, "branch", "dev")
-	bare := filepath.Join(root, "acme", "widgets.git")
-	runGit(t, "", "init", "-q", "--bare", "-b", "main", bare)
-	runGit(t, work, "push", "-q", bare, "main", "dev")
-	backend := cgi.Handler{Path: gitCLI(t), Args: []string{"http-backend"},
-		Env: []string{"GIT_PROJECT_ROOT=" + root, "GIT_HTTP_EXPORT_ALL=1", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null", "REMOTE_USER=x"}}
-	var widgets atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if u, p, _ := r.BasicAuth(); u != "x-access-token" || p != testToken {
-			w.Header().Set("WWW-Authenticate", `Basic realm="git"`)
-			http.Error(w, "bad credentials "+p, http.StatusUnauthorized)
-			return
-		}
-		if rest, ok := strings.CutPrefix(r.URL.Path, "/acme/old.git"); ok {
-			http.Redirect(w, r, "/acme/widgets.git"+rest+"?"+r.URL.RawQuery, http.StatusMovedPermanently)
-			return
-		}
-		widgets.Add(1)
-		backend.ServeHTTP(w, r)
-	}))
-	defer srv.Close()
-	u, _ := url.Parse(srv.URL)
-	g := &Git{InsecureHTTP: true, LookupIP: publicIP}
-	conn := testConn(u.Host)
-	conn.Fields["test_repository"] = "acme/widgets"
-	msg, err := g.Verify(context.Background(), conn)
-	if err != nil || msg != "Connected. 2 branches in acme/widgets." {
-		t.Fatalf("verify = %q, %v", msg, err)
-	}
-	conn.Fields["test_repository"] = "acme/old"
-	before := widgets.Load()
-	_, err = g.Verify(context.Background(), conn)
-	if err == nil || !strings.Contains(err.Error(), "the repository moved") || widgets.Load() != before {
-		t.Errorf("a redirect = %v, %d requests reached the target", err, widgets.Load()-before)
-	}
-	conn.Fields["test_repository"] = "acme/widgets"
-	conn.Fields["token"] = testToken + "-wrong"
-	_, err = g.Verify(context.Background(), conn)
-	if err == nil || !strings.Contains(err.Error(), "did not list acme/widgets") || strings.Contains(err.Error(), testToken) ||
-		!strings.Contains(err.Error(), tokenPlaceholder) {
-		t.Errorf("a wrong token = %v", err)
-	}
-}
-
-// Why this test exists: Test connection runs in Kivali's server, which
-// can reach the cluster and the machine it runs on. A connection host
-// that names, or resolves to, a loopback, private or link-local address
-// (a metadata service, the cluster's API) must be refused before any
-// request, the token in it, is sent; so must a host that does not
-// resolve.
-func TestVerifyReachesOnlyPublicHosts(t *testing.T) {
-	var hits atomic.Int32
-	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		hits.Add(1)
-		_, _ = w.Write([]byte(`{"login":"octo"}`))
-	}))
-	defer api.Close()
-	private := func(context.Context, string) ([]net.IP, error) {
-		return []net.IP{net.ParseIP("140.82.112.3"), net.ParseIP("10.0.0.7")}, nil
-	}
-	unknown := func(context.Context, string) ([]net.IP, error) { return nil, errors.New("no such host") }
-	for name, c := range map[string]struct {
-		g     *Git
-		host  string
-		words string
-	}{
-		"resolves privately": {&Git{HTTPClient: api.Client(), GitHubAPI: api.URL, LookupIP: private}, "github.com", "Test connection reaches only public hosts."},
-		"loopback literal":   {&Git{HTTPClient: api.Client(), GitHubAPI: api.URL}, "127.0.0.1", "Test connection reaches only public hosts."},
-		"metadata literal":   {&Git{HTTPClient: api.Client(), GitHubAPI: api.URL}, "169.254.169.254", "Test connection reaches only public hosts."},
-		"does not resolve":   {&Git{HTTPClient: api.Client(), GitHubAPI: api.URL, LookupIP: unknown}, "github.com", "github.com does not resolve"},
-	} {
-		conn := testConn(c.host)
-		conn.Fields["test_repository"] = "acme/widgets"
-		if _, err := c.g.Verify(context.Background(), conn); err == nil || err.Error() != c.words {
-			t.Errorf("%s = %v", name, err)
-		}
-		if _, err := c.g.Verify(context.Background(), testConn(c.host)); err == nil || err.Error() != c.words {
-			t.Errorf("%s, no repository = %v", name, err)
-		}
-	}
-	if n := hits.Load(); n != 0 {
-		t.Errorf("%d requests were sent", n)
-	}
-}
-
 // Why this test exists: a connection is checked when it is saved, so a
 // host the integration could never reach is a 400 the owner reads at
 // once rather than every agent's call refused later; and an access
@@ -640,45 +507,5 @@ func TestCheckConnectionAndAccess(t *testing.T) {
 	}
 	if err := g.CheckAccess(map[string]any{"repositories": []any{"acme/*", "acme/[x"}}); err == nil || err.Error() != "acme/[x is not a repository or a pattern" {
 		t.Errorf("a bad pattern = %v", err)
-	}
-}
-
-// Why this test exists: Test connection without a repository asks the
-// host's own account endpoint who the token is: GitHub with a bearer
-// token, GitLab with PRIVATE-TOKEN. The owner reads the account's name,
-// or the host's words on a refusal with the token taken out; any other
-// host has no such endpoint, and the owner is told to name a
-// repository.
-func TestVerifyAccountEndpoints(t *testing.T) {
-	var seen http.Header
-	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		seen = r.Header.Clone()
-		switch {
-		case r.URL.Path == "/gh/user" && r.Header.Get("Authorization") == "Bearer "+testToken:
-			_, _ = w.Write([]byte(`{"login":"octo"}`))
-		case r.URL.Path == "/gl/user" && r.Header.Get("PRIVATE-TOKEN") == testToken:
-			_, _ = w.Write([]byte(`{"username":"tanuki"}`))
-		default:
-			w.WriteHeader(http.StatusUnauthorized)
-			_, _ = w.Write([]byte(`{"message":"Bad credentials for ` + r.Header.Get("Authorization") + r.Header.Get("PRIVATE-TOKEN") + `"}`))
-		}
-	}))
-	defer api.Close()
-	g := &Git{HTTPClient: api.Client(), GitHubAPI: api.URL + "/gh", GitLabAPI: api.URL + "/gl", LookupIP: publicIP}
-	if msg, err := g.Verify(context.Background(), testConn("github.com")); err != nil || msg != "Connected to github.com as octo." {
-		t.Errorf("github = %q, %v (headers %v)", msg, err, seen)
-	}
-	if msg, err := g.Verify(context.Background(), testConn("gitlab.com")); err != nil || msg != "Connected to gitlab.com as tanuki." {
-		t.Errorf("gitlab = %q, %v", msg, err)
-	}
-	wrong := testConn("github.com")
-	wrong.Fields["token"] = testToken + "-wrong"
-	_, err := g.Verify(context.Background(), wrong)
-	if err == nil || !strings.Contains(err.Error(), "Bad credentials") || strings.Contains(err.Error(), testToken) {
-		t.Errorf("a refused token = %v", err)
-	}
-	if _, err := g.Verify(context.Background(), testConn("git.acme.io")); err == nil ||
-		err.Error() != "Name a repository for Test connection: this host has no account endpoint Kivali knows." {
-		t.Errorf("another host = %v", err)
 	}
 }

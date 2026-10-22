@@ -2,7 +2,6 @@
   "label": "Staging GitLab",
   "fields": {
     "host": "gitlab-staging.example.com",
-    "test_repository": "",
     "token": "glpat-..."
   }
 }

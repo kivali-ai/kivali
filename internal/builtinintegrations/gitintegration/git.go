@@ -9,8 +9,8 @@
 // run it (POST /v1/git, internal/agentshell/git.go) and sends the call
 // again with the result, which Complete puts in words. Everything local
 // (status, branch, commit, merge) is plain git in the agent's shell,
-// which reaches only the hosts on the team's allow list. Test
-// connection runs in core.
+// which reaches only the hosts on the team's allow list. It has no
+// connection test: core never reaches the host itself.
 package gitintegration
 
 import (
@@ -18,8 +18,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
-	"net/http"
 	"strings"
 
 	"github.com/kivali-ai/kivali/internal/builtinintegrations"
@@ -55,20 +53,9 @@ const tokenUser = "x-access-token"
 // Git is the built-in. Its fields are test hooks; the zero value is
 // what the binary runs.
 type Git struct {
-	// InsecureHTTP makes the URLs it builds http:// and lets Test
-	// connection list a repository over http://: for tests, whose git
-	// server is an httptest one. The binary never sets it.
+	// InsecureHTTP makes the URLs it builds http://: for tests, whose
+	// git server is an httptest one. The binary never sets it.
 	InsecureHTTP bool
-	// HTTPClient asks the account endpoints Test connection uses; nil
-	// is http.DefaultClient.
-	HTTPClient *http.Client
-	// GitHubAPI and GitLabAPI are those endpoints' bases; empty, the
-	// real ones.
-	GitHubAPI string
-	GitLabAPI string
-	// LookupIP resolves the connection's host for Test connection's
-	// check that it is public; nil is the system's resolver.
-	LookupIP func(ctx context.Context, host string) ([]net.IP, error)
 }
 
 // New is the built-in as the binary runs it.
@@ -93,6 +80,12 @@ func (g *Git) ConnectionLabel(conn builtinintegrations.Connection) string {
 	}
 	return host
 }
+
+// ownerWords is an error whose text is a sentence for the owner, as
+// the connection form shows it.
+type ownerWords string
+
+func (e ownerWords) Error() string { return string(e) }
 
 // errBadHost is a connection whose host is not one.
 const errBadHost = ownerWords("Host is a host name such as github.com, without https:// or a path")
@@ -146,7 +139,7 @@ func (g *Git) Manifest() *integration.Manifest {
 	return &integration.Manifest{
 		ManifestVersion: "0.3",
 		Name:            Name,
-		Version:         "1.1.0",
+		Version:         "1.2.0",
 		DisplayName:     "Git",
 		Description:     "Clones, fetches and pushes repositories over HTTPS with the owner's token; agents use plain git for everything local.",
 		Author:          integration.Author{Name: "Kivali"},
@@ -155,8 +148,6 @@ func (g *Git) Manifest() *integration.Manifest {
 				Description: "github.com, gitlab.com or any HTTPS git host, without https://"},
 			{Key: "token", Type: "string", Title: "Access token", Sensitive: true, Required: true,
 				Description: "A fine-grained personal access token on GitHub, or the host's equivalent, that can read the repositories agents will use"},
-			{Key: "test_repository", Type: "string", Title: "Repository for Test connection",
-				Description: "owner/name. Test connection lists its branches. Empty, it checks the token with GitHub's or GitLab's account endpoint."},
 		},
 		Tools: []integration.Tool{
 			{Name: actionClone, Description: "Clones a repository the agent's access includes into the agent's files, with the connection's token."},
@@ -166,7 +157,6 @@ func (g *Git) Manifest() *integration.Manifest {
 		Kivali: integration.Kivali{
 			Connection: integration.Connection{Method: "token", Multiple: true},
 			Access:     &integration.Access{Schema: json.RawMessage(accessSchema)},
-			Verify:     "ls_remote",
 		},
 	}
 }
@@ -194,6 +184,12 @@ func (g *Git) Hosts(conn builtinintegrations.Connection) []string {
 // Choices: git's access form lists no options.
 func (g *Git) Choices(context.Context, builtinintegrations.Connection, string) ([]string, error) {
 	return nil, errors.New("Git lists no options")
+}
+
+// Verify: git's manifest names no kivali.verify, so core offers no
+// Test connection and never calls this.
+func (g *Git) Verify(context.Context, builtinintegrations.Connection) (string, error) {
+	return "", errors.New("Git has no connection test")
 }
 
 // call is one clone, fetch or push as core checked it.
