@@ -12,6 +12,7 @@ import goIntegrationPageMultipleJson from '../../../../internal/web/apitypes/tes
 import goIntegrationUploadRefusedJson from '../../../../internal/web/apitypes/testdata/integration_upload_refused.json';
 import goIntegrationVersionJson from '../../../../internal/web/apitypes/testdata/integration_version.json';
 import goIntegrationVersionBuiltinJson from '../../../../internal/web/apitypes/testdata/integration_version_builtin.json';
+import goIntegrationVersionShippedJson from '../../../../internal/web/apitypes/testdata/integration_version_shipped.json';
 import goIntegrationsJson from '../../../../internal/web/apitypes/testdata/integrations.json';
 import goNetworkJson from '../../../../internal/web/apitypes/testdata/network.json';
 import goOrgJson from '../../../../internal/web/apitypes/testdata/org.json';
@@ -71,6 +72,7 @@ export const goIntegrationPageMultiple = (goIntegrationPageMultipleJson satisfie
 export const goIntegrationVersion = (goIntegrationVersionJson satisfies Wire<IntegrationVersion>) as IntegrationVersion;
 /** A version of an integration that ships with Kivali. */
 export const goIntegrationVersionBuiltin = (goIntegrationVersionBuiltinJson satisfies Wire<IntegrationVersion>) as IntegrationVersion;
+export const goIntegrationVersionShipped = (goIntegrationVersionShippedJson satisfies Wire<IntegrationVersion>) as IntegrationVersion;
 export const goIntegrationUploadRefused = (goIntegrationUploadRefusedJson satisfies Wire<IntegrationUploadRefused>) as IntegrationUploadRefused;
 export const goIntegrationLogs = (goIntegrationLogsJson satisfies Wire<IntegrationLogs>) as IntegrationLogs;
 export const goIntegrationAudit = (goIntegrationAuditJson satisfies Wire<IntegrationAudit>) as IntegrationAudit;
