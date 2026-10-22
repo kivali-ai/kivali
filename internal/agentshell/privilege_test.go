@@ -67,6 +67,14 @@ func (f *fakeCreds) DropBoundingCap(capability int) error {
 	return nil
 }
 
+func (f *fakeCreds) SetNoNewPrivs() error {
+	if skip, err := f.call("nonewprivs", "no_new_privs"); skip || err != nil {
+		return err
+	}
+	f.ids.NoNewPrivs = true
+	return nil
+}
+
 func (f *fakeCreds) SetKeepCaps(keep bool) error {
 	if skip, err := f.call("keepcaps", fmt.Sprintf("keepcaps %v", keep)); skip || err != nil {
 		return err
@@ -165,6 +173,7 @@ func userCreds(log *[]string) *fakeCreds {
 
 // dropSequence is DropPrivileges' calls after the bounding set.
 var dropSequence = []string{
+	"no_new_privs",
 	"keepcaps true",
 	"setresgid 65532 65532 65532",
 	"setgroups []",
@@ -201,7 +210,7 @@ func TestDropPrivilegesOrderAndResult(t *testing.T) {
 	if !reflect.DeepEqual(log, want) {
 		t.Errorf("calls = %q\nwant  %q", log, want)
 	}
-	wantIDs := IDs{RUID: 65533, EUID: 65533, SUID: 65533, FSUID: 65532, RGID: 65532, EGID: 65532, SGID: 65532, FSGID: 65532, Groups: []int{}}
+	wantIDs := IDs{RUID: 65533, EUID: 65533, SUID: 65533, FSUID: 65532, RGID: 65532, EGID: 65532, SGID: 65532, FSGID: 65532, Groups: []int{}, NoNewPrivs: true}
 	if !reflect.DeepEqual(c.ids, wantIDs) {
 		t.Errorf("ids = %s, want %s", c.ids, wantIDs)
 	}
@@ -236,6 +245,8 @@ func TestDropPrivilegesFailures(t *testing.T) {
 		"bounding drop fails":    func(c *fakeCreds) { c.fail["capbsetdrop"] = errors.New("EPERM") },
 		"bounding drop lies":     func(c *fakeCreds) { c.lie["capbsetdrop"] = true },
 		"no CAP_SETPCAP to drop": func(c *fakeCreds) { c.caps.Eff &^= 1 << capSetpcap },
+		"no_new_privs fails":     func(c *fakeCreds) { c.fail["nonewprivs"] = errors.New("EINVAL") },
+		"no_new_privs lies":      func(c *fakeCreds) { c.lie["nonewprivs"] = true },
 		"keepcaps fails":         func(c *fakeCreds) { c.fail["keepcaps"] = errors.New("EINVAL") },
 		"keepcaps lies":          func(c *fakeCreds) { c.lie["keepcaps"] = true },
 		"setresgid fails":        func(c *fakeCreds) { c.fail["setresgid"] = errors.New("EPERM") },
@@ -282,7 +293,7 @@ func TestVerifyDaemon(t *testing.T) {
 	good := func() *fakeCreds {
 		var log []string
 		c := userCreds(&log)
-		c.ids = IDs{RUID: 65533, EUID: 65533, SUID: 65533, FSUID: 65532, RGID: 65532, EGID: 65532, SGID: 65532, FSGID: 65532, Groups: []int{}}
+		c.ids = IDs{RUID: 65533, EUID: 65533, SUID: 65533, FSUID: 65532, RGID: 65532, EGID: 65532, SGID: 65532, FSGID: 65532, Groups: []int{}, NoNewPrivs: true}
 		c.caps = Caps{Prm: DaemonCaps, Eff: DaemonCaps, Bnd: DaemonCaps}
 		return c
 	}
@@ -299,6 +310,7 @@ func TestVerifyDaemon(t *testing.T) {
 		"saved gid":        func(c *fakeCreds) { c.ids.SGID = 0 },
 		"filesystem gid":   func(c *fakeCreds) { c.ids.FSGID = 0 },
 		"groups":           func(c *fakeCreds) { c.ids.Groups = []int{65532} },
+		"no_new_privs":     func(c *fakeCreds) { c.ids.NoNewPrivs = false },
 		"permitted extra":  func(c *fakeCreds) { c.caps.Prm |= 1 << 21 },
 		"effective short":  func(c *fakeCreds) { c.caps.Eff = 1 << capSetuid },
 		"bounding extra":   func(c *fakeCreds) { c.caps.Bnd = dockerDefaultCaps },
@@ -554,7 +566,7 @@ func TestParseProcStatus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseProcStatus: %v", err)
 	}
-	wantIDs := IDs{RUID: 65533, EUID: 65533, SUID: 65533, FSUID: 65532, RGID: 65532, EGID: 65532, SGID: 65532, FSGID: 65532, Groups: []int{}}
+	wantIDs := IDs{RUID: 65533, EUID: 65533, SUID: 65533, FSUID: 65532, RGID: 65532, EGID: 65532, SGID: 65532, FSGID: 65532, Groups: []int{}, NoNewPrivs: true}
 	if !reflect.DeepEqual(ids, wantIDs) {
 		t.Errorf("ids = %s, want %s", ids, wantIDs)
 	}
@@ -563,31 +575,33 @@ func TestParseProcStatus(t *testing.T) {
 	}
 
 	// Root in a default container, with groups and an ambient set.
-	ids, caps, err = ParseProcStatus("Uid:\t0\t0\t0\t0\nGid:\t0\t0\t0\t0\nGroups:\t0 1 2 \nCapInh:\t0000000000000000\nCapPrm:\t00000000a80425fb\nCapEff:\t00000000a80425fb\nCapBnd:\t00000000a80425fb\nCapAmb:\t0000000000001000\n")
+	ids, caps, err = ParseProcStatus("Uid:\t0\t0\t0\t0\nGid:\t0\t0\t0\t0\nGroups:\t0 1 2 \nCapInh:\t0000000000000000\nCapPrm:\t00000000a80425fb\nCapEff:\t00000000a80425fb\nCapBnd:\t00000000a80425fb\nCapAmb:\t0000000000001000\nNoNewPrivs:\t0\n")
 	if err != nil || !reflect.DeepEqual(ids.Groups, []int{0, 1, 2}) || caps != (Caps{Prm: dockerDefaultCaps, Eff: dockerDefaultCaps, Bnd: dockerDefaultCaps, Amb: 0x1000}) {
 		t.Errorf("root status = %s %s, %v", ids, caps, err)
 	}
 
 	// A kernel without ambient capabilities has no CapAmb line.
-	if _, caps, err := ParseProcStatus("Uid:\t1\t1\t1\t1\nGid:\t1\t1\t1\t1\nGroups:\nCapInh:\t0\nCapPrm:\t0\nCapEff:\t0\nCapBnd:\t0\n"); err != nil || caps != (Caps{}) {
+	if _, caps, err := ParseProcStatus("Uid:\t1\t1\t1\t1\nGid:\t1\t1\t1\t1\nGroups:\nCapInh:\t0\nCapPrm:\t0\nCapEff:\t0\nCapBnd:\t0\nNoNewPrivs:\t0\n"); err != nil || caps != (Caps{}) {
 		t.Errorf("without CapAmb = %s, %v", caps, err)
 	}
 
-	full := "Uid:\t1\t1\t1\t1\nGid:\t1\t1\t1\t1\nGroups:\t\nCapInh:\t0\nCapPrm:\t0\nCapEff:\t0\nCapBnd:\t0\n"
+	full := "Uid:\t1\t1\t1\t1\nGid:\t1\t1\t1\t1\nGroups:\t\nCapInh:\t0\nCapPrm:\t0\nCapEff:\t0\nCapBnd:\t0\nNoNewPrivs:\t0\n"
 	bad := map[string]string{
-		"empty":         "",
-		"three uids":    strings.Replace(full, "Uid:\t1\t1\t1\t1", "Uid:\t1\t1\t1", 1),
-		"bad gid":       strings.Replace(full, "Gid:\t1\t1\t1\t1", "Gid:\t1\tx\t1\t1", 1),
-		"bad group":     strings.Replace(full, "Groups:\t", "Groups:\tx", 1),
-		"bad cap":       strings.Replace(full, "CapEff:\t0", "CapEff:\tzz", 1),
-		"no Uid":        strings.Replace(full, "Uid:", "Xid:", 1),
-		"no Gid":        strings.Replace(full, "Gid:", "Xid:", 1),
-		"no Groups":     strings.Replace(full, "Groups:", "Xroups:", 1),
-		"no CapInh":     strings.Replace(full, "CapInh:", "XapInh:", 1),
-		"no CapPrm":     strings.Replace(full, "CapPrm:", "XapPrm:", 1),
-		"no CapEff":     strings.Replace(full, "CapEff:", "XapEff:", 1),
-		"no CapBnd":     strings.Replace(full, "CapBnd:", "XapBnd:", 1),
-		"name, nothing": "Name:\tx\n",
+		"empty":          "",
+		"three uids":     strings.Replace(full, "Uid:\t1\t1\t1\t1", "Uid:\t1\t1\t1", 1),
+		"bad gid":        strings.Replace(full, "Gid:\t1\t1\t1\t1", "Gid:\t1\tx\t1\t1", 1),
+		"bad group":      strings.Replace(full, "Groups:\t", "Groups:\tx", 1),
+		"bad cap":        strings.Replace(full, "CapEff:\t0", "CapEff:\tzz", 1),
+		"no Uid":         strings.Replace(full, "Uid:", "Xid:", 1),
+		"no Gid":         strings.Replace(full, "Gid:", "Xid:", 1),
+		"no Groups":      strings.Replace(full, "Groups:", "Xroups:", 1),
+		"no CapInh":      strings.Replace(full, "CapInh:", "XapInh:", 1),
+		"no CapPrm":      strings.Replace(full, "CapPrm:", "XapPrm:", 1),
+		"no CapEff":      strings.Replace(full, "CapEff:", "XapEff:", 1),
+		"no CapBnd":      strings.Replace(full, "CapBnd:", "XapBnd:", 1),
+		"no NoNewPrivs":  strings.Replace(full, "NoNewPrivs:", "XoNewPrivs:", 1),
+		"bad NoNewPrivs": strings.Replace(full, "NoNewPrivs:\t0", "NoNewPrivs:\tx", 1),
+		"name, nothing":  "Name:\tx\n",
 	}
 	for name, s := range bad {
 		if _, _, err := ParseProcStatus(s); err == nil {

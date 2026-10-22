@@ -187,24 +187,29 @@ as root, the daemon:
    at most the install's own 20-minute bound plus a grace, then counts
    every package failed ("the installation did not finish in time").
 2. drops itself to its own user (`agentshell.DropPrivileges`), on every
-   thread of the process (credentials, capability sets, keepcaps and
-   the filesystem uid are per thread; the binary is built with
+   thread of the process (credentials, capability sets, keepcaps,
+   no_new_privs and the filesystem uid are per thread; the binary is built with
    `CGO_ENABLED=0`, where `syscall.AllThreadsSyscall` works, and the
    daemon exits rather than serve if it does not): it drops every
    capability but CAP_SETUID, CAP_SETGID and CAP_KILL from the bounding
    set (`PR_CAPBSET_DROP`, while it still has CAP_SETPCAP; a container
    started with the three alone has nothing to drop), sets
-   `PR_SET_KEEPCAPS`, `setresgid` to `--run-as`'s gid (65532),
+   `PR_SET_NO_NEW_PRIVS` itself (so a command that execs a setuid-root
+   binary from the image gets no privileges, whatever the pod spec says;
+   the pod spec's `allowPrivilegeEscalation: false` sets it too, and
+   setting it again changes nothing), sets `PR_SET_KEEPCAPS`, `setresgid` to `--run-as`'s gid (65532),
    `setgroups([])`, `setresuid` to `--daemon-uid` (65533), clears
    keepcaps, `capset`s the permitted and effective sets to the three
    (mask `0xe0`) with an empty inheritable set, and `setfsuid` to
    `--run-as`'s uid (65532). It then reads `/proc/self/status` back and
    exits unless it shows `Uid: 65533 65533 65533 65532`,
-   `Gid: 65532 65532 65532 65532`, no groups, `CapInh` and `CapAmb` 0,
-   and `CapPrm`, `CapEff` and `CapBnd` each `00000000000000e0`;
+   `Gid: 65532 65532 65532 65532`, no groups, `NoNewPrivs: 1`, `CapInh`
+   and `CapAmb` 0, and `CapPrm`, `CapEff` and `CapBnd` each
+   `00000000000000e0`;
 3. only then creates `$HOME` (as 65532, through its filesystem uid),
    the socket (with its filesystem uid briefly 65533, so the socket is
-   65533:65532, mode 0660), and serves. Every command it starts runs as
+   65533:65532, mode 0660), and serves. A daemon that did not drop
+   keeps its socket to itself, mode 0600. Every command it starts runs as
    `--run-as`, 65532:65532 with no supplementary groups, and has no
    capabilities after exec.
 
