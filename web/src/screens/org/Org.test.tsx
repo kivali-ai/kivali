@@ -1550,6 +1550,18 @@ describe('Integration page', () => {
     expect(screen.queryByText(/^Verified /)).toBeNull();
   });
 
+  // Guards an integration with no connection test (connection_test false: its manifest names no kivali.verify). The
+  // page must offer no Test connection, which the server can only refuse, and must not say it is unavailable while
+  // the integration is not running. Save connection and Disconnect stay.
+  it('offers no Test connection to an integration without one', async () => {
+    const untested = { ...goIntegrationPage, connection_test: false, summary: { ...goIntegrationPage.summary, status: 'not_running' as const } };
+    await renderOrg(PATH, { routes: { ['GET ' + API]: untested } });
+    expect(screen.getByRole('button', { name: 'Save connection' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Disconnect' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Test connection' })).toBeNull();
+    expect(screen.queryByText('Not available while it is not running.')).toBeNull();
+  });
+
   // Guards the log block (integration_logs.json): lines show time, a level badge (none for info) and the message,
   // an empty log says so, and Refresh asks the server again and shows the new answer.
   it('shows the recent log and refreshes it', async () => {
@@ -1808,6 +1820,15 @@ describe('Integration page, several connections', () => {
     expect(lastBody('POST', API + '/connections')).toEqual(goConnectionCreate);
     expect(block.queryByRole('region', { name: 'New connection' })).toBeNull();
     expect(block.getByRole('button', { name: 'Add a connection' })).toBeInTheDocument();
+  });
+
+  // Guards the cards of an integration with no connection test (connection_test false): no card offers Test
+  // connection, which the server can only refuse.
+  it('offers no Test connection on a card when the integration has none', async () => {
+    await renderOrg(PATH, { routes: gitRoutes({ ['GET ' + API]: { ...goIntegrationPageMultiple, connection_test: false } }) });
+    const block = within(screen.getByRole('region', { name: 'Connections' }));
+    expect(block.getAllByRole('button', { name: 'Save connection' })).toHaveLength(2);
+    expect(block.queryByRole('button', { name: 'Test connection' })).toBeNull();
   });
 
   // Guards Delete on one of several connections: it waits for the danger dialog, which names the agents whose access

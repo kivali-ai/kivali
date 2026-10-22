@@ -1849,6 +1849,13 @@ export interface IntegrationPage {
    */
   multiple: boolean;
   /**
+   * ConnectionTest is true when the version in use has a connection
+   * test (its manifest names kivali.verify). Only then does the page
+   * offer Test connection, and only then does a connection carry its
+   * last result.
+   */
+  connection_test: boolean;
+  /**
    * AccessForm is the access form one agent's grant fills in. Absent
    * when access is all-or-nothing.
    */
@@ -1922,8 +1929,9 @@ export interface ConnectionState {
   fields: ConnectionField[];
   /**
    * VerifiedAt and Verified say what Test connection last found;
-   * absent until it has run. VerifyMessage is the integration's own
-   * words about the result.
+   * absent until it has run, and while the version in use has no
+   * connection test. VerifyMessage is the integration's own words
+   * about the result.
    */
   verified_at?: string /* RFC 3339 */;
   verified?: boolean;

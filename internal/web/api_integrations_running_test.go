@@ -37,6 +37,9 @@ func TestAPIIntegrationVerify(t *testing.T) {
 	if page.Summary.Status != apitypes.IntegrationStatusNotRunning {
 		t.Errorf("status without a shim = %s", page.Summary.Status)
 	}
+	if !page.ConnectionTest {
+		t.Error("connection_test is false for a manifest that names kivali.verify")
+	}
 
 	fs := attachShim(t, srv, "crm", toolTexts(map[string]string{"whoami": "Signed in as Acme"}))
 	page = orgOK[apitypes.IntegrationPage](t, intPost(t, srv, intBase+"/crm/connection/verify"))
@@ -83,7 +86,10 @@ func TestAPIIntegrationVerify(t *testing.T) {
 
 // A manifest without a verify action has no Test connection, and says
 // so rather than call something. This fails if the route calls a tool
-// named "".
+// named "", if the page says there is a test (the web app would offer a
+// button that can only fail), or if a result kept under an earlier
+// version that had a test still reaches the page, where it would read
+// as a test the owner can run again.
 func TestAPIIntegrationVerifyWithoutAnAction(t *testing.T) {
 	srv := newTestServer(t)
 	withIntegrationRegistry(srv, newFakeIntegrationProv())
@@ -93,6 +99,26 @@ func TestAPIIntegrationVerifyWithoutAnAction(t *testing.T) {
 	attachShim(t, srv, "crm", toolTexts(nil))
 	if e := assertAPIError(t, intPost(t, srv, intBase+"/crm/connection/verify"), http.StatusConflict); e.Error != "Test crm has no connection test" {
 		t.Errorf("= %+v", e)
+	}
+
+	page := orgOK[apitypes.IntegrationPage](t, orgGet(t, srv, intBase+"/crm"))
+	if page.ConnectionTest {
+		t.Error("connection_test is true for a manifest without kivali.verify")
+	}
+	conn, err := srv.Store.GetIntegrationConnectionByID("crm", page.Connection.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	at, failed := time.Date(2026, 10, 20, 9, 0, 0, 0, time.UTC), false
+	conn.VerifiedAt, conn.Verified, conn.VerifyMessage = &at, &failed, "The token was refused."
+	if err := srv.Store.PutIntegrationConnection("crm", conn); err != nil {
+		t.Fatal(err)
+	}
+	page = orgOK[apitypes.IntegrationPage](t, orgGet(t, srv, intBase+"/crm"))
+	for _, c := range append([]apitypes.ConnectionState{*page.Connection}, page.Connections...) {
+		if c.VerifiedAt != nil || c.Verified != nil || c.VerifyMessage != nil {
+			t.Errorf("a kept result reached the page: %+v", c)
+		}
 	}
 }
 

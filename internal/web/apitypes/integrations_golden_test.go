@@ -122,7 +122,8 @@ func goldenIntegrationPageMultiple() IntegrationPage {
 				VerifiedAt: &integrationLater, Verified: &failed, VerifyMessage: &refused, ReconnectNeeded: true,
 			},
 		},
-		Multiple: true,
+		Multiple:       true,
+		ConnectionTest: true,
 		AccessForm: &AccessForm{Fields: []AccessField{
 			{Key: "repositories", Title: "Repositories", Description: "owner/name, or a pattern such as acme/*", Kind: AccessFieldKindList, Required: true, Options: []string{}, Choices: false},
 			{Key: "push", Title: "May push", Description: "", Kind: AccessFieldKindSwitch, Required: false, Options: []string{}, Choices: false},
@@ -149,6 +150,7 @@ func goldenIntegrationPage() IntegrationPage {
 		Connection:       goldenConnectionState(),
 		Connections:      []ConnectionState{*goldenConnectionState()},
 		Multiple:         false,
+		ConnectionTest:   true,
 		AccessForm:       goldenAccessForm(),
 		Access: []AccessRow{
 			{Agent: PersonRef{Slug: "dana", Name: "Dana"}, Access: json.RawMessage(`{"blogs":["Marketing"],"write":true}`), Summary: "Blogs: Marketing · May publish and edit", SetAt: integrationNow, ConnectionID: "c7f3a1b2"},

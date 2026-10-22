@@ -87,6 +87,11 @@ type IntegrationPage struct {
 	// connections, each with a label; each agent's access names the one
 	// it uses.
 	Multiple bool `json:"multiple"`
+	// ConnectionTest is true when the version in use has a connection
+	// test (its manifest names kivali.verify). Only then does the page
+	// offer Test connection, and only then does a connection carry its
+	// last result.
+	ConnectionTest bool `json:"connection_test"`
 	// AccessForm is the access form one agent's grant fills in. Absent
 	// when access is all-or-nothing.
 	AccessForm *AccessForm `json:"access_form,omitempty"`
@@ -139,8 +144,9 @@ type ConnectionState struct {
 	// are set.
 	Fields []ConnectionField `json:"fields"`
 	// VerifiedAt and Verified say what Test connection last found;
-	// absent until it has run. VerifyMessage is the integration's own
-	// words about the result.
+	// absent until it has run, and while the version in use has no
+	// connection test. VerifyMessage is the integration's own words
+	// about the result.
 	VerifiedAt    *time.Time `json:"verified_at,omitempty"`
 	Verified      *bool      `json:"verified,omitempty"`
 	VerifyMessage *string    `json:"verify_message,omitempty"`

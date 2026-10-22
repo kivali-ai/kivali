@@ -106,6 +106,7 @@
     }
   ],
   "multiple": false,
+  "connection_test": true,
   "access_form": {
     "fields": [
       {

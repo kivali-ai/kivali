@@ -62,7 +62,7 @@ Secret fields, such as tokens, are never shown again once saved: the page says o
 
 Saving a connection restarts the integration with the new values, which takes a few seconds.
 
-**Test connection** asks the integration to sign in to the service with the connection you saved, and shows what it found under the form: whether it worked, the integration's own words (such as the account it signed in as), and when you last tested. A failed test keeps the integration's reason, so you can see what to fix. Saving the connection again clears the last result.
+**Test connection** asks the integration to sign in to the service with the connection you saved, and shows what it found under the form: whether it worked, the integration's own words (such as the account it signed in as), and when you last tested. A failed test keeps the integration's reason, so you can see what to fix. Saving the connection again clears the last result. An integration that has no connection test has no **Test connection**.
 
 **Disconnect** removes the connection and every agent's access, which was given for it.
 
