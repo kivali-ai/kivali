@@ -24,11 +24,20 @@
 //
 // To add one, implement Integration in a package of its own and list it
 // in builtins.All (internal/builtinintegrations/builtins).
+//
+// A shipped bundle (ShippedBundle) is the other kind of integration
+// that ships with Kivali: built in as above (no approval, no removal,
+// its version follows the binary), but its implementation is a bundle
+// embedded in the binary, which boot stores
+// (store.InstallShippedBundles) and core runs in a pod of its own like
+// any uploaded bundle. To add one, embed its directory in a package of
+// its own and list it in builtins.Shipped.
 package builtinintegrations
 
 import (
 	"context"
 	"encoding/json"
+	"io/fs"
 
 	"github.com/kivali-ai/kivali/internal/integration"
 	"github.com/kivali-ai/kivali/internal/shelljob"
@@ -212,6 +221,41 @@ func (r Registry) Manifests() []*integration.Manifest {
 	out := make([]*integration.Manifest, 0, len(r))
 	for _, bi := range r {
 		out = append(out, bi.Manifest())
+	}
+	return out
+}
+
+// ShippedBundle is an integration that ships with Kivali as a bundle:
+// its files, laid out as a bundle's (manifest.json at the root, the
+// server's files beside it), embedded in the binary.
+type ShippedBundle struct {
+	// Name is the integration's name, the one its manifest gives.
+	Name string
+	// FS is the bundle's files, rooted where manifest.json is: an
+	// embed.FS's directory (fs.Sub), embedded with the all: prefix so
+	// a file whose name starts with "_" or "." is kept.
+	FS fs.FS
+}
+
+// ShippedBundles is a set of shipped bundles.
+type ShippedBundles []ShippedBundle
+
+// Has reports whether the set ships an integration called name.
+func (b ShippedBundles) Has(name string) bool {
+	for _, sb := range b {
+		if sb.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// ByName is every shipped bundle's files by its name, as
+// store.InstallShippedBundles takes them.
+func (b ShippedBundles) ByName() map[string]fs.FS {
+	out := make(map[string]fs.FS, len(b))
+	for _, sb := range b {
+		out[sb.Name] = sb.FS
 	}
 	return out
 }

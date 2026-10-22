@@ -21,7 +21,8 @@ import (
 //	versions/<version>/manifest.json the binary's manifest
 //
 // A built-in version has no bundle/ directory: nothing runs from the
-// data directory.
+// data directory. An integration that ships as a bundle has one
+// (InstallShippedBundles, shipped_integrations.go).
 
 // BuiltinIntegrationPublisher is who installs and publishes a built-in
 // integration's versions: Kivali itself.
