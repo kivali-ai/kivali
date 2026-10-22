@@ -609,7 +609,8 @@ with "<Integration> did not answer when Kivali renewed the
 connection's sign-in; try again later or tell the owner."; the
 built-in is not called. A bundle's server gets -32002 or -32003 from
 `kivali/credential` and passes it on in words. The shim starts the
-server with empty values on -32002, as with no connection.
+server with empty values on -32002 or -32003, as with no connection,
+and the server asks for the token at call time.
 
 The tokens are among the secrets the scrubber replaces, in the log and
 in every answer. The log scrubber is built from the connection as
@@ -644,7 +645,9 @@ deletes the connection.
 
 `internal/connect` knows nothing of the store or the web server. An
 `Engine{Clock, HTTP}` makes every request through its HTTP client
-(core's has a 30-second timeout; `Server.Connect`) and reads every
+(core's has an 8-second timeout, so a refresh inside a pod's
+`kivali/credential` ends before the shim's 10-second wait for core;
+`Server.Connect`) and reads every
 expiry and wait from its clock:
 
 - `Refresh(ctx, Endpoints, Client, refresh)` and `Exchange(ctx,
@@ -949,9 +952,9 @@ a test hook, which the pod spec never sets.
   sign-in connection both carry a current access token under its
   `credential_keys` name, refreshed first when it is about to expire,
   and never the client secret; the error is -32002 while the owner
-  must sign in (the shim starts the server with empty values, as with
-  no connection) and -32003 while the vendor does not answer a due
-  refresh ([The credential path](#the-credential-path)).
+  must sign in and -32003 while the vendor does not answer a due
+  refresh, and on either the shim starts the server with empty values,
+  as with no connection ([The credential path](#the-credential-path)).
 - `kivali/log`, `{"level", "message"}`, appends a line to `log.jsonl`
   (level `info`, `warning`, `error`, `debug` or `stderr`; any other is
   `info`; a message is cut to 8 KiB) with every secret value of the

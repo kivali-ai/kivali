@@ -530,24 +530,30 @@ func TestShimAnswersOtherServerRequests(t *testing.T) {
 
 // Why this test exists: a connection made by signing in whose owner
 // has not signed in (or must sign in again) answers the values with
-// CodeSignInNeeded. If the shim treated that as a failure, the server
-// would never start and the pod would restart for ever; it starts the
-// server with empty values, as with no connection, and a sign-in later
-// restarts it.
+// CodeSignInNeeded, and one whose vendor did not answer a due refresh
+// with CodeVendorUnavailable. If the shim treated either as a failure,
+// the server would never start and the pod would restart for ever, a
+// vendor's outage among the causes; it starts the server with empty
+// values, as with no connection, and the server asks for the token at
+// call time.
 func TestShimStartsTheServerWhenSignInIsNeeded(t *testing.T) {
-	m := testManifest(map[string]string{"FAKE_TOKEN": "${user_config.token}"})
-	c := newFakeCore(t, m)
-	c.mu.Lock()
-	c.credCode = CodeSignInNeeded
-	c.mu.Unlock()
-	_, _, _ = runShim(t, c, m)
-	rc := &recorder{c: c}
-	st := c.stream()
-	st.send(EventStart, "{}")
-	rc.log("server started")
-	st.send(EventRPC, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"whoami","arguments":{}}}`)
-	if got := toolText(t, rc.response(1)); got != "fake account " {
-		t.Errorf("whoami = %q, want the server started with no token", got)
+	for _, code := range []int{CodeSignInNeeded, CodeVendorUnavailable} {
+		t.Run(fmt.Sprint(code), func(t *testing.T) {
+			m := testManifest(map[string]string{"FAKE_TOKEN": "${user_config.token}"})
+			c := newFakeCore(t, m)
+			c.mu.Lock()
+			c.credCode = code
+			c.mu.Unlock()
+			_, _, _ = runShim(t, c, m)
+			rc := &recorder{c: c}
+			st := c.stream()
+			st.send(EventStart, "{}")
+			rc.log("server started")
+			st.send(EventRPC, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"whoami","arguments":{}}}`)
+			if got := toolText(t, rc.response(1)); got != "fake account " {
+				t.Errorf("whoami = %q, want the server started with no token", got)
+			}
+		})
 	}
 }
 

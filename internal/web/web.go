@@ -174,7 +174,7 @@ type Server struct {
 	Integrations *integrationRegistry
 	// Connect makes the OAuth requests of connections made by signing
 	// in (integration_signin.go). NewServer gives a Server without one
-	// an engine on Clock with a 30-second HTTP timeout; tests point one
+	// an engine on Clock with an 8-second HTTP timeout; tests point one
 	// at connecttest.FakeVendor.
 	Connect *connect.Engine
 	// signInRefresher runs one refresh at a time per sign-in
