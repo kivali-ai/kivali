@@ -87,8 +87,7 @@
     "reconnect_needed": false,
     "sign_in": {
       "ways": [
-        "device",
-        "browser"
+        "device"
       ],
       "signed_in": false,
       "error": "the vendor refused the sign-in (bad_refresh_token): The refresh token passed is incorrect or expired."
@@ -129,8 +128,7 @@
       "reconnect_needed": false,
       "sign_in": {
         "ways": [
-          "device",
-          "browser"
+          "device"
         ],
         "signed_in": false,
         "error": "the vendor refused the sign-in (bad_refresh_token): The refresh token passed is incorrect or expired."

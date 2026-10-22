@@ -235,16 +235,16 @@ func goldenSignInConnectionFields() []ConnectionField {
 }
 
 // goldenIntegrationPageSignIn is a GitHub bundle's page, connected by
-// signing in with the device flow (browser offered too), its token
+// signing in with the device flow, its token
 // refreshed before it expires. needsSignIn makes it the page of the
 // same connection after the vendor refused a refresh.
 func goldenIntegrationPageSignIn(needsSignIn bool) IntegrationPage {
 	expires := integrationLater.Add(8 * time.Hour)
-	sign := &ConnectionSignIn{Ways: []string{"device", "browser"}, SignedIn: true, Method: "device", SignedInAt: &integrationNow, ExpiresAt: &expires}
+	sign := &ConnectionSignIn{Ways: []string{"device"}, SignedIn: true, Method: "device", SignedInAt: &integrationNow, ExpiresAt: &expires}
 	status := IntegrationStatusConnected
 	if needsSignIn {
 		refused := "the vendor refused the sign-in (bad_refresh_token): The refresh token passed is incorrect or expired."
-		sign = &ConnectionSignIn{Ways: []string{"device", "browser"}, SignedIn: false, Error: &refused}
+		sign = &ConnectionSignIn{Ways: []string{"device"}, SignedIn: false, Error: &refused}
 		status = IntegrationStatusNotConnected
 	}
 	conn := ConnectionState{ID: "a1b2c3d4", Label: "", CreatedAt: integrationNow, Fields: goldenSignInConnectionFields(), SignIn: sign}

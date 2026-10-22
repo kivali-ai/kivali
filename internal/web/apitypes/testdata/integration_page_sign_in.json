@@ -87,8 +87,7 @@
     "reconnect_needed": false,
     "sign_in": {
       "ways": [
-        "device",
-        "browser"
+        "device"
       ],
       "signed_in": true,
       "method": "device",
@@ -131,8 +130,7 @@
       "reconnect_needed": false,
       "sign_in": {
         "ways": [
-          "device",
-          "browser"
+          "device"
         ],
         "signed_in": true,
         "method": "device",
