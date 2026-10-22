@@ -343,7 +343,13 @@ func (s *Server) finishSignIn(f *signInFlow, m *integration.Manifest, client con
 		err = s.Secrets.Put(ctx, rec.SecretName, data)
 	}
 	if err == nil {
-		rec.SignIn = &store.ConnectionSignIn{Method: method, SignedInAt: s.clk().Now(), ExpiresAt: tok.ExpiresAt, Scope: tok.Scope}
+		now := s.clk().Now()
+		rec.SignIn = &store.ConnectionSignIn{Method: method, SignedInAt: now, ExpiresAt: tok.ExpiresAt, Scope: tok.Scope}
+		// How long the vendor says a token lasts, for a refresh whose
+		// answer says nothing of it.
+		if !tok.ExpiresAt.IsZero() {
+			rec.SignIn.Lifetime = tok.ExpiresAt.Sub(now)
+		}
 		rec.VerifiedAt, rec.Verified, rec.VerifyMessage = nil, nil, ""
 		err = s.Store.PutIntegrationConnection(f.name, rec)
 	}
