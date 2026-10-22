@@ -80,6 +80,9 @@ type Knobs struct {
 	// is answered: a test holds the answer back with it to have other
 	// callers arrive while the refresh is in flight.
 	OnRefresh func()
+	// OnRevoke, when set, runs as a revocation request arrives, before
+	// it is answered.
+	OnRevoke func()
 }
 
 // Request is one request the vendor took: its path, form and Accept
@@ -503,6 +506,9 @@ func (v *FakeVendor) revoke(w http.ResponseWriter, r *http.Request) {
 	if !ok || !v.clientOK(r.PostForm, true) {
 		fail(w, r, k, "invalid_client", "the client id or secret is wrong")
 		return
+	}
+	if k.OnRevoke != nil {
+		k.OnRevoke()
 	}
 	if k.RevokeStatus != 0 && k.RevokeStatus != http.StatusOK {
 		http.Error(w, "revocation failed", k.RevokeStatus)

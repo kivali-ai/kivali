@@ -626,7 +626,10 @@ Deleting a connection (`DELETE .../connections/{id}`), disconnecting
 to revoke each sign-in connection's tokens once its Secret is gone,
 when the manifest gives a revocation endpoint: the refresh token, then
 the access token, with the client's credentials, best effort within
-ten seconds. A failure is logged and the delete goes on.
+ten seconds. The tokens are collected under `lockIntegrations` and
+revoked once it is released, before the route answers, so a slow
+vendor holds up no other integration write. A failure is logged and
+the delete goes on.
 
 ### Needs you: sign in again
 

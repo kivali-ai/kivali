@@ -47,7 +47,7 @@ var (
 const connectHTTPTimeout = 8 * time.Second
 
 // revokeTimeout bounds the revocation a delete or a disconnect asks
-// for, best effort, while it holds lockIntegrations.
+// for, best effort, before it answers.
 const revokeTimeout = 10 * time.Second
 
 // signInEndpoints are m's OAuth endpoints.
@@ -224,10 +224,38 @@ func (s *Server) markSignInFailed(name, id, words string) {
 	}
 }
 
+// signInRevocation is one deleted connection's tokens to revoke with
+// the vendor: collected while lockIntegrations is held, revoked once
+// it is released, so a slow vendor stalls no other integration write.
+type signInRevocation struct {
+	name string
+	m    *integration.Manifest
+	rec  store.IntegrationConnection
+	data map[string]string
+}
+
+type signInRevocations []signInRevocation
+
+// add is rs with name's connection rec, whose Secret held data
+// (revocableTokens; nil: nothing to revoke).
+func (rs signInRevocations) add(name string, m *integration.Manifest, rec store.IntegrationConnection, data map[string]string) signInRevocations {
+	if data == nil {
+		return rs
+	}
+	return append(rs, signInRevocation{name: name, m: m, rec: rec, data: data})
+}
+
+// revokeSignIns revokes each of rs in turn. The caller holds no lock.
+func (s *Server) revokeSignIns(ctx context.Context, rs signInRevocations) {
+	for _, r := range rs {
+		s.revokeSignIn(ctx, r.name, r.m, r.rec, r.data)
+	}
+}
+
 // revokeSignIn asks the vendor to revoke rec's tokens, found in data,
 // best effort: a manifest with no revocation endpoint, or a connection
 // that holds no tokens, sends nothing, and a failure is logged. It
-// runs as the connection is deleted, which it never holds up for
+// runs once the connection is deleted, which it never holds up for
 // longer than revokeTimeout.
 func (s *Server) revokeSignIn(ctx context.Context, name string, m *integration.Manifest, rec store.IntegrationConnection, data map[string]string) {
 	if m == nil || !m.Kivali.Connection.SignIn() || m.Kivali.Connection.RevocationEndpoint == "" {

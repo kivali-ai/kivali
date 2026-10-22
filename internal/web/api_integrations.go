@@ -755,17 +755,32 @@ func (s *Server) handleAPIIntegrationToggle(on bool) http.HandlerFunc {
 // binary carries, as Go code or as a bundle, is a 409; one it does not
 // carry is removed.
 func (s *Server) handleAPIIntegrationRemove(w http.ResponseWriter, r *http.Request) {
-	defer s.lockIntegrations()()
+	unlock := s.lockIntegrations()
+	revokes, ok := s.removeIntegrationLocked(w, r)
+	unlock()
+	// The vendor is asked to revoke a sign-in's tokens with the lock
+	// released, so a slow vendor holds up no other integration write.
+	s.revokeSignIns(r.Context(), revokes)
+	if ok {
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// removeIntegrationLocked is the removal under lockIntegrations: true
+// once done, false with an error answered. It returns the sign-in
+// tokens to revoke.
+func (s *Server) removeIntegrationLocked(w http.ResponseWriter, r *http.Request) (signInRevocations, bool) {
 	v, ok := s.integrationOr404(w, r)
 	if !ok {
-		return
+		return nil, false
 	}
 	if v.it.Builtin && !v.staleBuiltin() {
 		writeAPIError(w, http.StatusConflict, builtinRefusal(v.displayName(), builtinRemove), whoYou)
-		return
+		return nil, false
 	}
-	if !s.deleteConnectionSecrets(w, r, v.it.Name) {
-		return
+	revokes, ok := s.deleteConnectionSecrets(w, r, v.it.Name)
+	if !ok {
+		return revokes, false
 	}
 	// A built-in's connections have proxy credentials of their own; a
 	// bundle's none, and dropping nothing is no error.
@@ -779,25 +794,27 @@ func (s *Server) handleAPIIntegrationRemove(w http.ResponseWriter, r *http.Reque
 	if err := remove(v.it.Name); err != nil {
 		log.Printf("integration %s: remove: %v", v.it.Name, err)
 		writeAPIError(w, http.StatusInternalServerError, "the integration could not be removed", whoServer)
-		return
+		return revokes, false
 	}
 	s.Integrations.Changed()
-	w.WriteHeader(http.StatusNoContent)
+	return revokes, true
 }
 
 // deleteConnectionSecrets deletes the Secret of every connection the
 // integration has. On a failure it answers 500 and returns false, and
 // the records stay, so the Secret is not left behind with nothing
-// naming it. A sign-in connection's tokens are revoked with the vendor
-// once its Secret is gone, best effort (revokeSignIn).
-func (s *Server) deleteConnectionSecrets(w http.ResponseWriter, r *http.Request, name string) bool {
+// naming it. It returns the sign-in tokens of each Secret it deleted,
+// for the caller to revoke with the vendor once it has released
+// lockIntegrations (revokeSignIns), whatever else fails.
+func (s *Server) deleteConnectionSecrets(w http.ResponseWriter, r *http.Request, name string) (signInRevocations, bool) {
 	conns, err := s.Store.ListIntegrationConnections(name)
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, "the connection could not be read", whoServer)
-		return false
+		return nil, false
 	}
 	// nil while no version is approved: nothing was signed in with.
 	_, m, _ := s.Store.CurrentIntegrationVersion(name)
+	var revokes signInRevocations
 	for _, c := range conns {
 		if c.SecretName == "" {
 			continue
@@ -806,11 +823,11 @@ func (s *Server) deleteConnectionSecrets(w http.ResponseWriter, r *http.Request,
 		if err := s.Secrets.Delete(r.Context(), c.SecretName); err != nil {
 			log.Printf("integration %s: delete Secret %s: %v", name, c.SecretName, err)
 			writeAPIError(w, http.StatusInternalServerError, "the connection's secrets could not be removed, so nothing was changed", whoServer)
-			return false
+			return revokes, false
 		}
-		s.revokeSignIn(r.Context(), name, m, c, tokens)
+		revokes = revokes.add(name, m, c, tokens)
 	}
-	return true
+	return revokes, true
 }
 
 // ---- versions ----
