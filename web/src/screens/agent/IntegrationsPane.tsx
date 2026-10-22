@@ -6,6 +6,11 @@ import { useAppHref, useFetched } from './tabsShared';
 import '../../styles/agent-tabs.css';
 import '../../styles/integrations.css';
 
+/** The row's name: "Git (Company GitLab)" for one of several connections, the integration's name otherwise. */
+export function rowTitle(i: Pick<AgentIntegration, 'display_name' | 'connection_label'>): string {
+  return i.connection_label ? i.display_name + ' (' + i.connection_label + ')' : i.display_name;
+}
+
 function IntegrationList({ items, connected, href }: { items: readonly AgentIntegration[]; connected: boolean; href(to: string): string }) {
   return (
     <div className="app-tabs-list">
@@ -14,7 +19,7 @@ function IntegrationList({ items, connected, href }: { items: readonly AgentInte
           <ListRow
             key={i.name}
             lead={<Icon name="plug" size={20} />}
-            title={i.display_name}
+            title={rowTitle(i)}
             meta={
               <>
                 <StatusBadge status={i.status} />

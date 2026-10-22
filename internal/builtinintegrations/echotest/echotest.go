@@ -35,9 +35,11 @@ var Colors = []string{"blue", "green", "red"}
 const FailGreeting = "fail"
 
 // Echo is the built-in. Version is its manifest's version; a test
-// changes it to see boot supersede the version before.
+// changes it to see boot supersede the version before. Multiple makes
+// its manifest take several connections (kivali.connection.multiple).
 type Echo struct {
-	Version string
+	Version  string
+	Multiple bool
 
 	mu    sync.Mutex
 	calls []Seen
@@ -85,7 +87,7 @@ func (e *Echo) Manifest() *integration.Manifest {
 			{Name: "whoami", Description: "Say the greeting and the token's start."},
 		},
 		Kivali: integration.Kivali{
-			Connection: integration.Connection{Method: "token"},
+			Connection: integration.Connection{Method: "token", Multiple: e.Multiple},
 			Access: &integration.Access{
 				Schema: json.RawMessage(`{"type":"object","properties":{` +
 					`"colors":{"type":"array","items":{"type":"string"},"title":"Colors"},` +

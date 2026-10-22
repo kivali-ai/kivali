@@ -80,7 +80,19 @@ var (
 	_ builtinintegrations.ConnectionChecker   = (*Git)(nil)
 	_ builtinintegrations.AccessChecker       = (*Git)(nil)
 	_ builtinintegrations.AccessSummarizer    = (*Git)(nil)
+	_ builtinintegrations.ConnectionLabeler   = (*Git)(nil)
 )
+
+// ConnectionLabel names a connection the owner gave no label by its
+// host, as gitrepo.NormalizeHost reads it ("github.com"); "" while the
+// host is not one.
+func (g *Git) ConnectionLabel(conn builtinintegrations.Connection) string {
+	host, err := gitrepo.NormalizeHost(conn.Fields["host"])
+	if err != nil {
+		return ""
+	}
+	return host
+}
 
 // errBadHost is a connection whose host is not one.
 const errBadHost = ownerWords("Host is a host name such as github.com, without https:// or a path")
@@ -152,7 +164,7 @@ func (g *Git) Manifest() *integration.Manifest {
 			{Name: actionPush, Description: "Pushes the branches and tags the agent's access allows to a repository it includes."},
 		},
 		Kivali: integration.Kivali{
-			Connection: integration.Connection{Method: "token"},
+			Connection: integration.Connection{Method: "token", Multiple: true},
 			Access:     &integration.Access{Schema: json.RawMessage(accessSchema)},
 			Verify:     "ls_remote",
 		},

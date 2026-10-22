@@ -12,6 +12,13 @@
       "status": "off",
       "summary": "Full access",
       "invalid": "Blogs lists a choice the form no longer offers"
+    },
+    {
+      "name": "git",
+      "display_name": "Git",
+      "status": "connected",
+      "summary": "Repositories: eng/*",
+      "connection_label": "Company GitLab"
     }
   ],
   "available": [

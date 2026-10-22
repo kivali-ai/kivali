@@ -135,12 +135,22 @@ type HostsOf interface {
 }
 
 // ConnectionChecker is an Integration that holds a connection to more
-// than its form does. PUT .../connection calls CheckConnection after
-// the form's own checks and before it stores anything; an error is a
-// 400 with its words, a sentence for the owner. conn.ID is empty for a
-// first connection.
+// than its form does. Saving a connection (PUT .../connection, POST
+// .../connections, PUT .../connections/{id}) calls CheckConnection
+// after the form's own checks and before it stores anything; an error
+// is a 400 with its words, a sentence for the owner. conn.ID is empty
+// for a new connection.
 type ConnectionChecker interface {
 	CheckConnection(conn Connection) error
+}
+
+// ConnectionLabeler is an Integration that takes several connections
+// (the manifest's kivali.connection.multiple) and names one the owner
+// gave no label: ConnectionLabel is that label, or "" for none. conn
+// holds the connection's fields that are not secret, so the label never
+// quotes a secret.
+type ConnectionLabeler interface {
+	ConnectionLabel(conn Connection) string
 }
 
 // AccessChecker is an Integration that holds an agent's access to more

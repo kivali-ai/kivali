@@ -198,13 +198,15 @@ func goldenFixtures() map[string]any {
 		// Integrations: integrations_golden_test.go.
 		"integrations":                goldenIntegrations(),
 		"integration_page":            goldenIntegrationPage(),
+		"integration_page_multiple":   goldenIntegrationPageMultiple(),
 		"integration_version":         goldenIntegrationVersion(),
 		"integration_version_builtin": goldenBuiltinIntegrationVersion(),
 		"integration_upload_refused":  IntegrationUploadRefused{Error: "the bundle did not pass the check", Who: "you", Findings: []string{"server.type must be python", "kivali.hosts is empty"}},
 		"integration_audit":           goldenIntegrationAudit(),
 		"agent_integrations":          goldenAgentIntegrations(),
 		"connection_write":            ConnectionWrite{Fields: map[string]string{"token": "pat-eu1-...", "portal": "acme"}},
-		"access_write":                AccessWrite{Access: json.RawMessage(`{"blogs":["Marketing"],"write":true,"delete":false}`)},
+		"connection_create":           ConnectionWrite{Label: "Staging GitLab", Fields: map[string]string{"host": "gitlab-staging.example.com", "token": "glpat-...", "test_repository": ""}},
+		"access_write":                AccessWrite{Access: json.RawMessage(`{"blogs":["Marketing"],"write":true,"delete":false}`), ConnectionID: "c7f3a1b2"},
 		"access_choices":              AccessChoices{Options: []string{"Engineering", "Marketing"}},
 		"integration_logs":            IntegrationLogs{Lines: []IntegrationLogLine{{At: integrationNow, Level: "info", Message: "server started"}, {At: integrationLater, Level: "stderr", Message: "token [secret] accepted"}}},
 		// Software lists: software_golden_test.go.

@@ -320,6 +320,9 @@ func validateKivali(m *Manifest, tools []string, builtin bool, f *Findings) {
 	default:
 		f.errorf("kivali.connection.method %s is not one Kivali knows; it must be token", k.Connection.Method)
 	}
+	if k.Connection.Multiple && !builtin {
+		f.errorf("kivali.connection.multiple: a bundle's server takes one connection")
+	}
 
 	if len(k.Hosts) == 0 && !builtin {
 		f.errorf("kivali.hosts is empty")

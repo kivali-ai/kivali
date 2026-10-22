@@ -125,9 +125,16 @@ type IntegrationVersion struct {
 
 // IntegrationConnection is connections/<id>.yaml: a connection's
 // fields that are not secret, and which secret fields have a value in
-// the Kubernetes Secret SecretName.
+// the Kubernetes Secret SecretName. An integration that takes several
+// connections (the manifest's kivali.connection.multiple) has one file
+// per connection; any other has one.
 type IntegrationConnection struct {
-	ID        string    `yaml:"id"`
+	ID string `yaml:"id"`
+	// Label is what the owner calls the connection ("GitHub", "Company
+	// GitLab"), unique within the integration ignoring case. Required
+	// for an integration that takes several connections, optional for
+	// any other.
+	Label     string    `yaml:"label,omitempty"`
 	CreatedAt time.Time `yaml:"created_at"`
 	// Fields holds the values of the fields that are not sensitive.
 	Fields map[string]string `yaml:"fields,omitempty"`
@@ -147,7 +154,8 @@ type IntegrationConnection struct {
 // through the integration.
 type IntegrationAccess struct {
 	Slug string `yaml:"slug"`
-	// ConnectionID is the connection the access was set for.
+	// ConnectionID is the connection the access was set for, and the
+	// one the agent's calls use.
 	ConnectionID string `yaml:"connection_id"`
 	// Access is the filled access form, field by field.
 	Access map[string]any `yaml:"access"`
@@ -673,6 +681,24 @@ func (s *FSStore) GetIntegrationConnection(name string) (IntegrationConnection, 
 	return all[0], nil
 }
 
+// GetIntegrationConnectionByID returns one connection of the
+// integration by its id; ErrNotFound when it has none of that id.
+func (s *FSStore) GetIntegrationConnectionByID(name, id string) (IntegrationConnection, error) {
+	dir, err := s.integrationDir(name)
+	if err != nil || !validFileName(id) {
+		return IntegrationConnection{}, ErrNotFound
+	}
+	var c IntegrationConnection
+	if err := readYAMLFile(filepath.Join(dir, "connections", id+".yaml"), &c); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return IntegrationConnection{}, ErrNotFound
+		}
+		return IntegrationConnection{}, fmt.Errorf("connection %s: %w", id, err)
+	}
+	c.ID = id
+	return c, nil
+}
+
 // PutIntegrationConnection writes a connection's record, by its ID.
 func (s *FSStore) PutIntegrationConnection(name string, c IntegrationConnection) error {
 	if !validFileName(c.ID) {
@@ -714,7 +740,101 @@ func (s *FSStore) DeleteIntegrationConnection(name string) ([]IntegrationConnect
 	return gone, nil
 }
 
+// DeleteIntegrationConnectionByID removes one connection's record and
+// every agent's access set for it, and returns the record, whose Secret
+// is the caller's to delete, and the slugs whose access it cleared.
+// The other connections and the access set for them stay. ErrNotFound
+// when the integration has no connection of that id.
+func (s *FSStore) DeleteIntegrationConnectionByID(name, id string) (IntegrationConnection, []string, error) {
+	unlock := s.lockIntegration(name)
+	defer unlock()
+	if _, err := s.GetIntegration(name); err != nil {
+		return IntegrationConnection{}, nil, err
+	}
+	c, err := s.GetIntegrationConnectionByID(name, id)
+	if err != nil {
+		return IntegrationConnection{}, nil, err
+	}
+	// The access goes first: a crash between the two leaves a
+	// connection no agent uses, never a row naming a connection that
+	// is gone.
+	cleared, err := s.clearIntegrationAccessForConnectionLocked(name, id)
+	if err != nil {
+		return IntegrationConnection{}, nil, err
+	}
+	dir, _ := s.integrationDir(name)
+	if err := os.Remove(filepath.Join(dir, "connections", id+".yaml")); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return IntegrationConnection{}, nil, err
+	}
+	return c, cleared, nil
+}
+
 // ---- access ----
+
+// readIntegrationAccessRows reads every access row as it is stored, by
+// file name order, with no Invalid worked out.
+func (s *FSStore) readIntegrationAccessRows(name string) ([]IntegrationAccess, error) {
+	dir, err := s.integrationDir(name)
+	if err != nil {
+		return nil, ErrNotFound
+	}
+	entries, err := os.ReadDir(filepath.Join(dir, "access"))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var rows []IntegrationAccess
+	for _, e := range entries {
+		slug, ok := strings.CutSuffix(e.Name(), ".yaml")
+		if !ok || e.IsDir() || !validFileName(slug) {
+			continue
+		}
+		var row IntegrationAccess
+		if err := readYAMLFile(filepath.Join(dir, "access", e.Name()), &row); err != nil {
+			if errors.Is(err, ErrNotFound) {
+				continue
+			}
+			return nil, fmt.Errorf("access %s: %w", slug, err)
+		}
+		row.Slug = slug
+		rows = append(rows, row)
+	}
+	return rows, nil
+}
+
+// ClearIntegrationAccessForConnection removes the access of every agent
+// whose row names the connection id, and returns their slugs, sorted.
+// Rows set for another connection stay.
+func (s *FSStore) ClearIntegrationAccessForConnection(name, id string) ([]string, error) {
+	unlock := s.lockIntegration(name)
+	defer unlock()
+	if _, err := s.GetIntegration(name); err != nil {
+		return nil, err
+	}
+	return s.clearIntegrationAccessForConnectionLocked(name, id)
+}
+
+func (s *FSStore) clearIntegrationAccessForConnectionLocked(name, id string) ([]string, error) {
+	rows, err := s.readIntegrationAccessRows(name)
+	if err != nil {
+		return nil, err
+	}
+	dir, _ := s.integrationDir(name)
+	var cleared []string
+	for _, row := range rows {
+		if row.ConnectionID != id {
+			continue
+		}
+		if err := os.Remove(filepath.Join(dir, "access", row.Slug+".yaml")); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return cleared, err
+		}
+		cleared = append(cleared, row.Slug)
+	}
+	sort.Strings(cleared)
+	return cleared, nil
+}
 
 // SetIntegrationAccess writes one agent's access. The integration and
 // the agent must exist; an agent that is not active is ErrNotFound, so
@@ -767,64 +887,59 @@ func (s *FSStore) ClearIntegrationAccess(name, slug string) error {
 
 // ListIntegrationAccess returns every agent's access, by slug, each
 // with Invalid set when it no longer fits: no version approved, a
-// connection other than the one it was set for, or access the approved
-// version's form refuses (integration.ValidateAccess). A record that
-// does not parse is an error.
+// connection that is no longer there, or access the approved version's
+// form refuses (integration.ValidateAccess). For an integration that
+// takes several connections (kivali.connection.multiple), a row's
+// connection is any the integration has; for any other, it is the one
+// connection, the oldest. A record that does not parse is an error.
 func (s *FSStore) ListIntegrationAccess(name string) ([]IntegrationAccess, error) {
-	dir, err := s.integrationDir(name)
-	if err != nil {
-		return nil, ErrNotFound
+	rows, err := s.readIntegrationAccessRows(name)
+	if err != nil || len(rows) == 0 {
+		return nil, err
 	}
-	entries, err := os.ReadDir(filepath.Join(dir, "access"))
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil, nil
-	}
+	_, m, merr := s.CurrentIntegrationVersion(name)
+	conns, err := s.ListIntegrationConnections(name)
 	if err != nil {
 		return nil, err
 	}
-	var rows []IntegrationAccess
-	for _, e := range entries {
-		slug, ok := strings.CutSuffix(e.Name(), ".yaml")
-		if !ok || e.IsDir() || !validFileName(slug) {
-			continue
-		}
-		var row IntegrationAccess
-		if err := readYAMLFile(filepath.Join(dir, "access", e.Name()), &row); err != nil {
-			if errors.Is(err, ErrNotFound) {
-				continue
-			}
-			return nil, fmt.Errorf("access %s: %w", slug, err)
-		}
-		row.Slug = slug
-		rows = append(rows, row)
-	}
-	if len(rows) == 0 {
-		return nil, nil
-	}
-	_, m, merr := s.CurrentIntegrationVersion(name)
-	conn, cerr := s.GetIntegrationConnection(name)
-	if cerr != nil && !errors.Is(cerr, ErrNotFound) {
-		return nil, cerr
-	}
 	for i := range rows {
-		rows[i].Invalid = accessInvalid(rows[i], m, merr, conn, cerr)
+		rows[i].Invalid = accessInvalid(rows[i], m, merr, conns)
 	}
 	sort.Slice(rows, func(i, j int) bool { return rows[i].Slug < rows[j].Slug })
 	return rows, nil
 }
 
-// accessInvalid is why row no longer fits, or "".
-func accessInvalid(row IntegrationAccess, m *integration.Manifest, merr error, conn IntegrationConnection, cerr error) string {
-	switch {
-	case merr != nil:
+// accessInvalid is why row no longer fits, or "". conns is every
+// connection, oldest first.
+func accessInvalid(row IntegrationAccess, m *integration.Manifest, merr error, conns []IntegrationConnection) string {
+	if merr != nil {
 		return "no version of the integration is approved"
-	case cerr != nil || row.ConnectionID != conn.ID:
+	}
+	if !accessConnectionThere(row.ConnectionID, m, conns) {
 		return "it was set for a connection that is no longer there"
 	}
 	if err := integration.ValidateAccess(m, row.AccessJSON()); err != nil {
 		return err.Error()
 	}
 	return ""
+}
+
+// accessConnectionThere reports whether id names a connection an
+// agent's access may use: any of conns for an integration that takes
+// several, the oldest for any other.
+func accessConnectionThere(id string, m *integration.Manifest, conns []IntegrationConnection) bool {
+	if len(conns) == 0 {
+		return false
+	}
+	if !m.Kivali.Connection.Multiple {
+		return id == conns[0].ID
+	}
+	for _, c := range conns {
+		if c.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 // AgentIntegrationAccess returns one agent's access across every

@@ -41,6 +41,13 @@ func TestValidateBuiltin(t *testing.T) {
 	if f := ValidateBuiltin(builtinManifest()); len(f) != 0 {
 		t.Fatalf("findings on a good built-in manifest: %v", f.Texts())
 	}
+	// A built-in runs inside Kivali with whichever connection an
+	// agent's access names, so it may take several.
+	multiple := builtinManifest()
+	multiple.Kivali.Connection.Multiple = true
+	if f := ValidateBuiltin(multiple); len(f) != 0 {
+		t.Errorf("findings on a built-in that takes several connections: %v", f.Texts())
+	}
 	// The same manifest is refused as a bundle: no server, no hosts,
 	// and a choices name that is not a tool.
 	f := Validate(builtinManifest(), nil)
@@ -87,9 +94,12 @@ func TestValidateBuiltin(t *testing.T) {
 // Why this test exists: a built-in's manifest is written to the store
 // as this type marshals and read back with ParseManifest. A field lost
 // on the way (the connection form's order, the access form, a
-// sensitive flag) would change what the Org page draws for it.
+// sensitive flag, whether it takes several connections) would change
+// what the Org page draws for it.
 func TestBuiltinManifestRoundTrips(t *testing.T) {
-	raw, err := json.Marshal(builtinManifest())
+	bm := builtinManifest()
+	bm.Kivali.Connection.Multiple = true
+	raw, err := json.Marshal(bm)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +113,7 @@ func TestBuiltinManifestRoundTrips(t *testing.T) {
 	if f := ValidateBuiltin(m); len(f) != 0 {
 		t.Errorf("findings after a round trip: %v", f.Texts())
 	}
-	if !m.UserConfig[0].Sensitive || m.Kivali.Access.Choices["books"] != "books" || m.Kivali.Verify != "find" {
+	if !m.UserConfig[0].Sensitive || m.Kivali.Access.Choices["books"] != "books" || m.Kivali.Verify != "find" || !m.Kivali.Connection.Multiple {
 		t.Errorf("read back as %+v", m)
 	}
 }

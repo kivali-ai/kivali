@@ -3,8 +3,6 @@ package web
 import (
 	"cmp"
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,13 +15,10 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/kivali-ai/kivali/internal/agent"
 	"github.com/kivali-ai/kivali/internal/builtinintegrations"
-	"github.com/kivali-ai/kivali/internal/egresscred"
 	"github.com/kivali-ai/kivali/internal/integration"
-	"github.com/kivali-ai/kivali/internal/integrationpod"
 	"github.com/kivali-ai/kivali/internal/secrets"
 	"github.com/kivali-ai/kivali/internal/store"
 	"github.com/kivali-ai/kivali/internal/web/apitypes"
@@ -53,6 +48,10 @@ func (s *Server) wireAPIIntegrationRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/v1/org/integrations/{name}/connection", s.handleAPIIntegrationConnectionPut)
 	mux.HandleFunc("DELETE /api/v1/org/integrations/{name}/connection", s.handleAPIIntegrationConnectionDelete)
 	mux.HandleFunc("POST /api/v1/org/integrations/{name}/connection/verify", s.handleAPIIntegrationVerify)
+	mux.HandleFunc("POST /api/v1/org/integrations/{name}/connections", s.handleAPIIntegrationConnectionCreate)
+	mux.HandleFunc("PUT /api/v1/org/integrations/{name}/connections/{id}", s.handleAPIIntegrationConnectionPutByID)
+	mux.HandleFunc("DELETE /api/v1/org/integrations/{name}/connections/{id}", s.handleAPIIntegrationConnectionDeleteByID)
+	mux.HandleFunc("POST /api/v1/org/integrations/{name}/connections/{id}/verify", s.handleAPIIntegrationVerifyByID)
 	mux.HandleFunc("PUT /api/v1/org/integrations/{name}/access/{slug}", s.handleAPIIntegrationAccessPut)
 	mux.HandleFunc("DELETE /api/v1/org/integrations/{name}/access/{slug}", s.handleAPIIntegrationAccessDelete)
 	mux.HandleFunc("GET /api/v1/org/integrations/{name}/audit", s.handleAPIIntegrationAudit)
@@ -88,18 +87,49 @@ type integrationView struct {
 	// manifest is the approved version's, or the newest stored
 	// version's while none is approved; nil with no version at all.
 	manifest *integration.Manifest
-	conn     *store.IntegrationConnection
-	// secretSet names the sensitive fields whose value is in the
-	// connection's Secret; reconnect is true when the Secret, or a
-	// value the record names, is not there.
-	secretSet map[string]bool
-	reconnect bool
-	access    []store.IntegrationAccess
+	// conns is every connection, oldest first.
+	conns  []*connView
+	access []store.IntegrationAccess
 	// running is whether the integration can be called: its shim is
 	// connected, or it ships with Kivali and this binary carries it.
 	running bool
 	// builtin is its code when it ships with Kivali; nil for a bundle.
 	builtin builtinintegrations.Integration
+}
+
+// connView is one connection as an integration's answers read it.
+type connView struct {
+	rec store.IntegrationConnection
+	// secretSet names the sensitive fields whose value is in the
+	// connection's Secret; reconnect is true when the Secret, or a
+	// value the record names, is not there.
+	secretSet map[string]bool
+	reconnect bool
+}
+
+// first is the oldest connection, the one an integration that takes
+// one has; nil with none.
+func (v *integrationView) first() *connView {
+	if len(v.conns) == 0 {
+		return nil
+	}
+	return v.conns[0]
+}
+
+// connByID is the connection of that id, nil when there is none.
+func (v *integrationView) connByID(id string) *connView {
+	for _, c := range v.conns {
+		if c.rec.ID == id {
+			return c
+		}
+	}
+	return nil
+}
+
+// multiple reports whether v takes several connections
+// (kivali.connection.multiple).
+func (v *integrationView) multiple() bool {
+	return v.manifest != nil && v.manifest.Kivali.Connection.Multiple
 }
 
 // loadIntegration reads one integration whole. A missing one is
@@ -109,7 +139,7 @@ func (s *Server) loadIntegration(ctx context.Context, name string) (*integration
 	if err != nil {
 		return nil, err
 	}
-	v := &integrationView{it: it, secretSet: map[string]bool{}, running: s.integrationRunning(it), builtin: s.builtinFor(it)}
+	v := &integrationView{it: it, running: s.integrationRunning(it), builtin: s.builtinFor(it)}
 	if v.versions, err = s.Store.IntegrationVersions(name); err != nil {
 		return nil, err
 	}
@@ -125,12 +155,12 @@ func (s *Server) loadIntegration(ctx context.Context, name string) (*integration
 	default:
 		return nil, err
 	}
-	switch c, err := s.Store.GetIntegrationConnection(name); {
-	case err == nil:
-		v.conn = &c
-		s.readConnectionSecret(ctx, v)
-	case !errors.Is(err, store.ErrNotFound):
+	conns, err := s.Store.ListIntegrationConnections(name)
+	if err != nil {
 		return nil, err
+	}
+	for _, rec := range conns {
+		v.conns = append(v.conns, s.readConnectionSecret(ctx, name, rec))
 	}
 	if v.access, err = s.Store.ListIntegrationAccess(name); err != nil {
 		return nil, err
@@ -138,33 +168,35 @@ func (s *Server) loadIntegration(ctx context.Context, name string) (*integration
 	return v, nil
 }
 
-// readConnectionSecret works out which secret fields of v's connection
-// have their value in its Secret. The values are not kept.
-func (s *Server) readConnectionSecret(ctx context.Context, v *integrationView) {
-	if len(v.conn.SecretKeys) == 0 {
-		return
+// readConnectionSecret works out which secret fields of rec have their
+// value in its Secret. The values are not kept.
+func (s *Server) readConnectionSecret(ctx context.Context, name string, rec store.IntegrationConnection) *connView {
+	c := &connView{rec: rec, secretSet: map[string]bool{}}
+	if len(rec.SecretKeys) == 0 {
+		return c
 	}
-	data, err := s.Secrets.Get(ctx, v.conn.SecretName)
+	data, err := s.Secrets.Get(ctx, rec.SecretName)
 	switch {
 	case errors.Is(err, secrets.ErrNotFound):
-		v.reconnect = true
-		return
+		c.reconnect = true
+		return c
 	case err != nil:
 		// Not knowing is not a missing Secret: the page shows the
 		// fields as set rather than ask for them again.
-		log.Printf("integration %s: read the connection's Secret: %v", v.it.Name, err)
-		for _, k := range v.conn.SecretKeys {
-			v.secretSet[k] = true
+		log.Printf("integration %s: read the connection's Secret: %v", name, err)
+		for _, k := range rec.SecretKeys {
+			c.secretSet[k] = true
 		}
-		return
+		return c
 	}
-	for _, k := range v.conn.SecretKeys {
+	for _, k := range rec.SecretKeys {
 		if data[k] == "" {
-			v.reconnect = true
+			c.reconnect = true
 			continue
 		}
-		v.secretSet[k] = true
+		c.secretSet[k] = true
 	}
+	return c
 }
 
 func (v *integrationView) status() apitypes.IntegrationStatus {
@@ -180,8 +212,12 @@ func (v *integrationView) status() apitypes.IntegrationStatus {
 		// connection and agents' calls need it up. A built-in one is
 		// always running while its code is in the binary.
 		return apitypes.IntegrationStatusNotRunning
-	case v.conn != nil && !v.reconnect:
-		return apitypes.IntegrationStatusConnected
+	}
+	// Connected once any connection has all its secrets.
+	for _, c := range v.conns {
+		if !c.reconnect {
+			return apitypes.IntegrationStatusConnected
+		}
 	}
 	return apitypes.IntegrationStatusNotConnected
 }
@@ -272,8 +308,9 @@ func (v *integrationView) summary() apitypes.IntegrationSummary {
 	return sum
 }
 
-// connectionFields is m's connection form, with what conn holds.
-func connectionFields(m *integration.Manifest, v *integrationView) []apitypes.ConnectionField {
+// connectionFields is m's connection form, with what c holds (nothing
+// for nil).
+func connectionFields(m *integration.Manifest, c *connView) []apitypes.ConnectionField {
 	out := []apitypes.ConnectionField{}
 	if m == nil {
 		return out
@@ -287,10 +324,11 @@ func connectionFields(m *integration.Manifest, v *integrationView) []apitypes.Co
 			Required:    f.Required,
 		}
 		switch {
+		case c == nil:
 		case f.Sensitive:
-			cf.Set = v.secretSet[f.Key]
-		case v.conn != nil:
-			if val, ok := v.conn.Fields[f.Key]; ok && val != "" {
+			cf.Set = c.secretSet[f.Key]
+		default:
+			if val, ok := c.rec.Fields[f.Key]; ok && val != "" {
 				cf.Set = true
 				cf.Value = &val
 			}
@@ -369,7 +407,9 @@ func (s *Server) integrationPage(v *integrationView) apitypes.IntegrationPage {
 		Summary:          v.summary(),
 		Hosts:            integrationHosts(v.manifest),
 		Actions:          integrationActions(v.manifest),
-		ConnectionFields: connectionFields(v.manifest, v),
+		ConnectionFields: connectionFields(v.manifest, v.first()),
+		Connections:      []apitypes.ConnectionState{},
+		Multiple:         v.multiple(),
 		AccessForm:       accessFormWire(v.manifest),
 		Access:           []apitypes.AccessRow{},
 		AgentsWithout:    []apitypes.PersonRef{},
@@ -379,25 +419,27 @@ func (s *Server) integrationPage(v *integrationView) apitypes.IntegrationPage {
 	if v.manifest != nil {
 		page.Author = v.manifest.Author.Name
 	}
-	if c := v.conn; c != nil {
-		page.Connection = &apitypes.ConnectionState{
-			ID:              c.ID,
-			CreatedAt:       c.CreatedAt,
-			VerifiedAt:      c.VerifiedAt,
-			Verified:        c.Verified,
-			VerifyMessage:   optString(c.VerifyMessage),
-			ReconnectNeeded: v.reconnect,
-		}
+	labels := map[string]string{}
+	for _, c := range v.conns {
+		state := v.connectionState(c)
+		labels[c.rec.ID] = state.Label
+		page.Connections = append(page.Connections, state)
+	}
+	if len(page.Connections) > 0 {
+		first := page.Connections[0]
+		page.Connection = &first
 	}
 	has := map[string]bool{}
 	for _, a := range v.access {
 		has[a.Slug] = true
 		page.Access = append(page.Access, apitypes.AccessRow{
-			Agent:   personNamed(names, a.Slug),
-			Access:  a.AccessJSON(),
-			Summary: v.accessSummary(a.AccessJSON()),
-			SetAt:   a.SetAt,
-			Invalid: optString(a.Invalid),
+			Agent:           personNamed(names, a.Slug),
+			Access:          a.AccessJSON(),
+			Summary:         v.accessSummary(a.AccessJSON()),
+			SetAt:           a.SetAt,
+			ConnectionID:    a.ConnectionID,
+			ConnectionLabel: labels[a.ConnectionID],
+			Invalid:         optString(a.Invalid),
 		})
 	}
 	sort.SliceStable(page.Access, func(i, j int) bool { return page.Access[i].Agent.Name < page.Access[j].Agent.Name })
@@ -447,7 +489,7 @@ func (s *Server) integrationVersionView(v *integrationView, ver store.Integratio
 		Runtime:          m.Server.Type,
 		ConnectionMethod: m.Kivali.Connection.Method,
 		Hosts:            integrationHosts(m),
-		ConnectionFields: connectionFields(m, v),
+		ConnectionFields: connectionFields(m, v.first()),
 		Actions:          integrationActions(m),
 		AccessForm:       accessFormWire(m),
 		BundleBytes:      ver.BundleBytes,
@@ -484,11 +526,17 @@ func (s *Server) integrationOr404(w http.ResponseWriter, r *http.Request) (*inte
 
 // writeIntegrationPage answers with the page as it now stands.
 func (s *Server) writeIntegrationPage(w http.ResponseWriter, r *http.Request) {
+	s.writeIntegrationPageStatus(w, r, http.StatusOK)
+}
+
+// writeIntegrationPageStatus is writeIntegrationPage with the status
+// code: 201 for a connection just created.
+func (s *Server) writeIntegrationPageStatus(w http.ResponseWriter, r *http.Request, code int) {
 	v, ok := s.integrationOr404(w, r)
 	if !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, s.integrationPage(v))
+	writeJSON(w, code, s.integrationPage(v))
 }
 
 // ---- the list and upload ----
@@ -953,360 +1001,6 @@ func (s *Server) integrationWords(name, version string) string {
 	return display + " " + version
 }
 
-// ---- the connection ----
-
-// newConnectionID is a fresh connection id: 8 hex digits.
-func newConnectionID() string {
-	var b [4]byte
-	_, _ = rand.Read(b[:])
-	return hex.EncodeToString(b[:])
-}
-
-// handleAPIIntegrationConnectionPut writes the connection from the
-// approved version's connection form: the fields that are not
-// sensitive to the store, the sensitive ones to the connection's
-// Secret. A sensitive field left out keeps its value and an empty one
-// clears it; a field that is not sensitive is what is sent. The
-// connection's last Test connection result is cleared.
-func (s *Server) handleAPIIntegrationConnectionPut(w http.ResponseWriter, r *http.Request) {
-	var req apitypes.ConnectionWrite
-	if !decodeJSONOrError(w, r, &req) {
-		return
-	}
-	defer s.lockIntegrations()()
-	v, ok := s.integrationOr404(w, r)
-	if !ok {
-		return
-	}
-	name := v.it.Name
-	if v.it.CurrentVersion == "" {
-		writeAPIError(w, http.StatusConflict, "approve a version of "+v.displayName()+" first; the connection follows the approved version's form", whoYou)
-		return
-	}
-	m := v.manifest
-	for _, k := range sortedFieldKeys(req.Fields) {
-		if _, ok := m.UserConfig.Field(k); !ok {
-			writeAPIError(w, http.StatusBadRequest, k+" is not a field of this integration's connection", whoDevelopers)
-			return
-		}
-	}
-	stored := map[string]string{}
-	if v.conn != nil && v.conn.SecretName != "" {
-		got, err := s.Secrets.Get(r.Context(), v.conn.SecretName)
-		switch {
-		case err == nil:
-			stored = got
-		case !errors.Is(err, secrets.ErrNotFound):
-			log.Printf("integration %s: read the connection's Secret: %v", name, err)
-			writeAPIError(w, http.StatusInternalServerError, "the connection's secrets could not be read, so nothing was changed", whoServer)
-			return
-		}
-	}
-	fields, secret := map[string]string{}, map[string]string{}
-	for _, f := range m.UserConfig {
-		val, sent := req.Fields[f.Key]
-		val = strings.TrimSpace(val)
-		switch {
-		case f.Sensitive && sent:
-			if val != "" {
-				secret[f.Key] = val
-			}
-		case f.Sensitive:
-			if old := stored[f.Key]; old != "" {
-				secret[f.Key] = old
-			}
-		case val != "":
-			fields[f.Key] = val
-		}
-		have := cmp.Or(fields[f.Key], secret[f.Key])
-		if have == "" {
-			if f.Required {
-				writeAPIError(w, http.StatusBadRequest, "the connection needs "+f.Title, whoYou)
-				return
-			}
-			continue
-		}
-		if msg := connectionValueProblem(f, have); msg != "" {
-			writeAPIError(w, http.StatusBadRequest, msg, whoYou)
-			return
-		}
-	}
-	// The connection as a built-in reads it: every field, secrets
-	// included.
-	conn := builtinintegrations.Connection{Fields: map[string]string{}}
-	if v.conn != nil {
-		conn.ID = v.conn.ID
-	}
-	for _, f := range m.UserConfig {
-		if val := cmp.Or(fields[f.Key], secret[f.Key]); val != "" {
-			conn.Fields[f.Key] = val
-		}
-	}
-	// A built-in may hold the connection to more than its form does.
-	if c, ok := v.builtin.(builtinintegrations.ConnectionChecker); ok {
-		if err := c.CheckConnection(conn); err != nil {
-			writeAPIError(w, http.StatusBadRequest, err.Error(), whoYou)
-			return
-		}
-	}
-	rec := store.IntegrationConnection{ID: newConnectionID(), CreatedAt: s.clk().Now(), Fields: fields}
-	if v.conn != nil {
-		rec.ID, rec.CreatedAt = v.conn.ID, v.conn.CreatedAt
-	}
-	conn.ID = rec.ID
-	secretName := secrets.ConnectionSecretName(name, rec.ID)
-	if v.conn != nil && v.conn.SecretName != "" {
-		secretName = v.conn.SecretName
-	}
-	// A built-in whose connection reaches hosts through the proxy keeps
-	// the connection's proxy credential in the same Secret: the one
-	// stored, or a new one. It is no field of the form, so it is not
-	// among the keys the owner is shown.
-	hostsOf := builtinHostsOf(v.builtin)
-	keys := sortedFieldKeys(secret)
-	if hostsOf != nil {
-		proxySecret := stored[builtinintegrations.ProxySecretKey]
-		if proxySecret == "" {
-			var err error
-			if proxySecret, err = egresscred.NewSecret(); err != nil {
-				writeAPIError(w, http.StatusInternalServerError, "the connection's secrets could not be saved, so nothing was changed", whoServer)
-				return
-			}
-		}
-		secret[builtinintegrations.ProxySecretKey] = proxySecret
-	}
-	if len(secret) > 0 {
-		if err := s.Secrets.Put(r.Context(), secretName, secret); err != nil {
-			log.Printf("integration %s: write the connection's Secret: %v", name, err)
-			writeAPIError(w, http.StatusInternalServerError, "the connection's secrets could not be saved, so nothing was changed", whoServer)
-			return
-		}
-		rec.SecretName = secretName
-		rec.SecretKeys = keys
-	} else if v.conn != nil && v.conn.SecretName != "" {
-		if err := s.Secrets.Delete(r.Context(), v.conn.SecretName); err != nil {
-			log.Printf("integration %s: delete the connection's Secret: %v", name, err)
-			writeAPIError(w, http.StatusInternalServerError, "the connection's secrets could not be cleared, so nothing was changed", whoServer)
-			return
-		}
-	}
-	if err := s.Store.PutIntegrationConnection(name, rec); err != nil {
-		log.Printf("integration %s: write the connection: %v", name, err)
-		writeAPIError(w, http.StatusInternalServerError, "the connection could not be saved", whoServer)
-		return
-	}
-	// Registered on every save, so the proxy admits the host as it now
-	// stands; only while the integration is on.
-	if hostsOf != nil && v.it.Enabled {
-		if err := s.registerBuiltinEgress(name, hostsOf, conn, secret[builtinintegrations.ProxySecretKey]); err != nil {
-			log.Printf("integration %s: register the connection's proxy credential: %v", name, err)
-			writeAPIError(w, http.StatusInternalServerError, "the connection was saved, but its network access could not be set up; save it again", whoServer)
-			return
-		}
-	}
-	// The running server starts again with the new values.
-	s.Integrations.ConnectionChanged(name)
-	s.Integrations.Changed()
-	s.writeIntegrationPage(w, r)
-}
-
-// connectionValueProblem is what is wrong with a connection field's
-// value for its type, or "". It never quotes the value, which may be a
-// secret.
-func connectionValueProblem(f integration.UserConfigField, val string) string {
-	switch f.Type {
-	case "number":
-		if _, err := strconv.ParseFloat(val, 64); err != nil {
-			return f.Title + " must be a number"
-		}
-	case "boolean":
-		if val != "true" && val != "false" {
-			return f.Title + " must be true or false"
-		}
-	}
-	return ""
-}
-
-func sortedFieldKeys(m map[string]string) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
-}
-
-// handleAPIIntegrationConnectionDelete removes the connection: its
-// Secret, its record and every agent's access, which was set for it.
-func (s *Server) handleAPIIntegrationConnectionDelete(w http.ResponseWriter, r *http.Request) {
-	defer s.lockIntegrations()()
-	v, ok := s.integrationOr404(w, r)
-	if !ok {
-		return
-	}
-	if !s.deleteConnectionSecrets(w, r, v.it.Name) {
-		return
-	}
-	removed, err := s.Store.DeleteIntegrationConnection(v.it.Name)
-	if err != nil {
-		log.Printf("integration %s: delete the connection: %v", v.it.Name, err)
-		writeAPIError(w, http.StatusInternalServerError, "the connection could not be removed", whoServer)
-		return
-	}
-	// A built-in's connection's proxy credential goes with it.
-	if err := s.dropBuiltinEgress(v.it.Name, removed); err != nil {
-		log.Printf("integration %s: drop the connection's proxy credential: %v", v.it.Name, err)
-	}
-	// The running server starts again without the values.
-	s.Integrations.ConnectionChanged(v.it.Name)
-	s.Integrations.Changed()
-	s.writeIntegrationPage(w, r)
-}
-
-// integrationVerifyMessageMax bounds the integration's words kept from
-// Test connection.
-const integrationVerifyMessageMax = 1000
-
-// toolResult is the part of an MCP tools/call result Kivali reads.
-type toolResult struct {
-	Content []struct {
-		Type string `json:"type"`
-		Text string `json:"text"`
-	} `json:"content"`
-	IsError bool `json:"isError"`
-}
-
-// firstText is the result's first text content.
-func (t toolResult) firstText() string {
-	for _, c := range t.Content {
-		if c.Type == "text" {
-			return c.Text
-		}
-	}
-	return ""
-}
-
-// callIntegrationTool calls one of v's tools for the owner (no agent),
-// writes the audit row with tool as its action, and returns the result.
-// For an integration that ships with Kivali, builtin makes the call
-// instead, answering as the server's tools/call would. failed is the
-// integration's words when the call did not go through: the server's
-// error, its tool's error result, or the deadline.
-// errIntegrationNotRunning and a caller that went away are returned as
-// err, with no audit row.
-func (s *Server) callIntegrationTool(r *http.Request, v *integrationView, tool string, builtin func(context.Context) (json.RawMessage, error)) (res toolResult, failed string, err error) {
-	name := v.it.Name
-	start := s.clk().Now()
-	var raw json.RawMessage
-	var callErr error
-	if v.builtin != nil {
-		raw, callErr = builtin(r.Context())
-	} else {
-		raw, callErr = s.Integrations.Call(r.Context(), name, "tools/call", map[string]any{"name": tool, "arguments": map[string]any{}})
-	}
-	var rpcErr *integrationpod.RPCError
-	switch {
-	case errors.Is(callErr, errIntegrationNotRunning), r.Context().Err() != nil:
-		return res, "", cmp.Or(callErr, r.Context().Err())
-	case errors.Is(callErr, errIntegrationTimeout):
-		failed = fmt.Sprintf("the integration did not answer within %d seconds", int(integrationCallTimeout/time.Second))
-	case errors.As(callErr, &rpcErr):
-		failed = rpcErr.Message
-	case callErr != nil:
-		failed = callErr.Error()
-	default:
-		if json.Unmarshal(raw, &res) != nil {
-			failed = "the integration's answer is not one Kivali reads"
-		} else if res.IsError {
-			failed = cmp.Or(res.firstText(), "the integration reported an error")
-		}
-	}
-	failed = clipText(failed, integrationVerifyMessageMax)
-	// The integration's words may quote a connection secret, as an
-	// agent's call's answer may: scrubbed before they are kept, shown
-	// or audited. With no scrubber (the secrets could not be read) the
-	// words are held back the way an agent's answer is.
-	if scrub := s.Integrations.scrubber(r.Context(), name); scrub != nil {
-		failed = scrub.Replace(failed)
-		for i := range res.Content {
-			res.Content[i].Text = scrub.Replace(res.Content[i].Text)
-		}
-	} else {
-		res = toolResult{}
-		failed = "Kivali could not check the integration's answer for secrets, so it held the answer back"
-	}
-	row := store.IntegrationAuditRow{
-		At:         start,
-		Agent:      agent.CEOSlug,
-		Action:     tool,
-		Allowed:    true,
-		Reason:     failed,
-		DurationMS: s.clk().Now().Sub(start).Milliseconds(),
-	}
-	if err := s.Store.AppendIntegrationAudit(name, row); err != nil {
-		log.Printf("integration %s: audit: %v", name, err)
-	}
-	return res, failed, nil
-}
-
-// handleAPIIntegrationVerify is Test connection: it calls the
-// integration's verify action through the running server, or a
-// built-in's Verify with the connection, and keeps what it found on
-// the connection.
-func (s *Server) handleAPIIntegrationVerify(w http.ResponseWriter, r *http.Request) {
-	v, ok := s.integrationOr404(w, r)
-	if !ok {
-		return
-	}
-	name := v.it.Name
-	switch {
-	case v.staleBuiltin():
-		writeAPIError(w, http.StatusConflict, builtinRefusal(v.displayName(), builtinNotIncluded), whoYou)
-		return
-	case v.it.CurrentVersion == "":
-		writeAPIError(w, http.StatusConflict, "approve a version of "+v.displayName()+" first", whoYou)
-		return
-	case v.conn == nil:
-		writeAPIError(w, http.StatusConflict, "connect the integration first", whoYou)
-		return
-	case v.manifest.Kivali.Verify == "":
-		writeAPIError(w, http.StatusConflict, v.displayName()+" has no connection test", v.whoBuilt())
-		return
-	case !v.running:
-		writeAPIError(w, http.StatusConflict, errNotRunning, whoBundle)
-		return
-	}
-	connID := v.conn.ID
-	res, failed, err := s.callIntegrationTool(r, v, v.manifest.Kivali.Verify, func(ctx context.Context) (json.RawMessage, error) {
-		return s.builtinOwnerCall(ctx, v.builtin, name, true, "")
-	})
-	if errors.Is(err, errIntegrationNotRunning) {
-		writeAPIError(w, http.StatusConflict, errNotRunning, v.whoBuilt())
-		return
-	}
-	if err != nil {
-		return
-	}
-	verified, message := failed == "", failed
-	if verified {
-		message = clipText(res.firstText(), integrationVerifyMessageMax)
-	}
-	unlock := s.lockIntegrations()
-	conn, err := s.Store.GetIntegrationConnection(name)
-	if err == nil && conn.ID == connID {
-		at := s.clk().Now().UTC()
-		conn.VerifiedAt, conn.Verified, conn.VerifyMessage = &at, &verified, message
-		err = s.Store.PutIntegrationConnection(name, conn)
-	}
-	unlock()
-	if err != nil && !errors.Is(err, store.ErrNotFound) {
-		log.Printf("integration %s: keep the connection test: %v", name, err)
-		writeAPIError(w, http.StatusInternalServerError, "the connection test's result could not be saved", whoServer)
-		return
-	}
-	s.writeIntegrationPage(w, r)
-}
-
 // ---- access ----
 
 // integrationAgent reads {slug} as an agent on the team that can be
@@ -1332,8 +1026,28 @@ func (s *Server) integrationAgent(w http.ResponseWriter, r *http.Request) (strin
 	return slug, true
 }
 
+// accessConnection is the connection an agent's access is set for, by
+// the id the write names: required when the integration has more than
+// one connection, the only one when it is left out. For an integration
+// that takes one connection it is always that one, the oldest. nil when
+// the id is missing where it is needed, or names no connection the
+// access may use.
+func (v *integrationView) accessConnection(id string) *connView {
+	switch {
+	case !v.multiple():
+		if c := v.first(); c != nil && (id == "" || id == c.rec.ID) {
+			return c
+		}
+		return nil
+	case id == "" && len(v.conns) == 1:
+		return v.conns[0]
+	}
+	return v.connByID(id)
+}
+
 // handleAPIIntegrationAccessPut sets one agent's access from the
-// filled access form, checked against the approved version's form.
+// filled access form, checked against the approved version's form,
+// for the connection the write names.
 func (s *Server) handleAPIIntegrationAccessPut(w http.ResponseWriter, r *http.Request) {
 	var req apitypes.AccessWrite
 	if !decodeJSONOrError(w, r, &req) {
@@ -1352,8 +1066,13 @@ func (s *Server) handleAPIIntegrationAccessPut(w http.ResponseWriter, r *http.Re
 		writeAPIError(w, http.StatusConflict, "approve a version of "+v.displayName()+" first", whoYou)
 		return
 	}
-	if v.conn == nil {
+	if len(v.conns) == 0 {
 		writeAPIError(w, http.StatusConflict, "connect the integration first", whoYou)
+		return
+	}
+	conn := v.accessConnection(req.ConnectionID)
+	if conn == nil {
+		writeAPIError(w, http.StatusBadRequest, "choose a connection", whoYou)
 		return
 	}
 	if err := integration.ValidateAccess(v.manifest, req.Access); err != nil {
@@ -1376,7 +1095,7 @@ func (s *Server) handleAPIIntegrationAccessPut(w http.ResponseWriter, r *http.Re
 	}
 	err := s.Store.SetIntegrationAccess(v.it.Name, store.IntegrationAccess{
 		Slug:         slug,
-		ConnectionID: v.conn.ID,
+		ConnectionID: conn.rec.ID,
 		Access:       access,
 		SetAt:        s.clk().Now(),
 		SetBy:        agent.CEOSlug,
@@ -1414,7 +1133,8 @@ func (s *Server) handleAPIIntegrationAccessDelete(w http.ResponseWriter, r *http
 
 // handleAPIIntegrationChoices lists a field's options through the
 // integration, which needs its runtime; a built-in one's Choices lists
-// them through its connection, which it needs.
+// them through its connection, which it needs: the one ?connection=
+// names, or the first.
 func (s *Server) handleAPIIntegrationChoices(w http.ResponseWriter, r *http.Request) {
 	v, ok := s.integrationOr404(w, r)
 	if !ok {
@@ -1426,6 +1146,13 @@ func (s *Server) handleAPIIntegrationChoices(w http.ResponseWriter, r *http.Requ
 		writeAPIError(w, http.StatusNotFound, v.displayName()+" lists no options for "+key, whoDevelopers)
 		return
 	}
+	conn := v.first()
+	if id := r.URL.Query().Get("connection"); id != "" {
+		if conn = v.connByID(id); conn == nil {
+			writeAPIError(w, http.StatusNotFound, "that connection is no longer there", whoLink)
+			return
+		}
+	}
 	switch {
 	case v.staleBuiltin():
 		writeAPIError(w, http.StatusConflict, builtinRefusal(v.displayName(), builtinNotIncluded), whoYou)
@@ -1433,13 +1160,17 @@ func (s *Server) handleAPIIntegrationChoices(w http.ResponseWriter, r *http.Requ
 	case !v.running:
 		writeAPIError(w, http.StatusConflict, errNotRunning, whoBundle)
 		return
-	case v.builtin != nil && v.conn == nil:
+	case v.builtin != nil && conn == nil:
 		writeAPIError(w, http.StatusConflict, "connect the integration first", whoYou)
 		return
 	}
+	connID := ""
+	if conn != nil {
+		connID = conn.rec.ID
+	}
 	listName := v.manifest.Kivali.Access.Choices[key]
-	res, failed, err := s.callIntegrationTool(r, v, listName, func(ctx context.Context) (json.RawMessage, error) {
-		return s.builtinOwnerCall(ctx, v.builtin, v.it.Name, false, listName)
+	res, failed, err := s.callIntegrationTool(r, v, listName, func(ctx context.Context) (json.RawMessage, *strings.Replacer, error) {
+		return s.builtinOwnerCall(ctx, v.builtin, v.it.Name, connID, false, listName)
 	})
 	if errors.Is(err, errIntegrationNotRunning) {
 		writeAPIError(w, http.StatusConflict, errNotRunning, v.whoBuilt())
@@ -1581,6 +1312,10 @@ func (s *Server) handleAPIAgentIntegrations(w http.ResponseWriter, r *http.Reque
 		}
 		row.Summary = v.accessSummary(v.access[i].AccessJSON())
 		row.Invalid = optString(v.access[i].Invalid)
+		// Which of several connections the agent's calls use.
+		if c := v.connByID(v.access[i].ConnectionID); c != nil && v.multiple() {
+			row.ConnectionLabel = v.connLabel(c)
+		}
 		out.Connected = append(out.Connected, row)
 	}
 	byName := func(list []apitypes.AgentIntegration) {

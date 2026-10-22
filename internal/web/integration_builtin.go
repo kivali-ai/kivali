@@ -50,13 +50,14 @@ func refuseNoConnection(display string) string {
 	return fmt.Sprintf("The %s integration has no connection yet. Ask the owner to connect it.", display)
 }
 
-// builtinConnection is name's connection for a built-in's function:
-// its id and every field's value by key, secrets included; the secret
-// of its scoped proxy credential ("" for none), which is not a field
-// and which core alone puts in a shell job; and the scrubber of all of
-// these secrets. store.ErrNotFound with no connection.
-func (s *Server) builtinConnection(ctx context.Context, name string) (builtinintegrations.Connection, string, *strings.Replacer, error) {
-	_, rec, values, secretValues, proxySecret, err := s.Integrations.readConnection(ctx, name)
+// builtinConnection is name's connection connID ("" for the oldest)
+// for a built-in's function: its id and every field's value by key,
+// secrets included; the secret of its scoped proxy credential ("" for
+// none), which is not a field and which core alone puts in a shell
+// job; and the scrubber of all of these secrets. store.ErrNotFound
+// with no such connection.
+func (s *Server) builtinConnection(ctx context.Context, name, connID string) (builtinintegrations.Connection, string, *strings.Replacer, error) {
+	_, rec, values, secretValues, proxySecret, err := s.Integrations.readConnection(ctx, name, connID)
 	if err != nil {
 		return builtinintegrations.Connection{}, "", nil, err
 	}
@@ -176,7 +177,8 @@ func (s *Server) builtinListedTools(ctx context.Context, v agentIntegration, slu
 // Each request is a call of its own under integrationCallTimeout; the
 // job runs between them in the shell, under the job's own bound.
 func (s *Server) builtinAgentCall(ctx context.Context, start time.Time, slug string, v agentIntegration, tool string, args json.RawMessage, result *agentpod.IntegrationShellJobResult) agentpod.IntegrationCallResponse {
-	conn, proxySecret, scrub, err := s.builtinConnection(ctx, v.name)
+	// The connection the agent's access names.
+	conn, proxySecret, scrub, err := s.builtinConnection(ctx, v.name, v.connID)
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		s.auditAgentCall(v.name, start, slug, tool, false, "the integration has no connection")
@@ -241,7 +243,7 @@ func (s *Server) builtinShellJob(ctx context.Context, start time.Time, slug stri
 	if job.Git != nil {
 		if _, ok := v.builtin.(builtinintegrations.HostsOf); ok && proxySecret == "" {
 			var err error
-			if proxySecret, err = s.builtinProxySecret(ctx, v.name, v.builtin); err != nil {
+			if proxySecret, err = s.builtinProxySecret(ctx, v.name, v.builtin, conn.ID); err != nil {
 				log.Printf("integration %s: the connection's proxy credential: %v", v.name, err)
 				s.auditAgentCall(v.name, start, slug, tool, true, "the connection's proxy credential could not be made")
 				return integrationError(fmt.Sprintf("Kivali could not prepare the %s integration's connection; try again later or tell the owner.", v.display))
@@ -274,18 +276,22 @@ func shellJobDuration(result agentpod.IntegrationShellJobResult) time.Duration {
 	return time.Duration(result.Git.DurationMs) * time.Millisecond
 }
 
-// builtinOwnerCall is the owner's call of a built-in for Test
-// connection (verify) or the options a field lists (choices name), as
-// the MCP tools/call result a pod's server would answer: the function's
-// words as a text block, its error as an error result. With no
+// builtinOwnerCall is the owner's call of a built-in with its
+// connection connID ("" for the oldest) for Test connection (verify)
+// or the options a field lists (choices name), as the MCP tools/call
+// result a pod's server would answer: the function's words as a text
+// block, its error as an error result; and the scrubber of that
+// connection's secrets (nil when it could not be read). With no
 // connection the error says so.
-func (s *Server) builtinOwnerCall(ctx context.Context, bi builtinintegrations.Integration, name string, verify bool, choices string) (json.RawMessage, error) {
-	conn, _, _, err := s.builtinConnection(ctx, name)
+func (s *Server) builtinOwnerCall(ctx context.Context, bi builtinintegrations.Integration, name, connID string, verify bool, choices string) (json.RawMessage, *strings.Replacer, error) {
+	conn, _, scrub, err := s.builtinConnection(ctx, name, connID)
 	switch {
 	case errors.Is(err, store.ErrNotFound):
-		return builtinResultJSON(&builtinintegrations.Result{Content: []string{"the integration has no connection"}, IsError: true}, nil)
+		raw, err := builtinResultJSON(&builtinintegrations.Result{Content: []string{"the integration has no connection"}, IsError: true}, nil)
+		return raw, nil, err
 	case err != nil:
-		return builtinResultJSON(&builtinintegrations.Result{Content: []string{"the connection could not be read"}, IsError: true}, nil)
+		raw, err := builtinResultJSON(&builtinintegrations.Result{Content: []string{"the connection could not be read"}, IsError: true}, nil)
+		return raw, nil, err
 	}
 	res, err := runBuiltin(ctx, s.clk(), integrationCallTimeout, func(ctx context.Context) (*builtinintegrations.Result, error) {
 		if verify {
@@ -305,5 +311,6 @@ func (s *Server) builtinOwnerCall(ctx context.Context, bi builtinintegrations.In
 		}
 		return &builtinintegrations.Result{Content: []string{string(b)}}, nil
 	})
-	return builtinResultJSON(res, err)
+	raw, err := builtinResultJSON(res, err)
+	return raw, scrub, err
 }

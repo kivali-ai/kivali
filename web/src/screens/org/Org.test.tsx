@@ -16,11 +16,12 @@ import type { OrgContextValue } from '../../state/OrgProvider';
 import { aboutLine, versionLabel } from './About';
 import { BACKUP_DEBOUNCE_MS } from './Backup';
 import { InstallScreen } from './InstallScreen';
-import { IntegrationPage } from './IntegrationPage';
+import { IntegrationPage, deleteConnectionWords } from './IntegrationPage';
 import { Org, headerMeta } from './OrgPage';
 import {
   goAccessChoices,
   goAccessWrite,
+  goConnectionCreate,
   goConnectionWrite,
   goDowngrade,
   goFiles,
@@ -28,6 +29,7 @@ import {
   goIntegrationAudit,
   goIntegrationLogs,
   goIntegrationPage,
+  goIntegrationPageMultiple,
   goIntegrationUploadRefused,
   goIntegrationVersion,
   goIntegrationVersionBuiltin,
@@ -1462,7 +1464,7 @@ describe('Integration page', () => {
     expect(dialog.getByRole('checkbox', { name: 'May publish and edit' }).closest('.app-int-danger')).toBeNull();
     await click(risky);
     await click(dialog.getByRole('button', { name: 'Give access' }));
-    expect(lastBody('PUT', API + '/access/chief-of-staff')).toEqual({ access: { write: false, delete: true } });
+    expect(lastBody('PUT', API + '/access/chief-of-staff')).toEqual({ access: { write: false, delete: true }, connection_id: 'c7f3a1b2' });
   });
 
   // Guards Change and its failures: the form starts from the agent's access as it stands, a list field adds entries
@@ -1492,13 +1494,13 @@ describe('Integration page', () => {
     expect(dialog.getByRole('button', { name: 'Remove launch' })).toBeInTheDocument();
     await click(dialog.getByRole('checkbox', { name: 'Marketing' }));
     await click(dialog.getByRole('button', { name: 'Save access' }));
-    expect(lastBody('PUT', API + '/access/dana')).toEqual({ access: { write: true, delete: false, tags: ['launch'] } });
+    expect(lastBody('PUT', API + '/access/dana')).toEqual({ access: { write: true, delete: false, tags: ['launch'] }, connection_id: 'c7f3a1b2' });
     expect(screen.getByRole('dialog')).toBeInTheDocument();
     expect(dialog.getByText('Blogs needs at least one choice.')).toBeInTheDocument();
   });
 
   // Guards an integration whose access is all or nothing: the dialog says so and Approve sends an empty form ({}),
-  // the body AccessWrite asks for, rather than a form with nothing in it.
+  // the body AccessWrite asks for, rather than a form with nothing in it, with the one connection's id.
   it('grants all-or-nothing access with an empty form', async () => {
     const plain = { ...goIntegrationPage, access_form: undefined };
     await renderOrg(PATH, { routes: { ['GET ' + API]: plain, ['PUT ' + API + '/access/chief-of-staff']: plain } });
@@ -1506,7 +1508,7 @@ describe('Integration page', () => {
     const dialog = within(screen.getByRole('dialog'));
     expect(dialog.getByText('This integration’s access is all or nothing.')).toBeInTheDocument();
     await click(dialog.getByRole('button', { name: 'Approve' }));
-    expect(lastBody('PUT', API + '/access/chief-of-staff')).toEqual({ access: {} });
+    expect(lastBody('PUT', API + '/access/chief-of-staff')).toEqual({ access: {}, connection_id: 'c7f3a1b2' });
   });
 
   // Guards taking access away: Remove beside an agent deletes that agent's access and the table follows the answer.
@@ -1742,6 +1744,135 @@ describe('Integration page', () => {
     expect(called('PUT', API + '/access/lee')).toBe(true);
     expect(screen.queryByText(/^1 access row no longer fits/)).toBeNull();
     expect(screen.queryByText(/^Invalid: /)).toBeNull();
+  });
+});
+
+describe('Integration page, several connections', () => {
+  const PATH = '/org/integrations/git';
+  const API = '/api/v1/org/integrations/git';
+  const HUB = goIntegrationPageMultiple.connections[0]!;
+  const LAB = goIntegrationPageMultiple.connections[1]!;
+  const gitRoutes = (more: Record<string, Route> = {}) => ({
+    ['GET ' + API]: goIntegrationPageMultiple,
+    ['GET ' + API + '/audit']: { rows: [] },
+    ['GET ' + API + '/logs']: { lines: [] },
+    ...more,
+  });
+
+  // Guards the Connections block of an integration that takes several (integration_page_multiple.json): one card per
+  // connection, named by its label and filled with its own values, each saving to and testing its own id; and Add a
+  // connection opens a blank form with a label whose body is connection_create.json. A card that saved through the
+  // singular route, or showed the first connection's host in the second, would change the wrong account.
+  it('draws a card per connection and saves, tests and adds by id', async () => {
+    await renderOrg(PATH, {
+      routes: gitRoutes({
+        ['PUT ' + API + '/connections/' + LAB.id]: goIntegrationPageMultiple,
+        ['POST ' + API + '/connections/' + HUB.id + '/verify']: goIntegrationPageMultiple,
+        ['POST ' + API + '/connections']: goIntegrationPageMultiple,
+      }),
+    });
+    const block = within(screen.getByRole('region', { name: 'Connections' }));
+    expect(screen.queryByRole('region', { name: 'Connection' })).toBeNull();
+    const hub = within(block.getByRole('region', { name: 'GitHub' }));
+    const lab = within(block.getByRole('region', { name: 'Company GitLab' }));
+    expect(hub.getByLabelText('Host')).toHaveValue('github.com');
+    expect(lab.getByLabelText('Host')).toHaveValue('gitlab.example.com');
+    expect(lab.getByLabelText('Label')).toHaveValue('Company GitLab');
+    expect(lab.getByLabelText('Access token')).toHaveAttribute('placeholder', 'Stored');
+    expect(lab.getByText('Reconnect needed')).toBeInTheDocument();
+    expect(lab.getByText('The host refused the token.').closest('[role="alert"]')).toHaveClass('kv-banner--danger');
+    expect(hub.queryByText('Reconnect needed')).toBeNull();
+    expect(hub.getByText(/^Verified .*: Connected as Acme Marketing$/)).toBeInTheDocument();
+
+    fireEvent.change(lab.getByLabelText('Host'), { target: { value: 'gitlab.example.org' } });
+    await click(lab.getByRole('button', { name: 'Save connection' }));
+    expect(lastBody('PUT', API + '/connections/' + LAB.id)).toEqual({ label: 'Company GitLab', fields: { host: 'gitlab.example.org', test_repository: '' } });
+    expect(called('PUT', API + '/connection')).toBe(false);
+
+    await click(within(block.getByRole('region', { name: 'GitHub' })).getByRole('button', { name: 'Test connection' }));
+    expect(called('POST', API + '/connections/' + HUB.id + '/verify')).toBe(true);
+
+    await click(block.getByRole('button', { name: 'Add a connection' }));
+    const added = within(block.getByRole('region', { name: 'New connection' }));
+    expect(added.getByLabelText('Host')).toHaveValue('');
+    expect(added.getByLabelText('Access token')).not.toHaveAttribute('placeholder');
+    fireEvent.change(added.getByLabelText('Label'), { target: { value: 'Staging GitLab' } });
+    fireEvent.change(added.getByLabelText('Host'), { target: { value: 'gitlab-staging.example.com' } });
+    fireEvent.change(added.getByLabelText('Access token'), { target: { value: 'glpat-...' } });
+    await click(added.getByRole('button', { name: 'Add connection' }));
+    expect(lastBody('POST', API + '/connections')).toEqual(goConnectionCreate);
+    expect(block.queryByRole('region', { name: 'New connection' })).toBeNull();
+    expect(block.getByRole('button', { name: 'Add a connection' })).toBeInTheDocument();
+  });
+
+  // Guards Delete on one of several connections: it waits for the danger dialog, which names the agents whose access
+  // goes with it (Lee's row names the GitLab connection, Dana's does not), then deletes that id alone. Deleting by the
+  // singular route would take every connection and every agent's access.
+  it('asks before deleting a connection, naming whose access goes with it', async () => {
+    const after = { ...goIntegrationPageMultiple, connections: [HUB], access: [goIntegrationPageMultiple.access[0]!] };
+    await renderOrg(PATH, { routes: gitRoutes({ ['DELETE ' + API + '/connections/' + LAB.id]: after }) });
+    await click(within(screen.getByRole('region', { name: 'Company GitLab' })).getByRole('button', { name: 'Delete' }));
+    const dialog = screen.getByRole('dialog');
+    expect(dialog).toHaveClass('kv-dialog--danger');
+    expect(within(dialog).getByText('Delete Company GitLab?')).toBeInTheDocument();
+    expect(within(dialog).getByText('Its stored secrets are deleted. Lee loses its access, which uses it.')).toBeInTheDocument();
+    expect(called('DELETE', API + '/connections/' + LAB.id)).toBe(false);
+    await click(within(dialog).getByRole('button', { name: 'Delete' }));
+    expect(called('DELETE', API + '/connections/' + LAB.id)).toBe(true);
+    expect(called('DELETE', API + '/connection')).toBe(false);
+    expect(screen.queryByRole('region', { name: 'Company GitLab' })).toBeNull();
+  });
+
+  // Guards the access dialog with several connections: a required Connection select comes first (Give access waits for
+  // it), the row's connection is chosen when changing it, and the body names the chosen id; the access table says
+  // which connection each agent uses. Without the select an agent would be set for a connection nobody chose.
+  it('asks which connection an agent uses, and shows it on each row', async () => {
+    await renderOrg(PATH, {
+      routes: gitRoutes({ ['PUT ' + API + '/access/chief-of-staff']: goIntegrationPageMultiple, ['PUT ' + API + '/access/dana']: goIntegrationPageMultiple }),
+    });
+    const access = within(screen.getByRole('region', { name: 'Access' }));
+    const table = within(access.getByRole('table'));
+    expect(within(table.getByText('Dana').closest('tr') as HTMLElement).getByText('GitHub')).toBeInTheDocument();
+    expect(within(table.getByText('Lee').closest('tr') as HTMLElement).getByText('Company GitLab')).toBeInTheDocument();
+
+    await click(access.getByRole('button', { name: 'Give access' }));
+    let dialog = within(screen.getByRole('dialog'));
+    const select = dialog.getByRole('combobox', { name: 'Connection' });
+    expect(select).toHaveValue('');
+    expect(within(select).getAllByRole('option').map((o) => o.textContent)).toEqual(['Choose a connection', 'GitHub', 'Company GitLab']);
+    expect(dialog.getByRole('button', { name: 'Give access' })).toBeDisabled();
+    fireEvent.change(select, { target: { value: LAB.id } });
+    await flush();
+    fireEvent.change(dialog.getByRole('textbox', { name: 'Repositories' }), { target: { value: 'eng/*' } });
+    await click(dialog.getByRole('button', { name: 'Add' }));
+    await click(dialog.getByRole('button', { name: 'Give access' }));
+    expect(lastBody('PUT', API + '/access/chief-of-staff')).toEqual({ access: { repositories: ['eng/*'], push: false }, connection_id: LAB.id });
+
+    await click(screen.getByRole('button', { name: 'Change Dana’s access' }));
+    dialog = within(screen.getByRole('dialog'));
+    expect(dialog.getByRole('combobox', { name: 'Connection' })).toHaveValue(HUB.id);
+    await click(dialog.getByRole('button', { name: 'Save access' }));
+    expect(lastBody('PUT', API + '/access/dana')).toEqual({ access: { repositories: ['acme/*'], push: false }, connection_id: HUB.id });
+  });
+
+  // Guards the one-connection page against the several-connection one: with one connection (integration_page.json)
+  // there is no card, no Add a connection, no Connection column and no Connection select, as before.
+  it('keeps the one-connection page as it was', async () => {
+    await renderOrg('/org/integrations/hubspot');
+    expect(screen.getByRole('region', { name: 'Connection' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Add a connection' })).toBeNull();
+    expect(within(within(screen.getByRole('region', { name: 'Access' })).getByRole('table')).queryByText('Connection')).toBeNull();
+    await click(screen.getByRole('button', { name: 'Give access' }));
+    expect(within(screen.getByRole('dialog')).queryByRole('combobox', { name: 'Connection' })).toBeNull();
+  });
+});
+
+describe('connection words', () => {
+  // Guards the delete dialog's sentence for every count of agents: none, one (its) and several (their, with "and").
+  it('names the agents whose access a delete takes', () => {
+    expect(deleteConnectionWords([])).toBe('Its stored secrets are deleted. No agent’s access uses it.');
+    expect(deleteConnectionWords(['Dana'])).toBe('Its stored secrets are deleted. Dana loses its access, which uses it.');
+    expect(deleteConnectionWords(['Dana', 'Lee', 'Kim'])).toBe('Its stored secrets are deleted. Dana, Lee and Kim lose their access, which uses it.');
   });
 });
 
