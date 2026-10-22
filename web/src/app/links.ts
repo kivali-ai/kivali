@@ -3,12 +3,12 @@ import { useHref, useNavigate } from 'react-router';
 
 /**
  * Paths the Go server answers itself rather than the app: the JSON API, raw messages, attachment downloads,
- * the org's uploaded logo, sign-in and sign-out, the build's own files, health and
+ * the org's uploaded logo, sign-in and sign-out, an integration's browser sign-in, the build's own files, health and
  * version, and the sign-in screen (a full load, so the session
  * starts fresh). A link to one of them is a real navigation, never a router one. Keep in step with
  * wireRoutes in internal/web/web.go.
  */
-const SERVER_PREFIXES = ['/api/', '/messages/', '/attachments/', '/branding/', '/auth/', '/assets/', '/logos/', '/admin/', '/debug/'];
+const SERVER_PREFIXES = ['/api/', '/messages/', '/attachments/', '/branding/', '/auth/', '/connect/', '/assets/', '/logos/', '/admin/', '/debug/'];
 const SERVER_PATHS = ['/favicon.ico', '/healthz', '/readyz', '/login'];
 /** The SSE streams: /org/stream, /agents/{slug}/stream and /agents/{slug}/subagents/{id}/stream. */
 const STREAM = /^\/(org|agents\/[^/]+(\/subagents\/[^/]+)?)\/stream$/;

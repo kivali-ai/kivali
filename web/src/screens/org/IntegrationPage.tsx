@@ -121,12 +121,20 @@ export function clientSaved(fields: readonly ConnectionField[]): boolean {
 }
 
 /**
- * Sends the browser to the service's sign-in page for a browser sign-in. The one place the page leaves for the
- * service, so Kivali Desktop can open the system browser instead. Its caller keeps the Sign in block's buttons held
- * (`working`), since this tab navigates away; a hook that keeps the page must have the caller reset them.
+ * Where the page sends the browser to begin the browser sign-in `flow` (BrowserSignIn.flow): Kivali sends it on to
+ * the service's sign-in page. Kivali Desktop does not load this address in a team's window; it opens the system
+ * browser at it instead, signed in to Kivali through the handoff (desktop-app/src-tauri/src/windows.rs, connect_flow).
  */
-export function openSignIn(url: string): void {
-  window.location.assign(url);
+export function connectStartPath(flow: string): string {
+  return '/connect/start?flow=' + encodeURIComponent(flow);
+}
+
+/**
+ * Sends the browser on its way to the service's sign-in page for the browser sign-in `flow`. In a browser the page
+ * leaves; in Kivali Desktop it stays, and the system browser opens instead.
+ */
+export function openSignIn(flow: string): void {
+  window.location.assign(connectStartPath(flow));
 }
 
 /**
@@ -203,12 +211,16 @@ interface SignInBlockProps {
  * browser, or both, the manifest's way first. With a code, the code and the service's page to enter it on while Kivali
  * waits for the approval, asking how it stands every few seconds while the tab is visible, and "Finishing the
  * sign-in." once it is done until the page is read again. In the browser, the page leaves for the service's
- * (openSignIn), which sends the browser back here through Kivali with how it went (returned). Signed in, who the
+ * (openSignIn), which sends the browser back here through Kivali with how it went (returned); where the page stays
+ * (Kivali Desktop, which opens the system browser instead), it waits for the sign-in as it does for a code, with
+ * Start again. Signed in, who the
  * connection test found and Sign out; a sign-in that failed or expired, why, and Try again the same way; a connection
  * none of whose ways this version offers, a sentence saying so. What the sign-in asks the service for is above it.
  */
 function SignInBlock({ connection, fields, api, scopes, signInAt, busy, now, onPage, onSignedIn, returned }: SignInBlockProps) {
   const [device, setDevice] = useState<DeviceSignIn | null>(null);
+  // A browser sign-in under way that this page stayed for: Kivali Desktop opened the system browser.
+  const [inBrowser, setInBrowser] = useState(false);
   // Done, and the page is being read again: held so the block does not show Sign in with a code in between.
   const [finishing, setFinishing] = useState(false);
   const [ended, setEnded] = useState<SignInProgress | null>(() =>
@@ -240,15 +252,17 @@ function SignInBlock({ connection, fields, api, scopes, signInAt, busy, now, onP
   }, [returned, api]);
 
   useEffect(() => {
-    if (!device || !visible) return;
+    if ((!device && !inBrowser) || !visible) return;
+    const way = device ? 'device' : 'browser';
     let stopped = false;
     const timer = setInterval(() => {
       apiGet<SignInProgress>(api + '/sign-in').then(
         (p) => {
           if (stopped || p.state === 'pending') return;
           setDevice(null);
+          setInBrowser(false);
           if (p.state !== 'done') {
-            setEndedWay('device');
+            setEndedWay(way);
             setEnded(p);
             return;
           }
@@ -264,7 +278,7 @@ function SignInBlock({ connection, fields, api, scopes, signInAt, busy, now, onP
       stopped = true;
       clearInterval(timer);
     };
-  }, [device, visible, api]);
+  }, [device, inBrowser, visible, api]);
 
   const start = async () => {
     setWorking(true);
@@ -283,13 +297,16 @@ function SignInBlock({ connection, fields, api, scopes, signInAt, busy, now, onP
     setWorking(true);
     setError(null);
     setEnded(null);
+    setInBrowser(false);
     try {
-      const { url } = await apiPost<BrowserSignIn>(api + '/sign-in/browser');
-      // `working` stays true: the tab is leaving for the service, and the buttons stay held until it does. A Desktop
-      // openSignIn that opens the system browser and keeps this page must reset it (setWorking(false)) once it has.
-      openSignIn(url);
+      const { flow } = await apiPost<BrowserSignIn>(api + '/sign-in/browser');
+      openSignIn(flow);
+      // In a browser the tab is leaving; in Kivali Desktop it stays and waits, with its buttons free again (finally),
+      // Start again among them. A click in the moment before a leaving tab goes only starts the sign-in afresh.
+      setInBrowser(true);
     } catch (err) {
       setError(asApiError(err));
+    } finally {
       setWorking(false);
     }
   };
@@ -382,6 +399,22 @@ function SignInBlock({ connection, fields, api, scopes, signInAt, busy, now, onP
           {codeLifeWords(device.expires_at, now) + ' Waiting for your approval.'}
         </Text>
       </div>
+    );
+  } else if (inBrowser) {
+    body = (
+      <>
+        <Text as="p" variant="body">
+          Approve the sign-in on the service’s page in your browser. Kivali finishes it here once you do.
+        </Text>
+        <Text as="p" variant="caption" tone="muted">
+          Waiting for your approval.
+        </Text>
+        <div className="app-org-actions">
+          <Button type="button" variant="secondary" disabled={disabled} onClick={() => void startBrowser()}>
+            Start again
+          </Button>
+        </div>
+      </>
     );
   } else if (ended) {
     body = (

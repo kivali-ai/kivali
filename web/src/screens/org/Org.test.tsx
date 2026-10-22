@@ -16,7 +16,7 @@ import type { OrgContextValue } from '../../state/OrgProvider';
 import { aboutLine, versionLabel } from './About';
 import { BACKUP_DEBOUNCE_MS } from './Backup';
 import { InstallScreen, bundleLine } from './InstallScreen';
-import { IntegrationPage, SIGN_IN_POLL_MS, clientSaved, codeLifeWords, deleteConnectionWords, signInLine, signInReturnOf, signsInAt } from './IntegrationPage';
+import { IntegrationPage, SIGN_IN_POLL_MS, clientSaved, codeLifeWords, connectStartPath, deleteConnectionWords, signInLine, signInReturnOf, signsInAt } from './IntegrationPage';
 import { whenLabel } from './integrationParts';
 import { Org, headerMeta } from './OrgPage';
 import {
@@ -2314,10 +2314,12 @@ describe('Integration page, signing in in the browser', () => {
   };
 
   // Guards the start of a browser sign-in, against browser_sign_in.json: Sign in in your browser posts to the
-  // connection's route and sends this tab to the service's page the server built (openSignIn), the address Kivali
-  // Desktop hooks to open the system browser instead. A manifest that offers both ways shows both, its own way first
-  // as the primary button.
-  it('sends the browser to the service, beside Sign in with a code', async () => {
+  // connection's route and sends this tab to /connect/start with the flow the server named (openSignIn), which the
+  // server sends on to the service's page and Kivali Desktop takes over to open the system browser, signed in, in the
+  // team window's place. Sent anywhere else (the service's page itself), a Desktop sign-in would open a browser with
+  // no Kivali session and no sign-in cookie, and fail at the callback. A manifest that offers both ways shows both,
+  // its own way first as the primary button.
+  it('sends the browser to the service through Kivali, beside Sign in with a code', async () => {
     await renderOrg(PATH, { routes: pageRoutes(notSignedIn(['device', 'browser'])) });
     const code = block().getByRole('button', { name: 'Sign in with a code' });
     const browser = block().getByRole('button', { name: 'Sign in in your browser' });
@@ -2325,7 +2327,54 @@ describe('Integration page, signing in in the browser', () => {
     const assign = stubAssign();
     await click(browser);
     expect(called('POST', API + '/connection/sign-in/browser')).toBe(true);
-    expect(assign).toHaveBeenCalledWith(goBrowserSignIn.url);
+    expect(assign).toHaveBeenCalledWith('/connect/start?flow=' + goBrowserSignIn.flow);
+    expect(connectStartPath('a b')).toBe('/connect/start?flow=a%20b');
+  });
+
+  // Guards Kivali Desktop's half of the page: there the team window does not leave (the system browser opens
+  // instead), so the block must say the sign-in goes on in the browser, ask how it stands every few seconds as it does
+  // for a code, and read the page again once the server says done. A block left on a disabled button would have the
+  // owner sign in in the browser and never see it here. Start again starts a new browser sign-in, for a browser that
+  // did not open.
+  it('waits for a sign-in in the system browser when the page stays', async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
+    await renderOrg(PATH, { routes: { ...pageRoutes(notSignedIn(['browser'])), ['GET ' + API + '/connection/sign-in']: { state: 'pending' } } });
+    const assign = stubAssign();
+    await click(block().getByRole('button', { name: 'Sign in in your browser' }));
+    expect(assign).toHaveBeenCalledTimes(1);
+    expect(block().getByText('Approve the sign-in on the service’s page in your browser. Kivali finishes it here once you do.')).toBeInTheDocument();
+    const polls = () => calls.filter((c) => c.method === 'GET' && c.url === API + '/connection/sign-in').length;
+    act(() => void vi.advanceTimersByTime(SIGN_IN_POLL_MS));
+    await flush();
+    expect(polls()).toBe(1);
+
+    await click(block().getByRole('button', { name: 'Start again' }));
+    expect(calls.filter((c) => c.method === 'POST' && c.url === API + '/connection/sign-in/browser')).toHaveLength(2);
+    expect(assign).toHaveBeenCalledTimes(2);
+
+    routes['GET ' + API] = signedIn;
+    routes['GET ' + API + '/connection/sign-in'] = { state: 'done' };
+    act(() => void vi.advanceTimersByTime(SIGN_IN_POLL_MS));
+    await flush();
+    expect(block().getByRole('button', { name: 'Sign out' })).toBeInTheDocument();
+    expect(block().queryByText('Waiting for your approval.')).toBeNull();
+  });
+
+  // Guards a sign-in in the system browser that failed (the owner said no on the service's page): the waiting block
+  // gives way to why, and Try again takes the browser way again, not the code.
+  it('says why a sign-in in the system browser did not work', async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
+    const failed = { state: 'failed', error: 'The user did not approve the app.' };
+    await renderOrg(PATH, { routes: { ...pageRoutes(notSignedIn(['device', 'browser'])), ['GET ' + API + '/connection/sign-in']: failed } });
+    stubAssign();
+    await click(block().getByRole('button', { name: 'Sign in in your browser' }));
+    act(() => void vi.advanceTimersByTime(SIGN_IN_POLL_MS));
+    await flush();
+    expect(block().getByText('The sign-in did not work')).toBeInTheDocument();
+    expect(block().getByText(failed.error)).toBeInTheDocument();
+    await click(block().getByRole('button', { name: 'Try again' }));
+    expect(calls.filter((c) => c.method === 'POST' && c.url === API + '/connection/sign-in/browser')).toHaveLength(2);
+    expect(called('POST', API + '/connection/sign-in/device')).toBe(false);
   });
 
   // Guards a manifest that signs in only in the browser: no code button that would only get a 409.
@@ -2367,7 +2416,7 @@ describe('Integration page, signing in in the browser', () => {
     await click(block().getByRole('button', { name: 'Try again' }));
     expect(called('POST', API + '/connection/sign-in/browser')).toBe(true);
     expect(called('POST', API + '/connection/sign-in/device')).toBe(false);
-    expect(assign).toHaveBeenCalledWith(goBrowserSignIn.url);
+    expect(assign).toHaveBeenCalledWith('/connect/start?flow=' + goBrowserSignIn.flow);
   });
 
   // Guards the page against words in its address: anyone can send the owner a link with ?sign_in_error=<anything>, and
