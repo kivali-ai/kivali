@@ -9,8 +9,12 @@ import { useFetched } from './tabsShared';
 import '../../styles/org.css';
 import '../../styles/agent-tabs.css';
 
-/** What turning the limits off lets the agent do, said the same way on the switch and in its confirmation. */
-const NO_LIMITS = 'Its commands and fetches can then send anything, of any size, anywhere, and Kivali will not stop or count it.';
+/** The switch's hint: what turning the limits off changes. The confirmation says why that is a risk. */
+const NO_LIMITS = 'Its commands can then reach any public host, not just the listed ones, and nothing counts what it sends.';
+
+/** The confirmation: why the limits matter, then what the agent can do without them. */
+const noLimitsWarning = (name: string) =>
+  `Something an agent reads, such as a web page, can trick it into sending your data to someone else. Without limits, ${name} can send anything it can read to any public host.`;
 
 /**
  * About > Security: what this agent can reach beyond the team's defaults. The team's host list is read here and
@@ -120,7 +124,7 @@ export function SecurityPane({ slug, name }: { slug: string; name: string }) {
         }}
         tone="danger"
         title={`Remove all network limits for ${name}?`}
-        description={NO_LIMITS}
+        description={noLimitsWarning(name)}
         footer={
           <>
             <DialogClose>

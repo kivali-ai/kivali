@@ -280,15 +280,20 @@ describe('About: security', () => {
 
   // Guards against lifting every limit in one click: the switch must only ask, Cancel must send nothing, and
   // only the dialog's Remove limits posts exempt:true (the body the server's golden has). A switch that posts at
-  // once, or a Cancel that posts, fails this.
+  // once, or a Cancel that posts, fails this. The dialog must also say why lifting the limits is a risk rather
+  // than repeat the switch's hint, so a confirmation that only echoes the hint fails this too.
   it('asks before removing the limits, and only Remove limits sends it', async () => {
     const { user, h } = await open({ ['POST ' + EXEMPT]: exempt });
     const limits = page().getByRole('switch', { name: LIMITS });
-    expect(limits).toHaveAccessibleName(/Its commands and fetches can then send anything, of any size, anywhere/);
+    const hint = 'Its commands can then reach any public host, not just the listed ones, and nothing counts what it sends.';
+    expect(limits).toHaveAccessibleName(/Its commands can then reach any public host, not just the listed ones, and nothing counts what it sends/);
     await user.click(limits);
     let dialog = await screen.findByRole('dialog');
     expect(within(dialog).getByText('Remove all network limits for Engineering lead?')).toBeInTheDocument();
-    expect(within(dialog).getByText('Its commands and fetches can then send anything, of any size, anywhere, and Kivali will not stop or count it.')).toBeInTheDocument();
+    expect(
+      within(dialog).getByText('Something an agent reads, such as a web page, can trick it into sending your data to someone else. Without limits, Engineering lead can send anything it can read to any public host.'),
+    ).toBeInTheDocument();
+    expect(dialog).not.toHaveTextContent(hint);
     expect(within(dialog).getByRole('button', { name: 'Cancel' })).toHaveClass('kv-btn--secondary');
     expect(within(dialog).getByRole('button', { name: 'Remove limits' })).toHaveClass('kv-btn--danger');
     expect(limits).not.toBeChecked();
