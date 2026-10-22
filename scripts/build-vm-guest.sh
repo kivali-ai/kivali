@@ -16,16 +16,28 @@
 # itself and hands containerd the path, which has to mean the same thing
 # to both, and containerd runs on the guest.
 #
+#   guest.sh imported                 wait until k3s has imported the root disk's image tarballs this boot
 #   guest.sh buildkitd                start buildkitd if it is not running (pulls the image once)
 #   guest.sh put <name>               a tar on stdin becomes build context ctx/<name> (replacing it)
 #   guest.sh get <name>               out/<name> as a tar on stdout
 #   guest.sh clean-out <name>         empty out/<name>
-#   guest.sh build <buildctl args>    buildctl build; contexts are ctx/<name>, outputs out/<name>
+#   guest.sh build <buildctl args>    buildctl build; contexts are ctx/<name>, outputs out/<name>;
+#                                     each image output's name and digest is recorded in built
 #   guest.sh pull <ref>...            pull images for the guest's architecture into containerd
 #   guest.sh digest <ref>             the digest containerd recorded for ref (the index's, for a tag)
-#   guest.sh export <ref>...          the images for the guest's architecture as one OCI tar on stdout
+#   guest.sh export <ref>...          the images for the guest's architecture as one OCI tar on stdout;
+#                                     refuses a ref built here that no longer names what was built
 #   guest.sh arch                     amd64 or arm64
 #   guest.sh stop                     stop buildkitd
+#
+# Every boot, k3s imports the image tarballs baked into the root disk
+# the VM booted (vm/rootfs/usr/libexec/kivali/boot), in the background,
+# seconds after the VM is up; an image there with the name of one built
+# here takes the name back. A Kivali Desktop installed from `make
+# desktop-trial` bakes the same :dev names `make images VERSION=dev`
+# builds. So `build-vm.sh up` waits for the import (imported) before
+# anything is built or exported, an image is exported in the boot that
+# built it, and export checks it against built.
 set -eu
 
 # Pinned by digest; bump both together. The digest is the image
@@ -35,12 +47,43 @@ BUILDKIT_IMAGE='docker.io/moby/buildkit:v0.33.1@sha256:cec9f139f45e93c5c69c60f8b
 BASE=/var/lib/kivali/build
 CTX=$BASE/ctx
 OUT=$BASE/out
+# One line per image a build here produced: its name and digest.
+BUILT=$BASE/built
+# This boot's k3s log (vm/rootfs/usr/libexec/kivali/k3s-server keeps the
+# previous boot's as .1), and the root disk's image tarballs as k3s
+# names them: boot binds /usr/share/kivali/images at its agent/images.
+K3S_LOG=/var/lib/kivali/log/k3s.log
+K3S_IMAGES=/var/lib/kivali/k3s/agent/images
+IMPORT_WAIT_S=300
 BK=/var/lib/kivali/buildkit
 SOCK=unix:///run/buildkit/buildkitd.sock
 NS=k8s.io
 
 ctr() { k3s ctr -n "$NS" "$@"; }
 buildctl() { "$BK/bin/buildctl" --addr "$SOCK" "$@"; }
+
+# `ctr images ls` prints REF TYPE DIGEST SIZE PLATFORMS LABELS.
+digest_of() { ctr images ls | awk -v r="$1" '$1 == r {print $3; exit}'; }
+
+# The name an --output spec gives its image (type=image,name=<ref>,...);
+# nothing for any other output type.
+image_name() {
+  case ",$1," in
+    *,type=image,*) printf '%s\n' "$1" | tr ',' '\n' | sed -n 's/^name=//p' ;;
+  esac
+}
+
+built_digest() { awk -v r="$1" '$1 == r {print $2}' "$BUILT" 2>/dev/null || true; }
+
+record_built() {
+  d=$(digest_of "$1")
+  if [ -z "$d" ]; then
+    echo "guest: the build named $1, but containerd has no image of that name" >&2
+    exit 1
+  fi
+  { awk -v r="$1" '$1 != r' "$BUILT" 2>/dev/null || true; printf '%s %s\n' "$1" "$d"; } >"$BUILT.new"
+  mv "$BUILT.new" "$BUILT"
+}
 
 arch() {
   case "$(uname -m)" in
@@ -79,6 +122,26 @@ running() { buildctl debug workers >/dev/null 2>&1; }
 cmd=${1:-}
 [ $# -gt 0 ] && shift
 case "$cmd" in
+imported)
+  # k3s logs each tarball's import as "Imported <n> images from <file>
+  # in <time>", or its failure as "failed to import <file>: ...".
+  i=0
+  while :; do
+    pending=
+    for f in "$K3S_IMAGES"/*; do
+      [ -f "$f" ] || continue
+      grep -qF -e "images from $f in " -e "failed to import $f:" "$K3S_LOG" 2>/dev/null || pending="$pending ${f##*/}"
+    done
+    [ -n "$pending" ] || exit 0
+    if [ $i -ge "$IMPORT_WAIT_S" ]; then
+      echo "guest: k3s has not imported$pending after ${IMPORT_WAIT_S}s (its log: $K3S_LOG)" >&2
+      exit 1
+    fi
+    [ $i -ne 0 ] || echo "guest: waiting for k3s to import$pending"
+    i=$((i + 1))
+    sleep 1
+  done
+  ;;
 buildkitd)
   mkdir -p "$BK/root" "$CTX" "$OUT" /run/buildkit
   binaries
@@ -126,7 +189,17 @@ clean-out)
   ;;
 build)
   cd "$CTX"
-  exec "$BK/bin/buildctl" --addr "$SOCK" build "$@"
+  names=
+  prev=
+  for a in "$@"; do
+    case "$prev" in --output | -o) names="$names $(image_name "$a")" ;; esac
+    case "$a" in --output=*) names="$names $(image_name "${a#--output=}")" ;; esac
+    prev=$a
+  done
+  buildctl build "$@"
+  for n in $names; do
+    record_built "$n"
+  done
   ;;
 pull)
   for ref in "$@"; do
@@ -135,10 +208,29 @@ pull)
   done
   ;;
 digest)
-  # `ctr images ls` prints REF TYPE DIGEST SIZE PLATFORMS LABELS.
-  ctr images ls | awk -v r="$1" '$1 == r {print $3; exit}'
+  digest_of "$1"
   ;;
 export)
+  # A ref never built here (pulled, or baked) is exported as it is.
+  stale=
+  moved=
+  for ref in "$@"; do
+    want=$(built_digest "$ref")
+    [ -n "$want" ] || continue
+    got=$(digest_of "$ref")
+    if [ -z "$got" ]; then
+      echo "guest: $ref is gone; the last build of it here produced $want" >&2
+      stale=1
+    elif [ "$got" != "$want" ]; then
+      echo "guest: $ref is $got, not $want, the image the last build of it here produced" >&2
+      stale=1
+      moved=1
+    fi
+  done
+  if [ -n "$moved" ]; then
+    echo "guest: the VM booted after that build, and k3s gave the name back to the root disk's image of that name; build and export in one boot (make dev-vm does)" >&2
+  fi
+  [ -z "$stale" ] || exit 1
   ctr images export --platform "linux/$(arch)" - "$@"
   ;;
 arch)

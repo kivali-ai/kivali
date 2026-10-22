@@ -5,7 +5,9 @@
 #                          or amd64 (Hyper-V; adds root.vhdx)
 #                          (KIVALI_CHART=<tgz> bakes the chart too)
 #   make -C vm dev-images  save the :dev Kivali images into
-#                          build/kivali-images/<arch> (baked by the next `image`)
+#                          build/kivali-images/<arch> (baked by the next `image`);
+#                          ENGINE=vm: in the boot that built them
+#                          (`make dev-vm` does both)
 #   make -C vm boottest    boot build/out on Virtualization.framework (arm64)
 #   make -C vm clean       remove build/
 #
@@ -125,7 +127,11 @@ endif
 	ls -la '$(OUT)'
 
 # The :dev images for baking: from this machine's Docker, or from the
-# build VM's containerd, where `make images` built them.
+# build VM's containerd, where `make images` built them. The build VM
+# must not have booted since that build (`make images
+# KIVALI_BUILD_VM_KEEP=1`, as `make dev-vm` runs it): a boot gives a :dev
+# name back to the root disk's image of that name, and the export
+# refuses a name that no longer points at what was built.
 dev-images:
 	mkdir -p '$(KIVALI_IMAGES_DIR)'
 ifeq ($(ENGINE),docker)

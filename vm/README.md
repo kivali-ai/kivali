@@ -265,7 +265,11 @@ disk's `/usr/share/kivali/images/`. The release pipeline sets
 tarball of `kivali`, `kivali-egress-proxy`, `kivali-agent-shell` and `kivali-browser` for
 the image's architecture; `make -C vm dev-images` fills the default
 with the `:dev` tags `make images VERSION=dev` built, exported from the
-build VM's containerd as an OCI tar (`ENGINE=vm`) or saved from Docker
+build VM's containerd as an OCI tar in the boot that built them
+(`ENGINE=vm`; `make dev-vm` keeps the build VM up between the two,
+since a boot's import gives a `:dev` name back to the image of that
+name in the root disk it booted, and the export refuses a name that no
+longer points at what the build produced) or saved from Docker
 for `linux/<arch>` (`ENGINE=docker`); k3s imports either. The default
 is per architecture so a tarball saved for one is never baked into the
 other.

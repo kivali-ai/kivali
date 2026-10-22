@@ -64,7 +64,10 @@ bundle and the VM image like them.
 architecture: with `ENGINE=vm` (the default on macOS and Windows) in
 the build VM, BuildKit inside a Kivali VM on this machine
 (scripts/build-vm.sh; no Docker), straight into that VM's containerd,
-where `make -C vm dev-images` exports them for baking and `make
+where `make -C vm dev-images` exports them for baking (in the boot
+that built them, as `make dev-vm` does: a boot gives a `:dev` name back
+to the image of that name baked into the root disk, and the export
+refuses a name that moved) and `make
 dev-load` runs them; with `ENGINE=docker` (the default on Linux) into
 the local Docker. `make release-assets VERSION=vX.Y.Z` builds every
 architecture in `RELEASE_ARCHES` (default `amd64 arm64`) with Docker's

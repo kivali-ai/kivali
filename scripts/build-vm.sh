@@ -8,7 +8,8 @@
 # installed into the VM by `up`. Make targets drive it (`make images`,
 # `make -C vm image`, `make test-vm`); the commands are:
 #
-#   scripts/build-vm.sh up                     boot the build VM and start BuildKit in it
+#   scripts/build-vm.sh up                     boot the build VM, wait for k3s's import of the root
+#                                              disk's images, and start BuildKit in it
 #   scripts/build-vm.sh down                   stop the build VM (its disk, caches included, stays)
 #   scripts/build-vm.sh destroy                delete the build VM and its disk
 #   scripts/build-vm.sh put <dir> <name>       a directory becomes build context <name> in the VM
@@ -120,6 +121,9 @@ up)
   sup exec -- mkdir -p "$(dirname "$guest_bin")"
   # A Windows checkout has CRLF line endings; the guest reads the script line by line.
   tr -d '\r' <"$guest_script" | sup exec -i -- tee "$guest_bin" >/dev/null
+  # The import can give a name built later in this boot back to the root
+  # disk's image of that name (scripts/build-vm-guest.sh).
+  guest imported
   guest buildkitd
   ;;
 down)
