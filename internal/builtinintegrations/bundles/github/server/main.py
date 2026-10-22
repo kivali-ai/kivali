@@ -242,7 +242,10 @@ def clean_repository(value):
     trimmed; a Refusal when it is not one."""
     if not isinstance(value, str) or not value.strip():
         raise Refusal("Name the repository as owner/name.")
-    p = value.strip("/")
+    # Spaces and tabs around it are a slip and go, as the Git
+    # integration takes them; any other whitespace, such as a newline,
+    # refuses it.
+    p = value.strip(" \t").strip("/")
     if p.endswith(".git"):
         p = p[: -len(".git")]
     p = p.strip("/")

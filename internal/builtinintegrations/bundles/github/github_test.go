@@ -59,6 +59,11 @@ func TestManifestPassesTheUploadCheck(t *testing.T) {
 		c.CredentialKeys["access_token"] != "GH_TOKEN" || len(c.Scopes) != 0 {
 		t.Errorf("connection = %+v", c)
 	}
+	// Both ways are offered, a code first, and the install screen names
+	// github.com as where the sign-in goes.
+	if !slices.Equal(c.Ways(), []string{"device", "browser"}) || !slices.Equal(c.SignInHosts(), []string{"github.com"}) {
+		t.Errorf("ways %v, sign-in hosts %v", c.Ways(), c.SignInHosts())
+	}
 	if !slices.Equal(m.Kivali.Packages, []string{"gh"}) || !slices.Equal(m.Kivali.Hosts, []string{"api.github.com", "github.com"}) {
 		t.Errorf("packages %v, hosts %v", m.Kivali.Packages, m.Kivali.Hosts)
 	}
@@ -623,6 +628,14 @@ func TestAccessHoldsCallsToTheRepositoryPatterns(t *testing.T) {
 	}
 	if got := len(s.ghCalls()); got != ran {
 		t.Errorf("gh ran for a repository that is not owner/name")
+	}
+
+	// Spaces and tabs around a repository are a slip a model makes, and
+	// the Git integration takes them: the repository is the one inside.
+	text, isErr := s.call("get_repository", map[string]any{"repository": " acme/widgets\t"}, map[string]any{"repositories": []string{"acme/*"}})
+	calls := s.ghCalls()
+	if isErr || len(calls) != ran+1 || calls[ran].Argv[2] != "acme/widgets" {
+		t.Errorf("spaces around it: %v %s, gh runs %d", isErr, text, len(calls))
 	}
 }
 
