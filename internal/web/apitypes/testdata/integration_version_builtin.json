@@ -14,6 +14,8 @@
   "notes_md": "Ships with Kivali.",
   "runtime": "",
   "connection_method": "token",
+  "scopes": [],
+  "setup_notes_md": "",
   "hosts": [],
   "packages": [],
   "connection_fields": [

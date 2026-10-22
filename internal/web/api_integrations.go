@@ -18,6 +18,7 @@ import (
 
 	"github.com/kivali-ai/kivali/internal/agent"
 	"github.com/kivali-ai/kivali/internal/builtinintegrations"
+	"github.com/kivali-ai/kivali/internal/connect"
 	"github.com/kivali-ai/kivali/internal/integration"
 	"github.com/kivali-ai/kivali/internal/secrets"
 	"github.com/kivali-ai/kivali/internal/store"
@@ -109,6 +110,20 @@ type connView struct {
 	// value the record names, is not there.
 	secretSet map[string]bool
 	reconnect bool
+	// hasToken is true when the Secret holds a sign-in's access token
+	// (or could not be read, which is not taken for a missing one).
+	hasToken bool
+}
+
+// signIn reports whether v's connections are made by signing in.
+func (v *integrationView) signIn() bool {
+	return v.manifest != nil && v.manifest.Kivali.Connection.SignIn()
+}
+
+// usable reports whether agents can use c: it has all its secrets and,
+// for a connection made by signing in, works.
+func (v *integrationView) usable(c *connView) bool {
+	return !c.reconnect && (!v.signIn() || !c.rec.NeedsSignIn(c.hasToken))
 }
 
 // first is the oldest connection, the one an integration that takes
@@ -173,16 +188,17 @@ func (s *Server) loadIntegration(ctx context.Context, name string) (*integration
 }
 
 // readConnectionSecret works out which secret fields of rec have their
-// value in its Secret. The values are not kept.
+// value in its Secret, and whether it holds a sign-in's access token.
+// The values are not kept.
 func (s *Server) readConnectionSecret(ctx context.Context, name string, rec store.IntegrationConnection) *connView {
 	c := &connView{rec: rec, secretSet: map[string]bool{}}
-	if len(rec.SecretKeys) == 0 {
+	if rec.SecretName == "" {
 		return c
 	}
 	data, err := s.Secrets.Get(ctx, rec.SecretName)
 	switch {
 	case errors.Is(err, secrets.ErrNotFound):
-		c.reconnect = true
+		c.reconnect = len(rec.SecretKeys) > 0
 		return c
 	case err != nil:
 		// Not knowing is not a missing Secret: the page shows the
@@ -191,8 +207,10 @@ func (s *Server) readConnectionSecret(ctx context.Context, name string, rec stor
 		for _, k := range rec.SecretKeys {
 			c.secretSet[k] = true
 		}
+		c.hasToken = true
 		return c
 	}
+	c.hasToken = data[connect.SecretKeyAccessToken] != ""
 	for _, k := range rec.SecretKeys {
 		if data[k] == "" {
 			c.reconnect = true
@@ -218,14 +236,15 @@ func (v *integrationView) status() apitypes.IntegrationStatus {
 		// shipped bundle runs as an uploaded one does.
 		return apitypes.IntegrationStatusNotRunning
 	}
-	// Connected once a connection agents can use has all its secrets:
-	// any of several, or the one, the oldest.
+	// Connected once a connection agents can use has all its secrets
+	// and, made by signing in, is signed in: any of several, or the
+	// one, the oldest.
 	conns := v.conns
 	if !v.multiple() && len(conns) > 1 {
 		conns = conns[:1]
 	}
 	for _, c := range conns {
-		if !c.reconnect {
+		if v.usable(c) {
 			return apitypes.IntegrationStatusConnected
 		}
 	}
@@ -235,13 +254,13 @@ func (v *integrationView) status() apitypes.IntegrationStatus {
 // agentStatus is v's status for an agent whose access names the
 // connection connID: for an integration that takes several
 // connections, while v is connected or not, whether that connection
-// has all its secrets; v's own status otherwise.
+// can be used (usable); v's own status otherwise.
 func (v *integrationView) agentStatus(connID string) apitypes.IntegrationStatus {
 	st := v.status()
 	if !v.multiple() || (st != apitypes.IntegrationStatusConnected && st != apitypes.IntegrationStatusNotConnected) {
 		return st
 	}
-	if c := v.connByID(connID); c != nil && !c.reconnect {
+	if c := v.connByID(connID); c != nil && v.usable(c) {
 		return apitypes.IntegrationStatusConnected
 	}
 	return apitypes.IntegrationStatusNotConnected
@@ -374,6 +393,15 @@ func integrationActions(m *integration.Manifest) []apitypes.IntegrationAction {
 	return out
 }
 
+// signInScopes is what m's sign-in connection asks the vendor for;
+// empty for a token connection.
+func signInScopes(m *integration.Manifest) []string {
+	if m == nil || !m.Kivali.Connection.SignIn() {
+		return []string{}
+	}
+	return nonNilStrings(slices.Clone(m.Kivali.Connection.Scopes))
+}
+
 func integrationHosts(m *integration.Manifest) []string {
 	if m == nil {
 		return []string{}
@@ -442,6 +470,7 @@ func (s *Server) integrationPage(v *integrationView) apitypes.IntegrationPage {
 		Packages:         integrationPackages(v.manifest),
 		Actions:          integrationActions(v.manifest),
 		ConnectionFields: connectionFields(v.manifest, v.first()),
+		Scopes:           signInScopes(v.manifest),
 		Connections:      []apitypes.ConnectionState{},
 		Multiple:         v.multiple(),
 		ConnectionTest:   v.connectionTest(),
@@ -453,6 +482,8 @@ func (s *Server) integrationPage(v *integrationView) apitypes.IntegrationPage {
 	}
 	if v.manifest != nil {
 		page.Author = v.manifest.Author.Name
+		page.ConnectionMethod = v.manifest.Kivali.Connection.Method
+		page.SetupNotesMD = v.manifest.Kivali.SetupNotes
 	}
 	labels := map[string]string{}
 	for _, c := range v.conns {
@@ -523,6 +554,8 @@ func (s *Server) integrationVersionView(v *integrationView, ver store.Integratio
 		NotesMD:          ver.NotesMD,
 		Runtime:          m.Server.Type,
 		ConnectionMethod: m.Kivali.Connection.Method,
+		Scopes:           signInScopes(m),
+		SetupNotesMD:     m.Kivali.SetupNotes,
 		Hosts:            integrationHosts(m),
 		Packages:         integrationPackages(m),
 		ConnectionFields: connectionFields(m, v.first()),

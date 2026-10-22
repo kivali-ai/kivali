@@ -84,6 +84,7 @@ func (s *Server) handleAPIHome(w http.ResponseWriter, _ *http.Request) {
 			needs = append(needs, s.webBudgetItem(n))
 		}
 	}
+	needs = append(needs, s.integrationSignInItems()...)
 	queue := make([]apitypes.QueueItem, 0, len(pending))
 	for _, p := range pending {
 		queue = append(queue, v.queueItem(p))
@@ -433,6 +434,53 @@ const (
 	webUploadNeedPrefix = "web_upload:"
 	webBudgetNeedPrefix = "web_budget:"
 )
+
+// integrationSignInNeedPrefix is the ID prefix of a connection's
+// Needs-you row for a new sign-in. The row takes no answer: it leaves
+// once the owner signs in again or deletes the connection.
+const integrationSignInNeedPrefix = "integration_sign_in:"
+
+// integrationSignInFrom is who an integration_sign_in row is from.
+var integrationSignInFrom = apitypes.PersonRef{Slug: store.BuiltinIntegrationPublisher, Name: "Kivali"}
+
+// integrationSignInItems are the Needs-you rows of the connections
+// whose sign-in the vendor refused to renew, read from the
+// connections as they stand: one per connection whose record says why
+// it needs a new sign-in, oldest refusal first. Every word is core's
+// but the refusal, which is the vendor's, shown as the body.
+func (s *Server) integrationSignInItems() []apitypes.NeedItem {
+	its, err := s.Store.ListIntegrations()
+	if err != nil {
+		return nil
+	}
+	var out []apitypes.NeedItem
+	for _, it := range its {
+		conns, err := s.Store.ListIntegrationConnections(it.Name)
+		if err != nil {
+			continue
+		}
+		display := cmp.Or(it.DisplayName, it.Name)
+		for _, c := range conns {
+			if c.SignIn == nil || c.SignIn.Error == "" {
+				continue
+			}
+			page := "/org/integrations/" + url.PathEscape(it.Name)
+			out = append(out, apitypes.NeedItem{
+				ID:          integrationSignInNeedPrefix + it.Name + "/" + c.ID,
+				Kind:        apitypes.NeedKindIntegrationSignIn,
+				Title:       display + " needs you to sign in again",
+				From:        integrationSignInFrom,
+				At:          c.SignIn.ErrorAt,
+				BodyMD:      sentence(errors.New(c.SignIn.Error)) + " Agents cannot use the connection until you sign in again.",
+				Attachments: []apitypes.AttachmentRef{},
+				Packages:    []apitypes.SoftwarePackage{},
+				ReviewPath:  &page,
+			})
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].At.Before(out[j].At) })
+	return out
+}
 
 // answerWebNeed answers a web task's Needs-you row when path names one:
 // approve or deny a web_upload, acknowledge a web_budget. handled is

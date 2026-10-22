@@ -157,8 +157,8 @@ describe('Home renders', () => {
     expect(screen.getByText('Waiting on #45, Run the tests')).toBeInTheDocument();
 
     const needs = screen.getByRole('region', { name: 'Needs you' });
-    expect(within(needs).getByLabelText('9 waiting on you')).toHaveTextContent('9');
-    for (const kind of ['Approval', 'Hire', 'Notice', 'Assigned to you', 'Needs help', 'Sign in', 'Install software', 'Upload request', 'Web budget']) expect(within(needs).getByText(kind)).toBeInTheDocument();
+    expect(within(needs).getByLabelText('10 waiting on you')).toHaveTextContent('10');
+    for (const kind of ['Approval', 'Hire', 'Notice', 'Assigned to you', 'Needs help', 'Sign in', 'Install software', 'Upload request', 'Web budget', 'Sign in again']) expect(within(needs).getByText(kind)).toBeInTheDocument();
 
     const queue = screen.getByRole('region', { name: 'Queue' });
     expect(within(queue).getByText('3 passing through')).toBeInTheDocument();
@@ -248,9 +248,9 @@ describe('Home follows the design rules', () => {
     await renderHome(busyHome);
     const signals = document.querySelectorAll('.kv-badge--signal');
     expect(signals).toHaveLength(1);
-    expect(signals[0]).toHaveAccessibleName('9 waiting on you');
+    expect(signals[0]).toHaveAccessibleName('10 waiting on you');
     const needs = screen.getByRole('region', { name: 'Needs you' });
-    for (const kind of ['Approval', 'Hire', 'Notice', 'Assigned to you', 'Needs help', 'Sign in', 'Install software', 'Upload request', 'Web budget']) expect(within(needs).getByText(kind)).toHaveClass('kv-badge--neutral');
+    for (const kind of ['Approval', 'Hire', 'Notice', 'Assigned to you', 'Needs help', 'Sign in', 'Install software', 'Upload request', 'Web budget', 'Sign in again']) expect(within(needs).getByText(kind)).toHaveClass('kv-badge--neutral');
   });
 
   it('keeps Release all the one primary until a row opens, and Open chat secondary', async () => {
@@ -402,7 +402,7 @@ describe('Needs you', () => {
     expect(form.get('message')).toBe('Go ahead.');
     expect((form.getAll('attachments[]')[0] as File).name).toBe('po.pdf');
     expect(document.querySelector(`[data-id="${approval.id}"]`)).toBeNull();
-    expect(screen.getByLabelText('8 waiting on you')).toBeInTheDocument();
+    expect(screen.getByLabelText('9 waiting on you')).toBeInTheDocument();
 
     // The answer's result shows as a toast with a link, and leaves on its own.
     const toast = screen.getAllByRole('status').find((el) => el.textContent?.includes('Garden advisor is hired and reports to Chief of Staff'));
@@ -586,6 +586,26 @@ describe('Needs you', () => {
       expect(url).toBe('/api/v1/needs/ack');
       expect(form.get('path')).toBe('web_budget:tester/dddd4444');
       expect(document.querySelector(`[data-id="${notice.id}"]`)).toBeNull();
+    });
+  });
+
+  describe('a connection that needs a new sign-in (home.json)', () => {
+    const signInAgain = busyHome.needs.find((n) => n.kind === 'integration_sign_in');
+    if (!signInAgain) throw new Error('fixture has no integration_sign_in row');
+
+    // Guards the row a refused refresh raises: the owner reads which integration, the vendor's refusal and what it
+    // costs, and Open takes them to the integration's page, where they sign in again. There is nothing to answer in
+    // place: an Approve or Acknowledge here would clear a row whose cause is still there.
+    it('shows the refusal and opens the integration’s page, with nothing to answer', async () => {
+      const { router } = await renderHome(busyHome);
+      fireEvent.click(screen.getByRole('button', { name: /GitHub needs you to sign in again/ }));
+      const row = within(rowFor('data-id', signInAgain.id));
+      expect(row.getByText('Sign in again')).toBeInTheDocument();
+      expect(row.getByText(/The refresh token passed is incorrect or expired\. Agents cannot use the connection/)).toBeInTheDocument();
+      for (const verb of ['Approve', 'Deny', 'Acknowledge', 'Hand back']) expect(row.queryByRole('button', { name: verb })).toBeNull();
+      fireEvent.click(row.getByRole('button', { name: 'Open' }));
+      await flush();
+      expect(router.state.location.pathname).toBe('/org/integrations/github');
     });
   });
 });

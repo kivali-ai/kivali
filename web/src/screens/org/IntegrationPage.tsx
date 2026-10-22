@@ -23,6 +23,7 @@ import type { BadgeTone, TableColumn } from '../../ds';
 import { AccessDialog } from './AccessDialog';
 import {
   Block,
+  Markdown,
   RollBackDialog,
   StatusBadge,
   VersionBadge,
@@ -71,11 +72,39 @@ function connectionLines(c: ConnectionState | undefined, now: number): string[] 
   return ['Connected since ' + whenLabel(c.created_at, now), ...(verified ? [verified] : [])];
 }
 
+/**
+ * Where a connection made by signing in stands: when the owner signed in and when its token is next refreshed, or
+ * why they must sign in again. Undefined for a token connection.
+ */
+export function signInLine(c: ConnectionState | undefined, now: number): { text: string; danger: boolean } | undefined {
+  const s = c?.sign_in;
+  if (!s) return undefined;
+  if (s.signed_in) {
+    const at = s.signed_in_at ? ' ' + whenLabel(s.signed_in_at, now) : '';
+    const refresh = s.expires_at ? ' · token refreshes ' + whenLabel(s.expires_at, now) : '';
+    return { text: 'Signed in' + at + refresh, danger: false };
+  }
+  if (s.error) return { text: 'Needs you to sign in again: ' + s.error, danger: true };
+  return { text: 'Not signed in yet.', danger: false };
+}
+
+/** The sign-in line of a connection made by signing in; nothing for a token connection. */
+function SignInLine({ connection, now }: { connection: ConnectionState | undefined; now: number }) {
+  const line = signInLine(connection, now);
+  if (!line) return null;
+  return (
+    <Text as="p" variant="caption" tone={line.danger ? 'danger' : 'muted'}>
+      {line.text}
+    </Text>
+  );
+}
+
 /** A folded connection card's line: a badge when it needs you, then how many agents use it and since when. */
 function connectionMeta(c: ConnectionState, agents: number, now: number): ReactNode {
   return (
     <>
       {c.reconnect_needed && <Badge tone="danger">Reconnect needed</Badge>}
+      {c.sign_in?.error && <Badge tone="danger">Sign in again</Badge>}
       {c.verified_at && c.verified === false && <Badge tone="danger">Could not verify</Badge>}
       <span>{agentsLabel(agents)}</span>
       <span aria-hidden="true">·</span>
@@ -139,6 +168,7 @@ function ConnectionForm({ page, busy, running, now, onSave, onVerify, onDisconne
             {line}
           </Text>
         ))}
+        <SignInLine connection={connection} now={now} />
       </div>
       <div className="app-org-actions">
         <Button type="submit" variant="primary" disabled={busy}>
@@ -260,6 +290,7 @@ function ConnectionCard({ connection, fields, agents = 0, open = false, busy, ru
             {verified}
           </Text>
         )}
+        <SignInLine connection={connection} now={now} />
         <div className="app-org-actions">
           <Button type="submit" variant="primary" disabled={busy}>
             {connection ? 'Save connection' : 'Add connection'}
@@ -630,6 +661,8 @@ export function IntegrationPage() {
       {invalid && <Banner tone="warning">{invalid}</Banner>}
 
       <Block label={p.multiple ? 'Connections' : 'Connection'} variant="heading">
+        {/* What to do on the vendor's side first, from the manifest; nothing when it has none. */}
+        {s.version && <Markdown markdown={p.setup_notes_md} />}
         {s.version && p.multiple ? (
           <div className="app-int-conns">
             {p.connections.length === 0 && !adding && <None>No connections yet.</None>}

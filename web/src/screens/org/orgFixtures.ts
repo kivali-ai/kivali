@@ -9,6 +9,8 @@ import goIntegrationLogsJson from '../../../../internal/web/apitypes/testdata/in
 import goConnectionCreateJson from '../../../../internal/web/apitypes/testdata/connection_create.json';
 import goIntegrationPageJson from '../../../../internal/web/apitypes/testdata/integration_page.json';
 import goIntegrationPageMultipleJson from '../../../../internal/web/apitypes/testdata/integration_page_multiple.json';
+import goIntegrationPageSignInJson from '../../../../internal/web/apitypes/testdata/integration_page_sign_in.json';
+import goIntegrationPageSignInAgainJson from '../../../../internal/web/apitypes/testdata/integration_page_sign_in_again.json';
 import goIntegrationUploadRefusedJson from '../../../../internal/web/apitypes/testdata/integration_upload_refused.json';
 import goIntegrationVersionJson from '../../../../internal/web/apitypes/testdata/integration_version.json';
 import goIntegrationVersionBuiltinJson from '../../../../internal/web/apitypes/testdata/integration_version_builtin.json';
@@ -69,6 +71,10 @@ export const goIntegrations = (goIntegrationsJson satisfies Wire<Integrations>) 
 export const goIntegrationPage = (goIntegrationPageJson satisfies Wire<IntegrationPage>) as IntegrationPage;
 /** Git's page: two connections, GitHub and a company GitLab, with one agent's access on each. */
 export const goIntegrationPageMultiple = (goIntegrationPageMultipleJson satisfies Wire<IntegrationPage>) as IntegrationPage;
+/** A GitHub bundle's page, connected by signing in, its token refreshed before it expires. */
+export const goIntegrationPageSignIn = (goIntegrationPageSignInJson satisfies Wire<IntegrationPage>) as IntegrationPage;
+/** The same connection after the vendor refused a refresh: the owner must sign in again. */
+export const goIntegrationPageSignInAgain = (goIntegrationPageSignInAgainJson satisfies Wire<IntegrationPage>) as IntegrationPage;
 export const goIntegrationVersion = (goIntegrationVersionJson satisfies Wire<IntegrationVersion>) as IntegrationVersion;
 /** A version of an integration that ships with Kivali. */
 export const goIntegrationVersionBuiltin = (goIntegrationVersionBuiltinJson satisfies Wire<IntegrationVersion>) as IntegrationVersion;

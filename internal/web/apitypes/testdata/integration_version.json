@@ -13,6 +13,8 @@
   "notes_md": "Adds contacts. Reaches one more host.",
   "runtime": "python",
   "connection_method": "token",
+  "scopes": [],
+  "setup_notes_md": "",
   "hosts": [
     "api.hubapi.com"
   ],

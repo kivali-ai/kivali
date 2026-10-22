@@ -1453,7 +1453,15 @@ export const NeedKindWebUpload = "web_upload";
  * as path.
  */
 export const NeedKindWebBudget = "web_budget";
-export type NeedKind = typeof NeedKindApproval | typeof NeedKindNotification | typeof NeedKindAssignment | typeof NeedKindNeedsHelp | typeof NeedKindProposal | typeof NeedKindWebSignIn | typeof NeedKindWebUpload | typeof NeedKindWebBudget;
+/**
+ * NeedKindIntegrationSignIn: an integration's connection made by
+ * signing in needs you to sign in again, since the vendor refused
+ * to renew its sign-in (the body says why). Open the integration's
+ * page (ReviewPath). The row leaves once the connection is signed
+ * in again or deleted.
+ */
+export const NeedKindIntegrationSignIn = "integration_sign_in";
+export type NeedKind = typeof NeedKindApproval | typeof NeedKindNotification | typeof NeedKindAssignment | typeof NeedKindNeedsHelp | typeof NeedKindProposal | typeof NeedKindWebSignIn | typeof NeedKindWebUpload | typeof NeedKindWebBudget | typeof NeedKindIntegrationSignIn;
 /**
  * WebUploadRef is the upload a web_upload row asks you to approve: the
  * task (its page is /agents/{parent}/subagents/{id}), the site it is
@@ -1544,8 +1552,10 @@ export interface NeedItem {
    * POST /api/v1/needs/*), "assignment:<id>" for an assignment,
    * "agent:<slug>" for a needs-help row, and
    * "web_sign_in:<agent>/<task>", "web_upload:<agent>/<task>" and
-   * "web_budget:<agent>/<task>" for a web task's rows; the last two
-   * are the path POST /api/v1/needs/* takes for them.
+   * "web_budget:<agent>/<task>" for a web task's rows, the last two
+   * being the path POST /api/v1/needs/* takes for them, and
+   * "integration_sign_in:<integration>/<connection>" for a
+   * connection that needs you to sign in again.
    */
   id: string;
   kind: NeedKind;
@@ -1557,7 +1567,8 @@ export interface NeedItem {
   attachments: AttachmentRef[];
   assignment?: AssignmentRef;
   /**
-   * ReviewPath is the proposal page for a proposal row.
+   * ReviewPath is the proposal page for a proposal row, and the
+   * integration's page for an integration_sign_in row.
    */
   review_path?: string;
   /**
@@ -1584,8 +1595,8 @@ export interface NeedItem {
    */
   web_budget?: WebBudgetRef;
   /**
-   * RawURL opens the message file; absent on a needs-help row and a
-   * web task's rows.
+   * RawURL opens the message file; absent on a needs-help row, a web
+   * task's rows and an integration_sign_in row.
    */
   raw_url?: string;
 }
@@ -1833,9 +1844,26 @@ export interface IntegrationPage {
   actions: IntegrationAction[];
   /**
    * ConnectionFields is the connection form, in the bundle's order,
-   * with what the first connection holds.
+   * with what the first connection holds. A connection made by
+   * signing in adds the client id and the client secret.
    */
   connection_fields: ConnectionField[];
+  /**
+   * ConnectionMethod is how the connection is made: token, device or
+   * browser. Empty with no version at all.
+   */
+  connection_method: string;
+  /**
+   * Scopes is what a sign-in connection asks the vendor for; empty
+   * otherwise.
+   */
+  scopes: string[];
+  /**
+   * SetupNotesMD is the manifest's kivali.setup_notes: what to do on
+   * the vendor's side, Markdown, shown above the connection form.
+   * Empty when the manifest has none.
+   */
+  setup_notes_md: string;
   /**
    * Connection is the first connection (the oldest), absent while
    * there is none: the one connection of an integration that takes
@@ -1947,6 +1975,39 @@ export interface ConnectionState {
    * Secret removed by hand): enter them again.
    */
   reconnect_needed: boolean;
+  /**
+   * SignIn is the sign-in state of a connection made by signing in;
+   * absent for a token connection.
+   */
+  sign_in?: ConnectionSignIn;
+}
+/**
+ * ConnectionSignIn is where a connection made by signing in stands.
+ */
+export interface ConnectionSignIn {
+  /**
+   * Ways is how the owner may sign in, the manifest's method first:
+   * device, browser.
+   */
+  ways: string[];
+  /**
+   * SignedIn is true while the connection holds tokens that work.
+   */
+  signed_in: boolean;
+  /**
+   * Method is the way the owner signed in; empty while not signed in.
+   */
+  method?: string;
+  signed_in_at?: string /* RFC 3339 */;
+  /**
+   * ExpiresAt is when the access token expires and Kivali refreshes
+   * it; absent when it does not expire.
+   */
+  expires_at?: string /* RFC 3339 */;
+  /**
+   * Error says why the connection needs the owner to sign in again.
+   */
+  error?: string;
 }
 /**
  * ConnectionWrite is the body of PUT
@@ -2146,9 +2207,20 @@ export interface IntegrationVersion {
    */
   runtime: string;
   /**
-   * ConnectionMethod is how the connection is made: token.
+   * ConnectionMethod is how the connection is made: token, device or
+   * browser.
    */
   connection_method: string;
+  /**
+   * Scopes is what a sign-in connection asks the vendor for; empty
+   * otherwise.
+   */
+  scopes: string[];
+  /**
+   * SetupNotesMD is the manifest's kivali.setup_notes: what to do on
+   * the vendor's side, Markdown. Empty when the manifest has none.
+   */
+  setup_notes_md: string;
   hosts: string[];
   /**
    * Packages is the Debian packages the pod installs from Debian's

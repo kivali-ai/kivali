@@ -105,7 +105,32 @@ func (v *integrationView) connectionState(c *connView) apitypes.ConnectionState 
 	if v.connectionTest() {
 		state.VerifiedAt, state.Verified, state.VerifyMessage = c.rec.VerifiedAt, c.rec.Verified, optString(c.rec.VerifyMessage)
 	}
+	if v.signIn() {
+		state.SignIn = v.connectionSignIn(c)
+	}
 	return state
+}
+
+// connectionSignIn is c's sign-in on the wire: how the owner may sign
+// in and, while the connection works, how and when they did and when
+// its token is next refreshed; or why they must sign in again.
+func (v *integrationView) connectionSignIn(c *connView) *apitypes.ConnectionSignIn {
+	out := &apitypes.ConnectionSignIn{Ways: v.manifest.Kivali.Connection.Ways(), SignedIn: !c.rec.NeedsSignIn(c.hasToken)}
+	si := c.rec.SignIn
+	if si == nil {
+		return out
+	}
+	if out.SignedIn {
+		out.Method = si.Method
+		at := si.SignedInAt
+		out.SignedInAt = &at
+		if !si.ExpiresAt.IsZero() {
+			exp := si.ExpiresAt
+			out.ExpiresAt = &exp
+		}
+	}
+	out.Error = optString(si.Error)
+	return out
 }
 
 // connectionOr404 is the connection {id} names, answering 404 when v

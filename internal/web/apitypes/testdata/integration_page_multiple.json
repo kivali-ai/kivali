@@ -41,6 +41,9 @@
       "set": true
     }
   ],
+  "connection_method": "token",
+  "scopes": [],
+  "setup_notes_md": "",
   "connection": {
     "id": "a1b2c3d4",
     "label": "GitHub",

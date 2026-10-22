@@ -16,7 +16,8 @@ import type { OrgContextValue } from '../../state/OrgProvider';
 import { aboutLine, versionLabel } from './About';
 import { BACKUP_DEBOUNCE_MS } from './Backup';
 import { InstallScreen, bundleLine } from './InstallScreen';
-import { IntegrationPage, deleteConnectionWords } from './IntegrationPage';
+import { IntegrationPage, deleteConnectionWords, signInLine } from './IntegrationPage';
+import { whenLabel } from './integrationParts';
 import { Org, headerMeta } from './OrgPage';
 import {
   goAccessChoices,
@@ -30,6 +31,8 @@ import {
   goIntegrationLogs,
   goIntegrationPage,
   goIntegrationPageMultiple,
+  goIntegrationPageSignIn,
+  goIntegrationPageSignInAgain,
   goIntegrationUploadRefused,
   goIntegrationVersion,
   goIntegrationVersionBuiltin,
@@ -2047,6 +2050,56 @@ describe('Integration page, several connections', () => {
     expect(within(within(screen.getByRole('region', { name: 'Access' })).getByRole('table')).queryByText('Connection')).toBeNull();
     await click(screen.getByRole('button', { name: 'Give access' }));
     expect(within(screen.getByRole('dialog')).queryByRole('combobox', { name: 'Connection' })).toBeNull();
+  });
+});
+
+describe('Integration page, a connection made by signing in', () => {
+  const PATH = '/org/integrations/github';
+  const API = '/api/v1/org/integrations/github';
+  const routes = (page: typeof goIntegrationPageSignIn) => ({
+    ['GET ' + API]: page,
+    ['GET ' + API + '/audit']: { rows: [] },
+    ['GET ' + API + '/logs']: { lines: [] },
+  });
+
+  // Guards the page of a sign-in connection (integration_page_sign_in.json): the manifest's setup notes render as
+  // Markdown above the form, the form holds the client id and secret core adds (the secret only as Stored), and the
+  // line under it says when the owner signed in and when the token is refreshed, both from the server's times. A page
+  // that dropped the notes would leave the owner without the vendor-side steps; one that showed no refresh time would
+  // hide when the connection next depends on the vendor.
+  it('shows the setup notes, the client fields and when the token is refreshed', async () => {
+    await renderOrg(PATH, { routes: routes(goIntegrationPageSignIn) });
+    const block = within(screen.getByRole('region', { name: 'Connection' }));
+    expect(block.getByText('Settings, Developer settings', { selector: 'strong' })).toBeInTheDocument();
+    expect(block.getByLabelText('Client id')).toHaveValue('Iv23liAbCdEf');
+    expect(block.getByLabelText('Client secret')).toHaveAttribute('placeholder', 'Stored');
+    const c = goIntegrationPageSignIn.connection!;
+    const now = Date.now();
+    const want = 'Signed in ' + whenLabel(c.sign_in!.signed_in_at!, now) + ' · token refreshes ' + whenLabel(c.sign_in!.expires_at!, now);
+    expect(block.getByText(want)).toBeInTheDocument();
+    expect(block.queryByText(/^Needs you to sign in again/)).toBeNull();
+  });
+
+  // Guards the page after the vendor refused a refresh (integration_page_sign_in_again.json): the line says the owner
+  // must sign in again and gives the vendor's reason, in the danger tone, where the refresh time was; a page that
+  // still read "Signed in" would hide why agents' calls fail.
+  it('says the connection needs a new sign-in, and why', async () => {
+    await renderOrg(PATH, { routes: routes(goIntegrationPageSignInAgain) });
+    const line = screen.getByText('Needs you to sign in again: ' + goIntegrationPageSignInAgain.connection!.sign_in!.error!);
+    expect(line).toBeInTheDocument();
+    expect(screen.queryByText(/^Signed in /)).toBeNull();
+  });
+
+  // Guards the words for each state signInLine draws, including a connection never signed in and a token connection,
+  // which has no line at all.
+  it('words each sign-in state', () => {
+    const now = Date.parse('2026-10-22T09:00:00Z');
+    const c = goIntegrationPageSignIn.connection!;
+    expect(signInLine(goIntegrationPage.connection, now)).toBeUndefined();
+    expect(signInLine({ ...c, sign_in: { ways: ['device'], signed_in: false } }, now)).toEqual({ text: 'Not signed in yet.', danger: false });
+    const { expires_at: _expires, ...noExpiry } = c.sign_in!;
+    expect(signInLine({ ...c, sign_in: noExpiry }, now)?.text).toBe('Signed in ' + whenLabel(c.sign_in!.signed_in_at!, now));
+    expect(signInLine(goIntegrationPageSignInAgain.connection, now)?.danger).toBe(true);
   });
 });
 

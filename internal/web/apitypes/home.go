@@ -80,6 +80,12 @@ const (
 	// Acknowledge it through POST /api/v1/needs/ack with the row's ID
 	// as path.
 	NeedKindWebBudget NeedKind = "web_budget"
+	// NeedKindIntegrationSignIn: an integration's connection made by
+	// signing in needs you to sign in again, since the vendor refused
+	// to renew its sign-in (the body says why). Open the integration's
+	// page (ReviewPath). The row leaves once the connection is signed
+	// in again or deleted.
+	NeedKindIntegrationSignIn NeedKind = "integration_sign_in"
 )
 
 // WebUploadRef is the upload a web_upload row asks you to approve: the
@@ -160,8 +166,10 @@ type NeedItem struct {
 	// POST /api/v1/needs/*), "assignment:<id>" for an assignment,
 	// "agent:<slug>" for a needs-help row, and
 	// "web_sign_in:<agent>/<task>", "web_upload:<agent>/<task>" and
-	// "web_budget:<agent>/<task>" for a web task's rows; the last two
-	// are the path POST /api/v1/needs/* takes for them.
+	// "web_budget:<agent>/<task>" for a web task's rows, the last two
+	// being the path POST /api/v1/needs/* takes for them, and
+	// "integration_sign_in:<integration>/<connection>" for a
+	// connection that needs you to sign in again.
 	ID           string          `json:"id"`
 	Kind         NeedKind        `json:"kind"`
 	ProposalKind *ProposalKind   `json:"proposal_kind,omitempty"`
@@ -171,7 +179,8 @@ type NeedItem struct {
 	BodyMD       string          `json:"body_md"`
 	Attachments  []AttachmentRef `json:"attachments"`
 	Assignment   *AssignmentRef  `json:"assignment,omitempty"`
-	// ReviewPath is the proposal page for a proposal row.
+	// ReviewPath is the proposal page for a proposal row, and the
+	// integration's page for an integration_sign_in row.
 	ReviewPath *string `json:"review_path,omitempty"`
 	// Packages are the Debian packages an Install software request
 	// asks for. That request is an approval row, answered in place,
@@ -186,8 +195,8 @@ type NeedItem struct {
 	WebUpload *WebUploadRef `json:"web_upload,omitempty"`
 	// WebBudget is what a web_budget row reports.
 	WebBudget *WebBudgetRef `json:"web_budget,omitempty"`
-	// RawURL opens the message file; absent on a needs-help row and a
-	// web task's rows.
+	// RawURL opens the message file; absent on a needs-help row, a web
+	// task's rows and an integration_sign_in row.
 	RawURL *string `json:"raw_url,omitempty"`
 }
 

@@ -48,6 +48,9 @@
       "value": "acme"
     }
   ],
+  "connection_method": "token",
+  "scopes": [],
+  "setup_notes_md": "",
   "connection": {
     "id": "c7f3a1b2",
     "label": "",
