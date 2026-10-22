@@ -2293,8 +2293,9 @@ export interface IntegrationLogs {
 export interface IntegrationLogLine {
   at: string /* RFC 3339 */;
   /**
-   * Level is the integration's own level (info, warning, error), or
-   * stderr for a line it wrote to its error output.
+   * Level is the integration's own level (info, warning, error, or
+   * debug for detail, such as apt-get's output while its software
+   * installs), or stderr for a line it wrote to its error output.
    */
   level: string;
   message: string;

@@ -107,7 +107,9 @@ func securityContext() map[string]any {
 
 // installCapabilities are the integration container's capabilities
 // while it installs software, the rest dropped: what apt-get and dpkg
-// need as root. CHOWN, DAC_OVERRIDE, FOWNER and FSETID for dpkg to
+// need as root for ordinary packages (no SETFCAP, so a package whose
+// maintainer script runs setcap may fail). CHOWN, DAC_OVERRIDE, FOWNER
+// and FSETID for dpkg to
 // unpack files with their owners and modes (setuid bits included) and
 // for apt-get to use its _apt-owned download directories; SETUID and
 // SETGID for apt-get to fetch as _apt, and for the shim to become the

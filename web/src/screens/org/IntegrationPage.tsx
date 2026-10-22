@@ -351,15 +351,27 @@ function auditAction(row: Pick<IntegrationAuditRow, 'agent' | 'action'>): string
   return isRollBack(row) ? 'Roll back' : actionWords(row.action);
 }
 
-const LOG_LEVEL: Record<string, BadgeTone | undefined> = { stderr: 'neutral', warning: 'signal', error: 'danger' };
+const LOG_LEVEL: Record<string, { tone: BadgeTone; variant?: 'outline' } | undefined> = {
+  stderr: { tone: 'neutral' },
+  warning: { tone: 'signal' },
+  error: { tone: 'danger' },
+  // Detail, such as apt-get's output while the integration's software installs: the quietest badge.
+  debug: { tone: 'neutral', variant: 'outline' },
+};
 
 /** One log line: its time, its level as a small badge (none for info), its message in mono. */
 function LogRow({ line, now }: { line: IntegrationLogLine; now: number }) {
-  const tone = LOG_LEVEL[line.level];
+  const badge = LOG_LEVEL[line.level];
   return (
     <li className="app-int-log-line">
       <span className="app-int-nowrap app-int-log-time">{whenLabel(line.at, now)}</span>
-      <span className="app-int-log-level">{tone && <Badge tone={tone}>{line.level}</Badge>}</span>
+      <span className="app-int-log-level">
+        {badge && (
+          <Badge tone={badge.tone} variant={badge.variant}>
+            {line.level}
+          </Badge>
+        )}
+      </span>
       <span className="app-int-log-message">{line.message}</span>
     </li>
   );
@@ -699,6 +711,21 @@ export function IntegrationPage() {
           </div>
         )}
       </Block>
+
+      {!s.builtin && p.packages.length > 0 && (
+        <Block label="Software" variant="heading">
+          <ul className="app-int-facts">
+            {p.packages.map((pkg) => (
+              <li key={pkg}>
+                <Text variant="code">{pkg}</Text>
+              </li>
+            ))}
+          </ul>
+          <Text as="p" variant="caption" tone="muted">
+            Debian packages, installed each time the integration starts.
+          </Text>
+        </Block>
+      )}
 
       <Block label="Actions" variant="heading">
         {p.actions.length === 0 ? (

@@ -1577,6 +1577,31 @@ describe('Integration page', () => {
     expect(screen.queryByText('Not available while it is not running.')).toBeNull();
   });
 
+  // Guards the page's Software block: a version in use that installs software lists each package and says it is
+  // installed each time the integration starts, so the owner can see what runs as root at every start without
+  // opening the version's install screen. One that installs none draws no block.
+  it('lists the software the version in use installs, and draws nothing when it installs none', async () => {
+    const h = await renderOrg(PATH, { routes: { ['GET ' + API]: { ...goIntegrationPage, packages: ['gh', 'jq'] } } });
+    const software = within(screen.getByRole('region', { name: 'Software' }));
+    expect(software.getAllByRole('listitem').map((li) => li.textContent)).toEqual(['gh', 'jq']);
+    expect(software.getByText('Debian packages, installed each time the integration starts.')).toBeInTheDocument();
+    h.unmount();
+
+    await renderOrg(PATH);
+    expect(goIntegrationPage.packages).toEqual([]);
+    expect(screen.queryByRole('region', { name: 'Software' })).toBeNull();
+  });
+
+  // Guards the debug level, which apt-get's output has while an integration's software installs: it gets the
+  // quietest badge (outline), so those lines read as detail beside stderr, warning and error.
+  it('marks a debug log line with a quiet badge', async () => {
+    const logs = { lines: [{ at: '2026-10-21T09:30:00Z', level: 'debug', message: 'Setting up gh ...' }] };
+    await renderOrg(PATH, { routes: { ['GET ' + API + '/logs']: logs } });
+    const block = within(screen.getByRole('region', { name: 'Recent logs' }));
+    expect(block.getByText('Setting up gh ...')).toBeInTheDocument();
+    expect(block.getByText('debug')).toHaveClass('kv-badge--outline');
+  });
+
   // Guards the log block (integration_logs.json): lines show time, a level badge (none for info) and the message,
   // an empty log says so, and Refresh asks the server again and shows the new answer.
   it('shows the recent logs and refreshes them', async () => {

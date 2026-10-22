@@ -542,8 +542,8 @@ that differs: a new version, a new token or a new image is a new pod.
 The registry reads the version's manifest and tells `Start` and `Token`
 whether it declares packages, so a pod built without software is never
 taken on for a version that installs some. A version without packages
-gets the pod a version without software has always had, byte for
-byte (`internal/integrationpod/testdata/pod_without_packages.json`).
+gets the pod described above, which a test pins byte for byte
+(`internal/integrationpod/testdata/pod_without_packages.json`).
 
 ### Software
 
@@ -554,9 +554,10 @@ each time its pod starts, before anything of the bundle runs.
   `runAsUser: 0`, `runAsGroup: 0`, `runAsNonRoot: false`,
   `allowPrivilegeEscalation: false`, and capabilities `drop: [ALL]`,
   `add:` CHOWN, DAC_OVERRIDE, FOWNER, FSETID, KILL, SETGID, SETPCAP and
-  SETUID: what apt-get and dpkg need as root, and SETPCAP for the shim
-  to empty its bounding set as it leaves root
-  (`integrationpod.installSecurityContext`). A version without
+  SETUID: what apt-get and dpkg need as root for ordinary packages,
+  and SETPCAP for the shim to empty its bounding set as it leaves root
+  (`integrationpod.installSecurityContext`). There is no SETFCAP, so a
+  package whose maintainer script runs `setcap` may fail to install. A version without
   packages keeps the 65532 container above.
 - **The start, in order** (`Shim.prepare`, before the events stream
   opens, so the integration is not running meanwhile, as it is while
