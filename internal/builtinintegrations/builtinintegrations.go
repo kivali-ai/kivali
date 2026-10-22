@@ -87,7 +87,10 @@ type Caller struct {
 
 // Connection is the connection's values, read by core at the moment of
 // the call: its id and every field by user_config key, secrets
-// included.
+// included. For a connection made by signing in, Fields also holds the
+// client id and the current access token, under the name the
+// manifest's credential_keys gives it, and never the client secret or
+// the refresh token.
 type Connection struct {
 	ID     string
 	Fields map[string]string
