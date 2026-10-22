@@ -365,6 +365,23 @@ func TestRefreshKivaliRoles(t *testing.T) {
 	}
 }
 
+// Why this test exists: the Chief of Staff's role follows the team's
+// kind, and the Org page can change the kind after setup. Without a
+// write on the change, the Chief of Staff would run on the other kind's
+// wording until the next boot.
+func TestSetTeamKindWritesTheChiefOfStaffsRole(t *testing.T) {
+	srv := newTestServer(t)
+	if err := srv.Store.CreateAgent(store.Agent{Slug: "chief-of-staff", Role: "Chief of Staff", ReportsTo: "ceo"}, seed.ChiefOfStaffRoleFor(store.TeamKindWork)); err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.setTeamKind(store.TeamKindPersonal); err != nil {
+		t.Fatal(err)
+	}
+	if role, _ := srv.Store.ReadRole("chief-of-staff"); role != seed.ChiefOfStaffRoleFor(store.TeamKindPersonal) {
+		t.Error("the Chief of Staff's role kept the work wording on a personal team")
+	}
+}
+
 func TestSeedCoSRejectsDuplicate(t *testing.T) {
 	srv := newTestServer(t)
 	if err := srv.Store.WriteHandbook("# rules"); err != nil {
