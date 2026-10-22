@@ -23,6 +23,7 @@ import (
 	"errors"
 	"log"
 	"time"
+	"unicode/utf8"
 
 	"github.com/kivali-ai/kivali/internal/agent"
 	"github.com/kivali-ai/kivali/internal/connect"
@@ -135,9 +136,7 @@ func (s *Server) refreshSignIn(ctx context.Context, name, id string, m *integrat
 	client := signInClient(rec, data)
 	tok, err := s.connectEngine().Refresh(ctx, signInEndpoints(m), client, stored.Refresh)
 	if err != nil {
-		// The vendor's words may echo what it was sent; they are shown
-		// on the page, in Needs you and in the audit.
-		words := newScrubber([]string{stored.Access, stored.Refresh, client.Secret}).Replace(err.Error())
+		words := signInFailureWords(err, stored, client)
 		var term *connect.Terminal
 		if errors.As(err, &term) {
 			s.markSignInFailed(name, id, words)
@@ -171,6 +170,33 @@ func (s *Server) refreshSignIn(ctx context.Context, name, id string, m *integrat
 		log.Printf("integration %s: keep connection %s's refreshed tokens: %v", name, id, err)
 	}
 	return tok, nil
+}
+
+// signInWordsRunes bounds the vendor's words a refresh's failure keeps:
+// they are shown on the page, in Needs you and in the audit.
+const signInWordsRunes = 200
+
+// signInFailureWords is a refresh's failure err in words to keep, log
+// and audit. The vendor's words may echo what it was sent, so they are
+// scrubbed of the stored tokens and the client secret first, whole,
+// and only then cut to signInWordsRunes: cut first, a secret astride
+// the cut would leave a piece no scrubber knows.
+func signInFailureWords(err error, stored connect.Tokens, client connect.Client) string {
+	scrub := newScrubber([]string{stored.Access, stored.Refresh, client.Secret})
+	var term *connect.Terminal
+	if errors.As(err, &term) {
+		clean := &connect.Terminal{Code: scrub.Replace(term.Code), Description: clipRunes(scrub.Replace(term.Description), signInWordsRunes)}
+		return clean.Error()
+	}
+	return clipRunes(scrub.Replace(err.Error()), signInWordsRunes)
+}
+
+// clipRunes is s cut to at most n runes.
+func clipRunes(s string, n int) string {
+	if utf8.RuneCountInString(s) <= n {
+		return s
+	}
+	return string([]rune(s)[:n])
 }
 
 // readSignIn reads name's connection id and its Secret's data.

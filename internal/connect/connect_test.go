@@ -516,10 +516,11 @@ func TestRefresherRunOutlivesItsCaller(t *testing.T) {
 }
 
 // Why this test exists: a vendor's error_description is the vendor's
-// to fill; one that answers with a page of text would carry it into
-// the connection's error, the page, Needs you and the audit. The words
-// an error carries are cut to MaxDescriptionRunes, in both vendor
-// styles, and multi-byte text is cut on a rune, never mid-character.
+// to fill; one that answers with megabytes of text would carry them
+// into every error core builds from it. The words an error carries are
+// bounded at MaxDescriptionRunes, in both vendor styles, and
+// multi-byte text is cut on a rune, never mid-character; core cuts
+// them further once it has scrubbed them.
 func TestVendorWordsAreClipped(t *testing.T) {
 	for _, github := range []bool{false, true} {
 		e, v, _ := setup(t)

@@ -477,35 +477,57 @@ func TestSignInRevokesWithTheLockReleased(t *testing.T) {
 // error, which the page, the Needs you row (as Markdown) and the audit
 // show. A vendor that echoes the refresh token it was sent, or answers
 // with a page of text, would put a live secret, or a megabyte, in front
-// of the owner. The words are cut to MaxDescriptionRunes and scrubbed
-// of the connection's tokens and client secret before they are kept.
+// of the owner. The words are scrubbed of the connection's tokens and
+// client secret, whole, and only then cut to signInWordsRunes: a token
+// astride the cut, scrubbed after it, would leave a piece of itself no
+// scrubber knows. Both a token near the start and one astride the cut
+// leave nothing of themselves.
 func TestSignInRefusalWordsAreClippedAndScrubbed(t *testing.T) {
-	srv, vendor, clk := signInServer(t)
-	signInBundle(t, srv, vendor)
-	vendor.Set(func(k *connecttest.Knobs) { k.AccessTTL = time.Hour })
-	tok := vendor.Issue()
-	signedIn(t, srv, "crm", tok)
-	vendor.Set(func(k *connecttest.Knobs) {
-		k.RefreshError = "invalid_grant"
-		k.RefreshErrorDescription = func(f url.Values) string {
-			return "token " + f.Get("refresh_token") + " is revoked " + strings.Repeat("and more words ", 500)
-		}
-	})
-	clk.Advance(time.Hour)
-	if _, rpcErr := srv.Integrations.credential(context.Background(), "crm"); rpcErr == nil || rpcErr.Code != integrationpod.CodeSignInNeeded {
-		t.Fatalf("error = %+v", rpcErr)
-	}
-	rec, _ := connectionSecret(t, srv, "crm")
-	words := rec.SignIn.Error
 	const lead = "the vendor refused the sign-in (invalid_grant): "
-	if !strings.HasPrefix(words, lead+"token "+integrationSecretPlaceholder+" is revoked") || strings.Contains(words, tok.Refresh) {
-		t.Errorf("error = %q", words)
-	}
-	if n := utf8.RuneCountInString(words); n > utf8.RuneCountInString(lead)+connect.MaxDescriptionRunes {
-		t.Errorf("error is %d runes, longer than the clip", n)
-	}
-	rows, _ := srv.Store.ReadIntegrationAuditTail("crm", 1)
-	if len(rows) != 1 || rows[0].Reason != words {
-		t.Errorf("audit = %+v", rows)
+	for _, c := range []struct {
+		name string
+		desc func(refresh string) string
+	}{
+		{"near the start", func(refresh string) string {
+			return "token " + refresh + " is revoked " + strings.Repeat("and more words ", 500)
+		}},
+		{"astride the cut", func(refresh string) string {
+			return strings.Repeat(".", signInWordsRunes-len(refresh)/2) + refresh + strings.Repeat(" and more", 500)
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			srv, vendor, clk := signInServer(t)
+			signInBundle(t, srv, vendor)
+			vendor.Set(func(k *connecttest.Knobs) { k.AccessTTL = time.Hour })
+			tok := vendor.Issue()
+			signedIn(t, srv, "crm", tok)
+			vendor.Set(func(k *connecttest.Knobs) {
+				k.RefreshError = "invalid_grant"
+				k.RefreshErrorDescription = func(f url.Values) string { return c.desc(f.Get("refresh_token")) }
+			})
+			clk.Advance(time.Hour)
+			if _, rpcErr := srv.Integrations.credential(context.Background(), "crm"); rpcErr == nil || rpcErr.Code != integrationpod.CodeSignInNeeded {
+				t.Fatalf("error = %+v", rpcErr)
+			}
+			rec, _ := connectionSecret(t, srv, "crm")
+			words := rec.SignIn.Error
+			if !strings.HasPrefix(words, lead) || !strings.Contains(words, integrationSecretPlaceholder) {
+				t.Errorf("error = %q", words)
+			}
+			// No piece of the token, from either end, survives.
+			for n := 4; n <= len(tok.Refresh); n++ {
+				if strings.Contains(words, tok.Refresh[:n]) || strings.Contains(words, tok.Refresh[len(tok.Refresh)-n:]) {
+					t.Errorf("error %q keeps a piece of the refresh token (%d characters)", words, n)
+					break
+				}
+			}
+			if n := utf8.RuneCountInString(words); n > utf8.RuneCountInString(lead)+signInWordsRunes {
+				t.Errorf("error is %d runes, longer than the clip", n)
+			}
+			rows, _ := srv.Store.ReadIntegrationAuditTail("crm", 1)
+			if len(rows) != 1 || rows[0].Reason != words {
+				t.Errorf("audit = %+v", rows)
+			}
+		})
 	}
 }
