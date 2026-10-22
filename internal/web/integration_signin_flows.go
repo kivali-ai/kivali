@@ -162,27 +162,40 @@ func (t *signInFlows) end(f *signInFlow, now time.Time, state apitypes.SignInSta
 	f.state, f.err, f.until = state, words, now.Add(signInFlowTTL)
 }
 
-// take is the browser sign-in whose OAuth state is state, still
-// pending, not yet taken and not past its time, marked taken so no
-// other callback finds it: nil when there is none. The flow stays in
-// the table, so a delete or a sign-out still cancels it.
-func (t *signInFlows) take(now time.Time, state string) *signInFlow {
+// take is the browser sign-in whose OAuth state is state, not yet
+// taken and not past its time, marked taken so no other callback finds
+// it: nil when there is none. pending is false for one that ended
+// before its callback came (endBrowser). The flow stays in the table,
+// so a delete or a sign-out still cancels it.
+func (t *signInFlows) take(now time.Time, state string) (f *signInFlow, pending bool) {
 	if state == "" {
-		return nil
+		return nil, false
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.pruneLocked(now)
 	for _, f := range t.flows {
-		if f.browser == nil || f.taken || f.state != apitypes.SignInStatePending {
+		if f.browser == nil || f.taken {
 			continue
 		}
 		if subtle.ConstantTimeCompare([]byte(f.browser.state), []byte(state)) == 1 {
 			f.taken = true
-			return f
+			return f, f.state == apitypes.SignInStatePending
 		}
 	}
-	return nil
+	return nil, false
+}
+
+// endBrowser ends the browser sign-in id, still pending and not yet
+// taken, as failed with words; any other flow is left as it is.
+func (t *signInFlows) endBrowser(now time.Time, id, words string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	f := t.flows[id]
+	if f == nil || f.browser == nil || f.taken || f.state != apitypes.SignInStatePending {
+		return
+	}
+	f.state, f.err, f.until = apitypes.SignInStateFailed, words, now.Add(signInFlowTTL)
 }
 
 // cancel cancels and forgets name's flows: those of its connection
