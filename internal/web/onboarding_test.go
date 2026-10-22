@@ -294,9 +294,7 @@ func TestSeedCoSHiresTheKivaliDeveloper(t *testing.T) {
 // Why this test exists: boot and every restore call
 // EnsureKivaliDeveloper, so it must hire only on a team that is set up
 // (before the Chief of Staff there is no one for the developer to
-// report to, and setup is still to run), hire once, and leave a
-// Kivali Developer alone after that: its role, once the owner approves
-// an update, is the team's, and a boot must not put Kivali's back.
+// report to, and setup is still to run), and hire once.
 func TestEnsureKivaliDeveloper(t *testing.T) {
 	srv := newTestServer(t)
 	if created, err := srv.EnsureKivaliDeveloper(); err != nil || created {
@@ -311,14 +309,59 @@ func TestEnsureKivaliDeveloper(t *testing.T) {
 	if created, err := srv.EnsureKivaliDeveloper(); err != nil || !created {
 		t.Fatalf("after setup = %v, %v", created, err)
 	}
-	if err := srv.Store.WriteRole("kivali-developer", "# the team's own\n"); err != nil {
-		t.Fatal(err)
-	}
 	if created, err := srv.EnsureKivaliDeveloper(); err != nil || created {
 		t.Fatalf("again = %v, %v", created, err)
 	}
-	if role, _ := srv.Store.ReadRole("kivali-developer"); role != "# the team's own\n" {
-		t.Errorf("a second call rewrote the role: %q", role)
+}
+
+// Why this test exists: the Chief of Staff's and the Kivali Developer's
+// roles are Kivali's, and RefreshKivaliRoles is how a team set up on an
+// earlier release, or restored from one, gets this release's: boot and
+// a restore run it. A role it left as it was would keep an agent on
+// rules a release has changed. It must write the Chief of Staff's role
+// for the team's kind, as setup does, leave every other agent's role
+// alone, skip an agent the team does not have, and write nothing when
+// the roles are current, so the role's "updated" time and the agent's
+// "your role changed" note mean a release changed it.
+func TestRefreshKivaliRoles(t *testing.T) {
+	srv := newTestServer(t)
+	if got, err := srv.RefreshKivaliRoles(); err != nil || len(got) != 0 {
+		t.Fatalf("before setup = %v, %v", got, err)
+	}
+	if err := srv.Store.WriteTeamKind(store.TeamKindPersonal); err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range []store.Agent{
+		{Slug: "chief-of-staff", Role: "Chief of Staff", ReportsTo: "ceo"},
+		{Slug: "kivali-developer", Role: "Kivali Developer", ReportsTo: "chief-of-staff"},
+		{Slug: "buyer", Role: "Buyer", ReportsTo: "chief-of-staff"},
+	} {
+		if err := srv.Store.CreateAgent(a, "# an earlier release's, or the team's own\n"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := srv.RefreshKivaliRoles()
+	if err != nil || strings.Join(got, ",") != "chief-of-staff,kivali-developer" {
+		t.Fatalf("rewritten = %v, %v", got, err)
+	}
+	if role, _ := srv.Store.ReadRole("chief-of-staff"); role != seed.ChiefOfStaffRoleFor(store.TeamKindPersonal) {
+		t.Error("the Chief of Staff's role is not Kivali's for a personal team")
+	}
+	if role, _ := srv.Store.ReadRole("kivali-developer"); role != seed.KivaliDeveloperRole {
+		t.Error("the Kivali Developer's role is not Kivali's")
+	}
+	if role, _ := srv.Store.ReadRole("buyer"); role != "# an earlier release's, or the team's own\n" {
+		t.Errorf("the buyer's role was rewritten: %q", role)
+	}
+	before, err := srv.Store.RoleUpdatedAt("chief-of-staff")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := srv.RefreshKivaliRoles(); err != nil || len(got) != 0 {
+		t.Fatalf("again = %v, %v", got, err)
+	}
+	if after, _ := srv.Store.RoleUpdatedAt("chief-of-staff"); !after.Equal(before) {
+		t.Error("a pass with nothing to change wrote the role again")
 	}
 }
 
@@ -351,9 +394,12 @@ func TestSeedCoSWithoutClaude(t *testing.T) {
 	}
 }
 
-// An edited role becomes the Chief of Staff's role.md and the second
-// system layer of the seed call.
-func TestSeedCoSUsesEditedRole(t *testing.T) {
+// Why this test exists: the Chief of Staff's role is Kivali's, so setup
+// writes the one this binary ships for the team's kind, and the seed
+// call that writes its first memory runs under that same role. A seed
+// call under another role would brief the Chief of Staff for a job its
+// role.md does not describe.
+func TestSeedCoSWritesKivalisRole(t *testing.T) {
 	srv := newTestServer(t)
 	_ = srv.Store.WriteHandbook("# rules")
 	var capturedReq provider.CompleteRequest
@@ -367,8 +413,8 @@ func TestSeedCoSUsesEditedRole(t *testing.T) {
 			}, nil
 		},
 	}
-	role := "# Custom CoS role"
-	if rr := seedCoS(t, srv, apitypes.SeedCoSRequest{RoleMD: &role}); rr.Code != http.StatusAccepted {
+	role := seed.ChiefOfStaffRoleFor(srv.teamKind())
+	if rr := seedCoS(t, srv, apitypes.SeedCoSRequest{}); rr.Code != http.StatusAccepted {
 		t.Fatalf("code = %d, body = %s", rr.Code, rr.Body.String())
 	}
 	if got, _ := srv.Store.ReadRole("chief-of-staff"); got != role {

@@ -416,6 +416,15 @@ func (s *Server) restoreArchive(ctx context.Context, path, filename string) erro
 	} else if created {
 		log.Printf("restore: hired the Kivali Developer")
 	}
+	// The archive's Chief of Staff and Kivali Developer carry the roles
+	// of the release that wrote it; boot's pass writes this one's.
+	rewritten, err := s.RefreshKivaliRoles()
+	for _, slug := range rewritten {
+		log.Printf("restore: wrote Kivali's role for %s", slug)
+	}
+	if err != nil {
+		log.Printf("restore: write Kivali's roles: %v", err)
+	}
 	// The archive replaced the assignment files without going through
 	// WriteAssignment, so the store's post-write hook never fired; the
 	// snapshot's goals and the web app's work views would describe the

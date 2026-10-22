@@ -10,8 +10,8 @@ const PATH = '/agents/' + SLUG + '/about';
 const DOC = (kind: string) => '/api/v1/agents/' + SLUG + '/docs/' + kind;
 const UPDATED = '2026-09-20T17:00:00Z';
 
-const role: AgentDoc = { kind: 'role', content: '# Engineering lead\n\nYou own the product roadmap.\n\n## What you own\n\n- Releases\n', updated_at: UPDATED, stats: { lines: 6, chars: 80 } };
-const habits: AgentDoc = { kind: 'habits', content: '- Read overnight results first.\n', updated_at: UPDATED, stats: { lines: 1, chars: 31 } };
+const role: AgentDoc = { kind: 'role', content: '# Engineering lead\n\nYou own the product roadmap.\n\n## What you own\n\n- Releases\n', updated_at: UPDATED, stats: { lines: 6, chars: 80 }, from_kivali: false };
+const habits: AgentDoc = { kind: 'habits', content: '- Read overnight results first.\n', updated_at: UPDATED, stats: { lines: 1, chars: 31 }, from_kivali: false };
 
 const routes = {
   ['GET ' + DOC('role')]: role,
@@ -78,6 +78,19 @@ describe('About: reading', () => {
     renderTabs(PATH, { routes, detail: { ...goAgentDetail, archived: true } });
     await page().findByText(/What it does/);
     expect(page().queryByRole('button', { name: /^Edit/ })).toBeNull();
+  });
+
+  // The Chief of Staff's and the Kivali Developer's roles are Kivali's: each release writes them, and the server
+  // refuses an edit. An Edit button would open an editor whose Save always fails, so the role says who keeps it
+  // instead, while the same agent's habits and memory stay editable. It carries no "updated" date: that would
+  // only count the time since a release last changed the role, and read as stale however current it is.
+  it('offers no Edit or date for a role that is Kivali’s, and says who keeps it', async () => {
+    const user = userEvent.setup();
+    renderTabs(PATH, { routes: { ...routes, ['GET ' + DOC('role')]: { ...role, from_kivali: true, updated_at: '2026-01-02T09:00:00Z' } } });
+    expect(await page().findByText('What it does · kept up to date by Kivali')).toBeInTheDocument();
+    expect(page().queryByRole('button', { name: 'Edit role' })).toBeNull();
+    await user.click(page().getByRole('button', { name: 'Habits' }));
+    expect(await page().findByRole('button', { name: 'Edit habits' })).toBeInTheDocument();
   });
 });
 

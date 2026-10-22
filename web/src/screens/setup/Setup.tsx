@@ -129,7 +129,6 @@ export function Setup({ pollMs = 1000 }: SetupProps) {
   async function startHire() {
     if (!setup) return;
     const body: SeedCoSRequest = { handbook_from_files: effectiveFromFiles };
-    if (drafts.role !== null && drafts.role !== setup.cos.default_role_md) body.role_md = drafts.role;
     if (drafts.handbook !== null && drafts.handbook !== setup.cos.default_handbook_md) body.handbook_md = drafts.handbook;
     setStarting(true);
     setCosError(null);

@@ -565,6 +565,9 @@ func parseProposeRoleUpdate(raw json.RawMessage, ctx ParseContext) (ParseResult,
 	if slug == CEO {
 		return ParseResult{}, fmt.Errorf("propose_role_update: slug %q is reserved", CEO)
 	}
+	if slug == ChiefOfStaff || slug == KivaliDeveloper {
+		return ParseResult{}, fmt.Errorf("propose_role_update: %q's role is Kivali's (each release of Kivali writes it), so no proposal changes it", slug)
+	}
 	body, err := ctx.resolveArtifactPath("role_path", in.RolePath)
 	if err != nil {
 		return ParseResult{}, fmt.Errorf("propose_role_update: %w", err)

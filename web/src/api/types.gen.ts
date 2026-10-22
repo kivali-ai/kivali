@@ -188,6 +188,12 @@ export interface AgentDoc {
    */
   updated_at: string | null;
   stats: AgentDocStats;
+  /**
+   * FromKivali marks the role of the Chief of Staff and of the Kivali
+   * Developer: Kivali's, written by each release, so PUT refuses it.
+   * False for every other document.
+   */
+  from_kivali: boolean;
 }
 /**
  * AgentDocStats is the one-line description's numbers.
@@ -2866,9 +2872,10 @@ export interface SetupFile {
 export interface SetupCoS {
   exists: boolean;
   /**
-   * DefaultRoleMD is the role document a new Chief of Staff gets.
+   * RoleMD is the Chief of Staff's role: Kivali's (seed.KivaliRole),
+   * shown for reading, since setup writes it as it is.
    */
-  default_role_md: string;
+  role_md: string;
   /**
    * DefaultHandbookMD is the handbook seeding would use: the
    * stored one when there is one, else the built-in default.
@@ -2932,11 +2939,6 @@ export interface SeedCoSRequest {
    * default (or HandbookMD), to be replaced by that proposal.
    */
   handbook_from_files: boolean;
-  /**
-   * RoleMD replaces the default role document. Send it only when the
-   * CEO edited it.
-   */
-  role_md?: string;
   /**
    * HandbookMD replaces the handbook seeding writes. Send it
    * only when the CEO edited it.

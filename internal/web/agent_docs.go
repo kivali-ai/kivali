@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kivali-ai/kivali/internal/seed"
 	"github.com/kivali-ai/kivali/internal/store"
 )
 
@@ -48,6 +49,14 @@ var (
 		updatedAt: (*store.FSStore).AgentHabitsUpdatedAt,
 	}
 )
+
+// isKivaliRole reports whether slug's role is Kivali's (seed.KivaliRole):
+// the Chief of Staff's and the Kivali Developer's, which boot writes and
+// every other role write door refuses.
+func isKivaliRole(slug string) bool {
+	_, ok := seed.KivaliRole(slug, "")
+	return ok
+}
 
 // errAgentDocRequired is saveAgentDoc's refusal of an empty body for a
 // document that must not be empty (the role: an agent with no identity

@@ -142,7 +142,7 @@ func roleIconDescription() string {
 var proposeRoleUpdateTool = ToolDef{
 	Name:        ToolProposeRoleUpdate,
 	MessageType: store.MsgCEOApprovalRequest,
-	Description: `Propose a change to an existing agent's role.md. Chief of Staff only. The proposal lands in the owner's inbox as an approval request; on approve, the server overwrites the target's role.md atomically before the ack lands in your chat. Full workflow (read current role, draft replacement, preserve load-bearing sections) is in cos_role.md §Updating an existing agent's role.
+	Description: `Propose a change to an existing agent's role.md. Chief of Staff only. Your role and the Kivali Developer's are Kivali's and are refused. The proposal lands in the owner's inbox as an approval request; on approve, the server overwrites the target's role.md atomically before the ack lands in your chat. Full workflow (read current role, draft replacement, preserve load-bearing sections) is in cos_role.md §Updating an existing agent's role.
 
 Draft the replacement role under /files/artifacts/private/ first, then point ` + "`role_path`" + ` at it. The CoS-side ` + "`rationale`" + ` is a short note for the owner (what's changing, why) — keep it tight.`,
 	Schema: json.RawMessage(`{

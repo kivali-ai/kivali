@@ -82,7 +82,7 @@ You do not create or remove agents directly. Your Chief of Staff does, through p
 
 **Reorganizing.** A **Reorg** proposal moves reporting lines. Each move applies on its own, so one bad move does not sink the rest. The Kivali Developer always reports to the Chief of Staff.
 
-**Changing a role or the handbook.** The Chief of Staff can propose a **Role update** for any agent, or a **Handbook update**, which you see as a diff. You can also edit the handbook yourself in **Org**, **Handbook**, and any agent's documents on its **About** tab.
+**Changing a role or the handbook.** The Chief of Staff can propose a **Role update** for any agent, or a **Handbook update**, which you see as a diff. You can also edit the handbook yourself in **Org**, **Handbook**, and any agent's documents on its **About** tab. The Chief of Staff's and the Kivali Developer's roles are Kivali's: each release brings them up to date, and neither a proposal nor an edit changes them.
 
 ## New chats
 

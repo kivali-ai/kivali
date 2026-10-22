@@ -5,13 +5,12 @@ import { renderMarkdown } from '../../lib/markdown';
 import { Actions, ErrorBanner, StepHead } from './parts';
 import { useState } from 'react';
 
-/** Your edits to the two starting documents; null is untouched. */
+/** Your edit to the handbook; null is untouched. The role is Kivali's and has no draft. */
 export interface Drafts {
-  role: string | null;
   handbook: string | null;
 }
 
-export const NO_DRAFTS: Drafts = { role: null, handbook: null };
+export const NO_DRAFTS: Drafts = { handbook: null };
 
 /**
  * The documents open with their own "# Chief of Staff" and "# Handbook". Inside a card under the step's
@@ -81,6 +80,17 @@ function DocCard({ title, fieldLabel, original, draft, onDraft }: DocCardProps) 
   );
 }
 
+/** A document Kivali writes and keeps up to date: closed and read-only, with no Edit. */
+function KivaliDocCard({ title, md }: { title: string; md: string }) {
+  return (
+    <Card collapsible defaultOpen={false} title={title} meta="Kept up to date by Kivali">
+      <div className="app-setup-doc">
+        <Prose html={docHtml(md)} />
+      </div>
+    </Card>
+  );
+}
+
 export interface CosStepProps {
   setup: Setup;
   /** Whether the hire asks it to write the handbook from the project files. */
@@ -97,9 +107,9 @@ export interface CosStepProps {
 }
 
 /**
- * Step 4: the default role and handbook, closed and read-only until Edit; one primary. When the hire cannot run
- * (no model connected, or Claude not signed in) it is canvas 6j instead: what is missing, how to fix it and who
- * can (the server's words), and Try again.
+ * Step 4: the role, which is Kivali's and read-only, and the default handbook, closed and read-only until Edit; one
+ * primary. When the hire cannot run (no model connected, or Claude not signed in) it is canvas 6j instead: what is
+ * missing, how to fix it and who can (the server's words), and Try again.
  */
 export function CosStep({ setup, fromFiles, drafts, onDrafts, error, hiring, checking = false, onBack, onHire, onRecheck }: CosStepProps) {
   if (!setup.credential.ready) {
@@ -121,13 +131,13 @@ export function CosStep({ setup, fromFiles, drafts, onDrafts, error, hiring, che
     );
   }
   const personal = setup.kind === 'personal';
-  let framing = 'It starts with a default role and handbook. Most people leave them as they are.';
+  let framing = 'Kivali writes its role and keeps it up to date. It starts with a default handbook, which most people leave as it is.';
   if (personal) {
     framing =
-      'It starts with a default role and handbook. Most people leave them; it asks you a few questions first, then proposes the About and Values sections for you to approve.';
+      'Kivali writes its role and keeps it up to date. It starts with a default handbook: it asks you a few questions first, then proposes the About and Values sections for you to approve.';
   } else if (fromFiles) {
     framing =
-      'It starts with a default role and handbook. Most people leave them; once it has read your files it proposes a better handbook for you to approve.';
+      'Kivali writes its role and keeps it up to date. It starts with a default handbook: once it has read your files it proposes a better handbook for you to approve.';
   }
   return (
     <>
@@ -143,13 +153,7 @@ export function CosStep({ setup, fromFiles, drafts, onDrafts, error, hiring, che
           </Text>
         </div>
       </div>
-      <DocCard
-        title="Role"
-        fieldLabel="Role document"
-        original={setup.cos.default_role_md}
-        draft={drafts.role}
-        onDraft={(role) => onDrafts({ ...drafts, role })}
-      />
+      <KivaliDocCard title="Role" md={setup.cos.role_md} />
       <DocCard
         title="Handbook"
         fieldLabel="Handbook document"

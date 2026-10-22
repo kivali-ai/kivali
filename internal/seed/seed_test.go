@@ -267,3 +267,35 @@ func TestKivaliDeveloperRoleNamesItsToolsAndLimits(t *testing.T) {
 		t.Errorf("the role is %d lines; it rides in the developer's system prompt on every call, so it stays between 60 and 120", n)
 	}
 }
+
+// Why this test exists: KivaliRole is what boot writes over the Chief
+// of Staff's and the Kivali Developer's role.md, and what every role
+// write door checks before refusing. A slug it missed would keep a
+// role Kivali can never bring up to date; one it claimed in error
+// would rewrite a role the team wrote, at every boot. The Chief of
+// Staff's role must also follow the team's kind, as setup writes it,
+// or a boot would put a personal team's Chief of Staff back on the
+// business wording.
+func TestKivaliRole(t *testing.T) {
+	for _, kind := range []string{"work", "personal", ""} {
+		if role, ok := KivaliRole("chief-of-staff", kind); !ok || role != ChiefOfStaffRoleFor(kind) {
+			t.Errorf("KivaliRole(chief-of-staff, %q) = %v and not the role setup writes", kind, ok)
+		}
+		if role, ok := KivaliRole("kivali-developer", kind); !ok || role != KivaliDeveloperRole {
+			t.Errorf("KivaliRole(kivali-developer, %q) = %v and not KivaliDeveloperRole", kind, ok)
+		}
+	}
+	for _, slug := range []string{"ceo", "buyer", ""} {
+		if _, ok := KivaliRole(slug, "work"); ok {
+			t.Errorf("KivaliRole(%q) claims a role the team writes", slug)
+		}
+	}
+	for _, slug := range KivaliRoleSlugs {
+		if _, ok := KivaliRole(slug, "work"); !ok {
+			t.Errorf("KivaliRoleSlugs lists %q, which has no Kivali role", slug)
+		}
+	}
+	if len(KivaliRoleSlugs) != 2 {
+		t.Errorf("KivaliRoleSlugs = %v", KivaliRoleSlugs)
+	}
+}

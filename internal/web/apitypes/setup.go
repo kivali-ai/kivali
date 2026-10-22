@@ -80,8 +80,9 @@ type SetupFile struct {
 // SetupCoS is the Chief of Staff step's starting point.
 type SetupCoS struct {
 	Exists bool `json:"exists"`
-	// DefaultRoleMD is the role document a new Chief of Staff gets.
-	DefaultRoleMD string `json:"default_role_md"`
+	// RoleMD is the Chief of Staff's role: Kivali's (seed.KivaliRole),
+	// shown for reading, since setup writes it as it is.
+	RoleMD string `json:"role_md"`
 	// DefaultHandbookMD is the handbook seeding would use: the
 	// stored one when there is one, else the built-in default.
 	DefaultHandbookMD string `json:"default_handbook_md"`
@@ -126,9 +127,6 @@ type SeedCoSRequest struct {
 	// leave out. The handbook written at seeding is then the
 	// default (or HandbookMD), to be replaced by that proposal.
 	HandbookFromFiles bool `json:"handbook_from_files"`
-	// RoleMD replaces the default role document. Send it only when the
-	// CEO edited it.
-	RoleMD *string `json:"role_md,omitempty"`
 	// HandbookMD replaces the handbook seeding writes. Send it
 	// only when the CEO edited it.
 	HandbookMD *string `json:"handbook_md,omitempty"`

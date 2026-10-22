@@ -48,3 +48,37 @@ func TestApplyRefusesToOffboardOrMoveTheKivaliDeveloper(t *testing.T) {
 		t.Errorf("the Kivali Developer reports to %q", a.ReportsTo)
 	}
 }
+
+// Why this test exists: the Chief of Staff's and the Kivali Developer's
+// roles are Kivali's, rewritten from the binary at every boot. The
+// parser refuses a role update for either (internal/message), but an
+// approval request stored before that, or written some other way,
+// reaches the apply step; applying it would tell the owner a change
+// was live that the next boot undoes.
+func TestApplyRoleUpdateRefusesKivaliRoles(t *testing.T) {
+	st, err := store.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range []store.Agent{
+		{Slug: ChiefOfStaffSlug, Role: "Chief of Staff", ReportsTo: CEOSlug},
+		{Slug: KivaliDeveloperSlug, Role: "Kivali Developer", ReportsTo: ChiefOfStaffSlug},
+		{Slug: "alice", Role: "Analyst", ReportsTo: ChiefOfStaffSlug},
+	} {
+		if err := st.CreateAgent(a, "# shipped\n"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r := NewRuntime(st, RuntimeDefaults{AgentModel: "mock-large-0"})
+	for _, slug := range []string{ChiefOfStaffSlug, KivaliDeveloperSlug} {
+		if err := r.ApplyRoleUpdate(store.RoleUpdate{Slug: slug, Body: "# edited\n"}); err == nil || !strings.Contains(err.Error(), "Kivali's") {
+			t.Errorf("role update for %s = %v", slug, err)
+		}
+		if role, _ := st.ReadRole(slug); role != "# shipped\n" {
+			t.Errorf("%s's role was rewritten: %q", slug, role)
+		}
+	}
+	if err := r.ApplyRoleUpdate(store.RoleUpdate{Slug: "alice", Body: "# edited\n"}); err != nil {
+		t.Errorf("role update for alice = %v", err)
+	}
+}

@@ -347,9 +347,10 @@ func (s *Server) handleAgentpodChatAppend(w http.ResponseWriter, r *http.Request
 }
 
 // handleAgentpodRole serves GET / POST /v1/agent/{slug}/role —
-// reads/writes the agent's role.md. role.md is set at hire time
-// and rewritten on rotation; the agent runtime caches it via ETag
-// (path-addressed cache class — see internal/agentpod/cache.go).
+// reads/writes the agent's role.md. role.md is set at hire time; the
+// agent runtime caches it via ETag (path-addressed cache class — see
+// internal/agentpod/cache.go). POST refuses the Chief of Staff's and
+// the Kivali Developer's, whose roles are Kivali's (seed.KivaliRole).
 //
 // GET emits an ETag header on every 200; clients send If-None-Match
 // on subsequent reads and get 304 when the body hasn't changed.
@@ -380,6 +381,10 @@ func (s *Server) handleAgentpodRole(w http.ResponseWriter, r *http.Request) {
 		}
 		if err := decodeJSONBounded(w, r, &body); err != nil {
 			http.Error(w, "decode: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if isKivaliRole(slug) {
+			http.Error(w, "the role is Kivali's (each release of Kivali writes it)", http.StatusForbidden)
 			return
 		}
 		if err := s.Store.WriteRole(slug, body.Body); err != nil {

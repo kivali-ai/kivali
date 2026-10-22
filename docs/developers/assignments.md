@@ -364,7 +364,6 @@ and the JSON API under `/api/v1/assignments/{id}` (`api_work.go`,
 
 Prompt surfaces: the tool descriptions and Kivali OS §Assignments
 (`internal/agent/kivali_os.md`, the full rules) ship in the binary and
-reach every install the moment it runs; `internal/seed/cos_role.md` is
-copied into an install once, when it is seeded, so a change to it
-reaches an existing install only by editing the Chief of Staff's
-`role.md`.
+reach every install the moment it runs; `internal/seed/cos_role.md`
+reaches it at the next boot, which writes the Chief of Staff's
+`role.md` from the binary ([Kivali's roles](architecture.md#kivalis-roles)).

@@ -136,6 +136,36 @@ func (s *Server) EnsureKivaliDeveloper() (created bool, err error) {
 	return true, nil
 }
 
+// RefreshKivaliRoles writes Kivali's role (seed.KivaliRole) as the
+// role.md of the Chief of Staff and the Kivali Developer wherever it
+// differs, so both run on the role this binary ships for the team's
+// kind. Boot and a restore call it after EnsureKivaliDeveloper.
+// rewritten names the agents whose role it wrote; an agent the team
+// does not have yet is skipped. An error for one agent does not stop
+// the other.
+func (s *Server) RefreshKivaliRoles() (rewritten []string, err error) {
+	kind := s.teamKind()
+	var errs []error
+	for _, slug := range seed.KivaliRoleSlugs {
+		role, _ := seed.KivaliRole(slug, kind)
+		if _, gerr := s.Store.GetAgent(slug); gerr != nil {
+			if !errors.Is(gerr, store.ErrNotFound) {
+				errs = append(errs, fmt.Errorf("%s: %w", slug, gerr))
+			}
+			continue
+		}
+		if current, rerr := s.Store.ReadRole(slug); rerr == nil && current == role {
+			continue
+		}
+		if werr := s.Store.WriteRole(slug, role); werr != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", slug, werr))
+			continue
+		}
+		rewritten = append(rewritten, slug)
+	}
+	return rewritten, errors.Join(errs...)
+}
+
 // The Chief of Staff seed runs in these stages, in order; the hiring
 // panel shows one line per stage. seedStageFirstMessage runs only when
 // the seed carries a first message.

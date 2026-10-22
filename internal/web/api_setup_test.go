@@ -210,7 +210,7 @@ func TestAPISetupStepFollowsWhatIsSet(t *testing.T) {
 		t.Fatalf("fresh setup = needed %v step %q files %d cos %v, want needed welcome, no files, no cos",
 			st.Needed, st.Step, len(st.Files), st.CoS.Exists)
 	}
-	if st.CoS.DefaultRoleMD != seed.ChiefOfStaffRole || st.CoS.DefaultHandbookMD != seed.Handbook {
+	if st.CoS.RoleMD != seed.ChiefOfStaffRole || st.CoS.DefaultHandbookMD != seed.Handbook {
 		t.Error("fresh setup should offer the built-in role and handbook")
 	}
 	if !st.RestoreAvailable {
@@ -415,10 +415,8 @@ func TestAPISetupSeedCoSRunsInTheBackground(t *testing.T) {
 
 func TestAPISetupSeedCoSHandbookFromFilesSendsTheFirstMessage(t *testing.T) {
 	srv, _ := newSetupServer(t, seedReply("briefing", nil, nil))
-	role := "# Chief of Staff\n\nEdited."
 	rr := setupJSON(t, srv, http.MethodPost, "/api/v1/setup/seed-cos", apitypes.SeedCoSRequest{
 		HandbookFromFiles: true,
-		RoleMD:            &role,
 	})
 	if rr.Code != http.StatusAccepted {
 		t.Fatalf("POST seed-cos = %d: %s", rr.Code, rr.Body.String())
@@ -452,8 +450,8 @@ func TestAPISetupSeedCoSHandbookFromFilesSendsTheFirstMessage(t *testing.T) {
 	if c, _ := srv.Store.ReadHandbook(); c != seed.Handbook {
 		t.Error("handbook_from_files should store the default handbook as the starting point")
 	}
-	if got, _ := srv.Store.ReadRole(cosSlug); got != strings.TrimSpace(role) {
-		t.Errorf("role = %q, want the edited one", got)
+	if got, _ := srv.Store.ReadRole(cosSlug); got != seed.ChiefOfStaffRoleFor(srv.teamKind()) {
+		t.Errorf("role = %q, want Kivali's", got)
 	}
 	if st := getSetup(t, srv); st.RestoreAvailable {
 		t.Error("a chief of staff with a chat is no longer a fresh server")
@@ -493,7 +491,10 @@ func TestAPISetupSeedCoSEditedHandbookAndRefusals(t *testing.T) {
 	if !strings.Contains(rr.Body.String(), "`## About`") {
 		t.Errorf("refusal does not name the missing section: %s", rr.Body.String())
 	}
-	assertAPIError(t, setupJSON(t, srv, http.MethodPost, "/api/v1/setup/seed-cos", apitypes.SeedCoSRequest{RoleMD: &blank}), http.StatusBadRequest)
+	// The Chief of Staff's role is Kivali's, and boot writes it again:
+	// a role sent with the hire would last only until then, so the
+	// request has no field for one and is refused.
+	assertAPIError(t, setupDo(t, srv, http.MethodPost, "/api/v1/setup/seed-cos", "application/json", strings.NewReader(`{"role_md":"# Mine"}`)), http.StatusBadRequest)
 	assertAPIError(t, setupDo(t, srv, http.MethodPost, "/api/v1/setup/seed-cos", "application/json", strings.NewReader(`{"surprise":true}`)), http.StatusBadRequest)
 	if srv.seedTracker().current() != nil {
 		t.Fatal("a refused request must not start a hire")

@@ -91,7 +91,7 @@ func (s *Server) setupState() (apitypes.Setup, error) {
 		Files:  make([]apitypes.SetupFile, 0, len(files)),
 		CoS: apitypes.SetupCoS{
 			Exists:            hired,
-			DefaultRoleMD:     seed.ChiefOfStaffRoleFor(br.TeamKind),
+			RoleMD:            seed.ChiefOfStaffRoleFor(br.TeamKind),
 			DefaultHandbookMD: handbook,
 		},
 		Credential:       s.setupCredential(context.Background()),
@@ -489,14 +489,6 @@ func (s *Server) cosSeedFromRequest(w http.ResponseWriter, req apitypes.SeedCoSR
 			return cosSeed{}, false
 		}
 		plan.Handbook, plan.WriteHandbook = *req.HandbookMD, true
-	}
-	if req.RoleMD != nil {
-		role := strings.TrimSpace(*req.RoleMD)
-		if role == "" {
-			writeAPIError(w, http.StatusBadRequest, "the Chief of Staff's role is empty", whoYou)
-			return cosSeed{}, false
-		}
-		plan.Role = role
 	}
 	switch {
 	case personal:

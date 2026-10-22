@@ -704,6 +704,16 @@ func main() {
 	} else if created {
 		log.Printf("hired the Kivali Developer")
 	}
+	// The Chief of Staff's and the Kivali Developer's roles are
+	// Kivali's: every boot writes the ones this binary ships, a no-op
+	// when they are already current.
+	rewritten, err := srv.RefreshKivaliRoles()
+	for _, slug := range rewritten {
+		log.Printf("role: wrote Kivali's role for %s", slug)
+	}
+	if err != nil {
+		log.Printf("write Kivali's roles: %v", err)
+	}
 
 	// Hydrate every active agent's /files/ view so the file_* tools
 	// have project/ and past-chats/ populated on first use. Before the

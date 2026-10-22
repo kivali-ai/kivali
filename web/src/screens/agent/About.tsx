@@ -29,13 +29,15 @@ const count = (n: number, one: string, many: string) => n + ' ' + (n === 1 ? one
 
 /**
  * The one-line description, in the canvas's words: "What it does · updated 26 Sept", "How it works · 6 habits ·
- * updated 2 days ago", "What it remembers · 214 notes · updated 2 days ago".
+ * updated 2 days ago", "What it remembers · 214 notes · updated 2 days ago". A role that is Kivali's says who keeps
+ * it and no date, which would only say how long ago a release last changed it: "What it does · kept up to date by
+ * Kivali".
  */
 export function describeDoc(doc: AgentDoc, now: number): string {
   const updated = doc.updated_at ? 'updated ' + agoPhrase(doc.updated_at, now).replace(/^on /, '') : 'not written yet';
   switch (doc.kind) {
     case 'role':
-      return ['What it does', updated].join(' · ');
+      return ['What it does', doc.from_kivali ? 'kept up to date by Kivali' : updated].join(' · ');
     case 'habits': {
       const n = listItemCount(doc.content);
       return ['How it works', ...(n > 0 ? [count(n, 'habit', 'habits')] : []), updated].join(' · ');
@@ -134,7 +136,7 @@ function DocPane({ slug, name, kind, label, archived }: { slug: string; name: st
         <Text variant="label" tone="muted" className="app-about-desc-text">
           {describeDoc(doc, deps.now())}
         </Text>
-        {!archived && (
+        {!archived && !doc.from_kivali && (
           <Button size="sm" variant="secondary" icon={<Icon name="pencil" />} onClick={startEdit} aria-label={'Edit ' + label.toLowerCase()}>
             Edit
           </Button>
@@ -159,9 +161,10 @@ const SHELL_VIEWS: readonly { kind: AboutView; label: string }[] = [
 ];
 
 /**
- * About: Role, Habits and Memory, one at a time, each read first with Edit swapping in the editor; Software, the
- * programs installed in the agent's shell; and Security, where the agent's commands can connect beyond the team's
- * defaults. An archived agent has no shell, so neither Software nor Security.
+ * About: Role, Habits and Memory, one at a time, each read first with Edit swapping in the editor (a role that is
+ * Kivali's, the Chief of Staff's or the Kivali Developer's, has no Edit); Software, the programs installed in the
+ * agent's shell; and Security, where the agent's commands can connect beyond the team's defaults. An archived agent
+ * has no shell, so neither Software nor Security.
  *
  * The view is the address's `?view=` (role, habits, memory, software or security), so a link can open one; any
  * other value, or a view the agent does not have, is Role, which has no parameter.

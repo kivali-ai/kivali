@@ -422,7 +422,8 @@ func (s *Server) handleAPIAgentDocGet(w http.ResponseWriter, r *http.Request) {
 
 // handleAPIAgentDocPut serves PUT /api/v1/agents/{slug}/docs/{kind}:
 // replace the document, then answer as GET does. Validation is
-// saveAgentDoc's.
+// saveAgentDoc's. The role of the Chief of Staff and of the Kivali
+// Developer is Kivali's (seed.KivaliRole) and is refused.
 //
 // The body is held to decodeJSON's apiMaxJSONBody (1 MB), deliberately
 // not raised here: every one of these documents is inlined into each
@@ -434,6 +435,14 @@ func (s *Server) handleAPIAgentDocGet(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleAPIAgentDocPut(w http.ResponseWriter, r *http.Request) {
 	slug, name, kind, ok := s.agentDocTarget(w, r)
 	if !ok {
+		return
+	}
+	if name == apitypes.AgentDocKindRole && isKivaliRole(slug) {
+		who := "this agent"
+		if a, err := s.Store.GetAgent(slug); err == nil {
+			who = "the " + a.Role
+		}
+		writeAPIError(w, http.StatusForbidden, who+"'s role is Kivali's and can't be edited", "no one; each Kivali release brings it up to date")
 		return
 	}
 	var req apitypes.AgentDocPut
@@ -461,7 +470,8 @@ func (s *Server) writeAgentDoc(w http.ResponseWriter, slug string, name apitypes
 		writeAPIError(w, http.StatusInternalServerError, "the "+string(name)+" could not be read", whoDevelopers)
 		return
 	}
-	doc := apitypes.AgentDoc{Kind: name, Content: content, Stats: agentDocStats(name, content)}
+	doc := apitypes.AgentDoc{Kind: name, Content: content, Stats: agentDocStats(name, content),
+		FromKivali: name == apitypes.AgentDocKindRole && isKivaliRole(slug)}
 	if at, err := kind.updatedAt(s.Store, slug); err == nil {
 		doc.UpdatedAt = &at
 	}

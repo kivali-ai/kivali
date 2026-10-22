@@ -8,7 +8,7 @@ Each agent has three documents it carries into every turn, and an archive it can
 
 | | What it holds | Who writes it | When it changes |
 | --- | --- | --- | --- |
-| **Role** | Who the agent is: its job, scope, who it reports to, how it works. | The Chief of Staff at hire, and you. | When you approve a role update, or edit it yourself. |
+| **Role** | Who the agent is: its job, scope, who it reports to, how it works. | The Chief of Staff at hire, and you. Kivali writes the Chief of Staff's and the Kivali Developer's. | When you approve a role update, or edit it yourself. The Chief of Staff's and the Kivali Developer's change with Kivali's releases. |
 | **Habits** | Short rules for how the agent acts, each with a one-line reason. | The agent, and you. | When the agent starts a new chat, or when you edit them. |
 | **Memory** | What the agent knows to be true, in its own words. Each entry notes where it came from: a past chat, or something a person told it. | The agent, and you. | When the agent starts a new chat, or when you edit it. |
 | **Past chats** | Every earlier conversation, each with a short summary of what happened. | Kivali keeps them; a summary is written for each. | Every time a chat ends. Never edited afterwards. |
@@ -55,6 +55,8 @@ Open an agent from **Team**, then its **About** tab. It has three documents:
 Each opens read-only; choose **Edit** to change it, then **Save**. Your edit applies from the agent's next turn. Archived agents' documents can be read but not edited.
 
 Changes to a role usually come from your Chief of Staff as a **Role update** proposal, so the role stays consistent with the rest of the team. You can still edit it directly.
+
+The Chief of Staff's and the Kivali Developer's roles are Kivali's. Their role says **kept up to date by Kivali** and has no **Edit**: each release of Kivali brings them up to date, so they always match what the release can do. To change how either works, put it in the handbook, or in that agent's habits or memory.
 
 ## Teaching an agent
 
