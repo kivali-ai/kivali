@@ -222,6 +222,7 @@ The check holds the section to these rules, for bundles and built-ins
 | A sign-in connection's `user_config` declares neither `client_id` nor `client_secret`: core adds them. | `user_config.client_id: Kivali adds the client id and secret to a sign-in connection's form, so user_config does not declare them` |
 | `scopes` entries are not empty. | `kivali.connection.scopes[<n>] is empty` |
 | `extra_authorization_params` names none of `client_id`, `redirect_uri`, `response_type`, `scope`, `state`, `code_challenge`, `code_challenge_method`. | `kivali.connection.extra_authorization_params.<key>: Kivali sets <key> itself` |
+| A sign-in connection's `server.mcp_config.env` names no `${user_config.client_secret}` (it reads empty) and sets no key equal to the access token's name (the token would replace it). | `server.mcp_config.env.<key>: the client secret is Kivali's; the server asks kivali/credential for the access token`; `server.mcp_config.env.<key>: Kivali gives the access token under that name, so the env cannot set it` |
 
 In this version `Validate` and `ValidateBuiltin` refuse `device` and
 `browser` as well ("sign-in connections are not available"), since the

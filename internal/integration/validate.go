@@ -274,12 +274,18 @@ func validateServer(m *Manifest, files []BundleFile, f *Findings) {
 	if len(s.MCPConfig.Args) == 0 {
 		f.errorf("server.mcp_config.args is empty; name the entry point")
 	}
+	signIn := m.Kivali.Connection.SignIn()
 	for _, k := range sortedKeys(s.MCPConfig.Env) {
+		if signIn && k == m.Kivali.Connection.CredentialKey() {
+			f.errorf("server.mcp_config.env.%s: Kivali gives the access token under that name, so the env cannot set it", k)
+		}
 		for _, ph := range placeholderRE.FindAllStringSubmatch(s.MCPConfig.Env[k], -1) {
 			key, ok := strings.CutPrefix(ph[1], "user_config.")
 			switch {
 			case !ok:
 				f.errorf("server.mcp_config.env.%s: ${%s} is not a connection field; only ${user_config.<key>} is replaced", k, ph[1])
+			case signIn && key == FieldClientSecret:
+				f.errorf("server.mcp_config.env.%s: the client secret is Kivali's; the server asks kivali/credential for the access token", k)
 			case !slices.ContainsFunc(ConnectionFields(m), func(u UserConfigField) bool { return u.Key == key }):
 				f.errorf("server.mcp_config.env.%s names user_config.%s, which user_config does not declare", k, key)
 			}
