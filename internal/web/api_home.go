@@ -446,8 +446,9 @@ var integrationSignInFrom = apitypes.PersonRef{Slug: store.BuiltinIntegrationPub
 // integrationSignInItems are the Needs-you rows of the connections
 // whose sign-in the vendor refused to renew, read from the
 // connections as they stand: one per connection whose record says why
-// it needs a new sign-in, oldest refusal first. Every word is core's
-// but the refusal, which is the vendor's, shown as the body.
+// it needs a new sign-in, of a switched-on integration whose version
+// in use signs in, oldest refusal first. Every word is core's but the
+// refusal, which is the vendor's, shown as the body.
 func (s *Server) integrationSignInItems() []apitypes.NeedItem {
 	its, err := s.Store.ListIntegrations()
 	if err != nil {
@@ -455,6 +456,14 @@ func (s *Server) integrationSignInItems() []apitypes.NeedItem {
 	}
 	var out []apitypes.NeedItem
 	for _, it := range its {
+		// Switched off, nothing calls it; a version in use that is
+		// connected with a token has no sign-in to renew.
+		if !it.Enabled {
+			continue
+		}
+		if _, m, err := s.Store.CurrentIntegrationVersion(it.Name); err != nil || !m.Kivali.Connection.SignIn() {
+			continue
+		}
 		conns, err := s.Store.ListIntegrationConnections(it.Name)
 		if err != nil {
 			continue

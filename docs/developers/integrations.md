@@ -642,7 +642,8 @@ the delete goes on.
 ### Needs you: sign in again
 
 `GET /api/v1/home` carries a row per connection whose record has an
-`error`, built from the connections as they stand
+`error`, of a switched-on integration whose version in use signs in,
+built from the connections as they stand
 (`Server.integrationSignInItems`, `api_home.go`), not from a stored
 message: kind `integration_sign_in`, id
 `integration_sign_in:<integration>/<connection id>`, title "<Display
