@@ -329,18 +329,18 @@ describe('Chief of Staff', () => {
     expect(screen.queryByText('Claude isn’t signed in')).toBeNull();
   });
 
-  it('keeps the edited documents across Back and Continue', async () => {
+  it('keeps the edited handbook across Back and Continue', async () => {
     serve({ ...ready, step: 'cos' });
     postMock.mockResolvedValue({});
     await renderSetup();
-    click('Edit role');
-    fireEvent.change(screen.getByLabelText('Role document'), { target: { value: 'Mine.' } });
+    click('Edit handbook');
+    fireEvent.change(screen.getByLabelText('Handbook document'), { target: { value: 'Mine.' } });
     click('Done editing');
     click('Back');
     click('Continue');
     click('Hire Chief of Staff');
     await flush();
-    expect(postMock).toHaveBeenCalledWith('/api/v1/setup/seed-cos', { handbook_from_files: true, role_md: 'Mine.' });
+    expect(postMock).toHaveBeenCalledWith('/api/v1/setup/seed-cos', { handbook_from_files: true, handbook_md: 'Mine.' });
   });
 
   it('says it will propose a handbook from the files only when asked to', async () => {
@@ -354,13 +354,17 @@ describe('Chief of Staff', () => {
     expect(screen.queryByText(/proposes a better handbook/)).toBeNull();
   });
 
-  it('shows the defaults read-only and closed', async () => {
+  // The Chief of Staff's role is Kivali's: the server has no field for an edited one and boot writes it again, so
+  // an Edit on it would lose the person's work. It is shown to read, saying who keeps it; the handbook is theirs.
+  it('shows the role and the handbook read-only and closed, with Edit on the handbook only', async () => {
     serve({ ...ready, step: 'cos' });
     await renderSetup();
     const details = document.querySelectorAll('details');
     expect(details).toHaveLength(2);
     for (const d of details) expect(d.open).toBe(false);
-    expect(screen.getByRole('button', { name: 'Edit role' })).toBeInTheDocument();
+    expect(screen.getByText('Kept up to date by Kivali')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Edit role' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Edit handbook' })).toBeInTheDocument();
     expect(screen.queryByRole('textbox')).toBeNull();
   });
 
@@ -380,12 +384,12 @@ describe('Chief of Staff', () => {
     await renderSetup();
     fireEvent.click(screen.getByRole('checkbox', { name: /Write the handbook from these files\?/ }));
     click('Continue');
-    click('Edit role');
-    fireEvent.change(screen.getByLabelText('Role document'), { target: { value: '# Chief of Staff\n\nEdited.\n' } });
+    click('Edit handbook');
+    fireEvent.change(screen.getByLabelText('Handbook document'), { target: { value: '# Handbook\n\nEdited.\n' } });
     click('Done editing');
     click('Hire Chief of Staff');
     await flush();
-    expect(postMock).toHaveBeenCalledWith('/api/v1/setup/seed-cos', { handbook_from_files: false, role_md: '# Chief of Staff\n\nEdited.\n' });
+    expect(postMock).toHaveBeenCalledWith('/api/v1/setup/seed-cos', { handbook_from_files: false, handbook_md: '# Handbook\n\nEdited.\n' });
   });
 
   it('does not send a document that was edited back to its default', async () => {

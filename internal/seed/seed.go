@@ -10,12 +10,15 @@
 // They call the person "the owner" and never carry their name, which
 // reaches agents through the system prompt's owner section
 // (internal/owner). The ...For functions pick a kind's text. Setup
-// seeds them; the person can edit either afterwards in the app.
+// seeds the handbook, which the person can edit afterwards in the app.
+// The two roles are Kivali's (KivaliRole): every boot writes them from
+// this binary, and nothing else changes them.
 package seed
 
 import (
 	_ "embed"
 
+	"github.com/kivali-ai/kivali/internal/graph"
 	"github.com/kivali-ai/kivali/internal/owner"
 )
 
@@ -50,15 +53,35 @@ func HandbookFor(kind string) string {
 	return Handbook
 }
 
-// ChiefOfStaffRoleFor is the Chief of Staff's default role for a team
-// of kind: cos_role.md without the business wording on a personal team,
-// byte for byte otherwise.
+// ChiefOfStaffRoleFor is the Chief of Staff's role for a team of kind:
+// cos_role.md without the business wording on a personal team, byte
+// for byte otherwise.
 func ChiefOfStaffRoleFor(kind string) string {
 	if kind == kindPersonal {
 		return owner.PersonalWording(ChiefOfStaffRole)
 	}
 	return ChiefOfStaffRole
 }
+
+// KivaliRole is the role Kivali ships for the agent slug on a team of
+// kind, when the agent is one of the two Kivali hires itself: the Chief
+// of Staff (ChiefOfStaffRoleFor) and the Kivali Developer
+// (KivaliDeveloperRole). Their roles are Kivali's, not the team's:
+// boot and a restore write them as the agents' role.md, and every
+// other write door refuses them. ok is false for any other agent,
+// whose role is the team's.
+func KivaliRole(slug, kind string) (role string, ok bool) {
+	switch slug {
+	case graph.ChiefOfStaffSlug:
+		return ChiefOfStaffRoleFor(kind), true
+	case graph.KivaliDeveloperSlug:
+		return KivaliDeveloperRole, true
+	}
+	return "", false
+}
+
+// KivaliRoleSlugs are the agents KivaliRole has a role for.
+var KivaliRoleSlugs = []string{graph.ChiefOfStaffSlug, graph.KivaliDeveloperSlug}
 
 // PersonalFirstMessage is a personal team's Chief of Staff's first
 // message: ask the CEO a few questions, then draft the handbook's
@@ -69,8 +92,9 @@ func ChiefOfStaffRoleFor(kind string) string {
 //go:embed personal_first_message.md
 var PersonalFirstMessage string
 
-// ChiefOfStaffRole is the default role template for the Chief of Staff
-// agent. It becomes the role.md for CoS at seed time.
+// ChiefOfStaffRole is the Chief of Staff's role, before
+// ChiefOfStaffRoleFor fits it to the team's kind. Setup writes it as
+// the agent's role.md, and every boot writes it again (KivaliRole).
 // Edit internal/seed/cos_role.md to change it.
 //
 //go:embed cos_role.md
@@ -89,8 +113,8 @@ var HandbookFromFilesMessage string
 // KivaliDeveloperRole is the Kivali Developer's role: the agent Kivali
 // hires under the Chief of Staff with the team, which builds the
 // integrations that connect agents to outside services. Setup writes
-// it as the agent's role.md, and boot does for a team that has a Chief
-// of Staff but no Kivali Developer.
+// it as the agent's role.md, and every boot writes it again
+// (KivaliRole).
 // Edit internal/seed/kivali_developer_role.md to change it.
 //
 //go:embed kivali_developer_role.md

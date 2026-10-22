@@ -649,15 +649,14 @@ on a team that has a Chief of Staff and no Kivali Developer, on the
 model the Chief of Staff is hired on: setup calls it right after
 hiring the Chief of Staff and provisions both pods; boot (`main.go`,
 before the files sync and `BulkProvisionAgentPods`) and a restore call
-it for a team that has none. It never rewrites an existing one, so a
-role update the owner approved stays. `propose_hire` has no way to
-hire it: its slug is reserved, like `ceo` and `chief-of-staff`.
+it for a team that has none. `propose_hire` has no way to hire it:
+its slug is reserved, like `ceo` and `chief-of-staff`.
 
 It stays and always reports to the Chief of Staff: `propose_offboard`
 and `propose_reorg` refuse it at parse, and `ApplyOffboard` and
-`applyReorgMove` again at apply. The Chief of Staff may propose a role
-update for it, as for any agent. `IsFreshForRestore` counts it as seed
-state while its chat is empty.
+`applyReorgMove` again at apply. Its role is Kivali's, as the Chief of
+Staff's is: see [Kivali's roles](architecture.md#kivalis-roles).
+`IsFreshForRestore` counts it as seed state while its chat is empty.
 
 The tools are its by slug, as the Chief of Staff's are: its MCP server
 (`mcp_cmd.go`) registers them when `--agent` is `kivali-developer`, and

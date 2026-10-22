@@ -82,7 +82,7 @@ const ChiefOfStaff = "chief-of-staff"
 
 // KivaliDeveloper is the slug of the Kivali Developer, the agent Kivali
 // hires under the Chief of Staff. Its slug is reserved, and no proposal
-// offboards it or moves it to another manager.
+// offboards it, moves it to another manager or updates its role.
 const KivaliDeveloper = "kivali-developer"
 
 // ToolDef bundles everything needed to expose one publish tool to Claude

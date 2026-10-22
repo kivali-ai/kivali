@@ -96,12 +96,19 @@ func (r *Runtime) ApplyHire(h store.Hire) (warn string, err error) {
 // file BEFORE writing the approval response, so the ack landing in
 // the proposer's chat is itself the signal that the new role is live.
 //
-// Refuses to write on missing/unknown slug or empty body. The
-// underlying Store.WriteRole is rename-based (atomic at the
-// filesystem layer); a crash mid-write leaves the prior file intact.
+// Refuses to write on missing/unknown slug or empty body, and for the
+// Chief of Staff and the Kivali Developer, whose roles are Kivali's
+// (seed.KivaliRole). The underlying Store.WriteRole is rename-based
+// (atomic at the filesystem layer); a crash mid-write leaves the prior
+// file intact.
 func (r *Runtime) ApplyRoleUpdate(u store.RoleUpdate) error {
 	if u.Slug == "" {
 		return fmt.Errorf("role_update: slug is required")
+	}
+	// Defense in depth: the parser refuses these too, but a proposal
+	// stored some other way reaches this chokepoint.
+	if u.Slug == ChiefOfStaffSlug || u.Slug == KivaliDeveloperSlug {
+		return fmt.Errorf("role_update %s: the role is Kivali's (each release of Kivali writes it), so no proposal changes it", u.Slug)
 	}
 	if strings.TrimSpace(u.Body) == "" {
 		return fmt.Errorf("role_update %s: body is required", u.Slug)

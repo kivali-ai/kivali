@@ -600,6 +600,28 @@ func TestParseProposeRoleUpdateRejectsNonCoSCaller(t *testing.T) {
 	}
 }
 
+// Why this test exists: the Chief of Staff's and the Kivali
+// Developer's roles are Kivali's, and every boot writes them again. A
+// proposal the owner approved for either would be lost at the next
+// boot, so the owner would be asked to approve a change that does not
+// last; the parser refuses it before it reaches the owner.
+func TestParseProposeRoleUpdateRefusesKivaliRoles(t *testing.T) {
+	files := map[string]string{"/files/artifacts/private/role.md": "# Replacement\n"}
+	for _, slug := range []string{ChiefOfStaff, KivaliDeveloper} {
+		block := toolUse(ToolProposeRoleUpdate, map[string]any{
+			"slug": slug, "title": "Update", "role_path": "/files/artifacts/private/role.md", "rationale": "r",
+		})
+		_, err := Parse(block, ctxWithFiles(files))
+		if err == nil {
+			t.Errorf("a role update for %q should be refused", slug)
+			continue
+		}
+		if !strings.Contains(err.Error(), "Kivali's") {
+			t.Errorf("the refusal for %q does not say the role is Kivali's: %v", slug, err)
+		}
+	}
+}
+
 func TestParseProposeRoleUpdateRequiresFields(t *testing.T) {
 	files := map[string]string{
 		"/files/artifacts/private/role.md":  "# Replacement\n",

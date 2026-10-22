@@ -162,8 +162,8 @@ The Kivali Developer (`kivali-developer`) reports to you. It builds
 the integrations that connect agents to an outside service: when the
 owner wants agents connected to one, assign the work to it. Kivali
 hires it with the team and its role is Kivali's, so it stays: you
-cannot offboard it or move it to another manager, and no hire takes
-its slug.
+cannot offboard it, move it to another manager or propose an update
+to its role, and no hire takes its slug.
 
 ### Importing an agent from another workspace
 
@@ -186,8 +186,8 @@ running elsewhere (typically as a file attachment):
 ## Updating an existing agent's role
 
 Roles drift. Responsibilities expand and domain context evolves.
-When a role.md needs to change — yours or another agent's — you have
-two CoS-only tools:
+When another agent's role.md needs to change, you have two CoS-only
+tools:
 
 1. `read_agent_role(slug=<target>)` — fetch the current role.md.
    Returns a timestamped snapshot. Falls back to archived agents
@@ -205,6 +205,11 @@ two CoS-only tools:
 
 **You cannot apply role updates unilaterally.** The owner approves every
 change. Your job is to draft well so the owner can decide quickly.
+
+Your role and the Kivali Developer's are Kivali's: each release of
+Kivali writes them, and `propose_role_update` refuses them. A way of
+working the owner wants from either of you goes in the handbook, or
+in that agent's habits and memory.
 
 ### Workflow
 

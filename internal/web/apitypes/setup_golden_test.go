@@ -13,7 +13,7 @@ func goldenSetup() Setup {
 		},
 		CoS: SetupCoS{
 			Exists:            false,
-			DefaultRoleMD:     "# Chief of Staff\n\nYou run the org day to day.\n",
+			RoleMD:            "# Chief of Staff\n\nYou run the org day to day.\n",
 			DefaultHandbookMD: "# Handbook\n\n## About\n\nThis section is a placeholder.\n",
 		},
 		Credential: SetupCredential{
@@ -29,9 +29,8 @@ func goldenSetup() Setup {
 }
 
 func goldenSeedCoSRequest() SeedCoSRequest {
-	role := "# Chief of Staff\n\nEdited.\n"
 	handbook := "# Handbook\n\nEdited.\n"
-	return SeedCoSRequest{HandbookFromFiles: true, RoleMD: &role, HandbookMD: &handbook}
+	return SeedCoSRequest{HandbookFromFiles: true, HandbookMD: &handbook}
 }
 
 func goldenSetupProgress() SetupProgress {

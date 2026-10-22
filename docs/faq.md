@@ -42,7 +42,7 @@ Kivali sets no limit. The practical limits are memory and cost: each agent that 
 
 ## Can I edit an agent's memory?
 
-Yes. On the agent's **About** tab, edit its **Role**, **Habits** or **Memory**. Your change applies from its next turn. See [Memory](memory.md).
+Yes. On the agent's **About** tab, edit its **Role**, **Habits** or **Memory**. Your change applies from its next turn. The Chief of Staff's and the Kivali Developer's roles are the exception: Kivali keeps them up to date with each release, so you change how they work through their habits, their memory or the handbook. See [Memory](memory.md).
 
 ## Does an agent forget when I start a new chat?
 

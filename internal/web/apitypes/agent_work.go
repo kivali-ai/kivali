@@ -148,6 +148,10 @@ type AgentDoc struct {
 	// UpdatedAt is null when the document has never been written.
 	UpdatedAt *time.Time    `json:"updated_at" tstype:"string | null,required"`
 	Stats     AgentDocStats `json:"stats"`
+	// FromKivali marks the role of the Chief of Staff and of the Kivali
+	// Developer: Kivali's, written by each release, so PUT refuses it.
+	// False for every other document.
+	FromKivali bool `json:"from_kivali"`
 }
 
 // AgentDocStats is the one-line description's numbers.

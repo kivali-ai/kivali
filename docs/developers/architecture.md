@@ -473,7 +473,7 @@ There is no database. Everything durable is a plain file under
 ```
 /data/agents/<slug>/
   agent.yaml                  identity and settings, its own network hosts and exemption among them
-  role.md                     the role, written at hire
+  role.md                     the role, written at hire (Kivali's for two agents: see below)
   agent_memory.md             what the agent knows; it edits this itself
   agent_memory_habits.md      learned rules of behaviour
   chat.jsonl                  the current conversation, append-only
@@ -486,6 +486,28 @@ There is no database. Everything durable is a plain file under
     subagents/<id>/           each subagent's view
     project/ skills/ attachments/ past-chats/ episodes/   symlink farms, read-only
 ```
+
+### Kivali's roles
+
+The Chief of Staff and the Kivali Developer are the two agents Kivali
+hires itself, and their roles are Kivali's, not the team's.
+`seed.KivaliRole` gives the one this binary ships:
+`internal/seed/cos_role.md` fitted to the team's kind, and
+`internal/seed/kivali_developer_role.md`. `Server.RefreshKivaliRoles`
+(`internal/web/onboarding.go`) writes it as the agent's `role.md`
+wherever it differs: at boot and after a restore, right after
+`EnsureKivaliDeveloper`. A change to either file reaches every team on
+its next boot, and
+the agent's next wake note says its role changed (the role fingerprint
+in `internal/agent/wake_update.go`).
+
+Every other write door refuses them: `propose_role_update` at parse
+(`internal/message`) and `ApplyRoleUpdate` at apply, PUT
+`/api/v1/agents/{slug}/docs/role` (403), core.sock's role POST, and
+setup, whose seed request has no role field. The role's GET carries
+`from_kivali: true`, and the About tab shows it with no Edit and no
+date. What a team wants either agent to do differently goes in the
+handbook, or in that agent's habits and memory.
 
 ## A turn
 

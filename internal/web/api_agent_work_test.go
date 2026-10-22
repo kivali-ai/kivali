@@ -410,6 +410,45 @@ func TestAPIAgentDocsGet(t *testing.T) {
 	}
 }
 
+// Why this test exists: the Chief of Staff's and the Kivali Developer's
+// roles are Kivali's, and boot writes them again. The About tab reads
+// from_kivali to show the role without Edit; an edit the PUT took
+// would be lost at the next boot, so it is refused and the role left as
+// it was. Every other document, the same agents' memory among them,
+// stays editable and is not marked.
+func TestAPIAgentDocsKivaliRole(t *testing.T) {
+	srv := newTestServer(t)
+	seedAlice(t, srv)
+	for _, a := range []store.Agent{
+		{Slug: "chief-of-staff", Role: "Chief of Staff", ReportsTo: "ceo"},
+		{Slug: "kivali-developer", Role: "Kivali Developer", ReportsTo: "chief-of-staff"},
+	} {
+		if err := srv.Store.CreateAgent(a, "# Kivali's\n"); err != nil {
+			t.Fatal(err)
+		}
+		path := "/api/v1/agents/" + a.Slug + "/docs/"
+		rr := agentWorkDo(t, srv, http.MethodGet, path+"role", "")
+		if doc := decodeAPI[apitypes.AgentDoc](t, rr); !doc.FromKivali || doc.Content != "# Kivali's\n" {
+			t.Errorf("%s role = %+v, want from_kivali", a.Slug, doc)
+		}
+		rr = agentWorkDo(t, srv, http.MethodPut, path+"role", `{"content":"# Mine\n"}`)
+		e := assertAPIError(t, rr, http.StatusForbidden)
+		if !strings.Contains(e.Error, "the "+a.Role+"'s role is Kivali's") {
+			t.Errorf("%s refusal = %q", a.Slug, e.Error)
+		}
+		if role, _ := srv.Store.ReadRole(a.Slug); role != "# Kivali's\n" {
+			t.Errorf("%s role after a refused PUT = %q", a.Slug, role)
+		}
+		rr = agentWorkDo(t, srv, http.MethodPut, path+"memory", `{"content":"# Facts\n"}`)
+		if rr.Code != http.StatusOK || decodeAPI[apitypes.AgentDoc](t, rr).FromKivali {
+			t.Errorf("%s memory PUT = %d %s", a.Slug, rr.Code, rr.Body.String())
+		}
+	}
+	if getDoc(t, srv, "role").FromKivali {
+		t.Error("alice's role is marked as Kivali's")
+	}
+}
+
 func TestMemoryNoteCountFallsBackToListItems(t *testing.T) {
 	if got := memoryNoteCount("# Old style\n- one\n- two\n* three\nprose\n"); got != 3 {
 		t.Errorf("uncited list items = %d, want 3", got)

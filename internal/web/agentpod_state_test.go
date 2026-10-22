@@ -95,6 +95,27 @@ func TestAgentpodChatHistoryRoundtrip(t *testing.T) {
 	}
 }
 
+// Why this test exists: core.sock's role POST is a write door to
+// role.md like the About tab's PUT. The Chief of Staff's and the Kivali
+// Developer's roles are Kivali's, and boot writes them again, so the
+// door refuses them and leaves the role as it was.
+func TestAgentpodRoleRefusesKivaliRoles(t *testing.T) {
+	path, srv, cleanup := startStateServer(t)
+	defer cleanup()
+	ctx := context.Background()
+	for _, slug := range []string{"chief-of-staff", "kivali-developer"} {
+		if err := srv.Store.CreateAgent(store.Agent{Slug: slug, Role: slug, ReportsTo: "ceo"}, "# Kivali's\n"); err != nil {
+			t.Fatal(err)
+		}
+		if err := agentpod.NewClient(path, slug).WriteRole(ctx, "# Mine\n"); err == nil {
+			t.Errorf("%s: WriteRole succeeded", slug)
+		}
+		if role, _ := srv.Store.ReadRole(slug); role != "# Kivali's\n" {
+			t.Errorf("%s role = %q", slug, role)
+		}
+	}
+}
+
 // TestAgentpodRoleRoundtrip: write + read role.md.
 func TestAgentpodRoleRoundtrip(t *testing.T) {
 	path, _, cleanup := startStateServer(t)

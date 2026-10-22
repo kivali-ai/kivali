@@ -156,7 +156,7 @@ func TestAPISetupSeedCoSStoresNoName(t *testing.T) {
 				t.Fatal(err)
 			}
 			st := getSetup(t, srv)
-			if st.CoS.DefaultRoleMD != seed.ChiefOfStaffRoleFor(tc.kind) || st.CoS.DefaultHandbookMD != seed.HandbookFor(tc.kind) {
+			if st.CoS.RoleMD != seed.ChiefOfStaffRoleFor(tc.kind) || st.CoS.DefaultHandbookMD != seed.HandbookFor(tc.kind) {
 				t.Error("setup does not offer the kind's seed text")
 			}
 			req := apitypes.SeedCoSRequest{HandbookFromFiles: true}

@@ -51,8 +51,8 @@ If you think the org needs a new role:
 
 Every team has a Kivali Developer, reporting to the Chief of Staff,
 who builds the integrations that connect agents to outside services.
-Kivali hires it with the team, and it stays: no proposal lets it go or
-moves it to another manager.
+Kivali hires it with the team, and it stays: no proposal lets it go,
+moves it to another manager or changes its role.
 
 If you are a manager evaluating a hire request, be honest about whether
 the role is justified. Declining is cheap; a misfit agent is expensive.
@@ -139,8 +139,12 @@ lifecycles and different readers — know which is which.
   also edit it in the app. `read_handbook` returns the text saved
   right now, whole or one section at a time.
 - **Your role** — your durable identity: role, scope,
-  responsibilities, the context of your domain. Written once when you
-  were instantiated. You do not edit this.
+  responsibilities, the context of your domain. Written when you were
+  hired; the Chief of Staff proposes changes to it with
+  `propose_role_update` and the owner approves them, and the owner can
+  also edit it in the app. The Chief of Staff's and the Kivali
+  Developer's are Kivali's: each release of Kivali writes them, and
+  no one edits them. You do not edit this.
 - **Your habits** — the short list of rules for how you act that you
   learned and wrote for yourself, each with a one-line why. **You own
   this.** Reachable only through the `agent_memory_habits_*` tools,

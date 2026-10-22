@@ -290,7 +290,8 @@ never silently destroy a running org. It takes the zip a backup wrote:
   to spare; otherwise it is refused (507) before anything is written.
 - It ends the way a boot does (published files,
   built-in skills, the files sync, the graph re-verified, assignment
-  wakes routed, model pins moved, agent pods provisioned) and then
+  wakes routed, model pins moved, Kivali's roles written, agent pods
+  provisioned) and then
   audits the result with the server's own readers; anything this binary
   cannot read is named in the server log.
 

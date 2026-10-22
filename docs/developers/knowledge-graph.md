@@ -401,8 +401,8 @@ Prompt surfaces: Kivali OS §The knowledge graph
 / `artifact_unpublish` and graph tool descriptions, the `file_*` and
 `run_shell` descriptions, the subagent tool descriptions and prompt,
 and the wake note all ship in the binary and are current everywhere
-the moment it runs. Only `internal/seed/cos_role.md` item 5 is copied
-into an install once, when it is seeded; an existing install keeps its
-copy until it is edited into the Chief of Staff's `role.md`.
+the moment it runs. `internal/seed/cos_role.md` item 5 reaches an
+install with the Chief of Staff's role, which every boot writes from
+the binary ([Kivali's roles](architecture.md#kivalis-roles)).
 Tests in `internal/agent/kivali_os_test.go` pin Kivali OS to
 `graph.Kinds` and `graph.DeclaredStatuses`.
