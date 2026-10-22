@@ -41,6 +41,10 @@ Kivali (each in a package of its own, listed in
 `internal/web/integration_builtin.go` calls them and
 `internal/web/integration_builtin_egress.go` keeps their connections'
 proxy credentials ([Built-in integrations](#built-in-integrations)).
+`internal/connect` runs the OAuth flows of a connection made by
+signing in, `internal/connect/connecttest` is a vendor in-process for
+its tests, and `internal/web/integration_signin.go` keeps and refreshes
+the tokens ([Sign-in connections](#sign-in-connections)).
 The Git built-in is `internal/builtinintegrations/gitintegration`,
 with `internal/gitrepo` (a repository's URL and access patterns),
 `internal/shelljob` (the shell job's wire shapes) and
@@ -121,7 +125,9 @@ byte for byte.
 - `user_config` is the connection form, in the manifest's order. A
   `sensitive` field is a secret (below).
 - `kivali.connection.method` is how the connection is made: `token`,
-  fields the owner pastes.
+  fields the owner pastes. The section also describes a connection
+  made by signing in (`device`, `browser`), which this version's check
+  refuses ([The connection section](#the-connection-section)).
 - `kivali.connection.multiple: true` says the integration takes several
   connections (Git's GitHub and a company GitLab), each with a label,
   and each agent's access names the one its calls use
@@ -139,10 +145,88 @@ byte for byte.
   all or nothing: an agent has the integration or does not.
 - `kivali.verify` names the tool Test connection calls. Without it the
   integration has no Test connection.
+- `kivali.setup_notes` is what to do on the vendor's side before
+  connecting (register an app, the scopes to tick), Markdown. The page
+  shows it above the connection form, and the install screen's answer
+  carries it (`setup_notes_md`).
 
 An integration's tools reach agents named with its tool prefix, its
 name with hyphens as underscores and a trailing underscore
 (`integration.ToolPrefix`: `hubspot_create_post`, `my_crm_find`).
+
+### The connection section
+
+A connection made by signing in names the vendor's OAuth endpoints in
+`kivali.connection`; core runs every flow against them and the
+integration never does OAuth
+([Sign-in connections](#sign-in-connections)):
+
+```json
+"connection": {
+  "method": "device",
+  "device_endpoint": "https://github.com/login/device/code",
+  "authorization_endpoint": "https://github.com/login/oauth/authorize",
+  "token_endpoint": "https://github.com/login/oauth/access_token",
+  "revocation_endpoint": null,
+  "scopes": ["repo"],
+  "pkce": true,
+  "client": "operator",
+  "extra_authorization_params": { "allow_signup": "false" },
+  "credential_keys": { "access_token": "GH_TOKEN" }
+}
+```
+
+- `method`: `token`, `device` (the device authorization grant, RFC
+  8628: a code and an address on the page, core polls the token
+  endpoint) or `browser` (the authorization code grant with PKCE: the
+  owner's browser goes to the vendor and back to Kivali). A `device`
+  manifest that also gives `authorization_endpoint` offers both ways,
+  and so does a `browser` one that gives `device_endpoint`; `method`
+  is the way the page shows first (`Connection.Ways`).
+- `device_endpoint`, `authorization_endpoint`, `token_endpoint`,
+  `revocation_endpoint`: the vendor's addresses. A revocation endpoint
+  (RFC 7009) is optional; with one, deleting the connection revokes
+  its tokens.
+- `scopes`: what a sign-in asks for, shown on the page
+  (`IntegrationPage.scopes`) and the install screen.
+- `pkce`: whether browser sign-in sends a PKCE challenge (S256);
+  absent is true.
+- `client`: whose OAuth app signs in. `operator` (or absent): the owner
+  registers an app with the vendor, and the connection form takes its
+  client id and secret.
+- `extra_authorization_params`: added to the vendor's authorization
+  address as they are.
+- `credential_keys.access_token`: the name the access token goes under
+  in a call's answer (`kivali/credential`'s `fields` and `env`, a
+  built-in's `Connection.Fields`).
+
+The connection form of a sign-in connection is
+`integration.ConnectionFields(manifest)`: the manifest's `user_config`
+followed by two fields core adds, `client_id` ("Client id", required)
+and `client_secret` ("Client secret", sensitive, required). Everything
+that reads the form (the page, a save, a call's values, the install
+screen and what one version changes from another) reads it there. A
+sign-in connection's `kivali.hosts` need not list the vendor's OAuth
+hosts: core talks to those, not the pod.
+
+The check holds the section to these rules, for bundles and built-ins
+(`validateConnection`, `internal/integration/validate.go`):
+
+| Rule | Refused with |
+| --- | --- |
+| A `token` connection gives no endpoint. | `kivali.connection.token_endpoint: a token connection has no endpoints` (each one named) |
+| `device` gives `device_endpoint` and `token_endpoint`; `browser` gives `authorization_endpoint` and `token_endpoint`. | `kivali.connection.<endpoint> is missing; a <method> connection needs it` |
+| Every endpoint given is an absolute `https://` address; plain `http://` only on `localhost`, `127.0.0.1` or `::1`, for a vendor run in-process in tests. | `kivali.connection.<endpoint>: "<address>" must be an https:// address` |
+| `client` is absent or `operator`. A client Kivali ships (`kivali`) is not in this version. | `kivali.connection.client: a client Kivali ships is not in this version of Kivali; the owner registers the app and the client is operator` |
+| `credential_keys` names only `access_token`, and a sign-in connection names it: capital letters, digits and underscores, starting with a letter. | `kivali.connection.credential_keys.access_token is missing; ...` |
+| A sign-in connection's `user_config` declares neither `client_id` nor `client_secret`: core adds them. | `user_config.client_id: Kivali adds the client id and secret to a sign-in connection's form, so user_config does not declare them` |
+| `scopes` entries are not empty. | `kivali.connection.scopes[<n>] is empty` |
+| `extra_authorization_params` names none of `client_id`, `redirect_uri`, `response_type`, `scope`, `state`, `code_challenge`, `code_challenge_method`. | `kivali.connection.extra_authorization_params.<key>: Kivali sets <key> itself` |
+
+In this version `Validate` and `ValidateBuiltin` refuse `device` and
+`browser` as well ("sign-in connections are not available"), since the
+page cannot yet sign in; the rules above run regardless, and their
+tests call the section's check directly.
 
 ## The check
 
@@ -160,10 +244,11 @@ the version and shown on its install screen. The rules:
 | `description` | Not empty, or a warning. |
 | `server.type` | `python`. |
 | `server.entry_point` | A file in the bundle. |
-| `server.mcp_config` | `command` is `python3` or `python`; `args` is not empty; each `${user_config.<key>}` in `env` names a `user_config` key, and `env` holds no other `${...}`. |
-| `user_config` | Each key is lowercase letters, digits and underscores, starting with a letter; `type` is `string`, `number` or `boolean`; `title` is not empty; `sensitive` and `required`, when given, are booleans. |
+| `server.mcp_config` | `command` is `python3` or `python`; `args` is not empty; each `${user_config.<key>}` in `env` names a field of the connection form (`integration.ConnectionFields`), and `env` holds no other `${...}`. |
+| `user_config` | Each key is lowercase letters, digits and underscores, starting with a letter, and neither `oauth_access_token` nor `oauth_refresh_token`, the keys a sign-in's tokens are kept under; `type` is `string`, `number` or `boolean`; `title` is not empty; `sensitive` and `required`, when given, are booleans. |
 | `tools` | Not empty; names are unique, lowercase letters, digits and underscores starting with a letter; a tool without a description is a warning. |
 | `kivali.connection.method` | `token`. A sign-in method (`device`, `browser`) is refused. |
+| The rest of `kivali.connection` | See [The connection section](#the-connection-section). |
 | `kivali.connection.multiple` | Absent or false: "a bundle's server takes one connection". |
 | `kivali.hosts` | Not empty; each a lowercase host or pattern with no scheme, port, path, user or whitespace (`integration.ValidHost`, the rule of `store.ValidEgressHost`, which a store test holds it to); a bare `*` is refused. |
 | `kivali.packages` | Each a Debian package name (`debpkg.ValidName`, Debian Policy's rule, which the agent shell's software is held to too): lowercase letters, digits, `+`, `-` and `.`, at least two characters, starting with a letter or digit and not ending in `-`, so no option, removal, version or release; none listed twice. |
@@ -391,12 +476,14 @@ one of several, or, for an integration that takes one, the oldest.
 
 The page (`IntegrationPage`) carries `connections`, every connection
 oldest first, each with its id, label, created at, Test connection's
-last result, `reconnect_needed` and `fields`, the connection form with
-that connection's values (the non-sensitive values, and which secrets
-are set); `connection`, the first of them, and `connection_fields`, the
-form with the first's values, which the one-connection page reads;
-`multiple`, from the manifest; and `connection_test`, true when the
-version in use names `kivali.verify`. Without it the page offers no
+last result, `reconnect_needed`, `sign_in` for a connection made by
+signing in ([Token storage](#token-storage)) and `fields`, the
+connection form with that connection's values (the non-sensitive
+values, and which secrets are set); `connection`, the first of them,
+and `connection_fields`, the form with the first's values, which the
+one-connection page reads; `multiple`, `connection_method`, `scopes`
+and `setup_notes_md`, from the manifest; and `connection_test`, true
+when the version in use names `kivali.verify`. Without it the page offers no
 Test connection, and no connection carries a last result, even one
 kept under an earlier version that had a test. Each access row carries the
 `connection_id` it names and that connection's `connection_label`. An
@@ -437,6 +524,172 @@ secrets; when they cannot be read, the answer is held back, never
 scrubbed with another connection's. The audit lists what is in
 `audit.jsonl`, which these calls and agents' calls
 ([The audit](#the-audit)) append to.
+
+## Sign-in connections
+
+A connection made by signing in ([The connection section](#the-connection-section))
+is a connection like any other, with its form's fields stored as
+above, and the tokens a sign-in gives besides. Core alone holds the
+client secret and the refresh token; an integration is given a
+current access token at the moment of each call and nothing else.
+
+### Token storage
+
+The tokens are in the connection's Secret, under keys that are no
+field of any form (the check refuses a `user_config` key equal to
+either): `connect.SecretKeyAccessToken` (`oauth_access_token`) and
+`connect.SecretKeyRefreshToken` (`oauth_refresh_token`). The record
+keeps the rest (`store.ConnectionSignIn`, `sign_in` in
+`connections/<id>.yaml`): `method` (how the owner signed in),
+`signed_in_at`, `expires_at` (when the access token expires; absent
+when the vendor gave no expiry), `scope` (what the vendor granted, as
+it said it), and `error` with `error_at` once the vendor refused to
+renew the sign-in for good. A save of the connection form keeps both
+the tokens and the sign-in state; a backup carries the record, never
+the tokens.
+
+A sign-in connection needs the owner to sign in
+(`IntegrationConnection.NeedsSignIn`) when it never has (no `sign_in`),
+when its Secret holds no access token, or when `error` is set. While
+it does, it is not connected (the list, the page and an agent's tab);
+`reconnect_needed` stays what it is for any connection, the form's
+secrets missing. The page's `ConnectionState.sign_in`
+(`apitypes.ConnectionSignIn`) carries `ways` (the manifest's method
+first), `signed_in`, and while signed in `method`, `signed_in_at` and
+`expires_at`, or the `error`. The page draws "Signed in <when> · token
+refreshes <when>", or "Needs you to sign in again: <error>".
+
+### The credential path
+
+Every read of a connection's values for an integration's call goes
+through `integrationRegistry.readConnection`: `kivali/credential` for a
+bundle, `Connection.Fields` for a built-in's call, Test connection and
+the options a field lists. For a sign-in connection it
+(`Server.signInAccessToken`, `internal/web/integration_signin.go`):
+
+1. Answers `integrationpod.CodeSignInNeeded` (-32002, "the connection
+   needs the owner to sign in again") while the connection needs a
+   sign-in.
+2. Hands out the stored access token while it is good for longer than
+   `connect.RefreshMargin` (a minute) or does not expire. Otherwise it
+   refreshes through the server's `connect.Refresher`, keyed
+   `<integration>/<connection id>`: one refresh at a time per
+   connection, which every caller that finds the token due waits for.
+   The refresh reads the connection again first, so a caller that
+   arrives after another's refresh ended finds the token fresh and
+   sends the vendor nothing (a vendor that rotates refresh tokens
+   refuses the old one). It runs on with a context that is not
+   cancelled when its caller goes, since the vendor may already have
+   rotated the refresh token. The new tokens go to the Secret and the
+   expiry and scope to the record, both read again under
+   `lockIntegrations`, the lock the connection routes take, so a save
+   in between keeps its fields; a refresh token the vendor did not
+   send keeps the stored one.
+3. A refusal for good (a `*connect.Terminal`) writes `error` and
+   `error_at` on the record, which raises the
+   [Needs you](#needs-you-sign-in-again) row, and answers -32002. Any
+   other failure (no answer, a 5xx, an answer Kivali cannot read) is
+   logged and leaves the connection as it is: the old token is handed
+   out while it has not expired, and after that the answer is
+   `integrationpod.CodeVendorUnavailable` (-32003, "the vendor did not
+   answer"), which a later call may get past. An expired token with no
+   refresh token to renew it marks the record as a refusal does. Each
+   failed refresh appends an audit row for the owner: agent `ceo`,
+   action `refresh`, not allowed, the failure in words.
+4. Puts the access token in the answer under its `credential_keys`
+   name, in `fields` and `env` for a bundle (`GH_TOKEN`) and in
+   `Connection.Fields` for a built-in. The client id is there; the
+   client secret and the refresh token never are, and an `env`
+   placeholder for the client secret reads empty.
+
+A built-in's call of a connection that needs a sign-in is refused with
+"<Integration>'s connection needs the owner to sign in again; ask the
+owner." (audited as not allowed), and one whose vendor did not answer
+with "<Integration> did not answer when Kivali renewed the
+connection's sign-in; try again later or tell the owner."; the
+built-in is not called. A bundle's server gets -32002 or -32003 from
+`kivali/credential` and passes it on in words. The shim starts the
+server with empty values on -32002, as with no connection.
+
+The tokens are among the secrets the scrubber replaces, in the log and
+in every answer. The log scrubber is built from the connection as
+stored and never refreshes; a token refreshed since joins it when the
+credential is next answered. A caller that holds `lockIntegrations`
+(the proxy credential's registration) reads the connection as stored
+(`readStoredConnection`), with no token and no refresh.
+
+### Revocation
+
+Deleting a connection (`DELETE .../connections/{id}`), disconnecting
+(`DELETE .../connection`) and removing the integration ask the vendor
+to revoke each sign-in connection's tokens once its Secret is gone,
+when the manifest gives a revocation endpoint: the refresh token, then
+the access token, with the client's credentials, best effort within
+ten seconds. A failure is logged and the delete goes on.
+
+### Needs you: sign in again
+
+`GET /api/v1/home` carries a row per connection whose record has an
+`error`, built from the connections as they stand
+(`Server.integrationSignInItems`, `api_home.go`), not from a stored
+message: kind `integration_sign_in`, id
+`integration_sign_in:<integration>/<connection id>`, title "<Display
+name> needs you to sign in again", from Kivali, at `error_at`, the
+vendor's refusal as the body, and `review_path` the integration's page,
+which Home's **Open** goes to. There is nothing to answer: the row
+leaves once the owner signs in again (a new sign-in clears `error`) or
+deletes the connection.
+
+### The flow engine
+
+`internal/connect` knows nothing of the store or the web server. An
+`Engine{Clock, HTTP}` makes every request through its HTTP client
+(core's has a 30-second timeout; `Server.Connect`) and reads every
+expiry and wait from its clock:
+
+- `Refresh(ctx, Endpoints, Client, refresh)` and `Exchange(ctx,
+  Endpoints, Client, code, redirectURL, pkceVerifier)` post the grant
+  with the client id and secret in the body; `StartDevice(ctx,
+  Endpoints, Client, scopes)` and `PollDevice` send the client id
+  only, as GitHub's device flow takes. Each is a form-encoded POST with
+  `Accept: application/json` (GitHub answers form-encoded without it,
+  which is read too). `expires_in`, a number or a quoted one, becomes
+  `Tokens.ExpiresAt` on the clock.
+- An answer that carries an `error` is that error whatever its status:
+  GitHub answers every device-flow and refresh failure with a 200.
+  `invalid_grant`, `invalid_client`, `unauthorized_client`,
+  `access_denied`, and GitHub's `bad_refresh_token` and
+  `incorrect_client_credentials` are a `*connect.Terminal`: the owner
+  must sign in again. Anything else is transient.
+- `PollDevice` waits the vendor's interval on a clock timer before each
+  poll; `authorization_pending` polls again, `slow_down` adds five
+  seconds to the interval for good, `expired_token` or the code's own
+  expiry is `connect.ErrDeviceExpired`, and `access_denied`,
+  `incorrect_device_code`, `device_flow_disabled`,
+  `unsupported_grant_type` or any other code ends it as a
+  `*connect.Terminal` with the vendor's words. It stops when its
+  context ends.
+- `AuthorizeURL` builds the authorization address: the endpoint's own
+  parameters, the manifest's extra ones, then `response_type=code`,
+  the client id, the redirect address, the state, the scopes and the
+  S256 challenge of `NewPKCEVerifier`'s verifier (`PKCEChallenge`).
+- `Revoke(ctx, Endpoints, Client, Tokens)` posts each token to the
+  revocation endpoint; with none it does nothing.
+- `RefreshDue(now, expiresAt)` is the margin rule; `Refresher.Do(ctx,
+  key, fn)` the one-run-per-key gate.
+
+`connecttest.FakeVendor` is a vendor in an `httptest.Server` on the
+test's clock: the device grant, the code grant with PKCE and state
+passed back (`/authorize` sends the browser straight back with a
+code), refresh with or without rotation, and revocation. Its `Knobs`
+answer each failure a vendor gives (`slow_down`, pending polls, any
+device or refresh error code, a status with no JSON, an answer that is
+not JSON), in RFC 6749's style (400, 401 for the client) or GitHub's
+(200 with the error), and `OnRefresh` holds a refresh's answer back so
+a test can have callers arrive while it is in flight. `Issue` gives a
+test a signed-in connection's tokens; `Requests`, `Refreshes`,
+`Revoked`, `Valid` and `RefreshAccepted` say what the vendor saw and
+holds. `echotest.Echo.SignIn` makes the test built-in a sign-in one.
 
 ## Installing a version
 
@@ -692,7 +945,13 @@ a test hook, which the pod spec never sets.
   value by key. Core reads them from the connection's record and its
   Secret at that moment and keeps none. With no connection the error is
   -32001 "no connection", and the shim starts the server with every
-  value empty, so a connection put later restarts it with them.
+  value empty, so a connection put later restarts it with them. For a
+  sign-in connection both carry a current access token under its
+  `credential_keys` name, refreshed first when it is about to expire,
+  and never the client secret; the error is -32002 while the owner
+  must sign in (the shim starts the server with empty values, as with
+  no connection) and -32003 while the vendor does not answer a due
+  refresh ([The credential path](#the-credential-path)).
 - `kivali/log`, `{"level", "message"}`, appends a line to `log.jsonl`
   (level `info`, `warning`, `error`, `debug` or `stderr`; any other is
   `info`; a message is cut to 8 KiB) with every secret value of the
@@ -956,7 +1215,9 @@ type Refusal struct{ Text, Reason string }
   `Connection.Fields` is every connection field by key, secrets
   included, read from the record and its Secret at the moment of the
   call and kept by no one. The connection's proxy credential is not
-  among them.
+  among them. For a sign-in connection the current access token is,
+  under its `credential_keys` name, and the client secret and the
+  refresh token are not ([The credential path](#the-credential-path)).
 - A `Refusal` from `Call` or `Complete` is audited as not allowed, with
   its `Reason`, and the agent reads its `Text`; any other error is the
   function's own failure, as above. `Result.Audit`, when set, is the
@@ -1779,7 +2040,7 @@ the owner's.
 
 | Route | Answer |
 | --- | --- |
-| `GET /api/v1/org/integrations` | `Integrations`, by display name. Status: not included (a built-in integration this binary does not carry), pending (no approved version), off, not running (approved and on, with no shim connected; a built-in of Go code is never not running while its code is in the binary, and a shipped bundle is not running as an uploaded one is), and, while it runs, connected (a connection whose secrets are all there) or not connected. |
+| `GET /api/v1/org/integrations` | `Integrations`, by display name. Status: not included (a built-in integration this binary does not carry), pending (no approved version), off, not running (approved and on, with no shim connected; a built-in of Go code is never not running while its code is in the binary, and a shipped bundle is not running as an uploaded one is), and, while it runs, connected (a connection whose secrets are all there and, made by signing in, that does not need a new sign-in) or not connected. |
 | `POST /api/v1/org/integrations` | multipart `file`: 201 `IntegrationVersion`; 400 `IntegrationUploadRefused`; 409 for a version already stored or a built-in name. |
 | `GET /api/v1/org/integrations/{name}` | `IntegrationPage`. |
 | `POST .../{name}/enable`, `.../disable` | `IntegrationPage`. |
