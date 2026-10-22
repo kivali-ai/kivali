@@ -768,8 +768,9 @@ A browser sign-in (`POST .../sign-in/browser`,
    The integrations list shows a `sign_in_error` it is sent.
 
 The redirect address is `signInRedirectURL`: `<scheme>://<host>/connect/callback`,
-the scheme `X-Forwarded-Proto`'s first value when it is `http` or
-`https`, else `https` on a TLS connection and `http` otherwise; the host
+the scheme `https` on a TLS connection, else `X-Forwarded-Proto`'s first
+value when it is `https`, else `http` (`requestScheme`, as the API's
+same-origin check reads it); the host
 `X-Forwarded-Host`'s first value when it is a host, else `r.Host`,
 lower-cased, without the scheme's default port. Either header can be
 anything the browser sends, which is safe: the vendor sends a code only
