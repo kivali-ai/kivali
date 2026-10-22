@@ -2343,6 +2343,9 @@ describe('Integration page, signing in in the browser', () => {
     await click(block().getByRole('button', { name: 'Sign in in your browser' }));
     expect(assign).toHaveBeenCalledTimes(1);
     expect(block().getByText('Approve the sign-in on the service’s page in your browser. Kivali finishes it here once you do.')).toBeInTheDocument();
+    // Kivali Desktop opens no browser for a team elsewhere: the block must say where to sign in instead, or the owner
+    // waits on a sign-in nothing started.
+    expect(block().getByText('If no browser opened, open the team in your browser and sign in from there.')).toBeInTheDocument();
     const polls = () => calls.filter((c) => c.method === 'GET' && c.url === API + '/connection/sign-in').length;
     act(() => void vi.advanceTimersByTime(SIGN_IN_POLL_MS));
     await flush();

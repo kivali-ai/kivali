@@ -834,10 +834,13 @@ sign-in, and reads itself again once it says `done`; a `failed` one
 shows why, with Try again in the browser.
 
 Both browsers then hold a cookie for the flow; the callback takes the
-state once, so only one of them can finish it. A team elsewhere (no
-supervisor here, and its handoff answers loopback only) loads
-`/connect/start` in the window like any page, and its sign-in finishes
-only from a browser at the team's own address.
+state once, so only one of them can finish it. For a team elsewhere
+(no supervisor here, and its handoff answers loopback only) the shell
+refuses `/connect/start` and opens nothing, so no vendor approval is
+spent on a sign-in that could not finish; the waiting block's "If no
+browser opened, open the team in your browser and sign in from there."
+says what to do, and the sign-in finishes from a browser at the team's
+own address.
 
 On Desktop's loopback the redirect address is
 `http://127.0.0.1:<port>/connect/callback`, the request's own host.

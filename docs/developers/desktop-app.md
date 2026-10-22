@@ -517,8 +517,8 @@ way, to the browser through the gate below.
 | Navigation in a team's web view | What happens |
 | --- | --- |
 | the pinned origin, `/auth/login` without `client=desktop` | refused; the desktop sign-in starts its listener and loads it again with `client=desktop`, `return_port` and `return_token` |
-| the pinned origin, `/connect/start?flow=<32 hex digits>`, a team here | refused; the system browser opens the team's handoff with `next=<flow>` ("Signing in to an integration" below) |
-| the pinned origin, any other path (including `/auth/login?…client=desktop`, as is, `/auth/callback`, and a team elsewhere's `/connect/start`) | loads |
+| the pinned origin, `/connect/start?flow=<32 hex digits>` (its path percent-decoded) | refused; for a team here the system browser opens the team's handoff with `next=<flow>`, for a team elsewhere nothing opens ("Signing in to an integration" below) |
+| the pinned origin, any other path (including `/auth/login?…client=desktop`, as is, and `/auth/callback`) | loads |
 | `about:blank`, `about:srcdoc`, the pinned origin's `blob:` | loads |
 | any other `http`/`https` page (another team, another port, Google) | refused, opened in the system browser |
 | the app's origin, `file:`, `data:`, `asset:`, foreign `blob:` | refused |
@@ -660,10 +660,13 @@ is not loopback, so the token never leaves the computer). The server
 signs that browser in, hands it the sign-in's cookie and sends it to
 the vendor ([auth.md](auth.md#desktop-handoff)). The web view stays on
 its page, which asks the server how the sign-in stands. The token is
-never logged; a failure logs one line naming the team. A team
-elsewhere, with no supervisor here, loads `/connect/start` in its
-window as any page; the vendor's page then goes to the system browser,
-and that sign-in finishes only from a browser at the team's address.
+never logged; a failure logs one line naming the team. For a team
+elsewhere, with no supervisor here, `/connect/start` is refused too
+and nothing opens (`connect_sign_in_target` has no target): loaded, it
+would send the system browser to the vendor's page with neither the
+session nor the sign-in's cookie, and the owner would approve a
+sign-in the callback must refuse. The page's waiting block says to
+open the team in a browser and sign in from there.
 A browser window refuses it (signing in is the team window's), a
 `window.open` of it takes the team window's way, and a frame never
 loads it. A device sign-in's link to the vendor's page is another site,

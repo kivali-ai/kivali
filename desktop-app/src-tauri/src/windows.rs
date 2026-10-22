@@ -116,7 +116,7 @@ pub enum TeamNav {
     /// The team's own `/connect/start?flow=<id>`, where its web app begins
     /// an integration's browser sign-in ([`connect_flow`]): for a team
     /// here, refused and opened in the system browser signed in through
-    /// the handoff ([`open_connect_sign_in`]); elsewhere it loads.
+    /// the handoff ([`open_connect_sign_in`]); never loaded in the window.
     ConnectSignIn,
     /// The team's own `/auth/login` without `client=desktop`: refused,
     /// and loaded again with it, as the desktop sign-in (signin.rs).
@@ -128,11 +128,12 @@ pub enum TeamNav {
 /// (internal/web/integration_signin_browser.go, `connectStartPath`).
 const CONNECT_START_PATH: &str = "/connect/start";
 
-/// The flow id of a team's `/connect/start?flow=<id>`: that exact path
-/// and one `flow`, 32 lowercase hex digits as the server makes them.
-/// None for anything else, which loads as any page of the team does.
+/// The flow id of a team's `/connect/start?flow=<id>`: that exact path,
+/// percent-decoded as the server's router decodes it, and one `flow`,
+/// 32 lowercase hex digits as the server makes them. None for anything
+/// else, which loads as any page of the team does.
 fn connect_flow(url: &Url) -> Option<String> {
-    if url.path() != CONNECT_START_PATH {
+    if signin::percent_decode(url.path())? != CONNECT_START_PATH.as_bytes() {
         return None;
     }
     let mut flows = url.query_pairs().filter(|(k, _)| k == "flow").map(|(_, v)| v.into_owned());
@@ -477,8 +478,9 @@ impl WebLoad {
         }
     }
 
-    /// The web view turned the pending load away, to a desktop sign-in or
-    /// to the browser: it is not retried.
+    /// The web view turned the pending load away, to a desktop sign-in,
+    /// to an integration's sign-in in the system browser, or to the
+    /// browser: it is not retried.
     fn handed_off(&mut self) {
         self.retry_at = None;
         self.failed = false;
@@ -843,10 +845,8 @@ fn create_team_window(app: &AppHandle, t: &Team, visible: bool) -> Option<Window
                     false
                 }
                 TeamNav::ConnectSignIn => {
-                    if !open_connect_sign_in(&app_nav, &id_nav, &gate_nav, url) {
-                        return true;
-                    }
                     web_load(&id_nav, WebLoad::handed_off);
+                    open_connect_sign_in(&app_nav, &id_nav, &gate_nav, url);
                     false
                 }
                 TeamNav::Deny => false,
@@ -936,9 +936,8 @@ fn open_new_window(app: &AppHandle, id: &str, pin: &Mutex<Option<url::Origin>>, 
     match team_nav(&url, pin.lock().unwrap().as_ref()) {
         TeamNav::Allow => {}
         TeamNav::ConnectSignIn => {
-            if open_connect_sign_in(app, id, gate, &url) {
-                return;
-            }
+            open_connect_sign_in(app, id, gate, &url);
+            return;
         }
         _ => {
             open_gated(app, gate, &url);
@@ -1156,23 +1155,22 @@ fn connect_sign_in_url(origin: &str, token: &str, flow: &str) -> Result<Url, Str
 /// server how the sign-in stands. The token is fetched from the team's
 /// supervisor off the main thread, as [`send_handoff`] fetches its own,
 /// and the browser opens through the team window's gate like any other
-/// page. Returns false, the page then loading as it is, when this is no
-/// team here on its loopback address (a team elsewhere: no supervisor
-/// here mints its tokens, and its server serves the handoff only on
-/// loopback).
-fn open_connect_sign_in(app: &AppHandle, id: &str, gate: &Mutex<BrowserGate>, url: &Url) -> bool {
-    let Some(flow) = connect_flow(url) else { return false };
+/// page. The address never loads in the window, whatever happens: for a
+/// team elsewhere (no supervisor here mints its tokens, and its server
+/// serves the handoff only on loopback) it would only send the system
+/// browser to the service's page without the session or the sign-in's
+/// cookie, costing the owner an approval that cannot finish. Such a
+/// sign-in is refused and logged, and the page's waiting block says to
+/// sign in from a browser at the team's address.
+fn open_connect_sign_in(app: &AppHandle, id: &str, gate: &Mutex<BrowserGate>, url: &Url) {
     let sh = app.state::<Shell>();
-    let Some(t) = sh.team(id).filter(Team::is_here) else { return false };
-    let (Some(rt), Some(origin)) = (sh.runtime(id), t.origin()) else { return false };
-    // Only the team's own origin, and only a loopback one.
-    let own = Url::parse(&origin).is_ok_and(|o| o.origin() == url.origin());
-    if !own || connect_sign_in_url(&origin, "", &flow).is_err() {
-        return false;
-    }
+    let (Some(rt), Some((origin, flow))) = (sh.runtime(id), sh.team(id).and_then(|t| connect_sign_in_target(&t, url))) else {
+        eprintln!("kivali: {id} is not a team here; its integration's sign-in is left to a browser at its address");
+        return;
+    };
     if !gate.lock().unwrap().try_open(Instant::now()) {
         eprintln!("kivali: not opening an integration's sign-in of {id} in the browser (rate limit or window not focused)");
-        return true;
+        return;
     }
     let (app, id) = (app.clone(), id.to_string());
     std::thread::spawn(move || {
@@ -1183,7 +1181,18 @@ fn open_connect_sign_in(app: &AppHandle, id: &str, gate: &Mutex<BrowserGate>, ur
             eprintln!("kivali: opening an integration's sign-in of {id} in the browser: {e}");
         }
     });
-    true
+}
+
+/// The origin and flow id the system browser opens team `t`'s browser
+/// sign-in `url` at ([`open_connect_sign_in`]): `t` is here, `url` is
+/// its `/connect/start?flow=<id>` ([`connect_flow`]) on its own origin,
+/// and that origin is loopback ([`connect_sign_in_url`]). None for
+/// anything else, which is refused.
+fn connect_sign_in_target(t: &Team, url: &Url) -> Option<(String, String)> {
+    let flow = connect_flow(url)?;
+    let origin = t.origin().filter(|_| t.is_here())?;
+    let own = Url::parse(&origin).is_ok_and(|o| o.origin() == url.origin());
+    (own && connect_sign_in_url(&origin, "", &flow).is_ok()).then_some((origin, flow))
 }
 
 /// Setup's "Open <team>": [`show_team`], then, for a team here that
@@ -1853,6 +1862,8 @@ mod tests {
         let start = u(&format!("http://127.0.0.1:8080/connect/start?flow={flow}"));
         assert_eq!(team_nav(&start, pin), TeamNav::ConnectSignIn);
         assert_eq!(connect_flow(&start).as_deref(), Some(flow));
+        // The server's router decodes the path, so an encoded one is the same route.
+        assert_eq!(team_nav(&u(&format!("http://127.0.0.1:8080/connect/%73tart?flow={flow}")), pin), TeamNav::ConnectSignIn);
         for loads in [
             "http://127.0.0.1:8080/connect/start".to_string(),
             "http://127.0.0.1:8080/connect/start?flow=".to_string(),
@@ -1868,6 +1879,33 @@ mod tests {
         assert_eq!(team_nav(&u("https://github.com/login/device?user_code=WDJB-MJHT"), pin), TeamNav::Browser);
         // A frame never begins one.
         assert!(!frame_may_load(pin, &start));
+    }
+
+    /// Why this test exists: only a team here on its loopback address can
+    /// have its browser sign-in opened signed in. For a team elsewhere (a
+    /// team reached through Other devices), loading `/connect/start` in
+    /// the window would send the system browser to the service's page
+    /// with no Kivali session and no sign-in cookie: the owner approves,
+    /// the callback refuses it as started elsewhere, and each Try again
+    /// costs another approval. So the shell has no target for it, and
+    /// the navigation is refused rather than loaded; and for a team here
+    /// the target is its own loopback origin and the flow, never another
+    /// port's.
+    #[test]
+    fn an_integration_sign_in_opens_only_for_a_team_here() {
+        let flow = "9f86d081884c7d659a2feaa0c55ad015";
+        let team = |v: serde_json::Value| -> Team { serde_json::from_value(v).unwrap() };
+        let here = team(serde_json::json!({"id": "t1", "name": "Acme", "place": "here", "dir": "teams/t1", "port": 8080}));
+        let start = u(&format!("http://127.0.0.1:8080/connect/start?flow={flow}"));
+        assert_eq!(connect_sign_in_target(&here, &start), Some(("http://127.0.0.1:8080".to_string(), flow.to_string())));
+        assert_eq!(connect_sign_in_target(&here, &u(&format!("http://127.0.0.1:8081/connect/start?flow={flow}"))), None);
+        assert_eq!(connect_sign_in_target(&here, &u("http://127.0.0.1:8080/connect/start?flow=nope")), None);
+        let unstarted = team(serde_json::json!({"id": "t2", "name": "New", "place": "here", "dir": "teams/t2"}));
+        assert_eq!(connect_sign_in_target(&unstarted, &start), None);
+        let elsewhere = team(serde_json::json!({"id": "t3", "name": "Far", "place": "elsewhere", "url": "https://kivali.example.com"}));
+        let far = u(&format!("https://kivali.example.com/connect/start?flow={flow}"));
+        assert_eq!(team_nav(&far, Some(&far.origin())), TeamNav::ConnectSignIn);
+        assert_eq!(connect_sign_in_target(&elsewhere, &far), None);
     }
 
     /// Why this test exists: the handoff token signs a browser in to the
