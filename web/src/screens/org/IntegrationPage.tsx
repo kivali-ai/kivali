@@ -122,7 +122,8 @@ export function clientSaved(fields: readonly ConnectionField[]): boolean {
 
 /**
  * Sends the browser to the service's sign-in page for a browser sign-in. The one place the page leaves for the
- * service, so Kivali Desktop can open the system browser instead.
+ * service, so Kivali Desktop can open the system browser instead. Its caller keeps the Sign in block's buttons held
+ * (`working`), since this tab navigates away; a hook that keeps the page must have the caller reset them.
  */
 export function openSignIn(url: string): void {
   window.location.assign(url);
@@ -284,6 +285,8 @@ function SignInBlock({ connection, fields, api, scopes, signInAt, busy, now, onP
     setEnded(null);
     try {
       const { url } = await apiPost<BrowserSignIn>(api + '/sign-in/browser');
+      // `working` stays true: the tab is leaving for the service, and the buttons stay held until it does. A Desktop
+      // openSignIn that opens the system browser and keeps this page must reset it (setWorking(false)) once it has.
       openSignIn(url);
     } catch (err) {
       setError(asApiError(err));
@@ -433,7 +436,7 @@ function RedirectAddress({ url }: { url: string }) {
   return (
     <div className="app-int-redirect">
       <TextField label="Redirect address" hint="Register this address as the app’s callback URL." value={url} readOnly onFocus={(e) => e.currentTarget.select()} />
-      <Button type="button" variant="secondary" icon={<Icon name={copied ? 'check' : 'copy'} />} onClick={copy}>
+      <Button type="button" size="sm" variant="ghost" icon={<Icon name={copied ? 'check' : 'copy'} />} onClick={copy}>
         {copied ? 'Copied' : 'Copy'}
       </Button>
     </div>
