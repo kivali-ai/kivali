@@ -981,7 +981,7 @@ says agents cannot use it, and offers Remove.
 ### The git built-in
 
 Git (`internal/builtinintegrations/gitintegration`, name `git`,
-version 1.2.0) lets agents clone, fetch and push repositories over
+version 2.0.0) lets agents clone, fetch and push repositories over
 HTTPS with the owner's token. Everything local is plain git in the agent's shell,
 which reaches only the team's allow list. Its manifest:
 
@@ -993,21 +993,28 @@ which reaches only the team's allow list. Its manifest:
   (`ConnectionLabeler`) names a connection saved with no label by its
   host. No `kivali.hosts`, and no `kivali.verify` ([No Test
   connection](#no-test-connection)).
-- `kivali.access.schema`, in this order: `repositories`, the one
-  required field (a list: "owner/name, or a pattern such as acme/*");
-  `push` (a switch, "May push"); `push_refs` (a list, "Branches and
-  tags it may push"); `force` (a switch, "May force-push", marked
-  `x-kivali-danger`). Only `repositories` is required, so an access set
-  under 1.0.0, which had that field alone, stays valid when boot
-  supersedes 1.0.0 with 1.1.0, and grants no push.
+- `kivali.access.schema`, in this order: `pull_repositories` (a list,
+  "Repositories it may pull": clone and fetch); `push_repositories` (a
+  list, "Repositories it may push to": clone, fetch and push);
+  `push_refs` (a list, "Branches and tags it may push", in the
+  repositories it may push to); `force` (a switch, "May force-push",
+  marked `x-kivali-danger`). Push is granted per repository: a
+  repository in `push_repositories` may be pushed to, one only in
+  `pull_repositories` may not. No field is required, since the form
+  cannot ask for one of two lists; `CheckAccess` asks for a repository
+  in either ([Checks at save](#checks-at-save)). An access set under
+  1.x (`repositories` and a `push` switch over all of it) does not fit
+  2.0.0's form, so once boot supersedes 1.x the store marks it invalid
+  and it grants nothing until the owner sets it again.
 - `tools`: `clone`, `fetch` and `push`, which agents call as
   `git_clone(url, path)`, `git_fetch(path, url?, refs?)` and
   `git_push(path, refs, force?, url?)`. All three are listed to every
   agent with access; each call is checked against the access.
-- `Git.AccessSummary` (`AccessSummarizer`): "Repositories: acme/* ·
-  May push: agent/* · May force-push". `push_refs` without `push`, and
-  `force` without a ref to push, are left out, since they grant
-  nothing; `push` with no refs reads "May push: no branches or tags".
+- `Git.AccessSummary` (`AccessSummarizer`): "Pull: acme/* · Push:
+  acme/widgets · Branches and tags: agent/* · May force-push".
+  `push_refs` and `force` without a repository to push to, and `force`
+  without a ref to push, are left out, since they grant nothing; a
+  repository to push to with no refs reads "Branches and tags: none".
 
 #### Repositories and access
 
@@ -1029,14 +1036,16 @@ URL or by `owner/name`:
   two. It keeps its case in the URL core builds,
   `https://<host>/<path>.git`, and is matched in lower case.
 
-The access's `repositories` are patterns matched against the path with
-`path.Match`: `*` is the only wildcard (`?`, `[...]` and `\` are
-refused, since a class can match a `/`), it stands within one segment
-and never across a `/`, case is ignored, and an entry without it is the
-one repository it names (`gitrepo.ValidPattern`,
-`gitintegration/access.go`). An access whose `repositories` is
-missing or empty, or holds anything but valid patterns, refuses every
-repository.
+The access's `pull_repositories` and `push_repositories` are patterns
+matched against the path with `path.Match`: `*` is the only wildcard
+(`?`, `[...]` and `\` are refused, since a class can match a `/`), it
+stands within one segment and never across a `/`, case is ignored, and
+an entry without it is the one repository it names
+(`gitrepo.ValidPattern`, `gitintegration/access.go`). A clone or a
+fetch may reach a repository in either list; a push only one in
+`push_repositories`. An access whose two lists are both missing or
+empty, or either of which holds anything but valid patterns, refuses
+every repository.
 
 #### Branches and tags a push names
 
@@ -1123,15 +1132,20 @@ two requests on `core.sock`, as the smoke test does
    carried the token out is in the audit.
 
 A push is checked in core, in this order, before any job is built:
-`push` must be on; `push_refs` must read; each entry of `refs` must
-read as a ref or a refspec (`gitrepo.ParsePushRefSpec`), delete
-nothing and name a destination no other entry does; each destination
-must match `push_refs`; and an entry that forces (`force: true` puts
-`+` on every entry, or the entry's own `+`) needs `force` on. The job
-carries the refspecs normalised (`[+]src:dst`), `allowed_refs` (the
-access's `push_refs` normalised) and `force` only when an entry
-forces, so the daemon can check the push again
-([The daemon's `POST /v1/git`](#the-daemons-post-v1git)).
+`push_repositories` must name a repository; `push_refs` must read;
+each entry of `refs` must read as a ref or a refspec
+(`gitrepo.ParsePushRefSpec`), delete nothing and name a destination no
+other entry does; each destination must match `push_refs`; an entry
+that forces (`force: true` puts `+` on every entry, or the entry's own
+`+`) needs `force` on; and a `url`'s repository must be in
+`push_repositories`. The job carries `allowed_repositories` (only
+`push_repositories`, so a push without a `url` reaches the working
+copy's origin only when the agent may push to it), the refspecs
+normalised (`[+]src:dst`), `allowed_refs` (the access's `push_refs`
+normalised) and `force` only when an entry forces, so the daemon can
+check the push again
+([The daemon's `POST /v1/git`](#the-daemons-post-v1git)). A clone's
+and a fetch's `allowed_repositories` are both lists.
 
 The result is untrusted text from the agent's pod: it becomes only the
 agent's answer and the audit's reason, both scrubbed of the
@@ -1154,7 +1168,7 @@ type GitJob struct {
 	Op, Path, URL       string   // op: clone, fetch or push; url empty: the working copy's origin
 	RefSpecs            []string // json: refspecs; a fetch's, or a push's normalised
 	Force               bool     // a fetch: a ref may move other than fast-forward; a push: + is allowed
-	AllowedRepositories []string // the access's patterns, for the daemon's own check
+	AllowedRepositories []string // the access's patterns, for the daemon's own check; a push's: push_repositories only
 	AllowedRefs         []string // a push's: the access's push_refs, normalised
 	Host                string   // the connection's, made exact
 	Auth                GitAuth  // {username: x-access-token, password: the token}
@@ -1188,7 +1202,8 @@ Git's refusals name the cause and the owner only:
 | A connection host that is no host | The Git integration's connection has no host Kivali can use. Ask the owner to fix the connection. | the connection's host is not a host name |
 | No token | The Git integration's connection has no token. Ask the owner to connect it again. | the connection has no token |
 | Arguments the action does not take | git_clone takes url and path, both strings. (git_fetch: path, and optionally url and refs; git_push: path and refs, and optionally force and url) | the arguments do not read |
-| A push with `push` off | The Git integration's access for you does not allow pushing. Ask the owner if your work needs it. | the access does not allow pushing |
+| A push with no repository to push to | The Git integration's access for you does not allow pushing. Ask the owner if your work needs it. | the access does not allow pushing |
+| A push to a repository it may only pull | The Git integration's access for you lets you pull <owner/name> but not push to it. Ask the owner if your work needs it. | the access does not allow pushing to <owner/name> |
 | `push_refs` that do not read | Your access to the Git integration names branches or tags Kivali cannot read. Ask the owner to set it again. | the access's branches and tags do not read |
 | A ref that does not read | git_push cannot read "<ref>": <why>. Each entry is a branch (agent/x), a tag (tags/v1.2.0) or a refspec such as HEAD:refs/heads/agent/x. | a ref does not read |
 | A deletion | Deleting a remote ref is not something the Git integration does. | the call deletes a remote ref |
@@ -1388,9 +1403,11 @@ Git is a `ConnectionChecker` and an `AccessChecker`. Saving a
 connection whose host `gitrepo.NormalizeHost` cannot read (a path, user
 info, a scheme other than `https://`) is a 400, "Host is a host name
 such as github.com, without https:// or a path", and nothing is
-stored. Saving an access with a `repositories` entry that is not a
-pattern `gitrepo.ValidPattern` reads is a 400, "<entry> is not a
-repository or a pattern", and one with a `push_refs` entry that
+stored. Saving an access with a `pull_repositories` or
+`push_repositories` entry that is not a pattern `gitrepo.ValidPattern`
+reads is a 400, "<entry> is not a repository or a pattern"; one that
+names no repository in either list is a 400, "Name a repository it may
+pull or push to"; and one with a `push_refs` entry that
 `gitrepo.NormalizeRefPattern` refuses is a 400, "<entry> is not a
 branch, a tag or a pattern". A stored row that is not this all the same (one written
 before the check, or by hand) refuses every repository.

@@ -414,9 +414,19 @@ func gitRepository(cfg ServerConfig, req GitRequest, host string) (gitrepo.Repos
 		return repo, fmt.Errorf("the repository's URL: %w", err)
 	}
 	if !gitrepo.Match(req.AllowedRepositories, repo.Key()) {
-		return repo, fmt.Errorf("%s is not a repository the access includes", repo.Path)
+		return repo, fmt.Errorf("%s is not %s", repo.Path, outsideAccess(req))
 	}
 	return repo, nil
+}
+
+// outsideAccess names what a repository outside the job's
+// AllowedRepositories is not: for a push they are the ones the agent
+// may push to, and it may still pull the repository.
+func outsideAccess(req GitRequest) string {
+	if req.Op == GitOpPush {
+		return "a repository the access lets you push to"
+	}
+	return "a repository the access includes"
 }
 
 func gitClone(ctx context.Context, cfg ServerConfig, req GitRequest, host, dir string) GitResponse {
@@ -838,7 +848,7 @@ func originRepository(cfg ServerConfig, r *git.Repository, req GitRequest, host 
 		return gitrepo.Repository{}, fmt.Errorf("the working copy's origin: %w", err)
 	}
 	if !gitrepo.Match(req.AllowedRepositories, repo.Key()) {
-		return repo, fmt.Errorf("the working copy's origin, %s, is not a repository the access includes", repo.Path)
+		return repo, fmt.Errorf("the working copy's origin, %s, is not %s", repo.Path, outsideAccess(req))
 	}
 	return repo, nil
 }

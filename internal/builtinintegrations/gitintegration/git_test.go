@@ -19,19 +19,21 @@ func testConn(host string) builtinintegrations.Connection {
 	return builtinintegrations.Connection{ID: "1a2b3c4d", Fields: map[string]string{"host": host, "token": testToken}}
 }
 
+// dana is an agent that may pull the repositories patterns name and
+// push to none.
 func dana(patterns ...any) builtinintegrations.Caller {
-	return builtinintegrations.Caller{Agent: "dana", Access: map[string]any{"repositories": patterns}}
+	return builtinintegrations.Caller{Agent: "dana", Access: map[string]any{"pull_repositories": patterns}}
 }
 
 // Why this test exists: the manifest is what the Org page draws the
 // connection and access forms from and what boot writes to every team.
 // It must pass the built-in check, ask for the host and the token (a
-// secret) in that order, take repositories as its one required access
-// field (so an access set before push stays valid) followed by the
-// push switch, its refs and the force switch marked dangerous, list
-// exactly clone, fetch and push, the actions Call and Tools know, and
-// name no kivali.verify, so that Kivali's server never reaches a git
-// host itself.
+// secret) in that order, take the repositories it may pull and the
+// ones it may push to as two lists, neither required (CheckAccess asks
+// for one), followed by the refs it may push and the force switch
+// marked dangerous, list exactly clone, fetch and push, the actions
+// Call and Tools know, and name no kivali.verify, so that Kivali's
+// server never reaches a git host itself.
 func TestManifest(t *testing.T) {
 	m := New().Manifest()
 	if f := integration.ValidateBuiltin(m); len(f) != 0 {
@@ -57,8 +59,8 @@ func TestManifest(t *testing.T) {
 		required bool
 		danger   bool
 	}{
-		{"repositories", integration.FieldList, true, false},
-		{"push", integration.FieldSwitch, false, false},
+		{"pull_repositories", integration.FieldList, false, false},
+		{"push_repositories", integration.FieldList, false, false},
 		{"push_refs", integration.FieldList, false, false},
 		{"force", integration.FieldSwitch, false, true},
 	}
@@ -68,7 +70,7 @@ func TestManifest(t *testing.T) {
 			t.Errorf("access field %d = %+v, want %+v", i, f, w)
 		}
 	}
-	if m.Version != "1.2.0" {
+	if m.Version != "2.0.0" {
 		t.Errorf("version = %s", m.Version)
 	}
 	tools, _ := New().Tools(context.Background(), builtinintegrations.Caller{})
@@ -137,12 +139,55 @@ func TestCallBuildsTheJob(t *testing.T) {
 	}
 }
 
-// pusher is an agent with access to acme/* that may push agent/* and
-// every tag, and force when force is set.
+// pusher is an agent that may push agent/* and every tag to acme/*,
+// and force when force is set.
 func pusher(force bool) builtinintegrations.Caller {
 	return builtinintegrations.Caller{Agent: "dana", Access: map[string]any{
-		"repositories": []any{"acme/*"}, "push": true, "push_refs": []any{"agent/*", "tags/*"}, "force": force,
+		"push_repositories": []any{"acme/*"}, "push_refs": []any{"agent/*", "tags/*"}, "force": force,
 	}}
+}
+
+// pullOnly is the access a with the repositories it may push to moved
+// to the ones it may only pull.
+func pullOnly(a map[string]any) {
+	a["pull_repositories"] = a["push_repositories"]
+	delete(a, "push_repositories")
+}
+
+// Why this test exists: push is granted per repository. An agent that
+// may pull acme/* and push only to acme/widgets must clone and fetch
+// any of acme/*, push to acme/widgets, and be refused a push to
+// another of acme/* in words that say it may pull that one but not
+// push to it. The job of a push must carry only the repositories it may
+// push to, since a push without a url reaches whatever the working
+// copy's origin names and the daemon holds that to the job's list; a
+// clone's job carries both lists.
+func TestPushIsPerRepository(t *testing.T) {
+	g := New()
+	ctx := context.Background()
+	caller := builtinintegrations.Caller{Agent: "dana", Access: map[string]any{
+		"pull_repositories": []any{"acme/*"}, "push_repositories": []any{"acme/widgets"}, "push_refs": []any{"agent/*"},
+	}}
+	for _, repo := range []string{"acme/gadgets", "acme/widgets"} {
+		res, err := g.Call(ctx, caller, testConn("github.com"), "clone", json.RawMessage(`{"url":"`+repo+`","path":"w"}`))
+		if err != nil || strings.Join(res.ShellJob.Git.AllowedRepositories, " ") != "acme/* acme/widgets" {
+			t.Errorf("clone %s = %+v, %v", repo, res, err)
+		}
+	}
+	res, err := g.Call(ctx, caller, testConn("github.com"), "push", json.RawMessage(`{"path":"w","url":"acme/widgets","refs":["agent/x"]}`))
+	if err != nil || strings.Join(res.ShellJob.Git.AllowedRepositories, " ") != "acme/widgets" {
+		t.Errorf("push to acme/widgets = %+v, %v", res, err)
+	}
+	res, err = g.Call(ctx, caller, testConn("github.com"), "push", json.RawMessage(`{"path":"w","refs":["agent/x"]}`))
+	if err != nil || res.ShellJob.Git.URL != "" || strings.Join(res.ShellJob.Git.AllowedRepositories, " ") != "acme/widgets" {
+		t.Errorf("push to the working copy's origin = %+v, %v", res, err)
+	}
+	_, err = g.Call(ctx, caller, testConn("github.com"), "push", json.RawMessage(`{"path":"w","url":"acme/gadgets","refs":["agent/x"]}`))
+	var ref *builtinintegrations.Refusal
+	if !errors.As(err, &ref) || ref.Reason != "the access does not allow pushing to acme/gadgets" ||
+		ref.Text != "The Git integration's access for you lets you pull acme/gadgets but not push to it. Ask the owner if your work needs it." {
+		t.Errorf("push to acme/gadgets = %v", err)
+	}
 }
 
 // Why this test exists: a push's job is what the daemon writes to the
@@ -186,12 +231,13 @@ func TestCallBuildsThePushJob(t *testing.T) {
 
 // Why this test exists: each way a push can reach past what the owner
 // granted must be refused in core, before any job carries the token:
-// push off (or not a true switch), a destination outside push_refs (a
-// bare v1 is a branch, not the tag tags/* allows), push_refs that do
-// not read or are empty, a force without the force switch (by force or
-// by +), a deletion, a ref that does not read, a destination twice, and
-// a repository outside the access. Each names the cause and the owner
-// only, and is a Refusal so core audits it as not allowed.
+// no repository to push to (or a push list that is not a list), a
+// destination outside push_refs (a bare v1 is a branch, not the tag
+// tags/* allows), push_refs that do not read or are empty, a force
+// without the force switch (by force or by +), a deletion, a ref that
+// does not read, a destination twice, and a repository outside the
+// access. Each names the cause and the owner only, and is a Refusal so
+// core audits it as not allowed.
 func TestPushRefusals(t *testing.T) {
 	g := New()
 	with := func(edit func(map[string]any)) builtinintegrations.Caller {
@@ -205,9 +251,11 @@ func TestPushRefusals(t *testing.T) {
 		words  string
 		reason string
 	}{
-		"push off":       {with(func(a map[string]any) { a["push"] = false }), `{"path":"w","refs":["agent/x"]}`, "does not allow pushing. Ask the owner", "the access does not allow pushing"},
-		"push not bool":  {with(func(a map[string]any) { a["push"] = "true" }), `{"path":"w","refs":["agent/x"]}`, "does not allow pushing", "the access does not allow pushing"},
+		"pull only":      {with(pullOnly), `{"path":"w","refs":["agent/x"]}`, "does not allow pushing. Ask the owner", "the access does not allow pushing"},
+		"push empty":     {with(func(a map[string]any) { a["push_repositories"] = []any{}; a["pull_repositories"] = []any{"acme/*"} }), `{"path":"w","refs":["agent/x"]}`, "does not allow pushing", "the access does not allow pushing"},
+		"push not list":  {with(func(a map[string]any) { a["push_repositories"] = "acme/*" }), `{"path":"w","refs":["agent/x"]}`, "names no repositories Kivali can read", "the access names no repositories"},
 		"push missing":   {dana("acme/*"), `{"path":"w","refs":["agent/x"]}`, "does not allow pushing", "the access does not allow pushing"},
+		"pull only, url": {with(pullOnly), `{"path":"w","url":"acme/widgets","refs":["agent/x"]}`, "does not allow pushing", "the access does not allow pushing"},
 		"outside refs":   {pusher(false), `{"path":"w","refs":["main"]}`, "does not include refs/heads/main. Ask the owner", "the access does not include refs/heads/main"},
 		"a bare tag":     {pusher(false), `{"path":"w","refs":["v1"]}`, "does not include refs/heads/v1", "the access does not include refs/heads/v1"},
 		"a refspec dst":  {pusher(false), `{"path":"w","refs":["HEAD:refs/heads/main"]}`, "does not include refs/heads/main", "the access does not include refs/heads/main"},
@@ -403,22 +451,22 @@ func TestCompletePush(t *testing.T) {
 		t.Errorf("force taken away, nothing landed = %v", err)
 	}
 	off := pusher(false)
-	off.Access["push"] = false
+	pullOnly(off.Access)
 	if _, err := g.Complete(ctx, off, testConn("github.com"), "push", args, shelljob.Result{Git: &shelljob.GitResult{Repository: "acme/widgets"}}); !errors.As(err, &ref) || ref.Reason != "the access does not allow pushing" {
 		t.Errorf("push taken away, nothing landed = %v", err)
 	}
 }
 
-// Why this test exists: the owner can turn push off or narrow
-// push_refs while a push runs. The remote is written all the same, so
-// the second request must not be audited as refused: the row must be
-// allowed and name what landed (only the refs the call asked for,
-// never one the shell's report adds), and the agent must read what
-// landed and that its access changed.
+// Why this test exists: the owner can take a repository off the ones an
+// agent may push to, or narrow push_refs, while a push runs. The remote
+// is written all the same, so the second request must not be audited
+// as refused: the row must be allowed and name what landed (only the
+// refs the call asked for, never one the shell's report adds), and the
+// agent must read what landed and that its access changed.
 func TestCompletePushWhenTheAccessChangedDuringIt(t *testing.T) {
 	g := New()
 	off := pusher(false)
-	off.Access["push"] = false
+	pullOnly(off.Access)
 	args := json.RawMessage(`{"path":"/files/w","refs":["agent/x"]}`)
 	landed := shelljob.Result{Git: &shelljob.GitResult{Repository: "acme/widgets", Updated: []shelljob.GitRefUpdate{
 		{Ref: "refs/heads/agent/x", New: "1111111aaaa"},
@@ -502,10 +550,10 @@ func TestCheckConnectionAndAccess(t *testing.T) {
 			t.Errorf("%q = %v", bad, err)
 		}
 	}
-	if err := g.CheckAccess(map[string]any{"repositories": []any{"acme/widgets", "acme/*"}}); err != nil {
+	if err := g.CheckAccess(map[string]any{"pull_repositories": []any{"acme/widgets", "acme/*"}}); err != nil {
 		t.Errorf("good access = %v", err)
 	}
-	if err := g.CheckAccess(map[string]any{"repositories": []any{"acme/*", "acme/[x"}}); err == nil || err.Error() != "acme/[x is not a repository or a pattern" {
+	if err := g.CheckAccess(map[string]any{"pull_repositories": []any{"acme/*", "acme/[x"}}); err == nil || err.Error() != "acme/[x is not a repository or a pattern" {
 		t.Errorf("a bad pattern = %v", err)
 	}
 }

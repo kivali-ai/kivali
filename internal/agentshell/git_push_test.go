@@ -196,8 +196,11 @@ func TestGitPushForceAndRejection(t *testing.T) {
 // daemon holds them to the access itself, as it does the URL. A
 // destination outside AllowedRefs, a deletion, a ref outside branches
 // and tags, a job with no refs or no AllowedRefs, a source the working
-// copy does not have, and a destination named twice must each be
-// refused before any byte reaches the host.
+// copy does not have, a destination named twice, and a repository
+// (named or the working copy's origin) outside the ones the agent may
+// push to must each be refused before any byte reaches the host; the
+// last in words that say it is pushing it may not do, since the agent
+// may still pull that repository.
 func TestGitPushRefusals(t *testing.T) {
 	srv := newTestGitServer(t)
 	srv.seed(t, "acme/widgets", "one")
@@ -226,7 +229,12 @@ func TestGitPushRefusals(t *testing.T) {
 			j := pushJob(srv, "wc", "refs/heads/main:refs/heads/agent/x")
 			j.AllowedRepositories = []string{"other/*"}
 			return j
-		}(), "not a repository the access includes"},
+		}(), "acme/widgets is not a repository the access lets you push to"},
+		"an origin outside": {func() GitRequest {
+			j := pushJob(srv, "wc", "refs/heads/main:refs/heads/agent/x")
+			j.URL, j.AllowedRepositories = "", []string{"other/*"}
+			return j
+		}(), "the working copy's origin, acme/widgets, is not a repository the access lets you push to"},
 	} {
 		if res := d.run(t, c.job); !strings.Contains(res.Error, c.words) {
 			t.Errorf("%s = %+v, want %q", name, res, c.words)

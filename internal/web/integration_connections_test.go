@@ -192,16 +192,16 @@ func TestAccessNamesAConnection(t *testing.T) {
 	intTeam(t, srv, "dana", "lee")
 	connectGit(t, srv, "github.com")
 	// One connection: the id may be left out.
-	putIntegrationAccess(t, srv, "git", "dana", `{"repositories":["acme/*"]}`)
+	putIntegrationAccess(t, srv, "git", "dana", `{"pull_repositories":["acme/*"]}`)
 
 	tick(srv)
 	page := addConnection(t, srv, "git", "Company GitLab", map[string]string{"host": "gitlab.example.com", "token": gitLabToken})
 	hub, lab := page.Connections[0], page.Connections[1]
-	if e := assertAPIError(t, putAccessFor(t, srv, "git", "lee", `{"repositories":["eng/*"]}`, ""), http.StatusBadRequest); e.Error != "choose a connection" {
+	if e := assertAPIError(t, putAccessFor(t, srv, "git", "lee", `{"pull_repositories":["eng/*"]}`, ""), http.StatusBadRequest); e.Error != "choose a connection" {
 		t.Errorf("no connection named = %+v", e)
 	}
-	assertAPIError(t, putAccessFor(t, srv, "git", "lee", `{"repositories":["eng/*"]}`, "nope"), http.StatusBadRequest)
-	page = orgOK[apitypes.IntegrationPage](t, putAccessFor(t, srv, "git", "lee", `{"repositories":["eng/*"]}`, lab.ID))
+	assertAPIError(t, putAccessFor(t, srv, "git", "lee", `{"pull_repositories":["eng/*"]}`, "nope"), http.StatusBadRequest)
+	page = orgOK[apitypes.IntegrationPage](t, putAccessFor(t, srv, "git", "lee", `{"pull_repositories":["eng/*"]}`, lab.ID))
 	rows := map[string]apitypes.AccessRow{}
 	for _, r := range page.Access {
 		rows[r.Agent.Slug] = r
@@ -228,10 +228,10 @@ func TestGitCallUsesTheConnectionItsAccessNames(t *testing.T) {
 	withGit(t, srv)
 	intTeam(t, srv, "dana", "lee")
 	_, hub, lab := twoGitConnections(t, srv)
-	if rr := putAccessFor(t, srv, "git", "dana", `{"repositories":["acme/*"]}`, hub.ID); rr.Code != http.StatusOK {
+	if rr := putAccessFor(t, srv, "git", "dana", `{"pull_repositories":["acme/*"]}`, hub.ID); rr.Code != http.StatusOK {
 		t.Fatal(rr.Body.String())
 	}
-	if rr := putAccessFor(t, srv, "git", "lee", `{"repositories":["eng/*"]}`, lab.ID); rr.Code != http.StatusOK {
+	if rr := putAccessFor(t, srv, "git", "lee", `{"pull_repositories":["eng/*"]}`, lab.ID); rr.Code != http.StatusOK {
 		t.Fatal(rr.Body.String())
 	}
 	ctx := context.Background()
@@ -312,10 +312,10 @@ func TestGitConnectionsCredentialsAndDeleteByID(t *testing.T) {
 		t.Errorf("registered after boot = %v, %v", a, b)
 	}
 
-	if rr := putAccessFor(t, srv, "git", "dana", `{"repositories":["acme/*"]}`, hub.ID); rr.Code != http.StatusOK {
+	if rr := putAccessFor(t, srv, "git", "dana", `{"pull_repositories":["acme/*"]}`, hub.ID); rr.Code != http.StatusOK {
 		t.Fatal(rr.Body.String())
 	}
-	if rr := putAccessFor(t, srv, "git", "lee", `{"repositories":["eng/*"]}`, lab.ID); rr.Code != http.StatusOK {
+	if rr := putAccessFor(t, srv, "git", "lee", `{"pull_repositories":["eng/*"]}`, lab.ID); rr.Code != http.StatusOK {
 		t.Fatal(rr.Body.String())
 	}
 	page := orgOK[apitypes.IntegrationPage](t, intDelete(t, srv, intBase+"/git/connections/"+lab.ID))
