@@ -667,6 +667,42 @@ func TestBrowserRedirectAddressOnThePage(t *testing.T) {
 	}
 }
 
+// Why this test exists: Sign in in your browser sends the owner's
+// browser wherever the manifest's authorization endpoint points, and a
+// bundle written under a prompt injection could point it at a lookalike
+// of the service's sign-in page. The install screen and the page must
+// name every host the sign-in talks to (each once, sorted), and the
+// page the host each way sends the owner to, so the owner can tell
+// before approving and before signing in. A token connection has none.
+func TestSignInHostsAreShown(t *testing.T) {
+	srv, vendor, _ := signInServer(t)
+	browserBundle(t, srv, vendor, func(c *integration.Connection) {
+		c.Method = integration.MethodDevice
+		c.AuthorizationEndpoint = "https://App.HubSpot.com/oauth/authorize"
+		c.TokenEndpoint = "https://api.hubapi.com/oauth/v1/token"
+		c.DeviceEndpoint = "https://login.example.com/device"
+		c.RevocationEndpoint = "https://api.hubapi.com/oauth/v1/revoke"
+	})
+	want := "api.hubapi.com,app.hubspot.com,login.example.com"
+	page := orgOK[apitypes.IntegrationPage](t, orgGet(t, srv, intBase+"/crm"))
+	if strings.Join(page.SignInHosts, ",") != want {
+		t.Errorf("page sign-in hosts = %v", page.SignInHosts)
+	}
+	if page.SignInAt["browser"] != "app.hubspot.com" || page.SignInAt["device"] != "login.example.com" || len(page.SignInAt) != 2 {
+		t.Errorf("page signs in at %v", page.SignInAt)
+	}
+	v := orgOK[apitypes.IntegrationVersion](t, orgGet(t, srv, intBase+"/crm/versions/1.0.0"))
+	if strings.Join(v.SignInHosts, ",") != want {
+		t.Errorf("install screen sign-in hosts = %v", v.SignInHosts)
+	}
+
+	intConnected(t, srv, "hubspot")
+	token := orgOK[apitypes.IntegrationPage](t, orgGet(t, srv, intBase+"/hubspot"))
+	if token.SignInHosts == nil || len(token.SignInHosts) != 0 || token.SignInAt != nil {
+		t.Errorf("a token connection's page: hosts %v, at %v", token.SignInHosts, token.SignInAt)
+	}
+}
+
 // Why this test exists: a manifest that offers both ways lists them on
 // the page with its method first, and each way's route works for it.
 func TestSignInWaysBoth(t *testing.T) {

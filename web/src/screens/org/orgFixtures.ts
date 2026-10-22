@@ -17,6 +17,7 @@ import goIntegrationUploadRefusedJson from '../../../../internal/web/apitypes/te
 import goIntegrationVersionJson from '../../../../internal/web/apitypes/testdata/integration_version.json';
 import goIntegrationVersionBuiltinJson from '../../../../internal/web/apitypes/testdata/integration_version_builtin.json';
 import goIntegrationVersionShippedJson from '../../../../internal/web/apitypes/testdata/integration_version_shipped.json';
+import goIntegrationVersionSignInJson from '../../../../internal/web/apitypes/testdata/integration_version_sign_in.json';
 import goSignInProgressJson from '../../../../internal/web/apitypes/testdata/sign_in_progress.json';
 import goSignInProgressFailedJson from '../../../../internal/web/apitypes/testdata/sign_in_progress_failed.json';
 import goIntegrationsJson from '../../../../internal/web/apitypes/testdata/integrations.json';
@@ -95,6 +96,8 @@ export const goIntegrationVersion = (goIntegrationVersionJson satisfies Wire<Int
 export const goIntegrationVersionBuiltin = (goIntegrationVersionBuiltinJson satisfies Wire<IntegrationVersion>) as IntegrationVersion;
 /** A version of an integration that ships with Kivali as a bundle: its runtime, hosts and bundle are an upload's. */
 export const goIntegrationVersionShipped = (goIntegrationVersionShippedJson satisfies Wire<IntegrationVersion>) as IntegrationVersion;
+/** The install screen of a bundle that connects by signing in in the browser: its scopes and sign-in hosts. */
+export const goIntegrationVersionSignIn = (goIntegrationVersionSignInJson satisfies Wire<IntegrationVersion>) as IntegrationVersion;
 export const goIntegrationUploadRefused = (goIntegrationUploadRefusedJson satisfies Wire<IntegrationUploadRefused>) as IntegrationUploadRefused;
 export const goIntegrationLogs = (goIntegrationLogsJson satisfies Wire<IntegrationLogs>) as IntegrationLogs;
 export const goIntegrationAudit = (goIntegrationAuditJson satisfies Wire<IntegrationAudit>) as IntegrationAudit;

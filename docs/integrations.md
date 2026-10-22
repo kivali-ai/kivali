@@ -33,6 +33,7 @@ A bundle that passes opens its **install screen**, which waits for your approval
 
 - what the integration is, who built it, and who published this version;
 - every host it reaches;
+- for an integration you connect by signing in, under **Signs in at**, every host the sign-in talks to: your browser is sent to the service's sign-in page there, so check they are the service's own;
 - the software it installs, if any, under **Software it installs**: Debian packages, fetched from Debian's repositories and installed each time the integration starts, before it runs. An integration uses them to run a tool such as GitHub's `gh` for its actions. Read each name before you approve;
 - every field its connection needs, with the secrets marked;
 - every action it gives agents;
@@ -85,7 +86,7 @@ Some services sign in in your browser instead of with a code (HubSpot, Slack, No
 1. Open the integration's page at the address you will keep using for Kivali. Above the connection form, the page shows a **Redirect address**, with **Copy**: Kivali's address as your browser reaches it, followed by `/connect/callback`. It is the same for every integration.
 2. Register an app with the service, as its setup steps say, and enter that redirect address exactly as the app's callback URL (some services call it the redirect URL). The service gives the app a client id and a client secret.
 3. Paste the client id and the client secret into the connection form and choose **Save connection**.
-4. Under **Sign in**, choose **Sign in in your browser**. The page takes you to the service, where you approve Kivali; the service sends you back to the integration's page, which says **Signed in**.
+4. Under **Sign in**, which names the host it sends you to ("Signs in at app.hubspot.com"), choose **Sign in in your browser**. The page takes you to the service, where you approve Kivali; the service sends you back to the integration's page, which says **Signed in**.
 
 The sign-in finishes in the browser that started it, signed in to Kivali: if Kivali asks you to sign in on the way back, do, and the sign-in carries on. If you turn it down, take longer than ten minutes, or come back in another browser, the page says why and offers **Try again**. One browser sign-in at a time: starting another in the same browser, for any integration, ends the one before, and its page says so.
 

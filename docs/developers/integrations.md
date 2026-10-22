@@ -480,7 +480,13 @@ connection form with that connection's values (the non-sensitive
 values, and which secrets are set); `connection`, the first of them,
 and `connection_fields`, the form with the first's values, which the
 one-connection page reads; `multiple`, `connection_method`, `scopes`
-and `setup_notes_md`, from the manifest; and `connection_test`, true
+and `setup_notes_md`, from the manifest; `sign_in_hosts`, the hosts of
+the manifest's OAuth endpoints, each once, sorted
+(`Connection.SignInHosts`, also on the install screen under "Signs in
+at"), and `sign_in_at`, for each way offered the host it sends the
+owner to (the authorization endpoint's for browser, the device
+endpoint's for device), which the Sign in block names ("Signs in at
+app.hubspot.com"); and `connection_test`, true
 when the version in use names `kivali.verify`. Without it the page offers no
 Test connection, and no connection carries a last result, even one
 kept under an earlier version that had a test. Each access row carries the
@@ -912,12 +918,14 @@ While another version is in use (`IntegrationVersion.CurrentVersion`),
 the screen also says what this one changes from it, under "What
 changes from version X": `IntegrationVersion.Changes`, worked out by
 `integration.Diff(current, this)`, one line for each of hosts,
-software, connection fields, actions and access form fields added or
-removed ("Hosts added: uploads.example.com", "Software added: gh",
-"Connection fields added: API key (secret)"). A host is matched by its
-pattern, a package and an action by their names, a field by its key.
-With none of those changed the list is empty, and the screen says "No
-change to hosts, software, secrets, actions or the access form." The same block is on a superseded version's screen, where it
+sign-in hosts (`Connection.SignInHosts`), software, connection fields,
+actions and access form fields added or removed ("Hosts added:
+uploads.example.com", "Software added: gh", "Connection fields added:
+API key (secret)"). A host is matched by its pattern, a package and an
+action by their names, a field by its key. With none of those changed
+the list is empty, and the screen says "No change to hosts, software,
+secrets, actions or the access form." The same block is on a
+superseded version's screen, where it
 says what rolling back to it changes.
 
 ### Rolling back

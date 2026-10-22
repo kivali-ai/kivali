@@ -8,15 +8,15 @@ import (
 
 // Diff is what changes from the manifest from to the manifest to, in
 // words, for the install screen of a version that would run in place
-// of the one in use: the hosts, the software its pod installs, the
-// connection's fields, the actions and the access form's fields to
-// gains or loses, one line for each kind and direction that has any
-// ("Hosts added: api.example.com", "Software added: gh"). A host is
-// matched by its pattern, a package by its name, a connection or
-// access field by its key and an action by its name; what is added is
-// listed in to's order and what is removed in from's. A secret
-// connection field says so. Nothing of those changed is no lines, and
-// so is a nil manifest.
+// of the one in use: the hosts, the hosts a sign-in goes to, the
+// software its pod installs, the connection's fields, the actions and
+// the access form's fields to gains or loses, one line for each kind
+// and direction that has any ("Hosts added: api.example.com",
+// "Software added: gh"). A host is matched by its pattern, a package by
+// its name, a connection or access field by its key and an action by
+// its name; what is added is listed in to's order and what is removed
+// in from's. A secret connection field says so. Nothing of those
+// changed is no lines, and so is a nil manifest.
 func Diff(from, to *Manifest) []string {
 	if from == nil || to == nil {
 		return nil
@@ -30,6 +30,9 @@ func Diff(from, to *Manifest) []string {
 	added, removed := diffKeys(hostItems(from), hostItems(to))
 	line("Hosts added", added)
 	line("Hosts removed", removed)
+	added, removed = diffKeys(signInHostItems(from), signInHostItems(to))
+	line("Sign-in hosts added", added)
+	line("Sign-in hosts removed", removed)
 	added, removed = diffKeys(packageItems(from), packageItems(to))
 	line("Software added", added)
 	line("Software removed", removed)
@@ -85,6 +88,17 @@ func packageItems(m *Manifest) []diffItem {
 	out := make([]diffItem, 0, len(m.Kivali.Packages))
 	for _, p := range m.Kivali.Packages {
 		out = append(out, diffItem{p, p})
+	}
+	return out
+}
+
+// signInHostItems are the hosts of m's OAuth endpoints
+// (Connection.SignInHosts).
+func signInHostItems(m *Manifest) []diffItem {
+	hosts := m.Kivali.Connection.SignInHosts()
+	out := make([]diffItem, 0, len(hosts))
+	for _, h := range hosts {
+		out = append(out, diffItem{h, h})
 	}
 	return out
 }

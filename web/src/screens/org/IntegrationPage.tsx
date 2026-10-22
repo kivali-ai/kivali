@@ -149,6 +149,19 @@ export function signInReturnOf(search: string): SignInReturn | null {
   return words ? { kind: 'start_again', words } : null;
 }
 
+/**
+ * "Signs in at app.hubspot.com": the hosts the connection's ways send the owner to, each once, in the ways' order;
+ * undefined when none is known.
+ */
+export function signsInAt(ways: readonly string[], at: Readonly<Record<string, string>> | undefined): string | undefined {
+  const hosts: string[] = [];
+  for (const way of ways) {
+    const host = at?.[way];
+    if (host && !hosts.includes(host)) hosts.push(host);
+  }
+  return hosts.length > 0 ? 'Signs in at ' + namesInWords(hosts) : undefined;
+}
+
 /** Whether the tab is showing; a hidden one asks the server nothing. */
 function useVisible(): boolean {
   const [visible, setVisible] = useState(() => document.visibilityState !== 'hidden');
@@ -161,7 +174,7 @@ function useVisible(): boolean {
 }
 
 /** What the Sign in block of one connection is wired to: its routes, and what to do with the page they answer. */
-type SignInWiring = Pick<SignInBlockProps, 'api' | 'scopes' | 'onPage' | 'onSignedIn' | 'returned'>;
+type SignInWiring = Pick<SignInBlockProps, 'api' | 'scopes' | 'signInAt' | 'onPage' | 'onSignedIn' | 'returned'>;
 
 interface SignInBlockProps {
   /** The connection; absent before the client id and secret are first saved. */
@@ -172,6 +185,8 @@ interface SignInBlockProps {
   api: string;
   /** What the sign-in asks the service for, shown above the block. */
   scopes: readonly string[];
+  /** The host each way's sign-in goes to (sign_in_at), named in the block so the owner sees where they are sent. */
+  signInAt?: Readonly<Record<string, string>>;
   busy: boolean;
   now: number;
   /** The page as Sign out answers it. */
@@ -191,7 +206,7 @@ interface SignInBlockProps {
  * connection test found and Sign out; a sign-in that failed or expired, why, and Try again the same way; a connection
  * none of whose ways this version offers, a sentence saying so. What the sign-in asks the service for is above it.
  */
-function SignInBlock({ connection, fields, api, scopes, busy, now, onPage, onSignedIn, returned }: SignInBlockProps) {
+function SignInBlock({ connection, fields, api, scopes, signInAt, busy, now, onPage, onSignedIn, returned }: SignInBlockProps) {
   const [device, setDevice] = useState<DeviceSignIn | null>(null);
   // Done, and the page is being read again: held so the block does not show Sign in with a code in between.
   const [finishing, setFinishing] = useState(false);
@@ -394,6 +409,11 @@ function SignInBlock({ connection, fields, api, scopes, busy, now, onPage, onSig
         <Text as="h3" variant="label" tone="muted">
           Sign in
         </Text>
+        {signsInAt(ways, signInAt) && (
+          <Text as="p" variant="caption" tone="muted">
+            {signsInAt(ways, signInAt)}
+          </Text>
+        )}
         <ErrorBanner error={error} onDismiss={() => setError(null)} />
         {body}
       </section>
@@ -868,7 +888,16 @@ export function IntegrationPage() {
     returned && (!p?.multiple || (returned.kind !== 'start_again' && returned.id === id)) ? returned : null;
   const signInFor = (connectionApi: string, id?: string): { signIn?: SignInWiring } =>
     p && (p.connection_method === 'device' || p.connection_method === 'browser')
-      ? { signIn: { api: connectionApi, scopes: p.scopes, onPage: signedOut, onSignedIn: signedIn, returned: returnedTo(id) } }
+      ? {
+          signIn: {
+            api: connectionApi,
+            scopes: p.scopes,
+            ...(p.sign_in_at ? { signInAt: p.sign_in_at } : {}),
+            onPage: signedOut,
+            onSignedIn: signedIn,
+            returned: returnedTo(id),
+          },
+        }
       : {};
   const verifyConnection = (id: string) => void mutate(() => apiPost<IntegrationPageData>(connectionApi(id) + '/verify'));
   const deleteConnection = async (id: string) => {
