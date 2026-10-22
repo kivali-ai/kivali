@@ -177,8 +177,9 @@ func TestAPIIntegrationUploadRefusals(t *testing.T) {
 	}
 }
 
-// writeBuiltinIntegration records a built-in integration the way a
-// Kivali that ships one does: integration.yaml with builtin set.
+// writeBuiltinIntegration records a built-in integration as a Kivali
+// that ships one leaves it: integration.yaml with builtin set. srv's
+// binary carries no code for it.
 func writeBuiltinIntegration(t *testing.T, srv *Server, name string) {
 	t.Helper()
 	dir := filepath.Join(srv.Store.Root(), "integrations", name)
@@ -742,7 +743,7 @@ func TestAPIIntegrationAccess(t *testing.T) {
 
 // The switch and removal. Off is its own status; removing deletes the
 // connection's Secret and answers 204, and the list is empty after; a
-// built-in integration cannot be removed.
+// built-in integration this binary carries cannot be removed.
 func TestAPIIntegrationSwitchAndRemove(t *testing.T) {
 	srv := newTestServer(t)
 	mem := secrets.NewMemory()
@@ -767,8 +768,8 @@ func TestAPIIntegrationSwitchAndRemove(t *testing.T) {
 		t.Errorf("secrets left: %v", names)
 	}
 	assertAPIError(t, intDelete(t, srv, intBase+"/crm"), http.StatusNotFound)
-	writeBuiltinIntegration(t, srv, "maps")
-	assertAPIError(t, intDelete(t, srv, intBase+"/maps"), http.StatusConflict)
+	withEcho(t, srv)
+	assertAPIError(t, intDelete(t, srv, intBase+"/echo"), http.StatusConflict)
 	assertAPIError(t, intPost(t, srv, intBase+"/nope/enable"), http.StatusNotFound)
 }
 

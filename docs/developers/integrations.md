@@ -1,12 +1,12 @@
 # Integrations
 
 An integration is an external service agents act on, such as a CRM or
-a blog, installed from a bundle. This page is the developer's
-reference: the bundle and its manifest, the check every bundle passes,
-the access form, where Kivali keeps an integration and its connection,
-how a version is approved or rolled back to, how an approved version
-runs, how agents call it, and the Kivali Developer, the agent that
-builds bundles.
+a blog, installed from a bundle or shipped with Kivali. This page is
+the developer's reference: the bundle and its manifest, the check every
+bundle passes, the access form, where Kivali keeps an integration and
+its connection, how a version is approved or rolled back to, how an
+approved version runs, how agents call it, the integrations built into
+Kivali, and the Kivali Developer, the agent that builds bundles.
 What the owner sees is in
 [../integrations.md](../integrations.md).
 
@@ -32,10 +32,15 @@ shim that runs in it), `internal/web/integration_registry.go` and
 `internal/mcp/kivali_developer_tools.go` (the Kivali Developer's
 tools), `internal/web/api_integrations.go` (the API) and
 `internal/web/apitypes/integrations.go` (the wire types).
+`internal/builtinintegrations` holds the integrations that ship with
+Kivali, `internal/store/builtin_integrations.go` writes them at boot
+and `internal/web/integration_builtin.go` calls them
+([Built-in integrations](#built-in-integrations)).
 `cmd/fake-integration` is a stdio MCP server for tests
 (`internal/integrationpod/fakeintegration`);
 `internal/integration/testdata/echo` is a real Python bundle the tests
-build on, end to end.
+build on, end to end; `internal/builtinintegrations/echotest` is a
+built-in that only tests register.
 
 ## The bundle
 
@@ -146,6 +151,16 @@ The check reads the bundle. It is not a review of what the code does:
 the install screen is, where the owner reads what the version
 reaches, holds and does before approving it.
 
+A built-in integration's manifest is checked by
+`integration.ValidateBuiltin(manifest)` by the same rules, with three
+differences. There is no bundle. A `server` section is refused, and so
+is any `kivali.hosts` entry: a built-in runs inside Kivali, and its
+network reach is Kivali's own. The names that `kivali.verify` and
+`kivali.access.choices` give must be lowercase letters, digits and
+underscores, but need not be in `tools`, since they are passed to the
+built-in's Go functions
+([Built-in integrations](#built-in-integrations)).
+
 A bundle is read from a zip (`integration.ReadBundle`, an upload) or
 from a directory (`integration.ReadDirectory`, the Kivali
 Developer's publish), by the same rules: `manifest.json` a regular file
@@ -203,7 +218,7 @@ integrations/<name>/
   versions/<version>/version.yaml   version, state, notes_md, published_by, published_at, approved_at, rejected_at,
                                     bundle_bytes, file_count, findings (the check's warnings)
   versions/<version>/manifest.json  the manifest, byte for byte
-  versions/<version>/bundle/        the bundle, unpacked
+  versions/<version>/bundle/        the bundle, unpacked (none for a built-in integration)
   connections/<id>.yaml             id, created_at, fields (not secret), secret_keys, secret_name,
                                     verified_at, verified, verify_message
   access/<slug>.yaml                slug, connection_id, access, set_at, set_by
@@ -231,8 +246,12 @@ the version's. A version stored once, in any state, cannot be stored again: a
 changed bundle needs a new version number. Every version is kept, its
 bundle with it, in every state, until the integration is removed: a
 roll back runs a superseded version's bundle again. A built-in
-integration (`builtin`, which an upload never sets) takes no upload and
-cannot be removed. Removing an integration deletes its directory (every
+integration (`builtin`, which boot sets and an upload never does) takes
+no upload and refuses the moves above (`store.ErrIntegrationBuiltin`):
+its versions follow the binary. It cannot be removed while the binary
+carries it; one the binary does not carry is removed with
+`store.RemoveStaleBuiltinIntegration`
+([Built-in integrations](#built-in-integrations)). Removing an integration deletes its directory (every
 version, whatever its state), its connections' records, every agent's
 access, the audit and the log; the API deletes the connections'
 Secrets first, and the next reconcile stops its pod.
@@ -291,7 +310,10 @@ its result's first text content as a JSON array of strings, or an
 object whose `options` is one. Both write an audit row for the owner
 (agent `ceo`, the tool as the action, the integration's words as the
 reason when it failed), and both answer 409 "the integration is not
-running" while no shim is connected. The audit lists what is in
+running" while no shim is connected; a built-in integration is running
+while its code is in the binary, and its `Verify` and `Choices` are called with the connection
+instead (and the options need one: 409 "connect the integration
+first" without it). The audit lists what is in
 `audit.jsonl`, which these calls and agents' calls
 ([The audit](#the-audit)) append to.
 
@@ -517,9 +539,10 @@ access, from the call's `_meta`.
 ### What an agent may call
 
 `Server.agentIntegrationTools(slug)` takes each integration that has
-an approved version, is switched on, is running (its shim connected)
-and has a valid access row for the agent, and asks it for its
-`tools/list` for that agent. Of the answer it keeps the tools the
+an approved version, is switched on, is running (its shim connected,
+or built in) and has a valid access row for the agent, and asks it for
+its `tools/list` for that agent (a built-in's `Tools`, with the agent
+and its access). Of the answer it keeps the tools the
 approved version's manifest declares, the actions its install screen
 listed, whose input schema is an object's (a tool with none gets
 `{"type":"object"}`; one with another schema is left out and logged).
@@ -534,7 +557,8 @@ An agent's `tools/list` answer is kept on the link it came through, by
 agent and the SHA-256 of its access (`integrationRegistry.AgentTools`).
 It is asked for again when the agent's access changes, when the
 connection changes (the server restarts with the new values), and when
-the shim connects again: a new pod, a new version, a reconnect.
+the shim connects again: a new pod, a new version, a reconnect. A
+built-in's `Tools` is asked each time and kept by no one.
 
 ### The stamp
 
@@ -587,7 +611,8 @@ worked out again from the store and the integration's list for the
 agent, never from anything else in the request. Each integration whose
 prefix the name starts with is tried, the longest prefix first. A
 match goes to the integration as `tools/call` with `{name, arguments,
-_meta}` and waits up to 60 s, which the MCP server's context bounds
+_meta}` (to a built-in's `Call`, with the agent, its access and the
+connection) and waits up to 60 s, which the MCP server's context bounds
 too. Without a match the call is refused with the first cause found,
 in words that name the cause and the owner and nothing else:
 
@@ -599,6 +624,7 @@ in words that name the cause and the owner and nothing else:
 | Access that no longer applies | Your access to the <integration> integration no longer applies (why). Ask the owner to set it again. |
 | Not running | The <integration> integration is not running right now; try again later or tell the owner. |
 | An action the agent's list does not have | Your access to the <integration> integration does not include <action>. Ask the owner if your work needs it. |
+| A built-in integration with no connection | The <integration> integration has no connection yet. Ask the owner to connect it. |
 
 A name that starts with no integration's prefix is answered "No
 integration has an action named <name>." and has no audit row.
@@ -614,7 +640,10 @@ error is an error with its message; no answer within 60 s, or a shim
 that goes before it answers, is an error that says so. Every string
 goes through the connection's secret scrubber, each secret value
 becoming `[secret]` as in the log, before it reaches the agent; when
-the connection's secrets cannot be read, the answer is held back.
+the connection's secrets cannot be read, the answer is held back. A
+built-in's answer is read the same way, as the result a server would
+send: each content string a text block, its `IsError` the result's,
+an error of its function's a JSON-RPC error with the error's words.
 
 ### The audit
 
@@ -629,6 +658,147 @@ are rows for `ceo`, and so is a roll back, with the action `rollback`
 and the versions as its reason ([Rolling back](#rolling-back)), which
 the page shows as "Roll back" and "From version 1.1.0 to version
 1.0.0".
+
+## Built-in integrations
+
+A built-in integration ships in the binary
+(`internal/builtinintegrations`). It has a bundle's contract surface,
+a manifest of the same shape (name, display_name, description,
+user_config, tools, `kivali.connection`, `kivali.access`,
+`kivali.verify`), so the Org page, the install screen, the connection
+form and the access form are drawn by the same code and every agent's
+access is checked by the same core. Its actions are Go functions core
+calls directly: no pod, no shim, no Python.
+
+### The interface
+
+```go
+type Integration interface {
+	Manifest() *integration.Manifest
+	Tools(ctx context.Context, caller Caller) ([]Tool, error)
+	Call(ctx context.Context, caller Caller, conn Connection, name string, args json.RawMessage) (*Result, error)
+	Verify(ctx context.Context, conn Connection) (message string, err error)
+	Choices(ctx context.Context, conn Connection, name string) ([]string, error)
+}
+
+type Caller struct{ Agent string; Access map[string]any }
+type Connection struct{ ID string; Fields map[string]string }
+type Tool struct{ Name, Description string; InputSchema json.RawMessage }
+type Result struct{ Content []string; IsError bool }
+```
+
+- `Manifest` is the manifest, held to `integration.ValidateBuiltin`
+  ([The check](#the-check)): no server section and no `kivali.hosts`.
+  A built-in runs inside Kivali, so its network reach is Kivali's own,
+  the hosts its connection names, not a host list on its install
+  screen. Its `version` is the built-in's own, semantic, bumped only
+  when the manifest's surface changes. It is called on every lookup,
+  concurrently, so it must be cheap and safe to call from many
+  goroutines.
+- `Tools` is the actions an agent is listed, unprefixed, for its
+  access. Core keeps only the ones the manifest declares, as it does a
+  pod's `tools/list`, and may be given fewer than the manifest
+  declares.
+- `Call` runs one action for the agent with the model's arguments. A
+  failure the agent should read is a `Result` with `IsError`; an error
+  is the function's own failure.
+- `Verify` is Test connection: a nil error with what it found, or an
+  error in words for the owner.
+- `Choices` lists an access field's options: `name` is what
+  `kivali.access.choices` maps the field to, which need not be a tool.
+- `Connection.Fields` is every connection field by key, secrets
+  included, read from the record and its Secret at the moment of the
+  call and kept by no one.
+
+`Tools`, `Call`, `Verify` and `Choices` run concurrently: many agents
+call at once, and each agent's list is asked for in parallel with the
+other integrations'. One still running at its deadline (below) is
+abandoned and its answer dropped; its context ends, and it must honour
+that and stop.
+
+`builtinintegrations.All()` is the built-ins compiled into the binary,
+and `Server.BuiltinIntegrations` the ones core calls (`All()` unless a
+test sets others). `internal/builtinintegrations/echotest` is the
+built-in the tests register; it is never in `All()`. A test holds
+every built-in in `All()` to the check, to a name of its own, and to a
+`Tools` list inside its manifest.
+
+### Registration at boot
+
+`store.InstallBuiltinIntegrations(manifests, now)` runs at every boot,
+right after the built-in skills (`main.go`), and after a restore
+(`internal/web/backup.go`). For each built-in it writes:
+
+- `integration.yaml` with `builtin: true`: a new record is switched on,
+  installed by `kivali`; an existing one keeps the owner's switch.
+- The manifest's version, `approved`, published by `kivali`, notes
+  "Ships with Kivali.", with no `bundle/` directory. Its
+  `manifest.json` is the binary's, written again whenever it differs.
+- When the version differs from the one in use, the one in use becomes
+  superseded and the binary's is the one in use, as an approval does.
+  The binary is the truth, so an older binary makes its older version
+  the one in use again.
+
+An installed integration of the same name that is not built in is left
+as it is, and the built-in is not installed; boot logs it. A backup
+carries the records like any integration's, and the restore writes the
+binary's versions over them.
+
+A built-in record whose code the binary does not carry (another
+version of Kivali shipped it) is left as it is: nothing runs it, its
+status is not included, agents' calls of it are refused as not
+running, and Test connection and its options answer 409 "<integration>
+is not in this version of Kivali, so nothing runs it; you can remove
+it". The owner may remove it (`store.RemoveStaleBuiltinIntegration`,
+which the API uses only for such a record).
+
+The owner cannot approve, reject or roll back to a built-in's version:
+the store refuses (`store.ErrIntegrationBuiltin`) and the API answers
+409 "<integration> ships with Kivali, and its version changes only with
+Kivali's updates; there is nothing to approve" (to reject, to roll
+back to). Remove is a 409 ("... ships with Kivali and cannot be
+removed; switch it off instead"), and so is an upload ("... ships with
+Kivali, so a bundle cannot replace it") or a publish under its name.
+Every one of these names the integration by its display name
+(`builtinRefusal`, `internal/web/api_integrations.go`).
+
+### Dispatch
+
+A built-in is an integration whose record is built in and whose name
+is in `Server.BuiltinIntegrations` (`Server.builtinFor`). Where core
+would reach a pod, it calls the function instead
+(`internal/web/integration_builtin.go`):
+
+| Where | A bundle | A built-in |
+| --- | --- | --- |
+| Running | its shim is connected | while its code is in the binary |
+| An agent's list | `tools/list` with `_meta`, kept on the link | `Tools(caller)`, every time |
+| An agent's call | `tools/call` through the shim | `Call(caller, connection, name, args)` |
+| Test connection | `tools/call` of `kivali.verify` | `Verify(connection)`; the audit's action is the name `kivali.verify` gives (`whoami` for echo) |
+| An access field's options | `tools/call` of the field's tool | `Choices(connection, name)`; 409 with no connection |
+| A connection change | the shim restarts the server | nothing to restart |
+| Reconcile | a pod while it should run | skipped |
+
+Each function runs under the same deadline a pod's request has (60 s
+for a call, Test connection and options, 20 s for a list), on core's
+clock; past it the function's context ends and the answer says the
+integration did not answer in time. A function that panics fails with
+an error. Every answer is read as the MCP result a server would send,
+so the agent, the scrubber and the audit see what they see for a pod.
+
+### What the owner sees
+
+The list and the page show a "Built in" badge and no Remove. The
+status is connected, not connected or off: never pending, never not
+running. Test connection works once there is a connection. The
+version is the built-in's manifest's, published by Kivali; the
+install screen (`IntegrationVersion.Builtin`) says it ships with
+Kivali, that it reaches the hosts its connection names, shows no
+bundle and no "Replaces version" line or "What changes from version"
+block, and offers no Approve, Reject or Roll back; the page's version
+list offers no Roll back. A built-in record this binary does not carry
+shows "Not in this version of Kivali" (`IntegrationStatusNotIncluded`),
+says agents cannot use it, and offers Remove.
 
 ## The Kivali Developer
 
@@ -790,20 +960,20 @@ the owner's.
 
 | Route | Answer |
 | --- | --- |
-| `GET /api/v1/org/integrations` | `Integrations`, by display name. Status: pending (no approved version), off, not running (approved and on, with no shim connected; a built-in integration is never not running), and, while it runs, connected (a connection whose secrets are all there) or not connected. |
+| `GET /api/v1/org/integrations` | `Integrations`, by display name. Status: not included (a built-in integration this binary does not carry), pending (no approved version), off, not running (approved and on, with no shim connected; a built-in integration is never not running while its code is in the binary), and, while it runs, connected (a connection whose secrets are all there) or not connected. |
 | `POST /api/v1/org/integrations` | multipart `file`: 201 `IntegrationVersion`; 400 `IntegrationUploadRefused`; 409 for a version already stored or a built-in name. |
 | `GET /api/v1/org/integrations/{name}` | `IntegrationPage`. |
 | `POST .../{name}/enable`, `.../disable` | `IntegrationPage`. |
-| `DELETE .../{name}` | 204; 409 for a built-in one. |
-| `GET .../versions/{version}` | `IntegrationVersion`, with `changes` from the version in use. |
-| `POST .../versions/{version}/approve`, `.../reject` | `IntegrationVersion`; 409 when not pending. |
-| `POST .../versions/{version}/rollback` | `IntegrationVersion`; 409 when not superseded; 404 for a version not stored. |
+| `DELETE .../{name}` | 204; 409 for a built-in one this binary carries. |
+| `GET .../versions/{version}` | `IntegrationVersion`, with `changes` from the version in use, and `builtin` for a built-in integration's version. |
+| `POST .../versions/{version}/approve`, `.../reject` | `IntegrationVersion`; 409 when not pending, or for a built-in integration. |
+| `POST .../versions/{version}/rollback` | `IntegrationVersion`; 409 when not superseded, or for a built-in integration; 404 for a version not stored. |
 | `PUT .../connection` | `ConnectionWrite` in, `IntegrationPage` out; 409 while no version is approved. |
 | `DELETE .../connection` | `IntegrationPage`: the Secret, the record and every agent's access removed. |
-| `POST .../connection/verify` | `IntegrationPage`, with the connection's verified, verify message and verified at; 409 with no approved version, no connection, no `kivali.verify`, or while the integration is not running. |
+| `POST .../connection/verify` | `IntegrationPage`, with the connection's verified, verify message and verified at; 409 with no approved version, no connection, no `kivali.verify`, while the integration is not running, or for a built-in one this binary does not carry. |
 | `PUT .../access/{slug}` | `AccessWrite` in, `IntegrationPage` out; 404 for an agent not on the team; 409 without a connection; 400 with the field's message. |
 | `DELETE .../access/{slug}` | `IntegrationPage`. |
 | `GET .../audit?limit=` | `IntegrationAudit`, newest first; limit 100 by default, at most 1000. |
-| `GET .../choices/{key}` | `AccessChoices`; 404 for a field that lists no options; 409 while the integration is not running; 502 for the tool's error, or a result that is not a list of names. |
+| `GET .../choices/{key}` | `AccessChoices`; 404 for a field that lists no options; 409 while the integration is not running, for a built-in one without a connection, or for a built-in one this binary does not carry; 502 for the tool's error, or a result that is not a list of names. |
 | `GET .../logs?limit=` | `IntegrationLogs`, oldest first; limit 200 by default, at most 2000. |
 | `GET /api/v1/agents/{slug}/integrations` | `AgentIntegrations`; 404 for an agent not on the team. |

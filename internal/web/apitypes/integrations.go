@@ -34,8 +34,13 @@ const (
 	IntegrationStatusOff IntegrationStatus = "off"
 	// IntegrationStatusNotRunning: approved and on, but the integration
 	// is not running right now (starting, or stopped after a failure);
-	// Test connection and agents' calls wait for it.
+	// Test connection and agents' calls wait for it. An integration that
+	// ships with Kivali is never not running.
 	IntegrationStatusNotRunning IntegrationStatus = "not_running"
+	// IntegrationStatusNotIncluded: a built-in integration this version
+	// of Kivali does not carry (another version shipped it). Nothing
+	// runs it and agents cannot use it; it can be removed.
+	IntegrationStatusNotIncluded IntegrationStatus = "not_included"
 )
 
 // IntegrationSummary is one row of the list.
@@ -82,7 +87,8 @@ type IntegrationPage struct {
 	AgentsWithout []PersonRef `json:"agents_without"`
 	// Versions is every version stored, newest first.
 	Versions []IntegrationVersionSummary `json:"versions"`
-	// CanRemove is false for a built-in integration.
+	// CanRemove is false for a built-in integration this version of
+	// Kivali carries.
 	CanRemove bool `json:"can_remove"`
 }
 
@@ -251,7 +257,8 @@ type IntegrationVersion struct {
 	PublishedBy PersonRef               `json:"published_by"`
 	ApprovedAt  *time.Time              `json:"approved_at,omitempty"`
 	NotesMD     string                  `json:"notes_md"`
-	// Runtime is what runs the bundle: python.
+	// Runtime is what runs the bundle: python; empty for a built-in
+	// integration, which runs inside Kivali.
 	Runtime string `json:"runtime"`
 	// ConnectionMethod is how the connection is made: token.
 	ConnectionMethod string              `json:"connection_method"`
@@ -263,6 +270,11 @@ type IntegrationVersion struct {
 	FileCount        int                 `json:"file_count"`
 	// Current is true when this is the version in use now.
 	Current bool `json:"current"`
+	// Builtin is true for a version of an integration that ships with
+	// Kivali: it has no bundle, needs no approval and comes with
+	// Kivali's updates, so it is never approved, rejected or rolled
+	// back to here (409).
+	Builtin bool `json:"builtin"`
 	// CurrentVersion is the version in use now, when there is one and
 	// it is not this one, so the screen can say what approving replaces.
 	CurrentVersion *string `json:"current_version,omitempty"`

@@ -30,6 +30,7 @@ import {
   goIntegrationPage,
   goIntegrationUploadRefused,
   goIntegrationVersion,
+  goIntegrationVersionBuiltin,
   goIntegrations,
   goNetwork,
   goOrg,
@@ -886,7 +887,8 @@ describe('Skills', () => {
   it('shows version and description, the Built in badge and a count; only custom skills can be removed', async () => {
     await renderOrg('/org/skills', { desktop: true });
     expect(screen.getByText('v1.2.0 · Read and fill PDFs.')).toBeInTheDocument();
-    expect(screen.getByText('Built in')).toBeInTheDocument();
+    // The wide layout draws the Integrations section too, whose list has a built-in of its own.
+    expect(within(screen.getByRole('region', { name: 'Skills' })).getByText('Built in')).toBeInTheDocument();
     expect(screen.getByText('2 installed · 1 off')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Remove pdf' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Remove quote-check' })).toBeInTheDocument();
@@ -1105,7 +1107,7 @@ describe('Integrations', () => {
   it('lists each integration with its version, status and agents, and links a waiting version to its install screen', async () => {
     await renderOrg('/org/integrations', { desktop: true });
     const section = within(screen.getByRole('region', { name: 'Integrations' }));
-    expect(section.getByText('2 installed · 1 waiting')).toBeInTheDocument();
+    expect(section.getByText('3 installed · 1 waiting')).toBeInTheDocument();
     const hubspot = section.getByRole('link', { name: /HubSpot/ });
     expect(hubspot).toHaveAttribute('href', '/org/integrations/hubspot');
     expect(within(hubspot).getByText('v1.2.0')).toBeInTheDocument();
@@ -1117,7 +1119,11 @@ describe('Integrations', () => {
     expect(within(weather).getByText('No agents')).toBeInTheDocument();
     expect(section.getByRole('link', { name: 'Version 1.3.0 waits for your approval' })).toHaveAttribute('href', '/org/integrations/hubspot/versions/1.3.0');
     expect(section.getAllByRole('link', { name: /waits for your approval/ })).toHaveLength(1);
-    expect(section.queryByText('Built in')).toBeNull();
+    expect(within(hubspot).queryByText('Built in')).toBeNull();
+    // A built-in record this version of Kivali does not carry says so, rather than "Not running".
+    const maps = section.getByRole('link', { name: /Maps/ });
+    expect(within(maps).getByText('Not in this version of Kivali')).toHaveClass('kv-badge--neutral');
+    expect(within(maps).getByText('Built in')).toBeInTheDocument();
   });
 
   // Guards the quiet states: a built-in integration carries the Built in badge beside its status, and an empty
@@ -1255,6 +1261,41 @@ describe('Integration install screen', () => {
     await click(within(dialog).getByRole('button', { name: 'Roll back' }));
     expect(called('POST', OLD + '/rollback')).toBe(true);
     expect(h.router.state.location.pathname).toBe('/org/integrations/hubspot');
+  });
+
+  // Guards a built-in integration's install screen (integration_version_builtin.json): it says the integration ships
+  // with Kivali in place of who published it, shows no bundle and no review banner about one, says its reach is the
+  // hosts its connection names rather than "No hosts.", and offers nothing to press, in use or replaced, since its
+  // versions come with Kivali and the server refuses every answer (409).
+  it('says a built-in version ships with Kivali and offers no approve, reject or roll back', async () => {
+    const BUILTIN = '/api/v1/org/integrations/git/versions/1.0.0';
+    const h = await renderOrg('/org/integrations/git/versions/1.0.0', { routes: { ['GET ' + BUILTIN]: goIntegrationVersionBuiltin } });
+    expect(h.chrome.at(-1)).toEqual({ title: 'Git 1.0.0', back: { to: '/org/integrations/git', label: 'Git' } });
+    const who = within(screen.getByRole('region', { name: 'Who built it' }));
+    expect(who.getByText('Kivali')).toBeInTheDocument();
+    expect(who.getByText('Ships with Kivali')).toBeInTheDocument();
+    expect(who.queryByText(/^Published by/)).toBeNull();
+    expect(screen.getByText('This integration ships with Kivali. It needs no install, and Kivali’s updates bring its new versions.')).toBeInTheDocument();
+    expect(screen.queryByText(/^The check only reads the bundle\./)).toBeNull();
+    expect(screen.queryByRole('region', { name: 'Bundle' })).toBeNull();
+    const hosts = within(screen.getByRole('region', { name: 'Reaches these hosts' }));
+    expect(hosts.getByText('Reaches the hosts its connection names.')).toBeInTheDocument();
+    expect(hosts.queryByText('No hosts.')).toBeNull();
+    expect(screen.queryAllByRole('button')).toEqual([]);
+    h.unmount();
+
+    // A replaced built-in version: nothing replaces the version in use by approving it, so neither the line nor the
+    // block that weighs a replacement is drawn, though the server names the version in use and what differs.
+    await renderOrg('/org/integrations/git/versions/1.0.0', {
+      routes: {
+        ['GET ' + BUILTIN]: { ...goIntegrationVersionBuiltin, state: 'superseded', current: false, current_version: '1.1.0', changes: ['Actions added: Push'] },
+      },
+    });
+    expect(screen.getByText('Replaced')).toBeInTheDocument();
+    expect(screen.queryByText(/^Replaces version/)).toBeNull();
+    expect(screen.queryByRole('region', { name: /^What changes from version/ })).toBeNull();
+    expect(screen.queryByText('Actions added: Push')).toBeNull();
+    expect(screen.queryAllByRole('button')).toEqual([]);
   });
 
   // Guards a rejected version's screen: it says Rejected and offers nothing to press, since a rejected version never
@@ -1599,6 +1640,45 @@ describe('Integration page', () => {
     expect(within(links[1]!).getByText('Replaced')).toBeInTheDocument();
     expect(versions.getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual(['Roll back to version 1.2.0']);
     expect(auditReads()).toBe(readsBefore + 1);
+  });
+
+  // Guards a built-in integration's page: it is never not running (it runs inside Kivali), so Test connection works
+  // as soon as there is a connection and nothing says it is not running; its versions offer no Roll back, even a
+  // replaced one, since its versions come with Kivali and the server refuses a roll back (409).
+  it('lets a built-in integration be tested once connected, and offers no roll back', async () => {
+    const builtin = {
+      ...goIntegrationPage,
+      can_remove: false,
+      summary: { ...goIntegrationPage.summary, builtin: true, pending_version: undefined },
+      versions: goIntegrationPage.versions.filter((v) => v.state === 'approved' || v.state === 'superseded'),
+    };
+    await renderOrg(PATH, { routes: { ['GET ' + API]: builtin, ['POST ' + API + '/connection/verify']: builtin } });
+    expect(screen.getByText('Built in')).toBeInTheDocument();
+    expect(screen.queryByText(/not running/i)).toBeNull();
+    expect(screen.queryByText(/waits for your approval/)).toBeNull();
+    const test = screen.getByRole('button', { name: 'Test connection' });
+    expect(test).toBeEnabled();
+    await click(test);
+    expect(called('POST', API + '/connection/verify')).toBe(true);
+    const versions = within(screen.getByRole('region', { name: 'Versions' }));
+    expect(versions.getByText('Replaced')).toBeInTheDocument();
+    expect(versions.queryAllByRole('button')).toEqual([]);
+    expect(screen.queryByRole('button', { name: 'Remove' })).toBeNull();
+  });
+
+  // Guards a built-in record this version of Kivali does not carry (status not_included): nothing runs it, so the
+  // page must not say Kivali is starting it, Test connection waits, and Remove is offered (can_remove), since the
+  // server removes such a record and the owner has no other way to take it off the team.
+  it('says a built-in integration is not in this version of Kivali and lets it be removed', async () => {
+    const stale = { ...goIntegrationPage, can_remove: true, summary: { ...goIntegrationPage.summary, builtin: true, status: 'not_included', pending_version: undefined } };
+    await renderOrg(PATH, { routes: { ['GET ' + API]: stale, ['DELETE ' + API]: null } });
+    expect(screen.getByText('Not in this version of Kivali')).toHaveClass('kv-badge');
+    expect(screen.getByText('Another version of Kivali shipped it, and this one does not include it. Agents cannot use it; you can remove it.')).toBeInTheDocument();
+    expect(screen.queryByText(/Kivali is starting it/)).toBeNull();
+    expect(screen.getByRole('button', { name: 'Test connection' })).toBeDisabled();
+    await click(screen.getByRole('button', { name: 'Remove' }));
+    await click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Remove' }));
+    expect(called('DELETE', API)).toBe(true);
   });
 
   // Guards a refused roll back (a 409, such as a version answered in another tab): the dialog stays open with the

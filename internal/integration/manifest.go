@@ -27,6 +27,8 @@ const ManifestName = "manifest.json"
 
 // Manifest is a bundle's manifest.json. Fields Kivali does not read
 // are tolerated and kept: the store keeps the manifest byte for byte.
+// A built-in integration's manifest (internal/builtinintegrations) has
+// the same shape with no server, and is written as this type marshals.
 type Manifest struct {
 	ManifestVersion string     `json:"manifest_version"`
 	Name            string     `json:"name"`
@@ -34,7 +36,7 @@ type Manifest struct {
 	DisplayName     string     `json:"display_name"`
 	Description     string     `json:"description"`
 	Author          Author     `json:"author"`
-	Server          Server     `json:"server"`
+	Server          Server     `json:"server,omitzero"`
 	UserConfig      UserConfig `json:"user_config"`
 	Tools           []Tool     `json:"tools"`
 	Kivali          Kivali     `json:"kivali"`

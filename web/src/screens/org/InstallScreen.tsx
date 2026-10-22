@@ -19,7 +19,8 @@ export function bundleLine(files: number, bytes: number): string {
 /**
  * A version's install screen: what it is, who built it, what it changes from the version in use, every host it
  * reaches, every secret its connection holds, every action and what the access form asks. Approving installs it;
- * nothing in it runs before. A superseded version can be rolled back to from here.
+ * nothing in it runs before. A superseded version can be rolled back to from here. A version of an integration that
+ * ships with Kivali says so, and offers none of these: its versions come with Kivali.
  */
 export function InstallScreen() {
   const { name = '', version = '' } = useParams();
@@ -94,7 +95,9 @@ export function InstallScreen() {
           {v.author || 'The bundle names no author.'}
         </Text>
         <Text as="p" variant="caption" tone="muted">
-          {'Published by ' + v.published_by.name + (whenLabel(v.published_at, now) ? ' · ' + whenLabel(v.published_at, now) : '')}
+          {v.builtin
+            ? 'Ships with Kivali'
+            : 'Published by ' + v.published_by.name + (whenLabel(v.published_at, now) ? ' · ' + whenLabel(v.published_at, now) : '')}
         </Text>
       </Block>
 
@@ -102,7 +105,7 @@ export function InstallScreen() {
         <Text as="p" variant="body">
           {v.version}
         </Text>
-        {v.current_version && (
+        {v.current_version && !v.builtin && (
           <Text as="p" variant="caption" tone="muted">
             {'Replaces version ' + v.current_version}
           </Text>
@@ -124,7 +127,8 @@ export function InstallScreen() {
         )}
       </Block>
 
-      {v.current_version && (
+      {/* Nothing replaces a built-in's version by approval, so there is no change to weigh. */}
+      {v.current_version && !v.builtin && (
         <Block label={'What changes from version ' + v.current_version}>
           {v.changes.length === 0 ? (
             <Text as="p" variant="body">
@@ -143,7 +147,11 @@ export function InstallScreen() {
       )}
 
       <Block label="Reaches these hosts">
-        {v.hosts.length === 0 ? (
+        {v.builtin ? (
+          <Text as="p" variant="body">
+            Reaches the hosts its connection names.
+          </Text>
+        ) : v.hosts.length === 0 ? (
           <Text as="p" variant="caption" tone="muted">
             No hosts.
           </Text>
@@ -220,11 +228,13 @@ export function InstallScreen() {
         )}
       </Block>
 
-      <Block label="Bundle">
-        <Text as="p" variant="body">
-          {bundleLine(v.file_count, v.bundle_bytes)}
-        </Text>
-      </Block>
+      {!v.builtin && (
+        <Block label="Bundle">
+          <Text as="p" variant="body">
+            {bundleLine(v.file_count, v.bundle_bytes)}
+          </Text>
+        </Block>
+      )}
 
       {v.findings.length > 0 && (
         <Block label="The check noted">
@@ -238,9 +248,14 @@ export function InstallScreen() {
         </Block>
       )}
 
-      <Banner tone="info">The check only reads the bundle. This screen is the review: what it reaches, what it holds, what it does.</Banner>
+      {v.builtin ? (
+        <Banner tone="info">This integration ships with Kivali. It needs no install, and Kivali’s updates bring its new versions.</Banner>
+      ) : (
+        <Banner tone="info">The check only reads the bundle. This screen is the review: what it reaches, what it holds, what it does.</Banner>
+      )}
 
-      {v.state === 'pending' && (
+      {/* A built-in integration's versions come with Kivali: nothing here approves, rejects or rolls back to one. */}
+      {!v.builtin && v.state === 'pending' && (
         <div className="app-int-decision">
           <Button variant="ghost" onClick={() => setRejecting(true)} disabled={action.busy}>
             Reject
@@ -251,7 +266,7 @@ export function InstallScreen() {
         </div>
       )}
 
-      {v.state === 'superseded' && (
+      {!v.builtin && v.state === 'superseded' && (
         <div className="app-int-decision">
           <Button variant="ghost" onClick={() => setRollingBack(true)} disabled={action.busy}>
             Roll back

@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/kivali-ai/kivali/internal/agent"
+	"github.com/kivali-ai/kivali/internal/builtinintegrations"
 	"github.com/kivali-ai/kivali/internal/integration"
 	"github.com/kivali-ai/kivali/internal/integrationpod"
 	"github.com/kivali-ai/kivali/internal/secrets"
@@ -93,8 +94,11 @@ type integrationView struct {
 	secretSet map[string]bool
 	reconnect bool
 	access    []store.IntegrationAccess
-	// running is whether the integration's shim is connected.
+	// running is whether the integration can be called: its shim is
+	// connected, or it ships with Kivali and this binary carries it.
 	running bool
+	// builtin is its code when it ships with Kivali; nil for a bundle.
+	builtin builtinintegrations.Integration
 }
 
 // loadIntegration reads one integration whole. A missing one is
@@ -104,7 +108,7 @@ func (s *Server) loadIntegration(ctx context.Context, name string) (*integration
 	if err != nil {
 		return nil, err
 	}
-	v := &integrationView{it: it, secretSet: map[string]bool{}, running: s.Integrations.Running(name)}
+	v := &integrationView{it: it, secretSet: map[string]bool{}, running: s.integrationRunning(it), builtin: s.builtinFor(it)}
 	if v.versions, err = s.Store.IntegrationVersions(name); err != nil {
 		return nil, err
 	}
@@ -164,18 +168,72 @@ func (s *Server) readConnectionSecret(ctx context.Context, v *integrationView) {
 
 func (v *integrationView) status() apitypes.IntegrationStatus {
 	switch {
+	case v.staleBuiltin():
+		return apitypes.IntegrationStatusNotIncluded
 	case v.it.CurrentVersion == "":
 		return apitypes.IntegrationStatusPending
 	case !v.it.Enabled:
 		return apitypes.IntegrationStatusOff
-	case !v.it.Builtin && !v.running:
+	case !v.running:
 		// Connected or not is the running server's to show: Test
-		// connection and agents' calls need it up.
+		// connection and agents' calls need it up. A built-in one is
+		// always running while its code is in the binary.
 		return apitypes.IntegrationStatusNotRunning
 	case v.conn != nil && !v.reconnect:
 		return apitypes.IntegrationStatusConnected
 	}
 	return apitypes.IntegrationStatusNotConnected
+}
+
+// staleBuiltin reports whether v is a built-in integration this binary
+// does not carry: another version of Kivali shipped it, nothing runs
+// it, and the owner may remove it.
+func (v *integrationView) staleBuiltin() bool { return v.it.Builtin && v.builtin == nil }
+
+// whoBuilt is who fixes what is wrong with v's code: Kivali's
+// developers for a built-in one, whoever built the bundle otherwise.
+func (v *integrationView) whoBuilt() string {
+	if v.it.Builtin {
+		return whoDevelopers
+	}
+	return whoBundle
+}
+
+// builtinMove is what the owner tried on a built-in integration that
+// is refused.
+type builtinMove int
+
+const (
+	builtinApprove builtinMove = iota
+	builtinReject
+	builtinRollBack
+	builtinRemove
+	builtinUpload
+	builtinNotIncluded
+)
+
+// builtinRefusal is the sentence every refusal of a built-in
+// integration answers with, naming it by display.
+func builtinRefusal(display string, move builtinMove) string {
+	switch move {
+	case builtinRemove:
+		return display + " ships with Kivali and cannot be removed; switch it off instead"
+	case builtinUpload:
+		return display + " ships with Kivali, so a bundle cannot replace it"
+	case builtinNotIncluded:
+		return display + " is not in this version of Kivali, so nothing runs it; you can remove it"
+	}
+	verb := map[builtinMove]string{builtinApprove: "approve", builtinReject: "reject", builtinRollBack: "roll back to"}[move]
+	return display + " ships with Kivali, and its version changes only with Kivali's updates; there is nothing to " + verb
+}
+
+// integrationDisplay is name's display name as its record has it, or
+// name.
+func (s *Server) integrationDisplay(name string) string {
+	if it, err := s.Store.GetIntegration(name); err == nil && it.DisplayName != "" {
+		return it.DisplayName
+	}
+	return name
 }
 
 func (v *integrationView) displayName() string {
@@ -300,7 +358,7 @@ func (s *Server) integrationPage(v *integrationView) apitypes.IntegrationPage {
 		Access:           []apitypes.AccessRow{},
 		AgentsWithout:    []apitypes.PersonRef{},
 		Versions:         []apitypes.IntegrationVersionSummary{},
-		CanRemove:        !v.it.Builtin,
+		CanRemove:        !v.it.Builtin || v.staleBuiltin(),
 	}
 	if v.manifest != nil {
 		page.Author = v.manifest.Author.Name
@@ -340,12 +398,21 @@ func (s *Server) integrationPage(v *integrationView) apitypes.IntegrationPage {
 			Version:     ver.Version,
 			State:       apitypes.IntegrationVersionState(ver.State),
 			PublishedAt: ver.PublishedAt,
-			PublishedBy: personNamed(names, ver.PublishedBy),
+			PublishedBy: publisherNamed(names, v.it, ver.PublishedBy),
 			ApprovedAt:  ver.ApprovedAt,
 			NotesMD:     ver.NotesMD,
 		})
 	}
 	return page
+}
+
+// publisherNamed is who published a version of it: Kivali for a
+// built-in one's, else the agent or the owner.
+func publisherNamed(names map[string]string, it store.Integration, slug string) apitypes.PersonRef {
+	if it.Builtin && slug == store.BuiltinIntegrationPublisher {
+		return apitypes.PersonRef{Slug: slug, Name: "Kivali"}
+	}
+	return personNamed(names, slug)
 }
 
 // integrationVersionView is a version's install screen.
@@ -358,7 +425,7 @@ func (s *Server) integrationVersionView(v *integrationView, ver store.Integratio
 		State:            apitypes.IntegrationVersionState(ver.State),
 		Author:           m.Author.Name,
 		PublishedAt:      ver.PublishedAt,
-		PublishedBy:      personNamed(s.agentNames(), ver.PublishedBy),
+		PublishedBy:      publisherNamed(s.agentNames(), v.it, ver.PublishedBy),
 		ApprovedAt:       ver.ApprovedAt,
 		NotesMD:          ver.NotesMD,
 		Runtime:          m.Server.Type,
@@ -370,6 +437,7 @@ func (s *Server) integrationVersionView(v *integrationView, ver store.Integratio
 		BundleBytes:      ver.BundleBytes,
 		FileCount:        ver.FileCount,
 		Current:          v.it.CurrentVersion == ver.Version,
+		Builtin:          v.it.Builtin,
 		Changes:          []string{},
 		Findings:         nonNilStrings(slices.Clone(ver.Findings)),
 	}
@@ -493,7 +561,7 @@ func (s *Server) handleAPIIntegrationUpload(w http.ResponseWriter, r *http.Reque
 	})
 	switch {
 	case errors.Is(err, store.ErrIntegrationBuiltin):
-		writeAPIError(w, http.StatusConflict, name+" ships with Kivali, so a bundle cannot replace it", whoYou)
+		writeAPIError(w, http.StatusConflict, builtinRefusal(s.integrationDisplay(name), builtinUpload), whoYou)
 		return
 	case errors.Is(err, store.ErrIntegrationVersionExists):
 		writeAPIError(w, http.StatusConflict, fmt.Sprintf("version %s of %s is already stored; a changed bundle needs a new version number", version, name), whoBundle)
@@ -537,22 +605,26 @@ func (s *Server) handleAPIIntegrationToggle(on bool) http.HandlerFunc {
 }
 
 // handleAPIIntegrationRemove removes an integration: its connections'
-// Secrets first, then everything the store keeps. A built-in one is a
-// 409.
+// Secrets first, then everything the store keeps. A built-in one this
+// binary carries is a 409; one it does not carry is removed.
 func (s *Server) handleAPIIntegrationRemove(w http.ResponseWriter, r *http.Request) {
 	defer s.lockIntegrations()()
 	v, ok := s.integrationOr404(w, r)
 	if !ok {
 		return
 	}
-	if v.it.Builtin {
-		writeAPIError(w, http.StatusConflict, v.displayName()+" ships with Kivali and cannot be removed; switch it off instead", whoYou)
+	if v.builtin != nil {
+		writeAPIError(w, http.StatusConflict, builtinRefusal(v.displayName(), builtinRemove), whoYou)
 		return
 	}
 	if !s.deleteConnectionSecrets(w, r, v.it.Name) {
 		return
 	}
-	if err := s.Store.RemoveIntegration(v.it.Name); err != nil {
+	remove := s.Store.RemoveIntegration
+	if v.staleBuiltin() {
+		remove = s.Store.RemoveStaleBuiltinIntegration
+	}
+	if err := remove(v.it.Name); err != nil {
 		log.Printf("integration %s: remove: %v", v.it.Name, err)
 		writeAPIError(w, http.StatusInternalServerError, "the integration could not be removed", whoServer)
 		return
@@ -625,6 +697,13 @@ func (s *Server) handleAPIIntegrationAnswer(approve bool) http.HandlerFunc {
 			return
 		case err != nil:
 			writeAPIError(w, http.StatusInternalServerError, "the version could not be read", whoServer)
+			return
+		case v.it.Builtin:
+			move := builtinReject
+			if approve {
+				move = builtinApprove
+			}
+			writeAPIError(w, http.StatusConflict, builtinRefusal(v.displayName(), move), whoNoOne)
 			return
 		case ver.State != store.IntegrationVersionPending:
 			writeAPIError(w, http.StatusConflict, fmt.Sprintf("version %s of %s is not waiting for approval: it is %s", version, name, ver.State), whoNoOne)
@@ -708,18 +787,26 @@ func integrationAnswerError(name, version string, err error) error {
 }
 
 // approveIntegrationVersion makes a pending version the one in use,
-// and its pod follows.
+// and its pod follows. A built-in integration's is refused in
+// builtinRefusal's words.
 func (s *Server) approveIntegrationVersion(name, version string) error {
 	if err := s.Store.ApproveIntegrationVersion(name, version, s.clk().Now()); err != nil {
+		if errors.Is(err, store.ErrIntegrationBuiltin) {
+			return errors.New(builtinRefusal(s.integrationDisplay(name), builtinApprove))
+		}
 		return integrationAnswerError(name, version, err)
 	}
 	s.Integrations.Changed()
 	return nil
 }
 
-// rejectIntegrationVersion turns a pending version down.
+// rejectIntegrationVersion turns a pending version down. A built-in
+// integration's is refused in builtinRefusal's words.
 func (s *Server) rejectIntegrationVersion(name, version string) error {
 	if err := s.Store.RejectIntegrationVersion(name, version, s.clk().Now()); err != nil {
+		if errors.Is(err, store.ErrIntegrationBuiltin) {
+			return errors.New(builtinRefusal(s.integrationDisplay(name), builtinReject))
+		}
 		return integrationAnswerError(name, version, err)
 	}
 	s.Integrations.Changed()
@@ -762,6 +849,9 @@ func (s *Server) handleAPIIntegrationRollBack(w http.ResponseWriter, r *http.Req
 	case err != nil:
 		writeAPIError(w, http.StatusInternalServerError, "the version could not be read", whoServer)
 		return
+	case v.it.Builtin:
+		writeAPIError(w, http.StatusConflict, builtinRefusal(v.displayName(), builtinRollBack), whoNoOne)
+		return
 	case ver.State != store.IntegrationVersionSuperseded:
 		writeAPIError(w, http.StatusConflict, rollBackRefusal(name, version, ver.State), whoNoOne)
 		return
@@ -772,6 +862,10 @@ func (s *Server) handleAPIIntegrationRollBack(w http.ResponseWriter, r *http.Req
 	case errors.Is(err, store.ErrIntegrationVersionNotSuperseded):
 		// Answered since it was read: another approval or roll back.
 		writeAPIError(w, http.StatusConflict, fmt.Sprintf("version %s of %s is no longer one a later version replaced", version, name), whoNoOne)
+		return
+	case errors.Is(err, store.ErrIntegrationBuiltin):
+		// Built in since it was read: a restore wrote it.
+		writeAPIError(w, http.StatusConflict, builtinRefusal(s.integrationDisplay(name), builtinRollBack), whoNoOne)
 		return
 	case errors.Is(err, store.ErrNotFound):
 		writeAPIError(w, http.StatusNotFound, "version "+version+" of "+name+" is not stored", whoLink)
@@ -1012,15 +1106,24 @@ func (t toolResult) firstText() string {
 	return ""
 }
 
-// callIntegrationTool calls one of the integration's tools for the
-// owner (no agent), writes the audit row, and returns the result.
-// failed is the integration's words when the call did not go through:
-// the server's error, its tool's error result, or the deadline.
+// callIntegrationTool calls one of v's tools for the owner (no agent),
+// writes the audit row with tool as its action, and returns the result.
+// For an integration that ships with Kivali, builtin makes the call
+// instead, answering as the server's tools/call would. failed is the
+// integration's words when the call did not go through: the server's
+// error, its tool's error result, or the deadline.
 // errIntegrationNotRunning and a caller that went away are returned as
 // err, with no audit row.
-func (s *Server) callIntegrationTool(r *http.Request, name, tool string) (res toolResult, failed string, err error) {
+func (s *Server) callIntegrationTool(r *http.Request, v *integrationView, tool string, builtin func(context.Context) (json.RawMessage, error)) (res toolResult, failed string, err error) {
+	name := v.it.Name
 	start := s.clk().Now()
-	raw, callErr := s.Integrations.Call(r.Context(), name, "tools/call", map[string]any{"name": tool, "arguments": map[string]any{}})
+	var raw json.RawMessage
+	var callErr error
+	if v.builtin != nil {
+		raw, callErr = builtin(r.Context())
+	} else {
+		raw, callErr = s.Integrations.Call(r.Context(), name, "tools/call", map[string]any{"name": tool, "arguments": map[string]any{}})
+	}
 	var rpcErr *integrationpod.RPCError
 	switch {
 	case errors.Is(callErr, errIntegrationNotRunning), r.Context().Err() != nil:
@@ -1067,8 +1170,9 @@ func (s *Server) callIntegrationTool(r *http.Request, name, tool string) (res to
 }
 
 // handleAPIIntegrationVerify is Test connection: it calls the
-// integration's verify action through the running server and keeps
-// what it found on the connection.
+// integration's verify action through the running server, or a
+// built-in's Verify with the connection, and keeps what it found on
+// the connection.
 func (s *Server) handleAPIIntegrationVerify(w http.ResponseWriter, r *http.Request) {
 	v, ok := s.integrationOr404(w, r)
 	if !ok {
@@ -1076,6 +1180,9 @@ func (s *Server) handleAPIIntegrationVerify(w http.ResponseWriter, r *http.Reque
 	}
 	name := v.it.Name
 	switch {
+	case v.staleBuiltin():
+		writeAPIError(w, http.StatusConflict, builtinRefusal(v.displayName(), builtinNotIncluded), whoYou)
+		return
 	case v.it.CurrentVersion == "":
 		writeAPIError(w, http.StatusConflict, "approve a version of "+v.displayName()+" first", whoYou)
 		return
@@ -1083,16 +1190,18 @@ func (s *Server) handleAPIIntegrationVerify(w http.ResponseWriter, r *http.Reque
 		writeAPIError(w, http.StatusConflict, "connect the integration first", whoYou)
 		return
 	case v.manifest.Kivali.Verify == "":
-		writeAPIError(w, http.StatusConflict, v.displayName()+" has no connection test", whoBundle)
+		writeAPIError(w, http.StatusConflict, v.displayName()+" has no connection test", v.whoBuilt())
 		return
 	case !v.running:
 		writeAPIError(w, http.StatusConflict, errNotRunning, whoBundle)
 		return
 	}
 	connID := v.conn.ID
-	res, failed, err := s.callIntegrationTool(r, name, v.manifest.Kivali.Verify)
+	res, failed, err := s.callIntegrationTool(r, v, v.manifest.Kivali.Verify, func(ctx context.Context) (json.RawMessage, error) {
+		return s.builtinOwnerCall(ctx, v.builtin, name, true, "")
+	})
 	if errors.Is(err, errIntegrationNotRunning) {
-		writeAPIError(w, http.StatusConflict, errNotRunning, whoBundle)
+		writeAPIError(w, http.StatusConflict, errNotRunning, v.whoBuilt())
 		return
 	}
 	if err != nil {
@@ -1217,7 +1326,8 @@ func (s *Server) handleAPIIntegrationAccessDelete(w http.ResponseWriter, r *http
 }
 
 // handleAPIIntegrationChoices lists a field's options through the
-// integration, which needs its runtime.
+// integration, which needs its runtime; a built-in one's Choices lists
+// them through its connection, which it needs.
 func (s *Server) handleAPIIntegrationChoices(w http.ResponseWriter, r *http.Request) {
 	v, ok := s.integrationOr404(w, r)
 	if !ok {
@@ -1229,25 +1339,35 @@ func (s *Server) handleAPIIntegrationChoices(w http.ResponseWriter, r *http.Requ
 		writeAPIError(w, http.StatusNotFound, v.displayName()+" lists no options for "+key, whoDevelopers)
 		return
 	}
-	if !v.running {
+	switch {
+	case v.staleBuiltin():
+		writeAPIError(w, http.StatusConflict, builtinRefusal(v.displayName(), builtinNotIncluded), whoYou)
+		return
+	case !v.running:
 		writeAPIError(w, http.StatusConflict, errNotRunning, whoBundle)
 		return
+	case v.builtin != nil && v.conn == nil:
+		writeAPIError(w, http.StatusConflict, "connect the integration first", whoYou)
+		return
 	}
-	res, failed, err := s.callIntegrationTool(r, v.it.Name, v.manifest.Kivali.Access.Choices[key])
+	listName := v.manifest.Kivali.Access.Choices[key]
+	res, failed, err := s.callIntegrationTool(r, v, listName, func(ctx context.Context) (json.RawMessage, error) {
+		return s.builtinOwnerCall(ctx, v.builtin, v.it.Name, false, listName)
+	})
 	if errors.Is(err, errIntegrationNotRunning) {
-		writeAPIError(w, http.StatusConflict, errNotRunning, whoBundle)
+		writeAPIError(w, http.StatusConflict, errNotRunning, v.whoBuilt())
 		return
 	}
 	if err != nil {
 		return
 	}
 	if failed != "" {
-		writeAPIError(w, http.StatusBadGateway, v.displayName()+" could not list the options: "+failed, whoBundle)
+		writeAPIError(w, http.StatusBadGateway, v.displayName()+" could not list the options: "+failed, v.whoBuilt())
 		return
 	}
 	options, ok := parseChoices(res.firstText())
 	if !ok {
-		writeAPIError(w, http.StatusBadGateway, v.displayName()+"'s options are not a list of names", whoBundle)
+		writeAPIError(w, http.StatusBadGateway, v.displayName()+"'s options are not a list of names", v.whoBuilt())
 		return
 	}
 	writeJSON(w, http.StatusOK, apitypes.AccessChoices{Options: options})

@@ -1,6 +1,6 @@
 # Integrations
 
-An integration is an external service your agents can act on, such as a CRM, a blog or a ticket tracker. Each one is installed from a bundle, connected with a token you paste, and given to agents one at a time, each with its own access. This page covers having one built, installing one and its new versions, rolling back to an earlier version, connecting and testing it, giving agents access, what an agent then sees, the record of their calls, its log, and switching it off or removing it.
+An integration is an external service your agents can act on, such as a CRM, a blog or a ticket tracker. Each one is installed from a bundle or ships with Kivali, is connected with a token you paste, and is given to agents one at a time, each with its own access. This page covers having one built, installing one and its new versions, rolling back to an earlier version, connecting and testing it, giving agents access, what an agent then sees, the record of their calls, its log, and switching it off or removing it.
 
 Integrations are under **Org**, **Integrations**.
 
@@ -8,7 +8,9 @@ Integrations are under **Org**, **Integrations**.
 
 An integration gives agents **actions**: things they can do in the service, such as "create a blog post" or "list contacts". Its **connection** is how it signs in to the service: a token or key you copy from the service's settings, and sometimes a field or two more, such as an account name. Its **access** is what one agent may do with it, chosen on a form the integration describes: which blogs, which projects, whether it may publish.
 
-An integration is installed one **version** at a time. Nothing in a version runs until you approve it. Once approved and switched on, it runs on its own, apart from Kivali and from your agents, and reaches only the hosts its install screen listed.
+An integration is installed one **version** at a time. Nothing in a version runs until you approve it. Once approved and switched on, an integration you install runs on its own, apart from Kivali and from your agents, and reaches only the hosts its install screen listed.
+
+Some integrations ship with Kivali. They are on the Integrations page already, marked **Built in**, and need no install: their version comes with Kivali, and Kivali's updates bring the next one, so there is nothing to approve, reject or roll back to. They run inside Kivali, and their network reach is Kivali's own: they reach the hosts their connection names, and their install screen lists no hosts of their own. Connect one and give agents access as you would any other. A built-in integration cannot be removed; switch it off when your team should not use it, and it stays off. One that this version of Kivali does not include (another version shipped it) is marked **Not in this version of Kivali**: agents cannot use it, and you can remove it.
 
 ## Have an integration built
 

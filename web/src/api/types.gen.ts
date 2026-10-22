@@ -1774,10 +1774,17 @@ export const IntegrationStatusOff = "off";
 /**
  * IntegrationStatusNotRunning: approved and on, but the integration
  * is not running right now (starting, or stopped after a failure);
- * Test connection and agents' calls wait for it.
+ * Test connection and agents' calls wait for it. An integration that
+ * ships with Kivali is never not running.
  */
 export const IntegrationStatusNotRunning = "not_running";
-export type IntegrationStatus = typeof IntegrationStatusPending | typeof IntegrationStatusNotConnected | typeof IntegrationStatusConnected | typeof IntegrationStatusOff | typeof IntegrationStatusNotRunning;
+/**
+ * IntegrationStatusNotIncluded: a built-in integration this version
+ * of Kivali does not carry (another version shipped it). Nothing
+ * runs it and agents cannot use it; it can be removed.
+ */
+export const IntegrationStatusNotIncluded = "not_included";
+export type IntegrationStatus = typeof IntegrationStatusPending | typeof IntegrationStatusNotConnected | typeof IntegrationStatusConnected | typeof IntegrationStatusOff | typeof IntegrationStatusNotRunning | typeof IntegrationStatusNotIncluded;
 /**
  * IntegrationSummary is one row of the list.
  */
@@ -1846,7 +1853,8 @@ export interface IntegrationPage {
    */
   versions: IntegrationVersionSummary[];
   /**
-   * CanRemove is false for a built-in integration.
+   * CanRemove is false for a built-in integration this version of
+   * Kivali carries.
    */
   can_remove: boolean;
 }
@@ -2062,7 +2070,8 @@ export interface IntegrationVersion {
   approved_at?: string /* RFC 3339 */;
   notes_md: string;
   /**
-   * Runtime is what runs the bundle: python.
+   * Runtime is what runs the bundle: python; empty for a built-in
+   * integration, which runs inside Kivali.
    */
   runtime: string;
   /**
@@ -2079,6 +2088,13 @@ export interface IntegrationVersion {
    * Current is true when this is the version in use now.
    */
   current: boolean;
+  /**
+   * Builtin is true for a version of an integration that ships with
+   * Kivali: it has no bundle, needs no approval and comes with
+   * Kivali's updates, so it is never approved, rejected or rolled
+   * back to here (409).
+   */
+  builtin: boolean;
   /**
    * CurrentVersion is the version in use now, when there is one and
    * it is not this one, so the screen can say what approving replaces.

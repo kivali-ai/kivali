@@ -147,11 +147,13 @@ interface VersionRowProps {
   v: IntegrationVersionSummary;
   now: number;
   busy: boolean;
+  /** A built-in integration's versions come with Kivali: none offers Roll back. */
+  builtin: boolean;
   onRollBack(): void;
 }
 
 /** One version: its row opens its install screen; a superseded one has Roll back beside it. */
-function VersionRow({ name, v, now, busy, onRollBack }: VersionRowProps) {
+function VersionRow({ name, v, now, busy, builtin, onRollBack }: VersionRowProps) {
   const href = useHref(versionPath(name, v.version));
   const notes = v.notes_md.trim().split('\n')[0] ?? '';
   const row = (
@@ -169,7 +171,7 @@ function VersionRow({ name, v, now, busy, onRollBack }: VersionRowProps) {
       href={href}
     />
   );
-  if (v.state !== 'superseded') return row;
+  if (v.state !== 'superseded' || builtin) return row;
   // The button sits beside the row's link, never inside it.
   return (
     <div className="app-int-version">
@@ -333,6 +335,10 @@ export function IntegrationPage() {
   const pending = s.pending_version;
   const invalid = invalidAccessLine(p.access.filter((r) => r.invalid).length);
   const chosen = p.agents_without.some((a) => a.slug === pick) ? pick : (p.agents_without[0]?.slug ?? '');
+  // What needs the integration running waits while it is not. A built-in one runs inside Kivali and is never
+  // not running, so Test connection is there as soon as it is connected; one this version of Kivali does not
+  // carry never runs.
+  const running = s.status !== 'not_running' && s.status !== 'not_included';
 
   const accessColumns: TableColumn<AccessRow & { id: string }>[] = [
     { key: 'agent', label: 'Agent', render: (r) => <span className="app-int-nowrap">{r.agent.name}</span> },
@@ -399,6 +405,11 @@ export function IntegrationPage() {
             Kivali is starting it, or it stopped. The log below says what happened.
           </Text>
         )}
+        {s.status === 'not_included' && (
+          <Text as="p" variant="caption" tone="muted">
+            Another version of Kivali shipped it, and this one does not include it. Agents cannot use it; you can remove it.
+          </Text>
+        )}
         {s.description && (
           <Text as="p" variant="body">
             {s.description}
@@ -430,7 +441,7 @@ export function IntegrationPage() {
             key={formSeq}
             page={p}
             busy={action.busy}
-            running={s.status !== 'not_running'}
+            running={running}
             now={now}
             onSave={save}
             onVerify={verify}
@@ -495,7 +506,7 @@ export function IntegrationPage() {
         ) : (
           <RowList>
             {p.versions.map((v) => (
-              <VersionRow key={v.version} name={name} v={v} now={now} busy={action.busy} onRollBack={() => setRollingBack(v.version)} />
+              <VersionRow key={v.version} name={name} v={v} now={now} busy={action.busy} builtin={s.builtin} onRollBack={() => setRollingBack(v.version)} />
             ))}
           </RowList>
         )}
@@ -512,7 +523,7 @@ export function IntegrationPage() {
 
       {grant && (
         <AccessDialog
-          running={s.status !== 'not_running'}
+          running={running}
           name={name}
           displayName={s.display_name}
           agent={grant.agent}

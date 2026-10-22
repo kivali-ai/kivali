@@ -20,6 +20,16 @@
       "enabled": true,
       "builtin": false,
       "agents": 0
+    },
+    {
+      "name": "maps",
+      "display_name": "Maps",
+      "description": "Places and routes.",
+      "version": "1.0.0",
+      "status": "not_included",
+      "enabled": true,
+      "builtin": true,
+      "agents": 0
     }
   ]
 }

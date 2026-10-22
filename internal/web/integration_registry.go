@@ -864,13 +864,20 @@ func (r *integrationRegistry) deliver(name string, msg integrationpod.Message) {
 // with which of them are secret, from the store and the Secret. A
 // missing connection is store.ErrNotFound.
 func (r *integrationRegistry) connectionValues(ctx context.Context, name string) (*integration.Manifest, map[string]string, []string, error) {
+	m, _, values, secretValues, err := r.readConnection(ctx, name)
+	return m, values, secretValues, err
+}
+
+// readConnection is connectionValues with the connection's record,
+// which a built-in integration's call needs for its id.
+func (r *integrationRegistry) readConnection(ctx context.Context, name string) (*integration.Manifest, store.IntegrationConnection, map[string]string, []string, error) {
 	_, m, err := r.store.CurrentIntegrationVersion(name)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, store.IntegrationConnection{}, nil, nil, err
 	}
 	conn, err := r.store.GetIntegrationConnection(name)
 	if err != nil {
-		return m, nil, nil, err
+		return m, conn, nil, nil, err
 	}
 	values := map[string]string{}
 	for k, v := range conn.Fields {
@@ -882,7 +889,7 @@ func (r *integrationRegistry) connectionValues(ctx context.Context, name string)
 		switch {
 		case errors.Is(err, secrets.ErrNotFound):
 		case err != nil:
-			return m, nil, nil, err
+			return m, conn, nil, nil, err
 		}
 		for k, v := range data {
 			if f, ok := m.UserConfig.Field(k); ok && f.Sensitive && v != "" {
@@ -891,7 +898,7 @@ func (r *integrationRegistry) connectionValues(ctx context.Context, name string)
 			}
 		}
 	}
-	return m, values, secretValues, nil
+	return m, conn, values, secretValues, nil
 }
 
 // credential is the kivali/credential answer: the server's env with
