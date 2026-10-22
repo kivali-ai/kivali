@@ -230,6 +230,39 @@ func TestAPIIntegrationApproveAndReject(t *testing.T) {
 	assertAPIError(t, orgGet(t, srv, intBase+"/nope/versions/1.0.0"), http.StatusNotFound)
 }
 
+// Why this test exists: software a version's pod installs runs as
+// root at every start, so the owner must read it before approving.
+// The install screen lists the packages the manifest declares and,
+// beside the version in use, names the ones it adds; the page lists
+// those of the version in use. A version without packages says so with
+// an empty list, never null, which the web app would not draw.
+func TestAPIIntegrationPackages(t *testing.T) {
+	srv := newTestServer(t)
+	intUpload(t, srv, intBundle(t, "crm", "1.0.0"))
+	first := orgGet(t, srv, intBase+"/crm/versions/1.0.0")
+	if !strings.Contains(first.Body.String(), `"packages":[]`) {
+		t.Errorf("a version without packages: %s", first.Body.String())
+	}
+	intPost(t, srv, intBase+"/crm/versions/1.0.0/approve")
+
+	m := integrationtest.Manifest("crm", "1.1.0")
+	m["kivali"].(map[string]any)["packages"] = []any{"gh", "jq"}
+	if rr := intUpload(t, srv, integrationtest.Zip(t, "", m, nil)); rr.Code != http.StatusCreated {
+		t.Fatalf("upload: %d %s", rr.Code, rr.Body.String())
+	}
+	v := orgOK[apitypes.IntegrationVersion](t, orgGet(t, srv, intBase+"/crm/versions/1.1.0"))
+	if strings.Join(v.Packages, ",") != "gh,jq" || strings.Join(v.Changes, "|") != "Software added: gh, jq" {
+		t.Errorf("1.1.0's packages %q, changes %q", v.Packages, v.Changes)
+	}
+	if page := orgOK[apitypes.IntegrationPage](t, orgGet(t, srv, intBase+"/crm")); page.Packages == nil || len(page.Packages) != 0 {
+		t.Errorf("the page before approval lists %#v", page.Packages)
+	}
+	intPost(t, srv, intBase+"/crm/versions/1.1.0/approve")
+	if page := orgOK[apitypes.IntegrationPage](t, orgGet(t, srv, intBase+"/crm")); strings.Join(page.Packages, ",") != "gh,jq" {
+		t.Errorf("the page after approval lists %q", page.Packages)
+	}
+}
+
 // crmVersion2 is the fixture's crm at 2.0.0, reaching one more host
 // and with Region's options changed from eu and us to us and apac, so
 // access set for eu does not fit it.

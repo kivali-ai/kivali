@@ -1825,6 +1825,11 @@ export interface IntegrationPage {
    * Hosts is every host the integration reaches.
    */
   hosts: string[];
+  /**
+   * Packages is the Debian packages its pod installs each time it
+   * starts (kivali.packages); empty for none.
+   */
+  packages: string[];
   actions: IntegrationAction[];
   /**
    * ConnectionFields is the connection form, in the bundle's order,
@@ -2145,6 +2150,12 @@ export interface IntegrationVersion {
    */
   connection_method: string;
   hosts: string[];
+  /**
+   * Packages is the Debian packages the pod installs from Debian's
+   * repositories each time it starts, before the server runs
+   * (kivali.packages); empty for none.
+   */
+  packages: string[];
   connection_fields: ConnectionField[];
   actions: IntegrationAction[];
   access_form?: AccessForm;
@@ -2168,9 +2179,9 @@ export interface IntegrationVersion {
   current_version?: string;
   /**
    * Changes is what this version changes from CurrentVersion, in
-   * words, one line each: hosts, connection fields, actions and
-   * access form fields added or removed ("Hosts added:
-   * api.example.com"). Empty without a CurrentVersion, and when none
+   * words, one line each: hosts, software, connection fields, actions
+   * and access form fields added or removed ("Hosts added:
+   * api.example.com", "Software added: gh"). Empty without a CurrentVersion, and when none
    * of those differ.
    */
   changes: string[];
