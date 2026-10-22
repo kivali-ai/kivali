@@ -2010,6 +2010,68 @@ export interface ConnectionSignIn {
   error?: string;
 }
 /**
+ * DeviceSignIn is the answer of POST
+ * /api/v1/org/integrations/{name}/connections/{id}/sign-in/device (and
+ * .../connection/sign-in/device): the code the owner enters on the
+ * service's page, and where. Kivali waits for the owner's approval in
+ * the background; GET .../sign-in says how it went.
+ */
+export interface DeviceSignIn {
+  /**
+   * UserCode is the code the owner enters, as the service gave it.
+   */
+  user_code: string;
+  /**
+   * VerificationURL is the service's page the code is entered on.
+   */
+  verification_url: string;
+  /**
+   * VerificationURLComplete is the same page with the code filled
+   * in, when the service gives one.
+   */
+  verification_url_complete?: string;
+  /**
+   * ExpiresAt is when the code stops working.
+   */
+  expires_at: string /* RFC 3339 */;
+}
+/**
+ * SignInState is how a sign-in under way stands.
+ */
+/**
+ * SignInStatePending: waiting for the owner to approve on the
+ * service's page.
+ */
+export const SignInStatePending = "pending";
+/**
+ * SignInStateDone: signed in; the connection holds the tokens.
+ */
+export const SignInStateDone = "done";
+/**
+ * SignInStateFailed: the service refused, or the owner said no.
+ */
+export const SignInStateFailed = "failed";
+/**
+ * SignInStateExpired: the code expired before the owner approved,
+ * or Kivali has no sign-in under way for the connection (it
+ * restarted since).
+ */
+export const SignInStateExpired = "expired";
+export type SignInState = typeof SignInStatePending | typeof SignInStateDone | typeof SignInStateFailed | typeof SignInStateExpired;
+/**
+ * SignInProgress is the answer of GET
+ * /api/v1/org/integrations/{name}/connections/{id}/sign-in (and
+ * .../connection/sign-in): how the connection's latest sign-in stands.
+ */
+export interface SignInProgress {
+  state: SignInState;
+  /**
+   * Error says why a sign-in failed or expired, in the service's
+   * words where it gave some.
+   */
+  error?: string;
+}
+/**
  * ConnectionWrite is the body of PUT
  * /api/v1/org/integrations/{name}/connection, POST .../connections and
  * PUT .../connections/{id}: field values by key, and the label. A

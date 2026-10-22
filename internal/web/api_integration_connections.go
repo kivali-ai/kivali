@@ -115,7 +115,7 @@ func (v *integrationView) connectionState(c *connView) apitypes.ConnectionState 
 // in and, while the connection works, how and when they did and when
 // its token is next refreshed; or why they must sign in again.
 func (v *integrationView) connectionSignIn(c *connView) *apitypes.ConnectionSignIn {
-	out := &apitypes.ConnectionSignIn{Ways: v.manifest.Kivali.Connection.Ways(), SignedIn: !c.rec.NeedsSignIn(c.hasToken)}
+	out := &apitypes.ConnectionSignIn{Ways: offeredSignInWays(v.manifest.Kivali.Connection), SignedIn: !c.rec.NeedsSignIn(c.hasToken)}
 	si := c.rec.SignIn
 	if si == nil {
 		return out
@@ -457,6 +457,8 @@ func (s *Server) deleteConnectionsLocked(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return nil, false
 	}
+	// A sign-in under way would sign in a connection that is gone.
+	s.signInFlows.cancel(v.it.Name, "")
 	revokes, ok := s.deleteConnectionSecrets(w, r, v.it.Name)
 	if !ok {
 		return revokes, false
@@ -506,6 +508,7 @@ func (s *Server) deleteConnectionByIDLocked(w http.ResponseWriter, r *http.Reque
 		return nil, false
 	}
 	name := v.it.Name
+	s.signInFlows.cancel(name, c.rec.ID)
 	var revokes signInRevocations
 	// The Secret goes first: on a failure the record stays, so the
 	// Secret is not left behind with nothing naming it.
@@ -565,21 +568,21 @@ func (t toolResult) firstText() string {
 // error, its tool's error result, or the deadline.
 // errIntegrationNotRunning and a caller that went away are returned as
 // err, with no audit row.
-func (s *Server) callIntegrationTool(r *http.Request, v *integrationView, tool string, builtin func(context.Context) (json.RawMessage, *strings.Replacer, error)) (res toolResult, failed string, err error) {
+func (s *Server) callIntegrationTool(ctx context.Context, v *integrationView, tool string, builtin func(context.Context) (json.RawMessage, *strings.Replacer, error)) (res toolResult, failed string, err error) {
 	name := v.it.Name
 	start := s.clk().Now()
 	var raw json.RawMessage
 	var scrub *strings.Replacer
 	var callErr error
 	if v.builtin != nil {
-		raw, scrub, callErr = builtin(r.Context())
+		raw, scrub, callErr = builtin(ctx)
 	} else {
-		raw, callErr = s.Integrations.Call(r.Context(), name, "tools/call", map[string]any{"name": tool, "arguments": map[string]any{}})
+		raw, callErr = s.Integrations.Call(ctx, name, "tools/call", map[string]any{"name": tool, "arguments": map[string]any{}})
 	}
 	var rpcErr *integrationpod.RPCError
 	switch {
-	case errors.Is(callErr, errIntegrationNotRunning), r.Context().Err() != nil:
-		return res, "", cmp.Or(callErr, r.Context().Err())
+	case errors.Is(callErr, errIntegrationNotRunning), ctx.Err() != nil:
+		return res, "", cmp.Or(callErr, ctx.Err())
 	case errors.Is(callErr, errIntegrationTimeout):
 		failed = fmt.Sprintf("the integration did not answer within %d seconds", int(integrationCallTimeout/time.Second))
 	case errors.As(callErr, &rpcErr):
@@ -601,7 +604,7 @@ func (s *Server) callIntegrationTool(r *http.Request, v *integrationView, tool s
 	// (the secrets could not be read) the words are held back the way
 	// an agent's answer is.
 	if v.builtin == nil {
-		scrub = s.Integrations.scrubber(r.Context(), name)
+		scrub = s.Integrations.scrubber(ctx, name)
 	}
 	if scrub != nil {
 		failed = scrub.Replace(failed)
@@ -672,33 +675,50 @@ func (s *Server) verifyConnection(w http.ResponseWriter, r *http.Request, v *int
 		writeAPIError(w, http.StatusConflict, errNotRunning, v.whoBuilt())
 		return
 	}
-	connID := c.rec.ID
-	res, failed, err := s.callIntegrationTool(r, v, v.manifest.Kivali.Verify, func(ctx context.Context) (json.RawMessage, *strings.Replacer, error) {
-		return s.builtinOwnerCall(ctx, v.builtin, name, connID, true, "")
-	})
-	if errors.Is(err, errIntegrationNotRunning) {
+	callErr, keepErr := s.testConnection(r.Context(), v, c.rec.ID)
+	switch {
+	case errors.Is(callErr, errIntegrationNotRunning):
 		writeAPIError(w, http.StatusConflict, errNotRunning, v.whoBuilt())
 		return
-	}
-	if err != nil {
+	case callErr != nil:
 		return
+	case keepErr != nil:
+		log.Printf("integration %s: keep the connection test: %v", name, keepErr)
+		writeAPIError(w, http.StatusInternalServerError, "the connection test's result could not be saved", whoServer)
+		return
+	}
+	s.writeIntegrationPage(w, r)
+}
+
+// testConnection runs v's connection test (kivali.verify) on its
+// connection connID for the owner and keeps what it found on the
+// connection's record: verified or not, the integration's words, when.
+// callErr is errIntegrationNotRunning, or ctx's error, when the test
+// did not run; keepErr is the store's when the result could not be
+// kept. A connection deleted meanwhile keeps nothing, and that is no
+// error.
+func (s *Server) testConnection(ctx context.Context, v *integrationView, connID string) (callErr, keepErr error) {
+	name := v.it.Name
+	res, failed, err := s.callIntegrationTool(ctx, v, v.manifest.Kivali.Verify, func(ctx context.Context) (json.RawMessage, *strings.Replacer, error) {
+		return s.builtinOwnerCall(ctx, v.builtin, name, connID, true, "")
+	})
+	if err != nil {
+		return err, nil
 	}
 	verified, message := failed == "", failed
 	if verified {
 		message = clipText(res.firstText(), integrationVerifyMessageMax)
 	}
 	unlock := s.lockIntegrations()
+	defer unlock()
 	conn, err := s.Store.GetIntegrationConnectionByID(name, connID)
 	if err == nil {
 		at := s.clk().Now().UTC()
 		conn.VerifiedAt, conn.Verified, conn.VerifyMessage = &at, &verified, message
 		err = s.Store.PutIntegrationConnection(name, conn)
 	}
-	unlock()
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
-		log.Printf("integration %s: keep the connection test: %v", name, err)
-		writeAPIError(w, http.StatusInternalServerError, "the connection test's result could not be saved", whoServer)
-		return
+		return nil, err
 	}
-	s.writeIntegrationPage(w, r)
+	return nil, nil
 }
