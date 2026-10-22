@@ -21,7 +21,7 @@ import (
 //     artifact_publish / artifact_unpublish, agent_memory, state
 //     lookups, search, project file listing, publish_*, share_file,
 //     run_shell, plus the `subagent` tool, and the integration_* tools
-//     for the agent hired as the Integrations engineer.
+//     for the Kivali Developer.
 //   - "subagent" — the narrow surface a subagent gets: filesystem
 //     (scoped to the subagent's own root), artifact_publish /
 //     artifact_unpublish (into its parent's area), list_skills, the two
@@ -63,11 +63,10 @@ type FullAgentDeps struct {
 	// Provider supplies the subagent tool schema's models and efforts;
 	// required when Subagent is set.
 	Provider provider.Provider
-	// IntegrationsEngineer registers the integration_* tools: the agent
-	// was hired from the Integrations engineer's template, as core's
-	// profile route says when this server starts. Core checks it again
-	// on every call of one.
-	IntegrationsEngineer bool
+	// IsKivaliDeveloper registers the integration_* tools: the agent is
+	// the Kivali Developer (slug == "kivali-developer"). Core checks the
+	// slug again on every call of one.
+	IsKivaliDeveloper bool
 	// SmokeShell is the shell the integration_* tools start a bundle's
 	// server in for its smoke test: the agent-shell sidecar, where the
 	// pod's network policy leaves a server with no proxy variables no
@@ -98,10 +97,10 @@ type fullAgentToolkitDeps struct {
 	Provider  provider.Provider
 
 	// IntegrationEngineer relays the integration_* tools; they are
-	// registered only when IntegrationsEngineer is set.
-	IntegrationsEngineer bool
-	IntegrationEngineer  IntegrationEngineerDispatcher
-	SmokeShell           agent.ShellExecutor
+	// registered only when IsKivaliDeveloper is set.
+	IsKivaliDeveloper   bool
+	IntegrationEngineer IntegrationEngineerDispatcher
+	SmokeShell          agent.ShellExecutor
 }
 
 // FullAgentToolkit returns the full-agent tool bundle wired entirely
@@ -130,9 +129,9 @@ func FullAgentToolkit(deps FullAgentDeps) Toolkit {
 		Subagent:       deps.Subagent,
 		Provider:       deps.Provider,
 
-		IntegrationsEngineer: deps.IntegrationsEngineer,
-		IntegrationEngineer:  c,
-		SmokeShell:           deps.SmokeShell,
+		IsKivaliDeveloper:   deps.IsKivaliDeveloper,
+		IntegrationEngineer: c,
+		SmokeShell:          deps.SmokeShell,
 	})
 }
 
@@ -177,7 +176,7 @@ func composeFullAgentToolkit(d fullAgentToolkitDeps) Toolkit {
 	if t := ShareFileTool(d.ShareFile); t != nil {
 		tools = append(tools, *t)
 	}
-	if d.IntegrationsEngineer {
+	if d.IsKivaliDeveloper {
 		tools = append(tools, IntegrationEngineerTools(d.IntegrationEngineer, d.SmokeShell, d.Slug)...)
 	}
 	if d.Subagent != nil {

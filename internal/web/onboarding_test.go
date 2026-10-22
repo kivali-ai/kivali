@@ -8,6 +8,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -232,9 +233,10 @@ func TestSeedCoS(t *testing.T) {
 	}
 }
 
-// The setup hire gives the Chief of Staff its pod, as every other hire
-// gets one: without it the first turn had nowhere to run and was
-// dropped ("no agent-pod subscriber") until the server next restarted.
+// The setup hire gives the Chief of Staff and the Kivali Developer
+// their pods, as every other hire gets one: without one the first turn
+// had nowhere to run and was dropped ("no agent-pod subscriber") until
+// the server next restarted.
 func TestSeedCoSProvisionsItsPod(t *testing.T) {
 	srv := newTestServer(t)
 	pod := &fakeAgentPodLifecycle{}
@@ -250,8 +252,73 @@ func TestSeedCoSProvisionsItsPod(t *testing.T) {
 	if rr := seedCoS(t, srv, apitypes.SeedCoSRequest{}); rr.Code != http.StatusAccepted {
 		t.Fatalf("seed code = %d, body = %s", rr.Code, rr.Body.String())
 	}
-	if got := pod.provisionedSlugs(); len(got) != 1 || got[0] != "chief-of-staff" {
-		t.Fatalf("provisioned %v, want [chief-of-staff]", got)
+	if got := pod.provisionedSlugs(); !slices.Equal(got, []string{"chief-of-staff", "kivali-developer"}) {
+		t.Fatalf("provisioned %v, want [chief-of-staff kivali-developer]", got)
+	}
+}
+
+// Why this test exists: every team has a Kivali Developer from the
+// moment it is set up, under the Chief of Staff and with Kivali's role,
+// on the model the Chief of Staff was hired on. Without it the owner has
+// no agent to ask for an integration, and the integration_* tools,
+// which only that slug gets, belong to no one.
+func TestSeedCoSHiresTheKivaliDeveloper(t *testing.T) {
+	srv := newTestServer(t)
+	srv.Claude = &provider.MockClient{
+		CompleteFn: func(ctx context.Context, req provider.CompleteRequest) (*provider.CompleteResponse, error) {
+			return &provider.CompleteResponse{
+				Content:    []provider.ContentBlock{{Type: provider.ContentText, Text: "# Briefing"}},
+				StopReason: "end_turn",
+			}, nil
+		},
+	}
+	if rr := seedCoS(t, srv, apitypes.SeedCoSRequest{}); rr.Code != http.StatusAccepted {
+		t.Fatalf("seed code = %d, body = %s", rr.Code, rr.Body.String())
+	}
+	cos, err := srv.Store.GetAgent("chief-of-staff")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dev, err := srv.Store.GetAgent("kivali-developer")
+	if err != nil {
+		t.Fatalf("no Kivali Developer after setup: %v", err)
+	}
+	if dev.Role != "Kivali Developer" || dev.ReportsTo != "chief-of-staff" || dev.Icon != "code" || dev.Model != cos.Model {
+		t.Errorf("Kivali Developer = %+v", dev)
+	}
+	if role, _ := srv.Store.ReadRole("kivali-developer"); role != seed.KivaliDeveloperRole {
+		t.Error("the Kivali Developer's role.md is not Kivali's")
+	}
+}
+
+// Why this test exists: boot and every restore call
+// EnsureKivaliDeveloper, so it must hire only on a team that is set up
+// (before the Chief of Staff there is no one for the developer to
+// report to, and setup is still to run), hire once, and leave a
+// Kivali Developer alone after that: its role, once the owner approves
+// an update, is the team's, and a boot must not put Kivali's back.
+func TestEnsureKivaliDeveloper(t *testing.T) {
+	srv := newTestServer(t)
+	if created, err := srv.EnsureKivaliDeveloper(); err != nil || created {
+		t.Fatalf("before setup = %v, %v", created, err)
+	}
+	if _, err := srv.Store.GetAgent("kivali-developer"); err == nil {
+		t.Fatal("a Kivali Developer was hired before the Chief of Staff")
+	}
+	if err := srv.Store.CreateAgent(store.Agent{Slug: "chief-of-staff", Role: "Chief of Staff", ReportsTo: "ceo"}, "# role\n"); err != nil {
+		t.Fatal(err)
+	}
+	if created, err := srv.EnsureKivaliDeveloper(); err != nil || !created {
+		t.Fatalf("after setup = %v, %v", created, err)
+	}
+	if err := srv.Store.WriteRole("kivali-developer", "# the team's own\n"); err != nil {
+		t.Fatal(err)
+	}
+	if created, err := srv.EnsureKivaliDeveloper(); err != nil || created {
+		t.Fatalf("again = %v, %v", created, err)
+	}
+	if role, _ := srv.Store.ReadRole("kivali-developer"); role != "# the team's own\n" {
+		t.Errorf("a second call rewrote the role: %q", role)
 	}
 }
 

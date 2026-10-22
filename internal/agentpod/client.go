@@ -315,31 +315,6 @@ func (c *Client) IntegrationCall(ctx context.Context, name string, args json.Raw
 	return &out, nil
 }
 
-// Profile reads which of Kivali's optional tool families the agent
-// has (GET /v1/agent/{slug}/profile).
-func (c *Client) Profile(ctx context.Context) (*AgentProfile, error) {
-	url := fmt.Sprintf("http://core/v1/agent/%s%s", c.slug, AgentProfilePath)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("agentpod: Profile: %w", err)
-	}
-	req.Header.Set(SlugHeader, c.slug)
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("agentpod: Profile: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode/100 != 2 {
-		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
-		return nil, fmt.Errorf("agentpod: Profile HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(errBody)))
-	}
-	var out AgentProfile
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, fmt.Errorf("agentpod: decode AgentProfile: %w", err)
-	}
-	return &out, nil
-}
-
 // IntegrationEngineerDispatch relays one request of an integration_*
 // tool to core (POST /v1/agent/{slug}/integration-engineer/dispatch).
 // Core reads and checks a whole bundle before it answers a validate or

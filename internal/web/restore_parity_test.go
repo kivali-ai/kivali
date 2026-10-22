@@ -73,6 +73,8 @@ func TestRestoreStagesTheUploadOnTheDataVolumeNotInTemp(t *testing.T) {
 //   - the restored agents get their pods (a turn for an agent with no
 //     pod is dropped), and an agent the backup caught mid-turn gets the
 //     disruption row and is resumed;
+//   - a team backed up without the Kivali Developer gets it, pod and
+//     all, as boot hires it;
 //   - a background task the backup caught running reads errored, not
 //     running for good with an Open browser button for a browser that
 //     is gone, and its agent is told it ended;
@@ -141,8 +143,11 @@ func TestRestoreDoesWhatABootDoes(t *testing.T) {
 
 	got := pods.provisionedSlugs()
 	slices.Sort(got)
-	if !slices.Equal(got, []string{"alice", "chief-of-staff"}) {
-		t.Errorf("pods provisioned for %v, want alice and chief-of-staff", got)
+	if !slices.Equal(got, []string{"alice", "chief-of-staff", "kivali-developer"}) {
+		t.Errorf("pods provisioned for %v, want alice, chief-of-staff and kivali-developer", got)
+	}
+	if a, err := dst.Store.GetAgent("kivali-developer"); err != nil || a.ReportsTo != "chief-of-staff" {
+		t.Errorf("the Kivali Developer after the restore = %+v, %v", a, err)
 	}
 
 	hist, err := dst.Store.ReadChatHistory("alice")

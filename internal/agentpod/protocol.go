@@ -783,24 +783,9 @@ type IntegrationCallResponse struct {
 	IsError bool     `json:"is_error,omitempty"`
 }
 
-// AgentProfilePath is the core.sock route, under /v1/agent/{slug},
-// that says which of Kivali's optional tool families the agent has.
-// The agent's MCP server reads it once when it starts (GET, bound to
-// the slug header); core checks each family again on every call.
-const AgentProfilePath = "/profile"
-
-// AgentProfile answers GET /v1/agent/{slug}/profile.
-type AgentProfile struct {
-	// IntegrationsEngineer is the agent hired from the Integrations
-	// engineer's template (store.Agent.IntegrationsEngineer): its MCP
-	// server registers the integration_* tools.
-	IntegrationsEngineer bool `json:"integrations_engineer,omitempty"`
-}
-
 // IntegrationEngineerDispatchPath is the core.sock route, under
-// /v1/agent/{slug}, of the Integrations engineer's integration_* tools:
-// a POST bound to the slug header, refused for an agent that is not
-// the engineer.
+// /v1/agent/{slug}, of the Kivali Developer's integration_* tools: a
+// POST bound to the slug header, refused for any other agent.
 const IntegrationEngineerDispatchPath = "/integration-engineer/dispatch"
 
 // IntegrationEngineerRequest is the body of POST

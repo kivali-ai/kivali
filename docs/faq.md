@@ -38,7 +38,7 @@ No. An agent wakes when something reaches it, works until it is done with that, 
 
 ## How many agents can I have?
 
-Kivali sets no limit. The practical limits are memory and cost: each agent that is working uses memory on the team's machine, and every turn is a model call. Teams start with one agent, the Chief of Staff, and grow as you approve hires.
+Kivali sets no limit. The practical limits are memory and cost: each agent that is working uses memory on the team's machine, and every turn is a model call. Teams start with two agents, the Chief of Staff and the Kivali Developer, and grow as you approve hires.
 
 ## Can I edit an agent's memory?
 

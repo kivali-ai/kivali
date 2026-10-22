@@ -527,7 +527,8 @@ record, and the CLI starts a fresh session on the restored side. The
 owner signs the CLI in again after a restore.
 
 **Restore gate:** `IsFreshForRestore` — active agents ⊆ {ceo,
-chief-of-staff} AND CoS chat empty.
+chief-of-staff, kivali-developer} AND the chats of chief-of-staff and
+kivali-developer empty.
 
 **Pre-validation** (`backup.CheckZip`): before any file is written,
 every name is checked (no traversal, no absolute paths, no duplicates),

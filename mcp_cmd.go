@@ -144,9 +144,10 @@ func runWebSubagentMCP(logger *log.Logger, socketPath, parent, id, session, site
 // agentpod.Client to core's UDS endpoints, and subagent +
 // route-message use controlclient against the same core socket.
 //
-// CoS detection is by slug-equality (slug == "chief-of-staff") —
-// sufficient because the slug IS the identity, and server-side
-// gates re-check defensively.
+// CoS and Kivali Developer detection is by slug-equality (slug ==
+// "chief-of-staff", slug == "kivali-developer") — sufficient because
+// the slug IS the identity, and server-side gates re-check
+// defensively.
 func runFullAgentMCP(logger *log.Logger, socketPath, agentSlug string) {
 	if agentSlug == "" {
 		logger.Fatal("--agent is required for --toolkit full-agent")
@@ -156,6 +157,7 @@ func runFullAgentMCP(logger *log.Logger, socketPath, agentSlug string) {
 	}
 	client := coreClient(socketPath, agentSlug)
 	isCoS := agentSlug == "chief-of-staff"
+	isDeveloper := agentSlug == agent.KivaliDeveloperSlug
 
 	// Subagent backend goes through controlclient against the same
 	// socket. Publishes don't go through controlclient; the publish
@@ -175,7 +177,6 @@ func runFullAgentMCP(logger *log.Logger, socketPath, agentSlug string) {
 		logger.Fatal(err)
 	}
 
-	profile := fullAgentProfile(logger, client)
 	// A bundle's smoke test runs only in the sidecar, where the pod's
 	// network policy gives a server started without proxy variables no
 	// network. A local shell (KIVALI_MCP_LOCAL_FILES) runs on a host
@@ -192,9 +193,9 @@ func runFullAgentMCP(logger *log.Logger, socketPath, agentSlug string) {
 		Subagent:       subagentBackend,
 		// The driver as Provider only: this process serves tools and
 		// makes no model call, so nothing else of it is used.
-		Provider:             claudeagent.New(claudeagent.Options{}),
-		IntegrationsEngineer: profile.IntegrationsEngineer,
-		SmokeShell:           smokeShell,
+		Provider:          claudeagent.New(claudeagent.Options{}),
+		IsKivaliDeveloper: isDeveloper,
+		SmokeShell:        smokeShell,
 	})
 	integrationTools := fullAgentIntegrationTools(logger, client)
 	tk.Tools = append(tk.Tools, mcp.IntegrationTools(client, integrationTools, tk.Tools)...)
@@ -209,30 +210,12 @@ func runFullAgentMCP(logger *log.Logger, socketPath, agentSlug string) {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	logger.Printf("starting MCP server: toolkit=%s agent=%s core-uds=%s tools=%d integration-actions=%d cos=%v integrations-engineer=%v",
-		tk.Name, agentSlug, socketPath, len(tk.Tools), len(integrationTools), isCoS, profile.IntegrationsEngineer)
+	logger.Printf("starting MCP server: toolkit=%s agent=%s core-uds=%s tools=%d integration-actions=%d cos=%v kivali-developer=%v",
+		tk.Name, agentSlug, socketPath, len(tk.Tools), len(integrationTools), isCoS, isDeveloper)
 	if err := server.Serve(ctx, os.Stdin, os.Stdout); err != nil {
 		logger.Fatalf("serve: %v", err)
 	}
 	logger.Print("shutdown (EOF)")
-}
-
-// profileTimeout bounds the start's wait for the agent's profile.
-const profileTimeout = 10 * time.Second
-
-// fullAgentProfile is which optional tool families core says the agent
-// has, read once at this server's start: the flag is set when the agent
-// is hired and never changes, and core checks it again on every call.
-// A failure is logged and starts the server with none of them.
-func fullAgentProfile(logger *log.Logger, client *agentpod.Client) agentpod.AgentProfile {
-	ctx, cancel := context.WithTimeout(context.Background(), profileTimeout)
-	defer cancel()
-	p, err := client.Profile(ctx)
-	if err != nil {
-		logger.Printf("agent profile: %v (starting without the optional tool families)", err)
-		return agentpod.AgentProfile{}
-	}
-	return *p
 }
 
 // integrationListTimeout bounds the start's wait for the agent's

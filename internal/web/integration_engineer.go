@@ -1,16 +1,15 @@
-// Package web (integration_engineer.go) — the Integrations engineer's
+// Package web (integration_engineer.go) — the Kivali Developer's
 // tools, core's side.
 //
-// The agent hired from the Integrations engineer's template
-// (store.Agent.IntegrationsEngineer) has five integration_* tools,
-// which its MCP server relays here (POST
+// The Kivali Developer (agent.KivaliDeveloperSlug) has five
+// integration_* tools, which its MCP server relays here (POST
 // /v1/agent/{slug}/integration-engineer/dispatch). Every request is
-// refused for an agent that is not the engineer, whatever its MCP
-// server registered: the flag is read from the store, never from the
-// request.
+// refused for any other agent, whatever its MCP server registered: the
+// slug is the one the request's header is bound to (checkSlugHeader),
+// never a field of the request.
 //
 // integration_validate and integration_publish read a bundle from the
-// engineer's own /files/ tree on the data volume, opened without
+// developer's own /files/ tree on the data volume, opened without
 // following a link (files.OpenDirNoFollow, then an os.Root), and run
 // the bundle check. Each takes two requests: the first answers with
 // the server's smoke test (integration.SmokeCommand), which the MCP
@@ -65,28 +64,8 @@ const (
 )
 
 // notEngineer answers an integration_* call from an agent that is not
-// the Integrations engineer.
-const notEngineer = "This tool is the Integrations engineer's, and you are not the team's Integrations engineer."
-
-// handleAgentpodProfile serves GET /v1/agent/{slug}/profile: which of
-// Kivali's optional tool families the agent has, for its MCP server to
-// register when it starts.
-func (s *Server) handleAgentpodProfile(w http.ResponseWriter, r *http.Request) {
-	slug := r.PathValue("slug")
-	if !checkSlugHeader(w, r, slug) {
-		return
-	}
-	if s.Store == nil {
-		http.Error(w, "store not configured", http.StatusServiceUnavailable)
-		return
-	}
-	a, err := s.Store.GetAgent(slug)
-	if err != nil {
-		http.Error(w, "no agent "+slug+" on the team", http.StatusNotFound)
-		return
-	}
-	writeJSON(w, http.StatusOK, agentpod.AgentProfile{IntegrationsEngineer: a.IntegrationsEngineer})
-}
+// the Kivali Developer.
+const notEngineer = "This tool is the Kivali Developer's, and you are not the team's Kivali Developer."
 
 // handleAgentpodIntegrationEngineer serves POST
 // /v1/agent/{slug}/integration-engineer/dispatch. Tool-level outcomes
@@ -113,9 +92,12 @@ func engineerError(text string) agentpod.IntegrationEngineerResponse {
 }
 
 // dispatchIntegrationEngineer runs one integration_* request for slug,
-// refused unless the store says slug is the Integrations engineer.
+// refused unless slug is the Kivali Developer and on the team.
 func (s *Server) dispatchIntegrationEngineer(ctx context.Context, slug string, req agentpod.IntegrationEngineerRequest) agentpod.IntegrationEngineerResponse {
-	if a, err := s.Store.GetAgent(slug); err != nil || !a.IntegrationsEngineer {
+	if slug != agent.KivaliDeveloperSlug {
+		return engineerError(notEngineer)
+	}
+	if _, err := s.Store.GetAgent(slug); err != nil {
 		return engineerError(notEngineer)
 	}
 	switch req.Tool {

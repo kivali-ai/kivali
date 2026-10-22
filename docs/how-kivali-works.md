@@ -51,11 +51,11 @@ Agents do not run all the time. An agent wakes when something reaches it (your m
 
 ## The Chief of Staff
 
-Every team starts with one agent, the Chief of Staff. It runs the team day to day and is the only agent that can change the team's shape. It does so through five kinds of proposal, each of which needs your approval:
+Every team starts with two agents. The Chief of Staff runs the team day to day and is the only agent that can change the team's shape. The Kivali Developer reports to it and builds [integrations](integrations.md#have-an-integration-built); it stays with the team, so no proposal lets it go or moves it. The Chief of Staff changes the team's shape through five kinds of proposal, each of which needs your approval:
 
 | Proposal | What approving does |
 | --- | --- |
-| Hire | Creates the new agent with the role the Chief of Staff wrote, or with the one role Kivali ships, the Integrations engineer, which builds [integrations](integrations.md#have-an-integration-built). |
+| Hire | Creates the new agent with the role the Chief of Staff wrote. |
 | Offboard | Archives an agent. Nothing is deleted: its role, memory and chats stay readable under **Team**, **Archived**. |
 | Reorg | Moves reporting lines. |
 | Role update | Replaces an agent's role document. |
@@ -155,6 +155,7 @@ Outbound network access from an agent's sandbox goes through a proxy. The comman
 | Habits | Rules an agent learned for how it acts, each with a reason. |
 | Handbook | Your team's About, Values, Communicating and Working together, read by every agent on every turn. |
 | Hold | A pause on an assignment and everything under it. |
+| Kivali Developer | The agent that builds integrations. Kivali hires it with the team, under the Chief of Staff, and it stays. |
 | Knowledge graph | Every published file, with what it is about and what it rests on. |
 | Memory | What an agent knows to be true, kept in its own words. |
 | Needs you | The part of Home with everything waiting on you. |

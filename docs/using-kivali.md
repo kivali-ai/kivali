@@ -74,13 +74,13 @@ An agent that needs a program it does not have, such as a PDF reader or a video 
 
 ## Hiring, offboarding and reorganizing
 
-You do not create or remove agents directly. Your Chief of Staff does, through proposals you approve.
+You do not create or remove agents directly. Your Chief of Staff does, through proposals you approve. The one agent Kivali hires itself is the **Kivali Developer**, which joins every team with the Chief of Staff, reports to it, and builds integrations for your agents ([Integrations](integrations.md#have-an-integration-built)).
 
-**Hiring.** Ask your Chief of Staff for the role you need: what it should own and why no one else can. It drafts the role and sends a **Hire** proposal. Review it and choose **Approve hire**; the agent is created the moment you approve. Other agents can also make the case for a hire to their manager, and it reaches the Chief of Staff from there. One role ships with Kivali, the **Integrations engineer**, who builds integrations for your agents: ask for it when you want agents connected to a service, and its proposal shows Kivali's role with **Template: Integrations engineer** ([Integrations](integrations.md#have-an-integration-built)).
+**Hiring.** Ask your Chief of Staff for the role you need: what it should own and why no one else can. It drafts the role and sends a **Hire** proposal. Review it and choose **Approve hire**; the agent is created the moment you approve. Other agents can also make the case for a hire to their manager, and it reaches the Chief of Staff from there.
 
-**Offboarding.** Ask your Chief of Staff to let an agent go. Approving the **Offboard** proposal archives the agent: its role, memory and chats stay readable under **Team**, **Archived**, and its open assignments move to the agent it reported to. An agent with direct reports cannot be offboarded until those reports are moved, and the Chief of Staff cannot be offboarded.
+**Offboarding.** Ask your Chief of Staff to let an agent go. Approving the **Offboard** proposal archives the agent: its role, memory and chats stay readable under **Team**, **Archived**, and its open assignments move to the agent it reported to. An agent with direct reports cannot be offboarded until those reports are moved, and neither the Chief of Staff nor the Kivali Developer can be offboarded.
 
-**Reorganizing.** A **Reorg** proposal moves reporting lines. Each move applies on its own, so one bad move does not sink the rest.
+**Reorganizing.** A **Reorg** proposal moves reporting lines. Each move applies on its own, so one bad move does not sink the rest. The Kivali Developer always reports to the Chief of Staff.
 
 **Changing a role or the handbook.** The Chief of Staff can propose a **Role update** for any agent, or a **Handbook update**, which you see as a diff. You can also edit the handbook yourself in **Org**, **Handbook**, and any agent's documents on its **About** tab.
 
