@@ -4,24 +4,40 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/kivali-ai/kivali/internal/agentpod"
+	"github.com/kivali-ai/kivali/internal/agentshell"
 )
 
-// recordingCaller answers every call with resp or err and records
-// what it was asked.
+// recordingCaller answers each call with the next of resps (the last
+// again once they run out) or err, and records what it was asked.
 type recordingCaller struct {
-	resp  *agentpod.IntegrationCallResponse
+	resps []*agentpod.IntegrationCallResponse
 	err   error
-	names []string
-	args  []string
+	reqs  []agentpod.IntegrationCallRequest
 }
 
-func (c *recordingCaller) IntegrationCall(_ context.Context, name string, args json.RawMessage) (*agentpod.IntegrationCallResponse, error) {
-	c.names = append(c.names, name)
-	c.args = append(c.args, string(args))
-	return c.resp, c.err
+func (c *recordingCaller) IntegrationCall(_ context.Context, req agentpod.IntegrationCallRequest) (*agentpod.IntegrationCallResponse, error) {
+	c.reqs = append(c.reqs, req)
+	if c.err != nil {
+		return nil, c.err
+	}
+	i := min(len(c.reqs), len(c.resps)) - 1
+	return c.resps[i], nil
+}
+
+// recordingShell runs every git job with res or err and records it.
+type recordingShell struct {
+	res  *agentshell.GitResponse
+	err  error
+	jobs []agentshell.GitRequest
+}
+
+func (s *recordingShell) Git(_ context.Context, req agentshell.GitRequest) (*agentshell.GitResponse, error) {
+	s.jobs = append(s.jobs, req)
+	return s.res, s.err
 }
 
 // Why this test exists: an integration action's handler is a relay,
@@ -31,12 +47,12 @@ func (c *recordingCaller) IntegrationCall(_ context.Context, name string, args j
 // request, which the CLI would show the model as a broken server. A
 // name a Kivali tool already has must not be registered over it.
 func TestIntegrationToolsRelayToCore(t *testing.T) {
-	c := &recordingCaller{resp: &agentpod.IntegrationCallResponse{Content: []string{"posted", "and logged"}}}
+	c := &recordingCaller{resps: []*agentpod.IntegrationCallResponse{{Content: []string{"posted", "and logged"}}}}
 	listed := []agentpod.IntegrationTool{
 		{Name: "crm_create_post", Description: "Create a post.", InputSchema: json.RawMessage(`{"type":"object"}`)},
 		{Name: "share_file", Description: "Not this one."},
 	}
-	tools := IntegrationTools(c, listed, []Tool{{Name: "share_file"}})
+	tools := IntegrationTools(c, nil, listed, []Tool{{Name: "share_file"}})
 	if len(tools) != 1 || tools[0].Name != "crm_create_post" || tools[0].ReadOnly || string(tools[0].InputSchema) != `{"type":"object"}` {
 		t.Fatalf("tools = %+v", tools)
 	}
@@ -44,18 +60,101 @@ func TestIntegrationToolsRelayToCore(t *testing.T) {
 	if err != nil || res.IsError || len(res.Content) != 2 || res.Content[1] != "and logged" {
 		t.Errorf("result = %+v, %v", res, err)
 	}
-	if len(c.names) != 1 || c.names[0] != "crm_create_post" || c.args[0] != `{"title":"x"}` {
-		t.Errorf("relayed %v %v", c.names, c.args)
+	if len(c.reqs) != 1 || c.reqs[0].Name != "crm_create_post" || string(c.reqs[0].Arguments) != `{"title":"x"}` || c.reqs[0].ShellJobResult != nil {
+		t.Errorf("relayed %+v", c.reqs)
 	}
 
-	c.resp = &agentpod.IntegrationCallResponse{Content: []string{"You have no access to the CRM integration."}, IsError: true}
+	c.resps = []*agentpod.IntegrationCallResponse{{Content: []string{"You have no access to the CRM integration."}, IsError: true}}
 	if res, _ := tools[0].Handler(context.Background(), nil); !res.IsError || res.Content[0] != "You have no access to the CRM integration." {
 		t.Errorf("refusal = %+v", res)
 	}
 
-	c.resp, c.err = nil, errors.New("dial unix: no such file")
+	c.resps, c.err = nil, errors.New("dial unix: no such file")
 	res, err = tools[0].Handler(context.Background(), nil)
 	if err != nil || !res.IsError || res.Content[0] != "The call did not reach Kivali: dial unix: no such file" {
 		t.Errorf("transport error = %+v, %v", res, err)
+	}
+}
+
+// Why this test exists: a git clone runs in two requests to core with
+// the job between them in the agent's shell. The job must reach the
+// daemon field for field (the URL, the access's patterns, the token,
+// the proxy credential, the bound), the second request must carry the
+// same name and arguments with what the shell gave back, ref for ref,
+// and only core's second answer may reach the model: never the job,
+// which holds the token.
+func TestIntegrationToolsRunTheShellJob(t *testing.T) {
+	job := &agentpod.GitJob{
+		Op: "clone", Path: "/files/widgets", URL: "https://github.com/acme/widgets.git", Host: "github.com",
+		AllowedRepositories: []string{"acme/*"}, RefSpecs: []string{"+refs/heads/main:refs/remotes/origin/main"}, Force: true,
+		Auth:           agentpod.GitAuth{Username: "x-access-token", Password: "ghp_secret_token"},
+		Proxy:          agentpod.GitProxy{Username: "integration-git.1a2b3c4d", Password: "proxy-secret-value"},
+		TimeoutSeconds: 900,
+	}
+	c := &recordingCaller{resps: []*agentpod.IntegrationCallResponse{
+		{ShellJob: &agentpod.IntegrationShellJob{Git: job}},
+		{Content: []string{"Cloned acme/widgets."}},
+	}}
+	shell := &recordingShell{res: &agentshell.GitResponse{
+		Repository: "acme/widgets", DurationMs: 1200,
+		Updated: []agentshell.GitRefUpdate{{Ref: "refs/remotes/origin/main", New: "abc"}},
+	}}
+	tools := IntegrationTools(c, shell, []agentpod.IntegrationTool{{Name: "git_clone"}}, nil)
+	args := json.RawMessage(`{"url":"acme/widgets","path":"/files/widgets"}`)
+	res, err := tools[0].Handler(context.Background(), args)
+	if err != nil || res.IsError || len(res.Content) != 1 || res.Content[0] != "Cloned acme/widgets." {
+		t.Fatalf("result = %+v, %v", res, err)
+	}
+	want := agentshell.GitRequest{
+		Op: job.Op, Path: job.Path, URL: job.URL, RefSpecs: job.RefSpecs, Force: true,
+		AllowedRepositories: job.AllowedRepositories, Host: job.Host,
+		Auth:           agentshell.GitAuth{Username: "x-access-token", Password: "ghp_secret_token"},
+		Proxy:          agentshell.GitProxy{Username: "integration-git.1a2b3c4d", Password: "proxy-secret-value"},
+		TimeoutSeconds: 900,
+	}
+	if len(shell.jobs) != 1 {
+		t.Fatalf("jobs = %+v", shell.jobs)
+	}
+	got, _ := json.Marshal(shell.jobs[0])
+	if wantJSON, _ := json.Marshal(want); string(got) != string(wantJSON) {
+		t.Errorf("the daemon got %s, want %s", got, wantJSON)
+	}
+	if len(c.reqs) != 2 || c.reqs[1].Name != "git_clone" || string(c.reqs[1].Arguments) != string(args) || c.reqs[1].ShellJobResult == nil {
+		t.Fatalf("requests = %+v", c.reqs)
+	}
+	r := c.reqs[1].ShellJobResult.Git
+	if r == nil || r.Repository != "acme/widgets" || r.DurationMs != 1200 || len(r.Updated) != 1 || r.Updated[0] != (agentpod.GitRefUpdate{Ref: "refs/remotes/origin/main", New: "abc"}) {
+		t.Errorf("result sent = %+v", r)
+	}
+
+	// The daemon out of reach: the error goes to core, scrubbed of the
+	// job's credentials.
+	c.reqs = nil
+	shell.res, shell.err = nil, errors.New("agentshell: HTTP 400: bad ghp_secret_token proxy-secret-value")
+	if _, err := tools[0].Handler(context.Background(), args); err != nil {
+		t.Fatal(err)
+	}
+	e := c.reqs[1].ShellJobResult.Git.Error
+	if strings.Contains(e, "ghp_secret_token") || strings.Contains(e, "proxy-secret-value") || !strings.Contains(e, "HTTP 400") {
+		t.Errorf("error sent = %q", e)
+	}
+
+	// No shell (a local tree): skipped, and nothing ran.
+	c.reqs, shell.jobs = nil, nil
+	tools = IntegrationTools(c, nil, []agentpod.IntegrationTool{{Name: "git_clone"}}, nil)
+	if _, err := tools[0].Handler(context.Background(), args); err != nil {
+		t.Fatal(err)
+	}
+	if s := c.reqs[1].ShellJobResult; s.Skipped != shellJobSkippedNoShell || s.Git != nil {
+		t.Errorf("no shell = %+v", s)
+	}
+
+	// Core asking for a second job is not run, and never shown.
+	c.reqs = nil
+	c.resps = []*agentpod.IntegrationCallResponse{{ShellJob: &agentpod.IntegrationShellJob{Git: job}}}
+	tools = IntegrationTools(c, shell, []agentpod.IntegrationTool{{Name: "git_clone"}}, nil)
+	res, _ = tools[0].Handler(context.Background(), args)
+	if !res.IsError || len(c.reqs) != 2 || strings.Contains(strings.Join(res.Content, " "), "ghp_secret_token") {
+		t.Errorf("a second job = %+v after %d requests", res, len(c.reqs))
 	}
 }

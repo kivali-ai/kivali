@@ -137,7 +137,7 @@ func TestBuiltinIntegrationCallThatNeverReturns(t *testing.T) {
 	}
 	got := make(chan answer, 1)
 	go func() {
-		resp, err := dana.IntegrationCall(context.Background(), "echo_echo", json.RawMessage(`{}`))
+		resp, err := dana.IntegrationCall(context.Background(), agentpod.IntegrationCallRequest{Name: "echo_echo", Arguments: json.RawMessage(`{}`)})
 		got <- answer{resp, err}
 	}()
 	<-h.entered // runBuiltin arms its deadline before the function starts

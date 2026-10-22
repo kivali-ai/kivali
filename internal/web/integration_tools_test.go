@@ -196,7 +196,7 @@ func TestAgentCallsAnIntegrationThroughCore(t *testing.T) {
 		t.Errorf("lee's actions = %+v, %v", l, err)
 	}
 
-	tools := mcp.IntegrationTools(dana, list.Tools, nil)
+	tools := mcp.IntegrationTools(dana, nil, list.Tools, nil)
 	var echo mcp.Tool
 	for _, tl := range tools {
 		if tl.Name == "fake_echo" {
@@ -215,7 +215,7 @@ func TestAgentCallsAnIntegrationThroughCore(t *testing.T) {
 		t.Errorf("audit after dana's call = %+v", rows)
 	}
 
-	resp, err := lee.IntegrationCall(ctx, "fake_echo", json.RawMessage(`{}`))
+	resp, err := lee.IntegrationCall(ctx, agentpod.IntegrationCallRequest{Name: "fake_echo", Arguments: json.RawMessage(`{}`)})
 	if err != nil {
 		t.Fatal(err)
 	}

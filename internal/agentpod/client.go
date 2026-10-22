@@ -303,13 +303,14 @@ func (c *Client) IntegrationTools(ctx context.Context) (*IntegrationToolsRespons
 // and answers with its result or the refusal. A call waits up to a
 // minute for the integration, so it runs on the client with no
 // response-header timeout; ctx bounds it. A non-2xx response is a
-// transport error.
-func (c *Client) IntegrationCall(ctx context.Context, name string, args json.RawMessage) (*IntegrationCallResponse, error) {
-	if strings.TrimSpace(name) == "" {
+// transport error. The answer may carry a shell job, with credentials
+// in it: nothing here logs a request or an answer.
+func (c *Client) IntegrationCall(ctx context.Context, req IntegrationCallRequest) (*IntegrationCallResponse, error) {
+	if strings.TrimSpace(req.Name) == "" {
 		return nil, fmt.Errorf("agentpod: IntegrationCall: name is required")
 	}
 	var out IntegrationCallResponse
-	if err := c.postIntegration(ctx, IntegrationCallPath, IntegrationCallRequest{Name: name, Arguments: args}, &out); err != nil {
+	if err := c.postIntegration(ctx, IntegrationCallPath, req, &out); err != nil {
 		return nil, fmt.Errorf("agentpod: IntegrationCall: %w", err)
 	}
 	return &out, nil

@@ -12,6 +12,7 @@ import (
 
 	"github.com/kivali-ai/kivali/internal/agent"
 	"github.com/kivali-ai/kivali/internal/agentpod"
+	"github.com/kivali-ai/kivali/internal/agentshell"
 	"github.com/kivali-ai/kivali/internal/claudeagent"
 	"github.com/kivali-ai/kivali/internal/controlclient"
 	"github.com/kivali-ai/kivali/internal/egresscred"
@@ -197,8 +198,15 @@ func runFullAgentMCP(logger *log.Logger, socketPath, agentSlug string) {
 		IsKivaliDeveloper: isDeveloper,
 		SmokeShell:        smokeShell,
 	})
+	// An integration's shell jobs (a git clone or fetch) run in the
+	// sidecar's daemon. A local shell has none, and the job is reported
+	// as skipped.
+	var integrationShell mcp.IntegrationShell
+	if s, ok := shellExec.(*agentshell.SidecarShell); ok {
+		integrationShell = s
+	}
 	integrationTools := fullAgentIntegrationTools(logger, client)
-	tk.Tools = append(tk.Tools, mcp.IntegrationTools(client, integrationTools, tk.Tools)...)
+	tk.Tools = append(tk.Tools, mcp.IntegrationTools(client, integrationShell, integrationTools, tk.Tools)...)
 
 	server := &mcp.Server{
 		Tools:      tk.Tools,

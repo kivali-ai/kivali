@@ -20,7 +20,7 @@ import (
 	"github.com/kivali-ai/kivali/internal/agentpod"
 	"github.com/kivali-ai/kivali/internal/auth"
 	"github.com/kivali-ai/kivali/internal/browserpod"
-	"github.com/kivali-ai/kivali/internal/builtinintegrations"
+	"github.com/kivali-ai/kivali/internal/builtinintegrations/builtins"
 	"github.com/kivali-ai/kivali/internal/claudeagent"
 	"github.com/kivali-ai/kivali/internal/clock"
 	"github.com/kivali-ai/kivali/internal/clockcheck"
@@ -184,7 +184,7 @@ func main() {
 	// manifest decides. Logged rather than fatal: a built-in that
 	// cannot be written (an uploaded integration has its name) leaves
 	// the rest of the team working.
-	if err := s.InstallBuiltinIntegrations(builtinintegrations.All().Manifests(), time.Now()); err != nil {
+	if err := s.InstallBuiltinIntegrations(builtins.All().Manifests(), time.Now()); err != nil {
 		log.Printf("install built-in integrations: %v", err)
 	}
 	// Model pins follow their lineage. An agent pinned to a model the
@@ -626,6 +626,11 @@ func main() {
 	// Browser lifecycle: deletes browser pods left from before this
 	// start, then reaps idle browsers and saves their profiles.
 	stopBrowsers := srv.StartBrowsers()
+
+	// The proxy credentials of the built-in integrations' connections,
+	// registered again from their Secrets: the proxy's credentials file
+	// is not in a backup, so a restored team has none until here.
+	srv.RegisterBuiltinEgress(context.Background())
 
 	// Integrations: takes on the pods left from before this start,
 	// stops those of integrations no longer installed, then follows

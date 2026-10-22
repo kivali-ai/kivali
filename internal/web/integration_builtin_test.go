@@ -175,7 +175,7 @@ func TestAgentCallsABuiltinIntegration(t *testing.T) {
 		t.Errorf("lee's actions = %+v, %v", l, err)
 	}
 
-	resp, err := dana.IntegrationCall(ctx, "echo_echo", json.RawMessage(`{"text":"hi"}`))
+	resp, err := dana.IntegrationCall(ctx, agentpod.IntegrationCallRequest{Name: "echo_echo", Arguments: json.RawMessage(`{"text":"hi"}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +187,7 @@ func TestAgentCallsABuiltinIntegration(t *testing.T) {
 		calls[0].Conn.Fields["token"] != echoToken || calls[0].Conn.Fields["greeting"] != "Hello" || calls[0].Conn.ID == "" {
 		t.Errorf("echo was called with %+v", calls)
 	}
-	resp, _ = dana.IntegrationCall(ctx, "echo_whoami", nil)
+	resp, _ = dana.IntegrationCall(ctx, agentpod.IntegrationCallRequest{Name: "echo_whoami", Arguments: nil})
 	if resp.IsError || resp.Content[0] != "Hello; token s3c..." {
 		t.Errorf("whoami = %+v", resp)
 	}
@@ -196,7 +196,7 @@ func TestAgentCallsABuiltinIntegration(t *testing.T) {
 		t.Errorf("audit after dana's calls = %+v", rows)
 	}
 
-	resp, err = lee.IntegrationCall(ctx, "echo_echo", json.RawMessage(`{}`))
+	resp, err = lee.IntegrationCall(ctx, agentpod.IntegrationCallRequest{Name: "echo_echo", Arguments: json.RawMessage(`{}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,14 +212,14 @@ func TestAgentCallsABuiltinIntegration(t *testing.T) {
 
 	// An action the built-in lists but the manifest does not declare is
 	// refused as one the access does not include.
-	resp, _ = dana.IntegrationCall(ctx, "echo_undeclared", nil)
+	resp, _ = dana.IntegrationCall(ctx, agentpod.IntegrationCallRequest{Name: "echo_undeclared", Arguments: nil})
 	if !resp.IsError || resp.Content[0] != "Your access to the Echo integration does not include undeclared. Ask the owner if your work needs it." {
 		t.Errorf("undeclared = %+v", resp)
 	}
 
 	// Switched off, the built-in is refused like a bundle.
 	intPost(t, srv, intBase+"/echo/disable")
-	resp, _ = dana.IntegrationCall(ctx, "echo_echo", nil)
+	resp, _ = dana.IntegrationCall(ctx, agentpod.IntegrationCallRequest{Name: "echo_echo", Arguments: nil})
 	if !resp.IsError || resp.Content[0] != "The Echo integration is switched off. Ask the owner if your work needs it." {
 		t.Errorf("off = %+v", resp)
 	}
@@ -323,7 +323,7 @@ func TestBuiltinIntegrationCallWithNoConnection(t *testing.T) {
 		t.Fatal(err)
 	}
 	v := agentIntegration{name: echotest.Name, display: "Echo", manifest: m, access: json.RawMessage(`{}`), builtin: echo}
-	resp := srv.runAgentIntegrationCall(context.Background(), srv.clk().Now(), "dana", v, "echo", nil)
+	resp := srv.runAgentIntegrationCall(context.Background(), srv.clk().Now(), "dana", v, "echo", nil, nil)
 	if !resp.IsError || resp.Content[0] != "The Echo integration has no connection yet. Ask the owner to connect it." {
 		t.Errorf("no connection = %+v", resp)
 	}

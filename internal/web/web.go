@@ -23,6 +23,7 @@ import (
 	"github.com/kivali-ai/kivali/internal/agent"
 	"github.com/kivali-ai/kivali/internal/auth"
 	"github.com/kivali-ai/kivali/internal/builtinintegrations"
+	"github.com/kivali-ai/kivali/internal/builtinintegrations/builtins"
 	"github.com/kivali-ai/kivali/internal/clock"
 	"github.com/kivali-ai/kivali/internal/clockcheck"
 	"github.com/kivali-ai/kivali/internal/debian"
@@ -151,7 +152,7 @@ type Server struct {
 	// whose actions core calls directly (integration_builtin.go). An
 	// integration is one of them when its record is built in and its
 	// name is here. NewServer gives a Server without them
-	// builtinintegrations.All(); it is read at each use, so tests set
+	// builtins.All(); it is read at each use, so tests set
 	// it after NewServer.
 	BuiltinIntegrations builtinintegrations.Registry
 	// Integrations is the registry NewServer builds from the store,
@@ -367,7 +368,7 @@ func NewServer(s *Server) (*Server, error) {
 		s.Secrets = secrets.NewMemory()
 	}
 	if s.BuiltinIntegrations == nil {
-		s.BuiltinIntegrations = builtinintegrations.All()
+		s.BuiltinIntegrations = builtins.All()
 	}
 	if s.Integrations == nil && s.Store != nil {
 		// Secrets is read at each use: tests swap it after NewServer.

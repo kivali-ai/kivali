@@ -21,6 +21,7 @@ import (
 
 	"github.com/kivali-ai/kivali/internal/agent"
 	"github.com/kivali-ai/kivali/internal/builtinintegrations"
+	"github.com/kivali-ai/kivali/internal/egresscred"
 	"github.com/kivali-ai/kivali/internal/integration"
 	"github.com/kivali-ai/kivali/internal/integrationpod"
 	"github.com/kivali-ai/kivali/internal/secrets"
@@ -592,12 +593,17 @@ func (s *Server) handleAPIIntegration(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleAPIIntegrationToggle(on bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if _, ok := s.integrationOr404(w, r); !ok {
+		v, ok := s.integrationOr404(w, r)
+		if !ok {
 			return
 		}
 		if err := s.Store.SetIntegrationEnabled(r.PathValue("name"), on); err != nil {
 			writeAPIError(w, http.StatusInternalServerError, "the integration's switch could not be saved", whoServer)
 			return
+		}
+		// A built-in's connection reaches its hosts only while it is on.
+		if err := s.builtinEgressAfterSwitch(r.Context(), v.it.Name, v.builtin, on); err != nil {
+			log.Printf("integration %s: the connection's proxy credential: %v", v.it.Name, err)
 		}
 		s.Integrations.Changed()
 		s.writeIntegrationPage(w, r)
@@ -619,6 +625,11 @@ func (s *Server) handleAPIIntegrationRemove(w http.ResponseWriter, r *http.Reque
 	}
 	if !s.deleteConnectionSecrets(w, r, v.it.Name) {
 		return
+	}
+	// A built-in's connections have proxy credentials of their own; a
+	// bundle's none, and dropping nothing is no error.
+	if err := s.dropAllBuiltinEgress(v.it.Name); err != nil {
+		log.Printf("integration %s: drop the connection's proxy credential: %v", v.it.Name, err)
 	}
 	remove := s.Store.RemoveIntegration
 	if v.staleBuiltin() {
@@ -1009,6 +1020,23 @@ func (s *Server) handleAPIIntegrationConnectionPut(w http.ResponseWriter, r *htt
 	if v.conn != nil && v.conn.SecretName != "" {
 		secretName = v.conn.SecretName
 	}
+	// A built-in whose connection reaches hosts through the proxy keeps
+	// the connection's proxy credential in the same Secret: the one
+	// stored, or a new one. It is no field of the form, so it is not
+	// among the keys the owner is shown.
+	hostsOf := builtinHostsOf(v.builtin)
+	keys := sortedFieldKeys(secret)
+	if hostsOf != nil {
+		proxySecret := stored[builtinintegrations.ProxySecretKey]
+		if proxySecret == "" {
+			var err error
+			if proxySecret, err = egresscred.NewSecret(); err != nil {
+				writeAPIError(w, http.StatusInternalServerError, "the connection's secrets could not be saved, so nothing was changed", whoServer)
+				return
+			}
+		}
+		secret[builtinintegrations.ProxySecretKey] = proxySecret
+	}
 	if len(secret) > 0 {
 		if err := s.Secrets.Put(r.Context(), secretName, secret); err != nil {
 			log.Printf("integration %s: write the connection's Secret: %v", name, err)
@@ -1016,7 +1044,7 @@ func (s *Server) handleAPIIntegrationConnectionPut(w http.ResponseWriter, r *htt
 			return
 		}
 		rec.SecretName = secretName
-		rec.SecretKeys = sortedFieldKeys(secret)
+		rec.SecretKeys = keys
 	} else if v.conn != nil && v.conn.SecretName != "" {
 		if err := s.Secrets.Delete(r.Context(), v.conn.SecretName); err != nil {
 			log.Printf("integration %s: delete the connection's Secret: %v", name, err)
@@ -1028,6 +1056,21 @@ func (s *Server) handleAPIIntegrationConnectionPut(w http.ResponseWriter, r *htt
 		log.Printf("integration %s: write the connection: %v", name, err)
 		writeAPIError(w, http.StatusInternalServerError, "the connection could not be saved", whoServer)
 		return
+	}
+	// Registered on every save, so the proxy admits the host as it now
+	// stands; only while the integration is on.
+	if hostsOf != nil && v.it.Enabled {
+		conn := builtinintegrations.Connection{ID: rec.ID, Fields: map[string]string{}}
+		for _, f := range m.UserConfig {
+			if val := cmp.Or(fields[f.Key], secret[f.Key]); val != "" {
+				conn.Fields[f.Key] = val
+			}
+		}
+		if err := s.registerBuiltinEgress(name, hostsOf, conn, secret[builtinintegrations.ProxySecretKey]); err != nil {
+			log.Printf("integration %s: register the connection's proxy credential: %v", name, err)
+			writeAPIError(w, http.StatusInternalServerError, "the connection was saved, but its network access could not be set up; save it again", whoServer)
+			return
+		}
 	}
 	// The running server starts again with the new values.
 	s.Integrations.ConnectionChanged(name)
@@ -1072,10 +1115,15 @@ func (s *Server) handleAPIIntegrationConnectionDelete(w http.ResponseWriter, r *
 	if !s.deleteConnectionSecrets(w, r, v.it.Name) {
 		return
 	}
-	if _, err := s.Store.DeleteIntegrationConnection(v.it.Name); err != nil {
+	removed, err := s.Store.DeleteIntegrationConnection(v.it.Name)
+	if err != nil {
 		log.Printf("integration %s: delete the connection: %v", v.it.Name, err)
 		writeAPIError(w, http.StatusInternalServerError, "the connection could not be removed", whoServer)
 		return
+	}
+	// A built-in's connection's proxy credential goes with it.
+	if err := s.dropBuiltinEgress(v.it.Name, removed); err != nil {
+		log.Printf("integration %s: drop the connection's proxy credential: %v", v.it.Name, err)
 	}
 	// The running server starts again without the values.
 	s.Integrations.ConnectionChanged(v.it.Name)

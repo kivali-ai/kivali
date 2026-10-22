@@ -131,7 +131,7 @@ lost.
 | --- | --- | --- |
 | `prepare-scratch` (init) | `kivali` | `kivali prepare-scratch`: mounts the whole per-agent scratch PVC and creates its two halves, owned by the pod's user |
 | `agent` | `kivali` | `kivali agent --slug=<slug> --uds=<dir>/core/core.sock` (`agent_cmd.go`, `internal/agentpod/runtime.go`): holds the events stream to core, drives the warm `claude` CLI and its subagent CLIs. Mounts its half of scratch at `/scratch`, the UDS dir's `core/` subdirectory, the agent-shell socket dir, and from the data PVC only the provider home (`/data/claude-home`). The only container that sees the Claude sign-in. When the CLI's sign-in changes (what `claude auth status` reports, or `settings.json`; re-checked when `.credentials.json` or `settings.json` changes), the runner registry respawns the warm CLI with `--resume` at the agent's next turn (`internal/claudeagent/signin.go`) |
-| `agent-shell` | `kivali-agent-shell` | `cmd/agent-shell`, `internal/agentshell`: an HTTP-over-UDS daemon on `/run/kivali-agent-shell/sock` (an emptyDir shared with `agent`, which also holds the shell's egress proxy credential, `proxy-credential`; see the egress proxy below) that runs `run_shell` and every `file_*` tool. The only container that mounts the agent's `/files/`, with `HOME=/scratch/home` on its own half of scratch. Starts as root, installs any software in a root child, and drops before it serves to its own uid 65533 (gid and filesystem uid 65532, keeping CAP_SETUID, CAP_SETGID and CAP_KILL); every command runs as 65532 ([the daemon's user](#the-agent-shell-daemons-user), [files-and-publishing.md](files-and-publishing.md#software-in-the-agent-shell)) |
+| `agent-shell` | `kivali-agent-shell` | `cmd/agent-shell`, `internal/agentshell`: an HTTP-over-UDS daemon on `/run/kivali-agent-shell/sock` (an emptyDir shared with `agent`, which also holds the shell's egress proxy credential, `proxy-credential`; see the egress proxy below) that runs `run_shell` and every `file_*` tool, and `POST /v1/git`, a clone or fetch through the Git integration's connection, in process with go-git ([integrations.md](integrations.md#the-git-built-in)). The only container that mounts the agent's `/files/`, with `HOME=/scratch/home` on its own half of scratch. Starts as root, installs any software in a root child, and drops before it serves to its own uid 65533 (gid and filesystem uid 65532, keeping CAP_SETUID, CAP_SETGID and CAP_KILL); every command runs as 65532 ([the daemon's user](#the-agent-shell-daemons-user), [files-and-publishing.md](files-and-publishing.md#software-in-the-agent-shell)) |
 
 The agent-shell's `/files/` is the agent's tree on the data PVC
 (`agents/<slug>/memory/`), with the core-managed subtrees
@@ -164,7 +164,12 @@ or signal it only as the same uid, and a command is not the daemon's
 uid. It does not narrow the socket: `/run/kivali-agent-shell/sock` is
 65533:65532, mode 0660, so uid 65532 reaches it from either container,
 the agent container's `kivali mcp` processes and the daemon's own
-commands alike.
+commands alike. Its directory, the emptyDir, is writable by every uid,
+so the daemon sets its sticky bit as root before it drops
+(`agentshell.ProtectSocketDir`): only the socket's owner can remove or
+replace it, and a command cannot stand in for the daemon to read what
+`kivali mcp` sends it, a git job's token among it. A daemon that could
+not set the bit, or did not drop, runs no `POST /v1/git`.
 
 The daemon keeps three capabilities, as its permitted, effective and
 bounding sets (`0xe0`), and nothing inheritable or ambient: CAP_SETUID,
@@ -338,7 +343,12 @@ The proxy serves five kinds of request, told apart by
   server. The host must match one of the hosts its approved version
   names, under the allowlist's address rules; never the team's list,
   and no agent's exemption reaches it. A refusal reads `<host> is not a
-  host this integration reaches.` Nothing is counted.
+  host this integration reaches.` Nothing is counted. A built-in
+  integration's connection has a scoped credential of its own
+  (`integration-<name>.<connection id>`, held by core in the
+  connection's Secret), which a git clone or fetch in the agent's shell
+  presents, held to the connection's host the same way
+  ([integrations.md](integrations.md#the-git-built-in)).
 
 A credential that is present but wrong gets 407. In every mode the proxy
 resolves the host once, checks every address and dials only one that
@@ -376,6 +386,9 @@ exact hosts. An integration's shim registers its scoped credential's
 hash on its events handshake instead, which core keeps in the same file
 under `scoped`, with the approved version's hosts, and drops when the
 integration stops ([integrations.md](integrations.md#the-scoped-proxy-credential)).
+A built-in integration's connection's credential is registered by core
+when the connection is saved, and again at every boot from the
+connection's Secret.
 Core writes the mirror again on every registration and every change to
 an agent's network settings. The proxy hot-reloads the
 file, and re-reads it on an unknown credential before refusing, so a
@@ -495,7 +508,8 @@ There is no database. Everything durable is a plain file under
   usage.jsonl                 one record per model call: tokens and cost
   allowed_egress.yaml         the allowlist for agents' shells
   egress_agents.json          each agent runtime's two proxy credential hashes, its own and its shell's, and each
-                              running integration's scoped credential hash and hosts (not backed up)
+                              running integration's and built-in connection's scoped credential hash and hosts
+                              (not backed up)
   branding/                   org name, logo and derived favicons
   integrations/<name>/        one installed integration: its versions (manifest and unpacked bundle), its
                               connection's fields that are not secret, each agent's access, its audit, its

@@ -338,6 +338,9 @@ func (s *Server) restoreArchive(ctx context.Context, path, filename string) erro
 	if err := s.Store.InstallBuiltinIntegrations(s.BuiltinIntegrations.Manifests(), s.clk().Now()); err != nil {
 		log.Printf("restore: install built-in integrations: %v", err)
 	}
+	// Their connections' proxy credentials, from the Secrets the
+	// restore leaves as they were.
+	s.RegisterBuiltinEgress(ctx)
 	// The restored allowed_egress.yaml is on disk; the egress proxy
 	// reads its own copy, which boot writes and nothing else would
 	// until the next edit of the allowlist.

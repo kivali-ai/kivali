@@ -161,3 +161,62 @@ const ProxyCredentialFile = "proxy-credential"
 // /files/ workspace. Cwd values from the request are resolved relative
 // to this, matching the unified-files contract.
 const RootDefault = "/files"
+
+// GitRequest is the body of POST /v1/git: one clone or fetch through
+// an integration's git connection (agentpod.GitJob has the same
+// fields; the agent's MCP server copies one into the other). It holds
+// the connection's token and its proxy credential, for this one
+// operation: the daemon keeps neither, writes neither to disk and
+// scrubs both from everything it answers. Nothing logs a request.
+//
+// Op is clone or fetch; Path the working copy, under the daemon's root
+// (/files) or its HOME. URL is the repository's URL, with no user info,
+// on Host; a fetch without one reads the working copy's origin and uses
+// it only when it is on Host and one of AllowedRepositories. RefSpecs
+// and Force are a fetch's. TimeoutSeconds bounds the operation (see
+// GitTimeoutFor).
+type GitRequest struct {
+	Op                  string   `json:"op"`
+	Path                string   `json:"path"`
+	URL                 string   `json:"url,omitempty"`
+	RefSpecs            []string `json:"refspecs,omitempty"`
+	Force               bool     `json:"force,omitempty"`
+	AllowedRepositories []string `json:"allowed_repositories,omitempty"`
+	Host                string   `json:"host"`
+	Auth                GitAuth  `json:"auth"`
+	Proxy               GitProxy `json:"proxy"`
+	TimeoutSeconds      int      `json:"timeout_seconds,omitempty"`
+}
+
+// GitAuth is the HTTP basic auth a git operation presents to the host.
+type GitAuth struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+// GitProxy is the egress proxy credential a git operation presents; the
+// daemon puts it on its own bare proxy URL.
+type GitProxy struct {
+	Username string `json:"username,omitempty"`
+	Password string `json:"password,omitempty"`
+}
+
+// GitResponse is a git operation's outcome: the repository it reached
+// (owner/name), the refs it moved, why it failed, how long it took and
+// whether its timeout ended it. Every string is scrubbed of the
+// request's token and proxy credential.
+type GitResponse struct {
+	Repository string         `json:"repository,omitempty"`
+	Updated    []GitRefUpdate `json:"updated,omitempty"`
+	Error      string         `json:"error,omitempty"`
+	DurationMs int64          `json:"duration_ms,omitempty"`
+	TimedOut   bool           `json:"timed_out,omitempty"`
+}
+
+// GitRefUpdate is one ref a git operation moved: its name and the
+// commit it pointed at before (empty for a new ref) and after.
+type GitRefUpdate struct {
+	Ref string `json:"ref"`
+	Old string `json:"old,omitempty"`
+	New string `json:"new"`
+}

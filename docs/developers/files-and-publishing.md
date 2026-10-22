@@ -220,7 +220,7 @@ nothing and reports every name as failed.
 While the install runs, `POST /v1/exec` waits for it (up to 10 minutes,
 then answers that the shell is still installing; the client allows for
 that wait) and `GET /v1/packages` waits up to 15s, then names what is
-still installing; `POST /v1/files` never waits. `GET /v1/packages`
+still installing; `POST /v1/files` and `POST /v1/git` never wait. `GET /v1/packages`
 lists the image's packages and those installed, and the failures with
 a short reason (apt-get's error lines, and the update's fetch failure
 when the package servers could not be reached). The first `run_shell`

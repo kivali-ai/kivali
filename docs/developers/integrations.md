@@ -33,9 +33,17 @@ shim that runs in it), `internal/web/integration_registry.go` and
 tools), `internal/web/api_integrations.go` (the API) and
 `internal/web/apitypes/integrations.go` (the wire types).
 `internal/builtinintegrations` holds the integrations that ship with
-Kivali, `internal/store/builtin_integrations.go` writes them at boot
-and `internal/web/integration_builtin.go` calls them
-([Built-in integrations](#built-in-integrations)).
+Kivali (each in a package of its own, listed in
+`internal/builtinintegrations/builtins`),
+`internal/store/builtin_integrations.go` writes them at boot,
+`internal/web/integration_builtin.go` calls them and
+`internal/web/integration_builtin_egress.go` keeps their connections'
+proxy credentials ([Built-in integrations](#built-in-integrations)).
+The Git built-in is `internal/builtinintegrations/gitintegration`,
+with `internal/gitrepo` (a repository's URL and access patterns),
+`internal/shelljob` (the shell job's wire shapes) and
+`internal/agentshell/git.go` (the daemon's `POST /v1/git`)
+([The git built-in](#the-git-built-in)).
 `cmd/fake-integration` is a stdio MCP server for tests
 (`internal/integrationpod/fakeintegration`);
 `internal/integration/testdata/echo` is a real Python bundle the tests
@@ -513,7 +521,12 @@ admits a host only when it matches one of those hosts, in the
 allowlist's pattern language and under its address rules, never the
 team's list, and counts nothing. The shim scrubs the secret, in every
 form it can be written, from everything it sends core, the server's
-error output included.
+error output included. A built-in integration's connection has a
+scoped credential of its own, which core keeps
+([The git built-in](#the-git-built-in)); its user,
+`integration-<name>.<connection id>`, is never a bundle's, since an
+integration name has no dot, and the boot reconcile, which drops the
+credentials of bundles no longer installed, leaves it alone.
 
 ### Health
 
@@ -597,7 +610,7 @@ On `core.sock`, bound to the slug header like every agent route:
 | Route | Body | Answer |
 | --- | --- | --- |
 | `POST /v1/agent/{slug}/integrations/tools` | `{}` | `agentpod.IntegrationToolsResponse`: `{tools: [{name, description, input_schema}]}` |
-| `POST /v1/agent/{slug}/integrations/call` | `agentpod.IntegrationCallRequest`: `{name, arguments}`, the prefixed name | `agentpod.IntegrationCallResponse`: `{content: [text, ...], is_error}` |
+| `POST /v1/agent/{slug}/integrations/call` | `agentpod.IntegrationCallRequest`: `{name, arguments, shell_job_result}`, the prefixed name; `shell_job_result` only on a call's second request ([The git built-in](#the-git-built-in)) | `agentpod.IntegrationCallResponse`: `{content: [text, ...], is_error, shell_job}`; `shell_job` set, it is not yet the answer |
 | `POST /v1/agent/{slug}/kivali-developer/dispatch` | `agentpod.KivaliDeveloperRequest`: `{tool, input, smoke_result}` | `agentpod.KivaliDeveloperResponse`: `{body, is_error, smoke}` |
 
 A refusal or the integration's error is a 200 with `is_error`; a
@@ -625,6 +638,8 @@ in words that name the cause and the owner and nothing else:
 | Not running | The <integration> integration is not running right now; try again later or tell the owner. |
 | An action the agent's list does not have | Your access to the <integration> integration does not include <action>. Ask the owner if your work needs it. |
 | A built-in integration with no connection | The <integration> integration has no connection yet. Ask the owner to connect it. |
+| A shell job's result with a call whose integration asks for no job | The <integration> integration asked your shell for nothing in this call, so its result was not read. Call the action again. |
+| A built-in's own refusal (`builtinintegrations.Refusal`) | The refusal's `Text`, audited with its `Reason`: for Git, see [The git built-in](#the-git-built-in) |
 
 A name that starts with no integration's prefix is answered "No
 integration has an action named <name>." and has no audit row.
@@ -684,7 +699,22 @@ type Integration interface {
 type Caller struct{ Agent string; Access map[string]any }
 type Connection struct{ ID string; Fields map[string]string }
 type Tool struct{ Name, Description string; InputSchema json.RawMessage }
-type Result struct{ Content []string; IsError bool }
+type Result struct {
+	Content  []string
+	IsError  bool
+	Audit    string        // the audit row's reason; empty: the failure's words
+	ShellJob *shelljob.Job // work for the agent's shell (ShellJobIntegration)
+}
+
+// Optional capabilities.
+type ShellJobIntegration interface {
+	Integration
+	Complete(ctx context.Context, caller Caller, conn Connection, name string, args json.RawMessage, result shelljob.Result) (*Result, error)
+}
+type HostsOf interface{ Hosts(conn Connection) []string }
+
+// An error of Call or Complete that refuses the call before anything ran.
+type Refusal struct{ Text, Reason string }
 ```
 
 - `Manifest` is the manifest, held to `integration.ValidateBuiltin`
@@ -708,7 +738,19 @@ type Result struct{ Content []string; IsError bool }
   `kivali.access.choices` maps the field to, which need not be a tool.
 - `Connection.Fields` is every connection field by key, secrets
   included, read from the record and its Secret at the moment of the
-  call and kept by no one.
+  call and kept by no one. The connection's proxy credential is not
+  among them.
+- A `Refusal` from `Call` or `Complete` is audited as not allowed, with
+  its `Reason`, and the agent reads its `Text`; any other error is the
+  function's own failure, as above. `Result.Audit`, when set, is the
+  audit row's reason in place of the failure's words.
+- A `ShellJobIntegration` runs part of an action in the agent's shell:
+  its `Call` answers with `Result.ShellJob`, and `Complete` puts the
+  shell's result in words on the call's second request
+  ([The git built-in](#the-git-built-in)).
+- A `HostsOf` built-in's shell jobs reach the network through the
+  egress proxy: each of its connections gets a scoped proxy credential
+  admitted to `Hosts(conn)` and nothing else.
 
 `Tools`, `Call`, `Verify` and `Choices` run concurrently: many agents
 call at once, and each agent's list is asked for in parallel with the
@@ -716,12 +758,15 @@ other integrations'. One still running at its deadline (below) is
 abandoned and its answer dropped; its context ends, and it must honour
 that and stop.
 
-`builtinintegrations.All()` is the built-ins compiled into the binary,
-and `Server.BuiltinIntegrations` the ones core calls (`All()` unless a
-test sets others). `internal/builtinintegrations/echotest` is the
-built-in the tests register; it is never in `All()`. A test holds
-every built-in in `All()` to the check, to a name of its own, and to a
-`Tools` list inside its manifest.
+`builtins.All()` (`internal/builtinintegrations/builtins`) is the
+built-ins compiled into the binary: Git. Each built-in is a package of
+its own that imports `builtinintegrations` for its types, so the list
+lives in a package apart. `Server.BuiltinIntegrations` is the ones core
+calls (`builtins.All()` unless a test sets others).
+`internal/builtinintegrations/echotest` is the built-in the tests
+register; it is never in `All()`. A test holds every built-in in
+`All()` to the check, to a name of its own, and to a `Tools` list
+inside its manifest.
 
 ### Registration at boot
 
@@ -776,7 +821,8 @@ would reach a pod, it calls the function instead
 | An agent's call | `tools/call` through the shim | `Call(caller, connection, name, args)` |
 | Test connection | `tools/call` of `kivali.verify` | `Verify(connection)`; the audit's action is the name `kivali.verify` gives (`whoami` for echo) |
 | An access field's options | `tools/call` of the field's tool | `Choices(connection, name)`; 409 with no connection |
-| A connection change | the shim restarts the server | nothing to restart |
+| Work in the agent's shell | none | `Call` answers with `ShellJob`, `Complete` the call's second request |
+| A connection change | the shim restarts the server | nothing to restart; a `HostsOf` built-in's proxy credential is registered again |
 | Reconcile | a pod while it should run | skipped |
 
 Each function runs under the same deadline a pod's request has (60 s
@@ -799,6 +845,260 @@ block, and offers no Approve, Reject or Roll back; the page's version
 list offers no Roll back. A built-in record this binary does not carry
 shows "Not in this version of Kivali" (`IntegrationStatusNotIncluded`),
 says agents cannot use it, and offers Remove.
+
+### The git built-in
+
+Git (`internal/builtinintegrations/gitintegration`, name `git`,
+version 1.0.0) lets agents clone and fetch repositories over HTTPS with
+the owner's token. Everything local is plain git in the agent's shell,
+which reaches only the team's allow list. Its manifest:
+
+- `user_config`: `host` (required; "github.com, gitlab.com or any HTTPS
+  git host, without https://"), `token` (sensitive, required) and
+  `test_repository` (optional, owner/name).
+- `kivali.connection.method: token`, no `kivali.hosts`,
+  `kivali.verify: "ls_remote"` (a name for `Verify`, not a tool).
+- `kivali.access.schema`: one required list field, `repositories`
+  ("owner/name, or a pattern such as acme/*").
+- `tools`: `clone` and `fetch`, which agents call as `git_clone(url,
+  path)` and `git_fetch(path, url?, refs?)`.
+
+#### Repositories and access
+
+A repository is its path on the connection's host, `owner/name`, or
+more segments where GitLab nests groups (`group/sub/project`)
+(`internal/gitrepo`, used by core and by the daemon alike). The host
+is the connection's, made exact (`gitrepo.NormalizeHost`: spaces, an
+`https://` in front and slashes behind dropped, lower case; a host
+name or address with an optional port). A call names the repository by
+URL or by `owner/name`:
+
+- A URL must be `https://<the connection's host>/<path>`, with an
+  optional `.git`, and no user info, query or fragment. Another scheme
+  is refused (SSH among them), and so is another host, a port included
+  ("the connection is for <host>").
+- Anything without `://` is `owner/name`, used as it is.
+- The path loses slashes around it and `.git`; each segment is letters,
+  digits, `.`, `_` and `-`, never `.` or `..`, and there are at least
+  two. It keeps its case in the URL core builds,
+  `https://<host>/<path>.git`, and is matched in lower case.
+
+The access's `repositories` are patterns matched against the path with
+`path.Match`: `*` and `?` stand within one segment and never across a
+`/`, case is ignored, and an entry with neither is the one repository it
+names (`gitintegration/access.go`). An access whose `repositories` is
+missing or empty, or holds anything but valid patterns, refuses every
+repository.
+
+#### A call, in two requests
+
+Core has no shell of the agent's, so a clone or a fetch takes two
+requests on `core.sock`, as the smoke test does
+([The smoke test](#the-smoke-test)):
+
+1. The agent's MCP server sends the call (`IntegrationCallRequest`).
+   Core works it out as any call ([A call](#a-call)) and calls
+   `Git.Call`, which checks the connection (a host, a token), the
+   access, the arguments and the repository, and answers with a
+   `builtinintegrations.Refusal` or a shell job. Core puts the
+   connection's proxy credential in the job and answers
+   `IntegrationCallResponse{shell_job}`. No audit row is written yet; a
+   refusal is audited and answered at once.
+2. The MCP server converts the job to an `agentshell.GitRequest` and has
+   the agent-shell daemon run it (`SidecarShell.Git`, `POST /v1/git`),
+   waiting the operation's own bound and 30 s more, as `SidecarShell.Exec`
+   does for a command. A server with no sidecar (`KIVALI_MCP_LOCAL_FILES`)
+   sends `skipped` ("the agent has no shell to run git in").
+3. It sends the call again: the same name and arguments, with
+   `shell_job_result`. Core works out the integration, the agent's
+   access and the connection again exactly as on the first request, and
+   `Git.Complete` checks the call again (access taken away while the job
+   ran refuses it) and puts the result in words. That writes the call's
+   one audit row: allowed, the action `clone` or `fetch`, and the reason
+   `<owner/name>: updated <refs>` (at most ten named), `<owner/name>: up
+   to date`, or the repository and why it failed. The row counts from
+   the job's start (the result's `duration_ms`, at most 15 minutes).
+
+The result is untrusted text from the agent's pod: it becomes only the
+agent's answer and the audit's reason, both scrubbed of the
+connection's secrets and its proxy credential, and nothing in core acts
+on it, so no nonce binds it to the job. For a fetch without a `url` the
+repository named is the one the daemon reports. The deadlines are per
+leg: each request is a call under the 60 s `integrationCallTimeout`;
+the job runs in between under its own bound. A result sent with a call
+whose integration asks for no job is refused and audited. The MCP
+server never runs a second job in one call.
+
+The wire shapes (`internal/shelljob`, named in `agentpod` as
+`IntegrationShellJob`, `GitJob` and the rest):
+
+```go
+type IntegrationShellJob struct{ Git *GitJob }             // json: git
+type GitJob struct {
+	Op, Path, URL       string   // op: clone or fetch; url empty: the working copy's origin
+	RefSpecs            []string // json: refspecs; a fetch's
+	Force               bool     // a ref may move other than fast-forward
+	AllowedRepositories []string // the access's patterns, for the daemon's own check
+	Host                string   // the connection's, made exact
+	Auth                GitAuth  // {username: x-access-token, password: the token}
+	Proxy               GitProxy // {username: integration-git.<id>, password: the secret}
+	TimeoutSeconds      int      // clone 900, fetch 600
+}
+type IntegrationShellJobResult struct{ Skipped string; Git *GitResult }
+type GitResult struct {
+	Repository string
+	Updated    []GitRefUpdate // {ref, old, new}; old empty for a new ref
+	Error      string
+	DurationMs int64
+	TimedOut   bool
+}
+```
+
+`refspecs` and `force` are carried for a push; clone and fetch set no
+`force`. Nothing on the job's path logs it: not core, not the MCP
+server, not the daemon.
+
+Git's refusals name the cause and the owner only:
+
+| Cause | The agent reads | The audit's reason |
+| --- | --- | --- |
+| A URL on another host | The Git integration's connection is for <host>; give a repository's URL on it, or owner/name. | the URL is on another host than the connection's |
+| A repository that does not read | Kivali cannot read the repository: <why>. Give its HTTPS URL on <host>, or owner/name. | the repository does not read |
+| Outside the access | The Git integration's access for you does not include <owner/name>. Ask the owner if your work needs it. | the access does not include <owner/name> |
+| An access that names no repositories | Your access to the Git integration names no repositories Kivali can read. Ask the owner to set it again. | the access names no repositories |
+| A connection host that is no host | The Git integration's connection has no host Kivali can use. Ask the owner to fix the connection. | the connection's host is not a host name |
+| No token | The Git integration's connection has no token. Ask the owner to connect it again. | the connection has no token |
+| Arguments the action does not take | git_clone takes url and path, both strings. (git_fetch: path, and optionally url and refs) | the arguments do not read |
+
+The answers: "Cloned <owner/name> into <path>. Its origin is <url>; use
+plain git there for everything local, and git_fetch to fetch with the
+connection." or "Fetched <owner/name> into <path>.", then the refs that
+moved (at most 50, `<ref> <old>..<new>` or `<ref> new at <new>`) or
+"Nothing changed: the working copy was up to date." An error answer
+says nothing ran for want of a shell, that the operation did not finish
+in time and was stopped, or that it did not go through, with the host's
+or the daemon's words, cut to 1000 bytes.
+
+#### The daemon's `POST /v1/git`
+
+`internal/agentshell/git.go` runs the operation in the daemon's own
+process with go-git v5 (`github.com/go-git/go-git/v5`). The body is a
+`GitRequest` (64 KiB at most), the answer a `GitResponse`
+(`{repository, updated, error, duration_ms, timed_out}`). The bound is
+the request's `timeout_seconds`, at most 15 minutes for a clone and 10
+for a fetch, 5 when it gives none, on the daemon's clock; past it the
+operation's context ends and the answer is `timed_out`.
+
+- **Where.** `path` is absolute under the daemon's root (`/files`) or
+  its HOME (`/scratch/home`), `~/...` for the home, or relative to the
+  root, as a command's cwd is; the root and the home themselves are
+  refused. The existing part of the path is resolved through its
+  symbolic links and must stay under the same base. A clone needs a
+  directory that does not exist or is empty, and go-git removes what it
+  made when the clone fails; a fetch needs a working copy whose `.git`
+  is a directory (a `gitdir:` file or a link is refused).
+- **What it reaches.** A clone's URL is the job's, parsed by the same
+  rules on the job's host, and must be one of `allowed_repositories`.
+  The clone's origin is that URL, with no user info, so plain git keeps
+  working for a repository the team's allow list reaches. A fetch's URL
+  is the job's, by the same rules, or, with none, the working copy's
+  origin as written in `.git/config` (read raw, so no
+  `url.<base>.insteadOf` rewrites it; exactly one URL), parsed by the
+  same rules and refused unless it is on the job's host and one of
+  `allowed_repositories`. `.git/config` is the agent's to write, so
+  nothing else in it is read. The daemon never follows a URL it did not
+  derive and check this way.
+- **How it fetches.** Through an anonymous remote
+  (`CreateRemoteAnonymous` with the URL in code, and `RemoteName:
+  "anonymous"` on the fetch). go-git then applies no `insteadOf` rule,
+  from the repository's configuration or a global `~/.gitconfig`,
+  ignores the `[remote "origin"]` the configuration holds, and runs no
+  hook; the daemon's tests pin all of it against a poisoned working copy
+  (a rule and an origin to another server, the same rule in the global
+  file, hooks that leave a mark), with a control that shows a fetch
+  through the named remote follows the poison. A named remote
+  (`RemoteName: "origin"` without `RemoteURL`) follows the
+  configuration's URL: the daemon never uses one. A push through an
+  anonymous remote needs `PushOptions.RemoteName: "anonymous"`.
+- **Refspecs.** None fetches `+refs/heads/*:refs/remotes/origin/*`.
+  Each given must parse (`config.RefSpec.Validate`), have a source, and
+  write under `refs/remotes/origin/` or `refs/tags/`, cleanly (no `..`),
+  so a fetch never moves a local branch. Tags are fetched
+  (`git.AllTags`). Already up to date is success with nothing moved. The
+  refs that moved are worked out from every ref before and after.
+- **The proxy.** Always given in code (`ProxyOptions`): the daemon's own
+  bare proxy URL (the first of `HTTPS_PROXY`, `https_proxy`,
+  `HTTP_PROXY`, `http_proxy` in its environment, without user info) with
+  the job's credential, so go-git never reads a proxy from the
+  environment. With none in the environment (tests, a laptop) it
+  connects directly.
+- **Credentials.** The token is basic auth (`x-access-token` and the
+  token, what GitHub expects of a personal access token; GitLab takes
+  any user). It and the proxy credential live in the request for the
+  one operation, are never written to disk (`.git/config` holds neither,
+  which the tests check) and are scrubbed from every string of the
+  answer: the value, `user:value` in base64, the credentialed proxy URL
+  and their URL-escaped forms. The MCP server scrubs its own transport
+  error the same way before it sends it to core.
+- **Whose files.** The daemon runs it with its filesystem uid, 65532, so
+  a clone is owned as every file the shell writes is.
+- **When it runs nothing.** A daemon that did not drop to its own user
+  (a command could then read its memory), or could not set the sticky
+  bit on its socket's directory (a command could then stand in for the
+  daemon), answers every request with why
+  (`ServerConfig.GitUnavailable`, [architecture.md](architecture.md#the-agent-shell-daemons-user)).
+
+`ServerConfig.GitInsecureHTTP` lets the tests' git server, `git
+http-backend` under `net/http/cgi` on `httptest`, be reached over
+`http://`; nothing else sets it, and anything but `https` is refused.
+
+#### The connection's proxy credential
+
+Git implements `builtinintegrations.HostsOf`: its connection reaches
+its host (without the port). Each connection of such a built-in has a
+scoped proxy credential of its own (`internal/web/integration_builtin_egress.go`):
+
+- A 32-byte secret (`egresscred.NewSecret`) in the connection's Secret
+  under `kivali-proxy-secret` (`builtinintegrations.ProxySecretKey`).
+  That key has a hyphen, so it is never a `user_config` key; it is not
+  in the record's `secret_keys`, the fields the owner is shown, or
+  `Connection.Fields`. Core alone puts it in a job.
+- Its SHA-256 is registered as the scoped proxy user
+  `integration-git.<connection id>` (`builtinintegrations.ProxyUser`)
+  with the built-in's hosts (`store.SetEgressScopedCredential`). The
+  proxy admits that user to those hosts alone and counts nothing; the
+  team's allow list is not touched.
+- Saving the connection (`PUT .../connection`) mints the secret when the
+  Secret holds none, keeps it otherwise, and registers it on every save
+  while the integration is on, so a changed host is registered at once.
+  Deleting the connection, switching the integration off and removing it
+  drop it (`DropEgressScopedCredential`); switching it on registers it
+  again. Every boot (`Server.RegisterBuiltinEgress` in `main.go`) and
+  every restore registers each switched-on built-in's connection again
+  from its Secret, since `egress_agents.json` is out of backups and the
+  Secret is not, and drops the credentials of those switched off. A job
+  whose connection's Secret holds no secret mints and registers one
+  first.
+
+#### Test connection
+
+`Git.Verify` runs in core, which reaches the host directly (the
+server's container has no egress proxy). With `test_repository` set it
+lists the repository in memory with the token
+(`git.NewRemote(memory.NewStorage(), ...)` and `ListContext` with basic
+auth) and answers "Connected. <n> branches in <owner/name>." Without it,
+for `github.com` it asks `https://api.github.com/user` with
+`Authorization: Bearer <token>` ("Connected to github.com as <login>.")
+and for `gitlab.com` `https://gitlab.com/api/v4/user` with
+`PRIVATE-TOKEN` ("Connected to gitlab.com as <username>."); any other
+host is the error "Name a repository for Test connection: this host
+has no account endpoint Kivali knows." A failure is the host's words
+with the token taken out. The `Git` struct's fields are test hooks
+(`InsecureHTTP`, `HTTPClient`, `GitHubAPI`, `GitLabAPI`); the tests
+never reach a real host.
+
+Not supported: SSH remotes, Git LFS (a clone holds the pointers),
+submodules (not cloned), and pushing through the integration.
 
 ## The Kivali Developer
 

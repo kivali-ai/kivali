@@ -4,8 +4,9 @@
 // runtime container via an emptyDir mounted at /run/kivali-agent-shell/.
 // POST /v1/exec runs a single bash command and returns
 // stdout/stderr/exit. POST /v1/files runs one file_* tool call against
-// the agent's /files/ (or a subagent's view of it). /healthz returns
-// 200 for liveness probes.
+// the agent's /files/ (or a subagent's view of it). POST /v1/git runs
+// one clone or fetch through an integration's git connection, in this
+// process. /healthz returns 200 for liveness probes.
 //
 // Each request runs in a fresh bash subprocess. Persistence across
 // calls is filesystem-based: HOME points into /scratch/, this
@@ -43,6 +44,9 @@
 //
 // Start-up. The order is fixed:
 //
+//  0. set the sticky bit on the socket's directory
+//     (agentshell.ProtectSocketDir), so no command can stand in for the
+//     daemon's socket; a failure leaves POST /v1/git running nothing;
 //  1. with --install, start `agent-shell install-software <pkgs...>`
 //     (this binary, via /proc/self/exe) as a root child, which runs
 //     apt-get and reports on a pipe;
@@ -71,6 +75,7 @@ import (
 
 	"github.com/kivali-ai/kivali/internal/agentshell"
 	"github.com/kivali-ai/kivali/internal/clock"
+	"github.com/kivali-ai/kivali/internal/egresscred"
 	"github.com/kivali-ai/kivali/internal/files"
 )
 
@@ -115,8 +120,18 @@ func main() {
 	}
 	id := agentshell.Identity{DaemonUID: *daemonUID, UID: uid, GID: gid}
 	creds := agentshell.HostCreds{}
-	// Before anything else: install as a root child if asked, then stop
-	// being root. Nothing below runs with privileges.
+	// While root: the socket's directory gets its sticky bit, so no
+	// command can replace the daemon's socket with its own. Without it,
+	// POST /v1/git runs nothing.
+	gitUnavailable := ""
+	if os.Geteuid() == 0 {
+		if err := agentshell.ProtectSocketDir(filepath.Dir(*socketPath)); err != nil {
+			logger.Printf("warning: protect the socket's directory: %v; git through a connection will not run", err)
+			gitUnavailable = "the shell's socket is not protected, so git through the connection does not run in this shell"
+		}
+	}
+	// Then: install as a root child if asked, and stop being root.
+	// Nothing below runs with privileges.
 	inst, err := agentshell.BecomeUnprivileged(creds, id,
 		agentshell.ParseInstallList(*install), startInstall, logger.Printf)
 	if err != nil {
@@ -133,6 +148,10 @@ func main() {
 	dropped := agentshell.VerifyDaemon(creds, id) == nil
 	if dropped {
 		commandUser = &agentshell.CommandUser{UID: uint32(uid), GID: uint32(gid)}
+	} else {
+		// A command of the daemon's own uid could read the daemon's
+		// memory, and a git job's token in it.
+		gitUnavailable = "the shell runs commands as its own user, so git through the connection does not run in this shell"
 	}
 	if inst != nil {
 		logger.Printf("installing software: %v", inst.Requested())
@@ -203,6 +222,12 @@ func main() {
 			// beside the socket, on the emptyDir both containers mount.
 			ProxyCredentialPath: filepath.Join(filepath.Dir(*socketPath), agentshell.ProxyCredentialFile),
 			CommandUser:         commandUser,
+			// POST /v1/git works under the root or the home, and goes
+			// through the proxy the daemon's environment names, with the
+			// connection's credential on it.
+			Home:           os.Getenv("HOME"),
+			GitProxyURL:    gitProxyURL(os.Getenv),
+			GitUnavailable: gitUnavailable,
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
@@ -225,6 +250,18 @@ func main() {
 	_ = srv.Shutdown(shutCtx)
 	_ = os.Remove(*socketPath)
 	logger.Print("shutdown complete")
+}
+
+// gitProxyURL is the daemon's bare egress proxy URL: the first proxy
+// variable of its environment that is set, without user info. Empty
+// when there is none.
+func gitProxyURL(getenv func(string) string) string {
+	for _, k := range []string{"HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"} {
+		if v := egresscred.BareProxyURL(getenv(k)); v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // listenSocket removes any stale socket at path from a crashed prior

@@ -37,6 +37,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/kivali-ai/kivali/internal/builtinintegrations"
 	"github.com/kivali-ai/kivali/internal/clock"
 	"github.com/kivali-ai/kivali/internal/integration"
 	"github.com/kivali-ai/kivali/internal/integrationpod"
@@ -335,7 +336,10 @@ func (r *integrationRegistry) reconcile(ctx context.Context, boot bool) error {
 			}
 		}
 		for user := range r.store.EgressScopedCredentials() {
-			if name, ok := strings.CutPrefix(user, integrationpod.ProxyUser("")); ok {
+			// A built-in's connection's user (builtinintegrations.ProxyUser)
+			// is no integration name after the prefix: it has a dot. Its
+			// credential follows the connection, not a pod.
+			if name, ok := strings.CutPrefix(user, integrationpod.ProxyUser("")); ok && integration.ValidName(name) {
 				stop[name] = true
 			}
 		}
@@ -864,32 +868,36 @@ func (r *integrationRegistry) deliver(name string, msg integrationpod.Message) {
 // with which of them are secret, from the store and the Secret. A
 // missing connection is store.ErrNotFound.
 func (r *integrationRegistry) connectionValues(ctx context.Context, name string) (*integration.Manifest, map[string]string, []string, error) {
-	m, _, values, secretValues, err := r.readConnection(ctx, name)
+	m, _, values, secretValues, _, err := r.readConnection(ctx, name)
 	return m, values, secretValues, err
 }
 
 // readConnection is connectionValues with the connection's record,
-// which a built-in integration's call needs for its id.
-func (r *integrationRegistry) readConnection(ctx context.Context, name string) (*integration.Manifest, store.IntegrationConnection, map[string]string, []string, error) {
+// which a built-in integration's call needs for its id, and the secret
+// of the connection's scoped proxy credential (a built-in's, kept in
+// its Secret under builtinintegrations.ProxySecretKey; "" for none),
+// which is never one of the values.
+func (r *integrationRegistry) readConnection(ctx context.Context, name string) (*integration.Manifest, store.IntegrationConnection, map[string]string, []string, string, error) {
 	_, m, err := r.store.CurrentIntegrationVersion(name)
 	if err != nil {
-		return nil, store.IntegrationConnection{}, nil, nil, err
+		return nil, store.IntegrationConnection{}, nil, nil, "", err
 	}
 	conn, err := r.store.GetIntegrationConnection(name)
 	if err != nil {
-		return m, conn, nil, nil, err
+		return m, conn, nil, nil, "", err
 	}
 	values := map[string]string{}
 	for k, v := range conn.Fields {
 		values[k] = v
 	}
 	var secretValues []string
+	proxySecret := ""
 	if conn.SecretName != "" {
 		data, err := r.secrets().Get(ctx, conn.SecretName)
 		switch {
 		case errors.Is(err, secrets.ErrNotFound):
 		case err != nil:
-			return m, conn, nil, nil, err
+			return m, conn, nil, nil, "", err
 		}
 		for k, v := range data {
 			if f, ok := m.UserConfig.Field(k); ok && f.Sensitive && v != "" {
@@ -897,8 +905,9 @@ func (r *integrationRegistry) readConnection(ctx context.Context, name string) (
 				secretValues = append(secretValues, v)
 			}
 		}
+		proxySecret = data[builtinintegrations.ProxySecretKey]
 	}
-	return m, conn, values, secretValues, nil
+	return m, conn, values, secretValues, proxySecret, nil
 }
 
 // credential is the kivali/credential answer: the server's env with

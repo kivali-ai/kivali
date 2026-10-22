@@ -31,6 +31,7 @@ import (
 	"net/http"
 
 	"github.com/kivali-ai/kivali/internal/provider"
+	"github.com/kivali-ai/kivali/internal/shelljob"
 )
 
 // EventType discriminates events on the agent's outbound SSE stream
@@ -769,19 +770,58 @@ type IntegrationToolsResponse struct {
 // prefixed name, with the arguments as the model wrote them. Core
 // works out the integration and the action from the agent's access as
 // it stands at the call, never from anything else in the request.
+//
+// A call of an integration that runs part of its work in the agent's
+// shell takes two requests, as the smoke test does: the first is
+// answered with ShellJob, and the second is the same name and
+// arguments with ShellJobResult, what the shell gave back. Core works
+// the call out again on the second request, exactly as on the first.
 type IntegrationCallRequest struct {
 	Name      string          `json:"name"`
 	Arguments json.RawMessage `json:"arguments,omitempty"`
+	// ShellJobResult is the shell job's outcome, on the second request.
+	// Core reads it as untrusted text: it becomes the agent's answer and
+	// the audit's reason, scrubbed, and nothing in core acts on it.
+	ShellJobResult *IntegrationShellJobResult `json:"shell_job_result,omitempty"`
 }
 
 // IntegrationCallResponse is the call's result as the model reads it:
 // the text of the integration's answer, block by block, or why the
 // call was refused. IsError marks a refusal or the integration's
 // error.
+//
+// With ShellJob set it is not yet the answer: the agent's MCP server
+// runs the job in the agent's shell and sends the request again with
+// the result (IntegrationCallRequest.ShellJobResult). The job carries
+// credentials, so nothing on its path logs it.
 type IntegrationCallResponse struct {
-	Content []string `json:"content"`
-	IsError bool     `json:"is_error,omitempty"`
+	Content  []string             `json:"content"`
+	IsError  bool                 `json:"is_error,omitempty"`
+	ShellJob *IntegrationShellJob `json:"shell_job,omitempty"`
 }
+
+// The shell job's shapes, defined in the leaf package shelljob (which
+// builtinintegrations names them from) and named here as core.sock's
+// protocol has them.
+type (
+	// IntegrationShellJob is the work core asks the agent's shell to do
+	// for one call; one field is set (shelljob.Job).
+	IntegrationShellJob = shelljob.Job
+	// IntegrationShellJobResult is what the shell gave back, or why
+	// nothing ran (shelljob.Result).
+	IntegrationShellJobResult = shelljob.Result
+	// GitJob is one clone or fetch through a git connection, with its
+	// credentials (shelljob.GitJob).
+	GitJob = shelljob.GitJob
+	// GitAuth is the basic auth a git operation presents to the host.
+	GitAuth = shelljob.GitAuth
+	// GitProxy is the egress proxy credential a git operation presents.
+	GitProxy = shelljob.GitProxy
+	// GitResult is a GitJob's outcome.
+	GitResult = shelljob.GitResult
+	// GitRefUpdate is one ref a git operation moved.
+	GitRefUpdate = shelljob.GitRefUpdate
+)
 
 // KivaliDeveloperDispatchPath is the core.sock route, under
 // /v1/agent/{slug}, of the Kivali Developer's integration_* tools: a
