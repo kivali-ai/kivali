@@ -10,7 +10,7 @@
     "entry_point": "server/main.py",
     "mcp_config": {
       "command": "python3",
-      "args": ["server/main.py"]
+      "args": ["-I", "server/main.py"]
     }
   },
   "user_config": {},

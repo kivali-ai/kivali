@@ -1698,7 +1698,8 @@ What the owner sees:
 `internal/builtinintegrations/bundles/github` embeds the bundle
 (`manifest.json`, `server/main.py`) and gives it as `github.Bundle()`.
 The server is a stdio MCP server of Python's standard library, in the
-template's shape, and every action is one run of GitHub's `gh`, which
+template's shape (`mcp_config` runs `python3 -I server/main.py`), and
+every action is one run of GitHub's `gh`, which
 the pod installs (`kivali.packages: ["gh"]`) before the server starts.
 The hosts are `api.github.com` and `github.com`.
 
@@ -1724,15 +1725,25 @@ The hosts are `api.github.com` and `github.com`.
   55-second budget for the whole call (Kivali waits 60). Standard
   output is the answer, or the action's own summary of gh's JSON; a
   non-zero exit is an error result with the end of gh's error output.
-  Long answers are cut: a body at 20,000 characters, an issue's
-  comments to the latest 20, a diff at 50,000, with a note saying so.
+  An `HTTP 401` or `HTTP 403` in it is answered with what GitHub
+  refused and "ask the owner". Long answers are cut: a body at 20,000
+  characters, an issue's comments to the latest 20, a diff at 50,000,
+  and every answer at 60,000 (`ANSWER_CLIP`), with a note saying so.
+  `list_repositories` lists owner by owner and names an owner gh
+  could not list rather than failing whole.
 - **Access, in the wrapper.** `_meta.kivali.access.repositories` are
   patterns read by `internal/gitrepo`'s rules, ported to Python
   (`normalize_pattern`, `valid_pattern`, `match`); a test holds the
   port to `gitrepo.Match` case by case. A repository argument must be
   `owner/name`, and one the patterns do not match is refused before gh
   runs ("Your access to GitHub does not include <owner/name>; ask the
-  owner."). `create_issue`, `comment` and `create_pull_request` need
+  owner."). gh runs `list_issues`' `search` as a GitHub search with
+  `repo:<owner/name>` added, and GitHub ORs `repo:` qualifiers and
+  honours `org:`, `user:` and `owner:`, so a search holding any of them
+  (after anything but a letter, digit or underscore) is refused, and
+  the answer keeps only items whose URL is under
+  `https://github.com/<owner/name>/issues/`. No other action takes a
+  search. `create_issue`, `comment` and `create_pull_request` need
   `write: true`; without it they are left out of the agent's
   `tools/list` and refused by name. The owner's requests carry no
   `_meta` and list every action; `whoami` is the owner's alone.

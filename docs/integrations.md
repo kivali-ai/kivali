@@ -214,8 +214,8 @@ Every clone, fetch and push is in **Recent calls**, with the repository and the 
 GitHub is connected by [signing in](#connect-by-signing-in) with a GitHub App you register yourself, so Kivali holds no password or personal access token of yours and you choose what the app may touch. The integration's page shows the steps above the connection form; in short:
 
 1. On GitHub, in the settings of the account or organization that owns the repositories, create a GitHub App under **Developer settings**, **GitHub Apps**: with **Enable Device Flow** ticked, the webhook off, and the repository permissions Contents and Metadata read-only, Issues and Pull requests read and write.
-2. Paste its client id and a client secret you generate into the connection form, and choose **Save connection**.
-3. Install the app on the account or organization, for the repositories agents should reach. Agents reach only repositories the app is installed on.
+2. Install the app on that account or organization, for the repositories agents should reach. Agents reach only repositories the app is installed on.
+3. Paste its client id and a client secret you generate into the connection form, and choose **Save connection**.
 4. Choose **Sign in with a code** and approve the sign-in on GitHub.
 
 Leave **Expire user authorization tokens** on in the app's settings: GitHub's tokens then last eight hours, and Kivali renews each one shortly before it expires, so a token that leaks stops working soon. **Test connection** names the GitHub account the connection signs in as. What agents can do is the smaller of what the app may do and what your GitHub account may do.
@@ -232,7 +232,7 @@ Everything an agent does is done as the account you signed in with, so GitHub sh
 ### What agents can do
 
 - List the repositories its access names, and read a repository's details, its branches, and a comparison of two branches, tags or commits (the commits and the files changed, not the changes themselves).
-- List and read issues, with the latest 20 comments, and list and read pull requests, with the diff when it asks (cut at 50,000 characters).
+- List and read issues, with the latest 20 comments, and list and read pull requests, with the diff when it asks (cut at 50,000 characters). Issue search words stay within the repository named: a search that names another repository, organization or user is refused.
 - With **May create and comment**: open an issue, comment on an issue or pull request, and open a pull request from a branch already on GitHub.
 
 Each action is in **Recent calls**. A call for a repository the agent's access does not name is refused before anything reaches GitHub, and the agent is told to ask you.
