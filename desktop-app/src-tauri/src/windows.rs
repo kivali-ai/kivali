@@ -233,6 +233,7 @@ fn add_team_web(
         if let Ok(web) = &added {
             platform::guard_frames(web, guard);
             watched.store(platform::watch_loads(web, ended), Ordering::SeqCst);
+            platform::contain_keys(web);
         }
         let _ = tx.send(added);
     })?;
@@ -858,7 +859,10 @@ fn create_team_window(app: &AppHandle, t: &Team, visible: bool) -> Option<Window
         .on_page_load(heal_page_loads())
         .auto_resize();
     match window.add_child(page, LogicalPosition::new(0.0, 0.0), size) {
-        Ok(page) => crate::menus::hook_window_shortcuts(app, &page, &id),
+        Ok(page) => {
+            platform::contain_keys(&page);
+            crate::menus::hook_window_shortcuts(app, &page, &id);
+        }
         Err(e) => eprintln!("kivali: cannot open {}'s page: {e}", t.name),
     }
     let app2 = app.clone();

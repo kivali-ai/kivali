@@ -6,11 +6,11 @@ use super::{cancel_index, tray_set, AlertAnswer, AlertSpec, StartTime, TrayIcons
 use block2::RcBlock;
 use objc2::rc::Retained;
 use objc2::runtime::Bool;
-use objc2::MainThreadMarker;
+use objc2::{define_class, msg_send, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{
     NSAlert, NSAlertFirstButtonReturn, NSAppearance, NSAppearanceCustomization, NSAppearanceNameAqua,
-    NSAppearanceNameDarkAqua, NSApplication, NSControlStateValueOn, NSModalResponse, NSRunningApplication, NSWindow,
-    NSWorkspace,
+    NSAppearanceNameDarkAqua, NSApplication, NSControlStateValueOn, NSEvent, NSModalResponse, NSResponder,
+    NSRunningApplication, NSView, NSWindow, NSWorkspace,
 };
 use objc2_foundation::{ns_string, NSArray, NSError, NSString, NSUserDefaults};
 use objc2_local_authentication::{LAContext, LAError, LAPolicy};
@@ -377,6 +377,70 @@ pub fn watch_loads(_webview: &tauri::Webview, _ended: Box<dyn Fn(super::LoadEnd)
 /// ([`WINDOW_MENU`]), and AppKit gives the menu bar its key equivalents
 /// before a webview sees them.
 pub fn menu_shortcuts(_webview: &tauri::Webview, _shortcut: Box<dyn Fn(&str) -> bool + Send>) {}
+
+define_class!(
+    // SAFETY: NSResponder has no subclassing requirements, and this class
+    // does not implement Drop.
+    #[unsafe(super(NSResponder))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "KivaliKeyStop"]
+    struct KeyStop;
+
+    impl KeyStop {
+        /// A key the webview left unhandled goes no further.
+        #[unsafe(method(keyDown:))]
+        fn key_down(&self, _event: &NSEvent) {}
+    }
+);
+
+impl KeyStop {
+    fn new(mtm: MainThreadMarker) -> Retained<Self> {
+        let this = Self::alloc(mtm).set_ivars(());
+        // SAFETY: NSResponder's designated initializer.
+        unsafe { msg_send![super(this), init] }
+    }
+}
+
+/// Its address names a webview's [`KeyStop`] among the webview's
+/// associated objects.
+static KEY_STOP: u8 = 0;
+
+/// Ends the keys a team window's webview leaves unhandled. wry adds a
+/// child webview straight into tao's view of the window, whose
+/// `keyDown:` runs `interpretKeyEvents:` on any key that reaches it, and
+/// macOS then types that key into the webview's focused field: a right
+/// arrow at the end of a text field types U+001D, drawn as a box. A
+/// responder between the webview and tao's view ends such a key, as
+/// wry's own parent view does for a window's only webview. Menu
+/// shortcuts never get this far: AppKit offers the menu a key equivalent
+/// before any view's `keyDown:`. The webview keeps the responder alive as
+/// an associated object.
+pub fn contain_keys(webview: &tauri::Webview) {
+    let label = webview.label().to_string();
+    let hooked = webview.with_webview(|w| {
+        let Some(mtm) = MainThreadMarker::new() else { return };
+        // SAFETY: on macOS the platform webview is wry's WKWebView, an
+        // NSView, alive for this call.
+        let view: &NSView = unsafe { &*w.inner().cast::<NSView>() };
+        let stop = KeyStop::new(mtm);
+        // SAFETY: the view's next responder is its superview, tao's view,
+        // which outlives it; the view retains the stop, which therefore
+        // lives as long as the view does.
+        unsafe {
+            stop.setNextResponder(view.nextResponder().as_deref());
+            view.setNextResponder(Some(&stop));
+            objc2::ffi::objc_setAssociatedObject(
+                (view as *const NSView).cast_mut().cast(),
+                (&raw const KEY_STOP).cast(),
+                Retained::as_ptr(&stop).cast_mut().cast(),
+                objc2::ffi::OBJC_ASSOCIATION_RETAIN_NONATOMIC,
+            );
+        }
+    });
+    if let Err(e) = hooked {
+        eprintln!("kivali: cannot keep {label}'s unhandled keys from its window: {e}");
+    }
+}
 
 /// Unused: the Edit menu's items are AppKit's own.
 pub fn press_keys(_chord: &str) {}

@@ -818,6 +818,11 @@ pub fn menu_shortcuts(webview: &tauri::Webview, shortcut: Box<dyn Fn(&str) -> bo
     }
 }
 
+/// Nothing to contain: WebView2 takes a focused webview's keys in its own
+/// process ([`menu_shortcuts`]), so a key it leaves unhandled never
+/// reaches the window's text input to be typed back into the webview.
+pub fn contain_keys(_webview: &tauri::Webview) {}
+
 /// Presses `chord` (the menus' spelling, "Ctrl+C") as keyboard input,
 /// which the focused window gets: a team window's Edit menu, whose
 /// shortcuts are the webview's own.
