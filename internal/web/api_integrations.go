@@ -430,6 +430,7 @@ func (s *Server) integrationPage(v *integrationView) apitypes.IntegrationPage {
 		ConnectionFields: connectionFields(v.manifest, v.first()),
 		Connections:      []apitypes.ConnectionState{},
 		Multiple:         v.multiple(),
+		ConnectionTest:   v.connectionTest(),
 		AccessForm:       accessFormWire(v.manifest),
 		Access:           []apitypes.AccessRow{},
 		AgentsWithout:    []apitypes.PersonRef{},

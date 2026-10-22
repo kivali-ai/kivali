@@ -132,7 +132,8 @@ byte for byte.
   the egress proxy).
 - `kivali.access` is the access form (below). Without it, access is
   all or nothing: an agent has the integration or does not.
-- `kivali.verify` names the tool Test connection calls.
+- `kivali.verify` names the tool Test connection calls. Without it the
+  integration has no Test connection.
 
 An integration's tools reach agents named with its tool prefix, its
 name with hyphens as underscores and a trailing underscore
@@ -378,8 +379,11 @@ oldest first, each with its id, label, created at, Test connection's
 last result, `reconnect_needed` and `fields`, the connection form with
 that connection's values (the non-sensitive values, and which secrets
 are set); `connection`, the first of them, and `connection_fields`, the
-form with the first's values, which the one-connection page reads; and
-`multiple`, from the manifest. Each access row carries the
+form with the first's values, which the one-connection page reads;
+`multiple`, from the manifest; and `connection_test`, true when the
+version in use names `kivali.verify`. Without it the page offers no
+Test connection, and no connection carries a last result, even one
+kept under an earlier version that had a test. Each access row carries the
 `connection_id` it names and that connection's `connection_label`. An
 access write (`AccessWrite`) names its connection with
 `connection_id`: required when the integration has more than one

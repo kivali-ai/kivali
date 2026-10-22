@@ -159,6 +159,7 @@
     }
   ],
   "multiple": true,
+  "connection_test": true,
   "access_form": {
     "fields": [
       {

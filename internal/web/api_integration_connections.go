@@ -84,18 +84,27 @@ func derivedConnectionLabel(bi builtinintegrations.Integration, rec store.Integr
 	return label
 }
 
-// connectionState is c on the wire.
+// connectionTest reports whether the version in use has a connection
+// test: its manifest names kivali.verify.
+func (v *integrationView) connectionTest() bool {
+	return v.manifest != nil && v.manifest.Kivali.Verify != ""
+}
+
+// connectionState is c on the wire. A result Test connection kept
+// under a version that had a test is left out once the version in use
+// has none, since the owner can no longer run it again.
 func (v *integrationView) connectionState(c *connView) apitypes.ConnectionState {
-	return apitypes.ConnectionState{
+	state := apitypes.ConnectionState{
 		ID:              c.rec.ID,
 		Label:           v.connLabel(c),
 		CreatedAt:       c.rec.CreatedAt,
 		Fields:          connectionFields(v.manifest, c),
-		VerifiedAt:      c.rec.VerifiedAt,
-		Verified:        c.rec.Verified,
-		VerifyMessage:   optString(c.rec.VerifyMessage),
 		ReconnectNeeded: c.reconnect,
 	}
+	if v.connectionTest() {
+		state.VerifiedAt, state.Verified, state.VerifyMessage = c.rec.VerifiedAt, c.rec.Verified, optString(c.rec.VerifyMessage)
+	}
+	return state
 }
 
 // connectionOr404 is the connection {id} names, answering 404 when v

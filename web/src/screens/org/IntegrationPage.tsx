@@ -73,7 +73,8 @@ interface ConnectionFormProps {
   running: boolean;
   now: number;
   onSave(body: ConnectionWrite): Promise<boolean>;
-  onVerify(): void;
+  /** Test connection; absent when the integration has no connection test, and so no button. */
+  onVerify?(): void;
   onDisconnect(): void;
 }
 
@@ -126,13 +127,17 @@ function ConnectionForm({ page, busy, running, now, onSave, onVerify, onDisconne
         <Button type="submit" variant="primary" disabled={busy}>
           Save connection
         </Button>
-        <Button type="button" variant="secondary" disabled={busy || !connection || !running} onClick={onVerify}>
-          Test connection
-        </Button>
-        {!running && (
-          <Text variant="caption" tone="muted">
-            Not available while it is not running.
-          </Text>
+        {onVerify && (
+          <>
+            <Button type="button" variant="secondary" disabled={busy || !connection || !running} onClick={onVerify}>
+              Test connection
+            </Button>
+            {!running && (
+              <Text variant="caption" tone="muted">
+                Not available while it is not running.
+              </Text>
+            )}
+          </>
         )}
         <Button type="button" variant="ghost" disabled={busy || !connection} onClick={onDisconnect}>
           Disconnect
@@ -169,6 +174,7 @@ interface ConnectionCardProps {
   running: boolean;
   now: number;
   onSave(body: ConnectionWrite): Promise<boolean>;
+  /** Test connection; absent when the integration has no connection test, and so no button. */
   onVerify?(): void;
   onDelete?(): void;
   onCancel?(): void;
@@ -176,8 +182,8 @@ interface ConnectionCardProps {
 
 /**
  * One of several connections, as a card: its label, its fields (a stored secret shows only that it is stored), what
- * Test connection last found, and Save, Test connection and Delete; or, for a connection being added, the same form
- * blank, with Add connection and Cancel.
+ * Test connection last found, and Save, Test connection (when the integration has one) and Delete; or, for a
+ * connection being added, the same form blank, with Add connection and Cancel.
  */
 function ConnectionCard({ connection, fields, busy, running, now, onSave, onVerify, onDelete, onCancel }: ConnectionCardProps) {
   const [label, setLabel] = useState(connection?.label ?? '');
@@ -244,13 +250,17 @@ function ConnectionCard({ connection, fields, busy, running, now, onSave, onVeri
           </Button>
           {connection ? (
             <>
-              <Button type="button" variant="secondary" disabled={busy || !running} onClick={onVerify}>
-                Test connection
-              </Button>
-              {!running && (
-                <Text variant="caption" tone="muted">
-                  Not available while it is not running.
-                </Text>
+              {onVerify && (
+                <>
+                  <Button type="button" variant="secondary" disabled={busy || !running} onClick={onVerify}>
+                    Test connection
+                  </Button>
+                  {!running && (
+                    <Text variant="caption" tone="muted">
+                      Not available while it is not running.
+                    </Text>
+                  )}
+                </>
               )}
               <Button type="button" variant="ghost" disabled={busy} onClick={onDelete}>
                 Delete
@@ -604,7 +614,7 @@ export function IntegrationPage() {
                 running={running}
                 now={now}
                 onSave={(body) => saveConnection(c.id, body)}
-                onVerify={() => verifyConnection(c.id)}
+                {...(p.connection_test ? { onVerify: () => verifyConnection(c.id) } : {})}
                 onDelete={() => setDeleting(c)}
               />
             ))}
@@ -634,7 +644,7 @@ export function IntegrationPage() {
             running={running}
             now={now}
             onSave={save}
-            onVerify={verify}
+            {...(p.connection_test ? { onVerify: verify } : {})}
             onDisconnect={() => setDisconnecting(true)}
           />
         ) : (
