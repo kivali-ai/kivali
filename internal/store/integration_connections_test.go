@@ -165,7 +165,7 @@ func TestIntegrationConnectionSignInRoundTrip(t *testing.T) {
 	multipleEcho(t, s)
 	cest := time.FixedZone("CEST", 2*60*60)
 	in := IntegrationConnection{ID: "c", Label: "GitHub app", CreatedAt: intNow, SignIn: &ConnectionSignIn{
-		Method: "device", SignedInAt: intNow.In(cest), ExpiresAt: intNow.Add(8 * time.Hour).In(cest), Scope: "repo,read:org",
+		Method: "device", SignedInAt: intNow.In(cest), ExpiresAt: intNow.Add(8 * time.Hour).In(cest), Lifetime: 8 * time.Hour, Scope: "repo,read:org",
 		Error: "the vendor refused it (bad_refresh_token)", ErrorAt: intNow.Add(9 * time.Hour),
 	}}
 	if err := s.PutIntegrationConnection(echotest.Name, in); err != nil {
@@ -177,7 +177,7 @@ func TestIntegrationConnectionSignInRoundTrip(t *testing.T) {
 	}
 	si := got.SignIn
 	if si == nil || si.Method != "device" || !si.SignedInAt.Equal(intNow) || !si.ExpiresAt.Equal(intNow.Add(8*time.Hour)) ||
-		si.Scope != "repo,read:org" || si.Error != in.SignIn.Error || !si.ErrorAt.Equal(intNow.Add(9*time.Hour)) {
+		si.Scope != "repo,read:org" || si.Lifetime != 8*time.Hour || si.Error != in.SignIn.Error || !si.ErrorAt.Equal(intNow.Add(9*time.Hour)) {
 		t.Errorf("sign-in read back as %+v", si)
 	}
 	if !got.NeedsSignIn(true) {

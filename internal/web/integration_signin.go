@@ -149,7 +149,22 @@ func (s *Server) refreshSignIn(ctx context.Context, name, id string, m *integrat
 	if tok.Scope == "" {
 		tok.Scope = stored.Scope
 	}
-	if err := s.storeSignInTokens(ctx, name, id, tok); err != nil {
+	// An answer with no expires_in says nothing of the new token's
+	// life; one that expired before is taken to last as long again.
+	now := s.clk().Now()
+	life := rec.SignIn.Lifetime
+	switch {
+	case !tok.ExpiresAt.IsZero():
+		life = tok.ExpiresAt.Sub(now)
+	case !stored.ExpiresAt.IsZero():
+		if life <= 0 {
+			life = stored.ExpiresAt.Sub(rec.SignIn.SignedInAt)
+		}
+		if life > 0 {
+			tok.ExpiresAt = now.Add(life)
+		}
+	}
+	if err := s.storeSignInTokens(ctx, name, id, tok, life); err != nil {
 		// The vendor may have rotated the refresh token, so the stored
 		// one may be refused next time; the new access token works now.
 		log.Printf("integration %s: keep connection %s's refreshed tokens: %v", name, id, err)
@@ -178,9 +193,9 @@ func (s *Server) readSignIn(ctx context.Context, name, id string) (store.Integra
 
 // storeSignInTokens writes tok to name's connection id: the tokens to
 // its Secret (a refresh token tok lacks keeps the stored one), the
-// expiry and the scope to its record. A connection deleted since is
-// left gone.
-func (s *Server) storeSignInTokens(ctx context.Context, name, id string, tok connect.Tokens) error {
+// expiry, the scope and the token's lifetime (life, when known) to its
+// record. A connection deleted since is left gone.
+func (s *Server) storeSignInTokens(ctx context.Context, name, id string, tok connect.Tokens, life time.Duration) error {
 	defer s.lockIntegrations()()
 	rec, data, err := s.readSignIn(ctx, name, id)
 	switch {
@@ -205,6 +220,9 @@ func (s *Server) storeSignInTokens(ctx context.Context, name, id string, tok con
 	}
 	rec.SecretName = secretName
 	rec.SignIn.ExpiresAt, rec.SignIn.Scope = tok.ExpiresAt, tok.Scope
+	if life > 0 {
+		rec.SignIn.Lifetime = life
+	}
 	return s.Store.PutIntegrationConnection(name, rec)
 }
 

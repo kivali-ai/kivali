@@ -543,8 +543,12 @@ either): `connect.SecretKeyAccessToken` (`oauth_access_token`) and
 keeps the rest (`store.ConnectionSignIn`, `sign_in` in
 `connections/<id>.yaml`): `method` (how the owner signed in),
 `signed_in_at`, `expires_at` (when the access token expires; absent
-when the vendor gave no expiry), `scope` (what the vendor granted, as
-it said it), and `error` with `error_at` once the vendor refused to
+when the vendor gave no expiry), `lifetime` (how long the vendor last
+said a token lasts: a refresh answer with no `expires_in` gives the
+new token that life again, never "does not expire", and until a
+refresh has said one, `expires_at` less `signed_in_at` stands for it),
+`scope` (what the vendor granted, as it said it), and `error` with
+`error_at` once the vendor refused to
 renew the sign-in for good. A save of the connection form keeps both
 the tokens and the sign-in state; a backup carries the record, never
 the tokens.
