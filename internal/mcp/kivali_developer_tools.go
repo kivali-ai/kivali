@@ -11,7 +11,7 @@ import (
 
 // The Kivali Developer's tools: it has them, and no other agent does.
 // Each is a relay to core, which checks on every call that the caller
-// is the Kivali Developer (internal/web/integration_engineer.go).
+// is the Kivali Developer (internal/web/kivali_developer.go).
 // integration_validate and integration_publish read the bundle from
 // the developer's own /files/ tree on core; core then hands back the
 // server's smoke test, which runs here, in the developer's shell, and
@@ -24,9 +24,9 @@ const (
 	IntegrationLogsToolName     = "integration_logs"
 )
 
-// IntegrationEngineerToolNames is the family, for the CLI's
+// KivaliDeveloperToolNames is the family, for the CLI's
 // --allowedTools.
-var IntegrationEngineerToolNames = []string{
+var KivaliDeveloperToolNames = []string{
 	IntegrationValidateToolName,
 	IntegrationPublishToolName,
 	IntegrationListToolName,
@@ -34,15 +34,15 @@ var IntegrationEngineerToolNames = []string{
 	IntegrationLogsToolName,
 }
 
-// IntegrationEngineerDispatcher relays one integration_* request to
+// KivaliDeveloperDispatcher relays one integration_* request to
 // core. *agentpod.Client implements it.
-type IntegrationEngineerDispatcher interface {
-	IntegrationEngineerDispatch(ctx context.Context, req agentpod.IntegrationEngineerRequest) (*agentpod.IntegrationEngineerResponse, error)
+type KivaliDeveloperDispatcher interface {
+	KivaliDeveloperDispatch(ctx context.Context, req agentpod.KivaliDeveloperRequest) (*agentpod.KivaliDeveloperResponse, error)
 }
 
-// integrationEngineerCallTimeout bounds one request to core: reading
+// kivaliDeveloperCallTimeout bounds one request to core: reading
 // and checking a bundle of up to 64 MiB, and storing it.
-const integrationEngineerCallTimeout = 2 * time.Minute
+const kivaliDeveloperCallTimeout = 2 * time.Minute
 
 // smokeSkippedNoShell is why the smoke test did not run for an agent
 // whose MCP server has no shell.
@@ -62,39 +62,39 @@ const bundlePathSchema = `"path": {"type": "string", "description": "the bundle'
 
 const integrationNameSchema = `"name": {"type": "string", "description": "the integration's name, as integration_list gives it"}`
 
-// IntegrationEngineerTools are the five integration_* tools, relayed
+// KivaliDeveloperTools are the five integration_* tools, relayed
 // through d. shell runs the smoke test core asks for; with none, the
 // smoke test is reported as not run.
-func IntegrationEngineerTools(d IntegrationEngineerDispatcher, shell agent.ShellExecutor, slug string) []Tool {
+func KivaliDeveloperTools(d KivaliDeveloperDispatcher, shell agent.ShellExecutor, slug string) []Tool {
 	if d == nil {
 		return nil
 	}
 	return []Tool{
-		engineerTool(d, shell, slug, IntegrationValidateToolName, integrationValidateDescription,
+		developerTool(d, shell, slug, IntegrationValidateToolName, integrationValidateDescription,
 			`{"type": "object", "properties": {`+bundlePathSchema+`}, "required": ["path"]}`, false),
-		engineerTool(d, shell, slug, IntegrationPublishToolName, integrationPublishDescription,
+		developerTool(d, shell, slug, IntegrationPublishToolName, integrationPublishDescription,
 			`{"type": "object", "properties": {`+bundlePathSchema+`, "notes": {"type": "string", "description": "the version's notes for the owner, Markdown, at most 4096 bytes: what the integration does, every host it reaches, each secret it asks for, and every action that changes or deletes something"}}, "required": ["path", "notes"]}`, false),
-		engineerTool(d, shell, slug, IntegrationListToolName, integrationListDescription,
+		developerTool(d, shell, slug, IntegrationListToolName, integrationListDescription,
 			`{"type": "object", "properties": {}}`, true),
-		engineerTool(d, shell, slug, IntegrationVersionsToolName, integrationVersionsDescription,
+		developerTool(d, shell, slug, IntegrationVersionsToolName, integrationVersionsDescription,
 			`{"type": "object", "properties": {`+integrationNameSchema+`}, "required": ["name"]}`, true),
-		engineerTool(d, shell, slug, IntegrationLogsToolName, integrationLogsDescription,
+		developerTool(d, shell, slug, IntegrationLogsToolName, integrationLogsDescription,
 			`{"type": "object", "properties": {`+integrationNameSchema+`, "since": {"type": "string", "description": "optional RFC 3339 time; only lines at or after it"}}, "required": ["name"]}`, true),
 	}
 }
 
-func engineerTool(d IntegrationEngineerDispatcher, shell agent.ShellExecutor, slug, name, description, schema string, readOnly bool) Tool {
+func developerTool(d KivaliDeveloperDispatcher, shell agent.ShellExecutor, slug, name, description, schema string, readOnly bool) Tool {
 	return Tool{
 		Name:        name,
 		Description: description,
 		InputSchema: json.RawMessage(schema),
 		ReadOnly:    readOnly,
 		Handler: func(ctx context.Context, args json.RawMessage) (*ToolResult, error) {
-			req := agentpod.IntegrationEngineerRequest{Tool: name, Input: args}
-			resp, err := engineerDispatch(ctx, d, req)
+			req := agentpod.KivaliDeveloperRequest{Tool: name, Input: args}
+			resp, err := developerDispatch(ctx, d, req)
 			if err == nil && resp.Smoke != nil {
 				req.SmokeResult = runSmoke(ctx, shell, slug, *resp.Smoke)
-				resp, err = engineerDispatch(ctx, d, req)
+				resp, err = developerDispatch(ctx, d, req)
 			}
 			if err != nil {
 				return &ToolResult{IsError: true, Content: []string{"The call did not reach Kivali: " + err.Error()}}, nil
@@ -104,10 +104,10 @@ func engineerTool(d IntegrationEngineerDispatcher, shell agent.ShellExecutor, sl
 	}
 }
 
-func engineerDispatch(ctx context.Context, d IntegrationEngineerDispatcher, req agentpod.IntegrationEngineerRequest) (*agentpod.IntegrationEngineerResponse, error) {
-	ctx, cancel := context.WithTimeout(ctx, integrationEngineerCallTimeout)
+func developerDispatch(ctx context.Context, d KivaliDeveloperDispatcher, req agentpod.KivaliDeveloperRequest) (*agentpod.KivaliDeveloperResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, kivaliDeveloperCallTimeout)
 	defer cancel()
-	return d.IntegrationEngineerDispatch(ctx, req)
+	return d.KivaliDeveloperDispatch(ctx, req)
 }
 
 // runSmoke runs the smoke test core asked for in the agent's shell.

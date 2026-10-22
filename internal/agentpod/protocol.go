@@ -783,29 +783,29 @@ type IntegrationCallResponse struct {
 	IsError bool     `json:"is_error,omitempty"`
 }
 
-// IntegrationEngineerDispatchPath is the core.sock route, under
+// KivaliDeveloperDispatchPath is the core.sock route, under
 // /v1/agent/{slug}, of the Kivali Developer's integration_* tools: a
 // POST bound to the slug header, refused for any other agent.
-const IntegrationEngineerDispatchPath = "/integration-engineer/dispatch"
+const KivaliDeveloperDispatchPath = "/kivali-developer/dispatch"
 
-// IntegrationEngineerRequest is the body of POST
-// /v1/agent/{slug}/integration-engineer/dispatch: one integration_*
+// KivaliDeveloperRequest is the body of POST
+// /v1/agent/{slug}/kivali-developer/dispatch: one integration_*
 // call, Tool and the model's arguments. integration_validate and
 // integration_publish take two requests: the first is answered with
-// the smoke test to run (IntegrationEngineerResponse.Smoke), and the
+// the smoke test to run (KivaliDeveloperResponse.Smoke), and the
 // second carries what the agent's shell gave back.
-type IntegrationEngineerRequest struct {
+type KivaliDeveloperRequest struct {
 	Tool  string          `json:"tool"`
 	Input json.RawMessage `json:"input,omitempty"`
 	// SmokeResult is the smoke test's run, on the second request.
 	SmokeResult *IntegrationSmokeResult `json:"smoke_result,omitempty"`
 }
 
-// IntegrationEngineerResponse is the call's answer as the model reads
+// KivaliDeveloperResponse is the call's answer as the model reads
 // it, or, with Smoke set, not yet the answer: the smoke test for the
 // agent's MCP server to run in the agent's shell before it sends the
 // request again with the result.
-type IntegrationEngineerResponse struct {
+type KivaliDeveloperResponse struct {
 	Body    string            `json:"body,omitempty"`
 	IsError bool              `json:"is_error,omitempty"`
 	Smoke   *IntegrationSmoke `json:"smoke,omitempty"`

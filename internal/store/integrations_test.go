@@ -535,7 +535,7 @@ func TestIntegrationAuditTail(t *testing.T) {
 func TestMessageCarriesIntegrationInstall(t *testing.T) {
 	s := mustStore(t)
 	p, err := s.WriteMessage(Message{
-		Type: MsgCEOApprovalRequest, Title: "Install HubSpot 1.2.0", From: "integrations-engineer", To: Recipients{"ceo"},
+		Type: MsgCEOApprovalRequest, Title: "Install HubSpot 1.2.0", From: "kivali-developer", To: Recipients{"ceo"},
 		Date: intNow, Body: "why", IntegrationInstall: &IntegrationInstall{Name: "hubspot", Version: "1.2.0"},
 	})
 	if err != nil {

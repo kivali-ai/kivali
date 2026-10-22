@@ -51,7 +51,7 @@ func TestGoldenManifestPassesAndReadsWhole(t *testing.T) {
 	if f := Validate(m, defaultFiles()); len(f) != 0 {
 		t.Fatalf("findings on the golden manifest: %v", f.Texts())
 	}
-	if m.Name != "hubspot" || m.Version != "1.2.0" || m.Author.Name != "Integrations engineer (agent)" ||
+	if m.Name != "hubspot" || m.Version != "1.2.0" || m.Author.Name != "Kivali Developer (agent)" ||
 		m.Server.MCPConfig.Env["HUBSPOT_TOKEN"] != "${user_config.token}" || len(m.Tools) != 3 ||
 		m.Kivali.Verify != "whoami" || m.Kivali.Access.Choices["blogs"] != "list_blogs" {
 		t.Errorf("manifest read as %+v", m)

@@ -150,7 +150,7 @@ func TestKivaliOSNamesEveryRegisteredTool(t *testing.T) {
 	// the Kivali Developer's, in its role
 	// (internal/seed/kivali_developer_role.md).
 	elsewhere := map[string]bool{"read_agent_role": true}
-	for _, name := range mcp.IntegrationEngineerToolNames {
+	for _, name := range mcp.KivaliDeveloperToolNames {
 		elsewhere[name] = true
 	}
 	for name := range have {

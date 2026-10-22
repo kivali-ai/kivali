@@ -340,7 +340,7 @@ describe('Needs you', () => {
   it('badges an integration install request and links it to the version’s install screen', async () => {
     const install = {
       ...proposal,
-      id: 'messages/2026-09-28/0012-integrations-engineer.md',
+      id: 'messages/2026-09-28/0012-kivali-developer.md',
       title: 'Install HubSpot 1.3.0',
       proposal_kind: 'integration_install',
       review_path: '/org/integrations/hubspot/versions/1.3.0',

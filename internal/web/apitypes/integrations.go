@@ -7,7 +7,7 @@ import (
 
 // Integrations: the external services agents can act on. An
 // integration is installed from a bundle (a zip the Integrations
-// engineer publishes, or one you upload), connected with a token, and
+// developer publishes, or one you upload), connected with a token, and
 // then granted to agents one at a time with an access form the
 // integration itself describes. Everything here is operator-facing:
 // actions in words, hosts, secrets by title, never the wire.

@@ -25,7 +25,7 @@ import (
 	"github.com/kivali-ai/kivali/internal/web/apitypes"
 )
 
-const engineerSlug = agent.KivaliDeveloperSlug
+const developerSlug = agent.KivaliDeveloperSlug
 
 // echoTestdata is the echo bundle every slice's tests run.
 var echoTestdata = filepath.Join("..", "integration", "testdata", "echo")
@@ -39,9 +39,9 @@ func havePython() bool {
 	return true
 }
 
-// hireEngineer hires the Kivali Developer under the Chief of Staff, as
+// hireDeveloper hires the Kivali Developer under the Chief of Staff, as
 // setup does, and returns its /files/ on the data volume.
-func hireEngineer(t *testing.T, srv *Server) string {
+func hireDeveloper(t *testing.T, srv *Server) string {
 	t.Helper()
 	if _, err := srv.Store.GetAgent(agent.ChiefOfStaffSlug); err != nil {
 		if err := srv.Store.CreateAgent(store.Agent{Slug: agent.ChiefOfStaffSlug, Role: "Chief of Staff", ReportsTo: agent.CEOSlug}, "# role\n"); err != nil {
@@ -51,7 +51,7 @@ func hireEngineer(t *testing.T, srv *Server) string {
 	if created, err := srv.EnsureKivaliDeveloper(); err != nil || !created {
 		t.Fatalf("EnsureKivaliDeveloper = %v, %v", created, err)
 	}
-	return files.StorageRoot(filepath.Join(srv.Store.Root(), "agents", engineerSlug))
+	return files.StorageRoot(filepath.Join(srv.Store.Root(), "agents", developerSlug))
 }
 
 // copyTree copies the regular files under src to dst.
@@ -76,13 +76,13 @@ func copyTree(t *testing.T, src, dst string) {
 	}
 }
 
-// engineerTools is the engineer's integration_* tools on the real
+// developerTools is the developer's integration_* tools on the real
 // core.sock client, with shell for the smoke test, by name.
-func engineerTools(t *testing.T, srv *Server, slug string, shell agent.ShellExecutor) map[string]mcp.Tool {
+func developerTools(t *testing.T, srv *Server, slug string, shell agent.ShellExecutor) map[string]mcp.Tool {
 	t.Helper()
 	client := agentpod.NewClient(serveCoreUDS(t, srv), slug)
 	out := map[string]mcp.Tool{}
-	for _, tl := range mcp.IntegrationEngineerTools(client, shell, slug) {
+	for _, tl := range mcp.KivaliDeveloperTools(client, shell, slug) {
 		out[tl.Name] = tl
 	}
 	return out
@@ -157,27 +157,27 @@ func pythonIntegrationAnswer(t *testing.T, dir string, env ...string) shimAnswer
 // The developer, hired as setup hires it, validates the echo bundle in
 // its own /files/ (the smoke test starting the real Python server in a
 // local shell when the host has python3) and publishes it; the version
-// is pending, published by the engineer with its notes, and the owner
+// is pending, published by the developer with its notes, and the owner
 // sees one request in Needs you whose review page is the install
 // screen. The owner approves it there, the version is the one in use,
-// and the engineer hears so. Connected, with dana given the color red,
+// and the developer hears so. Connected, with dana given the color red,
 // dana's call for red goes through and her call for blue reaches the
 // server, which refuses it by her stamped access, as the audit says.
-// A break anywhere in that chain is an integration the engineer cannot
+// A break anywhere in that chain is an integration the developer cannot
 // deliver, or one that runs without the owner's approval.
-func TestIntegrationsEngineerBuildsAndTheOwnerInstalls(t *testing.T) {
+func TestKivaliDeveloperBuildsAndTheOwnerInstalls(t *testing.T) {
 	srv, _ := newTurnServer(t)
 	withIntegrationRegistry(srv, newFakeIntegrationProv())
 	intTeam(t, srv, "dana")
-	memory := hireEngineer(t, srv)
+	memory := hireDeveloper(t, srv)
 	copyTree(t, echoTestdata, filepath.Join(memory, "artifacts", "private", "integrations", "echo"))
 
 	python := havePython()
 	var shell agent.ShellExecutor
 	if python {
-		shell = &agentpod.LocalShell{ScratchRoot: memory, Slug: engineerSlug}
+		shell = &agentpod.LocalShell{ScratchRoot: memory, Slug: developerSlug}
 	}
-	tools := engineerTools(t, srv, engineerSlug, shell)
+	tools := developerTools(t, srv, developerSlug, shell)
 	const dir = `"path": "/files/artifacts/private/integrations/echo"`
 
 	res := callTool(t, tools, mcp.IntegrationValidateToolName, `{`+dir+`}`)
@@ -195,7 +195,7 @@ func TestIntegrationsEngineerBuildsAndTheOwnerInstalls(t *testing.T) {
 		t.Fatalf("publish = %+v", res)
 	}
 	ver, _, err := srv.Store.GetIntegrationVersion("echo", "1.0.0")
-	if err != nil || ver.State != store.IntegrationVersionPending || ver.PublishedBy != engineerSlug || ver.NotesMD != notes {
+	if err != nil || ver.State != store.IntegrationVersionPending || ver.PublishedBy != developerSlug || ver.NotesMD != notes {
 		t.Errorf("version = %+v, %v", ver, err)
 	}
 
@@ -216,8 +216,8 @@ func TestIntegrationsEngineerBuildsAndTheOwnerInstalls(t *testing.T) {
 	if it, _ := srv.Store.GetIntegration("echo"); it.CurrentVersion != "1.0.0" {
 		t.Errorf("current version = %q", it.CurrentVersion)
 	}
-	if last := lastChat(t, srv, engineerSlug); !strings.Contains(last, "I approved version 1.0.0 of the `echo` integration. It is the version in use.") {
-		t.Errorf("the engineer heard %q", last)
+	if last := lastChat(t, srv, developerSlug); !strings.Contains(last, "I approved version 1.0.0 of the `echo` integration. It is the version in use.") {
+		t.Errorf("the developer heard %q", last)
 	}
 
 	if rr := orgJSON(t, srv, http.MethodPut, intBase+"/echo/connection", apitypes.ConnectionWrite{Fields: map[string]string{"token": "s3cret-echo"}}); rr.Code != http.StatusOK {
@@ -260,12 +260,12 @@ func TestIntegrationsEngineerBuildsAndTheOwnerInstalls(t *testing.T) {
 // refused whatever its MCP server registered, and the slug in the path
 // is the one the header binds. Without this, any agent could publish a
 // bundle into the owner's Needs you.
-func TestIntegrationEngineerToolsAreTheEngineersOnly(t *testing.T) {
+func TestKivaliDeveloperToolsAreTheDevelopersOnly(t *testing.T) {
 	srv, _ := newTurnServer(t)
 	intTeam(t, srv, "dana")
-	hireEngineer(t, srv)
+	hireDeveloper(t, srv)
 
-	dana := engineerTools(t, srv, "dana", nil)
+	dana := developerTools(t, srv, "dana", nil)
 	for name, args := range map[string]string{
 		mcp.IntegrationValidateToolName: `{"path":"/files/artifacts/private/x"}`,
 		mcp.IntegrationPublishToolName:  `{"path":"/files/artifacts/private/x","notes":"n"}`,
@@ -273,23 +273,23 @@ func TestIntegrationEngineerToolsAreTheEngineersOnly(t *testing.T) {
 		mcp.IntegrationVersionsToolName: `{"name":"echo"}`,
 		mcp.IntegrationLogsToolName:     `{"name":"echo"}`,
 	} {
-		if res := callTool(t, dana, name, args); !res.IsError || res.Content[0] != notEngineer {
+		if res := callTool(t, dana, name, args); !res.IsError || res.Content[0] != notDeveloper {
 			t.Errorf("dana's %s = %+v", name, res)
 		}
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/agent/"+engineerSlug+agentpod.IntegrationEngineerDispatchPath, strings.NewReader(`{"tool":"integration_list"}`))
+	req := httptest.NewRequest(http.MethodPost, "/v1/agent/"+developerSlug+agentpod.KivaliDeveloperDispatchPath, strings.NewReader(`{"tool":"integration_list"}`))
 	req.Header.Set(agentpod.SlugHeader, "dana")
 	rr := httptest.NewRecorder()
 	udsMux(srv).ServeHTTP(rr, req)
 	if rr.Code != http.StatusForbidden {
-		t.Errorf("a call for the engineer's slug from dana = %d", rr.Code)
+		t.Errorf("a call for the developer's slug from dana = %d", rr.Code)
 	}
 }
 
-// Why this test exists: core reads the bundle from the engineer's tree
+// Why this test exists: core reads the bundle from the developer's tree
 // on the data volume, which holds every agent's files and the team's
-// credentials. A path that climbs out, or a link the engineer's shell
+// credentials. A path that climbs out, or a link the developer's shell
 // planted, must be refused rather than followed, or publishing would
 // copy another agent's files, or anything core can read, into a
 // version. A bundle with an error is refused before anything is
@@ -298,7 +298,7 @@ func TestIntegrationEngineerToolsAreTheEngineersOnly(t *testing.T) {
 func TestIntegrationPublishRefusals(t *testing.T) {
 	srv, _ := newTurnServer(t)
 	intTeam(t, srv)
-	memory := hireEngineer(t, srv)
+	memory := hireDeveloper(t, srv)
 	private := filepath.Join(memory, "artifacts", "private")
 	copyTree(t, echoTestdata, filepath.Join(private, "integrations", "echo"))
 	outside := t.TempDir()
@@ -306,7 +306,7 @@ func TestIntegrationPublishRefusals(t *testing.T) {
 	if err := os.Symlink(outside, filepath.Join(private, "linked")); err != nil {
 		t.Fatal(err)
 	}
-	tools := engineerTools(t, srv, engineerSlug, nil)
+	tools := developerTools(t, srv, developerSlug, nil)
 	for _, tc := range []struct{ path, want string }{
 		{"/files/artifacts/private/linked", "The bundle in /files/artifacts/private/linked could not be read: a part of the path is a symbolic link, which Kivali does not follow."},
 		{"/files/../../ceo", "/files/../../ceo: .. is not allowed"},
@@ -369,19 +369,19 @@ func TestIntegrationPublishRefusals(t *testing.T) {
 	}
 }
 
-// Why this test exists: the engineer debugs from what these three
+// Why this test exists: the developer debugs from what these three
 // tools say, and none of them may say more than it should. The list
 // names how each integration stands and who has access, the versions
 // say who published each and what became of it, and the log is the
 // integration's own lines, scrubbed when they were written, filtered
 // by since, with a head that says it is data. A log line that read as
 // an instruction, or a version list that hid a pending version, would
-// send the engineer the wrong way.
-func TestIntegrationEngineerReadsWhatIsInstalled(t *testing.T) {
+// send the developer the wrong way.
+func TestKivaliDeveloperReadsWhatIsInstalled(t *testing.T) {
 	srv, _ := newTurnServer(t)
 	intTeam(t, srv, "dana")
-	hireEngineer(t, srv)
-	tools := engineerTools(t, srv, engineerSlug, nil)
+	hireDeveloper(t, srv)
+	tools := developerTools(t, srv, developerSlug, nil)
 	if res := callTool(t, tools, mcp.IntegrationListToolName, `{}`); res.IsError || res.Content[0] != "No integration is installed." {
 		t.Errorf("empty list = %+v", res)
 	}

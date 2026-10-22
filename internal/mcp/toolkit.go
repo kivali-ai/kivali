@@ -96,11 +96,11 @@ type fullAgentToolkitDeps struct {
 	Subagent  SubagentBackend
 	Provider  provider.Provider
 
-	// IntegrationEngineer relays the integration_* tools; they are
+	// KivaliDeveloper relays the integration_* tools; they are
 	// registered only when IsKivaliDeveloper is set.
-	IsKivaliDeveloper   bool
-	IntegrationEngineer IntegrationEngineerDispatcher
-	SmokeShell          agent.ShellExecutor
+	IsKivaliDeveloper bool
+	KivaliDeveloper   KivaliDeveloperDispatcher
+	SmokeShell        agent.ShellExecutor
 }
 
 // FullAgentToolkit returns the full-agent tool bundle wired entirely
@@ -129,9 +129,9 @@ func FullAgentToolkit(deps FullAgentDeps) Toolkit {
 		Subagent:       deps.Subagent,
 		Provider:       deps.Provider,
 
-		IsKivaliDeveloper:   deps.IsKivaliDeveloper,
-		IntegrationEngineer: c,
-		SmokeShell:          deps.SmokeShell,
+		IsKivaliDeveloper: deps.IsKivaliDeveloper,
+		KivaliDeveloper:   c,
+		SmokeShell:        deps.SmokeShell,
 	})
 }
 
@@ -177,7 +177,7 @@ func composeFullAgentToolkit(d fullAgentToolkitDeps) Toolkit {
 		tools = append(tools, *t)
 	}
 	if d.IsKivaliDeveloper {
-		tools = append(tools, IntegrationEngineerTools(d.IntegrationEngineer, d.SmokeShell, d.Slug)...)
+		tools = append(tools, KivaliDeveloperTools(d.KivaliDeveloper, d.SmokeShell, d.Slug)...)
 	}
 	if d.Subagent != nil {
 		cfg := SubagentToolConfig{Backend: d.Subagent, Parent: d.Slug, Provider: d.Provider}

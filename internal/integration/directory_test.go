@@ -48,7 +48,7 @@ func echoManifestBytes(t *testing.T) string {
 }
 
 // Why this test exists: the echo bundle is the fixture every slice's
-// end-to-end path runs (the shim's second server, the engineer's
+// end-to-end path runs (the shim's second server, the developer's
 // publish), so it must pass the check with nothing to say. A finding
 // here means the fixture drifted from the contract the check holds
 // bundles to, and every test built on it would be testing a bundle the

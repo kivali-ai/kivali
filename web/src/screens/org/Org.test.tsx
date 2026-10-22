@@ -1182,7 +1182,7 @@ describe('Integration install screen', () => {
     expect(h.chrome.at(-1)).toEqual({ title: 'HubSpot 1.3.0', back: { to: '/org/integrations/hubspot', label: 'HubSpot' } });
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('HubSpot 1.3.0');
     expect(screen.getByText('Needs your approval')).toHaveClass('kv-badge--signal');
-    expect(within(screen.getByRole('region', { name: 'Who built it' })).getByText('Integrations engineer (agent)')).toBeInTheDocument();
+    expect(within(screen.getByRole('region', { name: 'Who built it' })).getByText('Kivali Developer (agent)')).toBeInTheDocument();
     expect(within(screen.getByRole('region', { name: 'Version' })).getByText('Replaces version 1.2.0')).toBeInTheDocument();
     expect(within(screen.getByRole('region', { name: 'Version notes' })).getByText('Adds contacts. Reaches one more host.')).toBeInTheDocument();
     const changes = within(screen.getByRole('region', { name: 'What changes from version 1.2.0' }));

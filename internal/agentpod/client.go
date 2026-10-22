@@ -315,15 +315,15 @@ func (c *Client) IntegrationCall(ctx context.Context, name string, args json.Raw
 	return &out, nil
 }
 
-// IntegrationEngineerDispatch relays one request of an integration_*
-// tool to core (POST /v1/agent/{slug}/integration-engineer/dispatch).
+// KivaliDeveloperDispatch relays one request of an integration_*
+// tool to core (POST /v1/agent/{slug}/kivali-developer/dispatch).
 // Core reads and checks a whole bundle before it answers a validate or
 // a publish, so the call runs on the client with no response-header
 // timeout; ctx bounds it. A non-2xx response is a transport error.
-func (c *Client) IntegrationEngineerDispatch(ctx context.Context, req IntegrationEngineerRequest) (*IntegrationEngineerResponse, error) {
-	var out IntegrationEngineerResponse
-	if err := c.postIntegration(ctx, IntegrationEngineerDispatchPath, req, &out); err != nil {
-		return nil, fmt.Errorf("agentpod: IntegrationEngineerDispatch: %w", err)
+func (c *Client) KivaliDeveloperDispatch(ctx context.Context, req KivaliDeveloperRequest) (*KivaliDeveloperResponse, error) {
+	var out KivaliDeveloperResponse
+	if err := c.postIntegration(ctx, KivaliDeveloperDispatchPath, req, &out); err != nil {
+		return nil, fmt.Errorf("agentpod: KivaliDeveloperDispatch: %w", err)
 	}
 	return &out, nil
 }
