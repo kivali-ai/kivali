@@ -78,6 +78,26 @@
   flex: 1;
 }
 
+/* A collapsible block's toggle: a chevron at the end of the heading that turns while the block is open. It has no
+   text, so it centres on the heading rather than sitting on its baseline. */
+.app-int-block-toggle {
+  align-self: center;
+}
+
+.app-int-block-chev {
+  transition: transform var(--duration-base) var(--ease-in-out);
+}
+
+.app-int-block-toggle[aria-expanded='true'] .app-int-block-chev {
+  transform: rotate(180deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-int-block-chev {
+    transition: none;
+  }
+}
+
 .app-int-facts {
   display: flex;
   flex-direction: column;

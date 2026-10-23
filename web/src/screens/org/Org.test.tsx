@@ -1468,6 +1468,7 @@ describe('Integration page', () => {
     await renderOrg(PATH, { routes: { ['GET ' + API]: pending, ['GET ' + API + '/audit']: { rows: [] } } });
     expect(screen.getByText('Approve a version first.')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Save connection' })).toBeNull();
+    await click(screen.getByRole('button', { name: 'Recent calls' }));
     expect(screen.getByText('No calls yet.')).toBeInTheDocument();
   });
 
@@ -1658,6 +1659,7 @@ describe('Integration page', () => {
   it('marks a debug log line with a quiet badge', async () => {
     const logs = { lines: [{ at: '2026-10-21T09:30:00Z', level: 'debug', message: 'Setting up gh ...' }] };
     await renderOrg(PATH, { routes: { ['GET ' + API + '/logs']: logs } });
+    await click(screen.getByRole('button', { name: 'Recent logs' }));
     const block = within(screen.getByRole('region', { name: 'Recent logs' }));
     expect(block.getByText('Setting up gh ...')).toBeInTheDocument();
     expect(block.getByText('debug')).toHaveClass('kv-badge--outline');
@@ -1668,6 +1670,7 @@ describe('Integration page', () => {
   it('shows the recent logs and refreshes them', async () => {
     let logs: unknown = goIntegrationLogs;
     await renderOrg(PATH, { routes: { ['GET ' + API + '/logs']: () => logs } });
+    await click(screen.getByRole('button', { name: 'Recent logs' }));
     const block = within(screen.getByRole('region', { name: 'Recent logs' }));
     expect(block.getByText('server started')).toBeInTheDocument();
     expect(block.getByText('token [secret] accepted')).toBeInTheDocument();
@@ -1677,6 +1680,33 @@ describe('Integration page', () => {
     await click(block.getByRole('button', { name: 'Refresh' }));
     expect(block.getByText('Nothing logged yet.')).toBeInTheDocument();
     expect(block.queryByText('server started')).toBeNull();
+  });
+
+  // Guards the page's length: Recent calls and Recent logs start closed, so a page with a long history opens on its
+  // switch, connection and access. Each heading ends in a toggle, named for its block, that says whether the block is
+  // open; Refresh shows only while the log is open, and closing a block hides its rows again.
+  it('starts Recent calls and Recent logs closed, and opens and closes each from its toggle', async () => {
+    await renderOrg(PATH);
+    for (const name of ['Recent calls', 'Recent logs']) {
+      expect(screen.getByRole('button', { name })).toHaveAttribute('aria-expanded', 'false');
+    }
+    expect(screen.queryByText('812 ms')).toBeNull();
+    expect(screen.queryByText('server started')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Refresh' })).toBeNull();
+
+    await click(screen.getByRole('button', { name: 'Recent calls' }));
+    expect(screen.getByRole('button', { name: 'Recent calls' })).toHaveAttribute('aria-expanded', 'true');
+    expect(within(screen.getByRole('region', { name: 'Recent calls' })).getByText('812 ms')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Recent logs' })).toHaveAttribute('aria-expanded', 'false');
+
+    await click(screen.getByRole('button', { name: 'Recent logs' }));
+    const logs = within(screen.getByRole('region', { name: 'Recent logs' }));
+    expect(logs.getByText('server started')).toBeInTheDocument();
+    expect(logs.getByRole('button', { name: 'Refresh' })).toBeInTheDocument();
+
+    await click(screen.getByRole('button', { name: 'Recent calls' }));
+    expect(screen.getByRole('button', { name: 'Recent calls' })).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByText('812 ms')).toBeNull();
   });
 
   // Guards Remove: the DELETE waits for the danger dialog's confirm, then the page goes back to the list; a built-in
@@ -1723,6 +1753,7 @@ describe('Integration page', () => {
     expect(versions.getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual(['Roll back to version 1.1.0']);
     for (const l of links) expect(within(l).queryByRole('button')).toBeNull();
 
+    await click(screen.getByRole('button', { name: 'Recent calls' }));
     const calls = within(screen.getByRole('region', { name: 'Recent calls' }));
     expect(calls.getAllByText('Create post')).toHaveLength(2);
     expect(calls.getByText('Allowed')).toBeInTheDocument();
