@@ -810,7 +810,7 @@ func (g *GoogleOAuth) callbackForHost(host string, r *http.Request) string {
 	if ext := g.externalHost(); ext != "" && strings.EqualFold(withoutHTTPSPort(host), ext) {
 		return "https://" + ext + "/auth/callback"
 	}
-	if lb := loopbackHost(host); lb != "" {
+	if lb := LoopbackHost(host); lb != "" {
 		scheme := "http"
 		if r.TLS != nil {
 			scheme = "https"
@@ -838,7 +838,7 @@ func (g *GoogleOAuth) returnAllowed(ret string) bool {
 	if ext := g.externalHost(); ext != "" && u.Scheme == "https" && strings.EqualFold(u.Host, ext) {
 		return true
 	}
-	return (u.Scheme == "http" || u.Scheme == "https") && loopbackHost(u.Host) != ""
+	return (u.Scheme == "http" || u.Scheme == "https") && LoopbackHost(u.Host) != ""
 }
 
 // externalHost is ExternalURL's host (and port, unless it is 443),
@@ -860,11 +860,11 @@ func withoutHTTPSPort(host string) string {
 	return strings.TrimSuffix(host, ":443")
 }
 
-// loopbackHost is host in canonical form ("127.0.0.1", "localhost" or
+// LoopbackHost is host in canonical form ("127.0.0.1", "localhost" or
 // "[::1]", with its port if it has one) when it names loopback the way
 // the relay accepts an http callback, else "". Other 127/8 addresses are
 // not taken: the relay would refuse their plain-http callback.
-func loopbackHost(host string) string {
+func LoopbackHost(host string) string {
 	name, port := host, ""
 	if h, p, err := net.SplitHostPort(host); err == nil {
 		if !validLoopbackPort(p) {

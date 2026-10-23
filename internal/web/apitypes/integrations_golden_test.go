@@ -283,6 +283,25 @@ func goldenIntegrationPageSignIn(needsSignIn bool) IntegrationPage {
 	}
 }
 
+// goldenIntegrationPageSignInElsewhere is the same GitHub page, its
+// connection saved but never signed in, offering browser sign-in alone,
+// as Kivali Desktop's window for a team elsewhere reads it: no way
+// works here, so the page names the team's external address to sign in
+// from, and shows no redirect address to register.
+func goldenIntegrationPageSignInElsewhere() IntegrationPage {
+	page := goldenIntegrationPageSignIn(false)
+	openAt := "https://kivali.example.com"
+	conn := *page.Connection
+	conn.SignIn = &ConnectionSignIn{Ways: []string{}, BrowserElsewhere: true, OpenAt: &openAt}
+	page.Summary.Status = IntegrationStatusNotConnected
+	page.ConnectionMethod = "browser"
+	page.SignInAt = map[string]string{"browser": "github.com"}
+	page.SignInRedirectURL = nil
+	page.Connection = &conn
+	page.Connections = []ConnectionState{conn}
+	return page
+}
+
 // goldenShippedIntegrationVersion is the install screen of a version
 // of an integration that ships with Kivali as a bundle: built in, with
 // a bundle's runtime, hosts and size.

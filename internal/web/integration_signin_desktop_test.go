@@ -278,7 +278,7 @@ func assertHandoffRefused(t *testing.T, rr *httptest.ResponseRecorder, what stri
 // to the integrations list saying to start again, never to a vendor.
 func TestConnectStartSendsTheBrowserToTheFlow(t *testing.T) {
 	srv, _ := browserServer(t)
-	rr := serveSignedIn(t, srv, httptest.NewRequest(http.MethodPost, intBase+"/crm/connection/sign-in/browser", nil))
+	rr := serveSignedIn(t, srv, httptest.NewRequest(http.MethodPost, loopbackOrigin+intBase+"/crm/connection/sign-in/browser", nil))
 	bs := orgOK[apitypes.BrowserSignIn](t, rr)
 
 	rr = serveSignedIn(t, srv, httptest.NewRequest(http.MethodGet, connectStartPath+"?flow="+bs.Flow, nil))

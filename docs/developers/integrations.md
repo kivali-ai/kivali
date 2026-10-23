@@ -572,12 +572,13 @@ it does, it is not connected (the list, the page and an agent's tab);
 `reconnect_needed` stays what it is for any connection, the form's
 secrets missing. The page's `ConnectionState.sign_in`
 (`apitypes.ConnectionSignIn`) carries `ways` (the manifest's method
-first, those this server signs in by: [Signing in](#signing-in)),
-`signed_in`, and while signed in `method`, `signed_in_at` and
+first, those that work from where the request came from:
+[Signing in](#signing-in)), `browser_elsewhere` and `open_at` when none
+does, `signed_in`, and while signed in `method`, `signed_in_at` and
 `expires_at`, or the `error`. The page draws "Signed in <when> · token
 refreshes <when>", or "Needs you to sign in again: <error>", and under
-the form a **Sign in** block: Sign in with a code (once the client id
-and secret are saved), the code and the service's page while a
+the form a **Sign in** block: one button for the first of `ways` (once
+the client id and secret are saved), the code and the service's page while a
 sign-in waits, Signed in with the connection test's words and Sign
 out, or a failed sign-in's words and Try again. The sign-in routes'
 shapes are `DeviceSignIn` and `SignInProgress` (`state`: `pending`,
@@ -654,9 +655,38 @@ The page signs a connection in through the routes in
 [The API](#the-api) (`internal/web/integration_signin_flows.go`), each
 in a singular form that acts on the integration's one connection, the
 oldest, and a plural one under `.../connections/{id}`. The page is
-offered the ways `ConnectionSignIn.ways` lists: the manifest's
-`Connection.Ways`, kept to those this server signs in by
-(`signInWaysOffered`: `device` and `browser`).
+offered the ways `ConnectionSignIn.ways` lists (`Server.signInWaysHere`):
+the manifest's `Connection.Ways`, kept to those this server signs in by
+(`signInWaysOffered`: `device` and `browser`), and to browser only where a
+browser sign-in started by that request can finish
+(`browserSignInHere`):
+
+- At a loopback address: in a browser, or in Kivali Desktop's window,
+  which hands it to the system browser at the same address ([In Kivali
+  Desktop](#in-kivali-desktop)).
+- At the team's external address (`KIVALI_EXTERNAL_URL`), the request's
+  redirect address equal to `https://<host>/connect/callback`, and not
+  from Kivali Desktop's window: a request carrying the
+  `kivali_desktop_window=1` cookie, which Desktop's team web view sets
+  (`TEAM_WINDOW_SCRIPT`) and no browser has. That window, for a team
+  elsewhere, has no browser signed in to the team to hand the sign-in to.
+
+Those are the two addresses the setup notes give the vendor's app
+(`{{redirect_url}}` opened there, `{{external_redirect_url}}`).
+Anywhere else, a plain `http` address on the network or another name for
+the team, the vendor would send the browser back to an address its app
+may not know and end on its own error page. The cookie can be set by
+anyone; all it changes is which way is offered.
+
+The page offers one button, for the first of `ways`: **Sign in** for
+browser, **Sign in with a code** for device, so a manifest offering both
+shows the browser where it can finish and the code where it cannot. A
+browser-only connection read where browser sign-in cannot finish has no
+`ways`, `browser_elsewhere` true and `open_at` the team's external origin
+(`https://<host>`) when it has one; the page says signing in does not work
+from there and gives that address, with Copy, to open in a browser. The
+page's `sign_in_redirect_url` and each connection's `redirect_url` are
+there only where browser is offered.
 
 A sign-in under way is a `signInFlow` in the server's memory
 (`Server.signInFlows`), never in the store:
@@ -721,8 +751,8 @@ visible, and reads the page again once it says `done`, showing
 "Finishing the sign-in." until it is in. Above the block it shows the
 manifest's scopes ("Asks the service for: ..."), as the install screen
 does, when there are any; a connection none of whose ways this server
-offers shows "This version of Kivali has no way to sign in to this
-service." in its place.
+offers, and that is not `browser_elsewhere`, shows "This version of
+Kivali has no way to sign in to this service." in its place.
 
 A browser sign-in (`POST .../sign-in/browser`,
 `internal/web/integration_signin_browser.go`):
@@ -730,7 +760,9 @@ A browser sign-in (`POST .../sign-in/browser`,
 1. Under `lockIntegrations`, the route checks what the device route
    checks, with the manifest offering browser sign-in, and works out
    the redirect address from the request (below); a request that names
-   no host is a 409. It asks the vendor nothing, so it keeps the lock
+   no host is a 409, and so is one from where a browser sign-in cannot
+   finish (`browserSignInHere`: "a sign-in in the browser cannot finish
+   from here; ..."). It asks the vendor nothing, so it keeps the lock
    until the flow is registered: the checks hold for the flow it
    starts. A save of the form with a new client id or secret cancels
    it, as it does a device sign-in.
@@ -845,13 +877,16 @@ sign-in, and reads itself again once it says `done`; a `failed` one
 shows why, with Try again in the browser.
 
 Both browsers then hold a cookie for the flow; the callback takes the
-state once, so only one of them can finish it. For a team elsewhere
-(no supervisor here, and its handoff answers loopback only) the shell
-refuses `/connect/start` and opens nothing, so no vendor approval is
-spent on a sign-in that could not finish; the waiting block's "If no
-browser opened, open the team in your browser and sign in from there."
-says what to do, and the sign-in finishes from a browser at the team's
-own address.
+state once, so only one of them can finish it. A team elsewhere (no
+supervisor here, and its handoff answers loopback only) is offered no
+browser sign-in in its window: its web view carries the
+`kivali_desktop_window` cookie, so the server lists the code alone, or
+no way and the team's address to sign in from in a browser. Should a
+browser sign-in start there all the same, the shell refuses
+`/connect/start` and opens nothing, so no vendor approval is spent on a
+sign-in that could not finish; the waiting block's "If no browser
+opened, open the team in your browser and sign in from there." says what
+to do.
 
 On Desktop's loopback the redirect address is
 `http://127.0.0.1:<port>/connect/callback`, the request's own host.

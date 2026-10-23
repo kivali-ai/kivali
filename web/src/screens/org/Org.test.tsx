@@ -33,6 +33,7 @@ import {
   goIntegrationPageMultiple,
   goIntegrationPageSignIn,
   goIntegrationPageSignInAgain,
+  goIntegrationPageSignInElsewhere,
   goBrowserSignIn,
   goDeviceSignIn,
   goSignInProgress,
@@ -2384,17 +2385,17 @@ describe('Integration page, signing in in the browser', () => {
     return assign;
   };
 
-  // Guards the start of a browser sign-in, against browser_sign_in.json: Sign in in your browser posts to the
-  // connection's route and sends this tab to /connect/start with the flow the server named (openSignIn), which the
-  // server sends on to the service's page and Kivali Desktop takes over to open the system browser, signed in, in the
-  // team window's place. Sent anywhere else (the service's page itself), a Desktop sign-in would open a browser with
-  // no Kivali session and no sign-in cookie, and fail at the callback. A manifest that offers both ways shows both,
-  // its own way first as the primary button.
-  it('sends the browser to the service through Kivali, beside Sign in with a code', async () => {
-    await renderOrg(PATH, { routes: pageRoutes(notSignedIn(['device', 'browser'])) });
-    const code = block().getByRole('button', { name: 'Sign in with a code' });
-    const browser = block().getByRole('button', { name: 'Sign in in your browser' });
-    expect(code.compareDocumentPosition(browser) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  // Guards the start of a browser sign-in, against browser_sign_in.json: Sign in posts to the connection's route and
+  // sends this tab to /connect/start with the flow the server named (openSignIn), which the server sends on to the
+  // service's page and Kivali Desktop takes over to open the system browser, signed in, in the team window's place.
+  // Sent anywhere else (the service's page itself), a Desktop sign-in would open a browser with no Kivali session and
+  // no sign-in cookie, and fail at the callback. The page offers one way, the first the server lists for where the
+  // owner is, so there is no choice to make: with the browser first, no code button beside it.
+  it('offers one way, and sends the browser to the service through Kivali', async () => {
+    await renderOrg(PATH, { routes: pageRoutes(notSignedIn(['browser', 'device'])) });
+    const browser = block().getByRole('button', { name: 'Sign in' });
+    expect(browser).toHaveClass('kv-btn--primary');
+    expect(block().queryByRole('button', { name: 'Sign in with a code' })).toBeNull();
     const assign = stubAssign();
     await click(browser);
     expect(called('POST', API + '/connection/sign-in/browser')).toBe(true);
@@ -2411,7 +2412,7 @@ describe('Integration page, signing in in the browser', () => {
     vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
     await renderOrg(PATH, { routes: { ...pageRoutes(notSignedIn(['browser'])), ['GET ' + API + '/connection/sign-in']: { state: 'pending' } } });
     const assign = stubAssign();
-    await click(block().getByRole('button', { name: 'Sign in in your browser' }));
+    await click(block().getByRole('button', { name: 'Sign in' }));
     expect(assign).toHaveBeenCalledTimes(1);
     expect(block().getByText('Approve the sign-in on the service’s page in your browser. Kivali finishes it here once you do.')).toBeInTheDocument();
     // Kivali Desktop opens no browser for a team elsewhere: the block must say where to sign in instead, or the owner
@@ -2439,9 +2440,9 @@ describe('Integration page, signing in in the browser', () => {
   it('says why a sign-in in the system browser did not work', async () => {
     vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
     const failed = { state: 'failed', error: 'The user did not approve the app.' };
-    await renderOrg(PATH, { routes: { ...pageRoutes(notSignedIn(['device', 'browser'])), ['GET ' + API + '/connection/sign-in']: failed } });
+    await renderOrg(PATH, { routes: { ...pageRoutes(notSignedIn(['browser', 'device'])), ['GET ' + API + '/connection/sign-in']: failed } });
     stubAssign();
-    await click(block().getByRole('button', { name: 'Sign in in your browser' }));
+    await click(block().getByRole('button', { name: 'Sign in' }));
     act(() => void vi.advanceTimersByTime(SIGN_IN_POLL_MS));
     await flush();
     expect(block().getByText('The sign-in did not work')).toBeInTheDocument();
@@ -2451,11 +2452,37 @@ describe('Integration page, signing in in the browser', () => {
     expect(called('POST', API + '/connection/sign-in/device')).toBe(false);
   });
 
-  // Guards a manifest that signs in only in the browser: no code button that would only get a 409.
-  it('offers only the browser when that is the one way', async () => {
-    await renderOrg(PATH, { routes: pageRoutes(notSignedIn(['browser'])) });
-    expect(block().getByRole('button', { name: 'Sign in in your browser' })).toBeInTheDocument();
-    expect(block().queryByRole('button', { name: 'Sign in with a code' })).toBeNull();
+  // Guards where the browser cannot finish a sign-in (Kivali Desktop's window for a team elsewhere): the server lists
+  // the code alone, and the page offers it, with no browser button that would only get a 409.
+  it('offers the code where the server says the browser cannot finish', async () => {
+    await renderOrg(PATH, { routes: pageRoutes(notSignedIn(['device'])) });
+    expect(block().getByRole('button', { name: 'Sign in with a code' })).toHaveClass('kv-btn--primary');
+    expect(block().queryByRole('button', { name: 'Sign in' })).toBeNull();
+  });
+
+  // Guards a connection that signs in only in the browser, read where that cannot finish
+  // (integration_page_sign_in_elsewhere.json): no button at all, which would start a sign-in that cannot end, but
+  // words that say to sign in from a browser and the team's address to open there, with Copy, since a link would only
+  // open in this window. Without an address the words still say where.
+  it('says to sign in from a browser at the team’s address where no way works', async () => {
+    const writeText = vi.fn(() => Promise.resolve());
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
+    const page = goIntegrationPageSignInElsewhere;
+    const openAt = page.connection!.sign_in!.open_at!;
+    await renderOrg(PATH, { routes: pageRoutes(page) });
+    expect(block().getByText('Signing in does not work from here. Open the team’s address in your browser and sign in there.')).toBeInTheDocument();
+    expect(block().queryByRole('button', { name: /^Sign in/ })).toBeNull();
+    expect(block().queryByText('This version of Kivali has no way to sign in to this service.')).toBeNull();
+    expect(screen.queryByRole('textbox', { name: 'Redirect address' })).toBeNull();
+    expect(block().getByRole('textbox', { name: 'Team address' })).toHaveValue(openAt);
+    await click(block().getByRole('button', { name: 'Copy' }));
+    expect(writeText).toHaveBeenCalledWith(openAt);
+    cleanup();
+    const { open_at: _openAt, ...noAddress } = page.connection!.sign_in!;
+    const without = { ...page, connection: { ...page.connection!, sign_in: noAddress }, connections: [{ ...page.connection!, sign_in: noAddress }] };
+    await renderOrg(PATH, { routes: pageRoutes(without) });
+    expect(block().getByText('Signing in does not work from here. Open the team in your browser, at its own address, and sign in there.')).toBeInTheDocument();
+    expect(block().queryByRole('textbox', { name: 'Team address' })).toBeNull();
   });
 
   // Guards the address the owner registers with the service (sign_in_redirect_url in integration_page_sign_in.json):
