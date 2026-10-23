@@ -211,12 +211,15 @@ Every clone, fetch and push is in **Recent calls**, with the repository and the 
 
 ### The connection
 
-GitHub is connected by [signing in](#connect-by-signing-in) with a GitHub App you register yourself, so Kivali holds no password or personal access token of yours and you choose what the app may touch. The integration's page shows the steps above the connection form; in short:
+GitHub is connected by [signing in](#connect-by-signing-in) with a GitHub App you register yourself, so Kivali holds no password or personal access token of yours and you choose what the app may touch. Register it on the account that owns the repositories agents should reach: the app can reach only that account's repositories. The integration's page shows the steps above the connection form; in short:
 
-1. On GitHub, in the settings of the account or organization that owns the repositories, create a GitHub App under **Developer settings**, **GitHub Apps**: with the page's **Redirect address** as its callback URL, **Enable Device Flow** ticked, the webhook off, and the repository permissions Contents and Metadata read-only, Issues and Pull requests read and write.
-2. Install the app on that account or organization, for the repositories agents should reach. Agents reach only repositories the app is installed on.
+1. Open GitHub's form for a new GitHub App from the page: **Register the app on your personal account**, or, for an organization, copy the address the page gives, put the organization's name in place of `ORGANIZATION` and open it. The form opens filled in: the team's callback URLs, the webhook off, installation only on that account, and the repository permissions Contents and Metadata read-only, Issues and Pull requests read and write.
+2. Give the app a name, tick **Enable Device Flow**, and choose **Create GitHub App**.
 3. Paste its client id and a client secret you generate into the connection form, and choose **Save connection**.
-4. Choose **Sign in with a code**, or **Sign in in your browser**, and approve the sign-in on GitHub.
+4. Install the app on the account, for the repositories agents should reach. Agents reach only repositories the app is installed on.
+5. Choose **Sign in with a code**, or **Sign in in your browser**, and approve the sign-in on GitHub.
+
+The callback URLs are the addresses GitHub may send your browser back to after a sign-in: the one you opened the page at, `http://127.0.0.1/connect/callback` (any port, for a team in Kivali Desktop), and the team's address for other computers when it has one. If you give the team an address for other computers later (**Other devices** in Kivali Desktop), or change it, add that address followed by `/connect/callback` to the app's callback URLs on GitHub, or a sign-in from there ends on GitHub's error page.
 
 Leave **Expire user authorization tokens** on in the app's settings: GitHub's tokens then last eight hours, and Kivali renews each one shortly before it expires, so a token that leaks stops working soon. **Test connection** names the GitHub account the connection signs in as. What agents can do is the smaller of what the app may do and what your GitHub account may do.
 
