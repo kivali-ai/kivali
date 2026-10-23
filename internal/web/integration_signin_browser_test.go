@@ -90,11 +90,15 @@ func serveSignedIn(t *testing.T, srv *Server, req *http.Request, cookies ...*htt
 	return rr
 }
 
-// startBrowser starts crm's browser sign-in from a page at example.com
+// loopbackOrigin is where the tests' pages are, Kivali Desktop's way: a
+// browser sign-in started there can finish (browserSignInHere).
+const loopbackOrigin = "http://127.0.0.1:8080"
+
+// startBrowser starts crm's browser sign-in from a page on loopback
 // and returns the vendor's sign-in page and the cookie the answer set.
 func startBrowser(t *testing.T, srv *Server) (*url.URL, *http.Cookie) {
 	t.Helper()
-	rr := serveSignedIn(t, srv, httptest.NewRequest(http.MethodPost, intBase+"/crm/connection/sign-in/browser", nil))
+	rr := serveSignedIn(t, srv, httptest.NewRequest(http.MethodPost, loopbackOrigin+intBase+"/crm/connection/sign-in/browser", nil))
 	bs := orgOK[apitypes.BrowserSignIn](t, rr)
 	u, err := url.Parse(bs.URL)
 	if err != nil {
@@ -621,6 +625,7 @@ func TestSignInRedirectURL(t *testing.T) {
 // register.
 func TestBrowserRedirectAddressOnThePage(t *testing.T) {
 	srv, vendor, _ := signInServer(t)
+	srv.ExternalURL = "https://team.tail1234.ts.net"
 	browserBundle(t, srv, vendor, nil)
 	const want = "https://team.tail1234.ts.net/connect/callback"
 	viaProxy := func(method, path string) *http.Request {
@@ -746,7 +751,7 @@ func TestSignInWaysBoth(t *testing.T) {
 		c.Method, c.DeviceEndpoint = integration.MethodDevice, vendor.Endpoints().Device
 	})
 	saveSignInClient(t, srv)
-	page := orgOK[apitypes.IntegrationPage](t, orgGet(t, srv, intBase+"/crm"))
+	page := orgOK[apitypes.IntegrationPage](t, orgGet(t, srv, loopbackOrigin+intBase+"/crm"))
 	if si := page.Connection.SignIn; si == nil || strings.Join(si.Ways, ",") != "device,browser" || si.RedirectURL == nil {
 		t.Errorf("sign-in = %+v", si)
 	}
@@ -754,6 +759,94 @@ func TestSignInWaysBoth(t *testing.T) {
 	if to := callback(t, srv, vendorApprove(t, authorize), cookie); to.Query().Get("signed_in") == "" {
 		t.Errorf("landed on %s", to)
 	}
+}
+
+// Why this test exists: a browser sign-in finishes only where the
+// vendor's app knows the address it sends the browser back to and a
+// browser signed in to Kivali is there to take it: loopback (Kivali
+// Desktop's window hands it to the system browser at the same address)
+// and the team's external address in a browser. Offered anywhere else,
+// it would end on the vendor's error page, or open nothing from Kivali
+// Desktop's window for a team elsewhere. There the page must offer the
+// code instead when the manifest has one; with browser alone, offer no
+// way and say where to sign in; and the route must refuse a browser
+// sign-in started there, while the code still works.
+func TestSignInWaysFollowWhereTheOwnerIs(t *testing.T) {
+	srv, vendor, _ := signInServer(t)
+	srv.ExternalURL = "https://team.tail1234.ts.net"
+	browserBundle(t, srv, vendor, func(c *integration.Connection) { c.DeviceEndpoint = vendor.Endpoints().Device })
+	saveSignInClient(t, srv)
+	req := func(method, origin string, desktop bool, fwdHost string) *http.Request {
+		r := httptest.NewRequest(method, origin+intBase+"/crm", nil)
+		if method == http.MethodPost {
+			r = httptest.NewRequest(method, origin+intBase+"/crm/connection/sign-in/browser", nil)
+		}
+		if fwdHost != "" {
+			r.Header.Set("X-Forwarded-Proto", "https")
+			r.Header.Set("X-Forwarded-Host", fwdHost)
+		}
+		if desktop {
+			r.AddCookie(&http.Cookie{Name: desktopWindowCookie, Value: "1"})
+		}
+		return r
+	}
+	for _, tc := range []struct {
+		name     string
+		origin   string
+		desktop  bool
+		fwdHost  string
+		ways     string
+		redirect string
+	}{
+		{"a browser on loopback", loopbackOrigin, false, "", "browser,device", loopbackOrigin + "/connect/callback"},
+		{"Kivali Desktop's window on loopback", loopbackOrigin, true, "", "browser,device", loopbackOrigin + "/connect/callback"},
+		{"a browser at the external address", "http://10.0.0.5:8080", false, "team.tail1234.ts.net", "browser,device", "https://team.tail1234.ts.net/connect/callback"},
+		{"Kivali Desktop's window for a team elsewhere", "http://10.0.0.5:8080", true, "team.tail1234.ts.net", "device", ""},
+		{"a plain http address on the network", "http://192.168.1.5:8080", false, "", "device", ""},
+		{"another https name for the team", "http://10.0.0.5:8080", false, "kivali.other.example", "device", ""},
+	} {
+		page := orgOK[apitypes.IntegrationPage](t, serveSignedIn(t, srv, req(http.MethodGet, tc.origin, tc.desktop, tc.fwdHost)))
+		si := page.Connection.SignIn
+		if got := strings.Join(si.Ways, ","); got != tc.ways || si.BrowserElsewhere || si.OpenAt != nil {
+			t.Errorf("%s: ways %q (want %q), elsewhere %v, open at %v", tc.name, got, tc.ways, si.BrowserElsewhere, si.OpenAt)
+		}
+		if got := textOf(si.RedirectURL); got != tc.redirect || textOf(page.SignInRedirectURL) != tc.redirect {
+			t.Errorf("%s: redirect %q, page %q, want %q", tc.name, got, textOf(page.SignInRedirectURL), tc.redirect)
+		}
+		rr := serveSignedIn(t, srv, req(http.MethodPost, tc.origin, tc.desktop, tc.fwdHost))
+		if offered := strings.Contains(tc.ways, "browser"); offered != (rr.Code == http.StatusOK) ||
+			(!offered && !strings.Contains(rr.Body.String(), errSignInNotHere)) {
+			t.Errorf("%s: browser sign-in %d %s", tc.name, rr.Code, rr.Body.String())
+		}
+	}
+	far := req(http.MethodPost, "http://10.0.0.5:8080", true, "team.tail1234.ts.net")
+	far.URL.Path = intBase + "/crm/connection/sign-in/device"
+	if rr := serveSignedIn(t, srv, far); rr.Code != http.StatusOK {
+		t.Errorf("a code from Kivali Desktop's window for a team elsewhere: %d %s", rr.Code, rr.Body.String())
+	}
+
+	only, onlyVendor, _ := signInServer(t)
+	browserBundle(t, only, onlyVendor, nil)
+	saveSignInClient(t, only)
+	for _, ext := range []string{"https://team.tail1234.ts.net", ""} {
+		only.ExternalURL = ext
+		page := orgOK[apitypes.IntegrationPage](t, serveSignedIn(t, only, req(http.MethodGet, "http://192.168.1.5:8080", false, "")))
+		si := page.Connection.SignIn
+		if len(si.Ways) != 0 || !si.BrowserElsewhere || textOf(si.OpenAt) != ext {
+			t.Errorf("browser alone, external %q: ways %v, elsewhere %v, open at %v", ext, si.Ways, si.BrowserElsewhere, si.OpenAt)
+		}
+	}
+	if si := orgOK[apitypes.IntegrationPage](t, serveSignedIn(t, only, req(http.MethodGet, loopbackOrigin, true, ""))).Connection.SignIn; strings.Join(si.Ways, ",") != "browser" || si.BrowserElsewhere {
+		t.Errorf("browser alone on loopback: %+v", si)
+	}
+}
+
+// textOf is *s, or "" for nil.
+func textOf(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }
 
 // Why this test exists: the browser sign-in route refuses as the
@@ -765,7 +858,7 @@ func TestBrowserSignInRefusals(t *testing.T) {
 	srv, vendor, _ := signInServer(t)
 	browserBundle(t, srv, vendor, nil)
 	start := func() *httptest.ResponseRecorder {
-		return serveSignedIn(t, srv, httptest.NewRequest(http.MethodPost, intBase+"/crm/connection/sign-in/browser", nil))
+		return serveSignedIn(t, srv, httptest.NewRequest(http.MethodPost, loopbackOrigin+intBase+"/crm/connection/sign-in/browser", nil))
 	}
 	if rr := start(); rr.Code != http.StatusConflict || !strings.Contains(rr.Body.String(), errSignInClientFirst) {
 		t.Errorf("no connection: %d %s", rr.Code, rr.Body.String())

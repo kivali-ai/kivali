@@ -527,13 +527,18 @@ func (s *Server) integrationPage(v *integrationView, r *http.Request) apitypes.I
 		page.ConnectionMethod = v.manifest.Kivali.Connection.Method
 		page.SetupNotesMD = s.setupNotes(v.manifest, r)
 	}
-	redirect := browserRedirectURL(v.manifest, r)
+	redirect := s.browserRedirectURL(v.manifest, r)
 	page.SignInRedirectURL = redirect
 	labels := map[string]string{}
 	for _, c := range v.conns {
 		state := v.connectionState(c)
-		if state.SignIn != nil {
-			state.SignIn.RedirectURL = redirect
+		if si := state.SignIn; si != nil {
+			si.Ways = s.signInWaysHere(v.manifest, r)
+			si.RedirectURL = redirect
+			if len(si.Ways) == 0 && offersBrowser(v.manifest) {
+				si.BrowserElsewhere = true
+				si.OpenAt = s.externalOrigin()
+			}
 		}
 		labels[c.rec.ID] = state.Label
 		page.Connections = append(page.Connections, state)

@@ -128,6 +128,18 @@ pub enum TeamNav {
 /// (internal/web/integration_signin_browser.go, `connectStartPath`).
 const CONNECT_START_PATH: &str = "/connect/start";
 
+/// Runs in a team's web view before each page's own scripts, in the
+/// top frame only (WebView2 runs it in subframes too): it sets the
+/// cookie that tells the team's server a request comes from this window
+/// and not a browser (`desktopWindowCookie`,
+/// internal/web/integration_signin_browser.go). The server then offers
+/// browser sign-in only where this window can hand it to the system
+/// browser, the team's loopback address, and a code elsewhere. The
+/// cookie lives in the web view's own store, which no browser reads. It
+/// grants the page nothing.
+const TEAM_WINDOW_SCRIPT: &str = "if (window === window.top && /^https?:$/.test(location.protocol)) { \
+     try { document.cookie = 'kivali_desktop_window=1; path=/; SameSite=Lax'; } catch (e) {} }";
+
 /// The flow id of a team's `/connect/start?flow=<id>`: that exact path,
 /// percent-decoded as the server's router decodes it, and one `flow`,
 /// 32 lowercase hex digits as the server makes them. None for anything
@@ -828,6 +840,7 @@ fn create_team_window(app: &AppHandle, t: &Team, visible: bool) -> Option<Window
     let watched_load = watched.clone();
     let blank = Url::parse("about:blank").expect("a constant URL");
     let web = WebviewBuilder::new(web_label(&id), WebviewUrl::External(start.unwrap_or(blank)))
+        .initialization_script(TEAM_WINDOW_SCRIPT)
         .on_navigation(move |url| {
             let pinned = pin_nav.lock().unwrap().clone();
             match team_nav(url, pinned.as_ref()) {
@@ -1582,6 +1595,19 @@ mod tests {
 
     fn secs(n: u64) -> Duration {
         Duration::from_secs(n)
+    }
+
+    /// The team's server offers browser sign-in from this window only
+    /// on loopback, and a code elsewhere, by a cookie this script sets
+    /// (`desktopWindowCookie` in internal/web/integration_signin_browser.go).
+    /// A rename on either side would have the window of a team elsewhere
+    /// offered a browser sign-in it cannot hand to a browser, and a
+    /// script run in a subframe (WebView2 runs it there) would set the
+    /// cookie for whatever page that frame holds.
+    #[test]
+    fn team_window_script_marks_only_the_teams_own_page() {
+        assert!(TEAM_WINDOW_SCRIPT.contains("document.cookie = 'kivali_desktop_window=1; path=/;"));
+        assert!(TEAM_WINDOW_SCRIPT.starts_with("if (window === window.top && /^https?:$/.test(location.protocol))"));
     }
 
     #[test]

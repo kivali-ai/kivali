@@ -2007,10 +2007,27 @@ export interface ConnectionState {
  */
 export interface ConnectionSignIn {
   /**
-   * Ways is how the owner may sign in, the manifest's method first:
-   * device, browser.
+   * Ways is how the owner may sign in from where the request came
+   * from, the manifest's method first: device, browser. Browser only
+   * where a browser sign-in can finish: at a loopback address, or at
+   * the team's external address outside a Kivali Desktop window. The
+   * page offers the first.
    */
   ways: string[];
+  /**
+   * BrowserElsewhere is true when Ways is empty because browser
+   * sign-in, the connection's only way, cannot finish from where the
+   * request came from: a Kivali Desktop window for a team elsewhere,
+   * or an address the team does not sign in at. The page says to sign
+   * in from a browser at OpenAt.
+   */
+  browser_elsewhere?: boolean;
+  /**
+   * OpenAt is the team's external address (https://<host>), where a
+   * browser can sign the connection in, when BrowserElsewhere and the
+   * team has one.
+   */
+  open_at?: string;
   /**
    * SignedIn is true while the connection holds tokens that work.
    */

@@ -207,15 +207,17 @@ interface SignInBlockProps {
 }
 
 /**
- * A connection made by signing in, once the client id and secret are saved: Sign in with a code, Sign in in your
- * browser, or both, the manifest's way first. With a code, the code and the service's page to enter it on while Kivali
+ * A connection made by signing in, once the client id and secret are saved: one button, for the first of the ways the
+ * server says work from here (Sign in, in the browser, or Sign in with a code where the browser cannot finish, as in
+ * Kivali Desktop's window for a team elsewhere). With a code, the code and the service's page to enter it on while Kivali
  * waits for the approval, asking how it stands every few seconds while the tab is visible, and "Finishing the
  * sign-in." once it is done until the page is read again. In the browser, the page leaves for the service's
  * (openSignIn), which sends the browser back here through Kivali with how it went (returned); where the page stays
  * (Kivali Desktop, which opens the system browser instead), it waits for the sign-in as it does for a code, with
  * Start again. Signed in, who the
  * connection test found and Sign out; a sign-in that failed or expired, why, and Try again the same way; a connection
- * none of whose ways this version offers, a sentence saying so. What the sign-in asks the service for is above it.
+ * that signs in only in the browser where that cannot finish, the team's address to sign in from instead; and one none
+ * of whose ways this version offers, a sentence saying so. What the sign-in asks the service for is above it.
  */
 function SignInBlock({ connection, fields, api, scopes, signInAt, busy, now, onPage, onSignedIn, returned }: SignInBlockProps) {
   const [device, setDevice] = useState<DeviceSignIn | null>(null);
@@ -330,14 +332,15 @@ function SignInBlock({ connection, fields, api, scopes, signInAt, busy, now, onP
   };
 
   const disabled = busy || working;
-  const ways = s?.ways ?? ['device'];
-  const wayButton = (way: string, i: number) =>
-    way === 'browser' ? (
-      <Button key={way} type="button" variant={i === 0 ? 'primary' : 'secondary'} disabled={disabled} onClick={() => void startBrowser()}>
-        Sign in in your browser
+  // The server lists only the ways that work from here, the manifest's first; the page offers that one.
+  const ways = (s?.ways ?? ['device']).slice(0, 1);
+  const wayButton =
+    ways[0] === 'browser' ? (
+      <Button type="button" variant="primary" disabled={disabled} onClick={() => void startBrowser()}>
+        Sign in
       </Button>
     ) : (
-      <Button key={way} type="button" variant={i === 0 ? 'primary' : 'secondary'} disabled={disabled} onClick={() => void start()}>
+      <Button type="button" variant="primary" disabled={disabled} onClick={() => void start()}>
         Sign in with a code
       </Button>
     );
@@ -366,6 +369,17 @@ function SignInBlock({ connection, fields, api, scopes, signInAt, busy, now, onP
       <Text as="p" variant="body" tone="muted">
         Finishing the sign-in.
       </Text>
+    );
+  } else if (ways.length === 0 && s?.browser_elsewhere) {
+    body = (
+      <>
+        <Text as="p" variant="body">
+          {s.open_at
+            ? 'Signing in does not work from here. Open the team’s address in your browser and sign in there.'
+            : 'Signing in does not work from here. Open the team in your browser, at its own address, and sign in there.'}
+        </Text>
+        {s.open_at && <CopyAddress label="Team address" url={s.open_at} />}
+      </>
     );
   } else if (ways.length === 0) {
     // The ways offered are this server's; a manifest may name only ways it does not have.
@@ -434,7 +448,7 @@ function SignInBlock({ connection, fields, api, scopes, signInAt, busy, now, onP
       </>
     );
   } else if (connection && clientSaved(fields)) {
-    body = <div className="app-org-actions">{ways.map(wayButton)}</div>;
+    body = <div className="app-org-actions">{wayButton}</div>;
   } else {
     body = (
       <Text as="p" variant="body" tone="muted">
@@ -461,8 +475,8 @@ function SignInBlock({ connection, fields, api, scopes, signInAt, busy, now, onP
   );
 }
 
-/** The redirect address to register with the service for browser sign-in, read-only, with Copy. */
-function RedirectAddress({ url }: { url: string }) {
+/** An address to copy, such as the redirect address to register with the service, read-only, with Copy. */
+function CopyAddress({ label, hint, url }: { label: string; hint?: string; url: string }) {
   const [copied, setCopied] = useState(false);
   const copy = () => {
     void navigator.clipboard?.writeText(url).then(
@@ -472,7 +486,7 @@ function RedirectAddress({ url }: { url: string }) {
   };
   return (
     <div className="app-int-redirect">
-      <TextField label="Redirect address" hint="Register this address as the app’s callback URL." value={url} readOnly onFocus={(e) => e.currentTarget.select()} />
+      <TextField label={label} {...(hint ? { hint } : {})} value={url} readOnly onFocus={(e) => e.currentTarget.select()} />
       <Button type="button" size="sm" variant="ghost" icon={<Icon name={copied ? 'check' : 'copy'} />} onClick={copy}>
         {copied ? 'Copied' : 'Copy'}
       </Button>
@@ -1086,7 +1100,9 @@ export function IntegrationPage() {
       <Block label={p.multiple ? 'Connections' : 'Connection'} variant="heading">
         {/* What to do on the vendor's side first, from the manifest; nothing when it has none. */}
         {s.version && <Markdown markdown={p.setup_notes_md} />}
-        {s.version && p.sign_in_redirect_url && <RedirectAddress url={p.sign_in_redirect_url} />}
+        {s.version && p.sign_in_redirect_url && (
+          <CopyAddress label="Redirect address" hint="Register this address as the app’s callback URL." url={p.sign_in_redirect_url} />
+        )}
         {p.multiple && returned?.kind === 'start_again' && (
           <Banner tone="danger" title="The sign-in did not work">
             {returned.words}

@@ -778,6 +778,13 @@ entry that matches `team-*` windows or `web-*` webviews, so:
 - A team's web view cannot navigate to the app's origin, so it never
   runs the bundled pages either; the page webview beside it in the
   same window is a separate webview with its own label.
+- The one script the shell adds to a team's web view
+  (`TEAM_WINDOW_SCRIPT`, `windows.rs`) runs in its top frame and only
+  sets a cookie, `kivali_desktop_window=1`, in the web view's own store:
+  the team's server reads it to offer an integration's browser sign-in
+  from this window only on loopback, where the shell can hand it to the
+  system browser ([integrations.md](integrations.md#signing-in)). It
+  defines nothing the page could call.
 
 The reasons: a team elsewhere is third-party content
 from the shell's point of view, and a team here is served by a server

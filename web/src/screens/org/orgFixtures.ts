@@ -13,6 +13,7 @@ import goIntegrationPageJson from '../../../../internal/web/apitypes/testdata/in
 import goIntegrationPageMultipleJson from '../../../../internal/web/apitypes/testdata/integration_page_multiple.json';
 import goIntegrationPageSignInJson from '../../../../internal/web/apitypes/testdata/integration_page_sign_in.json';
 import goIntegrationPageSignInAgainJson from '../../../../internal/web/apitypes/testdata/integration_page_sign_in_again.json';
+import goIntegrationPageSignInElsewhereJson from '../../../../internal/web/apitypes/testdata/integration_page_sign_in_elsewhere.json';
 import goIntegrationUploadRefusedJson from '../../../../internal/web/apitypes/testdata/integration_upload_refused.json';
 import goIntegrationVersionJson from '../../../../internal/web/apitypes/testdata/integration_version.json';
 import goIntegrationVersionBuiltinJson from '../../../../internal/web/apitypes/testdata/integration_version_builtin.json';
@@ -83,6 +84,8 @@ export const goIntegrationPageMultiple = (goIntegrationPageMultipleJson satisfie
 export const goIntegrationPageSignIn = (goIntegrationPageSignInJson satisfies Wire<IntegrationPage>) as IntegrationPage;
 /** The same connection after the vendor refused a refresh: the owner must sign in again. */
 export const goIntegrationPageSignInAgain = (goIntegrationPageSignInAgainJson satisfies Wire<IntegrationPage>) as IntegrationPage;
+/** The same page as Kivali Desktop's window for a team elsewhere reads it: browser sign-in alone, which cannot finish there. */
+export const goIntegrationPageSignInElsewhere = (goIntegrationPageSignInElsewhereJson satisfies Wire<IntegrationPage>) as IntegrationPage;
 /** A browser sign-in just started: the service's sign-in page to send the browser to. */
 export const goBrowserSignIn = (goBrowserSignInJson satisfies Wire<BrowserSignIn>) as BrowserSignIn;
 /** A device sign-in just started: the code, the service's page, and when the code stops working. */

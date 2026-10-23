@@ -99,7 +99,57 @@ const (
 	// browser sign-in started in it ends the one before.
 	errSignInReplaced  = "another sign-in was started in this browser; start this one again"
 	errSignInNoAddress = "Kivali cannot tell the address it was reached at from this request"
+	// errSignInNotHere: a browser sign-in started where it cannot
+	// finish (browserSignInHere).
+	errSignInNotHere = "a sign-in in the browser cannot finish from here; sign in from a browser at the team's own address"
 )
+
+// desktopWindowCookie is the cookie Kivali Desktop's team windows set
+// in their own web view (TEAM_WINDOW_SCRIPT in
+// desktop-app/src-tauri/src/windows.rs), never in a browser's: a
+// request that carries it comes from such a window. Anyone can set it;
+// all it changes is which sign-in ways the page offers.
+const desktopWindowCookie = "kivali_desktop_window"
+
+// fromDesktopWindow reports whether r came from a Kivali Desktop team
+// window.
+func fromDesktopWindow(r *http.Request) bool {
+	c, err := r.Cookie(desktopWindowCookie)
+	return err == nil && c.Value == "1"
+}
+
+// browserSignInHere reports whether a browser sign-in started by r can
+// finish: at a loopback address, where Kivali Desktop's window hands it
+// to the system browser at the same address, or at the team's external
+// address (externalRedirectURL) outside Kivali Desktop's window. Those
+// are the addresses the setup notes give the vendor's app
+// ({{redirect_url}} opened there, {{external_redirect_url}}). Anywhere
+// else the vendor would send the browser back to an address its app may
+// not know, which ends on the vendor's own error page, and Kivali
+// Desktop's window for a team elsewhere has no browser signed in to hand
+// the sign-in to.
+func (s *Server) browserSignInHere(r *http.Request) bool {
+	redirect := signInRedirectURL(r)
+	u, err := url.Parse(redirect)
+	if redirect == "" || err != nil {
+		return false
+	}
+	if auth.LoopbackHost(u.Host) != "" {
+		return true
+	}
+	return redirect == s.externalRedirectURL() && !fromDesktopWindow(r)
+}
+
+// signInWaysHere is m's ways (offeredSignInWays) that a sign-in r starts
+// can finish by, the manifest's method first: browser only where
+// browserSignInHere says so.
+func (s *Server) signInWaysHere(m *integration.Manifest, r *http.Request) []string {
+	ways := offeredSignInWays(m.Kivali.Connection)
+	if s.browserSignInHere(r) {
+		return ways
+	}
+	return slices.DeleteFunc(ways, func(w string) bool { return w == integration.MethodBrowser })
+}
 
 // signInRedirectURL is the redirect address for browser sign-in as r
 // reached Kivali: <scheme>://<host>/connect/callback. The scheme is
@@ -159,29 +209,46 @@ func offersBrowser(m *integration.Manifest) bool {
 }
 
 // browserRedirectURL is the redirect address the page shows for m, as
-// r reached Kivali: nil when m does not offer browser sign-in, or r
-// names no host.
-func browserRedirectURL(m *integration.Manifest, r *http.Request) *string {
-	if !offersBrowser(m) {
+// r reached Kivali: nil when m does not offer browser sign-in, or a
+// browser sign-in r started could not finish (browserSignInHere).
+func (s *Server) browserRedirectURL(m *integration.Manifest, r *http.Request) *string {
+	if !offersBrowser(m) || !s.browserSignInHere(r) {
 		return nil
 	}
 	return optString(signInRedirectURL(r))
 }
 
-// externalRedirectURL is the redirect address for browser sign-in at
-// the team's external address (ExternalURL, an https origin):
-// https://<host>/connect/callback, the host lower-cased and without
-// :443. Empty when the team has no external address.
-func (s *Server) externalRedirectURL() string {
+// externalHost is the host of the team's external address
+// (ExternalURL, an https origin), lower-cased and without :443. Empty
+// when the team has no external address.
+func (s *Server) externalHost() string {
 	u, err := url.Parse(s.ExternalURL)
 	if err != nil || u.Scheme != "https" {
 		return ""
 	}
-	host := callbackHost(u.Host, "https")
+	return callbackHost(u.Host, "https")
+}
+
+// externalRedirectURL is the redirect address for browser sign-in at
+// the team's external address: https://<host>/connect/callback. Empty
+// when the team has no external address.
+func (s *Server) externalRedirectURL() string {
+	host := s.externalHost()
 	if host == "" {
 		return ""
 	}
 	return "https://" + host + connectCallbackPath
+}
+
+// externalOrigin is the team's external address, https://<host>, where
+// a browser signs a connection in when it cannot be signed in from
+// where the owner is; nil when the team has none.
+func (s *Server) externalOrigin() *string {
+	host := s.externalHost()
+	if host == "" {
+		return nil
+	}
+	return optString("https://" + host)
 }
 
 // setupNotes is m's kivali.setup_notes with {{redirect_url}} replaced
@@ -325,6 +392,10 @@ func (s *Server) handleAPISignInBrowser(byID bool) http.HandlerFunc {
 		redirect := signInRedirectURL(r)
 		if redirect == "" {
 			writeAPIError(w, http.StatusConflict, errSignInNoAddress, whoServer)
+			return
+		}
+		if !s.browserSignInHere(r) {
+			writeAPIError(w, http.StatusConflict, errSignInNotHere, whoYou)
 			return
 		}
 		conn := m.Kivali.Connection

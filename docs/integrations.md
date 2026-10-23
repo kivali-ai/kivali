@@ -81,12 +81,12 @@ If you turn the sign-in down on the service's page, or the code runs out before 
 
 #### In your browser
 
-Some services sign in in your browser instead of with a code (HubSpot, Slack, Notion), and some offer both: the page then shows both buttons, the integration's own way first.
+Some services sign in in your browser instead of with a code (HubSpot, Slack, Notion), and some offer both. The page shows one button: **Sign in**, in the browser, or **Sign in with a code** where a sign-in in the browser cannot finish (below).
 
 1. Open the integration's page at the address you will keep using for Kivali. Above the connection form, the page shows a **Redirect address**, with **Copy**: Kivali's address as your browser reaches it, followed by `/connect/callback`. It is the same for every integration.
 2. Register an app with the service, as its setup steps say, and enter that redirect address exactly as the app's callback URL (some services call it the redirect URL). The service gives the app a client id and a client secret.
 3. Paste the client id and the client secret into the connection form and choose **Save connection**.
-4. Under **Sign in**, which names the host it sends you to ("Signs in at app.hubspot.com"), choose **Sign in in your browser**. The page takes you to the service, where you approve Kivali; the service sends you back to the integration's page, which says **Signed in**.
+4. Under **Sign in**, which names the host it sends you to ("Signs in at app.hubspot.com"), choose **Sign in**. The page takes you to the service, where you approve Kivali; the service sends you back to the integration's page, which says **Signed in**.
 
 The sign-in finishes in the browser that started it, signed in to Kivali: if Kivali asks you to sign in on the way back, do, and the sign-in carries on. If you turn it down, take longer than ten minutes, or come back in another browser, the page says why and offers **Try again**. One browser sign-in at a time: starting another in the same browser, for any integration, ends the one before, and its page says so.
 
@@ -97,7 +97,7 @@ Services check the redirect address exactly, character for character, and set ru
 
 A Kivali server you run yourself therefore needs a real host name with a certificate for browser sign-in. Tailscale is the easy way: its MagicDNS name for the server, under `ts.net`, is a real name with a certificate Tailscale issues, reachable only from your tailnet. [Self-hosting](self-hosting.md#sign-in-to-integrations-in-the-browser) says how.
 
-**In Kivali Desktop**, **Sign in in your browser** opens your computer's default browser, not the team's window, which many services refuse to sign in inside. The browser arrives already signed in to the team, goes on to the service, and comes back to the integration's page there; the team's window says **Signed in** within a few seconds, and you can close the browser tab. While it waits, the team's window offers **Start again**, for a browser that did not open.
+**In Kivali Desktop**, **Sign in** opens your computer's default browser, not the team's window, which many services refuse to sign in inside. The browser arrives already signed in to the team, goes on to the service, and comes back to the integration's page there; the team's window says **Signed in** within a few seconds, and you can close the browser tab. While it waits, the team's window offers **Start again**, for a browser that did not open.
 
 For a team on your computer, the redirect address is the team's own address there, `http://127.0.0.1:<port>/connect/callback`, with the port the page shows:
 
@@ -105,7 +105,12 @@ For a team on your computer, the redirect address is the team's own address ther
 - Most other services need the exact address, port included: register the one the page shows. The team keeps its port.
 - A service that allows no plain `http` address, such as Slack, cannot sign in to a team on your computer this way. Use **Sign in with a code** where the integration offers it, or give the team an `https` address under **Other devices** in the team's settings and sign in from a browser at that address.
 
-A team elsewhere that you open in Kivali Desktop signs in from a browser at the team's own address: Kivali Desktop opens no browser for it, since the sign-in could not finish there. Open the team in your browser (**Open in browser**) and sign in from its page.
+Kivali offers a sign-in in the browser only where it can finish: at the team's address on your computer (`127.0.0.1`), and at the team's address for other computers (**Other devices**, or a server's own address) opened in a browser. Anywhere else the page offers **Sign in with a code** instead, when the integration has it:
+
+- In Kivali Desktop's window for a team elsewhere, which cannot hand a sign-in to a browser signed in to that team.
+- At another address for the team, such as a plain `http` one on your network, which the service's app does not know to send you back to.
+
+When the integration signs in only in the browser, the page says it cannot sign in from there and gives the team's address: open the team in your browser (**Open in browser** in Kivali Desktop) and sign in from its page.
 
 Kivali keeps the sign-in fresh: the integration never sees the client secret or what Kivali renews the sign-in with, only a token that works at the moment of each call, which Kivali renews shortly before it expires. When the service no longer accepts the sign-in (you revoked the app, or changed its secret), the connection reads **Sign in again** with the service's reason, the integration reads not connected, and **Needs you** on Home lists it until you sign in again from its page.
 
