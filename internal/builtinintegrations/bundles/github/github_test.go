@@ -7,9 +7,12 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -70,14 +73,56 @@ func TestManifestPassesTheUploadCheck(t *testing.T) {
 	if len(m.Server.MCPConfig.Env) != 0 {
 		t.Errorf("mcp_config.env = %v: the token comes from kivali/credential on each call", m.Server.MCPConfig.Env)
 	}
-	if !strings.Contains(m.Kivali.SetupNotes, "{{redirect_url}}") || !strings.Contains(m.Kivali.SetupNotes, "Enable Device Flow") {
-		t.Errorf("setup notes lack the callback placeholder or the device flow step")
+	if !strings.Contains(m.Kivali.SetupNotes, "Enable Device Flow") {
+		t.Errorf("setup notes lack the device flow step")
 	}
 	if err := integration.ValidateAccess(m, json.RawMessage(`{"repositories":["acme/*"],"write":false}`)); err != nil {
 		t.Errorf("good access refused: %v", err)
 	}
 	if err := integration.ValidateAccess(m, json.RawMessage(`{"write":true}`)); err == nil {
 		t.Error("access without repositories accepted")
+	}
+}
+
+// Why this test exists: the setup notes send the owner to GitHub's
+// new-app form with Kivali's settings in the address, and the owner
+// leaves them as they are. A parameter lost in an edit would register
+// an app that cannot do what agents need (a permission missing), sends
+// GitHub's events nowhere (a webhook on), asks for OAuth at install, can
+// be installed on any account, or does not know an address the team
+// signs in at, and nothing would say so until a call failed. The
+// personal link and the organization address must carry the same
+// settings, the organization's under its own path.
+func TestSetupNotesPreFillTheApp(t *testing.T) {
+	notes := readBundle(t).Manifest.Kivali.SetupNotes
+	link := regexp.MustCompile(`\]\((https://github\.com/settings/apps/new\?[^)\s]+)\)`).FindStringSubmatch(notes)
+	org := regexp.MustCompile("(?s)```Organization address\n(https://[^\n]+)\n```").FindStringSubmatch(notes)
+	if link == nil || org == nil {
+		t.Fatalf("notes lack the personal link or the organization address:\n%s", notes)
+	}
+	want := url.Values{
+		"description":              {"Lets Kivali agents work with issues and pull requests."},
+		"url":                      {"https://kivali.ai"},
+		"callback_urls[]":          {"{{redirect_url}}", "http://127.0.0.1/connect/callback", "{{external_redirect_url}}"},
+		"request_oauth_on_install": {"false"},
+		"public":                   {"false"},
+		"webhook_active":           {"false"},
+		"contents":                 {"read"},
+		"issues":                   {"write"},
+		"metadata":                 {"read"},
+		"pull_requests":            {"write"},
+	}
+	for _, tc := range []struct{ raw, path string }{
+		{link[1], "/settings/apps/new"},
+		{org[1], "/organizations/ORGANIZATION/settings/apps/new"},
+	} {
+		u, err := url.Parse(tc.raw)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.raw, err)
+		}
+		if u.Host != "github.com" || u.Path != tc.path || !reflect.DeepEqual(u.Query(), want) {
+			t.Errorf("%s:\n path %s, query %v\nwant %s, %v", tc.raw, u.Path, u.Query(), tc.path, want)
+		}
 	}
 }
 
