@@ -525,7 +525,7 @@ func (s *Server) integrationPage(v *integrationView, r *http.Request) apitypes.I
 	if v.manifest != nil {
 		page.Author = v.manifest.Author.Name
 		page.ConnectionMethod = v.manifest.Kivali.Connection.Method
-		page.SetupNotesMD = setupNotes(v.manifest, r)
+		page.SetupNotesMD = s.setupNotes(v.manifest, r)
 	}
 	redirect := browserRedirectURL(v.manifest, r)
 	page.SignInRedirectURL = redirect
@@ -604,7 +604,7 @@ func (s *Server) integrationVersionView(v *integrationView, ver store.Integratio
 		ConnectionMethod: m.Kivali.Connection.Method,
 		Scopes:           signInScopes(m),
 		SignInHosts:      signInHosts(m),
-		SetupNotesMD:     setupNotes(m, r),
+		SetupNotesMD:     s.setupNotes(m, r),
 		Hosts:            integrationHosts(m),
 		Packages:         integrationPackages(m),
 		ConnectionFields: connectionFields(m, v.first()),

@@ -2,9 +2,9 @@ import { useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { ApiError } from '../../api/client';
 import type { AccessField, IntegrationAuditRow, IntegrationStatus, IntegrationUploadRefused, IntegrationVersionState } from '../../api/types.gen';
-import { Badge, Button, Dialog, DialogClose, Icon, Prose, Text } from '../../ds';
+import { Badge, Button, CodeBlock, Dialog, DialogClose, Icon, Prose, Text } from '../../ds';
 import type { BadgeTone } from '../../ds';
-import { renderMarkdown } from '../../lib/markdown';
+import { markdownBlocks } from '../../lib/markdown';
 import { shortDate } from '../../lib/time';
 
 /** The API's list of integrations; each one's own paths hang off it. */
@@ -232,9 +232,17 @@ export function ScopesLine({ scopes }: { scopes: readonly string[] }) {
   );
 }
 
-/** Version notes or a manifest's setup notes: Markdown, sanitized, set as Prose. Nothing for empty notes. */
+/**
+ * Version notes or a manifest's setup notes: Markdown, sanitized, set as Prose, with each top-level code block a
+ * CodeBlock headed by its info string, so an address or a command the notes give has a copy button. Nothing for empty
+ * notes.
+ */
 export function Markdown({ markdown }: { markdown: string }) {
-  const html = useMemo(() => renderMarkdown(markdown), [markdown]);
-  if (!html) return null;
-  return <Prose html={html} className="app-int-notes" />;
+  const blocks = useMemo(() => markdownBlocks(markdown), [markdown]);
+  if (blocks.length === 0) return null;
+  return (
+    <div className="app-int-notes">
+      {blocks.map((b, i) => (b.kind === 'code' ? <CodeBlock key={i} code={b.code} {...(b.info ? { title: b.info } : {})} /> : <Prose key={i} html={b.html} className="app-int-notes-text" />))}
+    </div>
+  );
 }
