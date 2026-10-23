@@ -36,8 +36,10 @@ func readBundle(t *testing.T) *integration.Bundle {
 // Why this test exists: boot installs a shipped bundle only when it
 // passes the check an upload passes, so a manifest the check refuses
 // reaches every team as a GitHub integration that never installs. It
-// also pins what the rest of Kivali relies on: a device sign-in with
-// both of GitHub's endpoints and the token handed over as GH_TOKEN, gh
+// also pins what the rest of Kivali relies on: a browser sign-in with
+// GitHub's device endpoint too, so a code signs in where the browser
+// cannot finish (Kivali Desktop's window for a team elsewhere), and the
+// token handed over as GH_TOKEN, gh
 // installed in the pod, and an access form whose repositories field is
 // required, so access without one is refused at save rather than
 // granting nothing silently.
@@ -56,15 +58,15 @@ func TestManifestPassesTheUploadCheck(t *testing.T) {
 		t.Errorf("name, version, author = %s %s %s", m.Name, m.Version, m.Author.Name)
 	}
 	c := m.Kivali.Connection
-	if c.Method != "device" || c.DeviceEndpoint != "https://github.com/login/device/code" ||
+	if c.Method != "browser" || c.DeviceEndpoint != "https://github.com/login/device/code" ||
 		c.AuthorizationEndpoint != "https://github.com/login/oauth/authorize" ||
 		c.TokenEndpoint != "https://github.com/login/oauth/access_token" ||
 		c.CredentialKeys["access_token"] != "GH_TOKEN" || len(c.Scopes) != 0 {
 		t.Errorf("connection = %+v", c)
 	}
-	// Both ways are offered, a code first, and the install screen names
+	// Both ways are offered, the browser first, and the install screen names
 	// github.com as where the sign-in goes.
-	if !slices.Equal(c.Ways(), []string{"device", "browser"}) || !slices.Equal(c.SignInHosts(), []string{"github.com"}) {
+	if !slices.Equal(c.Ways(), []string{"browser", "device"}) || !slices.Equal(c.SignInHosts(), []string{"github.com"}) {
 		t.Errorf("ways %v, sign-in hosts %v", c.Ways(), c.SignInHosts())
 	}
 	if !slices.Equal(m.Kivali.Packages, []string{"gh"}) || !slices.Equal(m.Kivali.Hosts, []string{"api.github.com", "github.com"}) {

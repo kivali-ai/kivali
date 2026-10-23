@@ -222,7 +222,7 @@ GitHub is connected by [signing in](#connect-by-signing-in) with a GitHub App yo
 2. Give the app a name, tick **Enable Device Flow**, and choose **Create GitHub App**.
 3. Paste its client id and a client secret you generate into the connection form, and choose **Save connection**.
 4. Install the app on the account, for the repositories agents should reach. Agents reach only repositories the app is installed on.
-5. Choose **Sign in with a code**, or **Sign in in your browser**, and approve the sign-in on GitHub.
+5. Choose **Sign in** and approve the sign-in on GitHub. In Kivali Desktop's window for a team on another computer, the page offers **Sign in with a code** instead, which is what **Enable Device Flow** is for: enter the code on GitHub's page.
 
 The callback URLs are the addresses GitHub may send your browser back to after a sign-in: the one you opened the page at, `http://127.0.0.1/connect/callback` (any port, for a team in Kivali Desktop), and the team's address for other computers when it has one. If you give the team an address for other computers later (**Other devices** in Kivali Desktop), or change it, add that address followed by `/connect/callback` to the app's callback URLs on GitHub, or a sign-in from there ends on GitHub's error page.
 
