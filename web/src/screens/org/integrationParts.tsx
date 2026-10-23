@@ -1,8 +1,8 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { ApiError } from '../../api/client';
 import type { AccessField, IntegrationAuditRow, IntegrationStatus, IntegrationUploadRefused, IntegrationVersionState } from '../../api/types.gen';
-import { Badge, Button, Dialog, DialogClose, Prose, Text } from '../../ds';
+import { Badge, Button, Dialog, DialogClose, Icon, Prose, Text } from '../../ds';
 import type { BadgeTone } from '../../ds';
 import { renderMarkdown } from '../../lib/markdown';
 import { shortDate } from '../../lib/time';
@@ -129,19 +129,35 @@ interface BlockProps {
   action?: ReactNode;
   /** `heading` for the integration page's sections; `label` (the default) for the install screen's facts. */
   variant?: 'heading' | 'label';
+  /** Starts closed: a chevron at the end of the heading opens and closes it, and the action shows only while it is open. */
+  collapsible?: boolean;
 }
 
 /** One labelled block of an integration's page or install screen: its heading, then what it says. */
-export function Block({ label, children, action, variant = 'label' }: BlockProps) {
+export function Block({ label, children, action, variant = 'label', collapsible = false }: BlockProps) {
+  const [open, setOpen] = useState(false);
+  const shown = !collapsible || open;
   return (
     <section className="app-int-block" aria-label={label}>
       <div className="app-int-block-head">
         <Text as="h2" variant={variant} {...(variant === 'label' ? { tone: 'muted' as const } : {})} className="app-int-block-title">
           {label}
         </Text>
-        {action}
+        {shown && action}
+        {collapsible && (
+          <Button
+            variant="ghost"
+            size="sm"
+            iconOnly
+            icon={<Icon name="chevron-down" className="app-int-block-chev" />}
+            aria-label={label}
+            aria-expanded={open}
+            className="app-int-block-toggle"
+            onClick={() => setOpen((o) => !o)}
+          />
+        )}
       </div>
-      {children}
+      {shown && children}
     </section>
   );
 }

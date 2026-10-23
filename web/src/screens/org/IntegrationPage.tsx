@@ -820,6 +820,7 @@ function LogBlock({ api, now }: { api: string; now: number }) {
     <Block
       label="Recent logs"
       variant="heading"
+      collapsible
       action={
         <Button size="sm" variant="ghost" onClick={() => setSeq((n) => n + 1)}>
           Refresh
@@ -1222,7 +1223,7 @@ export function IntegrationPage() {
         )}
       </Block>
 
-      <Block label="Recent calls" variant="heading">
+      <Block label="Recent calls" variant="heading" collapsible>
         <ErrorBanner error={audit.error} />
         {!audit.data && !audit.error && <Skeleton height={64} />}
         {audit.data && audit.data.rows.length === 0 && <None>No calls yet.</None>}
