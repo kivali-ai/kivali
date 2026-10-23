@@ -1,4 +1,5 @@
 import { Marked } from 'marked';
+import type { Token, Tokens } from 'marked';
 
 // Markdown that agents and people write, rendered for Prose. marked passes raw HTML through, so every render
 // is sanitized against an allowlist: formatting tags stay, links keep safe schemes, and anything that can run
@@ -86,4 +87,33 @@ export function sanitizeHtml(html: string): string {
 export function renderMarkdown(src: string): string {
   if (!src.trim()) return '';
   return sanitizeHtml(parser.parse(src) as string);
+}
+
+/** A piece of `markdownBlocks`: sanitized HTML for `<Prose html>`, or a top-level code block's text and info string. */
+export type MarkdownBlock = { kind: 'html'; html: string } | { kind: 'code'; code: string; info: string };
+
+/**
+ * Markdown split at its top-level code blocks, for a page that shows each as a `CodeBlock` with its copy button.
+ * The rest renders as `renderMarkdown` does; a code block inside a list or a quote stays in its HTML.
+ */
+export function markdownBlocks(src: string): MarkdownBlock[] {
+  if (!src.trim()) return [];
+  const out: MarkdownBlock[] = [];
+  let run: Token[] = [];
+  const flush = () => {
+    const html = run.length > 0 ? sanitizeHtml(parser.parser(run) as string) : '';
+    if (html.trim()) out.push({ kind: 'html', html });
+    run = [];
+  };
+  for (const t of parser.lexer(src)) {
+    if (t.type !== 'code') {
+      run.push(t);
+      continue;
+    }
+    flush();
+    const code = t as Tokens.Code;
+    out.push({ kind: 'code', code: code.text, info: (code.lang ?? '').trim() });
+  }
+  flush();
+  return out;
 }

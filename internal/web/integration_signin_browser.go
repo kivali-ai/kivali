@@ -66,6 +66,13 @@ const connectStartPath = "/connect/start"
 // replace with it.
 const setupNotesRedirect = "{{redirect_url}}"
 
+// setupNotesExternalRedirect is what kivali.setup_notes writes for the
+// redirect address at the team's external address
+// (externalRedirectURL), so the vendor's app can be given both the
+// address the owner set it up from and the one other computers sign in
+// at.
+const setupNotesExternalRedirect = "{{external_redirect_url}}"
+
 // connectCookieBase is the browser sign-in cookie's name without the
 // cookie suffix.
 const connectCookieBase = "kivali_connect"
@@ -161,12 +168,39 @@ func browserRedirectURL(m *integration.Manifest, r *http.Request) *string {
 	return optString(signInRedirectURL(r))
 }
 
+// externalRedirectURL is the redirect address for browser sign-in at
+// the team's external address (ExternalURL, an https origin):
+// https://<host>/connect/callback, the host lower-cased and without
+// :443. Empty when the team has no external address.
+func (s *Server) externalRedirectURL() string {
+	u, err := url.Parse(s.ExternalURL)
+	if err != nil || u.Scheme != "https" {
+		return ""
+	}
+	host := callbackHost(u.Host, "https")
+	if host == "" {
+		return ""
+	}
+	return "https://" + host + connectCallbackPath
+}
+
 // setupNotes is m's kivali.setup_notes with {{redirect_url}} replaced
-// by the redirect address r reached Kivali at.
-func setupNotes(m *integration.Manifest, r *http.Request) string {
+// by the redirect address r reached Kivali at, and
+// {{external_redirect_url}} by the one at the team's external address:
+// empty when the team has none, or when r reached Kivali there, so
+// notes that name both never name one address twice.
+func (s *Server) setupNotes(m *integration.Manifest, r *http.Request) string {
 	notes := m.Kivali.SetupNotes
+	here := signInRedirectURL(r)
 	if strings.Contains(notes, setupNotesRedirect) {
-		notes = strings.ReplaceAll(notes, setupNotesRedirect, signInRedirectURL(r))
+		notes = strings.ReplaceAll(notes, setupNotesRedirect, here)
+	}
+	if strings.Contains(notes, setupNotesExternalRedirect) {
+		ext := s.externalRedirectURL()
+		if ext == here {
+			ext = ""
+		}
+		notes = strings.ReplaceAll(notes, setupNotesExternalRedirect, ext)
 	}
 	return notes
 }

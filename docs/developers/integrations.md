@@ -149,7 +149,16 @@ byte for byte.
   shows it above the connection form, and the install screen's answer
   carries it (`setup_notes_md`). The literal `{{redirect_url}}` in it is
   replaced with the redirect address for browser sign-in
-  ([Signing in](#signing-in)).
+  ([Signing in](#signing-in)), and `{{external_redirect_url}}` with the
+  one at the team's external address (`KIVALI_EXTERNAL_URL`, Other
+  devices in Kivali Desktop): `https://<host>/connect/callback`, or
+  nothing when the team has no external address or the page was opened
+  there, where `{{redirect_url}}` already names it. Notes that pre-fill
+  the vendor's app with both register every address the team signs in
+  at. A top-level code block in the notes shows as a `CodeBlock` with
+  its own Copy, headed by the block's info string (`` ```Organization
+  address ``): the way to give an address the owner edits before
+  opening it.
 
 An integration's tools reach agents named with its tool prefix, its
 name with hyphens as underscores and a trailing underscore
@@ -806,7 +815,8 @@ connection, since the owner registers it with the vendor before there
 is a client id to save) and `ConnectionSignIn.redirect_url`, whenever
 the manifest offers browser sign-in, and `{{redirect_url}}` in
 `kivali.setup_notes` is replaced with it on the page and the install
-screen.
+screen (`{{external_redirect_url}}` with the external address's,
+`Server.setupNotes`).
 
 #### In Kivali Desktop
 

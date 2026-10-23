@@ -667,6 +667,41 @@ func TestBrowserRedirectAddressOnThePage(t *testing.T) {
 	}
 }
 
+// Why this test exists: a vendor sends a browser sign-in back only to an
+// address registered with its app, so setup notes that pre-fill the
+// app's callback addresses must name both the one the owner set it up
+// from and the team's external address, or a sign-in from the other
+// one ends on the vendor's error page. Opened at the external address,
+// {{redirect_url}} already names it, and naming it twice could make the
+// vendor refuse the form; a team with no external address names none.
+func TestSetupNotesNameTheExternalRedirectAddress(t *testing.T) {
+	m := &integration.Manifest{}
+	m.Kivali.SetupNotes = "here={{redirect_url}} there={{external_redirect_url}}"
+	loopback := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:8080/api/v1/org/integrations/crm", nil)
+	external := httptest.NewRequest(http.MethodGet, "/api/v1/org/integrations/crm", nil)
+	external.Header.Set("X-Forwarded-Proto", "https")
+	external.Header.Set("X-Forwarded-Host", "team.tail1234.ts.net")
+	for _, tc := range []struct {
+		name, externalURL string
+		r                 *http.Request
+		want              string
+	}{
+		{"opened on loopback", "https://Team.tail1234.ts.net:443", loopback,
+			"here=http://127.0.0.1:8080/connect/callback there=https://team.tail1234.ts.net/connect/callback"},
+		{"opened at the external address", "https://team.tail1234.ts.net", external,
+			"here=https://team.tail1234.ts.net/connect/callback there="},
+		{"an external address with its own port", "https://team.example.com:8443", loopback,
+			"here=http://127.0.0.1:8080/connect/callback there=https://team.example.com:8443/connect/callback"},
+		{"no external address", "", loopback,
+			"here=http://127.0.0.1:8080/connect/callback there="},
+	} {
+		s := &Server{ExternalURL: tc.externalURL}
+		if got := s.setupNotes(m, tc.r); got != tc.want {
+			t.Errorf("%s: %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
 // Why this test exists: Sign in in your browser sends the owner's
 // browser wherever the manifest's authorization endpoint points, and a
 // bundle written under a prompt injection could point it at a lookalike

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { renderMarkdown, safeHref, sanitizeHtml } from './markdown';
+import { markdownBlocks, renderMarkdown, safeHref, sanitizeHtml } from './markdown';
 
 describe('renderMarkdown', () => {
   it('renders formatting and lists', () => {
@@ -34,6 +34,25 @@ describe('renderMarkdown', () => {
     const rel = renderMarkdown('[assignment](/assignments/4)');
     expect(rel).toContain('href="/assignments/4"');
     expect(rel).not.toContain('target');
+  });
+});
+
+describe('markdownBlocks', () => {
+  // Guards the split a page uses to give code blocks a copy button: each top-level code block comes out whole, with its
+  // info string as written, between the HTML around it, which is still sanitized and still resolves reference links
+  // defined after the block. A code block inside a list stays in its HTML, and blank input gives nothing.
+  it('splits at top-level code blocks and sanitizes the rest', () => {
+    const blocks = markdownBlocks(
+      'Open [the form][f] <script>x()</script>\n\n```Organization address\nhttps://github.com/a?b=1&c=2\n```\n\n1. one\n\n       indented in a list\n\n[f]: https://github.com/settings/apps/new\n',
+    );
+    expect(blocks.map((b) => b.kind)).toEqual(['html', 'code', 'html']);
+    const [intro, code, rest] = blocks;
+    expect(intro).toEqual({ kind: 'html', html: expect.stringContaining('href="https://github.com/settings/apps/new"') as string });
+    expect(intro?.kind === 'html' && intro.html).not.toContain('script');
+    expect(code).toEqual({ kind: 'code', code: 'https://github.com/a?b=1&c=2', info: 'Organization address' });
+    expect(rest?.kind === 'html' && rest.html).toContain('<code>indented in a list');
+    expect(markdownBlocks(' \n')).toEqual([]);
+    expect(markdownBlocks('```\nonly\n```')).toEqual([{ kind: 'code', code: 'only', info: '' }]);
   });
 });
 

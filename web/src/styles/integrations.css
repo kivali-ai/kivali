@@ -127,8 +127,16 @@
   gap: calc(var(--space-2) + var(--space-1));
 }
 
-/* The notes' last paragraph ends the block; the block's gap does the spacing. */
-.app-int-notes > :last-child {
+/* Notes are prose with code blocks between, each a block of its own. Each prose run's last paragraph ends its block,
+   and the gaps do the spacing. */
+.app-int-notes {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.app-int-notes-text > :last-child {
   margin-bottom: 0;
 }
 

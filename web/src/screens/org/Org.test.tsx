@@ -2149,6 +2149,25 @@ describe('Integration page, a connection made by signing in', () => {
     expect(block.queryByText(/^Needs you to sign in again/)).toBeNull();
   });
 
+  // Guards an address the setup notes give to copy rather than follow, such as GitHub's form for an organization,
+  // which the owner opens after putting in a name: a code block in the notes is a CodeBlock headed by its info string,
+  // not a link, and its Copy puts exactly the block's text on the clipboard, while the text around it stays Markdown.
+  it('gives a code block in the setup notes its own Copy', async () => {
+    const writeText = vi.fn(() => Promise.resolve());
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
+    const address = 'https://github.com/organizations/ORGANIZATION/settings/apps/new?public=false';
+    const page = { ...goIntegrationPageSignIn, setup_notes_md: 'Using an **organization**? Copy this:\n\n```Organization address\n' + address + '\n```\n\nThen save.' };
+    await renderOrg(PATH, { routes: routes(page) });
+    const block = within(screen.getByRole('region', { name: 'Connection' }));
+    expect(block.getByText('organization', { selector: 'strong' })).toBeInTheDocument();
+    expect(block.getByText('Then save.')).toBeInTheDocument();
+    const code = block.getByText('Organization address').closest('.kv-code') as HTMLElement;
+    expect(within(code).getByText(address)).toBeInTheDocument();
+    expect(within(code).queryByRole('link')).toBeNull();
+    await click(within(code).getByRole('button', { name: 'Copy' }));
+    expect(writeText).toHaveBeenCalledWith(address);
+  });
+
   // Guards the page after the vendor refused a refresh (integration_page_sign_in_again.json): the line says the owner
   // must sign in again and gives the vendor's reason, in the danger tone, where the refresh time was; a page that
   // still read "Signed in" would hide why agents' calls fail.
