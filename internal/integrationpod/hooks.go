@@ -65,7 +65,7 @@ type SetupAnswer struct {
 	Callback string              `json:"callback"`
 }
 
-// SetupAnswerOf is a on the wire.
+// SetupAnswerOf is the Answer a, as kivali/setup's params carry it.
 func SetupAnswerOf(a builtinintegrations.Answer) SetupAnswer {
 	out := SetupAnswer{
 		State: map[string]string{}, Form: map[string]string{}, Return: map[string][]string{},
@@ -195,7 +195,8 @@ type RequirementsResult struct {
 	Requirements []Requirement `json:"requirements"`
 }
 
-// Requirement is builtinintegrations.Requirement on the wire.
+// Requirement is builtinintegrations.Requirement on the wire; a row
+// gives every field but Fix (ParseRequirements).
 type Requirement struct {
 	ID    string `json:"id"`
 	Title string `json:"title"`
@@ -207,8 +208,17 @@ type Requirement struct {
 // ParseRequirements reads a MethodRequirements result, held to its
 // shape as a step is.
 func ParseRequirements(raw json.RawMessage) ([]builtinintegrations.Requirement, error) {
+	// Every field but fix is required: a row missing its met would read
+	// as unmet, and one missing its words as saying nothing.
+	type row struct {
+		ID    *string `json:"id"`
+		Title *string `json:"title"`
+		Words *string `json:"words"`
+		Met   *bool   `json:"met"`
+		Fix   string  `json:"fix"`
+	}
 	var res struct {
-		Requirements *[]Requirement  `json:"requirements"`
+		Requirements *[]row          `json:"requirements"`
 		Meta         json.RawMessage `json:"_meta"`
 	}
 	if err := strictJSON(raw, &res); err != nil {
@@ -218,8 +228,11 @@ func ParseRequirements(raw json.RawMessage) ([]builtinintegrations.Requirement, 
 		return nil, errors.New("the answer has no list of requirements")
 	}
 	out := make([]builtinintegrations.Requirement, 0, len(*res.Requirements))
-	for _, r := range *res.Requirements {
-		out = append(out, builtinintegrations.Requirement{ID: r.ID, Title: r.Title, Words: r.Words, Met: r.Met, Fix: r.Fix})
+	for i, r := range *res.Requirements {
+		if r.ID == nil || r.Title == nil || r.Words == nil || r.Met == nil {
+			return nil, fmt.Errorf("requirements[%d] lacks one of id, title, words and met", i)
+		}
+		out = append(out, builtinintegrations.Requirement{ID: *r.ID, Title: *r.Title, Words: *r.Words, Met: *r.Met, Fix: r.Fix})
 	}
 	return out, nil
 }

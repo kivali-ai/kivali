@@ -93,6 +93,7 @@ CORE_REQUIREMENTS = {"version", "connection", "sign_in", "connection_test", "run
 REQUIREMENT_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 REQUIREMENT_TITLE = 80
 REQUIREMENT_WORDS = 500
+REQUIREMENT_ROWS = 20
 # The words of a setup flow's failure, its steps and its progress are
 # cut to this many characters, and a Wait's code to CODE_CHARS, after
 # their secrets are replaced. A step naming an address longer than
@@ -819,8 +820,12 @@ def read_step(result):
         elif k == "done":
             if not isinstance(v, bool):
                 return None, "step: done is not true or false"
-        elif not (isinstance(v, dict) and all(isinstance(x, str) for x in v.values())):
+        elif not (isinstance(v, dict) and all(x is None or isinstance(x, str) for x in v.values())):
             return None, "step: %s is not an object of text" % k
+        else:
+            # A null reads as empty, as Kivali reads it: a kept empty
+            # value forgets the key.
+            step[k] = {kk: vv or "" for kk, vv in v.items()}
     return {k: v for k, v in step.items() if v is not None}, ""
 
 
@@ -1084,11 +1089,11 @@ def run_requirements(pod, display):
     rows = res.get("requirements") if isinstance(res, dict) else None
     shape = "id", "title", "words", "met", "fix"
     if not isinstance(rows, list) or any(k not in ("requirements", "_meta") for k in res) or not all(
-        isinstance(r, dict) and all(k in shape for k in r) and isinstance(r.get("id"), str) and isinstance(r.get("title", ""), str)
-        and isinstance(r.get("words", ""), str) and isinstance(r.get("met", False), bool) and isinstance(r.get("fix", ""), str)
+        isinstance(r, dict) and all(k in shape for k in r) and isinstance(r.get("id"), str) and isinstance(r.get("title"), str)
+        and isinstance(r.get("words"), str) and isinstance(r.get("met"), bool) and isinstance(r.get("fix") or "", str)
         for r in rows
     ):
-        problem('kivali/requirements answered rows Kivali cannot read: the answer is {"requirements": [...]}, each row {"id", "title", "words", "met", "fix"}; the page shows one unmet row in their place')
+        problem('kivali/requirements answered rows Kivali cannot read: the answer is {"requirements": [...]}, each row {"id", "title", "words", "met"} and optionally "fix"; the page shows one unmet row in their place')
         return
     seen = set()
     for r in rows:
@@ -1096,6 +1101,12 @@ def run_requirements(pod, display):
         if not REQUIREMENT_ID.match(rid) or rid in CORE_REQUIREMENTS or rid in seen:
             problem("the row %s is left out: an id is letters, digits, hyphens and underscores, 64 at most, not one of Kivali's (%s) and given once" % (json.dumps(rid), ", ".join(sorted(CORE_REQUIREMENTS))))
             continue
+        if r.get("fix") and not REQUIREMENT_ID.match(r["fix"]):
+            problem("the row %s is left out: its fix %s is not a flow's name, which is letters, digits, hyphens and underscores, 64 at most" % (json.dumps(rid), json.dumps(r["fix"])))
+            continue
+        if len(seen) == REQUIREMENT_ROWS:
+            problem("the integration gave more than %d rows; Kivali shows the first %d and leaves the row %s and those after it out" % (REQUIREMENT_ROWS, REQUIREMENT_ROWS, json.dumps(rid)))
+            break
         seen.add(rid)
         title, words = srv.scrub(r.get("title") or rid), srv.scrub(r.get("words", ""))
         if len(title) > REQUIREMENT_TITLE or len(words) > REQUIREMENT_WORDS:

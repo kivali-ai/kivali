@@ -62,10 +62,13 @@ const flowSignIn = "sign_in"
 // the page, the list and Home wait for it.
 const requirementsTimeout = 5 * time.Second
 
-// Bounds of an integration's own rows, in runes.
+// Bounds of an integration's own rows: a title's and words' runes, and
+// how many rows it may give (each unmet one is a Needs-you row, and a
+// bundle's server is someone else's code).
 const (
 	requirementTitleRunes = 80
 	requirementWordsRunes = 500
+	requirementRowsMax    = 20
 )
 
 // requirementID is an id an integration's own row may have.
@@ -321,6 +324,10 @@ func (s *Server) askRequirements(ctx context.Context, v *integrationView, ro bui
 		if r.Fix != "" && !requirementID.MatchString(r.Fix) {
 			log.Printf("integration %s: the requirement %s names a fix that is not a flow's name, and is left out", name, r.ID)
 			continue
+		}
+		if len(out) == requirementRowsMax {
+			log.Printf("integration %s: it gave more than %d requirements; the requirement %s and those after it are left out", name, requirementRowsMax, r.ID)
+			break
 		}
 		seen[r.ID] = true
 		out = append(out, apitypes.IntegrationRequirement{
