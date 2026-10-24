@@ -268,10 +268,13 @@ admin, a build that finishes after the call that started it.
   pass by itself (a 5xx, a rate limit), answers the same Wait again,
   for the next check to try. An error from a check fails the whole
   flow, so answer one only for what trying again will not mend.
-- The same Wait, the same state and nothing kept is no change. A flow
-  is forgotten ten minutes after its last change, so a Wait the owner
-  does not finish in ten minutes ends the flow: use one for what takes
-  minutes, and say in the words what the owner does.
+- The same Wait, the same state and nothing kept is no change, and a
+  progress notification during a check is none either. A flow is
+  forgotten ten minutes after its last change or its last check, and a
+  check is made only while the owner's page is open: a Wait the owner
+  watches lasts, up to 24 hours from the flow's start, and one they
+  leave ends ten minutes after the last check. Say in the words what
+  the owner does, and what the page waits for.
 
 ## Done
 
@@ -454,7 +457,7 @@ answer. Write them as the page's own:
 | What | Bound |
 | --- | --- |
 | One `kivali/setup` call | 5 minutes, or the flow fails: "setup did not finish its step within 5 minutes; start it again" |
-| A flow | forgotten 10 minutes after its last change; lost when Kivali restarts |
+| A flow | forgotten 10 minutes after its last change or its last check of a Wait (made only while the owner's page is open), 24 hours after its start at most; lost when Kivali restarts |
 | A Wait's checks | every 3 seconds while the owner's page is open (a read of the flow in the last 10 seconds counts), one at a time |
 | The server's start, for a flow | 2 minutes |
 | `kivali/requirements` | 5 seconds; 20 rows; the answer kept 3 seconds |

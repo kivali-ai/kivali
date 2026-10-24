@@ -858,9 +858,16 @@ A flow lives in the server's memory (`Server.setupRuns`), never in the
 store, at most one per integration: a new start ends the one before
 (audited as cancelled). Its id is 16 random bytes in hex, which Kivali
 Desktop checks at `/connect/start`. It is forgotten `setupFlowTTL` (ten
-minutes, on the server's clock) after its last change: a step nobody
-takes in that time ends with it, a Wait whose check finds nothing new
-is no change, and a flow that ended is kept that long for the page to
+minutes, on the server's clock) after the later of its last change
+(`setupRun.changed`: a step shown, a call started, a stage of a call
+that is not a Wait's check) and its last Wait check
+(`setupRun.touched`), and `setupFlowMaxAge` (24 hours) after its start
+at most (`setupRun.expiresLocked`, which `expires_at` gives). A check
+is made only while someone watches the flow, so a Wait the owner
+watches is kept, and one they leave goes ten minutes after its last
+check; a step nobody takes in ten minutes ends with it, a check that
+finds the same Wait is no change, a progress stage during a check is
+none either, and a flow that ended is kept ten minutes for the page to
 read. A device sign-in's Wait is kept while core polls the vendor,
 which stops at the code's own expiry. Deleting a connection,
 Uninstall, switching it off, Sign out and a save of the form with a new

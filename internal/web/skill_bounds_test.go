@@ -28,7 +28,7 @@ func TestTheSkillsSetupBoundsAreTheRunners(t *testing.T) {
 	}
 	rows := []string{
 		fmt.Sprintf("| One `kivali/setup` call | %d minutes, or the flow fails: %q |", int(setupCallTimeout.Minutes()), errSetupTimeout),
-		fmt.Sprintf("| A flow | forgotten %d minutes after its last change; lost when Kivali restarts |", int(setupFlowTTL.Minutes())),
+		fmt.Sprintf("| A flow | forgotten %d minutes after its last change or its last check of a Wait (made only while the owner's page is open), %d hours after its start at most; lost when Kivali restarts |", int(setupFlowTTL.Minutes()), int(setupFlowMaxAge.Hours())),
 		fmt.Sprintf("| A Wait's checks | every %d seconds while the owner's page is open (a read of the flow in the last %d seconds counts), one at a time |", int(setupWaitEvery.Seconds()), int(setupWatchWindow.Seconds())),
 		fmt.Sprintf("| The server's start, for a flow | %d minutes |", int(bundleStartWait.Minutes())),
 		fmt.Sprintf("| `kivali/requirements` | %d seconds; %d rows; the answer kept %d seconds |", int(requirementsTimeout.Seconds()), requirementRowsMax, int(requirementsCacheTTL.Seconds())),

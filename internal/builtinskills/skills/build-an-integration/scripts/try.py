@@ -1091,7 +1091,7 @@ def setup_calls(pod, display, flow, opts):
             if not same:
                 wait, checks = step["wait"], 0
             if checks >= opts.checks:
-                note("the Wait was checked %d time%s; Kivali goes on checking it every 3 seconds while the owner's page is open, for ten minutes after its last change" % (checks, "" if checks == 1 else "s"))
+                note("the Wait was checked %d time%s; Kivali goes on checking it every 3 seconds while the owner's page is open, up to 24 hours from the flow's start, and forgets it ten minutes after the last check once the page is closed" % (checks, "" if checks == 1 else "s"))
                 return
             checks += 1
             if opts.every > 0:
