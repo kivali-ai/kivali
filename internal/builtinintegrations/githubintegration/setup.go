@@ -64,8 +64,13 @@ type appManifest struct {
 	DefaultEvents      []string          `json:"default_events"`
 }
 
+// hookAttributes is the manifest's webhook. GitHub takes no manifest
+// whose hook_attributes lacks a url, an inactive webhook's included,
+// and names the lack "url" alone; the team's address stands in, and
+// nothing is ever sent to it.
 type hookAttributes struct {
-	Active bool `json:"active"`
+	URL    string `json:"url"`
+	Active bool   `json:"active"`
 }
 
 // appName is the name the app is made with: "Kivali" and the team's
@@ -193,7 +198,7 @@ func createApp(account string, last builtinintegrations.Answer) (builtinintegrat
 		SetupURL:           setupURL,
 		SetupOnUpdate:      true,
 		Public:             false,
-		HookAttributes:     hookAttributes{Active: false},
+		HookAttributes:     hookAttributes{URL: base, Active: false},
 		DefaultPermissions: needed(),
 		DefaultEvents:      []string{},
 	})
