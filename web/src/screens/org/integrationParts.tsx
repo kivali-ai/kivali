@@ -253,7 +253,8 @@ export function registeredClientLine(signInClient: string): string | undefined {
 /**
  * What a setup flow may do, from the manifest (IntegrationSetup), on the install screen and the integration's page:
  * its summary, every host it may send the browser to, every field it may ask for (secrets and setup-only values
- * marked) and every value it may keep. The declarations are the review: Kivali holds every step to them.
+ * marked) and every value it may keep (secrets marked). The declarations are the review: Kivali holds every step to
+ * them.
  */
 export function SetupFacts({ setup, integration }: { setup: IntegrationSetup; integration: string }) {
   return (
@@ -311,7 +312,10 @@ export function SetupFacts({ setup, integration }: { setup: IntegrationSetup; in
         <ul className="app-int-facts" aria-label="Keeps">
           {setup.keeps.map((k) => (
             <li key={k.key} className="app-int-fact">
-              <Text variant="body">{k.words}</Text>
+              <span className="app-int-fact-title">
+                <Text variant="body">{k.words}</Text>
+                {k.secret && <Badge variant="outline">Secret</Badge>}
+              </span>
               <Text variant="code">{k.key}</Text>
             </li>
           ))}

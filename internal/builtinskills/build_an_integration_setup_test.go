@@ -183,7 +183,7 @@ func TestTheSkillsSetupRunsDoWhatItSays(t *testing.T) {
 	out = run(2)
 	wantIn(t, out,
 		"A Wait, in",
-		"page: https://app.deals.example/apps\n",
+		"page: https://app.deals.example/apps/app_1\n",
 		"Kivali keeps app_id in the connection's Secret",
 		"The same Wait, in",
 		"The setup did not finish, so Kivali forgets the connection it made (app_id)",
@@ -305,6 +305,17 @@ func TestTryHoldsASetupStepToTheManifest(t *testing.T) {
 		t.Errorf("a return with another state: exit %d, want 1", code)
 	}
 	wantIn(t, out, "problem: the return's state is none the flow gave")
+
+	// A kept value whose keep is declared "secret": false (template-setup's
+	// app_id) is shown as it is, as Kivali shows it; a secret one (the
+	// token) is not. Were try.py to scrub both, a developer would avoid
+	// naming a page by the app's id that Kivali shows whole.
+	shown := map[string]any{"step": map[string]any{
+		"wait": map[string]any{"words": "Open app-12345 and show tok-abcdef.", "url": "https://app.deals.example/apps/app-12345"},
+		"keep": map[string]any{"app_id": "app-12345", "token": "tok-abcdef"},
+	}}
+	out, _ = try(t, []map[string]any{shown}, "--every", "0", "--checks", "0")
+	wantIn(t, out, "Open app-12345 and show [secret].", "page: https://app.deals.example/apps/app-12345\n")
 
 	away := map[string]any{"step": map[string]any{"go": map[string]any{"url": "https://app.deals.example/settings", "no_return": true}}}
 	out, code = try(t, []map[string]any{away, done})

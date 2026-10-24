@@ -50,7 +50,7 @@ Kivali holds every step to it: a step outside it fails the flow.
     },
     "keeps": {
       "token": "The app's token, which every call sends",
-      "app_id": "The app's id in Deals, to rebuild or remove it"
+      "app_id": { "words": "The app's id in Deals, to rebuild or remove it", "secret": false }
     }
   }
 },
@@ -62,7 +62,7 @@ Kivali holds every step to it: a step outside it fails the flow.
 | `summary` | The owner reads it on the install screen and the page: what setup does on the service, in one or two sentences. | `kivali.connection.setup.summary is missing; ...` |
 | `hosts` | Every host a Go may send the browser to and a Wait may name a page on: `https://` only, no user info, the host exactly as listed (no port, nothing under it). Empty for a flow that stays in Kivali. The API the server calls is not here but in `kivali.hosts`. | a host that is not lowercase, `*`, a pattern, with a scheme, port or path, or listed twice |
 | `fields` | Every field a Form may ask for, in order. `words` (required): what to enter and where it comes from. `title`: the label (the key in words otherwise). `secret`: entered as a password, never shown again. `setup_only`: lives in the flow's memory alone, never kept: a key the flow trades for something else. | missing words; a key that is not lowercase letters, digits and underscores, or is one Kivali keeps a sign-in under; `secret` or `setup_only` that is not true or false; a `setup_only` field that is also kept |
-| `keeps` | Every key a step may keep, each with words saying what it is. Kept values are the connection: all secret, given to the server by `${user_config.<key>}` in `mcp_config.env` and in `kivali/credential`'s `fields`, and shown as `[secret]` wherever an agent or the log would read them ([State and keep](#state-and-keep)). | missing words; a key as for fields |
+| `keeps` | Every key a step may keep, each with words saying what it is: the words alone (`"token": "The app's token"`), a secret, or `{"words": ..., "secret": false}`. Kept values are the connection: all stored in its Secret, given to the server by `${user_config.<key>}` in `mcp_config.env` and in `kivali/credential`'s `fields`. A secret one is shown as `[secret]` wherever the owner, an agent or the log would read it ([State and keep](#state-and-keep)); one that is not is shown as it is. An identifier the service shows publicly (a slug, an app id, an installation id) is `"secret": false`; a credential (a token, a key, a client secret) is the words alone. The install screen marks each secret one. | missing words; a key as for fields; `words` that is not text, `secret` that is not true or false, or any other key in the object |
 | `then` | `browser` or `device`: setup ends by handing over to Kivali's sign-in with the app it made ([Sketch: an app made by API, then a sign-in](#sketch-an-app-made-by-api-then-a-sign-in)). Beside `setup`, the connection then gives that sign-in's endpoints (`authorization_endpoint` and `token_endpoint` for browser, `device_endpoint` and `token_endpoint` for device, `revocation_endpoint` optional), `scopes` and `credential_keys.access_token`, as a sign-in connection does. | another value; `then` without `client_id` and `client_secret` in `keeps`; a missing endpoint or `credential_keys.access_token`; endpoints without `then` |
 | `user_config` | Empty: the connection's values are what setup keeps. | any field |
 | `client` | Not given: the app is the one setup makes. | any value |
@@ -290,22 +290,27 @@ setup kept.
 - An install keeps nothing unless it is Done: when it fails, the owner
   cancels it, or nobody takes its step in ten minutes, Kivali forgets
   the connection it made. A Fix that fails keeps what it kept.
-- Every kept value, every secret or setup-only value the owner entered,
-  every state value, each callback's state, and the values a return
-  brings back under `code`, `state` or a key holding `token`, `secret`,
-  `password` or `key`, each one six characters or longer, are replaced
-  with `[secret]` wherever the owner reads the flow: its words, its
-  progress, a Wait's page address and code, the error, the audit and
-  the log. So a value the owner must read (a code to enter, an id in a
-  page's address, the account name they typed) cannot also be carried
-  in `state` or kept: point a Wait at a page whose address holds none
-  (the app list, not the app), and name an account in words only from
-  what the service says on this call.
-- Every kept value is a secret to agents too: an agent's answer and the
-  integration's log show each one, six characters or longer, as
-  `[secret]`. So an account or organization name an action must give
-  agents in the clear is not kept; the action reads it from the service
-  (as Test connection's `whoami` does) and never echoes a kept value.
+- Every secret kept value, every secret or setup-only value the owner
+  entered, every state value, each callback's state, and the values a
+  return brings back under `code`, `state` or a key holding `token`,
+  `secret`, `password` or `key`, each one six characters or longer, are
+  replaced with `[secret]` wherever the owner reads the flow: its words,
+  its progress, a Wait's page address, the error, the audit and the
+  log. A value kept under a keep declared `"secret": false` is shown as
+  it is. So a value the owner must read in a page's address or the
+  words (an app's id or name on the service, the account it is
+  installed on) is kept under a keep that is not secret, and is not
+  also carried in `state`: a later call reads it back from the
+  connection.
+- A Wait's `code` is shown as given, never scrubbed: it is a code the
+  owner enters on the service's page, which the step chose to show.
+  Never put a secret there.
+- A secret kept value is a secret to agents too: an agent's answer and
+  the integration's log show each one, six characters or longer, as
+  `[secret]`. An identifier an action gives agents in the clear (the
+  app's name as the author of what it writes, an account) is kept
+  under a keep declared not secret, or read from the service on the
+  call.
 
 ## A flow left partway
 
@@ -469,9 +474,10 @@ through its API from a setup key the owner pastes. Read its
    with them in `DEALS_TOKEN` and `DEALS_APP_ID`.
 3. **The fallback.** Where Deals does not hand the token back, the call
    keeps `app_id` alone and answers a Wait ("Open the Kivali app in
-   Deals and choose Show token.") with the app list as its page, and
-   carries the session in state: `{"at": "show", "app_id": ...,
-   "session": ...}`. Each check (`"checked": true`) asks Deals, with a
+   Deals and choose Show token.") with the app's own page, its id in
+   the address (`app_id` is not secret), and carries the session in
+   state: `{"at": "show", "session": ...}`. The next calls read the id
+   back from `DEALS_APP_ID`. Each check (`"checked": true`) asks Deals, with a
    four-second timeout, whether the token has been shown, and answers
    the same Wait until it has, or when Deals cannot be reached;
    then a Form for `token`, which the next call tries against Deals
@@ -534,10 +540,10 @@ there, and copies nothing.
       "account": { "title": "Account", "words": "An organization's name on Forge, or leave it blank for your personal account." }
     },
     "keeps": {
-      "app_id": "The app's id",
-      "slug": "The app's name in Forge's addresses",
+      "app_id": { "words": "The app's id", "secret": false },
+      "slug": { "words": "The app's name in Forge's addresses", "secret": false },
       "private_key": "The app's private key, which signs a token for each call",
-      "installation_id": "Where the app is installed"
+      "installation_id": { "words": "Where the app is installed", "secret": false }
     }
   }
 },
@@ -586,9 +592,10 @@ through to the address it sends the browser back to.
    installations with a token signed by the kept key. One: keep its id
    and answer Done. None yet: the installation Go again, or, where the
    return says `setup_action=request` (an organization's owners must
-   approve it), a Wait checked until it is installed. The Wait names no
-   page: the installation page's address holds the kept slug, which
-   would show as `[secret]`.
+   approve it), a Wait checked until it is installed, naming the
+   installation page without the state: the slug is kept and not
+   secret, so the address shows as it is, and an owner who left that
+   page before installing finishes there.
 
 Requirements: the key signs a token; the app is installed (Fix: the
 installation Go and step 4 again); its permissions are this version's
@@ -718,4 +725,4 @@ Besides SKILL.md's Before you publish:
 | <Integration> stopped before it answered | The server exited, or Kivali stopped it (a line that is not JSON-RPC), during the request; its log says which. |
 | <Integration> failed and gave no reason | A JSON-RPC error with no message: give the owner's words in `message`. |
 | the service sent the browser back without its state | The return lost the callback's state: pass the state where the service passes it through ([Coming back](#coming-back)), or mark the Go `stateless` where the service returns to an address of its own settings. |
-| [secret] in a page address, a code or the step's words, or in an agent's answer | A value kept or carried in state shows there ([State and keep](#state-and-keep)). |
+| [secret] in a page address or the step's words, or in an agent's answer | A value kept under a secret keep, or carried in state, shows there: keep an identifier the service shows publicly under a keep declared `"secret": false`, and read it back from the connection rather than carry it ([State and keep](#state-and-keep)). |

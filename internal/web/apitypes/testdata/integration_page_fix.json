@@ -44,27 +44,33 @@
     "keeps": [
       {
         "key": "app_id",
-        "words": "The app's id"
+        "words": "The app's id",
+        "secret": false
       },
       {
         "key": "slug",
-        "words": "The app's name on GitHub"
+        "words": "The app's name on GitHub",
+        "secret": false
       },
       {
         "key": "client_id",
-        "words": "The app's client id"
+        "words": "The app's client id",
+        "secret": false
       },
       {
         "key": "client_secret",
-        "words": "The app's client secret"
+        "words": "The app's client secret",
+        "secret": true
       },
       {
         "key": "private_key",
-        "words": "The app's private key, which Kivali signs with to get a token for each call"
+        "words": "The app's private key, which Kivali signs with to get a token for each call",
+        "secret": true
       },
       {
         "key": "installation_id",
-        "words": "Where the app is installed"
+        "words": "Where the app is installed",
+        "secret": false
       }
     ],
     "then": ""
@@ -76,7 +82,7 @@
     "fields": [],
     "verified_at": "2026-10-21T10:00:00Z",
     "verified": true,
-    "verify_message": "Connected as the app Kivali Acme, installed on acme",
+    "verify_message": "Connected as kivali-acme[bot], the app Kivali Acme, installed on acme",
     "reconnect_needed": false
   },
   "connection_test": true,
@@ -119,14 +125,14 @@
     {
       "id": "connection_test",
       "title": "Connection test",
-      "words": "Connected as the app Kivali Acme, installed on acme",
+      "words": "Connected as kivali-acme[bot], the app Kivali Acme, installed on acme",
       "met": true,
       "fix": ""
     },
     {
       "id": "key",
       "title": "The app's key works",
-      "words": "GitHub accepts the key of the app Kivali Acme. Uninstalling GitHub here leaves the app on GitHub, for you to delete under https://github.com/organizations/acme/settings/apps.",
+      "words": "GitHub accepts the key of the app Kivali Acme. Uninstalling GitHub here leaves the app on GitHub, for you to delete in its settings at https://github.com/organizations/acme/settings/apps/kivali-acme.",
       "met": true,
       "fix": ""
     },

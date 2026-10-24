@@ -2061,6 +2061,13 @@ export interface SetupField {
 export interface SetupKeep {
   key: string;
   words: string;
+  /**
+   * Secret values are never shown, to you or to agents; one that is
+   * not (an identifier the service shows publicly, such as an app's
+   * name) may be. Every kept value is stored with the connection's
+   * secrets either way.
+   */
+  secret: boolean;
 }
 /**
  * ConnectionField is one field of the connection form, from the

@@ -178,7 +178,7 @@ type AccessSummarizer interface {
 // a Form may ask only for declared fields, a Go or a Wait may name a
 // page only on a declared host, and Keep may hold only declared keys;
 // a Step that does not keep to that fails the flow. An error's text
-// is shown to the owner, scrubbed of every kept value, and the flow
+// is shown to the owner, scrubbed of every secret kept value, and the flow
 // keeps nothing more. An install (FlowSetup, from no connection) that
 // fails or is cancelled keeps nothing at all: core forgets the
 // connection its Keep made, with no call of Uninstall. A Fix's flow
@@ -263,7 +263,9 @@ type Wait struct {
 	// setup.hosts; empty for none.
 	URL string
 	// Code is a code the owner enters on that page, shown large with a
-	// Copy button; empty for none.
+	// Copy button; empty for none. It is shown as given, cut to 64
+	// characters and never scrubbed: Setup chose to show it, so it is
+	// never a value Setup keeps secret.
 	Code string
 }
 

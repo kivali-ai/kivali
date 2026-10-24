@@ -105,8 +105,8 @@ REQUIREMENT_TITLE = 80
 REQUIREMENT_WORDS = 500
 REQUIREMENT_ROWS = 20
 # The words of a setup flow's failure, its steps and its progress are
-# cut to this many characters, and a Wait's code to CODE_CHARS, after
-# their secrets are replaced. A step naming an address longer than
+# cut to this many characters after their secrets are replaced, and a
+# Wait's code, shown as given, to CODE_CHARS. A step naming an address longer than
 # URL_CHARS, keeping and carrying more than CARRY_BYTES together, or
 # posting more than CARRY_BYTES fails the flow.
 FLOW_WORDS = 200
@@ -589,8 +589,9 @@ def main():
     for k in fields:
         if k not in user_config and k not in keeps:
             fail("--field %s: user_config has no field %s%s" % (k, k, ", and setup keeps no such key" if setup else ""))
-    # Every kept value is a secret, as a sensitive field is.
-    sensitive = {k for k, u in user_config.items() if isinstance(u, dict) and u.get("sensitive") is True} | set(keeps)
+    # A kept value is a secret, as a sensitive field is, unless its keep
+    # is declared "secret": false.
+    sensitive = {k for k, u in user_config.items() if isinstance(u, dict) and u.get("sensitive") is True} | {k for k in keeps if keep_secret(keeps, k)}
     secret_values = [v for k, v in fields.items() if k in sensitive]
     try:
         access = json.loads(opts.access)
@@ -787,6 +788,14 @@ def setup_section(manifest):
     """kivali.connection.setup, {} for none."""
     s = ((manifest.get("kivali") or {}).get("connection") or {}).get("setup")
     return s if isinstance(s, dict) else {}
+
+
+def keep_secret(keeps, key):
+    """Whether a kept value of key is replaced with [secret], as Kivali
+    has it: a keep is its words (secret), or an object of its words and
+    "secret", secret unless that is false."""
+    k = keeps.get(key)
+    return not (isinstance(k, dict) and k.get("secret") is False)
 
 
 def clip(s, n):
@@ -1014,7 +1023,8 @@ def setup_calls(pod, display, flow, opts):
         # A check that finds the same Wait, State and nothing kept is no
         # change, as Kivali has it.
         same = wait is not None and "wait" in step and wait_key(step["wait"]) == wait_key(wait) and new_state == state and not keep
-        for v in list(keep.values()) + list(new_state.values()):
+        keeps = setup.get("keeps") or {}
+        for v in [v for k, v in keep.items() if keep_secret(keeps, k)] + list(new_state.values()):
             pod.secrets.append(v)
         state = new_state
         if same:
@@ -1116,7 +1126,8 @@ def show_step(srv, step, took):
         if w.get("url"):
             say("    page: %s" % scrub(w["url"]))
         if w.get("code"):
-            say("    code: %s" % clip(scrub(w["code"]), CODE_CHARS))
+            # Shown as given, as Kivali shows it: the step chose to show it.
+            say("    code: %s" % clip(w["code"], CODE_CHARS))
 
 
 def run_requirements(pod, display):

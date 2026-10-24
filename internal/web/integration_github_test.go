@@ -411,7 +411,7 @@ func TestGitHubSetupInstalls(t *testing.T) {
 	// Test connection names the app in words core's scrubbing of the
 	// kept values leaves readable.
 	page = orgOK[apitypes.IntegrationPage](t, intPost(t, srv, intBase+"/github/connection/verify"))
-	if c := page.Connection; c == nil || c.Verified == nil || !*c.Verified || textOf(c.VerifyMessage) != "Connected as the app Kivali Acme, installed on acme" {
+	if c := page.Connection; c == nil || c.Verified == nil || !*c.Verified || textOf(c.VerifyMessage) != "Connected as kivali-acme[bot], the app Kivali Acme, installed on acme" {
 		t.Errorf("test connection = %+v %q", c, textOf(c.VerifyMessage))
 	}
 }
@@ -419,7 +419,10 @@ func TestGitHubSetupInstalls(t *testing.T) {
 // Why this test exists: GitHub may send the browser back before the app
 // is installed anywhere (an organization's owners approve it later).
 // That must wait, checked only while the owner watches, and finish once
-// GitHub lists the installation, rather than fail or keep a guess.
+// GitHub lists the installation, rather than fail or keep a guess. The
+// Wait names the app's installation page, its slug as it is: the slug
+// is declared not secret, so the runner does not scrub it into a
+// broken address.
 func TestGitHubSetupWaitsForTheInstallation(t *testing.T) {
 	srv, f, mem, clk := githubServer(t)
 	to, m, cookie := githubCreate(t, srv)
@@ -428,7 +431,7 @@ func TestGitHubSetupWaitsForTheInstallation(t *testing.T) {
 	_, cookie = startPage(t, srv, fl)
 	githubBack(t, srv, m["setup_url"].(string), cookie, url.Values{"setup_action": {"request"}})
 	fl = waitFlow(t, srv, "github", apitypes.SetupFlowStateWait)
-	if textOf(fl.Step.URL) != "" || !strings.Contains(fl.Step.Words, "approve") {
+	if textOf(fl.Step.URL) != "https://github.com/apps/"+ghSlug+"/installations/new" || !strings.Contains(fl.Step.Words, "approve") {
 		t.Errorf("wait = %+v", fl.Step)
 	}
 	if _, data := githubSecret(t, srv, mem); data["installation_id"] != "" {
@@ -715,12 +718,10 @@ func TestGitHubInstallOverOneZeroCancelledKeepsTheAccess(t *testing.T) {
 
 // Why this test exists: the app's slug is GitHub's name for it, which
 // GitHub's answers carry wherever the app is the author
-// (<slug>[bot]). It is not a secret, but every kept value is scrubbed
-// from an agent's answers today, so an issue the app opened reads as
-// opened by "[secret][bot]". Once a keep can be declared not secret,
-// GitHub declares the slug so and this test runs.
+// (<slug>[bot]). It is not a secret, and GitHub declares it so: were it
+// scrubbed from an agent's answers as a secret keep is, an issue the
+// app opened would read as opened by "[secret][bot]".
 func TestGitHubAgentReadsTheAppAsAuthor(t *testing.T) {
-	t.Skip("until keeps can be declared not secret")
 	srv, f, _, _ := githubServer(t)
 	githubInstall(t, srv, f)
 	intTeam(t, srv, "dana")

@@ -132,14 +132,16 @@ def ask_key(flow, words=None):
 
 
 def show_token_wait(app_id, session):
-    # The page is the app list, not the app's own: Kivali shows every
-    # kept or carried value as [secret], the app's id in an address too.
+    # The page is the app's own: its id is kept, and the manifest
+    # declares it not secret, so Kivali shows it in the address as it
+    # is. It is not carried in state, whose values Kivali shows as
+    # [secret]; a check reads it back from the connection (APP_ID).
     return {
         "wait": {
             "words": "Open the %s app in %s and choose Show token. Kivali asks for it here once it is shown." % (APP_NAME, SERVICE),
-            "url": APP + "/apps",
+            "url": APP + "/apps/" + urllib.parse.quote(app_id, safe=""),
         },
-        "state": {"at": "show", "app_id": app_id, "session": session},
+        "state": {"at": "show", "session": session},
     }
 
 
@@ -213,17 +215,19 @@ def setup(params, stage):
         # One quick look: a check that cannot reach Deals answers the same
         # Wait, for the next check to try again, since an error would end
         # the whole setup.
+        if not APP_ID:
+            raise Refusal("The app's id is not kept; start the setup again.")
         try:
-            app = api("GET", "/v1/apps/%s" % urllib.parse.quote(state["app_id"], safe=""), state.get("session"), timeout=CHECK_TIMEOUT)
+            app = api("GET", "/v1/apps/%s" % urllib.parse.quote(APP_ID, safe=""), state.get("session"), timeout=CHECK_TIMEOUT)
         except Refusal:
-            return show_token_wait(state["app_id"], state.get("session", ""))
+            return show_token_wait(APP_ID, state.get("session", ""))
         except Status as e:
             if e.code < 500 and e.code != 429:
                 raise
-            return show_token_wait(state["app_id"], state.get("session", ""))
+            return show_token_wait(APP_ID, state.get("session", ""))
         if app.get("token_shown"):
             return form("Paste the app's token, as its page in %s shows it." % SERVICE, ["token"], {"at": "token"})
-        return show_token_wait(state["app_id"], state.get("session", ""))
+        return show_token_wait(APP_ID, state.get("session", ""))
     if at == "token":
         token = entered.get("token", "")
         if token:

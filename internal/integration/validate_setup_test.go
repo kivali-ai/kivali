@@ -332,3 +332,86 @@ func TestDiffNamesSetupChanges(t *testing.T) {
 		t.Errorf("a manifest against itself = %v", got)
 	}
 }
+
+// Why this test exists: a keep may be declared not secret, an
+// identifier the service shows publicly (an app's slug, its id), so the
+// owner can read it in a step's words and an agent in an answer. Its
+// storage must not change (it is still in the Secret, still a
+// connection key), only whether it is scrubbed; and the object form
+// must be checked as strictly as the string form is read, or a
+// "secret": "no" would silently read one way or the other. The object
+// form is written back as it was declared, so a built-in's manifest
+// reads back the same.
+func TestSetupKeepMayBeDeclaredNotSecret(t *testing.T) {
+	m := setupManifest()
+	obj(m, "kivali", "connection", "setup", "keeps")["slug"] = map[string]any{"words": "The app's name on GitHub", "secret": false}
+	obj(m, "kivali", "connection", "setup", "keeps")["owner"] = map[string]any{"words": "The account", "secret": true}
+	if got := connectionFindings(t, m); len(got) != 0 {
+		t.Fatalf("findings: %v", got)
+	}
+	mb := parseMap(t, m)
+	keeps := mb.Kivali.Connection.Setup.Keeps
+	if !keeps.Has("slug") || keeps.Secret("slug") || !keeps.Secret("app_id") || !keeps.Secret("owner") || keeps.Secret("account") {
+		t.Errorf("keeps read as %+v", keeps)
+	}
+	if !ConnectionKeySecret(mb, "slug") || ConnectionKeyScrubbed(mb, "slug") || !ConnectionKeyScrubbed(mb, "app_id") || ConnectionKeyScrubbed(mb, "account") {
+		t.Error("a not-secret keep is stored in the Secret and not scrubbed; a secret one is both")
+	}
+	if !ConnectionKeyScrubbed(parseMap(t, signInManifest()), "client_secret") || ConnectionKeyScrubbed(parseMap(t, signInManifest()), "client_id") {
+		t.Error("a sensitive form field is scrubbed, a plain one is not")
+	}
+	out, err := json.Marshal(keeps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `{"app_id":"The app's id","owner":"The account","private_key":"The app's private key, which Kivali signs with","slug":{"words":"The app's name on GitHub","secret":false}}`; string(out) != want {
+		t.Errorf("keeps written as\n%s\nwant\n%s", out, want)
+	}
+
+	for _, c := range []struct {
+		value any
+		want  string
+	}{
+		{map[string]any{"words": "x", "secret": "no"}, "kivali.connection.setup.keeps.slug: secret must be true or false"},
+		{map[string]any{"words": "x", "secret": nil}, "kivali.connection.setup.keeps.slug: secret must be true or false"},
+		{map[string]any{"words": 7, "secret": false}, "kivali.connection.setup.keeps.slug: words must be text"},
+		{map[string]any{"secret": false}, "kivali.connection.setup.keeps.slug: words are missing"},
+		{map[string]any{"words": "x", "shown": true}, "kivali.connection.setup.keeps.slug: shown is not part of a keep"},
+	} {
+		m := setupManifest()
+		obj(m, "kivali", "connection", "setup", "keeps")["slug"] = c.value
+		got := connectionFindings(t, m)
+		if !slices.ContainsFunc(got, func(s string) bool { return strings.Contains(s, c.want) }) {
+			t.Errorf("%v: no finding contains %q; got %v", c.value, c.want, got)
+		}
+	}
+	// A secret not given as a boolean reads as secret, whatever the
+	// check then says of it.
+	m = setupManifest()
+	obj(m, "kivali", "connection", "setup", "keeps")["slug"] = map[string]any{"words": "x", "secret": "no"}
+	if !parseMap(t, m).Kivali.Connection.Setup.Keeps.Secret("slug") {
+		t.Error("a secret that is not a boolean reads as not secret")
+	}
+	if _, err := ParseManifest([]byte(`{"kivali":{"connection":{"method":"setup","setup":{"summary":"x","keeps":{"slug":7}}}}}`)); err == nil ||
+		!strings.Contains(err.Error(), "keeps.slug: the value is the key's words, or an object of its words and whether it is secret") {
+		t.Errorf("a keep that is neither: %v", err)
+	}
+}
+
+// Why this test exists: making a kept value no longer secret shows it
+// to the owner, agents and the log from then on, and making one secret
+// again hides what was shown; either is a change the owner approves on
+// the install screen. Without a line for it, a version that changed
+// only a keep's secrecy would read as no change.
+func TestDiffNamesAKeepWhoseSecrecyChanged(t *testing.T) {
+	from := setupManifest()
+	obj(from, "kivali", "connection", "setup", "keeps")["slug"] = map[string]any{"words": "The app's name", "secret": false}
+	to := setupManifest()
+	obj(to, "kivali", "connection", "setup", "keeps")["slug"] = "The app's name"
+	obj(to, "kivali", "connection", "setup", "keeps")["app_id"] = map[string]any{"words": "The app's id", "secret": false}
+	got := Diff(parseMap(t, from), parseMap(t, to))
+	want := []string{"Setup keeps, now secret: slug", "Setup keeps, no longer secret: app_id"}
+	if !slices.Equal(got, want) {
+		t.Errorf("diff = %q, want %q", got, want)
+	}
+}

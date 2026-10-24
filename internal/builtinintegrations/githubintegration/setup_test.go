@@ -37,10 +37,10 @@ func (g *GitHub) setupT(t *testing.T, conn builtinintegrations.Connection, flow 
 }
 
 // checkStep holds a step to what core does with it: the step is held
-// to the manifest's declarations, and core scrubs every kept value and
-// every State value of six characters or more from what a step shows.
-// A long State value would blank words out of the page, and a Wait
-// page holding the slug kept in the flow would show a broken address.
+// to the manifest's declarations, and core scrubs every secret kept
+// value and every State value of six characters or more from what a
+// step shows. A long State value would blank words out of the page,
+// and a page holding a secret would show a broken address.
 func checkStep(t *testing.T, step builtinintegrations.Step) {
 	t.Helper()
 	m := New().Manifest()
@@ -63,8 +63,12 @@ func checkStep(t *testing.T, step builtinintegrations.Step) {
 			t.Errorf("a page off github.com: %q", raw)
 		}
 	}
-	if w := waitURL(step); strings.Contains(w, testSlug) {
-		t.Errorf("a Wait page holding the slug: %q", w)
+	for _, w := range []string{goURL(step), waitURL(step)} {
+		for _, secret := range []string{testClientSecret, "PRIVATE KEY"} {
+			if strings.Contains(w, secret) {
+				t.Errorf("a page holding a secret kept value: %q", w)
+			}
+		}
 	}
 	if f := step.Form; f != nil {
 		for _, k := range f.Fields {
@@ -281,8 +285,9 @@ func TestSetupConversionFailures(t *testing.T) {
 // browser comes back (the owner left its page, or an organization's
 // owners approve it later), list more than one, or fail for a moment.
 // None may finish setup on a guess: no installation sends the owner to
-// install it again, an approval to come is waited for and checked, a
-// passing failure keeps waiting, the id the browser brought only picks
+// install it again, an approval to come is waited for and checked (the
+// Wait naming the installation page, for an owner who left it before
+// installing), a passing failure keeps waiting, the id the browser brought only picks
 // among the app's own installations, and a key GitHub refuses ends the
 // flow in its words.
 func TestSetupWaitsForTheInstallation(t *testing.T) {
@@ -294,7 +299,7 @@ func TestSetupWaitsForTheInstallation(t *testing.T) {
 		t.Fatalf("not installed = %+v", step)
 	}
 	step = g.setupT(t, madeConn(), builtinintegrations.FlowSetup, builtinintegrations.Answer{State: inst, Return: url.Values{"setup_action": {"request"}}})
-	if step.Wait == nil || step.Wait.URL != "" || !strings.Contains(step.Wait.Words, "An organization's owner may have to approve it") {
+	if step.Wait == nil || step.Wait.URL != "https://github.com/apps/kivali-acme/installations/new" || !strings.Contains(step.Wait.Words, "An organization's owner may have to approve it") {
 		t.Fatalf("awaiting approval = %+v", step)
 	}
 	wait := step.State
@@ -373,7 +378,7 @@ func (g *GitHub) requirementsT(t *testing.T, conn builtinintegrations.Connection
 	for _, r := range rows {
 		// Core scrubs the connection's kept values from the words, so a
 		// row naming one would read "[secret]".
-		for _, kept := range []string{testSlug, testClientSecret, "Iv23liTest"} {
+		for _, kept := range []string{testClientSecret} {
 			if strings.Contains(r.Words+r.Title, kept) {
 				t.Errorf("%s names %q: %q", r.ID, kept, r.Words)
 			}
@@ -412,7 +417,7 @@ func TestRequirements(t *testing.T) {
 	if got := rowsOf(rows); got != "key met |installed met |repositories met |permissions met " {
 		t.Fatalf("rows = %s", got)
 	}
-	if rows[0].Title != "The app's key works" || rows[0].Words != "GitHub accepts the key of the app Kivali Acme. Uninstalling GitHub here leaves the app on GitHub, for you to delete under https://github.com/organizations/acme/settings/apps." ||
+	if rows[0].Title != "The app's key works" || rows[0].Words != "GitHub accepts the key of the app Kivali Acme. Uninstalling GitHub here leaves the app on GitHub, for you to delete in its settings at https://github.com/organizations/acme/settings/apps/kivali-acme." ||
 		rows[1].Words != "Installed on acme." || rows[2].Words != "Installed on acme, reaching 3 repositories." || rows[3].Title != "Permissions current" {
 		t.Errorf("words = %+v", rows)
 	}

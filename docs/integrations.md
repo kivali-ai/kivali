@@ -46,7 +46,7 @@ A bundle that passes opens its **install screen**, which waits for your approval
 - every host it reaches;
 - for an integration you connect by signing in, under **Signs in at**, every host the sign-in talks to: your browser is sent to the service's sign-in page there, so check they are the service's own;
 - the software it installs, if any, under **Software it installs**: Debian packages, fetched from Debian's repositories and installed each time the integration starts, before it runs. An integration uses them to run a tool for its actions. Read each name before you approve;
-- every field its connection needs, with the secrets marked; or, for an integration whose connection its own setup makes, under **Setup**: what setup does, every host it may send your browser to, every field it may ask you for (secrets, and values used once and never kept, marked) and every value it keeps. Kivali holds setup to that list, so read it as you would the hosts;
+- every field its connection needs, with the secrets marked; or, for an integration whose connection its own setup makes, under **Setup**: what setup does, every host it may send your browser to, every field it may ask you for (secrets, and values used once and never kept, marked) and every value it keeps (secrets marked; a value the service shows publicly, such as an app's name, is not secret and may be shown). Kivali holds setup to that list, so read it as you would the hosts;
 - every action it gives agents;
 - what its access form asks, or that access is all or nothing;
 - the bundle's size, and anything the check noticed.
@@ -244,11 +244,11 @@ On GitHub's page, choose **Install**. Setup makes the app and installs it on Git
 3. GitHub sends you back to Kivali, which takes the app GitHub made. Choose **Continue to github.com** again: on GitHub's page for installing the app, choose the repositories agents should reach and choose **Install**. Agents reach only repositories the app is installed on.
 4. GitHub sends you back, and GitHub is installed. When an organization's owners approve installations first, the page waits until one of them approves it on GitHub.
 
-Kivali keeps the app's id, name, client id and secret, its private key and where it is installed, and nothing of your own GitHub account's. Each call is made as the app: Kivali signs with the app's key for a token that lasts an hour at most, narrowed to the call's repository and to what the action needs.
+Kivali keeps the app's id, name, client id and secret, its private key and where it is installed, and nothing of your own GitHub account's. The client secret and the private key are secrets, never shown; the app's id, name, client id and installation are GitHub's public names for it, so agents read the app as the author of what it writes, `<name>[bot]`. Each call is made as the app: Kivali signs with the app's key for a token that lasts an hour at most, narrowed to the call's repository and to what the action needs.
 
 If setup stops before it is done, Kivali keeps nothing, and you can start again; an app GitHub already made stays on GitHub, where you can delete it. A team opened at a plain `http` address, such as `http://127.0.0.1` in Kivali Desktop, gives GitHub that address to send you back to: if GitHub refuses it, give the team an `https` address under **Other devices** and start again from there.
 
-**Test connection** names the app and the account it is installed on.
+**Test connection** names the app, as the bot agents act as, and the account it is installed on.
 
 ### What it needs once installed
 

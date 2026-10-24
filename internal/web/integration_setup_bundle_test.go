@@ -397,8 +397,11 @@ func TestBundleSetupRefusedSteps(t *testing.T) {
 
 // Why this test exists: a bundle's step is someone else's text, and its
 // server may write lines of 16 MiB. The page shows a step's words cut
-// to 200 runes and a Wait's code to 64, each scrubbed first, so neither
-// floods the owner's page and no piece of a secret is left by the cut.
+// to 200 runes, scrubbed first so no piece of a secret is left by the
+// cut, and a Wait's code cut to 64 and shown as given: the step chose to
+// show it, for the owner to enter on the service's page, and a code
+// that happens to equal a value Kivali scrubs elsewhere (one the owner
+// typed, as here) must not read as [secret] there.
 func TestBundleSetupStepWordsAreBounded(t *testing.T) {
 	srv, pod, _, _, _ := bundleSetupServer(t, func(n int, p integrationpod.SetupParams, _ podProgress) (any, *integrationpod.RPCError, bool) {
 		if n == 1 {
@@ -419,7 +422,7 @@ func TestBundleSetupStepWordsAreBounded(t *testing.T) {
 	if len([]rune(words)) != signInWordsRunes || !strings.HasPrefix(words, integrationSecretPlaceholder+" more") {
 		t.Errorf("words = %d runes: %.40q", len([]rune(words)), words)
 	}
-	if len([]rune(code)) != setupCodeRunes || !strings.HasPrefix(code, integrationSecretPlaceholder+"CCC") {
+	if len([]rune(code)) != setupCodeRunes || !strings.HasPrefix(code, "pak-1234567CCC") {
 		t.Errorf("code = %q", code)
 	}
 }

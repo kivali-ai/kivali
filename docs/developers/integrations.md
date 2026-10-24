@@ -289,7 +289,7 @@ anything runs, and the page shows it in the Connection block
       "personal_access_key": {"title": "Key", "words": "From the key page", "secret": true, "setup_only": true}
     },
     "keeps": {
-      "app_id": "The app's id",
+      "app_id": {"words": "The app's id", "secret": false},
       "private_key": "The app's private key, which Kivali signs with to get a token for each call"
     }
   }
@@ -309,11 +309,19 @@ anything runs, and the page shows it in the Connection block
   is never kept: a key setup trades for something else). Core draws
   only declared fields, under the integration's name.
 - `keeps`: every key setup may store in the connection's Secret, each
-  with words for the owner. The kept values are the connection's
-  fields, all secret (`integration.ConnectionKeySecret`): a call reads
-  them as `Connection.Fields`, a bundle's server as
+  with words for the owner: the words alone, a secret keep, or
+  `{"words": "...", "secret": false}` for an identifier the service
+  shows publicly (an app's id or slug, an installation id), which the
+  owner may read in a step's words and an agent in an answer. The kept
+  values are the connection's fields, every one stored in the Secret
+  (`integration.ConnectionKeySecret`) and scrubbed unless declared not
+  secret (`integration.ConnectionKeyScrubbed`, which the runner's scrub
+  list and the scrubber of agents' answers and the log read): a call
+  reads them as `Connection.Fields`, a bundle's server as
   `kivali/credential`'s `fields`, and an env placeholder
   `${user_config.<key>}` may name one (`integration.ConnectionKeys`).
+  The install screen and the page mark each secret keep
+  (`SetupKeep.secret`).
   A kept `client_id` and `client_secret` are the app's, read from the
   Secret (not the record, where a pasted client id lives). Core refuses
   a step keeping any other key.
@@ -341,13 +349,18 @@ registered client's `hosts` are held to as well); a field's or keep's
 key is lowercase letters, digits and underscores, starting with a
 letter; none is a key core keeps a sign-in under (`connect.SecretKeys`:
 `oauth_access_token`, `oauth_refresh_token` and a
-[registered client's](#registered-clients)); a `setup_only` field is not also kept; `then` is `browser` or `device`,
+[registered client's](#registered-clients)); a keep is text, or an
+object whose `words` is text and `secret` true or false, with no other
+key ("kivali.connection.setup.keeps.<key>: secret must be true or
+false"; a value that is neither text nor an object does not parse); a `setup_only` field is not also kept; `then` is `browser` or `device`,
 and with it `client_id` and `client_secret` are kept, while without it
 the connection has no endpoints. The same rules hold a bundle's setup
 flow and a built-in's; a bundle's runs in its server, over MCP ([For a
 bundle](#for-a-bundle)). What a later version changes in the declarations is on its install
 screen ("Setup sends your browser to, added: ...", "Setup asks for,
-added: ...", "Setup keeps, added: ...": `integration.Diff`).
+added: ...", "Setup keeps, added: ...", and for a key both versions
+keep, "Setup keeps, now secret: ..." or "Setup keeps, no longer
+secret: ...": `integration.Diff`).
 
 ## The check
 
@@ -929,8 +942,8 @@ endpoints is on (Google's is `www.google.com`).
   cookie: `/connect/start` sends the browser and calls the driver again
   at once with `Answer.Went`, and the page opens it in a new tab so it
   stays to follow the flow.
-- **Wait.** The page shows the words, a code to copy (`Wait.Code`) and
-  the service's page. While someone watches the flow (a stream open on
+- **Wait.** The page shows the words, a code to copy (`Wait.Code`, as
+  given) and the service's page. While someone watches the flow (a stream open on
   it, or a read of its state in the last `setupWatchWindow`, ten
   seconds), core calls the driver with `Answer.Checked` every
   `setupWaitEvery` (three seconds) on the server's clock; nothing is
@@ -985,7 +998,10 @@ one an earlier version made, and no install takes it over.
 
 ### Scrubbing and the audit
 
-Every kept value, every secret or setup-only value the owner entered,
+Every kept value (but one of a keep declared not secret, or of a
+standard flow's form field that is not sensitive:
+`integration.ConnectionKeyScrubbed`, `setupSpec.shown`), every secret
+or setup-only value the owner entered,
 every `State` value six characters or longer, each call's state, the
 values a callback brings back under `code`, `state` or a key whose name
 holds `token`, `secret`, `password` or `key` (ignoring case; no other
@@ -994,8 +1010,10 @@ hidden into `State`), and a standard flow's own secrets (the client secret, a de
 OAuth state and verifier, the code and the tokens) are replaced by
 `[secret]`, whole, in the flow's error words, progress words and
 steps, in the audit and in what core logs of the flow. Then the error
-words, the progress words and a step's words are cut to 200 runes, and
-a Wait's code to 64. A step that names an address longer than 4096
+words, the progress words and a step's words are cut to 200 runes. A
+Wait's code (`Wait.Code`) is cut to 64 runes and not scrubbed: the
+driver chose to show it, for the owner to enter on the service's page.
+A step that names an address longer than 4096
 characters, keeps and carries in its `State` more than 64 KiB
 together, or posts more than 64 KiB fails the flow in words that say
 so: a bundle's step is someone else's code, and its server may write
@@ -2984,8 +3002,8 @@ action works in the agent's shell or moves commits.
   summary, which ends with what Uninstall leaves on GitHub;
   `hosts: ["github.com"]`; one field, `account`, "An organization's
   name, or leave it blank for your personal account"; keeps `app_id`,
-  `slug`, `client_id`, `client_secret`, `private_key` and
-  `installation_id`; no `then`), an empty `user_config`,
+  `slug`, `client_id` and `installation_id`, declared not secret, and
+  `client_secret` and `private_key`, secret; no `then`), an empty `user_config`,
   `kivali.hosts: ["api.github.com", "github.com"]`, `kivali.verify:
   whoami`, and GitHub 1.0.0's access form, so agents' access carries
   over: `repositories` (required) and `write`, "May create and
@@ -2999,10 +3017,12 @@ action works in the agent's shell or moves commits.
   every call with "GitHub's connection is not set up; ask the owner to
   set it up again.", its reason in the audit (`the connection is
   incomplete`, or what does not read), and nothing reaches GitHub.
-  Core scrubs every kept value from what the owner and the agents read
-  ([Scrubbing and the audit](#scrubbing-and-the-audit)), the slug and
-  the ids among them, so no words of the built-in's name one: they
-  name the app by its `name` (GET /app) and the account by its login.
+  Core scrubs the client secret and the private key from what the owner
+  and the agents read ([Scrubbing and the audit](#scrubbing-and-the-audit));
+  the app's id, slug, client id and installation id are GitHub's public
+  names for the app and where it is installed, so a page a step names,
+  a requirement's words and an agent's answer may carry them as they
+  are: an issue the app opened reads as opened by `<slug>[bot]`.
 
 #### Setup
 
@@ -3053,8 +3073,9 @@ GitHub's own pages and nothing copied:
    more than one, the id the browser brought picks among them, else
    the flow fails. With none: after `setup_action=request` (an
    organization's owners approve installations), or on a check, a
-   **Wait** with no page (the new-installation page's address holds
-   the slug, which core scrubs from what a step shows), checked until
+   **Wait** naming the new-installation page without the state
+   (`https://github.com/apps/<slug>/installations/new`, for an owner
+   who left it before installing), checked until
    one is listed; otherwise the Go of step 4 again ("GitHub lists no
    installation of the app yet"). A passing failure (no answer, a rate
    limit, GitHub's 5xx) keeps waiting; a key GitHub refuses fails the
@@ -3089,7 +3110,7 @@ nothing beyond core's three seconds. In order:
 
 | id | Title | Met | Not met, and its Fix |
 | --- | --- | --- | --- |
-| `key` | The app's key works | "GitHub accepts the key of the app <name>. Uninstalling GitHub here leaves the app on GitHub, for you to delete under <the account's apps page>." | values missing, or a 401 from GET /app: "GitHub refused the app's key (HTTP 401): ... Set GitHub up again.", Fix `setup`; nothing after it is asked |
+| `key` | The app's key works | "GitHub accepts the key of the app <name>. Uninstalling GitHub here leaves the app on GitHub, for you to delete in its settings at <the app's settings page>." (`https://github.com/settings/apps/<slug>`, or the organization's) | values missing, or a 401 from GET /app: "GitHub refused the app's key (HTTP 401): ... Set GitHub up again.", Fix `setup`; nothing after it is asked |
 | `installed` | Installed on GitHub | "Installed on <account>." | a 404: "The app is no longer installed on GitHub.", Fix `install`, nothing after it; suspended: "The app's installation on <account> is suspended on GitHub.", Fix `settings` |
 | `repositories` | Repositories it reaches | "Installed on <account>, reaching all repositories." or "reaching N repositories." | none: Fix `settings`; left out while suspended |
 | `permissions` | Permissions current | "The installation has every permission this version needs." | "The installation lacks permissions this version needs: issues: write, ... Approve them on GitHub.", Fix `permissions` (write covers read, admin both) |
@@ -3171,9 +3192,9 @@ The rules are GitHub 1.0.0's:
   true`: `Tools` leaves them out without it and `Call` refuses them by
   name, "Your access to GitHub does not include creating issues,
   comments or pull requests; ask the owner." `whoami` is Test
-  connection's (`Verify`, "Connected as the app <name>, installed on
-  <account>", the app's name from GET /app, since core scrubs the kept
-  slug): no agent is listed it, and a call of it is refused.
+  connection's (`Verify`, "Connected as <slug>[bot], the app <name>,
+  installed on <account>", the bot agents act as and the app's name
+  from GET /app): no agent is listed it, and a call of it is refused.
 - **The search.** `list_issues`' `search` (one line, at most 500
   characters) holding `repo:`, `org:`, `user:` or `owner:` after
   anything but a letter, digit or underscore is refused; with a search,

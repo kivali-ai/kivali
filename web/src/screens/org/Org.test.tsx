@@ -1379,6 +1379,13 @@ describe('Integration install screen', () => {
       expect(keeps.getByText(k.words)).toBeInTheDocument();
       expect(keeps.getByText(k.key)).toBeInTheDocument();
     }
+    // A kept secret is marked as a secret field is; a value the service shows publicly (the app's name) is not, so
+    // the owner reads which of what setup keeps is never shown. The fixture holds both kinds.
+    expect(declared.keeps.some((k) => k.secret) && declared.keeps.some((k) => !k.secret)).toBe(true);
+    for (const k of declared.keeps) {
+      const li = keeps.getByText(k.key).closest('li')!;
+      expect(within(li).queryByText('Secret') !== null).toBe(k.secret);
+    }
     const needs = within(screen.getByRole('region', { name: 'The connection needs' }));
     expect(needs.getByText('Nothing to enter: setup makes the connection.')).toBeInTheDocument();
     // A setup built-in reaches its service from Kivali, so its hosts are listed rather than "the hosts its connection

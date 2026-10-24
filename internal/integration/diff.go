@@ -17,8 +17,10 @@ import (
 // matched by its pattern, a package by its name, a connection, setup or
 // access field by its key, a kept key by itself and an action by its
 // name; what is added is listed in to's order and what is removed in
-// from's. A secret connection or setup field says so. Nothing of those
-// changed is no lines, and so is a nil manifest.
+// from's. A secret connection or setup field says so, and a key both
+// keep whose secrecy changed is named ("Setup keeps, no longer secret:
+// slug"). Nothing of those changed is no lines, and so is a nil
+// manifest.
 func Diff(from, to *Manifest) []string {
 	if from == nil || to == nil {
 		return nil
@@ -50,6 +52,9 @@ func Diff(from, to *Manifest) []string {
 	added, removed = diffKeys(setupKeepItems(from), setupKeepItems(to))
 	line("Setup keeps, added", added)
 	line("Setup keeps, removed", removed)
+	secret, shown := keepSecrecyChanges(from, to)
+	line("Setup keeps, now secret", secret)
+	line("Setup keeps, no longer secret", shown)
 	added, removed = diffKeys(actionItems(from), actionItems(to))
 	line("Actions added", added)
 	line("Actions removed", removed)
@@ -181,6 +186,28 @@ func setupKeepItems(m *Manifest) []diffItem {
 		out = append(out, diffItem{k.Key, k.Key})
 	}
 	return out
+}
+
+// keepSecrecyChanges are the keys both setups keep whose secrecy
+// changed, in to's order: those secret in to and not in from, and those
+// secret in from and not in to.
+func keepSecrecyChanges(from, to *Manifest) (secret, shown []string) {
+	a, b := setupOf(from), setupOf(to)
+	if a == nil || b == nil {
+		return nil, nil
+	}
+	for _, k := range b.Keeps {
+		if !a.Keeps.Has(k.Key) {
+			continue
+		}
+		switch was, is := a.Keeps.Secret(k.Key), b.Keeps.Secret(k.Key); {
+		case is && !was:
+			secret = append(secret, k.Key)
+		case was && !is:
+			shown = append(shown, k.Key)
+		}
+	}
+	return secret, shown
 }
 
 // SetupFieldTitle is what a setup field is called on the form: its

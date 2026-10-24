@@ -59,6 +59,19 @@ func connectionSetupFields(m *integration.Manifest) integration.SetupFields {
 	return out
 }
 
+// shownKeys are the keys of m's connection whose values a flow's words
+// are not scrubbed of (integration.ConnectionKeyScrubbed is false): a
+// form field that is not sensitive, a keep declared not secret.
+func shownKeys(m *integration.Manifest) []string {
+	out := []string{}
+	for _, k := range integration.ConnectionKeys(m) {
+		if !integration.ConnectionKeyScrubbed(m, k) {
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
 // setupKeys is fields' keys, in order.
 func setupKeys(fields integration.SetupFields) []string {
 	out := make([]string, 0, len(fields))
@@ -79,7 +92,7 @@ func (s *Server) setupSpecFor(v *integrationView, r *http.Request) (setupSpec, *
 		fields := connectionSetupFields(m)
 		return setupSpec{
 			driver: &tokenSetup{s: s, name: v.it.Name, keys: setupKeys(fields)},
-			fields: fields, keeps: setupKeys(fields), keep: s.keepConnectionForm,
+			fields: fields, keeps: setupKeys(fields), shown: shownKeys(m), keep: s.keepConnectionForm,
 		}, nil
 	case integration.MethodDevice, integration.MethodBrowser:
 		ways := s.signInWaysHere(m, r)
@@ -97,7 +110,7 @@ func (s *Server) setupSpecFor(v *integrationView, r *http.Request) (setupSpec, *
 		fields := connectionSetupFields(m)
 		return setupSpec{
 			driver: &signInSetup{s: s, name: v.it.Name, display: v.displayName(), m: m, way: ways[0], polled: make(chan struct{}), keys: setupKeys(fields)},
-			fields: fields, hosts: c.SignInHosts(), keeps: setupKeys(fields), keep: s.keepConnectionForm,
+			fields: fields, hosts: c.SignInHosts(), keeps: setupKeys(fields), shown: shownKeys(m), keep: s.keepConnectionForm,
 			vendorWaitPages: true,
 		}, nil
 	case integration.MethodSetup:
@@ -105,7 +118,7 @@ func (s *Server) setupSpecFor(v *integrationView, r *http.Request) (setupSpec, *
 		if !ok || c.Setup == nil {
 			return setupSpec{}, &connWriteError{http.StatusConflict, v.displayName() + "'s setup is not in this version of Kivali", v.whoBuilt()}
 		}
-		spec := setupSpec{driver: si, fields: c.Setup.Fields, hosts: c.Setup.Hosts, keeps: c.Setup.Keeps.Keys(), setup: c.Setup, keep: s.keepSetupValues}
+		spec := setupSpec{driver: si, fields: c.Setup.Fields, hosts: c.Setup.Hosts, keeps: c.Setup.Keeps.Keys(), shown: shownKeys(m), setup: c.Setup, keep: s.keepSetupValues}
 		if then := c.Setup.Then; then != "" {
 			// The sign-in setup hands over to must be able to finish from
 			// here, or the owner would make the app for nothing.
