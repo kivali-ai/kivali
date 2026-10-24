@@ -94,8 +94,14 @@ REQUIREMENT_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 REQUIREMENT_TITLE = 80
 REQUIREMENT_WORDS = 500
 # The words of a setup flow's failure, its steps and its progress are
-# cut to this many characters, after their secrets are replaced.
+# cut to this many characters, and a Wait's code to CODE_CHARS, after
+# their secrets are replaced. A step naming an address longer than
+# URL_CHARS, keeping and carrying more than CARRY_BYTES together, or
+# posting more than CARRY_BYTES fails the flow.
 FLOW_WORDS = 200
+CODE_CHARS = 64
+URL_CHARS = 4096
+CARRY_BYTES = 64 << 10
 VERIFY_MESSAGE = 1000
 # The shortest secret value Kivali replaces with [secret].
 SCRUB_MIN = 6
@@ -863,6 +869,15 @@ def check_step(step, display, setup):
     for k in sorted(step.get("keep") or {}):
         if k not in keeps:
             return "%s's setup tried to keep %s, which its manifest does not declare" % (display, k)
+    size = lambda m: sum(len(k.encode()) + len(v.encode()) for k, v in (m or {}).items())
+    if size(step.get("keep")) + size(step.get("state")) > CARRY_BYTES:
+        return "%s's setup gave more to keep and carry than Kivali holds for a step (%d KiB)" % (display, CARRY_BYTES >> 10)
+    for kind in ("go", "wait"):
+        if kind in step and len((step[kind].get("url") or "").encode()) > URL_CHARS:
+            return "%s's setup named an address longer than %d characters" % (display, URL_CHARS)
+    post = (step.get("go") or {}).get("post") or {}
+    if sum(len(k.encode()) + sum(len(x.encode()) for x in ([v] if isinstance(v, str) else v)) for k, v in post.items()) > CARRY_BYTES:
+        return "%s's setup gave a form to post larger than Kivali sends (%d KiB)" % (display, CARRY_BYTES >> 10)
     if "form" in step:
         asked = step["form"].get("fields") or []
         if not asked:
@@ -1022,26 +1037,31 @@ def wait_key(w):
 
 def show_step(srv, step, took):
     """A step as the owner's page shows it, its secrets replaced."""
-    scrub = srv.scrub
+    def scrub(text):
+        return srv.scrub(text)
+
+    def words(text):
+        return clip(srv.scrub(text), FLOW_WORDS) or "(no words)"
+
     if "form" in step:
         f = step["form"]
-        say("  A Form, in %.1f s: %s" % (took, scrub(f.get("words", "")) or "(no words)"))
+        say("  A Form, in %.1f s: %s" % (took, words(f.get("words", ""))))
         say("    asks for: %s" % ", ".join(f.get("fields") or []))
     elif "go" in step:
         g = step["go"]
         how = "posts a form to" if g.get("post") is not None else "goes to"
-        say("  A Go, in %.1f s: %s" % (took, scrub(g.get("words", "")) or "(no words)"))
+        say("  A Go, in %.1f s: %s" % (took, words(g.get("words", ""))))
         say("    the browser %s %s%s%s" % (how, scrub(g.get("url", "")), ", and nothing comes back" if g.get("no_return") else "", "; the service sends no state back" if g.get("stateless") else ""))
         for k in sorted(g.get("post") or {}):
             v = g["post"][k]
             say("    post %s: %s" % (k, scrub(json.dumps(v) if isinstance(v, list) else v)))
     elif "wait" in step:
         w = step["wait"]
-        say("  A Wait, in %.1f s: %s" % (took, scrub(w.get("words", "")) or "(no words)"))
+        say("  A Wait, in %.1f s: %s" % (took, words(w.get("words", ""))))
         if w.get("url"):
             say("    page: %s" % scrub(w["url"]))
         if w.get("code"):
-            say("    code: %s" % w["code"])
+            say("    code: %s" % clip(scrub(w["code"]), CODE_CHARS))
 
 
 def run_requirements(pod, display):

@@ -286,6 +286,8 @@ func TestTryHoldsASetupStepToTheManifest(t *testing.T) {
 		{"shape", map[string]any{"go": map[string]any{"url": "https://app.deals.example/new", "noreturn": true}}, `problem: Kivali fails the flow: Deals's setup answered with a step Kivali cannot read: step: unknown field "noreturn"`},
 		{"keep", map[string]any{"done": true, "keep": map[string]any{"password": "hunter22"}}, "problem: Kivali fails the flow: Deals's setup tried to keep password, which its manifest does not declare"},
 		{"field", map[string]any{"form": map[string]any{"fields": []any{"password"}}}, "problem: Kivali fails the flow: Deals's setup asked for password, which its manifest does not declare"},
+		{"long address", map[string]any{"go": map[string]any{"url": "https://app.deals.example/" + strings.Repeat("a", 4096)}}, "problem: Kivali fails the flow: Deals's setup named an address longer than 4096 characters"},
+		{"too much state", map[string]any{"done": true, "state": map[string]any{"blob": strings.Repeat("x", 64<<10)}}, "problem: Kivali fails the flow: Deals's setup gave more to keep and carry than Kivali holds for a step (64 KiB)"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			out, code := try(t, []map[string]any{{"step": tc.step}})

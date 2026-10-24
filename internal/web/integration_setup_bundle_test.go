@@ -217,6 +217,11 @@ func bundleCheck(t *testing.T, srv *Server, pod *setupPod, clk *clock.Fake) inte
 		t.Fatal("crm has no setup flow")
 	}
 	defer srv.setupUnsubscribe(run, ch)
+	// Every call before the check has returned and been applied: a call
+	// the pod has answered still holds its deadline timer on the clock
+	// until it returns, and that timer would answer BlockUntil before
+	// the wait loop arms its own.
+	callsEnd(t, run)
 	clk.BlockUntil(1)
 	clk.Advance(setupWaitEvery)
 	return pod.next(t)
@@ -348,6 +353,9 @@ func TestBundleSetupRefusedSteps(t *testing.T) {
 		{"keep", map[string]any{"done": true, "keep": map[string]any{"password": "hunter22"}}, nil, "Test crm's setup tried to keep password, which its manifest does not declare"},
 		{"unreadable", map[string]any{"go": map[string]any{"url": "https://" + setupHost + "/x", "noreturn": true}}, nil, `Test crm's setup answered with a step Kivali cannot read: step: json: unknown field "noreturn"`},
 		{"no step", map[string]any{}, nil, errSetupNoStep},
+		{"long address", map[string]any{"go": map[string]any{"url": "https://" + setupHost + "/" + strings.Repeat("a", setupURLMax)}}, nil, "Test crm's setup named an address longer than 4096 characters"},
+		{"too much state", map[string]any{"form": map[string]any{"fields": []any{"key"}}, "state": map[string]any{"blob": strings.Repeat("x", setupCarryMax)}}, nil, "Test crm's setup gave more to keep and carry than Kivali holds for a step (64 KiB)"},
+		{"too much to post", map[string]any{"go": map[string]any{"url": "https://" + setupHost + "/x", "post": map[string]any{"blob": strings.Repeat("x", setupCarryMax)}}}, nil, "Test crm's setup gave a form to post larger than Kivali sends (64 KiB)"},
 		{"error", nil, &integrationpod.RPCError{Code: -32000, Message: "setup.example refused the key pak-1234567"}, "setup.example refused the key " + integrationSecretPlaceholder},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -375,6 +383,35 @@ func TestBundleSetupRefusedSteps(t *testing.T) {
 				t.Errorf("audit = %q", got)
 			}
 		})
+	}
+}
+
+// Why this test exists: a bundle's step is someone else's text, and its
+// server may write lines of 16 MiB. The page shows a step's words cut
+// to 200 runes and a Wait's code to 64, each scrubbed first, so neither
+// floods the owner's page and no piece of a secret is left by the cut.
+func TestBundleSetupStepWordsAreBounded(t *testing.T) {
+	srv, pod, _, _, _ := bundleSetupServer(t, func(n int, p integrationpod.SetupParams, _ podProgress) (any, *integrationpod.RPCError, bool) {
+		if n == 1 {
+			return stepOf(map[string]any{"form": map[string]any{"fields": []any{"key"}}}), nil, true
+		}
+		return stepOf(map[string]any{"wait": map[string]any{
+			"words": p.Answer.Form["key"] + strings.Repeat(" more", 300),
+			"code":  p.Answer.Form["key"] + strings.Repeat("C", 100),
+		}}), nil, true
+	}, true)
+	startSetupFlow(t, srv, "crm")
+	waitFlow(t, srv, "crm", apitypes.SetupFlowStateForm)
+	orgOK[apitypes.SetupFlow](t, flowDo(t, srv, http.MethodPost, intBase+"/crm/setup/answer", apitypes.SetupFlowAnswer{Fields: map[string]string{"key": "pak-1234567"}}))
+	pod.next(t)
+	pod.next(t)
+	f := waitFlow(t, srv, "crm", apitypes.SetupFlowStateWait)
+	words, code := f.Step.Words, textOf(f.Step.Code)
+	if len([]rune(words)) != signInWordsRunes || !strings.HasPrefix(words, integrationSecretPlaceholder+" more") {
+		t.Errorf("words = %d runes: %.40q", len([]rune(words)), words)
+	}
+	if len([]rune(code)) != setupCodeRunes || !strings.HasPrefix(code, integrationSecretPlaceholder+"CCC") {
+		t.Errorf("code = %q", code)
 	}
 }
 

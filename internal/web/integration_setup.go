@@ -413,9 +413,12 @@ func (run *setupRun) wireLocked() apitypes.SetupFlow {
 		p.Words = clipRunes(scrub.Replace(p.Words), signInWordsRunes)
 		out.Progress = &p
 	}
+	// A step's words and code are scrubbed whole, then cut: a bundle's
+	// step is someone else's text, and the page shows only so much.
+	words := func(w string) string { return clipRunes(scrub.Replace(w), signInWordsRunes) }
 	switch st := run.step; {
 	case run.state == apitypes.SetupFlowStateForm && st.Form != nil:
-		step := &apitypes.SetupFlowStep{Kind: apitypes.SetupFlowStepKindForm, Words: scrub.Replace(st.Form.Words), Fields: []apitypes.SetupField{}}
+		step := &apitypes.SetupFlowStep{Kind: apitypes.SetupFlowStepKindForm, Words: words(st.Form.Words), Fields: []apitypes.SetupField{}}
 		for _, k := range st.Form.Fields {
 			if f, ok := run.spec.fields.Field(k); ok {
 				step.Fields = append(step.Fields, apitypes.SetupField{
@@ -426,13 +429,14 @@ func (run *setupRun) wireLocked() apitypes.SetupFlow {
 		out.Step = step
 	case run.state == apitypes.SetupFlowStateGo && st.Go != nil:
 		out.Step = &apitypes.SetupFlowStep{
-			Kind: apitypes.SetupFlowStepKindGo, Words: scrub.Replace(st.Go.Words), Fields: []apitypes.SetupField{},
+			Kind: apitypes.SetupFlowStepKindGo, Words: words(st.Go.Words), Fields: []apitypes.SetupField{},
 			StartURL: optString(connectStartPath + "?flow=" + run.id), Host: optString(setupURLHost(st.Go.URL)), NoReturn: st.Go.NoReturn,
 		}
 	case run.state == apitypes.SetupFlowStateWait && st.Wait != nil:
 		out.Step = &apitypes.SetupFlowStep{
-			Kind: apitypes.SetupFlowStepKindWait, Words: scrub.Replace(st.Wait.Words), Fields: []apitypes.SetupField{},
-			URL: optString(scrub.Replace(st.Wait.URL)), Host: optString(setupURLHost(st.Wait.URL)), Code: optString(st.Wait.Code),
+			Kind: apitypes.SetupFlowStepKindWait, Words: words(st.Wait.Words), Fields: []apitypes.SetupField{},
+			URL: optString(scrub.Replace(st.Wait.URL)), Host: optString(setupURLHost(st.Wait.URL)),
+			Code: optString(clipRunes(scrub.Replace(st.Wait.Code), setupCodeRunes)),
 		}
 	}
 	return out
@@ -743,6 +747,15 @@ func (spec setupSpec) check(display string, step builtinintegrations.Step) error
 			return fmt.Errorf("%s's setup tried to keep %s, which its manifest does not declare", display, k)
 		}
 	}
+	if mapBytes(step.Keep)+mapBytes(step.State) > setupCarryMax {
+		return fmt.Errorf("%s's setup gave more to keep and carry than Kivali holds for a step (%d KiB)", display, setupCarryMax>>10)
+	}
+	switch {
+	case step.Go != nil && len(step.Go.URL) > setupURLMax, step.Wait != nil && len(step.Wait.URL) > setupURLMax:
+		return fmt.Errorf("%s's setup named an address longer than %d characters", display, setupURLMax)
+	case step.Go != nil && valuesBytes(step.Go.Post) > setupCarryMax:
+		return fmt.Errorf("%s's setup gave a form to post larger than Kivali sends (%d KiB)", display, setupCarryMax>>10)
+	}
 	switch {
 	case step.Form != nil:
 		if len(step.Form.Fields) == 0 {
@@ -767,6 +780,37 @@ func (spec setupSpec) check(display string, step builtinintegrations.Step) error
 		}
 	}
 	return nil
+}
+
+// Bounds of a step, which for a bundle is someone else's code: the
+// longest address a Go or a Wait may name, the most a step may keep and
+// carry in its State together, and the most a Go may post; and the
+// longest Wait code the page shows.
+const (
+	setupURLMax    = 4096
+	setupCarryMax  = 64 << 10
+	setupCodeRunes = 64
+)
+
+// mapBytes is the size of m's keys and values.
+func mapBytes(m map[string]string) int {
+	n := 0
+	for k, v := range m {
+		n += len(k) + len(v)
+	}
+	return n
+}
+
+// valuesBytes is the size of v's keys and values.
+func valuesBytes(v url.Values) int {
+	n := 0
+	for k, vs := range v {
+		n += len(k)
+		for _, x := range vs {
+			n += len(x)
+		}
+	}
+	return n
 }
 
 // setupURLAllowed reports whether a step may name raw: an address
