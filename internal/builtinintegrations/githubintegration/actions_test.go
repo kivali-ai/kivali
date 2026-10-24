@@ -158,6 +158,9 @@ func TestGitHubRefusalsTellTheAgentToAskTheOwner(t *testing.T) {
 		{401, `{"message":"Bad credentials"}`, nil, "GitHub refused the GitHub App's credentials (HTTP 401): Bad credentials. Ask the owner."},
 		{403, `{"message":"Resource not accessible by integration"}`, nil, "GitHub refused this (HTTP 403): Resource not accessible by integration. The GitHub App may lack the permission, or not be installed on the repository; ask the owner."},
 		{403, `{"message":"API rate limit exceeded for installation."}`, map[string]string{"X-RateLimit-Remaining": "0"}, "GitHub is limiting the GitHub App's requests for now (HTTP 403): API rate limit exceeded for installation. Try again later."},
+		// A secondary limit comes without the headers; its words name it.
+		{403, `{"message":"You have exceeded a secondary rate limit. Please wait a few minutes before you try again."}`, nil, "GitHub is limiting the GitHub App's requests for now (HTTP 403): You have exceeded a secondary rate limit. Please wait a few minutes before you try again. Try again later."},
+		{429, `{"message":"Too many requests"}`, nil, "GitHub is limiting the GitHub App's requests for now (HTTP 429): Too many requests. Try again later."},
 	} {
 		f.routeFunc("GET /repos/acme/widgets/branches", func(recorded) reply { return reply{Status: c.status, Body: c.body, Header: c.header} })
 		r := g.callT(t, agent(false, "acme/*"), "list_branches", map[string]any{"repository": "acme/widgets"})
@@ -294,7 +297,7 @@ func TestCommentFindsWhetherTheNumberIsAPullRequest(t *testing.T) {
 	if r := g.callT(t, writer, "comment", map[string]any{"repository": "acme/widgets", "number": 7, "body": "--looks good"}); r.isError || r.text != "https://github.com/acme/widgets/pull/7#issuecomment-1" {
 		t.Errorf("pull request: %+v", r)
 	}
-	if r := g.callT(t, writer, "comment", map[string]any{"repository": "acme/widgets", "number": 8, "body": "On it."}); r.isError || r.text != "https://github.com/acme/widgets/issues/8#issuecomment-2" {
+	if r := g.callT(t, writer, "comment", map[string]any{"repository": "acme/widgets", "number": 8, "body": "On it."}); r.isError || r.text != "https://github.com/acme/widgets/issues/8#issuecomment-2" || r.audit != "created https://github.com/acme/widgets/issues/8#issuecomment-2" {
 		t.Errorf("issue: %+v", r)
 	}
 	api := f.api()
@@ -344,7 +347,7 @@ func TestCreatePullRequest(t *testing.T) {
 	r := g.callT(t, writer, "create_pull_request", map[string]any{
 		"repository": "acme/widgets", "title": "Fix the build", "head": "agent/fix-1", "base": "main", "body": "Fixes #3.", "draft": true,
 	})
-	if r.isError || r.text != "https://github.com/acme/widgets/pull/9" {
+	if r.isError || r.text != "https://github.com/acme/widgets/pull/9" || r.audit != "created https://github.com/acme/widgets/pull/9" {
 		t.Fatalf("%+v", r)
 	}
 	api := f.api()
@@ -568,13 +571,15 @@ func TestListPullRequestsReadsMergedFromClosed(t *testing.T) {
 
 // Why this test exists: create_issue writes as the app; its title is
 // one line of at most 256 characters, its labels are names, and its
-// token may write issues and nothing else.
+// token may write issues and nothing else. The owner's audit row names
+// the issue made (as it does for comment and create_pull_request), or
+// the owner cannot tell from the audit what an agent created.
 func TestCreateIssue(t *testing.T) {
 	g, f := newTest(t)
 	f.route("POST /repos/acme/widgets/issues", 201, `{"number":10,"html_url":"https://github.com/acme/widgets/issues/10"}`)
 	writer := agent(true, "acme/*")
 	r := g.callT(t, writer, "create_issue", map[string]any{"repository": "acme/widgets", "title": "Crash on start", "body": "Steps.", "labels": []any{"bug"}})
-	if r.isError || r.text != "https://github.com/acme/widgets/issues/10" {
+	if r.isError || r.text != "https://github.com/acme/widgets/issues/10" || r.audit != "created https://github.com/acme/widgets/issues/10" {
 		t.Fatalf("%+v", r)
 	}
 	api := f.api()
@@ -591,4 +596,150 @@ func TestCreateIssue(t *testing.T) {
 
 func callerWith(access map[string]any) builtinintegrations.Caller {
 	return builtinintegrations.Caller{Agent: "dana", Access: access}
+}
+
+// commentsRoute answers an issue's comments as GitHub lists them:
+// oldest first, 100 a page, "comment <i>" for each of total.
+func commentsRoute(total int) func(recorded) reply {
+	return func(r recorded) reply {
+		page, _ := strconv.Atoi(r.Query.Get("page"))
+		out := []map[string]any{}
+		for i := (page-1)*100 + 1; i <= min(page*100, total); i++ {
+			out = append(out, map[string]any{"user": map[string]any{"login": "u"}, "body": fmt.Sprintf("comment %d", i)})
+		}
+		b, _ := json.Marshal(out)
+		return reply{Status: 200, Body: string(b)}
+	}
+}
+
+// Why this test exists: GitHub lists an issue's comments oldest first,
+// so the latest 20 straddle two pages when the last holds fewer than
+// 20. The page before the last is read too, so the agent is given the
+// latest 20 in order and not only the few on the last page.
+func TestGetIssueReadsThePageBeforeTheLast(t *testing.T) {
+	g, f := newTest(t)
+	f.route("GET /repos/acme/widgets/issues/7", 200, `{"number":7,"comments":105}`)
+	f.routeFunc("GET /repos/acme/widgets/issues/7/comments", commentsRoute(105))
+	r := g.callT(t, agent(false, "acme/*"), "get_issue", map[string]any{"repository": "acme/widgets", "number": 7})
+	var issue struct {
+		Comments []struct {
+			Body string `json:"body"`
+		} `json:"comments"`
+		Note string `json:"note"`
+	}
+	if err := json.Unmarshal([]byte(r.text), &issue); err != nil {
+		t.Fatal(err, r.text)
+	}
+	if len(issue.Comments) != 20 || issue.Comments[0].Body != "comment 86" || issue.Comments[19].Body != "comment 105" {
+		t.Errorf("comments %+v", issue.Comments)
+	}
+	if !strings.Contains(issue.Note, "latest 20 of its 105 comments") {
+		t.Errorf("note %q", issue.Note)
+	}
+	var pages []string
+	for _, q := range f.api() {
+		if strings.HasSuffix(q.Path, "/comments") {
+			pages = append(pages, q.Query.Get("page"))
+		}
+	}
+	if !slices.Equal(pages, []string{"2", "1"}) {
+		t.Errorf("pages read %v", pages)
+	}
+}
+
+// pageRoute answers a listing page by page: page n is pages[n-1], and
+// a page past them is empty.
+func pageRoute(pages ...string) func(recorded) reply {
+	return func(r recorded) reply {
+		n, _ := strconv.Atoi(r.Query.Get("page"))
+		if n < 1 || n > len(pages) {
+			return reply{Status: 200, Body: `[]`}
+		}
+		return reply{Status: 200, Body: pages[n-1]}
+	}
+}
+
+// fullPage is 100 items made by item(i), for i from first.
+func fullPage(first int, item func(i int) string) string {
+	parts := make([]string, 100)
+	for k := range parts {
+		parts[k] = item(first + k)
+	}
+	return "[" + strings.Join(parts, ",") + "]"
+}
+
+// Why this test exists: list_issues leaves out the pull requests the
+// issues endpoint lists, and list_pull_requests' merged keeps only the
+// merged of the closed. A page full of what is left out must not leave
+// the agent with fewer than its limit when more pages hold what it
+// asked for; and a listing reads at most 10 pages, so a repository of
+// thousands of pull requests never turns one call into hundreds of
+// requests.
+func TestListsReadFurtherPagesToFillTheirLimit(t *testing.T) {
+	g, f := newTest(t)
+	reader := agent(false, "acme/*")
+	pull := func(i int) string {
+		return fmt.Sprintf(`{"number":%d,"html_url":"https://github.com/acme/widgets/pull/%d","pull_request":{}}`, i, i)
+	}
+	issue := func(i int) string {
+		return fmt.Sprintf(`{"number":%d,"html_url":"https://github.com/acme/widgets/issues/%d"}`, i, i)
+	}
+	f.routeFunc("GET /repos/acme/widgets/issues", pageRoute(fullPage(1, pull), fullPage(101, issue)))
+	r := g.callT(t, reader, "list_issues", map[string]any{"repository": "acme/widgets", "limit": 5})
+	var got []struct {
+		Number int `json:"number"`
+	}
+	if err := json.Unmarshal([]byte(r.text), &got); err != nil || len(got) != 5 || got[0].Number != 101 || got[4].Number != 105 {
+		t.Errorf("issues %s", r.text)
+	}
+	if n := len(f.api()); n != 2 {
+		t.Errorf("%d pages read, want 2", n)
+	}
+
+	closed := func(i int) string {
+		return fmt.Sprintf(`{"number":%d,"state":"closed","merged_at":null}`, i)
+	}
+	merged := func(i int) string {
+		return fmt.Sprintf(`{"number":%d,"state":"closed","merged_at":"2026-10-01T00:00:00Z"}`, i)
+	}
+	f.routeFunc("GET /repos/acme/widgets/pulls", pageRoute(fullPage(1, closed), fullPage(101, merged)))
+	r = g.callT(t, reader, "list_pull_requests", map[string]any{"repository": "acme/widgets", "state": "merged", "limit": 3})
+	if err := json.Unmarshal([]byte(r.text), &got); err != nil || len(got) != 3 || got[0].Number != 101 {
+		t.Errorf("merged %s", r.text)
+	}
+
+	// Nothing but closed, unmerged pull requests: ten pages, then an
+	// empty answer.
+	var many []string
+	for p := range 20 {
+		many = append(many, fullPage(p*100+1, closed))
+	}
+	f.routeFunc("GET /repos/acme/widgets/pulls", pageRoute(many...))
+	before := len(f.api())
+	r = g.callT(t, reader, "list_pull_requests", map[string]any{"repository": "acme/widgets", "state": "merged"})
+	if r.isError || r.text != "[]" {
+		t.Errorf("none merged: %+v", r)
+	}
+	if n := len(f.api()) - before; n != maxListPages {
+		t.Errorf("%d pages read, want %d", n, maxListPages)
+	}
+}
+
+// Why this test exists: GitHub answers 406 for a diff past its own
+// size limits. The agent asked for the pull request as well, so it is
+// given the pull request with a note that GitHub gives no diff, rather
+// than a failed call it cannot get around.
+func TestATooLargeDiffAnswersThePullRequest(t *testing.T) {
+	g, f := newTest(t)
+	f.routeFunc("GET /repos/acme/widgets/pulls/8", func(r recorded) reply {
+		if r.Header.Get("Accept") == mediaDiff {
+			return reply{Status: 406, Body: `{"message":"Sorry, the diff exceeded the maximum number of lines (20000)."}`}
+		}
+		return reply{Status: 200, Body: `{"number":8,"title":"Huge","state":"open"}`}
+	})
+	r := g.callT(t, agent(false, "acme/*"), "get_pull_request", map[string]any{"repository": "acme/widgets", "number": 8, "diff": true})
+	if r.isError || strings.Contains(r.text, `"diff"`) || !strings.Contains(r.text, `"title":"Huge"`) ||
+		!strings.Contains(r.text, "GitHub gives no diff for this pull request (Sorry, the diff exceeded the maximum number of lines (20000)); compare lists every file changed.") {
+		t.Errorf("%+v", r)
+	}
 }

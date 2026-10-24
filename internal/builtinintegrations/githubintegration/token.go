@@ -131,8 +131,13 @@ type cachedToken struct {
 func (g *GitHub) installationToken(ctx context.Context, c connection, repo string, p permissions) (string, error) {
 	name := ""
 	if repo != "" {
-		_, name, _ = strings.Cut(repo, "/")
-		name = strings.ToLower(name)
+		_, after, ok := strings.Cut(repo, "/")
+		if !ok || after == "" {
+			// Never a token for the whole installation in place of one
+			// narrowed to a repository.
+			return "", errors.New("a token narrowed to " + repo + ", which is not owner/name")
+		}
+		name = strings.ToLower(after)
 	}
 	k := tokenKey{conn: c.id, app: c.appID, installation: c.installationID, repo: name, perms: p.key()}
 	now := g.now()
@@ -232,7 +237,7 @@ func (g *GitHub) installations(ctx context.Context, c connection) ([]Installatio
 			} `json:"account"`
 		}
 		if err := json.Unmarshal(b, &page); err != nil {
-			return 0, true, &apiError{Message: "its answer is not JSON Kivali reads", Transport: err}
+			return 0, true, &apiError{Message: "its answer is not JSON Kivali reads"}
 		}
 		for _, in := range page {
 			out = append(out, Installation{ID: in.ID, Account: in.Account.Login})
