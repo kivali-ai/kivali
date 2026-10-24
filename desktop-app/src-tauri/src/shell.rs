@@ -354,6 +354,46 @@ impl Runtime {
         *self.report.lock().unwrap() = None;
     }
 
+    /// Quit's stop of this team ([`Self::stop_everything`]). While its VM
+    /// runs the stop is the team's Pause operation: its window shows the
+    /// pausing page rather than its web app, the tray and Settings say
+    /// pausing, and no status read mid-stop (the VM up, its forward
+    /// already dropped, which reads as starting) shows through. `redraw`
+    /// follows each step, and there is none once it has stopped: Kivali
+    /// exits next, or resumes the team when an update's installer could
+    /// not start.
+    fn pause_for_exit(&self, redraw: &dyn Fn()) {
+        if !self.report.lock().unwrap().as_ref().is_some_and(|r| r.running) {
+            return self.stop_everything(&mut |_| {});
+        }
+        *self.op.lock().unwrap() = Some(TeamOp::new(OpKind::Pause, 0));
+        redraw();
+        self.stop_everything(&mut |p| {
+            self.op_progress(&p);
+            redraw();
+        });
+        self.end_op(&Ok(()));
+    }
+
+    /// Takes a progress report into the running operation ([`TeamOp::progress`]).
+    fn op_progress(&self, p: &Progress) {
+        if let Some(o) = self.op.lock().unwrap().as_mut() {
+            o.progress(p);
+        }
+    }
+
+    /// Ends the running operation with `result` and wakes [`Self::wait_idle`].
+    fn end_op(&self, result: &Result<(), String>) {
+        if let Some(o) = self.op.lock().unwrap().as_mut() {
+            o.running = false;
+            match result {
+                Ok(()) => o.finished = true,
+                Err(e) => o.error = Some(e.clone()),
+            }
+        }
+        self.op_done.notify_all();
+    }
+
     /// After a delete: the supervisor has exited (destroy with exit), so
     /// only the process is waited for.
     fn forget_sidecar(&self) {
@@ -1069,23 +1109,11 @@ where
         let app2 = app.clone();
         let rt2 = rt.clone();
         let mut on_progress = |p: Progress| {
-            if let Some(o) = rt2.op.lock().unwrap().as_mut() {
-                o.progress(&p);
-            }
+            rt2.op_progress(&p);
             changed(&app2);
         };
         let result = work(&app, &sh, &rt, &mut on_progress);
-        {
-            let mut op = rt.op.lock().unwrap();
-            if let Some(o) = op.as_mut() {
-                o.running = false;
-                match &result {
-                    Ok(()) => o.finished = true,
-                    Err(e) => o.error = Some(e.clone()),
-                }
-            }
-        }
-        rt.op_done.notify_all();
+        rt.end_op(&result);
         if result.is_ok() {
             // Running again (or still): what its own API says.
             teamapi::refresh(&app, &rt.id);
@@ -2233,8 +2261,8 @@ pub fn launch(app: &AppHandle) {
 }
 
 /// Records which teams run (they resume next launch), waits for running
-/// operations, and stops every team here, in parallel. Returns the teams
-/// that ran.
+/// operations, and stops every team here, in parallel, each showing it
+/// pauses ([`Runtime::pause_for_exit`]). Returns the teams that ran.
 pub(crate) fn pause_all_for_exit(app: &AppHandle) -> Vec<String> {
     let sh = shell(app);
     discard_prepared(&sh);
@@ -2256,7 +2284,10 @@ pub(crate) fn pause_all_for_exit(app: &AppHandle) -> Vec<String> {
     let _ = sh.save_teams();
     let handles: Vec<_> = rts
         .into_iter()
-        .map(|rt| std::thread::spawn(move || rt.stop_everything(&mut |_| {})))
+        .map(|rt| {
+            let app = app.clone();
+            std::thread::spawn(move || rt.pause_for_exit(&|| changed(&app)))
+        })
         .collect();
     for h in handles {
         let _ = h.join();
@@ -2810,6 +2841,63 @@ mod tests {
         assert_eq!(v.state, TeamState::Failed);
         assert!(v.reason.as_deref().is_some_and(|r| r.contains(&format!("port {port}"))), "{:?}", v.reason);
         assert_eq!(sh.running_memory_mb("").0, 0);
+
+        sc.stop(&mut || rt.supervisor.down(true, &mut |_| {}).map_err(|e| e.to_string()), STOP_TIMEOUTS);
+    }
+
+    /// Quit stops every team at once and Kivali exits. With no operation
+    /// around that stop, the team's window kept its web app until Kivali
+    /// vanished, and a tray click mid-stop read the supervisor's report
+    /// (the VM up, its forward already dropped) as the team waking up, so
+    /// the window and the tray said it was starting. Every redraw while
+    /// it stops must show it pausing, and the operation must have ended
+    /// once it has stopped: when an update's installer cannot start the
+    /// team resumes, which a Pause still running would refuse. A team
+    /// already paused must not flash a pausing page.
+    #[test]
+    fn quit_shows_a_running_team_pausing() {
+        let fake = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join("fake-supervisor/target/debug")
+            .join(format!("kivali-supervisor{}", std::env::consts::EXE_SUFFIX));
+        assert!(fake.exists(), "build the fake first: cargo build --manifest-path fake-supervisor/Cargo.toml");
+        std::env::set_var("FAKE_STEP_MS", "0");
+        let dir = tempfile::tempdir().unwrap();
+        let mut teams = TeamsFile::default();
+        let mut n = 0u16;
+        let mut next = || {
+            n += 1;
+            n
+        };
+        let a = teams.add_here("A", Kind::Work, "a@example.com", &mut next);
+        let b = teams.add_here("B", Kind::Work, "b@example.com", &mut next);
+        let sh = Shell::new(dir.path().to_path_buf(), "0.15.1".into(), teams, None);
+        let rt = sh.runtime(&a).unwrap();
+        std::fs::create_dir_all(&rt.dir).unwrap();
+        let probe = Supervisor::new(&rt.dir);
+        let sc = Sidecar::start(&fake, &rt.dir, None, &|| probe.is_listening(), &std::thread::yield_now, &Instant::now).unwrap();
+        let port = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap().local_addr().unwrap().port();
+        let req = UpRequest { owner: Some("a@example.com".into()), port_hint: port, ..Default::default() };
+        rt.supervisor.up(&req, &mut |_| {}).unwrap();
+        let _ = rt.refresh_status();
+        assert!(rt.is_running());
+
+        let seen = Mutex::new(Vec::new());
+        rt.pause_for_exit(&|| seen.lock().unwrap().push(rt.state()));
+        let seen = seen.into_inner().unwrap();
+        // Once as it begins, then once for each of the stop's lines.
+        assert!(seen.len() > 1, "{seen:?}");
+        assert!(seen.iter().all(|s| *s == (TeamState::Starting, Some(Activity::Pausing))), "{seen:?}");
+        let op = rt.op.lock().unwrap().clone().unwrap();
+        assert!(op.finished && !op.running);
+        assert!(op.lines.iter().any(|l| l.contains("powering off")), "{:?}", op.lines);
+        assert_eq!(rt.state(), (TeamState::Paused, None));
+        rt.wait_idle();
+
+        let paused = sh.runtime(&b).unwrap();
+        paused.pause_for_exit(&|| panic!("B was already paused"));
+        assert!(paused.op.lock().unwrap().is_none());
 
         sc.stop(&mut || rt.supervisor.down(true, &mut |_| {}).map_err(|e| e.to_string()), STOP_TIMEOUTS);
     }
