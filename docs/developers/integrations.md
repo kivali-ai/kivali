@@ -648,7 +648,7 @@ integration whose connection an earlier version made, its one unmet
 otherwise),
 `flow`, its setup flow under way or the one that last ended, and
 `can_uninstall`: an upload in any state, a built-in installed, off or
-not included. The agent's tab (`AgentIntegration`) carries `state` and
+not included, or available holding a connection an earlier version made. The agent's tab (`AgentIntegration`) carries `state` and
 `usable`: installed, running, its access valid, and the connection its
 access names with its secrets and, made by signing in, signed in.
 
@@ -915,7 +915,8 @@ endpoints is on (Google's is `www.google.com`).
 and a real progress bar where there is a count (`done` of `total`).
 Each call is told which it is: `Answer.Leg` counts the calls of the
 flow from 1. `Answer.Team` is the team's name (the branding's company
-name, empty for none), for naming what setup makes on the service.
+name, empty for none), for naming what setup makes on the service; a
+bundle's `kivali/setup` answer carries it as `team` as well.
 
 ### Keep
 
@@ -941,10 +942,19 @@ value of the record and its Secret goes (the scoped proxy credential's
 secret aside), the sign-in, the test result with it; the record's id,
 its Secret's name and every agent's access stay. Once the lock is
 released, the sign-in the Secret held (the client id and secret, the
-access and refresh tokens) is handed to the built-in, when it is a
-`builtinintegrations.SignInReplacer`, to revoke with the service,
-best effort, under `revokeTimeout` (`revokeReplacedSignIn`; a failure
-is logged, scrubbed of the sign-in).
+access and refresh tokens) is revoked, best effort, off any lock
+(`revokeReplacedSignIn`; a failure is logged, scrubbed of the
+sign-in): first as core revokes any sign-in ([Revocation](#revocation)),
+with the manifest of the integration's newest superseded version when
+its sign-in has a revocation endpoint, so a standard sign-in that
+became a setup is revoked with nothing of the integration's own; then,
+for a vendor whose revocation is its own, by the built-in, when it is
+a `builtinintegrations.SignInReplacer`, under `revokeTimeout`. The
+hook is a built-in's alone, not part of a bundle's contract.
+Uninstall of such a connection, which the page offers while it reads
+available, revokes its sign-in the same way. With several connection
+records ([Migration](#migration)), the connection does not read as
+one an earlier version made, and no install takes it over.
 
 ### Scrubbing and the audit
 
@@ -2036,9 +2046,12 @@ type SignIn struct{ ClientID, ClientSecret, AccessToken, RefreshToken string }
   agent's access; an error leaves the installation as it is.
 - A `SignInReplacer` is a setup built-in whose earlier version made
   its connection by signing in with an app of the owner's: when an
-  install takes such a connection over ([Keep](#keep)), core hands it
-  the sign-in the connection held, once, off any lock, to revoke with
-  the service, best effort.
+  install takes such a connection over, or Uninstall removes it
+  ([Keep](#keep)), core hands it the sign-in the connection held,
+  once, off any lock, to revoke with the service, best effort, after
+  core's own revocation with the superseded version's endpoint where
+  there is one. It is the vendor-specific path for a vendor whose
+  revocation is not the standard one, a built-in's hook only.
 
 Core runs `Setup` through the setup runner ([Setup flows](#setup-flows)):
 `POST .../setup` of a `setup` connection whose built-in implements
@@ -2208,7 +2221,11 @@ takes the record over at its first Keep, after GitHub made the new
 app: the 1.0.0 values go, the earlier app's grant is revoked with
 GitHub (`RevokeSignIn`), and once installed every agent's access
 works again. The app the owner registered for 1.0.0 stays on GitHub.
-Started on this data, a Kivali that ships GitHub 1.0.0 reads 2.0.0's
+The page offers Uninstall meanwhile: it removes the earlier connection
+and every agent's access, and revokes the earlier app's grant as the
+install would. With several connection records (a migration that
+could not finish), no install takes the connection over. Started on
+this data, a Kivali that ships GitHub 1.0.0 reads 2.0.0's
 connection as its own and finds no client id there, so GitHub needs
 connecting again.
 

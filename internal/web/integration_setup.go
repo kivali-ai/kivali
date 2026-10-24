@@ -1232,27 +1232,66 @@ func (s *Server) keepSetupValuesLocked(ctx context.Context, run *setupRun, value
 	return replaced, nil
 }
 
-// revokeReplacedSignIn hands the sign-in a connection an install took
-// over held (rec, its Secret's data as it was) to the built-in, which
-// revokes it with the service (builtinintegrations.SignInReplacer), off
-// the caller's locks, under revokeTimeout, best effort: a failure is
-// logged, with nothing of the sign-in in it.
+// revokeReplacedSignIn revokes the sign-in a connection an earlier
+// version made held (rec, its Secret's data as it was), when an install
+// takes the connection over or Uninstall removes it: off the caller's
+// locks, best effort, a failure logged with nothing of the sign-in in
+// it. First as core revokes any sign-in (revokeSignIn), with the
+// newest superseded version's manifest when its sign-in has a
+// revocation endpoint; then, for a vendor whose revocation is its own,
+// through the built-in (builtinintegrations.SignInReplacer, a built-in
+// hook, not part of a bundle's contract).
 func (s *Server) revokeReplacedSignIn(name string, rec store.IntegrationConnection, data map[string]string) {
-	r, ok := s.BuiltinIntegrations.Lookup(name).(builtinintegrations.SignInReplacer)
 	client := signInClient(rec, data)
 	old := builtinintegrations.SignIn{ClientID: client.ID, ClientSecret: client.Secret,
 		AccessToken: data[connect.SecretKeyAccessToken], RefreshToken: data[connect.SecretKeyRefreshToken]}
-	if !ok || old.AccessToken == "" && old.RefreshToken == "" {
+	if old.AccessToken == "" && old.RefreshToken == "" {
+		return
+	}
+	earlier := s.supersededSignIn(name)
+	r, ok := s.BuiltinIntegrations.Lookup(name).(builtinintegrations.SignInReplacer)
+	if earlier == nil && !ok {
 		return
 	}
 	scrub := newScrubber([]string{old.ClientSecret, old.AccessToken, old.RefreshToken})
 	s.setupRuns.calling.Add(1)
 	go func() {
 		defer s.setupRuns.calling.Done()
+		if earlier != nil {
+			s.revokeSignIn(context.Background(), name, earlier, rec, data)
+		}
+		if !ok {
+			return
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), revokeTimeout)
 		defer cancel()
 		if err := r.RevokeSignIn(ctx, old); err != nil {
 			log.Printf("integration %s: revoke the sign-in of the connection setup replaced: %s", name, scrub.Replace(err.Error()))
 		}
 	}()
+}
+
+// supersededSignIn is the manifest of name's newest superseded version
+// when its connection is made by signing in and its sign-in has a
+// revocation endpoint: the version a connection that no longer fits
+// was most likely made by. nil for none.
+func (s *Server) supersededSignIn(name string) *integration.Manifest {
+	versions, err := s.Store.IntegrationVersions(name)
+	if err != nil {
+		return nil
+	}
+	for _, v := range versions {
+		if v.State != store.IntegrationVersionSuperseded {
+			continue
+		}
+		_, m, err := s.Store.GetIntegrationVersion(name, v.Version)
+		if err != nil || m == nil {
+			return nil
+		}
+		if c := m.Kivali.Connection; c.OAuth() && c.RevocationEndpoint != "" {
+			return m
+		}
+		return nil
+	}
+	return nil
 }

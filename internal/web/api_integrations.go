@@ -505,7 +505,7 @@ func (s *Server) integrationPage(v *integrationView, r *http.Request) apitypes.I
 		Versions:         []apitypes.IntegrationVersionSummary{},
 		Running:          v.running,
 		Flow:             v.flow,
-		CanUninstall:     !v.it.Builtin || v.staleBuiltin() || v.installed(),
+		CanUninstall:     !v.it.Builtin || v.staleBuiltin() || v.installed() || v.connectionMisfit(),
 	}
 	page.Requirements, _ = s.requirements(r.Context(), v)
 	if page.Summary.State == apitypes.IntegrationStateInstalled {
@@ -887,11 +887,23 @@ func (s *Server) uninstallBuiltinLocked(w http.ResponseWriter, r *http.Request, 
 	failed := false
 	if c.rec.SecretName != "" {
 		tokens := s.revocableTokens(r.Context(), name, v.manifest, c.rec)
+		// A connection an earlier version made holds that version's
+		// sign-in, which this version's manifest knows nothing of: it is
+		// revoked as an install taking it over would.
+		var earlier map[string]string
+		if v.connectionMisfit() {
+			if data, err := s.Secrets.Get(r.Context(), c.rec.SecretName); err == nil {
+				earlier = data
+			}
+		}
 		if err := s.Secrets.Delete(r.Context(), c.rec.SecretName); err != nil && !errors.Is(err, secrets.ErrNotFound) {
 			log.Printf("integration %s: uninstall: delete Secret %s: %v", name, c.rec.SecretName, err)
 			failed = true
 		} else {
 			revokes = revokes.add(name, v.manifest, c.rec, tokens)
+			if earlier != nil {
+				s.revokeReplacedSignIn(name, c.rec, earlier)
+			}
 		}
 	}
 	if !failed {
