@@ -311,6 +311,14 @@ type Answer struct {
 	// the flow. A return with no state is accepted only for a Go step
 	// that says Stateless, in the browser that left.
 	Callback string
+	// Addresses is every address the team signs in at, each the bare
+	// callback (<scheme>://<host>/connect/callback, no query): the one
+	// the request that last touched the flow reached Kivali at, the
+	// address Callback is built from, first, then the team's external
+	// address when it has one. A setup that registers callbacks with an
+	// app the service makes (redirect URIs for a sign-in Then hands over
+	// to) registers them all, so a sign-in from any of them comes back.
+	Addresses []string
 	// Team is the team's name as its owner set it, for naming what
 	// setup makes on the service; empty when the team has none.
 	Team string

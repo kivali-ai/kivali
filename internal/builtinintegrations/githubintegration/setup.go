@@ -177,7 +177,10 @@ func (g *GitHub) install(ctx context.Context, conn builtinintegrations.Connectio
 // new-app page for account ("" for the owner's personal account). The
 // manifest's redirect_url is the bare callback: the flow's state goes
 // on the new-app page's address alone, and GitHub sends it back with
-// the code.
+// the code. The manifest gives no callback_urls, the addresses a
+// user's sign-in with the app returns to: the app signs no user in,
+// since setup hands over to no sign-in. One that did would list every
+// address in Answer.Addresses there.
 func createApp(account string, last builtinintegrations.Answer) (builtinintegrations.Step, error) {
 	base, setupURL, state, err := callbackParts(last.Callback)
 	if err != nil {

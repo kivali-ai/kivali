@@ -268,7 +268,8 @@ func TestBundleSetupInstalls(t *testing.T) {
 	flow := startSetupFlow(t, srv, "crm")
 	first := pod.next(t)
 	if first.Flow != "setup" || first.Answer.Leg != 1 || len(first.Answer.State) != 0 || len(first.Answer.Form) != 0 || len(first.Answer.Return) != 0 ||
-		first.Answer.Checked || !strings.HasPrefix(first.Answer.Callback, loopbackOrigin+"/connect/callback?state=") || first.Meta == nil || first.Meta.ProgressToken == "" || first.Answer.Team != "Acme" {
+		first.Answer.Checked || !strings.HasPrefix(first.Answer.Callback, loopbackOrigin+"/connect/callback?state=") || first.Meta == nil || first.Meta.ProgressToken == "" || first.Answer.Team != "Acme" ||
+		!slices.Equal(first.Answer.Addresses, []string{loopbackOrigin + "/connect/callback"}) {
 		t.Errorf("first call = %+v", first)
 	}
 	f := waitFlow(t, srv, "crm", apitypes.SetupFlowStateForm)

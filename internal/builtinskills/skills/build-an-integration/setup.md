@@ -101,6 +101,7 @@ an error:
   "flow": "setup",
   "answer": {"state": {}, "form": {}, "return": {}, "checked": false, "went": false, "leg": 1,
              "callback": "https://team.example/connect/callback?state=4f0c9e2a7b1d4c3e8a6f5b2d1c0e9f8a",
+             "addresses": ["https://team.example/connect/callback"],
              "team": "Acme"},
   "_meta": {"progressToken": "8c1d6b0e2f4a"}}}
 ```
@@ -118,6 +119,13 @@ an error:
 - `answer.went`: true after a Go with `no_return` was sent.
 - `answer.leg`: which call of the flow this is, from 1.
 - `answer.callback`: where a Go's service may send the browser back.
+- `answer.addresses`: every address the team signs in at, each the bare
+  callback with no query: the one this request reached Kivali at (the
+  one `callback` is built from) first, then the team's address for
+  other devices when it has one. Register them all where the service
+  keeps a list of addresses for an app setup makes (an OAuth app's
+  redirect URIs), so a sign-in from any of them comes back. `try.py`
+  sends `--callback`'s, then each `--address`.
 - `answer.team`: the team's name as the owner set it, `""` for a team
   with none: for naming what setup makes on the service ("Kivali Acme"),
   so the owner tells it apart from another team's. `try.py` sends
@@ -637,9 +645,10 @@ revokes as for any sign-in.
 
 1. Form `admin_key`.
 2. One call: create the app with `POST https://api.desk.example/v1/oauth-apps`,
-   its redirect address the bare callback (`answer.callback` without
-   its query: Kivali's sign-in sends the state as OAuth's `state`), its
-   scopes the ones the manifest's sign-in asks for; answer
+   its redirect addresses `answer.addresses`, every address the team
+   signs in at, each a bare callback (Kivali's sign-in sends the state
+   as OAuth's `state`), its scopes the ones the manifest's sign-in asks
+   for; answer
    `{"done": true, "keep": {"client_id": ..., "client_secret": ...}}`.
 3. Kivali's browser sign-in takes the flow on: a Go to the
    authorization endpoint with the kept app, back to the callback, the
@@ -647,9 +656,11 @@ revokes as for any sign-in.
    from `kivali/credential` on every call
    (SKILL.md, A sign-in connection: `credential()` in the template).
 
-The app knows one redirect address, the one setup gave it; a sign-in
-from another of the team's addresses is refused by the service. The
-`sign_in` requirement (Kivali's own) asks the owner to sign in again
+The app knows the redirect addresses setup gave it: every one the team
+signed in at when setup ran. An address the team gains later (one for
+other devices given afterwards) is refused by the service until the app
+lists it; the owner adds it in Desk, or sets the integration up again.
+The `sign_in` requirement (Kivali's own) asks the owner to sign in again
 when the service stops taking the sign-in. Uninstall revokes the
 tokens at `revocation_endpoint`; removing the app needs an admin key, which setup keeps
 nowhere, so `kivali/uninstall` answers `{}` and the summary says the

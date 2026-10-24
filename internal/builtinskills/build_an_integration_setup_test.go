@@ -318,11 +318,14 @@ func TestTryHoldsASetupStepToTheManifest(t *testing.T) {
 	wantIn(t, out, "Open app-12345 and show [secret].", "page: https://app.deals.example/apps/app-12345\n")
 
 	away := map[string]any{"step": map[string]any{"go": map[string]any{"url": "https://app.deals.example/settings", "no_return": true}}}
-	out, code = try(t, []map[string]any{away, done})
+	out, code = try(t, []map[string]any{away, done}, "--address", "https://team.example/connect/callback")
 	if code != 0 {
 		t.Errorf("a Go with no return: exit %d", code)
 	}
-	wantIn(t, out, "calls setup again at once", `"went": true`, `"team": "Kivali"`)
+	// Each call carries every address the team signs in at, as Kivali's
+	// answer does: --callback's, then each --address.
+	wantIn(t, out, "calls setup again at once", `"went": true`, `"team": "Kivali"`,
+		`"addresses": ["http://127.0.0.1:8080/connect/callback", "https://team.example/connect/callback"]`)
 }
 
 // Why this test exists: try.py reads requirement rows as Kivali keeps
