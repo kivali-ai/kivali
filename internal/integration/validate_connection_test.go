@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kivali-ai/kivali/internal/connect"
 	"github.com/kivali-ai/kivali/internal/integration/integrationtest"
 )
 
@@ -31,20 +32,12 @@ func signInManifest() map[string]any {
 }
 
 // connectionFindings is what the connection section's own check finds
-// in m, a bundle's manifest, without the rest of the manifest's.
+// in m, without the rest of the manifest's: the same for a bundle's
+// manifest and a built-in's.
 func connectionFindings(t *testing.T, m map[string]any) []string {
 	t.Helper()
 	var f Findings
-	validateConnection(parseMap(t, m), false, &f)
-	return f.Texts()
-}
-
-// builtinConnectionFindings is connectionFindings for a built-in's
-// manifest, which may name a setup flow or a registered client.
-func builtinConnectionFindings(t *testing.T, m map[string]any) []string {
-	t.Helper()
-	var f Findings
-	validateConnection(parseMap(t, m), true, &f)
+	validateConnection(parseMap(t, m), &f)
 	return f.Texts()
 }
 
@@ -165,6 +158,25 @@ func TestUserConfigRefusesTheTokenKeys(t *testing.T) {
 		got := Validate(parseMap(t, m), defaultFiles()).Texts()
 		if !slices.ContainsFunc(got, func(s string) bool {
 			return strings.Contains(s, "user_config."+key+": Kivali keeps a sign-in's tokens under that key")
+		}) {
+			t.Errorf("%s: findings = %v", key, got)
+		}
+	}
+}
+
+// Why this test exists: a client core registers itself is kept in the
+// connection's Secret under oauth_ keys of its own (its id and secret,
+// the endpoints discovery found, the registration's token). A form
+// field of one of those names would let a save overwrite the client, or
+// send the sign-in to an endpoint the owner typed, so the check refuses
+// each of them for every method, as it does the token keys.
+func TestUserConfigRefusesTheRegisteredClientKeys(t *testing.T) {
+	for _, key := range connect.RegisteredSecretKeys {
+		m := integrationtest.Manifest("crm", "1.0.0")
+		obj(m, "user_config")[key] = map[string]any{"type": "string", "title": "Value"}
+		got := Validate(parseMap(t, m), defaultFiles()).Texts()
+		if !slices.ContainsFunc(got, func(s string) bool {
+			return strings.Contains(s, "user_config."+key+": Kivali keeps the client it registers with the service under that key")
 		}) {
 			t.Errorf("%s: findings = %v", key, got)
 		}

@@ -2,8 +2,10 @@
 // internal/connect and of core's credential path: FakeVendor serves
 // the device authorization grant (RFC 8628), the authorization code
 // grant with PKCE (S256) and state passed back, refresh with rotation
-// and revocation (RFC 7009), with a knob for each failure a real
-// vendor answers. Expiries are read from an injected clock, so they
+// and revocation (RFC 7009), and as an MCP server's authorization
+// server the discovery documents and dynamic client registration
+// (registration.go), with a knob for each failure a real vendor
+// answers. Expiries are read from an injected clock, so they
 // agree with the test's.
 package connecttest
 
@@ -104,14 +106,40 @@ type Knobs struct {
 	// OnRevoke, when set, runs as a revocation request arrives, before
 	// it is answered.
 	OnRevoke func()
+
+	// NoResourceMetadata answers the protected resource's metadata
+	// (/.well-known/oauth-protected-resource/mcp) with a 404, as an
+	// authorization server that is its own resource does.
+	NoResourceMetadata bool
+	// ResourceMetadata and ServerMetadata, when set, change the
+	// protected resource's and the authorization server's metadata
+	// before they are sent.
+	ResourceMetadata, ServerMetadata func(doc map[string]any)
+	// AuthMethods is the token endpoint's
+	// token_endpoint_auth_methods_supported; nil sends
+	// client_secret_basic and client_secret_post.
+	AuthMethods []string
+	// RegisterError refuses each registration with this error code
+	// (invalid_redirect_uri, invalid_client_metadata...) and a 400.
+	RegisterError string
+	// RegisterNoSecret registers a public client: no client secret,
+	// token_endpoint_auth_method none.
+	RegisterNoSecret bool
+	// RegisterNoManagement gives no registration_client_uri or
+	// registration_access_token.
+	RegisterNoManagement bool
 }
 
-// Request is one request the vendor took: its path, form and Accept
+// Request is one request the vendor took: its method, path, form (a
+// registration's JSON body in JSON), Accept header and Authorization
 // header.
 type Request struct {
-	Path   string
-	Form   url.Values
-	Accept string
+	Method        string
+	Path          string
+	Form          url.Values
+	JSON          map[string]any
+	Accept        string
+	Authorization string
 }
 
 // FakeVendor is the vendor. Its endpoints are at URL + /authorize,
@@ -136,6 +164,10 @@ type FakeVendor struct {
 	codes map[string]authCode
 	// devices are the device codes issued.
 	devices map[string]*device
+	// registered are the clients registered (RFC 7591), by id;
+	// deregistered the ids deleted since (RFC 7592), in order.
+	registered   map[string]*RegisteredClient
+	deregistered []string
 }
 
 type authCode struct {
@@ -158,12 +190,17 @@ func New(tb interface {
 		clk: clk, clientID: ClientID, clientSecret: ClientSecret,
 		access: map[string]time.Time{}, refresh: map[string]bool{},
 		codes: map[string]authCode{}, devices: map[string]*device{},
+		registered: map[string]*RegisteredClient{},
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /authorize", v.authorize)
 	mux.HandleFunc("POST /token", v.token)
 	mux.HandleFunc("POST /device", v.deviceStart)
 	mux.HandleFunc("POST /revoke", v.revoke)
+	mux.HandleFunc("GET /.well-known/oauth-protected-resource/mcp", v.resourceMetadata)
+	mux.HandleFunc("GET /.well-known/oauth-authorization-server", v.serverMetadata)
+	mux.HandleFunc("POST /register", v.register)
+	mux.HandleFunc("DELETE /register/{id}", v.deregister)
 	v.Server = httptest.NewServer(mux)
 	tb.Cleanup(v.Close)
 	return v
@@ -262,7 +299,7 @@ func (v *FakeVendor) record(r *http.Request) (Knobs, bool) {
 	if r.Method == http.MethodGet {
 		form = r.URL.Query()
 	}
-	v.requests = append(v.requests, Request{Path: r.URL.Path, Form: form, Accept: r.Header.Get("Accept")})
+	v.requests = append(v.requests, Request{Method: r.Method, Path: r.URL.Path, Form: form, Accept: r.Header.Get("Accept"), Authorization: r.Header.Get("Authorization")})
 	return v.knobs, true
 }
 
@@ -331,11 +368,26 @@ func (v *FakeVendor) tokensAnswer(k Knobs, access, refresh string, expires time.
 	return out
 }
 
-func (v *FakeVendor) clientOK(f url.Values, needSecret bool) bool {
-	if f.Get("client_id") != v.clientID {
+// clientOK reports whether r, whose form is f, comes from a client the
+// vendor knows, with its secret when needSecret: the id and secret in
+// the form or in HTTP Basic, for the client it was made with or one
+// registered (a public one needs no secret).
+func (v *FakeVendor) clientOK(r *http.Request, f url.Values, needSecret bool) bool {
+	id, secret := f.Get("client_id"), f.Get("client_secret")
+	if u, p, ok := r.BasicAuth(); ok {
+		id, _ = url.QueryUnescape(u)
+		secret, _ = url.QueryUnescape(p)
+	}
+	v.mu.Lock()
+	rc := v.registered[id]
+	v.mu.Unlock()
+	if rc != nil {
+		return !needSecret || rc.AuthMethod == connect.AuthNone || secret == rc.Secret
+	}
+	if id != v.clientID {
 		return false
 	}
-	return !needSecret || f.Get("client_secret") == v.clientSecret
+	return !needSecret || secret == v.clientSecret
 }
 
 func (v *FakeVendor) token(w http.ResponseWriter, r *http.Request) {
@@ -376,7 +428,7 @@ func (v *FakeVendor) refreshGrant(w http.ResponseWriter, r *http.Request, k Knob
 		}
 		fail(w, r, k, k.RefreshError, desc)
 		return
-	case !v.clientOK(f, true):
+	case !v.clientOK(r, f, true):
 		code := "invalid_client"
 		if k.GitHubStyle {
 			code = "incorrect_client_credentials"
@@ -408,7 +460,7 @@ func (v *FakeVendor) refreshGrant(w http.ResponseWriter, r *http.Request, k Knob
 
 func (v *FakeVendor) deviceStart(w http.ResponseWriter, r *http.Request) {
 	k, ok := v.record(r)
-	if !ok || !v.clientOK(r.PostForm, false) {
+	if !ok || !v.clientOK(r, r.PostForm, false) {
 		fail(w, r, k, "invalid_client", "unknown client")
 		return
 	}
@@ -444,7 +496,7 @@ func (v *FakeVendor) deviceStart(w http.ResponseWriter, r *http.Request) {
 }
 
 func (v *FakeVendor) deviceGrant(w http.ResponseWriter, r *http.Request, k Knobs, f url.Values) {
-	if !v.clientOK(f, false) {
+	if !v.clientOK(r, f, false) {
 		fail(w, r, k, "invalid_client", "unknown client")
 		return
 	}
@@ -489,8 +541,17 @@ func (v *FakeVendor) deviceGrant(w http.ResponseWriter, r *http.Request, k Knobs
 func (v *FakeVendor) authorize(w http.ResponseWriter, r *http.Request) {
 	k, _ := v.record(r)
 	q := r.URL.Query()
-	if q.Get("client_id") != v.clientID || q.Get("response_type") != "code" || q.Get("redirect_uri") == "" {
+	v.mu.Lock()
+	rc := v.registered[q.Get("client_id")]
+	v.mu.Unlock()
+	known := q.Get("client_id") == v.clientID || rc != nil
+	if !known || q.Get("response_type") != "code" || q.Get("redirect_uri") == "" {
 		http.Error(w, "bad authorization request", http.StatusBadRequest)
+		return
+	}
+	if rc != nil && !slices.Contains(rc.RedirectURIs, q.Get("redirect_uri")) {
+		// A registered client signs in only at an address it registered.
+		http.Error(w, "the redirect address is not registered", http.StatusBadRequest)
 		return
 	}
 	back, err := url.Parse(q.Get("redirect_uri"))
@@ -519,7 +580,7 @@ func (v *FakeVendor) authorize(w http.ResponseWriter, r *http.Request) {
 }
 
 func (v *FakeVendor) codeGrant(w http.ResponseWriter, r *http.Request, k Knobs, f url.Values) {
-	if !v.clientOK(f, true) {
+	if !v.clientOK(r, f, true) {
 		fail(w, r, k, "invalid_client", "the client id or secret is wrong")
 		return
 	}
@@ -551,7 +612,7 @@ func s256(verifier string) string {
 
 func (v *FakeVendor) revoke(w http.ResponseWriter, r *http.Request) {
 	k, ok := v.record(r)
-	if !ok || !v.clientOK(r.PostForm, true) {
+	if !ok || !v.clientOK(r, r.PostForm, true) {
 		fail(w, r, k, "invalid_client", "the client id or secret is wrong")
 		return
 	}

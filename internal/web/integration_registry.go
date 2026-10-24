@@ -1045,7 +1045,8 @@ func (r *integrationRegistry) readConnection(ctx context.Context, name, connID s
 // with no sign-in's refresh, and the Secret's data: for a caller that
 // holds lockIntegrations, and for the log scrubber, which must not
 // reach a vendor for every line. The secret values include a sign-in's
-// stored tokens; the values hold neither them nor the client secret.
+// stored tokens and a registered client's secrets; the values hold
+// none of them, nor the client secret.
 func (r *integrationRegistry) readStoredConnection(ctx context.Context, name, connID string) (*integration.Manifest, store.IntegrationConnection, map[string]string, []string, string, map[string]string, error) {
 	_, m, err := r.store.CurrentIntegrationVersion(name)
 	if err != nil {
@@ -1082,7 +1083,7 @@ func (r *integrationRegistry) readStoredConnection(ctx context.Context, name, co
 				secretValues = append(secretValues, v)
 			}
 		}
-		for _, k := range []string{connect.SecretKeyAccessToken, connect.SecretKeyRefreshToken} {
+		for _, k := range connect.SecretValueKeys {
 			if v := data[k]; v != "" {
 				secretValues = append(secretValues, v)
 			}

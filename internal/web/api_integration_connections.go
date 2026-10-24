@@ -249,9 +249,9 @@ func (s *Server) writeConnection(ctx context.Context, v *integrationView, cur *c
 	// among the keys the owner is shown.
 	hostsOf := builtinHostsOf(v.builtin)
 	keys := sortedFieldKeys(secret)
-	// A sign-in's tokens are kept in the same Secret, and no field of
-	// the form either.
-	for _, k := range []string{connect.SecretKeyAccessToken, connect.SecretKeyRefreshToken} {
+	// A sign-in's tokens and a registered client are kept in the same
+	// Secret, and are no field of the form either.
+	for _, k := range connect.SecretKeys {
 		if t := stored[k]; t != "" {
 			secret[k] = t
 		}

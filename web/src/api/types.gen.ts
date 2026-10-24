@@ -1898,8 +1898,10 @@ export interface IntegrationPage {
   sign_in_hosts: string[];
   /**
    * SignInAt is, for each way the owner may sign in, the host of the
-   * page the sign-in goes to: browser, the authorization endpoint's;
-   * device, the device endpoint's. Absent for a token connection.
+   * page the sign-in goes to: browser, the authorization endpoint's
+   * (for a client Kivali registers, the one discovery found, once it
+   * has); device, the device endpoint's. Absent for a token
+   * connection.
    */
   sign_in_at?: { [key: string]: string};
   /**

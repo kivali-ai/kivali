@@ -299,15 +299,29 @@ func validateServer(m *Manifest, files []BundleFile, f *Findings) {
 	}
 }
 
+// reservedSecretKey reports, with a finding at at, whether key is one
+// core keeps a sign-in under in a connection's Secret (connect.SecretKeys):
+// a token's, or a client core registered itself. A form field or a key
+// setup keeps under one would overwrite it, or be shown as a field.
+func reservedSecretKey(at, key string, f *Findings) bool {
+	switch {
+	case key == connect.SecretKeyAccessToken || key == connect.SecretKeyRefreshToken:
+		f.errorf("%s: Kivali keeps a sign-in's tokens under that key; choose another", at)
+	case slices.Contains(connect.RegisteredSecretKeys, key):
+		f.errorf("%s: Kivali keeps the client it registers with the service under that key; choose another", at)
+	default:
+		return false
+	}
+	return true
+}
+
 func validateUserConfig(m *Manifest, f *Findings) {
 	for _, u := range m.UserConfig {
 		at := "user_config." + u.Key
 		if !configKeyRE.MatchString(u.Key) {
 			f.errorf("%s: the key must be lowercase letters, digits and underscores, starting with a letter", at)
 		}
-		if u.Key == connect.SecretKeyAccessToken || u.Key == connect.SecretKeyRefreshToken {
-			f.errorf("%s: Kivali keeps a sign-in's tokens under that key; choose another", at)
-		}
+		reservedSecretKey(at, u.Key, f)
 		switch u.Type {
 		case "string", "number", "boolean":
 		case "":
@@ -350,7 +364,7 @@ func validateTools(m *Manifest, f *Findings) []string {
 
 func validateKivali(m *Manifest, tools []string, builtin bool, f *Findings) {
 	k := m.Kivali
-	validateConnection(m, builtin, f)
+	validateConnection(m, f)
 
 	if len(k.Hosts) == 0 && !builtin {
 		f.errorf("kivali.hosts is empty")
@@ -418,10 +432,8 @@ var envNameRE = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
 // and secret to core, or has core register itself (client registered,
 // with a discover address in place of endpoints); a setup connection
 // declares what its flow may do (validateSetup) and, when the flow hands
-// over to a sign-in, that sign-in's endpoints. builtin says whether the
-// manifest is a built-in's: a registered client is not in this version
-// of Kivali for a bundle.
-func validateConnection(m *Manifest, builtin bool, f *Findings) {
+// over to a sign-in, that sign-in's endpoints.
+func validateConnection(m *Manifest, f *Findings) {
 	c := m.Kivali.Connection
 	endpoints := []struct{ key, value string }{
 		{"device_endpoint", c.DeviceEndpoint},
@@ -495,11 +507,8 @@ func validateConnection(m *Manifest, builtin bool, f *Findings) {
 	switch c.Client {
 	case "", ClientOperator:
 	case ClientRegistered:
-		switch {
-		case c.Method != MethodBrowser:
+		if c.Method != MethodBrowser {
 			f.errorf("kivali.connection.client registered: only a browser connection has Kivali register itself; the authorization server is found from discover")
-		case !builtin:
-			f.errorf("kivali.connection.client registered is not in this version of Kivali for a bundle; the owner registers the app and the client is operator")
 		}
 	case "kivali":
 		f.errorf("kivali.connection.client: a client Kivali ships is not in this version of Kivali; the owner registers the app and the client is operator")
@@ -586,14 +595,7 @@ func validateSetup(m *Manifest, f *Findings) {
 		f.errorf("kivali.connection.setup.summary is missing; say what setup does, in words for the owner")
 	}
 	validateHostList("kivali.connection.setup.hosts", s.Hosts, f)
-	reserved := func(at, key string) bool {
-		switch key {
-		case connect.SecretKeyAccessToken, connect.SecretKeyRefreshToken:
-			f.errorf("%s: Kivali keeps a sign-in's tokens under that key; choose another", at)
-			return true
-		}
-		return false
-	}
+	reserved := func(at, key string) bool { return reservedSecretKey(at, key, f) }
 	for _, fld := range s.Fields {
 		at := "kivali.connection.setup.fields." + fld.Key
 		switch {

@@ -1,7 +1,10 @@
 // Package connect runs the OAuth flows of a connection made by signing
 // in (a manifest whose kivali.connection.method is device or browser):
 // the device authorization grant (RFC 8628), the authorization code
-// grant with PKCE (RFC 7636), refresh, and revocation (RFC 7009).
+// grant with PKCE (RFC 7636), refresh, and revocation (RFC 7009); and,
+// for a client core registers itself, discovery of the authorization
+// server (RFC 9728, RFC 8414), registration (RFC 7591) and deleting the
+// registration (RFC 7592).
 //
 // Core runs every flow; an integration never does OAuth and never sees
 // the client secret or the refresh token. It asks kivali/credential at
@@ -43,6 +46,44 @@ const (
 	SecretKeyRefreshToken = "oauth_refresh_token"
 )
 
+// The keys a connection's Secret keeps a client core registered itself
+// under (Register), with the endpoints discovery found for it (Discover).
+// Like the token keys they are no connection field and are never given
+// to an integration. A list (the redirect addresses) is one address per
+// line; a time is Unix seconds.
+const (
+	SecretKeyClientID                = "oauth_client_id"
+	SecretKeyClientSecret            = "oauth_client_secret"
+	SecretKeyClientSecretExpiresAt   = "oauth_client_secret_expires_at"
+	SecretKeyClientAuthMethod        = "oauth_token_endpoint_auth_method"
+	SecretKeyRedirectURIs            = "oauth_redirect_uris"
+	SecretKeyResource                = "oauth_resource"
+	SecretKeyAuthorizationEndpoint   = "oauth_authorization_endpoint"
+	SecretKeyTokenEndpoint           = "oauth_token_endpoint"
+	SecretKeyRevocationEndpoint      = "oauth_revocation_endpoint"
+	SecretKeyRegistrationClientURI   = "oauth_registration_client_uri"
+	SecretKeyRegistrationAccessToken = "oauth_registration_access_token"
+)
+
+// RegisteredSecretKeys are the keys a registered client is kept under,
+// in a fixed order.
+var RegisteredSecretKeys = []string{
+	SecretKeyClientID, SecretKeyClientSecret, SecretKeyClientSecretExpiresAt, SecretKeyClientAuthMethod,
+	SecretKeyRedirectURIs, SecretKeyResource,
+	SecretKeyAuthorizationEndpoint, SecretKeyTokenEndpoint, SecretKeyRevocationEndpoint,
+	SecretKeyRegistrationClientURI, SecretKeyRegistrationAccessToken,
+}
+
+// SecretKeys is every key core keeps of a sign-in in a connection's
+// Secret: the tokens, then a registered client's. A save of the
+// connection form keeps them, and no form field or setup key may be one.
+var SecretKeys = append([]string{SecretKeyAccessToken, SecretKeyRefreshToken}, RegisteredSecretKeys...)
+
+// SecretValueKeys are those of SecretKeys whose values are secrets,
+// scrubbed from every log line and answer: the tokens, a registered
+// client's secret and its registration access token.
+var SecretValueKeys = []string{SecretKeyAccessToken, SecretKeyRefreshToken, SecretKeyClientSecret, SecretKeyRegistrationAccessToken}
+
 // RefreshMargin is how close to its expiry an access token is
 // refreshed before it is handed out.
 const RefreshMargin = time.Minute
@@ -58,12 +99,36 @@ const deviceSlowDown = 5 * time.Second
 // names none (RFC 8628, 3.2).
 const deviceDefaultInterval = 5 * time.Second
 
-// Client is the OAuth app the owner registered with the vendor.
-type Client struct{ ID, Secret string }
+// Client is the OAuth app a connection signs in with: the one the
+// owner registered with the vendor, or the one core registered itself
+// (Register).
+type Client struct {
+	ID, Secret string
+	// AuthMethod is how the client authenticates at the token and
+	// revocation endpoints: AuthSecretPost (empty is the same: the id and
+	// secret in the body), AuthSecretBasic (HTTP Basic) or AuthNone (a
+	// public client: the id alone).
+	AuthMethod string
+}
 
-// Endpoints are the vendor's OAuth addresses, from the manifest. An
-// endpoint the manifest does not give is empty.
-type Endpoints struct{ Authorization, Token, Device, Revocation string }
+// The ways a client authenticates at the token and revocation
+// endpoints (RFC 7591's token_endpoint_auth_method).
+const (
+	AuthSecretPost  = "client_secret_post"
+	AuthSecretBasic = "client_secret_basic"
+	AuthNone        = "none"
+)
+
+// Endpoints are the vendor's OAuth addresses, from the manifest or, for
+// a client core registers, from discovery. An endpoint not given is
+// empty.
+type Endpoints struct {
+	Authorization, Token, Device, Revocation string
+	// Resource is the protected resource the tokens are for (RFC 8707),
+	// sent with the authorization request, the code exchange and each
+	// refresh; empty sends none.
+	Resource string
+}
 
 // Tokens is what a sign-in or a refresh gives.
 type Tokens struct {
@@ -195,9 +260,40 @@ func seconds(raw json.RawMessage) time.Duration {
 // status, or another error for a failure to reach the vendor or an
 // answer that is not one.
 func (e *Engine) post(ctx context.Context, endpoint string, form url.Values) (*tokenAnswer, error) {
+	return e.postAs(ctx, endpoint, form, nil)
+}
+
+// authenticate puts c's credentials on a token or revocation request:
+// the id and secret in form for AuthSecretPost (and empty), the id
+// alone for AuthNone, or for AuthSecretBasic an Authorization header
+// (each part form-encoded first, RFC 6749 2.3.1) and nothing in form.
+// It returns the header to set, "" for none.
+func (c Client) authenticate(form url.Values) string {
+	switch c.AuthMethod {
+	case AuthSecretBasic:
+		return "Basic " + base64.StdEncoding.EncodeToString([]byte(url.QueryEscape(c.ID)+":"+url.QueryEscape(c.Secret)))
+	case AuthNone:
+		form.Set("client_id", c.ID)
+	default:
+		form.Set("client_id", c.ID)
+		form.Set("client_secret", c.Secret)
+	}
+	return ""
+}
+
+// postAs is post with c's credentials (Client.authenticate), when c is
+// set.
+func (e *Engine) postAs(ctx context.Context, endpoint string, form url.Values, c *Client) (*tokenAnswer, error) {
+	auth := ""
+	if c != nil {
+		auth = c.authenticate(form)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(form.Encode()))
 	if err != nil {
 		return nil, err
+	}
+	if auth != "" {
+		req.Header.Set("Authorization", auth)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
@@ -286,8 +382,9 @@ func asTerminal(err error, codes ...[]string) error {
 	return err
 }
 
-// Refresh exchanges a refresh token for new tokens, sending the
-// client's id and secret in the body. A vendor answer of invalid_grant,
+// Refresh exchanges a refresh token for new tokens, with the client's
+// credentials as its AuthMethod says (the id and secret in the body by
+// default) and the resource when the endpoints name one. A vendor answer of invalid_grant,
 // invalid_client, unauthorized_client or access_denied (or GitHub's
 // bad_refresh_token, incorrect_client_credentials), with whatever
 // status, is a *Terminal error: the owner must sign in again. Anything
@@ -298,10 +395,11 @@ func (e *Engine) Refresh(ctx context.Context, ep Endpoints, c Client, refresh st
 	form := url.Values{
 		"grant_type":    {"refresh_token"},
 		"refresh_token": {refresh},
-		"client_id":     {c.ID},
-		"client_secret": {c.Secret},
 	}
-	a, err := e.post(ctx, ep.Token, form)
+	if ep.Resource != "" {
+		form.Set("resource", ep.Resource)
+	}
+	a, err := e.postAs(ctx, ep.Token, form, &c)
 	if err != nil {
 		return Tokens{}, asTerminal(err, terminalCodes)
 	}
@@ -310,7 +408,7 @@ func (e *Engine) Refresh(ctx context.Context, ep Endpoints, c Client, refresh st
 
 // Revoke asks the vendor to revoke the tokens (RFC 7009), the refresh
 // token first and then the access token, one request each, with the
-// client's id and secret. With no revocation endpoint there is nothing
+// client's credentials. With no revocation endpoint there is nothing
 // to do. A failure is the caller's to log; it never blocks a delete.
 func (e *Engine) Revoke(ctx context.Context, ep Endpoints, c Client, t Tokens) error {
 	if ep.Revocation == "" {
@@ -321,11 +419,15 @@ func (e *Engine) Revoke(ctx context.Context, ep Endpoints, c Client, t Tokens) e
 		if tok.value == "" {
 			continue
 		}
-		form := url.Values{"token": {tok.value}, "token_type_hint": {tok.hint}, "client_id": {c.ID}, "client_secret": {c.Secret}}
+		form := url.Values{"token": {tok.value}, "token_type_hint": {tok.hint}}
+		auth := c.authenticate(form)
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, ep.Revocation, strings.NewReader(form.Encode()))
 		if err != nil {
 			errs = append(errs, err)
 			continue
+		}
+		if auth != "" {
+			req.Header.Set("Authorization", auth)
 		}
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		req.Header.Set("Accept", "application/json")
@@ -455,8 +557,9 @@ func (e *Engine) PollDevice(ctx context.Context, ep Endpoints, c Client, ds *Dev
 // AuthorizeURL is the vendor's authorization address for the code
 // grant: the endpoint with response_type=code, the client id, the
 // redirect address, the scopes, state, the PKCE challenge (S256) when
-// pkceVerifier is set, and the manifest's extra parameters. The
-// endpoint's own query parameters are kept.
+// pkceVerifier is set, the resource when the endpoints name one (RFC
+// 8707), and the manifest's extra parameters. The endpoint's own query
+// parameters are kept.
 func (e *Engine) AuthorizeURL(ep Endpoints, c Client, redirectURL, state string, scopes []string, pkceVerifier string, extra map[string]string) string {
 	u, err := url.Parse(ep.Authorization)
 	if err != nil {
@@ -477,26 +580,31 @@ func (e *Engine) AuthorizeURL(ep Endpoints, c Client, redirectURL, state string,
 		q.Set("code_challenge", PKCEChallenge(pkceVerifier))
 		q.Set("code_challenge_method", "S256")
 	}
+	if ep.Resource != "" {
+		q.Set("resource", ep.Resource)
+	}
 	u.RawQuery = q.Encode()
 	return u.String()
 }
 
 // Exchange trades an authorization code for tokens, with the client's
-// id and secret, the redirect address the code was issued for and the
-// PKCE verifier when one was used. A refusal in the terminal set is a
+// credentials, the redirect address the code was issued for, the PKCE
+// verifier when one was used and the resource when the endpoints name
+// one. A refusal in the terminal set is a
 // *Terminal; any other failure is an error in words.
 func (e *Engine) Exchange(ctx context.Context, ep Endpoints, c Client, code, redirectURL, pkceVerifier string) (Tokens, error) {
 	form := url.Values{
-		"grant_type":    {"authorization_code"},
-		"code":          {code},
-		"redirect_uri":  {redirectURL},
-		"client_id":     {c.ID},
-		"client_secret": {c.Secret},
+		"grant_type":   {"authorization_code"},
+		"code":         {code},
+		"redirect_uri": {redirectURL},
 	}
 	if pkceVerifier != "" {
 		form.Set("code_verifier", pkceVerifier)
 	}
-	a, err := e.post(ctx, ep.Token, form)
+	if ep.Resource != "" {
+		form.Set("resource", ep.Resource)
+	}
+	a, err := e.postAs(ctx, ep.Token, form, &c)
 	if err != nil {
 		return Tokens{}, asTerminal(err, terminalCodes)
 	}

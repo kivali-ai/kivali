@@ -136,10 +136,10 @@ func (s *Server) refreshSignIn(ctx context.Context, name, id string, m *integrat
 		s.auditAgentCall(name, start, agent.CEOSlug, "refresh", false, words)
 		return connect.Tokens{}, errSignInNeeded
 	}
-	client := signInClient(rec, data)
-	tok, err := s.connectEngine().Refresh(ctx, signInEndpoints(m), client, stored.Refresh)
+	app := signInAppOf(m, rec, data)
+	tok, err := s.connectEngine().Refresh(ctx, app.ep, app.client, stored.Refresh)
 	if err != nil {
-		words := signInFailureWords(err, stored, client)
+		words := signInFailureWords(err, stored, app.client)
 		var term *connect.Terminal
 		if errors.As(err, &term) {
 			s.markSignInFailed(name, id, words)
@@ -309,38 +309,46 @@ func (s *Server) revokeSignIns(ctx context.Context, rs signInRevocations) {
 }
 
 // revokeSignIn asks the vendor to revoke rec's tokens, found in data,
-// best effort: a manifest with no revocation endpoint, or a connection
-// that holds no tokens, sends nothing, and a failure is logged. It
-// runs once the connection is deleted or signed out, which it never
-// holds up for longer than revokeTimeout.
+// best effort: a connection with no revocation endpoint (the manifest's,
+// or for a registered client the one discovery found), or one that holds
+// no tokens, sends nothing, and a failure is logged. A registered
+// client is then deleted with the service (deregisterClient). It runs
+// once the connection is deleted or signed out, which each request
+// holds up for no longer than revokeTimeout.
 func (s *Server) revokeSignIn(ctx context.Context, name string, m *integration.Manifest, rec store.IntegrationConnection, data map[string]string) {
-	if m == nil || !m.Kivali.Connection.OAuth() || m.Kivali.Connection.RevocationEndpoint == "" {
+	if m == nil || !m.Kivali.Connection.OAuth() {
 		return
 	}
 	tok := connect.Tokens{Access: data[connect.SecretKeyAccessToken], Refresh: data[connect.SecretKeyRefreshToken]}
-	s.revokeTokens(ctx, name, rec.ID, m, signInClient(rec, data), tok)
+	s.revokeTokens(ctx, name, rec.ID, signInAppOf(m, rec, data), tok)
+	if m.Kivali.Connection.Registered() {
+		s.deregisterClient(ctx, name, rec.ID, data)
+	}
 }
 
-// revokeTokens asks the vendor to revoke tok, issued to client for
-// name's connection id, best effort, as revokeSignIn does: nothing to
-// send with no revocation endpoint or no token, a failure logged.
-func (s *Server) revokeTokens(ctx context.Context, name, id string, m *integration.Manifest, client connect.Client, tok connect.Tokens) {
-	if m.Kivali.Connection.RevocationEndpoint == "" || (tok.Access == "" && tok.Refresh == "") {
+// revokeTokens asks the vendor to revoke tok, issued to app's client
+// for name's connection id, best effort, as revokeSignIn does: nothing
+// to send with no revocation endpoint or no token, a failure logged.
+func (s *Server) revokeTokens(ctx context.Context, name, id string, app signInApp, tok connect.Tokens) {
+	if app.ep.Revocation == "" || (tok.Access == "" && tok.Refresh == "") {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), revokeTimeout)
 	defer cancel()
-	if err := s.connectEngine().Revoke(ctx, signInEndpoints(m), client, tok); err != nil {
+	if err := s.connectEngine().Revoke(ctx, app.ep, app.client, tok); err != nil {
 		log.Printf("integration %s: revoke connection %s's tokens: %v", name, id, err)
 	}
 }
 
 // revocableTokens is the Secret's data of name's connection rec when
 // its tokens are to be revoked as it is deleted: a sign-in connection
-// whose manifest m has a revocation endpoint. nil otherwise, and when
-// the Secret cannot be read (the delete goes on; nothing is revoked).
+// whose manifest m has a revocation endpoint, or whose client Kivali
+// registered (its endpoints, and the registration to delete, are in
+// the Secret). nil otherwise, and when the Secret cannot be read (the
+// delete goes on; nothing is revoked).
 func (s *Server) revocableTokens(ctx context.Context, name string, m *integration.Manifest, rec store.IntegrationConnection) map[string]string {
-	if m == nil || !m.Kivali.Connection.OAuth() || m.Kivali.Connection.RevocationEndpoint == "" || rec.SecretName == "" {
+	if m == nil || !m.Kivali.Connection.OAuth() || rec.SecretName == "" ||
+		(m.Kivali.Connection.RevocationEndpoint == "" && !m.Kivali.Connection.Registered()) {
 		return nil
 	}
 	data, err := s.Secrets.Get(ctx, rec.SecretName)

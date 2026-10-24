@@ -114,8 +114,10 @@ type IntegrationPage struct {
 	// Kivali takes the tokens from. Empty for a token connection.
 	SignInHosts []string `json:"sign_in_hosts"`
 	// SignInAt is, for each way the owner may sign in, the host of the
-	// page the sign-in goes to: browser, the authorization endpoint's;
-	// device, the device endpoint's. Absent for a token connection.
+	// page the sign-in goes to: browser, the authorization endpoint's
+	// (for a client Kivali registers, the one discovery found, once it
+	// has); device, the device endpoint's. Absent for a token
+	// connection.
 	SignInAt map[string]string `json:"sign_in_at,omitempty"`
 	// SignInRedirectURL is the redirect address to register with the
 	// vendor for browser sign-in, as each connection's sign-in carries
