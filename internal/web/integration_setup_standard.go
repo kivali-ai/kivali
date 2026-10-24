@@ -112,7 +112,7 @@ func (s *Server) setupSpecFor(v *integrationView, r *http.Request) (setupSpec, *
 		if !ok || c.Setup == nil {
 			return setupSpec{}, &connWriteError{http.StatusConflict, v.displayName() + "'s setup is not in this version of Kivali", v.whoBuilt()}
 		}
-		spec := setupSpec{driver: si, fields: c.Setup.Fields, hosts: c.Setup.Hosts, keeps: c.Setup.Keeps.Keys(), keep: s.keepSetupValues}
+		spec := setupSpec{driver: si, fields: c.Setup.Fields, hosts: c.Setup.Hosts, keeps: c.Setup.Keeps.Keys(), setup: c.Setup, keep: s.keepSetupValues}
 		if then := c.Setup.Then; then != "" {
 			// The sign-in setup hands over to must be able to finish from
 			// here, or the owner would make the app for nothing.
@@ -183,7 +183,7 @@ func (s *Server) keepConnectionForm(ctx context.Context, run *setupRun, values m
 	}
 	if cur == nil {
 		if rec, err := s.Store.GetIntegrationConnection(run.name); err == nil {
-			s.setupMade(run, rec.ID)
+			s.setupMade(run, rec.ID, false)
 		}
 	}
 	return nil
