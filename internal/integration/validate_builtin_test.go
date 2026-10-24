@@ -42,13 +42,6 @@ func TestValidateBuiltin(t *testing.T) {
 	if f := ValidateBuiltin(builtinManifest()); len(f) != 0 {
 		t.Fatalf("findings on a good built-in manifest: %v", f.Texts())
 	}
-	// A built-in runs inside Kivali with whichever connection an
-	// agent's access names, so it may take several.
-	multiple := builtinManifest()
-	multiple.Kivali.Connection.Multiple = true
-	if f := ValidateBuiltin(multiple); len(f) != 0 {
-		t.Errorf("findings on a built-in that takes several connections: %v", f.Texts())
-	}
 	// The same manifest is refused as a bundle: no server, no hosts,
 	// and a choices name that is not a tool.
 	f := Validate(builtinManifest(), nil)
@@ -96,11 +89,9 @@ func TestValidateBuiltin(t *testing.T) {
 // Why this test exists: a built-in's manifest is written to the store
 // as this type marshals and read back with ParseManifest. A field lost
 // on the way (the connection form's order, the access form, a
-// sensitive flag, whether it takes several connections) would change
-// what the Org page draws for it.
+// sensitive flag) would change what the Org page draws for it.
 func TestBuiltinManifestRoundTrips(t *testing.T) {
 	bm := builtinManifest()
-	bm.Kivali.Connection.Multiple = true
 	raw, err := json.Marshal(bm)
 	if err != nil {
 		t.Fatal(err)
@@ -115,7 +106,34 @@ func TestBuiltinManifestRoundTrips(t *testing.T) {
 	if f := ValidateBuiltin(m); len(f) != 0 {
 		t.Errorf("findings after a round trip: %v", f.Texts())
 	}
-	if !m.UserConfig[0].Sensitive || m.Kivali.Access.Choices["books"] != "books" || m.Kivali.Verify != "find" || !m.Kivali.Connection.Multiple {
+	if !m.UserConfig[0].Sensitive || m.Kivali.Access.Choices["books"] != "books" || m.Kivali.Verify != "find" {
 		t.Errorf("read back as %+v", m)
+	}
+}
+
+// Why this test exists: a built-in version an earlier binary stored
+// (Git's 2.0.0, superseded on disk) has "multiple": true in its
+// connection section, and a bundle may still name it. Kivali reads one
+// connection per installation; refusing the key would leave the stored
+// version unreadable and its page empty after an upgrade.
+func TestConnectionMultipleIsIgnored(t *testing.T) {
+	raw, err := json.Marshal(builtinManifest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw = []byte(strings.Replace(string(raw), `"connection":{`, `"connection":{"multiple":true,`, 1))
+	if !strings.Contains(string(raw), `"multiple":true`) {
+		t.Fatalf("the manifest has no connection section to add to: %s", raw)
+	}
+	m, err := ParseManifest(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f := ValidateBuiltin(m); len(f) != 0 {
+		t.Errorf("findings on a manifest naming multiple: %v", f.Texts())
+	}
+	out, _ := json.Marshal(m)
+	if strings.Contains(string(out), "multiple") {
+		t.Errorf("written back with multiple: %s", out)
 	}
 }

@@ -44,18 +44,16 @@ var Colors = []string{"blue", "green", "red"}
 const FailGreeting = "fail"
 
 // Echo is the built-in. Version is its manifest's version; a test
-// changes it to see boot supersede the version before. Multiple makes
-// its manifest take several connections (kivali.connection.multiple).
-// SignIn, when set, is its manifest's connection section in place of a
-// token connection's: a connection made by signing in, for tests of
-// core's credential path (Multiple still applies).
+// changes it to see boot supersede the version before. SignIn, when
+// set, is its manifest's connection section in place of a token
+// connection's: a connection made by signing in, for tests of core's
+// credential path.
 //
 // SetupFlow makes its connection a setup one (setup.go). HandOver, with
 // it, is the sign-in setup hands over to (setup.then): its method and
 // endpoints. Neither changes once the built-in is registered.
 type Echo struct {
 	Version   string
-	Multiple  bool
 	SignIn    *integration.Connection
 	SetupFlow bool
 	HandOver  *integration.Connection
@@ -118,10 +116,9 @@ func (e *Echo) record(seen Seen) {
 
 // Manifest is echo's manifest.
 func (e *Echo) Manifest() *integration.Manifest {
-	conn := integration.Connection{Method: "token", Multiple: e.Multiple}
+	conn := integration.Connection{Method: "token"}
 	if e.SignIn != nil {
 		conn = *e.SignIn
-		conn.Multiple = e.Multiple
 	}
 	m := &integration.Manifest{
 		ManifestVersion: "0.3",

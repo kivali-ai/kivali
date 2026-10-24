@@ -16,14 +16,13 @@ import type { OrgContextValue } from '../../state/OrgProvider';
 import { aboutLine, versionLabel } from './About';
 import { BACKUP_DEBOUNCE_MS } from './Backup';
 import { InstallScreen, bundleLine } from './InstallScreen';
-import { IntegrationPage, deleteConnectionWords, setupReturnOf, signInLine, signsInAt, uninstallWords } from './IntegrationPage';
+import { IntegrationPage, setupReturnOf, signInLine, signsInAt, uninstallWords } from './IntegrationPage';
 import { SETUP_POLL_MS, codeLifeWords, progressWords } from './SetupFlowPanel';
 import { whenLabel } from './integrationParts';
 import { Org, headerMeta } from './OrgPage';
 import {
   goAccessChoices,
   goAccessWrite,
-  goConnectionCreate,
   goConnectionWrite,
   goDowngrade,
   goFiles,
@@ -31,7 +30,7 @@ import {
   goIntegrationAudit,
   goIntegrationLogs,
   goIntegrationPage,
-  goIntegrationPageMultiple,
+  goIntegrationPageGit,
   goIntegrationPageSignIn,
   goIntegrationPageSignInAgain,
   goIntegrationPageSignInElsewhere,
@@ -2061,234 +2060,109 @@ describe('Integration page', () => {
   });
 });
 
-describe('Integration page, several connections', () => {
+describe('Integration page, Git’s one connection', () => {
   const PATH = '/org/integrations/git';
   const API = '/api/v1/org/integrations/git';
-  const HUB = goIntegrationPageMultiple.connections[0]!;
-  const LAB = goIntegrationPageMultiple.connections[1]!;
-  // A connection's card, found by its title: a stored connection's is a <details>, folded until its title is clicked;
-  // one being added is a plain card.
-  const card = (name: string) => screen.getByText(name, { selector: '.kv-card-title' }).closest('.kv-card') as HTMLElement;
-  const openCard = async (name: string) => {
-    await click(screen.getByText(name, { selector: '.kv-card-title' }));
-    return within(card(name));
-  };
   const gitRoutes = (more: Record<string, Route> = {}) => ({
-    ['GET ' + API]: goIntegrationPageMultiple,
+    ['GET ' + API]: goIntegrationPageGit,
     ['GET ' + API + '/audit']: { rows: [] },
     ['GET ' + API + '/logs']: { lines: [] },
     ...more,
   });
 
-  // Guards the Connections block of an integration that takes several (integration_page_multiple.json, Git's page):
-  // one card per connection, named by its label and filled with its own values, each saving to its own id, with no
-  // Test connection since Git has none; and Add a connection opens a blank form with a label whose body is
-  // connection_create.json. A card that saved through the singular route, or showed the first connection's host in
-  // the second, would change the wrong account.
-  it('draws a card per connection and saves and adds by id', async () => {
+  // Guards the page's shape now that the installation is the connection (integration_page_git.json, which carries no
+  // connections list, no multiple flag and no connection label): one Connection block holding the connection form,
+  // with no connection cards, no Label field and no Add a connection; and an access table with no Connection column.
+  // A page that still drew the several-connection view, or read a field the server no longer sends, fails here.
+  it('draws one Connection block and an access table with no connection column', async () => {
+    await renderOrg(PATH, { routes: gitRoutes() });
+    const block = screen.getByRole('region', { name: 'Connection' });
+    expect(screen.queryByRole('region', { name: 'Connections' })).toBeNull();
+    expect(block.querySelector('.kv-card')).toBeNull();
+    expect(within(block).queryByLabelText('Label')).toBeNull();
+    expect(within(block).queryByRole('button', { name: 'Add a connection' })).toBeNull();
+    expect(within(block).queryByRole('button', { name: 'Delete' })).toBeNull();
+    expect(within(block).getByLabelText('Host')).toHaveValue('github.com');
+    expect(within(block).getByLabelText('Access token')).toHaveAttribute('placeholder', 'Stored');
+    const table = within(within(screen.getByRole('region', { name: 'Access' })).getByRole('table'));
+    expect(table.getAllByRole('columnheader').map((h) => h.textContent)).toEqual(['Agent', 'Access', 'Set', '']);
+  });
+
+  // Guards an access row whose connection a boot migration retired (Lee's row in integration_page_git.json): the
+  // reason arrives through invalid, so the row shows it in the danger tone and the page's banner counts it. A row
+  // that hid the reason would leave Lee's access granting nothing with no word of why.
+  it('shows why an access row set for a retired connection grants nothing', async () => {
+    await renderOrg(PATH, { routes: gitRoutes() });
+    const lee = screen.getByText('Lee').closest('tr') as HTMLElement;
+    expect(
+      within(lee).getByText('Invalid: set for the connection gitlab.example.com, which Git no longer has; set it again. It grants nothing until you change it.'),
+    ).toHaveClass('kv-text--danger');
+    const dana = screen.getByText('Dana').closest('tr') as HTMLElement;
+    expect(within(dana).queryByText(/^Invalid: /)).toBeNull();
+    expect(screen.getByText('1 access row no longer fits this version’s access form. Set it again.')).toBeInTheDocument();
+  });
+
+  // Guards ConnectionWrite without a label: Save connection PUTs the fields alone to …/connection, the one route
+  // there is, and never a …/connections/{id} route the server no longer has. A body carrying label would be refused
+  // as an unknown field.
+  it('saves the connection to the one connection route with no label', async () => {
+    await renderOrg(PATH, { routes: gitRoutes({ ['PUT ' + API + '/connection']: goIntegrationPageGit }) });
+    const block = within(screen.getByRole('region', { name: 'Connection' }));
+    fireEvent.change(block.getByLabelText('Host'), { target: { value: 'gitlab.example.com' } });
+    fireEvent.change(block.getByLabelText('Access token'), { target: { value: 'glpat-...' } });
+    await click(block.getByRole('button', { name: 'Save connection' }));
+    const body = lastBody('PUT', API + '/connection');
+    expect(body).toEqual({ fields: { host: 'gitlab.example.com', token: 'glpat-...' } });
+    expect(body).not.toHaveProperty('label');
+    expect(calls.some((c) => c.url.startsWith(API + '/connections'))).toBe(false);
+  });
+
+  // Guards AccessWrite without connection_id: the access dialog has no Connection picker, Give access is ready once
+  // the form is, and both a new grant and a change PUT the access alone (access_write.json for the new one). The
+  // server refuses unknown body fields, so a connection_id sent would fail every grant.
+  it('gives and changes access with no connection picker and no connection id', async () => {
     await renderOrg(PATH, {
-      routes: gitRoutes({
-        ['PUT ' + API + '/connections/' + LAB.id]: goIntegrationPageMultiple,
-        ['POST ' + API + '/connections']: goIntegrationPageMultiple,
-      }),
-    });
-    const block = within(screen.getByRole('region', { name: 'Connections' }));
-    expect(screen.queryByRole('region', { name: 'Connection' })).toBeNull();
-    const hub = await openCard('GitHub');
-    const lab = await openCard('Company GitLab');
-    expect(hub.getByLabelText('Host')).toHaveValue('github.com');
-    expect(lab.getByLabelText('Host')).toHaveValue('gitlab.example.com');
-    expect(lab.getByLabelText('Label')).toHaveValue('Company GitLab');
-    expect(lab.getByLabelText('Access token')).toHaveAttribute('placeholder', 'Stored');
-    expect(lab.getByRole('alert')).toHaveTextContent('Reconnect needed');
-    expect(hub.queryByText('Reconnect needed')).toBeNull();
-    expect(block.queryByRole('button', { name: 'Test connection' })).toBeNull();
-    expect(block.queryByText(/^Verified /)).toBeNull();
-
-    fireEvent.change(lab.getByLabelText('Host'), { target: { value: 'gitlab.example.org' } });
-    await click(lab.getByRole('button', { name: 'Save connection' }));
-    // The label was not typed into, so it is not sent: one the integration derives keeps following the host.
-    expect(lastBody('PUT', API + '/connections/' + LAB.id)).toEqual({ fields: { host: 'gitlab.example.org' } });
-    expect(called('PUT', API + '/connection')).toBe(false);
-    const labAgain = within(card('Company GitLab'));
-    fireEvent.change(labAgain.getByLabelText('Label'), { target: { value: 'GitLab' } });
-    await click(labAgain.getByRole('button', { name: 'Save connection' }));
-    expect(lastBody('PUT', API + '/connections/' + LAB.id)).toEqual({ label: 'GitLab', fields: { host: 'gitlab.example.com' } });
-
-    await click(block.getByRole('button', { name: 'Add a connection' }));
-    const added = within(card('New connection'));
-    expect(added.getByLabelText('Host')).toHaveValue('');
-    expect(added.getByLabelText('Access token')).not.toHaveAttribute('placeholder');
-    fireEvent.change(added.getByLabelText('Label'), { target: { value: 'Staging GitLab' } });
-    fireEvent.change(added.getByLabelText('Host'), { target: { value: 'gitlab-staging.example.com' } });
-    fireEvent.change(added.getByLabelText('Access token'), { target: { value: 'glpat-...' } });
-    await click(added.getByRole('button', { name: 'Add connection' }));
-    expect(lastBody('POST', API + '/connections')).toEqual(goConnectionCreate);
-    expect(screen.queryByText('New connection', { selector: '.kv-card-title' })).toBeNull();
-    expect(block.getByRole('button', { name: 'Add a connection' })).toBeInTheDocument();
-  });
-
-  // Guards the folded list: every stored connection starts folded to its label and one line (a danger badge when it
-  // needs you, how many agents use it, since when), so the page does not show every field of every connection; a
-  // card opens on its own, leaving the others folded; a card stays open after its own save, which remounts it; and a
-  // connection being added is open at once. A list that opened every card, or snapped a card shut on save, fails this.
-  it('folds each connection to a line and opens one at a time', async () => {
-    await renderOrg(PATH, { routes: gitRoutes({ ['PUT ' + API + '/connections/' + LAB.id]: goIntegrationPageMultiple }) });
-    for (const name of ['GitHub', 'Company GitLab']) {
-      expect(card(name).tagName).toBe('DETAILS');
-      expect(card(name)).not.toHaveAttribute('open');
-    }
-    const labLine = within(card('Company GitLab').querySelector('summary')!);
-    expect(labLine.getByText('Reconnect needed')).toHaveClass('kv-badge--danger');
-    expect(labLine.getByText('1 agent')).toBeInTheDocument();
-    expect(labLine.getByText(/^Connected since /)).toBeInTheDocument();
-    expect(within(card('GitHub').querySelector('summary')!).queryByText('Reconnect needed')).toBeNull();
-
-    const lab = await openCard('Company GitLab');
-    expect(card('Company GitLab')).toHaveAttribute('open');
-    expect(card('GitHub')).not.toHaveAttribute('open');
-    fireEvent.change(lab.getByLabelText('Access token'), { target: { value: 'glpat-new' } });
-    await click(lab.getByRole('button', { name: 'Save connection' }));
-    expect(card('Company GitLab')).toHaveAttribute('open');
-    expect(card('GitHub')).not.toHaveAttribute('open');
-
-    await click(screen.getByRole('button', { name: 'Add a connection' }));
-    expect(card('New connection').tagName).toBe('SECTION');
-    expect(within(card('New connection')).getByLabelText('Host')).toBeVisible();
-  });
-
-  // Guards the cards of an integration that takes several connections and has a connection test (connection_test
-  // true; no built-in today, so the Git page stands in): each card shows its own last result, a failed one in a danger
-  // banner, and tests its own id. A card that tested through the singular route, or showed another card's result,
-  // would report on the wrong account.
-  it('tests each card by its id when the integration has a connection test', async () => {
-    const tested = {
-      ...goIntegrationPageMultiple,
-      connection_test: true,
-      connections: [
-        { ...HUB, verified_at: '2026-10-21T10:00:00Z', verified: true, verify_message: 'Connected as octo' },
-        { ...LAB, verified_at: '2026-10-21T10:00:00Z', verified: false, verify_message: 'The host refused the token.' },
-      ],
-    };
-    await renderOrg(PATH, { routes: gitRoutes({ ['GET ' + API]: tested, ['POST ' + API + '/connections/' + LAB.id + '/verify']: tested }) });
-    expect(within(card('Company GitLab').querySelector('summary')!).getByText('Could not verify')).toHaveClass('kv-badge--danger');
-    expect(within(card('GitHub').querySelector('summary')!).queryByText('Could not verify')).toBeNull();
-    const hub = await openCard('GitHub');
-    const lab = await openCard('Company GitLab');
-    expect(hub.getByText(/^Verified .*: Connected as octo$/)).toBeInTheDocument();
-    expect(lab.getByText('The host refused the token.').closest('[role="alert"]')).toHaveClass('kv-banner--danger');
-    expect(lab.queryByText(/^Verified /)).toBeNull();
-    await click(lab.getByRole('button', { name: 'Test connection' }));
-    expect(called('POST', API + '/connections/' + LAB.id + '/verify')).toBe(true);
-    expect(called('POST', API + '/connections/' + HUB.id + '/verify')).toBe(false);
-  });
-
-  // Guards Delete on one of several connections: it waits for the danger dialog, which names the agents whose access
-  // goes with it (Lee's row names the GitLab connection, Dana's does not), then deletes that id alone. Deleting by the
-  // singular route would take every connection and every agent's access.
-  it('asks before deleting a connection, naming whose access goes with it', async () => {
-    const after = { ...goIntegrationPageMultiple, connections: [HUB], access: [goIntegrationPageMultiple.access[0]!] };
-    await renderOrg(PATH, { routes: gitRoutes({ ['DELETE ' + API + '/connections/' + LAB.id]: after }) });
-    await click((await openCard('Company GitLab')).getByRole('button', { name: 'Delete' }));
-    const dialog = screen.getByRole('dialog');
-    expect(dialog).toHaveClass('kv-dialog--danger');
-    expect(within(dialog).getByText('Delete Company GitLab?')).toBeInTheDocument();
-    expect(within(dialog).getByText('Its stored secrets are deleted. Lee loses its access, which uses it.')).toBeInTheDocument();
-    expect(called('DELETE', API + '/connections/' + LAB.id)).toBe(false);
-    await click(within(dialog).getByRole('button', { name: 'Delete' }));
-    expect(called('DELETE', API + '/connections/' + LAB.id)).toBe(true);
-    expect(called('DELETE', API + '/connection')).toBe(false);
-    expect(screen.queryByText('Company GitLab', { selector: '.kv-card-title' })).toBeNull();
-  });
-
-  // Guards the access dialog with several connections: a required Connection select comes first (Give access waits for
-  // it), the row's connection is chosen when changing it, and the body names the chosen id (access_write.json); the access table says
-  // which connection each agent uses. Without the select an agent would be set for a connection nobody chose.
-  it('asks which connection an agent uses, and shows it on each row', async () => {
-    await renderOrg(PATH, {
-      routes: gitRoutes({ ['PUT ' + API + '/access/chief-of-staff']: goIntegrationPageMultiple, ['PUT ' + API + '/access/dana']: goIntegrationPageMultiple }),
+      routes: gitRoutes({ ['PUT ' + API + '/access/chief-of-staff']: goIntegrationPageGit, ['PUT ' + API + '/access/lee']: goIntegrationPageGit }),
     });
     const access = within(screen.getByRole('region', { name: 'Access' }));
-    const table = within(access.getByRole('table'));
-    expect(within(table.getByText('Dana').closest('tr') as HTMLElement).getByText('GitHub')).toBeInTheDocument();
-    expect(within(table.getByText('Lee').closest('tr') as HTMLElement).getByText('Company GitLab')).toBeInTheDocument();
-
     await click(access.getByRole('button', { name: 'Give access' }));
     let dialog = within(screen.getByRole('dialog'));
-    const select = dialog.getByRole('combobox', { name: 'Connection' });
-    expect(select).toHaveValue('');
-    expect(within(select).getAllByRole('option').map((o) => o.textContent)).toEqual(['Choose a connection', 'GitHub', 'Company GitLab']);
-    expect(dialog.getByRole('button', { name: 'Give access' })).toBeDisabled();
-    fireEvent.change(select, { target: { value: LAB.id } });
-    await flush();
+    expect(dialog.queryByRole('combobox', { name: 'Connection' })).toBeNull();
     fireEvent.change(dialog.getByRole('textbox', { name: 'Repositories' }), { target: { value: 'eng/*' } });
     await click(dialog.getByRole('button', { name: 'Add' }));
+    expect(dialog.getByRole('button', { name: 'Give access' })).toBeEnabled();
     await click(dialog.getByRole('button', { name: 'Give access' }));
     expect(lastBody('PUT', API + '/access/chief-of-staff')).toEqual(goAccessWrite);
+    expect(lastBody('PUT', API + '/access/chief-of-staff')).not.toHaveProperty('connection_id');
 
-    await click(screen.getByRole('button', { name: 'Change Dana’s access' }));
+    await click(screen.getByRole('button', { name: 'Change Lee’s access' }));
     dialog = within(screen.getByRole('dialog'));
-    expect(dialog.getByRole('combobox', { name: 'Connection' })).toHaveValue(HUB.id);
+    expect(dialog.queryByRole('combobox', { name: 'Connection' })).toBeNull();
     await click(dialog.getByRole('button', { name: 'Save access' }));
-    expect(lastBody('PUT', API + '/access/dana')).toEqual({ access: { repositories: ['acme/*'], push: false }, connection_id: HUB.id });
+    expect(lastBody('PUT', API + '/access/lee')).toEqual({ access: { repositories: ['eng/*'], push: true } });
   });
 
-  // Guards the cards against each other: saving one starts that card again from what is stored, and leaves what was
-  // typed into another card in place. A page-wide reset would throw away a token half typed into the other card.
-  it('keeps what was typed into one card when another saves', async () => {
-    await renderOrg(PATH, { routes: gitRoutes({ ['PUT ' + API + '/connections/' + LAB.id]: goIntegrationPageMultiple }) });
-    fireEvent.change((await openCard('GitHub')).getByLabelText('Access token'), { target: { value: 'ghp-half-typed' } });
-    const lab = await openCard('Company GitLab');
-    fireEvent.change(lab.getByLabelText('Access token'), { target: { value: 'glpat-new' } });
-    await click(lab.getByRole('button', { name: 'Save connection' }));
-    expect(within(card('GitHub')).getByLabelText('Access token')).toHaveValue('ghp-half-typed');
-    expect(within(card('Company GitLab')).getByLabelText('Access token')).toHaveValue('');
-  });
-
-  // Guards options listed through a connection: Load options waits until a connection is chosen, asks through the
-  // chosen one, and choosing another connection drops the options and the values picked from them, which came through
-  // the first. Otherwise an agent could be given a GitHub repository on its GitLab connection.
-  it('lists options through the chosen connection, and drops them when it changes', async () => {
+  // Guards the options a field lists live: Load options is ready at once, with no connection to choose first, and asks
+  // …/choices/{key} with no ?connection= query, which the server no longer reads. A request that still named a
+  // connection would never reach the route that answers.
+  it('lists options without naming a connection', async () => {
     const listed = {
-      ...goIntegrationPageMultiple,
+      ...goIntegrationPageGit,
       access_form: {
         fields: [{ key: 'repos', title: 'Repositories', description: '', kind: 'choices' as const, required: false, options: [], choices: true, danger: false }],
       },
     };
     await renderOrg(PATH, {
-      routes: gitRoutes({
-        ['GET ' + API]: listed,
-        ['GET ' + API + '/choices/repos?connection=' + HUB.id]: { options: ['acme/widgets'] },
-        ['GET ' + API + '/choices/repos?connection=' + LAB.id]: { options: ['eng/tools'] },
-        ['PUT ' + API + '/access/chief-of-staff']: listed,
-      }),
+      routes: gitRoutes({ ['GET ' + API]: listed, ['GET ' + API + '/choices/repos']: { options: ['eng/tools'] }, ['PUT ' + API + '/access/chief-of-staff']: listed }),
     });
     await click(within(screen.getByRole('region', { name: 'Access' })).getByRole('button', { name: 'Give access' }));
     const dialog = within(screen.getByRole('dialog'));
-    expect(dialog.getByRole('button', { name: 'Load options' })).toBeDisabled();
-    expect(dialog.getByText('Choose a connection first: these are listed through it.')).toBeInTheDocument();
-    fireEvent.change(dialog.getByRole('combobox', { name: 'Connection' }), { target: { value: HUB.id } });
-    await flush();
+    expect(dialog.getByRole('button', { name: 'Load options' })).toBeEnabled();
     await click(dialog.getByRole('button', { name: 'Load options' }));
-    await click(dialog.getByRole('checkbox', { name: 'acme/widgets' }));
-    fireEvent.change(dialog.getByRole('combobox', { name: 'Connection' }), { target: { value: LAB.id } });
-    await flush();
-    expect(dialog.queryByRole('checkbox', { name: 'acme/widgets' })).toBeNull();
-    await click(dialog.getByRole('button', { name: 'Load options' }));
+    expect(calls.filter((c) => c.url.startsWith(API + '/choices/')).map((c) => c.url)).toEqual([API + '/choices/repos']);
     await click(dialog.getByRole('checkbox', { name: 'eng/tools' }));
     await click(dialog.getByRole('button', { name: 'Give access' }));
-    expect(lastBody('PUT', API + '/access/chief-of-staff')).toEqual({ access: { repos: ['eng/tools'] }, connection_id: LAB.id });
-  });
-
-  // Guards the one-connection page against the several-connection one: with one connection (integration_page.json)
-  // there is no card, no Add a connection, no Connection column and no Connection select.
-  it('draws the one-connection page with no connection choice', async () => {
-    await renderOrg('/org/integrations/hubspot');
-    expect(screen.getByRole('region', { name: 'Connection' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Add a connection' })).toBeNull();
-    expect(within(within(screen.getByRole('region', { name: 'Access' })).getByRole('table')).queryByText('Connection')).toBeNull();
-    await click(screen.getByRole('button', { name: 'Give access' }));
-    expect(within(screen.getByRole('dialog')).queryByRole('combobox', { name: 'Connection' })).toBeNull();
+    expect(lastBody('PUT', API + '/access/chief-of-staff')).toEqual({ access: { repos: ['eng/tools'] } });
   });
 });
 
@@ -2410,7 +2284,6 @@ describe('Integration page, setup flows', () => {
       summary: { ...signedIn.summary, needs: 1 },
       requirements: signedIn.requirements.map((r) => (r.id === 'sign_in' ? { ...r, met: false, words: 'Not signed in yet.' } : r)),
       connection: { ...signedIn.connection!, sign_in },
-      connections: [{ ...signedIn.connection!, sign_in }],
     };
   };
   const pageRoutes = (page: typeof signedIn, start: SetupFlow = goSetupFlowWait) => ({
@@ -2618,7 +2491,7 @@ describe('Integration page, setup flows', () => {
   // sentence rather than show a button the server would refuse.
   it('says when this version of Kivali has no way to sign in', async () => {
     const none = { ...signedIn.connection!, sign_in: { ways: [], signed_in: false } };
-    await renderOrg(PATH, { routes: pageRoutes({ ...signedIn, connection: none, connections: [none] }) });
+    await renderOrg(PATH, { routes: pageRoutes({ ...signedIn, connection: none }) });
     expect(signInBlock().getByText('This version of Kivali has no way to sign in to this service.')).toBeInTheDocument();
     expect(signInBlock().queryByRole('button')).toBeNull();
   });
@@ -2641,7 +2514,7 @@ describe('Integration page, setup flows', () => {
     expect(writeText).toHaveBeenCalledWith(openAt);
     cleanup();
     const { open_at: _openAt, ...noAddress } = page.connection!.sign_in!;
-    const without = { ...page, connection: { ...page.connection!, sign_in: noAddress }, connections: [{ ...page.connection!, sign_in: noAddress }] };
+    const without = { ...page, connection: { ...page.connection!, sign_in: noAddress } };
     await renderOrg(PATH, { routes: pageRoutes(without) });
     expect(signInBlock().getByText('Signing in does not work from here. Open the team in your browser, at its own address, and sign in there.')).toBeInTheDocument();
     expect(signInBlock().queryByRole('textbox', { name: 'Team address' })).toBeNull();
@@ -2717,7 +2590,6 @@ describe('Integration page, setup flows', () => {
       ...goIntegrationPage,
       summary: { ...goIntegrationPage.summary, state: 'available', needs: 0, agents: 0 },
       connection: undefined,
-      connections: [],
       access: [],
       requirements: [],
       can_uninstall: true,
@@ -2740,15 +2612,6 @@ describe('Integration page, setup flows', () => {
     const setup = within(screen.getByRole('region', { name: 'Install' }));
     await click(setup.getByRole('button', { name: 'Install' }));
     expect(setup.getByRole('button', { name: 'Continue to github.com' })).toBeInTheDocument();
-  });
-});
-
-describe('connection words', () => {
-  // Guards the delete dialog's sentence for every count of agents: none, one (its) and several (their, with "and").
-  it('names the agents whose access a delete takes', () => {
-    expect(deleteConnectionWords([])).toBe('Its stored secrets are deleted. No agent’s access uses it.');
-    expect(deleteConnectionWords(['Dana'])).toBe('Its stored secrets are deleted. Dana loses its access, which uses it.');
-    expect(deleteConnectionWords(['Dana', 'Lee', 'Kim'])).toBe('Its stored secrets are deleted. Dana, Lee and Kim lose their access, which uses it.');
   });
 });
 

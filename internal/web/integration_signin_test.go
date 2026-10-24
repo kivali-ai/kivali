@@ -406,23 +406,24 @@ func TestSignInTokensAreScrubbedFromTheLog(t *testing.T) {
 	}
 }
 
-// Why this test exists: deleting a sign-in connection, or uninstalling
-// the integration, must ask the vendor to revoke its tokens where the
-// vendor allows: the Secret is gone from Kivali, and the tokens should
-// not outlive it at the vendor. A vendor that fails the revocation
-// does not stop the delete.
-func TestSignInDeleteRevokes(t *testing.T) {
+// Why this test exists: uninstalling the integration must ask the
+// vendor to revoke its connection's tokens where the vendor allows: the
+// Secret is gone from Kivali, and the tokens should not outlive it at
+// the vendor. A vendor that fails the revocation does not stop the
+// uninstall.
+func TestSignInUninstallRevokes(t *testing.T) {
 	srv, vendor, _ := signInServer(t)
 	signInBundle(t, srv, vendor)
 	tok := vendor.Issue()
 	signedIn(t, srv, "crm", tok)
-	if rr := intDelete(t, srv, intBase+"/crm/connections/c1"); rr.Code != http.StatusOK {
-		t.Fatalf("delete: %d %s", rr.Code, rr.Body.String())
+	if rr := intDelete(t, srv, intBase+"/crm"); rr.Code != http.StatusNoContent {
+		t.Fatalf("uninstall: %d %s", rr.Code, rr.Body.String())
 	}
 	if got := vendor.Revoked(); len(got) != 2 || got[0] != tok.Refresh || got[1] != tok.Access {
 		t.Errorf("revoked %v", got)
 	}
 
+	signInBundle(t, srv, vendor)
 	tok = vendor.Issue()
 	signedIn(t, srv, "crm", tok)
 	vendor.Set(func(k *connecttest.Knobs) { k.RevokeStatus = http.StatusInternalServerError })
@@ -458,7 +459,6 @@ func TestSignInRevokesWithTheLockReleased(t *testing.T) {
 		}
 	})
 	for _, del := range []func() int{
-		func() int { return intDelete(t, srv, intBase+"/crm/connections/c1").Code },
 		func() int { return intPost(t, srv, intBase+"/crm/connection/sign-out").Code },
 		func() int { return intDelete(t, srv, intBase+"/crm").Code },
 	} {
@@ -467,7 +467,7 @@ func TestSignInRevokesWithTheLockReleased(t *testing.T) {
 			t.Fatalf("delete: %d", code)
 		}
 	}
-	if len(free) != 6 {
+	if len(free) != 4 {
 		t.Fatalf("%d revocations, want two per delete", len(free))
 	}
 	for i, ok := range free {

@@ -1855,7 +1855,7 @@ export interface IntegrationPage {
   actions: IntegrationAction[];
   /**
    * ConnectionFields is the connection form, in the bundle's order,
-   * with what the first connection holds. A connection made by
+   * with what the connection holds. A connection made by
    * signing in adds the client id and the client secret.
    */
   connection_fields: ConnectionField[];
@@ -1911,22 +1911,10 @@ export interface IntegrationPage {
    */
   sign_in_redirect_url?: string;
   /**
-   * Connection is the first connection (the oldest), absent while
-   * there is none: the one connection of an integration that takes
-   * one.
+   * Connection is the integration's connection, absent while there is
+   * none.
    */
   connection?: ConnectionState;
-  /**
-   * Connections is every connection, oldest first; empty while there
-   * is none.
-   */
-  connections: ConnectionState[];
-  /**
-   * Multiple is true for an integration that takes several
-   * connections, each with a label; each agent's access names the one
-   * it uses.
-   */
-  multiple: boolean;
   /**
    * ConnectionTest is true when the version in use has a connection
    * test (its manifest names kivali.verify). Only then does the page
@@ -2098,14 +2086,6 @@ export interface ConnectionField {
  */
 export interface ConnectionState {
   id: string;
-  /**
-   * Label is what the owner calls the connection ("Company GitLab"),
-   * or, for an integration that takes several, the one the
-   * integration derives from its fields when the owner gave none
-   * (Git: its host). The page of an integration that takes one
-   * connection does not ask for a label, so it is usually empty there.
-   */
-  label: string;
   created_at: string /* RFC 3339 */;
   /**
    * Fields is the connection form with what this connection holds:
@@ -2347,20 +2327,12 @@ export interface SetupFlowAnswer {
 }
 /**
  * ConnectionWrite is the body of PUT
- * /api/v1/org/integrations/{name}/connection, POST .../connections and
- * PUT .../connections/{id}: field values by key, and the label. A
+ * /api/v1/org/integrations/{name}/connection: field values by key. A
  * sensitive field left out keeps its stored value; an empty string
  * clears it. A field that is not sensitive is replaced by what is
  * sent. A required field with no value, stored or sent, is a 400.
  */
 export interface ConnectionWrite {
-  /**
-   * Label is what the owner calls the connection. Required for an
-   * integration that takes several connections (a built-in may give
-   * one: Git's is the host); empty keeps the stored label. Unique
-   * within the integration, ignoring case (409).
-   */
-  label?: string;
   fields: { [key: string]: string};
 }
 /**
@@ -2437,40 +2409,25 @@ export interface AccessRow {
   summary: string;
   set_at: string /* RFC 3339 */;
   /**
-   * ConnectionID is the connection the access was set for, and the
-   * one the agent's calls use; ConnectionLabel is its label, empty
-   * when it has none or is no longer there.
-   */
-  connection_id: string;
-  connection_label: string;
-  /**
-   * Invalid says why this row no longer fits the access form of the
-   * version in use (a version approved or rolled back to changed
-   * it), or that its connection is gone. An invalid row grants
-   * nothing until it is set again.
+   * Invalid says why this row grants nothing until it is set again:
+   * it no longer fits the access form of the version in use (a
+   * version approved or rolled back to changed it), or the connection
+   * it was set for is gone.
    */
   invalid?: string;
 }
 /**
  * AccessWrite is the body of PUT
  * /api/v1/org/integrations/{name}/access/{slug}: the filled access
- * form, and the connection it is for. For an integration without a
- * form, send {}.
+ * form. For an integration without a form, send {}.
  */
 export interface AccessWrite {
   access: any /* json.RawMessage */;
-  /**
-   * ConnectionID is the connection the agent's calls use. Required
-   * when the integration has more than one connection; with one, it
-   * may be left out. Missing or unknown where it is needed is a 400.
-   */
-  connection_id?: string;
 }
 /**
  * AccessChoices is GET /api/v1/org/integrations/{name}/choices/{key}:
- * the options the integration lists for a field, through the
- * connection (?connection=<id> names one of several; without it, the
- * first).
+ * the options the integration lists for a field, through its
+ * connection.
  */
 export interface AccessChoices {
   options: string[];
@@ -2695,21 +2652,15 @@ export interface AgentIntegration {
   state: IntegrationState;
   /**
    * Usable is true when the agent's calls can go through now: the
-   * integration is installed and running, and the connection its
-   * access names has its secrets and, made by signing in, is signed
-   * in. Always false under Available.
+   * integration is installed and running, and its connection has its
+   * secrets and, made by signing in, is signed in. Always false under
+   * Available.
    */
   usable: boolean;
   /**
    * Summary is the agent's access in words; empty under Available.
    */
   summary: string;
-  /**
-   * ConnectionLabel is the label of the connection the agent's access
-   * names, for an integration that takes several connections: the row
-   * reads "Git (Company GitLab)". Empty otherwise.
-   */
-  connection_label?: string;
   /**
    * Invalid is set when the agent's access no longer fits the
    * integration's access form and grants nothing until set again.

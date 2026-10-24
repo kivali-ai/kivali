@@ -43,12 +43,11 @@ func newSignInFlowID() string {
 	return hex.EncodeToString(b[:])
 }
 
-// signInTarget is the sign-in connection Sign out acts on: the one {id}
-// names (byID), or the integration's one, the oldest. It answers 404
-// for an id that names none, and 409 for an integration whose
-// connection is not made by signing in, one this version does not
-// carry, and one with no approved version or no connection yet.
-func (s *Server) signInTarget(w http.ResponseWriter, r *http.Request, v *integrationView, byID bool) (*connView, bool) {
+// signInTarget is the sign-in connection Sign out acts on: the
+// integration's. It answers 409 for an integration whose connection is
+// not made by signing in, one this version does not carry, and one
+// with no approved version or no connection yet.
+func (s *Server) signInTarget(w http.ResponseWriter, r *http.Request, v *integrationView) (*connView, bool) {
 	switch {
 	case v.staleBuiltin():
 		writeAPIError(w, http.StatusConflict, builtinRefusal(v.displayName(), builtinNotIncluded), whoYou)
@@ -60,10 +59,7 @@ func (s *Server) signInTarget(w http.ResponseWriter, r *http.Request, v *integra
 		writeAPIError(w, http.StatusConflict, v.displayName()+" is not connected by signing in", whoYou)
 		return nil, false
 	}
-	if byID {
-		return connectionOr404(w, r, v)
-	}
-	c := v.first()
+	c := v.conn
 	if c == nil {
 		writeAPIError(w, http.StatusConflict, v.displayName()+" has no connection", whoYou)
 		return nil, false
@@ -71,8 +67,7 @@ func (s *Server) signInTarget(w http.ResponseWriter, r *http.Request, v *integra
 	return c, true
 }
 
-// handleAPISignOut signs out the connection {id} names (byID), or the
-// integration's one: it ends a flow under way, removes the tokens from
+// handleAPISignOut signs out the integration's connection: it ends a flow under way, removes the tokens from
 // the connection's Secret (its fields stay, the client id and secret
 // among them), clears the sign-in and the last connection test from its
 // record, asks the vendor to revoke the tokens (best effort), appends
@@ -81,26 +76,24 @@ func (s *Server) signInTarget(w http.ResponseWriter, r *http.Request, v *integra
 // with lockIntegrations released, so a slow vendor holds up no other
 // integration write. Of a connection not signed in that holds no
 // tokens, only a flow under way is ended.
-func (s *Server) handleAPISignOut(byID bool) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		unlock := s.lockIntegrations()
-		revokes, ok := s.signOutLocked(w, r, byID)
-		unlock()
-		s.revokeSignIns(r.Context(), revokes)
-		if ok {
-			s.writeIntegrationPage(w, r)
-		}
+func (s *Server) handleAPISignOut(w http.ResponseWriter, r *http.Request) {
+	unlock := s.lockIntegrations()
+	revokes, ok := s.signOutLocked(w, r)
+	unlock()
+	s.revokeSignIns(r.Context(), revokes)
+	if ok {
+		s.writeIntegrationPage(w, r)
 	}
 }
 
 // signOutLocked is Sign out under lockIntegrations: true once done,
 // false with an error answered. It returns the tokens to revoke.
-func (s *Server) signOutLocked(w http.ResponseWriter, r *http.Request, byID bool) (signInRevocations, bool) {
+func (s *Server) signOutLocked(w http.ResponseWriter, r *http.Request) (signInRevocations, bool) {
 	v, ok := s.integrationOr404(w, r)
 	if !ok {
 		return nil, false
 	}
-	c, ok := s.signInTarget(w, r, v, byID)
+	c, ok := s.signInTarget(w, r, v)
 	if !ok {
 		return nil, false
 	}

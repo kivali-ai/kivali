@@ -171,8 +171,8 @@ func TestIntegrationLifecycle(t *testing.T) {
 		t.Errorf("Uninstall was given %+v", got)
 	}
 	page = echoPage(t, srv)
-	if page.Summary.State != apitypes.IntegrationStateAvailable || len(page.Access) != 0 || len(page.Connections) != 0 || page.CanUninstall {
-		t.Errorf("after uninstall = %s, access %v, connections %v", page.Summary.State, page.Access, page.Connections)
+	if page.Summary.State != apitypes.IntegrationStateAvailable || len(page.Access) != 0 || page.Connection != nil || page.CanUninstall {
+		t.Errorf("after uninstall = %s, access %v, connections %v", page.Summary.State, page.Access, page.Connection)
 	}
 	if names := mem.Names(); len(names) != 0 {
 		t.Errorf("secrets left: %v", names)
@@ -223,13 +223,13 @@ func TestFailedInstallKeepsNothing(t *testing.T) {
 			srv.Secrets = mem
 			startSetupFlow(t, srv, "echo")
 			_, cookie := echoGo(t, srv, "acme")
-			if page := echoPage(t, srv); page.Summary.State != apitypes.IntegrationStateSettingUp || len(page.Connections) != 1 {
-				t.Fatalf("after the Keep = %s, connections %v", page.Summary.State, page.Connections)
+			if page := echoPage(t, srv); page.Summary.State != apitypes.IntegrationStateSettingUp || page.Connection == nil {
+				t.Fatalf("after the Keep = %s, connections %v", page.Summary.State, page.Connection)
 			}
 			end.do(t, srv, e, cookie)
 			srv.setupAwaitDiscard(context.Background(), "echo")
-			if page := echoPage(t, srv); page.Summary.State != apitypes.IntegrationStateAvailable || len(page.Connections) != 0 {
-				t.Errorf("after it %s = %s, connections %v", end.name, page.Summary.State, page.Connections)
+			if page := echoPage(t, srv); page.Summary.State != apitypes.IntegrationStateAvailable || page.Connection != nil {
+				t.Errorf("after it %s = %s, connections %v", end.name, page.Summary.State, page.Connection)
 			}
 			if names := mem.Names(); len(names) != 0 {
 				t.Errorf("secrets left: %v", names)
@@ -255,8 +255,8 @@ func TestFailedInstallKeepsNothing(t *testing.T) {
 		waitFlow(t, srv, "echo", apitypes.SetupFlowStateFailed)
 		srv.setupAwaitDiscard(context.Background(), "echo")
 		page := echoPage(t, srv)
-		if page.Summary.State != apitypes.IntegrationStateInstalled || len(page.Connections) != 1 {
-			t.Errorf("after a failed fix = %s, connections %v", page.Summary.State, page.Connections)
+		if page.Summary.State != apitypes.IntegrationStateInstalled || page.Connection == nil {
+			t.Errorf("after a failed fix = %s, connections %v", page.Summary.State, page.Connection)
 		}
 		if conn := srv.setupConnection(context.Background(), "echo"); conn.Fields["account"] != "half-made-app" || conn.Fields["token"] != "tok-c0de-1" {
 			t.Errorf("the connection after a failed fix = %v", conn.Fields)

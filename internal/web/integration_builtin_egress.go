@@ -167,9 +167,10 @@ func (s *Server) mintBuiltinProxySecret(ctx context.Context, name, connID string
 	return secret, nil
 }
 
-// RegisterBuiltinEgress registers the scoped proxy credential of every
+// RegisterBuiltinEgress registers the scoped proxy credential of the
 // connection of every switched-on built-in integration again, from its
-// Secret, and drops those of the ones switched off. Boot calls it
+// Secret, and drops those of the ones switched off and of every
+// connection set aside. Boot calls it
 // (main.go), and so does a restore: the proxy's credentials file is
 // not in a backup, and the Secrets are not touched by one. Failures are
 // logged; the integration's calls then mint and register as they go.
@@ -185,6 +186,13 @@ func (s *Server) RegisterBuiltinEgress(ctx context.Context) {
 		it, err := s.Store.GetIntegration(name)
 		if err != nil || s.builtinFor(it) != bi {
 			continue
+		}
+		// A connection set aside (store.MigrateIntegrationConnections)
+		// reaches nothing, whatever an earlier boot registered for it.
+		if retired, err := s.Store.RetiredIntegrationConnections(name); err != nil {
+			log.Printf("integration %s: read the connections set aside: %v", name, err)
+		} else if err := s.dropBuiltinEgress(name, retired); err != nil {
+			log.Printf("integration %s: drop a connection set aside's proxy credential: %v", name, err)
 		}
 		if !it.Enabled {
 			if err := s.dropAllBuiltinEgress(name); err != nil {

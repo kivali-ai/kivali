@@ -338,6 +338,11 @@ func (s *Server) restoreArchive(ctx context.Context, path, filename string) erro
 	if err := s.Store.InstallBuiltinIntegrations(s.BuiltinIntegrations.Manifests(), s.clk().Now()); err != nil {
 		log.Printf("restore: install built-in integrations: %v", err)
 	}
+	// An archive from a Kivali whose Git took several connections
+	// holds them all: one is kept, as at boot.
+	if err := s.Store.MigrateIntegrationConnections(); err != nil {
+		log.Printf("restore: integrations: %v", err)
+	}
 	// And the ones that ship as bundles, with this binary's files.
 	// One that fails is not run: the archive's record of it is not the
 	// binary's.

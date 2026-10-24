@@ -28,19 +28,16 @@ func (f *failingPuts) Put(ctx context.Context, name string, data map[string]stri
 }
 
 // Why this test exists: the vendor is asked to start a sign-in off any
-// request, so the owner may switch the integration off or delete the
-// connection while it answers. The flow must end then, and nothing may
-// poll for, or later write tokens into, an integration switched off or
-// a connection gone.
+// request, so the owner may switch the integration off while it
+// answers. The flow must end then, and nothing may poll for, or later
+// write tokens into, an integration switched off. (Uninstalling it
+// meanwhile: TestSignInCancelledByUninstall.)
 func TestDeviceSignInEndsWhenSwitchedOffMeanwhile(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		act  func(t *testing.T, srv *Server)
 	}{
 		{"switched off", func(t *testing.T, srv *Server) { intPost(t, srv, intBase+"/crm/disable") }},
-		{"deleted", func(t *testing.T, srv *Server) {
-			intDelete(t, srv, intBase+"/crm/connections/"+firstConnID(t, srv, "crm"))
-		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			srv, vendor, _ := signInServer(t)

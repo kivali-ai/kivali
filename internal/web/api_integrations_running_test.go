@@ -116,10 +116,8 @@ func TestAPIIntegrationVerifyWithoutAnAction(t *testing.T) {
 		t.Fatal(err)
 	}
 	page = orgOK[apitypes.IntegrationPage](t, orgGet(t, srv, intBase+"/crm"))
-	for _, c := range append([]apitypes.ConnectionState{*page.Connection}, page.Connections...) {
-		if c.VerifiedAt != nil || c.Verified != nil || c.VerifyMessage != nil {
-			t.Errorf("a kept result reached the page: %+v", c)
-		}
+	if c := page.Connection; c.VerifiedAt != nil || c.Verified != nil || c.VerifyMessage != nil {
+		t.Errorf("a kept result reached the page: %+v", c)
 	}
 }
 

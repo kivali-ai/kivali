@@ -268,7 +268,7 @@ func TestIntegrationAccessFollowsTheVersionInUse(t *testing.T) {
 	s := mustStore(t)
 	mustAgent(t, s, "dana")
 	approvedWithConnection(t, s, "crm")
-	if err := s.SetIntegrationAccess("crm", IntegrationAccess{Slug: "dana", ConnectionID: "c1", Access: map[string]any{"blogs": []any{"M"}, "region": "eu"}, SetAt: intNow}); err != nil {
+	if err := s.SetIntegrationAccess("crm", IntegrationAccess{Slug: "dana", Access: map[string]any{"blogs": []any{"M"}, "region": "eu"}, SetAt: intNow}); err != nil {
 		t.Fatal(err)
 	}
 	m := integrationtest.Manifest("crm", "2.0.0")
@@ -343,7 +343,7 @@ func TestRemoveIntegration(t *testing.T) {
 	if err := s.PutIntegrationConnection("crm", IntegrationConnection{ID: "c1", CreatedAt: intNow}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SetIntegrationAccess("crm", IntegrationAccess{Slug: "dana", ConnectionID: "c1", Access: map[string]any{"blogs": []any{"M"}}, SetAt: intNow}); err != nil {
+	if err := s.SetIntegrationAccess("crm", IntegrationAccess{Slug: "dana", Access: map[string]any{"blogs": []any{"M"}}, SetAt: intNow}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.AppendIntegrationAudit("crm", IntegrationAuditRow{At: intNow, Agent: "dana", Action: "create_post", Allowed: true}); err != nil {
@@ -394,16 +394,20 @@ func TestIntegrationAccessAcrossAgents(t *testing.T) {
 	mustAgent(t, s, "dana")
 	mustAgent(t, s, "lee")
 	approvedWithConnection(t, s, "crm")
-	approvedWithConnection(t, s, "blog")
-	set := func(name, slug, conn string, access map[string]any) {
+	// blog has an approved version and no connection.
+	storeVersion(t, s, "blog", "1.0.0")
+	if err := s.ApproveIntegrationVersion("blog", "1.0.0", intNow); err != nil {
+		t.Fatal(err)
+	}
+	set := func(name, slug string, access map[string]any) {
 		t.Helper()
-		if err := s.SetIntegrationAccess(name, IntegrationAccess{Slug: slug, ConnectionID: conn, Access: access, SetAt: intNow, SetBy: "ceo"}); err != nil {
+		if err := s.SetIntegrationAccess(name, IntegrationAccess{Slug: slug, Access: access, SetAt: intNow, SetBy: "ceo"}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	set("crm", "dana", "c1", map[string]any{"blogs": []any{"Marketing"}, "write": true})
-	set("crm", "lee", "c1", map[string]any{"blogs": []any{"Eng"}, "region": "apac"})
-	set("blog", "dana", "c0", map[string]any{"blogs": []any{"x"}})
+	set("crm", "dana", map[string]any{"blogs": []any{"Marketing"}, "write": true})
+	set("crm", "lee", map[string]any{"blogs": []any{"Eng"}, "region": "apac"})
+	set("blog", "dana", map[string]any{"blogs": []any{"x"}})
 
 	rows, err := s.ListIntegrationAccess("crm")
 	if err != nil || len(rows) != 2 {
@@ -431,10 +435,10 @@ func TestIntegrationAccessAcrossAgents(t *testing.T) {
 	if rows, _ := s.ListIntegrationAccess("crm"); len(rows) != 1 {
 		t.Errorf("rows after clear = %v", rows)
 	}
-	if err := s.SetIntegrationAccess("crm", IntegrationAccess{Slug: "nobody", ConnectionID: "c1"}); !errors.Is(err, ErrNotFound) {
+	if err := s.SetIntegrationAccess("crm", IntegrationAccess{Slug: "nobody"}); !errors.Is(err, ErrNotFound) {
 		t.Errorf("access for no agent: %v", err)
 	}
-	if err := s.SetIntegrationAccess("crm", IntegrationAccess{Slug: "../x", ConnectionID: "c1"}); err == nil {
+	if err := s.SetIntegrationAccess("crm", IntegrationAccess{Slug: "../x"}); err == nil {
 		t.Error("path-like slug accepted")
 	}
 }
@@ -448,7 +452,7 @@ func TestArchiveAgentClearsIntegrationAccess(t *testing.T) {
 	approvedWithConnection(t, s, "crm")
 	approvedWithConnection(t, s, "blog")
 	for _, name := range []string{"crm", "blog"} {
-		if err := s.SetIntegrationAccess(name, IntegrationAccess{Slug: "dana", ConnectionID: "c1", Access: map[string]any{"blogs": []any{"M"}}, SetAt: intNow}); err != nil {
+		if err := s.SetIntegrationAccess(name, IntegrationAccess{Slug: "dana", Access: map[string]any{"blogs": []any{"M"}}, SetAt: intNow}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -471,7 +475,7 @@ func TestDeleteIntegrationConnection(t *testing.T) {
 	if err != nil || c.ID != "c1" || c.Fields["portal"] != "acme" || c.SecretName != "kivali-connection-crm-c1" || len(c.SecretKeys) != 1 {
 		t.Fatalf("connection = %+v, %v", c, err)
 	}
-	if err := s.SetIntegrationAccess("crm", IntegrationAccess{Slug: "dana", ConnectionID: "c1", Access: map[string]any{"blogs": []any{"M"}}}); err != nil {
+	if err := s.SetIntegrationAccess("crm", IntegrationAccess{Slug: "dana", Access: map[string]any{"blogs": []any{"M"}}}); err != nil {
 		t.Fatal(err)
 	}
 	gone, err := s.DeleteIntegrationConnection("crm")

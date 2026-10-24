@@ -62,7 +62,7 @@ func TestSignInNeedsYouRow(t *testing.T) {
 	if findRow() == nil {
 		t.Fatal("no row after a second refusal")
 	}
-	if rr := intDelete(t, srv, intBase+"/crm/connections/c1"); rr.Code != http.StatusOK {
+	if rr := intDelete(t, srv, intBase+"/crm"); rr.Code != http.StatusNoContent {
 		t.Fatalf("delete: %d", rr.Code)
 	}
 	if row := findRow(); row != nil {

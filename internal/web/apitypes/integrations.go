@@ -85,7 +85,7 @@ type IntegrationPage struct {
 	Packages []string            `json:"packages"`
 	Actions  []IntegrationAction `json:"actions"`
 	// ConnectionFields is the connection form, in the bundle's order,
-	// with what the first connection holds. A connection made by
+	// with what the connection holds. A connection made by
 	// signing in adds the client id and the client secret.
 	ConnectionFields []ConnectionField `json:"connection_fields"`
 	// ConnectionMethod is how the connection is made: token, device,
@@ -123,17 +123,9 @@ type IntegrationPage struct {
 	// with the vendor before they have a client id to save. Present when
 	// the manifest offers browser sign-in.
 	SignInRedirectURL *string `json:"sign_in_redirect_url,omitempty"`
-	// Connection is the first connection (the oldest), absent while
-	// there is none: the one connection of an integration that takes
-	// one.
+	// Connection is the integration's connection, absent while there is
+	// none.
 	Connection *ConnectionState `json:"connection,omitempty"`
-	// Connections is every connection, oldest first; empty while there
-	// is none.
-	Connections []ConnectionState `json:"connections"`
-	// Multiple is true for an integration that takes several
-	// connections, each with a label; each agent's access names the one
-	// it uses.
-	Multiple bool `json:"multiple"`
 	// ConnectionTest is true when the version in use has a connection
 	// test (its manifest names kivali.verify). Only then does the page
 	// offer Test connection, and only then does a connection carry its
@@ -249,13 +241,7 @@ type ConnectionField struct {
 
 // ConnectionState is one connection's standing.
 type ConnectionState struct {
-	ID string `json:"id"`
-	// Label is what the owner calls the connection ("Company GitLab"),
-	// or, for an integration that takes several, the one the
-	// integration derives from its fields when the owner gave none
-	// (Git: its host). The page of an integration that takes one
-	// connection does not ask for a label, so it is usually empty there.
-	Label     string    `json:"label"`
+	ID        string    `json:"id"`
 	CreatedAt time.Time `json:"created_at"`
 	// Fields is the connection form with what this connection holds:
 	// the value of each field that is not sensitive, and which secrets
@@ -427,17 +413,11 @@ type SetupFlowAnswer struct {
 }
 
 // ConnectionWrite is the body of PUT
-// /api/v1/org/integrations/{name}/connection, POST .../connections and
-// PUT .../connections/{id}: field values by key, and the label. A
+// /api/v1/org/integrations/{name}/connection: field values by key. A
 // sensitive field left out keeps its stored value; an empty string
 // clears it. A field that is not sensitive is replaced by what is
 // sent. A required field with no value, stored or sent, is a 400.
 type ConnectionWrite struct {
-	// Label is what the owner calls the connection. Required for an
-	// integration that takes several connections (a built-in may give
-	// one: Git's is the host); empty keeps the stored label. Unique
-	// within the integration, ignoring case (409).
-	Label  string            `json:"label,omitempty"`
 	Fields map[string]string `json:"fields"`
 }
 
@@ -492,34 +472,23 @@ type AccessRow struct {
 	// own page.
 	Summary string    `json:"summary"`
 	SetAt   time.Time `json:"set_at"`
-	// ConnectionID is the connection the access was set for, and the
-	// one the agent's calls use; ConnectionLabel is its label, empty
-	// when it has none or is no longer there.
-	ConnectionID    string `json:"connection_id"`
-	ConnectionLabel string `json:"connection_label"`
-	// Invalid says why this row no longer fits the access form of the
-	// version in use (a version approved or rolled back to changed
-	// it), or that its connection is gone. An invalid row grants
-	// nothing until it is set again.
+	// Invalid says why this row grants nothing until it is set again:
+	// it no longer fits the access form of the version in use (a
+	// version approved or rolled back to changed it), or the connection
+	// it was set for is gone.
 	Invalid *string `json:"invalid,omitempty"`
 }
 
 // AccessWrite is the body of PUT
 // /api/v1/org/integrations/{name}/access/{slug}: the filled access
-// form, and the connection it is for. For an integration without a
-// form, send {}.
+// form. For an integration without a form, send {}.
 type AccessWrite struct {
 	Access json.RawMessage `json:"access"`
-	// ConnectionID is the connection the agent's calls use. Required
-	// when the integration has more than one connection; with one, it
-	// may be left out. Missing or unknown where it is needed is a 400.
-	ConnectionID string `json:"connection_id,omitempty"`
 }
 
 // AccessChoices is GET /api/v1/org/integrations/{name}/choices/{key}:
-// the options the integration lists for a field, through the
-// connection (?connection=<id> names one of several; without it, the
-// first).
+// the options the integration lists for a field, through its
+// connection.
 type AccessChoices struct {
 	Options []string `json:"options"`
 }
@@ -691,16 +660,12 @@ type AgentIntegration struct {
 	// State is the integration's.
 	State IntegrationState `json:"state"`
 	// Usable is true when the agent's calls can go through now: the
-	// integration is installed and running, and the connection its
-	// access names has its secrets and, made by signing in, is signed
-	// in. Always false under Available.
+	// integration is installed and running, and its connection has its
+	// secrets and, made by signing in, is signed in. Always false under
+	// Available.
 	Usable bool `json:"usable"`
 	// Summary is the agent's access in words; empty under Available.
 	Summary string `json:"summary"`
-	// ConnectionLabel is the label of the connection the agent's access
-	// names, for an integration that takes several connections: the row
-	// reads "Git (Company GitLab)". Empty otherwise.
-	ConnectionLabel string `json:"connection_label,omitempty"`
 	// Invalid is set when the agent's access no longer fits the
 	// integration's access form and grants nothing until set again.
 	Invalid *string `json:"invalid,omitempty"`

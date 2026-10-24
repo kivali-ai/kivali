@@ -187,6 +187,13 @@ func main() {
 	if err := s.InstallBuiltinIntegrations(builtins.All().Manifests(), time.Now()); err != nil {
 		log.Printf("install built-in integrations: %v", err)
 	}
+	// One connection per integration: an integration holding several
+	// keeps the one most agents' access names, and the others, with
+	// the access set for them, are set aside, not deleted. Logged
+	// rather than fatal, as above.
+	if err := s.MigrateIntegrationConnections(); err != nil {
+		log.Printf("integrations: %v", err)
+	}
 	// And the integrations that ship as bundles: each one's record, its
 	// version in use and its files, checked as an upload is. Logged
 	// rather than fatal, for the same reason: one that cannot be

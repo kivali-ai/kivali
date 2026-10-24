@@ -98,7 +98,7 @@ func (s *Server) setupSpecFor(v *integrationView, r *http.Request) (setupSpec, *
 		case ways[0] == integration.MethodBrowser && signInRedirectURL(r) == "":
 			return setupSpec{}, &connWriteError{http.StatusConflict, errSignInNoAddress, whoServer}
 		}
-		if cur := v.first(); cur != nil && !cur.rec.NeedsSignIn(cur.hasToken) {
+		if cur := v.conn; cur != nil && !cur.rec.NeedsSignIn(cur.hasToken) {
 			return setupSpec{}, &connWriteError{http.StatusConflict, errSignInSignedIn, whoYou}
 		}
 		fields := connectionSetupFields(m)
@@ -157,7 +157,7 @@ func (s *Server) signInSpecFor(v *integrationView, r *http.Request) (setupSpec, 
 	case c.ThenMethod() == "":
 		return setupSpec{}, &connWriteError{http.StatusConflict, v.displayName() + " is not connected by signing in", whoYou}
 	}
-	if cur := v.first(); cur != nil && !cur.rec.NeedsSignIn(cur.hasToken) {
+	if cur := v.conn; cur != nil && !cur.rec.NeedsSignIn(cur.hasToken) {
 		return setupSpec{}, &connWriteError{http.StatusConflict, errSignInSignedIn, whoYou}
 	}
 	return s.thenSpecFor(v, r, c.ThenMethod())
@@ -177,7 +177,7 @@ func (s *Server) keepConnectionForm(ctx context.Context, run *setupRun, values m
 		log.Printf("integration %s: read it to keep the connection: %v", run.name, err)
 		return errors.New(errSetupNotKept)
 	}
-	cur := v.first()
+	cur := v.conn
 	if werr := s.writeConnection(ctx, v, cur, formWrite(v.manifest, values), false); werr != nil {
 		return werr
 	}
@@ -212,7 +212,7 @@ func (s *Server) checkConnectionForm(ctx context.Context, name string, values ma
 	if err != nil {
 		return "the integration could not be read; start again"
 	}
-	if _, werr := s.planConnectionWrite(ctx, v, v.first(), formWrite(v.manifest, values)); werr != nil {
+	if _, werr := s.planConnectionWrite(ctx, v, v.conn, formWrite(v.manifest, values)); werr != nil {
 		return werr.words
 	}
 	return ""

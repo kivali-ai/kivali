@@ -328,7 +328,7 @@ func TestSignOut(t *testing.T) {
 	tok := vendor.Issue()
 	signedIn(t, srv, "crm", tok)
 
-	page := orgOK[apitypes.IntegrationPage](t, intPost(t, srv, intBase+"/crm/connections/c1/sign-out"))
+	page := orgOK[apitypes.IntegrationPage](t, intPost(t, srv, intBase+"/crm/connection/sign-out"))
 	if si := page.Connection.SignIn; !slices.Contains(unmetIDs(page), "sign_in") || si == nil || si.SignedIn {
 		t.Errorf("page after the sign-out: unmet %v, %+v", unmetIDs(page), si)
 	}
@@ -351,30 +351,28 @@ func TestSignOut(t *testing.T) {
 	}
 }
 
-// Why this test exists: deleting the connection or uninstalling the
-// integration while a sign-in waits for the owner must
-// end it: an approval that came later would otherwise write tokens
-// into a connection that is gone, or bring back one the owner removed.
-func TestSignInCancelledByDelete(t *testing.T) {
-	for _, path := range []string{intBase + "/crm/connections/c1", intBase + "/crm"} {
-		srv, vendor, clk := signInServer(t)
-		signInBundle(t, srv, vendor)
-		signedIn(t, srv, "crm", vendor.Issue())
-		srv.markSignInFailed("crm", "c1", "the vendor refused the sign-in (invalid_grant)")
-		startDeviceSignIn(t, srv)
-		polled := pollerOf(t, srv)
-		clk.BlockUntil(1)
-		if rr := intDelete(t, srv, path); rr.Code != http.StatusOK && rr.Code != http.StatusNoContent {
-			t.Fatalf("%s: %d %s", path, rr.Code, rr.Body.String())
-		}
-		waitClosed(t, polled)
-		if _, err := srv.Store.GetIntegrationConnectionByID("crm", "c1"); err == nil {
-			t.Errorf("%s: the connection is back", path)
-		}
-		for _, r := range vendor.Requests() {
-			if r.Path == "/token" && r.Form.Get("grant_type") != "refresh_token" {
-				t.Errorf("%s: a cancelled sign-in polled the vendor: %v", path, r.Form)
-			}
+// Why this test exists: uninstalling the integration while a sign-in
+// waits for the owner must end it: an approval that came later would
+// otherwise write tokens into a connection that is gone, or bring back
+// one the owner removed.
+func TestSignInCancelledByUninstall(t *testing.T) {
+	srv, vendor, clk := signInServer(t)
+	signInBundle(t, srv, vendor)
+	signedIn(t, srv, "crm", vendor.Issue())
+	srv.markSignInFailed("crm", "c1", "the vendor refused the sign-in (invalid_grant)")
+	startDeviceSignIn(t, srv)
+	polled := pollerOf(t, srv)
+	clk.BlockUntil(1)
+	if rr := intDelete(t, srv, intBase+"/crm"); rr.Code != http.StatusNoContent {
+		t.Fatalf("uninstall: %d %s", rr.Code, rr.Body.String())
+	}
+	waitClosed(t, polled)
+	if _, err := srv.Store.GetIntegrationConnectionByID("crm", "c1"); err == nil {
+		t.Error("the connection is back")
+	}
+	for _, r := range vendor.Requests() {
+		if r.Path == "/token" && r.Form.Get("grant_type") != "refresh_token" {
+			t.Errorf("a cancelled sign-in polled the vendor: %v", r.Form)
 		}
 	}
 }

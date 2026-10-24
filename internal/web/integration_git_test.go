@@ -468,14 +468,10 @@ func TestGitAccessFrom1xIsSetAgain(t *testing.T) {
 	}
 	intTeam(t, srv, "dana")
 	connectGit(t, srv, "github.com")
-	conn, err := srv.Store.GetIntegrationConnection("git")
-	if err != nil {
-		t.Fatal(err)
-	}
 	// Written as 1.1.0's binary saved it: this binary's check refuses
 	// the old fields at save.
 	if err := srv.Store.SetIntegrationAccess("git", store.IntegrationAccess{
-		Slug: "dana", ConnectionID: conn.ID, SetAt: boot, SetBy: "ceo",
+		Slug: "dana", SetAt: boot, SetBy: "ceo",
 		Access: map[string]any{"repositories": []any{"acme/*"}, "push": true, "push_refs": []any{"agent/*"}},
 	}); err != nil {
 		t.Fatal(err)
@@ -547,16 +543,16 @@ func TestGitConnectionFromBeforeTheTestWasDropped(t *testing.T) {
 		t.Error("connection_test after the upgrade")
 	}
 	var keys []string
-	for _, f := range page.Connections[0].Fields {
+	for _, f := range page.Connection.Fields {
 		keys = append(keys, f.Key)
 	}
 	if strings.Join(keys, ",") != "host,token" {
 		t.Errorf("fields after the upgrade = %v", keys)
 	}
-	if c := page.Connections[0]; c.Verified != nil || c.VerifiedAt != nil || c.VerifyMessage != nil {
+	if c := page.Connection; c.Verified != nil || c.VerifiedAt != nil || c.VerifyMessage != nil {
 		t.Errorf("the old result reached the page: %+v", c)
 	}
-	orgOK[apitypes.IntegrationPage](t, orgJSON(t, srv, http.MethodPut, intBase+"/git/connections/"+conn.ID,
+	orgOK[apitypes.IntegrationPage](t, orgJSON(t, srv, http.MethodPut, intBase+"/git/connection",
 		apitypes.ConnectionWrite{Fields: map[string]string{"host": "github.com"}}))
 	conn, err = srv.Store.GetIntegrationConnectionByID("git", conn.ID)
 	if _, kept := conn.Fields["test_repository"]; err != nil || kept {

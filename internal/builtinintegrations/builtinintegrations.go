@@ -141,30 +141,19 @@ type ShellJobIntegration interface {
 
 // HostsOf is an Integration whose shell jobs reach the network through
 // the egress proxy: Hosts is what its connection reaches. Core gives
-// each of its connections a scoped proxy credential of its own,
-// admitted to those hosts and no others (ProxyUser), and puts it in the
-// job.
+// the connection a scoped proxy credential of its own, admitted to
+// those hosts and no others (ProxyUser), and puts it in the job.
 type HostsOf interface {
 	Hosts(conn Connection) []string
 }
 
 // ConnectionChecker is an Integration that holds a connection to more
-// than its form does. Saving a connection (PUT .../connection, POST
-// .../connections, PUT .../connections/{id}) calls CheckConnection
-// after the form's own checks and before it stores anything; an error
+// than its form does. Saving the connection (PUT .../connection, and a
+// setup flow's Form) calls CheckConnection after the form's own checks and before it stores anything; an error
 // is a 400 with its words, a sentence for the owner. conn.ID is empty
 // for a new connection.
 type ConnectionChecker interface {
 	CheckConnection(conn Connection) error
-}
-
-// ConnectionLabeler is an Integration that takes several connections
-// (the manifest's kivali.connection.multiple) and names one the owner
-// gave no label: ConnectionLabel is that label, or "" for none. conn
-// holds the connection's fields that are not secret, so the label never
-// quotes a secret.
-type ConnectionLabeler interface {
-	ConnectionLabel(conn Connection) string
 }
 
 // AccessChecker is an Integration that holds an agent's access to more

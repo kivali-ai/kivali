@@ -36,26 +36,26 @@ describe('Integrations tab', () => {
     expect(within(other).getByText('Pending')).toHaveClass('kv-badge--signal');
   });
 
-  // Guards which connection the agent uses, for an integration that takes several (agent_integrations.json's Git row):
-  // the row reads "Git (Company GitLab)", and a row without a connection label reads the integration's name alone. A
-  // label dropped would leave the owner unable to tell the agent's GitLab access from GitHub access.
-  it('names the connection after the integration when it takes several', async () => {
+  // Guards the row's title now that an integration has one connection (agent_integrations.json's Git row carries no
+  // connection label): it is the integration's display name alone, with the agent's access beside it. A title that
+  // still appended a connection name, or showed the integration's name key, fails here.
+  it('titles each row with the integration’s display name alone', async () => {
     renderTabs(PATH, { routes: { ['GET ' + API]: agentIntegrations } });
     const connected = await page().findByRole('region', { name: 'Connected to Engineering lead' });
     const git = within(connected).getByRole('link', { name: /Git/ });
-    expect(within(git).getByText('Git (Company GitLab)')).toBeInTheDocument();
+    expect(git.querySelector('.kv-row-title')?.textContent).toBe('Git');
     expect(within(git).getByText('Repositories: eng/*')).toBeInTheDocument();
     expect(within(connected).getByText('HubSpot')).toBeInTheDocument();
   });
 
-  // Guards whether the agent's calls can go through now (usable): the server reads it from the connection the agent's
-  // access names, so a GitLab connection that needs its secrets again reads not usable on this agent's row while Git
-  // is installed, and a usable row says nothing of it. A row showing the state alone would hide that this agent's
-  // calls fail.
+  // Guards whether the agent's calls can go through now (usable): the server reads it from the integration's
+  // one connection, so a Git connection that needs its secrets again reads not usable on this agent's row while Git is
+  // installed, and a usable row says nothing of it. A row showing the state alone would hide that this agent's calls
+  // fail.
   it('says when the agent cannot use an installed integration', async () => {
     renderTabs(PATH, { routes: { ['GET ' + API]: agentIntegrations } });
     const connected = await page().findByRole('region', { name: 'Connected to Engineering lead' });
-    const git = within(connected).getByRole('link', { name: /Git \(Company GitLab\)/ });
+    const git = within(connected).getByRole('link', { name: /Git/ });
     expect(within(git).getByText('Installed')).toHaveClass('kv-badge');
     expect(within(git).getByText('Not usable until its requirements are met')).toHaveClass('kv-text--danger');
     const hubspot = within(connected).getByRole('link', { name: /HubSpot/ });

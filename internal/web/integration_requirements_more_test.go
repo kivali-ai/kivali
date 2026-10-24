@@ -77,15 +77,15 @@ func TestUninstallFinishesAfterASecretWouldNotGo(t *testing.T) {
 	if apiErr.Error != "Echo's installation was undone on the service, but Kivali could not remove its connection; uninstall it again to finish" {
 		t.Errorf("first uninstall = %+v", apiErr)
 	}
-	if page := echoPage(t, srv); page.Summary.State != apitypes.IntegrationStateInstalled || len(page.Connections) != 1 {
-		t.Fatalf("after the failed delete = %s, connections %v", page.Summary.State, page.Connections)
+	if page := echoPage(t, srv); page.Summary.State != apitypes.IntegrationStateInstalled || page.Connection == nil {
+		t.Fatalf("after the failed delete = %s, connections %v", page.Summary.State, page.Connection)
 	}
 	if rr := intDelete(t, srv, intBase+"/echo"); rr.Code != http.StatusNoContent {
 		t.Fatalf("second uninstall: %d %s", rr.Code, rr.Body.String())
 	}
 	calls := len(e.callsOf("uninstall"))
-	if page := echoPage(t, srv); page.Summary.State != apitypes.IntegrationStateAvailable || len(page.Connections) != 0 || calls != 2 {
-		t.Errorf("after the second = %s, connections %v, Uninstall called %d times", page.Summary.State, page.Connections, calls)
+	if page := echoPage(t, srv); page.Summary.State != apitypes.IntegrationStateAvailable || page.Connection != nil || calls != 2 {
+		t.Errorf("after the second = %s, connections %v, Uninstall called %d times", page.Summary.State, page.Connection, calls)
 	}
 	if got := auditActions(t, srv, "echo", uninstallAction); len(got) != 2 || got[1] != "" {
 		t.Errorf("audit = %v", got)
@@ -117,14 +117,14 @@ func TestInstallTakeoverKeepsTheMadeConnection(t *testing.T) {
 			startSetupFlow(t, srv, "echo")
 			waitFlow(t, srv, "echo", apitypes.SetupFlowStateForm)
 			srv.setupAwaitDiscard(context.Background(), "echo")
-			if page := echoPage(t, srv); page.Summary.State != apitypes.IntegrationStateSettingUp || len(page.Connections) != 1 {
-				t.Fatalf("after the takeover = %s, connections %v", page.Summary.State, page.Connections)
+			if page := echoPage(t, srv); page.Summary.State != apitypes.IntegrationStateSettingUp || page.Connection == nil {
+				t.Fatalf("after the takeover = %s, connections %v", page.Summary.State, page.Connection)
 			}
 			answerEcho(t, srv, "acme")
 			waitFlow(t, srv, "echo", tc.end)
 			srv.setupAwaitDiscard(context.Background(), "echo")
-			if page := echoPage(t, srv); len(page.Connections) != tc.conns {
-				t.Errorf("after the second ends = %s, connections %v", page.Summary.State, page.Connections)
+			if page := echoPage(t, srv); (page.Connection != nil) != (tc.conns == 1) {
+				t.Errorf("after the second ends = %s, connections %v", page.Summary.State, page.Connection)
 			}
 		})
 	}
@@ -145,8 +145,8 @@ func TestUninstallWhileInstalling(t *testing.T) {
 		t.Fatalf("uninstall: %d %s", rr.Code, rr.Body.String())
 	}
 	srv.setupAwaitDiscard(context.Background(), "echo")
-	if page := echoPage(t, srv); page.Summary.State != apitypes.IntegrationStateAvailable || len(page.Connections) != 0 || page.Flow != nil {
-		t.Errorf("after uninstall = %s, connections %v, flow %+v", page.Summary.State, page.Connections, page.Flow)
+	if page := echoPage(t, srv); page.Summary.State != apitypes.IntegrationStateAvailable || page.Connection != nil || page.Flow != nil {
+		t.Errorf("after uninstall = %s, connections %v, flow %+v", page.Summary.State, page.Connection, page.Flow)
 	}
 	if names := mem.Names(); len(names) != 0 {
 		t.Errorf("secrets left: %v", names)
@@ -186,8 +186,8 @@ func TestSetupStartRefusedWhileAFailedInstallIsUndone(t *testing.T) {
 	srv.setupAwaitDiscard(context.Background(), "echo")
 	e.ScriptSetup(nil)
 	installEcho(t, srv, e, "acme")
-	if page := echoPage(t, srv); !installedAndMet(page) || len(page.Connections) != 1 {
-		t.Errorf("installed after the undo = %s, connections %v", page.Summary.State, page.Connections)
+	if page := echoPage(t, srv); !installedAndMet(page) || page.Connection == nil {
+		t.Errorf("installed after the undo = %s, connections %v", page.Summary.State, page.Connection)
 	}
 }
 

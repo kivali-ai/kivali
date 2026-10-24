@@ -21,7 +21,6 @@
 package web
 
 import (
-	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -141,12 +140,12 @@ func refuseVendorUnavailable(display string) string {
 }
 
 // jobConnectionNote is what the audit row of a call's second request
-// adds when its job ran through another connection than the one the
-// agent's access names now, jobID, and the scrubber of both
-// connections' secrets, rowSecrets being the access's connection's. A
-// job connection that is no longer there leaves rowSecrets alone, and
-// the note says so. jobID is text from the agent's pod: it only picks
-// which secrets are scrubbed and the label the audit names.
+// adds when its job ran through another connection than the
+// integration has now, jobID, and the scrubber of both connections'
+// secrets, rowSecrets being the current connection's. A job connection
+// that is no longer there leaves rowSecrets alone, and the note says
+// so. jobID is text from the agent's pod: it only picks which secrets
+// are scrubbed.
 func (s *Server) jobConnectionNote(ctx context.Context, v agentIntegration, jobID string, rowSecrets []string) (string, *strings.Replacer) {
 	// As stored: building a scrubber never sends a vendor a refresh.
 	// The stored tokens and the proxy credential's secret are among the
@@ -158,11 +157,7 @@ func (s *Server) jobConnectionNote(ctx context.Context, v agentIntegration, jobI
 	if err != nil {
 		return " (it ran through a connection that is no longer there, so only the current connection's secrets were scrubbed)", newScrubber(rowSecrets)
 	}
-	label := jobID
-	if rec, err := s.Store.GetIntegrationConnectionByID(v.name, jobID); err == nil {
-		label = cmp.Or(builtinConnectionLabel(v.builtin, v.manifest, rec), jobID)
-	}
-	return " (it ran through the connection " + label + ")", newScrubber(append(slices.Clone(rowSecrets), jobSecrets...))
+	return " (it ran through an earlier connection)", newScrubber(append(slices.Clone(rowSecrets), jobSecrets...))
 }
 
 // callerOf is the agent and its access as a built-in reads them.
@@ -275,8 +270,8 @@ func (s *Server) builtinListedTools(ctx context.Context, v agentIntegration, slu
 // Each request is a call of its own under integrationCallTimeout; the
 // job runs between them in the shell, under the job's own bound.
 func (s *Server) builtinAgentCall(ctx context.Context, start time.Time, slug string, v agentIntegration, tool string, args json.RawMessage, result *agentpod.IntegrationShellJobResult) agentpod.IntegrationCallResponse {
-	// The connection the agent's access names.
-	conn, proxySecret, rowSecrets, err := s.builtinConnectionSecrets(ctx, v.name, v.connID)
+	// The integration's connection, which every agent's call uses.
+	conn, proxySecret, rowSecrets, err := s.builtinConnectionSecrets(ctx, v.name, "")
 	scrub := newScrubber(rowSecrets)
 	switch {
 	case errors.Is(err, store.ErrNotFound):
@@ -306,14 +301,14 @@ func (s *Server) builtinAgentCall(ctx context.Context, start time.Time, slug str
 		// The result is text from the agent's pod. It only becomes the
 		// agent's answer and the audit's reason, both scrubbed, so
 		// nothing binds it to the job the first request handed out; its
-		// connection id only widens the scrubber and names a connection
-		// in the audit (jobConnectionNote). The row counts from the
-		// job's start.
+		// connection id only widens the scrubber and adds a note to the
+		// audit (jobConnectionNote). The row counts from the job's
+		// start.
 		start = start.Add(-shellJobDuration(*result))
-		// A job that ran through another connection than the one the
-		// access names now (the owner moved the access while it ran):
-		// its words may quote that connection's secrets, and the audit
-		// row names it.
+		// A job that ran through another connection than the
+		// integration has now (it was uninstalled and installed again
+		// while the job ran): its words may quote that connection's
+		// secrets, and the audit row says so.
 		if g := result.Git; g != nil && g.ConnectionID != "" && g.ConnectionID != conn.ID {
 			jobNote, scrub = s.jobConnectionNote(ctx, v, g.ConnectionID, rowSecrets)
 		}
