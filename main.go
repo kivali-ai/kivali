@@ -646,6 +646,12 @@ func main() {
 	// every change and checks each running server every 30 seconds.
 	stopIntegrations := srv.StartIntegrations()
 
+	// A connection an install under way made before this Kivali stopped
+	// is still marked unfinished, with no flow behind it (flows live in
+	// memory): it is discarded as a failed install's is, the
+	// integration asked to undo it on the service where it can.
+	srv.DiscardUnfinishedSetups()
+
 	idle := make(chan struct{})
 	go func() {
 		sigs := make(chan os.Signal, 1)

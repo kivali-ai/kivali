@@ -87,9 +87,11 @@ func (v *integrationView) state() apitypes.IntegrationState {
 		return apitypes.IntegrationStatePending
 	case v.installing:
 		return apitypes.IntegrationStateSettingUp
-	case v.conn == nil || v.discarding || v.connectionMisfit():
-		// A connection a failed install made is on its way out, or one
-		// an earlier version made does not fit this version's setup.
+	case v.conn == nil || v.discarding || v.connectionMisfit() || v.conn.rec.SetupPending:
+		// A connection a failed install made is on its way out, one an
+		// earlier version made does not fit this version's setup, or one
+		// an install left unfinished when Kivali stopped waits to be
+		// discarded.
 		return apitypes.IntegrationStateAvailable
 	case !v.it.Enabled:
 		return apitypes.IntegrationStateOff

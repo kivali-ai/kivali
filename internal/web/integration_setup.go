@@ -305,6 +305,14 @@ func (t *setupRuns) endLocked(run *setupRun) {
 	}
 	name, id, kept := run.name, run.madeConn, run.madeKept
 	run.madeConn, run.madeKept = "", false
+	t.discardLocked(name, id, kept)
+}
+
+// discardLocked starts forgetting name's connection id, an install's
+// that ended without being done (t.discard, off the caller's locks);
+// with kept, its record and access stay, emptied. A start of name waits
+// for it (setupAwaitDiscard) and is refused while it runs.
+func (t *setupRuns) discardLocked(name, id string, kept bool) {
 	done := make(chan struct{})
 	if t.discarding == nil {
 		t.discarding = map[string]chan struct{}{}
@@ -328,6 +336,45 @@ func (t *setupRuns) endLocked(run *setupRun) {
 		}
 		t.mu.Unlock()
 	}()
+}
+
+// DiscardUnfinishedSetups forgets every connection an install under
+// way made before Kivali stopped: a record still marked unfinished
+// (store.IntegrationConnection.SetupPending) with no flow of this
+// process behind it, since flows live in memory. Each goes as the
+// runner discards an install that ended without being done
+// (setupDiscard: the integration asked to undo what it made on the
+// service, best effort, then the Secret, the proxy credential, and the
+// record and its access, or for one an install took over, the record
+// emptied with its access kept), off the caller, logged. Until then the
+// integration reads available, and a start of it waits. Boot and a
+// restore call it; anything the owner finished carries no mark and is
+// left be.
+func (s *Server) DiscardUnfinishedSetups() {
+	its, err := s.Store.ListIntegrations()
+	if err != nil {
+		log.Printf("integrations: list them to discard unfinished setups: %v", err)
+		return
+	}
+	t := &s.setupRuns
+	for _, it := range its {
+		rec, err := s.Store.GetIntegrationConnection(it.Name)
+		if err != nil || !rec.SetupPending {
+			continue
+		}
+		t.mu.Lock()
+		if t.discard == nil {
+			t.discard = s.setupDiscard
+		}
+		if run := t.currentLocked(it.Name); run != nil && run.madeConn == rec.ID {
+			// This process's own install under way: it keeps its connection.
+			s.setupUnlock()
+			continue
+		}
+		log.Printf("integration %s: its setup did not finish before Kivali stopped; forgetting the connection it made", it.Name)
+		t.discardLocked(it.Name, rec.ID, rec.SetupTakenOver)
+		s.setupUnlock()
+	}
 }
 
 // setupAwaitDiscard waits, while ctx lasts, until no connection a
@@ -710,9 +757,21 @@ func (s *Server) setupApply(run *setupRun, gen int, step builtinintegrations.Ste
 		s.setupUnlock()
 		return
 	}
+	// The flow's last step: Done with no sign-in to hand over to.
+	final := step.Done && run.spec.then == nil
 	s.setupUnlock()
 	if len(step.Keep) > 0 {
 		if err := run.spec.keep(run.ctx, run, step.Keep); err != nil {
+			t.mu.Lock()
+			if t.liveLocked(run, gen) {
+				s.setupFailLocked(run, err.Error())
+			}
+			s.setupUnlock()
+			return
+		}
+	}
+	if final {
+		if err := s.setupFinish(run); err != nil {
 			t.mu.Lock()
 			if t.liveLocked(run, gen) {
 				s.setupFailLocked(run, err.Error())
@@ -792,6 +851,35 @@ func errSetupNoStep(display string) error {
 
 func errSetupManySteps(display string) error {
 	return fmt.Errorf("%s's setup gave more than one next step", display)
+}
+
+// setupFinish marks name's connection finished as run, about to be
+// done, made or mended it (store.IntegrationConnection.SetupPending
+// cleared), under lockIntegrations, unless run was cancelled meanwhile:
+// from then on it is the integration's installed connection, which a
+// restart keeps.
+func (s *Server) setupFinish(run *setupRun) error {
+	defer s.lockIntegrations()()
+	if run.ctx.Err() != nil {
+		return errors.New(errSetupStopped)
+	}
+	rec, err := s.Store.GetIntegrationConnection(run.name)
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		return nil
+	case err != nil:
+		log.Printf("integration %s: read the connection to finish its setup: %v", run.name, err)
+		return errors.New(errSetupNotKept)
+	case !rec.SetupPending:
+		return nil
+	}
+	rec.SetupPending, rec.SetupTakenOver = false, false
+	if err := s.Store.PutIntegrationConnection(run.name, rec); err != nil {
+		log.Printf("integration %s: mark the connection's setup finished: %v", run.name, err)
+		return errors.New(errSetupNotKept)
+	}
+	s.Integrations.Changed()
+	return nil
 }
 
 // check is why step does not keep to spec, as an error in words for
@@ -1198,21 +1286,40 @@ func (s *Server) setupCancel(name string) bool {
 
 // setupCancelKeep is setupCancel for an owner's write to the
 // connection (a save of the form, Sign out): the connection an install
-// under way made is the owner's from then on, and is kept.
+// under way made is the owner's from then on, and is kept, no longer
+// marked unfinished. The caller holds lockIntegrations.
 func (s *Server) setupCancelKeep(name string) bool {
-	return s.setupCancelRun(name, true)
+	ok := s.setupCancelRun(name, true)
+	s.adoptConnectionLocked(name)
+	return ok
+}
+
+// adoptConnectionLocked makes name's connection the owner's: one an
+// install marked unfinished (SetupPending) is so no longer, and a
+// restart keeps it. The caller holds lockIntegrations.
+func (s *Server) adoptConnectionLocked(name string) {
+	rec, err := s.Store.GetIntegrationConnection(name)
+	if err != nil || !rec.SetupPending {
+		return
+	}
+	rec.SetupPending, rec.SetupTakenOver = false, false
+	if err := s.Store.PutIntegrationConnection(name, rec); err != nil {
+		log.Printf("integration %s: keep the connection an install made as the owner's: %v", name, err)
+	}
 }
 
 // setupAdopt makes the connection name's install under way made the
 // owner's, as their own save of it does: it is kept whatever becomes of
-// the flow.
+// the flow, and is no longer marked unfinished. The caller holds
+// lockIntegrations.
 func (s *Server) setupAdopt(name string) {
 	t := &s.setupRuns
 	t.mu.Lock()
-	defer s.setupUnlock()
 	if run := t.currentLocked(name); run != nil {
 		run.madeConn = ""
 	}
+	s.setupUnlock()
+	s.adoptConnectionLocked(name)
 }
 
 // setupCancelRun ends and forgets name's flow; with keep, the
@@ -1379,14 +1486,23 @@ func (s *Server) keepSetupValuesLocked(ctx context.Context, run *setupRun, value
 		return nil, errors.New(errSetupNotKept)
 	}
 	rec.SecretKeys = keys
+	// An install's connection is marked unfinished from its first Keep
+	// until the flow is done (setupFinish), so one a stopped Kivali left
+	// is discarded at the next start (DiscardUnfinishedSetups). An
+	// install over a connection still so marked takes it over.
+	adopted := !made && replaced == nil && run.install && rec.SetupPending
+	if run.install && (made || replaced != nil || adopted) {
+		rec.SetupPending = true
+		rec.SetupTakenOver = replaced != nil || (adopted && rec.SetupTakenOver)
+	}
 	if err := s.Store.PutIntegrationConnection(name, rec); err != nil {
 		log.Printf("integration %s: write the connection for setup: %v", name, err)
 		// The Secret holds the new values alone: an earlier version's
 		// sign-in in it is gone either way.
 		return replaced, errors.New(errSetupNotKept)
 	}
-	if made || replaced != nil {
-		s.setupMade(run, rec.ID, replaced != nil)
+	if made || replaced != nil || adopted {
+		s.setupMade(run, rec.ID, rec.SetupTakenOver)
 	}
 	s.Integrations.ConnectionChanged(name)
 	s.Integrations.Changed()

@@ -187,9 +187,19 @@ func (s *Server) keepConnectionForm(ctx context.Context, run *setupRun, values m
 	if werr := s.writeConnection(ctx, v, cur, formWrite(v.manifest, values), false); werr != nil {
 		return werr
 	}
-	if cur == nil {
+	// The connection an install makes, or one a stopped Kivali's install
+	// left (still marked unfinished), is the install's: marked
+	// unfinished until the flow is done, and discarded should it end
+	// without being done.
+	if cur == nil || (run.install && cur.rec.SetupPending) {
 		if rec, err := s.Store.GetIntegrationConnection(run.name); err == nil {
-			s.setupMade(run, rec.ID, false)
+			if run.install && !rec.SetupPending {
+				rec.SetupPending = true
+				if err := s.Store.PutIntegrationConnection(run.name, rec); err != nil {
+					log.Printf("integration %s: mark the connection an install made: %v", run.name, err)
+				}
+			}
+			s.setupMade(run, rec.ID, rec.SetupTakenOver)
 		}
 	}
 	return nil

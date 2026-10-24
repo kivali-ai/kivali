@@ -342,6 +342,11 @@ setup kept.
   connection goes all the same. An install that kept nothing gets no
   call, and nothing is sent for a Fix's flow that fails: it keeps what
   it kept.
+- **Kivali restarts.** A flow lives in Kivali's memory, so a restart
+  mid-install loses it. The connection it kept so far is discarded
+  when Kivali starts again, as for a failed install, with
+  `kivali/uninstall` sent where the server is running by then; the
+  owner installs again from the start.
 - What setup made on the service before it kept anything stays there,
   and `kivali/uninstall` can undo only what the kept values name. So
   keep an app's id as soon as the app is made, and make each step safe
