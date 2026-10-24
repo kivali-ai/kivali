@@ -392,6 +392,12 @@ func TestGitHubSetupInstalls(t *testing.T) {
 	if r, _ := requirementOf(page, "repositories"); r.Words != "Installed on acme, reaching 2 repositories." {
 		t.Errorf("repositories = %q", r.Words)
 	}
+	// Test connection names the app in words core's scrubbing of the
+	// kept values leaves readable.
+	page = orgOK[apitypes.IntegrationPage](t, intPost(t, srv, intBase+"/github/connection/verify"))
+	if c := page.Connection; c == nil || c.Verified == nil || !*c.Verified || textOf(c.VerifyMessage) != "Connected as the app Kivali Acme, installed on acme" {
+		t.Errorf("test connection = %+v %q", c, textOf(c.VerifyMessage))
+	}
 }
 
 // Why this test exists: GitHub may send the browser back before the app
@@ -622,7 +628,7 @@ func TestGitHubInstallsOverAOneZeroConnection(t *testing.T) {
 	}
 	page := githubPage(t, srv)
 	if page.Summary.State != apitypes.IntegrationStateAvailable || len(page.Requirements) != 1 || page.Requirements[0].ID != "connection" ||
-		page.Requirements[0].Met || page.Requirements[0].Fix != "setup" || !strings.HasPrefix(page.Requirements[0].Words, "Set up GitHub again:") || page.CanUninstall {
+		page.Requirements[0].Met || page.Requirements[0].Fix != "setup" || page.Requirements[0].Words != "Set up GitHub again: this version makes its connection by its own setup, and the one an earlier version made does not fit it. Every agent's access is kept." || page.CanUninstall {
 		t.Fatalf("1.0.0's connection reads %s %+v", page.Summary.State, page.Requirements)
 	}
 	if len(page.Access) != 1 || page.Access[0].Invalid != nil {

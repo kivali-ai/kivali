@@ -22,6 +22,7 @@
 package githubintegration
 
 import (
+	"cmp"
 	"context"
 	"crypto/rsa"
 	"encoding/json"
@@ -287,8 +288,10 @@ func answerText(v any) (string, error) {
 
 // Verify is Test connection: the app GitHub knows the key as (GET
 // /app) and the account its installation is on (GET
-// /app/installations/{id}), both with the app's JWT. "Connected as
-// kivali-acme[bot], installed on acme".
+// /app/installations/{id}), both with the app's JWT. "Connected as the
+// app Kivali Acme, installed on acme". The app is named by its name,
+// not its slug: the slug is a kept value, which core scrubs from the
+// words the owner reads.
 func (g *GitHub) Verify(ctx context.Context, conn builtinintegrations.Connection) (string, error) {
 	c, err := readConnection(conn)
 	if err != nil {
@@ -299,7 +302,7 @@ func (g *GitHub) Verify(ctx context.Context, conn builtinintegrations.Connection
 		return "", err
 	}
 	var app struct {
-		Slug string `json:"slug"`
+		Name string `json:"name"`
 	}
 	if err := g.getJSON(ctx, jwt, "/app", &app); err != nil {
 		return "", ownerError(err)
@@ -312,11 +315,7 @@ func (g *GitHub) Verify(ctx context.Context, conn builtinintegrations.Connection
 	if err := g.getJSON(ctx, jwt, "/app/installations/"+url.PathEscape(c.installationID), &inst); err != nil {
 		return "", ownerError(err)
 	}
-	slug := app.Slug
-	if slug == "" {
-		slug = c.slug
-	}
-	return "Connected as " + slug + "[bot], installed on " + inst.Account.Login, nil
+	return "Connected as the app " + cmp.Or(app.Name, "Kivali made") + ", installed on " + inst.Account.Login, nil
 }
 
 // ownerError is err in words for the owner.
