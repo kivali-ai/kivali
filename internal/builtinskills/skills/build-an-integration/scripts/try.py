@@ -901,9 +901,9 @@ def check_step(step, display, setup):
     or "" when it keeps to the manifest's declarations."""
     kinds = [k for k in ("form", "go", "wait") if k in step] + (["done"] if step.get("done") else [])
     if not kinds:
-        return "setup gave no next step"
+        return "%s's setup gave no next step" % display
     if len(kinds) > 1:
-        return "setup gave more than one next step"
+        return "%s's setup gave more than one next step" % display
     hosts = setup.get("hosts") or []
     fields = setup.get("fields") or {}
     keeps = setup.get("keeps") or {}

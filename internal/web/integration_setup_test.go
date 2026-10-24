@@ -219,8 +219,8 @@ func TestSetupFlowHoldsStepsToTheDeclarations(t *testing.T) {
 		{"plain http", builtinintegrations.Step{Go: &builtinintegrations.Go{URL: "http://" + setupHost + "/login"}}, "Echo's setup tried to send your browser to " + setupHost + ", which its manifest does not declare"},
 		{"wait page elsewhere", builtinintegrations.Step{Wait: &builtinintegrations.Wait{URL: "https://evil.example/"}}, "Echo's setup named a page on evil.example, which its manifest does not declare"},
 		{"undeclared keep", builtinintegrations.Step{Done: true, Keep: map[string]string{"account": "a1", "password": "hunter22"}}, "Echo's setup tried to keep password, which its manifest does not declare"},
-		{"no step", builtinintegrations.Step{Keep: map[string]string{"account": "a1"}}, errSetupNoStep},
-		{"two steps", builtinintegrations.Step{Done: true, Wait: &builtinintegrations.Wait{}}, errSetupManySteps},
+		{"no step", builtinintegrations.Step{Keep: map[string]string{"account": "a1"}}, "Echo's setup gave no next step"},
+		{"two steps", builtinintegrations.Step{Done: true, Wait: &builtinintegrations.Wait{}}, "Echo's setup gave more than one next step"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			srv, _, _ := setupServer(t, func(int, context.Context, builtinintegrations.Connection, builtinintegrations.Answer, builtinintegrations.Progress) (builtinintegrations.Step, error) {
