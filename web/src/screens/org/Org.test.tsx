@@ -1386,6 +1386,9 @@ describe('Integration install screen', () => {
       const li = keeps.getByText(k.key).closest('li')!;
       expect(within(li).queryByText('Secret') !== null).toBe(k.secret);
     }
+    // One caption under the list says what the badge's absence means, so an owner does not read an unmarked value as
+    // kept hidden too.
+    expect(setup.getByText('Values not marked Secret may be shown to you and to agents.')).toBeInTheDocument();
     const needs = within(screen.getByRole('region', { name: 'The connection needs' }));
     expect(needs.getByText('Nothing to enter: setup makes the connection.')).toBeInTheDocument();
     // A setup built-in reaches its service from Kivali, so its hosts are listed rather than "the hosts its connection
@@ -2197,6 +2200,7 @@ describe('Integration page, a connection made by signing in', () => {
     expect(within(block.getByRole('list', { name: 'Sends your browser to' })).getByText('github.com')).toBeInTheDocument();
     expect(block.getByRole('list', { name: 'GitHub asks for' })).toBeInTheDocument();
     expect(block.getByRole('list', { name: 'Keeps' })).toBeInTheDocument();
+    expect(block.getByText('Values not marked Secret may be shown to you and to agents.')).toBeInTheDocument();
     // A setup connection has no form, so nothing to save or disconnect sits under the declarations; GitHub's setup
     // hands over to no sign-in, so nothing says it does.
     expect(block.queryByRole('button', { name: 'Save connection' })).toBeNull();

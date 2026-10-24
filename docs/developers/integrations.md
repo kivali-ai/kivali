@@ -329,7 +329,8 @@ anything runs, and the page shows it in the Connection block
   `kivali/credential`'s `fields`, and an env placeholder
   `${user_config.<key>}` may name one (`integration.ConnectionKeys`).
   The install screen and the page mark each secret keep
-  (`SetupKeep.secret`).
+  (`SetupKeep.secret`), with one caption under the list: "Values not
+  marked Secret may be shown to you and to agents."
   A kept `client_id` and `client_secret` are the app's, read from the
   Secret (not the record, where a pasted client id lives). Core refuses
   a step keeping any other key.

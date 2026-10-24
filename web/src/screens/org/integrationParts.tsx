@@ -256,6 +256,8 @@ export function registeredClientLine(signInClient: string): string | undefined {
  * marked) and every value it may keep (secrets marked). The declarations are the review: Kivali holds every step to
  * them.
  */
+export const KEEPS_SHOWN = 'Values not marked Secret may be shown to you and to agents.';
+
 export function SetupFacts({ setup, integration }: { setup: IntegrationSetup; integration: string }) {
   return (
     <div className="app-int-setup">
@@ -309,17 +311,22 @@ export function SetupFacts({ setup, integration }: { setup: IntegrationSetup; in
           Nothing: setup keeps no value.
         </Text>
       ) : (
-        <ul className="app-int-facts" aria-label="Keeps">
-          {setup.keeps.map((k) => (
-            <li key={k.key} className="app-int-fact">
-              <span className="app-int-fact-title">
-                <Text variant="body">{k.words}</Text>
-                {k.secret && <Badge variant="outline">Secret</Badge>}
-              </span>
-              <Text variant="code">{k.key}</Text>
-            </li>
-          ))}
-        </ul>
+        <>
+          <ul className="app-int-facts" aria-label="Keeps">
+            {setup.keeps.map((k) => (
+              <li key={k.key} className="app-int-fact">
+                <span className="app-int-fact-title">
+                  <Text variant="body">{k.words}</Text>
+                  {k.secret && <Badge variant="outline">Secret</Badge>}
+                </span>
+                <Text variant="code">{k.key}</Text>
+              </li>
+            ))}
+          </ul>
+          <Text as="p" variant="caption" tone="muted">
+            {KEEPS_SHOWN}
+          </Text>
+        </>
       )}
       {setup.then && (
         <Text as="p" variant="caption" tone="muted">
