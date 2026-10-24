@@ -64,11 +64,13 @@ Kivali; the exit status is 1 when there is one. A setup step is held to
 the manifest's kivali.connection.setup as Kivali holds it: a field, a
 host or a key it does not declare fails the flow, and is a problem
 here. What a step keeps becomes the connection's, and the server is
-started again with it, as in the pod. A flow that stops before it is
-done, for want of an answer, is one the owner left: an install that
-stops forgets what it kept, as Kivali does, and calls nothing on the
-service, so a setup after it in the same run meets what the first left
-there.
+started again with it, as in the pod. An install that fails has Kivali
+send kivali/uninstall, with what it kept, then forget the connection. A
+flow that stops before it is done, for want of an answer, is one the
+owner left, and waits in Kivali with what it kept: a setup after it in
+the same run takes that connection over, kept values and all, as a new
+start does in Kivali, and an install still left at the end of the run
+is undone as Kivali undoes it once the flow is forgotten.
 """
 
 import argparse
@@ -644,6 +646,9 @@ class Pod:
         self.fields, self.secrets = fields, secret_values
         self.srv = None
         self.starts = 0
+        # left_install: the connection's values are what an install left
+        # partway kept, which a setup started again takes over.
+        self.left_install = False
 
     def env(self):
         env = {
@@ -783,6 +788,11 @@ def run(pod, manifest, display, prefix, kivali, declared, requests, agent, acces
                 problem("%s's first text is not a JSON array of strings, or an object whose options is one; the owner's form says the options are not a list of names" % tool)
                 continue
             say("  The form offers, in %.1f s: %s" % (took, ", ".join(options) if options else "(no options)"))
+    if pod.left_install and pod.fields and not pod.srv.stopped:
+        say()
+        say("The run ends with a setup left partway:")
+        undo_install(pod, display, "Kivali forgets that flow ten minutes after its last change or check once nobody watches it")
+        pod.left_install = False
 
 
 def connection_method(manifest):
@@ -967,24 +977,56 @@ def ask_return():
 
 def run_setup(pod, display, flow, opts):
     """The setup flow, as Kivali's runner calls it (setup_calls). An
-    install, a setup flow started with no connection, keeps nothing
-    unless it is done: one that stops before, as the owner leaving it
-    or a call failing, has Kivali forget the connection it made, and
-    the server is started again without it."""
-    install = flow == "setup" and not pod.fields
-    done = setup_calls(pod, display, flow, opts)
-    if install and not done and pod.fields:
-        say("  The setup did not finish, so Kivali forgets the connection it made (%s) and starts the server again without it. It calls nothing on the service: what setup made there stays." % ", ".join(sorted(pod.fields)))
-        pod.fields.clear()
-        pod.restart()
+    install (a setup flow started with no connection, or over the one an
+    install left partway made) keeps nothing unless it is done. One that
+    fails has Kivali undo it (undo_install). One that stops for want of
+    an answer, as when the owner leaves it, waits in Kivali with what it
+    kept: a setup after it in the same run takes that connection over,
+    kept values and all, as a new start in Kivali does, and at the end
+    of the run it is undone as Kivali undoes it once forgotten."""
+    install = flow == "setup" and (not pod.fields or pod.left_install)
+    if pod.left_install and install:
+        say("  Kivali ends the setup left partway, and this one takes over the connection it made (%s): what it kept stays." % ", ".join(sorted(pod.fields)))
+    pod.left_install = False
+    end = setup_calls(pod, display, flow, opts)
+    if not install or end == "done" or not pod.fields:
+        return
+    if end == "left":
+        pod.left_install = True
+        say("  The setup waits partway, as when the owner leaves it. Kivali keeps what it kept (%s) while the flow lives: a setup started again takes it over, and once the flow is forgotten, Kivali undoes it." % ", ".join(sorted(pod.fields)))
+        return
+    undo_install(pod, display, "The setup did not finish")
+
+
+def undo_install(pod, display, why):
+    """What Kivali does with the connection an install made that ended
+    without being done: it asks kivali/uninstall to undo what the install
+    made on the service, with what was kept so far, best effort (an
+    error or no answer is logged, nothing more), then forgets the
+    connection and starts the server again without it."""
+    say("  %s: Kivali asks kivali/uninstall to undo on the service what it made, with what it kept (%s), then forgets the connection and starts the server again without it." % (why, ", ".join(sorted(pod.fields))))
+    srv = pod.srv
+    if not srv.stopped and srv.proc.poll() is None:
+        resp, took = srv.request("kivali/uninstall", {}, UNINSTALL_SECONDS)
+        if resp is None:
+            note("kivali/uninstall did not answer within %d seconds; Kivali logs it and forgets the connection all the same" % UNINSTALL_SECONDS)
+        elif "error" in resp:
+            err = resp.get("error") or {}
+            words = (err.get("message") if isinstance(err, dict) else "") or "%s failed and gave no reason" % display
+            say("  kivali/uninstall answered an error, in %.1f s, which Kivali logs, and it forgets the connection all the same: %s" % (took, clip(srv.scrub(words), FLOW_WORDS)))
+        else:
+            say("  kivali/uninstall answered, in %.1f s." % took)
+    pod.fields.clear()
+    pod.restart()
 
 
 def setup_calls(pod, display, flow, opts):
     """The setup flow, call after call, as Kivali's runner calls it: an
     empty answer first, then what each step gave back, each step held to
     the manifest's declarations, until a step is done, a call answers an
-    error, or the flow waits for what try.py was not given. True once a
-    step is done."""
+    error, or the flow waits for what try.py was not given. "done" once
+    a step is done, "failed" when Kivali fails the flow, "left" when it
+    waits for the owner."""
     setup = setup_section(pod.manifest)
     fields = setup.get("fields") or {}
     answers = opts.answers
@@ -1009,20 +1051,20 @@ def setup_calls(pod, display, flow, opts):
         srv.progress_token = None
         if resp is None:
             srv.missing("kivali/setup did not answer within %d seconds; Kivali fails the flow: setup did not finish its step within 5 minutes; start it again" % SETUP_SECONDS)
-            return
+            return "failed"
         if "error" in resp:
             err = resp.get("error") or {}
             words = err.get("message") if isinstance(err, dict) else ""
             say("  Setup fails, in %.1f s. The owner reads: %s" % (took, clip(srv.scrub(words or "%s failed and gave no reason" % display), FLOW_WORDS)))
-            return
+            return "failed"
         step, why = read_step(resp.get("result"))
         if why:
             problem("Kivali fails the flow: %s's setup answered with a step Kivali cannot read: %s" % (display, why))
-            return
+            return "failed"
         refused = check_step(step, display, setup)
         if refused:
             problem("Kivali fails the flow: " + clip(srv.scrub(refused), FLOW_WORDS))
-            return
+            return "failed"
         keep = step.get("keep") or {}
         new_state = step.get("state") or {}
         # A check that finds the same Wait, State and nothing kept is no
@@ -1045,10 +1087,10 @@ def setup_calls(pod, display, flow, opts):
                     pod.fields[k] = v
             say("  Kivali keeps %s in the connection's Secret%s." % (", ".join(sorted(keep)), ", and starts the server again with it, as the pod does" if changed else ""))
             if changed and not pod.restart():
-                return
+                return "failed"
         if step.get("done"):
             say("  Done, in %.1f s: %s." % (took, "the connection is made, and the integration is installed" if flow == "setup" else "the Fix is made"))
-            return True
+            return "done"
         if "form" in step:
             wait = None
             entered = {}
@@ -1060,7 +1102,7 @@ def setup_calls(pod, display, flow, opts):
             this_form = (step["form"].get("words", ""), tuple(step["form"].get("fields") or []), entered)
             if this_form == last_form:
                 note("setup asks for %s again after the same answer; give another --answer to see what follows" % ", ".join(this_form[1]))
-                return
+                return "left"
             last_form = this_form
             answer = {"form": entered, "return": {}, "checked": False, "went": False}
             continue
@@ -1074,14 +1116,14 @@ def setup_calls(pod, display, flow, opts):
             query = returns.pop(0) if returns else ask_return()
             if query is None:
                 note("the flow waits for the browser to come back from %s; give --return with the query the service sends back" % url_host(go.get("url", "")))
-                return
+                return "left"
             back = urllib.parse.parse_qs(query.lstrip("?"), keep_blank_values=True)
             if "state" not in back and not go.get("stateless"):
                 back["state"] = [legs[-1]]
                 note("the return has no state; the service sends the browser back to the callback the call was given, so try.py added its state")
             elif "state" in back and not any(v in legs for v in back["state"]):
                 problem("the return's state is none the flow gave: Kivali finds no flow for it, the browser lands on the integrations list and setup is not called")
-                return
+                return "left"
             for k, vs in back.items():
                 if secret_return_key(k):
                     pod.secrets.extend(vs)
@@ -1092,13 +1134,14 @@ def setup_calls(pod, display, flow, opts):
                 wait, checks = step["wait"], 0
             if checks >= opts.checks:
                 note("the Wait was checked %d time%s; Kivali goes on checking it every 3 seconds while the owner's page is open, up to 24 hours from the flow's start, and forgets it ten minutes after the last check once the page is closed" % (checks, "" if checks == 1 else "s"))
-                return
+                return "left"
             checks += 1
             if opts.every > 0:
                 time.sleep(opts.every)
             answer = {"form": {}, "return": {}, "checked": True, "went": False}
             continue
     note("setup was called %d times and is not done; try.py stops here" % SETUP_CALLS)
+    return "left"
 
 
 def addresses(opts):

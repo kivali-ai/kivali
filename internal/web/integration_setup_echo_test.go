@@ -245,6 +245,40 @@ func TestEchoSetupFails(t *testing.T) {
 	if _, err := srv.Store.GetIntegrationConnection("echo"); !errors.Is(err, store.ErrNotFound) || len(mem.Names()) != 0 {
 		t.Errorf("after the failure: %v, secrets %v", err, mem.Names())
 	}
+	// The install made an app on the service before it failed: echo is
+	// asked to undo it, with the connection as kept so far, before the
+	// connection goes.
+	if u := e.callsOf("uninstall"); len(u) != 1 || u[0].Conn.Fields["token"] != "tok-c0de-4" || u[0].Conn.Fields["account"] != "acme-widgets" {
+		t.Errorf("uninstall calls = %+v", u)
+	}
+}
+
+// Why this test exists: undoing what a failed or cancelled install made
+// on the service is best effort. An integration whose Uninstall fails
+// must not keep the half-made connection, or the owner could never
+// install it again; the connection goes all the same.
+func TestEchoSetupCancelledUndoesWhatItCan(t *testing.T) {
+	srv, e, _ := setupServer(t, nil)
+	mem := secrets.NewMemory()
+	srv.Secrets = mem
+	e.FailUninstall(true)
+	startSetupFlow(t, srv, "echo")
+	_, cookie := echoGo(t, srv, "acme")
+	echoBack(t, srv, e, cookie, url.Values{"code": {"c0de-5"}})
+	waitFlow(t, srv, "echo", apitypes.SetupFlowStateWait)
+	if rr := flowDo(t, srv, http.MethodPost, intBase+"/echo/setup/cancel", nil); rr.Code != http.StatusNoContent {
+		t.Fatalf("cancel: %d", rr.Code)
+	}
+	srv.setupAwaitDiscard(context.Background(), "echo")
+	if u := e.callsOf("uninstall"); len(u) != 1 || u[0].Conn.Fields["token"] != "tok-c0de-5" {
+		t.Errorf("uninstall calls = %+v", u)
+	}
+	if _, err := srv.Store.GetIntegrationConnection("echo"); !errors.Is(err, store.ErrNotFound) || len(mem.Names()) != 0 {
+		t.Errorf("after an uninstall that failed: %v, secrets %v", err, mem.Names())
+	}
+	if page := echoPage(t, srv); page.Summary.State != apitypes.IntegrationStateAvailable {
+		t.Errorf("after = %s", page.Summary.State)
+	}
 }
 
 // countingPuts is a Secrets store that counts its writes.

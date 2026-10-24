@@ -165,9 +165,9 @@ def build(flow, key, stage):
         api("POST", "/v1/apps/%s/install" % urllib.parse.quote(APP_ID, safe=""), session)
         return {"done": True}
     stage("Making the app", 2, total)
-    # Kivali calls nothing when a setup is cancelled, left or fails, so
-    # an app an earlier run made is still in Deals: take it up, rather
-    # than make the owner a second one.
+    # An install that ended before it kept the app's id left the app in
+    # Deals, and kivali/uninstall then had nothing to remove it by: take
+    # it up, rather than make the owner a second one.
     found = api("GET", "/v1/apps", session, query={"name": APP_NAME}).get("apps") or []
     app_id = str(found[0].get("id") or "") if found else ""
     if app_id:

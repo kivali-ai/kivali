@@ -44,9 +44,12 @@
 // its start at most, and lost on a restart; deleting a connection, uninstalling the integration,
 // switching it off and signing out cancel it. A flow that installs
 // (it started with no connection) and fails, is cancelled or is
-// forgotten before it is done keeps nothing: the connection its Keep
-// made goes again (setupDiscard), and the integration is available
-// again.
+// forgotten before it is done keeps nothing: the integration is asked
+// to undo what it made on the service, best effort (setupUndo), the
+// connection its Keep made goes again (setupDiscard), and the
+// integration is available again. An install started while another is
+// under way ends that one and takes over the connection it made, with
+// what it kept.
 
 package web
 
@@ -1069,14 +1072,17 @@ func (s *Server) setupMade(run *setupRun, id string, kept bool) {
 
 // setupDiscard forgets name's connection id that an install made and
 // that ended without being done, as Uninstall forgets a connection:
-// its Secret (the sign-in's tokens revoked with the service), its
-// scoped proxy credential, its record and the access set for it. With
-// keepRecord (the install took over a record an earlier version made),
-// the record and the access stay, holding no value, so the integration
-// reads available and agents' access returns with the next install. A
-// connection already gone is left be.
+// first, where the integration can undo what the install made on the
+// service, it is asked to (setupUndo); then its Secret (the sign-in's
+// tokens revoked with the service), its scoped proxy credential, its
+// record and the access set for it go. With keepRecord (the install
+// took over a record an earlier version made), the record and the
+// access stay, holding no value, so the integration reads available
+// and agents' access returns with the next install. A connection
+// already gone is left be.
 func (s *Server) setupDiscard(name, id string, keepRecord bool) {
 	ctx := context.Background()
+	s.setupUndo(ctx, name, id)
 	unlock := s.lockIntegrations()
 	rec, err := s.Store.GetIntegrationConnectionByID(name, id)
 	if err != nil {
@@ -1112,6 +1118,46 @@ func (s *Server) setupDiscard(name, id string, keepRecord bool) {
 	s.revokeSignIns(ctx, revokes)
 	s.Integrations.ConnectionChanged(name)
 	s.Integrations.Changed()
+}
+
+// setupUndo asks name's integration to undo, on the service, what an
+// install that ended without being done made there, before core
+// forgets the connection id it kept: a built-in's Uninstall, or a
+// setup bundle's kivali/uninstall while its server runs (uninstallerOf),
+// with the connection as kept so far, which may lack what later steps
+// would have kept. It is best effort, under integrationCallTimeout, off
+// every lock: a failure, or no answer in time, is logged, scrubbed of
+// the connection's secrets, and the connection goes all the same. The
+// call is counted in setupRuns.calling, so setupDrain waits for it.
+func (s *Server) setupUndo(ctx context.Context, name, id string) {
+	v, err := s.loadIntegration(ctx, name)
+	if err != nil {
+		return
+	}
+	u, ok := s.uninstallerOf(v)
+	if !ok {
+		return
+	}
+	conn, scrub, err := s.uninstallConnection(ctx, name, id)
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		return
+	case err != nil:
+		log.Printf("integration %s: read the connection an unfinished setup made, to undo it on the service: %v", name, err)
+		return
+	}
+	s.setupRuns.calling.Add(1)
+	_, err = runBuiltin(ctx, s.clk(), integrationCallTimeout, func(ctx context.Context) (struct{}, error) {
+		defer s.setupRuns.calling.Done()
+		return struct{}{}, u.Uninstall(ctx, conn)
+	})
+	if err != nil {
+		said := err.Error()
+		if errors.Is(err, errIntegrationTimeout) {
+			said = fmt.Sprintf("it did not answer within %d seconds", int(integrationCallTimeout/time.Second))
+		}
+		log.Printf("integration %s: undo on the service what an unfinished setup made: %s", name, clipRunes(scrub.Replace(said), signInWordsRunes))
+	}
 }
 
 // setupSubscribe is name's flow's state now and a channel of its

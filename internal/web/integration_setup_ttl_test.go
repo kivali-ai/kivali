@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"net/http"
 	"testing"
 	"time"
 
@@ -9,7 +10,8 @@ import (
 	"github.com/kivali-ai/kivali/internal/web/apitypes"
 )
 
-// The tests here hold how long a flow is kept: setupFlowTTL after its
+// The tests here hold a flow's lifetime: what a start while an install
+// is under way takes over, and how long a flow is kept: setupFlowTTL after its
 // last change or its last Wait check (made only while someone watches),
 // and setupFlowMaxAge after its start at most, on the server's clock.
 
@@ -65,6 +67,57 @@ func TestSetupFlowWatchedWaitIsKept(t *testing.T) {
 	clk.Advance(setupFlowTTL)
 	if f, _, _ := srv.setupPeek("echo"); f != nil {
 		t.Errorf("a Wait nobody watches was kept %v after its last check: %+v", setupFlowTTL, f)
+	}
+}
+
+// Why this test exists: an owner who starts an install again while one
+// is under way (back from the service in another tab, or after leaving
+// the page) gets the new flow over the connection the old one made:
+// what it kept stays and the new flow's calls read it, nothing of it is
+// undone on the service, and the new flow is the install, so if it is
+// cancelled, that connection is undone and goes. The docs and the skill
+// tell a setup author to expect exactly this.
+func TestSetupStartedAgainTakesOverWhatWasKept(t *testing.T) {
+	srv, e, _ := setupServer(t, func(n int, _ context.Context, _ builtinintegrations.Connection, last builtinintegrations.Answer, _ builtinintegrations.Progress) (builtinintegrations.Step, error) {
+		if last.Form == nil {
+			return builtinintegrations.Step{Form: &builtinintegrations.Form{Fields: []string{"account"}}}, nil
+		}
+		return builtinintegrations.Step{Keep: map[string]string{"token": "kept-token-1"}, Wait: &builtinintegrations.Wait{Words: "Waiting."}}, nil
+	})
+	startSetupFlow(t, srv, "echo")
+	waitFlow(t, srv, "echo", apitypes.SetupFlowStateForm)
+	orgOK[apitypes.SetupFlow](t, flowDo(t, srv, http.MethodPost, intBase+"/echo/setup/answer", apitypes.SetupFlowAnswer{Fields: map[string]string{"account": "acme"}}))
+	waitFlow(t, srv, "echo", apitypes.SetupFlowStateWait)
+	made, err := srv.Store.GetIntegrationConnection("echo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for len(e.seen) > 0 {
+		<-e.seen
+	}
+
+	startSetupFlow(t, srv, "echo")
+	first := e.nextCall(t)
+	if first.Conn.ID != made.ID || first.Conn.Fields["token"] != "kept-token-1" {
+		t.Errorf("the new flow's first call read %+v, want the connection %s with what was kept", first.Conn, made.ID)
+	}
+	waitFlow(t, srv, "echo", apitypes.SetupFlowStateForm)
+	if u := e.callsOf("uninstall"); len(u) != 0 {
+		t.Errorf("starting again undid the install: %+v", u)
+	}
+	if page := echoPage(t, srv); page.Summary.State != apitypes.IntegrationStateSettingUp {
+		t.Errorf("while the new install runs = %s", page.Summary.State)
+	}
+
+	if rr := flowDo(t, srv, http.MethodPost, intBase+"/echo/setup/cancel", nil); rr.Code != http.StatusNoContent {
+		t.Fatalf("cancel: %d", rr.Code)
+	}
+	srv.setupAwaitDiscard(context.Background(), "echo")
+	if _, err := srv.Store.GetIntegrationConnection("echo"); err == nil {
+		t.Error("the connection the first install made outlived the second's cancel")
+	}
+	if u := e.callsOf("uninstall"); len(u) != 1 || u[0].Conn.Fields["token"] != "kept-token-1" {
+		t.Errorf("uninstall calls = %+v", u)
 	}
 }
 

@@ -59,8 +59,9 @@ Done.
     `progress` and `total` for the bar. A setup key Deals refuses gives
     the Form back with words saying why, rather than failing the flow.
     It takes up the app an earlier run made (found by `APP_NAME`)
-    before making one: Kivali calls nothing when a setup is cancelled
-    or fails, so that app is still in Deals.
+    before making one: an install that ends partway before it kept the
+    app's id leaves that app in Deals, and one started again over a
+    left install keeps what that one kept.
   - The fallback (`show_token_wait`): a Wait whose check (`answer.checked`)
     asks Deals, with a four-second timeout, whether the token has been
     shown, and answers the same Wait until it has; a check that cannot
