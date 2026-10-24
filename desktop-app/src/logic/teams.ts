@@ -136,6 +136,14 @@ export function teamPage(team: Team | undefined, snap: Pick<Snapshot, "teams" | 
       return { kind: "progress", title: `Applying changes to ${name}`, body: remaining, percent, step: null };
     case "deleting":
       return { kind: "progress", title: `Deleting ${name}`, body: remaining, percent, step: null };
+    case "restarting":
+      return {
+        kind: "progress",
+        title: `Restarting ${name}`,
+        body: [remaining, "Agents pick up where they left off."].filter(Boolean).join(" "),
+        percent,
+        step: null,
+      };
     default:
       return { kind: "progress", title: `Waking ${name} up`, body: remaining, percent, step: measuredStep(op) };
   }
@@ -192,12 +200,13 @@ export function claudeLine(team: Team): string {
   return parts.length ? parts.join(" · ") : "Signed in";
 }
 
-/** The Overview tab's status row: the word, the line under it, and its button. */
+/** The Overview tab's status row: the word, the line under it, its button, and whether
+ *  Restart stands beside it (a running team on a development build). */
 export function statusRow(
   team: Team,
   snap: Pick<Snapshot, "teams" | "platform">,
   now: Date,
-): { cls: string; word: string; sub: string | null; action: "pause" | "resume" | "retry" | null; actionLabel: string | null } {
+): { cls: string; word: string; sub: string | null; action: "pause" | "resume" | "retry" | null; actionLabel: string | null; restart: boolean } {
   const { cls, word } = dotOf(team.state);
   switch (team.state) {
     case "running":
@@ -207,10 +216,11 @@ export function statusRow(
         sub: team.ai?.signed_in === false ? "Claude isn’t signed in" : (agentsWorking(team.working) ?? "Agents can work"),
         action: "pause",
         actionLabel: "Pause…",
+        restart: team.dev,
       };
     case "paused": {
       const since = team.paused_since ? sinceWhen(team.paused_since, now) : null;
-      return { cls, word, sub: since ? `Since ${since}` : null, action: "resume", actionLabel: "Resume" };
+      return { cls, word, sub: since ? `Since ${since}` : null, action: "resume", actionLabel: "Resume", restart: false };
     }
     case "failed": {
       const other = team.pause_first ? snap.teams.find((t) => t.id === team.pause_first) : undefined;
@@ -220,6 +230,7 @@ export function statusRow(
         sub: team.reason ?? (other ? lowMemory(snap.platform, other) : null),
         action: "retry",
         actionLabel: other ? `Pause ${other.name} and try again` : "Try again",
+        restart: false,
       };
     }
     case "starting": {
@@ -230,10 +241,11 @@ export function statusRow(
         updating: "Updating",
         applying: "Applying changes",
         deleting: "Deleting",
+        restarting: "Restarting",
       };
       const op = team.op;
       const sub = op?.running ? [op.stage, op.remaining].filter(Boolean).join(" · ") || null : null;
-      return { cls, word: words[team.activity ?? "waking"] ?? "Starting", sub, action: null, actionLabel: null };
+      return { cls, word: words[team.activity ?? "waking"] ?? "Starting", sub, action: null, actionLabel: null, restart: false };
     }
   }
 }

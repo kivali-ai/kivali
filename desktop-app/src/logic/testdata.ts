@@ -35,6 +35,7 @@ export function team(o: Partial<Team> = {}): Team {
     pause_first: null,
     op: null,
     version: "0.17.0",
+    dev: false,
     update: null,
     ai: { provider: "claude", signed_in: true, email: "dana@example.com", billing: "Claude Max", terminal_open: false, signin: "idle", signed_out_at: null },
     owner: "dana@example.com",

@@ -104,6 +104,11 @@ pub mod stage {
     /// Upgrade, once it failed: the snapshot put back, the earlier
     /// version started again.
     pub const ROLLING_BACK: &str = "rolling-back";
+    /// Restart: the agent pods deleted, the server deployment rolled
+    /// and `/readyz` waited for. The shell's own id: the supervisor
+    /// names no stage for a restart, and the fake supervisor sends this
+    /// one.
+    pub const RESTARTING: &str = "restarting";
     /// `down`.
     pub const PAUSING: &str = "pausing";
     /// `destroy`.
@@ -140,6 +145,10 @@ pub struct UpOptions {
     #[serde(default, skip_serializing_if = "is_false")]
     pub prepare: bool,
 }
+
+/// The body of `POST /v1/restart`: it takes nothing.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct RestartRequest {}
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct DownRequest {

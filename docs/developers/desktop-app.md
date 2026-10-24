@@ -905,6 +905,7 @@ the data disk.
 | pause | pausing | Pausing (`pausing`) |
 | address | applying | Applying the change (`setting-up`) |
 | delete | deleting | Deleting (`deleting`) |
+| restart | restarting | Restarting (`restarting`, the shell's own id: the supervisor names no stage for a restart) |
 
 A line whose stage this kind does not know keeps the step it had. The
 steps shown are the ones the operation has been in, the one it is in,
@@ -1177,6 +1178,16 @@ this computer can't run the VM, `boot` refuses before it starts a
 supervisor: the team couldn't start (failure `vm`, `reason` from
 `view::vm_reason`), and its page shows the steps from `logic/vmhelp.ts`
 in place of Resume or Try again.
+
+**Restarting a team** (Settings → team → Overview, Restart beside
+Pause…) runs the supervisor's `restart`: the agent pods are deleted,
+the server deployment is rolled and `/readyz` is waited for, so a team
+whose `:dev` image tags moved under it runs the images now in its VM.
+The button shows only for a team here whose Kivali version is a
+development one (`updates::is_dev_version`: the dev chart's
+`0.0.0-dev`, or `dev`), carried in the snapshot as the team's `dev`.
+The operation is `OpKind::Restart` (activity `restarting`); the team
+page says "Restarting Plainsong" meanwhile.
 
 **Updating a team** (E3, from the tray or Settings → team → Update…):
 "Update Plainsong to 0.17? It takes about 4 minutes. Agents pause while
@@ -1647,6 +1658,7 @@ welcome screen.
 | `open_team(id)`, `open_team_page(id, path)` | open a team's window; open a path of its web app there (no page calls either) |
 | `pause_team`, `resume_team`, `retry_team` (id) | pause; resume (refused with `memory:<id>` when it would not fit); resume, or recheck a team elsewhere |
 | `pause_and_resume(pause, resume)` | E5's confirm |
+| `restart_team(id)` | `POST /v1/restart`: the team's pods recreated on the images now in its VM; refused unless the team runs |
 | `update_team(id)` | the Kivali update |
 | `open_in_browser(id)` | the team's address in the system browser |
 | `remove_team(id)` | forget a team elsewhere (E6) |

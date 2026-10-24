@@ -581,6 +581,18 @@ fn handle(fake: &Fake, mut conn: impl Read + Write) -> std::io::Result<()> {
             Ok(r)
         }),
         "install" => Ok(None),
+        "restart" => {
+            if !fake.running.load(Ordering::SeqCst) {
+                Err("the VM is not running".into())
+            } else {
+                let _ = fake.logs(
+                    &mut conn,
+                    stage::RESTARTING,
+                    &["agent pods deleted", "deployment/kivali restarted", "waiting for the server deployment to roll out", "http://127.0.0.1:18080/readyz answers 200"],
+                );
+                Ok(None)
+            }
+        }
         "check" => Ok(Some(serde_json::to_value(fake.check()).unwrap())),
         "upgrade" => {
             if !fake.running.load(Ordering::SeqCst) {

@@ -40,6 +40,7 @@
     "allow-resume-team",
     "allow-retry-team",
     "allow-pause-and-resume",
+    "allow-restart-team",
     "allow-update-team",
     "allow-open-in-browser",
     "allow-remove-team",
