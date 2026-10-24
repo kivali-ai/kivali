@@ -865,7 +865,9 @@ func (s *Server) setupFinish(run *setupRun) error {
 	}
 	rec, err := s.Store.GetIntegrationConnection(run.name)
 	switch {
-	case errors.Is(err, store.ErrNotFound):
+	case errors.Is(err, store.ErrNotFound), errors.Is(err, store.ErrIntegrationConnectionsSeveral):
+		// No connection, or several an earlier Kivali left, which no
+		// install made: nothing is marked.
 		return nil
 	case err != nil:
 		log.Printf("integration %s: read the connection to finish its setup: %v", run.name, err)

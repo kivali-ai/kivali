@@ -2243,8 +2243,9 @@ export interface SetupFlow {
    */
   error?: string;
   /**
-   * ExpiresAt is when Kivali forgets the flow unless it changes
-   * before.
+   * ExpiresAt is when Kivali forgets the flow unless it changes, or
+   * its Wait is checked while you watch it, before; never later than
+   * a day after the flow started.
    */
   expires_at: string /* RFC 3339 */;
 }
