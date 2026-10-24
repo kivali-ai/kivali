@@ -2095,7 +2095,7 @@ describe('Integration page, Git’s one connection', () => {
     await renderOrg(PATH, { routes: gitRoutes() });
     const lee = screen.getByText('Lee').closest('tr') as HTMLElement;
     expect(
-      within(lee).getByText('Invalid: set for the connection gitlab.example.com, which Git no longer has; set it again. It grants nothing until you change it.'),
+      within(lee).getByText('Invalid: set for the connection gitlab.example.com, which Git no longer has. It grants nothing until you change it.'),
     ).toHaveClass('kv-text--danger');
     const dana = screen.getByText('Dana').closest('tr') as HTMLElement;
     expect(within(dana).queryByText(/^Invalid: /)).toBeNull();

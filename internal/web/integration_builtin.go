@@ -34,6 +34,7 @@ import (
 	"github.com/kivali-ai/kivali/internal/builtinintegrations"
 	"github.com/kivali-ai/kivali/internal/clock"
 	"github.com/kivali-ai/kivali/internal/integrationpod"
+	"github.com/kivali-ai/kivali/internal/secrets"
 	"github.com/kivali-ai/kivali/internal/store"
 )
 
@@ -143,21 +144,31 @@ func refuseVendorUnavailable(display string) string {
 // adds when its job ran through another connection than the
 // integration has now, jobID, and the scrubber of both connections'
 // secrets, rowSecrets being the current connection's. A job connection
-// that is no longer there leaves rowSecrets alone, and the note says
-// so. jobID is text from the agent's pod: it only picks which secrets
-// are scrubbed.
+// the migration set aside (a job handed out before the upgrade and
+// ended after it) is read from where it was set aside, every value of
+// its Secret a secret. Any other is no longer there: rowSecrets alone
+// scrub, and the note says so. jobID is text from the agent's pod: it
+// only picks which secrets are scrubbed.
 func (s *Server) jobConnectionNote(ctx context.Context, v agentIntegration, jobID string, rowSecrets []string) (string, *strings.Replacer) {
-	// As stored: building a scrubber never sends a vendor a refresh.
-	// The stored tokens and the proxy credential's secret are among the
-	// secrets.
-	_, _, _, jobSecrets, proxySecret, _, err := s.Integrations.readStoredConnection(ctx, v.name, jobID)
-	if proxySecret != "" {
-		jobSecrets = append(jobSecrets, proxySecret)
-	}
+	const gone = " (it ran through a connection that is no longer there, so only the current connection's secrets were scrubbed)"
+	rec, err := s.Store.GetRetiredIntegrationConnection(v.name, jobID)
 	if err != nil {
-		return " (it ran through a connection that is no longer there, so only the current connection's secrets were scrubbed)", newScrubber(rowSecrets)
+		return gone, newScrubber(rowSecrets)
 	}
-	return " (it ran through an earlier connection)", newScrubber(append(slices.Clone(rowSecrets), jobSecrets...))
+	var data map[string]string
+	if rec.SecretName != "" {
+		data, err = s.Secrets.Get(ctx, rec.SecretName)
+		if err != nil && !errors.Is(err, secrets.ErrNotFound) {
+			return gone, newScrubber(rowSecrets)
+		}
+	}
+	jobSecrets := slices.Clone(rowSecrets)
+	for _, val := range data {
+		if val != "" {
+			jobSecrets = append(jobSecrets, val)
+		}
+	}
+	return " (it ran through a connection set aside)", newScrubber(jobSecrets)
 }
 
 // callerOf is the agent and its access as a built-in reads them.

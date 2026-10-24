@@ -104,7 +104,7 @@ func (v *integrationView) installed() bool {
 // installed and running, its connection with all its secrets and, made
 // by signing in, signed in.
 func (v *integrationView) agentUsable() bool {
-	return v.state() == apitypes.IntegrationStateInstalled && v.running && v.conn != nil && v.usable(v.conn)
+	return v.state() == apitypes.IntegrationStateInstalled && v.running && v.conn != nil && !v.several && v.usable(v.conn)
 }
 
 // coreRequirements are Kivali's own rows of v, installed or off: an
@@ -123,7 +123,13 @@ func (v *integrationView) coreRequirements() ([]apitypes.IntegrationRequirement,
 	rows := []apitypes.IntegrationRequirement{ver}
 
 	conn := apitypes.IntegrationRequirement{ID: reqConnection, Title: "Connection", Met: true, Words: "Its secrets are stored."}
-	if first.reconnect {
+	switch {
+	case v.several:
+		// No Fix: a flow would write into one of the records.
+		conn.Met = false
+		conn.Words = "It holds more than one connection record, and Kivali could not bring it to one; the log says why. Agents cannot use it until it holds one."
+		at[reqConnection] = since
+	case first.reconnect:
 		conn.Met, conn.Fix = false, builtinintegrations.FlowSetup
 		conn.Words = "Its secrets are not stored on this Kivali server, as after a restore from a backup. Enter them again."
 		at[reqConnection] = since
@@ -205,7 +211,7 @@ func sentenceEnd(words string) string {
 // its renewal: the sign_in row says so.
 func (s *Server) ownRequirements(ctx context.Context, v *integrationView) []apitypes.IntegrationRequirement {
 	ro, ok := v.builtin.(builtinintegrations.RequirementsOf)
-	if !ok || v.conn == nil {
+	if !ok || v.conn == nil || v.several {
 		return nil
 	}
 	name, connID := v.it.Name, v.conn.rec.ID

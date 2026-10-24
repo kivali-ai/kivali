@@ -38,11 +38,18 @@ import (
 // ran.
 const errConnectionGone = "that connection is no longer there"
 
-// newConnectionID is a fresh connection id: 8 hex digits.
-func newConnectionID() string {
-	var b [4]byte
-	_, _ = rand.Read(b[:])
-	return hex.EncodeToString(b[:])
+// newConnectionID is a fresh connection id for name: 8 hex digits that
+// name no record of it, its connection's or one set aside
+// (store.IntegrationConnectionIDTaken), so the new connection's Secret
+// name is its own.
+func (s *Server) newConnectionID(name string) string {
+	for {
+		var b [4]byte
+		_, _ = rand.Read(b[:])
+		if id := hex.EncodeToString(b[:]); !s.Store.IntegrationConnectionIDTaken(name, id) {
+			return id
+		}
+	}
 }
 
 // connectionTest reports whether the version in use has a connection
@@ -223,11 +230,13 @@ func (s *Server) writeConnection(ctx context.Context, v *integrationView, cur *c
 	}
 	name, m := v.it.Name, v.manifest
 	fields, secret, stored, conn := plan.fields, plan.secret, plan.stored, plan.conn
-	rec := store.IntegrationConnection{ID: newConnectionID(), CreatedAt: s.clk().Now(), Fields: fields}
+	rec := store.IntegrationConnection{CreatedAt: s.clk().Now(), Fields: fields}
 	if cur != nil {
 		// A sign-in stays: saving the form changes its fields, not the
 		// tokens the owner signed in for.
 		rec.ID, rec.CreatedAt, rec.SignIn = cur.rec.ID, cur.rec.CreatedAt, cur.rec.SignIn
+	} else {
+		rec.ID = s.newConnectionID(name)
 	}
 	conn.ID = rec.ID
 	secretName := secrets.ConnectionSecretName(name, rec.ID)
@@ -442,6 +451,9 @@ func (s *Server) verifyConnection(w http.ResponseWriter, r *http.Request, v *int
 		return
 	case c == nil:
 		writeAPIError(w, http.StatusConflict, "install "+v.displayName()+" first", whoYou)
+		return
+	case v.several:
+		writeAPIError(w, http.StatusConflict, v.displayName()+" holds more than one connection record and Kivali could not bring it to one; see the log", whoServer)
 		return
 	case v.manifest.Kivali.Verify == "":
 		writeAPIError(w, http.StatusConflict, v.displayName()+" has no connection test", v.whoBuilt())
