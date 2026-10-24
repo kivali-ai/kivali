@@ -123,9 +123,11 @@ func installURL(slug, state string) string {
 // Nothing is kept before GitHub made the app. The Fixes are FlowInstall
 // (steps 3's Go and 4 again), FlowPermissions and FlowSettings.
 //
-// Core scrubs every kept value, and every State value of six
-// characters or more, from what a step shows, so State holds short
-// markers alone, and no page a Wait names carries the app's slug.
+// Core scrubs every secret kept value (the client secret, the private
+// key) and every State value of six characters or more from what a
+// step shows, so State holds short markers alone. The app's id, slug,
+// client id and installation id are declared not secret: a page a step
+// names may carry them.
 func (g *GitHub) Setup(ctx context.Context, conn builtinintegrations.Connection, flow string, last builtinintegrations.Answer, p builtinintegrations.Progress) (builtinintegrations.Step, error) {
 	switch flow {
 	case builtinintegrations.FlowSetup:
@@ -306,11 +308,17 @@ func (g *GitHub) checkInstalled(ctx context.Context, conn builtinintegrations.Co
 	if err != nil {
 		return builtinintegrations.Step{}, errors.New("the connection does not hold the app GitHub made; start again")
 	}
-	// The Wait names no page: the new-installation page's address holds
-	// the app's slug, which core scrubs from what a step shows.
+	// The Wait names the new-installation page, without the flow's
+	// state: an owner who left it there without installing finishes it
+	// from this page, and the check finds the installation.
 	wait := builtinintegrations.Step{
-		Wait:  &builtinintegrations.Wait{Words: "Waiting for the app's installation on GitHub. An organization's owner may have to approve it there; this page carries on once it is installed."},
+		Wait: &builtinintegrations.Wait{
+			Words: "Waiting for the app's installation on GitHub. An organization's owner may have to approve it there; this page carries on once it is installed.",
+		},
 		State: map[string]string{"at": "wait"},
+	}
+	if appSlug.MatchString(app.slug) {
+		wait.Wait.URL = installURL(app.slug, "")
 	}
 	list, err := g.installations(ctx, app)
 	if err != nil {
@@ -480,11 +488,6 @@ type appInfo struct {
 	Owner       account           `json:"owner"`
 	Permissions map[string]string `json:"permissions"`
 }
-
-// appsURL is the list of the account's apps on GitHub, where the app
-// is found and deleted. It names no slug, which core scrubs from the
-// words the owner reads.
-func (a *appInfo) appsURL() string { return a.Owner.settingsURL() + "/apps" }
 
 // settingsURL is the app's settings on GitHub, where it is deleted.
 func (a *appInfo) settingsURL() string {

@@ -1078,8 +1078,13 @@ func (r *integrationRegistry) readStoredConnection(ctx context.Context, name, co
 			data = got
 		}
 		for k, v := range data {
-			if integration.ConnectionKeySecret(m, k) && v != "" {
-				values[k] = v
+			if !integration.ConnectionKeySecret(m, k) || v == "" {
+				continue
+			}
+			values[k] = v
+			// A kept value declared not secret (an app's public name) is
+			// a value like any other, in an answer or the log.
+			if integration.ConnectionKeyScrubbed(m, k) {
 				secretValues = append(secretValues, v)
 			}
 		}

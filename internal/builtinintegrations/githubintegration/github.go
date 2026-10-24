@@ -123,13 +123,18 @@ func (g *GitHub) Manifest() *integration.Manifest {
 					Fields: integration.SetupFields{
 						{Key: "account", Words: "An organization's name, or leave it blank for your personal account"},
 					},
+					// The app's id, slug, client id and installation id are
+					// GitHub's public names for the app and where it is
+					// installed (its pages and the <slug>[bot] author of what
+					// it writes show them), so they are not secret; its
+					// client secret and private key are.
 					Keeps: integration.SetupKeeps{
-						{Key: FieldAppID, Words: "The app's id"},
-						{Key: FieldSlug, Words: "The app's name on GitHub"},
-						{Key: FieldClientID, Words: "The app's client id"},
+						{Key: FieldAppID, Words: "The app's id", NotSecret: true},
+						{Key: FieldSlug, Words: "The app's name on GitHub", NotSecret: true},
+						{Key: FieldClientID, Words: "The app's client id", NotSecret: true},
 						{Key: FieldClientSecret, Words: "The app's client secret"},
 						{Key: FieldPrivateKey, Words: "The app's private key, which Kivali signs with to get a token for each call"},
-						{Key: FieldInstallationID, Words: "Where the app is installed"},
+						{Key: FieldInstallationID, Words: "Where the app is installed", NotSecret: true},
 					},
 				},
 			},
@@ -288,10 +293,10 @@ func answerText(v any) (string, error) {
 
 // Verify is Test connection: the app GitHub knows the key as (GET
 // /app) and the account its installation is on (GET
-// /app/installations/{id}), both with the app's JWT. "Connected as the
-// app Kivali Acme, installed on acme". The app is named by its name,
-// not its slug: the slug is a kept value, which core scrubs from the
-// words the owner reads.
+// /app/installations/{id}), both with the app's JWT. "Connected as
+// kivali-acme[bot], the app Kivali Acme, installed on acme": the bot
+// is who agents act as on GitHub, the name what GitHub shows of the
+// app.
 func (g *GitHub) Verify(ctx context.Context, conn builtinintegrations.Connection) (string, error) {
 	c, err := readConnection(conn)
 	if err != nil {
@@ -302,6 +307,7 @@ func (g *GitHub) Verify(ctx context.Context, conn builtinintegrations.Connection
 		return "", err
 	}
 	var app struct {
+		Slug string `json:"slug"`
 		Name string `json:"name"`
 	}
 	if err := g.getJSON(ctx, jwt, "/app", &app); err != nil {
@@ -315,7 +321,11 @@ func (g *GitHub) Verify(ctx context.Context, conn builtinintegrations.Connection
 	if err := g.getJSON(ctx, jwt, "/app/installations/"+url.PathEscape(c.installationID), &inst); err != nil {
 		return "", ownerError(err)
 	}
-	return "Connected as the app " + cmp.Or(app.Name, "Kivali made") + ", installed on " + inst.Account.Login, nil
+	who := "the app " + cmp.Or(app.Name, "Kivali made")
+	if slug := cmp.Or(app.Slug, c.slug); appSlug.MatchString(slug) {
+		who = slug + "[bot], " + who
+	}
+	return "Connected as " + who + ", installed on " + inst.Account.Login, nil
 }
 
 // ownerError is err in words for the owner.

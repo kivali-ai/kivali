@@ -524,7 +524,7 @@ func (s *Server) fixSpecFor(v *integrationView, flow string) (setupSpec, *connWr
 		// own setup runs one.
 		return setupSpec{}, &connWriteError{http.StatusConflict, v.displayName() + "'s setup does not run its own flows", v.whoBuilt()}
 	}
-	return setupSpec{driver: si, fields: c.Setup.Fields, hosts: c.Setup.Hosts, keeps: c.Setup.Keeps.Keys(), keep: s.keepSetupValues}, nil
+	return setupSpec{driver: si, fields: c.Setup.Fields, hosts: c.Setup.Hosts, keeps: c.Setup.Keeps.Keys(), shown: shownKeys(v.manifest), keep: s.keepSetupValues}, nil
 }
 
 // listedIntegration is one integration as a list reads it: its row and

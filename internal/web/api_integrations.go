@@ -401,7 +401,7 @@ func setupWire(m *integration.Manifest) *apitypes.IntegrationSetup {
 		})
 	}
 	for _, k := range s.Keeps {
-		out.Keeps = append(out.Keeps, apitypes.SetupKeep{Key: k.Key, Words: k.Words})
+		out.Keeps = append(out.Keeps, apitypes.SetupKeep{Key: k.Key, Words: k.Words, Secret: !k.NotSecret})
 	}
 	return out
 }

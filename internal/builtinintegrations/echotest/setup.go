@@ -78,8 +78,8 @@ func (e *Echo) SetInstalled(v bool) { e.knob(func(k *setupKnobs) { k.installed =
 func (e *Echo) SetPermissions(v bool) { e.knob(func(k *setupKnobs) { k.permissions = v }) }
 
 // FailSetup makes the Wait step's check fail the flow, in words that
-// quote the kept token and the setup-only key, so a test sees both
-// scrubbed.
+// quote the kept account, the kept token and the setup-only key, so a
+// test sees the account as it is and the other two scrubbed.
 func (e *Echo) FailSetup(v bool) { e.knob(func(k *setupKnobs) { k.failSetup = v }) }
 
 // FailUninstall makes Uninstall fail, in words that quote the token.
@@ -114,7 +114,7 @@ func (e *Echo) knobsNow() setupKnobs {
 
 // setupManifest makes m's connection a setup one: the account and a
 // setup-only key asked for, the browser sent to SetupHost alone, and
-// the token and the account kept. With HandOver, the connection has
+// the token and the account kept, the account declared not secret. With HandOver, the connection has
 // HandOver's endpoints, setup.then names its method, and the keeps add
 // the app's client id and secret, which echo's last step keeps
 // (ClientID, ClientSecret) for that sign-in.
@@ -128,7 +128,7 @@ func (e *Echo) setupManifest(m *integration.Manifest) {
 		},
 		Keeps: integration.SetupKeeps{
 			{Key: "token", Words: "The echo app's token"},
-			{Key: "account", Words: "The account the app is installed on"},
+			{Key: "account", Words: "The account the app is installed on", NotSecret: true},
 		},
 	}
 	conn := integration.Connection{Method: integration.MethodSetup}
@@ -247,7 +247,7 @@ func (e *Echo) install(k setupKnobs, conn builtinintegrations.Connection, last b
 		}
 		switch {
 		case k.failSetup:
-			return builtinintegrations.Step{}, fmt.Errorf("%s dropped the app with token %s and key %s", SetupHost, conn.Fields["token"], state["key"])
+			return builtinintegrations.Step{}, fmt.Errorf("%s dropped the app of %s with token %s and key %s", SetupHost, conn.Fields["account"], conn.Fields["token"], state["key"])
 		case k.installed:
 			done := builtinintegrations.Step{Done: true}
 			if e.HandOver != nil {

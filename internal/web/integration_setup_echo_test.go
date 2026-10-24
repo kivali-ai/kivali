@@ -219,20 +219,22 @@ func TestEchoSetupCancelled(t *testing.T) {
 
 // Why this test exists: a built-in's setup that fails says why, and its
 // words reach the page and the audit. They quote the token setup kept
-// and the key the owner entered, which must both be scrubbed there; and
-// the failed install keeps nothing.
+// and the key the owner entered, which must both be scrubbed there, and
+// the account setup kept, which its manifest declares not secret and
+// which must read as it is, not as [secret]; and the failed install
+// keeps nothing.
 func TestEchoSetupFails(t *testing.T) {
 	srv, e, clk := setupServer(t, nil)
 	mem := secrets.NewMemory()
 	srv.Secrets = mem
 	e.FailSetup(true)
 	startSetupFlow(t, srv, "echo")
-	_, cookie := echoGo(t, srv, "acme")
+	_, cookie := echoGo(t, srv, "acme-widgets")
 	echoBack(t, srv, e, cookie, url.Values{"code": {"c0de-4"}})
 	waitFlow(t, srv, "echo", apitypes.SetupFlowStateWait)
 	echoCheck(t, srv, e, clk)
 	f := waitFlow(t, srv, "echo", apitypes.SetupFlowStateFailed)
-	want := "setup.example dropped the app with token " + integrationSecretPlaceholder + " and key " + integrationSecretPlaceholder
+	want := "setup.example dropped the app of acme-widgets with token " + integrationSecretPlaceholder + " and key " + integrationSecretPlaceholder
 	if textOf(f.Error) != want {
 		t.Errorf("error = %q", textOf(f.Error))
 	}

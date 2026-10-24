@@ -223,6 +223,11 @@ type SetupField struct {
 type SetupKeep struct {
 	Key   string `json:"key"`
 	Words string `json:"words"`
+	// Secret values are never shown, to you or to agents; one that is
+	// not (an identifier the service shows publicly, such as an app's
+	// name) may be. Every kept value is stored with the connection's
+	// secrets either way.
+	Secret bool `json:"secret"`
 }
 
 // ConnectionField is one field of the connection form, from the

@@ -44,27 +44,33 @@
     "keeps": [
       {
         "key": "app_id",
-        "words": "The app's id"
+        "words": "The app's id",
+        "secret": false
       },
       {
         "key": "slug",
-        "words": "The app's name on GitHub"
+        "words": "The app's name on GitHub",
+        "secret": false
       },
       {
         "key": "client_id",
-        "words": "The app's client id"
+        "words": "The app's client id",
+        "secret": false
       },
       {
         "key": "client_secret",
-        "words": "The app's client secret"
+        "words": "The app's client secret",
+        "secret": true
       },
       {
         "key": "private_key",
-        "words": "The app's private key, which Kivali signs with to get a token for each call"
+        "words": "The app's private key, which Kivali signs with to get a token for each call",
+        "secret": true
       },
       {
         "key": "installation_id",
-        "words": "Where the app is installed"
+        "words": "Where the app is installed",
+        "secret": false
       }
     ],
     "then": ""

@@ -16,7 +16,7 @@ pasted token or a standard sign-in; for those, start from `template/`.
    installed.
 
 Where Deals does not hand the token back, step 2 ends instead with a
-Wait naming the app list in Deals, checked every few seconds until the
+Wait naming the app's page in Deals, checked every few seconds until the
 owner has shown the app's token there, then a Form for the token, then
 Done.
 
@@ -36,7 +36,9 @@ Done.
       call's answer and is never stored. `token` is `secret`: the
       fallback's Form asks for it, and the step keeps it.
     - `keeps`: the keys a step may store in the connection's Secret,
-      with words for the owner: `token` and `app_id`.
+      with words for the owner: `token`, a secret, and `app_id`, which
+      Deals shows in its own addresses and so is declared
+      `"secret": false`.
   - `user_config` is empty: the connection's values are what setup
     keeps. `mcp_config.env` names them as `${user_config.token}` and
     `${user_config.app_id}`, so the server reads them from its
@@ -65,9 +67,11 @@ Done.
     reach Deals answers the same Wait too, since an error would end the
     setup. The short-lived session rides in `state`, which
     Kivali keeps in its memory alone and replaces in every word it
-    shows with `[secret]`. Kivali does the same to every kept or
-    carried value, wherever it appears in a step, so the Wait's page is
-    the app list, whose address holds no app id.
+    shows with `[secret]`. Kivali does the same to every secret kept
+    value, wherever it appears in a step. The app's id is kept and not
+    secret, so the Wait's page is the app's own, its id in the address,
+    and the check reads the id back from the connection rather than
+    from `state`.
   - `kivali/requirements` (`kivali_requirements`): the integration's
     health after Kivali's own rows, `{"requirements": [{"id", "title",
     "words", "met", "fix"}]}`. It answers with no connection too, and

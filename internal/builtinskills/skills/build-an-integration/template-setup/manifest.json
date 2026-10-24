@@ -45,7 +45,7 @@
         },
         "keeps": {
           "token": "The app's token, which every call sends",
-          "app_id": "The app's id in Deals, to rebuild or remove it"
+          "app_id": { "words": "The app's id in Deals, to rebuild or remove it", "secret": false }
         }
       }
     },

@@ -183,7 +183,7 @@ func TestWhoamiNamesTheAppAndTheAccount(t *testing.T) {
 	f.route("GET /app", 200, `{"id":1234,"slug":"kivali-acme","name":"Kivali acme"}`)
 	f.route("GET /app/installations/42", 200, `{"id":42,"account":{"login":"acme","type":"Organization"}}`)
 	msg, err := g.Verify(context.Background(), testConn())
-	if err != nil || msg != "Connected as the app Kivali acme, installed on acme" {
+	if err != nil || msg != "Connected as kivali-acme[bot], the app Kivali acme, installed on acme" {
 		t.Fatalf("verify = %q, %v", msg, err)
 	}
 	reqs := f.requests()

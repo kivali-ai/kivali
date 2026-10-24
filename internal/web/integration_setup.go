@@ -31,10 +31,11 @@
 // Every step is held to the flow's declarations (setupSpec): a Form
 // asks only for declared fields, a Go or a Wait names a page only on a
 // declared host, and Keep holds only declared keys; a step outside
-// them fails the flow before anything of it is kept. Kept values, the
-// secret values the owner entered, and the State's values six
-// characters or longer are scrubbed from every word the flow shows,
-// logs or audits. The owner's audit gains a row per flow event, under
+// them fails the flow before anything of it is kept. Kept values (but
+// those of a keep declared not secret, or a form field that is not
+// sensitive), the secret values the owner entered, and the State's
+// values six characters or longer are scrubbed from every word the flow
+// shows, logs or audits. The owner's audit gains a row per flow event, under
 // the flow's name: started, returned, done, failed with the words,
 // cancelled.
 //
@@ -123,6 +124,10 @@ type setupSpec struct {
 	hosts []string
 	// keeps are the keys Keep may hold.
 	keeps []string
+	// shown are the keys among keeps whose kept values are not scrubbed
+	// from the flow's words (integration.ConnectionKeyScrubbed is false:
+	// a form field that is not sensitive, a keep declared not secret).
+	shown []string
 	// setup is the manifest's kivali.connection.setup, for a setup
 	// connection's flow; nil for a standard flow.
 	setup *integration.Setup
@@ -413,8 +418,10 @@ func (run *setupRun) wireLocked() apitypes.SetupFlow {
 		p.Words = clipRunes(scrub.Replace(p.Words), signInWordsRunes)
 		out.Progress = &p
 	}
-	// A step's words and code are scrubbed whole, then cut: a bundle's
-	// step is someone else's text, and the page shows only so much.
+	// A step's words are scrubbed whole, then cut: a bundle's step is
+	// someone else's text, and the page shows only so much. A Wait's
+	// code is cut and not scrubbed: the driver chose to show it, for the
+	// owner to enter on the service's page.
 	words := func(w string) string { return clipRunes(scrub.Replace(w), signInWordsRunes) }
 	switch st := run.step; {
 	case run.state == apitypes.SetupFlowStateForm && st.Form != nil:
@@ -436,7 +443,7 @@ func (run *setupRun) wireLocked() apitypes.SetupFlow {
 		out.Step = &apitypes.SetupFlowStep{
 			Kind: apitypes.SetupFlowStepKindWait, Words: words(st.Wait.Words), Fields: []apitypes.SetupField{},
 			URL: optString(scrub.Replace(st.Wait.URL)), Host: optString(setupURLHost(st.Wait.URL)),
-			Code: optString(clipRunes(scrub.Replace(st.Wait.Code), setupCodeRunes)),
+			Code: optString(clipRunes(st.Wait.Code, setupCodeRunes)),
 		}
 	}
 	return out
@@ -671,8 +678,10 @@ func (s *Server) setupApply(run *setupRun, gen int, step builtinintegrations.Ste
 		s.setupUnlock()
 		return
 	}
-	for _, v := range step.Keep {
-		run.addScrubLocked(v)
+	for k, v := range step.Keep {
+		if !slices.Contains(run.spec.shown, k) {
+			run.addScrubLocked(v)
+		}
 	}
 	for _, v := range step.State {
 		run.addScrubLocked(v)

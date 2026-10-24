@@ -445,12 +445,12 @@ func goldenIntegrationSetup() *IntegrationSetup {
 			{Key: "account", Title: "Account", Words: "An organization's name, or leave it blank for your personal account", Secret: false, SetupOnly: false},
 		},
 		Keeps: []SetupKeep{
-			{Key: "app_id", Words: "The app's id"},
-			{Key: "slug", Words: "The app's name on GitHub"},
-			{Key: "client_id", Words: "The app's client id"},
-			{Key: "client_secret", Words: "The app's client secret"},
-			{Key: "private_key", Words: "The app's private key, which Kivali signs with to get a token for each call"},
-			{Key: "installation_id", Words: "Where the app is installed"},
+			{Key: "app_id", Words: "The app's id", Secret: false},
+			{Key: "slug", Words: "The app's name on GitHub", Secret: false},
+			{Key: "client_id", Words: "The app's client id", Secret: false},
+			{Key: "client_secret", Words: "The app's client secret", Secret: true},
+			{Key: "private_key", Words: "The app's private key, which Kivali signs with to get a token for each call", Secret: true},
+			{Key: "installation_id", Words: "Where the app is installed", Secret: false},
 		},
 		Then: "",
 	}
@@ -540,15 +540,15 @@ func goldenIntegrationPageSettingUp() IntegrationPage {
 // owner to approve a permission on GitHub.
 func goldenIntegrationPageFix() IntegrationPage {
 	page := goldenIntegrationPageSetup()
-	conn := ConnectionState{ID: "f00dcafe", CreatedAt: integrationNow, Fields: []ConnectionField{}, VerifiedAt: &integrationLater, Verified: &integrationVerified, VerifyMessage: new("Connected as the app Kivali Acme, installed on acme")}
+	conn := ConnectionState{ID: "f00dcafe", CreatedAt: integrationNow, Fields: []ConnectionField{}, VerifiedAt: &integrationLater, Verified: &integrationVerified, VerifyMessage: new("Connected as kivali-acme[bot], the app Kivali Acme, installed on acme")}
 	page.Summary.State, page.Summary.Needs = IntegrationStateInstalled, 1
 	page.Connection = &conn
 	page.CanUninstall = true
 	page.Requirements = []IntegrationRequirement{
 		{ID: "version", Title: "Approved version", Words: "Version 2.0.0 ships with Kivali.", Met: true},
 		{ID: "connection", Title: "Connection", Words: "Its secrets are stored.", Met: true},
-		{ID: "connection_test", Title: "Connection test", Words: "Connected as the app Kivali Acme, installed on acme", Met: true},
-		{ID: "key", Title: "The app's key works", Words: "GitHub accepts the key of the app Kivali Acme. Uninstalling GitHub here leaves the app on GitHub, for you to delete under https://github.com/organizations/acme/settings/apps.", Met: true},
+		{ID: "connection_test", Title: "Connection test", Words: "Connected as kivali-acme[bot], the app Kivali Acme, installed on acme", Met: true},
+		{ID: "key", Title: "The app's key works", Words: "GitHub accepts the key of the app Kivali Acme. Uninstalling GitHub here leaves the app on GitHub, for you to delete in its settings at https://github.com/organizations/acme/settings/apps/kivali-acme.", Met: true},
 		{ID: "installed", Title: "Installed on GitHub", Words: "Installed on acme.", Met: true},
 		{ID: "repositories", Title: "Repositories it reaches", Words: "Installed on acme, reaching 12 repositories.", Met: true},
 		{ID: "permissions", Title: "Permissions current", Words: "The installation lacks permissions this version needs: pull requests: write. Approve them on GitHub.", Met: false, Fix: "permissions"},

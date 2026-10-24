@@ -199,8 +199,10 @@ type Setup struct {
 	Fields SetupFields `json:"fields,omitempty"`
 	// Keeps is every key setup may store in the connection's Secret, in
 	// the order declared. The kept values are the connection's fields,
-	// all secret; a kept client_id and client_secret are the app's,
-	// which core reads from the Secret for the sign-in Then names.
+	// every one stored in the Secret, and secret unless declared not
+	// (SetupKeep.NotSecret); a kept client_id and client_secret are the
+	// app's, which core reads from the Secret for the sign-in Then
+	// names.
 	Keeps SetupKeeps `json:"keeps,omitempty"`
 	// Then is the standard sign-in setup hands over to once it has
 	// kept the app's client id and secret: MethodBrowser or
@@ -303,10 +305,21 @@ func (s SetupFields) MarshalJSON() ([]byte, error) {
 }
 
 // SetupKeep is one key setup may store in the connection's Secret, with
-// words for the owner.
+// words for the owner. A kept value is secret unless NotSecret says
+// otherwise: an identifier the service shows publicly (an app's id, its
+// name in the service's addresses), which the owner may read in a
+// step's words and an agent in an answer. Every kept value is stored in
+// the Secret all the same.
 type SetupKeep struct {
 	Key   string
 	Words string
+	// NotSecret is "secret": false in the manifest's object form: the
+	// value is not replaced with [secret] in what the owner, an agent or
+	// the log reads.
+	NotSecret bool
+	// bad names what of the object form is not of its type ("words",
+	// "secret") or a key the form does not have, for the check.
+	bad []string
 }
 
 // SetupKeeps is a setup's keeps, in the manifest's order.
@@ -315,6 +328,12 @@ type SetupKeeps []SetupKeep
 // Has reports whether key is one setup may keep.
 func (s SetupKeeps) Has(key string) bool {
 	return slices.ContainsFunc(s, func(k SetupKeep) bool { return k.Key == key })
+}
+
+// Secret reports whether key is one setup may keep whose value is
+// secret: declared, and not declared "secret": false.
+func (s SetupKeeps) Secret(key string) bool {
+	return slices.ContainsFunc(s, func(k SetupKeep) bool { return k.Key == key && !k.NotSecret })
 }
 
 // Keys is every key, in order.
@@ -326,8 +345,10 @@ func (s SetupKeeps) Keys() []string {
 	return out
 }
 
-// UnmarshalJSON reads the keeps object, each value the key's words,
-// keeping its order.
+// UnmarshalJSON reads the keeps object, keeping its order. Each value
+// is the key's words (a secret keep), or an object of its words and
+// whether it is secret ({"words": "...", "secret": false}); what of the
+// object is not of its type is left for the check to name.
 func (s *SetupKeeps) UnmarshalJSON(b []byte) error {
 	keys, values, err := orderedObject(b)
 	if err != nil {
@@ -335,17 +356,44 @@ func (s *SetupKeeps) UnmarshalJSON(b []byte) error {
 	}
 	out := make(SetupKeeps, 0, len(keys))
 	for _, k := range keys {
+		raw := bytes.TrimSpace(values[k])
 		var words string
-		if err := json.Unmarshal(values[k], &words); err != nil {
-			return fmt.Errorf("keeps.%s: the value is the key's words", k)
+		if err := json.Unmarshal(raw, &words); err == nil {
+			out = append(out, SetupKeep{Key: k, Words: words})
+			continue
 		}
-		out = append(out, SetupKeep{Key: k, Words: words})
+		var obj map[string]json.RawMessage
+		if len(raw) == 0 || raw[0] != '{' || json.Unmarshal(raw, &obj) != nil {
+			return fmt.Errorf("keeps.%s: the value is the key's words, or an object of its words and whether it is secret", k)
+		}
+		keep := SetupKeep{Key: k}
+		for _, name := range sortedKeys(obj) {
+			v := bytes.TrimSpace(obj[name])
+			switch name {
+			case "words":
+				if bytes.Equal(v, []byte("null")) || json.Unmarshal(v, &keep.Words) != nil {
+					keep.bad = append(keep.bad, "words")
+				}
+			case "secret":
+				var secret bool
+				if bytes.Equal(v, []byte("null")) || json.Unmarshal(v, &secret) != nil {
+					keep.bad = append(keep.bad, "secret")
+					secret = true
+				}
+				keep.NotSecret = !secret
+			default:
+				keep.bad = append(keep.bad, name)
+			}
+		}
+		out = append(out, keep)
 	}
 	*s = out
 	return nil
 }
 
-// MarshalJSON writes the keeps back as an object in their order.
+// MarshalJSON writes the keeps back as an object in their order: a
+// secret keep as its words, one that is not as {"words": ..., "secret":
+// false}.
 func (s SetupKeeps) MarshalJSON() ([]byte, error) {
 	var buf bytes.Buffer
 	buf.WriteByte('{')
@@ -354,10 +402,18 @@ func (s SetupKeeps) MarshalJSON() ([]byte, error) {
 			buf.WriteByte(',')
 		}
 		key, _ := json.Marshal(k.Key)
-		words, _ := json.Marshal(k.Words)
+		var v []byte
+		if k.NotSecret {
+			v, _ = json.Marshal(struct {
+				Words  string `json:"words"`
+				Secret bool   `json:"secret"`
+			}{k.Words, false})
+		} else {
+			v, _ = json.Marshal(k.Words)
+		}
 		buf.Write(key)
 		buf.WriteByte(':')
-		buf.Write(words)
+		buf.Write(v)
 	}
 	buf.WriteByte('}')
 	return buf.Bytes(), nil
@@ -473,7 +529,7 @@ func ConnectionFields(m *Manifest) UserConfig {
 
 // ConnectionKeySecret reports whether key, one of ConnectionKeys, is
 // kept in the connection's Secret: a sensitive form field, or a key a
-// setup flow keeps.
+// setup flow keeps, secret or not (every kept value is stored there).
 func ConnectionKeySecret(m *Manifest, key string) bool {
 	if m == nil {
 		return false
@@ -483,6 +539,21 @@ func ConnectionKeySecret(m *Manifest, key string) bool {
 	}
 	c := m.Kivali.Connection
 	return c.Method == MethodSetup && c.Setup != nil && c.Setup.Keeps.Has(key)
+}
+
+// ConnectionKeyScrubbed reports whether key's value, key one of
+// ConnectionKeys, is replaced with [secret] wherever the owner, an agent
+// or the log reads it: a sensitive form field, or a key a setup flow
+// keeps that is not declared "secret": false.
+func ConnectionKeyScrubbed(m *Manifest, key string) bool {
+	if m == nil {
+		return false
+	}
+	if f, ok := ConnectionFields(m).Field(key); ok && f.Sensitive {
+		return true
+	}
+	c := m.Kivali.Connection
+	return c.Method == MethodSetup && c.Setup != nil && c.Setup.Keeps.Secret(key)
 }
 
 // ConnectionKeys is every key a connection's values may hold, as a

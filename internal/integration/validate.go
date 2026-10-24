@@ -620,7 +620,17 @@ func validateSetup(m *Manifest, f *Findings) {
 			f.errorf("%s: the key must be lowercase letters, digits and underscores, starting with a letter", at)
 		case reserved(at, k.Key):
 		}
-		if strings.TrimSpace(k.Words) == "" {
+		for _, name := range k.bad {
+			switch name {
+			case "words":
+				f.errorf("%s: words must be text", at)
+			case "secret":
+				f.errorf("%s: secret must be true or false", at)
+			default:
+				f.errorf("%s: %s is not part of a keep; a keep is its words, or an object of words and secret", at, name)
+			}
+		}
+		if !slices.Contains(k.bad, "words") && strings.TrimSpace(k.Words) == "" {
 			f.errorf("%s: words are missing; say what the kept value is", at)
 		}
 	}
