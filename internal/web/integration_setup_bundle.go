@@ -135,25 +135,11 @@ func (b bundleHooks) hookError(method string, err error) error {
 // install it) is waited for, bundleStartWait at most.
 func (b bundleHooks) Setup(ctx context.Context, _ builtinintegrations.Connection, flow string, last builtinintegrations.Answer, p builtinintegrations.Progress) (builtinintegrations.Step, error) {
 	reg := b.s.Integrations
-	if !reg.Running(b.name) {
-		waitCtx, cancel := context.WithCancel(ctx)
-		t := b.s.clk().NewTimer(bundleStartWait)
-		go func() {
-			defer cancel()
-			select {
-			case <-t.C():
-			case <-waitCtx.Done():
-			}
-		}()
-		running := reg.awaitRunning(waitCtx, b.name)
-		t.Stop()
-		cancel()
-		if !running {
-			if ctx.Err() != nil {
-				return builtinintegrations.Step{}, ctx.Err()
-			}
-			return builtinintegrations.Step{}, fmt.Errorf("%s is not running, so its setup cannot go on; its log says why. Start the setup again once it runs", b.display)
+	if !b.awaitServer(ctx) {
+		if ctx.Err() != nil {
+			return builtinintegrations.Step{}, ctx.Err()
 		}
+		return builtinintegrations.Step{}, fmt.Errorf("%s is not running, so its setup cannot go on; its log says why. Start the setup again once it runs", b.display)
 	}
 	token, stop := reg.watchProgress(b.name, func(pp integrationpod.ProgressParams) {
 		total := 0
@@ -173,6 +159,29 @@ func (b bundleHooks) Setup(ctx context.Context, _ builtinintegrations.Connection
 		return builtinintegrations.Step{}, fmt.Errorf("%s's setup answered with a step Kivali cannot read: %v", b.display, err)
 	}
 	return step, nil
+}
+
+// awaitServer reports whether the bundle's server runs, waiting for it,
+// while ctx lasts, bundleStartWait at most on the server's clock: one
+// switched on to install it, or started again by a Keep, is coming.
+func (b bundleHooks) awaitServer(ctx context.Context) bool {
+	reg := b.s.Integrations
+	if reg.Running(b.name) {
+		return true
+	}
+	waitCtx, cancel := context.WithCancel(ctx)
+	t := b.s.clk().NewTimer(bundleStartWait)
+	go func() {
+		defer cancel()
+		select {
+		case <-t.C():
+		case <-waitCtx.Done():
+		}
+	}()
+	running := reg.awaitRunning(waitCtx, b.name)
+	t.Stop()
+	cancel()
+	return running
 }
 
 // Requirements is kivali/requirements: the bundle's own rows.
