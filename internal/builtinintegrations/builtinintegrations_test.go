@@ -9,7 +9,6 @@ import (
 	"github.com/kivali-ai/kivali/internal/builtinintegrations/builtins"
 	"github.com/kivali-ai/kivali/internal/builtinintegrations/echotest"
 	"github.com/kivali-ai/kivali/internal/integration"
-	"github.com/kivali-ai/kivali/internal/integration/integrationtest"
 )
 
 // checkRegistry holds every built-in of r to what boot and core assume
@@ -101,52 +100,4 @@ func TestEchoPassesTheCheck(t *testing.T) {
 	if builtins.All().Lookup(echotest.Name) != nil {
 		t.Errorf("the test built-in is in the binary's list")
 	}
-}
-
-// checkShipped holds every shipped bundle of b to what boot and core
-// assume of one: files that read as a bundle, a manifest that names the
-// bundle's own name and passes an upload's check with no error, and a
-// name no other integration that ships with Kivali has (core tells a
-// built-in of Go code from a shipped bundle by its name).
-func checkShipped(t *testing.T, b builtinintegrations.ShippedBundles, goBuiltins builtinintegrations.Registry) {
-	t.Helper()
-	seen := map[string]bool{}
-	for _, sb := range b {
-		bundle, err := integration.ReadDirectory(sb.FS)
-		if err != nil {
-			t.Errorf("%s: %v", sb.Name, err)
-			continue
-		}
-		if bundle.Manifest.Name != sb.Name {
-			t.Errorf("%s: the manifest names %s", sb.Name, bundle.Manifest.Name)
-		}
-		if f := integration.Validate(bundle.Manifest, bundle.Files); f.HasErrors() {
-			t.Errorf("%s: findings: %v", sb.Name, f.Texts())
-		}
-		if seen[sb.Name] || goBuiltins.Lookup(sb.Name) != nil {
-			t.Errorf("%s is registered twice", sb.Name)
-		}
-		seen[sb.Name] = true
-		if !b.Has(sb.Name) || b.ByName()[sb.Name] == nil {
-			t.Errorf("%s: Has or ByName does not find it", sb.Name)
-		}
-	}
-}
-
-// Why this test exists: every bundle shipped in the binary is checked
-// at boot as an upload is, and one that fails is not installed. A
-// bundle that reads wrong, names another integration or shares a name
-// with a built-in of Go code would reach every team as an integration
-// that never installs, or that core runs the wrong way.
-func TestEveryShippedBundlePassesTheCheck(t *testing.T) {
-	checkShipped(t, builtins.Shipped(), builtins.All())
-}
-
-// Why this test exists: the check above passes only as long as every
-// bundle the binary ships does. A test bundle laid out as an embedded
-// one is held to it here, so the check is known to read a bundle
-// directory and pass a good one whatever the binary ships.
-func TestShippedBundleCheckReadsADirectory(t *testing.T) {
-	fsys := integrationtest.Dir(t, integrationtest.Manifest("notes", "1.0.0"), nil)
-	checkShipped(t, builtinintegrations.ShippedBundles{{Name: "notes", FS: fsys}}, builtins.All())
 }

@@ -731,6 +731,15 @@ export function IntegrationPage() {
 
       {available && (
         <Block label="Install" variant="heading">
+          {/* An integration whose connection an earlier version made, which this version's setup does not take, says
+              so here: installing it again is the Fix. */}
+          {p.requirements
+            .filter((r) => !r.met)
+            .map((r) => (
+              <Banner key={r.id} tone="warning">
+                {r.words}
+              </Banner>
+            ))}
           {declarations}
           <SetupFlowPanel
             api={api}
@@ -819,7 +828,7 @@ export function IntegrationPage() {
         </Block>
       )}
 
-      {/* A bundle's, uploaded or shipped; a built-in of Go code installs none. */}
+      {/* A bundle's; a built-in installs none. */}
       {p.packages.length > 0 && (
         <Block label="Software" variant="heading">
           <ul className="app-int-facts">

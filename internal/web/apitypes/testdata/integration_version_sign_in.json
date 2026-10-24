@@ -131,7 +131,6 @@
   "file_count": 12,
   "current": false,
   "builtin": false,
-  "shipped": false,
   "current_version": "1.2.0",
   "changes": [
     "Hosts added: api.hubapi.com",

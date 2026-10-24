@@ -20,9 +20,8 @@ export function bundleLine(files: number, bytes: number): string {
  * A version's install screen: what it is, who built it, what it changes from the version in use, every host it
  * reaches, the software it installs, every secret its connection holds, every action and what the access form asks. Approving installs it;
  * nothing in it runs before. A superseded version can be rolled back to from here. A version of an integration that
- * ships with Kivali says so, and offers none of these: its versions come with Kivali. One that ships as a bundle
- * (shipped) runs in a pod of its own, so its hosts and its bundle are shown as an upload's are; one that runs inside
- * Kivali has neither.
+ * ships with Kivali says so, and offers none of these: its versions come with Kivali. It runs inside Kivali, so it
+ * shows no software and no bundle, even for a version an earlier Kivali stored as a bundle.
  */
 export function InstallScreen() {
   const { name = '', version = '' } = useParams();
@@ -75,8 +74,8 @@ export function InstallScreen() {
   }
 
   const fields = v.access_form?.fields ?? [];
-  // A built-in that runs inside Kivali has no host list and no bundle; a bundle, uploaded or shipped, has both.
-  const insideKivali = v.builtin && !v.shipped;
+  // A built-in runs inside Kivali: no software, no bundle, and a host list only when its setup declares one.
+  const insideKivali = v.builtin;
   return (
     <div className="app-int">
       <header className="app-int-head">
@@ -188,8 +187,7 @@ export function InstallScreen() {
         </Block>
       )}
 
-      {/* Software runs as root while it installs, at every start: the person reads each name before approving. A
-          shipped bundle's pod installs its software as an upload's does, with nothing to approve. */}
+      {/* Software runs as root while it installs, at every start: the person reads each name before approving. */}
       {!insideKivali && v.packages.length > 0 && (
         <Block label="Software it installs">
           <ul className="app-int-facts">
@@ -200,9 +198,8 @@ export function InstallScreen() {
             ))}
           </ul>
           <Text as="p" variant="caption" tone="muted">
-            {v.builtin
-              ? 'Debian packages, fetched from Debian’s repositories and installed each time the integration starts.'
-              : 'Debian packages, fetched from Debian’s repositories and installed each time the integration starts. Read each one before you approve.'}
+            Debian packages, fetched from Debian’s repositories and installed each time the integration starts. Read each
+            one before you approve.
           </Text>
         </Block>
       )}

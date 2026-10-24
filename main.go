@@ -194,15 +194,6 @@ func main() {
 	if err := s.MigrateIntegrationConnections(); err != nil {
 		log.Printf("integrations: %v", err)
 	}
-	// And the integrations that ship as bundles: each one's record, its
-	// version in use and its files, checked as an upload is. Logged
-	// rather than fatal, for the same reason: one that cannot be
-	// installed is named, and the others are installed. Only the ones
-	// installed run (web.Server.SetShippedBundlesInstalled).
-	shippedInstalled, err := s.InstallShippedBundles(builtins.Shipped().ByName(), time.Now())
-	if err != nil {
-		log.Printf("install shipped integrations: %v; Kivali does not run these until they install", err)
-	}
 	// Model pins follow their lineage. An agent pinned to a model the
 	// catalog has since retired moves to the newest model of the same
 	// family — Opus 4.8 to Opus 5.5, never Opus to Fable. Every boot,
@@ -653,7 +644,6 @@ func main() {
 	// Integrations: takes on the pods left from before this start,
 	// stops those of integrations no longer installed, then follows
 	// every change and checks each running server every 30 seconds.
-	srv.SetShippedBundlesInstalled(shippedInstalled)
 	stopIntegrations := srv.StartIntegrations()
 
 	idle := make(chan struct{})

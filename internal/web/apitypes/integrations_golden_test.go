@@ -377,40 +377,6 @@ func goldenIntegrationPageSignInElsewhere() IntegrationPage {
 	return page
 }
 
-// goldenShippedIntegrationVersion is the install screen of a version
-// of an integration that ships with Kivali as a bundle: built in, with
-// a bundle's runtime, hosts and size.
-func goldenShippedIntegrationVersion() IntegrationVersion {
-	return IntegrationVersion{
-		Name:             "notes",
-		DisplayName:      "Notes",
-		Description:      "Notes in a notes service.",
-		Version:          "1.0.0",
-		State:            IntegrationVersionStateApproved,
-		Author:           "Kivali",
-		PublishedAt:      integrationEarlier,
-		PublishedBy:      PersonRef{Slug: "kivali", Name: "Kivali"},
-		ApprovedAt:       &integrationEarlier,
-		NotesMD:          "Ships with Kivali.",
-		Runtime:          "python",
-		ConnectionMethod: "token",
-		Scopes:           []string{},
-		SignInHosts:      []string{},
-		Hosts:            []string{"api.notes.example.com"},
-		Packages:         []string{},
-		ConnectionFields: []ConnectionField{{Key: "token", Title: "API token", Description: "", Sensitive: true, Required: true, Set: false}},
-		Actions:          []IntegrationAction{{Name: "create_note", Description: "Create a note."}},
-		AccessForm:       nil,
-		BundleBytes:      4096,
-		FileCount:        3,
-		Current:          true,
-		Builtin:          true,
-		Shipped:          true,
-		Changes:          []string{},
-		Findings:         []string{},
-	}
-}
-
 func goldenIntegrationAudit() IntegrationAudit {
 	return IntegrationAudit{Rows: []IntegrationAuditRow{
 		{At: integrationLater, Agent: PersonRef{Slug: "dana", Name: "Dana"}, Action: "create_post", Allowed: true, Reason: "", DurationMS: 812},
@@ -448,19 +414,22 @@ func goldenIntegrationVersionSignIn() IntegrationVersion {
 	return v
 }
 
-// goldenIntegrationSetup is what a GitHub built-in's setup flow may
-// do: make a private GitHub App on the owner's account from GitHub's
-// own pages, asking for the account first, and keep the app's keys.
+// goldenIntegrationSetup is what GitHub's setup flow may do, as its
+// manifest declares it (githubintegration): make a private GitHub App
+// on the owner's account or an organization's from GitHub's own pages,
+// asking for the account first, and keep the app's values.
 func goldenIntegrationSetup() *IntegrationSetup {
 	return &IntegrationSetup{
-		Summary: "Creates a private GitHub App on your account that may write contents, issues and pull requests, and installs it on the repositories you choose.",
+		Summary: "Creates a private GitHub App, on your account or an organization's, that may read contents and write issues and pull requests, and installs it on the repositories you choose. Uninstalling removes the installation; the app stays on GitHub until you delete it under GitHub Apps in the account's settings.",
 		Hosts:   []string{"github.com"},
 		Fields: []SetupField{
-			{Key: "account", Title: "Account", Words: "Your personal account, or an organization's name", Secret: false, SetupOnly: false},
-			{Key: "personal_access_key", Title: "Personal access key", Words: "From the service's key page; used once, never kept", Secret: true, SetupOnly: true},
+			{Key: "account", Title: "Account", Words: "An organization's name, or leave it blank for your personal account", Secret: false, SetupOnly: false},
 		},
 		Keeps: []SetupKeep{
 			{Key: "app_id", Words: "The app's id"},
+			{Key: "slug", Words: "The app's name on GitHub"},
+			{Key: "client_id", Words: "The app's client id"},
+			{Key: "client_secret", Words: "The app's client secret"},
 			{Key: "private_key", Words: "The app's private key, which Kivali signs with to get a token for each call"},
 			{Key: "installation_id", Words: "Where the app is installed"},
 		},
@@ -468,13 +437,17 @@ func goldenIntegrationSetup() *IntegrationSetup {
 	}
 }
 
+// goldenGitHubDescription is GitHub's description, as its manifest
+// gives it.
+const goldenGitHubDescription = "Read and open issues, comments and pull requests in GitHub repositories, as a private GitHub App on your account."
+
 // goldenIntegrationVersionSetup is the install screen of a built-in
 // whose connection is made by its own setup flow: no connection
 // fields to enter, the flow's declarations to read instead, and the
 // hosts its setup and calls reach from Kivali.
 func goldenIntegrationVersionSetup() IntegrationVersion {
 	v := goldenBuiltinIntegrationVersion()
-	v.Name, v.DisplayName, v.Description, v.Version = "github", "GitHub", "Issues and pull requests on GitHub.", "2.0.0"
+	v.Name, v.DisplayName, v.Description, v.Version = "github", "GitHub", goldenGitHubDescription, "2.0.0"
 	v.ConnectionMethod = "setup"
 	v.ConnectionFields = []ConnectionField{}
 	v.Hosts = []string{"api.github.com", "github.com"}
@@ -502,17 +475,13 @@ func goldenIntegrationVersionRegistered() IntegrationVersion {
 	return v
 }
 
-// goldenIntegrationPageSetup is the page of a built-in whose setup
-// flow makes a private app and hands over to a browser sign-in with
-// it, before its setup has run: no connection yet, and the flow's
-// declarations.
+// goldenIntegrationPageSetup is GitHub's page before its setup has run:
+// no connection yet, and the flow's declarations.
 func goldenIntegrationPageSetup() IntegrationPage {
 	setup := goldenIntegrationSetup()
-	setup.Then = "browser"
-	setup.Keeps = append(setup.Keeps, SetupKeep{Key: "client_id", Words: "The app's client id"}, SetupKeep{Key: "client_secret", Words: "The app's client secret"})
 	return IntegrationPage{
 		Summary: IntegrationSummary{
-			Name: "github", DisplayName: "GitHub", Description: "Issues and pull requests on GitHub.",
+			Name: "github", DisplayName: "GitHub", Description: goldenGitHubDescription,
 			Version: "2.0.0", State: IntegrationStateAvailable, Enabled: true, Builtin: true, Agents: 0,
 		},
 		Author:           "Kivali",
@@ -521,9 +490,9 @@ func goldenIntegrationPageSetup() IntegrationPage {
 		Actions:          []IntegrationAction{{Name: "list_issues", Description: "List a repository's open issues."}},
 		ConnectionFields: []ConnectionField{},
 		ConnectionMethod: "setup",
-		SignInClient:     "setup",
+		SignInClient:     "",
 		Scopes:           []string{},
-		SignInHosts:      []string{"github.com"},
+		SignInHosts:      []string{},
 		Setup:            setup,
 		ConnectionTest:   true,
 		Access:           []AccessRow{},
@@ -552,21 +521,36 @@ func goldenIntegrationPageSettingUp() IntegrationPage {
 // owner to approve a permission on GitHub.
 func goldenIntegrationPageFix() IntegrationPage {
 	page := goldenIntegrationPageSetup()
-	conn := ConnectionState{ID: "f00dcafe", CreatedAt: integrationNow, Fields: []ConnectionField{}, VerifiedAt: &integrationLater, Verified: &integrationVerified, VerifyMessage: new("Installed on acme")}
+	conn := ConnectionState{ID: "f00dcafe", CreatedAt: integrationNow, Fields: []ConnectionField{}, VerifiedAt: &integrationLater, Verified: &integrationVerified, VerifyMessage: new("Connected as the app Kivali Acme, installed on acme")}
 	page.Summary.State, page.Summary.Needs = IntegrationStateInstalled, 1
 	page.Connection = &conn
 	page.CanUninstall = true
 	page.Requirements = []IntegrationRequirement{
 		{ID: "version", Title: "Approved version", Words: "Version 2.0.0 ships with Kivali.", Met: true},
 		{ID: "connection", Title: "Connection", Words: "Its secrets are stored.", Met: true},
-		{ID: "sign_in", Title: "Sign-in", Words: "Signed in in the browser.", Met: true, Fix: "sign_in"},
-		{ID: "connection_test", Title: "Connection test", Words: "Installed on acme", Met: true},
-		{ID: "installed", Title: "Installed on GitHub", Words: "Installed on acme, reaching 12 repositories.", Met: true},
-		{ID: "permissions", Title: "Permissions", Words: "This version needs write access to pull requests, which the app does not have yet.", Met: false, Fix: "permissions"},
+		{ID: "connection_test", Title: "Connection test", Words: "Connected as the app Kivali Acme, installed on acme", Met: true},
+		{ID: "key", Title: "The app's key works", Words: "GitHub accepts the key of the app Kivali Acme. Uninstalling GitHub here leaves the app on GitHub, for you to delete under https://github.com/organizations/acme/settings/apps.", Met: true},
+		{ID: "installed", Title: "Installed on GitHub", Words: "Installed on acme.", Met: true},
+		{ID: "repositories", Title: "Repositories it reaches", Words: "Installed on acme, reaching 12 repositories.", Met: true},
+		{ID: "permissions", Title: "Permissions current", Words: "The installation lacks permissions this version needs: pull requests: write. Approve them on GitHub.", Met: false, Fix: "permissions"},
 	}
 	flow := goldenSetupFlowWait()
 	flow.Flow = "permissions"
 	page.Flow = &flow
+	return page
+}
+
+// goldenIntegrationPageMisfit is the same GitHub page after an update
+// from GitHub 1.0.0, whose connection (the owner's own app, signed in
+// with) this version's setup does not take: available, with the one
+// row saying to set it up again, and the agents' access kept.
+func goldenIntegrationPageMisfit() IntegrationPage {
+	page := goldenIntegrationPageSetup()
+	page.Summary.Agents = 1
+	page.Requirements = []IntegrationRequirement{{
+		ID: "connection", Title: "Connection", Met: false, Fix: "setup",
+		Words: "Set up GitHub again: this version makes its connection by its own setup, and the one an earlier version made does not fit it. Every agent's access is kept.",
+	}}
 	return page
 }
 

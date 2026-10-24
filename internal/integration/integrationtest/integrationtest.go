@@ -11,7 +11,6 @@ import (
 	"io/fs"
 	"sort"
 	"testing"
-	"testing/fstest"
 )
 
 // MainPy is the server the bundles carry: enough to be a Python file.
@@ -137,29 +136,4 @@ func Zip(tb testing.TB, top string, m any, files map[string]File) []byte {
 		tb.Fatal(err)
 	}
 	return buf.Bytes()
-}
-
-// Dir is a bundle as a directory, the layout of a bundle the binary
-// embeds (builtinintegrations.ShippedBundle): manifest.json (m, a map
-// or the bytes themselves), server/main.py, and files by path, as Zip
-// lays them out. A files entry with an empty body and mode leaves a
-// default out.
-func Dir(tb testing.TB, m any, files map[string]File) fstest.MapFS {
-	tb.Helper()
-	all := fstest.MapFS{
-		"manifest.json":  {Data: ManifestJSON(tb, m), Mode: 0o444},
-		"server/main.py": {Data: []byte(MainPy), Mode: 0o444},
-	}
-	for p, f := range files {
-		if f == (File{}) {
-			delete(all, p)
-			continue
-		}
-		mode := f.Mode
-		if mode == 0 {
-			mode = 0o444
-		}
-		all[p] = &fstest.MapFile{Data: []byte(f.Body), Mode: mode}
-	}
-	return all
 }

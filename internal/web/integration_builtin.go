@@ -8,15 +8,9 @@
 // filter of its list against the manifest, the same answer for the
 // agent (each built-in answer goes through integrationCallAnswer as a
 // pod's MCP result would), the same scrubber, the same audit. It is
-// always running while its code is in the binary.
-//
-// A shipped bundle (builtinintegrations.ShippedBundle) is built in too,
-// so the owner's refusals are a built-in's, but it runs as an uploaded
-// bundle does: in its own pod, through its shim, running while the
-// shim is connected. Of a built-in record, builtinFor gives the Go
-// code, shippedBundle says the binary carries it as a bundle, and one
-// that is neither is a record this binary does not carry
-// (integrationView.staleBuiltin).
+// always running while its code is in the binary. Of a built-in
+// record, builtinFor gives the Go code, and one it finds none for is a
+// record this binary does not carry (integrationView.staleBuiltin).
 
 package web
 
@@ -48,33 +42,8 @@ func (s *Server) builtinFor(it store.Integration) builtinintegrations.Integratio
 	return s.BuiltinIntegrations.Lookup(it.Name)
 }
 
-// shippedBundle reports whether it ships with Kivali as a bundle this
-// binary carries and installed: its record is built in, its name is in
-// ShippedBundles and no built-in of Go code has it, and boot (or a
-// restore) installed it with the version the record has in use. One
-// whose install failed, or whose record names another version, runs
-// nothing: what it would run is not the binary's.
-func (s *Server) shippedBundle(it store.Integration) bool {
-	if !it.Builtin || it.CurrentVersion == "" || s.BuiltinIntegrations.Lookup(it.Name) != nil || !s.ShippedBundles.Has(it.Name) {
-		return false
-	}
-	s.shippedMu.Lock()
-	defer s.shippedMu.Unlock()
-	return s.shippedInstalled[it.Name] == it.CurrentVersion
-}
-
-// SetShippedBundlesInstalled records the shipped bundles boot or a
-// restore installed (store.InstallShippedBundles), by name, with the
-// version each made the one in use. main.go calls it at boot.
-func (s *Server) SetShippedBundlesInstalled(installed map[string]string) {
-	s.shippedMu.Lock()
-	defer s.shippedMu.Unlock()
-	s.shippedInstalled = installed
-}
-
 // integrationRunning reports whether it can be called now: a built-in
-// one always, a bundle (a shipped one too) while its shim is
-// connected.
+// one always, a bundle while its shim is connected.
 func (s *Server) integrationRunning(it store.Integration) bool {
 	return s.builtinFor(it) != nil || s.Integrations.Running(it.Name)
 }

@@ -1,0 +1,105 @@
+{
+  "summary": {
+    "name": "github",
+    "display_name": "GitHub",
+    "description": "Read and open issues, comments and pull requests in GitHub repositories, as a private GitHub App on your account.",
+    "version": "2.0.0",
+    "state": "available",
+    "needs": 0,
+    "enabled": true,
+    "builtin": true,
+    "agents": 1
+  },
+  "author": "Kivali",
+  "hosts": [
+    "api.github.com",
+    "github.com"
+  ],
+  "packages": [],
+  "actions": [
+    {
+      "name": "list_issues",
+      "description": "List a repository's open issues."
+    }
+  ],
+  "connection_fields": [],
+  "connection_method": "setup",
+  "sign_in_client": "",
+  "scopes": [],
+  "setup_notes_md": "",
+  "setup": {
+    "summary": "Creates a private GitHub App, on your account or an organization's, that may read contents and write issues and pull requests, and installs it on the repositories you choose. Uninstalling removes the installation; the app stays on GitHub until you delete it under GitHub Apps in the account's settings.",
+    "hosts": [
+      "github.com"
+    ],
+    "fields": [
+      {
+        "key": "account",
+        "title": "Account",
+        "words": "An organization's name, or leave it blank for your personal account",
+        "secret": false,
+        "setup_only": false
+      }
+    ],
+    "keeps": [
+      {
+        "key": "app_id",
+        "words": "The app's id"
+      },
+      {
+        "key": "slug",
+        "words": "The app's name on GitHub"
+      },
+      {
+        "key": "client_id",
+        "words": "The app's client id"
+      },
+      {
+        "key": "client_secret",
+        "words": "The app's client secret"
+      },
+      {
+        "key": "private_key",
+        "words": "The app's private key, which Kivali signs with to get a token for each call"
+      },
+      {
+        "key": "installation_id",
+        "words": "Where the app is installed"
+      }
+    ],
+    "then": ""
+  },
+  "sign_in_hosts": [],
+  "connection_test": true,
+  "access": [],
+  "agents_without": [
+    {
+      "slug": "dana",
+      "name": "Dana"
+    }
+  ],
+  "versions": [
+    {
+      "version": "2.0.0",
+      "state": "approved",
+      "published_at": "2026-10-20T09:00:00Z",
+      "published_by": {
+        "slug": "kivali",
+        "name": "Kivali"
+      },
+      "approved_at": "2026-10-20T09:00:00Z",
+      "notes_md": "Ships with Kivali."
+    }
+  ],
+  "running": true,
+  "requirements": [
+    {
+      "id": "connection",
+      "title": "Connection",
+      "words": "Set up GitHub again: this version makes its connection by its own setup, and the one an earlier version made does not fit it. Every agent's access is kept.",
+      "met": false,
+      "fix": "setup"
+    }
+  ],
+  "can_uninstall": false
+}

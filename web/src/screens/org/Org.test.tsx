@@ -44,13 +44,13 @@ import {
   goIntegrationUploadRefused,
   goIntegrationVersion,
   goIntegrationVersionBuiltin,
-  goIntegrationVersionShipped,
   goIntegrationVersionSignIn,
   goIntegrationVersionSetup,
   goIntegrationVersionRegistered,
   goIntegrationPageSetup,
   goIntegrationPageSettingUp,
   goIntegrationPageFix,
+  goIntegrationPageMisfit,
   goIntegrationPageOff,
   goIntegrationPagePending,
   goIntegrationPageNotIncluded,
@@ -1371,8 +1371,8 @@ describe('Integration install screen', () => {
       expect(asks.getByText(f.title)).toBeInTheDocument();
       expect(asks.getByText(f.words)).toBeInTheDocument();
     }
-    expect(asks.getAllByText('Secret')).toHaveLength(declared.fields.filter((f) => f.secret).length);
-    expect(asks.getAllByText('Used once, never kept')).toHaveLength(declared.fields.filter((f) => f.setup_only).length);
+    expect(asks.queryAllByText('Secret')).toHaveLength(declared.fields.filter((f) => f.secret).length);
+    expect(asks.queryAllByText('Used once, never kept')).toHaveLength(declared.fields.filter((f) => f.setup_only).length);
     const keeps = within(setup.getByRole('list', { name: 'Keeps' }));
     for (const k of declared.keeps) {
       expect(keeps.getByText(k.words)).toBeInTheDocument();
@@ -1405,35 +1405,20 @@ describe('Integration install screen', () => {
     for (const h of goIntegrationVersionRegistered.sign_in_hosts) expect(hosts.getByText(h)).toBeInTheDocument();
   });
 
-  // Guards the install screen of an integration that ships with Kivali as a bundle (integration_version_shipped.json):
-  // it runs in a pod of its own and reaches only the hosts its manifest lists, so the owner must see those hosts and
-  // the bundle's size as for an upload, not "Reaches the hosts its connection names.", while it still says it ships
-  // with Kivali and offers nothing to press, since the server refuses every answer to a built-in (409).
-  it('shows a shipped bundle\'s hosts and bundle, says it ships with Kivali and offers nothing to press', async () => {
-    await renderOrg('/org/integrations/notes/versions/1.0.0', {
-      routes: { ['GET /api/v1/org/integrations/notes/versions/1.0.0']: goIntegrationVersionShipped },
+  // Guards a built-in's earlier version that an earlier Kivali stored as a bundle, such as GitHub 1.0.0 with its gh:
+  // nothing of it runs any more, so its screen must not list software or a bundle as if a pod still installed and ran
+  // them, while it still says it ships with Kivali and offers nothing to press.
+  it('shows no software or bundle for a built-in version an earlier Kivali stored as a bundle', async () => {
+    await renderOrg('/org/integrations/github/versions/1.0.0', {
+      routes: {
+        ['GET /api/v1/org/integrations/github/versions/1.0.0']: { ...goIntegrationVersionBuiltin, state: 'superseded', packages: ['gh'], file_count: 3, bundle_bytes: 4096 },
+      },
     });
     const who = within(screen.getByRole('region', { name: 'Who built it' }));
     expect(who.getByText('Ships with Kivali')).toBeInTheDocument();
-    expect(screen.getByText('This integration ships with Kivali. It needs no install, and Kivali’s updates bring its new versions.')).toBeInTheDocument();
-    const hosts = within(screen.getByRole('region', { name: 'Reaches these hosts' }));
-    expect(hosts.getByText('api.notes.example.com')).toBeInTheDocument();
-    expect(hosts.queryByText('Reaches the hosts its connection names.')).toBeNull();
-    const bundle = within(screen.getByRole('region', { name: 'Bundle' }));
-    expect(bundle.getByText(bundleLine(3, 4096))).toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Software it installs' })).toBeNull();
+    expect(screen.queryByRole('region', { name: 'Bundle' })).toBeNull();
     expect(screen.queryAllByRole('button')).toEqual([]);
-  });
-
-  // Guards the software of a shipped bundle such as GitHub, whose pod installs gh as root at every start as an
-  // upload's does: its install screen lists each package, as an upload's does, without asking the owner to read them
-  // before approving, since a shipped bundle has nothing to approve.
-  it('lists the software a shipped bundle installs, with nothing to approve', async () => {
-    await renderOrg('/org/integrations/notes/versions/1.0.0', {
-      routes: { ['GET /api/v1/org/integrations/notes/versions/1.0.0']: { ...goIntegrationVersionShipped, packages: ['gh'] } },
-    });
-    const software = within(screen.getByRole('region', { name: 'Software it installs' }));
-    expect(software.getAllByRole('listitem').map((li) => li.textContent)).toEqual(['gh']);
-    expect(software.getByText('Debian packages, fetched from Debian’s repositories and installed each time the integration starts.')).toBeInTheDocument();
   });
 
   // Guards a rejected version's screen: it says Rejected and offers nothing to press, since a rejected version never
@@ -1585,10 +1570,10 @@ describe('Integration page', () => {
     });
     expect(screen.getByText('Installed')).toHaveClass('kv-badge--success');
     const reqs = within(screen.getByRole('region', { name: 'Requirements' }));
-    const panel = within(reqs.getByRole('region', { name: 'Permissions' }));
+    const panel = within(reqs.getByRole('region', { name: 'Permissions current' }));
     expect(panel.getByLabelText('Code')).toHaveTextContent('WDJB-MJHT');
     expect(called('POST', '/api/v1/org/integrations/github/setup')).toBe(false);
-    expect(reqs.getByRole('button', { name: 'Fix Permissions' })).toBeInTheDocument();
+    expect(reqs.getByRole('button', { name: 'Fix Permissions current' })).toBeInTheDocument();
     expect(screen.queryByRole('region', { name: 'Install' })).toBeNull();
   });
 
@@ -2205,14 +2190,33 @@ describe('Integration page, a connection made by signing in', () => {
     expect(within(block.getByRole('list', { name: 'Sends your browser to' })).getByText('github.com')).toBeInTheDocument();
     expect(block.getByRole('list', { name: 'GitHub asks for' })).toBeInTheDocument();
     expect(block.getByRole('list', { name: 'Keeps' })).toBeInTheDocument();
-    // A flow that hands over to a sign-in says so; and a setup connection has no form, so nothing to save or
-    // disconnect sits under the declarations.
-    expect(block.getByText('Then signs in through your browser, with the app that setup made.')).toBeInTheDocument();
+    // A setup connection has no form, so nothing to save or disconnect sits under the declarations; GitHub's setup
+    // hands over to no sign-in, so nothing says it does.
     expect(block.queryByRole('button', { name: 'Save connection' })).toBeNull();
     expect(block.queryByRole('button', { name: 'Disconnect' })).toBeNull();
+    expect(block.queryByText('Then signs in through your browser, with the app that setup made.')).toBeNull();
+    cleanup();
+    // A flow that hands over to a sign-in says so.
+    const handOver = { ...goIntegrationPageSetup, setup: { ...goIntegrationPageSetup.setup!, then: 'browser' } };
+    await renderOrg('/org/integrations/github', { routes: { ...routes(handOver), ['GET ' + API + '/setup']: fail(404, 'none', 'you') } });
+    expect(within(screen.getByRole('region', { name: 'Install' })).getByText('Then signs in through your browser, with the app that setup made.')).toBeInTheDocument();
     cleanup();
     await renderOrg(PATH);
     expect(screen.queryByRole('list', { name: 'Keeps' })).toBeNull();
+  });
+
+  // Guards the page after an update whose setup does not take the connection an earlier version made
+  // (integration_page_misfit.json, as GitHub 2.0.0 reads GitHub 1.0.0's): it reads Available with Install, and the
+  // Install block says why in the server's words, or the owner would see GitHub drop to Available with no reason
+  // while their agents lose it. Its access is not drawn, since nothing is installed.
+  it('says to set it up again when the connection an earlier version made does not fit', async () => {
+    const page = goIntegrationPageMisfit;
+    await renderOrg('/org/integrations/github', { routes: { ...routes(page), ['GET ' + API + '/setup']: fail(404, 'none', 'you') } });
+    expect(screen.getByText('Available')).toBeInTheDocument();
+    const block = within(screen.getByRole('region', { name: 'Install' }));
+    expect(block.getByText(page.requirements[0]!.words)).toBeInTheDocument();
+    expect(block.getByRole('button', { name: 'Install' })).toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Requirements' })).toBeNull();
   });
 
   // Guards the page while its install runs (integration_page_setting_up.json): it reads Setting up, keeps the Install
