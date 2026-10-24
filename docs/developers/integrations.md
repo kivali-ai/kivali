@@ -774,10 +774,11 @@ flow alone.
 ### Scrubbing and the audit
 
 Every kept value, every secret or setup-only value the owner entered,
-every `State` value six characters or longer, each call's state, every
-value a service sent back on a callback (but OAuth's `error`,
-`error_description` and `error_uri`, the service's words for the owner)
-and a standard flow's own secrets (the client secret, a device code, the
+every `State` value six characters or longer, each call's state, the
+values a callback brings back under `code`, `state` or a key whose name
+holds `token`, `secret`, `password` or `key` (ignoring case; no other
+returned value is scrubbed, so a driver puts anything else it must keep
+hidden into `State`), and a standard flow's own secrets (the client secret, a device code, the
 OAuth state and verifier, the code and the tokens) are replaced by
 `[secret]`, whole, in the flow's error words, progress words and
 steps, in the audit and in what core logs of the flow, before any of

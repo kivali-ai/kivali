@@ -187,6 +187,22 @@ func setupReturnElsewhere(w http.ResponseWriter, r *http.Request, cookieID, cook
 // restarted). The integrations list says so in its own words.
 const connectStartAgain = "start_again"
 
+// secretReturnKey reports whether a callback's query key names a value
+// the flow's words are scrubbed of: code or state, or a key whose name
+// holds token, secret, password or key, ignoring case.
+func secretReturnKey(k string) bool {
+	k = strings.ToLower(k)
+	if k == "code" || k == "state" {
+		return true
+	}
+	for _, w := range []string{"token", "secret", "password", "key"} {
+		if strings.Contains(k, w) {
+			return true
+		}
+	}
+	return false
+}
+
 // byLegLocked is the flow that issued state to one of its calls, nil
 // for none. Every state a flow issued finds it while it lives.
 func (t *setupRuns) byLegLocked(state string) *setupRun {
@@ -401,11 +417,10 @@ func (s *Server) handleConnectCallback(w http.ResponseWriter, r *http.Request) {
 	if cb := signInRedirectURL(r); cb != "" {
 		run.callback = cb
 	}
-	// A driver that echoes what came back never shows it: every value
-	// but the service's own words of a refusal (OAuth's error, its
-	// description and its page), which are for the owner to read.
+	// A driver that echoes a code, a state or a key that came back never
+	// shows it. Other values (setup_action=install) are ordinary words.
 	for k, vs := range q {
-		if k != "error" && k != "error_description" && k != "error_uri" {
+		if secretReturnKey(k) {
 			run.addScrubLocked(vs...)
 		}
 	}
