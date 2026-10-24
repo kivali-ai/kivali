@@ -5,101 +5,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/kivali-ai/kivali/internal/integration"
 )
-
-// dealsStub is the imaginary Deals API template-setup's server calls,
-// on this machine: a setup key traded once for a session, an app made,
-// rescoped and installed with it, the app's token read back (or, with
-// hidden, only shown on the app's page, the second look finding it
-// shown), and the app's own token answering /v1/me with its scopes.
-type dealsStub struct {
-	url string
-
-	mu          sync.Mutex
-	hidden      bool
-	looks       int
-	used        map[string]bool
-	scopes      []string
-	uninstalled bool
-}
-
-const dealsToken = "app-token-0001"
-
-func newDealsStub(t *testing.T) *dealsStub {
-	t.Helper()
-	d := &dealsStub{used: map[string]bool{}, scopes: []string{"deals.read"}}
-	srv := httptest.NewServer(http.HandlerFunc(d.serve))
-	t.Cleanup(srv.Close)
-	d.url = srv.URL
-	return d
-}
-
-func (d *dealsStub) set(edit func(d *dealsStub)) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	edit(d)
-}
-
-func (d *dealsStub) serve(w http.ResponseWriter, r *http.Request) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	reply := func(code int, v any) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(code)
-		_ = json.NewEncoder(w).Encode(v)
-	}
-	var body struct {
-		Key    string   `json:"key"`
-		Scopes []string `json:"scopes"`
-	}
-	_ = json.NewDecoder(r.Body).Decode(&body)
-	auth := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-	session := strings.HasPrefix(auth, "session-")
-	switch {
-	case r.Method == http.MethodPost && r.URL.Path == "/v1/setup-keys/exchange":
-		if body.Key == "" || d.used[body.Key] {
-			reply(http.StatusUnauthorized, map[string]string{"error": "the key was used"})
-			return
-		}
-		d.used[body.Key] = true
-		reply(http.StatusOK, map[string]string{"access_token": "session-" + body.Key})
-	case session && r.Method == http.MethodPost && r.URL.Path == "/v1/apps":
-		d.scopes = body.Scopes
-		reply(http.StatusCreated, map[string]string{"id": "app_1"})
-	case session && r.Method == http.MethodPut && r.URL.Path == "/v1/apps/app_1/scopes":
-		d.scopes = body.Scopes
-		reply(http.StatusOK, map[string]any{})
-	case session && r.Method == http.MethodPost && r.URL.Path == "/v1/apps/app_1/install":
-		reply(http.StatusOK, map[string]any{})
-	case session && r.Method == http.MethodGet && r.URL.Path == "/v1/apps/app_1/token":
-		if d.hidden {
-			reply(http.StatusNotFound, map[string]string{"error": "the token is on the app's page"})
-			return
-		}
-		reply(http.StatusOK, map[string]string{"token": dealsToken})
-	case session && r.Method == http.MethodGet && r.URL.Path == "/v1/apps/app_1":
-		d.looks++
-		reply(http.StatusOK, map[string]bool{"token_shown": d.looks >= 2})
-	case auth == dealsToken && r.Method == http.MethodGet && r.URL.Path == "/v1/me":
-		reply(http.StatusOK, map[string]any{"name": "Acme", "scopes": d.scopes})
-	case auth == dealsToken && r.Method == http.MethodDelete && r.URL.Path == "/v1/apps/self":
-		d.uninstalled = true
-		w.WriteHeader(http.StatusNoContent)
-	default:
-		reply(http.StatusUnauthorized, map[string]string{"error": "no"})
-	}
-}
 
 // Why this test exists: the skill gives the Kivali Developer
 // template-setup as the bundle to start a setup flow from. One the
@@ -143,27 +59,108 @@ func TestBuildAnIntegrationSetupTemplateIsABundleTheCheckAccepts(t *testing.T) {
 	}
 }
 
-// Why this test exists: try.py's setup mode is how the developer sees,
-// before publishing, the flow the owner will take, and template-setup
-// is the flow every setup bundle starts from. Each run here is one the
-// owner meets: the key traded and the app built in one step with its
-// stages as progress; what the step keeps restarting the server with
-// it, as the pod does; the fallback where the token is shown only on
-// the app's page, a Wait checked until it is shown and then a Form; the
-// requirements, an unmet one's Fix run as its own flow; and uninstall.
-// If try.py stopped calling as Kivali's runner does, or the template
-// stopped finishing its flow, the developer would publish on a run
-// Kivali does not reproduce.
-func TestTryRunsTheSetupTemplatesFlow(t *testing.T) {
+// skillRuns are the shell commands of the fenced block that follows the
+// line after in the skill's SKILL.md: each python3 command, with its
+// continuation lines joined, and the block's assignments before it. The
+// block's cd is left out (the runs start in the skill's directory) and
+// its port 8765 is port.
+func skillRuns(t *testing.T, dir, after string, port int) []string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(dir, "SKILL.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := string(b)
+	at := strings.Index(doc, after)
+	if at < 0 {
+		t.Fatalf("SKILL.md has no %q", after)
+	}
+	block := doc[at:]
+	open := strings.Index(block, "```\n")
+	if open < 0 {
+		t.Fatalf("no block follows %q", after)
+	}
+	block = block[open+4:]
+	block = block[:strings.Index(block, "```")]
+	block = strings.ReplaceAll(block, "\\\n", " ")
+	var prelude, runs []string
+	for _, line := range strings.Split(block, "\n") {
+		line = strings.TrimSpace(strings.ReplaceAll(line, "8765", strconv.Itoa(port)))
+		switch {
+		case line == "", strings.HasPrefix(line, "#"), strings.HasPrefix(line, "cd "):
+		case strings.HasPrefix(line, "python3 "):
+			runs = append(runs, strings.Join(append(slices.Clone(prelude), line), "\n"))
+		default:
+			prelude = append(prelude, line)
+		}
+	}
+	return runs
+}
+
+// freePort is a loopback port nothing listens on, for a stub.
+func freePort(t *testing.T) int {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := l.Addr().(*net.TCPAddr).Port
+	if err := l.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return port
+}
+
+// runShell runs script with bash in dir, with proxy variables in its
+// environment as an agent's shell has them, and returns what it printed
+// and its exit status.
+func runShell(t *testing.T, dir, script string) (string, int) {
+	t.Helper()
+	cmd := exec.Command("bash", "-c", script)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "HTTPS_PROXY=http://agent:secret@10.0.0.1:3128", "http_proxy=http://agent:secret@10.0.0.1:3128")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		var ee *exec.ExitError
+		if !errors.As(err, &ee) {
+			t.Fatal(err)
+		}
+		return string(out), ee.ExitCode()
+	}
+	return string(out), 0
+}
+
+// Why this test exists: the skill's example runs of template-setup are
+// how the developer first sees a setup flow, and every setup bundle
+// starts from them: try.py against scripts/deals_stub.py, word for word
+// as SKILL.md gives them. Each run is one the owner meets: the install,
+// its stages as progress and what it keeps; a key the service refuses
+// answered on the Form, then one it takes; the token only on the app's
+// page, a Wait checked until it is shown, the owner leaving it, the
+// install's connection forgotten and a second run taking up the app the
+// first made rather than making another; an installed integration's
+// requirements, an unmet one's Fix run as its own flow, and an uninstall
+// asked for twice; and the requirements with no connection, as
+// integration_validate asks. If the commands, the stub, try.py or the
+// template stopped agreeing, the developer would be shown a run that
+// fails, or one Kivali does not reproduce.
+func TestTheSkillsSetupRunsDoWhatItSays(t *testing.T) {
 	needPython(t)
 	dir := writeSkill(t)
-	d := newDealsStub(t)
-	api := "DEALS_API=" + d.url
-
-	out, code := runTry(t, dir, "--env", api, "template-setup", "setup", "--answer", "setup_key=sk-test-0001")
-	if code != 0 {
-		t.Errorf("setup: exit %d", code)
+	runs := skillRuns(t, dir, "Run it against the stub before you change it:", freePort(t))
+	if len(runs) != 5 {
+		t.Fatalf("the block holds %d runs, want 5:\n%s", len(runs), strings.Join(runs, "\n\n"))
 	}
+	run := func(i int) string {
+		t.Helper()
+		out, code := runShell(t, dir, runs[i])
+		if code != 0 {
+			t.Errorf("run %d exited %d:\n%s\n%s", i+1, code, runs[i], out)
+		}
+		return out
+	}
+
+	out := run(0)
 	wantIn(t, out,
 		"A Form, in",
 		"asks for: setup_key",
@@ -173,39 +170,34 @@ func TestTryRunsTheSetupTemplatesFlow(t *testing.T) {
 		"the connection is made, and the integration is installed.",
 		"No problems.",
 	)
-	if strings.Contains(out, "sk-test-0001") || strings.Contains(out, dealsToken) {
+	if strings.Contains(out, "sk-test-1") || strings.Contains(out, "app-token-0001") {
 		t.Errorf("a secret reached the output:\n%s", out)
 	}
 
-	d.set(func(d *dealsStub) { d.hidden = true })
-	out, code = runTry(t, dir, "--env", api, "--every", "0", "template-setup", "setup", "--answer", "setup_key=sk-test-0002", "--answer", "token="+dealsToken)
-	if code != 0 {
-		t.Errorf("the token on the app's page: exit %d", code)
-	}
-	wantIn(t, out,
-		"A Wait, in",
-		"page: https://app.deals.example/apps/app_1",
-		"Kivali keeps app_id in the connection's Secret",
-		"The same Wait, in",
-		"asks for: token",
-		"Kivali keeps token in the connection's Secret",
+	wantIn(t, run(1),
+		"Deals did not take that setup key; each one works once. Paste a new one.",
 		"the connection is made",
 		"No problems.",
 	)
 
-	out, code = runTry(t, dir, "--env", api, "template-setup", "requirements")
-	if code != 0 {
-		t.Errorf("requirements with no connection: exit %d", code)
-	}
-	wantIn(t, out, "not met: App token: No app token is kept yet.", "Fix runs the flow setup")
-
-	d.set(func(d *dealsStub) { d.scopes = nil })
-	out, code = runTry(t, dir, "--env", api, "--field", "token="+dealsToken, "--field", "app_id=app_1",
-		"template-setup", "requirements", "setup", "rescope", "requirements", "--answer", "setup_key=sk-test-0003")
-	if code != 0 {
-		t.Errorf("the rescope Fix: exit %d", code)
-	}
+	out = run(2)
 	wantIn(t, out,
+		"A Wait, in",
+		"page: https://app.deals.example/apps\n",
+		"Kivali keeps app_id in the connection's Secret",
+		"The same Wait, in",
+		"The setup did not finish, so Kivali forgets the connection it made (app_id)",
+		"asks for: token",
+		"Kivali keeps token in the connection's Secret",
+		"the connection is made",
+		"PUT /v1/apps/app_1/scopes -> 200",
+		"No problems.",
+	)
+	if n := strings.Count(out, "POST /v1/apps -> 201"); n != 1 {
+		t.Errorf("the runs made %d apps in Deals, want 1:\n%s", n, out)
+	}
+
+	wantIn(t, run(3),
 		"met: App token: The app's token works, in Acme.",
 		"not met: Scopes: This version needs deals.read, which the app was not built with.",
 		"Fix runs the flow rescope: try it with the request setup rescope",
@@ -213,19 +205,12 @@ func TestTryRunsTheSetupTemplatesFlow(t *testing.T) {
 		"progress: Updating the app's scopes (2 of 3)",
 		"the Fix is made.",
 		"met: Scopes: The app has every scope this version needs.",
+		"the app was removed",
+		"Deals answered 401 to removing the app; there is nothing left to undo",
 		"No problems.",
 	)
 
-	out, code = runTry(t, dir, "--env", api, "--field", "token="+dealsToken, "template-setup", "uninstall")
-	if code != 0 {
-		t.Errorf("uninstall: exit %d", code)
-	}
-	wantIn(t, out, "Done, in", "Kivali then forgets the connection's Secret and every agent's access.")
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	if !d.uninstalled {
-		t.Error("the app was not removed")
-	}
+	wantIn(t, run(4), "not met: App token: No app token is kept yet.", "Fix runs the flow setup")
 }
 
 // scriptedSetupServer is a server whose kivali/setup answers are the

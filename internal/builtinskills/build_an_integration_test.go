@@ -297,3 +297,97 @@ func TestTryAndTheTemplateMatchTheShim(t *testing.T) {
 		t.Errorf("the shim reads lines of up to %d bytes; try.py's MAX_LINE must say the same", integrationpod.MaxLineBytes)
 	}
 }
+
+// jsonBlocks are the bodies of the fenced json blocks in doc.
+func jsonBlocks(doc string) []string {
+	var out []string
+	for {
+		at := strings.Index(doc, "```json\n")
+		if at < 0 {
+			return out
+		}
+		doc = doc[at+len("```json\n"):]
+		end := strings.Index(doc, "```")
+		if end < 0 {
+			return out
+		}
+		out = append(out, doc[:end])
+		doc = doc[end:]
+	}
+}
+
+// Why this test exists: the skill teaches each way a bundle connects by
+// a manifest block the developer copies, and the check is what decides
+// whether a bundle written from one is stored. A block the check
+// refuses (a key a rule forbids, a field a shape lacks) hands every
+// bundle built from it a refusal at integration_validate, or teaches
+// the developer a rule wrong. So every json block of SKILL.md that holds
+// a "connection" is put into the token template's manifest (its
+// connection fields and their placeholders taken out, since a setup
+// connection has none) in place of the kivali keys it gives, and must
+// pass integration.Validate as a bundle with no finding; and the blocks
+// must cover every way the skill teaches, so none goes unchecked by
+// being left out.
+func TestTheSkillsManifestBlocksPassTheCheck(t *testing.T) {
+	dir := writeSkill(t)
+	doc, err := os.ReadFile(filepath.Join(dir, "SKILL.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl, err := integration.ReadDirectory(os.DirFS(filepath.Join(dir, "template")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ways := map[string]bool{}
+	for _, block := range jsonBlocks(string(doc)) {
+		if !strings.Contains(block, `"connection"`) {
+			continue
+		}
+		var frag map[string]any
+		if err := json.Unmarshal([]byte("{"+block+"}"), &frag); err != nil {
+			t.Errorf("a manifest block is not JSON once inside braces: %v\n%s", err, block)
+			continue
+		}
+		var m map[string]any
+		if err := json.Unmarshal(tmpl.ManifestBytes(), &m); err != nil {
+			t.Fatal(err)
+		}
+		m["user_config"] = map[string]any{}
+		env := m["server"].(map[string]any)["mcp_config"].(map[string]any)["env"].(map[string]any)
+		for k, v := range env {
+			if strings.Contains(v.(string), "${") {
+				delete(env, k)
+			}
+		}
+		k := m["kivali"].(map[string]any)
+		for key, v := range frag {
+			k[key] = v
+		}
+		raw, err := json.Marshal(m)
+		if err != nil {
+			t.Fatal(err)
+		}
+		mf, err := integration.ParseManifest(raw)
+		if err != nil {
+			t.Errorf("a manifest block does not parse: %v\n%s", err, block)
+			continue
+		}
+		if f := integration.Validate(mf, tmpl.Files); len(f) > 0 {
+			t.Errorf("the check's findings on a manifest block of SKILL.md:\n%s\n%s", strings.Join(f.Texts(), "\n"), block)
+		}
+		c := mf.Kivali.Connection
+		way := c.Method
+		if c.Registered() {
+			way += " registered"
+		}
+		if c.Setup != nil && c.Setup.Then != "" {
+			way += " then " + c.Setup.Then
+		}
+		ways[way] = true
+	}
+	for _, want := range []string{"token", "device", "browser", "browser registered", "setup", "setup then browser"} {
+		if !ways[want] {
+			t.Errorf("SKILL.md has no manifest block for a %s connection; it has %v", want, ways)
+		}
+	}
+}

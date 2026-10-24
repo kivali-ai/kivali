@@ -16,8 +16,9 @@ pasted token or a standard sign-in; for those, start from `template/`.
    installed.
 
 Where Deals does not hand the token back, step 2 ends instead with a
-Wait naming the app's page, checked every few seconds until the owner
-has shown the token there, then a Form for the token, then Done.
+Wait naming the app list in Deals, checked every few seconds until the
+owner has shown the app's token there, then a Form for the token, then
+Done.
 
 ## The parts
 
@@ -55,11 +56,16 @@ has shown the token there, then a Form for the token, then Done.
     `notifications/progress` naming the request's `progressToken`, with
     `progress` and `total` for the bar. A setup key Deals refuses gives
     the Form back with words saying why, rather than failing the flow.
+    It takes up the app an earlier run made (found by `APP_NAME`)
+    before making one: Kivali calls nothing when a setup is cancelled
+    or fails, so that app is still in Deals.
   - The fallback (`show_token_wait`): a Wait whose check (`answer.checked`)
     asks Deals whether the token has been shown, and answers the same
     Wait until it has. The short-lived session rides in `state`, which
     Kivali keeps in its memory alone and replaces in every word it
-    shows with `[secret]`.
+    shows with `[secret]`. Kivali does the same to every kept or
+    carried value, wherever it appears in a step, so the Wait's page is
+    the app list, whose address holds no app id.
   - `kivali/requirements` (`kivali_requirements`): the integration's
     health after Kivali's own rows, `{"requirements": [{"id", "title",
     "words", "met", "fix"}]}`. It answers with no connection too, and
@@ -68,8 +74,10 @@ has shown the token there, then a Form for the token, then Done.
     again; `rescope` is a second flow of `kivali/setup`, a Form for a
     new key and a rebuild with this version's `SCOPES`.
   - `kivali/uninstall` (`kivali_uninstall`): the app removed in Deals,
-    answered `{}`. An error is a JSON-RPC error whose message the owner
-    reads, and the uninstall is refused with nothing changed.
+    answered `{}`. An app already gone, or a token Deals no longer
+    takes, is done too, so an uninstall Kivali asks for again finishes.
+    An error is a JSON-RPC error whose message the owner reads, and the
+    uninstall is refused with nothing changed.
   - An error of any of the three is a JSON-RPC error whose message is
     the owner's words (`Refusal`, `Status`).
   - `tools/list` and `tools/call` as in `template/`, the agents'
@@ -80,22 +88,32 @@ has shown the token there, then a Form for the token, then Done.
 
 ## Trying it
 
-`scripts/try.py` drives the flow as Kivali does, against a stub of the
-service on this machine that you write (`--stub` starts it and stops it
-at the end; `DEALS_API` points the server at it):
+`scripts/try.py` drives the flow as Kivali does, against
+`scripts/deals_stub.py`, a stub of Deals on this machine (`--stub`
+starts it and stops it at the end, showing what it was asked;
+`DEALS_API` points the server at it). From the skill's directory:
 
 ```
-python3 scripts/try.py --stub 'python3 deals_stub.py' --env DEALS_API=http://127.0.0.1:8765 \
+python3 scripts/try.py --stub 'python3 scripts/deals_stub.py 8765' --env DEALS_API=http://127.0.0.1:8765 \
   template-setup setup --answer setup_key=sk-test-1
-python3 scripts/try.py --stub 'python3 deals_stub.py' --env DEALS_API=http://127.0.0.1:8765 \
-  --field token=app-token-1 --field app_id=app_1 \
-  template-setup requirements setup rescope --answer setup_key=sk-test-2 uninstall
+python3 scripts/try.py --stub 'python3 scripts/deals_stub.py 8765 --token-on-page' --env DEALS_API=http://127.0.0.1:8765 \
+  --every 0 --checks 1 template-setup setup --answer setup_key=sk-test-1 \
+  setup --answer setup_key=sk-test-2 --answer token=app-token-0001
+python3 scripts/try.py --stub "python3 scripts/deals_stub.py 8765 --installed --scopes ''" --env DEALS_API=http://127.0.0.1:8765 \
+  --field token=app-token-0001 --field app_id=app_1 \
+  template-setup requirements setup rescope --answer setup_key=sk-test-3 requirements uninstall uninstall
 ```
+
+The first installs. The second is the fallback, left at the Wait after
+one check and started again: the first run's connection is forgotten,
+and the second takes up the app it made. The third is an installed
+integration whose app lacks this version's scope: the requirements,
+the Fix, the requirements again, and an uninstall asked for twice.
 
 `setup` prints each step as the owner's page shows it, each progress
 notification, and what each step keeps; a Form takes its fields from
-`--answer` (or the terminal), a Go's return from `--return`, and a Wait
-is checked until it changes. `--field` starts the server with a
-connection, by the keys setup keeps. Each step is checked against the
-manifest's declarations as Kivali checks it; a `problem:` line is a
-step Kivali would fail the flow on.
+`--answer` (in order, a key given twice answering two Forms), a Go's
+return from `--return`, and a Wait is checked until it changes.
+`--field` starts the server with a connection, by the keys setup keeps.
+Each step is checked against the manifest's declarations as Kivali
+checks it; a `problem:` line is a step Kivali would fail the flow on.
