@@ -974,8 +974,13 @@ returned value is scrubbed, so a driver puts anything else it must keep
 hidden into `State`), and a standard flow's own secrets (the client secret, a device code, the
 OAuth state and verifier, the code and the tokens) are replaced by
 `[secret]`, whole, in the flow's error words, progress words and
-steps, in the audit and in what core logs of the flow, before any of
-them is cut to 200 runes.
+steps, in the audit and in what core logs of the flow. Then the error
+words, the progress words and a step's words are cut to 200 runes, and
+a Wait's code to 64. A step that names an address longer than 4096
+characters, keeps and carries in its `State` more than 64 KiB
+together, or posts more than 64 KiB fails the flow in words that say
+so: a bundle's step is someone else's code, and its server may write
+lines of up to 16 MiB.
 
 The owner's audit gains one row per flow event under the owner's name
 (`ceo`), with the flow's name as its action (`setup`): `started`,
