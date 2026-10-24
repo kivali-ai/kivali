@@ -1213,8 +1213,10 @@ func (s *Server) setupDiscard(name, id string, keepRecord bool) {
 // setupUndo asks name's integration to undo, on the service, what an
 // install that ended without being done made there, before core
 // forgets the connection id it kept: a built-in's Uninstall, or a
-// setup bundle's kivali/uninstall while its server runs (uninstallerOf),
-// with the connection as kept so far, which may lack what later steps
+// setup bundle's kivali/uninstall, its server waited for bundleStartWait
+// at most when it is switched on and not running yet (one that still
+// is not, or is switched off, is not asked, and the log says so), with
+// the connection as kept so far, which may lack what later steps
 // would have kept. It is best effort, under integrationCallTimeout, off
 // every lock: a failure, or no answer in time, is logged, scrubbed of
 // the connection's secrets, and the connection goes all the same. The
@@ -1224,8 +1226,19 @@ func (s *Server) setupUndo(ctx context.Context, name, id string) {
 	if err != nil {
 		return
 	}
-	u, ok := s.uninstallerOf(v)
-	if !ok {
+	var u builtinintegrations.Uninstaller
+	if b, ok := s.bundleHooksOf(v); ok {
+		// A setup bundle's server may be starting (switched on to install
+		// it, started again by a Keep, or at boot): it is waited for as a
+		// setup call waits for it.
+		if !v.it.Enabled || !b.awaitServer(ctx) {
+			log.Printf("integration %s: its server is not running, so what the unfinished setup made on the service is left as it is", name)
+			return
+		}
+		u = b
+	} else if bu, ok := v.builtin.(builtinintegrations.Uninstaller); ok {
+		u = bu
+	} else {
 		return
 	}
 	conn, scrub, err := s.uninstallConnection(ctx, name, id)

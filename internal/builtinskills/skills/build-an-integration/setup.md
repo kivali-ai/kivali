@@ -336,17 +336,20 @@ setup kept.
   same for a `setup` after one it left partway in the same run.
 - **Failed, cancelled or forgotten.** When an install that kept
   something ends without being done (a call fails, the owner cancels
-  it, or it is forgotten), Kivali sends `kivali/uninstall`, with the
-  server still holding what was kept so far, then forgets the
-  connection. That call is best effort: an error is logged, and the
+  it, or it is forgotten), Kivali sends `kivali/uninstall`, the server
+  started with what was kept so far, then forgets the connection. A
+  server that is starting (each Keep starts it again) is waited for,
+  two minutes at most; one still not running then, or one switched
+  off, is not asked, the log says so, and what the install made on the
+  service stays. The call is best effort: an error is logged, and the
   connection goes all the same. An install that kept nothing gets no
   call, and nothing is sent for a Fix's flow that fails: it keeps what
   it kept.
 - **Kivali restarts.** A flow lives in Kivali's memory, so a restart
   mid-install loses it. The connection it kept so far is discarded
   when Kivali starts again, as for a failed install, with
-  `kivali/uninstall` sent where the server is running by then; the
-  owner installs again from the start.
+  `kivali/uninstall` sent once the server runs, waited for two minutes
+  at most; the owner installs again from the start.
 - What setup made on the service before it kept anything stays there,
   and `kivali/uninstall` can undo only what the kept values name. So
   keep an app's id as soon as the app is made, and make each step safe

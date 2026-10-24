@@ -909,7 +909,11 @@ fails, is cancelled, is replaced by a flow that does not take it over,
 or is forgotten, core forgets that connection off the caller's locks
 (`setupDiscard`). First, where the integration can undo its
 installation on the service (a built-in's `Uninstaller`, or a setup
-bundle's `kivali/uninstall` while its server runs), it is asked to,
+bundle's `kivali/uninstall`, its server waited for `bundleStartWait`
+at most when it is switched on and not running yet, as a setup call
+waits for it; one still not running, or switched off, is not asked and
+the log says "its server is not running, so what the unfinished setup
+made on the service is left as it is"), it is asked to,
 with the connection as kept so far (`setupUndo`): best effort, off
 every lock, under `integrationCallTimeout` (60 seconds), a failure or
 no answer logged and scrubbed, the call counted in what `setupDrain`
@@ -1195,8 +1199,9 @@ and a proxy credential per connection stay built-in only.
   without the request ([Uninstall](#uninstall)). It is sent too when an
   install ends without being done (failed, cancelled, forgotten) after
   a Keep, with the server holding what was kept so far, best effort:
-  its error is logged and the connection goes all the same
-  ([Flows](#flows)).
+  a server starting is waited for two minutes at most, one not running
+  then or switched off is not asked, its error is logged, and the
+  connection goes all the same ([Flows](#flows)).
 
 An error of any of them is a JSON-RPC error whose message is the
 owner's words, scrubbed as a built-in's error is; one with no message
