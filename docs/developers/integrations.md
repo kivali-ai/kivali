@@ -767,15 +767,19 @@ integration (`handleAPIIntegrationUninstall`), 204 once done:
    undone on the service and to uninstall again to finish (audited as
    `uninstall`, not allowed). Uninstall again calls the built-in's
    `Uninstall` again, which treats an installation already gone as
-   done. Once the connection is gone, the record and its version stay,
-   so it is available again, and the owner's audit gains `uninstall`,
-   allowed. Connections set aside at boot (`connections-retired/`,
-   [Migration](#migration)) and their Secrets stay.
+   done. Once the connection is gone, the Secrets of any other record
+   under `connections/` and of the connections set aside at boot
+   (`connections-retired/`, [Migration](#migration)) are deleted, best
+   effort (a failure is logged), and their records go
+   (`store.DeleteIntegrationConnection`); the integration's record and
+   its version stay, so it is available again, and the owner's audit
+   gains `uninstall`, allowed.
 5. Any other integration, an upload in any state or a built-in this
    binary does not carry: the connection's Secret is deleted first (on
    a failure, a 500 and nothing else changes; a bundle has no
-   `Uninstall` of its own), then it is removed whole: every version,
-   its audit and its log ([Where it is kept](#where-it-is-kept)).
+   `Uninstall` of its own), then those of the connections set aside,
+   best effort, then it is removed whole: every version, its audit and
+   its log ([Where it is kept](#where-it-is-kept)).
 
 The page's Uninstall asks first, naming what goes: the connection and
 its secrets, each agent's access by name, and either that it stays
@@ -2116,26 +2120,49 @@ brought to that shape without deleting anything:
 
 - With several records under `connections/`, the one most access rows
   name is kept (ties: the oldest). Each other record moves, as it is, to
-  `connections-retired/<id>.yaml`; its Secret stays, and nothing reads
-  either again. Boot's `RegisterBuiltinEgress` drops the scoped proxy
-  credential of every connection set aside, so it reaches nothing.
+  `connections-retired/<id>.yaml`, never over a record already there
+  (that is an error, and the move stops); its Secret stays. Nothing
+  calls through it again: boot's `RegisterBuiltinEgress` drops its
+  scoped proxy credential, so it reaches nothing. A shell job handed
+  out through it before the upgrade and ended after is scrubbed with
+  its Secret's values too, and audited "(it ran through a connection
+  set aside)" ([A call, in two requests](#a-call-in-two-requests)).
 - A row whose `connection_id` names the kept connection is written
   again without it. A row naming any other connection is set aside:
   it keeps its `connection_id` on disk and gains `retired`, the reason
   it grants nothing, "set for the connection <label, else host>, which
-  Git no longer has; set it again" (or "it was set for a connection
-  that is no longer there; set it again" when no record set aside has
-  that id). Every read shows it as the row's `invalid`, the mechanism a
-  changed access form uses, until the owner sets the access again.
+  Git no longer has" (or "it was set for a connection that is no longer
+  there" when no record set aside has that id). Every read shows it as
+  the row's `invalid`, the mechanism a changed access form uses, whose
+  words (the page's, the agent's refusal) say to set it again, until
+  the owner does.
 
 It runs on every integration, so a one-connection integration's row
 left naming an earlier connection stays granting nothing, as it did.
-The connections are moved before the rows are written: should boot
-stop half way, the next finds one connection and rows still naming
-theirs, and finishes. A second run changes nothing. What it did is
-logged: "integration git: one connection per installation: kept
-connection <id>, set aside <ids>; access to set again: <slugs>".
-Uninstall leaves `connections-retired/` and its Secrets as they are.
+Every record is moved before any row is written: should boot stop half
+way, or a move fail, the next run finds the same connection to keep and
+rows still naming theirs, and finishes. Until it does, the integration
+holds more than one record, and no row may reach any of them: every
+row reads "<Integration> holds more than one connection record and
+Kivali could not bring it to one; see the log",
+`store.GetIntegrationConnection` answers
+`ErrIntegrationConnectionsSeveral` (so no call is made), the page shows
+the oldest record with the `connection` requirement not met and no
+Fix, Test connection and the options answer 409, and Uninstall still
+works. A second run changes nothing. What it did is logged:
+"integration git: one connection per installation: kept connection
+<id>, set aside <ids>; access to set again: <slugs>"; a failure is
+logged at boot ("integrations: ...") and after a restore.
+
+A new connection's id is never one a record set aside has
+(`store.IntegrationConnectionIDTaken`), so its Secret's name is its
+own. Uninstall forgets the connections set aside with the connection
+([Uninstall](#uninstall)).
+
+The migration is non-destructive, not reversible in place: an older
+Kivali started on the migrated data reads the one connection kept, and
+every access row, now naming no connection (or naming a connection set
+aside), as invalid until the owner sets it again.
 
 ### Dispatch
 

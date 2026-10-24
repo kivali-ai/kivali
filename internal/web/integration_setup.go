@@ -1130,7 +1130,7 @@ func (s *Server) keepSetupValues(ctx context.Context, run *setupRun, values map[
 	made := errors.Is(err, store.ErrNotFound)
 	switch {
 	case made:
-		rec = store.IntegrationConnection{ID: newConnectionID(), CreatedAt: s.clk().Now()}
+		rec = store.IntegrationConnection{ID: s.newConnectionID(name), CreatedAt: s.clk().Now()}
 	case err != nil:
 		log.Printf("integration %s: read the connection to keep what setup made: %v", name, err)
 		return errors.New(errSetupNotKept)

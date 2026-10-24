@@ -108,6 +108,10 @@ type integrationView struct {
 	// install made is on its way out (Server.setupPeek).
 	flow                   *apitypes.SetupFlow
 	installing, discarding bool
+	// several is true when connections/ holds more than one record,
+	// which a migration could not bring to one
+	// (store.ErrIntegrationConnectionsSeveral); conn is the oldest then.
+	several bool
 }
 
 // connView is one connection as an integration's answers read it.
@@ -162,6 +166,15 @@ func (s *Server) loadIntegration(ctx context.Context, name string) (*integration
 	switch rec, err := s.Store.GetIntegrationConnection(name); {
 	case err == nil:
 		v.conn = s.readConnectionSecret(ctx, name, rec)
+	case errors.Is(err, store.ErrIntegrationConnectionsSeveral):
+		// The page shows the oldest record, so the owner can see and
+		// uninstall it; no call reaches any (readStoredConnection), and
+		// the connection requirement says why.
+		all, err := s.Store.ListIntegrationConnections(name)
+		if err != nil || len(all) == 0 {
+			return nil, cmp.Or(err, store.ErrNotFound)
+		}
+		v.conn, v.several = s.readConnectionSecret(ctx, name, all[0]), true
 	case !errors.Is(err, store.ErrNotFound):
 		return nil, err
 	}
@@ -873,8 +886,9 @@ func (s *Server) builtinUninstall(ctx context.Context, v *integrationView) strin
 // credential and every agent's access. A Secret that cannot be deleted
 // keeps the record, so the Secret is still named and Uninstall again
 // finishes it, and the answer is a 500 saying the service's side was
-// undone. Once the connection is gone, the owner's audit gains
-// uninstall. The caller has checked v has its connection.
+// undone. Once the connection is gone, the Secrets of any other record
+// and of the connections set aside go, best effort, and the owner's
+// audit gains uninstall. The caller has checked v has its connection.
 func (s *Server) uninstallBuiltinLocked(w http.ResponseWriter, r *http.Request, v *integrationView, start time.Time) (signInRevocations, bool) {
 	name, c := v.it.Name, v.conn
 	var revokes signInRevocations
@@ -906,7 +920,22 @@ func (s *Server) uninstallBuiltinLocked(w http.ResponseWriter, r *http.Request, 
 		writeAPIError(w, http.StatusInternalServerError, words, whoServer)
 		return revokes, false
 	}
-	// Any record left beside the connection goes too.
+	// Any record left beside the connection (a migration that could not
+	// finish) and every connection set aside go too, their Secrets
+	// first, best effort.
+	if rest, err := s.Store.ListIntegrationConnections(name); err == nil {
+		for _, other := range rest {
+			if other.SecretName != "" {
+				if err := s.Secrets.Delete(r.Context(), other.SecretName); err != nil && !errors.Is(err, secrets.ErrNotFound) {
+					log.Printf("integration %s: uninstall: delete Secret %s: %v", name, other.SecretName, err)
+				}
+			}
+			if err := s.dropBuiltinEgress(name, []store.IntegrationConnection{other}); err != nil {
+				log.Printf("integration %s: drop the connection's proxy credential: %v", name, err)
+			}
+		}
+	}
+	s.forgetRetiredConnectionSecrets(r.Context(), name)
 	if _, err := s.Store.DeleteIntegrationConnection(name); err != nil {
 		log.Printf("integration %s: uninstall: %v", name, err)
 	}
@@ -961,7 +990,9 @@ func (s *Server) uninstallLocked(w http.ResponseWriter, r *http.Request) (signIn
 // the records stay, so the Secret is not left behind with nothing
 // naming it. It returns the sign-in tokens of each Secret it deleted,
 // for the caller to revoke with the vendor once it has released
-// lockIntegrations (revokeSignIns), whatever else fails.
+// lockIntegrations (revokeSignIns), whatever else fails. Once they are
+// gone, the Secrets of the connections set aside go too, best effort
+// (forgetRetiredConnectionSecrets).
 func (s *Server) deleteConnectionSecrets(w http.ResponseWriter, r *http.Request, name string) (signInRevocations, bool) {
 	conns, err := s.Store.ListIntegrationConnections(name)
 	if err != nil {
@@ -983,7 +1014,30 @@ func (s *Server) deleteConnectionSecrets(w http.ResponseWriter, r *http.Request,
 		}
 		revokes = revokes.add(name, m, c, tokens)
 	}
+	s.forgetRetiredConnectionSecrets(r.Context(), name)
 	return revokes, true
+}
+
+// forgetRetiredConnectionSecrets deletes the Secret of every connection
+// name's migration set aside (store.RetiredIntegrationConnections),
+// best effort: Uninstall forgets every secret the integration holds. A
+// failure is logged and does not stop the Uninstall, whose own
+// connection's Secret is already gone. The caller holds
+// lockIntegrations.
+func (s *Server) forgetRetiredConnectionSecrets(ctx context.Context, name string) {
+	retired, err := s.Store.RetiredIntegrationConnections(name)
+	if err != nil {
+		log.Printf("integration %s: uninstall: read the connections set aside: %v", name, err)
+		return
+	}
+	for _, c := range retired {
+		if c.SecretName == "" {
+			continue
+		}
+		if err := s.Secrets.Delete(ctx, c.SecretName); err != nil && !errors.Is(err, secrets.ErrNotFound) {
+			log.Printf("integration %s: uninstall: delete Secret %s of a connection set aside: %v", name, c.SecretName, err)
+		}
+	}
 }
 
 // ---- versions ----
@@ -1383,6 +1437,9 @@ func (s *Server) handleAPIIntegrationChoices(w http.ResponseWriter, r *http.Requ
 		return
 	case v.builtin != nil && conn == nil:
 		writeAPIError(w, http.StatusConflict, "install "+v.displayName()+" first", whoYou)
+		return
+	case v.several:
+		writeAPIError(w, http.StatusConflict, v.displayName()+" holds more than one connection record and Kivali could not bring it to one; see the log", whoServer)
 		return
 	}
 	connID := ""

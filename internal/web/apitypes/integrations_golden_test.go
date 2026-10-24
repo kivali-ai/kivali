@@ -108,7 +108,7 @@ func goldenGitConnectionFields(host string) []ConnectionField {
 
 // integrationRetired is the reason an access row set for a connection
 // boot set aside grants nothing.
-var integrationRetired = "set for the connection gitlab.example.com, which Git no longer has; set it again"
+var integrationRetired = "set for the connection gitlab.example.com, which Git no longer has"
 
 // goldenIntegrationPageGit is Git's page: its one connection, whose
 // secrets are needed again, one agent's access and one agent's access

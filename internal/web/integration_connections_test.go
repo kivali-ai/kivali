@@ -150,7 +150,7 @@ func TestGitAfterOneConnectionMigration(t *testing.T) {
 	for _, r := range page.Access {
 		rows[r.Agent.Slug] = r
 	}
-	const reason = "set for the connection GitHub, which Git no longer has; set it again"
+	const reason = "set for the connection GitHub, which Git no longer has"
 	if rows["lee"].Invalid != nil || rows["kim"].Invalid != nil || rows["dana"].Invalid == nil || *rows["dana"].Invalid != reason {
 		t.Errorf("rows = %+v", rows)
 	}
@@ -194,6 +194,17 @@ func TestGitAfterOneConnectionMigration(t *testing.T) {
 	if len(tab.Connected) != 1 || !tab.Connected[0].Usable || tab.Connected[0].Invalid != nil {
 		t.Errorf("dana's tab after setting the access again = %+v", tab.Connected)
 	}
+
+	// Uninstall forgets the connection set aside with the connection.
+	if rr := intDelete(t, srv, intBase+"/git"); rr.Code != http.StatusNoContent {
+		t.Fatalf("uninstall = %d %s", rr.Code, rr.Body.String())
+	}
+	if names := mem.Names(); len(names) != 0 {
+		t.Errorf("secrets after uninstall = %v", names)
+	}
+	if retired, _ := srv.Store.RetiredIntegrationConnections("git"); len(retired) != 0 {
+		t.Errorf("set aside after uninstall = %+v", retired)
+	}
 }
 
 // Why this test exists: a shell job carries the id of the connection it
@@ -202,9 +213,9 @@ func TestGitAfterOneConnectionMigration(t *testing.T) {
 // is not the one the job reached: checking the result against it would
 // refuse a clone that already happened. It is told as it ran, the
 // audit says the connection changed, and the job's connection's token
-// is scrubbed from both when Kivali still has that record (a record
-// left beside the connection), or the audit says only the current
-// connection's secrets were scrubbed.
+// is scrubbed from both when the migration set that connection aside
+// (a job handed out before the upgrade), or the audit says only the
+// current connection's secrets were scrubbed.
 func TestGitJobTellsWhatRanThroughItsConnection(t *testing.T) {
 	srv := newTestServer(t)
 	mem := secrets.NewMemory()
@@ -239,49 +250,69 @@ func TestGitJobTellsWhatRanThroughItsConnection(t *testing.T) {
 		t.Errorf("audit = %+v", row)
 	}
 
-	// A record of the job's connection left beside the integration's:
-	// its token is scrubbed too.
-	cur, _ := srv.Store.GetIntegrationConnection("git")
-	stray := store.IntegrationConnection{ID: "5a5a5a5a", CreatedAt: cur.CreatedAt.Add(time.Hour), Fields: map[string]string{"host": "github.com"},
-		SecretKeys: []string{"token"}, SecretName: secrets.ConnectionSecretName("git", "5a5a5a5a")}
-	if err := mem.Put(ctx, stray.SecretName, map[string]string{"token": otherGitToken}); err != nil {
+	// A job handed out before the upgrade, through a connection the
+	// migration then set aside: its token is scrubbed too.
+	const retiredID = "5a5a5a5a"
+	if err := mem.Put(ctx, secrets.ConnectionSecretName("git", retiredID), map[string]string{"token": otherGitToken}); err != nil {
 		t.Fatal(err)
 	}
-	if err := srv.Store.PutIntegrationConnection("git", stray); err != nil {
+	retired, err := yaml.Marshal(map[string]any{"id": retiredID, "label": "GitLab", "fields": map[string]string{"host": "gitlab.example.com"},
+		"secret_keys": []string{"token"}, "secret_name": secrets.ConnectionSecretName("git", retiredID)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	retiredDir := filepath.Join(srv.Store.Root(), store.IntegrationsDirName, "git", "connections-retired")
+	if err := os.MkdirAll(retiredDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(retiredDir, retiredID+".yaml"), retired, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	third, err := dana.IntegrationCall(ctx, agentpod.IntegrationCallRequest{Name: "git_clone", Arguments: args, ShellJobResult: &agentpod.IntegrationShellJobResult{
-		Git: &agentpod.GitResult{Repository: "acme/widgets", Error: "the host said " + otherGitToken + " was refused", ConnectionID: stray.ID},
+		Git: &agentpod.GitResult{Repository: "acme/widgets", Error: "the host said " + otherGitToken + " was refused", ConnectionID: retiredID},
 	}})
 	if err != nil || !third.IsError || strings.Contains(strings.Join(third.Content, " "), otherGitToken) {
 		t.Fatalf("third request = %+v, %v", third, err)
 	}
-	if row := gitRows(t, srv)[0]; strings.Contains(row.Reason, otherGitToken) || !strings.HasSuffix(row.Reason, "; the connection changed during the clone (it ran through an earlier connection)") {
+	if row := gitRows(t, srv)[0]; strings.Contains(row.Reason, otherGitToken) || !strings.HasSuffix(row.Reason, "; the connection changed during the clone (it ran through a connection set aside)") {
 		t.Errorf("audit = %+v", row)
 	}
 }
 
-// Why this test exists: an integration has one connection, the oldest
-// record. A second record (left from before, or written by hand) that
-// has its secrets must not make the connection requirement read met
-// while the connection agents use needs its secrets again.
-func TestConnectionRequirementIsTheOldest(t *testing.T) {
+// Why this test exists: a migration that could not finish leaves
+// several records under connections/, and an access row no longer says
+// which it was set for. If the oldest served every call, an agent whose
+// access was set for one host would reach another with its token. The
+// page must still open (the owner can see it and uninstall it), every
+// row and the connection requirement must say why nothing works, and
+// an agent's call must be refused.
+func TestSeveralConnectionRecordsGrantNothing(t *testing.T) {
 	srv := newTestServer(t)
 	mem := secrets.NewMemory()
 	srv.Secrets = mem
-	intConnected(t, srv, "crm")
-	attachShim(t, srv, "crm", toolTexts(nil))
-	oldest, err := srv.Store.GetIntegrationConnection("crm")
-	if err != nil {
-		t.Fatal(err)
+	hub, _ := legacyGitWithTwo(t, srv, mem)
+	page := orgOK[apitypes.IntegrationPage](t, orgGet(t, srv, intBase+"/git"))
+	const several = "Git holds more than one connection record and Kivali could not bring it to one; see the log"
+	if page.Connection == nil || page.Connection.ID != hub || len(page.Access) != 3 {
+		t.Fatalf("page = %+v, access %+v", page.Connection, page.Access)
 	}
-	if err := srv.Store.PutIntegrationConnection("crm", store.IntegrationConnection{ID: "later", CreatedAt: oldest.CreatedAt.Add(time.Hour)}); err != nil {
-		t.Fatal(err)
+	for _, r := range page.Access {
+		if r.Invalid == nil || *r.Invalid != several {
+			t.Errorf("%s's row = %+v", r.Agent.Slug, r.Invalid)
+		}
 	}
-	_ = mem.Delete(context.Background(), oldest.SecretName)
-	page := orgOK[apitypes.IntegrationPage](t, orgGet(t, srv, intBase+"/crm"))
-	if row, _ := requirementOf(page, "connection"); row.Met || row.Words != "Its secrets are not stored on this Kivali server, as after a restore from a backup. Enter them again." {
-		t.Errorf("connection = %+v, want not met", row)
+	if row, _ := requirementOf(page, "connection"); row.Met || row.Fix != "" || !strings.HasPrefix(row.Words, "It holds more than one connection record") {
+		t.Errorf("connection row = %+v", row)
+	}
+	resp := callAs(t, srv, "lee", "git_clone", `{"url":"https://gitlab.example.com/acme/tools","path":"/files/w"}`)
+	if !resp.IsError || !strings.Contains(strings.Join(resp.Content, " "), several) {
+		t.Errorf("lee's call = %+v", resp)
+	}
+	if rr := intDelete(t, srv, intBase+"/git"); rr.Code != http.StatusNoContent {
+		t.Fatalf("uninstall = %d %s", rr.Code, rr.Body.String())
+	}
+	if conns, _ := srv.Store.ListIntegrationConnections("git"); len(conns) != 0 || len(mem.Names()) != 0 {
+		t.Errorf("after uninstall: records %+v, secrets %v", conns, mem.Names())
 	}
 }
 

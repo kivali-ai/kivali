@@ -248,9 +248,9 @@ func TestMigrateIntegrationConnectionsKeepsTheMostUsed(t *testing.T) {
 	want := map[string]string{
 		"lee":  "",
 		"kim":  "",
-		"dana": "set for the connection GitHub, which Git no longer has; set it again",
-		"ana":  "set for the connection Old, which Git no longer has; set it again",
-		"pat":  "it was set for a connection that is no longer there; set it again",
+		"dana": "set for the connection GitHub, which Git no longer has",
+		"ana":  "set for the connection Old, which Git no longer has",
+		"pat":  "it was set for a connection that is no longer there",
 	}
 	for slug, w := range want {
 		if got[slug] != w {
@@ -295,7 +295,7 @@ func TestMigrateIntegrationConnectionsTieKeepsTheOldest(t *testing.T) {
 		t.Fatalf("connection = %+v, %v", c, err)
 	}
 	got := invalidBySlug(t, s, gitintegration.Name)
-	if got["dana"] != "" || got["lee"] != "set for the connection gitlab.example.com, which Git no longer has; set it again" {
+	if got["dana"] != "" || got["lee"] != "set for the connection gitlab.example.com, which Git no longer has" {
 		t.Errorf("rows: %+v", got)
 	}
 }
@@ -318,10 +318,150 @@ func TestMigrateIntegrationConnectionsOneConnection(t *testing.T) {
 		t.Fatalf("connection = %+v, %v", c, err)
 	}
 	got := invalidBySlug(t, s, "crm")
-	if got["dana"] != "" || got["lee"] != "it was set for a connection that is no longer there; set it again" {
+	if got["dana"] != "" || got["lee"] != "it was set for a connection that is no longer there" {
 		t.Errorf("rows: %+v", got)
 	}
 	if _, err := os.Stat(filepath.Join(s.Root(), IntegrationsDirName, "crm", retiredConnectionsDir)); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("a one-connection integration has %s: %v", retiredConnectionsDir, err)
+	}
+}
+
+// Why this test exists: a migration that cannot set a record aside
+// (here a directory stands where the record would go) leaves several
+// records under connections/. connection_id is no longer read, so if
+// rows stayed valid and the oldest record served every call, an agent
+// whose access was set for one host would reach another with its
+// token. Every row must grant nothing and no record be the connection,
+// the migration must say it failed and touch no row, and running it
+// again once the way is clear must finish.
+func TestMigrateIntegrationConnectionsThatCannotFinish(t *testing.T) {
+	s := mustStore(t)
+	legacyGit(t, s, map[string]string{"dana": "a", "lee": "b", "kim": "b"})
+	blocker := filepath.Join(s.Root(), IntegrationsDirName, gitintegration.Name, retiredConnectionsDir, "a.yaml")
+	if err := os.MkdirAll(blocker, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	before := gitFiles(t, s)
+	if err := s.MigrateIntegrationConnections(); err == nil {
+		t.Fatal("a migration that could not set a record aside said nothing")
+	}
+	if after := gitFiles(t, s); !maps.Equal(after, before) {
+		t.Errorf("a migration that could not finish changed files:\nbefore %v\nafter  %v", before, after)
+	}
+	const several = "Git holds more than one connection record and Kivali could not bring it to one; see the log"
+	for slug, why := range invalidBySlug(t, s, gitintegration.Name) {
+		if why != several {
+			t.Errorf("%s: invalid %q, want %q", slug, why, several)
+		}
+	}
+	if _, err := s.GetIntegrationConnection(gitintegration.Name); !errors.Is(err, ErrIntegrationConnectionsSeveral) {
+		t.Errorf("GetIntegrationConnection with several records: %v", err)
+	}
+
+	if err := os.Remove(blocker); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MigrateIntegrationConnections(); err != nil {
+		t.Fatal(err)
+	}
+	got := invalidBySlug(t, s, gitintegration.Name)
+	if got["lee"] != "" || got["kim"] != "" || got["dana"] != "set for the connection GitHub, which Git no longer has" {
+		t.Errorf("rows once the way is clear: %+v", got)
+	}
+}
+
+// Why this test exists: a boot that stops after moving the records and
+// before writing the rows must be finished by the next. The rows then
+// still name their connections, some only set aside, and must come out
+// as a run without the stop would leave them.
+func TestMigrateIntegrationConnectionsAfterAStop(t *testing.T) {
+	s := mustStore(t)
+	legacyGit(t, s, map[string]string{"dana": "a", "lee": "b", "kim": "b"})
+	dir := filepath.Join(s.Root(), IntegrationsDirName, gitintegration.Name)
+	if err := os.MkdirAll(filepath.Join(dir, retiredConnectionsDir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"a", "c"} {
+		if err := os.Rename(filepath.Join(dir, "connections", id+".yaml"), filepath.Join(dir, retiredConnectionsDir, id+".yaml")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.MigrateIntegrationConnections(); err != nil {
+		t.Fatal(err)
+	}
+	if c, err := s.GetIntegrationConnection(gitintegration.Name); err != nil || c.ID != "b" {
+		t.Fatalf("connection = %+v, %v", c, err)
+	}
+	got := invalidBySlug(t, s, gitintegration.Name)
+	if got["lee"] != "" || got["kim"] != "" || got["dana"] != "set for the connection GitHub, which Git no longer has" {
+		t.Errorf("rows: %+v", got)
+	}
+}
+
+// Why this test exists: the edges of the migration. With no connection
+// a row naming one must stay granting nothing (a connection made later
+// must not revive it); with two connections and no rows the oldest is
+// kept and the other set aside, and no row is written.
+func TestMigrateIntegrationConnectionsEdges(t *testing.T) {
+	t.Run("no connection", func(t *testing.T) {
+		s := mustStore(t)
+		legacyGit(t, s, map[string]string{"dana": "a"})
+		for _, id := range []string{"a", "b", "c"} {
+			if err := os.Remove(filepath.Join(s.Root(), IntegrationsDirName, gitintegration.Name, "connections", id+".yaml")); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := s.MigrateIntegrationConnections(); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.PutIntegrationConnection(gitintegration.Name, IntegrationConnection{ID: "n", CreatedAt: intNow}); err != nil {
+			t.Fatal(err)
+		}
+		if got := invalidBySlug(t, s, gitintegration.Name); got["dana"] != "it was set for a connection that is no longer there" {
+			t.Errorf("dana with a connection made later: %q", got["dana"])
+		}
+	})
+	t.Run("two connections, no rows", func(t *testing.T) {
+		s := mustStore(t)
+		legacyGit(t, s, nil)
+		if err := os.Remove(filepath.Join(s.Root(), IntegrationsDirName, gitintegration.Name, "connections", "c.yaml")); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.MigrateIntegrationConnections(); err != nil {
+			t.Fatal(err)
+		}
+		if c, err := s.GetIntegrationConnection(gitintegration.Name); err != nil || c.ID != "a" {
+			t.Errorf("connection = %+v, %v", c, err)
+		}
+		if retired, _ := s.RetiredIntegrationConnections(gitintegration.Name); len(retired) != 1 || retired[0].ID != "b" {
+			t.Errorf("set aside = %+v", retired)
+		}
+		if _, err := os.Stat(filepath.Join(s.Root(), IntegrationsDirName, gitintegration.Name, "access")); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("access/ was written: %v", err)
+		}
+	})
+}
+
+// Why this test exists: a connection set aside keeps its record and its
+// Secret until Uninstall, which forgets them with the connection. A new
+// connection's id must not be one set aside, or its Secret's name
+// (kivali-connection-<integration>-<id>) would be that one's.
+func TestRetiredConnectionsGoWithUninstall(t *testing.T) {
+	s := mustStore(t)
+	legacyGit(t, s, map[string]string{"dana": "a", "lee": "b", "kim": "b"})
+	if err := s.MigrateIntegrationConnections(); err != nil {
+		t.Fatal(err)
+	}
+	if !s.IntegrationConnectionIDTaken(gitintegration.Name, "a") || !s.IntegrationConnectionIDTaken(gitintegration.Name, "b") || s.IntegrationConnectionIDTaken(gitintegration.Name, "z") {
+		t.Error("IntegrationConnectionIDTaken does not see both directories")
+	}
+	if c, err := s.GetRetiredIntegrationConnection(gitintegration.Name, "a"); err != nil || c.SecretName != "kivali-connection-git-a" {
+		t.Errorf("a set aside = %+v, %v", c, err)
+	}
+	if _, err := s.DeleteIntegrationConnection(gitintegration.Name); err != nil {
+		t.Fatal(err)
+	}
+	if retired, _ := s.RetiredIntegrationConnections(gitintegration.Name); len(retired) != 0 {
+		t.Errorf("set aside after the delete = %+v", retired)
 	}
 }

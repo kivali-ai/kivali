@@ -112,8 +112,12 @@ func (s *FSStore) migrateIntegrationConnections(it Integration) error {
 			}
 		}
 	}
-	// The records move first: should this stop half way, the next boot
-	// finds the one kept, and the rows still name their connections.
+	// The records move first, and the rows are written only once every
+	// one has: should this stop half way, the next boot finds the same
+	// connection to keep and the rows still naming their connections.
+	// Until then the integration holds several records, and
+	// ListIntegrationAccess and GetIntegrationConnection let no row reach
+	// any of them.
 	var retired []string
 	for _, c := range conns {
 		if c.ID == kept {
@@ -122,7 +126,13 @@ func (s *FSStore) migrateIntegrationConnections(it Integration) error {
 		if err := os.MkdirAll(filepath.Join(dir, retiredConnectionsDir), 0o755); err != nil {
 			return err
 		}
-		if err := os.Rename(filepath.Join(dir, "connections", c.ID+".yaml"), filepath.Join(dir, retiredConnectionsDir, c.ID+".yaml")); err != nil {
+		to := filepath.Join(dir, retiredConnectionsDir, c.ID+".yaml")
+		// A record already set aside under that id is never written
+		// over.
+		if _, err := os.Lstat(to); !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("set aside connection %s: %s/%s.yaml is there already", c.ID, retiredConnectionsDir, c.ID)
+		}
+		if err := os.Rename(filepath.Join(dir, "connections", c.ID+".yaml"), to); err != nil {
 			return err
 		}
 		retired = append(retired, c.ID)
@@ -158,14 +168,49 @@ func (s *FSStore) migrateIntegrationConnections(it Integration) error {
 
 // retiredAccessReason is why a row set for the connection id grants
 // nothing: the connection named by its label, else its host, when its
-// record is one set aside.
+// record is one set aside. The words the reason is shown in say to set
+// the access again.
 func (s *FSStore) retiredAccessReason(dir string, it Integration, id string) string {
 	var c legacyConnection
 	if !validFileName(id) || readYAMLFile(filepath.Join(dir, retiredConnectionsDir, id+".yaml"), &c) != nil {
-		return "it was set for a connection that is no longer there; set it again"
+		return accessConnectionGone
 	}
 	name := cmp.Or(strings.TrimSpace(c.Label), strings.TrimSpace(c.Fields["host"]), id)
-	return fmt.Sprintf("set for the connection %s, which %s no longer has; set it again", name, cmp.Or(it.DisplayName, it.Name))
+	return fmt.Sprintf("set for the connection %s, which %s no longer has", name, cmp.Or(it.DisplayName, it.Name))
+}
+
+// GetRetiredIntegrationConnection returns the connection record set
+// aside under id; ErrNotFound when there is none.
+func (s *FSStore) GetRetiredIntegrationConnection(name, id string) (IntegrationConnection, error) {
+	dir, err := s.integrationDir(name)
+	if err != nil || !validFileName(id) {
+		return IntegrationConnection{}, ErrNotFound
+	}
+	var c IntegrationConnection
+	if err := readYAMLFile(filepath.Join(dir, retiredConnectionsDir, id+".yaml"), &c); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return IntegrationConnection{}, ErrNotFound
+		}
+		return IntegrationConnection{}, fmt.Errorf("connection %s: %w", id, err)
+	}
+	c.ID = id
+	return c, nil
+}
+
+// IntegrationConnectionIDTaken reports whether id names a connection
+// record of the integration, its connection's or one set aside: a new
+// connection takes another id, so its Secret's name is its own.
+func (s *FSStore) IntegrationConnectionIDTaken(name, id string) bool {
+	dir, err := s.integrationDir(name)
+	if err != nil {
+		return false
+	}
+	for _, sub := range []string{"connections", retiredConnectionsDir} {
+		if _, err := os.Lstat(filepath.Join(dir, sub, id+".yaml")); !errors.Is(err, fs.ErrNotExist) {
+			return true
+		}
+	}
+	return false
 }
 
 func wordsOrNone(ss []string) string {

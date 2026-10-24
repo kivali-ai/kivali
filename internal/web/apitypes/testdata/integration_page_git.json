@@ -123,7 +123,7 @@
       },
       "summary": "Repositories: eng/* · May push: no branches or tags",
       "set_at": "2026-10-21T09:30:00Z",
-      "invalid": "set for the connection gitlab.example.com, which Git no longer has; set it again"
+      "invalid": "set for the connection gitlab.example.com, which Git no longer has"
     }
   ],
   "agents_without": [

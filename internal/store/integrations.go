@@ -66,6 +66,10 @@ var (
 	// integration name (integration.ValidName), or a version or slug
 	// that cannot name a file.
 	ErrInvalidIntegrationName = errors.New("not an integration name")
+	// ErrIntegrationConnectionsSeveral is an integration whose
+	// connections/ holds more than one record, which
+	// MigrateIntegrationConnections could not bring to one.
+	ErrIntegrationConnectionsSeveral = errors.New("the integration holds more than one connection record, and Kivali could not bring it to one; see the log")
 )
 
 // IntegrationsDirName is the integrations' directory under the root.
@@ -784,18 +788,23 @@ func (s *FSStore) ListIntegrationConnections(name string) ([]IntegrationConnecti
 	return out, nil
 }
 
-// GetIntegrationConnection returns the integration's connection (the
-// oldest record, should the directory hold more than one); ErrNotFound
-// when it has none.
+// GetIntegrationConnection returns the integration's connection;
+// ErrNotFound when it has none, and ErrIntegrationConnectionsSeveral
+// when connections/ holds more than one record (a migration that could
+// not finish): no record is the connection then, so nothing is called
+// through the wrong one.
 func (s *FSStore) GetIntegrationConnection(name string) (IntegrationConnection, error) {
 	all, err := s.ListIntegrationConnections(name)
 	if err != nil {
 		return IntegrationConnection{}, err
 	}
-	if len(all) == 0 {
+	switch len(all) {
+	case 0:
 		return IntegrationConnection{}, ErrNotFound
+	case 1:
+		return all[0], nil
 	}
-	return all[0], nil
+	return IntegrationConnection{}, fmt.Errorf("%s: %w", name, ErrIntegrationConnectionsSeveral)
 }
 
 // GetIntegrationConnectionByID returns the integration's connection
@@ -842,9 +851,10 @@ func (s *FSStore) PutIntegrationConnection(name string, c IntegrationConnection)
 }
 
 // DeleteIntegrationConnection removes the connection's record and,
-// with it, every agent's access. It returns the records it removed,
-// whose Secrets are the caller's to delete. Connections set aside
-// (connections-retired/) stay, their Secrets with them.
+// with it, every agent's access and the connections set aside
+// (connections-retired/). It returns the records of connections/ it
+// removed, whose Secrets are the caller's to delete, as are those of
+// the ones set aside (RetiredIntegrationConnections), first.
 func (s *FSStore) DeleteIntegrationConnection(name string) ([]IntegrationConnection, error) {
 	unlock := s.lockIntegration(name)
 	defer unlock()
@@ -856,7 +866,7 @@ func (s *FSStore) DeleteIntegrationConnection(name string) ([]IntegrationConnect
 	if err != nil {
 		return nil, err
 	}
-	for _, sub := range []string{"connections", "access"} {
+	for _, sub := range []string{"connections", retiredConnectionsDir, "access"} {
 		if err := os.RemoveAll(filepath.Join(dir, sub)); err != nil {
 			return nil, err
 		}
@@ -998,7 +1008,8 @@ func (s *FSStore) ClearIntegrationAccess(name, slug string) error {
 
 // ListIntegrationAccess returns every agent's access, by slug, each
 // with Invalid set when it grants nothing: set aside with a retired
-// connection (Retired), no version approved, no connection, or access
+// connection (Retired), more than one connection record (a migration
+// that could not finish), no version approved, no connection, or access
 // the approved version's form refuses (integration.ValidateAccess). A
 // record that does not parse is an error.
 func (s *FSStore) ListIntegrationAccess(name string) ([]IntegrationAccess, error) {
@@ -1011,12 +1022,29 @@ func (s *FSStore) ListIntegrationAccess(name string) ([]IntegrationAccess, error
 	if err != nil {
 		return nil, err
 	}
+	several := ""
+	if len(conns) > 1 {
+		// A migration that could not finish: which record a row was set
+		// for is not read, so no row may reach any of them.
+		display := name
+		if it, err := s.GetIntegration(name); err == nil && it.DisplayName != "" {
+			display = it.DisplayName
+		}
+		several = display + " holds more than one connection record and Kivali could not bring it to one; see the log"
+	}
 	for i := range rows {
 		rows[i].Invalid = accessInvalid(rows[i], m, merr, len(conns) > 0)
+		if several != "" && rows[i].Retired == "" {
+			rows[i].Invalid = several
+		}
 	}
 	sort.Slice(rows, func(i, j int) bool { return rows[i].Slug < rows[j].Slug })
 	return rows, nil
 }
+
+// accessConnectionGone is why a row set for a connection the
+// integration no longer has grants nothing.
+const accessConnectionGone = "it was set for a connection that is no longer there"
 
 // accessInvalid is why row grants nothing, or "". connected is whether
 // the integration has its connection.
@@ -1027,7 +1055,7 @@ func accessInvalid(row IntegrationAccess, m *integration.Manifest, merr error, c
 	case merr != nil:
 		return "no version of the integration is approved"
 	case !connected:
-		return "it was set for a connection that is no longer there"
+		return accessConnectionGone
 	}
 	if err := integration.ValidateAccess(m, row.AccessJSON()); err != nil {
 		return err.Error()
