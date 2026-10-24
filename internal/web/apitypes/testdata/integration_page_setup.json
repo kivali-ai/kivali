@@ -10,7 +10,10 @@
     "agents": 0
   },
   "author": "Kivali",
-  "hosts": [],
+  "hosts": [
+    "api.github.com",
+    "github.com"
+  ],
   "packages": [],
   "actions": [
     {
@@ -20,7 +23,7 @@
   ],
   "connection_fields": [],
   "connection_method": "setup",
-  "sign_in_client": "",
+  "sign_in_client": "setup",
   "scopes": [],
   "setup_notes_md": "",
   "setup": {
@@ -56,11 +59,21 @@
       {
         "key": "installation_id",
         "words": "Where the app is installed"
+      },
+      {
+        "key": "client_id",
+        "words": "The app's client id"
+      },
+      {
+        "key": "client_secret",
+        "words": "The app's client secret"
       }
     ],
-    "then": ""
+    "then": "browser"
   },
-  "sign_in_hosts": [],
+  "sign_in_hosts": [
+    "github.com"
+  ],
   "connections": [],
   "multiple": false,
   "connection_test": true,

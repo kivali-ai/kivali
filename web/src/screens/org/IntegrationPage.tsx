@@ -1150,17 +1150,20 @@ export function IntegrationPage() {
             )}
           </div>
         ) : s.version ? (
-          <ConnectionForm
-            key={formSeq}
-            page={p}
-            busy={action.busy}
-            running={running}
-            now={now}
-            onSave={save}
-            {...(p.connection_test ? { onVerify: verify } : {})}
-            onDisconnect={() => setDisconnecting(true)}
-            {...signInFor(api + '/connection')}
-          />
+          /* A setup connection has no form: its flow makes the connection. */
+          !p.setup && (
+            <ConnectionForm
+              key={formSeq}
+              page={p}
+              busy={action.busy}
+              running={running}
+              now={now}
+              onSave={save}
+              {...(p.connection_test ? { onVerify: verify } : {})}
+              onDisconnect={() => setDisconnecting(true)}
+              {...signInFor(api + '/connection')}
+            />
+          )
         ) : (
           <Text as="p" variant="body" tone="muted">
             Approve a version first.

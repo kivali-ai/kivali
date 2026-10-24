@@ -269,7 +269,7 @@ export function SetupFacts({ setup, integration }: { setup: IntegrationSetup; in
       </Text>
       {setup.fields.length === 0 ? (
         <Text as="p" variant="caption" tone="muted">
-          Nothing.
+          Nothing: setup asks you for no field.
         </Text>
       ) : (
         <ul className="app-int-facts" aria-label={integration + ' asks for'}>
@@ -292,7 +292,7 @@ export function SetupFacts({ setup, integration }: { setup: IntegrationSetup; in
       </Text>
       {setup.keeps.length === 0 ? (
         <Text as="p" variant="caption" tone="muted">
-          Nothing.
+          Nothing: setup keeps no value.
         </Text>
       ) : (
         <ul className="app-int-facts" aria-label="Keeps">
@@ -306,7 +306,9 @@ export function SetupFacts({ setup, integration }: { setup: IntegrationSetup; in
       )}
       {setup.then && (
         <Text as="p" variant="caption" tone="muted">
-          {setup.then === 'browser' ? 'Then signs in in your browser, with the app setup made.' : 'Then signs in with a code, with the app setup made.'}
+          {setup.then === 'browser'
+            ? 'Then signs in through your browser, with the app that setup made.'
+            : 'Then signs in with a code, using the app that setup made.'}
         </Text>
       )}
     </div>

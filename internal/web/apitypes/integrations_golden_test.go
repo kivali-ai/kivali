@@ -413,34 +413,61 @@ func goldenIntegrationSetup() *IntegrationSetup {
 
 // goldenIntegrationVersionSetup is the install screen of a built-in
 // whose connection is made by its own setup flow: no connection
-// fields to enter, and the flow's declarations to read instead.
+// fields to enter, the flow's declarations to read instead, and the
+// hosts its setup and calls reach from Kivali.
 func goldenIntegrationVersionSetup() IntegrationVersion {
 	v := goldenBuiltinIntegrationVersion()
 	v.Name, v.DisplayName, v.Description, v.Version = "github", "GitHub", "Issues and pull requests on GitHub.", "2.0.0"
 	v.ConnectionMethod = "setup"
 	v.ConnectionFields = []ConnectionField{}
+	v.Hosts = []string{"api.github.com", "github.com"}
 	v.Setup = goldenIntegrationSetup()
 	v.Actions = []IntegrationAction{{Name: "list_issues", Description: "List a repository's open issues."}}
 	return v
 }
 
-// goldenIntegrationPageSetup is the page of the same built-in before
-// its setup has run: no connection yet, and the flow's declarations.
+// goldenIntegrationVersionRegistered is the install screen of a
+// browser sign-in whose client Kivali registers itself: no client id or
+// secret to paste, the discover host and the hosts the discovered
+// endpoints may be on under Signs in at.
+func goldenIntegrationVersionRegistered() IntegrationVersion {
+	v := goldenIntegrationVersion()
+	v.Name, v.DisplayName, v.Description = "zoominfo", "ZoomInfo", "Company and contact data from ZoomInfo."
+	v.ConnectionMethod = "browser"
+	v.SignInClient = "registered"
+	v.Scopes = []string{}
+	v.SignInHosts = []string{"mcp.zoominfo.com", "okta-login.zoominfo.com"}
+	v.Hosts = []string{"api.zoominfo.com"}
+	v.Packages = []string{}
+	v.ConnectionFields = []ConnectionField{}
+	v.Changes = []string{}
+	v.Findings = []string{}
+	return v
+}
+
+// goldenIntegrationPageSetup is the page of a built-in whose setup
+// flow makes a private app and hands over to a browser sign-in with
+// it, before its setup has run: no connection yet, and the flow's
+// declarations.
 func goldenIntegrationPageSetup() IntegrationPage {
+	setup := goldenIntegrationSetup()
+	setup.Then = "browser"
+	setup.Keeps = append(setup.Keeps, SetupKeep{Key: "client_id", Words: "The app's client id"}, SetupKeep{Key: "client_secret", Words: "The app's client secret"})
 	return IntegrationPage{
 		Summary: IntegrationSummary{
 			Name: "github", DisplayName: "GitHub", Description: "Issues and pull requests on GitHub.",
 			Version: "2.0.0", Status: IntegrationStatusNotConnected, Enabled: true, Builtin: true, Agents: 0,
 		},
 		Author:           "Kivali",
-		Hosts:            []string{},
+		Hosts:            []string{"api.github.com", "github.com"},
 		Packages:         []string{},
 		Actions:          []IntegrationAction{{Name: "list_issues", Description: "List a repository's open issues."}},
 		ConnectionFields: []ConnectionField{},
 		ConnectionMethod: "setup",
+		SignInClient:     "setup",
 		Scopes:           []string{},
-		SignInHosts:      []string{},
-		Setup:            goldenIntegrationSetup(),
+		SignInHosts:      []string{"github.com"},
+		Setup:            setup,
 		Connections:      []ConnectionState{},
 		Multiple:         false,
 		ConnectionTest:   true,

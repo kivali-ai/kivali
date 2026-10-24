@@ -219,6 +219,12 @@ integration never does OAuth
   client is not in this version of Kivali.
 - `discover`: the `https://` address a registered client's metadata is
   read from. Its host is among `SignInHosts`.
+- `hosts`: for a registered client, every host the discovered
+  endpoints may be on (the authorization server's, and the token and
+  revocation endpoints' where they differ), lowercase host names, no
+  wildcard, each once. They are the bound: the install screen lists
+  them under "Signs in at", and core refuses metadata naming any other
+  host. Required for a registered client; refused for any other.
 - `extra_authorization_params`: added to the vendor's authorization
   address as they are.
 - `credential_keys.access_token`: the name the access token goes under
@@ -243,7 +249,7 @@ The check holds the section to these rules, for bundles and built-ins
 | A `token` connection gives no endpoint. | `kivali.connection.token_endpoint: a token connection has no endpoints` (each one named) |
 | `device` gives `device_endpoint` and `token_endpoint`; `browser` gives `authorization_endpoint` and `token_endpoint`, unless its client is registered, when it gives none. | `kivali.connection.<endpoint> is missing; a <method> connection needs it`; `kivali.connection.<endpoint>: Kivali reads a registered client's endpoints from discover, so the manifest gives none` |
 | Every endpoint given, and `discover`, is an absolute `https://` address; plain `http://` only on `localhost`, `127.0.0.1` or `::1`, for a vendor run in-process in tests. | `kivali.connection.<endpoint>: "<address>" must be an https:// address` |
-| `client` is absent, `operator` or `registered`. A registered client is a `browser` connection's, with `discover`, and for a built-in; a client Kivali ships (`kivali`) is not in this version. | `kivali.connection.client <client> is not one Kivali knows; it is operator or registered`; `kivali.connection.client registered: only a browser connection has Kivali register itself; ...`; `kivali.connection.client registered is not in this version of Kivali for a bundle; ...`; `kivali.connection.discover is missing; a registered client needs the address whose metadata names the authorization server`; `kivali.connection.discover: only a registered client has one`; `kivali.connection.client: a client Kivali ships is not in this version of Kivali; the owner registers the app and the client is operator` |
+| `client` is absent, `operator` or `registered`. A registered client is a `browser` connection's, with `discover` and `hosts`, and for a built-in; a client Kivali ships (`kivali`) is not in this version. | `kivali.connection.client <client> is not one Kivali knows; it is operator or registered`; `kivali.connection.client registered: only a browser connection has Kivali register itself; ...`; `kivali.connection.client registered is not in this version of Kivali for a bundle; ...`; `kivali.connection.discover is missing; a registered client needs the address whose metadata names the authorization server`; `kivali.connection.discover: only a registered client has one`; `kivali.connection.hosts is missing; a registered client names every host the discovered endpoints may be on`; `kivali.connection.hosts: only a registered client has them; ...`; `kivali.connection.hosts: "<host>" is not a host name; ...` (the setup hosts' rules); `kivali.connection.client: a client Kivali ships is not in this version of Kivali; the owner registers the app and the client is operator` |
 | Only a `setup` connection has a `setup` section, and a `setup` connection is held to [its own rules](#setup-connections). | `kivali.connection.setup: only a setup connection has one` |
 | `credential_keys` names only `access_token`, and a sign-in connection names it: capital letters, digits and underscores, starting with a letter. | `kivali.connection.credential_keys.access_token is missing; ...` |
 | A sign-in connection's `user_config` declares neither `client_id` nor `client_secret`: core adds them. | `user_config.client_id: Kivali adds the client id and secret to a sign-in connection's form, so user_config does not declare them` |
@@ -298,31 +304,38 @@ anything runs, and the page shows it in the Connection block
   only declared fields, under the integration's name.
 - `keeps`: every key setup may store in the connection's Secret, each
   with words for the owner. The kept values are the connection's
-  fields, all secret: a call reads them as `Connection.Fields`, a
-  bundle's server as `kivali/credential`'s `fields`, and an env
-  placeholder `${user_config.<key>}` may name one
-  (`integration.ConnectionKeys`). Core refuses a step keeping any other
-  key.
+  fields, all secret (`integration.ConnectionKeySecret`): a call reads
+  them as `Connection.Fields`, a bundle's server as
+  `kivali/credential`'s `fields`, and an env placeholder
+  `${user_config.<key>}` may name one (`integration.ConnectionKeys`).
+  A kept `client_id` and `client_secret` are the app's, read from the
+  Secret (not the record, where a pasted client id lives). Core refuses
+  a step keeping any other key.
 - `then`: `browser` or `device` when setup ends by handing over to
   core's sign-in with the app it made: setup keeps `client_id` and
   `client_secret`, the connection gives that way's endpoints and
   `credential_keys` beside `setup`, and core signs in, refreshes and
   revokes as for any sign-in connection (`Connection.OAuth`,
   `Connection.ThenMethod`). Without `then` the connection gives no
-  endpoints and setup keeps the connection itself.
+  endpoints and setup keeps the connection itself; it may still keep an
+  app's `client_id` and `client_secret` the service minted, or ask the
+  owner for them.
 - `user_config` is empty and `client` is not given: the connection's
   values are what setup keeps, and the app is the one setup makes.
+- A built-in with a setup flow declares `kivali.hosts`: every host its
+  setup and its calls reach from Kivali, which the install screen
+  lists under "Reaches these hosts" (any other built-in declares none,
+  since it reaches the hosts its connection names).
 
 The check's rules, for bundles and built-ins (`validateSetup`), each
 refused with `kivali.connection.setup.<field>: <why>`: the summary and
 every field's and keep's words are present; a host is a lowercase host
-name, not `*` or a pattern, listed once; a field's or keep's key is
-lowercase letters, digits and underscores, starting with a letter; a
-field asks for neither `client_id` nor `client_secret` (they are what
-setup keeps); neither names `oauth_access_token` or
-`oauth_refresh_token`; a `setup_only` field is not also kept; `then` is
-`browser` or `device`, and with it `client_id` and `client_secret` are
-kept, while without it `client_id` and `client_secret` are not kept and
+name, not `*` or a pattern, listed once (`validateHostList`, the rule a
+registered client's `hosts` are held to as well); a field's or keep's
+key is lowercase letters, digits and underscores, starting with a
+letter; neither names `oauth_access_token` or `oauth_refresh_token`; a
+`setup_only` field is not also kept; `then` is `browser` or `device`,
+and with it `client_id` and `client_secret` are kept, while without it
 the connection has no endpoints. A bundle's setup flow is not in this
 version of Kivali (`kivali.connection.method setup: a bundle's setup
 flow is not in this version of Kivali`); a built-in's manifest passes.
@@ -367,9 +380,11 @@ checked by `integration.Validate` at every boot as an upload is. A
 built-in integration of Go code's manifest is checked by
 `integration.ValidateBuiltin(manifest)` by the same rules, with four
 differences. There is no bundle. A `server` section is refused, and so
-is any `kivali.hosts` or `kivali.packages` entry: a built-in runs
-inside Kivali, its network reach is Kivali's own, and it installs no
-software. The names that `kivali.verify` and
+is any `kivali.packages` entry and, unless the connection is made by a
+setup flow, any `kivali.hosts` entry: a built-in runs inside Kivali,
+its network reach is Kivali's own, and it installs no software; a
+setup built-in names the hosts its setup and calls reach from Kivali
+([Setup connections](#setup-connections)). The names that `kivali.verify` and
 `kivali.access.choices` give must be lowercase letters, digits and
 underscores, but need not be in `tools`, since they are passed to the
 built-in's Go functions
@@ -1604,13 +1619,14 @@ type Step struct {
 	State map[string]string // carried to the next Answer, in memory, for this flow
 }
 type Form struct{ Words string; Fields []string }          // keys from setup.fields
-type Go struct{ Words, URL string; Post url.Values }       // a link, or a form that posts Post to URL
+type Go struct{ Words, URL string; Post url.Values; NoReturn bool } // a link, or a form that posts Post to URL; NoReturn: nothing comes back
 type Wait struct{ Words, URL string }                      // words, and a page to open meanwhile
 type Answer struct {
 	State    map[string]string // the last Step's State
 	Form     map[string]string // what the owner entered
 	Return   url.Values        // what the service sent back: untrusted
 	Checked  bool              // a Wait step's check
+	Went     bool              // a Go with NoReturn was sent
 	Callback string            // where a Go step's service may send the browser back
 }
 type Progress interface{ Stage(words string, done, total int) }
@@ -1622,9 +1638,11 @@ type Uninstaller interface{ Uninstall(ctx context.Context, conn Connection) erro
 ```
 
 - `Manifest` is the manifest, held to `integration.ValidateBuiltin`
-  ([The check](#the-check)): no server section, no `kivali.hosts` and
-  no `kivali.packages`.
-  A built-in runs inside Kivali, so its network reach is Kivali's own,
+  ([The check](#the-check)): no server section and no
+  `kivali.packages`, and no `kivali.hosts` unless its connection is
+  made by a setup flow, when `kivali.hosts` names every host its setup
+  and its calls reach from Kivali, for the install screen. Otherwise a
+  built-in runs inside Kivali and its network reach is Kivali's own,
   the hosts its connection names, not a host list on its install
   screen. Its `version` is the built-in's own, semantic, bumped only
   when the manifest's surface changes. It is called on every lookup,
@@ -1693,12 +1711,19 @@ type Uninstaller interface{ Uninstall(ctx context.Context, conn Connection) erro
   carry `State` (in core's memory, for this flow alone, never written).
   A `Form` names declared fields; a `Go` sends the browser to `URL` on
   a declared host, by a link or by a form that posts `Post`, and the
-  service comes back to `Answer.Callback`; a `Wait` shows `Words` and
-  a page on a declared host, and core calls `Setup` again with
-  `Checked` every few seconds while the owner's page is open. A step
-  outside the declarations fails the flow; so does an error, whose
-  text the owner reads, scrubbed of every kept value. `Progress.Stage`
-  names where setup is, with a count where there is one.
+  service comes back to `Answer.Callback`, or, with `NoReturn` (a
+  settings page the owner acts on), nowhere: core then calls `Setup`
+  again at once with `Went`, so it can follow with a `Wait`. The
+  callback carries a state of the flow's; core issues a fresh one each
+  call and accepts any it issued for the flow while the flow lives, so
+  an address fixed in an earlier step still comes back to the flow, and
+  a return with no state comes back by the browser that started it. A
+  `Wait` shows `Words` and a page on a declared host, and core calls
+  `Setup` again with `Checked` every few seconds while the owner's page
+  is open. A step outside the declarations fails the flow; so does an
+  error, whose text the owner reads, scrubbed of every kept value.
+  `Progress.Stage` names where setup is, with a count where there is
+  one.
 - A `RequirementsOf` built-in has health of its own: rows met or not,
   each with words and a `Fix`, the flow its Fix runs through `Setup`.
   Core lists its own rows first.

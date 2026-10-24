@@ -172,6 +172,11 @@ type Connection struct {
 	// 9728) or the authorization server's own (RFC 8414). Core reads the
 	// endpoints there, so the manifest gives none.
 	Discover string `json:"discover,omitempty"`
+	// Hosts is, for ClientRegistered, every host the discovered
+	// endpoints may be on: where the sign-in sends the owner's browser
+	// and where core takes the tokens from. The install screen lists
+	// them, and core refuses metadata naming any other.
+	Hosts []string `json:"hosts,omitempty"`
 	// Setup is, for MethodSetup, what the integration's setup flow may
 	// do. The install screen lists it and core holds every step to it.
 	Setup *Setup `json:"setup,omitempty"`
@@ -200,7 +205,8 @@ type Setup struct {
 	Fields SetupFields `json:"fields,omitempty"`
 	// Keeps is every key setup may store in the connection's Secret, in
 	// the order declared. The kept values are the connection's fields,
-	// all secret.
+	// all secret; a kept client_id and client_secret are the app's,
+	// which core reads from the Secret for the sign-in Then names.
 	Keeps SetupKeeps `json:"keeps,omitempty"`
 	// Then is the standard sign-in setup hands over to once it has
 	// kept the app's client id and secret: MethodBrowser or
@@ -408,15 +414,21 @@ func (c Connection) Ways() []string {
 }
 
 // SignInHosts are the hosts of the connection's OAuth endpoints (the
-// authorization, token, device and revocation endpoints) and of its
-// discover address, lower-cased, each once, sorted: where a sign-in
-// sends the owner's browser and where core takes the tokens from. Empty
-// for a token connection and for a setup connection that signs nothing
-// in; a setup flow's own hosts are Setup.Hosts.
+// authorization, token, device and revocation endpoints), and for a
+// registered client of its discover address and its Hosts, lower-cased,
+// each once, sorted: where a sign-in sends the owner's browser and
+// where core takes the tokens from. Empty for a token connection and
+// for a setup connection that signs nothing in; a setup flow's own
+// hosts are Setup.Hosts.
 func (c Connection) SignInHosts() []string {
 	out := []string{}
 	for _, ep := range []string{c.AuthorizationEndpoint, c.TokenEndpoint, c.DeviceEndpoint, c.RevocationEndpoint, c.Discover} {
 		if h := EndpointHost(ep); h != "" && !slices.Contains(out, h) {
+			out = append(out, h)
+		}
+	}
+	for _, h := range c.Hosts {
+		if h = strings.ToLower(h); h != "" && !slices.Contains(out, h) {
 			out = append(out, h)
 		}
 	}
@@ -463,6 +475,20 @@ func ConnectionFields(m *Manifest) UserConfig {
 		)
 	}
 	return out
+}
+
+// ConnectionKeySecret reports whether key, one of ConnectionKeys, is
+// kept in the connection's Secret: a sensitive form field, or a key a
+// setup flow keeps.
+func ConnectionKeySecret(m *Manifest, key string) bool {
+	if m == nil {
+		return false
+	}
+	if f, ok := ConnectionFields(m).Field(key); ok && f.Sensitive {
+		return true
+	}
+	c := m.Kivali.Connection
+	return c.Method == MethodSetup && c.Setup != nil && c.Setup.Keeps.Has(key)
 }
 
 // ConnectionKeys is every key a connection's values may hold, as a

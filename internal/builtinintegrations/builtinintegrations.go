@@ -212,7 +212,8 @@ const FlowSetup = "setup"
 type Step struct {
 	// Form asks the owner for fields.
 	Form *Form
-	// Go sends the owner's browser to the service and back.
+	// Go sends the owner's browser to the service, and back unless it
+	// says otherwise.
 	Go *Go
 	// Wait shows words and a page, and has core call Setup again with
 	// Checked every few seconds while the owner's page is open.
@@ -243,9 +244,9 @@ type Form struct {
 
 // Go is a step that sends the owner's browser to the service, by a
 // link (a 303 to URL) or by a form that posts itself (Post to URL, for a
-// service that takes a POST), and expects it back at the callback the
-// Answer gave (Answer.Callback), where the service's query reaches
-// Setup as the next Answer's Return.
+// service that takes a POST). Unless NoReturn is set, core expects the
+// browser back at the callback the Answer gave (Answer.Callback), where
+// the service's query reaches Setup as the next Answer's Return.
 type Go struct {
 	// Words say what the owner will do there.
 	Words string
@@ -254,6 +255,11 @@ type Go struct {
 	// Post, when set, is posted to URL by a form in the owner's browser
 	// instead of a link.
 	Post url.Values
+	// NoReturn says the service sends the browser nowhere afterwards (a
+	// settings page the owner acts on): core sends the browser and
+	// calls Setup again at once with Answer.Went, so Setup can follow
+	// with a Wait that checks the service.
+	NoReturn bool
 }
 
 // Wait is a step that waits for something to happen on the service.
@@ -267,7 +273,7 @@ type Wait struct {
 
 // Answer is what the last step gave back: Setup reads it and returns
 // the next Step. The first call of a flow gets an Answer with State
-// nil, no Form, no Return and Checked false.
+// nil, no Form, no Return, and Checked and Went false.
 type Answer struct {
 	// State is the State the last Step carried, as it was.
 	State map[string]string
@@ -282,11 +288,17 @@ type Answer struct {
 	// service and returns the same Wait to keep waiting, or the next
 	// Step.
 	Checked bool
+	// Went is true after a Go step with NoReturn: the browser was sent,
+	// and nothing came back.
+	Went bool
 	// Callback is the address a Go step's service may send the browser
-	// back to for this step, with the flow's state in it: what Setup
-	// puts in a manifest's redirect_url or a form's return field. A
-	// service that returns elsewhere than it was told comes back to the
-	// flow all the same, by the browser that started it.
+	// back to, with a state of this flow's in it: what Setup puts in a
+	// manifest's redirect_url or a form's return field. Core issues a
+	// fresh state for each call and accepts, while the flow lives, any
+	// state it issued for the flow, so an address fixed in an earlier
+	// step (a setup URL registered with the app) still comes back to
+	// the flow. A return with no state comes back to the flow by the
+	// browser that started it, all the same.
 	Callback string
 }
 
