@@ -199,10 +199,10 @@ The test VM is the build VM (`scripts/build-vm.sh`), separate from the
 dev team. Each run boots it and stops it afterwards, since a running VM
 never gives memory back to macOS
 ([vm/README.md](../../vm/README.md), "Memory on macOS"); its disk, with
-Go's and BuildKit's caches, is kept. `make test-mac` covers what only a
-Mac can test: the supervisor's macOS backend, the shell's platform
-module, and a VM image built from this tree booting and stopping
-cleanly. Run it before a release.
+Go's caches and BuildKit's (capped at 12 GiB), is kept. `make test-mac`
+covers what only a Mac can test: the supervisor's macOS backend, the
+shell's platform module, and a VM image built from this tree booting
+and stopping cleanly. Run it before a release.
 
 Change something that runs in an agent pod or drives the real CLI
 (`internal/agentpod`, `internal/claudeagent`, the chart)? Run the
