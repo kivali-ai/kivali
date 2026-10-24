@@ -109,6 +109,9 @@ func (s *Server) handleAPISetupAnswer(w http.ResponseWriter, r *http.Request) {
 // handleAPISetupCancel ends the integration's flow; 204, or 404 with
 // none.
 func (s *Server) handleAPISetupCancel(w http.ResponseWriter, r *http.Request) {
+	// Under the lock a Keep is written under, so a Keep under way lands
+	// before the cancel or, seeing the flow cancelled, not at all.
+	defer s.lockIntegrations()()
 	v, ok := s.integrationOr404(w, r)
 	if !ok {
 		return
@@ -228,12 +231,12 @@ func (s *Server) handleConnectStart(w http.ResponseWriter, r *http.Request) {
 	t.pruneLocked(s.clk().Now())
 	run := t.runs[id]
 	if run == nil || id == "" {
-		t.mu.Unlock()
+		s.setupUnlock()
 		setupReturnElsewhere(w, r, "", "")
 		return
 	}
 	if run.state != apitypes.SetupFlowStateGo || run.step.Go == nil {
-		t.mu.Unlock()
+		s.setupUnlock()
 		http.Redirect(w, r, setupReturnPath(run.name, run.id), http.StatusSeeOther)
 		return
 	}
@@ -246,7 +249,7 @@ func (s *Server) handleConnectStart(w http.ResponseWriter, r *http.Request) {
 	} else {
 		s.replaceCookieLocked(r, id)
 	}
-	t.mu.Unlock()
+	s.setupUnlock()
 	if !step.NoReturn {
 		http.SetCookie(w, s.connectCookie(run.id, run.name, callback))
 	}
@@ -275,6 +278,10 @@ func writeAutoPost(w http.ResponseWriter, target string, values url.Values) {
 	u, _ := url.Parse(target)
 	origin := u.Scheme + "://" + u.Host
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	// form-action names the step's origin alone. Chrome holds the
+	// redirects that follow the POST to it as well, so a service that
+	// answers the post with a redirect to another origin is stopped by
+	// the browser there, on this page's policy.
 	w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src "+autoPostScriptHash+"; form-action "+origin+"; base-uri 'none'; frame-ancestors 'none'")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	var b strings.Builder
@@ -320,7 +327,7 @@ func (s *Server) handoffNext(w http.ResponseWriter, r *http.Request, next string
 	// another address (localhost for 127.0.0.1, another port) would set
 	// it where the callback never looks.
 	if next == "" || run == nil || run.state != apitypes.SetupFlowStateGo || signInRedirectURL(r) != run.callback {
-		t.mu.Unlock()
+		s.setupUnlock()
 		return ""
 	}
 	noReturn := run.step.Go != nil && run.step.Go.NoReturn
@@ -328,7 +335,7 @@ func (s *Server) handoffNext(w http.ResponseWriter, r *http.Request, next string
 		s.replaceCookieLocked(r, run.id)
 	}
 	name, callback := run.name, run.callback
-	t.mu.Unlock()
+	s.setupUnlock()
 	if !noReturn {
 		http.SetCookie(w, s.connectCookie(next, name, callback))
 	}
@@ -357,13 +364,14 @@ func (s *Server) handleConnectCallback(w http.ResponseWriter, r *http.Request) {
 	t.mu.Lock()
 	t.pruneLocked(s.clk().Now())
 	var run *setupRun
-	if state := q.Get("state"); state != "" {
+	state := q.Get("state")
+	if state != "" {
 		run = t.byLegLocked(state)
 	} else if c := t.runs[cookieID]; cookieID != "" && c != nil && c.state == apitypes.SetupFlowStateGo {
 		run = c
 	}
 	if run == nil {
-		t.mu.Unlock()
+		s.setupUnlock()
 		setupReturnElsewhere(w, r, cookieID, cookieName)
 		return
 	}
@@ -373,24 +381,41 @@ func (s *Server) handleConnectCallback(w http.ResponseWriter, r *http.Request) {
 		// Not waiting for the browser: it ended before its callback came
 		// (another flow's Go was started in this browser), or the
 		// callback is a replay. Its page reads how it stands.
-		t.mu.Unlock()
+		s.setupUnlock()
+		http.Redirect(w, r, back, http.StatusSeeOther)
+		return
+	case state == "" && !run.step.Go.Stateless:
+		// Matched by the cookie alone, which goes with any top-level GET
+		// a page the owner visits makes: only a step that says its
+		// service drops the state takes such a return. Nothing runs.
+		s.setupFailLocked(run, errSetupNoState)
+		s.setupUnlock()
 		http.Redirect(w, r, back, http.StatusSeeOther)
 		return
 	case cookieID != run.id:
 		s.setupFailLocked(run, errSignInStartAgain)
-		t.mu.Unlock()
+		s.setupUnlock()
 		http.Redirect(w, r, back, http.StatusSeeOther)
 		return
 	}
 	if cb := signInRedirectURL(r); cb != "" {
 		run.callback = cb
 	}
-	s.auditSetup(run, "returned", true)
+	// A driver that echoes what came back never shows it: every value
+	// but the service's own words of a refusal (OAuth's error, its
+	// description and its page), which are for the owner to read.
+	for k, vs := range q {
+		if k != "error" && k != "error_description" && k != "error_uri" {
+			run.addScrubLocked(vs...)
+		}
+	}
+	s.auditSetupLocked(run, "returned", true)
 	s.setupCallLocked(run, builtinintegrations.Answer{Return: q}, false)
-	t.mu.Unlock()
+	callback := run.callback
+	s.setupUnlock()
 	// The cookie was for this flow, and goes with this leg. A cookie
 	// that names another stays: that flow may still come back here.
-	gone := s.connectCookie("", "", run.callback)
+	gone := s.connectCookie("", "", callback)
 	gone.Value, gone.MaxAge = "", -1
 	http.SetCookie(w, gone)
 	http.Redirect(w, r, back, http.StatusSeeOther)

@@ -562,12 +562,13 @@ func TestBrowserSignInWithoutPKCE(t *testing.T) {
 // Why this test exists: an OAuth return carries the state the vendor
 // was given. A callback matched by the cookie alone, with no state (a
 // vendor that dropped it, or a link someone made), is no sign-in's
-// return: the flow ends without an exchange.
+// return: the runner ends the flow, as for any Go step that did not say
+// its service drops the state, without an exchange.
 func TestBrowserSignInNeedsTheState(t *testing.T) {
 	srv, vendor := browserServer(t)
 	_, cookie := startBrowser(t, srv)
 	to := callback(t, srv, &url.URL{Path: "/connect/callback", RawQuery: "code=abc"}, cookie)
-	if words := failedWords(t, srv, to); words != errSignInNoState {
+	if words := failedWords(t, srv, to); words != errSetupNoState {
 		t.Errorf("the page reads %q", words)
 	}
 	if n := tokenRequests(vendor); n != 0 {

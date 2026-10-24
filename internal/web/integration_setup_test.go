@@ -538,7 +538,8 @@ func TestSetupRoutesRefusals(t *testing.T) {
 // Why this test exists: a Go may send the browser away and back more
 // than once (make an app, then install it), and a service may come back
 // with a state an earlier step gave it (an address fixed when the app
-// was made), or with no state at all, in the browser that left. Each
+// was made), or, for a step that says its service drops it, with no
+// state at all, in the browser that left. Each
 // return must reach Setup; a return to another browser (no cookie, or
 // a cookie of another flow) must end the flow as started elsewhere.
 func TestSetupFlowLeavesAndReturnsMoreThanOnce(t *testing.T) {
@@ -548,7 +549,8 @@ func TestSetupFlowLeavesAndReturnsMoreThanOnce(t *testing.T) {
 			firstCallback = last.Callback
 		}
 		if n <= 3 {
-			return builtinintegrations.Step{Go: &builtinintegrations.Go{URL: "https://" + setupHost + "/leg"}}, nil
+			// The third leg's service sends the browser back with no state.
+			return builtinintegrations.Step{Go: &builtinintegrations.Go{URL: "https://" + setupHost + "/leg", Stateless: n == 3}}, nil
 		}
 		return builtinintegrations.Step{Done: true}, nil
 	})

@@ -709,16 +709,25 @@ flows, the connection form's fields, the manifest's sign-in hosts
 (`SignInHosts`) and the form's keys. A step that is none or several of
 Form, Go, Wait and Done, a Form asking for an undeclared field, a Go or
 a Wait naming a page that is not `https://` (plain `http://` only on
-loopback, for a service run in-process in tests) or not on a declared
-host, and a Keep holding an undeclared key fail the flow in words that
-say what it tried ("Echo's setup tried to send your browser to
-evil.example, which its manifest does not declare").
+loopback, for a service run in-process in tests), that carries user
+info, or that is not on a declared host, and a Keep holding an
+undeclared key fail the flow in words that say what it tried ("Echo's
+setup tried to send your browser to evil.example, which its manifest
+does not declare"). A declared host name takes no port: `github.com`
+does not admit `github.com:8443`; a sign-in host listed with its port
+(`127.0.0.1:8443`, a vendor run in-process) takes that port alone. The
+standard device flow's Wait page is exempt from the hosts, not from
+https: it is the page the manifest's own device endpoint answered with
+(`verification_uri`), which a vendor may put on a host none of its
+endpoints is on (Google's is `www.google.com`).
 
 - **Form.** The page draws the step's fields under the integration's
   name ("GitHub asks for"), a secret one as a password field, a
   setup-only one said to be never kept. `POST .../setup/answer` hands
-  what the owner entered, trimmed, to the next call as `Answer.Form`;
-  a key the step does not ask for is a 400, and an answer while the
+  what the owner entered, trimmed, to the next call as `Answer.Form`
+  (the page sends every field the step asks for, one left blank as
+  empty; a standard flow's blank secret keeps the value stored, as the
+  page's form does); a key the step does not ask for is a 400, and an answer while the
   flow is not on a Form a 409. A setup-only value lives in the flow's
   memory alone (the driver may carry it in `State`) and is never
   written.
@@ -746,11 +755,15 @@ evil.example, which its manifest does not declare").
 
 `Progress.Stage` sets what the page shows while a call runs: the words,
 and a real progress bar where there is a count (`done` of `total`).
+Each call is told which it is: `Answer.Leg` counts the calls of the
+flow from 1.
 
 ### Keep
 
 `Step.Keep` is written before the step is shown, under
-`lockIntegrations`, unless the flow was cancelled meanwhile: a `setup`
+`lockIntegrations`, unless the flow was cancelled meanwhile (every
+cancel takes the same lock, `POST .../setup/cancel` among them, so a
+Keep lands before a cancel or not at all): a `setup`
 connection's into the connection's Secret beside what it holds, the
 connection made when there is none and the keys recorded as its secret
 keys (`keepSetupValues`); a standard flow's as a save of the form
@@ -761,8 +774,10 @@ flow alone.
 ### Scrubbing and the audit
 
 Every kept value, every secret or setup-only value the owner entered,
-every `State` value six characters or longer, each call's state and a
-standard flow's own secrets (the client secret, a device code, the
+every `State` value six characters or longer, each call's state, every
+value a service sent back on a callback (but OAuth's `error`,
+`error_description` and `error_uri`, the service's words for the owner)
+and a standard flow's own secrets (the client secret, a device code, the
 OAuth state and verifier, the code and the tokens) are replaced by
 `[secret]`, whole, in the flow's error words, progress words and
 steps, in the audit and in what core logs of the flow, before any of
@@ -771,7 +786,9 @@ them is cut to 200 runes.
 The owner's audit gains one row per flow event under the owner's name
 (`ceo`), with the flow's name as its action (`setup`): `started`,
 `returned` (a Go came back), `done`, `failed: <words>` (not allowed),
-`cancelled`. Never a code, key or token.
+`cancelled`. Never a code, key or token. The rows are queued with the
+change they record and written, in that order, once the flows' lock is
+released; a stream is sent a state only after its rows are written.
 
 ### Coming back
 
@@ -782,6 +799,14 @@ to it once signed in. It is a GET that changes things, as OAuth has it.
 Nothing of its query is logged. It finds the flow by the query's
 `state`, any state the flow issued (a constant-time compare), or, with
 no `state`, by the flow cookie alone when that flow is on a Go step.
+The cookie goes with any top-level GET a page the owner visits makes,
+so a return with no state is taken only for a Go step that says its
+service drops the state (`Go.Stateless`); for any other the flow fails
+with "the service sent the browser back without its state; start it
+again" and the driver is not called. A callback replayed from an
+earlier leg, with a state the flow issued before, is delivered as the
+current Go step's `Answer.Return`: the driver checks what it receives
+against the service, as it must anyway.
 The cookie, `kivali_connect` (`kivali_connect_<suffix>` with
 `KIVALI_COOKIE_SUFFIX`), is set by `/connect/start` for each leg:
 `Path=/`, host-only, `HttpOnly`, `SameSite=Lax` (the service's redirect
@@ -988,15 +1013,17 @@ The flow's steps:
    connection made when there is none. The client is resolved by
    `signInClientFor`: a pasted client id from the record, or one a
    setup flow kept from the Secret, and the secret from the Secret. A
-   registered client (`client: registered`) is resolved there too; this
-   version of Kivali does not register itself, and says so.
+   registered client (`client: registered`) would be resolved there
+   too; this version of Kivali does not register itself, so `POST
+   .../setup` of one is a 409 that says so, before any flow starts.
 2. Device: `Engine.StartDevice` posts the client id and the manifest's
    scopes to the device endpoint (an answer with no code, or whose
    verification addresses are not absolute http(s) ones, is refused;
    the vendor's refusal fails the flow in its words). The code's expiry
    is cut to ten minutes. The step is a **Wait** with the code
    (`Wait.Code`) and the service's page (`verification_uri_complete`
-   when the vendor gives one), on one of the manifest's sign-in hosts.
+   when the vendor gives one), held to https but on any host, since it
+   is the device endpoint's own answer.
    It is never checked: core's poller (`signInSetup.waiting`) runs
    `Engine.PollDevice` on the flow's context and the server's clock, at
    the vendor's interval, five seconds more for good on each
@@ -1724,14 +1751,15 @@ type Step struct {
 	State map[string]string // carried to the next Answer, in memory, for this flow
 }
 type Form struct{ Words string; Fields []string }          // keys from setup.fields
-type Go struct{ Words, URL string; Post url.Values; NoReturn bool } // a link, or a form that posts Post to URL; NoReturn: nothing comes back
+type Go struct{ Words, URL string; Post url.Values; NoReturn, Stateless bool } // a link, or a form that posts Post to URL; NoReturn: nothing comes back; Stateless: it comes back without the state
 type Wait struct{ Words, URL, Code string }                // words, a page to open meanwhile, a code to enter there
 type Answer struct {
 	State    map[string]string // the last Step's State
-	Form     map[string]string // what the owner entered
-	Return   url.Values        // what the service sent back: untrusted
+	Form     map[string]string // what the owner entered: every key the Form asked for
+	Return   url.Values        // what the service sent back: untrusted, maybe an earlier leg's replayed
 	Checked  bool              // a Wait step's check
 	Went     bool              // a Go with NoReturn was sent
+	Leg      int               // which call of Setup this is in the flow, from 1
 	Callback string            // where a Go step's service may send the browser back
 }
 type Progress interface{ Stage(words string, done, total int) }
@@ -1822,8 +1850,10 @@ type Uninstaller interface{ Uninstall(ctx context.Context, conn Connection) erro
   callback carries a state of the flow's; core issues a fresh one each
   call (a Wait's check is given the latest again) and accepts any it
   issued for the flow while the flow lives, so an address fixed in an
-  earlier step still comes back to the flow, and a return with no state
-  comes back by the browser that started it. A `Wait` shows `Words`, a
+  earlier step still comes back to the flow (a replay of an earlier leg
+  arrives as the current Go's `Return`, so `Setup` checks it against the
+  service); a return with no state is accepted, by the browser that
+  left, only for a `Go` that says `Stateless`. A `Wait` shows `Words`, a
   page on a declared host and a `Code` to enter there, and core calls
   `Setup` again with `Checked` every few seconds while the owner's page
   is open. A step outside the declarations fails the flow; so does an
@@ -2725,10 +2755,10 @@ the owner's.
 | `GET .../audit?limit=` | `IntegrationAudit`, newest first; limit 100 by default, at most 1000. |
 | `GET .../choices/{key}?connection=` | `AccessChoices`, through the connection `connection` names, or the first; 404 for a field that lists no options or a connection id that names none; 409 while the integration is not running, for a built-in one without a connection, or for a built-in one this binary does not carry; 502 for the tool's error, or a result that is not a list of names. |
 | `GET .../logs?limit=` | `IntegrationLogs`, oldest first; limit 200 by default, at most 2000. |
-| `POST .../setup` | `SetupFlowStart` in (`{"flow": "setup"}`), `SetupFlow` out: the integration's setup flow started, ending one under way ([Setup flows](#setup-flows)); 409 for one this binary does not carry, with no approved version, while switched off ("switch <integration> on first"), for a flow name it does not have ("<flow> is not a flow <integration> has"), for a sign-in connection signed in ("the connection is signed in; sign out first") or none of whose ways works from here, for a request that names no host where the browser signs in, and for a setup connection whose setup this binary does not carry. |
+| `POST .../setup` | `SetupFlowStart` in (`{"flow": "setup"}`), `SetupFlow` out: the integration's setup flow started, ending one under way ([Setup flows](#setup-flows)); 409 for one this binary does not carry, with no approved version, while switched off ("switch <integration> on first"), for a flow name it does not have ("<flow> is not a flow <integration> has"), for a sign-in connection signed in ("the connection is signed in; sign out first") or none of whose ways works from here, for a request that names no host where the browser signs in, for a registered client ("this version of Kivali does not register itself with the service"), and for a setup connection whose setup this binary does not carry. |
 | `GET .../setup` | `SetupFlow`: the flow under way, or the one that last ended (kept ten minutes after its last change); 404 with none, as after a restart. A read counts as watching the flow for ten seconds. |
 | `POST .../setup/answer` | `SetupFlowAnswer` in, `SetupFlow` out: the flow's Form answered; 400 for a key the Form does not ask for, or what a save of the connection form would refuse (a standard flow's); 409 when the flow is not on a Form; 404 with no flow. |
-| `POST .../setup/cancel` | 204: the flow ended and forgotten, audited as cancelled; 404 with no flow. |
+| `POST .../setup/cancel` | 204: the flow ended and forgotten, audited as cancelled, under the lock a Keep is written under; 404 with no flow. |
 | `GET .../setup/stream` | `text/event-stream`: `retry: 1500`, the flow's `SetupFlow` as a `flow` event at once and on each change, a heartbeat comment every 25 seconds, and the end of the stream when the flow is forgotten; 404 with no flow. |
 | `GET /api/v1/agents/{slug}/integrations` | `AgentIntegrations`; 404 for an agent not on the team. |
 | `GET /connect/callback` | Not under `/api`: the signed-in UI's route a Go step's service sends the browser back to. The query goes to the flow its `state` (or, with none, the flow cookie) names as `Answer.Return`, and the answer is a 303 to `/org/integrations/<name>?setup=<flow id>`, or `/org/integrations?sign_in_error=start_again` when no flow and no cookie names an integration ([Coming back](#coming-back)). |
