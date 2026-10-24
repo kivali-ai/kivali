@@ -19,6 +19,7 @@
 package web
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"log"
@@ -58,9 +59,11 @@ func signInEndpoints(m *integration.Manifest) connect.Endpoints {
 }
 
 // signInClient is the OAuth app a connection signs in with: the client
-// id from its record, the client secret from its Secret's data.
+// id from its record, where a pasted one is, or else from its Secret's
+// data, where a setup flow keeps the app's; the client secret from its
+// Secret's data.
 func signInClient(rec store.IntegrationConnection, data map[string]string) connect.Client {
-	return connect.Client{ID: rec.Fields[integration.FieldClientID], Secret: data[integration.FieldClientSecret]}
+	return connect.Client{ID: cmp.Or(rec.Fields[integration.FieldClientID], data[integration.FieldClientID]), Secret: data[integration.FieldClientSecret]}
 }
 
 // signInKey is the Refresher's key of name's connection id.
@@ -311,7 +314,7 @@ func (s *Server) revokeSignIns(ctx context.Context, rs signInRevocations) {
 // runs once the connection is deleted or signed out, which it never
 // holds up for longer than revokeTimeout.
 func (s *Server) revokeSignIn(ctx context.Context, name string, m *integration.Manifest, rec store.IntegrationConnection, data map[string]string) {
-	if m == nil || !m.Kivali.Connection.SignIn() || m.Kivali.Connection.RevocationEndpoint == "" {
+	if m == nil || !m.Kivali.Connection.OAuth() || m.Kivali.Connection.RevocationEndpoint == "" {
 		return
 	}
 	tok := connect.Tokens{Access: data[connect.SecretKeyAccessToken], Refresh: data[connect.SecretKeyRefreshToken]}
@@ -337,7 +340,7 @@ func (s *Server) revokeTokens(ctx context.Context, name, id string, m *integrati
 // whose manifest m has a revocation endpoint. nil otherwise, and when
 // the Secret cannot be read (the delete goes on; nothing is revoked).
 func (s *Server) revocableTokens(ctx context.Context, name string, m *integration.Manifest, rec store.IntegrationConnection) map[string]string {
-	if m == nil || !m.Kivali.Connection.SignIn() || m.Kivali.Connection.RevocationEndpoint == "" || rec.SecretName == "" {
+	if m == nil || !m.Kivali.Connection.OAuth() || m.Kivali.Connection.RevocationEndpoint == "" || rec.SecretName == "" {
 		return nil
 	}
 	data, err := s.Secrets.Get(ctx, rec.SecretName)

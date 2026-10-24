@@ -269,6 +269,9 @@ type Wait struct {
 	// URL is a page for the owner to open meanwhile, on one of
 	// setup.hosts; empty for none.
 	URL string
+	// Code is a code the owner enters on that page, shown large with a
+	// Copy button; empty for none.
+	Code string
 }
 
 // Answer is what the last step gave back: Setup reads it and returns

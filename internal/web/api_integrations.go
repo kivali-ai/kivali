@@ -49,18 +49,17 @@ func (s *Server) wireAPIIntegrationRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/v1/org/integrations/{name}/connection", s.handleAPIIntegrationConnectionPut)
 	mux.HandleFunc("DELETE /api/v1/org/integrations/{name}/connection", s.handleAPIIntegrationConnectionDelete)
 	mux.HandleFunc("POST /api/v1/org/integrations/{name}/connection/verify", s.handleAPIIntegrationVerify)
-	mux.HandleFunc("POST /api/v1/org/integrations/{name}/connection/sign-in/device", s.handleAPISignInDevice(false))
-	mux.HandleFunc("POST /api/v1/org/integrations/{name}/connection/sign-in/browser", s.handleAPISignInBrowser(false))
-	mux.HandleFunc("GET /api/v1/org/integrations/{name}/connection/sign-in", s.handleAPISignInProgress(false))
 	mux.HandleFunc("POST /api/v1/org/integrations/{name}/connection/sign-out", s.handleAPISignOut(false))
 	mux.HandleFunc("POST /api/v1/org/integrations/{name}/connections", s.handleAPIIntegrationConnectionCreate)
 	mux.HandleFunc("PUT /api/v1/org/integrations/{name}/connections/{id}", s.handleAPIIntegrationConnectionPutByID)
 	mux.HandleFunc("DELETE /api/v1/org/integrations/{name}/connections/{id}", s.handleAPIIntegrationConnectionDeleteByID)
 	mux.HandleFunc("POST /api/v1/org/integrations/{name}/connections/{id}/verify", s.handleAPIIntegrationVerifyByID)
-	mux.HandleFunc("POST /api/v1/org/integrations/{name}/connections/{id}/sign-in/device", s.handleAPISignInDevice(true))
-	mux.HandleFunc("POST /api/v1/org/integrations/{name}/connections/{id}/sign-in/browser", s.handleAPISignInBrowser(true))
-	mux.HandleFunc("GET /api/v1/org/integrations/{name}/connections/{id}/sign-in", s.handleAPISignInProgress(true))
 	mux.HandleFunc("POST /api/v1/org/integrations/{name}/connections/{id}/sign-out", s.handleAPISignOut(true))
+	mux.HandleFunc("POST /api/v1/org/integrations/{name}/setup", s.handleAPISetupStart)
+	mux.HandleFunc("GET /api/v1/org/integrations/{name}/setup", s.handleAPISetupGet)
+	mux.HandleFunc("POST /api/v1/org/integrations/{name}/setup/answer", s.handleAPISetupAnswer)
+	mux.HandleFunc("POST /api/v1/org/integrations/{name}/setup/cancel", s.handleAPISetupCancel)
+	mux.HandleFunc("GET /api/v1/org/integrations/{name}/setup/stream", s.handleAPISetupStream)
 	mux.HandleFunc("PUT /api/v1/org/integrations/{name}/access/{slug}", s.handleAPIIntegrationAccessPut)
 	mux.HandleFunc("DELETE /api/v1/org/integrations/{name}/access/{slug}", s.handleAPIIntegrationAccessDelete)
 	mux.HandleFunc("GET /api/v1/org/integrations/{name}/audit", s.handleAPIIntegrationAudit)
@@ -123,9 +122,10 @@ type connView struct {
 	hasToken bool
 }
 
-// signIn reports whether v's connections are made by signing in.
+// signIn reports whether core holds sign-in tokens for v's connections:
+// made by signing in, or by a setup flow that hands over to a sign-in.
 func (v *integrationView) signIn() bool {
-	return v.manifest != nil && v.manifest.Kivali.Connection.SignIn()
+	return v.manifest != nil && v.manifest.Kivali.Connection.OAuth()
 }
 
 // usable reports whether agents can use c: it has all its secrets and,
@@ -847,7 +847,7 @@ func (s *Server) handleAPIIntegrationToggle(on bool) http.HandlerFunc {
 		}
 		// A sign-in under way ends with the integration switched off.
 		if !on {
-			s.signInFlows.cancel(v.it.Name, "")
+			s.setupCancel(v.it.Name)
 		}
 		// A built-in's connection reaches its hosts only while it is on.
 		if err := s.builtinEgressAfterSwitch(r.Context(), v.it.Name, v.builtin, on); err != nil {
@@ -886,7 +886,7 @@ func (s *Server) removeIntegrationLocked(w http.ResponseWriter, r *http.Request)
 		writeAPIError(w, http.StatusConflict, builtinRefusal(v.displayName(), builtinRemove), whoYou)
 		return nil, false
 	}
-	s.signInFlows.cancel(v.it.Name, "")
+	s.setupCancel(v.it.Name)
 	revokes, ok := s.deleteConnectionSecrets(w, r, v.it.Name)
 	if !ok {
 		return revokes, false

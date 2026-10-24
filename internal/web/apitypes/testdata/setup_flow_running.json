@@ -1,0 +1,11 @@
+{
+  "id": "9f86d081884c7d659a2feaa0c55ad015",
+  "flow": "setup",
+  "state": "running",
+  "progress": {
+    "words": "Building the app",
+    "done": 3,
+    "total": 5
+  },
+  "expires_at": "2026-10-21T10:10:00Z"
+}

@@ -358,23 +358,6 @@ func goldenAgentIntegrations() AgentIntegrations {
 	}
 }
 
-// goldenDeviceSignIn is a device sign-in just started, with the
-// service's page that has the code filled in.
-func goldenDeviceSignIn() DeviceSignIn {
-	complete := "https://github.com/login/device?user_code=WDJB-MJHT"
-	return DeviceSignIn{
-		UserCode: "WDJB-MJHT", VerificationURL: "https://github.com/login/device",
-		VerificationURLComplete: &complete, ExpiresAt: integrationLater.Add(15 * time.Minute),
-	}
-}
-
-// goldenSignInFailed is a device sign-in the owner turned down on the
-// service's page.
-func goldenSignInFailed() SignInProgress {
-	words := "the vendor refused the sign-in (access_denied): The user has denied your application access."
-	return SignInProgress{State: SignInStateFailed, Error: &words}
-}
-
 // goldenIntegrationVersionSignIn is the install screen of a HubSpot
 // bundle that connects by signing in in the browser: the scopes it
 // asks for and the hosts its sign-in goes to.
@@ -480,10 +463,68 @@ func goldenIntegrationPageSetup() IntegrationPage {
 	}
 }
 
-// goldenBrowserSignIn is a browser sign-in just started: the vendor's
-// sign-in page with the client id, the redirect address, the scopes,
-// the state and the PKCE challenge, and the flow id the page sends the
-// browser there by.
-func goldenBrowserSignIn() BrowserSignIn {
-	return BrowserSignIn{Flow: "9f86d081884c7d659a2feaa0c55ad015", URL: "https://app.hubspot.com/oauth/authorize?client_id=7fff1e36-2d40-4ae1-bbb1-5266d59564fb&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256&redirect_uri=https%3A%2F%2Fkivali.example.com%2Fconnect%2Fcallback&response_type=code&scope=content&state=3q2-7wEBAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhs"}
+// goldenSetupFlowID is the setup flows' id in the fixtures.
+const goldenSetupFlowID = "9f86d081884c7d659a2feaa0c55ad015"
+
+// goldenSetupFlow is a setup flow of GitHub's in state, the rest
+// filled in by the caller.
+func goldenSetupFlow(state SetupFlowState) SetupFlow {
+	return SetupFlow{ID: goldenSetupFlowID, Flow: "setup", State: state, ExpiresAt: integrationLater.Add(10 * time.Minute)}
+}
+
+// goldenSetupFlowRunning is a flow working out its next step, three
+// stages of five in.
+func goldenSetupFlowRunning() SetupFlow {
+	f := goldenSetupFlow(SetupFlowStateRunning)
+	f.Progress = &SetupFlowProgress{Words: "Building the app", Done: 3, Total: 5}
+	return f
+}
+
+// goldenSetupFlowForm is a flow asking for its declared fields, one of
+// them a secret used only during setup.
+func goldenSetupFlowForm() SetupFlow {
+	f := goldenSetupFlow(SetupFlowStateForm)
+	f.Step = &SetupFlowStep{Kind: SetupFlowStepKindForm, Words: "Name the account the app goes on.", Fields: []SetupField{
+		{Key: "account", Title: "Account", Words: "Your personal account, or an organization's name"},
+		{Key: "personal_access_key", Title: "Key", Words: "From the key page", Secret: true, SetupOnly: true},
+	}}
+	return f
+}
+
+// goldenSetupFlowGo is a flow sending the browser to the service and
+// back.
+func goldenSetupFlowGo() SetupFlow {
+	f := goldenSetupFlow(SetupFlowStateGo)
+	start, host := "/connect/start?flow="+goldenSetupFlowID, "github.com"
+	f.Step = &SetupFlowStep{Kind: SetupFlowStepKindGo, Words: "Create the app on GitHub. GitHub sends you back here.", Fields: []SetupField{}, StartURL: &start, Host: &host}
+	return f
+}
+
+// goldenSetupFlowGoNoReturn is a flow sending the browser to a
+// settings page that sends it nowhere afterwards.
+func goldenSetupFlowGoNoReturn() SetupFlow {
+	f := goldenSetupFlowGo()
+	f.Step.Words = "Choose the repositories the app may reach on GitHub."
+	f.Step.NoReturn = true
+	return f
+}
+
+// goldenSetupFlowWait is a device sign-in waiting for the owner to
+// enter the code on the service's page.
+func goldenSetupFlowWait() SetupFlow {
+	f := goldenSetupFlow(SetupFlowStateWait)
+	page, host, code := "https://github.com/login/device?user_code=WDJB-MJHT", "github.com", "WDJB-MJHT"
+	f.Step = &SetupFlowStep{
+		Kind: SetupFlowStepKindWait, Words: "Enter this code on the service’s page, then approve the sign-in there. Kivali finishes it here once you do.",
+		Fields: []SetupField{}, URL: &page, Host: &host, Code: &code,
+	}
+	return f
+}
+
+// goldenSetupFlowFailed is a flow the service refused.
+func goldenSetupFlowFailed() SetupFlow {
+	f := goldenSetupFlow(SetupFlowStateFailed)
+	words := "the vendor refused the sign-in (access_denied): The user has denied your application access."
+	f.Error = &words
+	return f
 }

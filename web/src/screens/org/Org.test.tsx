@@ -3,7 +3,7 @@ import { createMemoryRouter } from 'react-router';
 import { RouterProvider } from 'react-router/dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError, apiDelete, apiGet, apiGetBlob, apiPost, apiPostForm, apiPut } from '../../api/client';
-import type { Handbook, Me, Network, OrgSoftware, Org as OrgData, ProjectFiles, Skills, Usage } from '../../api/types.gen';
+import type { Handbook, IntegrationPage as IntegrationPageData, Me, Network, OrgSoftware, Org as OrgData, ProjectFiles, SetupFlow, Skills, Usage } from '../../api/types.gen';
 import { FrameChromeContext } from '../../app/chrome';
 import type { FrameChrome } from '../../app/chrome';
 import { TooltipProvider } from '../../ds';
@@ -16,7 +16,8 @@ import type { OrgContextValue } from '../../state/OrgProvider';
 import { aboutLine, versionLabel } from './About';
 import { BACKUP_DEBOUNCE_MS } from './Backup';
 import { InstallScreen, bundleLine } from './InstallScreen';
-import { IntegrationPage, SIGN_IN_POLL_MS, clientSaved, codeLifeWords, connectStartPath, deleteConnectionWords, signInLine, signInReturnOf, signsInAt } from './IntegrationPage';
+import { IntegrationPage, deleteConnectionWords, setupReturnOf, signInLine, signsInAt } from './IntegrationPage';
+import { SETUP_POLL_MS, codeLifeWords, progressWords } from './SetupFlowPanel';
 import { whenLabel } from './integrationParts';
 import { Org, headerMeta } from './OrgPage';
 import {
@@ -34,10 +35,13 @@ import {
   goIntegrationPageSignIn,
   goIntegrationPageSignInAgain,
   goIntegrationPageSignInElsewhere,
-  goBrowserSignIn,
-  goDeviceSignIn,
-  goSignInProgress,
-  goSignInProgressFailed,
+  goSetupFlowDone,
+  goSetupFlowFailed,
+  goSetupFlowForm,
+  goSetupFlowGo,
+  goSetupFlowGoNoReturn,
+  goSetupFlowRunning,
+  goSetupFlowWait,
   goIntegrationUploadRefused,
   goIntegrationVersion,
   goIntegrationVersionBuiltin,
@@ -1528,7 +1532,7 @@ describe('Integration page', () => {
   });
 
   // Guards Disconnect: the DELETE waits for the danger dialog's confirm, and the page then shows no connection, with
-  // nothing left to test.
+  // Connect in place of the form, which starts the flow that makes one again.
   it('asks before disconnecting', async () => {
     const disconnected = { ...goIntegrationPage, connection: undefined, summary: { ...goIntegrationPage.summary, status: 'not_connected' } };
     await renderOrg(PATH, { routes: { ['DELETE ' + API + '/connection']: disconnected } });
@@ -1539,8 +1543,8 @@ describe('Integration page', () => {
     expect(called('DELETE', API + '/connection')).toBe(false);
     await click(within(dialog).getByRole('button', { name: 'Disconnect' }));
     expect(called('DELETE', API + '/connection')).toBe(true);
-    expect(screen.getByText('Not connected.')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Test connection' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Connect' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Test connection' })).toBeNull();
   });
 
   // Guards the access form as the bundle describes it (integration_page.json's five kinds): text is a text field,
@@ -2266,120 +2270,202 @@ describe('Integration page, a connection made by signing in', () => {
   });
 });
 
-describe('Integration page, signing in with a code', () => {
+describe('Integration page, setup flows', () => {
   const PATH = '/org/integrations/github';
   const API = '/api/v1/org/integrations/github';
   const signedIn = goIntegrationPageSignIn;
-  // The same connection never signed in: its client id and secret stored, no tokens.
-  const notSignedIn: typeof signedIn = {
-    ...signedIn,
-    summary: { ...signedIn.summary, status: 'not_connected' },
-    connection: { ...signedIn.connection!, sign_in: { ways: ['device'], signed_in: false } },
-    connections: [{ ...signedIn.connection!, sign_in: { ways: ['device'], signed_in: false } }],
+  const redirect = signedIn.sign_in_redirect_url!;
+  // The same connection never signed in, its client id and secret stored, offered the ways given.
+  const notSignedIn = (ways: string[]): typeof signedIn => {
+    const sign_in = { ways, signed_in: false, ...(ways.includes('browser') ? { redirect_url: redirect } : {}) };
+    return {
+      ...signedIn,
+      summary: { ...signedIn.summary, status: 'not_connected' },
+      connection: { ...signedIn.connection!, sign_in },
+      connections: [{ ...signedIn.connection!, sign_in }],
+    };
   };
-  const pageRoutes = (page: typeof signedIn) => ({
+  const pageRoutes = (page: typeof signedIn, start: SetupFlow = goSetupFlowWait) => ({
     ['GET ' + API]: page,
     ['GET ' + API + '/audit']: { rows: [] },
     ['GET ' + API + '/logs']: { lines: [] },
-    ['POST ' + API + '/connection/sign-in/device']: goDeviceSignIn,
-    ['GET ' + API + '/connection/sign-in']: goSignInProgress,
+    ['GET ' + API + '/setup']: fail(404, 'Kivali has no setup under way for this integration', 'you'),
+    ['POST ' + API + '/setup']: start,
+    ['POST ' + API + '/setup/cancel']: {},
   });
   const block = () => within(screen.getByRole('region', { name: 'Sign in' }));
-  const polls = () => calls.filter((c) => c.method === 'GET' && c.url === API + '/connection/sign-in').length;
+  const reads = () => calls.filter((c) => c.method === 'GET' && c.url === API + '/setup').length;
   const tick = async () => {
-    act(() => void vi.advanceTimersByTime(SIGN_IN_POLL_MS));
+    act(() => void vi.advanceTimersByTime(SETUP_POLL_MS));
     await flush();
   };
 
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
-    // The fixture's code was issued at 10:00 and works until 10:15.
+    // The fixtures' flows were last changed at 10:00 and are kept until 10:10.
     vi.setSystemTime(new Date('2026-10-21T10:00:00Z'));
   });
   afterEach(() => {
     Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
   });
 
-  // Guards the owner's device sign-in on the page, against device_sign_in.json and sign_in_progress.json: Sign in with
-  // a code posts to the connection's route; the code is shown with a Copy button, the service's page is a link that
-  // opens in a new tab without handing it this page (noopener), and the code's life is said in minutes from the
-  // server's expiry. The page asks how the sign-in stands every few seconds, and once the server says done it reads
-  // the page again, which now says Signed in with who the connection test found, and offers Sign out. A page that
-  // never asked again would leave the owner looking at a code long after they approved it.
-  it('shows the code and the page to enter it on, waits, then reads itself again once signed in', async () => {
-    await renderOrg(PATH, { routes: pageRoutes(notSignedIn) });
+  // Guards a device sign-in drawn from its flow (setup_flow_wait.json): the one button the server's first way names
+  // starts the flow (POST …/setup with the flow's name), and its Wait shows the code with Copy, the service's page as a
+  // link that opens in a new tab without handing it this page (noopener), and how long the code works, from the
+  // flow's expiry. The page asks how the flow stands every few seconds where it has no stream, and once the flow is
+  // done it reads the page again, which says Signed in and offers Sign out. A page that never asked again would leave
+  // the owner looking at a code long after they approved it.
+  it('starts the sign-in, shows the code, and reads the page again once done', async () => {
+    await renderOrg(PATH, { routes: pageRoutes(notSignedIn(['device'])) });
+    expect(block().getByText('Signs in at github.com')).toBeInTheDocument();
     await click(block().getByRole('button', { name: 'Sign in with a code' }));
-    expect(called('POST', API + '/connection/sign-in/device')).toBe(true);
-    expect(block().getByLabelText('Sign-in code')).toHaveTextContent('WDJB-MJHT');
+    expect(lastBody('POST', API + '/setup')).toEqual({ flow: 'setup' });
+    expect(block().getByLabelText('Code')).toHaveTextContent('WDJB-MJHT');
     expect(block().getByRole('button', { name: 'Copy code' })).toBeInTheDocument();
-    const link = block().getByRole('link', { name: goDeviceSignIn.verification_url });
-    expect(link).toHaveAttribute('href', goDeviceSignIn.verification_url_complete);
+    const link = block().getByRole('link', { name: 'github.com' });
+    expect(link).toHaveAttribute('href', goSetupFlowWait.step!.url);
     expect(link).toHaveAttribute('target', '_blank');
     expect(link).toHaveAttribute('rel', 'noopener');
-    expect(block().getByText('The code works for 15 minutes. Waiting for your approval.')).toBeInTheDocument();
+    expect(block().getByText('The code works for 10 minutes. Waiting.')).toBeInTheDocument();
 
+    const before = reads();
+    routes['GET ' + API + '/setup'] = goSetupFlowWait;
     await tick();
-    expect(polls()).toBe(1);
-    expect(block().getByLabelText('Sign-in code')).toBeInTheDocument();
+    expect(reads()).toBe(before + 1);
+    expect(block().getByLabelText('Code')).toBeInTheDocument();
 
     routes['GET ' + API] = { ...signedIn, connection: { ...signedIn.connection!, verified: true, verify_message: 'Signed in as octocat' } };
-    routes['GET ' + API + '/connection/sign-in'] = { state: 'done' };
+    routes['GET ' + API + '/setup'] = goSetupFlowDone;
     await tick();
     expect(block().getByText('Signed in. Signed in as octocat')).toBeInTheDocument();
     expect(block().getByRole('button', { name: 'Sign out' })).toBeInTheDocument();
-    expect(block().queryByLabelText('Sign-in code')).toBeNull();
-    await tick();
-    expect(polls()).toBe(2);
+    expect(called('GET', API + '/audit')).toBe(true);
   });
 
   // Guards the wait while the tab is hidden: the page asks nothing then, and asks again once the tab shows. A page that
-  // kept asking from a background tab would load the server for nobody.
+  // kept asking from a background tab would load the server for nobody, and keep a Wait checked for nobody.
   it('asks nothing while the tab is hidden', async () => {
-    await renderOrg(PATH, { routes: pageRoutes(notSignedIn) });
+    await renderOrg(PATH, { routes: pageRoutes(notSignedIn(['device'])) });
     await click(block().getByRole('button', { name: 'Sign in with a code' }));
+    const before = reads();
     Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
     act(() => void document.dispatchEvent(new Event('visibilitychange')));
     await tick();
     await tick();
-    expect(polls()).toBe(0);
+    expect(reads()).toBe(before);
     Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
     act(() => void document.dispatchEvent(new Event('visibilitychange')));
     await tick();
-    expect(polls()).toBe(1);
+    expect(reads()).toBe(before + 1);
   });
 
-  // Guards a sign-in that ended without tokens (sign_in_progress_failed.json): the page stops asking, says the sign-in
-  // did not work in the service's words, and offers Try again, which starts a new one. A page that kept the code up
-  // would have the owner enter a code nothing waits for.
-  it('says why a sign-in did not work and offers Try again', async () => {
-    await renderOrg(PATH, { routes: { ...pageRoutes(notSignedIn), ['GET ' + API + '/connection/sign-in']: goSignInProgressFailed } });
+  // Guards a flow's Form (setup_flow_form.json): the declared fields under the integration's name, a secret one as a
+  // password field and one used during setup said to be never kept, and Continue posting what was typed to
+  // …/setup/answer. Cancel ends the flow and the panel offers to start again. A Form drawn as text would show a key on
+  // screen; one that posted elsewhere would never reach the flow.
+  it('draws a form step and answers it', async () => {
+    await renderOrg(PATH, { routes: pageRoutes(notSignedIn(['browser']), goSetupFlowForm) });
+    await click(block().getByRole('button', { name: 'Sign in' }));
+    expect(block().getByText('Name the account the app goes on.')).toBeInTheDocument();
+    expect(block().getByText('GitHub asks for')).toBeInTheDocument();
+    const key = block().getByLabelText('Key');
+    expect(key).toHaveAttribute('type', 'password');
+    expect(block().getByText('From the key page Used during setup and never kept.')).toBeInTheDocument();
+    expect(block().getByLabelText('Account')).toHaveAttribute('type', 'text');
+    fireEvent.change(block().getByLabelText('Account'), { target: { value: 'acme' } });
+    fireEvent.change(key, { target: { value: 'pak-123' } });
+    routes['POST ' + API + '/setup/answer'] = goSetupFlowRunning;
+    await click(block().getByRole('button', { name: 'Continue' }));
+    expect(lastBody('POST', API + '/setup/answer')).toEqual({ fields: { account: 'acme', personal_access_key: 'pak-123' } });
+    await click(block().getByRole('button', { name: 'Cancel' }));
+    expect(called('POST', API + '/setup/cancel')).toBe(true);
+    expect(block().getByRole('button', { name: 'Sign in' })).toBeInTheDocument();
+  });
+
+  // Guards a running step (setup_flow_running.json): a real progress bar where the integration gave a count, named by
+  // its words with the count for a screen reader, and Cancel; a step with no count shows its words alone, with no
+  // bar that would claim a measure there is not.
+  it('shows a running step’s progress as a bar where there is a count', async () => {
+    await renderOrg(PATH, { routes: pageRoutes(notSignedIn(['browser']), goSetupFlowRunning) });
+    await click(block().getByRole('button', { name: 'Sign in' }));
+    const bar = block().getByRole('progressbar', { name: 'Building the app' });
+    expect(bar).toHaveAttribute('aria-valuenow', '3');
+    expect(bar).toHaveAttribute('aria-valuemax', '5');
+    expect(bar).toHaveAttribute('aria-valuetext', 'Building the app, 3 of 5');
+    expect(block().getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
+    routes['GET ' + API + '/setup'] = { ...goSetupFlowRunning, progress: { words: 'Asking GitHub', done: 0, total: 0 } };
+    await tick();
+    expect(block().queryByRole('progressbar')).toBeNull();
+    expect(block().getByText('Asking GitHub')).toBeInTheDocument();
+    expect(progressWords({ words: 'Asking GitHub', done: 0, total: 0 })).toBe('Asking GitHub');
+  });
+
+  // Guards a Go step (setup_flow_go.json): its button names the host it sends the browser to and sends this tab to the
+  // step's start_url, /connect/start, which Kivali Desktop takes over to open the system browser, signed in. Sent
+  // anywhere else (the service's page itself), a Desktop sign-in would open a browser with no Kivali session and no
+  // flow cookie, and fail at the callback. Where the tab stays (Desktop), a line says what to do if no browser opened.
+  // A step the service sends the browser nowhere from (setup_flow_go_no_return.json) opens in a new tab, so this page
+  // stays to follow the flow.
+  it('sends the browser on a go step through Kivali', async () => {
+    const assign = vi.fn();
+    vi.stubGlobal('location', { href: 'http://localhost' + PATH, pathname: PATH, search: '', assign });
+    const open = vi.fn();
+    vi.stubGlobal('open', open);
+    await renderOrg(PATH, { routes: pageRoutes(notSignedIn(['browser']), goSetupFlowGo) });
+    await click(block().getByRole('button', { name: 'Sign in' }));
+    expect(block().getByText(goSetupFlowGo.step!.words)).toBeInTheDocument();
+    await click(block().getByRole('button', { name: 'Continue to github.com' }));
+    expect(assign).toHaveBeenCalledWith('/connect/start?flow=' + goSetupFlowGo.id);
+    expect(block().getByText('If no browser opened, open the team in your browser and continue from there.')).toBeInTheDocument();
+    expect(open).not.toHaveBeenCalled();
+
+    routes['GET ' + API + '/setup'] = goSetupFlowGoNoReturn;
+    await tick();
+    await click(block().getByRole('button', { name: 'Continue to github.com' }));
+    expect(open).toHaveBeenCalledWith('/connect/start?flow=' + goSetupFlowGo.id, '_blank', 'noopener');
+    expect(assign).toHaveBeenCalledTimes(1);
+  });
+
+  // Guards a flow that failed (setup_flow_failed.json): the panel says it did not finish in the service's words and
+  // offers Try again, which starts the flow again. A panel that kept the last step up would have the owner act on a
+  // flow nothing waits for.
+  it('says why a flow failed and offers Try again', async () => {
+    await renderOrg(PATH, { routes: pageRoutes(notSignedIn(['device'])) });
     await click(block().getByRole('button', { name: 'Sign in with a code' }));
+    routes['GET ' + API + '/setup'] = goSetupFlowFailed;
     await tick();
-    expect(block().getByText('The sign-in did not work')).toBeInTheDocument();
-    expect(block().getByText(goSignInProgressFailed.error!)).toBeInTheDocument();
-    expect(block().queryByLabelText('Sign-in code')).toBeNull();
+    expect(block().getByText('Setup did not finish')).toBeInTheDocument();
+    expect(block().getByText(goSetupFlowFailed.error!)).toBeInTheDocument();
+    expect(block().queryByLabelText('Code')).toBeNull();
+    const before = reads();
     await tick();
-    expect(polls()).toBe(1);
+    expect(reads()).toBe(before);
     await click(block().getByRole('button', { name: 'Try again' }));
-    expect(calls.filter((c) => c.method === 'POST' && c.url === API + '/connection/sign-in/device')).toHaveLength(2);
-    expect(block().getByLabelText('Sign-in code')).toBeInTheDocument();
+    expect(calls.filter((c) => c.method === 'POST' && c.url === API + '/setup')).toHaveLength(2);
   });
 
-  // Guards the order the owner must follow: without the client id and secret saved there is nothing to sign in with,
-  // so the page says to save them and offers no button that would only get a refusal.
-  it('asks for the client id and secret before a sign-in', async () => {
-    const unsaved = notSignedIn.connection_fields.map((f) => (f.key === 'client_secret' ? { ...f, set: false } : f));
-    await renderOrg(PATH, { routes: pageRoutes({ ...notSignedIn, connection_fields: unsaved, connection: { ...notSignedIn.connection!, fields: unsaved } }) });
-    expect(block().getByText('Save the client id and secret first.')).toBeInTheDocument();
-    expect(block().queryByRole('button', { name: 'Sign in with a code' })).toBeNull();
-    expect(clientSaved(unsaved)).toBe(false);
-    expect(clientSaved(notSignedIn.connection_fields)).toBe(true);
+  // Guards the way back from the service: Kivali's callback lands here with ?setup=<flow id> and no words, and the
+  // panel reads the flow from the server. When the server no longer has it (it took too long, or Kivali restarted) the
+  // panel says so and offers to start again; the query is taken off the address, so a reload does not read it again,
+  // and anything in the query but a flow id is read as nothing.
+  it('reads the flow a callback came back with', async () => {
+    const h = await renderOrg(PATH + '?setup=' + goSetupFlowGo.id, { routes: pageRoutes(notSignedIn(['browser'])) });
+    expect(called('GET', API + '/setup')).toBe(true);
+    expect(block().getByText('This setup is no longer under way')).toBeInTheDocument();
+    expect(block().getByRole('button', { name: 'Sign in' })).toBeInTheDocument();
+    expect(h.router.state.location.search).toBe('');
+    cleanup();
+    await renderOrg(PATH + '?setup=' + goSetupFlowGo.id, { routes: { ...pageRoutes(notSignedIn(['browser'])), ['GET ' + API + '/setup']: goSetupFlowRunning } });
+    expect(block().getByRole('progressbar')).toBeInTheDocument();
+    expect(setupReturnOf('?setup=' + goSetupFlowGo.id)).toBe(goSetupFlowGo.id);
+    expect(setupReturnOf('?setup=' + encodeURIComponent('Sign in at evil.example'))).toBeNull();
+    expect(setupReturnOf('')).toBeNull();
   });
 
   // Guards Sign out: it posts to the connection's route and the page it answers replaces this one, so the block offers
-  // Sign in with a code again rather than still reading Signed in.
+  // signing in again rather than still reading Signed in.
   it('signs out', async () => {
-    await renderOrg(PATH, { routes: { ...pageRoutes(signedIn), ['POST ' + API + '/connection/sign-out']: notSignedIn } });
+    await renderOrg(PATH, { routes: { ...pageRoutes(signedIn), ['POST ' + API + '/connection/sign-out']: notSignedIn(['device']) } });
     await click(block().getByRole('button', { name: 'Sign out' }));
     expect(called('POST', API + '/connection/sign-out')).toBe(true);
     expect(block().getByRole('button', { name: 'Sign in with a code' })).toBeInTheDocument();
@@ -2388,156 +2474,24 @@ describe('Integration page, signing in with a code', () => {
   // Guards the scopes on the page (integration_page_sign_in.json asks for repo and read:org): the line sits with the
   // Sign in block, so the owner sees what they are about to grant before they sign in.
   it('says what the sign-in asks the service for', async () => {
-    await renderOrg(PATH, { routes: pageRoutes(notSignedIn) });
+    await renderOrg(PATH, { routes: pageRoutes(notSignedIn(['device'])) });
     const connection = within(screen.getByRole('region', { name: 'Connection' }));
     expect(connection.getByText('Asks the service for: repo, read:org')).toBeInTheDocument();
   });
 
   // Guards a manifest that names only ways this version does not sign in by: the block says so in one sentence
-  // rather than show a heading over nothing, or a button the server would refuse.
+  // rather than show a button the server would refuse.
   it('says when this version of Kivali has no way to sign in', async () => {
-    const none = { ...notSignedIn.connection!, sign_in: { ways: [], signed_in: false } };
-    await renderOrg(PATH, { routes: pageRoutes({ ...notSignedIn, connection: none, connections: [none] }) });
+    const none = { ...signedIn.connection!, sign_in: { ways: [], signed_in: false } };
+    await renderOrg(PATH, { routes: pageRoutes({ ...signedIn, connection: none, connections: [none] }) });
     expect(block().getByText('This version of Kivali has no way to sign in to this service.')).toBeInTheDocument();
     expect(block().queryByRole('button')).toBeNull();
   });
 
-  // Guards the moment between the server's done and the page's re-read: the block holds "Finishing the sign-in."
-  // until the page is in, then reads Signed in. Without it the block would flash Sign in with a code, inviting a
-  // second sign-in of a connection that is already signed in.
-  it('holds a finishing line until the page is read again', async () => {
-    await renderOrg(PATH, { routes: pageRoutes(notSignedIn) });
-    await click(block().getByRole('button', { name: 'Sign in with a code' }));
-    let release!: () => void;
-    const gate = new Promise<void>((resolve) => (release = resolve));
-    const base = vi.mocked(apiGet).getMockImplementation()!;
-    vi.mocked(apiGet).mockImplementation((path, opts) => (path === API ? (gate.then(() => base(path, opts)) as never) : base(path, opts)));
-    routes['GET ' + API] = signedIn;
-    routes['GET ' + API + '/connection/sign-in'] = { state: 'done' };
-    await tick();
-    expect(block().getByText('Finishing the sign-in.')).toBeInTheDocument();
-    expect(block().queryByRole('button', { name: 'Sign in with a code' })).toBeNull();
-    release();
-    await flush();
-    expect(block().getByRole('button', { name: 'Sign out' })).toBeInTheDocument();
-    expect(block().queryByText('Finishing the sign-in.')).toBeNull();
-  });
-
-  // Guards the words of a code's life, rounded to whole minutes and never under one.
-  it('words how long a code works', () => {
-    const now = Date.parse('2026-10-21T10:00:00Z');
-    expect(codeLifeWords('2026-10-21T10:10:00Z', now)).toBe('The code works for 10 minutes.');
-    expect(codeLifeWords('2026-10-21T10:00:20Z', now)).toBe('The code works for 1 minute.');
-  });
-});
-
-describe('Integration page, signing in in the browser', () => {
-  const PATH = '/org/integrations/github';
-  const API = '/api/v1/org/integrations/github';
-  const signedIn = goIntegrationPageSignIn;
-  const redirect = signedIn.sign_in_redirect_url!;
-  // The same connection never signed in, offered the ways given.
-  const notSignedIn = (ways: string[]): typeof signedIn => {
-    const sign_in = { ways, signed_in: false, redirect_url: redirect };
-    return {
-      ...signedIn,
-      summary: { ...signedIn.summary, status: 'not_connected' },
-      connection: { ...signedIn.connection!, sign_in },
-      connections: [{ ...signedIn.connection!, sign_in }],
-    };
-  };
-  const pageRoutes = (page: typeof signedIn) => ({
-    ['GET ' + API]: page,
-    ['GET ' + API + '/audit']: { rows: [] },
-    ['GET ' + API + '/logs']: { lines: [] },
-    ['POST ' + API + '/connection/sign-in/browser']: goBrowserSignIn,
-  });
-  const block = () => within(screen.getByRole('region', { name: 'Sign in' }));
-  const stubAssign = () => {
-    const assign = vi.fn();
-    vi.stubGlobal('location', { href: 'http://localhost' + PATH, pathname: PATH, search: '', assign });
-    return assign;
-  };
-
-  // Guards the start of a browser sign-in, against browser_sign_in.json: Sign in posts to the connection's route and
-  // sends this tab to /connect/start with the flow the server named (openSignIn), which the server sends on to the
-  // service's page and Kivali Desktop takes over to open the system browser, signed in, in the team window's place.
-  // Sent anywhere else (the service's page itself), a Desktop sign-in would open a browser with no Kivali session and
-  // no sign-in cookie, and fail at the callback. The page offers one way, the first the server lists for where the
-  // owner is, so there is no choice to make: with the browser first, no code button beside it.
-  it('offers one way, and sends the browser to the service through Kivali', async () => {
-    await renderOrg(PATH, { routes: pageRoutes(notSignedIn(['browser', 'device'])) });
-    const browser = block().getByRole('button', { name: 'Sign in' });
-    expect(browser).toHaveClass('kv-btn--primary');
-    expect(block().queryByRole('button', { name: 'Sign in with a code' })).toBeNull();
-    const assign = stubAssign();
-    await click(browser);
-    expect(called('POST', API + '/connection/sign-in/browser')).toBe(true);
-    expect(assign).toHaveBeenCalledWith('/connect/start?flow=' + goBrowserSignIn.flow);
-    expect(connectStartPath('a b')).toBe('/connect/start?flow=a%20b');
-  });
-
-  // Guards Kivali Desktop's half of the page: there the team window does not leave (the system browser opens
-  // instead), so the block must say the sign-in goes on in the browser, ask how it stands every few seconds as it does
-  // for a code, and read the page again once the server says done. A block left on a disabled button would have the
-  // owner sign in in the browser and never see it here. Start again starts a new browser sign-in, for a browser that
-  // did not open.
-  it('waits for a sign-in in the system browser when the page stays', async () => {
-    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
-    await renderOrg(PATH, { routes: { ...pageRoutes(notSignedIn(['browser'])), ['GET ' + API + '/connection/sign-in']: { state: 'pending' } } });
-    const assign = stubAssign();
-    await click(block().getByRole('button', { name: 'Sign in' }));
-    expect(assign).toHaveBeenCalledTimes(1);
-    expect(block().getByText('Approve the sign-in on the service’s page in your browser. Kivali finishes it here once you do.')).toBeInTheDocument();
-    // Kivali Desktop opens no browser for a team elsewhere: the block must say where to sign in instead, or the owner
-    // waits on a sign-in nothing started.
-    expect(block().getByText('If no browser opened, open the team in your browser and sign in from there.')).toBeInTheDocument();
-    const polls = () => calls.filter((c) => c.method === 'GET' && c.url === API + '/connection/sign-in').length;
-    act(() => void vi.advanceTimersByTime(SIGN_IN_POLL_MS));
-    await flush();
-    expect(polls()).toBe(1);
-
-    await click(block().getByRole('button', { name: 'Start again' }));
-    expect(calls.filter((c) => c.method === 'POST' && c.url === API + '/connection/sign-in/browser')).toHaveLength(2);
-    expect(assign).toHaveBeenCalledTimes(2);
-
-    routes['GET ' + API] = signedIn;
-    routes['GET ' + API + '/connection/sign-in'] = { state: 'done' };
-    act(() => void vi.advanceTimersByTime(SIGN_IN_POLL_MS));
-    await flush();
-    expect(block().getByRole('button', { name: 'Sign out' })).toBeInTheDocument();
-    expect(block().queryByText('Waiting for your approval.')).toBeNull();
-  });
-
-  // Guards a sign-in in the system browser that failed (the owner said no on the service's page): the waiting block
-  // gives way to why, and Try again takes the browser way again, not the code.
-  it('says why a sign-in in the system browser did not work', async () => {
-    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
-    const failed = { state: 'failed', error: 'The user did not approve the app.' };
-    await renderOrg(PATH, { routes: { ...pageRoutes(notSignedIn(['browser', 'device'])), ['GET ' + API + '/connection/sign-in']: failed } });
-    stubAssign();
-    await click(block().getByRole('button', { name: 'Sign in' }));
-    act(() => void vi.advanceTimersByTime(SIGN_IN_POLL_MS));
-    await flush();
-    expect(block().getByText('The sign-in did not work')).toBeInTheDocument();
-    expect(block().getByText(failed.error)).toBeInTheDocument();
-    await click(block().getByRole('button', { name: 'Try again' }));
-    expect(calls.filter((c) => c.method === 'POST' && c.url === API + '/connection/sign-in/browser')).toHaveLength(2);
-    expect(called('POST', API + '/connection/sign-in/device')).toBe(false);
-  });
-
-  // Guards where the browser cannot finish a sign-in (Kivali Desktop's window for a team elsewhere): the server lists
-  // the code alone, and the page offers it, with no browser button that would only get a 409.
-  it('offers the code where the server says the browser cannot finish', async () => {
-    await renderOrg(PATH, { routes: pageRoutes(notSignedIn(['device'])) });
-    expect(block().getByRole('button', { name: 'Sign in with a code' })).toHaveClass('kv-btn--primary');
-    expect(block().queryByRole('button', { name: 'Sign in' })).toBeNull();
-  });
-
   // Guards a connection that signs in only in the browser, read where that cannot finish
-  // (integration_page_sign_in_elsewhere.json): no button at all, which would start a sign-in that cannot end, but
-  // words that say to sign in from a browser and the team's address to open there, with Copy, since a link would only
-  // open in this window. Without an address the words still say where.
+  // (integration_page_sign_in_elsewhere.json): no button at all, which would start a flow that cannot end, but words
+  // that say to sign in from a browser and the team's address to open there, with Copy, since a link would only open
+  // in this window. Without an address the words still say where.
   it('says to sign in from a browser at the team’s address where no way works', async () => {
     const writeText = vi.fn(() => Promise.resolve());
     vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
@@ -2546,7 +2500,6 @@ describe('Integration page, signing in in the browser', () => {
     await renderOrg(PATH, { routes: pageRoutes(page) });
     expect(block().getByText('Signing in does not work from here. Open the team’s address in your browser and sign in there.')).toBeInTheDocument();
     expect(block().queryByRole('button', { name: /^Sign in/ })).toBeNull();
-    expect(block().queryByText('This version of Kivali has no way to sign in to this service.')).toBeNull();
     expect(screen.queryByRole('textbox', { name: 'Redirect address' })).toBeNull();
     expect(block().getByRole('textbox', { name: 'Team address' })).toHaveValue(openAt);
     await click(block().getByRole('button', { name: 'Copy' }));
@@ -2575,52 +2528,9 @@ describe('Integration page, signing in in the browser', () => {
     expect(screen.getByRole('button', { name: 'Copied' })).toBeInTheDocument();
   });
 
-  // Guards the way back from the service after a failure: Kivali's callback lands here with ?sign_in_failed=<id> and
-  // no words, and the block reads why from the connection's GET …/sign-in (sign_in_progress_failed.json), shows it as
-  // a sign-in that did not work, and offers Try again, which takes the browser way again. The query is taken off the
-  // address, so a reload does not show an old failure as if it were new.
-  it('reads why a browser sign-in did not work and offers Try again', async () => {
-    const h = await renderOrg(PATH + '?sign_in_failed=' + signedIn.connection!.id, {
-      routes: { ...pageRoutes(notSignedIn(['device', 'browser'])), ['GET ' + API + '/connection/sign-in']: goSignInProgressFailed },
-    });
-    expect(called('GET', API + '/connection/sign-in')).toBe(true);
-    expect(block().getByText('The sign-in did not work')).toBeInTheDocument();
-    expect(block().getByText(goSignInProgressFailed.error!)).toBeInTheDocument();
-    expect(h.router.state.location.search).toBe('');
-    const assign = stubAssign();
-    await click(block().getByRole('button', { name: 'Try again' }));
-    expect(called('POST', API + '/connection/sign-in/browser')).toBe(true);
-    expect(called('POST', API + '/connection/sign-in/device')).toBe(false);
-    expect(assign).toHaveBeenCalledWith('/connect/start?flow=' + goBrowserSignIn.flow);
-  });
-
-  // Guards the page against words in its address: anyone can send the owner a link with ?sign_in_error=<anything>, and
-  // a danger banner showing it would read as Kivali's own. Only the codes the callback sends are shown, in Kivali's
-  // sentence (start_again: no sign-in to read); any other value shows nothing.
-  it('shows only its own words for a sign-in error code', async () => {
-    await renderOrg(PATH + '?sign_in_error=' + encodeURIComponent('Your session expired, sign in at evil.example'), {
-      routes: pageRoutes(notSignedIn(['browser'])),
-    });
-    expect(screen.queryByText(/evil\.example/)).toBeNull();
-    expect(screen.queryByText('The sign-in did not work')).toBeNull();
-    cleanup();
-    await renderOrg(PATH + '?sign_in_error=start_again', { routes: pageRoutes(notSignedIn(['browser'])) });
-    expect(block().getByText('The sign-in took too long or was started elsewhere. Start it again.')).toBeInTheDocument();
-    expect(block().getByRole('button', { name: 'Try again' })).toBeInTheDocument();
-  });
-
-  // Guards the way back after a sign-in that worked (?signed_in=<id>): the page, read fresh, says signed in, and a line
-  // says it was this browser sign-in that did it; the query goes from the address.
-  it('says the browser sign-in worked', async () => {
-    const h = await renderOrg(PATH + '?signed_in=' + signedIn.connection!.id, { routes: pageRoutes(signedIn) });
-    expect(block().getByText('You signed in in your browser.')).toBeInTheDocument();
-    expect(block().getByRole('button', { name: 'Sign out' })).toBeInTheDocument();
-    expect(h.router.state.location.search).toBe('');
-  });
-
-  // Guards a sign-in Kivali could not tie to any integration (it restarted, or the address was pasted): the callback
+  // Guards a flow Kivali could not tie to any integration (it restarted, or the address was pasted): the callback
   // lands on the integrations list with start_again, which must say what happened rather than show the list as if
-  // nothing did; words in the address are never shown there either.
+  // nothing did; words in the address are never shown there.
   it('shows a sign-in error on the integrations list', async () => {
     const h = await renderOrg('/org/integrations?sign_in_error=start_again');
     expect(screen.getByText('The sign-in did not work')).toBeInTheDocument();
@@ -2632,11 +2542,8 @@ describe('Integration page, signing in in the browser', () => {
     expect(screen.queryByText(/555-0100/)).toBeNull();
   });
 
-  // Guards where the owner is sent (sign_in_at in integration_page_sign_in.json): the Sign in block names the host
-  // each of its ways goes to, once, so a lookalike sign-in page named by a bundle is visible before the owner clicks.
-  it('names the host the sign-in goes to', async () => {
-    await renderOrg(PATH, { routes: pageRoutes(notSignedIn(['device', 'browser'])) });
-    expect(block().getByText('Signs in at github.com')).toBeInTheDocument();
+  // Guards where the owner is sent (sign_in_at in integration_page_sign_in.json): the words for each way's host, once.
+  it('names the hosts the sign-in goes to', () => {
     expect(signsInAt(['browser', 'device'], { browser: 'app.hubspot.com', device: 'login.example.com' })).toBe(
       'Signs in at app.hubspot.com and login.example.com',
     );
@@ -2658,18 +2565,36 @@ describe('Integration page, signing in in the browser', () => {
     expect(screen.queryByText('Signs in at')).toBeNull();
   });
 
-  // Guards the reading of the query: a connection signed in, one whose sign-in failed, the one code Kivali sends, and
-  // a code or a page reached any other way, which read as nothing.
-  it('reads how a browser sign-in came back', () => {
-    expect(signInReturnOf('?signed_in=c1')).toEqual({ kind: 'signed_in', id: 'c1' });
-    expect(signInReturnOf('?sign_in_failed=c1')).toEqual({ kind: 'failed', id: 'c1' });
-    expect(signInReturnOf('?sign_in_error=start_again')).toEqual({
-      kind: 'start_again',
-      words: 'The sign-in took too long or was started elsewhere. Start it again.',
+  // Guards the words of a code's life, rounded to whole minutes and never under one.
+  it('words how long a code works', () => {
+    const now = Date.parse('2026-10-21T10:00:00Z');
+    expect(codeLifeWords('2026-10-21T10:10:00Z', now)).toBe('The code works for 10 minutes.');
+    expect(codeLifeWords('2026-10-21T10:00:20Z', now)).toBe('The code works for 1 minute.');
+  });
+
+  // Guards every connection being made by a flow: a token integration with no connection yet offers Connect, whose
+  // flow asks for the connection's form, rather than a form saved by PUT; a setup integration's page offers Set up in
+  // its place. Each starts its flow with POST …/setup.
+  it('connects a token or setup integration through its flow', async () => {
+    const hubspot = '/api/v1/org/integrations/hubspot';
+    const unconnected = { ...goIntegrationPage, connection: undefined, connections: [] } as unknown as IntegrationPageData;
+    await renderOrg('/org/integrations/hubspot', {
+      routes: {
+        ['GET ' + hubspot]: unconnected,
+        ['GET ' + hubspot + '/setup']: fail(404, 'none', 'you'),
+        ['POST ' + hubspot + '/setup']: goSetupFlowForm,
+      },
     });
-    expect(signInReturnOf('?sign_in_error=toString')).toBeNull();
-    expect(signInReturnOf('?sign_in_error=made+up')).toBeNull();
-    expect(signInReturnOf('')).toBeNull();
+    const connect = within(screen.getByRole('region', { name: 'Connect' }));
+    expect(screen.queryByRole('button', { name: 'Save connection' })).toBeNull();
+    await click(connect.getByRole('button', { name: 'Connect' }));
+    expect(lastBody('POST', hubspot + '/setup')).toEqual({ flow: 'setup' });
+    expect(connect.getByLabelText('Account')).toBeInTheDocument();
+    cleanup();
+    await renderOrg(PATH, { routes: { ...pageRoutes(goIntegrationPageSetup), ['POST ' + API + '/setup']: goSetupFlowGo } });
+    const setup = within(screen.getByRole('region', { name: 'Set up' }));
+    await click(setup.getByRole('button', { name: 'Set up' }));
+    expect(setup.getByRole('button', { name: 'Continue to github.com' })).toBeInTheDocument();
   });
 });
 

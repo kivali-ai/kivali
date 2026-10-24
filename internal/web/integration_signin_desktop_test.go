@@ -1,7 +1,7 @@
 package web
 
 import (
-	"encoding/json"
+	"bytes"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
@@ -58,59 +58,72 @@ func browserJar(t *testing.T) (*http.Client, *cookiejar.Jar, **url.URL) {
 	return c, jar, landed
 }
 
+// startIn starts name's setup flow from a browser client signed in to
+// ts, and returns it once it is on its Go step.
+func startIn(t *testing.T, srv *Server, ts *httptest.Server, client *http.Client, name string) apitypes.SetupFlow {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+intBase+"/"+name+"/setup", bytes.NewReader([]byte(`{"flow":"setup"}`)))
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		t.Fatalf("start %s: %v %v", name, resp, err)
+	}
+	_ = resp.Body.Close()
+	return waitFlow(t, srv, name, apitypes.SetupFlowStateGo)
+}
+
 // startInWebview starts crm's browser sign-in from the Desktop team
-// window: a browser signed in to Kivali, with cookies of its own.
-func startInWebview(t *testing.T, srv *Server, ts *httptest.Server) (apitypes.BrowserSignIn, *cookiejar.Jar) {
+// window: a browser signed in to Kivali, with cookies of its own. The
+// window never loads /connect/start: Kivali Desktop takes it over.
+func startInWebview(t *testing.T, srv *Server, ts *httptest.Server) apitypes.SetupFlow {
 	t.Helper()
 	webview, jar, _ := browserJar(t)
 	base, _ := url.Parse(ts.URL)
 	jar.SetCookies(base, []*http.Cookie{authCookie(t, srv)})
-	req, _ := http.NewRequest(http.MethodPost, ts.URL+intBase+"/crm/connection/sign-in/browser", nil)
-	req.Header.Set("Sec-Fetch-Site", "same-origin")
-	resp, err := webview.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	var bs apitypes.BrowserSignIn
-	if err := json.NewDecoder(resp.Body).Decode(&bs); err != nil || resp.StatusCode != http.StatusOK || bs.Flow == "" || bs.URL == "" {
-		t.Fatalf("start: %d %v %+v", resp.StatusCode, err, bs)
-	}
-	return bs, jar
+	return startIn(t, srv, ts, webview, "crm")
 }
 
-// Why this test exists: in Kivali Desktop the owner presses Sign in in
-// your browser in the team's window, a webview, and the sign-in runs in
-// the system browser, which holds neither the Kivali session nor the
-// sign-in cookie the start answer set in the webview. Desktop opens
-// /auth/handoff?t=<token>&next=<flow> there: it must sign that browser
-// in and give it the sign-in's cookie before sending it to the vendor,
-// or the callback, which comes to the system browser, would ask the
-// owner to sign in to Kivali again and then refuse the sign-in as
-// started elsewhere. Two cookie jars stand for the two browsers; the
-// system browser starts with none and must end signed in, on the
-// integration's page, with the connection holding the tokens.
+// authorizeOf is the vendor's page the flow's Go step sends a browser
+// to, read from /connect/start without following it.
+func authorizeOf(t *testing.T, srv *Server, f apitypes.SetupFlow) *url.URL {
+	t.Helper()
+	rr, _ := startPage(t, srv, f)
+	u, err := url.Parse(rr.Header().Get("Location"))
+	if err != nil || rr.Code != http.StatusSeeOther {
+		t.Fatalf("start: %d %v", rr.Code, err)
+	}
+	return u
+}
+
+// Why this test exists: in Kivali Desktop the owner presses Connect in
+// the team's window, a webview, and the sign-in runs in the system
+// browser, which holds neither the Kivali session nor the flow's
+// cookie. Desktop opens /auth/handoff?t=<token>&next=<flow> there: it
+// must sign that browser in, give it the flow's cookie and send it on
+// through /connect/start to the vendor, or the callback, which comes to
+// the system browser, would ask the owner to sign in to Kivali again
+// and then refuse the sign-in as started elsewhere. The system browser
+// starts with no cookies and must end signed in, on the integration's
+// page, with the connection holding the tokens.
 func TestDesktopBrowserSignInThroughTheHandoff(t *testing.T) {
 	srv, _, ts := desktopServer(t)
-	bs, webviewJar := startInWebview(t, srv, ts)
+	f := startInWebview(t, srv, ts)
 	base, _ := url.Parse(ts.URL)
-	if !hasCookie(webviewJar, base, connectCallbackPath, "kivali_connect") {
-		t.Fatal("the start answer set no sign-in cookie in the webview")
-	}
 
 	system, systemJar, landed := browserJar(t)
-	resp, err := system.Get(ts.URL + auth.HandoffPath + "?t=" + url.QueryEscape(handoffToken(t, srv)) + "&next=" + bs.Flow)
+	resp, err := system.Get(ts.URL + auth.HandoffPath + "?t=" + url.QueryEscape(handoffToken(t, srv)) + "&next=" + f.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	_ = resp.Body.Close()
-	if *landed == nil || (*landed).Path != "/org/integrations/crm" {
+	if *landed == nil || (*landed).Path != "/org/integrations/crm" || (*landed).Query().Get("setup") != f.ID {
 		t.Fatalf("the system browser landed on %v (%d)", *landed, resp.StatusCode)
 	}
-	rec, data := firstConnectionSecret(t, srv)
-	if q := (*landed).Query(); q.Get("signed_in") != rec.ID || q.Has("sign_in_error") {
-		t.Errorf("landed on %s", *landed)
+	if f := flowEnds(t, srv); f.State != apitypes.SetupFlowStateDone {
+		t.Fatalf("flow = %+v %q", f, textOf(f.Error))
 	}
+	rec, data := firstConnectionSecret(t, srv)
 	if rec.SignIn == nil || rec.SignIn.Method != "browser" || data[connect.SecretKeyAccessToken] == "" {
 		t.Errorf("not signed in: %+v %v", rec.SignIn, data)
 	}
@@ -118,22 +131,20 @@ func TestDesktopBrowserSignInThroughTheHandoff(t *testing.T) {
 		t.Error("the system browser was not signed in to Kivali")
 	}
 	if hasCookie(systemJar, base, connectCallbackPath, "kivali_connect") {
-		t.Error("the sign-in cookie outlived the callback in the system browser")
-	}
-	if p := signInProgress(t, srv); p.State != apitypes.SignInStateDone {
-		t.Errorf("the team window reads %+v", p)
+		t.Error("the flow's cookie outlived the callback in the system browser")
 	}
 }
 
 // Why this test exists: the handoff hop is what makes the system
 // browser pass the cookie check, and nothing else may. A system
 // browser signed in to Kivali (by a handoff without next, or by hand)
-// that goes to the vendor's page with the sign-in's address must still
-// be refused as started elsewhere: the cookie still binds the sign-in
-// to a browser Kivali or Desktop gave it to.
+// that goes to the vendor's page with the flow's address must still be
+// refused as started elsewhere: the cookie binds the flow to a browser
+// Kivali or Desktop gave it to.
 func TestDesktopBrowserSignInNeedsTheHandoffsCookie(t *testing.T) {
 	srv, _, ts := desktopServer(t)
-	bs, _ := startInWebview(t, srv, ts)
+	f := startInWebview(t, srv, ts)
+	authorize := authorizeOf(t, srv, f)
 
 	system, _, landed := browserJar(t)
 	resp, err := system.Get(ts.URL + auth.HandoffPath + "?t=" + url.QueryEscape(handoffToken(t, srv)))
@@ -145,28 +156,29 @@ func TestDesktopBrowserSignInNeedsTheHandoffsCookie(t *testing.T) {
 		t.Fatalf("the handoff without next landed on %v", *landed)
 	}
 	*landed = nil
-	resp, err = system.Get(bs.URL)
+	q := authorize.Query()
+	q.Set("redirect_uri", ts.URL+connectCallbackPath)
+	authorize.RawQuery = q.Encode()
+	resp, err = system.Get(authorize.String())
 	if err != nil {
 		t.Fatal(err)
 	}
 	_ = resp.Body.Close()
-	rec, _ := firstConnectionSecret(t, srv)
-	if *landed == nil || (*landed).Query().Get("sign_in_failed") != rec.ID {
+	if *landed == nil || (*landed).Query().Get("setup") != f.ID {
 		t.Fatalf("landed on %v", *landed)
 	}
-	if p := signInProgress(t, srv); p.State != apitypes.SignInStateFailed || p.Error == nil || *p.Error != errSignInStartAgain {
-		t.Errorf("the sign-in reads %+v", p)
+	if f := flowEnds(t, srv); f.State != apitypes.SetupFlowStateFailed || textOf(f.Error) != errSignInStartAgain {
+		t.Errorf("the flow reads %+v %q", f, textOf(f.Error))
 	}
 	assertNotSignedIn(t, srv)
 }
 
-// Why this test exists: a browser holds one sign-in cookie, and the
-// handoff hands the system browser one. A sign-in the owner started in
-// that browser itself, of another integration, can then no longer
-// finish there: it must end at once, in words that say another sign-in
-// replaced it, as a second start in one browser ends the first, rather
-// than wait ten minutes for a callback that is refused. The Desktop
-// sign-in must still finish.
+// Why this test exists: a browser holds one flow cookie, and the
+// handoff hands the system browser one. A Go the owner started in that
+// browser itself, of another integration, can then no longer come back
+// there: it must end at once, in words that say another one replaced
+// it, rather than wait ten minutes for a callback that is refused. The
+// Desktop sign-in must still finish.
 func TestDesktopHandoffReplacesTheBrowsersSignIn(t *testing.T) {
 	srv, vendor, ts := desktopServer(t)
 	browserBundleNamed(t, srv, vendor, "crm2", nil)
@@ -178,46 +190,46 @@ func TestDesktopHandoffReplacesTheBrowsersSignIn(t *testing.T) {
 	}
 	base, _ := url.Parse(ts.URL)
 
-	// crm2's sign-in, started in the system browser itself.
+	// crm2's sign-in, started in the system browser itself, which then
+	// holds its cookie.
 	system, systemJar, landed := browserJar(t)
 	systemJar.SetCookies(base, []*http.Cookie{authCookie(t, srv)})
-	req, _ := http.NewRequest(http.MethodPost, ts.URL+intBase+"/crm2/connection/sign-in/browser", nil)
-	req.Header.Set("Sec-Fetch-Site", "same-origin")
-	resp, err := system.Do(req)
-	if err != nil || resp.StatusCode != http.StatusOK {
-		t.Fatalf("start crm2: %v %v", resp, err)
-	}
-	_ = resp.Body.Close()
-
-	// crm's, from the Desktop window, through the handoff.
-	bs, _ := startInWebview(t, srv, ts)
-	resp, err = system.Get(ts.URL + auth.HandoffPath + "?t=" + url.QueryEscape(handoffToken(t, srv)) + "&next=" + bs.Flow)
+	f2 := startIn(t, srv, ts, system, "crm2")
+	noFollow := &http.Client{Jar: systemJar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	resp, err := noFollow.Get(ts.URL + *f2.Step.StartURL)
 	if err != nil {
 		t.Fatal(err)
 	}
 	_ = resp.Body.Close()
-	if *landed == nil || (*landed).Path != "/org/integrations/crm" || (*landed).Query().Get("signed_in") == "" {
+
+	// crm's, from the Desktop window, through the handoff.
+	f := startInWebview(t, srv, ts)
+	resp, err = system.Get(ts.URL + auth.HandoffPath + "?t=" + url.QueryEscape(handoffToken(t, srv)) + "&next=" + f.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if *landed == nil || (*landed).Path != "/org/integrations/crm" || (*landed).Query().Get("setup") != f.ID {
 		t.Fatalf("the Desktop sign-in landed on %v", *landed)
 	}
-	p := orgOK[apitypes.SignInProgress](t, orgGet(t, srv, intBase+"/crm2/connection/sign-in"))
-	if p.State != apitypes.SignInStateFailed || p.Error == nil || *p.Error != errSignInReplaced {
-		t.Errorf("crm2's sign-in reads %+v", p)
+	if f := waitFlow(t, srv, "crm2", apitypes.SetupFlowStateFailed); textOf(f.Error) != errSignInReplaced {
+		t.Errorf("crm2's flow reads %q", textOf(f.Error))
 	}
 }
 
 // Why this test exists: next is a flow id the server looks up, never
 // an address, so the handoff cannot become an open redirect, and it
 // stays what it was: loopback only and one use per token. A next that
-// names no pending browser sign-in (an address, a path, an unknown id,
-// one a callback already took, one that started at another address;
-// one past its time, below) is refused as a bad token is: "/" with no
-// session and no sign-in cookie, since Desktop names only a flow it
-// just saw start and anything else is no errand of the app's. A
-// replayed token signs nothing in and hands no cookie over; on a host
-// that is not loopback the route does not exist.
+// names no flow on a Go step (an address, a path, an unknown id, one
+// whose callback came, one that started at another address; one past
+// its time, below) is refused as a bad token is: "/" with no session
+// and no flow cookie, since Desktop names only a flow it just saw start
+// and anything else is no errand of the app's. A replayed token signs
+// nothing in and hands no cookie over; on a host that is not loopback
+// the route does not exist.
 func TestDesktopHandoffNextIsAPendingFlow(t *testing.T) {
 	srv, _, ts := desktopServer(t)
-	bs, _ := startInWebview(t, srv, ts)
+	f := startInWebview(t, srv, ts)
 	base, _ := url.Parse(ts.URL)
 	host := base.Host
 
@@ -227,41 +239,43 @@ func TestDesktopHandoffNextIsAPendingFlow(t *testing.T) {
 	// Started at 127.0.0.1:<port>: the same team reached as localhost
 	// would hold the host-only cookie where the callback never looks.
 	_, port, _ := strings.Cut(host, ":")
-	assertHandoffRefused(t, serveHandoff(t, srv, "localhost:"+port, handoffToken(t, srv), bs.Flow), "another host")
+	assertHandoffRefused(t, serveHandoff(t, srv, "localhost:"+port, handoffToken(t, srv), f.ID), "another host")
 
 	// One use per token: the replay signs nothing in, hands no cookie.
 	tok := handoffToken(t, srv)
-	first := serveHandoff(t, srv, host, tok, bs.Flow)
-	if first.Code != http.StatusFound || first.Header().Get("Location") != bs.URL || cookieOf(first, "kivali_connect") == nil || cookieOf(first, auth.CookieName) == nil {
+	first := serveHandoff(t, srv, host, tok, f.ID)
+	if first.Code != http.StatusFound || first.Header().Get("Location") != connectStartPath+"?flow="+f.ID || cookieOf(first, "kivali_connect") == nil || cookieOf(first, auth.CookieName) == nil {
 		t.Fatalf("first: %d to %q", first.Code, first.Header().Get("Location"))
 	}
-	assertHandoffRefused(t, serveHandoff(t, srv, host, tok, bs.Flow), "replay")
+	assertHandoffRefused(t, serveHandoff(t, srv, host, tok, f.ID), "replay")
 	// Not loopback: no such route.
-	if rr := serveHandoff(t, srv, "kivali.example.com", handoffToken(t, srv), bs.Flow); rr.Code != http.StatusNotFound {
+	if rr := serveHandoff(t, srv, "kivali.example.com", handoffToken(t, srv), f.ID); rr.Code != http.StatusNotFound {
 		t.Errorf("non-loopback: %d", rr.Code)
 	}
-	// Taken by its callback: no longer a flow to send a browser to.
-	authorize, _ := url.Parse(bs.URL)
-	if to := callback(t, srv, vendorApprove(t, authorize), cookieOf(first, "kivali_connect")); to.Query().Get("signed_in") == "" {
-		t.Fatalf("the callback landed on %s", to)
-	}
-	assertHandoffRefused(t, serveHandoff(t, srv, host, handoffToken(t, srv), bs.Flow), "a taken flow")
+	// Its callback came: no longer a flow to send a browser to.
+	authorize := authorizeOf(t, srv, f)
+	q := authorize.Query()
+	q.Set("redirect_uri", ts.URL+connectCallbackPath)
+	authorize.RawQuery = q.Encode()
+	back := vendorApprove(t, authorize)
+	signedInThere(t, srv, callback(t, srv, back, cookieOf(first, "kivali_connect")))
+	assertHandoffRefused(t, serveHandoff(t, srv, host, handoffToken(t, srv), f.ID), "a flow that came back")
 }
 
-// Why this test exists: a sign-in lasts ten minutes. A handoff for one
-// that ran out (the owner's browser slow to open, the computer asleep)
-// must not send the browser to the vendor, whose code Kivali could no
-// longer exchange: it is refused, with no session.
+// Why this test exists: a flow lasts ten minutes after its last change.
+// A handoff for one that ran out (the owner's browser slow to open, the
+// computer asleep) must not send the browser to the vendor, whose code
+// Kivali could no longer exchange: it is refused, with no session.
 func TestDesktopHandoffNextPastItsTime(t *testing.T) {
 	srv, _, ts := desktopServer(t)
-	bs, _ := startInWebview(t, srv, ts)
+	f := startInWebview(t, srv, ts)
 	base, _ := url.Parse(ts.URL)
-	srv.Clock.(interface{ Advance(time.Duration) }).Advance(signInFlowTTL)
-	assertHandoffRefused(t, serveHandoff(t, srv, base.Host, handoffToken(t, srv), bs.Flow), "an expired flow")
+	srv.Clock.(interface{ Advance(time.Duration) }).Advance(setupFlowTTL)
+	assertHandoffRefused(t, serveHandoff(t, srv, base.Host, handoffToken(t, srv), f.ID), "an expired flow")
 }
 
 // assertHandoffRefused fails unless rr is a refused handoff: a 302 to
-// "/" that sets neither a session nor a sign-in cookie.
+// "/" that sets neither a session nor a flow cookie.
 func assertHandoffRefused(t *testing.T, rr *httptest.ResponseRecorder, what string) {
 	t.Helper()
 	if rr.Code != http.StatusFound || rr.Header().Get("Location") != "/" || cookieOf(rr, auth.CookieName) != nil || cookieOf(rr, "kivali_connect") != nil {
@@ -269,21 +283,20 @@ func assertHandoffRefused(t *testing.T, rr *httptest.ResponseRecorder, what stri
 	}
 }
 
-// Why this test exists: the web app begins every browser sign-in at
-// GET /connect/start?flow=<id> (Kivali Desktop takes that address over
-// in its team window). In a browser it must send the tab on to the
-// vendor's page of that flow, the address Kivali made and nothing from
-// the request, and set no cookie of its own; for a flow it does not
-// know (a typo, a sign-in that ran out or was already used) it returns
-// to the integrations list saying to start again, never to a vendor.
+// Why this test exists: the web app sends the browser for every Go step
+// to GET /connect/start?flow=<id> (Kivali Desktop takes that address
+// over in its team window). It must send the browser on to the step's
+// address, the one the flow gave and nothing from the request, with the
+// flow's cookie; a flow not on a Go step returns to its page, and an id
+// it does not know (a typo, a flow that ran out) to the integrations
+// list saying to start again, never to a vendor.
 func TestConnectStartSendsTheBrowserToTheFlow(t *testing.T) {
 	srv, _ := browserServer(t)
-	rr := serveSignedIn(t, srv, httptest.NewRequest(http.MethodPost, loopbackOrigin+intBase+"/crm/connection/sign-in/browser", nil))
-	bs := orgOK[apitypes.BrowserSignIn](t, rr)
-
-	rr = serveSignedIn(t, srv, httptest.NewRequest(http.MethodGet, connectStartPath+"?flow="+bs.Flow, nil))
-	if rr.Code != http.StatusSeeOther || rr.Header().Get("Location") != bs.URL || len(rr.Result().Cookies()) != 0 {
-		t.Errorf("a pending flow: %d to %q, cookies %v", rr.Code, rr.Header().Get("Location"), rr.Result().Cookies())
+	startSetupFlow(t, srv, "crm")
+	f := waitFlow(t, srv, "crm", apitypes.SetupFlowStateGo)
+	rr, cookie := startPage(t, srv, f)
+	if u, _ := url.Parse(rr.Header().Get("Location")); rr.Code != http.StatusSeeOther || u.Path != "/authorize" || cookie == nil {
+		t.Errorf("a flow on its Go: %d to %q, cookie %v", rr.Code, rr.Header().Get("Location"), cookie)
 	}
 	for _, q := range []string{"?flow=0000", "?flow=", "?url=https://evil.example/"} {
 		rr = serveSignedIn(t, srv, httptest.NewRequest(http.MethodGet, connectStartPath+q, nil))
@@ -292,8 +305,8 @@ func TestConnectStartSendsTheBrowserToTheFlow(t *testing.T) {
 			t.Errorf("%s: %d to %q", q, rr.Code, rr.Header().Get("Location"))
 		}
 	}
-	srv.Clock.(interface{ Advance(time.Duration) }).Advance(signInFlowTTL)
-	rr = serveSignedIn(t, srv, httptest.NewRequest(http.MethodGet, connectStartPath+"?flow="+bs.Flow, nil))
+	srv.Clock.(interface{ Advance(time.Duration) }).Advance(setupFlowTTL)
+	rr = serveSignedIn(t, srv, httptest.NewRequest(http.MethodGet, connectStartPath+"?flow="+f.ID, nil))
 	if to, _ := url.Parse(rr.Header().Get("Location")); to.Path != "/org/integrations" {
 		t.Errorf("an expired flow: to %q", rr.Header().Get("Location"))
 	}

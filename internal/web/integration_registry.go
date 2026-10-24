@@ -924,7 +924,7 @@ func (r *integrationRegistry) connectionValues(ctx context.Context, name string)
 // connection, so no caller holds lockIntegrations.
 func (r *integrationRegistry) readConnection(ctx context.Context, name, connID string) (*integration.Manifest, store.IntegrationConnection, map[string]string, []string, string, error) {
 	m, conn, values, secretValues, proxySecret, data, err := r.readStoredConnection(ctx, name, connID)
-	if err != nil || !m.Kivali.Connection.SignIn() {
+	if err != nil || !m.Kivali.Connection.OAuth() {
 		return m, conn, values, secretValues, proxySecret, err
 	}
 	token := data[connect.SecretKeyAccessToken]
