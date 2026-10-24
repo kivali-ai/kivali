@@ -28,6 +28,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"time"
 
 	"github.com/kivali-ai/kivali/internal/builtinintegrations"
 	"github.com/kivali-ai/kivali/internal/connect"
@@ -390,6 +391,17 @@ func (d *signInSetup) Setup(ctx context.Context, _ builtinintegrations.Connectio
 	return step, nil
 }
 
+// waitEnds is when the device flow's poller ends its Wait at the
+// latest: the code's expiry, cut to setupFlowTTL from its start. Zero
+// before a code was issued. The call that set it returned before its
+// Wait was shown, under setupRuns.mu, which the caller holds.
+func (d *signInSetup) waitEnds() time.Time {
+	if d.device == nil {
+		return time.Time{}
+	}
+	return d.device.ExpiresAt
+}
+
 // waiting is the device flow's Wait: core polls the vendor at its pace
 // until the owner approves, the vendor refuses or the code expires,
 // then keeps the tokens and runs the connection test.
@@ -555,4 +567,5 @@ var (
 	_ setupFormChecker = (*signInSetup)(nil)
 	_ setupWaiter      = (*signInSetup)(nil)
 	_ setupBinder      = (*signInSetup)(nil)
+	_ setupWaitEnder   = (*signInSetup)(nil)
 )

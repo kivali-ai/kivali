@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/kivali-ai/kivali/internal/builtinintegrations"
+	"github.com/kivali-ai/kivali/internal/connect/connecttest"
 	"github.com/kivali-ai/kivali/internal/web/apitypes"
 )
 
@@ -47,6 +48,14 @@ func TestSetupFlowWatchedWaitIsKept(t *testing.T) {
 	callsEnd(t, run)
 	if clk.Now().Sub(shown) <= setupFlowTTL {
 		t.Fatalf("only %v went by", clk.Now().Sub(shown))
+	}
+	// Each check moved expires_at and nothing else: no state was sent to
+	// the stream for it, or a watched Wait would send one every three
+	// seconds.
+	select {
+	case b := <-ch:
+		t.Errorf("a check of the same Wait was streamed: %s", b)
+	default:
 	}
 	f, _, _ := srv.setupPeek("echo")
 	if f == nil || f.State != apitypes.SetupFlowStateWait {
@@ -118,6 +127,22 @@ func TestSetupStartedAgainTakesOverWhatWasKept(t *testing.T) {
 	}
 	if u := e.callsOf("uninstall"); len(u) != 1 || u[0].Conn.Fields["token"] != "kept-token-1" {
 		t.Errorf("uninstall calls = %+v", u)
+	}
+}
+
+// Why this test exists: a device sign-in's Wait is kept until core's
+// poller ends it, when the code expires, not ten minutes after it was
+// shown, and the page says how long the code works from expires_at. A
+// code the vendor gives five minutes must read as five minutes there.
+func TestDeviceWaitExpiresWithItsCode(t *testing.T) {
+	srv, vendor, clk := signInServer(t)
+	signInBundle(t, srv, vendor)
+	saveSignInClient(t, srv)
+	vendor.Set(func(k *connecttest.Knobs) { k.DeviceExpiresIn = 5 * time.Minute })
+	issued := clk.Now()
+	f := startDeviceSignIn(t, srv)
+	if !f.ExpiresAt.Equal(issued.Add(5 * time.Minute)) {
+		t.Errorf("expires at %v, want the code's %v", f.ExpiresAt, issued.Add(5*time.Minute))
 	}
 }
 
