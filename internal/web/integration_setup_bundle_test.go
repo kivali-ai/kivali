@@ -282,6 +282,11 @@ func TestBundleSetupInstalls(t *testing.T) {
 	}
 	close(release)
 	f = waitFlow(t, srv, "crm", apitypes.SetupFlowStateGo)
+	// The Keep restarts the server with what it kept. The next call
+	// goes on the same events stream after the restart, and in a pod the
+	// shim queues it until the new server has started (Shim.loop), so it
+	// reaches the server that holds the kept values; the fake shim here
+	// answers at once.
 	fs.next(t, integrationpod.EventRestart)
 	if conn := srv.setupConnection(context.Background(), "crm"); conn.Fields["account"] != "acme" || conn.Fields["key"] != "" {
 		t.Errorf("kept at the Go = %v", conn.Fields)
@@ -508,12 +513,56 @@ func TestBundleRequirementsAndFix(t *testing.T) {
 	if got := unmetIDs(page); !slices.Equal(got, []string{"running"}) || pod.sent(integrationpod.MethodRequirements) != asked {
 		t.Errorf("not running: unmet %v, asked %d more times", got, pod.sent(integrationpod.MethodRequirements)-asked)
 	}
+	// Its Fix has no rows to come from and no server to run in: the
+	// owner reads why, not that the flow is not one it has.
+	if e := assertAPIError(t, flowDo(t, srv, http.MethodPost, intBase+"/crm/setup", apitypes.SetupFlowStart{Flow: "rescope"}), http.StatusConflict); e.Error != errBundleNotRunning("Test crm") {
+		t.Errorf("a Fix while not running = %+v", e)
+	}
+}
+
+// Why this test exists: a server that does not implement a setup
+// request, or stops while it is being asked, must fail in words the
+// owner can act on, not in the protocol's own ("method not found") or
+// after the five minutes a step may take.
+func TestBundleServerFailuresInWords(t *testing.T) {
+	srv, pod, _, _, _ := bundleSetupServer(t, func(int, integrationpod.SetupParams, podProgress) (any, *integrationpod.RPCError, bool) {
+		return nil, &integrationpod.RPCError{Code: integrationpod.CodeMethodNotFound, Message: "method not found: kivali/setup"}, true
+	}, true)
+	startSetupFlow(t, srv, "crm")
+	pod.next(t)
+	if f := waitFlow(t, srv, "crm", apitypes.SetupFlowStateFailed); textOf(f.Error) != "Test crm's server does not answer kivali/setup; its author must add it" {
+		t.Errorf("not implemented: %q", textOf(f.Error))
+	}
+
+	var fs *fakeShim
+	srv, pod, fs, _, _ = bundleSetupServer(t, func(int, integrationpod.SetupParams, podProgress) (any, *integrationpod.RPCError, bool) {
+		return nil, nil, false
+	}, true)
+	startSetupFlow(t, srv, "crm")
+	pod.next(t)
+	srv.Integrations.disconnect(fs.link)
+	if f := waitFlow(t, srv, "crm", apitypes.SetupFlowStateFailed); textOf(f.Error) != "Test crm stopped before it answered" {
+		t.Errorf("stopped mid-step: %q", textOf(f.Error))
+	}
+
+	srv, pod, _, _, _ = bundleSetupServer(t, keepAndDone, true)
+	installBundle(t, srv, pod)
+	pod.set(func(sp *setupPod) {
+		sp.uninstall = func() *integrationpod.RPCError {
+			return &integrationpod.RPCError{Code: integrationpod.CodeMethodNotFound, Message: "method not found"}
+		}
+	})
+	if e := assertAPIError(t, intDelete(t, srv, intBase+"/crm"), http.StatusBadGateway); e.Error != "Test crm could not undo its installation: Test crm's server does not answer kivali/uninstall; its author must add it; nothing was changed" {
+		t.Errorf("uninstall not implemented = %+v", e)
+	}
 }
 
 // Why this test exists: Uninstall asks a setup bundle to undo its
 // installation on the service before Kivali forgets anything; its error
 // is the owner's to read, scrubbed, and leaves everything as it was, as
-// a built-in's does. A bundle switched off has no server to ask, and is
+// a built-in's does. A bundle switched on whose server is not running
+// is refused, since uninstalling it then would leave its app on the
+// service by accident; one switched off has no server to ask, and is
 // uninstalled all the same: switching a bundle off is how one whose
 // server fails can still be removed.
 func TestBundleUninstall(t *testing.T) {
@@ -540,6 +589,19 @@ func TestBundleUninstall(t *testing.T) {
 	}
 	assertAPIError(t, orgGet(t, srv, intBase+"/crm"), http.StatusNotFound)
 
+	// Switched on and not running: the server may be about to run, so
+	// the uninstall waits for it, and nothing changes.
+	var fs *fakeShim
+	srv, pod, fs, _, mem = bundleSetupServer(t, keepAndDone, true)
+	installBundle(t, srv, pod)
+	srv.Integrations.disconnect(fs.link)
+	apiErr = assertAPIError(t, intDelete(t, srv, intBase+"/crm"), http.StatusConflict)
+	if apiErr.Error != "Test crm is not running, so it cannot undo its installation on the service; switch it off to uninstall it without that" || len(mem.Names()) != 1 {
+		t.Errorf("not running = %+v, secrets %v", apiErr, mem.Names())
+	}
+
+	// Switched off: no server to ask, so the service's side is left as
+	// it is, and the rest goes.
 	srv, pod, _, _, mem = bundleSetupServer(t, keepAndDone, true)
 	installBundle(t, srv, pod)
 	orgOK[apitypes.IntegrationPage](t, intPost(t, srv, intBase+"/crm/disable"))
@@ -557,8 +619,8 @@ func TestBundleUninstall(t *testing.T) {
 // Why this test exists: a progress notification reaches only the
 // request whose token it names, from the pod that request went to, and
 // only while the request waits: a pod naming another integration's
-// token, or a late notification after its step answered, must not move
-// a flow's progress bar.
+// token, a notification Kivali cannot read, or a late one after its
+// step answered, must not move a flow's progress bar.
 func TestProgressReachesOnlyItsRequest(t *testing.T) {
 	srv := newTestServer(t)
 	reg, _ := withIntegrationRegistry(srv, newFakeIntegrationProv())
@@ -574,6 +636,11 @@ func TestProgressReachesOnlyItsRequest(t *testing.T) {
 	note("crm", token, "mine")
 	note("other", token, "another pod's")
 	note("crm", "kivali-progress-99", "another request's")
+	// A token that is not text, and a progress that is not a number,
+	// are not ones Kivali reads.
+	for _, raw := range []string{`{"progressToken": 7, "progress": 1, "message": "a number"}`, `{"progressToken": "` + token + `", "progress": "half", "message": "not a number"}`} {
+		reg.onMessage(context.Background(), "crm", integrationpod.Message{JSONRPC: "2.0", Method: integrationpod.MethodProgress, Params: json.RawMessage(raw)})
+	}
 	stop()
 	note("crm", token, "late")
 	if !slices.Equal(got, []string{"mine"}) {

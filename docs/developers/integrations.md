@@ -726,7 +726,10 @@ runner takes:
   <integration> has", or "that is not a flow <integration> has" for
   one that is not a flow's name, which is not echoed), and a name a
   built-in whose connection is not `setup` names is a 409
-  ("<integration>'s setup does not run its own flows").
+  ("<integration>'s setup does not run its own flows"). A setup bundle
+  installed and switched on whose server is not running has no rows
+  to ask, and its Fix is a 409 ("<integration> is not running, so its
+  own flows cannot run; its log says why").
 
 A Fix needs the integration installed ("install <integration> first")
 and switched on ("switch <integration> on first"). It works on the
@@ -760,9 +763,13 @@ integration (`handleAPIIntegrationUninstall`), 204 once done:
    first, with no lock held: `Uninstall` is called with the connection
    as a call reads it (as stored when it needs a sign-in or the service
    did not answer its renewal), under `integrationCallTimeout`. A setup
-   bundle switched off has no server to ask: its installation on the
-   service is left as it is and the rest goes on, so a bundle whose
-   server fails is uninstalled by switching it off first. An error, or no answer in time, is a 502
+   bundle with a connection whose server is not running is not asked:
+   switched on, the uninstall is a 409 ("<integration> is not running,
+   so it cannot undo its installation on the service; switch it off to
+   uninstall it without that"), and nothing changes; switched off, its
+   installation on the service is left as it is and the rest goes on,
+   so a bundle whose server fails is uninstalled by switching it off
+   first. An error, or no answer in time, is a 502
    ("<integration> could not undo its installation: <words>; nothing
    was changed"), scrubbed of the connection's secrets and audited as
    `uninstall`, not allowed; nothing else happens.
@@ -1099,11 +1106,15 @@ and a proxy credential per connection stay built-in only.
   seconds, and asked only while the server runs.
 - **`kivali/uninstall`**, params `{}`: undo the installation on the
   service, answered `{}`, within `integrationCallTimeout`, and asked
-  only while the server runs ([Uninstall](#uninstall)).
+  only while the server runs: a bundle switched on whose server is not
+  running cannot be uninstalled, one switched off is uninstalled
+  without the request ([Uninstall](#uninstall)).
 
 An error of any of them is a JSON-RPC error whose message is the
 owner's words, scrubbed as a built-in's error is; one with no message
-reads "<Integration> failed and gave no reason", and a server that
+reads "<Integration> failed and gave no reason", one of -32601 (a
+server that does not implement the request) "<Integration>'s server
+does not answer <method>; its author must add it", and a server that
 stops before it answers, "<Integration> stopped before it answered".
 
 ## Sign-in connections
@@ -3275,7 +3286,7 @@ the owner's.
 | `POST /api/v1/org/integrations` | multipart `file`: 201 `IntegrationVersion`; 400 `IntegrationUploadRefused`; 409 for a version already stored or a built-in name. |
 | `GET /api/v1/org/integrations/{name}` | `IntegrationPage`, with its `requirements` installed or off, its `flow`, `running` and `can_uninstall`. |
 | `POST .../{name}/enable`, `.../disable` | `IntegrationPage`. |
-| `DELETE .../{name}` | Uninstall ([Uninstall](#uninstall)): 204; 409 for a built-in with nothing installed ("<integration> is not installed, so there is nothing to uninstall"); 502 when the built-in's own `Uninstall` failed ("<integration> could not undo its installation: ...; nothing was changed"); 500 when a Secret could not be deleted. |
+| `DELETE .../{name}` | Uninstall ([Uninstall](#uninstall)): 204; 409 for a built-in with nothing installed ("<integration> is not installed, so there is nothing to uninstall") and for a setup bundle switched on whose server is not running ("<integration> is not running, so it cannot undo its installation on the service; ..."); 502 when the built-in's own `Uninstall` or a setup bundle's `kivali/uninstall` failed ("<integration> could not undo its installation: ...; nothing was changed"); 500 when a Secret could not be deleted. |
 | `GET .../versions/{version}` | `IntegrationVersion`, with `changes` from the version in use, and `builtin` for a built-in integration's version. |
 | `POST .../versions/{version}/approve`, `.../reject` | `IntegrationVersion`; 409 when not pending, or for a built-in integration. |
 | `POST .../versions/{version}/rollback` | `IntegrationVersion`; 409 when not superseded, or for a built-in integration; 404 for a version not stored. |

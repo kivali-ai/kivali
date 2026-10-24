@@ -86,6 +86,9 @@ func (s *Server) handleAPISetupStart(w http.ResponseWriter, r *http.Request) {
 	case flow == flowSignIn && !v.signIn():
 		writeAPIError(w, http.StatusConflict, display+" is not connected by signing in", whoYou)
 		return
+	case flow != builtinintegrations.FlowSetup && flow != flowSignIn && !named && installed && v.it.Enabled && !v.running && s.isSetupBundle(v):
+		writeAPIError(w, http.StatusConflict, errBundleNotRunning(display), whoBundle)
+		return
 	case flow != builtinintegrations.FlowSetup && flow != flowSignIn && !named:
 		writeAPIError(w, http.StatusConflict, errFlowNotOffered(flow, display), whoLink)
 		return

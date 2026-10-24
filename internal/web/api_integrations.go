@@ -812,6 +812,13 @@ func (s *Server) handleAPIIntegrationUninstall(w http.ResponseWriter, r *http.Re
 		writeAPIError(w, http.StatusConflict, errNotInstalled(v.displayName()), whoNoOne)
 		return
 	}
+	// A setup bundle switched on whose server is not running cannot be
+	// asked to undo its installation, and the uninstall waits for it;
+	// one switched off leaves the service's side as it is.
+	if words := s.uninstallRefusal(v); words != "" {
+		writeAPIError(w, http.StatusConflict, words, whoYou)
+		return
+	}
 	// The service's side first, with no lock held: it may be slow, and
 	// a failure changes nothing here.
 	if words := s.serviceUninstall(r.Context(), v); words != "" {
