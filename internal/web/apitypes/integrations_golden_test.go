@@ -294,6 +294,25 @@ func goldenBuiltinIntegrationVersion() IntegrationVersion {
 	}
 }
 
+// goldenIntegrationVersionEarlierBundle is GitHub 1.0.0's install
+// screen after the update to 2.0.0: a built-in version an earlier
+// Kivali shipped as a bundle, superseded, still holding its bundle's
+// size, file count and software, which nothing runs any more.
+func goldenIntegrationVersionEarlierBundle() IntegrationVersion {
+	v := goldenBuiltinIntegrationVersion()
+	current := "2.0.0"
+	v.Name, v.DisplayName, v.Description = "github", "GitHub", "Read and open issues, comments and pull requests in GitHub repositories, signed in with your own GitHub App."
+	v.State, v.Current, v.CurrentVersion = IntegrationVersionStateSuperseded, false, &current
+	v.Runtime, v.ConnectionMethod, v.SignInClient = "python", "browser", "operator"
+	v.SignInHosts = []string{"github.com"}
+	v.Hosts = []string{"api.github.com", "github.com"}
+	v.Packages = []string{"gh"}
+	v.ConnectionFields = goldenSignInConnectionFields()
+	v.Actions = []IntegrationAction{{Name: "list_issues", Description: "List a repository's issues by state, labels or search words, at most 50. Reads only."}}
+	v.BundleBytes, v.FileCount = 4096, 3
+	return v
+}
+
 // goldenSignInConnectionFields is a sign-in connection's form: the
 // manifest's field and the client id and secret core adds.
 func goldenSignInConnectionFields() []ConnectionField {

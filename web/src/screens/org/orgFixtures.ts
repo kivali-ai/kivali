@@ -14,6 +14,7 @@ import goIntegrationPageSignInElsewhereJson from '../../../../internal/web/apity
 import goIntegrationUploadRefusedJson from '../../../../internal/web/apitypes/testdata/integration_upload_refused.json';
 import goIntegrationVersionJson from '../../../../internal/web/apitypes/testdata/integration_version.json';
 import goIntegrationVersionBuiltinJson from '../../../../internal/web/apitypes/testdata/integration_version_builtin.json';
+import goIntegrationVersionEarlierBundleJson from '../../../../internal/web/apitypes/testdata/integration_version_earlier_bundle.json';
 import goIntegrationVersionSignInJson from '../../../../internal/web/apitypes/testdata/integration_version_sign_in.json';
 import goIntegrationVersionSetupJson from '../../../../internal/web/apitypes/testdata/integration_version_setup.json';
 import goIntegrationVersionRegisteredJson from '../../../../internal/web/apitypes/testdata/integration_version_registered.json';
@@ -111,6 +112,8 @@ export const goSetupFlowFailed = (goSetupFlowFailedJson satisfies Wire<SetupFlow
 export const goIntegrationVersion =(goIntegrationVersionJson satisfies Wire<IntegrationVersion>) as IntegrationVersion;
 /** A version of an integration that ships with Kivali. */
 export const goIntegrationVersionBuiltin = (goIntegrationVersionBuiltinJson satisfies Wire<IntegrationVersion>) as IntegrationVersion;
+/** GitHub 1.0.0 after the update: a built-in version an earlier Kivali shipped as a bundle, its files and software still recorded. */
+export const goIntegrationVersionEarlierBundle = (goIntegrationVersionEarlierBundleJson satisfies Wire<IntegrationVersion>) as IntegrationVersion;
 /** The install screen of a bundle that connects by signing in in the browser: its scopes and sign-in hosts. */
 export const goIntegrationVersionSignIn = (goIntegrationVersionSignInJson satisfies Wire<IntegrationVersion>) as IntegrationVersion;
 /** The install screen of a built-in whose connection its own setup flow makes: the flow's declarations, no fields. */

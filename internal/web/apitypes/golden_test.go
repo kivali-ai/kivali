@@ -204,6 +204,7 @@ func goldenFixtures() map[string]any {
 		"integration_page_sign_in_elsewhere": goldenIntegrationPageSignInElsewhere(),
 		"integration_version":                goldenIntegrationVersion(),
 		"integration_version_builtin":        goldenBuiltinIntegrationVersion(),
+		"integration_version_earlier_bundle": goldenIntegrationVersionEarlierBundle(),
 		"integration_version_sign_in":        goldenIntegrationVersionSignIn(),
 		"integration_version_setup":          goldenIntegrationVersionSetup(),
 		"integration_version_registered":     goldenIntegrationVersionRegistered(),
