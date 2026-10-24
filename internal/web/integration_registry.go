@@ -2,8 +2,7 @@
 // side, as core sees it.
 //
 // One entry per integration that should run: an approved version,
-// switched on, and a bundle (uploaded, or shipped with Kivali), not a
-// built-in of Go code. Each has a pod (integrationpod) whose
+// switched on, and an uploaded bundle, not a built-in. Each has a pod (integrationpod) whose
 // shim dials integration.sock with the per-pod token core minted for
 // it. The registry keeps the token, the connected shim (the link: its
 // events stream), the requests core is waiting on, the last tools/list
@@ -203,10 +202,6 @@ type integrationRegistry struct {
 
 	store   *store.FSStore
 	secrets func() secrets.Store
-	// shipped reports whether a built-in record is a bundle this
-	// binary ships (Server.shippedBundle), which runs in a pod as an
-	// uploaded bundle does.
-	shipped func(store.Integration) bool
 	prov    IntegrationProvisioner
 	clk     clock.Clock
 	logf    func(format string, args ...any)
@@ -224,19 +219,15 @@ type integrationRegistry struct {
 	signIn func(ctx context.Context, name string, m *integration.Manifest, conn store.IntegrationConnection, data map[string]string) (string, error)
 }
 
-func newIntegrationRegistry(st *store.FSStore, sec func() secrets.Store, shipped func(store.Integration) bool, prov IntegrationProvisioner, clk clock.Clock, logf func(string, ...any)) *integrationRegistry {
+func newIntegrationRegistry(st *store.FSStore, sec func() secrets.Store, prov IntegrationProvisioner, clk clock.Clock, logf func(string, ...any)) *integrationRegistry {
 	if logf == nil {
 		logf = func(string, ...any) {}
-	}
-	if shipped == nil {
-		shipped = func(store.Integration) bool { return false }
 	}
 	return &integrationRegistry{
 		entries: map[string]*integrationEntry{},
 		pending: map[int64]*integrationCall{},
 		store:   st,
 		secrets: sec,
-		shipped: shipped,
 		prov:    prov,
 		clk:     clk,
 		logf:    logf,
@@ -322,9 +313,9 @@ func (r *integrationRegistry) closeLinks() {
 }
 
 // Reconcile brings every integration's pod to what the store says:
-// running for an approved, switched-on bundle (uploaded, or shipped
-// with Kivali and carried by this binary), and stopped for every
-// other.
+// running for an approved, switched-on bundle, and stopped for every
+// other: a built-in runs no pod, so one left from a Kivali that shipped
+// the integration as a bundle is stopped.
 func (r *integrationRegistry) Reconcile(ctx context.Context) error {
 	return r.reconcile(ctx, false)
 }
@@ -338,7 +329,7 @@ func (r *integrationRegistry) reconcile(ctx context.Context, boot bool) error {
 	}
 	want := map[string]string{}
 	for _, it := range its {
-		if it.Enabled && it.CurrentVersion != "" && (!it.Builtin || r.shipped(it)) {
+		if it.Enabled && it.CurrentVersion != "" && !it.Builtin {
 			want[it.Name] = it.CurrentVersion
 		}
 	}
@@ -397,9 +388,8 @@ func (r *integrationRegistry) reconcile(ctx context.Context, boot bool) error {
 // ensureRunning gives name a pod for version: the one it has when it
 // matches, one taken on from before a restart, or a new one with a new
 // token. A pod's spec carries the digest of the files it runs, so one
-// built from other files than the ones stored now (a shipped bundle
-// whose files boot wrote again under the same version) is never taken
-// on, and Start replaces it.
+// built from other files than the ones stored now is never taken on,
+// and Start replaces it.
 func (r *integrationRegistry) ensureRunning(ctx context.Context, name, version string) error {
 	digest, err := r.store.IntegrationBundleDigest(name, version)
 	if err != nil {

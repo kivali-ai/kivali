@@ -2556,14 +2556,6 @@ export interface IntegrationVersion {
    */
   builtin: boolean;
   /**
-   * Shipped is true for a built-in version that is a bundle, which
-   * runs in a pod of its own as an uploaded one does: its runtime,
-   * hosts and bundle are a bundle's. False for a built-in that runs
-   * inside Kivali, which has no runtime, no hosts and no bundle (it
-   * reaches the hosts its connection names), and for any upload.
-   */
-  shipped: boolean;
-  /**
    * CurrentVersion is the version in use now, when there is one and
    * it is not this one, so the screen can say what approving replaces.
    */

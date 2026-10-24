@@ -2,7 +2,7 @@
   "summary": {
     "name": "github",
     "display_name": "GitHub",
-    "description": "Issues and pull requests on GitHub.",
+    "description": "Read and open issues, comments and pull requests in GitHub repositories, as a private GitHub App on your account.",
     "version": "2.0.0",
     "state": "setting_up",
     "needs": 0,
@@ -24,11 +24,11 @@
   ],
   "connection_fields": [],
   "connection_method": "setup",
-  "sign_in_client": "setup",
+  "sign_in_client": "",
   "scopes": [],
   "setup_notes_md": "",
   "setup": {
-    "summary": "Creates a private GitHub App on your account that may write contents, issues and pull requests, and installs it on the repositories you choose.",
+    "summary": "Creates a private GitHub App, on your account or an organization's, that may read contents and write issues and pull requests, and installs it on the repositories you choose. Uninstalling removes the installation; the app stays on GitHub until you delete it under GitHub Apps in the account's settings.",
     "hosts": [
       "github.com"
     ],
@@ -36,16 +36,9 @@
       {
         "key": "account",
         "title": "Account",
-        "words": "Your personal account, or an organization's name",
+        "words": "An organization's name, or leave it blank for your personal account",
         "secret": false,
         "setup_only": false
-      },
-      {
-        "key": "personal_access_key",
-        "title": "Personal access key",
-        "words": "From the service's key page; used once, never kept",
-        "secret": true,
-        "setup_only": true
       }
     ],
     "keeps": [
@@ -54,12 +47,8 @@
         "words": "The app's id"
       },
       {
-        "key": "private_key",
-        "words": "The app's private key, which Kivali signs with to get a token for each call"
-      },
-      {
-        "key": "installation_id",
-        "words": "Where the app is installed"
+        "key": "slug",
+        "words": "The app's name on GitHub"
       },
       {
         "key": "client_id",
@@ -68,13 +57,19 @@
       {
         "key": "client_secret",
         "words": "The app's client secret"
+      },
+      {
+        "key": "private_key",
+        "words": "The app's private key, which Kivali signs with to get a token for each call"
+      },
+      {
+        "key": "installation_id",
+        "words": "Where the app is installed"
       }
     ],
-    "then": "browser"
+    "then": ""
   },
-  "sign_in_hosts": [
-    "github.com"
-  ],
+  "sign_in_hosts": [],
   "connection_test": true,
   "access": [],
   "agents_without": [

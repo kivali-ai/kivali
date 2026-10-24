@@ -156,19 +156,6 @@ type Server struct {
 	// builtins.All(); it is read at each use, so tests set
 	// it after NewServer.
 	BuiltinIntegrations builtinintegrations.Registry
-	// ShippedBundles is the integrations that ship with Kivali as
-	// bundles embedded in the binary, which run in pods of their own as
-	// uploaded bundles do (integration_builtin.go). An integration is
-	// one of them when its record is built in, its name is here and not
-	// in BuiltinIntegrations. NewServer gives a Server without them
-	// builtins.Shipped(); it is read at each use, so tests set it after
-	// NewServer.
-	ShippedBundles builtinintegrations.ShippedBundles
-	// shippedInstalled is each shipped bundle boot (or a restore)
-	// installed, with the version it made the one in use
-	// (SetShippedBundlesInstalled); guarded by shippedMu.
-	shippedMu        sync.Mutex
-	shippedInstalled map[string]string
 	// Integrations is the registry NewServer builds from the store,
 	// Secrets and IntegrationProvisioner; StartIntegrations runs it.
 	Integrations *integrationRegistry
@@ -408,12 +395,9 @@ func NewServer(s *Server) (*Server, error) {
 	if s.BuiltinIntegrations == nil {
 		s.BuiltinIntegrations = builtins.All()
 	}
-	if s.ShippedBundles == nil {
-		s.ShippedBundles = builtins.Shipped()
-	}
 	if s.Integrations == nil && s.Store != nil {
 		// Secrets is read at each use: tests swap it after NewServer.
-		s.Integrations = newIntegrationRegistry(s.Store, func() secrets.Store { return s.Secrets }, s.shippedBundle, s.IntegrationProvisioner, s.Clock, log.Printf)
+		s.Integrations = newIntegrationRegistry(s.Store, func() secrets.Store { return s.Secrets }, s.IntegrationProvisioner, s.Clock, log.Printf)
 	}
 	if s.Connect == nil {
 		s.Connect = &connect.Engine{Clock: s.Clock, HTTP: &http.Client{Timeout: connectHTTPTimeout}}

@@ -14,13 +14,13 @@ import goIntegrationPageSignInElsewhereJson from '../../../../internal/web/apity
 import goIntegrationUploadRefusedJson from '../../../../internal/web/apitypes/testdata/integration_upload_refused.json';
 import goIntegrationVersionJson from '../../../../internal/web/apitypes/testdata/integration_version.json';
 import goIntegrationVersionBuiltinJson from '../../../../internal/web/apitypes/testdata/integration_version_builtin.json';
-import goIntegrationVersionShippedJson from '../../../../internal/web/apitypes/testdata/integration_version_shipped.json';
 import goIntegrationVersionSignInJson from '../../../../internal/web/apitypes/testdata/integration_version_sign_in.json';
 import goIntegrationVersionSetupJson from '../../../../internal/web/apitypes/testdata/integration_version_setup.json';
 import goIntegrationVersionRegisteredJson from '../../../../internal/web/apitypes/testdata/integration_version_registered.json';
 import goIntegrationPageSetupJson from '../../../../internal/web/apitypes/testdata/integration_page_setup.json';
 import goIntegrationPageSettingUpJson from '../../../../internal/web/apitypes/testdata/integration_page_setting_up.json';
 import goIntegrationPageFixJson from '../../../../internal/web/apitypes/testdata/integration_page_fix.json';
+import goIntegrationPageMisfitJson from '../../../../internal/web/apitypes/testdata/integration_page_misfit.json';
 import goIntegrationPageOffJson from '../../../../internal/web/apitypes/testdata/integration_page_off.json';
 import goIntegrationPagePendingJson from '../../../../internal/web/apitypes/testdata/integration_page_pending.json';
 import goIntegrationPageNotIncludedJson from '../../../../internal/web/apitypes/testdata/integration_page_not_included.json';
@@ -111,18 +111,18 @@ export const goSetupFlowFailed = (goSetupFlowFailedJson satisfies Wire<SetupFlow
 export const goIntegrationVersion =(goIntegrationVersionJson satisfies Wire<IntegrationVersion>) as IntegrationVersion;
 /** A version of an integration that ships with Kivali. */
 export const goIntegrationVersionBuiltin = (goIntegrationVersionBuiltinJson satisfies Wire<IntegrationVersion>) as IntegrationVersion;
-/** A version of an integration that ships with Kivali as a bundle: its runtime, hosts and bundle are an upload's. */
-export const goIntegrationVersionShipped = (goIntegrationVersionShippedJson satisfies Wire<IntegrationVersion>) as IntegrationVersion;
 /** The install screen of a bundle that connects by signing in in the browser: its scopes and sign-in hosts. */
 export const goIntegrationVersionSignIn = (goIntegrationVersionSignInJson satisfies Wire<IntegrationVersion>) as IntegrationVersion;
 /** The install screen of a built-in whose connection its own setup flow makes: the flow's declarations, no fields. */
 export const goIntegrationVersionSetup = (goIntegrationVersionSetupJson satisfies Wire<IntegrationVersion>) as IntegrationVersion;
-/** The page of a setup built-in whose flow hands over to a browser sign-in, before setup has run. */
+/** GitHub's page, a setup built-in, before setup has run. */
 export const goIntegrationPageSetup = (goIntegrationPageSetupJson satisfies Wire<IntegrationPage>) as IntegrationPage;
 /** The same page while its setup flow builds the app: setting up, with the flow under way. */
 export const goIntegrationPageSettingUp = (goIntegrationPageSettingUpJson satisfies Wire<IntegrationPage>) as IntegrationPage;
 /** The same page once installed, one of its own requirements unmet and its Fix flow waiting on GitHub. */
 export const goIntegrationPageFix = (goIntegrationPageFixJson satisfies Wire<IntegrationPage>) as IntegrationPage;
+/** The same page after an update whose setup does not take the connection an earlier version made: set it up again. */
+export const goIntegrationPageMisfit = (goIntegrationPageMisfitJson satisfies Wire<IntegrationPage>) as IntegrationPage;
 /** HubSpot's page switched off: its connection and access kept, no running row. */
 export const goIntegrationPageOff = (goIntegrationPageOffJson satisfies Wire<IntegrationPage>) as IntegrationPage;
 /** An uploaded bundle's page before any version is approved. */

@@ -167,3 +167,46 @@ func TestRemoveStaleBuiltinIntegration(t *testing.T) {
 		t.Errorf("the uploaded one: %v", err)
 	}
 }
+
+// Why this test exists: an earlier Kivali shipped some integrations as
+// bundles, and a later one may carry as Go code the name and version
+// it shipped. The version must then hold no bundle: the install screen
+// and the page would otherwise show a built-in of Go code with a
+// bundle size and files it does not have.
+func TestBuiltinInstallClearsABundleShippedUnderItsVersion(t *testing.T) {
+	s := mustStore(t)
+	echo := echotest.New()
+	if err := s.InstallBuiltinIntegrations([]*integration.Manifest{echo.Manifest()}, intNow); err != nil {
+		t.Fatal(err)
+	}
+	// As the earlier binary left it: the version with its bundle.
+	v, _, err := s.GetIntegrationVersion(echotest.Name, echo.Version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v.FileCount, v.BundleBytes, v.BundleDigest = 2, 2048, "sha256:0000"
+	if err := s.writeIntegrationVersion(echotest.Name, v); err != nil {
+		t.Fatal(err)
+	}
+	dir, _ := s.IntegrationBundleDir(echotest.Name, echo.Version)
+	if err := os.MkdirAll(filepath.Join(dir, "server"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "server", "main.py"), []byte("print(1)\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.InstallBuiltinIntegrations([]*integration.Manifest{echo.Manifest()}, intNow); err != nil {
+		t.Fatal(err)
+	}
+	v, m, err := s.GetIntegrationVersion(echotest.Name, echo.Version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.FileCount != 0 || v.BundleBytes != 0 || v.BundleDigest != "" || m.Server.Type != "" {
+		t.Errorf("version = %+v, manifest server = %+v", v, m.Server)
+	}
+	if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the bundle is still there: %v", err)
+	}
+}

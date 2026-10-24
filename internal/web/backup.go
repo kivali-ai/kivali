@@ -343,14 +343,6 @@ func (s *Server) restoreArchive(ctx context.Context, path, filename string) erro
 	if err := s.Store.MigrateIntegrationConnections(); err != nil {
 		log.Printf("restore: integrations: %v", err)
 	}
-	// And the ones that ship as bundles, with this binary's files.
-	// One that fails is not run: the archive's record of it is not the
-	// binary's.
-	shippedInstalled, err := s.Store.InstallShippedBundles(s.ShippedBundles.ByName(), s.clk().Now())
-	if err != nil {
-		log.Printf("restore: install shipped integrations: %v; Kivali does not run these until they install", err)
-	}
-	s.SetShippedBundlesInstalled(shippedInstalled)
 	// Their connections' proxy credentials, from the Secrets the
 	// restore leaves as they were.
 	s.RegisterBuiltinEgress(ctx)

@@ -94,14 +94,10 @@ type integrationView struct {
 	conn   *connView
 	access []store.IntegrationAccess
 	// running is whether the integration can be called: its shim is
-	// connected, or it is a built-in of Go code this binary carries.
+	// connected, or it is a built-in this binary carries.
 	running bool
-	// builtin is its code when it ships with Kivali as Go code; nil for
-	// a bundle, uploaded or shipped.
+	// builtin is its code when it ships with Kivali; nil for a bundle.
 	builtin builtinintegrations.Integration
-	// shipped is true when it ships with Kivali as a bundle this
-	// binary carries (Server.shippedBundle).
-	shipped bool
 	// flow is its setup flow under way, or the one that last ended;
 	// nil for none. installing is true while a flow that installs it
 	// runs; discarding while the connection a failed or cancelled
@@ -146,7 +142,7 @@ func (s *Server) loadIntegration(ctx context.Context, name string) (*integration
 	if err != nil {
 		return nil, err
 	}
-	v := &integrationView{it: it, running: s.integrationRunning(it), builtin: s.builtinFor(it), shipped: s.shippedBundle(it)}
+	v := &integrationView{it: it, running: s.integrationRunning(it), builtin: s.builtinFor(it)}
 	v.flow, v.installing, v.discarding = s.setupPeek(name)
 	if v.versions, err = s.Store.IntegrationVersions(name); err != nil {
 		return nil, err
@@ -219,9 +215,9 @@ func (s *Server) readConnectionSecret(ctx context.Context, name string, rec stor
 }
 
 // staleBuiltin reports whether v is a built-in integration this binary
-// does not carry, as Go code or as a bundle: another version of Kivali
+// does not carry: another version of Kivali
 // shipped it, nothing runs it, and the owner may uninstall it.
-func (v *integrationView) staleBuiltin() bool { return v.it.Builtin && v.builtin == nil && !v.shipped }
+func (v *integrationView) staleBuiltin() bool { return v.it.Builtin && v.builtin == nil }
 
 // whoBuilt is who fixes what is wrong with v's code: Kivali's
 // developers for a built-in one, whoever built the bundle otherwise.
@@ -606,12 +602,8 @@ func (s *Server) integrationVersionView(v *integrationView, ver store.Integratio
 		FileCount:        ver.FileCount,
 		Current:          v.it.CurrentVersion == ver.Version,
 		Builtin:          v.it.Builtin,
-		// A shipped bundle's version holds its bundle, a Go built-in's
-		// none: what the version is, whether or not this binary still
-		// carries it.
-		Shipped:  v.it.Builtin && ver.FileCount > 0,
-		Changes:  []string{},
-		Findings: nonNilStrings(slices.Clone(ver.Findings)),
+		Changes:          []string{},
+		Findings:         nonNilStrings(slices.Clone(ver.Findings)),
 	}
 	if cur := v.it.CurrentVersion; cur != "" && cur != ver.Version {
 		out.CurrentVersion = &cur

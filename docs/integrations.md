@@ -10,7 +10,7 @@ An integration gives agents **actions**: things they can do in the service, such
 
 An integration is installed one **version** at a time. Nothing in a version runs until you approve it. Once approved and switched on, an integration you install runs on its own, apart from Kivali and from your agents, and reaches only the hosts its install screen listed.
 
-Some integrations ship with Kivali. They are on the Integrations page already, marked **Built in**, and need no approval: their version comes with Kivali, and Kivali's updates bring the next one, so there is nothing to approve, reject or roll back to. Some run inside Kivali, and their network reach is Kivali's own: they reach the hosts their connection names, and their install screen lists no hosts of their own. Others run on their own, as an uploaded integration does: they can show **Running** as not met for a moment while Kivali starts them, and they reach only the hosts their install screen lists. Install one and give agents access as you would any other. Uninstalling a built-in integration takes it back to **Available**, ready to install again; switch it off when your team should not use it for a while, and it stays off. One that this version of Kivali does not include (another version shipped it) is marked **Not in this version of Kivali**: agents cannot use it, and you can uninstall it.
+Some integrations ship with Kivali. They are on the Integrations page already, marked **Built in**, and need no approval: their version comes with Kivali, and Kivali's updates bring the next one, so there is nothing to approve, reject or roll back to. They run inside Kivali: one connected with a token reaches the hosts its connection names, and its install screen lists no hosts of its own; one whose own setup makes its connection, such as [GitHub](#github), lists every host its setup and its calls reach. Install one and give agents access as you would any other. Uninstalling a built-in integration takes it back to **Available**, ready to install again; switch it off when your team should not use it for a while, and it stays off. One that this version of Kivali does not include (another version shipped it) is marked **Not in this version of Kivali**: agents cannot use it, and you can uninstall it.
 
 ### Where an integration stands
 
@@ -45,7 +45,7 @@ A bundle that passes opens its **install screen**, which waits for your approval
 - what the integration is, who built it, and who published this version;
 - every host it reaches;
 - for an integration you connect by signing in, under **Signs in at**, every host the sign-in talks to: your browser is sent to the service's sign-in page there, so check they are the service's own;
-- the software it installs, if any, under **Software it installs**: Debian packages, fetched from Debian's repositories and installed each time the integration starts, before it runs. An integration uses them to run a tool such as GitHub's `gh` for its actions. Read each name before you approve;
+- the software it installs, if any, under **Software it installs**: Debian packages, fetched from Debian's repositories and installed each time the integration starts, before it runs. An integration uses them to run a tool for its actions. Read each name before you approve;
 - every field its connection needs, with the secrets marked; or, for an integration whose connection its own setup makes, under **Setup**: what setup does, every host it may send your browser to, every field it may ask you for (secrets, and values used once and never kept, marked) and every value it keeps. Kivali holds setup to that list, so read it as you would the hosts;
 - every action it gives agents;
 - what its access form asks, or that access is all or nothing;
@@ -93,9 +93,9 @@ A requirement that is not met has **Fix**, which runs what mends it, with the sa
 
 ### Connect by signing in
 
-Some services hand out no token to paste: you connect them by signing in to the service and approving Kivali there. The integration's page says so and shows the service's own setup steps above the connection form. When the integration asks the service for particular scopes, its install screen and page list them ("Asks the service for: ..."); one whose app's own settings decide what it may do, such as a GitHub App, lists none.
+Some services hand out no token to paste: you connect them by signing in to the service and approving Kivali there. The integration's page says so and shows the service's own setup steps above the connection form. When the integration asks the service for particular scopes, its install screen and page list them ("Asks the service for: ..."); one whose app's own settings decide what it may do lists none.
 
-1. Register an app with the service, as its setup steps say (on GitHub, a GitHub App under Settings, Developer settings, with device flow turned on). The service gives the app a client id and a client secret.
+1. Register an app with the service, as its setup steps say. The service gives the app a client id and a client secret.
 2. On the integration's page, choose **Install**, paste the client id and the client secret, with any other field it asks for, and choose **Continue**. The client secret is kept like any other secret field and never shown again.
 3. The page shows a code, a **Copy code** button, the service's page to enter it on (it opens in a new tab), and how long the code works, at most ten minutes.
 4. Enter the code on the service's page and approve the sign-in there. The integration's page notices within a few seconds and shows **Signed in**, with the account you signed in as when the integration has a connection test. The integration restarts with the sign-in, which takes a few seconds.
@@ -124,8 +124,8 @@ A Kivali server you run yourself therefore needs a real host name with a certifi
 
 For a team on your computer, the redirect address is the team's own address there, `http://127.0.0.1:<port>/connect/callback`, with the port the page shows:
 
-- GitHub accepts `http://127.0.0.1/connect/callback` registered once, whatever the port.
-- Most other services need the exact address, port included: register the one the page shows. The team keeps its port.
+- Some, such as GitHub, accept `http://127.0.0.1/connect/callback` registered once, whatever the port.
+- Most services need the exact address, port included: register the one the page shows. The team keeps its port.
 - A service that allows no plain `http` address, such as Slack, cannot sign in to a team on your computer this way. Sign in with a code where the integration offers it, or give the team an `https` address under **Other devices** in the team's settings and sign in from a browser at that address.
 
 Kivali offers a sign-in in the browser only where it can finish: at the team's address on your computer (`127.0.0.1`), and at the team's address for other computers (**Other devices**, or a server's own address) opened in a browser. Anywhere else the page signs in with a code instead, when the integration has it:
@@ -231,21 +231,39 @@ Every clone, fetch and push is in **Recent calls**, with the repository and the 
 
 ## GitHub
 
-**GitHub** ships with Kivali. It lets agents read and open issues, comments and pull requests in your GitHub repositories, as the GitHub account you sign in with. It runs GitHub's own `gh` tool for each action, in a place of its own apart from Kivali and your agents, and reaches only `api.github.com` and `github.com`. Its install screen lists `gh` under **Software it installs**.
+**GitHub** ships with Kivali. It lets agents read and open issues, comments and pull requests in your GitHub repositories, as a private GitHub App its setup makes on your account or an organization's. It runs inside Kivali and reaches only `api.github.com` and `github.com`.
 
-### The connection
+### Install it
 
-GitHub is connected by [signing in](#connect-by-signing-in) with a GitHub App you register yourself, so Kivali holds no password or personal access token of yours and you choose what the app may touch. Register it on the account that owns the repositories agents should reach: the app can reach only that account's repositories. The integration's page shows the steps above the connection form; in short:
+On GitHub's page, choose **Install**. Setup makes the app and installs it on GitHub's own pages, where you are signed in to GitHub, and you copy nothing:
 
-1. Open GitHub's form for a new GitHub App from the page: **Register the app on your personal account**, or, for an organization, copy the address the page gives, put the organization's name in place of `ORGANIZATION` and open it. The form opens filled in: the team's callback URLs, the webhook off, installation only on that account, and the repository permissions Contents and Metadata read-only, Issues and Pull requests read and write.
-2. Give the app a name, tick **Enable Device Flow**, and choose **Create GitHub App**.
-3. Install the app on the account, for the repositories agents should reach. Agents reach only repositories the app is installed on.
-4. Choose **Install**, paste the app's client id and a client secret you generate, and choose **Continue**.
-5. Choose **Continue to github.com** and approve the sign-in on GitHub. In Kivali Desktop's window for a team on another computer, the page shows a code instead, which is what **Enable Device Flow** is for: enter the code on GitHub's page.
+1. Name the account to make the app on: an organization's name, or leave it blank for your personal account. Choose the account that owns the repositories agents should reach: the app can reach only that account's repositories. Choose **Continue**.
+2. Choose **Continue to github.com**. GitHub's form for a new GitHub App opens filled in: the name (Kivali and your team's name), the team's address, the webhook off, installation only on that account, and the repository permissions Contents and Metadata read-only, Issues and Pull requests read and write. App names are unique across GitHub, so GitHub may ask you to change the name. Choose **Create GitHub App**.
+3. GitHub sends you back to Kivali, which takes the app GitHub made. Choose **Continue to github.com** again: on GitHub's page for installing the app, choose the repositories agents should reach and choose **Install**. Agents reach only repositories the app is installed on.
+4. GitHub sends you back, and GitHub is installed. When an organization's owners approve installations first, the page waits until one of them approves it on GitHub.
 
-The callback URLs are the addresses GitHub may send your browser back to after a sign-in: the one you opened the page at, `http://127.0.0.1/connect/callback` (any port, for a team in Kivali Desktop), and the team's address for other computers when it has one. If you give the team an address for other computers later (**Other devices** in Kivali Desktop), or change it, add that address followed by `/connect/callback` to the app's callback URLs on GitHub, or a sign-in from there ends on GitHub's error page.
+Kivali keeps the app's id, name, client id and secret, its private key and where it is installed, and nothing of your own GitHub account's. Each call is made as the app: Kivali signs with the app's key for a token that lasts an hour at most, narrowed to the call's repository and to what the action needs.
 
-Leave **Expire user authorization tokens** on in the app's settings: GitHub's tokens then last eight hours, and Kivali renews each one shortly before it expires, so a token that leaks stops working soon. **Test connection** names the GitHub account the connection signs in as. What agents can do is the smaller of what the app may do and what your GitHub account may do.
+If setup stops before it is done, Kivali keeps nothing, and you can start again; an app GitHub already made stays on GitHub, where you can delete it. A team opened at a plain `http` address, such as `http://127.0.0.1` in Kivali Desktop, gives GitHub that address to send you back to: if GitHub refuses it, give the team an `https` address under **Other devices** and start again from there.
+
+**Test connection** names the app and the account it is installed on.
+
+### What it needs once installed
+
+Besides Kivali's own, GitHub's page lists four requirements, each with a **Fix** that takes you to the page on GitHub that mends it:
+
+- **The app's key works**: GitHub accepts the app's key. If not, **Fix** sets GitHub up again, with a new app.
+- **Installed on GitHub**: the app is still installed, and not suspended. Removed on GitHub, **Fix** installs it again; suspended, it opens the installation's settings on GitHub.
+- **Repositories it reaches**: how many repositories the installation reaches, or all of them. Reaching none, **Fix** opens the installation's settings, to choose them.
+- **Permissions current**: the installation has every permission this version of Kivali needs. When a later version needs one more, **Fix** opens the app's settings on GitHub to add it (or the installation's, to approve it), and the page waits until GitHub shows it granted.
+
+### Uninstall
+
+Uninstalling GitHub removes the app's installation from GitHub, then Kivali forgets the app's key and every agent's access. The app itself stays on GitHub: delete it under **GitHub Apps** in the account's settings on GitHub (for an organization, the organization's settings) when you no longer need it. Installing GitHub again makes a new app.
+
+### From an earlier version of Kivali
+
+An earlier version of Kivali connected GitHub by signing in with a GitHub App you registered yourself. This version makes its own app, so that connection does not carry over: after the update, GitHub reads **Available** and says to set it up again, and agents cannot use it until you do. Install it as above. Installing it replaces the earlier connection, and Kivali revokes the earlier app's sign-in; every agent's access is kept, and works again once GitHub is installed. The app you registered stays on GitHub: delete it there when you no longer need it.
 
 ### Access
 
@@ -254,7 +272,7 @@ An agent's access has two parts:
 - **Repositories**: each `owner/name`, such as `acme/widgets`, or a pattern such as `acme/*`, which covers every repository directly under `acme`. `*` is the only wildcard, and capitals do not matter, as for [Git](#access). Name at least one.
 - **May create and comment**: lets the agent open issues and pull requests and comment on them in those repositories. Off, the agent only reads, and its tools do not include those actions.
 
-Everything an agent does is done as the account you signed in with, so GitHub shows your name on its issues, comments and pull requests.
+Everything an agent does is done as the app, so GitHub shows the app (its name followed by `[bot]`) on its issues, comments and pull requests, not you.
 
 ### What agents can do
 
@@ -270,4 +288,4 @@ GitHub stays apart from [Git](#git): it moves no commits. To open a pull request
 
 - GitHub Enterprise Server and other hosts than `github.com`.
 - Cloning, pushing or any other move of commits: that is Git's.
-- Anything `gh` cannot do with a user's token from a GitHub App, such as changing the repository's settings, merging pull requests or approving reviews.
+- Anything the app's permissions do not cover, such as changing the repository's settings, merging pull requests or approving reviews.

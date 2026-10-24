@@ -114,7 +114,7 @@ func (p *fakeIntegrationProv) pod(name string) fakeIntegrationPod {
 // prov, logging nowhere: its goroutines may outlive the test.
 func withIntegrationRegistry(srv *Server, prov IntegrationProvisioner) (*integrationRegistry, *clock.Fake) {
 	clk := clock.NewFake()
-	srv.Integrations = newIntegrationRegistry(srv.Store, func() secrets.Store { return srv.Secrets }, srv.shippedBundle, prov, clk, nil)
+	srv.Integrations = newIntegrationRegistry(srv.Store, func() secrets.Store { return srv.Secrets }, prov, clk, nil)
 	srv.Integrations.signIn = srv.signInAccessToken
 	return srv.Integrations, clk
 }

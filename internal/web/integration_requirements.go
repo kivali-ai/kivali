@@ -198,9 +198,8 @@ func (v *integrationView) coreRequirements() ([]apitypes.IntegrationRequirement,
 		rows = append(rows, test)
 	}
 
-	// A built-in of Go code runs while the binary carries it; a bundle,
-	// a shipped one too, while its server runs, which it does only while
-	// the integration is on.
+	// A built-in runs while the binary carries it; a bundle while its
+	// server runs, which it does only while the integration is on.
 	if v.builtin == nil && v.it.Enabled {
 		run := apitypes.IntegrationRequirement{ID: reqRunning, Title: "Running", Met: v.running, Words: "It is running."}
 		if !v.running {

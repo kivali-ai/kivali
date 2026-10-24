@@ -273,7 +273,7 @@ anything runs, and the page shows it in the Connection block
 "connection": {
   "method": "setup",
   "setup": {
-    "summary": "Creates a private GitHub App on your account that may write contents, issues and pull requests, and installs it on the repositories you choose.",
+    "summary": "Creates a private GitHub App, on your account or an organization's, that may read contents and write issues and pull requests, and installs it on the repositories you choose.",
     "hosts": ["github.com"],
     "fields": {
       "account": {"words": "Your personal account, or an organization's name"},
@@ -371,9 +371,7 @@ The check reads the bundle. It is not a review of what the code does:
 the install screen is, where the owner reads what the version
 reaches, holds and does before approving it.
 
-A shipped bundle ([Shipped bundles](#shipped-bundles)) is a bundle,
-checked by `integration.Validate` at every boot as an upload is. A
-built-in integration of Go code's manifest is checked by
+A built-in integration's manifest is checked by
 `integration.ValidateBuiltin(manifest)` by the same rules, with four
 differences. There is no bundle. A `server` section is refused, and so
 is any `kivali.packages` entry and, unless the connection is made by a
@@ -627,7 +625,7 @@ connections and its setup flow, never stored:
 | `pending` | no version has been approved yet |
 | `not_included` | a built-in record this binary does not carry |
 | `setting_up` | a flow that installs it runs: started with no connection (or taking over from one that did), not yet ended |
-| `available` | an approved version and no connection: a built-in while this binary carries it, a bundle once a version is approved; also while the connection a failed install made is on its way out |
+| `available` | an approved version and no connection: a built-in while this binary carries it, a bundle once a version is approved; also while the connection a failed install made is on its way out, and while the connection is one an earlier version made that does not fit this version's setup flow ([Migration](#migration)) |
 | `off` | a connection, and switched off: agents cannot use it, and the connection and every agent's access are kept |
 | `installed` | a connection, and switched on: agents can be given access |
 
@@ -644,7 +642,10 @@ refused as before: no connection, or switched off
 requirements of an installed integration are not met (0 in any other
 state). `IntegrationPage` carries `running`, whether it can be called
 now (a built-in while this binary carries it, a bundle while its shim
-is connected), `requirements` (installed or off; empty otherwise),
+is connected), `requirements` (installed or off; for an available
+integration whose connection an earlier version made, its one unmet
+`connection` row, Fix `setup`, which the Install block shows; empty
+otherwise),
 `flow`, its setup flow under way or the one that last ended, and
 `can_uninstall`: an upload in any state, a built-in installed, off or
 not included. The agent's tab (`AgentIntegration`) carries `state` and
@@ -670,7 +671,7 @@ runs, or empty. Kivali's own rows come first, in this order:
 | `connection` | Connection | the connection has every secret its record names | `setup` |
 | `sign_in` | Sign-in | for a connection made by signing in, or by a setup that hands over to a sign-in: `NeedsSignIn` is false. Not met: never signed in, the service refused a renewal (its words), or the token is not in the Secret | `sign_in` |
 | `connection_test` | Connection test | the manifest names `kivali.verify`, it has run, and the last result passed (its words, or the integration's words of the failure) | |
-| `running` | Running | a bundle (a shipped one too), switched on: its shim is connected | |
+| `running` | Running | a bundle, switched on: its shim is connected | |
 
 Then the integration's own rows: a built-in implementing
 `builtinintegrations.RequirementsOf` is asked with the connection as
@@ -825,13 +826,18 @@ client id or secret cancel it, audited; a restart loses it, and `GET
 .../setup` then answers 404 and the page offers to start again.
 
 A flow that installs (`setupRun.install`: started with no connection,
-or taking over from one that did) keeps nothing unless it is done.
+or with one an earlier version made that does not fit this version's
+setup (`setupMisfit`, [Keep](#keep)), or taking over from one that did)
+keeps nothing unless it is done.
 When its Keep makes the connection (`setupMade`), and the flow then
 fails, is cancelled, is replaced by a flow that does not take it over,
 or is forgotten, core forgets that connection off the caller's locks
 (`setupDiscard`): its Secret (a sign-in's tokens revoked), its scoped
 proxy credential, its record and the access set for it, with no call
-of `Uninstall`. Until that is done the integration reads available,
+of `Uninstall`. A connection an earlier version made that the install
+took over keeps its record, emptied of every value, and its access
+(`setupRun.madeKept`), so it still reads available and the next
+install takes it over again. Until that is done the integration reads available,
 and a new start waits for it (`setupAwaitDiscard`), so the next install
 never reads the half-made connection; one that began after the wait is
 a 409 under the lock ("Kivali is still undoing the last setup; try
@@ -908,7 +914,8 @@ endpoints is on (Google's is `www.google.com`).
 `Progress.Stage` sets what the page shows while a call runs: the words,
 and a real progress bar where there is a count (`done` of `total`).
 Each call is told which it is: `Answer.Leg` counts the calls of the
-flow from 1.
+flow from 1. `Answer.Team` is the team's name (the branding's company
+name, empty for none), for naming what setup makes on the service.
 
 ### Keep
 
@@ -922,6 +929,22 @@ keys (`keepSetupValues`); a standard flow's as a save of the form
 writes it (`keepConnectionForm`). A write that fails fails the flow.
 `State` is carried to the next Answer as it was, in memory, for this
 flow alone.
+
+A `setup` connection an earlier version made can hold values this
+version's flow does not keep (`setupMisfit`: a field in the record,
+which setup never writes; a key in its Secret outside `setup.keeps`; a
+sign-in, for a flow that hands over to none), or none of what it
+keeps. The integration then reads available, with one unmet
+`connection` row ("Set up <integration> again: ..."), and Install runs
+as an install over it. Its first Keep takes the connection over: every
+value of the record and its Secret goes (the scoped proxy credential's
+secret aside), the sign-in, the test result with it; the record's id,
+its Secret's name and every agent's access stay. Once the lock is
+released, the sign-in the Secret held (the client id and secret, the
+access and refresh tokens) is handed to the built-in, when it is a
+`builtinintegrations.SignInReplacer`, to revoke with the service,
+best effort, under `revokeTimeout` (`revokeReplacedSignIn`; a failure
+is logged, scrubbed of the sign-in).
 
 ### Scrubbing and the audit
 
@@ -1459,8 +1482,7 @@ changes the version alone.
 ## The runtime
 
 An integration that should run (an approved version, switched on, and
-a bundle: uploaded, or [shipped with Kivali](#shipped-bundles) and
-carried by this binary) runs in a pod of its own, `integrationpod-<name>`, which core
+an uploaded bundle) runs in a pod of its own, `integrationpod-<name>`, which core
 keeps up while it should (`internal/integrationpod`, `manifest.go` and
 `provisioner.go`). Core talks MCP to the integration's server through a
 shim in the pod. An agent's calls carry the agent and its access
@@ -1843,18 +1865,12 @@ a manifest of the same shape (name, display_name, description,
 user_config, tools, `kivali.connection`, `kivali.access`,
 `kivali.verify`), so the Org page, the install screen, the connection
 form and the access form are drawn by the same code and every agent's
-access is checked by the same core. It comes in two kinds:
+access is checked by the same core. Its actions are Go functions core
+calls directly, with no pod, no shim and no Python.
 
-- A built-in of Go code, most of this section: its actions are Go
-  functions core calls directly, with no pod, no shim and no Python.
-- A [shipped bundle](#shipped-bundles): a bundle embedded in the
-  binary, which core runs in a pod of its own exactly as an uploaded
-  bundle.
-
-Both are built in to the owner: no approval, no upload or publish
-under its name, and a version that follows the binary. Uninstall takes
-one back to available while the binary carries it, never off the
-team.
+It is built in to the owner: no approval, no upload or publish under
+its name, and a version that follows the binary. Uninstall takes one
+back to available while the binary carries it, never off the team.
 
 ### The interface
 
@@ -1914,6 +1930,7 @@ type Answer struct {
 	Went     bool              // a Go with NoReturn was sent
 	Leg      int               // which call of Setup this is in the flow, from 1
 	Callback string            // where a Go step's service may send the browser back
+	Team     string            // the team's name, for what setup makes on the service
 }
 type Progress interface{ Stage(words string, done, total int) }
 type RequirementsOf interface {
@@ -1921,6 +1938,8 @@ type RequirementsOf interface {
 }
 type Requirement struct{ ID, Title, Words string; Met bool; Fix string }
 type Uninstaller interface{ Uninstall(ctx context.Context, conn Connection) error }
+type SignInReplacer interface{ RevokeSignIn(ctx context.Context, old SignIn) error }
+type SignIn struct{ ClientID, ClientSecret, AccessToken, RefreshToken string }
 ```
 
 - `Manifest` is the manifest, held to `integration.ValidateBuiltin`
@@ -2015,6 +2034,11 @@ type Uninstaller interface{ Uninstall(ctx context.Context, conn Connection) erro
 - An `Uninstaller` undoes its installation on the service when the
   owner uninstalls it, before core forgets the Secret and drops every
   agent's access; an error leaves the installation as it is.
+- A `SignInReplacer` is a setup built-in whose earlier version made
+  its connection by signing in with an app of the owner's: when an
+  install takes such a connection over ([Keep](#keep)), core hands it
+  the sign-in the connection held, once, off any lock, to revoke with
+  the service, best effort.
 
 Core runs `Setup` through the setup runner ([Setup flows](#setup-flows)):
 `POST .../setup` of a `setup` connection whose built-in implements
@@ -2022,7 +2046,8 @@ Core runs `Setup` through the setup runner ([Setup flows](#setup-flows)):
 Fix ([Fix](#fix)). It asks for `Requirements` when the page, the list or
 Home is read ([Requirements](#requirements)), and calls `Uninstall` on
 Uninstall ([Uninstall](#uninstall)); the [Dispatch](#dispatch) table
-has each. No built-in in `builtins.All()` implements any of the three.
+has each. GitHub implements all four ([The GitHub
+built-in](#the-github-built-in)).
 
 `Tools`, `Call`, `Verify` and `Choices` run concurrently: many agents
 call at once, and each agent's list is asked for in parallel with the
@@ -2031,7 +2056,7 @@ abandoned and its answer dropped; its context ends, and it must honour
 that and stop.
 
 `builtins.All()` (`internal/builtinintegrations/builtins`) is the
-built-ins compiled into the binary: Git. Each built-in is a package of
+built-ins compiled into the binary: Git and GitHub. Each built-in is a package of
 its own that imports `builtinintegrations` for its types, so the list
 lives in a package apart. `Server.BuiltinIntegrations` is the ones core
 calls (`builtins.All()` unless a test sets others).
@@ -2079,8 +2104,10 @@ right after the built-in skills (`main.go`), and after a restore
 - `integration.yaml` with `builtin: true`: a new record is switched on,
   installed by `kivali`; an existing one keeps the owner's switch.
 - The manifest's version, `approved`, published by `kivali`, notes
-  "Ships with Kivali.", with no `bundle/` directory. Its
-  `manifest.json` is the binary's, written again whenever it differs.
+  "Ships with Kivali.", with no `bundle/` directory (one an earlier
+  Kivali stored under the same version, which shipped the integration
+  as a bundle, is removed). Its `manifest.json` is the binary's,
+  written again whenever it differs.
 - When the version differs from the one in use, the one in use becomes
   superseded and the binary's is the one in use, as an approval does.
   The binary is the truth, so an older binary makes its older version
@@ -2089,13 +2116,10 @@ right after the built-in skills (`main.go`), and after a restore
 An installed integration of the same name that is not built in is left
 as it is, and the built-in is not installed; boot logs it. A backup
 carries the records like any integration's, and the restore writes the
-binary's versions over them. Shipped bundles are installed next to
-them, by `store.InstallShippedBundles`
-([Shipped bundles](#shipped-bundles)).
+binary's versions over them.
 
-A built-in record whose code the binary does not carry, as Go code or
-as a shipped bundle (another version of Kivali shipped it), is left as
-it is: nothing runs it, its
+A built-in record whose code the binary does not carry (another
+version of Kivali shipped it) is left as it is: nothing runs it, its
 state is not included, agents' calls of it are refused as not
 running, and Test connection and its options answer 409 "<integration>
 is not in this version of Kivali, so nothing runs it; you can uninstall
@@ -2167,15 +2191,35 @@ Kivali started on the migrated data reads the one connection kept, and
 every access row, now naming no connection (or naming a connection set
 aside), as invalid until the owner sets it again.
 
+GitHub 1.0.0 (a bundle an earlier Kivali shipped and ran in a pod) is
+GitHub 2.0.0 here, a built-in of Go code. Boot's
+`InstallBuiltinIntegrations` makes 2.0.0 the version in use and 1.0.0
+superseded; the reconcile stops 1.0.0's pod, since it runs no pod for
+a built-in record. 1.0.0's connection, the owner's own GitHub App
+signed in with (its client id in the record; its client secret and
+the sign-in's tokens in the Secret), does not fit 2.0.0's setup flow,
+which makes its own app (`setupMisfit`, [Keep](#keep)): its record
+and Secret are left as they are, GitHub reads available with one unmet
+`connection` row ("Set up GitHub again: ..."), agents' calls are
+refused by GitHub's own check of the connection ("GitHub's connection
+is not set up; ask the owner to set it up again."), and the access
+rows stay valid (the access form is unchanged). The owner's install
+takes the record over at its first Keep, after GitHub made the new
+app: the 1.0.0 values go, the earlier app's grant is revoked with
+GitHub (`RevokeSignIn`), and once installed every agent's access
+works again. The app the owner registered for 1.0.0 stays on GitHub.
+Started on this data, a Kivali that ships GitHub 1.0.0 reads 2.0.0's
+connection as its own and finds no client id there, so GitHub needs
+connecting again.
+
 ### Dispatch
 
 A built-in of Go code is an integration whose record is built in and
 whose name is in `Server.BuiltinIntegrations` (`Server.builtinFor`).
 Where core would reach a pod, it calls the function instead
-(`internal/web/integration_builtin.go`). A shipped bundle is dispatched
-as a bundle, in the first column:
+(`internal/web/integration_builtin.go`):
 
-| Where | A bundle (uploaded or shipped) | A built-in of Go code |
+| Where | A bundle | A built-in of Go code |
 | --- | --- | --- |
 | Running | its shim is connected | while its code is in the binary |
 | An agent's list | `tools/list` with `_meta`, kept on the link | `Tools(caller)`, every time |
@@ -2202,168 +2246,15 @@ The list and the page show a "Built in" badge. A built-in of Go code
 is available, setting up, installed or off: never pending, and with no
 `running` requirement, since it runs while its code is in the binary.
 Test connection, for a built-in that has one, works once it is
-installed. A shipped bundle's requirements are a bundle's, so its
-`running` row can be unmet ([Shipped bundles](#shipped-bundles)). The
-version is the built-in's manifest's, published by Kivali; the
-install screen (`IntegrationVersion.Builtin`) says it ships with
-Kivali, shows no "Replaces version" line or "What changes from
-version" block, and offers no Approve, Reject or Roll back; for a
-built-in of Go code it says it reaches the hosts its connection names
-and shows no bundle; the page's version
+installed. The version is the built-in's manifest's, published by
+Kivali; the install screen (`IntegrationVersion.Builtin`) says it
+ships with Kivali, shows no "Replaces version" line or "What changes
+from version" block, no software and no bundle, offers no Approve,
+Reject or Roll back, and says it reaches the hosts its connection
+names (a setup built-in lists its `kivali.hosts`); the page's version
 list offers no Roll back. A built-in record this binary does not carry
 shows "Not in this version of Kivali" (`IntegrationStateNotIncluded`),
 says agents cannot use it, and offers Uninstall, which removes it.
-
-### Shipped bundles
-
-A shipped bundle is an integration that ships with Kivali whose
-implementation is a bundle embedded in the binary, run in an
-integration pod like any uploaded bundle, in place of Go functions in
-core. It is built in to the owner, as above; to core it is a bundle.
-
-`builtinintegrations.ShippedBundle{Name, FS}` is one: its name and its
-files, laid out exactly as a bundle's (`manifest.json` at the root,
-the server's files beside it), an `embed.FS` directory embedded with
-the `all:` prefix so a file whose name starts with `_` or `.` is kept.
-`builtins.Shipped()` is the ones compiled into the binary: GitHub
-([The GitHub shipped bundle](#the-github-shipped-bundle)). To add one,
-embed its directory in a package of its own and list it there. `Server.ShippedBundles` is the ones core runs
-(`builtins.Shipped()` unless a test sets others); a test bundle built
-from `integrationtest.Dir` and the fake integration's server is the one
-the tests register. A test holds every entry of `Shipped()` to the
-bundle check, to a manifest that names its own name, and to a name no
-other entry and no built-in of Go code has.
-
-`store.InstallShippedBundles(bundles, now)` runs at every boot, right
-after `InstallBuiltinIntegrations` (`main.go`), and after a restore. For
-each shipped bundle it reads the files (`integration.ReadDirectory`)
-and holds them to `integration.Validate`, as an upload is held; one
-that does not read, does not pass, or whose manifest names another
-integration is not installed, and boot logs it with every finding,
-while the others are installed. It writes:
-
-- `integration.yaml` with `builtin: true`, as for a built-in of Go
-  code: a new record switched on, installed by `kivali`; an existing
-  one keeps the owner's switch.
-- The manifest's version, `approved`, published by `kivali`, notes
-  "Ships with Kivali.", its manifest byte for byte, its bundle unpacked
-  in `bundle/` and its size, file count, digest and warnings, staged
-  and renamed into place as an upload's version is. The digest is
-  worked out from the files on disk at every boot.
-- When the version differs from the one in use, the one in use becomes
-  superseded and the binary's is the one in use: a new version is a new
-  pod.
-- When the version is stored with files other than the binary's (the
-  same version string, changed bytes), its manifest and bundle are
-  written again, the new bundle unpacked beside the old and renamed
-  into its place (the old one is put back when that rename fails). The
-  new files have a new digest, so a pod left running on the old ones,
-  whose spec carries the old digest, is replaced rather than taken on,
-  at this boot or any later one.
-
-It returns each shipped bundle it installed with the version it made
-the one in use, and the Server keeps that
-(`Server.SetShippedBundlesInstalled`, at boot and after a restore).
-
-An installed integration of the same name that is not built in is
-left as it is, as for a built-in of Go code.
-
-The binary's lists, not the record, say which kind a built-in record
-is: `Server.builtinFor` finds its Go code, `Server.shippedBundle` that
-the binary ships it as a bundle (its name in `Server.ShippedBundles`
-and not in `Server.BuiltinIntegrations`, installed at this boot or
-restore with the version the record has in use), and one that is
-neither is a record this binary does not carry
-(`integrationView.staleBuiltin`). So a record whose install failed, or
-whose version in use is not the binary's (a restore that left another),
-runs nothing and reads as not in this version of Kivali; boot's log
-says why. The
-reconcile runs a pod for a built-in record only when it is a shipped
-bundle, so a stale one's pod is stopped. Everything else is a bundle's:
-`Integrations.Running`, the shim's connect and `tools/list`, Test
-connection and the options a field lists through the shim (409 "the
-integration is not running" while no shim is connected, for Kivali's
-developers to fix), `kivali/credential`, the log, health, and the pod's
-scoped proxy credential, admitted to the manifest's `kivali.hosts`.
-
-What the owner sees:
-
-- The "Built in" badge and no Approve, Reject or Roll back, as for any
-  built-in; an upload and a publish under its name answer the same
-  409s, and Uninstall takes it back to available.
-- Its `running` requirement is a bundle's: not met until its shim
-  connects, while Kivali starts it.
-- Its install screen (`IntegrationVersion.Builtin` and `.Shipped`)
-  says it ships with Kivali and, as for an upload, carries its runtime
-  (`python`) and shows the hosts it reaches, the software its pod
-  installs (with no "read each one before you approve") and its
-  bundle's size. Its page lists that software as an upload's does. `Shipped` is
-  read from the version (it holds a bundle), so a stale record's
-  version still shows as one.
-
-### The GitHub shipped bundle
-
-`internal/builtinintegrations/bundles/github` embeds the bundle
-(`manifest.json`, `server/main.py`) and gives it as `github.Bundle()`.
-The server is a stdio MCP server of Python's standard library, in the
-template's shape (`mcp_config` runs `python3 -I server/main.py`), and
-every action is one run of GitHub's `gh`, which
-the pod installs (`kivali.packages: ["gh"]`) before the server starts.
-The hosts are `api.github.com` and `github.com`.
-
-- **The connection** is a [sign-in connection](#sign-in-connections):
-  `method: device` with GitHub's device, authorization and token
-  endpoints, so both ways are offered, a code first; `client: operator` (a GitHub App the owner registers, its
-  steps in `kivali.setup_notes`), no scopes (a GitHub App's token has
-  the app's permissions), and `credential_keys` naming the token
-  `GH_TOKEN`. `user_config` is empty: the form is the client id and
-  secret core adds. `kivali.verify` is `whoami` (`gh api user`,
-  "Connected as @login").
-- **The token, per call.** Each `tools/call` sends `kivali/credential`
-  from its own thread while the reading loop goes on (the answer
-  arrives on the server's input) and takes `env.GH_TOKEN`, never kept
-  past the call. -32001, -32002 and -32003 are answered to the agent in
-  words, as an error result, with "ask the owner"; gh does not run.
-- **gh, per call**: an argument list, never a shell; values as
-  `--flag=value` and bodies on gh's input (`--body-file=-`), so nothing
-  an agent writes reads as an option; an environment of `GH_TOKEN`,
-  `GH_HOST=github.com`, `GH_CONFIG_DIR=/tmp/gh`,
-  `GH_NO_UPDATE_NOTIFIER`, `GH_PROMPT_DISABLED`, `NO_COLOR`, PATH, HOME
-  and the proxy variables, nothing else; 50 seconds at most, inside a
-  55-second budget for the whole call (Kivali waits 60). Standard
-  output is the answer, or the action's own summary of gh's JSON; a
-  non-zero exit is an error result with the end of gh's error output.
-  An `HTTP 401` or `HTTP 403` in it is answered with what GitHub
-  refused and "ask the owner". Long answers are cut: a body at 20,000
-  characters, an issue's comments to the latest 20, a diff at 50,000,
-  and every answer at 60,000 (`ANSWER_CLIP`), with a note saying so.
-  `list_repositories` lists owner by owner and names an owner gh
-  could not list rather than failing whole.
-- **Access, in the wrapper.** `_meta.kivali.access.repositories` are
-  patterns read by `internal/gitrepo`'s rules, ported to Python
-  (`normalize_pattern`, `valid_pattern`, `match`); a test holds the
-  port to `gitrepo.Match` case by case. A repository argument must be
-  `owner/name`, and one the patterns do not match is refused before gh
-  runs ("Your access to GitHub does not include <owner/name>; ask the
-  owner."). gh runs `list_issues`' `search` as a GitHub search with
-  `repo:<owner/name>` added, and GitHub ORs `repo:` qualifiers and
-  honours `org:`, `user:` and `owner:`, so a search holding any of them
-  (after anything but a letter, digit or underscore) is refused, and
-  the answer keeps only items whose URL is under
-  `https://github.com/<owner/name>/issues/`. No other action takes a
-  search. `create_issue`, `comment` and `create_pull_request` need
-  `write: true`; without it they are left out of the agent's
-  `tools/list` and refused by name. The owner's requests carry no
-  `_meta` and list every action; `whoami` is the owner's alone.
-- **Isolated from Git.** No action clones, pushes or otherwise moves
-  commits; `create_pull_request` opens a pull request from a head
-  branch already on GitHub.
-
-The package's tests run `python3 -I server/main.py` from the embedded
-files with a fake `gh` first on PATH that records its argv,
-environment and input, and the test as core on the server's standard
-streams; and the smoke test (`integration.SmokeCommand`) on the
-bundle.
 
 ### The git built-in
 
@@ -2815,25 +2706,26 @@ submodules (not cloned), and deleting a remote ref.
 ### The GitHub built-in
 
 `internal/builtinintegrations/githubintegration` (name `github`,
-version 2.0.0) is GitHub as a built-in of Go code: agents read and open
-issues, comments and pull requests as a private GitHub App on the
-owner's account, through GitHub's REST API. It is not in
-`builtins.All()`, so no team runs it; the binary runs [the GitHub
-shipped bundle](#the-github-shipped-bundle). The package implements
-`Integration` alone: not `SetupIntegration`, `RequirementsOf` or
-`Uninstaller` (whose place is `setup.go` in the package), nor
-`ShellJobIntegration` or `HostsOf`, since no action works in the
-agent's shell or moves commits.
+version 2.0.0, in `builtins.All()`) is GitHub as a built-in of Go
+code: agents read and open issues, comments and pull requests as a
+private GitHub App its setup makes on the owner's account or an
+organization's, through GitHub's REST API. The package implements
+`Integration`, `SetupIntegration` (`setup.go`), `RequirementsOf`
+(`requirements.go`), `Uninstaller` and `SignInReplacer`
+(`uninstall.go`); not `ShellJobIntegration` or `HostsOf`, since no
+action works in the agent's shell or moves commits.
 
 - **The manifest**: `kivali.connection.method: setup`, with the
-  `setup` block of [Setup connections](#setup-connections) (summary;
-  `hosts: ["github.com"]`; one field, `account`; keeps `app_id`,
+  `setup` block of [Setup connections](#setup-connections) (the
+  summary, which ends with what Uninstall leaves on GitHub;
+  `hosts: ["github.com"]`; one field, `account`, "An organization's
+  name, or leave it blank for your personal account"; keeps `app_id`,
   `slug`, `client_id`, `client_secret`, `private_key` and
   `installation_id`; no `then`), an empty `user_config`,
   `kivali.hosts: ["api.github.com", "github.com"]`, `kivali.verify:
-  whoami`, and the shipped bundle's access form: `repositories`
-  (required) and `write`, "May create and comment". It passes
-  `integration.ValidateBuiltin`.
+  whoami`, and GitHub 1.0.0's access form, so agents' access carries
+  over: `repositories` (required) and `write`, "May create and
+  comment". It passes `integration.ValidateBuiltin`.
 - **The connection** is what setup keeps, read as `conn.Fields`.
   `app_id`, `private_key` (PEM: PKCS#1 `RSA PRIVATE KEY` as GitHub
   issues it, or PKCS#8 `PRIVATE KEY` holding an RSA key) and
@@ -2843,6 +2735,121 @@ agent's shell or moves commits.
   every call with "GitHub's connection is not set up; ask the owner to
   set it up again.", its reason in the audit (`the connection is
   incomplete`, or what does not read), and nothing reaches GitHub.
+  Core scrubs every kept value from what the owner and the agents read
+  ([Scrubbing and the audit](#scrubbing-and-the-audit)), the slug and
+  the ids among them, so no words of the built-in's name one: they
+  name the app by its `name` (GET /app) and the account by its login.
+
+#### Setup
+
+`Setup` with `FlowSetup` is GitHub's app-manifest flow, two clicks on
+GitHub's own pages and nothing copied:
+
+1. **Form** `account`, asked again (with words saying why) when it is
+   not a GitHub account's name (letters, digits and hyphens, not
+   starting with one, at most 39; an `@` before it is dropped). Blank
+   is the owner's personal account.
+2. **Go** by POST to `https://github.com/settings/apps/new?state=<state>`
+   (an organization's: `https://github.com/organizations/<account>/settings/apps/new?state=<state>`),
+   the state the one in `Answer.Callback`, with the form field
+   `manifest`: `{"name": "Kivali <team>", "url": <the team's address>,
+   "redirect_url": <Answer.Callback>, "setup_url": <the team's
+   /connect/callback, no query>, "setup_on_update": true, "public":
+   false, "hook_attributes": {"active": false},
+   "default_permissions": {"metadata": "read", "contents": "read",
+   "issues": "write", "pull_requests": "write"}, "default_events": []}`.
+   The name is `Answer.Team` after "Kivali" ("Kivali" alone for a team
+   with no name), cut to the 34 characters GitHub takes. The words say
+   GitHub may ask the owner to change the name (names are unique across
+   GitHub, and GitHub's form lets the owner edit it before Create
+   GitHub App) and, for a team on plain `http`, that GitHub may refuse
+   the address and to give the team an `https` one under Other devices.
+   Nothing is kept yet.
+3. GitHub sends the browser back with `code` and `state`. Progress
+   "Creating the app on GitHub". The code (one use, within the hour;
+   at most 200 characters, never a path) is traded with no credential,
+   `POST /app-manifests/{code}/conversions`, and kept nowhere; of the
+   answer, the app's `id`, `slug`, `client_id`, `client_secret` and
+   `pem` are kept (`app_id`, `slug`, `client_id`, `client_secret`,
+   `private_key`), each checked first (an id, a slug of lowercase
+   letters, digits and hyphens, a client, a key that reads), and the
+   `webhook_secret` dropped. A 404 says the code works once, within an
+   hour; any other failure gives GitHub's words, and nothing is kept.
+4. **Go** (`Stateless`) to `https://github.com/apps/<slug>/installations/new?state=<state>`,
+   where the owner chooses the account's repositories. GitHub sends the
+   browser to the setup address with `installation_id` and
+   `setup_action`; whether it passes the state on is GitHub's, so the
+   return is taken by the flow's cookie when it does not.
+5. Progress "Waiting for the installation". The `installation_id` the
+   browser brought is not trusted (anyone can load the setup address
+   with one): the app's installations are listed with its JWT (`GET
+   /app/installations`). A private app installs only on its owner's
+   account, so the list holds one, whose id is kept: **Done**. With
+   more than one, the id the browser brought picks among them, else
+   the flow fails. With none: after `setup_action=request` (an
+   organization's owners approve installations), or on a check, a
+   **Wait** with no page (the new-installation page's address holds
+   the slug, which core scrubs from what a step shows), checked until
+   one is listed; otherwise the Go of step 4 again ("GitHub lists no
+   installation of the app yet"). A passing failure (no answer, a rate
+   limit, GitHub's 5xx) keeps waiting; a key GitHub refuses fails the
+   flow in its words.
+
+`State` holds a marker of the step alone ("form", "make", "inst",
+"wait", "went"), shorter than the six characters core scrubs. The
+Fixes are flows of their own:
+
+- `install`: step 4's Go and step 5, keeping the new installation id.
+- `permissions`: a Go with `NoReturn` to where the missing permissions
+  are granted: the app's own settings
+  (`https://github.com/settings/apps/<slug>/permissions`, or the
+  organization's) when the app does not ask for one this version needs
+  (GET /app), else the installation's
+  (`https://github.com/settings/installations/<id>`, or
+  `https://github.com/organizations/<login>/settings/installations/<id>`),
+  where its owner approves what the app asks for; then a Wait on that
+  page, checked until the installation's `permissions` cover this
+  version's. Already covered, it is done at once.
+- `settings`: a Go with `NoReturn` to the installation's settings, then
+  a Wait checked until it is not suspended and reaches a repository.
+
+#### Requirements
+
+`Requirements` asks GitHub, with the app's JWT and within the runner's
+five seconds, at most four requests (GET /app, GET
+/app/installations/{id}, and for an installation of selected
+repositories an installation token and GET
+/installation/repositories?per_page=1 for `total_count`), and caches
+nothing beyond core's three seconds. In order:
+
+| id | Title | Met | Not met, and its Fix |
+| --- | --- | --- | --- |
+| `key` | The app's key works | "GitHub accepts the key of the app <name>. Uninstalling GitHub here leaves the app on GitHub, for you to delete under <the account's apps page>." | values missing, or a 401 from GET /app: "GitHub refused the app's key (HTTP 401): ... Set GitHub up again.", Fix `setup`; nothing after it is asked |
+| `installed` | Installed on GitHub | "Installed on <account>." | a 404: "The app is no longer installed on GitHub.", Fix `install`, nothing after it; suspended: "The app's installation on <account> is suspended on GitHub.", Fix `settings` |
+| `repositories` | Repositories it reaches | "Installed on <account>, reaching all repositories." or "reaching N repositories." | none: Fix `settings`; left out while suspended |
+| `permissions` | Permissions current | "The installation has every permission this version needs." | "The installation lacks permissions this version needs: issues: write, ... Approve them on GitHub.", Fix `permissions` (write covers read, admin both) |
+
+Any other failure is an error, which core shows as its one `checks` row.
+
+#### Uninstall
+
+`Uninstall` is `DELETE /app/installations/{installation_id}` with the
+app's JWT. A 404 (gone already) and a 401 (GitHub no longer takes the
+key: the app was deleted there) are done, and so is a connection
+missing a value; any other failure is an error that leaves everything
+as it is ("GitHub did not remove the app's installation: ..."). The
+app's registration stays on GitHub: the summary and the `key` row say
+so and where to delete it.
+
+`RevokeSignIn` (the take-over of a 1.0.0 connection,
+[Migration](#migration)) revokes the earlier app's grant to the
+owner's account, `DELETE /applications/{client_id}/grant` with the
+client id and secret as basic authentication and the access token in
+the body, which ends its access and refresh tokens both. GitHub takes
+it only with a live access token, so on a 404 or 422 the refresh token
+is traded for a fresh one first (`POST
+https://github.com/login/oauth/access_token`, `GitHub.TokenURL`); a
+refresh token GitHub no longer takes leaves nothing to revoke.
 
 #### Tokens
 
@@ -2887,7 +2894,7 @@ permission, and to ask the owner.
 | `compare` | `GET /repos/{o}/{r}/compare/{base}...{head}`: commits and files, no patches | `contents: read` |
 | `whoami` | `GET /app` and `GET /app/installations/{id}`, both with the JWT | no installation token |
 
-The rules are the shipped bundle's:
+The rules are GitHub 1.0.0's:
 
 - **Access.** A repository argument must be `owner/name`
   (`cleanRepository`: spaces and tabs around it and a `.git` dropped,
@@ -2899,8 +2906,9 @@ The rules are the shipped bundle's:
   true`: `Tools` leaves them out without it and `Call` refuses them by
   name, "Your access to GitHub does not include creating issues,
   comments or pull requests; ask the owner." `whoami` is Test
-  connection's (`Verify`, "Connected as <slug>[bot], installed on
-  <account>"): no agent is listed it, and a call of it is refused.
+  connection's (`Verify`, "Connected as the app <name>, installed on
+  <account>", the app's name from GET /app, since core scrubs the kept
+  slug): no agent is listed it, and a call of it is refused.
 - **The search.** `list_issues`' `search` (one line, at most 500
   characters) holding `repo:`, `org:`, `user:` or `owner:` after
   anything but a letter, digit or underscore is refused; with a search,
@@ -2938,7 +2946,8 @@ The rules are the shipped bundle's:
 One `*http.Client` serves the built-in: 30 seconds a request, at most
 16 MiB of an answer read, `Accept: application/vnd.github+json` (or the
 diff type), `X-GitHub-Api-Version: 2022-11-28`, the credential as a
-bearer, and redirects followed only for a GET and only on the API's
+bearer (none for the manifest conversion; the client id and secret as
+basic authentication for a grant's revocation), and redirects followed only for a GET and only on the API's
 own origin (a renamed repository's), at most five: Go would follow a
 redirected POST as a GET. `GitHub.APIBase` is the API; it must be
 `https://api.github.com`, whose addresses on github.com the actions
@@ -2950,7 +2959,7 @@ The package's tests run against a fake GitHub (`fake_test.go`), an
 key signed, on a `clock.Fake`, and records every request: method,
 path, query, headers, the bearer, a JWT's claims, what the bearer
 token was minted for, and the body. Each rule above has a test, as do
-the shipped bundle's behaviour tests, ported: the access holds calls to
+GitHub 1.0.0's behaviour tests, ported: the access holds calls to
 the patterns (case by case against `gitrepo.Match`), write actions
 need write, whoami names the app and the account, a GitHub failure is
 an error with its reason, long answers are clipped, comment finds
@@ -2959,7 +2968,16 @@ repositories keeps to the patterns, list issues stays in the
 repository, every answer is bounded, refusals tell the agent to ask the
 owner, and branches and compare call their paths; and tokens are
 minted per call, narrowed, cached until a minute before they expire,
-and never in an answer.
+and never in an answer. `setup_test.go` drives `Setup`, `Requirements`,
+`Uninstall` and `RevokeSignIn` against the same fake, holding every
+step to the manifest's declarations and to what core's scrubbing leaves
+readable. `internal/web/integration_github_test.go` drives the whole
+setup over the HTTP API, on the fake clock, against a fake of GitHub's
+API that makes the app from a code once and lists its installation:
+the start page's manifest, the conversion and what is kept, the
+stateless return and the listed installation, the Wait for an
+approval, nothing kept on a failure, the requirement rows and their
+Fixes, Uninstall, and the install over a 1.0.0 connection.
 
 ## The Kivali Developer
 
@@ -3126,7 +3144,7 @@ the owner's.
 | `GET /api/v1/org/integrations/{name}` | `IntegrationPage`, with its `requirements` installed or off, its `flow`, `running` and `can_uninstall`. |
 | `POST .../{name}/enable`, `.../disable` | `IntegrationPage`. |
 | `DELETE .../{name}` | Uninstall ([Uninstall](#uninstall)): 204; 409 for a built-in with nothing installed ("<integration> is not installed, so there is nothing to uninstall"); 502 when the built-in's own `Uninstall` failed ("<integration> could not undo its installation: ...; nothing was changed"); 500 when a Secret could not be deleted. |
-| `GET .../versions/{version}` | `IntegrationVersion`, with `changes` from the version in use, `builtin` for a built-in integration's version, and `shipped` for one that ships as a bundle. |
+| `GET .../versions/{version}` | `IntegrationVersion`, with `changes` from the version in use, and `builtin` for a built-in integration's version. |
 | `POST .../versions/{version}/approve`, `.../reject` | `IntegrationVersion`; 409 when not pending, or for a built-in integration. |
 | `POST .../versions/{version}/rollback` | `IntegrationVersion`; 409 when not superseded, or for a built-in integration; 404 for a version not stored. |
 | `PUT .../connection` | `ConnectionWrite` in, `IntegrationPage` out: the connection written, or made when there is none; a sensitive field left out keeps its value; 409 while no version is approved. |
