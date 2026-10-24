@@ -106,7 +106,7 @@ func (s *Server) signOutLocked(w http.ResponseWriter, r *http.Request, byID bool
 	}
 	name, connID := v.it.Name, c.rec.ID
 	start := s.clk().Now()
-	s.setupCancel(name)
+	s.setupCancelKeep(name)
 	rec, data, err := s.readSignIn(r.Context(), name, connID)
 	if err != nil {
 		log.Printf("integration %s: read connection %s: %v", name, connID, err)

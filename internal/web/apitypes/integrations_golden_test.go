@@ -148,7 +148,7 @@ func goldenIntegrationPageMultiple() IntegrationPage {
 		Running: true,
 		Requirements: []IntegrationRequirement{
 			{ID: "version", Title: "Approved version", Words: "Version 1.2.0 ships with Kivali.", Met: true},
-			{ID: "connection", Title: "Connection", Words: "Company GitLab's secrets are not stored on this Kivali server, as after a restore from a backup. Enter them again.", Met: false, Fix: "setup"},
+			{ID: "connection", Title: "Connection", Words: "Company GitLab's secrets are not stored on this Kivali server, as after a restore from a backup. Enter them again on its card.", Met: false, Fix: ""},
 		},
 		CanUninstall: true,
 	}

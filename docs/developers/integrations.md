@@ -706,23 +706,35 @@ runs, or empty. Kivali's own rows come first, in this order:
 | id | Title | Met while | Fix |
 |---|---|---|---|
 | `version` | Approved version | always, once installed: "Version 1.2.0 is in use." (a built-in's "ships with Kivali") | |
-| `connection` | Connection | the connection has every secret its record names; with several, every one | `setup` |
+| `connection` | Connection | the connection has every secret its record names; with several, every one (the words name each that lacks them) | `setup`; none with several, each mended on its own card |
 | `sign_in` | Sign-in | for a connection made by signing in, or by a setup that hands over to a sign-in: `NeedsSignIn` is false. Not met: never signed in, the service refused a renewal (its words), or the token is not in the Secret | `sign_in` |
 | `connection_test` | Connection test | the manifest names `kivali.verify`, it has run, and the last result passed (its words, or the integration's words of the failure) | |
 | `running` | Running | a bundle (a shipped one too), switched on: its shim is connected | |
 
 Then the integration's own rows: a built-in implementing
 `builtinintegrations.RequirementsOf` is asked with the first
-connection as a call reads it, under `requirementsTimeout` (five
-seconds, on the server's clock), with its panics recovered. A row whose
-id is not letters, digits, hyphens and underscores (64 at most), is one
-of Kivali's or repeats one is left out and logged; a title left empty
+connection as a call reads it, the read (which may renew a sign-in
+with the service) and the call both under one `requirementsTimeout`
+(five seconds, on the server's clock), with its panics recovered. A
+row whose id is not letters, digits, hyphens and underscores (64 at
+most), is one of Kivali's or repeats one, or whose `fix` is not such a
+name, is left out and logged; a title left empty
 is the id; titles are cut to 80 runes and words to 500, each scrubbed
 of the connection's secrets. An error, or no answer in time, is one
 unmet row `checks` ("<Integration> could not check its requirements:
 <words>"). While the connection needs a sign-in, or the service did
 not answer its renewal, the integration is not asked: the `sign_in`
 row says why.
+
+What it answered is kept `requirementsCacheTTL` (three seconds, on the
+server's clock) for the connection it was asked with
+(`Server.requirementsCache`), so the page, the list and Home read on
+one screen ask it once. A change of the connection
+(`integrationRegistry.ConnectionChanged`, which counts each in
+`connectionGen`), a flow done and Uninstall make the next read ask
+again. The list and `integration_list` read every integration at once
+(`listIntegrations`), as Home does, so a list waits one deadline at
+most however many integrations there are.
 
 #### Fix
 
@@ -746,7 +758,10 @@ runner takes:
   integration holds up no other write), run by its `SetupIntegration`
   with that flow's name and held to its `kivali.connection.setup`
   declarations; a name no row names is a 409 ("<flow> is not a flow
-  <integration> has").
+  <integration> has", or "that is not a flow <integration> has" for
+  one that is not a flow's name, which is not echoed), and a name a
+  built-in whose connection is not `setup` names is a 409
+  ("<integration>'s setup does not run its own flows").
 
 A Fix needs the integration installed ("install <integration> first")
 and switched on ("switch <integration> on first"). It works on the
@@ -782,18 +797,27 @@ integration (`handleAPIIntegrationUninstall`), 204 once done:
    ("<integration> could not undo its installation: <words>; nothing
    was changed"), scrubbed of the connection's secrets and audited as
    `uninstall`, not allowed; nothing else happens.
-3. Under `lockIntegrations`: the setup flow under way is cancelled,
-   each connection's Secret is deleted (on a failure, a 500 and the
-   records stay), and the sign-in tokens it held are revoked with the
+3. Under `lockIntegrations`, the setup flow under way is cancelled.
+   The sign-in tokens each deleted Secret held are revoked with the
    service once the lock is released, where the manifest has a
    revocation endpoint ([Revocation](#revocation)).
-4. A built-in this binary carries: its connections' records and every
-   agent's access go (`store.DeleteIntegrationConnection`), with their
-   scoped proxy credentials; the record and its version stay, so it is
-   available again; the owner's audit gains `uninstall`, allowed. Any
-   other integration, an upload in any state or a built-in this binary
-   does not carry, is removed whole: every version, its audit and its
-   log ([Where it is kept](#where-it-is-kept)).
+4. A built-in this binary carries (`uninstallBuiltinLocked`): each
+   connection's Secret is deleted (one already gone is no error), then
+   its scoped proxy credential, its record and the access set for it.
+   A Secret that cannot be deleted does not stop the others: its
+   connection's record stays, so the Secret is still named, and the
+   answer is a 500 that says the installation was undone on the service
+   and to uninstall again to finish (audited as `uninstall`, not
+   allowed). Uninstall again calls the built-in's `Uninstall` again,
+   which treats an installation already gone as done. Once every
+   connection is gone, every agent's access goes with them; the record
+   and its version stay, so it is available again, and the owner's
+   audit gains `uninstall`, allowed.
+5. Any other integration, an upload in any state or a built-in this
+   binary does not carry: each connection's Secret is deleted first (on
+   a failure, a 500 and nothing else changes; a bundle has no
+   `Uninstall` of its own), then it is removed whole: every version,
+   its audit and its log ([Where it is kept](#where-it-is-kept)).
 
 The page's Uninstall asks first, naming what goes: the connection and
 its secrets, each agent's access by name, and either that it stays
@@ -844,7 +868,12 @@ or is forgotten, core forgets that connection off the caller's locks
 proxy credential, its record and the access set for it, with no call
 of `Uninstall`. Until that is done the integration reads available,
 and a new start waits for it (`setupAwaitDiscard`), so the next install
-never reads the half-made connection.
+never reads the half-made connection; one that began after the wait is
+a 409 under the lock ("Kivali is still undoing the last setup; try
+again in a moment"). The owner's own save of the connection (`PUT
+.../connection`, `POST .../connections`) or Sign out while an install
+runs makes the connection theirs (`setupAdopt`, `setupCancelKeep`): it
+is kept whatever becomes of the flow.
 
 The driver is called off any request, one call at a time per flow,
 under `setupCallTimeout` (five minutes) on the server's clock, with its
@@ -2916,7 +2945,7 @@ the owner's.
 | `GET .../audit?limit=` | `IntegrationAudit`, newest first; limit 100 by default, at most 1000. |
 | `GET .../choices/{key}?connection=` | `AccessChoices`, through the connection `connection` names, or the first; 404 for a field that lists no options or a connection id that names none; 409 while the integration is not running, for a built-in one without a connection, or for a built-in one this binary does not carry; 502 for the tool's error, or a result that is not a list of names. |
 | `GET .../logs?limit=` | `IntegrationLogs`, oldest first; limit 200 by default, at most 2000. |
-| `POST .../setup` | `SetupFlowStart` in (`{"flow": "setup"}` to install, `sign_in` or a flow the integration's requirements name for a Fix: [Fix](#fix)), `SetupFlow` out: the flow started, ending one under way ([Setup flows](#setup-flows)); installing an integration with nothing installed switches it on. 409 for one this binary does not carry, with no approved version, for a Fix of one not installed ("install <integration> first") or switched off ("switch <integration> on first"), for a flow name it does not have ("<flow> is not a flow <integration> has"), for `sign_in` of a connection not made by signing in, for a sign-in connection signed in ("the connection is signed in; sign out first") or none of whose ways works from here, for a request that names no host where the browser signs in, for a registered client ("this version of Kivali does not register itself with the service"), and for a setup connection whose setup this binary does not carry. |
+| `POST .../setup` | `SetupFlowStart` in (`{"flow": "setup"}` to install, `sign_in` or a flow the integration's requirements name for a Fix: [Fix](#fix)), `SetupFlow` out: the flow started, ending one under way ([Setup flows](#setup-flows)); installing an integration with nothing installed switches it on. 409 for one this binary does not carry, with no approved version, for a Fix of one not installed ("install <integration> first") or switched off ("switch <integration> on first"), for a flow name it does not have ("<flow> is not a flow <integration> has"), while a failed install's connection is still being forgotten ("Kivali is still undoing the last setup; try again in a moment"), for `sign_in` of a connection not made by signing in, for a sign-in connection signed in ("the connection is signed in; sign out first") or none of whose ways works from here, for a request that names no host where the browser signs in, for a registered client ("this version of Kivali does not register itself with the service"), and for a setup connection whose setup this binary does not carry. |
 | `GET .../setup` | `SetupFlow`: the flow under way, or the one that last ended (kept ten minutes after its last change); 404 with none, as after a restart. A read counts as watching the flow for ten seconds. |
 | `POST .../setup/answer` | `SetupFlowAnswer` in, `SetupFlow` out: the flow's Form answered; 400 for a key the Form does not ask for, or what a save of the connection form would refuse (a standard flow's); 409 when the flow is not on a Form; 404 with no flow. |
 | `POST .../setup/cancel` | 204: the flow ended and forgotten, audited as cancelled, under the lock a Keep is written under; 404 with no flow. |

@@ -689,14 +689,15 @@ func (s *Server) handleAPIIntegrations(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusInternalServerError, "the integrations could not be read", whoServer)
 		return
 	}
+	listed, bad, err := s.listIntegrations(r.Context(), its)
+	if err != nil {
+		log.Printf("integration %s: %v", bad, err)
+		writeAPIError(w, http.StatusInternalServerError, "the integration "+bad+" could not be read", whoServer)
+		return
+	}
 	out := apitypes.Integrations{Integrations: []apitypes.IntegrationSummary{}}
-	for _, it := range its {
-		v, err := s.loadIntegration(r.Context(), it.Name)
-		if err != nil {
-			writeAPIError(w, http.StatusInternalServerError, "the integration "+it.Name+" could not be read", whoServer)
-			return
-		}
-		out.Integrations = append(out.Integrations, s.integrationSummary(r.Context(), v))
+	for _, l := range listed {
+		out.Integrations = append(out.Integrations, l.sum)
 	}
 	sort.SliceStable(out.Integrations, func(i, j int) bool {
 		return strings.ToLower(out.Integrations[i].DisplayName) < strings.ToLower(out.Integrations[j].DisplayName)
@@ -912,6 +913,55 @@ func (s *Server) builtinUninstall(ctx context.Context, v *integrationView) strin
 	return ""
 }
 
+// uninstallBuiltinLocked takes v, a built-in this binary carries, back
+// to available under lockIntegrations, once its own Uninstall (if any)
+// has undone the service's side: each connection's Secret goes (its
+// sign-in's tokens to revoke), then that connection's record, its
+// scoped proxy credential and the access set for it. A Secret that
+// cannot be deleted does not stop the others; its connection's record
+// stays, so the Secret is still named and Uninstall again finishes it,
+// and the answer is a 500 saying the service's side was undone. Once
+// every connection is gone, every agent's access goes with them and
+// the owner's audit gains uninstall.
+func (s *Server) uninstallBuiltinLocked(w http.ResponseWriter, r *http.Request, v *integrationView, start time.Time) (signInRevocations, bool) {
+	name := v.it.Name
+	var revokes signInRevocations
+	failed := 0
+	for _, c := range v.conns {
+		if c.rec.SecretName != "" {
+			tokens := s.revocableTokens(r.Context(), name, v.manifest, c.rec)
+			if err := s.Secrets.Delete(r.Context(), c.rec.SecretName); err != nil && !errors.Is(err, secrets.ErrNotFound) {
+				log.Printf("integration %s: uninstall: delete Secret %s: %v", name, c.rec.SecretName, err)
+				failed++
+				continue
+			}
+			revokes = revokes.add(name, v.manifest, c.rec, tokens)
+		}
+		// With its Secret gone the credential's secret is gone too.
+		if err := s.dropBuiltinEgress(name, []store.IntegrationConnection{c.rec}); err != nil {
+			log.Printf("integration %s: drop the connection's proxy credential: %v", name, err)
+		}
+		if _, _, err := s.Store.DeleteIntegrationConnectionByID(name, c.rec.ID); err != nil && !errors.Is(err, store.ErrNotFound) {
+			log.Printf("integration %s: uninstall: delete connection %s: %v", name, c.rec.ID, err)
+			failed++
+		}
+	}
+	s.Integrations.ConnectionChanged(name)
+	s.Integrations.Changed()
+	if failed > 0 {
+		words := v.displayName() + "'s installation was undone on the service, but Kivali could not remove its connection; uninstall it again to finish"
+		s.auditAgentCall(name, start, agent.CEOSlug, uninstallAction, false, words)
+		writeAPIError(w, http.StatusInternalServerError, words, whoServer)
+		return revokes, false
+	}
+	// Every connection gone: access left naming none goes too.
+	if _, err := s.Store.DeleteIntegrationConnection(name); err != nil {
+		log.Printf("integration %s: uninstall: %v", name, err)
+	}
+	s.auditAgentCall(name, start, agent.CEOSlug, uninstallAction, true, "")
+	return revokes, true
+}
+
 // uninstallLocked is Uninstall's part under lockIntegrations: true
 // once done, false with an error answered. It returns the sign-in
 // tokens to revoke.
@@ -929,26 +979,12 @@ func (s *Server) uninstallLocked(w http.ResponseWriter, r *http.Request) (signIn
 	}
 	start := s.clk().Now()
 	s.setupCancel(name)
+	if keep {
+		return s.uninstallBuiltinLocked(w, r, v, start)
+	}
 	revokes, ok := s.deleteConnectionSecrets(w, r, name)
 	if !ok {
 		return revokes, false
-	}
-	if keep {
-		// Back to available: the record and its version stay, its
-		// connections and every agent's access go.
-		removed, err := s.Store.DeleteIntegrationConnection(name)
-		if err != nil {
-			log.Printf("integration %s: uninstall: %v", name, err)
-			writeAPIError(w, http.StatusInternalServerError, "the connection's secrets were removed, but its record could not be", whoServer)
-			return revokes, false
-		}
-		if err := s.dropBuiltinEgress(name, removed); err != nil {
-			log.Printf("integration %s: drop the connection's proxy credential: %v", name, err)
-		}
-		s.auditAgentCall(name, start, agent.CEOSlug, uninstallAction, true, "")
-		s.Integrations.ConnectionChanged(name)
-		s.Integrations.Changed()
-		return revokes, true
 	}
 	// A built-in's connections have proxy credentials of their own; a
 	// bundle's none, and dropping nothing is no error.
