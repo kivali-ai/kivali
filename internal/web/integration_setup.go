@@ -689,6 +689,8 @@ func (s *Server) setupApply(run *setupRun, gen int, step builtinintegrations.Ste
 		run.state, run.step = apitypes.SetupFlowStateDone, builtinintegrations.Step{}
 		run.cancel()
 		s.auditSetupLocked(run, "done", true)
+		// What the flow made or mended is read afresh.
+		s.requirementsCache.forget(run.name)
 	case step.Form != nil:
 		run.state = apitypes.SetupFlowStateForm
 	case step.Go != nil:
@@ -1010,12 +1012,40 @@ func (s *Server) setupUnsubscribe(run *setupRun, ch chan []byte) {
 // when it had not ended: the connection is going, or the integration
 // is switched off or removed.
 func (s *Server) setupCancel(name string) bool {
+	return s.setupCancelRun(name, false)
+}
+
+// setupCancelKeep is setupCancel for an owner's write to the
+// connection (a save of the form, Sign out): the connection an install
+// under way made is the owner's from then on, and is kept.
+func (s *Server) setupCancelKeep(name string) bool {
+	return s.setupCancelRun(name, true)
+}
+
+// setupAdopt makes the connection name's install under way made the
+// owner's, as their own save of it does: it is kept whatever becomes of
+// the flow.
+func (s *Server) setupAdopt(name string) {
+	t := &s.setupRuns
+	t.mu.Lock()
+	defer s.setupUnlock()
+	if run := t.currentLocked(name); run != nil {
+		run.madeConn = ""
+	}
+}
+
+// setupCancelRun ends and forgets name's flow; with keep, the
+// connection an install made is not forgotten with it.
+func (s *Server) setupCancelRun(name string, keep bool) bool {
 	t := &s.setupRuns
 	t.mu.Lock()
 	run := t.currentLocked(name)
 	if run == nil {
 		s.setupUnlock()
 		return false
+	}
+	if keep {
+		run.madeConn = ""
 	}
 	if !run.ended() {
 		s.auditSetupLocked(run, "cancelled", true)
@@ -1078,6 +1108,10 @@ func (s *Server) setupAnswer(ctx context.Context, name string, values map[string
 	s.setupCallLocked(run, builtinintegrations.Answer{Form: clean}, false)
 	return nil
 }
+
+// errSetupUndoing refuses a start while the connection a failed or
+// cancelled install made is still being forgotten.
+const errSetupUndoing = "Kivali is still undoing the last setup; try again in a moment"
 
 // errSetupNoFlow: an integration with no flow Kivali knows of.
 const errSetupNoFlow = "Kivali has no setup under way for this integration, as after a restart; start it again"

@@ -67,8 +67,14 @@ func (s *Server) handleAPISetupStart(w http.ResponseWriter, r *http.Request) {
 	}
 	display := v.displayName()
 	// What a flow other than installing works on: the connection.
-	installed := len(v.conns) > 0 && !v.discarding
+	installed := len(v.conns) > 0
 	switch {
+	case v.discarding:
+		// A failed install's connection started going after the wait
+		// above: a flow started now would keep into the record that
+		// discard is about to delete.
+		writeAPIError(w, http.StatusConflict, errSetupUndoing, whoYou)
+		return
 	case v.staleBuiltin():
 		writeAPIError(w, http.StatusConflict, builtinRefusal(display, builtinNotIncluded), whoYou)
 		return

@@ -395,11 +395,16 @@ func (s *Server) writeConnection(ctx context.Context, v *integrationView, cur *c
 			return &connWriteError{http.StatusInternalServerError, "the connection was saved, but its network access could not be set up; save it again", whoServer}
 		}
 	}
+	// The owner's own save: the connection is theirs, whatever becomes
+	// of an install under way.
+	if endFlows {
+		s.setupAdopt(name)
+	}
 	// A sign-in under way was started with the app's old client id and
 	// secret: its tokens would be the old app's.
 	if endFlows && cur != nil && m.Kivali.Connection.SignIn() &&
 		(cur.rec.Fields[integration.FieldClientID] != fields[integration.FieldClientID] || stored[integration.FieldClientSecret] != secret[integration.FieldClientSecret]) {
-		s.setupCancel(name)
+		s.setupCancelKeep(name)
 	}
 	// The running server starts again with the new values.
 	s.Integrations.ConnectionChanged(name)

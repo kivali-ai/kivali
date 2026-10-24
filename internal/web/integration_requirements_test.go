@@ -322,6 +322,7 @@ func TestIntegrationOwnRequirements(t *testing.T) {
 	}
 
 	// Met: the row leaves Needs you.
+	clk.Advance(requirementsCacheTTL) // past what the last read kept
 	fh.setRows(func(context.Context, builtinintegrations.Connection) ([]builtinintegrations.Requirement, error) {
 		return []builtinintegrations.Requirement{{ID: "permissions", Title: "Permissions", Met: true}}, nil
 	})
@@ -330,6 +331,7 @@ func TestIntegrationOwnRequirements(t *testing.T) {
 	}
 
 	// An error is one unmet row in the integration's words, scrubbed.
+	clk.Advance(requirementsCacheTTL) // past what the last read kept
 	fh.setRows(func(_ context.Context, conn builtinintegrations.Connection) ([]builtinintegrations.Requirement, error) {
 		return nil, errors.New("the service refused " + conn.Fields["app_secret"])
 	})
@@ -339,6 +341,7 @@ func TestIntegrationOwnRequirements(t *testing.T) {
 	}
 
 	// No answer in time is the same, once the deadline passes.
+	clk.Advance(requirementsCacheTTL) // past what the last read kept
 	fh.setRows(func(ctx context.Context, _ builtinintegrations.Connection) ([]builtinintegrations.Requirement, error) {
 		<-ctx.Done()
 		return nil, ctx.Err()

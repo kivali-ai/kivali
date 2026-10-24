@@ -182,6 +182,9 @@ type Server struct {
 	signInRefresher connect.Refresher
 	// setupRuns are the setup flows under way (integration_setup.go).
 	setupRuns setupRuns
+	// requirementsCache keeps each integration's own requirement rows
+	// a few seconds (integration_requirements.go).
+	requirementsCache requirementsCache
 	// SessionCodec is the session cookie's codec, which also signs the
 	// setup flow cookie (integration_signin_browser.go). Without
 	// one the session middleware's is used, and without that a key of

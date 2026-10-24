@@ -365,8 +365,14 @@ type Requirement struct {
 
 // Uninstaller is an Integration that undoes its installation on the
 // service: Uninstall is called before core forgets the connection's
-// Secret and drops every agent's access. An error is shown to the
-// owner and leaves the installation as it is.
+// Secret and drops every agent's access, once per connection. An error
+// is shown to the owner and leaves the installation as it is.
+//
+// Core may call Uninstall again for an installation it already undid:
+// when forgetting the connection failed after Uninstall succeeded, the
+// owner uninstalls again, and conn may then lack values an earlier
+// step kept. Uninstall treats an installation that is already gone on
+// the service, or that conn cannot name, as done, and returns nil.
 type Uninstaller interface {
 	Uninstall(ctx context.Context, conn Connection) error
 }

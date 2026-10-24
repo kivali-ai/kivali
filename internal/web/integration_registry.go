@@ -194,6 +194,10 @@ type integrationCall struct {
 type integrationRegistry struct {
 	mu      sync.Mutex
 	entries map[string]*integrationEntry
+	// connGen counts, by integration, the changes of its connection
+	// (ConnectionChanged), for what is worked out from the connection
+	// and kept a while (Server.requirementsCache).
+	connGen map[string]uint64
 	pending map[int64]*integrationCall
 	nextID  int64
 
@@ -846,9 +850,24 @@ func (r *integrationRegistry) ConnectionChanged(name string) {
 	if e := r.entries[name]; e != nil {
 		e.scrub = nil
 	}
+	if r.connGen == nil {
+		r.connGen = map[string]uint64{}
+	}
+	r.connGen[name]++
 	r.forgetAgentToolsLocked(name)
 	r.mu.Unlock()
 	r.sendEvent(name, integrationpod.Event{Type: integrationpod.EventRestart, Data: []byte("{}")})
+}
+
+// connectionGen is how many times name's connection changed
+// (ConnectionChanged) since the registry started; 0 with no registry.
+func (r *integrationRegistry) connectionGen(name string) uint64 {
+	if r == nil {
+		return 0
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.connGen[name]
 }
 
 // onMessage handles one message the pod posted: a response is matched

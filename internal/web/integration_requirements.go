@@ -144,12 +144,15 @@ func (v *integrationView) coreRequirements() ([]apitypes.IntegrationRequirement,
 		}
 	}
 	if len(missing) > 0 {
-		conn.Met, conn.Fix = false, builtinintegrations.FlowSetup
-		subject := "Its secrets are"
+		conn.Met = false
+		conn.Words = "Its secrets are not stored on this Kivali server, as after a restore from a backup. Enter them again."
 		if v.multiple() {
-			subject = strings.Join(missing, ", ") + "'s secrets are"
+			// The install flow writes the oldest connection: each of
+			// several is mended on its own card.
+			conn.Words = strings.Join(missing, ", ") + "'s secrets are not stored on this Kivali server, as after a restore from a backup. Enter them again on its card."
+		} else {
+			conn.Fix = builtinintegrations.FlowSetup
 		}
-		conn.Words = subject + " not stored on this Kivali server, as after a restore from a backup. Enter them again."
 		at[reqConnection] = since
 	}
 	rows = append(rows, conn)
@@ -232,43 +235,129 @@ func (s *Server) ownRequirements(ctx context.Context, v *integrationView) []apit
 	if !ok || v.first() == nil {
 		return nil
 	}
-	name, display := v.it.Name, v.displayName()
-	conn, _, scrub, err := s.builtinConnection(ctx, name, v.first().rec.ID)
-	switch {
-	case errors.Is(err, errSignInNeeded), errors.Is(err, errVendorUnavailable), errors.Is(err, store.ErrNotFound):
-		return nil
-	case err != nil:
-		log.Printf("integration %s: read the connection for its requirements: %v", name, err)
-		return []apitypes.IntegrationRequirement{{ID: reqChecks, Title: display + "'s own checks", Words: "Kivali could not read the connection to check them."}}
+	name, connID := v.it.Name, v.first().rec.ID
+	gen := s.Integrations.connectionGen(name)
+	if rows, ok := s.requirementsCache.get(name, connID, gen, s.clk().Now()); ok {
+		return rows
 	}
-	got, err := runBuiltin(ctx, s.clk(), requirementsTimeout, func(ctx context.Context) ([]builtinintegrations.Requirement, error) {
-		return ro.Requirements(ctx, conn)
+	rows := s.askRequirements(ctx, v, ro)
+	s.requirementsCache.put(name, connID, gen, s.clk().Now(), rows)
+	return rows
+}
+
+// ownAnswer is what an integration's Requirements gave, with the
+// scrubber of the connection it was given.
+type ownAnswer struct {
+	rows  []builtinintegrations.Requirement
+	scrub *strings.Replacer
+	// skip is true when the connection needs a sign-in, or the service
+	// did not answer its renewal: the sign_in row says so.
+	skip bool
+}
+
+// askRequirements asks ro for v's rows, reading the connection (which
+// may renew a sign-in with the service) and calling Requirements under
+// one requirementsTimeout.
+func (s *Server) askRequirements(ctx context.Context, v *integrationView, ro builtinintegrations.RequirementsOf) []apitypes.IntegrationRequirement {
+	name, display := v.it.Name, v.displayName()
+	connID := v.first().rec.ID
+	errNoConn := errors.New("the connection could not be read")
+	got, err := runBuiltin(ctx, s.clk(), requirementsTimeout, func(ctx context.Context) (ownAnswer, error) {
+		conn, _, scrub, err := s.builtinConnection(ctx, name, connID)
+		switch {
+		case errors.Is(err, errSignInNeeded), errors.Is(err, errVendorUnavailable), errors.Is(err, store.ErrNotFound):
+			return ownAnswer{skip: true}, nil
+		case err != nil:
+			log.Printf("integration %s: read the connection for its requirements: %v", name, err)
+			return ownAnswer{}, errNoConn
+		}
+		rows, err := ro.Requirements(ctx, conn)
+		if err != nil {
+			err = errors.New(scrub.Replace(err.Error()))
+		}
+		return ownAnswer{rows: rows, scrub: scrub}, err
 	})
-	if err != nil {
+	switch {
+	case got.skip && err == nil:
+		return nil
+	case errors.Is(err, errNoConn):
+		return []apitypes.IntegrationRequirement{{ID: reqChecks, Title: display + "'s own checks", Words: "Kivali could not read the connection to check them."}}
+	case err != nil:
 		words := err.Error()
 		if errors.Is(err, errIntegrationTimeout) {
 			words = "it did not answer within 5 seconds"
 		}
-		words = clipRunes(scrub.Replace(words), requirementWordsRunes)
-		return []apitypes.IntegrationRequirement{{ID: reqChecks, Title: display + "'s own checks", Words: display + " could not check its requirements: " + sentenceEnd(words)}}
+		return []apitypes.IntegrationRequirement{{ID: reqChecks, Title: display + "'s own checks", Words: display + " could not check its requirements: " + sentenceEnd(clipRunes(words, requirementWordsRunes))}}
 	}
 	out := []apitypes.IntegrationRequirement{}
 	seen := map[string]bool{}
-	for _, r := range got {
+	for _, r := range got.rows {
 		if !requirementID.MatchString(r.ID) || slices.Contains(coreRequirementIDs, r.ID) || seen[r.ID] {
 			log.Printf("integration %s: a requirement with the id %q is left out", name, r.ID)
+			continue
+		}
+		if r.Fix != "" && !requirementID.MatchString(r.Fix) {
+			log.Printf("integration %s: the requirement %s names a fix that is not a flow's name, and is left out", name, r.ID)
 			continue
 		}
 		seen[r.ID] = true
 		out = append(out, apitypes.IntegrationRequirement{
 			ID:    r.ID,
-			Title: clipRunes(scrub.Replace(cmp.Or(r.Title, r.ID)), requirementTitleRunes),
-			Words: clipRunes(scrub.Replace(r.Words), requirementWordsRunes),
+			Title: clipRunes(got.scrub.Replace(cmp.Or(r.Title, r.ID)), requirementTitleRunes),
+			Words: clipRunes(got.scrub.Replace(r.Words), requirementWordsRunes),
 			Met:   r.Met,
 			Fix:   r.Fix,
 		})
 	}
 	return out
+}
+
+// requirementsCacheTTL is how long an integration's own rows are kept:
+// long enough that the page, the list and Home read on one screen ask
+// the integration once.
+const requirementsCacheTTL = 3 * time.Second
+
+// requirementsCache holds each integration's own rows for
+// requirementsCacheTTL on the server's clock, for the connection it
+// asked with: a change of the connection (integrationRegistry's
+// connection generation), a Fix done or Uninstall makes it ask again.
+// The zero value is ready to use.
+type requirementsCache struct {
+	mu   sync.Mutex
+	rows map[string]cachedRequirements
+}
+
+type cachedRequirements struct {
+	connID string
+	gen    uint64
+	at     time.Time
+	rows   []apitypes.IntegrationRequirement
+}
+
+func (c *requirementsCache) get(name, connID string, gen uint64, now time.Time) ([]apitypes.IntegrationRequirement, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e, ok := c.rows[name]
+	if !ok || e.connID != connID || e.gen != gen || !now.Before(e.at.Add(requirementsCacheTTL)) {
+		return nil, false
+	}
+	return slices.Clone(e.rows), true
+}
+
+func (c *requirementsCache) put(name, connID string, gen uint64, now time.Time, rows []apitypes.IntegrationRequirement) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.rows == nil {
+		c.rows = map[string]cachedRequirements{}
+	}
+	c.rows[name] = cachedRequirements{connID: connID, gen: gen, at: now, rows: slices.Clone(rows)}
+}
+
+// forget drops name's rows, so the next read asks again.
+func (c *requirementsCache) forget(name string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.rows, name)
 }
 
 // requirements are v's rows, Kivali's then its own, with when each
@@ -291,17 +380,6 @@ func unmet(rows []apitypes.IntegrationRequirement) int {
 		}
 	}
 	return n
-}
-
-// integrationSummary is v's row of the list: its state and, installed
-// and on, how many of its requirements are not met.
-func (s *Server) integrationSummary(ctx context.Context, v *integrationView) apitypes.IntegrationSummary {
-	sum := v.summary()
-	if sum.State == apitypes.IntegrationStateInstalled {
-		rows, _ := s.requirements(ctx, v)
-		sum.Needs = unmet(rows)
-	}
-	return sum
 }
 
 // integrationRequirementNeedPrefix is the ID prefix of an integration's
@@ -383,6 +461,10 @@ func (s *Server) integrationRequirementItems(ctx context.Context) []apitypes.Nee
 // errFlowNotOffered refuses a flow v neither installs with nor names in
 // its requirements.
 func errFlowNotOffered(flow, display string) string {
+	if !requirementID.MatchString(flow) {
+		// The caller's words are not echoed back.
+		return "that is not a flow " + display + " has"
+	}
 	return flow + " is not a flow " + display + " has"
 }
 
@@ -403,7 +485,51 @@ func (s *Server) fixSpecFor(v *integrationView, flow string) (setupSpec, *connWr
 	si, ok := v.builtin.(builtinintegrations.SetupIntegration)
 	c := v.manifest.Kivali.Connection
 	if !ok || c.Method != integration.MethodSetup || c.Setup == nil {
-		return setupSpec{}, &connWriteError{http.StatusConflict, errFlowNotOffered(flow, v.displayName()), v.whoBuilt()}
+		// Its requirements name a flow, but only a setup connection's
+		// own setup runs one.
+		return setupSpec{}, &connWriteError{http.StatusConflict, v.displayName() + "'s setup does not run its own flows", v.whoBuilt()}
 	}
 	return setupSpec{driver: si, fields: c.Setup.Fields, hosts: c.Setup.Hosts, keeps: c.Setup.Keeps.Keys(), keep: s.keepSetupValues}, nil
+}
+
+// listedIntegration is one integration as a list reads it: its row and
+// its requirements (none unless installed or off).
+type listedIntegration struct {
+	sum  apitypes.IntegrationSummary
+	rows []apitypes.IntegrationRequirement
+}
+
+// listIntegrations reads each of its, and asks each installed one for
+// its requirements, all at once, so a list waits requirementsTimeout at
+// most however many integrations there are. The answer keeps its'
+// order; err is the first integration's that could not be read, and
+// bad its name.
+func (s *Server) listIntegrations(ctx context.Context, its []store.Integration) (out []listedIntegration, bad string, err error) {
+	out = make([]listedIntegration, len(its))
+	errs := make([]error, len(its))
+	var wg sync.WaitGroup
+	for i, it := range its {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			v, err := s.loadIntegration(ctx, it.Name)
+			if err != nil {
+				errs[i] = err
+				return
+			}
+			rows, _ := s.requirements(ctx, v)
+			sum := v.summary()
+			if sum.State == apitypes.IntegrationStateInstalled {
+				sum.Needs = unmet(rows)
+			}
+			out[i] = listedIntegration{sum: sum, rows: rows}
+		}()
+	}
+	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			return nil, its[i].Name, err
+		}
+	}
+	return out, "", nil
 }

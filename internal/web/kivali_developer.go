@@ -433,19 +433,10 @@ func (s *Server) developerList(ctx context.Context) agentpod.KivaliDeveloperResp
 	if len(its) == 0 {
 		return agentpod.KivaliDeveloperResponse{Body: "No integration is installed."}
 	}
-	type listed struct {
-		sum  apitypes.IntegrationSummary
-		rows []apitypes.IntegrationRequirement
-	}
-	var sums []listed
-	for _, it := range its {
-		v, err := s.loadIntegration(ctx, it.Name)
-		if err != nil {
-			log.Printf("integration_list: %s: %v", it.Name, err)
-			return developerError(fmt.Sprintf("The integration %s could not be read; try again later or tell the owner.", it.Name))
-		}
-		rows, _ := s.requirements(ctx, v)
-		sums = append(sums, listed{v.summary(), rows})
+	sums, bad, err := s.listIntegrations(ctx, its)
+	if err != nil {
+		log.Printf("integration_list: %s: %v", bad, err)
+		return developerError(fmt.Sprintf("The integration %s could not be read; try again later or tell the owner.", bad))
 	}
 	sort.SliceStable(sums, func(i, j int) bool {
 		return strings.ToLower(sums[i].sum.DisplayName) < strings.ToLower(sums[j].sum.DisplayName)
