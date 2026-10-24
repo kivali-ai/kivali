@@ -57,9 +57,39 @@ func TestEveryBuiltinPassesTheCheck(t *testing.T) {
 
 // Why this test exists: the test built-in is what the server's tests
 // prove dispatch with. A manifest of its that the check refuses would
-// make those tests prove something no real built-in could ship.
+// make those tests prove something no real built-in could ship. Each of
+// its shapes is held to it: a token connection, and a setup one, alone
+// and handing over to a sign-in, which also must name method setup and
+// implement every hook of the setup contract, or the tests of core's
+// dispatch of them would prove nothing.
 func TestEchoPassesTheCheck(t *testing.T) {
 	checkRegistry(t, builtinintegrations.Registry{echotest.New()}, false)
+	setup := echotest.New()
+	setup.SetupFlow = true
+	handOver := echotest.New()
+	handOver.SetupFlow = true
+	handOver.HandOver = &integration.Connection{
+		Method:                integration.MethodBrowser,
+		AuthorizationEndpoint: "https://" + echotest.SetupHost + "/authorize",
+		TokenEndpoint:         "https://" + echotest.SetupHost + "/token",
+		CredentialKeys:        map[string]string{"access_token": "TOKEN"},
+	}
+	for _, e := range []*echotest.Echo{setup, handOver} {
+		checkRegistry(t, builtinintegrations.Registry{e}, false)
+		if c := e.Manifest().Kivali.Connection; c.Method != integration.MethodSetup || c.Setup == nil {
+			t.Errorf("the setup shape's connection = %+v", c)
+		}
+		var bi builtinintegrations.Integration = e
+		_, setupOK := bi.(builtinintegrations.SetupIntegration)
+		_, reqOK := bi.(builtinintegrations.RequirementsOf)
+		_, unOK := bi.(builtinintegrations.Uninstaller)
+		if !setupOK || !reqOK || !unOK {
+			t.Errorf("the setup shape implements Setup %v, Requirements %v, Uninstall %v", setupOK, reqOK, unOK)
+		}
+	}
+	if then := handOver.Manifest().Kivali.Connection.Setup.Then; then != integration.MethodBrowser {
+		t.Errorf("the hand-over's then = %q", then)
+	}
 	if builtins.All().Lookup(echotest.Name) != nil {
 		t.Errorf("the test built-in is in the binary's list")
 	}

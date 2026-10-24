@@ -33,13 +33,23 @@ func (f *failingDeletes) Delete(ctx context.Context, name string) error {
 	return f.Store.Delete(ctx, name)
 }
 
-// keepThenFail is a setup flow whose first call keeps an app's id and
+// keepThenFail is a setup script whose first call keeps an account and
 // asks for a Form, and whose answer fails.
 func keepThenFail(_ int, _ context.Context, _ builtinintegrations.Connection, last builtinintegrations.Answer, _ builtinintegrations.Progress) (builtinintegrations.Step, error) {
 	if last.Form == nil {
-		return builtinintegrations.Step{Keep: map[string]string{"app_id": "half-made-app"}, Form: &builtinintegrations.Form{Fields: []string{"account"}}}, nil
+		return builtinintegrations.Step{Keep: map[string]string{"account": "half-made-app"}, Form: &builtinintegrations.Form{Fields: []string{"account"}}}, nil
 	}
 	return builtinintegrations.Step{}, errors.New("the service refused")
+}
+
+// keepThenDone is a setup script of one Form, whose answer it keeps as
+// the account and a token, then Done: an install in one step, for a
+// test about what follows it.
+func keepThenDone(_ int, _ context.Context, _ builtinintegrations.Connection, last builtinintegrations.Answer, _ builtinintegrations.Progress) (builtinintegrations.Step, error) {
+	if last.Form == nil {
+		return builtinintegrations.Step{Form: &builtinintegrations.Form{Fields: []string{"account"}}}, nil
+	}
+	return builtinintegrations.Step{Done: true, Keep: map[string]string{"account": last.Form["account"], "token": "s3cret-token"}}, nil
 }
 
 // answerEcho answers echo's Form with account.
@@ -58,14 +68,14 @@ func answerEcho(t *testing.T, srv *Server, account string) {
 // named so its Secret is not lost, and Uninstall again (the built-in
 // treating the gone installation as done) completes it.
 func TestUninstallFinishesAfterASecretWouldNotGo(t *testing.T) {
-	srv, fh, _ := healthServer(t, keepThenDone)
+	srv, e, _ := healthServer(t)
 	mem := &failingDeletes{Store: secrets.NewMemory()}
 	srv.Secrets = mem
-	installEcho(t, srv, "acme")
+	installEcho(t, srv, e, "acme")
 	mem.left.Store(1)
-	e := assertAPIError(t, intDelete(t, srv, intBase+"/echo"), http.StatusInternalServerError)
-	if e.Error != "Echo's installation was undone on the service, but Kivali could not remove its connection; uninstall it again to finish" {
-		t.Errorf("first uninstall = %+v", e)
+	apiErr := assertAPIError(t, intDelete(t, srv, intBase+"/echo"), http.StatusInternalServerError)
+	if apiErr.Error != "Echo's installation was undone on the service, but Kivali could not remove its connection; uninstall it again to finish" {
+		t.Errorf("first uninstall = %+v", apiErr)
 	}
 	if page := echoPage(t, srv); page.Summary.State != apitypes.IntegrationStateInstalled || len(page.Connections) != 1 {
 		t.Fatalf("after the failed delete = %s, connections %v", page.Summary.State, page.Connections)
@@ -73,9 +83,7 @@ func TestUninstallFinishesAfterASecretWouldNotGo(t *testing.T) {
 	if rr := intDelete(t, srv, intBase+"/echo"); rr.Code != http.StatusNoContent {
 		t.Fatalf("second uninstall: %d %s", rr.Code, rr.Body.String())
 	}
-	fh.mu.Lock()
-	calls := len(fh.uninstalled)
-	fh.mu.Unlock()
+	calls := len(e.callsOf("uninstall"))
 	if page := echoPage(t, srv); page.Summary.State != apitypes.IntegrationStateAvailable || len(page.Connections) != 0 || calls != 2 {
 		t.Errorf("after the second = %s, connections %v, Uninstall called %d times", page.Summary.State, page.Connections, calls)
 	}
@@ -93,7 +101,7 @@ func TestUninstallFinishesAfterASecretWouldNotGo(t *testing.T) {
 func TestInstallTakeoverKeepsTheMadeConnection(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
-		second func(n int, ctx context.Context, conn builtinintegrations.Connection, last builtinintegrations.Answer, p builtinintegrations.Progress) (builtinintegrations.Step, error)
+		second echotest.SetupScript
 		end    apitypes.SetupFlowState
 		conns  int
 	}{
@@ -101,10 +109,11 @@ func TestInstallTakeoverKeepsTheMadeConnection(t *testing.T) {
 		{"the second is done", keepThenDone, apitypes.SetupFlowStateDone, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			srv, fh, _ := healthServer(t, keepThenFail)
+			srv, e, _ := healthServer(t)
+			e.ScriptSetup(keepThenFail)
 			startSetupFlow(t, srv, "echo")
 			waitFlow(t, srv, "echo", apitypes.SetupFlowStateForm)
-			fh.script = tc.second
+			e.ScriptSetup(tc.second)
 			startSetupFlow(t, srv, "echo")
 			waitFlow(t, srv, "echo", apitypes.SetupFlowStateForm)
 			srv.setupAwaitDiscard(context.Background(), "echo")
@@ -126,7 +135,8 @@ func TestInstallTakeoverKeepsTheMadeConnection(t *testing.T) {
 // made connection and its Secret go, and the built-in is available,
 // with nothing left for the flow's own discard to find.
 func TestUninstallWhileInstalling(t *testing.T) {
-	srv, _, _ := healthServer(t, keepThenFail)
+	srv, e, _ := healthServer(t)
+	e.ScriptSetup(keepThenFail)
 	mem := secrets.NewMemory()
 	srv.Secrets = mem
 	startSetupFlow(t, srv, "echo")
@@ -150,7 +160,8 @@ func TestUninstallWhileInstalling(t *testing.T) {
 // start must be refused while a discard is under way, and go through
 // once it is over.
 func TestSetupStartRefusedWhileAFailedInstallIsUndone(t *testing.T) {
-	srv, fh, _ := healthServer(t, keepThenFail)
+	srv, e, _ := healthServer(t)
+	e.ScriptSetup(keepThenFail)
 	release := make(chan struct{})
 	srv.setupRuns.discard = func(name, id string) {
 		<-release
@@ -173,8 +184,8 @@ func TestSetupStartRefusedWhileAFailedInstallIsUndone(t *testing.T) {
 	}
 	close(release)
 	srv.setupAwaitDiscard(context.Background(), "echo")
-	fh.script = keepThenDone
-	installEcho(t, srv, "acme")
+	e.ScriptSetup(nil)
+	installEcho(t, srv, e, "acme")
 	if page := echoPage(t, srv); !installedAndMet(page) || len(page.Connections) != 1 {
 		t.Errorf("installed after the undo = %s, connections %v", page.Summary.State, page.Connections)
 	}
@@ -262,19 +273,20 @@ func TestFixNamesAreFlowNames(t *testing.T) {
 	}
 }
 
-// renamed is a fakeHealth under another name, for a team with two.
+// renamed is echo under another name, for a team with two.
 type renamed struct {
-	*fakeHealth
+	*echotest.Echo
 	name string
 }
 
 func (r renamed) Manifest() *integration.Manifest {
-	m := r.fakeHealth.Manifest()
+	m := r.Echo.Manifest()
 	m.Name, m.DisplayName = r.name, r.name
 	return m
 }
 
-// installNamed runs name's install flow (keepThenDone) to its end.
+// installNamed runs name's install flow, scripted by keepThenDone, to
+// its end.
 func installNamed(t *testing.T, srv *Server, name string) {
 	t.Helper()
 	startSetupFlow(t, srv, name)
@@ -292,9 +304,12 @@ func installNamed(t *testing.T, srv *Server, name string) {
 // Both deadlines armed together, before either passes, is what shows
 // they run at once.
 func TestListAsksEveryIntegrationAtOnce(t *testing.T) {
-	srv, fh, clk := healthServer(t, keepThenDone)
-	other := &fakeHealth{fakeSetup: &fakeSetup{Echo: echotest.New(), setup: testSetupDecl(), script: keepThenDone, seen: make(chan builtinintegrations.Answer, 64)}}
-	srv.BuiltinIntegrations = builtinintegrations.Registry{fh, renamed{other, "second"}}
+	srv, e, clk := healthServer(t)
+	e.ScriptSetup(keepThenDone)
+	other := echotest.New()
+	other.SetupFlow = true
+	other.ScriptSetup(keepThenDone)
+	srv.BuiltinIntegrations = builtinintegrations.Registry{e.Echo, renamed{other, "second"}}
 	if err := srv.Store.InstallBuiltinIntegrations(srv.BuiltinIntegrations.Manifests(), signInAt); err != nil {
 		t.Fatal(err)
 	}
@@ -304,8 +319,8 @@ func TestListAsksEveryIntegrationAtOnce(t *testing.T) {
 		<-ctx.Done()
 		return nil, ctx.Err()
 	}
-	fh.setRows(slow)
-	other.setRows(slow)
+	e.ScriptRequirements(slow)
+	other.ScriptRequirements(slow)
 	got := make(chan apitypes.Integrations, 1)
 	go func() { got <- orgOK[apitypes.Integrations](t, orgGet(t, srv, intBase)) }()
 	clk.BlockUntil(2)
@@ -332,10 +347,10 @@ func TestListAsksEveryIntegrationAtOnce(t *testing.T) {
 // connection it was asked with, and asked again once that time is up
 // or the connection changes, so a change is never hidden for long.
 func TestOwnRequirementsAreKeptBriefly(t *testing.T) {
-	srv, fh, clk := healthServer(t, keepThenDone)
-	installEcho(t, srv, "acme")
+	srv, e, clk := healthServer(t)
+	installEcho(t, srv, e, "acme")
 	var asked atomic.Int32
-	fh.setRows(func(context.Context, builtinintegrations.Connection) ([]builtinintegrations.Requirement, error) {
+	e.ScriptRequirements(func(context.Context, builtinintegrations.Connection) ([]builtinintegrations.Requirement, error) {
 		asked.Add(1)
 		return []builtinintegrations.Requirement{{ID: "permissions", Title: "Permissions"}}, nil
 	})

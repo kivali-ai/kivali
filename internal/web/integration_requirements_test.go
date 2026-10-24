@@ -5,9 +5,9 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"slices"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -19,82 +19,13 @@ import (
 	"github.com/kivali-ai/kivali/internal/web/apitypes"
 )
 
-// fakeHealth is fakeSetup with health of its own: Requirements and
-// Uninstall answer as the test sets them, and each records what it was
-// given, as Setup records the flow it ran.
-type fakeHealth struct {
-	*fakeSetup
-
-	mu          sync.Mutex
-	rows        func(ctx context.Context, conn builtinintegrations.Connection) ([]builtinintegrations.Requirement, error)
-	uninstall   error
-	uninstalled []builtinintegrations.Connection
-	flows       []string
-}
-
-func (f *fakeHealth) Setup(ctx context.Context, conn builtinintegrations.Connection, flow string, last builtinintegrations.Answer, p builtinintegrations.Progress) (builtinintegrations.Step, error) {
-	f.mu.Lock()
-	f.flows = append(f.flows, flow)
-	f.mu.Unlock()
-	return f.fakeSetup.Setup(ctx, conn, flow, last, p)
-}
-
-func (f *fakeHealth) Requirements(ctx context.Context, conn builtinintegrations.Connection) ([]builtinintegrations.Requirement, error) {
-	f.mu.Lock()
-	rows := f.rows
-	f.mu.Unlock()
-	if rows == nil {
-		return nil, nil
-	}
-	return rows(ctx, conn)
-}
-
-func (f *fakeHealth) Uninstall(_ context.Context, conn builtinintegrations.Connection) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.uninstalled = append(f.uninstalled, conn)
-	return f.uninstall
-}
-
-// setRows sets what Requirements answers.
-func (f *fakeHealth) setRows(rows func(ctx context.Context, conn builtinintegrations.Connection) ([]builtinintegrations.Requirement, error)) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.rows = rows
-}
-
-// lastFlow is the flow Setup last ran.
-func (f *fakeHealth) lastFlow() string {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if len(f.flows) == 0 {
-		return ""
-	}
-	return f.flows[len(f.flows)-1]
-}
-
-// healthServer is setupServer with fakeHealth as the built-in echo.
-func healthServer(t *testing.T, script func(n int, ctx context.Context, conn builtinintegrations.Connection, last builtinintegrations.Answer, p builtinintegrations.Progress) (builtinintegrations.Step, error)) (*Server, *fakeHealth, *clock.Fake) {
+// healthServer is setupServer running echo's own flow, with its
+// permissions granted so that it is healthy once installed.
+func healthServer(t *testing.T) (*Server, *setupEcho, *clock.Fake) {
 	t.Helper()
-	srv := newTestServer(t)
-	clk := clock.NewFakeAt(signInAt)
-	srv.Clock = clk
-	fh := &fakeHealth{fakeSetup: &fakeSetup{Echo: echotest.New(), setup: testSetupDecl(), script: script, seen: make(chan builtinintegrations.Answer, 64)}}
-	srv.BuiltinIntegrations = builtinintegrations.Registry{fh}
-	withIntegrationRegistry(srv, nil)
-	if err := srv.Store.InstallBuiltinIntegrations(srv.BuiltinIntegrations.Manifests(), signInAt); err != nil {
-		t.Fatal(err)
-	}
-	return srv, fh, clk
-}
-
-// keepThenDone is a setup flow of one Form, whose answer it keeps as
-// the app's id and secret, and Done.
-func keepThenDone(_ int, _ context.Context, _ builtinintegrations.Connection, last builtinintegrations.Answer, _ builtinintegrations.Progress) (builtinintegrations.Step, error) {
-	if last.Form == nil {
-		return builtinintegrations.Step{Form: &builtinintegrations.Form{Fields: []string{"account"}}}, nil
-	}
-	return builtinintegrations.Step{Done: true, Keep: map[string]string{"app_id": last.Form["account"], "app_secret": "s3cret-app-secret"}}, nil
+	srv, e, clk := setupServer(t, nil)
+	e.SetPermissions(true)
+	return srv, e, clk
 }
 
 // echoPage is echo's page as it stands.
@@ -103,15 +34,72 @@ func echoPage(t *testing.T, srv *Server) apitypes.IntegrationPage {
 	return orgOK[apitypes.IntegrationPage](t, orgGet(t, srv, intBase+"/echo"))
 }
 
-// installEcho runs echo's install flow to its end, answering its Form
-// with account.
-func installEcho(t *testing.T, srv *Server, account string) {
+// echoKey is the key installEcho enters on echo's Form.
+const echoKey = "pak-123456"
+
+// echoGo takes echo's flow from its Form, answered with account and
+// echoKey, to its Go, and returns the flow there and the flow's cookie
+// /connect/start set.
+func echoGo(t *testing.T, srv *Server, account string) (apitypes.SetupFlow, *http.Cookie) {
 	t.Helper()
-	startSetupFlow(t, srv, "echo")
 	waitFlow(t, srv, "echo", apitypes.SetupFlowStateForm)
-	if rr := flowDo(t, srv, http.MethodPost, intBase+"/echo/setup/answer", apitypes.SetupFlowAnswer{Fields: map[string]string{"account": account}}); rr.Code != http.StatusOK {
+	if rr := flowDo(t, srv, http.MethodPost, intBase+"/echo/setup/answer", apitypes.SetupFlowAnswer{Fields: map[string]string{"account": account, "key": echoKey}}); rr.Code != http.StatusOK {
 		t.Fatalf("answer: %d %s", rr.Code, rr.Body.String())
 	}
+	f := waitFlow(t, srv, "echo", apitypes.SetupFlowStateGo)
+	rr, cookie := startPage(t, srv, f)
+	if rr.Code != http.StatusOK || cookie == nil {
+		t.Fatalf("start = %d, cookie %v", rr.Code, cookie)
+	}
+	return f, cookie
+}
+
+// echoBack is setup.example sending the browser back from echo's Go
+// with query added to the callback echo gave it, and returns where
+// Kivali sends the browser on.
+func echoBack(t *testing.T, srv *Server, e *setupEcho, cookie *http.Cookie, query url.Values) *url.URL {
+	t.Helper()
+	calls := e.callsOf("setup")
+	back := mustURL(t, calls[len(calls)-1].Answer.Callback)
+	q := back.Query()
+	for k, v := range query {
+		q[k] = v
+	}
+	back.RawQuery = q.Encode()
+	return callback(t, srv, back, cookie)
+}
+
+// echoCheck has the Wait echo's flow shows checked once, with a stream
+// watching it.
+func echoCheck(t *testing.T, srv *Server, e *setupEcho, clk *clock.Fake) builtinintegrations.Answer {
+	t.Helper()
+	run, _, ch, ok := srv.setupSubscribe("echo")
+	if !ok {
+		t.Fatal("echo has no setup flow")
+	}
+	defer srv.setupUnsubscribe(run, ch)
+	// The calls before the check have all been made: the flow shows
+	// the Wait the last of them gave.
+	for len(e.seen) > 0 {
+		<-e.seen
+	}
+	clk.BlockUntil(1)
+	clk.Advance(setupWaitEvery)
+	return e.nextAnswer(t)
+}
+
+// installEcho runs echo's install flow to its end through every step
+// it takes, as the owner would: the Form answered with account, the Go
+// there and back with a code, and the Wait checked once the app is
+// installed.
+func installEcho(t *testing.T, srv *Server, e *setupEcho, account string) {
+	t.Helper()
+	e.SetInstalled(true)
+	startSetupFlow(t, srv, "echo")
+	_, cookie := echoGo(t, srv, account)
+	landedOnSetup(t, echoBack(t, srv, e, cookie, url.Values{"code": {"c0de-1"}}), "echo")
+	waitFlow(t, srv, "echo", apitypes.SetupFlowStateWait)
+	echoCheck(t, srv, e, srv.Clock.(*clock.Fake))
 	waitFlow(t, srv, "echo", apitypes.SetupFlowStateDone)
 }
 
@@ -135,14 +123,14 @@ func auditActions(t *testing.T, srv *Server, name, action string) []string {
 // Why this test exists: every integration has the same lifecycle, and
 // the page and the list draw it from the state alone. A built-in must
 // read available until its install flow runs, setting up while it
-// does, installed once it is done (with Uninstall offered and Kivali's
-// requirements met), off with the switch, and available again after
-// Uninstall, which calls the integration's own Uninstall with the
-// connection, forgets the Secret, drops every agent's access and is
-// audited. A state read wrong would offer Install on an installed
-// integration, or access on one that is not.
+// does, installed once it is done (with Uninstall offered and every
+// requirement, Kivali's and its own, met), off with the switch, and
+// available again after Uninstall, which calls the integration's own
+// Uninstall with the connection, forgets the Secret, drops every
+// agent's access and is audited. A state read wrong would offer
+// Install on an installed integration, or access on one that is not.
 func TestIntegrationLifecycle(t *testing.T) {
-	srv, fh, _ := healthServer(t, keepThenDone)
+	srv, e, _ := healthServer(t)
 	mem := secrets.NewMemory()
 	srv.Secrets = mem
 	intTeam(t, srv, "dana")
@@ -157,12 +145,12 @@ func TestIntegrationLifecycle(t *testing.T) {
 	if page.Summary.State != apitypes.IntegrationStateSettingUp || page.Flow == nil || page.Flow.State != apitypes.SetupFlowStateForm || page.Flow.Flow != "setup" {
 		t.Errorf("while setting up = %s, flow %+v", page.Summary.State, page.Flow)
 	}
-	if rr := flowDo(t, srv, http.MethodPost, intBase+"/echo/setup/answer", apitypes.SetupFlowAnswer{Fields: map[string]string{"account": "acme"}}); rr.Code != http.StatusOK {
-		t.Fatalf("answer: %d %s", rr.Code, rr.Body.String())
+	if !srv.setupCancel("echo") {
+		t.Fatal("no flow to cancel")
 	}
-	waitFlow(t, srv, "echo", apitypes.SetupFlowStateDone)
+	installEcho(t, srv, e, "acme")
 	page = echoPage(t, srv)
-	if !installedAndMet(page) || !page.CanUninstall || !slices.Equal(requirementIDs(page), []string{"version", "connection"}) {
+	if !installedAndMet(page) || !page.CanUninstall || !slices.Equal(requirementIDs(page), []string{"version", "connection", "installed", "permissions"}) {
 		t.Errorf("installed = %s, unmet %v, ids %v", page.Summary.State, unmetIDs(page), requirementIDs(page))
 	}
 	putIntegrationAccess(t, srv, "echo", "dana", `{}`)
@@ -174,10 +162,8 @@ func TestIntegrationLifecycle(t *testing.T) {
 	if rr := intDelete(t, srv, intBase+"/echo"); rr.Code != http.StatusNoContent {
 		t.Fatalf("uninstall: %d %s", rr.Code, rr.Body.String())
 	}
-	fh.mu.Lock()
-	got := fh.uninstalled
-	fh.mu.Unlock()
-	if len(got) != 1 || got[0].Fields["app_id"] != "acme" || got[0].Fields["app_secret"] != "s3cret-app-secret" {
+	got := e.callsOf("uninstall")
+	if len(got) != 1 || got[0].Conn.Fields["account"] != "acme" || got[0].Conn.Fields["token"] != "tok-c0de-1" {
 		t.Errorf("Uninstall was given %+v", got)
 	}
 	page = echoPage(t, srv)
@@ -192,56 +178,51 @@ func TestIntegrationLifecycle(t *testing.T) {
 	}
 	// Installing it again switches it on: nothing installed has nothing
 	// to keep off.
-	installEcho(t, srv, "acme")
+	installEcho(t, srv, e, "acme")
 	if page := echoPage(t, srv); !installedAndMet(page) || !page.Summary.Enabled {
 		t.Errorf("installed again = %+v", page.Summary)
 	}
 }
 
 // Why this test exists: an install that fails or is cancelled keeps
-// nothing, and the integration is available again. A setup flow keeps
-// along the way (an app's id before the browser goes to the service),
-// so a failure after a Keep would otherwise leave a half-made
-// connection that reads as installed, with secrets nobody finished. A
-// Fix that fails on an installed integration keeps what it kept: the
-// connection was there before it.
+// nothing, and the integration is available again. Echo's flow keeps
+// along the way (the account as the browser goes to the service, the
+// token once it is back), so a failure after a Keep would otherwise
+// leave a half-made connection that reads as installed, with secrets
+// nobody finished. A Fix that fails on an installed integration keeps
+// what it kept: the connection was there before it.
 func TestFailedInstallKeepsNothing(t *testing.T) {
-	failAfterKeep := func(_ int, _ context.Context, _ builtinintegrations.Connection, last builtinintegrations.Answer, _ builtinintegrations.Progress) (builtinintegrations.Step, error) {
-		if last.Form == nil {
-			return builtinintegrations.Step{Keep: map[string]string{"app_id": "half-made-app"}, Form: &builtinintegrations.Form{Fields: []string{"account"}}}, nil
-		}
-		return builtinintegrations.Step{}, errors.New("the service refused")
-	}
 	for _, end := range []struct {
 		name string
-		do   func(t *testing.T, srv *Server)
+		do   func(t *testing.T, srv *Server, e *setupEcho, cookie *http.Cookie)
 	}{
-		{"failed", func(t *testing.T, srv *Server) {
-			if rr := flowDo(t, srv, http.MethodPost, intBase+"/echo/setup/answer", apitypes.SetupFlowAnswer{Fields: map[string]string{"account": "acme"}}); rr.Code != http.StatusOK {
-				t.Fatalf("answer: %d %s", rr.Code, rr.Body.String())
-			}
+		{"failed", func(t *testing.T, srv *Server, e *setupEcho, cookie *http.Cookie) {
+			e.FailSetup(true)
+			echoBack(t, srv, e, cookie, url.Values{"code": {"c0de-1"}})
+			waitFlow(t, srv, "echo", apitypes.SetupFlowStateWait)
+			echoCheck(t, srv, e, srv.Clock.(*clock.Fake))
 			waitFlow(t, srv, "echo", apitypes.SetupFlowStateFailed)
 		}},
-		{"cancelled", func(t *testing.T, srv *Server) {
+		{"cancelled", func(t *testing.T, srv *Server, _ *setupEcho, _ *http.Cookie) {
 			if rr := flowDo(t, srv, http.MethodPost, intBase+"/echo/setup/cancel", nil); rr.Code != http.StatusNoContent {
 				t.Fatalf("cancel: %d", rr.Code)
 			}
 		}},
-		{"forgotten", func(t *testing.T, srv *Server) {
+		{"forgotten", func(t *testing.T, srv *Server, _ *setupEcho, _ *http.Cookie) {
 			srv.Clock.(*clock.Fake).Advance(setupFlowTTL)
 			assertAPIError(t, orgGet(t, srv, intBase+"/echo/setup"), http.StatusNotFound)
 		}},
 	} {
 		t.Run(end.name, func(t *testing.T) {
-			srv, _, _ := healthServer(t, failAfterKeep)
+			srv, e, _ := healthServer(t)
 			mem := secrets.NewMemory()
 			srv.Secrets = mem
 			startSetupFlow(t, srv, "echo")
-			waitFlow(t, srv, "echo", apitypes.SetupFlowStateForm)
+			_, cookie := echoGo(t, srv, "acme")
 			if page := echoPage(t, srv); page.Summary.State != apitypes.IntegrationStateSettingUp || len(page.Connections) != 1 {
 				t.Fatalf("after the Keep = %s, connections %v", page.Summary.State, page.Connections)
 			}
-			end.do(t, srv)
+			end.do(t, srv, e, cookie)
 			srv.setupAwaitDiscard(context.Background(), "echo")
 			if page := echoPage(t, srv); page.Summary.State != apitypes.IntegrationStateAvailable || len(page.Connections) != 0 {
 				t.Errorf("after it %s = %s, connections %v", end.name, page.Summary.State, page.Connections)
@@ -253,11 +234,14 @@ func TestFailedInstallKeepsNothing(t *testing.T) {
 	}
 
 	t.Run("a fix", func(t *testing.T) {
-		srv, fh, _ := healthServer(t, keepThenDone)
-		installEcho(t, srv, "acme")
-		fh.script = failAfterKeep
-		fh.setRows(func(context.Context, builtinintegrations.Connection) ([]builtinintegrations.Requirement, error) {
-			return []builtinintegrations.Requirement{{ID: "permissions", Title: "Permissions", Fix: "permissions"}}, nil
+		srv, e, _ := healthServer(t)
+		installEcho(t, srv, e, "acme")
+		e.SetPermissions(false)
+		e.ScriptSetup(func(_ int, _ context.Context, _ builtinintegrations.Connection, last builtinintegrations.Answer, _ builtinintegrations.Progress) (builtinintegrations.Step, error) {
+			if last.Form == nil {
+				return builtinintegrations.Step{Keep: map[string]string{"account": "half-made-app"}, Form: &builtinintegrations.Form{Fields: []string{"account"}}}, nil
+			}
+			return builtinintegrations.Step{}, errors.New("the service refused")
 		})
 		orgOK[apitypes.SetupFlow](t, flowDo(t, srv, http.MethodPost, intBase+"/echo/setup", apitypes.SetupFlowStart{Flow: "permissions"}))
 		waitFlow(t, srv, "echo", apitypes.SetupFlowStateForm)
@@ -270,7 +254,7 @@ func TestFailedInstallKeepsNothing(t *testing.T) {
 		if page.Summary.State != apitypes.IntegrationStateInstalled || len(page.Connections) != 1 {
 			t.Errorf("after a failed fix = %s, connections %v", page.Summary.State, page.Connections)
 		}
-		if conn := srv.setupConnection(context.Background(), "echo"); conn.Fields["app_id"] != "half-made-app" || conn.Fields["app_secret"] != "s3cret-app-secret" {
+		if conn := srv.setupConnection(context.Background(), "echo"); conn.Fields["account"] != "half-made-app" || conn.Fields["token"] != "tok-c0de-1" {
 			t.Errorf("the connection after a failed fix = %v", conn.Fields)
 		}
 	})
@@ -285,12 +269,12 @@ func TestFailedInstallKeepsNothing(t *testing.T) {
 // answer must show one unmet row saying so, never nothing, which would
 // read as healthy.
 func TestIntegrationOwnRequirements(t *testing.T) {
-	srv, fh, clk := healthServer(t, keepThenDone)
-	installEcho(t, srv, "acme")
-	fh.setRows(func(_ context.Context, conn builtinintegrations.Connection) ([]builtinintegrations.Requirement, error) {
+	srv, e, clk := healthServer(t)
+	installEcho(t, srv, e, "acme")
+	e.ScriptRequirements(func(_ context.Context, conn builtinintegrations.Connection) ([]builtinintegrations.Requirement, error) {
 		return []builtinintegrations.Requirement{
-			{ID: "installed", Title: "Installed on the service", Words: "Installed on " + conn.Fields["app_id"] + ".", Met: true},
-			{ID: "permissions", Title: "Permissions", Words: "The app " + conn.Fields["app_secret"] + " lacks a permission.", Fix: "permissions"},
+			{ID: "installed", Title: "Installed on the service", Words: "Installed on " + conn.Fields["account"] + ".", Met: true},
+			{ID: "permissions", Title: "Permissions", Words: "The app " + conn.Fields["token"] + " lacks a permission.", Fix: "permissions"},
 			{ID: "connection", Title: "Shadow", Met: true},
 			{ID: "permissions", Title: "Again"},
 			{ID: "not one", Title: "Bad"},
@@ -323,7 +307,7 @@ func TestIntegrationOwnRequirements(t *testing.T) {
 
 	// Met: the row leaves Needs you.
 	clk.Advance(requirementsCacheTTL) // past what the last read kept
-	fh.setRows(func(context.Context, builtinintegrations.Connection) ([]builtinintegrations.Requirement, error) {
+	e.ScriptRequirements(func(context.Context, builtinintegrations.Connection) ([]builtinintegrations.Requirement, error) {
 		return []builtinintegrations.Requirement{{ID: "permissions", Title: "Permissions", Met: true}}, nil
 	})
 	if needs := requirementNeeds(t, srv); len(needs) != 0 {
@@ -332,8 +316,8 @@ func TestIntegrationOwnRequirements(t *testing.T) {
 
 	// An error is one unmet row in the integration's words, scrubbed.
 	clk.Advance(requirementsCacheTTL) // past what the last read kept
-	fh.setRows(func(_ context.Context, conn builtinintegrations.Connection) ([]builtinintegrations.Requirement, error) {
-		return nil, errors.New("the service refused " + conn.Fields["app_secret"])
+	e.ScriptRequirements(func(_ context.Context, conn builtinintegrations.Connection) ([]builtinintegrations.Requirement, error) {
+		return nil, errors.New("the service refused " + conn.Fields["token"])
 	})
 	page = echoPage(t, srv)
 	if c, _ := requirementOf(page, "checks"); c.Met || c.Words != "Echo could not check its requirements: the service refused "+integrationSecretPlaceholder+"." {
@@ -342,7 +326,7 @@ func TestIntegrationOwnRequirements(t *testing.T) {
 
 	// No answer in time is the same, once the deadline passes.
 	clk.Advance(requirementsCacheTTL) // past what the last read kept
-	fh.setRows(func(ctx context.Context, _ builtinintegrations.Connection) ([]builtinintegrations.Requirement, error) {
+	e.ScriptRequirements(func(ctx context.Context, _ builtinintegrations.Connection) ([]builtinintegrations.Requirement, error) {
 		<-ctx.Done()
 		return nil, ctx.Err()
 	})
@@ -363,30 +347,54 @@ func TestIntegrationOwnRequirements(t *testing.T) {
 // Why this test exists: a requirement's Fix runs a flow through the
 // integration's own setup, with the flow's name, and only a flow one
 // of its requirements names: anything else would let the page run any
-// code path of Setup by name. The integration stays installed while
-// the fix runs (it is not setting up again), the page carries the
-// fix's flow, and a fix waits for the integration to be switched on.
+// code path of Setup by name. Echo's permissions row, unmet, is a
+// Needs-you row whose Fix runs its one-step flow, after which the row
+// is met and leaves Needs you. The integration stays installed while a
+// fix runs (it is not setting up again), the page carries the fix's
+// flow, and a fix waits for the integration to be switched on.
 func TestRequirementFixRunsItsFlow(t *testing.T) {
-	srv, fh, _ := healthServer(t, keepThenDone)
+	srv, e, clk := healthServer(t)
 	start := func(flow string) *httptest.ResponseRecorder {
 		return flowDo(t, srv, http.MethodPost, intBase+"/echo/setup", apitypes.SetupFlowStart{Flow: flow})
 	}
 	if e := assertAPIError(t, start("permissions"), http.StatusConflict); e.Error != "permissions is not a flow Echo has" {
 		t.Errorf("before install = %+v", e)
 	}
-	installEcho(t, srv, "acme")
-	fh.setRows(func(context.Context, builtinintegrations.Connection) ([]builtinintegrations.Requirement, error) {
-		return []builtinintegrations.Requirement{{ID: "permissions", Title: "Permissions", Fix: "permissions"}}, nil
-	})
+	installEcho(t, srv, e, "acme")
+	e.SetPermissions(false)
+	clk.Advance(requirementsCacheTTL) // past what the last read kept
+	page := echoPage(t, srv)
+	if perm, _ := requirementOf(page, "permissions"); perm.Met || perm.Fix != echotest.FlowPermissions || page.Summary.Needs != 1 {
+		t.Fatalf("permissions = %+v, needs %d", perm, page.Summary.Needs)
+	}
+	if _, ok := requirementNeeds(t, srv)["integration_requirement:echo/permissions"]; !ok {
+		t.Error("the unmet row is not in Needs you")
+	}
 	if e := assertAPIError(t, start("update"), http.StatusConflict); e.Error != "update is not a flow Echo has" {
 		t.Errorf("a flow no row names = %+v", e)
 	}
 	orgOK[apitypes.SetupFlow](t, start("permissions"))
-	waitFlow(t, srv, "echo", apitypes.SetupFlowStateForm)
-	if got := fh.lastFlow(); got != "permissions" {
+	waitFlow(t, srv, "echo", apitypes.SetupFlowStateDone)
+	if got := e.lastFlow(); got != "permissions" {
 		t.Errorf("Setup ran %q", got)
 	}
-	page := echoPage(t, srv)
+	page = echoPage(t, srv)
+	if !installedAndMet(page) || page.Flow == nil || page.Flow.Flow != "permissions" {
+		t.Errorf("after the fix = %s, unmet %v, flow %+v", page.Summary.State, unmetIDs(page), page.Flow)
+	}
+	if needs := requirementNeeds(t, srv); len(needs) != 0 {
+		t.Errorf("after the fix, Needs you = %v", needs)
+	}
+
+	// A fix under way leaves the integration installed.
+	e.SetPermissions(false)
+	clk.Advance(requirementsCacheTTL) // past what the last read kept
+	e.ScriptSetup(func(int, context.Context, builtinintegrations.Connection, builtinintegrations.Answer, builtinintegrations.Progress) (builtinintegrations.Step, error) {
+		return builtinintegrations.Step{Form: &builtinintegrations.Form{Fields: []string{"account"}}}, nil
+	})
+	orgOK[apitypes.SetupFlow](t, start("permissions"))
+	waitFlow(t, srv, "echo", apitypes.SetupFlowStateForm)
+	page = echoPage(t, srv)
 	if page.Summary.State != apitypes.IntegrationStateInstalled || page.Flow == nil || page.Flow.Flow != "permissions" {
 		t.Errorf("while fixing = %s, flow %+v", page.Summary.State, page.Flow)
 	}
@@ -406,25 +414,35 @@ func TestRequirementFixRunsItsFlow(t *testing.T) {
 // failure that went on to forget the connection would leave an app on
 // the service that nothing can reach to remove.
 func TestUninstallRefusedByTheIntegration(t *testing.T) {
-	srv, fh, _ := healthServer(t, keepThenDone)
+	srv, e, _ := healthServer(t)
 	mem := secrets.NewMemory()
 	srv.Secrets = mem
 	intTeam(t, srv, "dana")
-	installEcho(t, srv, "acme")
+	installEcho(t, srv, e, "acme")
 	putIntegrationAccess(t, srv, "echo", "dana", `{}`)
-	fh.mu.Lock()
-	fh.uninstall = errors.New("the service kept s3cret-app-secret's app")
-	fh.mu.Unlock()
-	e := assertAPIError(t, intDelete(t, srv, intBase+"/echo"), http.StatusBadGateway)
-	if e.Error != "Echo could not undo its installation: the service kept "+integrationSecretPlaceholder+"'s app; nothing was changed" || e.Who != whoDevelopers {
-		t.Errorf("refusal = %+v", e)
+	e.FailUninstall(true)
+	apiErr := assertAPIError(t, intDelete(t, srv, intBase+"/echo"), http.StatusBadGateway)
+	if apiErr.Error != "Echo could not undo its installation: setup.example kept the app of token "+integrationSecretPlaceholder+"; nothing was changed" || apiErr.Who != whoDevelopers {
+		t.Errorf("refusal = %+v", apiErr)
+	}
+	if got := e.callsOf("uninstall"); len(got) != 1 || got[0].Conn.Fields["token"] != "tok-c0de-1" {
+		t.Errorf("Uninstall was given %+v", got)
 	}
 	page := echoPage(t, srv)
 	if page.Summary.State != apitypes.IntegrationStateInstalled || len(page.Access) != 1 || len(mem.Names()) != 1 {
 		t.Errorf("after the refusal = %s, access %v, secrets %v", page.Summary.State, page.Access, mem.Names())
 	}
-	if got := auditActions(t, srv, "echo", uninstallAction); len(got) != 1 || !strings.HasPrefix(got[0], "refused Echo could not undo") {
+	if got := auditActions(t, srv, "echo", uninstallAction); len(got) != 1 || !strings.HasPrefix(got[0], "refused Echo could not undo") || strings.Contains(got[0], "tok-c0de-1") {
 		t.Errorf("audit = %v", got)
+	}
+
+	// Once the service lets it go, Uninstall goes through.
+	e.FailUninstall(false)
+	if rr := intDelete(t, srv, intBase+"/echo"); rr.Code != http.StatusNoContent {
+		t.Fatalf("uninstall: %d %s", rr.Code, rr.Body.String())
+	}
+	if page := echoPage(t, srv); page.Summary.State != apitypes.IntegrationStateAvailable || len(mem.Names()) != 0 {
+		t.Errorf("after uninstall = %s, secrets %v", page.Summary.State, mem.Names())
 	}
 }
 
