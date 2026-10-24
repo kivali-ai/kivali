@@ -880,7 +880,7 @@ check; a step nobody takes in ten minutes ends with it, a check that
 finds the same Wait is no change, a progress stage during a check is
 none either, and a flow that ended is kept ten minutes for the page to
 read. A device sign-in's Wait is kept while core polls the vendor,
-which stops at the code's own expiry. Deleting a connection,
+which stops at the code's own expiry, and its `expires_at` is that expiry (`signInSetup.waitEnds`). Deleting a connection,
 Uninstall, switching it off, Sign out and a save of the form with a new
 client id or secret cancel it, audited; a restart loses it, and `GET
 .../setup` then answers 404 and the page offers to start again.
@@ -1139,7 +1139,7 @@ the state, `POST
 .../setup/answer` (`SetupFlowAnswer`) answers a Form, `POST
 .../setup/cancel` ends the flow, and `GET .../setup/stream` is an SSE
 stream of the state: `retry: 1500`, the state at once as a `flow`
-event, each change after (byte-equal states are not sent again; a slow
+event, each change after (a state equal to the last sent but for `expires_at` is not sent again; a slow
 reader gets the newest), a `: heartbeat` comment every 25 seconds, and
 the end of the stream when the flow is forgotten. A stream counts as
 watching the flow. The page (`SetupFlowPanel`) follows the stream, and

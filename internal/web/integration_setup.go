@@ -167,6 +167,12 @@ type setupWaiter interface {
 	waiting(run *setupRun)
 }
 
+// setupWaitEnder is a setupWaiter that knows when it ends its Wait at
+// the latest (the device code's expiry), for the flow's expires_at.
+type setupWaitEnder interface {
+	waitEnds() time.Time
+}
+
 // setupRun is one flow.
 type setupRun struct {
 	id, name, flow, display string
@@ -212,7 +218,9 @@ type setupRun struct {
 	scrub    []string
 	polled   time.Time
 	subs     map[chan []byte]struct{}
-	sent     []byte
+	// sent is the state last queued for the streams; sentKey the same
+	// without its expires_at, which publishLocked compares.
+	sent, sentKey []byte
 	// install is true for a flow that installs: it started with no
 	// connection, or with one an earlier version made that does not
 	// fit (setupMisfit), or took over from one that did. madeConn is
@@ -440,6 +448,13 @@ func (run *setupRun) expiresLocked() time.Time {
 		last = run.touched
 	}
 	at := last.Add(setupFlowTTL)
+	// A Wait its driver ends itself (the device flow's poller) is kept
+	// until the driver ends it: when the code expires.
+	if w, ok := run.spec.driver.(setupWaitEnder); ok && run.state == apitypes.SetupFlowStateWait {
+		if end := w.waitEnds(); !end.IsZero() {
+			at = end
+		}
+	}
 	if ceiling := run.started.Add(setupFlowMaxAge); !run.started.IsZero() && ceiling.Before(at) {
 		at = ceiling
 	}
@@ -528,13 +543,18 @@ func (run *setupRun) wireLocked() apitypes.SetupFlow {
 }
 
 // publishLocked queues run's state for its streams when it changed;
-// setupUnlock sends it.
+// setupUnlock sends it. A state whose expires_at alone moved (a Wait
+// checked while watched) is no change and is not sent: a reader learns
+// the new expiry with the next change, or by reading the flow.
 func (run *setupRun) publishLocked() {
-	b, err := json.Marshal(run.wireLocked())
-	if err != nil || bytes.Equal(b, run.sent) {
+	f := run.wireLocked()
+	b, err := json.Marshal(f)
+	f.ExpiresAt = time.Time{}
+	key, kerr := json.Marshal(f)
+	if err != nil || kerr != nil || bytes.Equal(key, run.sentKey) {
 		return
 	}
-	run.sent = b
+	run.sent, run.sentKey = b, key
 	if run.runs.dirty == nil {
 		run.runs.dirty = map[*setupRun]struct{}{}
 	}
