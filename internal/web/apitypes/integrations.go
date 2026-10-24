@@ -352,8 +352,9 @@ type SetupFlow struct {
 	Progress *SetupFlowProgress `json:"progress,omitempty"`
 	// Error says why a failed flow ended.
 	Error *string `json:"error,omitempty"`
-	// ExpiresAt is when Kivali forgets the flow unless it changes
-	// before.
+	// ExpiresAt is when Kivali forgets the flow unless it changes, or
+	// its Wait is checked while you watch it, before; never later than
+	// a day after the flow started.
 	ExpiresAt time.Time `json:"expires_at"`
 }
 
