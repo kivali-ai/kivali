@@ -63,13 +63,16 @@ type SetupAnswer struct {
 	Went     bool                `json:"went"`
 	Leg      int                 `json:"leg"`
 	Callback string              `json:"callback"`
+	// Team is the team's name, for naming what setup makes on the
+	// service; empty when the team has none.
+	Team string `json:"team"`
 }
 
 // SetupAnswerOf is the Answer a, as kivali/setup's params carry it.
 func SetupAnswerOf(a builtinintegrations.Answer) SetupAnswer {
 	out := SetupAnswer{
 		State: map[string]string{}, Form: map[string]string{}, Return: map[string][]string{},
-		Checked: a.Checked, Went: a.Went, Leg: a.Leg, Callback: a.Callback,
+		Checked: a.Checked, Went: a.Went, Leg: a.Leg, Callback: a.Callback, Team: a.Team,
 	}
 	for k, v := range a.State {
 		out.State[k] = v

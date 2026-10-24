@@ -231,13 +231,13 @@ func bundleCheck(t *testing.T, srv *Server, pod *setupPod, clk *clock.Fake) inte
 // Why this test exists: this is a bundle's whole install, over MCP, as
 // the owner takes it: kivali/setup sent with the flow and an Answer
 // carrying every part a built-in's Setup is given (the form, the state,
-// the return, the check, the leg and the callback) under the wire's
-// names; its progress notifications shown as the flow's stage while the
-// step runs; a Form of the declared fields; a Go whose /connect/start
-// posts to the declared host; the callback's query reaching the next
-// call; a Wait checked while watched; each Keep written into the
-// connection's Secret and restarting the server with it; and an audit
-// row per event. A break anywhere is a bundle whose setup cannot
+// the return, the check, the leg, the callback and the team's name)
+// under the wire's names; its progress notifications shown as the
+// flow's stage while the step runs; a Form of the declared fields; a
+// Go whose /connect/start posts to the declared host; the callback's
+// query reaching the next call; a Wait checked while watched; each Keep
+// written into the connection's Secret and restarting the server with
+// it; and an audit row per event. A break anywhere is a bundle whose setup cannot
 // finish.
 func TestBundleSetupInstalls(t *testing.T) {
 	release := make(chan struct{})
@@ -262,10 +262,13 @@ func TestBundleSetupInstalls(t *testing.T) {
 		return stepOf(map[string]any{"done": true}), nil, true
 	}, true)
 
+	if err := srv.Store.WriteCompanyName("Acme"); err != nil {
+		t.Fatal(err)
+	}
 	flow := startSetupFlow(t, srv, "crm")
 	first := pod.next(t)
 	if first.Flow != "setup" || first.Answer.Leg != 1 || len(first.Answer.State) != 0 || len(first.Answer.Form) != 0 || len(first.Answer.Return) != 0 ||
-		first.Answer.Checked || !strings.HasPrefix(first.Answer.Callback, loopbackOrigin+"/connect/callback?state=") || first.Meta == nil || first.Meta.ProgressToken == "" {
+		first.Answer.Checked || !strings.HasPrefix(first.Answer.Callback, loopbackOrigin+"/connect/callback?state=") || first.Meta == nil || first.Meta.ProgressToken == "" || first.Answer.Team != "Acme" {
 		t.Errorf("first call = %+v", first)
 	}
 	f := waitFlow(t, srv, "crm", apitypes.SetupFlowStateForm)
