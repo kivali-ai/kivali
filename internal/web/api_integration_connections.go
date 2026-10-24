@@ -235,6 +235,11 @@ func (s *Server) writeConnection(ctx context.Context, v *integrationView, cur *c
 		// A sign-in stays: saving the form changes its fields, not the
 		// tokens the owner signed in for.
 		rec.ID, rec.CreatedAt, rec.SignIn = cur.rec.ID, cur.rec.CreatedAt, cur.rec.SignIn
+		// A flow's write leaves an install's connection unfinished as it
+		// was; the owner's own save makes it theirs (setupAdopt).
+		if !endFlows {
+			rec.SetupPending, rec.SetupTakenOver = cur.rec.SetupPending, cur.rec.SetupTakenOver
+		}
 	} else {
 		rec.ID = s.newConnectionID(name)
 	}

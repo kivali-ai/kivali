@@ -481,7 +481,8 @@ integrations/<name>/
   versions/<version>/manifest.json  the manifest, byte for byte
   versions/<version>/bundle/        the bundle, unpacked (none for a built-in of Go code)
   connections/<id>.yaml             id, created_at, fields (not secret), secret_keys, secret_name,
-                                    verified_at, verified, verify_message, sign_in (the one connection)
+                                    verified_at, verified, verify_message, sign_in, setup_pending,
+                                    setup_taken_over (the one connection)
   connections-retired/<id>.yaml     a connection set aside at boot, as it was stored (Migration, below)
   access/<slug>.yaml                slug, access, set_at, set_by, retired (set aside with a retired connection)
   audit.jsonl                       one row per call: at, agent, action, allowed, reason, duration_ms
@@ -651,7 +652,7 @@ connections and its setup flow, never stored:
 | `pending` | no version has been approved yet |
 | `not_included` | a built-in record this binary does not carry |
 | `setting_up` | a flow that installs it runs: started with no connection (or taking over from one that did), not yet ended |
-| `available` | an approved version and no connection: a built-in while this binary carries it, a bundle once a version is approved; also while the connection a failed install made is on its way out, and while the connection is one an earlier version made that does not fit this version's setup flow ([Migration](#migration)) |
+| `available` | an approved version and no connection: a built-in while this binary carries it, a bundle once a version is approved; also while the connection a failed install made is on its way out, while the connection is one an earlier version made that does not fit this version's setup flow ([Migration](#migration)), and while an install a stopped Kivali left unfinished waits to be discarded ([Flows](#flows)) |
 | `off` | a connection, and switched off: agents cannot use it, and the connection and every agent's access are kept |
 | `installed` | a connection, and switched on: agents can be given access |
 
@@ -873,6 +874,21 @@ which stops at the code's own expiry. Deleting a connection,
 Uninstall, switching it off, Sign out and a save of the form with a new
 client id or secret cancel it, audited; a restart loses it, and `GET
 .../setup` then answers 404 and the page offers to start again.
+
+An install's first Keep marks the connection it writes unfinished
+(`setup_pending` on its record, `store.IntegrationConnection.SetupPending`,
+with `setup_taken_over` for a record an earlier version made that the
+install took over), under `lockIntegrations`; the flow's last Done
+clears it before the flow reads done (`setupFinish`), and so does the
+owner's own save or Sign out while it runs (`adoptConnectionLocked`). A
+connection still marked has no flow behind it after a restart, so at
+boot, after the integrations start, and after a restore,
+`Server.DiscardUnfinishedSetups` discards each such connection as the
+runner discards an install that ended without being done (below),
+logged; one this process's own install is still making is left be.
+Until then the integration reads available, and a start installs over
+the connection, taking it over. Nothing the owner finished carries the
+mark.
 
 A flow that installs (`setupRun.install`: started with no connection,
 or with one an earlier version made that does not fit this version's

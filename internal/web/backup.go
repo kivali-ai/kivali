@@ -346,6 +346,9 @@ func (s *Server) restoreArchive(ctx context.Context, path, filename string) erro
 	// Their connections' proxy credentials, from the Secrets the
 	// restore leaves as they were.
 	s.RegisterBuiltinEgress(ctx)
+	// An archive taken while an install was under way holds its
+	// connection marked unfinished: discarded, as at boot.
+	s.DiscardUnfinishedSetups()
 	// The restored allowed_egress.yaml is on disk; the egress proxy
 	// reads its own copy, which boot writes and nothing else would
 	// until the next edit of the allowlist.

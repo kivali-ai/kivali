@@ -166,6 +166,18 @@ type IntegrationConnection struct {
 	// owner has not signed in with yet. The tokens themselves are in
 	// the Secret (internal/connect's SecretKey constants), never here.
 	SignIn *ConnectionSignIn `yaml:"sign_in,omitempty"`
+	// SetupPending is true from the first Keep of an install's setup
+	// flow until that flow is done: the connection is an install's that
+	// has not finished. Flows live in memory, so one found at boot (or
+	// after a restore) was left by a Kivali that stopped mid-install, and
+	// is discarded as the runner discards an install that ended without
+	// being done; until then the integration reads available.
+	SetupPending bool `yaml:"setup_pending,omitempty"`
+	// SetupTakenOver is true, with SetupPending, for a record an earlier
+	// version made that the install took over: discarding it empties
+	// the record and keeps every agent's access, rather than deleting
+	// them.
+	SetupTakenOver bool `yaml:"setup_taken_over,omitempty"`
 }
 
 // ConnectionSignIn is a sign-in connection's state.

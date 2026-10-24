@@ -67,9 +67,10 @@ func (s *Server) handleAPISetupStart(w http.ResponseWriter, r *http.Request) {
 	}
 	display := v.displayName()
 	// What a flow other than installing works on: the connection. One an
-	// earlier version made that does not fit this version's setup is
-	// installed over (keepSetupValues takes it over).
-	installed := v.conn != nil && !v.connectionMisfit()
+	// earlier version made that does not fit this version's setup, and
+	// one an install left unfinished, are installed over (keepSetupValues
+	// takes them over).
+	installed := v.conn != nil && !v.connectionMisfit() && !v.conn.rec.SetupPending
 	switch {
 	case v.discarding:
 		// A failed install's connection started going after the wait
