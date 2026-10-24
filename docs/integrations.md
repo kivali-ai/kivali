@@ -263,7 +263,7 @@ Uninstalling GitHub removes the app's installation from GitHub, then Kivali forg
 
 ### From an earlier version of Kivali
 
-An earlier version of Kivali connected GitHub by signing in with a GitHub App you registered yourself. This version makes its own app, so that connection does not carry over: after the update, GitHub reads **Available** and says to set it up again, and agents cannot use it until you do. Install it as above. Installing it replaces the earlier connection, and Kivali revokes the earlier app's sign-in; every agent's access is kept, and works again once GitHub is installed. The app you registered stays on GitHub: delete it there when you no longer need it.
+An earlier version of Kivali connected GitHub by signing in with a GitHub App you registered yourself. This version makes its own app, so that connection does not carry over: after the update, GitHub reads **Available** and says to set it up again, and agents cannot use it until you do. Install it as above. Installing it replaces the earlier connection, and Kivali revokes the earlier app's sign-in; every agent's access is kept, and works again once GitHub is installed. If you no longer want GitHub, choose **Uninstall** instead: it removes the earlier connection and every agent's access, and revokes the earlier app's sign-in. Either way, the app you registered stays on GitHub: delete it there when you no longer need it.
 
 ### Access
 

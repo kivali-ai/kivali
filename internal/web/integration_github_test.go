@@ -636,7 +636,7 @@ func TestGitHubInstallsOverAOneZeroConnection(t *testing.T) {
 	}
 	page := githubPage(t, srv)
 	if page.Summary.State != apitypes.IntegrationStateAvailable || len(page.Requirements) != 1 || page.Requirements[0].ID != "connection" ||
-		page.Requirements[0].Met || page.Requirements[0].Fix != "setup" || page.Requirements[0].Words != "Set up GitHub again: this version makes its connection by its own setup, and the one an earlier version made does not fit it. Every agent's access is kept." || page.CanUninstall {
+		page.Requirements[0].Met || page.Requirements[0].Fix != "setup" || page.Requirements[0].Words != "Set up GitHub again: this version makes its connection by its own setup, and the one an earlier version made does not fit it. Every agent's access is kept." || !page.CanUninstall {
 		t.Fatalf("1.0.0's connection reads %s %+v", page.Summary.State, page.Requirements)
 	}
 	if len(page.Access) != 1 || page.Access[0].Invalid != nil {
@@ -702,5 +702,35 @@ func TestGitHubInstallOverOneZeroCancelledKeepsTheAccess(t *testing.T) {
 	}
 	if page := githubPage(t, srv); !installedAndMet(page) || len(page.Access) != 1 {
 		t.Errorf("installed again = %v, access %+v", unmetIDs(page), page.Access)
+	}
+}
+
+// Why this test exists: an owner who no longer wants GitHub after the
+// update uninstalls 1.0.0's connection rather than set it up again.
+// That removes the connection and dana's access, and revokes the
+// earlier app's grant through GitHub's own revocation, since 1.0.0's
+// manifest gives core no revocation endpoint: left alone, the owner's
+// app would keep a live grant to their account.
+func TestGitHubUninstallsAOneZeroConnection(t *testing.T) {
+	srv, f, mem, _ := githubServer(t)
+	srv.BuiltinIntegrations.Lookup("github").(*githubintegration.GitHub).TokenURL = f.srv.URL + "/login/oauth/access_token"
+	githubV1(t, srv, mem)
+	if rr := intDelete(t, srv, intBase+"/github"); rr.Code != http.StatusNoContent {
+		t.Fatalf("uninstall = %d %s", rr.Code, rr.Body.String())
+	}
+	select {
+	case tok := <-f.grants:
+		if tok != "ghu_oldaccess" {
+			t.Errorf("revoked %q", tok)
+		}
+	case <-time.After(failsafeWait):
+		t.Error("1.0.0's grant was not revoked")
+	}
+	if del := f.requestsTo("DELETE", "/app/installations/42"); len(del) != 0 {
+		t.Errorf("an installation was deleted: %+v", del)
+	}
+	page := githubPage(t, srv)
+	if page.Summary.State != apitypes.IntegrationStateAvailable || len(page.Access) != 0 || len(page.Requirements) != 0 || len(mem.Names()) != 0 {
+		t.Errorf("after = %s, access %+v, rows %+v, secrets %v", page.Summary.State, page.Access, page.Requirements, mem.Names())
 	}
 }
