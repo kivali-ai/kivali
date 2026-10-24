@@ -851,11 +851,12 @@ The owner decides on the install screen. It lists who built the
 version, every host, the software it installs, every connection field
 with the secrets marked, or for a setup bundle under **Setup** its
 summary, every host it sends the browser to, every field it asks for
-and every value it keeps, for a sign-in the hosts it signs in at,
+and every value it keeps (each secret one marked), for a sign-in the hosts it signs in at,
 every action with the manifest's description, the access form, the
 bundle's size and the check's warnings. While another version is in
 use it also lists the hosts, software, connection fields, setup
-declarations, actions and access form fields this one adds or removes.
+declarations, actions and access form fields this one adds or removes,
+and each kept value whose secrecy it changes.
 The notes, at most 4096 bytes, are at the top: what the integration
 does, every host it reaches, each secret it asks for and the narrowest
 scopes it needs, what its setup makes and changes on the service, every
