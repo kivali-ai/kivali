@@ -37,8 +37,8 @@ type bundleHooks struct {
 	name, display string
 }
 
-// bundleHooksOf is v's hooks over its pod: a bundle (uploaded, or
-// shipped) whose manifest names method setup. ok is false for any other.
+// bundleHooksOf is v's hooks over its pod: a bundle whose manifest
+// names method setup. ok is false for any other.
 func (s *Server) bundleHooksOf(v *integrationView) (bundleHooks, bool) {
 	if v.builtin != nil || v.staleBuiltin() || v.manifest == nil || v.manifest.Kivali.Connection.Method != integration.MethodSetup {
 		return bundleHooks{}, false
@@ -72,10 +72,8 @@ func (s *Server) requirementsOf(v *integrationView) (builtinintegrations.Require
 }
 
 // uninstallerOf is what undoes v's installation on the service: a
-// built-in's Uninstaller, or a setup bundle's server while it runs. A
-// bundle switched off has no server to ask, so its installation on the
-// service is left and the rest of Uninstall goes on: switching a bundle
-// off is how one whose server fails can still be uninstalled.
+// built-in's Uninstaller, or a setup bundle's server while it runs
+// (uninstallRefusal says what Uninstall does when it does not run).
 func (s *Server) uninstallerOf(v *integrationView) (builtinintegrations.Uninstaller, bool) {
 	if u, ok := v.builtin.(builtinintegrations.Uninstaller); ok {
 		return u, true
@@ -86,13 +84,41 @@ func (s *Server) uninstallerOf(v *integrationView) (builtinintegrations.Uninstal
 	return nil, false
 }
 
-// hookError is err of a request to the bundle's server in words for
-// the owner: the server's own error message, or why it gave none. The
-// deadline and a caller that went are passed on as they are, for the
-// runner's and the route's own words.
-func (b bundleHooks) hookError(err error) error {
+// uninstallRefusal is why Uninstall of a setup bundle with a
+// connection is refused: switched on with its server not running, it
+// cannot ask the server to undo the installation on the service, and
+// the server may be about to run. "" otherwise: one switched off is
+// uninstalled without asking, its installation on the service left as
+// it is.
+func (s *Server) uninstallRefusal(v *integrationView) string {
+	if _, ok := s.bundleHooksOf(v); !ok || v.conn == nil || v.running || !v.it.Enabled {
+		return ""
+	}
+	return v.displayName() + " is not running, so it cannot undo its installation on the service; switch it off to uninstall it without that"
+}
+
+// errBundleNotRunning refuses a Fix of a setup bundle whose server is
+// not running: its own flows run in it.
+func errBundleNotRunning(display string) string {
+	return display + " is not running, so its own flows cannot run; its log says why"
+}
+
+// isSetupBundle reports whether v is a bundle whose own setup flow
+// makes its connection.
+func (s *Server) isSetupBundle(v *integrationView) bool {
+	_, ok := s.bundleHooksOf(v)
+	return ok
+}
+
+// hookError is err of the bundle's server's answer to method in words
+// for the owner: the server's own error message, or why it gave none.
+// The deadline and a caller that went are passed on as they are, for
+// the runner's and the route's own words.
+func (b bundleHooks) hookError(method string, err error) error {
 	var rpcErr *integrationpod.RPCError
 	switch {
+	case errors.As(err, &rpcErr) && rpcErr.Code == integrationpod.CodeMethodNotFound:
+		return fmt.Errorf("%s's server does not answer %s; its author must add it", b.display, method)
 	case errors.As(err, &rpcErr) && rpcErr.Message != "":
 		return errors.New(rpcErr.Message)
 	case errors.As(err, &rpcErr):
@@ -140,7 +166,7 @@ func (b bundleHooks) Setup(ctx context.Context, _ builtinintegrations.Connection
 	params := integrationpod.SetupParams{Flow: flow, Answer: integrationpod.SetupAnswerOf(last), Meta: &integrationpod.RequestMeta{ProgressToken: token}}
 	raw, err := reg.Call(ctx, b.name, integrationpod.MethodSetup, params)
 	if err != nil {
-		return builtinintegrations.Step{}, b.hookError(err)
+		return builtinintegrations.Step{}, b.hookError(integrationpod.MethodSetup, err)
 	}
 	step, err := integrationpod.ParseSetupResult(orEmptyObject(raw))
 	if err != nil {
@@ -153,7 +179,7 @@ func (b bundleHooks) Setup(ctx context.Context, _ builtinintegrations.Connection
 func (b bundleHooks) Requirements(ctx context.Context, _ builtinintegrations.Connection) ([]builtinintegrations.Requirement, error) {
 	raw, err := b.s.Integrations.Call(ctx, b.name, integrationpod.MethodRequirements, map[string]any{})
 	if err != nil {
-		return nil, b.hookError(err)
+		return nil, b.hookError(integrationpod.MethodRequirements, err)
 	}
 	rows, err := integrationpod.ParseRequirements(orEmptyObject(raw))
 	if err != nil {
@@ -166,7 +192,7 @@ func (b bundleHooks) Requirements(ctx context.Context, _ builtinintegrations.Con
 // the service.
 func (b bundleHooks) Uninstall(ctx context.Context, _ builtinintegrations.Connection) error {
 	_, err := b.s.Integrations.Call(ctx, b.name, integrationpod.MethodUninstall, map[string]any{})
-	return b.hookError(err)
+	return b.hookError(integrationpod.MethodUninstall, err)
 }
 
 // orEmptyObject is raw, or {} for a response with no result.
