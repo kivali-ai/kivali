@@ -351,9 +351,6 @@ func validateTools(m *Manifest, f *Findings) []string {
 func validateKivali(m *Manifest, tools []string, builtin bool, f *Findings) {
 	k := m.Kivali
 	validateConnection(m, builtin, f)
-	if k.Connection.Multiple && !builtin {
-		f.errorf("kivali.connection.multiple: a bundle's server takes one connection")
-	}
 
 	if len(k.Hosts) == 0 && !builtin {
 		f.errorf("kivali.hosts is empty")

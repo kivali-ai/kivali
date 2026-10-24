@@ -84,7 +84,7 @@ func (v *integrationView) state() apitypes.IntegrationState {
 		return apitypes.IntegrationStatePending
 	case v.installing:
 		return apitypes.IntegrationStateSettingUp
-	case len(v.conns) == 0 || v.discarding:
+	case v.conn == nil || v.discarding:
 		// A connection a failed install made is on its way out.
 		return apitypes.IntegrationStateAvailable
 	case !v.it.Enabled:
@@ -100,22 +100,11 @@ func (v *integrationView) installed() bool {
 	return st == apitypes.IntegrationStateInstalled || st == apitypes.IntegrationStateOff
 }
 
-// usableConn is the connection an agent whose access names connID
-// calls with: that one for an integration that takes several, the
-// oldest otherwise; nil for none.
-func (v *integrationView) usableConn(connID string) *connView {
-	if v.multiple() {
-		return v.connByID(connID)
-	}
-	return v.first()
-}
-
-// agentUsable reports whether an agent whose access names connID can
-// call v now: installed and running, its connection with all its
-// secrets and, made by signing in, signed in.
-func (v *integrationView) agentUsable(connID string) bool {
-	c := v.usableConn(connID)
-	return v.state() == apitypes.IntegrationStateInstalled && v.running && c != nil && v.usable(c)
+// agentUsable reports whether an agent with access can call v now:
+// installed and running, its connection with all its secrets and, made
+// by signing in, signed in.
+func (v *integrationView) agentUsable() bool {
+	return v.state() == apitypes.IntegrationStateInstalled && v.running && v.conn != nil && v.usable(v.conn)
 }
 
 // coreRequirements are Kivali's own rows of v, installed or off: an
@@ -124,7 +113,7 @@ func (v *integrationView) agentUsable(connID string) bool {
 // server running. at is when each unmet row has stood since, as far as
 // Kivali knows, for Needs you.
 func (v *integrationView) coreRequirements() ([]apitypes.IntegrationRequirement, map[string]time.Time) {
-	first := v.first()
+	first := v.conn
 	at := map[string]time.Time{}
 	since := first.rec.CreatedAt
 	ver := apitypes.IntegrationRequirement{ID: reqVersion, Title: "Approved version", Met: true, Words: "Version " + v.it.CurrentVersion + " is in use."}
@@ -134,25 +123,9 @@ func (v *integrationView) coreRequirements() ([]apitypes.IntegrationRequirement,
 	rows := []apitypes.IntegrationRequirement{ver}
 
 	conn := apitypes.IntegrationRequirement{ID: reqConnection, Title: "Connection", Met: true, Words: "Its secrets are stored."}
-	var missing []string
-	for _, c := range v.conns {
-		if c.reconnect {
-			missing = append(missing, cmp.Or(v.connLabel(c), "The connection"))
-		}
-		if !v.multiple() {
-			break
-		}
-	}
-	if len(missing) > 0 {
-		conn.Met = false
+	if first.reconnect {
+		conn.Met, conn.Fix = false, builtinintegrations.FlowSetup
 		conn.Words = "Its secrets are not stored on this Kivali server, as after a restore from a backup. Enter them again."
-		if v.multiple() {
-			// The install flow writes the oldest connection: each of
-			// several is mended on its own card.
-			conn.Words = strings.Join(missing, ", ") + "'s secrets are not stored on this Kivali server, as after a restore from a backup. Enter them again on its card."
-		} else {
-			conn.Fix = builtinintegrations.FlowSetup
-		}
 		at[reqConnection] = since
 	}
 	rows = append(rows, conn)
@@ -223,7 +196,7 @@ func sentenceEnd(words string) string {
 }
 
 // ownRequirements are v's own rows (builtinintegrations.RequirementsOf)
-// for its first connection, asked for under requirementsTimeout, with
+// for its connection, asked for under requirementsTimeout, with
 // the connection's secrets scrubbed from their words. A row of an id
 // that is not one, of one of Kivali's ids or of one already given is
 // left out. An integration that could not give its rows has one unmet
@@ -232,10 +205,10 @@ func sentenceEnd(words string) string {
 // its renewal: the sign_in row says so.
 func (s *Server) ownRequirements(ctx context.Context, v *integrationView) []apitypes.IntegrationRequirement {
 	ro, ok := v.builtin.(builtinintegrations.RequirementsOf)
-	if !ok || v.first() == nil {
+	if !ok || v.conn == nil {
 		return nil
 	}
-	name, connID := v.it.Name, v.first().rec.ID
+	name, connID := v.it.Name, v.conn.rec.ID
 	gen := s.Integrations.connectionGen(name)
 	if rows, ok := s.requirementsCache.get(name, connID, gen, s.clk().Now()); ok {
 		return rows
@@ -260,7 +233,7 @@ type ownAnswer struct {
 // one requirementsTimeout.
 func (s *Server) askRequirements(ctx context.Context, v *integrationView, ro builtinintegrations.RequirementsOf) []apitypes.IntegrationRequirement {
 	name, display := v.it.Name, v.displayName()
-	connID := v.first().rec.ID
+	connID := v.conn.rec.ID
 	errNoConn := errors.New("the connection could not be read")
 	got, err := runBuiltin(ctx, s.clk(), requirementsTimeout, func(ctx context.Context) (ownAnswer, error) {
 		conn, _, scrub, err := s.builtinConnection(ctx, name, connID)
@@ -429,7 +402,7 @@ func (s *Server) integrationRequirementItems(ctx context.Context) []apitypes.Nee
 				}
 				since, ok := at[r.ID]
 				if !ok || since.IsZero() {
-					since = v.first().rec.CreatedAt
+					since = v.conn.rec.CreatedAt
 				}
 				items = append(items, apitypes.NeedItem{
 					ID:          integrationRequirementNeedPrefix + it.Name + "/" + r.ID,

@@ -51,16 +51,6 @@ func requirementNeeds(t *testing.T, srv *Server) map[string]apitypes.NeedItem {
 	return out
 }
 
-// firstConnID is the id of name's one connection, the oldest.
-func firstConnID(t *testing.T, srv *Server, name string) string {
-	t.Helper()
-	rec, err := srv.Store.GetIntegrationConnection(name)
-	if err != nil {
-		t.Fatalf("%s's connection: %v", name, err)
-	}
-	return rec.ID
-}
-
 // installedAndMet reports whether page is installed with every
 // requirement met.
 func installedAndMet(page apitypes.IntegrationPage) bool {

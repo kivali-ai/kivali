@@ -67,7 +67,7 @@ func (s *Server) handleAPISetupStart(w http.ResponseWriter, r *http.Request) {
 	}
 	display := v.displayName()
 	// What a flow other than installing works on: the connection.
-	installed := len(v.conns) > 0
+	installed := v.conn != nil
 	switch {
 	case v.discarding:
 		// A failed install's connection started going after the wait

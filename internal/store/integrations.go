@@ -28,7 +28,8 @@ import (
 //	versions/<version>/version.yaml  one stored version (IntegrationVersion), with its bundle's digest
 //	versions/<version>/manifest.json the bundle's manifest, byte for byte
 //	versions/<version>/bundle/       the bundle, unpacked
-//	connections/<id>.yaml            a connection's fields that are not secret (IntegrationConnection)
+//	connections/<id>.yaml            its connection's fields that are not secret (IntegrationConnection)
+//	connections-retired/<id>.yaml    a connection set aside, as it was stored (MigrateIntegrationConnections)
 //	access/<slug>.yaml               one agent's access (IntegrationAccess)
 //	audit.jsonl                      one row per call (IntegrationAuditRow)
 //	log.jsonl                        its log, capped (IntegrationLogRow, integration_logs.go)
@@ -130,18 +131,13 @@ type IntegrationVersion struct {
 	Findings []string `yaml:"findings,omitempty"`
 }
 
-// IntegrationConnection is connections/<id>.yaml: a connection's
-// fields that are not secret, and which secret fields have a value in
-// the Kubernetes Secret SecretName. An integration that takes several
-// connections (the manifest's kivali.connection.multiple) has one file
-// per connection; any other has one.
+// IntegrationConnection is connections/<id>.yaml: the integration's
+// connection, its fields that are not secret, and which secret fields
+// have a value in the Kubernetes Secret SecretName. An integration has
+// one connection; MigrateIntegrationConnections sets any other record
+// aside.
 type IntegrationConnection struct {
-	ID string `yaml:"id"`
-	// Label is what the owner calls the connection ("GitHub", "Company
-	// GitLab"), unique within the integration ignoring case. Required
-	// for an integration that takes several connections, optional for
-	// any other.
-	Label     string    `yaml:"label,omitempty"`
+	ID        string    `yaml:"id"`
 	CreatedAt time.Time `yaml:"created_at"`
 	// Fields holds the values of the fields that are not sensitive.
 	Fields map[string]string `yaml:"fields,omitempty"`
@@ -196,16 +192,18 @@ func (c IntegrationConnection) NeedsSignIn(hasToken bool) bool {
 // through the integration.
 type IntegrationAccess struct {
 	Slug string `yaml:"slug"`
-	// ConnectionID is the connection the access was set for, and the
-	// one the agent's calls use.
-	ConnectionID string `yaml:"connection_id"`
 	// Access is the filled access form, field by field.
 	Access map[string]any `yaml:"access"`
 	SetAt  time.Time      `yaml:"set_at"`
 	SetBy  string         `yaml:"set_by"`
-	// Invalid says why the row no longer fits the approved version's
-	// access form or connection; such a row grants nothing. Worked out
-	// when the row is read, never stored.
+	// Retired says why the row was set aside with the connection it was
+	// set for (MigrateIntegrationConnections); a row with it grants
+	// nothing until the owner sets the access again, which writes a row
+	// without it.
+	Retired string `yaml:"retired,omitempty"`
+	// Invalid says why the row grants nothing: Retired, no approved
+	// version, no connection, or access the approved version's form
+	// refuses. Worked out when the row is read, never stored.
 	Invalid string `yaml:"-"`
 }
 
@@ -744,8 +742,11 @@ func validFileName(s string) bool {
 	return s != "" && !strings.HasPrefix(s, ".") && !strings.ContainsAny(s, `/\`)
 }
 
-// ListIntegrationConnections returns an integration's connections,
-// oldest first. A record that does not parse is an error.
+// ListIntegrationConnections returns every connection record under the
+// integration's connections/, oldest first: its one connection, or
+// none. Records from before one connection per installation are there
+// until MigrateIntegrationConnections sets all but one aside. A record
+// that does not parse is an error.
 func (s *FSStore) ListIntegrationConnections(name string) ([]IntegrationConnection, error) {
 	dir, err := s.integrationDir(name)
 	if err != nil {
@@ -783,9 +784,9 @@ func (s *FSStore) ListIntegrationConnections(name string) ([]IntegrationConnecti
 	return out, nil
 }
 
-// GetIntegrationConnection returns the integration's connection, the
-// oldest when the directory holds more than one; ErrNotFound when it
-// has none.
+// GetIntegrationConnection returns the integration's connection (the
+// oldest record, should the directory hold more than one); ErrNotFound
+// when it has none.
 func (s *FSStore) GetIntegrationConnection(name string) (IntegrationConnection, error) {
 	all, err := s.ListIntegrationConnections(name)
 	if err != nil {
@@ -797,8 +798,10 @@ func (s *FSStore) GetIntegrationConnection(name string) (IntegrationConnection, 
 	return all[0], nil
 }
 
-// GetIntegrationConnectionByID returns one connection of the
-// integration by its id; ErrNotFound when it has none of that id.
+// GetIntegrationConnectionByID returns the integration's connection
+// when its id is id: a caller that holds an id (a setup flow's, a shell
+// job's) learns whether the connection is still the one it had.
+// ErrNotFound when it has none of that id.
 func (s *FSStore) GetIntegrationConnectionByID(name, id string) (IntegrationConnection, error) {
 	dir, err := s.integrationDir(name)
 	if err != nil || !validFileName(id) {
@@ -838,10 +841,10 @@ func (s *FSStore) PutIntegrationConnection(name string, c IntegrationConnection)
 	return writeYAMLFile(filepath.Join(dir, "connections", c.ID+".yaml"), c)
 }
 
-// DeleteIntegrationConnection removes every connection's record and,
-// with them, every agent's access, which was set for a connection.
-// It returns the records it removed, whose Secrets are the caller's to
-// delete.
+// DeleteIntegrationConnection removes the connection's record and,
+// with it, every agent's access. It returns the records it removed,
+// whose Secrets are the caller's to delete. Connections set aside
+// (connections-retired/) stay, their Secrets with them.
 func (s *FSStore) DeleteIntegrationConnection(name string) ([]IntegrationConnection, error) {
 	unlock := s.lockIntegration(name)
 	defer unlock()
@@ -861,11 +864,12 @@ func (s *FSStore) DeleteIntegrationConnection(name string) ([]IntegrationConnect
 	return gone, nil
 }
 
-// DeleteIntegrationConnectionByID removes one connection's record and
-// every agent's access set for it, and returns the record, whose Secret
-// is the caller's to delete, and the slugs whose access it cleared.
-// The other connections and the access set for them stay. ErrNotFound
-// when the integration has no connection of that id.
+// DeleteIntegrationConnectionByID removes the integration's connection
+// when its id is id, and every agent's access with it, and returns the
+// record, whose Secret is the caller's to delete, and the slugs whose
+// access it cleared. A connection of another id stays, and so does the
+// access. ErrNotFound when the integration has no connection of that
+// id.
 func (s *FSStore) DeleteIntegrationConnectionByID(name, id string) (IntegrationConnection, []string, error) {
 	unlock := s.lockIntegration(name)
 	defer unlock()
@@ -877,9 +881,8 @@ func (s *FSStore) DeleteIntegrationConnectionByID(name, id string) (IntegrationC
 		return IntegrationConnection{}, nil, err
 	}
 	// The access goes first: a crash between the two leaves a
-	// connection no agent uses, never a row naming a connection that
-	// is gone.
-	cleared, err := s.clearIntegrationAccessForConnectionLocked(name, id)
+	// connection no agent uses, never a row outliving it.
+	cleared, err := s.clearIntegrationAccessLocked(name)
 	if err != nil {
 		return IntegrationConnection{}, nil, err
 	}
@@ -925,11 +928,9 @@ func (s *FSStore) readIntegrationAccessRows(name string) ([]IntegrationAccess, e
 	return rows, nil
 }
 
-// clearIntegrationAccessForConnectionLocked removes the access of every
-// agent whose row names the connection id, and returns their slugs,
-// sorted. Rows set for another connection stay. The caller holds the
-// integration's lock.
-func (s *FSStore) clearIntegrationAccessForConnectionLocked(name, id string) ([]string, error) {
+// clearIntegrationAccessLocked removes every agent's access and returns
+// their slugs, sorted. The caller holds the integration's lock.
+func (s *FSStore) clearIntegrationAccessLocked(name string) ([]string, error) {
 	rows, err := s.readIntegrationAccessRows(name)
 	if err != nil {
 		return nil, err
@@ -937,9 +938,6 @@ func (s *FSStore) clearIntegrationAccessForConnectionLocked(name, id string) ([]
 	dir, _ := s.integrationDir(name)
 	var cleared []string
 	for _, row := range rows {
-		if row.ConnectionID != id {
-			continue
-		}
 		if err := os.Remove(filepath.Join(dir, "access", row.Slug+".yaml")); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return cleared, err
 		}
@@ -999,12 +997,10 @@ func (s *FSStore) ClearIntegrationAccess(name, slug string) error {
 }
 
 // ListIntegrationAccess returns every agent's access, by slug, each
-// with Invalid set when it no longer fits: no version approved, a
-// connection that is no longer there, or access the approved version's
-// form refuses (integration.ValidateAccess). For an integration that
-// takes several connections (kivali.connection.multiple), a row's
-// connection is any the integration has; for any other, it is the one
-// connection, the oldest. A record that does not parse is an error.
+// with Invalid set when it grants nothing: set aside with a retired
+// connection (Retired), no version approved, no connection, or access
+// the approved version's form refuses (integration.ValidateAccess). A
+// record that does not parse is an error.
 func (s *FSStore) ListIntegrationAccess(name string) ([]IntegrationAccess, error) {
 	rows, err := s.readIntegrationAccessRows(name)
 	if err != nil || len(rows) == 0 {
@@ -1016,43 +1012,27 @@ func (s *FSStore) ListIntegrationAccess(name string) ([]IntegrationAccess, error
 		return nil, err
 	}
 	for i := range rows {
-		rows[i].Invalid = accessInvalid(rows[i], m, merr, conns)
+		rows[i].Invalid = accessInvalid(rows[i], m, merr, len(conns) > 0)
 	}
 	sort.Slice(rows, func(i, j int) bool { return rows[i].Slug < rows[j].Slug })
 	return rows, nil
 }
 
-// accessInvalid is why row no longer fits, or "". conns is every
-// connection, oldest first.
-func accessInvalid(row IntegrationAccess, m *integration.Manifest, merr error, conns []IntegrationConnection) string {
-	if merr != nil {
+// accessInvalid is why row grants nothing, or "". connected is whether
+// the integration has its connection.
+func accessInvalid(row IntegrationAccess, m *integration.Manifest, merr error, connected bool) string {
+	switch {
+	case row.Retired != "":
+		return row.Retired
+	case merr != nil:
 		return "no version of the integration is approved"
-	}
-	if !accessConnectionThere(row.ConnectionID, m, conns) {
+	case !connected:
 		return "it was set for a connection that is no longer there"
 	}
 	if err := integration.ValidateAccess(m, row.AccessJSON()); err != nil {
 		return err.Error()
 	}
 	return ""
-}
-
-// accessConnectionThere reports whether id names a connection an
-// agent's access may use: any of conns for an integration that takes
-// several, the oldest for any other.
-func accessConnectionThere(id string, m *integration.Manifest, conns []IntegrationConnection) bool {
-	if len(conns) == 0 {
-		return false
-	}
-	if !m.Kivali.Connection.Multiple {
-		return id == conns[0].ID
-	}
-	for _, c := range conns {
-		if c.ID == id {
-			return true
-		}
-	}
-	return false
 }
 
 // AgentIntegrationAccess returns one agent's access across every

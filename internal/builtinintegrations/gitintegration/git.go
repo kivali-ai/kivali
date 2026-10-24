@@ -68,19 +68,7 @@ var (
 	_ builtinintegrations.ConnectionChecker   = (*Git)(nil)
 	_ builtinintegrations.AccessChecker       = (*Git)(nil)
 	_ builtinintegrations.AccessSummarizer    = (*Git)(nil)
-	_ builtinintegrations.ConnectionLabeler   = (*Git)(nil)
 )
-
-// ConnectionLabel names a connection the owner gave no label by its
-// host, as gitrepo.NormalizeHost reads it ("github.com"); "" while the
-// host is not one.
-func (g *Git) ConnectionLabel(conn builtinintegrations.Connection) string {
-	host, err := gitrepo.NormalizeHost(conn.Fields["host"])
-	if err != nil {
-		return ""
-	}
-	return host
-}
 
 // ownerWords is an error whose text is a sentence for the owner, as
 // the connection form shows it.
@@ -155,7 +143,7 @@ func (g *Git) Manifest() *integration.Manifest {
 			{Name: actionPush, Description: "Pushes the branches and tags the agent's access allows to a repository it may push to."},
 		},
 		Kivali: integration.Kivali{
-			Connection: integration.Connection{Method: "token", Multiple: true},
+			Connection: integration.Connection{Method: "token"},
 			Access:     &integration.Access{Schema: json.RawMessage(accessSchema)},
 		},
 	}
@@ -427,15 +415,15 @@ const (
 // when the result says refs landed, the answer and the audit say what
 // landed and that the access changed (pushedUnderOldAccess).
 //
-// A job that ran through another connection than the one the agent's
-// access names now (the owner moved the access to another connection
-// while it ran: result.Git.ConnectionID is not conn.ID) is never
-// refused: it is told as it ran, and the audit says the access changed
-// (ranThroughAnotherConnection). conn's host and token are not the
+// A job that ran through another connection than the integration has
+// now (Git was uninstalled and installed again while it ran:
+// result.Git.ConnectionID is not conn.ID) is never refused: it is told
+// as it ran, and the audit says the connection changed
+// (ranThroughReplacedConnection). conn's host and token are not the
 // job's, so the call is not checked against them.
 func (g *Git) Complete(_ context.Context, caller builtinintegrations.Caller, conn builtinintegrations.Connection, name string, args json.RawMessage, result shelljob.Result) (*builtinintegrations.Result, error) {
 	if r := result.Git; r != nil && r.ConnectionID != "" && r.ConnectionID != conn.ID {
-		return ranThroughAnotherConnection(name, r), nil
+		return ranThroughReplacedConnection(name, r), nil
 	}
 	c, err := g.check(caller, conn, name, args)
 	if err != nil {
@@ -563,12 +551,12 @@ func pushed(repo string, c call, r *shelljob.GitResult) *builtinintegrations.Res
 	return &builtinintegrations.Result{Content: []string{b.String()}, Audit: repo + ": " + verb + " " + auditNames(refNames(updated), total)}
 }
 
-// ranThroughAnotherConnection is the answer to a call whose job ran
-// through a connection the agent's access no longer names: what ran,
-// or why it did not, as the result says, and that the access changed
+// ranThroughReplacedConnection is the answer to a call whose job ran
+// through a connection the integration no longer has: what ran, or why
+// it did not, as the result says, and that the connection changed
 // during it. Its audit row is allowed, since the job ran as the access
 // allowed when it was handed out.
-func ranThroughAnotherConnection(name string, r *shelljob.GitResult) *builtinintegrations.Result {
+func ranThroughReplacedConnection(name string, r *shelljob.GitResult) *builtinintegrations.Result {
 	verb, done := "fetch", "Fetched"
 	switch name {
 	case actionClone:
@@ -580,8 +568,8 @@ func ranThroughAnotherConnection(name string, r *shelljob.GitResult) *builtinint
 	if r.Repository != "" {
 		repo = clip(r.Repository, 200)
 	}
-	note := fmt.Sprintf("Your access to the Git integration changed to another connection during the %s; what it allows now is what your next call gets.", verb)
-	changed := "; the access changed during the " + verb
+	note := fmt.Sprintf("The Git connection changed during the %s; what your access allows now is what your next call gets.", verb)
+	changed := "; the connection changed during the " + verb
 	switch {
 	case r.TimedOut:
 		return &builtinintegrations.Result{Content: []string{fmt.Sprintf("The %s of %s did not finish in time and was stopped. %s", verb, repo, note)}, IsError: true, Audit: repo + ": did not finish in time" + changed}

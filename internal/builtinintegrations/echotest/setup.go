@@ -131,10 +131,10 @@ func (e *Echo) setupManifest(m *integration.Manifest) {
 			{Key: "account", Words: "The account the app is installed on"},
 		},
 	}
-	conn := integration.Connection{Method: integration.MethodSetup, Multiple: e.Multiple}
+	conn := integration.Connection{Method: integration.MethodSetup}
 	if e.HandOver != nil {
 		conn = *e.HandOver
-		conn.Method, conn.Multiple = integration.MethodSetup, e.Multiple
+		conn.Method = integration.MethodSetup
 		setup.Then = e.HandOver.Method
 		setup.Keeps = append(setup.Keeps,
 			integration.SetupKeep{Key: integration.FieldClientID, Words: "The app's client id"},

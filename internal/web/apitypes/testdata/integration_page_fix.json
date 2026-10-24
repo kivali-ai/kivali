@@ -77,7 +77,6 @@
   ],
   "connection": {
     "id": "f00dcafe",
-    "label": "",
     "created_at": "2026-10-21T09:30:00Z",
     "fields": [],
     "verified_at": "2026-10-21T10:00:00Z",
@@ -85,19 +84,6 @@
     "verify_message": "Installed on acme",
     "reconnect_needed": false
   },
-  "connections": [
-    {
-      "id": "f00dcafe",
-      "label": "",
-      "created_at": "2026-10-21T09:30:00Z",
-      "fields": [],
-      "verified_at": "2026-10-21T10:00:00Z",
-      "verified": true,
-      "verify_message": "Installed on acme",
-      "reconnect_needed": false
-    }
-  ],
-  "multiple": false,
   "connection_test": true,
   "access": [],
   "agents_without": [

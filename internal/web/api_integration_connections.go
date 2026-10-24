@@ -1,16 +1,10 @@
 // Package web (api_integration_connections.go) — an integration's
-// connections under Org: saving, deleting and testing them.
+// connection under Org: saving and testing it.
 //
-// Every integration has the singular routes (PUT .../connection and
-// POST .../connection/verify), which act on its one connection, the
-// oldest, and the plural ones (POST .../connections, PUT, DELETE
-// .../connections/{id} and POST .../connections/{id}/verify), which act
-// on the connection the id names. Uninstall (DELETE
-// .../integrations/{name}) removes every connection. An integration whose
-// manifest takes several connections (kivali.connection.multiple, only
-// a built-in) has one per account the owner connects, each with a
-// label unique within it; any other takes one, and a second is a 409.
-// A connection's secret fields go to s.Secrets and nowhere else.
+// An integration has one connection: PUT .../connection writes it (or
+// makes it when there is none) and POST .../connection/verify tests
+// it. Uninstall (DELETE .../integrations/{name}) removes it. A
+// connection's secret fields go to s.Secrets and nowhere else.
 
 package web
 
@@ -28,7 +22,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/kivali-ai/kivali/internal/agent"
 	"github.com/kivali-ai/kivali/internal/builtinintegrations"
@@ -41,10 +34,8 @@ import (
 	"github.com/kivali-ai/kivali/internal/web/apitypes"
 )
 
-// connectionLabelMax bounds a connection's label, in characters.
-const connectionLabelMax = 64
-
-// errConnectionGone answers a route whose {id} names no connection.
+// errConnectionGone answers a sign-in whose connection went while it
+// ran.
 const errConnectionGone = "that connection is no longer there"
 
 // newConnectionID is a fresh connection id: 8 hex digits.
@@ -52,38 +43,6 @@ func newConnectionID() string {
 	var b [4]byte
 	_, _ = rand.Read(b[:])
 	return hex.EncodeToString(b[:])
-}
-
-// connLabel is c's label: the stored one, or, for an integration that
-// takes several connections and a connection stored with none, the one
-// the built-in derives from its fields as they are now
-// (derivedConnectionLabel), so a changed host renames it.
-func (v *integrationView) connLabel(c *connView) string {
-	return builtinConnectionLabel(v.builtin, v.manifest, c.rec)
-}
-
-// builtinConnectionLabel is rec's label as connLabel reads it, for the
-// built-in bi with the manifest m.
-func builtinConnectionLabel(bi builtinintegrations.Integration, m *integration.Manifest, rec store.IntegrationConnection) string {
-	if rec.Label != "" || m == nil || !m.Kivali.Connection.Multiple {
-		return rec.Label
-	}
-	return derivedConnectionLabel(bi, rec)
-}
-
-// derivedConnectionLabel is the label bi gives rec from its fields that
-// are not secret (builtinintegrations.ConnectionLabeler), cut to
-// connectionLabelMax characters; "" when it gives none.
-func derivedConnectionLabel(bi builtinintegrations.Integration, rec store.IntegrationConnection) string {
-	l, ok := bi.(builtinintegrations.ConnectionLabeler)
-	if !ok {
-		return ""
-	}
-	label := l.ConnectionLabel(builtinintegrations.Connection{ID: rec.ID, Fields: rec.Fields})
-	if r := []rune(label); len(r) > connectionLabelMax {
-		label = string(r[:connectionLabelMax])
-	}
-	return label
 }
 
 // connectionTest reports whether the version in use has a connection
@@ -98,7 +57,6 @@ func (v *integrationView) connectionTest() bool {
 func (v *integrationView) connectionState(c *connView) apitypes.ConnectionState {
 	state := apitypes.ConnectionState{
 		ID:              c.rec.ID,
-		Label:           v.connLabel(c),
 		CreatedAt:       c.rec.CreatedAt,
 		Fields:          connectionFields(v.manifest, c),
 		ReconnectNeeded: c.reconnect,
@@ -134,19 +92,8 @@ func (v *integrationView) connectionSignIn(c *connView) *apitypes.ConnectionSign
 	return out
 }
 
-// connectionOr404 is the connection {id} names, answering 404 when v
-// has none of that id.
-func connectionOr404(w http.ResponseWriter, r *http.Request, v *integrationView) (*connView, bool) {
-	c := v.connByID(r.PathValue("id"))
-	if c == nil {
-		writeAPIError(w, http.StatusNotFound, errConnectionGone, whoLink)
-		return nil, false
-	}
-	return c, true
-}
-
-// handleAPIIntegrationConnectionPut writes the integration's one
-// connection, the oldest, or makes it when there is none.
+// handleAPIIntegrationConnectionPut writes the integration's
+// connection, or makes it when there is none.
 func (s *Server) handleAPIIntegrationConnectionPut(w http.ResponseWriter, r *http.Request) {
 	var req apitypes.ConnectionWrite
 	if !decodeJSONOrError(w, r, &req) {
@@ -157,59 +104,11 @@ func (s *Server) handleAPIIntegrationConnectionPut(w http.ResponseWriter, r *htt
 	if !ok {
 		return
 	}
-	s.saveConnection(w, r, v, v.first(), req, http.StatusOK)
-}
-
-// handleAPIIntegrationConnectionCreate adds a connection, answering 201
-// with the page. An integration that takes one connection and has it
-// is a 409.
-func (s *Server) handleAPIIntegrationConnectionCreate(w http.ResponseWriter, r *http.Request) {
-	var req apitypes.ConnectionWrite
-	if !decodeJSONOrError(w, r, &req) {
-		return
-	}
-	defer s.lockIntegrations()()
-	v, ok := s.integrationOr404(w, r)
-	if !ok {
-		return
-	}
-	if v.it.CurrentVersion != "" && !v.multiple() && len(v.conns) > 0 {
-		writeAPIError(w, http.StatusConflict, v.displayName()+" takes one connection", whoYou)
-		return
-	}
-	s.saveConnection(w, r, v, nil, req, http.StatusCreated)
-}
-
-// handleAPIIntegrationConnectionPutByID writes the connection {id}
-// names.
-func (s *Server) handleAPIIntegrationConnectionPutByID(w http.ResponseWriter, r *http.Request) {
-	var req apitypes.ConnectionWrite
-	if !decodeJSONOrError(w, r, &req) {
-		return
-	}
-	defer s.lockIntegrations()()
-	v, ok := s.integrationOr404(w, r)
-	if !ok {
-		return
-	}
-	c, ok := connectionOr404(w, r, v)
-	if !ok {
-		return
-	}
-	s.saveConnection(w, r, v, c, req, http.StatusOK)
-}
-
-// saveConnection writes cur, or a new connection when cur is nil
-// (writeConnection), and answers with the page and done, the route's
-// status code. A sign-in connection's flow under way ends when the
-// app's client id or secret changes: its tokens would be the old
-// app's. The caller holds lockIntegrations.
-func (s *Server) saveConnection(w http.ResponseWriter, r *http.Request, v *integrationView, cur *connView, req apitypes.ConnectionWrite, done int) {
-	if werr := s.writeConnection(r.Context(), v, cur, req, true); werr != nil {
+	if werr := s.writeConnection(r.Context(), v, v.conn, req, true); werr != nil {
 		writeAPIError(w, werr.status, werr.words, werr.who)
 		return
 	}
-	s.writeIntegrationPageStatus(w, r, done)
+	s.writeIntegrationPage(w, r)
 }
 
 // connWriteError is why a connection was not written: the status and
@@ -313,10 +212,7 @@ func (s *Server) planConnectionWrite(ctx context.Context, v *integrationView, cu
 // writeConnection writes cur, or a new connection when cur is nil, as
 // planConnectionWrite works it out: the fields that are not sensitive
 // to the store, the sensitive ones to the connection's Secret. The
-// label sent replaces the stored one, and an empty one keeps it; for
-// an integration that takes several connections a label is required
-// (the built-in's ConnectionLabel when the owner gives none) and unique
-// ignoring case. The connection's last Test connection result is
+// connection's last Test connection result is
 // cleared, and the running server starts again with the new values.
 // With endFlows, a sign-in connection's flow under way ends when the
 // app's client id or secret changes. The caller holds lockIntegrations.
@@ -332,16 +228,7 @@ func (s *Server) writeConnection(ctx context.Context, v *integrationView, cur *c
 		// A sign-in stays: saving the form changes its fields, not the
 		// tokens the owner signed in for.
 		rec.ID, rec.CreatedAt, rec.SignIn = cur.rec.ID, cur.rec.CreatedAt, cur.rec.SignIn
-	} else {
-		for v.connByID(rec.ID) != nil {
-			rec.ID = newConnectionID()
-		}
 	}
-	label, msg, code := v.connectionLabelFor(cur, req.Label, rec)
-	if msg != "" {
-		return &connWriteError{code, msg, whoYou}
-	}
-	rec.Label = label
 	conn.ID = rec.ID
 	secretName := secrets.ConnectionSecretName(name, rec.ID)
 	if cur != nil && cur.rec.SecretName != "" {
@@ -412,48 +299,6 @@ func (s *Server) writeConnection(ctx context.Context, v *integrationView, cur *c
 	return nil
 }
 
-// connectionLabelFor is the label rec is stored with: sent, trimmed;
-// or, sent empty, cur's. For an integration that takes several
-// connections, a label that is the one the built-in derives (from rec's
-// fields, or a kept label from cur's) is stored as "", so connLabel
-// derives it on every read and it follows the fields; with none stored,
-// the derived one is the label the checks see. A label the owner sent
-// longer than connectionLabelMax, a missing one where one is required,
-// and another connection's (ignoring case) are refused with msg and
-// code; a derived label is cut, never refused.
-func (v *integrationView) connectionLabelFor(cur *connView, sent string, rec store.IntegrationConnection) (stored, msg string, code int) {
-	sent = strings.TrimSpace(sent)
-	if utf8.RuneCountInString(sent) > connectionLabelMax {
-		return "", fmt.Sprintf("a connection's label is at most %d characters", connectionLabelMax), http.StatusBadRequest
-	}
-	stored = sent
-	if stored == "" && cur != nil {
-		stored = cur.rec.Label
-	}
-	label := stored
-	if v.multiple() {
-		derived := derivedConnectionLabel(v.builtin, rec)
-		if stored == derived || (sent == "" && cur != nil && stored == derivedConnectionLabel(v.builtin, cur.rec)) {
-			stored = ""
-		}
-		if label = stored; label == "" {
-			label = derived
-		}
-		if label == "" {
-			return "", "the connection needs a label", http.StatusBadRequest
-		}
-	}
-	if label == "" {
-		return "", "", 0
-	}
-	for _, c := range v.conns {
-		if c != cur && strings.EqualFold(v.connLabel(c), label) {
-			return "", v.displayName() + " already has a connection called " + v.connLabel(c), http.StatusConflict
-		}
-	}
-	return stored, "", 0
-}
-
 // connectionValueProblem is what is wrong with a connection field's
 // value for its type, or "". It never quotes the value, which may be a
 // secret.
@@ -478,63 +323,6 @@ func sortedFieldKeys(m map[string]string) []string {
 	}
 	sort.Strings(keys)
 	return keys
-}
-
-// handleAPIIntegrationConnectionDeleteByID removes the connection {id}
-// names: its Secret, its scoped proxy credential, its record and the
-// access of every agent whose row names it. The other connections, and
-// the access set for them, stay.
-func (s *Server) handleAPIIntegrationConnectionDeleteByID(w http.ResponseWriter, r *http.Request) {
-	unlock := s.lockIntegrations()
-	revokes, ok := s.deleteConnectionByIDLocked(w, r)
-	unlock()
-	// The vendor is asked to revoke a sign-in's tokens with the lock
-	// released, so a slow vendor holds up no other integration write.
-	s.revokeSignIns(r.Context(), revokes)
-	if ok {
-		s.writeIntegrationPage(w, r)
-	}
-}
-
-// deleteConnectionByIDLocked is the removal of the connection {id}
-// names under lockIntegrations: true once done, false with an error
-// answered. It returns the sign-in tokens to revoke.
-func (s *Server) deleteConnectionByIDLocked(w http.ResponseWriter, r *http.Request) (signInRevocations, bool) {
-	v, ok := s.integrationOr404(w, r)
-	if !ok {
-		return nil, false
-	}
-	c, ok := connectionOr404(w, r, v)
-	if !ok {
-		return nil, false
-	}
-	name := v.it.Name
-	s.setupCancel(name)
-	var revokes signInRevocations
-	// The Secret goes first: on a failure the record stays, so the
-	// Secret is not left behind with nothing naming it.
-	if c.rec.SecretName != "" {
-		tokens := s.revocableTokens(r.Context(), name, v.manifest, c.rec)
-		if err := s.Secrets.Delete(r.Context(), c.rec.SecretName); err != nil {
-			log.Printf("integration %s: delete Secret %s: %v", name, c.rec.SecretName, err)
-			writeAPIError(w, http.StatusInternalServerError, "the connection's secrets could not be removed, so nothing was changed", whoServer)
-			return nil, false
-		}
-		revokes = revokes.add(name, v.manifest, c.rec, tokens)
-	}
-	// With its Secret gone the credential's secret is gone too, so the
-	// credential goes now, whatever the store's step does next.
-	if err := s.dropBuiltinEgress(name, []store.IntegrationConnection{c.rec}); err != nil {
-		log.Printf("integration %s: drop the connection's proxy credential: %v", name, err)
-	}
-	if _, _, err := s.Store.DeleteIntegrationConnectionByID(name, c.rec.ID); err != nil && !errors.Is(err, store.ErrNotFound) {
-		log.Printf("integration %s: delete connection %s: %v", name, c.rec.ID, err)
-		writeAPIError(w, http.StatusInternalServerError, "the connection could not be removed", whoServer)
-		return revokes, false
-	}
-	s.Integrations.ConnectionChanged(name)
-	s.Integrations.Changed()
-	return revokes, true
 }
 
 // integrationVerifyMessageMax bounds the integration's words kept from
@@ -631,27 +419,13 @@ func (s *Server) callIntegrationTool(ctx context.Context, v *integrationView, to
 }
 
 // handleAPIIntegrationVerify is Test connection of the integration's
-// one connection, the oldest.
+// connection.
 func (s *Server) handleAPIIntegrationVerify(w http.ResponseWriter, r *http.Request) {
 	v, ok := s.integrationOr404(w, r)
 	if !ok {
 		return
 	}
-	s.verifyConnection(w, r, v, v.first())
-}
-
-// handleAPIIntegrationVerifyByID is Test connection of the connection
-// {id} names.
-func (s *Server) handleAPIIntegrationVerifyByID(w http.ResponseWriter, r *http.Request) {
-	v, ok := s.integrationOr404(w, r)
-	if !ok {
-		return
-	}
-	c, ok := connectionOr404(w, r, v)
-	if !ok {
-		return
-	}
-	s.verifyConnection(w, r, v, c)
+	s.verifyConnection(w, r, v, v.conn)
 }
 
 // verifyConnection is Test connection of c (nil: none): it calls the

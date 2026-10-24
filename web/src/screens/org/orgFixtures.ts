@@ -6,9 +6,8 @@ import goConnectionWriteJson from '../../../../internal/web/apitypes/testdata/co
 import goHandbookJson from '../../../../internal/web/apitypes/testdata/handbook.json';
 import goIntegrationAuditJson from '../../../../internal/web/apitypes/testdata/integration_audit.json';
 import goIntegrationLogsJson from '../../../../internal/web/apitypes/testdata/integration_logs.json';
-import goConnectionCreateJson from '../../../../internal/web/apitypes/testdata/connection_create.json';
 import goIntegrationPageJson from '../../../../internal/web/apitypes/testdata/integration_page.json';
-import goIntegrationPageMultipleJson from '../../../../internal/web/apitypes/testdata/integration_page_multiple.json';
+import goIntegrationPageGitJson from '../../../../internal/web/apitypes/testdata/integration_page_git.json';
 import goIntegrationPageSignInJson from '../../../../internal/web/apitypes/testdata/integration_page_sign_in.json';
 import goIntegrationPageSignInAgainJson from '../../../../internal/web/apitypes/testdata/integration_page_sign_in_again.json';
 import goIntegrationPageSignInElsewhereJson from '../../../../internal/web/apitypes/testdata/integration_page_sign_in_elsewhere.json';
@@ -87,8 +86,8 @@ export const goSoftwareAdd = (goSoftwareAddJson satisfies Wire<SoftwareAdd>) as 
 export const goNetwork =(goNetworkJson satisfies Wire<Network>) as Network;
 export const goIntegrations = (goIntegrationsJson satisfies Wire<Integrations>) as Integrations;
 export const goIntegrationPage = (goIntegrationPageJson satisfies Wire<IntegrationPage>) as IntegrationPage;
-/** Git's page: two connections, GitHub and a company GitLab, with one agent's access on each. */
-export const goIntegrationPageMultiple = (goIntegrationPageMultipleJson satisfies Wire<IntegrationPage>) as IntegrationPage;
+/** Git's page: its one connection needing its secrets again, and two agents' access, one set for a connection Git no longer has. */
+export const goIntegrationPageGit = (goIntegrationPageGitJson satisfies Wire<IntegrationPage>) as IntegrationPage;
 /** A GitHub bundle's page, connected by signing in, its token refreshed before it expires. */
 export const goIntegrationPageSignIn = (goIntegrationPageSignInJson satisfies Wire<IntegrationPage>) as IntegrationPage;
 /** The same connection after the vendor refused a refresh: the owner must sign in again. */
@@ -137,7 +136,5 @@ export const goIntegrationLogs = (goIntegrationLogsJson satisfies Wire<Integrati
 export const goIntegrationAudit = (goIntegrationAuditJson satisfies Wire<IntegrationAudit>) as IntegrationAudit;
 /** Request bodies and the options answer, as the Go server's goldens have them. */
 export const goConnectionWrite = (goConnectionWriteJson satisfies Wire<ConnectionWrite>) as ConnectionWrite;
-/** A new connection with its label, as POST .../connections reads it. */
-export const goConnectionCreate = (goConnectionCreateJson satisfies Wire<ConnectionWrite>) as ConnectionWrite;
 export const goAccessWrite = (goAccessWriteJson satisfies Wire<AccessWrite>) as AccessWrite;
 export const goAccessChoices = (goAccessChoicesJson satisfies Wire<AccessChoices>) as AccessChoices;

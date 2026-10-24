@@ -75,8 +75,6 @@
   "sign_in_hosts": [
     "github.com"
   ],
-  "connections": [],
-  "multiple": false,
   "connection_test": true,
   "access": [],
   "agents_without": [

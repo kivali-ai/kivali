@@ -395,7 +395,7 @@ func TestAgentIntegrationCallsAreHeldToTheAccess(t *testing.T) {
 
 	// Access that no longer applies, the switch, a name no integration
 	// has, and an integration not running.
-	if err := srv.Store.SetIntegrationAccess("crm", store.IntegrationAccess{Slug: "dana", ConnectionID: "gone", Access: map[string]any{"blogs": []any{"M"}}}); err != nil {
+	if err := srv.Store.SetIntegrationAccess("crm", store.IntegrationAccess{Slug: "dana", Retired: "it was set for a connection that is no longer there", Access: map[string]any{"blogs": []any{"M"}}}); err != nil {
 		t.Fatal(err)
 	}
 	if resp := callAs(t, srv, "dana", "crm_whoami", `{}`); resp.Content[0] != "Your access to the Test crm integration no longer applies (it was set for a connection that is no longer there). Ask the owner to set it again." {

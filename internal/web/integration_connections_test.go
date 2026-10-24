@@ -4,422 +4,303 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
-	"slices"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/kivali-ai/kivali/internal/agentpod"
 	"github.com/kivali-ai/kivali/internal/agentshell"
 	"github.com/kivali-ai/kivali/internal/builtinintegrations"
-	"github.com/kivali-ai/kivali/internal/builtinintegrations/echotest"
-	"github.com/kivali-ai/kivali/internal/clock"
 	"github.com/kivali-ai/kivali/internal/egresscred"
 	"github.com/kivali-ai/kivali/internal/mcp"
 	"github.com/kivali-ai/kivali/internal/secrets"
+	"github.com/kivali-ai/kivali/internal/store"
 	"github.com/kivali-ai/kivali/internal/web/apitypes"
 )
 
-// gitLabToken is the second Git connection's token in these tests.
-const gitLabToken = "glpat-web-git-test-token-4567"
+// otherGitToken is a second token in these tests: a connection's other
+// than the integration's.
+const otherGitToken = "glpat-web-git-test-token-4567"
 
-// createdPage decodes a 201 answer, failing on any other status.
-func createdPage(t *testing.T, rr *httptest.ResponseRecorder) apitypes.IntegrationPage {
-	t.Helper()
-	if rr.Code != http.StatusCreated {
-		t.Fatalf("code = %d, want 201 (body %s)", rr.Code, rr.Body.String())
-	}
-	return decodeAPI[apitypes.IntegrationPage](t, rr)
-}
-
-// useFakeClock gives srv a clock tick advances, so connections made
-// one after another are ordered oldest first by their creation time.
-func useFakeClock(srv *Server) { srv.Clock = clock.NewFake() }
-
-func tick(srv *Server) { srv.Clock.(*clock.Fake).Advance(time.Minute) }
-
-// addConnection posts a new connection of name.
-func addConnection(t *testing.T, srv *Server, name, label string, fields map[string]string) apitypes.IntegrationPage {
-	t.Helper()
-	return createdPage(t, orgJSON(t, srv, http.MethodPost, intBase+"/"+name+"/connections", apitypes.ConnectionWrite{Label: label, Fields: fields}))
-}
-
-// twoGitConnections connects Git to github.com (labelled by its host)
-// and to a company GitLab, and returns the page and both connections.
-func twoGitConnections(t *testing.T, srv *Server) (apitypes.IntegrationPage, apitypes.ConnectionState, apitypes.ConnectionState) {
-	t.Helper()
-	addConnection(t, srv, "git", "", map[string]string{"host": "github.com", "token": gitToken})
-	tick(srv)
-	page := addConnection(t, srv, "git", "Company GitLab", map[string]string{"host": "gitlab.example.com", "token": gitLabToken})
-	if len(page.Connections) != 2 {
-		t.Fatalf("connections = %+v", page.Connections)
-	}
-	return page, page.Connections[0], page.Connections[1]
-}
-
-func connectionValue(c apitypes.ConnectionState, key string) string {
-	for _, f := range c.Fields {
-		if f.Key == key && f.Value != nil {
-			return *f.Value
+// Why this test exists: an integration has one connection, and the
+// installation is its identity. The routes that made, saved, tested,
+// signed out and deleted one of several by id must be gone, and a body
+// naming a connection's label or an access row's connection must be
+// refused as a field Kivali does not read, not quietly taken: a page
+// or client still sending them would otherwise believe it had chosen
+// a connection.
+func TestOneConnectionPerInstallation(t *testing.T) {
+	srv := newTestServer(t)
+	withGit(t, srv)
+	intTeam(t, srv, "dana")
+	page := connectGit(t, srv, "github.com")
+	id := page.Connection.ID
+	for _, c := range []struct{ method, path string }{
+		{http.MethodPost, intBase + "/git/connections"},
+		{http.MethodPut, intBase + "/git/connections/" + id},
+		{http.MethodDelete, intBase + "/git/connections/" + id},
+		{http.MethodPost, intBase + "/git/connections/" + id + "/verify"},
+		{http.MethodPost, intBase + "/git/connections/" + id + "/sign-out"},
+	} {
+		rr := orgDo(t, srv, "", c.method, c.path, "application/json", []byte(`{"fields":{"host":"gitlab.example.com","token":"x-token-123"}}`))
+		if rr.Code != http.StatusNotFound && rr.Code != http.StatusMethodNotAllowed {
+			t.Errorf("%s %s = %d %s", c.method, c.path, rr.Code, rr.Body.String())
 		}
 	}
-	return ""
+	if conns, _ := srv.Store.ListIntegrationConnections("git"); len(conns) != 1 || conns[0].ID != id || conns[0].Fields["host"] != "github.com" {
+		t.Errorf("connections after the removed routes = %+v", conns)
+	}
+
+	// The one route saves the one connection, under its id.
+	page = connectGit(t, srv, "gitlab.example.com")
+	if page.Connection == nil || page.Connection.ID != id {
+		t.Errorf("the second save made another connection: %+v", page.Connection)
+	}
+	assertAPIError(t, orgDo(t, srv, "", http.MethodPut, intBase+"/git/connection", "application/json", []byte(`{"label":"Company","fields":{"host":"github.com"}}`)), http.StatusBadRequest)
+	assertAPIError(t, orgDo(t, srv, "", http.MethodPut, intBase+"/git/access/dana", "application/json", []byte(`{"access":{"pull_repositories":["acme/*"]},"connection_id":"`+id+`"}`)), http.StatusBadRequest)
+
+	putIntegrationAccess(t, srv, "git", "dana", `{"pull_repositories":["acme/*"]}`)
+	body := orgGet(t, srv, intBase+"/git").Body.String()
+	tab := orgGet(t, srv, "/api/v1/agents/dana/integrations").Body.String()
+	for _, key := range []string{`"connections"`, `"multiple"`, `"label"`, `"connection_id"`, `"connection_label"`} {
+		if strings.Contains(body, key) || strings.Contains(tab, key) {
+			t.Errorf("%s is on the wire:\npage %s\ntab %s", key, body, tab)
+		}
+	}
 }
 
-func putAccessFor(t *testing.T, srv *Server, name, slug, access, connID string) *httptest.ResponseRecorder {
+// legacyGitWithTwo is Git as a Kivali that took several connections
+// left it: hub (github.com, labelled GitHub, the oldest) and lab
+// (gitlab.example.com, no label), each with its Secret, and the access
+// rows of dana (hub) and lee and kim (lab), each naming its connection.
+func legacyGitWithTwo(t *testing.T, srv *Server, mem *secrets.Memory) (hub, lab string) {
 	t.Helper()
-	return orgJSON(t, srv, http.MethodPut, intBase+"/"+name+"/access/"+slug, apitypes.AccessWrite{Access: []byte(access), ConnectionID: connID})
+	withGit(t, srv)
+	intTeam(t, srv, "dana", "lee", "kim")
+	dir := filepath.Join(srv.Store.Root(), store.IntegrationsDirName, "git")
+	write := func(rel string, v any) {
+		t.Helper()
+		b, err := yaml.Marshal(v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(dir, rel)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, rel), b, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	created := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
+	for i, c := range []struct{ id, label, host, token string }{
+		{"a1b2c3d4", "GitHub", "github.com", gitToken},
+		{"e5f6a7b8", "", "gitlab.example.com", otherGitToken},
+	} {
+		secret := secrets.ConnectionSecretName("git", c.id)
+		if err := mem.Put(context.Background(), secret, map[string]string{"token": c.token, builtinintegrations.ProxySecretKey: "proxy-secret-" + c.id + "-0123456789abcdef"}); err != nil {
+			t.Fatal(err)
+		}
+		rec := map[string]any{"id": c.id, "created_at": created.Add(time.Duration(i) * time.Hour), "fields": map[string]string{"host": c.host},
+			"secret_keys": []string{"token"}, "secret_name": secret}
+		if c.label != "" {
+			rec["label"] = c.label
+		}
+		write("connections/"+c.id+".yaml", rec)
+	}
+	for slug, id := range map[string]string{"dana": "a1b2c3d4", "lee": "e5f6a7b8", "kim": "e5f6a7b8"} {
+		write("access/"+slug+".yaml", map[string]any{"slug": slug, "connection_id": id, "set_at": created, "set_by": "ceo",
+			"access": map[string]any{"pull_repositories": []any{"acme/*"}}})
+	}
+	return "a1b2c3d4", "e5f6a7b8"
 }
 
-// Why this test exists: Git is the integration that takes several
-// connections, GitHub and a company GitLab side by side. Each must be
-// stored under its own id with its own label and fields: a label left
-// empty takes the host, a label another connection has (ignoring case)
-// is a 409, and the page lists every connection, oldest first, each
-// with its own values, while Connection is the first, which the
-// one-connection page reads. Saving one by id must change
-// that one alone and keep its token when the token is left out.
-func TestGitTakesSeveralConnections(t *testing.T) {
+// Why this test exists: after the boot that gives Git one connection,
+// what the owner and the agents see must follow it end to end. The
+// page shows the connection kept, with each agent's row valid or
+// saying which connection it was set for; the agent whose access was
+// set aside reads it on its tab and is refused with the reason; the
+// others' calls go through the kept connection's host, token and proxy
+// credential; the set-aside connection's proxy credential no longer
+// reaches its host; and setting the access again gives it back.
+func TestGitAfterOneConnectionMigration(t *testing.T) {
 	srv := newTestServer(t)
-	useFakeClock(srv)
 	mem := secrets.NewMemory()
 	srv.Secrets = mem
-	withGit(t, srv)
-	page, hub, lab := twoGitConnections(t, srv)
-	if !page.Multiple || !installedAndMet(page) {
-		t.Errorf("page = multiple %v, state %s, unmet %v", page.Multiple, page.Summary.State, unmetIDs(page))
+	hub, lab := legacyGitWithTwo(t, srv, mem)
+	// An earlier boot registered both connections' credentials.
+	for _, id := range []string{hub, lab} {
+		if err := srv.Store.SetEgressScopedCredential(builtinintegrations.ProxyUser("git", id), egresscred.Hash("proxy-secret-"+id+"-0123456789abcdef"), []string{"example.com"}); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if hub.Label != "github.com" || lab.Label != "Company GitLab" || hub.ID == lab.ID {
-		t.Errorf("labels = %q (%s), %q (%s)", hub.Label, hub.ID, lab.Label, lab.ID)
+	if err := srv.Store.MigrateIntegrationConnections(); err != nil {
+		t.Fatal(err)
 	}
-	if connectionValue(hub, "host") != "github.com" || connectionValue(lab, "host") != "gitlab.example.com" {
-		t.Errorf("hosts = %q, %q", connectionValue(hub, "host"), connectionValue(lab, "host"))
-	}
-	if page.Connection == nil || page.Connection.ID != hub.ID {
-		t.Errorf("connection = %+v, want the first", page.Connection)
-	}
-	if strings.Contains(orgGet(t, srv, intBase+"/git").Body.String(), gitLabToken) {
-		t.Error("the page carries a token")
-	}
-	if got, _ := mem.Get(context.Background(), secrets.ConnectionSecretName("git", lab.ID)); got["token"] != gitLabToken {
-		t.Errorf("the second connection's Secret = %v", got)
-	}
+	srv.RegisterBuiltinEgress(context.Background())
 
-	dup := orgJSON(t, srv, http.MethodPost, intBase+"/git/connections", apitypes.ConnectionWrite{Label: "company gitlab", Fields: map[string]string{"host": "gitlab.com", "token": "x-token-123"}})
-	if e := assertAPIError(t, dup, http.StatusConflict); e.Error != "Git already has a connection called Company GitLab" {
-		t.Errorf("a label taken = %+v", e)
+	page := orgOK[apitypes.IntegrationPage](t, orgGet(t, srv, intBase+"/git"))
+	if page.Connection == nil || page.Connection.ID != lab || !installedAndMet(page) {
+		t.Fatalf("page = %+v, unmet %v", page.Connection, unmetIDs(page))
 	}
-	sameHost := orgJSON(t, srv, http.MethodPost, intBase+"/git/connections", apitypes.ConnectionWrite{Fields: map[string]string{"host": "https://github.com/", "token": "x-token-123"}})
-	if e := assertAPIError(t, sameHost, http.StatusConflict); e.Error != "Git already has a connection called github.com" {
-		t.Errorf("a second github.com without a label = %+v", e)
-	}
-
-	// By id: the second one's host and label change, its token stays.
-	rr := orgJSON(t, srv, http.MethodPut, intBase+"/git/connections/"+lab.ID, apitypes.ConnectionWrite{Label: "GitLab", Fields: map[string]string{"host": "gitlab.example.org"}})
-	page = orgOK[apitypes.IntegrationPage](t, rr)
-	if c := page.Connections[1]; c.ID != lab.ID || c.Label != "GitLab" || connectionValue(c, "host") != "gitlab.example.org" {
-		t.Errorf("after the put = %+v", c)
-	}
-	if c := page.Connections[0]; c.Label != "github.com" || connectionValue(c, "host") != "github.com" {
-		t.Errorf("the other connection changed: %+v", c)
-	}
-	if got, _ := mem.Get(context.Background(), secrets.ConnectionSecretName("git", lab.ID)); got["token"] != gitLabToken {
-		t.Errorf("the token after a put without it = %v", got)
-	}
-	// An empty label keeps the stored one; another's label is a 409.
-	page = orgOK[apitypes.IntegrationPage](t, orgJSON(t, srv, http.MethodPut, intBase+"/git/connections/"+lab.ID, apitypes.ConnectionWrite{Fields: map[string]string{"host": "gitlab.example.org"}}))
-	if page.Connections[1].Label != "GitLab" {
-		t.Errorf("label after a put without one = %q", page.Connections[1].Label)
-	}
-	assertAPIError(t, orgJSON(t, srv, http.MethodPut, intBase+"/git/connections/"+lab.ID, apitypes.ConnectionWrite{Label: "GITHUB.COM", Fields: map[string]string{"host": "gitlab.example.org"}}), http.StatusConflict)
-	assertAPIError(t, orgJSON(t, srv, http.MethodPut, intBase+"/git/connections/nope", apitypes.ConnectionWrite{Fields: map[string]string{"host": "x.com"}}), http.StatusNotFound)
-	assertAPIError(t, intPost(t, srv, intBase+"/git/connections/nope/verify"), http.StatusNotFound)
-	assertAPIError(t, intDelete(t, srv, intBase+"/git/connections/nope"), http.StatusNotFound)
-}
-
-// Why this test exists: an integration whose built-in gives no label
-// must be given one when it takes several connections, or the page and
-// the access dialog would offer two connections with no name to choose
-// between.
-func TestSeveralConnectionsNeedALabel(t *testing.T) {
-	srv := newTestServer(t)
-	useFakeClock(srv)
-	withMultipleEcho(t, srv)
-	rr := orgJSON(t, srv, http.MethodPost, intBase+"/echo/connections", apitypes.ConnectionWrite{Fields: map[string]string{"token": echoToken}})
-	if e := assertAPIError(t, rr, http.StatusBadRequest); e.Error != "the connection needs a label" {
-		t.Errorf("no label = %+v", e)
-	}
-	rr = orgJSON(t, srv, http.MethodPost, intBase+"/echo/connections", apitypes.ConnectionWrite{Label: strings.Repeat("x", connectionLabelMax+1), Fields: map[string]string{"token": echoToken}})
-	assertAPIError(t, rr, http.StatusBadRequest)
-}
-
-// Why this test exists: an integration that takes one connection must
-// keep taking one. A second POST .../connections would give a bundle's
-// agents a connection its server never starts with; it is a 409 in the
-// integration's name, and the first is created as the singular route
-// would create it.
-func TestOneConnectionIntegrationRefusesASecond(t *testing.T) {
-	srv := newTestServer(t)
-	useFakeClock(srv)
-	intInstalled(t, srv, "crm", "1.0.0")
-	page := addConnection(t, srv, "crm", "", map[string]string{"token": "s3cret-crm"})
-	if page.Multiple || len(page.Connections) != 1 || page.Connection == nil || page.Connection.ID != page.Connections[0].ID || page.Connection.Label != "" {
-		t.Errorf("first = %+v", page)
-	}
-	rr := orgJSON(t, srv, http.MethodPost, intBase+"/crm/connections", apitypes.ConnectionWrite{Fields: map[string]string{"token": "another"}})
-	if e := assertAPIError(t, rr, http.StatusConflict); e.Error != "Test crm takes one connection" {
-		t.Errorf("a second = %+v", e)
-	}
-	// The singular route still edits the one.
-	page = orgOK[apitypes.IntegrationPage](t, orgJSON(t, srv, http.MethodPut, intBase+"/crm/connection", apitypes.ConnectionWrite{Fields: map[string]string{"portal": "acme"}}))
-	if len(page.Connections) != 1 || connectionValue(page.Connections[0], "portal") != "acme" {
-		t.Errorf("after the singular put = %+v", page.Connections)
-	}
-}
-
-// Why this test exists: with two connections an access row must name
-// the one the agent's calls use. Saved without one, a row would be
-// set for a connection the owner never chose, so it is a 400, as is an
-// id that names no connection; with one connection the id may be left
-// out and is the one. The page's rows and the agent's tab must say
-// which connection each agent uses, or the owner cannot tell GitHub
-// access from GitLab access.
-func TestAccessNamesAConnection(t *testing.T) {
-	srv := newTestServer(t)
-	useFakeClock(srv)
-	withGit(t, srv)
-	intTeam(t, srv, "dana", "lee")
-	connectGit(t, srv, "github.com")
-	// One connection: the id may be left out.
-	putIntegrationAccess(t, srv, "git", "dana", `{"pull_repositories":["acme/*"]}`)
-
-	tick(srv)
-	page := addConnection(t, srv, "git", "Company GitLab", map[string]string{"host": "gitlab.example.com", "token": gitLabToken})
-	hub, lab := page.Connections[0], page.Connections[1]
-	if e := assertAPIError(t, putAccessFor(t, srv, "git", "lee", `{"pull_repositories":["eng/*"]}`, ""), http.StatusBadRequest); e.Error != "choose a connection" {
-		t.Errorf("no connection named = %+v", e)
-	}
-	assertAPIError(t, putAccessFor(t, srv, "git", "lee", `{"pull_repositories":["eng/*"]}`, "nope"), http.StatusBadRequest)
-	page = orgOK[apitypes.IntegrationPage](t, putAccessFor(t, srv, "git", "lee", `{"pull_repositories":["eng/*"]}`, lab.ID))
 	rows := map[string]apitypes.AccessRow{}
 	for _, r := range page.Access {
 		rows[r.Agent.Slug] = r
 	}
-	if rows["dana"].ConnectionID != hub.ID || rows["dana"].ConnectionLabel != "github.com" || rows["dana"].Invalid != nil ||
-		rows["lee"].ConnectionID != lab.ID || rows["lee"].ConnectionLabel != "Company GitLab" || rows["lee"].Invalid != nil {
+	const reason = "set for the connection GitHub, which Git no longer has; set it again"
+	if rows["lee"].Invalid != nil || rows["kim"].Invalid != nil || rows["dana"].Invalid == nil || *rows["dana"].Invalid != reason {
 		t.Errorf("rows = %+v", rows)
 	}
-	tab := orgOK[apitypes.AgentIntegrations](t, orgGet(t, srv, "/api/v1/agents/lee/integrations"))
-	if len(tab.Connected) != 1 || tab.Connected[0].ConnectionLabel != "Company GitLab" {
-		t.Errorf("lee's tab = %+v", tab.Connected)
+	tab := orgOK[apitypes.AgentIntegrations](t, orgGet(t, srv, "/api/v1/agents/dana/integrations"))
+	if len(tab.Connected) != 1 || tab.Connected[0].Usable || tab.Connected[0].Invalid == nil || *tab.Connected[0].Invalid != reason {
+		t.Errorf("dana's tab = %+v", tab.Connected)
 	}
-}
+	creds := srv.Store.EgressScopedCredentials()
+	if _, ok := creds[builtinintegrations.ProxyUser("git", hub)]; ok {
+		t.Error("the connection set aside keeps its proxy credential")
+	}
+	if c, ok := creds[builtinintegrations.ProxyUser("git", lab)]; !ok || len(c.Hosts) != 1 || c.Hosts[0] != "gitlab.example.com" {
+		t.Errorf("the kept connection's credential = %+v, %v", c, ok)
+	}
+	if names := mem.Names(); len(names) != 2 {
+		t.Errorf("secrets after the migration = %v; the one set aside is kept", names)
+	}
 
-// Why this test exists: an agent's call must reach the connection its
-// access names, not the oldest. If dispatch read the oldest, an agent
-// given the company GitLab would be handed the GitHub token and host,
-// and its clone would go to the wrong host with the wrong secret. Each
-// job carries its own connection's host, token and scoped proxy
-// credential.
-func TestGitCallUsesTheConnectionItsAccessNames(t *testing.T) {
-	srv := newTestServer(t)
-	useFakeClock(srv)
-	withGit(t, srv)
-	intTeam(t, srv, "dana", "lee")
-	_, hub, lab := twoGitConnections(t, srv)
-	if rr := putAccessFor(t, srv, "git", "dana", `{"pull_repositories":["acme/*"]}`, hub.ID); rr.Code != http.StatusOK {
-		t.Fatal(rr.Body.String())
-	}
-	if rr := putAccessFor(t, srv, "git", "lee", `{"pull_repositories":["eng/*"]}`, lab.ID); rr.Code != http.StatusOK {
-		t.Fatal(rr.Body.String())
-	}
 	ctx := context.Background()
 	sock := serveCoreUDS(t, srv)
-	creds := srv.Store.EgressScopedCredentials()
-	for _, c := range []struct {
-		slug, url, host, token, connID string
-	}{
-		{"dana", "https://github.com/acme/widgets", "github.com", gitToken, hub.ID},
-		{"lee", "https://gitlab.example.com/eng/tools", "gitlab.example.com", gitLabToken, lab.ID},
-	} {
-		client := agentpod.NewClient(sock, c.slug)
-		list, err := client.IntegrationTools(ctx)
-		if err != nil || len(list.Tools) == 0 {
-			t.Fatalf("%s's actions = %+v, %v", c.slug, list, err)
-		}
-		shell := &fakeGitShell{res: &agentshell.GitResponse{Repository: "x/y", DurationMs: 10}}
-		clone := mcp.IntegrationTools(client, shell, list.Tools, nil)[0]
-		if _, err := clone.Handler(ctx, json.RawMessage(`{"url":"`+c.url+`","path":"/files/w"}`)); err != nil {
-			t.Fatalf("%s's clone: %v", c.slug, err)
-		}
-		if len(shell.jobs) != 1 {
-			t.Fatalf("%s's jobs = %d", c.slug, len(shell.jobs))
-		}
-		j := shell.jobs[0]
-		proxy, ok := creds[builtinintegrations.ProxyUser("git", c.connID)]
-		if j.Host != c.host || j.Auth.Password != c.token || j.Proxy.Username != builtinintegrations.ProxyUser("git", c.connID) ||
-			!ok || proxy.Hash != egresscred.Hash(j.Proxy.Password) || !slices.Equal(proxy.Hosts, []string{c.host}) {
-			t.Errorf("%s's job = %+v (proxy %+v %v)", c.slug, j, proxy, ok)
-		}
+	args := json.RawMessage(`{"url":"https://gitlab.example.com/acme/tools","path":"/files/w"}`)
+	refused, err := agentpod.NewClient(sock, "dana").IntegrationCall(ctx, agentpod.IntegrationCallRequest{Name: "git_clone", Arguments: args})
+	if err != nil || !refused.IsError || !strings.Contains(strings.Join(refused.Content, " "), reason) {
+		t.Errorf("dana's call = %+v, %v", refused, err)
+	}
+	lee := agentpod.NewClient(sock, "lee")
+	list, err := lee.IntegrationTools(ctx)
+	if err != nil || len(list.Tools) == 0 {
+		t.Fatalf("lee's actions = %+v, %v", list, err)
+	}
+	shell := &fakeGitShell{res: &agentshell.GitResponse{Repository: "acme/tools", DurationMs: 10}}
+	if _, err := mcp.IntegrationTools(lee, shell, list.Tools, nil)[0].Handler(ctx, args); err != nil || len(shell.jobs) != 1 {
+		t.Fatalf("lee's clone: %v, jobs %d", err, len(shell.jobs))
+	}
+	if j := shell.jobs[0]; j.Host != "gitlab.example.com" || j.Auth.Password != otherGitToken || j.Proxy.Username != builtinintegrations.ProxyUser("git", lab) || j.ConnectionID != lab {
+		t.Errorf("lee's job = %+v", j)
+	}
+
+	putIntegrationAccess(t, srv, "git", "dana", `{"pull_repositories":["acme/*"]}`)
+	tab = orgOK[apitypes.AgentIntegrations](t, orgGet(t, srv, "/api/v1/agents/dana/integrations"))
+	if len(tab.Connected) != 1 || !tab.Connected[0].Usable || tab.Connected[0].Invalid != nil {
+		t.Errorf("dana's tab after setting the access again = %+v", tab.Connected)
 	}
 }
 
-// Why this test exists: each connection has a scoped proxy credential
-// of its own, admitted to its own host. Every path that registers or
-// drops credentials must cover every connection: the switch, boot,
-// and deleting one connection, which must drop that connection's
-// credential, Secret and access rows only. Dropping all of them would
-// cut off the agents on the other host; dropping none would leave a
-// deleted connection's credential reaching its host.
-func TestGitConnectionsCredentialsAndDeleteByID(t *testing.T) {
+// Why this test exists: a shell job carries the id of the connection it
+// ran through, and Git can be uninstalled and installed again while it
+// runs. The second request then finds another connection, whose host
+// is not the one the job reached: checking the result against it would
+// refuse a clone that already happened. It is told as it ran, the
+// audit says the connection changed, and the job's connection's token
+// is scrubbed from both when Kivali still has that record (a record
+// left beside the connection), or the audit says only the current
+// connection's secrets were scrubbed.
+func TestGitJobTellsWhatRanThroughItsConnection(t *testing.T) {
 	srv := newTestServer(t)
-	useFakeClock(srv)
 	mem := secrets.NewMemory()
 	srv.Secrets = mem
 	withGit(t, srv)
-	intTeam(t, srv, "dana", "lee")
-	_, hub, lab := twoGitConnections(t, srv)
-	hubUser, labUser := builtinintegrations.ProxyUser("git", hub.ID), builtinintegrations.ProxyUser("git", lab.ID)
-	registered := func() (bool, bool) {
-		c := srv.Store.EgressScopedCredentials()
-		_, a := c[hubUser]
-		_, b := c[labUser]
-		return a, b
+	intTeam(t, srv, "dana")
+	before := connectGit(t, srv, "github.com").Connection.ID
+	putIntegrationAccess(t, srv, "git", "dana", `{"pull_repositories":["acme/*"]}`)
+	dana := agentpod.NewClient(serveCoreUDS(t, srv), "dana")
+	ctx := context.Background()
+	args := json.RawMessage(`{"url":"https://github.com/acme/widgets","path":"/files/widgets"}`)
+	first, err := dana.IntegrationCall(ctx, agentpod.IntegrationCallRequest{Name: "git_clone", Arguments: args})
+	if err != nil || first.ShellJob == nil || first.ShellJob.Git == nil || first.ShellJob.Git.ConnectionID != before {
+		t.Fatalf("first request = %+v, %v", first, err)
 	}
-	if a, b := registered(); !a || !b {
-		t.Fatalf("registered after the saves = %v, %v", a, b)
+	if rr := intDelete(t, srv, intBase+"/git"); rr.Code != http.StatusNoContent {
+		t.Fatalf("uninstall = %d %s", rr.Code, rr.Body.String())
 	}
-	if got := srv.Store.EgressScopedCredentials()[labUser]; !slices.Equal(got.Hosts, []string{"gitlab.example.com"}) {
-		t.Errorf("the second connection's hosts = %v", got.Hosts)
+	if after := connectGit(t, srv, "github.com").Connection.ID; after == before {
+		t.Fatal("installing again kept the connection's id")
+	}
+	putIntegrationAccess(t, srv, "git", "dana", `{"pull_repositories":["acme/*"]}`)
+
+	second, err := dana.IntegrationCall(ctx, agentpod.IntegrationCallRequest{Name: "git_clone", Arguments: args, ShellJobResult: &agentpod.IntegrationShellJobResult{
+		Git: &agentpod.GitResult{Repository: "acme/widgets", ConnectionID: before},
+	}})
+	text := strings.Join(second.Content, " ")
+	if err != nil || second.IsError || !strings.HasPrefix(text, "Cloned acme/widgets.") || !strings.Contains(text, "The Git connection changed during the clone") {
+		t.Fatalf("second request = %+v, %v", second, err)
+	}
+	if row := gitRows(t, srv)[0]; !row.Allowed || !strings.HasSuffix(row.Reason, "; the connection changed during the clone (it ran through a connection that is no longer there, so only the current connection's secrets were scrubbed)") {
+		t.Errorf("audit = %+v", row)
 	}
 
-	intPost(t, srv, intBase+"/git/disable")
-	if a, b := registered(); a || b {
-		t.Errorf("registered while off = %v, %v", a, b)
-	}
-	intPost(t, srv, intBase+"/git/enable")
-	if a, b := registered(); !a || !b {
-		t.Errorf("registered after on = %v, %v", a, b)
-	}
-	for _, u := range []string{hubUser, labUser} {
-		if err := srv.Store.DropEgressScopedCredential(u); err != nil {
-			t.Fatal(err)
-		}
-	}
-	srv.RegisterBuiltinEgress(context.Background())
-	if a, b := registered(); !a || !b {
-		t.Errorf("registered after boot = %v, %v", a, b)
-	}
-
-	if rr := putAccessFor(t, srv, "git", "dana", `{"pull_repositories":["acme/*"]}`, hub.ID); rr.Code != http.StatusOK {
-		t.Fatal(rr.Body.String())
-	}
-	if rr := putAccessFor(t, srv, "git", "lee", `{"pull_repositories":["eng/*"]}`, lab.ID); rr.Code != http.StatusOK {
-		t.Fatal(rr.Body.String())
-	}
-	page := orgOK[apitypes.IntegrationPage](t, intDelete(t, srv, intBase+"/git/connections/"+lab.ID))
-	if len(page.Connections) != 1 || page.Connections[0].ID != hub.ID {
-		t.Errorf("connections after the delete = %+v", page.Connections)
-	}
-	if len(page.Access) != 1 || page.Access[0].Agent.Slug != "dana" || page.Access[0].Invalid != nil {
-		t.Errorf("access after the delete = %+v", page.Access)
-	}
-	if a, b := registered(); !a || b {
-		t.Errorf("registered after deleting the second = %v, %v", a, b)
-	}
-	if names := mem.Names(); !slices.Equal(names, []string{secrets.ConnectionSecretName("git", hub.ID)}) {
-		t.Errorf("secrets after deleting the second = %v", names)
-	}
-}
-
-// withMultipleEcho gives srv the echo built-in taking several
-// connections.
-func withMultipleEcho(t *testing.T, srv *Server) *echotest.Echo {
-	t.Helper()
-	echo := echotest.New()
-	echo.Multiple = true
-	srv.BuiltinIntegrations = builtinintegrations.Registry{echo}
-	withIntegrationRegistry(srv, nil)
-	if err := srv.Store.InstallBuiltinIntegrations(srv.BuiltinIntegrations.Manifests(), time.Date(2026, 10, 21, 9, 0, 0, 0, time.UTC)); err != nil {
+	// A record of the job's connection left beside the integration's:
+	// its token is scrubbed too.
+	cur, _ := srv.Store.GetIntegrationConnection("git")
+	stray := store.IntegrationConnection{ID: "5a5a5a5a", CreatedAt: cur.CreatedAt.Add(time.Hour), Fields: map[string]string{"host": "github.com"},
+		SecretKeys: []string{"token"}, SecretName: secrets.ConnectionSecretName("git", "5a5a5a5a")}
+	if err := mem.Put(ctx, stray.SecretName, map[string]string{"token": otherGitToken}); err != nil {
 		t.Fatal(err)
 	}
-	return echo
+	if err := srv.Store.PutIntegrationConnection("git", stray); err != nil {
+		t.Fatal(err)
+	}
+	third, err := dana.IntegrationCall(ctx, agentpod.IntegrationCallRequest{Name: "git_clone", Arguments: args, ShellJobResult: &agentpod.IntegrationShellJobResult{
+		Git: &agentpod.GitResult{Repository: "acme/widgets", Error: "the host said " + otherGitToken + " was refused", ConnectionID: stray.ID},
+	}})
+	if err != nil || !third.IsError || strings.Contains(strings.Join(third.Content, " "), otherGitToken) {
+		t.Fatalf("third request = %+v, %v", third, err)
+	}
+	if row := gitRows(t, srv)[0]; strings.Contains(row.Reason, otherGitToken) || !strings.HasSuffix(row.Reason, "; the connection changed during the clone (it ran through an earlier connection)") {
+		t.Errorf("audit = %+v", row)
+	}
 }
 
-// Why this test exists: Test connection by id must test that
-// connection, keep the result on that connection alone, and scrub that
-// connection's secrets from what it keeps. Scrubbing with the first
-// connection's secrets only would keep the second's token in the
-// page, the record and the audit.
-func TestVerifyByIDTestsThatConnection(t *testing.T) {
+// Why this test exists: an integration has one connection, the oldest
+// record. A second record (left from before, or written by hand) that
+// has its secrets must not make the connection requirement read met
+// while the connection agents use needs its secrets again.
+func TestConnectionRequirementIsTheOldest(t *testing.T) {
 	srv := newTestServer(t)
-	useFakeClock(srv)
-	echo := withMultipleEcho(t, srv)
-	const otherToken = "s3cret-other-echo-token"
-	addConnection(t, srv, "echo", "First", map[string]string{"token": echoToken, "greeting": "Hello"})
-	tick(srv)
-	page := addConnection(t, srv, "echo", "Second", map[string]string{"token": otherToken, "greeting": echotest.FailGreeting})
-	first, second := page.Connections[0], page.Connections[1]
-
-	rr := intPost(t, srv, intBase+"/echo/connections/"+second.ID+"/verify")
-	if strings.Contains(rr.Body.String(), otherToken) {
-		t.Fatal("the answer carries the second connection's token")
-	}
-	page = orgOK[apitypes.IntegrationPage](t, rr)
-	calls := echo.Calls()
-	if len(calls) != 1 || calls[0].Action != "verify" || calls[0].Conn.ID != second.ID || calls[0].Conn.Fields["token"] != otherToken {
-		t.Errorf("Verify was given %+v", calls)
-	}
-	if c := page.Connections[1]; c.Verified == nil || *c.Verified || c.VerifyMessage == nil || *c.VerifyMessage != "the token [secret] was refused" {
-		t.Errorf("second after its test = %+v", c)
-	}
-	if c := page.Connections[0]; c.ID != first.ID || c.Verified != nil {
-		t.Errorf("first after the second's test = %+v", c)
-	}
-	audit := orgOK[apitypes.IntegrationAudit](t, orgGet(t, srv, intBase+"/echo/audit"))
-	if len(audit.Rows) != 1 || audit.Rows[0].Reason != "the token [secret] was refused" {
-		t.Errorf("audit = %+v", audit.Rows)
-	}
-	page = orgOK[apitypes.IntegrationPage](t, intPost(t, srv, intBase+"/echo/connections/"+first.ID+"/verify"))
-	if c := page.Connections[0]; c.Verified == nil || !*c.Verified || c.VerifyMessage == nil || *c.VerifyMessage != "Hello; token s3c..." {
-		t.Errorf("first after its test = %+v", c)
-	}
-	// The options a field lists come through the connection named.
-	orgOK[apitypes.AccessChoices](t, orgGet(t, srv, intBase+"/echo/choices/colors?connection="+second.ID))
-	if calls := echo.Calls(); calls[len(calls)-1].Action != "choices" || calls[len(calls)-1].Conn.ID != second.ID {
-		t.Errorf("Choices was given %+v", calls[len(calls)-1])
-	}
-	assertAPIError(t, orgGet(t, srv, intBase+"/echo/choices/colors?connection=nope"), http.StatusNotFound)
-}
-
-// Why this test exists: with several connections, the connection
-// requirement names each one that lost its secrets, and only those.
-// Reading only the first would miss the second losing its Secret, or
-// blame the second for the first's.
-func TestRequirementsWithOneOfTwoConnected(t *testing.T) {
-	srv := newTestServer(t)
-	useFakeClock(srv)
 	mem := secrets.NewMemory()
 	srv.Secrets = mem
-	withMultipleEcho(t, srv)
-	addConnection(t, srv, "echo", "First", map[string]string{"token": echoToken})
-	tick(srv)
-	page := addConnection(t, srv, "echo", "Second", map[string]string{"token": "s3cret-other-echo-token"})
-	first, second := page.Connections[0], page.Connections[1]
-	_ = mem.Delete(context.Background(), secrets.ConnectionSecretName("echo", first.ID))
-	page = orgOK[apitypes.IntegrationPage](t, orgGet(t, srv, intBase+"/echo"))
-	row, _ := requirementOf(page, "connection")
-	if page.Summary.State != apitypes.IntegrationStateInstalled || !page.Connections[0].ReconnectNeeded || page.Connections[1].ReconnectNeeded ||
-		row.Met || !strings.HasPrefix(row.Words, "First's secrets are not stored") {
-		t.Errorf("one of two = %s %+v %+v", page.Summary.State, row, page.Connections)
+	intConnected(t, srv, "crm")
+	attachShim(t, srv, "crm", toolTexts(nil))
+	oldest, err := srv.Store.GetIntegrationConnection("crm")
+	if err != nil {
+		t.Fatal(err)
 	}
-	_ = mem.Delete(context.Background(), secrets.ConnectionSecretName("echo", second.ID))
-	page = orgOK[apitypes.IntegrationPage](t, orgGet(t, srv, intBase+"/echo"))
-	if row, _ := requirementOf(page, "connection"); row.Met || !strings.HasPrefix(row.Words, "First, Second's secrets are not stored") || page.Summary.Needs != 1 {
-		t.Errorf("none of two = %+v", row)
+	if err := srv.Store.PutIntegrationConnection("crm", store.IntegrationConnection{ID: "later", CreatedAt: oldest.CreatedAt.Add(time.Hour)}); err != nil {
+		t.Fatal(err)
 	}
-	if _, err := srv.Store.GetIntegrationConnectionByID("echo", second.ID); err != nil {
-		t.Errorf("the record went with its Secret: %v", err)
+	_ = mem.Delete(context.Background(), oldest.SecretName)
+	page := orgOK[apitypes.IntegrationPage](t, orgGet(t, srv, intBase+"/crm"))
+	if row, _ := requirementOf(page, "connection"); row.Met || row.Words != "Its secrets are not stored on this Kivali server, as after a restore from a backup. Enter them again." {
+		t.Errorf("connection = %+v, want not met", row)
+	}
+}
+
+// Why this test exists: a built-in's Test connection is scrubbed with
+// the secrets of the connection it called with. With none (they could
+// not be read), scrubbing with nothing would keep the connection's
+// token in the page, the record and the audit: the answer is held back
+// instead.
+func TestBuiltinOwnerCallWithNoScrubberIsHeldBack(t *testing.T) {
+	srv := newTestServer(t)
+	echo := withEcho(t, srv)
+	v := &integrationView{it: store.Integration{Name: "echo"}, builtin: echo}
+	res, failed, err := srv.callIntegrationTool(context.Background(), v, "whoami", func(context.Context) (json.RawMessage, *strings.Replacer, error) {
+		return json.RawMessage(`{"content":[{"type":"text","text":"token ` + echoToken + `"}],"isError":true}`), nil, nil
+	})
+	if err != nil || len(res.Content) != 0 || failed != "Kivali could not check the integration's answer for secrets, so it held the answer back" {
+		t.Errorf("result = %+v, failed %q, %v", res, failed, err)
+	}
+	if rows, _ := srv.Store.ReadIntegrationAuditTail("echo", 1); len(rows) != 1 || strings.Contains(rows[0].Reason, echoToken) {
+		t.Errorf("audit = %+v", rows)
 	}
 }

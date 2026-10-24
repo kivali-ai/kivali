@@ -39,8 +39,8 @@ type Job struct {
 //   - TimeoutSeconds bounds the operation in the daemon.
 //   - ConnectionID is the connection the job runs through, which the
 //     daemon echoes in its result (GitResult.ConnectionID), so the
-//     call's second request knows it even when the agent's access
-//     names another connection by then.
+//     call's second request knows it even when the integration has
+//     another connection by then.
 //
 // It carries credentials: nothing on its path logs it.
 type GitJob struct {

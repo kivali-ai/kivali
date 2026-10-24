@@ -145,12 +145,6 @@ type Connection struct {
 	// Method is how the connection is made: MethodToken, MethodDevice
 	// or MethodBrowser.
 	Method string `json:"method"`
-	// Multiple says the integration takes several connections, each
-	// with a label, and each agent's access names the one it uses. Only
-	// a built-in integration may: a bundle's server is started with one
-	// connection's values.
-	Multiple bool `json:"multiple,omitempty"`
-
 	// The vendor's OAuth endpoints, for a connection made by signing
 	// in. Core talks to them; the integration never does.
 	DeviceEndpoint        string `json:"device_endpoint,omitempty"`

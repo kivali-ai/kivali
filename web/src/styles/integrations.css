@@ -169,13 +169,6 @@
   gap: var(--space-4);
 }
 
-/* Several connections: one folding card each (ds Card), then Add a connection. */
-.app-int-conns {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-}
-
 .app-int-status {
   display: flex;
   flex-direction: column;

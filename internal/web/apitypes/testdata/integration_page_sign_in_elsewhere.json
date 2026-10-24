@@ -63,7 +63,6 @@
   },
   "connection": {
     "id": "a1b2c3d4",
-    "label": "",
     "created_at": "2026-10-21T09:30:00Z",
     "fields": [
       {
@@ -100,48 +99,6 @@
       "signed_in": false
     }
   },
-  "connections": [
-    {
-      "id": "a1b2c3d4",
-      "label": "",
-      "created_at": "2026-10-21T09:30:00Z",
-      "fields": [
-        {
-          "key": "org",
-          "title": "Organization",
-          "description": "The organization agents work in.",
-          "sensitive": false,
-          "required": false,
-          "set": false
-        },
-        {
-          "key": "client_id",
-          "title": "Client id",
-          "description": "",
-          "sensitive": false,
-          "required": true,
-          "set": true,
-          "value": "Iv23liAbCdEf"
-        },
-        {
-          "key": "client_secret",
-          "title": "Client secret",
-          "description": "",
-          "sensitive": true,
-          "required": true,
-          "set": true
-        }
-      ],
-      "reconnect_needed": false,
-      "sign_in": {
-        "ways": [],
-        "browser_elsewhere": true,
-        "open_at": "https://kivali.example.com",
-        "signed_in": false
-      }
-    }
-  ],
-  "multiple": false,
   "connection_test": false,
   "access": [],
   "agents_without": [

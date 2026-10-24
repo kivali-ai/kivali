@@ -49,12 +49,7 @@ func (s *Server) wireAPIIntegrationRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/org/integrations/{name}/versions/{version}/rollback", s.handleAPIIntegrationRollBack)
 	mux.HandleFunc("PUT /api/v1/org/integrations/{name}/connection", s.handleAPIIntegrationConnectionPut)
 	mux.HandleFunc("POST /api/v1/org/integrations/{name}/connection/verify", s.handleAPIIntegrationVerify)
-	mux.HandleFunc("POST /api/v1/org/integrations/{name}/connection/sign-out", s.handleAPISignOut(false))
-	mux.HandleFunc("POST /api/v1/org/integrations/{name}/connections", s.handleAPIIntegrationConnectionCreate)
-	mux.HandleFunc("PUT /api/v1/org/integrations/{name}/connections/{id}", s.handleAPIIntegrationConnectionPutByID)
-	mux.HandleFunc("DELETE /api/v1/org/integrations/{name}/connections/{id}", s.handleAPIIntegrationConnectionDeleteByID)
-	mux.HandleFunc("POST /api/v1/org/integrations/{name}/connections/{id}/verify", s.handleAPIIntegrationVerifyByID)
-	mux.HandleFunc("POST /api/v1/org/integrations/{name}/connections/{id}/sign-out", s.handleAPISignOut(true))
+	mux.HandleFunc("POST /api/v1/org/integrations/{name}/connection/sign-out", s.handleAPISignOut)
 	mux.HandleFunc("POST /api/v1/org/integrations/{name}/setup", s.handleAPISetupStart)
 	mux.HandleFunc("GET /api/v1/org/integrations/{name}/setup", s.handleAPISetupGet)
 	mux.HandleFunc("POST /api/v1/org/integrations/{name}/setup/answer", s.handleAPISetupAnswer)
@@ -95,8 +90,8 @@ type integrationView struct {
 	// manifest is the approved version's, or the newest stored
 	// version's while none is approved; nil with no version at all.
 	manifest *integration.Manifest
-	// conns is every connection, oldest first.
-	conns  []*connView
+	// conn is its connection; nil with none.
+	conn   *connView
 	access []store.IntegrationAccess
 	// running is whether the integration can be called: its shim is
 	// connected, or it is a built-in of Go code this binary carries.
@@ -140,31 +135,6 @@ func (v *integrationView) usable(c *connView) bool {
 	return !c.reconnect && (!v.signIn() || !c.rec.NeedsSignIn(c.hasToken))
 }
 
-// first is the oldest connection, the one an integration that takes
-// one has; nil with none.
-func (v *integrationView) first() *connView {
-	if len(v.conns) == 0 {
-		return nil
-	}
-	return v.conns[0]
-}
-
-// connByID is the connection of that id, nil when there is none.
-func (v *integrationView) connByID(id string) *connView {
-	for _, c := range v.conns {
-		if c.rec.ID == id {
-			return c
-		}
-	}
-	return nil
-}
-
-// multiple reports whether v takes several connections
-// (kivali.connection.multiple).
-func (v *integrationView) multiple() bool {
-	return v.manifest != nil && v.manifest.Kivali.Connection.Multiple
-}
-
 // loadIntegration reads one integration whole. A missing one is
 // store.ErrNotFound.
 func (s *Server) loadIntegration(ctx context.Context, name string) (*integrationView, error) {
@@ -189,12 +159,11 @@ func (s *Server) loadIntegration(ctx context.Context, name string) (*integration
 	default:
 		return nil, err
 	}
-	conns, err := s.Store.ListIntegrationConnections(name)
-	if err != nil {
+	switch rec, err := s.Store.GetIntegrationConnection(name); {
+	case err == nil:
+		v.conn = s.readConnectionSecret(ctx, name, rec)
+	case !errors.Is(err, store.ErrNotFound):
 		return nil, err
-	}
-	for _, rec := range conns {
-		v.conns = append(v.conns, s.readConnectionSecret(ctx, name, rec))
 	}
 	if v.access, err = s.Store.ListIntegrationAccess(name); err != nil {
 		return nil, err
@@ -514,14 +483,12 @@ func (s *Server) integrationPage(v *integrationView, r *http.Request) apitypes.I
 		Hosts:            integrationHosts(v.manifest),
 		Packages:         integrationPackages(v.manifest),
 		Actions:          integrationActions(v.manifest),
-		ConnectionFields: connectionFields(v.manifest, v.first()),
+		ConnectionFields: connectionFields(v.manifest, v.conn),
 		SignInClient:     signInClientWire(v.manifest),
 		Scopes:           signInScopes(v.manifest),
 		SignInHosts:      signInHosts(v.manifest),
 		SignInAt:         signInPagesOf(v.manifest),
 		Setup:            setupWire(v.manifest),
-		Connections:      []apitypes.ConnectionState{},
-		Multiple:         v.multiple(),
 		ConnectionTest:   v.connectionTest(),
 		AccessForm:       accessFormWire(v.manifest),
 		Access:           []apitypes.AccessRow{},
@@ -542,9 +509,8 @@ func (s *Server) integrationPage(v *integrationView, r *http.Request) apitypes.I
 	}
 	redirect := s.browserRedirectURL(v.manifest, r)
 	page.SignInRedirectURL = redirect
-	labels := map[string]string{}
-	for _, c := range v.conns {
-		state := v.connectionState(c)
+	if v.conn != nil {
+		state := v.connectionState(v.conn)
 		if si := state.SignIn; si != nil {
 			si.Ways = s.signInWaysHere(v.manifest, r)
 			si.RedirectURL = redirect
@@ -553,24 +519,17 @@ func (s *Server) integrationPage(v *integrationView, r *http.Request) apitypes.I
 				si.OpenAt = s.externalOrigin()
 			}
 		}
-		labels[c.rec.ID] = state.Label
-		page.Connections = append(page.Connections, state)
-	}
-	if len(page.Connections) > 0 {
-		first := page.Connections[0]
-		page.Connection = &first
+		page.Connection = &state
 	}
 	has := map[string]bool{}
 	for _, a := range v.access {
 		has[a.Slug] = true
 		page.Access = append(page.Access, apitypes.AccessRow{
-			Agent:           personNamed(names, a.Slug),
-			Access:          a.AccessJSON(),
-			Summary:         v.accessSummary(a.AccessJSON()),
-			SetAt:           a.SetAt,
-			ConnectionID:    a.ConnectionID,
-			ConnectionLabel: labels[a.ConnectionID],
-			Invalid:         optString(a.Invalid),
+			Agent:   personNamed(names, a.Slug),
+			Access:  a.AccessJSON(),
+			Summary: v.accessSummary(a.AccessJSON()),
+			SetAt:   a.SetAt,
+			Invalid: optString(a.Invalid),
 		})
 	}
 	sort.SliceStable(page.Access, func(i, j int) bool { return page.Access[i].Agent.Name < page.Access[j].Agent.Name })
@@ -627,7 +586,7 @@ func (s *Server) integrationVersionView(v *integrationView, ver store.Integratio
 		Setup:            setupWire(m),
 		Hosts:            integrationHosts(m),
 		Packages:         integrationPackages(m),
-		ConnectionFields: connectionFields(m, v.first()),
+		ConnectionFields: connectionFields(m, v.conn),
 		Actions:          integrationActions(m),
 		AccessForm:       accessFormWire(m),
 		BundleBytes:      ver.BundleBytes,
@@ -668,17 +627,11 @@ func (s *Server) integrationOr404(w http.ResponseWriter, r *http.Request) (*inte
 
 // writeIntegrationPage answers with the page as it now stands.
 func (s *Server) writeIntegrationPage(w http.ResponseWriter, r *http.Request) {
-	s.writeIntegrationPageStatus(w, r, http.StatusOK)
-}
-
-// writeIntegrationPageStatus is writeIntegrationPage with the status
-// code: 201 for a connection just created.
-func (s *Server) writeIntegrationPageStatus(w http.ResponseWriter, r *http.Request, code int) {
 	v, ok := s.integrationOr404(w, r)
 	if !ok {
 		return
 	}
-	writeJSON(w, code, s.integrationPage(v, r))
+	writeJSON(w, http.StatusOK, s.integrationPage(v, r))
 }
 
 // ---- the list and upload ----
@@ -849,7 +802,7 @@ func (s *Server) handleAPIIntegrationUninstall(w http.ResponseWriter, r *http.Re
 	if !ok {
 		return
 	}
-	if v.it.Builtin && !v.staleBuiltin() && len(v.conns) == 0 {
+	if v.it.Builtin && !v.staleBuiltin() && v.conn == nil {
 		writeAPIError(w, http.StatusConflict, errNotInstalled(v.displayName()), whoNoOne)
 		return
 	}
@@ -871,17 +824,17 @@ func (s *Server) handleAPIIntegrationUninstall(w http.ResponseWriter, r *http.Re
 }
 
 // builtinUninstall calls Uninstall of v's built-in, when it implements
-// builtinintegrations.Uninstaller, with each connection as a call
-// reads it (as stored when it needs a sign-in), under
-// integrationCallTimeout: the words of the first failure, scrubbed of
-// the connection's secrets and audited, or "" once each went through.
+// builtinintegrations.Uninstaller, with the connection as a call reads
+// it (as stored when it needs a sign-in), under integrationCallTimeout:
+// the words of a failure, scrubbed of the connection's secrets and
+// audited, or "" once it went through.
 func (s *Server) builtinUninstall(ctx context.Context, v *integrationView) string {
 	u, ok := v.builtin.(builtinintegrations.Uninstaller)
 	if !ok {
 		return ""
 	}
 	name, display := v.it.Name, v.displayName()
-	for _, c := range v.conns {
+	if c := v.conn; c != nil {
 		start := s.clk().Now()
 		conn, _, scrub, err := s.builtinConnection(ctx, name, c.rec.ID)
 		if errors.Is(err, errSignInNeeded) || errors.Is(err, errVendorUnavailable) {
@@ -889,7 +842,7 @@ func (s *Server) builtinUninstall(ctx context.Context, v *integrationView) strin
 			conn, scrub, err = builtinintegrations.Connection{ID: rec.ID, Fields: values}, newScrubber(secretValues), rerr
 		}
 		if errors.Is(err, store.ErrNotFound) {
-			continue
+			return ""
 		}
 		if err != nil {
 			log.Printf("integration %s: read connection %s to uninstall it: %v", name, c.rec.ID, err)
@@ -915,46 +868,45 @@ func (s *Server) builtinUninstall(ctx context.Context, v *integrationView) strin
 
 // uninstallBuiltinLocked takes v, a built-in this binary carries, back
 // to available under lockIntegrations, once its own Uninstall (if any)
-// has undone the service's side: each connection's Secret goes (its
-// sign-in's tokens to revoke), then that connection's record, its
-// scoped proxy credential and the access set for it. A Secret that
-// cannot be deleted does not stop the others; its connection's record
-// stays, so the Secret is still named and Uninstall again finishes it,
-// and the answer is a 500 saying the service's side was undone. Once
-// every connection is gone, every agent's access goes with them and
-// the owner's audit gains uninstall.
+// has undone the service's side: the connection's Secret goes (its
+// sign-in's tokens to revoke), then its record, its scoped proxy
+// credential and every agent's access. A Secret that cannot be deleted
+// keeps the record, so the Secret is still named and Uninstall again
+// finishes it, and the answer is a 500 saying the service's side was
+// undone. Once the connection is gone, the owner's audit gains
+// uninstall. The caller has checked v has its connection.
 func (s *Server) uninstallBuiltinLocked(w http.ResponseWriter, r *http.Request, v *integrationView, start time.Time) (signInRevocations, bool) {
-	name := v.it.Name
+	name, c := v.it.Name, v.conn
 	var revokes signInRevocations
-	failed := 0
-	for _, c := range v.conns {
-		if c.rec.SecretName != "" {
-			tokens := s.revocableTokens(r.Context(), name, v.manifest, c.rec)
-			if err := s.Secrets.Delete(r.Context(), c.rec.SecretName); err != nil && !errors.Is(err, secrets.ErrNotFound) {
-				log.Printf("integration %s: uninstall: delete Secret %s: %v", name, c.rec.SecretName, err)
-				failed++
-				continue
-			}
+	failed := false
+	if c.rec.SecretName != "" {
+		tokens := s.revocableTokens(r.Context(), name, v.manifest, c.rec)
+		if err := s.Secrets.Delete(r.Context(), c.rec.SecretName); err != nil && !errors.Is(err, secrets.ErrNotFound) {
+			log.Printf("integration %s: uninstall: delete Secret %s: %v", name, c.rec.SecretName, err)
+			failed = true
+		} else {
 			revokes = revokes.add(name, v.manifest, c.rec, tokens)
 		}
+	}
+	if !failed {
 		// With its Secret gone the credential's secret is gone too.
 		if err := s.dropBuiltinEgress(name, []store.IntegrationConnection{c.rec}); err != nil {
 			log.Printf("integration %s: drop the connection's proxy credential: %v", name, err)
 		}
 		if _, _, err := s.Store.DeleteIntegrationConnectionByID(name, c.rec.ID); err != nil && !errors.Is(err, store.ErrNotFound) {
 			log.Printf("integration %s: uninstall: delete connection %s: %v", name, c.rec.ID, err)
-			failed++
+			failed = true
 		}
 	}
 	s.Integrations.ConnectionChanged(name)
 	s.Integrations.Changed()
-	if failed > 0 {
+	if failed {
 		words := v.displayName() + "'s installation was undone on the service, but Kivali could not remove its connection; uninstall it again to finish"
 		s.auditAgentCall(name, start, agent.CEOSlug, uninstallAction, false, words)
 		writeAPIError(w, http.StatusInternalServerError, words, whoServer)
 		return revokes, false
 	}
-	// Every connection gone: access left naming none goes too.
+	// Any record left beside the connection goes too.
 	if _, err := s.Store.DeleteIntegrationConnection(name); err != nil {
 		log.Printf("integration %s: uninstall: %v", name, err)
 	}
@@ -972,7 +924,7 @@ func (s *Server) uninstallLocked(w http.ResponseWriter, r *http.Request) (signIn
 	}
 	name := v.it.Name
 	keep := v.it.Builtin && !v.staleBuiltin()
-	if keep && len(v.conns) == 0 {
+	if keep && v.conn == nil {
 		// Uninstalled meanwhile.
 		writeAPIError(w, http.StatusConflict, errNotInstalled(v.displayName()), whoNoOne)
 		return nil, false
@@ -1326,28 +1278,10 @@ func (s *Server) integrationAgent(w http.ResponseWriter, r *http.Request) (strin
 	return slug, true
 }
 
-// accessConnection is the connection an agent's access is set for, by
-// the id the write names: required when the integration has more than
-// one connection, the only one when it is left out. For an integration
-// that takes one connection it is always that one, the oldest. nil when
-// the id is missing where it is needed, or names no connection the
-// access may use.
-func (v *integrationView) accessConnection(id string) *connView {
-	switch {
-	case !v.multiple():
-		if c := v.first(); c != nil && (id == "" || id == c.rec.ID) {
-			return c
-		}
-		return nil
-	case id == "" && len(v.conns) == 1:
-		return v.conns[0]
-	}
-	return v.connByID(id)
-}
-
 // handleAPIIntegrationAccessPut sets one agent's access from the
-// filled access form, checked against the approved version's form,
-// for the connection the write names.
+// filled access form, checked against the approved version's form. A
+// row set aside with a retired connection is written again without
+// that mark.
 func (s *Server) handleAPIIntegrationAccessPut(w http.ResponseWriter, r *http.Request) {
 	var req apitypes.AccessWrite
 	if !decodeJSONOrError(w, r, &req) {
@@ -1366,18 +1300,8 @@ func (s *Server) handleAPIIntegrationAccessPut(w http.ResponseWriter, r *http.Re
 		writeAPIError(w, http.StatusConflict, "approve a version of "+v.displayName()+" first", whoYou)
 		return
 	}
-	if len(v.conns) == 0 {
+	if v.conn == nil {
 		writeAPIError(w, http.StatusConflict, "install "+v.displayName()+" first", whoYou)
-		return
-	}
-	conn := v.accessConnection(req.ConnectionID)
-	switch {
-	case conn == nil && !v.multiple():
-		// A page read before the one connection was replaced.
-		writeAPIError(w, http.StatusConflict, errConnectionGone, whoNoOne)
-		return
-	case conn == nil:
-		writeAPIError(w, http.StatusBadRequest, "choose a connection", whoYou)
 		return
 	}
 	if err := integration.ValidateAccess(v.manifest, req.Access); err != nil {
@@ -1399,11 +1323,10 @@ func (s *Server) handleAPIIntegrationAccessPut(w http.ResponseWriter, r *http.Re
 		}
 	}
 	err := s.Store.SetIntegrationAccess(v.it.Name, store.IntegrationAccess{
-		Slug:         slug,
-		ConnectionID: conn.rec.ID,
-		Access:       access,
-		SetAt:        s.clk().Now(),
-		SetBy:        agent.CEOSlug,
+		Slug:   slug,
+		Access: access,
+		SetAt:  s.clk().Now(),
+		SetBy:  agent.CEOSlug,
 	})
 	switch {
 	case errors.Is(err, store.ErrNotFound):
@@ -1438,8 +1361,7 @@ func (s *Server) handleAPIIntegrationAccessDelete(w http.ResponseWriter, r *http
 
 // handleAPIIntegrationChoices lists a field's options through the
 // integration, which needs its runtime; a built-in one's Choices lists
-// them through its connection, which it needs: the one ?connection=
-// names, or the first.
+// them through its connection, which it needs.
 func (s *Server) handleAPIIntegrationChoices(w http.ResponseWriter, r *http.Request) {
 	v, ok := s.integrationOr404(w, r)
 	if !ok {
@@ -1451,13 +1373,7 @@ func (s *Server) handleAPIIntegrationChoices(w http.ResponseWriter, r *http.Requ
 		writeAPIError(w, http.StatusNotFound, v.displayName()+" lists no options for "+key, whoDevelopers)
 		return
 	}
-	conn := v.first()
-	if id := r.URL.Query().Get("connection"); id != "" {
-		if conn = v.connByID(id); conn == nil {
-			writeAPIError(w, http.StatusNotFound, "that connection is no longer there", whoLink)
-			return
-		}
-	}
+	conn := v.conn
 	switch {
 	case v.staleBuiltin():
 		writeAPIError(w, http.StatusConflict, builtinRefusal(v.displayName(), builtinNotIncluded), whoYou)
@@ -1617,11 +1533,7 @@ func (s *Server) handleAPIAgentIntegrations(w http.ResponseWriter, r *http.Reque
 		}
 		row.Summary = v.accessSummary(v.access[i].AccessJSON())
 		row.Invalid = optString(v.access[i].Invalid)
-		row.Usable = v.access[i].Invalid == "" && v.agentUsable(v.access[i].ConnectionID)
-		// Which of several connections the agent's calls use.
-		if c := v.connByID(v.access[i].ConnectionID); c != nil && v.multiple() {
-			row.ConnectionLabel = v.connLabel(c)
-		}
+		row.Usable = v.access[i].Invalid == "" && v.agentUsable()
 		out.Connected = append(out.Connected, row)
 	}
 	byName := func(list []apitypes.AgentIntegration) {

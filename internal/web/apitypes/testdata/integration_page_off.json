@@ -56,7 +56,6 @@
   "sign_in_hosts": [],
   "connection": {
     "id": "c7f3a1b2",
-    "label": "",
     "created_at": "2026-10-21T09:30:00Z",
     "fields": [
       {
@@ -82,37 +81,6 @@
     "verify_message": "Connected as Acme Marketing",
     "reconnect_needed": false
   },
-  "connections": [
-    {
-      "id": "c7f3a1b2",
-      "label": "",
-      "created_at": "2026-10-21T09:30:00Z",
-      "fields": [
-        {
-          "key": "token",
-          "title": "Private app token",
-          "description": "From HubSpot, Settings, Private apps.",
-          "sensitive": true,
-          "required": true,
-          "set": true
-        },
-        {
-          "key": "portal",
-          "title": "Portal",
-          "description": "The portal's short name.",
-          "sensitive": false,
-          "required": false,
-          "set": true,
-          "value": "acme"
-        }
-      ],
-      "verified_at": "2026-10-21T10:00:00Z",
-      "verified": true,
-      "verify_message": "Connected as Acme Marketing",
-      "reconnect_needed": false
-    }
-  ],
-  "multiple": false,
   "connection_test": true,
   "access_form": {
     "fields": [
@@ -194,9 +162,7 @@
         "write": true
       },
       "summary": "Blogs: Marketing · May publish and edit",
-      "set_at": "2026-10-21T09:30:00Z",
-      "connection_id": "c7f3a1b2",
-      "connection_label": ""
+      "set_at": "2026-10-21T09:30:00Z"
     },
     {
       "agent": {
@@ -210,8 +176,6 @@
       },
       "summary": "Blogs: Old",
       "set_at": "2026-10-21T09:30:00Z",
-      "connection_id": "c7f3a1b2",
-      "connection_label": "",
       "invalid": "Blogs lists a choice the form no longer offers"
     }
   ],

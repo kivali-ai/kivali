@@ -88,7 +88,6 @@ func goldenIntegrationActions() []IntegrationAction {
 func goldenConnectionState() *ConnectionState {
 	return &ConnectionState{
 		ID:              "c7f3a1b2",
-		Label:           "",
 		CreatedAt:       integrationNow,
 		Fields:          goldenConnectionFields(),
 		VerifiedAt:      &integrationLater,
@@ -107,10 +106,14 @@ func goldenGitConnectionFields(host string) []ConnectionField {
 	}
 }
 
-// goldenIntegrationPageMultiple is Git's page with two connections,
-// GitHub and a company GitLab (whose secrets are needed again), and
-// one agent's access on each. Git has no connection test.
-func goldenIntegrationPageMultiple() IntegrationPage {
+// integrationRetired is the reason an access row set for a connection
+// boot set aside grants nothing.
+var integrationRetired = "set for the connection gitlab.example.com, which Git no longer has; set it again"
+
+// goldenIntegrationPageGit is Git's page: its one connection, whose
+// secrets are needed again, one agent's access and one agent's access
+// set for a connection boot set aside. Git has no connection test.
+func goldenIntegrationPageGit() IntegrationPage {
 	return IntegrationPage{
 		Summary: IntegrationSummary{
 			Name: "git", DisplayName: "Git", Description: "Clones, fetches and pushes repositories over HTTPS.",
@@ -125,21 +128,16 @@ func goldenIntegrationPageMultiple() IntegrationPage {
 		Scopes:           []string{},
 		SignInHosts:      []string{},
 		Connection: &ConnectionState{
-			ID: "a1b2c3d4", Label: "GitHub", CreatedAt: integrationEarlier, Fields: goldenGitConnectionFields("github.com"),
+			ID: "a1b2c3d4", CreatedAt: integrationEarlier, Fields: goldenGitConnectionFields("github.com"), ReconnectNeeded: true,
 		},
-		Connections: []ConnectionState{
-			{ID: "a1b2c3d4", Label: "GitHub", CreatedAt: integrationEarlier, Fields: goldenGitConnectionFields("github.com")},
-			{ID: "e5f6a7b8", Label: "Company GitLab", CreatedAt: integrationNow, Fields: goldenGitConnectionFields("gitlab.example.com"), ReconnectNeeded: true},
-		},
-		Multiple:       true,
 		ConnectionTest: false,
 		AccessForm: &AccessForm{Fields: []AccessField{
 			{Key: "repositories", Title: "Repositories", Description: "owner/name, or a pattern such as acme/*", Kind: AccessFieldKindList, Required: true, Options: []string{}, Choices: false},
 			{Key: "push", Title: "May push", Description: "", Kind: AccessFieldKindSwitch, Required: false, Options: []string{}, Choices: false},
 		}},
 		Access: []AccessRow{
-			{Agent: PersonRef{Slug: "dana", Name: "Dana"}, Access: json.RawMessage(`{"repositories":["acme/*"]}`), Summary: "Repositories: acme/*", SetAt: integrationNow, ConnectionID: "a1b2c3d4", ConnectionLabel: "GitHub"},
-			{Agent: PersonRef{Slug: "lee", Name: "Lee"}, Access: json.RawMessage(`{"repositories":["eng/*"],"push":true}`), Summary: "Repositories: eng/* · May push: no branches or tags", SetAt: integrationNow, ConnectionID: "e5f6a7b8", ConnectionLabel: "Company GitLab"},
+			{Agent: PersonRef{Slug: "dana", Name: "Dana"}, Access: json.RawMessage(`{"repositories":["acme/*"]}`), Summary: "Repositories: acme/*", SetAt: integrationNow},
+			{Agent: PersonRef{Slug: "lee", Name: "Lee"}, Access: json.RawMessage(`{"repositories":["eng/*"],"push":true}`), Summary: "Repositories: eng/* · May push: no branches or tags", SetAt: integrationNow, Invalid: &integrationRetired},
 		},
 		AgentsWithout: []PersonRef{{Slug: "chief-of-staff", Name: "Chief of Staff"}},
 		Versions: []IntegrationVersionSummary{
@@ -148,7 +146,7 @@ func goldenIntegrationPageMultiple() IntegrationPage {
 		Running: true,
 		Requirements: []IntegrationRequirement{
 			{ID: "version", Title: "Approved version", Words: "Version 1.2.0 ships with Kivali.", Met: true},
-			{ID: "connection", Title: "Connection", Words: "Company GitLab's secrets are not stored on this Kivali server, as after a restore from a backup. Enter them again on its card.", Met: false, Fix: ""},
+			{ID: "connection", Title: "Connection", Words: "Its secrets are not stored on this Kivali server, as after a restore from a backup. Enter them again.", Met: false, Fix: "setup"},
 		},
 		CanUninstall: true,
 	}
@@ -166,13 +164,11 @@ func goldenIntegrationPage() IntegrationPage {
 		Scopes:           []string{},
 		SignInHosts:      []string{},
 		Connection:       goldenConnectionState(),
-		Connections:      []ConnectionState{*goldenConnectionState()},
-		Multiple:         false,
 		ConnectionTest:   true,
 		AccessForm:       goldenAccessForm(),
 		Access: []AccessRow{
-			{Agent: PersonRef{Slug: "dana", Name: "Dana"}, Access: json.RawMessage(`{"blogs":["Marketing"],"write":true}`), Summary: "Blogs: Marketing · May publish and edit", SetAt: integrationNow, ConnectionID: "c7f3a1b2"},
-			{Agent: PersonRef{Slug: "lee", Name: "Lee"}, Access: json.RawMessage(`{"blogs":["Old"]}`), Summary: "Blogs: Old", SetAt: integrationNow, ConnectionID: "c7f3a1b2", Invalid: &integrationInvalid},
+			{Agent: PersonRef{Slug: "dana", Name: "Dana"}, Access: json.RawMessage(`{"blogs":["Marketing"],"write":true}`), Summary: "Blogs: Marketing · May publish and edit", SetAt: integrationNow},
+			{Agent: PersonRef{Slug: "lee", Name: "Lee"}, Access: json.RawMessage(`{"blogs":["Old"]}`), Summary: "Blogs: Old", SetAt: integrationNow, Invalid: &integrationInvalid},
 		},
 		AgentsWithout: []PersonRef{{Slug: "chief-of-staff", Name: "Chief of Staff"}},
 		Versions: []IntegrationVersionSummary{
@@ -211,7 +207,6 @@ func goldenIntegrationPagePending() IntegrationPage {
 		ConnectionMethod: "token",
 		Scopes:           []string{},
 		SignInHosts:      []string{},
-		Connections:      []ConnectionState{},
 		Access:           []AccessRow{},
 		AgentsWithout:    []PersonRef{{Slug: "dana", Name: "Dana"}},
 		Versions: []IntegrationVersionSummary{
@@ -327,7 +322,7 @@ func goldenIntegrationPageSignIn(needsSignIn bool) IntegrationPage {
 		signInRow.Met, signInRow.Words = false, "The service no longer accepts the sign-in: "+refused+" Agents cannot use GitHub until you sign in again."
 		needs = 1
 	}
-	conn := ConnectionState{ID: "a1b2c3d4", Label: "", CreatedAt: integrationNow, Fields: goldenSignInConnectionFields(), SignIn: sign}
+	conn := ConnectionState{ID: "a1b2c3d4", CreatedAt: integrationNow, Fields: goldenSignInConnectionFields(), SignIn: sign}
 	return IntegrationPage{
 		Summary: IntegrationSummary{
 			Name: "github", DisplayName: "GitHub", Description: "Issues and pull requests on GitHub.",
@@ -346,8 +341,6 @@ func goldenIntegrationPageSignIn(needsSignIn bool) IntegrationPage {
 		SetupNotesMD:      "Register a GitHub App under **Settings, Developer settings**, set its callback URL to " + redirect + ", tick *Enable Device Flow*, then paste its client id and a client secret here.",
 		SignInRedirectURL: &redirect,
 		Connection:        &conn,
-		Connections:       []ConnectionState{conn},
-		Multiple:          false,
 		ConnectionTest:    false,
 		Access:            []AccessRow{},
 		AgentsWithout:     []PersonRef{{Slug: "dana", Name: "Dana"}},
@@ -381,7 +374,6 @@ func goldenIntegrationPageSignInElsewhere() IntegrationPage {
 	page.SignInAt = map[string]string{"browser": "github.com"}
 	page.SignInRedirectURL = nil
 	page.Connection = &conn
-	page.Connections = []ConnectionState{conn}
 	return page
 }
 
@@ -432,7 +424,7 @@ func goldenAgentIntegrations() AgentIntegrations {
 		Connected: []AgentIntegration{
 			{Name: "hubspot", DisplayName: "HubSpot", State: IntegrationStateInstalled, Usable: true, Summary: "Blogs: Marketing · May publish and edit"},
 			{Name: "crm", DisplayName: "CRM", State: IntegrationStateOff, Usable: false, Summary: "Full access", Invalid: &integrationInvalid},
-			{Name: "git", DisplayName: "Git", State: IntegrationStateInstalled, Usable: false, Summary: "Repositories: eng/*", ConnectionLabel: "Company GitLab"},
+			{Name: "git", DisplayName: "Git", State: IntegrationStateInstalled, Usable: false, Summary: "Repositories: eng/*"},
 		},
 		Available: []AgentIntegration{
 			{Name: "weather", DisplayName: "Weather", State: IntegrationStatePending, Summary: ""},
@@ -533,8 +525,6 @@ func goldenIntegrationPageSetup() IntegrationPage {
 		Scopes:           []string{},
 		SignInHosts:      []string{"github.com"},
 		Setup:            setup,
-		Connections:      []ConnectionState{},
-		Multiple:         false,
 		ConnectionTest:   true,
 		Access:           []AccessRow{},
 		AgentsWithout:    []PersonRef{{Slug: "dana", Name: "Dana"}},
@@ -562,9 +552,9 @@ func goldenIntegrationPageSettingUp() IntegrationPage {
 // owner to approve a permission on GitHub.
 func goldenIntegrationPageFix() IntegrationPage {
 	page := goldenIntegrationPageSetup()
-	conn := ConnectionState{ID: "f00dcafe", Label: "", CreatedAt: integrationNow, Fields: []ConnectionField{}, VerifiedAt: &integrationLater, Verified: &integrationVerified, VerifyMessage: new("Installed on acme")}
+	conn := ConnectionState{ID: "f00dcafe", CreatedAt: integrationNow, Fields: []ConnectionField{}, VerifiedAt: &integrationLater, Verified: &integrationVerified, VerifyMessage: new("Installed on acme")}
 	page.Summary.State, page.Summary.Needs = IntegrationStateInstalled, 1
-	page.Connection, page.Connections = &conn, []ConnectionState{conn}
+	page.Connection = &conn
 	page.CanUninstall = true
 	page.Requirements = []IntegrationRequirement{
 		{ID: "version", Title: "Approved version", Words: "Version 2.0.0 ships with Kivali.", Met: true},
