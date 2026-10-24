@@ -20,6 +20,7 @@ import (
 	"github.com/kivali-ai/kivali/internal/connect"
 	"github.com/kivali-ai/kivali/internal/connect/connecttest"
 	"github.com/kivali-ai/kivali/internal/integration"
+	"github.com/kivali-ai/kivali/internal/secrets"
 	"github.com/kivali-ai/kivali/internal/store"
 	"github.com/kivali-ai/kivali/internal/web/apitypes"
 )
@@ -35,16 +36,22 @@ type setupEcho struct {
 	seen chan echotest.Seen
 }
 
-// nextAnswer is the Answer of Setup's next call.
-func (e *setupEcho) nextAnswer(t *testing.T) builtinintegrations.Answer {
+// nextCall is Setup's next call.
+func (e *setupEcho) nextCall(t *testing.T) echotest.Seen {
 	t.Helper()
 	select {
 	case s := <-e.seen:
-		return s.Answer
+		return s
 	case <-time.After(failsafeWait):
 		t.Fatal("setup was not called")
 	}
-	return builtinintegrations.Answer{}
+	return echotest.Seen{}
+}
+
+// nextAnswer is the Answer of Setup's next call.
+func (e *setupEcho) nextAnswer(t *testing.T) builtinintegrations.Answer {
+	t.Helper()
+	return e.nextCall(t).Answer
 }
 
 // callsOf is echo's calls of action, oldest first.
@@ -219,6 +226,8 @@ func TestSetupFlowHoldsStepsToTheDeclarations(t *testing.T) {
 			srv, _, _ := setupServer(t, func(int, context.Context, builtinintegrations.Connection, builtinintegrations.Answer, builtinintegrations.Progress) (builtinintegrations.Step, error) {
 				return tc.step, nil
 			})
+			puts := &countingPuts{Store: secrets.NewMemory()}
+			srv.Secrets = puts
 			startSetupFlow(t, srv, "echo")
 			f := waitFlow(t, srv, "echo", apitypes.SetupFlowStateFailed)
 			if f.Error == nil || *f.Error != tc.want || f.Step != nil {
@@ -226,6 +235,11 @@ func TestSetupFlowHoldsStepsToTheDeclarations(t *testing.T) {
 			}
 			if _, err := srv.Store.GetIntegrationConnection("echo"); !errors.Is(err, store.ErrNotFound) {
 				t.Errorf("a refused step kept a connection: %v", err)
+			}
+			// Refused before its Keep, not kept and then forgotten.
+			srv.setupAwaitDiscard(context.Background(), "echo")
+			if n := puts.n.Load(); n != 0 {
+				t.Errorf("a refused step wrote the Secret %d times", n)
 			}
 			if got := setupAudit(t, srv, "echo"); len(got) != 2 || got[1] != "refused failed: "+tc.want {
 				t.Errorf("audit = %q", got)
@@ -538,11 +552,12 @@ func TestSetupFlowGoWithoutReturn(t *testing.T) {
 // flow is forgotten so the page reads it again; a stream with no flow
 // is a 404.
 func TestSetupFlowStream(t *testing.T) {
-	release := make(chan struct{})
+	release, free := heldCall()
 	srv, _, _ := setupServer(t, func(n int, _ context.Context, _ builtinintegrations.Connection, _ builtinintegrations.Answer, _ builtinintegrations.Progress) (builtinintegrations.Step, error) {
 		<-release
 		return builtinintegrations.Step{Form: &builtinintegrations.Form{Fields: []string{"account"}}}, nil
 	})
+	t.Cleanup(free)
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 	get := func() *http.Response {
@@ -602,7 +617,7 @@ func TestSetupFlowStream(t *testing.T) {
 	if e := next(); !strings.HasPrefix(e, "event: flow\ndata: ") || !strings.Contains(e, `"state":"running"`) {
 		t.Errorf("initial = %q", e)
 	}
-	close(release)
+	free()
 	if e := next(); !strings.Contains(e, `"state":"form"`) {
 		t.Errorf("change = %q", e)
 	}

@@ -2080,7 +2080,10 @@ calls (`builtins.All()` unless a test sets others).
 `internal/builtinintegrations/echotest` is the built-in the tests
 register; it is never in `All()`. A test holds every built-in in
 `All()` to the check, to a name of its own, and to a `Tools` list
-inside its manifest, and echo to the check in each of its shapes.
+inside its manifest. It also holds each of echo's shapes to the check:
+token, sign-in, setup, and setup handing over to a browser or a device
+sign-in. Outside setup, echo's setup hooks give no rows and record no
+call.
 
 Echo has a token connection, or, with `SignIn`, a sign-in one. With
 `SetupFlow` it is a `setup` connection that implements all three setup
@@ -2089,11 +2092,15 @@ hooks, and the web tests drive it over the HTTP API
 `integration_requirements_test.go`). Its declarations are the host
 `setup.example`, the fields `account` and a secret, setup-only `key`,
 and the keeps `token` and `account`. Its install flow runs a Form
-(account, key), then a Go to `https://setup.example/install` that posts
-the key (or links there when the key is blank) and keeps the account.
-That Go expects `?code=` back and keeps the token the code stands for.
-Next comes a Wait that is checked until `SetInstalled`, and then Done,
-with the account and the key carried in `State`. The `permissions`
+(account, key; asked again while the account is blank), then a Go to
+`https://setup.example/install` that posts the key (or links there
+when the key is blank), keeps the account and expects `?code=` back.
+The step after the return keeps the token the code stands for and
+shows a Wait that is checked until `SetInstalled`; then Done, keeping
+`ClientID` and `ClientSecret` with `HandOver`. `State` carries the key
+alone; each step reads what earlier ones kept from `conn.Fields`. Echo
+has no service to trade the code with and takes it as it came back; a
+real `Setup` trades it with the service before keeping anything. The `permissions`
 requirement's Fix is a one-step flow that grants it. `Requirements`
 gives one row met and `permissions`, unmet until granted. `Uninstall`
 records the call. Knobs fail the flow (`FailSetup`, with the token and

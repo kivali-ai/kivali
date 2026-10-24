@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/kivali-ai/kivali/internal/builtinintegrations/echotest"
@@ -41,9 +42,20 @@ func TestEchoSetupInstalls(t *testing.T) {
 		t.Errorf("first answer = %+v", first)
 	}
 	f := waitFlow(t, srv, "echo", apitypes.SetupFlowStateForm)
-	if f.ID != flow.ID || f.Flow != "setup" || f.Step.Kind != apitypes.SetupFlowStepKindForm || len(f.Step.Fields) != 2 ||
-		f.Step.Fields[0].Key != "account" || f.Step.Fields[0].Secret || f.Step.Fields[1].Key != "key" || !f.Step.Fields[1].Secret || !f.Step.Fields[1].SetupOnly {
-		t.Errorf("form = %+v", f.Step)
+	if f.ID != flow.ID || f.Flow != "setup" || f.Step.Kind != apitypes.SetupFlowStepKindForm || f.Step.Words != "Name your setup.example account and paste its key." ||
+		len(f.Step.Fields) != 2 {
+		t.Fatalf("form = %+v", f.Step)
+	}
+	if acc, key := f.Step.Fields[0], f.Step.Fields[1]; acc != (apitypes.SetupField{Key: "account", Title: "Account", Words: "Your account on setup.example."}) ||
+		key.Key != "key" || key.Title != "Key" || !strings.HasPrefix(key.Words, "From the account's key page.") || !key.Secret || !key.SetupOnly {
+		t.Errorf("fields = %+v", f.Step.Fields)
+	}
+
+	// A blank account is asked for again, and nothing goes anywhere.
+	orgOK[apitypes.SetupFlow](t, flowDo(t, srv, http.MethodPost, intBase+"/echo/setup/answer", apitypes.SetupFlowAnswer{Fields: map[string]string{"account": " ", "key": echoKey}}))
+	e.nextAnswer(t)
+	if f = waitFlow(t, srv, "echo", apitypes.SetupFlowStateForm); f.Step.Words != "Name your setup.example account; it cannot be left blank." {
+		t.Errorf("blank account = %+v", f.Step)
 	}
 
 	orgOK[apitypes.SetupFlow](t, flowDo(t, srv, http.MethodPost, intBase+"/echo/setup/answer", apitypes.SetupFlowAnswer{Fields: map[string]string{"account": " acme ", "key": echoKey}}))
@@ -72,7 +84,9 @@ func TestEchoSetupInstalls(t *testing.T) {
 	if id := landedOnSetup(t, to, "echo"); id != flow.ID {
 		t.Errorf("landed on flow %s", id)
 	}
-	if back := e.nextAnswer(t); back.Return.Get("code") != "c0de-77" || back.State["key"] != echoKey || back.State["account"] != "acme" {
+	// What the Go kept comes back as the connection; the key, kept
+	// nowhere, in State.
+	if back := e.nextCall(t); back.Answer.Return.Get("code") != "c0de-77" || back.Answer.State["key"] != echoKey || back.Conn.Fields["account"] != "acme" || back.Conn.ID == "" {
 		t.Errorf("the return reached setup as %+v", back)
 	}
 	f = waitFlow(t, srv, "echo", apitypes.SetupFlowStateWait)
@@ -92,8 +106,8 @@ func TestEchoSetupInstalls(t *testing.T) {
 	}
 	// A stream watches: a check that finds it not yet installed keeps the
 	// Wait; one that finds it installed is done.
-	if a := echoCheck(t, srv, e, clk); !a.Checked {
-		t.Errorf("check = %+v", a)
+	if c := echoCheck(t, srv, e, clk); !c.Answer.Checked || c.Conn.Fields["token"] != "tok-c0de-77" || c.Conn.Fields["account"] != "acme" {
+		t.Errorf("check = %+v", c)
 	}
 	if f := crmFlowOf(t, srv, "echo"); f.State != apitypes.SetupFlowStateWait {
 		t.Errorf("not yet installed = %+v", f)
@@ -116,6 +130,12 @@ func TestEchoSetupInstalls(t *testing.T) {
 	}
 	if page := echoPage(t, srv); page.Summary.State != apitypes.IntegrationStateInstalled {
 		t.Errorf("after setup = %s", page.Summary.State)
+	}
+	// What setup kept is the connection an ordinary call is given: Test
+	// connection answers with the account and the token's start.
+	page := orgOK[apitypes.IntegrationPage](t, intPost(t, srv, intBase+"/echo/connection/verify"))
+	if c := page.Connection; c == nil || c.Verified == nil || !*c.Verified || textOf(c.VerifyMessage) != "acme; token tok..." {
+		t.Errorf("test connection = %+v", c)
 	}
 }
 
@@ -225,6 +245,17 @@ func TestEchoSetupFails(t *testing.T) {
 	}
 }
 
+// countingPuts is a Secrets store that counts its writes.
+type countingPuts struct {
+	secrets.Store
+	n atomic.Int32
+}
+
+func (c *countingPuts) Put(ctx context.Context, name string, data map[string]string) error {
+	c.n.Add(1)
+	return c.Store.Put(ctx, name, data)
+}
+
 // Why this test exists: core holds a built-in's own steps to its
 // manifest's declarations as it does a bundle's: a bug in compiled code
 // must no more send the browser to another host, ask for another field
@@ -241,6 +272,8 @@ func TestEchoSetupStraysFailTheFlow(t *testing.T) {
 	} {
 		t.Run(string(tc.stray), func(t *testing.T) {
 			srv, e, _ := setupServer(t, nil)
+			puts := &countingPuts{Store: secrets.NewMemory()}
+			srv.Secrets = puts
 			e.SetStray(tc.stray)
 			startSetupFlow(t, srv, "echo")
 			if tc.stray != echotest.StrayField {
@@ -252,6 +285,11 @@ func TestEchoSetupStraysFailTheFlow(t *testing.T) {
 			}
 			if _, err := srv.Store.GetIntegrationConnection("echo"); !errors.Is(err, store.ErrNotFound) {
 				t.Errorf("a stray step kept a connection: %v", err)
+			}
+			// Refused before the Keep, not kept and then forgotten.
+			srv.setupAwaitDiscard(context.Background(), "echo")
+			if n := puts.n.Load(); n != 0 {
+				t.Errorf("a stray step wrote the Secret %d times", n)
 			}
 		})
 	}

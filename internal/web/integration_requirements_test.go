@@ -70,22 +70,26 @@ func echoBack(t *testing.T, srv *Server, e *setupEcho, cookie *http.Cookie, quer
 }
 
 // echoCheck has the Wait echo's flow shows checked once, with a stream
-// watching it.
-func echoCheck(t *testing.T, srv *Server, e *setupEcho, clk *clock.Fake) builtinintegrations.Answer {
+// watching it, and returns the check's call.
+func echoCheck(t *testing.T, srv *Server, e *setupEcho, clk *clock.Fake) echotest.Seen {
 	t.Helper()
 	run, _, ch, ok := srv.setupSubscribe("echo")
 	if !ok {
 		t.Fatal("echo has no setup flow")
 	}
 	defer srv.setupUnsubscribe(run, ch)
-	// The calls before the check have all been made: the flow shows
-	// the Wait the last of them gave.
+	// Every call before the check has returned (a check that just
+	// returned leaves its deadline timer on the clock until it does, and
+	// that timer would answer BlockUntil before the wait loop arms its
+	// own), and what they sent is drained, so the next call seen is the
+	// check.
+	callsEnd(t, run)
 	for len(e.seen) > 0 {
 		<-e.seen
 	}
 	clk.BlockUntil(1)
 	clk.Advance(setupWaitEvery)
-	return e.nextAnswer(t)
+	return e.nextCall(t)
 }
 
 // installEcho runs echo's install flow to its end through every step
@@ -377,6 +381,10 @@ func TestRequirementFixRunsItsFlow(t *testing.T) {
 	waitFlow(t, srv, "echo", apitypes.SetupFlowStateDone)
 	if got := e.lastFlow(); got != "permissions" {
 		t.Errorf("Setup ran %q", got)
+	}
+	// A Fix runs on the installed connection, with what install kept.
+	if calls := e.callsOf("setup"); calls[len(calls)-1].Conn.Fields["token"] != "tok-c0de-1" {
+		t.Errorf("the fix was given %+v", calls[len(calls)-1].Conn)
 	}
 	page = echoPage(t, srv)
 	if !installedAndMet(page) || page.Flow == nil || page.Flow.Flow != "permissions" {

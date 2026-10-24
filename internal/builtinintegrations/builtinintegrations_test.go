@@ -58,37 +58,45 @@ func TestEveryBuiltinPassesTheCheck(t *testing.T) {
 // Why this test exists: the test built-in is what the server's tests
 // prove dispatch with. A manifest of its that the check refuses would
 // make those tests prove something no real built-in could ship. Each of
-// its shapes is held to it: a token connection, and a setup one, alone
-// and handing over to a sign-in, which also must name method setup and
-// implement every hook of the setup contract, or the tests of core's
-// dispatch of them would prove nothing.
+// its shapes is held to it: a token connection, a sign-in one, and a
+// setup one, alone and handing over to a browser or a device sign-in.
+// Echo implements the setup hooks in every shape, so outside its setup
+// shape they must do nothing: rows or an Uninstall call there would
+// change every other test of a token or sign-in built-in.
 func TestEchoPassesTheCheck(t *testing.T) {
-	checkRegistry(t, builtinintegrations.Registry{echotest.New()}, false)
+	const ep = "https://" + echotest.SetupHost
+	token := echotest.New()
+	signIn := echotest.New()
+	signIn.SignIn = &integration.Connection{
+		Method: integration.MethodDevice, DeviceEndpoint: ep + "/device", TokenEndpoint: ep + "/token",
+		CredentialKeys: map[string]string{"access_token": "TOKEN"},
+	}
+	for _, e := range []*echotest.Echo{token, signIn} {
+		checkRegistry(t, builtinintegrations.Registry{e}, false)
+		rows, err := e.Requirements(context.Background(), builtinintegrations.Connection{})
+		if rows != nil || err != nil || e.Uninstall(context.Background(), builtinintegrations.Connection{}) != nil || len(e.Calls()) != 0 {
+			t.Errorf("outside setup: rows %v, %v, calls %v", rows, err, e.Calls())
+		}
+	}
 	setup := echotest.New()
 	setup.SetupFlow = true
-	handOver := echotest.New()
-	handOver.SetupFlow = true
-	handOver.HandOver = &integration.Connection{
-		Method:                integration.MethodBrowser,
-		AuthorizationEndpoint: "https://" + echotest.SetupHost + "/authorize",
-		TokenEndpoint:         "https://" + echotest.SetupHost + "/token",
-		CredentialKeys:        map[string]string{"access_token": "TOKEN"},
+	browser := echotest.New()
+	browser.SetupFlow = true
+	browser.HandOver = &integration.Connection{
+		Method: integration.MethodBrowser, AuthorizationEndpoint: ep + "/authorize", TokenEndpoint: ep + "/token",
+		CredentialKeys: map[string]string{"access_token": "TOKEN"},
 	}
-	for _, e := range []*echotest.Echo{setup, handOver} {
-		checkRegistry(t, builtinintegrations.Registry{e}, false)
-		if c := e.Manifest().Kivali.Connection; c.Method != integration.MethodSetup || c.Setup == nil {
+	device := echotest.New()
+	device.SetupFlow = true
+	device.HandOver = signIn.SignIn
+	for _, tc := range []struct {
+		e    *echotest.Echo
+		then string
+	}{{setup, ""}, {browser, integration.MethodBrowser}, {device, integration.MethodDevice}} {
+		checkRegistry(t, builtinintegrations.Registry{tc.e}, false)
+		if c := tc.e.Manifest().Kivali.Connection; c.Method != integration.MethodSetup || c.Setup == nil || c.Setup.Then != tc.then {
 			t.Errorf("the setup shape's connection = %+v", c)
 		}
-		var bi builtinintegrations.Integration = e
-		_, setupOK := bi.(builtinintegrations.SetupIntegration)
-		_, reqOK := bi.(builtinintegrations.RequirementsOf)
-		_, unOK := bi.(builtinintegrations.Uninstaller)
-		if !setupOK || !reqOK || !unOK {
-			t.Errorf("the setup shape implements Setup %v, Requirements %v, Uninstall %v", setupOK, reqOK, unOK)
-		}
-	}
-	if then := handOver.Manifest().Kivali.Connection.Setup.Then; then != integration.MethodBrowser {
-		t.Errorf("the hand-over's then = %q", then)
 	}
 	if builtins.All().Lookup(echotest.Name) != nil {
 		t.Errorf("the test built-in is in the binary's list")

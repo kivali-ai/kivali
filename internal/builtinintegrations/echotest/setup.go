@@ -114,8 +114,10 @@ func (e *Echo) knobsNow() setupKnobs {
 
 // setupManifest makes m's connection a setup one: the account and a
 // setup-only key asked for, the browser sent to SetupHost alone, and
-// the token and the account kept. With HandOver, setup then hands over
-// to that sign-in, and keeps the app's client id and secret for it.
+// the token and the account kept. With HandOver, the connection has
+// HandOver's endpoints, setup.then names its method, and the keeps add
+// the app's client id and secret, which echo's last step keeps
+// (ClientID, ClientSecret) for that sign-in.
 func (e *Echo) setupManifest(m *integration.Manifest) {
 	setup := integration.Setup{
 		Summary: "Installs the echo app on your " + SetupHost + " account.",
@@ -145,11 +147,20 @@ func (e *Echo) setupManifest(m *integration.Manifest) {
 }
 
 // Setup is echo's setup flow. Installing (FlowSetup) is a Form asking
-// for the account and the key; a Go to InstallURL posting the key (a
-// link with none), which keeps the account and expects the browser back
-// with ?code=; a Wait on AppURL, after keeping the token the code
-// stands for, checked until the app is installed (SetInstalled); then
-// Done. The State carries where the flow is, the account and the key.
+// for the account and the key (asked again while the account is blank);
+// a Go to InstallURL posting the key (a link with none), which keeps the
+// account and expects the browser back with ?code=; a Wait on AppURL,
+// after keeping the token the code stands for, checked until the app is
+// installed (SetInstalled); then Done, keeping ClientID and
+// ClientSecret with HandOver. State carries where the flow is and the
+// setup-only key; what was kept is read back from conn.Fields.
+//
+// Echo has no service to trade the code with, so it takes the code as
+// it came back. A real Setup trades the code with the service before
+// keeping anything, and treats Return as untrusted: anyone can make the
+// browser load the callback, and a replayed earlier leg arrives as this
+// step's Return.
+//
 // The permissions Fix (FlowPermissions) is one step: Done, with the
 // permissions granted.
 func (e *Echo) Setup(ctx context.Context, conn builtinintegrations.Connection, flow string, last builtinintegrations.Answer, p builtinintegrations.Progress) (builtinintegrations.Step, error) {
@@ -164,7 +175,7 @@ func (e *Echo) Setup(ctx context.Context, conn builtinintegrations.Connection, f
 	}
 	switch flow {
 	case builtinintegrations.FlowSetup:
-		return e.install(k, last)
+		return e.install(k, conn, last)
 	case FlowPermissions:
 		e.SetPermissions(true)
 		return builtinintegrations.Step{Done: true}, nil
@@ -172,8 +183,9 @@ func (e *Echo) Setup(ctx context.Context, conn builtinintegrations.Connection, f
 	return builtinintegrations.Step{}, fmt.Errorf("echo has no flow %s", flow)
 }
 
-// install is the install flow's next step after last.
-func (e *Echo) install(k setupKnobs, last builtinintegrations.Answer) (builtinintegrations.Step, error) {
+// install is the install flow's next step after last, on conn as the
+// steps before kept it.
+func (e *Echo) install(k setupKnobs, conn builtinintegrations.Connection, last builtinintegrations.Answer) (builtinintegrations.Step, error) {
 	state := last.State
 	switch state["at"] {
 	case "":
@@ -201,7 +213,7 @@ func (e *Echo) install(k setupKnobs, last builtinintegrations.Answer) (builtinin
 		step := builtinintegrations.Step{
 			Go:    &builtinintegrations.Go{Words: "Install the echo app on " + SetupHost + "."},
 			Keep:  map[string]string{"account": account},
-			State: map[string]string{"at": "go", "account": account, "key": key},
+			State: map[string]string{"at": "go", "key": key},
 		}
 		if key != "" {
 			step.Go.URL = "https://" + host + "/install"
@@ -215,6 +227,10 @@ func (e *Echo) install(k setupKnobs, last builtinintegrations.Answer) (builtinin
 		return step, nil
 
 	case "go":
+		// Echo has no service to trade the code with, so it takes it as
+		// it came back. A real Setup trades it with the service before it
+		// keeps anything, since Return is untrusted (a replayed earlier
+		// leg arrives here too).
 		code := last.Return.Get("code")
 		if code == "" {
 			return builtinintegrations.Step{}, errors.New(SetupHost + " sent the browser back with no code")
@@ -222,7 +238,7 @@ func (e *Echo) install(k setupKnobs, last builtinintegrations.Answer) (builtinin
 		return builtinintegrations.Step{
 			Wait:  &builtinintegrations.Wait{Words: "Approve the echo app on " + SetupHost + ".", URL: AppURL},
 			Keep:  map[string]string{"token": "tok-" + code},
-			State: map[string]string{"at": "wait", "account": state["account"], "key": state["key"], "token": "tok-" + code},
+			State: map[string]string{"at": "wait", "key": state["key"]},
 		}, nil
 
 	case "wait":
@@ -231,9 +247,13 @@ func (e *Echo) install(k setupKnobs, last builtinintegrations.Answer) (builtinin
 		}
 		switch {
 		case k.failSetup:
-			return builtinintegrations.Step{}, fmt.Errorf("%s dropped the app with token %s and key %s", SetupHost, state["token"], state["key"])
+			return builtinintegrations.Step{}, fmt.Errorf("%s dropped the app with token %s and key %s", SetupHost, conn.Fields["token"], state["key"])
 		case k.installed:
-			return builtinintegrations.Step{Done: true}, nil
+			done := builtinintegrations.Step{Done: true}
+			if e.HandOver != nil {
+				done.Keep = map[string]string{integration.FieldClientID: e.ClientID, integration.FieldClientSecret: e.ClientSecret}
+			}
+			return done, nil
 		}
 		return builtinintegrations.Step{
 			Wait:  &builtinintegrations.Wait{Words: "Approve the echo app on " + SetupHost + ".", URL: AppURL},
