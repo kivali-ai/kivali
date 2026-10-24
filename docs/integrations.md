@@ -1,6 +1,6 @@
 # Integrations
 
-An integration is an external service your agents can act on, such as a CRM, a blog or a ticket tracker. Each one is installed from a bundle or ships with Kivali, is connected with a token you paste or by signing in to the service, and is given to agents one at a time, each with its own access. This page covers having one built, installing one and its new versions, rolling back to an earlier version, connecting and testing it, giving agents access, what an agent then sees, the record of their calls, its log, switching it off or removing it, and the [Git](#git) and [GitHub](#github) integrations that ship with Kivali.
+An integration is an external service your agents can act on, such as a CRM, a blog or a ticket tracker. Each one comes from a bundle you approve or ships with Kivali, is installed with a token you paste, by signing in to the service or by its own setup, and is given to agents one at a time, each with its own access. This page covers having one built, approving one and its new versions, rolling back to an earlier version, installing it, what it needs from you once installed, giving agents access, what an agent then sees, the record of their calls, its log, switching it off or uninstalling it, and the [Git](#git) and [GitHub](#github) integrations that ship with Kivali.
 
 Integrations are under **Org**, **Integrations**.
 
@@ -10,7 +10,18 @@ An integration gives agents **actions**: things they can do in the service, such
 
 An integration is installed one **version** at a time. Nothing in a version runs until you approve it. Once approved and switched on, an integration you install runs on its own, apart from Kivali and from your agents, and reaches only the hosts its install screen listed.
 
-Some integrations ship with Kivali. They are on the Integrations page already, marked **Built in**, and need no install: their version comes with Kivali, and Kivali's updates bring the next one, so there is nothing to approve, reject or roll back to. Some run inside Kivali, and their network reach is Kivali's own: they reach the hosts their connection names, and their install screen lists no hosts of their own. Others run on their own, as an installed integration does: they can show **Not running** for a moment while Kivali starts them, and they reach only the hosts their install screen lists. Connect one and give agents access as you would any other. A built-in integration cannot be removed; switch it off when your team should not use it, and it stays off. One that this version of Kivali does not include (another version shipped it) is marked **Not in this version of Kivali**: agents cannot use it, and you can remove it.
+Some integrations ship with Kivali. They are on the Integrations page already, marked **Built in**, and need no approval: their version comes with Kivali, and Kivali's updates bring the next one, so there is nothing to approve, reject or roll back to. Some run inside Kivali, and their network reach is Kivali's own: they reach the hosts their connection names, and their install screen lists no hosts of their own. Others run on their own, as an uploaded integration does: they can show **Running** as not met for a moment while Kivali starts them, and they reach only the hosts their install screen lists. Install one and give agents access as you would any other. Uninstalling a built-in integration takes it back to **Available**, ready to install again; switch it off when your team should not use it for a while, and it stays off. One that this version of Kivali does not include (another version shipped it) is marked **Not in this version of Kivali**: agents cannot use it, and you can uninstall it.
+
+### Where an integration stands
+
+Every integration's page and its row on the Integrations page show where it stands:
+
+- **Pending**: no version is approved yet. Approve one from its install screen.
+- **Available**: ready to install. **Install** on its page runs its setup.
+- **Setting up**: its setup runs. A setup that fails or that you cancel keeps nothing, and the integration is available again.
+- **Installed**: it has its connection, and agents can be given access. Its **Requirements** say whether it works, and the list shows how many need you ("1 needs you").
+- **Off**: switched off. Agents cannot use it; its connection and every agent's access are kept for when you switch it on.
+- **Not in this version of Kivali**: see above.
 
 ## Have an integration built
 
@@ -19,7 +30,7 @@ You do not need a bundle from anyone else: every team has a **Kivali Developer**
 1. Ask the Kivali Developer for the integration, in its chat or through your Chief of Staff: the service, what your agents should be able to do in it, and what you want to limit agent by agent, such as which blogs an agent may write in or whether it may publish.
 2. The Kivali Developer reads the service's documentation, writes the integration, and tests it against a stand-in for the service it writes itself, never against your account: it never sees your connection's secrets. Before it publishes, it checks the bundle by the rules an install checks it by, and starts it with no network to see that it answers.
 3. When it publishes a version, a request arrives in **Needs you**: **Install** and the integration's name and version, with the Kivali Developer's notes on what it does, every host it reaches, each secret it asks for and anything it can change or delete. **Review** opens the version's [install screen](#install-an-integration), which shows the notes beside everything approving lets in. Approve or reject it there or in Needs you; the Kivali Developer hears your answer in its chat.
-4. [Connect it](#connect-it), choose **Test connection**, and [give agents access](#give-agents-access). Tell the Kivali Developer what the test said. If it failed, the Kivali Developer reads the integration's [log](#its-log) and publishes a fixed version, which reaches you the same way.
+4. [Install it](#install-it), choose **Test connection**, and [give agents access](#give-agents-access). Tell the Kivali Developer what the test said. If it failed, the Kivali Developer reads the integration's [log](#its-log) and publishes a fixed version, which reaches you the same way.
 
 The Kivali Developer uses an integration only if you give it access, like any agent. Its own commands reach the hosts your team allows and the ones you add on its **Security** view, so if it needs to download a package, it asks you for that host.
 
@@ -56,24 +67,36 @@ Rolling back stops the version in use and runs the earlier one again in a few se
 
 Your agents' access stays as it is. Access that no longer fits the earlier version's access form is marked, as after a new version (see [Give agents access](#give-agents-access)). Every version is kept until you remove the integration, so any version that was in use can be rolled back to.
 
-## Connect it
+## Install it
 
-On the integration's page, choose **Connect**. It asks for the connection's fields, under the integration's name; fill them in and choose **Continue**. The fields are the approved version's, so approve a version first. **Cancel** stops, keeping nothing. Once the integration is connected, its page shows the connection form, where you change a field and choose **Save connection**.
+On the integration's page, under **Install**, choose **Install**. For an integration you connect with a token, it asks for the connection's fields, under the integration's name; fill them in and choose **Continue**. The fields are the approved version's, so approve a version first. **Cancel** stops, keeping nothing. Once the integration is installed, its page shows its requirements, its connection form, where you change a field and choose **Save connection**, and who has access.
 
-Secret fields, such as tokens, are never shown again once saved: the page says only that they are set. To change one, type the new value; leave it empty to keep the one stored. They are kept outside your team's data volume, so [backups](backup-and-restore.md) never contain them. After a restore, an integration whose secrets are not there shows **Reconnect needed** until you enter them again.
+Secret fields, such as tokens, are never shown again once saved: the page says only that they are set. To change one, type the new value; leave it empty to keep the one stored. They are kept outside your team's data volume, so [backups](backup-and-restore.md) never contain them. After a restore, an integration whose secrets are not there has its **Connection** requirement not met until you enter them again: its **Fix** asks for them.
 
 Saving a connection restarts the integration with the new values, which takes a few seconds.
 
 **Test connection** asks the integration to sign in to the service with the connection you saved, and shows what it found under the form: whether it worked, the integration's own words (such as the account it signed in as), and when you last tested. A failed test keeps the integration's reason, so you can see what to fix. Saving the connection again clears the last result. An integration that has no connection test, such as [Git](#git), has no **Test connection**.
 
-**Disconnect** removes the connection and every agent's access, which was given for it.
+### What it needs from you
+
+An installed integration lists its **Requirements**: what it needs to work, each met or not, with what is so in words. Kivali's own come first:
+
+- **Approved version**: the version in use.
+- **Connection**: its secrets are stored on this Kivali server.
+- **Sign-in**, for an integration you connect by signing in: the service still accepts the sign-in.
+- **Connection test**, for one that has a test, once it has run: whether the last test passed, in the integration's words.
+- **Running**, for one that runs on its own: whether it is running now.
+
+Then the integration's own, such as whether its app is still installed on the service.
+
+A requirement that is not met has **Fix**, which runs what mends it, with the same steps as installing: entering the connection again, signing in again, or the integration's own steps, such as approving a new permission on the service. Each one not met is also in **Needs you** on Home, under the integration's name, with **Open** to go to its page; it leaves once the requirement is met, or once you switch the integration off or uninstall it.
 
 ### Connect by signing in
 
 Some services hand out no token to paste: you connect them by signing in to the service and approving Kivali there. The integration's page says so and shows the service's own setup steps above the connection form. When the integration asks the service for particular scopes, its install screen and page list them ("Asks the service for: ..."); one whose app's own settings decide what it may do, such as a GitHub App, lists none.
 
 1. Register an app with the service, as its setup steps say (on GitHub, a GitHub App under Settings, Developer settings, with device flow turned on). The service gives the app a client id and a client secret.
-2. On the integration's page, choose **Connect**, paste the client id and the client secret, with any other field it asks for, and choose **Continue**. The client secret is kept like any other secret field and never shown again. Once the connection is saved, **Sign in with a code** under **Sign in** starts a sign-in without asking again.
+2. On the integration's page, choose **Install**, paste the client id and the client secret, with any other field it asks for, and choose **Continue**. The client secret is kept like any other secret field and never shown again.
 3. The page shows a code, a **Copy code** button, the service's page to enter it on (it opens in a new tab), and how long the code works, at most ten minutes.
 4. Enter the code on the service's page and approve the sign-in there. The integration's page notices within a few seconds and shows **Signed in**, with the account you signed in as when the integration has a connection test. The integration restarts with the sign-in, which takes a few seconds.
 
@@ -81,11 +104,11 @@ If you turn the sign-in down on the service's page, or the code runs out before 
 
 #### In your browser
 
-Some services sign in in your browser instead of with a code (HubSpot, Slack, Notion), and some offer both. The page shows one button: **Sign in**, in the browser, or **Sign in with a code** where a sign-in in the browser cannot finish (below).
+Some services sign in in your browser instead of with a code (HubSpot, Slack, Notion), and some offer both. **Install**, and the **Sign-in** requirement's **Fix** once installed, sign in in the browser where a sign-in there can finish, and with a code elsewhere (below).
 
 1. Open the integration's page at the address you will keep using for Kivali. Above the connection form, the page shows a **Redirect address**, with **Copy**: Kivali's address as your browser reaches it, followed by `/connect/callback`. It is the same for every integration.
 2. Register an app with the service, as its setup steps say, and enter that redirect address exactly as the app's callback URL (some services call it the redirect URL). The service gives the app a client id and a client secret.
-3. Choose **Connect**, paste the client id and the client secret, and choose **Continue**. Once the connection is saved, **Sign in** under **Sign in**, which names the host it sends you to ("Signs in at app.hubspot.com"), starts a sign-in without asking again.
+3. Choose **Install**, which names the host it sends you to ("Signs in at app.hubspot.com"), paste the client id and the client secret, and choose **Continue**.
 4. Choose **Continue to** the service's host. The page takes you to the service, where you approve Kivali; the service sends you back to the integration's page, which finishes the sign-in and says **Signed in**.
 
 The sign-in finishes in the browser that went to the service, signed in to Kivali: if Kivali asks you to sign in on the way back, do, and the sign-in carries on. If you turn it down, take longer than ten minutes, or come back in another browser, the page says why and offers **Try again**. One browser sign-in at a time: going to a service from the same browser for another integration ends the one before, and its page says so.
@@ -103,20 +126,20 @@ For a team on your computer, the redirect address is the team's own address ther
 
 - GitHub accepts `http://127.0.0.1/connect/callback` registered once, whatever the port.
 - Most other services need the exact address, port included: register the one the page shows. The team keeps its port.
-- A service that allows no plain `http` address, such as Slack, cannot sign in to a team on your computer this way. Use **Sign in with a code** where the integration offers it, or give the team an `https` address under **Other devices** in the team's settings and sign in from a browser at that address.
+- A service that allows no plain `http` address, such as Slack, cannot sign in to a team on your computer this way. Sign in with a code where the integration offers it, or give the team an `https` address under **Other devices** in the team's settings and sign in from a browser at that address.
 
-Kivali offers a sign-in in the browser only where it can finish: at the team's address on your computer (`127.0.0.1`), and at the team's address for other computers (**Other devices**, or a server's own address) opened in a browser. Anywhere else the page offers **Sign in with a code** instead, when the integration has it:
+Kivali offers a sign-in in the browser only where it can finish: at the team's address on your computer (`127.0.0.1`), and at the team's address for other computers (**Other devices**, or a server's own address) opened in a browser. Anywhere else the page signs in with a code instead, when the integration has it:
 
 - In Kivali Desktop's window for a team elsewhere, which cannot hand a sign-in to a browser signed in to that team.
 - At another address for the team, such as a plain `http` one on your network, which the service's app does not know to send you back to.
 
 When the integration signs in only in the browser, the page says it cannot sign in from there and gives the team's address: open the team in your browser (**Open in browser** in Kivali Desktop) and sign in from its page.
 
-Kivali keeps the sign-in fresh: the integration never sees the client secret or what Kivali renews the sign-in with, only a token that works at the moment of each call, which Kivali renews shortly before it expires. When the service no longer accepts the sign-in (you revoked the app, or changed its secret), the connection reads **Sign in again** with the service's reason, the integration reads not connected, and **Needs you** on Home lists it until you sign in again from its page.
+Kivali keeps the sign-in fresh: the integration never sees the client secret or what Kivali renews the sign-in with, only a token that works at the moment of each call, which Kivali renews shortly before it expires. When the service no longer accepts the sign-in (you revoked the app, or changed its secret), its **Sign-in** requirement is not met, with the service's reason, and **Needs you** on Home lists it until you sign in again with its **Fix**, which does not ask for the client id and secret again.
 
 While a connection needs you to sign in, an agent's call through it is refused with words that say the connection needs you to sign in again and to ask you; nothing reaches the service.
 
-**Sign out** ends the sign-in: Kivali forgets the tokens and asks the service to revoke them where the service allows it. The client id and secret stay, so you can sign in again at once. **Disconnect**, deleting the connection and removing the integration revoke the tokens the same way. Switching the integration off, signing out, disconnecting and removing it end a sign-in that is waiting for your approval.
+**Sign out** ends the sign-in: Kivali forgets the tokens and asks the service to revoke them where the service allows it. The client id and secret stay, so you can sign in again at once with the **Sign-in** requirement's **Fix**. Deleting a connection and uninstalling the integration revoke the tokens the same way. Switching the integration off, signing out and uninstalling it end a sign-in that is waiting for your approval.
 
 ### Several connections
 
@@ -126,9 +149,9 @@ Each agent's access then names the connection its calls use: **Give access** ask
 
 ### Not running
 
-An integration that is approved and switched on shows **Not running** while it is starting, and when it has stopped. Starting takes a few seconds, or longer for one that installs software: it installs it each time it starts, before it runs, and **Recent logs** says **Installing** and the packages' names, then **Installed**, or which could not be installed and why. While it is not running, **Test connection** and the options in an access form are not available.
+An installed integration that runs on its own has its **Running** requirement not met while it is starting, and when it has stopped. Starting takes a few seconds, or longer for one that installs software: it installs it each time it starts, before it runs, and **Recent logs** says **Installing** and the packages' names, then **Installed**, or which could not be installed and why. While it is not running, **Test connection** and the options in an access form are not available.
 
-If it stays **Not running**, open **Recent logs** on its page: the integration's own messages and Kivali's about it say what happened, such as a server that did not start or stopped answering. Kivali starts a stopped integration again by itself, and restarts one that stops answering. If the log shows the integration failing each time it starts, the version itself is at fault: ask whoever built the bundle for a fixed version, or switch it off. An integration whose software cannot be installed stops, tries again each time Kivali starts it, and says so in its log each time: a package name Debian does not have needs a fixed version, while a failure to reach Debian's repositories may pass on its own. On a team short of memory, the log says the team does not have enough memory for it; raise the team's memory in Kivali Desktop's settings, or ask whoever runs your server.
+If it stays not running, open **Recent logs** on its page: the integration's own messages and Kivali's about it say what happened, such as a server that did not start or stopped answering. Kivali starts a stopped integration again by itself, and restarts one that stops answering. If the log shows the integration failing each time it starts, the version itself is at fault: ask whoever built the bundle for a fixed version, or switch it off. An integration whose software cannot be installed stops, tries again each time Kivali starts it, and says so in its log each time: a package name Debian does not have needs a fixed version, while a failure to reach Debian's repositories may pass on its own. On a team short of memory, the log says the team does not have enough memory for it; raise the team's memory in Kivali Desktop's settings, or ask whoever runs your server.
 
 ## Its log
 
@@ -154,11 +177,11 @@ A change to an agent's access, given or taken away, changes its tools from its n
 
 **Recent calls** on an integration's page starts closed; select the arrow beside its heading to open it. It lists the latest calls through it, newest first: when, which agent, the action, whether Kivali let it through and, for a call that was refused or failed, why, and how long it took. Your own Test connection, the options an access form loads and your roll backs are in it too, under your name; a roll back reads **Roll back**, with the versions it went from and to. Calls an agent made are listed whether Kivali allowed them or not.
 
-## Switch it off or remove it
+## Switch it off or uninstall it
 
-The switch at the top of the integration's page turns it off for every agent at once and stops it running, keeping the connection and everyone's access for when you turn it back on.
+The switch at the top of an installed integration's page turns it off for every agent at once and stops it running, keeping the connection and everyone's access for when you turn it back on.
 
-**Remove** deletes the integration: every version, the connection and its secrets, every agent's access and its log, and stops it running. Uploading a bundle installs it again from scratch. An integration that ships with Kivali cannot be removed; switch it off instead.
+**Uninstall** asks first, naming what goes. Kivali asks the service to undo the installation where the integration can (such as removing its app), revokes a sign-in's tokens where the service allows it, then forgets the connection and its secrets, and every agent's access goes. If the integration could not undo its side, the page says why and nothing changes. An integration that ships with Kivali is then **Available** again, ready to install. One you uploaded goes with every version and its log, and stops running; uploading a bundle brings it back from scratch.
 
 ## Git
 
@@ -221,7 +244,7 @@ GitHub is connected by [signing in](#connect-by-signing-in) with a GitHub App yo
 1. Open GitHub's form for a new GitHub App from the page: **Register the app on your personal account**, or, for an organization, copy the address the page gives, put the organization's name in place of `ORGANIZATION` and open it. The form opens filled in: the team's callback URLs, the webhook off, installation only on that account, and the repository permissions Contents and Metadata read-only, Issues and Pull requests read and write.
 2. Give the app a name, tick **Enable Device Flow**, and choose **Create GitHub App**.
 3. Install the app on the account, for the repositories agents should reach. Agents reach only repositories the app is installed on.
-4. Choose **Connect**, paste the app's client id and a client secret you generate, and choose **Continue**.
+4. Choose **Install**, paste the app's client id and a client secret you generate, and choose **Continue**.
 5. Choose **Continue to github.com** and approve the sign-in on GitHub. In Kivali Desktop's window for a team on another computer, the page shows a code instead, which is what **Enable Device Flow** is for: enter the code on GitHub's page.
 
 The callback URLs are the addresses GitHub may send your browser back to after a sign-in: the one you opened the page at, `http://127.0.0.1/connect/callback` (any port, for a team in Kivali Desktop), and the team's address for other computers when it has one. If you give the team an address for other computers later (**Other devices** in Kivali Desktop), or change it, add that address followed by `/connect/callback` to the app's callback URLs on GitHub, or a sign-in from there ends on GitHub's error page.

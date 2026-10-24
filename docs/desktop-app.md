@@ -19,7 +19,7 @@ Each team opens in its own window, showing that team's Kivali. When a team canno
 
 **Open in browser** (Team menu, ⇧⌘B, or the team's **Overview** in Settings) opens the running team in your usual browser on this computer.
 
-**Sign in to an integration.** When you choose **Sign in** on an integration's page, Kivali Desktop opens your usual browser, already signed in to the team, rather than signing in inside the team's window, which many services refuse. Approve Kivali on the service's page; the team's window says **Signed in** within a few seconds. A team elsewhere cannot hand that sign-in to your browser, so its window offers **Sign in with a code** instead when the integration has one; when it does not, the page gives the team's address to open in your browser and sign in there. [Integrations](integrations.md#in-your-browser) has the redirect address to register for a team on this computer.
+**Sign in to an integration.** When an integration's **Install**, or the **Fix** of its **Sign-in** requirement, sends you to the service, Kivali Desktop opens your usual browser, already signed in to the team, rather than signing in inside the team's window, which many services refuse. Approve Kivali on the service's page; the team's window says **Signed in** within a few seconds. A team elsewhere cannot hand that sign-in to your browser, so its window signs in with a code instead when the integration has one; when it does not, the page gives the team's address to open in your browser and sign in there. [Integrations](integrations.md#in-your-browser) has the redirect address to register for a team on this computer.
 
 Closing a window does not stop anything. Kivali keeps running in the menu bar on macOS, and in the notification area on Windows.
 
