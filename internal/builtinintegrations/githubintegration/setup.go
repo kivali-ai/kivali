@@ -172,7 +172,10 @@ func (g *GitHub) install(ctx context.Context, conn builtinintegrations.Connectio
 }
 
 // createApp is the Go that posts the app's manifest to GitHub's
-// new-app page for account ("" for the owner's personal account).
+// new-app page for account ("" for the owner's personal account). The
+// manifest's redirect_url is the bare callback: the flow's state goes
+// on the new-app page's address alone, and GitHub sends it back with
+// the code.
 func createApp(account string, last builtinintegrations.Answer) (builtinintegrations.Step, error) {
 	base, setupURL, state, err := callbackParts(last.Callback)
 	if err != nil {
@@ -181,7 +184,7 @@ func createApp(account string, last builtinintegrations.Answer) (builtinintegrat
 	m, err := json.Marshal(appManifest{
 		Name:               appName(last.Team),
 		URL:                base,
-		RedirectURL:        last.Callback,
+		RedirectURL:        setupURL,
 		SetupURL:           setupURL,
 		SetupOnUpdate:      true,
 		Public:             false,
@@ -365,7 +368,13 @@ func (g *GitHub) mend(ctx context.Context, conn builtinintegrations.Connection, 
 		}
 		return builtinintegrations.Step{}, mendError(err)
 	}
-	if mended(flow, inst, g.reaches(ctx, c, inst)) {
+	// The repositories are counted for the settings Fix alone: it costs
+	// a token and a request, on every check of the Wait.
+	repos := -1
+	if flow == FlowSettings {
+		repos = g.reaches(ctx, c, inst)
+	}
+	if mended(flow, inst, repos) {
 		return builtinintegrations.Step{Done: true}, nil
 	}
 	page, words, err := g.mendPage(ctx, c, flow, inst)

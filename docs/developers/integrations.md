@@ -2751,10 +2751,11 @@ GitHub's own pages and nothing copied:
    is the owner's personal account.
 2. **Go** by POST to `https://github.com/settings/apps/new?state=<state>`
    (an organization's: `https://github.com/organizations/<account>/settings/apps/new?state=<state>`),
-   the state the one in `Answer.Callback`, with the form field
+   the state the one in `Answer.Callback` (on this address alone, which
+   GitHub sends back with the code), with the form field
    `manifest`: `{"name": "Kivali <team>", "url": <the team's address>,
-   "redirect_url": <Answer.Callback>, "setup_url": <the team's
-   /connect/callback, no query>, "setup_on_update": true, "public":
+   "redirect_url": <the team's /connect/callback, no query>, "setup_url":
+   <the same>, "setup_on_update": true, "public":
    false, "hook_attributes": {"active": false},
    "default_permissions": {"metadata": "read", "contents": "read",
    "issues": "write", "pull_requests": "write"}, "default_events": []}`.
