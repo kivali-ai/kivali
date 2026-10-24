@@ -309,6 +309,14 @@ function overview(ctx: Ctx, t: Team): Child[] {
       id: "retry",
       onclick: () => void (t.pause_first ? ctx.act("pause_and_resume", { pause: t.pause_first, resume: t.id }) : ctx.act("retry_team", { id: t.id })),
     });
+  // A development build: Restart puts the team on the images now in its VM.
+  if (st.restart)
+    action = h(
+      "span",
+      { class: "row-actions" },
+      button("Restart", { variant: "secondary", size: "sm", id: "restart", onclick: () => void ctx.act("restart_team", { id: t.id }) }),
+      action,
+    );
   const statusLine = row({ lead: dot(t.state, 10), title: st.word, sub: st.sub, trail: action });
   const u = updateRow(t, ctx.now);
   const updateLine = u

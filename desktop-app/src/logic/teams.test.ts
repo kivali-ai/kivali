@@ -121,6 +121,12 @@ describe("teamPage", () => {
     const v = teamPage(team({ state: "starting", activity: "pausing", op: op({ kind: "pause" }) }), snap, now);
     expect(v.kind === "progress" && v.title).toBe("Pausing Plainsong");
   });
+  // A restart would otherwise fall through to "Waking Plainsong up".
+  it("restarting, in the same voice", () => {
+    const v = teamPage(team({ state: "starting", activity: "restarting", op: op({ kind: "restart" }) }), snap, now);
+    expect(v.kind === "progress" && v.title).toBe("Restarting Plainsong");
+    expect(v.kind === "progress" && v.body).toBe("Agents pick up where they left off.");
+  });
   it("couldn't start, with a team to pause first, or the generic reason", () => {
     const home = team({ id: "home", name: "Home", memory_mb: 4096 });
     const t = team({ state: "failed", pause_first: "home", op: op({ kind: "resume", running: false, error: "no memory", lines: ["x"] }) });
@@ -172,7 +178,7 @@ describe("teamPage", () => {
 describe("Settings rows", () => {
   it("status row per state", () => {
     const snap = snapshot();
-    expect(statusRow(team(), snap, now)).toMatchObject({ word: "Running", sub: "Agents can work", action: "pause", actionLabel: "Pause…" });
+    expect(statusRow(team(), snap, now)).toMatchObject({ word: "Running", sub: "Agents can work", action: "pause", actionLabel: "Pause…", restart: false });
     expect(statusRow(team({ ai: { provider: "claude", signed_in: false, email: null, billing: null, terminal_open: false, signin: "idle", signed_out_at: null } }), snap, now).sub).toBe(
       "Claude isn’t signed in",
     );
@@ -180,12 +186,21 @@ describe("Settings rows", () => {
     expect(statusRow(team({ working: 3 }), snap, now).sub).toBe("3 agents working");
     expect(statusRow(team({ working: 1 }), snap, now).sub).toBe("1 agent working");
     expect(statusRow(team({ working: 0 }), snap, now).sub).toBe("Agents can work");
-    expect(statusRow(team({ state: "paused" }), snap, now)).toMatchObject({ action: "resume", actionLabel: "Resume" });
+    expect(statusRow(team({ state: "paused" }), snap, now)).toMatchObject({ action: "resume", actionLabel: "Resume", restart: false });
     expect(statusRow(team({ state: "starting", activity: "updating", op: op({ stage: "Installing", remaining: "about 1 minute" }) }), snap, now)).toMatchObject({
       word: "Updating",
       sub: "Installing · about 1 minute",
       action: null,
     });
+  });
+  // Restart shows only beside Pause on a development build: never on a
+  // release, and never while the team is paused, starting or failed.
+  it("status row offers Restart on a development build while running", () => {
+    const snap = snapshot();
+    expect(statusRow(team({ dev: true, version: "0.0.0-dev" }), snap, now)).toMatchObject({ action: "pause", restart: true });
+    expect(statusRow(team({ dev: true, state: "paused" }), snap, now).restart).toBe(false);
+    expect(statusRow(team({ dev: true, state: "failed" }), snap, now).restart).toBe(false);
+    expect(statusRow(team({ dev: true, state: "starting", activity: "restarting", op: op({ kind: "restart" }) }), snap, now)).toMatchObject({ word: "Restarting", restart: false });
   });
   it("update row", () => {
     const t = team({

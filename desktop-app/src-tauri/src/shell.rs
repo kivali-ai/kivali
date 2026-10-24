@@ -606,6 +606,9 @@ pub struct TeamView {
     pub pause_first: Option<String>,
     pub op: Option<OpView>,
     pub version: Option<String>,
+    /// A team here running a development build of Kivali
+    /// (`updates::is_dev_version`): Settings offers Restart.
+    pub dev: bool,
     pub update: Option<TeamUpdateView>,
     pub ai: Option<AiView>,
     pub owner: Option<String>,
@@ -810,6 +813,7 @@ impl Shell {
                     pause_first,
                     op,
                     version: status.as_ref().and_then(|s| s.kivali.clone()),
+                    dev: status.as_ref().and_then(|s| s.kivali.as_deref()).is_some_and(updates::is_dev_version),
                     update: Some(update_view(check.as_ref(), &self.app_version, now, snapshot_copy_bytes(report.as_ref()))),
                     ai: Some(AiView {
                         provider: "claude",
@@ -854,6 +858,7 @@ impl Shell {
                     pause_first: None,
                     op: None,
                     version: None,
+                    dev: false,
                     update: None,
                     ai: None,
                     owner: None,
@@ -1603,6 +1608,21 @@ pub fn pause_team(app: &AppHandle, id: &str) -> Result<(), String> {
         sh.set_paused_at(&rt.id);
         sh.set_running_at_quit(&rt.id, false);
         Ok(())
+    })
+}
+
+/// Restart: the team's pods recreated on the images now in its VM, for
+/// a development build whose `:dev` tags moved. The team must be
+/// running; the supervisor refuses otherwise.
+pub fn restart_team(app: &AppHandle, id: &str) -> Result<(), String> {
+    let rt = shell(app).runtime(id).ok_or_else(no_team_here)?;
+    if !rt.is_running() {
+        return Err("The team isn't running.".into());
+    }
+    run_op(app, rt, OpKind::Restart, |_app, _sh, rt, progress| {
+        let r = rt.supervisor.restart(progress).map_err(sup_err);
+        let _ = rt.refresh_status();
+        r
     })
 }
 
@@ -2441,7 +2461,7 @@ mod tests {
         }
         let t = &v["teams"][0];
         for k in [
-            "id", "name", "kind", "place", "url", "device", "state", "activity", "phrase", "reason", "pause_first", "op", "version",
+            "id", "name", "kind", "place", "url", "device", "state", "activity", "phrase", "reason", "pause_first", "op", "version", "dev",
             "update", "ai", "owner", "memory_mb", "cpus", "disk_used_bytes", "disk_size_bytes", "public_url", "paused_since", "last_reached",
             "provisional", "agents", "working", "files", "signed_in_as", "memory_free_mb",
         ] {

@@ -50,7 +50,7 @@ On macOS the menus are in the menu bar at the top of the screen. On Windows each
 
 | Tab | What it holds |
 | --- | --- |
-| **Overview** | Status with **Pause…** or **Resume**, the team's Kivali version and updates, **Open in browser**, and **Delete**. |
+| **Overview** | Status with **Pause…** or **Resume**, the team's Kivali version and updates, **Open in browser**, and **Delete**. A team on a development build of Kivali also has **Restart**, which starts its agents and server again on the images now in its virtual machine. |
 | **AI** | How agents sign in to Claude: the account and what it bills, such as **Claude Max** or **Amazon Bedrock**, as Claude Code reports them. Before the first sign-in, **Sign in…** opens Claude's sign-in in a terminal window. Once signed in, **Sign in again…** opens Claude in a terminal window, where `/login` switches account or billing; it first removes any Microsoft Foundry settings, which would otherwise outrank the new sign-in. **Use Microsoft Foundry**, **Set up…** (**Change…** once set up) connects a Foundry resource through a form, since Claude's sign-in has none, and checks each model's deployment. Agents use a new sign-in from their next turn. |
 | **This Mac** (**This PC** on Windows) | Memory and CPUs for the team, how much of your computer's memory running teams use, and the team's disk use. |
 | **Other devices** | Let other computers connect to the team. See below. |

@@ -60,6 +60,7 @@ function team(o: Partial<Team> & Pick<Team, "id" | "name">): Team {
     pause_first: null,
     op: null,
     version: "0.17.0",
+    dev: false,
     update: { state: "up_to_date", current: "0.17.0", latest: "0.17.0", notes_url: null, summary: null, checked_at: iso(3 * HOUR), takes: "about 4 minutes" },
     ai: { provider: "claude", signed_in: true, email: "dana@example.com", billing: "Claude Max", terminal_open: false, signin: "idle", signed_out_at: null },
     owner: "dana@example.com",
@@ -85,8 +86,9 @@ function onDay(month: number, day: number): string {
   return new Date(new Date().getFullYear(), month - 1, day, 10, 0).toISOString();
 }
 
+// A development build, so its Overview shows Restart beside Pause.
 const plainsong = () =>
-  team({ id: "plainsong", name: "Plainsong", phrase: "3 agents working", agents: 6, working: 3, files: 1204, signed_in_as: "dana@example.com" });
+  team({ id: "plainsong", name: "Plainsong", phrase: "3 agents working", agents: 6, working: 3, files: 1204, signed_in_as: "dana@example.com", version: "0.0.0-dev", dev: true });
 const home = () =>
   team({
     id: "home",
@@ -478,6 +480,21 @@ export function installMock() {
     pause_and_resume: (a) => {
       Object.assign(find(a.pause)!, { state: "paused", phrase: "paused", paused_since: new Date().toISOString() });
       Object.assign(find(a.resume)!, { state: "running", phrase: "running", paused_since: null, pause_first: null });
+      return null;
+    },
+    restart_team: (a) => {
+      const t = find(a.id)!;
+      const lines = ["agent pods deleted", "deployment/kivali restarted", "waiting for the server deployment to roll out"];
+      Object.assign(t, {
+        state: "starting",
+        activity: "restarting",
+        phrase: "restarting",
+        op: { kind: "restart", running: true, error: null, finished: false, lines, stage: "Restarting", stage_index: 0, stages: ["Restarting"], started_ms: Date.now(), percent: 20, remaining: "about 30 seconds", stage_progress: null },
+      });
+      setTimeout(() => {
+        Object.assign(t, { state: "running", activity: null, phrase: "3 agents working", op: null });
+        changed();
+      }, 2500);
       return null;
     },
     team_facts: () => ({ agents: 6, files: 1204, disk_used_bytes: 18 * 1024 ** 3 }),

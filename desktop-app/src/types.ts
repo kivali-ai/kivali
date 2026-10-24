@@ -12,14 +12,14 @@ export type VmSupport = "ready" | "hyperv_off" | "windows_home" | "virtualizatio
 export type TeamState = "running" | "starting" | "paused" | "failed";
 
 /** What a "starting" team is doing, for the words on its page. */
-export type Activity = "creating" | "waking" | "pausing" | "updating" | "applying" | "deleting";
+export type Activity = "creating" | "waking" | "pausing" | "updating" | "applying" | "deleting" | "restarting";
 
 export type Kind = "work" | "personal";
 
 /** Where a team runs: on this computer, or reached by its address. */
 export type Place = "here" | "elsewhere";
 
-export type OpKind = "create" | "resume" | "pause" | "update" | "address" | "delete";
+export type OpKind = "create" | "resume" | "pause" | "update" | "address" | "delete" | "restart";
 
 /** The team's current or last long operation. */
 export interface OpView {
@@ -137,6 +137,9 @@ export interface Team {
   pause_first: string | null;
   op: OpView | null;
   version: string | null;
+  /** A team here on a development build of Kivali (the dev chart's 0.0.0-dev):
+   *  the Overview offers Restart beside Pause. */
+  dev: boolean;
   update: TeamUpdate | null;
   ai: AiView | null;
   owner: string | null;

@@ -313,6 +313,13 @@ impl Supervisor {
         let r = self.op("upgrade", &UpgradeOptions::default(), on_progress)?;
         self.status_from(r)
     }
+
+    /// Recreates the team's pods on the images now in its VM: the agent
+    /// pods are deleted, the server deployment is rolled and the server
+    /// is waited for. The manifest does not change.
+    pub fn restart(&self, on_progress: &mut dyn FnMut(Progress)) -> Result<(), Error> {
+        self.op("restart", &wire::RestartRequest::default(), on_progress).map(|_| ())
+    }
 }
 
 /// What `up` is asked: the owner and server environment on the first

@@ -27,6 +27,7 @@ pub enum Activity {
     Updating,
     Applying,
     Deleting,
+    Restarting,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -39,6 +40,9 @@ pub enum OpKind {
     /// Other devices' address handed to the running server.
     Address,
     Delete,
+    /// The team's pods recreated on the images now in its VM (a
+    /// development build's `:dev` tags move without a release).
+    Restart,
 }
 
 impl OpKind {
@@ -50,6 +54,7 @@ impl OpKind {
             OpKind::Update => Activity::Updating,
             OpKind::Address => Activity::Applying,
             OpKind::Delete => Activity::Deleting,
+            OpKind::Restart => Activity::Restarting,
         }
     }
 
@@ -88,6 +93,9 @@ impl OpKind {
             OpKind::Pause => &[("pausing", "Pausing", 15)],
             OpKind::Address => &[("setting-up", "Applying the change", 30)],
             OpKind::Delete => &[("deleting", "Deleting", 20)],
+            // The supervisor names no stage for a restart; its one
+            // stage is the whole operation.
+            OpKind::Restart => &[(stage::RESTARTING, "Restarting", 45)],
         }
     }
 
@@ -287,6 +295,7 @@ pub fn phrase(state: TeamState, activity: Option<Activity>, signed_in: Option<bo
         (TeamState::Starting, Some(Activity::Updating)) => "updating".into(),
         (TeamState::Starting, Some(Activity::Applying)) => "applying a change".into(),
         (TeamState::Starting, Some(Activity::Deleting)) => "deleting".into(),
+        (TeamState::Starting, Some(Activity::Restarting)) => "restarting".into(),
         (TeamState::Starting, _) => "waking up".into(),
         (TeamState::Paused, _) => "paused".into(),
         (TeamState::Failed, _) => "couldn't start".into(),

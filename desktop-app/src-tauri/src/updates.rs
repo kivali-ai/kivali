@@ -18,6 +18,14 @@ pub fn parse_version(s: &str) -> Option<Version> {
     Version::parse(s.strip_prefix('v').unwrap_or(s)).ok()
 }
 
+/// Whether a team runs a development build of Kivali: the dev chart's
+/// `0.0.0-dev`, or a bare `dev`. A release, a release candidate and an
+/// unknown version are not.
+pub fn is_dev_version(s: &str) -> bool {
+    let s = s.trim();
+    s == "dev" || parse_version(s).is_some_and(|v| v.pre.as_str().split('.').any(|p| p == "dev"))
+}
+
 /// "0.16.0" without a leading v, for display after "v".
 fn bare(s: &str) -> &str {
     let s = s.trim();
@@ -225,6 +233,19 @@ mod tests {
         assert_eq!(parse_version(" v1.2.3 ").unwrap(), parse_version("1.2.3").unwrap());
         assert!(parse_version("0.16").is_none());
         assert!(parse_version("dev").is_none());
+    }
+
+    // Guards the Restart button's condition: it shows for the dev chart
+    // and never for a release, a release candidate or no version.
+    #[test]
+    fn dev_versions() {
+        assert!(is_dev_version("0.0.0-dev"));
+        assert!(is_dev_version(" dev "));
+        assert!(is_dev_version("1.3.0-dev.2"));
+        assert!(!is_dev_version("1.2.2"));
+        assert!(!is_dev_version("0.17.0-rc.2"));
+        assert!(!is_dev_version(""));
+        assert!(!is_dev_version("devel"));
     }
 
     #[test]

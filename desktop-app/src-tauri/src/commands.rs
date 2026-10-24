@@ -236,6 +236,12 @@ pub fn pause_and_resume(webview: Webview, app: AppHandle, pause: String, resume:
 }
 
 #[tauri::command]
+pub fn restart_team(webview: Webview, app: AppHandle, id: String) -> Res {
+    guard(&webview)?;
+    shell::restart_team(&app, &id)
+}
+
+#[tauri::command]
 pub fn update_team(webview: Webview, app: AppHandle, id: String) -> Res {
     guard(&webview)?;
     shell::update_team(&app, &id)
@@ -422,6 +428,7 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static 
         resume_team,
         retry_team,
         pause_and_resume,
+        restart_team,
         update_team,
         open_in_browser,
         remove_team,
@@ -470,6 +477,7 @@ pub const COMMANDS: &[&str] = &[
     "resume_team",
     "retry_team",
     "pause_and_resume",
+    "restart_team",
     "update_team",
     "open_in_browser",
     "remove_team",

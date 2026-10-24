@@ -29,6 +29,7 @@ const COMMANDS: &[&str] = &[
     "resume_team",
     "retry_team",
     "pause_and_resume",
+    "restart_team",
     "update_team",
     "open_in_browser",
     "remove_team",
