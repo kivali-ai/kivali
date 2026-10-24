@@ -9,7 +9,6 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -25,102 +24,80 @@ import (
 	"github.com/kivali-ai/kivali/internal/web/apitypes"
 )
 
-// setupHost is the host the test setup integration's Go and Wait
-// steps may name.
-const setupHost = "service.example"
+// setupHost is the host echo's setup declares: where its Go and Wait
+// steps may send the browser.
+const setupHost = echotest.SetupHost
 
-// fakeSetup is a built-in whose connection its own setup flow makes
-// (method setup): echo's actions, a setup section of its own, and a
-// Setup the test scripts. Each call's Answer is sent on seen.
-type fakeSetup struct {
+// setupEcho is echo in its setup shape (echotest.Echo.SetupFlow) as a
+// test drives it: the built-in, and its calls of Setup as they come.
+type setupEcho struct {
 	*echotest.Echo
-	setup integration.Setup
-	// edit, when set, changes the connection section after setup is
-	// put in (a hand-over's endpoints).
-	edit   func(c *integration.Connection)
-	script func(n int, ctx context.Context, conn builtinintegrations.Connection, last builtinintegrations.Answer, p builtinintegrations.Progress) (builtinintegrations.Step, error)
-
-	mu    sync.Mutex
-	calls int
-	seen  chan builtinintegrations.Answer
+	seen chan echotest.Seen
 }
 
-func (f *fakeSetup) Manifest() *integration.Manifest {
-	m := f.Echo.Manifest()
-	m.UserConfig = nil
-	setup := f.setup
-	m.Kivali.Connection = integration.Connection{Method: integration.MethodSetup, Setup: &setup}
-	if f.edit != nil {
-		f.edit(&m.Kivali.Connection)
-	}
-	return m
-}
-
-func (f *fakeSetup) Setup(ctx context.Context, conn builtinintegrations.Connection, flow string, last builtinintegrations.Answer, p builtinintegrations.Progress) (builtinintegrations.Step, error) {
-	f.mu.Lock()
-	f.calls++
-	n := f.calls
-	f.mu.Unlock()
-	f.seen <- last
-	return f.script(n, ctx, conn, last, p)
-}
-
-// nextAnswer is the Answer of the setup's next call.
-func (f *fakeSetup) nextAnswer(t *testing.T) builtinintegrations.Answer {
+// nextAnswer is the Answer of Setup's next call.
+func (e *setupEcho) nextAnswer(t *testing.T) builtinintegrations.Answer {
 	t.Helper()
 	select {
-	case a := <-f.seen:
-		return a
+	case s := <-e.seen:
+		return s.Answer
 	case <-time.After(failsafeWait):
 		t.Fatal("setup was not called")
 	}
 	return builtinintegrations.Answer{}
 }
 
-// callCount is how many times Setup was called.
-func (f *fakeSetup) callCount() int {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.calls
-}
-
-// testSetupDecl is the test integration's kivali.connection.setup.
-func testSetupDecl() integration.Setup {
-	return integration.Setup{
-		Summary: "Makes an app on the service.",
-		Hosts:   []string{setupHost},
-		Fields: integration.SetupFields{
-			{Key: "account", Words: "Your account's name"},
-			{Key: "key", Title: "Key", Words: "From the key page", Secret: true, SetupOnly: true},
-		},
-		Keeps: integration.SetupKeeps{{Key: "app_id", Words: "The app's id"}, {Key: "app_secret", Words: "The app's secret"}},
+// callsOf is echo's calls of action, oldest first.
+func (e *setupEcho) callsOf(action string) []echotest.Seen {
+	var out []echotest.Seen
+	for _, s := range e.Calls() {
+		if s.Action == action {
+			out = append(out, s)
+		}
 	}
+	return out
 }
 
-// setupServer is a server on a fake clock with fakeSetup installed as
-// the built-in echo, scripted by script.
-func setupServer(t *testing.T, script func(n int, ctx context.Context, conn builtinintegrations.Connection, last builtinintegrations.Answer, p builtinintegrations.Progress) (builtinintegrations.Step, error)) (*Server, *fakeSetup, *clock.Fake) {
+// callCount is how many times Setup was called.
+func (e *setupEcho) callCount() int { return len(e.callsOf("setup")) }
+
+// lastFlow is the flow Setup last ran.
+func (e *setupEcho) lastFlow() string {
+	calls := e.callsOf("setup")
+	if len(calls) == 0 {
+		return ""
+	}
+	return calls[len(calls)-1].Flow
+}
+
+// setupServer is a server on a fake clock with echo installed in its
+// setup shape, its steps decided by script, or by echo's own flow when
+// script is nil.
+func setupServer(t *testing.T, script echotest.SetupScript) (*Server, *setupEcho, *clock.Fake) {
 	t.Helper()
 	return setupServerWith(t, script, nil)
 }
 
-// setupServerWith is setupServer with the fake changed by edit before
-// it is installed.
-func setupServerWith(t *testing.T, script func(n int, ctx context.Context, conn builtinintegrations.Connection, last builtinintegrations.Answer, p builtinintegrations.Progress) (builtinintegrations.Step, error), edit func(fs *fakeSetup)) (*Server, *fakeSetup, *clock.Fake) {
+// setupServerWith is setupServer with echo changed by edit before it is
+// registered (a hand-over).
+func setupServerWith(t *testing.T, script echotest.SetupScript, edit func(e *echotest.Echo)) (*Server, *setupEcho, *clock.Fake) {
 	t.Helper()
 	srv := newTestServer(t)
 	clk := clock.NewFakeAt(signInAt)
 	srv.Clock = clk
-	fs := &fakeSetup{Echo: echotest.New(), setup: testSetupDecl(), script: script, seen: make(chan builtinintegrations.Answer, 64)}
+	seen := make(chan echotest.Seen, 64)
+	e := echotest.New()
+	e.SetupFlow, e.Watch = true, seen
 	if edit != nil {
-		edit(fs)
+		edit(e)
 	}
-	srv.BuiltinIntegrations = builtinintegrations.Registry{fs}
+	e.ScriptSetup(script)
+	srv.BuiltinIntegrations = builtinintegrations.Registry{e}
 	withIntegrationRegistry(srv, nil)
 	if err := srv.Store.InstallBuiltinIntegrations(srv.BuiltinIntegrations.Manifests(), signInAt); err != nil {
 		t.Fatal(err)
 	}
-	return srv, fs, clk
+	return srv, &setupEcho{Echo: e, seen: seen}, clk
 }
 
 // flowDo serves method path with body (JSON when not nil) through the
@@ -217,107 +194,6 @@ func startPage(t *testing.T, srv *Server, f apitypes.SetupFlow) (*httptest.Respo
 	return rr, cookie
 }
 
-// Why this test exists: this is a setup integration's whole flow
-// through core, as the owner takes it: a Form of declared fields (a
-// secret one marked), the owner's answer reaching Setup as Answer.Form,
-// a Go whose /connect/start sends the browser to the service with the
-// flow's cookie, the service's callback (matched by the state Setup was
-// given in Answer.Callback) handing the whole query to Setup as Return
-// and landing on the page with ?setup=<id> and nothing else, a Wait
-// checked while the page watches, and Done with Keep written into the
-// connection's Secret as the connection's values. Each event is in the
-// owner's audit under the flow's name. A step missing here is a setup
-// no integration can finish.
-func TestSetupFlowFormGoWaitDone(t *testing.T) {
-	var goURL string
-	srv, fs, clk := setupServer(t, func(n int, _ context.Context, conn builtinintegrations.Connection, last builtinintegrations.Answer, p builtinintegrations.Progress) (builtinintegrations.Step, error) {
-		switch n {
-		case 1:
-			return builtinintegrations.Step{Form: &builtinintegrations.Form{Words: "Name the account.", Fields: []string{"account", "key"}}}, nil
-		case 2:
-			goURL = "https://" + setupHost + "/apps/new?" + url.Values{"redirect": {last.Callback}}.Encode()
-			return builtinintegrations.Step{
-				Go:    &builtinintegrations.Go{Words: "Create the app.", URL: goURL},
-				State: map[string]string{"key": last.Form["key"]},
-			}, nil
-		case 3:
-			p.Stage("Making the app", 1, 2)
-			return builtinintegrations.Step{Wait: &builtinintegrations.Wait{Words: "Install it.", URL: "https://" + setupHost + "/install"}, State: last.State}, nil
-		default:
-			if !last.Checked {
-				t.Errorf("call %d is not a check: %+v", n, last)
-			}
-			return builtinintegrations.Step{Done: true, Keep: map[string]string{"app_id": "app-42", "app_secret": "s3cret-value"}}, nil
-		}
-	})
-
-	flow := startSetupFlow(t, srv, "echo")
-	if flow.Flow != "setup" || len(flow.ID) != 32 || !flow.ExpiresAt.Equal(signInAt.Add(setupFlowTTL)) {
-		t.Errorf("started = %+v", flow)
-	}
-	if first := fs.nextAnswer(t); first.Form != nil || first.Return != nil || first.Checked || first.State != nil || !strings.HasPrefix(first.Callback, loopbackOrigin+"/connect/callback?state=") {
-		t.Errorf("first answer = %+v", first)
-	}
-	f := waitFlow(t, srv, "echo", apitypes.SetupFlowStateForm)
-	if f.Step == nil || f.Step.Kind != apitypes.SetupFlowStepKindForm || f.Step.Words != "Name the account." || len(f.Step.Fields) != 2 ||
-		f.Step.Fields[0].Title != "Account" || f.Step.Fields[1].Key != "key" || !f.Step.Fields[1].Secret || !f.Step.Fields[1].SetupOnly {
-		t.Errorf("form = %+v", f.Step)
-	}
-
-	orgOK[apitypes.SetupFlow](t, flowDo(t, srv, http.MethodPost, intBase+"/echo/setup/answer", apitypes.SetupFlowAnswer{Fields: map[string]string{"account": " acme ", "key": "pak-123456"}}))
-	if a := fs.nextAnswer(t); a.Form["account"] != "acme" || a.Form["key"] != "pak-123456" {
-		t.Errorf("the form reached setup as %+v", a.Form)
-	}
-	f = waitFlow(t, srv, "echo", apitypes.SetupFlowStateGo)
-	if f.Step.Kind != apitypes.SetupFlowStepKindGo || *f.Step.StartURL != "/connect/start?flow="+f.ID || *f.Step.Host != setupHost || f.Step.NoReturn {
-		t.Errorf("go = %+v", f.Step)
-	}
-	rr, cookie := startPage(t, srv, f)
-	if rr.Code != http.StatusSeeOther || rr.Header().Get("Location") != goURL || cookie == nil || !cookie.HttpOnly || cookie.SameSite != http.SameSiteLaxMode {
-		t.Fatalf("start = %d %q, cookie %+v", rr.Code, rr.Header().Get("Location"), cookie)
-	}
-
-	redirect, _ := url.Parse(goURL)
-	back, _ := url.Parse(redirect.Query().Get("redirect"))
-	q := back.Query()
-	q.Set("code", "c0de-from-service")
-	q.Set("installation_id", "77")
-	back.RawQuery = q.Encode()
-	rr = serveSignedIn(t, srv, httptest.NewRequest(http.MethodGet, back.String(), nil), cookie)
-	if rr.Code != http.StatusSeeOther || rr.Header().Get("Location") != "/org/integrations/echo?setup="+f.ID {
-		t.Fatalf("callback = %d %q", rr.Code, rr.Header().Get("Location"))
-	}
-	if a := fs.nextAnswer(t); a.Return.Get("code") != "c0de-from-service" || a.Return.Get("installation_id") != "77" || a.State["key"] != "pak-123456" {
-		t.Errorf("the return reached setup as %+v", a)
-	}
-	f = waitFlow(t, srv, "echo", apitypes.SetupFlowStateWait)
-	if f.Step.Kind != apitypes.SetupFlowStepKindWait || *f.Step.URL != "https://"+setupHost+"/install" || f.Step.Words != "Install it." {
-		t.Errorf("wait = %+v", f.Step)
-	}
-
-	// The page watches; the Wait is checked every three seconds.
-	run, _, ch, _ := srv.setupSubscribe("echo")
-	clk.BlockUntil(1)
-	clk.Advance(setupWaitEvery)
-	if a := fs.nextAnswer(t); !a.Checked {
-		t.Errorf("check = %+v", a)
-	}
-	srv.setupUnsubscribe(run, ch)
-	waitFlow(t, srv, "echo", apitypes.SetupFlowStateDone)
-
-	conn, err := srv.Store.GetIntegrationConnection("echo")
-	if err != nil {
-		t.Fatal(err)
-	}
-	data, _ := srv.Secrets.Get(context.Background(), conn.SecretName)
-	if data["app_id"] != "app-42" || data["app_secret"] != "s3cret-value" || data["key"] != "" || len(conn.Fields) != 0 {
-		t.Errorf("kept %v, fields %v", data, conn.Fields)
-	}
-	if got := strings.Join(setupAudit(t, srv, "echo"), "|"); got != "started|returned|done" {
-		t.Errorf("audit = %s", got)
-	}
-}
-
 // Why this test exists: the manifest's declarations are the install
 // screen's promise: Kivali sends the browser only to declared hosts,
 // asks only for declared fields and keeps only declared keys. A step
@@ -335,8 +211,8 @@ func TestSetupFlowHoldsStepsToTheDeclarations(t *testing.T) {
 		{"undeclared host", builtinintegrations.Step{Go: &builtinintegrations.Go{URL: "https://evil.example/login"}}, "Echo's setup tried to send your browser to evil.example, which its manifest does not declare"},
 		{"plain http", builtinintegrations.Step{Go: &builtinintegrations.Go{URL: "http://" + setupHost + "/login"}}, "Echo's setup tried to send your browser to " + setupHost + ", which its manifest does not declare"},
 		{"wait page elsewhere", builtinintegrations.Step{Wait: &builtinintegrations.Wait{URL: "https://evil.example/"}}, "Echo's setup named a page on evil.example, which its manifest does not declare"},
-		{"undeclared keep", builtinintegrations.Step{Done: true, Keep: map[string]string{"app_id": "a1", "password": "hunter22"}}, "Echo's setup tried to keep password, which its manifest does not declare"},
-		{"no step", builtinintegrations.Step{Keep: map[string]string{"app_id": "a1"}}, errSetupNoStep},
+		{"undeclared keep", builtinintegrations.Step{Done: true, Keep: map[string]string{"account": "a1", "password": "hunter22"}}, "Echo's setup tried to keep password, which its manifest does not declare"},
+		{"no step", builtinintegrations.Step{Keep: map[string]string{"account": "a1"}}, errSetupNoStep},
 		{"two steps", builtinintegrations.Step{Done: true, Wait: &builtinintegrations.Wait{}}, errSetupManySteps},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -418,7 +294,7 @@ func TestSetupFlowScrubsItsSecrets(t *testing.T) {
 			return builtinintegrations.Step{Form: &builtinintegrations.Form{Fields: []string{"key"}}}, nil
 		case 2:
 			return builtinintegrations.Step{
-				Keep:  map[string]string{"app_secret": "kept-secret-1"},
+				Keep:  map[string]string{"token": "kept-secret-1"},
 				State: map[string]string{"code": "state-code-22", "short": "ab"},
 				Form:  &builtinintegrations.Form{Words: "Key pak-entered-9 again", Fields: []string{"account"}},
 			}, nil
@@ -623,7 +499,7 @@ func TestSetupFlowGoByPost(t *testing.T) {
 	if !strings.Contains(csp, "default-src 'none'") || !strings.Contains(csp, "form-action https://"+setupHost) || !strings.Contains(csp, "script-src 'sha256-") {
 		t.Errorf("CSP = %q", csp)
 	}
-	if !strings.Contains(body, `action="https://service.example/settings/apps/new?state=s1"`) ||
+	if !strings.Contains(body, `action="https://setup.example/settings/apps/new?state=s1"`) ||
 		!strings.Contains(body, `name="manifest" value="{&#34;name&#34;:&#34;a\&#34;&lt;b&gt;&#34;}"`) ||
 		!strings.Contains(body, `<button type="submit">Continue</button>`) || strings.Contains(body, "src=") {
 		t.Errorf("page = %s", body)
@@ -771,13 +647,11 @@ func TestSetupFlowHandsOverToASignIn(t *testing.T) {
 	vendor := connecttest.New(t, clk)
 	srv, _, _ := setupServerWith(t, func(int, context.Context, builtinintegrations.Connection, builtinintegrations.Answer, builtinintegrations.Progress) (builtinintegrations.Step, error) {
 		return builtinintegrations.Step{Done: true, Keep: map[string]string{"client_id": connecttest.ClientID, "client_secret": connecttest.ClientSecret}}, nil
-	}, func(fs *fakeSetup) {
-		fs.setup.Then = integration.MethodBrowser
-		fs.setup.Keeps = append(fs.setup.Keeps, integration.SetupKeep{Key: "client_id", Words: "The app's client id"}, integration.SetupKeep{Key: "client_secret", Words: "The app's client secret"})
+	}, func(e *echotest.Echo) {
 		ep := vendor.Endpoints()
-		fs.edit = func(c *integration.Connection) {
-			c.AuthorizationEndpoint, c.TokenEndpoint = ep.Authorization, ep.Token
-			c.CredentialKeys = map[string]string{"access_token": "TOKEN"}
+		e.HandOver = &integration.Connection{
+			Method: integration.MethodBrowser, AuthorizationEndpoint: ep.Authorization, TokenEndpoint: ep.Token,
+			CredentialKeys: map[string]string{"access_token": "TOKEN"},
 		}
 	})
 	srv.Clock = clk

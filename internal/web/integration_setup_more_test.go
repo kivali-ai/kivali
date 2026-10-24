@@ -11,6 +11,7 @@ import (
 
 	"github.com/kivali-ai/kivali/internal/auth"
 	"github.com/kivali-ai/kivali/internal/builtinintegrations"
+	"github.com/kivali-ai/kivali/internal/builtinintegrations/echotest"
 	"github.com/kivali-ai/kivali/internal/clock"
 	"github.com/kivali-ai/kivali/internal/connect"
 	"github.com/kivali-ai/kivali/internal/connect/connecttest"
@@ -130,7 +131,7 @@ func TestSetupCallAfterCancelKeepsNothing(t *testing.T) {
 			srv, fs, _ := setupServer(t, func(n int, _ context.Context, _ builtinintegrations.Connection, _ builtinintegrations.Answer, _ builtinintegrations.Progress) (builtinintegrations.Step, error) {
 				if n == 1 {
 					<-release
-					return builtinintegrations.Step{Done: true, Keep: map[string]string{"app_id": "late-app-1"}}, nil
+					return builtinintegrations.Step{Done: true, Keep: map[string]string{"account": "late-app-1"}}, nil
 				}
 				return builtinintegrations.Step{Form: &builtinintegrations.Form{Fields: []string{"account"}}}, nil
 			})
@@ -178,7 +179,7 @@ func TestSetupFlowReadsBackWhatItKept(t *testing.T) {
 		conns <- conn
 		switch n {
 		case 1:
-			return builtinintegrations.Step{Keep: map[string]string{"app_id": "app-42"}, Wait: &builtinintegrations.Wait{Words: "Install it."}}, nil
+			return builtinintegrations.Step{Keep: map[string]string{"account": "app-42"}, Wait: &builtinintegrations.Wait{Words: "Install it."}}, nil
 		case 2:
 			return builtinintegrations.Step{Wait: &builtinintegrations.Wait{Words: "Install it."}}, nil
 		}
@@ -192,7 +193,7 @@ func TestSetupFlowReadsBackWhatItKept(t *testing.T) {
 	clk.BlockUntil(1)
 	clk.Advance(setupWaitEvery)
 	check := fs.nextAnswer(t)
-	if conn := <-conns; conn.Fields["app_id"] != "app-42" || conn.ID == "" {
+	if conn := <-conns; conn.Fields["account"] != "app-42" || conn.ID == "" {
 		t.Errorf("the check's connection = %+v", conn)
 	}
 	srv.setupUnsubscribe(run, ch)
@@ -312,13 +313,11 @@ func TestSetupFlowHandsOverToADeviceSignIn(t *testing.T) {
 	vendor := connecttest.New(t, clk)
 	srv, _, _ := setupServerWith(t, func(int, context.Context, builtinintegrations.Connection, builtinintegrations.Answer, builtinintegrations.Progress) (builtinintegrations.Step, error) {
 		return builtinintegrations.Step{Done: true, Keep: map[string]string{"client_id": connecttest.ClientID, "client_secret": connecttest.ClientSecret}}, nil
-	}, func(fs *fakeSetup) {
-		fs.setup.Then = integration.MethodDevice
-		fs.setup.Keeps = append(fs.setup.Keeps, integration.SetupKeep{Key: "client_id", Words: "The app's client id"}, integration.SetupKeep{Key: "client_secret", Words: "The app's client secret"})
+	}, func(e *echotest.Echo) {
 		ep := vendor.Endpoints()
-		fs.edit = func(c *integration.Connection) {
-			c.DeviceEndpoint, c.TokenEndpoint = ep.Device, ep.Token
-			c.CredentialKeys = map[string]string{"access_token": "TOKEN"}
+		e.HandOver = &integration.Connection{
+			Method: integration.MethodDevice, DeviceEndpoint: ep.Device, TokenEndpoint: ep.Token,
+			CredentialKeys: map[string]string{"access_token": "TOKEN"},
 		}
 	})
 	srv.Clock = clk

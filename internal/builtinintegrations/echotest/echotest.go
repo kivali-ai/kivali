@@ -9,9 +9,18 @@
 // as JSON text (upper case when the access is loud), and whoami, which
 // answers with the greeting and the token's first three characters, so
 // a test sees the secret reach the Go function.
+//
+// With SetupFlow set its connection is a setup one instead (method
+// setup, setup.go), and it implements every optional hook of the setup
+// contract: SetupIntegration, RequirementsOf and Uninstaller. Its flow
+// installs the echo app on SetupHost, its requirements are one row met
+// and one with a Fix, and its Uninstall records the call. Knobs steer
+// each hook to the path a test needs, and every call is recorded as
+// Calls gives it.
 package echotest
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -40,21 +49,39 @@ const FailGreeting = "fail"
 // SignIn, when set, is its manifest's connection section in place of a
 // token connection's: a connection made by signing in, for tests of
 // core's credential path (Multiple still applies).
+//
+// SetupFlow makes its connection a setup one (setup.go). HandOver, with
+// it, is the sign-in setup hands over to (setup.then): its method and
+// endpoints. Neither changes once the built-in is registered.
 type Echo struct {
-	Version  string
-	Multiple bool
-	SignIn   *integration.Connection
+	Version   string
+	Multiple  bool
+	SignIn    *integration.Connection
+	SetupFlow bool
+	HandOver  *integration.Connection
+
+	// Watch, when set, is sent every call of Setup as it is recorded,
+	// for a test that waits on a call its flow's state does not show (a
+	// Wait's check that finds the same Wait). It is set before the
+	// built-in is registered, with room for every call the test makes:
+	// a call that finds it full is not sent.
+	Watch chan<- Seen
 
 	mu    sync.Mutex
 	calls []Seen
+	knobs setupKnobs
 }
 
-// Seen is one call Echo was given: the action (or verify, or choices),
-// the caller and the connection.
+// Seen is one call Echo was given: the action (an action's name, or
+// verify, choices, setup, requirements or uninstall), the caller and
+// the connection. For setup, Flow and Answer are what the call was
+// given.
 type Seen struct {
 	Action string
 	Caller builtinintegrations.Caller
 	Conn   builtinintegrations.Connection
+	Flow   string
+	Answer builtinintegrations.Answer
 }
 
 // New is Echo at version 1.0.0.
@@ -68,9 +95,21 @@ func (e *Echo) Calls() []Seen {
 }
 
 func (e *Echo) see(action string, caller builtinintegrations.Caller, conn builtinintegrations.Connection) {
+	e.record(Seen{Action: action, Caller: caller, Conn: conn})
+}
+
+func (e *Echo) record(seen Seen) {
 	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.calls = append(e.calls, Seen{Action: action, Caller: caller, Conn: conn})
+	e.calls = append(e.calls, seen)
+	e.mu.Unlock()
+	if e.Watch != nil && seen.Action == "setup" {
+		// Never blocks: a call made as a test ends, with nobody reading,
+		// must still return, or the runner's drain would wait on it.
+		select {
+		case e.Watch <- seen:
+		default:
+		}
+	}
 }
 
 // Manifest is echo's manifest.
@@ -80,7 +119,7 @@ func (e *Echo) Manifest() *integration.Manifest {
 		conn = *e.SignIn
 		conn.Multiple = e.Multiple
 	}
-	return &integration.Manifest{
+	m := &integration.Manifest{
 		ManifestVersion: "0.3",
 		Name:            Name,
 		Version:         e.Version,
@@ -106,6 +145,10 @@ func (e *Echo) Manifest() *integration.Manifest {
 			Verify: "whoami",
 		},
 	}
+	if e.SetupFlow {
+		e.setupManifest(m)
+	}
+	return m
 }
 
 // Tools lists echo and whoami for every caller, and an action the
@@ -138,9 +181,11 @@ func (e *Echo) Call(_ context.Context, caller builtinintegrations.Caller, conn b
 	return nil, fmt.Errorf("echo has no action %s", name)
 }
 
+// whoami is the greeting (for a setup connection, which has none, the
+// account) and the token's first three characters.
 func whoami(conn builtinintegrations.Connection) string {
 	tok := conn.Fields["token"]
-	return fmt.Sprintf("%s; token %s...", conn.Fields["greeting"], tok[:min(3, len(tok))])
+	return fmt.Sprintf("%s; token %s...", cmp.Or(conn.Fields["greeting"], conn.Fields["account"]), tok[:min(3, len(tok))])
 }
 
 // Verify answers as whoami does, and fails, quoting the token, when the

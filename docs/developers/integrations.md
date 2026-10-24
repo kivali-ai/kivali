@@ -2060,9 +2060,11 @@ type Uninstaller interface{ Uninstall(ctx context.Context, conn Connection) erro
 
 Core runs `Setup` through the setup runner ([Setup flows](#setup-flows)):
 `POST .../setup` of a `setup` connection whose built-in implements
-`SetupIntegration`, and the `then` sign-in after it. It dispatches
-neither `Requirements` nor `Uninstall` in this version of Kivali, and no
-built-in in `builtins.All()` implements any of the three.
+`SetupIntegration`, and the `then` sign-in after it, or a requirement's
+Fix ([Fix](#fix)). It asks for `Requirements` when the page, the list or
+Home is read ([Requirements](#requirements)), and calls `Uninstall` on
+Uninstall ([Uninstall](#uninstall)); the [Dispatch](#dispatch) table
+has each. No built-in in `builtins.All()` implements any of the three.
 
 `Tools`, `Call`, `Verify` and `Choices` run concurrently: many agents
 call at once, and each agent's list is asked for in parallel with the
@@ -2078,7 +2080,30 @@ calls (`builtins.All()` unless a test sets others).
 `internal/builtinintegrations/echotest` is the built-in the tests
 register; it is never in `All()`. A test holds every built-in in
 `All()` to the check, to a name of its own, and to a `Tools` list
-inside its manifest.
+inside its manifest, and echo to the check in each of its shapes.
+
+Echo has a token connection, or, with `SignIn`, a sign-in one. With
+`SetupFlow` it is a `setup` connection that implements all three setup
+hooks, and the web tests drive it over the HTTP API
+(`internal/web/integration_setup_echo_test.go`,
+`integration_requirements_test.go`). Its declarations are the host
+`setup.example`, the fields `account` and a secret, setup-only `key`,
+and the keeps `token` and `account`. Its install flow runs a Form
+(account, key), then a Go to `https://setup.example/install` that posts
+the key (or links there when the key is blank) and keeps the account.
+That Go expects `?code=` back and keeps the token the code stands for.
+Next comes a Wait that is checked until `SetInstalled`, and then Done,
+with the account and the key carried in `State`. The `permissions`
+requirement's Fix is a one-step flow that grants it. `Requirements`
+gives one row met and `permissions`, unmet until granted. `Uninstall`
+records the call. Knobs fail the flow (`FailSetup`, with the token and
+the key in its words), take a step outside the declarations
+(`SetStray`: another host, field or key), fail `Uninstall`
+(`FailUninstall`), and hand over to a sign-in (`HandOver`).
+`ScriptSetup` and `ScriptRequirements` replace echo's own answers for
+the tests of the runner's mechanics and of rows no integration should
+give. `Calls` records every call, with each Setup call's flow and
+`Answer`.
 
 ### Registration at boot
 
@@ -2138,6 +2163,9 @@ as a bundle, in the first column:
 | Test connection | `tools/call` of `kivali.verify` | `Verify(connection)`, with the connection the route names; the audit's action is the name `kivali.verify` gives (`whoami` for echo) |
 | An access field's options | `tools/call` of the field's tool | `Choices(connection, name)`, with the connection `?connection=` names or the first; 409 with no connection |
 | Work in the agent's shell | none | `Call` answers with `ShellJob`, `Complete` the call's second request |
+| Setup (`method: setup`) | not in this version of Kivali | `Setup(conn, flow, answer, progress)`, in the background through the setup runner, each step held to `kivali.connection.setup` |
+| Requirements | none | `Requirements(connection)` of the first connection, under a 5 s deadline, as the integration's rows after Kivali's; unmet ones are Needs-you rows |
+| Uninstall | none | `Uninstall(connection)` of each connection before anything is forgotten; an error is a 502 that changes nothing |
 | A connection change | the shim restarts the server | nothing to restart; a `HostsOf` built-in's proxy credential of that connection is registered again |
 | Reconcile | a pod while it should run | skipped |
 
