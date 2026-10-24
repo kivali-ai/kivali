@@ -225,7 +225,10 @@ integration never does OAuth
   revocation endpoints' where they differ), lowercase host names, no
   wildcard, each once. They are the bound: the install screen lists
   them under "Signs in at", and core refuses metadata naming any other
-  host. Required for a registered client; refused for any other.
+  host. A host listed is that host on its scheme's default port: an
+  endpoint that names another port is refused (loopback, for a vendor
+  run in-process in tests, takes any port). Required for a registered
+  client; refused for any other.
 - `extra_authorization_params`: added to the vendor's authorization
   address as they are.
 - `credential_keys.access_token`: the name the access token goes under
@@ -1447,20 +1450,25 @@ its root. The authorization server's metadata (RFC 8414) is read at
 `/.well-known/oauth-authorization-server` with the issuer's path after
 it, then `/.well-known/openid-configuration` the same way, then, for an
 issuer with a path, that path followed by
-`/.well-known/openid-configuration`. A 4xx answer, or a 200 that is no
-JSON object, is a document not there. Discovery refuses, and the flow
-fails with "Kivali could not find where to sign in to <integration>:
-<why>", metadata for another resource than the discover address, an
-issuer that is not the one it was read for (RFC 8414, 3.3), an
-authorization server or endpoint that is not `https://` (plain `http`
-only on loopback) or is on a host neither the discover address's nor
-in `hosts` ("the service's metadata names its token endpoint on
-<host>, which the manifest does not list"), no authorization or token
-endpoint, a server that does not offer the authorization code grant,
-or one that lists PKCE methods without S256. Each request is bounded
-by `connect.RequestTimeout` (eight seconds) on the engine's clock and
-by 256 KiB, a larger document refused, and follows redirects only on
-the host it was sent to.
+`/.well-known/openid-configuration`. A 404, 410 or 403, or a 200 that
+is no JSON object, is a document not there; any other status is an
+error naming it. Discovery refuses, and the flow fails with "Kivali
+could not find where to sign in to <integration>: <why>", a protected
+resource's metadata that names no `resource` (RFC 9728 requires it) or
+another resource than the discover address, an issuer that is not the
+one it was read for (RFC 8414, 3.3), an authorization server or
+endpoint that is not `https://` (plain `http` only on loopback) or is on
+a host neither the discover address's nor in `hosts` ("the service's
+metadata names its token endpoint on "<host>", which the manifest does
+not list"), no authorization or token endpoint, a server that does not
+offer the authorization code grant, or one whose
+`code_challenge_methods_supported` does not list S256 (listing none is
+offering no PKCE, which MCP's authorization refuses). A value from the
+service's document in those words is cut to 200 runes and quoted, in
+the log too. Each request is bounded by `connect.RequestTimeout`
+(eight seconds) on the engine's clock and by 256 KiB, a larger
+document refused, and follows redirects only on the host it was sent
+to.
 
 **Registration.** `Engine.Register` posts RFC 7591's request to the
 registration endpoint found (none: "the service's metadata names no
@@ -1509,9 +1517,12 @@ authentication kept (HTTP Basic, each part form-encoded first, for
 **Registering again.** A sign-in from an address the client was not
 registered with (the team moved, or the owner signed in at its
 external address after its loopback one) registers a new client with
-every address so far and this one, keeps it in place of the old, and
-deletes the old one with the service. A sign-in again from an address
-registered uses the client kept.
+every address so far and this one, keeps it in place of the old (the
+tokens issued to the old client are dropped from the Secret), revokes
+the old client's tokens and deletes the old client with the service. So
+does a sign-in once the kept secret's `oauth_client_secret_expires_at`
+has passed on the server's clock. A sign-in again from an address
+registered, with a secret that has not expired, uses the client kept.
 
 **Deregistration.** Signing out removes the client's keys from the
 Secret with the tokens; Sign out, [Uninstall](#uninstall) and
@@ -1587,7 +1598,11 @@ expiry and wait from its clock:
   only, as GitHub's device flow takes. Each is a form-encoded POST with
   `Accept: application/json` (GitHub answers form-encoded without it,
   which is read too). `expires_in`, a number or a quoted one, becomes
-  `Tokens.ExpiresAt` on the clock.
+  `Tokens.ExpiresAt` on the clock. None of these, nor a revocation,
+  follows a redirect: a 307 or 308 would send the form (a code, a
+  verifier, the client secret) on to the host it names, so a redirect
+  is an answer that is not one ("the vendor answered 307 Temporary
+  Redirect").
 - An answer that carries an `error` is that error whatever its status:
   GitHub answers every device-flow and refresh failure with a 200.
   `invalid_grant`, `invalid_client`, `unauthorized_client`,

@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -173,7 +174,7 @@ func TestChooseAuthMethod(t *testing.T) {
 			t.Errorf("%v: %q, %v", c.supported, got, err)
 		}
 	}
-	if _, err := connect.ChooseAuthMethod([]string{"private_key_jwt"}); err == nil || !strings.Contains(err.Error(), "only by private_key_jwt, which Kivali does not") {
+	if _, err := connect.ChooseAuthMethod([]string{"private_key_jwt"}); err == nil || !strings.Contains(err.Error(), `only by "private_key_jwt", which Kivali does not`) {
 		t.Errorf("private_key_jwt alone: %v", err)
 	}
 }
@@ -243,7 +244,7 @@ func TestRegisterRefusesWhatItCannotUse(t *testing.T) {
 	}{
 		{"no client id", http.StatusCreated, `{"client_secret":"s"}`, "gave no client id"},
 		{"an address left out", http.StatusCreated, `{"client_id":"c","client_secret":"s","redirect_uris":["https://other.example/cb"]}`, "did not register http://127.0.0.1:8080/connect/callback, the address Kivali signs in at"},
-		{"an authentication Kivali does not use", http.StatusCreated, `{"client_id":"c","client_secret":"s","token_endpoint_auth_method":"private_key_jwt"}`, "by private_key_jwt, which Kivali does not"},
+		{"an authentication Kivali does not use", http.StatusCreated, `{"client_id":"c","client_secret":"s","token_endpoint_auth_method":"private_key_jwt"}`, `by "private_key_jwt", which Kivali does not`},
 		{"a failure", http.StatusInternalServerError, `oops`, "answered 500 Internal Server Error to Kivali's registration"},
 		{"an answer Kivali cannot read", http.StatusCreated, `<html>`, "is not one Kivali reads"},
 		{"a redirect", http.StatusTemporaryRedirect, ``, "answered 307 Temporary Redirect"},
@@ -319,5 +320,84 @@ func TestRegisterTimesOutOnTheEnginesClock(t *testing.T) {
 		if err := <-errc; err == nil || !strings.Contains(err.Error(), "did not answer within 8s") {
 			t.Errorf("err = %v", err)
 		}
+	}
+}
+
+// Why this test exists: a token or revocation request carries the
+// code, the PKCE verifier, the refresh token and the client secret in
+// its body, and a 307 or 308 makes an HTTP client send that body again
+// to wherever the redirect names. Every such request must follow no
+// redirect, so another host sees nothing, and the redirect is an
+// answer Kivali does not take.
+func TestTokenRequestsFollowNoRedirect(t *testing.T) {
+	var other atomic.Int32
+	elsewhere := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { other.Add(1) }))
+	t.Cleanup(elsewhere.Close)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The same port on another loopback name is another host.
+		http.Redirect(w, r, strings.Replace(elsewhere.URL, "127.0.0.1", "localhost", 1)+r.URL.Path, http.StatusTemporaryRedirect)
+	}))
+	t.Cleanup(srv.Close)
+	e := &connect.Engine{Clock: clock.NewFake(), HTTP: &http.Client{}}
+	ep := connect.Endpoints{Token: srv.URL + "/token", Revocation: srv.URL + "/revoke"}
+	for _, c := range []connect.Client{
+		{ID: "id", Secret: "client-secret-value"},
+		{ID: "id", Secret: "client-secret-value", AuthMethod: connect.AuthSecretBasic},
+	} {
+		if _, err := e.Exchange(context.Background(), ep, c, "code", "http://127.0.0.1/cb", "verifier"); err == nil || !strings.Contains(err.Error(), "the vendor answered 307 Temporary Redirect") {
+			t.Errorf("exchange: %v", err)
+		}
+		if _, err := e.Refresh(context.Background(), ep, c, "refresh"); err == nil || !strings.Contains(err.Error(), "307") {
+			t.Errorf("refresh: %v", err)
+		}
+		if err := e.Revoke(context.Background(), ep, c, connect.Tokens{Access: "a", Refresh: "r"}); err == nil || !strings.Contains(err.Error(), "307") {
+			t.Errorf("revoke: %v", err)
+		}
+	}
+	if n := other.Load(); n != 0 {
+		t.Errorf("the other host took %d requests", n)
+	}
+}
+
+// Why this test exists: a manifest's hosts are host names, and one
+// listed is the service's on its usual port, not every port on that
+// machine: an endpoint on another port could be another service. A
+// loopback host (a vendor run in-process in tests) has a port of its
+// own, and an address given with its port matches as given.
+func TestHostAllowedHoldsToThePort(t *testing.T) {
+	hosts := []string{"login.example.com", "127.0.0.1", "api.example.com:8443"}
+	cases := map[string]bool{
+		"https://login.example.com/token":     true,
+		"https://login.example.com:443/token": true,
+		"https://login.example.com:8443/x":    false,
+		"http://127.0.0.1:54321/token":        true,
+		"https://api.example.com:8443/token":  true,
+		"https://api.example.com/token":       false,
+		"https://evil.example/token":          false,
+	}
+	for raw, want := range cases {
+		u, _ := url.Parse(raw)
+		if got := connect.HostAllowed(u, hosts); got != want {
+			t.Errorf("%s: %v, want %v", raw, got, want)
+		}
+	}
+}
+
+// Why this test exists: deleting a registration runs as the owner
+// signs out or removes the connection, and a service that no longer
+// takes the registration's token (it expired it, or deleted the client
+// itself) answers 401; that is a registration already gone, not a
+// failure to log on every delete.
+func TestDeregisterTakesAnUnknownTokenForDone(t *testing.T) {
+	e, v, _ := setup(t)
+	reg, err := e.Register(context.Background(), v.URL+"/register", connect.RegisterRequest{RedirectURIs: []string{"http://127.0.0.1/cb"}}, []string{"127.0.0.1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.Deregister(context.Background(), reg.ClientURI, "not-the-registration-token"); err != nil {
+		t.Errorf("a 401: %v", err)
+	}
+	if len(v.Deregistered()) != 0 {
+		t.Errorf("deleted with the wrong token: %v", v.Deregistered())
 	}
 }

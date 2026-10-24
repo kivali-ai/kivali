@@ -162,7 +162,7 @@ func (s *Server) registeredSignInApp(ctx context.Context, run *setupRun, name, d
 		if ctx.Err() != nil {
 			return signInApp{}, errors.New(errSetupStopped)
 		}
-		log.Printf("integration %s: discover the authorization server: %v", name, err)
+		log.Printf("integration %s: discover the authorization server: %s", name, clipRunes(err.Error(), signInWordsRunes))
 		return signInApp{}, errors.New("Kivali could not find where to sign in to " + display + ": " + err.Error())
 	}
 	redirects := registeredRedirects(old)
@@ -178,7 +178,7 @@ func (s *Server) registeredSignInApp(ctx context.Context, run *setupRun, name, d
 		}
 		var refused *connect.RegistrationRefused
 		if !errors.As(err, &refused) {
-			log.Printf("integration %s: register with the service: %v", name, err)
+			log.Printf("integration %s: register with the service: %s", name, clipRunes(err.Error(), signInWordsRunes))
 		}
 		return signInApp{}, errors.New("Kivali could not register itself with " + display + ": " + err.Error())
 	}
@@ -190,6 +190,9 @@ func (s *Server) registeredSignInApp(ctx context.Context, run *setupRun, name, d
 		return signInApp{}, err
 	}
 	if old[connect.SecretKeyClientID] != "" && old[connect.SecretKeyClientID] != reg.Client.ID {
+		// The client replaced goes, and the tokens it still holds first.
+		tok := connect.Tokens{Access: old[connect.SecretKeyAccessToken], Refresh: old[connect.SecretKeyRefreshToken]}
+		s.revokeTokens(ctx, name, "", registeredApp(old), tok)
 		s.deregisterClient(ctx, name, "", old)
 	}
 	return registeredApp(values), nil
@@ -197,7 +200,8 @@ func (s *Server) registeredSignInApp(ctx context.Context, run *setupRun, name, d
 
 // keepRegisteredClient writes values, a registered client
 // (registeredValues), into name's connection's Secret in place of the
-// one it keeps, beside its fields and tokens, under lockIntegrations,
+// one it keeps, beside its fields and tokens (dropped when they were
+// issued to another client), under lockIntegrations,
 // making the connection when there is none. The keys are no fields, so
 // the record's secret keys are left as they are. A flow cancelled
 // meanwhile keeps nothing.
@@ -225,6 +229,12 @@ func (s *Server) keepRegisteredClient(ctx context.Context, run *setupRun, name s
 			log.Printf("integration %s: read the connection's Secret to keep its registered client: %v", name, err)
 			return errors.New(errRegisteredNotKept)
 		}
+	}
+	if data[connect.SecretKeyClientID] != values[connect.SecretKeyClientID] {
+		// Tokens issued to the client this one replaces are revoked
+		// with it (registeredSignInApp), not kept for the new one.
+		delete(data, connect.SecretKeyAccessToken)
+		delete(data, connect.SecretKeyRefreshToken)
 	}
 	for _, k := range connect.RegisteredSecretKeys {
 		delete(data, k)

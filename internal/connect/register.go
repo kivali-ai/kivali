@@ -60,7 +60,7 @@ func ChooseAuthMethod(supported []string) (string, error) {
 	case slices.Contains(supported, AuthNone):
 		return AuthNone, nil
 	}
-	return "", fmt.Errorf("the service lets a client sign in to its token endpoint only by %s, which Kivali does not", strings.Join(supported, ", "))
+	return "", fmt.Errorf("the service lets a client sign in to its token endpoint only by %s, which Kivali does not", vendorValue(strings.Join(supported, ", ")))
 }
 
 // registrationAnswer is a registration endpoint's answer (RFC 7591,
@@ -157,7 +157,7 @@ func (e *Engine) Register(ctx context.Context, endpoint string, req RegisterRequ
 	case jerr == nil && a.Error != "":
 		return nil, &RegistrationRefused{Code: clipRunes(a.Error, maxCodeRunes), Description: clipRunes(a.ErrorDescription, MaxDescriptionRunes)}
 	case resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK:
-		return nil, fmt.Errorf("%s answered %s to Kivali's registration", host, resp.Status)
+		return nil, fmt.Errorf("%s answered %s to Kivali's registration", host, statusWords(resp.StatusCode))
 	case jerr != nil:
 		return nil, fmt.Errorf("%s's answer to Kivali's registration is not one Kivali reads", host)
 	case a.ClientID == "":
@@ -166,7 +166,7 @@ func (e *Engine) Register(ctx context.Context, endpoint string, req RegisterRequ
 	reg := &Registration{Client: Client{ID: a.ClientID, Secret: a.ClientSecret, AuthMethod: method}, RedirectURIs: req.RedirectURIs}
 	if a.AuthMethod != "" {
 		if !slices.Contains([]string{AuthSecretBasic, AuthSecretPost, AuthNone}, a.AuthMethod) {
-			return nil, fmt.Errorf("%s registered Kivali to sign in to its token endpoint by %s, which Kivali does not", host, clipRunes(a.AuthMethod, maxCodeRunes))
+			return nil, fmt.Errorf("%s registered Kivali to sign in to its token endpoint by %s, which Kivali does not", host, vendorValue(a.AuthMethod))
 		}
 		reg.Client.AuthMethod = a.AuthMethod
 	}
@@ -179,7 +179,6 @@ func (e *Engine) Register(ctx context.Context, endpoint string, req RegisterRequ
 				return nil, fmt.Errorf("%s did not register %s, the address Kivali signs in at", host, want)
 			}
 		}
-		reg.RedirectURIs = a.RedirectURIs
 	}
 	if n := int64(seconds(a.ClientSecretExpiresAt) / time.Second); n > 0 {
 		reg.SecretExpiresAt = time.Unix(n, 0).UTC()
@@ -218,5 +217,5 @@ func (e *Engine) Deregister(ctx context.Context, clientURI, accessToken string) 
 	case http.StatusNoContent, http.StatusOK, http.StatusNotFound, http.StatusUnauthorized:
 		return nil
 	}
-	return fmt.Errorf("%s answered %s to deleting Kivali's registration", host, resp.Status)
+	return fmt.Errorf("%s answered %s to deleting Kivali's registration", host, statusWords(resp.StatusCode))
 }
