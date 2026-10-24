@@ -604,7 +604,7 @@ through to the address it sends the browser back to.
    ```json
    {"step": {"go": {"words": "Create the app on Forge: choose Create app. Forge may ask you to change the name first.",
                     "url": "https://forge.example/organizations/acme/settings/apps/new?state=4f0c9e2a7b1d4c3e8a6f5b2d1c0e9f8a",
-                    "post": {"manifest": "{\"name\":\"Kivali Acme\",\"url\":\"https://team.example\",\"redirect_url\":\"https://team.example/connect/callback\",\"setup_url\":\"https://team.example/connect/callback\",\"setup_on_update\":true,\"public\":false,\"hook_attributes\":{\"active\":false},\"default_permissions\":{\"contents\":\"write\",\"pull_requests\":\"write\"},\"default_events\":[]}"}},
+                    "post": {"manifest": "{\"name\":\"Kivali Acme\",\"url\":\"https://team.example\",\"redirect_url\":\"https://team.example/connect/callback\",\"setup_url\":\"https://team.example/connect/callback\",\"setup_on_update\":true,\"public\":false,\"hook_attributes\":{\"url\":\"https://team.example\",\"active\":false},\"default_permissions\":{\"contents\":\"write\",\"pull_requests\":\"write\"},\"default_events\":[]}"}},
              "state": {"at": "make"}}}
    ```
 
