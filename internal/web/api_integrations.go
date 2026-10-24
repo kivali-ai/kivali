@@ -851,6 +851,18 @@ func (s *Server) handleAPIIntegrationUninstall(w http.ResponseWriter, r *http.Re
 	}
 }
 
+// uninstallConnection is name's connection id as Uninstall is given it:
+// as a call reads it, or as it is stored when it needs a sign-in or the
+// service did not answer its renewal; with the scrubber of its secrets.
+func (s *Server) uninstallConnection(ctx context.Context, name, id string) (builtinintegrations.Connection, *strings.Replacer, error) {
+	conn, _, scrub, err := s.builtinConnection(ctx, name, id)
+	if errors.Is(err, errSignInNeeded) || errors.Is(err, errVendorUnavailable) {
+		_, rec, values, secretValues, _, _, rerr := s.Integrations.readStoredConnection(ctx, name, id)
+		conn, scrub, err = builtinintegrations.Connection{ID: rec.ID, Fields: values}, newScrubber(secretValues), rerr
+	}
+	return conn, scrub, err
+}
+
 // serviceUninstall undoes v's installation on the service: Uninstall
 // of v's built-in when it implements builtinintegrations.Uninstaller,
 // or a setup bundle's kivali/uninstall while its server runs
@@ -866,11 +878,7 @@ func (s *Server) serviceUninstall(ctx context.Context, v *integrationView) strin
 	name, display := v.it.Name, v.displayName()
 	if c := v.conn; c != nil {
 		start := s.clk().Now()
-		conn, _, scrub, err := s.builtinConnection(ctx, name, c.rec.ID)
-		if errors.Is(err, errSignInNeeded) || errors.Is(err, errVendorUnavailable) {
-			_, rec, values, secretValues, _, _, rerr := s.Integrations.readStoredConnection(ctx, name, c.rec.ID)
-			conn, scrub, err = builtinintegrations.Connection{ID: rec.ID, Fields: values}, newScrubber(secretValues), rerr
-		}
+		conn, scrub, err := s.uninstallConnection(ctx, name, c.rec.ID)
 		if errors.Is(err, store.ErrNotFound) {
 			return ""
 		}

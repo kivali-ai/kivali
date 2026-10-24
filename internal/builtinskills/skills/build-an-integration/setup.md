@@ -300,8 +300,9 @@ setup kept.
   `kivali/credential`'s `fields`. Keep what the actions and the
   requirements need and nothing more.
 - An install keeps nothing unless it is Done: when it fails, the owner
-  cancels it, or nobody takes its step in ten minutes, Kivali forgets
-  the connection it made. A Fix that fails keeps what it kept.
+  cancels it, or it is forgotten, Kivali sends `kivali/uninstall` and
+  then forgets the connection it made ([A flow left
+  partway](#a-flow-left-partway)). A Fix that fails keeps what it kept.
 - Every secret kept value, every secret or setup-only value the owner
   entered, every state value, each callback's state, and the values a
   return brings back under `code`, `state` or a key holding `token`,
@@ -326,13 +327,28 @@ setup kept.
 
 ## A flow left partway
 
-Kivali calls nothing when the owner cancels a flow, starts another, or
-leaves one to expire, and nothing when a call fails. What setup made on
-the service before then stays there. So make each step safe to run
-again: before creating an app, look for the one an earlier run made
-(by the name setup gives it) and take it up; before installing, ask
-whether it is installed. The owner who tries again then gets one app,
-not two.
+- **Started again while it runs.** When the owner starts the install
+  again while one is under way (from another tab, or back on the page
+  after leaving it), the new flow ends the old one and takes over the
+  connection it made: what it kept stays, the server still has it in
+  its environment, and the new flow's first call starts from an empty
+  answer with those values there. Nothing is undone. `try.py` does the
+  same for a `setup` after one it left partway in the same run.
+- **Failed, cancelled or forgotten.** When an install that kept
+  something ends without being done (a call fails, the owner cancels
+  it, or it is forgotten), Kivali sends `kivali/uninstall`, with the
+  server still holding what was kept so far, then forgets the
+  connection. That call is best effort: an error is logged, and the
+  connection goes all the same. An install that kept nothing gets no
+  call, and nothing is sent for a Fix's flow that fails: it keeps what
+  it kept.
+- What setup made on the service before it kept anything stays there,
+  and `kivali/uninstall` can undo only what the kept values name. So
+  keep an app's id as soon as the app is made, and make each step safe
+  to run again: before creating an app, look for the one an earlier run
+  made (by the name setup gives it) and take it up; before installing,
+  ask whether it is installed. The owner who tries again then gets one
+  app, not two.
 
 ## Progress
 
@@ -417,7 +433,10 @@ installation. Answer `{}` once done, within 60 seconds.
   tried again finishes. Kivali may ask again after an answer of `{}`,
   when it could not forget the connection the first time.
 - A value it needs that is missing (the token is not in the
-  environment): nothing can be undone from here; answer `{}`.
+  environment): nothing can be undone from here; answer `{}`. Kivali
+  also sends `kivali/uninstall` for an install that ended partway, with
+  only what was kept so far: undo what those values name, and treat
+  what is missing as already gone.
 - An error is a JSON-RPC error, and the uninstall is refused with
   nothing changed: the owner reads "<Integration> could not undo its
   installation: <message>; nothing was changed". Refuse only for a
@@ -687,10 +706,13 @@ app stays in Desk until an admin removes it.
   checked every `--every` seconds (0 in a script) until it changes or
   `--checks` checks have run. Without the answer a step needs, once a
   Wait's checks have run, or at a Form asked again after the same
-  answer, the flow stops there, as when the owner leaves it: an install
-  that stops before Done forgets what it kept, as Kivali does, and a
-  `setup` after it in the same run starts again against what the stub
-  holds.
+  answer, the flow stops there, as when the owner leaves it: it waits
+  with what it kept, and a `setup` after it in the same run takes that
+  connection over, as a new start in Kivali does, against what the stub
+  holds. An install still left at the end of the run, and one that
+  fails, is undone as Kivali undoes it: `kivali/uninstall` with what it
+  kept, then the connection forgotten and the server started again
+  without it.
 - `requirements` reads the rows as the page does, held to what Kivali
   keeps of them, and says which flow each unmet row's Fix runs.
 - `uninstall` sends `kivali/uninstall` as Uninstall does.

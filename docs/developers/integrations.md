@@ -881,12 +881,21 @@ keeps nothing unless it is done.
 When its Keep makes the connection (`setupMade`), and the flow then
 fails, is cancelled, is replaced by a flow that does not take it over,
 or is forgotten, core forgets that connection off the caller's locks
-(`setupDiscard`): its Secret (a sign-in's tokens revoked), its scoped
-proxy credential, its record and the access set for it, with no call
-of `Uninstall`. A connection an earlier version made that the install
+(`setupDiscard`). First, where the integration can undo its
+installation on the service (a built-in's `Uninstaller`, or a setup
+bundle's `kivali/uninstall` while its server runs), it is asked to,
+with the connection as kept so far (`setupUndo`): best effort, off
+every lock, under `integrationCallTimeout` (60 seconds), a failure or
+no answer logged and scrubbed, the call counted in what `setupDrain`
+waits for. Then its Secret (a sign-in's tokens revoked), its scoped
+proxy credential, its record and the access set for it go. A connection an earlier version made that the install
 took over keeps its record, emptied of every value, and its access
 (`setupRun.madeKept`), so it still reads available and the next
-install takes it over again. Until that is done the integration reads available,
+install takes it over again. A start while an install is under way
+ends that one (audited as cancelled) and takes it over: the new flow
+is the install, the connection the old one made is its own, with what
+it kept, which its calls read, and nothing of it is undone unless the
+new flow ends without being done too. Until that is done the integration reads available,
 and a new start waits for it (`setupAwaitDiscard`), so the next install
 never reads the half-made connection; one that began after the wait is
 a 409 under the lock ("Kivali is still undoing the last setup; try
@@ -1157,7 +1166,11 @@ and a proxy credential per connection stay built-in only.
   service, answered `{}`, within `integrationCallTimeout`, and asked
   only while the server runs: a bundle switched on whose server is not
   running cannot be uninstalled, one switched off is uninstalled
-  without the request ([Uninstall](#uninstall)).
+  without the request ([Uninstall](#uninstall)). It is sent too when an
+  install ends without being done (failed, cancelled, forgotten) after
+  a Keep, with the server holding what was kept so far, best effort:
+  its error is logged and the connection goes all the same
+  ([Flows](#flows)).
 
 An error of any of them is a JSON-RPC error whose message is the
 owner's words, scrubbed as a built-in's error is; one with no message
@@ -2322,7 +2335,11 @@ type SignIn struct{ ClientID, ClientSecret, AccessToken, RefreshToken string }
   Core lists its own rows first.
 - An `Uninstaller` undoes its installation on the service when the
   owner uninstalls it, before core forgets the Secret and drops every
-  agent's access; an error leaves the installation as it is.
+  agent's access; an error leaves the installation as it is. It may
+  also be called for a partial installation, an install that ended
+  without being done, with the connection as kept so far
+  ([Flows](#flows)): it treats what is missing as already gone, and an
+  error there is logged while the connection goes all the same.
 - A `SignInReplacer` is a setup built-in whose earlier version made
   its connection by signing in with an app of the owner's: when an
   install takes such a connection over, or Uninstall removes it

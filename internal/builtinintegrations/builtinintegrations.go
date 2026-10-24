@@ -180,9 +180,12 @@ type AccessSummarizer interface {
 // a Step that does not keep to that fails the flow. An error's text
 // is shown to the owner, scrubbed of every secret kept value, and the flow
 // keeps nothing more. An install (FlowSetup, from no connection) that
-// fails or is cancelled keeps nothing at all: core forgets the
-// connection its Keep made, with no call of Uninstall. A Fix's flow
-// that fails leaves what it kept.
+// fails, is cancelled or is forgotten keeps nothing at all: core first
+// calls Uninstall, for an Uninstaller, with the connection as kept so
+// far, best effort, then forgets the connection its Keep made. An
+// install started while another is under way takes that one's place,
+// and the connection it made with what it kept. A Fix's flow that
+// fails leaves what it kept.
 type SetupIntegration interface {
 	Integration
 	Setup(ctx context.Context, conn Connection, flow string, last Answer, p Progress) (Step, error)
@@ -368,6 +371,13 @@ type Requirement struct {
 // owner uninstalls again, and conn may then lack values an earlier
 // step kept. Uninstall treats an installation that is already gone on
 // the service, or that conn cannot name, as done, and returns nil.
+//
+// Core may also call Uninstall for a partial installation: an install
+// that failed, was cancelled or was forgotten before it was done, with
+// the connection as its steps kept it so far, before core forgets it.
+// Uninstall undoes what that connection names and treats what is
+// missing as already gone. That call is best effort, under the same
+// deadline: an error is logged, and the connection goes all the same.
 type Uninstaller interface {
 	Uninstall(ctx context.Context, conn Connection) error
 }

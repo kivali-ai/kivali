@@ -136,9 +136,10 @@ func runShell(t *testing.T, dir, script string) (string, int) {
 // as setup.md gives them. Each run is one the owner meets: the install,
 // its stages as progress and what it keeps; a key the service refuses
 // answered on the Form, then one it takes; the token only on the app's
-// page, a Wait checked until it is shown, the owner leaving it, the
-// install's connection forgotten and a second run taking up the app the
-// first made rather than making another; an installed integration's
+// page, a Wait checked until it is shown, the owner leaving it, and a
+// second run taking over the connection the first left (its kept
+// app_id), as a new start in Kivali does, and the app the first made
+// rather than making another; an installed integration's
 // requirements, an unmet one's Fix run as its own flow, and an uninstall
 // asked for twice; and the requirements with no connection, as
 // integration_validate asks. If the commands, the stub, try.py or the
@@ -186,7 +187,8 @@ func TestTheSkillsSetupRunsDoWhatItSays(t *testing.T) {
 		"page: https://app.deals.example/apps/app_1\n",
 		"Kivali keeps app_id in the connection's Secret",
 		"The same Wait, in",
-		"The setup did not finish, so Kivali forgets the connection it made (app_id)",
+		"The setup waits partway, as when the owner leaves it.",
+		"this one takes over the connection it made (app_id): what it kept stays.",
 		"asks for: token",
 		"Kivali keeps token in the connection's Secret",
 		"the connection is made",
@@ -315,7 +317,21 @@ func TestTryHoldsASetupStepToTheManifest(t *testing.T) {
 		"keep": map[string]any{"app_id": "app-12345", "token": "tok-abcdef"},
 	}}
 	out, _ = try(t, []map[string]any{shown}, "--every", "0", "--checks", "0")
-	wantIn(t, out, "Open app-12345 and show [secret].", "page: https://app.deals.example/apps/app-12345\n")
+	wantIn(t, out, "Open app-12345 and show [secret].", "page: https://app.deals.example/apps/app-12345\n",
+		// Left at its Wait, the install is undone as Kivali undoes it
+		// once the flow is forgotten.
+		"The run ends with a setup left partway:", "Kivali asks kivali/uninstall to undo on the service what it made, with what it kept (app_id, token)", "kivali/uninstall answered")
+
+	// An install that fails after keeping something has Kivali ask
+	// kivali/uninstall to undo what it made, with what it kept, before
+	// the connection goes: a server that relied on Kivali calling
+	// nothing would leave the service's side behind in Kivali and not
+	// here. (A Keep restarts the scripted server, which then answers
+	// from its first step again: the same Go, kept as it was.)
+	kept := map[string]any{"step": map[string]any{"go": map[string]any{"url": "https://app.deals.example/settings", "no_return": true}, "keep": map[string]any{"token": "tok-abcdef"}}}
+	stray := map[string]any{"step": map[string]any{"go": map[string]any{"url": "https://evil.example/"}}}
+	out, _ = try(t, []map[string]any{kept, stray})
+	wantIn(t, out, "problem: Kivali fails the flow", "The setup did not finish: Kivali asks kivali/uninstall to undo on the service what it made, with what it kept (token)", "kivali/uninstall answered")
 
 	away := map[string]any{"step": map[string]any{"go": map[string]any{"url": "https://app.deals.example/settings", "no_return": true}}}
 	out, code = try(t, []map[string]any{away, done}, "--address", "https://team.example/connect/callback")
