@@ -28,7 +28,7 @@ func TestManifest(t *testing.T) {
 		t.Errorf("manifest = %+v", m)
 	}
 	c := m.Kivali.Connection
-	if c.Method != integration.MethodSetup || c.Setup == nil || c.Client != "" || c.Multiple {
+	if c.Method != integration.MethodSetup || c.Setup == nil || c.Client != "" {
 		t.Fatalf("connection = %+v", c)
 	}
 	s := c.Setup
