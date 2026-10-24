@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/kivali-ai/kivali/internal/builtinintegrations"
 )
 
 // Why this test exists: GitHub takes an app's JWT only when it is
@@ -122,6 +124,58 @@ func TestTokensAreMintedPerCallNarrowedAndCachedUntilNearExpiry(t *testing.T) {
 	r := g.callT(t, reader, "get_repository", map[string]any{"repository": "acme/widgets"})
 	if !r.isError || strings.Contains(r.text, "ghs_") || !strings.Contains(r.text, "token [credential] may not read this") {
 		t.Errorf("error words %q", r.text)
+	}
+}
+
+// Why this test exists: setting GitHub up again keeps the connection's
+// id but may make another app or install it again elsewhere. A token
+// cached for the old app or installation must not be handed out for
+// the new one, whose installation it does not belong to.
+func TestTheCacheKeepsAppsAndInstallationsApart(t *testing.T) {
+	g, f := newTest(t)
+	f.route("GET /repos/acme/widgets", 200, repoJSON)
+	reader := agent(false, "acme/*")
+	call := func(conn builtinintegrations.Connection) {
+		t.Helper()
+		if r := g.callConn(t, reader, conn, "get_repository", map[string]any{"repository": "acme/widgets"}); r.isError {
+			t.Fatal(r.text)
+		}
+	}
+	call(testConn())
+	otherApp := testConn()
+	otherApp.Fields[FieldAppID] = "5678"
+	call(otherApp)
+	otherInstallation := testConn()
+	otherInstallation.Fields[FieldInstallationID] = "43"
+	call(otherInstallation)
+	call(testConn())
+	mints := f.mints()
+	if len(mints) != 3 || mints[1].JWT.ISS != "5678" || mints[2].Path != "/app/installations/43/access_tokens" {
+		t.Errorf("mints %+v", mints)
+	}
+	api := f.api()
+	if api[3].Bearer != api[0].Bearer {
+		t.Error("the first app's token was not reused for it")
+	}
+}
+
+// Why this test exists: a token for a repository is narrowed to its
+// name; a repository that is not owner/name would otherwise mint one
+// for the whole installation. Every action cleans its repository
+// first, so this guards the function's own contract.
+func TestATokenForARepositoryIsAlwaysNarrowed(t *testing.T) {
+	g, f := newTest(t)
+	c, err := readConnection(testConn())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, repo := range []string{"widgets", "acme/"} {
+		if _, err := g.installationToken(context.Background(), c, repo, perms()); err == nil {
+			t.Errorf("%q: a token", repo)
+		}
+	}
+	if n := len(f.requests()); n != 0 {
+		t.Errorf("%d requests", n)
 	}
 }
 

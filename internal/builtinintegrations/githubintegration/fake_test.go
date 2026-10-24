@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -212,6 +213,9 @@ func verifyJWT(tok string) (*jwtClaims, error) {
 	return &c, nil
 }
 
+// mintPath is the token endpoint of any installation.
+var mintPath = regexp.MustCompile(`^/app/installations/[0-9]+/access_tokens$`)
+
 func (f *fakeGitHub) serve(w http.ResponseWriter, req *http.Request) {
 	body, _ := io.ReadAll(req.Body)
 	rec := recorded{Method: req.Method, Path: req.URL.Path, Query: req.URL.Query(), Header: req.Header.Clone(), Body: string(body)}
@@ -235,7 +239,7 @@ func (f *fakeGitHub) serve(w http.ResponseWriter, req *http.Request) {
 		w.WriteHeader(r.Status)
 		_, _ = io.WriteString(w, r.Body)
 	}
-	if req.Method == http.MethodPost && req.URL.Path == "/app/installations/"+testInstallationID+"/access_tokens" {
+	if req.Method == http.MethodPost && mintPath.MatchString(req.URL.Path) {
 		switch {
 		case mintReply != nil:
 			write(*mintReply)
@@ -277,6 +281,8 @@ type callResult struct {
 	text    string
 	isError bool
 	refusal *builtinintegrations.Refusal
+	// audit is the Result's audit reason.
+	audit string
 }
 
 func (g *GitHub) callT(t *testing.T, caller builtinintegrations.Caller, name string, a map[string]any) callResult {
@@ -301,5 +307,5 @@ func (g *GitHub) callConn(t *testing.T, caller builtinintegrations.Caller, conn 
 	if len(res.Content) != 1 {
 		t.Fatalf("%s: content %q", name, res.Content)
 	}
-	return callResult{text: res.Content[0], isError: res.IsError}
+	return callResult{text: res.Content[0], isError: res.IsError, audit: res.Audit}
 }

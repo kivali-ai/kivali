@@ -48,8 +48,6 @@ type apiError struct {
 	RateLimited bool
 	// Timeout is GitHub not answering in time, for Status 0.
 	Timeout bool
-	// Transport is the failure to reach GitHub, for Status 0.
-	Transport error
 }
 
 func (e *apiError) Error() string {
@@ -59,8 +57,13 @@ func (e *apiError) Error() string {
 	return fmt.Sprintf("GitHub answered %d: %s", e.Status, e.Message)
 }
 
-// base is the API's address, checked: https, or plain http on loopback
-// for the tests' fake.
+// apiHost is the one host the API base may name over https: the
+// manifest's hosts are github.com's, and the actions read addresses on
+// github.com.
+const apiHost = "api.github.com"
+
+// base is the API's address, checked: https://api.github.com, or plain
+// http on loopback for the tests' fake.
 func (g *GitHub) base() (*url.URL, error) {
 	raw := g.APIBase
 	if raw == "" {
@@ -72,6 +75,9 @@ func (g *GitHub) base() (*url.URL, error) {
 	}
 	switch u.Scheme {
 	case "https":
+		if u.Host != apiHost {
+			return nil, errors.New("the GitHub built-in's API base is not " + apiHost)
+		}
 	case "http":
 		if h := u.Hostname(); h != "127.0.0.1" && h != "localhost" && h != "::1" {
 			return nil, errors.New("the GitHub built-in's API base is plain http off loopback")
@@ -83,12 +89,16 @@ func (g *GitHub) base() (*url.URL, error) {
 }
 
 // httpClient is the built-in's one client: a deadline per request, and
-// redirects followed only on the API's own origin.
+// redirects followed only for a GET and only on the API's own origin
+// (Go would follow a redirected POST as a GET, which writes nothing).
 func (g *GitHub) httpClient() *http.Client {
 	g.clientOnce.Do(func() {
 		g.client = &http.Client{
 			Timeout: requestTimeout,
 			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				if via[0].Method != http.MethodGet {
+					return errors.New("GitHub redirected a request that is not a read")
+				}
 				if len(via) >= maxRedirects {
 					return errors.New("GitHub redirected too many times")
 				}
@@ -152,13 +162,14 @@ func (g *GitHub) do(ctx context.Context, r request) ([]byte, http.Header, error)
 	case err != nil:
 		return nil, nil, transportError(ctx, err, r.auth)
 	case len(b) > maxAnswerBytes:
-		return nil, nil, &apiError{Message: "its answer is larger than Kivali reads", Transport: errors.New("answer too large")}
+		return nil, nil, &apiError{Message: "its answer is larger than Kivali reads"}
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		msg := scrub(errorWords(b, cmp.Or(http.StatusText(resp.StatusCode), resp.Status)), r.auth)
 		return nil, nil, &apiError{
 			Status:      resp.StatusCode,
-			Message:     scrub(errorWords(b, resp.Status), r.auth),
-			RateLimited: rateLimited(resp),
+			Message:     msg,
+			RateLimited: rateLimited(resp, msg),
 		}
 	}
 	return b, resp.Header, nil
@@ -179,7 +190,7 @@ func (g *GitHub) sendJSON(ctx context.Context, r request, out any) error {
 		return nil
 	}
 	if err := json.Unmarshal(b, out); err != nil {
-		return &apiError{Status: 0, Message: "its answer is not JSON Kivali reads", Transport: err}
+		return &apiError{Message: "its answer is not JSON Kivali reads"}
 	}
 	return nil
 }
@@ -245,31 +256,38 @@ func errorWords(body []byte, status string) string {
 	return w
 }
 
-// rateLimited reports whether a 403 or 429 is GitHub limiting the
-// app's requests rather than refusing them.
-func rateLimited(resp *http.Response) bool {
-	if resp.StatusCode != http.StatusForbidden && resp.StatusCode != http.StatusTooManyRequests {
-		return false
+// rateLimited reports whether an error answer is GitHub limiting the
+// app's requests rather than refusing them: every 429, and a 403 that
+// says its primary limit is used up (X-RateLimit-Remaining: 0), names
+// a wait (Retry-After) or whose words name a rate limit (a secondary
+// limit, which comes without either header).
+func rateLimited(resp *http.Response, words string) bool {
+	switch resp.StatusCode {
+	case http.StatusTooManyRequests:
+		return true
+	case http.StatusForbidden:
+		return resp.Header.Get("X-RateLimit-Remaining") == "0" || resp.Header.Get("Retry-After") != "" ||
+			strings.Contains(strings.ToLower(words), "rate limit")
 	}
-	return resp.Header.Get("X-RateLimit-Remaining") == "0" || resp.Header.Get("Retry-After") != ""
+	return false
 }
 
 // transportError is a failure to reach GitHub, or to read its answer,
 // in words scrubbed of the request's credential.
 func transportError(ctx context.Context, err error, secret string) *apiError {
 	if ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded) {
-		return &apiError{Message: "not in time", Timeout: true, Transport: err}
+		return &apiError{Message: "not in time", Timeout: true}
 	}
 	cause := err
 	var ue *url.Error
 	if errors.As(err, &ue) {
 		if ue.Timeout() {
-			return &apiError{Message: "not in time", Timeout: true, Transport: err}
+			return &apiError{Message: "not in time", Timeout: true}
 		}
 		cause = ue.Err
 	}
 	w, _ := clip(cause.Error(), errorWordsMax)
-	return &apiError{Message: scrub(w, secret), Transport: err}
+	return &apiError{Message: scrub(w, secret)}
 }
 
 // sentence is GitHub's words without the full stop they may end with,

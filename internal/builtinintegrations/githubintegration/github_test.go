@@ -200,6 +200,15 @@ func TestWhoamiNamesTheAppAndTheAccount(t *testing.T) {
 		err.Error() != "GitHub refused the GitHub App's key (HTTP 401): A JSON web token could not be decoded. Set GitHub up again." {
 		t.Errorf("verify on a refused key = %v", err)
 	}
+
+	// An installation the owner removed on GitHub reads as a setup to do
+	// again, not as GitHub's bare 404.
+	f.route("GET /app", 200, `{"slug":"kivali-acme"}`)
+	f.route("GET /app/installations/42", 404, `{"message":"Not Found"}`)
+	if _, err := g.Verify(context.Background(), testConn()); err == nil ||
+		err.Error() != "GitHub has no installation of the GitHub App that Kivali keeps (HTTP 404): Not Found. Set GitHub up again." {
+		t.Errorf("verify on a removed installation = %v", err)
+	}
 }
 
 // Why this test exists: an action the built-in does not have, and

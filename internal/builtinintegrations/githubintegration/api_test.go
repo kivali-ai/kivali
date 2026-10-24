@@ -2,8 +2,11 @@ package githubintegration
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -68,21 +71,26 @@ func TestAnswersAreReadToABound(t *testing.T) {
 	}
 }
 
-// Why this test exists: the API base is a test hook, and a plain http
-// one would send the app's JWT and tokens in the clear. Only https, or
-// http on loopback for the tests' fake, is ever used.
-func TestTheAPIBaseIsHTTPSOrLoopback(t *testing.T) {
+// Why this test exists: the API base is a test hook. A plain http one
+// would send the app's JWT and tokens in the clear, and another https
+// host is one the manifest does not name and whose addresses the
+// actions do not read (they keep what is under github.com). Only
+// https://api.github.com, or http on loopback for the tests' fake, is
+// ever used.
+func TestTheAPIBaseIsGitHubsOrLoopback(t *testing.T) {
 	for base, ok := range map[string]bool{
-		"":                       true,
-		"https://api.github.com": true,
-		"https://ghe.acme.io/":   true,
-		"http://127.0.0.1:9999":  true,
-		"http://localhost:9999":  true,
-		"http://api.github.com":  false,
-		"http://10.0.0.1":        false,
-		"ftp://api.github.com":   false,
-		"https://user@x.io":      false,
-		"api.github.com":         false,
+		"":                               true,
+		"https://api.github.com":         true,
+		"https://api.github.com/":        true,
+		"https://ghe.acme.io/":           false,
+		"https://api.github.com.evil.io": false,
+		"http://127.0.0.1:9999":          true,
+		"http://localhost:9999":          true,
+		"http://api.github.com":          false,
+		"http://10.0.0.1":                false,
+		"ftp://api.github.com":           false,
+		"https://user@x.io":              false,
+		"api.github.com":                 false,
 	} {
 		_, err := (&GitHub{APIBase: base}).base()
 		if (err == nil) != ok {
@@ -92,5 +100,79 @@ func TestTheAPIBaseIsHTTPSOrLoopback(t *testing.T) {
 	g := &GitHub{APIBase: "http://api.github.com"}
 	if _, _, err := g.do(context.Background(), request{method: "GET", path: "/app", auth: "x"}); err == nil {
 		t.Error("a request went out over plain http")
+	}
+}
+
+// Why this test exists: Go follows a 301, 302 or 303 after a POST as a
+// GET, so a create GitHub redirected would read something and answer
+// as though it had written. Only a read is followed.
+func TestARedirectedWriteIsNotFollowed(t *testing.T) {
+	g, f := newTest(t)
+	f.routeFunc("POST /repos/acme/widgets/issues", func(recorded) reply {
+		return reply{Status: 302, Header: map[string]string{"Location": f.srv.URL + "/repos/acme/widgets/issues/1"}}
+	})
+	f.route("GET /repos/acme/widgets/issues/1", 200, `{"html_url":"https://github.com/acme/widgets/issues/1"}`)
+	r := g.callT(t, agent(true, "acme/*"), "create_issue", map[string]any{"repository": "acme/widgets", "title": "t"})
+	if !r.isError || !strings.Contains(r.text, "GitHub redirected a request that is not a read") {
+		t.Errorf("%+v", r)
+	}
+	for _, q := range f.api() {
+		if q.Method == "GET" {
+			t.Errorf("the redirect was followed: %s", q.Path)
+		}
+	}
+}
+
+// Why this test exists: an error answer that is not GitHub's JSON (a
+// proxy's or a load balancer's page) has no message to quote; the
+// agent reads the status in words rather than the page or nothing.
+func TestAnErrorWithoutGitHubsWordsNamesItsStatus(t *testing.T) {
+	g, f := newTest(t)
+	f.route("GET /repos/acme/widgets", 502, `<html>bad gateway</html>`)
+	r := g.callT(t, agent(false, "acme/*"), "get_repository", map[string]any{"repository": "acme/widgets"})
+	if !r.isError || r.text != "GitHub answered 502: Bad Gateway" {
+		t.Errorf("%+v", r)
+	}
+}
+
+type timeoutError struct{}
+
+func (timeoutError) Error() string   { return "i/o timeout" }
+func (timeoutError) Timeout() bool   { return true }
+func (timeoutError) Temporary() bool { return true }
+
+// Why this test exists: a call core abandons at its deadline, or a
+// request past the client's 30 seconds, must read as GitHub not
+// answering in time, with nothing to ask the owner; any other failure
+// to reach GitHub names its cause, without the request's credential.
+func TestTimeoutsAndCancelsReadAsNotInTime(t *testing.T) {
+	g, f := newTest(t)
+	f.route("GET /repos/acme/widgets", 200, repoJSON)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	res, err := g.Call(ctx, agent(false, "acme/*"), testConn(), "get_repository", json.RawMessage(`{"repository":"acme/widgets"}`))
+	if err != nil || !res.IsError || res.Content[0] != "GitHub did not answer in time; try again later." {
+		t.Errorf("cancelled: %+v %v", res, err)
+	}
+	for _, c := range []struct {
+		err   error
+		agent string
+		owner string
+	}{
+		{&url.Error{Op: "Get", URL: "https://api.github.com/x", Err: timeoutError{}},
+			"GitHub did not answer in time; try again later.", "GitHub did not answer in time; try again later."},
+		{context.DeadlineExceeded,
+			"GitHub did not answer in time; try again later.", "GitHub did not answer in time; try again later."},
+		{&url.Error{Op: "Get", URL: "https://api.github.com/x", Err: errors.New("dial tcp: connection refused by ghs_secret")},
+			"GitHub did not answer: dial tcp: connection refused by [credential]. Try again later.",
+			"GitHub did not answer: dial tcp: connection refused by [credential]"},
+	} {
+		e := transportError(context.Background(), c.err, "ghs_secret")
+		if got := agentWords(e); got != c.agent {
+			t.Errorf("%v: agent %q", c.err, got)
+		}
+		if got := ownerWords(e); got != c.owner {
+			t.Errorf("%v: owner %q", c.err, got)
+		}
 	}
 }
