@@ -54,7 +54,8 @@ const (
 // what the binary runs.
 type GitHub struct {
 	// APIBase is GitHub's REST API; empty is DefaultAPIBase. It must be
-	// https, or plain http on loopback for the tests' fake.
+	// https://api.github.com, or plain http on loopback for the tests'
+	// fake.
 	APIBase string
 	// Clock is the server's clock, which JWTs are signed on and cached
 	// tokens expire on; nil is the system's.
@@ -237,6 +238,11 @@ func (g *GitHub) Call(ctx context.Context, caller builtinintegrations.Caller, co
 			return failed(agentWords(ae)), nil
 		}
 		return nil, err
+	}
+	if made, ok := answer.(created); ok {
+		// The audit row says what was made, from GitHub's own answer.
+		text, _ := clip(string(made), answerClip)
+		return &builtinintegrations.Result{Content: []string{text}, Audit: "created " + text}, nil
 	}
 	text, err := answerText(answer)
 	if err != nil {

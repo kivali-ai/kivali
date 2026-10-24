@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -307,10 +308,14 @@ func (l *labelNames) UnmarshalJSON(b []byte) error {
 // decode reads a GitHub answer into out.
 func decode(b []byte, out any) error {
 	if err := json.Unmarshal(b, out); err != nil {
-		return &apiError{Message: "its answer is not JSON Kivali reads", Transport: err}
+		return &apiError{Message: "its answer is not JSON Kivali reads"}
 	}
 	return nil
 }
+
+// created is the answer of an action that made something on GitHub:
+// its address, which the owner's audit row keeps too.
+type created string
 
 // repoPath is the REST path of owner/name.
 func repoPath(repo string) string { return "/repos/" + repo }
@@ -618,7 +623,7 @@ func createIssue(ctx context.Context, c *call) (any, error) {
 	if err := c.g.sendJSON(ctx, request{method: http.MethodPost, path: repoPath(repo) + "/issues", auth: tok, body: payload}, &out); err != nil {
 		return nil, err
 	}
-	return out.HTMLURL, nil
+	return created(out.HTMLURL), nil
 }
 
 // comment comments on an issue or a pull request. They share their
@@ -659,7 +664,7 @@ func comment(ctx context.Context, c *call) (any, error) {
 	if err := c.g.sendJSON(ctx, request{method: http.MethodPost, path: path + "/comments", auth: write, body: map[string]any{"body": body}}, &out); err != nil {
 		return nil, err
 	}
-	return out.HTMLURL, nil
+	return created(out.HTMLURL), nil
 }
 
 // pullSummary is one pull request in a list.
@@ -769,13 +774,19 @@ func getPullRequest(ctx context.Context, c *call) (any, error) {
 	var diff *string
 	if withDiff {
 		b, _, err := c.g.do(ctx, request{method: http.MethodGet, path: path, auth: tok, accept: mediaDiff})
-		if err != nil {
+		var ae *apiError
+		switch {
+		case errors.As(err, &ae) && ae.Status == http.StatusNotAcceptable:
+			// GitHub gives no diff past its own size limits.
+			notes = append(notes, "GitHub gives no diff for this pull request ("+sentence(ae.Message)+"); compare lists every file changed.")
+		case err != nil:
 			return nil, err
-		}
-		text, clipped := clip(string(b), diffClip)
-		diff = &text
-		if clipped {
-			notes = append(notes, fmt.Sprintf("The diff is cut to its first %d characters; compare lists every file changed.", diffClip))
+		default:
+			text, clipped := clip(string(b), diffClip)
+			diff = &text
+			if clipped {
+				notes = append(notes, fmt.Sprintf("The diff is cut to its first %d characters; compare lists every file changed.", diffClip))
+			}
 		}
 	}
 	return struct {
@@ -836,7 +847,7 @@ func createPullRequest(ctx context.Context, c *call) (any, error) {
 	if err := c.g.sendJSON(ctx, request{method: http.MethodPost, path: repoPath(repo) + "/pulls", auth: tok, body: payload}, &out); err != nil {
 		return nil, err
 	}
-	return out.HTMLURL, nil
+	return created(out.HTMLURL), nil
 }
 
 func listBranches(ctx context.Context, c *call) (any, error) {

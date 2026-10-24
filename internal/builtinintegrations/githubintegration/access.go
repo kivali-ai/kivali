@@ -114,7 +114,8 @@ func cleanRepository(v any) (string, error) {
 	if !ok || strings.TrimSpace(s) == "" {
 		return "", badArgument("Name the repository as owner/name.")
 	}
-	notOne := badArgument(fmt.Sprintf("%s is not owner/name.", strings.TrimSpace(s)))
+	echoed, _ := clip(strings.TrimSpace(s), 200)
+	notOne := badArgument(fmt.Sprintf("%s is not owner/name.", echoed))
 	p := strings.Trim(strings.Trim(s, " \t"), "/")
 	p = strings.Trim(strings.TrimSuffix(p, ".git"), "/")
 	segs := strings.Split(p, "/")

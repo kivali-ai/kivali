@@ -2481,8 +2481,10 @@ installation access token (`POST
 narrows it to the call's repository (`repositories: [name]`) and to
 the permissions the action needs (`permissions`, always with `metadata:
 read`). A minted token is cached in the process's memory, by
-connection id, app id, installation id, repository (in lower case) and
-permissions, and handed out again until a minute before the
+connection id, app id, installation id, the repository's name (the
+owner dropped, in lower case, as the token's `repositories` names it;
+none for a token that reaches the whole installation) and permissions,
+and handed out again until a minute before the
 `expires_at` GitHub gave, on the same clock; one that expires within
 the minute is used once and not cached. Tokens are never written
 anywhere and never in an answer: GitHub's words an error passes on have
@@ -2506,7 +2508,7 @@ permission, and to ask the owner.
 | `create_issue` | `POST /repos/{o}/{r}/issues` | `issues: write` |
 | `comment` | `GET /repos/{o}/{r}/issues/{n}` to learn whether it is a pull request, then `POST /repos/{o}/{r}/issues/{n}/comments` | reads with `issues: read`, `pull_requests: read`; writes with `pull_requests: write` for a pull request, `issues: write` for an issue |
 | `list_pull_requests` | `GET /repos/{o}/{r}/pulls` (state, base); `merged` asks for closed ones and keeps those with `merged_at` | `pull_requests: read` |
-| `get_pull_request` | `GET /repos/{o}/{r}/pulls/{n}`, and with `diff` the same path as `application/vnd.github.diff` | `pull_requests: read`, and `contents: read` with `diff` |
+| `get_pull_request` | `GET /repos/{o}/{r}/pulls/{n}`, and with `diff` the same path as `application/vnd.github.diff`; a 406 there (a diff past GitHub's limits) answers the pull request with a note instead | `pull_requests: read`, and `contents: read` with `diff` |
 | `create_pull_request` | `POST /repos/{o}/{r}/pulls` from a head branch already on GitHub; moves no commits | `pull_requests: write` |
 | `list_branches` | `GET /repos/{o}/{r}/branches` | `contents: read` |
 | `compare` | `GET /repos/{o}/{r}/compare/{base}...{head}`: commits and files, no patches | `contents: read` |
@@ -2548,22 +2550,26 @@ The rules are the shipped bundle's:
   every answer at 60,000, with "[The answer is cut to its first 60000
   characters.]". Answers are compact JSON, or text for
   `list_repositories`, `list_branches` and the addresses the write
-  actions answer.
+  actions answer. A write action's audit row is "created <address>".
 - **GitHub's failures** are error results with GitHub's words (its
-  `message` and each of its `errors`' messages): a 401 says GitHub
+  `message` and each of its `errors`' messages, or the status in words,
+  "Bad Gateway", for an answer that has none): a 401 says GitHub
   refused the app's credentials and "Ask the owner."; a 403 says the
   app may lack the permission or not be installed on the repository,
-  "ask the owner"; a 403 or 429 that is GitHub's rate limit
-  (`X-RateLimit-Remaining: 0` or `Retry-After`) says to try again
-  later; any other is "GitHub answered <status>: <words>".
+  "ask the owner"; a 429, and a 403 that is GitHub's rate limit
+  (`X-RateLimit-Remaining: 0`, `Retry-After`, or words naming a rate
+  limit, as a secondary limit's do), says to try again later; a request
+  past its deadline, or a call core abandons, says GitHub did not
+  answer in time; any other is "GitHub answered <status>: <words>".
 
 One `*http.Client` serves the built-in: 30 seconds a request, at most
 16 MiB of an answer read, `Accept: application/vnd.github+json` (or the
 diff type), `X-GitHub-Api-Version: 2022-11-28`, the credential as a
-bearer, and redirects followed only on the API's own origin (a renamed
-repository's), at most five. `GitHub.APIBase` is the API
-(`https://api.github.com`); it must be https, or plain http on
-loopback, which only the tests use. `GitHub.Clock` is the clock JWTs
+bearer, and redirects followed only for a GET and only on the API's
+own origin (a renamed repository's), at most five: Go would follow a
+redirected POST as a GET. `GitHub.APIBase` is the API; it must be
+`https://api.github.com`, whose addresses on github.com the actions
+read, or plain http on loopback, which only the tests use. `GitHub.Clock` is the clock JWTs
 and the cache run on.
 
 The package's tests run against a fake GitHub (`fake_test.go`), an
