@@ -45,6 +45,7 @@ func registeredManifest() map[string]any {
 		"method":          "browser",
 		"client":          "registered",
 		"discover":        "https://mcp.zoominfo.com/mcp",
+		"hosts":           []any{"mcp.zoominfo.com", "okta-login.zoominfo.com"},
 		"credential_keys": map[string]any{"access_token": "ZI_TOKEN"},
 	}
 	return m
@@ -86,26 +87,38 @@ func TestSetupConnectionPassesForABuiltinAndReadsWhole(t *testing.T) {
 	}
 	// The whole check, as a bundle: the one refusal and nothing else, so
 	// an env that names a kept key passes as one naming a form field
-	// does. As a built-in (no server, no hosts): no finding. The ordered
+	// does. As a built-in (no server): no finding, and kivali.hosts is
+	// required, since a setup built-in reaches its service from Kivali
+	// and the install screen lists where. A keep of client_id without a
+	// hand-over passes: GitHub's manifest flow mints one. The ordered
 	// fields are written back as they were read.
+	obj(m, "kivali", "connection", "setup", "keeps")["client_id"] = "The app's client id"
 	if got := Validate(parseMap(t, m), defaultFiles()).Texts(); len(got) != 1 || !strings.Contains(got[0], "a bundle's setup flow is not in this version of Kivali") {
 		t.Errorf("bundle findings = %v", got)
 	}
 	delete(m, "server")
-	delete(obj(m, "kivali"), "hosts")
 	mb := parseMap(t, m)
 	if got := ValidateBuiltin(mb).Texts(); len(got) != 0 {
 		t.Errorf("built-in findings = %v", got)
+	}
+	delete(obj(m, "kivali"), "hosts")
+	if got := ValidateBuiltin(parseMap(t, m)).Texts(); len(got) != 1 || !strings.Contains(got[0], "kivali.hosts is empty; a built-in with a setup flow names every host") {
+		t.Errorf("a setup built-in without hosts: %v", got)
+	}
+	delete(obj(m, "kivali", "connection", "setup", "keeps"), "client_id")
+	obj(m, "kivali")["hosts"] = []any{"api.example.com"}
+	if !ConnectionKeySecret(mb, "app_id") || ConnectionKeySecret(mb, "account") || ConnectionKeySecret(parseMap(t, signInManifest()), "client_id") || !ConnectionKeySecret(parseMap(t, signInManifest()), "client_secret") {
+		t.Error("ConnectionKeySecret: a kept key and a sensitive field are secret; a plain field and the client id are not")
 	}
 	out, err := json.Marshal(mb.Kivali.Connection.Setup)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := `{"summary":"Creates a private GitHub App on your account and installs it on the repositories you choose.","hosts":["github.com"],"fields":{"account":{"words":"Your personal account, or an organization's name"},"personal_access_key":{"title":"Key","words":"From the key page","secret":true,"setup_only":true}},"keeps":{"app_id":"The app's id","private_key":"The app's private key, which Kivali signs with"}}`
+	want := `{"summary":"Creates a private GitHub App on your account and installs it on the repositories you choose.","hosts":["github.com"],"fields":{"account":{"words":"Your personal account, or an organization's name"},"personal_access_key":{"title":"Key","words":"From the key page","secret":true,"setup_only":true}},"keeps":{"app_id":"The app's id","client_id":"The app's client id","private_key":"The app's private key, which Kivali signs with"}}`
 	if string(out) != want {
 		t.Errorf("setup written as\n%s\nwant\n%s", out, want)
 	}
-	if got := ConnectionKeys(mb); !slices.Equal(got, []string{"app_id", "private_key"}) {
+	if got := ConnectionKeys(mb); !slices.Equal(got, []string{"app_id", "client_id", "private_key"}) {
 		t.Errorf("connection keys = %v", got)
 	}
 	if got := ConnectionFields(mb); len(got) != 0 {
@@ -162,11 +175,14 @@ func TestSetupThenHandsOverToASignIn(t *testing.T) {
 // with a wildcard or in another case would not match what a Go step
 // names; a field or kept key with no words leaves the install screen
 // nothing to show; a key both used once and kept contradicts itself; a
-// field asking for the client id would have the owner paste what setup
-// makes; a kept token key would collide with core's own; user_config
-// on a setup connection would draw a form nothing reads; endpoints
-// without a hand-over would be sign-in settings nothing runs. One case
-// per rule, each the valid manifest changed in one place.
+// kept token key would collide with core's own; user_config on a setup
+// connection would draw a form nothing reads; endpoints without a
+// hand-over would be sign-in settings nothing runs. A field or a keep
+// may name client_id or client_secret with or without a hand-over: a
+// flow may ask the owner for an app's credentials (HubSpot's fallback)
+// or keep the ones a service minted (GitHub's), and the install screen
+// shows either. One case per rule, each the valid manifest changed in
+// one place.
 func TestSetupConnectionRules(t *testing.T) {
 	setup := func(m map[string]any) map[string]any { return obj(m, "kivali", "connection", "setup") }
 	cases := []struct {
@@ -190,9 +206,6 @@ func TestSetupConnectionRules(t *testing.T) {
 		{"field secret not a boolean", func(m map[string]any) {
 			obj(m, "kivali", "connection", "setup", "fields")["account"] = map[string]any{"words": "x", "secret": "yes"}
 		}, "kivali.connection.setup.fields.account: secret must be true or false"},
-		{"field asks for the client id", func(m map[string]any) {
-			obj(m, "kivali", "connection", "setup", "fields")["client_id"] = map[string]any{"words": "x"}
-		}, "kivali.connection.setup.fields.client_id: an app's client id and secret are what setup keeps"},
 		{"field under a token key", func(m map[string]any) {
 			obj(m, "kivali", "connection", "setup", "fields")["oauth_access_token"] = map[string]any{"words": "x"}
 		}, "kivali.connection.setup.fields.oauth_access_token: Kivali keeps a sign-in's tokens under that key"},
@@ -202,7 +215,6 @@ func TestSetupConnectionRules(t *testing.T) {
 		{"keep key", func(m map[string]any) { obj(m, "kivali", "connection", "setup", "keeps")["App Id"] = "x" }, "kivali.connection.setup.keeps.App Id: the key must be lowercase letters"},
 		{"keep without words", func(m map[string]any) { obj(m, "kivali", "connection", "setup", "keeps")["app_id"] = "" }, "kivali.connection.setup.keeps.app_id: words are missing"},
 		{"keep under a token key", func(m map[string]any) { obj(m, "kivali", "connection", "setup", "keeps")["oauth_refresh_token"] = "x" }, "kivali.connection.setup.keeps.oauth_refresh_token: Kivali keeps a sign-in's tokens under that key"},
-		{"keeps the client id with no hand-over", func(m map[string]any) { obj(m, "kivali", "connection", "setup", "keeps")["client_id"] = "x" }, "kivali.connection.setup.keeps.client_id: an app's client id and secret are kept for the sign-in setup.then hands over to"},
 		{"then unknown", func(m map[string]any) { setup(m)["then"] = "token" }, "kivali.connection.setup.then token is not a sign-in Kivali runs; it is browser or device"},
 		{"user_config on a setup connection", func(m map[string]any) {
 			m["user_config"] = map[string]any{"token": map[string]any{"type": "string", "title": "Token"}}
@@ -227,12 +239,15 @@ func TestSetupConnectionRules(t *testing.T) {
 
 // Why this test exists: a registered client is the one sign-in the
 // owner registers nothing for, so its manifest gives a discover address
-// and no endpoints, and its form takes no client id or secret. A
-// manifest that gave endpoints beside discover could send the sign-in
-// somewhere other than the server it discovered; one with no discover
-// gives core nothing to read; and a registered device or token
-// connection names a flow core does not run that way. For a bundle it
-// is not in this version of Kivali.
+// and no endpoints, and its form takes no client id or secret; what it
+// does give is the hosts the discovered endpoints may be on, since the
+// install screen promises where the browser is sent and core can hold
+// the metadata to that only when the manifest says. A manifest that
+// gave endpoints beside discover could send the sign-in somewhere other
+// than the server it discovered; one with no discover gives core
+// nothing to read; one with no hosts leaves the promise empty; and a
+// registered device or token connection names a flow core does not run
+// that way. For a bundle it is not in this version of Kivali.
 func TestRegisteredClient(t *testing.T) {
 	m := registeredManifest()
 	if got := builtinConnectionFindings(t, m); len(got) != 0 {
@@ -242,7 +257,7 @@ func TestRegisteredClient(t *testing.T) {
 	if !c.Registered() || !c.SignIn() || !c.OAuth() || c.Discover != "https://mcp.zoominfo.com/mcp" {
 		t.Errorf("read as %+v", c)
 	}
-	if got := c.SignInHosts(); !slices.Equal(got, []string{"mcp.zoominfo.com"}) {
+	if got := c.SignInHosts(); !slices.Equal(got, []string{"mcp.zoominfo.com", "okta-login.zoominfo.com"}) {
 		t.Errorf("sign-in hosts = %v", got)
 	}
 	if got := ConnectionFields(parseMap(t, m)); len(got) != len(parseMap(t, m).UserConfig) {
@@ -264,11 +279,19 @@ func TestRegisteredClient(t *testing.T) {
 			conn(m)["authorization_endpoint"] = "https://evil.example/authorize"
 		}, "kivali.connection.authorization_endpoint: Kivali reads a registered client's endpoints from discover, so the manifest gives none"},
 		{"registered device", func(m map[string]any) { conn(m)["method"] = "device" }, "kivali.connection.client registered: only a browser connection has Kivali register itself"},
+		{"no hosts", func(m map[string]any) { delete(conn(m), "hosts") }, "kivali.connection.hosts is missing; a registered client names every host the discovered endpoints may be on"},
+		{"host pattern", func(m map[string]any) { conn(m)["hosts"] = []any{"*.zoominfo.com"} }, `kivali.connection.hosts: "*.zoominfo.com" is not a host name`},
 		{"discover on an operator client", func(m map[string]any) {
 			conn(m)["client"] = "operator"
 			conn(m)["authorization_endpoint"] = "https://app.example/authorize"
 			conn(m)["token_endpoint"] = "https://api.example/token"
 		}, "kivali.connection.discover: only a registered client has one"},
+		{"hosts on an operator client", func(m map[string]any) {
+			delete(conn(m), "discover")
+			conn(m)["client"] = "operator"
+			conn(m)["authorization_endpoint"] = "https://app.example/authorize"
+			conn(m)["token_endpoint"] = "https://api.example/token"
+		}, "kivali.connection.hosts: only a registered client has them"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

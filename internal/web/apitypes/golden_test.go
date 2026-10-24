@@ -207,6 +207,7 @@ func goldenFixtures() map[string]any {
 		"integration_version_shipped":        goldenShippedIntegrationVersion(),
 		"integration_version_sign_in":        goldenIntegrationVersionSignIn(),
 		"integration_version_setup":          goldenIntegrationVersionSetup(),
+		"integration_version_registered":     goldenIntegrationVersionRegistered(),
 		"integration_page_setup":             goldenIntegrationPageSetup(),
 		"integration_upload_refused":         IntegrationUploadRefused{Error: "the bundle did not pass the check", Who: "you", Findings: []string{"server.type must be python", "kivali.hosts is empty"}},
 		"integration_audit":                  goldenIntegrationAudit(),

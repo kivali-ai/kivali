@@ -168,8 +168,11 @@ func validatePackages(m *Manifest, f *Findings) {
 // ValidateBuiltin checks a built-in integration's manifest
 // (internal/builtinintegrations) by the rules Validate holds a bundle's
 // to, except what a built-in has no use for. It has no bundle and no
-// server section, and declares no hosts and no packages: it runs inside
-// Kivali and reaches the hosts its connection names. The names kivali.verify and
+// server section, and declares no packages: it runs inside Kivali. It
+// declares no hosts either, since it reaches the hosts its connection
+// names, unless its connection is made by a setup flow, when
+// kivali.hosts names every host its setup and its calls reach from
+// Kivali, for the install screen. The names kivali.verify and
 // kivali.access.choices give are passed to its Go functions, so they
 // need not name a tool.
 func ValidateBuiltin(m *Manifest) Findings {
@@ -183,7 +186,10 @@ func ValidateBuiltin(m *Manifest) Findings {
 	if s.Type != "" || s.EntryPoint != "" || s.MCPConfig.Command != "" || len(s.MCPConfig.Args) > 0 || len(s.MCPConfig.Env) > 0 {
 		f.errorf("server: a built-in integration has no server section")
 	}
-	if len(m.Kivali.Hosts) > 0 {
+	switch setup := m.Kivali.Connection.Method == MethodSetup; {
+	case setup && len(m.Kivali.Hosts) == 0:
+		f.errorf("kivali.hosts is empty; a built-in with a setup flow names every host its setup and its calls reach from Kivali")
+	case !setup && len(m.Kivali.Hosts) > 0:
 		f.errorf("kivali.hosts: a built-in integration declares no hosts; it reaches the hosts its connection names")
 	}
 	if len(m.Kivali.Packages) > 0 {
@@ -274,7 +280,7 @@ func validateServer(m *Manifest, files []BundleFile, f *Findings) {
 	if len(s.MCPConfig.Args) == 0 {
 		f.errorf("server.mcp_config.args is empty; name the entry point")
 	}
-	signIn := m.Kivali.Connection.SignIn()
+	signIn := m.Kivali.Connection.OAuth()
 	for _, k := range sortedKeys(s.MCPConfig.Env) {
 		if signIn && k == m.Kivali.Connection.CredentialKey() {
 			f.errorf("server.mcp_config.env.%s: Kivali gives the access token under that name, so the env cannot set it", k)
@@ -514,6 +520,14 @@ func validateConnection(m *Manifest, builtin bool, f *Findings) {
 	case !c.Registered() && c.Discover != "":
 		f.errorf("kivali.connection.discover: only a registered client has one")
 	}
+	switch {
+	case c.Registered() && len(c.Hosts) == 0:
+		f.errorf("kivali.connection.hosts is missing; a registered client names every host the discovered endpoints may be on")
+	case c.Registered():
+		validateHostList("kivali.connection.hosts", c.Hosts, f)
+	case len(c.Hosts) > 0:
+		f.errorf("kivali.connection.hosts: only a registered client has them; a sign-in connection's hosts are its endpoints'")
+	}
 	for _, key := range sortedKeys(c.CredentialKeys) {
 		if key != CredentialAccessToken {
 			f.errorf("kivali.connection.credential_keys.%s: only access_token can be named", key)
@@ -533,6 +547,27 @@ func validateConnection(m *Manifest, builtin bool, f *Findings) {
 
 // setupThenMethods is what setup.then may hand over to.
 var setupThenMethods = []string{MethodBrowser, MethodDevice}
+
+// validateHostList checks a list of hosts the owner's browser may be
+// sent to, or tokens taken from (at names it): each a lowercase host
+// name alone, no wildcard or pattern, listed once. Core matches a
+// step's or a discovered endpoint's host against the list exactly.
+func validateHostList(at string, hosts []string, f *Findings) {
+	seen := map[string]bool{}
+	for _, h := range hosts {
+		switch {
+		case h == "*":
+			f.errorf("%s: * would send the browser anywhere; name the hosts", at)
+		case h != strings.ToLower(h):
+			f.errorf("%s: %s must be lowercase", at, h)
+		case !ValidHost(h) || strings.ContainsAny(h, "*[]"):
+			f.errorf("%s: %q is not a host name; give the host alone, with no scheme, port, path or wildcard", at, h)
+		case seen[h]:
+			f.errorf("%s: %s is listed twice", at, h)
+		}
+		seen[h] = true
+	}
+}
 
 // validateSetup checks kivali.connection.setup, what a setup
 // connection's flow may do. Every bound core holds a step to is
@@ -556,20 +591,7 @@ func validateSetup(m *Manifest, f *Findings) {
 	if strings.TrimSpace(s.Summary) == "" {
 		f.errorf("kivali.connection.setup.summary is missing; say what setup does, in words for the owner")
 	}
-	seen := map[string]bool{}
-	for _, h := range s.Hosts {
-		switch {
-		case h == "*":
-			f.errorf("kivali.connection.setup.hosts: * would send the browser anywhere; name the hosts")
-		case h != strings.ToLower(h):
-			f.errorf("kivali.connection.setup.hosts: %s must be lowercase", h)
-		case !ValidHost(h) || strings.ContainsAny(h, "*[]"):
-			f.errorf("kivali.connection.setup.hosts: %q is not a host name; give the host alone, with no scheme, port, path or wildcard", h)
-		case seen[h]:
-			f.errorf("kivali.connection.setup.hosts: %s is listed twice", h)
-		}
-		seen[h] = true
-	}
+	validateHostList("kivali.connection.setup.hosts", s.Hosts, f)
 	reserved := func(at, key string) bool {
 		switch key {
 		case connect.SecretKeyAccessToken, connect.SecretKeyRefreshToken:
@@ -583,8 +605,6 @@ func validateSetup(m *Manifest, f *Findings) {
 		switch {
 		case !configKeyRE.MatchString(fld.Key):
 			f.errorf("%s: the key must be lowercase letters, digits and underscores, starting with a letter", at)
-		case fld.Key == FieldClientID || fld.Key == FieldClientSecret:
-			f.errorf("%s: an app's client id and secret are what setup keeps, not what it asks the owner for", at)
 		case reserved(at, fld.Key):
 		}
 		if strings.TrimSpace(fld.Words) == "" {
@@ -602,8 +622,6 @@ func validateSetup(m *Manifest, f *Findings) {
 		switch {
 		case !configKeyRE.MatchString(k.Key):
 			f.errorf("%s: the key must be lowercase letters, digits and underscores, starting with a letter", at)
-		case (k.Key == FieldClientID || k.Key == FieldClientSecret) && s.Then == "":
-			f.errorf("%s: an app's client id and secret are kept for the sign-in setup.then hands over to; without then they mean nothing to Kivali", at)
 		case reserved(at, k.Key):
 		}
 		if strings.TrimSpace(k.Words) == "" {

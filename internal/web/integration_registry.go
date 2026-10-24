@@ -978,9 +978,8 @@ func (r *integrationRegistry) readStoredConnection(ctx context.Context, name, co
 		default:
 			data = got
 		}
-		fields := integration.ConnectionFields(m)
 		for k, v := range data {
-			if f, ok := fields.Field(k); ok && f.Sensitive && v != "" {
+			if integration.ConnectionKeySecret(m, k) && v != "" {
 				values[k] = v
 				secretValues = append(secretValues, v)
 			}
@@ -1017,13 +1016,13 @@ func (r *integrationRegistry) credential(ctx context.Context, name string) (*int
 	}
 	r.setScrub(name, secretValues)
 	fields := map[string]string{}
-	for _, f := range integration.ConnectionFields(m) {
-		if v, ok := values[f.Key]; ok {
-			fields[f.Key] = v
+	for _, k := range integration.ConnectionKeys(m) {
+		if v, ok := values[k]; ok {
+			fields[k] = v
 		}
 	}
 	env := integration.ServerEnv(m, values)
-	if key := m.Kivali.Connection.CredentialKey(); key != "" && m.Kivali.Connection.SignIn() {
+	if key := m.Kivali.Connection.CredentialKey(); key != "" && m.Kivali.Connection.OAuth() {
 		fields[key] = values[key]
 		env[key] = values[key]
 	}

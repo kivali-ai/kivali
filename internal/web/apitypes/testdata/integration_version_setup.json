@@ -55,7 +55,10 @@
     "then": ""
   },
   "sign_in_hosts": [],
-  "hosts": [],
+  "hosts": [
+    "api.github.com",
+    "github.com"
+  ],
   "packages": [],
   "connection_fields": [],
   "actions": [

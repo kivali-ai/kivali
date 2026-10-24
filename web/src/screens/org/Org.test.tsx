@@ -44,6 +44,7 @@ import {
   goIntegrationVersionShipped,
   goIntegrationVersionSignIn,
   goIntegrationVersionSetup,
+  goIntegrationVersionRegistered,
   goIntegrationPageSetup,
   goIntegrations,
   goNetwork,
@@ -1365,11 +1366,29 @@ describe('Integration install screen', () => {
     }
     const needs = within(screen.getByRole('region', { name: 'The connection needs' }));
     expect(needs.getByText('Nothing to enter: setup makes the connection.')).toBeInTheDocument();
+    // A setup built-in reaches its service from Kivali, so its hosts are listed rather than "the hosts its connection
+    // names", which a setup connection has none of.
+    const hosts = within(screen.getByRole('region', { name: 'Reaches these hosts' }));
+    expect(hosts.getAllByRole('listitem').map((li) => li.textContent)).toEqual(goIntegrationVersionSetup.hosts);
+    expect(hosts.queryByText('Reaches the hosts its connection names.')).toBeNull();
     cleanup();
 
     // A version with no setup draws no such block.
     await renderOrg('/org/integrations/hubspot/versions/1.3.0');
     expect(screen.queryByRole('region', { name: 'Setup' })).toBeNull();
+  });
+
+  // Guards the install screen of a sign-in whose client Kivali registers itself (integration_version_registered.json):
+  // the owner pastes nothing, and the screen says so where a form would otherwise list the client id and secret,
+  // while Signs in at still lists the hosts the discovered endpoints may be on, since that is the bound Kivali holds
+  // the service's metadata to.
+  it('says Kivali registers itself for a registered client', async () => {
+    const REG = '/api/v1/org/integrations/zoominfo/versions/1.3.0';
+    await renderOrg('/org/integrations/zoominfo/versions/1.3.0', { routes: { ['GET ' + REG]: goIntegrationVersionRegistered } });
+    const needs = within(screen.getByRole('region', { name: 'The connection needs' }));
+    expect(needs.getByText('Kivali registers itself with the service; there is nothing to paste.')).toBeInTheDocument();
+    const hosts = within(screen.getByRole('region', { name: 'Signs in at' }));
+    for (const h of goIntegrationVersionRegistered.sign_in_hosts) expect(hosts.getByText(h)).toBeInTheDocument();
   });
 
   // Guards the install screen of an integration that ships with Kivali as a bundle (integration_version_shipped.json):
@@ -2195,6 +2214,11 @@ describe('Integration page, a connection made by signing in', () => {
     expect(within(block.getByRole('list', { name: 'Sends your browser to' })).getByText('github.com')).toBeInTheDocument();
     expect(block.getByRole('list', { name: 'GitHub asks for' })).toBeInTheDocument();
     expect(block.getByRole('list', { name: 'Keeps' })).toBeInTheDocument();
+    // A flow that hands over to a sign-in says so; and a setup connection has no form, so nothing to save or
+    // disconnect sits under the declarations.
+    expect(block.getByText('Then signs in through your browser, with the app that setup made.')).toBeInTheDocument();
+    expect(block.queryByRole('button', { name: 'Save connection' })).toBeNull();
+    expect(block.queryByRole('button', { name: 'Disconnect' })).toBeNull();
     cleanup();
     await renderOrg(PATH);
     expect(screen.queryByRole('list', { name: 'Keeps' })).toBeNull();

@@ -151,7 +151,9 @@ export function InstallScreen() {
       )}
 
       <Block label="Reaches these hosts">
-        {insideKivali ? (
+        {/* A built-in reaches what its connection names, except one with a setup flow, whose manifest lists every host
+            its setup and calls reach from Kivali. */}
+        {insideKivali && v.hosts.length === 0 ? (
           <Text as="p" variant="body">
             Reaches the hosts its connection names.
           </Text>
