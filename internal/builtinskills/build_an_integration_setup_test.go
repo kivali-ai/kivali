@@ -326,7 +326,7 @@ func TestTryHoldsASetupStepToTheManifest(t *testing.T) {
 	if code != 0 {
 		t.Errorf("a Go with no return: exit %d", code)
 	}
-	wantIn(t, out, "calls setup again at once", `"went": true`)
+	wantIn(t, out, "calls setup again at once", `"went": true`, `"team": "Kivali"`)
 }
 
 // Why this test exists: try.py reads requirement rows as Kivali keeps

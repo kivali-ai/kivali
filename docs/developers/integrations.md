@@ -1079,7 +1079,7 @@ for its requirements: [The smoke test](#the-smoke-test)). Shell jobs
 and a proxy credential per connection stay built-in only.
 
 - **`kivali/setup`**, one call of the flow. Params:
-  `{"flow", "answer": {"state", "form", "return", "checked", "went", "leg", "callback"}, "_meta": {"progressToken"}}`.
+  `{"flow", "answer": {"state", "form", "return", "checked", "went", "leg", "callback", "team"}, "_meta": {"progressToken"}}`.
   `flow` is `setup` or a Fix's name; `answer` is the
   [Answer](#the-interface), every object present (`{}` when empty) and
   `return` the query with each key's values as a list. The result is
@@ -3171,7 +3171,7 @@ points at and every agent can list. It holds:
   `uninstall` as core does ([For a bundle](#for-a-bundle)): `setup`
   runs `kivali/setup` call after call with the Answer core builds
   (a fresh state in each callback, the latest again for a Wait's
-  check), prints each step as the page shows it and each progress
+  check, and `--team` as the team's name), prints each step as the page shows it and each progress
   notification as it comes, takes a Form's fields from `--answer` or
   the terminal, a Go's return from `--return` or the terminal (adding
   the callback's state to one without, unless the Go says

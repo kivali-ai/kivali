@@ -18,11 +18,11 @@ import (
 // check; a nil State or Return written as null would make the
 // template's code fail on its first call.
 func TestSetupParamsOnTheWire(t *testing.T) {
-	first, err := json.Marshal(SetupParams{Flow: "setup", Answer: SetupAnswerOf(builtinintegrations.Answer{Leg: 1, Callback: "https://k.example/connect/callback?state=s1"}), Meta: &RequestMeta{ProgressToken: "p1"}})
+	first, err := json.Marshal(SetupParams{Flow: "setup", Answer: SetupAnswerOf(builtinintegrations.Answer{Leg: 1, Callback: "https://k.example/connect/callback?state=s1", Team: "Acme"}), Meta: &RequestMeta{ProgressToken: "p1"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := `{"flow":"setup","answer":{"state":{},"form":{},"return":{},"checked":false,"went":false,"leg":1,"callback":"https://k.example/connect/callback?state=s1"},"_meta":{"progressToken":"p1"}}`; string(first) != want {
+	if want := `{"flow":"setup","answer":{"state":{},"form":{},"return":{},"checked":false,"went":false,"leg":1,"callback":"https://k.example/connect/callback?state=s1","team":"Acme"},"_meta":{"progressToken":"p1"}}`; string(first) != want {
 		t.Errorf("first call =\n%s\nwant\n%s", first, want)
 	}
 	later, err := json.Marshal(SetupAnswerOf(builtinintegrations.Answer{
@@ -32,7 +32,7 @@ func TestSetupParamsOnTheWire(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := `{"state":{"at":"go"},"form":{"account":"acme"},"return":{"code":["c1"],"scope":["a","b"]},"checked":true,"went":true,"leg":4,"callback":""}`; string(later) != want {
+	if want := `{"state":{"at":"go"},"form":{"account":"acme"},"return":{"code":["c1"],"scope":["a","b"]},"checked":true,"went":true,"leg":4,"callback":"","team":""}`; string(later) != want {
 		t.Errorf("a later call =\n%s\nwant\n%s", later, want)
 	}
 }
