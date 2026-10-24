@@ -287,13 +287,21 @@ func githubBack(t *testing.T, srv *Server, address string, cookie *http.Cookie, 
 	return callback(t, srv, &url.URL{Path: back.Path, RawQuery: back.RawQuery}, cookie)
 }
 
+// githubMade is GitHub sending the browser back once it made the app:
+// to the manifest's redirect_url, with the code and the state the
+// new-app page's address (to) carried.
+func githubMade(t *testing.T, srv *Server, to *url.URL, m map[string]any, cookie *http.Cookie) *url.URL {
+	t.Helper()
+	return githubBack(t, srv, m["redirect_url"].(string), cookie, url.Values{"code": {ghCode}, "state": {to.Query().Get("state")}})
+}
+
 // githubInstall runs GitHub's install to its end: created, the code
 // traded, installed on GitHub (the fake lists installation 42) and the
 // browser back at the setup address.
 func githubInstall(t *testing.T, srv *Server, f *fakeGitHubAPI) {
 	t.Helper()
-	_, m, cookie := githubCreate(t, srv)
-	landedOnSetup(t, githubBack(t, srv, m["redirect_url"].(string), cookie, url.Values{"code": {ghCode}}), "github")
+	to, m, cookie := githubCreate(t, srv)
+	landedOnSetup(t, githubMade(t, srv, to, m, cookie), "github")
 	fl := waitFlow(t, srv, "github", apitypes.SetupFlowStateGo)
 	_, cookie = startPage(t, srv, fl)
 	f.set(func(f *fakeGitHubAPI) { f.installed = 42 })
@@ -329,13 +337,13 @@ func githubSecret(t *testing.T, srv *Server, mem *secrets.Memory) (store.Integra
 func TestGitHubSetupInstalls(t *testing.T) {
 	srv, f, mem, _ := githubServer(t)
 	to, m, cookie := githubCreate(t, srv)
-	redirect := mustURL(t, m["redirect_url"].(string))
-	if to.Scheme+"://"+to.Host+to.Path != "https://github.com/settings/apps/new" || to.Query().Get("state") == "" ||
-		to.Query().Get("state") != redirect.Query().Get("state") {
-		t.Errorf("posts to %s, sends back to %s", to, redirect)
+	// The state is on the new-app page's address alone; the manifest's
+	// addresses are the bare callback.
+	if to.Scheme+"://"+to.Host+to.Path != "https://github.com/settings/apps/new" || to.Query().Get("state") == "" {
+		t.Errorf("posts to %s", to)
 	}
 	if m["name"] != "Kivali Acme" || m["url"] != loopbackOrigin || m["setup_url"] != loopbackOrigin+"/connect/callback" ||
-		!strings.HasPrefix(redirect.String(), loopbackOrigin+"/connect/callback?state=") || m["public"] != false || m["setup_on_update"] != true {
+		m["redirect_url"] != loopbackOrigin+"/connect/callback" || m["public"] != false || m["setup_on_update"] != true {
 		t.Errorf("manifest = %v", m)
 	}
 	if _, err := srv.Store.GetIntegrationConnection("github"); !errors.Is(err, store.ErrNotFound) {
@@ -345,7 +353,7 @@ func TestGitHubSetupInstalls(t *testing.T) {
 		t.Errorf("while setting up = %s", page.Summary.State)
 	}
 
-	landedOnSetup(t, githubBack(t, srv, redirect.String(), cookie, url.Values{"code": {ghCode}}), "github")
+	landedOnSetup(t, githubMade(t, srv, to, m, cookie), "github")
 	fl := waitFlow(t, srv, "github", apitypes.SetupFlowStateGo)
 	if conv := f.requestsTo("POST", "/app-manifests/"+ghCode+"/conversions"); len(conv) != 1 || conv[0].Header.Get("Authorization") != "" {
 		t.Errorf("conversions = %+v", conv)
@@ -406,8 +414,8 @@ func TestGitHubSetupInstalls(t *testing.T) {
 // GitHub lists the installation, rather than fail or keep a guess.
 func TestGitHubSetupWaitsForTheInstallation(t *testing.T) {
 	srv, f, mem, clk := githubServer(t)
-	_, m, cookie := githubCreate(t, srv)
-	githubBack(t, srv, m["redirect_url"].(string), cookie, url.Values{"code": {ghCode}})
+	to, m, cookie := githubCreate(t, srv)
+	githubMade(t, srv, to, m, cookie)
 	fl := waitFlow(t, srv, "github", apitypes.SetupFlowStateGo)
 	_, cookie = startPage(t, srv, fl)
 	githubBack(t, srv, m["setup_url"].(string), cookie, url.Values{"setup_action": {"request"}})
@@ -445,9 +453,9 @@ func TestGitHubSetupFailureKeepsNothing(t *testing.T) {
 	}
 
 	// A code GitHub no longer takes fails the flow in GitHub's words.
-	_, m, cookie := githubCreate(t, srv)
+	to, m, cookie := githubCreate(t, srv)
 	f.set(func(f *fakeGitHubAPI) { f.codeUsed = true })
-	githubBack(t, srv, m["redirect_url"].(string), cookie, url.Values{"code": {ghCode}})
+	githubMade(t, srv, to, m, cookie)
 	if fl := waitFlow(t, srv, "github", apitypes.SetupFlowStateFailed); !strings.HasPrefix(textOf(fl.Error), "GitHub did not take the app's code (HTTP 404)") {
 		t.Errorf("failed = %q", textOf(fl.Error))
 	}
@@ -457,8 +465,8 @@ func TestGitHubSetupFailureKeepsNothing(t *testing.T) {
 
 	// Made, then cancelled before the installation: the app's values go.
 	f.set(func(f *fakeGitHubAPI) { f.codeUsed = false })
-	_, m, cookie = githubCreate(t, srv)
-	githubBack(t, srv, m["redirect_url"].(string), cookie, url.Values{"code": {ghCode}})
+	to, m, cookie = githubCreate(t, srv)
+	githubMade(t, srv, to, m, cookie)
 	waitFlow(t, srv, "github", apitypes.SetupFlowStateGo)
 	flowDo(t, srv, http.MethodPost, intBase+"/github/setup/cancel", nil)
 	srv.setupAwaitDiscard(context.Background(), "github")
@@ -674,8 +682,8 @@ func TestGitHubInstallsOverAOneZeroConnection(t *testing.T) {
 func TestGitHubInstallOverOneZeroCancelledKeepsTheAccess(t *testing.T) {
 	srv, f, mem, _ := githubServer(t)
 	old := githubV1(t, srv, mem)
-	_, m, cookie := githubCreate(t, srv)
-	githubBack(t, srv, m["redirect_url"].(string), cookie, url.Values{"code": {ghCode}})
+	to, m, cookie := githubCreate(t, srv)
+	githubMade(t, srv, to, m, cookie)
 	waitFlow(t, srv, "github", apitypes.SetupFlowStateGo)
 	flowDo(t, srv, http.MethodPost, intBase+"/github/setup/cancel", nil)
 	srv.setupAwaitDiscard(context.Background(), "github")

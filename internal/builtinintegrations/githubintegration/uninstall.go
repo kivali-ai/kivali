@@ -16,8 +16,10 @@ import (
 // /app/installations/{id}, with the app's JWT). An installation already
 // gone (404), and one a connection cannot name (it lacks a value, or
 // GitHub no longer takes the key: the app was deleted there), are
-// done. The app's registration stays on GitHub, for the owner to
-// delete.
+// done. A 401 over the JWT's times (this server's clock off from
+// GitHub's) is not: the key still names the installation, and GitHub's
+// words say what to mend. The app's registration stays on GitHub, for
+// the owner to delete.
 func (g *GitHub) Uninstall(ctx context.Context, conn builtinintegrations.Connection) error {
 	c, err := readConnection(conn)
 	if err != nil {
@@ -32,12 +34,31 @@ func (g *GitHub) Uninstall(ctx context.Context, conn builtinintegrations.Connect
 	switch {
 	case err == nil:
 		return nil
-	case errors.As(err, &ae) && (ae.Status == http.StatusNotFound || ae.Status == http.StatusUnauthorized):
+	case errors.As(err, &ae) && ae.Status == http.StatusNotFound:
 		return nil
+	case errors.As(err, &ae) && ae.Status == http.StatusUnauthorized && !jwtTimeRefused(ae.Message):
+		return nil
+	case errors.As(err, &ae) && ae.Status == http.StatusUnauthorized:
+		return errors.New("GitHub did not remove the app's installation: it refused the times Kivali signed with (HTTP 401): " + sentence(ae.Message) +
+			". Check the clock of the computer Kivali runs on, then uninstall again")
 	case errors.As(err, &ae):
 		return errors.New("GitHub did not remove the app's installation: " + sentence(ownerWords(ae)))
 	}
 	return err
+}
+
+// jwtTimeRefused reports whether GitHub's words refuse a JWT over its
+// time claims ("'Expiration time' claim ('exp') is too far in the
+// future", "'Issued at' claim ('iat') must be an Integer"), rather than
+// over its key.
+func jwtTimeRefused(words string) bool {
+	w := strings.ToLower(words)
+	for _, s := range []string{"'exp'", "'iat'", "expiration time", "issued at", "too far"} {
+		if strings.Contains(w, s) {
+			return true
+		}
+	}
+	return false
 }
 
 // DefaultTokenURL is GitHub's OAuth token endpoint, where a sign-in of

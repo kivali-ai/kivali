@@ -136,7 +136,7 @@ func TestSetupInstallsThroughTheManifestFlow(t *testing.T) {
 		t.Fatalf("manifest %q: %v", step.Go.Post, err)
 	}
 	want := map[string]any{
-		"name": "Kivali Acme Corp", "url": teamBase, "redirect_url": testCallback, "setup_url": teamBase + "/connect/callback",
+		"name": "Kivali Acme Corp", "url": teamBase, "redirect_url": teamBase + "/connect/callback", "setup_url": teamBase + "/connect/callback",
 		"setup_on_update": true, "public": false, "hook_attributes": map[string]any{"active": false},
 		"default_permissions": map[string]any{"metadata": "read", "contents": "read", "issues": "write", "pull_requests": "write"},
 		"default_events":      []any{},
@@ -463,7 +463,7 @@ func TestRequirements(t *testing.T) {
 func TestPermissionsFix(t *testing.T) {
 	g, f := newTest(t)
 	f.route("GET /app", 200, `{"slug":"kivali-acme","owner":{"login":"dana","type":"User"},"permissions":`+readPerms+`}`)
-	f.route("GET /app/installations/42", 200, installation("all", readPerms, false))
+	f.route("GET /app/installations/42", 200, installation("selected", readPerms, false))
 	step := g.setupT(t, testConn(), FlowPermissions, builtinintegrations.Answer{Leg: 1})
 	if step.Go == nil || !step.Go.NoReturn || step.Go.URL != "https://github.com/settings/apps/kivali-acme/permissions" ||
 		step.Go.Words != "On GitHub, give the app these permissions and save: issues: write, pull requests: write. Then approve them for its installation, where GitHub asks." {
@@ -478,12 +478,19 @@ func TestPermissionsFix(t *testing.T) {
 	if wait.Wait == nil || wait.Wait.URL != "https://github.com/organizations/acme/settings/installations/42" {
 		t.Fatalf("wait = %+v", wait)
 	}
-	f.route("GET /app/installations/42", 200, installation("all", allPerms, false))
+	f.route("GET /app/installations/42", 200, installation("selected", allPerms, false))
 	if done := g.setupT(t, testConn(), FlowPermissions, builtinintegrations.Answer{State: wait.State, Checked: true}); !done.Done || len(done.Keep) != 0 {
 		t.Errorf("granted = %+v", done)
 	}
 	if done := g.setupT(t, testConn(), FlowPermissions, builtinintegrations.Answer{Leg: 1}); !done.Done {
 		t.Errorf("already granted = %+v", done)
+	}
+	// Its checks, every few seconds, never count repositories: that is a
+	// token and a request the permissions do not need.
+	for _, r := range f.requests() {
+		if r.Path == "/installation/repositories" || strings.HasSuffix(r.Path, "/access_tokens") {
+			t.Errorf("the permissions Fix asked %s", r.Path)
+		}
 	}
 }
 
@@ -513,7 +520,9 @@ func TestSettingsFix(t *testing.T) {
 // again after it succeeded, or with values missing, so an installation
 // already gone, a key GitHub no longer takes (the app deleted there)
 // and a connection that cannot name one are done; any other failure is
-// an error that leaves everything as it is.
+// an error that leaves everything as it is. A 401 over the JWT's times
+// is this server's clock, not a deleted app: taking it as done would
+// forget the key while the installation stays on GitHub.
 func TestUninstall(t *testing.T) {
 	g, f := newTest(t)
 	f.route("DELETE /app/installations/42", 204, ``)
@@ -528,6 +537,11 @@ func TestUninstall(t *testing.T) {
 		if err := g.Uninstall(context.Background(), testConn()); err != nil {
 			t.Errorf("%d: %v", status, err)
 		}
+	}
+	f.route("DELETE /app/installations/42", 401, `{"message":"'Expiration time' claim ('exp') is too far in the future"}`)
+	if err := g.Uninstall(context.Background(), testConn()); err == nil || !strings.Contains(err.Error(), "Check the clock of the computer Kivali runs on") ||
+		!strings.Contains(err.Error(), "too far in the future") {
+		t.Errorf("a 401 over the JWT's times = %v", err)
 	}
 	f.route("DELETE /app/installations/42", 500, `{"message":"Server Error"}`)
 	if err := g.Uninstall(context.Background(), testConn()); err == nil || err.Error() != "GitHub did not remove the app's installation: GitHub answered 500: Server Error" {
