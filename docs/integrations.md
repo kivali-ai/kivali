@@ -139,13 +139,7 @@ Kivali keeps the sign-in fresh: the integration never sees the client secret or 
 
 While a connection needs you to sign in, an agent's call through it is refused with words that say the connection needs you to sign in again and to ask you; nothing reaches the service.
 
-**Sign out** ends the sign-in: Kivali forgets the tokens and asks the service to revoke them where the service allows it. The client id and secret stay, so you can sign in again at once with the **Sign-in** requirement's **Fix**. Deleting a connection and uninstalling the integration revoke the tokens the same way. Switching the integration off, signing out and uninstalling it end a sign-in that is waiting for your approval.
-
-### Several connections
-
-Most integrations take one connection. Some that ship with Kivali, such as [Git](#git), take several: one for each account or host you connect, such as GitHub and your company's GitLab. Their page has **Connections** in place of **Connection**: one card per connection, folded to its label (what you call it, such as "Company GitLab") and a line saying how many agents use it and since when it is connected, with a **Reconnect needed** or **Could not verify** badge when it needs you. Open a card to see its own fields, **Save connection** and **Delete**, and **Test connection** when the integration has a connection test; the others stay folded. **Add a connection** opens a blank form with a **Label** field. Labels are unique within the integration, whatever their capitals.
-
-Each agent's access then names the connection its calls use: **Give access** asks for a **Connection** first, and the access table, like the agent's **Integrations** tab ("Git (Company GitLab)"), says which one each agent uses. **Delete** asks first, naming the agents whose access uses that connection: their access goes with it, and the other connections and the access given for them stay.
+**Sign out** ends the sign-in: Kivali forgets the tokens and asks the service to revoke them where the service allows it. The client id and secret stay, so you can sign in again at once with the **Sign-in** requirement's **Fix**. Uninstalling the integration revokes the tokens the same way. Switching the integration off, signing out and uninstalling it end a sign-in that is waiting for your approval.
 
 ### Not running
 
@@ -194,9 +188,11 @@ The switch at the top of an installed integration's page turns it off for every 
 
 Git has no **Test connection**. An agent's first clone shows whether the token works: every clone, fetch and push is in **Recent calls**, with why it failed when it did.
 
-Git takes [several connections](#several-connections), one per host: connect GitHub and your company's GitLab side by side, each with its own token. A connection you leave without a label is named after its host, such as `github.com`. Each agent's access names one connection, and its clones, fetches and pushes go to that connection's host with that connection's token. An agent has one access to Git, so it works on one host at a time: the one its access names.
+Git has one connection, like every integration: one host and its token. Every agent's clones, fetches and pushes go to that host with that token. To point Git at another host, save the connection with the new host and a token for it.
 
-The token is kept in the connection's Secret, like every connection secret. Each connection also has a network credential of its own, kept beside the token, that lets an agent's clone, fetch or push reach the connection's host and nothing else. Your team's allow list does not change.
+The token is kept in the connection's Secret, like every connection secret. The connection also has a network credential of its own, kept beside the token, that lets an agent's clone, fetch or push reach the connection's host and nothing else. Your team's allow list does not change.
+
+A team whose Git holds several connections, one per host, as earlier versions of Kivali allowed, keeps one when Kivali starts: the one most agents' access uses (the oldest, when two are used as much). The others are set aside, not deleted, and their tokens stay where they were kept. An agent whose access was given for a connection set aside keeps its access on the page, marked invalid with the reason, such as "set for the connection Company GitLab, which Git no longer has; set it again", and can use Git again once you set its access with **Change**.
 
 ### Access
 
@@ -223,7 +219,7 @@ An agent with access has three actions:
 
 All three go to the connection's host with your token. The working copy is an ordinary one, whose origin is the repository's address without the token, and the agent works in it with plain git in its shell. That plain git reaches only the hosts on your team's allow list, and without your token, so a repository host that is not on the list is reachable only through these three actions.
 
-Every clone, fetch and push is in **Recent calls**, with the repository and the branches and tags that moved (a push also says when it forced), or why it failed. Kivali checks each one against the agent's access before anything runs. Each has two rows: one when it starts and one when it ends. If you change an agent's access while its push runs, the second row still records what the push wrote, and says the access changed during it. If you move an agent's access to another connection while its clone, fetch or push runs, the second row records what ran, says the access changed, and names the connection it ran through.
+Every clone, fetch and push is in **Recent calls**, with the repository and the branches and tags that moved (a push also says when it forced), or why it failed. Kivali checks each one against the agent's access before anything runs. Each has two rows: one when it starts and one when it ends. If you change an agent's access while its push runs, the second row still records what the push wrote, and says the access changed during it. If you uninstall Git and install it again while an agent's clone, fetch or push runs, the second row records what ran and says the connection changed during it.
 
 ### Not supported
 
