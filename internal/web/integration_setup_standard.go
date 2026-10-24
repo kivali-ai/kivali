@@ -108,7 +108,7 @@ func (s *Server) setupSpecFor(v *integrationView, r *http.Request) (setupSpec, *
 			vendorWaitPages: true,
 		}, nil
 	case integration.MethodSetup:
-		si, ok := v.builtin.(builtinintegrations.SetupIntegration)
+		si, ok := s.setupDriverOf(v)
 		if !ok || c.Setup == nil {
 			return setupSpec{}, &connWriteError{http.StatusConflict, v.displayName() + "'s setup is not in this version of Kivali", v.whoBuilt()}
 		}

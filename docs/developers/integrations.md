@@ -261,7 +261,8 @@ steps the owner takes (a Form to fill in, a Go that sends the browser
 to the service and back, a Wait while something happens on the
 service), which core runs and draws, with the integration deciding
 each next step (`builtinintegrations.SetupIntegration`, [The
-interface](#the-interface)). The service's own way of making or
+interface](#the-interface); for a bundle, its server's answers to
+`kivali/setup`, [For a bundle](#for-a-bundle)). The service's own way of making or
 installing an app lives in that flow, and in no other integration.
 `kivali.connection.setup` declares what the flow may do, and core holds
 every step to it; the install screen lists it under **Setup** before
@@ -333,10 +334,9 @@ key is lowercase letters, digits and underscores, starting with a
 letter; neither names `oauth_access_token` or `oauth_refresh_token`; a
 `setup_only` field is not also kept; `then` is `browser` or `device`,
 and with it `client_id` and `client_secret` are kept, while without it
-the connection has no endpoints. A bundle's setup flow is not in this
-version of Kivali (`kivali.connection.method setup: a bundle's setup
-flow is not in this version of Kivali`); a built-in's manifest passes.
-What a later version changes in the declarations is on its install
+the connection has no endpoints. The same rules hold a bundle's setup
+flow and a built-in's; a bundle's runs in its server, over MCP ([For a
+bundle](#for-a-bundle)). What a later version changes in the declarations is on its install
 screen ("Setup sends your browser to, added: ...", "Setup asks for,
 added: ...", "Setup keeps, added: ...": `integration.Diff`).
 
@@ -675,12 +675,14 @@ runs, or empty. Kivali's own rows come first, in this order:
 
 Then the integration's own rows: a built-in implementing
 `builtinintegrations.RequirementsOf` is asked with the connection as
-a call reads it, the read (which may renew a sign-in with the
-service) and the call both under one `requirementsTimeout` (five
-seconds, on the server's clock), with its panics recovered. A row
-whose id is not letters, digits, hyphens and underscores (64 at most),
-is one of Kivali's or repeats one, or whose `fix` is not such a name,
-is left out and logged; a title left empty
+a call reads it, and a setup bundle's server, while it runs, with
+`kivali/requirements` ([For a bundle](#for-a-bundle); one not running
+is not asked, and the `running` row says why), the read (which may
+renew a sign-in with the service) and the call both under one
+`requirementsTimeout` (five seconds, on the server's clock), with its
+panics recovered. A row whose id is not letters, digits, hyphens and
+underscores (64 at most), is one of Kivali's or repeats one, or whose
+`fix` is not such a name, is left out and logged; a title left empty
 is the id; titles are cut to 80 runes and words to 500, each scrubbed
 of the connection's secrets. An error, or no answer in time, is one
 unmet row `checks` ("<Integration> could not check its requirements:
@@ -718,7 +720,8 @@ runner takes:
 - Any other name: only one the integration's own rows name as a `fix`
   (`fixNamed`, asked before `lockIntegrations` is taken, so a slow
   integration holds up no other write), run by its `SetupIntegration`
-  with that flow's name and held to its `kivali.connection.setup`
+  (a bundle's server, through `kivali/setup`) with that flow's name and
+  held to its `kivali.connection.setup`
   declarations; a name no row names is a 409 ("<flow> is not a flow
   <integration> has", or "that is not a flow <integration> has" for
   one that is not a flow's name, which is not echoed), and a name a
@@ -751,11 +754,15 @@ integration (`handleAPIIntegrationUninstall`), 204 once done:
 1. A built-in with no connection is a 409 ("<integration> is not
    installed, so there is nothing to uninstall"); its setup flow under
    way is cancelled from the page instead.
-2. A built-in implementing `builtinintegrations.Uninstaller` undoes the
-   installation on the service first, with no lock held: `Uninstall`
-   is called with the connection as a call reads it (as stored when
-   it needs a sign-in or the service did not answer its renewal), under
-   `integrationCallTimeout`. An error, or no answer in time, is a 502
+2. A built-in implementing `builtinintegrations.Uninstaller`, or a
+   setup bundle whose server runs (`kivali/uninstall`, [For a
+   bundle](#for-a-bundle)), undoes the installation on the service
+   first, with no lock held: `Uninstall` is called with the connection
+   as a call reads it (as stored when it needs a sign-in or the service
+   did not answer its renewal), under `integrationCallTimeout`. A setup
+   bundle switched off has no server to ask: its installation on the
+   service is left as it is and the rest goes on, so a bundle whose
+   server fails is uninstalled by switching it off first. An error, or no answer in time, is a 502
    ("<integration> could not undo its installation: <words>; nothing
    was changed"), scrubbed of the connection's secrets and audited as
    `uninstall`, not allowed; nothing else happens.
@@ -795,7 +802,8 @@ log.
 Every connection is made by a setup flow: a run of steps the owner
 takes, which core runs and draws (`internal/web/integration_setup.go`).
 What decides each step is the flow's driver: for a `setup` connection,
-the built-in's `SetupIntegration.Setup` ([The interface](#the-interface));
+the built-in's `SetupIntegration.Setup` ([The interface](#the-interface))
+or the bundle's server ([For a bundle](#for-a-bundle));
 for `token`, `device` and `browser`, one of core's standard flows
 (`internal/web/integration_setup_standard.go`):
 
@@ -1037,6 +1045,61 @@ the end of the stream when the flow is forgotten. A stream counts as
 watching the flow. The page (`SetupFlowPanel`) follows the stream, and
 asks `GET .../setup` every three seconds while the tab is visible where
 it has no stream.
+
+### For a bundle
+
+A bundle whose connection is `method: setup` implements the three
+hooks in its MCP server, as requests core sends through the shim as it
+sends `tools/call` (`bundleHooks`, `internal/web/integration_setup_bundle.go`;
+the shapes are `internal/integrationpod/hooks.go`). The runner, the
+requirements and Uninstall run them by the same code as a built-in's:
+the same declarations, deadlines, scrubbing and audit. The server reads
+the connection's values as for any call, from its env or
+`kivali/credential`: a Keep restarts it with what was kept
+([The shim and its socket](#the-shim-and-its-socket)), so a later step
+reads a kept value back as a built-in reads `conn.Fields`. Its own calls
+to the service go out through its scoped proxy credential, held to
+`kivali.hosts` as any call is. Core sends these requests only to a
+bundle whose manifest names `method: setup`, and such a server answers
+all three from its start, with no connection too (the smoke test asks
+for its requirements: [The smoke test](#the-smoke-test)). Shell jobs
+and a proxy credential per connection stay built-in only.
+
+- **`kivali/setup`**, one call of the flow. Params:
+  `{"flow", "answer": {"state", "form", "return", "checked", "went", "leg", "callback"}, "_meta": {"progressToken"}}`.
+  `flow` is `setup` or a Fix's name; `answer` is the
+  [Answer](#the-interface), every object present (`{}` when empty) and
+  `return` the query with each key's values as a list. The result is
+  `{"step": {...}}` with exactly one of `"form": {"words", "fields"}`,
+  `"go": {"words", "url", "post", "no_return", "stateless"}` (`post` an
+  object of strings or lists of strings), `"wait": {"words", "url", "code"}`
+  or `"done": true`, and optionally `"keep"` and `"state"`, objects of
+  strings. A key none of these shapes has, or a value of another type,
+  fails the flow ("<Integration>'s setup answered with a step Kivali
+  cannot read: ..."). While the step runs, the server may send
+  `notifications/progress`, `{"progressToken", "progress", "total", "message"}`
+  with the request's token: each is the flow's stage (`message`) and
+  its progress bar (`progress` of `total`). One naming any other token,
+  or sent once the step has answered, is dropped. The step is answered
+  within `setupCallTimeout`, five minutes, or the flow fails as a
+  built-in's does; a long job in the pod reports progress meanwhile. A
+  server not yet running (a bundle switched on to install it) is
+  waited for, `bundleStartWait` (two minutes) at most on the server's
+  clock, and then the flow fails ("<Integration> is not running, so
+  its setup cannot go on; its log says why. Start the setup again once
+  it runs").
+- **`kivali/requirements`**, params `{}`: the integration's own rows,
+  `{"requirements": [{"id", "title", "words", "met", "fix"}]}`, read as
+  a built-in's ([Requirements](#requirements)), under the same five
+  seconds, and asked only while the server runs.
+- **`kivali/uninstall`**, params `{}`: undo the installation on the
+  service, answered `{}`, within `integrationCallTimeout`, and asked
+  only while the server runs ([Uninstall](#uninstall)).
+
+An error of any of them is a JSON-RPC error whose message is the
+owner's words, scrubbed as a built-in's error is; one with no message
+reads "<Integration> failed and gave no reason", and a server that
+stops before it answers, "<Integration> stopped before it answered".
 
 ## Sign-in connections
 
@@ -1663,7 +1726,9 @@ until the server has started; until then a call simply waits. The
 server's output is read a line at a time: a response goes to core; a
 `kivali/credential` or `kivali/log` request goes to core and core's
 answer to the server; any other request (sampling, roots, elicitation)
-is answered by the shim with -32601; notifications other than
+is answered by the shim with -32601; `notifications/progress` goes to
+core, which hands it to the setup step it names ([For a
+bundle](#for-a-bundle)), and notifications other than it and
 `kivali/log` are dropped. A line that is not JSON-RPC, or over 16 MiB,
 ends the server. The server's error output becomes `kivali/log` lines
 of level `stderr`, and the shim adds its own (`server started`,
@@ -1694,6 +1759,14 @@ a test hook, which the pod spec never sets.
   it is rewritten with the last 2000. Core adds lines of its own: a
   restart after missed health checks, a pod that cannot be placed for
   want of memory.
+- `notifications/progress`, `{"progressToken", "progress", "total",
+  "message"}`, is a setup step's stage, handed to the `kivali/setup`
+  request whose `_meta.progressToken` it names; any other is dropped.
+
+Core's own requests to the server are MCP's (`initialize` through the
+shim, `ping`, `tools/list`, `tools/call`) and, for a bundle whose
+manifest names `method: setup`, `kivali/setup`, `kivali/requirements`
+and `kivali/uninstall` ([For a bundle](#for-a-bundle)).
 
 ### The scoped proxy credential
 
@@ -1724,8 +1797,8 @@ integration a new token, and so a new pod, and say so in its log. An
 integration that should run and has had no shim for three checks gets a
 reconcile, which makes its pod again if it is gone. A shim's stream that
 ends makes the integration not running; requests waiting on it fail at
-once. A request waits 60 s for a `tools/call` and 20 s for anything
-else.
+once. A request waits 60 s for a `tools/call` or a `kivali/uninstall`,
+five minutes for a `kivali/setup` step, and 20 s for anything else.
 
 ## Agents' calls
 
@@ -2060,7 +2133,9 @@ Fix ([Fix](#fix)). It asks for `Requirements` when the page, the list or
 Home is read ([Requirements](#requirements)), and calls `Uninstall` on
 Uninstall ([Uninstall](#uninstall)); the [Dispatch](#dispatch) table
 has each. GitHub implements all four ([The GitHub
-built-in](#the-github-built-in)).
+built-in](#the-github-built-in)). A bundle's server implements the
+same three as MCP requests, held to the same declarations ([For a
+bundle](#for-a-bundle)).
 
 `Tools`, `Call`, `Verify` and `Choices` run concurrently: many agents
 call at once, and each agent's list is asked for in parallel with the
@@ -2244,9 +2319,9 @@ Where core would reach a pod, it calls the function instead
 | Test connection | `tools/call` of `kivali.verify` | `Verify(connection)`, with the connection the route names; the audit's action is the name `kivali.verify` gives (`whoami` for echo) |
 | An access field's options | `tools/call` of the field's tool | `Choices(connection, name)`, with the connection `?connection=` names or the first; 409 with no connection |
 | Work in the agent's shell | none | `Call` answers with `ShellJob`, `Complete` the call's second request |
-| Setup (`method: setup`) | not in this version of Kivali | `Setup(conn, flow, answer, progress)`, in the background through the setup runner, each step held to `kivali.connection.setup` |
-| Requirements | none | `Requirements(connection)` of the connection, under a 5 s deadline, as the integration's rows after Kivali's; unmet ones are Needs-you rows |
-| Uninstall | none | `Uninstall(connection)` of the connection before anything is forgotten; an error is a 502 that changes nothing |
+| Setup (`method: setup`) | `kivali/setup` with the flow and the answer, through the shim, its progress notifications the flow's stages, each step held to `kivali.connection.setup` ([For a bundle](#for-a-bundle)) | `Setup(conn, flow, answer, progress)`, in the background through the setup runner, each step held to `kivali.connection.setup` |
+| Requirements | `kivali/requirements` of a setup bundle while its server runs, under a 5 s deadline, as the integration's rows after Kivali's | `Requirements(connection)` of the connection, under a 5 s deadline, as the integration's rows after Kivali's; unmet ones are Needs-you rows |
+| Uninstall | `kivali/uninstall` of a setup bundle while its server runs; an error is a 502 that changes nothing | `Uninstall(connection)` of the connection before anything is forgotten; an error is a 502 that changes nothing |
 | A connection change | the shim restarts the server | nothing to restart; a `HostsOf` built-in's proxy credential of that connection is registered again |
 | Reconcile | a pod while it should run | skipped |
 
@@ -3121,7 +3196,8 @@ manifest's env with every connection field empty, and no proxy
 variable: in the agent pod, whose network policy lets it reach only
 the egress proxy, the server has no network. It sends `initialize`
 (protocol `2025-06-18`), waits for the answer, sends
-`notifications/initialized` and `tools/list`, all within 20 s, answers
+`notifications/initialized` and `tools/list`, and for a manifest that
+names `method: setup`, `kivali/requirements`, all within 20 s, answers
 the server's own requests as the shim does with no connection, and
 prints one JSON line. The findings:
 
@@ -3130,11 +3206,14 @@ prints one JSON line. The findings:
 | The server does not start, ends before an answer (with its status and the end of its error output), does not answer in 20 s, answers with an error, or writes a line that is not JSON-RPC | error |
 | `tools/list` does not list a declared action (worded for `kivali.verify`'s and `kivali.access.choices`' tools) | error |
 | `tools/list` lists an action the manifest does not declare, or gives a declared one an input schema that is not an object's | warning |
+| A setup bundle's server does not answer `kivali/requirements`, answers it with an error, or answers it in another shape than `{"requirements": [...]}` of rows with an id, a title, words and met | error |
 | The check could not run, or did not finish in 30 s | warning |
 
 It checks that the server starts and lists the actions its manifest
 declares, with no `_meta.kivali`, as core's own `tools/list` at every
-connect asks. It is not a review of what the code does.
+connect asks, and that a setup bundle's server answers for its health
+before anything is set up. It is not a review of what the code does,
+and it runs no setup step.
 
 ### Publishing
 

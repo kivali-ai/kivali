@@ -18,9 +18,13 @@
 //     hash of the egress proxy secret the shim drew.
 //   - POST /v1/integration/{name}/rpc: one JSON-RPC message from the
 //     pod: a response to a request core sent, or a request or
-//     notification of the pod's (MethodCredential, MethodLog). Core
-//     answers a request with its JSON-RPC response and anything else
-//     with 204.
+//     notification of the pod's (MethodCredential, MethodLog,
+//     MethodProgress). Core answers a request with its JSON-RPC
+//     response and anything else with 204.
+//
+// Core's requests to the server are MCP's (initialize through the
+// shim, ping, tools/list, tools/call) and, for a bundle whose manifest
+// names method setup, its setup hooks (hooks.go).
 //
 // docs/developers/integrations.md is the reference.
 package integrationpod

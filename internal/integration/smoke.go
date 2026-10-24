@@ -13,7 +13,10 @@ import (
 
 // The server smoke test: a bundle's server started the way its pod
 // starts it, but in its author's shell with no network, and asked what
-// Kivali asks at every start: initialize, then tools/list. SmokeCommand
+// Kivali asks at every start: initialize, then tools/list; and, for a
+// connection made by the bundle's own setup flow, kivali/requirements
+// with no connection, the one setup request a server can answer before
+// anything is set up. SmokeCommand
 // is the bash command that runs it from the bundle's directory;
 // SmokeFindings reads what it printed against the manifest. It checks
 // that the server starts and lists the actions the manifest declares.
@@ -45,6 +48,8 @@ type smokeSpec struct {
 	Env             map[string]string `json:"env"`
 	Timeout         float64           `json:"timeout"`
 	ProtocolVersion string            `json:"protocol_version"`
+	// Requirements asks for kivali/requirements after tools/list.
+	Requirements bool `json:"requirements"`
 }
 
 // SmokeCommand is the bash command that runs m's smoke test from the
@@ -59,6 +64,7 @@ func SmokeCommand(m *Manifest) string {
 		Env:             ServerEnv(m, nil),
 		Timeout:         SmokeTimeout.Seconds(),
 		ProtocolVersion: smokeProtocolVersion,
+		Requirements:    m.Kivali.Connection.Method == MethodSetup,
 	})
 	return "python3 - " + shellQuote(string(spec)) + " <<'" + smokeHeredoc + "'\n" + smokeDriver + smokeHeredoc + "\n"
 }
@@ -88,15 +94,16 @@ type SmokeRun struct {
 
 // smokeOutput is the driver's JSON line.
 type smokeOutput struct {
-	Started    bool            `json:"started"`
-	StartError *string         `json:"start_error"`
-	Initialize json.RawMessage `json:"initialize"`
-	ToolsList  json.RawMessage `json:"tools_list"`
-	NotJSON    *string         `json:"not_json"`
-	Ended      bool            `json:"ended"`
-	TimedOut   bool            `json:"timed_out"`
-	ExitCode   *int            `json:"exit_code"`
-	Stderr     string          `json:"stderr"`
+	Started      bool            `json:"started"`
+	StartError   *string         `json:"start_error"`
+	Initialize   json.RawMessage `json:"initialize"`
+	ToolsList    json.RawMessage `json:"tools_list"`
+	Requirements json.RawMessage `json:"requirements"`
+	NotJSON      *string         `json:"not_json"`
+	Ended        bool            `json:"ended"`
+	TimedOut     bool            `json:"timed_out"`
+	ExitCode     *int            `json:"exit_code"`
+	Stderr       string          `json:"stderr"`
 }
 
 // parseSmokeOutput is the last line of stdout that is the driver's.
@@ -122,8 +129,10 @@ const smokeClip = 300
 // SmokeFindings reads the smoke test's run against m: errors for a
 // server that does not start, writes a line that is not JSON-RPC, does
 // not answer initialize or tools/list in time, or answers either with
-// an error, and for a declared action it does not list (worded for
-// kivali.verify's and kivali.access.choices' tools); warnings for an
+// an error, for a declared action it does not list (worded for
+// kivali.verify's and kivali.access.choices' tools), and, for a setup
+// connection, for a kivali/requirements it does not answer in time,
+// answers with an error or answers in another shape; warnings for an
 // action it lists that the manifest does not declare or whose input
 // schema is not an object's, and for a run that could not check
 // anything. listed is the actions the server listed, nil when it
@@ -233,7 +242,43 @@ func SmokeFindings(m *Manifest, run SmokeRun) (f Findings, listed []string) {
 		f.warnf("the server lists %s, which tools does not declare; agents are never given it", name)
 	}
 	sort.Strings(listed)
+	if m.Kivali.Connection.Method == MethodSetup {
+		if res, ok := answer(smokeRequirementsMethod, out.Requirements); ok && !requirementsShape(res) {
+			f.errorf(`the server's %s answer is not {"requirements": [...]} of rows with an id, a title, words and met; Kivali shows none of its rows`, smokeRequirementsMethod)
+		}
+	}
 	return f, slices.Clip(listed)
+}
+
+// smokeRequirementsMethod is the request a setup bundle's server
+// answers with its own rows (integrationpod.MethodRequirements).
+const smokeRequirementsMethod = "kivali/requirements"
+
+// requirementsShape reports whether raw is a kivali/requirements
+// result core reads: a list of rows, each with a string id, title and
+// words, a met switch and an optional string fix, and nothing else.
+func requirementsShape(raw json.RawMessage) bool {
+	var res struct {
+		Requirements *[]struct {
+			ID    *string `json:"id"`
+			Title *string `json:"title"`
+			Words *string `json:"words"`
+			Met   *bool   `json:"met"`
+			Fix   *string `json:"fix"`
+		} `json:"requirements"`
+		Meta json.RawMessage `json:"_meta"`
+	}
+	dec := json.NewDecoder(strings.NewReader(string(raw)))
+	dec.DisallowUnknownFields()
+	if dec.Decode(&res) != nil || res.Requirements == nil {
+		return false
+	}
+	for _, r := range *res.Requirements {
+		if r.ID == nil || r.Title == nil || r.Words == nil || r.Met == nil {
+			return false
+		}
+	}
+	return true
 }
 
 // objectSchema reports whether raw is a JSON Schema of an object.

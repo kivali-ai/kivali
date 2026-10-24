@@ -419,8 +419,8 @@ var envNameRE = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
 // with a discover address in place of endpoints); a setup connection
 // declares what its flow may do (validateSetup) and, when the flow hands
 // over to a sign-in, that sign-in's endpoints. builtin says whether the
-// manifest is a built-in's: a bundle's setup flow and a registered
-// client are not in this version of Kivali for a bundle.
+// manifest is a built-in's: a registered client is not in this version
+// of Kivali for a bundle.
 func validateConnection(m *Manifest, builtin bool, f *Findings) {
 	c := m.Kivali.Connection
 	endpoints := []struct{ key, value string }{
@@ -468,9 +468,6 @@ func validateConnection(m *Manifest, builtin bool, f *Findings) {
 	case MethodDevice, MethodBrowser:
 		signIn(c.Method)
 	case MethodSetup:
-		if !builtin {
-			f.errorf("kivali.connection.method setup: a bundle's setup flow is not in this version of Kivali")
-		}
 		validateSetup(m, f)
 		switch then := c.ThenMethod(); then {
 		case MethodDevice, MethodBrowser:

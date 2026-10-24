@@ -528,6 +528,35 @@ func TestShimAnswersOtherServerRequests(t *testing.T) {
 	}
 }
 
+// Why this test exists: a bundle's setup step reports its stages as
+// MCP progress notifications naming the request's progress token, and
+// core shows them as the flow's progress bar. If the shim dropped them
+// as it drops other notifications, a long step would show nothing but
+// a spinner for minutes; if it passed on every notification, a server
+// could fill core's socket with ones nothing reads.
+func TestShimRelaysSetupProgress(t *testing.T) {
+	m := testManifest(nil)
+	c := newFakeCore(t, m)
+	_, _, _ = runShim(t, c, m)
+	rc := &recorder{c: c}
+	st := c.stream()
+	st.send(EventStart, "{}")
+	rc.log("server started")
+	st.send(EventRPC, `{"jsonrpc":"2.0","id":3,"method":"kivali/setup","params":{"flow":"setup","answer":{},"_meta":{"progressToken":"tok-1"}}}`)
+	note := rc.wait("the progress", func(m Message) bool { return m.Method == MethodProgress })
+	var p ProgressParams
+	if err := json.Unmarshal(note.Params, &p); err != nil || !note.IsNotification() || string(p.ProgressToken) != `"tok-1"` ||
+		p.Progress != 1 || p.Total == nil || *p.Total != 2 || p.Message != "Building the app" {
+		t.Errorf("progress = %+v, %s", note, note.Params)
+	}
+	if step, err := ParseSetupResult(rc.response(3).Result); err != nil || !step.Done {
+		t.Errorf("step = %+v, %v", step, err)
+	}
+	if n := rc.count(func(m Message) bool { return m.Method == "notifications/tools/list_changed" }); n != 0 {
+		t.Errorf("another notification reached core %d times", n)
+	}
+}
+
 // Why this test exists: a connection made by signing in whose owner
 // has not signed in (or must sign in again) answers the values with
 // CodeSignInNeeded, and one whose vendor did not answer a due refresh

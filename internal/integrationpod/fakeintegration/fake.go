@@ -1,7 +1,10 @@
 // Package fakeintegration is a stdio MCP server for tests: what
 // cmd/fake-integration runs, and what a test binary runs when it
 // re-executes itself as an integration's server. It answers
-// initialize, ping, tools/list and tools/call, with three tools:
+// initialize, ping, tools/list, tools/call and kivali/setup (one
+// progress notification with the request's progress token, then one
+// notifications/tools/list_changed, then a step that is done), with
+// three tools:
 //
 //   - echo returns its arguments and the _meta.kivali the call carried,
 //     as JSON text, so a test can see what was stamped on a call.
@@ -159,6 +162,22 @@ func (f *fake) handle(m message) {
 		f.reply(m.ID, map[string]any{})
 	case "tools/list":
 		f.reply(m.ID, map[string]any{"tools": Tools})
+	case "kivali/setup":
+		// A setup step's stage, then a notification the shim drops,
+		// then the step.
+		var p struct {
+			Meta struct {
+				ProgressToken json.RawMessage `json:"progressToken"`
+			} `json:"_meta"`
+		}
+		_ = json.Unmarshal(m.Params, &p)
+		note, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "method": "notifications/progress", "params": map[string]any{
+			"progressToken": p.Meta.ProgressToken, "progress": 1, "total": 2, "message": "Building the app",
+		}})
+		f.writeLine(note)
+		other, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "method": "notifications/tools/list_changed"})
+		f.writeLine(other)
+		f.reply(m.ID, map[string]any{"step": map[string]any{"done": true}})
 	case "tools/call":
 		var p struct {
 			Name      string          `json:"name"`

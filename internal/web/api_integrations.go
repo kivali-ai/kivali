@@ -793,8 +793,9 @@ func errNotInstalled(display string) string {
 
 // handleAPIIntegrationUninstall is Uninstall, for every integration: a
 // built-in that undoes its installation on the service
-// (builtinintegrations.Uninstaller) does so first, and its error is a
-// 502 that leaves everything as it was. Then its setup flow under way
+// (builtinintegrations.Uninstaller), or a setup bundle whose server
+// runs, does so first, and its error is a 502 that leaves everything as
+// it was. Then its setup flow under way
 // ends, each connection's Secret goes (a sign-in's tokens revoked with
 // the service where it has a revocation endpoint), and every agent's
 // access with the connections' records. A built-in this binary carries
@@ -813,7 +814,7 @@ func (s *Server) handleAPIIntegrationUninstall(w http.ResponseWriter, r *http.Re
 	}
 	// The service's side first, with no lock held: it may be slow, and
 	// a failure changes nothing here.
-	if words := s.builtinUninstall(r.Context(), v); words != "" {
+	if words := s.serviceUninstall(r.Context(), v); words != "" {
 		writeAPIError(w, http.StatusBadGateway, words, v.whoBuilt())
 		return
 	}
@@ -828,13 +829,15 @@ func (s *Server) handleAPIIntegrationUninstall(w http.ResponseWriter, r *http.Re
 	}
 }
 
-// builtinUninstall calls Uninstall of v's built-in, when it implements
-// builtinintegrations.Uninstaller, with the connection as a call reads
-// it (as stored when it needs a sign-in), under integrationCallTimeout:
-// the words of a failure, scrubbed of the connection's secrets and
-// audited, or "" once it went through.
-func (s *Server) builtinUninstall(ctx context.Context, v *integrationView) string {
-	u, ok := v.builtin.(builtinintegrations.Uninstaller)
+// serviceUninstall undoes v's installation on the service: Uninstall
+// of v's built-in when it implements builtinintegrations.Uninstaller,
+// or a setup bundle's kivali/uninstall while its server runs
+// (uninstallerOf), with the connection as a call reads it (as stored
+// when it needs a sign-in), under integrationCallTimeout: the words of
+// a failure, scrubbed of the connection's secrets and audited, or ""
+// once it went through.
+func (s *Server) serviceUninstall(ctx context.Context, v *integrationView) string {
+	u, ok := s.uninstallerOf(v)
 	if !ok {
 		return ""
 	}

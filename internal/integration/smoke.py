@@ -1,12 +1,14 @@
 # The server smoke test's driver (smoke.go). It runs in the bundle's
 # author's shell with the bundle directory as its working directory,
 # starts the server the way an integration's pod starts it, and asks it
-# what Kivali asks at every start: initialize, then tools/list. It
-# prints one JSON line with what it found, and nothing else.
+# what Kivali asks at every start: initialize, then tools/list, and for
+# a bundle whose connection is made by its own setup flow,
+# kivali/requirements with no connection. It prints one JSON line with
+# what it found, and nothing else.
 #
 # argv[1] is the spec as JSON: command, args, env (the manifest's, with
-# every connection field empty), timeout (seconds, for the whole check)
-# and protocol_version. The server's environment is PATH, a HOME of its
+# every connection field empty), timeout (seconds, for the whole check),
+# protocol_version and requirements (whether to ask for them). The server's environment is PATH, a HOME of its
 # own, LANG and the manifest's env, with no proxy variable: it has no
 # network while it is checked.
 
@@ -32,6 +34,7 @@ def main():
         "start_error": None,
         "initialize": None,
         "tools_list": None,
+        "requirements": None,
         "not_json": None,
         "ended": False,
         "timed_out": False,
@@ -151,6 +154,9 @@ def main():
         send({"jsonrpc": "2.0", "method": "notifications/initialized"})
         if send({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}):
             out["tools_list"] = wait_for(2)
+    if spec.get("requirements") and out["tools_list"] is not None and "result" in out["tools_list"]:
+        if send({"jsonrpc": "2.0", "id": 3, "method": "kivali/requirements", "params": {}}):
+            out["requirements"] = wait_for(3)
 
     try:
         proc.stdin.close()

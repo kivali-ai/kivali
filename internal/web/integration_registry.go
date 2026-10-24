@@ -212,6 +212,13 @@ type integrationRegistry struct {
 	// onConnect, when set, runs once a shim's link is in place. A test
 	// seam.
 	onConnect func(name string)
+	// progress are the progress notifications core waits for, by
+	// integration and progress token (watchProgress); nextProgress
+	// numbers the tokens. linked is closed, and made again, each time a
+	// shim connects (awaitRunning). Guarded by mu.
+	progress     map[progressKey]func(integrationpod.ProgressParams)
+	nextProgress int64
+	linked       chan struct{}
 	// signIn is a sign-in connection's current access token, refreshed
 	// first when it is about to expire (Server.signInAccessToken), given
 	// its manifest, its record and its Secret's data. NewServer sets
@@ -594,6 +601,10 @@ func (r *integrationRegistry) connect(name, token, version, proxyHash string) (*
 	old := e.link
 	e.link, e.misses, e.idle = link, 0, 0
 	r.failPendingLocked(name)
+	if r.linked != nil {
+		close(r.linked)
+		r.linked = nil
+	}
 	r.mu.Unlock()
 	if old != nil {
 		old.close()
@@ -742,9 +753,83 @@ func (r *integrationRegistry) Running(name string) bool {
 	return e != nil && e.link != nil
 }
 
-// timeoutFor is how long a request waits for its response.
+// awaitRunning waits until name's shim is connected, and reports
+// whether it is: false once ctx ends first.
+func (r *integrationRegistry) awaitRunning(ctx context.Context, name string) bool {
+	if r == nil {
+		return false
+	}
+	for {
+		r.mu.Lock()
+		if e := r.entries[name]; e != nil && e.link != nil {
+			r.mu.Unlock()
+			return true
+		}
+		if r.linked == nil {
+			r.linked = make(chan struct{})
+		}
+		ch := r.linked
+		r.mu.Unlock()
+		select {
+		case <-ch:
+		case <-ctx.Done():
+			return false
+		}
+	}
+}
+
+// progressKey names the progress notifications of one request: the
+// integration whose pod sends them and the request's token.
+type progressKey struct{ name, token string }
+
+// watchProgress hands each progress notification name's pod sends with
+// the token it returns to fn, until stop is called. The caller puts the
+// token in the request's _meta.progressToken.
+func (r *integrationRegistry) watchProgress(name string, fn func(integrationpod.ProgressParams)) (token string, stop func()) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.nextProgress++
+	token = "kivali-progress-" + strconv.FormatInt(r.nextProgress, 10)
+	if r.progress == nil {
+		r.progress = map[progressKey]func(integrationpod.ProgressParams){}
+	}
+	key := progressKey{name, token}
+	r.progress[key] = fn
+	return token, func() {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		delete(r.progress, key)
+	}
+}
+
+// onProgress hands a progress notification of name's pod to the
+// request waiting for it; one no request waits for is dropped.
+func (r *integrationRegistry) onProgress(name string, params json.RawMessage) {
+	var p integrationpod.ProgressParams
+	if json.Unmarshal(params, &p) != nil {
+		return
+	}
+	var token string
+	if json.Unmarshal(p.ProgressToken, &token) != nil {
+		return
+	}
+	r.mu.Lock()
+	fn := r.progress[progressKey{name, token}]
+	r.mu.Unlock()
+	if fn != nil {
+		fn(p)
+	}
+}
+
+// timeoutFor is how long a request waits for its response: a call of a
+// setup step as long as the setup runner waits for one, an action or an
+// uninstall a minute, anything else (ping, tools/list, a bundle's
+// requirements) the short wait.
 func timeoutFor(method string) time.Duration {
-	if method == "tools/call" {
+	switch method {
+	case integrationpod.MethodSetup:
+		return setupCallTimeout
+	case "tools/call", integrationpod.MethodUninstall:
 		return integrationCallTimeout
 	}
 	return integrationShortTimeout
@@ -861,7 +946,8 @@ func (r *integrationRegistry) connectionGen(name string) uint64 {
 }
 
 // onMessage handles one message the pod posted: a response is matched
-// to the request waiting on it; a request for the connection's values
+// to the request waiting on it; a progress notification goes to the
+// request whose token it names; a request for the connection's values
 // or a log line is answered; any other request is a method that does
 // not exist. It returns the JSON-RPC response for a request and nil
 // for anything else.
@@ -879,6 +965,9 @@ func (r *integrationRegistry) onMessage(ctx context.Context, name string, msg in
 		}
 		out, _ := integrationpod.Response(msg.ID, map[string]any{}, nil)
 		return out
+	case msg.Method == integrationpod.MethodProgress && msg.IsNotification():
+		r.onProgress(name, msg.Params)
+		return nil
 	case msg.IsNotification():
 		return nil
 	case msg.Method == integrationpod.MethodCredential:
