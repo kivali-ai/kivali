@@ -1286,8 +1286,11 @@ macOS, a "Don't ask again" checkbox that turns `ask_before_quit` off
 running operation, records the teams that run as `running_at_quit`
 (stamping their `paused_at`), and stops every team's supervisor in
 parallel: an owned one RPC-first as above, one it does not own with
-`down` without `exit`. The run loop refuses every other exit request,
-so closing the last window leaves Kivali in the tray. On Windows, if
+`down` without `exit`. A team whose VM runs stops as its Pause
+operation (`Runtime::pause_for_exit`), so while it stops its window
+shows its pausing page and the tray and Settings say pausing. The run
+loop refuses every other exit request, so closing the last window
+leaves Kivali in the tray. On Windows, if
 that `down` fails or times out, the supervisor is terminated and the
 VM is left running until the next start handles it.
 
