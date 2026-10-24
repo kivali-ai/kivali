@@ -571,6 +571,7 @@ func (s *Server) setupCallLocked(run *setupRun, ans builtinintegrations.Answer, 
 	if run.callback != "" {
 		ans.Callback = run.callback + "?" + url.Values{"state": {leg}}.Encode()
 	}
+	ans.Addresses = s.setupAddresses(run.callback)
 	if check {
 		run.checking = true
 	} else {
@@ -581,6 +582,21 @@ func (s *Server) setupCallLocked(run *setupRun, ans builtinintegrations.Answer, 
 	run.calling.Add(1)
 	s.setupRuns.calling.Add(1)
 	go s.runSetupCall(run, gen, ans)
+}
+
+// setupAddresses is every address the team signs in at, as
+// Answer.Addresses gives them: callback (the bare callback the flow's
+// last request reached Kivali at, "" for none) first, then the one at
+// the team's external address when it has one and it is another.
+func (s *Server) setupAddresses(callback string) []string {
+	out := []string{}
+	if callback != "" {
+		out = append(out, callback)
+	}
+	if ext := s.externalRedirectURL(); ext != "" && ext != callback {
+		out = append(out, ext)
+	}
+	return out
 }
 
 // runSetupCall is one call of run's driver, gen, off any request.

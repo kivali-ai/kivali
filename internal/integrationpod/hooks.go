@@ -63,6 +63,9 @@ type SetupAnswer struct {
 	Went     bool                `json:"went"`
 	Leg      int                 `json:"leg"`
 	Callback string              `json:"callback"`
+	// Addresses is every address the team signs in at, each a bare
+	// callback: a list, empty for none.
+	Addresses []string `json:"addresses"`
 	// Team is the team's name, for naming what setup makes on the
 	// service; empty when the team has none.
 	Team string `json:"team"`
@@ -73,6 +76,7 @@ func SetupAnswerOf(a builtinintegrations.Answer) SetupAnswer {
 	out := SetupAnswer{
 		State: map[string]string{}, Form: map[string]string{}, Return: map[string][]string{},
 		Checked: a.Checked, Went: a.Went, Leg: a.Leg, Callback: a.Callback, Team: a.Team,
+		Addresses: append([]string{}, a.Addresses...),
 	}
 	for k, v := range a.State {
 		out.State[k] = v

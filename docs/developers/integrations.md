@@ -959,6 +959,13 @@ Each call is told which it is: `Answer.Leg` counts the calls of the
 flow from 1. `Answer.Team` is the team's name (the branding's company
 name, empty for none), for naming what setup makes on the service; a
 bundle's `kivali/setup` answer carries it as `team` as well.
+`Answer.Addresses` (`addresses`) is every address the team signs in
+at, each a bare callback with no query (`Server.setupAddresses`): the
+one the flow's last request reached Kivali at, which `Callback` is
+built from, then the one at the team's external address
+(`externalRedirectURL`) when it has one and it is another. A setup
+that registers callbacks with an app the service makes (the redirect
+URIs of a sign-in `then` hands over to) registers them all.
 
 ### Keep
 
@@ -1110,7 +1117,7 @@ for its requirements: [The smoke test](#the-smoke-test)). Shell jobs
 and a proxy credential per connection stay built-in only.
 
 - **`kivali/setup`**, one call of the flow. Params:
-  `{"flow", "answer": {"state", "form", "return", "checked", "went", "leg", "callback", "team"}, "_meta": {"progressToken"}}`.
+  `{"flow", "answer": {"state", "form", "return", "checked", "went", "leg", "callback", "addresses", "team"}, "_meta": {"progressToken"}}`.
   `flow` is `setup` or a Fix's name; `answer` is the
   [Answer](#the-interface), every object present (`{}` when empty) and
   `return` the query with each key's values as a list. The result is

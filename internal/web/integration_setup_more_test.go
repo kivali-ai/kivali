@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -212,6 +213,31 @@ func TestSetupFlowReadsBackWhatItKept(t *testing.T) {
 	srv.setupUnsubscribe(run, ch)
 	if first.Leg != 1 || check.Leg != 2 || !check.Checked || check.Callback != first.Callback {
 		t.Errorf("first %d %q, check %d %q", first.Leg, first.Callback, check.Leg, check.Callback)
+	}
+}
+
+// Why this test exists: a setup that registers callbacks with an app
+// the service makes (redirect URIs for a sign-in it hands over to) must
+// register every address the team signs in at, or a sign-in from the
+// team's external address is refused by the service while one from
+// here works. Each call is given them: the bare callback the request
+// reached Kivali at first, then the external one, never with a query,
+// and the external one alone once, when the flow was started there.
+func TestSetupFlowGivesEveryAddress(t *testing.T) {
+	srv, fs, _ := setupServer(t, func(int, context.Context, builtinintegrations.Connection, builtinintegrations.Answer, builtinintegrations.Progress) (builtinintegrations.Step, error) {
+		return builtinintegrations.Step{Form: &builtinintegrations.Form{Fields: []string{"account"}}}, nil
+	})
+	startSetupFlow(t, srv, "echo")
+	if got := fs.nextAnswer(t).Addresses; !slices.Equal(got, []string{loopbackOrigin + "/connect/callback"}) {
+		t.Errorf("with no external address = %q", got)
+	}
+	srv.ExternalURL = "https://team.tail1234.ts.net"
+	startSetupFlow(t, srv, "echo")
+	if got := fs.nextAnswer(t).Addresses; !slices.Equal(got, []string{loopbackOrigin + "/connect/callback", "https://team.tail1234.ts.net/connect/callback"}) {
+		t.Errorf("with an external address = %q", got)
+	}
+	if got := srv.setupAddresses("https://team.tail1234.ts.net/connect/callback"); !slices.Equal(got, []string{"https://team.tail1234.ts.net/connect/callback"}) {
+		t.Errorf("started at the external address = %q", got)
 	}
 }
 

@@ -39,6 +39,10 @@ options:
   --every SECONDS      the wait between a Wait's checks (default 3, as Kivali's).
   --callback URL       the callback address Kivali gives each call (default
                        http://127.0.0.1:8080/connect/callback).
+  --address URL        another address the team signs in at, such as
+                       https://team.example/connect/callback for its
+                       external address; repeat it. Each call's addresses
+                       are --callback's, then these.
   --team NAME          the team's name each call carries, for naming what
                        setup makes on the service (default Kivali; empty for
                        a team with none).
@@ -564,6 +568,7 @@ def main():
     ap.add_argument("--every", type=float, default=3)
     ap.add_argument("--callback", default=DEFAULT_CALLBACK)
     ap.add_argument("--team", default="Kivali")
+    ap.add_argument("--address", dest="addresses", action="append", default=[])
     ap.add_argument("bundle")
     ap.add_argument("requests", nargs="*")
     opts = ap.parse_intermixed_args()
@@ -995,7 +1000,7 @@ def setup_calls(pod, display, flow, opts):
             pod.secrets.append(legs[-1])
         callback = opts.callback + "?" + urllib.parse.urlencode({"state": legs[-1]})
         progress = "kivali-progress-%d" % leg
-        params = {"flow": flow, "answer": dict(answer, state=dict(state), leg=leg, callback=callback, team=opts.team), "_meta": {"progressToken": progress}}
+        params = {"flow": flow, "answer": dict(answer, state=dict(state), leg=leg, callback=callback, addresses=addresses(opts), team=opts.team), "_meta": {"progressToken": progress}}
         what = "a check of the Wait" if answer["checked"] else "call %d" % leg
         say("  kivali/setup, %s:" % what)
         srv = pod.srv
@@ -1094,6 +1099,16 @@ def setup_calls(pod, display, flow, opts):
             answer = {"form": {}, "return": {}, "checked": True, "went": False}
             continue
     note("setup was called %d times and is not done; try.py stops here" % SETUP_CALLS)
+
+
+def addresses(opts):
+    """Every address the team signs in at, as Kivali gives them: the
+    --callback address first, then each --address, each once."""
+    out = []
+    for a in [opts.callback] + opts.addresses:
+        if a and a not in out:
+            out.append(a)
+    return out
 
 
 def wait_key(w):
