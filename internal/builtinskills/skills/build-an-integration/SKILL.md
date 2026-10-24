@@ -379,7 +379,8 @@ servers that follow MCP's authorization offer it.
   authorization code grant and PKCE with `S256`; without them the
   sign-in fails with "Kivali could not find where to sign in to
   <integration>: <why>" or "Kivali could not register itself with
-  <integration>: ...". Check before choosing this way. Leave `pkce` out.
+  <integration>: ...". Check before choosing this way. Leave `pkce` out:
+  the check refuses `"pkce": false` for a registered client.
 - `scopes` go in the registration and the sign-in; `credential_keys`
   and `kivali/credential` are as for any sign-in. The connection form
   has no client id or secret: `user_config` declares only what else the

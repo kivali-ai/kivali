@@ -278,6 +278,11 @@ func TestRegisteredClient(t *testing.T) {
 			conn(m)["authorization_endpoint"] = "https://evil.example/authorize"
 		}, "kivali.connection.authorization_endpoint: Kivali reads a registered client's endpoints from discover, so the manifest gives none"},
 		{"registered device", func(m map[string]any) { conn(m)["method"] = "device" }, "kivali.connection.client registered: only a browser connection has Kivali register itself"},
+		// Discovery refuses a service whose metadata does not list PKCE
+		// with S256, which core signs a registered client in with; a
+		// manifest turning it off would read as a sign-in with no
+		// verifier, which the service was chosen for not needing.
+		{"pkce off", func(m map[string]any) { conn(m)["pkce"] = false }, "kivali.connection.pkce: a registered client signs in with PKCE; pkce cannot be false"},
 		{"no hosts", func(m map[string]any) { delete(conn(m), "hosts") }, "kivali.connection.hosts is missing; a registered client names every host the discovered endpoints may be on"},
 		{"host pattern", func(m map[string]any) { conn(m)["hosts"] = []any{"*.zoominfo.com"} }, `kivali.connection.hosts: "*.zoominfo.com" is not a host name`},
 		{"discover on an operator client", func(m map[string]any) {

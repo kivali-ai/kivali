@@ -79,7 +79,8 @@ owner reads as why the setup did not finish, and `try.py` as a
   declare"; "<Integration>'s setup asked for a form with no fields"
 - "<Integration>'s setup tried to keep <key>, which its manifest does
   not declare"
-- "setup gave no next step"; "setup gave more than one next step"
+- "<Integration>'s setup gave no next step"; "<Integration>'s setup
+  gave more than one next step"
 - "<Integration>'s setup answered with a step Kivali cannot read: ..."
   (a key none of the shapes below has, or a value of another type)
 - "<Integration>'s setup named an address longer than 4096

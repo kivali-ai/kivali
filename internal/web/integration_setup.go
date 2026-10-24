@@ -89,11 +89,9 @@ const (
 
 // Words of the runner's own.
 const (
-	errSetupTimeout   = "setup did not finish its step within 5 minutes; start it again"
-	errSetupNotKept   = "setup made something Kivali could not keep; start it again"
-	errSetupNoStep    = "setup gave no next step"
-	errSetupManySteps = "setup gave more than one next step"
-	errSetupStopped   = "setup was stopped before it finished; start it again"
+	errSetupTimeout = "setup did not finish its step within 5 minutes; start it again"
+	errSetupNotKept = "setup made something Kivali could not keep; start it again"
+	errSetupStopped = "setup was stopped before it finished; start it again"
 	// errSetupNoState: a callback with no state, matched by the flow's
 	// cookie alone, for a Go step that did not say its service drops
 	// the state (Go.Stateless).
@@ -736,6 +734,16 @@ func (s *Server) setupApply(run *setupRun, gen int, step builtinintegrations.Ste
 	}
 }
 
+// errSetupNoStep and errSetupManySteps refuse a step that is none, or
+// more than one, of Form, Go, Wait and Done.
+func errSetupNoStep(display string) error {
+	return fmt.Errorf("%s's setup gave no next step", display)
+}
+
+func errSetupManySteps(display string) error {
+	return fmt.Errorf("%s's setup gave more than one next step", display)
+}
+
 // check is why step does not keep to spec, as an error in words for
 // the owner, or nil.
 func (spec setupSpec) check(display string, step builtinintegrations.Step) error {
@@ -747,9 +755,9 @@ func (spec setupSpec) check(display string, step builtinintegrations.Step) error
 	}
 	switch {
 	case n == 0:
-		return errors.New(errSetupNoStep)
+		return errSetupNoStep(display)
 	case n > 1:
-		return errors.New(errSetupManySteps)
+		return errSetupManySteps(display)
 	}
 	for _, k := range sortedFieldKeys(step.Keep) {
 		if !slices.Contains(spec.keeps, k) {

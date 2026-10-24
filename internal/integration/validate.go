@@ -510,6 +510,9 @@ func validateConnection(m *Manifest, f *Findings) {
 		if c.Method != MethodBrowser {
 			f.errorf("kivali.connection.client registered: only a browser connection has Kivali register itself; the authorization server is found from discover")
 		}
+		if !c.UsesPKCE() {
+			f.errorf("kivali.connection.pkce: a registered client signs in with PKCE; pkce cannot be false")
+		}
 	case "kivali":
 		f.errorf("kivali.connection.client: a client Kivali ships is not in this version of Kivali; the owner registers the app and the client is operator")
 	default:

@@ -361,7 +361,7 @@ func TestBundleSetupRefusedSteps(t *testing.T) {
 		{"field", map[string]any{"form": map[string]any{"fields": []any{"password"}}}, nil, "Test crm's setup asked for password, which its manifest does not declare"},
 		{"keep", map[string]any{"done": true, "keep": map[string]any{"password": "hunter22"}}, nil, "Test crm's setup tried to keep password, which its manifest does not declare"},
 		{"unreadable", map[string]any{"go": map[string]any{"url": "https://" + setupHost + "/x", "noreturn": true}}, nil, `Test crm's setup answered with a step Kivali cannot read: step: json: unknown field "noreturn"`},
-		{"no step", map[string]any{}, nil, errSetupNoStep},
+		{"no step", map[string]any{}, nil, "Test crm's setup gave no next step"},
 		{"long address", map[string]any{"go": map[string]any{"url": "https://" + setupHost + "/" + strings.Repeat("a", setupURLMax)}}, nil, "Test crm's setup named an address longer than 4096 characters"},
 		{"too much state", map[string]any{"form": map[string]any{"fields": []any{"key"}}, "state": map[string]any{"blob": strings.Repeat("x", setupCarryMax)}}, nil, "Test crm's setup gave more to keep and carry than Kivali holds for a step (64 KiB)"},
 		{"too much to post", map[string]any{"go": map[string]any{"url": "https://" + setupHost + "/x", "post": map[string]any{"blob": strings.Repeat("x", setupCarryMax)}}}, nil, "Test crm's setup gave a form to post larger than Kivali sends (64 KiB)"},
