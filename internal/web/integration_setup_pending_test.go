@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/kivali-ai/kivali/internal/agentpod"
+	"github.com/kivali-ai/kivali/internal/integration/integrationtest"
 	"github.com/kivali-ai/kivali/internal/secrets"
 	"github.com/kivali-ai/kivali/internal/store"
 	"github.com/kivali-ai/kivali/internal/web/apitypes"
@@ -199,6 +200,41 @@ func TestAgentCallsWaitForTheInstall(t *testing.T) {
 	}
 	if r := call(); r.IsError {
 		t.Errorf("once installed = %+v", r)
+	}
+}
+
+// Why this test exists: an install's last step can keep values and be
+// Done at once. Were the unfinished mark cleared by a later write, a
+// Kivali stopping between the two would find a finished installation
+// still marked, and its next start would undo it on the service and
+// delete it. The last step's Keep writes the record unmarked in the
+// same write; an earlier step's Keep marks it. Both of core's keeps,
+// a setup integration's and a standard flow's form, hold to it.
+func TestTheLastKeepLeavesTheConnectionFinished(t *testing.T) {
+	ctx := context.Background()
+	for _, final := range []bool{false, true} {
+		srv, _, _ := setupServer(t, nil)
+		srv.Secrets = secrets.NewMemory()
+		run := &setupRun{id: "r1", name: "echo", install: true, ctx: ctx, cancel: func() {}}
+		if err := srv.keepSetupValues(ctx, run, map[string]string{"token": "tok-last-1"}, final); err != nil {
+			t.Fatal(err)
+		}
+		if rec, err := srv.Store.GetIntegrationConnection("echo"); err != nil || rec.SetupPending == final {
+			t.Errorf("setup keep, final %v: %+v %v", final, rec, err)
+		}
+	}
+	for _, final := range []bool{false, true} {
+		srv := newTestServer(t)
+		srv.Secrets = secrets.NewMemory()
+		withIntegrationRegistry(srv, newFakeIntegrationProv())
+		intUploadApprove(t, srv, integrationtest.Manifest("crm", "1.0.0"))
+		run := &setupRun{id: "r2", name: "crm", install: true, ctx: ctx, cancel: func() {}}
+		if err := srv.keepConnectionForm(ctx, run, map[string]string{"token": "tok-form-1", "portal": "acme"}, final); err != nil {
+			t.Fatal(err)
+		}
+		if rec, err := srv.Store.GetIntegrationConnection("crm"); err != nil || rec.SetupPending == final {
+			t.Errorf("form keep, final %v: %+v %v", final, rec, err)
+		}
 	}
 }
 
