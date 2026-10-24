@@ -4,7 +4,8 @@
     "display_name": "GitHub",
     "description": "Issues and pull requests on GitHub.",
     "version": "1.0.0",
-    "status": "not_connected",
+    "state": "installed",
+    "needs": 1,
     "enabled": true,
     "builtin": false,
     "agents": 0
@@ -170,5 +171,36 @@
       "notes_md": ""
     }
   ],
-  "can_remove": true
+  "running": true,
+  "requirements": [
+    {
+      "id": "version",
+      "title": "Approved version",
+      "words": "Version 1.0.0 is in use.",
+      "met": true,
+      "fix": ""
+    },
+    {
+      "id": "connection",
+      "title": "Connection",
+      "words": "Its secrets are stored.",
+      "met": true,
+      "fix": ""
+    },
+    {
+      "id": "sign_in",
+      "title": "Sign-in",
+      "words": "The service no longer accepts the sign-in: the vendor refused the sign-in (bad_refresh_token): The refresh token passed is incorrect or expired. Agents cannot use GitHub until you sign in again.",
+      "met": false,
+      "fix": "sign_in"
+    },
+    {
+      "id": "running",
+      "title": "Running",
+      "words": "It is running.",
+      "met": true,
+      "fix": ""
+    }
+  ],
+  "can_uninstall": true
 }

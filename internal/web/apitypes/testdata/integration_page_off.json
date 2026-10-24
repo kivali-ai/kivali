@@ -1,0 +1,293 @@
+{
+  "summary": {
+    "name": "hubspot",
+    "display_name": "HubSpot",
+    "description": "Blog posts and contacts in HubSpot.",
+    "version": "1.2.0",
+    "state": "off",
+    "needs": 0,
+    "enabled": false,
+    "builtin": false,
+    "agents": 2,
+    "pending_version": "1.3.0"
+  },
+  "author": "Kivali Developer (agent)",
+  "hosts": [
+    "api.hubapi.com"
+  ],
+  "packages": [],
+  "actions": [
+    {
+      "name": "create_post",
+      "description": "Create a blog post as a draft."
+    },
+    {
+      "name": "list_blogs",
+      "description": "List the blogs the connection can see."
+    },
+    {
+      "name": "whoami",
+      "description": "Name the connected account."
+    }
+  ],
+  "connection_fields": [
+    {
+      "key": "token",
+      "title": "Private app token",
+      "description": "From HubSpot, Settings, Private apps.",
+      "sensitive": true,
+      "required": true,
+      "set": true
+    },
+    {
+      "key": "portal",
+      "title": "Portal",
+      "description": "The portal's short name.",
+      "sensitive": false,
+      "required": false,
+      "set": true,
+      "value": "acme"
+    }
+  ],
+  "connection_method": "token",
+  "sign_in_client": "",
+  "scopes": [],
+  "setup_notes_md": "",
+  "sign_in_hosts": [],
+  "connection": {
+    "id": "c7f3a1b2",
+    "label": "",
+    "created_at": "2026-10-21T09:30:00Z",
+    "fields": [
+      {
+        "key": "token",
+        "title": "Private app token",
+        "description": "From HubSpot, Settings, Private apps.",
+        "sensitive": true,
+        "required": true,
+        "set": true
+      },
+      {
+        "key": "portal",
+        "title": "Portal",
+        "description": "The portal's short name.",
+        "sensitive": false,
+        "required": false,
+        "set": true,
+        "value": "acme"
+      }
+    ],
+    "verified_at": "2026-10-21T10:00:00Z",
+    "verified": true,
+    "verify_message": "Connected as Acme Marketing",
+    "reconnect_needed": false
+  },
+  "connections": [
+    {
+      "id": "c7f3a1b2",
+      "label": "",
+      "created_at": "2026-10-21T09:30:00Z",
+      "fields": [
+        {
+          "key": "token",
+          "title": "Private app token",
+          "description": "From HubSpot, Settings, Private apps.",
+          "sensitive": true,
+          "required": true,
+          "set": true
+        },
+        {
+          "key": "portal",
+          "title": "Portal",
+          "description": "The portal's short name.",
+          "sensitive": false,
+          "required": false,
+          "set": true,
+          "value": "acme"
+        }
+      ],
+      "verified_at": "2026-10-21T10:00:00Z",
+      "verified": true,
+      "verify_message": "Connected as Acme Marketing",
+      "reconnect_needed": false
+    }
+  ],
+  "multiple": false,
+  "connection_test": true,
+  "access_form": {
+    "fields": [
+      {
+        "key": "blogs",
+        "title": "Blogs",
+        "description": "The blogs the agent may write in.",
+        "kind": "choices",
+        "required": true,
+        "options": [],
+        "choices": true,
+        "danger": false
+      },
+      {
+        "key": "write",
+        "title": "May publish and edit",
+        "description": "",
+        "kind": "switch",
+        "required": false,
+        "options": [],
+        "choices": false,
+        "danger": false
+      },
+      {
+        "key": "delete",
+        "title": "May delete posts",
+        "description": "Deletes posts for good.",
+        "kind": "switch",
+        "required": false,
+        "options": [],
+        "choices": false,
+        "danger": true
+      },
+      {
+        "key": "region",
+        "title": "Region",
+        "description": "",
+        "kind": "choice",
+        "required": false,
+        "options": [
+          "eu",
+          "us"
+        ],
+        "choices": false,
+        "danger": false
+      },
+      {
+        "key": "tags",
+        "title": "Tags",
+        "description": "",
+        "kind": "list",
+        "required": false,
+        "options": [],
+        "choices": false,
+        "danger": false
+      },
+      {
+        "key": "note",
+        "title": "Note",
+        "description": "",
+        "kind": "text",
+        "required": false,
+        "options": [],
+        "choices": false,
+        "danger": false
+      }
+    ]
+  },
+  "access": [
+    {
+      "agent": {
+        "slug": "dana",
+        "name": "Dana"
+      },
+      "access": {
+        "blogs": [
+          "Marketing"
+        ],
+        "write": true
+      },
+      "summary": "Blogs: Marketing · May publish and edit",
+      "set_at": "2026-10-21T09:30:00Z",
+      "connection_id": "c7f3a1b2",
+      "connection_label": ""
+    },
+    {
+      "agent": {
+        "slug": "lee",
+        "name": "Lee"
+      },
+      "access": {
+        "blogs": [
+          "Old"
+        ]
+      },
+      "summary": "Blogs: Old",
+      "set_at": "2026-10-21T09:30:00Z",
+      "connection_id": "c7f3a1b2",
+      "connection_label": "",
+      "invalid": "Blogs lists a choice the form no longer offers"
+    }
+  ],
+  "agents_without": [
+    {
+      "slug": "chief-of-staff",
+      "name": "Chief of Staff"
+    }
+  ],
+  "versions": [
+    {
+      "version": "1.3.0",
+      "state": "pending",
+      "published_at": "2026-10-21T10:00:00Z",
+      "published_by": {
+        "slug": "kivali-developer",
+        "name": "Kivali Developer"
+      },
+      "notes_md": "Adds contacts."
+    },
+    {
+      "version": "1.2.0",
+      "state": "approved",
+      "published_at": "2026-10-21T09:30:00Z",
+      "published_by": {
+        "slug": "ceo",
+        "name": "Evan"
+      },
+      "approved_at": "2026-10-21T10:00:00Z",
+      "notes_md": ""
+    },
+    {
+      "version": "1.1.1",
+      "state": "rejected",
+      "published_at": "2026-10-20T09:00:00Z",
+      "published_by": {
+        "slug": "kivali-developer",
+        "name": "Kivali Developer"
+      },
+      "notes_md": "Reaches a reporting host."
+    },
+    {
+      "version": "1.1.0",
+      "state": "superseded",
+      "published_at": "2026-10-20T09:00:00Z",
+      "published_by": {
+        "slug": "kivali-developer",
+        "name": "Kivali Developer"
+      },
+      "approved_at": "2026-10-20T09:00:00Z",
+      "notes_md": "Blog posts only."
+    }
+  ],
+  "running": false,
+  "requirements": [
+    {
+      "id": "version",
+      "title": "Approved version",
+      "words": "Version 1.2.0 is in use.",
+      "met": true,
+      "fix": ""
+    },
+    {
+      "id": "connection",
+      "title": "Connection",
+      "words": "Its secrets are stored.",
+      "met": true,
+      "fix": ""
+    },
+    {
+      "id": "connection_test",
+      "title": "Connection test",
+      "words": "Connected as Acme Marketing",
+      "met": true,
+      "fix": ""
+    }
+  ],
+  "can_uninstall": true
+}

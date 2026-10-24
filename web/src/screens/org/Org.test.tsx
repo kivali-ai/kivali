@@ -16,7 +16,7 @@ import type { OrgContextValue } from '../../state/OrgProvider';
 import { aboutLine, versionLabel } from './About';
 import { BACKUP_DEBOUNCE_MS } from './Backup';
 import { InstallScreen, bundleLine } from './InstallScreen';
-import { IntegrationPage, deleteConnectionWords, setupReturnOf, signInLine, signsInAt } from './IntegrationPage';
+import { IntegrationPage, deleteConnectionWords, setupReturnOf, signInLine, signsInAt, uninstallWords } from './IntegrationPage';
 import { SETUP_POLL_MS, codeLifeWords, progressWords } from './SetupFlowPanel';
 import { whenLabel } from './integrationParts';
 import { Org, headerMeta } from './OrgPage';
@@ -50,6 +50,11 @@ import {
   goIntegrationVersionSetup,
   goIntegrationVersionRegistered,
   goIntegrationPageSetup,
+  goIntegrationPageSettingUp,
+  goIntegrationPageFix,
+  goIntegrationPageOff,
+  goIntegrationPagePending,
+  goIntegrationPageNotIncluded,
   goIntegrations,
   goNetwork,
   goOrg,
@@ -1120,17 +1125,23 @@ describe('Software', () => {
 // ---- Integrations ----
 
 describe('Integrations', () => {
-  // Guards the list's reading of integrations.json: each row's version, status badge and agent count, the row
-  // opening the integration's page, the version waiting for approval linking to its install screen, and the
-  // head's counts. A field the list drops, a badge in the wrong tone or a link to the wrong place fails here.
-  it('lists each integration with its version, status and agents, and links a waiting version to its install screen', async () => {
+  // Guards the list's reading of integrations.json: each row's version, state badge, how many of an installed one's
+  // requirements need you, and agent count, the row opening the integration's page, the version waiting for approval
+  // linking to its install screen, and the head's counts. A field the list drops, a badge in the wrong tone or a link
+  // to the wrong place fails here.
+  it('lists each integration with its version, state and agents, and links a waiting version to its install screen', async () => {
     await renderOrg('/org/integrations', { desktop: true });
     const section = within(screen.getByRole('region', { name: 'Integrations' }));
-    expect(section.getByText('3 installed · 1 waiting')).toBeInTheDocument();
+    expect(section.getByText('3 installed · 1 needs you · 1 waiting')).toBeInTheDocument();
     const hubspot = section.getByRole('link', { name: /HubSpot/ });
     expect(hubspot).toHaveAttribute('href', '/org/integrations/hubspot');
     expect(within(hubspot).getByText('v1.2.0')).toBeInTheDocument();
-    expect(within(hubspot).getByText('Connected')).toHaveClass('kv-badge--success');
+    expect(within(hubspot).getByText('Installed')).toHaveClass('kv-badge--success');
+    expect(within(hubspot).queryByText(/needs? you/)).toBeNull();
+    expect(within(section.getByRole('link', { name: /CRM/ })).getByText('1 needs you')).toHaveClass('kv-badge--signal');
+    expect(within(section.getByRole('link', { name: /^Git(?!Hub)/ })).getByText('Available')).toHaveClass('kv-badge--neutral');
+    expect(within(section.getByRole('link', { name: /GitHub/ })).getByText('Setting up')).toBeInTheDocument();
+    expect(within(section.getByRole('link', { name: /Blog/ })).getByText('Off')).toBeInTheDocument();
     expect(within(hubspot).getByText('2 agents')).toBeInTheDocument();
     const weather = section.getByRole('link', { name: /Weather/ });
     expect(weather).toHaveAttribute('href', '/org/integrations/weather');
@@ -1153,7 +1164,7 @@ describe('Integrations', () => {
     expect(within(screen.getByRole('link', { name: /Weather/ })).getByText('Built in')).toHaveClass('kv-badge--outline');
     h.unmount();
     await renderOrg('/org/integrations', { routes: { 'GET /api/v1/org/integrations': { integrations: [] } } });
-    expect(screen.getByText('No integrations installed.')).toBeInTheDocument();
+    expect(screen.getByText('No integrations yet.')).toBeInTheDocument();
   });
 
   // Guards the upload: one .zip goes up as the multipart field `file`, and the version the server stored leads
@@ -1467,10 +1478,9 @@ describe('Integration page', () => {
   const API = '/api/v1/org/integrations/hubspot';
 
   // Guards the switch: turning it off posts .../disable and on posts .../enable, and the page shows what each
-  // answer says (the status follows), so a switch that only moves on screen fails here.
+  // answer says (the state follows: integration_page_off.json), so a switch that only moves on screen fails here.
   it('turns the integration off and on with its switch', async () => {
-    const off = { ...goIntegrationPage, summary: { ...goIntegrationPage.summary, enabled: false, status: 'off' } };
-    const h = await renderOrg(PATH, { routes: { ['POST ' + API + '/disable']: off, ['POST ' + API + '/enable']: goIntegrationPage } });
+    const h = await renderOrg(PATH, { routes: { ['POST ' + API + '/disable']: goIntegrationPageOff, ['POST ' + API + '/enable']: goIntegrationPage } });
     expect(h.chrome.at(-1)).toEqual({ title: 'HubSpot', back: { to: '/org/integrations', label: 'Integrations' } });
     const sw = screen.getByRole('switch', { name: 'On' });
     expect(sw).toHaveAttribute('aria-checked', 'true');
@@ -1478,6 +1488,10 @@ describe('Integration page', () => {
     expect(called('POST', API + '/disable')).toBe(true);
     expect(sw).toHaveAttribute('aria-checked', 'false');
     expect(screen.getByText('Off')).toHaveClass('kv-badge');
+    expect(screen.getByText('Switched off: agents cannot use it. Its connection and every agent’s access are kept for when you switch it on.')).toBeInTheDocument();
+    // Off keeps the connection and the access, and the requirements without the running row.
+    expect(within(screen.getByRole('region', { name: 'Access' })).getByRole('table')).toBeInTheDocument();
+    expect(within(screen.getByRole('region', { name: 'Requirements' })).queryByText('Running')).toBeNull();
     await click(sw);
     expect(called('POST', API + '/enable')).toBe(true);
     expect(sw).toHaveAttribute('aria-checked', 'true');
@@ -1503,48 +1517,115 @@ describe('Integration page', () => {
     expect(screen.getByLabelText('Private app token')).toHaveValue('');
   });
 
-  // Guards the connection's standing and Test connection: the lines say since when it is connected and what the
-  // last test found, and a refused test (409 while testing is unavailable) shows the server's sentence instead of
-  // failing silently.
-  it('says how the connection stands, and why a test could not run', async () => {
+  // Guards the Requirements block of an installed integration (integration_page.json, every row met): each of
+  // Kivali's rows in order with its words and a met mark, no Fix on a met row, and since when it is connected under
+  // the form. A refused test (409 while testing is unavailable) shows the server's sentence instead of failing
+  // silently.
+  it('lists the requirements, and says why a test could not run', async () => {
     await renderOrg(PATH, { routes: { ['POST ' + API + '/connection/verify']: fail(409, 'Testing a connection is not available yet.', 'You can still save it.') } });
+    const reqs = within(screen.getByRole('region', { name: 'Requirements' }));
+    expect(reqs.getAllByRole('listitem').map((li) => li.querySelector('.kv-text')?.textContent)).toEqual(['Approved version', 'Connection', 'Connection test', 'Running']);
+    expect(reqs.getByText('Connected as Acme Marketing')).toBeInTheDocument();
+    expect(reqs.getAllByRole('img', { name: 'Met' })).toHaveLength(4);
+    expect(reqs.queryByRole('button', { name: /^Fix/ })).toBeNull();
     expect(screen.getByText(/^Connected since /)).toBeInTheDocument();
-    expect(screen.getByText(/^Verified .*: Connected as Acme Marketing$/)).toBeInTheDocument();
     await click(screen.getByRole('button', { name: 'Test connection' }));
     expect(called('POST', API + '/connection/verify')).toBe(true);
     expect(screen.getByText('Testing a connection is not available yet.')).toBeInTheDocument();
   });
 
-  // Guards the two states where the form cannot be used as it is: secrets missing from this server (a danger banner
-  // asks for them again) and no approved version yet (no form at all, nothing to connect).
-  it('asks to reconnect when the secrets are missing, and waits for an approved version before any form', async () => {
-    const lost = { ...goIntegrationPage, connection: { ...goIntegrationPage.connection!, reconnect_needed: true } };
-    const h = await renderOrg(PATH, { routes: { ['GET ' + API]: lost } });
-    expect(screen.getByText('Reconnect needed').closest('[role="alert"]')).toHaveClass('kv-banner--danger');
-    h.unmount();
-
-    const pending = { ...goIntegrationPage, connection: undefined, summary: { ...goIntegrationPage.summary, version: '', status: 'pending' } };
-    await renderOrg(PATH, { routes: { ['GET ' + API]: pending, ['GET ' + API + '/audit']: { rows: [] } } });
+  // Guards the page before any version is approved (integration_page_pending.json): nothing to install yet, so no
+  // Install, no form, no requirements and no access, while the history blocks still read.
+  it('waits for an approved version before anything installs', async () => {
+    await renderOrg('/org/integrations/weather', {
+      routes: { ['GET /api/v1/org/integrations/weather']: goIntegrationPagePending, ['GET /api/v1/org/integrations/weather/audit']: { rows: [] }, ['GET /api/v1/org/integrations/weather/logs']: { lines: [] } },
+    });
+    expect(screen.getByText('Pending')).toHaveClass('kv-badge--signal');
     expect(screen.getByText('Approve a version first.')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Save connection' })).toBeNull();
+    for (const name of ['Install', 'Save connection', 'Give access']) expect(screen.queryByRole('button', { name })).toBeNull();
+    expect(screen.queryByRole('region', { name: 'Requirements' })).toBeNull();
+    expect(screen.queryByRole('switch')).toBeNull();
     await click(screen.getByRole('button', { name: 'Recent calls' }));
     expect(screen.getByText('No calls yet.')).toBeInTheDocument();
   });
 
-  // Guards Disconnect: the DELETE waits for the danger dialog's confirm, and the page then shows no connection, with
-  // Connect in place of the form, which starts the flow that makes one again.
-  it('asks before disconnecting', async () => {
-    const disconnected = { ...goIntegrationPage, connection: undefined, summary: { ...goIntegrationPage.summary, status: 'not_connected' } };
-    await renderOrg(PATH, { routes: { ['DELETE ' + API + '/connection']: disconnected } });
-    await click(screen.getByRole('button', { name: 'Disconnect' }));
+  // Guards an unmet requirement: its row says what is wrong with a not-met mark and a Fix named for it, and Fix starts
+  // the row's flow (POST …/setup with its fix) in a panel under the requirements, headed by the row. A Fix that
+  // started the install flow would make the connection again from nothing.
+  it('fixes an unmet requirement through its flow', async () => {
+    const lost = {
+      ...goIntegrationPage,
+      summary: { ...goIntegrationPage.summary, needs: 1 },
+      requirements: goIntegrationPage.requirements.map((r) =>
+        r.id === 'connection' ? { ...r, met: false, fix: 'setup', words: 'Its secrets are not stored on this Kivali server, as after a restore from a backup. Enter them again.' } : r,
+      ),
+    };
+    await renderOrg(PATH, { routes: { ['GET ' + API]: lost, ['GET ' + API + '/setup']: fail(404, 'none', 'you'), ['POST ' + API + '/setup']: goSetupFlowForm } });
+    expect(screen.getByText('1 needs you')).toHaveClass('kv-badge--signal');
+    const reqs = within(screen.getByRole('region', { name: 'Requirements' }));
+    expect(reqs.getByText(/^Its secrets are not stored on this Kivali server/)).toBeInTheDocument();
+    expect(reqs.getAllByRole('img', { name: 'Not met' })).toHaveLength(1);
+    await click(reqs.getByRole('button', { name: 'Fix Connection' }));
+    expect(lastBody('POST', API + '/setup')).toEqual({ flow: 'setup' });
+    const panel = within(reqs.getByRole('region', { name: 'Connection' }));
+    expect(panel.getByLabelText('Account')).toBeInTheDocument();
+  });
+
+  // Guards a Fix flow under way when the page opens (integration_page_fix.json: a permissions Wait, such as after a
+  // Go step's service sent the browser back): the panel follows it under the requirement it mends, with no button
+  // that would start it again, and the integration still reads installed.
+  it('shows a fix under way as the page opens', async () => {
+    const fix = goIntegrationPageFix;
+    await renderOrg('/org/integrations/github', {
+      routes: {
+        ['GET /api/v1/org/integrations/github']: fix,
+        ['GET /api/v1/org/integrations/github/setup']: fix.flow!,
+        ['GET /api/v1/org/integrations/github/audit']: { rows: [] },
+        ['GET /api/v1/org/integrations/github/logs']: { lines: [] },
+      },
+    });
+    expect(screen.getByText('Installed')).toHaveClass('kv-badge--success');
+    const reqs = within(screen.getByRole('region', { name: 'Requirements' }));
+    const panel = within(reqs.getByRole('region', { name: 'Permissions' }));
+    expect(panel.getByLabelText('Code')).toHaveTextContent('WDJB-MJHT');
+    expect(called('POST', '/api/v1/org/integrations/github/setup')).toBe(false);
+    expect(reqs.getByRole('button', { name: 'Fix Permissions' })).toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Install' })).toBeNull();
+  });
+
+  // Guards Uninstall of a built-in: the DELETE waits for the danger dialog, which names what goes (the connection, its
+  // secrets, each agent's access by name) and says the integration stays available; then the page is read again, now
+  // available with Install, rather than leaving for the list.
+  it('uninstalls a built-in after asking, and it is available again', async () => {
+    const builtin = { ...goIntegrationPage, summary: { ...goIntegrationPage.summary, builtin: true } };
+    const after = { ...goIntegrationPageSetup, summary: { ...goIntegrationPageSetup.summary, name: 'hubspot', display_name: 'HubSpot' } };
+    let pageNow: unknown = builtin;
+    const h = await renderOrg(PATH, {
+      routes: {
+        ['GET ' + API]: () => pageNow,
+        ['GET ' + API + '/setup']: fail(404, 'none', 'you'),
+        ['DELETE ' + API]: () => {
+          pageNow = after;
+          return null;
+        },
+      },
+    });
+    await click(screen.getByRole('button', { name: 'Uninstall' }));
     const dialog = screen.getByRole('dialog');
     expect(dialog).toHaveClass('kv-dialog--danger');
-    expect(within(dialog).getByText('Disconnect HubSpot?')).toBeInTheDocument();
-    expect(called('DELETE', API + '/connection')).toBe(false);
-    await click(within(dialog).getByRole('button', { name: 'Disconnect' }));
-    expect(called('DELETE', API + '/connection')).toBe(true);
-    expect(screen.getByRole('button', { name: 'Connect' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Test connection' })).toBeNull();
+    expect(within(dialog).getByText('Uninstall HubSpot?')).toBeInTheDocument();
+    expect(
+      within(dialog).getByText(
+        'Kivali undoes the installation on the service where it can, then forgets the connection and its secrets. Dana and Lee lose their access. HubSpot stays available to install again.',
+      ),
+    ).toBeInTheDocument();
+    expect(called('DELETE', API)).toBe(false);
+    await click(within(dialog).getByRole('button', { name: 'Uninstall' }));
+    expect(called('DELETE', API)).toBe(true);
+    expect(h.router.state.location.pathname).toBe(PATH);
+    expect(screen.getByText('Available')).toBeInTheDocument();
+    expect(within(screen.getByRole('region', { name: 'Install' })).getByRole('button', { name: 'Install' })).toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Access' })).toBeNull();
   });
 
   // Guards the access form as the bundle describes it (integration_page.json's five kinds): text is a text field,
@@ -1647,13 +1728,14 @@ describe('Integration page', () => {
     expect(screen.queryByRole('button', { name: 'Change Dana’s access' })).toBeNull();
   });
 
-  // Guards not_running: the status reads "Not running" with its caption, and nothing that needs the process (Test
-  // connection, the access dialog's Load options) can be pressed, so a click cannot reach an integration that is down.
+  // Guards an integration that is not running (running false, its running requirement unmet): the row says so in its
+  // words, and nothing that needs the process (Test connection, the access dialog's Load options) can be pressed, so a
+  // click cannot reach an integration that is down.
   it('says when the integration is not running and disables what needs it', async () => {
-    const down = { ...goIntegrationPage, summary: { ...goIntegrationPage.summary, status: 'not_running' } };
+    const words = 'It is not running: Kivali is starting it, or it stopped. Its log says what happened.';
+    const down = { ...goIntegrationPage, running: false, requirements: goIntegrationPage.requirements.map((r) => (r.id === 'running' ? { ...r, met: false, words } : r)) };
     await renderOrg(PATH, { routes: { ['GET ' + API]: down } });
-    expect(screen.getByText('Not running')).toHaveClass('kv-badge');
-    expect(screen.getByText('Kivali is starting it, or it stopped. The log below says what happened.')).toBeInTheDocument();
+    expect(within(screen.getByRole('region', { name: 'Requirements' })).getByText(words)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Test connection' })).toBeDisabled();
     await click(screen.getByRole('button', { name: 'Give access' }));
     const dialog = within(screen.getByRole('dialog'));
@@ -1661,30 +1743,32 @@ describe('Integration page', () => {
     expect(dialog.getAllByText('HubSpot is not running, so it cannot list these.').length).toBeGreaterThan(0);
   });
 
-  // Guards the two answers of Test connection: a good one shows "Verified ...: message" as the status line; a bad
-  // one (verified false) shows its message in a danger banner rather than as a quiet line.
+  // Guards the two answers of Test connection: the page each answers with replaces this one, so the connection test
+  // row reads what the test found, met with the integration's words, or not met with why.
   it('shows what Test connection found, good or bad', async () => {
-    const conn = goIntegrationPage.connection!;
-    const good = { ...goIntegrationPage, connection: { ...conn, verified: true, verify_message: 'Connected as Acme' } };
-    const bad = { ...goIntegrationPage, connection: { ...conn, verified: false, verify_message: 'The token was refused.' } };
-    let answerWith: unknown = good;
+    const withTest = (met: boolean, words: string) => ({
+      ...goIntegrationPage,
+      requirements: goIntegrationPage.requirements.map((r) => (r.id === 'connection_test' ? { ...r, met, words } : r)),
+    });
+    let answerWith: unknown = withTest(true, 'Connected as Acme');
     await renderOrg(PATH, { routes: { ['POST ' + API + '/connection/verify']: () => answerWith } });
     await click(screen.getByRole('button', { name: 'Test connection' }));
-    expect(screen.getByText(/^Verified .*: Connected as Acme$/)).toBeInTheDocument();
-    answerWith = bad;
+    const reqs = () => within(screen.getByRole('region', { name: 'Requirements' }));
+    expect(reqs().getByText('Connected as Acme')).toBeInTheDocument();
+    answerWith = withTest(false, 'The connection test failed: The token was refused.');
     await click(screen.getByRole('button', { name: 'Test connection' }));
-    expect(screen.getByText('The token was refused.').closest('[role="alert"]')).toHaveClass('kv-banner--danger');
-    expect(screen.queryByText(/^Verified /)).toBeNull();
+    expect(reqs().getByText('The connection test failed: The token was refused.')).toBeInTheDocument();
+    expect(reqs().getAllByRole('img', { name: 'Not met' })).toHaveLength(1);
   });
 
   // Guards an integration with no connection test (connection_test false: its manifest names no kivali.verify). The
   // page must offer no Test connection, which the server can only refuse, and must not say it is unavailable while
-  // the integration is not running. Save connection and Disconnect stay.
+  // the integration is not running. Save connection stays, and nothing disconnects: Uninstall is the one way out.
   it('offers no Test connection to an integration without one', async () => {
-    const untested = { ...goIntegrationPage, connection_test: false, summary: { ...goIntegrationPage.summary, status: 'not_running' as const } };
+    const untested = { ...goIntegrationPage, connection_test: false, running: false };
     await renderOrg(PATH, { routes: { ['GET ' + API]: untested } });
     expect(screen.getByRole('button', { name: 'Save connection' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Disconnect' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Disconnect' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Test connection' })).toBeNull();
     expect(screen.queryByText('Not available while it is not running.')).toBeNull();
   });
@@ -1768,25 +1852,44 @@ describe('Integration page', () => {
     expect(screen.queryByText('812 ms')).toBeNull();
   });
 
-  // Guards Remove: the DELETE waits for the danger dialog's confirm, then the page goes back to the list; a built-in
-  // integration (can_remove false) offers no Remove at all, since the server would refuse it.
-  it('removes the integration after asking, and never offers it for a built-in one', async () => {
+  // Guards Uninstall of an uploaded integration: the DELETE waits for the danger dialog's confirm, which says it goes
+  // whole, then the page goes back to the list; an available built-in (can_uninstall false) offers no Uninstall at
+  // all, since there is nothing installed and the server would refuse it.
+  it('uninstalls an uploaded integration after asking, and offers nothing to uninstall where nothing is installed', async () => {
     const h = await renderOrg(PATH, { routes: { ['DELETE ' + API]: null } });
-    await click(screen.getByRole('button', { name: 'Remove' }));
+    await click(screen.getByRole('button', { name: 'Uninstall' }));
     const dialog = screen.getByRole('dialog');
     expect(dialog).toHaveClass('kv-dialog--danger');
-    expect(within(dialog).getByText('Remove HubSpot?')).toBeInTheDocument();
-    expect(within(dialog).getByText('Its connection and every agent’s access go with it. A new bundle can install it again.')).toBeInTheDocument();
+    expect(within(dialog).getByText('Uninstall HubSpot?')).toBeInTheDocument();
+    expect(
+      within(dialog).getByText(
+        'Kivali undoes the installation on the service where it can, then forgets the connection and its secrets. Dana and Lee lose their access. HubSpot goes with every version and its log; uploading a bundle installs it again.',
+      ),
+    ).toBeInTheDocument();
     expect(called('DELETE', API)).toBe(false);
-    await click(within(dialog).getByRole('button', { name: 'Remove' }));
+    await click(within(dialog).getByRole('button', { name: 'Uninstall' }));
     expect(called('DELETE', API)).toBe(true);
     expect(h.router.state.location.pathname).toBe('/org/integrations');
     h.unmount();
 
-    const builtin = { ...goIntegrationPage, can_remove: false, summary: { ...goIntegrationPage.summary, builtin: true } };
-    await renderOrg(PATH, { routes: { ['GET ' + API]: builtin } });
+    await renderOrg('/org/integrations/github', {
+      routes: {
+        ['GET /api/v1/org/integrations/github']: goIntegrationPageSetup,
+        ['GET /api/v1/org/integrations/github/setup']: fail(404, 'none', 'you'),
+        ['GET /api/v1/org/integrations/github/audit']: { rows: [] },
+        ['GET /api/v1/org/integrations/github/logs']: { lines: [] },
+      },
+    });
     expect(screen.getByText('Built in')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Remove' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Uninstall' })).toBeNull();
+  });
+
+  // Guards the words of the Uninstall dialog for every count of agents, for an integration that goes and one that stays.
+  it('words what Uninstall drops', () => {
+    expect(uninstallWords('Git', false, [])).toBe(
+      'Kivali undoes the installation on the service where it can, then forgets the connection and its secrets. No agent has access. Git stays available to install again.',
+    );
+    expect(uninstallWords('CRM', true, ['Dana'])).toMatch(/ Dana loses its access\. CRM goes with every version and its log; uploading a bundle installs it again\.$/);
   });
 
   // Guards the history blocks: the waiting version's banner leads to its install screen, versions are listed newest
@@ -1872,7 +1975,7 @@ describe('Integration page', () => {
   it('lets a built-in integration be tested once connected, and offers no roll back', async () => {
     const builtin = {
       ...goIntegrationPage,
-      can_remove: false,
+      can_uninstall: true,
       summary: { ...goIntegrationPage.summary, builtin: true, pending_version: undefined },
       versions: goIntegrationPage.versions.filter((v) => v.state === 'approved' || v.state === 'superseded'),
     };
@@ -1887,22 +1990,30 @@ describe('Integration page', () => {
     const versions = within(screen.getByRole('region', { name: 'Versions' }));
     expect(versions.getByText('Replaced')).toBeInTheDocument();
     expect(versions.queryAllByRole('button')).toEqual([]);
-    expect(screen.queryByRole('button', { name: 'Remove' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Uninstall' })).toBeInTheDocument();
   });
 
-  // Guards a built-in record this version of Kivali does not carry (status not_included): nothing runs it, so the
-  // page must not say Kivali is starting it, Test connection waits, and Remove is offered (can_remove), since the
-  // server removes such a record and the owner has no other way to take it off the team.
-  it('says a built-in integration is not in this version of Kivali and lets it be removed', async () => {
-    const stale = { ...goIntegrationPage, can_remove: true, summary: { ...goIntegrationPage.summary, builtin: true, status: 'not_included', pending_version: undefined } };
-    await renderOrg(PATH, { routes: { ['GET ' + API]: stale, ['DELETE ' + API]: null } });
+  // Guards a built-in record this version of Kivali does not carry (integration_page_not_included.json): nothing runs
+  // it, so the page offers nothing to install, test or give access to, and Uninstall is offered (can_uninstall),
+  // saying it goes whole, since the server removes such a record and the owner has no other way to take it off the
+  // team.
+  it('says a built-in integration is not in this version of Kivali and lets it be uninstalled', async () => {
+    const h = await renderOrg('/org/integrations/maps', {
+      routes: {
+        ['GET /api/v1/org/integrations/maps']: goIntegrationPageNotIncluded,
+        ['GET /api/v1/org/integrations/maps/audit']: { rows: [] },
+        ['GET /api/v1/org/integrations/maps/logs']: { lines: [] },
+        ['DELETE /api/v1/org/integrations/maps']: null,
+      },
+    });
     expect(screen.getByText('Not in this version of Kivali')).toHaveClass('kv-badge');
-    expect(screen.getByText('Another version of Kivali shipped it, and this one does not include it. Agents cannot use it; you can remove it.')).toBeInTheDocument();
-    expect(screen.queryByText(/Kivali is starting it/)).toBeNull();
-    expect(screen.getByRole('button', { name: 'Test connection' })).toBeDisabled();
-    await click(screen.getByRole('button', { name: 'Remove' }));
-    await click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Remove' }));
-    expect(called('DELETE', API)).toBe(true);
+    expect(screen.getByText('Another version of Kivali shipped it, and this one does not include it. Agents cannot use it; you can uninstall it.')).toBeInTheDocument();
+    for (const name of ['Install', 'Test connection', 'Give access']) expect(screen.queryByRole('button', { name })).toBeNull();
+    await click(screen.getByRole('button', { name: 'Uninstall' }));
+    expect(within(screen.getByRole('dialog')).getByText(/Maps goes with every version and its log/)).toBeInTheDocument();
+    await click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Uninstall' }));
+    expect(called('DELETE', '/api/v1/org/integrations/maps')).toBe(true);
+    expect(h.router.state.location.pathname).toBe('/org/integrations');
   });
 
   // Guards a refused roll back (a 409, such as a version answered in another tab): the dialog stays open with the
@@ -2208,12 +2319,14 @@ describe('Integration page, a connection made by signing in', () => {
     expect(block.queryByText(/^Needs you to sign in again/)).toBeNull();
   });
 
-  // Guards the page of a setup connection (integration_page_setup.json): what the flow may do is in the Connection
-  // block, so the owner sees where setup will send their browser and what it keeps on the page too, not only on the
-  // install screen they approved weeks ago. A token page draws none of it.
+  // Guards the page of an available setup integration (integration_page_setup.json): what the flow may do is in the
+  // Install block, beside the one Install button, so the owner sees where setup will send their browser and what it
+  // keeps before it runs, not only on the install screen they approved weeks ago. A token page draws none of it.
   it('shows what a setup flow may do on the page', async () => {
-    await renderOrg('/org/integrations/github', { routes: routes(goIntegrationPageSetup) });
-    const block = within(screen.getByRole('region', { name: 'Connection' }));
+    await renderOrg('/org/integrations/github', { routes: { ...routes(goIntegrationPageSetup), ['GET ' + API + '/setup']: fail(404, 'none', 'you') } });
+    expect(screen.getByText('Available')).toBeInTheDocument();
+    const block = within(screen.getByRole('region', { name: 'Install' }));
+    expect(block.getByRole('button', { name: 'Install' })).toBeInTheDocument();
     expect(block.getByText(goIntegrationPageSetup.setup!.summary)).toBeInTheDocument();
     expect(within(block.getByRole('list', { name: 'Sends your browser to' })).getByText('github.com')).toBeInTheDocument();
     expect(block.getByRole('list', { name: 'GitHub asks for' })).toBeInTheDocument();
@@ -2226,6 +2339,19 @@ describe('Integration page, a connection made by signing in', () => {
     cleanup();
     await renderOrg(PATH);
     expect(screen.queryByRole('list', { name: 'Keeps' })).toBeNull();
+  });
+
+  // Guards the page while its install runs (integration_page_setting_up.json): it reads Setting up, keeps the Install
+  // block with the flow drawn in it (here building the app, with a real bar), and offers no access, requirements or
+  // switch, since nothing is installed until the flow is done.
+  it('draws an install under way', async () => {
+    const page = goIntegrationPageSettingUp;
+    await renderOrg('/org/integrations/github', { routes: { ...routes(page), ['GET ' + API + '/setup']: page.flow! } });
+    expect(screen.getByText('Setting up')).toHaveClass('kv-badge--signal');
+    const install = within(screen.getByRole('region', { name: 'Install' }));
+    expect(install.getByRole('progressbar', { name: 'Building the app' })).toBeInTheDocument();
+    for (const name of ['Requirements', 'Access']) expect(screen.queryByRole('region', { name })).toBeNull();
+    expect(screen.queryByRole('switch')).toBeNull();
   });
 
   // Guards an address the setup notes give to copy rather than follow, such as GitHub's form for an organization,
@@ -2275,12 +2401,14 @@ describe('Integration page, setup flows', () => {
   const API = '/api/v1/org/integrations/github';
   const signedIn = goIntegrationPageSignIn;
   const redirect = signedIn.sign_in_redirect_url!;
-  // The same connection never signed in, its client id and secret stored, offered the ways given.
+  // The same connection never signed in, its client id and secret stored, offered the ways given: installed, its
+  // sign-in requirement not met.
   const notSignedIn = (ways: string[]): typeof signedIn => {
     const sign_in = { ways, signed_in: false, ...(ways.includes('browser') ? { redirect_url: redirect } : {}) };
     return {
       ...signedIn,
-      summary: { ...signedIn.summary, status: 'not_connected' },
+      summary: { ...signedIn.summary, needs: 1 },
+      requirements: signedIn.requirements.map((r) => (r.id === 'sign_in' ? { ...r, met: false, words: 'Not signed in yet.' } : r)),
       connection: { ...signedIn.connection!, sign_in },
       connections: [{ ...signedIn.connection!, sign_in }],
     };
@@ -2293,7 +2421,10 @@ describe('Integration page, setup flows', () => {
     ['POST ' + API + '/setup']: start,
     ['POST ' + API + '/setup/cancel']: {},
   });
-  const block = () => within(screen.getByRole('region', { name: 'Sign in' }));
+  // The sign-in row's Fix panel, headed by the row; and the Sign in block under the connection's form.
+  const block = () => within(screen.getByRole('region', { name: 'Sign-in' }));
+  const signInBlock = () => within(screen.getByRole('region', { name: 'Sign in' }));
+  const fix = () => click(within(screen.getByRole('region', { name: 'Requirements' })).getByRole('button', { name: 'Fix Sign-in' }));
   const reads = () => calls.filter((c) => c.method === 'GET' && c.url === API + '/setup').length;
   const tick = async () => {
     act(() => void vi.advanceTimersByTime(SETUP_POLL_MS));
@@ -2309,17 +2440,18 @@ describe('Integration page, setup flows', () => {
     Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
   });
 
-  // Guards a device sign-in drawn from its flow (setup_flow_wait.json): the one button the server's first way names
-  // starts the flow (POST …/setup with the flow's name), and its Wait shows the code with Copy, the service's page as a
-  // link that opens in a new tab without handing it this page (noopener), and how long the code works, from the
-  // flow's expiry. The page asks how the flow stands every few seconds where it has no stream, and once the flow is
-  // done it reads the page again, which says Signed in and offers Sign out. A page that never asked again would leave
-  // the owner looking at a code long after they approved it.
-  it('starts the sign-in, shows the code, and reads the page again once done', async () => {
+  // Guards a device sign-in drawn from its flow (setup_flow_wait.json), started by the sign-in row's Fix: it posts
+  // …/setup with the flow sign_in, the panel names where it signs in, and its Wait shows the code with Copy, the
+  // service's page as a link that opens in a new tab without handing it this page (noopener), and how long the code
+  // works, from the flow's expiry. The page asks how the flow stands every few seconds where it has no stream, and
+  // once the flow is done it reads the page again, which says Signed in and offers Sign out. A page that never asked
+  // again would leave the owner looking at a code long after they approved it.
+  it('signs in again from the sign-in row, shows the code, and reads the page again once done', async () => {
     await renderOrg(PATH, { routes: pageRoutes(notSignedIn(['device'])) });
+    expect(screen.getByText('Installed')).toBeInTheDocument();
+    await fix();
+    expect(lastBody('POST', API + '/setup')).toEqual({ flow: 'sign_in' });
     expect(block().getByText('Signs in at github.com')).toBeInTheDocument();
-    await click(block().getByRole('button', { name: 'Sign in with a code' }));
-    expect(lastBody('POST', API + '/setup')).toEqual({ flow: 'setup' });
     expect(block().getByLabelText('Code')).toHaveTextContent('WDJB-MJHT');
     expect(block().getByRole('button', { name: 'Copy code' })).toBeInTheDocument();
     const link = block().getByRole('link', { name: 'github.com' });
@@ -2337,8 +2469,9 @@ describe('Integration page, setup flows', () => {
     routes['GET ' + API] = { ...signedIn, connection: { ...signedIn.connection!, verified: true, verify_message: 'Signed in as octocat' } };
     routes['GET ' + API + '/setup'] = goSetupFlowDone;
     await tick();
-    expect(block().getByText('Signed in. Signed in as octocat')).toBeInTheDocument();
-    expect(block().getByRole('button', { name: 'Sign out' })).toBeInTheDocument();
+    expect(signInBlock().getByText('Signed in. Signed in as octocat')).toBeInTheDocument();
+    expect(signInBlock().getByRole('button', { name: 'Sign out' })).toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Sign-in' })).toBeNull();
     expect(called('GET', API + '/audit')).toBe(true);
   });
 
@@ -2346,7 +2479,7 @@ describe('Integration page, setup flows', () => {
   // kept asking from a background tab would load the server for nobody, and keep a Wait checked for nobody.
   it('asks nothing while the tab is hidden', async () => {
     await renderOrg(PATH, { routes: pageRoutes(notSignedIn(['device'])) });
-    await click(block().getByRole('button', { name: 'Sign in with a code' }));
+    await fix();
     const before = reads();
     Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
     act(() => void document.dispatchEvent(new Event('visibilitychange')));
@@ -2360,13 +2493,12 @@ describe('Integration page, setup flows', () => {
   });
 
   // Guards a flow's Form (setup_flow_form.json): the declared fields under the integration's name, a secret one as a
-  // password field and one used during setup said to be never kept, and Continue posting every field it asks for
-  // to …/setup/answer, one left untouched as empty, so the flow reads what was left blank. Cancel ends the flow and
-  // the panel offers to start again. A Form drawn as text would show a key on screen; one that posted elsewhere would
-  // never reach the flow.
+  // password field and one used during setup said to be never kept, and Continue posting what was typed to
+  // …/setup/answer. Cancel ends the flow and the panel offers to start it again. A Form drawn as text would show a key
+  // on screen; one that posted elsewhere would never reach the flow.
   it('draws a form step and answers it', async () => {
     await renderOrg(PATH, { routes: pageRoutes(notSignedIn(['browser']), goSetupFlowForm) });
-    await click(block().getByRole('button', { name: 'Sign in' }));
+    await fix();
     expect(block().getByText('Name the account the app goes on.')).toBeInTheDocument();
     expect(block().getByText('GitHub asks for')).toBeInTheDocument();
     const key = block().getByLabelText('Key');
@@ -2374,12 +2506,13 @@ describe('Integration page, setup flows', () => {
     expect(block().getByText('From the key page Used during setup and never kept.')).toBeInTheDocument();
     expect(block().getByLabelText('Account')).toHaveAttribute('type', 'text');
     fireEvent.change(block().getByLabelText('Account'), { target: { value: 'acme' } });
+    fireEvent.change(key, { target: { value: 'pak-123' } });
     routes['POST ' + API + '/setup/answer'] = goSetupFlowRunning;
     await click(block().getByRole('button', { name: 'Continue' }));
-    expect(lastBody('POST', API + '/setup/answer')).toEqual({ fields: { account: 'acme', personal_access_key: '' } });
+    expect(lastBody('POST', API + '/setup/answer')).toEqual({ fields: { account: 'acme', personal_access_key: 'pak-123' } });
     await click(block().getByRole('button', { name: 'Cancel' }));
     expect(called('POST', API + '/setup/cancel')).toBe(true);
-    expect(block().getByRole('button', { name: 'Sign in' })).toBeInTheDocument();
+    expect(block().getByRole('button', { name: 'Fix' })).toBeInTheDocument();
   });
 
   // Guards a running step (setup_flow_running.json): a real progress bar where the integration gave a count, named by
@@ -2387,7 +2520,7 @@ describe('Integration page, setup flows', () => {
   // bar that would claim a measure there is not.
   it('shows a running step’s progress as a bar where there is a count', async () => {
     await renderOrg(PATH, { routes: pageRoutes(notSignedIn(['browser']), goSetupFlowRunning) });
-    await click(block().getByRole('button', { name: 'Sign in' }));
+    await fix();
     const bar = block().getByRole('progressbar', { name: 'Building the app' });
     expect(bar).toHaveAttribute('aria-valuenow', '3');
     expect(bar).toHaveAttribute('aria-valuemax', '5');
@@ -2412,7 +2545,7 @@ describe('Integration page, setup flows', () => {
     const open = vi.fn();
     vi.stubGlobal('open', open);
     await renderOrg(PATH, { routes: pageRoutes(notSignedIn(['browser']), goSetupFlowGo) });
-    await click(block().getByRole('button', { name: 'Sign in' }));
+    await fix();
     expect(block().getByText(goSetupFlowGo.step!.words)).toBeInTheDocument();
     await click(block().getByRole('button', { name: 'Continue to github.com' }));
     expect(assign).toHaveBeenCalledWith('/connect/start?flow=' + goSetupFlowGo.id);
@@ -2427,11 +2560,11 @@ describe('Integration page, setup flows', () => {
   });
 
   // Guards a flow that failed (setup_flow_failed.json): the panel says it did not finish in the service's words and
-  // offers Try again, which starts the flow again. A panel that kept the last step up would have the owner act on a
-  // flow nothing waits for.
+  // offers Try again, which starts the same flow again. A panel that kept the last step up would have the owner act on
+  // a flow nothing waits for.
   it('says why a flow failed and offers Try again', async () => {
     await renderOrg(PATH, { routes: pageRoutes(notSignedIn(['device'])) });
-    await click(block().getByRole('button', { name: 'Sign in with a code' }));
+    await fix();
     routes['GET ' + API + '/setup'] = goSetupFlowFailed;
     await tick();
     expect(block().getByText('Setup did not finish')).toBeInTheDocument();
@@ -2442,6 +2575,7 @@ describe('Integration page, setup flows', () => {
     expect(reads()).toBe(before);
     await click(block().getByRole('button', { name: 'Try again' }));
     expect(calls.filter((c) => c.method === 'POST' && c.url === API + '/setup')).toHaveLength(2);
+    expect(lastBody('POST', API + '/setup')).toEqual({ flow: 'sign_in' });
   });
 
   // Guards the way back from the service: Kivali's callback lands here with ?setup=<flow id> and no words, and the
@@ -2452,7 +2586,7 @@ describe('Integration page, setup flows', () => {
     const h = await renderOrg(PATH + '?setup=' + goSetupFlowGo.id, { routes: pageRoutes(notSignedIn(['browser'])) });
     expect(called('GET', API + '/setup')).toBe(true);
     expect(block().getByText('This setup is no longer under way')).toBeInTheDocument();
-    expect(block().getByRole('button', { name: 'Sign in' })).toBeInTheDocument();
+    expect(block().getByRole('button', { name: 'Fix' })).toBeInTheDocument();
     expect(h.router.state.location.search).toBe('');
     cleanup();
     await renderOrg(PATH + '?setup=' + goSetupFlowGo.id, { routes: { ...pageRoutes(notSignedIn(['browser'])), ['GET ' + API + '/setup']: goSetupFlowRunning } });
@@ -2462,59 +2596,60 @@ describe('Integration page, setup flows', () => {
     expect(setupReturnOf('')).toBeNull();
   });
 
-  // Guards Sign out: it posts to the connection's route and the page it answers replaces this one, so the block offers
-  // signing in again rather than still reading Signed in.
+  // Guards Sign out: it posts to the connection's route and the page it answers replaces this one, so the sign-in row
+  // is not met and offers its Fix rather than the block still reading Signed in.
   it('signs out', async () => {
     await renderOrg(PATH, { routes: { ...pageRoutes(signedIn), ['POST ' + API + '/connection/sign-out']: notSignedIn(['device']) } });
-    await click(block().getByRole('button', { name: 'Sign out' }));
+    await click(signInBlock().getByRole('button', { name: 'Sign out' }));
     expect(called('POST', API + '/connection/sign-out')).toBe(true);
-    expect(block().getByRole('button', { name: 'Sign in with a code' })).toBeInTheDocument();
+    expect(within(screen.getByRole('region', { name: 'Requirements' })).getByRole('button', { name: 'Fix Sign-in' })).toBeInTheDocument();
+    expect(screen.queryByText('Signed in.')).toBeNull();
   });
 
-  // Guards the scopes on the page (integration_page_sign_in.json asks for repo and read:org): the line sits with the
-  // Sign in block, so the owner sees what they are about to grant before they sign in.
+  // Guards the scopes on the page (integration_page_sign_in.json asks for repo and read:org): the line sits in the
+  // Connection block, so the owner sees what they grant whenever they sign in again.
   it('says what the sign-in asks the service for', async () => {
     await renderOrg(PATH, { routes: pageRoutes(notSignedIn(['device'])) });
     const connection = within(screen.getByRole('region', { name: 'Connection' }));
     expect(connection.getByText('Asks the service for: repo, read:org')).toBeInTheDocument();
   });
 
-  // Guards a manifest that names only ways this version does not sign in by: the block says so in one sentence
-  // rather than show a button the server would refuse.
+  // Guards a manifest that names only ways this version does not sign in by: the Sign in block says so in one
+  // sentence rather than show a button the server would refuse.
   it('says when this version of Kivali has no way to sign in', async () => {
     const none = { ...signedIn.connection!, sign_in: { ways: [], signed_in: false } };
     await renderOrg(PATH, { routes: pageRoutes({ ...signedIn, connection: none, connections: [none] }) });
-    expect(block().getByText('This version of Kivali has no way to sign in to this service.')).toBeInTheDocument();
-    expect(block().queryByRole('button')).toBeNull();
+    expect(signInBlock().getByText('This version of Kivali has no way to sign in to this service.')).toBeInTheDocument();
+    expect(signInBlock().queryByRole('button')).toBeNull();
   });
 
   // Guards a connection that signs in only in the browser, read where that cannot finish
-  // (integration_page_sign_in_elsewhere.json): no button at all, which would start a flow that cannot end, but words
-  // that say to sign in from a browser and the team's address to open there, with Copy, since a link would only open
-  // in this window. Without an address the words still say where.
+  // (integration_page_sign_in_elsewhere.json): the Sign in block says to sign in from a browser and gives the team's
+  // address to open there, with Copy, since a link would only open in this window. Without an address the words
+  // still say where.
   it('says to sign in from a browser at the team’s address where no way works', async () => {
     const writeText = vi.fn(() => Promise.resolve());
     vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
     const page = goIntegrationPageSignInElsewhere;
     const openAt = page.connection!.sign_in!.open_at!;
     await renderOrg(PATH, { routes: pageRoutes(page) });
-    expect(block().getByText('Signing in does not work from here. Open the team’s address in your browser and sign in there.')).toBeInTheDocument();
-    expect(block().queryByRole('button', { name: /^Sign in/ })).toBeNull();
+    expect(signInBlock().getByText('Signing in does not work from here. Open the team’s address in your browser and sign in there.')).toBeInTheDocument();
+    expect(signInBlock().queryByRole('button', { name: /^Sign in/ })).toBeNull();
     expect(screen.queryByRole('textbox', { name: 'Redirect address' })).toBeNull();
-    expect(block().getByRole('textbox', { name: 'Team address' })).toHaveValue(openAt);
-    await click(block().getByRole('button', { name: 'Copy' }));
+    expect(signInBlock().getByRole('textbox', { name: 'Team address' })).toHaveValue(openAt);
+    await click(signInBlock().getByRole('button', { name: 'Copy' }));
     expect(writeText).toHaveBeenCalledWith(openAt);
     cleanup();
     const { open_at: _openAt, ...noAddress } = page.connection!.sign_in!;
     const without = { ...page, connection: { ...page.connection!, sign_in: noAddress }, connections: [{ ...page.connection!, sign_in: noAddress }] };
     await renderOrg(PATH, { routes: pageRoutes(without) });
-    expect(block().getByText('Signing in does not work from here. Open the team in your browser, at its own address, and sign in there.')).toBeInTheDocument();
-    expect(block().queryByRole('textbox', { name: 'Team address' })).toBeNull();
+    expect(signInBlock().getByText('Signing in does not work from here. Open the team in your browser, at its own address, and sign in there.')).toBeInTheDocument();
+    expect(signInBlock().queryByRole('textbox', { name: 'Team address' })).toBeNull();
   });
 
   // Guards the address the owner registers with the service (sign_in_redirect_url in integration_page_sign_in.json):
-  // above the form, read-only so it cannot be changed by a slip before it is copied, with Copy, and the sentence that
-  // says what to do with it. A wrong address there is a service that refuses every sign-in.
+  // read-only so it cannot be changed by a slip before it is copied, with Copy, and the sentence that says what to do
+  // with it. A wrong address there is a service that refuses every sign-in.
   it('shows the redirect address to copy', async () => {
     const writeText = vi.fn(() => Promise.resolve());
     vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
@@ -2572,28 +2707,38 @@ describe('Integration page, setup flows', () => {
     expect(codeLifeWords('2026-10-21T10:00:20Z', now)).toBe('The code works for 1 minute.');
   });
 
-  // Guards every connection being made by a flow: a token integration with no connection yet offers Connect, whose
-  // flow asks for the connection's form, rather than a form saved by PUT; a setup integration's page offers Set up in
-  // its place. Each starts its flow with POST …/setup.
-  it('connects a token or setup integration through its flow', async () => {
+  // Guards Install, every integration's one way in: an available token integration offers Install, whose flow asks
+  // for the connection's form, rather than a form saved by PUT; a setup integration's page offers the same Install
+  // over its declarations. Each starts its flow with POST …/setup and the flow setup, and once done the page is read
+  // again.
+  it('installs a token or setup integration through its flow', async () => {
     const hubspot = '/api/v1/org/integrations/hubspot';
-    const unconnected = { ...goIntegrationPage, connection: undefined, connections: [] } as unknown as IntegrationPageData;
+    const available = {
+      ...goIntegrationPage,
+      summary: { ...goIntegrationPage.summary, state: 'available', needs: 0, agents: 0 },
+      connection: undefined,
+      connections: [],
+      access: [],
+      requirements: [],
+      can_uninstall: true,
+    } as unknown as IntegrationPageData;
     await renderOrg('/org/integrations/hubspot', {
       routes: {
-        ['GET ' + hubspot]: unconnected,
+        ['GET ' + hubspot]: available,
         ['GET ' + hubspot + '/setup']: fail(404, 'none', 'you'),
         ['POST ' + hubspot + '/setup']: goSetupFlowForm,
       },
     });
-    const connect = within(screen.getByRole('region', { name: 'Connect' }));
+    const install = within(screen.getByRole('region', { name: 'Install' }));
     expect(screen.queryByRole('button', { name: 'Save connection' })).toBeNull();
-    await click(connect.getByRole('button', { name: 'Connect' }));
+    expect(screen.queryByRole('region', { name: 'Access' })).toBeNull();
+    await click(install.getByRole('button', { name: 'Install' }));
     expect(lastBody('POST', hubspot + '/setup')).toEqual({ flow: 'setup' });
-    expect(connect.getByLabelText('Account')).toBeInTheDocument();
+    expect(install.getByLabelText('Account')).toBeInTheDocument();
     cleanup();
     await renderOrg(PATH, { routes: { ...pageRoutes(goIntegrationPageSetup), ['POST ' + API + '/setup']: goSetupFlowGo } });
-    const setup = within(screen.getByRole('region', { name: 'Set up' }));
-    await click(setup.getByRole('button', { name: 'Set up' }));
+    const setup = within(screen.getByRole('region', { name: 'Install' }));
+    await click(setup.getByRole('button', { name: 'Install' }));
     expect(setup.getByRole('button', { name: 'Continue to github.com' })).toBeInTheDocument();
   });
 });

@@ -1454,14 +1454,15 @@ export const NeedKindWebUpload = "web_upload";
  */
 export const NeedKindWebBudget = "web_budget";
 /**
- * NeedKindIntegrationSignIn: an integration's connection made by
- * signing in needs you to sign in again, since the vendor refused
- * to renew its sign-in (the body says why). Open the integration's
- * page (ReviewPath). The row leaves once the connection is signed
- * in again or deleted.
+ * NeedKindIntegrationRequirement: one of an installed integration's
+ * requirements is not met (the body says what is), such as a sign-in
+ * the service no longer accepts. Open the integration's page
+ * (ReviewPath), where its Fix is. The row leaves once the
+ * requirement is met, or the integration is switched off or
+ * uninstalled.
  */
-export const NeedKindIntegrationSignIn = "integration_sign_in";
-export type NeedKind = typeof NeedKindApproval | typeof NeedKindNotification | typeof NeedKindAssignment | typeof NeedKindNeedsHelp | typeof NeedKindProposal | typeof NeedKindWebSignIn | typeof NeedKindWebUpload | typeof NeedKindWebBudget | typeof NeedKindIntegrationSignIn;
+export const NeedKindIntegrationRequirement = "integration_requirement";
+export type NeedKind = typeof NeedKindApproval | typeof NeedKindNotification | typeof NeedKindAssignment | typeof NeedKindNeedsHelp | typeof NeedKindProposal | typeof NeedKindWebSignIn | typeof NeedKindWebUpload | typeof NeedKindWebBudget | typeof NeedKindIntegrationRequirement;
 /**
  * WebUploadRef is the upload a web_upload row asks you to approve: the
  * task (its page is /agents/{parent}/subagents/{id}), the site it is
@@ -1554,8 +1555,8 @@ export interface NeedItem {
    * "web_sign_in:<agent>/<task>", "web_upload:<agent>/<task>" and
    * "web_budget:<agent>/<task>" for a web task's rows, the last two
    * being the path POST /api/v1/needs/* takes for them, and
-   * "integration_sign_in:<integration>/<connection>" for a
-   * connection that needs you to sign in again.
+   * "integration_requirement:<integration>/<requirement>" for an
+   * installed integration's requirement that is not met.
    */
   id: string;
   kind: NeedKind;
@@ -1568,7 +1569,7 @@ export interface NeedItem {
   assignment?: AssignmentRef;
   /**
    * ReviewPath is the proposal page for a proposal row, and the
-   * integration's page for an integration_sign_in row.
+   * integration's page for an integration_requirement row.
    */
   review_path?: string;
   /**
@@ -1596,7 +1597,7 @@ export interface NeedItem {
   web_budget?: WebBudgetRef;
   /**
    * RawURL opens the message file; absent on a needs-help row, a web
-   * task's rows and an integration_sign_in row.
+   * task's rows and an integration_requirement row.
    */
   raw_url?: string;
 }
@@ -1764,38 +1765,43 @@ export interface Integrations {
   integrations: IntegrationSummary[];
 }
 /**
- * IntegrationStatus is the one word the list shows for an integration.
+ * IntegrationState is where an integration stands in its lifecycle:
+ * available, setting up, installed or off; or, before that, waiting
+ * for its first approval, or not in this version of Kivali.
  */
 /**
- * IntegrationStatusPending: no version has been approved yet.
+ * IntegrationStateAvailable: ready to install. A built-in while this
+ * version of Kivali carries it, a bundle once a version is approved.
+ * Install runs its setup flow.
  */
-export const IntegrationStatusPending = "pending";
+export const IntegrationStateAvailable = "available";
 /**
- * IntegrationStatusNotConnected: approved, on, but no connection.
+ * IntegrationStateSettingUp: its setup flow runs (IntegrationPage's
+ * Flow). A flow that fails or is cancelled keeps nothing, and the
+ * integration is available again.
  */
-export const IntegrationStatusNotConnected = "not_connected";
+export const IntegrationStateSettingUp = "setting_up";
 /**
- * IntegrationStatusConnected: approved, on, with a connection.
+ * IntegrationStateInstalled: the connection exists, and agents can
+ * be given access. Its requirements say whether it works.
  */
-export const IntegrationStatusConnected = "connected";
+export const IntegrationStateInstalled = "installed";
 /**
- * IntegrationStatusOff: switched off; agents cannot use it.
+ * IntegrationStateOff: switched off. Agents cannot use it; the
+ * connection and their access are kept.
  */
-export const IntegrationStatusOff = "off";
+export const IntegrationStateOff = "off";
 /**
- * IntegrationStatusNotRunning: approved and on, but the integration
- * is not running right now (starting, or stopped after a failure);
- * Test connection and agents' calls wait for it. An integration that
- * ships with Kivali is never not running.
+ * IntegrationStatePending: no version has been approved yet.
  */
-export const IntegrationStatusNotRunning = "not_running";
+export const IntegrationStatePending = "pending";
 /**
- * IntegrationStatusNotIncluded: a built-in integration this version
+ * IntegrationStateNotIncluded: a built-in integration this version
  * of Kivali does not carry (another version shipped it). Nothing
- * runs it and agents cannot use it; it can be removed.
+ * runs it and agents cannot use it; it can be uninstalled.
  */
-export const IntegrationStatusNotIncluded = "not_included";
-export type IntegrationStatus = typeof IntegrationStatusPending | typeof IntegrationStatusNotConnected | typeof IntegrationStatusConnected | typeof IntegrationStatusOff | typeof IntegrationStatusNotRunning | typeof IntegrationStatusNotIncluded;
+export const IntegrationStateNotIncluded = "not_included";
+export type IntegrationState = typeof IntegrationStateAvailable | typeof IntegrationStateSettingUp | typeof IntegrationStateInstalled | typeof IntegrationStateOff | typeof IntegrationStatePending | typeof IntegrationStateNotIncluded;
 /**
  * IntegrationSummary is one row of the list.
  */
@@ -1808,7 +1814,12 @@ export interface IntegrationSummary {
    * has been approved.
    */
   version: string;
-  status: IntegrationStatus;
+  state: IntegrationState;
+  /**
+   * Needs is how many of its requirements are not met, each a row of
+   * Needs you; 0 for an integration that is not installed or is off.
+   */
+  needs: number /* int */;
   enabled: boolean;
   builtin: boolean;
   /**
@@ -1942,10 +1953,58 @@ export interface IntegrationPage {
    */
   versions: IntegrationVersionSummary[];
   /**
-   * CanRemove is false for a built-in integration this version of
-   * Kivali carries.
+   * Running is whether the integration can be called now: a built-in
+   * always while this version of Kivali carries it, a bundle while its
+   * server runs. Test connection and the options an access form lists
+   * wait for it.
    */
-  can_remove: boolean;
+  running: boolean;
+  /**
+   * Requirements are an installed or switched-off integration's
+   * health, Kivali's rows first (an approved version, the connection,
+   * a sign-in still accepted, the connection test, the integration
+   * running), then the integration's own. Empty in any other state.
+   */
+  requirements: IntegrationRequirement[];
+  /**
+   * Flow is its setup flow under way, or the one that last ended,
+   * which Kivali keeps for ten minutes: installing (flow setup) or a
+   * requirement's fix. Absent with none.
+   */
+  flow?: SetupFlow;
+  /**
+   * CanUninstall is true when DELETE /api/v1/org/integrations/{name}
+   * applies: to an uploaded integration whatever its state, and to a
+   * built-in that is installed, off or not in this version of Kivali.
+   */
+  can_uninstall: boolean;
+}
+/**
+ * IntegrationRequirement is one row of an integration's health: met or
+ * not, in words, with the flow that fixes it.
+ */
+export interface IntegrationRequirement {
+  /**
+   * ID names the row, stable across reads. Kivali's own are version,
+   * connection, sign_in, connection_test and running.
+   */
+  id: string;
+  /**
+   * Title is the row in a few words ("Signed in").
+   */
+  title: string;
+  /**
+   * Words say what is, met or not.
+   */
+  words: string;
+  met: boolean;
+  /**
+   * Fix is the flow its Fix button runs (POST .../setup with
+   * {"flow": fix}): setup to make the connection again, sign_in to
+   * sign in again, or a flow the integration names. Empty for a row
+   * with nothing to run.
+   */
+  fix: string;
 }
 /**
  * IntegrationAction is one tool the integration gives agents, in words.
@@ -2176,7 +2235,8 @@ export interface SetupFlow {
    */
   id: string;
   /**
-   * Flow is the flow run: setup, to make the connection.
+   * Flow is the flow run: setup, to make the connection, or a
+   * requirement's fix.
    */
   flow: string;
   state: SetupFlowState;
@@ -2271,7 +2331,9 @@ export interface SetupFlowProgress {
  */
 export interface SetupFlowStart {
   /**
-   * Flow is setup, to make the connection.
+   * Flow is setup, to install the integration or make its connection
+   * again; or a requirement's fix: sign_in, or a flow the
+   * integration's requirements name. Any other is a 409.
    */
   flow: string;
 }
@@ -2628,12 +2690,16 @@ export interface AgentIntegration {
   name: string;
   display_name: string;
   /**
-   * Status is the integration's. Under Connected, for an integration
-   * that takes several connections, connected or not connected is the
-   * connection's the agent's access names: not connected while that
-   * one needs its secrets again.
+   * State is the integration's.
    */
-  status: IntegrationStatus;
+  state: IntegrationState;
+  /**
+   * Usable is true when the agent's calls can go through now: the
+   * integration is installed and running, and the connection its
+   * access names has its secrets and, made by signing in, is signed
+   * in. Always false under Available.
+   */
+  usable: boolean;
   /**
    * Summary is the agent's access in words; empty under Available.
    */

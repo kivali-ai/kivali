@@ -25,6 +25,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"html"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -34,11 +35,28 @@ import (
 )
 
 // handleAPISetupStart starts the integration's flow (SetupFlowStart),
-// ending one under way, and answers with its state.
+// ending one under way, and answers with its state: setup, which
+// installs it (switching it on when nothing is installed yet) or makes
+// its connection again; sign_in, the standard sign-in again; or a flow
+// one of its own requirements names as its Fix.
 func (s *Server) handleAPISetupStart(w http.ResponseWriter, r *http.Request) {
 	var req apitypes.SetupFlowStart
 	if !decodeJSONOrError(w, r, &req) {
 		return
+	}
+	flow := req.Flow
+	// A connection a failed install made goes before another starts,
+	// so the new one never reads it.
+	s.setupAwaitDiscard(r.Context(), r.PathValue("name"))
+	// A Fix the integration names is asked of it before the lock, so a
+	// slow integration holds up no other integration write.
+	named := false
+	if flow != builtinintegrations.FlowSetup && flow != flowSignIn {
+		v, ok := s.integrationOr404(w, r)
+		if !ok {
+			return
+		}
+		named = s.fixNamed(r.Context(), v, flow)
 	}
 	// Under the lock a switch-off or a delete takes, so the checks hold
 	// for the flow this starts.
@@ -47,26 +65,54 @@ func (s *Server) handleAPISetupStart(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	display := v.displayName()
+	// What a flow other than installing works on: the connection.
+	installed := len(v.conns) > 0 && !v.discarding
 	switch {
 	case v.staleBuiltin():
-		writeAPIError(w, http.StatusConflict, builtinRefusal(v.displayName(), builtinNotIncluded), whoYou)
+		writeAPIError(w, http.StatusConflict, builtinRefusal(display, builtinNotIncluded), whoYou)
 		return
 	case v.it.CurrentVersion == "":
-		writeAPIError(w, http.StatusConflict, "approve a version of "+v.displayName()+" first", whoYou)
+		writeAPIError(w, http.StatusConflict, "approve a version of "+display+" first", whoYou)
 		return
-	case !v.it.Enabled:
-		writeAPIError(w, http.StatusConflict, "switch "+v.displayName()+" on first", whoYou)
+	case flow == flowSignIn && !v.signIn():
+		writeAPIError(w, http.StatusConflict, display+" is not connected by signing in", whoYou)
 		return
-	case req.Flow != builtinintegrations.FlowSetup:
-		writeAPIError(w, http.StatusConflict, req.Flow+" is not a flow "+v.displayName()+" has", whoLink)
+	case flow != builtinintegrations.FlowSetup && flow != flowSignIn && !named:
+		writeAPIError(w, http.StatusConflict, errFlowNotOffered(flow, display), whoLink)
+		return
+	case flow != builtinintegrations.FlowSetup && !installed:
+		writeAPIError(w, http.StatusConflict, "install "+display+" first", whoYou)
+		return
+	case !v.it.Enabled && installed:
+		writeAPIError(w, http.StatusConflict, "switch "+display+" on first", whoYou)
 		return
 	}
-	spec, werr := s.setupSpecFor(v, r)
+	var spec setupSpec
+	var werr *connWriteError
+	switch flow {
+	case builtinintegrations.FlowSetup:
+		spec, werr = s.setupSpecFor(v, r)
+	case flowSignIn:
+		spec, werr = s.signInSpecFor(v, r)
+	default:
+		spec, werr = s.fixSpecFor(v, flow)
+	}
 	if werr != nil {
 		writeAPIError(w, werr.status, werr.words, werr.who)
 		return
 	}
-	writeJSON(w, http.StatusOK, s.setupStart(v.it.Name, v.displayName(), req.Flow, spec, signInRedirectURL(r)))
+	// Installing what is not installed switches it on: an integration
+	// with no connection has nothing to keep off.
+	if !v.it.Enabled {
+		if err := s.Store.SetIntegrationEnabled(v.it.Name, true); err != nil {
+			log.Printf("integration %s: switch it on to install it: %v", v.it.Name, err)
+			writeAPIError(w, http.StatusInternalServerError, "the integration's switch could not be saved", whoServer)
+			return
+		}
+		s.Integrations.Changed()
+	}
+	writeJSON(w, http.StatusOK, s.setupStart(v.it.Name, display, flow, spec, signInRedirectURL(r), !installed))
 }
 
 // handleAPISetupGet answers with the integration's flow; 404 with none.

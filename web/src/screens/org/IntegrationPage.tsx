@@ -13,6 +13,7 @@ import type {
   IntegrationLogLine,
   IntegrationLogs,
   IntegrationPage as IntegrationPageData,
+  IntegrationRequirement,
   IntegrationVersion,
   IntegrationVersionSummary,
   PersonRef,
@@ -29,7 +30,8 @@ import {
   RollBackDialog,
   ScopesLine,
   SetupFacts,
-  StatusBadge,
+  NeedsBadge,
+  StateBadge,
   VersionBadge,
   actionWords,
   agentsLabel,
@@ -126,40 +128,25 @@ export function setupReturnOf(search: string): string | null {
   return id && /^[0-9a-f]{32}$/.test(id) ? id : null;
 }
 
-/** What the Sign in block of the connection is wired to: its routes, and what to do with the page they answer. */
-type SignInWiring = Pick<SignInBlockProps, 'api' | 'integration' | 'scopes' | 'signInAt' | 'onPage' | 'onSignedIn' | 'returned'>;
-
 interface SignInBlockProps {
-  /** The connection; absent before it is first saved. */
-  connection: ConnectionState | undefined;
+  /** The connection, made by signing in. */
+  connection: ConnectionState;
   /** The integration's routes: …/integrations/{name}. Sign out is the connection's, …/connection/sign-out. */
   api: string;
-  /** The integration's name in words. */
-  integration: string;
-  /** What the sign-in asks the service for, shown above the block. */
-  scopes: readonly string[];
-  /** The host each way's sign-in goes to (sign_in_at), named in the block so the owner sees where they are sent. */
-  signInAt?: Readonly<Record<string, string>>;
   busy: boolean;
   /** The page as Sign out answers it. */
   onPage(page: IntegrationPageData): void;
-  /** Reads the page again once a sign-in is done; settles once the page is in. */
-  onSignedIn(): Promise<unknown>;
-  /** The flow a service's callback sent the browser back with (?setup=<id>). */
-  returned?: string | null;
 }
 
 /**
- * A connection made by signing in: signed in, who the connection test found and Sign out; otherwise the sign-in's
- * setup flow (SetupFlowPanel) for the first of the ways the server says work from here, Sign in in the browser or
- * Sign in with a code where the browser cannot finish, as in Kivali Desktop's window for a team elsewhere. A connection
- * that signs in only in the browser where that cannot finish says to sign in from the team's address instead, and one
- * none of whose ways this version offers says so. What the sign-in asks the service for is above it.
+ * A connection made by signing in, under its form: signed in, with who the connection test found and Sign out; or,
+ * not signed in where no way of signing in works from here, where to sign in from instead. Signing in again is the
+ * sign-in requirement's Fix, above, so this block starts no flow.
  */
-function SignInBlock({ connection, api, integration, scopes, signInAt, busy, onPage, onSignedIn, returned }: SignInBlockProps) {
+function SignInBlock({ connection, api, busy, onPage }: SignInBlockProps) {
   const [error, setError] = useState<ApiError | null>(null);
   const [working, setWorking] = useState(false);
-  const s = connection?.sign_in;
+  const s = connection.sign_in;
   const signOut = async () => {
     setWorking(true);
     setError(null);
@@ -172,12 +159,9 @@ function SignInBlock({ connection, api, integration, scopes, signInAt, busy, onP
     }
   };
 
-  // The server lists only the ways that work from here, the manifest's first; the flow takes that one.
-  const ways = (s?.ways ?? []).slice(0, 1);
-  const at = signsInAt(ways, signInAt);
   let body: ReactNode;
   if (s?.signed_in) {
-    const who = connection?.verified && connection.verify_message;
+    const who = connection.verified && connection.verify_message;
     body = (
       <>
         <Text as="p" variant="body">
@@ -190,7 +174,7 @@ function SignInBlock({ connection, api, integration, scopes, signInAt, busy, onP
         </div>
       </>
     );
-  } else if (ways.length === 0 && s?.browser_elsewhere) {
+  } else if ((s?.ways.length ?? 0) === 0 && s?.browser_elsewhere) {
     body = (
       <>
         <Text as="p" variant="body">
@@ -201,7 +185,7 @@ function SignInBlock({ connection, api, integration, scopes, signInAt, busy, onP
         {s.open_at && <CopyAddress label="Team address" url={s.open_at} />}
       </>
     );
-  } else if (ways.length === 0) {
+  } else if ((s?.ways.length ?? 0) === 0) {
     // The ways offered are this server's; a manifest may name only ways it does not have.
     body = (
       <Text as="p" variant="body" tone="muted">
@@ -209,38 +193,16 @@ function SignInBlock({ connection, api, integration, scopes, signInAt, busy, onP
       </Text>
     );
   } else {
-    return (
-      <>
-        <ScopesLine scopes={scopes} />
-        <SetupFlowPanel
-          api={api}
-          integration={integration}
-          label="Sign in"
-          startLabel={ways[0] === 'browser' ? 'Sign in' : 'Sign in with a code'}
-          busy={busy}
-          {...(at ? { note: at } : {})}
-          {...(returned ? { returned } : {})}
-          onDone={onSignedIn}
-        />
-      </>
-    );
+    return null;
   }
   return (
-    <>
-      <ScopesLine scopes={scopes} />
-      <section className="app-int-sign-in" aria-label="Sign in">
-        <Text as="h3" variant="label" tone="muted">
-          Sign in
-        </Text>
-        {at && (
-          <Text as="p" variant="caption" tone="muted">
-            {at}
-          </Text>
-        )}
-        <ErrorBanner error={error} onDismiss={() => setError(null)} />
-        {body}
-      </section>
-    </>
+    <section className="app-int-sign-in" aria-label="Sign in">
+      <Text as="h3" variant="label" tone="muted">
+        Sign in
+      </Text>
+      <ErrorBanner error={error} onDismiss={() => setError(null)} />
+      {body}
+    </section>
   );
 }
 
@@ -280,87 +242,124 @@ function connectionMeta(c: ConnectionState, agents: number, now: number): ReactN
 interface ConnectionFormProps {
   page: IntegrationPageData;
   busy: boolean;
-  running: boolean;
   now: number;
   onSave(body: ConnectionWrite): Promise<boolean>;
   /** Test connection; absent when the integration has no connection test, and so no button. */
   onVerify?(): void;
-  onDisconnect(): void;
-  /** The Sign in block's routes and answers, for a connection made by signing in; absent otherwise. */
-  signIn?: SignInWiring;
+  /** Sign out's answer, for a connection made by signing in. */
+  onPage(page: IntegrationPageData): void;
 }
 
-/** The connection: one field per entry the bundle asks for. A stored secret shows only that it is stored. */
-function ConnectionForm({ page, busy, running, now, onSave, onVerify, onDisconnect, signIn }: ConnectionFormProps) {
+/**
+ * An installed integration's one connection: its form, one field per entry the bundle asks for (a stored secret shows
+ * only that it is stored), with Save connection; since when it is connected and, made by signing in, when the owner
+ * signed in; Test connection where there is one; and, made by signing in, the Sign in block. A connection its own
+ * setup made has no form. How it stands (secrets, sign-in, the last test) is in Requirements.
+ */
+function ConnectionForm({ page, busy, now, onSave, onVerify, onPage }: ConnectionFormProps) {
   const fields = page.connection_fields;
   const [values, setValues] = useState(() => startingValues(fields));
   const connection = page.connection;
-  return (
+  const actions = (
     <>
-      <form
-        className="app-int-form"
-        onSubmit={(e) => {
-          e.preventDefault();
-          void onSave(connectionBody(fields, values));
-        }}
-      >
-        {connection?.reconnect_needed && (
-          <Banner tone="danger" title="Reconnect needed">
-            Its secrets are not stored on this Kivali server, as after a restore from a backup. Enter them again, then save the connection.
-          </Banner>
-        )}
-        {connection && connection.verified_at && !connection.verified && (
-          <Banner tone="danger" title="Could not verify the connection">
-            {connection.verify_message || 'The integration did not say why.'}
-          </Banner>
-        )}
-        {fields.map((f) => (
-          <TextField
-            key={f.key}
-            label={f.required ? f.title : f.title + ' (optional)'}
-            {...(f.description ? { hint: f.description } : {})}
-            type={f.sensitive ? 'password' : 'text'}
-            autoComplete="off"
-            {...(f.sensitive && f.set ? { placeholder: 'Stored' } : {})}
-            value={values[f.key] ?? ''}
-            onChange={(e) => {
-              const v = e.currentTarget.value;
-              setValues((m) => ({ ...m, [f.key]: v }));
-            }}
-          />
-        ))}
-        <div className="app-int-status">
-          {connectionLines(connection, now).map((line) => (
-            <Text key={line} as="p" variant="caption" tone="muted">
-              {line}
+      {fields.length > 0 && (
+        <Button type="submit" variant="primary" disabled={busy}>
+          Save connection
+        </Button>
+      )}
+      {onVerify && (
+        <>
+          <Button type="button" variant="secondary" disabled={busy || !connection || !page.running} onClick={onVerify}>
+            Test connection
+          </Button>
+          {!page.running && (
+            <Text variant="caption" tone="muted">
+              Not available while it is not running.
             </Text>
-          ))}
-          <SignInLine connection={connection} now={now} />
-        </div>
-        <div className="app-org-actions">
-          <Button type="submit" variant="primary" disabled={busy}>
-            Save connection
-          </Button>
-          {onVerify && (
-            <>
-              <Button type="button" variant="secondary" disabled={busy || !connection || !running} onClick={onVerify}>
-                Test connection
-              </Button>
-              {!running && (
-                <Text variant="caption" tone="muted">
-                  Not available while it is not running.
-                </Text>
-              )}
-            </>
           )}
-          <Button type="button" variant="ghost" disabled={busy || !connection} onClick={onDisconnect}>
-            Disconnect
-          </Button>
-        </div>
-      </form>
-      {signIn && <SignInBlock connection={connection} busy={busy} {...signIn} />}
+        </>
+      )}
     </>
   );
+  const status = (
+    <div className="app-int-status">
+      {connection && (
+        <Text as="p" variant="caption" tone="muted">
+          {'Connected since ' + whenLabel(connection.created_at, now)}
+        </Text>
+      )}
+      <SignInLine connection={connection} now={now} />
+    </div>
+  );
+  return (
+    <>
+      {fields.length > 0 ? (
+        <form
+          className="app-int-form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void onSave(connectionBody(fields, values));
+          }}
+        >
+          {fields.map((f) => (
+            <TextField
+              key={f.key}
+              label={f.required ? f.title : f.title + ' (optional)'}
+              {...(f.description ? { hint: f.description } : {})}
+              type={f.sensitive ? 'password' : 'text'}
+              autoComplete="off"
+              {...(f.sensitive && f.set ? { placeholder: 'Stored' } : {})}
+              value={values[f.key] ?? ''}
+              onChange={(e) => {
+                const v = e.currentTarget.value;
+                setValues((m) => ({ ...m, [f.key]: v }));
+              }}
+            />
+          ))}
+          {status}
+          <div className="app-org-actions">{actions}</div>
+        </form>
+      ) : (
+        <>
+          {status}
+          {onVerify && <div className="app-org-actions">{actions}</div>}
+        </>
+      )}
+      {connection?.sign_in && <SignInBlock connection={connection} api={integrationApi(page.summary.name)} busy={busy} onPage={onPage} />}
+    </>
+  );
+}
+
+/** A requirement row's icon: met, or not. */
+function RequirementRow({ row, busy, onFix }: { row: IntegrationRequirement; busy: boolean; onFix(): void }) {
+  return (
+    <li className={'app-int-req' + (row.met ? '' : ' is-unmet')}>
+      <Icon name={row.met ? 'circle-check' : 'triangle-alert'} className="app-int-req-icon" label={row.met ? 'Met' : 'Not met'} />
+      <span className="app-int-req-text">
+        <Text variant="body">{row.title}</Text>
+        <Text variant="caption" tone="muted">
+          {row.words}
+        </Text>
+      </span>
+      {!row.met && row.fix && (
+        <Button size="sm" variant="secondary" aria-label={'Fix ' + row.title} disabled={busy} onClick={onFix}>
+          Fix
+        </Button>
+      )}
+    </li>
+  );
+}
+
+/**
+ * What Uninstall does, for its dialog: the service's side undone where it can be, the connection and its secrets
+ * forgotten, and whose access goes; then, for an integration that is removed (uploaded, or not in this version of
+ * Kivali), that it goes whole, or else that it stays available to install again.
+ */
+export function uninstallWords(display: string, removed: boolean, agents: readonly string[]): string {
+  const lead = 'Kivali undoes the installation on the service where it can, then forgets the connection and its secrets. ';
+  const access = agents.length === 0 ? 'No agent has access. ' : namesInWords(agents) + (agents.length === 1 ? ' loses its access. ' : ' lose their access. ');
+  const after = removed ? display + ' goes with every version and its log; uploading a bundle installs it again.' : display + ' stays available to install again.';
+  return lead + access + after;
 }
 
 /** "Dana", "Dana and Lee", "Dana, Lee and Kim". */
@@ -626,9 +625,21 @@ interface Grant {
   row?: AccessRow;
 }
 
+/** A Fix under way on the page: the flow it runs, the requirement it mends, and a count that starts it again. */
+interface Fixing {
+  flow: string;
+  title: string;
+  seq: number;
+}
+
+/** The states a flow on the page is still worth drawing in: under way, or failed with why. */
+const SHOWN_FLOW: ReadonlySet<string> = new Set(['running', 'form', 'go', 'wait', 'failed']);
+
 /**
- * An integration's page under Org: whether it is on, its connection, which agents have access and how far, its
- * actions, its versions, its recent calls and its recent logs. Every change answers with the whole page.
+ * An integration's page under Org, drawn from its lifecycle state. Available (or setting up): what installing it does
+ * and one button, Install, which runs its setup flow. Installed or off: its requirements, each unmet one with its Fix,
+ * its connection, which agents have access and how far, and Uninstall. Every state shows its actions, versions,
+ * recent calls and recent logs. Every change answers with the whole page.
  */
 export function IntegrationPage() {
   const { name = '' } = useParams();
@@ -642,13 +653,13 @@ export function IntegrationPage() {
   const audit = useResource<IntegrationAudit>(api + '/audit');
   const action = useAction();
   const [now] = useState(() => Date.now());
-  const [removing, setRemoving] = useState(false);
-  const [disconnecting, setDisconnecting] = useState(false);
+  const [uninstalling, setUninstalling] = useState(false);
   // Several connections: the one Delete asks about, and whether a new one is being added.
   const [deleting, setDeleting] = useState<ConnectionState | null>(null);
   const [adding, setAdding] = useState(false);
   const [grant, setGrant] = useState<Grant | null>(null);
   const [rollingBack, setRollingBack] = useState<string | null>(null);
+  const [fixing, setFixing] = useState<Fixing | null>(null);
   const [pick, setPick] = useState('');
   // Bumped after a save so the connection form starts again from what is stored.
   const [formSeq, setFormSeq] = useState(0);
@@ -673,11 +684,6 @@ export function IntegrationPage() {
     return ok;
   };
   const verify = () => void mutate(() => apiPost<IntegrationPageData>(api + '/connection/verify'));
-  const disconnect = async () => {
-    const ok = await mutate(() => apiDelete<IntegrationPageData>(api + '/connection'));
-    setDisconnecting(false);
-    if (ok) setFormSeq((n) => n + 1);
-  };
   const connectionApi = (id: string) => api + '/connections/' + encodeURIComponent(id);
   // Several connections: only the card that saved starts again from what is stored, so another card keeps what was
   // typed into it.
@@ -699,35 +705,30 @@ export function IntegrationPage() {
     action.run(async () => {
       page.set(await apiGet<IntegrationPageData>(api));
       audit.set(await apiGet<IntegrationAudit>(api + '/audit'));
+      setFixing(null);
     });
   const signedOut = (next: IntegrationPageData) => {
     page.set(next);
     void apiGet<IntegrationAudit>(api + '/audit').then(audit.set, () => {});
   };
-  const signInFor = (): { signIn?: SignInWiring } =>
-    p && (p.connection_method === 'device' || p.connection_method === 'browser')
-      ? {
-          signIn: {
-            api,
-            integration: p.summary.display_name,
-            scopes: p.scopes,
-            ...(p.sign_in_at ? { signInAt: p.sign_in_at } : {}),
-            onPage: signedOut,
-            onSignedIn: flowDone,
-            returned,
-          },
-        }
-      : {};
   const verifyConnection = (id: string) => void mutate(() => apiPost<IntegrationPageData>(connectionApi(id) + '/verify'));
   const deleteConnection = async (id: string) => {
     await mutate(() => apiDelete<IntegrationPageData>(connectionApi(id)));
     setDeleting(null);
   };
   const revoke = (slug: string) => void mutate(() => apiDelete<IntegrationPageData>(api + '/access/' + encodeURIComponent(slug)));
-  const remove = () =>
+  // Uninstall takes an uploaded integration (or one this version of Kivali does not carry) off the team, back to the
+  // list; a built-in stays, available again, and its page and audit are read again.
+  const uninstall = (removed: boolean) =>
     action.run(async () => {
       await apiDelete(api);
-      void navigate('/org/integrations');
+      setUninstalling(false);
+      if (removed) {
+        void navigate('/org/integrations');
+        return;
+      }
+      page.set(await apiGet<IntegrationPageData>(api));
+      audit.set(await apiGet<IntegrationAudit>(api + '/audit'));
     });
   // The roll back answers with the version; the page and the audit (which gains a row for it) are read again.
   const rollBack = (version: string) =>
@@ -754,13 +755,29 @@ export function IntegrationPage() {
   }
 
   const s = p.summary;
+  const state = s.state;
+  const installed = state === 'installed' || state === 'off';
+  const available = state === 'available' || state === 'setting_up';
+  const removed = !s.builtin || state === 'not_included';
   const pending = s.pending_version;
   const invalid = invalidAccessLine(p.access.filter((r) => r.invalid).length);
   const chosen = p.agents_without.some((a) => a.slug === pick) ? pick : (p.agents_without[0]?.slug ?? '');
-  // What needs the integration running waits while it is not. A built-in one runs inside Kivali and is never
-  // not running, so Test connection is there as soon as it is connected; one this version of Kivali does not
-  // carry never runs.
-  const running = s.status !== 'not_running' && s.status !== 'not_included';
+  const signIn = p.connection_method === 'device' || p.connection_method === 'browser';
+  // The flow a Fix runs: one the owner just started, or one under way (or failed) that the page carries, such as a
+  // Go step's service sending the browser back here.
+  const fixFlow: Fixing | null =
+    fixing ??
+    (installed && p.flow && SHOWN_FLOW.has(p.flow.state)
+      ? { flow: p.flow.flow, title: p.requirements.find((r) => r.fix === p.flow?.flow)?.title ?? 'Fix', seq: 0 }
+      : installed && returned
+        ? signIn
+          ? { flow: 'sign_in', title: p.requirements.find((r) => r.fix === 'sign_in')?.title ?? 'Fix', seq: 0 }
+          : { flow: 'setup', title: 'Fix', seq: 0 }
+        : null);
+  // Where installing signs in, for a sign-in connection: every way's host, as the install screen names them.
+  const installNote = signIn ? signsInAt(Object.keys(p.sign_in_at ?? {}), p.sign_in_at) : undefined;
+  // Where signing in again sends the owner, for the sign-in row's Fix.
+  const fixNote = fixFlow?.flow === 'sign_in' ? signsInAt((p.connection?.sign_in?.ways ?? []).slice(0, 1), p.sign_in_at) : undefined;
 
   const accessColumns: TableColumn<AccessRow & { id: string }>[] = [
     { key: 'agent', label: 'Agent', render: (r) => <span className="app-int-nowrap">{r.agent.name}</span> },
@@ -808,32 +825,44 @@ export function IntegrationPage() {
     { key: 'duration_ms', label: 'Took', mono: true, align: 'right', render: (r) => <span className="app-int-nowrap">{durationLabel(r.duration_ms)}</span> },
   ];
 
+  // What the vendor's side needs first and what installing does, from the manifest: on the Install block before it
+  // runs, and on the Connection block after.
+  const declarations = (
+    <>
+      <Markdown markdown={p.setup_notes_md} />
+      {p.setup && <SetupFacts setup={p.setup} integration={s.display_name} />}
+      {p.sign_in_redirect_url && <CopyAddress label="Redirect address" hint="Register this address as the app’s callback URL." url={p.sign_in_redirect_url} />}
+      <ScopesLine scopes={p.scopes} />
+    </>
+  );
+
   return (
     <div className="app-int">
       <header className="app-int-head">
         <PageTitle>{s.display_name}</PageTitle>
         <div className="app-int-head-row">
-          <StatusBadge status={s.status} />
+          <StateBadge state={state} />
+          {state === 'installed' && <NeedsBadge needs={s.needs} />}
           {s.builtin && <Badge variant="outline">Built in</Badge>}
           <Text variant="caption" tone="muted">
             {s.version ? 'Version ' + s.version : 'No version approved yet'}
           </Text>
           <span className="app-int-spacer" />
-          <Switch label="On" checked={s.enabled} disabled={action.busy} onCheckedChange={(on) => void toggle(on)} />
-          {p.can_remove && (
-            <Button variant="ghost" icon={<Icon name="trash2" />} disabled={action.busy} onClick={() => setRemoving(true)}>
-              Remove
+          {installed && <Switch label="On" checked={s.enabled} disabled={action.busy} onCheckedChange={(on) => void toggle(on)} />}
+          {p.can_uninstall && (
+            <Button variant="ghost" icon={<Icon name="trash2" />} disabled={action.busy} onClick={() => setUninstalling(true)}>
+              Uninstall
             </Button>
           )}
         </div>
-        {s.status === 'not_running' && (
+        {state === 'not_included' && (
           <Text as="p" variant="caption" tone="muted">
-            Kivali is starting it, or it stopped. The log below says what happened.
+            Another version of Kivali shipped it, and this one does not include it. Agents cannot use it; you can uninstall it.
           </Text>
         )}
-        {s.status === 'not_included' && (
+        {state === 'off' && (
           <Text as="p" variant="caption" tone="muted">
-            Another version of Kivali shipped it, and this one does not include it. Agents cannot use it; you can remove it.
+            Switched off: agents cannot use it. Its connection and every agent’s access are kept for when you switch it on.
           </Text>
         )}
         {s.description && (
@@ -861,115 +890,141 @@ export function IntegrationPage() {
 
       {invalid && <Banner tone="warning">{invalid}</Banner>}
 
-      <Block label={p.multiple ? 'Connections' : 'Connection'} variant="heading">
-        {/* What to do on the vendor's side first, from the manifest; nothing when it has none. */}
-        {s.version && <Markdown markdown={p.setup_notes_md} />}
-        {/* What a setup connection's flow may do, from the manifest. */}
-        {s.version && p.setup && <SetupFacts setup={p.setup} integration={s.display_name} />}
-        {s.version && p.sign_in_redirect_url && (
-          <CopyAddress label="Redirect address" hint="Register this address as the app’s callback URL." url={p.sign_in_redirect_url} />
-        )}
-        {s.version && p.multiple ? (
-          <div className="app-int-conns">
-            {p.connections.length === 0 && !adding && <None>No connections yet.</None>}
-            {p.connections.map((c) => (
-              <ConnectionCard
-                key={c.id + ':' + (cardSeq[c.id] ?? 0)}
-                connection={c}
-                fields={c.fields}
-                agents={p.access.filter((a) => a.connection_id === c.id).length}
-                // A card remounts after its own save (cardSeq), which it can only have while open: it stays open.
-                open={(cardSeq[c.id] ?? 0) > 0}
-                busy={action.busy}
-                running={running}
-                now={now}
-                onSave={(body) => saveConnection(c.id, body)}
-                {...(p.connection_test ? { onVerify: () => verifyConnection(c.id) } : {})}
-                onDelete={() => setDeleting(c)}
-              />
-            ))}
-            {adding ? (
-              <ConnectionCard
-                key={'new:' + addSeq}
-                fields={blankFields(p.connection_fields)}
-                busy={action.busy}
-                running={running}
-                now={now}
-                onSave={addConnection}
-                onCancel={() => setAdding(false)}
-              />
-            ) : (
-              <div className="app-org-actions">
-                <Button variant="secondary" icon={<Icon name="plus" />} disabled={action.busy} onClick={() => setAdding(true)}>
-                  Add a connection
-                </Button>
-              </div>
-            )}
-          </div>
-        ) : s.version && p.setup ? (
-          /* A setup connection has no form: its flow makes the connection. */
-          <>
-            <div className="app-int-status">
-              {connectionLines(p.connection, now).map((line) => (
-                <Text key={line} as="p" variant="caption" tone="muted">
-                  {line}
-                </Text>
-              ))}
-              <SignInLine connection={p.connection} now={now} />
-            </div>
-            <SetupFlowPanel api={api} integration={s.display_name} label="Set up" busy={action.busy} returned={returned} onDone={flowDone} />
-          </>
-        ) : s.version && !p.connection ? (
-          /* No connection yet: the flow asks for its form, and signs it in when it signs in. */
-          <>
-            <ScopesLine scopes={p.scopes} />
-            <SetupFlowPanel api={api} integration={s.display_name} label="Connect" busy={action.busy} returned={returned} onDone={flowDone} />
-          </>
-        ) : s.version ? (
-          <ConnectionForm
-            key={formSeq}
-            page={p}
-            busy={action.busy}
-            running={running}
-            now={now}
-            onSave={save}
-            {...(p.connection_test ? { onVerify: verify } : {})}
-            onDisconnect={() => setDisconnecting(true)}
-            {...signInFor()}
-          />
-        ) : (
+      {state === 'pending' && (
+        <Block label="Install" variant="heading">
           <Text as="p" variant="body" tone="muted">
             Approve a version first.
           </Text>
-        )}
-      </Block>
+        </Block>
+      )}
 
-      <Block label="Access" variant="heading">
-        {p.access.length === 0 ? (
-          <None>No agent has access yet.</None>
-        ) : (
-          <Table columns={accessColumns} rows={p.access.map((r) => ({ ...r, id: r.agent.slug }))} />
-        )}
-        {p.agents_without.length > 0 && (
-          <div className="app-org-add">
-            <div className="app-org-add-field">
-              <Select label="Agent" value={chosen} onChange={(e) => setPick(e.currentTarget.value)} options={p.agents_without.map((a) => ({ value: a.slug, label: a.name }))} />
+      {available && (
+        <Block label="Install" variant="heading">
+          {declarations}
+          <SetupFlowPanel
+            api={api}
+            integration={s.display_name}
+            label="Setup"
+            startLabel="Install"
+            busy={action.busy}
+            returned={returned}
+            {...(installNote ? { note: installNote } : {})}
+            onDone={flowDone}
+          />
+        </Block>
+      )}
+
+      {installed && (
+        <Block label="Requirements" variant="heading">
+          <ul className="app-int-reqs">
+            {p.requirements.map((r) => (
+              <RequirementRow
+                key={r.id}
+                row={r}
+                busy={action.busy}
+                onFix={() => setFixing((f) => ({ flow: r.fix, title: r.title, seq: (f?.seq ?? 0) + 1 }))}
+              />
+            ))}
+          </ul>
+          {fixFlow && (
+            <SetupFlowPanel
+              key={fixFlow.flow + ':' + fixFlow.seq}
+              api={api}
+              integration={s.display_name}
+              label={fixFlow.title}
+              flow={fixFlow.flow}
+              startLabel="Fix"
+              autoStart={fixFlow.seq > 0}
+              {...(fixNote ? { note: fixNote } : {})}
+              busy={action.busy}
+              {...(fixFlow.seq === 0 ? { returned } : {})}
+              onDone={flowDone}
+            />
+          )}
+        </Block>
+      )}
+
+      {installed && (
+        <Block label={p.multiple ? 'Connections' : 'Connection'} variant="heading">
+          {declarations}
+          {p.multiple ? (
+            <div className="app-int-conns">
+              {p.connections.map((c) => (
+                <ConnectionCard
+                  key={c.id + ':' + (cardSeq[c.id] ?? 0)}
+                  connection={c}
+                  fields={c.fields}
+                  agents={p.access.filter((a) => a.connection_id === c.id).length}
+                  // A card remounts after its own save (cardSeq), which it can only have while open: it stays open.
+                  open={(cardSeq[c.id] ?? 0) > 0}
+                  busy={action.busy}
+                  running={p.running}
+                  now={now}
+                  onSave={(body) => saveConnection(c.id, body)}
+                  {...(p.connection_test ? { onVerify: () => verifyConnection(c.id) } : {})}
+                  onDelete={() => setDeleting(c)}
+                />
+              ))}
+              {adding ? (
+                <ConnectionCard
+                  key={'new:' + addSeq}
+                  fields={blankFields(p.connection_fields)}
+                  busy={action.busy}
+                  running={p.running}
+                  now={now}
+                  onSave={addConnection}
+                  onCancel={() => setAdding(false)}
+                />
+              ) : (
+                <div className="app-org-actions">
+                  <Button variant="secondary" icon={<Icon name="plus" />} disabled={action.busy} onClick={() => setAdding(true)}>
+                    Add a connection
+                  </Button>
+                </div>
+              )}
             </div>
-            <div className="app-org-add-action">
-              <Button
-                variant="secondary"
-                disabled={action.busy || !chosen}
-                onClick={() => {
-                  const agent = p.agents_without.find((a) => a.slug === chosen);
-                  if (agent) setGrant({ agent });
-                }}
-              >
-                Give access
-              </Button>
+          ) : (
+            <ConnectionForm
+              key={formSeq}
+              page={p}
+              busy={action.busy}
+              now={now}
+              onSave={save}
+              {...(p.connection_test ? { onVerify: verify } : {})}
+              onPage={signedOut}
+            />
+          )}
+        </Block>
+      )}
+
+      {installed && (
+        <Block label="Access" variant="heading">
+          {p.access.length === 0 ? (
+            <None>No agent has access yet.</None>
+          ) : (
+            <Table columns={accessColumns} rows={p.access.map((r) => ({ ...r, id: r.agent.slug }))} />
+          )}
+          {p.agents_without.length > 0 && (
+            <div className="app-org-add">
+              <div className="app-org-add-field">
+                <Select label="Agent" value={chosen} onChange={(e) => setPick(e.currentTarget.value)} options={p.agents_without.map((a) => ({ value: a.slug, label: a.name }))} />
+              </div>
+              <div className="app-org-add-action">
+                <Button
+                  variant="secondary"
+                  disabled={action.busy || !chosen}
+                  onClick={() => {
+                    const agent = p.agents_without.find((a) => a.slug === chosen);
+                    if (agent) setGrant({ agent });
+                  }}
+                >
+                  Give access
+                </Button>
+              </div>
             </div>
-          </div>
-        )}
-      </Block>
+          )}
+        </Block>
+      )}
 
       {/* A bundle's, uploaded or shipped; a built-in of Go code installs none. */}
       {p.packages.length > 0 && (
@@ -1029,7 +1084,7 @@ export function IntegrationPage() {
 
       {grant && (
         <AccessDialog
-          running={running}
+          running={p.running}
           name={name}
           displayName={s.display_name}
           agent={grant.agent}
@@ -1056,25 +1111,6 @@ export function IntegrationPage() {
         onClose={() => setRollingBack(null)}
       />
       <Dialog
-        open={disconnecting}
-        onOpenChange={(o) => {
-          if (!o) setDisconnecting(false);
-        }}
-        tone="danger"
-        title={'Disconnect ' + s.display_name + '?'}
-        description="Its stored connection is deleted, along with every agent’s access to it. Connect it again, then give access again."
-        footer={
-          <>
-            <DialogClose>
-              <Button variant="secondary">Cancel</Button>
-            </DialogClose>
-            <Button variant="danger" onClick={() => void disconnect()} disabled={action.busy}>
-              Disconnect
-            </Button>
-          </>
-        }
-      />
-      <Dialog
         open={deleting !== null}
         onOpenChange={(o) => {
           if (!o) setDeleting(null);
@@ -1094,20 +1130,24 @@ export function IntegrationPage() {
         }
       />
       <Dialog
-        open={removing}
+        open={uninstalling}
         onOpenChange={(o) => {
-          if (!o) setRemoving(false);
+          if (!o) setUninstalling(false);
         }}
         tone="danger"
-        title={'Remove ' + s.display_name + '?'}
-        description="Its connection and every agent’s access go with it. A new bundle can install it again."
+        title={'Uninstall ' + s.display_name + '?'}
+        description={uninstallWords(
+          s.display_name,
+          removed,
+          p.access.map((r) => r.agent.name),
+        )}
         footer={
           <>
             <DialogClose>
               <Button variant="secondary">Cancel</Button>
             </DialogClose>
-            <Button variant="danger" onClick={() => void remove()} disabled={action.busy}>
-              Remove
+            <Button variant="danger" onClick={() => void uninstall(removed)} disabled={action.busy}>
+              Uninstall
             </Button>
           </>
         }

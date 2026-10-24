@@ -1,0 +1,183 @@
+{
+  "summary": {
+    "name": "github",
+    "display_name": "GitHub",
+    "description": "Issues and pull requests on GitHub.",
+    "version": "2.0.0",
+    "state": "installed",
+    "needs": 1,
+    "enabled": true,
+    "builtin": true,
+    "agents": 0
+  },
+  "author": "Kivali",
+  "hosts": [
+    "api.github.com",
+    "github.com"
+  ],
+  "packages": [],
+  "actions": [
+    {
+      "name": "list_issues",
+      "description": "List a repository's open issues."
+    }
+  ],
+  "connection_fields": [],
+  "connection_method": "setup",
+  "sign_in_client": "setup",
+  "scopes": [],
+  "setup_notes_md": "",
+  "setup": {
+    "summary": "Creates a private GitHub App on your account that may write contents, issues and pull requests, and installs it on the repositories you choose.",
+    "hosts": [
+      "github.com"
+    ],
+    "fields": [
+      {
+        "key": "account",
+        "title": "Account",
+        "words": "Your personal account, or an organization's name",
+        "secret": false,
+        "setup_only": false
+      },
+      {
+        "key": "personal_access_key",
+        "title": "Personal access key",
+        "words": "From the service's key page; used once, never kept",
+        "secret": true,
+        "setup_only": true
+      }
+    ],
+    "keeps": [
+      {
+        "key": "app_id",
+        "words": "The app's id"
+      },
+      {
+        "key": "private_key",
+        "words": "The app's private key, which Kivali signs with to get a token for each call"
+      },
+      {
+        "key": "installation_id",
+        "words": "Where the app is installed"
+      },
+      {
+        "key": "client_id",
+        "words": "The app's client id"
+      },
+      {
+        "key": "client_secret",
+        "words": "The app's client secret"
+      }
+    ],
+    "then": "browser"
+  },
+  "sign_in_hosts": [
+    "github.com"
+  ],
+  "connection": {
+    "id": "f00dcafe",
+    "label": "",
+    "created_at": "2026-10-21T09:30:00Z",
+    "fields": [],
+    "verified_at": "2026-10-21T10:00:00Z",
+    "verified": true,
+    "verify_message": "Installed on acme",
+    "reconnect_needed": false
+  },
+  "connections": [
+    {
+      "id": "f00dcafe",
+      "label": "",
+      "created_at": "2026-10-21T09:30:00Z",
+      "fields": [],
+      "verified_at": "2026-10-21T10:00:00Z",
+      "verified": true,
+      "verify_message": "Installed on acme",
+      "reconnect_needed": false
+    }
+  ],
+  "multiple": false,
+  "connection_test": true,
+  "access": [],
+  "agents_without": [
+    {
+      "slug": "dana",
+      "name": "Dana"
+    }
+  ],
+  "versions": [
+    {
+      "version": "2.0.0",
+      "state": "approved",
+      "published_at": "2026-10-20T09:00:00Z",
+      "published_by": {
+        "slug": "kivali",
+        "name": "Kivali"
+      },
+      "approved_at": "2026-10-20T09:00:00Z",
+      "notes_md": "Ships with Kivali."
+    }
+  ],
+  "running": true,
+  "requirements": [
+    {
+      "id": "version",
+      "title": "Approved version",
+      "words": "Version 2.0.0 ships with Kivali.",
+      "met": true,
+      "fix": ""
+    },
+    {
+      "id": "connection",
+      "title": "Connection",
+      "words": "Its secrets are stored.",
+      "met": true,
+      "fix": ""
+    },
+    {
+      "id": "sign_in",
+      "title": "Sign-in",
+      "words": "Signed in in the browser.",
+      "met": true,
+      "fix": "sign_in"
+    },
+    {
+      "id": "connection_test",
+      "title": "Connection test",
+      "words": "Installed on acme",
+      "met": true,
+      "fix": ""
+    },
+    {
+      "id": "installed",
+      "title": "Installed on GitHub",
+      "words": "Installed on acme, reaching 12 repositories.",
+      "met": true,
+      "fix": ""
+    },
+    {
+      "id": "permissions",
+      "title": "Permissions",
+      "words": "This version needs write access to pull requests, which the app does not have yet.",
+      "met": false,
+      "fix": "permissions"
+    }
+  ],
+  "flow": {
+    "id": "9f86d081884c7d659a2feaa0c55ad015",
+    "flow": "permissions",
+    "state": "wait",
+    "step": {
+      "kind": "wait",
+      "words": "Enter this code on the service’s page, then approve the sign-in there. Kivali finishes it here once you do.",
+      "fields": [],
+      "no_return": false,
+      "url": "https://github.com/login/device?user_code=WDJB-MJHT",
+      "host": "github.com",
+      "code": "WDJB-MJHT"
+    },
+    "expires_at": "2026-10-21T10:10:00Z"
+  },
+  "can_uninstall": true
+}

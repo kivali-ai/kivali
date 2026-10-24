@@ -202,15 +202,15 @@
       }
     },
     {
-      "id": "integration_sign_in:github/a1b2c3d4",
-      "kind": "integration_sign_in",
-      "title": "GitHub needs you to sign in again",
+      "id": "integration_requirement:github/sign_in",
+      "kind": "integration_requirement",
+      "title": "GitHub: Sign-in",
       "from": {
         "slug": "kivali",
         "name": "Kivali"
       },
       "at": "2026-09-20T17:00:00Z",
-      "body_md": "The vendor refused the sign-in (bad_refresh_token): The refresh token passed is incorrect or expired. Agents cannot use the connection until you sign in again.",
+      "body_md": "The service no longer accepts the sign-in: the vendor refused the sign-in (bad_refresh_token): The refresh token passed is incorrect or expired. Agents cannot use GitHub until you sign in again.",
       "attachments": [],
       "review_path": "/org/integrations/github",
       "packages": []

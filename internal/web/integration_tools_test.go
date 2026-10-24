@@ -158,7 +158,7 @@ func TestAgentCallsAnIntegrationThroughCore(t *testing.T) {
 	// Not running yet: the agent's tab says so, and there is nothing
 	// to call.
 	tab := orgOK[apitypes.AgentIntegrations](t, orgGet(t, srv, "/api/v1/agents/dana/integrations"))
-	if len(tab.Connected) != 1 || tab.Connected[0].Status != apitypes.IntegrationStatusNotRunning {
+	if len(tab.Connected) != 1 || tab.Connected[0].State != apitypes.IntegrationStateInstalled || tab.Connected[0].Usable {
 		t.Errorf("tab before the shim = %+v", tab.Connected)
 	}
 	if list, err := dana.IntegrationTools(ctx); err != nil || len(list.Tools) != 0 {
@@ -167,7 +167,7 @@ func TestAgentCallsAnIntegrationThroughCore(t *testing.T) {
 
 	fs := attachShim(t, srv, "fake", fakeIntegrationAnswer(t))
 	tab = orgOK[apitypes.AgentIntegrations](t, orgGet(t, srv, "/api/v1/agents/dana/integrations"))
-	if tab.Connected[0].Status != apitypes.IntegrationStatusConnected {
+	if !tab.Connected[0].Usable {
 		t.Errorf("tab while running = %+v", tab.Connected)
 	}
 	list, err := dana.IntegrationTools(ctx)

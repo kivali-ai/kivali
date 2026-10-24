@@ -1,6 +1,6 @@
 import type { AgentIntegration, AgentIntegrations } from '../../api/types.gen';
 import { Banner, Icon, ListRow, Skeleton, Text } from '../../ds';
-import { StatusBadge, integrationPath } from '../org/integrationParts';
+import { StateBadge, integrationPath } from '../org/integrationParts';
 import { useAgentPage } from './AgentPage';
 import { useAppHref, useFetched } from './tabsShared';
 import '../../styles/agent-tabs.css';
@@ -22,7 +22,12 @@ function IntegrationList({ items, connected, href }: { items: readonly AgentInte
             title={rowTitle(i)}
             meta={
               <>
-                <StatusBadge status={i.status} />
+                <StateBadge state={i.state} />
+                {connected && i.state === 'installed' && !i.usable && !i.invalid && (
+                  <Text variant="caption" tone="danger">
+                    Not usable until its requirements are met
+                  </Text>
+                )}
                 {connected && i.summary && <span>{i.summary}</span>}
                 {connected && i.invalid && (
                   <Text variant="caption" tone="danger">

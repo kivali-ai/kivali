@@ -3,20 +3,23 @@
     {
       "name": "hubspot",
       "display_name": "HubSpot",
-      "status": "connected",
+      "state": "installed",
+      "usable": true,
       "summary": "Blogs: Marketing · May publish and edit"
     },
     {
       "name": "crm",
       "display_name": "CRM",
-      "status": "off",
+      "state": "off",
+      "usable": false,
       "summary": "Full access",
       "invalid": "Blogs lists a choice the form no longer offers"
     },
     {
       "name": "git",
       "display_name": "Git",
-      "status": "connected",
+      "state": "installed",
+      "usable": false,
       "summary": "Repositories: eng/*",
       "connection_label": "Company GitLab"
     }
@@ -25,7 +28,8 @@
     {
       "name": "weather",
       "display_name": "Weather",
-      "status": "pending",
+      "state": "pending",
+      "usable": false,
       "summary": ""
     }
   ]

@@ -158,7 +158,7 @@ describe('Home renders', () => {
 
     const needs = screen.getByRole('region', { name: 'Needs you' });
     expect(within(needs).getByLabelText('10 waiting on you')).toHaveTextContent('10');
-    for (const kind of ['Approval', 'Hire', 'Notice', 'Assigned to you', 'Needs help', 'Sign in', 'Install software', 'Upload request', 'Web budget', 'Sign in again']) expect(within(needs).getByText(kind)).toBeInTheDocument();
+    for (const kind of ['Approval', 'Hire', 'Notice', 'Assigned to you', 'Needs help', 'Sign in', 'Install software', 'Upload request', 'Web budget', 'Integration']) expect(within(needs).getByText(kind)).toBeInTheDocument();
 
     const queue = screen.getByRole('region', { name: 'Queue' });
     expect(within(queue).getByText('3 passing through')).toBeInTheDocument();
@@ -250,7 +250,7 @@ describe('Home follows the design rules', () => {
     expect(signals).toHaveLength(1);
     expect(signals[0]).toHaveAccessibleName('10 waiting on you');
     const needs = screen.getByRole('region', { name: 'Needs you' });
-    for (const kind of ['Approval', 'Hire', 'Notice', 'Assigned to you', 'Needs help', 'Sign in', 'Install software', 'Upload request', 'Web budget', 'Sign in again']) expect(within(needs).getByText(kind)).toHaveClass('kv-badge--neutral');
+    for (const kind of ['Approval', 'Hire', 'Notice', 'Assigned to you', 'Needs help', 'Sign in', 'Install software', 'Upload request', 'Web budget', 'Integration']) expect(within(needs).getByText(kind)).toHaveClass('kv-badge--neutral');
   });
 
   it('keeps Release all the one primary until a row opens, and Open chat secondary', async () => {
@@ -589,19 +589,20 @@ describe('Needs you', () => {
     });
   });
 
-  describe('a connection that needs a new sign-in (home.json)', () => {
-    const signInAgain = busyHome.needs.find((n) => n.kind === 'integration_sign_in');
-    if (!signInAgain) throw new Error('fixture has no integration_sign_in row');
+  describe('an integration requirement not met (home.json)', () => {
+    const signInAgain = busyHome.needs.find((n) => n.kind === 'integration_requirement');
+    if (!signInAgain) throw new Error('fixture has no integration_requirement row');
 
-    // Guards the row a refused refresh raises: the owner reads which integration, the vendor's refusal and what it
-    // costs, and Open takes them to the integration's page, where they sign in again. There is nothing to answer in
-    // place: an Approve or Acknowledge here would clear a row whose cause is still there.
-    it('shows the refusal and opens the integration’s page, with nothing to answer', async () => {
+    // Guards the row an unmet requirement raises (here a refused refresh, the sign-in row): the owner reads which
+    // integration and requirement, what is wrong and what it costs, and Open takes them to the integration's page,
+    // where its Fix is. There is nothing to answer in place: an Approve or Acknowledge here would clear a row whose
+    // cause is still there.
+    it('shows what is wrong and opens the integration’s page, with nothing to answer', async () => {
       const { router } = await renderHome(busyHome);
-      fireEvent.click(screen.getByRole('button', { name: /GitHub needs you to sign in again/ }));
+      fireEvent.click(screen.getByRole('button', { name: /GitHub: Sign-in/ }));
       const row = within(rowFor('data-id', signInAgain.id));
-      expect(row.getByText('Sign in again')).toBeInTheDocument();
-      expect(row.getByText(/The refresh token passed is incorrect or expired\. Agents cannot use the connection/)).toBeInTheDocument();
+      expect(row.getByText('Integration')).toBeInTheDocument();
+      expect(row.getByText(/The refresh token passed is incorrect or expired\. Agents cannot use GitHub until you sign in again/)).toBeInTheDocument();
       for (const verb of ['Approve', 'Deny', 'Acknowledge', 'Hand back']) expect(row.queryByRole('button', { name: verb })).toBeNull();
       fireEvent.click(row.getByRole('button', { name: 'Open' }));
       await flush();

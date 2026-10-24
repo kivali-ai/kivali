@@ -1,11 +1,12 @@
 // Package web (api_integration_connections.go) — an integration's
 // connections under Org: saving, deleting and testing them.
 //
-// Every integration has the singular routes (PUT, DELETE
-// .../connection and POST .../connection/verify), which act on its one
-// connection, the oldest, and the plural ones (POST .../connections,
-// PUT, DELETE .../connections/{id} and POST .../connections/{id}/verify),
-// which act on the connection the id names. An integration whose
+// Every integration has the singular routes (PUT .../connection and
+// POST .../connection/verify), which act on its one connection, the
+// oldest, and the plural ones (POST .../connections, PUT, DELETE
+// .../connections/{id} and POST .../connections/{id}/verify), which act
+// on the connection the id names. Uninstall (DELETE
+// .../integrations/{name}) removes every connection. An integration whose
 // manifest takes several connections (kivali.connection.multiple, only
 // a built-in) has one per account the owner connects, each with a
 // label unique within it; any other takes one, and a second is a 409.
@@ -474,51 +475,6 @@ func sortedFieldKeys(m map[string]string) []string {
 	return keys
 }
 
-// handleAPIIntegrationConnectionDelete removes every connection: their
-// Secrets, their records and every agent's access, which was set for
-// one of them.
-func (s *Server) handleAPIIntegrationConnectionDelete(w http.ResponseWriter, r *http.Request) {
-	unlock := s.lockIntegrations()
-	revokes, ok := s.deleteConnectionsLocked(w, r)
-	unlock()
-	// The vendor is asked to revoke a sign-in's tokens with the lock
-	// released, so a slow vendor holds up no other integration write.
-	s.revokeSignIns(r.Context(), revokes)
-	if ok {
-		s.writeIntegrationPage(w, r)
-	}
-}
-
-// deleteConnectionsLocked is the removal of every connection under
-// lockIntegrations: true once done, false with an error answered. It
-// returns the sign-in tokens to revoke.
-func (s *Server) deleteConnectionsLocked(w http.ResponseWriter, r *http.Request) (signInRevocations, bool) {
-	v, ok := s.integrationOr404(w, r)
-	if !ok {
-		return nil, false
-	}
-	// A sign-in under way would sign in a connection that is gone.
-	s.setupCancel(v.it.Name)
-	revokes, ok := s.deleteConnectionSecrets(w, r, v.it.Name)
-	if !ok {
-		return revokes, false
-	}
-	removed, err := s.Store.DeleteIntegrationConnection(v.it.Name)
-	if err != nil {
-		log.Printf("integration %s: delete the connection: %v", v.it.Name, err)
-		writeAPIError(w, http.StatusInternalServerError, "the connection could not be removed", whoServer)
-		return revokes, false
-	}
-	// A built-in's connection's proxy credential goes with it.
-	if err := s.dropBuiltinEgress(v.it.Name, removed); err != nil {
-		log.Printf("integration %s: drop the connection's proxy credential: %v", v.it.Name, err)
-	}
-	// The running server starts again without the values.
-	s.Integrations.ConnectionChanged(v.it.Name)
-	s.Integrations.Changed()
-	return revokes, true
-}
-
 // handleAPIIntegrationConnectionDeleteByID removes the connection {id}
 // names: its Secret, its scoped proxy credential, its record and the
 // access of every agent whose row names it. The other connections, and
@@ -706,7 +662,7 @@ func (s *Server) verifyConnection(w http.ResponseWriter, r *http.Request, v *int
 		writeAPIError(w, http.StatusConflict, "approve a version of "+v.displayName()+" first", whoYou)
 		return
 	case c == nil:
-		writeAPIError(w, http.StatusConflict, "connect the integration first", whoYou)
+		writeAPIError(w, http.StatusConflict, "install "+v.displayName()+" first", whoYou)
 		return
 	case v.manifest.Kivali.Verify == "":
 		writeAPIError(w, http.StatusConflict, v.displayName()+" has no connection test", v.whoBuilt())

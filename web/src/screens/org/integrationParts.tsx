@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { ApiError } from '../../api/client';
-import type { AccessField, IntegrationAuditRow, IntegrationSetup, IntegrationStatus, IntegrationUploadRefused, IntegrationVersionState } from '../../api/types.gen';
+import type { AccessField, IntegrationAuditRow, IntegrationSetup, IntegrationState, IntegrationUploadRefused, IntegrationVersionState } from '../../api/types.gen';
 import { Badge, Button, CodeBlock, Dialog, DialogClose, Icon, Prose, Text } from '../../ds';
 import type { BadgeTone } from '../../ds';
 import { markdownBlocks } from '../../lib/markdown';
@@ -29,19 +29,32 @@ export function rollBackApi(name: string, version: string): string {
   return integrationApi(name) + '/versions/' + encodeURIComponent(version) + '/rollback';
 }
 
-const STATUS: Record<IntegrationStatus, { label: string; tone: BadgeTone }> = {
-  pending: { label: 'Pending', tone: 'signal' },
-  not_connected: { label: 'Not connected', tone: 'neutral' },
-  connected: { label: 'Connected', tone: 'success' },
+const STATE: Record<IntegrationState, { label: string; tone: BadgeTone }> = {
+  available: { label: 'Available', tone: 'neutral' },
+  setting_up: { label: 'Setting up', tone: 'signal' },
+  installed: { label: 'Installed', tone: 'success' },
   off: { label: 'Off', tone: 'neutral' },
-  not_running: { label: 'Not running', tone: 'signal' },
+  pending: { label: 'Pending', tone: 'signal' },
   not_included: { label: 'Not in this version of Kivali', tone: 'neutral' },
 };
 
-/** The one word the list shows for an integration, as a badge. */
-export function StatusBadge({ status }: { status: IntegrationStatus }) {
-  const s = STATUS[status] ?? { label: status, tone: 'neutral' as const };
+/** Where an integration stands in its lifecycle, as a badge. */
+export function StateBadge({ state }: { state: IntegrationState }) {
+  const s = STATE[state] ?? { label: state, tone: 'neutral' as const };
   return <Badge tone={s.tone}>{s.label}</Badge>;
+}
+
+/** "1 needs you", "3 need you": an installed integration's unmet requirements; empty for none. */
+export function needsLabel(n: number): string {
+  if (n <= 0) return '';
+  return n + (n === 1 ? ' needs you' : ' need you');
+}
+
+/** The badge of an installed integration's unmet requirements: "1 needs you"; nothing for none. */
+export function NeedsBadge({ needs }: { needs: number }) {
+  const label = needsLabel(needs);
+  if (!label) return null;
+  return <Badge tone="signal">{label}</Badge>;
 }
 
 const VERSION_STATE: Record<IntegrationVersionState, { label: string; tone: BadgeTone }> = {

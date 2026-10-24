@@ -1,0 +1,65 @@
+{
+  "summary": {
+    "name": "weather",
+    "display_name": "Weather",
+    "description": "Forecasts.",
+    "version": "",
+    "state": "pending",
+    "needs": 0,
+    "enabled": true,
+    "builtin": false,
+    "agents": 0,
+    "pending_version": "1.0.0"
+  },
+  "author": "Kivali Developer (agent)",
+  "hosts": [
+    "api.weather.example"
+  ],
+  "packages": [],
+  "actions": [
+    {
+      "name": "forecast",
+      "description": "The forecast for a place."
+    }
+  ],
+  "connection_fields": [
+    {
+      "key": "key",
+      "title": "API key",
+      "description": "",
+      "sensitive": true,
+      "required": true,
+      "set": false
+    }
+  ],
+  "connection_method": "token",
+  "sign_in_client": "",
+  "scopes": [],
+  "setup_notes_md": "",
+  "sign_in_hosts": [],
+  "connections": [],
+  "multiple": false,
+  "connection_test": false,
+  "access": [],
+  "agents_without": [
+    {
+      "slug": "dana",
+      "name": "Dana"
+    }
+  ],
+  "versions": [
+    {
+      "version": "1.0.0",
+      "state": "pending",
+      "published_at": "2026-10-21T10:00:00Z",
+      "published_by": {
+        "slug": "kivali-developer",
+        "name": "Kivali Developer"
+      },
+      "notes_md": "Forecasts by place."
+    }
+  ],
+  "running": false,
+  "requirements": [],
+  "can_uninstall": true
+}

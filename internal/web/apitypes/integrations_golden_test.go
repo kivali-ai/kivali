@@ -26,7 +26,7 @@ func goldenIntegrationSummary() IntegrationSummary {
 		DisplayName:    "HubSpot",
 		Description:    "Blog posts and contacts in HubSpot.",
 		Version:        "1.2.0",
-		Status:         IntegrationStatusConnected,
+		State:          IntegrationStateInstalled,
 		Enabled:        true,
 		Builtin:        false,
 		Agents:         2,
@@ -37,9 +37,24 @@ func goldenIntegrationSummary() IntegrationSummary {
 func goldenIntegrations() Integrations {
 	return Integrations{Integrations: []IntegrationSummary{
 		goldenIntegrationSummary(),
-		{Name: "weather", DisplayName: "Weather", Description: "Forecasts.", Version: "", Status: IntegrationStatusPending, Enabled: true, Agents: 0},
-		{Name: "maps", DisplayName: "Maps", Description: "Places and routes.", Version: "1.0.0", Status: IntegrationStatusNotIncluded, Enabled: true, Builtin: true, Agents: 0},
+		{Name: "weather", DisplayName: "Weather", Description: "Forecasts.", Version: "", State: IntegrationStatePending, Enabled: true, Agents: 0},
+		{Name: "maps", DisplayName: "Maps", Description: "Places and routes.", Version: "1.0.0", State: IntegrationStateNotIncluded, Enabled: true, Builtin: true, Agents: 0},
+		{Name: "git", DisplayName: "Git", Description: "Repositories on a Git host.", Version: "1.0.0", State: IntegrationStateAvailable, Enabled: true, Builtin: true, Agents: 0},
+		{Name: "github", DisplayName: "GitHub", Description: "Issues and pull requests on GitHub.", Version: "2.0.0", State: IntegrationStateSettingUp, Enabled: true, Builtin: true, Agents: 0},
+		{Name: "crm", DisplayName: "CRM", Description: "Contacts.", Version: "2.1.0", State: IntegrationStateInstalled, Needs: 1, Enabled: true, Agents: 1},
+		{Name: "blog", DisplayName: "Blog", Description: "Posts.", Version: "1.0.0", State: IntegrationStateOff, Enabled: false, Agents: 3},
 	}}
+}
+
+// goldenRequirementsMet are an installed bundle's requirements, every
+// one met: Kivali's rows, the connection test among them.
+func goldenRequirementsMet() []IntegrationRequirement {
+	return []IntegrationRequirement{
+		{ID: "version", Title: "Approved version", Words: "Version 1.2.0 is in use.", Met: true},
+		{ID: "connection", Title: "Connection", Words: "Its secrets are stored.", Met: true},
+		{ID: "connection_test", Title: "Connection test", Words: integrationVerifyMsg, Met: true},
+		{ID: "running", Title: "Running", Words: "It is running.", Met: true},
+	}
 }
 
 func goldenConnectionFields() []ConnectionField {
@@ -99,7 +114,7 @@ func goldenIntegrationPageMultiple() IntegrationPage {
 	return IntegrationPage{
 		Summary: IntegrationSummary{
 			Name: "git", DisplayName: "Git", Description: "Clones, fetches and pushes repositories over HTTPS.",
-			Version: "1.2.0", Status: IntegrationStatusConnected, Enabled: true, Builtin: true, Agents: 2,
+			Version: "1.2.0", State: IntegrationStateInstalled, Needs: 1, Enabled: true, Builtin: true, Agents: 2,
 		},
 		Author:           "Kivali",
 		Hosts:            []string{},
@@ -130,7 +145,12 @@ func goldenIntegrationPageMultiple() IntegrationPage {
 		Versions: []IntegrationVersionSummary{
 			{Version: "1.2.0", State: IntegrationVersionStateApproved, PublishedAt: integrationEarlier, PublishedBy: PersonRef{Slug: "kivali", Name: "Kivali"}, ApprovedAt: &integrationEarlier, NotesMD: "Ships with Kivali."},
 		},
-		CanRemove: false,
+		Running: true,
+		Requirements: []IntegrationRequirement{
+			{ID: "version", Title: "Approved version", Words: "Version 1.2.0 ships with Kivali.", Met: true},
+			{ID: "connection", Title: "Connection", Words: "Company GitLab's secrets are not stored on this Kivali server, as after a restore from a backup. Enter them again.", Met: false, Fix: "setup"},
+		},
+		CanUninstall: true,
 	}
 }
 
@@ -161,8 +181,60 @@ func goldenIntegrationPage() IntegrationPage {
 			{Version: "1.1.1", State: IntegrationVersionStateRejected, PublishedAt: integrationEarlier, PublishedBy: PersonRef{Slug: "kivali-developer", Name: "Kivali Developer"}, NotesMD: "Reaches a reporting host."},
 			{Version: "1.1.0", State: IntegrationVersionStateSuperseded, PublishedAt: integrationEarlier, PublishedBy: PersonRef{Slug: "kivali-developer", Name: "Kivali Developer"}, ApprovedAt: &integrationEarlier, NotesMD: "Blog posts only."},
 		},
-		CanRemove: true,
+		Running:      true,
+		Requirements: goldenRequirementsMet(),
+		CanUninstall: true,
 	}
+}
+
+// goldenIntegrationPageOff is HubSpot's page switched off: its
+// connection and access kept, its requirements without the running
+// row, nothing in Needs you.
+func goldenIntegrationPageOff() IntegrationPage {
+	page := goldenIntegrationPage()
+	page.Summary.State, page.Summary.Enabled = IntegrationStateOff, false
+	page.Running = false
+	page.Requirements = goldenRequirementsMet()[:3]
+	return page
+}
+
+// goldenIntegrationPagePending is an uploaded bundle's page before
+// any version is approved: nothing installed, its one version waiting.
+func goldenIntegrationPagePending() IntegrationPage {
+	return IntegrationPage{
+		Summary:          IntegrationSummary{Name: "weather", DisplayName: "Weather", Description: "Forecasts.", Version: "", State: IntegrationStatePending, Enabled: true, Agents: 0, PendingVersion: new("1.0.0")},
+		Author:           "Kivali Developer (agent)",
+		Hosts:            []string{"api.weather.example"},
+		Packages:         []string{},
+		Actions:          []IntegrationAction{{Name: "forecast", Description: "The forecast for a place."}},
+		ConnectionFields: []ConnectionField{{Key: "key", Title: "API key", Description: "", Sensitive: true, Required: true, Set: false}},
+		ConnectionMethod: "token",
+		Scopes:           []string{},
+		SignInHosts:      []string{},
+		Connections:      []ConnectionState{},
+		Access:           []AccessRow{},
+		AgentsWithout:    []PersonRef{{Slug: "dana", Name: "Dana"}},
+		Versions: []IntegrationVersionSummary{
+			{Version: "1.0.0", State: IntegrationVersionStatePending, PublishedAt: integrationLater, PublishedBy: PersonRef{Slug: "kivali-developer", Name: "Kivali Developer"}, NotesMD: "Forecasts by place."},
+		},
+		Running:      false,
+		Requirements: []IntegrationRequirement{},
+		CanUninstall: true,
+	}
+}
+
+// goldenIntegrationPageNotIncluded is the page of a built-in another
+// version of Kivali shipped: nothing runs it, and it can be
+// uninstalled.
+func goldenIntegrationPageNotIncluded() IntegrationPage {
+	page := goldenIntegrationPagePending()
+	page.Summary = IntegrationSummary{Name: "maps", DisplayName: "Maps", Description: "Places and routes.", Version: "1.0.0", State: IntegrationStateNotIncluded, Enabled: true, Builtin: true}
+	page.Author = "Kivali"
+	page.Hosts = []string{}
+	page.Versions = []IntegrationVersionSummary{
+		{Version: "1.0.0", State: IntegrationVersionStateApproved, PublishedAt: integrationEarlier, PublishedBy: PersonRef{Slug: "kivali", Name: "Kivali"}, ApprovedAt: &integrationEarlier, NotesMD: "Ships with Kivali."},
+	}
+	return page
 }
 
 func goldenIntegrationVersion() IntegrationVersion {
@@ -247,17 +319,19 @@ func goldenIntegrationPageSignIn(needsSignIn bool) IntegrationPage {
 	expires := integrationLater.Add(8 * time.Hour)
 	redirect := "https://kivali.example.com/connect/callback"
 	sign := &ConnectionSignIn{Ways: []string{"device", "browser"}, SignedIn: true, Method: "device", SignedInAt: &integrationNow, ExpiresAt: &expires, RedirectURL: &redirect}
-	status := IntegrationStatusConnected
+	signInRow := IntegrationRequirement{ID: "sign_in", Title: "Sign-in", Words: "Signed in with a code.", Met: true, Fix: "sign_in"}
+	needs := 0
 	if needsSignIn {
 		refused := "the vendor refused the sign-in (bad_refresh_token): The refresh token passed is incorrect or expired."
 		sign = &ConnectionSignIn{Ways: []string{"device", "browser"}, SignedIn: false, Error: &refused, RedirectURL: &redirect}
-		status = IntegrationStatusNotConnected
+		signInRow.Met, signInRow.Words = false, "The service no longer accepts the sign-in: "+refused+" Agents cannot use GitHub until you sign in again."
+		needs = 1
 	}
 	conn := ConnectionState{ID: "a1b2c3d4", Label: "", CreatedAt: integrationNow, Fields: goldenSignInConnectionFields(), SignIn: sign}
 	return IntegrationPage{
 		Summary: IntegrationSummary{
 			Name: "github", DisplayName: "GitHub", Description: "Issues and pull requests on GitHub.",
-			Version: "1.0.0", Status: status, Enabled: true, Agents: 0,
+			Version: "1.0.0", State: IntegrationStateInstalled, Needs: needs, Enabled: true, Agents: 0,
 		},
 		Author:            "Kivali Developer (agent)",
 		Hosts:             []string{"api.github.com"},
@@ -280,7 +354,14 @@ func goldenIntegrationPageSignIn(needsSignIn bool) IntegrationPage {
 		Versions: []IntegrationVersionSummary{
 			{Version: "1.0.0", State: IntegrationVersionStateApproved, PublishedAt: integrationEarlier, PublishedBy: PersonRef{Slug: "kivali-developer", Name: "Kivali Developer"}, ApprovedAt: &integrationEarlier, NotesMD: ""},
 		},
-		CanRemove: true,
+		Running: true,
+		Requirements: []IntegrationRequirement{
+			{ID: "version", Title: "Approved version", Words: "Version 1.0.0 is in use.", Met: true},
+			{ID: "connection", Title: "Connection", Words: "Its secrets are stored.", Met: true},
+			signInRow,
+			{ID: "running", Title: "Running", Words: "It is running.", Met: true},
+		},
+		CanUninstall: true,
 	}
 }
 
@@ -294,7 +375,8 @@ func goldenIntegrationPageSignInElsewhere() IntegrationPage {
 	openAt := "https://kivali.example.com"
 	conn := *page.Connection
 	conn.SignIn = &ConnectionSignIn{Ways: []string{}, BrowserElsewhere: true, OpenAt: &openAt}
-	page.Summary.Status = IntegrationStatusNotConnected
+	page.Summary.Needs = 1
+	page.Requirements[2] = IntegrationRequirement{ID: "sign_in", Title: "Sign-in", Words: "Not signed in yet.", Met: false, Fix: "sign_in"}
 	page.ConnectionMethod = "browser"
 	page.SignInAt = map[string]string{"browser": "github.com"}
 	page.SignInRedirectURL = nil
@@ -348,12 +430,12 @@ func goldenIntegrationAudit() IntegrationAudit {
 func goldenAgentIntegrations() AgentIntegrations {
 	return AgentIntegrations{
 		Connected: []AgentIntegration{
-			{Name: "hubspot", DisplayName: "HubSpot", Status: IntegrationStatusConnected, Summary: "Blogs: Marketing · May publish and edit"},
-			{Name: "crm", DisplayName: "CRM", Status: IntegrationStatusOff, Summary: "Full access", Invalid: &integrationInvalid},
-			{Name: "git", DisplayName: "Git", Status: IntegrationStatusConnected, Summary: "Repositories: eng/*", ConnectionLabel: "Company GitLab"},
+			{Name: "hubspot", DisplayName: "HubSpot", State: IntegrationStateInstalled, Usable: true, Summary: "Blogs: Marketing · May publish and edit"},
+			{Name: "crm", DisplayName: "CRM", State: IntegrationStateOff, Usable: false, Summary: "Full access", Invalid: &integrationInvalid},
+			{Name: "git", DisplayName: "Git", State: IntegrationStateInstalled, Usable: false, Summary: "Repositories: eng/*", ConnectionLabel: "Company GitLab"},
 		},
 		Available: []AgentIntegration{
-			{Name: "weather", DisplayName: "Weather", Status: IntegrationStatusPending, Summary: ""},
+			{Name: "weather", DisplayName: "Weather", State: IntegrationStatePending, Summary: ""},
 		},
 	}
 }
@@ -439,7 +521,7 @@ func goldenIntegrationPageSetup() IntegrationPage {
 	return IntegrationPage{
 		Summary: IntegrationSummary{
 			Name: "github", DisplayName: "GitHub", Description: "Issues and pull requests on GitHub.",
-			Version: "2.0.0", Status: IntegrationStatusNotConnected, Enabled: true, Builtin: true, Agents: 0,
+			Version: "2.0.0", State: IntegrationStateAvailable, Enabled: true, Builtin: true, Agents: 0,
 		},
 		Author:           "Kivali",
 		Hosts:            []string{"api.github.com", "github.com"},
@@ -459,8 +541,43 @@ func goldenIntegrationPageSetup() IntegrationPage {
 		Versions: []IntegrationVersionSummary{
 			{Version: "2.0.0", State: IntegrationVersionStateApproved, PublishedAt: integrationEarlier, PublishedBy: PersonRef{Slug: "kivali", Name: "Kivali"}, ApprovedAt: &integrationEarlier, NotesMD: "Ships with Kivali."},
 		},
-		CanRemove: false,
+		Running:      true,
+		Requirements: []IntegrationRequirement{},
+		CanUninstall: false,
 	}
+}
+
+// goldenIntegrationPageSettingUp is the same GitHub page while its
+// setup flow builds the app: setting up, with the flow under way.
+func goldenIntegrationPageSettingUp() IntegrationPage {
+	page := goldenIntegrationPageSetup()
+	page.Summary.State = IntegrationStateSettingUp
+	flow := goldenSetupFlowRunning()
+	page.Flow = &flow
+	return page
+}
+
+// goldenIntegrationPageFix is the same GitHub page once installed,
+// one of its own requirements unmet and its Fix flow waiting for the
+// owner to approve a permission on GitHub.
+func goldenIntegrationPageFix() IntegrationPage {
+	page := goldenIntegrationPageSetup()
+	conn := ConnectionState{ID: "f00dcafe", Label: "", CreatedAt: integrationNow, Fields: []ConnectionField{}, VerifiedAt: &integrationLater, Verified: &integrationVerified, VerifyMessage: new("Installed on acme")}
+	page.Summary.State, page.Summary.Needs = IntegrationStateInstalled, 1
+	page.Connection, page.Connections = &conn, []ConnectionState{conn}
+	page.CanUninstall = true
+	page.Requirements = []IntegrationRequirement{
+		{ID: "version", Title: "Approved version", Words: "Version 2.0.0 ships with Kivali.", Met: true},
+		{ID: "connection", Title: "Connection", Words: "Its secrets are stored.", Met: true},
+		{ID: "sign_in", Title: "Sign-in", Words: "Signed in in the browser.", Met: true, Fix: "sign_in"},
+		{ID: "connection_test", Title: "Connection test", Words: "Installed on acme", Met: true},
+		{ID: "installed", Title: "Installed on GitHub", Words: "Installed on acme, reaching 12 repositories.", Met: true},
+		{ID: "permissions", Title: "Permissions", Words: "This version needs write access to pull requests, which the app does not have yet.", Met: false, Fix: "permissions"},
+	}
+	flow := goldenSetupFlowWait()
+	flow.Flow = "permissions"
+	page.Flow = &flow
+	return page
 }
 
 // goldenSetupFlowID is the setup flows' id in the fixtures.

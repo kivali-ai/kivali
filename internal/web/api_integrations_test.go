@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -116,11 +117,11 @@ func TestAPIIntegrationUploadIsAPendingVersion(t *testing.T) {
 		t.Fatalf("list = %+v", list)
 	}
 	sum := list.Integrations[0]
-	if sum.Status != apitypes.IntegrationStatusPending || sum.Version != "" || sum.PendingVersion == nil || *sum.PendingVersion != "1.0.0" || !sum.Enabled || sum.Description == "" {
+	if sum.State != apitypes.IntegrationStatePending || sum.Needs != 0 || sum.Version != "" || sum.PendingVersion == nil || *sum.PendingVersion != "1.0.0" || !sum.Enabled || sum.Description == "" {
 		t.Errorf("summary = %+v", sum)
 	}
 	page := orgOK[apitypes.IntegrationPage](t, orgGet(t, srv, intBase+"/crm"))
-	if len(page.Versions) != 1 || page.Versions[0].State != apitypes.IntegrationVersionStatePending || page.Connection != nil || !page.CanRemove {
+	if len(page.Versions) != 1 || page.Versions[0].State != apitypes.IntegrationVersionStatePending || page.Connection != nil || !page.CanUninstall || len(page.Requirements) != 0 || page.Running {
 		t.Errorf("page = %+v", page)
 	}
 }
@@ -217,8 +218,8 @@ func TestAPIIntegrationApproveAndReject(t *testing.T) {
 		t.Errorf("rejected = %+v", rejected)
 	}
 	page := orgOK[apitypes.IntegrationPage](t, orgGet(t, srv, intBase+"/crm"))
-	// Approved and on, with no shim connected: not running.
-	if page.Summary.Version != "1.0.0" || page.Summary.Status != apitypes.IntegrationStatusNotRunning || page.Summary.PendingVersion != nil {
+	// Approved and on, with no connection and no shim: available, not running.
+	if page.Summary.Version != "1.0.0" || page.Summary.State != apitypes.IntegrationStateAvailable || page.Running || page.Summary.PendingVersion != nil {
 		t.Errorf("summary = %+v", page.Summary)
 	}
 	if len(page.Versions) != 2 || page.Versions[0].Version != "1.1.0" {
@@ -613,8 +614,8 @@ func TestNeedsYouAnswersIntegrationInstall(t *testing.T) {
 // have is a 400. The secret goes to the Secret store and nowhere else:
 // not the response, not the data directory. A sensitive field left
 // out keeps its value. A Secret that has gone missing reads as
-// "reconnect needed". Disconnecting removes the record, the Secret and
-// every agent's access.
+// "reconnect needed", an unmet connection requirement whose Fix is setup.
+// Uninstalling removes the record, the Secret and every agent's access.
 func TestAPIIntegrationConnection(t *testing.T) {
 	srv := newTestServer(t)
 	mem := secrets.NewMemory()
@@ -643,7 +644,7 @@ func TestAPIIntegrationConnection(t *testing.T) {
 	if strings.Contains(rr.Body.String(), "s3cret-value") {
 		t.Fatal("the response carries the secret")
 	}
-	if page.Summary.Status != apitypes.IntegrationStatusConnected || page.Connection == nil || page.Connection.ReconnectNeeded || len(page.Connection.ID) != 8 {
+	if !installedAndMet(page) || page.Connection == nil || page.Connection.ReconnectNeeded || len(page.Connection.ID) != 8 {
 		t.Errorf("connected page = %+v %+v", page.Summary, page.Connection)
 	}
 	fields := map[string]apitypes.ConnectionField{}
@@ -677,7 +678,8 @@ func TestAPIIntegrationConnection(t *testing.T) {
 	}
 	_ = mem.Delete(context.Background(), secretName)
 	page = orgOK[apitypes.IntegrationPage](t, orgGet(t, srv, intBase+"/crm"))
-	if page.Connection == nil || !page.Connection.ReconnectNeeded || page.Summary.Status != apitypes.IntegrationStatusNotConnected {
+	if row, _ := requirementOf(page, "connection"); page.Connection == nil || !page.Connection.ReconnectNeeded || page.Summary.State != apitypes.IntegrationStateInstalled ||
+		page.Summary.Needs != 1 || row.Met || row.Fix != "setup" {
 		t.Errorf("after the Secret went: %+v %+v", page.Summary, page.Connection)
 	}
 	for _, f := range page.ConnectionFields {
@@ -689,10 +691,10 @@ func TestAPIIntegrationConnection(t *testing.T) {
 	assertAPIError(t, put(map[string]string{"portal": "acme2"}), http.StatusBadRequest)
 	orgOK[apitypes.IntegrationPage](t, put(map[string]string{"token": "again", "portal": "acme2"}))
 
-	page = orgOK[apitypes.IntegrationPage](t, intDelete(t, srv, intBase+"/crm/connection"))
-	if page.Connection != nil || len(page.Access) != 0 || page.Summary.Status != apitypes.IntegrationStatusNotConnected {
-		t.Errorf("after disconnect: %+v", page)
+	if rr := intDelete(t, srv, intBase+"/crm"); rr.Code != http.StatusNoContent {
+		t.Fatalf("uninstall: %d %s", rr.Code, rr.Body.String())
 	}
+	assertAPIError(t, orgGet(t, srv, intBase+"/crm"), http.StatusNotFound)
 	if names := mem.Names(); len(names) != 0 {
 		t.Errorf("secrets left: %v", names)
 	}
@@ -728,7 +730,7 @@ func TestAPIIntegrationAccess(t *testing.T) {
 		return orgJSON(t, srv, http.MethodPut, intBase+"/crm/access/"+slug, apitypes.AccessWrite{Access: []byte(raw)})
 	}
 	intInstalled(t, srv, "crm", "1.0.0")
-	if e := assertAPIError(t, putAccess("dana", `{"blogs":["M"]}`), http.StatusConflict); e.Error != "connect the integration first" {
+	if e := assertAPIError(t, putAccess("dana", `{"blogs":["M"]}`), http.StatusConflict); e.Error != "install Test crm first" {
 		t.Errorf("no connection = %+v", e)
 	}
 	if rr := orgJSON(t, srv, http.MethodPut, intBase+"/crm/connection", apitypes.ConnectionWrite{Fields: map[string]string{"token": "t"}}); rr.Code != http.StatusOK {
@@ -756,10 +758,10 @@ func TestAPIIntegrationAccess(t *testing.T) {
 
 	intUpload(t, srv, intBundle(t, "blog", "1.0.0"))
 	tab := orgOK[apitypes.AgentIntegrations](t, orgGet(t, srv, "/api/v1/agents/dana/integrations"))
-	if len(tab.Connected) != 1 || tab.Connected[0].Name != "crm" || tab.Connected[0].Summary != "Blogs: Marketing, Eng · May publish and edit" || tab.Connected[0].Status != apitypes.IntegrationStatusConnected {
+	if len(tab.Connected) != 1 || tab.Connected[0].Name != "crm" || tab.Connected[0].Summary != "Blogs: Marketing, Eng · May publish and edit" || tab.Connected[0].State != apitypes.IntegrationStateInstalled || !tab.Connected[0].Usable {
 		t.Errorf("connected = %+v", tab.Connected)
 	}
-	if len(tab.Available) != 1 || tab.Available[0].Name != "blog" || tab.Available[0].Status != apitypes.IntegrationStatusPending || tab.Available[0].Summary != "" {
+	if len(tab.Available) != 1 || tab.Available[0].Name != "blog" || tab.Available[0].State != apitypes.IntegrationStatePending || tab.Available[0].Usable || tab.Available[0].Summary != "" {
 		t.Errorf("available = %+v", tab.Available)
 	}
 
@@ -774,9 +776,10 @@ func TestAPIIntegrationAccess(t *testing.T) {
 	assertAPIError(t, orgGet(t, srv, "/api/v1/agents/lee/integrations"), http.StatusNotFound)
 }
 
-// The switch and removal. Off is its own status; removing deletes the
-// connection's Secret and answers 204, and the list is empty after; a
-// built-in integration this binary carries cannot be removed.
+// The switch and Uninstall. Off is its own state; uninstalling an
+// uploaded integration deletes the connection's Secret and the whole
+// integration and answers 204, and the list is empty after; a built-in
+// with nothing installed has nothing to uninstall (409).
 func TestAPIIntegrationSwitchAndRemove(t *testing.T) {
 	srv := newTestServer(t)
 	mem := secrets.NewMemory()
@@ -784,15 +787,15 @@ func TestAPIIntegrationSwitchAndRemove(t *testing.T) {
 	intConnected(t, srv, "crm")
 	attachShim(t, srv, "crm", toolTexts(nil))
 	page := orgOK[apitypes.IntegrationPage](t, intPost(t, srv, intBase+"/crm/disable"))
-	if page.Summary.Status != apitypes.IntegrationStatusOff || page.Summary.Enabled {
+	if page.Summary.State != apitypes.IntegrationStateOff || page.Summary.Enabled || page.Summary.Needs != 0 || slices.Contains(requirementIDs(page), "running") {
 		t.Errorf("off = %+v", page.Summary)
 	}
 	page = orgOK[apitypes.IntegrationPage](t, intPost(t, srv, intBase+"/crm/enable"))
-	if page.Summary.Status != apitypes.IntegrationStatusConnected {
+	if !installedAndMet(page) {
 		t.Errorf("on = %+v", page.Summary)
 	}
 	if rr := intDelete(t, srv, intBase+"/crm"); rr.Code != http.StatusNoContent {
-		t.Fatalf("remove: %d %s", rr.Code, rr.Body.String())
+		t.Fatalf("uninstall: %d %s", rr.Code, rr.Body.String())
 	}
 	if list := orgOK[apitypes.Integrations](t, orgGet(t, srv, intBase)); len(list.Integrations) != 0 {
 		t.Errorf("list after remove = %+v", list)
@@ -802,7 +805,9 @@ func TestAPIIntegrationSwitchAndRemove(t *testing.T) {
 	}
 	assertAPIError(t, intDelete(t, srv, intBase+"/crm"), http.StatusNotFound)
 	withEcho(t, srv)
-	assertAPIError(t, intDelete(t, srv, intBase+"/echo"), http.StatusConflict)
+	if e := assertAPIError(t, intDelete(t, srv, intBase+"/echo"), http.StatusConflict); e.Error != "Echo is not installed, so there is nothing to uninstall" {
+		t.Errorf("uninstall of a built-in with nothing installed = %+v", e)
+	}
 	assertAPIError(t, intPost(t, srv, intBase+"/nope/enable"), http.StatusNotFound)
 }
 

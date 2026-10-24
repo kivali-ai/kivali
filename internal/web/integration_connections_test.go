@@ -87,8 +87,8 @@ func TestGitTakesSeveralConnections(t *testing.T) {
 	srv.Secrets = mem
 	withGit(t, srv)
 	page, hub, lab := twoGitConnections(t, srv)
-	if !page.Multiple || page.Summary.Status != apitypes.IntegrationStatusConnected {
-		t.Errorf("page = multiple %v, status %s", page.Multiple, page.Summary.Status)
+	if !page.Multiple || !installedAndMet(page) {
+		t.Errorf("page = multiple %v, state %s, unmet %v", page.Multiple, page.Summary.State, unmetIDs(page))
 	}
 	if hub.Label != "github.com" || lab.Label != "Company GitLab" || hub.ID == lab.ID {
 		t.Errorf("labels = %q (%s), %q (%s)", hub.Label, hub.ID, lab.Label, lab.ID)
@@ -393,11 +393,11 @@ func TestVerifyByIDTestsThatConnection(t *testing.T) {
 	assertAPIError(t, orgGet(t, srv, intBase+"/echo/choices/colors?connection=nope"), http.StatusNotFound)
 }
 
-// Why this test exists: with several connections the integration is
-// connected while any one of them has all its secrets. Reading only the
-// first would call it not connected when the first lost its Secret and
-// the second still works, and agents on the second would look cut off.
-func TestStatusWithOneOfTwoConnected(t *testing.T) {
+// Why this test exists: with several connections, the connection
+// requirement names each one that lost its secrets, and only those.
+// Reading only the first would miss the second losing its Secret, or
+// blame the second for the first's.
+func TestRequirementsWithOneOfTwoConnected(t *testing.T) {
 	srv := newTestServer(t)
 	useFakeClock(srv)
 	mem := secrets.NewMemory()
@@ -409,13 +409,15 @@ func TestStatusWithOneOfTwoConnected(t *testing.T) {
 	first, second := page.Connections[0], page.Connections[1]
 	_ = mem.Delete(context.Background(), secrets.ConnectionSecretName("echo", first.ID))
 	page = orgOK[apitypes.IntegrationPage](t, orgGet(t, srv, intBase+"/echo"))
-	if page.Summary.Status != apitypes.IntegrationStatusConnected || !page.Connections[0].ReconnectNeeded || page.Connections[1].ReconnectNeeded {
-		t.Errorf("one of two = %s %+v", page.Summary.Status, page.Connections)
+	row, _ := requirementOf(page, "connection")
+	if page.Summary.State != apitypes.IntegrationStateInstalled || !page.Connections[0].ReconnectNeeded || page.Connections[1].ReconnectNeeded ||
+		row.Met || !strings.HasPrefix(row.Words, "First's secrets are not stored") {
+		t.Errorf("one of two = %s %+v %+v", page.Summary.State, row, page.Connections)
 	}
 	_ = mem.Delete(context.Background(), secrets.ConnectionSecretName("echo", second.ID))
 	page = orgOK[apitypes.IntegrationPage](t, orgGet(t, srv, intBase+"/echo"))
-	if page.Summary.Status != apitypes.IntegrationStatusNotConnected {
-		t.Errorf("none of two = %s", page.Summary.Status)
+	if row, _ := requirementOf(page, "connection"); row.Met || !strings.HasPrefix(row.Words, "First, Second's secrets are not stored") || page.Summary.Needs != 1 {
+		t.Errorf("none of two = %+v", row)
 	}
 	if _, err := srv.Store.GetIntegrationConnectionByID("echo", second.ID); err != nil {
 		t.Errorf("the record went with its Secret: %v", err)

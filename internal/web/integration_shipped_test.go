@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -79,9 +80,9 @@ func TestShippedBundleRunsInItsOwnPod(t *testing.T) {
 	putIntegrationAccess(t, srv, "notes", "dana", `{"blogs":["red"]}`)
 
 	page := orgOK[apitypes.IntegrationPage](t, orgGet(t, srv, intBase+"/notes"))
-	if page.Summary.Status != apitypes.IntegrationStatusNotRunning || !page.Summary.Builtin || page.CanRemove ||
+	if page.Summary.State != apitypes.IntegrationStateInstalled || page.Running || !slices.Equal(unmetIDs(page), []string{"running"}) || !page.Summary.Builtin || !page.CanUninstall ||
 		strings.Join(page.Hosts, ",") != "api.example.com" {
-		t.Errorf("page before the shim = %+v, hosts %v, can remove %v", page.Summary, page.Hosts, page.CanRemove)
+		t.Errorf("page before the shim = %+v, hosts %v, unmet %v", page.Summary, page.Hosts, unmetIDs(page))
 	}
 	if e := assertAPIError(t, intPost(t, srv, intBase+"/notes/connection/verify"), http.StatusConflict); e.Error != errNotRunning || e.Who != whoDevelopers {
 		t.Errorf("verify before the shim = %+v", e)
@@ -135,7 +136,7 @@ func TestShippedBundleRunsInItsOwnPod(t *testing.T) {
 	reg.checks.Wait()
 
 	page = orgOK[apitypes.IntegrationPage](t, intPost(t, srv, intBase+"/notes/connection/verify"))
-	if page.Summary.Status != apitypes.IntegrationStatusConnected || page.Connection == nil || page.Connection.Verified == nil ||
+	if !installedAndMet(page) || page.Connection == nil || page.Connection.Verified == nil ||
 		!*page.Connection.Verified || *page.Connection.VerifyMessage != "fake account "+integrationSecretPlaceholder {
 		t.Fatalf("verify = %+v %+v", page.Summary, page.Connection)
 	}
@@ -186,8 +187,8 @@ func TestShippedBundleRefusalsAndInstallScreen(t *testing.T) {
 	installShipped(t, srv, shippedNotes(t, "1.0.0", integrationtest.MainPy))
 	installShipped(t, srv, shippedNotes(t, "1.1.0", integrationtest.MainPy))
 
-	if e := assertAPIError(t, intDelete(t, srv, intBase+"/notes"), http.StatusConflict); e.Error != builtinRefusal("Test notes", builtinRemove) {
-		t.Errorf("remove = %+v", e)
+	if e := assertAPIError(t, intDelete(t, srv, intBase+"/notes"), http.StatusConflict); e.Error != errNotInstalled("Test notes") {
+		t.Errorf("uninstall with nothing installed = %+v", e)
 	}
 	if e := assertAPIError(t, intUpload(t, srv, intBundle(t, "notes", "2.0.0")), http.StatusConflict); e.Error != builtinRefusal("Test notes", builtinUpload) {
 		t.Errorf("upload = %+v", e)
@@ -215,8 +216,8 @@ func TestShippedBundleRefusalsAndInstallScreen(t *testing.T) {
 		t.Errorf("install screen = %+v", v)
 	}
 	page := orgOK[apitypes.IntegrationPage](t, orgGet(t, srv, intBase+"/notes"))
-	if !page.Summary.Builtin || page.CanRemove || page.Summary.Version != "1.1.0" || page.Summary.PendingVersion != nil {
-		t.Errorf("page = %+v, can remove %v", page.Summary, page.CanRemove)
+	if !page.Summary.Builtin || page.CanUninstall || page.Summary.Version != "1.1.0" || page.Summary.PendingVersion != nil {
+		t.Errorf("page = %+v, can uninstall %v", page.Summary, page.CanUninstall)
 	}
 
 	// A built-in of Go code and an upload are not shipped bundles.
@@ -261,8 +262,8 @@ func TestShippedBundleNotInThisKivali(t *testing.T) {
 		t.Errorf("pods = %v", calls)
 	}
 	page := orgOK[apitypes.IntegrationPage](t, orgGet(t, srv, intBase+"/notes"))
-	if page.Summary.Status != apitypes.IntegrationStatusNotIncluded || !page.Summary.Builtin || !page.CanRemove {
-		t.Errorf("page = %+v, can remove %v", page.Summary, page.CanRemove)
+	if page.Summary.State != apitypes.IntegrationStateNotIncluded || !page.Summary.Builtin || !page.CanUninstall {
+		t.Errorf("page = %+v, can uninstall %v", page.Summary, page.CanUninstall)
 	}
 	why := builtinRefusal("Test notes", builtinNotIncluded)
 	if e := assertAPIError(t, intPost(t, srv, intBase+"/notes/connection/verify"), http.StatusConflict); e.Error != why {
@@ -279,7 +280,7 @@ func TestShippedBundleNotInThisKivali(t *testing.T) {
 		t.Errorf("install screen = %+v", v)
 	}
 	if rr := intDelete(t, srv, intBase+"/notes"); rr.Code != http.StatusNoContent {
-		t.Fatalf("remove: %d %s", rr.Code, rr.Body.String())
+		t.Fatalf("uninstall: %d %s", rr.Code, rr.Body.String())
 	}
 	if _, err := srv.Store.GetIntegration("notes"); err == nil {
 		t.Errorf("the record is still there")
@@ -431,7 +432,7 @@ func TestAShippedBundleWhoseInstallFailedDoesNotRun(t *testing.T) {
 	if calls := prov.takeCalls(); len(calls) != 0 {
 		t.Errorf("pods = %v", calls)
 	}
-	if page := orgOK[apitypes.IntegrationPage](t, orgGet(t, srv, intBase+"/notes")); page.Summary.Status != apitypes.IntegrationStatusNotIncluded || page.Summary.Version != "9.9.9" {
+	if page := orgOK[apitypes.IntegrationPage](t, orgGet(t, srv, intBase+"/notes")); page.Summary.State != apitypes.IntegrationStateNotIncluded || page.Summary.Version != "9.9.9" {
 		t.Errorf("page = %+v", page.Summary)
 	}
 
@@ -455,7 +456,7 @@ func TestAShippedBundleWhoseInstallFailedDoesNotRun(t *testing.T) {
 	if calls := prov.takeCalls(); strings.Join(calls, ",") != "start notes 1.0.0" {
 		t.Errorf("pods after the install = %v", calls)
 	}
-	if page := orgOK[apitypes.IntegrationPage](t, orgGet(t, srv, intBase+"/notes")); page.Summary.Status != apitypes.IntegrationStatusNotRunning {
+	if page := orgOK[apitypes.IntegrationPage](t, orgGet(t, srv, intBase+"/notes")); page.Summary.State != apitypes.IntegrationStateAvailable || page.Running {
 		t.Errorf("page after the install = %+v", page.Summary)
 	}
 }

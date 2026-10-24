@@ -4,16 +4,21 @@ import { apiPostForm } from '../../api/client';
 import type { IntegrationSummary, IntegrationUploadRefused, IntegrationVersion, Integrations } from '../../api/types.gen';
 import { Badge, Banner, Button, Dialog, DialogClose, Icon, ListRow, Text } from '../../ds';
 import { pickFiles } from '../../lib/pickFiles';
-import { INTEGRATIONS_API, StatusBadge, agentsLabel, integrationPath, signInErrorWords, uploadRefusalOf, versionPath } from './integrationParts';
+import { INTEGRATIONS_API, NeedsBadge, StateBadge, agentsLabel, needsLabel, integrationPath, signInErrorWords, uploadRefusalOf, versionPath } from './integrationParts';
 import { ErrorBanner, None, RowList, RowSkeletons, SectionHead } from './parts';
 import type { SectionProps } from './sections';
 import { useAction, useResource } from './useResource';
 import '../../styles/integrations.css';
 
-/** "2 installed · 1 waiting": waiting counts the integrations with a version for you to approve. */
+/**
+ * "2 installed · 1 needs you · 1 waiting": installed counts those installed or off, needs you those installed with a
+ * requirement not met, and waiting those with a version for you to approve.
+ */
 export function integrationsMeta(list: readonly IntegrationSummary[]): string {
+  const installed = list.filter((i) => i.state === 'installed' || i.state === 'off').length;
+  const needs = list.filter((i) => i.state === 'installed' && i.needs > 0).length;
   const waiting = list.filter((i) => i.pending_version).length;
-  return `${list.length} installed` + (waiting > 0 ? ` · ${waiting} waiting` : '');
+  return `${installed} installed` + (needs > 0 ? ` · ${needsLabel(needs)}` : '') + (waiting > 0 ? ` · ${waiting} waiting` : '');
 }
 
 /** One integration: its row opens its page; a version waiting for approval links to its install screen below it. */
@@ -30,7 +35,8 @@ function IntegrationRow({ item }: { item: IntegrationSummary }) {
             {item.builtin && <Badge variant="outline">Built in</Badge>}
             {item.version && <span>{'v' + item.version.replace(/^v/, '')}</span>}
             {item.version && <span aria-hidden="true">·</span>}
-            <StatusBadge status={item.status} />
+            <StateBadge state={item.state} />
+            {item.state === 'installed' && <NeedsBadge needs={item.needs} />}
             <span aria-hidden="true">·</span>
             <span>{agentsLabel(item.agents)}</span>
           </>
@@ -86,7 +92,7 @@ export function IntegrationsSection({ showHead }: SectionProps) {
     <>
       <SectionHead title="Integrations" show={showHead} meta={items ? integrationsMeta(items) : undefined} />
       <Text as="p" variant="caption" tone="muted">
-        Services your agents can act on, each from a bundle you approve. You connect each one, then choose which agents may use it and how far.
+        Services your agents can act on, each from a bundle you approve or shipped with Kivali. You install each one, then choose which agents may use it and how far.
       </Text>
       <ErrorBanner error={list.error ?? action.error} {...(action.error ? { onDismiss: action.dismiss } : {})} />
       {signInError && (
@@ -95,7 +101,7 @@ export function IntegrationsSection({ showHead }: SectionProps) {
         </Banner>
       )}
       {!items && !list.error && <RowSkeletons />}
-      {items && items.length === 0 && <None>No integrations installed.</None>}
+      {items && items.length === 0 && <None>No integrations yet.</None>}
       {items && items.length > 0 && (
         <RowList>
           {items.map((item) => (

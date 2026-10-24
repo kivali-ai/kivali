@@ -15,11 +15,11 @@ import (
 
 // Why this test exists: a refresh the vendor refused leaves agents'
 // calls failing until the owner signs in again, and nothing else tells
-// the owner. Home's Needs you must carry a row for that connection,
-// built from the connection as it stands: core's title naming the
-// integration, the vendor's refusal as the body, from Kivali, at the
-// refusal's time, opening the integration's page. The row leaves once
-// the connection is signed in again, and once it is deleted.
+// the owner. Home's Needs you must carry the unmet sign-in requirement
+// as a row, built from the connection as it stands: core's title naming
+// the integration, the vendor's refusal in the body, from Kivali, at
+// the refusal's time, opening the integration's page. The row leaves
+// once the connection is signed in again, and once it is deleted.
 func TestSignInNeedsYouRow(t *testing.T) {
 	srv, vendor, clk := signInServer(t)
 	signInBundle(t, srv, vendor)
@@ -31,20 +31,17 @@ func TestSignInNeedsYouRow(t *testing.T) {
 		t.Fatal("the refresh went through")
 	}
 	findRow := func() *apitypes.NeedItem {
-		home := decodeAPI[apitypes.Home](t, homeDo(t, srv, http.MethodGet, "/api/v1/home", "", nil, nil))
-		for i, n := range home.Needs {
-			if n.Kind == apitypes.NeedKindIntegrationSignIn {
-				return &home.Needs[i]
-			}
+		if row, ok := requirementNeeds(t, srv)["integration_requirement:crm/sign_in"]; ok {
+			return &row
 		}
 		return nil
 	}
 	row := findRow()
 	if row == nil {
-		t.Fatal("no integration_sign_in row")
+		t.Fatal("no sign-in row")
 	}
-	want := "The vendor refused the sign-in (bad_refresh_token): refused by the test. Agents cannot use the connection until you sign in again."
-	if row.ID != "integration_sign_in:crm/c1" || row.Title != "Test crm needs you to sign in again" || row.BodyMD != want ||
+	want := "The service no longer accepts the sign-in: the vendor refused the sign-in (bad_refresh_token): refused by the test. Agents cannot use Test crm until you sign in again."
+	if row.Title != "Test crm: Sign-in" || row.BodyMD != want ||
 		row.From != (apitypes.PersonRef{Slug: "kivali", Name: "Kivali"}) || !row.At.Equal(clk.Now()) ||
 		row.ReviewPath == nil || *row.ReviewPath != "/org/integrations/crm" || row.RawURL != nil {
 		t.Errorf("row = %+v", row)
@@ -122,12 +119,11 @@ func TestSignInConnectionOnThePage(t *testing.T) {
 	}
 }
 
-// Why this test exists: an integration reads connected while agents
-// can use a connection. A sign-in connection that needs the owner to
-// sign in again cannot be used, so the list, the page and an agent's
-// tab must read not connected until the owner signs in again, not
-// connected with every call failing.
-func TestSignInStatus(t *testing.T) {
+// Why this test exists: a sign-in connection that needs the owner to
+// sign in again cannot be used, so the list must count its unmet
+// sign-in requirement until the owner signs in again, not read every
+// requirement met with every call failing.
+func TestSignInRequirementOnTheList(t *testing.T) {
 	srv, vendor, _ := signInServer(t)
 	echo := echotest.New()
 	c := signInConnection(vendor)
@@ -138,11 +134,11 @@ func TestSignInStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 	signedIn(t, srv, echotest.Name, vendor.Issue())
-	if st := echoSummary(t, srv).Status; st != apitypes.IntegrationStatusConnected {
-		t.Errorf("signed in: %s", st)
+	if sum := echoSummary(t, srv); sum.State != apitypes.IntegrationStateInstalled || sum.Needs != 0 {
+		t.Errorf("signed in: %+v", sum)
 	}
 	srv.markSignInFailed(echotest.Name, "c1", "the vendor refused the sign-in (invalid_grant)")
-	if st := echoSummary(t, srv).Status; st != apitypes.IntegrationStatusNotConnected {
-		t.Errorf("needs a new sign-in: %s", st)
+	if sum := echoSummary(t, srv); sum.State != apitypes.IntegrationStateInstalled || sum.Needs != 1 {
+		t.Errorf("needs a new sign-in: %+v", sum)
 	}
 }

@@ -116,20 +116,51 @@ func (s *Server) setupSpecFor(v *integrationView, r *http.Request) (setupSpec, *
 		if then := c.Setup.Then; then != "" {
 			// The sign-in setup hands over to must be able to finish from
 			// here, or the owner would make the app for nothing.
-			switch {
-			case then == integration.MethodBrowser && signInRedirectURL(r) == "":
-				return setupSpec{}, &connWriteError{http.StatusConflict, errSignInNoAddress, whoServer}
-			case then == integration.MethodBrowser && !s.browserSignInHere(r):
-				return setupSpec{}, &connWriteError{http.StatusConflict, errSignInNotHere, whoYou}
+			thenSpec, werr := s.thenSpecFor(v, r, then)
+			if werr != nil {
+				return setupSpec{}, werr
 			}
-			spec.then = &setupSpec{
-				driver: &signInSetup{s: s, name: v.it.Name, display: v.displayName(), m: m, way: then, polled: make(chan struct{})},
-				hosts:  c.SignInHosts(), keep: s.keepSetupValues, vendorWaitPages: true,
-			}
+			spec.then = &thenSpec
 		}
 		return spec, nil
 	}
 	return setupSpec{}, &connWriteError{http.StatusConflict, v.displayName() + "'s connection is not one Kivali makes", v.whoBuilt()}
+}
+
+// thenSpecFor is the sign-in a setup connection's flow hands over to
+// (setup.then), with the app setup kept, or why it cannot finish from
+// where r reached Kivali.
+func (s *Server) thenSpecFor(v *integrationView, r *http.Request, then string) (setupSpec, *connWriteError) {
+	switch {
+	case then == integration.MethodBrowser && signInRedirectURL(r) == "":
+		return setupSpec{}, &connWriteError{http.StatusConflict, errSignInNoAddress, whoServer}
+	case then == integration.MethodBrowser && !s.browserSignInHere(r):
+		return setupSpec{}, &connWriteError{http.StatusConflict, errSignInNotHere, whoYou}
+	}
+	return setupSpec{
+		driver: &signInSetup{s: s, name: v.it.Name, display: v.displayName(), m: v.manifest, way: then, polled: make(chan struct{})},
+		hosts:  v.manifest.Kivali.Connection.SignInHosts(), keep: s.keepSetupValues, vendorWaitPages: true,
+	}, nil
+}
+
+// signInSpecFor is the flow the sign_in row's Fix runs: a sign-in
+// connection's standard sign-in, in the first way that works from
+// here, asking for the connection form only when the app's client id
+// or secret is not stored; or, for a setup connection that hands over
+// to a sign-in, that sign-in with the app setup kept. A connection
+// signed in is a 409: sign out first.
+func (s *Server) signInSpecFor(v *integrationView, r *http.Request) (setupSpec, *connWriteError) {
+	c := v.manifest.Kivali.Connection
+	switch {
+	case c.SignIn():
+		return s.setupSpecFor(v, r)
+	case c.ThenMethod() == "":
+		return setupSpec{}, &connWriteError{http.StatusConflict, v.displayName() + " is not connected by signing in", whoYou}
+	}
+	if cur := v.first(); cur != nil && !cur.rec.NeedsSignIn(cur.hasToken) {
+		return setupSpec{}, &connWriteError{http.StatusConflict, errSignInSignedIn, whoYou}
+	}
+	return s.thenSpecFor(v, r, c.ThenMethod())
 }
 
 // keepConnectionForm is a standard flow's Keep: the connection form's
@@ -146,8 +177,14 @@ func (s *Server) keepConnectionForm(ctx context.Context, run *setupRun, values m
 		log.Printf("integration %s: read it to keep the connection: %v", run.name, err)
 		return errors.New(errSetupNotKept)
 	}
-	if werr := s.writeConnection(ctx, v, v.first(), formWrite(v.manifest, values), false); werr != nil {
+	cur := v.first()
+	if werr := s.writeConnection(ctx, v, cur, formWrite(v.manifest, values), false); werr != nil {
 		return werr
+	}
+	if cur == nil {
+		if rec, err := s.Store.GetIntegrationConnection(run.name); err == nil {
+			s.setupMade(run, rec.ID)
+		}
 	}
 	return nil
 }

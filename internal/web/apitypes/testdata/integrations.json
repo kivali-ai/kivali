@@ -5,7 +5,8 @@
       "display_name": "HubSpot",
       "description": "Blog posts and contacts in HubSpot.",
       "version": "1.2.0",
-      "status": "connected",
+      "state": "installed",
+      "needs": 0,
       "enabled": true,
       "builtin": false,
       "agents": 2,
@@ -16,7 +17,8 @@
       "display_name": "Weather",
       "description": "Forecasts.",
       "version": "",
-      "status": "pending",
+      "state": "pending",
+      "needs": 0,
       "enabled": true,
       "builtin": false,
       "agents": 0
@@ -26,10 +28,55 @@
       "display_name": "Maps",
       "description": "Places and routes.",
       "version": "1.0.0",
-      "status": "not_included",
+      "state": "not_included",
+      "needs": 0,
       "enabled": true,
       "builtin": true,
       "agents": 0
+    },
+    {
+      "name": "git",
+      "display_name": "Git",
+      "description": "Repositories on a Git host.",
+      "version": "1.0.0",
+      "state": "available",
+      "needs": 0,
+      "enabled": true,
+      "builtin": true,
+      "agents": 0
+    },
+    {
+      "name": "github",
+      "display_name": "GitHub",
+      "description": "Issues and pull requests on GitHub.",
+      "version": "2.0.0",
+      "state": "setting_up",
+      "needs": 0,
+      "enabled": true,
+      "builtin": true,
+      "agents": 0
+    },
+    {
+      "name": "crm",
+      "display_name": "CRM",
+      "description": "Contacts.",
+      "version": "2.1.0",
+      "state": "installed",
+      "needs": 1,
+      "enabled": true,
+      "builtin": false,
+      "agents": 1
+    },
+    {
+      "name": "blog",
+      "display_name": "Blog",
+      "description": "Posts.",
+      "version": "1.0.0",
+      "state": "off",
+      "needs": 0,
+      "enabled": false,
+      "builtin": false,
+      "agents": 3
     }
   ]
 }

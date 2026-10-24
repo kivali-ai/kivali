@@ -264,7 +264,7 @@ func TestIntegrationEndToEnd(t *testing.T) {
 	verify := func() apitypes.ConnectionState {
 		t.Helper()
 		page := orgOK[apitypes.IntegrationPage](t, intPost(t, srv, intBase+"/fakecrm/connection/verify"))
-		if page.Summary.Status != apitypes.IntegrationStatusConnected || page.Connection == nil || page.Connection.Verified == nil {
+		if page.Summary.State != apitypes.IntegrationStateInstalled || page.Connection == nil || page.Connection.Verified == nil {
 			t.Fatalf("page = %+v %+v", page.Summary, page.Connection)
 		}
 		return *page.Connection
@@ -319,7 +319,7 @@ func TestIntegrationEndToEnd(t *testing.T) {
 	if got := srv.Store.EgressScopedCredentials(); len(got) != 0 {
 		t.Errorf("scoped credentials after switching off: %v", got)
 	}
-	if page := orgOK[apitypes.IntegrationPage](t, orgGet(t, srv, intBase+"/fakecrm")); page.Summary.Status != apitypes.IntegrationStatusOff {
-		t.Errorf("status = %s", page.Summary.Status)
+	if page := orgOK[apitypes.IntegrationPage](t, orgGet(t, srv, intBase+"/fakecrm")); page.Summary.State != apitypes.IntegrationStateOff {
+		t.Errorf("state = %s", page.Summary.State)
 	}
 }

@@ -13,7 +13,7 @@ afterEach(() => {
 
 describe('Integrations tab', () => {
   // Guards the tab's reading of agent_integrations.json and its route: the Integrations tab is the current one at
-  // /agents/{slug}/integrations; the connected list shows each integration's status and the agent's access in
+  // /agents/{slug}/integrations; the connected list shows each integration's state and the agent's access in
   // words, with access that no longer fits in the danger tone; the rest follow under Not connected; and every row
   // opens the integration's page under Org, where access is changed. A row in the wrong list, a lost summary or a
   // link anywhere else fails here.
@@ -25,7 +25,7 @@ describe('Integrations tab', () => {
     const rows = within(connected).getAllByRole('link');
     expect(rows.map((r) => r.getAttribute('href'))).toEqual(['/org/integrations/hubspot', '/org/integrations/crm', '/org/integrations/git']);
     expect(within(rows[0]!).getByText('HubSpot')).toBeInTheDocument();
-    expect(within(rows[0]!).getByText('Connected')).toHaveClass('kv-badge--success');
+    expect(within(rows[0]!).getByText('Installed')).toHaveClass('kv-badge--success');
     expect(within(rows[0]!).getByText('Blogs: Marketing · May publish and edit')).toBeInTheDocument();
     expect(within(rows[1]!).getByText('Off')).toBeInTheDocument();
     expect(within(rows[1]!).getByText('Invalid: Blogs lists a choice the form no longer offers')).toHaveClass('kv-text--danger');
@@ -48,17 +48,18 @@ describe('Integrations tab', () => {
     expect(within(connected).getByText('HubSpot')).toBeInTheDocument();
   });
 
-  // Guards the status of a row on one of several connections: the server gives the status of the connection the
-  // agent's access names, so a GitLab connection that needs its secrets again reads Not connected on this agent's row
-  // while the integration, through GitHub, is connected. A row showing the integration's status would hide that this
-  // agent's calls fail.
-  it('shows the status of the connection the agent uses', async () => {
-    const lost = { ...agentIntegrations, connected: agentIntegrations.connected.map((i) => (i.name === 'git' ? { ...i, status: 'not_connected' as const } : i)) };
-    renderTabs(PATH, { routes: { ['GET ' + API]: lost } });
+  // Guards whether the agent's calls can go through now (usable): the server reads it from the connection the agent's
+  // access names, so a GitLab connection that needs its secrets again reads not usable on this agent's row while Git
+  // is installed, and a usable row says nothing of it. A row showing the state alone would hide that this agent's
+  // calls fail.
+  it('says when the agent cannot use an installed integration', async () => {
+    renderTabs(PATH, { routes: { ['GET ' + API]: agentIntegrations } });
     const connected = await page().findByRole('region', { name: 'Connected to Engineering lead' });
     const git = within(connected).getByRole('link', { name: /Git \(Company GitLab\)/ });
-    expect(within(git).getByText('Not connected')).toHaveClass('kv-badge');
-    expect(within(within(connected).getByRole('link', { name: /HubSpot/ })).getByText('Connected')).toBeInTheDocument();
+    expect(within(git).getByText('Installed')).toHaveClass('kv-badge');
+    expect(within(git).getByText('Not usable until its requirements are met')).toHaveClass('kv-text--danger');
+    const hubspot = within(connected).getByRole('link', { name: /HubSpot/ });
+    expect(within(hubspot).queryByText('Not usable until its requirements are met')).toBeNull();
   });
 
   // Guards an agent with no access anywhere: the connected list says so in words instead of drawing an empty

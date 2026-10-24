@@ -365,3 +365,37 @@
   gap: var(--space-2);
   min-width: 0;
 }
+
+/* An installed integration's requirements: one row each, met or not, with the Fix of one that is not. */
+.app-int-reqs {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.app-int-req {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+
+.app-int-req-icon {
+  flex: none;
+  margin-top: calc(var(--space-1) / 2);
+  color: var(--success);
+}
+
+.app-int-req.is-unmet .app-int-req-icon {
+  color: var(--signal);
+}
+
+.app-int-req-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: calc(var(--space-1) / 2);
+  min-width: 0;
+}
