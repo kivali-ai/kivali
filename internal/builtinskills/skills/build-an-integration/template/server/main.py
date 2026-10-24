@@ -8,7 +8,8 @@ input; it answers one per line on its output.
 To make another integration from it: change SERVICE, VERSION and the
 environment names, write one function per action, list each in TOOLS
 with the agents' access it needs, and change manifest.json to match.
-The plumbing (the output, send, api, handle, main) stays as it is.
+The plumbing (the output, send, ask_kivali, credential, api, handle,
+main) stays as it is. For a sign-in connection, change token() alone.
 """
 
 import json
@@ -47,6 +48,8 @@ API = os.environ.get("NOTES_API", "https://api.notes.example").rstrip("/")
 # waits for an action, so the agent reads this server's words rather
 # than Kivali's timeout.
 HTTP_TIMEOUT = 30
+# How long a request to Kivali (kivali/credential) is waited for.
+KIVALI_TIMEOUT = 10
 
 _write = threading.Lock()
 
@@ -79,17 +82,81 @@ def refusal(text):
     return {"content": [{"type": "text", "text": text}], "isError": True}
 
 
+# Requests this server sends Kivali, by id, each waiting for its answer.
+# Kivali's answer arrives on the input among Kivali's own requests: the
+# reading loop (main) hands it over here, and the call that asked goes
+# on. A reading loop that dropped it would leave the call waiting.
+_pending = {}
+_pending_lock = threading.Lock()
+_next_id = [0]
+
+
+def ask_kivali(method, params, timeout=KIVALI_TIMEOUT):
+    """Send Kivali a request and wait for its answer: the whole response,
+    with "result" or "error". Call it from an action's thread, never from
+    the reading loop, which must stay free to read the answer."""
+    with _pending_lock:
+        _next_id[0] += 1
+        rid = "kivali-%d" % _next_id[0]
+        waiting = _pending[rid] = {"event": threading.Event(), "response": None}
+    send({"jsonrpc": "2.0", "id": rid, "method": method, "params": params})
+    try:
+        if not waiting["event"].wait(timeout):
+            raise Refusal("Kivali did not answer the %s integration in time; try again." % SERVICE)
+        return waiting["response"]
+    finally:
+        with _pending_lock:
+            _pending.pop(rid, None)
+
+
+def answered(msg):
+    """Hand an answer to the ask_kivali that waits for its id; False when
+    nothing waits for it."""
+    with _pending_lock:
+        waiting = _pending.get(msg.get("id"))
+    if waiting is None:
+        return False
+    waiting["response"] = msg
+    waiting["event"].set()
+    return True
+
+
+def credential():
+    """The connection's values as they are now: {"env": ..., "fields": ...}.
+    A sign-in connection's token is renewed while the server runs, so
+    such a server reads it here on every call, under the name its
+    credential_keys give it, and never keeps it."""
+    resp = ask_kivali("kivali/credential", {})
+    err = resp.get("error")
+    if err:
+        code = err.get("code")
+        if code == -32002:
+            raise Refusal("The %s connection needs the owner to sign in again; ask the owner." % SERVICE)
+        if code == -32003:
+            raise Refusal("%s did not answer when Kivali renewed the sign-in; try again later." % SERVICE)
+        raise Refusal("The %s integration is not connected yet; the owner connects it on its page in Kivali." % SERVICE)
+    return resp.get("result") or {}
+
+
+def token():
+    """The token every request to the service sends. A token connection's
+    is in the environment, read once at start. For a sign-in connection,
+    return credential()["fields"]["<its credential_keys name>"] instead."""
+    if not TOKEN:
+        raise Refusal("The %s integration is not connected yet; the owner connects it on its page in Kivali." % SERVICE)
+    return TOKEN
+
+
 def api(method, path, body=None, query=None):
     """One request to the service. urllib goes through the proxy that
     HTTPS_PROXY names, the pod's only way out; a client that ignores
     that variable reaches nothing."""
-    if not TOKEN:
-        raise Refusal("The %s integration is not connected yet; the owner connects it on its page in Kivali." % SERVICE)
+    bearer = token()
     url = API + path
     if query:
         url += "?" + urllib.parse.urlencode(query)
     headers = {
-        "Authorization": "Bearer " + TOKEN,
+        "Authorization": "Bearer " + bearer,
         "Accept": "application/json",
         "User-Agent": "kivali-notes/" + VERSION,
     }
@@ -345,7 +412,14 @@ def main():
         except ValueError:
             log("warning", "a line that is not JSON came in; ignored")
             continue
-        if not isinstance(msg, dict) or not isinstance(msg.get("method"), str) or "id" not in msg:
+        if not isinstance(msg, dict):
+            continue
+        if "method" not in msg and "id" in msg:
+            # Kivali's answer to a request of this server's (ask_kivali).
+            if not answered(msg):
+                log("warning", "an answer came in for a request nothing waits for; ignored")
+            continue
+        if not isinstance(msg.get("method"), str) or "id" not in msg:
             # A notification, such as notifications/initialized.
             continue
         if msg["method"] == "tools/call":

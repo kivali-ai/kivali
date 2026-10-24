@@ -3287,42 +3287,56 @@ built-in skill `build-an-integration`
 (`internal/builtinskills/skills/build-an-integration/`), which the role
 points at and every agent can list. It holds:
 
-- `SKILL.md`: the steps (template, stub, `try.py`,
-  `integration_validate`, `integration_publish`), then the choice of
-  connection first (**How it connects**: one table of the four ways, a
-  token, a sign-in with the owner's app, a registered client, a setup
-  flow, with when each fits), and a section for each with a complete
-  `kivali.connection` block. **A registered client** says how to fill
-  `hosts` from the service's metadata and sketches a bundle wrapping a
-  remote MCP server (core runs none: the bundle lists the declared
-  actions from its own table and forwards each call with the token from
-  `kivali/credential`). **A setup connection** is this page's contract
-  for a bundle, as patterns: the declarations with the rules and the
-  refusal words; a flow call by call with the exact JSON of
-  `kivali/setup`, its answer and the progress notification; when a
-  Form, a Go (link or post, `no_return`, `stateless`) and a Wait fit,
-  and what the owner sees at each; coming back (the callback, its
-  state, a return as untrusted, a replayed leg); state against keep and
-  what is scrubbed; a flow left partway, which no hook hears of, so
-  each step is safe to run again; requirements and a Fix; uninstall,
-  done when already gone; the words the owner reads; the bounds and
-  deadlines. Then template-setup step by step, a sketch of an app made
-  from a manifest the browser posts (Form, Go posting it, the code
-  traded, a stateless Go to install, the installation listed, Done) and
-  one of an app made by API that hands over to a sign-in (`then`). The
-  rest is what a bundle's author meets and the check cannot show: the
-  pod's environment and network, the line protocol as the shim holds it
-  (the three setup requests and a setup step's progress among it), the
-  shape of `_meta.kivali.access`, what reaches an agent from an answer,
-  how Test connection and an access field's options read theirs,
-  `try.py`, publishing, a checklist before publishing and a table of
-  failures and their causes.
+- `SKILL.md`: a map of which sections each way of connecting needs;
+  the steps (template, stub, `try.py`, `integration_validate`,
+  `integration_publish`); the choice of connection first (**How it
+  connects**: the criteria for a token, a registered client, a sign-in
+  with the owner's app and a setup flow, and one table of the four), and
+  a section for each with a complete `kivali.connection` block. **A
+  sign-in connection** points at the template's `credential()`. **A
+  registered client** says what `discover` must be (exactly the
+  resource the metadata names) and how to fill `hosts` from the
+  service's metadata, and sketches a bundle wrapping a remote MCP
+  server (core runs none: the bundle lists the declared actions from
+  its own table and forwards each call with the token from
+  `kivali/credential`, over one upstream session kept between calls
+  and ended at exit, inside the 60 seconds a call has). The rest is
+  what a bundle's author meets and the check cannot show: the pod's
+  environment and network, the line protocol as the shim holds it (the
+  three setup requests and a setup step's progress among it), the shape
+  of `_meta.kivali.access`, what reaches an agent from an answer, how
+  Test connection and an access field's options read theirs, `try.py`,
+  publishing, a checklist before publishing and a table of failures and
+  their causes.
+- `setup.md`: this page's contract for a setup bundle, as patterns: the
+  declarations with the rules and the refusal words; a flow call by call
+  with the exact JSON of `kivali/setup`, its answer and the progress
+  notification; when a Form, a Go (link or post, `no_return`,
+  `stateless`) and a Wait fit, and what the owner sees at each; coming
+  back (the bare callback and the state as a parameter where the
+  service passes a state through, the callback whole where it does not,
+  a return as untrusted, a replayed leg); a Wait's check that cannot
+  reach the service answering the same Wait; state against keep, what
+  is scrubbed from the owner's and the agents' view; a flow left
+  partway, which no hook hears of, so each step is safe to run again;
+  requirements and a Fix; uninstall, done when already gone; the words
+  the owner reads; the bounds and deadlines. Then template-setup step
+  by step, a sketch of an app made from a manifest the browser posts
+  (the GitHub built-in's flow: the bare callback as `redirect_url` and
+  `setup_url`, the state on the new-app and installation pages'
+  addresses, a stateless installation Go, the installation listed) and
+  one of an app made by API that hands over to a sign-in (`then`), and
+  `try.py`'s setup requests, the checklist and the failures of a setup
+  bundle.
 - `template/`: a token bundle for an imaginary notes service, standard
   library only, which the developer copies to start from. Its server
   keeps the output for JSON-RPC (descriptor 1 becomes the error
   output), answers each `tools/call` on a thread, reaches the service
   with `urllib.request` through the proxy, lists each agent the actions
-  its access allows, and starts with no connection. It answers any
+  its access allows, starts with no connection, and asks Kivali for the
+  connection (`credential()` over `ask_kivali`, its reading loop handing
+  each answer to the call waiting for its id) as a sign-in bundle must
+  on every call. It answers any
   other method -32601, the three setup requests among them, which core
   sends no bundle that is not `method: setup`.
 - `template-setup/`: a complete bundle whose own setup flow makes its
@@ -3384,21 +3398,30 @@ points at and every agent can list. It holds:
 `internal/builtinskills/build_an_integration_test.go` and
 `build_an_integration_setup_test.go` hold them to the platform: each
 template passes `integration.Validate` and the smoke test with no
-finding; every json block of `SKILL.md` holding a `"connection"`,
-put into the token template's manifest in place of the kivali keys it
-gives, passes `integration.Validate` as a bundle, and the blocks cover
-token, device, browser, a registered client, setup and setup handing
-over to a browser sign-in, so the skill's examples cannot drift from
-the check; `try.py` drives the template against a stub as the owner
-and as agents; the skill's own runs of template-setup, taken from
-`SKILL.md`'s block as written, run against `deals_stub.py` and show the
-install, a refused key, the fallback left and started again (one app
-made), the requirements, the Fix and uninstall twice; `try.py` reports
-the failures above and a setup step outside the declarations; and
-try.py and the templates use the shim's protocol version and line
-limit (`integrationpod.ProtocolVersion`, `integrationpod.MaxLineBytes`).
-A change to what the shim, core or the check does that a bundle's
-author meets changes the skill in the same change.
+finding; every json block of `SKILL.md` and `setup.md` holding a
+`"connection"` gives kivali keys alone and, put into the token
+template's manifest in place of them, passes `integration.Validate` as
+a bundle, and the blocks cover token, device, browser, a registered
+client, setup and setup handing over to a browser sign-in, so the
+skill's examples cannot drift from the check; every wire example (a
+`kivali/setup` request's params, a step, a requirements answer, a
+progress notification) reads as core reads it
+(`integrationpod.ParseSetupResult`, `ParseRequirements`, the params'
+types with no unknown key); every protocol version the files name is
+the shim's; `try.py` drives the template against a stub as the owner
+and as agents, and the template changed as the skill says a sign-in
+bundle changes it reads its token through `kivali/credential` at once;
+the skill's own runs of template-setup, taken from `setup.md`'s block
+as written, run against `deals_stub.py` and show the install, a refused
+key, the fallback left and started again (one app made), the
+requirements, the Fix and uninstall twice; `try.py` reports the
+failures above and a setup step outside the declarations; and try.py
+and the templates use the shim's protocol version and line limit
+(`integrationpod.ProtocolVersion`, `integrationpod.MaxLineBytes`).
+`internal/web/skill_bounds_test.go` builds each row of `setup.md`'s
+bounds table from the runner's constants. The vocabulary test reads
+both files. A change to what the shim, core or the check does that a
+bundle's author meets changes the skill in the same change.
 
 ### The tools
 

@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -277,6 +278,29 @@ func TestTryReportsWhatKivaliStopsOrNeverMatches(t *testing.T) {
 	)
 }
 
+// Why this test exists: a sign-in or registered bundle reads its token
+// from kivali/credential on every call, and the answer comes back on the
+// server's input among Kivali's own requests. The template's reading
+// loop must hand that answer to the call waiting for it: one that drops
+// a message without a method leaves every call of a bundle built on it
+// waiting until Kivali gives up at 60 seconds. The template is changed
+// as the skill says a sign-in bundle changes it (token() reads
+// credential()), and an agent's call must then be answered at once with
+// the service's data.
+func TestTheTemplateReadsItsTokenFromKivali(t *testing.T) {
+	needPython(t)
+	dir := writeSkill(t)
+	edit(t, filepath.Join(dir, "template", "server", "main.py"),
+		"    if not TOKEN:\n        raise Refusal(\"The %s integration is not connected yet; the owner connects it on its page in Kivali.\" % SERVICE)\n    return TOKEN\n",
+		"    return credential()[\"env\"][\"NOTES_TOKEN\"]\n")
+	out, code := runTry(t, dir, "--env", "NOTES_API="+notesStub(t), "--field", "token=test-token",
+		"--agent", "dana", "--access", `{"notebooks":["Ideas"]}`, "template", "call", "find_notes", `{"notebook":"Ideas"}`)
+	if code != 0 {
+		t.Errorf("exit %d", code)
+	}
+	wantIn(t, out, "note: the server asked for the connection's values", `"title":"Launch"`, "No problems.")
+}
+
 // Why this test exists: try.py and the templates copy two facts from
 // the shim, the MCP protocol version its initialize names and the
 // longest line it reads from the server. A shim that moved on without
@@ -298,96 +322,216 @@ func TestTryAndTheTemplateMatchTheShim(t *testing.T) {
 	}
 }
 
-// jsonBlocks are the bodies of the fenced json blocks in doc.
+// skillDocs are the skill's Markdown files an agent reads, by name.
+var skillDocs = []string{"SKILL.md", "setup.md"}
+
+// readSkillDocs is each of skillDocs in dir, by name.
+func readSkillDocs(t *testing.T, dir string) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	for _, name := range skillDocs {
+		b, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		out[name] = string(b)
+	}
+	return out
+}
+
+// jsonBlocks are the bodies of the fenced json blocks in doc, indented
+// ones (inside a list) among them.
 func jsonBlocks(doc string) []string {
 	var out []string
-	for {
-		at := strings.Index(doc, "```json\n")
-		if at < 0 {
-			return out
+	lines := strings.Split(doc, "\n")
+	for i := 0; i < len(lines); i++ {
+		if strings.TrimSpace(lines[i]) != "```json" {
+			continue
 		}
-		doc = doc[at+len("```json\n"):]
-		end := strings.Index(doc, "```")
-		if end < 0 {
-			return out
+		var body []string
+		for i++; i < len(lines) && strings.TrimSpace(lines[i]) != "```"; i++ {
+			body = append(body, lines[i])
 		}
-		out = append(out, doc[:end])
-		doc = doc[end:]
+		out = append(out, strings.Join(body, "\n"))
 	}
+	return out
 }
+
+// kivaliKeys are the keys of a manifest's kivali section a block may
+// give.
+var kivaliKeys = []string{"connection", "hosts", "packages", "access", "verify", "setup_notes"}
 
 // Why this test exists: the skill teaches each way a bundle connects by
 // a manifest block the developer copies, and the check is what decides
 // whether a bundle written from one is stored. A block the check
 // refuses (a key a rule forbids, a field a shape lacks) hands every
 // bundle built from it a refusal at integration_validate, or teaches
-// the developer a rule wrong. So every json block of SKILL.md that holds
-// a "connection" is put into the token template's manifest (its
-// connection fields and their placeholders taken out, since a setup
-// connection has none) in place of the kivali keys it gives, and must
-// pass integration.Validate as a bundle with no finding; and the blocks
-// must cover every way the skill teaches, so none goes unchecked by
-// being left out.
+// the developer a rule wrong. So every json block of SKILL.md and
+// setup.md that holds a "connection" is put into the token template's
+// manifest (its connection fields and their placeholders taken out,
+// since a setup connection has none) in place of the kivali keys it
+// gives, and must pass integration.Validate as a bundle with no
+// finding. A block may give only kivali keys: one that gives a
+// top-level key would be put in the wrong place and pass for the wrong
+// reason. And the blocks must cover every way the skill teaches, so
+// none goes unchecked by being left out.
 func TestTheSkillsManifestBlocksPassTheCheck(t *testing.T) {
 	dir := writeSkill(t)
-	doc, err := os.ReadFile(filepath.Join(dir, "SKILL.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
 	tmpl, err := integration.ReadDirectory(os.DirFS(filepath.Join(dir, "template")))
 	if err != nil {
 		t.Fatal(err)
 	}
 	ways := map[string]bool{}
-	for _, block := range jsonBlocks(string(doc)) {
-		if !strings.Contains(block, `"connection"`) {
-			continue
-		}
-		var frag map[string]any
-		if err := json.Unmarshal([]byte("{"+block+"}"), &frag); err != nil {
-			t.Errorf("a manifest block is not JSON once inside braces: %v\n%s", err, block)
-			continue
-		}
-		var m map[string]any
-		if err := json.Unmarshal(tmpl.ManifestBytes(), &m); err != nil {
-			t.Fatal(err)
-		}
-		m["user_config"] = map[string]any{}
-		env := m["server"].(map[string]any)["mcp_config"].(map[string]any)["env"].(map[string]any)
-		for k, v := range env {
-			if strings.Contains(v.(string), "${") {
-				delete(env, k)
+	for name, doc := range readSkillDocs(t, dir) {
+		for _, block := range jsonBlocks(doc) {
+			if !strings.Contains(block, `"connection"`) {
+				continue
 			}
+			var frag map[string]any
+			if err := json.Unmarshal([]byte("{"+block+"}"), &frag); err != nil {
+				t.Errorf("a manifest block of %s is not JSON once inside braces: %v\n%s", name, err, block)
+				continue
+			}
+			var m map[string]any
+			if err := json.Unmarshal(tmpl.ManifestBytes(), &m); err != nil {
+				t.Fatal(err)
+			}
+			m["user_config"] = map[string]any{}
+			env := m["server"].(map[string]any)["mcp_config"].(map[string]any)["env"].(map[string]any)
+			for k, v := range env {
+				if strings.Contains(v.(string), "${") {
+					delete(env, k)
+				}
+			}
+			k := m["kivali"].(map[string]any)
+			for key, v := range frag {
+				if !slices.Contains(kivaliKeys, key) {
+					t.Errorf("a manifest block of %s gives %s, which is not a key of the kivali section:\n%s", name, key, block)
+				}
+				k[key] = v
+			}
+			raw, err := json.Marshal(m)
+			if err != nil {
+				t.Fatal(err)
+			}
+			mf, err := integration.ParseManifest(raw)
+			if err != nil {
+				t.Errorf("a manifest block of %s does not parse: %v\n%s", name, err, block)
+				continue
+			}
+			if f := integration.Validate(mf, tmpl.Files); len(f) > 0 {
+				t.Errorf("the check's findings on a manifest block of %s:\n%s\n%s", name, strings.Join(f.Texts(), "\n"), block)
+			}
+			c := mf.Kivali.Connection
+			way := c.Method
+			if c.Registered() {
+				way += " registered"
+			}
+			if c.Setup != nil && c.Setup.Then != "" {
+				way += " then " + c.Setup.Then
+			}
+			ways[way] = true
 		}
-		k := m["kivali"].(map[string]any)
-		for key, v := range frag {
-			k[key] = v
-		}
-		raw, err := json.Marshal(m)
-		if err != nil {
-			t.Fatal(err)
-		}
-		mf, err := integration.ParseManifest(raw)
-		if err != nil {
-			t.Errorf("a manifest block does not parse: %v\n%s", err, block)
-			continue
-		}
-		if f := integration.Validate(mf, tmpl.Files); len(f) > 0 {
-			t.Errorf("the check's findings on a manifest block of SKILL.md:\n%s\n%s", strings.Join(f.Texts(), "\n"), block)
-		}
-		c := mf.Kivali.Connection
-		way := c.Method
-		if c.Registered() {
-			way += " registered"
-		}
-		if c.Setup != nil && c.Setup.Then != "" {
-			way += " then " + c.Setup.Then
-		}
-		ways[way] = true
 	}
 	for _, want := range []string{"token", "device", "browser", "browser registered", "setup", "setup then browser"} {
 		if !ways[want] {
-			t.Errorf("SKILL.md has no manifest block for a %s connection; it has %v", want, ways)
+			t.Errorf("the skill has no manifest block for a %s connection; it has %v", want, ways)
+		}
+	}
+}
+
+// Why this test exists: the skill shows the exact JSON of what Kivali
+// sends a setup bundle and what the server answers, and the developer
+// writes the server from it. Core reads those answers strictly
+// (integrationpod.ParseSetupResult, ParseRequirements): an example
+// with a key a shape lacks, or a value of another type, teaches a
+// server Kivali fails every flow of, or whose requirements read as one
+// unmet row. So every JSON value in the json blocks of SKILL.md and
+// setup.md that is a kivali/setup request's params, a step (bare or as
+// a result), a requirements result or a progress notification is read
+// as core reads it, and each kind must appear at least once.
+func TestTheSkillsWireExamplesReadAsCoreReadsThem(t *testing.T) {
+	dir := writeSkill(t)
+	strict := func(raw []byte, v any) error {
+		dec := json.NewDecoder(bytes.NewReader(raw))
+		dec.DisallowUnknownFields()
+		return dec.Decode(v)
+	}
+	seen := map[string]int{}
+	for name, doc := range readSkillDocs(t, dir) {
+		for _, block := range jsonBlocks(doc) {
+			if strings.Contains(block, `"connection"`) {
+				continue
+			}
+			dec := json.NewDecoder(strings.NewReader(block))
+			for dec.More() {
+				var raw json.RawMessage
+				if err := dec.Decode(&raw); err != nil {
+					t.Errorf("a json block of %s is not JSON: %v\n%s", name, err, block)
+					break
+				}
+				var msg struct {
+					Method string          `json:"method"`
+					Params json.RawMessage `json:"params"`
+					Result json.RawMessage `json:"result"`
+					Step   json.RawMessage `json:"step"`
+				}
+				if err := json.Unmarshal(raw, &msg); err != nil {
+					t.Errorf("a json value of %s is not an object: %v\n%s", name, err, raw)
+					continue
+				}
+				var err error
+				kind := ""
+				switch {
+				case msg.Method == integrationpod.MethodSetup:
+					kind = "setup params"
+					var p integrationpod.SetupParams
+					err = strict(msg.Params, &p)
+				case msg.Method == integrationpod.MethodProgress:
+					kind = "progress"
+					var p integrationpod.ProgressParams
+					err = strict(msg.Params, &p)
+				case msg.Step != nil:
+					kind = "step"
+					_, err = integrationpod.ParseSetupResult(raw)
+				case bytes.Contains(msg.Result, []byte(`"step"`)):
+					kind = "step"
+					_, err = integrationpod.ParseSetupResult(msg.Result)
+				case bytes.Contains(msg.Result, []byte(`"requirements"`)):
+					kind = "requirements"
+					_, err = integrationpod.ParseRequirements(msg.Result)
+				}
+				if err != nil {
+					t.Errorf("%s's %s example does not read as core reads it: %v\n%s", name, kind, err, raw)
+				}
+				if kind != "" {
+					seen[kind]++
+				}
+			}
+		}
+	}
+	for _, kind := range []string{"setup params", "progress", "step", "requirements"} {
+		if seen[kind] == 0 {
+			t.Errorf("the skill shows no %s example; it shows %v", kind, seen)
+		}
+	}
+	if seen["step"] < 2 {
+		t.Errorf("the skill shows %d steps, want the Form's and the sketch's Go at least", seen["step"])
+	}
+}
+
+// Why this test exists: the skill names MCP's protocol version where a
+// server answers initialize, and the remote sketch sends it upstream.
+// A literal that differs from the one the shim asks for teaches a
+// server to answer with a version Kivali does not ask for.
+func TestTheSkillsProtocolVersionIsTheShims(t *testing.T) {
+	dir := writeSkill(t)
+	version := regexp.MustCompile(`\b20\d\d-\d\d-\d\d\b`)
+	for name, doc := range readSkillDocs(t, dir) {
+		for _, v := range version.FindAllString(doc, -1) {
+			if v != integrationpod.ProtocolVersion {
+				t.Errorf("%s names the protocol version %s; the shim's is %s", name, v, integrationpod.ProtocolVersion)
+			}
 		}
 	}
 }
