@@ -174,14 +174,16 @@ func TestAnIncompleteConnectionRefusesEveryCall(t *testing.T) {
 // Why this test exists: whoami is the manifest's kivali.verify, what
 // Test connection shows the owner: the app GitHub knows the key as and
 // the account it is installed on, read with the app's own JWT (an
-// installation token cannot read /app). Agents never call it: it names
-// the owner's setup, not a repository.
+// installation token cannot read /app). The app is named by its name,
+// not its slug, which core scrubs from the owner's words as a kept
+// value. Agents never call it: it names the owner's setup, not a
+// repository.
 func TestWhoamiNamesTheAppAndTheAccount(t *testing.T) {
 	g, f := newTest(t)
 	f.route("GET /app", 200, `{"id":1234,"slug":"kivali-acme","name":"Kivali acme"}`)
 	f.route("GET /app/installations/42", 200, `{"id":42,"account":{"login":"acme","type":"Organization"}}`)
 	msg, err := g.Verify(context.Background(), testConn())
-	if err != nil || msg != "Connected as kivali-acme[bot], installed on acme" {
+	if err != nil || msg != "Connected as the app Kivali acme, installed on acme" {
 		t.Fatalf("verify = %q, %v", msg, err)
 	}
 	reqs := f.requests()
