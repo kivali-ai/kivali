@@ -2181,8 +2181,8 @@ as a bundle, in the first column:
 | An access field's options | `tools/call` of the field's tool | `Choices(connection, name)`, with the connection `?connection=` names or the first; 409 with no connection |
 | Work in the agent's shell | none | `Call` answers with `ShellJob`, `Complete` the call's second request |
 | Setup (`method: setup`) | not in this version of Kivali | `Setup(conn, flow, answer, progress)`, in the background through the setup runner, each step held to `kivali.connection.setup` |
-| Requirements | none | `Requirements(connection)` of the first connection, under a 5 s deadline, as the integration's rows after Kivali's; unmet ones are Needs-you rows |
-| Uninstall | none | `Uninstall(connection)` of each connection before anything is forgotten; an error is a 502 that changes nothing |
+| Requirements | none | `Requirements(connection)` of the connection, under a 5 s deadline, as the integration's rows after Kivali's; unmet ones are Needs-you rows |
+| Uninstall | none | `Uninstall(connection)` of the connection before anything is forgotten; an error is a 502 that changes nothing |
 | A connection change | the shim restarts the server | nothing to restart; a `HostsOf` built-in's proxy credential of that connection is registered again |
 | Reconcile | a pod while it should run | skipped |
 
