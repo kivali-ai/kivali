@@ -19,15 +19,16 @@
 //     its network reach is Kivali's own, the hosts its connection names.
 //   - It needs no install approval: the owner approved the binary. Boot
 //     writes its record and its version (store.InstallBuiltinIntegrations).
-//   - While the binary carries it, it cannot be removed or replaced by an
-//     upload; it can be switched off.
+//   - While the binary carries it, it cannot be replaced by an upload,
+//     and Uninstall takes it back to available rather than off the
+//     team; it can be switched off.
 //
 // To add one, implement Integration in a package of its own and list it
 // in builtins.All (internal/builtinintegrations/builtins).
 //
 // A shipped bundle (ShippedBundle) is the other kind of integration
-// that ships with Kivali: built in as above (no approval, no removal,
-// its version follows the binary), but its implementation is a bundle
+// that ships with Kivali: built in as above (no approval, Uninstall
+// keeps it available, its version follows the binary), but its implementation is a bundle
 // embedded in the binary, which boot stores
 // (store.InstallShippedBundles) and core runs in a pod of its own like
 // any uploaded bundle. To add one, embed its directory in a package of
@@ -340,8 +341,9 @@ type Progress interface {
 // approved version, the connection, a sign-in still accepted, the
 // connection test passing, the integration running), then these. An
 // unmet row is a Needs you item, and its Fix runs a flow through Setup
-// with the same steps as installing. Requirements runs under a request's
-// deadline, concurrently with everything else, and must honour ctx.
+// with the same steps as installing. Requirements is called when the
+// page, the list or Home is read, under a five-second deadline,
+// concurrently with everything else, and must honour ctx.
 type RequirementsOf interface {
 	Requirements(ctx context.Context, conn Connection) ([]Requirement, error)
 }
