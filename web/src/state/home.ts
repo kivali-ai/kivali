@@ -207,8 +207,8 @@ export function needKindLabel(item: NeedItem): string {
       return 'Upload request';
     case 'web_budget':
       return 'Web budget';
-    case 'integration_sign_in':
-      return 'Sign in again';
+    case 'integration_requirement':
+      return 'Integration';
     case 'proposal':
       return PROPOSAL_LABELS[item.proposal_kind ?? ''] ?? 'Proposal';
     default:

@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/kivali-ai/kivali/internal/agent"
 	"github.com/kivali-ai/kivali/internal/builtinintegrations"
@@ -39,7 +40,7 @@ func (s *Server) wireAPIIntegrationRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/org/integrations", s.handleAPIIntegrations)
 	mux.HandleFunc("POST /api/v1/org/integrations", s.handleAPIIntegrationUpload)
 	mux.HandleFunc("GET /api/v1/org/integrations/{name}", s.handleAPIIntegration)
-	mux.HandleFunc("DELETE /api/v1/org/integrations/{name}", s.handleAPIIntegrationRemove)
+	mux.HandleFunc("DELETE /api/v1/org/integrations/{name}", s.handleAPIIntegrationUninstall)
 	mux.HandleFunc("POST /api/v1/org/integrations/{name}/enable", s.handleAPIIntegrationToggle(true))
 	mux.HandleFunc("POST /api/v1/org/integrations/{name}/disable", s.handleAPIIntegrationToggle(false))
 	mux.HandleFunc("GET /api/v1/org/integrations/{name}/versions/{version}", s.handleAPIIntegrationVersion)
@@ -47,7 +48,6 @@ func (s *Server) wireAPIIntegrationRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/org/integrations/{name}/versions/{version}/reject", s.handleAPIIntegrationAnswer(false))
 	mux.HandleFunc("POST /api/v1/org/integrations/{name}/versions/{version}/rollback", s.handleAPIIntegrationRollBack)
 	mux.HandleFunc("PUT /api/v1/org/integrations/{name}/connection", s.handleAPIIntegrationConnectionPut)
-	mux.HandleFunc("DELETE /api/v1/org/integrations/{name}/connection", s.handleAPIIntegrationConnectionDelete)
 	mux.HandleFunc("POST /api/v1/org/integrations/{name}/connection/verify", s.handleAPIIntegrationVerify)
 	mux.HandleFunc("POST /api/v1/org/integrations/{name}/connection/sign-out", s.handleAPISignOut(false))
 	mux.HandleFunc("POST /api/v1/org/integrations/{name}/connections", s.handleAPIIntegrationConnectionCreate)
@@ -107,6 +107,12 @@ type integrationView struct {
 	// shipped is true when it ships with Kivali as a bundle this
 	// binary carries (Server.shippedBundle).
 	shipped bool
+	// flow is its setup flow under way, or the one that last ended;
+	// nil for none. installing is true while a flow that installs it
+	// runs; discarding while the connection a failed or cancelled
+	// install made is on its way out (Server.setupPeek).
+	flow                   *apitypes.SetupFlow
+	installing, discarding bool
 }
 
 // connView is one connection as an integration's answers read it.
@@ -167,6 +173,7 @@ func (s *Server) loadIntegration(ctx context.Context, name string) (*integration
 		return nil, err
 	}
 	v := &integrationView{it: it, running: s.integrationRunning(it), builtin: s.builtinFor(it), shipped: s.shippedBundle(it)}
+	v.flow, v.installing, v.discarding = s.setupPeek(name)
 	if v.versions, err = s.Store.IntegrationVersions(name); err != nil {
 		return nil, err
 	}
@@ -229,54 +236,9 @@ func (s *Server) readConnectionSecret(ctx context.Context, name string, rec stor
 	return c
 }
 
-func (v *integrationView) status() apitypes.IntegrationStatus {
-	switch {
-	case v.staleBuiltin():
-		return apitypes.IntegrationStatusNotIncluded
-	case v.it.CurrentVersion == "":
-		return apitypes.IntegrationStatusPending
-	case !v.it.Enabled:
-		return apitypes.IntegrationStatusOff
-	case !v.running:
-		// Connected or not is the running server's to show: Test
-		// connection and agents' calls need it up. A built-in of Go
-		// code is always running while its code is in the binary; a
-		// shipped bundle runs as an uploaded one does.
-		return apitypes.IntegrationStatusNotRunning
-	}
-	// Connected once a connection agents can use has all its secrets
-	// and, made by signing in, is signed in: any of several, or the
-	// one, the oldest.
-	conns := v.conns
-	if !v.multiple() && len(conns) > 1 {
-		conns = conns[:1]
-	}
-	for _, c := range conns {
-		if v.usable(c) {
-			return apitypes.IntegrationStatusConnected
-		}
-	}
-	return apitypes.IntegrationStatusNotConnected
-}
-
-// agentStatus is v's status for an agent whose access names the
-// connection connID: for an integration that takes several
-// connections, while v is connected or not, whether that connection
-// can be used (usable); v's own status otherwise.
-func (v *integrationView) agentStatus(connID string) apitypes.IntegrationStatus {
-	st := v.status()
-	if !v.multiple() || (st != apitypes.IntegrationStatusConnected && st != apitypes.IntegrationStatusNotConnected) {
-		return st
-	}
-	if c := v.connByID(connID); c != nil && v.usable(c) {
-		return apitypes.IntegrationStatusConnected
-	}
-	return apitypes.IntegrationStatusNotConnected
-}
-
 // staleBuiltin reports whether v is a built-in integration this binary
 // does not carry, as Go code or as a bundle: another version of Kivali
-// shipped it, nothing runs it, and the owner may remove it.
+// shipped it, nothing runs it, and the owner may uninstall it.
 func (v *integrationView) staleBuiltin() bool { return v.it.Builtin && v.builtin == nil && !v.shipped }
 
 // whoBuilt is who fixes what is wrong with v's code: Kivali's
@@ -296,7 +258,6 @@ const (
 	builtinApprove builtinMove = iota
 	builtinReject
 	builtinRollBack
-	builtinRemove
 	builtinUpload
 	builtinNotIncluded
 )
@@ -305,12 +266,10 @@ const (
 // integration answers with, naming it by display.
 func builtinRefusal(display string, move builtinMove) string {
 	switch move {
-	case builtinRemove:
-		return display + " ships with Kivali and cannot be removed; switch it off instead"
 	case builtinUpload:
 		return display + " ships with Kivali, so a bundle cannot replace it"
 	case builtinNotIncluded:
-		return display + " is not in this version of Kivali, so nothing runs it; you can remove it"
+		return display + " is not in this version of Kivali, so nothing runs it; you can uninstall it"
 	}
 	verb := map[builtinMove]string{builtinApprove: "approve", builtinReject: "reject", builtinRollBack: "roll back to"}[move]
 	return display + " ships with Kivali, and its version changes only with Kivali's updates; there is nothing to " + verb
@@ -337,7 +296,7 @@ func (v *integrationView) summary() apitypes.IntegrationSummary {
 		Name:        v.it.Name,
 		DisplayName: v.displayName(),
 		Version:     v.it.CurrentVersion,
-		Status:      v.status(),
+		State:       v.state(),
 		Enabled:     v.it.Enabled,
 		Builtin:     v.it.Builtin,
 	}
@@ -568,7 +527,13 @@ func (s *Server) integrationPage(v *integrationView, r *http.Request) apitypes.I
 		Access:           []apitypes.AccessRow{},
 		AgentsWithout:    []apitypes.PersonRef{},
 		Versions:         []apitypes.IntegrationVersionSummary{},
-		CanRemove:        !v.it.Builtin || v.staleBuiltin(),
+		Running:          v.running,
+		Flow:             v.flow,
+		CanUninstall:     !v.it.Builtin || v.staleBuiltin() || v.installed(),
+	}
+	page.Requirements, _ = s.requirements(r.Context(), v)
+	if page.Summary.State == apitypes.IntegrationStateInstalled {
+		page.Summary.Needs = unmet(page.Requirements)
 	}
 	if v.manifest != nil {
 		page.Author = v.manifest.Author.Name
@@ -731,7 +696,7 @@ func (s *Server) handleAPIIntegrations(w http.ResponseWriter, r *http.Request) {
 			writeAPIError(w, http.StatusInternalServerError, "the integration "+it.Name+" could not be read", whoServer)
 			return
 		}
-		out.Integrations = append(out.Integrations, v.summary())
+		out.Integrations = append(out.Integrations, s.integrationSummary(r.Context(), v))
 	}
 	sort.SliceStable(out.Integrations, func(i, j int) bool {
 		return strings.ToLower(out.Integrations[i].DisplayName) < strings.ToLower(out.Integrations[j].DisplayName)
@@ -858,13 +823,43 @@ func (s *Server) handleAPIIntegrationToggle(on bool) http.HandlerFunc {
 	}
 }
 
-// handleAPIIntegrationRemove removes an integration: its connections'
-// Secrets first, then everything the store keeps. A built-in one this
-// binary carries, as Go code or as a bundle, is a 409; one it does not
-// carry is removed.
-func (s *Server) handleAPIIntegrationRemove(w http.ResponseWriter, r *http.Request) {
+// uninstallAction is the audit's action for the owner's Uninstall.
+const uninstallAction = "uninstall"
+
+// errNotInstalled refuses Uninstall of a built-in that has nothing
+// installed.
+func errNotInstalled(display string) string {
+	return display + " is not installed, so there is nothing to uninstall"
+}
+
+// handleAPIIntegrationUninstall is Uninstall, for every integration: a
+// built-in that undoes its installation on the service
+// (builtinintegrations.Uninstaller) does so first, and its error is a
+// 502 that leaves everything as it was. Then its setup flow under way
+// ends, each connection's Secret goes (a sign-in's tokens revoked with
+// the service where it has a revocation endpoint), and every agent's
+// access with the connections' records. A built-in this binary carries
+// is then available again, with an audit row uninstall; one with
+// nothing installed is a 409. Any other integration (uploaded, or a
+// built-in this binary does not carry) goes whole: every version, its
+// audit and its log. 204 once done.
+func (s *Server) handleAPIIntegrationUninstall(w http.ResponseWriter, r *http.Request) {
+	v, ok := s.integrationOr404(w, r)
+	if !ok {
+		return
+	}
+	if v.it.Builtin && !v.staleBuiltin() && len(v.conns) == 0 {
+		writeAPIError(w, http.StatusConflict, errNotInstalled(v.displayName()), whoNoOne)
+		return
+	}
+	// The service's side first, with no lock held: it may be slow, and
+	// a failure changes nothing here.
+	if words := s.builtinUninstall(r.Context(), v); words != "" {
+		writeAPIError(w, http.StatusBadGateway, words, v.whoBuilt())
+		return
+	}
 	unlock := s.lockIntegrations()
-	revokes, ok := s.removeIntegrationLocked(w, r)
+	revokes, ok := s.uninstallLocked(w, r)
 	unlock()
 	// The vendor is asked to revoke a sign-in's tokens with the lock
 	// released, so a slow vendor holds up no other integration write.
@@ -874,35 +869,99 @@ func (s *Server) handleAPIIntegrationRemove(w http.ResponseWriter, r *http.Reque
 	}
 }
 
-// removeIntegrationLocked is the removal under lockIntegrations: true
+// builtinUninstall calls Uninstall of v's built-in, when it implements
+// builtinintegrations.Uninstaller, with each connection as a call
+// reads it (as stored when it needs a sign-in), under
+// integrationCallTimeout: the words of the first failure, scrubbed of
+// the connection's secrets and audited, or "" once each went through.
+func (s *Server) builtinUninstall(ctx context.Context, v *integrationView) string {
+	u, ok := v.builtin.(builtinintegrations.Uninstaller)
+	if !ok {
+		return ""
+	}
+	name, display := v.it.Name, v.displayName()
+	for _, c := range v.conns {
+		start := s.clk().Now()
+		conn, _, scrub, err := s.builtinConnection(ctx, name, c.rec.ID)
+		if errors.Is(err, errSignInNeeded) || errors.Is(err, errVendorUnavailable) {
+			_, rec, values, secretValues, _, _, rerr := s.Integrations.readStoredConnection(ctx, name, c.rec.ID)
+			conn, scrub, err = builtinintegrations.Connection{ID: rec.ID, Fields: values}, newScrubber(secretValues), rerr
+		}
+		if errors.Is(err, store.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			log.Printf("integration %s: read connection %s to uninstall it: %v", name, c.rec.ID, err)
+			words := display + " could not be uninstalled: Kivali could not read its connection; nothing was changed"
+			s.auditAgentCall(name, start, agent.CEOSlug, uninstallAction, false, words)
+			return words
+		}
+		_, err = runBuiltin(ctx, s.clk(), integrationCallTimeout, func(ctx context.Context) (struct{}, error) {
+			return struct{}{}, u.Uninstall(ctx, conn)
+		})
+		if err != nil {
+			said := err.Error()
+			if errors.Is(err, errIntegrationTimeout) {
+				said = fmt.Sprintf("it did not answer within %d seconds", int(integrationCallTimeout/time.Second))
+			}
+			words := display + " could not undo its installation: " + clipRunes(scrub.Replace(said), signInWordsRunes) + "; nothing was changed"
+			s.auditAgentCall(name, start, agent.CEOSlug, uninstallAction, false, words)
+			return words
+		}
+	}
+	return ""
+}
+
+// uninstallLocked is Uninstall's part under lockIntegrations: true
 // once done, false with an error answered. It returns the sign-in
 // tokens to revoke.
-func (s *Server) removeIntegrationLocked(w http.ResponseWriter, r *http.Request) (signInRevocations, bool) {
+func (s *Server) uninstallLocked(w http.ResponseWriter, r *http.Request) (signInRevocations, bool) {
 	v, ok := s.integrationOr404(w, r)
 	if !ok {
 		return nil, false
 	}
-	if v.it.Builtin && !v.staleBuiltin() {
-		writeAPIError(w, http.StatusConflict, builtinRefusal(v.displayName(), builtinRemove), whoYou)
+	name := v.it.Name
+	keep := v.it.Builtin && !v.staleBuiltin()
+	if keep && len(v.conns) == 0 {
+		// Uninstalled meanwhile.
+		writeAPIError(w, http.StatusConflict, errNotInstalled(v.displayName()), whoNoOne)
 		return nil, false
 	}
-	s.setupCancel(v.it.Name)
-	revokes, ok := s.deleteConnectionSecrets(w, r, v.it.Name)
+	start := s.clk().Now()
+	s.setupCancel(name)
+	revokes, ok := s.deleteConnectionSecrets(w, r, name)
 	if !ok {
 		return revokes, false
 	}
+	if keep {
+		// Back to available: the record and its version stay, its
+		// connections and every agent's access go.
+		removed, err := s.Store.DeleteIntegrationConnection(name)
+		if err != nil {
+			log.Printf("integration %s: uninstall: %v", name, err)
+			writeAPIError(w, http.StatusInternalServerError, "the connection's secrets were removed, but its record could not be", whoServer)
+			return revokes, false
+		}
+		if err := s.dropBuiltinEgress(name, removed); err != nil {
+			log.Printf("integration %s: drop the connection's proxy credential: %v", name, err)
+		}
+		s.auditAgentCall(name, start, agent.CEOSlug, uninstallAction, true, "")
+		s.Integrations.ConnectionChanged(name)
+		s.Integrations.Changed()
+		return revokes, true
+	}
 	// A built-in's connections have proxy credentials of their own; a
 	// bundle's none, and dropping nothing is no error.
-	if err := s.dropAllBuiltinEgress(v.it.Name); err != nil {
-		log.Printf("integration %s: drop the connection's proxy credential: %v", v.it.Name, err)
+	if err := s.dropAllBuiltinEgress(name); err != nil {
+		log.Printf("integration %s: drop the connection's proxy credential: %v", name, err)
 	}
 	remove := s.Store.RemoveIntegration
 	if v.staleBuiltin() {
 		remove = s.Store.RemoveStaleBuiltinIntegration
 	}
-	if err := remove(v.it.Name); err != nil {
-		log.Printf("integration %s: remove: %v", v.it.Name, err)
-		writeAPIError(w, http.StatusInternalServerError, "the integration could not be removed", whoServer)
+	if err := remove(name); err != nil {
+		log.Printf("integration %s: uninstall: %v", name, err)
+		writeAPIError(w, http.StatusInternalServerError, "the integration could not be uninstalled", whoServer)
 		return revokes, false
 	}
 	s.Integrations.Changed()
@@ -1272,7 +1331,7 @@ func (s *Server) handleAPIIntegrationAccessPut(w http.ResponseWriter, r *http.Re
 		return
 	}
 	if len(v.conns) == 0 {
-		writeAPIError(w, http.StatusConflict, "connect the integration first", whoYou)
+		writeAPIError(w, http.StatusConflict, "install "+v.displayName()+" first", whoYou)
 		return
 	}
 	conn := v.accessConnection(req.ConnectionID)
@@ -1371,7 +1430,7 @@ func (s *Server) handleAPIIntegrationChoices(w http.ResponseWriter, r *http.Requ
 		writeAPIError(w, http.StatusConflict, errNotRunning, v.whoBuilt())
 		return
 	case v.builtin != nil && conn == nil:
-		writeAPIError(w, http.StatusConflict, "connect the integration first", whoYou)
+		writeAPIError(w, http.StatusConflict, "install "+v.displayName()+" first", whoYou)
 		return
 	}
 	connID := ""
@@ -1514,7 +1573,7 @@ func (s *Server) handleAPIAgentIntegrations(w http.ResponseWriter, r *http.Reque
 			writeAPIError(w, http.StatusInternalServerError, "the integration "+it.Name+" could not be read", whoServer)
 			return
 		}
-		row := apitypes.AgentIntegration{Name: it.Name, DisplayName: v.displayName(), Status: v.status()}
+		row := apitypes.AgentIntegration{Name: it.Name, DisplayName: v.displayName(), State: v.state()}
 		i := slices.IndexFunc(v.access, func(a store.IntegrationAccess) bool { return a.Slug == slug })
 		if i < 0 {
 			out.Available = append(out.Available, row)
@@ -1522,7 +1581,7 @@ func (s *Server) handleAPIAgentIntegrations(w http.ResponseWriter, r *http.Reque
 		}
 		row.Summary = v.accessSummary(v.access[i].AccessJSON())
 		row.Invalid = optString(v.access[i].Invalid)
-		row.Status = v.agentStatus(v.access[i].ConnectionID)
+		row.Usable = v.access[i].Invalid == "" && v.agentUsable(v.access[i].ConnectionID)
 		// Which of several connections the agent's calls use.
 		if c := v.connByID(v.access[i].ConnectionID); c != nil && v.multiple() {
 			row.ConnectionLabel = v.connLabel(c)

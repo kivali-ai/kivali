@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -143,8 +144,8 @@ func crmFlow(t *testing.T, srv *Server) apitypes.SetupFlow {
 // refresh); restart the bundle's server (whose env otherwise keeps no
 // token); run the connection test so the page names who signed in;
 // audit the flow for the owner; and from then on hand the token to the
-// integration's calls. Before the sign-in the integration reads not
-// connected, after it connected.
+// integration's calls. Before the sign-in its sign-in requirement is
+// not met, after it is.
 func TestDeviceSignInEndToEnd(t *testing.T) {
 	srv, vendor, clk := signInServer(t)
 	withIntegrationRegistry(srv, newFakeIntegrationProv())
@@ -152,8 +153,8 @@ func TestDeviceSignInEndToEnd(t *testing.T) {
 	saveSignInClient(t, srv)
 	fs := attachShim(t, srv, "crm", toolTexts(map[string]string{"whoami": "Signed in as octocat"}))
 	page := orgOK[apitypes.IntegrationPage](t, orgGet(t, srv, intBase+"/crm"))
-	if page.Summary.Status != apitypes.IntegrationStatusNotConnected || page.Connection.SignIn == nil || page.Connection.SignIn.SignedIn {
-		t.Fatalf("before the sign-in: %s, %+v", page.Summary.Status, page.Connection.SignIn)
+	if !slices.Equal(unmetIDs(page), []string{"sign_in"}) || page.Connection.SignIn == nil || page.Connection.SignIn.SignedIn {
+		t.Fatalf("before the sign-in: unmet %v, %+v", unmetIDs(page), page.Connection.SignIn)
 	}
 	vendor.Set(func(k *connecttest.Knobs) {
 		k.GitHubStyle = true
@@ -195,8 +196,8 @@ func TestDeviceSignInEndToEnd(t *testing.T) {
 	fs.next(t, integrationpod.EventRestart)
 
 	page = orgOK[apitypes.IntegrationPage](t, orgGet(t, srv, intBase+"/crm"))
-	if si := page.Connection.SignIn; page.Summary.Status != apitypes.IntegrationStatusConnected || si == nil || !si.SignedIn || si.Method != "device" {
-		t.Errorf("after the sign-in: %s, %+v", page.Summary.Status, page.Connection.SignIn)
+	if si := page.Connection.SignIn; !installedAndMet(page) || si == nil || !si.SignedIn || si.Method != "device" {
+		t.Errorf("after the sign-in: unmet %v, %+v", unmetIDs(page), page.Connection.SignIn)
 	}
 	if got := strings.Join(setupAudit(t, srv, "crm"), "|"); got != "started|done" {
 		t.Errorf("audit = %s", got)
@@ -319,7 +320,7 @@ func TestDeviceSignInRefusals(t *testing.T) {
 // (the connection's own values and the app's client id and secret
 // kept, so the owner can sign in again at once), the sign-in off the
 // record, both tokens revoked with the vendor, the owner's audit row,
-// and the integration not connected. A flow under way is cancelled with
+// and the sign-in requirement not met. A flow under way is cancelled with
 // it, and the page then reads that none is under way.
 func TestSignOut(t *testing.T) {
 	srv, vendor, _ := signInServer(t)
@@ -328,8 +329,8 @@ func TestSignOut(t *testing.T) {
 	signedIn(t, srv, "crm", tok)
 
 	page := orgOK[apitypes.IntegrationPage](t, intPost(t, srv, intBase+"/crm/connections/c1/sign-out"))
-	if si := page.Connection.SignIn; page.Summary.Status == apitypes.IntegrationStatusConnected || si == nil || si.SignedIn {
-		t.Errorf("page after the sign-out: %s, %+v", page.Summary.Status, si)
+	if si := page.Connection.SignIn; !slices.Contains(unmetIDs(page), "sign_in") || si == nil || si.SignedIn {
+		t.Errorf("page after the sign-out: unmet %v, %+v", unmetIDs(page), si)
 	}
 	rec, data := connectionSecret(t, srv, "crm")
 	if rec.SignIn != nil || data[connect.SecretKeyAccessToken] != "" || data[connect.SecretKeyRefreshToken] != "" ||
@@ -350,12 +351,12 @@ func TestSignOut(t *testing.T) {
 	}
 }
 
-// Why this test exists: deleting the connection, disconnecting or
-// removing the integration while a sign-in waits for the owner must
+// Why this test exists: deleting the connection or uninstalling the
+// integration while a sign-in waits for the owner must
 // end it: an approval that came later would otherwise write tokens
 // into a connection that is gone, or bring back one the owner removed.
 func TestSignInCancelledByDelete(t *testing.T) {
-	for _, path := range []string{intBase + "/crm/connections/c1", intBase + "/crm/connection", intBase + "/crm"} {
+	for _, path := range []string{intBase + "/crm/connections/c1", intBase + "/crm"} {
 		srv, vendor, clk := signInServer(t)
 		signInBundle(t, srv, vendor)
 		signedIn(t, srv, "crm", vendor.Issue())

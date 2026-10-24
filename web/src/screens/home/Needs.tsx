@@ -274,10 +274,10 @@ function NeedRow({ item, now, base, expanded, onToggle, onAct }: NeedRowProps) {
           {item.kind === 'web_sign_in' && item.subagent && <SignInActions task={item.subagent} />}
           {item.kind === 'web_upload' && item.web_upload && <UploadApproval upload={item.web_upload} files={item.attachments} onAct={onAct} />}
           {item.kind === 'web_budget' && item.web_budget && <BudgetNotice notice={item.web_budget} onAct={onAct} />}
-          {item.kind === 'integration_sign_in' && item.review_path && (
+          {item.kind === 'integration_requirement' && item.review_path && (
             <div className="app-home-actions">
               <span className="app-home-spacer" />
-              {/* Nothing to answer here: the row leaves once the connection is signed in again on its page. */}
+              {/* Nothing to answer here: the row leaves once the requirement is met, from its Fix on the integration's page. */}
               <Button variant="primary" size="sm" onClick={() => void navigate(item.review_path ?? '/')}>
                 Open
               </Button>

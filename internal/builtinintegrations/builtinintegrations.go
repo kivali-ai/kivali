@@ -196,8 +196,10 @@ type AccessSummarizer interface {
 // page only on a declared host, and Keep may hold only declared keys;
 // a Step that does not keep to that fails the flow. An error's text
 // is shown to the owner, scrubbed of every kept value, and the flow
-// keeps nothing more; a flow that fails or is cancelled before its
-// first Keep leaves the connection as it was.
+// keeps nothing more. An install (FlowSetup, from no connection) that
+// fails or is cancelled keeps nothing at all: core forgets the
+// connection its Keep made, with no call of Uninstall. A Fix's flow
+// that fails leaves what it kept.
 type SetupIntegration interface {
 	Integration
 	Setup(ctx context.Context, conn Connection, flow string, last Answer, p Progress) (Step, error)

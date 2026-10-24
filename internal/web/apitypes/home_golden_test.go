@@ -83,9 +83,9 @@ func goldenHome() Home {
 				WebBudget: &WebBudgetRef{Parent: "tester", ID: "dddd4444", Description: "Check the status page", Site: "paste.example", Bytes: 5222, Limit: WebBudgetLimitAction},
 			},
 			{
-				ID: "integration_sign_in:github/a1b2c3d4", Kind: NeedKindIntegrationSignIn, Title: "GitHub needs you to sign in again",
+				ID: "integration_requirement:github/sign_in", Kind: NeedKindIntegrationRequirement, Title: "GitHub: Sign-in",
 				From: PersonRef{Slug: "kivali", Name: "Kivali"}, At: t1,
-				BodyMD:      "The vendor refused the sign-in (bad_refresh_token): The refresh token passed is incorrect or expired. Agents cannot use the connection until you sign in again.",
+				BodyMD:      "The service no longer accepts the sign-in: the vendor refused the sign-in (bad_refresh_token): The refresh token passed is incorrect or expired. Agents cannot use GitHub until you sign in again.",
 				Attachments: []AttachmentRef{}, Packages: []SoftwarePackage{}, ReviewPath: &integrationPage,
 			},
 		},

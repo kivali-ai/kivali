@@ -391,7 +391,7 @@ func TestKivaliDeveloperReadsWhatIsInstalled(t *testing.T) {
 		t.Fatal(rr.Body.String())
 	}
 	res := callTool(t, tools, mcp.IntegrationListToolName, `{}`)
-	if res.IsError || res.Content[0] != "- crm (Test crm): version 1.0.0, not running; 1 agent has access; version 1.1.0 waits for the owner's approval." {
+	if res.IsError || res.Content[0] != "- crm (Test crm): version 1.0.0, installed, 1 requirement not met: Running; 1 agent has access; version 1.1.0 waits for the owner's approval." {
 		t.Errorf("list = %+v", res)
 	}
 	res = callTool(t, tools, mcp.IntegrationVersionsToolName, `{"name":"crm"}`)

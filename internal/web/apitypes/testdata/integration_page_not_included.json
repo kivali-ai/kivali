@@ -1,0 +1,63 @@
+{
+  "summary": {
+    "name": "maps",
+    "display_name": "Maps",
+    "description": "Places and routes.",
+    "version": "1.0.0",
+    "state": "not_included",
+    "needs": 0,
+    "enabled": true,
+    "builtin": true,
+    "agents": 0
+  },
+  "author": "Kivali",
+  "hosts": [],
+  "packages": [],
+  "actions": [
+    {
+      "name": "forecast",
+      "description": "The forecast for a place."
+    }
+  ],
+  "connection_fields": [
+    {
+      "key": "key",
+      "title": "API key",
+      "description": "",
+      "sensitive": true,
+      "required": true,
+      "set": false
+    }
+  ],
+  "connection_method": "token",
+  "sign_in_client": "",
+  "scopes": [],
+  "setup_notes_md": "",
+  "sign_in_hosts": [],
+  "connections": [],
+  "multiple": false,
+  "connection_test": false,
+  "access": [],
+  "agents_without": [
+    {
+      "slug": "dana",
+      "name": "Dana"
+    }
+  ],
+  "versions": [
+    {
+      "version": "1.0.0",
+      "state": "approved",
+      "published_at": "2026-10-20T09:00:00Z",
+      "published_by": {
+        "slug": "kivali",
+        "name": "Kivali"
+      },
+      "approved_at": "2026-10-20T09:00:00Z",
+      "notes_md": "Ships with Kivali."
+    }
+  ],
+  "running": false,
+  "requirements": [],
+  "can_uninstall": true
+}

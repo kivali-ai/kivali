@@ -489,12 +489,12 @@ func TestSetupFlowCallsAreBounded(t *testing.T) {
 }
 
 // Why this test exists: the setup routes refuse what cannot run, in
-// words the page shows: an integration switched off or with no approved
-// version, a flow name it does not have (a Fix's, until those exist), a
+// words the page shows: an integration with no approved version, a
+// flow name it does not have (a Fix none of its requirements names), a
 // form answer while the flow asks for none or with a field the form
 // does not ask for, and a read, answer or cancel with no flow. Cancel
 // ends the flow for good, audited; so does switching the integration
-// off.
+// off, and installing it again switches it on.
 func TestSetupRoutesRefusals(t *testing.T) {
 	srv, _, _ := setupServer(t, func(int, context.Context, builtinintegrations.Connection, builtinintegrations.Answer, builtinintegrations.Progress) (builtinintegrations.Step, error) {
 		return builtinintegrations.Step{Form: &builtinintegrations.Form{Fields: []string{"account"}}}, nil
@@ -520,10 +520,13 @@ func TestSetupRoutesRefusals(t *testing.T) {
 	waitFlow(t, srv, "echo", apitypes.SetupFlowStateForm)
 	orgOK[apitypes.IntegrationPage](t, intPost(t, srv, intBase+"/echo/disable"))
 	assertAPIError(t, orgGet(t, srv, intBase+"/echo/setup"), http.StatusNotFound)
-	if e := assertAPIError(t, flowDo(t, srv, http.MethodPost, intBase+"/echo/setup", apitypes.SetupFlowStart{Flow: "setup"}), http.StatusConflict); e.Error != "switch Echo on first" {
-		t.Errorf("switched off = %+v", e)
+	// With nothing installed there is nothing to keep off: installing
+	// switches it on.
+	startSetupFlow(t, srv, "echo")
+	if it, _ := srv.Store.GetIntegration("echo"); !it.Enabled {
+		t.Error("installing left it switched off")
 	}
-	if got := strings.Join(setupAudit(t, srv, "echo"), "|"); got != "started|cancelled|started|cancelled" {
+	if got := strings.Join(setupAudit(t, srv, "echo"), "|"); got != "started|cancelled|started|cancelled|started" {
 		t.Errorf("audit = %s", got)
 	}
 

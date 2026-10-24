@@ -54,9 +54,9 @@ func TestDerivedLabelFollowsTheHost(t *testing.T) {
 
 // Why this test exists: an agent on the second of two connections
 // works only while that connection has its secrets. Its Integrations
-// tab showing the integration's status would read Connected through
-// the first connection while every one of its calls fails.
-func TestAgentTabStatusIsTheConnections(t *testing.T) {
+// tab reading usable from the integration alone would say so through
+// the other connection while every one of its calls fails.
+func TestAgentTabUsableIsTheConnections(t *testing.T) {
 	srv := newTestServer(t)
 	useFakeClock(srv)
 	mem := secrets.NewMemory()
@@ -70,27 +70,27 @@ func TestAgentTabStatusIsTheConnections(t *testing.T) {
 	putAccessFor(t, srv, "echo", "dana", `{}`, first.ID)
 	putAccessFor(t, srv, "echo", "lee", `{}`, second.ID)
 	_ = mem.Delete(context.Background(), secrets.ConnectionSecretName("echo", first.ID))
-	tab := func(slug string) apitypes.IntegrationStatus {
+	tab := func(slug string) bool {
 		t.Helper()
 		got := orgOK[apitypes.AgentIntegrations](t, orgGet(t, srv, "/api/v1/agents/"+slug+"/integrations"))
 		if len(got.Connected) != 1 {
 			t.Fatalf("%s's tab = %+v", slug, got)
 		}
-		return got.Connected[0].Status
+		return got.Connected[0].Usable
 	}
-	if got := tab("dana"); got != apitypes.IntegrationStatusNotConnected {
-		t.Errorf("dana, on the connection that lost its secrets = %s", got)
+	if tab("dana") {
+		t.Error("dana, on the connection that lost its secrets, reads usable")
 	}
-	if got := tab("lee"); got != apitypes.IntegrationStatusConnected {
-		t.Errorf("lee, on the one that has them = %s", got)
+	if !tab("lee") {
+		t.Error("lee, on the one that has them, reads not usable")
 	}
 }
 
 // Why this test exists: an integration that takes one connection uses
 // only the oldest. A second record (a leftover, or one written by
-// hand) that has its secrets must not make the integration read
-// Connected while the connection agents use needs its secrets again.
-func TestOneConnectionStatusIsTheOldest(t *testing.T) {
+// hand) that has its secrets must not make the connection requirement
+// read met while the connection agents use needs its secrets again.
+func TestOneConnectionRequirementIsTheOldest(t *testing.T) {
 	srv := newTestServer(t)
 	mem := secrets.NewMemory()
 	srv.Secrets = mem
@@ -105,8 +105,8 @@ func TestOneConnectionStatusIsTheOldest(t *testing.T) {
 	}
 	_ = mem.Delete(context.Background(), oldest.SecretName)
 	page := orgOK[apitypes.IntegrationPage](t, orgGet(t, srv, intBase+"/crm"))
-	if page.Summary.Status != apitypes.IntegrationStatusNotConnected {
-		t.Errorf("status = %s, want not connected", page.Summary.Status)
+	if row, _ := requirementOf(page, "connection"); row.Met {
+		t.Errorf("connection = %+v, want not met", row)
 	}
 }
 

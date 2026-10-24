@@ -20,7 +20,7 @@ import (
 // carried it (a Kivali that dropped it, a backup restored from one
 // that had it). Nothing runs it, so its page must not say Kivali is
 // starting it, its Test connection and options must say why they
-// cannot run, and the owner must be able to remove it; otherwise it
+// cannot run, and the owner must be able to uninstall it; otherwise it
 // stays on the team for good.
 func TestBuiltinIntegrationNotInThisKivali(t *testing.T) {
 	srv := newTestServer(t)
@@ -31,10 +31,10 @@ func TestBuiltinIntegrationNotInThisKivali(t *testing.T) {
 	srv.BuiltinIntegrations = builtinintegrations.Registry{}
 
 	page := orgOK[apitypes.IntegrationPage](t, orgGet(t, srv, intBase+"/echo"))
-	if page.Summary.Status != apitypes.IntegrationStatusNotIncluded || !page.Summary.Builtin || !page.CanRemove {
-		t.Errorf("page = %+v, can remove %v", page.Summary, page.CanRemove)
+	if page.Summary.State != apitypes.IntegrationStateNotIncluded || !page.Summary.Builtin || !page.CanUninstall || len(page.Requirements) != 0 {
+		t.Errorf("page = %+v, can uninstall %v, requirements %v", page.Summary, page.CanUninstall, page.Requirements)
 	}
-	const why = "Echo is not in this version of Kivali, so nothing runs it; you can remove it"
+	const why = "Echo is not in this version of Kivali, so nothing runs it; you can uninstall it"
 	if e := assertAPIError(t, intPost(t, srv, intBase+"/echo/connection/verify"), http.StatusConflict); e.Error != why || e.Who != whoYou {
 		t.Errorf("verify = %+v", e)
 	}
@@ -42,7 +42,7 @@ func TestBuiltinIntegrationNotInThisKivali(t *testing.T) {
 		t.Errorf("choices = %+v", e)
 	}
 	if rr := intDelete(t, srv, intBase+"/echo"); rr.Code != http.StatusNoContent {
-		t.Fatalf("remove: %d %s", rr.Code, rr.Body.String())
+		t.Fatalf("uninstall: %d %s", rr.Code, rr.Body.String())
 	}
 	if _, err := srv.Store.GetIntegration(echotest.Name); err == nil {
 		t.Errorf("the record is still there")

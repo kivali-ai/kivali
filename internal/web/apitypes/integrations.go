@@ -20,27 +20,32 @@ type Integrations struct {
 	Integrations []IntegrationSummary `json:"integrations"`
 }
 
-// IntegrationStatus is the one word the list shows for an integration.
-type IntegrationStatus string
+// IntegrationState is where an integration stands in its lifecycle:
+// available, setting up, installed or off; or, before that, waiting
+// for its first approval, or not in this version of Kivali.
+type IntegrationState string
 
 const (
-	// IntegrationStatusPending: no version has been approved yet.
-	IntegrationStatusPending IntegrationStatus = "pending"
-	// IntegrationStatusNotConnected: approved, on, but no connection.
-	IntegrationStatusNotConnected IntegrationStatus = "not_connected"
-	// IntegrationStatusConnected: approved, on, with a connection.
-	IntegrationStatusConnected IntegrationStatus = "connected"
-	// IntegrationStatusOff: switched off; agents cannot use it.
-	IntegrationStatusOff IntegrationStatus = "off"
-	// IntegrationStatusNotRunning: approved and on, but the integration
-	// is not running right now (starting, or stopped after a failure);
-	// Test connection and agents' calls wait for it. An integration that
-	// ships with Kivali is never not running.
-	IntegrationStatusNotRunning IntegrationStatus = "not_running"
-	// IntegrationStatusNotIncluded: a built-in integration this version
+	// IntegrationStateAvailable: ready to install. A built-in while this
+	// version of Kivali carries it, a bundle once a version is approved.
+	// Install runs its setup flow.
+	IntegrationStateAvailable IntegrationState = "available"
+	// IntegrationStateSettingUp: its setup flow runs (IntegrationPage's
+	// Flow). A flow that fails or is cancelled keeps nothing, and the
+	// integration is available again.
+	IntegrationStateSettingUp IntegrationState = "setting_up"
+	// IntegrationStateInstalled: the connection exists, and agents can
+	// be given access. Its requirements say whether it works.
+	IntegrationStateInstalled IntegrationState = "installed"
+	// IntegrationStateOff: switched off. Agents cannot use it; the
+	// connection and their access are kept.
+	IntegrationStateOff IntegrationState = "off"
+	// IntegrationStatePending: no version has been approved yet.
+	IntegrationStatePending IntegrationState = "pending"
+	// IntegrationStateNotIncluded: a built-in integration this version
 	// of Kivali does not carry (another version shipped it). Nothing
-	// runs it and agents cannot use it; it can be removed.
-	IntegrationStatusNotIncluded IntegrationStatus = "not_included"
+	// runs it and agents cannot use it; it can be uninstalled.
+	IntegrationStateNotIncluded IntegrationState = "not_included"
 )
 
 // IntegrationSummary is one row of the list.
@@ -50,10 +55,13 @@ type IntegrationSummary struct {
 	Description string `json:"description"`
 	// Version is the approved version in use; empty while no version
 	// has been approved.
-	Version string            `json:"version"`
-	Status  IntegrationStatus `json:"status"`
-	Enabled bool              `json:"enabled"`
-	Builtin bool              `json:"builtin"`
+	Version string           `json:"version"`
+	State   IntegrationState `json:"state"`
+	// Needs is how many of its requirements are not met, each a row of
+	// Needs you; 0 for an integration that is not installed or is off.
+	Needs   int  `json:"needs"`
+	Enabled bool `json:"enabled"`
+	Builtin bool `json:"builtin"`
 	// Agents is how many agents have access.
 	Agents int `json:"agents"`
 	// PendingVersion is a version waiting for your approval, if any.
@@ -141,9 +149,42 @@ type IntegrationPage struct {
 	AgentsWithout []PersonRef `json:"agents_without"`
 	// Versions is every version stored, newest first.
 	Versions []IntegrationVersionSummary `json:"versions"`
-	// CanRemove is false for a built-in integration this version of
-	// Kivali carries.
-	CanRemove bool `json:"can_remove"`
+	// Running is whether the integration can be called now: a built-in
+	// always while this version of Kivali carries it, a bundle while its
+	// server runs. Test connection and the options an access form lists
+	// wait for it.
+	Running bool `json:"running"`
+	// Requirements are an installed or switched-off integration's
+	// health, Kivali's rows first (an approved version, the connection,
+	// a sign-in still accepted, the connection test, the integration
+	// running), then the integration's own. Empty in any other state.
+	Requirements []IntegrationRequirement `json:"requirements"`
+	// Flow is its setup flow under way, or the one that last ended,
+	// which Kivali keeps for ten minutes: installing (flow setup) or a
+	// requirement's fix. Absent with none.
+	Flow *SetupFlow `json:"flow,omitempty"`
+	// CanUninstall is true when DELETE /api/v1/org/integrations/{name}
+	// applies: to an uploaded integration whatever its state, and to a
+	// built-in that is installed, off or not in this version of Kivali.
+	CanUninstall bool `json:"can_uninstall"`
+}
+
+// IntegrationRequirement is one row of an integration's health: met or
+// not, in words, with the flow that fixes it.
+type IntegrationRequirement struct {
+	// ID names the row, stable across reads. Kivali's own are version,
+	// connection, sign_in, connection_test and running.
+	ID string `json:"id"`
+	// Title is the row in a few words ("Signed in").
+	Title string `json:"title"`
+	// Words say what is, met or not.
+	Words string `json:"words"`
+	Met   bool   `json:"met"`
+	// Fix is the flow its Fix button runs (POST .../setup with
+	// {"flow": fix}): setup to make the connection again, sign_in to
+	// sign in again, or a flow the integration names. Empty for a row
+	// with nothing to run.
+	Fix string `json:"fix"`
 }
 
 // IntegrationAction is one tool the integration gives agents, in words.
@@ -307,7 +348,8 @@ type SetupFlow struct {
 	// on for a go step, and the service's callback returns to the
 	// integration's page with ?setup=<id>.
 	ID string `json:"id"`
-	// Flow is the flow run: setup, to make the connection.
+	// Flow is the flow run: setup, to make the connection, or a
+	// requirement's fix.
 	Flow  string         `json:"flow"`
 	State SetupFlowState `json:"state"`
 	// Step is what you do next, while State is form, go or wait.
@@ -371,7 +413,9 @@ type SetupFlowProgress struct {
 // the flow to run. A flow already under way for the integration ends
 // first.
 type SetupFlowStart struct {
-	// Flow is setup, to make the connection.
+	// Flow is setup, to install the integration or make its connection
+	// again; or a requirement's fix: sign_in, or a flow the
+	// integration's requirements name. Any other is a 409.
 	Flow string `json:"flow"`
 }
 
@@ -644,11 +688,13 @@ type AgentIntegrations struct {
 type AgentIntegration struct {
 	Name        string `json:"name"`
 	DisplayName string `json:"display_name"`
-	// Status is the integration's. Under Connected, for an integration
-	// that takes several connections, connected or not connected is the
-	// connection's the agent's access names: not connected while that
-	// one needs its secrets again.
-	Status IntegrationStatus `json:"status"`
+	// State is the integration's.
+	State IntegrationState `json:"state"`
+	// Usable is true when the agent's calls can go through now: the
+	// integration is installed and running, and the connection its
+	// access names has its secrets and, made by signing in, is signed
+	// in. Always false under Available.
+	Usable bool `json:"usable"`
 	// Summary is the agent's access in words; empty under Available.
 	Summary string `json:"summary"`
 	// ConnectionLabel is the label of the connection the agent's access

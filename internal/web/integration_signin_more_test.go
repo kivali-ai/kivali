@@ -1,17 +1,14 @@
 package web
 
 import (
-	"net/http"
 	"testing"
-
-	"github.com/kivali-ai/kivali/internal/web/apitypes"
 )
 
 // Why this test exists: a refresh refused while the owner signs out
 // (the record's sign-in cleared under it) must not write an error onto
-// a connection that has no sign-in: the owner would be told to sign in
-// again to a connection they just signed out of, by a Needs you row
-// nothing clears but a delete.
+// a connection that has no sign-in: the owner would be told the
+// service refused a sign-in they just ended, rather than that the
+// connection is not signed in.
 func TestSignInRefusalAfterSignOutLeavesTheRecord(t *testing.T) {
 	srv, vendor, _ := signInServer(t)
 	signInBundle(t, srv, vendor)
@@ -25,10 +22,7 @@ func TestSignInRefusalAfterSignOutLeavesTheRecord(t *testing.T) {
 	if got.SignIn != nil {
 		t.Errorf("sign-in = %+v, want none", got.SignIn)
 	}
-	home := decodeAPI[apitypes.Home](t, homeDo(t, srv, http.MethodGet, "/api/v1/home", "", nil, nil))
-	for _, n := range home.Needs {
-		if n.Kind == apitypes.NeedKindIntegrationSignIn {
-			t.Errorf("a row for a signed-out connection: %+v", n)
-		}
+	if row := requirementNeeds(t, srv)["integration_requirement:crm/sign_in"]; row.BodyMD != "Not signed in yet." {
+		t.Errorf("sign-in row of a signed-out connection = %+v", row)
 	}
 }

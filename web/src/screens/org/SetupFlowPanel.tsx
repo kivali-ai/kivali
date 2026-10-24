@@ -52,8 +52,12 @@ export interface SetupFlowPanelProps {
   api: string;
   /** The integration's name in words, which a form's fields are asked under. */
   integration: string;
-  /** The panel's heading and its button that starts the flow: Connect, Sign in, Set up. */
+  /** The panel's heading and its button that starts the flow: Install, or the requirement a Fix mends. */
   label: string;
+  /** The flow the panel starts: setup, to install, or a requirement's Fix (sign_in, or a flow the integration names). */
+  flow?: string;
+  /** Starts the flow as the panel opens, as a Fix does, instead of reading the flow under way. */
+  autoStart?: boolean;
   /** What starting it is called where it differs from the heading (Sign in with a code). */
   startLabel?: string;
   /** A line under the heading, such as where a sign-in goes ("Signs in at github.com"). */
@@ -75,7 +79,7 @@ export interface SetupFlowPanelProps {
  * Cancel ends a flow under way. The panel follows the flow's stream, or asks every few seconds while the tab is
  * visible where there is no stream.
  */
-export function SetupFlowPanel({ api, integration, label, startLabel, note, busy = false, returned, onDone, openStream }: SetupFlowPanelProps) {
+export function SetupFlowPanel({ api, integration, label, flow: flowName = 'setup', autoStart = false, startLabel, note, busy = false, returned, onDone, openStream }: SetupFlowPanelProps) {
   const [flow, setFlow] = useState<SetupFlow | null>(null);
   // A flow the callback named that the server no longer has: it took too long, or Kivali restarted.
   const [gone, setGone] = useState(false);
@@ -109,9 +113,15 @@ export function SetupFlowPanel({ api, integration, label, startLabel, note, busy
     }
   };
 
-  // The flow under way, or the one that last ended, as the page opens.
+  // The flow under way, or the one that last ended, as the page opens; or, for a Fix, its flow started.
   useEffect(() => {
     let stopped = false;
+    if (autoStart) {
+      void start();
+      return () => {
+        stopped = true;
+      };
+    }
     apiGet<SetupFlow>(api + '/setup').then(
       (f) => {
         if (!stopped) take(f);
@@ -176,7 +186,7 @@ export function SetupFlowPanel({ api, integration, label, startLabel, note, busy
     run(async () => {
       setGone(false);
       setWent(false);
-      const body: SetupFlowStart = { flow: 'setup' };
+      const body: SetupFlowStart = { flow: flowName };
       take(await apiPost<SetupFlow>(api + '/setup', body));
     });
   const answer = () =>

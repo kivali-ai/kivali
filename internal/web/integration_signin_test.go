@@ -406,7 +406,7 @@ func TestSignInTokensAreScrubbedFromTheLog(t *testing.T) {
 	}
 }
 
-// Why this test exists: deleting a sign-in connection, or disconnecting
+// Why this test exists: deleting a sign-in connection, or uninstalling
 // the integration, must ask the vendor to revoke its tokens where the
 // vendor allows: the Secret is gone from Kivali, and the tokens should
 // not outlive it at the vendor. A vendor that fails the revocation
@@ -426,11 +426,14 @@ func TestSignInDeleteRevokes(t *testing.T) {
 	tok = vendor.Issue()
 	signedIn(t, srv, "crm", tok)
 	vendor.Set(func(k *connecttest.Knobs) { k.RevokeStatus = http.StatusInternalServerError })
-	if rr := intDelete(t, srv, intBase+"/crm/connection"); rr.Code != http.StatusOK {
-		t.Fatalf("disconnect: %d %s", rr.Code, rr.Body.String())
+	if rr := intDelete(t, srv, intBase+"/crm"); rr.Code != http.StatusNoContent {
+		t.Fatalf("uninstall: %d %s", rr.Code, rr.Body.String())
 	}
-	if _, err := srv.Store.GetIntegrationConnectionByID("crm", "c1"); err == nil {
-		t.Error("a failed revocation kept the connection")
+	if got := vendor.Revoked(); len(got) != 2 {
+		t.Errorf("revoked %v, want the first sign-in's two alone", got)
+	}
+	if _, err := srv.Store.GetIntegration("crm"); err == nil {
+		t.Error("a failed revocation kept the integration")
 	}
 }
 
@@ -438,8 +441,9 @@ func TestSignInDeleteRevokes(t *testing.T) {
 // seconds. Made while the delete held lockIntegrations, it would stall
 // every other integration write for that long: connection saves,
 // switches, access, approvals, and the proxy credential a Git call's
-// shell job needs. Each delete route must collect the tokens under the
-// lock and ask the vendor once it is released, before it answers.
+// shell job needs. Each route that drops tokens (a delete, Sign out,
+// Uninstall) must collect them under the lock and ask the vendor once
+// it is released, before it answers.
 func TestSignInRevokesWithTheLockReleased(t *testing.T) {
 	srv, vendor, _ := signInServer(t)
 	signInBundle(t, srv, vendor)
@@ -455,7 +459,7 @@ func TestSignInRevokesWithTheLockReleased(t *testing.T) {
 	})
 	for _, del := range []func() int{
 		func() int { return intDelete(t, srv, intBase+"/crm/connections/c1").Code },
-		func() int { return intDelete(t, srv, intBase+"/crm/connection").Code },
+		func() int { return intPost(t, srv, intBase+"/crm/connection/sign-out").Code },
 		func() int { return intDelete(t, srv, intBase+"/crm").Code },
 	} {
 		signedIn(t, srv, "crm", vendor.Issue())

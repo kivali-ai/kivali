@@ -4,7 +4,8 @@
     "display_name": "GitHub",
     "description": "Issues and pull requests on GitHub.",
     "version": "2.0.0",
-    "status": "not_connected",
+    "state": "available",
+    "needs": 0,
     "enabled": true,
     "builtin": true,
     "agents": 0
@@ -97,5 +98,7 @@
       "notes_md": "Ships with Kivali."
     }
   ],
-  "can_remove": false
+  "running": true,
+  "requirements": [],
+  "can_uninstall": false
 }

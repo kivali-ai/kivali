@@ -389,21 +389,35 @@ func (s *Server) fileIntegrationInstallRequest(ctx context.Context, slug string,
 	return nil
 }
 
-// statusWords is an integration's status as integration_list says it.
-func statusWords(st apitypes.IntegrationStatus) string {
+// stateWords is where an integration stands as integration_list says
+// it: its state and, installed, the titles of the requirements not
+// met.
+func stateWords(st apitypes.IntegrationState, rows []apitypes.IntegrationRequirement) string {
 	switch st {
-	case apitypes.IntegrationStatusPending:
+	case apitypes.IntegrationStatePending:
 		return "no version approved"
-	case apitypes.IntegrationStatusOff:
-		return "off"
-	case apitypes.IntegrationStatusNotRunning:
-		return "not running"
-	case apitypes.IntegrationStatusConnected:
-		return "connected"
-	case apitypes.IntegrationStatusNotConnected:
-		return "not connected"
-	case apitypes.IntegrationStatusNotIncluded:
+	case apitypes.IntegrationStateAvailable:
+		return "not installed"
+	case apitypes.IntegrationStateSettingUp:
+		return "being set up"
+	case apitypes.IntegrationStateOff:
+		return "installed, off"
+	case apitypes.IntegrationStateNotIncluded:
 		return "not in this version of Kivali"
+	case apitypes.IntegrationStateInstalled:
+		var titles []string
+		for _, r := range rows {
+			if !r.Met {
+				titles = append(titles, r.Title)
+			}
+		}
+		switch len(titles) {
+		case 0:
+			return "installed, every requirement met"
+		case 1:
+			return "installed, 1 requirement not met: " + titles[0]
+		}
+		return fmt.Sprintf("installed, %d requirements not met: %s", len(titles), strings.Join(titles, ", "))
 	}
 	return string(st)
 }
@@ -419,25 +433,31 @@ func (s *Server) developerList(ctx context.Context) agentpod.KivaliDeveloperResp
 	if len(its) == 0 {
 		return agentpod.KivaliDeveloperResponse{Body: "No integration is installed."}
 	}
-	var sums []apitypes.IntegrationSummary
+	type listed struct {
+		sum  apitypes.IntegrationSummary
+		rows []apitypes.IntegrationRequirement
+	}
+	var sums []listed
 	for _, it := range its {
 		v, err := s.loadIntegration(ctx, it.Name)
 		if err != nil {
 			log.Printf("integration_list: %s: %v", it.Name, err)
 			return developerError(fmt.Sprintf("The integration %s could not be read; try again later or tell the owner.", it.Name))
 		}
-		sums = append(sums, v.summary())
+		rows, _ := s.requirements(ctx, v)
+		sums = append(sums, listed{v.summary(), rows})
 	}
 	sort.SliceStable(sums, func(i, j int) bool {
-		return strings.ToLower(sums[i].DisplayName) < strings.ToLower(sums[j].DisplayName)
+		return strings.ToLower(sums[i].sum.DisplayName) < strings.ToLower(sums[j].sum.DisplayName)
 	})
 	var b strings.Builder
-	for _, sum := range sums {
+	for _, l := range sums {
+		sum := l.sum
 		fmt.Fprintf(&b, "- %s (%s): ", sum.Name, sum.DisplayName)
 		if sum.Version != "" {
 			fmt.Fprintf(&b, "version %s, ", sum.Version)
 		}
-		b.WriteString(statusWords(sum.Status))
+		b.WriteString(stateWords(sum.State, l.rows))
 		agents := "agents have"
 		if sum.Agents == 1 {
 			agents = "agent has"

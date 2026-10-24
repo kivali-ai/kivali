@@ -52,7 +52,7 @@ const integrationValidateDescription = `Check an integration bundle you are buil
 
 const integrationPublishDescription = `Publish the bundle in a directory under /files/ as a new version for the owner's approval. It runs integration_validate's checks first, and refuses a bundle with an error, a version number already stored and the name of an integration that ships with Kivali. The version is stored with your notes, which the owner reads on its install screen, and the owner is asked to approve it in Needs you. Nothing in it runs until the owner approves; the answer lands in your chat.`
 
-const integrationListDescription = `List the installed integrations: each one's name and display name, the version in use, how it stands (no version approved, off, not running, connected, not connected), a version waiting for the owner's approval, and how many agents have access to it.`
+const integrationListDescription = `List the installed integrations: each one's name and display name, the version in use, how it stands (no version approved, not installed, being set up, installed, installed but off, not in this version of Kivali) and, installed, which of its requirements are not met (such as Running or Sign-in), a version waiting for the owner's approval, and how many agents have access to it.`
 
 const integrationVersionsDescription = `List every stored version of one integration, newest first: its state (pending, approved, rejected, superseded), when and by whom it was published, when it was approved, and the start of its notes. An integration that is not installed is refused.`
 

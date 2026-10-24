@@ -377,8 +377,8 @@ func TestIntegrationChangesAskForAReconcile(t *testing.T) {
 		{"connect", func() {
 			orgJSON(t, srv, "PUT", intBase+"/crm/connection", apitypes.ConnectionWrite{Fields: map[string]string{"token": "t"}})
 		}},
-		{"disconnect", func() { intDelete(t, srv, intBase+"/crm/connection") }},
-		{"remove", func() { intDelete(t, srv, intBase+"/crm") }},
+		{"delete the connection", func() { intDelete(t, srv, intBase+"/crm/connections/"+firstConnID(t, srv, "crm")) }},
+		{"uninstall", func() { intDelete(t, srv, intBase+"/crm") }},
 	} {
 		step.do()
 		if !kicked() {

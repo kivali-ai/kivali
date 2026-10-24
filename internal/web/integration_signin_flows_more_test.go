@@ -38,7 +38,9 @@ func TestDeviceSignInEndsWhenSwitchedOffMeanwhile(t *testing.T) {
 		act  func(t *testing.T, srv *Server)
 	}{
 		{"switched off", func(t *testing.T, srv *Server) { intPost(t, srv, intBase+"/crm/disable") }},
-		{"deleted", func(t *testing.T, srv *Server) { intDelete(t, srv, intBase+"/crm/connection") }},
+		{"deleted", func(t *testing.T, srv *Server) {
+			intDelete(t, srv, intBase+"/crm/connections/"+firstConnID(t, srv, "crm"))
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			srv, vendor, _ := signInServer(t)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -54,28 +55,29 @@ func echoSummary(t *testing.T, srv *Server) apitypes.IntegrationSummary {
 }
 
 // Why this test exists: a built-in has no pod, so nothing ever
-// connects a shim for it. If its status came from the shim it would
+// connects a shim for it. If its health came from the shim it would
 // read "not running" forever and Test connection would stay disabled;
-// it must read not connected, connected or off, with the built-in's
-// own version, and its page must offer no Remove and name Kivali as
-// the publisher of its version.
-func TestBuiltinIntegrationStatus(t *testing.T) {
+// it must read available, installed or off, with the built-in's own
+// version and no running requirement, and its page must offer
+// Uninstall only once something is installed and name Kivali as the
+// publisher of its version.
+func TestBuiltinIntegrationState(t *testing.T) {
 	srv := newTestServer(t)
 	withEcho(t, srv)
 	sum := echoSummary(t, srv)
-	if sum.Status != apitypes.IntegrationStatusNotConnected || sum.Version != "1.0.0" || !sum.Builtin || !sum.Enabled || sum.PendingVersion != nil {
+	if sum.State != apitypes.IntegrationStateAvailable || sum.Needs != 0 || sum.Version != "1.0.0" || !sum.Builtin || !sum.Enabled || sum.PendingVersion != nil {
 		t.Errorf("before a connection = %+v", sum)
 	}
 	connectEcho(t, srv, "Hello")
-	if sum := echoSummary(t, srv); sum.Status != apitypes.IntegrationStatusConnected {
-		t.Errorf("connected = %+v", sum)
+	if sum := echoSummary(t, srv); sum.State != apitypes.IntegrationStateInstalled || sum.Needs != 0 {
+		t.Errorf("installed = %+v", sum)
 	}
 	page := orgOK[apitypes.IntegrationPage](t, intPost(t, srv, intBase+"/echo/disable"))
-	if page.Summary.Status != apitypes.IntegrationStatusOff {
+	if page.Summary.State != apitypes.IntegrationStateOff || !page.CanUninstall {
 		t.Errorf("off = %+v", page.Summary)
 	}
 	page = orgOK[apitypes.IntegrationPage](t, intPost(t, srv, intBase+"/echo/enable"))
-	if page.Summary.Status != apitypes.IntegrationStatusConnected || page.CanRemove {
+	if !installedAndMet(page) || !page.Running || !page.CanUninstall || !slices.Equal(requirementIDs(page), []string{"version", "connection"}) {
 		t.Errorf("page = %+v", page.Summary)
 	}
 	if len(page.Versions) != 1 || page.Versions[0].PublishedBy != (apitypes.PersonRef{Slug: store.BuiltinIntegrationPublisher, Name: "Kivali"}) ||
@@ -94,8 +96,8 @@ func TestBuiltinIntegrationStatus(t *testing.T) {
 }
 
 // Why this test exists: a built-in's versions follow the binary and it
-// cannot be taken off the team. An approve, a reject, a roll back, a
-// removal or an upload under its name that went through would make the
+// cannot be taken off the team. An approve, a reject, a roll back or
+// an upload under its name that went through would make the
 // data directory disagree with the code that runs; each must be a 409
 // with a sentence that says why.
 func TestBuiltinIntegrationRefusesTheOwnersVersionMoves(t *testing.T) {
@@ -122,9 +124,6 @@ func TestBuiltinIntegrationRefusesTheOwnersVersionMoves(t *testing.T) {
 	}
 	if err := srv.rejectIntegrationVersion("echo", "1.1.0"); err == nil || err.Error() != why+"reject" {
 		t.Errorf("the store's refusal of a rejection = %v", err)
-	}
-	if e := assertAPIError(t, intDelete(t, srv, intBase+"/echo"), http.StatusConflict); e.Error != "Echo ships with Kivali and cannot be removed; switch it off instead" {
-		t.Errorf("remove = %+v", e)
 	}
 	if e := assertAPIError(t, intUpload(t, srv, intBundle(t, "echo", "2.0.0")), http.StatusConflict); e.Error != "Echo ships with Kivali, so a bundle cannot replace it" {
 		t.Errorf("upload = %+v", e)
@@ -275,10 +274,10 @@ func TestBuiltinIntegrationAnswersAreScrubbed(t *testing.T) {
 func TestBuiltinIntegrationVerifyAndChoices(t *testing.T) {
 	srv := newTestServer(t)
 	echo := withEcho(t, srv)
-	if e := assertAPIError(t, intPost(t, srv, intBase+"/echo/connection/verify"), http.StatusConflict); e.Error != "connect the integration first" {
+	if e := assertAPIError(t, intPost(t, srv, intBase+"/echo/connection/verify"), http.StatusConflict); e.Error != "install Echo first" {
 		t.Errorf("verify with no connection = %+v", e)
 	}
-	if e := assertAPIError(t, orgGet(t, srv, intBase+"/echo/choices/colors"), http.StatusConflict); e.Error != "connect the integration first" {
+	if e := assertAPIError(t, orgGet(t, srv, intBase+"/echo/choices/colors"), http.StatusConflict); e.Error != "install Echo first" {
 		t.Errorf("choices with no connection = %+v", e)
 	}
 	connectEcho(t, srv, "Hello")

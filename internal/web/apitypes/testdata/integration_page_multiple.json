@@ -4,7 +4,8 @@
     "display_name": "Git",
     "description": "Clones, fetches and pushes repositories over HTTPS.",
     "version": "1.2.0",
-    "status": "connected",
+    "state": "installed",
+    "needs": 1,
     "enabled": true,
     "builtin": true,
     "agents": 2
@@ -201,5 +202,22 @@
       "notes_md": "Ships with Kivali."
     }
   ],
-  "can_remove": false
+  "running": true,
+  "requirements": [
+    {
+      "id": "version",
+      "title": "Approved version",
+      "words": "Version 1.2.0 ships with Kivali.",
+      "met": true,
+      "fix": ""
+    },
+    {
+      "id": "connection",
+      "title": "Connection",
+      "words": "Company GitLab's secrets are not stored on this Kivali server, as after a restore from a backup. Enter them again.",
+      "met": false,
+      "fix": "setup"
+    }
+  ],
+  "can_uninstall": true
 }

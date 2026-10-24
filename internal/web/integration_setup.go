@@ -38,8 +38,12 @@
 // cancelled.
 //
 // A flow is forgotten setupFlowTTL after its last change, and lost on
-// a restart; deleting the connection, disconnecting, removing the
-// integration, switching it off and signing out cancel it.
+// a restart; deleting a connection, uninstalling the integration,
+// switching it off and signing out cancel it. A flow that installs
+// (it started with no connection) and fails, is cancelled or is
+// forgotten before it is done keeps nothing: the connection its Keep
+// made goes again (setupDiscard), and the integration is available
+// again.
 
 package web
 
@@ -186,6 +190,12 @@ type setupRun struct {
 	polled   time.Time
 	subs     map[chan []byte]struct{}
 	sent     []byte
+	// install is true for a flow that installs: it started with no
+	// connection (or took over from one that did). madeConn is the
+	// connection its Keep made, which goes again when the flow ends
+	// without being done.
+	install  bool
+	madeConn string
 }
 
 // setupRuns are the flows, by id. The zero value is ready to use.
@@ -203,6 +213,12 @@ type setupRuns struct {
 	// changed since it was last sent to their streams.
 	pending []setupAuditRow
 	dirty   map[*setupRun]struct{}
+	// discard forgets the connection id an install of the integration
+	// name made and that ended without being done (Server.setupDiscard),
+	// off the caller's locks. discarding holds, by integration, a
+	// channel closed once its discard is over.
+	discard    func(name, connID string)
+	discarding map[string]chan struct{}
 	// settleMu orders the writes of what is queued.
 	settleMu sync.Mutex
 	// calling counts every goroutine the runner and its drivers start
@@ -255,6 +271,52 @@ func (s *Server) setupUnlock() {
 	r.dirty = nil
 }
 
+// endLocked starts forgetting the connection run made, when run
+// installs and ends without being done: a flow that fails or is
+// cancelled keeps nothing, and the integration is available again.
+func (t *setupRuns) endLocked(run *setupRun) {
+	if !run.install || run.madeConn == "" || run.state == apitypes.SetupFlowStateDone || t.discard == nil {
+		return
+	}
+	name, id := run.name, run.madeConn
+	run.madeConn = ""
+	done := make(chan struct{})
+	if t.discarding == nil {
+		t.discarding = map[string]chan struct{}{}
+	}
+	prev := t.discarding[name]
+	t.discarding[name] = done
+	go func() {
+		defer close(done)
+		if prev != nil {
+			<-prev
+		}
+		t.discard(name, id)
+		t.mu.Lock()
+		if t.discarding[name] == done {
+			delete(t.discarding, name)
+		}
+		t.mu.Unlock()
+	}()
+}
+
+// setupAwaitDiscard waits, while ctx lasts, until no connection a
+// failed or cancelled install of name made is still on its way out.
+// The caller holds no lock.
+func (s *Server) setupAwaitDiscard(ctx context.Context, name string) {
+	t := &s.setupRuns
+	t.mu.Lock()
+	done := t.discarding[name]
+	t.mu.Unlock()
+	if done == nil {
+		return
+	}
+	select {
+	case <-done:
+	case <-ctx.Done():
+	}
+}
+
 // ended reports whether run is done or failed.
 func (run *setupRun) ended() bool {
 	return run.state == apitypes.SetupFlowStateDone || run.state == apitypes.SetupFlowStateFailed
@@ -277,8 +339,10 @@ func (t *setupRuns) currentLocked(name string) *setupRun {
 }
 
 // forgetLocked takes run out of the table, cancels it and ends its
-// streams.
+// streams. A connection an install made goes with it, unless the
+// flow was done.
 func (t *setupRuns) forgetLocked(run *setupRun) {
+	t.endLocked(run)
 	run.cancel()
 	delete(t.runs, run.id)
 	for ch := range run.subs {
@@ -406,22 +470,31 @@ func newSetupFlowID() string { return newSignInFlowID() }
 
 // setupStart begins name's flow, running spec, ending (and auditing as
 // cancelled) any flow name had. callback is the callback address of
-// the request that started it. The first call starts at once.
-func (s *Server) setupStart(name, display, flow string, spec setupSpec, callback string) apitypes.SetupFlow {
+// the request that started it; install is true when name has no
+// connection yet, so the flow installs it. A flow that takes over from
+// an install under way installs in its place, and the connection that
+// one made is its own. The first call starts at once.
+func (s *Server) setupStart(name, display, flow string, spec setupSpec, callback string, install bool) apitypes.SetupFlow {
 	ctx, cancel := context.WithCancel(context.Background())
 	now := s.clk().Now()
 	run := &setupRun{
 		id: newSetupFlowID(), name: name, flow: flow, display: display, spec: spec, ctx: ctx, cancel: cancel,
-		changed: now, callback: callback, subs: map[chan []byte]struct{}{}, runs: &s.setupRuns,
+		changed: now, callback: callback, subs: map[chan []byte]struct{}{}, runs: &s.setupRuns, install: install,
 	}
 	t := &s.setupRuns
 	t.mu.Lock()
 	defer s.setupUnlock()
+	if t.discard == nil {
+		t.discard = s.setupDiscard
+	}
 	t.pruneLocked(now)
 	var replaced *setupRun
 	if old := t.currentLocked(name); old != nil {
 		if !old.ended() {
 			replaced = old
+			if old.install {
+				run.install, run.madeConn, old.madeConn = true, old.madeConn, ""
+			}
 		}
 		t.forgetLocked(old)
 	}
@@ -740,6 +813,7 @@ func (s *Server) setupFailLocked(run *setupRun, words string) {
 	run.cancel()
 	run.publishLocked()
 	s.auditSetupLocked(run, "failed: "+words, false)
+	s.setupRuns.endLocked(run)
 }
 
 // setupEnd ends run's Wait from its driver (setupWaiter): done when err
@@ -823,6 +897,79 @@ func (s *Server) setupFlowState(name string) (apitypes.SetupFlow, bool) {
 	}
 	run.polled = now
 	return run.wireLocked(), true
+}
+
+// setupPeek is name's flow on the wire, nil for none, without counting
+// as watching it; whether an install of name is under way; and whether
+// a connection a failed or cancelled install made is still on its way
+// out.
+func (s *Server) setupPeek(name string) (flow *apitypes.SetupFlow, installing, discarding bool) {
+	t := &s.setupRuns
+	t.mu.Lock()
+	defer s.setupUnlock()
+	t.pruneLocked(s.clk().Now())
+	discarding = t.discarding[name] != nil
+	run := t.currentLocked(name)
+	if run == nil {
+		return nil, false, discarding
+	}
+	f := run.wireLocked()
+	return &f, run.install && !run.ended(), discarding
+}
+
+// setupMade records that run's Keep made name's connection id, which
+// goes again should run end without being done. A run that ended
+// meanwhile lets it go at once.
+func (s *Server) setupMade(run *setupRun, id string) {
+	t := &s.setupRuns
+	t.mu.Lock()
+	defer s.setupUnlock()
+	if !run.install || run.madeConn != "" {
+		return
+	}
+	run.madeConn = id
+	if t.runs[run.id] != run || run.state == apitypes.SetupFlowStateFailed {
+		t.endLocked(run)
+	}
+}
+
+// setupDiscard forgets name's connection id that an install made and
+// that ended without being done, as Uninstall forgets a connection:
+// its Secret (the sign-in's tokens revoked with the service), its
+// scoped proxy credential, its record and the access set for it. A
+// connection already gone is left be.
+func (s *Server) setupDiscard(name, id string) {
+	ctx := context.Background()
+	unlock := s.lockIntegrations()
+	rec, err := s.Store.GetIntegrationConnectionByID(name, id)
+	if err != nil {
+		unlock()
+		if !errors.Is(err, store.ErrNotFound) {
+			log.Printf("integration %s: read the connection a setup made, to forget it: %v", name, err)
+		}
+		return
+	}
+	_, m, _ := s.Store.CurrentIntegrationVersion(name)
+	var revokes signInRevocations
+	if rec.SecretName != "" {
+		tokens := s.revocableTokens(ctx, name, m, rec)
+		if err := s.Secrets.Delete(ctx, rec.SecretName); err != nil && !errors.Is(err, secrets.ErrNotFound) {
+			unlock()
+			log.Printf("integration %s: forget the connection a setup made: delete Secret %s: %v", name, rec.SecretName, err)
+			return
+		}
+		revokes = revokes.add(name, m, rec, tokens)
+	}
+	if err := s.dropBuiltinEgress(name, []store.IntegrationConnection{rec}); err != nil {
+		log.Printf("integration %s: drop the connection's proxy credential: %v", name, err)
+	}
+	if _, _, err := s.Store.DeleteIntegrationConnectionByID(name, id); err != nil && !errors.Is(err, store.ErrNotFound) {
+		log.Printf("integration %s: forget the connection a setup made: %v", name, err)
+	}
+	unlock()
+	s.revokeSignIns(ctx, revokes)
+	s.Integrations.ConnectionChanged(name)
+	s.Integrations.Changed()
 }
 
 // setupSubscribe is name's flow's state now and a channel of its
@@ -941,8 +1088,9 @@ func (s *Server) keepSetupValues(ctx context.Context, run *setupRun, values map[
 	}
 	name := run.name
 	rec, err := s.Store.GetIntegrationConnection(name)
+	made := errors.Is(err, store.ErrNotFound)
 	switch {
-	case errors.Is(err, store.ErrNotFound):
+	case made:
 		rec = store.IntegrationConnection{ID: newConnectionID(), CreatedAt: s.clk().Now()}
 	case err != nil:
 		log.Printf("integration %s: read the connection to keep what setup made: %v", name, err)
@@ -983,6 +1131,9 @@ func (s *Server) keepSetupValues(ctx context.Context, run *setupRun, values map[
 	if err := s.Store.PutIntegrationConnection(name, rec); err != nil {
 		log.Printf("integration %s: write the connection for setup: %v", name, err)
 		return errors.New(errSetupNotKept)
+	}
+	if made {
+		s.setupMade(run, rec.ID)
 	}
 	s.Integrations.ConnectionChanged(name)
 	s.Integrations.Changed()
