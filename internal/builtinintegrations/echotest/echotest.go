@@ -59,6 +59,10 @@ type Echo struct {
 	SignIn    *integration.Connection
 	SetupFlow bool
 	HandOver  *integration.Connection
+	// ClientID and ClientSecret are what echo's flow keeps as the app's
+	// client id and secret at its end, with HandOver, for the sign-in
+	// that takes it on.
+	ClientID, ClientSecret string
 
 	// Watch, when set, is sent every call of Setup as it is recorded,
 	// for a test that waits on a call its flow's state does not show (a

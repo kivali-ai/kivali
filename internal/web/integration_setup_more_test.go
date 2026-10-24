@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -19,6 +20,16 @@ import (
 	"github.com/kivali-ai/kivali/internal/store"
 	"github.com/kivali-ai/kivali/internal/web/apitypes"
 )
+
+// heldCall is a channel a scripted call waits on and the one way to
+// free it, at most once, by the test or by its cleanup: a test that
+// fails before freeing it must not leave the call holding up the
+// runner's drain.
+func heldCall() (<-chan struct{}, func()) {
+	ch := make(chan struct{})
+	var once sync.Once
+	return ch, func() { once.Do(func() { close(ch) }) }
+}
 
 // currentRun is name's flow, for a test that waits on its calls.
 func currentRun(t *testing.T, srv *Server, name string) *setupRun {
@@ -127,7 +138,7 @@ func TestSetupFlowStatelessReturnOnlyWhereTheStepSaysSo(t *testing.T) {
 func TestSetupCallAfterCancelKeepsNothing(t *testing.T) {
 	for _, how := range []string{"cancel", "replace"} {
 		t.Run(how, func(t *testing.T) {
-			release := make(chan struct{})
+			release, free := heldCall()
 			srv, fs, _ := setupServer(t, func(n int, _ context.Context, _ builtinintegrations.Connection, _ builtinintegrations.Answer, _ builtinintegrations.Progress) (builtinintegrations.Step, error) {
 				if n == 1 {
 					<-release
@@ -135,6 +146,8 @@ func TestSetupCallAfterCancelKeepsNothing(t *testing.T) {
 				}
 				return builtinintegrations.Step{Form: &builtinintegrations.Form{Fields: []string{"account"}}}, nil
 			})
+			// After the server's cleanup is registered, so it runs first.
+			t.Cleanup(free)
 			startSetupFlow(t, srv, "echo")
 			fs.nextAnswer(t)
 			old := currentRun(t, srv, "echo")
@@ -146,7 +159,7 @@ func TestSetupCallAfterCancelKeepsNothing(t *testing.T) {
 				startSetupFlow(t, srv, "echo")
 				waitFlow(t, srv, "echo", apitypes.SetupFlowStateForm)
 			}
-			close(release)
+			free()
 			callsEnd(t, old)
 			if _, err := srv.Store.GetIntegrationConnection("echo"); !errors.Is(err, store.ErrNotFound) {
 				t.Errorf("a cancelled call kept a connection: %v", err)
