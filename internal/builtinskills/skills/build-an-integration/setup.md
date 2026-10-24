@@ -99,7 +99,8 @@ an error:
 {"jsonrpc": "2.0", "id": 7, "method": "kivali/setup", "params": {
   "flow": "setup",
   "answer": {"state": {}, "form": {}, "return": {}, "checked": false, "went": false, "leg": 1,
-             "callback": "https://team.example/connect/callback?state=4f0c9e2a7b1d4c3e8a6f5b2d1c0e9f8a"},
+             "callback": "https://team.example/connect/callback?state=4f0c9e2a7b1d4c3e8a6f5b2d1c0e9f8a",
+             "team": "Acme"},
   "_meta": {"progressToken": "8c1d6b0e2f4a"}}}
 ```
 
@@ -116,6 +117,10 @@ an error:
 - `answer.went`: true after a Go with `no_return` was sent.
 - `answer.leg`: which call of the flow this is, from 1.
 - `answer.callback`: where a Go's service may send the browser back.
+- `answer.team`: the team's name as the owner set it, `""` for a team
+  with none: for naming what setup makes on the service ("Kivali Acme"),
+  so the owner tells it apart from another team's. `try.py` sends
+  `--team` (Kivali by default).
 - Every object is there, `{}` when empty.
 
 The answer is one step, and optionally what to keep and to carry:
@@ -548,7 +553,8 @@ through to the address it sends the browser back to.
    Go that posts the manifest to the new-app page for that account, the
    state on the page's address and the bare callback as both
    `redirect_url` (where Forge sends the code) and `setup_url` (where
-   it sends the browser after an installation):
+   it sends the browser after an installation), the app named "Kivali"
+   and `answer.team`, cut to the length Forge takes:
 
    ```json
    {"step": {"go": {"words": "Create the app on Forge: choose Create app. Forge may ask you to change the name first.",
