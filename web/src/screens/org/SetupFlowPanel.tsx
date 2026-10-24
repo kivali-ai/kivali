@@ -181,7 +181,8 @@ export function SetupFlowPanel({ api, integration, label, startLabel, note, busy
     });
   const answer = () =>
     run(async () => {
-      const body: SetupFlowAnswer = { fields: values };
+      // Every field the step asks for, an untouched one as empty, so the flow reads what was left blank.
+      const body: SetupFlowAnswer = { fields: Object.fromEntries((flow?.step?.fields ?? []).map((f) => [f.key, values[f.key] ?? ''])) };
       take(await apiPost<SetupFlow>(api + '/setup/answer', body));
     });
   const cancel = () =>

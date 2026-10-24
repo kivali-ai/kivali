@@ -19,6 +19,7 @@
 package web
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"log"
@@ -40,6 +41,10 @@ const (
 	deviceWaitWords = "Enter this code on the service’s page, then approve the sign-in there. Kivali finishes it here once you do."
 	browserGoWords  = "Sign in on the service’s page and approve the sign-in. The service sends you back here."
 )
+
+// errSignInNotRegistered: a registered client (client: registered),
+// which this version of Kivali does not register.
+const errSignInNotRegistered = "this version of Kivali does not register itself with the service"
 
 // errSignInNoState: a callback of a browser sign-in that carried no
 // OAuth state, matched by the flow's cookie alone.
@@ -78,6 +83,12 @@ func (s *Server) setupSpecFor(v *integrationView, r *http.Request) (setupSpec, *
 			fields: fields, keeps: setupKeys(fields), keep: s.keepConnectionForm,
 		}, nil
 	case integration.MethodDevice, integration.MethodBrowser:
+		// The seam signInClientFor resolves a registered client at:
+		// until Kivali registers itself, the flow is refused before it
+		// starts rather than failing once started.
+		if c.Registered() {
+			return setupSpec{}, &connWriteError{http.StatusConflict, errSignInNotRegistered, whoDevelopers}
+		}
 		ways := s.signInWaysHere(m, r)
 		switch {
 		case len(ways) == 0 && offersBrowser(m):
@@ -94,6 +105,7 @@ func (s *Server) setupSpecFor(v *integrationView, r *http.Request) (setupSpec, *
 		return setupSpec{
 			driver: &signInSetup{s: s, name: v.it.Name, display: v.displayName(), m: m, way: ways[0], polled: make(chan struct{}), keys: setupKeys(fields)},
 			fields: fields, hosts: c.SignInHosts(), keeps: setupKeys(fields), keep: s.keepConnectionForm,
+			vendorWaitPages: true,
 		}, nil
 	case integration.MethodSetup:
 		si, ok := v.builtin.(builtinintegrations.SetupIntegration)
@@ -112,7 +124,7 @@ func (s *Server) setupSpecFor(v *integrationView, r *http.Request) (setupSpec, *
 			}
 			spec.then = &setupSpec{
 				driver: &signInSetup{s: s, name: v.it.Name, display: v.displayName(), m: m, way: then, polled: make(chan struct{})},
-				hosts:  c.SignInHosts(), keep: s.keepSetupValues,
+				hosts:  c.SignInHosts(), keep: s.keepSetupValues, vendorWaitPages: true,
 			}
 		}
 		return spec, nil
@@ -134,10 +146,25 @@ func (s *Server) keepConnectionForm(ctx context.Context, run *setupRun, values m
 		log.Printf("integration %s: read it to keep the connection: %v", run.name, err)
 		return errors.New(errSetupNotKept)
 	}
-	if werr := s.writeConnection(ctx, v, v.first(), apitypes.ConnectionWrite{Fields: values}, false); werr != nil {
+	if werr := s.writeConnection(ctx, v, v.first(), formWrite(v.manifest, values), false); werr != nil {
 		return werr
 	}
 	return nil
+}
+
+// formWrite is a Form's answer as a save of m's connection form: the
+// Form sends every field it asks for, so a secret field left blank is
+// left out, which keeps the value stored, as the page's form does.
+func formWrite(m *integration.Manifest, values map[string]string) apitypes.ConnectionWrite {
+	fields := integration.ConnectionFields(m)
+	out := map[string]string{}
+	for k, v := range values {
+		if f, ok := fields.Field(k); ok && f.Sensitive && v == "" {
+			continue
+		}
+		out[k] = v
+	}
+	return apitypes.ConnectionWrite{Fields: out}
 }
 
 // checkConnectionForm is why values cannot be the integration's one
@@ -148,7 +175,7 @@ func (s *Server) checkConnectionForm(ctx context.Context, name string, values ma
 	if err != nil {
 		return "the integration could not be read; start again"
 	}
-	if _, werr := s.planConnectionWrite(ctx, v, v.first(), apitypes.ConnectionWrite{Fields: values}); werr != nil {
+	if _, werr := s.planConnectionWrite(ctx, v, v.first(), formWrite(v.manifest, values)); werr != nil {
 		return werr.words
 	}
 	return ""
@@ -203,24 +230,28 @@ func (d *signInSetup) checkForm(ctx context.Context, values map[string]string) s
 // resolved here too.
 func (s *Server) signInClientFor(ctx context.Context, name string, m *integration.Manifest, form map[string]string) (connect.Client, bool, error) {
 	if m.Kivali.Connection.Registered() {
-		return connect.Client{}, false, errors.New("this version of Kivali does not register itself with the service")
+		return connect.Client{}, false, errors.New(errSignInNotRegistered)
 	}
-	if form != nil {
-		return connect.Client{ID: form[integration.FieldClientID], Secret: form[integration.FieldClientSecret]}, false, nil
+	entered := connect.Client{ID: form[integration.FieldClientID], Secret: form[integration.FieldClientSecret]}
+	if form != nil && entered.ID != "" && entered.Secret != "" {
+		return entered, false, nil
 	}
+	var stored connect.Client
 	rec, err := s.Store.GetIntegrationConnection(name)
 	switch {
 	case errors.Is(err, store.ErrNotFound):
-		return connect.Client{}, true, nil
 	case err != nil:
 		return connect.Client{}, false, err
+	default:
+		rec, data, err := s.readSignIn(ctx, name, rec.ID)
+		if err != nil {
+			return connect.Client{}, false, err
+		}
+		stored = signInClient(rec, data)
 	}
-	rec, data, err := s.readSignIn(ctx, name, rec.ID)
-	if err != nil {
-		return connect.Client{}, false, err
-	}
-	client := signInClient(rec, data)
-	return client, client.ID == "" || client.Secret == "", nil
+	// A field the owner left blank keeps what is stored.
+	client := connect.Client{ID: cmp.Or(entered.ID, stored.ID), Secret: cmp.Or(entered.Secret, stored.Secret)}
+	return client, form == nil && (client.ID == "" || client.Secret == ""), nil
 }
 
 func (d *signInSetup) Setup(ctx context.Context, _ builtinintegrations.Connection, _ string, last builtinintegrations.Answer, _ builtinintegrations.Progress) (builtinintegrations.Step, error) {

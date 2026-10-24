@@ -2360,9 +2360,10 @@ describe('Integration page, setup flows', () => {
   });
 
   // Guards a flow's Form (setup_flow_form.json): the declared fields under the integration's name, a secret one as a
-  // password field and one used during setup said to be never kept, and Continue posting what was typed to
-  // …/setup/answer. Cancel ends the flow and the panel offers to start again. A Form drawn as text would show a key on
-  // screen; one that posted elsewhere would never reach the flow.
+  // password field and one used during setup said to be never kept, and Continue posting every field it asks for
+  // to …/setup/answer, one left untouched as empty, so the flow reads what was left blank. Cancel ends the flow and
+  // the panel offers to start again. A Form drawn as text would show a key on screen; one that posted elsewhere would
+  // never reach the flow.
   it('draws a form step and answers it', async () => {
     await renderOrg(PATH, { routes: pageRoutes(notSignedIn(['browser']), goSetupFlowForm) });
     await click(block().getByRole('button', { name: 'Sign in' }));
@@ -2373,10 +2374,9 @@ describe('Integration page, setup flows', () => {
     expect(block().getByText('From the key page Used during setup and never kept.')).toBeInTheDocument();
     expect(block().getByLabelText('Account')).toHaveAttribute('type', 'text');
     fireEvent.change(block().getByLabelText('Account'), { target: { value: 'acme' } });
-    fireEvent.change(key, { target: { value: 'pak-123' } });
     routes['POST ' + API + '/setup/answer'] = goSetupFlowRunning;
     await click(block().getByRole('button', { name: 'Continue' }));
-    expect(lastBody('POST', API + '/setup/answer')).toEqual({ fields: { account: 'acme', personal_access_key: 'pak-123' } });
+    expect(lastBody('POST', API + '/setup/answer')).toEqual({ fields: { account: 'acme', personal_access_key: '' } });
     await click(block().getByRole('button', { name: 'Cancel' }));
     expect(called('POST', API + '/setup/cancel')).toBe(true);
     expect(block().getByRole('button', { name: 'Sign in' })).toBeInTheDocument();

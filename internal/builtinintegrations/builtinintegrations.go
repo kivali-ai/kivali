@@ -260,6 +260,14 @@ type Go struct {
 	// calls Setup again at once with Answer.Went, so Setup can follow
 	// with a Wait that checks the service.
 	NoReturn bool
+	// Stateless says the service sends the browser back without the
+	// state it was given (an address fixed when an app was made that
+	// carries none): core accepts a return with no state for this step,
+	// matched by the flow's cookie alone. Without it, a return with no
+	// state fails the flow, since any page the owner visits can make
+	// the browser load the callback with the cookie and a query of its
+	// own.
+	Stateless bool
 }
 
 // Wait is a step that waits for something to happen on the service.
@@ -280,12 +288,16 @@ type Wait struct {
 type Answer struct {
 	// State is the State the last Step carried, as it was.
 	State map[string]string
-	// Form is what the owner entered, by field key, after a Form step.
+	// Form is what the owner entered, by field key, after a Form step:
+	// every key the Form asked for is there, empty for a field left
+	// blank.
 	Form map[string]string
 	// Return is the query the service sent the browser back with,
 	// after a Go step. It is untrusted: the service sent it, but anyone
-	// can make the browser load the callback with any query. Setup
-	// checks it against the service before relying on it.
+	// can make the browser load the callback with any query, and a
+	// callback replayed from an earlier leg (with a state core issued
+	// before) is delivered as the current Go step's Return. Setup checks
+	// it against the service before relying on it.
 	Return url.Values
 	// Checked is true for a Wait step's check: Setup looks at the
 	// service and returns the same Wait to keep waiting, or the next
@@ -294,6 +306,9 @@ type Answer struct {
 	// Went is true after a Go step with NoReturn: the browser was sent,
 	// and nothing came back.
 	Went bool
+	// Leg counts the calls of Setup in this flow, from 1 for the first,
+	// so a driver can tell which call an Answer is for.
+	Leg int
 	// Callback is the address a Go step's service may send the browser
 	// back to, with a state of this flow's in it: what Setup puts in a
 	// manifest's redirect_url or a form's return field. Core issues a
@@ -302,8 +317,8 @@ type Answer struct {
 	// lasts) and accepts, while the flow lives, any
 	// state it issued for the flow, so an address fixed in an earlier
 	// step (a setup URL registered with the app) still comes back to
-	// the flow. A return with no state comes back to the flow by the
-	// browser that started it, all the same.
+	// the flow. A return with no state is accepted only for a Go step
+	// that says Stateless, in the browser that left.
 	Callback string
 }
 

@@ -88,6 +88,10 @@ const (
 	errSetupNoStep    = "setup gave no next step"
 	errSetupManySteps = "setup gave more than one next step"
 	errSetupStopped   = "setup was stopped before it finished; start it again"
+	// errSetupNoState: a callback with no state, matched by the flow's
+	// cookie alone, for a Go step that did not say its service drops
+	// the state (Go.Stateless).
+	errSetupNoState = "the service sent the browser back without its state; start it again"
 )
 
 // setupDriver decides a flow's steps, as SetupIntegration.Setup does:
@@ -119,6 +123,12 @@ type setupSpec struct {
 	// then is the sign-in that takes the flow on once the driver is
 	// Done (kivali.connection.setup.then); nil for none.
 	then *setupSpec
+	// vendorWaitPages is true for the standard device flow, whose Wait
+	// page is the one the manifest's own device endpoint answered with
+	// (verification_uri), not one the integration's code chose: it is
+	// held to https (or loopback http) but not to hosts, since a vendor
+	// may put it on a host none of its endpoints is on.
+	vendorWaitPages bool
 }
 
 // setupFormChecker is a driver that checks a Form's answer before the
@@ -141,6 +151,11 @@ type setupRun struct {
 	spec                    setupSpec
 	ctx                     context.Context
 	cancel                  context.CancelFunc
+	// runs is the table the flow is in.
+	runs *setupRuns
+	// calling counts the calls of runSetupCall not yet returned, with
+	// what each call keeps or shows.
+	calling sync.WaitGroup
 
 	// Guarded by setupRuns.mu.
 	state apitypes.SetupFlowState
@@ -159,9 +174,11 @@ type setupRun struct {
 	// the flow while it lives, since a service may keep an address an
 	// earlier step gave it.
 	legs []string
-	// gen counts the calls: a call's answer is kept only while it is
-	// the latest.
+	// gen counts the calls and the ends: a call's answer is kept only
+	// while it is the latest.
 	gen int
+	// calls counts the calls of the driver, Answer.Leg.
+	calls int
 	// checking is true while a Wait's check is in flight: the owner
 	// still sees the Wait.
 	checking bool
@@ -172,9 +189,52 @@ type setupRun struct {
 }
 
 // setupRuns are the flows, by id. The zero value is ready to use.
+//
+// What a change owes the outside (its audit rows, its state to the
+// streams) is queued under mu with the change and written once mu is
+// released (Server.setupUnlock): the store is never written under mu,
+// and the rows reach the audit in the order their changes were made.
+// A stream is sent a state only once the rows of that state are
+// written, so whoever sees a state can read its audit.
 type setupRuns struct {
 	mu   sync.Mutex
 	runs map[string]*setupRun
+	// pending are audit rows not yet written; dirty, flows whose state
+	// changed since it was last sent to their streams.
+	pending []setupAuditRow
+	dirty   map[*setupRun]struct{}
+	// settleMu orders the writes of what is queued.
+	settleMu sync.Mutex
+}
+
+// setupAuditRow is one flow event for the owner's audit.
+type setupAuditRow struct {
+	name, flow, event string
+	at                time.Time
+	allowed           bool
+}
+
+// setupUnlock releases setupRuns.mu and writes what the changes made
+// under it owe: the audit rows, in order, then the flows' states to
+// their streams. The caller holds mu.
+func (s *Server) setupUnlock() {
+	r := &s.setupRuns
+	r.mu.Unlock()
+	r.settleMu.Lock()
+	defer r.settleMu.Unlock()
+	r.mu.Lock()
+	rows := r.pending
+	r.pending = nil
+	r.mu.Unlock()
+	for _, row := range rows {
+		s.auditAgentCall(row.name, row.at, agent.CEOSlug, row.flow, row.allowed, row.event)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for run := range r.dirty {
+		run.sendLocked()
+	}
+	r.dirty = nil
 }
 
 // ended reports whether run is done or failed.
@@ -253,7 +313,8 @@ func (run *setupRun) wireLocked() apitypes.SetupFlow {
 	}
 	if run.state == apitypes.SetupFlowStateRunning && run.progress != nil {
 		p := *run.progress
-		p.Words = scrub.Replace(p.Words)
+		// Scrubbed whole, then cut, so no piece of a secret is left.
+		p.Words = clipRunes(scrub.Replace(p.Words), signInWordsRunes)
 		out.Progress = &p
 	}
 	switch st := run.step; {
@@ -281,14 +342,24 @@ func (run *setupRun) wireLocked() apitypes.SetupFlow {
 	return out
 }
 
-// publishLocked sends run's state to its streams when it changed.
-// Each stream holds one state at most: a slow one gets the newest.
+// publishLocked queues run's state for its streams when it changed;
+// setupUnlock sends it.
 func (run *setupRun) publishLocked() {
 	b, err := json.Marshal(run.wireLocked())
 	if err != nil || bytes.Equal(b, run.sent) {
 		return
 	}
 	run.sent = b
+	if run.runs.dirty == nil {
+		run.runs.dirty = map[*setupRun]struct{}{}
+	}
+	run.runs.dirty[run] = struct{}{}
+}
+
+// sendLocked sends run's latest state to its streams. Each stream holds
+// one state at most: a slow one gets the newest.
+func (run *setupRun) sendLocked() {
+	b := run.sent
 	for ch := range run.subs {
 		select {
 		case ch <- b:
@@ -323,10 +394,11 @@ func (s *Server) setupStart(name, display, flow string, spec setupSpec, callback
 	now := s.clk().Now()
 	run := &setupRun{
 		id: newSetupFlowID(), name: name, flow: flow, display: display, spec: spec, ctx: ctx, cancel: cancel,
-		changed: now, callback: callback, subs: map[chan []byte]struct{}{},
+		changed: now, callback: callback, subs: map[chan []byte]struct{}{}, runs: &s.setupRuns,
 	}
 	t := &s.setupRuns
 	t.mu.Lock()
+	defer s.setupUnlock()
 	t.pruneLocked(now)
 	var replaced *setupRun
 	if old := t.currentLocked(name); old != nil {
@@ -344,18 +416,18 @@ func (s *Server) setupStart(name, display, flow string, spec setupSpec, callback
 	}
 	// Audited before the first call, whose own rows come after.
 	if replaced != nil {
-		s.auditSetup(replaced, "cancelled", true)
+		s.auditSetupLocked(replaced, "cancelled", true)
 	}
-	s.auditSetup(run, "started", true)
+	s.auditSetupLocked(run, "started", true)
 	s.setupCallLocked(run, builtinintegrations.Answer{}, false)
-	out := run.wireLocked()
-	t.mu.Unlock()
-	return out
+	return run.wireLocked()
 }
 
-// auditSetup appends the owner's audit row of run's event.
-func (s *Server) auditSetup(run *setupRun, event string, allowed bool) {
-	s.auditAgentCall(run.name, s.clk().Now(), agent.CEOSlug, run.flow, allowed, event)
+// auditSetupLocked queues the owner's audit row of run's event, which
+// setupUnlock writes.
+func (s *Server) auditSetupLocked(run *setupRun, event string, allowed bool) {
+	t := &s.setupRuns
+	t.pending = append(t.pending, setupAuditRow{name: run.name, flow: run.flow, event: event, at: s.clk().Now(), allowed: allowed})
 }
 
 // setupCallLocked starts run's next call with ans. A check keeps the
@@ -366,6 +438,8 @@ func (s *Server) auditSetup(run *setupRun, event string, allowed bool) {
 func (s *Server) setupCallLocked(run *setupRun, ans builtinintegrations.Answer, check bool) {
 	run.gen++
 	gen := run.gen
+	run.calls++
+	ans.Leg = run.calls
 	var leg string
 	if check && len(run.legs) > 0 {
 		leg = run.legs[len(run.legs)-1]
@@ -390,11 +464,13 @@ func (s *Server) setupCallLocked(run *setupRun, ans builtinintegrations.Answer, 
 		run.changed = s.clk().Now()
 		run.publishLocked()
 	}
+	run.calling.Add(1)
 	go s.runSetupCall(run, gen, ans)
 }
 
 // runSetupCall is one call of run's driver, gen, off any request.
 func (s *Server) runSetupCall(run *setupRun, gen int, ans builtinintegrations.Answer) {
+	defer run.calling.Done()
 	conn := s.setupConnection(run.ctx, run.name)
 	p := &setupProgress{s: s, run: run, gen: gen}
 	step, err := runBuiltin(run.ctx, s.clk(), setupCallTimeout, func(ctx context.Context) (builtinintegrations.Step, error) {
@@ -450,7 +526,7 @@ func (s *Server) setupApply(run *setupRun, gen int, step builtinintegrations.Ste
 	t := &s.setupRuns
 	t.mu.Lock()
 	if !t.liveLocked(run, gen) {
-		t.mu.Unlock()
+		s.setupUnlock()
 		return
 	}
 	if err == nil {
@@ -458,23 +534,23 @@ func (s *Server) setupApply(run *setupRun, gen int, step builtinintegrations.Ste
 	}
 	if err != nil {
 		s.setupFailLocked(run, err.Error())
-		t.mu.Unlock()
+		s.setupUnlock()
 		return
 	}
-	t.mu.Unlock()
+	s.setupUnlock()
 	if len(step.Keep) > 0 {
 		if err := run.spec.keep(run.ctx, run, step.Keep); err != nil {
 			t.mu.Lock()
 			if t.liveLocked(run, gen) {
 				s.setupFailLocked(run, err.Error())
 			}
-			t.mu.Unlock()
+			s.setupUnlock()
 			return
 		}
 	}
 	t.mu.Lock()
 	if !t.liveLocked(run, gen) {
-		t.mu.Unlock()
+		s.setupUnlock()
 		return
 	}
 	for _, v := range step.Keep {
@@ -505,12 +581,12 @@ func (s *Server) setupApply(run *setupRun, gen int, step builtinintegrations.Ste
 			b.bind(run)
 		}
 		s.setupCallLocked(run, builtinintegrations.Answer{}, false)
-		t.mu.Unlock()
+		s.setupUnlock()
 		return
 	case step.Done:
 		run.state, run.step = apitypes.SetupFlowStateDone, builtinintegrations.Step{}
 		run.cancel()
-		s.auditSetup(run, "done", true)
+		s.auditSetupLocked(run, "done", true)
 	case step.Form != nil:
 		run.state = apitypes.SetupFlowStateForm
 	case step.Go != nil:
@@ -521,7 +597,7 @@ func (s *Server) setupApply(run *setupRun, gen int, step builtinintegrations.Ste
 	}
 	run.publishLocked()
 	gen = run.gen
-	t.mu.Unlock()
+	s.setupUnlock()
 	switch {
 	case startWait && waits:
 		waiter.waiting(run)
@@ -564,6 +640,10 @@ func (spec setupSpec) check(display string, step builtinintegrations.Step) error
 		if !setupURLAllowed(step.Go.URL, spec.hosts) {
 			return fmt.Errorf("%s's setup tried to send your browser to %s, which its manifest does not declare", display, setupURLWords(step.Go.URL))
 		}
+	case step.Wait != nil && step.Wait.URL != "" && spec.vendorWaitPages:
+		if !setupURLSafe(step.Wait.URL) {
+			return fmt.Errorf("%s's sign-in named a page at %s, which is not an https address", display, setupURLWords(step.Wait.URL))
+		}
 	case step.Wait != nil:
 		if step.Wait.URL != "" && !setupURLAllowed(step.Wait.URL, spec.hosts) {
 			return fmt.Errorf("%s's setup named a page on %s, which its manifest does not declare", display, setupURLWords(step.Wait.URL))
@@ -572,25 +652,38 @@ func (spec setupSpec) check(display string, step builtinintegrations.Step) error
 	return nil
 }
 
-// setupURLAllowed reports whether a step may name raw: an https://
-// address, or plain http:// on loopback (a service run in-process in
-// tests), whose host is among hosts.
+// setupURLAllowed reports whether a step may name raw: an address
+// setupURLSafe takes whose host is among hosts. A host listed with a
+// port (a sign-in endpoint's, 127.0.0.1:8443) takes that port alone; a
+// bare host name takes no port, so a declared github.com does not let a
+// step send the browser to github.com:8443.
 func setupURLAllowed(raw string, hosts []string) bool {
+	if !setupURLSafe(raw) {
+		return false
+	}
+	u, _ := url.Parse(raw)
+	if slices.Contains(hosts, strings.ToLower(u.Host)) {
+		return true
+	}
+	return u.Port() == "" && slices.Contains(hosts, strings.ToLower(u.Hostname()))
+}
+
+// setupURLSafe reports whether raw is an address a step may send the
+// browser to at all: an absolute https:// one with no user info, or
+// plain http:// on loopback (a service run in-process in tests).
+func setupURLSafe(raw string) bool {
 	u, err := url.Parse(raw)
 	if err != nil || u.Host == "" || u.User != nil {
 		return false
 	}
 	switch u.Scheme {
 	case "https":
+		return true
 	case "http":
-		if h := u.Hostname(); h != "localhost" && h != "127.0.0.1" && h != "::1" {
-			return false
-		}
-	default:
-		return false
+		h := u.Hostname()
+		return h == "localhost" || h == "127.0.0.1" || h == "::1"
 	}
-	host := strings.ToLower(u.Host)
-	return slices.Contains(hosts, host) || slices.Contains(hosts, strings.ToLower(u.Hostname()))
+	return false
 }
 
 // setupURLHost is raw's host, lower-cased; "" for none.
@@ -621,7 +714,7 @@ func (s *Server) setupFailLocked(run *setupRun, words string) {
 	run.changed = s.clk().Now()
 	run.cancel()
 	run.publishLocked()
-	s.auditSetup(run, "failed: "+words, false)
+	s.auditSetupLocked(run, "failed: "+words, false)
 }
 
 // setupEnd ends run's Wait from its driver (setupWaiter): done when err
@@ -632,10 +725,10 @@ func (s *Server) setupEnd(run *setupRun, err error) {
 	t.mu.Lock()
 	gen := run.gen
 	if !t.liveLocked(run, gen) || run.state != apitypes.SetupFlowStateWait {
-		t.mu.Unlock()
+		s.setupUnlock()
 		return
 	}
-	t.mu.Unlock()
+	s.setupUnlock()
 	s.setupApply(run, gen, builtinintegrations.Step{Done: err == nil}, err)
 }
 
@@ -655,15 +748,15 @@ func (s *Server) setupWaitLoop(run *setupRun, gen int) {
 		now := s.clk().Now()
 		t.pruneLocked(now)
 		if !t.liveLocked(run, gen) || run.state != apitypes.SetupFlowStateWait {
-			t.mu.Unlock()
+			s.setupUnlock()
 			return
 		}
 		if run.watchedLocked(now) {
 			s.setupCallLocked(run, builtinintegrations.Answer{Checked: true}, true)
-			t.mu.Unlock()
+			s.setupUnlock()
 			return
 		}
-		t.mu.Unlock()
+		s.setupUnlock()
 	}
 }
 
@@ -678,13 +771,14 @@ type setupProgress struct {
 func (p *setupProgress) Stage(words string, done, total int) {
 	t := &p.s.setupRuns
 	t.mu.Lock()
-	defer t.mu.Unlock()
+	defer p.s.setupUnlock()
 	if !t.liveLocked(p.run, p.gen) {
 		return
 	}
 	total = max(total, 0)
 	done = min(max(done, 0), total)
-	p.run.progress = &apitypes.SetupFlowProgress{Words: clipRunes(words, signInWordsRunes), Done: done, Total: total}
+	// Kept as given: wireLocked scrubs, then cuts.
+	p.run.progress = &apitypes.SetupFlowProgress{Words: words, Done: done, Total: total}
 	p.run.changed = p.s.clk().Now()
 	p.run.publishLocked()
 }
@@ -694,7 +788,7 @@ func (p *setupProgress) Stage(words string, done, total int) {
 func (s *Server) setupFlowState(name string) (apitypes.SetupFlow, bool) {
 	t := &s.setupRuns
 	t.mu.Lock()
-	defer t.mu.Unlock()
+	defer s.setupUnlock()
 	now := s.clk().Now()
 	t.pruneLocked(now)
 	run := t.currentLocked(name)
@@ -711,7 +805,7 @@ func (s *Server) setupFlowState(name string) (apitypes.SetupFlow, bool) {
 func (s *Server) setupSubscribe(name string) (run *setupRun, initial []byte, ch chan []byte, ok bool) {
 	t := &s.setupRuns
 	t.mu.Lock()
-	defer t.mu.Unlock()
+	defer s.setupUnlock()
 	t.pruneLocked(s.clk().Now())
 	run = t.currentLocked(name)
 	if run == nil {
@@ -730,7 +824,7 @@ func (s *Server) setupSubscribe(name string) (run *setupRun, initial []byte, ch 
 func (s *Server) setupUnsubscribe(run *setupRun, ch chan []byte) {
 	t := &s.setupRuns
 	t.mu.Lock()
-	defer t.mu.Unlock()
+	defer s.setupUnlock()
 	delete(run.subs, ch)
 }
 
@@ -742,15 +836,14 @@ func (s *Server) setupCancel(name string) bool {
 	t.mu.Lock()
 	run := t.currentLocked(name)
 	if run == nil {
-		t.mu.Unlock()
+		s.setupUnlock()
 		return false
 	}
-	ended := run.ended()
-	t.forgetLocked(run)
-	t.mu.Unlock()
-	if !ended {
-		s.auditSetup(run, "cancelled", true)
+	if !run.ended() {
+		s.auditSetupLocked(run, "cancelled", true)
 	}
+	t.forgetLocked(run)
+	s.setupUnlock()
 	return true
 }
 
@@ -768,16 +861,16 @@ func (s *Server) setupAnswer(ctx context.Context, name string, values map[string
 	t.pruneLocked(s.clk().Now())
 	run := t.currentLocked(name)
 	if run == nil {
-		t.mu.Unlock()
+		s.setupUnlock()
 		return &setupAnswerRefusal{404, errSetupNoFlow}
 	}
 	if run.state != apitypes.SetupFlowStateForm || run.step.Form == nil {
-		t.mu.Unlock()
+		s.setupUnlock()
 		return &setupAnswerRefusal{409, "the setup is not asking for a form now"}
 	}
 	asked := run.step.Form.Fields
 	gen, spec := run.gen, run.spec
-	t.mu.Unlock()
+	s.setupUnlock()
 	clean := map[string]string{}
 	var secret []string
 	for _, k := range sortedFieldKeys(values) {
@@ -796,7 +889,7 @@ func (s *Server) setupAnswer(ctx context.Context, name string, values map[string
 		}
 	}
 	t.mu.Lock()
-	defer t.mu.Unlock()
+	defer s.setupUnlock()
 	if !t.liveLocked(run, gen) || run.state != apitypes.SetupFlowStateForm {
 		return &setupAnswerRefusal{409, "the setup is not asking for a form now"}
 	}
