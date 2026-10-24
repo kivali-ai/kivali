@@ -205,6 +205,24 @@ type setupRuns struct {
 	dirty   map[*setupRun]struct{}
 	// settleMu orders the writes of what is queued.
 	settleMu sync.Mutex
+	// calling counts every goroutine the runner and its drivers start
+	// that may write: each call (runSetupCall) and the driver's own
+	// function it runs, each Wait's check loop, and the device flow's
+	// poller (signInSetup.waiting). setupDrain waits for them.
+	calling sync.WaitGroup
+}
+
+// setupDrain cancels every flow and waits for every goroutine of the
+// runner to return. A test's teardown calls it, so nothing writes
+// under a directory being removed.
+func (s *Server) setupDrain() {
+	t := &s.setupRuns
+	t.mu.Lock()
+	for _, run := range t.runs {
+		run.cancel()
+	}
+	t.mu.Unlock()
+	t.calling.Wait()
 }
 
 // setupAuditRow is one flow event for the owner's audit.
@@ -465,15 +483,21 @@ func (s *Server) setupCallLocked(run *setupRun, ans builtinintegrations.Answer, 
 		run.publishLocked()
 	}
 	run.calling.Add(1)
+	s.setupRuns.calling.Add(1)
 	go s.runSetupCall(run, gen, ans)
 }
 
 // runSetupCall is one call of run's driver, gen, off any request.
 func (s *Server) runSetupCall(run *setupRun, gen int, ans builtinintegrations.Answer) {
+	defer s.setupRuns.calling.Done()
 	defer run.calling.Done()
 	conn := s.setupConnection(run.ctx, run.name)
 	p := &setupProgress{s: s, run: run, gen: gen}
+	// The driver's function runs on in its own goroutine when the call
+	// is abandoned (cancelled, past its deadline), and may still write.
+	s.setupRuns.calling.Add(1)
 	step, err := runBuiltin(run.ctx, s.clk(), setupCallTimeout, func(ctx context.Context) (builtinintegrations.Step, error) {
+		defer s.setupRuns.calling.Done()
 		return run.spec.driver.Setup(ctx, conn, run.flow, ans, p)
 	})
 	if run.ctx.Err() != nil {
@@ -602,6 +626,7 @@ func (s *Server) setupApply(run *setupRun, gen int, step builtinintegrations.Ste
 	case startWait && waits:
 		waiter.waiting(run)
 	case startWait:
+		s.setupRuns.calling.Add(1)
 		go s.setupWaitLoop(run, gen)
 	}
 }
@@ -735,6 +760,7 @@ func (s *Server) setupEnd(run *setupRun, err error) {
 // setupWaitLoop checks run's Wait, shown by call gen, every
 // setupWaitEvery while someone watches it, until the flow moves on.
 func (s *Server) setupWaitLoop(run *setupRun, gen int) {
+	defer s.setupRuns.calling.Done()
 	t := &s.setupRuns
 	for {
 		timer := s.clk().NewTimer(setupWaitEvery)

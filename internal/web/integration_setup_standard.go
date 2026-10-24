@@ -324,7 +324,9 @@ func (d *signInSetup) Setup(ctx context.Context, _ builtinintegrations.Connectio
 // until the owner approves, the vendor refuses or the code expires,
 // then keeps the tokens and runs the connection test.
 func (d *signInSetup) waiting(run *setupRun) {
+	d.s.setupRuns.calling.Add(1)
 	go func() {
+		defer d.s.setupRuns.calling.Done()
 		defer close(d.polled)
 		ds := d.device
 		tok, err := d.s.connectEngine().PollDevice(run.ctx, signInEndpoints(d.m), d.client, ds)

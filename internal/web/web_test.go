@@ -43,6 +43,10 @@ func newTestServer(t *testing.T) *Server {
 	if err != nil {
 		t.Fatalf("server: %v", err)
 	}
+	// Cleanups run last first, so the setup runner's goroutines end
+	// before TempDir's removal, registered above, and none writes under
+	// a directory being removed.
+	t.Cleanup(srv.setupDrain)
 	return srv
 }
 
