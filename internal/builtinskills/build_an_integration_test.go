@@ -277,10 +277,10 @@ func TestTryReportsWhatKivaliStopsOrNeverMatches(t *testing.T) {
 	)
 }
 
-// Why this test exists: try.py and the template copy two facts from the
-// shim, the MCP protocol version its initialize names and the longest
-// line it reads from the server. A shim that moved on without them
-// would leave try.py passing a server the pod stops, or the template
+// Why this test exists: try.py and the templates copy two facts from
+// the shim, the MCP protocol version its initialize names and the
+// longest line it reads from the server. A shim that moved on without
+// them would leave try.py passing a server the pod stops, or a template
 // answering with a version Kivali no longer asks for.
 func TestTryAndTheTemplateMatchTheShim(t *testing.T) {
 	files := map[string]string{}
@@ -288,7 +288,7 @@ func TestTryAndTheTemplateMatchTheShim(t *testing.T) {
 		files[f.Path] = string(f.Data)
 	}
 	version := `PROTOCOL_VERSION = "` + integrationpod.ProtocolVersion + `"`
-	for _, p := range []string{"scripts/try.py", "template/server/main.py"} {
+	for _, p := range []string{"scripts/try.py", "template/server/main.py", "template-setup/server/main.py"} {
 		if !strings.Contains(files[p], version) {
 			t.Errorf("%s does not hold %s", p, version)
 		}
