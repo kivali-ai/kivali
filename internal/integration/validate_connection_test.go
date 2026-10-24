@@ -31,11 +31,20 @@ func signInManifest() map[string]any {
 }
 
 // connectionFindings is what the connection section's own check finds
-// in m, without the rest of the manifest's.
+// in m, a bundle's manifest, without the rest of the manifest's.
 func connectionFindings(t *testing.T, m map[string]any) []string {
 	t.Helper()
 	var f Findings
-	validateConnection(parseMap(t, m), &f)
+	validateConnection(parseMap(t, m), false, &f)
+	return f.Texts()
+}
+
+// builtinConnectionFindings is connectionFindings for a built-in's
+// manifest, which may name a setup flow or a registered client.
+func builtinConnectionFindings(t *testing.T, m map[string]any) []string {
+	t.Helper()
+	var f Findings
+	validateConnection(parseMap(t, m), true, &f)
 	return f.Texts()
 }
 

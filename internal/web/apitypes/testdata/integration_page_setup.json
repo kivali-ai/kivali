@@ -1,0 +1,88 @@
+{
+  "summary": {
+    "name": "github",
+    "display_name": "GitHub",
+    "description": "Issues and pull requests on GitHub.",
+    "version": "2.0.0",
+    "status": "not_connected",
+    "enabled": true,
+    "builtin": true,
+    "agents": 0
+  },
+  "author": "Kivali",
+  "hosts": [],
+  "packages": [],
+  "actions": [
+    {
+      "name": "list_issues",
+      "description": "List a repository's open issues."
+    }
+  ],
+  "connection_fields": [],
+  "connection_method": "setup",
+  "sign_in_client": "",
+  "scopes": [],
+  "setup_notes_md": "",
+  "setup": {
+    "summary": "Creates a private GitHub App on your account that may write contents, issues and pull requests, and installs it on the repositories you choose.",
+    "hosts": [
+      "github.com"
+    ],
+    "fields": [
+      {
+        "key": "account",
+        "title": "Account",
+        "words": "Your personal account, or an organization's name",
+        "secret": false,
+        "setup_only": false
+      },
+      {
+        "key": "personal_access_key",
+        "title": "Personal access key",
+        "words": "From the service's key page; used once, never kept",
+        "secret": true,
+        "setup_only": true
+      }
+    ],
+    "keeps": [
+      {
+        "key": "app_id",
+        "words": "The app's id"
+      },
+      {
+        "key": "private_key",
+        "words": "The app's private key, which Kivali signs with to get a token for each call"
+      },
+      {
+        "key": "installation_id",
+        "words": "Where the app is installed"
+      }
+    ],
+    "then": ""
+  },
+  "sign_in_hosts": [],
+  "connections": [],
+  "multiple": false,
+  "connection_test": true,
+  "access": [],
+  "agents_without": [
+    {
+      "slug": "dana",
+      "name": "Dana"
+    }
+  ],
+  "versions": [
+    {
+      "version": "2.0.0",
+      "state": "approved",
+      "published_at": "2026-10-20T09:00:00Z",
+      "published_by": {
+        "slug": "kivali",
+        "name": "Kivali"
+      },
+      "approved_at": "2026-10-20T09:00:00Z",
+      "notes_md": "Ships with Kivali."
+    }
+  ],
+  "can_remove": false
+}

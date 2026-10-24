@@ -48,6 +48,7 @@
     }
   ],
   "connection_method": "device",
+  "sign_in_client": "operator",
   "scopes": [
     "repo",
     "read:org"

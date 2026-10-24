@@ -286,7 +286,7 @@ func validateServer(m *Manifest, files []BundleFile, f *Findings) {
 				f.errorf("server.mcp_config.env.%s: ${%s} is not a connection field; only ${user_config.<key>} is replaced", k, ph[1])
 			case signIn && key == FieldClientSecret:
 				f.errorf("server.mcp_config.env.%s: the client secret is Kivali's; the server asks kivali/credential for the access token", k)
-			case !slices.ContainsFunc(ConnectionFields(m), func(u UserConfigField) bool { return u.Key == key }):
+			case !slices.Contains(ConnectionKeys(m), key):
 				f.errorf("server.mcp_config.env.%s names user_config.%s, which user_config does not declare", k, key)
 			}
 		}
@@ -344,7 +344,7 @@ func validateTools(m *Manifest, f *Findings) []string {
 
 func validateKivali(m *Manifest, tools []string, builtin bool, f *Findings) {
 	k := m.Kivali
-	validateConnection(m, f)
+	validateConnection(m, builtin, f)
 	if k.Connection.Multiple && !builtin {
 		f.errorf("kivali.connection.multiple: a bundle's server takes one connection")
 	}
@@ -412,8 +412,13 @@ var envNameRE = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
 // connection (device, browser) gives the endpoints its method needs,
 // each an https:// address (plain http only on loopback), names the
 // access token for the integration's calls and leaves the client id
-// and secret to core.
-func validateConnection(m *Manifest, f *Findings) {
+// and secret to core, or has core register itself (client registered,
+// with a discover address in place of endpoints); a setup connection
+// declares what its flow may do (validateSetup) and, when the flow hands
+// over to a sign-in, that sign-in's endpoints. builtin says whether the
+// manifest is a built-in's: a bundle's setup flow and a registered
+// client are not in this version of Kivali for a bundle.
+func validateConnection(m *Manifest, builtin bool, f *Findings) {
 	c := m.Kivali.Connection
 	endpoints := []struct{ key, value string }{
 		{"device_endpoint", c.DeviceEndpoint},
@@ -421,21 +426,21 @@ func validateConnection(m *Manifest, f *Findings) {
 		{"token_endpoint", c.TokenEndpoint},
 		{"revocation_endpoint", c.RevocationEndpoint},
 	}
-	switch c.Method {
-	case MethodToken:
-		for _, e := range endpoints {
-			if e.value != "" {
-				f.errorf("kivali.connection.%s: a token connection has no endpoints", e.key)
-			}
-		}
-	case MethodDevice, MethodBrowser:
+	// signIn checks what every connection core signs in needs: the
+	// endpoints of the way (unless core discovers them), the access
+	// token's name, and a user_config that leaves the client id and
+	// secret to core.
+	signIn := func(method string) {
 		need := map[string][]string{
 			MethodDevice:  {"device_endpoint", "token_endpoint"},
 			MethodBrowser: {"authorization_endpoint", "token_endpoint"},
-		}[c.Method]
+		}[method]
 		for _, e := range endpoints {
-			if slices.Contains(need, e.key) && e.value == "" {
-				f.errorf("kivali.connection.%s is missing; a %s connection needs it", e.key, c.Method)
+			switch {
+			case c.Registered() && e.value != "":
+				f.errorf("kivali.connection.%s: Kivali reads a registered client's endpoints from discover, so the manifest gives none", e.key)
+			case !c.Registered() && slices.Contains(need, e.key) && e.value == "":
+				f.errorf("kivali.connection.%s is missing; a %s connection needs it", e.key, method)
 			}
 		}
 		switch key := c.CredentialKey(); {
@@ -449,10 +454,38 @@ func validateConnection(m *Manifest, f *Findings) {
 				f.errorf("user_config.%s: Kivali adds the client id and secret to a sign-in connection's form, so user_config does not declare them", key)
 			}
 		}
+	}
+	switch c.Method {
+	case MethodToken:
+		for _, e := range endpoints {
+			if e.value != "" {
+				f.errorf("kivali.connection.%s: a token connection has no endpoints", e.key)
+			}
+		}
+	case MethodDevice, MethodBrowser:
+		signIn(c.Method)
+	case MethodSetup:
+		if !builtin {
+			f.errorf("kivali.connection.method setup: a bundle's setup flow is not in this version of Kivali")
+		}
+		validateSetup(m, f)
+		switch then := c.ThenMethod(); then {
+		case MethodDevice, MethodBrowser:
+			signIn(then)
+		default:
+			for _, e := range endpoints {
+				if e.value != "" {
+					f.errorf("kivali.connection.%s: a setup connection has endpoints only when setup.then hands over to a sign-in", e.key)
+				}
+			}
+		}
 	case "":
-		f.errorf("kivali.connection.method is missing; it is token, device or browser")
+		f.errorf("kivali.connection.method is missing; it is token, device, browser or setup")
 	default:
-		f.errorf("kivali.connection.method %s is not one Kivali knows; it is token, device or browser", c.Method)
+		f.errorf("kivali.connection.method %s is not one Kivali knows; it is token, device, browser or setup", c.Method)
+	}
+	if c.Method != MethodSetup && c.Setup != nil {
+		f.errorf("kivali.connection.setup: only a setup connection has one")
 	}
 	for _, e := range endpoints {
 		if e.value != "" && !validEndpoint(e.value) {
@@ -460,11 +493,26 @@ func validateConnection(m *Manifest, f *Findings) {
 		}
 	}
 	switch c.Client {
-	case "", "operator":
+	case "", ClientOperator:
+	case ClientRegistered:
+		switch {
+		case c.Method != MethodBrowser:
+			f.errorf("kivali.connection.client registered: only a browser connection has Kivali register itself; the authorization server is found from discover")
+		case !builtin:
+			f.errorf("kivali.connection.client registered is not in this version of Kivali for a bundle; the owner registers the app and the client is operator")
+		}
 	case "kivali":
 		f.errorf("kivali.connection.client: a client Kivali ships is not in this version of Kivali; the owner registers the app and the client is operator")
 	default:
-		f.errorf("kivali.connection.client %s is not one Kivali knows; it is operator", c.Client)
+		f.errorf("kivali.connection.client %s is not one Kivali knows; it is operator or registered", c.Client)
+	}
+	switch {
+	case c.Registered() && c.Discover == "":
+		f.errorf("kivali.connection.discover is missing; a registered client needs the address whose metadata names the authorization server")
+	case c.Registered() && !validEndpoint(c.Discover):
+		f.errorf("kivali.connection.discover: %q must be an https:// address", c.Discover)
+	case !c.Registered() && c.Discover != "":
+		f.errorf("kivali.connection.discover: only a registered client has one")
 	}
 	for _, key := range sortedKeys(c.CredentialKeys) {
 		if key != CredentialAccessToken {
@@ -479,6 +527,98 @@ func validateConnection(m *Manifest, f *Findings) {
 	for _, key := range sortedKeys(c.ExtraAuthorizationParams) {
 		if slices.Contains(reservedAuthorizationParams, key) {
 			f.errorf("kivali.connection.extra_authorization_params.%s: Kivali sets %s itself", key, key)
+		}
+	}
+}
+
+// setupThenMethods is what setup.then may hand over to.
+var setupThenMethods = []string{MethodBrowser, MethodDevice}
+
+// validateSetup checks kivali.connection.setup, what a setup
+// connection's flow may do. Every bound core holds a step to is
+// declared here, for a bundle and a built-in alike: the hosts a Go
+// step may send the browser to, the fields a Form step may ask for,
+// the keys setup may keep, and the sign-in it may hand over to. The
+// connection's values are what setup keeps, so user_config is empty.
+func validateSetup(m *Manifest, f *Findings) {
+	c := m.Kivali.Connection
+	for _, u := range m.UserConfig {
+		f.errorf("user_config.%s: a setup connection's fields are kivali.connection.setup.fields and its values what setup keeps, so user_config is empty", u.Key)
+	}
+	if c.Client != "" {
+		f.errorf("kivali.connection.client: a setup connection's app is the one setup makes; client is not given")
+	}
+	s := c.Setup
+	if s == nil {
+		f.errorf("kivali.connection.setup is missing; a setup connection declares what its flow may do")
+		return
+	}
+	if strings.TrimSpace(s.Summary) == "" {
+		f.errorf("kivali.connection.setup.summary is missing; say what setup does, in words for the owner")
+	}
+	seen := map[string]bool{}
+	for _, h := range s.Hosts {
+		switch {
+		case h == "*":
+			f.errorf("kivali.connection.setup.hosts: * would send the browser anywhere; name the hosts")
+		case h != strings.ToLower(h):
+			f.errorf("kivali.connection.setup.hosts: %s must be lowercase", h)
+		case !ValidHost(h) || strings.ContainsAny(h, "*[]"):
+			f.errorf("kivali.connection.setup.hosts: %q is not a host name; give the host alone, with no scheme, port, path or wildcard", h)
+		case seen[h]:
+			f.errorf("kivali.connection.setup.hosts: %s is listed twice", h)
+		}
+		seen[h] = true
+	}
+	reserved := func(at, key string) bool {
+		switch key {
+		case connect.SecretKeyAccessToken, connect.SecretKeyRefreshToken:
+			f.errorf("%s: Kivali keeps a sign-in's tokens under that key; choose another", at)
+			return true
+		}
+		return false
+	}
+	for _, fld := range s.Fields {
+		at := "kivali.connection.setup.fields." + fld.Key
+		switch {
+		case !configKeyRE.MatchString(fld.Key):
+			f.errorf("%s: the key must be lowercase letters, digits and underscores, starting with a letter", at)
+		case fld.Key == FieldClientID || fld.Key == FieldClientSecret:
+			f.errorf("%s: an app's client id and secret are what setup keeps, not what it asks the owner for", at)
+		case reserved(at, fld.Key):
+		}
+		if strings.TrimSpace(fld.Words) == "" {
+			f.errorf("%s: words are missing; say what to enter and where it comes from", at)
+		}
+		for _, name := range fld.notBool {
+			f.errorf("%s: %s must be true or false", at, name)
+		}
+		if fld.SetupOnly && s.Keeps.Has(fld.Key) {
+			f.errorf("%s is setup_only and also kept; a setup-only value lives in the flow's memory alone", at)
+		}
+	}
+	for _, k := range s.Keeps {
+		at := "kivali.connection.setup.keeps." + k.Key
+		switch {
+		case !configKeyRE.MatchString(k.Key):
+			f.errorf("%s: the key must be lowercase letters, digits and underscores, starting with a letter", at)
+		case (k.Key == FieldClientID || k.Key == FieldClientSecret) && s.Then == "":
+			f.errorf("%s: an app's client id and secret are kept for the sign-in setup.then hands over to; without then they mean nothing to Kivali", at)
+		case reserved(at, k.Key):
+		}
+		if strings.TrimSpace(k.Words) == "" {
+			f.errorf("%s: words are missing; say what the kept value is", at)
+		}
+	}
+	switch {
+	case s.Then == "":
+	case !slices.Contains(setupThenMethods, s.Then):
+		f.errorf("kivali.connection.setup.then %s is not a sign-in Kivali runs; it is browser or device", s.Then)
+	default:
+		for _, key := range []string{FieldClientID, FieldClientSecret} {
+			if !s.Keeps.Has(key) {
+				f.errorf("kivali.connection.setup.keeps.%s is missing; a setup that hands over to a %s sign-in keeps the app's client id and secret for it", key, s.Then)
+			}
 		}
 	}
 }

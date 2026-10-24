@@ -5,7 +5,7 @@ import type { IntegrationVersion } from '../../api/types.gen';
 import { useFrameChrome } from '../../app/chrome';
 import { PageTitle } from '../../app/PageTitle';
 import { Badge, Banner, Button, Dialog, DialogClose, Skeleton, Text } from '../../ds';
-import { Block, Markdown, RollBackDialog, ScopesLine, VersionBadge, actionWords, fieldKindWords, integrationApi, integrationPath, rollBackApi, whenLabel } from './integrationParts';
+import { Block, Markdown, RollBackDialog, ScopesLine, SetupFacts, VersionBadge, actionWords, fieldKindWords, integrationApi, integrationPath, registeredClientLine, rollBackApi, whenLabel } from './integrationParts';
 import { ErrorBanner, formatBytes } from './parts';
 import { useAction, useResource } from './useResource';
 import '../../styles/org.css';
@@ -205,10 +205,18 @@ export function InstallScreen() {
         </Block>
       )}
 
+      {/* A setup connection is made by the integration's own flow, held to what it declares here: that is what the
+          person reads in place of a form. */}
+      {v.setup && (
+        <Block label="Setup">
+          <SetupFacts setup={v.setup} integration={v.display_name} />
+        </Block>
+      )}
+
       <Block label="The connection needs">
         {v.connection_fields.length === 0 ? (
           <Text as="p" variant="caption" tone="muted">
-            Nothing to enter.
+            {v.setup ? 'Nothing to enter: setup makes the connection.' : (registeredClientLine(v.sign_in_client) ?? 'Nothing to enter.')}
           </Text>
         ) : (
           <ul className="app-int-facts">

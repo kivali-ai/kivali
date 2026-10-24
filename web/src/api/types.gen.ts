@@ -1849,10 +1849,19 @@ export interface IntegrationPage {
    */
   connection_fields: ConnectionField[];
   /**
-   * ConnectionMethod is how the connection is made: token, device or
-   * browser. Empty with no version at all.
+   * ConnectionMethod is how the connection is made: token, device,
+   * browser or setup. Empty with no version at all.
    */
   connection_method: string;
+  /**
+   * SignInClient is whose app a sign-in uses: operator, an app you
+   * register and whose client id and secret the connection form
+   * takes; registered, a client Kivali registers itself with the
+   * service, so the form takes neither; setup, the app the
+   * integration's setup flow makes. Empty for a connection that signs
+   * nothing in.
+   */
+  sign_in_client: string;
   /**
    * Scopes is what a sign-in connection asks the vendor for; empty
    * otherwise.
@@ -1865,6 +1874,11 @@ export interface IntegrationPage {
    * it is replaced with the redirect address.
    */
   setup_notes_md: string;
+  /**
+   * Setup is what a setup connection's flow may do, as the manifest
+   * declares it; absent for the other methods.
+   */
+  setup?: IntegrationSetup;
   /**
    * SignInHosts are the hosts of the manifest's OAuth endpoints, each
    * once, sorted: where a sign-in sends the owner's browser and where
@@ -1939,6 +1953,65 @@ export interface IntegrationPage {
 export interface IntegrationAction {
   name: string;
   description: string;
+}
+/**
+ * IntegrationSetup is what a setup connection's flow may do, from the
+ * manifest's kivali.connection.setup: the install screen lists it
+ * before anything runs, and Kivali holds every step of the flow to it.
+ */
+export interface IntegrationSetup {
+  /**
+   * Summary is what setup does, in words.
+   */
+  summary: string;
+  /**
+   * Hosts is every host setup may send your browser to.
+   */
+  hosts: string[];
+  /**
+   * Fields is every field setup may ask you for, in order.
+   */
+  fields: SetupField[];
+  /**
+   * Keeps is every value setup may keep in the connection's Secret,
+   * in order.
+   */
+  keeps: SetupKeep[];
+  /**
+   * Then is the sign-in setup hands over to once it has made the
+   * app: browser or device; empty when setup keeps the connection
+   * itself.
+   */
+  then: string;
+}
+/**
+ * SetupField is one field a setup flow may ask you for.
+ */
+export interface SetupField {
+  key: string;
+  /**
+   * Title is what the field is called on the form.
+   */
+  title: string;
+  /**
+   * Words say what to enter and where it comes from.
+   */
+  words: string;
+  /**
+   * Secret fields are entered as secrets and never shown again.
+   */
+  secret: boolean;
+  /**
+   * SetupOnly fields are used during setup and never kept.
+   */
+  setup_only: boolean;
+}
+/**
+ * SetupKeep is one value a setup flow may keep, in words.
+ */
+export interface SetupKeep {
+  key: string;
+  words: string;
 }
 /**
  * ConnectionField is one field of the connection form, from the
@@ -2336,10 +2409,14 @@ export interface IntegrationVersion {
    */
   runtime: string;
   /**
-   * ConnectionMethod is how the connection is made: token, device or
-   * browser.
+   * ConnectionMethod is how the connection is made: token, device,
+   * browser or setup.
    */
   connection_method: string;
+  /**
+   * SignInClient is whose app a sign-in uses (IntegrationPage's).
+   */
+  sign_in_client: string;
   /**
    * Scopes is what a sign-in connection asks the vendor for; empty
    * otherwise.
@@ -2352,6 +2429,13 @@ export interface IntegrationVersion {
    * address.
    */
   setup_notes_md: string;
+  /**
+   * Setup is what a setup connection's flow may do; absent for the
+   * other methods. Read it before you approve: Kivali sends your
+   * browser only to these hosts, asks only for these fields and keeps
+   * only these values.
+   */
+  setup?: IntegrationSetup;
   /**
    * SignInHosts are the hosts of the manifest's OAuth endpoints, each
    * once, sorted: where a sign-in sends the owner's browser and where

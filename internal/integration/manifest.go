@@ -108,6 +108,24 @@ const (
 	// MethodBrowser: the owner signs in on the vendor's site, which
 	// sends the browser back to Kivali (the authorization code grant).
 	MethodBrowser = "browser"
+	// MethodSetup: the integration's own setup flow makes the
+	// connection, from the steps core runs (Form, Go, Wait), held to
+	// what Connection.Setup declares.
+	MethodSetup = "setup"
+)
+
+// Whose OAuth app signs a browser or device connection in
+// (Connection.Client).
+const (
+	// ClientOperator: the owner registers an app with the vendor and
+	// the connection form takes its client id and secret. Empty is the
+	// same.
+	ClientOperator = "operator"
+	// ClientRegistered: core registers the team as a client with the
+	// vendor's authorization server (RFC 7591), found from the metadata
+	// at Connection.Discover (RFC 9728, RFC 8414). The owner registers
+	// nothing and the form takes no client id or secret.
+	ClientRegistered = "registered"
 )
 
 // The connection fields core adds to the form of a connection made by
@@ -144,10 +162,19 @@ type Connection struct {
 	// PKCE says whether browser sign-in sends a PKCE challenge; nil is
 	// true.
 	PKCE *bool `json:"pkce,omitempty"`
-	// Client is whose OAuth app signs in: "operator" (empty is the
+	// Client is whose OAuth app signs in: ClientOperator (empty is the
 	// same), the app the owner registers and whose id and secret the
-	// connection form takes.
+	// connection form takes, or ClientRegistered, the client core
+	// registers itself.
 	Client string `json:"client,omitempty"`
+	// Discover is, for ClientRegistered, the address whose metadata
+	// names the authorization server: the protected resource's (RFC
+	// 9728) or the authorization server's own (RFC 8414). Core reads the
+	// endpoints there, so the manifest gives none.
+	Discover string `json:"discover,omitempty"`
+	// Setup is, for MethodSetup, what the integration's setup flow may
+	// do. The install screen lists it and core holds every step to it.
+	Setup *Setup `json:"setup,omitempty"`
 	// ExtraAuthorizationParams are added to the vendor's authorization
 	// address as they are.
 	ExtraAuthorizationParams map[string]string `json:"extra_authorization_params,omitempty"`
@@ -156,9 +183,209 @@ type Connection struct {
 	CredentialKeys map[string]string `json:"credential_keys,omitempty"`
 }
 
+// Setup is what a setup connection's flow may do
+// (kivali.connection.setup): the declarations the install screen shows
+// before anything runs, and the bounds core holds every step to. A
+// bundle's setup and a built-in's are held to the same ones.
+type Setup struct {
+	// Summary is what setup does, in words for the owner ("Creates a
+	// private GitHub App on your account that may write contents,
+	// issues and pull requests").
+	Summary string `json:"summary"`
+	// Hosts is every host a Go step may send the browser to, or a Wait
+	// step may name a page on. Lowercase, no scheme, port or path.
+	Hosts []string `json:"hosts,omitempty"`
+	// Fields is every field a Form step may ask for, in the order
+	// declared.
+	Fields SetupFields `json:"fields,omitempty"`
+	// Keeps is every key setup may store in the connection's Secret, in
+	// the order declared. The kept values are the connection's fields,
+	// all secret.
+	Keeps SetupKeeps `json:"keeps,omitempty"`
+	// Then is the standard sign-in setup hands over to once it has
+	// kept the app's client id and secret: MethodBrowser or
+	// MethodDevice, with the vendor's endpoints beside it in the
+	// connection; empty for none.
+	Then string `json:"then,omitempty"`
+}
+
+// SetupField is one field a Form step may ask the owner for.
+type SetupField struct {
+	Key string
+	// Title is what the field is called on the form; empty, the key is
+	// shown in words.
+	Title string
+	// Words say what to enter, and where it comes from.
+	Words string
+	// Secret fields are entered as secrets and never shown again.
+	Secret bool
+	// SetupOnly fields live in the flow's memory alone and are never
+	// kept: a key setup trades for something else.
+	SetupOnly bool
+	// notBool names "secret" or "setup_only" when the manifest gives
+	// either a value that is not a boolean.
+	notBool []string
+}
+
+// SetupFields is a setup's fields, in the manifest's order.
+type SetupFields []SetupField
+
+// Field returns the field with key, if the setup declares one.
+func (s SetupFields) Field(key string) (SetupField, bool) {
+	for _, f := range s {
+		if f.Key == key {
+			return f, true
+		}
+	}
+	return SetupField{}, false
+}
+
+// UnmarshalJSON reads the fields object keeping its order.
+func (s *SetupFields) UnmarshalJSON(b []byte) error {
+	keys, values, err := orderedObject(b)
+	if err != nil {
+		return fmt.Errorf("fields: %w", err)
+	}
+	out := make(SetupFields, 0, len(keys))
+	for _, k := range keys {
+		var aux struct {
+			Title     string          `json:"title"`
+			Words     string          `json:"words"`
+			Secret    json.RawMessage `json:"secret"`
+			SetupOnly json.RawMessage `json:"setup_only"`
+		}
+		if err := json.Unmarshal(values[k], &aux); err != nil {
+			return fmt.Errorf("fields.%s: %w", k, err)
+		}
+		f := SetupField{Key: k, Title: aux.Title, Words: aux.Words}
+		for _, b := range []struct {
+			name string
+			raw  json.RawMessage
+			dst  *bool
+		}{{"secret", aux.Secret, &f.Secret}, {"setup_only", aux.SetupOnly, &f.SetupOnly}} {
+			if len(b.raw) == 0 {
+				continue
+			}
+			if err := json.Unmarshal(b.raw, b.dst); err != nil {
+				f.notBool = append(f.notBool, b.name)
+			}
+		}
+		out = append(out, f)
+	}
+	*s = out
+	return nil
+}
+
+// MarshalJSON writes the fields back as an object in their order.
+func (s SetupFields) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	buf.WriteByte('{')
+	for i, f := range s {
+		if i > 0 {
+			buf.WriteByte(',')
+		}
+		k, _ := json.Marshal(f.Key)
+		v, err := json.Marshal(struct {
+			Title     string `json:"title,omitempty"`
+			Words     string `json:"words"`
+			Secret    bool   `json:"secret,omitempty"`
+			SetupOnly bool   `json:"setup_only,omitempty"`
+		}{f.Title, f.Words, f.Secret, f.SetupOnly})
+		if err != nil {
+			return nil, err
+		}
+		buf.Write(k)
+		buf.WriteByte(':')
+		buf.Write(v)
+	}
+	buf.WriteByte('}')
+	return buf.Bytes(), nil
+}
+
+// SetupKeep is one key setup may store in the connection's Secret, with
+// words for the owner.
+type SetupKeep struct {
+	Key   string
+	Words string
+}
+
+// SetupKeeps is a setup's keeps, in the manifest's order.
+type SetupKeeps []SetupKeep
+
+// Has reports whether key is one setup may keep.
+func (s SetupKeeps) Has(key string) bool {
+	return slices.ContainsFunc(s, func(k SetupKeep) bool { return k.Key == key })
+}
+
+// Keys is every key, in order.
+func (s SetupKeeps) Keys() []string {
+	out := make([]string, 0, len(s))
+	for _, k := range s {
+		out = append(out, k.Key)
+	}
+	return out
+}
+
+// UnmarshalJSON reads the keeps object, each value the key's words,
+// keeping its order.
+func (s *SetupKeeps) UnmarshalJSON(b []byte) error {
+	keys, values, err := orderedObject(b)
+	if err != nil {
+		return fmt.Errorf("keeps: %w", err)
+	}
+	out := make(SetupKeeps, 0, len(keys))
+	for _, k := range keys {
+		var words string
+		if err := json.Unmarshal(values[k], &words); err != nil {
+			return fmt.Errorf("keeps.%s: the value is the key's words", k)
+		}
+		out = append(out, SetupKeep{Key: k, Words: words})
+	}
+	*s = out
+	return nil
+}
+
+// MarshalJSON writes the keeps back as an object in their order.
+func (s SetupKeeps) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	buf.WriteByte('{')
+	for i, k := range s {
+		if i > 0 {
+			buf.WriteByte(',')
+		}
+		key, _ := json.Marshal(k.Key)
+		words, _ := json.Marshal(k.Words)
+		buf.Write(key)
+		buf.WriteByte(':')
+		buf.Write(words)
+	}
+	buf.WriteByte('}')
+	return buf.Bytes(), nil
+}
+
 // SignIn reports whether the connection is made by signing in (device
-// or browser) rather than with a pasted token.
+// or browser) rather than with a pasted token or a setup flow.
 func (c Connection) SignIn() bool { return c.Method == MethodDevice || c.Method == MethodBrowser }
+
+// OAuth reports whether core holds OAuth tokens for the connection and
+// renews them: a sign-in connection, or a setup connection whose flow
+// hands over to a sign-in (Setup.Then).
+func (c Connection) OAuth() bool { return c.SignIn() || c.ThenMethod() != "" }
+
+// ThenMethod is the sign-in a setup connection hands over to
+// (Setup.Then): MethodBrowser or MethodDevice, or "" for a connection
+// that is not a setup one or whose setup keeps the connection itself.
+func (c Connection) ThenMethod() string {
+	if c.Method != MethodSetup || c.Setup == nil {
+		return ""
+	}
+	return c.Setup.Then
+}
+
+// Registered reports whether core registers itself as the vendor's
+// client (ClientRegistered) rather than the owner pasting an app's id
+// and secret.
+func (c Connection) Registered() bool { return c.Client == ClientRegistered }
 
 // Ways is how the owner may sign in, the manifest's method first: a
 // device connection that also gives an authorization endpoint offers
@@ -181,12 +408,14 @@ func (c Connection) Ways() []string {
 }
 
 // SignInHosts are the hosts of the connection's OAuth endpoints (the
-// authorization, token, device and revocation endpoints), lower-cased,
-// each once, sorted: where a sign-in sends the owner's browser and
-// where core takes the tokens from. Empty for a token connection.
+// authorization, token, device and revocation endpoints) and of its
+// discover address, lower-cased, each once, sorted: where a sign-in
+// sends the owner's browser and where core takes the tokens from. Empty
+// for a token connection and for a setup connection that signs nothing
+// in; a setup flow's own hosts are Setup.Hosts.
 func (c Connection) SignInHosts() []string {
 	out := []string{}
-	for _, ep := range []string{c.AuthorizationEndpoint, c.TokenEndpoint, c.DeviceEndpoint, c.RevocationEndpoint} {
+	for _, ep := range []string{c.AuthorizationEndpoint, c.TokenEndpoint, c.DeviceEndpoint, c.RevocationEndpoint, c.Discover} {
 		if h := EndpointHost(ep); h != "" && !slices.Contains(out, h) {
 			out = append(out, h)
 		}
@@ -216,20 +445,43 @@ func (c Connection) UsesPKCE() bool { return c.PKCE == nil || *c.PKCE }
 func (c Connection) CredentialKey() string { return c.CredentialKeys[CredentialAccessToken] }
 
 // ConnectionFields is the connection form: the manifest's user_config
-// followed, for a connection made by signing in, by the two fields core
-// adds, the client id and the client secret of the app the owner
-// registered with the vendor. It is what the page draws, a save writes
-// and a call reads.
+// followed, for a connection made by signing in with an app the owner
+// registers, by the two fields core adds, the client id and the client
+// secret. It is what the page draws, a save writes and a call reads. A
+// registered client's form takes neither (core registers itself), and a
+// setup connection's form is empty: its fields are what its flow asks
+// for and keeps (ConnectionKeys).
 func ConnectionFields(m *Manifest) UserConfig {
 	if m == nil {
 		return nil
 	}
 	out := append(UserConfig{}, m.UserConfig...)
-	if m.Kivali.Connection.SignIn() {
+	if c := m.Kivali.Connection; c.SignIn() && !c.Registered() {
 		out = append(out,
 			UserConfigField{Key: FieldClientID, Type: "string", Title: "Client id", Required: true},
 			UserConfigField{Key: FieldClientSecret, Type: "string", Title: "Client secret", Sensitive: true, Required: true},
 		)
+	}
+	return out
+}
+
+// ConnectionKeys is every key a connection's values may hold, as a
+// call reads them: the connection form's fields (ConnectionFields)
+// and, for a setup connection, the keys its flow keeps.
+func ConnectionKeys(m *Manifest) []string {
+	if m == nil {
+		return nil
+	}
+	out := []string{}
+	for _, f := range ConnectionFields(m) {
+		out = append(out, f.Key)
+	}
+	if c := m.Kivali.Connection; c.Method == MethodSetup && c.Setup != nil {
+		for _, k := range c.Setup.Keeps.Keys() {
+			if !slices.Contains(out, k) {
+				out = append(out, k)
+			}
+		}
 	}
 	return out
 }

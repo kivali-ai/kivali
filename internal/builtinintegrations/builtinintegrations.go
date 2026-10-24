@@ -38,6 +38,7 @@ import (
 	"context"
 	"encoding/json"
 	"io/fs"
+	"net/url"
 
 	"github.com/kivali-ai/kivali/internal/integration"
 	"github.com/kivali-ai/kivali/internal/shelljob"
@@ -179,6 +180,155 @@ type AccessChecker interface {
 // the stored form, which may no longer fit the manifest's.
 type AccessSummarizer interface {
 	AccessSummary(access map[string]any) string
+}
+
+// SetupIntegration is an Integration whose manifest names method setup:
+// its own flow makes the connection, from steps core runs and draws.
+// Core calls Setup in the background, off any request, under a
+// deadline on its clock: first with an Answer holding nothing, then
+// after each step with what that step gave back, until Setup returns a
+// Step that is Done or an error.
+//
+// flow is FlowSetup for installing, or the Fix a Requirement named.
+// conn.Fields holds what earlier steps kept, so a later step reads it
+// back. Every Step is held to the manifest's kivali.connection.setup:
+// a Form may ask only for declared fields, a Go or a Wait may name a
+// page only on a declared host, and Keep may hold only declared keys;
+// a Step that does not keep to that fails the flow. An error's text
+// is shown to the owner, scrubbed of every kept value, and the flow
+// keeps nothing more; a flow that fails or is cancelled before its
+// first Keep leaves the connection as it was.
+type SetupIntegration interface {
+	Integration
+	Setup(ctx context.Context, conn Connection, flow string, last Answer, p Progress) (Step, error)
+}
+
+// FlowSetup is the flow that installs the integration: the one the
+// owner starts from Available.
+const FlowSetup = "setup"
+
+// Step is what the owner does next. Exactly one of Form, Go, Wait or
+// Done is set.
+type Step struct {
+	// Form asks the owner for fields.
+	Form *Form
+	// Go sends the owner's browser to the service and back.
+	Go *Go
+	// Wait shows words and a page, and has core call Setup again with
+	// Checked every few seconds while the owner's page is open.
+	Wait *Wait
+	// Done ends the flow: the connection exists (installing) or the Fix
+	// is made.
+	Done bool
+
+	// Keep is written into the connection's Secret now, under keys the
+	// manifest's setup.keeps declares. A kept value is the connection's
+	// from then on, read back as conn.Fields.
+	Keep map[string]string
+	// State is carried to the next Answer as it is, in core's memory,
+	// for this flow alone: a setup-only field's value, a code to trade
+	// later, where the flow is. Never written anywhere.
+	State map[string]string
+}
+
+// Form is a step the owner fills in. Core draws the fields under the
+// integration's name.
+type Form struct {
+	// Words say what to do, for the owner.
+	Words string
+	// Fields names the fields to ask for, in the order drawn: keys of
+	// the manifest's setup.fields.
+	Fields []string
+}
+
+// Go is a step that sends the owner's browser to the service, by a
+// link (a 303 to URL) or by a form that posts itself (Post to URL, for a
+// service that takes a POST), and expects it back at the callback the
+// Answer gave (Answer.Callback), where the service's query reaches
+// Setup as the next Answer's Return.
+type Go struct {
+	// Words say what the owner will do there.
+	Words string
+	// URL is where the browser goes; its host is one of setup.hosts.
+	URL string
+	// Post, when set, is posted to URL by a form in the owner's browser
+	// instead of a link.
+	Post url.Values
+}
+
+// Wait is a step that waits for something to happen on the service.
+type Wait struct {
+	// Words say what to do, or what is being waited for.
+	Words string
+	// URL is a page for the owner to open meanwhile, on one of
+	// setup.hosts; empty for none.
+	URL string
+}
+
+// Answer is what the last step gave back: Setup reads it and returns
+// the next Step. The first call of a flow gets an Answer with State
+// nil, no Form, no Return and Checked false.
+type Answer struct {
+	// State is the State the last Step carried, as it was.
+	State map[string]string
+	// Form is what the owner entered, by field key, after a Form step.
+	Form map[string]string
+	// Return is the query the service sent the browser back with,
+	// after a Go step. It is untrusted: the service sent it, but anyone
+	// can make the browser load the callback with any query. Setup
+	// checks it against the service before relying on it.
+	Return url.Values
+	// Checked is true for a Wait step's check: Setup looks at the
+	// service and returns the same Wait to keep waiting, or the next
+	// Step.
+	Checked bool
+	// Callback is the address a Go step's service may send the browser
+	// back to for this step, with the flow's state in it: what Setup
+	// puts in a manifest's redirect_url or a form's return field. A
+	// service that returns elsewhere than it was told comes back to the
+	// flow all the same, by the browser that started it.
+	Callback string
+}
+
+// Progress names the stage Setup is at; the page shows it as it runs.
+// done and total give a real progress bar where there is a count,
+// 0 and 0 where there is none.
+type Progress interface {
+	Stage(words string, done, total int)
+}
+
+// RequirementsOf is an Integration with health of its own: rows that
+// are met or not, each with a fix. Core lists its own rows first (an
+// approved version, the connection, a sign-in still accepted, the
+// connection test passing, the integration running), then these. An
+// unmet row is a Needs you item, and its Fix runs a flow through Setup
+// with the same steps as installing. Requirements runs under a request's
+// deadline, concurrently with everything else, and must honour ctx.
+type RequirementsOf interface {
+	Requirements(ctx context.Context, conn Connection) ([]Requirement, error)
+}
+
+// Requirement is one row of an integration's health.
+type Requirement struct {
+	// ID names the row, stable across calls: letters, digits, hyphens
+	// and underscores.
+	ID string
+	// Title is the row in a few words ("Installed on GitHub"); Words
+	// say what is, met or not ("Installed on acme, reaching 12
+	// repositories", "The app is no longer installed on GitHub").
+	Title, Words string
+	Met          bool
+	// Fix is the flow its Fix button runs through Setup, in place of
+	// FlowSetup; "" for a row with nothing to run.
+	Fix string
+}
+
+// Uninstaller is an Integration that undoes its installation on the
+// service: Uninstall is called before core forgets the connection's
+// Secret and drops every agent's access. An error is shown to the
+// owner and leaves the installation as it is.
+type Uninstaller interface {
+	Uninstall(ctx context.Context, conn Connection) error
 }
 
 // ProxySecretKey is the key, in a connection's Secret, of its scoped

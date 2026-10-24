@@ -410,13 +410,59 @@ func signInScopes(m *integration.Manifest) []string {
 	return nonNilStrings(slices.Clone(m.Kivali.Connection.Scopes))
 }
 
-// signInHosts are the hosts m's sign-in connection talks to
-// (Connection.SignInHosts); empty for a token connection.
+// signInHosts are the hosts m's connection signs in at
+// (Connection.SignInHosts); empty for a connection core signs nothing
+// in for.
 func signInHosts(m *integration.Manifest) []string {
-	if m == nil || !m.Kivali.Connection.SignIn() {
+	if m == nil || !m.Kivali.Connection.OAuth() {
 		return []string{}
 	}
 	return m.Kivali.Connection.SignInHosts()
+}
+
+// signInClientWire is whose app m's connection signs in with
+// (IntegrationPage.SignInClient): operator or registered for a sign-in
+// connection, setup for a setup flow that hands over to a sign-in, ""
+// for a connection core signs nothing in for.
+func signInClientWire(m *integration.Manifest) string {
+	if m == nil {
+		return ""
+	}
+	c := m.Kivali.Connection
+	switch {
+	case c.ThenMethod() != "":
+		return integration.MethodSetup
+	case !c.SignIn():
+		return ""
+	case c.Registered():
+		return integration.ClientRegistered
+	}
+	return integration.ClientOperator
+}
+
+// setupWire is what m's setup flow may do, for the install screen and
+// the page; nil for a connection that is not a setup one.
+func setupWire(m *integration.Manifest) *apitypes.IntegrationSetup {
+	if m == nil || m.Kivali.Connection.Method != integration.MethodSetup || m.Kivali.Connection.Setup == nil {
+		return nil
+	}
+	s := m.Kivali.Connection.Setup
+	out := &apitypes.IntegrationSetup{
+		Summary: s.Summary,
+		Hosts:   nonNilStrings(slices.Clone(s.Hosts)),
+		Fields:  []apitypes.SetupField{},
+		Keeps:   []apitypes.SetupKeep{},
+		Then:    s.Then,
+	}
+	for _, f := range s.Fields {
+		out.Fields = append(out.Fields, apitypes.SetupField{
+			Key: f.Key, Title: integration.SetupFieldTitle(f), Words: f.Words, Secret: f.Secret, SetupOnly: f.SetupOnly,
+		})
+	}
+	for _, k := range s.Keeps {
+		out.Keeps = append(out.Keeps, apitypes.SetupKeep{Key: k.Key, Words: k.Words})
+	}
+	return out
 }
 
 // signInPagesOf is, for each way this server offers m's connection, the
@@ -510,9 +556,11 @@ func (s *Server) integrationPage(v *integrationView, r *http.Request) apitypes.I
 		Packages:         integrationPackages(v.manifest),
 		Actions:          integrationActions(v.manifest),
 		ConnectionFields: connectionFields(v.manifest, v.first()),
+		SignInClient:     signInClientWire(v.manifest),
 		Scopes:           signInScopes(v.manifest),
 		SignInHosts:      signInHosts(v.manifest),
 		SignInAt:         signInPagesOf(v.manifest),
+		Setup:            setupWire(v.manifest),
 		Connections:      []apitypes.ConnectionState{},
 		Multiple:         v.multiple(),
 		ConnectionTest:   v.connectionTest(),
@@ -607,9 +655,11 @@ func (s *Server) integrationVersionView(v *integrationView, ver store.Integratio
 		NotesMD:          ver.NotesMD,
 		Runtime:          m.Server.Type,
 		ConnectionMethod: m.Kivali.Connection.Method,
+		SignInClient:     signInClientWire(m),
 		Scopes:           signInScopes(m),
 		SignInHosts:      signInHosts(m),
 		SetupNotesMD:     s.setupNotes(m, r),
+		Setup:            setupWire(m),
 		Hosts:            integrationHosts(m),
 		Packages:         integrationPackages(m),
 		ConnectionFields: connectionFields(m, v.first()),

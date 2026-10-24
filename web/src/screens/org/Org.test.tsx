@@ -43,6 +43,8 @@ import {
   goIntegrationVersionBuiltin,
   goIntegrationVersionShipped,
   goIntegrationVersionSignIn,
+  goIntegrationVersionSetup,
+  goIntegrationPageSetup,
   goIntegrations,
   goNetwork,
   goOrg,
@@ -1337,6 +1339,39 @@ describe('Integration install screen', () => {
     expect(screen.queryAllByRole('button')).toEqual([]);
   });
 
+  // Guards the install screen of a setup connection (integration_version_setup.json): the flow the integration runs
+  // is held to what the manifest declares, and those declarations are the review. Before approving, the owner reads
+  // what setup does, every host it may send the browser to, every field it may ask for (secrets and values used once
+  // marked) and every value it keeps; the connection block says setup makes the connection rather than "Nothing to
+  // enter.", which would read as a connection with nothing behind it.
+  it('lists what a setup flow may do on the install screen', async () => {
+    const SETUP = '/api/v1/org/integrations/github/versions/2.0.0';
+    await renderOrg('/org/integrations/github/versions/2.0.0', { routes: { ['GET ' + SETUP]: goIntegrationVersionSetup } });
+    const setup = within(screen.getByRole('region', { name: 'Setup' }));
+    const declared = goIntegrationVersionSetup.setup!;
+    expect(setup.getByText(declared.summary)).toBeInTheDocument();
+    expect(within(setup.getByRole('list', { name: 'Sends your browser to' })).getAllByRole('listitem').map((li) => li.textContent)).toEqual(declared.hosts);
+    const asks = within(setup.getByRole('list', { name: 'GitHub asks for' }));
+    for (const f of declared.fields) {
+      expect(asks.getByText(f.title)).toBeInTheDocument();
+      expect(asks.getByText(f.words)).toBeInTheDocument();
+    }
+    expect(asks.getAllByText('Secret')).toHaveLength(declared.fields.filter((f) => f.secret).length);
+    expect(asks.getAllByText('Used once, never kept')).toHaveLength(declared.fields.filter((f) => f.setup_only).length);
+    const keeps = within(setup.getByRole('list', { name: 'Keeps' }));
+    for (const k of declared.keeps) {
+      expect(keeps.getByText(k.words)).toBeInTheDocument();
+      expect(keeps.getByText(k.key)).toBeInTheDocument();
+    }
+    const needs = within(screen.getByRole('region', { name: 'The connection needs' }));
+    expect(needs.getByText('Nothing to enter: setup makes the connection.')).toBeInTheDocument();
+    cleanup();
+
+    // A version with no setup draws no such block.
+    await renderOrg('/org/integrations/hubspot/versions/1.3.0');
+    expect(screen.queryByRole('region', { name: 'Setup' })).toBeNull();
+  });
+
   // Guards the install screen of an integration that ships with Kivali as a bundle (integration_version_shipped.json):
   // it runs in a pod of its own and reaches only the hosts its manifest lists, so the owner must see those hosts and
   // the bundle's size as for an upload, not "Reaches the hosts its connection names.", while it still says it ships
@@ -2148,6 +2183,21 @@ describe('Integration page, a connection made by signing in', () => {
     const want = 'Signed in ' + whenLabel(c.sign_in!.signed_in_at!, now) + ' · token refreshes ' + whenLabel(c.sign_in!.expires_at!, now);
     expect(block.getByText(want)).toBeInTheDocument();
     expect(block.queryByText(/^Needs you to sign in again/)).toBeNull();
+  });
+
+  // Guards the page of a setup connection (integration_page_setup.json): what the flow may do is in the Connection
+  // block, so the owner sees where setup will send their browser and what it keeps on the page too, not only on the
+  // install screen they approved weeks ago. A token page draws none of it.
+  it('shows what a setup flow may do on the page', async () => {
+    await renderOrg('/org/integrations/github', { routes: routes(goIntegrationPageSetup) });
+    const block = within(screen.getByRole('region', { name: 'Connection' }));
+    expect(block.getByText(goIntegrationPageSetup.setup!.summary)).toBeInTheDocument();
+    expect(within(block.getByRole('list', { name: 'Sends your browser to' })).getByText('github.com')).toBeInTheDocument();
+    expect(block.getByRole('list', { name: 'GitHub asks for' })).toBeInTheDocument();
+    expect(block.getByRole('list', { name: 'Keeps' })).toBeInTheDocument();
+    cleanup();
+    await renderOrg(PATH);
+    expect(screen.queryByRole('list', { name: 'Keeps' })).toBeNull();
   });
 
   // Guards an address the setup notes give to copy rather than follow, such as GitHub's form for an organization,

@@ -49,6 +49,7 @@
     }
   ],
   "connection_method": "token",
+  "sign_in_client": "",
   "scopes": [],
   "setup_notes_md": "",
   "sign_in_hosts": [],

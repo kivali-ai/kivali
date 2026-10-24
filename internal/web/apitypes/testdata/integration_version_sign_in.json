@@ -13,6 +13,7 @@
   "notes_md": "Adds contacts. Reaches one more host.",
   "runtime": "python",
   "connection_method": "browser",
+  "sign_in_client": "operator",
   "scopes": [
     "content"
   ],

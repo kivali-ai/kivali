@@ -31,6 +31,7 @@ import {
   RollBackDialog,
   signInErrorWords,
   ScopesLine,
+  SetupFacts,
   StatusBadge,
   VersionBadge,
   actionWords,
@@ -1100,6 +1101,8 @@ export function IntegrationPage() {
       <Block label={p.multiple ? 'Connections' : 'Connection'} variant="heading">
         {/* What to do on the vendor's side first, from the manifest; nothing when it has none. */}
         {s.version && <Markdown markdown={p.setup_notes_md} />}
+        {/* What a setup connection's flow may do, from the manifest. */}
+        {s.version && p.setup && <SetupFacts setup={p.setup} integration={s.display_name} />}
         {s.version && p.sign_in_redirect_url && (
           <CopyAddress label="Redirect address" hint="Register this address as the app’s callback URL." url={p.sign_in_redirect_url} />
         )}

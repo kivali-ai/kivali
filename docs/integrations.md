@@ -35,7 +35,7 @@ A bundle that passes opens its **install screen**, which waits for your approval
 - every host it reaches;
 - for an integration you connect by signing in, under **Signs in at**, every host the sign-in talks to: your browser is sent to the service's sign-in page there, so check they are the service's own;
 - the software it installs, if any, under **Software it installs**: Debian packages, fetched from Debian's repositories and installed each time the integration starts, before it runs. An integration uses them to run a tool such as GitHub's `gh` for its actions. Read each name before you approve;
-- every field its connection needs, with the secrets marked;
+- every field its connection needs, with the secrets marked; or, for an integration whose connection its own setup makes, under **Setup**: what setup does, every host it may send your browser to, every field it may ask you for (secrets, and values used once and never kept, marked) and every value it keeps. Kivali holds setup to that list, so read it as you would the hosts;
 - every action it gives agents;
 - what its access form asks, or that access is all or nothing;
 - the bundle's size, and anything the check noticed.
