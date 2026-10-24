@@ -58,7 +58,7 @@ Your agents' access stays as it is. Access that no longer fits the earlier versi
 
 ## Connect it
 
-On the integration's page, fill in the connection and choose **Save connection**. The form is the approved version's, so approve a version first.
+On the integration's page, choose **Connect**. It asks for the connection's fields, under the integration's name; fill them in and choose **Continue**. The fields are the approved version's, so approve a version first. **Cancel** stops, keeping nothing. Once the integration is connected, its page shows the connection form, where you change a field and choose **Save connection**.
 
 Secret fields, such as tokens, are never shown again once saved: the page says only that they are set. To change one, type the new value; leave it empty to keep the one stored. They are kept outside your team's data volume, so [backups](backup-and-restore.md) never contain them. After a restore, an integration whose secrets are not there shows **Reconnect needed** until you enter them again.
 
@@ -73,11 +73,11 @@ Saving a connection restarts the integration with the new values, which takes a 
 Some services hand out no token to paste: you connect them by signing in to the service and approving Kivali there. The integration's page says so and shows the service's own setup steps above the connection form. When the integration asks the service for particular scopes, its install screen and page list them ("Asks the service for: ..."); one whose app's own settings decide what it may do, such as a GitHub App, lists none.
 
 1. Register an app with the service, as its setup steps say (on GitHub, a GitHub App under Settings, Developer settings, with device flow turned on). The service gives the app a client id and a client secret.
-2. On the integration's page, paste the client id and the client secret into the connection form, with any other field it asks for, and choose **Save connection**. The client secret is kept like any other secret field and never shown again.
-3. Under **Sign in**, choose **Sign in with a code**. The page shows a code, a **Copy code** button, the service's page to enter it on (it opens in a new tab), and how long the code works, at most ten minutes.
+2. On the integration's page, choose **Connect**, paste the client id and the client secret, with any other field it asks for, and choose **Continue**. The client secret is kept like any other secret field and never shown again. Once the connection is saved, **Sign in with a code** under **Sign in** starts a sign-in without asking again.
+3. The page shows a code, a **Copy code** button, the service's page to enter it on (it opens in a new tab), and how long the code works, at most ten minutes.
 4. Enter the code on the service's page and approve the sign-in there. The integration's page notices within a few seconds and shows **Signed in**, with the account you signed in as when the integration has a connection test. The integration restarts with the sign-in, which takes a few seconds.
 
-If you turn the sign-in down on the service's page, or the code runs out before you approve it, the page says so and offers **Try again**. A sign-in waits in Kivali's memory only: if Kivali restarts meanwhile, start it again. Saving the connection with a new client id or secret ends a sign-in that is waiting, since it was started with the old ones.
+If you turn the sign-in down on the service's page, or the code runs out before you approve it, the page says why and offers **Try again**; **Cancel** stops a sign-in that waits. A sign-in waits in Kivali's memory only: if Kivali restarts meanwhile, start it again. Saving the connection with a new client id or secret ends a sign-in that is waiting, since it was started with the old ones.
 
 #### In your browser
 
@@ -85,10 +85,10 @@ Some services sign in in your browser instead of with a code (HubSpot, Slack, No
 
 1. Open the integration's page at the address you will keep using for Kivali. Above the connection form, the page shows a **Redirect address**, with **Copy**: Kivali's address as your browser reaches it, followed by `/connect/callback`. It is the same for every integration.
 2. Register an app with the service, as its setup steps say, and enter that redirect address exactly as the app's callback URL (some services call it the redirect URL). The service gives the app a client id and a client secret.
-3. Paste the client id and the client secret into the connection form and choose **Save connection**.
-4. Under **Sign in**, which names the host it sends you to ("Signs in at app.hubspot.com"), choose **Sign in**. The page takes you to the service, where you approve Kivali; the service sends you back to the integration's page, which says **Signed in**.
+3. Choose **Connect**, paste the client id and the client secret, and choose **Continue**. Once the connection is saved, **Sign in** under **Sign in**, which names the host it sends you to ("Signs in at app.hubspot.com"), starts a sign-in without asking again.
+4. Choose **Continue to** the service's host. The page takes you to the service, where you approve Kivali; the service sends you back to the integration's page, which finishes the sign-in and says **Signed in**.
 
-The sign-in finishes in the browser that started it, signed in to Kivali: if Kivali asks you to sign in on the way back, do, and the sign-in carries on. If you turn it down, take longer than ten minutes, or come back in another browser, the page says why and offers **Try again**. One browser sign-in at a time: starting another in the same browser, for any integration, ends the one before, and its page says so.
+The sign-in finishes in the browser that went to the service, signed in to Kivali: if Kivali asks you to sign in on the way back, do, and the sign-in carries on. If you turn it down, take longer than ten minutes, or come back in another browser, the page says why and offers **Try again**. One browser sign-in at a time: going to a service from the same browser for another integration ends the one before, and its page says so.
 
 Services check the redirect address exactly, character for character, and set rules for it:
 
@@ -97,7 +97,7 @@ Services check the redirect address exactly, character for character, and set ru
 
 A Kivali server you run yourself therefore needs a real host name with a certificate for browser sign-in. Tailscale is the easy way: its MagicDNS name for the server, under `ts.net`, is a real name with a certificate Tailscale issues, reachable only from your tailnet. [Self-hosting](self-hosting.md#sign-in-to-integrations-in-the-browser) says how.
 
-**In Kivali Desktop**, **Sign in** opens your computer's default browser, not the team's window, which many services refuse to sign in inside. The browser arrives already signed in to the team, goes on to the service, and comes back to the integration's page there; the team's window says **Signed in** within a few seconds, and you can close the browser tab. While it waits, the team's window offers **Start again**, for a browser that did not open.
+**In Kivali Desktop**, **Continue to** the service opens your computer's default browser, not the team's window, which many services refuse to sign in inside. The browser arrives already signed in to the team, goes on to the service, and comes back to the integration's page there; the team's window says **Signed in** within a few seconds, and you can close the browser tab. While it waits, the team's window keeps **Continue to** the service, for a browser that did not open.
 
 For a team on your computer, the redirect address is the team's own address there, `http://127.0.0.1:<port>/connect/callback`, with the port the page shows:
 
@@ -220,9 +220,9 @@ GitHub is connected by [signing in](#connect-by-signing-in) with a GitHub App yo
 
 1. Open GitHub's form for a new GitHub App from the page: **Register the app on your personal account**, or, for an organization, copy the address the page gives, put the organization's name in place of `ORGANIZATION` and open it. The form opens filled in: the team's callback URLs, the webhook off, installation only on that account, and the repository permissions Contents and Metadata read-only, Issues and Pull requests read and write.
 2. Give the app a name, tick **Enable Device Flow**, and choose **Create GitHub App**.
-3. Paste its client id and a client secret you generate into the connection form, and choose **Save connection**.
-4. Install the app on the account, for the repositories agents should reach. Agents reach only repositories the app is installed on.
-5. Choose **Sign in** and approve the sign-in on GitHub. In Kivali Desktop's window for a team on another computer, the page offers **Sign in with a code** instead, which is what **Enable Device Flow** is for: enter the code on GitHub's page.
+3. Install the app on the account, for the repositories agents should reach. Agents reach only repositories the app is installed on.
+4. Choose **Connect**, paste the app's client id and a client secret you generate, and choose **Continue**.
+5. Choose **Continue to github.com** and approve the sign-in on GitHub. In Kivali Desktop's window for a team on another computer, the page shows a code instead, which is what **Enable Device Flow** is for: enter the code on GitHub's page.
 
 The callback URLs are the addresses GitHub may send your browser back to after a sign-in: the one you opened the page at, `http://127.0.0.1/connect/callback` (any port, for a team in Kivali Desktop), and the team's address for other computers when it has one. If you give the team an address for other computers later (**Other devices** in Kivali Desktop), or change it, add that address followed by `/connect/callback` to the app's callback URLs on GitHub, or a sign-in from there ends on GitHub's error page.
 

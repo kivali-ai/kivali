@@ -652,6 +652,180 @@ scrubbed with another connection's. The audit lists what is in
 `audit.jsonl`, which these calls and agents' calls
 ([The audit](#the-audit)) append to.
 
+## Setup flows
+
+Every connection is made by a setup flow: a run of steps the owner
+takes, which core runs and draws (`internal/web/integration_setup.go`).
+What decides each step is the flow's driver: for a `setup` connection,
+the built-in's `SetupIntegration.Setup` ([The interface](#the-interface));
+for `token`, `device` and `browser`, one of core's standard flows
+(`internal/web/integration_setup_standard.go`):
+
+- `token`: a Form of the connection form (`integration.ConnectionFields`),
+  then Keep, saved as `PUT .../connection` saves it, and Done. The
+  answer is checked as a save checks it before the flow goes on: a
+  required field with no value, a value of the wrong type or the
+  built-in's `CheckConnection` is a 400, and the flow stays on its Form.
+- `device` and `browser`: [Signing in](#signing-in).
+
+A flow works on the integration's one connection, the oldest, made
+when there is none. `PUT .../connection` stays for editing a saved
+connection.
+
+### Flows
+
+A flow lives in the server's memory (`Server.setupRuns`), never in the
+store, at most one per integration: a new start ends the one before
+(audited as cancelled). Its id is 16 random bytes in hex, which Kivali
+Desktop checks at `/connect/start`. It is forgotten `setupFlowTTL` (ten
+minutes, on the server's clock) after its last change: a step nobody
+takes in that time ends with it, a Wait whose check finds nothing new
+is no change, and a flow that ended is kept that long for the page to
+read. A device sign-in's Wait is kept while core polls the vendor,
+which stops at the code's own expiry. Deleting the connection,
+disconnecting, removing the integration, switching it off, Sign out and
+a save of the form with a new client id or secret cancel it, audited;
+a restart loses it, and `GET .../setup` then answers 404 and the page
+offers to start again.
+
+The driver is called off any request, one call at a time per flow,
+under `setupCallTimeout` (five minutes) on the server's clock, with its
+panics recovered (`runBuiltin`): first with an empty Answer, then after
+each step with what it gave back. A call that does not finish in time
+fails the flow ("setup did not finish its step within 5 minutes; start
+it again"), and so does an error, whose words the owner reads. A call
+whose flow was cancelled or replaced meanwhile is dropped. Every
+Answer carries `Callback`: `<scheme>://<host>/connect/callback?state=<state>`,
+the address being what `signInRedirectURL` computes from the request
+that started the flow, last answered it or came back to it, and the
+state a fresh one for each call (a Wait's check is given the latest
+again), any of which finds the flow while it lives.
+
+### Steps
+
+Each Step is held to the declarations before anything of it is kept:
+for a `setup` connection, `kivali.connection.setup`; for the standard
+flows, the connection form's fields, the manifest's sign-in hosts
+(`SignInHosts`) and the form's keys. A step that is none or several of
+Form, Go, Wait and Done, a Form asking for an undeclared field, a Go or
+a Wait naming a page that is not `https://` (plain `http://` only on
+loopback, for a service run in-process in tests) or not on a declared
+host, and a Keep holding an undeclared key fail the flow in words that
+say what it tried ("Echo's setup tried to send your browser to
+evil.example, which its manifest does not declare").
+
+- **Form.** The page draws the step's fields under the integration's
+  name ("GitHub asks for"), a secret one as a password field, a
+  setup-only one said to be never kept. `POST .../setup/answer` hands
+  what the owner entered, trimmed, to the next call as `Answer.Form`;
+  a key the step does not ask for is a 400, and an answer while the
+  flow is not on a Form a 409. A setup-only value lives in the flow's
+  memory alone (the driver may carry it in `State`) and is never
+  written.
+- **Go.** The page sends the browser to `GET /connect/start?flow=<id>`
+  (`step.start_url`), which sets the flow's cookie for this leg and
+  sends the browser on to the step's address: a 303 for a link, or for
+  `Go.Post` a small page whose form posts the values there and submits
+  itself on load, with a Continue button for a browser that runs no
+  scripts (`no-store`, `no-referrer`, a CSP of `default-src 'none'`,
+  its one script by hash and `form-action` the address's origin,
+  nothing loaded). The service sends the browser back to
+  `GET /connect/callback` ([Coming back](#coming-back)). A Go with
+  `NoReturn` (a settings page that sends the browser nowhere) sets no
+  cookie: `/connect/start` sends the browser and calls the driver again
+  at once with `Answer.Went`, and the page opens it in a new tab so it
+  stays to follow the flow.
+- **Wait.** The page shows the words, a code to copy (`Wait.Code`) and
+  the service's page. While someone watches the flow (a stream open on
+  it, or a read of its state in the last `setupWatchWindow`, ten
+  seconds), core calls the driver with `Answer.Checked` every
+  `setupWaitEvery` (three seconds) on the server's clock; nothing is
+  checked for a flow nobody is watching. The check keeps the Wait on
+  the page until it answers.
+- **Done.** The connection is made; the page reads itself again.
+
+`Progress.Stage` sets what the page shows while a call runs: the words,
+and a real progress bar where there is a count (`done` of `total`).
+
+### Keep
+
+`Step.Keep` is written before the step is shown, under
+`lockIntegrations`, unless the flow was cancelled meanwhile: a `setup`
+connection's into the connection's Secret beside what it holds, the
+connection made when there is none and the keys recorded as its secret
+keys (`keepSetupValues`); a standard flow's as a save of the form
+writes it (`keepConnectionForm`). A write that fails fails the flow.
+`State` is carried to the next Answer as it was, in memory, for this
+flow alone.
+
+### Scrubbing and the audit
+
+Every kept value, every secret or setup-only value the owner entered,
+every `State` value six characters or longer, each call's state and a
+standard flow's own secrets (the client secret, a device code, the
+OAuth state and verifier, the code and the tokens) are replaced by
+`[secret]`, whole, in the flow's error words, progress words and
+steps, in the audit and in what core logs of the flow, before any of
+them is cut to 200 runes.
+
+The owner's audit gains one row per flow event under the owner's name
+(`ceo`), with the flow's name as its action (`setup`): `started`,
+`returned` (a Go came back), `done`, `failed: <words>` (not allowed),
+`cancelled`. Never a code, key or token.
+
+### Coming back
+
+`GET /connect/callback` is on the protected mux, behind the session
+middleware: a browser not signed in to Kivali is sent to `/login` with
+the whole callback address, query included, as `next`, and comes back
+to it once signed in. It is a GET that changes things, as OAuth has it.
+Nothing of its query is logged. It finds the flow by the query's
+`state`, any state the flow issued (a constant-time compare), or, with
+no `state`, by the flow cookie alone when that flow is on a Go step.
+The cookie, `kivali_connect` (`kivali_connect_<suffix>` with
+`KIVALI_COOKIE_SUFFIX`), is set by `/connect/start` for each leg:
+`Path=/`, host-only, `HttpOnly`, `SameSite=Lax` (the service's redirect
+back is a cross-site top-level GET), `Secure` when the callback address
+is `https`, twenty minutes, its value `connect:<flow id>:<integration>`
+signed with the session codec (`Server.SessionCodec`, else the session
+middleware's, else a key the process makes once). One browser holds
+one: a Go started in it ends the flow on a Go step its cookie named,
+failed with "another setup was started in this browser; start this one
+again".
+
+- A flow on its Go step whose cookie names it: the whole query goes to
+  the next call as `Answer.Return`, audited as returned, the cookie is
+  dropped, and the browser goes to `/org/integrations/<name>?setup=<id>`.
+- A cookie that is missing, not signed by Kivali or names another flow:
+  the flow fails with "this came back to a different browser than the
+  one that left; start it again".
+- A flow not on a Go step (ended meanwhile, or the callback replayed):
+  nothing runs, and the browser goes to its page.
+- No flow: to the page of the integration the cookie names, with its
+  flow id, or to `/org/integrations?sign_in_error=start_again`.
+
+The address never carries words: anyone can link the owner to the page
+with any query. The page reads `?setup=<id>` once, takes it off the
+address and reads the flow from `GET .../setup`; with none it says the
+setup is no longer under way and offers to start again.
+`Answer.Return` is untrusted for the same reason: the driver checks it
+against the service before relying on it.
+
+### The routes and the stream
+
+`POST .../setup` (`SetupFlowStart`, `{"flow": "setup"}`) starts the
+flow and answers its state (`SetupFlow`); a Fix's flow name is a 409
+until requirements exist. `GET .../setup` answers the state, `POST
+.../setup/answer` (`SetupFlowAnswer`) answers a Form, `POST
+.../setup/cancel` ends the flow, and `GET .../setup/stream` is an SSE
+stream of the state: `retry: 1500`, the state at once as a `flow`
+event, each change after (byte-equal states are not sent again; a slow
+reader gets the newest), a `: heartbeat` comment every 25 seconds, and
+the end of the stream when the flow is forgotten. A stream counts as
+watching the flow. The page (`SetupFlowPanel`) follows the stream, and
+asks `GET .../setup` every three seconds while the tab is visible where
+it has no stream.
+
 ## Sign-in connections
 
 A connection made by signing in ([The connection section](#the-connection-section))
@@ -691,12 +865,9 @@ first, those that work from where the request came from:
 does, `signed_in`, and while signed in `method`, `signed_in_at` and
 `expires_at`, or the `error`. The page draws "Signed in <when> · token
 refreshes <when>", or "Needs you to sign in again: <error>", and under
-the form a **Sign in** block: one button for the first of `ways` (once
-the client id and secret are saved), the code and the service's page while a
-sign-in waits, Signed in with the connection test's words and Sign
-out, or a failed sign-in's words and Try again. The sign-in routes'
-shapes are `DeviceSignIn` and `SignInProgress` (`state`: `pending`,
-`done`, `failed`, `expired`; `error`).
+the form a **Sign in** block: Signed in with the connection test's
+words and Sign out, or the sign-in's [setup flow](#setup-flows) for
+the first of `ways`.
 
 ### The credential path
 
@@ -765,21 +936,20 @@ credential is next answered. A caller that holds `lockIntegrations`
 
 ### Signing in
 
-The page signs a connection in through the routes in
-[The API](#the-api) (`internal/web/integration_signin_flows.go`), each
-in a singular form that acts on the integration's one connection, the
-oldest, and a plural one under `.../connections/{id}`. The page is
-offered the ways `ConnectionSignIn.ways` lists (`Server.signInWaysHere`):
-the manifest's `Connection.Ways`, kept to those this server signs in by
-(`signInWaysOffered`: `device` and `browser`), and to browser only where a
-browser sign-in started by that request can finish
+A sign-in is a standard [setup flow](#setup-flows), run on the same
+runner as an integration's own (`signInSetup`,
+`internal/web/integration_setup_standard.go`). The page is offered the
+ways `ConnectionSignIn.ways` lists (`Server.signInWaysHere`): the
+manifest's `Connection.Ways`, kept to those this server signs in by
+(`signInWaysOffered`: `device` and `browser`), and to browser only
+where a browser sign-in started by that request can finish
 (`browserSignInHere`):
 
 - At a loopback address: in a browser, or in Kivali Desktop's window,
   which hands it to the system browser at the same address ([In Kivali
   Desktop](#in-kivali-desktop)).
 - At the team's external address (`KIVALI_EXTERNAL_URL`), the request's
-  redirect address equal to `https://<host>/connect/callback`, and not
+  callback address equal to `https://<host>/connect/callback`, and not
   from Kivali Desktop's window: a request carrying the
   `kivali_desktop_window=1` cookie, which Desktop's team web view sets
   (`TEAM_WINDOW_SCRIPT`) and no browser has. That window, for a team
@@ -792,160 +962,88 @@ the team, the vendor would send the browser back to an address its app
 may not know and end on its own error page. The cookie can be set by
 anyone; all it changes is which way is offered.
 
-The page offers one button, for the first of `ways`: **Sign in** for
-browser, **Sign in with a code** for device, so a manifest offering both
-shows the browser where it can finish and the code where it cannot. A
-browser-only connection read where browser sign-in cannot finish has no
-`ways`, `browser_elsewhere` true and `open_at` the team's external origin
-(`https://<host>`) when it has one; the page says signing in does not work
-from there and gives that address, with Copy, to open in a browser. The
-page's `sign_in_redirect_url` and each connection's `redirect_url` are
-there only where browser is offered.
+`POST .../setup` of a sign-in connection runs the first of those ways
+(the page's one button says which: **Sign in** for browser, **Sign in
+with a code** for device), so a manifest offering both signs in in the
+browser where it can finish and with the code where it cannot. With
+none, the start is a 409: `errSignInNotHere` for a browser-only
+connection read where browser sign-in cannot finish (the page says
+signing in does not work from there and gives `open_at`, the team's
+external origin, with Copy, to open in a browser), else "this version
+of Kivali has no way to sign in to <integration>". A connection signed
+in is a 409 too ("the connection is signed in; sign out first"); one
+whose refresh the vendor refused may sign in again, which is how the
+owner mends it. The page's `sign_in_redirect_url` and each
+connection's `redirect_url` are there only where browser is offered.
 
-A sign-in under way is a `signInFlow` in the server's memory
-(`Server.signInFlows`), never in the store:
+The flow's steps:
 
-| Kept | What |
-| --- | --- |
-| Key | A random id (16 bytes, hex). |
-| Per connection | At most one: a new start cancels and forgets the one before. |
-| State | `pending`, then `done`, `failed` (the vendor's words) or `expired`. |
-| Life | Pending until its code expires: the vendor's `expires_in`, at most `signInFlowTTL` (ten minutes) on the server's clock, which is also the expiry the page is given; a browser sign-in, `signInFlowTTL` from its start. Kept `signInFlowTTL` once it ended, for the page to read, then forgotten. |
-| Browser sign-in's own | `browserFlow`: the OAuth state (32 random bytes, base64url), the PKCE verifier and the redirect address the vendor was given. `taken` once a callback found it. |
-| Ends early | Deleting the connection, disconnecting, removing the integration, switching it off, Sign out and a save of the form with a new client id or secret cancel its flows; a cancelled flow keeps nothing. |
-| After a restart | Gone. `GET .../sign-in` answers `expired` with words that say so, and the page offers Try again. |
-
-A device sign-in (`POST .../sign-in/device`):
-
-1. Under `lockIntegrations`, the route checks the integration
-   (approved, a sign-in connection, on, offering device sign-in), the
-   connection (it needs a sign-in: never signed in, its tokens gone, or
-   a refused refresh to mend) and that the client id (record) and
-   client secret (Secret) are stored.
-2. Outside the lock, `Engine.StartDevice` posts the client id and the
-   manifest's scopes to the device endpoint. An answer with no code, or
-   whose verification addresses are not absolute http(s) ones, is
-   refused. The answer's expiry is cut to ten minutes. Under the lock
-   again, the route reads the connection anew and repeats the checks
-   of step 1 that may have changed meanwhile (the connection there,
-   the integration on, the connection needing a sign-in), then
-   registers the flow and answers `DeviceSignIn`
-   (`user_code`, `verification_url`, `verification_url_complete` when
-   the vendor gives one, `expires_at`).
-3. A goroutine runs `Engine.PollDevice` with the flow's context on the
-   server's clock: the vendor's interval, five seconds more for good on
-   each `slow_down`, until the code expires.
-4. On approval (`finishSignIn`), under `lockIntegrations`, the tokens
-   go to the connection's Secret beside its other values (no refresh
-   token in the answer drops a stored one), and the record gets
-   `sign_in` (`method: device`, `signed_in_at`, `expires_at`, `lifetime`
-   when the vendor gave an expiry, `scope`)
-   with any refused refresh's `error` gone, which clears the
-   [Needs you](#needs-you-sign-in-again) row, and the last connection
-   test cleared. The owner's audit gains `sign_in` (agent `ceo`,
-   allowed). `ConnectionChanged` restarts the bundle's server, which
-   asks `kivali/credential` again and starts with the token (a server
-   started while the connection needed a sign-in has empty values).
-   A flow cancelled meanwhile, a connection gone, or a Secret or record
-   that cannot be written keeps nothing and revokes the new tokens,
-   best effort (a write that failed ends the flow `failed`).
+1. When the integration has no connection, or its client id (record)
+   or client secret (Secret) is not stored, a **Form** of the
+   connection form (`integration.ConnectionFields`: the manifest's
+   `user_config`, then the client id and secret, the secret marked
+   secret). The answer is checked as a save of the form checks it
+   (`planConnectionWrite`; a refusal is a 400 and the flow stays on its
+   Form) and kept as a save keeps it (`writeConnection`), the
+   connection made when there is none. The client is resolved by
+   `signInClientFor`: a pasted client id from the record, or one a
+   setup flow kept from the Secret, and the secret from the Secret. A
+   registered client (`client: registered`) is resolved there too; this
+   version of Kivali does not register itself, and says so.
+2. Device: `Engine.StartDevice` posts the client id and the manifest's
+   scopes to the device endpoint (an answer with no code, or whose
+   verification addresses are not absolute http(s) ones, is refused;
+   the vendor's refusal fails the flow in its words). The code's expiry
+   is cut to ten minutes. The step is a **Wait** with the code
+   (`Wait.Code`) and the service's page (`verification_uri_complete`
+   when the vendor gives one), on one of the manifest's sign-in hosts.
+   It is never checked: core's poller (`signInSetup.waiting`) runs
+   `Engine.PollDevice` on the flow's context and the server's clock, at
+   the vendor's interval, five seconds more for good on each
+   `slow_down`, until the code expires, and the flow is kept while it
+   polls. Approval keeps the tokens (below) and the flow is done; a
+   refusal (`access_denied` and the other codes `PollDevice` ends on)
+   or the code's expiry ends it failed in the vendor's words, scrubbed
+   of the client secret and the device code and cut to 200 runes, as a
+   refresh's are (`signInFailureWords`).
+3. Browser: a **Go** to the vendor's authorization address from
+   `Engine.AuthorizeURL`, with the manifest's scopes and
+   `extra_authorization_params`, the redirect address (the call's
+   `Answer.Callback` without its query) and, as the OAuth state, the
+   call's own state from that callback, and the S256 challenge of a
+   verifier from `connect.NewPKCEVerifier` unless the manifest says
+   `pkce: false`. The vendor sends the browser back to
+   `/connect/callback?code=&state=` (or `?error=&error_description=&state=`).
+   A vendor `error` fails the flow with its `error_description` (or
+   "the service refused the sign-in (<code>)"); a return with no state
+   or no code fails it too. Otherwise `Engine.Exchange` posts the code,
+   the client id and secret, the redirect address and the verifier; a
+   refusal (a PKCE verifier that does not match is the vendor's
+   `invalid_grant`) fails the flow in the vendor's words. Either way
+   the words are scrubbed of the state, the code, the verifier and the
+   client secret, then cut to 200 runes.
+4. Keeping the tokens (`finishSignIn`), under `lockIntegrations`: the
+   tokens go to the connection's Secret beside its other values (no
+   refresh token in the answer drops a stored one), and the record
+   gets `sign_in` (`method`, `signed_in_at`, `expires_at`, `lifetime`
+   when the vendor gave an expiry, `scope`) with any refused refresh's
+   `error` gone, which clears the [Needs you](#needs-you-sign-in-again)
+   row, and the last connection test cleared. `ConnectionChanged`
+   restarts the bundle's server, which asks `kivali/credential` again
+   and starts with the token. A flow cancelled meanwhile, a connection
+   gone, or a Secret or record that cannot be written keeps nothing and
+   revokes the new tokens, best effort ("the sign-in worked, but Kivali
+   could not keep it; start it again").
 5. When the manifest names `kivali.verify` and the integration runs,
    the connection test runs (`testConnection`, what Test connection
    runs) and its result is kept on the record, so the page names who
-   signed in. Then the flow is `done`.
-6. A refusal (`access_denied` and the other codes `PollDevice` ends
-   on) ends the flow `failed` with the vendor's words; `expired_token`
-   or the code's expiry ends it `expired`. Either appends an audit row
-   `sign_in`, not allowed, with the words: the vendor's, scrubbed of
-   the client secret and the device code and cut to 200 runes, as a
-   refresh's are (`signInFailureWords`).
+   signed in. Then the flow is done.
 
-The page polls `GET .../sign-in` every three seconds while the tab is
-visible, and reads the page again once it says `done`, showing
-"Finishing the sign-in." until it is in. Above the block it shows the
-manifest's scopes ("Asks the service for: ..."), as the install screen
-does, when there are any; a connection none of whose ways this server
-offers, and that is not `browser_elsewhere`, shows "This version of
-Kivali has no way to sign in to this service." in its place.
-
-A browser sign-in (`POST .../sign-in/browser`,
-`internal/web/integration_signin_browser.go`):
-
-1. Under `lockIntegrations`, the route checks what the device route
-   checks, with the manifest offering browser sign-in, and works out
-   the redirect address from the request (below); a request that names
-   no host is a 409, and so is one from where a browser sign-in cannot
-   finish (`browserSignInHere`: "a sign-in in the browser cannot finish
-   from here; ..."). It asks the vendor nothing, so it keeps the lock
-   until the flow is registered: the checks hold for the flow it
-   starts. A save of the form with a new client id or secret cancels
-   it, as it does a device sign-in.
-2. It registers a flow with a fresh state, a verifier from
-   `connect.NewPKCEVerifier` unless the manifest says `pkce: false`,
-   and the redirect address, and answers `BrowserSignIn`: `url`, the
-   vendor's authorization address from `Engine.AuthorizeURL`, with the
-   manifest's scopes and `extra_authorization_params`, which the flow
-   keeps too, and `flow`, the flow's id. Nothing is sent to the vendor
-   yet.
-3. The answer sets the cookie `kivali_connect` (`kivali_connect_<suffix>`
-   with `KIVALI_COOKIE_SUFFIX`): `Path=/`, host-only,
-   `HttpOnly`, `SameSite=Lax` (the vendor's redirect back is a
-   cross-site top-level GET, which Lax lets through), `Secure` when the
-   redirect address is `https`, twenty minutes. Its value is
-   `connect:<flow id>:<integration>`, signed with the session codec
-   (`Server.SessionCodec`, else the session middleware's, else a key the
-   process makes once: a flow lives no longer than the process). One
-   browser holds one, so one browser sign-in at a time: the start reads
-   the cookie it replaces (hence the whole site as its path) and ends
-   the sign-in it named, of another connection, `failed` with "another
-   sign-in was started in this browser; start this one again". That
-   sign-in's callback finds it ended and redirects to its page with
-   `?sign_in_failed=<id>`, leaving the cookie for the later one.
-4. The web app sends the tab to `GET /connect/start?flow=<flow>`
-   (`openSignIn`), on the protected mux, which answers a 303 to the
-   flow's `url` while the flow is pending and not yet taken, and
-   otherwise returns to `/org/integrations?sign_in_error=start_again`.
-   It sets no cookie and takes no address from the request. (Kivali
-   Desktop does not load this address in a team's window: [In Kivali
-   Desktop](#in-kivali-desktop) below.) The owner approves on the
-   vendor's site, which sends the browser to `GET
-   /connect/callback?code=&state=` (or `?error=&error_description=&state=`).
-5. The callback is on the protected mux, behind the session middleware:
-   a browser not signed in to Kivali is sent to `/login` with the whole
-   callback address, query included, as `next`, and comes back to it
-   once signed in. It is a GET that changes things, as OAuth has it.
-   The state and the code are never logged.
-6. It takes the flow whose state matches (`signInFlows.take`, a
-   constant-time compare): taken once, so a replay finds nothing; past
-   its ten minutes it is gone. It drops the cookie only when the cookie
-   names that flow. No flow:
-   redirect with `?sign_in_error=start_again`, to the page of the
-   integration the cookie names, or to `/org/integrations`. A cookie
-   that is missing, not signed by Kivali or names another flow: the
-   flow ends `failed` with "the sign-in took too long or was started
-   elsewhere; start it again", without an exchange.
-7. A vendor `error` ends the flow with its `error_description` (or
-   "the service refused the sign-in (<code>)"), audited. Otherwise
-   `Engine.Exchange` posts the code, the client id and secret, the
-   flow's redirect address and the verifier; a refusal (a PKCE verifier
-   that does not match is the vendor's `invalid_grant`) is in the
-   vendor's words, audited. Either way the words are scrubbed of the
-   state, the code, the verifier and the client secret and then cut to
-   200 runes, as a refresh's are (`signInFailureWords`). Success goes through
-   `finishSignIn` and the connection test as for a device sign-in, with
-   `method: browser`.
-8. The answer is a 303 to `/org/integrations/<name>?signed_in=<id>`, or
-   `?sign_in_failed=<id>` once the flow ended `failed`, or
-   `?sign_in_error=start_again` when there is no flow to read (none
-   found, or one cancelled meanwhile). The address never carries words:
-   anyone can link the owner to the page with any query. The page reads
-   the query once and replaces the address without it. For
-   `sign_in_failed` it reads the words from the connection's `GET
-   .../sign-in` (an ended flow is kept ten minutes); `start_again` is
-   the one `sign_in_error` code, which the page and the integrations
-   list put in their own sentence (`signInErrorWords`), and any other
-   value is ignored. The result shows on that connection's Sign in
-   block, where Try again starts a browser sign-in again.
+A setup flow whose manifest says `setup.then` hands over to the same
+sign-in once its own driver is done: the runner swaps in the standard
+flow for that way and starts it, with the client id and secret setup
+kept. A `then: browser` flow is refused at the start where browser
+sign-in cannot finish.
 
 The redirect address is `signInRedirectURL`: `<scheme>://<host>/connect/callback`,
 the scheme `https` on a TLS connection, else `X-Forwarded-Proto`'s first
@@ -954,8 +1052,8 @@ same-origin check reads it); the host
 `X-Forwarded-Host`'s first value when it is a host, else `r.Host`,
 lower-cased, without the scheme's default port. Either header can be
 anything the browser sends, which is safe: the vendor sends a code only
-to the address registered with it, the flow keeps the address it was
-started with for the exchange, and the cookie is host-only. The page
+to the address registered with it, the flow keeps the address it gave
+the vendor for the exchange, and the cookie is host-only. The page
 carries it as `IntegrationPage.sign_in_redirect_url` (there before any
 connection, since the owner registers it with the vendor before there
 is a client id to save) and `ConnectionSignIn.redirect_url`, whenever
@@ -964,43 +1062,47 @@ the manifest offers browser sign-in, and `{{redirect_url}}` in
 screen (`{{external_redirect_url}}` with the external address's,
 `Server.setupNotes`).
 
+The page shows the manifest's scopes above the block ("Asks the service
+for: ..."), as the install screen does, and the host each way signs in
+at. With no connection yet it offers **Connect**, whose flow asks for
+the form first; once a connection is saved the form edits it (`PUT
+.../connection`) and the **Sign in** block under it offers the flow, or
+Signed in with the connection test's words and Sign out.
+
 #### In Kivali Desktop
 
-The team's window is a webview: the start answer's cookie lands there,
-and a vendor's page loaded there is refused and opened in the system
-browser, which holds neither the Kivali session nor that cookie, so
-the callback would ask the owner to sign in and then refuse the
-sign-in as started elsewhere. The team's web view has no IPC
-([desktop-app.md](desktop-app.md), "Capabilities: why team web apps
-get nothing"), so the web app does not call the app: the shell
-recognises the navigation to the team's own `/connect/start?flow=<id>`
-(that exact path, one `flow` of 32 lowercase hex digits; `team_nav`
-answers `ConnectSignIn`) and, for a team here on its loopback origin,
-refuses it in the window, mints a handoff token from the team's
-supervisor and opens `<origin>/auth/handoff?t=<token>&next=<id>` in the
-system browser through the window's browser gate
+The team's window is a webview: a service's page loaded there is
+refused and opened in the system browser, which holds neither the
+Kivali session nor the flow's cookie, so the callback would ask the
+owner to sign in and then refuse the flow as started elsewhere. The
+team's web view has no IPC ([desktop-app.md](desktop-app.md),
+"Capabilities: why team web apps get nothing"), so the web app does not
+call the app: the shell recognises the navigation to the team's own
+`/connect/start?flow=<id>` (that exact path, one `flow` of 32 lowercase
+hex digits; `team_nav` answers `ConnectSignIn`), whether the page
+navigates there or opens it in a new window, and, for a team here on its
+loopback origin, refuses it in the window, mints a handoff token from
+the team's supervisor and opens `<origin>/auth/handoff?t=<token>&next=<id>`
+in the system browser through the window's browser gate
 (`open_connect_sign_in` in `desktop-app/src-tauri/src/windows.rs`). The
-handoff, for a pending flow started at that address, signs that
-browser in as the owner and sets the flow's `kivali_connect` cookie
-there before its 302 to the vendor; for any other `next` it signs
-nothing in ([auth.md](auth.md#desktop-handoff), `next`). The callback then
-comes to a browser that passes both checks. The page in the window
-stays, says the sign-in goes on in the browser with **Start again**,
-asks `GET .../sign-in` every few seconds while visible, as for a device
-sign-in, and reads itself again once it says `done`; a `failed` one
-shows why, with Try again in the browser.
+handoff, for a flow on a Go step whose callback address is the one it
+was reached at, signs that browser in as the owner, sets the flow's
+`kivali_connect` cookie there and sends it to `/connect/start?flow=<id>`,
+which sends it on to the service by a link or a form that posts itself;
+for any other `next` it signs nothing in ([auth.md](auth.md#desktop-handoff),
+`next`). The callback then comes to a browser that passes both checks.
+The page in the window stays and follows the flow; its Go step then
+says "If no browser opened, open the team in your browser and continue
+from there."
 
-Both browsers then hold a cookie for the flow; the callback takes the
-state once, so only one of them can finish it. A team elsewhere (no
-supervisor here, and its handoff answers loopback only) is offered no
-browser sign-in in its window: its web view carries the
-`kivali_desktop_window` cookie, so the server lists the code alone, or
-no way and the team's address to sign in from in a browser. Should a
-browser sign-in start there all the same, the shell refuses
-`/connect/start` and opens nothing, so no vendor approval is spent on a
-sign-in that could not finish; the waiting block's "If no browser
-opened, open the team in your browser and sign in from there." says what
-to do.
+A team elsewhere (no supervisor here, and its handoff answers loopback
+only) is offered no browser sign-in in its window: its web view carries
+the `kivali_desktop_window` cookie, so the server lists the code alone,
+or no way and the team's address to sign in from in a browser. Should a
+Go step start there all the same, the shell refuses `/connect/start`
+and opens nothing, so no approval is spent on a flow that could not
+come back. Nothing here is platform-specific: macOS and Windows behave
+the same.
 
 On Desktop's loopback the redirect address is
 `http://127.0.0.1:<port>/connect/callback`, the request's own host.
@@ -1034,8 +1136,8 @@ credentials, best effort within ten seconds. The tokens are collected
 under `lockIntegrations` and revoked once it is released, before the
 route answers, so a slow vendor holds up no other integration write.
 A failure is logged and the sign-out or delete goes on. Deleting,
-disconnecting and removing also cancel the connection's sign-ins
-under way ([Signing in](#signing-in)).
+disconnecting and removing also cancel the integration's setup flow
+under way ([Setup flows](#setup-flows)).
 
 ### Needs you: sign in again
 
@@ -1053,7 +1155,10 @@ deletes the connection.
 
 ### The flow engine
 
-`internal/connect` knows nothing of the store or the web server. An
+The OAuth requests the standard sign-in flows and refreshes make are
+`internal/connect`'s; the flows themselves are the setup runner's
+([Setup flows](#setup-flows)). `internal/connect` knows nothing of the
+store or the web server. An
 `Engine{Clock, HTTP}` makes every request through its HTTP client
 (core's has an 8-second timeout, so a refresh inside a pod's
 `kivali/credential` ends before the shim's 10-second wait for core;
@@ -1620,7 +1725,7 @@ type Step struct {
 }
 type Form struct{ Words string; Fields []string }          // keys from setup.fields
 type Go struct{ Words, URL string; Post url.Values; NoReturn bool } // a link, or a form that posts Post to URL; NoReturn: nothing comes back
-type Wait struct{ Words, URL string }                      // words, and a page to open meanwhile
+type Wait struct{ Words, URL, Code string }                // words, a page to open meanwhile, a code to enter there
 type Answer struct {
 	State    map[string]string // the last Step's State
 	Form     map[string]string // what the owner entered
@@ -1715,10 +1820,11 @@ type Uninstaller interface{ Uninstall(ctx context.Context, conn Connection) erro
   settings page the owner acts on), nowhere: core then calls `Setup`
   again at once with `Went`, so it can follow with a `Wait`. The
   callback carries a state of the flow's; core issues a fresh one each
-  call and accepts any it issued for the flow while the flow lives, so
-  an address fixed in an earlier step still comes back to the flow, and
-  a return with no state comes back by the browser that started it. A
-  `Wait` shows `Words` and a page on a declared host, and core calls
+  call (a Wait's check is given the latest again) and accepts any it
+  issued for the flow while the flow lives, so an address fixed in an
+  earlier step still comes back to the flow, and a return with no state
+  comes back by the browser that started it. A `Wait` shows `Words`, a
+  page on a declared host and a `Code` to enter there, and core calls
   `Setup` again with `Checked` every few seconds while the owner's page
   is open. A step outside the declarations fails the flow; so does an
   error, whose text the owner reads, scrubbed of every kept value.
@@ -1731,9 +1837,11 @@ type Uninstaller interface{ Uninstall(ctx context.Context, conn Connection) erro
   owner uninstalls it, before core forgets the Secret and drops every
   agent's access; an error leaves the installation as it is.
 
-Core dispatches none of these three hooks in this version of Kivali:
-the types are the contract, and no built-in in `builtins.All()`
-implements them.
+Core runs `Setup` through the setup runner ([Setup flows](#setup-flows)):
+`POST .../setup` of a `setup` connection whose built-in implements
+`SetupIntegration`, and the `then` sign-in after it. It dispatches
+neither `Requirements` nor `Uninstall` in this version of Kivali, and no
+built-in in `builtins.All()` implements any of the three.
 
 `Tools`, `Call`, `Verify` and `Choices` run concurrently: many agents
 call at once, and each agent's list is asked for in parallel with the
@@ -2611,15 +2719,17 @@ the owner's.
 | `PUT .../connections/{id}` | `ConnectionWrite` in, `IntegrationPage` out: that connection written; a sensitive field left out keeps its value, an empty label keeps the label; 404 for an id that names none; 409 as for `POST`. |
 | `DELETE .../connections/{id}` | `IntegrationPage`: that connection's Secret, scoped proxy credential and record, and the access of every agent whose row names it, removed; the other connections and their access stay; 404 for an id that names none. |
 | `POST .../connections/{id}/verify` | `IntegrationPage`, with that connection's verified, verify message and verified at; 404 for an id that names none; 409 as for `.../connection/verify`. |
-| `POST .../connection/sign-in/device`, `.../connections/{id}/sign-in/device` | `DeviceSignIn`: a device sign-in started ([Signing in](#signing-in)); 409 for a token connection ("<integration> is not connected by signing in"), one this binary does not carry, with no approved version, without a connection or the client id and secret stored ("save the client id and secret first"), for a manifest that offers no device sign-in ("<integration> does not sign in with a code"), and, checked again once the vendor answers, while switched off ("switch <integration> on first") or for a connection signed in ("the connection is signed in; sign out first"); 409 with the vendor's words when it refuses to start, 502 when it does not answer or its answer has no code or page to show; 404 for an id that names none, or a connection gone while the vendor answered. |
-| `GET .../connection/sign-in`, `.../connections/{id}/sign-in` | `SignInProgress` of the connection's latest sign-in: `pending`, `done`, `failed` or `expired` with the words; `expired` with "Kivali has no sign-in under way for this connection, as after a restart; start it again" when there is none; 409 for a token connection, one this binary does not carry, with no approved version or without a connection ("<integration> has no connection"); 404 for an id that names none. |
-| `POST .../connection/sign-in/browser`, `.../connections/{id}/sign-in/browser` | `BrowserSignIn`: a browser sign-in started, `url` the vendor's authorization address, `flow` its id, and the `kivali_connect` cookie set ([Signing in](#signing-in)); 409 as the device route, for a manifest that offers no browser sign-in, and for a request that names no host ("Kivali cannot tell the address it was reached at from this request"); 404 for an id that names none. |
 | `POST .../connection/sign-out`, `.../connections/{id}/sign-out` | `IntegrationPage`, the connection signed out ([Sign out](#sign-out)); 409 for a token connection ("<integration> is not connected by signing in"), one this binary does not carry, with no approved version, or without a connection ("<integration> has no connection"); 404 for an id that names none; 500 when the tokens or the record could not be written. |
 | `PUT .../access/{slug}` | `AccessWrite` in, `IntegrationPage` out; 404 for an agent not on the team; 409 without a connection; 400 with the field's message, or "choose a connection" when `connection_id` is missing with more than one connection or names none. |
 | `DELETE .../access/{slug}` | `IntegrationPage`. |
 | `GET .../audit?limit=` | `IntegrationAudit`, newest first; limit 100 by default, at most 1000. |
 | `GET .../choices/{key}?connection=` | `AccessChoices`, through the connection `connection` names, or the first; 404 for a field that lists no options or a connection id that names none; 409 while the integration is not running, for a built-in one without a connection, or for a built-in one this binary does not carry; 502 for the tool's error, or a result that is not a list of names. |
 | `GET .../logs?limit=` | `IntegrationLogs`, oldest first; limit 200 by default, at most 2000. |
+| `POST .../setup` | `SetupFlowStart` in (`{"flow": "setup"}`), `SetupFlow` out: the integration's setup flow started, ending one under way ([Setup flows](#setup-flows)); 409 for one this binary does not carry, with no approved version, while switched off ("switch <integration> on first"), for a flow name it does not have ("<flow> is not a flow <integration> has"), for a sign-in connection signed in ("the connection is signed in; sign out first") or none of whose ways works from here, for a request that names no host where the browser signs in, and for a setup connection whose setup this binary does not carry. |
+| `GET .../setup` | `SetupFlow`: the flow under way, or the one that last ended (kept ten minutes after its last change); 404 with none, as after a restart. A read counts as watching the flow for ten seconds. |
+| `POST .../setup/answer` | `SetupFlowAnswer` in, `SetupFlow` out: the flow's Form answered; 400 for a key the Form does not ask for, or what a save of the connection form would refuse (a standard flow's); 409 when the flow is not on a Form; 404 with no flow. |
+| `POST .../setup/cancel` | 204: the flow ended and forgotten, audited as cancelled; 404 with no flow. |
+| `GET .../setup/stream` | `text/event-stream`: `retry: 1500`, the flow's `SetupFlow` as a `flow` event at once and on each change, a heartbeat comment every 25 seconds, and the end of the stream when the flow is forgotten; 404 with no flow. |
 | `GET /api/v1/agents/{slug}/integrations` | `AgentIntegrations`; 404 for an agent not on the team. |
-| `GET /connect/callback?code=&state=` | Not under `/api`: the signed-in UI's route a vendor sends the browser back to. A 303 to `/org/integrations/<name>?signed_in=<id>`, `?sign_in_failed=<id>` (the words are `GET .../connections/{id}/sign-in`'s) or `?sign_in_error=start_again`, or `/org/integrations?sign_in_error=start_again` for a state that names no sign-in and no cookie that names an integration ([Signing in](#signing-in)). |
-| `GET /connect/start?flow=` | Not under `/api`: the signed-in UI's route the web app sends the browser to, to begin a browser sign-in. A 303 to the vendor's authorization address of the pending flow `flow` names, or to `/org/integrations?sign_in_error=start_again` for any other ([Signing in](#signing-in)). Kivali Desktop opens the handoff with `next=<flow>` in its place ([In Kivali Desktop](#in-kivali-desktop)). |
+| `GET /connect/callback` | Not under `/api`: the signed-in UI's route a Go step's service sends the browser back to. The query goes to the flow its `state` (or, with none, the flow cookie) names as `Answer.Return`, and the answer is a 303 to `/org/integrations/<name>?setup=<flow id>`, or `/org/integrations?sign_in_error=start_again` when no flow and no cookie names an integration ([Coming back](#coming-back)). |
+| `GET /connect/start?flow=` | Not under `/api`: the signed-in UI's route the web app sends the browser to for a Go step. It sets the flow's cookie and answers a 303 to the step's address, or a page whose form posts the step's values there; a flow not on a Go step returns to its page, any other id to `/org/integrations?sign_in_error=start_again` ([Setup flows](#setup-flows)). Kivali Desktop opens the handoff with `next=<flow>` in its place ([In Kivali Desktop](#in-kivali-desktop)). |

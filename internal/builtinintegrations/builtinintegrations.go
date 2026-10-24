@@ -297,7 +297,9 @@ type Answer struct {
 	// Callback is the address a Go step's service may send the browser
 	// back to, with a state of this flow's in it: what Setup puts in a
 	// manifest's redirect_url or a form's return field. Core issues a
-	// fresh state for each call and accepts, while the flow lives, any
+	// fresh state for each call (a Wait's check is given the latest
+	// again, as it may come every few seconds for as long as the Wait
+	// lasts) and accepts, while the flow lives, any
 	// state it issued for the flow, so an address fixed in an earlier
 	// step (a setup URL registered with the app) still comes back to
 	// the flow. A return with no state comes back to the flow by the
