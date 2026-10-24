@@ -56,9 +56,10 @@ const (
 // server when core says start, and carries JSON-RPC both ways: core's
 // requests to the server's input, one line each, and the server's
 // output lines back to core. The server's requests for the
-// connection's values and its log lines go to core too; any other
-// request it makes (sampling, roots, elicitation) is answered here as
-// a method that does not exist. The server's error output becomes log
+// connection's values, its log lines and its progress notifications
+// (a setup step's stages) go to core too; any other request it makes
+// (sampling, roots, elicitation) is answered here as a method that does
+// not exist, and any other notification is dropped. The server's error output becomes log
 // lines. The shim exits when the server does, with its status.
 //
 // Started as root, for a version whose manifest declares packages, the
@@ -507,8 +508,8 @@ func (s *Shim) handshake(ctx context.Context, srv *server) error {
 // core's, unless the shim sent the request; a request for the
 // connection's values or a log line goes to core and core's answer to
 // the server; any other request is answered as a method that does not
-// exist; a log notification goes to core and any other notification
-// is dropped. A line that is not JSON-RPC, or longer than
+// exist; a log or progress notification goes to core and any other
+// notification is dropped. A line that is not JSON-RPC, or longer than
 // MaxLineBytes, ends the server.
 func (s *Shim) readOutput(ctx context.Context, srv *server, r io.Reader) {
 	sc := bufio.NewScanner(r)
@@ -547,9 +548,9 @@ func (s *Shim) readOutput(ctx context.Context, srv *server, r io.Reader) {
 		case msg.IsRequest():
 			reply, _ := Response(msg.ID, nil, &RPCError{Code: CodeMethodNotFound, Message: "method not found: " + msg.Method})
 			srv.write(reply)
-		case msg.Method == MethodLog:
+		case msg.Method == MethodLog || msg.Method == MethodProgress:
 			if _, err := s.post(ctx, line); err != nil {
-				s.logf("relay a log line to core: %v", err)
+				s.logf("relay %s to core: %v", msg.Method, err)
 			}
 		}
 	}

@@ -2,6 +2,7 @@ package integration
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -164,6 +165,49 @@ func TestSmokeTestNamesWhatIsWrong(t *testing.T) {
 	f, _ := SmokeFindings(m, runSmoke(t, m, dir))
 	if got := texts(f); !strings.HasPrefix(got, "error: the server did not start (python-that-is-not-there server/main.py): ") {
 		t.Errorf("findings = %s", got)
+	}
+}
+
+// Why this test exists: Kivali asks a setup bundle's server for its
+// requirements whenever the owner reads its page, and a server that
+// does not answer kivali/requirements, or answers in another shape,
+// shows the owner one unmet row instead of its health. The smoke test
+// is the agent's one chance to see that before publishing, so it must
+// ask, with no connection, as at the server's first start, and say
+// what is wrong. A bundle whose connection is not a setup one is never
+// asked, since its server need not know the request.
+func TestSmokeTestAsksASetupBundleForItsRequirements(t *testing.T) {
+	needPython(t)
+	var raw map[string]any
+	if err := json.Unmarshal([]byte(echoManifestBytes(t)), &raw); err != nil {
+		t.Fatal(err)
+	}
+	raw["user_config"] = map[string]any{}
+	raw["kivali"].(map[string]any)["connection"] = map[string]any{"method": "setup", "setup": map[string]any{
+		"summary": "Installs echo.", "hosts": []any{"example.com"},
+		"fields": map[string]any{"key": map[string]any{"words": "A key.", "secret": true, "setup_only": true}},
+		"keeps":  map[string]any{"token": "The token"},
+	}}
+	b, err := json.Marshal(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	withRows := func(rows string) string {
+		return strings.Replace(mainPy(t), `    if method == "ping":`, "    if method == \"kivali/requirements\":\n        return "+rows+", None\n    if method == \"ping\":", 1)
+	}
+	for _, tc := range []struct{ name, main, want string }{
+		{"rows", withRows(`{"requirements": [{"id": "token", "title": "Token", "words": "No token is kept yet.", "met": False, "fix": "setup"}]}`), ""},
+		{"no answer", mainPy(t), "error: the server answered kivali/requirements with an error: method not found: kivali/requirements"},
+		{"another shape", withRows(`{"rows": []}`), `error: the server's kivali/requirements answer is not {"requirements": [...]} of rows with an id, a title, words and met; Kivali shows none of its rows`},
+		{"a row without met", withRows(`{"requirements": [{"id": "token", "title": "Token", "words": "?"}]}`), `error: the server's kivali/requirements answer is not {"requirements": [...]}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, dir := readEcho(t, map[string]string{ManifestName: string(b), "server/main.py": tc.main})
+			f, _ := SmokeFindings(m, runSmoke(t, m, dir))
+			if got := texts(f); (tc.want == "" && got != "") || !strings.HasPrefix(got, tc.want) {
+				t.Errorf("findings = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 

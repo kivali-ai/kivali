@@ -4,9 +4,10 @@
 //
 // A flow is a setupRun, kept in memory on the Server (setupRuns) under
 // a random id, at most one per integration: a new start ends the one
-// before. What decides each step is the flow's driver: a built-in's
-// SetupIntegration.Setup for a manifest whose connection method is
-// setup, or one of core's standard flows for token, device and browser
+// before. What decides each step is the flow's driver: for a manifest
+// whose connection method is setup, a built-in's SetupIntegration.Setup
+// or a bundle's server, asked over its pod (integration_setup_bundle.go);
+// for token, device and browser, one of core's standard flows
 // (integration_setup_standard.go). Core calls the driver off any
 // request, one call at a time per flow, under setupCallTimeout on the
 // server's clock, first with an empty Answer and then with what each
@@ -99,7 +100,8 @@ const (
 )
 
 // setupDriver decides a flow's steps, as SetupIntegration.Setup does:
-// a setup integration itself, or one of core's standard flows.
+// a setup built-in itself, a setup bundle's server (bundleHooks), or
+// one of core's standard flows.
 type setupDriver interface {
 	Setup(ctx context.Context, conn builtinintegrations.Connection, flow string, last builtinintegrations.Answer, p builtinintegrations.Progress) (builtinintegrations.Step, error)
 }

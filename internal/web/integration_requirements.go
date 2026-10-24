@@ -243,8 +243,9 @@ func sentenceEnd(words string) string {
 	return words + "."
 }
 
-// ownRequirements are v's own rows (builtinintegrations.RequirementsOf)
-// for its connection, asked for under requirementsTimeout, with
+// ownRequirements are v's own rows (builtinintegrations.RequirementsOf,
+// or a setup bundle's kivali/requirements while its server runs) for
+// its connection, asked for under requirementsTimeout, with
 // the connection's secrets scrubbed from their words. A row of an id
 // that is not one, of one of Kivali's ids or of one already given is
 // left out. An integration that could not give its rows has one unmet
@@ -252,7 +253,7 @@ func sentenceEnd(words string) string {
 // while the connection needs a sign-in or the service did not answer
 // its renewal: the sign_in row says so.
 func (s *Server) ownRequirements(ctx context.Context, v *integrationView) []apitypes.IntegrationRequirement {
-	ro, ok := v.builtin.(builtinintegrations.RequirementsOf)
+	ro, ok := s.requirementsOf(v)
 	if !ok || v.conn == nil || v.several {
 		return nil
 	}
@@ -494,7 +495,8 @@ func errFlowNotOffered(flow, display string) string {
 }
 
 // fixNamed reports whether one of v's own requirements names flow as
-// its Fix: the flows a built-in's setup runs besides installing.
+// its Fix: the flows an integration's own setup runs besides
+// installing.
 func (s *Server) fixNamed(ctx context.Context, v *integrationView, flow string) bool {
 	if !v.installed() {
 		return false
@@ -503,11 +505,12 @@ func (s *Server) fixNamed(ctx context.Context, v *integrationView, flow string) 
 }
 
 // fixSpecFor is the flow POST .../setup runs for a requirement's Fix
-// named flow (one fixNamed found): the built-in's own setup, held to
-// its declarations, run with that flow's name. It hands over to no
-// sign-in: the sign_in row's Fix does that.
+// named flow (one fixNamed found): the integration's own setup (a
+// built-in's, or a setup bundle's server), held to its declarations,
+// run with that flow's name. It hands over to no sign-in: the sign_in
+// row's Fix does that.
 func (s *Server) fixSpecFor(v *integrationView, flow string) (setupSpec, *connWriteError) {
-	si, ok := v.builtin.(builtinintegrations.SetupIntegration)
+	si, ok := s.setupDriverOf(v)
 	c := v.manifest.Kivali.Connection
 	if !ok || c.Method != integration.MethodSetup || c.Setup == nil {
 		// Its requirements name a flow, but only a setup connection's

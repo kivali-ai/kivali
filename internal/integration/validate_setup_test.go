@@ -52,12 +52,12 @@ func registeredManifest() map[string]any {
 }
 
 // Why this test exists: a setup connection's manifest is the only place
-// core learns what the flow may do, and a built-in's must pass whole
-// (and be read whole, in the order declared) or no setup integration
-// could ship. The same manifest as a bundle's is refused, since a
-// bundle's setup flow is not in this version of Kivali, and its other
-// findings must still be the built-in's none, so the one refusal is
-// the only difference.
+// core learns what the flow may do, and it must pass whole (and be read
+// whole, in the order declared) or no setup integration could ship. A
+// bundle's setup flow is held to the same declarations as a built-in's
+// and runs over MCP, so the same manifest passes as a bundle's too: a
+// refusal left for bundles would keep the Kivali Developer from ever
+// publishing one.
 func TestSetupConnectionPassesForABuiltinAndReadsWhole(t *testing.T) {
 	m := setupManifest()
 	if got := builtinConnectionFindings(t, m); len(got) != 0 {
@@ -81,19 +81,17 @@ func TestSetupConnectionPassesForABuiltinAndReadsWhole(t *testing.T) {
 	if got := SetupFieldTitle(s.Fields[0]); got != "Account" {
 		t.Errorf("a field with no title is called %q", got)
 	}
-	bundle := connectionFindings(t, m)
-	if len(bundle) != 1 || !strings.Contains(bundle[0], "kivali.connection.method setup: a bundle's setup flow is not in this version of Kivali") {
+	if bundle := connectionFindings(t, m); len(bundle) != 0 {
 		t.Errorf("as a bundle: %v", bundle)
 	}
-	// The whole check, as a bundle: the one refusal and nothing else, so
-	// an env that names a kept key passes as one naming a form field
-	// does. As a built-in (no server): no finding, and kivali.hosts is
+	// The whole check, as a bundle: no finding, so an env that names a
+	// kept key passes as one naming a form field does. As a built-in (no server): no finding, and kivali.hosts is
 	// required, since a setup built-in reaches its service from Kivali
 	// and the install screen lists where. A keep of client_id without a
 	// hand-over passes: GitHub's manifest flow mints one. The ordered
 	// fields are written back as they were read.
 	obj(m, "kivali", "connection", "setup", "keeps")["client_id"] = "The app's client id"
-	if got := Validate(parseMap(t, m), defaultFiles()).Texts(); len(got) != 1 || !strings.Contains(got[0], "a bundle's setup flow is not in this version of Kivali") {
+	if got := Validate(parseMap(t, m), defaultFiles()).Texts(); len(got) != 0 {
 		t.Errorf("bundle findings = %v", got)
 	}
 	delete(m, "server")
