@@ -139,7 +139,9 @@ type setupSpec struct {
 	setup *integration.Setup
 	// keep writes a step's Keep, under lockIntegrations, unless the
 	// flow was cancelled.
-	keep func(ctx context.Context, run *setupRun, values map[string]string) error
+	// final is true for the flow's last step (Done, with no sign-in
+	// after it): the same write clears the connection's unfinished mark.
+	keep func(ctx context.Context, run *setupRun, values map[string]string, final bool) error
 	// then is the sign-in that takes the flow on once the driver is
 	// Done (kivali.connection.setup.then); nil for none.
 	then *setupSpec
@@ -761,7 +763,9 @@ func (s *Server) setupApply(run *setupRun, gen int, step builtinintegrations.Ste
 	final := step.Done && run.spec.then == nil
 	s.setupUnlock()
 	if len(step.Keep) > 0 {
-		if err := run.spec.keep(run.ctx, run, step.Keep); err != nil {
+		// The last step's Keep clears the unfinished mark in the same
+		// write, so no moment holds the finished connection still marked.
+		if err := run.spec.keep(run.ctx, run, step.Keep, final); err != nil {
 			t.mu.Lock()
 			if t.liveLocked(run, gen) {
 				s.setupFailLocked(run, err.Error())
@@ -770,7 +774,7 @@ func (s *Server) setupApply(run *setupRun, gen int, step builtinintegrations.Ste
 			return
 		}
 	}
-	if final {
+	if final && len(step.Keep) == 0 {
 		if err := s.setupFinish(run); err != nil {
 			t.mu.Lock()
 			if t.liveLocked(run, gen) {
@@ -854,8 +858,10 @@ func errSetupManySteps(display string) error {
 }
 
 // setupFinish marks name's connection finished as run, about to be
-// done, made or mended it (store.IntegrationConnection.SetupPending
-// cleared), under lockIntegrations, unless run was cancelled meanwhile:
+// done with a last step that keeps nothing, made or mended it
+// (store.IntegrationConnection.SetupPending cleared; a last step that
+// keeps clears it in its Keep's own write), under lockIntegrations,
+// unless run was cancelled meanwhile:
 // from then on it is the integration's installed connection, which a
 // restart keeps.
 func (s *Server) setupFinish(run *setupRun) error {
@@ -1430,8 +1436,8 @@ const errSetupNoFlow = "Kivali has no setup under way for this integration, as a
 // proxy credential's secret aside), the record's id, its access and
 // its Secret's name stay, and the sign-in it held is revoked with the
 // service once the lock is released (revokeReplacedSignIn).
-func (s *Server) keepSetupValues(ctx context.Context, run *setupRun, values map[string]string) error {
-	replaced, err := s.keepSetupValuesLocked(ctx, run, values)
+func (s *Server) keepSetupValues(ctx context.Context, run *setupRun, values map[string]string, final bool) error {
+	replaced, err := s.keepSetupValuesLocked(ctx, run, values, final)
 	if replaced != nil {
 		s.revokeReplacedSignIn(run.name, replaced.rec, replaced.data)
 	}
@@ -1444,7 +1450,7 @@ type replacedConnection struct {
 	data map[string]string
 }
 
-func (s *Server) keepSetupValuesLocked(ctx context.Context, run *setupRun, values map[string]string) (*replacedConnection, error) {
+func (s *Server) keepSetupValuesLocked(ctx context.Context, run *setupRun, values map[string]string, final bool) (*replacedConnection, error) {
 	defer s.lockIntegrations()()
 	if run.ctx.Err() != nil {
 		return nil, errors.New(errSetupStopped)
@@ -1506,9 +1512,14 @@ func (s *Server) keepSetupValuesLocked(ctx context.Context, run *setupRun, value
 	// is discarded at the next start (DiscardUnfinishedSetups). An
 	// install over a connection still so marked takes it over.
 	adopted := !made && replaced == nil && run.install && rec.SetupPending
-	if run.install && (made || replaced != nil || adopted) {
-		rec.SetupPending = true
-		rec.SetupTakenOver = replaced != nil || (adopted && rec.SetupTakenOver)
+	takenOver := replaced != nil || (adopted && rec.SetupTakenOver)
+	switch {
+	case final:
+		// The flow's last step: the connection is finished as this
+		// write makes it.
+		rec.SetupPending, rec.SetupTakenOver = false, false
+	case run.install && (made || replaced != nil || adopted):
+		rec.SetupPending, rec.SetupTakenOver = true, takenOver
 	}
 	if err := s.Store.PutIntegrationConnection(name, rec); err != nil {
 		log.Printf("integration %s: write the connection for setup: %v", name, err)
@@ -1517,7 +1528,7 @@ func (s *Server) keepSetupValuesLocked(ctx context.Context, run *setupRun, value
 		return replaced, errors.New(errSetupNotKept)
 	}
 	if made || replaced != nil || adopted {
-		s.setupMade(run, rec.ID, rec.SetupTakenOver)
+		s.setupMade(run, rec.ID, takenOver)
 	}
 	s.Integrations.ConnectionChanged(name)
 	s.Integrations.Changed()

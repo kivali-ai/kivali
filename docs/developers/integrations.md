@@ -888,8 +888,11 @@ client id or secret cancel it, audited; a restart loses it, and `GET
 An install's first Keep marks the connection it writes unfinished
 (`setup_pending` on its record, `store.IntegrationConnection.SetupPending`,
 with `setup_taken_over` for a record an earlier version made that the
-install took over), under `lockIntegrations`; the flow's last Done
-clears it before the flow reads done (`setupFinish`), and so does the
+install took over), under `lockIntegrations`; the flow's last step
+clears it before the flow reads done, in the same write as its Keep
+(the `final` the keep is given) or, for a last Done that keeps nothing,
+in one of its own (`setupFinish`), so no stop between two writes leaves
+a finished installation marked; and so does the
 owner's own save or Sign out while it runs (`adoptConnectionLocked`). A
 connection still marked has no flow behind it after a restart, so at
 boot, after the integrations start, and after a restore,

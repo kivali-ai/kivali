@@ -173,7 +173,7 @@ func (s *Server) signInSpecFor(v *integrationView, r *http.Request) (setupSpec, 
 // values, saved under lockIntegrations as PUT .../connection saves
 // them, into the integration's one connection, made when there is
 // none. A flow cancelled meanwhile keeps nothing.
-func (s *Server) keepConnectionForm(ctx context.Context, run *setupRun, values map[string]string) error {
+func (s *Server) keepConnectionForm(ctx context.Context, run *setupRun, values map[string]string, final bool) error {
 	defer s.lockIntegrations()()
 	if run.ctx.Err() != nil {
 		return errors.New(errSetupStopped)
@@ -191,15 +191,21 @@ func (s *Server) keepConnectionForm(ctx context.Context, run *setupRun, values m
 	// left (still marked unfinished), is the install's: marked
 	// unfinished until the flow is done, and discarded should it end
 	// without being done.
+	// The flow's last step (final) leaves it finished.
 	if cur == nil || (run.install && cur.rec.SetupPending) {
 		if rec, err := s.Store.GetIntegrationConnection(run.name); err == nil {
-			if run.install && !rec.SetupPending {
-				rec.SetupPending = true
+			takenOver := rec.SetupTakenOver
+			if pending := run.install && !final; rec.SetupPending != pending {
+				rec.SetupPending = pending
+				rec.SetupTakenOver = pending && takenOver
 				if err := s.Store.PutIntegrationConnection(run.name, rec); err != nil {
 					log.Printf("integration %s: mark the connection an install made: %v", run.name, err)
+					if final {
+						return errors.New(errSetupNotKept)
+					}
 				}
 			}
-			s.setupMade(run, rec.ID, rec.SetupTakenOver)
+			s.setupMade(run, rec.ID, takenOver)
 		}
 	}
 	return nil
