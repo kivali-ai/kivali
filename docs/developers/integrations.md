@@ -3127,6 +3127,16 @@ points at and every agent can list. It holds:
   output), answers each `tools/call` on a thread, reaches the service
   with `urllib.request` through the proxy, lists each agent the actions
   its access allows, and starts with no connection.
+- `template-setup/`: a complete bundle whose own setup flow makes its
+  connection (`method: setup`), for an imaginary service whose app is
+  made by API from a pasted one-time key: a Form for the setup-only
+  key, one step that builds and installs the app with its stages as
+  progress, a Keep of the app's token and id, and Done; where the
+  service does not hand the token back, a Wait on the app's page,
+  checked until the owner has shown it, then a Form for it. It answers
+  `kivali/requirements` (the token works; the scopes are current, whose
+  Fix is a second flow, `rescope`) and `kivali/uninstall`. Its
+  `README.md` says what each part does.
 - `scripts/try.py`: runs a bundle's server as the pod does (no proxy
   variable, so only a stub on the shell's own machine answers) and
   sends what core sends, as the owner or as one agent with one access:
@@ -3137,12 +3147,31 @@ points at and every agent can list. It holds:
   what the check does not see: a line that is not JSON-RPC, an id that
   core would not match, an answer later than core waits, options the
   form cannot read. `--stub` starts a stub and stops it at the end.
+  For a setup bundle it also sends `setup [FLOW]`, `requirements` and
+  `uninstall` as core does ([For a bundle](#for-a-bundle)): `setup`
+  runs `kivali/setup` call after call with the Answer core builds
+  (a fresh state in each callback, the latest again for a Wait's
+  check), prints each step as the page shows it and each progress
+  notification as it comes, takes a Form's fields from `--answer` or
+  the terminal, a Go's return from `--return` or the terminal (adding
+  the callback's state to one without, unless the Go says
+  `stateless`), checks a Wait again every `--every` seconds until it
+  changes or `--checks` runs out, and starts the server again with what
+  a step keeps, as the shim does. Each step is held to the manifest's
+  `kivali.connection.setup` as the runner holds it: an undeclared field,
+  host or key, a step of none or several kinds, a step of a shape core
+  cannot read, and a return with a state the flow never gave are each a
+  `problem:` line. `--field` takes the keys setup keeps, so the
+  requirements, a Fix's flow and uninstall run on a connection.
 
-`internal/builtinskills/build_an_integration_test.go` holds them to
-the platform: the template passes `integration.Validate` and the smoke
-test with no finding, `try.py` drives it against a stub as the owner
-and as agents, reports the failures above, and uses the shim's
-protocol version and line limit
+`internal/builtinskills/build_an_integration_test.go` and
+`build_an_integration_setup_test.go` hold them to the platform: each
+template passes `integration.Validate` and the smoke test with no
+finding, `try.py` drives the template against a stub as the owner and
+as agents and template-setup's flow, fallback, requirements, Fix and
+uninstall against a stub of its service, reports the failures above
+and a setup step outside the declarations, and try.py and the
+templates use the shim's protocol version and line limit
 (`integrationpod.ProtocolVersion`, `integrationpod.MaxLineBytes`). A
 change to what the shim, core or the check does that a bundle's author
 meets changes the skill in the same change.
@@ -3213,7 +3242,8 @@ It checks that the server starts and lists the actions its manifest
 declares, with no `_meta.kivali`, as core's own `tools/list` at every
 connect asks, and that a setup bundle's server answers for its health
 before anything is set up. It is not a review of what the code does,
-and it runs no setup step.
+and it runs no setup step: `try.py`'s `setup` does that, against a
+stub.
 
 ### Publishing
 

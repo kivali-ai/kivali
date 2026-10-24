@@ -13,10 +13,29 @@ Each REQUEST, in the order given:
   choices FIELD        the action kivali.access.choices names for FIELD, as
                        the access form calls it
 
+and, for a bundle whose connection's method is setup:
+  setup [FLOW]         the setup flow (setup, or the flow a requirement's Fix
+                       names), kivali/setup call after call, as Kivali runs it
+  requirements         kivali/requirements, as the integration's page reads it
+  uninstall            kivali/uninstall, as Uninstall sends it
+
 options:
-  --field KEY=VALUE    a connection field's value, by user_config key; repeat
-                       it. With none, the server starts as it does before the
-                       owner connects it: every field empty.
+  --field KEY=VALUE    a connection field's value, by user_config key or, for a
+                       setup connection, by a key setup keeps; repeat it. With
+                       none, the server starts as it does before the owner
+                       connects it: every field empty.
+  --answer KEY=VALUE   what the owner enters in a Form's field; repeat it. A
+                       field with no --answer is asked for on the terminal, or
+                       left blank when there is none.
+  --return QUERY       the query the service sends the browser back with after
+                       a Go step, such as 'code=abc'; repeat it, one per Go. With
+                       none, it is asked for on the terminal. Without a state,
+                       the state Kivali gave the step's callback is added.
+  --checks N           how many times a Wait is checked before setup stops
+                       (default 5).
+  --every SECONDS      the wait between a Wait's checks (default 3, as Kivali's).
+  --callback URL       the callback address Kivali gives each call (default
+                       http://127.0.0.1:8080/connect/callback).
   --env NAME=VALUE     an environment variable over the manifest's, such as the
                        stub's address; repeat it.
   --agent SLUG         make the requests as this agent; without it, they are
@@ -31,13 +50,19 @@ The server gets what the pod gives it (PATH, a HOME of its own and the
 manifest's env with the connection's values put in) but no proxy
 variable, so it reaches this machine and nothing else: a stub answers,
 the real service does not. Lines starting "problem:" are what fails in
-Kivali; the exit status is 1 when there is one.
+Kivali; the exit status is 1 when there is one. A setup step is held to
+the manifest's kivali.connection.setup as Kivali holds it: a field, a
+host or a key it does not declare fails the flow, and is a problem
+here. What a step keeps becomes the connection's, and the server is
+started again with it, as in the pod.
 """
 
 import argparse
+import getpass
 import json
 import os
 import re
+import secrets as tokens
 import shutil
 import signal
 import socket
@@ -54,6 +79,23 @@ STDERR_LINE = 8 << 10
 HANDSHAKE_SECONDS = 20
 CALL_SECONDS = 60
 OTHER_SECONDS = 20
+# Kivali's deadlines for a setup bundle's requests: a setup step, the
+# requirements (which the owner's page waits on) and an uninstall.
+SETUP_SECONDS = 300
+REQUIREMENTS_SECONDS = 5
+UNINSTALL_SECONDS = 60
+# How many calls of one flow try.py makes before it stops.
+SETUP_CALLS = 40
+DEFAULT_CALLBACK = "http://127.0.0.1:8080/connect/callback"
+# Kivali's own requirement rows, whose ids an integration's row may not
+# take; and the rest of what core holds a row to.
+CORE_REQUIREMENTS = {"version", "connection", "sign_in", "connection_test", "running", "checks"}
+REQUIREMENT_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+REQUIREMENT_TITLE = 80
+REQUIREMENT_WORDS = 500
+# The words of a setup flow's failure, its steps and its progress are
+# cut to this many characters, after their secrets are replaced.
+FLOW_WORDS = 200
 VERIFY_MESSAGE = 1000
 # The shortest secret value Kivali replaces with [secret].
 SCRUB_MIN = 6
@@ -93,12 +135,22 @@ def parse_pairs(pairs, what):
     return out
 
 
+REQUESTS = ("list", "call", "verify", "choices", "setup", "requirements", "uninstall")
+
+
 def parse_requests(words):
     reqs, i = [], 0
     while i < len(words):
         w = words[i]
-        if w in ("list", "verify"):
+        if w in ("list", "verify", "requirements", "uninstall"):
             reqs.append((w, None, None))
+            i += 1
+        elif w == "setup":
+            flow = "setup"
+            if i + 1 < len(words) and words[i + 1] not in REQUESTS:
+                flow = words[i + 1]
+                i += 1
+            reqs.append((w, flow, None))
             i += 1
         elif w == "choices":
             if i + 1 >= len(words):
@@ -118,7 +170,7 @@ def parse_requests(words):
                 i += 1
             reqs.append(("call", action, args))
         else:
-            fail("%r is not a request: list, call ACTION [JSON], verify or choices FIELD" % w)
+            fail("%r is not a request: list, call ACTION [JSON], verify, choices FIELD, setup [FLOW], requirements or uninstall" % w)
     return reqs
 
 
@@ -154,9 +206,13 @@ def check_access(manifest, access):
 
 
 class Server:
-    def __init__(self, manifest, bundle, env, fields, sensitive, display):
+    def __init__(self, manifest, bundle, env, fields, secret_values, display):
         self.manifest, self.fields, self.display = manifest, fields, display
-        self.secrets = [v for k, v in fields.items() if k in sensitive and len(v) >= SCRUB_MIN]
+        # What Kivali replaces with [secret]: shared with the run, which
+        # adds what a setup flow keeps or the owner enters.
+        self.secrets = secret_values
+        # The progress token of the kivali/setup request in flight, if any.
+        self.progress_token = None
         mcp = (manifest.get("server") or {}).get("mcp_config") or {}
         self.home = tempfile.mkdtemp(prefix="kivali-try-")
         env = dict(env, HOME=self.home)
@@ -186,7 +242,7 @@ class Server:
         threading.Thread(target=self.read_err, daemon=True).start()
 
     def scrub(self, s):
-        for v in self.secrets:
+        for v in sorted((v for v in self.secrets if len(v) >= SCRUB_MIN), key=len, reverse=True):
             s = s.replace(v, "[secret]")
         return s
 
@@ -279,10 +335,13 @@ class Server:
             if "id" in msg:
                 self.write({"jsonrpc": "2.0", "id": msg["id"], "result": {}})
             return
+        if method == "notifications/progress" and "id" not in msg:
+            self.on_progress(msg.get("params"))
+            return
         if "id" not in msg:
             if method not in self.dropped:
                 self.dropped.add(method)
-                note("the server sent the notification %s; Kivali passes on only kivali/log and drops it" % method)
+                note("the server sent the notification %s; Kivali passes on only kivali/log and a setup step's notifications/progress, and drops it" % method)
             return
         if method == "kivali/credential":
             if not self.fields:
@@ -294,6 +353,27 @@ class Server:
             return
         note("the server asked Kivali for %s; Kivali answers that it is a method that does not exist" % method)
         self.write({"jsonrpc": "2.0", "id": msg["id"], "error": {"code": -32601, "message": "method not found: " + method}})
+
+    def on_progress(self, params):
+        """A setup step's stage, as the flow's page shows it."""
+        params = params if isinstance(params, dict) else {}
+        token = params.get("progressToken")
+        if self.progress_token is None or token != self.progress_token:
+            note("the server sent a progress notification with the progressToken %s, which no kivali/setup in flight carries; Kivali drops it" % json.dumps(token))
+            return
+        done, total = params.get("progress"), params.get("total", 0)
+        number = lambda v: isinstance(v, (int, float)) and not isinstance(v, bool)
+        if not number(done) or not (number(total) or total is None):
+            note("the server sent a progress notification whose progress or total is not a number; Kivali drops it")
+            return
+        words = params.get("message", "")
+        if not isinstance(words, str):
+            note("the server sent a progress notification whose message is not text; Kivali drops it")
+            return
+        total = max(int(total or 0), 0)
+        done = min(max(int(done), 0), total)
+        count = " (%d of %d)" % (done, total) if total else ""
+        say("  progress: %s%s" % (clip(self.scrub(words), FLOW_WORDS), count))
 
     def request(self, method, params, seconds, rid=None):
         """The response to one request, or None when there is none in
@@ -448,6 +528,11 @@ def main():
     ap.add_argument("--agent")
     ap.add_argument("--access", default="{}")
     ap.add_argument("--stub")
+    ap.add_argument("--answer", action="append", default=[])
+    ap.add_argument("--return", dest="returns", action="append", default=[])
+    ap.add_argument("--checks", type=int, default=5)
+    ap.add_argument("--every", type=float, default=3)
+    ap.add_argument("--callback", default=DEFAULT_CALLBACK)
     ap.add_argument("bundle")
     ap.add_argument("requests", nargs="*")
     opts = ap.parse_intermixed_args()
@@ -467,11 +552,15 @@ def main():
     user_config = manifest.get("user_config") or {}
     declared = [t.get("name") for t in manifest.get("tools") or [] if isinstance(t, dict)]
 
+    setup = setup_section(manifest)
+    keeps = setup.get("keeps") or {}
     fields = parse_pairs(opts.field, "--field")
     for k in fields:
-        if k not in user_config:
-            fail("--field %s: user_config has no field %s" % (k, k))
-    sensitive = {k for k, u in user_config.items() if isinstance(u, dict) and u.get("sensitive") is True}
+        if k not in user_config and k not in keeps:
+            fail("--field %s: user_config has no field %s%s" % (k, k, ", and setup keeps no such key" if setup else ""))
+    # Every kept value is a secret, as a sensitive field is.
+    sensitive = {k for k, u in user_config.items() if isinstance(u, dict) and u.get("sensitive") is True} | set(keeps)
+    secret_values = [v for k, v in fields.items() if k in sensitive]
     try:
         access = json.loads(opts.access)
     except ValueError as e:
@@ -481,17 +570,6 @@ def main():
     requests = parse_requests(opts.requests)
 
     extra = parse_pairs(opts.env, "--env")
-    env = {
-        "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
-        # Keeps __pycache__ out of the bundle's directory; the pod's
-        # bundle is read-only, so it writes none there either.
-        "PYTHONDONTWRITEBYTECODE": "1",
-    }
-    env.update(server_env(manifest, fields))
-    env.update(extra)
-    for k in list(env):
-        if k.lower() in PROXY_VARS:
-            del env[k]
 
     if opts.agent:
         check_access(manifest, access)
@@ -502,13 +580,11 @@ def main():
     who = "as %s with access %s" % (opts.agent, json.dumps(access)) if opts.agent else "as the owner"
     conn = "connection fields: " + ", ".join(sorted(fields)) if fields else "no connection, every connection field empty"
     say("Starting the %s server in %s (%s; no proxy, so it reaches this machine only)." % (display, opts.bundle, conn))
-    srv = Server(manifest, bundle, env, fields, sensitive, display)
+    pod = Pod(manifest, bundle, extra, fields, secret_values, display)
     try:
-        run(srv, manifest, display, prefix, kivali, declared, requests, opts.agent, access, who)
+        run(pod, manifest, display, prefix, kivali, declared, requests, opts.agent, access, who, opts)
     finally:
-        srv.stop()
-        if srv.proc.returncode not in (0, None) and not srv.bad_line:
-            say("The server exited with status %s." % srv.proc.returncode)
+        pod.stop()
         if stub:
             stop_stub(*stub)
     say()
@@ -518,16 +594,65 @@ def main():
     say("No problems.")
 
 
-def run(srv, manifest, display, prefix, kivali, declared, requests, agent, access, who):
-    params = {"protocolVersion": PROTOCOL_VERSION, "capabilities": {}, "clientInfo": {"name": "kivali", "version": "try"}}
-    init, _ = srv.request("initialize", params, HANDSHAKE_SECONDS, rid="kivali-shim-1")
-    if init is None:
-        srv.missing("the server did not answer initialize within %d seconds, or exited first; Kivali stops it and the pod starts again" % HANDSHAKE_SECONDS)
+class Pod:
+    """The server as the pod runs it: started with the connection's
+    values in its env, through the shim's handshake, and started again
+    when they change, as a Keep changes them."""
+
+    def __init__(self, manifest, bundle, extra, fields, secret_values, display):
+        self.manifest, self.bundle, self.extra, self.display = manifest, bundle, extra, display
+        self.fields, self.secrets = fields, secret_values
+        self.srv = None
+        self.starts = 0
+
+    def env(self):
+        env = {
+            "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
+            # Keeps __pycache__ out of the bundle's directory; the pod's
+            # bundle is read-only, so it writes none there either.
+            "PYTHONDONTWRITEBYTECODE": "1",
+        }
+        env.update(server_env(self.manifest, self.fields))
+        env.update(self.extra)
+        for k in list(env):
+            if k.lower() in PROXY_VARS:
+                del env[k]
+        return env
+
+    def start(self):
+        """Start the server and run the shim's handshake: True once it
+        answered initialize."""
+        self.starts += 1
+        self.srv = Server(self.manifest, self.bundle, self.env(), self.fields, self.secrets, self.display)
+        params = {"protocolVersion": PROTOCOL_VERSION, "capabilities": {}, "clientInfo": {"name": "kivali", "version": "try"}}
+        init, _ = self.srv.request("initialize", params, HANDSHAKE_SECONDS, rid="kivali-shim-%d" % self.starts)
+        if init is None:
+            self.srv.missing("the server did not answer initialize within %d seconds, or exited first; Kivali stops it and the pod starts again" % HANDSHAKE_SECONDS)
+            return False
+        if "error" in init:
+            problem("the server refused initialize: %s" % (init.get("error") or {}).get("message", ""))
+            return False
+        self.srv.write({"jsonrpc": "2.0", "method": "notifications/initialized"})
+        return True
+
+    def restart(self):
+        """Stop the server and start it again with the values as they
+        are now, as the shim does when the connection changes."""
+        self.stop()
+        return self.start()
+
+    def stop(self):
+        if self.srv is None:
+            return
+        self.srv.stop()
+        if self.srv.proc.returncode not in (0, None) and not self.srv.bad_line:
+            say("The server exited with status %s." % self.srv.proc.returncode)
+
+
+def run(pod, manifest, display, prefix, kivali, declared, requests, agent, access, who, opts):
+    if not pod.start():
         return
-    if "error" in init:
-        problem("the server refused initialize: %s" % (init.get("error") or {}).get("message", ""))
-        return
-    srv.write({"jsonrpc": "2.0", "method": "notifications/initialized"})
+    srv = pod.srv
 
     # Kivali's own list, at every start: every declared action is on it.
     owner_list, _ = srv.request("tools/list", {}, OTHER_SECONDS)
@@ -556,9 +681,22 @@ def run(srv, manifest, display, prefix, kivali, declared, requests, agent, acces
 
     for kind, arg, args in requests:
         say()
+        srv = pod.srv
         if srv.stopped:
             note("the server has stopped; the requests left are not sent")
             return
+        if kind in ("setup", "requirements", "uninstall") and connection_method(manifest) != "setup":
+            problem("Kivali sends kivali/%s only to a bundle whose kivali.connection.method is setup; this one's is %s" % (kind, connection_method(manifest) or "missing"))
+            continue
+        if kind == "setup":
+            run_setup(pod, display, arg, opts)
+            continue
+        if kind == "requirements":
+            run_requirements(pod, display)
+            continue
+        if kind == "uninstall":
+            run_uninstall(pod, display)
+            continue
         if kind == "list":
             tools = agent_list() if agent else owner_tools
             say("list, %s:" % who)
@@ -605,6 +743,364 @@ def run(srv, manifest, display, prefix, kivali, declared, requests, agent, acces
                 problem("%s's first text is not a JSON array of strings, or an object whose options is one; the owner's form says the options are not a list of names" % tool)
                 continue
             say("  The form offers, in %.1f s: %s" % (took, ", ".join(options) if options else "(no options)"))
+
+
+def connection_method(manifest):
+    return str(((manifest.get("kivali") or {}).get("connection") or {}).get("method") or "")
+
+
+def setup_section(manifest):
+    """kivali.connection.setup, {} for none."""
+    s = ((manifest.get("kivali") or {}).get("connection") or {}).get("setup")
+    return s if isinstance(s, dict) else {}
+
+
+def clip(s, n):
+    return s if len(s) <= n else s[:n]
+
+
+def secret_return_key(k):
+    """Whether Kivali replaces a returned value of this key with [secret]."""
+    k = k.lower()
+    return k in ("code", "state") or any(w in k for w in ("token", "secret", "password", "key"))
+
+
+# What a kivali/setup result may hold, as Kivali reads it: a key outside
+# these, or a value of another type, and Kivali cannot read the step.
+STEP_KEYS = {"form", "go", "wait", "done", "keep", "state"}
+KIND_KEYS = {
+    "form": {"words": "text", "fields": "texts"},
+    "go": {"words": "text", "url": "text", "post": "post", "no_return": "switch", "stateless": "switch"},
+    "wait": {"words": "text", "url": "text", "code": "text"},
+}
+
+
+def read_step(result):
+    """The step of a kivali/setup result, and why Kivali cannot read it
+    ("" when it can). A result with no step is a step of nothing."""
+    if not isinstance(result, dict):
+        return None, "the result is not an object"
+    for k in result:
+        if k not in ("step", "_meta"):
+            return None, 'unknown field "%s"' % k
+    step = result.get("step")
+    if step is None:
+        return {}, ""
+    if not isinstance(step, dict):
+        return None, "step is not an object"
+    for k, v in step.items():
+        if k not in STEP_KEYS:
+            return None, 'step: unknown field "%s"' % k
+        if v is None:
+            continue
+        if k in KIND_KEYS:
+            if not isinstance(v, dict):
+                return None, "step: %s is not an object" % k
+            for kk, vv in v.items():
+                want = KIND_KEYS[k].get(kk)
+                if want is None:
+                    return None, 'step: unknown field "%s"' % kk
+                if vv is None:
+                    continue
+                ok = {
+                    "text": isinstance(vv, str),
+                    "switch": isinstance(vv, bool),
+                    "texts": isinstance(vv, list) and all(isinstance(x, str) for x in vv),
+                    "post": isinstance(vv, dict) and all(isinstance(x, str) or (isinstance(x, list) and all(isinstance(y, str) for y in x)) for x in vv.values()),
+                }[want]
+                if not ok:
+                    return None, "step: %s.%s is not %s" % (k, kk, {"text": "text", "switch": "true or false", "texts": "a list of text", "post": "an object of strings or lists of strings"}[want])
+        elif k == "done":
+            if not isinstance(v, bool):
+                return None, "step: done is not true or false"
+        elif not (isinstance(v, dict) and all(isinstance(x, str) for x in v.values())):
+            return None, "step: %s is not an object of text" % k
+    return {k: v for k, v in step.items() if v is not None}, ""
+
+
+def url_host(raw):
+    try:
+        u = urllib.parse.urlsplit(raw)
+    except ValueError:
+        return ""
+    return u.netloc.rpartition("@")[2].lower()
+
+
+def url_words(raw):
+    return url_host(raw) or "an address that is not one"
+
+
+def url_allowed(raw, hosts):
+    """Whether a step may name raw: https (plain http on loopback alone),
+    no user info, on a declared host, with no port."""
+    try:
+        u = urllib.parse.urlsplit(raw)
+        port = u.port
+    except ValueError:
+        return False
+    if not u.netloc or "@" in u.netloc:
+        return False
+    if u.scheme == "http":
+        if u.hostname not in ("localhost", "127.0.0.1", "::1"):
+            return False
+    elif u.scheme != "https":
+        return False
+    host = url_host(raw)
+    return host in hosts or (port is None and (u.hostname or "") in hosts)
+
+
+def check_step(step, display, setup):
+    """Why Kivali fails the flow on step, in the words the owner reads,
+    or "" when it keeps to the manifest's declarations."""
+    kinds = [k for k in ("form", "go", "wait") if k in step] + (["done"] if step.get("done") else [])
+    if not kinds:
+        return "setup gave no next step"
+    if len(kinds) > 1:
+        return "setup gave more than one next step"
+    hosts = setup.get("hosts") or []
+    fields = setup.get("fields") or {}
+    keeps = setup.get("keeps") or {}
+    for k in sorted(step.get("keep") or {}):
+        if k not in keeps:
+            return "%s's setup tried to keep %s, which its manifest does not declare" % (display, k)
+    if "form" in step:
+        asked = step["form"].get("fields") or []
+        if not asked:
+            return "%s's setup asked for a form with no fields" % display
+        for k in asked:
+            if k not in fields:
+                return "%s's setup asked for %s, which its manifest does not declare" % (display, k)
+    if "go" in step and not url_allowed(step["go"].get("url", ""), hosts):
+        return "%s's setup tried to send your browser to %s, which its manifest does not declare" % (display, url_words(step["go"].get("url", "")))
+    if "wait" in step and step["wait"].get("url") and not url_allowed(step["wait"]["url"], hosts):
+        return "%s's setup named a page on %s, which its manifest does not declare" % (display, url_words(step["wait"]["url"]))
+    return ""
+
+
+def field_title(key, field):
+    title = field.get("title") if isinstance(field, dict) else None
+    return title or key.replace("_", " ").capitalize()
+
+
+def ask_owner(key, field, answers):
+    """What the owner enters in a Form's field: --answer, else the
+    terminal, else blank."""
+    if key in answers:
+        return answers[key].strip()
+    words = "%s (%s): " % (field_title(key, field), field.get("words", ""))
+    if sys.stdin.isatty():
+        if field.get("secret") or field.get("setup_only"):
+            return getpass.getpass("  " + words).strip()
+        return input("  " + words).strip()
+    note("no --answer for %s, so it is left blank, as the page sends a field left blank" % key)
+    return ""
+
+
+def ask_return():
+    if not sys.stdin.isatty():
+        return None
+    return input("  The query the service sent the browser back with (code=...&state=...): ").strip()
+
+
+def run_setup(pod, display, flow, opts):
+    """The setup flow, call after call, as Kivali's runner calls it: an
+    empty answer first, then what each step gave back, each step held to
+    the manifest's declarations, until a step is done, a call answers an
+    error, or the flow waits for what try.py was not given."""
+    setup = setup_section(pod.manifest)
+    fields = setup.get("fields") or {}
+    answers = parse_pairs(opts.answer, "--answer")
+    returns = list(opts.returns)
+    say("setup%s, as Kivali runs it:" % ("" if flow == "setup" else " " + flow))
+    state, legs = {}, []
+    answer = {"form": {}, "return": {}, "checked": False, "went": False}
+    wait, checks = None, 0
+    for leg in range(1, SETUP_CALLS + 1):
+        if not answer["checked"] or not legs:
+            legs.append(tokens.token_hex(16))
+            pod.secrets.append(legs[-1])
+        callback = opts.callback + "?" + urllib.parse.urlencode({"state": legs[-1]})
+        progress = "kivali-progress-%d" % leg
+        params = {"flow": flow, "answer": dict(answer, state=dict(state), leg=leg, callback=callback), "_meta": {"progressToken": progress}}
+        what = "a check of the Wait" if answer["checked"] else "call %d" % leg
+        say("  kivali/setup, %s:" % what)
+        srv = pod.srv
+        srv.progress_token = progress
+        resp, took = srv.request("kivali/setup", params, SETUP_SECONDS)
+        srv.progress_token = None
+        if resp is None:
+            srv.missing("kivali/setup did not answer within %d seconds; Kivali fails the flow: setup did not finish its step within 5 minutes; start it again" % SETUP_SECONDS)
+            return
+        if "error" in resp:
+            err = resp.get("error") or {}
+            words = err.get("message") if isinstance(err, dict) else ""
+            say("  Setup fails, in %.1f s. The owner reads: %s" % (took, clip(srv.scrub(words or "%s failed and gave no reason" % display), FLOW_WORDS)))
+            return
+        step, why = read_step(resp.get("result"))
+        if why:
+            problem("Kivali fails the flow: %s's setup answered with a step Kivali cannot read: %s" % (display, why))
+            return
+        refused = check_step(step, display, setup)
+        if refused:
+            problem("Kivali fails the flow: " + clip(srv.scrub(refused), FLOW_WORDS))
+            return
+        keep = step.get("keep") or {}
+        new_state = step.get("state") or {}
+        # A check that finds the same Wait, State and nothing kept is no
+        # change, as Kivali has it.
+        same = wait is not None and "wait" in step and wait_key(step["wait"]) == wait_key(wait) and new_state == state and not keep
+        for v in list(keep.values()) + list(new_state.values()):
+            pod.secrets.append(v)
+        state = new_state
+        if same:
+            say("  The same Wait, in %.1f s: Kivali keeps showing it." % took)
+        else:
+            show_step(srv, step, took)
+        if keep:
+            changed = {k: v for k, v in keep.items() if pod.fields.get(k, "") != v}
+            for k, v in keep.items():
+                if v == "":
+                    pod.fields.pop(k, None)
+                else:
+                    pod.fields[k] = v
+            say("  Kivali keeps %s in the connection's Secret%s." % (", ".join(sorted(keep)), ", and starts the server again with it, as the pod does" if changed else ""))
+            if changed and not pod.restart():
+                return
+        if step.get("done"):
+            say("  Done, in %.1f s: %s." % (took, "the connection is made, and the integration is installed" if flow == "setup" else "the Fix is made"))
+            return
+        if "form" in step:
+            wait = None
+            entered = {}
+            for k in step["form"].get("fields") or []:
+                f = fields.get(k) or {}
+                entered[k] = ask_owner(k, f, answers)
+                if f.get("secret") or f.get("setup_only"):
+                    pod.secrets.append(entered[k])
+            answer = {"form": entered, "return": {}, "checked": False, "went": False}
+            continue
+        if "go" in step:
+            wait = None
+            go = step["go"]
+            if go.get("no_return"):
+                say("  Kivali sends the browser there, and calls setup again at once: nothing comes back.")
+                answer = {"form": {}, "return": {}, "checked": False, "went": True}
+                continue
+            query = returns.pop(0) if returns else ask_return()
+            if query is None:
+                note("the flow waits for the browser to come back from %s; give --return with the query the service sends back" % url_host(go.get("url", "")))
+                return
+            back = urllib.parse.parse_qs(query.lstrip("?"), keep_blank_values=True)
+            if "state" not in back and not go.get("stateless"):
+                back["state"] = [legs[-1]]
+                note("the return has no state; the service sends the browser back to the callback the call was given, so try.py added its state")
+            elif "state" in back and not any(v in legs for v in back["state"]):
+                problem("the return's state is none the flow gave: Kivali finds no flow for it, the browser lands on the integrations list and setup is not called")
+                return
+            for k, vs in back.items():
+                if secret_return_key(k):
+                    pod.secrets.extend(vs)
+            answer = {"form": {}, "return": back, "checked": False, "went": False}
+            continue
+        if "wait" in step:
+            if not same:
+                wait, checks = step["wait"], 0
+            if checks >= opts.checks:
+                note("the Wait was checked %d times; Kivali goes on checking it every 3 seconds while the owner's page is open, for ten minutes after its last change" % checks)
+                return
+            checks += 1
+            if opts.every > 0:
+                time.sleep(opts.every)
+            answer = {"form": {}, "return": {}, "checked": True, "went": False}
+            continue
+    note("setup was called %d times and is not done; try.py stops here" % SETUP_CALLS)
+
+
+def wait_key(w):
+    return (w.get("words", ""), w.get("url", ""), w.get("code", ""))
+
+
+def show_step(srv, step, took):
+    """A step as the owner's page shows it, its secrets replaced."""
+    scrub = srv.scrub
+    if "form" in step:
+        f = step["form"]
+        say("  A Form, in %.1f s: %s" % (took, scrub(f.get("words", "")) or "(no words)"))
+        say("    asks for: %s" % ", ".join(f.get("fields") or []))
+    elif "go" in step:
+        g = step["go"]
+        how = "posts a form to" if g.get("post") is not None else "goes to"
+        say("  A Go, in %.1f s: %s" % (took, scrub(g.get("words", "")) or "(no words)"))
+        say("    the browser %s %s%s%s" % (how, scrub(g.get("url", "")), ", and nothing comes back" if g.get("no_return") else "", "; the service sends no state back" if g.get("stateless") else ""))
+        for k in sorted(g.get("post") or {}):
+            v = g["post"][k]
+            say("    post %s: %s" % (k, scrub(json.dumps(v) if isinstance(v, list) else v)))
+    elif "wait" in step:
+        w = step["wait"]
+        say("  A Wait, in %.1f s: %s" % (took, scrub(w.get("words", "")) or "(no words)"))
+        if w.get("url"):
+            say("    page: %s" % scrub(w["url"]))
+        if w.get("code"):
+            say("    code: %s" % w["code"])
+
+
+def run_requirements(pod, display):
+    """kivali/requirements, as the page reads it: the rows after
+    Kivali's own, held to what Kivali keeps of a row."""
+    srv = pod.srv
+    say("requirements, as the integration's page reads them:")
+    if not pod.fields:
+        note("Kivali asks only once the integration is installed; with no connection, this is what integration_validate sees")
+    resp, took = srv.request("kivali/requirements", {}, REQUIREMENTS_SECONDS)
+    unmet = "  The page shows one unmet row: %s could not check its requirements: " % display
+    if resp is None:
+        srv.missing("kivali/requirements did not answer within %d seconds; the owner's page shows one unmet row: %s could not check its requirements: it did not answer within 5 seconds" % (REQUIREMENTS_SECONDS, display))
+        return
+    if "error" in resp:
+        err = resp.get("error") or {}
+        say(unmet + clip(srv.scrub((err.get("message") if isinstance(err, dict) else "") or "%s failed and gave no reason" % display), REQUIREMENT_WORDS))
+        return
+    res = resp.get("result")
+    rows = res.get("requirements") if isinstance(res, dict) else None
+    shape = "id", "title", "words", "met", "fix"
+    if not isinstance(rows, list) or any(k not in ("requirements", "_meta") for k in res) or not all(
+        isinstance(r, dict) and all(k in shape for k in r) and isinstance(r.get("id"), str) and isinstance(r.get("title", ""), str)
+        and isinstance(r.get("words", ""), str) and isinstance(r.get("met", False), bool) and isinstance(r.get("fix", ""), str)
+        for r in rows
+    ):
+        problem('kivali/requirements answered rows Kivali cannot read: the answer is {"requirements": [...]}, each row {"id", "title", "words", "met", "fix"}; the page shows one unmet row in their place')
+        return
+    seen = set()
+    for r in rows:
+        rid = r["id"]
+        if not REQUIREMENT_ID.match(rid) or rid in CORE_REQUIREMENTS or rid in seen:
+            problem("the row %s is left out: an id is letters, digits, hyphens and underscores, 64 at most, not one of Kivali's (%s) and given once" % (json.dumps(rid), ", ".join(sorted(CORE_REQUIREMENTS))))
+            continue
+        seen.add(rid)
+        title, words = srv.scrub(r.get("title") or rid), srv.scrub(r.get("words", ""))
+        if len(title) > REQUIREMENT_TITLE or len(words) > REQUIREMENT_WORDS:
+            note("Kivali cuts a row's title to %d characters and its words to %d" % (REQUIREMENT_TITLE, REQUIREMENT_WORDS))
+        say("  %s %s: %s" % ("met:" if r.get("met") else "not met:", clip(title, REQUIREMENT_TITLE), clip(words, REQUIREMENT_WORDS)))
+        if r.get("fix") and not r.get("met"):
+            say("    Fix runs the flow %s: try it with the request setup%s" % (r["fix"], "" if r["fix"] == "setup" else " " + r["fix"]))
+    if not rows:
+        say("  (no rows of its own)")
+    say("  in %.1f s." % took)
+
+
+def run_uninstall(pod, display):
+    srv = pod.srv
+    say("uninstall, as Uninstall sends it:")
+    resp, took = srv.request("kivali/uninstall", {}, UNINSTALL_SECONDS)
+    if resp is None:
+        srv.missing("kivali/uninstall did not answer within %d seconds; Kivali refuses the uninstall and changes nothing" % UNINSTALL_SECONDS)
+        return
+    if "error" in resp:
+        err = resp.get("error") or {}
+        words = (err.get("message") if isinstance(err, dict) else "") or "%s failed and gave no reason" % display
+        say("  Kivali refuses the uninstall, in %.1f s, and changes nothing. The owner reads: %s could not undo its installation: %s; nothing was changed" % (took, display, clip(srv.scrub(words), FLOW_WORDS)))
+        return
+    say("  Done, in %.1f s: Kivali then forgets the connection's Secret and every agent's access." % took)
 
 
 def listed(resp):

@@ -1,0 +1,55 @@
+{
+  "manifest_version": "0.3",
+  "name": "deals",
+  "version": "0.1.0",
+  "display_name": "Deals",
+  "description": "Find deals in a Deals account, through an app Kivali builds and installs there.",
+  "author": { "name": "Kivali Developer (agent)" },
+  "server": {
+    "type": "python",
+    "entry_point": "server/main.py",
+    "mcp_config": {
+      "command": "python3",
+      "args": ["server/main.py"],
+      "env": {
+        "DEALS_TOKEN": "${user_config.token}",
+        "DEALS_APP_ID": "${user_config.app_id}",
+        "DEALS_API": "https://api.deals.example",
+        "DEALS_APP": "https://app.deals.example"
+      }
+    }
+  },
+  "user_config": {},
+  "tools": [
+    { "name": "find_deals", "description": "Search the account's deals by name. Reads only." },
+    { "name": "whoami", "description": "Name the account the app is installed on, for Test connection. Reads only." }
+  ],
+  "kivali": {
+    "connection": {
+      "method": "setup",
+      "setup": {
+        "summary": "Builds a private app in your Deals account with the scopes agents need, installs it there, and keeps its token. The setup key you paste is used once and kept nowhere.",
+        "hosts": ["app.deals.example"],
+        "fields": {
+          "setup_key": {
+            "title": "Setup key",
+            "words": "A one-time setup key, from Settings, Developer, Setup keys, in your Deals account.",
+            "secret": true,
+            "setup_only": true
+          },
+          "token": {
+            "title": "App token",
+            "words": "The app's token, from its page in Deals, under Show token.",
+            "secret": true
+          }
+        },
+        "keeps": {
+          "token": "The app's token, which every call sends",
+          "app_id": "The app's id in Deals, to rebuild or remove it"
+        }
+      }
+    },
+    "hosts": ["api.deals.example"],
+    "verify": "whoami"
+  }
+}
