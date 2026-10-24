@@ -69,8 +69,9 @@ func (s *Server) signInTarget(w http.ResponseWriter, r *http.Request, v *integra
 
 // handleAPISignOut signs out the integration's connection: it ends a flow under way, removes the tokens from
 // the connection's Secret (its fields stay, the client id and secret
-// among them), clears the sign-in and the last connection test from its
-// record, asks the vendor to revoke the tokens (best effort), appends
+// among them; a client Kivali registered goes too), clears the sign-in
+// and the last connection test from its record, asks the vendor to
+// revoke the tokens and delete a registered client (best effort), appends
 // the owner's audit row and starts the bundle's server again without
 // the token. It answers with the page. The vendor is asked to revoke
 // with lockIntegrations released, so a slow vendor holds up no other
@@ -111,9 +112,15 @@ func (s *Server) signOutLocked(w http.ResponseWriter, r *http.Request) (signInRe
 	if rec.SignIn == nil && data[connect.SecretKeyAccessToken] == "" && data[connect.SecretKeyRefreshToken] == "" {
 		return nil, true
 	}
+	// A client Kivali registered goes with the tokens: it is deleted
+	// with the service, and the next sign-in registers again.
+	drop := []string{connect.SecretKeyAccessToken, connect.SecretKeyRefreshToken}
+	if v.manifest.Kivali.Connection.Registered() {
+		drop = connect.SecretKeys
+	}
 	kept := map[string]string{}
 	for k, val := range data {
-		if k != connect.SecretKeyAccessToken && k != connect.SecretKeyRefreshToken {
+		if !slices.Contains(drop, k) {
 			kept[k] = val
 		}
 	}

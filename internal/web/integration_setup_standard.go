@@ -10,7 +10,10 @@
 //     background, then Done once the tokens are kept.
 //   - browser: the same Form when needed, then a Go to the vendor's
 //     authorization page (with PKCE), which sends the browser back with
-//     a code; core exchanges it, keeps the tokens, and is Done.
+//     a code; core exchanges it, keeps the tokens, and is Done. For a
+//     client Kivali registers itself, the Go is preceded by discovery
+//     and registration when the connection keeps no client for the
+//     address it signs in at (integration_signin_registered.go).
 //
 // Each holds what it needs between calls (the client, the device code,
 // the OAuth state and verifier) itself, never in the flow's State, and
@@ -41,10 +44,6 @@ const (
 	deviceWaitWords = "Enter this code on the service’s page, then approve the sign-in there. Kivali finishes it here once you do."
 	browserGoWords  = "Sign in on the service’s page and approve the sign-in. The service sends you back here."
 )
-
-// errSignInNotRegistered: a registered client (client: registered),
-// which this version of Kivali does not register.
-const errSignInNotRegistered = "this version of Kivali does not register itself with the service"
 
 // errSignInNoState: a callback of a browser sign-in that carried no
 // OAuth state, matched by the flow's cookie alone.
@@ -83,12 +82,6 @@ func (s *Server) setupSpecFor(v *integrationView, r *http.Request) (setupSpec, *
 			fields: fields, keeps: setupKeys(fields), keep: s.keepConnectionForm,
 		}, nil
 	case integration.MethodDevice, integration.MethodBrowser:
-		// The seam signInClientFor resolves a registered client at:
-		// until Kivali registers itself, the flow is refused before it
-		// starts rather than failing once started.
-		if c.Registered() {
-			return setupSpec{}, &connWriteError{http.StatusConflict, errSignInNotRegistered, whoDevelopers}
-		}
 		ways := s.signInWaysHere(m, r)
 		switch {
 		case len(ways) == 0 && offersBrowser(m):
@@ -247,7 +240,7 @@ type signInSetup struct {
 
 	// Set by a call, read by the next call or the poller, which the
 	// runner starts only once that call's step is shown.
-	client                    connect.Client
+	app                       signInApp
 	device                    *connect.DeviceStart
 	redirect, state, verifier string
 	// polled is closed once the device flow's poller has ended.
@@ -262,40 +255,45 @@ func (d *signInSetup) checkForm(ctx context.Context, values map[string]string) s
 
 // signInClientFor is the app a sign-in of name's connection uses, from
 // what the owner just entered (form, nil for none) or else as stored,
-// and whether the owner must first enter the connection's form. A
-// client Kivali registers itself (integration.ClientRegistered) is
-// resolved here too.
-func (s *Server) signInClientFor(ctx context.Context, name string, m *integration.Manifest, form map[string]string) (connect.Client, bool, error) {
-	if m.Kivali.Connection.Registered() {
-		return connect.Client{}, false, errors.New(errSignInNotRegistered)
-	}
+// and whether the owner must first enter the connection's form. For a
+// client Kivali registers itself (integration.ClientRegistered) it is
+// the one the connection keeps, empty before one is registered
+// (registeredSignInApp registers it), and the form is needed only to
+// make a connection whose form has fields.
+func (s *Server) signInClientFor(ctx context.Context, name string, m *integration.Manifest, form map[string]string) (signInApp, bool, error) {
+	registered := m.Kivali.Connection.Registered()
 	entered := connect.Client{ID: form[integration.FieldClientID], Secret: form[integration.FieldClientSecret]}
-	if form != nil && entered.ID != "" && entered.Secret != "" {
-		return entered, false, nil
+	if form != nil && !registered && entered.ID != "" && entered.Secret != "" {
+		return signInApp{client: entered, ep: signInEndpoints(m)}, false, nil
 	}
-	var stored connect.Client
+	app := signInApp{ep: signInEndpoints(m)}
 	rec, err := s.Store.GetIntegrationConnection(name)
 	switch {
+	case errors.Is(err, store.ErrNotFound) && registered:
+		return signInApp{}, form == nil && len(integration.ConnectionFields(m)) > 0, nil
 	case errors.Is(err, store.ErrNotFound):
 	case err != nil:
-		return connect.Client{}, false, err
+		return signInApp{}, false, err
 	default:
 		rec, data, err := s.readSignIn(ctx, name, rec.ID)
 		if err != nil {
-			return connect.Client{}, false, err
+			return signInApp{}, false, err
 		}
-		stored = signInClient(rec, data)
+		app = signInAppOf(m, rec, data)
+		if registered {
+			return app, false, nil
+		}
 	}
 	// A field the owner left blank keeps what is stored.
-	client := connect.Client{ID: cmp.Or(entered.ID, stored.ID), Secret: cmp.Or(entered.Secret, stored.Secret)}
-	return client, form == nil && (client.ID == "" || client.Secret == ""), nil
+	app.client = connect.Client{ID: cmp.Or(entered.ID, app.client.ID), Secret: cmp.Or(entered.Secret, app.client.Secret)}
+	return app, form == nil && (app.client.ID == "" || app.client.Secret == ""), nil
 }
 
-func (d *signInSetup) Setup(ctx context.Context, _ builtinintegrations.Connection, _ string, last builtinintegrations.Answer, _ builtinintegrations.Progress) (builtinintegrations.Step, error) {
+func (d *signInSetup) Setup(ctx context.Context, _ builtinintegrations.Connection, _ string, last builtinintegrations.Answer, p builtinintegrations.Progress) (builtinintegrations.Step, error) {
 	if last.Return != nil {
 		return d.back(ctx, last.Return)
 	}
-	client, needForm, err := d.s.signInClientFor(ctx, d.name, d.m, last.Form)
+	app, needForm, err := d.s.signInClientFor(ctx, d.name, d.m, last.Form)
 	if err != nil {
 		log.Printf("integration %s: read the connection to sign in: %v", d.name, err)
 		return builtinintegrations.Step{}, errors.New("the connection could not be read; start the sign-in again")
@@ -307,14 +305,14 @@ func (d *signInSetup) Setup(ctx context.Context, _ builtinintegrations.Connectio
 	if needForm {
 		return builtinintegrations.Step{Form: &builtinintegrations.Form{Words: signInFormWords, Fields: d.keys}}, nil
 	}
-	d.client = client
-	d.s.setupScrub(d.run, client.Secret)
+	d.app = app
+	d.s.setupScrub(d.run, app.client.Secret)
 	step := builtinintegrations.Step{Keep: last.Form}
 	if d.way == integration.MethodDevice {
-		ds, err := d.s.connectEngine().StartDevice(ctx, signInEndpoints(d.m), client, d.m.Kivali.Connection.Scopes)
+		ds, err := d.s.connectEngine().StartDevice(ctx, app.ep, app.client, d.m.Kivali.Connection.Scopes)
 		if err != nil {
 			var term *connect.Terminal
-			words := signInFailureWords(err, connect.Tokens{}, client)
+			words := signInFailureWords(err, connect.Tokens{}, app.client)
 			if !errors.As(err, &term) {
 				log.Printf("integration %s: start the sign-in: %s", d.name, words)
 				return step, errors.New(d.display + " did not start the sign-in: " + words)
@@ -343,13 +341,19 @@ func (d *signInSetup) Setup(ctx context.Context, _ builtinintegrations.Connectio
 	d.state = cb.Query().Get("state")
 	cb.RawQuery = ""
 	d.redirect = cb.String()
+	c := d.m.Kivali.Connection
+	if c.Registered() {
+		// The client registered with the address this sign-in comes back to.
+		if d.app, err = d.s.registeredSignInApp(ctx, d.run, d.name, d.display, d.m, d.redirect, p); err != nil {
+			return step, err
+		}
+	}
 	d.verifier = ""
-	if d.m.Kivali.Connection.UsesPKCE() {
+	if c.UsesPKCE() {
 		d.verifier = connect.NewPKCEVerifier()
 	}
 	d.s.setupScrub(d.run, d.state, d.verifier)
-	c := d.m.Kivali.Connection
-	target := d.s.connectEngine().AuthorizeURL(signInEndpoints(d.m), client, d.redirect, d.state, c.Scopes, d.verifier, c.ExtraAuthorizationParams)
+	target := d.s.connectEngine().AuthorizeURL(d.app.ep, d.app.client, d.redirect, d.state, c.Scopes, d.verifier, c.ExtraAuthorizationParams)
 	if target == "" {
 		return step, errors.New(d.display + "'s sign-in address is not one Kivali can use")
 	}
@@ -366,13 +370,13 @@ func (d *signInSetup) waiting(run *setupRun) {
 		defer d.s.setupRuns.calling.Done()
 		defer close(d.polled)
 		ds := d.device
-		tok, err := d.s.connectEngine().PollDevice(run.ctx, signInEndpoints(d.m), d.client, ds)
+		tok, err := d.s.connectEngine().PollDevice(run.ctx, d.app.ep, d.app.client, ds)
 		if run.ctx.Err() != nil {
 			return
 		}
 		if err != nil {
 			// The vendor's words may echo the device code it was polled with.
-			d.s.setupEnd(run, errors.New(signInFailureWords(err, connect.Tokens{}, d.client, ds.DeviceCode())))
+			d.s.setupEnd(run, errors.New(signInFailureWords(err, connect.Tokens{}, d.app.client, ds.DeviceCode())))
 			return
 		}
 		d.s.setupEnd(run, d.keepSignIn(run.ctx, integration.MethodDevice, tok))
@@ -391,7 +395,7 @@ func (d *signInSetup) back(ctx context.Context, q url.Values) (builtinintegratio
 	// The vendor's words may echo what it was sent or sends back.
 	echoed := []string{d.state, code, d.verifier}
 	if vendorCode := q.Get("error"); vendorCode != "" {
-		return builtinintegrations.Step{}, errors.New(vendorRefusalWords(vendorCode, q.Get("error_description"), d.client, echoed...))
+		return builtinintegrations.Step{}, errors.New(vendorRefusalWords(vendorCode, q.Get("error_description"), d.app.client, echoed...))
 	}
 	switch {
 	case q.Get("state") != d.state:
@@ -399,28 +403,28 @@ func (d *signInSetup) back(ctx context.Context, q url.Values) (builtinintegratio
 	case code == "":
 		return builtinintegrations.Step{}, errors.New(errSignInNoCode)
 	}
-	client, _, err := d.s.signInClientFor(ctx, d.name, d.m, nil)
+	app, _, err := d.s.signInClientFor(ctx, d.name, d.m, nil)
 	if err != nil {
 		log.Printf("integration %s: read the connection to finish the sign-in: %v", d.name, err)
 		return builtinintegrations.Step{}, errors.New("the connection could not be read; start the sign-in again")
 	}
-	tok, err := d.s.connectEngine().Exchange(ctx, signInEndpoints(d.m), client, code, d.redirect, d.verifier)
+	tok, err := d.s.connectEngine().Exchange(ctx, app.ep, app.client, code, d.redirect, d.verifier)
 	if ctx.Err() != nil {
 		// Stopped meanwhile: tokens the vendor gave are revoked, not kept.
 		if err == nil {
-			d.s.revokeTokens(ctx, d.name, "", d.m, client, tok)
+			d.s.revokeTokens(ctx, d.name, "", app, tok)
 		}
 		return builtinintegrations.Step{}, errors.New(errSetupStopped)
 	}
 	if err != nil {
-		words := signInFailureWords(err, connect.Tokens{}, client, echoed...)
+		words := signInFailureWords(err, connect.Tokens{}, app.client, echoed...)
 		var term *connect.Terminal
 		if !errors.As(err, &term) {
 			log.Printf("integration %s: exchange the sign-in code: %s", d.name, words)
 		}
 		return builtinintegrations.Step{}, errors.New(words)
 	}
-	d.client = client
+	d.app = app
 	if err := d.keepSignIn(ctx, integration.MethodBrowser, tok); err != nil {
 		return builtinintegrations.Step{}, err
 	}
@@ -433,10 +437,10 @@ func (d *signInSetup) keepSignIn(ctx context.Context, method string, tok connect
 	d.s.setupScrub(d.run, tok.Access, tok.Refresh)
 	rec, err := d.s.Store.GetIntegrationConnection(d.name)
 	if err != nil {
-		d.s.revokeTokens(ctx, d.name, "", d.m, d.client, tok)
+		d.s.revokeTokens(ctx, d.name, "", d.app, tok)
 		return errors.New(errConnectionGone)
 	}
-	if err := d.s.finishSignIn(ctx, d.name, rec.ID, d.m, d.client, method, tok); err != nil {
+	if err := d.s.finishSignIn(ctx, d.name, rec.ID, d.m, d.app, method, tok); err != nil {
 		return err
 	}
 	d.s.testAfterSignIn(ctx, d.name, rec.ID)
@@ -456,12 +460,12 @@ var errSignInNotKept = errors.New("the sign-in worked, but Kivali could not keep
 // asks for the new token. A flow cancelled meanwhile (ctx), a
 // connection gone, or a Secret or record that cannot be written keeps
 // nothing, and the tokens are revoked with the vendor, best effort.
-func (s *Server) finishSignIn(ctx context.Context, name, connID string, m *integration.Manifest, client connect.Client, method string, tok connect.Tokens) error {
+func (s *Server) finishSignIn(ctx context.Context, name, connID string, m *integration.Manifest, app signInApp, method string, tok connect.Tokens) error {
 	unlock := s.lockIntegrations()
 	rec, data, err := s.readSignIn(ctx, name, connID)
 	if ctx.Err() != nil || errors.Is(err, store.ErrNotFound) {
 		unlock()
-		s.revokeTokens(ctx, name, connID, m, client, tok)
+		s.revokeTokens(ctx, name, connID, app, tok)
 		if ctx.Err() != nil {
 			return errors.New(errSetupStopped)
 		}
@@ -494,7 +498,7 @@ func (s *Server) finishSignIn(ctx context.Context, name, connID string, m *integ
 		log.Printf("integration %s: keep connection %s's sign-in: %v", name, connID, err)
 		// Tokens Kivali could not keep are of use to nobody: revoked
 		// with the vendor, best effort, as for a cancelled flow.
-		s.revokeTokens(ctx, name, connID, m, client, tok)
+		s.revokeTokens(ctx, name, connID, app, tok)
 		return errSignInNotKept
 	}
 	// The running server starts again with the new token.

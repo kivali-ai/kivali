@@ -604,9 +604,10 @@ func (s *Server) runSetupCall(run *setupRun, gen int, ans builtinintegrations.An
 }
 
 // setupConnection is name's connection as a driver reads it: its id
-// and every value it holds, fields and Secret both, without a
-// sign-in's tokens and the proxy credential's secret. Empty with no
-// connection yet; a Secret that cannot be read gives the fields alone.
+// and every value it holds, fields and Secret both, without what core
+// keeps of a sign-in (connect.SecretKeys) and the proxy credential's
+// secret. Empty with no connection yet; a Secret that cannot be read
+// gives the fields alone.
 func (s *Server) setupConnection(ctx context.Context, name string) builtinintegrations.Connection {
 	conn := builtinintegrations.Connection{Fields: map[string]string{}}
 	rec, err := s.Store.GetIntegrationConnection(name)
@@ -628,8 +629,7 @@ func (s *Server) setupConnection(ctx context.Context, name string) builtinintegr
 		return conn
 	}
 	for k, v := range data {
-		switch k {
-		case connect.SecretKeyAccessToken, connect.SecretKeyRefreshToken, builtinintegrations.ProxySecretKey:
+		if k == builtinintegrations.ProxySecretKey || slices.Contains(connect.SecretKeys, k) {
 			continue
 		}
 		conn.Fields[k] = v

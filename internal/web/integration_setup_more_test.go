@@ -420,21 +420,3 @@ func TestSetupFlowScrubsWhatCameBack(t *testing.T) {
 		}
 	}
 }
-
-// Why this test exists: a registered client (client: registered) is
-// one this version of Kivali does not register itself as. The start is
-// refused in words that say so, rather than started and failed, which
-// would leave started and failed rows in the audit for nothing.
-func TestSetupFlowRefusesARegisteredClient(t *testing.T) {
-	srv, vendor, _ := signInServer(t)
-	browserBundle(t, srv, vendor, func(c *integration.Connection) {
-		c.Client, c.Discover = integration.ClientRegistered, vendor.URL+"/mcp"
-	})
-	e := assertAPIError(t, flowDo(t, srv, http.MethodPost, intBase+"/crm/setup", apitypes.SetupFlowStart{Flow: "setup"}), http.StatusConflict)
-	if e.Error != errSignInNotRegistered {
-		t.Errorf("a registered client = %+v", e)
-	}
-	if got := setupAudit(t, srv, "crm"); len(got) != 0 {
-		t.Errorf("audit = %q", got)
-	}
-}

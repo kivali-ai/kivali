@@ -60,7 +60,7 @@ func registeredManifest() map[string]any {
 // publishing one.
 func TestSetupConnectionPassesForABuiltinAndReadsWhole(t *testing.T) {
 	m := setupManifest()
-	if got := builtinConnectionFindings(t, m); len(got) != 0 {
+	if got := connectionFindings(t, m); len(got) != 0 {
 		t.Fatalf("findings: %v", got)
 	}
 	c := parseMap(t, m).Kivali.Connection
@@ -135,7 +135,7 @@ func TestSetupThenHandsOverToASignIn(t *testing.T) {
 	conn := obj(m, "kivali", "connection")
 	setup := obj(m, "kivali", "connection", "setup")
 	setup["then"] = "browser"
-	got := builtinConnectionFindings(t, m)
+	got := connectionFindings(t, m)
 	for _, want := range []string{
 		"kivali.connection.authorization_endpoint is missing; a browser connection needs it",
 		"kivali.connection.token_endpoint is missing; a browser connection needs it",
@@ -152,7 +152,7 @@ func TestSetupThenHandsOverToASignIn(t *testing.T) {
 	conn["credential_keys"] = map[string]any{"access_token": "HUBSPOT_TOKEN"}
 	obj(m, "kivali", "connection", "setup", "keeps")["client_id"] = "The app's client id"
 	obj(m, "kivali", "connection", "setup", "keeps")["client_secret"] = "The app's client secret"
-	if got := builtinConnectionFindings(t, m); len(got) != 0 {
+	if got := connectionFindings(t, m); len(got) != 0 {
 		t.Fatalf("findings: %v", got)
 	}
 	c := parseMap(t, m).Kivali.Connection
@@ -213,6 +213,7 @@ func TestSetupConnectionRules(t *testing.T) {
 		{"keep key", func(m map[string]any) { obj(m, "kivali", "connection", "setup", "keeps")["App Id"] = "x" }, "kivali.connection.setup.keeps.App Id: the key must be lowercase letters"},
 		{"keep without words", func(m map[string]any) { obj(m, "kivali", "connection", "setup", "keeps")["app_id"] = "" }, "kivali.connection.setup.keeps.app_id: words are missing"},
 		{"keep under a token key", func(m map[string]any) { obj(m, "kivali", "connection", "setup", "keeps")["oauth_refresh_token"] = "x" }, "kivali.connection.setup.keeps.oauth_refresh_token: Kivali keeps a sign-in's tokens under that key"},
+		{"keep under a registered client's key", func(m map[string]any) { obj(m, "kivali", "connection", "setup", "keeps")["oauth_token_endpoint"] = "x" }, "kivali.connection.setup.keeps.oauth_token_endpoint: Kivali keeps the client it registers with the service under that key"},
 		{"then unknown", func(m map[string]any) { setup(m)["then"] = "token" }, "kivali.connection.setup.then token is not a sign-in Kivali runs; it is browser or device"},
 		{"user_config on a setup connection", func(m map[string]any) {
 			m["user_config"] = map[string]any{"token": map[string]any{"type": "string", "title": "Token"}}
@@ -227,7 +228,7 @@ func TestSetupConnectionRules(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			m := setupManifest()
 			c.change(m)
-			got := builtinConnectionFindings(t, m)
+			got := connectionFindings(t, m)
 			if !slices.ContainsFunc(got, func(s string) bool { return strings.Contains(s, c.want) }) {
 				t.Errorf("no finding contains %q; got %v", c.want, got)
 			}
@@ -245,11 +246,15 @@ func TestSetupConnectionRules(t *testing.T) {
 // than the server it discovered; one with no discover gives core
 // nothing to read; one with no hosts leaves the promise empty; and a
 // registered device or token connection names a flow core does not run
-// that way. For a bundle it is not in this version of Kivali.
+// that way. A bundle may declare one as a built-in may: its server asks
+// kivali/credential for the token as any sign-in connection's does.
 func TestRegisteredClient(t *testing.T) {
 	m := registeredManifest()
-	if got := builtinConnectionFindings(t, m); len(got) != 0 {
+	if got := connectionFindings(t, m); len(got) != 0 {
 		t.Fatalf("findings: %v", got)
+	}
+	if got := Validate(parseMap(t, m), defaultFiles()).Texts(); len(got) != 0 {
+		t.Fatalf("the whole bundle: %v", got)
 	}
 	c := parseMap(t, m).Kivali.Connection
 	if !c.Registered() || !c.SignIn() || !c.OAuth() || c.Discover != "https://mcp.zoominfo.com/mcp" {
@@ -260,10 +265,6 @@ func TestRegisteredClient(t *testing.T) {
 	}
 	if got := ConnectionFields(parseMap(t, m)); len(got) != len(parseMap(t, m).UserConfig) {
 		t.Errorf("a registered client's form adds fields: %+v", got)
-	}
-	bundle := connectionFindings(t, m)
-	if len(bundle) != 1 || !strings.Contains(bundle[0], "kivali.connection.client registered is not in this version of Kivali for a bundle") {
-		t.Errorf("as a bundle: %v", bundle)
 	}
 	conn := func(m map[string]any) map[string]any { return obj(m, "kivali", "connection") }
 	cases := []struct {
@@ -295,7 +296,7 @@ func TestRegisteredClient(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			m := registeredManifest()
 			c.change(m)
-			got := builtinConnectionFindings(t, m)
+			got := connectionFindings(t, m)
 			if !slices.ContainsFunc(got, func(s string) bool { return strings.Contains(s, c.want) }) {
 				t.Errorf("no finding contains %q; got %v", c.want, got)
 			}

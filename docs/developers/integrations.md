@@ -211,11 +211,15 @@ integration never does OAuth
   the metadata at `discover` (the protected resource's, RFC 9728, or
   the authorization server's own, RFC 8414), so the owner registers
   nothing, the form takes no client id or secret, and the manifest
-  gives no endpoints: core reads them there. Only a `browser`
-  connection has a registered client. For a bundle, a registered
-  client is not in this version of Kivali.
+  gives no endpoints: core reads them there
+  ([Registered clients](#registered-clients)). Only a `browser`
+  connection has a registered client, a bundle's as a built-in's; a
+  bundle's server asks `kivali/credential` for the token as for any
+  sign-in connection.
 - `discover`: the `https://` address a registered client's metadata is
-  read from. Its host is among `SignInHosts`.
+  read from: an MCP server's address, such as
+  `https://mcp.zoominfo.com/mcp`, or the authorization server's. Its
+  host is among `SignInHosts`.
 - `hosts`: for a registered client, every host the discovered
   endpoints may be on (the authorization server's, and the token and
   revocation endpoints' where they differ), lowercase host names, no
@@ -246,10 +250,11 @@ The check holds the section to these rules, for bundles and built-ins
 | A `token` connection gives no endpoint. | `kivali.connection.token_endpoint: a token connection has no endpoints` (each one named) |
 | `device` gives `device_endpoint` and `token_endpoint`; `browser` gives `authorization_endpoint` and `token_endpoint`, unless its client is registered, when it gives none. | `kivali.connection.<endpoint> is missing; a <method> connection needs it`; `kivali.connection.<endpoint>: Kivali reads a registered client's endpoints from discover, so the manifest gives none` |
 | Every endpoint given, and `discover`, is an absolute `https://` address; plain `http://` only on `localhost`, `127.0.0.1` or `::1`, for a vendor run in-process in tests. | `kivali.connection.<endpoint>: "<address>" must be an https:// address` |
-| `client` is absent, `operator` or `registered`. A registered client is a `browser` connection's, with `discover` and `hosts`, and for a built-in; a client Kivali ships (`kivali`) is not in this version. | `kivali.connection.client <client> is not one Kivali knows; it is operator or registered`; `kivali.connection.client registered: only a browser connection has Kivali register itself; ...`; `kivali.connection.client registered is not in this version of Kivali for a bundle; ...`; `kivali.connection.discover is missing; a registered client needs the address whose metadata names the authorization server`; `kivali.connection.discover: only a registered client has one`; `kivali.connection.hosts is missing; a registered client names every host the discovered endpoints may be on`; `kivali.connection.hosts: only a registered client has them; ...`; `kivali.connection.hosts: "<host>" is not a host name; ...` (the setup hosts' rules); `kivali.connection.client: a client Kivali ships is not in this version of Kivali; the owner registers the app and the client is operator` |
+| `client` is absent, `operator` or `registered`. A registered client is a `browser` connection's, a bundle's or a built-in's, with `discover` and `hosts`; a client Kivali ships (`kivali`) is not in this version. | `kivali.connection.client <client> is not one Kivali knows; it is operator or registered`; `kivali.connection.client registered: only a browser connection has Kivali register itself; ...`; `kivali.connection.discover is missing; a registered client needs the address whose metadata names the authorization server`; `kivali.connection.discover: only a registered client has one`; `kivali.connection.hosts is missing; a registered client names every host the discovered endpoints may be on`; `kivali.connection.hosts: only a registered client has them; ...`; `kivali.connection.hosts: "<host>" is not a host name; ...` (the setup hosts' rules); `kivali.connection.client: a client Kivali ships is not in this version of Kivali; the owner registers the app and the client is operator` |
 | Only a `setup` connection has a `setup` section, and a `setup` connection is held to [its own rules](#setup-connections). | `kivali.connection.setup: only a setup connection has one` |
 | `credential_keys` names only `access_token`, and a sign-in connection names it: capital letters, digits and underscores, starting with a letter. | `kivali.connection.credential_keys.access_token is missing; ...` |
 | A sign-in connection's `user_config` declares neither `client_id` nor `client_secret`: core adds them. | `user_config.client_id: Kivali adds the client id and secret to a sign-in connection's form, so user_config does not declare them` |
+| No `user_config` key, for any method, is one core keeps a sign-in under (`connect.SecretKeys`, checked by `validateUserConfig`). | `user_config.oauth_access_token: Kivali keeps a sign-in's tokens under that key; choose another`; `user_config.oauth_token_endpoint: Kivali keeps the client it registers with the service under that key; choose another` (each key of a [registered client](#registered-clients)) |
 | `scopes` entries are not empty. | `kivali.connection.scopes[<n>] is empty` |
 | `extra_authorization_params` names none of `client_id`, `redirect_uri`, `response_type`, `scope`, `state`, `code_challenge`, `code_challenge_method`. | `kivali.connection.extra_authorization_params.<key>: Kivali sets <key> itself` |
 | A sign-in connection's `server.mcp_config.env` names no `${user_config.client_secret}` (it reads empty) and sets no key equal to the access token's name (the token would replace it). | `server.mcp_config.env.<key>: the client secret is Kivali's; the server asks kivali/credential for the access token`; `server.mcp_config.env.<key>: Kivali gives the access token under that name, so the env cannot set it` |
@@ -331,8 +336,9 @@ every field's and keep's words are present; a host is a lowercase host
 name, not `*` or a pattern, listed once (`validateHostList`, the rule a
 registered client's `hosts` are held to as well); a field's or keep's
 key is lowercase letters, digits and underscores, starting with a
-letter; neither names `oauth_access_token` or `oauth_refresh_token`; a
-`setup_only` field is not also kept; `then` is `browser` or `device`,
+letter; none is a key core keeps a sign-in under (`connect.SecretKeys`:
+`oauth_access_token`, `oauth_refresh_token` and a
+[registered client's](#registered-clients)); a `setup_only` field is not also kept; `then` is `browser` or `device`,
 and with it `client_id` and `client_secret` are kept, while without it
 the connection has no endpoints. The same rules hold a bundle's setup
 flow and a built-in's; a bundle's runs in its server, over MCP ([For a
@@ -357,7 +363,7 @@ the version and shown on its install screen. The rules:
 | `server.type` | `python`. |
 | `server.entry_point` | A file in the bundle. |
 | `server.mcp_config` | `command` is `python3` or `python`; `args` is not empty; each `${user_config.<key>}` in `env` names a field of the connection form (`integration.ConnectionFields`), and `env` holds no other `${...}`. |
-| `user_config` | Each key is lowercase letters, digits and underscores, starting with a letter, and neither `oauth_access_token` nor `oauth_refresh_token`, the keys a sign-in's tokens are kept under; `type` is `string`, `number` or `boolean`; `title` is not empty; `sensitive` and `required`, when given, are booleans. |
+| `user_config` | Each key is lowercase letters, digits and underscores, starting with a letter, and none of `connect.SecretKeys`, the keys a sign-in's tokens (`oauth_access_token`, `oauth_refresh_token`) and a [registered client](#registered-clients) are kept under; `type` is `string`, `number` or `boolean`; `title` is not empty; `sensitive` and `required`, when given, are booleans. |
 | `tools` | Not empty; names are unique, lowercase letters, digits and underscores starting with a letter; a tool without a description is a warning. |
 | `kivali.connection.method` | `token`, `device` or `browser`. |
 | The rest of `kivali.connection` | See [The connection section](#the-connection-section). |
@@ -582,7 +588,9 @@ discover address, each once, sorted (`Connection.SignInHosts`, also on
 the install screen under "Signs in
 at"), and `sign_in_at`, for each way offered the host it sends the
 owner to (the authorization endpoint's for browser, the device
-endpoint's for device), which the Sign in block names ("Signs in at
+endpoint's for device; for a [registered client](#registered-clients),
+the authorization endpoint discovery found, once the first
+connection keeps one), which the Sign in block names ("Signs in at
 app.hubspot.com"); and `connection_test`, true
 when the version in use names `kivali.verify`. Without it the page offers no
 Test connection, and no connection carries a last result, even one
@@ -1134,7 +1142,9 @@ current access token at the moment of each call and nothing else.
 The tokens are in the connection's Secret, under keys that are no
 field of any form (the check refuses a `user_config` key equal to
 either): `connect.SecretKeyAccessToken` (`oauth_access_token`) and
-`connect.SecretKeyRefreshToken` (`oauth_refresh_token`). The record
+`connect.SecretKeyRefreshToken` (`oauth_refresh_token`). A client
+Kivali registered is kept beside them under keys of its own
+([Registered clients](#registered-clients)). The record
 keeps the rest (`store.ConnectionSignIn`, `sign_in` in
 `connections/<id>.yaml`): `method` (how the owner signed in),
 `signed_in_at`, `expires_at` (when the access token expires; absent
@@ -1285,9 +1295,11 @@ The flow's steps:
    connection made when there is none. The client is resolved by
    `signInClientFor`: a pasted client id from the record, or one a
    setup flow kept from the Secret, and the secret from the Secret. A
-   registered client (`client: registered`) would be resolved there
-   too; this version of Kivali does not register itself, so `POST
-   .../setup` of one is a 409 that says so, before any flow starts.
+   registered client (`client: registered`) has no client fields: the
+   Form comes only to make a connection whose `user_config` has
+   fields, and the client is the one the connection keeps, registered
+   before the Go when there is none for the redirect address
+   ([Registered clients](#registered-clients)).
 2. Device: `Engine.StartDevice` posts the client id and the manifest's
    scopes to the device endpoint (an answer with no code, or whose
    verification addresses are not absolute http(s) ones, is refused;
@@ -1412,13 +1424,113 @@ vendors that allow no plain `http` (Slack) cannot sign in to a team
 here: the code sign-in where the vendor has it, or an `https` address
 under Other devices.
 
+### Registered clients
+
+A `browser` connection whose `client` is `registered` signs in with a
+client core registers itself, so the owner registers no app and pastes
+nothing (`internal/web/integration_signin_registered.go`, the engine's
+`Discover`, `Register` and `Deregister`: [The flow engine](#the-flow-engine)).
+It is a standard (MCP servers' authorization, among others), and core
+knows no vendor: the manifest gives `discover`, the address to read
+the metadata from, and `hosts`, every host the endpoints found may be
+on.
+
+**Discovery.** Before the browser sign-in's Go, when the connection
+keeps no client usable at the flow's redirect address (none yet, one
+registered with other addresses, or one whose secret has expired),
+`Engine.Discover` reads the protected resource's metadata (RFC 9728)
+at `/.well-known/oauth-protected-resource` with the discover address's
+path after it, then without the path, and follows the first
+authorization server it names; with none there, the discover address
+is taken for the authorization server itself, at its path and then at
+its root. The authorization server's metadata (RFC 8414) is read at
+`/.well-known/oauth-authorization-server` with the issuer's path after
+it, then `/.well-known/openid-configuration` the same way, then, for an
+issuer with a path, that path followed by
+`/.well-known/openid-configuration`. A 4xx answer, or a 200 that is no
+JSON object, is a document not there. Discovery refuses, and the flow
+fails with "Kivali could not find where to sign in to <integration>:
+<why>", metadata for another resource than the discover address, an
+issuer that is not the one it was read for (RFC 8414, 3.3), an
+authorization server or endpoint that is not `https://` (plain `http`
+only on loopback) or is on a host neither the discover address's nor
+in `hosts` ("the service's metadata names its token endpoint on
+<host>, which the manifest does not list"), no authorization or token
+endpoint, a server that does not offer the authorization code grant,
+or one that lists PKCE methods without S256. Each request is bounded
+by `connect.RequestTimeout` (eight seconds) on the engine's clock and
+by 256 KiB, a larger document refused, and follows redirects only on
+the host it was sent to.
+
+**Registration.** `Engine.Register` posts RFC 7591's request to the
+registration endpoint found (none: "the service's metadata names no
+registration endpoint, so Kivali cannot register itself"):
+`redirect_uris`, every address registered so far and the flow's;
+`client_name`, "Kivali <team name>" (the company name), or "Kivali"
+for a team with none; `grant_types` `authorization_code` and
+`refresh_token`; `response_types` `code`; the manifest's scopes as
+`scope`; and `token_endpoint_auth_method`, `client_secret_basic` where
+the server lists it or lists none, else `client_secret_post`, else
+`none` (`ChooseAuthMethod`; a server that lists only others is
+refused). The request follows no redirect and has the same bounds. The
+answer's client id is required; its `token_endpoint_auth_method`
+replaces the one asked for; a client with no secret is a public one
+(`none`: the id alone at the token endpoint); an answer that lists
+`redirect_uris` must list every address asked for; a
+`registration_client_uri` is kept only with its
+`registration_access_token` and on an allowed host. The service's
+refusal fails the flow in its words: "Kivali could not register itself
+with <integration>: the service refused to register Kivali
+(<code>): <description>".
+
+**What is kept.** The client and what discovery found go to the
+connection's Secret beside its fields and tokens, under `lockIntegrations`,
+the connection made when there is none, before the Go is shown
+(`keepRegisteredClient`), under `connect.RegisteredSecretKeys`:
+`oauth_client_id`, `oauth_client_secret`, `oauth_client_secret_expires_at`
+(Unix seconds; absent when it does not expire),
+`oauth_token_endpoint_auth_method`, `oauth_redirect_uris` (one address
+per line), `oauth_resource` (the protected resource, sent as RFC 8707's
+`resource` with the authorization request, the code exchange and each
+refresh), `oauth_authorization_endpoint`, `oauth_token_endpoint`,
+`oauth_revocation_endpoint`, `oauth_registration_client_uri` and
+`oauth_registration_access_token`. None is a field: the record's
+secret keys do not name them, a save of the form keeps them as it
+keeps the tokens, the check refuses a `user_config` or setup key equal
+to one, and an integration is never given them. The client secret and
+the registration access token are scrubbed as the tokens are: from the
+flow's words and the audit, and from the log and every answer
+(`connect.SecretValueKeys`). The sign-in, the exchange, every refresh
+and the revocation then go to the endpoints kept, by the
+authentication kept (HTTP Basic, each part form-encoded first, for
+`client_secret_basic`), through `signInAppOf`. The page's
+`sign_in_at` names the authorization endpoint's host once one is kept.
+
+**Registering again.** A sign-in from an address the client was not
+registered with (the team moved, or the owner signed in at its
+external address after its loopback one) registers a new client with
+every address so far and this one, keeps it in place of the old, and
+deletes the old one with the service. A sign-in again from an address
+registered uses the client kept.
+
+**Deregistration.** Signing out removes the client's keys from the
+Secret with the tokens; Sign out, [Uninstall](#uninstall) and
+forgetting the connection a failed install made revoke the tokens at
+the revocation endpoint found ([Revocation](#revocation)) and then delete
+the registration with a `DELETE` of `registration_client_uri` carrying
+the registration access token (RFC 7592), best effort within ten
+seconds: a 204, 200, 404 or 401 is done, any other failure is logged.
+The next sign-in registers again. A registration Kivali could not keep
+is deleted at once.
+
 ### Sign out
 
 `POST .../sign-out` cancels the connection's flow, removes
 `oauth_access_token` and `oauth_refresh_token` from its Secret (its
-fields, the client id and secret among them, stay), clears `sign_in`
-and the last connection test from the record, asks the vendor to
-revoke the tokens ([Revocation](#revocation)), appends the owner's
+fields, the client id and secret among them, stay; a client Kivali
+registered goes too: [Registered clients](#registered-clients)),
+clears `sign_in` and the last connection test from the record, asks
+the vendor to revoke the tokens ([Revocation](#revocation)), appends the owner's
 audit row `sign_out`, restarts the bundle's server without the token,
 and answers the page. The connection then needs a sign-in, so its
 `sign_in` requirement is not met. A connection not signed in that
@@ -1430,8 +1542,10 @@ test kept); only a sign-in under way is cancelled.
 Signing out, [Uninstall](#uninstall) and forgetting the connection a
 failed install made ask the vendor to revoke the connection's tokens once they
 are gone from its Secret, when the manifest gives a revocation
-endpoint: the refresh token, then the access token, with the client's
-credentials, best effort within ten seconds. The tokens are collected
+endpoint (for a registered client, when discovery found one): the
+refresh token, then the access token, with the client's credentials,
+best effort within ten seconds, and then delete a registered client
+([Registered clients](#registered-clients)). The tokens are collected
 under `lockIntegrations` and revoked once it is released, before the
 route answers, so a slow vendor holds up no other integration write.
 A failure is logged and the sign-out or delete goes on. Deleting and
@@ -1464,7 +1578,11 @@ expiry and wait from its clock:
 
 - `Refresh(ctx, Endpoints, Client, refresh)` and `Exchange(ctx,
   Endpoints, Client, code, redirectURL, pkceVerifier)` post the grant
-  with the client id and secret in the body; `StartDevice(ctx,
+  with the client's credentials as its `AuthMethod` says: the id and
+  secret in the body (`client_secret_post`, and empty), HTTP Basic
+  (`client_secret_basic`), or the id alone (`none`); `Revoke` the same.
+  With `Endpoints.Resource` set, the authorization address, the
+  exchange and each refresh carry it as `resource` (RFC 8707). `StartDevice(ctx,
   Endpoints, Client, scopes)` and `PollDevice` send the client id
   only, as GitHub's device flow takes. Each is a form-encoded POST with
   `Accept: application/json` (GitHub answers form-encoded without it,
@@ -1490,6 +1608,14 @@ expiry and wait from its clock:
   S256 challenge of `NewPKCEVerifier`'s verifier (`PKCEChallenge`).
 - `Revoke(ctx, Endpoints, Client, Tokens)` posts each token to the
   revocation endpoint; with none it does nothing.
+- `Discover(ctx, discover, hosts)` reads a registered client's
+  metadata and returns its endpoints (`Metadata`); `Register(ctx,
+  endpoint, RegisterRequest, hosts)` registers a client
+  (`Registration`), `ChooseAuthMethod` picks its token endpoint
+  authentication, and `Deregister(ctx, clientURI, accessToken)`
+  deletes it ([Registered clients](#registered-clients)). Each request
+  of theirs is bounded by `RequestTimeout` on the engine's clock,
+  whatever the HTTP client's own timeout.
 - `RefreshDue(now, expiresAt)` is the margin rule; `Refresher.Do(ctx,
   key, fn)` the one-run-per-key gate.
 
@@ -1507,7 +1633,18 @@ no JSON, an answer that is not JSON), in RFC 6749's style (400, 401 for the clie
 a test can have callers arrive while it is in flight. `Issue` gives a
 test a signed-in connection's tokens; `Requests`, `Refreshes`,
 `Revoked`, `Valid` and `RefreshAccepted` say what the vendor saw and
-holds. `echotest.Echo.SignIn` makes the test built-in a sign-in one.
+holds. It is also an MCP server's authorization server: the protected
+resource's metadata for `Resource()` (`URL + /mcp`), the authorization
+server's at the root, `POST /register` and `DELETE /register/{id}`; a
+client registered signs in, refreshes and revokes as the one it was
+made with does, by HTTP Basic or in the body, at the addresses it
+registered only. Knobs change the documents (`ResourceMetadata`,
+`ServerMetadata`, `NoResourceMetadata`, `AuthMethods`) and the
+registration (`RegisterError`, `RegisterNoSecret`,
+`RegisterNoManagement`); `Registered` and `Deregistered` say what it
+holds. The connect package's tests also read ZoomInfo's documents as
+published, verbatim, from an in-process server that answers for its
+hosts. `echotest.Echo.SignIn` makes the test built-in a sign-in one.
 
 ## Installing a version
 
@@ -3306,7 +3443,7 @@ the owner's.
 | `GET .../audit?limit=` | `IntegrationAudit`, newest first; limit 100 by default, at most 1000. |
 | `GET .../choices/{key}` | `AccessChoices`, through the connection; 404 for a field that lists no options; 409 while the integration is not running, for a built-in one without a connection, or for a built-in one this binary does not carry; 502 for the tool's error, or a result that is not a list of names. |
 | `GET .../logs?limit=` | `IntegrationLogs`, oldest first; limit 200 by default, at most 2000. |
-| `POST .../setup` | `SetupFlowStart` in (`{"flow": "setup"}` to install, `sign_in` or a flow the integration's requirements name for a Fix: [Fix](#fix)), `SetupFlow` out: the flow started, ending one under way ([Setup flows](#setup-flows)); installing an integration with nothing installed switches it on. 409 for one this binary does not carry, with no approved version, for a Fix of one not installed ("install <integration> first") or switched off ("switch <integration> on first"), for a flow name it does not have ("<flow> is not a flow <integration> has"), while a failed install's connection is still being forgotten ("Kivali is still undoing the last setup; try again in a moment"), for `sign_in` of a connection not made by signing in, for a sign-in connection signed in ("the connection is signed in; sign out first") or none of whose ways works from here, for a request that names no host where the browser signs in, for a registered client ("this version of Kivali does not register itself with the service"), and for a setup connection whose setup this binary does not carry. |
+| `POST .../setup` | `SetupFlowStart` in (`{"flow": "setup"}` to install, `sign_in` or a flow the integration's requirements name for a Fix: [Fix](#fix)), `SetupFlow` out: the flow started, ending one under way ([Setup flows](#setup-flows)); installing an integration with nothing installed switches it on. 409 for one this binary does not carry, with no approved version, for a Fix of one not installed ("install <integration> first") or switched off ("switch <integration> on first"), for a flow name it does not have ("<flow> is not a flow <integration> has"), while a failed install's connection is still being forgotten ("Kivali is still undoing the last setup; try again in a moment"), for `sign_in` of a connection not made by signing in, for a sign-in connection signed in ("the connection is signed in; sign out first") or none of whose ways works from here, for a request that names no host where the browser signs in, and for a setup connection whose setup this binary does not carry. |
 | `GET .../setup` | `SetupFlow`: the flow under way, or the one that last ended (kept ten minutes after its last change); 404 with none, as after a restart. A read counts as watching the flow for ten seconds. |
 | `POST .../setup/answer` | `SetupFlowAnswer` in, `SetupFlow` out: the flow's Form answered; 400 for a key the Form does not ask for, or what a save of the connection form would refuse (a standard flow's); 409 when the flow is not on a Form; 404 with no flow. |
 | `POST .../setup/cancel` | 204: the flow ended and forgotten, audited as cancelled, under the lock a Keep is written under; 404 with no flow. |

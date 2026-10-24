@@ -121,6 +121,9 @@ type connView struct {
 	// hasToken is true when the Secret holds a sign-in's access token
 	// (or could not be read, which is not taken for a missing one).
 	hasToken bool
+	// registeredAt is the host of the authorization endpoint discovery
+	// found for a client Kivali registered, "" before one is.
+	registeredAt string
 }
 
 // signIn reports whether core holds sign-in tokens for v's connections:
@@ -204,6 +207,7 @@ func (s *Server) readConnectionSecret(ctx context.Context, name string, rec stor
 		return c
 	}
 	c.hasToken = data[connect.SecretKeyAccessToken] != ""
+	c.registeredAt = integration.EndpointHost(data[connect.SecretKeyAuthorizationEndpoint])
 	for _, k := range rec.SecretKeys {
 		if data[k] == "" {
 			c.reconnect = true
@@ -404,8 +408,11 @@ func setupWire(m *integration.Manifest) *apitypes.IntegrationSetup {
 
 // signInPagesOf is, for each way this server offers m's connection, the
 // host the sign-in goes to: the authorization endpoint's for browser,
-// the device endpoint's for device. nil for a token connection.
-func signInPagesOf(m *integration.Manifest) map[string]string {
+// the device endpoint's for device. For a client Kivali registers, the
+// browser's is registeredAt, the host of the authorization endpoint
+// discovery found, once it has (empty before). nil for a token
+// connection.
+func signInPagesOf(m *integration.Manifest, registeredAt string) map[string]string {
 	if m == nil || !m.Kivali.Connection.SignIn() {
 		return nil
 	}
@@ -416,7 +423,11 @@ func signInPagesOf(m *integration.Manifest) map[string]string {
 		if way == integration.MethodBrowser {
 			ep = c.AuthorizationEndpoint
 		}
-		if h := integration.EndpointHost(ep); h != "" {
+		h := integration.EndpointHost(ep)
+		if way == integration.MethodBrowser && c.Registered() {
+			h = registeredAt
+		}
+		if h != "" {
 			out[way] = h
 		}
 	}
@@ -487,6 +498,10 @@ func optString(s string) *string {
 // (signInRedirectURL).
 func (s *Server) integrationPage(v *integrationView, r *http.Request) apitypes.IntegrationPage {
 	names := s.agentNames()
+	registeredAt := ""
+	if c := v.conn; c != nil {
+		registeredAt = c.registeredAt
+	}
 	page := apitypes.IntegrationPage{
 		Summary:          v.summary(),
 		Hosts:            integrationHosts(v.manifest),
@@ -496,7 +511,7 @@ func (s *Server) integrationPage(v *integrationView, r *http.Request) apitypes.I
 		SignInClient:     signInClientWire(v.manifest),
 		Scopes:           signInScopes(v.manifest),
 		SignInHosts:      signInHosts(v.manifest),
-		SignInAt:         signInPagesOf(v.manifest),
+		SignInAt:         signInPagesOf(v.manifest, registeredAt),
 		Setup:            setupWire(v.manifest),
 		ConnectionTest:   v.connectionTest(),
 		AccessForm:       accessFormWire(v.manifest),
