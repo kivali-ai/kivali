@@ -684,7 +684,8 @@ panics recovered. A row whose id is not letters, digits, hyphens and
 underscores (64 at most), is one of Kivali's or repeats one, or whose
 `fix` is not such a name, is left out and logged; a title left empty
 is the id; titles are cut to 80 runes and words to 500, each scrubbed
-of the connection's secrets. An error, or no answer in time, is one
+of the connection's secrets; the first 20 rows kept are shown and the
+rest left out and logged, so no integration floods Needs you. An error, or no answer in time, is one
 unmet row `checks` ("<Integration> could not check its requirements:
 <words>"). While the connection needs a sign-in, or the service did
 not answer its renewal, the integration is not asked: the `sign_in`
@@ -1101,9 +1102,12 @@ and a proxy credential per connection stay built-in only.
   its setup cannot go on; its log says why. Start the setup again once
   it runs").
 - **`kivali/requirements`**, params `{}`: the integration's own rows,
-  `{"requirements": [{"id", "title", "words", "met", "fix"}]}`, read as
-  a built-in's ([Requirements](#requirements)), under the same five
-  seconds, and asked only while the server runs.
+  `{"requirements": [{"id", "title", "words", "met", "fix"}]}`, every
+  field but `fix` required (an answer with a row lacking one is read as
+  the checks failing), read as a built-in's
+  ([Requirements](#requirements)), at most 20 kept, under the same five
+  seconds, and asked only while the server runs; a Fix of a bundle
+  whose server is not running is a 409 ([Fix](#fix)).
 - **`kivali/uninstall`**, params `{}`: undo the installation on the
   service, answered `{}`, within `integrationCallTimeout`, and asked
   only while the server runs: a bundle switched on whose server is not
@@ -3178,7 +3182,11 @@ points at and every agent can list. It holds:
   host or key, a step of none or several kinds, a step of a shape core
   cannot read, and a return with a state the flow never gave are each a
   `problem:` line. `--field` takes the keys setup keeps, so the
-  requirements, a Fix's flow and uninstall run on a connection.
+  requirements, a Fix's flow and uninstall run on a connection. A step
+  is held to the runner's bounds too (words cut to 200 runes, a code to
+  64, an address of 4096 characters at most, 64 KiB kept and carried),
+  and the requirement rows to what core keeps of them: every field but
+  `fix` present, an id and a fix that are names, and 20 rows at most.
 
 `internal/builtinskills/build_an_integration_test.go` and
 `build_an_integration_setup_test.go` hold them to the platform: each

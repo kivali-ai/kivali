@@ -43,7 +43,9 @@ func TestSetupParamsOnTheWire(t *testing.T) {
 // post may give a key one value or several, and a step that is not one
 // of the shapes (a misspelt key, a number for a string) must be an
 // error rather than a step with a part silently missing: a Go read
-// without its no_return would wait for a callback that never comes.
+// without its no_return would wait for a callback that never comes. A
+// kept null reads as an empty value, which forgets the key, as try.py
+// reads it.
 func TestParseSetupResult(t *testing.T) {
 	for _, tc := range []struct {
 		name, raw string
@@ -56,6 +58,7 @@ func TestParseSetupResult(t *testing.T) {
 		{"wait", `{"step":{"wait":{"words":"Enter the code.","url":"https://app.example/device","code":"WDJB-MJHT"}},"_meta":{}}`,
 			builtinintegrations.Step{Wait: &builtinintegrations.Wait{Words: "Enter the code.", URL: "https://app.example/device", Code: "WDJB-MJHT"}}},
 		{"done", `{"step":{"done":true,"keep":{"token":"t0k3n-1"}}}`, builtinintegrations.Step{Done: true, Keep: map[string]string{"token": "t0k3n-1"}}},
+		{"keep forgets", `{"step":{"done":true,"keep":{"token":null}}}`, builtinintegrations.Step{Done: true, Keep: map[string]string{"token": ""}}},
 		{"none", `{}`, builtinintegrations.Step{}},
 	} {
 		got, err := ParseSetupResult(json.RawMessage(tc.raw))
@@ -81,7 +84,9 @@ func TestParseSetupResult(t *testing.T) {
 // fields must arrive under their names, and an answer with no list (a
 // server that answered {} or misspelt the key) must be an error the
 // page shows as the integration's checks failing, not a healthy
-// integration with no rows.
+// integration with no rows. So must a row lacking its id, title, words
+// or met (an absent met would read as unmet), as the smoke test and
+// try.py hold it.
 func TestParseRequirements(t *testing.T) {
 	got, err := ParseRequirements(json.RawMessage(`{"requirements":[{"id":"token","title":"Token","words":"It works.","met":true},{"id":"scopes","title":"Scopes","words":"One is missing.","met":false,"fix":"rescope"}]}`))
 	want := []builtinintegrations.Requirement{{ID: "token", Title: "Token", Words: "It works.", Met: true}, {ID: "scopes", Title: "Scopes", Words: "One is missing.", Fix: "rescope"}}
@@ -91,7 +96,7 @@ func TestParseRequirements(t *testing.T) {
 	if got, err := ParseRequirements(json.RawMessage(`{"requirements":[]}`)); err != nil || len(got) != 0 {
 		t.Errorf("none = %+v, %v", got, err)
 	}
-	for _, raw := range []string{`{}`, `{"requirements":null}`, `{"rows":[]}`, `{"requirements":[{"id":"a","ok":true}]}`} {
+	for _, raw := range []string{`{}`, `{"requirements":null}`, `{"rows":[]}`, `{"requirements":[{"id":"a","ok":true}]}`, `{"requirements":[{"id":"a","title":"A","words":"w"}]}`, `{"requirements":[{"title":"A","words":"w","met":true}]}`} {
 		if _, err := ParseRequirements(json.RawMessage(raw)); err == nil {
 			t.Errorf("%s read as rows", raw)
 		}

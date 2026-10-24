@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -228,8 +229,9 @@ func TestTryRunsTheSetupTemplatesFlow(t *testing.T) {
 }
 
 // scriptedSetupServer is a server whose kivali/setup answers are the
-// results in TRY_STEPS, one per call (the last repeated), and that
-// writes each answer it was given to its error output.
+// results in TRY_STEPS, one per call (the last repeated), that writes
+// each answer it was given to its error output, and whose
+// kivali/requirements answer is TRY_ROWS.
 const scriptedSetupServer = `import json, os, sys
 steps = json.loads(os.environ["TRY_STEPS"])
 n = 0
@@ -247,6 +249,8 @@ for line in sys.stdin:
         sys.stderr.flush()
         res = steps[min(n, len(steps) - 1)]
         n += 1
+    elif m == "kivali/requirements":
+        res = json.loads(os.environ.get("TRY_ROWS", '{"requirements": []}'))
     else:
         res = {}
     print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": res}), flush=True)
@@ -323,4 +327,52 @@ func TestTryHoldsASetupStepToTheManifest(t *testing.T) {
 		t.Errorf("a Go with no return: exit %d", code)
 	}
 	wantIn(t, out, "calls setup again at once", `"went": true`)
+}
+
+// Why this test exists: try.py reads requirement rows as Kivali keeps
+// them, so a row Kivali leaves out or cannot read is a problem before
+// publishing rather than a row the owner never sees. A row lacking its
+// met is one Kivali cannot read at all; a fix that is not a flow's name
+// leaves its row out; and past 20 rows Kivali shows none of the rest,
+// so no integration floods Needs you.
+func TestTryHoldsRequirementRowsToWhatKivaliKeeps(t *testing.T) {
+	needPython(t)
+	rows := func(t *testing.T, res map[string]any) (string, int) {
+		t.Helper()
+		dir := writeSkill(t)
+		if err := os.WriteFile(filepath.Join(dir, "template-setup", "server", "main.py"), []byte(scriptedSetupServer), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		b, err := json.Marshal(res)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return runTry(t, dir, "--env", "TRY_STEPS=[]", "--env", "TRY_ROWS="+string(b), "template-setup", "requirements")
+	}
+	row := func(id string) map[string]any {
+		return map[string]any{"id": id, "title": "Row " + id, "words": "Fine.", "met": true}
+	}
+	out, code := rows(t, map[string]any{"requirements": []any{map[string]any{"id": "a", "title": "A", "words": "No met."}}})
+	if code != 1 {
+		t.Errorf("a row without met: exit %d, want 1", code)
+	}
+	wantIn(t, out, "problem: kivali/requirements answered rows Kivali cannot read")
+
+	bad := row("scopes")
+	bad["fix"] = "re scope"
+	out, code = rows(t, map[string]any{"requirements": []any{row("token"), bad}})
+	if code != 1 {
+		t.Errorf("a fix that is not a flow's name: exit %d, want 1", code)
+	}
+	wantIn(t, out, `problem: the row "scopes" is left out: its fix "re scope" is not a flow's name`, "met: Row token: Fine.")
+
+	var many []any
+	for i := range 21 {
+		many = append(many, row(fmt.Sprintf("r%d", i)))
+	}
+	out, code = rows(t, map[string]any{"requirements": many})
+	if code != 1 {
+		t.Errorf("21 rows: exit %d, want 1", code)
+	}
+	wantIn(t, out, `problem: the integration gave more than 20 rows; Kivali shows the first 20 and leaves the row "r20" and those after it out`, "met: Row r19: Fine.")
 }

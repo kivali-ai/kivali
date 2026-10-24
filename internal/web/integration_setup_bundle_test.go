@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"slices"
 	"strings"
@@ -517,6 +518,29 @@ func TestBundleRequirementsAndFix(t *testing.T) {
 	// owner reads why, not that the flow is not one it has.
 	if e := assertAPIError(t, flowDo(t, srv, http.MethodPost, intBase+"/crm/setup", apitypes.SetupFlowStart{Flow: "rescope"}), http.StatusConflict); e.Error != errBundleNotRunning("Test crm") {
 		t.Errorf("a Fix while not running = %+v", e)
+	}
+}
+
+// Why this test exists: each unmet row of an integration's own is a
+// Needs-you row, and a bundle's server is someone else's code: one that
+// answered hundreds of unmet rows would bury everything else on Home.
+// Kivali keeps the first 20.
+func TestBundleRequirementsAreCapped(t *testing.T) {
+	srv, pod, _, _, _ := bundleSetupServer(t, keepAndDone, true)
+	installBundle(t, srv, pod)
+	pod.set(func(sp *setupPod) {
+		sp.rows = func() (any, *integrationpod.RPCError) {
+			var rows []any
+			for i := range 25 {
+				rows = append(rows, map[string]any{"id": fmt.Sprintf("r%d", i), "title": "Row", "words": "Not met.", "met": false})
+			}
+			return map[string]any{"requirements": rows}, nil
+		}
+	})
+	page := orgOK[apitypes.IntegrationPage](t, orgGet(t, srv, intBase+"/crm"))
+	ids := requirementIDs(page)
+	if !slices.Contains(ids, "r19") || slices.Contains(ids, "r20") || len(requirementNeeds(t, srv)) != requirementRowsMax {
+		t.Errorf("rows = %v, needs %d", ids, len(requirementNeeds(t, srv)))
 	}
 }
 
