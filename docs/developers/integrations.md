@@ -368,7 +368,7 @@ the version and shown on its install screen. The rules:
 | `server.mcp_config` | `command` is `python3` or `python`; `args` is not empty; each `${user_config.<key>}` in `env` names a field of the connection form (`integration.ConnectionFields`), and `env` holds no other `${...}`. |
 | `user_config` | Each key is lowercase letters, digits and underscores, starting with a letter, and none of `connect.SecretKeys`, the keys a sign-in's tokens (`oauth_access_token`, `oauth_refresh_token`) and a [registered client](#registered-clients) are kept under; `type` is `string`, `number` or `boolean`; `title` is not empty; `sensitive` and `required`, when given, are booleans. |
 | `tools` | Not empty; names are unique, lowercase letters, digits and underscores starting with a letter; a tool without a description is a warning. |
-| `kivali.connection.method` | `token`, `device` or `browser`. |
+| `kivali.connection.method` | `token`, `device`, `browser` or `setup`. |
 | The rest of `kivali.connection` | See [The connection section](#the-connection-section). |
 | `kivali.hosts` | Not empty; each a lowercase host or pattern with no scheme, port, path, user or whitespace (`integration.ValidHost`, the rule of `store.ValidEgressHost`, which a store test holds it to); a bare `*` is refused. |
 | `kivali.packages` | Each a Debian package name (`debpkg.ValidName`, Debian Policy's rule, which the agent shell's software is held to too): lowercase letters, digits, `+`, `-` and `.`, at least two characters, starting with a letter or digit and not ending in `-`, so no option, removal, version or release; none listed twice. |
@@ -3287,28 +3287,60 @@ built-in skill `build-an-integration`
 (`internal/builtinskills/skills/build-an-integration/`), which the role
 points at and every agent can list. It holds:
 
-- `SKILL.md`: the steps, the bundle and its manifest, and the parts of
-  this page a bundle's author meets and the check cannot show: the
-  pod's environment and network, the line protocol as the shim holds
-  it, the shape of `_meta.kivali.access`, what reaches an agent from an
-  answer, and how Test connection and an access field's options read
-  theirs.
-- `template/`: a bundle for an imaginary notes service, standard
+- `SKILL.md`: the steps (template, stub, `try.py`,
+  `integration_validate`, `integration_publish`), then the choice of
+  connection first (**How it connects**: one table of the four ways, a
+  token, a sign-in with the owner's app, a registered client, a setup
+  flow, with when each fits), and a section for each with a complete
+  `kivali.connection` block. **A registered client** says how to fill
+  `hosts` from the service's metadata and sketches a bundle wrapping a
+  remote MCP server (core runs none: the bundle lists the declared
+  actions from its own table and forwards each call with the token from
+  `kivali/credential`). **A setup connection** is this page's contract
+  for a bundle, as patterns: the declarations with the rules and the
+  refusal words; a flow call by call with the exact JSON of
+  `kivali/setup`, its answer and the progress notification; when a
+  Form, a Go (link or post, `no_return`, `stateless`) and a Wait fit,
+  and what the owner sees at each; coming back (the callback, its
+  state, a return as untrusted, a replayed leg); state against keep and
+  what is scrubbed; a flow left partway, which no hook hears of, so
+  each step is safe to run again; requirements and a Fix; uninstall,
+  done when already gone; the words the owner reads; the bounds and
+  deadlines. Then template-setup step by step, a sketch of an app made
+  from a manifest the browser posts (Form, Go posting it, the code
+  traded, a stateless Go to install, the installation listed, Done) and
+  one of an app made by API that hands over to a sign-in (`then`). The
+  rest is what a bundle's author meets and the check cannot show: the
+  pod's environment and network, the line protocol as the shim holds it
+  (the three setup requests and a setup step's progress among it), the
+  shape of `_meta.kivali.access`, what reaches an agent from an answer,
+  how Test connection and an access field's options read theirs,
+  `try.py`, publishing, a checklist before publishing and a table of
+  failures and their causes.
+- `template/`: a token bundle for an imaginary notes service, standard
   library only, which the developer copies to start from. Its server
   keeps the output for JSON-RPC (descriptor 1 becomes the error
   output), answers each `tools/call` on a thread, reaches the service
   with `urllib.request` through the proxy, lists each agent the actions
-  its access allows, and starts with no connection.
+  its access allows, and starts with no connection. It answers any
+  other method -32601, the three setup requests among them, which core
+  sends no bundle that is not `method: setup`.
 - `template-setup/`: a complete bundle whose own setup flow makes its
   connection (`method: setup`), for an imaginary service whose app is
   made by API from a pasted one-time key: a Form for the setup-only
-  key, one step that builds and installs the app with its stages as
-  progress, a Keep of the app's token and id, and Done; where the
-  service does not hand the token back, a Wait on the app's page,
-  checked until the owner has shown it, then a Form for it. It answers
-  `kivali/requirements` (the token works; the scopes are current, whose
-  Fix is a second flow, `rescope`) and `kivali/uninstall`. Its
-  `README.md` says what each part does.
+  key, one step that takes up the app an earlier run made or makes one,
+  installs it and reads its token, with its stages as progress, a Keep
+  of the app's token and id, and Done; where the service does not hand
+  the token back, a Wait on the app list (whose address holds no kept
+  value, which would show as `[secret]`), checked until the owner has
+  shown it, then a Form for it. It answers `kivali/requirements` (the
+  token works; the scopes are current, whose Fix is a second flow,
+  `rescope`) and `kivali/uninstall`, done too when the app is already
+  gone. Its `README.md` says what each part does.
+- `scripts/deals_stub.py`: a stub of that service for `try.py`
+  (standard library, one port, `--installed`, `--token-on-page` and
+  `--scopes` for the account's state), which prints each request it
+  answers.
 - `scripts/try.py`: runs a bundle's server as the pod does (no proxy
   variable, so only a stub on the shell's own machine answers) and
   sends what core sends, as the owner or as one agent with one access:
@@ -3318,39 +3350,55 @@ points at and every agent can list. It holds:
   shows each answer as the agent or the owner reads it, and reports
   what the check does not see: a line that is not JSON-RPC, an id that
   core would not match, an answer later than core waits, options the
-  form cannot read. `--stub` starts a stub and stops it at the end.
+  form cannot read. `--stub` starts a stub and stops it at the end,
+  showing its output.
   For a setup bundle it also sends `setup [FLOW]`, `requirements` and
   `uninstall` as core does ([For a bundle](#for-a-bundle)): `setup`
   runs `kivali/setup` call after call with the Answer core builds
   (a fresh state in each callback, the latest again for a Wait's
   check, and `--team` as the team's name), prints each step as the page shows it and each progress
-  notification as it comes, takes a Form's fields from `--answer` or
-  the terminal, a Go's return from `--return` or the terminal (adding
-  the callback's state to one without, unless the Go says
-  `stateless`), checks a Wait again every `--every` seconds until it
-  changes or `--checks` runs out, and starts the server again with what
-  a step keeps, as the shim does. Each step is held to the manifest's
-  `kivali.connection.setup` as the runner holds it: an undeclared field,
-  host or key, a step of none or several kinds, a step of a shape core
-  cannot read, and a return with a state the flow never gave are each a
-  `problem:` line. `--field` takes the keys setup keeps, so the
-  requirements, a Fix's flow and uninstall run on a connection. A step
-  is held to the runner's bounds too (words cut to 200 runes, a code to
-  64, an address of 4096 characters at most, 64 KiB kept and carried),
-  and the requirement rows to what core keeps of them: every field but
-  `fix` present, an id and a fix that are names, and 20 rows at most.
+  notification as it comes, takes a Form's fields from `--answer` (in
+  order, a key given twice answering two Forms, the last used for any
+  after) or the terminal, a Go's return from `--return` (one per Go, in
+  order, across the run) or the terminal (adding the callback's state
+  to one without, unless the Go says `stateless`), checks a Wait again
+  every `--every` seconds until it changes or `--checks` runs out, and
+  starts the server again with what a step keeps, as the shim does. A
+  flow that stops for want of an answer is one the owner left: an
+  install that stops before Done has its kept values forgotten and the
+  server started again without them, as the runner discards a failed
+  install's connection, and a `setup` after it in the same run meets
+  what the first left with the stub. A Form asked again after the same
+  answer stops the flow with a note. Each step is held to the
+  manifest's `kivali.connection.setup` as the runner holds it: an
+  undeclared field, host or key, a step of none or several kinds, a
+  step of a shape core cannot read, and a return with a state the flow
+  never gave are each a `problem:` line. `--field` takes the keys setup
+  keeps, so the requirements, a Fix's flow and uninstall run on a
+  connection. A step is held to the runner's bounds too (words cut to
+  200 runes, a code to 64, an address of 4096 characters at most,
+  64 KiB kept and carried), and the requirement rows to what core keeps
+  of them: every field but `fix` present, an id and a fix that are
+  names, and 20 rows at most.
 
 `internal/builtinskills/build_an_integration_test.go` and
 `build_an_integration_setup_test.go` hold them to the platform: each
 template passes `integration.Validate` and the smoke test with no
-finding, `try.py` drives the template against a stub as the owner and
-as agents and template-setup's flow, fallback, requirements, Fix and
-uninstall against a stub of its service, reports the failures above
-and a setup step outside the declarations, and try.py and the
-templates use the shim's protocol version and line limit
-(`integrationpod.ProtocolVersion`, `integrationpod.MaxLineBytes`). A
-change to what the shim, core or the check does that a bundle's author
-meets changes the skill in the same change.
+finding; every json block of `SKILL.md` holding a `"connection"`,
+put into the token template's manifest in place of the kivali keys it
+gives, passes `integration.Validate` as a bundle, and the blocks cover
+token, device, browser, a registered client, setup and setup handing
+over to a browser sign-in, so the skill's examples cannot drift from
+the check; `try.py` drives the template against a stub as the owner
+and as agents; the skill's own runs of template-setup, taken from
+`SKILL.md`'s block as written, run against `deals_stub.py` and show the
+install, a refused key, the fallback left and started again (one app
+made), the requirements, the Fix and uninstall twice; `try.py` reports
+the failures above and a setup step outside the declarations; and
+try.py and the templates use the shim's protocol version and line
+limit (`integrationpod.ProtocolVersion`, `integrationpod.MaxLineBytes`).
+A change to what the shim, core or the check does that a bundle's
+author meets changes the skill in the same change.
 
 ### The tools
 

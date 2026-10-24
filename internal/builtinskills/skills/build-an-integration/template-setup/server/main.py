@@ -57,6 +57,8 @@ CHECK_TIMEOUT = 4
 # The scopes the app is built with. A version that needs another adds it
 # here; the scopes requirement then asks the owner to rebuild the app.
 SCOPES = ["deals.read"]
+# The name setup gives the app, by which a later run finds it again.
+APP_NAME = "Kivali"
 
 _write = threading.Lock()
 
@@ -130,10 +132,12 @@ def ask_key(flow, words=None):
 
 
 def show_token_wait(app_id, session):
+    # The page is the app list, not the app's own: Kivali shows every
+    # kept or carried value as [secret], the app's id in an address too.
     return {
         "wait": {
-            "words": "Open the app's page in %s and choose Show token. Kivali asks for it here once it is shown." % SERVICE,
-            "url": APP + "/apps/" + urllib.parse.quote(app_id, safe=""),
+            "words": "Open the %s app in %s and choose Show token. Kivali asks for it here once it is shown." % (APP_NAME, SERVICE),
+            "url": APP + "/apps",
         },
         "state": {"at": "show", "app_id": app_id, "session": session},
     }
@@ -158,8 +162,16 @@ def build(flow, key, stage):
         stage("Installing the app again", 3, total)
         api("POST", "/v1/apps/%s/install" % urllib.parse.quote(APP_ID, safe=""), session)
         return {"done": True}
-    stage("Creating the app", 2, total)
-    app_id = str(api("POST", "/v1/apps", session, body={"name": "Kivali", "scopes": SCOPES}).get("id") or "")
+    stage("Making the app", 2, total)
+    # Kivali calls nothing when a setup is cancelled, left or fails, so
+    # an app an earlier run made is still in Deals: take it up, rather
+    # than make the owner a second one.
+    found = api("GET", "/v1/apps", session, query={"name": APP_NAME}).get("apps") or []
+    app_id = str(found[0].get("id") or "") if found else ""
+    if app_id:
+        api("PUT", "/v1/apps/%s/scopes" % urllib.parse.quote(app_id, safe=""), session, body={"scopes": SCOPES})
+    else:
+        app_id = str(api("POST", "/v1/apps", session, body={"name": APP_NAME, "scopes": SCOPES}).get("id") or "")
     if not app_id:
         raise Refusal("%s made the app but did not say its id." % SERVICE)
     stage("Installing the app", 3, total)
@@ -259,13 +271,20 @@ def kivali_requirements(params):
 
 
 def kivali_uninstall(params):
+    # Kivali may ask again, after an uninstall it could not finish: an
+    # app already gone is done. With no token there is nothing this
+    # server can undo.
     if not TOKEN:
         return {}
     try:
         api("DELETE", "/v1/apps/self", TOKEN)
     except Status as e:
-        if e.code != 404:
+        # 404: the app is gone. 401 or 403: Deals no longer takes its
+        # token, as after the app was removed, so nothing is left that
+        # this token could undo.
+        if e.code not in (401, 403, 404):
             raise Refusal("%s did not remove the app: %s" % (SERVICE, e))
+        log("info", "%s answered %d to removing the app; there is nothing left to undo" % (SERVICE, e.code))
     return {}
 
 

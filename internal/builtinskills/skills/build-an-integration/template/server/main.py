@@ -303,6 +303,10 @@ def initialize(params):
     }
 
 
+# Every other method is answered -32601. Kivali sends kivali/setup,
+# kivali/requirements and kivali/uninstall only to a bundle whose
+# kivali.connection.method is setup, which answers them (template-setup
+# does); this one's is token, so it never gets them.
 METHODS = {
     "initialize": initialize,
     "ping": lambda params: {},

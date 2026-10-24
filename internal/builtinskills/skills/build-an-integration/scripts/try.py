@@ -23,14 +23,17 @@ options:
   --field KEY=VALUE    a connection field's value, by user_config key or, for a
                        setup connection, by a key setup keeps; repeat it. With
                        none, the server starts as it does before the owner
-                       connects it: every field empty.
-  --answer KEY=VALUE   what the owner enters in a Form's field; repeat it. A
-                       field with no --answer is asked for on the terminal, or
+                       installs it: every field empty.
+  --answer KEY=VALUE   what the owner enters in a Form's field. Give a key again
+                       to answer the next Form that asks for it: each Form takes
+                       the next answer, and the last is used for any Form after.
+                       A field with no --answer is asked for on the terminal, or
                        left blank when there is none.
   --return QUERY       the query the service sends the browser back with after
-                       a Go step, such as 'code=abc'; repeat it, one per Go. With
-                       none, it is asked for on the terminal. Without a state,
-                       the state Kivali gave the step's callback is added.
+                       a Go step, such as 'code=abc' or 'error=access_denied';
+                       repeat it, one per Go, in order. With none left, it is
+                       asked for on the terminal. Without a state, the state
+                       Kivali gave the step's callback is added.
   --checks N           how many times a Wait is checked before setup stops
                        (default 5).
   --every SECONDS      the wait between a Wait's checks (default 3, as Kivali's).
@@ -57,7 +60,11 @@ Kivali; the exit status is 1 when there is one. A setup step is held to
 the manifest's kivali.connection.setup as Kivali holds it: a field, a
 host or a key it does not declare fails the flow, and is a problem
 here. What a step keeps becomes the connection's, and the server is
-started again with it, as in the pod.
+started again with it, as in the pod. A flow that stops before it is
+done, for want of an answer, is one the owner left: an install that
+stops forgets what it kept, as Kivali does, and calls nothing on the
+service, so a setup after it in the same run meets what the first left
+there.
 """
 
 import argparse
@@ -135,14 +142,27 @@ def fail(text):
     sys.exit(1)
 
 
-def parse_pairs(pairs, what):
+def parse_answers(pairs):
+    """--answer's values by key, in the order given."""
     out = {}
+    for k, v in parse_pairs_list(pairs, "--answer"):
+        out.setdefault(k, []).append(v)
+    return out
+
+
+def parse_pairs_list(pairs, what):
+    out = []
     for p in pairs:
         k, sep, v = p.partition("=")
         if not sep or not k:
             fail("%s %r is not NAME=VALUE" % (what, p))
-        out[k] = v
+        out.append((k, v))
     return out
+
+
+def parse_pairs(pairs, what):
+    """NAME=VALUE pairs by name, the last given winning."""
+    return dict(parse_pairs_list(pairs, what))
 
 
 REQUESTS = ("list", "call", "verify", "choices", "setup", "requirements", "uninstall")
@@ -581,6 +601,9 @@ def main():
     requests = parse_requests(opts.requests)
 
     extra = parse_pairs(opts.env, "--env")
+    # A run's Forms and Gos take the answers and returns in order, flow
+    # after flow.
+    opts.answers = parse_answers(opts.answer)
 
     if opts.agent:
         check_access(manifest, access)
@@ -907,10 +930,12 @@ def field_title(key, field):
 
 
 def ask_owner(key, field, answers):
-    """What the owner enters in a Form's field: --answer, else the
-    terminal, else blank."""
-    if key in answers:
-        return answers[key].strip()
+    """What the owner enters in a Form's field: the next --answer for
+    it (the last one again once they are used), else the terminal, else
+    blank."""
+    if answers.get(key):
+        given = answers[key]
+        return (given.pop(0) if len(given) > 1 else given[0]).strip()
     words = "%s (%s): " % (field_title(key, field), field.get("words", ""))
     if sys.stdin.isatty():
         if field.get("secret") or field.get("setup_only"):
@@ -927,15 +952,31 @@ def ask_return():
 
 
 def run_setup(pod, display, flow, opts):
+    """The setup flow, as Kivali's runner calls it (setup_calls). An
+    install, a setup flow started with no connection, keeps nothing
+    unless it is done: one that stops before, as the owner leaving it
+    or a call failing, has Kivali forget the connection it made, and
+    the server is started again without it."""
+    install = flow == "setup" and not pod.fields
+    done = setup_calls(pod, display, flow, opts)
+    if install and not done and pod.fields:
+        say("  The setup did not finish, so Kivali forgets the connection it made (%s) and starts the server again without it. It calls nothing on the service: what setup made there stays." % ", ".join(sorted(pod.fields)))
+        pod.fields.clear()
+        pod.restart()
+
+
+def setup_calls(pod, display, flow, opts):
     """The setup flow, call after call, as Kivali's runner calls it: an
     empty answer first, then what each step gave back, each step held to
     the manifest's declarations, until a step is done, a call answers an
-    error, or the flow waits for what try.py was not given."""
+    error, or the flow waits for what try.py was not given. True once a
+    step is done."""
     setup = setup_section(pod.manifest)
     fields = setup.get("fields") or {}
-    answers = parse_pairs(opts.answer, "--answer")
-    returns = list(opts.returns)
+    answers = opts.answers
+    returns = opts.returns
     say("setup%s, as Kivali runs it:" % ("" if flow == "setup" else " " + flow))
+    last_form = None
     state, legs = {}, []
     answer = {"form": {}, "return": {}, "checked": False, "went": False}
     wait, checks = None, 0
@@ -992,7 +1033,7 @@ def run_setup(pod, display, flow, opts):
                 return
         if step.get("done"):
             say("  Done, in %.1f s: %s." % (took, "the connection is made, and the integration is installed" if flow == "setup" else "the Fix is made"))
-            return
+            return True
         if "form" in step:
             wait = None
             entered = {}
@@ -1001,6 +1042,11 @@ def run_setup(pod, display, flow, opts):
                 entered[k] = ask_owner(k, f, answers)
                 if f.get("secret") or f.get("setup_only"):
                     pod.secrets.append(entered[k])
+            this_form = (step["form"].get("words", ""), tuple(step["form"].get("fields") or []), entered)
+            if this_form == last_form:
+                note("setup asks for %s again after the same answer; give another --answer to see what follows" % ", ".join(this_form[1]))
+                return
+            last_form = this_form
             answer = {"form": entered, "return": {}, "checked": False, "went": False}
             continue
         if "go" in step:
@@ -1030,7 +1076,7 @@ def run_setup(pod, display, flow, opts):
             if not same:
                 wait, checks = step["wait"], 0
             if checks >= opts.checks:
-                note("the Wait was checked %d times; Kivali goes on checking it every 3 seconds while the owner's page is open, for ten minutes after its last change" % checks)
+                note("the Wait was checked %d time%s; Kivali goes on checking it every 3 seconds while the owner's page is open, for ten minutes after its last change" % (checks, "" if checks == 1 else "s"))
                 return
             checks += 1
             if opts.every > 0:
