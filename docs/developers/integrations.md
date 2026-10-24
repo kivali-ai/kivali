@@ -50,6 +50,9 @@ with `internal/gitrepo` (a repository's URL and access patterns),
 `internal/shelljob` (the shell job's wire shapes) and
 `internal/agentshell/git.go` (the daemon's `POST /v1/git`)
 ([The git built-in](#the-git-built-in)).
+`internal/builtinintegrations/githubintegration` is GitHub as a
+built-in of Go code, which `builtins.All()` does not list
+([The GitHub built-in](#the-github-built-in)).
 `cmd/fake-integration` is a stdio MCP server for tests
 (`internal/integrationpod/fakeintegration`);
 `internal/integration/testdata/echo` is a real Python bundle the tests
@@ -2435,6 +2438,149 @@ requires it, and answers an error. The `Git` struct's one field,
 
 Not supported: SSH remotes, Git LFS (a clone holds the pointers),
 submodules (not cloned), and deleting a remote ref.
+
+### The GitHub built-in
+
+`internal/builtinintegrations/githubintegration` (name `github`,
+version 2.0.0) is GitHub as a built-in of Go code: agents read and open
+issues, comments and pull requests as a private GitHub App on the
+owner's account, through GitHub's REST API. It is not in
+`builtins.All()`, so no team runs it; the binary runs [the GitHub
+shipped bundle](#the-github-shipped-bundle). The package implements
+`Integration` alone: not `SetupIntegration`, `RequirementsOf` or
+`Uninstaller` (whose place is `setup.go` in the package), nor
+`ShellJobIntegration` or `HostsOf`, since no action works in the
+agent's shell or moves commits.
+
+- **The manifest**: `kivali.connection.method: setup`, with the
+  `setup` block of [Setup connections](#setup-connections) (summary;
+  `hosts: ["github.com"]`; one field, `account`; keeps `app_id`,
+  `slug`, `client_id`, `client_secret`, `private_key` and
+  `installation_id`; no `then`), an empty `user_config`,
+  `kivali.hosts: ["api.github.com", "github.com"]`, `kivali.verify:
+  whoami`, and the shipped bundle's access form: `repositories`
+  (required) and `write`, "May create and comment". It passes
+  `integration.ValidateBuiltin`.
+- **The connection** is what setup keeps, read as `conn.Fields`.
+  `app_id`, `private_key` (PEM: PKCS#1 `RSA PRIVATE KEY` as GitHub
+  issues it, or PKCS#8 `PRIVATE KEY` holding an RSA key) and
+  `installation_id` are what a call needs, the two ids whole numbers;
+  `client_id` and `client_secret` are read by no action. A connection
+  missing any of the three, or whose key or ids do not read, refuses
+  every call with "GitHub's connection is not set up; ask the owner to
+  set it up again.", its reason in the audit (`the connection is
+  incomplete`, or what does not read), and nothing reaches GitHub.
+
+#### Tokens
+
+Every call acts as the app's installation. The built-in signs a JWT
+with the app's key (RS256; `iss` the app id, `iat` 60 seconds back and
+`exp` nine minutes ahead, on the server's clock) and trades it for an
+installation access token (`POST
+/app/installations/{installation_id}/access_tokens`), whose body
+narrows it to the call's repository (`repositories: [name]`) and to
+the permissions the action needs (`permissions`, always with `metadata:
+read`). A minted token is cached in the process's memory, by
+connection id, app id, installation id, repository (in lower case) and
+permissions, and handed out again until a minute before the
+`expires_at` GitHub gave, on the same clock; one that expires within
+the minute is used once and not cached. Tokens are never written
+anywhere and never in an answer: GitHub's words an error passes on have
+the request's credential replaced by `[credential]`. `installations`
+lists the app's installations with the JWT (`GET /app/installations`),
+for the setup flow to check an installation id against.
+
+GitHub refusing a token is an error result for the agent: 401 (the
+key) and 404 (no such installation) end with "Ask the owner."; 422 for
+a repository says the app may not be installed on it or lack the
+permission, and to ask the owner.
+
+#### The actions
+
+| Action | REST | Permissions besides `metadata: read` |
+| --- | --- | --- |
+| `list_repositories` | `GET /installation/repositories`, every page, kept to the access's patterns | none; the token is not narrowed to a repository |
+| `get_repository` | `GET /repos/{o}/{r}` | none |
+| `list_issues` | `GET /repos/{o}/{r}/issues` (state, labels, newest first), pull requests left out; with `search`, `GET /search/issues?q=repo:{o}/{r} is:issue ...` | `issues: read` |
+| `get_issue` | `GET /repos/{o}/{r}/issues/{n}`, then the last pages of its comments | `issues: read`, `pull_requests: read` |
+| `create_issue` | `POST /repos/{o}/{r}/issues` | `issues: write` |
+| `comment` | `GET /repos/{o}/{r}/issues/{n}` to learn whether it is a pull request, then `POST /repos/{o}/{r}/issues/{n}/comments` | reads with `issues: read`, `pull_requests: read`; writes with `pull_requests: write` for a pull request, `issues: write` for an issue |
+| `list_pull_requests` | `GET /repos/{o}/{r}/pulls` (state, base); `merged` asks for closed ones and keeps those with `merged_at` | `pull_requests: read` |
+| `get_pull_request` | `GET /repos/{o}/{r}/pulls/{n}`, and with `diff` the same path as `application/vnd.github.diff` | `pull_requests: read`, and `contents: read` with `diff` |
+| `create_pull_request` | `POST /repos/{o}/{r}/pulls` from a head branch already on GitHub; moves no commits | `pull_requests: write` |
+| `list_branches` | `GET /repos/{o}/{r}/branches` | `contents: read` |
+| `compare` | `GET /repos/{o}/{r}/compare/{base}...{head}`: commits and files, no patches | `contents: read` |
+| `whoami` | `GET /app` and `GET /app/installations/{id}`, both with the JWT | no installation token |
+
+The rules are the shipped bundle's:
+
+- **Access.** A repository argument must be `owner/name`
+  (`cleanRepository`: spaces and tabs around it and a `.git` dropped,
+  each segment letters, digits, `.`, `_` and `-`, never `.`, `..` or
+  starting with `-`); one the access's `repositories` patterns do not
+  match (`gitrepo.Match`) is refused before any token is minted, "Your
+  access to GitHub does not include <owner/name>; ask the owner."
+  `create_issue`, `comment` and `create_pull_request` need `write:
+  true`: `Tools` leaves them out without it and `Call` refuses them by
+  name, "Your access to GitHub does not include creating issues,
+  comments or pull requests; ask the owner." `whoami` is Test
+  connection's (`Verify`, "Connected as <slug>[bot], installed on
+  <account>"): no agent is listed it, and a call of it is refused.
+- **The search.** `list_issues`' `search` (one line, at most 500
+  characters) holding `repo:`, `org:`, `user:` or `owner:` after
+  anything but a letter, digit or underscore is refused; with a search,
+  a label holding a double quote is refused, since labels go into the
+  query quoted. Whatever GitHub answers, with a search or without,
+  only items whose address is under
+  `https://github.com/<owner/name>/issues/` and that are not pull
+  requests reach the agent.
+- **Arguments**, each a refusal: `number` a positive whole number;
+  `limit` the same, capped (50 for issues and pull requests, 100 for
+  branches; 30 when left out); `state` one of the listed values; a
+  branch at most 255 characters of letters, digits, `.`, `_`, `/`, `+`
+  and `-`, not starting with `-`, `/` or `.`, not ending with `/`, `.`
+  or `.lock`, without `..` or `//` (so `owner:branch` is refused);
+  `title` one line of at most 256 characters; `body` at most 60,000;
+  `labels` a list of names, each not blank, without a comma and at
+  most 100 characters; `diff` and `draft` true or false.
+- **Clips**, in characters: a body at 20,000, an issue's comments to
+  the latest 20, a diff at 50,000, each with a `note` saying so; and
+  every answer at 60,000, with "[The answer is cut to its first 60000
+  characters.]". Answers are compact JSON, or text for
+  `list_repositories`, `list_branches` and the addresses the write
+  actions answer.
+- **GitHub's failures** are error results with GitHub's words (its
+  `message` and each of its `errors`' messages): a 401 says GitHub
+  refused the app's credentials and "Ask the owner."; a 403 says the
+  app may lack the permission or not be installed on the repository,
+  "ask the owner"; a 403 or 429 that is GitHub's rate limit
+  (`X-RateLimit-Remaining: 0` or `Retry-After`) says to try again
+  later; any other is "GitHub answered <status>: <words>".
+
+One `*http.Client` serves the built-in: 30 seconds a request, at most
+16 MiB of an answer read, `Accept: application/vnd.github+json` (or the
+diff type), `X-GitHub-Api-Version: 2022-11-28`, the credential as a
+bearer, and redirects followed only on the API's own origin (a renamed
+repository's), at most five. `GitHub.APIBase` is the API
+(`https://api.github.com`); it must be https, or plain http on
+loopback, which only the tests use. `GitHub.Clock` is the clock JWTs
+and the cache run on.
+
+The package's tests run against a fake GitHub (`fake_test.go`), an
+`httptest` server that mints installation tokens for JWTs the app's
+key signed, on a `clock.Fake`, and records every request: method,
+path, query, headers, the bearer, a JWT's claims, what the bearer
+token was minted for, and the body. Each rule above has a test, as do
+the shipped bundle's behaviour tests, ported: the access holds calls to
+the patterns (case by case against `gitrepo.Match`), write actions
+need write, whoami names the app and the account, a GitHub failure is
+an error with its reason, long answers are clipped, comment finds
+whether the number is a pull request, create pull request, list
+repositories keeps to the patterns, list issues stays in the
+repository, every answer is bounded, refusals tell the agent to ask the
+owner, and branches and compare call their paths; and tokens are
+minted per call, narrowed, cached until a minute before they expire,
+and never in an answer.
 
 ## The Kivali Developer
 
