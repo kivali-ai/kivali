@@ -41,7 +41,13 @@ Kivali (each in a package of its own, listed in
 `internal/web/integration_builtin.go` calls them and
 `internal/web/integration_builtin_egress.go` keeps their connections'
 proxy credentials ([Built-in integrations](#built-in-integrations)).
-`internal/connect` runs the OAuth flows of a connection made by
+`internal/web/integration_setup.go` is the setup runner every
+connection is made by, with its routes (`integration_setup_routes.go`),
+core's standard flows (`integration_setup_standard.go`) and a bundle's
+hooks over its pod (`integration_setup_bundle.go`)
+([Setup flows](#setup-flows)); `internal/web/integration_requirements.go`
+is the lifecycle and the requirements ([The lifecycle](#the-lifecycle)).
+`internal/connect` makes the OAuth requests of a connection made by
 signing in, `internal/connect/connecttest` is a vendor in-process for
 its tests, and `internal/web/integration_signin.go` keeps and refreshes
 the tokens ([Sign-in connections](#sign-in-connections)).
@@ -51,7 +57,7 @@ with `internal/gitrepo` (a repository's URL and access patterns),
 `internal/agentshell/git.go` (the daemon's `POST /v1/git`)
 ([The git built-in](#the-git-built-in)).
 `internal/builtinintegrations/githubintegration` is GitHub as a
-built-in of Go code, which `builtins.All()` does not list
+built-in of Go code, listed in `builtins.All()` beside Git
 ([The GitHub built-in](#the-github-built-in)).
 `cmd/fake-integration` is a stdio MCP server for tests
 (`internal/integrationpod/fakeintegration`);
@@ -380,7 +386,7 @@ the version and shown on its install screen. The rules:
 | `description` | Not empty, or a warning. |
 | `server.type` | `python`. |
 | `server.entry_point` | A file in the bundle. |
-| `server.mcp_config` | `command` is `python3` or `python`; `args` is not empty; each `${user_config.<key>}` in `env` names a field of the connection form (`integration.ConnectionFields`), and `env` holds no other `${...}`. |
+| `server.mcp_config` | `command` is `python3` or `python`; `args` is not empty; each `${user_config.<key>}` in `env` names a key of the connection (`integration.ConnectionKeys`: a field of the connection form, or a key a setup keeps), and `env` holds no other `${...}`. |
 | `user_config` | Each key is lowercase letters, digits and underscores, starting with a letter, and none of `connect.SecretKeys`, the keys a sign-in's tokens (`oauth_access_token`, `oauth_refresh_token`) and a [registered client](#registered-clients) are kept under; `type` is `string`, `number` or `boolean`; `title` is not empty; `sensitive` and `required`, when given, are booleans. |
 | `tools` | Not empty; names are unique, lowercase letters, digits and underscores starting with a letter; a tool without a description is a warning. |
 | `kivali.connection.method` | `token`, `device`, `browser` or `setup`. |
@@ -822,8 +828,8 @@ integration (`handleAPIIntegrationUninstall`), 204 once done:
    gains `uninstall`, allowed.
 5. Any other integration, an upload in any state or a built-in this
    binary does not carry: the connection's Secret is deleted first (on
-   a failure, a 500 and nothing else changes; a bundle has no
-   `Uninstall` of its own), then those of the connections set aside,
+   a failure, a 500 and nothing else changes; a setup bundle's
+   `kivali/uninstall`, step 2, has already run), then those of the connections set aside,
    best effort, then it is removed whole: every version, its audit and
    its log ([Where it is kept](#where-it-is-kept)).
 
@@ -831,6 +837,10 @@ The page's Uninstall asks first, naming what goes: the connection and
 its secrets, each agent's access by name, and either that it stays
 available to install again or that it goes with every version and its
 log.
+
+The same `Uninstall` (or `kivali/uninstall`) is asked, best effort,
+of an install that ends without being done, before its connection is
+forgotten ([Flows](#flows)).
 
 ## Setup flows
 
@@ -916,7 +926,7 @@ and a new start waits for it (`setupAwaitDiscard`), so the next install
 never reads the half-made connection; one that began after the wait is
 a 409 under the lock ("Kivali is still undoing the last setup; try
 again in a moment"). The owner's own save of the connection (`PUT
-.../connection`, `POST .../connections`) or Sign out while an install
+.../connection`) or Sign out while an install
 runs makes the connection theirs (`setupAdopt`, `setupCancelKeep`): it
 is kept whatever becomes of the flow.
 
@@ -1736,7 +1746,9 @@ install screen (`GET .../versions/{version}`, the web app's
 lets in: who built it and published it, every host, the software its
 pod installs (`IntegrationVersion.Packages`, under "Software it
 installs", with where it comes from and when it is installed), every
-connection field (secrets marked), every action, what the access form
+connection field (secrets marked) or, for a setup connection, what its
+setup may do (`IntegrationVersion.setup`: [Setup
+connections](#setup-connections)), every action, what the access form
 asks, the bundle's size and the check's warnings. Nothing runs before it is
 approved.
 
@@ -1745,10 +1757,12 @@ the screen also says what this one changes from it, under "What
 changes from version X": `IntegrationVersion.Changes`, worked out by
 `integration.Diff(current, this)`, one line for each of hosts,
 sign-in hosts (`Connection.SignInHosts`), software, connection fields,
-actions and access form fields added or removed ("Hosts added:
+a setup's hosts, fields and keeps, actions and access form fields
+added or removed, and a kept key whose secrecy changed ("Hosts added:
 uploads.example.com", "Software added: gh", "Connection fields added:
-API key (secret)"). A host is matched by its pattern, a package and an
-action by their names, a field by its key. With none of those changed
+API key (secret)", "Setup keeps, no longer secret: slug"). A host is
+matched by its pattern, a package and an action by their names, a
+field and a kept key by its key. With none of those changed
 the list is empty, and the screen says "No change to hosts, software,
 secrets, actions or the access form." The same block is on a
 superseded version's screen, where it
@@ -2248,6 +2262,7 @@ type Answer struct {
 	Went     bool              // a Go with NoReturn was sent
 	Leg      int               // which call of Setup this is in the flow, from 1
 	Callback string            // where a Go step's service may send the browser back
+	Addresses []string         // every address the team signs in at, each a bare callback
 	Team     string            // the team's name, for what setup makes on the service
 }
 type Progress interface{ Stage(words string, done, total int) }
@@ -2343,7 +2358,7 @@ type SignIn struct{ ClientID, ClientSecret, AccessToken, RefreshToken string }
   page on a declared host and a `Code` to enter there, and core calls
   `Setup` again with `Checked` every few seconds while the owner's page
   is open. A step outside the declarations fails the flow; so does an
-  error, whose text the owner reads, scrubbed of every kept value.
+  error, whose text the owner reads, scrubbed of every secret kept value.
   `Progress.Stage` names where setup is, with a count where there is
   one.
 - A `RequirementsOf` built-in has health of its own: rows met or not,
@@ -2401,7 +2416,7 @@ hooks, and the web tests drive it over the HTTP API
 (`internal/web/integration_setup_echo_test.go`,
 `integration_requirements_test.go`). Its declarations are the host
 `setup.example`, the fields `account` and a secret, setup-only `key`,
-and the keeps `token` and `account`. Its install flow runs a Form
+and the keeps `token` and `account`, the account declared not secret. Its install flow runs a Form
 (account, key; asked again while the account is blank), then a Go to
 `https://setup.example/install` that posts the key (or links there
 when the key is blank), keeps the account and expects `?code=` back.
@@ -2413,8 +2428,10 @@ has no service to trade the code with and takes it as it came back; a
 real `Setup` trades it with the service before keeping anything. The `permissions`
 requirement's Fix is a one-step flow that grants it. `Requirements`
 gives one row met and `permissions`, unmet until granted. `Uninstall`
-records the call. Knobs fail the flow (`FailSetup`, with the token and
-the key in its words), take a step outside the declarations
+records the call, the one Uninstall makes and the one before a failed
+or cancelled install's connection goes. Knobs fail the flow
+(`FailSetup`, with the account, the token and the key in its words),
+take a step outside the declarations
 (`SetStray`: another host, field or key), fail `Uninstall`
 (`FailUninstall`), and hand over to a sign-in (`HandOver`).
 `ScriptSetup` and `ScriptRequirements` replace echo's own answers for
@@ -2554,9 +2571,9 @@ Where core would reach a pod, it calls the function instead
 | --- | --- | --- |
 | Running | its shim is connected | while its code is in the binary |
 | An agent's list | `tools/list` with `_meta`, kept on the link | `Tools(caller)`, every time |
-| An agent's call | `tools/call` through the shim | `Call(caller, connection, name, args)`, with the connection the agent's access row names |
-| Test connection | `tools/call` of `kivali.verify` | `Verify(connection)`, with the connection the route names; the audit's action is the name `kivali.verify` gives (`whoami` for echo) |
-| An access field's options | `tools/call` of the field's tool | `Choices(connection, name)`, with the connection `?connection=` names or the first; 409 with no connection |
+| An agent's call | `tools/call` through the shim | `Call(caller, connection, name, args)`, with the integration's connection |
+| Test connection | `tools/call` of `kivali.verify` | `Verify(connection)`, with the integration's connection; the audit's action is the name `kivali.verify` gives (`whoami` for echo) |
+| An access field's options | `tools/call` of the field's tool | `Choices(connection, name)`, with the integration's connection; 409 with no connection |
 | Work in the agent's shell | none | `Call` answers with `ShellJob`, `Complete` the call's second request |
 | Setup (`method: setup`) | `kivali/setup` with the flow and the answer, through the shim, its progress notifications the flow's stages, each step held to `kivali.connection.setup` ([For a bundle](#for-a-bundle)) | `Setup(conn, flow, answer, progress)`, in the background through the setup runner, each step held to `kivali.connection.setup` |
 | Requirements | `kivali/requirements` of a setup bundle while its server runs, under a 5 s deadline, as the integration's rows after Kivali's | `Requirements(connection)` of the connection, under a 5 s deadline, as the integration's rows after Kivali's; unmet ones are Needs-you rows |
@@ -3171,7 +3188,8 @@ Any other failure is an error, which core shows as its one `checks` row.
 `Uninstall` is `DELETE /app/installations/{installation_id}` with the
 app's JWT. A 404 (gone already) and a 401 (GitHub no longer takes the
 key: the app was deleted there) are done, and so is a connection
-missing a value; any other failure is an error that leaves everything
+missing a value (an install that ended partway, whose connection holds
+no installation id yet, among them); any other failure is an error that leaves everything
 as it is ("GitHub did not remove the app's installation: ..."). The
 app's registration stays on GitHub: the summary and the `key` row say
 so and where to delete it.
@@ -3387,8 +3405,11 @@ points at and every agent can list. It holds:
   service passes a state through, the callback whole where it does not,
   a return as untrusted, a replayed leg); a Wait's check that cannot
   reach the service answering the same Wait; state against keep, what
-  is scrubbed from the owner's and the agents' view; a flow left
-  partway, which no hook hears of, so each step is safe to run again;
+  is scrubbed from the owner's and the agents' view and what a keep
+  declared not secret shows; a flow left partway (a start again takes
+  over what it kept; a failed, cancelled or forgotten install, or one a
+  restart left, is undone with `kivali/uninstall` and forgotten), so
+  each step is safe to run again;
   requirements and a Fix; uninstall, done when already gone; the words
   the owner reads; the bounds and deadlines. Then template-setup step
   by step, a sketch of an app made from a manifest the browser posts
@@ -3415,8 +3436,9 @@ points at and every agent can list. It holds:
   key, one step that takes up the app an earlier run made or makes one,
   installs it and reads its token, with its stages as progress, a Keep
   of the app's token and id, and Done; where the service does not hand
-  the token back, a Wait on the app list (whose address holds no kept
-  value, which would show as `[secret]`), checked until the owner has
+  the token back, a Wait on the app's own page (its id kept under a
+  keep declared not secret, so the address shows as it is, and read
+  back from the connection on each check), checked until the owner has
   shown it, then a Form for it. It answers `kivali/requirements` (the
   token works; the scopes are current, whose Fix is a second flow,
   `rescope`) and `kivali/uninstall`, done too when the app is already
@@ -3440,19 +3462,24 @@ points at and every agent can list. It holds:
   `uninstall` as core does ([For a bundle](#for-a-bundle)): `setup`
   runs `kivali/setup` call after call with the Answer core builds
   (a fresh state in each callback, the latest again for a Wait's
-  check, and `--team` as the team's name), prints each step as the page shows it and each progress
+  check, `--team` as the team's name, and `--callback`'s and each
+  `--address` as the addresses), prints each step as the page shows it
+  (a secret keep's value scrubbed, one declared not secret shown, a
+  Wait's code as given) and each progress
   notification as it comes, takes a Form's fields from `--answer` (in
   order, a key given twice answering two Forms, the last used for any
   after) or the terminal, a Go's return from `--return` (one per Go, in
   order, across the run) or the terminal (adding the callback's state
   to one without, unless the Go says `stateless`), checks a Wait again
   every `--every` seconds until it changes or `--checks` runs out, and
-  starts the server again with what a step keeps, as the shim does. A
-  flow that stops for want of an answer is one the owner left: an
-  install that stops before Done has its kept values forgotten and the
-  server started again without them, as the runner discards a failed
-  install's connection, and a `setup` after it in the same run meets
-  what the first left with the stub. A Form asked again after the same
+  starts the server again with what a step keeps, as the shim does. An
+  install that fails has `kivali/uninstall` sent with what it kept, then
+  its kept values forgotten and the server started again without them,
+  as the runner discards a failed install's connection. A flow that
+  stops for want of an answer is one the owner left, which waits with
+  what it kept: a `setup` after it in the same run takes that over, as
+  a new start does in the runner, and one still left at the end of the
+  run is undone as the runner undoes it once forgotten. A Form asked again after the same
   answer stops the flow with a note. Each step is held to the
   manifest's `kivali.connection.setup` as the runner holds it: an
   undeclared field, host or key, a step of none or several kinds, a
@@ -3600,7 +3627,7 @@ the owner's.
 | `GET .../choices/{key}` | `AccessChoices`, through the connection; 404 for a field that lists no options; 409 while the integration is not running, for a built-in one without a connection, or for a built-in one this binary does not carry; 502 for the tool's error, or a result that is not a list of names. |
 | `GET .../logs?limit=` | `IntegrationLogs`, oldest first; limit 200 by default, at most 2000. |
 | `POST .../setup` | `SetupFlowStart` in (`{"flow": "setup"}` to install, `sign_in` or a flow the integration's requirements name for a Fix: [Fix](#fix)), `SetupFlow` out: the flow started, ending one under way ([Setup flows](#setup-flows)); installing an integration with nothing installed switches it on. 409 for one this binary does not carry, with no approved version, for a Fix of one not installed ("install <integration> first") or switched off ("switch <integration> on first"), for a flow name it does not have ("<flow> is not a flow <integration> has"), while a failed install's connection is still being forgotten ("Kivali is still undoing the last setup; try again in a moment"), for `sign_in` of a connection not made by signing in, for a sign-in connection signed in ("the connection is signed in; sign out first") or none of whose ways works from here, for a request that names no host where the browser signs in, and for a setup connection whose setup this binary does not carry. |
-| `GET .../setup` | `SetupFlow`: the flow under way, or the one that last ended (kept ten minutes after its last change); 404 with none, as after a restart. A read counts as watching the flow for ten seconds. |
+| `GET .../setup` | `SetupFlow`: the flow under way, or the one that last ended (kept ten minutes after its last change or its last Wait check, 24 hours from its start at most); 404 with none, as after a restart. A read counts as watching the flow for ten seconds. |
 | `POST .../setup/answer` | `SetupFlowAnswer` in, `SetupFlow` out: the flow's Form answered; 400 for a key the Form does not ask for, or what a save of the connection form would refuse (a standard flow's); 409 when the flow is not on a Form; 404 with no flow. |
 | `POST .../setup/cancel` | 204: the flow ended and forgotten, audited as cancelled, under the lock a Keep is written under; 404 with no flow. |
 | `GET .../setup/stream` | `text/event-stream`: `retry: 1500`, the flow's `SetupFlow` as a `flow` event at once and on each change, a heartbeat comment every 25 seconds, and the end of the stream when the flow is forgotten; 404 with no flow. |

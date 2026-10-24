@@ -57,7 +57,7 @@ Read it before you approve. The check only reads the bundle; this screen is the 
 
 A newer version is uploaded the same way, and waits on its own install screen, which says which version it replaces. Until you approve it, the version in use stays. The integration's page lists every version with where it stands: **Needs your approval**, **In use**, **Replaced** (in use before) or **Rejected**.
 
-The install screen of a version that would replace the one in use says what is different from it, in words, under **What changes from version** and the number of the version in use: hosts it reaches that the version in use does not, or no longer reaches; software it installs that the version in use does not, or no longer installs; connection fields added or removed, with new secrets marked; actions added or removed; and fields added to or removed from the access form. When none of those differ, it says **No change to hosts, software, secrets, actions or the access form.** The rest of the screen still lists everything the version holds.
+The install screen of a version that would replace the one in use says what is different from it, in words, under **What changes from version** and the number of the version in use: hosts it reaches that the version in use does not, or no longer reaches; hosts its sign-in talks to, added or removed; software it installs that the version in use does not, or no longer installs; connection fields added or removed, with new secrets marked; for a setup, hosts it may send your browser to, fields it may ask for and values it keeps, added or removed, and a kept value that becomes secret or stops being one; actions added or removed; and fields added to or removed from the access form. When none of those differ, it says **No change to hosts, software, secrets, actions or the access form.** The rest of the screen still lists everything the version holds.
 
 ### Roll back to an earlier version
 
@@ -244,7 +244,7 @@ On GitHub's page, choose **Install**. Setup makes the app and installs it on Git
 3. GitHub sends you back to Kivali, which takes the app GitHub made. Choose **Continue to github.com** again: on GitHub's page for installing the app, choose the repositories agents should reach and choose **Install**. Agents reach only repositories the app is installed on.
 4. GitHub sends you back, and GitHub is installed. When an organization's owners approve installations first, the page waits until one of them approves it on GitHub.
 
-Kivali keeps the app's id, name, client id and secret, its private key and where it is installed, and nothing of your own GitHub account's. The client secret and the private key are secrets, never shown; the app's id, name, client id and installation are GitHub's public names for it, so agents read the app as the author of what it writes, `<name>[bot]`. Each call is made as the app: Kivali signs with the app's key for a token that lasts an hour at most, narrowed to the call's repository and to what the action needs.
+Kivali keeps the app's id, name, client id and secret, its private key and where it is installed, and nothing of your own GitHub account's. The client secret and the private key are secrets, never shown; the app's id, name, client id and installation are GitHub's public names for it, so what the app writes on GitHub reads as written by `<the app's name on GitHub>[bot]`, to agents as on GitHub. Each call is made as the app: Kivali signs with the app's key for a token that lasts an hour at most, narrowed to the call's repository and to what the action needs.
 
 If setup stops before it is done, Kivali keeps nothing, and you can start again; an app GitHub already made stays on GitHub, where you can delete it. A team opened at a plain `http` address, such as `http://127.0.0.1` in Kivali Desktop, gives GitHub that address to send you back to: if GitHub refuses it, give the team an `https` address under **Other devices** and start again from there.
 
@@ -261,7 +261,7 @@ Besides Kivali's own, GitHub's page lists four requirements, each with a **Fix**
 
 ### Uninstall
 
-Uninstalling GitHub removes the app's installation from GitHub, then Kivali forgets the app's key and every agent's access. The app itself stays on GitHub: delete it under **GitHub Apps** in the account's settings on GitHub (for an organization, the organization's settings) when you no longer need it. Installing GitHub again makes a new app.
+Uninstalling GitHub removes the app's installation from GitHub, then Kivali forgets the app's key and every agent's access. The app itself stays on GitHub: delete it under **GitHub Apps** in the account's settings on GitHub (for an organization, the organization's settings), where the **The app's key works** requirement links it, when you no longer need it. Installing GitHub again makes a new app.
 
 ### From an earlier version of Kivali
 
