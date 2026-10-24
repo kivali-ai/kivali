@@ -245,6 +245,11 @@ func (s *Server) keepRegisteredClient(ctx context.Context, run *setupRun, name s
 	if rec.SecretName == "" {
 		rec.SecretName = secrets.ConnectionSecretName(name, rec.ID)
 	}
+	if made && run.install {
+		// An install's connection, marked unfinished until the flow is
+		// done, so one a stopped Kivali left is discarded at its start.
+		rec.SetupPending = true
+	}
 	if err := s.Secrets.Put(ctx, rec.SecretName, data); err != nil {
 		log.Printf("integration %s: write the connection's registered client: %v", name, err)
 		return errors.New(errRegisteredNotKept)

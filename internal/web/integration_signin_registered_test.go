@@ -250,6 +250,33 @@ func TestRegisteredSignInEndToEnd(t *testing.T) {
 	}
 }
 
+// Why this test exists: a registered client's install makes its
+// connection when it keeps the client, before the browser goes to the
+// service. A restart while the owner is away there must find that
+// connection marked unfinished and discard it, as for every other
+// install, rather than read it installed with a client and no sign-in;
+// and the mark goes once the sign-in is done.
+func TestRegisteredSignInMarksItsConnectionUntilDone(t *testing.T) {
+	srv, vendor, _ := signInServer(t)
+	registeredBundle(t, srv, vendor, nil)
+	orgOK[apitypes.SetupFlow](t, serveSignedIn(t, srv, onLoopback(http.MethodPost, intBase+"/crm/setup", []byte(`{"flow":"setup"}`))))
+	if f := waitFlowEnd(t, srv, apitypes.SetupFlowStateGo); f.State != apitypes.SetupFlowStateGo {
+		t.Fatalf("the flow = %+v", f)
+	}
+	if rec, err := srv.Store.GetIntegrationConnection("crm"); err != nil || !rec.SetupPending {
+		t.Errorf("at the Go: %+v %v", rec, err)
+	}
+	srv.setupCancel("crm")
+	srv.setupAwaitDiscard(context.Background(), "crm")
+
+	if _, f := registeredSignIn(t, srv, onLoopback); f.State != apitypes.SetupFlowStateDone {
+		t.Fatalf("the flow ended %s: %s", f.State, textOf(f.Error))
+	}
+	if rec, err := srv.Store.GetIntegrationConnection("crm"); err != nil || rec.SetupPending {
+		t.Errorf("once signed in: %+v %v", rec, err)
+	}
+}
+
 // fmtAudit is crm's audit, rows joined, for a test that looks for a
 // value in it.
 func fmtAudit(t *testing.T, srv *Server) string {
