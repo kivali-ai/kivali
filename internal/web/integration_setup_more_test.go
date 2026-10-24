@@ -344,10 +344,11 @@ func desktopHandoff(srv *Server) *auth.Handoff {
 	return &auth.Handoff{Codec: srv.AuthMW.Codec, Allowlist: auth.NewAllowlist(testOwnerEmail), Now: srv.clk().Now}
 }
 
-// Why this test exists: what a service sends back (a manifest code, an
-// installation id) is a secret of the flow's, and a driver that echoes
-// it in its error must not put it on the page or in the audit. The
-// service's own words of a refusal (error_description) stay readable.
+// Why this test exists: a code, a state or a secret a service sends
+// back is a secret of the flow's, and a driver that echoes it in its
+// error must not put it on the page or in the audit. Any other value
+// (setup_action=install, the service's error_description) stays
+// readable, or ordinary words such as "Installed" would be mangled.
 // Progress words are scrubbed whole before they are cut, so no piece of
 // a secret astride the cut is left.
 func TestSetupFlowScrubsWhatCameBack(t *testing.T) {
@@ -386,7 +387,7 @@ func TestSetupFlowScrubsWhatCameBack(t *testing.T) {
 		if n == 1 {
 			return builtinintegrations.Step{Go: &builtinintegrations.Go{URL: "https://" + setupHost + "/go"}}, nil
 		}
-		return builtinintegrations.Step{}, errors.New("GitHub refused " + last.Return.Get("code") + ": " + last.Return.Get("error_description"))
+		return builtinintegrations.Step{}, errors.New("GitHub refused " + last.Return.Get("code") + " (" + last.Return.Get("setup_action") + ", " + last.Return.Get("Client_Secret") + "): " + last.Return.Get("error_description"))
 	})
 	startSetupFlow(t, srv, "echo")
 	fs.nextAnswer(t)
@@ -395,10 +396,10 @@ func TestSetupFlowScrubsWhatCameBack(t *testing.T) {
 	srv.setupRuns.mu.Lock()
 	legs = append([]string(nil), srv.setupRuns.runs[f.ID].legs...)
 	srv.setupRuns.mu.Unlock()
-	back = &url.URL{Path: "/connect/callback", RawQuery: url.Values{"state": {legs[0]}, "code": {"c0de-secret-9"}, "error_description": {"the code expired"}}.Encode()}
+	back = &url.URL{Path: "/connect/callback", RawQuery: url.Values{"state": {legs[0]}, "code": {"c0de-secret-9"}, "error_description": {"the code expired"}, "setup_action": {"install"}, "Client_Secret": {"s3cret-from-svc"}}.Encode()}
 	callback(t, srv, back, cookie)
 	f = waitFlow(t, srv, "echo", apitypes.SetupFlowStateFailed)
-	if textOf(f.Error) != "GitHub refused [secret]: the code expired" {
+	if textOf(f.Error) != "GitHub refused [secret] (install, [secret]): the code expired" {
 		t.Errorf("error = %q", textOf(f.Error))
 	}
 	for _, row := range setupAudit(t, srv, "echo") {

@@ -297,7 +297,11 @@ type Answer struct {
 	// can make the browser load the callback with any query, and a
 	// callback replayed from an earlier leg (with a state core issued
 	// before) is delivered as the current Go step's Return. Setup checks
-	// it against the service before relying on it.
+	// it against the service before relying on it. Core scrubs from the
+	// flow's words the values of code, state and any key whose name
+	// holds token, secret, password or key; no other returned value is
+	// scrubbed, so Setup puts anything else it must keep hidden into
+	// State, whose values are.
 	Return url.Values
 	// Checked is true for a Wait step's check: Setup looks at the
 	// service and returns the same Wait to keep waiting, or the next
