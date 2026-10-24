@@ -642,12 +642,12 @@ system, so `make dev` exercises the same flow as the packaged app.
 
 ## Signing in to an integration
 
-An integration's browser sign-in runs the other way round from the
-team's: the vendor sends the code back to the team's own
-`/connect/callback`, which must come to a browser signed in to the team
-and holding the cookie the sign-in started with
+An integration's setup flow's Go step (a browser sign-in among them)
+runs the other way round from the team's sign-in: the service sends
+the browser back to the team's own `/connect/callback`, which must come
+to a browser signed in to the team and holding the flow's cookie
 ([integrations.md](integrations.md#in-kivali-desktop)). The web app
-begins every one at `/connect/start?flow=<id>` of the team's origin.
+sends every one to `/connect/start?flow=<id>` of the team's origin.
 In a team's window `team_nav` answers `ConnectSignIn` for that exact
 path with a single `flow` of 32 lowercase hex digits (`connect_flow`),
 and `open_connect_sign_in`, for a team here whose origin the
@@ -657,16 +657,16 @@ supervisor off the main thread (`POST /v1/handoff`, as the first open
 does) and opens `<origin>/auth/handoff?t=<token>&next=<id>` in the
 system browser (`connect_sign_in_url`, which refuses any origin that
 is not loopback, so the token never leaves the computer). The server
-signs that browser in, hands it the sign-in's cookie and sends it to
-the vendor ([auth.md](auth.md#desktop-handoff)). The web view stays on
-its page, which asks the server how the sign-in stands. The token is
+signs that browser in, hands it the flow's cookie and sends it through
+`/connect/start` to the service ([auth.md](auth.md#desktop-handoff)).
+The web view stays on its page, which follows the flow. The token is
 never logged; a failure logs one line naming the team. For a team
 elsewhere, with no supervisor here, `/connect/start` is refused too
 and nothing opens (`connect_sign_in_target` has no target): loaded, it
-would send the system browser to the vendor's page with neither the
-session nor the sign-in's cookie, and the owner would approve a
-sign-in the callback must refuse. The page's waiting block says to
-open the team in a browser and sign in from there.
+would send the system browser to the service's page with neither the
+session nor the flow's cookie, and the owner would approve something
+the callback must refuse. The page's Go step then says to open the
+team in a browser and continue from there.
 A browser window refuses it (signing in is the team window's), a
 `window.open` of it takes the team window's way, and a frame never
 loads it. A device sign-in's link to the vendor's page is another site,
