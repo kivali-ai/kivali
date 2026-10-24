@@ -5,11 +5,9 @@ import { apiDelete, apiGet, apiPost, apiPut } from '../../api/client';
 import type { ApiError } from '../../api/client';
 import type {
   AccessRow,
-  BrowserSignIn,
   ConnectionField,
   ConnectionState,
   ConnectionWrite,
-  DeviceSignIn,
   IntegrationAudit,
   IntegrationAuditRow,
   IntegrationLogLine,
@@ -18,18 +16,17 @@ import type {
   IntegrationVersion,
   IntegrationVersionSummary,
   PersonRef,
-  SignInProgress,
 } from '../../api/types.gen';
 import { useFrameChrome } from '../../app/chrome';
 import { PageTitle } from '../../app/PageTitle';
 import { Badge, Banner, Button, Card, Dialog, DialogClose, Icon, ListRow, Select, Skeleton, Switch, Table, Text, TextField } from '../../ds';
 import type { BadgeTone, TableColumn } from '../../ds';
 import { AccessDialog } from './AccessDialog';
+import { SetupFlowPanel } from './SetupFlowPanel';
 import {
   Block,
   Markdown,
   RollBackDialog,
-  signInErrorWords,
   ScopesLine,
   SetupFacts,
   StatusBadge,
@@ -106,59 +103,6 @@ function SignInLine({ connection, now }: { connection: ConnectionState | undefin
   );
 }
 
-/** How often the page asks how a sign-in under way stands, while the tab is visible. */
-export const SIGN_IN_POLL_MS = 3000;
-
-/** How long a sign-in's code works, from its expiry: "The code works for 10 minutes." */
-export function codeLifeWords(expiresAt: string, now: number): string {
-  const minutes = Math.max(1, Math.round((Date.parse(expiresAt) - now) / 60_000));
-  return 'The code works for ' + minutes + (minutes === 1 ? ' minute.' : ' minutes.');
-}
-
-/** Whether a sign-in connection's form holds both the client id and the client secret, which a sign-in needs. */
-export function clientSaved(fields: readonly ConnectionField[]): boolean {
-  const set = (key: string) => fields.some((f) => f.key === key && f.set);
-  return set('client_id') && set('client_secret');
-}
-
-/**
- * Where the page sends the browser to begin the browser sign-in `flow` (BrowserSignIn.flow): Kivali sends it on to
- * the service's sign-in page. Kivali Desktop does not load this address in a team's window; it opens the system
- * browser at it instead, signed in to Kivali through the handoff (desktop-app/src-tauri/src/windows.rs, connect_flow).
- */
-export function connectStartPath(flow: string): string {
-  return '/connect/start?flow=' + encodeURIComponent(flow);
-}
-
-/**
- * Sends the browser on its way to the service's sign-in page for the browser sign-in `flow`. In a browser the page
- * leaves; in Kivali Desktop it stays, and the system browser opens instead.
- */
-export function openSignIn(flow: string): void {
-  window.location.assign(connectStartPath(flow));
-}
-
-/**
- * How a browser sign-in came back to the page: the connection it signed in, the connection whose sign-in failed
- * (its words are the connection's GET …/sign-in), or that there is no sign-in to read and the owner starts again.
- */
-export type SignInReturn = { kind: 'signed_in'; id: string } | { kind: 'failed'; id: string } | { kind: 'start_again'; words: string };
-
-/**
- * The page's query after a browser sign-in: ?signed_in=<id>, ?sign_in_failed=<id> or ?sign_in_error=<code>. The query
- * never carries words, since anyone can link to the page with any query: a code is one of signInErrorWords' and any
- * other is ignored.
- */
-export function signInReturnOf(search: string): SignInReturn | null {
-  const q = new URLSearchParams(search);
-  const signedIn = q.get('signed_in');
-  if (signedIn) return { kind: 'signed_in', id: signedIn };
-  const failed = q.get('sign_in_failed');
-  if (failed) return { kind: 'failed', id: failed };
-  const words = signInErrorWords(q.get('sign_in_error'));
-  return words ? { kind: 'start_again', words } : null;
-}
-
 /**
  * "Signs in at app.hubspot.com": the hosts the connection's ways send the owner to, each once, in the ways' order;
  * undefined when none is known.
@@ -172,204 +116,79 @@ export function signsInAt(ways: readonly string[], at: Readonly<Record<string, s
   return hosts.length > 0 ? 'Signs in at ' + namesInWords(hosts) : undefined;
 }
 
-/** Whether the tab is showing; a hidden one asks the server nothing. */
-function useVisible(): boolean {
-  const [visible, setVisible] = useState(() => document.visibilityState !== 'hidden');
-  useEffect(() => {
-    const onVisibility = () => setVisible(document.visibilityState !== 'hidden');
-    document.addEventListener('visibilitychange', onVisibility);
-    return () => document.removeEventListener('visibilitychange', onVisibility);
-  }, []);
-  return visible;
+/**
+ * The flow a service's callback sent the browser back with: ?setup=<id>, a flow id (32 hex digits), or null. The query
+ * never carries words, since anyone can link to the page with any query: the page reads how the flow stands from the
+ * server.
+ */
+export function setupReturnOf(search: string): string | null {
+  const id = new URLSearchParams(search).get('setup');
+  return id && /^[0-9a-f]{32}$/.test(id) ? id : null;
 }
 
-/** What the Sign in block of one connection is wired to: its routes, and what to do with the page they answer. */
-type SignInWiring = Pick<SignInBlockProps, 'api' | 'scopes' | 'signInAt' | 'onPage' | 'onSignedIn' | 'returned'>;
+/** What the Sign in block of the connection is wired to: its routes, and what to do with the page they answer. */
+type SignInWiring = Pick<SignInBlockProps, 'api' | 'integration' | 'scopes' | 'signInAt' | 'onPage' | 'onSignedIn' | 'returned'>;
 
 interface SignInBlockProps {
-  /** The connection; absent before the client id and secret are first saved. */
+  /** The connection; absent before it is first saved. */
   connection: ConnectionState | undefined;
-  /** Its form, with what it holds. */
-  fields: readonly ConnectionField[];
-  /** The connection's routes: …/connection, or …/connections/{id}. */
+  /** The integration's routes: …/integrations/{name}. Sign out is the connection's, …/connection/sign-out. */
   api: string;
+  /** The integration's name in words. */
+  integration: string;
   /** What the sign-in asks the service for, shown above the block. */
   scopes: readonly string[];
   /** The host each way's sign-in goes to (sign_in_at), named in the block so the owner sees where they are sent. */
   signInAt?: Readonly<Record<string, string>>;
   busy: boolean;
-  now: number;
   /** The page as Sign out answers it. */
   onPage(page: IntegrationPageData): void;
   /** Reads the page again once a sign-in is done; settles once the page is in. */
   onSignedIn(): Promise<unknown>;
-  /** How a browser sign-in of this connection came back to the page, when it just did. */
-  returned?: SignInReturn | null;
+  /** The flow a service's callback sent the browser back with (?setup=<id>). */
+  returned?: string | null;
 }
 
 /**
- * A connection made by signing in, once the client id and secret are saved: one button, for the first of the ways the
- * server says work from here (Sign in, in the browser, or Sign in with a code where the browser cannot finish, as in
- * Kivali Desktop's window for a team elsewhere). With a code, the code and the service's page to enter it on while Kivali
- * waits for the approval, asking how it stands every few seconds while the tab is visible, and "Finishing the
- * sign-in." once it is done until the page is read again. In the browser, the page leaves for the service's
- * (openSignIn), which sends the browser back here through Kivali with how it went (returned); where the page stays
- * (Kivali Desktop, which opens the system browser instead), it waits for the sign-in as it does for a code, with
- * Start again. Signed in, who the
- * connection test found and Sign out; a sign-in that failed or expired, why, and Try again the same way; a connection
- * that signs in only in the browser where that cannot finish, the team's address to sign in from instead; and one none
- * of whose ways this version offers, a sentence saying so. What the sign-in asks the service for is above it.
+ * A connection made by signing in: signed in, who the connection test found and Sign out; otherwise the sign-in's
+ * setup flow (SetupFlowPanel) for the first of the ways the server says work from here, Sign in in the browser or
+ * Sign in with a code where the browser cannot finish, as in Kivali Desktop's window for a team elsewhere. A connection
+ * that signs in only in the browser where that cannot finish says to sign in from the team's address instead, and one
+ * none of whose ways this version offers says so. What the sign-in asks the service for is above it.
  */
-function SignInBlock({ connection, fields, api, scopes, signInAt, busy, now, onPage, onSignedIn, returned }: SignInBlockProps) {
-  const [device, setDevice] = useState<DeviceSignIn | null>(null);
-  // A browser sign-in under way that this page stayed for: Kivali Desktop opened the system browser.
-  const [inBrowser, setInBrowser] = useState(false);
-  // Done, and the page is being read again: held so the block does not show Sign in with a code in between.
-  const [finishing, setFinishing] = useState(false);
-  const [ended, setEnded] = useState<SignInProgress | null>(() =>
-    returned?.kind === 'start_again' ? { state: 'expired', error: returned.words } : null,
-  );
-  // The way the sign-in that ended went, which Try again takes again.
-  const [endedWay, setEndedWay] = useState<'device' | 'browser'>(returned && returned.kind !== 'signed_in' ? 'browser' : 'device');
+function SignInBlock({ connection, api, integration, scopes, signInAt, busy, onPage, onSignedIn, returned }: SignInBlockProps) {
   const [error, setError] = useState<ApiError | null>(null);
   const [working, setWorking] = useState(false);
-  const [copied, setCopied] = useState(false);
-  const visible = useVisible();
-  const signedIn = useRef(onSignedIn);
-  useEffect(() => {
-    signedIn.current = onSignedIn;
-  });
   const s = connection?.sign_in;
-
-  // A browser sign-in that came back failed: why is the server's, read once from the sign-in it kept.
-  const failedRead = useRef(false);
-  useEffect(() => {
-    if (returned?.kind !== 'failed' || failedRead.current) return;
-    failedRead.current = true;
-    apiGet<SignInProgress>(api + '/sign-in').then(
-      (p) => {
-        if (p.state === 'failed' || p.state === 'expired') setEnded(p);
-      },
-      (err: unknown) => setError(asApiError(err)),
-    );
-  }, [returned, api]);
-
-  useEffect(() => {
-    if ((!device && !inBrowser) || !visible) return;
-    const way = device ? 'device' : 'browser';
-    let stopped = false;
-    const timer = setInterval(() => {
-      apiGet<SignInProgress>(api + '/sign-in').then(
-        (p) => {
-          if (stopped || p.state === 'pending') return;
-          setDevice(null);
-          setInBrowser(false);
-          if (p.state !== 'done') {
-            setEndedWay(way);
-            setEnded(p);
-            return;
-          }
-          setFinishing(true);
-          void signedIn.current().finally(() => setFinishing(false));
-        },
-        (err: unknown) => {
-          if (!stopped) setError(asApiError(err));
-        },
-      );
-    }, SIGN_IN_POLL_MS);
-    return () => {
-      stopped = true;
-      clearInterval(timer);
-    };
-  }, [device, inBrowser, visible, api]);
-
-  const start = async () => {
-    setWorking(true);
-    setError(null);
-    setEnded(null);
-    setCopied(false);
-    try {
-      setDevice(await apiPost<DeviceSignIn>(api + '/sign-in/device'));
-    } catch (err) {
-      setError(asApiError(err));
-    } finally {
-      setWorking(false);
-    }
-  };
-  const startBrowser = async () => {
-    setWorking(true);
-    setError(null);
-    setEnded(null);
-    setInBrowser(false);
-    try {
-      const { flow } = await apiPost<BrowserSignIn>(api + '/sign-in/browser');
-      openSignIn(flow);
-      // In a browser the tab is leaving; in Kivali Desktop it stays and waits, with its buttons free again (finally),
-      // Start again among them. A click in the moment before a leaving tab goes only starts the sign-in afresh.
-      setInBrowser(true);
-    } catch (err) {
-      setError(asApiError(err));
-    } finally {
-      setWorking(false);
-    }
-  };
   const signOut = async () => {
     setWorking(true);
     setError(null);
     try {
-      onPage(await apiPost<IntegrationPageData>(api + '/sign-out'));
+      onPage(await apiPost<IntegrationPageData>(api + '/connection/sign-out'));
     } catch (err) {
       setError(asApiError(err));
     } finally {
       setWorking(false);
     }
   };
-  const copy = () => {
-    if (!device) return;
-    void navigator.clipboard?.writeText(device.user_code).then(
-      () => setCopied(true),
-      () => setCopied(false),
-    );
-  };
 
-  const disabled = busy || working;
-  // The server lists only the ways that work from here, the manifest's first; the page offers that one.
-  const ways = (s?.ways ?? ['device']).slice(0, 1);
-  const wayButton =
-    ways[0] === 'browser' ? (
-      <Button type="button" variant="primary" disabled={disabled} onClick={() => void startBrowser()}>
-        Sign in
-      </Button>
-    ) : (
-      <Button type="button" variant="primary" disabled={disabled} onClick={() => void start()}>
-        Sign in with a code
-      </Button>
-    );
+  // The server lists only the ways that work from here, the manifest's first; the flow takes that one.
+  const ways = (s?.ways ?? []).slice(0, 1);
+  const at = signsInAt(ways, signInAt);
   let body: ReactNode;
   if (s?.signed_in) {
     const who = connection?.verified && connection.verify_message;
     body = (
       <>
-        {returned?.kind === 'signed_in' && (
-          <Text as="p" variant="caption" tone="muted">
-            You signed in in your browser.
-          </Text>
-        )}
         <Text as="p" variant="body">
           {who ? 'Signed in. ' + who : 'Signed in.'}
         </Text>
         <div className="app-org-actions">
-          <Button type="button" variant="secondary" disabled={disabled} onClick={() => void signOut()}>
+          <Button type="button" variant="secondary" disabled={busy || working} onClick={() => void signOut()}>
             Sign out
           </Button>
         </div>
       </>
-    );
-  } else if (finishing) {
-    body = (
-      <Text as="p" variant="body" tone="muted">
-        Finishing the sign-in.
-      </Text>
     );
   } else if (ways.length === 0 && s?.browser_elsewhere) {
     body = (
@@ -389,72 +208,21 @@ function SignInBlock({ connection, fields, api, scopes, signInAt, busy, now, onP
         This version of Kivali has no way to sign in to this service.
       </Text>
     );
-  } else if (device) {
-    const href = device.verification_url_complete ?? device.verification_url;
-    body = (
-      <div className="app-int-device">
-        <Text as="p" variant="body">
-          Enter this code on the service’s page, then approve the sign-in there. Kivali finishes it here once you do.
-        </Text>
-        <div className="app-int-device-code">
-          <Text variant="display" className="app-int-code" aria-label="Sign-in code">
-            {device.user_code}
-          </Text>
-          <Button type="button" size="sm" variant="ghost" icon={<Icon name={copied ? 'check' : 'copy'} />} onClick={copy}>
-            {copied ? 'Copied' : 'Copy code'}
-          </Button>
-        </div>
-        <Text as="p" variant="body">
-          {/* eslint-disable-next-line react/forbid-elements -- external */}
-          <a href={href} target="_blank" rel="noopener">
-            {device.verification_url}
-          </a>
-        </Text>
-        <Text as="p" variant="caption" tone="muted">
-          {codeLifeWords(device.expires_at, now) + ' Waiting for your approval.'}
-        </Text>
-      </div>
-    );
-  } else if (inBrowser) {
-    body = (
-      <>
-        <Text as="p" variant="body">
-          Approve the sign-in on the service’s page in your browser. Kivali finishes it here once you do.
-        </Text>
-        <Text as="p" variant="caption" tone="muted">
-          Waiting for your approval.
-        </Text>
-        {/* Kivali Desktop opens no browser for a team elsewhere (it could not finish there): this says what to do. */}
-        <Text as="p" variant="caption" tone="muted">
-          If no browser opened, open the team in your browser and sign in from there.
-        </Text>
-        <div className="app-org-actions">
-          <Button type="button" variant="secondary" disabled={disabled} onClick={() => void startBrowser()}>
-            Start again
-          </Button>
-        </div>
-      </>
-    );
-  } else if (ended) {
-    body = (
-      <>
-        <Banner tone="danger" title={ended.state === 'expired' ? 'The sign-in expired' : 'The sign-in did not work'}>
-          {ended.error ?? 'The service did not say why.'}
-        </Banner>
-        <div className="app-org-actions">
-          <Button type="button" variant="primary" disabled={disabled} onClick={() => void (endedWay === 'browser' ? startBrowser() : start())}>
-            Try again
-          </Button>
-        </div>
-      </>
-    );
-  } else if (connection && clientSaved(fields)) {
-    body = <div className="app-org-actions">{wayButton}</div>;
   } else {
-    body = (
-      <Text as="p" variant="body" tone="muted">
-        Save the client id and secret first.
-      </Text>
+    return (
+      <>
+        <ScopesLine scopes={scopes} />
+        <SetupFlowPanel
+          api={api}
+          integration={integration}
+          label="Sign in"
+          startLabel={ways[0] === 'browser' ? 'Sign in' : 'Sign in with a code'}
+          busy={busy}
+          {...(at ? { note: at } : {})}
+          {...(returned ? { returned } : {})}
+          onDone={onSignedIn}
+        />
+      </>
     );
   }
   return (
@@ -464,9 +232,9 @@ function SignInBlock({ connection, fields, api, scopes, signInAt, busy, now, onP
         <Text as="h3" variant="label" tone="muted">
           Sign in
         </Text>
-        {signsInAt(ways, signInAt) && (
+        {at && (
           <Text as="p" variant="caption" tone="muted">
-            {signsInAt(ways, signInAt)}
+            {at}
           </Text>
         )}
         <ErrorBanner error={error} onDismiss={() => setError(null)} />
@@ -590,7 +358,7 @@ function ConnectionForm({ page, busy, running, now, onSave, onVerify, onDisconne
           </Button>
         </div>
       </form>
-      {signIn && <SignInBlock connection={connection} fields={fields} busy={busy} now={now} {...signIn} />}
+      {signIn && <SignInBlock connection={connection} busy={busy} {...signIn} />}
     </>
   );
 }
@@ -630,8 +398,6 @@ interface ConnectionCardProps {
   onVerify?(): void;
   onDelete?(): void;
   onCancel?(): void;
-  /** The Sign in block's routes and answers, for a stored connection made by signing in; absent otherwise. */
-  signIn?: SignInWiring;
 }
 
 /**
@@ -640,7 +406,7 @@ interface ConnectionCardProps {
  * stored), what Test connection last found, and Save, Test connection (when the integration has one) and Delete. A
  * connection being added is the same form blank, always open, with Add connection and Cancel.
  */
-function ConnectionCard({ connection, fields, agents = 0, open = false, busy, running, now, onSave, onVerify, onDelete, onCancel, signIn }: ConnectionCardProps) {
+function ConnectionCard({ connection, fields, agents = 0, open = false, busy, running, now, onSave, onVerify, onDelete, onCancel }: ConnectionCardProps) {
   const [label, setLabel] = useState(connection?.label ?? '');
   // The label is sent only once typed into: a label the integration derives (Git's host) is not stored, so it
   // follows the fields; sending it back on every save would fix it in place.
@@ -723,7 +489,6 @@ function ConnectionCard({ connection, fields, agents = 0, open = false, busy, ru
           )}
         </div>
       </form>
-      {signIn && connection && <SignInBlock connection={connection} fields={fields} busy={busy} now={now} {...signIn} />}
     </Card>
   );
 }
@@ -869,9 +634,9 @@ export function IntegrationPage() {
   const { name = '' } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
-  // How a browser sign-in came back here, read once: the query is taken off the address so a reload does not show it
-  // again.
-  const [returned] = useState(() => signInReturnOf(location.search));
+  // The flow a service's callback sent the browser back with (?setup=<id>), read once: the query is taken off the
+  // address so a reload does not read it again.
+  const [returned] = useState(() => setupReturnOf(location.search));
   const api = integrationApi(name);
   const page = useResource<IntegrationPageData>(api);
   const audit = useResource<IntegrationAudit>(api + '/audit');
@@ -929,8 +694,8 @@ export function IntegrationPage() {
     }
     return ok;
   };
-  // A sign-in or a sign-out changes the page and adds a row to the audit, which are read again.
-  const signedIn = () =>
+  // A flow that finished, or a sign-out, changes the page and adds a row to the audit, which are read again.
+  const flowDone = () =>
     action.run(async () => {
       page.set(await apiGet<IntegrationPageData>(api));
       audit.set(await apiGet<IntegrationAudit>(api + '/audit'));
@@ -939,19 +704,17 @@ export function IntegrationPage() {
     page.set(next);
     void apiGet<IntegrationAudit>(api + '/audit').then(audit.set, () => {});
   };
-  // A browser sign-in that came back goes to its connection's block: the one connection's, or the one it names.
-  const returnedTo = (id: string | undefined) =>
-    returned && (!p?.multiple || (returned.kind !== 'start_again' && returned.id === id)) ? returned : null;
-  const signInFor = (connectionApi: string, id?: string): { signIn?: SignInWiring } =>
+  const signInFor = (): { signIn?: SignInWiring } =>
     p && (p.connection_method === 'device' || p.connection_method === 'browser')
       ? {
           signIn: {
-            api: connectionApi,
+            api,
+            integration: p.summary.display_name,
             scopes: p.scopes,
             ...(p.sign_in_at ? { signInAt: p.sign_in_at } : {}),
             onPage: signedOut,
-            onSignedIn: signedIn,
-            returned: returnedTo(id),
+            onSignedIn: flowDone,
+            returned,
           },
         }
       : {};
@@ -1106,11 +869,6 @@ export function IntegrationPage() {
         {s.version && p.sign_in_redirect_url && (
           <CopyAddress label="Redirect address" hint="Register this address as the app’s callback URL." url={p.sign_in_redirect_url} />
         )}
-        {p.multiple && returned?.kind === 'start_again' && (
-          <Banner tone="danger" title="The sign-in did not work">
-            {returned.words}
-          </Banner>
-        )}
         {s.version && p.multiple ? (
           <div className="app-int-conns">
             {p.connections.length === 0 && !adding && <None>No connections yet.</None>}
@@ -1128,7 +886,6 @@ export function IntegrationPage() {
                 onSave={(body) => saveConnection(c.id, body)}
                 {...(p.connection_test ? { onVerify: () => verifyConnection(c.id) } : {})}
                 onDelete={() => setDeleting(c)}
-                {...signInFor(connectionApi(c.id), c.id)}
               />
             ))}
             {adding ? (
@@ -1149,21 +906,37 @@ export function IntegrationPage() {
               </div>
             )}
           </div>
-        ) : s.version ? (
+        ) : s.version && p.setup ? (
           /* A setup connection has no form: its flow makes the connection. */
-          !p.setup && (
-            <ConnectionForm
-              key={formSeq}
-              page={p}
-              busy={action.busy}
-              running={running}
-              now={now}
-              onSave={save}
-              {...(p.connection_test ? { onVerify: verify } : {})}
-              onDisconnect={() => setDisconnecting(true)}
-              {...signInFor(api + '/connection')}
-            />
-          )
+          <>
+            <div className="app-int-status">
+              {connectionLines(p.connection, now).map((line) => (
+                <Text key={line} as="p" variant="caption" tone="muted">
+                  {line}
+                </Text>
+              ))}
+              <SignInLine connection={p.connection} now={now} />
+            </div>
+            <SetupFlowPanel api={api} integration={s.display_name} label="Set up" busy={action.busy} returned={returned} onDone={flowDone} />
+          </>
+        ) : s.version && !p.connection ? (
+          /* No connection yet: the flow asks for its form, and signs it in when it signs in. */
+          <>
+            <ScopesLine scopes={p.scopes} />
+            <SetupFlowPanel api={api} integration={s.display_name} label="Connect" busy={action.busy} returned={returned} onDone={flowDone} />
+          </>
+        ) : s.version ? (
+          <ConnectionForm
+            key={formSeq}
+            page={p}
+            busy={action.busy}
+            running={running}
+            now={now}
+            onSave={save}
+            {...(p.connection_test ? { onVerify: verify } : {})}
+            onDisconnect={() => setDisconnecting(true)}
+            {...signInFor()}
+          />
         ) : (
           <Text as="p" variant="body" tone="muted">
             Approve a version first.

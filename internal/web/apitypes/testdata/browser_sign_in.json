@@ -1,4 +1,0 @@
-{
-  "url": "https://app.hubspot.com/oauth/authorize?client_id=7fff1e36-2d40-4ae1-bbb1-5266d59564fb\u0026code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM\u0026code_challenge_method=S256\u0026redirect_uri=https%3A%2F%2Fkivali.example.com%2Fconnect%2Fcallback\u0026response_type=code\u0026scope=content\u0026state=3q2-7wEBAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhs",
-  "flow": "9f86d081884c7d659a2feaa0c55ad015"
-}

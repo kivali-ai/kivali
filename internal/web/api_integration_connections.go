@@ -198,41 +198,64 @@ func (s *Server) handleAPIIntegrationConnectionPutByID(w http.ResponseWriter, r 
 	s.saveConnection(w, r, v, c, req, http.StatusOK)
 }
 
-// saveConnection writes cur, or a new connection when cur is nil, from
-// the approved version's connection form: the fields that are not
-// sensitive to the store, the sensitive ones to the connection's
-// Secret. A sensitive field left out keeps its value and an empty one
-// clears it; a field that is not sensitive is what is sent. The label
-// sent replaces the stored one, and an empty one keeps it; for an
-// integration that takes several connections a label is required (the
-// built-in's ConnectionLabel when the owner gives none) and unique
-// ignoring case. The connection's last Test connection result is
-// cleared. The caller holds lockIntegrations. The page answers with
-// done, the route's status code.
+// saveConnection writes cur, or a new connection when cur is nil
+// (writeConnection), and answers with the page and done, the route's
+// status code. A sign-in connection's flow under way ends when the
+// app's client id or secret changes: its tokens would be the old
+// app's. The caller holds lockIntegrations.
 func (s *Server) saveConnection(w http.ResponseWriter, r *http.Request, v *integrationView, cur *connView, req apitypes.ConnectionWrite, done int) {
+	if werr := s.writeConnection(r.Context(), v, cur, req, true); werr != nil {
+		writeAPIError(w, werr.status, werr.words, werr.who)
+		return
+	}
+	s.writeIntegrationPageStatus(w, r, done)
+}
+
+// connWriteError is why a connection was not written: the status and
+// words to answer, and who fixes it.
+type connWriteError struct {
+	status     int
+	words, who string
+}
+
+func (e *connWriteError) Error() string { return e.words }
+
+// connectionWrite is a save worked out (planConnectionWrite): the
+// fields that are not sensitive, the sensitive ones, what the Secret
+// held, and the connection as a built-in reads it.
+type connectionWrite struct {
+	fields, secret, stored map[string]string
+	conn                   builtinintegrations.Connection
+}
+
+// planConnectionWrite works out a save of cur, or of a new connection
+// when cur is nil, from the approved version's connection form, and
+// refuses one the form or the built-in does not take: a field the form
+// has not, a required one with no value, a value of the wrong type,
+// the built-in's own check (ConnectionChecker). A sensitive field left
+// out keeps its value and an empty one clears it; a field that is not
+// sensitive is what is sent. Nothing is written.
+func (s *Server) planConnectionWrite(ctx context.Context, v *integrationView, cur *connView, req apitypes.ConnectionWrite) (*connectionWrite, *connWriteError) {
 	name := v.it.Name
 	if v.it.CurrentVersion == "" {
-		writeAPIError(w, http.StatusConflict, "approve a version of "+v.displayName()+" first; the connection follows the approved version's form", whoYou)
-		return
+		return nil, &connWriteError{http.StatusConflict, "approve a version of " + v.displayName() + " first; the connection follows the approved version's form", whoYou}
 	}
 	m := v.manifest
 	form := integration.ConnectionFields(m)
 	for _, k := range sortedFieldKeys(req.Fields) {
 		if _, ok := form.Field(k); !ok {
-			writeAPIError(w, http.StatusBadRequest, k+" is not a field of this integration's connection", whoDevelopers)
-			return
+			return nil, &connWriteError{http.StatusBadRequest, k + " is not a field of this integration's connection", whoDevelopers}
 		}
 	}
 	stored := map[string]string{}
 	if cur != nil && cur.rec.SecretName != "" {
-		got, err := s.Secrets.Get(r.Context(), cur.rec.SecretName)
+		got, err := s.Secrets.Get(ctx, cur.rec.SecretName)
 		switch {
 		case err == nil:
 			stored = got
 		case !errors.Is(err, secrets.ErrNotFound):
 			log.Printf("integration %s: read the connection's Secret: %v", name, err)
-			writeAPIError(w, http.StatusInternalServerError, "the connection's secrets could not be read, so nothing was changed", whoServer)
-			return
+			return nil, &connWriteError{http.StatusInternalServerError, "the connection's secrets could not be read, so nothing was changed", whoServer}
 		}
 	}
 	fields, secret := map[string]string{}, map[string]string{}
@@ -254,14 +277,12 @@ func (s *Server) saveConnection(w http.ResponseWriter, r *http.Request, v *integ
 		have := cmp.Or(fields[f.Key], secret[f.Key])
 		if have == "" {
 			if f.Required {
-				writeAPIError(w, http.StatusBadRequest, "the connection needs "+f.Title, whoYou)
-				return
+				return nil, &connWriteError{http.StatusBadRequest, "the connection needs " + f.Title, whoYou}
 			}
 			continue
 		}
 		if msg := connectionValueProblem(f, have); msg != "" {
-			writeAPIError(w, http.StatusBadRequest, msg, whoYou)
-			return
+			return nil, &connWriteError{http.StatusBadRequest, msg, whoYou}
 		}
 	}
 	// The connection as a built-in reads it: every field, secrets
@@ -282,10 +303,29 @@ func (s *Server) saveConnection(w http.ResponseWriter, r *http.Request, v *integ
 	// A built-in may hold the connection to more than its form does.
 	if c, ok := v.builtin.(builtinintegrations.ConnectionChecker); ok {
 		if err := c.CheckConnection(conn); err != nil {
-			writeAPIError(w, http.StatusBadRequest, err.Error(), whoYou)
-			return
+			return nil, &connWriteError{http.StatusBadRequest, err.Error(), whoYou}
 		}
 	}
+	return &connectionWrite{fields: fields, secret: secret, stored: stored, conn: conn}, nil
+}
+
+// writeConnection writes cur, or a new connection when cur is nil, as
+// planConnectionWrite works it out: the fields that are not sensitive
+// to the store, the sensitive ones to the connection's Secret. The
+// label sent replaces the stored one, and an empty one keeps it; for
+// an integration that takes several connections a label is required
+// (the built-in's ConnectionLabel when the owner gives none) and unique
+// ignoring case. The connection's last Test connection result is
+// cleared, and the running server starts again with the new values.
+// With endFlows, a sign-in connection's flow under way ends when the
+// app's client id or secret changes. The caller holds lockIntegrations.
+func (s *Server) writeConnection(ctx context.Context, v *integrationView, cur *connView, req apitypes.ConnectionWrite, endFlows bool) *connWriteError {
+	plan, werr := s.planConnectionWrite(ctx, v, cur, req)
+	if werr != nil {
+		return werr
+	}
+	name, m := v.it.Name, v.manifest
+	fields, secret, stored, conn := plan.fields, plan.secret, plan.stored, plan.conn
 	rec := store.IntegrationConnection{ID: newConnectionID(), CreatedAt: s.clk().Now(), Fields: fields}
 	if cur != nil {
 		// A sign-in stays: saving the form changes its fields, not the
@@ -298,8 +338,7 @@ func (s *Server) saveConnection(w http.ResponseWriter, r *http.Request, v *integ
 	}
 	label, msg, code := v.connectionLabelFor(cur, req.Label, rec)
 	if msg != "" {
-		writeAPIError(w, code, msg, whoYou)
-		return
+		return &connWriteError{code, msg, whoYou}
 	}
 	rec.Label = label
 	conn.ID = rec.ID
@@ -325,51 +364,46 @@ func (s *Server) saveConnection(w http.ResponseWriter, r *http.Request, v *integ
 		if proxySecret == "" {
 			var err error
 			if proxySecret, err = egresscred.NewSecret(); err != nil {
-				writeAPIError(w, http.StatusInternalServerError, "the connection's secrets could not be saved, so nothing was changed", whoServer)
-				return
+				return &connWriteError{http.StatusInternalServerError, "the connection's secrets could not be saved, so nothing was changed", whoServer}
 			}
 		}
 		secret[builtinintegrations.ProxySecretKey] = proxySecret
 	}
 	if len(secret) > 0 {
-		if err := s.Secrets.Put(r.Context(), secretName, secret); err != nil {
+		if err := s.Secrets.Put(ctx, secretName, secret); err != nil {
 			log.Printf("integration %s: write the connection's Secret: %v", name, err)
-			writeAPIError(w, http.StatusInternalServerError, "the connection's secrets could not be saved, so nothing was changed", whoServer)
-			return
+			return &connWriteError{http.StatusInternalServerError, "the connection's secrets could not be saved, so nothing was changed", whoServer}
 		}
 		rec.SecretName = secretName
 		rec.SecretKeys = keys
 	} else if cur != nil && cur.rec.SecretName != "" {
-		if err := s.Secrets.Delete(r.Context(), cur.rec.SecretName); err != nil {
+		if err := s.Secrets.Delete(ctx, cur.rec.SecretName); err != nil {
 			log.Printf("integration %s: delete the connection's Secret: %v", name, err)
-			writeAPIError(w, http.StatusInternalServerError, "the connection's secrets could not be cleared, so nothing was changed", whoServer)
-			return
+			return &connWriteError{http.StatusInternalServerError, "the connection's secrets could not be cleared, so nothing was changed", whoServer}
 		}
 	}
 	if err := s.Store.PutIntegrationConnection(name, rec); err != nil {
 		log.Printf("integration %s: write the connection: %v", name, err)
-		writeAPIError(w, http.StatusInternalServerError, "the connection could not be saved", whoServer)
-		return
+		return &connWriteError{http.StatusInternalServerError, "the connection could not be saved", whoServer}
 	}
 	// Registered on every save, so the proxy admits the host as it now
 	// stands; only while the integration is on.
 	if hostsOf != nil && v.it.Enabled {
 		if err := s.registerBuiltinEgress(name, hostsOf, conn, secret[builtinintegrations.ProxySecretKey]); err != nil {
 			log.Printf("integration %s: register the connection's proxy credential: %v", name, err)
-			writeAPIError(w, http.StatusInternalServerError, "the connection was saved, but its network access could not be set up; save it again", whoServer)
-			return
+			return &connWriteError{http.StatusInternalServerError, "the connection was saved, but its network access could not be set up; save it again", whoServer}
 		}
 	}
 	// A sign-in under way was started with the app's old client id and
 	// secret: its tokens would be the old app's.
-	if cur != nil && m.Kivali.Connection.SignIn() &&
+	if endFlows && cur != nil && m.Kivali.Connection.SignIn() &&
 		(cur.rec.Fields[integration.FieldClientID] != fields[integration.FieldClientID] || stored[integration.FieldClientSecret] != secret[integration.FieldClientSecret]) {
-		s.signInFlows.cancel(name, cur.rec.ID)
+		s.setupCancel(name)
 	}
 	// The running server starts again with the new values.
 	s.Integrations.ConnectionChanged(name)
 	s.Integrations.Changed()
-	s.writeIntegrationPageStatus(w, r, done)
+	return nil
 }
 
 // connectionLabelFor is the label rec is stored with: sent, trimmed;
@@ -464,7 +498,7 @@ func (s *Server) deleteConnectionsLocked(w http.ResponseWriter, r *http.Request)
 		return nil, false
 	}
 	// A sign-in under way would sign in a connection that is gone.
-	s.signInFlows.cancel(v.it.Name, "")
+	s.setupCancel(v.it.Name)
 	revokes, ok := s.deleteConnectionSecrets(w, r, v.it.Name)
 	if !ok {
 		return revokes, false
@@ -514,7 +548,7 @@ func (s *Server) deleteConnectionByIDLocked(w http.ResponseWriter, r *http.Reque
 		return nil, false
 	}
 	name := v.it.Name
-	s.signInFlows.cancel(name, c.rec.ID)
+	s.setupCancel(name)
 	var revokes signInRevocations
 	// The Secret goes first: on a failure the record stays, so the
 	// Secret is not left behind with nothing naming it.

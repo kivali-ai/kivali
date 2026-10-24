@@ -271,65 +271,115 @@ type ConnectionSignIn struct {
 	RedirectURL *string `json:"redirect_url,omitempty"`
 }
 
-// BrowserSignIn is the answer of POST
-// /api/v1/org/integrations/{name}/connections/{id}/sign-in/browser (and
-// .../connection/sign-in/browser): the sign-in started, and the
-// vendor's sign-in page. The page sends the browser to
-// GET /connect/start?flow=<flow>, which sends it on to url; Kivali
-// Desktop opens that address in the system browser instead, signed in
-// through the handoff. The vendor sends the browser back to
-// GET /connect/callback, which finishes the sign-in and returns to the
-// integration's page.
-type BrowserSignIn struct {
-	// URL is the vendor's sign-in page for this sign-in.
-	URL string `json:"url"`
-	// Flow names the sign-in: GET /connect/start?flow=<flow>, and the
-	// handoff's next=<flow>, send the browser on to URL.
-	Flow string `json:"flow"`
-}
+// ---- /api/v1/org/integrations/{name}/setup ----
 
-// DeviceSignIn is the answer of POST
-// /api/v1/org/integrations/{name}/connections/{id}/sign-in/device (and
-// .../connection/sign-in/device): the code the owner enters on the
-// service's page, and where. Kivali waits for the owner's approval in
-// the background; GET .../sign-in says how it went.
-type DeviceSignIn struct {
-	// UserCode is the code the owner enters, as the service gave it.
-	UserCode string `json:"user_code"`
-	// VerificationURL is the service's page the code is entered on.
-	VerificationURL string `json:"verification_url"`
-	// VerificationURLComplete is the same page with the code filled
-	// in, when the service gives one.
-	VerificationURLComplete *string `json:"verification_url_complete,omitempty"`
-	// ExpiresAt is when the code stops working.
+// SetupFlowState is where a setup flow stands.
+type SetupFlowState string
+
+const (
+	// SetupFlowStateRunning: Kivali is working out the next step;
+	// Progress says how far it is when it knows.
+	SetupFlowStateRunning SetupFlowState = "running"
+	// SetupFlowStateForm: waiting for you to fill in Step's fields.
+	SetupFlowStateForm SetupFlowState = "form"
+	// SetupFlowStateGo: waiting for your browser to go to the service
+	// (Step.StartURL) and come back.
+	SetupFlowStateGo SetupFlowState = "go"
+	// SetupFlowStateWait: waiting for something to happen on the
+	// service; Kivali checks again every few seconds while the page is
+	// open.
+	SetupFlowStateWait SetupFlowState = "wait"
+	// SetupFlowStateDone: the connection is made.
+	SetupFlowStateDone SetupFlowState = "done"
+	// SetupFlowStateFailed: the flow ended without finishing; Error
+	// says why.
+	SetupFlowStateFailed SetupFlowState = "failed"
+)
+
+// SetupFlow is the answer of POST and GET
+// /api/v1/org/integrations/{name}/setup and each event of GET
+// .../setup/stream: the integration's setup flow under way, or the one
+// that last ended, which Kivali keeps for ten minutes after its last
+// change. A flow lives in the server's memory: after a restart there
+// is none (404), and you start again.
+type SetupFlow struct {
+	// ID names the flow: GET /connect/start?flow=<id> sends the browser
+	// on for a go step, and the service's callback returns to the
+	// integration's page with ?setup=<id>.
+	ID string `json:"id"`
+	// Flow is the flow run: setup, to make the connection.
+	Flow  string         `json:"flow"`
+	State SetupFlowState `json:"state"`
+	// Step is what you do next, while State is form, go or wait.
+	Step *SetupFlowStep `json:"step,omitempty"`
+	// Progress is where Kivali is while State is running, when the
+	// integration says.
+	Progress *SetupFlowProgress `json:"progress,omitempty"`
+	// Error says why a failed flow ended.
+	Error *string `json:"error,omitempty"`
+	// ExpiresAt is when Kivali forgets the flow unless it changes
+	// before.
 	ExpiresAt time.Time `json:"expires_at"`
 }
 
-// SignInState is how a sign-in under way stands.
-type SignInState string
+// SetupFlowStepKind is what kind of step you take.
+type SetupFlowStepKind string
 
 const (
-	// SignInStatePending: waiting for the owner to approve on the
-	// service's page.
-	SignInStatePending SignInState = "pending"
-	// SignInStateDone: signed in; the connection holds the tokens.
-	SignInStateDone SignInState = "done"
-	// SignInStateFailed: the service refused, or the owner said no.
-	SignInStateFailed SignInState = "failed"
-	// SignInStateExpired: the code expired before the owner approved,
-	// or Kivali has no sign-in under way for the connection (it
-	// restarted since).
-	SignInStateExpired SignInState = "expired"
+	// SetupFlowStepKindForm: fill in fields.
+	SetupFlowStepKindForm SetupFlowStepKind = "form"
+	// SetupFlowStepKindGo: your browser goes to the service and comes back.
+	SetupFlowStepKindGo SetupFlowStepKind = "go"
+	// SetupFlowStepKindWait: wait while something happens on the service.
+	SetupFlowStepKindWait SetupFlowStepKind = "wait"
 )
 
-// SignInProgress is the answer of GET
-// /api/v1/org/integrations/{name}/connections/{id}/sign-in (and
-// .../connection/sign-in): how the connection's latest sign-in stands.
-type SignInProgress struct {
-	State SignInState `json:"state"`
-	// Error says why a sign-in failed or expired, in the service's
-	// words where it gave some.
-	Error *string `json:"error,omitempty"`
+// SetupFlowStep is one step of a setup flow for you to take.
+type SetupFlowStep struct {
+	Kind SetupFlowStepKind `json:"kind"`
+	// Words say what to do.
+	Words string `json:"words"`
+	// Fields is a form's fields, in order; empty for the other kinds.
+	// Answer them with POST .../setup/answer.
+	Fields []SetupField `json:"fields"`
+	// StartURL is, for a go step, where the page sends the browser:
+	// /connect/start?flow=<id>, which Kivali Desktop opens in the
+	// system browser.
+	StartURL *string `json:"start_url,omitempty"`
+	// NoReturn is true for a go step whose service sends the browser
+	// nowhere afterwards (a settings page): the page opens start_url in
+	// a new tab and stays, and the flow goes on at once.
+	NoReturn bool `json:"no_return"`
+	// URL is, for a wait step, a page on the service to open meanwhile.
+	URL *string `json:"url,omitempty"`
+	// Host is the host the step sends you to: a go step's, or a wait
+	// step's page's.
+	Host *string `json:"host,omitempty"`
+	// Code is, for a wait step, a code to enter on its page.
+	Code *string `json:"code,omitempty"`
+}
+
+// SetupFlowProgress is how far a running step has got, in the
+// integration's words. Total is 0 when there is no count to show.
+type SetupFlowProgress struct {
+	Words string `json:"words"`
+	Done  int    `json:"done"`
+	Total int    `json:"total"`
+}
+
+// SetupFlowStart is the body of POST /api/v1/org/integrations/{name}/setup:
+// the flow to run. A flow already under way for the integration ends
+// first.
+type SetupFlowStart struct {
+	// Flow is setup, to make the connection.
+	Flow string `json:"flow"`
+}
+
+// SetupFlowAnswer is the body of POST
+// /api/v1/org/integrations/{name}/setup/answer: a form step's fields by
+// key. A field the form does not ask for is a 400.
+type SetupFlowAnswer struct {
+	Fields map[string]string `json:"fields"`
 }
 
 // ConnectionWrite is the body of PUT

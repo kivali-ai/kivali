@@ -7,8 +7,6 @@ import goHandbookJson from '../../../../internal/web/apitypes/testdata/handbook.
 import goIntegrationAuditJson from '../../../../internal/web/apitypes/testdata/integration_audit.json';
 import goIntegrationLogsJson from '../../../../internal/web/apitypes/testdata/integration_logs.json';
 import goConnectionCreateJson from '../../../../internal/web/apitypes/testdata/connection_create.json';
-import goBrowserSignInJson from '../../../../internal/web/apitypes/testdata/browser_sign_in.json';
-import goDeviceSignInJson from '../../../../internal/web/apitypes/testdata/device_sign_in.json';
 import goIntegrationPageJson from '../../../../internal/web/apitypes/testdata/integration_page.json';
 import goIntegrationPageMultipleJson from '../../../../internal/web/apitypes/testdata/integration_page_multiple.json';
 import goIntegrationPageSignInJson from '../../../../internal/web/apitypes/testdata/integration_page_sign_in.json';
@@ -22,8 +20,13 @@ import goIntegrationVersionSignInJson from '../../../../internal/web/apitypes/te
 import goIntegrationVersionSetupJson from '../../../../internal/web/apitypes/testdata/integration_version_setup.json';
 import goIntegrationVersionRegisteredJson from '../../../../internal/web/apitypes/testdata/integration_version_registered.json';
 import goIntegrationPageSetupJson from '../../../../internal/web/apitypes/testdata/integration_page_setup.json';
-import goSignInProgressJson from '../../../../internal/web/apitypes/testdata/sign_in_progress.json';
-import goSignInProgressFailedJson from '../../../../internal/web/apitypes/testdata/sign_in_progress_failed.json';
+import goSetupFlowDoneJson from '../../../../internal/web/apitypes/testdata/setup_flow_done.json';
+import goSetupFlowFailedJson from '../../../../internal/web/apitypes/testdata/setup_flow_failed.json';
+import goSetupFlowFormJson from '../../../../internal/web/apitypes/testdata/setup_flow_form.json';
+import goSetupFlowGoJson from '../../../../internal/web/apitypes/testdata/setup_flow_go.json';
+import goSetupFlowGoNoReturnJson from '../../../../internal/web/apitypes/testdata/setup_flow_go_no_return.json';
+import goSetupFlowRunningJson from '../../../../internal/web/apitypes/testdata/setup_flow_running.json';
+import goSetupFlowWaitJson from '../../../../internal/web/apitypes/testdata/setup_flow_wait.json';
 import goIntegrationsJson from '../../../../internal/web/apitypes/testdata/integrations.json';
 import goNetworkJson from '../../../../internal/web/apitypes/testdata/network.json';
 import goOrgJson from '../../../../internal/web/apitypes/testdata/org.json';
@@ -36,9 +39,7 @@ import goSoftwareAddJson from '../../../../internal/web/apitypes/testdata/softwa
 import type {
   AccessChoices,
   AccessWrite,
-  BrowserSignIn,
   ConnectionWrite,
-  DeviceSignIn,
   Handbook,
   IntegrationAudit,
   IntegrationLogs,
@@ -50,7 +51,7 @@ import type {
   Org,
   OrgSoftware,
   ProjectFiles,
-  SignInProgress,
+  SetupFlow,
   SkillDowngrade,
   Skills,
   SoftwareAdd,
@@ -89,15 +90,21 @@ export const goIntegrationPageSignIn = (goIntegrationPageSignInJson satisfies Wi
 export const goIntegrationPageSignInAgain = (goIntegrationPageSignInAgainJson satisfies Wire<IntegrationPage>) as IntegrationPage;
 /** The same page as Kivali Desktop's window for a team elsewhere reads it: browser sign-in alone, which cannot finish there. */
 export const goIntegrationPageSignInElsewhere = (goIntegrationPageSignInElsewhereJson satisfies Wire<IntegrationPage>) as IntegrationPage;
-/** A browser sign-in just started: the service's sign-in page to send the browser to. */
-export const goBrowserSignIn = (goBrowserSignInJson satisfies Wire<BrowserSignIn>) as BrowserSignIn;
-/** A device sign-in just started: the code, the service's page, and when the code stops working. */
-export const goDeviceSignIn = (goDeviceSignInJson satisfies Wire<DeviceSignIn>) as DeviceSignIn;
-/** A sign-in still waiting for the owner's approval. */
-export const goSignInProgress = (goSignInProgressJson satisfies Wire<SignInProgress>) as SignInProgress;
-/** A sign-in the owner turned down on the service's page, with the service's words. */
-export const goSignInProgressFailed = (goSignInProgressFailedJson satisfies Wire<SignInProgress>) as SignInProgress;
-export const goIntegrationVersion = (goIntegrationVersionJson satisfies Wire<IntegrationVersion>) as IntegrationVersion;
+/** A setup flow working out its next step, three stages of five in. */
+export const goSetupFlowRunning = (goSetupFlowRunningJson satisfies Wire<SetupFlow>) as SetupFlow;
+/** A setup flow asking for its declared fields, one a secret used during setup alone. */
+export const goSetupFlowForm = (goSetupFlowFormJson satisfies Wire<SetupFlow>) as SetupFlow;
+/** A setup flow sending the browser to the service and back. */
+export const goSetupFlowGo = (goSetupFlowGoJson satisfies Wire<SetupFlow>) as SetupFlow;
+/** A setup flow sending the browser to a settings page that sends it nowhere afterwards. */
+export const goSetupFlowGoNoReturn = (goSetupFlowGoNoReturnJson satisfies Wire<SetupFlow>) as SetupFlow;
+/** A device sign-in's flow waiting for the code to be entered on the service's page. */
+export const goSetupFlowWait = (goSetupFlowWaitJson satisfies Wire<SetupFlow>) as SetupFlow;
+/** A setup flow that finished. */
+export const goSetupFlowDone = (goSetupFlowDoneJson satisfies Wire<SetupFlow>) as SetupFlow;
+/** A setup flow the service refused, with its words. */
+export const goSetupFlowFailed = (goSetupFlowFailedJson satisfies Wire<SetupFlow>) as SetupFlow;
+export const goIntegrationVersion =(goIntegrationVersionJson satisfies Wire<IntegrationVersion>) as IntegrationVersion;
 /** A version of an integration that ships with Kivali. */
 export const goIntegrationVersionBuiltin = (goIntegrationVersionBuiltinJson satisfies Wire<IntegrationVersion>) as IntegrationVersion;
 /** A version of an integration that ships with Kivali as a bundle: its runtime, hosts and bundle are an upload's. */

@@ -1,0 +1,27 @@
+{
+  "id": "9f86d081884c7d659a2feaa0c55ad015",
+  "flow": "setup",
+  "state": "form",
+  "step": {
+    "kind": "form",
+    "words": "Name the account the app goes on.",
+    "fields": [
+      {
+        "key": "account",
+        "title": "Account",
+        "words": "Your personal account, or an organization's name",
+        "secret": false,
+        "setup_only": false
+      },
+      {
+        "key": "personal_access_key",
+        "title": "Key",
+        "words": "From the key page",
+        "secret": true,
+        "setup_only": true
+      }
+    ],
+    "no_return": false
+  },
+  "expires_at": "2026-10-21T10:10:00Z"
+}

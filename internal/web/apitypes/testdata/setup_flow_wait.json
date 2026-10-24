@@ -1,0 +1,15 @@
+{
+  "id": "9f86d081884c7d659a2feaa0c55ad015",
+  "flow": "setup",
+  "state": "wait",
+  "step": {
+    "kind": "wait",
+    "words": "Enter this code on the service’s page, then approve the sign-in there. Kivali finishes it here once you do.",
+    "fields": [],
+    "no_return": false,
+    "url": "https://github.com/login/device?user_code=WDJB-MJHT",
+    "host": "github.com",
+    "code": "WDJB-MJHT"
+  },
+  "expires_at": "2026-10-21T10:10:00Z"
+}

@@ -1,6 +1,7 @@
 package web
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/json"
@@ -94,26 +95,28 @@ func serveSignedIn(t *testing.T, srv *Server, req *http.Request, cookies ...*htt
 // browser sign-in started there can finish (browserSignInHere).
 const loopbackOrigin = "http://127.0.0.1:8080"
 
-// startBrowser starts crm's browser sign-in from a page on loopback
-// and returns the vendor's sign-in page and the cookie the answer set.
-func startBrowser(t *testing.T, srv *Server) (*url.URL, *http.Cookie) {
+// startBrowserNamed starts name's browser sign-in from a page on
+// loopback, follows its Go step to /connect/start and returns the
+// vendor's sign-in page it sends the browser to and the flow's cookie.
+func startBrowserNamed(t *testing.T, srv *Server, name string) (*url.URL, *http.Cookie) {
 	t.Helper()
-	rr := serveSignedIn(t, srv, httptest.NewRequest(http.MethodPost, loopbackOrigin+intBase+"/crm/connection/sign-in/browser", nil))
-	bs := orgOK[apitypes.BrowserSignIn](t, rr)
-	u, err := url.Parse(bs.URL)
+	startSetupFlow(t, srv, name)
+	f := waitFlow(t, srv, name, apitypes.SetupFlowStateGo)
+	rr, cookie := startPage(t, srv, f)
+	if rr.Code != http.StatusSeeOther || cookie == nil {
+		t.Fatalf("start: %d, cookie %v", rr.Code, cookie)
+	}
+	u, err := url.Parse(rr.Header().Get("Location"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	var cookie *http.Cookie
-	for _, c := range rr.Result().Cookies() {
-		if c.Name == "kivali_connect" {
-			cookie = c
-		}
-	}
-	if cookie == nil {
-		t.Fatalf("no sign-in cookie in %v", rr.Result().Cookies())
-	}
 	return u, cookie
+}
+
+// startBrowser is startBrowserNamed for crm.
+func startBrowser(t *testing.T, srv *Server) (*url.URL, *http.Cookie) {
+	t.Helper()
+	return startBrowserNamed(t, srv, "crm")
 }
 
 // vendorApprove stands for the owner approving on the vendor's page: it asks
@@ -152,21 +155,37 @@ func callback(t *testing.T, srv *Server, back *url.URL, cookies ...*http.Cookie)
 	return to
 }
 
-// failedWords is why the sign-in a callback sent the browser to as
-// failed (?sign_in_failed=<id>) did not work, as the page reads it:
-// crm's connection's GET .../sign-in.
+// landedOnSetup fails unless a callback sent the browser to name's page
+// with ?setup=<a flow id> and nothing else, and returns the id.
+func landedOnSetup(t *testing.T, to *url.URL, name string) string {
+	t.Helper()
+	q := to.Query()
+	if to.Path != "/org/integrations/"+name || len(q) != 1 || len(q.Get("setup")) != 32 {
+		t.Fatalf("landed on %s, want %s's page with ?setup=", to, name)
+	}
+	return q.Get("setup")
+}
+
+// signedInThere fails unless the callback sent the browser to crm's
+// page and its flow then ended done.
+func signedInThere(t *testing.T, srv *Server, to *url.URL) {
+	t.Helper()
+	id := landedOnSetup(t, to, "crm")
+	if f := flowEnds(t, srv); f.ID != id || f.State != apitypes.SetupFlowStateDone {
+		t.Fatalf("the flow ended %+v %q", f, textOf(f.Error))
+	}
+}
+
+// failedWords is why the flow a callback sent the browser to failed, as
+// the page reads it.
 func failedWords(t *testing.T, srv *Server, to *url.URL) string {
 	t.Helper()
-	rec, _ := firstConnectionSecret(t, srv)
-	q := to.Query()
-	if to.Path != "/org/integrations/crm" || q.Get("sign_in_failed") != rec.ID || len(q) != 1 {
-		t.Fatalf("landed on %s, want crm's page with sign_in_failed", to)
+	id := landedOnSetup(t, to, "crm")
+	f := flowEnds(t, srv)
+	if f.ID != id || f.State != apitypes.SetupFlowStateFailed || f.Error == nil {
+		t.Fatalf("the flow reads %+v", f)
 	}
-	p := orgOK[apitypes.SignInProgress](t, orgGet(t, srv, intBase+"/crm/connections/"+rec.ID+"/sign-in"))
-	if p.State != apitypes.SignInStateFailed || p.Error == nil {
-		t.Fatalf("the failed sign-in reads %+v", p)
-	}
-	return *p.Error
+	return *f.Error
 }
 
 // startAgain fails unless a callback sent the browser to path with
@@ -201,19 +220,19 @@ func assertNotSignedIn(t *testing.T, srv *Server) {
 
 // Why this test exists: this is the owner's whole browser sign-in, as a
 // browser does it, through the real server and its session middleware:
-// Sign in in your browser, the vendor's page, the vendor sending the
-// browser back to /connect/callback, and the integration's page. The
-// vendor's page must carry the client id, the redirect address, the
-// scopes, the manifest's extra parameters, a random state and a PKCE
-// challenge (S256), or the vendor refuses or the code can be redeemed
-// by whoever intercepts it. The cookie that binds the browser must be
-// HttpOnly, SameSite=Lax (the vendor's redirect is a cross-site
+// Connect, the Go step's /connect/start, the vendor's page, the vendor
+// sending the browser back to /connect/callback, and the integration's
+// page. The vendor's page must carry the client id, the redirect
+// address, the scopes, the manifest's extra parameters, a random state
+// and a PKCE challenge (S256), or the vendor refuses or the code can be
+// redeemed by whoever intercepts it. The cookie that binds the browser
+// must be HttpOnly, SameSite=Lax (the vendor's redirect is a cross-site
 // navigation) and host-only. Kivali must exchange the code with the
 // verifier and the client secret, keep the tokens and the sign-in as
 // browser, restart the bundle's server, run the connection test, audit
-// the sign-in, drop the cookie and land the browser on the page with
-// the connection it signed in. A step missing here is a sign-in that
-// fails for every owner of a vendor like HubSpot.
+// the flow, drop the cookie and land the browser on the page with the
+// flow. A step missing here is a sign-in that fails for every owner of
+// a vendor like HubSpot.
 func TestBrowserSignInEndToEnd(t *testing.T) {
 	srv, vendor, clk := signInServer(t)
 	withIntegrationRegistry(srv, newFakeIntegrationProv())
@@ -234,15 +253,28 @@ func TestBrowserSignInEndToEnd(t *testing.T) {
 		return nil
 	}}
 
-	req, _ := http.NewRequest(http.MethodPost, ts.URL+intBase+"/crm/connection/sign-in/browser", nil)
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+intBase+"/crm/setup", bytes.NewReader([]byte(`{"flow":"setup"}`)))
 	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	req.Header.Set("Content-Type", "application/json")
 	resp, err := browser.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var bs apitypes.BrowserSignIn
-	if err := json.NewDecoder(resp.Body).Decode(&bs); err != nil || resp.StatusCode != http.StatusOK {
+	var started apitypes.SetupFlow
+	if err := json.NewDecoder(resp.Body).Decode(&started); err != nil || resp.StatusCode != http.StatusOK {
 		t.Fatalf("start: %d %v", resp.StatusCode, err)
+	}
+	_ = resp.Body.Close()
+	f := waitFlow(t, srv, "crm", apitypes.SetupFlowStateGo)
+	if f.Step.Words != browserGoWords || textOf(f.Step.Host) != strings.TrimPrefix(vendor.URL, "http://") {
+		t.Errorf("go = %+v", f.Step)
+	}
+
+	// /connect/start, seen without following it.
+	noFollow := &http.Client{Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	resp, err = noFollow.Get(ts.URL + *f.Step.StartURL)
+	if err != nil {
+		t.Fatal(err)
 	}
 	_ = resp.Body.Close()
 	setCookie := resp.Header.Get("Set-Cookie")
@@ -250,17 +282,17 @@ func TestBrowserSignInEndToEnd(t *testing.T) {
 		!strings.Contains(setCookie, "HttpOnly") || !strings.Contains(setCookie, "SameSite=Lax") || strings.Contains(setCookie, "Domain=") {
 		t.Errorf("Set-Cookie = %q", setCookie)
 	}
-	authorize, _ := url.Parse(bs.URL)
+	authorize, _ := url.Parse(resp.Header.Get("Location"))
 	q := authorize.Query()
 	if authorize.Path != "/authorize" || q.Get("client_id") != connecttest.ClientID || q.Get("response_type") != "code" ||
 		q.Get("redirect_uri") != ts.URL+"/connect/callback" || q.Get("scope") != "content" ||
 		q.Get("optional_scope") != "crm.objects.contacts.read" || q.Get("code_challenge_method") != "S256" ||
 		len(q.Get("code_challenge")) != 43 || len(q.Get("state")) != 43 || q.Has("client_secret") {
-		t.Errorf("the vendor's page = %s", bs.URL)
+		t.Errorf("the vendor's page = %s", authorize)
 	}
 
 	signedInAt := clk.Now()
-	resp, err = browser.Get(bs.URL)
+	resp, err = browser.Get(authorize.String())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -268,10 +300,13 @@ func TestBrowserSignInEndToEnd(t *testing.T) {
 	if resp.StatusCode != http.StatusSeeOther || landed == nil || landed.Path != "/org/integrations/crm" {
 		t.Fatalf("landed on %v after %d", landed, resp.StatusCode)
 	}
-	rec, data := firstConnectionSecret(t, srv)
-	if got := landed.Query(); got.Get("signed_in") != rec.ID || len(got) != 1 {
+	if got := landed.Query(); got.Get("setup") != f.ID || len(got) != 1 {
 		t.Errorf("landed on %s", landed)
 	}
+	if f := flowEnds(t, srv); f.State != apitypes.SetupFlowStateDone {
+		t.Fatalf("flow = %+v %q", f, textOf(f.Error))
+	}
+	rec, data := firstConnectionSecret(t, srv)
 	var exchange *connecttest.Request
 	for _, r := range vendor.Requests() {
 		if r.Path == "/token" {
@@ -297,12 +332,8 @@ func TestBrowserSignInEndToEnd(t *testing.T) {
 			t.Errorf("the sign-in cookie outlived the callback: %v", c)
 		}
 	}
-	rows, _ := srv.Store.ReadIntegrationAuditTail("crm", 5)
-	if last := rows[len(rows)-1]; last.Action != "sign_in" || last.Agent != agent.CEOSlug || !last.Allowed {
-		t.Errorf("audit = %+v", rows)
-	}
-	if p := signInProgress(t, srv); p.State != apitypes.SignInStateDone {
-		t.Errorf("progress = %+v", p)
+	if got := strings.Join(setupAudit(t, srv, "crm"), "|"); got != "started|returned|done" {
+		t.Errorf("audit = %s", got)
 	}
 	cred, rpcErr := srv.Integrations.credential(context.Background(), "crm")
 	if rpcErr != nil || cred.Env["HUBSPOT_ACCESS_TOKEN"] != data[connect.SecretKeyAccessToken] {
@@ -310,14 +341,13 @@ func TestBrowserSignInEndToEnd(t *testing.T) {
 	}
 }
 
-// Why this test exists: a browser holds one sign-in cookie, so of two
-// browser sign-ins started in it (two integrations' pages, two tabs)
-// only the later can finish. The earlier must end at once, and its
-// callback must land on its own page with words that say another
-// sign-in replaced it, without taking the later's cookie with it: the
-// later sign-in must still finish. Without this both would fail, the
-// first for its cookie and the second because the first callback
-// dropped it.
+// Why this test exists: a browser holds one flow cookie, so of two Go
+// steps started in it (two integrations' pages, two tabs) only the
+// later can come back. The earlier must end at once, and its callback
+// must land on its own page, whose flow says another one replaced it,
+// without taking the later's cookie with it: the later sign-in must
+// still finish. Without this both would fail, the first for its cookie
+// and the second because the first callback dropped it.
 func TestBrowserSignInOneAtATimePerBrowser(t *testing.T) {
 	srv, vendor, _ := signInServer(t)
 	browserBundle(t, srv, vendor, nil)
@@ -330,77 +360,42 @@ func TestBrowserSignInOneAtATimePerBrowser(t *testing.T) {
 			t.Fatalf("save %s: %d %s", name, rr.Code, rr.Body.String())
 		}
 	}
-	ts := httptest.NewServer(srv.Handler())
-	t.Cleanup(ts.Close)
-	base, _ := url.Parse(ts.URL)
-	jar, _ := cookiejar.New(nil)
-	jar.SetCookies(base, []*http.Cookie{authCookie(t, srv)})
-	var landed *url.URL
-	browser := &http.Client{Jar: jar, CheckRedirect: func(req *http.Request, _ []*http.Request) error {
-		if strings.HasPrefix(req.URL.Path, "/org/") {
-			landed = req.URL
-			return http.ErrUseLastResponse
-		}
-		return nil
-	}}
-	start := func(name string) string {
-		req, _ := http.NewRequest(http.MethodPost, ts.URL+intBase+"/"+name+"/connection/sign-in/browser", nil)
-		req.Header.Set("Sec-Fetch-Site", "same-origin")
-		resp, err := browser.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer func() { _ = resp.Body.Close() }()
-		var bs apitypes.BrowserSignIn
-		if err := json.NewDecoder(resp.Body).Decode(&bs); err != nil || resp.StatusCode != http.StatusOK {
-			t.Fatalf("start %s: %d %v", name, resp.StatusCode, err)
-		}
-		return bs.URL
-	}
-	approveIn := func(authorize string) *url.URL {
-		landed = nil
-		resp, err := browser.Get(authorize)
-		if err != nil {
-			t.Fatal(err)
-		}
-		_ = resp.Body.Close()
-		return landed
-	}
-	first, second := start("crm"), start("crm2")
+	first, firstCookie := startBrowserNamed(t, srv, "crm")
+	// The second /connect/start comes from the same browser, which
+	// holds the first's cookie.
+	startSetupFlow(t, srv, "crm2")
+	f2 := waitFlow(t, srv, "crm2", apitypes.SetupFlowStateGo)
+	rr := flowDo(t, srv, http.MethodGet, *f2.Step.StartURL, nil, firstCookie)
+	second, _ := url.Parse(rr.Header().Get("Location"))
+	secondCookie := cookieOf(rr, "kivali_connect")
 
-	to := approveIn(first)
-	rec, _ := firstConnectionSecret(t, srv)
-	if to == nil || to.Path != "/org/integrations/crm" || to.Query().Get("sign_in_failed") != rec.ID {
-		t.Fatalf("the first sign-in landed on %v", to)
-	}
-	p := orgOK[apitypes.SignInProgress](t, orgGet(t, srv, intBase+"/crm/connection/sign-in"))
-	if p.State != apitypes.SignInStateFailed || p.Error == nil || *p.Error != errSignInReplaced {
-		t.Errorf("the first sign-in reads %+v", p)
+	to := callback(t, srv, vendorApprove(t, first), secondCookie)
+	if words := failedWords(t, srv, to); words != errSignInReplaced {
+		t.Errorf("the first sign-in reads %q", words)
 	}
 	if n := tokenRequests(vendor); n != 0 {
 		t.Errorf("%d exchanges for the replaced sign-in", n)
 	}
-
-	if to := approveIn(second); to == nil || to.Path != "/org/integrations/crm2" || to.Query().Get("signed_in") == "" {
-		t.Errorf("the second sign-in landed on %v", to)
+	to = callback(t, srv, vendorApprove(t, second), secondCookie)
+	landedOnSetup(t, to, "crm2")
+	if f := waitFlow(t, srv, "crm2", apitypes.SetupFlowStateDone); f.ID != f2.ID {
+		t.Errorf("crm2 = %+v", f)
 	}
 }
 
-// Why this test exists: the state is good for one callback. A callback
-// replayed (the browser's back button, a copied address, an attacker
-// who saw it) must not run the exchange again, nor overwrite the
-// sign-in, even when it carries the cookie: it lands on the page saying
-// to start again.
-func TestBrowserSignInStateIsSingleUse(t *testing.T) {
+// Why this test exists: a callback replayed (the browser's back button,
+// a copied address, an attacker who saw it) after the flow moved on
+// must not run the exchange again, nor overwrite the sign-in, even when
+// it carries the cookie: it lands on the page, which reads the flow as
+// it is.
+func TestBrowserSignInReplayRunsNothing(t *testing.T) {
 	srv, vendor := browserServer(t)
 	authorize, cookie := startBrowser(t, srv)
 	back := vendorApprove(t, authorize)
-	if to := callback(t, srv, back, cookie); to.Query().Get("signed_in") == "" {
-		t.Fatalf("the first callback landed on %s", to)
-	}
+	signedInThere(t, srv, callback(t, srv, back, cookie))
 	rec, data := firstConnectionSecret(t, srv)
 
-	startAgain(t, callback(t, srv, back, cookie), "/org/integrations/crm")
+	landedOnSetup(t, callback(t, srv, back, cookie), "crm")
 	if n := tokenRequests(vendor); n != 1 {
 		t.Errorf("%d exchanges, want 1", n)
 	}
@@ -410,31 +405,33 @@ func TestBrowserSignInStateIsSingleUse(t *testing.T) {
 	}
 }
 
-// Why this test exists: a sign-in lasts ten minutes on Kivali's clock.
-// A vendor's redirect that comes later (an owner who left the vendor's
-// page open) must be refused in words that say to start again, with
-// no exchange: the flow's verifier is gone with it. The cookie still
-// names the integration, so the browser lands on its page.
+// Why this test exists: a flow lasts ten minutes after its last change
+// on Kivali's clock. A vendor's redirect that comes later (an owner who
+// left the vendor's page open) must find nothing, with no exchange: the
+// flow's verifier is gone with it. The cookie still names the
+// integration and its flow, so the browser lands on its page, which
+// says to start again.
 func TestBrowserSignInExpires(t *testing.T) {
 	srv, vendor := browserServer(t)
 	clk := srv.Clock.(interface{ Advance(time.Duration) })
 	authorize, cookie := startBrowser(t, srv)
 	back := vendorApprove(t, authorize)
-	clk.Advance(signInFlowTTL)
+	clk.Advance(setupFlowTTL)
 
-	startAgain(t, callback(t, srv, back, cookie), "/org/integrations/crm")
+	landedOnSetup(t, callback(t, srv, back, cookie), "crm")
+	assertAPIError(t, orgGet(t, srv, intBase+"/crm/setup"), http.StatusNotFound)
 	if n := tokenRequests(vendor); n != 0 {
 		t.Errorf("%d exchanges after the sign-in expired", n)
 	}
 	assertNotSignedIn(t, srv)
 }
 
-// Why this test exists: the cookie binds the sign-in to the browser
-// that started it. A callback without it (another browser, or a link an
-// attacker sends the owner to sign the owner's connection in to the
-// attacker's account) must be refused as started elsewhere, with no
-// exchange, and the state must be spent so the right browser cannot be
-// raced either. A cookie Kivali did not sign is no cookie.
+// Why this test exists: the cookie binds the flow to the browser that
+// left. A callback without it (another browser, or a link an attacker
+// sends the owner to sign the owner's connection in to the attacker's
+// account) must end the flow as started elsewhere, with no exchange, so
+// the right browser cannot be raced either. A cookie Kivali did not
+// sign is no cookie.
 func TestBrowserSignInNeedsTheCookie(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -454,8 +451,8 @@ func TestBrowserSignInNeedsTheCookie(t *testing.T) {
 			if words := failedWords(t, srv, callback(t, srv, back, tc.cookie(cookie)...)); words != errSignInStartAgain {
 				t.Errorf("the page reads %q", words)
 			}
-			// The right browser after a refused callback finds the state spent.
-			startAgain(t, callback(t, srv, back, cookie), "/org/integrations/crm")
+			// The right browser after a refused callback finds the flow ended.
+			landedOnSetup(t, callback(t, srv, back, cookie), "crm")
 			if n := tokenRequests(vendor); n != 0 {
 				t.Errorf("%d exchanges without the cookie", n)
 			}
@@ -467,9 +464,8 @@ func TestBrowserSignInNeedsTheCookie(t *testing.T) {
 // Why this test exists: when the owner says no on the vendor's page, or
 // the vendor refuses the request (a scope the app does not have), the
 // vendor sends the browser back with its error. The page must say so
-// in the vendor's own words, cut short so a vendor cannot fill the
-// address, or in its error code when it gave none; the owner's audit
-// keeps it; nothing is exchanged.
+// in the vendor's own words, cut short, or in its error code when it
+// gave none; the owner's audit keeps it; nothing is exchanged.
 func TestBrowserSignInPassesOnTheVendorsWords(t *testing.T) {
 	long := strings.Repeat("x", 300)
 	for _, tc := range []struct{ code, description, want string }{
@@ -488,19 +484,17 @@ func TestBrowserSignInPassesOnTheVendorsWords(t *testing.T) {
 			t.Errorf("%s: %d exchanges", tc.code, n)
 		}
 		assertNotSignedIn(t, srv)
-		rows, _ := srv.Store.ReadIntegrationAuditTail("crm", 5)
-		if last := rows[len(rows)-1]; last.Action != "sign_in" || last.Allowed || last.Reason != tc.want {
-			t.Errorf("%s: audit = %+v", tc.code, rows)
+		if got := setupAudit(t, srv, "crm"); got[len(got)-1] != "refused failed: "+tc.want {
+			t.Errorf("%s: audit = %q", tc.code, got)
 		}
 	}
 }
 
 // Why this test exists: a vendor's error words may echo what it was
-// sent, the state among them, and they go into the page's address, the
-// audit and the flow. The state (with the code, the verifier and the
-// client secret) must be scrubbed from them whole before they are cut,
-// or a replayable state, or a piece of a secret, would sit in the
-// browser's history.
+// sent, the state among them, and they go to the page, the audit and
+// the flow. The state (with the code, the verifier and the client
+// secret) must be scrubbed from them whole before they are cut, or a
+// piece of a secret would be shown.
 func TestBrowserSignInScrubsTheVendorsWords(t *testing.T) {
 	srv, vendor := browserServer(t)
 	authorize, cookie := startBrowser(t, srv)
@@ -514,9 +508,10 @@ func TestBrowserSignInScrubsTheVendorsWords(t *testing.T) {
 	if strings.Contains(words, state[:10]) || strings.Contains(words, connecttest.ClientSecret[:10]) || len([]rune(words)) > signInWordsRunes {
 		t.Errorf("the page was sent %q", words)
 	}
-	rows, _ := srv.Store.ReadIntegrationAuditTail("crm", 5)
-	if last := rows[len(rows)-1]; strings.Contains(last.Reason, state[:10]) {
-		t.Errorf("audit = %+v", last)
+	for _, row := range setupAudit(t, srv, "crm") {
+		if strings.Contains(row, state[:10]) {
+			t.Errorf("audit = %s", row)
+		}
 	}
 }
 
@@ -529,11 +524,9 @@ func TestBrowserSignInPKCEMismatch(t *testing.T) {
 	srv, vendor := browserServer(t)
 	authorize, cookie := startBrowser(t, srv)
 	back := vendorApprove(t, authorize)
-	srv.signInFlows.mu.Lock()
-	for _, f := range srv.signInFlows.flows {
-		f.browser.verifier = connect.NewPKCEVerifier()
-	}
-	srv.signInFlows.mu.Unlock()
+	srv.setupRuns.mu.Lock()
+	srv.setupRuns.currentLocked("crm").spec.driver.(*signInSetup).verifier = connect.NewPKCEVerifier()
+	srv.setupRuns.mu.Unlock()
 
 	to := callback(t, srv, back, cookie)
 	want := "the vendor refused the sign-in (invalid_grant): the PKCE verifier does not match"
@@ -544,9 +537,6 @@ func TestBrowserSignInPKCEMismatch(t *testing.T) {
 		t.Errorf("%d exchanges, want 1", n)
 	}
 	assertNotSignedIn(t, srv)
-	if p := signInProgress(t, srv); p.State != apitypes.SignInStateFailed || p.Error == nil || *p.Error != want {
-		t.Errorf("progress = %+v", p)
-	}
 }
 
 // Why this test exists: a manifest with pkce false is a vendor that
@@ -561,13 +551,27 @@ func TestBrowserSignInWithoutPKCE(t *testing.T) {
 	if q := authorize.Query(); q.Has("code_challenge") || q.Has("code_challenge_method") {
 		t.Errorf("the vendor's page = %s", authorize)
 	}
-	if to := callback(t, srv, vendorApprove(t, authorize), cookie); to.Query().Get("signed_in") == "" {
-		t.Errorf("landed on %s", to)
-	}
+	signedInThere(t, srv, callback(t, srv, vendorApprove(t, authorize), cookie))
 	for _, r := range vendor.Requests() {
 		if r.Path == "/token" && r.Form.Has("code_verifier") {
 			t.Errorf("the exchange sent a verifier: %v", r.Form)
 		}
+	}
+}
+
+// Why this test exists: an OAuth return carries the state the vendor
+// was given. A callback matched by the cookie alone, with no state (a
+// vendor that dropped it, or a link someone made), is no sign-in's
+// return: the flow ends without an exchange.
+func TestBrowserSignInNeedsTheState(t *testing.T) {
+	srv, vendor := browserServer(t)
+	_, cookie := startBrowser(t, srv)
+	to := callback(t, srv, &url.URL{Path: "/connect/callback", RawQuery: "code=abc"}, cookie)
+	if words := failedWords(t, srv, to); words != errSignInNoState {
+		t.Errorf("the page reads %q", words)
+	}
+	if n := tokenRequests(vendor); n != 0 {
+		t.Errorf("%d exchanges", n)
 	}
 }
 
@@ -628,36 +632,40 @@ func TestBrowserRedirectAddressOnThePage(t *testing.T) {
 	srv.ExternalURL = "https://team.tail1234.ts.net"
 	browserBundle(t, srv, vendor, nil)
 	const want = "https://team.tail1234.ts.net/connect/callback"
-	viaProxy := func(method, path string) *http.Request {
-		r := httptest.NewRequest(method, path, nil)
+	viaProxy := func(method, path string, body []byte) *http.Request {
+		r := httptest.NewRequest(method, path, bytes.NewReader(body))
+		if body != nil {
+			r.Header.Set("Content-Type", "application/json")
+		}
 		r.Header.Set("X-Forwarded-Proto", "https")
 		r.Header.Set("X-Forwarded-Host", "team.tail1234.ts.net")
 		return r
 	}
-	page := orgOK[apitypes.IntegrationPage](t, serveSignedIn(t, srv, viaProxy(http.MethodGet, intBase+"/crm")))
+	page := orgOK[apitypes.IntegrationPage](t, serveSignedIn(t, srv, viaProxy(http.MethodGet, intBase+"/crm", nil)))
 	if page.SignInRedirectURL == nil || *page.SignInRedirectURL != want || page.Connection != nil {
 		t.Errorf("before any connection: redirect %v, connection %+v", page.SignInRedirectURL, page.Connection)
 	}
 	if page.SetupNotesMD != strings.ReplaceAll(browserSetupNotes, "{{redirect_url}}", want) {
 		t.Errorf("setup notes = %q", page.SetupNotesMD)
 	}
-	v := orgOK[apitypes.IntegrationVersion](t, serveSignedIn(t, srv, viaProxy(http.MethodGet, intBase+"/crm/versions/1.0.0")))
+	v := orgOK[apitypes.IntegrationVersion](t, serveSignedIn(t, srv, viaProxy(http.MethodGet, intBase+"/crm/versions/1.0.0", nil)))
 	if !strings.Contains(v.SetupNotesMD, want) || strings.Contains(v.SetupNotesMD, "{{") {
 		t.Errorf("install screen notes = %q", v.SetupNotesMD)
 	}
 
 	saveSignInClient(t, srv)
-	page = orgOK[apitypes.IntegrationPage](t, serveSignedIn(t, srv, viaProxy(http.MethodGet, intBase+"/crm")))
+	page = orgOK[apitypes.IntegrationPage](t, serveSignedIn(t, srv, viaProxy(http.MethodGet, intBase+"/crm", nil)))
 	if si := page.Connection.SignIn; si == nil || si.RedirectURL == nil || *si.RedirectURL != want || strings.Join(si.Ways, ",") != "browser" {
 		t.Errorf("the connection's sign-in = %+v", si)
 	}
-	rr := serveSignedIn(t, srv, viaProxy(http.MethodPost, intBase+"/crm/connection/sign-in/browser"))
-	bs := orgOK[apitypes.BrowserSignIn](t, rr)
-	if u, _ := url.Parse(bs.URL); u.Query().Get("redirect_uri") != want {
-		t.Errorf("the vendor's page = %s", bs.URL)
+	orgOK[apitypes.SetupFlow](t, serveSignedIn(t, srv, viaProxy(http.MethodPost, intBase+"/crm/setup", []byte(`{"flow":"setup"}`))))
+	f := waitFlow(t, srv, "crm", apitypes.SetupFlowStateGo)
+	rr := serveSignedIn(t, srv, viaProxy(http.MethodGet, *f.Step.StartURL, nil))
+	if u, _ := url.Parse(rr.Header().Get("Location")); u.Query().Get("redirect_uri") != want {
+		t.Errorf("the vendor's page = %s", rr.Header().Get("Location"))
 	}
-	if c := rr.Result().Cookies(); len(c) != 1 || !c[0].Secure {
-		t.Errorf("cookies = %v", c)
+	if c := cookieOf(rr, "kivali_connect"); c == nil || !c.Secure {
+		t.Errorf("cookies = %v", rr.Result().Cookies())
 	}
 
 	device, deviceVendor, _ := signInServer(t)
@@ -666,9 +674,6 @@ func TestBrowserRedirectAddressOnThePage(t *testing.T) {
 	page = orgOK[apitypes.IntegrationPage](t, orgGet(t, device, intBase+"/crm"))
 	if page.SignInRedirectURL != nil || page.Connection.SignIn.RedirectURL != nil {
 		t.Errorf("a device-only page carries a redirect address")
-	}
-	if rr := intPost(t, device, intBase+"/crm/connection/sign-in/browser"); rr.Code != http.StatusConflict {
-		t.Errorf("browser sign-in of a device-only connection: %d", rr.Code)
 	}
 }
 
@@ -707,13 +712,13 @@ func TestSetupNotesNameTheExternalRedirectAddress(t *testing.T) {
 	}
 }
 
-// Why this test exists: Sign in in your browser sends the owner's
-// browser wherever the manifest's authorization endpoint points, and a
-// bundle written under a prompt injection could point it at a lookalike
-// of the service's sign-in page. The install screen and the page must
-// name every host the sign-in talks to (each once, sorted), and the
-// page the host each way sends the owner to, so the owner can tell
-// before approving and before signing in. A token connection has none.
+// Why this test exists: a sign-in sends the owner's browser wherever
+// the manifest's authorization endpoint points, and a bundle written
+// under a prompt injection could point it at a lookalike of the
+// service's sign-in page. The install screen and the page must name
+// every host the sign-in talks to (each once, sorted), and the page the
+// host each way sends the owner to, so the owner can tell before
+// approving and before signing in. A token connection has none.
 func TestSignInHostsAreShown(t *testing.T) {
 	srv, vendor, _ := signInServer(t)
 	browserBundle(t, srv, vendor, func(c *integration.Connection) {
@@ -744,7 +749,8 @@ func TestSignInHostsAreShown(t *testing.T) {
 }
 
 // Why this test exists: a manifest that offers both ways lists them on
-// the page with its method first, and each way's route works for it.
+// the page with its method first, and the flow takes the first, as the
+// page says it will.
 func TestSignInWaysBoth(t *testing.T) {
 	srv, vendor, _ := signInServer(t)
 	browserBundle(t, srv, vendor, func(c *integration.Connection) {
@@ -755,9 +761,8 @@ func TestSignInWaysBoth(t *testing.T) {
 	if si := page.Connection.SignIn; si == nil || strings.Join(si.Ways, ",") != "device,browser" || si.RedirectURL == nil {
 		t.Errorf("sign-in = %+v", si)
 	}
-	authorize, cookie := startBrowser(t, srv)
-	if to := callback(t, srv, vendorApprove(t, authorize), cookie); to.Query().Get("signed_in") == "" {
-		t.Errorf("landed on %s", to)
+	if f := startDeviceSignIn(t, srv); textOf(f.Step.Code) == "" {
+		t.Errorf("the flow's step = %+v", f.Step)
 	}
 }
 
@@ -768,9 +773,9 @@ func TestSignInWaysBoth(t *testing.T) {
 // and the team's external address in a browser. Offered anywhere else,
 // it would end on the vendor's error page, or open nothing from Kivali
 // Desktop's window for a team elsewhere. There the page must offer the
-// code instead when the manifest has one; with browser alone, offer no
-// way and say where to sign in; and the route must refuse a browser
-// sign-in started there, while the code still works.
+// code instead when the manifest has one, and the flow must take it;
+// with browser alone, the page offers no way and says where to sign in,
+// and the flow is refused.
 func TestSignInWaysFollowWhereTheOwnerIs(t *testing.T) {
 	srv, vendor, _ := signInServer(t)
 	srv.ExternalURL = "https://team.tail1234.ts.net"
@@ -779,7 +784,8 @@ func TestSignInWaysFollowWhereTheOwnerIs(t *testing.T) {
 	req := func(method, origin string, desktop bool, fwdHost string) *http.Request {
 		r := httptest.NewRequest(method, origin+intBase+"/crm", nil)
 		if method == http.MethodPost {
-			r = httptest.NewRequest(method, origin+intBase+"/crm/connection/sign-in/browser", nil)
+			r = httptest.NewRequest(method, origin+intBase+"/crm/setup", bytes.NewReader([]byte(`{"flow":"setup"}`)))
+			r.Header.Set("Content-Type", "application/json")
 		}
 		if fwdHost != "" {
 			r.Header.Set("X-Forwarded-Proto", "https")
@@ -813,16 +819,13 @@ func TestSignInWaysFollowWhereTheOwnerIs(t *testing.T) {
 		if got := textOf(si.RedirectURL); got != tc.redirect || textOf(page.SignInRedirectURL) != tc.redirect {
 			t.Errorf("%s: redirect %q, page %q, want %q", tc.name, got, textOf(page.SignInRedirectURL), tc.redirect)
 		}
-		rr := serveSignedIn(t, srv, req(http.MethodPost, tc.origin, tc.desktop, tc.fwdHost))
-		if offered := strings.Contains(tc.ways, "browser"); offered != (rr.Code == http.StatusOK) ||
-			(!offered && !strings.Contains(rr.Body.String(), errSignInNotHere)) {
-			t.Errorf("%s: browser sign-in %d %s", tc.name, rr.Code, rr.Body.String())
+		orgOK[apitypes.SetupFlow](t, serveSignedIn(t, srv, req(http.MethodPost, tc.origin, tc.desktop, tc.fwdHost)))
+		want := apitypes.SetupFlowStateGo
+		if !strings.HasPrefix(tc.ways, "browser") {
+			want = apitypes.SetupFlowStateWait
 		}
-	}
-	far := req(http.MethodPost, "http://10.0.0.5:8080", true, "team.tail1234.ts.net")
-	far.URL.Path = intBase + "/crm/connection/sign-in/device"
-	if rr := serveSignedIn(t, srv, far); rr.Code != http.StatusOK {
-		t.Errorf("a code from Kivali Desktop's window for a team elsewhere: %d %s", rr.Code, rr.Body.String())
+		waitFlow(t, srv, "crm", want)
+		srv.setupCancel("crm")
 	}
 
 	only, onlyVendor, _ := signInServer(t)
@@ -836,6 +839,9 @@ func TestSignInWaysFollowWhereTheOwnerIs(t *testing.T) {
 			t.Errorf("browser alone, external %q: ways %v, elsewhere %v, open at %v", ext, si.Ways, si.BrowserElsewhere, si.OpenAt)
 		}
 	}
+	if e := assertAPIError(t, serveSignedIn(t, only, req(http.MethodPost, "http://192.168.1.5:8080", false, "")), http.StatusConflict); e.Error != errSignInNotHere {
+		t.Errorf("browser alone from elsewhere: %+v", e)
+	}
 	if si := orgOK[apitypes.IntegrationPage](t, serveSignedIn(t, only, req(http.MethodGet, loopbackOrigin, true, ""))).Connection.SignIn; strings.Join(si.Ways, ",") != "browser" || si.BrowserElsewhere {
 		t.Errorf("browser alone on loopback: %+v", si)
 	}
@@ -847,37 +853,6 @@ func textOf(s *string) string {
 		return ""
 	}
 	return *s
-}
-
-// Why this test exists: the browser sign-in route refuses as the
-// device one does, before any flow or cookie: the client id and
-// secret not saved, a connection already signed in, the integration
-// switched off. A sign-in started from any of these would send the
-// owner to the vendor for nothing.
-func TestBrowserSignInRefusals(t *testing.T) {
-	srv, vendor, _ := signInServer(t)
-	browserBundle(t, srv, vendor, nil)
-	start := func() *httptest.ResponseRecorder {
-		return serveSignedIn(t, srv, httptest.NewRequest(http.MethodPost, loopbackOrigin+intBase+"/crm/connection/sign-in/browser", nil))
-	}
-	if rr := start(); rr.Code != http.StatusConflict || !strings.Contains(rr.Body.String(), errSignInClientFirst) {
-		t.Errorf("no connection: %d %s", rr.Code, rr.Body.String())
-	}
-	saveSignInClient(t, srv)
-	authorize, cookie := startBrowser(t, srv)
-	callback(t, srv, vendorApprove(t, authorize), cookie)
-	if rr := start(); rr.Code != http.StatusConflict || !strings.Contains(rr.Body.String(), errSignInSignedIn) || len(rr.Result().Cookies()) != 0 {
-		t.Errorf("signed in: %d %s", rr.Code, rr.Body.String())
-	}
-	if rr := intPost(t, srv, intBase+"/crm/disable"); rr.Code != http.StatusOK {
-		t.Fatalf("disable: %d", rr.Code)
-	}
-	if rr := intPost(t, srv, intBase+"/crm/connection/sign-out"); rr.Code != http.StatusOK {
-		t.Fatalf("sign out: %d", rr.Code)
-	}
-	if rr := start(); rr.Code != http.StatusConflict || !strings.Contains(rr.Body.String(), "switch") {
-		t.Errorf("switched off: %d %s", rr.Code, rr.Body.String())
-	}
 }
 
 // Why this test exists: the callback is part of the signed-in UI. A

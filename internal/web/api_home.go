@@ -461,7 +461,7 @@ func (s *Server) integrationSignInItems() []apitypes.NeedItem {
 		if !it.Enabled {
 			continue
 		}
-		if _, m, err := s.Store.CurrentIntegrationVersion(it.Name); err != nil || !m.Kivali.Connection.SignIn() {
+		if _, m, err := s.Store.CurrentIntegrationVersion(it.Name); err != nil || !m.Kivali.Connection.OAuth() {
 			continue
 		}
 		conns, err := s.Store.ListIntegrationConnections(it.Name)
