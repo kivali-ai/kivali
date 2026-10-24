@@ -118,12 +118,25 @@ type request struct {
 	// path is under the API base, with its query: "/repos/a/b/issues?state=open".
 	path string
 	// auth is the bearer credential: the app's JWT or an installation
-	// token.
+	// token. Empty for a request that carries none (the manifest
+	// conversion) or that carries basic instead.
 	auth string
+	// basic, when set, is the app's client id and secret, sent as basic
+	// authentication in place of a bearer (the endpoints an app's own
+	// OAuth client calls).
+	basic *[2]string
 	// body, when set, is sent as JSON.
 	body any
 	// accept is the media type asked for; empty is mediaJSON.
 	accept string
+}
+
+// secret is the credential r carries, which no words may quote.
+func (r request) secret() string {
+	if r.basic != nil {
+		return r.basic[1]
+	}
+	return r.auth
 }
 
 // do sends r and reads the answer: its body and headers on success,
@@ -148,24 +161,29 @@ func (g *GitHub) do(ctx context.Context, r request) ([]byte, http.Header, error)
 	req.Header.Set("Accept", cmp.Or(r.accept, mediaJSON))
 	req.Header.Set("X-GitHub-Api-Version", apiVersion)
 	req.Header.Set("User-Agent", "Kivali")
-	req.Header.Set("Authorization", "Bearer "+r.auth)
+	switch {
+	case r.basic != nil:
+		req.SetBasicAuth(r.basic[0], r.basic[1])
+	case r.auth != "":
+		req.Header.Set("Authorization", "Bearer "+r.auth)
+	}
 	if r.body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
 	resp, err := g.httpClient().Do(req)
 	if err != nil {
-		return nil, nil, transportError(ctx, err, r.auth)
+		return nil, nil, transportError(ctx, err, r.secret())
 	}
 	defer func() { _ = resp.Body.Close() }()
 	b, err := io.ReadAll(io.LimitReader(resp.Body, maxAnswerBytes+1))
 	switch {
 	case err != nil:
-		return nil, nil, transportError(ctx, err, r.auth)
+		return nil, nil, transportError(ctx, err, r.secret())
 	case len(b) > maxAnswerBytes:
 		return nil, nil, &apiError{Message: "its answer is larger than Kivali reads"}
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		msg := scrub(errorWords(b, cmp.Or(http.StatusText(resp.StatusCode), resp.Status)), r.auth)
+		msg := scrub(errorWords(b, cmp.Or(http.StatusText(resp.StatusCode), resp.Status)), r.secret())
 		return nil, nil, &apiError{
 			Status:      resp.StatusCode,
 			Message:     msg,

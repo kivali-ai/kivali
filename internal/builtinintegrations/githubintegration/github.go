@@ -12,11 +12,13 @@
 // API (actions.go), each held to the agent's access first (access.go).
 //
 // The connection is made by the integration's own setup flow (method
-// setup): GitHub's app-manifest flow keeps the app's id, slug, client
-// id and secret and private key after GitHub's conversion, and the
-// installation id once the app is installed. This package does not
-// implement that flow, the integration's requirements or its
-// uninstall, and it is not in builtins.All().
+// setup, setup.go): GitHub's app-manifest flow keeps the app's id,
+// slug, client id and secret and private key after GitHub's
+// conversion, and the installation id once the app is installed. Its
+// requirements check the key, the installation, the repositories it
+// reaches and its permissions (requirements.go); Uninstall removes the
+// installation from GitHub, and a sign-in an earlier version's
+// connection held is revoked when setup replaces it (uninstall.go).
 package githubintegration
 
 import (
@@ -60,6 +62,11 @@ type GitHub struct {
 	// Clock is the server's clock, which JWTs are signed on and cached
 	// tokens expire on; nil is the system's.
 	Clock clock.Clock
+	// TokenURL is GitHub's OAuth token endpoint, which renews a sign-in
+	// an earlier version's connection held before it is revoked; empty
+	// is DefaultTokenURL. It must be on github.com, or plain http on
+	// loopback for the tests' fake.
+	TokenURL string
 
 	clientOnce sync.Once
 	client     *http.Client
@@ -80,8 +87,9 @@ func (g *GitHub) now() time.Time {
 	return g.Clock.Now()
 }
 
-// setupSummary is what setup does, in words for the owner.
-const setupSummary = "Creates a private GitHub App on your account that may write contents, issues and pull requests, and installs it on the repositories you choose."
+// setupSummary is what setup does, in words for the owner, with what
+// Uninstall leaves on GitHub.
+const setupSummary = "Creates a private GitHub App, on your account or an organization's, that may read contents and write issues and pull requests, and installs it on the repositories you choose. Uninstalling removes the installation; the app stays on GitHub until you delete it under GitHub Apps in the account's settings."
 
 // accessSchema is the access form: the repositories an agent may use,
 // and whether it may create issues, comments and pull requests there.
@@ -112,7 +120,7 @@ func (g *GitHub) Manifest() *integration.Manifest {
 					Summary: setupSummary,
 					Hosts:   []string{"github.com"},
 					Fields: integration.SetupFields{
-						{Key: "account", Words: "Your personal account, or an organization's name"},
+						{Key: "account", Words: "An organization's name, or leave it blank for your personal account"},
 					},
 					Keeps: integration.SetupKeeps{
 						{Key: FieldAppID, Words: "The app's id"},
@@ -319,10 +327,3 @@ func ownerError(err error) error {
 	}
 	return err
 }
-
-// Setup, Requirements and Uninstall (builtinintegrations.SetupIntegration,
-// RequirementsOf and Uninstaller) are not implemented here; they belong
-// in setup.go, beside this file. The flow keeps the fields above (the
-// installation id after checking it against installations, since the
-// one GitHub sends the browser back with can be forged), and Uninstall
-// is DELETE /app/installations/{id} with the app's JWT.

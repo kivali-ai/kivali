@@ -316,6 +316,9 @@ type Answer struct {
 	// the flow. A return with no state is accepted only for a Go step
 	// that says Stateless, in the browser that left.
 	Callback string
+	// Team is the team's name as its owner set it, for naming what
+	// setup makes on the service; empty when the team has none.
+	Team string
 }
 
 // Progress names the stage Setup is at; the page shows it as it runs.
@@ -364,6 +367,23 @@ type Requirement struct {
 // the service, or that conn cannot name, as done, and returns nil.
 type Uninstaller interface {
 	Uninstall(ctx context.Context, conn Connection) error
+}
+
+// SignInReplacer is a setup integration whose earlier version made its
+// connection by signing in with an app of the owner's. When an install
+// of this version takes over such a connection, its first Keep
+// replaces every value the connection held, and core then hands the
+// sign-in it held to RevokeSignIn, once, off any lock and best effort:
+// an error is logged, and nothing else depends on it.
+type SignInReplacer interface {
+	RevokeSignIn(ctx context.Context, old SignIn) error
+}
+
+// SignIn is a sign-in a connection held: the app's client and the
+// tokens the service issued to it. Any of them may be empty.
+type SignIn struct {
+	ClientID, ClientSecret    string
+	AccessToken, RefreshToken string
 }
 
 // ProxySecretKey is the key, in a connection's Secret, of its scoped
