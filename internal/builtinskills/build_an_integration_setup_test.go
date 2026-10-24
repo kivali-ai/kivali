@@ -60,20 +60,20 @@ func TestBuildAnIntegrationSetupTemplateIsABundleTheCheckAccepts(t *testing.T) {
 }
 
 // skillRuns are the shell commands of the fenced block that follows the
-// line after in the skill's SKILL.md: each python3 command, with its
+// line after in the skill's file: each python3 command, with its
 // continuation lines joined, and the block's assignments before it. The
 // block's cd is left out (the runs start in the skill's directory) and
 // its port 8765 is port.
-func skillRuns(t *testing.T, dir, after string, port int) []string {
+func skillRuns(t *testing.T, dir, file, after string, port int) []string {
 	t.Helper()
-	b, err := os.ReadFile(filepath.Join(dir, "SKILL.md"))
+	b, err := os.ReadFile(filepath.Join(dir, file))
 	if err != nil {
 		t.Fatal(err)
 	}
 	doc := string(b)
 	at := strings.Index(doc, after)
 	if at < 0 {
-		t.Fatalf("SKILL.md has no %q", after)
+		t.Fatalf("%s has no %q", file, after)
 	}
 	block := doc[at:]
 	open := strings.Index(block, "```\n")
@@ -133,7 +133,7 @@ func runShell(t *testing.T, dir, script string) (string, int) {
 // Why this test exists: the skill's example runs of template-setup are
 // how the developer first sees a setup flow, and every setup bundle
 // starts from them: try.py against scripts/deals_stub.py, word for word
-// as SKILL.md gives them. Each run is one the owner meets: the install,
+// as setup.md gives them. Each run is one the owner meets: the install,
 // its stages as progress and what it keeps; a key the service refuses
 // answered on the Form, then one it takes; the token only on the app's
 // page, a Wait checked until it is shown, the owner leaving it, the
@@ -147,7 +147,7 @@ func runShell(t *testing.T, dir, script string) (string, int) {
 func TestTheSkillsSetupRunsDoWhatItSays(t *testing.T) {
 	needPython(t)
 	dir := writeSkill(t)
-	runs := skillRuns(t, dir, "Run it against the stub before you change it:", freePort(t))
+	runs := skillRuns(t, dir, "setup.md", "Run it against the stub before you change it:", freePort(t))
 	if len(runs) != 5 {
 		t.Fatalf("the block holds %d runs, want 5:\n%s", len(runs), strings.Join(runs, "\n\n"))
 	}

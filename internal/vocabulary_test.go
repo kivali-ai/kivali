@@ -31,7 +31,7 @@ import (
 //	grep -rn -i -E 'issue|principle|initiative|\bchild|children|\bfired\b|errored|constitution' internal/seed internal/builtinskills
 func TestAgentFacingProseUsesTheVocabulary(t *testing.T) {
 	var failures []string
-	for _, file := range globAll(t, "seed/*.md", "agent/kivali_os.md", "builtinskills/skills/*/SKILL.md") {
+	for _, file := range globAll(t, "seed/*.md", "agent/kivali_os.md", "builtinskills/skills/*/*.md") {
 		body, err := os.ReadFile(file)
 		if err != nil {
 			t.Fatal(err)

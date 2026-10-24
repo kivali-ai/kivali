@@ -60,8 +60,10 @@ Done.
     before making one: Kivali calls nothing when a setup is cancelled
     or fails, so that app is still in Deals.
   - The fallback (`show_token_wait`): a Wait whose check (`answer.checked`)
-    asks Deals whether the token has been shown, and answers the same
-    Wait until it has. The short-lived session rides in `state`, which
+    asks Deals, with a four-second timeout, whether the token has been
+    shown, and answers the same Wait until it has; a check that cannot
+    reach Deals answers the same Wait too, since an error would end the
+    setup. The short-lived session rides in `state`, which
     Kivali keeps in its memory alone and replaces in every word it
     shows with `[secret]`. Kivali does the same to every kept or
     carried value, wherever it appears in a step, so the Wait's page is

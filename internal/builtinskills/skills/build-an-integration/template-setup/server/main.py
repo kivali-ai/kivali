@@ -196,7 +196,7 @@ def build(flow, key, stage):
 def setup(params, stage):
     flow = params.get("flow")
     if flow not in ("setup", "rescope"):
-        raise Refusal("%s has no flow %s." % (SERVICE, flow))
+        raise Refusal("%s has nothing named %s to set up." % (SERVICE, flow))
     answer = params.get("answer") or {}
     state = answer.get("state") or {}
     entered = answer.get("form") or {}
@@ -210,7 +210,17 @@ def setup(params, stage):
         return build(flow, key, stage)
     if at == "show":
         # A Wait's check: has the owner shown the token on the app's page?
-        app = api("GET", "/v1/apps/%s" % urllib.parse.quote(state["app_id"], safe=""), state.get("session"))
+        # One quick look: a check that cannot reach Deals answers the same
+        # Wait, for the next check to try again, since an error would end
+        # the whole setup.
+        try:
+            app = api("GET", "/v1/apps/%s" % urllib.parse.quote(state["app_id"], safe=""), state.get("session"), timeout=CHECK_TIMEOUT)
+        except Refusal:
+            return show_token_wait(state["app_id"], state.get("session", ""))
+        except Status as e:
+            if e.code < 500 and e.code != 429:
+                raise
+            return show_token_wait(state["app_id"], state.get("session", ""))
         if app.get("token_shown"):
             return form("Paste the app's token, as its page in %s shows it." % SERVICE, ["token"], {"at": "token"})
         return show_token_wait(state["app_id"], state.get("session", ""))
@@ -224,7 +234,7 @@ def setup(params, stage):
                 if e.code not in (401, 403):
                     raise
         return form("%s did not take that token. Copy it again from the app's page." % SERVICE, ["token"], {"at": "token"})
-    raise Refusal("The setup is at a step this version does not know; start it again.")
+    raise Refusal("This setup was started by another version of %s; start it again." % SERVICE)
 
 
 def kivali_setup(params, progress_token):
