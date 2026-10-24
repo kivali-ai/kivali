@@ -28,7 +28,10 @@ Windows, is the build VM: BuildKit inside a Kivali VM on this machine
 supervisor`) and a VM image to boot, `build/out` when it holds one, else
 the installed Kivali Desktop's; the first image on a new machine comes
 from a release and builds its successors. It builds the machine's own
-architecture only. `docker`, the default on Linux (which has no Kivali
+architecture only. BuildKit's cache stays on the build VM's data disk
+between runs, capped at 12 GiB (scripts/build-vm-guest.sh), and the
+disk's file on this machine follows what the disk holds ("trim",
+below). `docker`, the default on Linux (which has no Kivali
 VM) and what CI uses, is this machine's Docker; for the other
 architecture the guest agent is still cross-compiled and the downloads
 and disk assembly still run natively, but the stages that install and

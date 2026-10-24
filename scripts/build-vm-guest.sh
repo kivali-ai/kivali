@@ -11,7 +11,11 @@
 # on first use and copied out of it) run as a plain process of the
 # guest, with k3s's containerd as its worker: images it builds land in
 # the k8s.io namespace, where the cluster runs them, and its snapshots
-# and cache live on the data disk and survive a stop. A plain process,
+# and cache live on the data disk and survive a stop. The cache is
+# capped at 12 GiB (buildkitd.toml, written at each start): BuildKit's
+# own policy sizes it to the disk, keeping a 64 GiB data disk about
+# 80% full, and the disk's file on the host grows to match and stays
+# there (vm/README.md, "trim"). A plain process,
 # not a container: BuildKit mounts each build step's root filesystem
 # itself and hands containerd the path, which has to mean the same thing
 # to both, and containerd runs on the guest.
@@ -56,6 +60,7 @@ K3S_LOG=/var/lib/kivali/log/k3s.log
 K3S_IMAGES=/var/lib/kivali/k3s/agent/images
 IMPORT_WAIT_S=300
 BK=/var/lib/kivali/buildkit
+CONFIG=$BK/buildkitd.toml
 SOCK=unix:///run/buildkit/buildkitd.sock
 NS=k8s.io
 
@@ -149,10 +154,23 @@ buildkitd)
     echo "guest: buildkitd is running"
     exit 0
   fi
+  # The cache policy. Only the sizes change from BuildKit's own rules:
+  # it prunes to 12 GiB after a build (the build of the four images and
+  # of the VM image leaves about 5 GiB each), keeps 4 GiB however old
+  # it is, and prunes harder while the data disk has under 20 GiB free.
+  # Cache mounts and local sources keep their 48-hour rule.
+  cat >"$CONFIG" <<EOF
+[worker.containerd]
+  gc = true
+  reservedSpace = "4GB"
+  maxUsedSpace = "12GB"
+  minFreeSpace = "20GB"
+EOF
   # setsid: its own session, so the exec that started it can end
   # without taking it along (an exec's process group is killed when
   # the stream closes).
   setsid "$BK/bin/buildkitd" \
+    --config "$CONFIG" \
     --oci-worker=false --containerd-worker=true \
     --containerd-worker-addr=/run/k3s/containerd/containerd.sock \
     --containerd-worker-namespace="$NS" \
@@ -237,7 +255,8 @@ arch)
   arch
   ;;
 stop)
-  pkill -x buildkitd >/dev/null 2>&1 || true
+  # busybox's pkill matches the whole command line, path included.
+  pkill -f "^$BK/bin/buildkitd " >/dev/null 2>&1 || true
   echo "guest: buildkitd stopped"
   ;;
 *)
