@@ -39,8 +39,9 @@
 // the flow's name: started, returned, done, failed with the words,
 // cancelled.
 //
-// A flow is forgotten setupFlowTTL after its last change, and lost on
-// a restart; deleting a connection, uninstalling the integration,
+// A flow is forgotten setupFlowTTL after its last change or its last
+// Wait check (made only while someone watches it), setupFlowMaxAge after
+// its start at most, and lost on a restart; deleting a connection, uninstalling the integration,
 // switching it off and signing out cancel it. A flow that installs
 // (it started with no connection) and fails, is cancelled or is
 // forgotten before it is done keeps nothing: the connection its Keep
@@ -73,10 +74,14 @@ import (
 )
 
 const (
-	// setupFlowTTL is how long a flow is kept after its last change: a
-	// step nobody takes in that time ends with it, and a flow that
-	// ended is kept that long for the page to read.
+	// setupFlowTTL is how long a flow is kept after its last change, or
+	// its last Wait check made while someone watched it: a step nobody
+	// takes in that time ends with it, and a flow that ended is kept
+	// that long for the page to read.
 	setupFlowTTL = 10 * time.Minute
+	// setupFlowMaxAge is how long a flow is kept at most from its start,
+	// however it is watched: a Wait left open in a tab ends too.
+	setupFlowMaxAge = 24 * time.Hour
 	// setupCallTimeout bounds one call of a flow's driver.
 	setupCallTimeout = 5 * time.Minute
 	// setupWaitEvery is how often a Wait step is checked while someone
@@ -175,7 +180,12 @@ type setupRun struct {
 	step     builtinintegrations.Step
 	progress *apitypes.SetupFlowProgress
 	err      string
-	changed  time.Time
+	// changed is the flow's last change: a step shown, a call started,
+	// a stage of a call that is not a Wait's check. touched is its last
+	// Wait check, made only while someone watches. The flow is kept
+	// setupFlowTTL after the later of the two, and setupFlowMaxAge after
+	// started at most.
+	changed, touched, started time.Time
 	// data is the last step's State.
 	data map[string]string
 	// callback is the callback address as the request that started or
@@ -368,16 +378,34 @@ func (t *setupRuns) forgetLocked(run *setupRun) {
 	run.subs = nil
 }
 
-// pruneLocked forgets the flows whose time is up. A Wait its driver
-// ends itself (setupWaiter: the device flow's poller, which stops at
-// the code's expiry) is left for the driver to end, so the page reads
-// why.
+// expiresLocked is when run is forgotten unless it changes, or a Wait
+// check is made while someone watches it, before: setupFlowTTL after
+// the later of its last change and its last such check, and never
+// later than setupFlowMaxAge after it started.
+func (run *setupRun) expiresLocked() time.Time {
+	last := run.changed
+	if run.touched.After(last) {
+		last = run.touched
+	}
+	at := last.Add(setupFlowTTL)
+	if ceiling := run.started.Add(setupFlowMaxAge); !run.started.IsZero() && ceiling.Before(at) {
+		at = ceiling
+	}
+	return at
+}
+
+// pruneLocked forgets the flows whose time is up (expiresLocked). A
+// Wait its driver ends itself (setupWaiter: the device flow's poller,
+// which stops at the code's expiry) is left for the driver to end, so
+// the page reads why, until setupFlowMaxAge.
 func (t *setupRuns) pruneLocked(now time.Time) {
 	for _, run := range t.runs {
-		if _, waits := run.spec.driver.(setupWaiter); waits && run.state == apitypes.SetupFlowStateWait {
-			continue
-		}
-		if !now.Before(run.changed.Add(setupFlowTTL)) {
+		_, waits := run.spec.driver.(setupWaiter)
+		switch {
+		case !run.started.IsZero() && !now.Before(run.started.Add(setupFlowMaxAge)):
+			t.forgetLocked(run)
+		case waits && run.state == apitypes.SetupFlowStateWait:
+		case !now.Before(run.expiresLocked()):
 			t.forgetLocked(run)
 		}
 	}
@@ -406,7 +434,7 @@ func (s *Server) setupScrub(run *setupRun, values ...string) {
 // wireLocked is run on the wire, scrubbed.
 func (run *setupRun) wireLocked() apitypes.SetupFlow {
 	scrub := run.scrubber()
-	out := apitypes.SetupFlow{ID: run.id, Flow: run.flow, State: run.state, ExpiresAt: run.changed.Add(setupFlowTTL)}
+	out := apitypes.SetupFlow{ID: run.id, Flow: run.flow, State: run.state, ExpiresAt: run.expiresLocked()}
 	if run.err != "" {
 		out.Error = optString(run.err)
 	}
@@ -502,7 +530,7 @@ func (s *Server) setupStart(name, display, flow string, spec setupSpec, callback
 	now := s.clk().Now()
 	run := &setupRun{
 		id: newSetupFlowID(), name: name, flow: flow, display: display, spec: spec, ctx: ctx, cancel: cancel,
-		changed: now, callback: callback, subs: map[chan []byte]struct{}{}, runs: &s.setupRuns, install: install,
+		changed: now, started: now, callback: callback, subs: map[chan []byte]struct{}{}, runs: &s.setupRuns, install: install,
 	}
 	t := &s.setupRuns
 	t.mu.Lock()
@@ -573,7 +601,10 @@ func (s *Server) setupCallLocked(run *setupRun, ans builtinintegrations.Answer, 
 	}
 	ans.Addresses = s.setupAddresses(run.callback)
 	if check {
+		// A check is made only while someone watches the flow: that keeps
+		// it, as a change would.
 		run.checking = true
+		run.touched = s.clk().Now()
 	} else {
 		run.state, run.step, run.progress = apitypes.SetupFlowStateRunning, builtinintegrations.Step{}, nil
 		run.changed = s.clk().Now()
@@ -975,7 +1006,12 @@ func (p *setupProgress) Stage(words string, done, total int) {
 	done = min(max(done, 0), total)
 	// Kept as given: wireLocked scrubs, then cuts.
 	p.run.progress = &apitypes.SetupFlowProgress{Words: words, Done: done, Total: total}
-	p.run.changed = p.s.clk().Now()
+	// A stage of a Wait's check is no change: the owner still sees the
+	// Wait, and a check is kept alive only by someone watching it
+	// (setupRun.touched), however much its driver reports.
+	if !p.run.checking {
+		p.run.changed = p.s.clk().Now()
+	}
 	p.run.publishLocked()
 }
 

@@ -1,0 +1,107 @@
+package web
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/kivali-ai/kivali/internal/builtinintegrations"
+	"github.com/kivali-ai/kivali/internal/web/apitypes"
+)
+
+// The tests here hold how long a flow is kept: setupFlowTTL after its
+// last change or its last Wait check (made only while someone watches),
+// and setupFlowMaxAge after its start at most, on the server's clock.
+
+// Why this test exists: an owner watching a Wait that takes longer than
+// ten minutes (an organization's admin approving the app, a build) must
+// not have the flow forgotten under them while the page checks it every
+// three seconds; and a stage the driver reports during a check is not a
+// change, so a flow nobody watches is forgotten ten minutes after its
+// last change however much its checks would have said. Once nobody
+// watches, the ten minutes run from the last check.
+func TestSetupFlowWatchedWaitIsKept(t *testing.T) {
+	srv, fs, clk := setupServer(t, func(n int, _ context.Context, _ builtinintegrations.Connection, _ builtinintegrations.Answer, p builtinintegrations.Progress) (builtinintegrations.Step, error) {
+		if n > 1 {
+			p.Stage("Looking at the service", 1, 2)
+		}
+		return builtinintegrations.Step{Wait: &builtinintegrations.Wait{Words: "Waiting."}}, nil
+	})
+	startSetupFlow(t, srv, "echo")
+	fs.nextAnswer(t)
+	waitFlow(t, srv, "echo", apitypes.SetupFlowStateWait)
+	shown := clk.Now()
+
+	run, _, ch, _ := srv.setupSubscribe("echo")
+	checks := int(setupFlowTTL/setupWaitEvery) + 20
+	for range checks {
+		callsEnd(t, run)
+		clk.BlockUntil(1)
+		clk.Advance(setupWaitEvery)
+		if a := fs.nextAnswer(t); !a.Checked {
+			t.Fatalf("not a check: %+v", a)
+		}
+	}
+	callsEnd(t, run)
+	if clk.Now().Sub(shown) <= setupFlowTTL {
+		t.Fatalf("only %v went by", clk.Now().Sub(shown))
+	}
+	f, _, _ := srv.setupPeek("echo")
+	if f == nil || f.State != apitypes.SetupFlowStateWait {
+		t.Fatalf("a watched Wait was forgotten: %+v", f)
+	}
+	// The last check was made now.
+	if !f.ExpiresAt.Equal(clk.Now().Add(setupFlowTTL)) {
+		t.Errorf("expires at %v, now %v", f.ExpiresAt, clk.Now())
+	}
+	srv.setupRuns.mu.Lock()
+	changed := run.changed
+	srv.setupRuns.mu.Unlock()
+	if !changed.Equal(shown) {
+		t.Errorf("the checks' stages changed the flow at %v; it was shown at %v", changed, shown)
+	}
+
+	srv.setupUnsubscribe(run, ch)
+	clk.Advance(setupFlowTTL)
+	if f, _, _ := srv.setupPeek("echo"); f != nil {
+		t.Errorf("a Wait nobody watches was kept %v after its last check: %+v", setupFlowTTL, f)
+	}
+}
+
+// Why this test exists: watching keeps a flow, so a tab left open on a
+// Wait would keep it, and the connection an install made, for ever.
+// setupFlowMaxAge after its start it goes however it is watched, a Wait
+// its driver ends itself (the device flow's poller) included; before
+// that a watched flow and a polled device Wait stay.
+func TestSetupFlowEndsAtItsMaxAge(t *testing.T) {
+	start := signInAt
+	t.Run("checked", func(t *testing.T) {
+		var runs setupRuns
+		run := &setupRun{id: "a", state: apitypes.SetupFlowStateWait, started: start, changed: start, touched: start.Add(setupFlowMaxAge - time.Minute), cancel: func() {}}
+		runs.runs = map[string]*setupRun{run.id: run}
+		if got := run.expiresLocked(); !got.Equal(start.Add(setupFlowMaxAge)) {
+			t.Errorf("expires at %v, want the ceiling", got)
+		}
+		runs.pruneLocked(start.Add(setupFlowMaxAge - time.Second))
+		if runs.runs[run.id] == nil {
+			t.Fatal("forgotten before its ceiling")
+		}
+		runs.pruneLocked(start.Add(setupFlowMaxAge))
+		if runs.runs[run.id] != nil {
+			t.Error("kept past its ceiling")
+		}
+	})
+	t.Run("a Wait its driver ends", func(t *testing.T) {
+		var runs setupRuns
+		run := &setupRun{id: "b", state: apitypes.SetupFlowStateWait, started: start, changed: start, spec: setupSpec{driver: &signInSetup{}}, cancel: func() {}}
+		runs.runs = map[string]*setupRun{run.id: run}
+		runs.pruneLocked(start.Add(setupFlowTTL + time.Hour))
+		if runs.runs[run.id] == nil {
+			t.Fatal("a device Wait was forgotten while its poller runs")
+		}
+		runs.pruneLocked(start.Add(setupFlowMaxAge))
+		if runs.runs[run.id] != nil {
+			t.Error("a device Wait was kept past the ceiling")
+		}
+	})
+}
