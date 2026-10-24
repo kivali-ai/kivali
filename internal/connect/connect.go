@@ -258,7 +258,10 @@ func seconds(raw json.RawMessage) time.Duration {
 // without the Accept header). It returns the answer, or a
 // *vendorError when the answer carries an error code, whatever its
 // status, or another error for a failure to reach the vendor or an
-// answer that is not one.
+// answer that is not one. It follows no redirect: a 307 or 308 would
+// send the form (a code, a verifier, the client secret) on to wherever
+// it names, so a redirect is an answer that is not one ("the vendor
+// answered 307 Temporary Redirect"). Revoke follows none either.
 func (e *Engine) post(ctx context.Context, endpoint string, form url.Values) (*tokenAnswer, error) {
 	return e.postAs(ctx, endpoint, form, nil)
 }
@@ -297,7 +300,7 @@ func (e *Engine) postAs(ctx context.Context, endpoint string, form url.Values, c
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
-	resp, err := e.client().Do(req)
+	resp, err := e.clientWith(noRedirects).Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("the vendor did not answer: %w", err)
 	}
@@ -431,7 +434,7 @@ func (e *Engine) Revoke(ctx context.Context, ep Endpoints, c Client, t Tokens) e
 		}
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		req.Header.Set("Accept", "application/json")
-		resp, err := e.client().Do(req)
+		resp, err := e.clientWith(noRedirects).Do(req)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("revoke the %s: %w", tok.hint, err))
 			continue

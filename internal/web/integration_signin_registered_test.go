@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -396,12 +397,15 @@ func TestRegisteredSignInRefusals(t *testing.T) {
 			k.ServerMetadata = func(doc map[string]any) {
 				doc["token_endpoint"] = strings.Replace(vendor.URL, "127.0.0.1", "localhost", 1) + "/token"
 			}
-		}, "Kivali could not find where to sign in to Test crm: the service's metadata names its token endpoint on localhost:"},
+		}, "Kivali could not find where to sign in to Test crm: the service's metadata names its token endpoint on \"localhost:"},
 		{"a refused registration", func(k *connecttest.Knobs, _ *connecttest.FakeVendor) { k.RegisterError = "invalid_redirect_uri" },
 			"Kivali could not register itself with Test crm: the service refused to register Kivali (invalid_redirect_uri): refused by the test"},
 		{"no registration endpoint", func(k *connecttest.Knobs, _ *connecttest.FakeVendor) {
 			k.ServerMetadata = func(doc map[string]any) { delete(doc, "registration_endpoint") }
 		}, "Kivali could not register itself with Test crm: the service's metadata names no registration endpoint"},
+		{"a resource naming a server on another host", func(k *connecttest.Knobs, _ *connecttest.FakeVendor) {
+			k.ResourceMetadata = func(doc map[string]any) { doc["authorization_servers"] = []any{"https://login.evil.example"} }
+		}, `Kivali could not find where to sign in to Test crm: the service's metadata names its authorization server on "login.evil.example"`},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -457,5 +461,153 @@ func TestRegisteredClientSurvivesAFormSave(t *testing.T) {
 		if after[k] != before[k] {
 			t.Errorf("a save changed %s: %q, was %q", k, after[k], before[k])
 		}
+	}
+}
+
+// registrationDeletes counts the registration deletes the vendor took.
+func registrationDeletes(vendor *connecttest.FakeVendor) int {
+	n := 0
+	for _, r := range vendor.Requests() {
+		if r.Method == http.MethodDelete {
+			n++
+		}
+	}
+	return n
+}
+
+// Why this test exists: RFC 7592's management address and token are
+// optional, and a service that gives neither has no registration to
+// delete. Signing out and Uninstall must still forget the
+// client (the next sign-in registers again) and send the service no
+// DELETE, rather than fail or guess an address.
+func TestRegisteredClientWithoutManagementIsForgotten(t *testing.T) {
+	srv, vendor, _ := signInServer(t)
+	registeredBundle(t, srv, vendor, nil)
+	vendor.Set(func(k *connecttest.Knobs) { k.RegisterNoManagement = true })
+	if _, f := registeredSignIn(t, srv, onLoopback); f.State != apitypes.SetupFlowStateDone {
+		t.Fatalf("sign in: %s", textOf(f.Error))
+	}
+	if _, data := firstConnectionSecret(t, srv); data[connect.SecretKeyRegistrationClientURI] != "" || data[connect.SecretKeyRegistrationAccessToken] != "" {
+		t.Fatalf("Secret %v", data)
+	}
+	orgOK[apitypes.IntegrationPage](t, intPost(t, srv, intBase+"/crm/connection/sign-out"))
+	_, data := firstConnectionSecret(t, srv)
+	for _, k := range connect.SecretKeys {
+		if _, ok := data[k]; ok {
+			t.Errorf("signed out, the Secret keeps %s", k)
+		}
+	}
+	if _, f := registeredSignIn(t, srv, onLoopback); f.State != apitypes.SetupFlowStateDone {
+		t.Fatalf("sign in again: %s", textOf(f.Error))
+	}
+	if rr := intDelete(t, srv, intBase+"/crm"); rr.Code != http.StatusNoContent {
+		t.Fatalf("uninstall: %d %s", rr.Code, rr.Body.String())
+	}
+	if registrations(vendor) != 2 || registrationDeletes(vendor) != 0 || len(vendor.Revoked()) != 4 {
+		t.Errorf("registrations %d, deletes %d, revoked %v", registrations(vendor), registrationDeletes(vendor), vendor.Revoked())
+	}
+}
+
+// Why this test exists: the token endpoint's authentication is the one
+// the server listed and registered, kept in the Secret, and every later
+// request reads it there: a server that takes only client_secret_post
+// must get the id and secret in the body, never HTTP Basic, on the code
+// exchange, each refresh and the revocation, or it refuses the client
+// it registered.
+func TestRegisteredSignInBySecretPost(t *testing.T) {
+	srv, vendor, clk := signInServer(t)
+	registeredBundle(t, srv, vendor, nil)
+	vendor.Set(func(k *connecttest.Knobs) { k.AuthMethods = []string{connect.AuthSecretPost} })
+	if _, f := registeredSignIn(t, srv, onLoopback); f.State != apitypes.SetupFlowStateDone {
+		t.Fatalf("sign in: %s", textOf(f.Error))
+	}
+	reg := vendor.Registered()[0]
+	if _, data := firstConnectionSecret(t, srv); reg.AuthMethod != connect.AuthSecretPost || data[connect.SecretKeyClientAuthMethod] != connect.AuthSecretPost {
+		t.Fatalf("registered %+v, kept %q", reg, data[connect.SecretKeyClientAuthMethod])
+	}
+	clk.Advance(30 * time.Minute)
+	if _, rpcErr := srv.Integrations.credential(context.Background(), "crm"); rpcErr != nil {
+		t.Fatal(rpcErr)
+	}
+	orgOK[apitypes.IntegrationPage](t, intPost(t, srv, intBase+"/crm/connection/sign-out"))
+	seen := map[string]int{}
+	for _, r := range vendor.Requests() {
+		if r.Path != "/token" && r.Path != "/revoke" {
+			continue
+		}
+		seen[r.Path+" "+r.Form.Get("grant_type")]++
+		if r.Authorization != "" || r.Form.Get("client_id") != reg.ID || r.Form.Get("client_secret") != reg.Secret {
+			t.Errorf("%s: Authorization %q, form %v", r.Path, r.Authorization, r.Form)
+		}
+	}
+	if seen["/token authorization_code"] != 1 || seen["/token refresh_token"] != 1 || seen["/revoke "] != 2 {
+		t.Errorf("requests %v", seen)
+	}
+}
+
+// Why this test exists: a discover address may name an authorization
+// server that publishes no protected resource's metadata (it is its own
+// resource). Core must find it at its root after the resource's places
+// come up empty, register and sign in as for any other, and then name
+// no resource on the sign-in or the token requests, since none was
+// declared to ask for.
+func TestRegisteredSignInAtAServerThatIsItsOwnResource(t *testing.T) {
+	srv, vendor, _ := signInServer(t)
+	registeredBundle(t, srv, vendor, nil)
+	vendor.Set(func(k *connecttest.Knobs) { k.NoResourceMetadata = true })
+	authorize, f := registeredSignIn(t, srv, onLoopback)
+	if f.State != apitypes.SetupFlowStateDone {
+		t.Fatalf("sign in: %s", textOf(f.Error))
+	}
+	if authorize.Query().Has("resource") {
+		t.Errorf("the vendor's page names a resource: %s", authorize)
+	}
+	for _, r := range vendor.Requests() {
+		if r.Path == "/token" && r.Form.Has("resource") {
+			t.Errorf("the exchange names a resource: %v", r.Form)
+		}
+	}
+	if _, data := firstConnectionSecret(t, srv); data[connect.SecretKeyTokenEndpoint] != vendor.URL+"/token" || data[connect.SecretKeyResource] != "" {
+		t.Errorf("Secret %v", data)
+	}
+}
+
+// Why this test exists: a registered client's secret may expire
+// (client_secret_expires_at), after which the service refuses it. A
+// sign-in after that must register again rather than send the expired
+// secret, and the client it replaces goes: the tokens it still holds
+// are revoked with it, then it is deleted, and they are not kept for
+// the new client.
+func TestRegisteredSignInRegistersAgainOnceTheSecretExpires(t *testing.T) {
+	srv, vendor, _ := signInServer(t)
+	registeredBundle(t, srv, vendor, nil)
+	if _, f := registeredSignIn(t, srv, onLoopback); f.State != apitypes.SetupFlowStateDone {
+		t.Fatalf("sign in: %s", textOf(f.Error))
+	}
+	first := vendor.Registered()[0]
+	rec, data := firstConnectionSecret(t, srv)
+	old := connect.Tokens{Access: data[connect.SecretKeyAccessToken], Refresh: data[connect.SecretKeyRefreshToken]}
+	data[connect.SecretKeyClientSecretExpiresAt] = strconv.FormatInt(signInAt.Add(-time.Hour).Unix(), 10)
+	if err := srv.Secrets.Put(context.Background(), rec.SecretName, data); err != nil {
+		t.Fatal(err)
+	}
+	markSignInAgain(t, srv)
+
+	if _, f := registeredSignIn(t, srv, onLoopback); f.State != apitypes.SetupFlowStateDone {
+		t.Fatalf("sign in again: %s", textOf(f.Error))
+	}
+	regs := vendor.Registered()
+	if registrations(vendor) != 2 || len(regs) != 1 || regs[0].ID == first.ID {
+		t.Fatalf("registered %+v", regs)
+	}
+	if got := vendor.Deregistered(); !slices.Equal(got, []string{first.ID}) {
+		t.Errorf("deregistered %v", got)
+	}
+	if got := vendor.Revoked(); !slices.Equal(got, []string{old.Refresh, old.Access}) {
+		t.Errorf("revoked %v, want the old client's tokens", got)
+	}
+	_, data = firstConnectionSecret(t, srv)
+	if data[connect.SecretKeyClientID] != regs[0].ID || data[connect.SecretKeyAccessToken] == old.Access || !vendor.Valid(data[connect.SecretKeyAccessToken]) {
+		t.Errorf("Secret %v", data)
 	}
 }

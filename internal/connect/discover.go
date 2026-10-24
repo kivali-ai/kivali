@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -99,16 +100,18 @@ type serverDoc struct {
 // /.well-known/oauth-authorization-server with the issuer's path after
 // it (RFC 8414, 3.1), then at /.well-known/openid-configuration the
 // same way, then, for an issuer with a path, at that path followed by
-// /.well-known/openid-configuration. A 4xx answer, or a 200 that is no
-// JSON object (a site's page for any path), is a document not there; a
-// 5xx, no answer, or a JSON object Kivali cannot read is an error.
+// /.well-known/openid-configuration. A 404, 410 or 403, or a 200 that is
+// no JSON object (a site's page for any path), is a document not there;
+// any other status, no answer, or a JSON object Kivali cannot read is
+// an error.
 //
-// The metadata is refused when the resource it is for is not discover,
-// the issuer it names is not the one it was read for (RFC 8414, 3.3),
-// an endpoint or the authorization server is not an https:// address
-// (plain http only on loopback) or is on a host not in hosts, or the
-// server does not offer the authorization code grant or, listing PKCE
-// methods, does not list S256. Each request is bounded by
+// The metadata is refused when the resource document names no resource
+// or one that is not discover, the issuer it names is not the one it
+// was read for (RFC 8414, 3.3), an endpoint or the authorization server
+// is not an https:// address (plain http only on loopback) or is on a
+// host not in hosts (hostAllowed), or the server does not offer the
+// authorization code grant or does not list PKCE with S256. A vendor's
+// value an error names is cut and quoted (vendorValue). Each request is bounded by
 // RequestTimeout on the engine's clock and by maxMetadataBytes, and
 // follows redirects only on the host it was sent to.
 func (e *Engine) Discover(ctx context.Context, discover string, hosts []string) (*Metadata, error) {
@@ -116,7 +119,7 @@ func (e *Engine) Discover(ctx context.Context, discover string, hosts []string) 
 	if err != nil || !fetchable(u) {
 		return nil, fmt.Errorf("%q is not an https:// address to read the service's metadata from", discover)
 	}
-	allowed := append(slices.Clone(hosts), strings.ToLower(u.Hostname()))
+	allowed := append(slices.Clone(hosts), strings.ToLower(u.Host))
 	origin := u.Scheme + "://" + u.Host
 	path := strings.TrimSuffix(u.EscapedPath(), "/")
 	self := origin + path
@@ -141,31 +144,30 @@ func (e *Engine) Discover(ctx context.Context, discover string, hosts []string) 
 		if i > 0 {
 			want = append(want, origin)
 		}
-		if rd.Resource != "" && !slices.Contains(want, strings.TrimSuffix(rd.Resource, "/")) {
-			return nil, fmt.Errorf("the service's metadata at %s is for %s, not %s", doc, rd.Resource, discover)
-		}
-		if len(rd.AuthorizationServers) == 0 {
+		switch {
+		case rd.Resource == "":
+			return nil, fmt.Errorf("the service's metadata at %s names no resource", doc)
+		case !slices.Contains(want, strings.TrimSuffix(rd.Resource, "/")):
+			return nil, fmt.Errorf("the service's metadata at %s is for %s, not %s", doc, vendorValue(rd.Resource), discover)
+		case len(rd.AuthorizationServers) == 0:
 			return nil, fmt.Errorf("the service's metadata at %s names no authorization server", doc)
 		}
 		issuer := rd.AuthorizationServers[0]
 		iu, err := url.Parse(issuer)
 		switch {
 		case err != nil || !fetchable(iu):
-			return nil, fmt.Errorf("the service's metadata names an authorization server, %q, that is not an https:// address", issuer)
+			return nil, fmt.Errorf("the service's metadata names an authorization server, %s, that is not an https:// address", vendorValue(issuer))
 		case !hostAllowed(iu, allowed):
-			return nil, fmt.Errorf("the service's metadata names its authorization server on %s, which the manifest does not list", strings.ToLower(iu.Host))
+			return nil, fmt.Errorf("the service's metadata names its authorization server on %s, which the manifest does not list", vendorValue(strings.ToLower(iu.Host)))
 		}
 		m, err := e.serverMetadata(ctx, issuer, allowed)
 		if err != nil {
 			return nil, err
 		}
 		if m == nil {
-			return nil, fmt.Errorf("the authorization server %s publishes no metadata", issuer)
+			return nil, fmt.Errorf("the authorization server %s publishes no metadata", vendorValue(issuer))
 		}
 		m.Resource = rd.Resource
-		if m.Resource == "" {
-			m.Resource = discover
-		}
 		return m, nil
 	}
 	issuers := []string{self}
@@ -215,7 +217,7 @@ func (e *Engine) serverMetadata(ctx context.Context, issuer string, allowed []st
 // as Metadata, or why it is refused.
 func checkServerDoc(doc, issuer string, sd serverDoc, allowed []string) (*Metadata, error) {
 	if strings.TrimSuffix(sd.Issuer, "/") != issuer {
-		return nil, fmt.Errorf("the service's metadata at %s names the issuer %q, not %s", doc, sd.Issuer, issuer)
+		return nil, fmt.Errorf("the service's metadata at %s names the issuer %s, not %s", doc, vendorValue(sd.Issuer), issuer)
 	}
 	for _, ep := range []struct{ name, value string }{
 		{"authorization endpoint", sd.AuthorizationEndpoint},
@@ -232,17 +234,19 @@ func checkServerDoc(doc, issuer string, sd serverDoc, allowed []string) (*Metada
 		u, err := url.Parse(ep.value)
 		switch {
 		case err != nil || !fetchable(u):
-			return nil, fmt.Errorf("the service's metadata names its %s as %q, which is not an https:// address", ep.name, ep.value)
+			return nil, fmt.Errorf("the service's metadata names its %s as %s, which is not an https:// address", ep.name, vendorValue(ep.value))
 		case !hostAllowed(u, allowed):
-			return nil, fmt.Errorf("the service's metadata names its %s on %s, which the manifest does not list", ep.name, strings.ToLower(u.Host))
+			return nil, fmt.Errorf("the service's metadata names its %s on %s, which the manifest does not list", ep.name, vendorValue(strings.ToLower(u.Host)))
 		}
 	}
 	switch {
 	case len(sd.ResponseTypes) > 0 && !slices.Contains(sd.ResponseTypes, "code"),
 		len(sd.GrantTypes) > 0 && !slices.Contains(sd.GrantTypes, "authorization_code"):
 		return nil, errors.New("the service does not offer the authorization code sign-in Kivali uses")
-	case len(sd.PKCEMethods) > 0 && !slices.Contains(sd.PKCEMethods, "S256"):
-		return nil, errors.New("the service does not offer PKCE with S256, which Kivali signs in with")
+	case !slices.Contains(sd.PKCEMethods, "S256"):
+		// RFC 8414: a server that lists no methods offers no PKCE; MCP's
+		// authorization has a client refuse it.
+		return nil, errors.New("the service's metadata does not list PKCE with S256 (code_challenge_methods_supported), which Kivali signs in with")
 	}
 	return &Metadata{
 		Issuer:        sd.Issuer,
@@ -269,11 +273,34 @@ func fetchable(u *url.URL) bool {
 	return false
 }
 
-// hostAllowed reports whether u's host, with or without its port, is
-// among hosts.
+// hostAllowed reports whether u's host is among hosts: as given, port
+// and all, or by its name alone when u names no port, the scheme's
+// default port, or a loopback host (a vendor run in-process in tests,
+// on a port of its own). A listed host name is not every port on it.
 func hostAllowed(u *url.URL, hosts []string) bool {
-	return slices.Contains(hosts, strings.ToLower(u.Host)) || slices.Contains(hosts, strings.ToLower(u.Hostname()))
+	if slices.Contains(hosts, strings.ToLower(u.Host)) {
+		return true
+	}
+	name := strings.ToLower(u.Hostname())
+	switch port := u.Port(); {
+	case port == "", u.Scheme == "https" && port == "443", u.Scheme == "http" && port == "80",
+		name == "localhost", name == "127.0.0.1", name == "::1":
+		return slices.Contains(hosts, name)
+	}
+	return false
 }
+
+// maxVendorValueRunes bounds a value from a vendor's document that an
+// error carries, such as an endpoint or a host it names.
+const maxVendorValueRunes = 200
+
+// vendorValue is s, a value from a vendor's document or answer, cut to
+// maxVendorValueRunes and quoted, for an error's words and the log.
+func vendorValue(s string) string { return strconv.Quote(clipRunes(s, maxVendorValueRunes)) }
+
+// statusWords is an HTTP status in words, from its code alone: the
+// reason phrase a server sends is its own text.
+func statusWords(code int) string { return strconv.Itoa(code) + " " + http.StatusText(code) }
 
 // errRequestTimeout is the cause of a request's context that
 // RequestTimeout ended.
@@ -306,7 +333,7 @@ func sameHostOnly(req *http.Request, via []*http.Request) error {
 	case len(via) >= maxRedirects:
 		return redirectRefused{fmt.Sprintf("%s redirected Kivali too many times", via[0].URL.Host)}
 	case !strings.EqualFold(req.URL.Host, via[0].URL.Host):
-		return redirectRefused{fmt.Sprintf("%s sent Kivali on to %s, another host", via[0].URL.Host, req.URL.Host)}
+		return redirectRefused{fmt.Sprintf("%s sent Kivali on to %s, another host", via[0].URL.Host, vendorValue(req.URL.Host))}
 	case !fetchable(req.URL):
 		return redirectRefused{fmt.Sprintf("%s sent Kivali on to an address that is not https://", via[0].URL.Host)}
 	}
@@ -385,12 +412,14 @@ func (e *Engine) getJSON(ctx context.Context, raw string, allowed []string, into
 		return false, requestFailure(ctx, host, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	switch {
-	case resp.StatusCode >= 400 && resp.StatusCode < 500:
+	switch resp.StatusCode {
+	case http.StatusOK:
+	case http.StatusNotFound, http.StatusGone, http.StatusForbidden:
+		// No document there.
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxMetadataBytes))
 		return false, nil
-	case resp.StatusCode != http.StatusOK:
-		return false, fmt.Errorf("%s answered %s for %s", host, resp.Status, raw)
+	default:
+		return false, fmt.Errorf("%s answered %s for %s", host, statusWords(resp.StatusCode), raw)
 	}
 	b, err := readBounded(ctx, host, resp.Body)
 	if err != nil {

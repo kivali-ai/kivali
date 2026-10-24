@@ -193,7 +193,7 @@ func TestDiscoverReadsZoomInfoAsItPublishes(t *testing.T) {
 	}
 
 	_, err = e.Discover(context.Background(), "https://mcp.zoominfo.com/mcp", []string{"mcp.zoominfo.com"})
-	if err == nil || !strings.Contains(err.Error(), "names its token endpoint on okta-login.zoominfo.com, which the manifest does not list") {
+	if err == nil || !strings.Contains(err.Error(), `names its token endpoint on "okta-login.zoominfo.com", which the manifest does not list`) {
 		t.Errorf("without Okta's host: %v", err)
 	}
 }
@@ -258,7 +258,7 @@ func TestDiscoverTriesEachPlaceInOrder(t *testing.T) {
 			name: "a page that is no JSON is no document", discover: "/mcp",
 			docs: map[string]string{
 				"/.well-known/oauth-protected-resource/mcp": `<html>sign in</html>`,
-				"/.well-known/oauth-protected-resource":     `{"authorization_servers":["{{base}}"]}`,
+				"/.well-known/oauth-protected-resource":     `{"resource":"{{base}}/mcp","authorization_servers":["{{base}}"]}`,
 				"/.well-known/oauth-authorization-server":   serverDoc("{{base}}/"),
 			},
 			asked:  []string{"/.well-known/oauth-protected-resource/mcp", "/.well-known/oauth-protected-resource", "/.well-known/oauth-authorization-server"},
@@ -290,12 +290,16 @@ func TestDiscoverTriesEachPlaceInOrder(t *testing.T) {
 // install screen makes about where the owner's browser goes and where
 // the tokens come from, and the metadata is the service's word, which
 // core must hold to that promise and to the standards: a document for
-// another resource or issuer (a mix-up), an endpoint or server on a
-// host the manifest does not list or over plain http, a server that
-// does not offer the flow Kivali runs, a server that fails, a document
-// Kivali cannot read, one too large, and a redirect to another host
-// are each refused in words that say what, before anything is sent to
-// the host they name.
+// another resource or issuer (a mix-up) or for none, an endpoint or
+// server on a host the manifest does not list or over plain http, a
+// server that does not offer the flow Kivali runs or does not list PKCE
+// with S256 (MCP's authorization refuses one that lists none), a server
+// that fails or refuses with a status that is not "no document here", a
+// document Kivali cannot read, one too large, and a redirect to another
+// host are each refused in words that say what, before anything is
+// sent to the host they name. A vendor's value in those words is cut
+// and quoted, so a document cannot write a line of its own into the
+// log.
 func TestDiscoverRefusesWhatTheManifestDoesNotAllow(t *testing.T) {
 	prm := `{"resource":"{{base}}/mcp","authorization_servers":["{{base}}"]}`
 	edit := func(field, value string) string {
@@ -321,17 +325,19 @@ func TestDiscoverRefusesWhatTheManifestDoesNotAllow(t *testing.T) {
 	}{
 		{"another resource's metadata", `{"resource":"{{base}}/other","authorization_servers":["{{base}}"]}`, serverDoc("{{base}}"), "/mcp is for "},
 		{"no authorization server", `{"resource":"{{base}}/mcp","authorization_servers":[]}`, "", "names no authorization server"},
-		{"a server on another host", `{"resource":"{{base}}/mcp","authorization_servers":["https://login.evil.example"]}`, "", "names its authorization server on login.evil.example, which the manifest does not list"},
+		{"a server on another host", `{"resource":"{{base}}/mcp","authorization_servers":["https://login.evil.example"]}`, "", `names its authorization server on "login.evil.example", which the manifest does not list`},
 		{"a server over plain http", `{"resource":"{{base}}/mcp","authorization_servers":["http://login.example.com"]}`, "", `names an authorization server, "http://login.example.com", that is not an https:// address`},
 		{"another issuer's metadata", prm, serverDoc("https://other.example"), `names the issuer "https://other.example"`},
-		{"a token endpoint on another host", prm, edit("token_endpoint", "https://tokens.evil.example/token"), "names its token endpoint on tokens.evil.example, which the manifest does not list"},
-		{"a token endpoint on another loopback name", prm, edit("token_endpoint", "http://localhost:1/token"), "names its token endpoint on localhost:1, which the manifest does not list"},
+		{"a token endpoint on another host", prm, edit("token_endpoint", "https://tokens.evil.example/token"), `names its token endpoint on "tokens.evil.example", which the manifest does not list`},
+		{"a token endpoint on another loopback name", prm, edit("token_endpoint", "http://localhost:1/token"), `names its token endpoint on "localhost:1", which the manifest does not list`},
 		{"an authorization endpoint over plain http", prm, edit("authorization_endpoint", "http://login.example.com/authorize"), "names its authorization endpoint as \"http://login.example.com/authorize\", which is not an https:// address"},
-		{"a registration endpoint on another host", prm, edit("registration_endpoint", "https://evil.example/register"), "names its registration endpoint on evil.example"},
+		{"a registration endpoint on another host", prm, edit("registration_endpoint", "https://evil.example/register"), `names its registration endpoint on "evil.example"`},
 		{"no token endpoint", prm, edit("token_endpoint", ""), "names no token endpoint"},
 		{"no code flow", prm, edit("response_types_supported", `["token"]`), "does not offer the authorization code sign-in Kivali uses"},
 		{"no code grant", prm, edit("grant_types_supported", `["client_credentials"]`), "does not offer the authorization code sign-in Kivali uses"},
-		{"no S256", prm, edit("code_challenge_methods_supported", `["plain"]`), "does not offer PKCE with S256"},
+		{"no S256", prm, edit("code_challenge_methods_supported", `["plain"]`), "does not list PKCE with S256 (code_challenge_methods_supported)"},
+		{"no PKCE methods listed", prm, edit("code_challenge_methods_supported", ""), "does not list PKCE with S256 (code_challenge_methods_supported)"},
+		{"a resource document that names no resource", `{"authorization_servers":["{{base}}"]}`, serverDoc("{{base}}"), "/.well-known/oauth-protected-resource/mcp names no resource"},
 		{"a document Kivali cannot read", `{"resource":"{{base}}/mcp","authorization_servers":"{{base}}"}`, "", "is not a document Kivali reads"},
 	}
 	for _, c := range cases {
@@ -353,6 +359,22 @@ func TestDiscoverRefusesWhatTheManifestDoesNotAllow(t *testing.T) {
 		})
 	}
 
+	t.Run("a refusal that is not a missing document", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusUnauthorized) }))
+		t.Cleanup(srv.Close)
+		_, err := discoverEngine().Discover(context.Background(), srv.URL+"/mcp", nil)
+		if err == nil || !strings.Contains(err.Error(), "answered 401 Unauthorized") {
+			t.Errorf("err = %v", err)
+		}
+	})
+	t.Run("a vendor's long value is cut and quoted", func(t *testing.T) {
+		d := newDocServer(t)
+		d.set("/.well-known/oauth-protected-resource/mcp", `{"resource":"{{base}}/a\nforged log line `+strings.Repeat("x", 5000)+`"}`)
+		_, err := discoverEngine().Discover(context.Background(), d.URL+"/mcp", nil)
+		if err == nil || strings.Contains(err.Error(), "\n") || len(err.Error()) > 600 || !strings.Contains(err.Error(), `is for "`) {
+			t.Errorf("err = %q", err)
+		}
+	})
 	t.Run("a server that fails", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusBadGateway) }))
 		t.Cleanup(srv.Close)
