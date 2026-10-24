@@ -9,13 +9,15 @@ import (
 // Diff is what changes from the manifest from to the manifest to, in
 // words, for the install screen of a version that would run in place
 // of the one in use: the hosts, the hosts a sign-in goes to, the
-// software its pod installs, the connection's fields, the actions and
-// the access form's fields to gains or loses, one line for each kind
-// and direction that has any ("Hosts added: api.example.com",
-// "Software added: gh"). A host is matched by its pattern, a package by
-// its name, a connection or access field by its key and an action by
-// its name; what is added is listed in to's order and what is removed
-// in from's. A secret connection field says so. Nothing of those
+// software its pod installs, the connection's fields, what a setup
+// flow may do (the hosts it sends the browser to, the fields it asks
+// for, the keys it keeps), the actions and the access form's fields to
+// gains or loses, one line for each kind and direction that has any
+// ("Hosts added: api.example.com", "Software added: gh"). A host is
+// matched by its pattern, a package by its name, a connection, setup or
+// access field by its key, a kept key by itself and an action by its
+// name; what is added is listed in to's order and what is removed in
+// from's. A secret connection or setup field says so. Nothing of those
 // changed is no lines, and so is a nil manifest.
 func Diff(from, to *Manifest) []string {
 	if from == nil || to == nil {
@@ -39,6 +41,15 @@ func Diff(from, to *Manifest) []string {
 	added, removed = diffKeys(connectionItems(from), connectionItems(to))
 	line("Connection fields added", added)
 	line("Connection fields removed", removed)
+	added, removed = diffKeys(setupHostItems(from), setupHostItems(to))
+	line("Setup sends your browser to, added", added)
+	line("Setup sends your browser to, removed", removed)
+	added, removed = diffKeys(setupFieldItems(from), setupFieldItems(to))
+	line("Setup asks for, added", added)
+	line("Setup asks for, removed", removed)
+	added, removed = diffKeys(setupKeepItems(from), setupKeepItems(to))
+	line("Setup keeps, added", added)
+	line("Setup keeps, removed", removed)
 	added, removed = diffKeys(actionItems(from), actionItems(to))
 	line("Actions added", added)
 	line("Actions removed", removed)
@@ -119,6 +130,67 @@ func connectionItems(m *Manifest) []diffItem {
 		out = append(out, diffItem{f.Key, words})
 	}
 	return out
+}
+
+// setupOf is m's setup declarations, nil for a connection that is not
+// a setup one.
+func setupOf(m *Manifest) *Setup {
+	if c := m.Kivali.Connection; c.Method == MethodSetup {
+		return c.Setup
+	}
+	return nil
+}
+
+func setupHostItems(m *Manifest) []diffItem {
+	s := setupOf(m)
+	if s == nil {
+		return nil
+	}
+	out := make([]diffItem, 0, len(s.Hosts))
+	for _, h := range s.Hosts {
+		out = append(out, diffItem{h, h})
+	}
+	return out
+}
+
+// setupFieldItems are a setup's fields by title, a secret one marked
+// as the install screen marks it.
+func setupFieldItems(m *Manifest) []diffItem {
+	s := setupOf(m)
+	if s == nil {
+		return nil
+	}
+	out := make([]diffItem, 0, len(s.Fields))
+	for _, f := range s.Fields {
+		words := SetupFieldTitle(f)
+		if f.Secret {
+			words += " (secret)"
+		}
+		out = append(out, diffItem{f.Key, words})
+	}
+	return out
+}
+
+func setupKeepItems(m *Manifest) []diffItem {
+	s := setupOf(m)
+	if s == nil {
+		return nil
+	}
+	out := make([]diffItem, 0, len(s.Keeps))
+	for _, k := range s.Keeps {
+		out = append(out, diffItem{k.Key, k.Key})
+	}
+	return out
+}
+
+// SetupFieldTitle is what a setup field is called on the form: its
+// title, or its key in words (personal_access_key is "Personal access
+// key").
+func SetupFieldTitle(f SetupField) string {
+	if f.Title != "" {
+		return f.Title
+	}
+	return actionWords(f.Key)
 }
 
 func actionItems(m *Manifest) []diffItem {

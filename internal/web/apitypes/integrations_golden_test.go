@@ -265,6 +265,7 @@ func goldenIntegrationPageSignIn(needsSignIn bool) IntegrationPage {
 		Actions:           []IntegrationAction{{Name: "list_issues", Description: "List a repository's open issues."}},
 		ConnectionFields:  goldenSignInConnectionFields(),
 		ConnectionMethod:  "device",
+		SignInClient:      "operator",
 		Scopes:            []string{"repo", "read:org"},
 		SignInHosts:       []string{"github.com"},
 		SignInAt:          map[string]string{"device": "github.com", "browser": "github.com"},
@@ -380,6 +381,7 @@ func goldenSignInFailed() SignInProgress {
 func goldenIntegrationVersionSignIn() IntegrationVersion {
 	v := goldenIntegrationVersion()
 	v.ConnectionMethod = "browser"
+	v.SignInClient = "operator"
 	v.Scopes = []string{"content"}
 	v.SignInHosts = []string{"api.hubapi.com", "app.hubspot.com"}
 	v.ConnectionFields = []ConnectionField{
@@ -387,6 +389,68 @@ func goldenIntegrationVersionSignIn() IntegrationVersion {
 		{Key: "client_secret", Title: "Client secret", Description: "", Sensitive: true, Required: true, Set: false},
 	}
 	return v
+}
+
+// goldenIntegrationSetup is what a GitHub built-in's setup flow may
+// do: make a private GitHub App on the owner's account from GitHub's
+// own pages, asking for the account first, and keep the app's keys.
+func goldenIntegrationSetup() *IntegrationSetup {
+	return &IntegrationSetup{
+		Summary: "Creates a private GitHub App on your account that may write contents, issues and pull requests, and installs it on the repositories you choose.",
+		Hosts:   []string{"github.com"},
+		Fields: []SetupField{
+			{Key: "account", Title: "Account", Words: "Your personal account, or an organization's name", Secret: false, SetupOnly: false},
+			{Key: "personal_access_key", Title: "Personal access key", Words: "From the service's key page; used once, never kept", Secret: true, SetupOnly: true},
+		},
+		Keeps: []SetupKeep{
+			{Key: "app_id", Words: "The app's id"},
+			{Key: "private_key", Words: "The app's private key, which Kivali signs with to get a token for each call"},
+			{Key: "installation_id", Words: "Where the app is installed"},
+		},
+		Then: "",
+	}
+}
+
+// goldenIntegrationVersionSetup is the install screen of a built-in
+// whose connection is made by its own setup flow: no connection
+// fields to enter, and the flow's declarations to read instead.
+func goldenIntegrationVersionSetup() IntegrationVersion {
+	v := goldenBuiltinIntegrationVersion()
+	v.Name, v.DisplayName, v.Description, v.Version = "github", "GitHub", "Issues and pull requests on GitHub.", "2.0.0"
+	v.ConnectionMethod = "setup"
+	v.ConnectionFields = []ConnectionField{}
+	v.Setup = goldenIntegrationSetup()
+	v.Actions = []IntegrationAction{{Name: "list_issues", Description: "List a repository's open issues."}}
+	return v
+}
+
+// goldenIntegrationPageSetup is the page of the same built-in before
+// its setup has run: no connection yet, and the flow's declarations.
+func goldenIntegrationPageSetup() IntegrationPage {
+	return IntegrationPage{
+		Summary: IntegrationSummary{
+			Name: "github", DisplayName: "GitHub", Description: "Issues and pull requests on GitHub.",
+			Version: "2.0.0", Status: IntegrationStatusNotConnected, Enabled: true, Builtin: true, Agents: 0,
+		},
+		Author:           "Kivali",
+		Hosts:            []string{},
+		Packages:         []string{},
+		Actions:          []IntegrationAction{{Name: "list_issues", Description: "List a repository's open issues."}},
+		ConnectionFields: []ConnectionField{},
+		ConnectionMethod: "setup",
+		Scopes:           []string{},
+		SignInHosts:      []string{},
+		Setup:            goldenIntegrationSetup(),
+		Connections:      []ConnectionState{},
+		Multiple:         false,
+		ConnectionTest:   true,
+		Access:           []AccessRow{},
+		AgentsWithout:    []PersonRef{{Slug: "dana", Name: "Dana"}},
+		Versions: []IntegrationVersionSummary{
+			{Version: "2.0.0", State: IntegrationVersionStateApproved, PublishedAt: integrationEarlier, PublishedBy: PersonRef{Slug: "kivali", Name: "Kivali"}, ApprovedAt: &integrationEarlier, NotesMD: "Ships with Kivali."},
+		},
+		CanRemove: false,
+	}
 }
 
 // goldenBrowserSignIn is a browser sign-in just started: the vendor's

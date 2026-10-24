@@ -80,9 +80,16 @@ type IntegrationPage struct {
 	// with what the first connection holds. A connection made by
 	// signing in adds the client id and the client secret.
 	ConnectionFields []ConnectionField `json:"connection_fields"`
-	// ConnectionMethod is how the connection is made: token, device or
-	// browser. Empty with no version at all.
+	// ConnectionMethod is how the connection is made: token, device,
+	// browser or setup. Empty with no version at all.
 	ConnectionMethod string `json:"connection_method"`
+	// SignInClient is whose app a sign-in uses: operator, an app you
+	// register and whose client id and secret the connection form
+	// takes; registered, a client Kivali registers itself with the
+	// service, so the form takes neither; setup, the app the
+	// integration's setup flow makes. Empty for a connection that signs
+	// nothing in.
+	SignInClient string `json:"sign_in_client"`
 	// Scopes is what a sign-in connection asks the vendor for; empty
 	// otherwise.
 	Scopes []string `json:"scopes"`
@@ -91,6 +98,9 @@ type IntegrationPage struct {
 	// Empty when the manifest has none. The literal {{redirect_url}} in
 	// it is replaced with the redirect address.
 	SetupNotesMD string `json:"setup_notes_md"`
+	// Setup is what a setup connection's flow may do, as the manifest
+	// declares it; absent for the other methods.
+	Setup *IntegrationSetup `json:"setup,omitempty"`
 	// SignInHosts are the hosts of the manifest's OAuth endpoints, each
 	// once, sorted: where a sign-in sends the owner's browser and where
 	// Kivali takes the tokens from. Empty for a token connection.
@@ -140,6 +150,44 @@ type IntegrationPage struct {
 type IntegrationAction struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
+}
+
+// IntegrationSetup is what a setup connection's flow may do, from the
+// manifest's kivali.connection.setup: the install screen lists it
+// before anything runs, and Kivali holds every step of the flow to it.
+type IntegrationSetup struct {
+	// Summary is what setup does, in words.
+	Summary string `json:"summary"`
+	// Hosts is every host setup may send your browser to.
+	Hosts []string `json:"hosts"`
+	// Fields is every field setup may ask you for, in order.
+	Fields []SetupField `json:"fields"`
+	// Keeps is every value setup may keep in the connection's Secret,
+	// in order.
+	Keeps []SetupKeep `json:"keeps"`
+	// Then is the sign-in setup hands over to once it has made the
+	// app: browser or device; empty when setup keeps the connection
+	// itself.
+	Then string `json:"then"`
+}
+
+// SetupField is one field a setup flow may ask you for.
+type SetupField struct {
+	Key string `json:"key"`
+	// Title is what the field is called on the form.
+	Title string `json:"title"`
+	// Words say what to enter and where it comes from.
+	Words string `json:"words"`
+	// Secret fields are entered as secrets and never shown again.
+	Secret bool `json:"secret"`
+	// SetupOnly fields are used during setup and never kept.
+	SetupOnly bool `json:"setup_only"`
+}
+
+// SetupKeep is one value a setup flow may keep, in words.
+type SetupKeep struct {
+	Key   string `json:"key"`
+	Words string `json:"words"`
 }
 
 // ConnectionField is one field of the connection form, from the
@@ -436,9 +484,11 @@ type IntegrationVersion struct {
 	// Runtime is what runs the bundle, uploaded or shipped: python; empty
 	// for a built-in of Go code, which runs inside Kivali.
 	Runtime string `json:"runtime"`
-	// ConnectionMethod is how the connection is made: token, device or
-	// browser.
+	// ConnectionMethod is how the connection is made: token, device,
+	// browser or setup.
 	ConnectionMethod string `json:"connection_method"`
+	// SignInClient is whose app a sign-in uses (IntegrationPage's).
+	SignInClient string `json:"sign_in_client"`
 	// Scopes is what a sign-in connection asks the vendor for; empty
 	// otherwise.
 	Scopes []string `json:"scopes"`
@@ -447,6 +497,11 @@ type IntegrationVersion struct {
 	// The literal {{redirect_url}} in it is replaced with the redirect
 	// address.
 	SetupNotesMD string `json:"setup_notes_md"`
+	// Setup is what a setup connection's flow may do; absent for the
+	// other methods. Read it before you approve: Kivali sends your
+	// browser only to these hosts, asks only for these fields and keeps
+	// only these values.
+	Setup *IntegrationSetup `json:"setup,omitempty"`
 	// SignInHosts are the hosts of the manifest's OAuth endpoints, each
 	// once, sorted: where a sign-in sends the owner's browser and where
 	// Kivali takes the tokens from. Empty for a token connection.

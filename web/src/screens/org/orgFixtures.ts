@@ -19,6 +19,8 @@ import goIntegrationVersionJson from '../../../../internal/web/apitypes/testdata
 import goIntegrationVersionBuiltinJson from '../../../../internal/web/apitypes/testdata/integration_version_builtin.json';
 import goIntegrationVersionShippedJson from '../../../../internal/web/apitypes/testdata/integration_version_shipped.json';
 import goIntegrationVersionSignInJson from '../../../../internal/web/apitypes/testdata/integration_version_sign_in.json';
+import goIntegrationVersionSetupJson from '../../../../internal/web/apitypes/testdata/integration_version_setup.json';
+import goIntegrationPageSetupJson from '../../../../internal/web/apitypes/testdata/integration_page_setup.json';
 import goSignInProgressJson from '../../../../internal/web/apitypes/testdata/sign_in_progress.json';
 import goSignInProgressFailedJson from '../../../../internal/web/apitypes/testdata/sign_in_progress_failed.json';
 import goIntegrationsJson from '../../../../internal/web/apitypes/testdata/integrations.json';
@@ -101,6 +103,10 @@ export const goIntegrationVersionBuiltin = (goIntegrationVersionBuiltinJson sati
 export const goIntegrationVersionShipped = (goIntegrationVersionShippedJson satisfies Wire<IntegrationVersion>) as IntegrationVersion;
 /** The install screen of a bundle that connects by signing in in the browser: its scopes and sign-in hosts. */
 export const goIntegrationVersionSignIn = (goIntegrationVersionSignInJson satisfies Wire<IntegrationVersion>) as IntegrationVersion;
+/** The install screen of a built-in whose connection its own setup flow makes: the flow's declarations, no fields. */
+export const goIntegrationVersionSetup = (goIntegrationVersionSetupJson satisfies Wire<IntegrationVersion>) as IntegrationVersion;
+/** The page of the same built-in before setup has run. */
+export const goIntegrationPageSetup = (goIntegrationPageSetupJson satisfies Wire<IntegrationPage>) as IntegrationPage;
 export const goIntegrationUploadRefused = (goIntegrationUploadRefusedJson satisfies Wire<IntegrationUploadRefused>) as IntegrationUploadRefused;
 export const goIntegrationLogs = (goIntegrationLogsJson satisfies Wire<IntegrationLogs>) as IntegrationLogs;
 export const goIntegrationAudit = (goIntegrationAuditJson satisfies Wire<IntegrationAudit>) as IntegrationAudit;

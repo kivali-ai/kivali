@@ -118,7 +118,7 @@ func TestValidateRules(t *testing.T) {
 		{"connection device", func(m map[string]any) { obj(m, "kivali", "connection")["method"] = "device" }, nil, LevelError, "kivali.connection.device_endpoint is missing; a device connection needs it"},
 		{"connection browser", func(m map[string]any) { obj(m, "kivali", "connection")["method"] = "browser" }, nil, LevelError, "kivali.connection.authorization_endpoint is missing; a browser connection needs it"},
 		{"connection missing", func(m map[string]any) { delete(obj(m, "kivali"), "connection") }, nil, LevelError, "kivali.connection.method is missing"},
-		{"connection unknown", func(m map[string]any) { obj(m, "kivali", "connection")["method"] = "oauth" }, nil, LevelError, "kivali.connection.method oauth is not one Kivali knows; it is token, device or browser"},
+		{"connection unknown", func(m map[string]any) { obj(m, "kivali", "connection")["method"] = "oauth" }, nil, LevelError, "kivali.connection.method oauth is not one Kivali knows; it is token, device, browser or setup"},
 		// A bundle's pod is started with one connection's values: a bundle
 		// that said it takes several would give agents' rows connections
 		// its server never sees.

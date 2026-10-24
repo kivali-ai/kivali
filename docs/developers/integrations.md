@@ -188,11 +188,17 @@ integration never does OAuth
 
 - `method`: `token`, `device` (the device authorization grant, RFC
   8628: a code and an address on the page, core polls the token
-  endpoint) or `browser` (the authorization code grant with PKCE: the
-  owner's browser goes to the vendor and back to Kivali). A `device`
-  manifest that also gives `authorization_endpoint` offers both ways,
-  and so does a `browser` one that gives `device_endpoint`; `method`
-  is the way the page shows first (`Connection.Ways`).
+  endpoint), `browser` (the authorization code grant with PKCE: the
+  owner's browser goes to the vendor and back to Kivali) or `setup`
+  (the integration's own setup flow makes the connection, held to
+  `kivali.connection.setup`: [Setup connections](#setup-connections)).
+  A `device` manifest that also gives `authorization_endpoint` offers
+  both ways, and so does a `browser` one that gives `device_endpoint`;
+  `method` is the way the page shows first (`Connection.Ways`). The
+  list is closed: core knows standards (a pasted token, OAuth's two
+  grants) and mechanisms (running a flow's steps), never a vendor; a
+  vendor's own way of making or installing an app is that
+  integration's setup flow.
 - `device_endpoint`, `authorization_endpoint`, `token_endpoint`,
   `revocation_endpoint`: the vendor's addresses. A revocation endpoint
   (RFC 7009) is optional; with one, deleting the connection revokes
@@ -203,7 +209,16 @@ integration never does OAuth
   absent is true.
 - `client`: whose OAuth app signs in. `operator` (or absent): the owner
   registers an app with the vendor, and the connection form takes its
-  client id and secret.
+  client id and secret. `registered`: core registers the team as a
+  client with the vendor's authorization server (RFC 7591), found from
+  the metadata at `discover` (the protected resource's, RFC 9728, or
+  the authorization server's own, RFC 8414), so the owner registers
+  nothing, the form takes no client id or secret, and the manifest
+  gives no endpoints: core reads them there. Only a `browser`
+  connection has a registered client. For a bundle, a registered
+  client is not in this version of Kivali.
+- `discover`: the `https://` address a registered client's metadata is
+  read from. Its host is among `SignInHosts`.
 - `extra_authorization_params`: added to the vendor's authorization
   address as they are.
 - `credential_keys.access_token`: the name the access token goes under
@@ -224,16 +239,96 @@ The check holds the section to these rules, for bundles and built-ins
 
 | Rule | Refused with |
 | --- | --- |
-| `method` is `token`, `device` or `browser`. | `kivali.connection.method <method> is not one Kivali knows; it is token, device or browser` (`kivali.connection.method is missing; ...` without one) |
+| `method` is `token`, `device`, `browser` or `setup`. | `kivali.connection.method <method> is not one Kivali knows; it is token, device, browser or setup` (`kivali.connection.method is missing; ...` without one) |
 | A `token` connection gives no endpoint. | `kivali.connection.token_endpoint: a token connection has no endpoints` (each one named) |
-| `device` gives `device_endpoint` and `token_endpoint`; `browser` gives `authorization_endpoint` and `token_endpoint`. | `kivali.connection.<endpoint> is missing; a <method> connection needs it` |
-| Every endpoint given is an absolute `https://` address; plain `http://` only on `localhost`, `127.0.0.1` or `::1`, for a vendor run in-process in tests. | `kivali.connection.<endpoint>: "<address>" must be an https:// address` |
-| `client` is absent or `operator`. A client Kivali ships (`kivali`) is not in this version. | `kivali.connection.client: a client Kivali ships is not in this version of Kivali; the owner registers the app and the client is operator` |
+| `device` gives `device_endpoint` and `token_endpoint`; `browser` gives `authorization_endpoint` and `token_endpoint`, unless its client is registered, when it gives none. | `kivali.connection.<endpoint> is missing; a <method> connection needs it`; `kivali.connection.<endpoint>: Kivali reads a registered client's endpoints from discover, so the manifest gives none` |
+| Every endpoint given, and `discover`, is an absolute `https://` address; plain `http://` only on `localhost`, `127.0.0.1` or `::1`, for a vendor run in-process in tests. | `kivali.connection.<endpoint>: "<address>" must be an https:// address` |
+| `client` is absent, `operator` or `registered`. A registered client is a `browser` connection's, with `discover`, and for a built-in; a client Kivali ships (`kivali`) is not in this version. | `kivali.connection.client <client> is not one Kivali knows; it is operator or registered`; `kivali.connection.client registered: only a browser connection has Kivali register itself; ...`; `kivali.connection.client registered is not in this version of Kivali for a bundle; ...`; `kivali.connection.discover is missing; a registered client needs the address whose metadata names the authorization server`; `kivali.connection.discover: only a registered client has one`; `kivali.connection.client: a client Kivali ships is not in this version of Kivali; the owner registers the app and the client is operator` |
+| Only a `setup` connection has a `setup` section, and a `setup` connection is held to [its own rules](#setup-connections). | `kivali.connection.setup: only a setup connection has one` |
 | `credential_keys` names only `access_token`, and a sign-in connection names it: capital letters, digits and underscores, starting with a letter. | `kivali.connection.credential_keys.access_token is missing; ...` |
 | A sign-in connection's `user_config` declares neither `client_id` nor `client_secret`: core adds them. | `user_config.client_id: Kivali adds the client id and secret to a sign-in connection's form, so user_config does not declare them` |
 | `scopes` entries are not empty. | `kivali.connection.scopes[<n>] is empty` |
 | `extra_authorization_params` names none of `client_id`, `redirect_uri`, `response_type`, `scope`, `state`, `code_challenge`, `code_challenge_method`. | `kivali.connection.extra_authorization_params.<key>: Kivali sets <key> itself` |
 | A sign-in connection's `server.mcp_config.env` names no `${user_config.client_secret}` (it reads empty) and sets no key equal to the access token's name (the token would replace it). | `server.mcp_config.env.<key>: the client secret is Kivali's; the server asks kivali/credential for the access token`; `server.mcp_config.env.<key>: Kivali gives the access token under that name, so the env cannot set it` |
+
+### Setup connections
+
+A `setup` connection is made by the integration's own flow: a run of
+steps the owner takes (a Form to fill in, a Go that sends the browser
+to the service and back, a Wait while something happens on the
+service), which core runs and draws, with the integration deciding
+each next step (`builtinintegrations.SetupIntegration`, [The
+interface](#the-interface)). The service's own way of making or
+installing an app lives in that flow, and in no other integration.
+`kivali.connection.setup` declares what the flow may do, and core holds
+every step to it; the install screen lists it under **Setup** before
+anything runs, and the page shows it in the Connection block
+(`setup` on `IntegrationVersion` and `IntegrationPage`,
+`apitypes.IntegrationSetup`):
+
+```json
+"connection": {
+  "method": "setup",
+  "setup": {
+    "summary": "Creates a private GitHub App on your account that may write contents, issues and pull requests, and installs it on the repositories you choose.",
+    "hosts": ["github.com"],
+    "fields": {
+      "account": {"words": "Your personal account, or an organization's name"},
+      "personal_access_key": {"title": "Key", "words": "From the key page", "secret": true, "setup_only": true}
+    },
+    "keeps": {
+      "app_id": "The app's id",
+      "private_key": "The app's private key, which Kivali signs with to get a token for each call"
+    }
+  }
+}
+```
+
+- `summary`: what setup does, in words for the owner. Required.
+- `hosts`: every host a Go step may send the browser to, or a Wait
+  step may name a page on; lowercase host names, no scheme, port, path
+  or wildcard, each once. Core refuses a step naming any other.
+  Empty for a flow that stays in Kivali.
+- `fields`: every field a Form step may ask for, in order, each with
+  `words` (what to enter and where it comes from; required), an
+  optional `title` (the key in words otherwise:
+  `integration.SetupFieldTitle`), `secret` (entered as a secret, never
+  shown again) and `setup_only` (lives in the flow's memory alone and
+  is never kept: a key setup trades for something else). Core draws
+  only declared fields, under the integration's name.
+- `keeps`: every key setup may store in the connection's Secret, each
+  with words for the owner. The kept values are the connection's
+  fields, all secret: a call reads them as `Connection.Fields`, a
+  bundle's server as `kivali/credential`'s `fields`, and an env
+  placeholder `${user_config.<key>}` may name one
+  (`integration.ConnectionKeys`). Core refuses a step keeping any other
+  key.
+- `then`: `browser` or `device` when setup ends by handing over to
+  core's sign-in with the app it made: setup keeps `client_id` and
+  `client_secret`, the connection gives that way's endpoints and
+  `credential_keys` beside `setup`, and core signs in, refreshes and
+  revokes as for any sign-in connection (`Connection.OAuth`,
+  `Connection.ThenMethod`). Without `then` the connection gives no
+  endpoints and setup keeps the connection itself.
+- `user_config` is empty and `client` is not given: the connection's
+  values are what setup keeps, and the app is the one setup makes.
+
+The check's rules, for bundles and built-ins (`validateSetup`), each
+refused with `kivali.connection.setup.<field>: <why>`: the summary and
+every field's and keep's words are present; a host is a lowercase host
+name, not `*` or a pattern, listed once; a field's or keep's key is
+lowercase letters, digits and underscores, starting with a letter; a
+field asks for neither `client_id` nor `client_secret` (they are what
+setup keeps); neither names `oauth_access_token` or
+`oauth_refresh_token`; a `setup_only` field is not also kept; `then` is
+`browser` or `device`, and with it `client_id` and `client_secret` are
+kept, while without it `client_id` and `client_secret` are not kept and
+the connection has no endpoints. A bundle's setup flow is not in this
+version of Kivali (`kivali.connection.method setup: a bundle's setup
+flow is not in this version of Kivali`); a built-in's manifest passes.
+What a later version changes in the declarations is on its install
+screen ("Setup sends your browser to, added: ...", "Setup asks for,
+added: ...", "Setup keeps, added: ...": `integration.Diff`).
 
 ## The check
 
@@ -488,10 +583,14 @@ signing in ([Token storage](#token-storage)) and `fields`, the
 connection form with that connection's values (the non-sensitive
 values, and which secrets are set); `connection`, the first of them,
 and `connection_fields`, the form with the first's values, which the
-one-connection page reads; `multiple`, `connection_method`, `scopes`
-and `setup_notes_md`, from the manifest; `sign_in_hosts`, the hosts of
-the manifest's OAuth endpoints, each once, sorted
-(`Connection.SignInHosts`, also on the install screen under "Signs in
+one-connection page reads; `multiple`, `connection_method`, `scopes`,
+`setup_notes_md` and, for a setup connection, `setup` (what its flow
+may do: [Setup connections](#setup-connections)), from the manifest;
+`sign_in_client`, whose app a sign-in uses (`operator`, `registered`,
+`setup` for a flow that hands over to a sign-in, or empty);
+`sign_in_hosts`, the hosts of the manifest's OAuth endpoints and
+discover address, each once, sorted (`Connection.SignInHosts`, also on
+the install screen under "Signs in
 at"), and `sign_in_at`, for each way offered the host it sends the
 owner to (the authorization endpoint's for browser, the device
 endpoint's for device), which the Sign in block names ("Signs in at
@@ -1490,6 +1589,36 @@ type AccessSummarizer interface{ AccessSummary(access map[string]any) string }
 
 // An error of Call or Complete that refuses the call before anything ran.
 type Refusal struct{ Text, Reason string }
+
+// Setup, requirements and uninstall: the hooks of an integration whose
+// connection its own flow makes (method setup), and of any integration
+// with health or an installation of its own.
+type SetupIntegration interface {
+	Integration
+	Setup(ctx context.Context, conn Connection, flow string, last Answer, p Progress) (Step, error)
+}
+const FlowSetup = "setup"
+type Step struct {
+	Form *Form; Go *Go; Wait *Wait; Done bool // exactly one
+	Keep  map[string]string // into the connection's Secret now, keys from setup.keeps
+	State map[string]string // carried to the next Answer, in memory, for this flow
+}
+type Form struct{ Words string; Fields []string }          // keys from setup.fields
+type Go struct{ Words, URL string; Post url.Values }       // a link, or a form that posts Post to URL
+type Wait struct{ Words, URL string }                      // words, and a page to open meanwhile
+type Answer struct {
+	State    map[string]string // the last Step's State
+	Form     map[string]string // what the owner entered
+	Return   url.Values        // what the service sent back: untrusted
+	Checked  bool              // a Wait step's check
+	Callback string            // where a Go step's service may send the browser back
+}
+type Progress interface{ Stage(words string, done, total int) }
+type RequirementsOf interface {
+	Requirements(ctx context.Context, conn Connection) ([]Requirement, error)
+}
+type Requirement struct{ ID, Title, Words string; Met bool; Fix string }
+type Uninstaller interface{ Uninstall(ctx context.Context, conn Connection) error }
 ```
 
 - `Manifest` is the manifest, held to `integration.ValidateBuiltin`
@@ -1548,6 +1677,38 @@ type Refusal struct{ Text, Reason string }
   `integration.AccessSummary`'s field by field: for an access form
   whose fields mean something only together. It is given the stored
   access, which may no longer fit the form.
+
+- A `SetupIntegration` is a built-in whose manifest names `method:
+  setup` ([Setup connections](#setup-connections)): its `Setup` is the
+  flow. Core calls it in the background, off any request, under a
+  deadline on its clock: first with an `Answer` holding nothing, then
+  after each step with what the step gave back (`Form`, the fields the
+  owner entered; `Return`, the query the service sent the browser back
+  with, which is untrusted and checked against the service before it
+  is relied on; `Checked`, a Wait's check), until it returns a `Step`
+  that is `Done` or an error. `flow` is `FlowSetup` for installing, or
+  the `Fix` a `Requirement` named. `conn.Fields` holds what earlier
+  steps kept. Each `Step` sets exactly one of `Form`, `Go`, `Wait` and
+  `Done`, and may `Keep` (into the Secret now, declared keys only) and
+  carry `State` (in core's memory, for this flow alone, never written).
+  A `Form` names declared fields; a `Go` sends the browser to `URL` on
+  a declared host, by a link or by a form that posts `Post`, and the
+  service comes back to `Answer.Callback`; a `Wait` shows `Words` and
+  a page on a declared host, and core calls `Setup` again with
+  `Checked` every few seconds while the owner's page is open. A step
+  outside the declarations fails the flow; so does an error, whose
+  text the owner reads, scrubbed of every kept value. `Progress.Stage`
+  names where setup is, with a count where there is one.
+- A `RequirementsOf` built-in has health of its own: rows met or not,
+  each with words and a `Fix`, the flow its Fix runs through `Setup`.
+  Core lists its own rows first.
+- An `Uninstaller` undoes its installation on the service when the
+  owner uninstalls it, before core forgets the Secret and drops every
+  agent's access; an error leaves the installation as it is.
+
+Core dispatches none of these three hooks in this version of Kivali:
+the types are the contract, and no built-in in `builtins.All()`
+implements them.
 
 `Tools`, `Call`, `Verify` and `Choices` run concurrently: many agents
 call at once, and each agent's list is asked for in parallel with the

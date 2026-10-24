@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { ApiError } from '../../api/client';
-import type { AccessField, IntegrationAuditRow, IntegrationStatus, IntegrationUploadRefused, IntegrationVersionState } from '../../api/types.gen';
+import type { AccessField, IntegrationAuditRow, IntegrationSetup, IntegrationStatus, IntegrationUploadRefused, IntegrationVersionState } from '../../api/types.gen';
 import { Badge, Button, CodeBlock, Dialog, DialogClose, Icon, Prose, Text } from '../../ds';
 import type { BadgeTone } from '../../ds';
 import { markdownBlocks } from '../../lib/markdown';
@@ -229,6 +229,87 @@ export function ScopesLine({ scopes }: { scopes: readonly string[] }) {
     <Text as="p" variant="caption" tone="muted">
       {line}
     </Text>
+  );
+}
+
+/** "Kivali registers itself with the service; there is nothing to paste." for a sign-in client Kivali registers itself. */
+export function registeredClientLine(signInClient: string): string | undefined {
+  return signInClient === 'registered' ? 'Kivali registers itself with the service; there is nothing to paste.' : undefined;
+}
+
+/**
+ * What a setup flow may do, from the manifest (IntegrationSetup), on the install screen and the integration's page:
+ * its summary, every host it may send the browser to, every field it may ask for (secrets and setup-only values
+ * marked) and every value it may keep. The declarations are the review: Kivali holds every step to them.
+ */
+export function SetupFacts({ setup, integration }: { setup: IntegrationSetup; integration: string }) {
+  return (
+    <div className="app-int-setup">
+      <Text as="p" variant="body">
+        {setup.summary}
+      </Text>
+      <Text as="p" variant="caption" tone="muted">
+        Sends your browser to
+      </Text>
+      {setup.hosts.length === 0 ? (
+        <Text as="p" variant="caption" tone="muted">
+          No pages: setup stays in Kivali.
+        </Text>
+      ) : (
+        <ul className="app-int-facts" aria-label="Sends your browser to">
+          {setup.hosts.map((h) => (
+            <li key={h}>
+              <Text variant="code">{h}</Text>
+            </li>
+          ))}
+        </ul>
+      )}
+      <Text as="p" variant="caption" tone="muted">
+        {integration + ' asks for'}
+      </Text>
+      {setup.fields.length === 0 ? (
+        <Text as="p" variant="caption" tone="muted">
+          Nothing.
+        </Text>
+      ) : (
+        <ul className="app-int-facts" aria-label={integration + ' asks for'}>
+          {setup.fields.map((f) => (
+            <li key={f.key} className="app-int-fact">
+              <span className="app-int-fact-title">
+                <Text variant="body">{f.title}</Text>
+                {f.secret && <Badge variant="outline">Secret</Badge>}
+                {f.setup_only && <Badge variant="outline">Used once, never kept</Badge>}
+              </span>
+              <Text variant="caption" tone="muted">
+                {f.words}
+              </Text>
+            </li>
+          ))}
+        </ul>
+      )}
+      <Text as="p" variant="caption" tone="muted">
+        Keeps
+      </Text>
+      {setup.keeps.length === 0 ? (
+        <Text as="p" variant="caption" tone="muted">
+          Nothing.
+        </Text>
+      ) : (
+        <ul className="app-int-facts" aria-label="Keeps">
+          {setup.keeps.map((k) => (
+            <li key={k.key} className="app-int-fact">
+              <Text variant="body">{k.words}</Text>
+              <Text variant="code">{k.key}</Text>
+            </li>
+          ))}
+        </ul>
+      )}
+      {setup.then && (
+        <Text as="p" variant="caption" tone="muted">
+          {setup.then === 'browser' ? 'Then signs in in your browser, with the app setup made.' : 'Then signs in with a code, with the app setup made.'}
+        </Text>
+      )}
+    </div>
   );
 }
 
