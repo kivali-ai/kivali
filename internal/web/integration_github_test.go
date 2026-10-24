@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kivali-ai/kivali/internal/agentpod"
 	"github.com/kivali-ai/kivali/internal/builtinintegrations"
 	"github.com/kivali-ai/kivali/internal/builtinintegrations/githubintegration"
 	"github.com/kivali-ai/kivali/internal/clock"
@@ -194,6 +195,13 @@ func (f *fakeGitHubAPI) serve(w http.ResponseWriter, r *http.Request) {
 		answer(f.deleteStatus, nil)
 	case path == "GET /installation/repositories":
 		answer(http.StatusOK, map[string]any{"total_count": f.repos, "repositories": []any{}})
+	case path == "GET /repos/acme/widgets/issues":
+		// An issue the app itself opened: GitHub names its author by the
+		// app's slug.
+		answer(http.StatusOK, []any{map[string]any{
+			"number": 7, "title": "Opened by the app", "state": "open", "user": map[string]string{"login": ghSlug + "[bot]"},
+			"labels": []any{}, "updated_at": "2026-10-22T09:00:00Z", "html_url": "https://github.com/acme/widgets/issues/7",
+		}})
 	case path == "DELETE /applications/Iv1old/grant":
 		var b struct {
 			AccessToken string `json:"access_token"`
@@ -702,6 +710,28 @@ func TestGitHubInstallOverOneZeroCancelledKeepsTheAccess(t *testing.T) {
 	}
 	if page := githubPage(t, srv); !installedAndMet(page) || len(page.Access) != 1 {
 		t.Errorf("installed again = %v, access %+v", unmetIDs(page), page.Access)
+	}
+}
+
+// Why this test exists: the app's slug is GitHub's name for it, which
+// GitHub's answers carry wherever the app is the author
+// (<slug>[bot]). It is not a secret, but every kept value is scrubbed
+// from an agent's answers today, so an issue the app opened reads as
+// opened by "[secret][bot]". Once a keep can be declared not secret,
+// GitHub declares the slug so and this test runs.
+func TestGitHubAgentReadsTheAppAsAuthor(t *testing.T) {
+	t.Skip("until keeps can be declared not secret")
+	srv, f, _, _ := githubServer(t)
+	githubInstall(t, srv, f)
+	intTeam(t, srv, "dana")
+	putIntegrationAccess(t, srv, "github", "dana", `{"repositories":["acme/*"]}`)
+	dana := agentpod.NewClient(serveCoreUDS(t, srv), "dana")
+	res, err := dana.IntegrationCall(context.Background(), agentpod.IntegrationCallRequest{Name: "github_list_issues", Arguments: json.RawMessage(`{"repository":"acme/widgets"}`)})
+	if err != nil || res.IsError || len(res.Content) != 1 {
+		t.Fatalf("list issues = %+v, %v", res, err)
+	}
+	if text := res.Content[0]; !strings.Contains(text, `"author":"`+ghSlug+`[bot]"`) {
+		t.Errorf("the issue's author reads %s", text)
 	}
 }
 

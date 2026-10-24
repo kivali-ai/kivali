@@ -44,6 +44,7 @@ import {
   goIntegrationUploadRefused,
   goIntegrationVersion,
   goIntegrationVersionBuiltin,
+  goIntegrationVersionEarlierBundle,
   goIntegrationVersionSignIn,
   goIntegrationVersionSetup,
   goIntegrationVersionRegistered,
@@ -1405,15 +1406,14 @@ describe('Integration install screen', () => {
     for (const h of goIntegrationVersionRegistered.sign_in_hosts) expect(hosts.getByText(h)).toBeInTheDocument();
   });
 
-  // Guards a built-in's earlier version that an earlier Kivali stored as a bundle, such as GitHub 1.0.0 with its gh:
-  // nothing of it runs any more, so its screen must not list software or a bundle as if a pod still installed and ran
-  // them, while it still says it ships with Kivali and offers nothing to press.
+  // Guards a built-in's earlier version that an earlier Kivali stored as a bundle (integration_version_earlier_bundle
+  // .json, GitHub 1.0.0 with its gh, its file count and no `shipped` field): nothing of it runs any more, so its
+  // screen must not list software or a bundle as if a pod still installed and ran them, while it still says it ships
+  // with Kivali and offers nothing to press.
   it('shows no software or bundle for a built-in version an earlier Kivali stored as a bundle', async () => {
-    await renderOrg('/org/integrations/github/versions/1.0.0', {
-      routes: {
-        ['GET /api/v1/org/integrations/github/versions/1.0.0']: { ...goIntegrationVersionBuiltin, state: 'superseded', packages: ['gh'], file_count: 3, bundle_bytes: 4096 },
-      },
-    });
+    const v = goIntegrationVersionEarlierBundle;
+    expect(v.builtin && v.file_count > 0 && v.packages.length > 0 && !('shipped' in v)).toBe(true);
+    await renderOrg('/org/integrations/github/versions/1.0.0', { routes: { ['GET /api/v1/org/integrations/github/versions/1.0.0']: v } });
     const who = within(screen.getByRole('region', { name: 'Who built it' }));
     expect(who.getByText('Ships with Kivali')).toBeInTheDocument();
     expect(screen.queryByRole('region', { name: 'Software it installs' })).toBeNull();
