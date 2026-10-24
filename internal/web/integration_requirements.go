@@ -84,13 +84,56 @@ func (v *integrationView) state() apitypes.IntegrationState {
 		return apitypes.IntegrationStatePending
 	case v.installing:
 		return apitypes.IntegrationStateSettingUp
-	case v.conn == nil || v.discarding:
-		// A connection a failed install made is on its way out.
+	case v.conn == nil || v.discarding || v.connectionMisfit():
+		// A connection a failed install made is on its way out, or one
+		// an earlier version made does not fit this version's setup.
 		return apitypes.IntegrationStateAvailable
 	case !v.it.Enabled:
 		return apitypes.IntegrationStateOff
 	}
 	return apitypes.IntegrationStateInstalled
+}
+
+// connectionMisfit reports whether v's connection was made by an
+// earlier version's way of connecting and does not fit this version's
+// setup flow (setupMisfit). v then reads available, its one row says
+// to set it up again, and installing it takes the connection over
+// (keepSetupValues): its record and every agent's access stay, and its
+// values are replaced.
+func (v *integrationView) connectionMisfit() bool {
+	return v.conn != nil && !v.several && v.manifest != nil && setupMisfit(v.manifest.Kivali.Connection.Setup, v.conn.rec)
+}
+
+// setupMisfit reports whether rec does not fit setup, a manifest's
+// kivali.connection.setup (nil for a connection not made by setup): it
+// holds a value the flow does not keep (a field in the record, which
+// setup never writes; a key in its Secret outside setup.keeps; a
+// sign-in, for a flow that hands over to none), or none of what the
+// flow keeps. A GitHub 1.0.0 connection, the owner's own app signed in
+// with, is one for GitHub 2.0.0, whose setup makes the app.
+func setupMisfit(setup *integration.Setup, rec store.IntegrationConnection) bool {
+	switch {
+	case setup == nil:
+		return false
+	case len(rec.Fields) > 0, rec.SignIn != nil && setup.Then == "", len(rec.SecretKeys) == 0:
+		return true
+	}
+	for _, k := range rec.SecretKeys {
+		if !setup.Keeps.Has(k) {
+			return true
+		}
+	}
+	return false
+}
+
+// misfitRequirement is the one row of an integration whose connection
+// an earlier version made and that this version's setup does not
+// take: install it again.
+func (v *integrationView) misfitRequirement() apitypes.IntegrationRequirement {
+	return apitypes.IntegrationRequirement{
+		ID: reqConnection, Title: "Connection", Fix: builtinintegrations.FlowSetup,
+		Words: "Set up " + v.displayName() + " again: this version makes its connection by its own setup, and the one an earlier version made does not fit it. Every agent's access is kept.",
+	}
 }
 
 // installed reports whether v has its requirements read: installed or
@@ -341,9 +384,13 @@ func (c *requirementsCache) forget(name string) {
 
 // requirements are v's rows, Kivali's then its own, with when each
 // unmet one of Kivali's has stood since; none for an integration that
-// is not installed or off.
+// is not installed or off, but the one row of an available one whose
+// connection an earlier version made (connectionMisfit).
 func (s *Server) requirements(ctx context.Context, v *integrationView) ([]apitypes.IntegrationRequirement, map[string]time.Time) {
 	if !v.installed() {
+		if v.state() == apitypes.IntegrationStateAvailable && v.connectionMisfit() {
+			return []apitypes.IntegrationRequirement{v.misfitRequirement()}, nil
+		}
 		return []apitypes.IntegrationRequirement{}, nil
 	}
 	rows, at := v.coreRequirements()

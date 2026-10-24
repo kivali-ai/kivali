@@ -163,9 +163,9 @@ func TestSetupStartRefusedWhileAFailedInstallIsUndone(t *testing.T) {
 	srv, e, _ := healthServer(t)
 	e.ScriptSetup(keepThenFail)
 	release := make(chan struct{})
-	srv.setupRuns.discard = func(name, id string) {
+	srv.setupRuns.discard = func(name, id string, keepRecord bool) {
 		<-release
-		srv.setupDiscard(name, id)
+		srv.setupDiscard(name, id, keepRecord)
 	}
 	startSetupFlow(t, srv, "echo")
 	waitFlow(t, srv, "echo", apitypes.SetupFlowStateForm)

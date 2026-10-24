@@ -121,6 +121,9 @@ type setupSpec struct {
 	hosts []string
 	// keeps are the keys Keep may hold.
 	keeps []string
+	// setup is the manifest's kivali.connection.setup, for a setup
+	// connection's flow; nil for a standard flow.
+	setup *integration.Setup
 	// keep writes a step's Keep, under lockIntegrations, unless the
 	// flow was cancelled.
 	keep func(ctx context.Context, run *setupRun, values map[string]string) error
@@ -191,11 +194,14 @@ type setupRun struct {
 	subs     map[chan []byte]struct{}
 	sent     []byte
 	// install is true for a flow that installs: it started with no
-	// connection (or took over from one that did). madeConn is the
-	// connection its Keep made, which goes again when the flow ends
-	// without being done.
+	// connection, or with one an earlier version made that does not
+	// fit (setupMisfit), or took over from one that did. madeConn is
+	// the connection its Keep made, or emptied and filled again, which
+	// goes again when the flow ends without being done; madeKept is
+	// true for the second, whose record and access stay, emptied.
 	install  bool
 	madeConn string
+	madeKept bool
 }
 
 // setupRuns are the flows, by id. The zero value is ready to use.
@@ -215,9 +221,10 @@ type setupRuns struct {
 	dirty   map[*setupRun]struct{}
 	// discard forgets the connection id an install of the integration
 	// name made and that ended without being done (Server.setupDiscard),
-	// off the caller's locks. discarding holds, by integration, a
-	// channel closed once its discard is over.
-	discard    func(name, connID string)
+	// off the caller's locks; with keepRecord, its record and access
+	// stay, emptied. discarding holds, by integration, a channel closed
+	// once its discard is over.
+	discard    func(name, connID string, keepRecord bool)
 	discarding map[string]chan struct{}
 	// settleMu orders the writes of what is queued.
 	settleMu sync.Mutex
@@ -278,8 +285,8 @@ func (t *setupRuns) endLocked(run *setupRun) {
 	if !run.install || run.madeConn == "" || run.state == apitypes.SetupFlowStateDone || t.discard == nil {
 		return
 	}
-	name, id := run.name, run.madeConn
-	run.madeConn = ""
+	name, id, kept := run.name, run.madeConn, run.madeKept
+	run.madeConn, run.madeKept = "", false
 	done := make(chan struct{})
 	if t.discarding == nil {
 		t.discarding = map[string]chan struct{}{}
@@ -296,7 +303,7 @@ func (t *setupRuns) endLocked(run *setupRun) {
 		if prev != nil {
 			<-prev
 		}
-		t.discard(name, id)
+		t.discard(name, id, kept)
 		t.mu.Lock()
 		if t.discarding[name] == done {
 			delete(t.discarding, name)
@@ -498,7 +505,7 @@ func (s *Server) setupStart(name, display, flow string, spec setupSpec, callback
 		if !old.ended() {
 			replaced = old
 			if old.install {
-				run.install, run.madeConn, old.madeConn = true, old.madeConn, ""
+				run.install, run.madeConn, run.madeKept, old.madeConn, old.madeKept = true, old.madeConn, old.madeKept, "", false
 			}
 		}
 		t.forgetLocked(old)
@@ -570,6 +577,9 @@ func (s *Server) runSetupCall(run *setupRun, gen int, ans builtinintegrations.An
 	defer s.setupRuns.calling.Done()
 	defer run.calling.Done()
 	conn := s.setupConnection(run.ctx, run.name)
+	if br, err := s.Store.ReadBranding(); err == nil {
+		ans.Team = br.CompanyName
+	}
 	p := &setupProgress{s: s, run: run, gen: gen}
 	// The driver's function runs on in its own goroutine when the call
 	// is abandoned (cancelled, past its deadline), and may still write.
@@ -925,16 +935,18 @@ func (s *Server) setupPeek(name string) (flow *apitypes.SetupFlow, installing, d
 }
 
 // setupMade records that run's Keep made name's connection id, which
-// goes again should run end without being done. A run that ended
+// goes again should run end without being done; kept is true for a
+// record an earlier version made that the Keep emptied and filled
+// again, which then stays, emptied, with its access. A run that ended
 // meanwhile lets it go at once.
-func (s *Server) setupMade(run *setupRun, id string) {
+func (s *Server) setupMade(run *setupRun, id string, kept bool) {
 	t := &s.setupRuns
 	t.mu.Lock()
 	defer s.setupUnlock()
 	if !run.install || run.madeConn != "" {
 		return
 	}
-	run.madeConn = id
+	run.madeConn, run.madeKept = id, kept
 	if t.runs[run.id] != run || run.state == apitypes.SetupFlowStateFailed {
 		t.endLocked(run)
 	}
@@ -943,9 +955,12 @@ func (s *Server) setupMade(run *setupRun, id string) {
 // setupDiscard forgets name's connection id that an install made and
 // that ended without being done, as Uninstall forgets a connection:
 // its Secret (the sign-in's tokens revoked with the service), its
-// scoped proxy credential, its record and the access set for it. A
+// scoped proxy credential, its record and the access set for it. With
+// keepRecord (the install took over a record an earlier version made),
+// the record and the access stay, holding no value, so the integration
+// reads available and agents' access returns with the next install. A
 // connection already gone is left be.
-func (s *Server) setupDiscard(name, id string) {
+func (s *Server) setupDiscard(name, id string, keepRecord bool) {
 	ctx := context.Background()
 	unlock := s.lockIntegrations()
 	rec, err := s.Store.GetIntegrationConnectionByID(name, id)
@@ -970,7 +985,12 @@ func (s *Server) setupDiscard(name, id string) {
 	if err := s.dropBuiltinEgress(name, []store.IntegrationConnection{rec}); err != nil {
 		log.Printf("integration %s: drop the connection's proxy credential: %v", name, err)
 	}
-	if _, _, err := s.Store.DeleteIntegrationConnectionByID(name, id); err != nil && !errors.Is(err, store.ErrNotFound) {
+	if keepRecord {
+		empty := store.IntegrationConnection{ID: rec.ID, CreatedAt: rec.CreatedAt}
+		if err := s.Store.PutIntegrationConnection(name, empty); err != nil {
+			log.Printf("integration %s: empty the connection a setup took over: %v", name, err)
+		}
+	} else if _, _, err := s.Store.DeleteIntegrationConnectionByID(name, id); err != nil && !errors.Is(err, store.ErrNotFound) {
 		log.Printf("integration %s: forget the connection a setup made: %v", name, err)
 	}
 	unlock()
@@ -1120,10 +1140,31 @@ const errSetupNoFlow = "Kivali has no setup under way for this integration, as a
 // the connection's Secret beside what it holds, under
 // lockIntegrations, making the connection when there is none. A flow
 // cancelled meanwhile keeps nothing.
+//
+// An install whose connection an earlier version made, which does not
+// fit this version's setup (setupMisfit), takes it over at its first
+// Keep: every value the record and its Secret held goes (the scoped
+// proxy credential's secret aside), the record's id, its access and
+// its Secret's name stay, and the sign-in it held is revoked with the
+// service once the lock is released (revokeReplacedSignIn).
 func (s *Server) keepSetupValues(ctx context.Context, run *setupRun, values map[string]string) error {
+	replaced, err := s.keepSetupValuesLocked(ctx, run, values)
+	if replaced != nil {
+		s.revokeReplacedSignIn(run.name, replaced.rec, replaced.data)
+	}
+	return err
+}
+
+// replacedConnection is a connection an install took over, as it was.
+type replacedConnection struct {
+	rec  store.IntegrationConnection
+	data map[string]string
+}
+
+func (s *Server) keepSetupValuesLocked(ctx context.Context, run *setupRun, values map[string]string) (*replacedConnection, error) {
 	defer s.lockIntegrations()()
 	if run.ctx.Err() != nil {
-		return errors.New(errSetupStopped)
+		return nil, errors.New(errSetupStopped)
 	}
 	name := run.name
 	rec, err := s.Store.GetIntegrationConnection(name)
@@ -1133,7 +1174,7 @@ func (s *Server) keepSetupValues(ctx context.Context, run *setupRun, values map[
 		rec = store.IntegrationConnection{ID: s.newConnectionID(name), CreatedAt: s.clk().Now()}
 	case err != nil:
 		log.Printf("integration %s: read the connection to keep what setup made: %v", name, err)
-		return errors.New(errSetupNotKept)
+		return nil, errors.New(errSetupNotKept)
 	}
 	data := map[string]string{}
 	if rec.SecretName != "" {
@@ -1143,8 +1184,18 @@ func (s *Server) keepSetupValues(ctx context.Context, run *setupRun, values map[
 			data = got
 		case !errors.Is(err, secrets.ErrNotFound):
 			log.Printf("integration %s: read the connection's Secret to keep what setup made: %v", name, err)
-			return errors.New(errSetupNotKept)
+			return nil, errors.New(errSetupNotKept)
 		}
+	}
+	var replaced *replacedConnection
+	if !made && run.install && setupMisfit(run.spec.setup, rec) {
+		replaced = &replacedConnection{rec: rec, data: data}
+		fresh := map[string]string{}
+		if p := data[builtinintegrations.ProxySecretKey]; p != "" {
+			fresh[builtinintegrations.ProxySecretKey] = p
+		}
+		data = fresh
+		rec = store.IntegrationConnection{ID: rec.ID, CreatedAt: rec.CreatedAt, SecretName: rec.SecretName}
 	}
 	keys := slices.Clone(rec.SecretKeys)
 	for k, v := range values {
@@ -1164,17 +1215,44 @@ func (s *Server) keepSetupValues(ctx context.Context, run *setupRun, values map[
 	}
 	if err := s.Secrets.Put(ctx, rec.SecretName, data); err != nil {
 		log.Printf("integration %s: write the connection's Secret for setup: %v", name, err)
-		return errors.New(errSetupNotKept)
+		return nil, errors.New(errSetupNotKept)
 	}
 	rec.SecretKeys = keys
 	if err := s.Store.PutIntegrationConnection(name, rec); err != nil {
 		log.Printf("integration %s: write the connection for setup: %v", name, err)
-		return errors.New(errSetupNotKept)
+		// The Secret holds the new values alone: an earlier version's
+		// sign-in in it is gone either way.
+		return replaced, errors.New(errSetupNotKept)
 	}
-	if made {
-		s.setupMade(run, rec.ID)
+	if made || replaced != nil {
+		s.setupMade(run, rec.ID, replaced != nil)
 	}
 	s.Integrations.ConnectionChanged(name)
 	s.Integrations.Changed()
-	return nil
+	return replaced, nil
+}
+
+// revokeReplacedSignIn hands the sign-in a connection an install took
+// over held (rec, its Secret's data as it was) to the built-in, which
+// revokes it with the service (builtinintegrations.SignInReplacer), off
+// the caller's locks, under revokeTimeout, best effort: a failure is
+// logged, with nothing of the sign-in in it.
+func (s *Server) revokeReplacedSignIn(name string, rec store.IntegrationConnection, data map[string]string) {
+	r, ok := s.BuiltinIntegrations.Lookup(name).(builtinintegrations.SignInReplacer)
+	client := signInClient(rec, data)
+	old := builtinintegrations.SignIn{ClientID: client.ID, ClientSecret: client.Secret,
+		AccessToken: data[connect.SecretKeyAccessToken], RefreshToken: data[connect.SecretKeyRefreshToken]}
+	if !ok || old.AccessToken == "" && old.RefreshToken == "" {
+		return
+	}
+	scrub := newScrubber([]string{old.ClientSecret, old.AccessToken, old.RefreshToken})
+	s.setupRuns.calling.Add(1)
+	go func() {
+		defer s.setupRuns.calling.Done()
+		ctx, cancel := context.WithTimeout(context.Background(), revokeTimeout)
+		defer cancel()
+		if err := r.RevokeSignIn(ctx, old); err != nil {
+			log.Printf("integration %s: revoke the sign-in of the connection setup replaced: %s", name, scrub.Replace(err.Error()))
+		}
+	}()
 }
