@@ -107,9 +107,35 @@ func refuseNoShellJob(display string) string {
 	return fmt.Sprintf("The %s integration asked your shell for nothing in this call, so its result was not read. Call the action again.", display)
 }
 
+func refuseSettingUp(display string) string {
+	return fmt.Sprintf("The %s integration is being set up; ask the owner to finish it.", display)
+}
+
+// reasonSettingUp is the audit's reason for a call refused while the
+// integration's connection is not an installed one.
+const reasonSettingUp = "the connection is being set up"
+
+// connectionBeingSetUp reports whether name's connection is not one an
+// agent may call through, though it may exist: an install of it under
+// way, one a stopped Kivali left unfinished (SetupPending), one being
+// discarded, or one an earlier version made that m's setup does not fit
+// (setupMisfit). Agents call through an installed connection alone, as
+// the lifecycle (integrationView.state) and AgentIntegration.usable say.
+func (s *Server) connectionBeingSetUp(name string, m *integration.Manifest) bool {
+	if _, installing, discarding := s.setupPeek(name); installing || discarding {
+		return true
+	}
+	rec, err := s.Store.GetIntegrationConnection(name)
+	if err != nil {
+		return false
+	}
+	return rec.SetupPending || (m != nil && setupMisfit(m.Kivali.Connection.Setup, rec))
+}
+
 // agentIntegrationFor is it as slug's calls find it: refused when no
 // version is approved, it is switched off, the agent has no access or
-// access that no longer applies, or it is not running.
+// access that no longer applies, it is not running, or its connection
+// is being set up (connectionBeingSetUp).
 func (s *Server) agentIntegrationFor(it store.Integration, slug string) (agentIntegration, error) {
 	v := agentIntegration{name: it.Name, display: cmp.Or(it.DisplayName, it.Name)}
 	refuse := func(refusal, reason string) (agentIntegration, error) {
@@ -139,6 +165,9 @@ func (s *Server) agentIntegrationFor(it store.Integration, slug string) (agentIn
 	_, m, err := s.Store.CurrentIntegrationVersion(it.Name)
 	if err != nil {
 		return v, err
+	}
+	if s.connectionBeingSetUp(it.Name, m) {
+		return refuse(refuseSettingUp(v.display), reasonSettingUp)
 	}
 	v.manifest, v.access, v.builtin = m, rows[i].AccessJSON(), s.builtinFor(it)
 	return v, nil

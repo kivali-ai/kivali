@@ -2152,6 +2152,7 @@ in words that name the cause and the owner and nothing else:
 | Access that no longer applies | Your access to the <integration> integration no longer applies (why). Ask the owner to set it again. |
 | Not running | The <integration> integration is not running right now; try again later or tell the owner. |
 | An action the agent's list does not have | Your access to the <integration> integration does not include <action>. Ask the owner if your work needs it. |
+| Its connection being set up: an install under way, one a stopped Kivali left unfinished, one being discarded, or one an earlier version made that this version's setup does not fit (`connectionBeingSetUp`, audited "the connection is being set up") | The <integration> integration is being set up; ask the owner to finish it. |
 | A built-in integration with no connection | The <integration> integration has no connection yet. Ask the owner to connect it. |
 | A shell job's result with a call whose integration asks for no job | The <integration> integration asked your shell for nothing in this call, so its result was not read. Call the action again. |
 | A built-in's own refusal (`builtinintegrations.Refusal`) | The refusal's `Text`, audited with its `Reason`: for Git, see [The git built-in](#the-git-built-in) |
@@ -2550,8 +2551,8 @@ the sign-in's tokens in the Secret), does not fit 2.0.0's setup flow,
 which makes its own app (`setupMisfit`, [Keep](#keep)): its record
 and Secret are left as they are, GitHub reads available with one unmet
 `connection` row ("Set up GitHub again: ..."), agents' calls are
-refused by GitHub's own check of the connection ("GitHub's connection
-is not set up; ask the owner to set it up again."), and the access
+refused by core before GitHub's code runs ("The GitHub integration is
+being set up; ask the owner to finish it.", [A call](#a-call)), and the access
 rows stay valid (the access form is unchanged). The owner's install
 takes the record over at its first Keep, after GitHub made the new
 app: the 1.0.0 values go, the earlier app's grant is revoked with

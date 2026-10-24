@@ -2,10 +2,12 @@ package web
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/url"
 	"testing"
 
+	"github.com/kivali-ai/kivali/internal/agentpod"
 	"github.com/kivali-ai/kivali/internal/secrets"
 	"github.com/kivali-ai/kivali/internal/store"
 	"github.com/kivali-ai/kivali/internal/web/apitypes"
@@ -141,6 +143,62 @@ func TestRestartKeepsTheAccessOfATakenOverRecord(t *testing.T) {
 	srv2.setupAwaitDiscard(ctx, "echo")
 	if got, err := srv2.Store.GetIntegrationConnection("echo"); err != nil || got.ID != "c0ffee02" || len(mem2.Names()) != 1 {
 		t.Errorf("a finished connection = %+v %v, secrets %v", got, err, mem2.Names())
+	}
+}
+
+// Why this test exists: agents call only through an installed
+// connection. While an install runs, and while a connection a stopped
+// Kivali left unfinished waits to be discarded, the connection holds
+// half of what setup keeps, and an agent whose access was set before
+// (a take-over keeps every agent's access) must be refused by core in
+// words that name the cause, not reach the integration with it. Once
+// the install is done, the same call goes through.
+func TestAgentCallsWaitForTheInstall(t *testing.T) {
+	srv, e, _ := setupServer(t, nil)
+	srv.Secrets = secrets.NewMemory()
+	intTeam(t, srv, "dana")
+	dana := agentpod.NewClient(serveCoreUDS(t, srv), "dana")
+	call := func() *agentpod.IntegrationCallResponse {
+		t.Helper()
+		resp, err := dana.IntegrationCall(context.Background(), agentpod.IntegrationCallRequest{Name: "echo_echo", Arguments: json.RawMessage(`{}`)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return resp
+	}
+	const refused = "The Echo integration is being set up; ask the owner to finish it."
+	lastReason := func() string {
+		rows, _ := srv.Store.ReadIntegrationAuditTail("echo", 1)
+		if len(rows) != 1 || rows[0].Agent != "dana" {
+			return ""
+		}
+		return rows[0].Reason
+	}
+
+	startSetupFlow(t, srv, "echo")
+	_, cookie := echoGo(t, srv, "acme")
+	echoBack(t, srv, e, cookie, url.Values{"code": {"c0de-a1"}})
+	waitFlow(t, srv, "echo", apitypes.SetupFlowStateWait)
+	if err := srv.Store.SetIntegrationAccess("echo", store.IntegrationAccess{Slug: "dana", SetAt: signInAt, SetBy: "ceo"}); err != nil {
+		t.Fatal(err)
+	}
+	if r := call(); !r.IsError || len(r.Content) != 1 || r.Content[0] != refused || lastReason() != reasonSettingUp {
+		t.Errorf("during the install = %+v, audit %q", r, lastReason())
+	}
+
+	forgetFlowsAsARestartDoes(srv)
+	if r := call(); !r.IsError || len(r.Content) != 1 || r.Content[0] != refused {
+		t.Errorf("over an unfinished install = %+v", r)
+	}
+	srv.DiscardUnfinishedSetups()
+	srv.setupAwaitDiscard(context.Background(), "echo")
+
+	installEcho(t, srv, e, "acme")
+	if err := srv.Store.SetIntegrationAccess("echo", store.IntegrationAccess{Slug: "dana", SetAt: signInAt, SetBy: "ceo"}); err != nil {
+		t.Fatal(err)
+	}
+	if r := call(); r.IsError {
+		t.Errorf("once installed = %+v", r)
 	}
 }
 
