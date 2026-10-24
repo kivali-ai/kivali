@@ -286,7 +286,12 @@ func (t *setupRuns) endLocked(run *setupRun) {
 	}
 	prev := t.discarding[name]
 	t.discarding[name] = done
+	// Counted, and run to its end whatever is cancelled meanwhile
+	// (setupDrain cancels flows, not this): it writes the store after
+	// the flow has ended.
+	t.calling.Add(1)
 	go func() {
+		defer t.calling.Done()
 		defer close(done)
 		if prev != nil {
 			<-prev
