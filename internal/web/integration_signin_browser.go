@@ -78,6 +78,14 @@ const (
 	errSignInNotHere = "a sign-in in the browser cannot finish from here; sign in from a browser at the team's own address"
 )
 
+// errHandoffRefused: Kivali Desktop sent the system browser to the
+// handoff for this flow and the server refused its token, so the
+// browser never left for the service. why is the refusal's words
+// (auth.HandoffRefusal.Words), which say what to put right.
+func errHandoffRefused(why string) string {
+	return "the browser could not be signed in to the team: " + why + "; start it again"
+}
+
 // desktopWindowCookie is the cookie Kivali Desktop's team windows set
 // in their own web view (TEAM_WINDOW_SCRIPT in
 // desktop-app/src-tauri/src/windows.rs), never in a browser's: a

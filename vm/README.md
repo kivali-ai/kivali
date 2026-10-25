@@ -719,6 +719,28 @@ runs the same `shutdown` sequence through `poweroff`; the console verb
 stays as the fallback. Its log is `log/guest.log` on the data disk. The
 protocol, the supervisor and its CLI are in [supervisor.md](../docs/developers/supervisor.md).
 
+**The clock.** The guest's system clock stops with its CPUs: while the
+computer sleeps no time passes in the VM, and the kernel reads the
+hardware clock only at boot, so after the computer wakes the guest runs
+behind the host by however long it slept (ten hours after a night). The
+hardware clock the hypervisor shows the guest (`rtc-pl031` on
+Virtualization.framework, Hyper-V's RTC) follows the host's clock all
+along. The agent compares the two at start and every 10 s
+(`guestapi.ClockSync`, `/sys/class/rtc/rtc0/since_epoch` against
+`CLOCK_REALTIME`) and, when they differ by more than 2 s (the hardware
+clock reads to the second), steps the system clock to the hardware
+clock, logging the step ("clock: stepped the system clock +10h0m17s,
+from … to the hardware clock's …"). A guest with no readable hardware
+clock keeps its system clock and says so once. What depends on the
+guest's clock agreeing with the host's then holds: the handoff tokens
+the supervisor mints, which the server refuses when their expiry
+stands too far from its own clock
+([auth.md](../docs/developers/auth.md), "Desktop handoff"), the JSON Web
+Tokens an integration signs for a service, and TLS. On Hyper-V the
+kernel's `hv_utils` time sync (`CONFIG_HYPERV_UTILS`, loaded by the
+boot script's modalias pass) also steps the clock when the VM resumes;
+the agent's check is the same on both.
+
 The agent accepts only connections from the host's vsock CID (2).
 `rootfs/etc/modprobe.d/kivali.conf` blacklists `vsock_loopback` and
 `vhost_vsock` (`blacklist` plus `install … /bin/false`, so neither

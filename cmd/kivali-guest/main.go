@@ -13,6 +13,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
@@ -59,6 +60,18 @@ func main() {
 			time.Sleep(time.Hour)
 		}
 	}
+
+	// The system clock first, so the status this agent serves and
+	// everything the guest signs or checks against the host's clock are
+	// right from the start; then at every tick for as long as it runs
+	// (guestapi.ClockSync).
+	clock := guestapi.NewClockSync(log.Printf)
+	if step, err := clock.Once(); err == nil && step != 0 {
+		say("clock stepped %s to the hardware clock", step.Round(time.Second))
+	}
+	ticker := time.NewTicker(guestapi.ClockSyncEvery)
+	defer ticker.Stop()
+	go clock.Run(context.Background(), ticker.C)
 
 	srv := guestapi.NewServer(version)
 	srv.Logf = log.Printf

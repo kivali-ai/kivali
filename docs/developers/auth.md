@@ -286,8 +286,21 @@ an ordinary sign-in would leave.
   On success the session cookie is set as the callback sets it (with
   `KIVALI_COOKIE_SUFFIX`), and the answer is a 302 to `/`. Any failure
   is a 302 to `/` with no session, where the ordinary sign-in follows,
-  and one fixed log line ("auth handoff: refused a handoff token");
-  the token is never logged.
+  and one log line naming the cause ("auth handoff: refused a handoff
+  token: too far ahead by 10h0m17s"; `auth.HandoffRefusal`): malformed
+  (not a token, or not signed with this key), expired, too far ahead,
+  replayed or not invited. For expired and too far ahead the line
+  carries the two clocks' disagreement: a token is minted 2 minutes
+  ahead of the supervisor's clock, so an expiry standing elsewhere than
+  2 minutes ahead of the server's measures how far the supervisor's
+  clock is from the server's. The token is never logged.
+- **Clocks.** The supervisor mints on the computer's clock and the
+  server checks on the VM's. The two agree because the guest agent
+  keeps the VM's system clock on its hardware clock, which the
+  hypervisor keeps on the computer's ([vm/README.md](../../vm/README.md),
+  "The guest agent and the supervisor"); without that, a VM that stood
+  still while the computer slept would refuse every token as too far
+  ahead until it restarted.
 - **`next`:** `GET /auth/handoff?t=<token>&next=<flow id>` is how the
   app sends an integration's setup flow's Go step (a browser sign-in
   among them) to the system browser
@@ -302,14 +315,26 @@ an ordinary sign-in would leave.
   one browser ends the first) and the 302 goes to
   `/connect/start?flow=<id>`, which sends the browser on to the
   service, by a link or a form that posts itself. Any other `next` refuses the handoff as
-  a bad token is refused: a 302 to `/` with no session, and one fixed
-  log line. The app names only a flow it just saw start, so a `next`
-  with nowhere to go is no errand of its. `next` is never an address,
-  so the route redirects only to one the server made. A token
-  that is refused, replayed or sent to a host that is not loopback
-  ignores `next` entirely: no cookie, no lookup. The answer carries
-  `Referrer-Policy: no-referrer`, so the vendor's page never sees the
-  token.
+  a bad token is refused: a 302 to `/` with no session, and a log line
+  saying what `next` named (no flow, a flow not waiting for a browser,
+  a flow started at another address). The app names only a flow it
+  just saw start, so a `next` with nowhere to go is no errand of its.
+  `next` is never an address, so the route redirects only to one the
+  server made. A token that is refused or sent to a host that is not
+  loopback signs nothing in and sets no cookie whatever its `next`.
+  A refused token's `next` is told to the flow runner all the same
+  (`auth.HandoffRefused`, `handoffRefused`), so the owner learns why
+  the browser never left: when it names a flow waiting on a Go step,
+  the flow ends with the refusal's words ("the browser could not be
+  signed in to the team: the team's clock is about 10 hours behind this
+  computer's; start it again"), which its page in the team's window
+  shows with Try again, and the browser is sent to that page
+  (`/org/integrations/<name>?setup=<id>`) instead of `/`. A replayed
+  token, the browser loading the handoff again after it passed, ends
+  nothing (that flow is under way in the browser) and goes to the
+  flow's page. A `next` naming anything else leaves the browser on `/`.
+  The answer carries `Referrer-Policy: no-referrer`, so the vendor's
+  page never sees the token.
 
 The route exists whenever sign-in is enforced (not under `DEV_MODE`),
 with or without a Google client.

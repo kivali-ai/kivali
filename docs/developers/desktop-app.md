@@ -660,7 +660,9 @@ is not loopback, so the token never leaves the computer). The server
 signs that browser in, hands it the flow's cookie and sends it through
 `/connect/start` to the service ([auth.md](auth.md#desktop-handoff)).
 The web view stays on its page, which follows the flow. The token is
-never logged; a failure logs one line naming the team. For a team
+never logged; a failure to get or open one logs one line naming the
+team, and a token the server refuses ends the flow in words the page
+shows ([auth.md](auth.md#desktop-handoff), `next`). For a team
 elsewhere, with no supervisor here, `/connect/start` is refused too
 and nothing opens (`connect_sign_in_target` has no target): loaded, it
 would send the system browser to the service's page with neither the

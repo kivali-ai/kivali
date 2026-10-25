@@ -585,7 +585,7 @@ func (s *Server) wireRoutes() {
 	// system browser it sends a browser sign-in to, which next names
 	// (docs/developers/auth.md, Desktop handoff).
 	if s.Handoff != nil {
-		mux.Handle("GET "+auth.HandoffPath, s.Handoff.WithNext(s.handoffNext))
+		mux.Handle("GET "+auth.HandoffPath, s.Handoff.WithNext(s.handoffNext, s.handoffRefused))
 	}
 	mux.HandleFunc("GET /auth/logout", s.handleLogout)
 	mux.HandleFunc("GET "+auth.NotInvitedPath, auth.NotInvitedHandler)

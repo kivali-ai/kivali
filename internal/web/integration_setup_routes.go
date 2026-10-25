@@ -30,6 +30,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/kivali-ai/kivali/internal/auth"
 	"github.com/kivali-ai/kivali/internal/builtinintegrations"
 	"github.com/kivali-ai/kivali/internal/web/apitypes"
 )
@@ -399,9 +400,21 @@ func (s *Server) handoffNext(w http.ResponseWriter, r *http.Request, next string
 	// The cookie is host-only and the service sends the browser back to
 	// the flow's callback address: a handoff that reached Kivali at
 	// another address (localhost for 127.0.0.1, another port) would set
-	// it where the callback never looks.
-	if next == "" || run == nil || run.state != apitypes.SetupFlowStateGo || signInRedirectURL(r) != run.callback {
+	// it where the callback never looks. Why the browser is turned away
+	// is logged: the flow's id is not a secret, and the addresses are
+	// Kivali's own.
+	switch reached := signInRedirectURL(r); {
+	case next == "" || run == nil:
 		s.setupUnlock()
+		log.Printf("auth handoff: next names no setup flow (it ended, ran out or Kivali restarted)")
+		return ""
+	case run.state != apitypes.SetupFlowStateGo:
+		s.setupUnlock()
+		log.Printf("auth handoff: next names a setup flow of %s that is not waiting for a browser (%s)", run.name, run.state)
+		return ""
+	case reached != run.callback:
+		s.setupUnlock()
+		log.Printf("auth handoff: the browser reached Kivali at %s while %s's setup flow was started at %s", setupURLWords(reached), run.name, setupURLWords(run.callback))
 		return ""
 	}
 	noReturn := run.step.Go != nil && run.step.Go.NoReturn
@@ -414,6 +427,38 @@ func (s *Server) handoffNext(w http.ResponseWriter, r *http.Request, next string
 		http.SetCookie(w, s.connectCookie(next, name, callback))
 	}
 	return connectStartPath + "?" + url.Values{"flow": {next}}.Encode()
+}
+
+// handoffRefused is the Desktop handoff's refusal (auth.HandoffRefused):
+// the system browser came with a token the server refused, so it never
+// left for the service, and nothing but the handoff's log line would
+// say so; the owner would see the flow wait on its Go step until it
+// ran out, and the browser the home page. When next names a flow
+// waiting on a Go step, the flow ends with the refusal's words (the
+// team's clock stands hours from this computer's, the link was opened
+// too late), which its page in the team's window shows with Try again,
+// and the browser is sent to that page. A replayed token, the browser
+// loading the handoff again after it passed, ends nothing: the flow is
+// that browser's, under way at the service; the browser goes to the
+// flow's page. Nothing is signed in and no cookie set either way. next
+// comes from a request whose token failed: it can end only a flow it
+// names by its 32 random hex digits, and only while that flow waits
+// for a browser.
+func (s *Server) handoffRefused(_ *http.Request, next string, why auth.HandoffRefusal) string {
+	t := &s.setupRuns
+	t.mu.Lock()
+	t.pruneLocked(s.clk().Now())
+	run := t.runs[next]
+	if run == nil || run.state != apitypes.SetupFlowStateGo {
+		s.setupUnlock()
+		return ""
+	}
+	name, id := run.name, run.id
+	if why.Cause != auth.HandoffRefusedReplayed {
+		s.setupFailLocked(run, errHandoffRefused(why.Words()))
+	}
+	s.setupUnlock()
+	return setupReturnPath(name, id)
 }
 
 // handleConnectCallback is GET /connect/callback, where a Go step's
