@@ -66,12 +66,21 @@ type appManifest struct {
 
 // hookAttributes is the manifest's webhook. GitHub takes no manifest
 // whose hook_attributes lacks a url, an inactive webhook's included,
-// and names the lack "url" alone; the team's address stands in, and
-// nothing is ever sent to it.
+// and names the lack "url" alone; and it takes no url that is not
+// reachable over the public Internet, so a team's loopback address
+// (127.0.0.1) is refused as "Hook url is not supported". The webhook
+// is inactive and nothing is ever sent to it, so its address is
+// hookPlaceholder, a public name that is nobody's.
 type hookAttributes struct {
 	URL    string `json:"url"`
 	Active bool   `json:"active"`
 }
+
+// hookPlaceholder is the inactive webhook's address: example.com is
+// reserved for exactly this use and resolves on the public Internet,
+// which GitHub requires of a webhook's host; GitHub's own manifest
+// example names it.
+const hookPlaceholder = "https://example.com/no-webhook"
 
 // appName is the name the app is made with: "Kivali" and the team's
 // name, cut to the most GitHub takes.
@@ -198,7 +207,7 @@ func createApp(account string, last builtinintegrations.Answer) (builtinintegrat
 		SetupURL:           setupURL,
 		SetupOnUpdate:      true,
 		Public:             false,
-		HookAttributes:     hookAttributes{URL: base, Active: false},
+		HookAttributes:     hookAttributes{URL: hookPlaceholder, Active: false},
 		DefaultPermissions: needed(),
 		DefaultEvents:      []string{},
 	})
