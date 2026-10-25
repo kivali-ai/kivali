@@ -79,7 +79,7 @@ func TestDesktopHandoffRefusedEndsOnlyAWaitingFlow(t *testing.T) {
 	q.Set("redirect_uri", ts.URL+connectCallbackPath)
 	authorize.RawQuery = q.Encode()
 	back := vendorApprove(t, authorize)
-	signedInThere(t, srv, callback(t, srv, back, cookieOf(first, "kivali_connect")))
+	desktopCallback(t, srv, back, "", cookieOf(first, "kivali_connect"))
 	if done := flowEnds(t, srv); done.State != apitypes.SetupFlowStateDone {
 		t.Fatalf("flow = %+v %q", done, textOf(done.Error))
 	}

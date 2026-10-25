@@ -22,6 +22,7 @@
 //! A team's web app and the bundled pages never share a webview, so the
 //! ACL is scoped by webview label as well as origin.
 
+use crate::connectreturn;
 use crate::platform;
 use crate::shell::{self, Shell};
 use crate::signin;
@@ -1142,7 +1143,7 @@ fn handoff_url(origin: &str, token: &str) -> Option<Url> {
 /// handoff). Only for a loopback origin, a team on this computer: the
 /// server answers the handoff nowhere else, and a token is never sent
 /// off the computer. The token is a secret: never logged.
-fn connect_sign_in_url(origin: &str, token: &str, flow: &str) -> Result<Url, String> {
+fn connect_sign_in_url(origin: &str, token: &str, flow: &str, ret: Option<(u16, &str)>) -> Result<Url, String> {
     let base = Url::parse(origin).map_err(|e| format!("the team's address does not read as one: {e}"))?;
     let loopback = match base.host() {
         Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
@@ -1155,7 +1156,10 @@ fn connect_sign_in_url(origin: &str, token: &str, flow: &str) -> Result<Url, Str
     }
     let mut u = base.join(HANDOFF_PATH).map_err(|e| e.to_string())?;
     u.query_pairs_mut().append_pair("t", token).append_pair("next", flow);
-    Ok(u)
+    Ok(match ret {
+        Some((port, token)) => connectreturn::with_return(&u, port, token),
+        None => u,
+    })
 }
 
 /// An integration's browser sign-in the team's web app begins at
@@ -1175,6 +1179,13 @@ fn connect_sign_in_url(origin: &str, token: &str, flow: &str) -> Result<Url, Str
 /// cookie, costing the owner an approval that cannot finish. Such a
 /// sign-in is refused and logged, and the page's waiting block says to
 /// sign in from a browser at the team's address.
+///
+/// The browser's part ends at the callback, whose page says the setup
+/// goes on in the app. So that the app comes forward then, the shell
+/// listens for that page's one request meanwhile (connectreturn.rs) and
+/// names the listener in the handoff; a newer sign-in of the team
+/// replaces the listener. Without one (no port to be had) the sign-in
+/// still runs, and the owner switches back to the app by hand.
 fn open_connect_sign_in(app: &AppHandle, id: &str, gate: &Mutex<BrowserGate>, url: &Url) {
     let sh = app.state::<Shell>();
     let (Some(rt), Some((origin, flow))) = (sh.runtime(id), sh.team(id).and_then(|t| connect_sign_in_target(&t, url))) else {
@@ -1185,14 +1196,46 @@ fn open_connect_sign_in(app: &AppHandle, id: &str, gate: &Mutex<BrowserGate>, ur
         eprintln!("kivali: not opening an integration's sign-in of {id} in the browser (rate limit or window not focused)");
         return;
     }
+    let (app_ret, id_ret) = (app.clone(), id.to_string());
+    let ret = match connectreturn::start(Arc::new(signin::SystemClock), move |token| connect_returned(&app_ret, &id_ret, &token)) {
+        Ok(p) => {
+            let ret = (p.port, p.token.clone());
+            sh.pending_returns.lock().unwrap().insert(id.to_string(), p);
+            Some(ret)
+        }
+        Err(e) => {
+            eprintln!("kivali: {id}: cannot listen on 127.0.0.1 for the browser's return: {e}");
+            None
+        }
+    };
     let (app, id) = (app.clone(), id.to_string());
     std::thread::spawn(move || {
-        let target = rt.supervisor.handoff().map_err(|e| e.to_string()).and_then(|token| connect_sign_in_url(&origin, &token, &flow));
+        let ret = ret.as_ref().map(|(port, token)| (*port, token.as_str()));
+        let target = rt.supervisor.handoff().map_err(|e| e.to_string()).and_then(|token| connect_sign_in_url(&origin, &token, &flow, ret));
         // The opener's own error may quote the address, token and all.
         let opened = target.and_then(|u| crate::open_url_in_browser(&app, u.as_str()).map_err(|_| "the system browser did not open it".to_string()));
         if let Err(e) = opened {
             eprintln!("kivali: opening an integration's sign-in of {id} in the browser: {e}");
         }
+    });
+}
+
+/// The browser came back from an integration's sign-in to the team's
+/// callback, whose page told the listener `token` names: the team's
+/// window, which follows the flow, comes forward ([`show_team`]). The
+/// listener is forgotten only while it is still the team's: a newer
+/// sign-in's stays.
+fn connect_returned(app: &AppHandle, id: &str, token: &str) {
+    let (app2, id, token) = (app.clone(), id.to_string(), token.to_string());
+    let _ = app.run_on_main_thread(move || {
+        let sh = app2.state::<Shell>();
+        {
+            let mut g = sh.pending_returns.lock().unwrap();
+            if g.get(&id).is_some_and(|p| p.token == token) {
+                g.remove(&id);
+            }
+        }
+        show_team(&app2, &id);
     });
 }
 
@@ -1205,7 +1248,7 @@ fn connect_sign_in_target(t: &Team, url: &Url) -> Option<(String, String)> {
     let flow = connect_flow(url)?;
     let origin = t.origin().filter(|_| t.is_here())?;
     let own = Url::parse(&origin).is_ok_and(|o| o.origin() == url.origin());
-    (own && connect_sign_in_url(&origin, "", &flow).is_ok()).then_some((origin, flow))
+    (own && connect_sign_in_url(&origin, "", &flow, None).is_ok()).then_some((origin, flow))
 }
 
 /// Setup's "Open <team>": [`show_team`], then, for a team here that
@@ -1945,12 +1988,16 @@ mod tests {
     #[test]
     fn connect_sign_in_url_is_the_teams_loopback_handoff() {
         let flow = "9f86d081884c7d659a2feaa0c55ad015";
-        let target = connect_sign_in_url("http://127.0.0.1:8080", "eyJl+/=.c2ln&next=x", flow).unwrap();
+        let target = connect_sign_in_url("http://127.0.0.1:8080", "eyJl+/=.c2ln&next=x", flow, None).unwrap();
         assert_eq!(target.as_str(), format!("http://127.0.0.1:8080/auth/handoff?t=eyJl%2B%2F%3D.c2ln%26next%3Dx&next={flow}"));
         let pairs: Vec<(String, String)> = target.query_pairs().into_owned().collect();
         assert_eq!(pairs, vec![("t".into(), "eyJl+/=.c2ln&next=x".into()), ("next".into(), flow.into())]);
-        assert!(connect_sign_in_url("http://localhost:8080", "t", flow).is_ok());
-        assert!(connect_sign_in_url("http://[::1]:8080", "t", flow).is_ok());
+        // With a listener for the browser's return, the handoff names it.
+        let tok = "abcDEF0123456789-_abcDEF0123456789-_abcDEF0";
+        let with = connect_sign_in_url("http://127.0.0.1:8080", "a.b", flow, Some((54321, tok))).unwrap();
+        assert_eq!(with.as_str(), format!("http://127.0.0.1:8080/auth/handoff?t=a.b&next={flow}&return_port=54321&return_token={tok}"));
+        assert!(connect_sign_in_url("http://localhost:8080", "t", flow, None).is_ok());
+        assert!(connect_sign_in_url("http://[::1]:8080", "t", flow, None).is_ok());
         for refused in [
             "https://kivali.example.com",
             "http://192.168.1.5:8080",
@@ -1959,7 +2006,7 @@ mod tests {
             "file:///tmp/x",
             "not an address",
         ] {
-            assert!(connect_sign_in_url(refused, "t", flow).is_err(), "{refused}");
+            assert!(connect_sign_in_url(refused, "t", flow, None).is_err(), "{refused}");
         }
     }
 

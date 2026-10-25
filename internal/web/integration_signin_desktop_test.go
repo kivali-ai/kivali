@@ -2,6 +2,7 @@ package web
 
 import (
 	"bytes"
+	"io"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
@@ -116,10 +117,12 @@ func TestDesktopBrowserSignInThroughTheHandoff(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	page, _ := io.ReadAll(resp.Body)
 	_ = resp.Body.Close()
-	if *landed == nil || (*landed).Path != "/org/integrations/crm" || (*landed).Query().Get("setup") != f.ID {
-		t.Fatalf("the system browser landed on %v (%d)", *landed, resp.StatusCode)
+	if *landed != nil || resp.StatusCode != http.StatusOK || resp.Request.URL.Path != connectCallbackPath {
+		t.Fatalf("the system browser landed on %v, then %s (%d)", *landed, resp.Request.URL, resp.StatusCode)
 	}
+	assertDesktopReturnPage(t, string(page), "")
 	if f := flowEnds(t, srv); f.State != apitypes.SetupFlowStateDone {
 		t.Fatalf("flow = %+v %q", f, textOf(f.Error))
 	}
@@ -209,8 +212,11 @@ func TestDesktopHandoffReplacesTheBrowsersSignIn(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = resp.Body.Close()
-	if *landed == nil || (*landed).Path != "/org/integrations/crm" || (*landed).Query().Get("setup") != f.ID {
-		t.Fatalf("the Desktop sign-in landed on %v", *landed)
+	if *landed != nil || resp.StatusCode != http.StatusOK || resp.Request.URL.Path != connectCallbackPath {
+		t.Fatalf("the Desktop sign-in landed on %v, then %s (%d)", *landed, resp.Request.URL, resp.StatusCode)
+	}
+	if f := waitFlow(t, srv, "crm", apitypes.SetupFlowStateDone); f.State != apitypes.SetupFlowStateDone {
+		t.Errorf("crm's flow reads %+v %q", f, textOf(f.Error))
 	}
 	if f := waitFlow(t, srv, "crm2", apitypes.SetupFlowStateFailed); textOf(f.Error) != errSignInReplaced {
 		t.Errorf("crm2's flow reads %q", textOf(f.Error))
@@ -264,8 +270,43 @@ func TestDesktopHandoffNextIsAPendingFlow(t *testing.T) {
 	q.Set("redirect_uri", ts.URL+connectCallbackPath)
 	authorize.RawQuery = q.Encode()
 	back := vendorApprove(t, authorize)
-	signedInThere(t, srv, callback(t, srv, back, cookieOf(first, "kivali_connect")))
+	desktopCallback(t, srv, back, "", cookieOf(first, "kivali_connect"))
+	if f := flowEnds(t, srv); f.State != apitypes.SetupFlowStateDone {
+		t.Fatalf("the flow ended %+v %q", f, textOf(f.Error))
+	}
 	assertHandoffRefused(t, serveHandoff(t, srv, host, handoffToken(t, srv), f.ID), "a flow that came back")
+}
+
+// desktopCallback is a browser Kivali Desktop handed off coming back to
+// Kivali at back with cookies: the callback answers it with the page
+// that sends it back to the app (assertDesktopReturnPage), telling the
+// app's listener at ret when the handoff named one.
+func desktopCallback(t *testing.T, srv *Server, back *url.URL, ret string, cookies ...*http.Cookie) {
+	t.Helper()
+	rr := serveSignedIn(t, srv, httptest.NewRequest(http.MethodGet, back.String(), nil), cookies...)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("the callback answered %d %s", rr.Code, rr.Body.String())
+	}
+	csp, origin := rr.Header().Get("Content-Security-Policy"), originOf(ret)
+	if reaches := strings.Contains(csp, "connect-src "); reaches != (origin != "") || (origin != "" && !strings.Contains(csp, "connect-src "+origin)) {
+		t.Errorf("CSP = %q, want connect-src %q", csp, origin)
+	}
+	assertDesktopReturnPage(t, rr.Body.String(), ret)
+}
+
+// assertDesktopReturnPage fails unless page is the one a handed-off
+// browser gets at the callback: it says the setup goes on in Kivali
+// Desktop, loads only from Kivali's own origin, and tells the app's
+// listener at ret, or no one when ret is empty.
+func assertDesktopReturnPage(t *testing.T, page, ret string) {
+	t.Helper()
+	if !strings.Contains(page, "<h1>Back to Kivali</h1>") || !strings.Contains(page, "The setup goes on in Kivali Desktop") {
+		t.Errorf("page = %s", page)
+	}
+	if told := strings.Contains(page, "fetch("); told != (ret != "") || (ret != "" && !strings.Contains(page, `fetch("`+ret+`",`)) {
+		t.Errorf("page tells %q: %s", ret, page)
+	}
+	assertLoadsOnlyItself(t, page)
 }
 
 // Why this test exists: a flow lasts ten minutes after its last change.

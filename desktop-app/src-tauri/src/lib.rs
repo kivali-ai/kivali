@@ -4,6 +4,7 @@
 mod appupdate;
 pub mod cli;
 mod commands;
+mod connectreturn;
 mod diagnostics;
 mod hostinfo;
 mod menus;

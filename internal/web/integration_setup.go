@@ -202,6 +202,14 @@ type setupRun struct {
 	// callback is the callback address as the request that started or
 	// last touched the flow reached Kivali: <scheme>://<host>/connect/callback.
 	callback string
+	// viaDesktop says the browser the Go step left in is the system
+	// browser Kivali Desktop handed off (handoffNext), while the team's
+	// window follows the flow: the callback answers that browser with a
+	// page that says so rather than the flow's page. desktopReturn is
+	// the app's listener that page tells, so the app comes to the
+	// front, or empty when the handoff named none.
+	viaDesktop    bool
+	desktopReturn string
 	// legs is every state the flow's calls were given in their
 	// Callback, the latest last: a callback carrying any of them finds
 	// the flow while it lives, since a service may keep an address an
