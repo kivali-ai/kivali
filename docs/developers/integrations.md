@@ -1173,9 +1173,14 @@ stream of the state: `retry: 1500`, the state at once as a `flow`
 event, each change after (a state equal to the last sent but for `expires_at` is not sent again; a slow
 reader gets the newest), a `: heartbeat` comment every 25 seconds, and
 the end of the stream when the flow is forgotten. A stream counts as
-watching the flow. The page (`SetupFlowPanel`) follows the stream, and
-asks `GET .../setup` every three seconds while the tab is visible where
-it has no stream.
+watching the flow. Every state carries `seq`, one more than the state
+before it: a reply to `POST .../setup` or `.../setup/answer` is read
+before the step it started finishes, while the stream may already have
+carried the step's result, so of two states of one flow the higher
+`seq` is the later, whichever arrived first. The page (`SetupFlowPanel`)
+follows the stream, keeps the highest `seq` it has seen of the flow
+and drops an older state, and asks `GET .../setup` every three seconds
+while the tab is visible where it has no stream.
 
 ### For a bundle
 

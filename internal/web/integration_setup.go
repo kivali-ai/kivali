@@ -227,8 +227,11 @@ type setupRun struct {
 	polled   time.Time
 	subs     map[chan []byte]struct{}
 	// sent is the state last queued for the streams; sentKey the same
-	// without its expires_at, which publishLocked compares.
+	// without its expires_at and seq, which publishLocked compares.
+	// seq numbers the states, SetupFlow.Seq: one more each time the
+	// state to send differs from the last.
 	sent, sentKey []byte
+	seq           int
 	// install is true for a flow that installs: it started with no
 	// connection, or with one an earlier version made that does not
 	// fit (setupMisfit), or took over from one that did. madeConn is
@@ -509,7 +512,7 @@ func (s *Server) setupScrub(run *setupRun, values ...string) {
 // wireLocked is run on the wire, scrubbed.
 func (run *setupRun) wireLocked() apitypes.SetupFlow {
 	scrub := run.scrubber()
-	out := apitypes.SetupFlow{ID: run.id, Flow: run.flow, State: run.state, ExpiresAt: run.expiresLocked()}
+	out := apitypes.SetupFlow{ID: run.id, Flow: run.flow, State: run.state, Seq: run.seq, ExpiresAt: run.expiresLocked()}
 	if run.err != "" {
 		out.Error = optString(run.err)
 	}
@@ -550,16 +553,22 @@ func (run *setupRun) wireLocked() apitypes.SetupFlow {
 	return out
 }
 
-// publishLocked queues run's state for its streams when it changed;
-// setupUnlock sends it. A state whose expires_at alone moved (a Wait
-// checked while watched) is no change and is not sent: a reader learns
-// the new expiry with the next change, or by reading the flow.
+// publishLocked queues run's state for its streams when it changed,
+// numbered one past the last (SetupFlow.Seq); setupUnlock sends it. A
+// state whose expires_at alone moved (a Wait checked while watched) is
+// no change and is not sent: a reader learns the new expiry with the
+// next change, or by reading the flow.
 func (run *setupRun) publishLocked() {
 	f := run.wireLocked()
-	b, err := json.Marshal(f)
-	f.ExpiresAt = time.Time{}
+	f.ExpiresAt, f.Seq = time.Time{}, 0
 	key, kerr := json.Marshal(f)
-	if err != nil || kerr != nil || bytes.Equal(key, run.sentKey) {
+	if kerr != nil || bytes.Equal(key, run.sentKey) {
+		return
+	}
+	run.seq++
+	b, err := json.Marshal(run.wireLocked())
+	if err != nil {
+		run.seq--
 		return
 	}
 	run.sent, run.sentKey = b, key

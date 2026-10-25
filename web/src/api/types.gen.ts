@@ -2230,6 +2230,14 @@ export interface SetupFlow {
   flow: string;
   state: SetupFlowState;
   /**
+   * Seq numbers the flow's states from 1, rising with each change
+   * of State, Step, Progress or Error. A request's reply and a
+   * stream event can cross on their way to the page: of two states
+   * of one flow, the higher Seq is the later, whichever arrived
+   * first.
+   */
+  seq: number /* int */;
+  /**
    * Step is what you do next, while State is form, go or wait.
    */
   step?: SetupFlowStep;
