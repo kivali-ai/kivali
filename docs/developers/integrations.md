@@ -3120,12 +3120,16 @@ GitHub's own pages and nothing copied:
    `manifest`: `{"name": "Kivali <team>", "url": <the team's address>,
    "redirect_url": <the team's /connect/callback, no query>, "setup_url":
    <the same>, "setup_on_update": true, "public":
-   false, "hook_attributes": {"url": <the team's address>, "active": false},
-   "default_permissions": {"metadata": "read", "contents": "read",
-   "issues": "write", "pull_requests": "write"}, "default_events": []}`.
-   GitHub takes no `hook_attributes` without a `url`, an inactive
-   webhook's included, and names the lack "url" alone; the team's
-   address stands in, and nothing is ever sent to it.
+   false, "hook_attributes": {"url": "https://example.com/no-webhook",
+   "active": false}, "default_permissions": {"metadata": "read",
+   "contents": "read", "issues": "write", "pull_requests": "write"},
+   "default_events": []}`. GitHub takes no `hook_attributes` without a
+   `url`, an inactive webhook's included, and names the lack "url"
+   alone; and no `url` whose host is not reachable over the public
+   Internet, which refuses a team's 127.0.0.1 ("Hook url is not
+   supported"). The inactive webhook names example.com, reserved for
+   such use and GitHub's own manifest example; nothing is ever sent to
+   it.
    The name is `Answer.Team` after "Kivali" ("Kivali" alone for a team
    with no name), cut to the 34 characters GitHub takes. The words say
    GitHub may ask the owner to change the name (names are unique across

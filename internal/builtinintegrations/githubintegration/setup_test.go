@@ -113,10 +113,12 @@ func madeConn() builtinintegrations.Connection {
 // Why this test exists: this is GitHub's whole install as the design
 // draws it, two clicks on GitHub and nothing copied. The Form asks for
 // the account alone; the Go posts the manifest (named for the team,
-// private, its webhook inactive at the team's address (GitHub takes no
-// webhook without an address, and names the lack "url"), the
-// permissions this version needs, GitHub sent back to the flow's
-// callback and the setup address) to the personal
+// private, its webhook inactive at a public placeholder address and
+// never the team's (GitHub takes no webhook without an address, and
+// names the lack "url"; and none at an address that is not public,
+// which a team's 127.0.0.1 is not), the permissions this version
+// needs, GitHub sent back to the flow's callback and the setup
+// address) to the personal
 // account's new-app page with the flow's state; the code GitHub sends
 // back is traded with no credential, and only the app's five values
 // are kept (the webhook secret and the code never); the install Go is
@@ -143,7 +145,7 @@ func TestSetupInstallsThroughTheManifestFlow(t *testing.T) {
 	}
 	want := map[string]any{
 		"name": "Kivali Acme Corp", "url": teamBase, "redirect_url": teamBase + "/connect/callback", "setup_url": teamBase + "/connect/callback",
-		"setup_on_update": true, "public": false, "hook_attributes": map[string]any{"url": teamBase, "active": false},
+		"setup_on_update": true, "public": false, "hook_attributes": map[string]any{"url": "https://example.com/no-webhook", "active": false},
 		"default_permissions": map[string]any{"metadata": "read", "contents": "read", "issues": "write", "pull_requests": "write"},
 		"default_events":      []any{},
 	}
