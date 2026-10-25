@@ -662,7 +662,27 @@ signs that browser in, hands it the flow's cookie and sends it through
 The web view stays on its page, which follows the flow. The token is
 never logged; a failure to get or open one logs one line naming the
 team, and a token the server refuses ends the flow in words the page
-shows ([auth.md](auth.md#desktop-handoff), `next`). For a team
+shows ([auth.md](auth.md#desktop-handoff), `next`).
+
+The browser's part ends at the team's `/connect/callback`, which
+answers it with a page saying the setup goes on in Kivali Desktop and
+the tab can be closed. So that the app comes forward at that moment,
+`open_connect_sign_in` first starts a listener on `127.0.0.1:<port>`
+(`connectreturn.rs`, built on the desktop sign-in's: the same `Closer`,
+request reading and answers) and appends its `return_port` and
+`return_token` to the handoff (`connectreturn::with_return`). The
+server keeps them with the flow, and the callback's page asks
+`GET /connect/<token>` of the listener, which answers a 204, closes,
+and has the shell bring the team's window forward (`connect_returned`,
+`show_team`); any other request is a 404 and the listener keeps
+waiting. One listener per team (`Shell::pending_returns`): a newer
+sign-in of the team drops the older, which closes it, and a listener
+nobody returns to closes after fifteen minutes. The token is never
+logged. With no port to be had the sign-in runs without a listener and
+the owner switches back to the app by hand. Nothing is registered with
+the system and no URL scheme is involved, so `make dev` exercises the
+same return as the packaged app, and a browser shows no "open this
+app?" prompt. For a team
 elsewhere, with no supervisor here, `/connect/start` is refused too
 and nothing opens (`connect_sign_in_target` has no target): loaded, it
 would send the system browser to the service's page with neither the
@@ -1855,6 +1875,7 @@ limit is 2 GB.
 | Remote IPC | none: no `remote` capability; app manifest in build.rs; webview-label check in every command | relying on origin scoping alone: one line in a capability file away from exposing a supervisor |
 | Owner at setup | the app's own Google sign-in through the public client and relay, id_token verified locally | typing an email: a typo locks the owner out of their own team; signing in later in the team's page: the server needs the owner before it can admit anyone |
 | Connecting to a team | the team's own sign-in through the existing desktop sign-in (loopback return), the outcome read from where the hidden window lands | a new one-time-code handoff endpoint on the team: the loopback flow already lands the session in the window |
+| Bringing the app forward after an integration's browser sign-in | a loopback listener the callback's page asks once (`connectreturn.rs`), named in the handoff | a `kivali://` URL scheme: a browser prompts before opening it, it needs registering with the system on both platforms, and a development build may lack it |
 | Claude credential | the CLI's own sign-in (`claude` in the team's server container), which offers a subscription, a Console account, Bedrock and Vertex AI, plus the app's Microsoft Foundry form; status from `claude auth status` | an API key typed into the app: a second billing path for Kivali to carry to agent pods, check, store and rotate, covering less than the CLI's own sign-in |
 | Claude sign-in progress | the supervisor's `terminals` count and credential status, polled while a sign-in is open | reading the Terminal session: the providers' terms keep the login in their own CLI, and the app must not see it |
 | Supervisor protocol | the real RPC in `internal/supervisor/rpc.go` (HTTP over the platform's endpoint, NDJSON with stage ids) | a protocol of the shell's own: would have needed a second server in the supervisor |

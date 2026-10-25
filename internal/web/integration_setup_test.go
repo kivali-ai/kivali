@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -495,9 +496,11 @@ func TestSetupFlowLeavesAndReturnsMoreThanOnce(t *testing.T) {
 // Why this test exists: a service that takes a POST (GitHub's app
 // manifest flow) is reached by a page whose form posts itself. The page
 // must post exactly the step's values, escaped, to the step's address,
-// load nothing, run only its own script, post nowhere else, send no
-// referrer and never be cached; a browser that runs no scripts gets a
-// button.
+// load only from Kivali's own origin (its lockup and fonts), run only
+// its own scripts, post nowhere else, send no referrer and never be
+// cached; a browser that runs no scripts gets a button. It says where
+// the browser is going, in the design system's chrome, so the owner
+// who sees it for a moment knows it is Kivali's.
 func TestSetupFlowGoByPost(t *testing.T) {
 	srv, _, _ := setupServer(t, func(int, context.Context, builtinintegrations.Connection, builtinintegrations.Answer, builtinintegrations.Progress) (builtinintegrations.Step, error) {
 		return builtinintegrations.Step{Go: &builtinintegrations.Go{URL: "https://" + setupHost + "/settings/apps/new?state=s1", Post: url.Values{"manifest": {`{"name":"a\"<b>"}`}}}}, nil
@@ -510,13 +513,32 @@ func TestSetupFlowGoByPost(t *testing.T) {
 	if rr.Code != http.StatusOK || cookie == nil || rr.Header().Get("Cache-Control") != "no-store" || rr.Header().Get("Referrer-Policy") != "no-referrer" {
 		t.Errorf("start = %d, headers %v", rr.Code, rr.Header())
 	}
-	if !strings.Contains(csp, "default-src 'none'") || !strings.Contains(csp, "form-action https://"+setupHost) || !strings.Contains(csp, "script-src 'sha256-") {
-		t.Errorf("CSP = %q", csp)
+	for _, want := range []string{"default-src 'none'", "form-action https://" + setupHost, "script-src 'sha256-", "style-src 'sha256-", "img-src 'self'", "font-src 'self'"} {
+		if !strings.Contains(csp, want) {
+			t.Errorf("CSP = %q, want %q", csp, want)
+		}
+	}
+	if strings.Contains(csp, "connect-src") {
+		t.Errorf("CSP = %q reaches somewhere", csp)
 	}
 	if !strings.Contains(body, `action="https://setup.example/settings/apps/new?state=s1"`) ||
 		!strings.Contains(body, `name="manifest" value="{&#34;name&#34;:&#34;a\&#34;&lt;b&gt;&#34;}"`) ||
-		!strings.Contains(body, `<button type="submit">Continue</button>`) || strings.Contains(body, "src=") {
+		!strings.Contains(body, `<button type="submit">Continue</button>`) ||
+		!strings.Contains(body, `<h1>Sending you to setup.example</h1>`) {
 		t.Errorf("page = %s", body)
+	}
+	assertLoadsOnlyItself(t, body)
+}
+
+// assertLoadsOnlyItself fails when a connect page's HTML or stylesheet
+// names anything to load from elsewhere than Kivali's own origin: every
+// src and every url() is a path from the root.
+func assertLoadsOnlyItself(t *testing.T, body string) {
+	t.Helper()
+	for _, m := range regexp.MustCompile(`(?:src=|url\()"([^"]*)"`).FindAllStringSubmatch(body, -1) {
+		if !strings.HasPrefix(m[1], "/") || strings.HasPrefix(m[1], "//") {
+			t.Errorf("the page loads %q", m[1])
+		}
 	}
 }
 

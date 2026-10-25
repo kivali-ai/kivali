@@ -4,6 +4,7 @@
 //! elsewhere have only what the shell learns by asking their address.
 //! Windows, menus and IPC commands call into here.
 
+use crate::connectreturn::PendingReturn;
 use crate::ownersignin;
 use crate::platform;
 use crate::signin::PendingSignin;
@@ -483,6 +484,9 @@ pub struct Shell {
     pub pins: Mutex<HashMap<String, Arc<Mutex<Option<url::Origin>>>>>,
     /// Sign-ins a team window started and the browser has not handed back.
     pub pending_signins: Mutex<HashMap<String, PendingSignin>>,
+    /// Integrations' sign-ins handed off to the browser and not yet back
+    /// (windows.rs, `open_connect_sign_in`), by team.
+    pub pending_returns: Mutex<HashMap<String, PendingReturn>>,
     /// The team window in front, or last in front.
     pub front_team: Mutex<Option<String>>,
     pub zoom: Mutex<HashMap<String, f64>>,
@@ -683,6 +687,7 @@ impl Shell {
             connecting: Mutex::new(None),
             pins: Mutex::new(HashMap::new()),
             pending_signins: Mutex::new(HashMap::new()),
+            pending_returns: Mutex::new(HashMap::new()),
             front_team: Mutex::new(None),
             zoom: Mutex::new(HashMap::new()),
             last_deleted: Mutex::new(None),

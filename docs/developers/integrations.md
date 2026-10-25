@@ -984,12 +984,11 @@ endpoints is on (Google's is `www.google.com`).
 - **Go.** The page sends the browser to `GET /connect/start?flow=<id>`
   (`step.start_url`), which sets the flow's cookie for this leg and
   sends the browser on to the step's address: a 303 for a link, or for
-  `Go.Post` a small page whose form posts the values there and submits
-  itself on load, with a Continue button for a browser that runs no
-  scripts (`no-store`, `no-referrer`, a CSP of `default-src 'none'`,
-  its one script by hash and `form-action` the address's origin,
-  nothing loaded). The service sends the browser back to
-  `GET /connect/callback` ([Coming back](#coming-back)). A Go with
+  `Go.Post` a connect page (below) whose form posts the values there
+  and submits itself on load, saying where the browser is going, with
+  a Continue button for a browser that runs no scripts; its CSP names
+  the address's origin as the one `form-action`. The service sends the
+  browser back to `GET /connect/callback` ([Coming back](#coming-back)). A Go with
   `NoReturn` (a settings page that sends the browser nowhere) sets no
   cookie: `/connect/start` sends the browser and calls the driver again
   at once with `Answer.Went`, and the page opens it in a new tab so it
@@ -1124,10 +1123,41 @@ again".
 - No flow: to the page of the integration the cookie names, with its
   flow id, or to `/org/integrations?sign_in_error=start_again`.
 
+A flow whose browser Kivali Desktop handed off (`handoffNext`, below;
+`setupRun.viaDesktop`) is followed in the team's window, so in each
+case but the last the browser gets, in place of the 303, the connect
+page that says the setup goes on in Kivali Desktop and the tab can be
+closed (`writeDesktopReturn`): the window shows how the flow stands,
+done or failed. When the handoff named the app's return listener
+(`return_port` and `return_token`, kept as `setupRun.desktopReturn`),
+the page's script asks `http://127.0.0.1:<port>/connect/<token>` once,
+with no-cors and nothing read back, so the app brings the team's window
+forward ([In Kivali Desktop](#in-kivali-desktop)); its CSP names that
+origin as the one `connect-src`. A listener that is gone fails quietly
+and the page's words stand.
+
 The address never carries words: anyone can link the owner to the page
 with any query. The page reads `?setup=<id>` once, takes it off the
 address and reads the flow from `GET .../setup`; with none it says the
 setup is no longer under way and offers to start again.
+
+#### Connect pages
+
+The two pages Kivali itself shows the owner's browser between the web
+app and the service, the Go step's self-posting form and the handed-off
+browser's return, are built by `connectPage`
+(`internal/web/connect_page.go`): one card on paper in the design
+system's tokens, type and primary button, with the lockup at the top,
+dark when the web app is dark (the choice the app stores under
+`kivali.theme` on the same origin, else the device's). They load only
+from Kivali's own origin: the lockup from `/logos`, the faces from the
+build's `/assets` when the binary carries one (`connectFontFaces`
+finds them by their hashed names; without a build the stack falls back
+to the system's). Headers: `no-store`, `no-referrer`, `nosniff`, and a
+CSP from `default-src 'none'` with `img-src 'self'`, `font-src 'self'`,
+the stylesheet and each script by hash, `base-uri 'none'`,
+`frame-ancestors 'none'`, plus the one `form-action` or `connect-src`
+origin the page needs.
 `Answer.Return` is untrusted for the same reason: the driver checks it
 against the service before relying on it.
 
@@ -1487,7 +1517,19 @@ was reached at, signs that browser in as the owner, sets the flow's
 `kivali_connect` cookie there and sends it to `/connect/start?flow=<id>`,
 which sends it on to the service by a link or a form that posts itself;
 for any other `next` it signs nothing in ([auth.md](auth.md#desktop-handoff),
-`next`). The callback then comes to a browser that passes both checks.
+`next`). The callback then comes to a browser that passes both checks,
+and answers it with the page that says the setup goes on in Kivali
+Desktop ([Coming back](#coming-back)): the browser's part is over.
+Before opening the browser the shell listens on `127.0.0.1:<port>` for
+that page's one request, as the desktop sign-in listens for Google's
+answer (`desktop-app/src-tauri/src/connectreturn.rs`), and the handoff
+carries `return_port` and `return_token`; the server keeps them with
+the flow and the page asks `GET /connect/<token>` there, which the
+listener answers with a 204, once, and the shell brings the team's
+window forward (`show_team`). The listener lives fifteen minutes or
+until a newer sign-in of the team replaces it; without one (no port to
+be had) the sign-in runs all the same and the owner switches back by
+hand.
 The page in the window stays and follows the flow; its Go step then
 says "If no browser opened, open the team in your browser and continue
 from there." A token the server refuses (its clock and the computer's
@@ -3653,5 +3695,5 @@ the owner's.
 | `POST .../setup/cancel` | 204: the flow ended and forgotten, audited as cancelled, under the lock a Keep is written under; 404 with no flow. |
 | `GET .../setup/stream` | `text/event-stream`: `retry: 1500`, the flow's `SetupFlow` as a `flow` event at once and on each change, a heartbeat comment every 25 seconds, and the end of the stream when the flow is forgotten; 404 with no flow. |
 | `GET /api/v1/agents/{slug}/integrations` | `AgentIntegrations`; 404 for an agent not on the team. |
-| `GET /connect/callback` | Not under `/api`: the signed-in UI's route a Go step's service sends the browser back to. The query goes to the flow its `state` (or, with none, the flow cookie) names as `Answer.Return`, and the answer is a 303 to `/org/integrations/<name>?setup=<flow id>`, or `/org/integrations?sign_in_error=start_again` when no flow and no cookie names an integration ([Coming back](#coming-back)). |
+| `GET /connect/callback` | Not under `/api`: the signed-in UI's route a Go step's service sends the browser back to. The query goes to the flow its `state` (or, with none, the flow cookie) names as `Answer.Return`, and the answer is a 303 to `/org/integrations/<name>?setup=<flow id>`, or `/org/integrations?sign_in_error=start_again` when no flow and no cookie names an integration; for a flow Kivali Desktop handed off, the page that says the setup goes on in the app ([Coming back](#coming-back)). |
 | `GET /connect/start?flow=` | Not under `/api`: the signed-in UI's route the web app sends the browser to for a Go step. It sets the flow's cookie and answers a 303 to the step's address, or a page whose form posts the step's values there; a flow not on a Go step returns to its page, any other id to `/org/integrations?sign_in_error=start_again` ([Setup flows](#setup-flows)). Kivali Desktop opens the handoff with `next=<flow>` in its place ([In Kivali Desktop](#in-kivali-desktop)). |

@@ -314,7 +314,13 @@ an ordinary sign-in would leave.
   (replacing any the browser held, whose flow ends as a second Go in
   one browser ends the first) and the 302 goes to
   `/connect/start?flow=<id>`, which sends the browser on to the
-  service, by a link or a form that posts itself. Any other `next` refuses the handoff as
+  service, by a link or a form that posts itself. With `next` the app
+  may name its listener for the browser's return, `return_port` and
+  `return_token` as the desktop sign-in names its own: both of the
+  right shape are kept with the flow, and the callback's page tells the
+  listener so the app comes forward
+  ([integrations.md](integrations.md#coming-back)); any other pair is
+  dropped with a log line, and the flow runs without. Any other `next` refuses the handoff as
   a bad token is refused: a 302 to `/` with no session, and a log line
   saying what `next` named (no flow, a flow not waiting for a browser,
   a flow started at another address). The app names only a flow it

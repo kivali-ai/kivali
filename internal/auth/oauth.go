@@ -418,6 +418,16 @@ func validReturnToken(s string) bool {
 	return err == nil && len(b) == 32
 }
 
+// ValidLoopbackReturn reports whether port and token name a listener
+// Kivali Desktop started for a browser's return, as a desktop sign-in's
+// return_port and return_token do: a TCP port and the listener's
+// 43-character token. An integration's setup flow handed off with them
+// (internal/web, handoffNext) tells the listener when the browser is
+// back.
+func ValidLoopbackReturn(port, token string) bool {
+	return validLoopbackPort(port) && validReturnToken(token)
+}
+
 // desktopReturnURL reads the app's loopback listener out of a desktop
 // sign-in's state: the nonce part is desktop~<port>~<token>~<random>.
 // Anything else, or a port or token of the wrong shape, is not a desktop

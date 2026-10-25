@@ -20,9 +20,7 @@
 package web
 
 import (
-	"crypto/sha256"
 	"crypto/subtle"
-	"encoding/base64"
 	"fmt"
 	"html"
 	"log"
@@ -338,38 +336,91 @@ func (s *Server) handleConnectStart(w http.ResponseWriter, r *http.Request) {
 // autoPostScript submits the start page's form as it loads.
 const autoPostScript = `document.getElementById("go").submit();`
 
-// autoPostScriptHash is autoPostScript's CSP hash: the one script the
-// page may run.
-var autoPostScriptHash = func() string {
-	sum := sha256.Sum256([]byte(autoPostScript))
-	return "'sha256-" + base64.StdEncoding.EncodeToString(sum[:]) + "'"
-}()
-
 // writeAutoPost answers with a page whose form posts values to target
 // and submits itself on load, with a visible button for a browser that
-// runs no scripts. It loads nothing, sends no referrer, and may post
-// only to target's origin.
+// runs no scripts. It loads only from Kivali's own origin (connectPage),
+// sends no referrer, and may post only to target's origin.
 func writeAutoPost(w http.ResponseWriter, target string, values url.Values) {
 	u, _ := url.Parse(target)
-	origin := u.Scheme + "://" + u.Host
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	// form-action names the step's origin alone. Chrome holds the
-	// redirects that follow the POST to it as well, so a service that
-	// answers the post with a redirect to another origin is stopped by
-	// the browser there, on this page's policy.
-	w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src "+autoPostScriptHash+"; form-action "+origin+"; base-uri 'none'; frame-ancestors 'none'")
-	w.Header().Set("X-Content-Type-Options", "nosniff")
 	var b strings.Builder
-	b.WriteString(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="referrer" content="no-referrer"><title>Kivali</title></head><body>`)
 	b.WriteString(`<form id="go" method="post" action="` + html.EscapeString(target) + `">`)
 	for _, k := range sortedValueKeys(values) {
 		for _, v := range values[k] {
 			b.WriteString(`<input type="hidden" name="` + html.EscapeString(k) + `" value="` + html.EscapeString(v) + `">`)
 		}
 	}
-	b.WriteString(`<p>Kivali is sending you to ` + html.EscapeString(u.Host) + `.</p><button type="submit">Continue</button></form>`)
-	b.WriteString(`<script>` + autoPostScript + `</script></body></html>`)
-	_, _ = w.Write([]byte(b.String()))
+	b.WriteString(`<button type="submit">Continue</button></form>`)
+	connectPage{
+		Heading: "Sending you to " + u.Host,
+		Words:   "This page moves on by itself in a moment. If it stays here, press Continue.",
+		Body:    b.String(),
+		Script:  autoPostScript,
+		// form-action names the step's origin alone. Chrome holds the
+		// redirects that follow the POST to it as well, so a service that
+		// answers the post with a redirect to another origin is stopped
+		// by the browser there, on this page's policy.
+		FormAction: originOf(target),
+	}.write(w)
+}
+
+// desktopReturnScript is the script of the page a handed-off browser
+// gets at the callback (writeDesktopReturn): it tells Kivali Desktop's
+// listener at ret that the browser is back, so the app comes to the
+// front. The listener answers nothing the page reads (no-cors), and a
+// listener that is gone (the app quit, the flow took too long) fails
+// quietly: the page says what to do either way.
+func desktopReturnScript(ret string) string {
+	return `fetch(` + jsString(ret) + `,{mode:"no-cors",credentials:"omit",keepalive:true}).catch(function(){});`
+}
+
+// jsString is s as a JavaScript string literal, safe inside a script
+// element: every character outside a plain ASCII run is escaped.
+func jsString(s string) string {
+	var b strings.Builder
+	b.WriteByte('"')
+	for _, c := range s {
+		switch {
+		case c == '"' || c == '\\' || c == '<' || c == '>' || c == '&' || c < 0x20 || c > 0x7e:
+			fmt.Fprintf(&b, `\u%04x`, c)
+		default:
+			b.WriteRune(c)
+		}
+	}
+	b.WriteByte('"')
+	return b.String()
+}
+
+// writeDesktopReturn answers a browser Kivali Desktop handed off, back
+// at the callback, with a page that says the setup goes on in the app:
+// the team's window follows the flow and shows how it stands, so this
+// browser is done. With ret, the listener the app gave the handoff
+// (handoffNext), the page tells the app so it can come to the front;
+// a browser that runs no scripts, or an app no longer listening, leaves
+// the owner to switch to it. The page is the end of this browser's
+// part whatever the callback made of the return: a flow that failed
+// there shows its words in the window too.
+func writeDesktopReturn(w http.ResponseWriter, ret string) {
+	p := connectPage{
+		Heading: "Back to Kivali",
+		Words:   "The setup goes on in Kivali Desktop, which shows how it stands. You can close this tab.",
+	}
+	if ret != "" {
+		p.Script = desktopReturnScript(ret)
+		p.ConnectSrc = originOf(ret)
+	}
+	p.write(w)
+}
+
+// desktopReturnURL is where the terminal page tells Kivali Desktop the
+// browser is back: the app's listener on the loopback address at port,
+// at the path of its one-time token (desktop-app/src-tauri/src/connectreturn.rs).
+// Empty unless port and token have the shape the app's listener gives
+// them, the same as the desktop sign-in's.
+func desktopReturnURL(port, token string) string {
+	if !auth.ValidLoopbackReturn(port, token) {
+		return ""
+	}
+	return "http://127.0.0.1:" + port + "/connect/" + token
 }
 
 // sortedValueKeys is values' keys, sorted.
@@ -420,6 +471,18 @@ func (s *Server) handoffNext(w http.ResponseWriter, r *http.Request, next string
 	noReturn := run.step.Go != nil && run.step.Go.NoReturn
 	if !noReturn {
 		s.replaceCookieLocked(r, run.id)
+	}
+	// The browser is the system browser, handed off from the team's
+	// window: the callback answers it with a page that says the setup
+	// goes on in the app (writeDesktopReturn), and tells the app's
+	// listener when the handoff names one. A listener of the wrong
+	// shape is dropped, not refused: the flow still works, and the
+	// owner switches back to the app by hand.
+	run.viaDesktop = true
+	q := r.URL.Query()
+	run.desktopReturn = desktopReturnURL(q.Get("return_port"), q.Get("return_token"))
+	if run.desktopReturn == "" && (q.Get("return_port") != "" || q.Get("return_token") != "") {
+		log.Printf("auth handoff: the app's return listener for %s's setup flow is not a loopback port and token; the browser's return will not bring the app forward", run.name)
 	}
 	name, callback := run.name, run.callback
 	s.setupUnlock()
@@ -494,14 +557,17 @@ func (s *Server) handleConnectCallback(w http.ResponseWriter, r *http.Request) {
 		setupReturnElsewhere(w, r, cookieID, cookieName)
 		return
 	}
-	back := setupReturnPath(run.name, run.id)
+	// Where this browser goes once the callback is read: the flow's
+	// page, or, for a browser Kivali Desktop handed off, the page that
+	// says the setup goes on in the app, whose window shows the flow.
+	back := connectBack{path: setupReturnPath(run.name, run.id), desktop: run.viaDesktop, ret: run.desktopReturn}
 	switch {
 	case run.state != apitypes.SetupFlowStateGo || run.step.Go == nil || run.step.Go.NoReturn:
 		// Not waiting for the browser: it ended before its callback came
 		// (another flow's Go was started in this browser), or the
 		// callback is a replay. Its page reads how it stands.
 		s.setupUnlock()
-		http.Redirect(w, r, back, http.StatusSeeOther)
+		back.send(w, r)
 		return
 	case state == "" && !run.step.Go.Stateless:
 		// Matched by the cookie alone, which goes with any top-level GET
@@ -509,12 +575,12 @@ func (s *Server) handleConnectCallback(w http.ResponseWriter, r *http.Request) {
 		// service drops the state takes such a return. Nothing runs.
 		s.setupFailLocked(run, errSetupNoState)
 		s.setupUnlock()
-		http.Redirect(w, r, back, http.StatusSeeOther)
+		back.send(w, r)
 		return
 	case cookieID != run.id:
 		s.setupFailLocked(run, errSignInStartAgain)
 		s.setupUnlock()
-		http.Redirect(w, r, back, http.StatusSeeOther)
+		back.send(w, r)
 		return
 	}
 	if cb := signInRedirectURL(r); cb != "" {
@@ -536,5 +602,25 @@ func (s *Server) handleConnectCallback(w http.ResponseWriter, r *http.Request) {
 	gone := s.connectCookie("", "", callback)
 	gone.Value, gone.MaxAge = "", -1
 	http.SetCookie(w, gone)
-	http.Redirect(w, r, back, http.StatusSeeOther)
+	back.send(w, r)
+}
+
+// connectBack is where the callback sends a browser once it has read
+// the return: the flow's page, or the page a browser handed off from
+// Kivali Desktop gets instead (writeDesktopReturn).
+type connectBack struct {
+	// path is the flow's page with ?setup=<id>.
+	path string
+	// desktop says the flow's browser was handed off by Kivali Desktop
+	// (handoffNext), and ret is the app's listener to tell, or empty.
+	desktop bool
+	ret     string
+}
+
+func (b connectBack) send(w http.ResponseWriter, r *http.Request) {
+	if b.desktop {
+		writeDesktopReturn(w, b.ret)
+		return
+	}
+	http.Redirect(w, r, b.path, http.StatusSeeOther)
 }
