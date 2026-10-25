@@ -1490,7 +1490,11 @@ for any other `next` it signs nothing in ([auth.md](auth.md#desktop-handoff),
 `next`). The callback then comes to a browser that passes both checks.
 The page in the window stays and follows the flow; its Go step then
 says "If no browser opened, open the team in your browser and continue
-from there."
+from there." A token the server refuses (its clock and the computer's
+disagree, the link was opened too late) ends the flow with the
+refusal's words, so the page in the window says why the browser never
+left and offers Try again, and the browser lands on the integration's
+page rather than the home page ([auth.md](auth.md#desktop-handoff)).
 
 A team elsewhere (no supervisor here, and its handoff answers loopback
 only) is offered no browser sign-in in its window: its web view carries

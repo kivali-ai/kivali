@@ -241,13 +241,19 @@ func TestDesktopHandoffNextIsAPendingFlow(t *testing.T) {
 	_, port, _ := strings.Cut(host, ":")
 	assertHandoffRefused(t, serveHandoff(t, srv, "localhost:"+port, handoffToken(t, srv), f.ID), "another host")
 
-	// One use per token: the replay signs nothing in, hands no cookie.
+	// One use per token: the replay signs nothing in and hands no cookie;
+	// the browser, which the first use sent on, is shown the flow's page.
 	tok := handoffToken(t, srv)
 	first := serveHandoff(t, srv, host, tok, f.ID)
 	if first.Code != http.StatusFound || first.Header().Get("Location") != connectStartPath+"?flow="+f.ID || cookieOf(first, "kivali_connect") == nil || cookieOf(first, auth.CookieName) == nil {
 		t.Fatalf("first: %d to %q", first.Code, first.Header().Get("Location"))
 	}
-	assertHandoffRefused(t, serveHandoff(t, srv, host, tok, f.ID), "replay")
+	if rr := serveHandoff(t, srv, host, tok, f.ID); rr.Code != http.StatusFound || rr.Header().Get("Location") != setupReturnPath("crm", f.ID) || cookieOf(rr, auth.CookieName) != nil || cookieOf(rr, "kivali_connect") != nil {
+		t.Errorf("replay: %d to %q with %v", rr.Code, rr.Header().Get("Location"), rr.Result().Cookies())
+	}
+	if f := waitFlow(t, srv, "crm", apitypes.SetupFlowStateGo); f.State != apitypes.SetupFlowStateGo {
+		t.Fatalf("after the replay the flow reads %+v %q", f, textOf(f.Error))
+	}
 	// Not loopback: no such route.
 	if rr := serveHandoff(t, srv, "kivali.example.com", handoffToken(t, srv), f.ID); rr.Code != http.StatusNotFound {
 		t.Errorf("non-loopback: %d", rr.Code)

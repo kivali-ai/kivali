@@ -901,7 +901,12 @@ that owner, valid for 2 minutes ([auth.md](auth.md), "Desktop handoff";
 `auth.NewHandoffToken`). It is not an operation and never takes the
 lock, but refuses while an upgrade journal is open. The serve log says
 "handoff token minted for the owner", never the token or the key. The
-shell calls it once, when setup's **Open** shows the new team.
+shell calls it once, when setup's **Open** shows the new team, and
+once for each integration setup step it sends to the system browser.
+The token's expiry is set on this computer's clock and checked on the
+VM's, which the guest agent keeps on the hardware clock
+([vm/README.md](../../vm/README.md), "The guest agent and the
+supervisor"); a VM whose clock stood still would refuse every token.
 
 **What the shell calls:** `GET /v1/status` to draw the tray (`running`,
 `url`, `guest.state`, `state.kivali`, `state.latest` with its

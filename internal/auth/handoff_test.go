@@ -141,7 +141,7 @@ func TestHandoffNextAfterASignInOnly(t *testing.T) {
 			return "https://vendor.example/authorize?state=s"
 		}
 		return ""
-	})
+	}, nil)
 	redeem := func(host, token, next string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(http.MethodGet, HandoffPath+"?t="+token+"&next="+next, nil)
 		req.Host = host
