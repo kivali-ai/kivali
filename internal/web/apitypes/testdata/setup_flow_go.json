@@ -2,6 +2,7 @@
   "id": "9f86d081884c7d659a2feaa0c55ad015",
   "flow": "setup",
   "state": "go",
+  "seq": 2,
   "step": {
     "kind": "go",
     "words": "Create the app on GitHub. GitHub sends you back here.",

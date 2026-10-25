@@ -715,3 +715,49 @@ func TestSetupFlowHandsOverToASignIn(t *testing.T) {
 		t.Errorf("audit = %s", got)
 	}
 }
+
+// Why this test exists: the reply to a start or an answer is read after
+// the step it set going, and a quick step can finish and reach the
+// flow's stream before the reply reaches the page. The page orders the
+// two by seq, so every state must carry one that rises with each
+// change and is the same on a read as on the stream. A seq that stood
+// still across a change, or differed between the two routes, would let
+// a stale reply hide the step the owner should take.
+func TestSetupFlowStatesAreNumbered(t *testing.T) {
+	release, free := heldCall()
+	srv, _, _ := setupServer(t, func(n int, _ context.Context, _ builtinintegrations.Connection, _ builtinintegrations.Answer, _ builtinintegrations.Progress) (builtinintegrations.Step, error) {
+		if n == 1 {
+			<-release
+			return builtinintegrations.Step{Form: &builtinintegrations.Form{Fields: []string{"account"}}}, nil
+		}
+		return builtinintegrations.Step{Done: true}, nil
+	})
+	t.Cleanup(free)
+	f := startSetupFlow(t, srv, "echo")
+	if f.State != apitypes.SetupFlowStateRunning || f.Seq != 1 {
+		t.Errorf("started: %s seq %d, want running seq 1", f.State, f.Seq)
+	}
+	if g, ok := srv.setupFlowState("echo"); !ok || g.Seq != 1 {
+		t.Errorf("read while running: seq %d, want 1", g.Seq)
+	}
+	free()
+	f = waitFlow(t, srv, "echo", apitypes.SetupFlowStateForm)
+	if f.Seq != 2 {
+		t.Errorf("form on the stream: seq %d, want 2", f.Seq)
+	}
+	if g, ok := srv.setupFlowState("echo"); !ok || g.Seq != 2 {
+		t.Errorf("read of the form: seq %d, want 2", g.Seq)
+	}
+	// The answer's reply carries the state as the reply is written,
+	// running (3) or already done (4); the stream's done is 4 either way.
+	reply := orgOK[apitypes.SetupFlow](t, flowDo(t, srv, http.MethodPost, intBase+"/echo/setup/answer", apitypes.SetupFlowAnswer{Fields: map[string]string{"account": "acme"}}))
+	f = waitFlow(t, srv, "echo", apitypes.SetupFlowStateDone)
+	if f.Seq != 4 {
+		t.Errorf("done on the stream: seq %d, want 4", f.Seq)
+	}
+	switch {
+	case reply.State == apitypes.SetupFlowStateRunning && reply.Seq == 3, reply.State == apitypes.SetupFlowStateDone && reply.Seq == 4:
+	default:
+		t.Errorf("answer's reply: %s seq %d, want running 3 or done 4", reply.State, reply.Seq)
+	}
+}

@@ -96,9 +96,16 @@ export function SetupFlowPanel({ api, integration, label, flow: flowName = 'setu
   });
   const finished = useRef<string | null>(null);
   const shown = useRef('');
+  // The state last taken, whose seq an older one of the same flow is dropped against.
+  const latest = useRef<SetupFlow | null>(null);
 
   // Applies a state from the server: a new step starts with a blank form, and a flow done reads the page again, once.
+  // A request's reply is read before the step it started finishes, while the stream may already have carried the
+  // step's result: a state older than the one shown (a lower seq of the same flow) is dropped, whenever it arrives.
   const take = (next: SetupFlow | null) => {
+    const cur = latest.current;
+    if (next && cur && next.id === cur.id && next.seq < cur.seq) return;
+    latest.current = next;
     const key = next ? next.id + ':' + next.state : '';
     if (key !== shown.current) {
       shown.current = key;

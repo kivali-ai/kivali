@@ -103,6 +103,7 @@
     "id": "9f86d081884c7d659a2feaa0c55ad015",
     "flow": "setup",
     "state": "running",
+    "seq": 2,
     "progress": {
       "words": "Building the app",
       "done": 3,

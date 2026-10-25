@@ -162,6 +162,7 @@
     "id": "9f86d081884c7d659a2feaa0c55ad015",
     "flow": "permissions",
     "state": "wait",
+    "seq": 2,
     "step": {
       "kind": "wait",
       "words": "Enter this code on the service’s page, then approve the sign-in there. Kivali finishes it here once you do.",

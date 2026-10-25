@@ -345,6 +345,12 @@ type SetupFlow struct {
 	// requirement's fix.
 	Flow  string         `json:"flow"`
 	State SetupFlowState `json:"state"`
+	// Seq numbers the flow's states from 1, rising with each change
+	// of State, Step, Progress or Error. A request's reply and a
+	// stream event can cross on their way to the page: of two states
+	// of one flow, the higher Seq is the later, whichever arrived
+	// first.
+	Seq int `json:"seq"`
 	// Step is what you do next, while State is form, go or wait.
 	Step *SetupFlowStep `json:"step,omitempty"`
 	// Progress is where Kivali is while State is running, when the

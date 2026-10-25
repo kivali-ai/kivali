@@ -576,10 +576,10 @@ func goldenIntegrationPageMisfit() IntegrationPage {
 // goldenSetupFlowID is the setup flows' id in the fixtures.
 const goldenSetupFlowID = "9f86d081884c7d659a2feaa0c55ad015"
 
-// goldenSetupFlow is a setup flow of GitHub's in state, the rest
+// goldenSetupFlow is a setup flow of GitHub's in state, its second, the rest
 // filled in by the caller.
 func goldenSetupFlow(state SetupFlowState) SetupFlow {
-	return SetupFlow{ID: goldenSetupFlowID, Flow: "setup", State: state, ExpiresAt: integrationLater.Add(10 * time.Minute)}
+	return SetupFlow{ID: goldenSetupFlowID, Flow: "setup", State: state, Seq: 2, ExpiresAt: integrationLater.Add(10 * time.Minute)}
 }
 
 // goldenSetupFlowRunning is a flow working out its next step, three

@@ -2,6 +2,7 @@
   "id": "9f86d081884c7d659a2feaa0c55ad015",
   "flow": "setup",
   "state": "failed",
+  "seq": 2,
   "error": "the vendor refused the sign-in (access_denied): The user has denied your application access.",
   "expires_at": "2026-10-21T10:10:00Z"
 }
