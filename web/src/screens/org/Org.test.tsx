@@ -16,7 +16,7 @@ import type { OrgContextValue } from '../../state/OrgProvider';
 import { aboutLine, versionLabel } from './About';
 import { BACKUP_DEBOUNCE_MS } from './Backup';
 import { InstallScreen, bundleLine } from './InstallScreen';
-import { IntegrationPage, disconnectWords, setupReturnOf, signInLine, signsInAt, uninstallWords } from './IntegrationPage';
+import { IntegrationPage, disconnectWords, setupReturnOf, signInLine, signsInAt, testLine, uninstallWords } from './IntegrationPage';
 import { SETUP_POLL_MS, codeLifeWords, progressWords } from './SetupFlowPanel';
 import { whenLabel } from './integrationParts';
 import { Org, headerMeta } from './OrgPage';
@@ -1794,22 +1794,33 @@ describe('Integration page', () => {
     expect(dialog.getAllByText('HubSpot is not running, so it cannot list these.').length).toBeGreaterThan(0);
   });
 
-  // Guards the two answers of Test connection: the page each answers with replaces this one, so the connection test
-  // row reads what the test found, met with the integration's words, or not met with why.
+  // Guards the two answers of Test connection: the page each answers with replaces this one, so the line under the
+  // form, beside the button, and the connection test row in Requirements both read what the test found: passed, when
+  // and the integration's words, or failed with why. The line matters because Requirements is closed while every
+  // requirement is met: without it, a passing test changes nothing the owner can see.
   it('shows what Test connection found, good or bad', async () => {
-    const withTest = (met: boolean, words: string) => ({
+    const at = '2026-10-21T11:00:00Z';
+    const when = whenLabel(at, Date.now());
+    const withTest = (met: boolean, words: string, message: string) => ({
       ...goIntegrationPage,
+      connection: { ...goIntegrationPage.connection!, verified: met, verified_at: at, verify_message: message },
       requirements: goIntegrationPage.requirements.map((r) => (r.id === 'connection_test' ? { ...r, met, words } : r)),
     });
-    let answerWith: unknown = withTest(true, 'Connected as Acme');
+    let answerWith: unknown = withTest(true, 'Connected as Acme', 'Connected as Acme');
     await renderOrg(PATH, { routes: { ['POST ' + API + '/connection/verify']: () => answerWith } });
     await click(screen.getByRole('button', { name: 'Connection' }));
+    const connection = () => within(screen.getByRole('region', { name: 'Connection' }));
+    // Before the button is pressed, the line reads the result the page carries.
+    const before = goIntegrationPage.connection!;
+    expect(connection().getByText('Connection test passed ' + whenLabel(before.verified_at!, Date.now()) + '. ' + before.verify_message)).toHaveClass('kv-text--success');
     await click(screen.getByRole('button', { name: 'Test connection' }));
+    expect(connection().getByText('Connection test passed ' + when + '. Connected as Acme')).toHaveClass('kv-text--success');
     await click(screen.getByRole('button', { name: 'Requirements' }));
     const reqs = () => within(screen.getByRole('region', { name: 'Requirements' }));
     expect(reqs().getByText('Connected as Acme')).toBeInTheDocument();
-    answerWith = withTest(false, 'The connection test failed: The token was refused.');
+    answerWith = withTest(false, 'The connection test failed: The token was refused.', 'The token was refused.');
     await click(screen.getByRole('button', { name: 'Test connection' }));
+    expect(connection().getByText('Connection test failed ' + when + ': The token was refused.')).toHaveClass('kv-text--danger');
     expect(reqs().getByText('The connection test failed: The token was refused.')).toBeInTheDocument();
     expect(reqs().getAllByRole('img', { name: 'Not met' })).toHaveLength(1);
   });
@@ -2385,6 +2396,21 @@ describe('Integration page, a connection made by signing in', () => {
     const { expires_at: _expires, ...noExpiry } = c.sign_in!;
     expect(signInLine({ ...c, sign_in: noExpiry }, now)?.text).toBe('Signed in ' + whenLabel(c.sign_in!.signed_in_at!, now));
     expect(signInLine(goIntegrationPageSignInAgain.connection, now)?.danger).toBe(true);
+  });
+
+  // Guards the words of the last connection test's line: none until a test has run (a fresh connection, or one saved
+  // again, carries no result), a pass with and without the integration's words, and a failure with and without why.
+  it('words the last connection test', () => {
+    const now = Date.parse('2026-10-22T09:00:00Z');
+    const c = goIntegrationPage.connection!;
+    const when = whenLabel(c.verified_at!, now);
+    expect(testLine(undefined, now)).toBeUndefined();
+    const { verified: _verified, verified_at: _at, verify_message: _message, ...untested } = c;
+    expect(testLine(untested, now)).toBeUndefined();
+    expect(testLine(c, now)).toEqual({ text: 'Connection test passed ' + when + '. ' + c.verify_message, passed: true });
+    expect(testLine({ ...c, verify_message: '' }, now)).toEqual({ text: 'Connection test passed ' + when + '.', passed: true });
+    expect(testLine({ ...c, verified: false, verify_message: 'The token was refused.' }, now)).toEqual({ text: 'Connection test failed ' + when + ': The token was refused.', passed: false });
+    expect(testLine({ ...c, verified: false, verify_message: undefined }, now)).toEqual({ text: 'Connection test failed ' + when + '.', passed: false });
   });
 });
 
