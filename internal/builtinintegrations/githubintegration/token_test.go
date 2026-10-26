@@ -260,6 +260,8 @@ func TestInstallationsListsWithTheJWT(t *testing.T) {
 func TestATokenIsOnlyForTheInstallationsAccount(t *testing.T) {
 	g, f := newTest(t)
 	f.route("GET /repos/ACME/widgets", 200, repoJSON)
+	// A clone's job names the bot user as the working copy's identity.
+	f.route("GET /users/kivali-acme[bot]", 200, botUserJSON)
 	writer := agent(true, "*/widgets")
 	want := "The owner's GitHub App is installed on acme; partner/widgets is not one of its repositories. Ask the owner."
 	reason := "partner/widgets is not under acme, where the app is installed"
