@@ -1,7 +1,14 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
+import { useMediaQuery } from '../../lib/useMediaQuery';
 import { cx } from '../cx';
 import { Icon } from '../Icon/Icon';
+
+/**
+ * The primary input is a touch screen (a phone, a tablet). There the keyboard has no Shift+Enter, so Enter
+ * adds a line and the send button sends. Where matchMedia is missing (tests) this is false: Enter sends.
+ */
+export const TOUCH_SCREEN_QUERY = '(hover: none) and (pointer: coarse)';
 
 export interface ComposerProps {
   placeholder?: string;
@@ -20,7 +27,8 @@ export interface ComposerProps {
 /**
  * Where the person writes to an agent.
  *
- * - The text area grows with the message up to about ten lines, then scrolls. Enter sends; Shift+Enter adds a line.
+ * - The text area grows with the message up to about ten lines, then scrolls. With a keyboard and mouse, Enter sends
+ *   and Shift+Enter adds a line; on a touch screen, Enter adds a line and the send button sends.
  * - `onSend(text)` is called on send; `busy` swaps the send icon for three dots and blocks sending while the agent works. `onAttach` adds a paperclip; `footer` holds quiet details like the model and attachments as outline `Badge`s.
  * - Blank text never sends unless `allowEmpty` is set (the consumer has attachments staged); `onSend` then receives the empty string.
  * - The placeholder names who you are talking to ("Message Garden advisor").
@@ -29,6 +37,7 @@ export function Composer({ placeholder = 'Message', value, defaultValue, onChang
   const [inner, setInner] = useState(defaultValue ?? '');
   const v = value ?? inner;
   const ref = useRef<HTMLTextAreaElement>(null);
+  const touchScreen = useMediaQuery(TOUCH_SCREEN_QUERY);
   useLayoutEffect(() => {
     const t = ref.current;
     if (t) {
@@ -56,7 +65,7 @@ export function Composer({ placeholder = 'Message', value, defaultValue, onChang
           onChange?.(e.target.value);
         }}
         onKeyDown={(e) => {
-          if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+          if (e.key === 'Enter' && !e.shiftKey && !touchScreen && !e.nativeEvent.isComposing) {
             e.preventDefault();
             send();
           }

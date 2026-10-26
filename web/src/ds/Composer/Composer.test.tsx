@@ -1,9 +1,26 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it, vi } from 'vitest';
-import { Composer } from './Composer';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { Composer, TOUCH_SCREEN_QUERY } from './Composer';
+
+/** Makes matchMedia answer the touch-screen query with `on`: true is a phone or tablet, false a desktop. */
+function touchScreen(on: boolean): void {
+  window.matchMedia = ((query: string) =>
+    ({
+      matches: on && query === TOUCH_SCREEN_QUERY,
+      media: query,
+      onchange: null,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      addListener: () => {},
+      removeListener: () => {},
+      dispatchEvent: () => false,
+    }) as unknown as MediaQueryList) as typeof window.matchMedia;
+}
 
 describe('Composer', () => {
+  afterEach(() => touchScreen(false));
+
   it('sends on Enter and clears the field', async () => {
     const onSend = vi.fn();
     render(<Composer placeholder="Message Garden advisor" onSend={onSend} />);
@@ -20,6 +37,20 @@ describe('Composer', () => {
     await userEvent.type(box, 'one{Shift>}{Enter}{/Shift}two');
     expect(onSend).not.toHaveBeenCalled();
     expect(box).toHaveValue('one\ntwo');
+  });
+
+  // On a phone the keyboard has no Shift, so Enter must add a line; sending on Enter would cut messages short.
+  it('adds a newline on Enter on a touch screen, where the send button sends', async () => {
+    touchScreen(true);
+    const onSend = vi.fn();
+    render(<Composer placeholder="Message" onSend={onSend} />);
+    const box = screen.getByRole('textbox');
+    await userEvent.type(box, 'one{Enter}two');
+    expect(onSend).not.toHaveBeenCalled();
+    expect(box).toHaveValue('one\ntwo');
+    await userEvent.click(screen.getByRole('button', { name: 'Send' }));
+    expect(onSend).toHaveBeenCalledWith('one\ntwo');
+    expect(box).toHaveValue('');
   });
 
   it('does not send an empty message', async () => {
