@@ -186,8 +186,8 @@ var actions = []action{
 	},
 	{
 		name:             actionDeleteBranch,
-		description:      "Delete a branch of a GitHub repository whose work is done: the head branch of a pull request the owner's GitHub App opened in that repository, now closed or merged. The repository's default branch, and a branch an open pull request has as its head, cannot be deleted. Answers what it deleted.",
-		ownerDescription: "Delete the branch a closed or merged pull request the GitHub App opened came from; never the default branch, nor a branch an open pull request comes from." + needsWrite,
+		description:      "Delete a branch of a GitHub repository whose work is done: the head branch of a pull request the owner's GitHub App opened in that repository, now closed or merged. The repository's default branch, and a branch an open pull request in the repository has as its head or its base, cannot be deleted. Answers what it deleted.",
+		ownerDescription: "Delete the branch a closed or merged pull request the GitHub App opened came from; never the default branch, nor a branch an open pull request comes from or goes into." + needsWrite,
 		schema: schema(map[string]any{
 			"repository": repositoryProperty,
 			"branch":     map[string]any{"type": "string", "description": "The branch's name, such as agent/fix-1."},
@@ -254,9 +254,10 @@ type call struct {
 	conn   connection
 	access access
 	args   args
-	// bot is the login of the app's bot user once openedByApp has
-	// worked it out.
-	bot string
+	// current is the login of the app's bot user by the slug GitHub
+	// gives the app now, once openedByApp has asked (asked).
+	current string
+	asked   bool
 }
 
 // token is an installation token for repo (owner/name; "" for the
@@ -745,25 +746,34 @@ func comment(ctx context.Context, c *call) (any, error) {
 
 // openedByApp reports whether u, the user GitHub names as the author
 // of an issue or a pull request, is the app's bot user: of type Bot,
-// its login <slug>[bot]. The slug is the connection's; for a
-// connection that keeps none (one set up before it was kept), it is
-// read from GitHub (GET /app, with the app's JWT), once a call.
+// its login <slug>[bot]. The slug is the connection's. A Bot whose
+// login is not that, or any Bot on a connection that keeps no slug
+// (one set up before it was kept), is held to the slug GitHub gives
+// the app now (GET /app, with the app's JWT), read once a call, so an
+// app renamed since setup still knows its own bot. A user of another
+// type is never the app, and costs no request.
 func (c *call) openedByApp(ctx context.Context, u ghUser) (bool, error) {
-	if c.bot == "" {
-		slug := c.conn.slug
-		if !appSlug.MatchString(slug) {
-			app, err := c.g.appOf(ctx, c.conn)
-			if err != nil {
-				return false, err
-			}
-			slug = app.Slug
-		}
-		if !appSlug.MatchString(slug) {
-			return false, refuse(notSetUp, "GitHub names no slug for the app")
-		}
-		c.bot = slug + "[bot]"
+	if u.Type != "Bot" {
+		return false, nil
 	}
-	return u.Type == "Bot" && u.Login == c.bot, nil
+	kept := appSlug.MatchString(c.conn.slug)
+	if kept && u.Login == c.conn.slug+"[bot]" {
+		return true, nil
+	}
+	if !c.asked {
+		app, err := c.g.appOf(ctx, c.conn)
+		if err != nil {
+			return false, err
+		}
+		c.asked = true
+		if appSlug.MatchString(app.Slug) {
+			c.current = app.Slug + "[bot]"
+		}
+	}
+	if c.current == "" && !kept {
+		return false, refuse(notSetUp, "GitHub names no slug for the app")
+	}
+	return c.current != "" && u.Login == c.current, nil
 }
 
 // closingComment is the comment argument of a close: Markdown of at
@@ -1111,13 +1121,64 @@ func listBranches(ctx context.Context, c *call) (any, error) {
 	return strings.Join(lines, "\n"), nil
 }
 
-// deleteBranch deletes a branch whose work is done: the head branch,
-// in the repository itself, of a pull request the app opened there,
-// now closed or merged. With a token that only reads, it reads the
-// repository's default branch, which it never deletes, and the pull
-// requests from the branch (head owner:branch, owner the repository's
-// owner), refusing while any is open; only then is a token that writes
-// the repository's contents minted, for the deletion.
+// openPullRefusal is the words of a branch an open pull request in the
+// repository has as its head or its base (role), n its number.
+func openPullRefusal(branch, role string, n int64) string {
+	return fmt.Sprintf("%s is the %s of pull request #%d, which is open; a branch is deleted only once no open pull request has it as its head or its base; ask the owner.", branch, role, n)
+}
+
+// pullsCut is the refusal of a branch whose pull requests GitHub lists
+// past maxListPages pages: some were not read, so none of the checks
+// can be said to hold.
+func pullsCut(branch, repo string) error {
+	return refuse(fmt.Sprintf("The pull requests of %s in %s could not all be read, so it is not deleted; ask the owner.", branch, repo),
+		"the branch's pull requests could not all be read")
+}
+
+// allPulls is every pull request GitHub lists at path, and whether the
+// listing was cut: maxListPages pages read, the last of them full, so
+// that more may follow.
+func (c *call) allPulls(ctx context.Context, tok, path string) ([]ghPull, bool, error) {
+	var out []ghPull
+	read, last := 0, 0
+	err := c.g.pages(ctx, tok, path, maxListPages, func(b []byte) (int, bool, error) {
+		var page []ghPull
+		if err := decode(b, &page); err != nil {
+			return 0, true, err
+		}
+		out = append(out, page...)
+		read, last = read+1, len(page)
+		return len(page), false, nil
+	})
+	return out, read == maxListPages && last >= 100, err
+}
+
+// leftByApp is the rule that lets a branch go once nothing open uses
+// it: from, every pull request in the repository (full, owner/name as
+// GitHub names it) whose head is the branch, holds a closed or merged
+// one the app opened from the repository itself. A pull request from a
+// fork's branch of the same name, or from a fork GitHub no longer has,
+// is not this branch's.
+func (c *call) leftByApp(ctx context.Context, from []ghPull, branch, full string) (bool, error) {
+	for _, p := range from {
+		if p.State == "open" || p.Head.Ref != branch || p.Head.Repo == nil || !strings.EqualFold(p.Head.Repo.FullName, full) {
+			continue
+		}
+		mine, err := c.openedByApp(ctx, p.User)
+		if err != nil || mine {
+			return mine, err
+		}
+	}
+	return false, nil
+}
+
+// deleteBranch deletes a branch whose work is done (leftByApp). With a
+// token that only reads, it reads the repository's default branch,
+// which it never deletes, and the repository's pull requests from the
+// branch (head owner:branch, the owner GitHub names the repository's,
+// every state) and into it (base, open), refusing while any is open or
+// either listing is cut; only then is a token that writes the
+// repository's contents minted, for the deletion.
 func deleteBranch(ctx context.Context, c *call) (any, error) {
 	repo, err := c.args.repository(c.access)
 	if err != nil {
@@ -1149,44 +1210,43 @@ func deleteBranch(ctx context.Context, c *call) (any, error) {
 	}
 	owner, _, _ := strings.Cut(repo, "/")
 	full := cmp.Or(r.FullName, repo)
-	v := url.Values{"head": {cmp.Or(r.Owner.Login, owner) + ":" + branch}, "state": {"all"}}
-	var open []int64
-	var ended []ghPull
-	err = c.g.pages(ctx, read, repoPath(repo)+"/pulls?"+v.Encode(), maxListPages, func(b []byte) (int, bool, error) {
-		var page []ghPull
-		if err := decode(b, &page); err != nil {
-			return 0, true, err
-		}
-		for _, p := range page {
-			switch {
-			case p.Head.Ref != branch:
-			case p.State == "open":
-				open = append(open, p.Number)
-			case p.Head.Repo != nil && strings.EqualFold(p.Head.Repo.FullName, full):
-				// A pull request from a fork's branch of the same name is
-				// not this branch's.
-				ended = append(ended, p)
-			}
-		}
-		return len(page), false, nil
-	})
-	if err != nil {
+
+	head := url.Values{"head": {cmp.Or(r.Owner.Login, owner) + ":" + branch}, "state": {"all"}}
+	from, cut, err := c.allPulls(ctx, read, repoPath(repo)+"/pulls?"+head.Encode())
+	switch {
+	case err != nil:
 		return nil, err
+	case cut:
+		return nil, pullsCut(branch, repo)
 	}
-	if len(open) > 0 {
-		return nil, refuse(fmt.Sprintf("%s is the head of pull request #%d, which is open; a branch is deleted only once no open pull request has it as its head.", branch, open[0]),
-			fmt.Sprintf("pull request #%d is open from the branch", open[0]))
-	}
-	mine := false
-	for _, p := range ended {
-		if mine, err = c.openedByApp(ctx, p.User); err != nil {
-			return nil, err
-		}
-		if mine {
-			break
+	// An open one holds the branch capitals aside, so a name that
+	// differs only in them is held too.
+	for _, p := range from {
+		if p.State == "open" && strings.EqualFold(p.Head.Ref, branch) {
+			return nil, refuse(openPullRefusal(branch, "head", p.Number), fmt.Sprintf("pull request #%d is open from the branch", p.Number))
 		}
 	}
-	if !mine {
+	// Deleting a branch open pull requests are into closes or retargets
+	// them.
+	base := url.Values{"base": {branch}, "state": {"open"}}
+	into, cut, err := c.allPulls(ctx, read, repoPath(repo)+"/pulls?"+base.Encode())
+	switch {
+	case err != nil:
+		return nil, err
+	case cut:
+		return nil, pullsCut(branch, repo)
+	}
+	for _, p := range into {
+		if p.State == "open" && strings.EqualFold(p.Base.Ref, branch) {
+			return nil, refuse(openPullRefusal(branch, "base", p.Number), fmt.Sprintf("pull request #%d is open into the branch", p.Number))
+		}
+	}
+
+	mine, err := c.leftByApp(ctx, from, branch, full)
+	switch {
+	case err != nil:
+		return nil, err
+	case !mine:
 		return nil, refuse("Your access lets you delete only the branch of a closed or merged pull request the GitHub App opened; ask the owner.",
 			"no closed pull request the GitHub App opened came from "+branch)
 	}
