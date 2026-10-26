@@ -176,8 +176,9 @@ const RootDefault = "/files"
 // AllowedRepositories: for a push, the repositories the agent may push
 // to. RefSpecs are a fetch's or a push's. A push's
 // destinations must be in AllowedRefs (patterns of branches and tags),
-// and a refspec with + needs Force; a fetch's Force lets a ref move
-// other than fast-forward. TimeoutSeconds bounds the operation (see
+// or with AnyBranchOrTag be any branch or tag (under refs/heads/ or
+// refs/tags/), and a refspec with + needs Force; a fetch's Force lets a
+// ref move other than fast-forward. TimeoutSeconds bounds the operation (see
 // GitTimeoutFor). ConnectionID names the connection the job runs
 // through; the daemon only echoes it in its response.
 type GitRequest struct {
@@ -188,6 +189,7 @@ type GitRequest struct {
 	Force               bool     `json:"force,omitempty"`
 	AllowedRepositories []string `json:"allowed_repositories,omitempty"`
 	AllowedRefs         []string `json:"allowed_refs,omitempty"`
+	AnyBranchOrTag      bool     `json:"any_branch_or_tag,omitempty"`
 	Host                string   `json:"host"`
 	Auth                GitAuth  `json:"auth"`
 	Proxy               GitProxy `json:"proxy"`

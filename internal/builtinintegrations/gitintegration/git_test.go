@@ -149,6 +149,37 @@ func TestToolsFollowTheManifestsAccess(t *testing.T) {
 	}
 }
 
+// Why this test exists: Git's clone, fetch and push are worded by
+// gitops for every built-in that runs them. What a Git agent reads must
+// stay what Git does: a fetch and a push that may reach the working
+// copy's origin, a push whose force needs the owner's switch, the
+// connection's host, and the schemas' fields in this order with only
+// what each requires. A change to the shared words for another
+// built-in would show here as Git's tools changing.
+func TestTools(t *testing.T) {
+	// A caller with a repository to push to is given all three.
+	tools, err := New().Tools(context.Background(), pusher(false))
+	if err != nil || len(tools) != 3 {
+		t.Fatalf("tools = %+v, %v", tools, err)
+	}
+	want := []struct{ name, description, schema string }{
+		{"clone",
+			`Clones a repository with the owner's Git connection into path, a directory under /files or your home that does not exist yet or is empty. url is the repository's HTTPS URL on the connection's host, or owner/name. The clone's origin is the repository's URL without the token. Afterwards use plain git in run_shell for everything local: status, branch, commit, diff, log, merge, rebase. Plain git reaches only hosts on the team's allow list; this reaches the connection's host with its token. Refused for a repository outside your access.`,
+			`{"type":"object","properties":{"url":{"type":"string","description":"the repository's HTTPS URL on the connection's host, or owner/name"},"path":{"type":"string","description":"a directory under /files or your home (~/...) that does not exist yet or is empty"}},"required":["url","path"]}`},
+		{"fetch",
+			`Fetches from the repository's origin with the owner's Git connection into the working copy at path, updating refs/remotes/origin/* and tags; then merge, rebase or check out with plain git. refs are refspecs; empty fetches every branch. url, when given, is the repository's HTTPS URL on the connection's host, or owner/name; empty, the repository is the working copy's origin. Refused for a repository outside your access.`,
+			`{"type":"object","properties":{"path":{"type":"string","description":"the working copy, under /files or your home (~/...)"},"url":{"type":"string","description":"optional: the repository's HTTPS URL on the connection's host, or owner/name; empty, the working copy's origin"},"refs":{"type":"array","items":{"type":"string"},"description":"optional refspecs, each writing under refs/remotes/origin/ or refs/tags/, such as +refs/heads/main:refs/remotes/origin/main"}},"required":["path"]}`},
+		{"push",
+			`Pushes refs from the working copy at path to its origin with the owner's Git connection. Each entry is a branch, a tag, or a refspec such as HEAD:refs/heads/agent/x; the destination must be one the owner allowed for you. A name without refs/ is a branch (agent/x is refs/heads/agent/x); a tag is written tags/v1.2.0 or refs/tags/v1.2.0. force, or a + in front of an entry, overwrites the remote ref and needs the owner's separate permission. Deleting a remote ref is refused. url, when given, is the repository's HTTPS URL on the connection's host, or owner/name; empty, the repository is the working copy's origin. Refused for a repository, a ref or a force push outside your access.`,
+			`{"type":"object","properties":{"path":{"type":"string","description":"the working copy, under /files or your home (~/...)"},"refs":{"type":"array","items":{"type":"string"},"description":"what to push: a branch (agent/x), a tag (tags/v1.2.0) or a refspec such as HEAD:refs/heads/agent/x"},"force":{"type":"boolean","description":"optional: overwrite the remote refs even where the push is not a fast-forward"},"url":{"type":"string","description":"optional: the repository's HTTPS URL on the connection's host, or owner/name; empty, the working copy's origin"}},"required":["path","refs"]}`},
+	}
+	for i, w := range want {
+		if tl := tools[i]; tl.Name != w.name || tl.Description != w.description || string(tl.InputSchema) != w.schema {
+			t.Errorf("tool %d = %s\n%q\n%s\nwant %s\n%q\n%s", i, tl.Name, tl.Description, tl.InputSchema, w.name, w.description, w.schema)
+		}
+	}
+}
+
 // Why this test exists: the job core hands the agent's shell carries
 // the owner's token, so everything in it is core's, not the model's: a
 // URL core built from the connection's host and the repository's
@@ -510,82 +541,6 @@ func TestCompletePush(t *testing.T) {
 	pullOnly(off.Access)
 	if _, err := g.Complete(ctx, off, testConn("github.com"), "push", args, shelljob.Result{Git: &shelljob.GitResult{Repository: "acme/widgets"}}); !errors.As(err, &ref) || ref.Reason != "the access does not allow pushing" {
 		t.Errorf("push taken away, nothing landed = %v", err)
-	}
-}
-
-// Why this test exists: the owner can take a repository off the ones an
-// agent may push to, or narrow push_refs, while a push runs. The remote
-// is written all the same, so the second request must not be audited
-// as refused: the row must be allowed and name what landed (only the
-// refs the call asked for, never one the shell's report adds), and the
-// agent must read what landed and that its access changed.
-func TestCompletePushWhenTheAccessChangedDuringIt(t *testing.T) {
-	g := New()
-	off := pusher(false)
-	pullOnly(off.Access)
-	args := json.RawMessage(`{"path":"/files/w","refs":["agent/x"]}`)
-	landed := shelljob.Result{Git: &shelljob.GitResult{Repository: "acme/widgets", Updated: []shelljob.GitRefUpdate{
-		{Ref: "refs/heads/agent/x", New: "1111111aaaa"},
-		{Ref: "refs/heads/main", Old: "2222222bbbb", New: "3333333cccc"},
-	}}}
-	res, err := g.Complete(context.Background(), off, testConn("github.com"), "push", args, landed)
-	if err != nil || res.IsError {
-		t.Fatalf("landed under a changed access = %+v, %v", res, err)
-	}
-	if res.Audit != "pushed refs/heads/agent/x to acme/widgets; the access changed during the push" ||
-		!strings.HasPrefix(res.Content[0], "Pushed refs/heads/agent/x (new) to acme/widgets. Your access to the Git integration changed during the push") ||
-		strings.Contains(res.Content[0], "refs/heads/main") {
-		t.Errorf("landed under a changed access = %+v", res)
-	}
-}
-
-// Why this test exists: the result is the agent's pod's own report. A
-// push's answer and audit must name only the destinations core asked
-// for, so a report that adds a ref cannot write a row saying it was
-// pushed; and when the daemon cut its list short (UpdatedTotal above
-// the refs listed), the count must still say how many moved.
-func TestPushedNamesOnlyWhatWasAsked(t *testing.T) {
-	g := New()
-	ctx := context.Background()
-	args := json.RawMessage(`{"path":"/files/w","url":"acme/widgets","refs":["agent/x"]}`)
-	extra := shelljob.Result{Git: &shelljob.GitResult{Updated: []shelljob.GitRefUpdate{
-		{Ref: "refs/heads/main", New: "3333333cccc"},
-		{Ref: "refs/heads/agent/x", New: "1111111aaaa"},
-	}}}
-	res, _ := g.Complete(ctx, pusher(false), testConn("github.com"), "push", args, extra)
-	if res.Audit != "acme/widgets: pushed refs/heads/agent/x" || strings.Contains(res.Content[0], "main") {
-		t.Errorf("a report with a ref not asked for = %+v", res)
-	}
-	only := shelljob.Result{Git: &shelljob.GitResult{Updated: []shelljob.GitRefUpdate{{Ref: "refs/heads/main", New: "3333333cccc"}}}}
-	res, _ = g.Complete(ctx, pusher(false), testConn("github.com"), "push", args, only)
-	if !strings.HasPrefix(res.Content[0], "Nothing to push") {
-		t.Errorf("a report of only refs not asked for = %+v", res)
-	}
-
-	many := json.RawMessage(`{"path":"/files/w","url":"acme/widgets","refs":["agent/a","agent/b","agent/c"]}`)
-	cut := shelljob.Result{Git: &shelljob.GitResult{UpdatedTotal: 3, Updated: []shelljob.GitRefUpdate{{Ref: "refs/heads/agent/a", New: "1111111aaaa"}}}}
-	res, _ = g.Complete(ctx, pusher(false), testConn("github.com"), "push", many, cut)
-	if !strings.HasPrefix(res.Content[0], "Pushed refs/heads/agent/a (new) and 2 more to acme/widgets.") ||
-		res.Audit != "acme/widgets: pushed refs/heads/agent/a and 2 more" {
-		t.Errorf("a cut list = %+v", res)
-	}
-}
-
-// Why this test exists: core writes an audit row as it hands a job
-// out, so a push whose second request never comes is still on record.
-// For a push that row must name the destinations and whether it
-// forces, from core's own reading of the refs (the shell has not run
-// yet, and its report is the agent's pod's).
-func TestPushStartedRow(t *testing.T) {
-	g := New()
-	res, err := g.Call(context.Background(), pusher(true), testConn("github.com"), "push",
-		json.RawMessage(`{"path":"w","url":"acme/widgets","refs":["agent/x","+HEAD:tags/v2"]}`))
-	if err != nil || res.Audit != "started: acme/widgets, force push of refs/heads/agent/x, refs/tags/v2" {
-		t.Errorf("started = %+v, %v", res, err)
-	}
-	res, _ = g.Call(context.Background(), pusher(false), testConn("github.com"), "push", json.RawMessage(`{"path":"w","refs":["agent/x"]}`))
-	if res.Audit != "started: the working copy's origin at w, push of refs/heads/agent/x" {
-		t.Errorf("started without a url = %q", res.Audit)
 	}
 }
 

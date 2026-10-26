@@ -80,8 +80,9 @@ func TestIntegrationToolsRelayToCore(t *testing.T) {
 
 // Why this test exists: a git clone runs in two requests to core with
 // the job between them in the agent's shell. The job must reach the
-// daemon field for field (the URL, the access's patterns, the token,
-// the proxy credential, the bound, the connection), the second request
+// daemon field for field (the URL, the access's patterns, the refs and
+// whether any branch or tag may be pushed, the token, the proxy
+// credential, the bound, the connection), the second request
 // must carry the same name and arguments with what the shell gave back,
 // ref for ref, with the connection the daemon echoed,
 // and only core's second answer may reach the model: never the job,
@@ -91,6 +92,7 @@ func TestIntegrationToolsRunTheShellJob(t *testing.T) {
 		Op: "clone", Path: "/files/widgets", URL: "https://github.com/acme/widgets.git", Host: "github.com",
 		AllowedRepositories: []string{"acme/*"}, RefSpecs: []string{"+refs/heads/main:refs/remotes/origin/main"}, Force: true,
 		AllowedRefs:    []string{"refs/heads/agent/*"},
+		AnyBranchOrTag: true,
 		Auth:           agentpod.GitAuth{Username: "x-access-token", Password: "ghp_secret_token"},
 		Proxy:          agentpod.GitProxy{Username: "integration-git.1a2b3c4d", Password: "proxy-secret-value"},
 		TimeoutSeconds: 900,
@@ -113,7 +115,7 @@ func TestIntegrationToolsRunTheShellJob(t *testing.T) {
 	}
 	want := agentshell.GitRequest{
 		Op: job.Op, Path: job.Path, URL: job.URL, RefSpecs: job.RefSpecs, Force: true,
-		AllowedRepositories: job.AllowedRepositories, AllowedRefs: job.AllowedRefs, Host: job.Host,
+		AllowedRepositories: job.AllowedRepositories, AllowedRefs: job.AllowedRefs, AnyBranchOrTag: true, Host: job.Host,
 		Auth:           agentshell.GitAuth{Username: "x-access-token", Password: "ghp_secret_token"},
 		Proxy:          agentshell.GitProxy{Username: "integration-git.1a2b3c4d", Password: "proxy-secret-value"},
 		TimeoutSeconds: 900,

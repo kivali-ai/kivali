@@ -5,9 +5,55 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/kivali-ai/kivali/internal/builtinintegrations"
+	"github.com/kivali-ai/kivali/internal/builtinintegrations/gitops"
 	"github.com/kivali-ai/kivali/internal/gitrepo"
 	"github.com/kivali-ai/kivali/internal/integration"
 )
+
+// policy is what caller may do through conn with the action name: the
+// connection's host, the access's repositories to pull and to push to,
+// and for a push the branches and tags it may write and whether it may
+// force. A connection without a usable host or token, or an access
+// whose repositories (or, for a push to a repository it may push to,
+// whose push_refs) do not read, grants nothing: the policy's Refused
+// says why, in the order a call meets them.
+func (g *Git) policy(caller builtinintegrations.Caller, conn builtinintegrations.Connection, name string) gitops.Policy {
+	p := gitops.Policy{Integration: g.integration(), InsecureHTTP: g.InsecureHTTP}
+	host, err := gitrepo.NormalizeHost(conn.Fields["host"])
+	if err != nil {
+		p.Refused = &builtinintegrations.Refusal{Text: "The " + displayName + " integration's connection has no host Kivali can use. Ask the owner to fix the connection.",
+			Reason: "the connection's host is not a host name"}
+		return p
+	}
+	p.Host = host
+	if conn.Fields["token"] == "" {
+		p.Refused = &builtinintegrations.Refusal{Text: "The " + displayName + " integration's connection has no token. Ask the owner to connect it again.",
+			Reason: "the connection has no token"}
+		return p
+	}
+	pull, push, err := repositoryPatterns(caller.Access)
+	if err != nil {
+		p.Refused = &builtinintegrations.Refusal{Text: "Your access to the " + displayName + " integration names no repositories Kivali can read. Ask the owner to set it again.",
+			Reason: err.Error()}
+		return p
+	}
+	p.Pull, p.Push = pull, push
+	p.Force = accessAllows(caller.Access, forceKey)
+	// push_refs mean something only to a push with a repository to push
+	// to: a clone or a fetch is not refused for them, and a push with
+	// none is refused for that first.
+	if name == gitops.Push && len(push) > 0 {
+		refs, err := pushRefPatterns(caller.Access)
+		if err != nil {
+			p.Refused = &builtinintegrations.Refusal{Text: "Your access to the " + displayName + " integration names branches or tags Kivali cannot read. Ask the owner to set it again.",
+				Reason: err.Error()}
+			return p
+		}
+		p.Refs = refs
+	}
+	return p
+}
 
 // The access form's fields: the repositories an agent may pull (clone
 // and fetch); the repositories it may push to, which it may pull too;

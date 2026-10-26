@@ -52,7 +52,9 @@ signing in, `internal/connect/connecttest` is a vendor in-process for
 its tests, and `internal/web/integration_signin.go` keeps and refreshes
 the tokens ([Sign-in connections](#sign-in-connections)).
 The Git built-in is `internal/builtinintegrations/gitintegration`,
-with `internal/gitrepo` (a repository's URL and access patterns),
+with `internal/builtinintegrations/gitops` (the clone, fetch and push
+a built-in runs in the agent's shell: checks, job and words),
+`internal/gitrepo` (a repository's URL and access patterns),
 `internal/shelljob` (the shell job's wire shapes) and
 `internal/agentshell/git.go` (the daemon's `POST /v1/git`)
 ([The git built-in](#the-git-built-in)).
@@ -2757,6 +2759,30 @@ which reaches only the team's allow list. Its manifest:
   without a ref to push, are left out, since they grant nothing; a
   repository to push to with no refs reads "Branches and tags: none".
 
+#### The shared clone, fetch and push
+
+Everything about a clone, a fetch or a push that is not Git's own
+policy is `internal/builtinintegrations/gitops`, so another built-in
+can run the same actions through the same daemon. Git reads its
+connection and the caller's access (`gitintegration/access.go`) into a
+`gitops.Policy`, per call, and hands it in; `gitops` reads no access
+form:
+
+| `gitops` | Is |
+| --- | --- |
+| `Integration` | how the actions name the built-in: `Name` (its tool prefix: `git_fetch`), `DisplayName` (in every refusal and answer), `HostWords` (the host in the tools' words: Git's "the connection's host"), `NameRepository` (a fetch and a push must name the repository; Git's may reach the working copy's origin) and `ForceSwitch` (the access can allow force; without it a push takes no `force`, and a `+` is refused as something the integration does not do) |
+| `Policy` | one call's grant: the `Integration`, the exact host, the repositories it may pull (`Pull`) and push to (`Push`, which it may pull too), the refs a push may write (`Refs`, normalised patterns, or `AnyRef`: any branch or tag), `Force`, and `Refused`, the built-in's own refusal when its connection or the access grants nothing |
+| `Tools(in)` | the three tools, their descriptions and schemas worded for `in` |
+| `Check(name, args, p)` | the first request: a `Refusal`, or a `Call` |
+| `Call.Job(auth, connID)`, `Call.Started()` | the job, with the credential the built-in presents, and the `started: ...` audit reason |
+| `Complete(name, args, p, connID, result)` | the second request: the answer and the audit row, with the two edge cases below |
+
+`Policy.Refused` is how Git says its connection has no host or token,
+or that the access's repositories (or, for a push to a repository it
+may push to, its `push_refs`) do not read: `Check` refuses every action
+with it, before the arguments are read, and `Complete` takes it as the
+check refusing.
+
 #### Repositories and access
 
 A repository is its path on the connection's host, `owner/name`, or
@@ -2824,9 +2850,9 @@ two requests on `core.sock`, as the smoke test does
 
 1. The agent's MCP server sends the call (`IntegrationCallRequest`).
    Core works it out as any call ([A call](#a-call)) and calls
-   `Git.Call`, which checks the connection (a host, a token), the
-   access, the arguments and the repository, and for a push its refs
-   (below), and answers with a `builtinintegrations.Refusal` or a shell
+   `Git.Call` (`gitops.Check` with Git's policy), which checks the
+   connection (a host, a token), the access, the arguments and the
+   repository, and for a push its refs (below), and answers with a `builtinintegrations.Refusal` or a shell
    job. Core puts the connection's proxy credential in the job, writes
    an audit row (allowed, the action, `started: <owner/name>`, or
    `started: the working copy's origin at <path>` for a fetch or a push
@@ -2842,8 +2868,8 @@ two requests on `core.sock`, as the smoke test does
 3. It sends the call again: the same name and arguments, with
    `shell_job_result`. Core works out the integration, the agent's
    access and the connection again exactly as on the first request, and
-   `Git.Complete` checks the call again (access taken away while the job
-   ran refuses it) and puts the result in words. That writes the call's
+   `Git.Complete` (`gitops.Complete`) checks the call again (access
+   taken away while the job ran refuses it) and puts the result in words. That writes the call's
    second audit row: allowed, the action `clone`, `fetch` or `push`,
    and the reason `<owner/name>: updated <refs>` (at most ten named,
    then how many more), `<owner/name>: up to date`, or the repository
@@ -2911,6 +2937,7 @@ type GitJob struct {
 	Force               bool     // a fetch: a ref may move other than fast-forward; a push: + is allowed
 	AllowedRepositories []string // the access's patterns, for the daemon's own check; a push's: push_repositories only
 	AllowedRefs         []string // a push's: the access's push_refs, normalised
+	AnyBranchOrTag      bool     // json: any_branch_or_tag; a push's: any branch or tag, in place of AllowedRefs
 	Host                string   // the connection's, made exact
 	Auth                GitAuth  // {username: x-access-token, password: the token}
 	Proxy               GitProxy // {username: integration-git.<id>, password: the secret}
@@ -2929,8 +2956,12 @@ type GitResult struct {
 }
 ```
 
-Clone and fetch set no `force` and no `allowed_refs`. Nothing on the
-job's path logs it: not core, not the MCP server, not the daemon.
+Clone and fetch set no `force`, no `allowed_refs` and no
+`any_branch_or_tag`. `any_branch_or_tag` is for an access that lets an
+agent push without naming branches and tags, which no pattern can say
+(`*` stands within one segment); Git's push never sets it, since its
+access names them in `push_refs`. Nothing on the job's path logs it:
+not core, not the MCP server, not the daemon.
 
 Git's refusals name the cause and the owner only:
 
@@ -3033,8 +3064,10 @@ bound.
   refs that moved are worked out from every ref before and after.
 - **A push's refspecs.** Each is held again to the rules core held it
   to, as the URL is to `allowed_repositories`: it parses
-  (`gitrepo.ParsePushRefSpec`), deletes nothing, writes a destination
-  `allowed_refs` matches, names a destination no other one does, and
+  (`gitrepo.ParsePushRefSpec`, whose destination is only ever a branch
+  or a tag), deletes nothing, writes a destination `allowed_refs`
+  matches (any branch or tag when `any_branch_or_tag` is set, which
+  widens nothing else), names a destination no other one does, and
   has a `+` only when the job's `force` is set. None is an error. Each
   source is resolved in the working copy first, so a source it does not
   have is an error, not a push of nothing: a ref naming an object
