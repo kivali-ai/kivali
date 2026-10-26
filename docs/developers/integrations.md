@@ -51,7 +51,7 @@ is the lifecycle and the requirements ([The lifecycle](#the-lifecycle)).
 signing in, `internal/connect/connecttest` is a vendor in-process for
 its tests, and `internal/web/integration_signin.go` keeps and refreshes
 the tokens ([Sign-in connections](#sign-in-connections)).
-The Git built-in is `internal/builtinintegrations/gitintegration`,
+The Git (Basic) built-in is `internal/builtinintegrations/gitintegration`,
 with `internal/builtinintegrations/gitops` (the clone, fetch and push
 a built-in runs in the agent's shell: checks, job and words),
 `internal/gitrepo` (a repository's URL and access patterns),
@@ -59,7 +59,7 @@ a built-in runs in the agent's shell: checks, job and words),
 `internal/agentshell/git.go` (the daemon's `POST /v1/git`)
 ([The git built-in](#the-git-built-in)).
 `internal/builtinintegrations/githubintegration` is GitHub as a
-built-in of Go code, listed in `builtins.All()` beside Git
+built-in of Go code, listed in `builtins.All()` beside Git (Basic)
 ([The GitHub built-in](#the-github-built-in)).
 `cmd/fake-integration` is a stdio MCP server for tests
 (`internal/integrationpod/fakeintegration`);
@@ -423,7 +423,7 @@ built-in's Go functions
 
 Every integration, bundle or built-in, takes one connection: the
 installation is its identity. A manifest key Kivali does not read is
-ignored, `kivali.connection.multiple` among them (Git's versions
+ignored, `kivali.connection.multiple` among them (Git (Basic)'s versions
 stored by an earlier Kivali carry it).
 
 A bundle is read from a zip (`integration.ReadBundle`, an upload) or
@@ -454,7 +454,7 @@ flat form can show. The top level takes `type: object`, `properties`,
 | `boolean` with `"x-kivali-danger": true` | `switch` with `danger` (`AccessField.Danger`) |
 
 `x-kivali-danger` marks a switch whose "on" the owner should choose
-with care (Git's force-push): the access dialog draws it in the warning
+with care (Git (Basic)'s force-push): the access dialog draws it in the warning
 tone, its description beside a warning icon instead of a muted hint.
 It must be `true` or `false`, and it is an error on any property but a
 `boolean`.
@@ -2261,7 +2261,7 @@ in words that name the cause and the owner and nothing else:
 | Its connection being set up: an install under way, one a stopped Kivali left unfinished, one being discarded, or one an earlier version made that this version's setup does not fit (`connectionBeingSetUp`, audited "the connection is being set up") | The <integration> integration is being set up; ask the owner to finish it. |
 | A built-in integration with no connection | The <integration> integration has no connection yet. Ask the owner to connect it. |
 | A shell job's result with a call whose integration asks for no job | The <integration> integration asked your shell for nothing in this call, so its result was not read. Call the action again. |
-| A built-in's own refusal (`builtinintegrations.Refusal`) | The refusal's `Text`, audited with its `Reason`: for Git, see [The git built-in](#the-git-built-in) |
+| A built-in's own refusal (`builtinintegrations.Refusal`) | The refusal's `Text`, audited with its `Reason`: for Git (Basic), see [The git built-in](#the-git-built-in) |
 
 A name that starts with no integration's prefix is answered "No
 integration has an action named <name>." and has no audit row.
@@ -2599,7 +2599,7 @@ Every one of these names the integration by its display name
 Right after `store.InstallBuiltinIntegrations`, at boot and after a
 restore, `store.MigrateIntegrationConnections` gives every integration
 one connection (`internal/store/integration_connections_migrate.go`).
-Git's records from a Kivali that let it hold several connections, each
+Git (Basic)'s records from a Kivali that let it hold several connections, each
 with a label, and access rows naming theirs by `connection_id`, are
 brought to that shape without deleting anything:
 
@@ -2616,7 +2616,7 @@ brought to that shape without deleting anything:
   again without it. A row naming any other connection is set aside:
   it keeps its `connection_id` on disk and gains `retired`, the reason
   it grants nothing, "set for the connection <label, else host>, which
-  Git no longer has" (or "it was set for a connection that is no longer
+  Git (Basic) no longer has" (or "it was set for a connection that is no longer
   there" when no record set aside has that id). Every read shows it as
   the row's `invalid`, the mechanism a changed access form uses, whose
   words (the page's, the agent's refusal) say to set it again, until
@@ -2720,17 +2720,21 @@ says agents cannot use it, and offers Uninstall, which removes it.
 
 ### The git built-in
 
-Git (`internal/builtinintegrations/gitintegration`, name `git`,
-version 2.0.0) lets agents clone, fetch and push repositories over
-HTTPS with the owner's token. Everything local is plain git in the agent's shell,
-which reaches only the team's allow list. Its manifest:
+Git (Basic), the built-in named `git`
+(`internal/builtinintegrations/gitintegration`, version 2.1.0), lets
+agents clone, fetch and push repositories over HTTPS with the owner's
+token. Everything local is plain git in the agent's shell, which
+reaches only the team's allow list. Version 2.1.0 renamed it from Git;
+its name, its records and its actions (`git_clone`, `git_fetch`,
+`git_push`) kept `git`, and its access form did not change, so every
+agent's access set under 2.0.0 stays valid. Its manifest:
 
 - `user_config`: `host` (required; "github.com, gitlab.com or any HTTPS
   git host, without https://") and `token` (sensitive, required).
 - `kivali.connection.method: token`: one connection, any HTTPS host
   and a token for it, which every agent's call uses. No
   `kivali.hosts`, and no `kivali.verify` ([No Test
-  connection](#no-test-connection)). A Git that held several
+  connection](#no-test-connection)). A Git (Basic) that held several
   connections keeps one at boot ([Migration](#migration)).
 - `kivali.access.schema`, in this order: `pull_repositories` (a list,
   "Repositories it may pull": clone and fetch); `push_repositories` (a
@@ -2761,23 +2765,23 @@ which reaches only the team's allow list. Its manifest:
 
 #### The shared clone, fetch and push
 
-Everything about a clone, a fetch or a push that is not Git's own
+Everything about a clone, a fetch or a push that is not Git (Basic)'s own
 policy is `internal/builtinintegrations/gitops`, so another built-in
-can run the same actions through the same daemon. Git reads its
+can run the same actions through the same daemon. Git (Basic) reads its
 connection and the caller's access (`gitintegration/access.go`) into a
 `gitops.Policy`, per call, and hands it in; `gitops` reads no access
 form:
 
 | `gitops` | Is |
 | --- | --- |
-| `Integration` | how the actions name the built-in: `Name` (its tool prefix: `git_fetch`), `DisplayName` (in every refusal and answer), `HostWords` (the host in the tools' words: Git's "the connection's host"), `NameRepository` (a fetch and a push must name the repository; Git's may reach the working copy's origin) and `ForceSwitch` (the access can allow force; without it a push takes no `force`, and a `+` is refused as something the integration does not do) |
+| `Integration` | how the actions name the built-in: `Name` (its tool prefix: `git_fetch`), `DisplayName` (in every refusal and answer), `HostWords` (the host in the tools' words: Git (Basic)'s "the connection's host"), `NameRepository` (a fetch and a push must name the repository; Git (Basic)'s may reach the working copy's origin) and `ForceSwitch` (the access can allow force; without it a push takes no `force`, and a `+` is refused as something the integration does not do) |
 | `Policy` | one call's grant: the `Integration`, the exact host, the repositories it may pull (`Pull`) and push to (`Push`, which it may pull too), the refs a push may write (`Refs`, normalised patterns, or `AnyRef`: any branch or tag), `Force`, and `Refused`, the built-in's own refusal when its connection or the access grants nothing |
 | `Tools(in)` | the three tools, their descriptions and schemas worded for `in` |
 | `Check(name, args, p)` | the first request: a `Refusal`, or a `Call` |
 | `Call.Job(auth, connID)`, `Call.Started()` | the job, with the credential the built-in presents, and the `started: ...` audit reason |
 | `Complete(name, args, p, connID, result)` | the second request: the answer and the audit row, with the two edge cases below |
 
-`Policy.Refused` is how Git says its connection has no host or token,
+`Policy.Refused` is how Git (Basic) says its connection has no host or token,
 or that the access's repositories (or, for a push to a repository it
 may push to, its `push_refs`) do not read: `Check` refuses every action
 with it, before the arguments are read, and `Complete` takes it as the
@@ -2850,7 +2854,7 @@ two requests on `core.sock`, as the smoke test does
 
 1. The agent's MCP server sends the call (`IntegrationCallRequest`).
    Core works it out as any call ([A call](#a-call)) and calls
-   `Git.Call` (`gitops.Check` with Git's policy), which checks the
+   `Git.Call` (`gitops.Check` with Git (Basic)'s policy), which checks the
    connection (a host, a token), the access, the arguments and the
    repository, and for a push its refs (below), and answers with a `builtinintegrations.Refusal` or a shell
    job. Core puts the connection's proxy credential in the job, writes
@@ -2883,7 +2887,7 @@ two requests on `core.sock`, as the smoke test does
    agent reads what landed and that its access changed; with nothing
    landed the refusal stands. A job that ran through another connection
    than the integration has now (the job's `connection_id`, which the
-   daemon echoes in the result, is not the connection's id: Git was
+   daemon echoes in the result, is not the connection's id: Git (Basic) was
    uninstalled and installed again while it ran) is never refused and
    not checked against the new connection, whose host and token are
    not the job's: the agent reads what ran and that the connection
@@ -2959,29 +2963,29 @@ type GitResult struct {
 Clone and fetch set no `force`, no `allowed_refs` and no
 `any_branch_or_tag`. `any_branch_or_tag` is for an access that lets an
 agent push without naming branches and tags, which no pattern can say
-(`*` stands within one segment); Git's push never sets it, since its
+(`*` stands within one segment); Git (Basic)'s push never sets it, since its
 access names them in `push_refs`. Nothing on the job's path logs it:
 not core, not the MCP server, not the daemon.
 
-Git's refusals name the cause and the owner only:
+Git (Basic)'s refusals name the cause and the owner only:
 
 | Cause | The agent reads | The audit's reason |
 | --- | --- | --- |
-| A URL on another host | The Git integration's connection is for <host>; give a repository's URL on it, or owner/name. | the URL is on another host than the connection's |
+| A URL on another host | The Git (Basic) integration's connection is for <host>; give a repository's URL on it, or owner/name. | the URL is on another host than the connection's |
 | A repository that does not read | Kivali cannot read the repository: <why>. Give its HTTPS URL on <host>, or owner/name. | the repository does not read |
-| Outside the access | The Git integration's access for you does not include <owner/name>. Ask the owner if your work needs it. | the access does not include <owner/name> |
-| An access that names no repositories | Your access to the Git integration names no repositories Kivali can read. Ask the owner to set it again. | the access names no repositories |
-| A connection host that is no host | The Git integration's connection has no host Kivali can use. Ask the owner to fix the connection. | the connection's host is not a host name |
-| No token | The Git integration's connection has no token. Ask the owner to connect it again. | the connection has no token |
+| Outside the access | The Git (Basic) integration's access for you does not include <owner/name>. Ask the owner if your work needs it. | the access does not include <owner/name> |
+| An access that names no repositories | Your access to the Git (Basic) integration names no repositories Kivali can read. Ask the owner to set it again. | the access names no repositories |
+| A connection host that is no host | The Git (Basic) integration's connection has no host Kivali can use. Ask the owner to fix the connection. | the connection's host is not a host name |
+| No token | The Git (Basic) integration's connection has no token. Ask the owner to connect it again. | the connection has no token |
 | Arguments the action does not take | git_clone takes url and path, both strings. (git_fetch: path, and optionally url and refs; git_push: path and refs, and optionally force and url) | the arguments do not read |
-| A push with no repository to push to | The Git integration's access for you does not allow pushing. Ask the owner if your work needs it. | the access does not allow pushing |
-| A push to a repository it may only pull | The Git integration's access for you lets you pull <owner/name> but not push to it. Ask the owner if your work needs it. | the access does not allow pushing to <owner/name> |
-| `push_refs` that do not read | Your access to the Git integration names branches or tags Kivali cannot read. Ask the owner to set it again. | the access's branches and tags do not read |
+| A push with no repository to push to | The Git (Basic) integration's access for you does not allow pushing. Ask the owner if your work needs it. | the access does not allow pushing |
+| A push to a repository it may only pull | The Git (Basic) integration's access for you lets you pull <owner/name> but not push to it. Ask the owner if your work needs it. | the access does not allow pushing to <owner/name> |
+| `push_refs` that do not read | Your access to the Git (Basic) integration names branches or tags Kivali cannot read. Ask the owner to set it again. | the access's branches and tags do not read |
 | A ref that does not read | git_push cannot read "<ref>": <why>. Each entry is a branch (agent/x), a tag (tags/v1.2.0) or a refspec such as HEAD:refs/heads/agent/x. | a ref does not read |
-| A deletion | Deleting a remote ref is not something the Git integration does. | the call deletes a remote ref |
+| A deletion | Deleting a remote ref is not something the Git (Basic) integration does. | the call deletes a remote ref |
 | A destination twice | git_push names <ref> twice; push each destination once. | a destination is named twice |
-| A destination outside `push_refs` | The Git integration's access for you does not include refs/heads/main. Ask the owner if your work needs it. | the access does not include refs/heads/main |
-| A force without `force` | The Git integration's access for you does not allow force-pushing. Ask the owner if your work needs it. | the access does not allow force-pushing |
+| A destination outside `push_refs` | The Git (Basic) integration's access for you does not include refs/heads/main. Ask the owner if your work needs it. | the access does not include refs/heads/main |
+| A force without `force` | The Git (Basic) integration's access for you does not allow force-pushing. Ask the owner if your work needs it. | the access does not allow force-pushing |
 
 The answers: "Cloned <owner/name> into <path>. Its origin is <url>; use
 plain git there for everything local, and git_fetch to fetch with the
@@ -3140,7 +3144,7 @@ http-backend` under `net/http/cgi` on `httptest`, be reached over
 
 #### The connection's proxy credential
 
-Git implements `builtinintegrations.HostsOf`: its connection reaches
+Git (Basic) implements `builtinintegrations.HostsOf`: its connection reaches
 its host (without the port). The connection of such a built-in has a
 scoped proxy credential of its own (`internal/web/integration_builtin_egress.go`):
 
@@ -3173,7 +3177,7 @@ scoped proxy credential of its own (`internal/web/integration_builtin_egress.go`
 
 #### Checks at save
 
-Git is a `ConnectionChecker` and an `AccessChecker`. Saving a
+Git (Basic) is a `ConnectionChecker` and an `AccessChecker`. Saving a
 connection whose host `gitrepo.NormalizeHost` cannot read (a path, user
 info, a scheme other than `https://`) is a 400, "Host is a host name
 such as github.com, without https:// or a path", and nothing is
@@ -3188,7 +3192,7 @@ before the check, or by hand) refuses every repository.
 
 #### No Test connection
 
-Git's manifest names no `kivali.verify`, so its page offers no Test
+Git (Basic)'s manifest names no `kivali.verify`, so its page offers no Test
 connection, and core never reaches a git host itself: every request
 that carries the token leaves from the agent-shell daemon through the
 egress proxy, held to the connection's host. Whether a connection

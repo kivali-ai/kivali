@@ -248,8 +248,8 @@ func TestMigrateIntegrationConnectionsKeepsTheMostUsed(t *testing.T) {
 	want := map[string]string{
 		"lee":  "",
 		"kim":  "",
-		"dana": "set for the connection GitHub, which Git no longer has",
-		"ana":  "set for the connection Old, which Git no longer has",
+		"dana": "set for the connection GitHub, which Git (Basic) no longer has",
+		"ana":  "set for the connection Old, which Git (Basic) no longer has",
 		"pat":  "it was set for a connection that is no longer there",
 	}
 	for slug, w := range want {
@@ -295,7 +295,7 @@ func TestMigrateIntegrationConnectionsTieKeepsTheOldest(t *testing.T) {
 		t.Fatalf("connection = %+v, %v", c, err)
 	}
 	got := invalidBySlug(t, s, gitintegration.Name)
-	if got["dana"] != "" || got["lee"] != "set for the connection gitlab.example.com, which Git no longer has" {
+	if got["dana"] != "" || got["lee"] != "set for the connection gitlab.example.com, which Git (Basic) no longer has" {
 		t.Errorf("rows: %+v", got)
 	}
 }
@@ -348,7 +348,7 @@ func TestMigrateIntegrationConnectionsThatCannotFinish(t *testing.T) {
 	if after := gitFiles(t, s); !maps.Equal(after, before) {
 		t.Errorf("a migration that could not finish changed files:\nbefore %v\nafter  %v", before, after)
 	}
-	const several = "Git holds more than one connection record and Kivali could not bring it to one; see the log"
+	const several = "Git (Basic) holds more than one connection record and Kivali could not bring it to one; see the log"
 	for slug, why := range invalidBySlug(t, s, gitintegration.Name) {
 		if why != several {
 			t.Errorf("%s: invalid %q, want %q", slug, why, several)
@@ -365,7 +365,7 @@ func TestMigrateIntegrationConnectionsThatCannotFinish(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := invalidBySlug(t, s, gitintegration.Name)
-	if got["lee"] != "" || got["kim"] != "" || got["dana"] != "set for the connection GitHub, which Git no longer has" {
+	if got["lee"] != "" || got["kim"] != "" || got["dana"] != "set for the connection GitHub, which Git (Basic) no longer has" {
 		t.Errorf("rows once the way is clear: %+v", got)
 	}
 }
@@ -393,7 +393,7 @@ func TestMigrateIntegrationConnectionsAfterAStop(t *testing.T) {
 		t.Fatalf("connection = %+v, %v", c, err)
 	}
 	got := invalidBySlug(t, s, gitintegration.Name)
-	if got["lee"] != "" || got["kim"] != "" || got["dana"] != "set for the connection GitHub, which Git no longer has" {
+	if got["lee"] != "" || got["kim"] != "" || got["dana"] != "set for the connection GitHub, which Git (Basic) no longer has" {
 		t.Errorf("rows: %+v", got)
 	}
 }

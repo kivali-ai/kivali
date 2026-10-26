@@ -150,7 +150,7 @@ func TestGitAfterOneConnectionMigration(t *testing.T) {
 	for _, r := range page.Access {
 		rows[r.Agent.Slug] = r
 	}
-	const reason = "set for the connection GitHub, which Git no longer has"
+	const reason = "set for the connection GitHub, which Git (Basic) no longer has"
 	if rows["lee"].Invalid != nil || rows["kim"].Invalid != nil || rows["dana"].Invalid == nil || *rows["dana"].Invalid != reason {
 		t.Errorf("rows = %+v", rows)
 	}
@@ -243,7 +243,7 @@ func TestGitJobTellsWhatRanThroughItsConnection(t *testing.T) {
 		Git: &agentpod.GitResult{Repository: "acme/widgets", ConnectionID: before},
 	}})
 	text := strings.Join(second.Content, " ")
-	if err != nil || second.IsError || !strings.HasPrefix(text, "Cloned acme/widgets.") || !strings.Contains(text, "The Git connection changed during the clone") {
+	if err != nil || second.IsError || !strings.HasPrefix(text, "Cloned acme/widgets.") || !strings.Contains(text, "The Git (Basic) connection changed during the clone") {
 		t.Fatalf("second request = %+v, %v", second, err)
 	}
 	if row := gitRows(t, srv)[0]; !row.Allowed || !strings.HasSuffix(row.Reason, "; the connection changed during the clone (it ran through a connection that is no longer there, so only the current connection's secrets were scrubbed)") {
@@ -292,7 +292,7 @@ func TestSeveralConnectionRecordsGrantNothing(t *testing.T) {
 	srv.Secrets = mem
 	hub, _ := legacyGitWithTwo(t, srv, mem)
 	page := orgOK[apitypes.IntegrationPage](t, orgGet(t, srv, intBase+"/git"))
-	const several = "Git holds more than one connection record and Kivali could not bring it to one; see the log"
+	const several = "Git (Basic) holds more than one connection record and Kivali could not bring it to one; see the log"
 	if page.Connection == nil || page.Connection.ID != hub || len(page.Access) != 3 {
 		t.Fatalf("page = %+v, access %+v", page.Connection, page.Access)
 	}

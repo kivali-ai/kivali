@@ -34,12 +34,19 @@ func dana(patterns ...any) builtinintegrations.Caller {
 // for one), followed by the refs it may push and the force switch
 // marked dangerous, list exactly clone, fetch and push, the actions
 // Call and Tools know, push marked as needing a repository to push to,
-// and name no kivali.verify, so that Kivali's server never reaches a
-// git host itself.
+// and name no kivali.verify, so that Kivali's
+// server never reaches a git host itself. It is Git (Basic), under the
+// name git its records and its actions keep, and its description says
+// github.com is the GitHub integration's, so an owner reaching for it
+// for GitHub is sent there; its version is past 2.0.0, which named it
+// Git and took github.com, so boot supersedes that one.
 func TestManifest(t *testing.T) {
 	m := New().Manifest()
 	if f := integration.ValidateBuiltin(m); len(f) != 0 {
 		t.Fatalf("findings: %v", f.Texts())
+	}
+	if m.Name != "git" || m.DisplayName != "Git (Basic)" || !strings.Contains(m.Description, "other than github.com, which the GitHub integration handles") {
+		t.Errorf("name %q, display name %q, description %q", m.Name, m.DisplayName, m.Description)
 	}
 	var keys []string
 	for _, f := range m.UserConfig {
@@ -72,7 +79,7 @@ func TestManifest(t *testing.T) {
 			t.Errorf("access field %d = %+v, want %+v", i, f, w)
 		}
 	}
-	if m.Version != "2.0.0" {
+	if m.Version != "2.1.0" {
 		t.Errorf("version = %s", m.Version)
 	}
 	tools, _ := New().Tools(context.Background(), pusher(false))
@@ -149,8 +156,8 @@ func TestToolsFollowTheManifestsAccess(t *testing.T) {
 	}
 }
 
-// Why this test exists: Git's clone, fetch and push are worded by
-// gitops for every built-in that runs them. What a Git agent reads must
+// Why this test exists: Git (Basic)'s clone, fetch and push are worded
+// by gitops for every built-in that runs them. What its agents read must
 // stay what Git does: a fetch and a push that may reach the working
 // copy's origin, a push whose force needs the owner's switch, the
 // connection's host, and the schemas' fields in this order with only
@@ -164,13 +171,13 @@ func TestTools(t *testing.T) {
 	}
 	want := []struct{ name, description, schema string }{
 		{"clone",
-			`Clones a repository with the owner's Git connection into path, a directory under /files or your home that does not exist yet or is empty. url is the repository's HTTPS URL on the connection's host, or owner/name. The clone's origin is the repository's URL without the token. Afterwards use plain git in run_shell for everything local: status, branch, commit, diff, log, merge, rebase. Plain git reaches only hosts on the team's allow list; this reaches the connection's host with its token. Refused for a repository outside your access.`,
+			`Clones a repository with the owner's Git (Basic) connection into path, a directory under /files or your home that does not exist yet or is empty. url is the repository's HTTPS URL on the connection's host, or owner/name. The clone's origin is the repository's URL without the token. Afterwards use plain git in run_shell for everything local: status, branch, commit, diff, log, merge, rebase. Plain git reaches only hosts on the team's allow list; this reaches the connection's host with its token. Refused for a repository outside your access.`,
 			`{"type":"object","properties":{"url":{"type":"string","description":"the repository's HTTPS URL on the connection's host, or owner/name"},"path":{"type":"string","description":"a directory under /files or your home (~/...) that does not exist yet or is empty"}},"required":["url","path"]}`},
 		{"fetch",
-			`Fetches from the repository's origin with the owner's Git connection into the working copy at path, updating refs/remotes/origin/* and tags; then merge, rebase or check out with plain git. refs are refspecs; empty fetches every branch. url, when given, is the repository's HTTPS URL on the connection's host, or owner/name; empty, the repository is the working copy's origin. Refused for a repository outside your access.`,
+			`Fetches from the repository's origin with the owner's Git (Basic) connection into the working copy at path, updating refs/remotes/origin/* and tags; then merge, rebase or check out with plain git. refs are refspecs; empty fetches every branch. url, when given, is the repository's HTTPS URL on the connection's host, or owner/name; empty, the repository is the working copy's origin. Refused for a repository outside your access.`,
 			`{"type":"object","properties":{"path":{"type":"string","description":"the working copy, under /files or your home (~/...)"},"url":{"type":"string","description":"optional: the repository's HTTPS URL on the connection's host, or owner/name; empty, the working copy's origin"},"refs":{"type":"array","items":{"type":"string"},"description":"optional refspecs, each writing under refs/remotes/origin/ or refs/tags/, such as +refs/heads/main:refs/remotes/origin/main"}},"required":["path"]}`},
 		{"push",
-			`Pushes refs from the working copy at path to its origin with the owner's Git connection. Each entry is a branch, a tag, or a refspec such as HEAD:refs/heads/agent/x; the destination must be one the owner allowed for you. A name without refs/ is a branch (agent/x is refs/heads/agent/x); a tag is written tags/v1.2.0 or refs/tags/v1.2.0. force, or a + in front of an entry, overwrites the remote ref and needs the owner's separate permission. Deleting a remote ref is refused. url, when given, is the repository's HTTPS URL on the connection's host, or owner/name; empty, the repository is the working copy's origin. Refused for a repository, a ref or a force push outside your access.`,
+			`Pushes refs from the working copy at path to its origin with the owner's Git (Basic) connection. Each entry is a branch, a tag, or a refspec such as HEAD:refs/heads/agent/x; the destination must be one the owner allowed for you. A name without refs/ is a branch (agent/x is refs/heads/agent/x); a tag is written tags/v1.2.0 or refs/tags/v1.2.0. force, or a + in front of an entry, overwrites the remote ref and needs the owner's separate permission. Deleting a remote ref is refused. url, when given, is the repository's HTTPS URL on the connection's host, or owner/name; empty, the repository is the working copy's origin. Refused for a repository, a ref or a force push outside your access.`,
 			`{"type":"object","properties":{"path":{"type":"string","description":"the working copy, under /files or your home (~/...)"},"refs":{"type":"array","items":{"type":"string"},"description":"what to push: a branch (agent/x), a tag (tags/v1.2.0) or a refspec such as HEAD:refs/heads/agent/x"},"force":{"type":"boolean","description":"optional: overwrite the remote refs even where the push is not a fast-forward"},"url":{"type":"string","description":"optional: the repository's HTTPS URL on the connection's host, or owner/name; empty, the working copy's origin"}},"required":["path","refs"]}`},
 	}
 	for i, w := range want {
@@ -272,7 +279,7 @@ func TestPushIsPerRepository(t *testing.T) {
 	_, err = g.Call(ctx, caller, testConn("github.com"), "push", json.RawMessage(`{"path":"w","url":"acme/gadgets","refs":["agent/x"]}`))
 	var ref *builtinintegrations.Refusal
 	if !errors.As(err, &ref) || ref.Reason != "the access does not allow pushing to acme/gadgets" ||
-		ref.Text != "The Git integration's access for you lets you pull acme/gadgets but not push to it. Ask the owner if your work needs it." {
+		ref.Text != "The Git (Basic) integration's access for you lets you pull acme/gadgets but not push to it. Ask the owner if your work needs it." {
 		t.Errorf("push to acme/gadgets = %v", err)
 	}
 }
@@ -350,7 +357,7 @@ func TestPushRefusals(t *testing.T) {
 		"bad push_refs":  {with(func(a map[string]any) { a["push_refs"] = []any{"agent/*", "refs/notes/*"} }), `{"path":"w","refs":["agent/x"]}`, "names branches or tags Kivali cannot read", "the access's branches and tags do not read"},
 		"force off":      {pusher(false), `{"path":"w","refs":["agent/x"],"force":true}`, "does not allow force-pushing. Ask the owner", "the access does not allow force-pushing"},
 		"a + force off":  {pusher(false), `{"path":"w","refs":["+agent/x"]}`, "does not allow force-pushing", "the access does not allow force-pushing"},
-		"a deletion":     {pusher(true), `{"path":"w","refs":[":refs/heads/agent/x"]}`, "Deleting a remote ref is not something the Git integration does.", "the call deletes a remote ref"},
+		"a deletion":     {pusher(true), `{"path":"w","refs":[":refs/heads/agent/x"]}`, "Deleting a remote ref is not something the Git (Basic) integration does.", "the call deletes a remote ref"},
 		"does not read":  {pusher(false), `{"path":"w","refs":["agent/x..y"]}`, "git_push cannot read", "a ref does not read"},
 		"twice":          {pusher(false), `{"path":"w","refs":["agent/x","HEAD:agent/x"]}`, "names refs/heads/agent/x twice", "a destination is named twice"},
 		"no refs":        {pusher(false), `{"path":"w","refs":[]}`, "needs path and refs", "the arguments lack path or refs"},

@@ -23,7 +23,7 @@ import (
 // gitToken is the Git connection's token in these tests.
 const gitToken = "ghp_web-git-test-token-0123"
 
-// withGit gives srv the Git built-in, installed as boot installs it,
+// withGit gives srv the Git (Basic) built-in, installed as boot installs it,
 // with no pod provisioner: nothing it does may need a pod.
 func withGit(t *testing.T, srv *Server) {
 	t.Helper()
@@ -66,7 +66,7 @@ func (f *fakeGitShell) Git(_ context.Context, req agentshell.GitRequest) (*agent
 	return f.res, nil
 }
 
-// gitRows is the Git integration's audit, newest first.
+// gitRows is the Git (Basic) integration's audit, newest first.
 func gitRows(t *testing.T, srv *Server) []store.IntegrationAuditRow {
 	t.Helper()
 	rows, err := srv.Store.ReadIntegrationAuditTail("git", 100)
@@ -76,7 +76,7 @@ func gitRows(t *testing.T, srv *Server) []store.IntegrationAuditRow {
 	return rows
 }
 
-// Why this test exists: a clone through the Git integration crosses
+// Why this test exists: a clone through the Git (Basic) integration crosses
 // core.sock twice with the job in the agent's shell between, on the
 // real client and MCP tools. The job must carry core's URL, the token
 // and the connection's own proxy credential (the one the store
@@ -159,7 +159,7 @@ func TestGitCallRelaysTheShellJob(t *testing.T) {
 	}
 	done := &agentpod.IntegrationShellJobResult{Git: &agentpod.GitResult{Repository: "acme/widgets"}}
 	second, _ = dana.IntegrationCall(ctx, agentpod.IntegrationCallRequest{Name: "git_clone", Arguments: args, ShellJobResult: done})
-	if !second.IsError || second.Content[0] != "You have no access to the Git integration. Ask the owner if your work needs it." {
+	if !second.IsError || second.Content[0] != "You have no access to the Git (Basic) integration. Ask the owner if your work needs it." {
 		t.Errorf("after access went = %+v", second)
 	}
 	rows = gitRows(t, srv)
@@ -186,7 +186,7 @@ func TestGitCallRefusalsAndNoShell(t *testing.T) {
 	tools := mcp.IntegrationTools(dana, shell, list.Tools, nil)
 
 	res, _ := tools[0].Handler(ctx, json.RawMessage(`{"url":"acme/gadgets","path":"g"}`))
-	if !res.IsError || res.Content[0] != "The Git integration's access for you does not include acme/gadgets. Ask the owner if your work needs it." {
+	if !res.IsError || res.Content[0] != "The Git (Basic) integration's access for you does not include acme/gadgets. Ask the owner if your work needs it." {
 		t.Errorf("outside the access = %+v", res)
 	}
 	res, _ = tools[0].Handler(ctx, json.RawMessage(`{"url":"https://gitlab.com/acme/widgets","path":"g"}`))
@@ -407,7 +407,7 @@ func TestGitPushRelaysTheShellJob(t *testing.T) {
 	}
 
 	res, _ = push.Handler(ctx, json.RawMessage(`{"path":"/files/widgets","refs":["HEAD:main"]}`))
-	if !res.IsError || res.Content[0] != "The Git integration's access for you does not include refs/heads/main. Ask the owner if your work needs it." {
+	if !res.IsError || res.Content[0] != "The Git (Basic) integration's access for you does not include refs/heads/main. Ask the owner if your work needs it." {
 		t.Errorf("outside push_refs = %+v", res)
 	}
 	if len(shell.jobs) != 1 {
@@ -417,7 +417,7 @@ func TestGitPushRelaysTheShellJob(t *testing.T) {
 		t.Errorf("audit = %+v", rows)
 	}
 	res, _ = push.Handler(ctx, json.RawMessage(`{"path":"/files/gadgets","url":"acme/gadgets","refs":["agent/x"]}`))
-	if !res.IsError || res.Content[0] != "The Git integration's access for you lets you pull acme/gadgets but not push to it. Ask the owner if your work needs it." {
+	if !res.IsError || res.Content[0] != "The Git (Basic) integration's access for you lets you pull acme/gadgets but not push to it. Ask the owner if your work needs it." {
 		t.Errorf("a repository it may only pull = %+v", res)
 	}
 	if len(shell.jobs) != 1 {
@@ -444,13 +444,13 @@ func TestGitPushRelaysTheShellJob(t *testing.T) {
 	}
 }
 
-// Why this test exists: Git 2.0.0 grants push per repository, where
-// 1.1.0 had one list of repositories and a push switch over all of it.
-// A team that set an agent's access under 1.1.0 boots a binary carrying
-// 2.0.0: the store supersedes 1.1.0, and that access must turn invalid
-// and grant nothing (no clone, and above all no push to every
-// repository in the old list) until the owner sets it again, after
-// which the agent works as the new access says.
+// Why this test exists: Git 2.0.0 and later grant push per repository,
+// where 1.1.0 had one list of repositories and a push switch over all
+// of it. A team that set an agent's access under 1.1.0 boots a binary
+// carrying a later version: the store supersedes 1.1.0, and that
+// access must turn invalid and grant nothing (no clone, and above all
+// no push to every repository in the old list) until the owner sets it
+// again, after which the agent works as the new access says.
 func TestGitAccessFrom1xIsSetAgain(t *testing.T) {
 	srv := newTestServer(t)
 	srv.BuiltinIntegrations = builtinintegrations.Registry{gitintegration.New()}
@@ -482,12 +482,12 @@ func TestGitAccessFrom1xIsSetAgain(t *testing.T) {
 		t.Fatal(err)
 	}
 	vs, _ := srv.Store.IntegrationVersions("git")
-	if len(vs) != 2 || vs[0].Version != "2.0.0" || vs[0].State != store.IntegrationVersionApproved || vs[1].State != store.IntegrationVersionSuperseded {
+	if len(vs) != 2 || vs[0].Version != gitintegration.New().Manifest().Version || vs[0].State != store.IntegrationVersionApproved || vs[1].State != store.IntegrationVersionSuperseded {
 		t.Fatalf("versions = %+v", vs)
 	}
 	rows, err := srv.Store.ListIntegrationAccess("git")
 	if err != nil || len(rows) != 1 || rows[0].Invalid == "" {
-		t.Fatalf("access after 2.0.0 = %+v, %v", rows, err)
+		t.Fatalf("access after the upgrade = %+v, %v", rows, err)
 	}
 	dana := agentpod.NewClient(serveCoreUDS(t, srv), "dana")
 	ctx := context.Background()
@@ -502,6 +502,46 @@ func TestGitAccessFrom1xIsSetAgain(t *testing.T) {
 	res, err := dana.IntegrationCall(ctx, agentpod.IntegrationCallRequest{Name: "git_clone", Arguments: json.RawMessage(`{"url":"acme/widgets","path":"w"}`)})
 	if err != nil || res.ShellJob == nil {
 		t.Errorf("clone once set again = %+v, %v", res, err)
+	}
+}
+
+// Why this test exists: 2.1.0 renames Git to Git (Basic) and keeps its
+// access form. A team on 2.0.0 that boots this binary must read the new
+// name on the integration's record (the list, the page and every
+// refusal name it from there) while its agents' access stays valid and
+// keeps working: a version bump read as a changed form would take every
+// agent's Git access away until the owner set each again.
+func TestGitAccessFrom2xKeepsWorking(t *testing.T) {
+	srv := newTestServer(t)
+	srv.BuiltinIntegrations = builtinintegrations.Registry{gitintegration.New()}
+	withIntegrationRegistry(srv, nil)
+	old := *gitintegration.New().Manifest()
+	old.Version, old.DisplayName = "2.0.0", "Git"
+	boot := time.Date(2026, 10, 21, 9, 0, 0, 0, time.UTC)
+	if err := srv.Store.InstallBuiltinIntegrations([]*integration.Manifest{&old}, boot); err != nil {
+		t.Fatal(err)
+	}
+	intTeam(t, srv, "dana")
+	connectGit(t, srv, "github.com")
+	putIntegrationAccess(t, srv, "git", "dana", `{"pull_repositories":["acme/*"]}`)
+
+	if err := srv.Store.InstallBuiltinIntegrations(srv.BuiltinIntegrations.Manifests(), boot.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	vs, _ := srv.Store.IntegrationVersions("git")
+	if len(vs) != 2 || vs[0].Version != "2.1.0" || vs[0].State != store.IntegrationVersionApproved || vs[1].Version != "2.0.0" || vs[1].State != store.IntegrationVersionSuperseded {
+		t.Fatalf("versions = %+v", vs)
+	}
+	if it, _ := srv.Store.GetIntegration("git"); it.DisplayName != "Git (Basic)" {
+		t.Errorf("display name = %q", it.DisplayName)
+	}
+	if rows, err := srv.Store.ListIntegrationAccess("git"); err != nil || len(rows) != 1 || rows[0].Invalid != "" {
+		t.Fatalf("access after the upgrade = %+v, %v", rows, err)
+	}
+	dana := agentpod.NewClient(serveCoreUDS(t, srv), "dana")
+	res, err := dana.IntegrationCall(context.Background(), agentpod.IntegrationCallRequest{Name: "git_clone", Arguments: json.RawMessage(`{"url":"acme/gadgets","path":"w"}`)})
+	if err != nil || res.ShellJob == nil {
+		t.Errorf("clone after the upgrade = %+v, %v", res, err)
 	}
 }
 

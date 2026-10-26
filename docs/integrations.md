@@ -1,6 +1,6 @@
 # Integrations
 
-An integration is an external service your agents can act on, such as a CRM, a blog or a ticket tracker. Each one comes from a bundle you approve or ships with Kivali, is connected with a token you paste, by signing in to the service or by its own setup, and is given to agents one at a time, each with its own access. This page covers having one built, approving one and its new versions, rolling back to an earlier version, connecting it, what it needs from you once connected, giving agents access, what an agent then sees, the record of their calls, its log, disabling, disconnecting or uninstalling it, and the [Git](#git) and [GitHub](#github) integrations that ship with Kivali.
+An integration is an external service your agents can act on, such as a CRM, a blog or a ticket tracker. Each one comes from a bundle you approve or ships with Kivali, is connected with a token you paste, by signing in to the service or by its own setup, and is given to agents one at a time, each with its own access. This page covers having one built, approving one and its new versions, rolling back to an earlier version, connecting it, what it needs from you once connected, giving agents access, what an agent then sees, the record of their calls, its log, disabling, disconnecting or uninstalling it, and the [Git (Basic)](#git-basic) and [GitHub](#github) integrations that ship with Kivali.
 
 Integrations are under **Org**, **Integrations**.
 
@@ -76,7 +76,7 @@ Secret fields, such as tokens, are never shown again once saved: the page says o
 
 Saving a connection restarts the integration with the new values, which takes a few seconds.
 
-**Test connection** asks the integration to sign in to the service with the connection you saved, and shows what it found under the form: whether it worked, the integration's own words (such as the account it signed in as), and when you last tested. A failed test keeps the integration's reason, so you can see what to fix. Saving the connection again clears the last result. An integration that has no connection test, such as [Git](#git), has no **Test connection**.
+**Test connection** asks the integration to sign in to the service with the connection you saved, and shows what it found under the form: whether it worked, the integration's own words (such as the account it signed in as), and when you last tested. A failed test keeps the integration's reason, so you can see what to fix. Saving the connection again clears the last result. An integration that has no connection test, such as [Git (Basic)](#git-basic), has no **Test connection**.
 
 ### What it needs from you
 
@@ -184,22 +184,22 @@ The **Enabled** switch at the top of a connected integration's page turns it off
 
 **Uninstall**, at the top of the page, is for an integration you uploaded: it disconnects it the same way, then takes it off the team with every version and its log, and it stops running; uploading a bundle brings it back from scratch. An integration that ships with Kivali cannot be uninstalled while this version of Kivali carries it; one that another version shipped can.
 
-## Git
+## Git (Basic)
 
-**Git** ships with Kivali. It lets agents clone, fetch and push your repositories on a git host over HTTPS with a token you give it. Everything else an agent does with a repository (status, branches, commits, diffs, merges) is plain git in its own shell.
+**Git (Basic)** ships with Kivali. It lets agents clone, fetch and push your repositories on a git host over HTTPS with a token you give it. Everything else an agent does with a repository (status, branches, commits, diffs, merges) is plain git in its own shell.
 
 ### The connection
 
 - **Host**: `github.com`, `gitlab.com` or your own git host that serves HTTPS, without `https://`. A host that is not a host name (with a path, for example) is refused when you save.
 - **Access token**: a token that can read the repositories your agents will use. On GitHub, a fine-grained personal access token limited to those repositories, with read access to their contents; on GitLab, an access token with `read_repository`. For agents that push, the token also needs write access to contents on GitHub, or `write_repository` on GitLab. Give it no more than that.
 
-Git has no **Test connection**. An agent's first clone shows whether the token works: every clone, fetch and push is in **Recent calls**, with why it failed when it did.
+Git (Basic) has no **Test connection**. An agent's first clone shows whether the token works: every clone, fetch and push is in **Recent calls**, with why it failed when it did.
 
-Git has one connection, like every integration: one host and its token. Every agent's clones, fetches and pushes go to that host with that token. To point Git at another host, save the connection with the new host and a token for it.
+Git (Basic) has one connection, like every integration: one host and its token. Every agent's clones, fetches and pushes go to that host with that token. To point Git (Basic) at another host, save the connection with the new host and a token for it.
 
 The token is kept in the connection's Secret, like every connection secret. The connection also has a network credential of its own, kept beside the token, that lets an agent's clone, fetch or push reach the connection's host and nothing else. Your team's allow list does not change.
 
-A team whose Git holds several connections, one per host, as earlier versions of Kivali allowed, keeps one when Kivali starts: the one most agents' access uses (the oldest, when two are used as much). The others are set aside, not deleted: agents can no longer use them, and their tokens stay where they were kept until you disconnect Git, which forgets them with the connection. An agent whose access was given for a connection set aside keeps its access on the page, marked invalid with the reason, such as "set for the connection Company GitLab, which Git no longer has", and can use Git again once you set its access with **Change**. If Kivali cannot finish setting the others aside, it says so in its log, and no agent can use Git (every access row says why) until it can. Going back to an earlier version of Kivali afterwards keeps the connection, but every agent's Git access then reads as invalid until you set it again.
+A team whose Git (Basic) holds several connections, one per host, as earlier versions of Kivali allowed, keeps one when Kivali starts: the one most agents' access uses (the oldest, when two are used as much). The others are set aside, not deleted: agents can no longer use them, and their tokens stay where they were kept until you disconnect Git (Basic), which forgets them with the connection. An agent whose access was given for a connection set aside keeps its access on the page, marked invalid with the reason, such as "set for the connection Company GitLab, which Git (Basic) no longer has", and can use Git (Basic) again once you set its access with **Change**. If Kivali cannot finish setting the others aside, it says so in its log, and no agent can use Git (Basic) (every access row says why) until it can. Going back to an earlier version of Kivali afterwards keeps the connection, but every agent's Git (Basic) access then reads as invalid until you set it again.
 
 ### Access
 
@@ -228,7 +228,7 @@ Git's page lists Clone and Fetch under **Any access** and Push under **Repositor
 
 All three go to the connection's host with your token. The working copy is an ordinary one, whose origin is the repository's address without the token, and the agent works in it with plain git in its shell. That plain git reaches only the hosts on your team's allow list, and without your token, so a repository host that is not on the list is reachable only through these three actions.
 
-Every clone, fetch and push is in **Recent calls**, with the repository and the branches and tags that moved (a push also says when it forced), or why it failed. Kivali checks each one against the agent's access before anything runs. Each has two rows: one when it starts and one when it ends. If you change an agent's access while its push runs, the second row still records what the push wrote, and says the access changed during it. If you disconnect Git and connect it again while an agent’s clone, fetch or push runs, the second row records what ran and says the connection changed during it.
+Every clone, fetch and push is in **Recent calls**, with the repository and the branches and tags that moved (a push also says when it forced), or why it failed. Kivali checks each one against the agent's access before anything runs. Each has two rows: one when it starts and one when it ends. If you change an agent's access while its push runs, the second row still records what the push wrote, and says the access changed during it. If you disconnect Git (Basic) and connect it again while an agent’s clone, fetch or push runs, the second row records what ran and says the connection changed during it.
 
 ### Not supported
 
@@ -278,7 +278,7 @@ An earlier version of Kivali connected GitHub by signing in with a GitHub App yo
 
 An agent's access has two parts:
 
-- **Repositories**: each `owner/name`, such as `acme/widgets`, or a pattern such as `acme/*`, which covers every repository directly under `acme`. `*` is the only wildcard, and capitals do not matter, as for [Git](#access). Name at least one.
+- **Repositories**: each `owner/name`, such as `acme/widgets`, or a pattern such as `acme/*`, which covers every repository directly under `acme`. `*` is the only wildcard, and capitals do not matter, as for [Git (Basic)](#access). Name at least one.
 - **May create and comment**: lets the agent open issues and pull requests and comment on them in those repositories. Off, the agent only reads, and its tools do not include those actions.
 
 Everything an agent does is done as the app, so GitHub shows the app (its name followed by `[bot]`) on its issues, comments and pull requests, not you.
@@ -294,10 +294,10 @@ With **May create and comment**, it can also open an issue, comment on an issue 
 
 Each action is in **Recent calls**. A call for a repository the agent's access does not name is refused before anything reaches GitHub, and the agent is told to ask you.
 
-GitHub stays apart from [Git](#git): it moves no commits. To open a pull request from an agent's work, the agent first pushes its branch with the Git integration, through Git's own connection and access, then opens the pull request here.
+GitHub stays apart from [Git (Basic)](#git-basic): it moves no commits. To open a pull request from an agent's work, the agent first pushes its branch with the Git (Basic) integration, through Git (Basic)'s own connection and access, then opens the pull request here.
 
 ### Not supported
 
 - GitHub Enterprise Server and other hosts than `github.com`.
-- Cloning, pushing or any other move of commits: that is Git's.
+- Cloning, pushing or any other move of commits: that is Git (Basic)'s.
 - Anything the app's permissions do not cover, such as changing the repository's settings, merging pull requests or approving reviews.

@@ -55,8 +55,8 @@ func TestRepositoryAccess(t *testing.T) {
 }
 
 // Why this test exists: the summary is how the owner reads an agent's
-// Git access on the Org page. Each repository must read under what the
-// agent may do with it, pull or push; the branches, tags and force mean
+// Git (Basic) access on the Org page. Each repository must read under
+// what the agent may do with it, pull or push; the branches, tags and force mean
 // something only with a repository to push to, so refs or force set
 // without one, or force with no ref to push, must not read as granted;
 // and a full grant must read as one line: "Pull: acme/* · Push:
