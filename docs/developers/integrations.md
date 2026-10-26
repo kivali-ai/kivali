@@ -477,9 +477,10 @@ core enforces nothing by it; the integration's `tools/list` (a
 built-in's `Tools`) and its calls hold an agent to its access. Core
 carries it to the install screen and the page
 (`IntegrationAction.access`), and the page's Actions block groups the
-actions by it: first those without one, under "With any access", then
-one group per field in the form's order, under "With" and the field's
-title. When no tool names one, the list is flat.
+actions by it: first those without one, under "Any access", then one
+group per field in the form's order, under the field's title (its key
+when the form lacks the field). When no tool names one, the list is
+flat.
 
 `integration.ValidateAccess` checks one agent's filled form: every key
 a field, every value of its field's kind and from its fixed options,
@@ -2744,11 +2745,12 @@ which reaches only the team's allow list. Its manifest:
   and it grants nothing until the owner sets it again.
 - `tools`: `clone`, `fetch` and `push`, which agents call as
   `git_clone(url, path)`, `git_fetch(path, url?, refs?)` and
-  `git_push(path, refs, force?, url?)`. All three are listed to every
-  agent with access; each call is checked against the access. `push`
-  names `push_repositories` as its `access`, so the page shows it under
-  "With Repositories it may push to", and clone and fetch under "With
-  any access".
+  `git_push(path, refs, force?, url?)`. Clone and fetch are listed to
+  every agent with access, and push only to one whose
+  `push_repositories` names a repository; each call is checked against
+  the access. `push` names `push_repositories` as its `access`, so the
+  page shows it under "Repositories it may push to", and clone and
+  fetch under "Any access".
 - `Git.AccessSummary` (`AccessSummarizer`): "Pull: acme/* · Push:
   acme/widgets · Branches and tags: agent/* · May force-push".
   `push_refs` and `force` without a repository to push to, and `force`
@@ -3189,8 +3191,8 @@ action works in the agent's shell or moves commits.
   over: `repositories` (required) and `write`, "May create and
   comment". Its `tools` are the actions an agent may be given, the
   three write ones (`create_issue`, `comment`, `create_pull_request`)
-  with `"access": "write"`, so the page lists them under "With May
-  create and comment" and the rest under "With any access". `whoami`
+  with `"access": "write"`, so the page lists them under "May create
+  and comment" and the rest under "Any access". `whoami`
   is not a tool: a built-in's `kivali.verify` need not name one
   ([The check](#the-check)). It passes `integration.ValidateBuiltin`.
 - **The connection** is what setup keeps, read as `conn.Fields`.

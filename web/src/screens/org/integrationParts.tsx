@@ -99,8 +99,8 @@ export interface ActionGroup {
 
 /**
  * The actions grouped by the access each needs, as the access form presents it: those that need nothing under
- * "With any access", then one group per access field in the form's order, under "With" and the field's title (its key
- * when the form lacks the field or its title). Empty when no action needs a field, so the list stays flat.
+ * "Any access", then one group per access field in the form's order, under the field's title (its key when the form
+ * lacks the field or its title). Empty when no action needs a field, so the list stays flat.
  */
 export function actionGroups(actions: readonly IntegrationAction[], form: AccessForm | undefined): ActionGroup[] {
   if (!actions.some((a) => a.access)) return [];
@@ -111,12 +111,11 @@ export function actionGroups(actions: readonly IntegrationAction[], form: Access
   }
   const groups: ActionGroup[] = [];
   const any = actions.filter((a) => !a.access);
-  if (any.length > 0) groups.push({ key: '', heading: 'With any access', actions: any });
+  if (any.length > 0) groups.push({ key: '', heading: 'Any access', actions: any });
   for (const key of keys) {
     const members = actions.filter((a) => a.access === key);
     if (members.length === 0) continue;
-    const title = fields.find((f) => f.key === key)?.title || key;
-    groups.push({ key, heading: 'With ' + title, actions: members });
+    groups.push({ key, heading: fields.find((f) => f.key === key)?.title || key, actions: members });
   }
   return groups;
 }

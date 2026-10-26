@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -74,7 +75,7 @@ func TestManifest(t *testing.T) {
 	if m.Version != "2.0.0" {
 		t.Errorf("version = %s", m.Version)
 	}
-	tools, _ := New().Tools(context.Background(), builtinintegrations.Caller{})
+	tools, _ := New().Tools(context.Background(), pusher(false))
 	if len(tools) != 3 || tools[0].Name != "clone" || tools[1].Name != "fetch" || tools[2].Name != "push" || len(m.Tools) != 3 || m.Tools[2].Name != "push" {
 		t.Errorf("tools = %+v, manifest %+v", tools, m.Tools)
 	}
@@ -97,6 +98,54 @@ func TestManifest(t *testing.T) {
 	}
 	if h := New().Hosts(testConn("not a host")); h != nil {
 		t.Errorf("hosts of no host = %v", h)
+	}
+}
+
+// Why this test exists: the integration's page lists push under the
+// repositories it may push to, from the manifest's mark, and an agent
+// sees what Tools lists. An agent that may only pull must not be given
+// push, an action every call of which is refused; one with a repository
+// to push to must be; clone and fetch go to every agent with access, as
+// their unmarked tools say. A Tools that drifted from the marks would
+// show the owner one set of grants and give agents another.
+func TestToolsFollowTheManifestsAccess(t *testing.T) {
+	g := New()
+	names := func(c builtinintegrations.Caller) []string {
+		tools, err := g.Tools(context.Background(), c)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, tl := range tools {
+			out = append(out, tl.Name)
+		}
+		return out
+	}
+	both := builtinintegrations.Caller{Agent: "dana", Access: map[string]any{"pull_repositories": []any{"acme/*"}, "push_repositories": []any{"acme/widgets"}}}
+	for _, c := range []struct {
+		name   string
+		caller builtinintegrations.Caller
+		want   []string
+	}{
+		{"pull only", dana("acme/*"), []string{"clone", "fetch"}},
+		{"push only", pusher(false), []string{"clone", "fetch", "push"}},
+		{"pull and push", both, []string{"clone", "fetch", "push"}},
+		{"an empty push list", builtinintegrations.Caller{Agent: "dana", Access: map[string]any{"pull_repositories": []any{"acme/*"}, "push_repositories": []any{}}}, []string{"clone", "fetch"}},
+	} {
+		if got := names(c.caller); !slices.Equal(got, c.want) {
+			t.Errorf("%s: tools %v, want %v", c.name, got, c.want)
+		}
+	}
+	// Each manifest tool is given to an agent with every grant, and one
+	// marked with an access only to an agent whose access sets it.
+	given := names(both)
+	for _, tl := range g.Manifest().Tools {
+		if !slices.Contains(given, tl.Name) {
+			t.Errorf("%s is in the manifest, and no agent is given it", tl.Name)
+		}
+		if slices.Contains(names(dana("acme/*")), tl.Name) != (tl.Access == "") {
+			t.Errorf("%s: access %q, given to an agent that may only pull", tl.Name, tl.Access)
+		}
 	}
 }
 

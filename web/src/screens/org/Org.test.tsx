@@ -2257,10 +2257,11 @@ describe('Integration page, Git’s one connection', () => {
   });
 
   // Guards the Actions block following the access form (integration_page_git.json, whose push names the May push
-  // switch as its access): the actions any access gives first, then one group per access field in the form's order,
-  // headed by the field's title, or its key when the form has no such field. A page that drew one flat list again
-  // would show the owner every action as if any access gave it; one that dropped the access, or ordered the groups
-  // otherwise, would put an action under the wrong grant. Actions that all need nothing keep the flat list.
+  // switch as its access): the actions any access gives first, under Any access, then one group per access field in
+  // the form's order, headed by the field's title, or its key when the form has no such field. A page that drew one
+  // flat list again would show the owner every action as if any access gave it; one that dropped the access, or
+  // ordered the groups otherwise, would put an action under the wrong grant. Actions that all need nothing keep the
+  // flat list.
   it('groups the actions by the access that unlocks them', async () => {
     const actionsBlock = async () => {
       await click(screen.getByRole('button', { name: 'Actions' }));
@@ -2270,9 +2271,9 @@ describe('Integration page, Git’s one connection', () => {
 
     await renderOrg(PATH, { routes: gitRoutes() });
     let actions = await actionsBlock();
-    expect(actions.getAllByRole('heading', { level: 3 }).map((h) => h.textContent)).toEqual(['With any access', 'With May push']);
-    expect(names(actions.getByRole('region', { name: 'With any access' }))).toEqual(['Clone']);
-    expect(names(actions.getByRole('region', { name: 'With May push' }))).toEqual(['Push']);
+    expect(actions.getAllByRole('heading', { level: 3 }).map((h) => h.textContent)).toEqual(['Any access', 'May push']);
+    expect(names(actions.getByRole('region', { name: 'Any access' }))).toEqual(['Clone']);
+    expect(names(actions.getByRole('region', { name: 'May push' }))).toEqual(['Push']);
     expect(actions.getByText('Pushes branches and tags.')).toBeInTheDocument();
     cleanup();
 
@@ -2280,8 +2281,8 @@ describe('Integration page, Git’s one connection', () => {
     const unknown = { ...goIntegrationPageGit, actions: [...goIntegrationPageGit.actions, { name: 'prune', description: '', access: 'prune_refs' }] };
     await renderOrg(PATH, { routes: gitRoutes({ ['GET ' + API]: unknown }) });
     actions = await actionsBlock();
-    expect(actions.getAllByRole('heading', { level: 3 }).map((h) => h.textContent)).toEqual(['With any access', 'With May push', 'With prune_refs']);
-    expect(names(actions.getByRole('region', { name: 'With prune_refs' }))).toEqual(['Prune']);
+    expect(actions.getAllByRole('heading', { level: 3 }).map((h) => h.textContent)).toEqual(['Any access', 'May push', 'prune_refs']);
+    expect(names(actions.getByRole('region', { name: 'prune_refs' }))).toEqual(['Prune']);
     cleanup();
 
     const flat = { ...goIntegrationPageGit, actions: goIntegrationPageGit.actions.map(({ name, description }) => ({ name, description })) };

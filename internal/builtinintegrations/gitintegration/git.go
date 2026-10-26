@@ -149,14 +149,19 @@ func (g *Git) Manifest() *integration.Manifest {
 	}
 }
 
-// Tools lists clone, fetch and push for every caller: the access is
-// checked on each call, against the repository and the refs it names.
-func (g *Git) Tools(context.Context, builtinintegrations.Caller) ([]builtinintegrations.Tool, error) {
-	return []builtinintegrations.Tool{
+// Tools lists clone and fetch for every caller, and push for one whose
+// access names a repository it may push to, as the manifest's push
+// says. The access is checked on each call, against the repository and
+// the refs it names.
+func (g *Git) Tools(_ context.Context, caller builtinintegrations.Caller) ([]builtinintegrations.Tool, error) {
+	tools := []builtinintegrations.Tool{
 		{Name: actionClone, Description: cloneDescription, InputSchema: json.RawMessage(cloneSchema)},
 		{Name: actionFetch, Description: fetchDescription, InputSchema: json.RawMessage(fetchSchema)},
-		{Name: actionPush, Description: pushDescription, InputSchema: json.RawMessage(pushSchema)},
-	}, nil
+	}
+	if _, push, _ := repositoryPatterns(caller.Access); len(push) > 0 {
+		tools = append(tools, builtinintegrations.Tool{Name: actionPush, Description: pushDescription, InputSchema: json.RawMessage(pushSchema)})
+	}
+	return tools, nil
 }
 
 // Hosts is the host the connection names, without its port: what its

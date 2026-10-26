@@ -93,8 +93,9 @@ func TestGitCallRelaysTheShellJob(t *testing.T) {
 	dana := agentpod.NewClient(serveCoreUDS(t, srv), "dana")
 	ctx := context.Background()
 
+	// Dana may only pull, so she is not given push.
 	list, err := dana.IntegrationTools(ctx)
-	if err != nil || len(list.Tools) != 3 || list.Tools[0].Name != "git_clone" || list.Tools[1].Name != "git_fetch" {
+	if err != nil || len(list.Tools) != 2 || list.Tools[0].Name != "git_clone" || list.Tools[1].Name != "git_fetch" {
 		t.Fatalf("dana's actions = %+v, %v", list, err)
 	}
 	shell := &fakeGitShell{res: &agentshell.GitResponse{
