@@ -92,8 +92,8 @@ func TestPushNeedsWriteAndNeverForcesOrDeletes(t *testing.T) {
 		{"repositories": []any{"acme/*"}, "write": "true"},
 	} {
 		_, _, ref := g.gitCall(t, callerWith(access), "push", args)
-		if ref == nil || ref.Text != "Your access to GitHub does not include opening issues and pull requests, commenting or pushing; ask the owner." ||
-			ref.Reason != "the access does not include opening issues and pull requests, commenting or pushing" {
+		if ref == nil || ref.Text != "Your access to GitHub does not include opening, commenting on or closing issues and pull requests, pushing or deleting branches; ask the owner." ||
+			ref.Reason != "the access does not include opening, commenting on or closing issues and pull requests, pushing or deleting branches" {
 			t.Errorf("%v: %+v", access, ref)
 		}
 	}

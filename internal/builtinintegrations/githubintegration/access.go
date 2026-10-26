@@ -13,8 +13,9 @@ import (
 )
 
 // The access form's fields: the repositories an agent may use, and
-// whether it may open issues and pull requests, comment and push in
-// them.
+// whether it may open, comment on and close issues and pull requests,
+// push and delete branches in them (closing and deleting only what the
+// app opened, actions.go).
 const (
 	repositoriesKey = "repositories"
 	writeKey        = "write"
@@ -51,8 +52,8 @@ func (a access) includes(repo string) bool {
 // writeRefusal is the words of a write action called without write,
 // push among them, and writeReason its audit's reason.
 const (
-	writeRefusal = "Your access to GitHub does not include opening issues and pull requests, commenting or pushing; ask the owner."
-	writeReason  = "the access does not include opening issues and pull requests, commenting or pushing"
+	writeRefusal = "Your access to GitHub does not include opening, commenting on or closing issues and pull requests, pushing or deleting branches; ask the owner."
+	writeReason  = "the access does not include opening, commenting on or closing issues and pull requests, pushing or deleting branches"
 )
 
 // notIncluded is the refusal of a repository the access does not name.
@@ -112,8 +113,8 @@ var repositoryName = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
 // cleanRepository is v as owner/name, slashes around it and a .git
 // suffix trimmed; a refusal when it is not one. Spaces and tabs around
-// it are a slip and go, as the Git integration takes them; any other
-// whitespace, such as a newline, refuses it.
+// it are a slip a model makes, and go; any other whitespace, such as a
+// newline, refuses it.
 func cleanRepository(v any) (string, error) {
 	s, ok := v.(string)
 	if !ok || strings.TrimSpace(s) == "" {

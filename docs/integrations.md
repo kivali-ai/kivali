@@ -242,7 +242,7 @@ Every clone, fetch and push is in **Recent calls**, with the repository and the 
 
 ## GitHub
 
-**GitHub** ships with Kivali. It lets agents read and open issues, comments and pull requests in your GitHub repositories, and clone, fetch and push them, as a private GitHub App its setup makes on your account or an organization's. It runs inside Kivali and reaches only `api.github.com` and `github.com`; an agent's clones, fetches and pushes run in its own sandbox and reach only `github.com`.
+**GitHub** ships with Kivali. It lets agents read and open issues, comments and pull requests in your GitHub repositories, close the issues and pull requests the app opened, and clone, fetch and push the repositories, as a private GitHub App its setup makes on your account or an organization's. It runs inside Kivali and reaches only `api.github.com` and `github.com`; an agent's clones, fetches and pushes run in its own sandbox and reach only `github.com`.
 
 ### Connect it
 
@@ -281,9 +281,9 @@ An earlier version of Kivali connected GitHub by signing in with a GitHub App yo
 An agent's access has two parts:
 
 - **Repositories**: each `owner/name`, such as `acme/widgets`, or a pattern such as `acme/*`, which covers every repository directly under `acme`. `*` is the only wildcard, and capitals do not matter, as for [Git (Basic)](#access). Name at least one.
-- **May create, comment and push**: lets the agent open issues and pull requests, comment on them and push branches and tags in those repositories. Off, the agent only reads (cloning and fetching among that), and its tools do not include those actions.
+- **May create, comment, push and close**: lets the agent open issues and pull requests, comment on them and push branches and tags in those repositories; close the issues and pull requests the app opened; and delete the branch of a pull request the app opened once that pull request is closed or merged. Off, the agent only reads (cloning and fetching among that), and its tools do not include those actions.
 
-Everything an agent does is done as the app, so GitHub shows the app (its name followed by `[bot]`) on its issues, comments and pull requests, not you.
+Everything an agent does is done as the app, so GitHub shows the app (its name followed by `[bot]`) on its issues, comments and pull requests, not you. That is also how Kivali tells what the app opened: an issue or pull request whose author on GitHub is the app's `[bot]` user. Anything you, anyone else or another app opened, an agent can read and comment on but not close.
 
 ### What agents can do
 
@@ -293,15 +293,19 @@ GitHub's page lists these under **Actions** by the part of the access that unloc
 - List and read issues, with the latest 20 comments, and list and read pull requests, with the diff when it asks (cut at 50,000 characters). Issue search words stay within the repository named: a search that names another repository, organization or user is refused.
 - **Clone** a repository its access names into a new or empty directory of its files or its home, and **Fetch** new commits and tags into one of its working copies.
 
-With **May create, comment and push**, it can also open an issue, comment on an issue or pull request, **Push** branches and tags to a repository its access names, and open a pull request from a branch on GitHub, such as one it pushed.
+With **May create, comment, push and close**, it can also open an issue, comment on an issue or pull request, **Push** branches and tags to a repository its access names, and open a pull request from a branch on GitHub, such as one it pushed. It can also tidy up after the app, and only after the app:
 
-Clone, Fetch and Push work as [Git (Basic)](#what-agents-can-do)'s do: the working copy is an ordinary one, whose origin is the repository's address without a token, and the agent works in it with plain git in its shell. Each names its repository, as its `https://github.com/...` address or `owner/name`. Each takes a token of its own: once Kivali has checked the call against the agent's access, it has the app mint a token for that one call, narrowed to that one repository and to reading it (Clone, Fetch) or writing it (Push). Kivali does not keep it, and it expires within the hour. A push may write any branch or tag in the repository, lands whole or not at all, and is never forced: a push that would overwrite history, or move an existing tag, is refused, and so is deleting a branch or tag. GitHub's own rules for the repository, such as branch protection, still apply.
+- Close an issue the app opened, or a pull request the app opened without merging it, with a comment first when it gives one. An issue or pull request someone else opened is refused, and a merged pull request cannot be closed.
+- Delete a branch that was the head of a pull request the app opened in that repository, once that pull request is closed or merged. The repository's default branch is never deleted, and neither is a branch any open pull request has as its head, whoever opened it.
 
-Each action is in **Recent calls**; a clone, fetch or push has two rows, one when it starts and one when it ends, as for Git (Basic). A call for a repository the agent's access does not name, or for one under another account than the one the app is installed on, is refused before anything reaches GitHub, and the agent is told to ask you. [Git (Basic)](#git-basic) does not handle `github.com`: GitHub's repositories are this integration's.
+Clone, Fetch and Push work as [Git (Basic)](#what-agents-can-do)'s do: the working copy is an ordinary one, whose origin is the repository's address without a token, and the agent works in it with plain git in its shell. Each names its repository, as its `https://github.com/...` address or `owner/name`. Each takes a token of its own: once Kivali has checked the call against the agent's access, it has the app mint a token for that one call, narrowed to that one repository and to reading it (Clone, Fetch) or writing it (Push). Kivali does not keep it, and it expires within the hour. A push may write any branch or tag in the repository, lands whole or not at all, and is never forced: a push that would overwrite history, or move an existing tag, is refused, and so is a push that deletes a branch or tag. GitHub's own rules for the repository, such as branch protection, still apply.
+
+Each action is in **Recent calls**: one that opens, comments, closes or deletes names what it made, closed or deleted, and a clone, fetch or push has two rows, one when it starts and one when it ends, as for Git (Basic). A call for a repository the agent's access does not name, or for one under another account than the one the app is installed on, is refused before anything reaches GitHub, and the agent is told to ask you. [Git (Basic)](#git-basic) does not handle `github.com`: GitHub's repositories are this integration's.
 
 ### Not supported
 
 - GitHub Enterprise Server and other hosts than `github.com`.
-- Force-pushing, and deleting a branch or tag on GitHub.
+- Force-pushing, and deleting a tag on GitHub.
+- Closing an issue or pull request the app did not open, and deleting a branch other than the head of a closed or merged pull request the app opened.
 - SSH addresses, Git LFS files and submodules, as for [Git (Basic)](#not-supported). A clone stops after 15 minutes, a fetch or a push after 10.
 - Anything the app's permissions do not cover, such as changing the repository's settings, merging pull requests or approving reviews.

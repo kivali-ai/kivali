@@ -33,7 +33,7 @@ var gitIntegration = gitops.Integration{Name: Name, DisplayName: "GitHub", HostW
 var gitTools = []integration.Tool{
 	{Name: gitops.Clone, Description: "Clone a repository the agent's access names into its files, with a token for that repository alone. Reads only."},
 	{Name: gitops.Fetch, Description: "Fetch new commits and tags into the agent's working copy of a repository its access names, with a token for that repository alone. Reads only."},
-	{Name: gitops.Push, Description: "Push branches and tags to a repository the agent's access names, when it allows pushing, with a token for that repository alone. Never forced, never deleting; GitHub's branch protection applies.", Access: writeKey},
+	{Name: gitops.Push, Description: "Push branches and tags to a repository the agent's access names, with a token for that repository alone. Never forced, never deleting; GitHub's branch protection applies." + needsWrite, Access: writeKey},
 }
 
 var (

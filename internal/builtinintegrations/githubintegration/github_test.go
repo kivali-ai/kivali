@@ -20,7 +20,9 @@ import (
 // only, one field, the seven keeps and no hand-over to a sign-in), keep
 // the access form the shipped bundle has, so agents' access carries
 // over, and name whoami as Test connection without listing it among
-// the tools, each write one marked as needing the write switch.
+// the tools, each write one marked as needing the write switch and
+// saying so by the switch's title, so the owner's words for an action
+// never name a condition the switch no longer reads as.
 func TestManifest(t *testing.T) {
 	m := New().Manifest()
 	if f := integration.ValidateBuiltin(m); len(f) != 0 {
@@ -49,8 +51,10 @@ func TestManifest(t *testing.T) {
 	form := integration.AccessForm(m)
 	if form == nil || len(form.Fields) != 2 ||
 		form.Fields[0].Key != "repositories" || form.Fields[0].Kind != integration.FieldList || !form.Fields[0].Required ||
-		form.Fields[1].Key != "write" || form.Fields[1].Kind != integration.FieldSwitch || form.Fields[1].Title != "May create, comment and push" ||
-		!strings.Contains(form.Fields[1].Description, "push branches and tags") {
+		form.Fields[1].Key != "write" || form.Fields[1].Kind != integration.FieldSwitch || form.Fields[1].Title != "May create, comment, push and close" ||
+		!strings.Contains(form.Fields[1].Description, "push branches and tags") ||
+		!strings.Contains(form.Fields[1].Description, "close the issues and pull requests the app opened") ||
+		!strings.Contains(form.Fields[1].Description, "delete the branch of a pull request the app opened") {
 		t.Errorf("access form = %+v", form)
 	}
 	var names, writes []string
@@ -59,20 +63,29 @@ func TestManifest(t *testing.T) {
 		if tl.Description == "" || strings.Contains(tl.Description, "signed in with") {
 			t.Errorf("%s: %q", tl.Name, tl.Description)
 		}
+		// Each write action's words name the switch it needs by its
+		// title, and no read action's do.
 		switch tl.Access {
 		case "write":
 			writes = append(writes, tl.Name)
+			if !strings.HasSuffix(tl.Description, " Only when the agent's access may create, comment, push and close.") {
+				t.Errorf("%s: %q does not name the write switch", tl.Name, tl.Description)
+			}
 		case "":
+			if strings.Contains(tl.Description, needsWrite) {
+				t.Errorf("%s: %q", tl.Name, tl.Description)
+			}
 		default:
 			t.Errorf("%s: access %q", tl.Name, tl.Access)
 		}
 	}
-	want := []string{"list_repositories", "get_repository", "list_issues", "get_issue", "create_issue", "comment",
-		"list_pull_requests", "get_pull_request", "create_pull_request", "list_branches", "compare", "clone", "fetch", "push"}
+	want := []string{"list_repositories", "get_repository", "list_issues", "get_issue", "create_issue", "comment", "close_issue",
+		"list_pull_requests", "get_pull_request", "create_pull_request", "close_pull_request", "list_branches", "delete_branch", "compare",
+		"clone", "fetch", "push"}
 	if !slices.Equal(names, want) {
 		t.Errorf("tools = %v", names)
 	}
-	if want := []string{"create_issue", "comment", "create_pull_request", "push"}; !slices.Equal(writes, want) {
+	if want := []string{"create_issue", "comment", "close_issue", "create_pull_request", "close_pull_request", "delete_branch", "push"}; !slices.Equal(writes, want) {
 		t.Errorf("tools needing write = %v, want %v", writes, want)
 	}
 }
@@ -113,8 +126,9 @@ func TestManifestToolsNameTheAccessToolsFollows(t *testing.T) {
 
 // Why this test exists: core keeps only the actions the manifest
 // declares, and an agent sees what Tools lists. An agent without write
-// must not be shown the actions that create something, an agent with it
-// must be, whoami (Test connection's) is listed to none, and each
+// must not be shown the actions that write (creating, commenting,
+// closing, deleting a branch, pushing), an agent with it must be,
+// whoami (Test connection's) is listed to none, and each
 // action's schema must be JSON a model reads, naming the repository it
 // acts on (clone, fetch and push by url). Only list_issues takes a
 // search, the one place a GitHub search runs.
@@ -129,7 +143,9 @@ func TestToolsFollowTheManifestAndTheAccess(t *testing.T) {
 		want  []string
 	}{
 		{false, []string{"list_repositories", "get_repository", "list_issues", "get_issue", "list_pull_requests", "get_pull_request", "list_branches", "compare", "clone", "fetch"}},
-		{true, []string{"list_repositories", "get_repository", "list_issues", "get_issue", "create_issue", "comment", "list_pull_requests", "get_pull_request", "create_pull_request", "list_branches", "compare", "clone", "fetch", "push"}},
+		{true, []string{"list_repositories", "get_repository", "list_issues", "get_issue", "create_issue", "comment", "close_issue",
+			"list_pull_requests", "get_pull_request", "create_pull_request", "close_pull_request", "list_branches", "delete_branch", "compare",
+			"clone", "fetch", "push"}},
 	} {
 		tools, err := g.Tools(context.Background(), agent(c.write, "acme/*"))
 		if err != nil {
