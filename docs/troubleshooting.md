@@ -70,7 +70,7 @@ The new team version needs a newer Kivali app: update the app in **Settings**, *
 
 ### A team couldn't update
 
-Nothing is lost: the team went back to the version it was on and keeps running. The team's **Overview** in **Settings** says why the update stopped. Try again later from there, or save a diagnostics file and report it.
+Nothing is lost: the team went back to the version it was on and keeps running. The team's **Overview** in **Settings** says why the update stopped. Try again later from there, or save a diagnostics file and report it. This covers the update a team runs on its own the first time it starts after the app has updated, too; it is tried once, and **Try again** runs it again.
 
 ### Another computer can't connect
 

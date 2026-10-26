@@ -9,8 +9,10 @@ it boots a VM with k3s and installs the Helm chart `charts/kivali` into
 it as a k3s HelmChart (`internal/supervisor/install.go`). Kivali Desktop
 drives it, one org per team; from a shell it is `bin/kivali-supervisor`
 (`make supervisor`). Upgrades come from the release feed
-(`kivali-supervisor upgrade`, or Update in the desktop app). There is no
-other deploy path.
+(`kivali-supervisor upgrade`, or Update in the desktop app) or from the
+release baked into a newer desktop's VM image (`kivali-supervisor upgrade
+--baked`, which the desktop runs on a team's first start after the app
+updated). There is no other deploy path.
 
 The supervisor runs orgs on macOS (Apple Silicon, Virtualization.framework).
 A Windows backend (one Hyper-V VM per team, through a privileged broker)
@@ -225,7 +227,9 @@ rejected loudly, because VERSION would otherwise silently fall back to
 > its release notes say what.
 
 `kivali-supervisor check` reads the feed; `kivali-supervisor upgrade`
-(Update in Kivali Desktop) takes its release. The upgrade downloads and
+(Update in Kivali Desktop) takes its release, and `upgrade --baked` the
+one baked into the VM image instead ([supervisor.md](supervisor.md),
+"Upgrade from the VM image"). The upgrade downloads and
 verifies the release's chart and image bundle, imports the images,
 deletes the agent pods, stops the VM cleanly, snapshots the data disk,
 boots, rewrites the HelmChart to the new chart and image tags, and waits

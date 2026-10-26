@@ -171,7 +171,7 @@ host's config directory; on macOS `~/Library/Application Support/Kivali`).
 | `restart` | delete the agent pods, `rollout restart deploy/kivali`, wait: the org onto the images now in the VM (a mutable tag such as `:dev` leaves the manifest unchanged, so nothing else picks new images up) |
 | `forward [--port P]` | move the loopback forward and record the port |
 | `check [--feed F]` | fetch `release.json` (10 s timeout), record the outcome |
-| `upgrade [--feed F] [--force]` | the journaled upgrade below |
+| `upgrade [--feed F] [--force] [--baked]` | the journaled upgrade below; `--baked` moves to the Kivali baked into the VM image instead of the feed's release, downloading nothing |
 | `credential` | print how the org's Claude CLI is signed in, as `claude auth status` reports it ("Claude: signed in · owner@example.com · Claude Max"); sign in with `terminal` (see "Credential") |
 | `handoff` | print a one-time token that signs the org's first owner in at `http://127.0.0.1:<port>/auth/handoff?t=<token>` within 2 minutes (debugging; see "Handoff") |
 | `destroy --yes [--exit]` | stop the VM and delete the org: the data disk, its snapshot, `downloads/`, `local.json`, the logs (see "local.json"); `--exit` also ends `serve` |
@@ -756,7 +756,7 @@ guest contract is unchanged across the two.
 
 | Request | Answer |
 | --- | --- |
-| `GET /v1/status` | JSON `Status`: `boot_id`, `state` (`booting`/`ready`/`fatal` from `/run/kivali/{ready,fatal}`; `ready` only if it holds this boot's id), `fatal`, `node_ready` (node Ready with this boot's id, read now), `versions` (agent, vm_image, kernel, k3s), `baked_images` (refs inside `/usr/share/kivali/images/*`), `baked_charts` (name/version from each `/usr/share/kivali/charts/*.tgz`) |
+| `GET /v1/status` | JSON `Status`: `boot_id`, `state` (`booting`/`ready`/`fatal` from `/run/kivali/{ready,fatal}`; `ready` only if it holds this boot's id), `fatal`, `node_ready` (node Ready with this boot's id, read now), `versions` (agent, vm_image, kernel, k3s), `baked_images` (refs inside `/usr/share/kivali/images/*`), `baked_charts` (name, version, app_version and whether its values have a `browser` section, from each `/usr/share/kivali/charts/*.tgz`), `manual_steps` (whether `/usr/share/kivali/manual-steps` exists: the baked release's upgrade needs steps the app cannot do) |
 | `GET /v1/exec?spec=<json>` + `Upgrade: kivali-stream` | 101, then frames |
 | `GET /v1/pty?spec=<json>` + upgrade | 101, then frames (rows/cols in the spec) |
 | `PUT /v1/file?path=<rel>&mode=<octal>` body | 204; written atomically under `/var/lib/kivali`, paths escaping it refused |
@@ -804,7 +804,7 @@ the request.
 | `POST /v1/restart` | `{}` | |
 | `POST /v1/forward` | `{"port": N}` | |
 | `POST /v1/check` | `{"feed": "..."}` | `CheckResult` |
-| `POST /v1/upgrade` | `{"feed": "...", "force": bool}` | `Report` |
+| `POST /v1/upgrade` | `{"feed": "...", "force": bool, "baked": bool}` | `Report` |
 | `POST /v1/backup` | `{"path": "/abs/file.zip"}` (inside the config directory or the home directory) | `{"path", "bytes"}`; the file exists only on success |
 | `POST /v1/restore` | `{"path": "/abs/file.zip"}` (same rule) | the status, once the org restored it |
 | `GET /v1/credential` | | `{"signed_in", "email" (when reported), "billing" (when reported: "Claude Max", "Anthropic Console", "Amazon Bedrock", "Google Vertex AI", or a setup's "<provider> · <target>"), "checked_at" (RFC 3339)}` (plain JSON); 409 with a sentence when the VM is not running or Kivali is not installed |
@@ -823,9 +823,16 @@ because its recorded port could not be bound: the `PortError`'s message,
 for the person), `state` (`local.json`), `config_dir`,
 `supervisor_version`, `busy`, `operation`, `terminals` (open
 `/v1/terminal` sessions: counted once attached, until the splice ends, so
-the shell sees the Terminal running `claude` login close) and
+the shell sees the Terminal running `claude` login close),
 `disk_used_bytes`/`disk_size_bytes` (the data disk's allocated bytes and
-logical size, the Host's `FileUsage`; 0 without a disk).
+logical size, the Host's `FileUsage`; 0 without a disk) and, once the
+guest has answered, `baked` (`BakedRelease`: the one kivali chart the VM
+image bakes, `version`; `newer` when it and the installed Kivali are
+both releases, a "dev" pre-release part or a bare `dev` being none, and
+it is above the installed one; `manual_steps` when the image carries the
+manual-steps mark. Absent when the image bakes no single kivali chart.
+This is what the desktop acts on after an app update: "Upgrade from the
+VM image" below).
 
 **Stages.** Every log line of an operation carries the stage it belongs
 to (the serve log shows it in brackets), so the shell can draw steps
@@ -838,7 +845,7 @@ its final event and, in the serve log, a line `<operation> failed:
 | `up`, fresh disk | `making-room` (creating the disk, its first boot to READY), `starting` (guest agent, forward), `setting-up` (install, rollout, `/readyz`) |
 | `up`, installed | `updating-data` (moving the data disk from where an earlier version kept it, only once, on Windows: "Moving the data disk"; with progress, the bytes copied), `making-room` (compacting the data disk, only when the Windows backend compacts it before the boot; with progress, in virtdisk's own units), `starting` (boot to READY, guest agent, forward), `setting-up` (rollout, `/readyz`) |
 | `install`, `address` | `setting-up` |
-| `upgrade` | `downloading` (preflight, fetch, verify, import; with progress, the bytes downloaded against release.json's sizes, at each hundredth), `snapshot` (journal, quiesce, stop, snapshot; with progress where the backend copies the data disk, on Windows, the bytes copied), `installing` (boot, chart, HelmChart rewrite), `starting` (rollout, `/readyz`), `starting-agents` (every agent pod up on the new release and connected, `waitAgents`; with progress, the agents connected of the agent pods, at each change); on failure `rolling-back` |
+| `upgrade` | `downloading` (preflight, fetch, verify, import; with progress, the bytes downloaded against release.json's sizes, at each hundredth; with `baked`, the preflight and the wait for the image's images, nothing downloaded and no progress), `snapshot` (journal, quiesce, stop, snapshot; with progress where the backend copies the data disk, on Windows, the bytes copied), `installing` (boot, chart, HelmChart rewrite), `starting` (rollout, `/readyz`), `starting-agents` (every agent pod up on the new release and connected, `waitAgents`; with progress, the agents connected of the agent pods, at each change); on failure `rolling-back` |
 | `down` | `pausing` |
 | `destroy` | `deleting` |
 
@@ -1060,6 +1067,33 @@ successful one is kept as `latest` in `local.json`. `status` is one of
 `manual-steps`, `not-installed`, `failed`. The supervisor's own verdict
 compares the minimum with the supervisor's version; a development
 supervisor (version not semver) satisfies every minimum.
+
+## Upgrade from the VM image
+
+A newer Kivali Desktop brings a newer VM image, which bakes its own
+release's chart and images for new teams; `upgrade --baked` (`POST
+/v1/upgrade {"baked": true}`) moves an existing team to that release
+with nothing downloaded, through the journal below. It is what the
+desktop runs on a team's first start after the app updated
+(docs/developers/desktop-app.md, "Updating a team"). The feed is not
+consulted. In place of the feed's release, step 1 takes the one kivali
+chart the guest reports baked (`Status.baked_charts`) and refuses, before
+anything is touched: no single kivali chart; an installed Kivali that is
+a development build ("dev", or a "dev" pre-release part, as the dev
+chart's `0.0.0-dev`; `restart` is the dev loop); a baked development
+build; a baked release not above the installed one (`--force` allows
+that, never a development build); or the image's manual-steps mark
+(`Status.manual_steps`), in the words the feed's `manual_steps` is
+refused with. Step 2 picks the images from `baked_images` at the chart's
+tag (`kivali`, `kivali-egress-proxy`, `kivali-agent-shell`, and
+`kivali-browser` when the chart has a `browser` section) and waits, up
+to 5 minutes, for containerd to list every one: k3s imports the image's
+tarballs (`agent/images`) as it starts, not before the node is Ready.
+Nothing is downloaded, so the room check counts only the snapshot and
+`minFreeBytes`, and there is no second check. From the journal on it is
+the same upgrade: the chart is placed from the image at apply (as a first
+install's is), and a failure rolls back to the snapshot. `GET
+/v1/status`'s `baked` says ahead of time whether it would apply.
 
 ## Upgrade journal
 

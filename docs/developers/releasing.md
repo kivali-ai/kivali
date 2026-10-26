@@ -13,7 +13,10 @@ the first release" first.
 
 A release is `MAJOR.MINOR.PATCH`. The desktop app and the team are cut
 together under that one number, but each install moves on its own: the
-app updates itself, and each team upgrades when its owner chooses.
+app updates itself; each team moves to the app's release the first time
+it starts under a newer app (from the chart and images the app's VM
+image bakes, nothing downloaded), and to a later team release when its
+owner chooses.
 
 **The guarantee.** Within one major and minor, every Kivali Desktop runs
 every team release: a desktop of 1.4.0 runs a team on 1.4.7, and a
@@ -61,6 +64,10 @@ release needs the supervisor to have is a minor too.
    does, add the tag (one line, `vX.Y.Z`) to `scripts/manual-steps` and
    merge that to `main` first, and write the steps in the release
    notes (see "Publishing a release that needs manual steps").
+   `scripts/manual-steps.sh` reads the list for both `release.json`
+   (`manual_steps`) and the VM image (`make vm-release` bakes
+   `/usr/share/kivali/manual-steps`), so neither the feed's release nor
+   the one a newer desktop brings is applied on its own.
 3. **Cut it**, from any checkout of the repository with `gh` signed in:
 
    ```

@@ -87,9 +87,14 @@ release's minimum desktop version is `X.Y.0`. A newer Kivali whose
 minimum desktop version is above the installed app (a new minor) asks
 for the app update first and does nothing else; an older Kivali keeps
 running under a newer app, because a team's version is recorded on its
-data disk and the root disk carries none. A release that needs a step the
-app cannot do sets `manual_steps` in `release.json`, and the app
-explains instead of upgrading ("Update states").
+data disk and the root disk carries none. The two meet on the team's
+first start under the newer app: the VM image bakes the app's own Kivali
+(its chart and images, what a new team installs), the supervisor reports
+it as newer than the team's, and the shell updates the team to it from
+the image, nothing downloaded ("Updating a team"). A release that needs
+a step the app cannot do sets `manual_steps` in `release.json`, and its
+VM image carries the same mark; the app explains instead of upgrading
+("Update states").
 
 ## Layout
 
@@ -374,9 +379,11 @@ because the command-line supervisor uses it without the shell.
   4096 MB and 4), its kind (`work` or `personal`) and when it was last
   paused; also, when known, when Claude signed out (`signed_out_at`,
   D4: stamped by the watch loop on a signed-in to signed-out change,
-  cleared by any sign-in), and `provisional: true` while the setup that
-  made it has not finished ("The flows"). A team **elsewhere** has only
-  its origin.
+  cleared by any sign-in), `provisional: true` while the setup that
+  made it has not finished ("The flows"), and `first_boot_update`, the
+  baked Kivali version the team's first start after an app update moved
+  it to or tried to ("Updating a team"; each is tried once). A team
+  **elsewhere** has only its origin.
 - New ids are the name's ASCII letters and digits, lower-cased,
   non-alphanumerics folded to single dashes, at most 16 characters,
   then four random hex digits (`plainsong-3f2a`; `team-<hex>` when
@@ -1232,6 +1239,32 @@ update line reads "Couldn't update to 0.17.0" and its button
 Try again… (the error is the last operation's, `op.error`, until the
 team's next operation).
 
+The release updated to is the one the row offers (`shell::update_state`):
+the Kivali baked into the team's VM image when that is a release above
+the team's (`Report.baked.newer`), else the feed's. An update from the
+image runs `POST /v1/upgrade {"baked": true}`: nothing is downloaded, so
+its first stage is "Checking the update" and short
+(`view::BAKED_FIRST_STAGE`, `TeamOp::baked`), and the dialog's length
+follows; the rest is the same journal, snapshot and rollback. The feed's
+What's new attaches only when the feed names that same release.
+
+**After an app update**, the team's first start brings the new Kivali:
+`after_started` (`shell::first_boot_update`), on every start and on a
+team adopted at launch, reads `Report.baked`, and when it is newer and
+not marked `manual_steps` runs the update from the image without asking,
+once the operation that started the team has ended (`Runtime::wait_idle`),
+as the Update… op with its stages, notifications and failure banner. It
+is tried once per baked version per team: `first_boot_update` in
+teams.json is written to that version before the update starts, so a
+failed update (or a crash during it, which the supervisor's journal
+recovers) shows the banner with Try again… and is not attempted again at
+every launch. The supervisor's verdict keeps a development build on either
+side out of it (a local build never moves a real team, and a dev team keeps
+its dev chart; Restart serves it), and a team setup has not finished with
+(`provisional`) is left to setup. A VM that was already running when the
+app updated still runs the old root disk, so it reports nothing newer; its
+next pause and resume boots the new image and updates.
+
 **Deleting a team here** (Settings → team → Overview, below a divider;
 nowhere else):
 
@@ -1564,9 +1597,14 @@ bring Kivali forward, as on Windows and Linux.
 here checks for a Kivali release once it is up (at launch for a team
 already running, after every start), then every 24 hours, and again
 after an update. The supervisor fetches `release.json` and gives a
-verdict; the shell reduces it to one state, shown in Settings → team →
-Overview (D2) and, when an update is available, as the tray's update
-item:
+verdict; the shell reduces it to one state, then folds in the Kivali
+baked into the team's VM image (`Report.baked`, `updates::with_baked`):
+a baked release above the team's is `available` whatever the check said
+or whether one has finished, since the app that bakes it is new enough
+for it, unless the feed offers a release above it; one marked
+`manual_steps` reads `manual_steps` instead. The state is shown in
+Settings → team → Overview (D2) and, when an update is available, as
+the tray's update item:
 
 | State | Settings line | Tray |
 | --- | --- | --- |
