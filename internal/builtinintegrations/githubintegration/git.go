@@ -101,15 +101,6 @@ func (g *GitHub) callGit(ctx context.Context, caller builtinintegrations.Caller,
 		echoed, _ := clip(repo.Path, 200)
 		return nil, refuse(fmt.Sprintf("A GitHub repository is owner/name, and %s is not one.", echoed), "the repository is not owner/name")
 	}
-	// A writer's clone is given the app's bot as its identity, so what
-	// the agent commits there is the bot's (bot.go), which is what lets
-	// it delete such a branch.
-	var identity *shelljob.GitIdentity
-	if name == gitops.Clone && readAccess(caller.Access).write {
-		if b, err := g.bot(ctx, c, repo.Path); err == nil {
-			identity = &shelljob.GitIdentity{Name: b.login, Email: b.noreply()}
-		}
-	}
 	tok, err := g.jobToken(ctx, c, repo.Path, jobPermissions(name))
 	if err != nil {
 		var te *tokenError
@@ -119,7 +110,16 @@ func (g *GitHub) callGit(ctx context.Context, caller builtinintegrations.Caller,
 		return nil, err
 	}
 	job := call.Job(shelljob.GitAuth{Username: tokenUser, Password: tok}, conn.ID)
-	job.Identity = identity
+	// A writer's clone is given the app's bot as its identity, so what
+	// the agent commits there is the bot's (bot.go), which is what lets
+	// it delete such a branch. The token comes first: a call the token's
+	// checks refuse (a repository under another account) asks GitHub for
+	// nothing.
+	if name == gitops.Clone && readAccess(caller.Access).write {
+		if b, err := g.bot(ctx, c, repo.Path); err == nil {
+			job.Identity = &shelljob.GitIdentity{Name: b.login, Email: b.noreply()}
+		}
+	}
 	return &builtinintegrations.Result{ShellJob: &shelljob.Job{Git: job}, Audit: call.Started()}, nil
 }
 
