@@ -55,6 +55,7 @@ var ghKey = sync.OnceValue(func() *rsa.PrivateKey {
 // The app the fake GitHub makes.
 const (
 	ghSlug         = "kivali-acme"
+	ghClientID     = "Iv23liNew"
 	ghClientSecret = "gh-client-secret-0001"
 	ghWebhook      = "gh-webhook-secret-0001"
 	ghCode         = "manifest-code-0001"
@@ -171,7 +172,7 @@ func (f *fakeGitHubAPI) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		f.codeUsed = true
 		answer(http.StatusCreated, map[string]any{
-			"id": 1234, "slug": ghSlug, "name": "Kivali Acme", "client_id": "Iv23liNew", "client_secret": ghClientSecret,
+			"id": 1234, "slug": ghSlug, "name": "Kivali Acme", "client_id": ghClientID, "client_secret": ghClientSecret,
 			"webhook_secret": ghWebhook, "owner": map[string]string{"login": "acme", "type": "User"},
 			"pem": string(pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(ghKey())})),
 		})
@@ -339,8 +340,9 @@ func githubSecret(t *testing.T, srv *Server, mem *secrets.Memory) (store.Integra
 // back to this flow's callback, the setup address without a query) to
 // the personal account's new-app page with the flow's state; nothing is
 // kept before GitHub made the app; the code GitHub sends back is traded
-// once, and only the app's values are kept, never the code or the
-// webhook secret; the return from the install page carries no state of
+// once, and only the app's id, slug and key are kept, never its client
+// id or secret (nothing reads them), the code or the webhook secret;
+// the return from the install page carries no state of
 // Kivali's and is taken by the flow's cookie; the installation kept is
 // the one the app's key lists, not the id in the address; and the
 // integration then reads installed with every requirement met. A step
@@ -370,12 +372,12 @@ func TestGitHubSetupInstalls(t *testing.T) {
 		t.Errorf("conversions = %+v", conv)
 	}
 	rec, data := githubSecret(t, srv, mem)
-	if want := []string{"app_id", "client_id", "client_secret", "private_key", "slug"}; !slices.Equal(rec.SecretKeys, want) || len(rec.Fields) != 0 ||
-		data["app_id"] != "1234" || data["slug"] != ghSlug || data["client_secret"] != ghClientSecret || !strings.HasPrefix(data["private_key"], "-----BEGIN RSA PRIVATE KEY-----") {
+	if want := []string{"app_id", "private_key", "slug"}; !slices.Equal(rec.SecretKeys, want) || len(rec.Fields) != 0 ||
+		data["app_id"] != "1234" || data["slug"] != ghSlug || !strings.HasPrefix(data["private_key"], "-----BEGIN RSA PRIVATE KEY-----") {
 		t.Fatalf("kept %v %v", rec.SecretKeys, data)
 	}
 	for _, v := range data {
-		if v == ghWebhook || v == ghCode {
+		if v == ghWebhook || v == ghCode || v == ghClientID || v == ghClientSecret {
 			t.Errorf("kept %q", v)
 		}
 	}
@@ -667,7 +669,7 @@ func TestGitHubInstallsOverAOneZeroConnection(t *testing.T) {
 	githubInstall(t, srv, f)
 	rec, data := githubSecret(t, srv, mem)
 	if rec.ID != old.ID || len(rec.Fields) != 0 || rec.SignIn != nil || data[connect.SecretKeyAccessToken] != "" || data[connect.SecretKeyRefreshToken] != "" ||
-		data["client_secret"] != ghClientSecret || data["installation_id"] != "42" {
+		data["client_secret"] != "" || data["installation_id"] != "42" {
 		t.Errorf("after the install: %+v %v", rec, data)
 	}
 	select {
@@ -737,6 +739,46 @@ func TestGitHubAgentReadsTheAppAsAuthor(t *testing.T) {
 	}
 	if text := res.Content[0]; !strings.Contains(text, `"author":"`+ghSlug+`[bot]"`) {
 		t.Errorf("the issue's author reads %s", text)
+	}
+}
+
+// Why this test exists: GitHub's setup keeps no client id or secret,
+// but a connection made by a setup that kept them still holds both in
+// its Secret, beside the keeps. Read as a connection an earlier version
+// made that does not fit (setupMisfit), GitHub would drop to installed,
+// its agents' calls refused as being set up, and the owner would be
+// told to set it up again, which makes a second app on GitHub. It must
+// read connected with every requirement met, pass Test connection and
+// take an agent's call, with the two values left in the Secret, unread.
+func TestGitHubConnectionHoldingTheClientStaysConnected(t *testing.T) {
+	srv, f, mem, _ := githubServer(t)
+	githubInstall(t, srv, f)
+	rec, data := githubSecret(t, srv, mem)
+	data["client_id"], data["client_secret"] = ghClientID, ghClientSecret
+	if err := mem.Put(context.Background(), rec.SecretName, data); err != nil {
+		t.Fatal(err)
+	}
+	rec.SecretKeys = append(rec.SecretKeys, "client_id", "client_secret")
+	slices.Sort(rec.SecretKeys)
+	if err := srv.Store.PutIntegrationConnection("github", rec); err != nil {
+		t.Fatal(err)
+	}
+	if page := githubPage(t, srv); !connectedAndMet(page) {
+		t.Fatalf("page = %s %v", page.Summary.State, unmetIDs(page))
+	}
+	page := orgOK[apitypes.IntegrationPage](t, intPost(t, srv, intBase+"/github/connection/verify"))
+	if c := page.Connection; c == nil || c.Verified == nil || !*c.Verified {
+		t.Errorf("test connection = %+v", c)
+	}
+	intTeam(t, srv, "dana")
+	putIntegrationAccess(t, srv, "github", "dana", `{"repositories":["acme/*"]}`)
+	dana := agentpod.NewClient(serveCoreUDS(t, srv), "dana")
+	res, err := dana.IntegrationCall(context.Background(), agentpod.IntegrationCallRequest{Name: "github_list_issues", Arguments: json.RawMessage(`{"repository":"acme/widgets"}`)})
+	if err != nil || res.IsError || len(res.Content) != 1 {
+		t.Fatalf("list issues = %+v, %v", res, err)
+	}
+	if _, data := githubSecret(t, srv, mem); data["client_secret"] != ghClientSecret || data["client_id"] != ghClientID {
+		t.Errorf("the Secret = %v", data)
 	}
 }
 

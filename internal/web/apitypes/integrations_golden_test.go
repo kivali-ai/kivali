@@ -451,8 +451,6 @@ func goldenIntegrationSetup() *IntegrationSetup {
 		Keeps: []SetupKeep{
 			{Key: "app_id", Words: "The app's id", Secret: false},
 			{Key: "slug", Words: "The app's name on GitHub", Secret: false},
-			{Key: "client_id", Words: "The app's client id", Secret: false},
-			{Key: "client_secret", Words: "The app's client secret", Secret: true},
 			{Key: "private_key", Words: "The app's private key, which Kivali signs with to get a token for each call", Secret: true},
 			{Key: "installation_id", Words: "Where the app is installed", Secret: false},
 			{Key: "installation_account", Words: "The account the app is installed on, which owns every repository it reaches", Secret: false},

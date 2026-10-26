@@ -27,12 +27,12 @@
 //
 // The connection is made by the integration's own setup flow (method
 // setup, setup.go): GitHub's app-manifest flow keeps the app's id,
-// slug, client id and secret and private key after GitHub's
-// conversion, and the installation id once the app is installed. Its
-// requirements check the key, the installation, the repositories it
-// reaches and its permissions (requirements.go); Uninstall removes the
-// installation from GitHub, and a sign-in an earlier version's
-// connection held is revoked when setup replaces it (uninstall.go).
+// slug and private key after GitHub's conversion, and the installation
+// id once the app is installed. Its requirements check the key, the
+// installation, the repositories it reaches and its permissions
+// (requirements.go); Uninstall removes the installation from GitHub,
+// and a sign-in an earlier version's connection held is revoked when
+// setup replaces it (uninstall.go).
 package githubintegration
 
 import (
@@ -56,14 +56,12 @@ import (
 // Name is the built-in's name; its actions are github_<action>.
 const Name = "github"
 
-// The connection's fields: what setup keeps, read as conn.Fields.
-// client_id and client_secret are kept for the app's own sign-in and
-// read by no action.
+// The connection's fields: what setup keeps, read as conn.Fields. The
+// app's client id and secret are not among them: every call signs
+// with the private key, and the app signs no user in.
 const (
 	FieldAppID          = "app_id"
 	FieldSlug           = "slug"
-	FieldClientID       = "client_id"
-	FieldClientSecret   = "client_secret"
 	FieldPrivateKey     = "private_key"
 	FieldInstallationID = "installation_id"
 	// FieldInstallationAccount is the login of the account the app is
@@ -165,16 +163,14 @@ func (g *GitHub) Manifest() *integration.Manifest {
 					Fields: integration.SetupFields{
 						{Key: "account", Words: "An organization's name, or leave it blank for your personal account"},
 					},
-					// The app's id, slug, client id, installation id and
-					// installation account are GitHub's public names for the
-					// app and where it is installed (its pages and the
-					// <slug>[bot] author of what it writes show them), so they
-					// are not secret; its client secret and private key are.
+					// The app's id, slug, installation id and installation
+					// account are GitHub's public names for the app and where
+					// it is installed (its pages and the <slug>[bot] author of
+					// what it writes show them), so they are not secret; its
+					// private key is.
 					Keeps: integration.SetupKeeps{
 						{Key: FieldAppID, Words: "The app's id", NotSecret: true},
 						{Key: FieldSlug, Words: "The app's name on GitHub", NotSecret: true},
-						{Key: FieldClientID, Words: "The app's client id", NotSecret: true},
-						{Key: FieldClientSecret, Words: "The app's client secret"},
 						{Key: FieldPrivateKey, Words: "The app's private key, which Kivali signs with to get a token for each call"},
 						{Key: FieldInstallationID, Words: "Where the app is installed", NotSecret: true},
 						{Key: FieldInstallationAccount, Words: "The account the app is installed on, which owns every repository it reaches", NotSecret: true},

@@ -123,9 +123,9 @@ func installURL(slug, state string) string {
 //     account. The owner chooses Create GitHub App there, and GitHub
 //     sends the browser back to the callback with a code.
 //  3. The code traded for the app (POST /app-manifests/{code}/conversions),
-//     whose id, slug, client id and secret and private key are kept,
-//     then a Go to the app's new-installation page. GitHub sends the
-//     browser back to the setup address, with no state of Kivali's.
+//     whose id, slug and private key are kept, then a Go to the app's
+//     new-installation page. GitHub sends the browser back to the
+//     setup address, with no state of Kivali's.
 //  4. The app's installations listed with its JWT: the installation id
 //     GitHub sent back is not trusted, since anyone can make the
 //     browser load the setup address with one. The one installation is
@@ -137,11 +137,10 @@ func installURL(slug, state string) string {
 // Nothing is kept before GitHub made the app. The Fixes are FlowInstall
 // (steps 3's Go and 4 again), FlowPermissions and FlowSettings.
 //
-// Core scrubs every secret kept value (the client secret, the private
-// key) and every State value of six characters or more from what a
-// step shows, so State holds short markers alone. The app's id, slug,
-// client id and installation id are declared not secret: a page a step
-// names may carry them.
+// Core scrubs every secret kept value (the private key) and every
+// State value of six characters or more from what a step shows, so
+// State holds short markers alone. The app's id, slug and installation
+// id are declared not secret: a page a step names may carry them.
 func (g *GitHub) Setup(ctx context.Context, conn builtinintegrations.Connection, flow string, last builtinintegrations.Answer, p builtinintegrations.Progress) (builtinintegrations.Step, error) {
 	switch flow {
 	case builtinintegrations.FlowSetup:
@@ -231,20 +230,22 @@ func createApp(account string, last builtinintegrations.Answer) (builtinintegrat
 	}, nil
 }
 
-// conversion is GitHub's answer to a manifest's code: the app it made.
+// conversion is GitHub's answer to a manifest's code: the app it made,
+// as much of it as setup keeps. The answer also carries the app's
+// client id and secret and its webhook secret, which are not read.
 type conversion struct {
-	ID           int64  `json:"id"`
-	Slug         string `json:"slug"`
-	ClientID     string `json:"client_id"`
-	ClientSecret string `json:"client_secret"`
-	PEM          string `json:"pem"`
+	ID   int64  `json:"id"`
+	Slug string `json:"slug"`
+	PEM  string `json:"pem"`
 }
 
 // convert trades the code GitHub sent the browser back with for the
 // app (POST /app-manifests/{code}/conversions, with no credential),
-// keeps it, and sends the owner to install it. The code works once,
-// within the hour, and is kept nowhere; the webhook secret GitHub gives
-// is dropped.
+// keeps its id, slug and private key, and sends the owner to install
+// it. The code works once, within the hour, and is kept nowhere; the
+// client id and secret and the webhook secret GitHub gives are
+// dropped, since every call signs with the key and the app signs no
+// user in.
 func (g *GitHub) convert(ctx context.Context, last builtinintegrations.Answer) (builtinintegrations.Step, error) {
 	code := last.Return.Get("code")
 	if code == "" || len(code) > 200 || strings.ContainsAny(code, "/?#% ") {
@@ -273,9 +274,6 @@ func (g *GitHub) convert(ctx context.Context, last builtinintegrations.Answer) (
 	if !appSlug.MatchString(app.Slug) {
 		missing = append(missing, "its name")
 	}
-	if app.ClientID == "" || app.ClientSecret == "" {
-		missing = append(missing, "its client")
-	}
 	if _, err := parsePrivateKey(app.PEM); err != nil {
 		missing = append(missing, "its private key")
 	}
@@ -287,11 +285,9 @@ func (g *GitHub) convert(ctx context.Context, last builtinintegrations.Answer) (
 		return step, err
 	}
 	step.Keep = map[string]string{
-		FieldAppID:        strconv.FormatInt(app.ID, 10),
-		FieldSlug:         app.Slug,
-		FieldClientID:     app.ClientID,
-		FieldClientSecret: app.ClientSecret,
-		FieldPrivateKey:   app.PEM,
+		FieldAppID:      strconv.FormatInt(app.ID, 10),
+		FieldSlug:       app.Slug,
+		FieldPrivateKey: app.PEM,
 	}
 	return step, nil
 }
