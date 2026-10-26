@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"net/http"
 	"os"
@@ -579,6 +580,177 @@ func TestUpgradeCommits(t *testing.T) {
 	// Two boots before the upgrade? One: install; the upgrade adds one.
 	if len(h.vm.boots) != 2 {
 		t.Fatalf("%d boots", len(h.vm.boots))
+	}
+}
+
+// The release a newer desktop brought: its VM image bakes a chart newer
+// than the team's, and `upgrade --baked` moves the team to it with
+// nothing downloaded (no downloads directory, no feed), through the
+// same journal, snapshot and waits as a feed upgrade. Guards the
+// first-boot update the desktop runs after it is updated.
+func TestUpgradeFromTheBakedRelease(t *testing.T) {
+	h := newHarness(t)
+	h.mustUp(UpOptions{Install: owner})
+	_, before := h.manifestValues()
+	h.bakeRelease("0.16.0", "v0.16.0")
+	if b := h.sup.Status(context.Background()).Baked; b == nil || !b.Newer || b.Version != "0.16.0" {
+		t.Fatalf("baked verdict before the upgrade: %+v", b)
+	}
+
+	if err := h.sup.Upgrade(context.Background(), UpgradeOptions{Baked: true}, h.logf()); err != nil {
+		t.Fatalf("upgrade --baked: %v", err)
+	}
+	st := h.sup.State()
+	if st.Kivali != "0.16.0" || st.Upgrade != nil {
+		t.Fatalf("state %+v", st)
+	}
+	if exists(h.snapPath()) {
+		t.Fatal("snapshot left behind")
+	}
+	if _, err := os.Stat(filepath.Join(h.dir, "downloads")); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("a baked upgrade made a downloads directory: %v", err)
+	}
+	file, after := h.manifestValues()
+	if file != "kivali-0.16.0.tgz" || getPath(t, after, "image", "tag") != "v0.16.0" || getPath(t, after, "egress", "image", "tag") != "v0.16.0" {
+		t.Fatalf("manifest %s %v", file, after)
+	}
+	if h.disk()[StaticChartsRel+"/kivali-0.16.0.tgz"] != "chart baked kivali-0.16.0.tgz" {
+		t.Fatalf("the chart was not placed from the VM image: %q", h.disk()[StaticChartsRel+"/kivali-0.16.0.tgz"])
+	}
+	for _, k := range [][]string{{"secrets", "sessionKey"}, {"secrets", "ownerEmails"}, {"initImage"}} {
+		if getPath(t, before, k...) != getPath(t, after, k...) {
+			t.Errorf("%v changed across the upgrade", k)
+		}
+	}
+	if len(h.vm.boots) != 2 {
+		t.Fatalf("%d boots", len(h.vm.boots))
+	}
+	if b := h.sup.Status(context.Background()).Baked; b == nil || b.Newer || b.Version != "0.16.0" {
+		t.Fatalf("baked verdict after the upgrade: %+v", b)
+	}
+}
+
+// A baked upgrade that fails rolls back like a feed upgrade: the team
+// is on its version again, and nothing is left of the attempt.
+func TestBakedUpgradeRollsBack(t *testing.T) {
+	h := newHarness(t)
+	h.mustUp(UpOptions{Install: owner})
+	h.vm.broken["v0.16.0"] = true
+	h.bakeRelease("0.16.0", "v0.16.0")
+
+	err := h.sup.Upgrade(context.Background(), UpgradeOptions{Baked: true}, h.logf())
+	if err == nil || !strings.Contains(err.Error(), "still on 0.15.0") {
+		t.Fatalf("upgrade: %v", err)
+	}
+	st := h.sup.State()
+	if st.Kivali != "0.15.0" || st.Upgrade != nil {
+		t.Fatalf("state %+v", st)
+	}
+	if exists(h.snapPath()) {
+		t.Fatal("snapshot left behind")
+	}
+	if file, _ := h.manifestValues(); file != "kivali-0.15.0.tgz" {
+		t.Fatalf("manifest %s after the rollback", file)
+	}
+}
+
+// The baked release is applied only between two releases, and only
+// forward: a development build on either side, the same version and
+// an older VM image are refused before anything is touched, and the
+// report's verdict agrees with each refusal. Guards the rule that keeps
+// a local build from moving a real team, and a dev team from being
+// moved onto a release.
+func TestBakedUpgradeRefusals(t *testing.T) {
+	h := newHarness(t)
+	h.mustUp(UpOptions{Install: owner})
+	boots := len(h.vm.boots)
+	try := func(installed, baked, tag, wantErr string) {
+		t.Helper()
+		if err := h.update(t, func(st *State) { st.Kivali = installed }); err != nil {
+			t.Fatal(err)
+		}
+		h.bakeRelease(baked, tag)
+		if b := h.sup.Status(context.Background()).Baked; b == nil || b.Newer || b.Version != strings.TrimPrefix(baked, "v") {
+			t.Errorf("%s with %s baked: verdict %+v, want not newer", installed, baked, b)
+		}
+		err := h.sup.Upgrade(context.Background(), UpgradeOptions{Baked: true}, h.logf())
+		if err == nil || !strings.Contains(err.Error(), wantErr) {
+			t.Errorf("%s with %s baked: %v, want %q", installed, baked, err, wantErr)
+		}
+		if st := h.sup.State(); st.Kivali != installed || st.Upgrade != nil {
+			t.Errorf("%s with %s baked: state %+v", installed, baked, st)
+		}
+	}
+	try("0.15.0", "0.15.0", "v0.15.0", "up to date")
+	try("0.15.0", "0.14.2", "v0.14.2", "up to date")
+	try("0.0.0-dev", "0.16.0", "v0.16.0", "development build")
+	try("0.15.0", "0.0.0-dev", "dev", "development build")
+	try("0.0.0-dev", "0.0.0-dev", "dev", "development build")
+	// A development build is refused even with --force; the same
+	// release is not.
+	h.bakeRelease("0.16.0", "v0.16.0")
+	if err := h.update(t, func(st *State) { st.Kivali = "0.0.0-dev" }); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.sup.Upgrade(context.Background(), UpgradeOptions{Baked: true, Force: true}, h.logf()); err == nil || !strings.Contains(err.Error(), "development build") {
+		t.Fatalf("dev team, --force: %v", err)
+	}
+	if len(h.vm.boots) != boots {
+		t.Fatalf("a refusal booted the VM (%d boots, had %d)", len(h.vm.boots), boots)
+	}
+	// No kivali chart baked: no verdict, and a refusal naming it.
+	if err := h.update(t, func(st *State) { st.Kivali = "0.15.0" }); err != nil {
+		t.Fatal(err)
+	}
+	h.vm.mu.Lock()
+	h.vm.charts = nil
+	h.vm.mu.Unlock()
+	if b := h.sup.Status(context.Background()).Baked; b != nil {
+		t.Errorf("verdict with no baked chart: %+v", b)
+	}
+	if err := h.sup.Upgrade(context.Background(), UpgradeOptions{Baked: true}, h.logf()); err == nil || !strings.Contains(err.Error(), "bakes 0 kivali charts") {
+		t.Fatalf("no baked chart: %v", err)
+	}
+}
+
+// The VM image's images reach containerd as k3s imports them at boot;
+// a baked upgrade waits for them, and when one never arrives it fails
+// before the journal, with the team untouched.
+func TestBakedUpgradeWaitsForTheImport(t *testing.T) {
+	h := newHarness(t)
+	h.mustUp(UpOptions{Install: owner})
+	h.bakeRelease("0.16.0", "v0.16.0")
+	// The boot's import happened before the bake (the fake imports at
+	// boot): the new refs are baked but not imported.
+	h.vm.mu.Lock()
+	for r := range h.vm.imported {
+		if strings.HasSuffix(r, ":v0.16.0") {
+			delete(h.vm.imported, r)
+		}
+	}
+	h.vm.mu.Unlock()
+	err := h.sup.Upgrade(context.Background(), UpgradeOptions{Baked: true}, h.logf())
+	if err == nil || !strings.Contains(err.Error(), "timed out") || !strings.Contains(err.Error(), "kivali:v0.16.0 is not in containerd yet") {
+		t.Fatalf("upgrade with the images missing: %v", err)
+	}
+	if st := h.sup.State(); st.Kivali != "0.15.0" || st.Upgrade != nil {
+		t.Fatalf("state %+v", st)
+	}
+	if len(h.vm.boots) != 1 {
+		t.Fatalf("%d boots", len(h.vm.boots))
+	}
+}
+
+func TestIsDevVersion(t *testing.T) {
+	for _, v := range []string{"dev", " dev ", "0.0.0-dev", "v0.0.0-dev", "1.3.0-dev.2", "1.3.0-rc.1.dev+build"} {
+		if !isDevVersion(v) {
+			t.Errorf("isDevVersion(%q) = false, want true", v)
+		}
+	}
+	for _, v := range []string{"", "1.2.2", "v1.2.2", "0.17.0-rc.2", "devel", "1.2.2-devel", "1.2.2+dev"} {
+		if isDevVersion(v) {
+			t.Errorf("isDevVersion(%q) = true, want false", v)
+		}
 	}
 }
 

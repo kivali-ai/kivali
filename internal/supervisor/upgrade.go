@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"time"
 
 	"github.com/kivali-ai/kivali/internal/supervisor/guestapi"
 )
@@ -21,7 +22,15 @@ type UpgradeOptions struct {
 	// Force upgrades even to the same or an older version (development
 	// and the rollback rehearsal).
 	Force bool `json:"force,omitempty"`
+	// Baked upgrades to the Kivali baked into the VM image the team is
+	// running on, with nothing downloaded: the release a newer Kivali
+	// Desktop brought. The feed is not consulted.
+	Baked bool `json:"baked,omitempty"`
 }
+
+// bakedImportTimeout bounds the wait for k3s to import the VM image's
+// baked image tarballs, which it does as it starts.
+const bakedImportTimeout = 5 * time.Minute
 
 // minFreeBytes is the host free space the upgrade leaves beside the
 // data disk once the release is downloaded and the snapshot taken: what
@@ -86,10 +95,11 @@ type staged struct {
 	dir    string // downloads/<version>, deleted when the upgrade ends
 }
 
-// Upgrade runs the journaled upgrade of docs/developers/desktop-app.md, "Upgrade
-// the org". Nothing touches the org until the release's chart and images
-// are fetched, verified and imported; from the journal on, a failure
-// rolls the data disk back to the snapshot.
+// Upgrade runs the journaled upgrade of docs/developers/supervisor.md,
+// "Upgrade journal". Nothing touches the org until the release's chart
+// and images are fetched, verified and imported (or, with Baked, found
+// in the VM image); from the journal on, a failure rolls the data disk
+// back to the snapshot.
 func (s *Supervisor) Upgrade(ctx context.Context, o UpgradeOptions, logf Logf) error {
 	ctx, end, err := s.begin(ctx, "upgrade", false)
 	if err != nil {
@@ -110,29 +120,41 @@ func (s *Supervisor) Upgrade(ctx context.Context, o UpgradeOptions, logf Logf) e
 		return errors.New("not installed; nothing to upgrade")
 	}
 
-	// 1. Preflight.
-	feed := o.Feed
-	if feed == "" {
-		feed = s.State().Feed
-	}
-	rel, err := s.fetchRelease(ctx, feed)
-	if err != nil {
-		return fmt.Errorf("fetch release.json: %w", err)
-	}
-	res := s.evaluate(rel, from)
-	switch res.Status {
-	case CheckUpgrade:
-	case CheckUpToDate:
-		if !o.Force {
-			return errors.New(res.Message)
-		}
-		logf("%s; upgrading anyway (--force)", res.Message)
-	default:
-		return errors.New(res.Message)
-	}
+	// 1. Preflight: the release, from the feed or the VM image.
 	gs, err := g.Status(ctx)
 	if err != nil {
 		return fmt.Errorf("preflight: guest agent: %w", err)
+	}
+	var (
+		feed    string
+		rel     Release
+		baked   guestapi.BakedChart
+		pending uint64 // bytes still to download
+	)
+	if o.Baked {
+		if baked, err = s.bakedTarget(gs, from, o.Force, logf); err != nil {
+			return err
+		}
+	} else {
+		feed = o.Feed
+		if feed == "" {
+			feed = s.State().Feed
+		}
+		if rel, err = s.fetchRelease(ctx, feed); err != nil {
+			return fmt.Errorf("fetch release.json: %w", err)
+		}
+		res := s.evaluate(rel, from)
+		switch res.Status {
+		case CheckUpgrade:
+		case CheckUpToDate:
+			if !o.Force {
+				return errors.New(res.Message)
+			}
+			logf("%s; upgrading anyway (--force)", res.Message)
+		default:
+			return errors.New(res.Message)
+		}
+		pending = uint64(rel.Chart.Size + rel.Images[s.platform()].Size)
 	}
 	if gs.State != guestapi.StateReady || !gs.NodeReady {
 		return fmt.Errorf("preflight: the VM is not healthy (state %s, node ready %v)", gs.State, gs.NodeReady)
@@ -140,18 +162,25 @@ func (s *Supervisor) Upgrade(ctx context.Context, o UpgradeOptions, logf Logf) e
 	if err := deploymentState(ctx, g, "", "", nil); err != nil {
 		return fmt.Errorf("preflight: the org is not healthy: %w", err)
 	}
-	if err := s.upgradeRoom(uint64(rel.Chart.Size+rel.Images[s.platform()].Size), nothingChanged, logf); err != nil {
+	if err := s.upgradeRoom(pending, nothingChanged, logf); err != nil {
 		return err
 	}
 
-	// 2. Fetch, verify and import. The org keeps running.
-	sg, err := s.stage(ctx, g, feed, rel, logf)
-	if err != nil {
-		return err
-	}
-	if err := s.upgradeRoom(0, stillRunning, logf); err != nil {
-		s.dropDownloads(sg, logf)
-		return err
+	// 2. Fetch, verify and import (or find the VM image's). The org
+	// keeps running.
+	var sg staged
+	if o.Baked {
+		if sg, err = s.stageBaked(ctx, g, gs, baked, logf); err != nil {
+			return err
+		}
+	} else {
+		if sg, err = s.stage(ctx, g, feed, rel, logf); err != nil {
+			return err
+		}
+		if err := s.upgradeRoom(0, stillRunning, logf); err != nil {
+			s.dropDownloads(sg, logf)
+			return err
+		}
 	}
 
 	// 3. Journal.
@@ -344,6 +373,66 @@ func (s *Supervisor) stage(ctx context.Context, g Guest, feed string, rel Releas
 	}
 	sg.chart, sg.meta, sg.images, sg.dir = chart, meta, im, dir
 	return sg, nil
+}
+
+// bakedTarget is what `upgrade --baked` moves the team to: the one
+// kivali chart baked into the VM image, a release newer than the
+// installed one. --force allows the same or an older release. A
+// development build on either side is refused whatever the flags: a dev
+// team keeps its dev chart (restart puts it onto the images now in its
+// VM), and a dev build is never applied over a release.
+func (s *Supervisor) bakedTarget(gs guestapi.Status, from string, force bool, logf Logf) (guestapi.BakedChart, error) {
+	c, err := bakedChart(gs)
+	if err != nil {
+		return c, fmt.Errorf("%v; upgrade from a feed instead", err)
+	}
+	to := strings.TrimPrefix(c.Version, "v")
+	switch {
+	case isDevVersion(from):
+		return c, fmt.Errorf("Kivali %s is a development build; the VM image's %s is not applied over it (restart puts the team onto the images now in its VM)", from, to)
+	case isDevVersion(to):
+		return c, fmt.Errorf("the VM image bakes a development build of Kivali (%s), which is not applied to a team on %s", to, from)
+	case !isRelease(from) || !isRelease(to):
+		return c, fmt.Errorf("cannot compare Kivali %s with the VM image's %s", from, to)
+	case compareVersions(to, from) <= 0:
+		if !force {
+			return c, fmt.Errorf("Kivali %s is up to date; the VM image bakes %s", from, to)
+		}
+		logf("Kivali %s is up to date (the VM image bakes %s); upgrading anyway (--force)", from, to)
+	}
+	logf("upgrading to Kivali %s, baked into the VM image", to)
+	return c, nil
+}
+
+// stageBaked is step 2 for the VM image's release: nothing to download
+// or verify, and the chart is placed from the image at apply (an empty
+// staged.chart). The images are the image's baked tarballs, which k3s
+// imports as it starts; the stage waits for every one the chart needs
+// to be listed by containerd, and fails, touching nothing, when they
+// are not within bakedImportTimeout.
+func (s *Supervisor) stageBaked(ctx context.Context, g Guest, gs guestapi.Status, c guestapi.BakedChart, logf Logf) (staged, error) {
+	meta := guestapi.ChartMeta{Name: c.Name, Version: c.Version, AppVersion: c.AppVersion, Browser: c.Browser}
+	im, err := pickImages(gs.BakedImages, c.Browser, false)
+	if err != nil {
+		return staged{}, fmt.Errorf("the VM image's images: %w", err)
+	}
+	logf("chart %s %s is baked into the VM image; waiting for k3s to import its images", meta.Name, meta.Version)
+	if err := poll(ctx, s.o.Clock, bakedImportTimeout, 2*time.Second, "k3s to import the VM image's images", func(ctx context.Context) error {
+		out, err := kubectlLikeCtr(ctx, g)
+		if err != nil {
+			return err
+		}
+		for _, r := range im.Refs {
+			if !bytes.Contains(out, []byte(r+"\n")) {
+				return fmt.Errorf("image %s is not in containerd yet", r)
+			}
+		}
+		return nil
+	}); err != nil {
+		return staged{}, err
+	}
+	logf("images in containerd: %s", strings.Join(im.Refs, ", "))
+	return staged{meta: meta, images: im}, nil
 }
 
 // progressWriter counts the bytes of a release's downloads written

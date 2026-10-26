@@ -163,6 +163,10 @@ type Images struct {
 	Kivali  string // repo:tag of the server (and agent) image
 	Egress  string
 	Busybox string // k3s's baked busybox helper, the init container
+	// Refs are every Kivali image the install needs, at the one tag:
+	// the server, the egress proxy, the agent shell and, when the chart
+	// has browser pods, the browser.
+	Refs []string
 }
 
 // pickImages finds Kivali's images among refs, all at one tag: the
@@ -197,8 +201,10 @@ func pickImages(refs []string, browser, busybox bool) (Images, error) {
 	if browser {
 		wants = append(wants, repoBrowser)
 	}
+	im.Refs = []string{im.Kivali}
 	for _, want := range wants {
 		ref := prefix + want + ":" + ktag
+		im.Refs = append(im.Refs, ref)
 		found := false
 		for _, r := range byRepo[want] {
 			if r == ref {
