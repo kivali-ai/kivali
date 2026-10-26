@@ -31,7 +31,7 @@ func TestTheSkillsSetupBoundsAreTheRunners(t *testing.T) {
 		fmt.Sprintf("| A flow | forgotten %d minutes after its last change or its last check of a Wait (made only while the owner's page is open), %d hours after its start at most; lost when Kivali restarts |", int(setupFlowTTL.Minutes()), int(setupFlowMaxAge.Hours())),
 		fmt.Sprintf("| A Wait's checks | every %d seconds while the owner's page is open (a read of the flow in the last %d seconds counts), one at a time |", int(setupWaitEvery.Seconds()), int(setupWatchWindow.Seconds())),
 		fmt.Sprintf("| The server's start, for a flow | %d minutes |", int(bundleStartWait.Minutes())),
-		fmt.Sprintf("| `kivali/requirements` | %d seconds; %d rows; the answer kept %d seconds |", int(requirementsTimeout.Seconds()), requirementRowsMax, int(requirementsCacheTTL.Seconds())),
+		fmt.Sprintf("| `kivali/requirements` | %d seconds; %d rows; asked when the page is read and every %d minutes; a page read again within %d seconds takes the last answer |", int(requirementsTimeout.Seconds()), requirementRowsMax, int(requirementsRefreshEvery.Minutes()), int(requirementsCacheTTL.Seconds())),
 		fmt.Sprintf("| A requirement's title and words | %d and %d characters |", requirementTitleRunes, requirementWordsRunes),
 		fmt.Sprintf("| `kivali/uninstall` | %d seconds |", int(integrationCallTimeout.Seconds())),
 		fmt.Sprintf("| A step's words, progress message, error | %d characters; a Wait's code %d |", signInWordsRunes, setupCodeRunes),

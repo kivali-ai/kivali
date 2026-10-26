@@ -59,8 +59,14 @@ const (
 const flowSignIn = "sign_in"
 
 // requirementsTimeout bounds an integration's own Requirements call:
-// the page, the list and Home wait for it.
+// the page and the refresh wait for it.
 const requirementsTimeout = 5 * time.Second
+
+// requirementsRefreshEvery is how often the refresh asks every
+// connected integration for its own rows, so what the list and Home
+// show stays current without either asking: a vendor is asked on this
+// clock and when the integration's page is read, never for a list.
+const requirementsRefreshEvery = time.Hour
 
 // Bounds of an integration's own rows: a title's and words' runes, and
 // how many rows it may give (each unmet one is a Needs-you row, and a
@@ -249,25 +255,34 @@ func sentenceEnd(words string) string {
 
 // ownRequirements are v's own rows (builtinintegrations.RequirementsOf,
 // or a setup bundle's kivali/requirements while its server runs) for
-// its connection, asked for under requirementsTimeout, with
-// the connection's secrets scrubbed from their words. A row of an id
-// that is not one, of one of Kivali's ids or of one already given is
-// left out. An integration that could not give its rows has one unmet
-// row (reqChecks) saying why. nil for an integration with none, and
-// while the connection needs a sign-in or the service did not answer
-// its renewal: the sign_in row says so.
-func (s *Server) ownRequirements(ctx context.Context, v *integrationView) []apitypes.IntegrationRequirement {
+// its connection, with the connection's secrets scrubbed from their
+// words. A row of an id that is not one, of one of Kivali's ids or of
+// one already given is left out. An integration that could not give
+// its rows has one unmet row (reqChecks) saying why. nil for an
+// integration with none, and while the connection needs a sign-in or
+// the service did not answer its renewal: the sign_in row says so.
+//
+// fresh asks the integration, under requirementsTimeout, unless it
+// was asked within requirementsCacheTTL: the page and the refresh.
+// Not fresh is what the last ask answered for this connection, and nil
+// before any: the list and Home, read often, never wait on a vendor.
+func (s *Server) ownRequirements(ctx context.Context, v *integrationView, fresh bool) []apitypes.IntegrationRequirement {
 	ro, ok := s.requirementsOf(v)
 	if !ok || v.conn == nil || v.several {
 		return nil
 	}
 	name, connID := v.it.Name, v.conn.rec.ID
 	gen := s.Integrations.connectionGen(name)
-	if rows, ok := s.requirementsCache.get(name, connID, gen, s.clk().Now()); ok {
+	now := s.clk().Now()
+	rows, at, ok := s.requirementsCache.get(name, connID, gen)
+	switch {
+	case ok && (!fresh || now.Before(at.Add(requirementsCacheTTL))):
 		return rows
+	case !fresh:
+		return nil
 	}
-	rows := s.askRequirements(ctx, v, ro)
-	s.requirementsCache.put(name, connID, gen, s.clk().Now(), rows)
+	rows = s.askRequirements(ctx, v, ro)
+	s.requirementsCache.put(name, connID, gen, now, rows)
 	return rows
 }
 
@@ -342,16 +357,17 @@ func (s *Server) askRequirements(ctx context.Context, v *integrationView, ro bui
 	return out
 }
 
-// requirementsCacheTTL is how long an integration's own rows are kept:
-// long enough that the page, the list and Home read on one screen ask
-// the integration once.
+// requirementsCacheTTL is how long a fresh read takes the last answer
+// for: long enough that a page read twice on one screen asks the
+// integration once.
 const requirementsCacheTTL = 3 * time.Second
 
-// requirementsCache holds each integration's own rows for
-// requirementsCacheTTL on the server's clock, for the connection it
-// asked with: a change of the connection (integrationRegistry's
-// connection generation), a Fix done or Uninstall makes it ask again.
-// The zero value is ready to use.
+// requirementsCache holds what each integration last answered, for
+// the connection it was asked with and when, on the server's clock. A
+// change of the connection (integrationRegistry's connection
+// generation), a Fix done or Uninstall drops the answer, so a list
+// shows no own rows until the page or the refresh asks again. The
+// zero value is ready to use.
 type requirementsCache struct {
 	mu   sync.Mutex
 	rows map[string]cachedRequirements
@@ -364,14 +380,15 @@ type cachedRequirements struct {
 	rows   []apitypes.IntegrationRequirement
 }
 
-func (c *requirementsCache) get(name, connID string, gen uint64, now time.Time) ([]apitypes.IntegrationRequirement, bool) {
+// get is name's last answer for connID and gen, and when it was given.
+func (c *requirementsCache) get(name, connID string, gen uint64) ([]apitypes.IntegrationRequirement, time.Time, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	e, ok := c.rows[name]
-	if !ok || e.connID != connID || e.gen != gen || !now.Before(e.at.Add(requirementsCacheTTL)) {
-		return nil, false
+	if !ok || e.connID != connID || e.gen != gen {
+		return nil, time.Time{}, false
 	}
-	return slices.Clone(e.rows), true
+	return slices.Clone(e.rows), e.at, true
 }
 
 func (c *requirementsCache) put(name, connID string, gen uint64, now time.Time, rows []apitypes.IntegrationRequirement) {
@@ -390,11 +407,12 @@ func (c *requirementsCache) forget(name string) {
 	delete(c.rows, name)
 }
 
-// requirements are v's rows, Kivali's then its own, with when each
-// unmet one of Kivali's has stood since; none for an integration that
-// is not connected or disabled, but the one row of an installed one
-// whose connection an earlier version made (connectionMisfit).
-func (s *Server) requirements(ctx context.Context, v *integrationView) ([]apitypes.IntegrationRequirement, map[string]time.Time) {
+// requirements are v's rows, Kivali's then its own (ownRequirements,
+// asked afresh when fresh), with when each unmet one of Kivali's has
+// stood since; none for an integration that is not connected or
+// disabled, but the one row of an installed one whose connection an
+// earlier version made (connectionMisfit).
+func (s *Server) requirements(ctx context.Context, v *integrationView, fresh bool) ([]apitypes.IntegrationRequirement, map[string]time.Time) {
 	if !v.configured() {
 		if v.state() == apitypes.IntegrationStateInstalled && v.connectionMisfit() {
 			return []apitypes.IntegrationRequirement{v.misfitRequirement()}, nil
@@ -402,7 +420,68 @@ func (s *Server) requirements(ctx context.Context, v *integrationView) ([]apityp
 		return []apitypes.IntegrationRequirement{}, nil
 	}
 	rows, at := v.coreRequirements()
-	return append(rows, s.ownRequirements(ctx, v)...), at
+	return append(rows, s.ownRequirements(ctx, v, fresh)...), at
+}
+
+// StartRequirementsRefresh starts the loop that asks every connected
+// integration for its own rows: once now, then every
+// requirementsRefreshEvery on the server's clock. Returns a stop
+// function, which waits for a pass under way to end.
+func (s *Server) StartRequirementsRefresh() func() {
+	if s.Store == nil {
+		return func() {}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			s.refreshRequirements(ctx)
+			// Armed after the pass, so the next one is an hour after
+			// this one ended.
+			t := s.clk().NewTimer(requirementsRefreshEvery)
+			select {
+			case <-stop:
+				t.Stop()
+				return
+			case <-t.C():
+			}
+		}
+	}()
+	return func() {
+		cancel()
+		close(stop)
+		<-done
+	}
+}
+
+// refreshRequirements asks each connected integration for its own
+// rows, all at once, so the list and Home show what it answers. One
+// that cannot be asked (none of its own, its server not running) is
+// left as it is.
+func (s *Server) refreshRequirements(ctx context.Context) {
+	its, err := s.Store.ListIntegrations()
+	if err != nil {
+		log.Printf("integration requirements: %v", err)
+		return
+	}
+	var wg sync.WaitGroup
+	for _, it := range its {
+		if !it.Enabled || it.CurrentVersion == "" {
+			continue
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			v, err := s.loadIntegration(ctx, it.Name)
+			if err != nil || v.state() != apitypes.IntegrationStateConnected {
+				return
+			}
+			s.ownRequirements(ctx, v, true)
+		}()
+	}
+	wg.Wait()
 }
 
 // unmet counts the rows not met.
@@ -453,7 +532,7 @@ func (s *Server) integrationRequirementItems(ctx context.Context) []apitypes.Nee
 			if err != nil || v.state() != apitypes.IntegrationStateConnected {
 				return
 			}
-			rows, at := s.requirements(ctx, v)
+			rows, at := s.requirements(ctx, v, false)
 			page := "/org/integrations/" + url.PathEscape(it.Name)
 			display := v.displayName()
 			var items []apitypes.NeedItem
@@ -509,7 +588,7 @@ func (s *Server) fixNamed(ctx context.Context, v *integrationView, flow string) 
 	if !v.configured() {
 		return false
 	}
-	return slices.ContainsFunc(s.ownRequirements(ctx, v), func(r apitypes.IntegrationRequirement) bool { return r.Fix == flow })
+	return slices.ContainsFunc(s.ownRequirements(ctx, v, true), func(r apitypes.IntegrationRequirement) bool { return r.Fix == flow })
 }
 
 // fixSpecFor is the flow POST .../setup runs for a requirement's Fix
@@ -535,11 +614,10 @@ type listedIntegration struct {
 	rows []apitypes.IntegrationRequirement
 }
 
-// listIntegrations reads each of its, and asks each installed one for
-// its requirements, all at once, so a list waits requirementsTimeout at
-// most however many integrations there are. The answer keeps its'
-// order; err is the first integration's that could not be read, and
-// bad its name.
+// listIntegrations reads each of its, all at once, with the
+// requirements each one last answered (never asking: a list is read
+// often). The answer keeps its' order; err is the first integration's
+// that could not be read, and bad its name.
 func (s *Server) listIntegrations(ctx context.Context, its []store.Integration) (out []listedIntegration, bad string, err error) {
 	out = make([]listedIntegration, len(its))
 	errs := make([]error, len(its))
@@ -553,7 +631,7 @@ func (s *Server) listIntegrations(ctx context.Context, its []store.Integration) 
 				errs[i] = err
 				return
 			}
-			rows, _ := s.requirements(ctx, v)
+			rows, _ := s.requirements(ctx, v, false)
 			sum := v.summary()
 			if sum.State == apitypes.IntegrationStateConnected {
 				sum.Needs = unmet(rows)

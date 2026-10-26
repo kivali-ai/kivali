@@ -646,6 +646,10 @@ func main() {
 	// every change and checks each running server every 30 seconds.
 	stopIntegrations := srv.StartIntegrations()
 
+	// Each connected integration's own requirements, asked for now
+	// and then hourly, so the list and Home never ask a vendor.
+	stopRequirementsRefresh := srv.StartRequirementsRefresh()
+
 	// A connection an install under way made before this Kivali stopped
 	// is still marked unfinished, with no flow behind it (flows live in
 	// memory): it is discarded as a failed install's is, the
@@ -682,6 +686,7 @@ func main() {
 		srv.ShutdownBrowsers(bctx)
 		bcancel()
 		stopBrowserSocket()
+		stopRequirementsRefresh()
 		// Integration pods stay up: their shims reconnect to the next
 		// server.
 		stopIntegrations()

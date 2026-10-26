@@ -524,7 +524,9 @@ func (s *Server) integrationPage(v *integrationView, r *http.Request) apitypes.I
 		CanDisconnect:    v.conn != nil && !v.staleBuiltin(),
 		CanUninstall:     !v.it.Builtin || v.staleBuiltin(),
 	}
-	page.Requirements, _ = s.requirements(r.Context(), v)
+	// The page asks the integration afresh: it is where the rows are
+	// shown and fixed, and read seldom.
+	page.Requirements, _ = s.requirements(r.Context(), v, true)
 	if page.Summary.State == apitypes.IntegrationStateConnected {
 		page.Summary.Needs = unmet(page.Requirements)
 	}
