@@ -216,7 +216,7 @@ func TestNameRepository(t *testing.T) {
 		c.Job(shelljob.GitAuth{}, "c1").URL != "https://hub.example.com/acme/widgets.git" {
 		t.Errorf("a fetch with a url = %+v, %v", c, err)
 	}
-	if _, err := Check(Push, json.RawMessage(`{"path":"w","refs":["agent/x"],"force":true}`), p); !strings.HasPrefix(refusal(t, err).Text, "hub_push takes path, url and refs, a list of strings.") {
+	if _, err := Check(Push, json.RawMessage(`{"path":"w","refs":["agent/x"],"force":false}`), p); !strings.HasPrefix(refusal(t, err).Text, "hub_push takes path, url and refs, a list of strings.") {
 		t.Errorf("a push with force = %v", err)
 	}
 
@@ -278,15 +278,26 @@ func TestAnyRef(t *testing.T) {
 // Why this test exists: a built-in that never force-pushes has no
 // switch the owner could turn on, so its words must not send the agent
 // to ask for one, and its push must not take force at all: the schema
-// has no force, force in the arguments is refused as an argument it
-// does not take, and a + is refused as something it does not do, even
-// should its policy say Force.
+// has no force, force: false is refused as an argument it does not
+// take, and force: true and a + are refused as something it does not
+// do, even should its policy say Force. force: true read as an unknown
+// argument would tell the agent only that the call is malformed, and it
+// might try again another way.
 func TestNoForceSwitch(t *testing.T) {
 	p := anyRef()
 	p.Force = true
-	_, err := Check(Push, json.RawMessage(`{"path":"w","url":"acme/widgets","refs":["+main"]}`), p)
-	if ref := refusal(t, err); ref.Text != "Force-pushing is not something the Hub integration does." || ref.Reason != "the call forces a push" {
-		t.Errorf("a + = %+v", ref)
+	for _, args := range []string{
+		`{"path":"w","url":"acme/widgets","refs":["+main"]}`,
+		`{"path":"w","url":"acme/widgets","refs":["main"],"force":true}`,
+	} {
+		_, err := Check(Push, json.RawMessage(args), p)
+		if ref := refusal(t, err); ref.Text != "Force-pushing is not something the Hub integration does." || ref.Reason != "the call forces a push" {
+			t.Errorf("%s = %+v", args, ref)
+		}
+	}
+	_, err := Check(Push, json.RawMessage(`{"path":"w","url":"acme/widgets","refs":["main"],"force":false}`), p)
+	if ref := refusal(t, err); ref.Text != "hub_push takes path, url and refs, a list of strings." || ref.Reason != "the arguments do not read" {
+		t.Errorf("force: false = %+v", ref)
 	}
 	push := Tools(hub())[2]
 	if strings.Contains(string(push.InputSchema), "force") || strings.Contains(push.Description, "permission") ||

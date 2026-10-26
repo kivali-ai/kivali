@@ -2776,7 +2776,7 @@ form:
 
 | `gitops` | Is |
 | --- | --- |
-| `Integration` | how the actions name the built-in: `Name` (its tool prefix: `git_fetch`), `DisplayName` (in every refusal and answer), `HostWords` (the host in the tools' words: Git (Basic)'s "the connection's host"), `NameRepository` (a fetch and a push must name the repository; Git (Basic)'s may reach the working copy's origin) and `ForceSwitch` (the access can allow force; without it a push takes no `force`, and a `+` is refused as something the integration does not do) |
+| `Integration` | how the actions name the built-in: `Name` (its tool prefix: `git_fetch`), `DisplayName` (in every refusal and answer), `HostWords` (the host in the tools' words: Git (Basic)'s "the connection's host"), `NameRepository` (a fetch and a push must name the repository; Git (Basic)'s may reach the working copy's origin) and `ForceSwitch` (the access can allow force; without it a push's schema has no `force`, and `force: true` or a `+` is refused as something the integration does not do) |
 | `Policy` | one call's grant: the `Integration`, the exact host, the repositories it may pull (`Pull`) and push to (`Push`, which it may pull too), the refs a push may write (`Refs`, normalised patterns, or `AnyRef`: any branch or tag), `Force`, and `Refused`, the built-in's own refusal when its connection or the access grants nothing |
 | `Tools(in)` | the three tools, their descriptions and schemas worded for `in` |
 | `Check(name, args, p)` | the first request: a `Refusal`, or a `Call` |

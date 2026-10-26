@@ -76,8 +76,9 @@ type Integration struct {
 	NameRepository bool
 	// ForceSwitch is a built-in whose access has a switch that lets an
 	// agent force-push (Policy.Force): its push takes force. Without it
-	// the built-in never force-pushes: its push takes no force, and a +
-	// in front of an entry is refused as something it does not do.
+	// the built-in never force-pushes: its push takes no force, and
+	// force: true or a + in front of an entry is refused as something it
+	// does not do.
 	ForceSwitch bool
 }
 
@@ -229,6 +230,10 @@ func Check(name string, args json.RawMessage, p Policy) (Call, error) {
 		} else {
 			var b pushArgsNoForce
 			if err := dec.Decode(&b); err != nil {
+				// force: true asks for what the built-in never does.
+				if json.Unmarshal(args, &a) == nil && a.Force {
+					return c, refuseForcing(in)
+				}
 				return c, refuse(pushTakes(in), "the arguments do not read")
 			}
 			a = pushArgs{Path: b.Path, Refs: b.Refs, URL: b.URL}
@@ -300,6 +305,12 @@ func refuseNoURL(in Integration, action, host string) error {
 		"the arguments lack url")
 }
 
+// refuseForcing refuses a forced push, for a built-in that never
+// forces (no ForceSwitch).
+func refuseForcing(in Integration) error {
+	return refuse(fmt.Sprintf("Force-pushing is not something the %s integration does.", in.DisplayName), "the call forces a push")
+}
+
 // checkPush holds a push's refs to p: it must have a repository to push
 // to (p.Push, which becomes c's patterns), every entry must read as a
 // ref or a refspec that deletes nothing, its destination must be one of
@@ -337,7 +348,7 @@ func checkPush(c *Call, p Policy, a pushArgs) error {
 		}
 		switch {
 		case spec.Force && !in.ForceSwitch:
-			return refuse(fmt.Sprintf("Force-pushing is not something the %s integration does.", in.DisplayName), "the call forces a push")
+			return refuseForcing(in)
 		case spec.Force && !p.Force:
 			return refuse(fmt.Sprintf("The %s integration's access for you does not allow force-pushing. Ask the owner if your work needs it.", in.DisplayName), "the access does not allow force-pushing")
 		}
