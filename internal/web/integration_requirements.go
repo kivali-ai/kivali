@@ -121,19 +121,36 @@ func (v *integrationView) connectionMisfit() bool {
 // sign-in, for a flow that hands over to none), or none of what the
 // flow keeps. A GitHub 1.0.0 connection, the owner's own app signed in
 // with, is one for GitHub 2.0.0, whose setup makes the app.
+//
+// An app's client id and secret in the Secret beside what the flow
+// keeps (keptClient) fit: a setup flow keeps them for the app it made,
+// and one whose keeps lack them leaves them unread, since a call is
+// given no value its manifest does not declare. A connection made by
+// signing in holds its client id in the record, so it still does not
+// fit.
 func setupMisfit(setup *integration.Setup, rec store.IntegrationConnection) bool {
 	switch {
 	case setup == nil:
 		return false
-	case len(rec.Fields) > 0, rec.SignIn != nil && setup.Then == "", len(rec.SecretKeys) == 0:
+	case len(rec.Fields) > 0, rec.SignIn != nil && setup.Then == "":
 		return true
 	}
+	held := false
 	for _, k := range rec.SecretKeys {
-		if !setup.Keeps.Has(k) {
+		switch {
+		case setup.Keeps.Has(k):
+			held = true
+		case !keptClient(k):
 			return true
 		}
 	}
-	return false
+	return !held
+}
+
+// keptClient reports whether key is one a setup flow keeps the app it
+// made's client under: client_id or client_secret.
+func keptClient(key string) bool {
+	return key == integration.FieldClientID || key == integration.FieldClientSecret
 }
 
 // misfitRequirement is the one row of an integration whose connection

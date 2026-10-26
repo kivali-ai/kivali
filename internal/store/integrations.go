@@ -148,9 +148,10 @@ type IntegrationConnection struct {
 	// SecretKeys names the sensitive fields that have a value: only the
 	// keys the owner's form or a setup flow's Keep wrote, never core's
 	// own entries in the Secret (the scoped proxy credential's secret, a
-	// sign-in's oauth_* tokens). A setup connection whose keys are not
-	// all its setup's keeps was made by another version
-	// (web.setupMisfit), so an entry core wrote here would read as one.
+	// sign-in's oauth_* tokens). A setup connection with a key outside
+	// its setup's keeps (an app's client id and secret aside) was made
+	// by another version (web.setupMisfit), so an entry core wrote here
+	// would read as one.
 	SecretKeys []string `yaml:"secret_keys,omitempty"`
 	// SecretName is the Kubernetes Secret holding them; empty while
 	// none has a value.

@@ -1083,7 +1083,15 @@ A `setup` connection an earlier version made can hold values this
 version's flow does not keep (`setupMisfit`: a field in the record,
 which setup never writes; a key in its Secret outside `setup.keeps`; a
 sign-in, for a flow that hands over to none), or none of what it
-keeps. The integration then reads installed, with one unmet
+keeps. An app's `client_id` and `client_secret` in the Secret beside
+what the flow keeps are no misfit: a setup flow keeps them for the app
+it made, and when this version's keeps lack them they are unread,
+since core gives a call, a requirements check, Test connection and
+Uninstall only the values the manifest declares. A connection made by
+signing in holds its client id in the record, a misfit either way. A
+connection that fits keeps such values until it is disconnected: a
+later Keep writes beside them. A misfit integration reads installed,
+with one unmet
 `connection` row ("Set up <integration> again: ..."), and Connect runs
 as an install over it. Its first Keep takes the connection over: every
 value of the record and its Secret goes (the scoped proxy credential's
