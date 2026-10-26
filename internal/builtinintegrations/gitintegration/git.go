@@ -1,5 +1,6 @@
-// Package gitintegration is the Git built-in integration: the owner
-// connects a git host with a token, and agents with access clone,
+// Package gitintegration is the Git (Basic) built-in integration: the
+// owner connects a git host other than github.com (which the GitHub
+// integration handles) with a token, and agents with access clone,
 // fetch and push repositories through it.
 //
 // Its actions are gitops's (internal/builtinintegrations/gitops), run
@@ -32,7 +33,7 @@ import (
 const Name = "git"
 
 // displayName is the name the owner and the agents read.
-const displayName = "Git"
+const displayName = "Git (Basic)"
 
 // tokenUser is the user name the token is presented with: what GitHub
 // expects for a personal access token; GitLab takes any.
@@ -90,9 +91,9 @@ func (g *Git) Manifest() *integration.Manifest {
 	return &integration.Manifest{
 		ManifestVersion: "0.3",
 		Name:            Name,
-		Version:         "2.0.0",
+		Version:         "2.1.0",
 		DisplayName:     displayName,
-		Description:     "Clones, fetches and pushes repositories over HTTPS with the owner's token; agents use plain git for everything local.",
+		Description:     "Clones, fetches and pushes repositories over HTTPS with the owner's token, on a git host other than github.com, which the GitHub integration handles; agents use plain git for everything local.",
 		Author:          integration.Author{Name: "Kivali"},
 		UserConfig: integration.UserConfig{
 			{Key: "host", Type: "string", Title: "Host", Required: true,
@@ -149,13 +150,13 @@ func (g *Git) Hosts(conn builtinintegrations.Connection) []string {
 
 // Choices: git's access form lists no options.
 func (g *Git) Choices(context.Context, builtinintegrations.Connection, string) ([]string, error) {
-	return nil, errors.New("Git lists no options")
+	return nil, errors.New(displayName + " lists no options")
 }
 
 // Verify: git's manifest names no kivali.verify, so core offers no
 // Test connection and never calls this.
 func (g *Git) Verify(context.Context, builtinintegrations.Connection) (string, error) {
-	return "", errors.New("Git has no connection test")
+	return "", errors.New(displayName + " has no connection test")
 }
 
 // Call checks the call and answers with the shell job that runs it,

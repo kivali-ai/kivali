@@ -82,8 +82,8 @@ func runGitCLIInput(t *testing.T, dir, input string, args ...string) {
 }
 
 // testGitServer is a smart-HTTP git server: git http-backend under
-// net/http/cgi, behind a check of the basic auth the Git integration
-// sends (x-access-token and the token). Its repositories are bare
+// net/http/cgi, behind a check of the basic auth the Git (Basic)
+// integration sends (x-access-token and the token). Its repositories are bare
 // ones under root; requests counts what reached it, and served the
 // requests per repository path prefix the backend served.
 type testGitServer struct {
