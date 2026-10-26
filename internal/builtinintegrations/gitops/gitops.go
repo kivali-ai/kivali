@@ -333,7 +333,7 @@ func checkPush(c *Call, p Policy, a pushArgs) error {
 		spec, err := gitrepo.ParsePushRefSpec(raw)
 		switch {
 		case errors.Is(err, gitrepo.ErrDeleteRef):
-			return refuse(fmt.Sprintf("Deleting a remote ref is not something the %s integration does.", in.DisplayName), "the call deletes a remote ref")
+			return refuse("A push never deletes a remote ref.", "the call deletes a remote ref")
 		case err != nil:
 			return refuse(fmt.Sprintf("%s cannot read %q: %v. Each entry is a branch (agent/x), a tag (tags/v1.2.0) or a refspec such as HEAD:refs/heads/agent/x.", tool, clip(raw, 200), err),
 				"a ref does not read")

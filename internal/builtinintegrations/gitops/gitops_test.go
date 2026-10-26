@@ -150,7 +150,7 @@ func TestWordsNameTheIntegration(t *testing.T) {
 		"pull only":     {Push, `{"path":"w","url":"acme/x","refs":["agent/x"]}`, Policy{Integration: forge(), Host: "git.example.com", Pull: []string{"acme/*"}, Push: []string{"other/*"}, Refs: []string{"refs/heads/agent/*"}}, "The Forge integration's access for you lets you pull acme/x but not push to it."},
 		"no push":       {Push, `{"path":"w","refs":["agent/x"]}`, pullOnly(pusher(false)), "The Forge integration's access for you does not allow pushing."},
 		"other host":    {Clone, `{"url":"https://gitlab.com/acme/x","path":"w"}`, pusher(false), "The Forge integration's connection is for git.example.com"},
-		"deletion":      {Push, `{"path":"w","refs":[":agent/x"]}`, pusher(true), "Deleting a remote ref is not something the Forge integration does."},
+		"deletion":      {Push, `{"path":"w","refs":[":agent/x"]}`, pusher(true), "A push never deletes a remote ref."},
 		"force off":     {Push, `{"path":"w","refs":["+agent/x"]}`, pusher(false), "The Forge integration's access for you does not allow force-pushing."},
 		"twice":         {Push, `{"path":"w","refs":["agent/x","HEAD:agent/x"]}`, pusher(false), "forge_push names refs/heads/agent/x twice"},
 		"does not read": {Push, `{"path":"w","refs":["agent/x..y"]}`, pusher(false), "forge_push cannot read"},

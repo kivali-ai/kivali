@@ -361,7 +361,7 @@ func TestPushRefusals(t *testing.T) {
 		"bad push_refs":  {with(func(a map[string]any) { a["push_refs"] = []any{"agent/*", "refs/notes/*"} }), `{"path":"w","refs":["agent/x"]}`, "names branches or tags Kivali cannot read", "the access's branches and tags do not read"},
 		"force off":      {pusher(false), `{"path":"w","refs":["agent/x"],"force":true}`, "does not allow force-pushing. Ask the owner", "the access does not allow force-pushing"},
 		"a + force off":  {pusher(false), `{"path":"w","refs":["+agent/x"]}`, "does not allow force-pushing", "the access does not allow force-pushing"},
-		"a deletion":     {pusher(true), `{"path":"w","refs":[":refs/heads/agent/x"]}`, "Deleting a remote ref is not something the Git (Basic) integration does.", "the call deletes a remote ref"},
+		"a deletion":     {pusher(true), `{"path":"w","refs":[":refs/heads/agent/x"]}`, "A push never deletes a remote ref.", "the call deletes a remote ref"},
 		"does not read":  {pusher(false), `{"path":"w","refs":["agent/x..y"]}`, "git_push cannot read", "a ref does not read"},
 		"twice":          {pusher(false), `{"path":"w","refs":["agent/x","HEAD:agent/x"]}`, "names refs/heads/agent/x twice", "a destination is named twice"},
 		"no refs":        {pusher(false), `{"path":"w","refs":[]}`, "needs path and refs", "the arguments lack path or refs"},
