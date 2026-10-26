@@ -54,7 +54,7 @@ func TestManifest(t *testing.T) {
 		form.Fields[1].Key != "write" || form.Fields[1].Kind != integration.FieldSwitch || form.Fields[1].Title != "May create, comment, push and close" ||
 		!strings.Contains(form.Fields[1].Description, "push branches and tags") ||
 		!strings.Contains(form.Fields[1].Description, "close the issues and pull requests the app opened") ||
-		!strings.Contains(form.Fields[1].Description, "delete the branch of a pull request the app opened") {
+		!strings.Contains(form.Fields[1].Description, "delete a branch whose commits beyond the default branch the app's bot authored and committed") {
 		t.Errorf("access form = %+v", form)
 	}
 	var names, writes []string

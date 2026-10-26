@@ -3506,7 +3506,7 @@ permission, and to ask the owner.
 | `create_pull_request` | `POST /repos/{o}/{r}/pulls` from a head branch already on GitHub; moves no commits | `pull_requests: write` |
 | `close_pull_request` | `GET /repos/{o}/{r}/pulls/{n}`, held to [the same app](#the-same-app); then, with `comment`, `POST /repos/{o}/{r}/issues/{n}/comments`, and `PATCH /repos/{o}/{r}/pulls/{n}` `{"state": "closed"}` | reads with `pull_requests: read`; writes with `pull_requests: write` |
 | `list_branches` | `GET /repos/{o}/{r}/branches` | `contents: read` |
-| `delete_branch` | `GET /repos/{o}/{r}` for its default branch and owner, `GET /repos/{o}/{r}/pulls?head={owner}:{branch}&state=all` and `?base={branch}&state=open`, held to [the same app](#the-same-app); then `DELETE /repos/{o}/{r}/git/refs/heads/{branch}` | reads with `pull_requests: read`; deletes with `contents: write` |
+| `delete_branch` | `GET /repos/{o}/{r}` for its default branch and owner, `GET /repos/{o}/{r}/pulls?head={owner}:{branch}&state=open` and `?base={branch}&state=open`, `GET /repos/{o}/{r}/compare/{default}...{branch}`, and when a commit's identity is unresolved `GET /users/{slug}[bot]`, held to [the same app](#the-same-app); then `DELETE /repos/{o}/{r}/git/refs/heads/{branch}` | reads with `contents: read`, `pull_requests: read` (the bot user with none); deletes with `contents: write` |
 | `compare` | `GET /repos/{o}/{r}/compare/{base}...{head}`: commits and files, no patches | `contents: read` |
 | `whoami` | `GET /app` and `GET /app/installations/{id}`, both with the JWT | no installation token |
 | `clone`, `fetch` | a shell job ([Clone, fetch and push](#clone-fetch-and-push)) | `contents: read`, in the job's own token |
@@ -3600,13 +3600,15 @@ closing an issue the app opened, with its comment, in order and
 audited; one opened by anyone else, a pull request served from the
 issues endpoint and one closed already, each with nothing written and
 no token that writes minted; a close whose comment went up before it
-failed; a merged pull request; `delete_branch` refusing the default
-branch, an open pull request's head or base, a listing cut at ten
-pages, and a branch no closed pull request of the app's came from (a
-person's, another app's, a fork's), asking for the pull requests by
-GitHub's owner, and deleting otherwise; and the slug read from GET
-/app once a call, for a connection that keeps none and for a renamed
-app.
+failed; a merged pull request; `commitByBot` case by case (resolved
+or by the no-reply address; a person's, web-flow's, another app's, an
+address not known); `delete_branch` refusing the default branch, an
+open pull request's head or base, a listing cut at ten pages, a
+person's commit, a comparison cut at 250 commits and one GitHub cannot
+make, asking for the pull requests by GitHub's owner, and deleting a
+fully merged branch and one of the bot's commits, the bot user read
+once per connection; and the slug read from GET /app once a call, for
+a connection that keeps none and for a renamed app.
 `git_test.go` holds clone, fetch and push to
 [Clone, fetch and push](#clone-fetch-and-push): the job's token minted
 for the repository alone with the action's permission, after the
@@ -3628,14 +3630,16 @@ connection's proxy credential.
 
 With `write`, `close_issue` and `close_pull_request` close only an
 issue or a pull request the app opened, and `delete_branch` deletes
-only a branch that was the head, in the repository itself, of a pull
-request the app opened there, once that pull request is closed or
-merged. Whoever made the branch or pushed to it does not enter into
-it: the branch's pull requests decide.
+only a branch every commit of which beyond the default branch the
+app's bot authored and committed, or a branch with none, fully merged.
+Authorship is what git records in each commit, and an agent cannot
+rewrite a branch on GitHub (a push never forces), so a commit anyone
+else made keeps the branch.
 
-What the app opened is one check, `openedByApp`: the author GitHub
-names (`user`) is the app's bot user, `type` `Bot` and `login`
-`<slug>[bot]`, exactly. A user of another type is never the app and
+Whether a user GitHub names is the app's bot is one check, `isAppBot`:
+the user (an issue's or a pull request's `user`, or the `author` or
+`committer` GitHub resolved a commit's to) is `type` `Bot` with the
+`login` `<slug>[bot]`, exactly. A user of another type is never the app and
 costs no request. The slug is the connection's `slug`; a `Bot` whose
 login is not that one, or any `Bot` on a connection that keeps no slug
 (one set up before it was kept), is held to the slug GitHub gives the
@@ -3657,7 +3661,7 @@ GitHub rejects.
 | --- | --- | --- |
 | `close_issue` | a pull request, as the issues endpoint serves one with `pull_request`: "<owner/name>#<n> is a pull request; github_close_pull_request closes it." (`the number is a pull request`); one the app did not open: "Your access lets you close only issues the GitHub App opened; ask the owner." (`the GitHub App did not open <owner/name>#<n>`) | closed already: "Issue <owner/name>#<n> is closed already." |
 | `close_pull_request` | one the app did not open: "Your access lets you close only pull requests the GitHub App opened; ask the owner." | merged: "Pull request <owner/name>#<n> is merged, and a merged pull request cannot be closed."; closed already |
-| `delete_branch` | the default branch, capitals aside, before any pull request is read: "<branch> is the default branch of <owner/name>, which your access does not let you delete; ask the owner."; a listing cut short: "The pull requests of <branch> in <owner/name> could not all be read, so it is not deleted; ask the owner." (`the branch's pull requests could not all be read`); an open pull request in the repository with that head or that base, whoever opened it: "<branch> is the head of pull request #<n>, which is open; a branch is deleted only once no open pull request has it as its head or its base; ask the owner." (`pull request #<n> is open from the branch`; for a base, "the base of", `... open into the branch`); no closed or merged one the app opened (`leftByApp`): "Your access lets you delete only the branch of a closed or merged pull request the GitHub App opened; ask the owner." (`no closed pull request the GitHub App opened came from <branch>`) | GitHub's, such as a 422 for a branch it no longer has |
+| `delete_branch` | the default branch, capitals aside, before any pull request is read: "<branch> is the default branch of <owner/name>, which your access does not let you delete; ask the owner."; a listing cut short: "The pull requests of <branch> in <owner/name> could not all be read, so it is not deleted; ask the owner." (`the branch's pull requests could not all be read`); an open pull request in the repository with that head or that base, whoever opened it: "<branch> is the head of pull request #<n>, which is open; a branch is deleted only once no open pull request has it as its head or its base; ask the owner." (`pull request #<n> is open from the branch`; for a base, "the base of", `... open into the branch`); a comparison GitHub cannot make (a 404: no history in common, or no such branch): "GitHub cannot compare <branch> with <default> (HTTP 404: <GitHub's words>), so it is not deleted; ask the owner." (`the branch cannot be compared with the default branch`); one that lists fewer commits than its `total_commits`: "<branch> has too many commits beyond <default> to check (<n>), so it is not deleted; ask the owner." (`the branch has too many commits to check`); a commit not the bot's (`branchByBot`): "<branch> has a commit beyond <default> that the GitHub App's bot did not both author and commit (<sha>); your access lets you delete only a branch whose own commits are all the bot's; ask the owner." (`commit <sha> of the branch is not the app's bot's`) | GitHub's, such as a 422 for a branch it no longer has |
 
 A close posts its `comment` first, when there is one, through the
 issue's comments (as `comment` does), then sends `PATCH` `{"state":
@@ -3666,12 +3670,13 @@ that fails after the comment went up says so after GitHub's words,
 "... The comment is on GitHub: <address>.", so the agent does not post
 it again.
 
-`delete_branch` reads two listings of the repository's pull requests
-(`allPulls`), each up to ten pages: those whose head is
-`<owner>:<branch>` in every state, the owner the one GitHub names the
+`delete_branch` reads, with one token that reads contents and pull
+requests, the repository (its default branch and owner), then two
+listings of the repository's open pull requests (`allPulls`), each up
+to ten pages: those whose head is `<owner>:<branch>`, the owner the one GitHub names the
 repository's (its `owner.login`, in GitHub's capitals and, for a
-transferred repository, the new owner), and the open ones whose base is
-the branch, since deleting a base closes or retargets the pull requests
+transferred repository, the new owner), and those whose base is the
+branch, since deleting a base closes or retargets the pull requests
 into it. A listing whose tenth page is full may go on, so the branch is
 refused as cut: a check that has not seen every pull request does not
 hold. An open pull request holds the branch when its `head.ref` or
@@ -3681,13 +3686,26 @@ such as the one a fork came from, with this branch as its head is not
 seen.
 
 The rule that lets the branch go once nothing open holds it is one
-function, `leftByApp`, over the head listing: a closed or merged pull
-request whose `head.ref` is the branch exactly, whose `head.repo` is
-the repository itself (a pull request from a fork's branch of the same
-name, or from a fork GitHub no longer has, is not this branch's), and
-that `openedByApp` says the app opened. The action then deletes
-`refs/heads/<branch>` and nothing else, and GitHub's own branch
-protection still applies.
+function, `branchByBot`: `GET
+/repos/{o}/{r}/compare/{default}...{branch}`, each name's segments
+escaped, lists the commits the branch has beyond the default branch
+(GitHub lists at most 250, and counts them all in `total_commits`).
+None, and the branch is fully merged, so it goes. Otherwise every one
+must pass `commitByBot`: its author and its committer each either
+resolved by GitHub to the bot user (`isAppBot`), or, where GitHub
+resolved no user (`author` or `committer` null, or without a login),
+recorded with the bot's no-reply address exactly,
+`<id>+<slug>[bot]@users.noreply.github.com`. The bot's user id is read
+only when a commit has an identity GitHub did not resolve: `GET
+/users/<slug>%5Bbot%5D` (`bot`, `bot.go`), with an installation token
+narrowed to the repository that reads metadata alone (the app's JWT
+reaches only the `/app` endpoints), once per connection, kept in the
+process's memory by connection, app and kept slug. A bot user GitHub
+answers that is not `type` `Bot` with that login is an error. The
+action then deletes `refs/heads/<branch>` and nothing else, and
+GitHub's own branch protection still applies. The checks and the
+deletion are separate requests: a commit pushed to the branch between
+the comparison and the `DELETE` is not seen.
 
 #### Clone, fetch and push
 

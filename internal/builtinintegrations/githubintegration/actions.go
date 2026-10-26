@@ -186,8 +186,8 @@ var actions = []action{
 	},
 	{
 		name:             actionDeleteBranch,
-		description:      "Delete a branch of a GitHub repository whose work is done: the head branch of a pull request the owner's GitHub App opened in that repository, now closed or merged. The repository's default branch, and a branch an open pull request in the repository has as its head or its base, cannot be deleted. Answers what it deleted.",
-		ownerDescription: "Delete the branch a closed or merged pull request the GitHub App opened came from; never the default branch, nor a branch an open pull request comes from or goes into." + needsWrite,
+		description:      "Delete a branch of a GitHub repository whose work is done: every commit it has beyond the repository's default branch must have been authored and committed by the owner's GitHub App's bot, as git records them, or it has none, being merged. The default branch, and a branch an open pull request in the repository has as its head or its base, cannot be deleted. Answers what it deleted.",
+		ownerDescription: "Delete a branch whose commits beyond the default branch the GitHub App's bot authored and committed, every one, or a branch merged into it; never the default branch, nor a branch an open pull request comes from or goes into." + needsWrite,
 		schema: schema(map[string]any{
 			"repository": repositoryProperty,
 			"branch":     map[string]any{"type": "string", "description": "The branch's name, such as agent/fix-1."},
@@ -255,7 +255,7 @@ type call struct {
 	access access
 	args   args
 	// current is the login of the app's bot user by the slug GitHub
-	// gives the app now, once openedByApp has asked (asked).
+	// gives the app now, once isAppBot has asked (asked).
 	current string
 	asked   bool
 }
@@ -279,11 +279,6 @@ type (
 	}
 	ghRef struct {
 		Ref string `json:"ref"`
-		// Repo is the repository the branch is in; nil for a fork GitHub
-		// no longer has.
-		Repo *struct {
-			FullName string `json:"full_name"`
-		} `json:"repo"`
 	}
 	ghIssue struct {
 		Number      int64           `json:"number"`
@@ -744,15 +739,16 @@ func comment(ctx context.Context, c *call) (any, error) {
 	return created(out.HTMLURL), nil
 }
 
-// openedByApp reports whether u, the user GitHub names as the author
-// of an issue or a pull request, is the app's bot user: of type Bot,
-// its login <slug>[bot]. The slug is the connection's. A Bot whose
+// isAppBot reports whether u, a user GitHub names (the author of an
+// issue or a pull request, or the user it resolved a commit's author or
+// committer to), is the app's bot user: of type Bot, its login
+// <slug>[bot]. The slug is the connection's. A Bot whose
 // login is not that, or any Bot on a connection that keeps no slug
 // (one set up before it was kept), is held to the slug GitHub gives
 // the app now (GET /app, with the app's JWT), read once a call, so an
 // app renamed since setup still knows its own bot. A user of another
 // type is never the app, and costs no request.
-func (c *call) openedByApp(ctx context.Context, u ghUser) (bool, error) {
+func (c *call) isAppBot(ctx context.Context, u ghUser) (bool, error) {
 	if u.Type != "Bot" {
 		return false, nil
 	}
@@ -774,6 +770,50 @@ func (c *call) openedByApp(ctx context.Context, u ghUser) (bool, error) {
 		return false, refuse(notSetUp, "GitHub names no slug for the app")
 	}
 	return c.current != "" && u.Login == c.current, nil
+}
+
+// ghCommit is one commit of a comparison: the author and committer git
+// records (their emails), and the users GitHub resolved those emails
+// to, nil (or no login) where it resolved none.
+type ghCommit struct {
+	SHA    string `json:"sha"`
+	Commit struct {
+		Author struct {
+			Email string `json:"email"`
+		} `json:"author"`
+		Committer struct {
+			Email string `json:"email"`
+		} `json:"committer"`
+	} `json:"commit"`
+	Author    *ghUser `json:"author"`
+	Committer *ghUser `json:"committer"`
+}
+
+// unresolved reports whether GitHub resolved no user for u.
+func unresolved(u *ghUser) bool { return u == nil || u.Login == "" }
+
+// commitByBot reports whether cm was authored and committed by the
+// app's bot, by what git records: each of its author and its committer
+// either resolved by GitHub to the bot user (isAppBot), or, where
+// GitHub resolved no user, an email that is the bot's no-reply address
+// exactly (noreply; "" when it is not known, which no email matches).
+func (c *call) commitByBot(ctx context.Context, cm ghCommit, noreply string) (bool, error) {
+	for _, side := range []struct {
+		user  *ghUser
+		email string
+	}{{cm.Author, cm.Commit.Author.Email}, {cm.Committer, cm.Commit.Committer.Email}} {
+		if unresolved(side.user) {
+			if noreply == "" || side.email != noreply {
+				return false, nil
+			}
+			continue
+		}
+		mine, err := c.isAppBot(ctx, *side.user)
+		if err != nil || !mine {
+			return false, err
+		}
+	}
+	return true, nil
 }
 
 // closingComment is the comment argument of a close: Markdown of at
@@ -844,7 +884,7 @@ func closeIssue(ctx context.Context, c *call) (any, error) {
 	if issue.isPullRequest() {
 		return nil, refuse(fmt.Sprintf("%s#%d is a pull request; github_close_pull_request closes it.", repo, n), "the number is a pull request")
 	}
-	mine, err := c.openedByApp(ctx, issue.User)
+	mine, err := c.isAppBot(ctx, issue.User)
 	switch {
 	case err != nil:
 		return nil, err
@@ -1071,7 +1111,7 @@ func closePullRequest(ctx context.Context, c *call) (any, error) {
 	if err := c.g.getJSON(ctx, read, path, &pr); err != nil {
 		return nil, err
 	}
-	mine, err := c.openedByApp(ctx, pr.User)
+	mine, err := c.isAppBot(ctx, pr.User)
 	switch {
 	case err != nil:
 		return nil, err
@@ -1153,32 +1193,75 @@ func (c *call) allPulls(ctx context.Context, tok, path string) ([]ghPull, bool, 
 	return out, read == maxListPages && last >= 100, err
 }
 
-// leftByApp is the rule that lets a branch go once nothing open uses
-// it: from, every pull request in the repository (full, owner/name as
-// GitHub names it) whose head is the branch, holds a closed or merged
-// one the app opened from the repository itself. A pull request from a
-// fork's branch of the same name, or from a fork GitHub no longer has,
-// is not this branch's.
-func (c *call) leftByApp(ctx context.Context, from []ghPull, branch, full string) (bool, error) {
-	for _, p := range from {
-		if p.State == "open" || p.Head.Ref != branch || p.Head.Repo == nil || !strings.EqualFold(p.Head.Repo.FullName, full) {
-			continue
-		}
-		mine, err := c.openedByApp(ctx, p.User)
-		if err != nil || mine {
-			return mine, err
-		}
+// refPath is a branch name in a REST path: each segment escaped, the
+// slashes between them kept.
+func refPath(name string) string {
+	segs := strings.Split(name, "/")
+	for i, s := range segs {
+		segs[i] = url.PathEscape(s)
 	}
-	return false, nil
+	return strings.Join(segs, "/")
 }
 
-// deleteBranch deletes a branch whose work is done (leftByApp). With a
-// token that only reads, it reads the repository's default branch,
-// which it never deletes, and the repository's pull requests from the
-// branch (head owner:branch, the owner GitHub names the repository's,
-// every state) and into it (base, open), refusing while any is open or
-// either listing is cut; only then is a token that writes the
-// repository's contents minted, for the deletion.
+// branchByBot is the rule that lets a branch go once nothing open uses
+// it: every commit it has beyond the default branch (GET
+// /repos/{r}/compare/{default}...{branch}) was authored and committed
+// by the app's bot (commitByBot), or it has none. A comparison GitHub
+// cannot make (404: no common history, or no such branch), or one that
+// lists fewer commits than it counts, refuses the branch; so does the
+// first commit that is not the bot's.
+func (c *call) branchByBot(ctx context.Context, tok, repo, branch, def string) error {
+	var cmpd struct {
+		TotalCommits int        `json:"total_commits"`
+		Commits      []ghCommit `json:"commits"`
+	}
+	err := c.g.getJSON(ctx, tok, repoPath(repo)+"/compare/"+refPath(def)+"..."+refPath(branch), &cmpd)
+	var ae *apiError
+	switch {
+	case errors.As(err, &ae) && ae.Status == http.StatusNotFound:
+		return refuse(fmt.Sprintf("GitHub cannot compare %s with %s (HTTP 404: %s), so it is not deleted; ask the owner.", branch, def, sentence(ae.Message)),
+			"the branch cannot be compared with the default branch")
+	case err != nil:
+		return err
+	case cmpd.TotalCommits > len(cmpd.Commits):
+		return refuse(fmt.Sprintf("%s has too many commits beyond %s to check (%d), so it is not deleted; ask the owner.", branch, def, cmpd.TotalCommits),
+			"the branch has too many commits to check")
+	}
+	// The bot's no-reply address is read only for a commit GitHub
+	// resolved no user for.
+	noreply := ""
+	for _, cm := range cmpd.Commits {
+		if unresolved(cm.Author) || unresolved(cm.Committer) {
+			b, err := c.g.bot(ctx, c.conn, repo)
+			if err != nil {
+				return err
+			}
+			noreply = b.noreply()
+			break
+		}
+	}
+	for _, cm := range cmpd.Commits {
+		mine, err := c.commitByBot(ctx, cm, noreply)
+		switch {
+		case err != nil:
+			return err
+		case !mine:
+			sha, _ := clip(cm.SHA, 12)
+			return refuse(fmt.Sprintf("%s has a commit beyond %s that the GitHub App's bot did not both author and commit (%s); your access lets you delete only a branch whose own commits are all the bot's; ask the owner.", branch, def, sha),
+				fmt.Sprintf("commit %s of the branch is not the app's bot's", sha))
+		}
+	}
+	return nil
+}
+
+// deleteBranch deletes a branch whose work is done (branchByBot). With
+// a token that only reads, it reads the repository's default branch,
+// which it never deletes, and the repository's open pull requests from
+// the branch (head owner:branch, the owner GitHub names the
+// repository's) and into it (base), refusing while there is one or
+// either listing is cut, then compares the branch with the default
+// branch; only then is a token that writes the repository's contents
+// minted, for the deletion.
 func deleteBranch(ctx context.Context, c *call) (any, error) {
 	repo, err := c.args.repository(c.access)
 	if err != nil {
@@ -1188,12 +1271,11 @@ func deleteBranch(ctx context.Context, c *call) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	read, err := c.token(ctx, repo, perms("pull_requests", "read"))
+	read, err := c.token(ctx, repo, perms("contents", "read", "pull_requests", "read"))
 	if err != nil {
 		return nil, err
 	}
 	var r struct {
-		FullName      string `json:"full_name"`
 		DefaultBranch string `json:"default_branch"`
 		Owner         ghUser `json:"owner"`
 	}
@@ -1209,9 +1291,8 @@ func deleteBranch(ctx context.Context, c *call) (any, error) {
 		return nil, refuse(fmt.Sprintf("%s is the default branch of %s, which your access does not let you delete; ask the owner.", branch, repo), "the branch is the repository's default branch")
 	}
 	owner, _, _ := strings.Cut(repo, "/")
-	full := cmp.Or(r.FullName, repo)
 
-	head := url.Values{"head": {cmp.Or(r.Owner.Login, owner) + ":" + branch}, "state": {"all"}}
+	head := url.Values{"head": {cmp.Or(r.Owner.Login, owner) + ":" + branch}, "state": {"open"}}
 	from, cut, err := c.allPulls(ctx, read, repoPath(repo)+"/pulls?"+head.Encode())
 	switch {
 	case err != nil:
@@ -1242,13 +1323,8 @@ func deleteBranch(ctx context.Context, c *call) (any, error) {
 		}
 	}
 
-	mine, err := c.leftByApp(ctx, from, branch, full)
-	switch {
-	case err != nil:
+	if err := c.branchByBot(ctx, read, repo, branch, r.DefaultBranch); err != nil {
 		return nil, err
-	case !mine:
-		return nil, refuse("Your access lets you delete only the branch of a closed or merged pull request the GitHub App opened; ask the owner.",
-			"no closed pull request the GitHub App opened came from "+branch)
 	}
 	write, err := c.token(ctx, repo, perms("contents", "write"))
 	if err != nil {
