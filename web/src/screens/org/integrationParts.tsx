@@ -1,7 +1,16 @@
 import { useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { ApiError } from '../../api/client';
-import type { AccessField, IntegrationAuditRow, IntegrationSetup, IntegrationState, IntegrationUploadRefused, IntegrationVersionState } from '../../api/types.gen';
+import type {
+  AccessField,
+  AccessForm,
+  IntegrationAction,
+  IntegrationAuditRow,
+  IntegrationSetup,
+  IntegrationState,
+  IntegrationUploadRefused,
+  IntegrationVersionState,
+} from '../../api/types.gen';
 import { Badge, Button, CodeBlock, Dialog, DialogClose, Icon, Prose, Text } from '../../ds';
 import type { BadgeTone } from '../../ds';
 import { markdownBlocks } from '../../lib/markdown';
@@ -78,6 +87,38 @@ export function VersionBadge({ state }: { state: IntegrationVersionState }) {
 export function actionWords(name: string): string {
   const words = name.replace(/_/g, ' ').trim();
   return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+/** One heading of an integration's actions: those an access field unlocks, or those any access gives. */
+export interface ActionGroup {
+  /** The access field's key; empty for the actions any access gives. */
+  key: string;
+  heading: string;
+  actions: IntegrationAction[];
+}
+
+/**
+ * The actions grouped by the access each needs, as the access form presents it: those that need nothing under
+ * "With any access", then one group per access field in the form's order, under "With" and the field's title (its key
+ * when the form lacks the field or its title). Empty when no action needs a field, so the list stays flat.
+ */
+export function actionGroups(actions: readonly IntegrationAction[], form: AccessForm | undefined): ActionGroup[] {
+  if (!actions.some((a) => a.access)) return [];
+  const fields = form?.fields ?? [];
+  const keys = fields.map((f) => f.key);
+  for (const a of actions) {
+    if (a.access && !keys.includes(a.access)) keys.push(a.access);
+  }
+  const groups: ActionGroup[] = [];
+  const any = actions.filter((a) => !a.access);
+  if (any.length > 0) groups.push({ key: '', heading: 'With any access', actions: any });
+  for (const key of keys) {
+    const members = actions.filter((a) => a.access === key);
+    if (members.length === 0) continue;
+    const title = fields.find((f) => f.key === key)?.title || key;
+    groups.push({ key, heading: 'With ' + title, actions: members });
+  }
+  return groups;
 }
 
 /** Your roll back to another version is in the audit as the action `rollback`, with you as the agent. */

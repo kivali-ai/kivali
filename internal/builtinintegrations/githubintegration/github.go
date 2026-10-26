@@ -99,11 +99,20 @@ const accessSchema = `{"type":"object","properties":{` +
 	`"write":{"type":"boolean","title":"May create and comment","description":"Lets the agent open issues and pull requests and comment on them in those repositories, as the GitHub App."}},` +
 	`"required":["repositories"]}`
 
-// Manifest is GitHub's manifest.
+// Manifest is GitHub's manifest. Its tools are the actions an agent
+// may be given, each write one needing the write switch; whoami is
+// Test connection's (kivali.verify) and no tool.
 func (g *GitHub) Manifest() *integration.Manifest {
-	tools := make([]integration.Tool, len(actions))
-	for i, a := range actions {
-		tools[i] = integration.Tool{Name: a.name, Description: a.ownerDescription}
+	var tools []integration.Tool
+	for _, a := range actions {
+		if a.ownerOnly {
+			continue
+		}
+		t := integration.Tool{Name: a.name, Description: a.ownerDescription}
+		if a.write {
+			t.Access = writeKey
+		}
+		tools = append(tools, t)
 	}
 	return &integration.Manifest{
 		ManifestVersion: "0.3",

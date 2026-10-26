@@ -7,8 +7,8 @@ import (
 )
 
 // builtinManifest is a built-in's manifest: the bundle's shape with no
-// server and no hosts, a live-listed field whose name is no tool, and
-// a verify name.
+// server and no hosts, a tool that needs a field of the access form, a
+// live-listed field whose name is no tool, and a verify name.
 func builtinManifest() *Manifest {
 	return &Manifest{
 		ManifestVersion: "0.3",
@@ -18,7 +18,7 @@ func builtinManifest() *Manifest {
 		Description:     "Notes kept by a service.",
 		Author:          Author{Name: "Kivali"},
 		UserConfig:      UserConfig{{Key: "token", Type: "string", Title: "Token", Sensitive: true, Required: true}},
-		Tools:           []Tool{{Name: "find", Description: "Find a note."}},
+		Tools:           []Tool{{Name: "find", Description: "Find a note.", Access: "books"}},
 		Kivali: Kivali{
 			Connection: Connection{Method: "token"},
 			Access: &Access{
@@ -73,6 +73,10 @@ func TestValidateBuiltin(t *testing.T) {
 		}, "n"},
 		{"bad choices name", func(m *Manifest) { m.Kivali.Access.Choices["books"] = "List Books" }, "kivali.access.choices.books"},
 		{"bad verify name", func(m *Manifest) { m.Kivali.Verify = "Who Am I" }, "kivali.verify"},
+		// A built-in's tool access is held to its form as a bundle's is:
+		// the page would group the action under a heading no grant has.
+		{"tool access not a field", func(m *Manifest) { m.Tools[0].Access = "shelves" }, "tools[0] (find): access names shelves, which is not a field of the access form"},
+		{"tool access without a form", func(m *Manifest) { m.Kivali.Access = nil }, "tools[0] (find): access names books, and the integration has no kivali.access"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -89,7 +93,8 @@ func TestValidateBuiltin(t *testing.T) {
 // Why this test exists: a built-in's manifest is written to the store
 // as this type marshals and read back with ParseManifest. A field lost
 // on the way (the connection form's order, the access form, a
-// sensitive flag) would change what the Org page draws for it.
+// sensitive flag, a tool's access) would change what the Org page
+// draws for it.
 func TestBuiltinManifestRoundTrips(t *testing.T) {
 	bm := builtinManifest()
 	raw, err := json.Marshal(bm)
@@ -106,7 +111,7 @@ func TestBuiltinManifestRoundTrips(t *testing.T) {
 	if f := ValidateBuiltin(m); len(f) != 0 {
 		t.Errorf("findings after a round trip: %v", f.Texts())
 	}
-	if !m.UserConfig[0].Sensitive || m.Kivali.Access.Choices["books"] != "books" || m.Kivali.Verify != "find" {
+	if !m.UserConfig[0].Sensitive || m.Kivali.Access.Choices["books"] != "books" || m.Kivali.Verify != "find" || m.Tools[0].Access != "books" {
 		t.Errorf("read back as %+v", m)
 	}
 }

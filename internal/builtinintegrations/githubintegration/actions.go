@@ -31,8 +31,9 @@ const (
 // action is one of GitHub's actions. description is what the agent's
 // model reads, ownerDescription the manifest's, for the owner. write
 // marks an action that creates something on GitHub, which an agent has
-// only when its access allows writing; ownerOnly keeps an action for
-// Test connection.
+// only when its access allows writing (its manifest tool's access is
+// the write switch); ownerOnly keeps an action for Test connection,
+// out of the manifest's tools.
 type action struct {
 	name             string
 	description      string
@@ -46,7 +47,7 @@ type action struct {
 // ownerDecides ends every description an agent reads.
 const ownerDecides = " The owner decides which repositories you may use and whether you may create issues, comments and pull requests."
 
-// actions is every action, in the manifest's order.
+// actions is every action, the manifest's tools in their order.
 var actions = []action{
 	{
 		name:             actionListRepositories,

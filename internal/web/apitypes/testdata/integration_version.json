@@ -45,7 +45,8 @@
   "actions": [
     {
       "name": "create_post",
-      "description": "Create a blog post as a draft."
+      "description": "Create a blog post as a draft.",
+      "access": "write"
     },
     {
       "name": "list_blogs",

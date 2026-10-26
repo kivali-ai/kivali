@@ -2014,6 +2014,13 @@ export interface IntegrationRequirement {
 export interface IntegrationAction {
   name: string;
   description: string;
+  /**
+   * Access is the key of the access form's field an agent's access
+   * must set for the integration to give it this action (the
+   * manifest tool's access); absent, any access does. The page groups
+   * the actions by it.
+   */
+  access?: string;
 }
 /**
  * IntegrationSetup is what a setup connection's flow may do, from the

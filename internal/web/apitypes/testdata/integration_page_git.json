@@ -20,7 +20,8 @@
     },
     {
       "name": "push",
-      "description": "Pushes branches and tags."
+      "description": "Pushes branches and tags.",
+      "access": "push"
     }
   ],
   "connection_fields": [

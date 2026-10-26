@@ -110,7 +110,7 @@ byte for byte.
   "user_config": {
     "token": { "type": "string", "title": "Private app token", "description": "...", "sensitive": true, "required": true }
   },
-  "tools": [ { "name": "create_post", "description": "..." } ],
+  "tools": [ { "name": "create_post", "description": "...", "access": "write" } ],
   "kivali": {
     "connection": { "method": "token" },
     "hosts": ["api.hubapi.com"],
@@ -133,6 +133,10 @@ byte for byte.
 
 - `user_config` is the connection form, in the manifest's order. A
   `sensitive` field is a secret (below).
+- `tools` is the actions the integration gives agents. A tool's
+  optional `access` names the access form's field an agent's access
+  must set for the integration to give it the tool
+  ([The access form](#the-access-form)); without one, any access does.
 - `kivali.connection.method` is how the connection is made: `token`,
   fields the owner pastes, or a sign-in, `device` or `browser`
   ([The connection section](#the-connection-section)).
@@ -389,7 +393,7 @@ the version and shown on its install screen. The rules:
 | `server.entry_point` | A file in the bundle. |
 | `server.mcp_config` | `command` is `python3` or `python`; `args` is not empty; each `${user_config.<key>}` in `env` names a key of the connection (`integration.ConnectionKeys`: a field of the connection form, or a key a setup keeps), and `env` holds no other `${...}`. |
 | `user_config` | Each key is lowercase letters, digits and underscores, starting with a letter, and none of `connect.SecretKeys`, the keys a sign-in's tokens (`oauth_access_token`, `oauth_refresh_token`) and a [registered client](#registered-clients) are kept under; `type` is `string`, `number` or `boolean`; `title` is not empty; `sensitive` and `required`, when given, are booleans. |
-| `tools` | Not empty; names are unique, lowercase letters, digits and underscores starting with a letter; a tool without a description is a warning. |
+| `tools` | Not empty; names are unique, lowercase letters, digits and underscores starting with a letter; a tool without a description is a warning. A tool's `access`, when given, is the key of a `boolean` or `array` property of `kivali.access.schema`; a manifest without `kivali.access` gives none. |
 | `kivali.connection.method` | `token`, `device`, `browser` or `setup`. |
 | The rest of `kivali.connection` | See [The connection section](#the-connection-section). |
 | `kivali.hosts` | Not empty; each a lowercase host or pattern with no scheme, port, path, user or whitespace (`integration.ValidHost`, the rule of `store.ValidEgressHost`, which a store test holds it to); a bare `*` is refused. |
@@ -463,6 +467,19 @@ its key.
 lists its options live through the connection: the field becomes a
 `choice` or `choices` field with `choices: true` and no fixed options.
 A field cannot have both an enum and a tool.
+
+A tool's `access` names the switch or list an agent's access must set
+for the integration to give it that tool: the switch on, the list not
+empty. HubSpot's `create_post` with `"access": "write"` is given only
+with May publish and edit on; a tool without `access` is given with any
+access. It is the integration's statement of what its own code does:
+core enforces nothing by it; the integration's `tools/list` (a
+built-in's `Tools`) and its calls hold an agent to its access. Core
+carries it to the install screen and the page
+(`IntegrationAction.access`), and the page's Actions block groups the
+actions by it: first those without one, under "With any access", then
+one group per field in the form's order, under "With" and the field's
+title. When no tool names one, the list is flat.
 
 `integration.ValidateAccess` checks one agent's filled form: every key
 a field, every value of its field's kind and from its fixed options,
@@ -2728,7 +2745,10 @@ which reaches only the team's allow list. Its manifest:
 - `tools`: `clone`, `fetch` and `push`, which agents call as
   `git_clone(url, path)`, `git_fetch(path, url?, refs?)` and
   `git_push(path, refs, force?, url?)`. All three are listed to every
-  agent with access; each call is checked against the access.
+  agent with access; each call is checked against the access. `push`
+  names `push_repositories` as its `access`, so the page shows it under
+  "With Repositories it may push to", and clone and fetch under "With
+  any access".
 - `Git.AccessSummary` (`AccessSummarizer`): "Pull: acme/* · Push:
   acme/widgets · Branches and tags: agent/* · May force-push".
   `push_refs` and `force` without a repository to push to, and `force`
@@ -3167,7 +3187,12 @@ action works in the agent's shell or moves commits.
   `kivali.hosts: ["api.github.com", "github.com"]`, `kivali.verify:
   whoami`, and GitHub 1.0.0's access form, so agents' access carries
   over: `repositories` (required) and `write`, "May create and
-  comment". It passes `integration.ValidateBuiltin`.
+  comment". Its `tools` are the actions an agent may be given, the
+  three write ones (`create_issue`, `comment`, `create_pull_request`)
+  with `"access": "write"`, so the page lists them under "With May
+  create and comment" and the rest under "With any access". `whoami`
+  is not a tool: a built-in's `kivali.verify` need not name one
+  ([The check](#the-check)). It passes `integration.ValidateBuiltin`.
 - **The connection** is what setup keeps, read as `conn.Fields`.
   `app_id`, `private_key` (PEM: PKCS#1 `RSA PRIVATE KEY` as GitHub
   issues it, or PKCS#8 `PRIVATE KEY` holding an RSA key) and
@@ -3363,7 +3388,8 @@ The rules are GitHub 1.0.0's:
   comments or pull requests; ask the owner." `whoami` is Test
   connection's (`Verify`, "Connected as <slug>[bot], the app <name>,
   installed on <account>", the bot agents act as and the app's name
-  from GET /app): no agent is listed it, and a call of it is refused.
+  from GET /app): it is not among the manifest's tools, no agent is
+  listed it, and a call of it is refused.
 - **The search.** `list_issues`' `search` (one line, at most 500
   characters) holding `repo:`, `org:`, `user:` or `owner:` after
   anything but a letter, digit or underscore is refused; with a search,

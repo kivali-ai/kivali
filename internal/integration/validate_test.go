@@ -56,6 +56,10 @@ func TestGoldenManifestPassesAndReadsWhole(t *testing.T) {
 		m.Kivali.Verify != "whoami" || m.Kivali.Access.Choices["blogs"] != "list_blogs" {
 		t.Errorf("manifest read as %+v", m)
 	}
+	// A tool's access is read, and a tool without one reads empty.
+	if m.Tools[0].Access != "write" || m.Tools[1].Access != "" {
+		t.Errorf("tools read as %+v", m.Tools)
+	}
 	// user_config keeps the bundle's order, which is the connection
 	// form's order.
 	if len(m.UserConfig) != 2 || m.UserConfig[0].Key != "token" || m.UserConfig[1].Key != "portal" ||
@@ -115,6 +119,16 @@ func TestValidateRules(t *testing.T) {
 			m["tools"] = append(m["tools"].([]any), map[string]any{"name": "whoami", "description": "x"})
 		}, nil, LevelError, "tools[3] (whoami) is listed twice"},
 		{"tool no description", func(m map[string]any) { delete(m["tools"].([]any)[2].(map[string]any), "description") }, nil, LevelWarning, "tools[2] (whoami) has no description"},
+		// A tool's access is what the page groups it under. A key the
+		// form does not have, a text or choice field (which no access
+		// turns on), or any key without a form would draw a heading that
+		// names nothing the owner can grant.
+		{"tool access not a field", func(m map[string]any) { m["tools"].([]any)[0].(map[string]any)["access"] = "owners" }, nil, LevelError, "tools[0] (create_post): access names owners, which is not a field of the access form"},
+		{"tool access on a choice field", func(m map[string]any) { m["tools"].([]any)[0].(map[string]any)["access"] = "region" }, nil, LevelError, "tools[0] (create_post): access names region, a text or choice field"},
+		{"tool access without a form", func(m map[string]any) {
+			delete(obj(m, "kivali"), "access")
+			m["tools"].([]any)[0].(map[string]any)["access"] = "write"
+		}, nil, LevelError, "tools[0] (create_post): access names write, and the integration has no kivali.access"},
 		{"connection device", func(m map[string]any) { obj(m, "kivali", "connection")["method"] = "device" }, nil, LevelError, "kivali.connection.device_endpoint is missing; a device connection needs it"},
 		{"connection browser", func(m map[string]any) { obj(m, "kivali", "connection")["method"] = "browser" }, nil, LevelError, "kivali.connection.authorization_endpoint is missing; a browser connection needs it"},
 		{"connection missing", func(m map[string]any) { delete(obj(m, "kivali"), "connection") }, nil, LevelError, "kivali.connection.method is missing"},

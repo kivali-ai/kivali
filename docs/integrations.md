@@ -166,6 +166,8 @@ An agent that is offboarded loses its access to every integration.
 
 An agent with access to a running integration has its actions as tools, named after the integration and the action: `hubspot_create_post` for HubSpot's "create post". It has only the actions its access lets the integration offer it, among those the install screen listed, and is told that you decide what it may do with each integration. An agent without access, or with access that no longer applies, has none of them.
 
+**Actions** on an integration's page lists its actions grouped by the access that unlocks them, as the integration declares it: first those any access gives, under **With any access**, then those a part of the access form adds, under **With** and that part's name, such as **With May publish and edit**. An integration whose actions all come with any access lists them without headings.
+
 Kivali checks every call against the agent's access before the integration sees it, and tells the integration which agent is calling and with what access. A call Kivali refuses (no access, the integration disabled, not running or still being connected, an action the agent's access does not include) tells the agent why and to ask you. What comes back is the integration's text, with the connection's secrets replaced by `[secret]`; images and other content that is not text are not passed on in this release.
 
 A change to an agent's access, given or taken away, changes its tools from its next turn. Access you take away is refused from the next call, even in the middle of a turn.
@@ -221,6 +223,8 @@ An agent with access has three actions:
 - **Clone** copies a repository its access includes into a new or empty directory of its files or its home.
 - **Fetch** brings new commits and tags into one of its working copies, from the repository's address or the one the working copy came from, if its access includes it.
 - **Push** sends branches and tags from one of its working copies to the repository, when the repository is one it may push to and its access allows those branches and tags. It can push a branch to the same name or to another (its current commit to `agent/fix-1`, say) and push tags. A push that would overwrite history is refused unless the agent asks to force and you allowed force-pushing, and an existing tag is never moved without force. A push of several branches and tags lands whole or not at all: if the host refuses one, it takes none of them, so the host must accept atomic pushes (GitHub, GitLab and plain git servers do). The host's own rules (protected branches, required reviews) still apply.
+
+Git's page lists Clone and Fetch under **With any access** and Push under **With Repositories it may push to**.
 
 All three go to the connection's host with your token. The working copy is an ordinary one, whose origin is the repository's address without the token, and the agent works in it with plain git in its shell. That plain git reaches only the hosts on your team's allow list, and without your token, so a repository host that is not on the list is reachable only through these three actions.
 
@@ -281,9 +285,12 @@ Everything an agent does is done as the app, so GitHub shows the app (its name f
 
 ### What agents can do
 
+GitHub's page lists these under **Actions** by the part of the access that unlocks them. **With any access**, an agent can:
+
 - List the repositories its access names, and read a repository's details, its branches, and a comparison of two branches, tags or commits (the commits and the files changed, not the changes themselves).
 - List and read issues, with the latest 20 comments, and list and read pull requests, with the diff when it asks (cut at 50,000 characters). Issue search words stay within the repository named: a search that names another repository, organization or user is refused.
-- With **May create and comment**: open an issue, comment on an issue or pull request, and open a pull request from a branch already on GitHub.
+
+**With May create and comment**, it can also open an issue, comment on an issue or pull request, and open a pull request from a branch already on GitHub.
 
 Each action is in **Recent calls**. A call for a repository the agent's access does not name is refused before anything reaches GitHub, and the agent is told to ask you.
 

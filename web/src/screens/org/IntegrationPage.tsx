@@ -8,6 +8,7 @@ import type {
   ConnectionField,
   ConnectionState,
   ConnectionWrite,
+  IntegrationAction,
   IntegrationAudit,
   IntegrationAuditRow,
   IntegrationLogLine,
@@ -33,6 +34,7 @@ import {
   NeedsBadge,
   StateBadge,
   VersionBadge,
+  actionGroups,
   actionWords,
   agentsLabel,
   durationLabel,
@@ -526,6 +528,24 @@ interface Fixing {
 /** The states a flow on the page is still worth drawing in: under way, or failed with why. */
 const SHOWN_FLOW: ReadonlySet<string> = new Set(['running', 'form', 'go', 'wait', 'failed']);
 
+/** Actions in words, each with its description under it. */
+function ActionFacts({ actions }: { actions: readonly IntegrationAction[] }) {
+  return (
+    <ul className="app-int-facts">
+      {actions.map((a) => (
+        <li key={a.name} className="app-int-fact">
+          <Text variant="body">{actionWords(a.name)}</Text>
+          {a.description && (
+            <Text variant="caption" tone="muted">
+              {a.description}
+            </Text>
+          )}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 /** "6 actions", "1 action", "No actions": what the integration gives agents, beside the block's heading. */
 export function countLabel(n: number, one: string, many: string): string {
   if (n === 0) return 'No ' + many;
@@ -537,8 +557,9 @@ export function countLabel(n: number, one: string, many: string): string {
  * Installed (no connection): the Connect block, whose flow makes the connection, with the vendor-side notes and, under
  * it, what connecting does. Connected or disabled: its requirements (open while one is not met, each unmet one with
  * its Fix; a line when all are met), which agents have access and how far, and its connection, closed, with its form,
- * the notes and Disconnect. Every state ends with what agents can do, its software, its versions, recent calls and
- * recent logs, each closed. Uninstall, for a bundle, is in the header. Every change answers with the whole page.
+ * the notes and Disconnect. Every state ends with what agents can do (grouped by the access that unlocks it), its
+ * software, its versions, recent calls and recent logs, each closed. Uninstall, for a bundle, is in the header. Every
+ * change answers with the whole page.
  */
 export function IntegrationPage() {
   const { name = '' } = useParams();
@@ -666,6 +687,8 @@ export function IntegrationPage() {
   const notes = p.setup_notes_md.trim() !== '' || p.sign_in_redirect_url;
   const facts = p.setup || p.scopes.length > 0;
   const accessAgents = p.access.map((r) => r.agent.name);
+  // What agents can do, under the access that unlocks it, as the access form presents it.
+  const actionsByAccess = actionGroups(p.actions, p.access_form);
 
   const accessColumns: TableColumn<AccessRow & { id: string }>[] = [
     { key: 'agent', label: 'Agent', render: (r) => <span className="app-int-nowrap">{r.agent.name}</span> },
@@ -911,19 +934,14 @@ export function IntegrationPage() {
       <Block label="Actions" variant="heading" collapsible summary={countLabel(p.actions.length, 'action', 'actions')}>
         {p.actions.length === 0 ? (
           <None>No actions.</None>
+        ) : actionsByAccess.length === 0 ? (
+          <ActionFacts actions={p.actions} />
         ) : (
-          <ul className="app-int-facts">
-            {p.actions.map((a) => (
-              <li key={a.name} className="app-int-fact">
-                <Text variant="body">{actionWords(a.name)}</Text>
-                {a.description && (
-                  <Text variant="caption" tone="muted">
-                    {a.description}
-                  </Text>
-                )}
-              </li>
-            ))}
-          </ul>
+          actionsByAccess.map((g) => (
+            <Block key={g.key} label={g.heading} level="h3">
+              <ActionFacts actions={g.actions} />
+            </Block>
+          ))
         )}
       </Block>
 
