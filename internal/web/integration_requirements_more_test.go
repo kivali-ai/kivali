@@ -297,13 +297,15 @@ func installNamed(t *testing.T, srv *Server, name string) {
 	waitFlow(t, srv, name, apitypes.SetupFlowStateDone)
 }
 
-// Why this test exists: the list asks every installed built-in for its
-// own requirements, each with a five-second deadline. Asked one after
-// another, a team with several slow integrations would wait five
-// seconds for each; asked at once, the list waits five seconds at most.
-// Both deadlines armed together, before either passes, is what shows
-// they run at once.
-func TestListAsksEveryIntegrationAtOnce(t *testing.T) {
+// Why this test exists: the refresh asks every connected built-in for
+// its own requirements, each with a five-second deadline. Asked one
+// after another, a team with several slow integrations would hold a
+// pass five seconds for each; asked at once, a pass waits five seconds
+// at most. Both deadlines armed together, before either passes, is
+// what shows they run at once. The list then shows what the pass
+// found without asking, and an hour after the pass ended the next one
+// asks again, so what the list shows cannot go stale for good.
+func TestRefreshAsksEveryIntegrationAtOnce(t *testing.T) {
 	srv, e, clk := healthServer(t)
 	e.ScriptSetup(keepThenDone)
 	other := echotest.New()
@@ -315,22 +317,32 @@ func TestListAsksEveryIntegrationAtOnce(t *testing.T) {
 	}
 	installNamed(t, srv, "echo")
 	installNamed(t, srv, "second")
+	// Each ask says it began, then waits for its deadline.
+	called := make(chan struct{}, 4)
 	slow := func(ctx context.Context, _ builtinintegrations.Connection) ([]builtinintegrations.Requirement, error) {
+		called <- struct{}{}
 		<-ctx.Done()
 		return nil, ctx.Err()
 	}
 	e.ScriptRequirements(slow)
 	other.ScriptRequirements(slow)
-	got := make(chan apitypes.Integrations, 1)
-	go func() { got <- orgOK[apitypes.Integrations](t, orgGet(t, srv, intBase)) }()
-	clk.BlockUntil(2)
-	clk.Advance(requirementsTimeout)
-	var list apitypes.Integrations
-	select {
-	case list = <-got:
-	case <-time.After(failsafeWait):
-		t.Fatal("the list waited past one deadline")
+	bothAsked := func(when string) {
+		t.Helper()
+		for i := 0; i < 2; i++ {
+			select {
+			case <-called:
+			case <-time.After(failsafeWait):
+				t.Fatalf("%s, only %d of the two were asked", when, i)
+			}
+		}
 	}
+	stop := srv.StartRequirementsRefresh()
+	t.Cleanup(stop)
+	clk.BlockUntil(2) // both deadlines, armed together
+	bothAsked("at the start")
+	clk.Advance(requirementsTimeout)
+	clk.BlockUntil(1) // the hour's timer: the pass is over
+	list := orgOK[apitypes.Integrations](t, orgGet(t, srv, intBase))
 	if len(list.Integrations) != 2 {
 		t.Fatalf("list = %+v", list)
 	}
@@ -339,35 +351,70 @@ func TestListAsksEveryIntegrationAtOnce(t *testing.T) {
 			t.Errorf("%s = %+v", sum.Name, sum)
 		}
 	}
+	select {
+	case <-called:
+		t.Fatal("the list asked")
+	default:
+	}
+	clk.Advance(requirementsRefreshEvery)
+	clk.BlockUntil(2)
+	bothAsked("an hour on")
+	clk.Advance(requirementsTimeout)
+	clk.BlockUntil(1)
 }
 
-// Why this test exists: the page, the list and Home are read together
-// on one screen, and each would otherwise ask the integration for its
-// requirements again. Its rows are kept a few seconds for the
-// connection it was asked with, and asked again once that time is up
-// or the connection changes, so a change is never hidden for long.
-func TestOwnRequirementsAreKeptBriefly(t *testing.T) {
+// Why this test exists: the list and Home are read often, and asking
+// the integration on each read (GitHub's health is four requests to
+// GitHub) held them up for as long as the vendor took. The page, where
+// the rows are shown and fixed, asks, and asks again once a few seconds
+// have passed; the list and Home show what the integration last
+// answered and never ask. A connection changed drops the answer, so
+// the list shows no own rows until the page or the refresh asks again.
+func TestListsShowTheLastAnswerWithoutAsking(t *testing.T) {
 	srv, e, clk := healthServer(t)
 	installEcho(t, srv, e, "acme")
+	clk.Advance(requirementsCacheTTL) // past whatever the install's end read
 	var asked atomic.Int32
 	e.ScriptRequirements(func(context.Context, builtinintegrations.Connection) ([]builtinintegrations.Requirement, error) {
 		asked.Add(1)
 		return []builtinintegrations.Requirement{{ID: "permissions", Title: "Permissions"}}, nil
 	})
+	srv.Integrations.ConnectionChanged("echo") // nothing known
+	if sum := echoSummary(t, srv); sum.Needs != 0 {
+		t.Errorf("before any ask, the list needs %d", sum.Needs)
+	}
+	if needs := requirementNeeds(t, srv); len(needs) != 0 {
+		t.Errorf("before any ask, Needs you = %v", needs)
+	}
+	if n := asked.Load(); n != 0 {
+		t.Fatalf("the list and Home asked %d times", n)
+	}
 	echoPage(t, srv)
+	if n := asked.Load(); n != 1 {
+		t.Fatalf("the page asked %d times", n)
+	}
+	if sum := echoSummary(t, srv); sum.Needs != 1 {
+		t.Errorf("after the page, the list needs %d", sum.Needs)
+	}
+	if needs := requirementNeeds(t, srv); len(needs) != 1 {
+		t.Errorf("after the page, Needs you = %v", needs)
+	}
+	clk.Advance(requirementsCacheTTL)
 	echoSummary(t, srv)
 	requirementNeeds(t, srv)
 	if n := asked.Load(); n != 1 {
-		t.Errorf("one screen asked %d times", n)
+		t.Errorf("after the time is up, the list and Home asked: %d times in all", n)
 	}
-	clk.Advance(requirementsCacheTTL)
 	echoPage(t, srv)
 	if n := asked.Load(); n != 2 {
-		t.Errorf("after the time is up, asked %d times", n)
+		t.Errorf("after the time is up, the page asked: %d times in all", n)
 	}
 	srv.Integrations.ConnectionChanged("echo")
-	echoPage(t, srv)
-	if n := asked.Load(); n != 3 {
-		t.Errorf("after the connection changed, asked %d times", n)
+	if sum := echoSummary(t, srv); sum.Needs != 0 || asked.Load() != 2 {
+		t.Errorf("after the connection changed, the list needs %d, asked %d times", sum.Needs, asked.Load())
+	}
+	srv.refreshRequirements(context.Background())
+	if sum := echoSummary(t, srv); sum.Needs != 1 || asked.Load() != 3 {
+		t.Errorf("after the refresh, the list needs %d, asked %d times", sum.Needs, asked.Load())
 	}
 }

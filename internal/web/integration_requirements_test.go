@@ -309,11 +309,12 @@ func TestIntegrationOwnRequirements(t *testing.T) {
 		t.Errorf("Needs you = %+v", needs)
 	}
 
-	// Met: the row leaves Needs you.
+	// Met: once the page asks again, the row leaves Needs you.
 	clk.Advance(requirementsCacheTTL) // past what the last read kept
 	e.ScriptRequirements(func(context.Context, builtinintegrations.Connection) ([]builtinintegrations.Requirement, error) {
 		return []builtinintegrations.Requirement{{ID: "permissions", Title: "Permissions", Met: true}}, nil
 	})
+	echoPage(t, srv)
 	if needs := requirementNeeds(t, srv); len(needs) != 0 {
 		t.Errorf("met, Needs you = %v", needs)
 	}

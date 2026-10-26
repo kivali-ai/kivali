@@ -697,8 +697,10 @@ not met: Running").
 ### Requirements
 
 Requirements are an installed integration's health, built when the
-page, the list, Home or `integration_list` is read, never on a timer
-(`Server.requirements`). Each row (`apitypes.IntegrationRequirement`)
+page, the list, Home or `integration_list` is read
+(`Server.requirements`): Kivali's own rows from what it holds, and the
+integration's own rows as it last answered ([who asks](#who-asks)).
+Each row (`apitypes.IntegrationRequirement`)
 is `{id, title, words, met, fix}`; `fix` is the flow its Fix button
 runs, or empty. Kivali's own rows come first, in this order:
 
@@ -728,15 +730,25 @@ unmet row `checks` ("<Integration> could not check its requirements:
 not answer its renewal, the integration is not asked: the `sign_in`
 row says why.
 
-What it answered is kept `requirementsCacheTTL` (three seconds, on the
-server's clock) for the connection it was asked with
-(`Server.requirementsCache`), so the page, the list and Home read on
-one screen ask it once. A change of the connection
-(`integrationRegistry.ConnectionChanged`, which counts each in
-`connectionGen`), a flow done, Disconnect and Uninstall make the next read ask
-again. The list and `integration_list` read every integration at once
-(`listIntegrations`), as Home does, so a list waits one deadline at
-most however many integrations there are.
+##### Who asks
+
+The page asks (`Server.requirements` with `fresh`): it is where the
+rows are shown and fixed, and read seldom. So does the refresh
+(`Server.StartRequirementsRefresh`), which asks every connected
+integration at once, once at start and then an hour after each pass
+ended (`requirementsRefreshEvery`, on the server's clock), so a pass
+waits one deadline at most however many integrations there are. The
+list, Home and `integration_list` show what the integration last
+answered (`Server.requirementsCache`, kept for the connection it was
+asked with) and never ask: they are read often, and a vendor's check
+(GitHub's is four requests) is not on their path. Before any answer
+they show Kivali's rows alone. A page read within
+`requirementsCacheTTL` (three seconds) of the last ask takes that
+answer, so a page read twice on one screen asks once. A change of the
+connection (`integrationRegistry.ConnectionChanged`, which counts each
+in `connectionGen`), a flow done, Disconnect and Uninstall drop the
+answer: the page's next read asks again, and the list shows no own
+rows until it or the refresh does.
 
 #### Fix
 
@@ -2463,8 +2475,8 @@ type SignIn struct{ ClientID, ClientSecret, AccessToken, RefreshToken string }
 Core runs `Setup` through the setup runner ([Setup flows](#setup-flows)):
 `POST .../setup` of a `setup` connection whose built-in implements
 `SetupIntegration`, and the `then` sign-in after it, or a requirement's
-Fix ([Fix](#fix)). It asks for `Requirements` when the page, the list or
-Home is read ([Requirements](#requirements)), and calls `Uninstall` on
+Fix ([Fix](#fix)). It asks for `Requirements` when the page is read and
+on the hourly refresh ([Requirements](#requirements)), and calls `Uninstall` on
 Uninstall ([Disconnect and Uninstall](#disconnect-and-uninstall)); the [Dispatch](#dispatch) table
 has each. GitHub implements all four ([The GitHub
 built-in](#the-github-built-in)). A bundle's server implements the
@@ -3260,8 +3272,9 @@ Fixes are flows of their own:
 five seconds, at most four requests (GET /app, GET
 /app/installations/{id}, and for an installation of selected
 repositories an installation token and GET
-/installation/repositories?per_page=1 for `total_count`), and caches
-nothing beyond core's three seconds. In order:
+/installation/repositories?per_page=1 for `total_count`), when the
+page is read and on the hourly refresh, never for the list or Home
+([who asks](#who-asks)), and caches nothing itself. In order:
 
 | id | Title | Met | Not met, and its Fix |
 | --- | --- | --- | --- |

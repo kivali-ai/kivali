@@ -379,9 +379,9 @@ minutes, with a stage for each wait.
 ## Requirements
 
 `kivali/requirements` is the installed integration's health. Kivali
-asks for it when the owner's page, the list or Home is read, after its
-own rows (Approved version, Connection, Sign-in, Connection test,
-Running):
+asks for it when the owner's page is read and once an hour; the list
+and Home show what it last answered. It comes after Kivali's own rows
+(Approved version, Connection, Sign-in, Connection test, Running):
 
 ```json
 {"jsonrpc": "2.0", "id": 9, "method": "kivali/requirements", "params": {}}
@@ -487,7 +487,7 @@ answer. Write them as the page's own:
 | A flow | forgotten 10 minutes after its last change or its last check of a Wait (made only while the owner's page is open), 24 hours after its start at most; lost when Kivali restarts |
 | A Wait's checks | every 3 seconds while the owner's page is open (a read of the flow in the last 10 seconds counts), one at a time |
 | The server's start, for a flow | 2 minutes |
-| `kivali/requirements` | 5 seconds; 20 rows; the answer kept 3 seconds |
+| `kivali/requirements` | 5 seconds; 20 rows; asked when the page is read and every 60 minutes; a page read again within 3 seconds takes the last answer |
 | A requirement's title and words | 80 and 500 characters |
 | `kivali/uninstall` | 60 seconds |
 | A step's words, progress message, error | 200 characters; a Wait's code 64 |

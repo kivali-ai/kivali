@@ -88,7 +88,7 @@ An installed integration lists its **Requirements**: what it needs to work, each
 - **Connection test**, for one that has a test, once it has run: whether the last test passed, in the integration's words.
 - **Running**, for one that runs on its own: whether it is running now.
 
-Then the integration's own, such as whether its app is still installed on the service.
+Then the integration's own, such as whether its app is still installed on the service. Kivali asks the integration for those when you open its page, and once an hour; the list and **Needs you** show what it last answered.
 
 A requirement that is not met has **Fix**, which runs what mends it, with the same steps as connecting: entering the connection again, signing in again, or the integration's own steps, such as approving a new permission on the service. Each one not met is also in **Needs you** on Home, under the integration's name, with **Open** to go to its page; it leaves once the requirement is met, or once you disable, disconnect or uninstall the integration.
 
