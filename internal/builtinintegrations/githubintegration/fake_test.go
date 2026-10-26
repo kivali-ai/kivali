@@ -59,7 +59,7 @@ const (
 func testConn() builtinintegrations.Connection {
 	return builtinintegrations.Connection{ID: "c0ffee01", Fields: map[string]string{
 		FieldAppID: testAppID, FieldSlug: testSlug, FieldClientID: "Iv23liTest", FieldClientSecret: testClientSecret,
-		FieldPrivateKey: pkcs1PEM(testKey()), FieldInstallationID: testInstallationID,
+		FieldPrivateKey: pkcs1PEM(testKey()), FieldInstallationID: testInstallationID, FieldInstallationAccount: "acme",
 	}}
 }
 

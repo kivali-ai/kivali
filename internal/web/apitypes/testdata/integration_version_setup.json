@@ -18,7 +18,7 @@
   "scopes": [],
   "setup_notes_md": "",
   "setup": {
-    "summary": "Creates a private GitHub App, on your account or an organization's, that may read contents and write issues and pull requests, and installs it on the repositories you choose. Disconnecting removes the installation; the app stays on GitHub until you delete it under GitHub Apps in the account's settings.",
+    "summary": "Creates a private GitHub App, on your account or an organization's, that may read and write contents, issues and pull requests, and installs it on the repositories you choose. Disconnecting removes the installation; the app stays on GitHub until you delete it under GitHub Apps in the account's settings.",
     "hosts": [
       "github.com"
     ],
@@ -60,6 +60,11 @@
       {
         "key": "installation_id",
         "words": "Where the app is installed",
+        "secret": false
+      },
+      {
+        "key": "installation_account",
+        "words": "The account the app is installed on, which owns every repository it reaches",
         "secret": false
       }
     ],

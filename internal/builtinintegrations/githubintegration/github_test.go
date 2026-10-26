@@ -17,7 +17,7 @@ import (
 // the built-in check (a setup connection with its declarations, the
 // hosts its setup and its calls reach, no server or packages), declare
 // exactly what setup may do as the design names it (GitHub's own pages
-// only, one field, the six keeps and no hand-over to a sign-in), keep
+// only, one field, the seven keeps and no hand-over to a sign-in), keep
 // the access form the shipped bundle has, so agents' access carries
 // over, and name whoami as Test connection without listing it among
 // the tools, each write one marked as needing the write switch.
@@ -40,7 +40,7 @@ func TestManifest(t *testing.T) {
 	if len(s.Fields) != 1 || s.Fields[0].Key != "account" || s.Fields[0].Secret || s.Fields[0].SetupOnly {
 		t.Errorf("setup fields = %+v", s.Fields)
 	}
-	if want := []string{"app_id", "slug", "client_id", "client_secret", "private_key", "installation_id"}; !slices.Equal(s.Keeps.Keys(), want) {
+	if want := []string{"app_id", "slug", "client_id", "client_secret", "private_key", "installation_id", "installation_account"}; !slices.Equal(s.Keeps.Keys(), want) {
 		t.Errorf("keeps = %v, want %v", s.Keeps.Keys(), want)
 	}
 	if !slices.Equal(m.Kivali.Hosts, []string{"api.github.com", "github.com"}) || m.Kivali.Verify != "whoami" || len(m.Kivali.Packages) != 0 {

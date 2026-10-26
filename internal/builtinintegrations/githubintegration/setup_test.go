@@ -185,7 +185,7 @@ func TestSetupInstallsThroughTheManifestFlow(t *testing.T) {
 	}
 
 	// The browser comes back with an installation id anyone could have
-	// put there; the one the app's JWT lists is kept.
+	// put there; the one the app's JWT lists is kept, with its account.
 	f.route("GET /app/installations", 200, `[{"id":42,"account":{"login":"acme"}}]`)
 	pr = &stages{}
 	done, err := g.Setup(context.Background(), madeConn(), builtinintegrations.FlowSetup,
@@ -193,7 +193,7 @@ func TestSetupInstallsThroughTheManifestFlow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !done.Done || len(done.Keep) != 1 || done.Keep[FieldInstallationID] != "42" {
+	if !done.Done || len(done.Keep) != 2 || done.Keep[FieldInstallationID] != "42" || done.Keep[FieldInstallationAccount] != "acme" {
 		t.Fatalf("done = %+v", done)
 	}
 	if len(*pr) != 1 || (*pr)[0] != "Waiting for the installation" {

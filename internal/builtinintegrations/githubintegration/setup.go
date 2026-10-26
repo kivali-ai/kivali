@@ -312,7 +312,8 @@ func goInstall(slug, callback, words string) (builtinintegrations.Step, error) {
 }
 
 // checkInstalled lists the app's installations with its JWT and keeps
-// the one there is: setup is done. With none yet, the owner is sent to
+// the one there is, its id and its account: setup is done. With none
+// yet, the owner is sent to
 // GitHub's new-installation page again; or, when GitHub sent the
 // browser back with an installation an organization's owners have yet
 // to approve (setup_action=request), or a Wait is being checked, a
@@ -349,7 +350,7 @@ func (g *GitHub) checkInstalled(ctx context.Context, conn builtinintegrations.Co
 		return builtinintegrations.Step{}, err
 	}
 	pick := func(in Installation) builtinintegrations.Step {
-		return builtinintegrations.Step{Done: true, Keep: map[string]string{FieldInstallationID: strconv.FormatInt(in.ID, 10)}}
+		return builtinintegrations.Step{Done: true, Keep: map[string]string{FieldInstallationID: strconv.FormatInt(in.ID, 10), FieldInstallationAccount: in.Account}}
 	}
 	switch len(list) {
 	case 0:

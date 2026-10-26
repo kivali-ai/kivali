@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"net/http"
 	"slices"
 	"strconv"
@@ -129,7 +130,7 @@ type cachedToken struct {
 // permissions is handed out again until a minute before it expires;
 // tokens live in this memory alone.
 func (g *GitHub) installationToken(ctx context.Context, c connection, repo string, p permissions) (string, error) {
-	name, err := narrowedName(repo)
+	name, err := g.narrowedName(ctx, c, repo)
 	if err != nil {
 		return "", err
 	}
@@ -168,32 +169,85 @@ func (g *GitHub) installationToken(ctx context.Context, c connection, repo strin
 // it, and kept nowhere in Kivali. It expires when GitHub says, within
 // the hour.
 func (g *GitHub) jobToken(ctx context.Context, c connection, repo string, p permissions) (string, error) {
-	name, err := narrowedName(repo)
-	switch {
-	case err != nil:
-		return "", err
-	case name == "":
+	if repo == "" {
 		// Never a token for the whole installation in a job.
 		return "", errors.New("a job's token narrowed to no repository")
+	}
+	name, err := g.narrowedName(ctx, c, repo)
+	if err != nil {
+		return "", err
 	}
 	tok, _, err := g.mint(ctx, c, repo, name, p)
 	return tok, err
 }
 
 // narrowedName is the repository owner/name as a token narrowed to it
-// names it: its name, the owner dropped, in lower case. "" for repo
-// "", a token that reaches every repository of the installation.
-func narrowedName(repo string) (string, error) {
+// names it: its name, the owner dropped, in lower case; "" for repo "",
+// a token that reaches every repository of the installation. GitHub
+// reads that name as a repository of the account the installation is
+// on, so repo's owner must be that account, case ignored, or the token
+// would be for a repository the call's check never looked at: any
+// other owner is refused before a token is asked for.
+func (g *GitHub) narrowedName(ctx context.Context, c connection, repo string) (string, error) {
 	if repo == "" {
 		return "", nil
 	}
-	_, after, ok := strings.Cut(repo, "/")
-	if !ok || after == "" {
+	owner, after, ok := strings.Cut(repo, "/")
+	if !ok || owner == "" || after == "" {
 		// Never a token for the whole installation in place of one
 		// narrowed to a repository.
 		return "", errors.New("a token narrowed to " + repo + ", which is not owner/name")
 	}
+	account, err := g.installationAccount(ctx, c)
+	if err != nil {
+		return "", err
+	}
+	if !strings.EqualFold(owner, account) {
+		return "", refuse(fmt.Sprintf("The owner's GitHub App is installed on %s; %s is not one of its repositories. Ask the owner.", account, repo),
+			repo+" is not under "+account+", where the app is installed")
+	}
 	return strings.ToLower(after), nil
+}
+
+// accountKey is what a cached installation account is for.
+type accountKey struct{ conn, installation string }
+
+// installationAccount is the login of the account c's installation is
+// on: the one setup kept, or, for a connection kept before setup kept
+// it, the one GitHub names (GET /app/installations/{id}, with the app's
+// JWT), read once per connection and installation and kept in this
+// memory. A failure to read it is GitHub's (a *tokenError), and no
+// token is asked for.
+func (g *GitHub) installationAccount(ctx context.Context, c connection) (string, error) {
+	if c.account != "" {
+		return c.account, nil
+	}
+	k := accountKey{conn: c.id, installation: c.installationID}
+	g.accountsMu.Lock()
+	account, ok := g.accounts[k]
+	g.accountsMu.Unlock()
+	if ok {
+		return account, nil
+	}
+	inst, err := g.installationOf(ctx, c)
+	if err != nil {
+		var e *apiError
+		if errors.As(err, &e) {
+			return "", &tokenError{api: e, account: true}
+		}
+		return "", err
+	}
+	account = strings.TrimSpace(inst.Account.Login)
+	if account == "" {
+		return "", &tokenError{api: &apiError{Message: "its answer names no account for the installation"}, account: true}
+	}
+	g.accountsMu.Lock()
+	if g.accounts == nil {
+		g.accounts = map[accountKey]string{}
+	}
+	g.accounts[k] = account
+	g.accountsMu.Unlock()
+	return account, nil
 }
 
 // mint trades the connection's JWT for a token of its installation
@@ -237,9 +291,18 @@ func (g *GitHub) mint(ctx context.Context, c connection, repo, name string, p pe
 type tokenError struct {
 	api  *apiError
 	repo string
+	// account is GitHub not naming the account the installation is on,
+	// which a token narrowed to a repository needs first
+	// (installationAccount).
+	account bool
 }
 
-func (e *tokenError) Error() string { return "an installation token: " + e.api.Error() }
+func (e *tokenError) Error() string {
+	if e.account {
+		return "the installation's account: " + e.api.Error()
+	}
+	return "an installation token: " + e.api.Error()
+}
 
 // words is the refusal in words for the agent.
 func (e *tokenError) words() string {
@@ -252,6 +315,8 @@ func (e *tokenError) words() string {
 		return "GitHub refused the GitHub App's key (HTTP 401): " + msg + ". Ask the owner."
 	case a.Status == http.StatusNotFound:
 		return "GitHub has no installation of the GitHub App that Kivali keeps (HTTP 404): " + msg + ". Ask the owner."
+	case e.account:
+		return "GitHub did not say which account the GitHub App is installed on (HTTP " + strconv.Itoa(a.Status) + "): " + msg + ". Ask the owner."
 	case a.Status == http.StatusUnprocessableEntity && e.repo != "":
 		return "GitHub refused the GitHub App a token for " + e.repo + " (HTTP 422): " + msg +
 			". The app may not be installed on it, or lack the permission; ask the owner."

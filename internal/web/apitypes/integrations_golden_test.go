@@ -443,7 +443,7 @@ func goldenIntegrationVersionSignIn() IntegrationVersion {
 // asking for the account first, and keep the app's values.
 func goldenIntegrationSetup() *IntegrationSetup {
 	return &IntegrationSetup{
-		Summary: "Creates a private GitHub App, on your account or an organization's, that may read contents and write issues and pull requests, and installs it on the repositories you choose. Disconnecting removes the installation; the app stays on GitHub until you delete it under GitHub Apps in the account's settings.",
+		Summary: "Creates a private GitHub App, on your account or an organization's, that may read and write contents, issues and pull requests, and installs it on the repositories you choose. Disconnecting removes the installation; the app stays on GitHub until you delete it under GitHub Apps in the account's settings.",
 		Hosts:   []string{"github.com"},
 		Fields: []SetupField{
 			{Key: "account", Title: "Account", Words: "An organization's name, or leave it blank for your personal account", Secret: false, SetupOnly: false},
@@ -455,6 +455,7 @@ func goldenIntegrationSetup() *IntegrationSetup {
 			{Key: "client_secret", Words: "The app's client secret", Secret: true},
 			{Key: "private_key", Words: "The app's private key, which Kivali signs with to get a token for each call", Secret: true},
 			{Key: "installation_id", Words: "Where the app is installed", Secret: false},
+			{Key: "installation_account", Words: "The account the app is installed on, which owns every repository it reaches", Secret: false},
 		},
 		Then: "",
 	}

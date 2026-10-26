@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"encoding/pem"
+	"maps"
 	"slices"
 	"strings"
 	"testing"
@@ -243,5 +244,93 @@ func TestInstallationsListsWithTheJWT(t *testing.T) {
 	reqs := f.requests()
 	if len(reqs) != 1 || reqs[0].JWT == nil || reqs[0].Query.Get("per_page") != "100" {
 		t.Errorf("requests %+v", reqs)
+	}
+}
+
+// Why this test exists: a token narrowed to a repository names it
+// without its owner, and GitHub reads the name as a repository of the
+// account the app is installed on. An access row naming another owner
+// (partner/widgets, or */widgets) would otherwise pass the check and
+// mint a token, a writing one for a push, for acme/widgets, which the
+// check never looked at. A clone and a REST action for a repository
+// under another owner must be refused, naming where the app is
+// installed and sending the agent to the owner, with no request to
+// GitHub; the owner written in other capitals is the same account and
+// passes.
+func TestATokenIsOnlyForTheInstallationsAccount(t *testing.T) {
+	g, f := newTest(t)
+	f.route("GET /repos/ACME/widgets", 200, repoJSON)
+	writer := agent(true, "*/widgets")
+	want := "The owner's GitHub App is installed on acme; partner/widgets is not one of its repositories. Ask the owner."
+	reason := "partner/widgets is not under acme, where the app is installed"
+	_, _, ref := g.gitCall(t, writer, "push", `{"path":"w","url":"partner/widgets","refs":["agent/x"]}`)
+	if ref == nil || ref.Text != want || ref.Reason != reason {
+		t.Errorf("push = %+v", ref)
+	}
+	_, _, ref = g.gitCall(t, writer, "clone", `{"url":"https://github.com/partner/widgets","path":"w"}`)
+	if ref == nil || ref.Text != want {
+		t.Errorf("clone = %+v", ref)
+	}
+	if r := g.callT(t, writer, "get_repository", map[string]any{"repository": "partner/widgets"}); r.refusal == nil || r.text != want || r.refusal.Reason != reason {
+		t.Errorf("get_repository = %+v", r)
+	}
+	if n := len(f.requests()); n != 0 {
+		t.Fatalf("refused calls made %d requests", n)
+	}
+
+	if job, res, ref := g.gitCall(t, writer, "clone", `{"url":"ACME/widgets","path":"w"}`); job == nil {
+		t.Errorf("clone of ACME/widgets = %+v, %+v", res, ref)
+	}
+	if r := g.callT(t, writer, "get_repository", map[string]any{"repository": "ACME/widgets"}); r.isError {
+		t.Errorf("get_repository of ACME/widgets = %+v", r)
+	}
+}
+
+// Why this test exists: a connection 2.0.0 set up kept no installation
+// account, and the owner check must not be skipped for it. The account
+// is read from GitHub (the installation, with the app's JWT) once per
+// connection and installation, not on every call, which would double
+// the requests; another installation is read again. A read that fails
+// fails the call in GitHub's words, with no token asked for.
+func TestTheAccountOfAConnectionKeptWithoutOneIsReadOnce(t *testing.T) {
+	g, f := newTest(t)
+	f.route("GET /app/installations/42", 200, `{"id":42,"account":{"login":"Acme","type":"Organization"}}`)
+	f.route("GET /app/installations/43", 503, `{"message":"Service Unavailable"}`)
+	f.route("GET /repos/acme/widgets", 200, repoJSON)
+	conn := testConn()
+	delete(conn.Fields, FieldInstallationAccount)
+	reader := agent(false, "*/*")
+	for range 2 {
+		if r := g.callConn(t, reader, conn, "get_repository", map[string]any{"repository": "acme/widgets"}); r.isError {
+			t.Fatal(r.text)
+		}
+	}
+	if r := g.callConn(t, reader, conn, "get_repository", map[string]any{"repository": "partner/widgets"}); r.refusal == nil ||
+		r.text != "The owner's GitHub App is installed on Acme; partner/widgets is not one of its repositories. Ask the owner." {
+		t.Errorf("another owner = %+v", r)
+	}
+	reads := 0
+	for _, q := range f.requests() {
+		if q.Path == "/app/installations/42" {
+			reads++
+			if q.JWT == nil {
+				t.Error("the installation was read without the app's JWT")
+			}
+		}
+	}
+	if reads != 1 {
+		t.Errorf("the installation was read %d times", reads)
+	}
+
+	other := conn
+	other.Fields = maps.Clone(conn.Fields)
+	other.Fields[FieldInstallationID] = "43"
+	before := len(f.mints())
+	if r := g.callConn(t, reader, other, "get_repository", map[string]any{"repository": "acme/widgets"}); !r.isError || r.refusal != nil ||
+		r.text != "GitHub did not say which account the GitHub App is installed on (HTTP 503): Service Unavailable. Ask the owner." {
+		t.Errorf("failed read = %+v", r)
+	}
+	if len(f.mints()) != before {
+		t.Error("a token was asked for without the installation's account")
 	}
 }
