@@ -764,8 +764,13 @@ this boot's id to `/run/kivali/ready` just before printing READY, and every
 FATAL writes its reason to `/run/kivali/fatal`.
 
 `make -C vm image KIVALI_CHART=<tgz>` bakes that chart at
-`/usr/share/kivali/charts/` so a first install needs no download;
-`VM_VERSION` is written to `/usr/share/kivali/vm-version`.
+`/usr/share/kivali/charts/` so a first install needs no download, and
+so a team from an earlier release can move to it with none
+(`kivali-supervisor upgrade --baked`); `VM_VERSION` is written to
+`/usr/share/kivali/vm-version`, and `MANUAL_STEPS=true` (what `make
+vm-release` passes for a tag listed in `scripts/manual-steps`) creates
+`/usr/share/kivali/manual-steps`, which the guest agent reports so that
+upgrade is not offered.
 
 A current cost: k3s re-imports **every** tarball in `agent/images` on
 **every** start (5 k3s images: ~4 s; the Kivali `:dev` images: ~8 s more
