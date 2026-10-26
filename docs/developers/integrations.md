@@ -3255,8 +3255,9 @@ submodules (not cloned), and deleting a remote ref.
 
 `internal/builtinintegrations/githubintegration` (name `github`,
 version 2.1.0, in `builtins.All()`) is GitHub as a built-in of Go
-code: agents read and open issues, comments and pull requests through
-GitHub's REST API, and clone, fetch and push through the agent-shell
+code: agents read and open issues, comments and pull requests, close
+the ones the app opened and delete their branches through GitHub's
+REST API, and clone, fetch and push through the agent-shell
 daemon, as a private GitHub App its setup makes on the owner's account
 or an organization's. The package implements `Integration`,
 `SetupIntegration` (`setup.go`), `RequirementsOf`
@@ -3274,12 +3275,15 @@ or an organization's. The package implements `Integration`,
   secret, and `client_secret` and `private_key`, secret; no `then`), an empty `user_config`,
   `kivali.hosts: ["api.github.com", "github.com"]`, `kivali.verify:
   whoami`, and GitHub 1.0.0's access form, so agents' access carries
-  over: `repositories` (required) and `write`, "May create, comment and
-  push". Its `tools` are the actions an agent may be given, the REST
-  ones then `clone`, `fetch` and `push`, the four write ones
-  (`create_issue`, `comment`, `create_pull_request`, `push`) with
-  `"access": "write"`, so the page lists them under "May create,
-  comment and push" and the rest under "Any access". `whoami`
+  over: `repositories` (required) and `write`, "May create, comment,
+  push and close". Its `tools` are the actions an agent may be given,
+  the REST ones then `clone`, `fetch` and `push`, the seven write ones
+  (`create_issue`, `comment`, `close_issue`, `create_pull_request`,
+  `close_pull_request`, `delete_branch`, `push`) with `"access":
+  "write"`, so the page lists them under "May create, comment, push and
+  close" and the rest under "Any access"; each write one's description
+  ends "Only when the agent's access may create, comment, push and
+  close." (`needsWrite`). `whoami`
   is not a tool: a built-in's `kivali.verify` need not name one
   ([The check](#the-check)). It passes `integration.ValidateBuiltin`.
 - **The connection** is what setup keeps, read as `conn.Fields`.
@@ -3496,10 +3500,13 @@ permission, and to ask the owner.
 | `get_issue` | `GET /repos/{o}/{r}/issues/{n}`, then the last pages of its comments | `issues: read`, `pull_requests: read` |
 | `create_issue` | `POST /repos/{o}/{r}/issues` | `issues: write` |
 | `comment` | `GET /repos/{o}/{r}/issues/{n}` to learn whether it is a pull request, then `POST /repos/{o}/{r}/issues/{n}/comments` | reads with `issues: read`, `pull_requests: read`; writes with `pull_requests: write` for a pull request, `issues: write` for an issue |
+| `close_issue` | `GET /repos/{o}/{r}/issues/{n}`, held to [the same app](#the-same-app); then, with `comment`, `POST /repos/{o}/{r}/issues/{n}/comments`, and `PATCH /repos/{o}/{r}/issues/{n}` `{"state": "closed"}` | reads with `issues: read`, `pull_requests: read`; writes with `issues: write` |
 | `list_pull_requests` | `GET /repos/{o}/{r}/pulls` (state, base); `merged` asks for closed ones and keeps those with `merged_at` | `pull_requests: read` |
 | `get_pull_request` | `GET /repos/{o}/{r}/pulls/{n}`, and with `diff` the same path as `application/vnd.github.diff`; a 406 there (a diff past GitHub's limits) answers the pull request with a note instead | `pull_requests: read`, and `contents: read` with `diff` |
 | `create_pull_request` | `POST /repos/{o}/{r}/pulls` from a head branch already on GitHub; moves no commits | `pull_requests: write` |
+| `close_pull_request` | `GET /repos/{o}/{r}/pulls/{n}`, held to [the same app](#the-same-app); then, with `comment`, `POST /repos/{o}/{r}/issues/{n}/comments`, and `PATCH /repos/{o}/{r}/pulls/{n}` `{"state": "closed"}` | reads with `pull_requests: read`; writes with `pull_requests: write` |
 | `list_branches` | `GET /repos/{o}/{r}/branches` | `contents: read` |
+| `delete_branch` | `GET /repos/{o}/{r}` for its default branch and owner, `GET /repos/{o}/{r}/pulls?head={owner}:{branch}&state=all`, held to [the same app](#the-same-app); then `DELETE /repos/{o}/{r}/git/refs/heads/{branch}` | reads with `pull_requests: read`; deletes with `contents: write` |
 | `compare` | `GET /repos/{o}/{r}/compare/{base}...{head}`: commits and files, no patches | `contents: read` |
 | `whoami` | `GET /app` and `GET /app/installations/{id}`, both with the JWT | no installation token |
 | `clone`, `fetch` | a shell job ([Clone, fetch and push](#clone-fetch-and-push)) | `contents: read`, in the job's own token |
@@ -3513,10 +3520,12 @@ The REST actions' rules are GitHub 1.0.0's:
   starting with `-`); one the access's `repositories` patterns do not
   match (`gitrepo.Match`) is refused before any token is minted, "Your
   access to GitHub does not include <owner/name>; ask the owner."
-  `create_issue`, `comment` and `create_pull_request`, and `push`, need
-  `write: true`: `Tools` leaves them out without it and `Call` refuses
-  them by name, "Your access to GitHub does not include opening issues
-  and pull requests, commenting or pushing; ask the owner." `whoami` is Test
+  `create_issue`, `comment`, `close_issue`, `create_pull_request`,
+  `close_pull_request` and `delete_branch`, and `push`, need `write:
+  true`: `Tools` leaves them out without it and `Call` refuses them by
+  name, "Your access to GitHub does not include opening, commenting on
+  or closing issues and pull requests, pushing or deleting branches;
+  ask the owner." `whoami` is Test
   connection's (`Verify`, "Connected as <slug>[bot], the app <name>,
   installed on <account>", the bot agents act as and the app's name
   from GET /app): it is not among the manifest's tools, no agent is
@@ -3535,15 +3544,20 @@ The REST actions' rules are GitHub 1.0.0's:
   branch at most 255 characters of letters, digits, `.`, `_`, `/`, `+`
   and `-`, not starting with `-`, `/` or `.`, not ending with `/`, `.`
   or `.lock`, without `..` or `//` (so `owner:branch` is refused);
-  `title` one line of at most 256 characters; `body` at most 60,000;
-  `labels` a list of names, each not blank, without a comma and at
-  most 100 characters; `diff` and `draft` true or false.
+  `title` one line of at most 256 characters; `body` at most 60,000,
+  and a close's `comment` too (blank is none); `labels` a list of
+  names, each not blank, without a comma and at most 100 characters;
+  `diff` and `draft` true or false.
 - **Clips**, in characters: a body at 20,000, an issue's comments to
   the latest 20, a diff at 50,000, each with a `note` saying so; and
   every answer at 60,000, with "[The answer is cut to its first 60000
   characters.]". Answers are compact JSON, or text for
-  `list_repositories`, `list_branches` and the addresses the write
-  actions answer. A write action's audit row is "created <address>".
+  `list_repositories`, `list_branches` and the write actions. An
+  action that makes something answers its address, and its audit row
+  is "created <address>"; a close answers "Closed <address>." ("Closed
+  <address>, with the comment <address>." when it posted one) and a
+  deletion "Deleted the branch <branch> of <owner/name>.", each audit
+  row the same words, uncapitalized and without the full stop.
 - **GitHub's failures** are error results with GitHub's words (its
   `message` and each of its `errors`' messages, or the status in words,
   "Bad Gateway", for an answer that has none): a 401 says GitHub
@@ -3580,7 +3594,17 @@ repositories keeps to the patterns, list issues stays in the
 repository, every answer is bounded, refusals tell the agent to ask the
 owner, and branches and compare call their paths; and tokens are
 minted per call, narrowed, cached until a minute before they expire,
-and never in an answer. `git_test.go` holds clone, fetch and push to
+and never in an answer. `close_test.go` holds [the same
+app](#the-same-app): only the app's bot user counts as the app;
+closing an issue the app opened, with its comment, in order and
+audited; one opened by anyone else, a pull request served from the
+issues endpoint and one closed already, each with nothing written and
+no token that writes minted; a close whose comment went up before it
+failed; a merged pull request; `delete_branch` refusing the default
+branch, an open pull request's head and a branch no closed pull
+request of the app's came from (a person's, another app's, a fork's),
+and deleting otherwise; and the slug read from GET /app once a call.
+`git_test.go` holds clone, fetch and push to
 [Clone, fetch and push](#clone-fetch-and-push): the job's token minted
 for the repository alone with the action's permission, after the
 check and never through the cache, and every refusal minting nothing.
@@ -3597,6 +3621,50 @@ Fixes, Uninstall, the install over a 1.0.0 connection, and a clone
 relayed on the real client and MCP tools, its job carrying the
 connection's proxy credential.
 
+#### The same app
+
+With `write`, an agent closes and deletes only what the app made:
+`close_issue` and `close_pull_request` close only an issue or a pull
+request the app opened, and `delete_branch` deletes only the head
+branch of a pull request the app opened in that repository, once that
+pull request is closed or merged.
+
+What the app opened is one check, `openedByApp`: the author GitHub
+names (`user`) is the app's bot user, `type` `Bot` and `login`
+`<slug>[bot]`, exactly. The slug is the connection's `slug`; a
+connection that keeps none (one set up before it was kept) has it read
+from GitHub, `GET /app` with the app's JWT (`appOf`), once a call
+however many authors the call checks. GitHub naming no slug either
+refuses the call as a connection not set up ("GitHub's connection is
+not set up; ask the owner to set it up again.", `GitHub names no slug
+for the app`).
+
+Each reads what it acts on with a token that only reads, and mints a
+token that writes only once every check has passed, so a refused or
+failed call writes nothing and holds no write permission:
+
+| Action | Refused (a Refusal) | Failed (an error result) |
+| --- | --- | --- |
+| `close_issue` | a pull request, as the issues endpoint serves one with `pull_request`: "<owner/name>#<n> is a pull request; github_close_pull_request closes it." (`the number is a pull request`); one the app did not open: "Your access lets you close only issues the GitHub App opened; ask the owner." (`the GitHub App did not open <owner/name>#<n>`) | closed already: "Issue <owner/name>#<n> is closed already." |
+| `close_pull_request` | one the app did not open: "Your access lets you close only pull requests the GitHub App opened; ask the owner." | merged: "Pull request <owner/name>#<n> is merged, and a merged pull request cannot be closed."; closed already |
+| `delete_branch` | the default branch, capitals aside, before any pull request is read: "<branch> is the default branch of <owner/name>, which your access does not let you delete; ask the owner."; any open pull request with that head, whoever opened it: "<branch> is the head of pull request #<n>, which is open; a branch is deleted only once no open pull request has it as its head."; no closed or merged one the app opened: "Your access lets you delete only the branch of a closed or merged pull request the GitHub App opened; ask the owner." (`no closed pull request the GitHub App opened came from <branch>`) | GitHub's, such as a 422 for a branch it no longer has |
+
+A close posts its `comment` first, when there is one, through the
+issue's comments (as `comment` does), then sends `PATCH` `{"state":
+"closed"}`, GitHub's own order for closing with a comment. A `PATCH`
+that fails after the comment went up says so after GitHub's words,
+"... The comment is on GitHub: <address>.", so the agent does not post
+it again.
+
+`delete_branch` lists the pull requests whose head is
+`<owner>:<branch>`, the owner the repository's (its `owner.login`), in
+every state, up to ten pages. Only those whose `head.ref` is the
+branch count, and of the closed ones only those whose `head.repo` is
+the repository itself: a pull request from a fork's branch of the same
+name, or from a fork GitHub no longer has, is not this branch's. The
+action deletes `refs/heads/<branch>` and nothing else, and GitHub's own
+branch protection still applies.
+
 #### Clone, fetch and push
 
 `git.go`. `clone`, `fetch` and `push` are gitops's ([The shared clone,
@@ -3609,8 +3677,8 @@ and `NameRepository`, with no `ForceSwitch`, so agents call
 `github_clone(url, path)`, `github_fetch(path, url, refs?)` and
 `github_push(path, refs, url)`; each tool's description ends, as the
 REST ones do, with the owner deciding which repositories the agent may
-use and whether it may open issues and pull requests, comment and
-push.
+use and whether it may open, comment on and close issues and pull
+requests, push and delete branches.
 
 `gitPolicy` reads the call's `gitops.Policy`: the host `github.com`;
 with `write`, `Push` is the access's `repositories`, with `AnyRef` (any
@@ -3620,7 +3688,7 @@ branch or tag); without, `Pull` is, and `Push` is empty. A job's
 
 | Cause | The agent reads | The audit's reason |
 | --- | --- | --- |
-| A push without `write` | Your access to GitHub does not include opening issues and pull requests, commenting or pushing; ask the owner. | the access does not include opening issues and pull requests, commenting or pushing |
+| A push without `write` | Your access to GitHub does not include opening, commenting on or closing issues and pull requests, pushing or deleting branches; ask the owner. | the access does not include opening, commenting on or closing issues and pull requests, pushing or deleting branches |
 | A connection setup has not finished | GitHub's connection is not set up; ask the owner to set it up again. | what is missing, as for the REST actions |
 
 `Check` then refuses, in gitops's words: `force: true` or a `+`

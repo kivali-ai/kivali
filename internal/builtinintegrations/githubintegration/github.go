@@ -1,8 +1,9 @@
 // Package githubintegration is the GitHub built-in integration: agents
 // read and open issues, comments and pull requests in GitHub
-// repositories, and clone, fetch and push them, acting as a private
-// GitHub App that the owner's setup makes on their account and
-// installs on the repositories they choose.
+// repositories, close the issues and pull requests the app opened and
+// delete their branches, and clone, fetch and push the repositories,
+// acting as a private GitHub App that the owner's setup makes on their
+// account and installs on the repositories they choose.
 //
 // Every call acts as the app's installation: core signs a JSON web
 // token with the app's private key and trades it for an installation
@@ -116,11 +117,12 @@ func (g *GitHub) now() time.Time {
 const setupSummary = "Creates a private GitHub App, on your account or an organization's, that may read and write contents, issues and pull requests, and installs it on the repositories you choose. Disconnecting removes the installation; the app stays on GitHub until you delete it under GitHub Apps in the account's settings."
 
 // accessSchema is the access form: the repositories an agent may use,
-// and whether it may open issues and pull requests, comment and push
-// there.
+// and whether it may open, comment on and close issues and pull
+// requests, push and delete branches there, closing and deleting only
+// what the app opened.
 const accessSchema = `{"type":"object","properties":{` +
 	`"repositories":{"type":"array","items":{"type":"string"},"title":"Repositories","description":"Each one owner/name, such as acme/widgets, or a pattern such as acme/*, which covers every repository directly under acme. * is the only wildcard. Capitals do not matter."},` +
-	`"write":{"type":"boolean","title":"May create, comment and push","description":"Lets the agent open issues and pull requests, comment on them and push branches and tags in those repositories, as the GitHub App. A push never overwrites history."}},` +
+	`"write":{"type":"boolean","title":"May create, comment, push and close","description":"Lets the agent, as the GitHub App, open issues and pull requests, comment on them and push branches and tags in those repositories; close the issues and pull requests the app opened; and delete the branch of a pull request the app opened once that pull request is closed or merged. A push never overwrites history."}},` +
 	`"required":["repositories"]}`
 
 // Manifest is GitHub's manifest. Its tools are the actions an agent
@@ -292,22 +294,32 @@ func (g *GitHub) Call(ctx context.Context, caller builtinintegrations.Caller, co
 	answer, err := a.run(ctx, &call{g: g, conn: c, access: acc, args: in})
 	if err != nil {
 		var ref *builtinintegrations.Refusal
-		var te *tokenError
-		var ae *apiError
-		switch {
-		case errors.As(err, &ref):
+		if errors.As(err, &ref) {
 			return nil, err
-		case errors.As(err, &te):
-			return failed(te.words()), nil
-		case errors.As(err, &ae):
-			return failed(agentWords(ae)), nil
 		}
-		return nil, err
+		words, ok := failureWords(err)
+		if !ok {
+			return nil, err
+		}
+		if cf := (*commentedFirst)(nil); errors.As(err, &cf) {
+			words = sentence(words) + ". The comment is on GitHub"
+			if cf.comment != "" {
+				words += ": " + cf.comment
+			}
+			words += "."
+		}
+		return failed(words), nil
 	}
-	if made, ok := answer.(created); ok {
+	switch v := answer.(type) {
+	case created:
 		// The audit row says what was made, from GitHub's own answer.
-		text, _ := clip(string(made), answerClip)
+		text, _ := clip(string(v), answerClip)
 		return &builtinintegrations.Result{Content: []string{text}, Audit: "created " + text}, nil
+	case done:
+		// The audit row says what was closed or deleted, as the agent's
+		// answer does.
+		text, _ := clip(string(v), answerClip)
+		return &builtinintegrations.Result{Content: []string{strings.ToUpper(text[:1]) + text[1:] + "."}, Audit: text}, nil
 	}
 	text, err := answerText(answer)
 	if err != nil {
@@ -318,6 +330,24 @@ func (g *GitHub) Call(ctx context.Context, caller builtinintegrations.Caller, co
 
 func failed(words string) *builtinintegrations.Result {
 	return &builtinintegrations.Result{Content: []string{words}, IsError: true}
+}
+
+// failureWords is an action's failure on GitHub in words for the agent:
+// GitHub refusing a token or a request, or an action's own failure.
+// false for an error that is none of these.
+func failureWords(err error) (string, bool) {
+	var te *tokenError
+	var ae *apiError
+	var f failure
+	switch {
+	case errors.As(err, &te):
+		return te.words(), true
+	case errors.As(err, &ae):
+		return agentWords(ae), true
+	case errors.As(err, &f):
+		return string(f), true
+	}
+	return "", false
 }
 
 // clipNote follows an answer cut at answerClip.

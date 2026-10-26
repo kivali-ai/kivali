@@ -20,20 +20,23 @@ const (
 	actionGetIssue          = "get_issue"
 	actionCreateIssue       = "create_issue"
 	actionComment           = "comment"
+	actionCloseIssue        = "close_issue"
 	actionListPullRequests  = "list_pull_requests"
 	actionGetPullRequest    = "get_pull_request"
 	actionCreatePullRequest = "create_pull_request"
+	actionClosePullRequest  = "close_pull_request"
 	actionListBranches      = "list_branches"
+	actionDeleteBranch      = "delete_branch"
 	actionCompare           = "compare"
 	actionWhoami            = "whoami"
 )
 
 // action is one of GitHub's REST actions. description is what the agent's
 // model reads, ownerDescription the manifest's, for the owner. write
-// marks an action that creates something on GitHub, which an agent has
-// only when its access allows writing (its manifest tool's access is
-// the write switch); ownerOnly keeps an action for Test connection,
-// out of the manifest's tools.
+// marks an action that writes to GitHub, which an agent has only when
+// its access allows writing (its manifest tool's access is the write
+// switch, and its ownerDescription ends with needsWrite); ownerOnly
+// keeps an action for Test connection, out of the manifest's tools.
 type action struct {
 	name             string
 	description      string
@@ -45,7 +48,11 @@ type action struct {
 }
 
 // ownerDecides ends every description an agent reads.
-const ownerDecides = " The owner decides which repositories you may use and whether you may open issues and pull requests, comment and push."
+const ownerDecides = " The owner decides which repositories you may use and whether you may open, comment on and close issues and pull requests, push and delete branches."
+
+// needsWrite ends the owner's description of every write action: the
+// write switch, in its title's words.
+const needsWrite = " Only when the agent's access may create, comment, push and close."
 
 // actions is every REST action: the manifest's tools are these in this
 // order, less the ownerOnly one, then clone, fetch and push (git.go).
@@ -87,7 +94,7 @@ var actions = []action{
 	{
 		name:             actionCreateIssue,
 		description:      "Open an issue in a GitHub repository, as the owner's GitHub App. Answers the issue's address.",
-		ownerDescription: "Open an issue in a repository, when the agent's access allows creating and commenting. Creates an issue as the GitHub App.",
+		ownerDescription: "Open an issue in a repository, as the GitHub App." + needsWrite,
 		schema: schema(map[string]any{
 			"repository": repositoryProperty,
 			"title":      map[string]any{"type": "string"},
@@ -100,10 +107,22 @@ var actions = []action{
 	{
 		name:             actionComment,
 		description:      "Comment on a GitHub issue or pull request by its number, as the owner's GitHub App. Answers the comment's address.",
-		ownerDescription: "Comment on an issue or pull request, when the agent's access allows creating and commenting. Posts a comment as the GitHub App.",
+		ownerDescription: "Comment on an issue or pull request, as the GitHub App." + needsWrite,
 		schema:           schema(map[string]any{"repository": repositoryProperty, "number": numberProperty, "body": markdown}, "repository", "number", "body"),
 		write:            true,
 		run:              comment,
+	},
+	{
+		name:             actionCloseIssue,
+		description:      "Close an issue in a GitHub repository that the owner's GitHub App opened, posting your comment on it first when you give one. Only an issue the app opened can be closed; a pull request is closed with github_close_pull_request. Answers the issue's address.",
+		ownerDescription: "Close an issue the GitHub App opened, with the agent's comment when it gives one; never an issue anyone else opened." + needsWrite,
+		schema: schema(map[string]any{
+			"repository": repositoryProperty,
+			"number":     map[string]any{"type": "integer", "description": "The issue's number."},
+			"comment":    map[string]any{"type": "string", "description": "Markdown, posted on the issue before it is closed."},
+		}, "repository", "number"),
+		write: true,
+		run:   closeIssue,
 	},
 	{
 		name:             actionListPullRequests,
@@ -131,7 +150,7 @@ var actions = []action{
 	{
 		name:             actionCreatePullRequest,
 		description:      "Open a pull request in a GitHub repository from the head branch into the base branch, as the owner's GitHub App. The head branch must already be on GitHub: this action moves no commits, so push it first with github_push, or ask whoever owns the branch. Answers the pull request's address.",
-		ownerDescription: "Open a pull request from a branch already on GitHub, when the agent's access allows creating and commenting. Creates a pull request as the GitHub App; moves no commits.",
+		ownerDescription: "Open a pull request from a branch already on GitHub, as the GitHub App; moves no commits." + needsWrite,
 		schema: schema(map[string]any{
 			"repository": repositoryProperty,
 			"title":      map[string]any{"type": "string"},
@@ -144,6 +163,18 @@ var actions = []action{
 		run:   createPullRequest,
 	},
 	{
+		name:             actionClosePullRequest,
+		description:      "Close a pull request in a GitHub repository that the owner's GitHub App opened, without merging it, posting your comment on it first when you give one. Only a pull request the app opened can be closed, and a merged one cannot be. Answers the pull request's address.",
+		ownerDescription: "Close a pull request the GitHub App opened, unmerged, with the agent's comment when it gives one; never a pull request anyone else opened." + needsWrite,
+		schema: schema(map[string]any{
+			"repository": repositoryProperty,
+			"number":     map[string]any{"type": "integer", "description": "The pull request's number."},
+			"comment":    map[string]any{"type": "string", "description": "Markdown, posted on the pull request before it is closed."},
+		}, "repository", "number"),
+		write: true,
+		run:   closePullRequest,
+	},
+	{
 		name:             actionListBranches,
 		description:      "List a GitHub repository's branches, one per line with the commit each points at.",
 		ownerDescription: "List a repository's branches and the commit each points at. Reads only.",
@@ -152,6 +183,17 @@ var actions = []action{
 			"limit":      map[string]any{"type": "integer", "description": "How many to list, at most 100; 30 when left out."},
 		}, "repository"),
 		run: listBranches,
+	},
+	{
+		name:             actionDeleteBranch,
+		description:      "Delete a branch of a GitHub repository whose work is done: the head branch of a pull request the owner's GitHub App opened in that repository, now closed or merged. The repository's default branch, and a branch an open pull request has as its head, cannot be deleted. Answers what it deleted.",
+		ownerDescription: "Delete the branch a closed or merged pull request the GitHub App opened came from; never the default branch, nor a branch an open pull request comes from." + needsWrite,
+		schema: schema(map[string]any{
+			"repository": repositoryProperty,
+			"branch":     map[string]any{"type": "string", "description": "The branch's name, such as agent/fix-1."},
+		}, "repository", "branch"),
+		write: true,
+		run:   deleteBranch,
 	},
 	{
 		name:             actionCompare,
@@ -212,6 +254,9 @@ type call struct {
 	conn   connection
 	access access
 	args   args
+	// bot is the login of the app's bot user once openedByApp has
+	// worked it out.
+	bot string
 }
 
 // token is an installation token for repo (owner/name; "" for the
@@ -228,9 +273,16 @@ const maxListPages = 10
 type (
 	ghUser struct {
 		Login string `json:"login"`
+		// Type is User, Organization or, for an app's bot user, Bot.
+		Type string `json:"type"`
 	}
 	ghRef struct {
 		Ref string `json:"ref"`
+		// Repo is the repository the branch is in; nil for a fork GitHub
+		// no longer has.
+		Repo *struct {
+			FullName string `json:"full_name"`
+		} `json:"repo"`
 	}
 	ghIssue struct {
 		Number      int64           `json:"number"`
@@ -318,6 +370,28 @@ func decode(b []byte, out any) error {
 // created is the answer of an action that made something on GitHub:
 // its address, which the owner's audit row keeps too.
 type created string
+
+// done is the answer of an action that closed or deleted something on
+// GitHub: what it did, "closed <address>", which the owner's audit row
+// keeps as it is and the agent reads as a sentence.
+type done string
+
+// failure is an action that reached GitHub and did not do what it was
+// asked, in its own words for the agent: an error result.
+type failure string
+
+func (f failure) Error() string { return string(f) }
+
+// commentedFirst is a close that failed after posting its comment
+// (comment, the comment's address): the agent is told the comment is
+// on GitHub, so that it does not post it again.
+type commentedFirst struct {
+	err     error
+	comment string
+}
+
+func (e *commentedFirst) Error() string { return e.err.Error() }
+func (e *commentedFirst) Unwrap() error { return e.err }
 
 // repoPath is the REST path of owner/name.
 func repoPath(repo string) string { return "/repos/" + repo }
@@ -669,6 +743,113 @@ func comment(ctx context.Context, c *call) (any, error) {
 	return created(out.HTMLURL), nil
 }
 
+// openedByApp reports whether u, the user GitHub names as the author
+// of an issue or a pull request, is the app's bot user: of type Bot,
+// its login <slug>[bot]. The slug is the connection's; for a
+// connection that keeps none (one set up before it was kept), it is
+// read from GitHub (GET /app, with the app's JWT), once a call.
+func (c *call) openedByApp(ctx context.Context, u ghUser) (bool, error) {
+	if c.bot == "" {
+		slug := c.conn.slug
+		if !appSlug.MatchString(slug) {
+			app, err := c.g.appOf(ctx, c.conn)
+			if err != nil {
+				return false, err
+			}
+			slug = app.Slug
+		}
+		if !appSlug.MatchString(slug) {
+			return false, refuse(notSetUp, "GitHub names no slug for the app")
+		}
+		c.bot = slug + "[bot]"
+	}
+	return u.Type == "Bot" && u.Login == c.bot, nil
+}
+
+// closingComment is the comment argument of a close: Markdown of at
+// most maxText characters, "" when it is absent or blank.
+func (a args) closingComment() (string, error) {
+	s, err := a.text("comment", false, false, maxText)
+	if err != nil || strings.TrimSpace(s) == "" {
+		return "", err
+	}
+	return s, nil
+}
+
+// closeItem closes the issue or pull request at path with write, a
+// token that may write it, after posting note on it through
+// commentsPath when note is not empty. Its answer names what was
+// closed, GitHub's address for it (address when GitHub's answer names
+// none), and the comment's.
+func (c *call) closeItem(ctx context.Context, write, path, commentsPath, note, address string) (any, error) {
+	commented, comment := false, ""
+	if note != "" {
+		var out ghCreated
+		if err := c.g.sendJSON(ctx, request{method: http.MethodPost, path: commentsPath, auth: write, body: map[string]any{"body": note}}, &out); err != nil {
+			return nil, err
+		}
+		commented, comment = true, out.HTMLURL
+	}
+	var out ghCreated
+	if err := c.g.sendJSON(ctx, request{method: http.MethodPatch, path: path, auth: write, body: map[string]any{"state": "closed"}}, &out); err != nil {
+		if commented {
+			return nil, &commentedFirst{err: err, comment: comment}
+		}
+		return nil, err
+	}
+	what := "closed " + cmp.Or(out.HTMLURL, address)
+	if commented {
+		what += ", with the comment " + comment
+	}
+	return done(what), nil
+}
+
+// closeIssue closes an issue the app opened, after posting the comment
+// when one is given. The issue is read first with a token that only
+// reads: a pull request (the issues endpoint serves those too) and an
+// issue anyone else opened are refused, one already closed fails, and
+// none of them gets a token that writes.
+func closeIssue(ctx context.Context, c *call) (any, error) {
+	repo, err := c.args.repository(c.access)
+	if err != nil {
+		return nil, err
+	}
+	n, err := c.args.number("number")
+	if err != nil {
+		return nil, err
+	}
+	note, err := c.args.closingComment()
+	if err != nil {
+		return nil, err
+	}
+	read, err := c.token(ctx, repo, perms("issues", "read", "pull_requests", "read"))
+	if err != nil {
+		return nil, err
+	}
+	path := repoPath(repo) + "/issues/" + strconv.FormatInt(n, 10)
+	var issue ghIssue
+	if err := c.g.getJSON(ctx, read, path, &issue); err != nil {
+		return nil, err
+	}
+	if issue.isPullRequest() {
+		return nil, refuse(fmt.Sprintf("%s#%d is a pull request; github_close_pull_request closes it.", repo, n), "the number is a pull request")
+	}
+	mine, err := c.openedByApp(ctx, issue.User)
+	switch {
+	case err != nil:
+		return nil, err
+	case !mine:
+		return nil, refuse("Your access lets you close only issues the GitHub App opened; ask the owner.", fmt.Sprintf("the GitHub App did not open %s#%d", repo, n))
+	case issue.State == "closed":
+		return nil, failure(fmt.Sprintf("Issue %s#%d is closed already.", repo, n))
+	}
+	write, err := c.token(ctx, repo, perms("issues", "write"))
+	if err != nil {
+		return nil, err
+	}
+	return c.closeItem(ctx, write, path, path+"/comments", note, issue.HTMLURL)
+}
+
 // pullSummary is one pull request in a list.
 type pullSummary struct {
 	Number    int64  `json:"number"`
@@ -852,6 +1033,52 @@ func createPullRequest(ctx context.Context, c *call) (any, error) {
 	return created(out.HTMLURL), nil
 }
 
+// closePullRequest closes a pull request the app opened, unmerged,
+// after posting the comment when one is given (through the issue's
+// comments, as comment does). It is read first with a token that only
+// reads: one anyone else opened is refused, a merged or closed one
+// fails, and none of them gets a token that writes.
+func closePullRequest(ctx context.Context, c *call) (any, error) {
+	repo, err := c.args.repository(c.access)
+	if err != nil {
+		return nil, err
+	}
+	n, err := c.args.number("number")
+	if err != nil {
+		return nil, err
+	}
+	note, err := c.args.closingComment()
+	if err != nil {
+		return nil, err
+	}
+	read, err := c.token(ctx, repo, perms("pull_requests", "read"))
+	if err != nil {
+		return nil, err
+	}
+	num := strconv.FormatInt(n, 10)
+	path := repoPath(repo) + "/pulls/" + num
+	var pr ghPull
+	if err := c.g.getJSON(ctx, read, path, &pr); err != nil {
+		return nil, err
+	}
+	mine, err := c.openedByApp(ctx, pr.User)
+	switch {
+	case err != nil:
+		return nil, err
+	case !mine:
+		return nil, refuse("Your access lets you close only pull requests the GitHub App opened; ask the owner.", fmt.Sprintf("the GitHub App did not open %s#%d", repo, n))
+	case pullState(pr) == "merged":
+		return nil, failure(fmt.Sprintf("Pull request %s#%d is merged, and a merged pull request cannot be closed.", repo, n))
+	case pr.State == "closed":
+		return nil, failure(fmt.Sprintf("Pull request %s#%d is closed already.", repo, n))
+	}
+	write, err := c.token(ctx, repo, perms("pull_requests", "write"))
+	if err != nil {
+		return nil, err
+	}
+	return c.closeItem(ctx, write, path, repoPath(repo)+"/issues/"+num+"/comments", note, pr.HTMLURL)
+}
+
 func listBranches(ctx context.Context, c *call) (any, error) {
 	repo, err := c.args.repository(c.access)
 	if err != nil {
@@ -882,6 +1109,95 @@ func listBranches(ctx context.Context, c *call) (any, error) {
 		lines = append(lines, b.Name+" "+b.Commit.SHA)
 	}
 	return strings.Join(lines, "\n"), nil
+}
+
+// deleteBranch deletes a branch whose work is done: the head branch,
+// in the repository itself, of a pull request the app opened there,
+// now closed or merged. With a token that only reads, it reads the
+// repository's default branch, which it never deletes, and the pull
+// requests from the branch (head owner:branch, owner the repository's
+// owner), refusing while any is open; only then is a token that writes
+// the repository's contents minted, for the deletion.
+func deleteBranch(ctx context.Context, c *call) (any, error) {
+	repo, err := c.args.repository(c.access)
+	if err != nil {
+		return nil, err
+	}
+	branch, err := c.args.branch("branch", true)
+	if err != nil {
+		return nil, err
+	}
+	read, err := c.token(ctx, repo, perms("pull_requests", "read"))
+	if err != nil {
+		return nil, err
+	}
+	var r struct {
+		FullName      string `json:"full_name"`
+		DefaultBranch string `json:"default_branch"`
+		Owner         ghUser `json:"owner"`
+	}
+	if err := c.g.getJSON(ctx, read, repoPath(repo), &r); err != nil {
+		return nil, err
+	}
+	switch {
+	case r.DefaultBranch == "":
+		return nil, &apiError{Message: "its answer names no default branch"}
+	case strings.EqualFold(branch, r.DefaultBranch):
+		// Capitals aside: a name that differs only in them is refused
+		// too.
+		return nil, refuse(fmt.Sprintf("%s is the default branch of %s, which your access does not let you delete; ask the owner.", branch, repo), "the branch is the repository's default branch")
+	}
+	owner, _, _ := strings.Cut(repo, "/")
+	full := cmp.Or(r.FullName, repo)
+	v := url.Values{"head": {cmp.Or(r.Owner.Login, owner) + ":" + branch}, "state": {"all"}}
+	var open []int64
+	var ended []ghPull
+	err = c.g.pages(ctx, read, repoPath(repo)+"/pulls?"+v.Encode(), maxListPages, func(b []byte) (int, bool, error) {
+		var page []ghPull
+		if err := decode(b, &page); err != nil {
+			return 0, true, err
+		}
+		for _, p := range page {
+			switch {
+			case p.Head.Ref != branch:
+			case p.State == "open":
+				open = append(open, p.Number)
+			case p.Head.Repo != nil && strings.EqualFold(p.Head.Repo.FullName, full):
+				// A pull request from a fork's branch of the same name is
+				// not this branch's.
+				ended = append(ended, p)
+			}
+		}
+		return len(page), false, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(open) > 0 {
+		return nil, refuse(fmt.Sprintf("%s is the head of pull request #%d, which is open; a branch is deleted only once no open pull request has it as its head.", branch, open[0]),
+			fmt.Sprintf("pull request #%d is open from the branch", open[0]))
+	}
+	mine := false
+	for _, p := range ended {
+		if mine, err = c.openedByApp(ctx, p.User); err != nil {
+			return nil, err
+		}
+		if mine {
+			break
+		}
+	}
+	if !mine {
+		return nil, refuse("Your access lets you delete only the branch of a closed or merged pull request the GitHub App opened; ask the owner.",
+			"no closed pull request the GitHub App opened came from "+branch)
+	}
+	write, err := c.token(ctx, repo, perms("contents", "write"))
+	if err != nil {
+		return nil, err
+	}
+	if _, _, err := c.g.do(ctx, request{method: http.MethodDelete, path: repoPath(repo) + "/git/refs/heads/" + branch, auth: write}); err != nil {
+		return nil, err
+	}
+	return done("deleted the branch " + branch + " of " + repo), nil
 }
 
 func compare(ctx context.Context, c *call) (any, error) {
