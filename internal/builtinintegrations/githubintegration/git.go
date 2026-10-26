@@ -31,7 +31,7 @@ var gitIntegration = gitops.Integration{Name: Name, DisplayName: "GitHub", HostW
 // gitTools are clone, fetch and push as the manifest declares them,
 // for the owner: push needs the write switch.
 var gitTools = []integration.Tool{
-	{Name: gitops.Clone, Description: "Clone a repository the agent's access names into its files, with a token for that repository alone. Reads only."},
+	{Name: gitops.Clone, Description: "Clone a repository the agent's access names into its files, with a token for that repository alone, its git identity the GitHub App's bot. Reads only."},
 	{Name: gitops.Fetch, Description: "Fetch new commits and tags into the agent's working copy of a repository its access names, with a token for that repository alone. Reads only."},
 	{Name: gitops.Push, Description: "Push branches and tags to a repository the agent's access names, with a token for that repository alone. Never forced, never deleting; GitHub's branch protection applies." + needsWrite, Access: writeKey},
 }
@@ -78,7 +78,8 @@ func gitPolicy(caller builtinintegrations.Caller, conn builtinintegrations.Conne
 // (jobToken), narrowed to the call's repository and to reading its
 // contents, or for a push writing them; a repository under another
 // account than the installation's is refused first (narrowedName). A
-// refused call mints nothing.
+// refused call mints nothing. A clone's job also names the app's bot
+// user as the working copy's git identity.
 // The token is presented as x-access-token's password and is in
 // nothing but the job: not in the answer, the audit or an error.
 func (g *GitHub) callGit(ctx context.Context, caller builtinintegrations.Caller, conn builtinintegrations.Connection, name string, args json.RawMessage) (*builtinintegrations.Result, error) {
@@ -98,16 +99,36 @@ func (g *GitHub) callGit(ctx context.Context, caller builtinintegrations.Caller,
 		echoed, _ := clip(repo.Path, 200)
 		return nil, refuse(fmt.Sprintf("A GitHub repository is owner/name, and %s is not one.", echoed), "the repository is not owner/name")
 	}
+	// A clone's working copy is given the app's bot as its identity, so
+	// what the agent commits there is the bot's (bot.go).
+	var identity *shelljob.GitIdentity
+	if name == gitops.Clone {
+		b, err := g.bot(ctx, c, repo.Path)
+		if err != nil {
+			return gitFailure(err)
+		}
+		identity = &shelljob.GitIdentity{Name: b.login, Email: b.noreply()}
+	}
 	tok, err := g.jobToken(ctx, c, repo.Path, jobPermissions(name))
 	if err != nil {
-		var te *tokenError
-		if errors.As(err, &te) {
-			return failed(te.words()), nil
-		}
-		return nil, err
+		return gitFailure(err)
 	}
 	job := call.Job(shelljob.GitAuth{Username: tokenUser, Password: tok}, conn.ID)
+	job.Identity = identity
 	return &builtinintegrations.Result{ShellJob: &shelljob.Job{Git: job}, Audit: call.Started()}, nil
+}
+
+// gitFailure is err of a clone's, a fetch's or a push's first request:
+// a Refusal as it is, GitHub's failure an error result in its words.
+func gitFailure(err error) (*builtinintegrations.Result, error) {
+	var ref *builtinintegrations.Refusal
+	if errors.As(err, &ref) {
+		return nil, err
+	}
+	if words, ok := failureWords(err); ok {
+		return failed(words), nil
+	}
+	return nil, err
 }
 
 // jobPermissions is what the job of the action name may do besides

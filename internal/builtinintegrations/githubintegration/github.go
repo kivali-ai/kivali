@@ -204,11 +204,18 @@ func (g *GitHub) Tools(_ context.Context, caller builtinintegrations.Caller) ([]
 		if t.Name == gitops.Push && !acc.write {
 			continue
 		}
+		if t.Name == gitops.Clone {
+			t.Description += cloneIdentity
+		}
 		t.Description += ownerDecides
 		out = append(out, t)
 	}
 	return out, nil
 }
+
+// cloneIdentity follows github_clone's description: the working copy's
+// git identity is the app's bot.
+const cloneIdentity = " The working copy's git identity is the owner's GitHub App's bot, so commits you make there are authored as the app's bot unless you change the identity."
 
 // Choices: GitHub's access form lists no options live.
 func (g *GitHub) Choices(context.Context, builtinintegrations.Connection, string) ([]string, error) {

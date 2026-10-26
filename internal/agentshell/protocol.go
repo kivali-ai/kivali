@@ -178,24 +178,40 @@ const RootDefault = "/files"
 // destinations must be in AllowedRefs (patterns of branches and tags),
 // or with AnyBranchOrTag be any branch or tag (under refs/heads/ or
 // refs/tags/), and a refspec with + needs Force; a fetch's Force lets a
-// ref move other than fast-forward. TimeoutSeconds bounds the operation (see
+// ref move other than fast-forward. Identity, on a clone, is written
+// into the new working copy's .git/config as user.name and user.email
+// once the clone has succeeded; nil writes none, and a fetch or a push
+// ignores it. TimeoutSeconds bounds the operation (see
 // GitTimeoutFor). ConnectionID names the connection the job runs
 // through; the daemon only echoes it in its response.
 type GitRequest struct {
-	Op                  string   `json:"op"`
-	Path                string   `json:"path"`
-	URL                 string   `json:"url,omitempty"`
-	RefSpecs            []string `json:"refspecs,omitempty"`
-	Force               bool     `json:"force,omitempty"`
-	AllowedRepositories []string `json:"allowed_repositories,omitempty"`
-	AllowedRefs         []string `json:"allowed_refs,omitempty"`
-	AnyBranchOrTag      bool     `json:"any_branch_or_tag,omitempty"`
-	Host                string   `json:"host"`
-	Auth                GitAuth  `json:"auth"`
-	Proxy               GitProxy `json:"proxy"`
-	TimeoutSeconds      int      `json:"timeout_seconds,omitempty"`
-	ConnectionID        string   `json:"connection_id,omitempty"`
+	Op                  string       `json:"op"`
+	Path                string       `json:"path"`
+	URL                 string       `json:"url,omitempty"`
+	RefSpecs            []string     `json:"refspecs,omitempty"`
+	Force               bool         `json:"force,omitempty"`
+	AllowedRepositories []string     `json:"allowed_repositories,omitempty"`
+	AllowedRefs         []string     `json:"allowed_refs,omitempty"`
+	AnyBranchOrTag      bool         `json:"any_branch_or_tag,omitempty"`
+	Identity            *GitIdentity `json:"identity,omitempty"`
+	Host                string       `json:"host"`
+	Auth                GitAuth      `json:"auth"`
+	Proxy               GitProxy     `json:"proxy"`
+	TimeoutSeconds      int          `json:"timeout_seconds,omitempty"`
+	ConnectionID        string       `json:"connection_id,omitempty"`
 }
+
+// GitIdentity is the git identity a clone's working copy is given: its
+// user.name and user.email. Each is one line of at most
+// GitIdentityMaxBytes, without < or >, which git does not take in an
+// identity.
+type GitIdentity struct {
+	Name  string `json:"name"`
+	Email string `json:"email"`
+}
+
+// GitIdentityMaxBytes bounds each of a GitIdentity's fields.
+const GitIdentityMaxBytes = 256
 
 // GitAuth is the HTTP basic auth a git operation presents to the host.
 type GitAuth struct {

@@ -442,6 +442,64 @@ func TestGitCloneRefusals(t *testing.T) {
 	}
 }
 
+// Why this test exists: a clone through GitHub carries the app's bot
+// as its identity, so the commits an agent makes there are authored and
+// committed as the bot, which is what lets the agent delete such a
+// branch later. The daemon must write it into the new working copy's
+// .git/config as user.name and user.email, as git reads them; a clone
+// without one (Git (Basic)'s) must get no user section at all, and an
+// identity git would not take (a line break could add config of its
+// own) must be refused before any byte goes to the git host.
+func TestGitCloneWritesTheIdentity(t *testing.T) {
+	srv := newTestGitServer(t)
+	srv.seed(t, "acme/widgets", "one")
+	d := newGitDaemon(t, "")
+	id := &GitIdentity{Name: "kivali-acme[bot]", Email: "99+kivali-acme[bot]@users.noreply.github.com"}
+	req := cloneJob(srv, "with")
+	req.Identity = id
+	if res := d.run(t, req); res.Error != "" {
+		t.Fatalf("clone = %+v", res)
+	}
+	wc := filepath.Join(d.root, "with")
+	if got := runGitCLI(t, wc, "config", "--get", "user.name"); got != id.Name {
+		t.Errorf("user.name = %q", got)
+	}
+	if got := runGitCLI(t, wc, "config", "--get", "user.email"); got != id.Email {
+		t.Errorf("user.email = %q", got)
+	}
+	if got := runGitCLI(t, wc, "config", "--get", "remote.origin.url"); got != srv.URL+"/acme/widgets.git" {
+		t.Errorf("origin = %q", got)
+	}
+
+	if res := d.run(t, cloneJob(srv, "without")); res.Error != "" {
+		t.Fatalf("clone = %+v", res)
+	}
+	cfg, err := os.ReadFile(filepath.Join(d.root, "without", ".git", "config"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(cfg), "[user]") {
+		t.Errorf("a clone without an identity has one:\n%s", cfg)
+	}
+
+	before := srv.requests.Load()
+	for _, bad := range []GitIdentity{
+		{Name: "bot\n[core]\n\thooksPath = /tmp", Email: id.Email},
+		{Name: id.Name, Email: "x@example.com>"},
+		{Name: "", Email: id.Email},
+		{Name: id.Name, Email: strings.Repeat("e", GitIdentityMaxBytes+1)},
+	} {
+		req := cloneJob(srv, "bad")
+		req.Identity = &bad
+		if res := d.run(t, req); res.Error != "the job's git identity is not one git takes" {
+			t.Errorf("%q: %+v", bad, res)
+		}
+	}
+	if n := srv.requests.Load() - before; n != 0 {
+		t.Errorf("%d requests reached the git host for a refused identity", n)
+	}
+}
+
 // Why this test exists: a working copy is the agent's to write, so
 // its .git/config can send git anywhere: an insteadOf rule to another
 // server, an origin that names it, a global ~/.gitconfig doing the

@@ -819,6 +819,8 @@ type (
 	GitAuth = shelljob.GitAuth
 	// GitProxy is the egress proxy credential a git operation presents.
 	GitProxy = shelljob.GitProxy
+	// GitIdentity is the git identity a clone's working copy is given.
+	GitIdentity = shelljob.GitIdentity
 	// GitResult is a GitJob's outcome.
 	GitResult = shelljob.GitResult
 	// GitRefUpdate is one ref a git operation moved.

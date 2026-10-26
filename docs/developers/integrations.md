@@ -2958,6 +2958,7 @@ type GitJob struct {
 	AllowedRepositories []string // the access's patterns, for the daemon's own check; a push's: push_repositories only
 	AllowedRefs         []string // a push's: the access's push_refs, normalised
 	AnyBranchOrTag      bool     // json: any_branch_or_tag; a push's: any branch or tag, in place of AllowedRefs
+	Identity            *GitIdentity // json: identity; a clone's: {name, email} written to the working copy's .git/config
 	Host                string   // the connection's, made exact
 	Auth                GitAuth  // {username: x-access-token, password: the token}
 	Proxy               GitProxy // {username: integration-git.<id>, password: the secret}
@@ -2981,7 +2982,16 @@ Clone and fetch set no `force`, no `allowed_refs` and no
 agent push without naming branches and tags, which no pattern can say
 (`*` stands within one segment); Git (Basic)'s push never sets it, since its
 access names them in `push_refs`, and GitHub's always does
-([Clone, fetch and push](#clone-fetch-and-push)). Nothing on the job's path logs it:
+([Clone, fetch and push](#clone-fetch-and-push)). `identity`, on a
+clone, is the git identity the daemon writes into the new working
+copy's `.git/config` once the clone has succeeded, `user.name` and
+`user.email`, so the agent's commits there are authored and committed
+as it until the agent changes them; each field one line of at most 256
+bytes without a control character, `<` or `>`, or the daemon refuses
+the job before reaching the host. Git (Basic) sets none, and the
+daemon then writes no `[user]` section; GitHub's clone names its app's
+bot ([Clone, fetch and push](#clone-fetch-and-push)); a fetch or a push
+ignores it. Nothing on the job's path logs it:
 not core, not the MCP server, not the daemon.
 
 Git (Basic)'s refusals name the cause and the owner only:
@@ -3048,7 +3058,11 @@ bound.
 - **What it reaches.** A clone's URL is the job's, parsed by the same
   rules on the job's host, and must be one of `allowed_repositories`.
   The clone's origin is that URL, with no user info, so plain git keeps
-  working for a repository the team's allow list reaches. A fetch's URL
+  working for a repository the team's allow list reaches. A clone with
+  an `identity` gets it in `.git/config` (`user.name`, `user.email`,
+  through go-git's `SetConfig`) once it has succeeded; one git would
+  not take is refused first, and a clone without one gets no `[user]`
+  section. A fetch's URL
   is the job's, by the same rules, or, with none, the working copy's
   origin as written in `.git/config` (read raw, so no
   `url.<base>.insteadOf` rewrites it; exactly one URL), parsed by the
@@ -3612,8 +3626,10 @@ a connection that keeps none and for a renamed app.
 `git_test.go` holds clone, fetch and push to
 [Clone, fetch and push](#clone-fetch-and-push): the job's token minted
 for the repository alone with the action's permission, after the
-check and never through the cache, and every refusal minting nothing.
-`setup_test.go` drives `Setup`, `Requirements`,
+check and never through the cache, and every refusal minting nothing;
+`bot_test.go` the clone's identity, the bot's login and no-reply
+address, read once per connection, and a clone without the bot user
+an error and no job. `setup_test.go` drives `Setup`, `Requirements`,
 `Uninstall` and `RevokeSignIn` against the same fake, holding every
 step to the manifest's declarations and to what core's scrubbing leaves
 readable. `internal/web/integration_github_test.go` drives the whole
@@ -3745,6 +3761,15 @@ acme/tools/cli is not one.", `the repository is not owner/name`), and
 `jobToken`, as every token narrowed to a repository, one under another
 account than the installation's ([Tokens](#tokens)). A refused call
 mints nothing.
+
+A clone's job names the app's bot as the working copy's `identity`:
+`user.name` `<slug>[bot]` and `user.email` its no-reply address,
+`<id>+<slug>[bot]@users.noreply.github.com`, the bot user read once per
+connection as [the same app](#the-same-app) describes (`bot`). So the
+agent's commits there are the bot's, as `delete_branch` reads them,
+unless it changes the identity; `github_clone`'s description says so.
+GitHub not answering for the bot user, or answering another user, is
+an error result in its words, before any job token is minted.
 
 Once the check has passed, `callGit` mints the job's token
 (`jobToken`, [Tokens](#tokens)): `repositories: [<name>]`, the call's

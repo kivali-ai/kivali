@@ -17,7 +17,9 @@ package agentshell
 //   - A clone's URL comes from the job, and must be an https URL on the
 //     job's host, of a repository AllowedRepositories includes. The
 //     clone's origin is that URL, with no user info, so plain git keeps
-//     working for a repository the team's allow list reaches.
+//     working for a repository the team's allow list reaches. A clone
+//     with an Identity has it written into .git/config (user.name and
+//     user.email) once it has succeeded, and nothing else there.
 //   - A fetch's or a push's URL comes from the job, by the same rules,
 //     or, when the job has none, from the working copy's origin as
 //     written in .git/config (raw: never rewritten by a
@@ -75,6 +77,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/config"
@@ -340,6 +344,11 @@ func runGitOp(ctx context.Context, cfg ServerConfig, locks *gitPathLocks, req Gi
 	if req.Op != GitOpClone && req.Op != GitOpFetch && req.Op != GitOpPush {
 		return GitResponse{Error: fmt.Sprintf("%q is not an operation: clone, fetch or push", req.Op)}
 	}
+	if req.Op == GitOpClone && req.Identity != nil {
+		if err := checkGitIdentity(*req.Identity); err != nil {
+			return GitResponse{Error: err.Error()}
+		}
+	}
 	host, err := gitrepo.NormalizeHost(req.Host)
 	if err != nil {
 		return GitResponse{Error: "the connection's host is not a host name"}
@@ -465,7 +474,36 @@ func gitClone(ctx context.Context, cfg ServerConfig, req GitRequest, host, dir s
 		return res
 	}
 	res.Updated = refUpdates(nil, refSnapshot(r))
+	if req.Identity != nil {
+		if err := writeGitIdentity(r, *req.Identity); err != nil {
+			res.Error = "the clone landed, but its git identity could not be written to .git/config: " + err.Error()
+		}
+	}
 	return res
+}
+
+// checkGitIdentity holds a clone's identity to what git takes in one:
+// each field set, one valid line of at most GitIdentityMaxBytes, with
+// no control character, < or >.
+func checkGitIdentity(id GitIdentity) error {
+	for _, f := range []string{id.Name, id.Email} {
+		if f == "" || len(f) > GitIdentityMaxBytes || !utf8.ValidString(f) || strings.ContainsAny(f, "<>") ||
+			strings.IndexFunc(f, unicode.IsControl) >= 0 {
+			return errors.New("the job's git identity is not one git takes")
+		}
+	}
+	return nil
+}
+
+// writeGitIdentity writes id into the working copy's .git/config as
+// user.name and user.email, and nothing else of it.
+func writeGitIdentity(r *git.Repository, id GitIdentity) error {
+	c, err := r.Config()
+	if err != nil {
+		return err
+	}
+	c.User.Name, c.User.Email = id.Name, id.Email
+	return r.SetConfig(c)
 }
 
 // openWorkingCopy is the working copy at dir, whose .git must be a
