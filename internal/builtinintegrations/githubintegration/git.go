@@ -76,7 +76,9 @@ func gitPolicy(caller builtinintegrations.Caller, conn builtinintegrations.Conne
 // callGit is a clone's, a fetch's or a push's first request: the call
 // checked (gitops.Check), then a token minted for its job alone
 // (jobToken), narrowed to the call's repository and to reading its
-// contents, or for a push writing them. A refused call mints nothing.
+// contents, or for a push writing them; a repository under another
+// account than the installation's is refused first (narrowedName). A
+// refused call mints nothing.
 // The token is presented as x-access-token's password and is in
 // nothing but the job: not in the answer, the audit or an error.
 func (g *GitHub) callGit(ctx context.Context, caller builtinintegrations.Caller, conn builtinintegrations.Connection, name string, args json.RawMessage) (*builtinintegrations.Result, error) {
@@ -88,7 +90,8 @@ func (g *GitHub) callGit(ctx context.Context, caller builtinintegrations.Caller,
 	repo, ok := call.Repository()
 	switch {
 	case !ok:
-		// Every call names its repository (NameRepository); a job never
+		// Not reached: Check passes no call without a repository
+		// (NameRepository). It stays as a defence, since a job never
 		// takes a token for the whole installation.
 		return nil, refuse(integration.ToolPrefix(Name)+name+" needs url: name the repository, as its HTTPS URL on github.com or owner/name.", "the arguments lack url")
 	case strings.Count(repo.Path, "/") != 1:

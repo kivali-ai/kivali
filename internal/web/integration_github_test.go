@@ -390,8 +390,9 @@ func TestGitHubSetupInstalls(t *testing.T) {
 	f.set(func(f *fakeGitHubAPI) { f.installed = 42 })
 	landedOnSetup(t, githubBack(t, srv, m["setup_url"].(string), cookie, url.Values{"installation_id": {"999"}, "setup_action": {"install"}}), "github")
 	waitFlow(t, srv, "github", apitypes.SetupFlowStateDone)
-	if rec, data = githubSecret(t, srv, mem); data["installation_id"] != "42" || !slices.Contains(rec.SecretKeys, "installation_id") {
-		t.Errorf("installation kept = %v", data["installation_id"])
+	if rec, data = githubSecret(t, srv, mem); data["installation_id"] != "42" || !slices.Contains(rec.SecretKeys, "installation_id") ||
+		data["installation_account"] != "acme" || !slices.Contains(rec.SecretKeys, "installation_account") {
+		t.Errorf("installation kept = %v %v", data["installation_id"], data["installation_account"])
 	}
 	if list := f.requestsTo("GET", "/app/installations"); len(list) != 1 || !list[0].JWT {
 		t.Errorf("listed = %+v", list)

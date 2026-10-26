@@ -3269,8 +3269,9 @@ or an organization's. The package implements `Integration`,
   summary, which ends with what Disconnect leaves on GitHub;
   `hosts: ["github.com"]`; one field, `account`, "An organization's
   name, or leave it blank for your personal account"; keeps `app_id`,
-  `slug`, `client_id` and `installation_id`, declared not secret, and
-  `client_secret` and `private_key`, secret; no `then`), an empty `user_config`,
+  `slug`, `client_id`, `installation_id` and `installation_account`
+  (the login of the account the app is installed on), declared not
+  secret, and `client_secret` and `private_key`, secret; no `then`), an empty `user_config`,
   `kivali.hosts: ["api.github.com", "github.com"]`, `kivali.verify:
   whoami`, and GitHub 1.0.0's access form, so agents' access carries
   over: `repositories` (required) and `write`, "May create, comment and
@@ -3290,10 +3291,14 @@ or an organization's. The package implements `Integration`,
   every call with "GitHub's connection is not set up; ask the owner to
   set it up again.", its reason in the audit (`the connection is
   incomplete`, or what does not read), and nothing reaches GitHub.
+  `installation_account` holds every token narrowed to a repository to
+  that account ([Tokens](#tokens)); a connection 2.0.0 kept has none,
+  and GitHub is asked for it instead.
   Core scrubs the client secret and the private key from what the owner
   and the agents read ([Scrubbing and the audit](#scrubbing-and-the-audit));
-  the app's id, slug, client id and installation id are GitHub's public
-  names for the app and where it is installed, so a page a step names,
+  the app's id, slug, client id, installation id and installation
+  account are GitHub's public names for the app and where it is
+  installed, so a page a step names,
   a requirement's words and an agent's answer may carry them as they
   are: an issue the app opened reads as opened by `<slug>[bot]`.
 
@@ -3349,7 +3354,8 @@ GitHub's own pages and nothing copied:
    browser brought is not trusted (anyone can load the setup address
    with one): the app's installations are listed with its JWT (`GET
    /app/installations`). A private app installs only on its owner's
-   account, so the list holds one, whose id is kept: **Done**. With
+   account, so the list holds one, whose id and account's login are
+   kept (`installation_id`, `installation_account`): **Done**. With
    more than one, the id the browser brought picks among them, else
    the flow fails. With none: after `setup_action=request` (an
    organization's owners approve installations), or on a check, a
@@ -3435,7 +3441,29 @@ installation access token (`POST
 /app/installations/{installation_id}/access_tokens`), whose body
 narrows it to the call's repository (`repositories: [name]`) and to
 the permissions the action needs (`permissions`, always with `metadata:
-read`). A REST action's token (`installationToken`) is cached in the
+read`).
+
+GitHub reads `repositories` as names of repositories of the account
+the installation is on, without their owner. So before any token
+narrowed to a repository is asked for, REST action and shell job
+alike, `narrowedName` holds the repository's owner to that account,
+case ignored: the call's check matched `owner/name` against the
+access, and a token for the installation account's own repository of
+that name would be for one the check never looked at (an access row
+`partner/widgets` or `*/widgets` with the app on `acme` would mint one
+for `acme/widgets`). Another owner is refused, "The owner's GitHub App
+is installed on acme; partner/widgets is not one of its repositories.
+Ask the owner.", audited as `partner/widgets is not under acme, where
+the app is installed`, and nothing is asked of GitHub. The account is
+the connection's `installation_account`; for a connection 2.0.0 kept,
+which has none, `installationAccount` reads it once (`GET
+/app/installations/{id}`, with the JWT) and keeps it in the process's
+memory by connection id and installation id. A read that fails fails
+the call in GitHub's words ("GitHub did not say which account the
+GitHub App is installed on (HTTP 503): ... Ask the owner.", or the
+401 and 404 words below), and no token is asked for.
+
+A REST action's token (`installationToken`) is cached in the
 process's memory, by connection id, app id, installation id, the
 repository's name (the owner dropped, in lower case, as the token's
 `repositories` names it; none for a token that reaches the whole
@@ -3603,8 +3631,10 @@ needs url: name the repository, as its HTTPS URL on github.com or
 owner/name."), a URL on another host, and a repository outside the
 access. `callGit` adds one: a path of more than two segments is not a
 GitHub repository ("A GitHub repository is owner/name, and
-acme/tools/cli is not one.", `the repository is not owner/name`). A
-refused call mints nothing.
+acme/tools/cli is not one.", `the repository is not owner/name`), and
+`jobToken`, as every token narrowed to a repository, one under another
+account than the installation's ([Tokens](#tokens)). A refused call
+mints nothing.
 
 Once the check has passed, `callGit` mints the job's token
 (`jobToken`, [Tokens](#tokens)): `repositories: [<name>]`, the call's

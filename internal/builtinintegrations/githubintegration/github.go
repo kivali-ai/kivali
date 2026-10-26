@@ -64,6 +64,11 @@ const (
 	FieldClientSecret   = "client_secret"
 	FieldPrivateKey     = "private_key"
 	FieldInstallationID = "installation_id"
+	// FieldInstallationAccount is the login of the account the app is
+	// installed on, which every repository a token is narrowed to must
+	// be under. Not account, the setup form's field, which is blank for
+	// a personal account.
+	FieldInstallationAccount = "installation_account"
 )
 
 // GitHub is the built-in. APIBase and Clock are test hooks; New gives
@@ -87,6 +92,11 @@ type GitHub struct {
 
 	tokensMu sync.Mutex
 	tokens   map[tokenKey]cachedToken
+
+	// accounts is the account each installation is on, read from GitHub
+	// for a connection whose setup kept none (installationAccount).
+	accountsMu sync.Mutex
+	accounts   map[accountKey]string
 }
 
 // New is the built-in as the binary runs it.
@@ -148,11 +158,11 @@ func (g *GitHub) Manifest() *integration.Manifest {
 					Fields: integration.SetupFields{
 						{Key: "account", Words: "An organization's name, or leave it blank for your personal account"},
 					},
-					// The app's id, slug, client id and installation id are
-					// GitHub's public names for the app and where it is
-					// installed (its pages and the <slug>[bot] author of what
-					// it writes show them), so they are not secret; its
-					// client secret and private key are.
+					// The app's id, slug, client id, installation id and
+					// installation account are GitHub's public names for the
+					// app and where it is installed (its pages and the
+					// <slug>[bot] author of what it writes show them), so they
+					// are not secret; its client secret and private key are.
 					Keeps: integration.SetupKeeps{
 						{Key: FieldAppID, Words: "The app's id", NotSecret: true},
 						{Key: FieldSlug, Words: "The app's name on GitHub", NotSecret: true},
@@ -160,6 +170,7 @@ func (g *GitHub) Manifest() *integration.Manifest {
 						{Key: FieldClientSecret, Words: "The app's client secret"},
 						{Key: FieldPrivateKey, Words: "The app's private key, which Kivali signs with to get a token for each call"},
 						{Key: FieldInstallationID, Words: "Where the app is installed", NotSecret: true},
+						{Key: FieldInstallationAccount, Words: "The account the app is installed on, which owns every repository it reaches", NotSecret: true},
 					},
 				},
 			},
@@ -203,7 +214,10 @@ type connection struct {
 	appID          string
 	slug           string
 	installationID string
-	key            *rsa.PrivateKey
+	// account is the account setup kept as the installation's; "" for a
+	// connection kept before it did (installationAccount).
+	account string
+	key     *rsa.PrivateKey
 }
 
 // notSetUp is the words of a call on a connection setup has not
@@ -219,6 +233,7 @@ func readConnection(conn builtinintegrations.Connection) (connection, error) {
 		appID:          strings.TrimSpace(conn.Fields[FieldAppID]),
 		slug:           strings.TrimSpace(conn.Fields[FieldSlug]),
 		installationID: strings.TrimSpace(conn.Fields[FieldInstallationID]),
+		account:        strings.TrimSpace(conn.Fields[FieldInstallationAccount]),
 	}
 	pemKey := conn.Fields[FieldPrivateKey]
 	if c.appID == "" || c.installationID == "" || strings.TrimSpace(pemKey) == "" {
