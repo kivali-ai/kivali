@@ -248,6 +248,51 @@ func TestGitPushRefusals(t *testing.T) {
 	}
 }
 
+// Why this test exists: a job with AnyBranchOrTag is how core lets a
+// push write any branch or tag, which no AllowedRefs pattern can say
+// (* stands within one segment). The daemon must then take a nested
+// branch such as feature/a/b that no pattern of the job names; a job
+// without the flag must still be held to AllowedRefs, so the flag is
+// the only way past them; and the flag must widen nothing else: a +
+// without the job's Force is still refused before anything reaches the
+// host. A daemon that ignored the flag would refuse every such push; one
+// that read it too widely would let a job past what core checked.
+func TestGitPushAnyBranchOrTag(t *testing.T) {
+	srv := newTestGitServer(t)
+	srv.seed(t, "acme/widgets", "one")
+	d := newGitDaemon(t, "")
+	if res := d.run(t, cloneJob(srv, "wc")); res.Error != "" {
+		t.Fatalf("clone = %+v", res)
+	}
+	wc := filepath.Join(d.root, "wc")
+	runGitCLI(t, wc, "checkout", "-q", "-b", "feature/a/b")
+	head := commit(t, wc, "two")
+
+	held := pushJob(srv, "wc", "refs/heads/feature/a/b:refs/heads/feature/a/b")
+	before := srv.requests.Load()
+	if res := d.run(t, held); !strings.Contains(res.Error, "refs/heads/feature/a/b is not a branch or tag the access lets you push") {
+		t.Errorf("a nested branch without the flag = %+v", res)
+	}
+	forced := pushJob(srv, "wc", "+refs/heads/feature/a/b:refs/heads/feature/a/b")
+	forced.AllowedRefs, forced.AnyBranchOrTag = nil, true
+	if res := d.run(t, forced); !strings.Contains(res.Error, "does not allow force-pushing") {
+		t.Errorf("a + with the flag and without Force = %+v", res)
+	}
+	if n := srv.requests.Load() - before; n != 0 {
+		t.Errorf("%d requests of refused pushes reached the host", n)
+	}
+
+	anyRef := pushJob(srv, "wc", "refs/heads/feature/a/b:refs/heads/feature/a/b", "HEAD:refs/tags/release/v1")
+	anyRef.AllowedRefs, anyRef.AnyBranchOrTag = nil, true
+	res := d.run(t, anyRef)
+	if res.Error != "" || len(res.Updated) != 2 || res.Updated[0] != (GitRefUpdate{Ref: "refs/heads/feature/a/b", New: head}) {
+		t.Fatalf("a nested branch and tag with the flag = %+v", res)
+	}
+	if srv.bareRev(t, "refs/heads/feature/a/b") != head || srv.bareRev(t, "refs/tags/release/v1") != head {
+		t.Error("the host lacks feature/a/b or release/v1")
+	}
+}
+
 // Why this test exists: a push runs against the agent's own working
 // copy, whose .git/config and hooks the agent writes. A pre-push hook
 // that refuses (and leaves a mark), an insteadOf or pushInsteadOf rule

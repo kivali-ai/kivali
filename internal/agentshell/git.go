@@ -37,7 +37,8 @@ package agentshell
 //     answers with a redirect (GitHub does for a renamed or transferred
 //     repository) fails the operation, so the repository served is the
 //     one checked, at the URL checked.
-//   - A push writes only the branches and tags of AllowedRefs, forces
+//   - A push writes only the branches and tags of AllowedRefs (any
+//     branch or tag with AnyBranchOrTag, and nothing else), forces
 //     only a refspec with + and only when the job's Force allows it, and
 //     never deletes a remote ref: every refspec is held to that again
 //     here (gitrepo.ParsePushRefSpec), as the URL is to
@@ -745,8 +746,10 @@ func (v verifiedObjects) EncodedObject(t plumbing.ObjectType, h plumbing.Hash) (
 }
 
 // pushRefSpecs is the job's push refspecs, each held again to the
-// rules core held it to: it parses (gitrepo.ParsePushRefSpec), deletes
-// nothing, writes a branch or a tag AllowedRefs includes, forces only
+// rules core held it to: it parses (gitrepo.ParsePushRefSpec, whose
+// destination is only ever a branch or a tag), deletes nothing, writes
+// a branch or a tag AllowedRefs includes (any, with AnyBranchOrTag),
+// forces only
 // when the job's Force allows, and names a destination no other one
 // does. Each source is resolved in the working copy, so a source that
 // is not there is an error rather than a push of nothing.
@@ -763,7 +766,7 @@ func pushRefSpecs(r *git.Repository, req GitRequest) ([]pushSpec, error) {
 			return nil, fmt.Errorf("%q deletes a remote ref, which a push here never does", raw)
 		case err != nil:
 			return nil, fmt.Errorf("%q is not a refspec of a push: %v", raw, err)
-		case !gitrepo.MatchRef(req.AllowedRefs, p.Dst):
+		case !req.AnyBranchOrTag && !gitrepo.MatchRef(req.AllowedRefs, p.Dst):
 			return nil, fmt.Errorf("%s is not a branch or tag the access lets you push", p.Dst)
 		case p.Force && !req.Force:
 			return nil, fmt.Errorf("%q forces, and the access does not allow force-pushing", raw)

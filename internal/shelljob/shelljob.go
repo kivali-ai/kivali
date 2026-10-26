@@ -9,8 +9,9 @@ package shelljob
 // Job is the work core asks the agent's shell to do for one call. One
 // field is set.
 type Job struct {
-	// Git is a clone, a fetch or a push with the Git integration's connection,
-	// run by the agent-shell daemon (POST /v1/git).
+	// Git is a clone, a fetch or a push through a built-in integration's
+	// connection (internal/builtinintegrations/gitops), run by the
+	// agent-shell daemon (POST /v1/git).
 	Git *GitJob `json:"git,omitempty"`
 }
 
@@ -27,9 +28,15 @@ type Job struct {
 //     may pull or push to, or for a push only the ones it may push to).
 //   - RefSpecs are a fetch's refspecs (empty: every branch) or a push's,
 //     normalised by core ([+]src:dst, gitrepo.ParsePushRefSpec).
-//   - AllowedRefs are the branches and tags a push may write, the
-//     access's push_refs normalised (gitrepo.NormalizeRefPatterns); the
-//     daemon refuses a push refspec whose destination is outside them.
+//   - AllowedRefs are the branches and tags a push may write, patterns
+//     normalised (gitrepo.NormalizeRefPatterns; Git (Basic)'s are the
+//     access's push_refs); the daemon refuses a push refspec whose
+//     destination is outside them.
+//   - AnyBranchOrTag lets a push write any branch or tag (every ref
+//     under refs/heads/ or refs/tags/) in place of AllowedRefs, which is
+//     then empty: for an access that lets an agent push without naming
+//     branches and tags. It widens nothing else: the URL, force and
+//     deletions are held as for any push.
 //   - Force on a fetch lets a ref move other than fast-forward. On a
 //     push it is the owner's permission to force: the daemon refuses a
 //     refspec with + when it is false.
@@ -51,6 +58,7 @@ type GitJob struct {
 	Force               bool     `json:"force,omitempty"`
 	AllowedRepositories []string `json:"allowed_repositories,omitempty"`
 	AllowedRefs         []string `json:"allowed_refs,omitempty"`
+	AnyBranchOrTag      bool     `json:"any_branch_or_tag,omitempty"`
 	Host                string   `json:"host"`
 	Auth                GitAuth  `json:"auth"`
 	Proxy               GitProxy `json:"proxy"`
