@@ -94,7 +94,7 @@ fn release_parts(v: &str) -> Option<[u64; 3]> {
 fn baked_release(installed: &str) -> BakedRelease {
     let version = baked_version();
     let newer = matches!((release_parts(installed), release_parts(&version)), (Some(i), Some(b)) if b > i);
-    BakedRelease { version, newer }
+    BakedRelease { version, newer, manual_steps: false }
 }
 
 /// The data disk an earlier version kept in the config directory, and

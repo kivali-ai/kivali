@@ -152,14 +152,17 @@ pub fn decide(report: Option<&CheckReport>, has_local: bool, app_version: &str) 
 /// the team can move to (`newer`: a release above the team's release) is
 /// on offer whatever the feed said or whether it was reached, since the
 /// app that bakes it is by definition new enough for it; only a feed
-/// release above it keeps the feed's offer. `current` is the team's
-/// version from its status, for when no check has finished.
-pub fn with_baked(state: UpdateState, baked: Option<&BakedRelease>, current: Option<&str>) -> UpdateState {
+/// release above it keeps the feed's offer. One whose upgrade needs
+/// steps by hand is shown as such instead (`notes_url` from the feed when
+/// it names the same release). `current` is the team's version from its
+/// status, for when no check has finished.
+pub fn with_baked(state: UpdateState, baked: Option<&BakedRelease>, current: Option<&str>, notes_url: Option<&str>) -> UpdateState {
     let Some(b) = baked.filter(|b| b.newer) else { return state };
     let Some(bv) = parse_version(&b.version) else { return state };
     match &state {
         UpdateState::NoLocalOrg => state,
-        UpdateState::Available { latest, .. } if parse_version(latest).is_some_and(|l| l > bv) => state,
+        UpdateState::Available { latest, .. } | UpdateState::ManualSteps { latest, .. } if parse_version(latest).is_some_and(|l| l > bv) => state,
+        _ if b.manual_steps => UpdateState::ManualSteps { latest: b.version.clone(), notes_url: notes_url.map(Into::into) },
         _ => UpdateState::Available { current: current.unwrap_or_default().to_string(), latest: b.version.clone(), baked: true },
     }
 }
@@ -279,7 +282,7 @@ mod tests {
     }
 
     fn baked(version: &str, newer: bool) -> BakedRelease {
-        BakedRelease { version: version.into(), newer }
+        BakedRelease { version: version.into(), newer, manual_steps: false }
     }
 
     // Guards the first-boot update's offer: the VM image's release
@@ -292,30 +295,41 @@ mod tests {
     fn baked_release_is_offered_over_the_feed() {
         let b = baked("0.17.0", true);
         let offered = |s: UpdateState| matches!(s, UpdateState::Available { ref latest, baked: true, .. } if latest == "0.17.0");
-        assert!(offered(with_baked(decide(None, true, "0.17.0"), Some(&b), Some("0.16.0"))));
-        assert!(offered(with_baked(decide(Some(&report("0.16.0", Some("0.16.0"))), true, "0.17.0"), Some(&b), Some("0.16.0"))));
+        assert!(offered(with_baked(decide(None, true, "0.17.0"), Some(&b), Some("0.16.0"), None)));
+        assert!(offered(with_baked(decide(Some(&report("0.16.0", Some("0.16.0"))), true, "0.17.0"), Some(&b), Some("0.16.0"), None)));
         let mut failed = report("0.16.0", None);
         failed.error = Some("timed out".into());
-        assert!(offered(with_baked(decide(Some(&failed), true, "0.17.0"), Some(&b), Some("0.16.0"))));
+        assert!(offered(with_baked(decide(Some(&failed), true, "0.17.0"), Some(&b), Some("0.16.0"), None)));
         let mut manual = report("0.16.0", Some("0.17.0"));
         manual.manual_steps = true;
-        assert!(offered(with_baked(decide(Some(&manual), true, "0.17.0"), Some(&b), Some("0.16.0"))));
+        assert!(offered(with_baked(decide(Some(&manual), true, "0.17.0"), Some(&b), Some("0.16.0"), None)));
         assert_eq!(
-            with_baked(decide(None, true, "0.17.0"), Some(&b), Some("0.16.0")),
+            with_baked(decide(None, true, "0.17.0"), Some(&b), Some("0.16.0"), None),
             UpdateState::Available { current: "0.16.0".into(), latest: "0.17.0".into(), baked: true }
         );
         // The feed's own offer of the same version becomes the baked one.
-        assert!(offered(with_baked(decide(Some(&report("0.16.0", Some("0.17.0"))), true, "0.17.0"), Some(&b), Some("0.16.0"))));
-        // A feed release above the baked one keeps the feed's offer.
+        assert!(offered(with_baked(decide(Some(&report("0.16.0", Some("0.17.0"))), true, "0.17.0"), Some(&b), Some("0.16.0"), None)));
+        // A feed release above the baked one keeps the feed's offer, as
+        // does a feed release above it that needs steps by hand.
         assert_eq!(
-            with_baked(decide(Some(&report("0.16.0", Some("0.17.1"))), true, "0.17.0"), Some(&b), Some("0.16.0")),
+            with_baked(decide(Some(&report("0.16.0", Some("0.17.1"))), true, "0.17.0"), Some(&b), Some("0.16.0"), None),
             UpdateState::Available { current: "0.16.0".into(), latest: "0.17.1".into(), baked: false }
+        );
+        let mut manual_above = report("0.16.0", Some("0.17.1"));
+        manual_above.manual_steps = true;
+        assert!(matches!(with_baked(decide(Some(&manual_above), true, "0.17.0"), Some(&b), Some("0.16.0"), None), UpdateState::ManualSteps { ref latest, .. } if latest == "0.17.1"));
+        // A baked release whose upgrade needs steps by hand is shown as
+        // such, never offered; the feed's notes attach when it names it.
+        let by_hand = BakedRelease { manual_steps: true, ..baked("0.17.0", true) };
+        assert_eq!(
+            with_baked(decide(None, true, "0.17.0"), Some(&by_hand), Some("0.16.0"), Some("https://notes")),
+            UpdateState::ManualSteps { latest: "0.17.0".into(), notes_url: Some("https://notes".into()) }
         );
         // Not newer, or no verdict yet: the feed's state stands.
         let up = decide(Some(&report("0.16.0", Some("0.16.0"))), true, "0.16.0");
-        assert_eq!(with_baked(up.clone(), Some(&baked("0.16.0", false)), Some("0.16.0")), up);
-        assert_eq!(with_baked(up.clone(), None, Some("0.16.0")), up);
-        assert_eq!(with_baked(UpdateState::NoLocalOrg, Some(&b), None), UpdateState::NoLocalOrg);
+        assert_eq!(with_baked(up.clone(), Some(&baked("0.16.0", false)), Some("0.16.0"), None), up);
+        assert_eq!(with_baked(up.clone(), None, Some("0.16.0"), None), up);
+        assert_eq!(with_baked(UpdateState::NoLocalOrg, Some(&b), None, None), UpdateState::NoLocalOrg);
     }
 
     #[test]

@@ -666,7 +666,11 @@ fn copy_bytes(copies: bool, report: Option<&Report>) -> u64 {
 /// image's release folded in (`updates::with_baked`). `current` is the
 /// team's version from its status.
 fn update_state(check: Option<&CheckReport>, baked: Option<&BakedRelease>, current: Option<&str>, app_version: &str) -> updates::UpdateState {
-    updates::with_baked(updates::decide(check, true, app_version), baked, current)
+    // The feed's notes describe the baked release only when they name it.
+    let notes = check
+        .filter(|c| baked.is_some_and(|b| c.latest.as_deref().map(|l| l.trim_start_matches('v')) == Some(b.version.trim_start_matches('v'))))
+        .and_then(|c| c.notes_url.as_deref());
+    updates::with_baked(updates::decide(check, true, app_version), baked, current, notes)
 }
 
 /// `copy_bytes` is what an update's snapshot copies
@@ -1952,10 +1956,11 @@ fn after_started(app: &AppHandle, rt: &Runtime) {
 /// (teams.json `first_boot_update`): an update that fails shows in
 /// Settings with Try again, and is not attempted again at every launch.
 /// The supervisor's verdict already leaves a development build on either
-/// side alone, and a team setup has not finished with is left to setup.
+/// side alone; a release whose upgrade needs steps by hand is shown, not
+/// applied; and a team setup has not finished with is left to setup.
 fn first_boot_update(app: &AppHandle, rt: &Runtime) {
     let sh = shell(app);
-    let Some(baked) = rt.report.lock().unwrap().as_ref().and_then(|r| r.baked.clone()).filter(|b| b.newer) else { return };
+    let Some(baked) = rt.report.lock().unwrap().as_ref().and_then(|r| r.baked.clone()).filter(|b| b.newer && !b.manual_steps) else { return };
     {
         let mut teams = sh.teams.lock().unwrap();
         let Some(l) = teams.get_mut(&rt.id).and_then(Team::local_mut) else { return };

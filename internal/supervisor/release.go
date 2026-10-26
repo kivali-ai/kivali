@@ -313,11 +313,14 @@ func isRelease(v string) bool {
 type BakedRelease struct {
 	// Version is the baked chart's version.
 	Version string `json:"version"`
-	// Newer is whether an upgrade --baked would apply: the installed
-	// Kivali and the baked chart are both releases, and the baked one is
-	// newer. A development build on either side is never moved on its
-	// own.
+	// Newer is whether the baked chart is a release above the installed
+	// Kivali, itself a release. A development build on either side is
+	// never moved on its own.
 	Newer bool `json:"newer"`
+	// ManualSteps is whether the baked release's upgrade needs steps the
+	// app cannot do (the image's marker): upgrade --baked refuses it, as
+	// a feed release with manual_steps is refused.
+	ManualSteps bool `json:"manual_steps,omitempty"`
 }
 
 // bakedChart is the one kivali chart among the guest's baked charts;
@@ -344,7 +347,7 @@ func bakedRelease(gs guestapi.Status, installed string) *BakedRelease {
 		return nil
 	}
 	v := strings.TrimPrefix(c.Version, "v")
-	return &BakedRelease{Version: v, Newer: isRelease(installed) && isRelease(v) && compareVersions(v, installed) > 0}
+	return &BakedRelease{Version: v, Newer: isRelease(installed) && isRelease(v) && compareVersions(v, installed) > 0, ManualSteps: gs.ManualSteps}
 }
 
 // desktopTooOld reports whether this supervisor is older than min. A

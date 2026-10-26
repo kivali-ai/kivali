@@ -112,6 +112,8 @@ type fakeBackend struct {
 	broken   map[string]bool
 	baked    []string
 	charts   []guestapi.BakedChart
+	// manualSteps is the root disk's manual-steps marker.
+	manualSteps bool
 	// agentDown makes Shutdown over the agent fail (poweroff request
 	// path).
 	agentDown bool
@@ -467,7 +469,7 @@ func (g fakeGuest) Status(context.Context) (guestapi.Status, error) {
 	return guestapi.Status{
 		BootID: "boot", State: guestapi.StateReady, NodeReady: true,
 		Versions:    guestapi.Versions{Agent: "test", VMImage: "0.15.0"},
-		BakedImages: g.m.vm.baked, BakedCharts: g.m.vm.charts,
+		BakedImages: g.m.vm.baked, BakedCharts: g.m.vm.charts, ManualSteps: g.m.vm.manualSteps,
 	}, nil
 }
 

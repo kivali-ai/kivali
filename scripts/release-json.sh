@@ -30,8 +30,9 @@
 #                        for its own version, which semver puts below X.Y.0.
 #   vm_image             VM_IMAGE_VERSION, default X.Y.Z: the VM image the
 #                        release was built with (make -C vm image VM_VERSION=...)
-#   manual_steps         true with --manual-steps, MANUAL_STEPS=1, or when the
-#                        tag is listed in scripts/manual-steps
+#   manual_steps         true with --manual-steps, else scripts/manual-steps.sh's
+#                        answer (MANUAL_STEPS=1, or the tag listed in
+#                        scripts/manual-steps)
 #   notes_url            NOTES_URL, default the GitHub release page of the tag
 #
 # The chart inside the .tgz must say version X.Y.Z (the supervisor refuses
@@ -92,8 +93,8 @@ if [ "$chart_version" != "$bare" ]; then
   exit 1
 fi
 
-if [ -z "$manual" ] && [ -f "$here/manual-steps" ] && grep -qxF "$VERSION" <(grep -v '^[[:space:]]*#' "$here/manual-steps"); then
-  manual=1
+if [ -z "$manual" ]; then
+  manual="$(sh "$here/manual-steps.sh" "$VERSION")"
 fi
 case "$manual" in
   1|true|yes) manual=true ;;

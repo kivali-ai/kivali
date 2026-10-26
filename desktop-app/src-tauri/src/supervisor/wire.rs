@@ -174,14 +174,18 @@ pub struct UpgradeOptions {
 }
 
 /// The Kivali the team's VM image carries (its baked chart), and whether
-/// the team can move to it: both are releases and the baked one is
-/// newer. In the status report once the guest has answered.
+/// the team can move to it: `newer` when both are releases and the baked
+/// one is newer; `manual_steps` when its upgrade needs steps the app
+/// cannot do, which the supervisor then refuses. In the status report
+/// once the guest has answered.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct BakedRelease {
     #[serde(default)]
     pub version: String,
     #[serde(default)]
     pub newer: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub manual_steps: bool,
 }
 
 /// `GET /v1/status`, and the result of `up` and `upgrade`.
@@ -573,7 +577,9 @@ mod tests {
         assert_eq!((r.terminals, r.disk_used_bytes, r.disk_size_bytes), (1, 3 << 30, 64 << 30));
         assert_eq!(r.baked, None);
         let r: Report = serde_json::from_str(r#"{"running":true,"state":{},"baked":{"version":"0.16.0","newer":true}}"#).unwrap();
-        assert_eq!(r.baked, Some(BakedRelease { version: "0.16.0".into(), newer: true }));
+        assert_eq!(r.baked, Some(BakedRelease { version: "0.16.0".into(), newer: true, manual_steps: false }));
+        let r: Report = serde_json::from_str(r#"{"running":true,"state":{},"baked":{"version":"0.16.0","newer":true,"manual_steps":true}}"#).unwrap();
+        assert!(r.baked.unwrap().manual_steps);
         assert_eq!(serde_json::to_string(&UpgradeOptions::default()).unwrap(), "{}");
         assert_eq!(serde_json::to_string(&UpgradeOptions { baked: true, ..Default::default() }).unwrap(), r#"{"baked":true}"#);
 

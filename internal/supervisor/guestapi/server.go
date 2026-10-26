@@ -40,6 +40,9 @@ type Server struct {
 	ChartsDir string
 	// VMVersionFile names the root disk's version.
 	VMVersionFile string
+	// ManualStepsFile exists when the baked release's upgrade needs
+	// steps the app cannot do.
+	ManualStepsFile string
 	// BootIDFile is /proc/sys/kernel/random/boot_id.
 	BootIDFile string
 	// KernelFile is /proc/sys/kernel/osrelease.
@@ -81,16 +84,17 @@ const K3sBin = DataDir + "/k3s/data/current/bin"
 // NewServer returns the agent configured for the Kivali Desktop guest.
 func NewServer(version string) *Server {
 	return &Server{
-		Version:       version,
-		RunDir:        "/run/kivali",
-		DataDir:       DataDir,
-		ImagesDir:     "/usr/share/kivali/images",
-		ChartsDir:     "/usr/share/kivali/charts",
-		VMVersionFile: "/usr/share/kivali/vm-version",
-		BootIDFile:    "/proc/sys/kernel/random/boot_id",
-		KernelFile:    "/proc/sys/kernel/osrelease",
-		MountsFile:    "/proc/mounts",
-		Ext4SysDir:    "/sys/fs/ext4",
+		Version:         version,
+		RunDir:          "/run/kivali",
+		DataDir:         DataDir,
+		ImagesDir:       "/usr/share/kivali/images",
+		ChartsDir:       "/usr/share/kivali/charts",
+		VMVersionFile:   "/usr/share/kivali/vm-version",
+		ManualStepsFile: "/usr/share/kivali/manual-steps",
+		BootIDFile:      "/proc/sys/kernel/random/boot_id",
+		KernelFile:      "/proc/sys/kernel/osrelease",
+		MountsFile:      "/proc/mounts",
+		Ext4SysDir:      "/sys/fs/ext4",
 		Env: []string{
 			"PATH=/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:" + K3sBin + ":" + K3sBin + "/aux",
 			"HOME=/root",
@@ -234,6 +238,10 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	st.State, st.Fatal = s.State()
 	st.NodeReady = s.nodeReady(r.Context(), st.BootID)
 	st.BakedImages, st.BakedCharts = s.baked()
+	if s.ManualStepsFile != "" {
+		_, err := os.Stat(s.ManualStepsFile)
+		st.ManualSteps = err == nil
+	}
 	st.DataDisk = s.dataDiskHealth()
 	st.Versions = Versions{
 		Agent:   s.Version,

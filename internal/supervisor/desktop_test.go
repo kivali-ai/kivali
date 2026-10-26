@@ -612,6 +612,9 @@ func TestWireShapes(t *testing.T) {
 	if r := enc(Report{}); strings.Contains(r, `"baked"`) {
 		t.Errorf("report without a guest carries baked: %s", r)
 	}
+	if r := enc(Report{Baked: &BakedRelease{Version: "0.16.0", Newer: true, ManualSteps: true}}); !strings.Contains(r, `"baked":{"version":"0.16.0","newer":true,"manual_steps":true}`) {
+		t.Errorf("report with manual steps: %s", r)
+	}
 	var uo UpgradeOptions
 	if err := json.Unmarshal([]byte(`{"baked":true}`), &uo); err != nil || !uo.Baked || uo.Force || uo.Feed != "" {
 		t.Errorf("upgrade options %+v %v", uo, err)
