@@ -89,7 +89,8 @@ func (s *Supervisor) snapshotCost(logf Logf) uint64 {
 // staged is everything step 2 produced.
 type staged struct {
 	rel    Release
-	chart  string // host path of the verified chart
+	chart  string // host path of the verified chart; "" for the VM image's
+	baked  string // guest path of the VM image's chart, when chart is ""
 	meta   guestapi.ChartMeta
 	images Images
 	dir    string // downloads/<version>, deleted when the upgrade ends
@@ -387,6 +388,9 @@ func (s *Supervisor) bakedTarget(gs guestapi.Status, from string, force bool, lo
 		return c, fmt.Errorf("%v; upgrade from a feed instead", err)
 	}
 	to := strings.TrimPrefix(c.Version, "v")
+	if gs.ManualSteps {
+		return c, fmt.Errorf("the VM image's Kivali %s needs steps the app can't do yet; see the upgrade notes", to)
+	}
 	switch {
 	case isDevVersion(from):
 		return c, fmt.Errorf("the team runs Kivali %s, a development build; the VM image's %s is not applied over it (restart puts the team onto the images now in its VM)", from, to)
@@ -400,19 +404,19 @@ func (s *Supervisor) bakedTarget(gs guestapi.Status, from string, force bool, lo
 		}
 		logf("Kivali %s is up to date (the VM image bakes %s); upgrading anyway (--force)", from, to)
 	}
-	if gs.ManualSteps {
-		return c, fmt.Errorf("the VM image's Kivali %s needs steps the app can't do yet; see the upgrade notes", to)
-	}
 	logf("upgrading to Kivali %s, baked into the VM image", to)
 	return c, nil
 }
 
 // stageBaked is step 2 for the VM image's release: nothing to download
-// or verify, and the chart is placed from the image at apply (an empty
-// staged.chart). The images are the image's baked tarballs, which k3s
+// or verify, and the chart is copied from the image at apply
+// (staged.baked). The images are the image's baked tarballs, which k3s
 // imports as it starts; the stage waits for every one the chart needs
 // to be listed by containerd, and fails, touching nothing, when they
-// are not within bakedImportTimeout.
+// are not within bakedImportTimeout. A listed ref is taken as the
+// image's: release tags are immutable, so a ref already in containerd
+// from an earlier boot is the same image (a mutable tag, the dev loop's
+// :dev, never reaches here, since a development build is refused).
 func (s *Supervisor) stageBaked(ctx context.Context, g Guest, gs guestapi.Status, c guestapi.BakedChart, logf Logf) (staged, error) {
 	meta := guestapi.ChartMeta{Name: c.Name, Version: c.Version, AppVersion: c.AppVersion, Browser: c.Browser}
 	im, err := pickImages(gs.BakedImages, c.Browser, false)
@@ -435,7 +439,7 @@ func (s *Supervisor) stageBaked(ctx context.Context, g Guest, gs guestapi.Status
 		return staged{}, err
 	}
 	logf("images in containerd: %s", strings.Join(im.Refs, ", "))
-	return staged{meta: meta, images: im}, nil
+	return staged{baked: c.Path, meta: meta, images: im}, nil
 }
 
 // progressWriter counts the bytes of a release's downloads written
@@ -524,11 +528,16 @@ func (s *Supervisor) apply(ctx context.Context, sg staged, logf Logf) error {
 	if _, err := readManifest(ctx, g); err != nil {
 		return err
 	}
-	gs, err := g.Status(ctx)
-	if err != nil {
-		return err
+	if sg.chart == "" {
+		err = copyBakedChart(ctx, g, sg.baked, sg.meta, logf)
+	} else {
+		gs, serr := g.Status(ctx)
+		if serr != nil {
+			return serr
+		}
+		_, err = s.placeChart(ctx, g, gs, sg.chart, logf)
 	}
-	if _, err := s.placeChart(ctx, g, gs, sg.chart, logf); err != nil {
+	if err != nil {
 		return err
 	}
 	krepo, ktag := guestapi.SplitRef(sg.images.Kivali)

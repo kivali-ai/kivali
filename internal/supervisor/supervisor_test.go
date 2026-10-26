@@ -758,6 +758,10 @@ func TestBakedUpgradeWaitsForTheImport(t *testing.T) {
 	}
 }
 
+// The development-build rule that keeps a local build from moving a real
+// team and a dev team from being moved onto a release; the desktop's
+// updates::is_dev_version is the same rule, so the two sides must agree
+// on every shape here.
 func TestIsDevVersion(t *testing.T) {
 	for _, v := range []string{"dev", " dev ", "0.0.0-dev", "v0.0.0-dev", "1.3.0-dev.2", "1.3.0-rc.1.dev+build"} {
 		if !isDevVersion(v) {

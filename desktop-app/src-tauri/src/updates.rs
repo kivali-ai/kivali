@@ -161,7 +161,11 @@ pub fn with_baked(state: UpdateState, baked: Option<&BakedRelease>, current: Opt
     let Some(bv) = parse_version(&b.version) else { return state };
     match &state {
         UpdateState::NoLocalOrg => state,
-        UpdateState::Available { latest, .. } | UpdateState::ManualSteps { latest, .. } if parse_version(latest).is_some_and(|l| l > bv) => state,
+        UpdateState::Available { latest, .. } | UpdateState::ManualSteps { latest, .. } | UpdateState::DesktopFirst { latest, .. }
+            if parse_version(latest).is_some_and(|l| l > bv) =>
+        {
+            state
+        }
         _ if b.manual_steps => UpdateState::ManualSteps { latest: b.version.clone(), notes_url: notes_url.map(Into::into) },
         _ => UpdateState::Available { current: current.unwrap_or_default().to_string(), latest: b.version.clone(), baked: true },
     }
@@ -318,6 +322,15 @@ mod tests {
         let mut manual_above = report("0.16.0", Some("0.17.1"));
         manual_above.manual_steps = true;
         assert!(matches!(with_baked(decide(Some(&manual_above), true, "0.17.0"), Some(&b), Some("0.16.0"), None), UpdateState::ManualSteps { ref latest, .. } if latest == "0.17.1"));
+        // A feed release above it that needs a newer app keeps that
+        // message too: the next app brings it on its first start.
+        let mut app_first = report("0.16.0", Some("0.18.0"));
+        app_first.min_desktop = Some("0.18.0".into());
+        assert!(matches!(with_baked(decide(Some(&app_first), true, "0.17.0"), Some(&b), Some("0.16.0"), None), UpdateState::DesktopFirst { ref latest, .. } if latest == "0.18.0"));
+        // One at or below the baked release gives way to it.
+        let mut app_first_below = report("0.16.0", Some("0.17.0"));
+        app_first_below.min_desktop = Some("0.17.0".into());
+        assert!(offered(with_baked(decide(Some(&app_first_below), true, "0.16.9"), Some(&b), Some("0.16.0"), None)));
         // A baked release whose upgrade needs steps by hand is shown as
         // such, never offered; the feed's notes attach when it names it.
         let by_hand = BakedRelease { manual_steps: true, ..baked("0.17.0", true) };
