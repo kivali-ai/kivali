@@ -1,8 +1,8 @@
 // Package githubintegration is the GitHub built-in integration: agents
 // read and open issues, comments and pull requests in GitHub
 // repositories, close the issues and pull requests the app opened and
-// delete the branches its closed pull requests came from, and clone,
-// fetch and push the repositories, acting as a private GitHub App that
+// delete branches whose own commits are all its bot's, and clone, fetch
+// and push the repositories, acting as a private GitHub App that
 // the owner's setup makes on their account and installs on the
 // repositories they choose.
 //
@@ -99,6 +99,9 @@ type GitHub struct {
 	// for a connection whose setup kept none (installationAccount).
 	accountsMu sync.Mutex
 	accounts   map[accountKey]string
+
+	botsMu sync.Mutex
+	bots   map[botKey]botUser
 }
 
 // New is the built-in as the binary runs it.
@@ -120,11 +123,11 @@ const setupSummary = "Creates a private GitHub App, on your account or an organi
 // accessSchema is the access form: the repositories an agent may use,
 // and whether it may open, comment on and close issues and pull
 // requests, push and delete branches there, closing only what the app
-// opened and deleting only a branch a closed pull request of the app's
-// came from.
+// opened and deleting only a branch whose own commits are all the app's
+// bot's.
 const accessSchema = `{"type":"object","properties":{` +
 	`"repositories":{"type":"array","items":{"type":"string"},"title":"Repositories","description":"Each one owner/name, such as acme/widgets, or a pattern such as acme/*, which covers every repository directly under acme. * is the only wildcard. Capitals do not matter."},` +
-	`"write":{"type":"boolean","title":"May create, comment, push and close","description":"Lets the agent, as the GitHub App, open issues and pull requests, comment on them and push branches and tags in those repositories; close the issues and pull requests the app opened; and delete the branch of a pull request the app opened once that pull request is closed or merged. A push never overwrites history."}},` +
+	`"write":{"type":"boolean","title":"May create, comment, push and close","description":"Lets the agent, as the GitHub App, open issues and pull requests, comment on them and push branches and tags in those repositories; close the issues and pull requests the app opened; and delete a branch whose commits beyond the default branch the app's bot authored and committed, every one, or a branch merged into it. A push never overwrites history."}},` +
 	`"required":["repositories"]}`
 
 // Manifest is GitHub's manifest. Its tools are the actions an agent
@@ -149,7 +152,7 @@ func (g *GitHub) Manifest() *integration.Manifest {
 		Name:            Name,
 		Version:         "2.1.0",
 		DisplayName:     "GitHub",
-		Description:     "Read and open issues, comments and pull requests in GitHub repositories, close the issues and pull requests the app opened, delete the branches its closed pull requests came from, and clone, fetch and push the repositories, as a private GitHub App on your account.",
+		Description:     "Read and open issues, comments and pull requests in GitHub repositories, close the issues and pull requests the app opened, delete branches whose own commits are all its bot's, and clone, fetch and push the repositories, as a private GitHub App on your account.",
 		Author:          integration.Author{Name: "Kivali"},
 		UserConfig:      integration.UserConfig{},
 		Tools:           tools,
