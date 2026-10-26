@@ -37,7 +37,7 @@ func TestOneConnectionPerInstallation(t *testing.T) {
 	srv := newTestServer(t)
 	withGit(t, srv)
 	intTeam(t, srv, "dana")
-	page := connectGit(t, srv, "github.com")
+	page := connectGit(t, srv, "git.example.com")
 	id := page.Connection.ID
 	for _, c := range []struct{ method, path string }{
 		{http.MethodPost, intBase + "/git/connections"},
@@ -51,7 +51,7 @@ func TestOneConnectionPerInstallation(t *testing.T) {
 			t.Errorf("%s %s = %d %s", c.method, c.path, rr.Code, rr.Body.String())
 		}
 	}
-	if conns, _ := srv.Store.ListIntegrationConnections("git"); len(conns) != 1 || conns[0].ID != id || conns[0].Fields["host"] != "github.com" {
+	if conns, _ := srv.Store.ListIntegrationConnections("git"); len(conns) != 1 || conns[0].ID != id || conns[0].Fields["host"] != "git.example.com" {
 		t.Errorf("connections after the removed routes = %+v", conns)
 	}
 
@@ -60,7 +60,7 @@ func TestOneConnectionPerInstallation(t *testing.T) {
 	if page.Connection == nil || page.Connection.ID != id {
 		t.Errorf("the second save made another connection: %+v", page.Connection)
 	}
-	assertAPIError(t, orgDo(t, srv, "", http.MethodPut, intBase+"/git/connection", "application/json", []byte(`{"label":"Company","fields":{"host":"github.com"}}`)), http.StatusBadRequest)
+	assertAPIError(t, orgDo(t, srv, "", http.MethodPut, intBase+"/git/connection", "application/json", []byte(`{"label":"Company","fields":{"host":"git.example.com"}}`)), http.StatusBadRequest)
 	assertAPIError(t, orgDo(t, srv, "", http.MethodPut, intBase+"/git/access/dana", "application/json", []byte(`{"access":{"pull_repositories":["acme/*"]},"connection_id":"`+id+`"}`)), http.StatusBadRequest)
 
 	putIntegrationAccess(t, srv, "git", "dana", `{"pull_repositories":["acme/*"]}`)
@@ -222,11 +222,11 @@ func TestGitJobTellsWhatRanThroughItsConnection(t *testing.T) {
 	srv.Secrets = mem
 	withGit(t, srv)
 	intTeam(t, srv, "dana")
-	before := connectGit(t, srv, "github.com").Connection.ID
+	before := connectGit(t, srv, "git.example.com").Connection.ID
 	putIntegrationAccess(t, srv, "git", "dana", `{"pull_repositories":["acme/*"]}`)
 	dana := agentpod.NewClient(serveCoreUDS(t, srv), "dana")
 	ctx := context.Background()
-	args := json.RawMessage(`{"url":"https://github.com/acme/widgets","path":"/files/widgets"}`)
+	args := json.RawMessage(`{"url":"https://git.example.com/acme/widgets","path":"/files/widgets"}`)
 	first, err := dana.IntegrationCall(ctx, agentpod.IntegrationCallRequest{Name: "git_clone", Arguments: args})
 	if err != nil || first.ShellJob == nil || first.ShellJob.Git == nil || first.ShellJob.Git.ConnectionID != before {
 		t.Fatalf("first request = %+v, %v", first, err)
@@ -234,7 +234,7 @@ func TestGitJobTellsWhatRanThroughItsConnection(t *testing.T) {
 	if rr := intDelete(t, srv, intBase+"/git/connection"); rr.Code != http.StatusOK {
 		t.Fatalf("disconnect = %d %s", rr.Code, rr.Body.String())
 	}
-	if after := connectGit(t, srv, "github.com").Connection.ID; after == before {
+	if after := connectGit(t, srv, "git.example.com").Connection.ID; after == before {
 		t.Fatal("installing again kept the connection's id")
 	}
 	putIntegrationAccess(t, srv, "git", "dana", `{"pull_repositories":["acme/*"]}`)

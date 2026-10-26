@@ -2729,10 +2729,12 @@ its name, its records and its actions (`git_clone`, `git_fetch`,
 `git_push`) kept `git`, and its access form did not change, so every
 agent's access set under 2.0.0 stays valid. Its manifest:
 
-- `user_config`: `host` (required; "github.com, gitlab.com or any HTTPS
-  git host, without https://") and `token` (sensitive, required).
+- `user_config`: `host` (required; "gitlab.com or any HTTPS git host
+  other than github.com, without https://") and `token` (sensitive,
+  required).
 - `kivali.connection.method: token`: one connection, any HTTPS host
-  and a token for it, which every agent's call uses. No
+  but github.com ([github.com](#githubcom)) and a token for it, which
+  every agent's call uses. No
   `kivali.hosts`, and no `kivali.verify` ([No Test
   connection](#no-test-connection)). A Git (Basic) that held several
   connections keeps one at boot ([Migration](#migration)).
@@ -2854,9 +2856,11 @@ two requests on `core.sock`, as the smoke test does
 
 1. The agent's MCP server sends the call (`IntegrationCallRequest`).
    Core works it out as any call ([A call](#a-call)) and calls
-   `Git.Call` (`gitops.Check` with Git (Basic)'s policy), which checks the
-   connection (a host, a token), the access, the arguments and the
-   repository, and for a push its refs (below), and answers with a `builtinintegrations.Refusal` or a shell
+   `Git.Call`, which refuses a connection to github.com
+   ([github.com](#githubcom)) and then, with `gitops.Check` and Git
+   (Basic)'s policy, checks the connection (a host, a token), the
+   access, the arguments and the repository, and for a push its refs
+   (below), and answers with a `builtinintegrations.Refusal` or a shell
    job. Core puts the connection's proxy credential in the job, writes
    an audit row (allowed, the action, `started: <owner/name>`, or
    `started: the working copy's origin at <path>` for a fetch or a push
@@ -2986,6 +2990,7 @@ Git (Basic)'s refusals name the cause and the owner only:
 | A destination twice | git_push names <ref> twice; push each destination once. | a destination is named twice |
 | A destination outside `push_refs` | The Git (Basic) integration's access for you does not include refs/heads/main. Ask the owner if your work needs it. | the access does not include refs/heads/main |
 | A force without `force` | The Git (Basic) integration's access for you does not allow force-pushing. Ask the owner if your work needs it. | the access does not allow force-pushing |
+| A connection to github.com | The Git (Basic) integration does not handle github.com; ask the owner. | the connection is for github.com, which Git (Basic) does not handle |
 
 The answers: "Cloned <owner/name> into <path>. Its origin is <url>; use
 plain git there for everything local, and git_fetch to fetch with the
@@ -3180,8 +3185,8 @@ scoped proxy credential of its own (`internal/web/integration_builtin_egress.go`
 Git (Basic) is a `ConnectionChecker` and an `AccessChecker`. Saving a
 connection whose host `gitrepo.NormalizeHost` cannot read (a path, user
 info, a scheme other than `https://`) is a 400, "Host is a host name
-such as github.com, without https:// or a path", and nothing is
-stored. Saving an access with a `pull_repositories` or
+such as gitlab.com, without https:// or a path", and nothing is
+stored; so is one to github.com ([github.com](#githubcom)). Saving an access with a `pull_repositories` or
 `push_repositories` entry that is not a pattern `gitrepo.ValidPattern`
 reads is a 400, "<entry> is not a repository or a pattern"; one that
 names no repository in either list is a 400, "Name a repository it may
@@ -3189,6 +3194,28 @@ pull or push to"; and one with a `push_refs` entry that
 `gitrepo.NormalizeRefPattern` refuses is a 400, "<entry> is not a
 branch, a tag or a pattern". A stored row that is not this all the same (one written
 before the check, or by hand) refuses every repository.
+
+#### github.com
+
+github.com is the GitHub built-in's ([The GitHub
+built-in](#the-github-built-in)), so Git (Basic) does not handle a host
+whose name, made exact (`gitrepo.NormalizeHost`) and without its port,
+is `github.com` or `www.github.com` (`isGitHub`, `gitintegration/git.go`);
+any other host, one that only looks like it (`notgithub.com`,
+`github.com.example.org`) among them, is unchanged:
+
+- Saving a connection to it (`CheckConnection`) is a 400, "github.com
+  is handled by the GitHub integration; connect it there", and nothing
+  is stored.
+- A connection to it that 2.0.0 or earlier saved stays on disk, its
+  page as before. `Call` and `Complete` refuse every call through it
+  first, before the access or the arguments are read, and `Complete`
+  whatever the result says, a push that landed among them: the agent
+  reads "The Git (Basic) integration does not handle github.com; ask
+  the owner.", which names no other integration, and the audit "the
+  connection is for github.com, which Git (Basic) does not handle". The
+  owner connects GitHub and disconnects Git (Basic), or saves its
+  connection with another host.
 
 #### No Test connection
 

@@ -88,7 +88,7 @@ func TestGitCallRelaysTheShellJob(t *testing.T) {
 	srv := newTestServer(t)
 	withGit(t, srv)
 	intTeam(t, srv, "dana", "lee")
-	connectGit(t, srv, "github.com")
+	connectGit(t, srv, "git.example.com")
 	putIntegrationAccess(t, srv, "git", "dana", `{"pull_repositories":["acme/*"]}`)
 	dana := agentpod.NewClient(serveCoreUDS(t, srv), "dana")
 	ctx := context.Background()
@@ -104,7 +104,7 @@ func TestGitCallRelaysTheShellJob(t *testing.T) {
 	}}
 	tools := mcp.IntegrationTools(dana, shell, list.Tools, nil)
 	clone := tools[0]
-	args := json.RawMessage(`{"url":"https://github.com/acme/widgets","path":"/files/widgets"}`)
+	args := json.RawMessage(`{"url":"https://git.example.com/acme/widgets","path":"/files/widgets"}`)
 	res, err := clone.Handler(ctx, args)
 	if err != nil || res.IsError || !strings.Contains(res.Content[0], "Cloned acme/widgets into /files/widgets.") {
 		t.Fatalf("clone = %+v, %v", res, err)
@@ -114,13 +114,13 @@ func TestGitCallRelaysTheShellJob(t *testing.T) {
 		t.Fatalf("jobs = %d", len(shell.jobs))
 	}
 	j := shell.jobs[0]
-	if j.Op != "clone" || j.URL != "https://github.com/acme/widgets.git" || j.Host != "github.com" || j.Path != "/files/widgets" ||
+	if j.Op != "clone" || j.URL != "https://git.example.com/acme/widgets.git" || j.Host != "git.example.com" || j.Path != "/files/widgets" ||
 		j.Auth != (agentshell.GitAuth{Username: "x-access-token", Password: gitToken}) ||
 		j.Proxy != (agentshell.GitProxy{Username: builtinintegrations.ProxyUser("git", connID), Password: secret}) ||
 		!slices.Equal(j.AllowedRepositories, []string{"acme/*"}) {
 		t.Errorf("job = %+v", j)
 	}
-	if secret == "" || !registered || proxy.Hash != egresscred.Hash(secret) || !slices.Equal(proxy.Hosts, []string{"github.com"}) {
+	if secret == "" || !registered || proxy.Hash != egresscred.Hash(secret) || !slices.Equal(proxy.Hosts, []string{"git.example.com"}) {
 		t.Errorf("proxy credential = %+v registered %v", proxy, registered)
 	}
 	rows := gitRows(t, srv)
@@ -177,7 +177,7 @@ func TestGitCallRefusalsAndNoShell(t *testing.T) {
 	srv := newTestServer(t)
 	withGit(t, srv)
 	intTeam(t, srv, "dana")
-	connectGit(t, srv, "github.com")
+	connectGit(t, srv, "git.example.com")
 	putIntegrationAccess(t, srv, "git", "dana", `{"pull_repositories":["acme/widgets"]}`)
 	dana := agentpod.NewClient(serveCoreUDS(t, srv), "dana")
 	ctx := context.Background()
@@ -190,7 +190,7 @@ func TestGitCallRefusalsAndNoShell(t *testing.T) {
 		t.Errorf("outside the access = %+v", res)
 	}
 	res, _ = tools[0].Handler(ctx, json.RawMessage(`{"url":"https://gitlab.com/acme/widgets","path":"g"}`))
-	if !res.IsError || !strings.Contains(res.Content[0], "connection is for github.com") {
+	if !res.IsError || !strings.Contains(res.Content[0], "connection is for git.example.com") {
 		t.Errorf("another host = %+v", res)
 	}
 	if len(shell.jobs) != 0 {
@@ -247,9 +247,9 @@ func TestGitConnectionProxyCredential(t *testing.T) {
 	withGit(t, srv)
 	ctx := context.Background()
 
-	page := connectGit(t, srv, "github.com")
+	page := connectGit(t, srv, "git.example.com")
 	first, ok, secret, connID := gitProxy(t, srv)
-	if !ok || secret == "" || first.Hash != egresscred.Hash(secret) || !slices.Equal(first.Hosts, []string{"github.com"}) {
+	if !ok || secret == "" || first.Hash != egresscred.Hash(secret) || !slices.Equal(first.Hosts, []string{"git.example.com"}) {
 		t.Fatalf("after the first save: %+v %v", first, ok)
 	}
 	for _, f := range page.ConnectionFields {
@@ -264,7 +264,7 @@ func TestGitConnectionProxyCredential(t *testing.T) {
 		t.Errorf("the built-in is given %+v, %v", conn.Fields, err)
 	}
 
-	connectGit(t, srv, "github.com")
+	connectGit(t, srv, "git.example.com")
 	if again, _, s, _ := gitProxy(t, srv); s != secret || again.Hash != first.Hash {
 		t.Error("a second save changed the credential")
 	}
@@ -330,8 +330,8 @@ func TestGitConnectionAndAccessChecksAtSave(t *testing.T) {
 	intTeam(t, srv, "dana")
 
 	rr := orgJSON(t, srv, http.MethodPut, intBase+"/git/connection",
-		apitypes.ConnectionWrite{Fields: map[string]string{"host": "github.com/acme", "token": gitToken}})
-	if e := assertAPIError(t, rr, http.StatusBadRequest); e.Error != "Host is a host name such as github.com, without https:// or a path" {
+		apitypes.ConnectionWrite{Fields: map[string]string{"host": "git.example.com/acme", "token": gitToken}})
+	if e := assertAPIError(t, rr, http.StatusBadRequest); e.Error != "Host is a host name such as gitlab.com, without https:// or a path" {
 		t.Errorf("a host with a path = %+v", e)
 	}
 	if _, err := srv.Store.GetIntegrationConnection("git"); err == nil {
@@ -341,7 +341,7 @@ func TestGitConnectionAndAccessChecksAtSave(t *testing.T) {
 		t.Error("the refused connection registered a proxy credential")
 	}
 
-	connectGit(t, srv, "https://github.com/")
+	connectGit(t, srv, "https://git.example.com/")
 	rr = orgJSON(t, srv, http.MethodPut, intBase+"/git/access/dana", apitypes.AccessWrite{Access: []byte(`{"push_repositories":["acme/*","acme/[x"]}`)})
 	if e := assertAPIError(t, rr, http.StatusBadRequest); e.Error != "acme/[x is not a repository or a pattern" {
 		t.Errorf("a bad pattern = %+v", e)
@@ -359,6 +359,61 @@ func TestGitConnectionAndAccessChecksAtSave(t *testing.T) {
 	}
 }
 
+// Why this test exists: github.com is the GitHub integration's. Saving
+// a Git (Basic) connection to it must be a 400 whose words send the
+// owner there, storing nothing and registering no proxy credential. A
+// github.com connection an earlier version saved stays on disk after
+// the upgrade, so through the real client every call through it must
+// be refused on either request, with no job carrying its token out,
+// answered with the cause and the owner only and audited as not
+// allowed; were it not, the owner's broad token would keep reaching
+// github.com behind the GitHub integration's narrowed ones.
+func TestGitRefusesGitHub(t *testing.T) {
+	srv := newTestServer(t)
+	withGit(t, srv)
+	intTeam(t, srv, "dana")
+
+	rr := orgJSON(t, srv, http.MethodPut, intBase+"/git/connection",
+		apitypes.ConnectionWrite{Fields: map[string]string{"host": "https://www.GitHub.com/", "token": gitToken}})
+	if e := assertAPIError(t, rr, http.StatusBadRequest); e.Error != "github.com is handled by the GitHub integration; connect it there" {
+		t.Errorf("a github.com connection = %+v", e)
+	}
+	if _, err := srv.Store.GetIntegrationConnection("git"); err == nil || len(srv.Store.EgressScopedCredentials()) != 0 {
+		t.Error("the refused connection was stored or registered")
+	}
+
+	// As an earlier version saved it.
+	connectGit(t, srv, "git.example.com")
+	rec, err := srv.Store.GetIntegrationConnection("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec.Fields["host"] = "github.com"
+	if err := srv.Store.PutIntegrationConnection("git", rec); err != nil {
+		t.Fatal(err)
+	}
+	putIntegrationAccess(t, srv, "git", "dana", `{"pull_repositories":["acme/*"],"push_repositories":["acme/widgets"],"push_refs":["agent/*"]}`)
+	dana := agentpod.NewClient(serveCoreUDS(t, srv), "dana")
+	ctx := context.Background()
+	const words = "The Git (Basic) integration does not handle github.com; ask the owner."
+	const reason = "the connection is for github.com, which Git (Basic) does not handle"
+	landed := &agentpod.IntegrationShellJobResult{Git: &agentpod.GitResult{Repository: "acme/widgets", ConnectionID: rec.ID,
+		Updated: []agentpod.GitRefUpdate{{Ref: "refs/heads/agent/x", New: "1111111aaaa"}}}}
+	for _, req := range []agentpod.IntegrationCallRequest{
+		{Name: "git_clone", Arguments: json.RawMessage(`{"url":"acme/widgets","path":"w"}`)},
+		{Name: "git_push", Arguments: json.RawMessage(`{"path":"w","url":"acme/widgets","refs":["agent/x"]}`)},
+		{Name: "git_push", Arguments: json.RawMessage(`{"path":"w","url":"acme/widgets","refs":["agent/x"]}`), ShellJobResult: landed},
+	} {
+		res, err := dana.IntegrationCall(ctx, req)
+		if err != nil || res.ShellJob != nil || !res.IsError || len(res.Content) != 1 || res.Content[0] != words {
+			t.Errorf("%s (a result: %v) = %+v, %v", req.Name, req.ShellJobResult != nil, res, err)
+		}
+		if row := gitRows(t, srv)[0]; row.Allowed || row.Reason != reason {
+			t.Errorf("%s (a result: %v): audit = %+v", req.Name, req.ShellJobResult != nil, row)
+		}
+	}
+}
+
 // Why this test exists: a push crosses core.sock twice like a clone,
 // and is the one Git call that writes to the owner's repository. Its
 // job must carry the refs core normalised, the access's push_refs and
@@ -373,7 +428,7 @@ func TestGitPushRelaysTheShellJob(t *testing.T) {
 	srv := newTestServer(t)
 	withGit(t, srv)
 	intTeam(t, srv, "dana")
-	connectGit(t, srv, "github.com")
+	connectGit(t, srv, "git.example.com")
 	putIntegrationAccess(t, srv, "git", "dana", `{"pull_repositories":["acme/*"],"push_repositories":["acme/widgets"],"push_refs":["agent/*"],"force":true}`)
 	dana := agentpod.NewClient(serveCoreUDS(t, srv), "dana")
 	ctx := context.Background()
@@ -468,7 +523,7 @@ func TestGitAccessFrom1xIsSetAgain(t *testing.T) {
 		t.Fatal(err)
 	}
 	intTeam(t, srv, "dana")
-	connectGit(t, srv, "github.com")
+	connectGit(t, srv, "git.example.com")
 	// Written as 1.1.0's binary saved it: this binary's check refuses
 	// the old fields at save.
 	if err := srv.Store.SetIntegrationAccess("git", store.IntegrationAccess{
@@ -522,7 +577,7 @@ func TestGitAccessFrom2xKeepsWorking(t *testing.T) {
 		t.Fatal(err)
 	}
 	intTeam(t, srv, "dana")
-	connectGit(t, srv, "github.com")
+	connectGit(t, srv, "git.example.com")
 	putIntegrationAccess(t, srv, "git", "dana", `{"pull_repositories":["acme/*"]}`)
 
 	if err := srv.Store.InstallBuiltinIntegrations(srv.BuiltinIntegrations.Manifests(), boot.Add(time.Hour)); err != nil {
@@ -565,13 +620,13 @@ func TestGitConnectionFromBeforeTheTestWasDropped(t *testing.T) {
 		t.Fatal(err)
 	}
 	page := orgOK[apitypes.IntegrationPage](t, orgJSON(t, srv, http.MethodPut, intBase+"/git/connection",
-		apitypes.ConnectionWrite{Fields: map[string]string{"host": "github.com", "token": gitToken, "test_repository": "acme/widgets"}}))
+		apitypes.ConnectionWrite{Fields: map[string]string{"host": "git.example.com", "token": gitToken, "test_repository": "acme/widgets"}}))
 	conn, err := srv.Store.GetIntegrationConnectionByID("git", page.Connection.ID)
 	if err != nil || conn.Fields["test_repository"] != "acme/widgets" {
 		t.Fatalf("connection under 1.1.0 = %+v, %v", conn, err)
 	}
 	verified := true
-	conn.VerifiedAt, conn.Verified, conn.VerifyMessage = &boot, &verified, "Connected to github.com as octo."
+	conn.VerifiedAt, conn.Verified, conn.VerifyMessage = &boot, &verified, "Connected to git.example.com as octo."
 	if err := srv.Store.PutIntegrationConnection("git", conn); err != nil {
 		t.Fatal(err)
 	}
@@ -594,7 +649,7 @@ func TestGitConnectionFromBeforeTheTestWasDropped(t *testing.T) {
 		t.Errorf("the old result reached the page: %+v", c)
 	}
 	orgOK[apitypes.IntegrationPage](t, orgJSON(t, srv, http.MethodPut, intBase+"/git/connection",
-		apitypes.ConnectionWrite{Fields: map[string]string{"host": "github.com"}}))
+		apitypes.ConnectionWrite{Fields: map[string]string{"host": "git.example.com"}}))
 	conn, err = srv.Store.GetIntegrationConnectionByID("git", conn.ID)
 	if _, kept := conn.Fields["test_repository"]; err != nil || kept {
 		t.Errorf("connection after a save = %+v, %v", conn, err)
