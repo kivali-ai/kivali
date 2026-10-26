@@ -88,6 +88,9 @@ type BakedChart struct {
 	Name       string `json:"name"`
 	Version    string `json:"version"`
 	AppVersion string `json:"app_version"`
+	// Browser is whether the chart's values have a browser section
+	// (ChartMeta.Browser): the images an install of it needs.
+	Browser bool `json:"browser"`
 }
 
 // ExecSpec is the JSON in the `spec` query parameter of exec and pty.

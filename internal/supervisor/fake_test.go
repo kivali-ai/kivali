@@ -415,6 +415,13 @@ func (m *fakeMachine) Start() error {
 	if fatal != "" {
 		return failBoot(fatal)
 	}
+	// k3s imports every tarball in agent/images (the root disk's baked
+	// images) as it starts.
+	m.vm.mu.Lock()
+	for _, r := range m.vm.baked {
+		m.vm.imported[r] = true
+	}
+	m.vm.mu.Unlock()
 	m.events <- ConsoleEvent{Kind: EventReady, Line: ReadyLine}
 	return nil
 }
@@ -1050,6 +1057,23 @@ func (h *harness) disk() diskFS {
 		h.t.Fatal(err)
 	}
 	return fs
+}
+
+// bakeRelease makes the fake VM image carry version's chart and the four
+// Kivali images at tag, as the root disk of a newer desktop would; the
+// next boot imports them (Start), and a running VM already has.
+func (h *harness) bakeRelease(version, tag string) {
+	h.t.Helper()
+	h.vm.mu.Lock()
+	defer h.vm.mu.Unlock()
+	h.vm.charts = []guestapi.BakedChart{{Path: "/usr/share/kivali/charts/kivali-" + version + ".tgz", Name: "kivali", Version: version, AppVersion: "v" + version, Browser: true}}
+	h.vm.baked = nil
+	for _, repo := range []string{repoKivali, repoEgress, repoShell, repoBrowser} {
+		ref := "docker.io/library/" + repo + ":" + tag
+		h.vm.baked = append(h.vm.baked, ref)
+		h.vm.imported[ref] = true
+	}
+	h.vm.baked = append(h.vm.baked, "docker.io/rancher/mirrored-library-busybox:1.37.0", "docker.io/rancher/mirrored-pause:3.10.2")
 }
 
 func (h *harness) manifestValues() (string, map[string]any) {

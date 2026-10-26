@@ -14,9 +14,12 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/kivali-ai/kivali/internal/supervisor/guestapi"
 )
 
 // Release is release.json, the update feed (docs/developers/supervisor.md).
@@ -272,6 +275,76 @@ func compareVersions(a, b string) int {
 		}
 	}
 	return 0
+}
+
+// isDevVersion reports whether v names a development build: "dev", or a
+// version whose pre-release has a "dev" part (the dev chart's
+// 0.0.0-dev). A release candidate is not one. The desktop's
+// updates::is_dev_version is the same rule.
+func isDevVersion(v string) bool {
+	v = strings.TrimSpace(v)
+	if v == "dev" {
+		return true
+	}
+	if _, ok := semver(v); !ok {
+		return false
+	}
+	v = strings.TrimPrefix(v, "v")
+	if i := strings.Index(v, "+"); i >= 0 {
+		v = v[:i]
+	}
+	_, pre, ok := strings.Cut(v, "-")
+	if !ok {
+		return false
+	}
+	return slices.Contains(strings.Split(pre, "."), "dev")
+}
+
+// isRelease reports whether v is a release version: semver, and not a
+// development build.
+func isRelease(v string) bool {
+	_, ok := semver(v)
+	return ok && !isDevVersion(v)
+}
+
+// BakedRelease is the Kivali the VM image the team last booted carries
+// (its baked chart), and whether the team can move to it (Report.Baked;
+// docs/developers/supervisor.md, "Upgrade from the VM image").
+type BakedRelease struct {
+	// Version is the baked chart's version.
+	Version string `json:"version"`
+	// Newer is whether an upgrade --baked would apply: the installed
+	// Kivali and the baked chart are both releases, and the baked one is
+	// newer. A development build on either side is never moved on its
+	// own.
+	Newer bool `json:"newer"`
+}
+
+// bakedChart is the one kivali chart among the guest's baked charts;
+// an error names how many there are otherwise.
+func bakedChart(gs guestapi.Status) (guestapi.BakedChart, error) {
+	var found []guestapi.BakedChart
+	for _, c := range gs.BakedCharts {
+		if c.Name == "kivali" {
+			found = append(found, c)
+		}
+	}
+	if len(found) != 1 {
+		return guestapi.BakedChart{}, fmt.Errorf("the VM image bakes %d kivali charts", len(found))
+	}
+	return found[0], nil
+}
+
+// bakedRelease is the Report's view of the guest's baked chart against
+// the installed version; nil when the VM image bakes no single kivali
+// chart.
+func bakedRelease(gs guestapi.Status, installed string) *BakedRelease {
+	c, err := bakedChart(gs)
+	if err != nil {
+		return nil
+	}
+	v := strings.TrimPrefix(c.Version, "v")
+	return &BakedRelease{Version: v, Newer: isRelease(installed) && isRelease(v) && compareVersions(v, installed) > 0}
 }
 
 // desktopTooOld reports whether this supervisor is older than min. A

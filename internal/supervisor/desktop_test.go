@@ -603,11 +603,18 @@ func TestWireShapes(t *testing.T) {
 	if got := enc(Event{Log: "copying the data disk (10s so far)", Stage: StageUpdatingData, Progress: &EventProgress{Done: 0, Total: 8 << 30}}); got != `{"log":"copying the data disk (10s so far)","stage":"updating-data","progress":{"done":0,"total":8589934592}}` {
 		t.Errorf("line with progress %s", got)
 	}
-	r := enc(Report{Terminals: 1, DiskUsedBytes: 3 << 30, DiskSizeBytes: 64 << 30})
-	for _, want := range []string{`"terminals":1`, `"disk_used_bytes":3221225472`, `"disk_size_bytes":68719476736`} {
+	r := enc(Report{Terminals: 1, DiskUsedBytes: 3 << 30, DiskSizeBytes: 64 << 30, Baked: &BakedRelease{Version: "0.16.0", Newer: true}})
+	for _, want := range []string{`"terminals":1`, `"disk_used_bytes":3221225472`, `"disk_size_bytes":68719476736`, `"baked":{"version":"0.16.0","newer":true}`} {
 		if !strings.Contains(r, want) {
 			t.Errorf("report %s lacks %s", r, want)
 		}
+	}
+	if r := enc(Report{}); strings.Contains(r, `"baked"`) {
+		t.Errorf("report without a guest carries baked: %s", r)
+	}
+	var uo UpgradeOptions
+	if err := json.Unmarshal([]byte(`{"baked":true}`), &uo); err != nil || !uo.Baked || uo.Force || uo.Feed != "" {
+		t.Errorf("upgrade options %+v %v", uo, err)
 	}
 	if got := enc(CredentialStatus{SignedIn: true, Email: "owner@example.com", Billing: "Claude Max", CheckedAt: "2026-10-01T12:00:00Z"}); got != `{"signed_in":true,"email":"owner@example.com","billing":"Claude Max","checked_at":"2026-10-01T12:00:00Z"}` {
 		t.Errorf("credential %s", got)

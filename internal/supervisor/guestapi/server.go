@@ -202,7 +202,7 @@ func (s *Server) baked() ([]string, []BakedChart) {
 				s.logf("baked chart %s: %v", c, err)
 				continue
 			}
-			s.bakedCharts = append(s.bakedCharts, BakedChart{Path: c, Name: m.Name, Version: m.Version, AppVersion: m.AppVersion})
+			s.bakedCharts = append(s.bakedCharts, BakedChart{Path: c, Name: m.Name, Version: m.Version, AppVersion: m.AppVersion, Browser: m.Browser})
 		}
 	})
 	return s.bakedImages, s.bakedCharts

@@ -42,7 +42,7 @@ commands:
   restart      restart the agent pods and the server onto the images now in the VM (the dev loop)
   forward      move the host port forward (--port)
   check        check the release feed for a new version
-  upgrade      upgrade to the feed's release, with snapshot and rollback
+  upgrade      upgrade to the feed's release (--baked: the one baked into the VM image), with snapshot and rollback
   backup       write a backup of the org to a file (--out), the zip the app downloads
   restore      restore a backup zip into a freshly set up org (--in), as the app does
   credential   show how the org's Claude CLI is signed in (sign in with terminal: Claude opens its sign-in menu)
@@ -431,6 +431,13 @@ func (c *cli) status(args []string) int {
 		fmt.Printf("guest: unreachable: %s\n", r.GuestError)
 	}
 	fmt.Printf("kivali: %s\n", orNone(r.State.Kivali))
+	if b := r.Baked; b != nil {
+		newer := ""
+		if b.Newer {
+			newer = " (newer; upgrade --baked applies it)"
+		}
+		fmt.Printf("vm image bakes kivali: %s%s\n", b.Version, newer)
+	}
 	if r.State.LastCheck != nil {
 		fmt.Printf("last check: %s (ok %v)\n", r.State.LastCheck.Format(time.RFC3339), r.State.LastCheckOK)
 	}
@@ -541,6 +548,7 @@ func (c *cli) upgrade(args []string) int {
 	fs := flag.NewFlagSet("upgrade", flag.ExitOnError)
 	feed := fs.String("feed", "", "release.json URL or path (default: local.json's feed)")
 	force := fs.Bool("force", false, "upgrade even when the release is not newer")
+	baked := fs.Bool("baked", false, "upgrade to the Kivali baked into the VM image, downloading nothing (the feed is not consulted)")
 	_ = fs.Parse(args)
 	f := *feed
 	if f != "" && !strings.Contains(f, "://") {
@@ -550,7 +558,7 @@ func (c *cli) upgrade(args []string) int {
 		}
 		f = abs
 	}
-	_, code := c.op("upgrade", supervisor.UpgradeOptions{Feed: f, Force: *force})
+	_, code := c.op("upgrade", supervisor.UpgradeOptions{Feed: f, Force: *force, Baked: *baked})
 	return code
 }
 

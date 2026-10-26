@@ -1088,6 +1088,9 @@ type Report struct {
 	URL        string           `json:"url,omitempty"`
 	Guest      *guestapi.Status `json:"guest,omitempty"`
 	GuestError string           `json:"guest_error,omitempty"`
+	// Baked is the Kivali the VM image carries and whether the team can
+	// move to it (upgrade --baked); nil until the guest has answered.
+	Baked *BakedRelease `json:"baked,omitempty"`
 	// ForwardError is why the forward is down while the VM runs: the
 	// org's recorded port could not be bound (PortError), in words for
 	// the person.
@@ -1144,6 +1147,7 @@ func (s *Supervisor) Status(ctx context.Context) Report {
 	} else {
 		r.Guest = &st
 		r.DiskProblem = st.DataDisk.Problem()
+		r.Baked = bakedRelease(st, r.State.Kivali)
 	}
 	return r
 }
