@@ -635,7 +635,7 @@ fn handle(fake: &Fake, mut conn: impl Read + Write) -> std::io::Result<()> {
                 // The real supervisor's refusals, in its words.
                 let baked = baked_release(&current);
                 if !baked.newer {
-                    return Err(format!("Kivali {current} is up to date; the VM image bakes {}", baked.version));
+                    return Err(format!("the team's Kivali {current} is up to date; the VM image bakes {}", baked.version));
                 }
                 let _ = fake.logs(
                     &mut conn,
