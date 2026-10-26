@@ -47,7 +47,8 @@ type action struct {
 // ownerDecides ends every description an agent reads.
 const ownerDecides = " The owner decides which repositories you may use and whether you may create issues, comments and pull requests."
 
-// actions is every action, the manifest's tools in their order.
+// actions is every action: the manifest's tools are these in this
+// order, less the ownerOnly one.
 var actions = []action{
 	{
 		name:             actionListRepositories,
