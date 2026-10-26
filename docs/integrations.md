@@ -186,12 +186,14 @@ The **Enabled** switch at the top of a connected integration's page turns it off
 
 ## Git (Basic)
 
-**Git (Basic)** ships with Kivali. It lets agents clone, fetch and push your repositories on a git host over HTTPS with a token you give it. Everything else an agent does with a repository (status, branches, commits, diffs, merges) is plain git in its own shell.
+**Git (Basic)** ships with Kivali. It lets agents clone, fetch and push your repositories on a git host other than `github.com` over HTTPS with a token you give it; `github.com` is the [GitHub](#github) integration's. Everything else an agent does with a repository (status, branches, commits, diffs, merges) is plain git in its own shell.
 
 ### The connection
 
-- **Host**: `github.com`, `gitlab.com` or your own git host that serves HTTPS, without `https://`. A host that is not a host name (with a path, for example) is refused when you save.
-- **Access token**: a token that can read the repositories your agents will use. On GitHub, a fine-grained personal access token limited to those repositories, with read access to their contents; on GitLab, an access token with `read_repository`. For agents that push, the token also needs write access to contents on GitHub, or `write_repository` on GitLab. Give it no more than that.
+- **Host**: `gitlab.com` or your own git host that serves HTTPS, without `https://`. A host that is not a host name (with a path, for example) is refused when you save, and so is `github.com` (or `www.github.com`): connect [GitHub](#github) for those repositories instead.
+- **Access token**: a token that can read the repositories your agents will use: on GitLab, an access token with `read_repository`, or your host's equivalent. For agents that push, the token also needs `write_repository` on GitLab, or write access on your host. Give it no more than that.
+
+A Git connection to `github.com` that an earlier version of Kivali saved stays after the update, but every clone, fetch and push through it is refused, and the agent is told to ask you. Connect [GitHub](#github) for those repositories, then disconnect Git (Basic), or save its connection with another host.
 
 Git (Basic) has no **Test connection**. An agent's first clone shows whether the token works: every clone, fetch and push is in **Recent calls**, with why it failed when it did.
 
@@ -232,7 +234,7 @@ Every clone, fetch and push is in **Recent calls**, with the repository and the 
 
 ### Not supported
 
-- SSH addresses (`git@github.com:...`): give the HTTPS address or `owner/name`.
+- SSH addresses (`git@gitlab.com:...`): give the HTTPS address or `owner/name`.
 - Git LFS: a clone holds the LFS pointers, not the files.
 - Submodules are not cloned.
 - Deleting a branch or tag on the remote: a push only adds and moves them.
@@ -294,10 +296,10 @@ With **May create and comment**, it can also open an issue, comment on an issue 
 
 Each action is in **Recent calls**. A call for a repository the agent's access does not name is refused before anything reaches GitHub, and the agent is told to ask you.
 
-GitHub stays apart from [Git (Basic)](#git-basic): it moves no commits. To open a pull request from an agent's work, the agent first pushes its branch with the Git (Basic) integration, through Git (Basic)'s own connection and access, then opens the pull request here.
+GitHub moves no commits, and [Git (Basic)](#git-basic) does not handle `github.com`: an agent opens a pull request here from a branch already on GitHub.
 
 ### Not supported
 
 - GitHub Enterprise Server and other hosts than `github.com`.
-- Cloning, pushing or any other move of commits: that is Git (Basic)'s.
+- Cloning, pushing or any other move of commits.
 - Anything the app's permissions do not cover, such as changing the repository's settings, merging pull requests or approving reviews.

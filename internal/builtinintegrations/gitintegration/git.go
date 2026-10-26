@@ -35,8 +35,8 @@ const Name = "git"
 // displayName is the name the owner and the agents read.
 const displayName = "Git (Basic)"
 
-// tokenUser is the user name the token is presented with: what GitHub
-// expects for a personal access token; GitLab takes any.
+// tokenUser is the user name the token is presented with; GitLab takes
+// any.
 const tokenUser = "x-access-token"
 
 // Git is the built-in. Its fields are test hooks; the zero value is
@@ -65,15 +65,43 @@ type ownerWords string
 func (e ownerWords) Error() string { return string(e) }
 
 // errBadHost is a connection whose host is not one.
-const errBadHost = ownerWords("Host is a host name such as github.com, without https:// or a path")
+const errBadHost = ownerWords("Host is a host name such as gitlab.com, without https:// or a path")
+
+// errGitHubHost is a connection whose host is github.com.
+const errGitHubHost = ownerWords("github.com is handled by the GitHub integration; connect it there")
 
 // CheckConnection holds the connection, as the owner saves it, to a
-// host gitrepo.NormalizeHost can read.
+// host gitrepo.NormalizeHost can read that is not github.com.
 func (g *Git) CheckConnection(conn builtinintegrations.Connection) error {
-	if _, err := gitrepo.NormalizeHost(conn.Fields["host"]); err != nil {
+	host, err := gitrepo.NormalizeHost(conn.Fields["host"])
+	switch {
+	case err != nil:
 		return errBadHost
+	case isGitHub(host):
+		return errGitHubHost
 	}
 	return nil
+}
+
+// isGitHub reports whether host (as gitrepo.NormalizeHost returns it)
+// is github.com or www.github.com, on any port: the GitHub
+// integration's, which Git (Basic) does not handle.
+func isGitHub(host string) bool {
+	name := gitrepo.HostName(host)
+	return name == "github.com" || name == "www.github.com"
+}
+
+// throughGitHub refuses a call through conn when its host is github.com:
+// a connection an earlier version saved, which this one refuses at
+// save. Nil for any other connection, one without a host among them.
+func throughGitHub(conn builtinintegrations.Connection) error {
+	if host, err := gitrepo.NormalizeHost(conn.Fields["host"]); err != nil || !isGitHub(host) {
+		return nil
+	}
+	return &builtinintegrations.Refusal{
+		Text:   "The " + displayName + " integration does not handle github.com; ask the owner.",
+		Reason: "the connection is for github.com, which " + displayName + " does not handle",
+	}
 }
 
 // accessSchema is the access form: the repositories it may pull, the
@@ -97,9 +125,9 @@ func (g *Git) Manifest() *integration.Manifest {
 		Author:          integration.Author{Name: "Kivali"},
 		UserConfig: integration.UserConfig{
 			{Key: "host", Type: "string", Title: "Host", Required: true,
-				Description: "github.com, gitlab.com or any HTTPS git host, without https://"},
+				Description: "gitlab.com or any HTTPS git host other than github.com, without https://"},
 			{Key: "token", Type: "string", Title: "Access token", Sensitive: true, Required: true,
-				Description: "A fine-grained personal access token on GitHub, or the host's equivalent, that can read the repositories agents will use"},
+				Description: "A token for the host, such as a GitLab access token, that can read the repositories agents will use"},
 		},
 		Tools: []integration.Tool{
 			{Name: gitops.Clone, Description: "Clones a repository the agent's access includes into the agent's files, with the connection's token."},
@@ -160,8 +188,12 @@ func (g *Git) Verify(context.Context, builtinintegrations.Connection) (string, e
 }
 
 // Call checks the call and answers with the shell job that runs it,
-// the token presented under tokenUser.
+// the token presented under tokenUser. A call through a github.com
+// connection is refused first.
 func (g *Git) Call(_ context.Context, caller builtinintegrations.Caller, conn builtinintegrations.Connection, name string, args json.RawMessage) (*builtinintegrations.Result, error) {
+	if err := throughGitHub(conn); err != nil {
+		return nil, err
+	}
 	c, err := gitops.Check(name, args, g.policy(caller, conn, name))
 	if err != nil {
 		return nil, err
@@ -172,7 +204,12 @@ func (g *Git) Call(_ context.Context, caller builtinintegrations.Caller, conn bu
 
 // Complete puts the shell's result in words for the agent and the
 // audit, with the call checked again under the access and the
-// connection as they are at the second request (gitops.Complete).
+// connection as they are at the second request (gitops.Complete). A
+// call through a github.com connection is refused first, whatever the
+// result says.
 func (g *Git) Complete(_ context.Context, caller builtinintegrations.Caller, conn builtinintegrations.Connection, name string, args json.RawMessage, result shelljob.Result) (*builtinintegrations.Result, error) {
+	if err := throughGitHub(conn); err != nil {
+		return nil, err
+	}
 	return gitops.Complete(name, args, g.policy(caller, conn, name), conn.ID, result)
 }

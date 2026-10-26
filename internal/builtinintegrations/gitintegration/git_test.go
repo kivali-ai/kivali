@@ -36,10 +36,11 @@ func dana(patterns ...any) builtinintegrations.Caller {
 // Call and Tools know, push marked as needing a repository to push to,
 // and name no kivali.verify, so that Kivali's
 // server never reaches a git host itself. It is Git (Basic), under the
-// name git its records and its actions keep, and its description says
-// github.com is the GitHub integration's, so an owner reaching for it
-// for GitHub is sent there; its version is past 2.0.0, which named it
-// Git and took github.com, so boot supersedes that one.
+// name git its records and its actions keep, and its description and
+// its host field say github.com is the GitHub integration's, so an
+// owner reaching for it for GitHub is sent there; its version is past
+// 2.0.0, which named it Git and took github.com, so boot supersedes
+// that one.
 func TestManifest(t *testing.T) {
 	m := New().Manifest()
 	if f := integration.ValidateBuiltin(m); len(f) != 0 {
@@ -47,6 +48,9 @@ func TestManifest(t *testing.T) {
 	}
 	if m.Name != "git" || m.DisplayName != "Git (Basic)" || !strings.Contains(m.Description, "other than github.com, which the GitHub integration handles") {
 		t.Errorf("name %q, display name %q, description %q", m.Name, m.DisplayName, m.Description)
+	}
+	if !strings.Contains(m.UserConfig[0].Description, "other than github.com") || strings.Contains(m.UserConfig[1].Description, "GitHub") {
+		t.Errorf("user_config = %+v", m.UserConfig)
 	}
 	var keys []string
 	for _, f := range m.UserConfig {
@@ -97,7 +101,7 @@ func TestManifest(t *testing.T) {
 			t.Errorf("%s: %q %s", tl.Name, tl.Description, tl.InputSchema)
 		}
 	}
-	if h := New().Hosts(testConn("https://GitHub.com/")); len(h) != 1 || h[0] != "github.com" {
+	if h := New().Hosts(testConn("https://Git.Example.com/")); len(h) != 1 || h[0] != "git.example.com" {
 		t.Errorf("hosts = %v", h)
 	}
 	if h := New().Hosts(testConn("git.acme.io:8443")); len(h) != 1 || h[0] != "git.acme.io" {
@@ -191,18 +195,18 @@ func TestTools(t *testing.T) {
 // the owner's token, so everything in it is core's, not the model's: a
 // URL core built from the connection's host and the repository's
 // owner/name (case kept, no user info), the access's patterns for the
-// daemon's own check, the bound, the token under the user GitHub
-// expects, the connection it runs through (which the second request
+// daemon's own check, the bound, the token under x-access-token, the
+// connection it runs through (which the second request
 // reads back), and no proxy credential (core adds the connection's).
 func TestCallBuildsTheJob(t *testing.T) {
 	g := New()
-	res, err := g.Call(context.Background(), dana("acme/*"), testConn("github.com"), "clone",
-		json.RawMessage(`{"url":"https://github.com/Acme/Widgets","path":"/files/widgets"}`))
+	res, err := g.Call(context.Background(), dana("acme/*"), testConn("git.example.com"), "clone",
+		json.RawMessage(`{"url":"https://git.example.com/Acme/Widgets","path":"/files/widgets"}`))
 	if err != nil || res.ShellJob == nil || res.ShellJob.Git == nil {
 		t.Fatalf("clone = %+v, %v", res, err)
 	}
 	want := shelljob.GitJob{
-		Op: "clone", Path: "/files/widgets", URL: "https://github.com/Acme/Widgets.git", Host: "github.com",
+		Op: "clone", Path: "/files/widgets", URL: "https://git.example.com/Acme/Widgets.git", Host: "git.example.com",
 		AllowedRepositories: []string{"acme/*"}, Auth: shelljob.GitAuth{Username: "x-access-token", Password: testToken},
 		TimeoutSeconds: 900, ConnectionID: "1a2b3c4d",
 	}
@@ -215,7 +219,7 @@ func TestCallBuildsTheJob(t *testing.T) {
 		t.Errorf("started row = %q", res.Audit)
 	}
 
-	res, err = g.Call(context.Background(), dana("acme/widgets"), testConn("github.com"), "fetch",
+	res, err = g.Call(context.Background(), dana("acme/widgets"), testConn("git.example.com"), "fetch",
 		json.RawMessage(`{"path":"~/w","refs":["+refs/heads/main:refs/remotes/origin/main"]}`))
 	if err != nil || res.ShellJob == nil {
 		t.Fatalf("fetch = %+v, %v", res, err)
@@ -227,8 +231,8 @@ func TestCallBuildsTheJob(t *testing.T) {
 	if res.Audit != "started: the working copy's origin at ~/w" {
 		t.Errorf("started row of a fetch from origin = %q", res.Audit)
 	}
-	res, err = g.Call(context.Background(), dana("acme/widgets"), testConn("github.com"), "fetch", json.RawMessage(`{"path":"w","url":"acme/widgets"}`))
-	if err != nil || res.ShellJob.Git.URL != "https://github.com/acme/widgets.git" {
+	res, err = g.Call(context.Background(), dana("acme/widgets"), testConn("git.example.com"), "fetch", json.RawMessage(`{"path":"w","url":"acme/widgets"}`))
+	if err != nil || res.ShellJob.Git.URL != "https://git.example.com/acme/widgets.git" {
 		t.Errorf("fetch with url = %+v, %v", res, err)
 	}
 }
@@ -263,20 +267,20 @@ func TestPushIsPerRepository(t *testing.T) {
 		"pull_repositories": []any{"acme/*"}, "push_repositories": []any{"acme/widgets"}, "push_refs": []any{"agent/*"},
 	}}
 	for _, repo := range []string{"acme/gadgets", "acme/widgets"} {
-		res, err := g.Call(ctx, caller, testConn("github.com"), "clone", json.RawMessage(`{"url":"`+repo+`","path":"w"}`))
+		res, err := g.Call(ctx, caller, testConn("git.example.com"), "clone", json.RawMessage(`{"url":"`+repo+`","path":"w"}`))
 		if err != nil || strings.Join(res.ShellJob.Git.AllowedRepositories, " ") != "acme/* acme/widgets" {
 			t.Errorf("clone %s = %+v, %v", repo, res, err)
 		}
 	}
-	res, err := g.Call(ctx, caller, testConn("github.com"), "push", json.RawMessage(`{"path":"w","url":"acme/widgets","refs":["agent/x"]}`))
+	res, err := g.Call(ctx, caller, testConn("git.example.com"), "push", json.RawMessage(`{"path":"w","url":"acme/widgets","refs":["agent/x"]}`))
 	if err != nil || strings.Join(res.ShellJob.Git.AllowedRepositories, " ") != "acme/widgets" {
 		t.Errorf("push to acme/widgets = %+v, %v", res, err)
 	}
-	res, err = g.Call(ctx, caller, testConn("github.com"), "push", json.RawMessage(`{"path":"w","refs":["agent/x"]}`))
+	res, err = g.Call(ctx, caller, testConn("git.example.com"), "push", json.RawMessage(`{"path":"w","refs":["agent/x"]}`))
 	if err != nil || res.ShellJob.Git.URL != "" || strings.Join(res.ShellJob.Git.AllowedRepositories, " ") != "acme/widgets" {
 		t.Errorf("push to the working copy's origin = %+v, %v", res, err)
 	}
-	_, err = g.Call(ctx, caller, testConn("github.com"), "push", json.RawMessage(`{"path":"w","url":"acme/gadgets","refs":["agent/x"]}`))
+	_, err = g.Call(ctx, caller, testConn("git.example.com"), "push", json.RawMessage(`{"path":"w","url":"acme/gadgets","refs":["agent/x"]}`))
 	var ref *builtinintegrations.Refusal
 	if !errors.As(err, &ref) || ref.Reason != "the access does not allow pushing to acme/gadgets" ||
 		ref.Text != "The Git (Basic) integration's access for you lets you pull acme/gadgets but not push to it. Ask the owner if your work needs it." {
@@ -292,13 +296,13 @@ func TestPushIsPerRepository(t *testing.T) {
 // push's bound.
 func TestCallBuildsThePushJob(t *testing.T) {
 	g := New()
-	res, err := g.Call(context.Background(), pusher(false), testConn("github.com"), "push",
+	res, err := g.Call(context.Background(), pusher(false), testConn("git.example.com"), "push",
 		json.RawMessage(`{"path":"~/w","refs":["agent/x","tags/v1.2.0","HEAD:refs/heads/agent/y"]}`))
 	if err != nil || res.ShellJob == nil || res.ShellJob.Git == nil {
 		t.Fatalf("push = %+v, %v", res, err)
 	}
 	want := shelljob.GitJob{
-		Op: "push", Path: "~/w", Host: "github.com",
+		Op: "push", Path: "~/w", Host: "git.example.com",
 		RefSpecs:            []string{"refs/heads/agent/x:refs/heads/agent/x", "refs/tags/v1.2.0:refs/tags/v1.2.0", "HEAD:refs/heads/agent/y"},
 		AllowedRepositories: []string{"acme/*"}, AllowedRefs: []string{"refs/heads/agent/*", "refs/tags/*"},
 		Auth: shelljob.GitAuth{Username: "x-access-token", Password: testToken}, TimeoutSeconds: 600, ConnectionID: "1a2b3c4d",
@@ -308,16 +312,16 @@ func TestCallBuildsThePushJob(t *testing.T) {
 		t.Errorf("push job = %s, want %s", got, w)
 	}
 
-	res, err = g.Call(context.Background(), pusher(true), testConn("github.com"), "push",
+	res, err = g.Call(context.Background(), pusher(true), testConn("git.example.com"), "push",
 		json.RawMessage(`{"path":"w","url":"acme/widgets","refs":["agent/x","+HEAD:agent/y"]}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if j := res.ShellJob.Git; !j.Force || j.URL != "https://github.com/acme/widgets.git" ||
+	if j := res.ShellJob.Git; !j.Force || j.URL != "https://git.example.com/acme/widgets.git" ||
 		strings.Join(j.RefSpecs, " ") != "refs/heads/agent/x:refs/heads/agent/x +HEAD:refs/heads/agent/y" {
 		t.Errorf("a push with one forced ref = %+v", j)
 	}
-	res, _ = g.Call(context.Background(), pusher(true), testConn("github.com"), "push", json.RawMessage(`{"path":"w","refs":["agent/x"],"force":true}`))
+	res, _ = g.Call(context.Background(), pusher(true), testConn("git.example.com"), "push", json.RawMessage(`{"path":"w","refs":["agent/x"],"force":true}`))
 	if j := res.ShellJob.Git; !j.Force || j.RefSpecs[0] != "+refs/heads/agent/x:refs/heads/agent/x" {
 		t.Errorf("force: true = %+v", j)
 	}
@@ -364,7 +368,7 @@ func TestPushRefusals(t *testing.T) {
 		"force not bool": {pusher(false), `{"path":"w","refs":["agent/x"],"force":"yes"}`, "git_push takes path and refs", "the arguments do not read"},
 		"outside repos":  {pusher(false), `{"path":"w","url":"other/x","refs":["agent/x"]}`, "does not include other/x", "the access does not include other/x"},
 	} {
-		res, err := g.Call(context.Background(), c.caller, testConn("github.com"), "push", json.RawMessage(c.args))
+		res, err := g.Call(context.Background(), c.caller, testConn("git.example.com"), "push", json.RawMessage(c.args))
 		var ref *builtinintegrations.Refusal
 		if !errors.As(err, &ref) || res != nil {
 			t.Errorf("%s: = %+v, %v; want a refusal", name, res, err)
@@ -393,22 +397,22 @@ func TestCallRefusals(t *testing.T) {
 		args   json.RawMessage
 		words  string
 	}{
-		"another host":      {dana("acme/*"), testConn("github.com"), "clone", clone(`{"url":"https://gitlab.com/acme/widgets","path":"w"}`), "is for github.com"},
-		"another port":      {dana("acme/*"), testConn("github.com"), "clone", clone(`{"url":"https://github.com:8443/acme/widgets","path":"w"}`), "is for github.com"},
-		"user info":         {dana("acme/*"), testConn("github.com"), "clone", clone(`{"url":"https://me:pw@github.com/acme/widgets","path":"w"}`), "user name or password"},
-		"a query":           {dana("acme/*"), testConn("github.com"), "clone", clone(`{"url":"https://github.com/acme/widgets?x=1","path":"w"}`), "query"},
-		"ssh":               {dana("acme/*"), testConn("github.com"), "clone", clone(`{"url":"git@github.com:acme/widgets.git","path":"w"}`), "neither an HTTPS URL"},
-		"plain http":        {dana("acme/*"), testConn("github.com"), "clone", clone(`{"url":"http://github.com/acme/widgets","path":"w"}`), "HTTPS"},
-		"outside":           {dana("acme/widgets"), testConn("github.com"), "clone", clone(`{"url":"acme/gadgets","path":"w"}`), "does not include acme/gadgets. Ask the owner"},
-		"fetch outside":     {dana("acme/widgets"), testConn("github.com"), "fetch", clone(`{"url":"other/x","path":"w"}`), "does not include other/x"},
-		"no repositories":   {builtinintegrations.Caller{Access: map[string]any{}}, testConn("github.com"), "clone", clone(`{"url":"acme/widgets","path":"w"}`), "names no repositories"},
-		"no host":           {dana("acme/*"), testConn("https://github.com/acme"), "clone", clone(`{"url":"acme/widgets","path":"w"}`), "no host Kivali can use"},
-		"no token":          {dana("acme/*"), builtinintegrations.Connection{Fields: map[string]string{"host": "github.com"}}, "clone", clone(`{"url":"acme/widgets","path":"w"}`), "no token"},
-		"no path":           {dana("acme/*"), testConn("github.com"), "clone", clone(`{"url":"acme/widgets"}`), "needs url and path"},
-		"fetch no path":     {dana("acme/*"), testConn("github.com"), "fetch", clone(`{}`), "needs path"},
-		"an unknown field":  {dana("acme/*"), testConn("github.com"), "clone", clone(`{"url":"acme/widgets","path":"w","force":true}`), "takes url and path"},
-		"refs not strings":  {dana("acme/*"), testConn("github.com"), "fetch", clone(`{"path":"w","refs":[1]}`), "list of strings"},
-		"an unknown action": {dana("acme/*"), testConn("github.com"), "pull", clone(`{}`), "no action pull"},
+		"another host":      {dana("acme/*"), testConn("git.example.com"), "clone", clone(`{"url":"https://gitlab.com/acme/widgets","path":"w"}`), "is for git.example.com"},
+		"another port":      {dana("acme/*"), testConn("git.example.com"), "clone", clone(`{"url":"https://git.example.com:8443/acme/widgets","path":"w"}`), "is for git.example.com"},
+		"user info":         {dana("acme/*"), testConn("git.example.com"), "clone", clone(`{"url":"https://me:pw@git.example.com/acme/widgets","path":"w"}`), "user name or password"},
+		"a query":           {dana("acme/*"), testConn("git.example.com"), "clone", clone(`{"url":"https://git.example.com/acme/widgets?x=1","path":"w"}`), "query"},
+		"ssh":               {dana("acme/*"), testConn("git.example.com"), "clone", clone(`{"url":"git@git.example.com:acme/widgets.git","path":"w"}`), "neither an HTTPS URL"},
+		"plain http":        {dana("acme/*"), testConn("git.example.com"), "clone", clone(`{"url":"http://git.example.com/acme/widgets","path":"w"}`), "HTTPS"},
+		"outside":           {dana("acme/widgets"), testConn("git.example.com"), "clone", clone(`{"url":"acme/gadgets","path":"w"}`), "does not include acme/gadgets. Ask the owner"},
+		"fetch outside":     {dana("acme/widgets"), testConn("git.example.com"), "fetch", clone(`{"url":"other/x","path":"w"}`), "does not include other/x"},
+		"no repositories":   {builtinintegrations.Caller{Access: map[string]any{}}, testConn("git.example.com"), "clone", clone(`{"url":"acme/widgets","path":"w"}`), "names no repositories"},
+		"no host":           {dana("acme/*"), testConn("https://git.example.com/acme"), "clone", clone(`{"url":"acme/widgets","path":"w"}`), "no host Kivali can use"},
+		"no token":          {dana("acme/*"), builtinintegrations.Connection{Fields: map[string]string{"host": "git.example.com"}}, "clone", clone(`{"url":"acme/widgets","path":"w"}`), "no token"},
+		"no path":           {dana("acme/*"), testConn("git.example.com"), "clone", clone(`{"url":"acme/widgets"}`), "needs url and path"},
+		"fetch no path":     {dana("acme/*"), testConn("git.example.com"), "fetch", clone(`{}`), "needs path"},
+		"an unknown field":  {dana("acme/*"), testConn("git.example.com"), "clone", clone(`{"url":"acme/widgets","path":"w","force":true}`), "takes url and path"},
+		"refs not strings":  {dana("acme/*"), testConn("git.example.com"), "fetch", clone(`{"path":"w","refs":[1]}`), "list of strings"},
+		"an unknown action": {dana("acme/*"), testConn("git.example.com"), "pull", clone(`{}`), "no action pull"},
 	} {
 		res, err := g.Call(context.Background(), c.caller, c.conn, c.action, c.args)
 		var ref *builtinintegrations.Refusal
@@ -437,20 +441,20 @@ func TestComplete(t *testing.T) {
 		{Ref: "refs/heads/main", New: "1111111aaaa"},
 		{Ref: "refs/remotes/origin/main", New: "1111111aaaa"},
 	}}}
-	res, err := g.Complete(ctx, dana("acme/*"), testConn("github.com"), "clone", cloneArgs, ok)
-	if err != nil || res.IsError || !strings.Contains(res.Content[0], "Cloned acme/widgets into /files/widgets. Its origin is https://github.com/acme/widgets.git") ||
+	res, err := g.Complete(ctx, dana("acme/*"), testConn("git.example.com"), "clone", cloneArgs, ok)
+	if err != nil || res.IsError || !strings.Contains(res.Content[0], "Cloned acme/widgets into /files/widgets. Its origin is https://git.example.com/acme/widgets.git") ||
 		!strings.Contains(res.Content[0], "refs/remotes/origin/main new at 1111111") || res.Audit != "acme/widgets: updated refs/heads/main, refs/remotes/origin/main" {
 		t.Errorf("clone = %+v, %v", res, err)
 	}
 
 	fetchArgs := json.RawMessage(`{"path":"/files/widgets"}`)
 	moved := shelljob.Result{Git: &shelljob.GitResult{Repository: "acme/widgets", Updated: []shelljob.GitRefUpdate{{Ref: "refs/remotes/origin/main", Old: "1111111aaaa", New: "2222222bbbb"}}}}
-	res, _ = g.Complete(ctx, dana("acme/*"), testConn("github.com"), "fetch", fetchArgs, moved)
+	res, _ = g.Complete(ctx, dana("acme/*"), testConn("git.example.com"), "fetch", fetchArgs, moved)
 	if res.IsError || !strings.Contains(res.Content[0], "Fetched acme/widgets into /files/widgets.") || !strings.Contains(res.Content[0], "refs/remotes/origin/main 1111111..2222222") ||
 		res.Audit != "acme/widgets: updated refs/remotes/origin/main" {
 		t.Errorf("fetch = %+v", res)
 	}
-	res, _ = g.Complete(ctx, dana("acme/*"), testConn("github.com"), "fetch", fetchArgs, shelljob.Result{Git: &shelljob.GitResult{Repository: "acme/widgets"}})
+	res, _ = g.Complete(ctx, dana("acme/*"), testConn("git.example.com"), "fetch", fetchArgs, shelljob.Result{Git: &shelljob.GitResult{Repository: "acme/widgets"}})
 	if res.IsError || !strings.Contains(res.Content[0], "up to date") || res.Audit != "acme/widgets: up to date" {
 		t.Errorf("up to date = %+v", res)
 	}
@@ -460,7 +464,7 @@ func TestComplete(t *testing.T) {
 	for i := range 200 {
 		many.Git.Updated = append(many.Git.Updated, shelljob.GitRefUpdate{Ref: fmt.Sprintf("refs/tags/v%d", i), New: "3333333cccc"})
 	}
-	res, _ = g.Complete(ctx, dana("acme/*"), testConn("github.com"), "clone", cloneArgs, many)
+	res, _ = g.Complete(ctx, dana("acme/*"), testConn("git.example.com"), "clone", cloneArgs, many)
 	if res.IsError || !strings.Contains(res.Content[0], "Updated (150000):") || !strings.Contains(res.Content[0], "... and 149950 more") ||
 		!strings.HasSuffix(res.Audit, " and 149990 more") || len(res.Content[0]) > 8<<10 {
 		t.Errorf("a large clone = %q, audit %q", res.Content[0][:min(300, len(res.Content[0]))], res.Audit)
@@ -478,7 +482,7 @@ func TestComplete(t *testing.T) {
 		"failed":    {shelljob.Result{Git: &shelljob.GitResult{Error: "clone: authentication required"}}, "The clone of acme/widgets did not go through: clone: authentication required", "acme/widgets: clone: authentication required"},
 		"long":      {shelljob.Result{Git: &shelljob.GitResult{Error: long}}, "did not go through", ""},
 	} {
-		res, err := g.Complete(ctx, dana("acme/*"), testConn("github.com"), "clone", cloneArgs, c.result)
+		res, err := g.Complete(ctx, dana("acme/*"), testConn("git.example.com"), "clone", cloneArgs, c.result)
 		if err != nil || !res.IsError || !strings.Contains(res.Content[0], c.words) || (c.audit != "" && res.Audit != c.audit) {
 			t.Errorf("%s = %+v, %v", name, res, err)
 		}
@@ -488,7 +492,7 @@ func TestComplete(t *testing.T) {
 	}
 
 	var ref *builtinintegrations.Refusal
-	if _, err := g.Complete(ctx, dana("other/*"), testConn("github.com"), "clone", cloneArgs, ok); !errors.As(err, &ref) {
+	if _, err := g.Complete(ctx, dana("other/*"), testConn("git.example.com"), "clone", cloneArgs, ok); !errors.As(err, &ref) {
 		t.Errorf("access taken away = %v", err)
 	}
 }
@@ -508,7 +512,7 @@ func TestCompletePush(t *testing.T) {
 		{Ref: "refs/heads/agent/x", New: "1111111aaaa"},
 		{Ref: "refs/tags/v1", Old: "2222222bbbb", New: "3333333cccc"},
 	}}}
-	res, err := g.Complete(ctx, pusher(false), testConn("github.com"), "push", args, done)
+	res, err := g.Complete(ctx, pusher(false), testConn("git.example.com"), "push", args, done)
 	if err != nil || res.IsError || !strings.HasPrefix(res.Content[0], "Pushed refs/heads/agent/x (new) and refs/tags/v1 to acme/widgets.") ||
 		!strings.Contains(res.Content[0], "refs/heads/agent/x new at 1111111") || !strings.Contains(res.Content[0], "refs/tags/v1 2222222..3333333") ||
 		res.Audit != "acme/widgets: pushed refs/heads/agent/x, refs/tags/v1" {
@@ -517,36 +521,36 @@ func TestCompletePush(t *testing.T) {
 
 	forced := json.RawMessage(`{"path":"/files/w","refs":["agent/x"],"force":true}`)
 	moved := shelljob.Result{Git: &shelljob.GitResult{Repository: "acme/widgets", Updated: []shelljob.GitRefUpdate{{Ref: "refs/heads/agent/x", Old: "1111111aaaa", New: "4444444dddd"}}}}
-	res, _ = g.Complete(ctx, pusher(true), testConn("github.com"), "push", forced, moved)
+	res, _ = g.Complete(ctx, pusher(true), testConn("git.example.com"), "push", forced, moved)
 	if res.IsError || !strings.HasPrefix(res.Content[0], "Force-pushed refs/heads/agent/x to acme/widgets.") || res.Audit != "acme/widgets: force-pushed refs/heads/agent/x" {
 		t.Errorf("force push = %+v", res)
 	}
 
-	res, _ = g.Complete(ctx, pusher(false), testConn("github.com"), "push", args, shelljob.Result{Git: &shelljob.GitResult{Repository: "acme/widgets"}})
+	res, _ = g.Complete(ctx, pusher(false), testConn("git.example.com"), "push", args, shelljob.Result{Git: &shelljob.GitResult{Repository: "acme/widgets"}})
 	if res.IsError || res.Content[0] != "Nothing to push: acme/widgets already has refs/heads/agent/x and refs/tags/v1 as the working copy does." ||
 		res.Audit != "acme/widgets: up to date, refs/heads/agent/x, refs/tags/v1" {
 		t.Errorf("up to date = %+v", res)
 	}
 
 	rejected := shelljob.Result{Git: &shelljob.GitResult{Error: "push: non-fast-forward update: refs/heads/agent/x"}}
-	res, _ = g.Complete(ctx, pusher(false), testConn("github.com"), "push", args, rejected)
+	res, _ = g.Complete(ctx, pusher(false), testConn("git.example.com"), "push", args, rejected)
 	if !res.IsError || res.Content[0] != "The push of acme/widgets did not go through: push: non-fast-forward update: refs/heads/agent/x" ||
 		res.Audit != "acme/widgets: push of refs/heads/agent/x, refs/tags/v1: push: non-fast-forward update: refs/heads/agent/x" {
 		t.Errorf("rejected = %+v", res)
 	}
-	res, _ = g.Complete(ctx, pusher(true), testConn("github.com"), "push", forced, rejected)
+	res, _ = g.Complete(ctx, pusher(true), testConn("git.example.com"), "push", forced, rejected)
 	if !res.IsError || res.Audit != "the working copy's origin: force push of refs/heads/agent/x: push: non-fast-forward update: refs/heads/agent/x" {
 		t.Errorf("rejected force push = %+v", res)
 	}
 
 	// Access taken away while the job ran, and nothing landed: refused.
 	var ref *builtinintegrations.Refusal
-	if _, err := g.Complete(ctx, pusher(false), testConn("github.com"), "push", forced, rejected); !errors.As(err, &ref) || ref.Reason != "the access does not allow force-pushing" {
+	if _, err := g.Complete(ctx, pusher(false), testConn("git.example.com"), "push", forced, rejected); !errors.As(err, &ref) || ref.Reason != "the access does not allow force-pushing" {
 		t.Errorf("force taken away, nothing landed = %v", err)
 	}
 	off := pusher(false)
 	pullOnly(off.Access)
-	if _, err := g.Complete(ctx, off, testConn("github.com"), "push", args, shelljob.Result{Git: &shelljob.GitResult{Repository: "acme/widgets"}}); !errors.As(err, &ref) || ref.Reason != "the access does not allow pushing" {
+	if _, err := g.Complete(ctx, off, testConn("git.example.com"), "push", args, shelljob.Result{Git: &shelljob.GitResult{Repository: "acme/widgets"}}); !errors.As(err, &ref) || ref.Reason != "the access does not allow pushing" {
 		t.Errorf("push taken away, nothing landed = %v", err)
 	}
 }
@@ -558,13 +562,13 @@ func TestCompletePush(t *testing.T) {
 // rather than stored and granting nothing.
 func TestCheckConnectionAndAccess(t *testing.T) {
 	g := New()
-	for _, ok := range []string{"github.com", "https://GitLab.com/", "git.acme.io:8443"} {
+	for _, ok := range []string{"git.example.com", "https://GitLab.com/", "git.acme.io:8443"} {
 		if err := g.CheckConnection(testConn(ok)); err != nil {
 			t.Errorf("%q = %v", ok, err)
 		}
 	}
-	for _, bad := range []string{"", "github.com/acme", "user@github.com", "http://github.com"} {
-		if err := g.CheckConnection(testConn(bad)); err == nil || err.Error() != "Host is a host name such as github.com, without https:// or a path" {
+	for _, bad := range []string{"", "git.example.com/acme", "user@git.example.com", "http://git.example.com"} {
+		if err := g.CheckConnection(testConn(bad)); err == nil || err.Error() != "Host is a host name such as gitlab.com, without https:// or a path" {
 			t.Errorf("%q = %v", bad, err)
 		}
 	}
@@ -573,5 +577,76 @@ func TestCheckConnectionAndAccess(t *testing.T) {
 	}
 	if err := g.CheckAccess(map[string]any{"pull_repositories": []any{"acme/*", "acme/[x"}}); err == nil || err.Error() != "acme/[x is not a repository or a pattern" {
 		t.Errorf("a bad pattern = %v", err)
+	}
+}
+
+// githubHosts are hosts that are github.com, however the owner wrote
+// them; notGitHub are hosts that only look like it.
+var (
+	githubHosts = []string{"github.com", "https://GitHub.com/", " www.github.com ", "github.com:443", "WWW.GITHUB.COM:8443"}
+	notGitHub   = []string{"gitlab.com", "git.example.com", "notgithub.com", "github.com.example.org", "github.co"}
+)
+
+// Why this test exists: github.com is the GitHub integration's, whose
+// own app reaches it with narrowed tokens; a Git (Basic) connection to
+// it would hand agents the owner's broad token instead. Saving one must
+// be a 400 in words that send the owner to GitHub, however the host is
+// written, while a host that only looks like it saves as before.
+func TestCheckConnectionRefusesGitHub(t *testing.T) {
+	g := New()
+	for _, host := range githubHosts {
+		if err := g.CheckConnection(testConn(host)); err == nil || err.Error() != "github.com is handled by the GitHub integration; connect it there" {
+			t.Errorf("%q = %v", host, err)
+		}
+	}
+	for _, host := range notGitHub {
+		if err := g.CheckConnection(testConn(host)); err != nil {
+			t.Errorf("%q = %v", host, err)
+		}
+	}
+}
+
+// Why this test exists: a connection to github.com an earlier version
+// saved is still there after the upgrade, and the check at save never
+// sees it again. Every call through it, of each action and on either
+// request, must be refused before any job carries its token, in words
+// that name the cause and the owner only (never another integration an
+// agent might reach for instead), and audited as not allowed: Complete
+// too, even where the result says a push landed, which elsewhere is
+// told as landed. A host that only looks like github.com is not
+// refused for it.
+func TestCallsThroughGitHubAreRefused(t *testing.T) {
+	g := New()
+	ctx := context.Background()
+	landed := shelljob.Result{Git: &shelljob.GitResult{Repository: "acme/widgets", ConnectionID: "1a2b3c4d", Updated: []shelljob.GitRefUpdate{{Ref: "refs/heads/agent/x", New: "1111111aaaa"}}}}
+	calls := map[string]string{
+		"clone": `{"url":"acme/widgets","path":"w"}`,
+		"fetch": `{"path":"w","url":"acme/widgets"}`,
+		"push":  `{"path":"w","url":"acme/widgets","refs":["agent/x"]}`,
+	}
+	for _, host := range githubHosts {
+		for action, args := range calls {
+			for leg, run := range map[string]func() (*builtinintegrations.Result, error){
+				"call": func() (*builtinintegrations.Result, error) {
+					return g.Call(ctx, pusher(false), testConn(host), action, json.RawMessage(args))
+				},
+				"complete": func() (*builtinintegrations.Result, error) {
+					return g.Complete(ctx, pusher(false), testConn(host), action, json.RawMessage(args), landed)
+				},
+			} {
+				res, err := run()
+				var ref *builtinintegrations.Refusal
+				if !errors.As(err, &ref) || res != nil ||
+					ref.Text != "The Git (Basic) integration does not handle github.com; ask the owner." ||
+					ref.Reason != "the connection is for github.com, which Git (Basic) does not handle" {
+					t.Errorf("%s: %s %s = %+v, %v", host, action, leg, res, err)
+				}
+			}
+		}
+	}
+	for _, host := range notGitHub {
+		if res, err := g.Call(ctx, pusher(false), testConn(host), "push", json.RawMessage(calls["push"])); err != nil || res.ShellJob == nil {
+			t.Errorf("%s: push = %+v, %v", host, res, err)
+		}
 	}
 }

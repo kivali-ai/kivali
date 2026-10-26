@@ -46,7 +46,7 @@ func TestRepositoryAccess(t *testing.T) {
 		{"only the old fields", map[string]any{"repositories": []any{"acme/*"}, "push": true}, "acme/widgets", false},
 	} {
 		args, _ := json.Marshal(map[string]string{"url": c.repo, "path": "w"})
-		_, err := g.Call(context.Background(), builtinintegrations.Caller{Agent: "dana", Access: c.access}, testConn("github.com"), "clone", args)
+		_, err := g.Call(context.Background(), builtinintegrations.Caller{Agent: "dana", Access: c.access}, testConn("git.example.com"), "clone", args)
 		var ref *builtinintegrations.Refusal
 		if got := err == nil; got != c.want || (err != nil && !errors.As(err, &ref)) {
 			t.Errorf("%s: clone = %v, want allowed %v", c.name, err, c.want)
