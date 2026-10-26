@@ -26,7 +26,14 @@ import (
 // against a connection that holds them beside its keeps, as a GitHub
 // setup that kept them left it: read as a misfit, its agents' calls
 // would be refused and the owner told to set GitHub up again, making a
-// second app on GitHub, over two values nothing reads.
+// second app on GitHub, over two values nothing reads. Only the pair
+// fits: the client id or secret alone beside the keeps is a key outside
+// them, so a rule that let either through would take a stray key for
+// the app's client. A record holding a client id in its fields, with a
+// Secret that fits on its own and no sign-in, is a misfit by its field
+// alone: setup never writes a field, so a connection whose form the
+// owner filled for signing in, and never signed in with, must not read
+// as a setup's.
 func TestSetupMisfit(t *testing.T) {
 	keeps := integration.SetupKeeps{{Key: "app_id"}, {Key: "slug"}, {Key: "client_id"}, {Key: "client_secret"}, {Key: "private_key"}}
 	setup := &integration.Setup{Keeps: keeps}
@@ -49,11 +56,13 @@ func TestSetupMisfit(t *testing.T) {
 		{"keeps and the app's client beside them", noClient,
 			store.IntegrationConnection{SecretKeys: []string{"app_id", "client_id", "client_secret", "installation_id", "private_key", "slug"}}, false},
 		{"the app's client alone", noClient, store.IntegrationConnection{SecretKeys: []string{"client_id", "client_secret"}}, true},
-		{"keeps, the app's client and a key outside them", noClient, store.IntegrationConnection{SecretKeys: []string{"app_id", "client_secret", "token"}}, true},
+		{"keeps, the app's client and a key outside them", noClient, store.IntegrationConnection{SecretKeys: []string{"app_id", "client_id", "client_secret", "token"}}, true},
+		{"keeps and the client secret alone beside them", noClient, store.IntegrationConnection{SecretKeys: []string{"app_id", "client_secret"}}, true},
+		{"keeps and the client id alone beside them", noClient, store.IntegrationConnection{SecretKeys: []string{"app_id", "client_id"}}, true},
 		{"a 1.0.0 record, for keeps without a client", noClient,
 			store.IntegrationConnection{Fields: map[string]string{"client_id": "Iv1old"}, SecretKeys: []string{"client_secret"}, SignIn: signedIn}, true},
-		{"a 1.0.0 record not signed in, for keeps without a client", noClient,
-			store.IntegrationConnection{Fields: map[string]string{"client_id": "Iv1old"}, SecretKeys: []string{"client_secret"}}, true},
+		{"a client id in the record, not signed in, beside a kept key", noClient,
+			store.IntegrationConnection{Fields: map[string]string{"client_id": "Iv1old"}, SecretKeys: []string{"slug"}}, true},
 		{"no setup, a 1.0.0 record", nil,
 			store.IntegrationConnection{Fields: map[string]string{"client_id": "Iv1old"}, SecretKeys: []string{"client_secret"}, SignIn: signedIn}, false},
 		{"no setup, an empty record", nil, store.IntegrationConnection{}, false},
