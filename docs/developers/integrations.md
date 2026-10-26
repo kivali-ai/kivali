@@ -2999,7 +2999,7 @@ Git (Basic)'s refusals name the cause and the owner only:
 | A push to a repository it may only pull | The Git (Basic) integration's access for you lets you pull <owner/name> but not push to it. Ask the owner if your work needs it. | the access does not allow pushing to <owner/name> |
 | `push_refs` that do not read | Your access to the Git (Basic) integration names branches or tags Kivali cannot read. Ask the owner to set it again. | the access's branches and tags do not read |
 | A ref that does not read | git_push cannot read "<ref>": <why>. Each entry is a branch (agent/x), a tag (tags/v1.2.0) or a refspec such as HEAD:refs/heads/agent/x. | a ref does not read |
-| A deletion | Deleting a remote ref is not something the Git (Basic) integration does. | the call deletes a remote ref |
+| A deletion | A push never deletes a remote ref. | the call deletes a remote ref |
 | A destination twice | git_push names <ref> twice; push each destination once. | a destination is named twice |
 | A destination outside `push_refs` | The Git (Basic) integration's access for you does not include refs/heads/main. Ask the owner if your work needs it. | the access does not include refs/heads/main |
 | A force without `force` | The Git (Basic) integration's access for you does not allow force-pushing. Ask the owner if your work needs it. | the access does not allow force-pushing |
@@ -3693,8 +3693,8 @@ branch or tag); without, `Pull` is, and `Push` is empty. A job's
 
 `Check` then refuses, in gitops's words: `force: true` or a `+`
 ("Force-pushing is not something the GitHub integration does."), a
-deletion ("Deleting a remote ref is not something the GitHub
-integration does."), a fetch or a push without `url` ("github_fetch
+deletion ("A push never deletes a remote ref."; `delete_branch` is
+[the same app](#the-same-app)'s), a fetch or a push without `url` ("github_fetch
 needs url: name the repository, as its HTTPS URL on github.com or
 owner/name."), a URL on another host, and a repository outside the
 access. `callGit` adds one: a path of more than two segments is not a

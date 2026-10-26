@@ -101,7 +101,7 @@ func TestPushNeedsWriteAndNeverForcesOrDeletes(t *testing.T) {
 	for _, c := range []struct{ args, text, reason string }{
 		{`{"path":"w","url":"acme/widgets","refs":["agent/x"],"force":true}`, "Force-pushing is not something the GitHub integration does.", "the call forces a push"},
 		{`{"path":"w","url":"acme/widgets","refs":["+agent/x"]}`, "Force-pushing is not something the GitHub integration does.", "the call forces a push"},
-		{`{"path":"w","url":"acme/widgets","refs":[":agent/x"]}`, "Deleting a remote ref is not something the GitHub integration does.", "the call deletes a remote ref"},
+		{`{"path":"w","url":"acme/widgets","refs":[":agent/x"]}`, "A push never deletes a remote ref.", "the call deletes a remote ref"},
 	} {
 		_, _, ref := g.gitCall(t, writer, "push", c.args)
 		if ref == nil || ref.Text != c.text || ref.Reason != c.reason {
