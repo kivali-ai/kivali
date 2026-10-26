@@ -380,8 +380,10 @@ func validateKivali(m *Manifest, tools []string, builtin bool, f *Findings) {
 		}
 	}
 
+	var s *schema
 	if a := k.Access; a != nil {
-		s, sf := parseSchema(a.Schema)
+		var sf Findings
+		s, sf = parseSchema(a.Schema)
 		*f = append(*f, sf...)
 		for _, key := range sortedKeys(a.Choices) {
 			tool := a.Choices[key]
@@ -403,6 +405,7 @@ func validateKivali(m *Manifest, tools []string, builtin bool, f *Findings) {
 			}
 		}
 	}
+	validateToolAccess(m, s, f)
 
 	switch {
 	case k.Verify == "":
@@ -410,6 +413,30 @@ func validateKivali(m *Manifest, tools []string, builtin bool, f *Findings) {
 		f.errorf("kivali.verify: %q must be lowercase letters, digits and underscores, starting with a letter", k.Verify)
 	case !builtin && !slices.Contains(tools, k.Verify):
 		f.errorf("kivali.verify names %s, which is not in tools", k.Verify)
+	}
+}
+
+// validateToolAccess checks each tool's access against the access
+// form s (nil without one): the key of a switch or a list of the form,
+// since an agent's access gives the tool by turning the switch on or
+// filling the list. Without a form access is all or nothing, so no
+// tool names one.
+func validateToolAccess(m *Manifest, s *schema, f *Findings) {
+	for i, t := range m.Tools {
+		if t.Access == "" {
+			continue
+		}
+		at := fmt.Sprintf("tools[%d] (%s): access", i, t.Name)
+		if s == nil {
+			f.errorf("%s names %s, and the integration has no kivali.access, so access is all or nothing", at, t.Access)
+			continue
+		}
+		switch p, ok := s.prop(t.Access); {
+		case !ok:
+			f.errorf("%s names %s, which is not a field of the access form", at, t.Access)
+		case p.typ != propBoolean && p.typ != propArray:
+			f.errorf("%s names %s, a text or choice field; it names a switch or a list, which an agent's access turns on or fills", at, t.Access)
+		}
 	}
 }
 

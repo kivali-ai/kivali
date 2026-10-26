@@ -77,7 +77,7 @@ func goldenAccessForm() *AccessForm {
 
 func goldenIntegrationActions() []IntegrationAction {
 	return []IntegrationAction{
-		{Name: "create_post", Description: "Create a blog post as a draft."},
+		{Name: "create_post", Description: "Create a blog post as a draft.", Access: "write"},
 		{Name: "list_blogs", Description: "List the blogs the connection can see."},
 		{Name: "whoami", Description: "Name the connected account."},
 	}
@@ -122,7 +122,7 @@ func goldenIntegrationPageGit() IntegrationPage {
 		Author:           "Kivali",
 		Hosts:            []string{},
 		Packages:         []string{},
-		Actions:          []IntegrationAction{{Name: "clone", Description: "Clones a repository."}, {Name: "push", Description: "Pushes branches and tags."}},
+		Actions:          []IntegrationAction{{Name: "clone", Description: "Clones a repository."}, {Name: "push", Description: "Pushes branches and tags.", Access: "push"}},
 		ConnectionFields: goldenGitConnectionFields("github.com"),
 		ConnectionMethod: "token",
 		Scopes:           []string{},

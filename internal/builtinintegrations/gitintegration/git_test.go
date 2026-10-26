@@ -32,8 +32,9 @@ func dana(patterns ...any) builtinintegrations.Caller {
 // ones it may push to as two lists, neither required (CheckAccess asks
 // for one), followed by the refs it may push and the force switch
 // marked dangerous, list exactly clone, fetch and push, the actions
-// Call and Tools know, and name no kivali.verify, so that Kivali's
-// server never reaches a git host itself.
+// Call and Tools know, push marked as needing a repository to push to,
+// and name no kivali.verify, so that Kivali's server never reaches a
+// git host itself.
 func TestManifest(t *testing.T) {
 	m := New().Manifest()
 	if f := integration.ValidateBuiltin(m); len(f) != 0 {
@@ -76,6 +77,12 @@ func TestManifest(t *testing.T) {
 	tools, _ := New().Tools(context.Background(), builtinintegrations.Caller{})
 	if len(tools) != 3 || tools[0].Name != "clone" || tools[1].Name != "fetch" || tools[2].Name != "push" || len(m.Tools) != 3 || m.Tools[2].Name != "push" {
 		t.Errorf("tools = %+v, manifest %+v", tools, m.Tools)
+	}
+	// The page groups push under the repositories it may push to, and
+	// clone and fetch under any access; push unmarked would read as an
+	// action any access gives.
+	if m.Tools[0].Access != "" || m.Tools[1].Access != "" || m.Tools[2].Access != "push_repositories" {
+		t.Errorf("tools' access = %+v", m.Tools)
 	}
 	for _, tl := range tools {
 		if strings.Contains(tl.Description, "MCP") || !json.Valid(tl.InputSchema) {

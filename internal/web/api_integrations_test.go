@@ -126,6 +126,33 @@ func TestAPIIntegrationUploadIsAPendingVersion(t *testing.T) {
 	}
 }
 
+// Why this test exists: the integration's page groups its actions by
+// the access field each needs, read from the manifest's tools. If the
+// install screen or the page dropped a tool's access, every action
+// would read as one any access gives, and an owner would grant write
+// thinking the agent only reads; if it set one on a tool that has
+// none, a read action would read as one only that field gives.
+func TestAPIIntegrationActionsCarryTheAccessTheyNeed(t *testing.T) {
+	srv := newTestServer(t)
+	m := integrationtest.Manifest("crm", "1.0.0")
+	m["tools"].([]any)[0].(map[string]any)["access"] = "write"
+	rr := intUpload(t, srv, integrationtest.Zip(t, "crm", m, nil))
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("upload: %d %s", rr.Code, rr.Body.String())
+	}
+	want := []apitypes.IntegrationAction{
+		{Name: "create_post", Description: "Create a blog post as a draft.", Access: "write"},
+		{Name: "list_blogs", Description: "List the blogs the connection can see."},
+		{Name: "whoami", Description: "Name the connected account."},
+	}
+	if v := decodeAPI[apitypes.IntegrationVersion](t, rr); !slices.Equal(v.Actions, want) {
+		t.Errorf("install screen's actions = %+v", v.Actions)
+	}
+	if page := orgOK[apitypes.IntegrationPage](t, orgGet(t, srv, intBase+"/crm")); !slices.Equal(page.Actions, want) {
+		t.Errorf("page's actions = %+v", page.Actions)
+	}
+}
+
 // What the upload refuses, and how: a body that is not a form, a form
 // without a file, a file that is not a bundle, a bundle that fails the
 // check (every finding listed), a version already stored and a

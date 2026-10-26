@@ -20,7 +20,7 @@
     "portal": { "type": "string", "title": "Portal", "description": "The portal's short name." }
   },
   "tools": [
-    { "name": "create_post", "description": "Create a blog post as a draft." },
+    { "name": "create_post", "description": "Create a blog post as a draft.", "access": "write" },
     { "name": "list_blogs", "description": "List the blogs the connection can see." },
     { "name": "whoami", "description": "Name the connected account." }
   ],

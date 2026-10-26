@@ -140,7 +140,7 @@ func (g *Git) Manifest() *integration.Manifest {
 		Tools: []integration.Tool{
 			{Name: actionClone, Description: "Clones a repository the agent's access includes into the agent's files, with the connection's token."},
 			{Name: actionFetch, Description: "Fetches new commits and tags into a working copy of a repository the agent's access includes."},
-			{Name: actionPush, Description: "Pushes the branches and tags the agent's access allows to a repository it may push to."},
+			{Name: actionPush, Description: "Pushes the branches and tags the agent's access allows to a repository it may push to.", Access: pushKey},
 		},
 		Kivali: integration.Kivali{
 			Connection: integration.Connection{Method: "token"},

@@ -18,7 +18,8 @@ import (
 // exactly what setup may do as the design names it (GitHub's own pages
 // only, one field, the six keeps and no hand-over to a sign-in), keep
 // the access form the shipped bundle has, so agents' access carries
-// over, and name whoami as Test connection.
+// over, and name whoami as Test connection without listing it among
+// the tools, each write one marked as needing the write switch.
 func TestManifest(t *testing.T) {
 	m := New().Manifest()
 	if f := integration.ValidateBuiltin(m); len(f) != 0 {
@@ -50,17 +51,61 @@ func TestManifest(t *testing.T) {
 		form.Fields[1].Key != "write" || form.Fields[1].Kind != integration.FieldSwitch || form.Fields[1].Title != "May create and comment" {
 		t.Errorf("access form = %+v", form)
 	}
-	var names []string
+	var names, writes []string
 	for _, tl := range m.Tools {
 		names = append(names, tl.Name)
 		if tl.Description == "" || strings.Contains(tl.Description, "signed in with") {
 			t.Errorf("%s: %q", tl.Name, tl.Description)
 		}
+		switch tl.Access {
+		case "write":
+			writes = append(writes, tl.Name)
+		case "":
+		default:
+			t.Errorf("%s: access %q", tl.Name, tl.Access)
+		}
 	}
 	want := []string{"list_repositories", "get_repository", "list_issues", "get_issue", "create_issue", "comment",
-		"list_pull_requests", "get_pull_request", "create_pull_request", "list_branches", "compare", "whoami"}
+		"list_pull_requests", "get_pull_request", "create_pull_request", "list_branches", "compare"}
 	if !slices.Equal(names, want) {
 		t.Errorf("tools = %v", names)
+	}
+	if want := []string{"create_issue", "comment", "create_pull_request"}; !slices.Equal(writes, want) {
+		t.Errorf("tools needing write = %v, want %v", writes, want)
+	}
+}
+
+// Why this test exists: the integration's page groups the manifest's
+// tools by the access each names, as the access form presents GitHub:
+// the repositories, and the write switch. A write action left unmarked
+// would read as one any access gives; a read action marked would read
+// as one only write gives; whoami listed would show the owner an action
+// no agent is ever given. The marks must agree with what Tools gives an
+// agent with and without write.
+func TestManifestToolsNameTheAccessToolsFollows(t *testing.T) {
+	g := New()
+	given := func(write bool) map[string]bool {
+		tools, err := g.Tools(context.Background(), agent(write, "acme/*"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := map[string]bool{}
+		for _, tl := range tools {
+			out[tl.Name] = true
+		}
+		return out
+	}
+	without, with := given(false), given(true)
+	for _, tl := range g.Manifest().Tools {
+		if !with[tl.Name] {
+			t.Errorf("%s is in the manifest, and no agent is given it", tl.Name)
+		}
+		if needsWrite := tl.Access == "write"; without[tl.Name] == needsWrite {
+			t.Errorf("%s: access %q, given without write %v", tl.Name, tl.Access, without[tl.Name])
+		}
+	}
+	if len(g.Manifest().Tools) != len(with) {
+		t.Errorf("manifest has %d tools, an agent with write is given %d", len(g.Manifest().Tools), len(with))
 	}
 }
 

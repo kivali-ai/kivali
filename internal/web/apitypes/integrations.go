@@ -197,6 +197,11 @@ type IntegrationRequirement struct {
 type IntegrationAction struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
+	// Access is the key of the access form's field an agent's access
+	// must set for the integration to give it this action (the
+	// manifest tool's access); absent, any access does. The page groups
+	// the actions by it.
+	Access string `json:"access,omitempty"`
 }
 
 // IntegrationSetup is what a setup connection's flow may do, from the

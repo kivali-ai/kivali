@@ -338,7 +338,7 @@ func integrationActions(m *integration.Manifest) []apitypes.IntegrationAction {
 		return out
 	}
 	for _, t := range m.Tools {
-		out = append(out, apitypes.IntegrationAction{Name: t.Name, Description: t.Description})
+		out = append(out, apitypes.IntegrationAction{Name: t.Name, Description: t.Description, Access: t.Access})
 	}
 	return out
 }

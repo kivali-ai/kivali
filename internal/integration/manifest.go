@@ -75,6 +75,12 @@ type MCPConfig struct {
 type Tool struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
+	// Access is the key of the access form's switch or list that an
+	// agent's access must set (the switch on, the list not empty) for
+	// the integration to give it this action; empty, any access does.
+	// The integration's page groups the actions by it. Core enforces
+	// nothing by it: the integration's own code does.
+	Access string `json:"access,omitempty"`
 }
 
 // Kivali is the manifest's kivali section.
