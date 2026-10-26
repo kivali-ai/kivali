@@ -360,17 +360,23 @@ func (s *Supervisor) placeChart(ctx context.Context, g Guest, st guestapi.Status
 		return guestapi.ChartMeta{}, fmt.Errorf("the VM image bakes %d kivali charts; pass --chart <tgz>", len(baked))
 	}
 	c := baked[0]
-	meta := guestapi.ChartMeta{Name: c.Name, Version: c.Version, AppVersion: c.AppVersion}
+	meta := guestapi.ChartMeta{Name: c.Name, Version: c.Version, AppVersion: c.AppVersion, Browser: c.Browser}
+	return meta, copyBakedChart(ctx, g, c.Path, meta, logf)
+}
+
+// copyBakedChart copies the VM image's chart at path into the static
+// charts directory under meta's file name.
+func copyBakedChart(ctx context.Context, g Guest, path string, meta guestapi.ChartMeta, logf Logf) error {
 	dst := guestapi.DataDir + "/" + StaticChartsRel + "/" + chartFileName(meta)
-	code, err := g.Exec(ctx, guestapi.ExecSpec{Argv: []string{"cp", c.Path, dst}}, nil, nil, nil)
+	code, err := g.Exec(ctx, guestapi.ExecSpec{Argv: []string{"cp", path, dst}}, nil, nil, nil)
 	if err != nil {
-		return meta, err
+		return err
 	}
 	if code != 0 {
-		return meta, fmt.Errorf("cp %s %s: exit %d", c.Path, dst, code)
+		return fmt.Errorf("cp %s %s: exit %d", path, dst, code)
 	}
-	logf("chart %s %s placed from the VM image (%s)", meta.Name, meta.Version, c.Path)
-	return meta, nil
+	logf("chart %s %s placed from the VM image (%s)", meta.Name, meta.Version, path)
+	return nil
 }
 
 func (s *Supervisor) installLocked(ctx context.Context, o InstallOptions, logf Logf) error {

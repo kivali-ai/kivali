@@ -1088,7 +1088,9 @@ refused with. Step 2 picks the images from `baked_images` at the chart's
 tag (`kivali`, `kivali-egress-proxy`, `kivali-agent-shell`, and
 `kivali-browser` when the chart has a `browser` section) and waits, up
 to 5 minutes, for containerd to list every one: k3s imports the image's
-tarballs (`agent/images`) as it starts, not before the node is Ready.
+tarballs (`agent/images`) as it starts, alongside the node coming up. A
+listed ref is taken as the image's, since release tags are immutable
+(a mutable tag never reaches this path: a development build is refused).
 Nothing is downloaded, so the room check counts only the snapshot and
 `minFreeBytes`, and there is no second check. From the journal on it is
 the same upgrade: the chart is placed from the image at apply (as a first

@@ -24,6 +24,9 @@
 //!                   (default: the one it ships, 0.16.0); a release newer
 //!                   than the org's makes the status report say the org
 //!                   can move to it, and `upgrade {"baked": true}` does
+//!   FAKE_BAKED_MANUAL_STEPS  1 marks the baked release as needing steps
+//!                   the app cannot do: reported, and the baked upgrade
+//!                   refused
 //!   FAKE_FAIL_UP    set to fail the first `up` part-way
 //!   FAKE_SIGNED_IN  1 starts with Claude signed in, as the owner (it is
 //!                   otherwise not signed in)
@@ -78,9 +81,10 @@ fn baked_version() -> String {
 
 /// MAJOR.MINOR.PATCH of a release version; None for a development build
 /// (a "dev" pre-release part) or anything else, as the supervisor's
-/// isRelease decides.
+/// isRelease decides. Build metadata (`+…`) is ignored.
 fn release_parts(v: &str) -> Option<[u64; 3]> {
     let v = v.trim().trim_start_matches('v');
+    let v = v.split_once('+').map_or(v, |(v, _)| v);
     let (core, pre) = v.split_once('-').unwrap_or((v, ""));
     if pre.split('.').any(|p| p == "dev") {
         return None;
@@ -94,7 +98,8 @@ fn release_parts(v: &str) -> Option<[u64; 3]> {
 fn baked_release(installed: &str) -> BakedRelease {
     let version = baked_version();
     let newer = matches!((release_parts(installed), release_parts(&version)), (Some(i), Some(b)) if b > i);
-    BakedRelease { version, newer, manual_steps: false }
+    let manual_steps = std::env::var("FAKE_BAKED_MANUAL_STEPS").is_ok_and(|v| v == "1");
+    BakedRelease { version, newer, manual_steps }
 }
 
 /// The data disk an earlier version kept in the config directory, and
@@ -634,6 +639,9 @@ fn handle(fake: &Fake, mut conn: impl Read + Write) -> std::io::Result<()> {
             let to = if o.baked {
                 // The real supervisor's refusals, in its words.
                 let baked = baked_release(&current);
+                if baked.manual_steps {
+                    return Err(format!("the VM image's Kivali {} needs steps the app can't do yet; see the upgrade notes", baked.version));
+                }
                 if !baked.newer {
                     return Err(format!("the team's Kivali {current} is up to date; the VM image bakes {}", baked.version));
                 }

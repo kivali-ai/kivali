@@ -1255,10 +1255,13 @@ not marked `manual_steps` runs the update from the image without asking,
 once the operation that started the team has ended (`Runtime::wait_idle`),
 as the Update… op with its stages, notifications and failure banner. It
 is tried once per baked version per team: `first_boot_update` in
-teams.json is written to that version before the update starts, so a
-failed update (or a crash during it, which the supervisor's journal
-recovers) shows the banner with Try again… and is not attempted again at
-every launch. The supervisor's verdict keeps a development build on either
+teams.json is written to that version before the update starts
+(`Shell::claim_first_boot_update`), so a failed update (or a crash during
+it, which the supervisor's journal recovers) shows the banner with Try
+again… and is not attempted again at every launch; an attempt that never
+became an operation (another operation got in first, Kivali quitting) is
+given back (`release_first_boot_update`), so the next start tries again.
+Quit waits for a running update as it does for any operation. The supervisor's verdict keeps a development build on either
 side out of it (a local build never moves a real team, and a dev team keeps
 its dev chart; Restart serves it), and a team setup has not finished with
 (`provisional`) is left to setup. A VM that was already running when the
@@ -1601,8 +1604,10 @@ verdict; the shell reduces it to one state, then folds in the Kivali
 baked into the team's VM image (`Report.baked`, `updates::with_baked`):
 a baked release above the team's is `available` whatever the check said
 or whether one has finished, since the app that bakes it is new enough
-for it, unless the feed offers a release above it; one marked
-`manual_steps` reads `manual_steps` instead. The state is shown in
+for it, unless the feed names a release above it (as `available`,
+`desktop_first` or `manual_steps`), which keeps the feed's state; a baked
+release marked `manual_steps` reads `manual_steps` instead. The state is
+shown in
 Settings → team → Overview (D2) and, when an update is available, as
 the tray's update item:
 
