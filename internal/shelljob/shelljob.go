@@ -40,6 +40,12 @@ type Job struct {
 //   - Force on a fetch lets a ref move other than fast-forward. On a
 //     push it is the owner's permission to force: the daemon refuses a
 //     refspec with + when it is false.
+//   - Identity, on a clone, is the git identity the daemon writes into
+//     the new working copy's .git/config (user.name and user.email)
+//     once the clone has succeeded, so commits made there are authored
+//     and committed as it unless the agent changes it: GitHub's is its
+//     app's bot user. Nil writes none (Git (Basic)'s), and a fetch or
+//     a push ignores it.
 //   - Auth is the connection's token as HTTP basic auth; Proxy the
 //     connection's scoped egress proxy credential, which the daemon
 //     puts on its own bare proxy URL.
@@ -51,19 +57,27 @@ type Job struct {
 //
 // It carries credentials: nothing on its path logs it.
 type GitJob struct {
-	Op                  string   `json:"op"`
-	Path                string   `json:"path"`
-	URL                 string   `json:"url,omitempty"`
-	RefSpecs            []string `json:"refspecs,omitempty"`
-	Force               bool     `json:"force,omitempty"`
-	AllowedRepositories []string `json:"allowed_repositories,omitempty"`
-	AllowedRefs         []string `json:"allowed_refs,omitempty"`
-	AnyBranchOrTag      bool     `json:"any_branch_or_tag,omitempty"`
-	Host                string   `json:"host"`
-	Auth                GitAuth  `json:"auth"`
-	Proxy               GitProxy `json:"proxy"`
-	TimeoutSeconds      int      `json:"timeout_seconds,omitempty"`
-	ConnectionID        string   `json:"connection_id,omitempty"`
+	Op                  string       `json:"op"`
+	Path                string       `json:"path"`
+	URL                 string       `json:"url,omitempty"`
+	RefSpecs            []string     `json:"refspecs,omitempty"`
+	Force               bool         `json:"force,omitempty"`
+	AllowedRepositories []string     `json:"allowed_repositories,omitempty"`
+	AllowedRefs         []string     `json:"allowed_refs,omitempty"`
+	AnyBranchOrTag      bool         `json:"any_branch_or_tag,omitempty"`
+	Identity            *GitIdentity `json:"identity,omitempty"`
+	Host                string       `json:"host"`
+	Auth                GitAuth      `json:"auth"`
+	Proxy               GitProxy     `json:"proxy"`
+	TimeoutSeconds      int          `json:"timeout_seconds,omitempty"`
+	ConnectionID        string       `json:"connection_id,omitempty"`
+}
+
+// GitIdentity is the git identity a clone's working copy is given: its
+// user.name and user.email.
+type GitIdentity struct {
+	Name  string `json:"name"`
+	Email string `json:"email"`
 }
 
 // GitAuth is the HTTP basic auth a git operation presents to the host.

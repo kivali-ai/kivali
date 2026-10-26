@@ -82,6 +82,14 @@ func IntegrationTools(c IntegrationCaller, shell IntegrationShell, tools []agent
 	return out
 }
 
+// gitIdentity is a job's identity as the daemon takes it; nil for none.
+func gitIdentity(id *agentpod.GitIdentity) *agentshell.GitIdentity {
+	if id == nil {
+		return nil
+	}
+	return &agentshell.GitIdentity{Name: id.Name, Email: id.Email}
+}
+
 // runShellJob runs job in shell and is what core reads back. An error
 // reaching the shell is the result's error, scrubbed of the job's
 // credentials.
@@ -102,6 +110,7 @@ func runShellJob(ctx context.Context, shell IntegrationShell, job agentpod.Integ
 		AllowedRepositories: g.AllowedRepositories,
 		AllowedRefs:         g.AllowedRefs,
 		AnyBranchOrTag:      g.AnyBranchOrTag,
+		Identity:            gitIdentity(g.Identity),
 		Host:                g.Host,
 		Auth:                agentshell.GitAuth{Username: g.Auth.Username, Password: g.Auth.Password},
 		Proxy:               agentshell.GitProxy{Username: g.Proxy.Username, Password: g.Proxy.Password},

@@ -41,16 +41,18 @@ func (g *GitHub) gitCall(t *testing.T, caller builtinintegrations.Caller, name, 
 // nothing.
 func TestCloneMintsATokenForTheRepositoryAlone(t *testing.T) {
 	g, f := newTest(t)
+	f.route("GET /users/kivali-acme[bot]", 200, botUserJSON)
 	dana := agent(false, "acme/*", "tools/cli")
 	job, res, ref := g.gitCall(t, dana, "clone", `{"url":"https://github.com/Acme/Widgets","path":"/files/widgets"}`)
 	if ref != nil || job == nil {
 		t.Fatalf("clone = %+v, %+v", res, ref)
 	}
+	// The first mint reads the bot user, for the working copy's identity.
 	mints := f.mints()
-	if len(mints) != 1 || mints[0].JWT == nil || mints[0].Body != `{"permissions":{"contents":"read","metadata":"read"},"repositories":["widgets"]}` {
+	if len(mints) != 2 || mints[1].JWT == nil || mints[1].Body != `{"permissions":{"contents":"read","metadata":"read"},"repositories":["widgets"]}` {
 		t.Fatalf("mints = %+v", mints)
 	}
-	tok := "ghs_fakeinstallationtoken0001"
+	tok := "ghs_fakeinstallationtoken0002"
 	if job.Op != "clone" || job.URL != "https://github.com/Acme/Widgets.git" || job.Host != "github.com" || job.Path != "/files/widgets" ||
 		job.Auth != (shelljob.GitAuth{Username: "x-access-token", Password: tok}) || job.Proxy != (shelljob.GitProxy{}) ||
 		!slices.Equal(job.AllowedRepositories, []string{"acme/*", "tools/cli"}) ||
@@ -71,8 +73,8 @@ func TestCloneMintsATokenForTheRepositoryAlone(t *testing.T) {
 		done.Audit != "Acme/Widgets: updated refs/remotes/origin/main" || strings.Contains(done.Content[0]+done.Audit, tok) {
 		t.Errorf("complete = %+v, %v", done, err)
 	}
-	if n := len(f.requests()); n != 1 {
-		t.Errorf("GitHub took %d requests, want the one mint", n)
+	if n := len(f.requests()); n != 3 {
+		t.Errorf("GitHub took %d requests, want the bot user and two mints", n)
 	}
 }
 
@@ -174,6 +176,7 @@ func TestFetchAndPushNameTheRepository(t *testing.T) {
 func TestAJobsTokenIsNeverCached(t *testing.T) {
 	g, f := newTest(t)
 	f.route("GET /repos/acme/widgets/branches", 200, `[]`)
+	f.route("GET /users/kivali-acme[bot]", 200, botUserJSON)
 	dana := agent(false, "acme/*")
 	clone := `{"url":"acme/widgets","path":"w"}`
 	first, _, _ := g.gitCall(t, dana, "clone", clone)
@@ -187,15 +190,17 @@ func TestAJobsTokenIsNeverCached(t *testing.T) {
 	if third, _, _ := g.gitCall(t, dana, "clone", clone); third == nil || third.Auth.Password == first.Auth.Password {
 		t.Errorf("third job = %+v", third)
 	}
+	// Three jobs' tokens, the REST call's, and the one that read the bot
+	// user once.
 	mints := f.mints()
-	if len(mints) != 4 {
-		t.Fatalf("%d mints, want 4", len(mints))
+	if len(mints) != 5 {
+		t.Fatalf("%d mints, want 5", len(mints))
 	}
 	api := f.api()
 	if bearer := api[len(api)-1].Bearer; bearer == first.Auth.Password || bearer == second.Auth.Password {
 		t.Error("the REST call used a job's token")
 	}
-	if len(g.tokens) != 1 {
+	if len(g.tokens) != 2 {
 		t.Errorf("cache = %v", g.tokens)
 	}
 }
