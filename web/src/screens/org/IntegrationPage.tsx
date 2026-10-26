@@ -82,6 +82,30 @@ export function signInLine(c: ConnectionState | undefined, now: number): { text:
 }
 
 /**
+ * What Test connection last found, under the connection's form: whether it passed, when, and the integration's own
+ * words; undefined until it has run (Save connection and Sign out clear it). The Requirements row that keeps the same
+ * result is closed while every requirement is met, so this line is where pressing the button shows.
+ */
+export function testLine(c: ConnectionState | undefined, now: number): { text: string; passed: boolean } | undefined {
+  if (!c || c.verified === undefined || !c.verified_at) return undefined;
+  const at = whenLabel(c.verified_at, now);
+  const words = c.verify_message?.trim() ?? '';
+  if (c.verified) return { text: 'Connection test passed ' + at + (words ? '. ' + words : '.'), passed: true };
+  return { text: 'Connection test failed ' + at + (words ? ': ' + words : '.'), passed: false };
+}
+
+/** The last connection test's line; nothing until one has run. */
+function TestLine({ connection, now }: { connection: ConnectionState | undefined; now: number }) {
+  const line = testLine(connection, now);
+  if (!line) return null;
+  return (
+    <Text as="p" variant="caption" tone={line.passed ? 'success' : 'danger'}>
+      {line.text}
+    </Text>
+  );
+}
+
+/**
  * The Connection block's line beside its heading, read without opening it: a sign-in that needs the owner, in the
  * danger tone, else since when it is connected. Empty with no connection.
  */
@@ -237,8 +261,9 @@ interface ConnectionFormProps {
 /**
  * A connected integration's one connection: its form, one field per entry the bundle asks for (a stored secret shows
  * only that it is stored), with Save connection; made by signing in, when the owner signed in; Test connection where
- * there is one; and, made by signing in, the Sign in block. A connection its own setup made has no form. Since when it
- * is connected is beside the block's heading; how it stands (secrets, sign-in, the last test) is in Requirements.
+ * there is one, with what the last test found under the form; and, made by signing in, the Sign in block. A connection
+ * its own setup made has no form. Since when it is connected is beside the block's heading; how it stands (secrets,
+ * sign-in, the last test) is in Requirements too.
  */
 function ConnectionForm({ page, busy, now, onSave, onVerify, onPage }: ConnectionFormProps) {
   const fields = page.connection_fields;
@@ -268,6 +293,7 @@ function ConnectionForm({ page, busy, now, onSave, onVerify, onPage }: Connectio
   const status = (
     <div className="app-int-status">
       <SignInLine connection={connection} now={now} />
+      <TestLine connection={connection} now={now} />
     </div>
   );
   return (
