@@ -14,8 +14,9 @@ import (
 
 // The access form's fields: the repositories an agent may use, and
 // whether it may open, comment on and close issues and pull requests,
-// push and delete branches in them (closing and deleting only what the
-// app opened, actions.go).
+// push and delete branches in them (closing only what the app opened,
+// and deleting only a branch a closed pull request of the app's came
+// from, actions.go).
 const (
 	repositoriesKey = "repositories"
 	writeKey        = "write"

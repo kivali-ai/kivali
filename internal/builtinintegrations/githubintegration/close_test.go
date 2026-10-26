@@ -17,6 +17,27 @@ const (
 	otherAppUser = `{"login":"other-app[bot]","type":"Bot"}`
 )
 
+// appInfoJSON is GET /app's answer for the app the connection keeps.
+const appInfoJSON = `{"id":1234,"slug":"kivali-acme","name":"Kivali acme"}`
+
+// appReads is every GET /app the fake took.
+func appReads(f *fakeGitHub) []recorded {
+	var out []recorded
+	for _, q := range f.api() {
+		if q.Path == "/app" {
+			out = append(out, q)
+		}
+	}
+	return out
+}
+
+// pullIntoJSON is an open pull request a person opened from dana/x
+// into the branch base.
+func pullIntoJSON(n int, base string) string {
+	return fmt.Sprintf(`{"number":%d,"title":"t","state":"open","user":%s,"merged_at":null,"head":{"ref":"dana/x","repo":{"full_name":"acme/widgets"}},"base":{"ref":%q},"html_url":"https://github.com/acme/widgets/pull/%d"}`,
+		n, personUser, base, n)
+}
+
 // issueJSON is an issue GitHub answers, by author and state; a pull
 // request, as the issues endpoint serves one, when pull is true.
 func issueJSON(n int, user, state string, pull bool) string {
@@ -76,10 +97,18 @@ func writesTaken(f *fakeGitHub) []string {
 // the app's own bot user counts: the login <slug>[bot] of type Bot. A
 // person, another app's bot, a user of another type that bears the
 // login, or a login differing in its slug must not pass, or an agent
-// could close or delete what someone else made.
+// could close or delete what someone else made. A user of another type
+// is never the app and costs no request; a bot that is not the kept
+// slug's is checked against GitHub's slug for the app, read once a
+// call however many authors it checks.
 func TestOpenedByAppIsTheAppsBotUserAlone(t *testing.T) {
 	g, f := newTest(t)
-	c := &call{g: g, conn: connection{slug: testSlug}}
+	f.route("GET /app", 200, appInfoJSON)
+	conn, err := readConnection(testConn())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := &call{g: g, conn: conn}
 	for _, tc := range []struct {
 		user ghUser
 		want bool
@@ -99,8 +128,43 @@ func TestOpenedByAppIsTheAppsBotUserAlone(t *testing.T) {
 			t.Errorf("%+v: %v, %v", tc.user, got, err)
 		}
 	}
-	if n := len(f.requests()); n != 0 {
-		t.Errorf("a connection that keeps its slug asked GitHub %d times", n)
+	if n := len(appReads(f)); n != 1 {
+		t.Errorf("GET /app %d times in one call", n)
+	}
+
+	// Neither the app's own bot nor a person asks GitHub.
+	c = &call{g: g, conn: conn}
+	for _, u := range []ghUser{{Login: "kivali-acme[bot]", Type: "Bot"}, {Login: "dana", Type: "User"}, {Login: "kivali-acme[bot]", Type: "User"}} {
+		if _, err := c.openedByApp(context.Background(), u); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := len(appReads(f)); n != 1 {
+		t.Errorf("GET /app for the kept bot or a person: %d", n)
+	}
+}
+
+// Why this test exists: the slug the connection keeps is the app's
+// name when setup ran, and a renamed app's bot user is GitHub's new
+// slug followed by [bot]. Held only to the kept slug, an agent could
+// close nothing the renamed app opened; so a bot that is not the kept
+// slug's is held to the slug GitHub gives the app now, and only that
+// one passes.
+func TestOpenedByAppKnowsARenamedApp(t *testing.T) {
+	g, f := newTest(t)
+	f.route("GET /app", 200, `{"id":1234,"slug":"kivali-acme-renamed","name":"Kivali acme renamed"}`)
+	f.route("GET /repos/acme/widgets/issues/7", 200, issueJSON(7, `{"login":"kivali-acme-renamed[bot]","type":"Bot"}`, "open", false))
+	f.route("PATCH /repos/acme/widgets/issues/7", 200, issueJSON(7, `{"login":"kivali-acme-renamed[bot]","type":"Bot"}`, "closed", false))
+	writer := agent(true, "acme/*")
+	if r := g.callT(t, writer, "close_issue", map[string]any{"repository": "acme/widgets", "number": 7}); r.isError {
+		t.Fatalf("renamed: %+v", r)
+	}
+	f.route("GET /repos/acme/widgets/issues/8", 200, issueJSON(8, otherAppUser, "open", false))
+	if r := g.callT(t, writer, "close_issue", map[string]any{"repository": "acme/widgets", "number": 8}); r.refusal == nil {
+		t.Errorf("another app's: %+v", r)
+	}
+	if n := len(appReads(f)); n != 2 {
+		t.Errorf("GET /app %d times over two calls", n)
 	}
 }
 
@@ -157,7 +221,7 @@ func TestCloseIssueTheAppOpened(t *testing.T) {
 	}
 }
 
-// Why this test exists: Evan's rule lets an agent close only what the
+// Why this test exists: write lets an agent close only an issue the
 // app opened. An issue a person or another app opened must be refused,
 // in words that name the cause and send the agent to the owner, with
 // nothing written and no token that writes minted; a pull request,
@@ -166,6 +230,7 @@ func TestCloseIssueTheAppOpened(t *testing.T) {
 // closed must fail in words rather than read as closed by the agent.
 func TestCloseIssueRefusesWhatTheAppDidNotOpen(t *testing.T) {
 	g, f := newTest(t)
+	f.route("GET /app", 200, appInfoJSON)
 	writer := agent(true, "acme/*")
 	for _, user := range []string{personUser, otherAppUser, `{"login":"kivali-acme[bot]","type":"User"}`, `null`} {
 		f.route("GET /repos/acme/widgets/issues/7", 200, issueJSON(7, user, "open", false))
@@ -221,6 +286,7 @@ func TestACloseThatFailsAfterItsCommentSaysTheCommentIsPosted(t *testing.T) {
 // requests.
 func TestClosePullRequest(t *testing.T) {
 	g, f := newTest(t)
+	f.route("GET /app", 200, appInfoJSON)
 	writer := agent(true, "acme/*")
 	f.route("GET /repos/acme/widgets/pulls/5", 200, pullJSON(5, appUser, "closed", "agent/x", "acme/widgets", true))
 	r := g.callT(t, writer, "close_pull_request", map[string]any{"repository": "acme/widgets", "number": 5, "comment": "Closing."})
@@ -271,25 +337,40 @@ func TestClosePullRequest(t *testing.T) {
 	}
 }
 
-// branchRoutes answers acme/widgets (default branch main) and its pull
-// requests from agent/fix-1 with pulls.
-func branchRoutes(f *fakeGitHub, pulls ...string) {
+// branchRoutes answers acme/widgets (default branch main, owner acme),
+// its pull requests from agent/fix-1 with from, and its open ones into
+// agent/fix-1 with none.
+func branchRoutes(f *fakeGitHub, from ...string) {
+	branchRoutesInto(f, nil, from...)
+}
+
+// branchRoutesInto is branchRoutes, answering the open pull requests
+// into agent/fix-1 (a listing by base) with into.
+func branchRoutesInto(f *fakeGitHub, into []string, from ...string) {
 	f.route("GET /repos/acme/widgets", 200, `{"full_name":"acme/widgets","default_branch":"main","owner":{"login":"acme","type":"Organization"}}`)
-	f.route("GET /repos/acme/widgets/pulls", 200, "["+strings.Join(pulls, ",")+"]")
+	f.routeFunc("GET /repos/acme/widgets/pulls", func(r recorded) reply {
+		list := from
+		if r.Query.Get("base") != "" {
+			list = into
+		}
+		return reply{Status: 200, Body: "[" + strings.Join(list, ",") + "]"}
+	})
 }
 
 // Why this test exists: delete_branch is the one way an agent deletes
-// anything on GitHub, and the rule holding it is the parent's reading
-// of Evan's: only the head branch, in the repository itself, of a
-// closed or merged pull request the app opened, never the default
-// branch, and not while any open pull request has it as its head. A
-// branch past any of these must be refused with nothing deleted and no
-// token that writes minted: the default branch before its pull
-// requests are read; an open pull request's head, whoever opened it; a
-// branch only people or other apps opened pull requests from, or only
-// a fork's branch of the same name, or none at all.
+// anything on GitHub. It deletes only the head branch, in the
+// repository itself, of a closed or merged pull request the app opened,
+// never the default branch, and not while any open pull request in the
+// repository has it as its head or its base (deleting a base closes or
+// retargets the pull requests into it). A branch past any of these must
+// be refused with nothing deleted and no token that writes minted: the
+// default branch before its pull requests are read; an open pull
+// request's head or base, whoever opened it; a branch only people or
+// other apps opened pull requests from, or only a fork's branch of the
+// same name, or none at all.
 func TestDeleteBranchRefusesWhatTheAppsPullRequestsDidNotLeave(t *testing.T) {
 	g, f := newTest(t)
+	f.route("GET /app", 200, appInfoJSON)
 	writer := agent(true, "acme/*")
 	branchRoutes(f)
 	for _, branch := range []string{"main", "Main"} {
@@ -309,10 +390,25 @@ func TestDeleteBranchRefusesWhatTheAppsPullRequestsDidNotLeave(t *testing.T) {
 	for _, open := range []string{appUser, personUser} {
 		branchRoutes(f, pullJSON(4, open, "open", "agent/fix-1", "acme/widgets", false), merged)
 		r := g.callT(t, writer, "delete_branch", map[string]any{"repository": "acme/widgets", "branch": "agent/fix-1"})
-		if r.refusal == nil || r.text != "agent/fix-1 is the head of pull request #4, which is open; a branch is deleted only once no open pull request has it as its head." ||
+		if r.refusal == nil || r.text != "agent/fix-1 is the head of pull request #4, which is open; a branch is deleted only once no open pull request has it as its head or its base; ask the owner." ||
 			r.refusal.Reason != "pull request #4 is open from the branch" {
 			t.Errorf("open by %s: %+v", open, r)
 		}
+	}
+	branchRoutesInto(f, []string{pullIntoJSON(12, "agent/fix-1")}, merged)
+	r := g.callT(t, writer, "delete_branch", map[string]any{"repository": "acme/widgets", "branch": "agent/fix-1"})
+	if r.refusal == nil || r.text != "agent/fix-1 is the base of pull request #12, which is open; a branch is deleted only once no open pull request has it as its head or its base; ask the owner." ||
+		r.refusal.Reason != "pull request #12 is open into the branch" {
+		t.Errorf("open into it: %+v", r)
+	}
+	var into []recorded
+	for _, q := range f.api() {
+		if q.Path == "/repos/acme/widgets/pulls" && q.Query.Get("base") != "" {
+			into = append(into, q)
+		}
+	}
+	if len(into) == 0 || into[len(into)-1].Query.Get("base") != "agent/fix-1" || into[len(into)-1].Query.Get("state") != "open" {
+		t.Errorf("pull requests into the branch asked for as %+v", into)
 	}
 
 	for name, pulls := range map[string][]string{
@@ -330,7 +426,7 @@ func TestDeleteBranchRefusesWhatTheAppsPullRequestsDidNotLeave(t *testing.T) {
 		},
 	} {
 		branchRoutes(f, pulls...)
-		r := g.callT(t, writer, "delete_branch", map[string]any{"repository": "acme/widgets", "branch": "agent/fix-1"})
+		r = g.callT(t, writer, "delete_branch", map[string]any{"repository": "acme/widgets", "branch": "agent/fix-1"})
 		if r.refusal == nil || r.text != "Your access lets you delete only the branch of a closed or merged pull request the GitHub App opened; ask the owner." ||
 			r.refusal.Reason != "no closed pull request the GitHub App opened came from agent/fix-1" {
 			t.Errorf("%s: %+v", name, r)
@@ -350,15 +446,17 @@ func TestDeleteBranchRefusesWhatTheAppsPullRequestsDidNotLeave(t *testing.T) {
 // repository that may write its contents, minted only then. The pull
 // requests must be asked for by the repository owner's head
 // (owner:branch) in every state, or a closed one would be missed or
-// another owner's branch read as this one; and the owner's audit row
-// must say what was deleted.
+// another owner's branch read as this one, and those into the branch
+// by base, open; and the owner's audit row must say what was deleted.
 func TestDeleteBranchDeletesTheHeadOfAClosedPullRequestTheAppOpened(t *testing.T) {
 	g, f := newTest(t)
 	for _, pr := range []string{
 		pullJSON(3, appUser, "closed", "agent/fix-1", "acme/widgets", true),
 		pullJSON(3, appUser, "closed", "agent/fix-1", "ACME/Widgets", false),
 	} {
-		branchRoutes(f, pullJSON(2, personUser, "closed", "agent/fix-1", "acme/widgets", false), pr)
+		// A pull request GitHub answers into another branch all the
+		// same does not hold this one.
+		branchRoutesInto(f, []string{pullIntoJSON(12, "main")}, pullJSON(2, personUser, "closed", "agent/fix-1", "acme/widgets", false), pr)
 		f.route("DELETE /repos/acme/widgets/git/refs/heads/agent/fix-1", 204, "")
 		before := len(f.api())
 		r := g.callT(t, agent(true, "acme/*"), "delete_branch", map[string]any{"repository": "acme/widgets", "branch": "agent/fix-1"})
@@ -366,13 +464,17 @@ func TestDeleteBranchDeletesTheHeadOfAClosedPullRequestTheAppOpened(t *testing.T
 			t.Fatalf("%+v", r)
 		}
 		api := f.api()[before:]
-		if len(api) != 3 || api[1].Path != "/repos/acme/widgets/pulls" || api[2].Method != "DELETE" {
+		if len(api) != 4 || api[1].Path != "/repos/acme/widgets/pulls" || api[2].Path != "/repos/acme/widgets/pulls" || api[3].Method != "DELETE" {
 			t.Fatalf("requests %+v", api)
 		}
 		if q := api[1].Query; q.Get("head") != "acme:agent/fix-1" || q.Get("state") != "all" {
 			t.Errorf("query %v", q)
 		}
+		if q := api[2].Query; q.Get("base") != "agent/fix-1" || q.Get("state") != "open" || q.Get("head") != "" {
+			t.Errorf("query %v", q)
+		}
 		for i, want := range []map[string]string{
+			{"metadata": "read", "pull_requests": "read"},
 			{"metadata": "read", "pull_requests": "read"},
 			{"metadata": "read", "pull_requests": "read"},
 			{"metadata": "read", "contents": "write"},
@@ -392,6 +494,111 @@ func TestDeleteBranchDeletesTheHeadOfAClosedPullRequestTheAppOpened(t *testing.T
 	for _, branch := range []any{"", "a..b", "-x", "refs/heads/", 3} {
 		if r := g.callT(t, agent(true, "acme/*"), "delete_branch", map[string]any{"repository": "acme/widgets", "branch": branch}); r.refusal == nil {
 			t.Errorf("branch %v: %+v", branch, r)
+		}
+	}
+}
+
+// Why this test exists: a listing reads at most maxListPages pages, and
+// a pull request past them is never seen. Every check delete_branch
+// makes rests on seeing them all: an open pull request from the branch
+// on the page after the last one read would be missed and the branch
+// deleted under it. A listing whose last page read is full is taken as
+// cut, and the branch is refused, with nothing deleted and no token
+// that writes minted, whichever of the two listings it is.
+func TestDeleteBranchRefusesWhenItsPullRequestsCannotAllBeRead(t *testing.T) {
+	g, f := newTest(t)
+	f.route("GET /app", 200, appInfoJSON)
+	closed := func(i int) string { return pullJSON(i, personUser, "closed", "agent/fix-1", "acme/widgets", false) }
+	from := []string{fullPage(1, func(i int) string {
+		if i == 1 {
+			return pullJSON(1, appUser, "closed", "agent/fix-1", "acme/widgets", true)
+		}
+		return closed(i)
+	})}
+	for p := 1; p < maxListPages; p++ {
+		from = append(from, fullPage(p*100+1, closed))
+	}
+	from = append(from, "["+pullJSON(5000, personUser, "open", "agent/fix-1", "acme/widgets", false)+"]")
+	var into []string
+	for p := range maxListPages + 1 {
+		into = append(into, fullPage(p*100+1, func(i int) string { return pullIntoJSON(i, "agent/fix-1") }))
+	}
+	f.route("GET /repos/acme/widgets", 200, `{"full_name":"acme/widgets","default_branch":"main","owner":{"login":"acme"}}`)
+	f.route("DELETE /repos/acme/widgets/git/refs/heads/agent/fix-1", 204, "")
+	for name, pages := range map[string][2][]string{
+		"from the branch": {from, nil},
+		"into the branch": {{"[" + pullJSON(1, appUser, "closed", "agent/fix-1", "acme/widgets", true) + "]"}, into},
+	} {
+		f.routeFunc("GET /repos/acme/widgets/pulls", func(r recorded) reply {
+			if r.Query.Get("base") != "" {
+				return pageRoute(pages[1]...)(r)
+			}
+			return pageRoute(pages[0]...)(r)
+		})
+		before := len(f.api())
+		r := g.callT(t, agent(true, "acme/*"), "delete_branch", map[string]any{"repository": "acme/widgets", "branch": "agent/fix-1"})
+		if r.refusal == nil || r.text != "The pull requests of agent/fix-1 in acme/widgets could not all be read, so it is not deleted; ask the owner." ||
+			r.refusal.Reason != "the branch's pull requests could not all be read" {
+			t.Errorf("%s: %+v", name, r)
+		}
+		read := 0
+		for _, q := range f.api()[before:] {
+			if q.Path == "/repos/acme/widgets/pulls" {
+				read++
+			}
+		}
+		want := maxListPages
+		if name == "into the branch" {
+			want++
+		}
+		if read != want {
+			t.Errorf("%s: %d pages read, want %d", name, read, want)
+		}
+	}
+	if w := writesTaken(f); len(w) != 0 {
+		t.Errorf("wrote %v", w)
+	}
+	if w := writesMinted(f); len(w) != 0 {
+		t.Errorf("minted tokens that write %v", w)
+	}
+}
+
+// Why this test exists: GitHub names a repository's owner as it is, in
+// its own capitals, and for a transferred repository the new owner
+// (GitHub answers the old name with the repository where it is now).
+// The pull requests from the branch must be asked for by GitHub's
+// owner, and their head repository held to GitHub's name for the
+// repository: by the agent's spelling, a listing by the old owner
+// finds none of the branch's pull requests, and an open one would go
+// unseen.
+func TestDeleteBranchAsksForPullRequestsByGitHubsOwner(t *testing.T) {
+	for _, c := range []struct {
+		name, arg, full, owner string
+	}{
+		{"capitals", "ACME/widgets", "acme/widgets", "acme"},
+		{"transferred", "acme/widgets", "newco/widgets", "newco"},
+	} {
+		g, f := newTest(t)
+		f.route("GET /repos/"+c.arg, 200, fmt.Sprintf(`{"full_name":%q,"default_branch":"main","owner":{"login":%q,"type":"Organization"}}`, c.full, c.owner))
+		f.routeFunc("GET /repos/"+c.arg+"/pulls", func(r recorded) reply {
+			if r.Query.Get("base") != "" {
+				return reply{Status: 200, Body: "[]"}
+			}
+			return reply{Status: 200, Body: "[" + pullJSON(3, appUser, "closed", "agent/fix-1", c.full, true) + "]"}
+		})
+		f.route("DELETE /repos/"+c.arg+"/git/refs/heads/agent/fix-1", 204, "")
+		r := g.callT(t, agent(true, "acme/*"), "delete_branch", map[string]any{"repository": c.arg, "branch": "agent/fix-1"})
+		if r.isError {
+			t.Errorf("%s: %+v", c.name, r)
+		}
+		var heads []string
+		for _, q := range f.api() {
+			if h := q.Query.Get("head"); h != "" {
+				heads = append(heads, h)
+			}
+		}
+		if want := []string{c.owner + ":agent/fix-1"}; !slices.Equal(heads, want) {
+			t.Errorf("%s: head %v, want %v", c.name, heads, want)
 		}
 	}
 }

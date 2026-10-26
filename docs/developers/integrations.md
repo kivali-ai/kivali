@@ -3506,7 +3506,7 @@ permission, and to ask the owner.
 | `create_pull_request` | `POST /repos/{o}/{r}/pulls` from a head branch already on GitHub; moves no commits | `pull_requests: write` |
 | `close_pull_request` | `GET /repos/{o}/{r}/pulls/{n}`, held to [the same app](#the-same-app); then, with `comment`, `POST /repos/{o}/{r}/issues/{n}/comments`, and `PATCH /repos/{o}/{r}/pulls/{n}` `{"state": "closed"}` | reads with `pull_requests: read`; writes with `pull_requests: write` |
 | `list_branches` | `GET /repos/{o}/{r}/branches` | `contents: read` |
-| `delete_branch` | `GET /repos/{o}/{r}` for its default branch and owner, `GET /repos/{o}/{r}/pulls?head={owner}:{branch}&state=all`, held to [the same app](#the-same-app); then `DELETE /repos/{o}/{r}/git/refs/heads/{branch}` | reads with `pull_requests: read`; deletes with `contents: write` |
+| `delete_branch` | `GET /repos/{o}/{r}` for its default branch and owner, `GET /repos/{o}/{r}/pulls?head={owner}:{branch}&state=all` and `?base={branch}&state=open`, held to [the same app](#the-same-app); then `DELETE /repos/{o}/{r}/git/refs/heads/{branch}` | reads with `pull_requests: read`; deletes with `contents: write` |
 | `compare` | `GET /repos/{o}/{r}/compare/{base}...{head}`: commits and files, no patches | `contents: read` |
 | `whoami` | `GET /app` and `GET /app/installations/{id}`, both with the JWT | no installation token |
 | `clone`, `fetch` | a shell job ([Clone, fetch and push](#clone-fetch-and-push)) | `contents: read`, in the job's own token |
@@ -3601,9 +3601,12 @@ audited; one opened by anyone else, a pull request served from the
 issues endpoint and one closed already, each with nothing written and
 no token that writes minted; a close whose comment went up before it
 failed; a merged pull request; `delete_branch` refusing the default
-branch, an open pull request's head and a branch no closed pull
-request of the app's came from (a person's, another app's, a fork's),
-and deleting otherwise; and the slug read from GET /app once a call.
+branch, an open pull request's head or base, a listing cut at ten
+pages, and a branch no closed pull request of the app's came from (a
+person's, another app's, a fork's), asking for the pull requests by
+GitHub's owner, and deleting otherwise; and the slug read from GET
+/app once a call, for a connection that keeps none and for a renamed
+app.
 `git_test.go` holds clone, fetch and push to
 [Clone, fetch and push](#clone-fetch-and-push): the job's token minted
 for the repository alone with the action's permission, after the
@@ -3623,31 +3626,38 @@ connection's proxy credential.
 
 #### The same app
 
-With `write`, an agent closes and deletes only what the app made:
-`close_issue` and `close_pull_request` close only an issue or a pull
-request the app opened, and `delete_branch` deletes only the head
-branch of a pull request the app opened in that repository, once that
-pull request is closed or merged.
+With `write`, `close_issue` and `close_pull_request` close only an
+issue or a pull request the app opened, and `delete_branch` deletes
+only a branch that was the head, in the repository itself, of a pull
+request the app opened there, once that pull request is closed or
+merged. Whoever made the branch or pushed to it does not enter into
+it: the branch's pull requests decide.
 
 What the app opened is one check, `openedByApp`: the author GitHub
 names (`user`) is the app's bot user, `type` `Bot` and `login`
-`<slug>[bot]`, exactly. The slug is the connection's `slug`; a
-connection that keeps none (one set up before it was kept) has it read
-from GitHub, `GET /app` with the app's JWT (`appOf`), once a call
-however many authors the call checks. GitHub naming no slug either
-refuses the call as a connection not set up ("GitHub's connection is
-not set up; ask the owner to set it up again.", `GitHub names no slug
-for the app`).
+`<slug>[bot]`, exactly. A user of another type is never the app and
+costs no request. The slug is the connection's `slug`; a `Bot` whose
+login is not that one, or any `Bot` on a connection that keeps no slug
+(one set up before it was kept), is held to the slug GitHub gives the
+app now, `GET /app` with the app's JWT (`appOf`), read once a call
+however many authors the call checks, so an app renamed since setup
+still knows its own bot. GitHub naming no slug for a connection that
+keeps none refuses the call as a connection not set up ("GitHub's
+connection is not set up; ask the owner to set it up again.",
+`GitHub names no slug for the app`).
 
 Each reads what it acts on with a token that only reads, and mints a
-token that writes only once every check has passed, so a refused or
-failed call writes nothing and holds no write permission:
+token that writes only once every check below has passed, so a call
+these checks refuse or fail writes nothing and holds no write
+permission. A call past them does both, whatever GitHub then answers:
+a close whose comment went up before the close failed, a deletion
+GitHub rejects.
 
 | Action | Refused (a Refusal) | Failed (an error result) |
 | --- | --- | --- |
 | `close_issue` | a pull request, as the issues endpoint serves one with `pull_request`: "<owner/name>#<n> is a pull request; github_close_pull_request closes it." (`the number is a pull request`); one the app did not open: "Your access lets you close only issues the GitHub App opened; ask the owner." (`the GitHub App did not open <owner/name>#<n>`) | closed already: "Issue <owner/name>#<n> is closed already." |
 | `close_pull_request` | one the app did not open: "Your access lets you close only pull requests the GitHub App opened; ask the owner." | merged: "Pull request <owner/name>#<n> is merged, and a merged pull request cannot be closed."; closed already |
-| `delete_branch` | the default branch, capitals aside, before any pull request is read: "<branch> is the default branch of <owner/name>, which your access does not let you delete; ask the owner."; any open pull request with that head, whoever opened it: "<branch> is the head of pull request #<n>, which is open; a branch is deleted only once no open pull request has it as its head."; no closed or merged one the app opened: "Your access lets you delete only the branch of a closed or merged pull request the GitHub App opened; ask the owner." (`no closed pull request the GitHub App opened came from <branch>`) | GitHub's, such as a 422 for a branch it no longer has |
+| `delete_branch` | the default branch, capitals aside, before any pull request is read: "<branch> is the default branch of <owner/name>, which your access does not let you delete; ask the owner."; a listing cut short: "The pull requests of <branch> in <owner/name> could not all be read, so it is not deleted; ask the owner." (`the branch's pull requests could not all be read`); an open pull request in the repository with that head or that base, whoever opened it: "<branch> is the head of pull request #<n>, which is open; a branch is deleted only once no open pull request has it as its head or its base; ask the owner." (`pull request #<n> is open from the branch`; for a base, "the base of", `... open into the branch`); no closed or merged one the app opened (`leftByApp`): "Your access lets you delete only the branch of a closed or merged pull request the GitHub App opened; ask the owner." (`no closed pull request the GitHub App opened came from <branch>`) | GitHub's, such as a 422 for a branch it no longer has |
 
 A close posts its `comment` first, when there is one, through the
 issue's comments (as `comment` does), then sends `PATCH` `{"state":
@@ -3656,14 +3666,28 @@ that fails after the comment went up says so after GitHub's words,
 "... The comment is on GitHub: <address>.", so the agent does not post
 it again.
 
-`delete_branch` lists the pull requests whose head is
-`<owner>:<branch>`, the owner the repository's (its `owner.login`), in
-every state, up to ten pages. Only those whose `head.ref` is the
-branch count, and of the closed ones only those whose `head.repo` is
-the repository itself: a pull request from a fork's branch of the same
-name, or from a fork GitHub no longer has, is not this branch's. The
-action deletes `refs/heads/<branch>` and nothing else, and GitHub's own
-branch protection still applies.
+`delete_branch` reads two listings of the repository's pull requests
+(`allPulls`), each up to ten pages: those whose head is
+`<owner>:<branch>` in every state, the owner the one GitHub names the
+repository's (its `owner.login`, in GitHub's capitals and, for a
+transferred repository, the new owner), and the open ones whose base is
+the branch, since deleting a base closes or retargets the pull requests
+into it. A listing whose tenth page is full may go on, so the branch is
+refused as cut: a check that has not seen every pull request does not
+hold. An open pull request holds the branch when its `head.ref` or
+`base.ref` is the branch, capitals aside. Only the repository's own
+pull requests are read: an open pull request in another repository,
+such as the one a fork came from, with this branch as its head is not
+seen.
+
+The rule that lets the branch go once nothing open holds it is one
+function, `leftByApp`, over the head listing: a closed or merged pull
+request whose `head.ref` is the branch exactly, whose `head.repo` is
+the repository itself (a pull request from a fork's branch of the same
+name, or from a fork GitHub no longer has, is not this branch's), and
+that `openedByApp` says the app opened. The action then deletes
+`refs/heads/<branch>` and nothing else, and GitHub's own branch
+protection still applies.
 
 #### Clone, fetch and push
 
