@@ -13,7 +13,8 @@ import (
 )
 
 // The access form's fields: the repositories an agent may use, and
-// whether it may create issues, comments and pull requests in them.
+// whether it may open issues and pull requests, comment and push in
+// them.
 const (
 	repositoriesKey = "repositories"
 	writeKey        = "write"
@@ -47,8 +48,12 @@ func (a access) includes(repo string) bool {
 	return gitrepo.Match(a.repositories, strings.ToLower(repo))
 }
 
-// writeRefusal is the words of a write action called without write.
-const writeRefusal = "Your access to GitHub does not include creating issues, comments or pull requests; ask the owner."
+// writeRefusal is the words of a write action called without write,
+// push among them, and writeReason its audit's reason.
+const (
+	writeRefusal = "Your access to GitHub does not include opening issues and pull requests, commenting or pushing; ask the owner."
+	writeReason  = "the access does not include opening issues and pull requests, commenting or pushing"
+)
 
 // notIncluded is the refusal of a repository the access does not name.
 func notIncluded(repo string) error {

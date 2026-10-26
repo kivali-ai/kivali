@@ -242,18 +242,18 @@ Every clone, fetch and push is in **Recent calls**, with the repository and the 
 
 ## GitHub
 
-**GitHub** ships with Kivali. It lets agents read and open issues, comments and pull requests in your GitHub repositories, as a private GitHub App its setup makes on your account or an organization's. It runs inside Kivali and reaches only `api.github.com` and `github.com`.
+**GitHub** ships with Kivali. It lets agents read and open issues, comments and pull requests in your GitHub repositories, and clone, fetch and push them, as a private GitHub App its setup makes on your account or an organization's. It runs inside Kivali and reaches only `api.github.com` and `github.com`; an agent's clones, fetches and pushes run in its own sandbox and reach only `github.com`.
 
 ### Connect it
 
 On GitHub’s page, choose **Connect**. Setup makes the app and installs it on GitHub's own pages, where you are signed in to GitHub, and you copy nothing:
 
 1. Name the account to make the app on: an organization's name, or leave it blank for your personal account. Choose the account that owns the repositories agents should reach: the app can reach only that account's repositories. Choose **Continue**.
-2. Choose **Continue to github.com**. GitHub's form for a new GitHub App opens filled in: the name (Kivali and your team's name), the team's address, the webhook off, installation only on that account, and the repository permissions Contents and Metadata read-only, Issues and Pull requests read and write. App names are unique across GitHub, so GitHub may ask you to change the name. Choose **Create GitHub App**.
+2. Choose **Continue to github.com**. GitHub's form for a new GitHub App opens filled in: the name (Kivali and your team's name), the team's address, the webhook off, installation only on that account, and the repository permissions Contents, Issues and Pull requests read and write, Metadata read-only. App names are unique across GitHub, so GitHub may ask you to change the name. Choose **Create GitHub App**.
 3. GitHub sends you back to Kivali, which takes the app GitHub made. Choose **Continue to github.com** again: on GitHub's page for installing the app, choose the repositories agents should reach and choose **Install**. Agents reach only repositories the app is installed on.
 4. GitHub sends you back, and GitHub is connected. When an organization's owners approve installations first, the page waits until one of them approves it on GitHub.
 
-Kivali keeps the app's id, name, client id and secret, its private key and where it is installed, and nothing of your own GitHub account's. The client secret and the private key are secrets, never shown; the app's id, name, client id and installation are GitHub's public names for it, so what the app writes on GitHub reads as written by `<the app's name on GitHub>[bot]`, to agents as on GitHub. Each call is made as the app: Kivali signs with the app's key for a token that lasts an hour at most, narrowed to the call's repository and to what the action needs.
+Kivali keeps the app's id, name, client id and secret, its private key and where it is installed, and nothing of your own GitHub account's. The client secret and the private key are secrets, never shown; the app's id, name, client id and installation are GitHub's public names for it, so what the app writes on GitHub reads as written by `<the app's name on GitHub>[bot]`, to agents as on GitHub. Each call is made as the app: Kivali signs with the app's key for a token that lasts an hour at most, narrowed to the call's repository and to what the action needs. The app's key never leaves Kivali's server; a clone, fetch or push takes a token of its own to the agent's sandbox, as **What agents can do** below describes.
 
 If setup stops before it is done, Kivali keeps nothing, and you can start again; an app GitHub already made stays on GitHub, where you can delete it. A team opened at a plain `http` address, such as `http://127.0.0.1` in Kivali Desktop, gives GitHub that address to send you back to: if GitHub refuses it, give the team an `https` address under **Other devices** and start again from there.
 
@@ -266,7 +266,7 @@ Besides Kivali's own, GitHub's page lists four requirements, each with a **Fix**
 - **The app's key works**: GitHub accepts the app's key. If not, **Fix** sets GitHub up again, with a new app.
 - **Installed on GitHub**: the app is still installed, and not suspended. Removed on GitHub, **Fix** installs it again; suspended, it opens the installation's settings on GitHub.
 - **Repositories it reaches**: how many repositories the installation reaches, or all of them. Reaching none, **Fix** opens the installation's settings, to choose them.
-- **Permissions current**: the installation has every permission this version of Kivali needs. When a later version needs one more, **Fix** opens the app's settings on GitHub to add it (or the installation's, to approve it), and the page waits until GitHub shows it granted.
+- **Permissions current**: the installation has every permission this version of Kivali needs. When a later version needs one more, **Fix** opens the app's settings on GitHub to add it (or the installation's, to approve it), and the page waits until GitHub shows it granted. Pushing needs Contents read and write, so an app made by a version that could not push, with Contents read-only, reads not met after the update, naming `contents: write`: **Fix** opens the app's permissions on GitHub, where you set Contents to read and write and save, then approve the change for its installation where GitHub asks. Until then, pushes are refused by GitHub, and everything else works as before.
 
 ### Disconnect
 
@@ -281,7 +281,7 @@ An earlier version of Kivali connected GitHub by signing in with a GitHub App yo
 An agent's access has two parts:
 
 - **Repositories**: each `owner/name`, such as `acme/widgets`, or a pattern such as `acme/*`, which covers every repository directly under `acme`. `*` is the only wildcard, and capitals do not matter, as for [Git (Basic)](#access). Name at least one.
-- **May create and comment**: lets the agent open issues and pull requests and comment on them in those repositories. Off, the agent only reads, and its tools do not include those actions.
+- **May create, comment and push**: lets the agent open issues and pull requests, comment on them and push branches and tags in those repositories. Off, the agent only reads (cloning and fetching among that), and its tools do not include those actions.
 
 Everything an agent does is done as the app, so GitHub shows the app (its name followed by `[bot]`) on its issues, comments and pull requests, not you.
 
@@ -291,15 +291,17 @@ GitHub's page lists these under **Actions** by the part of the access that unloc
 
 - List the repositories its access names, and read a repository's details, its branches, and a comparison of two branches, tags or commits (the commits and the files changed, not the changes themselves).
 - List and read issues, with the latest 20 comments, and list and read pull requests, with the diff when it asks (cut at 50,000 characters). Issue search words stay within the repository named: a search that names another repository, organization or user is refused.
+- **Clone** a repository its access names into a new or empty directory of its files or its home, and **Fetch** new commits and tags into one of its working copies.
 
-With **May create and comment**, it can also open an issue, comment on an issue or pull request, and open a pull request from a branch already on GitHub.
+With **May create, comment and push**, it can also open an issue, comment on an issue or pull request, **Push** branches and tags to a repository its access names, and open a pull request from a branch on GitHub, such as one it pushed.
 
-Each action is in **Recent calls**. A call for a repository the agent's access does not name is refused before anything reaches GitHub, and the agent is told to ask you.
+Clone, Fetch and Push work as [Git (Basic)](#what-agents-can-do)'s do: the working copy is an ordinary one, whose origin is the repository's address without a token, and the agent works in it with plain git in its shell. Each names its repository, as its `https://github.com/...` address or `owner/name`. Each takes a token of its own: once Kivali has checked the call against the agent's access, it has the app mint a token for that one call, narrowed to that one repository and to reading it (Clone, Fetch) or writing it (Push). Kivali does not keep it, and it expires within the hour. A push may write any branch or tag in the repository, lands whole or not at all, and is never forced: a push that would overwrite history, or move an existing tag, is refused, and so is deleting a branch or tag. GitHub's own rules for the repository, such as branch protection, still apply.
 
-GitHub moves no commits, and [Git (Basic)](#git-basic) does not handle `github.com`: an agent opens a pull request here from a branch already on GitHub.
+Each action is in **Recent calls**; a clone, fetch or push has two rows, one when it starts and one when it ends, as for Git (Basic). A call for a repository the agent's access does not name is refused before anything reaches GitHub, and the agent is told to ask you. [Git (Basic)](#git-basic) does not handle `github.com`: GitHub's repositories are this integration's.
 
 ### Not supported
 
 - GitHub Enterprise Server and other hosts than `github.com`.
-- Cloning, pushing or any other move of commits.
+- Force-pushing, and deleting a branch or tag on GitHub.
+- SSH addresses, Git LFS files and submodules, as for [Git (Basic)](#not-supported). A clone stops after 15 minutes, a fetch or a push after 10.
 - Anything the app's permissions do not cover, such as changing the repository's settings, merging pull requests or approving reviews.

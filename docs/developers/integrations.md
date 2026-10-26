@@ -296,7 +296,7 @@ anything runs, and the page shows it in the Connection block
 "connection": {
   "method": "setup",
   "setup": {
-    "summary": "Creates a private GitHub App, on your account or an organization's, that may read contents and write issues and pull requests, and installs it on the repositories you choose.",
+    "summary": "Creates a private GitHub App, on your account or an organization's, that may read and write contents, issues and pull requests, and installs it on the repositories you choose.",
     "hosts": ["github.com"],
     "fields": {
       "account": {"words": "Your personal account, or an organization's name"},
@@ -2426,10 +2426,11 @@ type SignIn struct{ ClientID, ClientSecret, AccessToken, RefreshToken string }
   its `Call` answers with `Result.ShellJob` (and `Result.Audit`, the
   reason of the row core writes as it hands the job out), and
   `Complete` puts the shell's result in words on the call's second
-  request ([The git built-in](#the-git-built-in)).
+  request ([The git built-in](#the-git-built-in); GitHub's clone,
+  fetch and push, [The GitHub built-in](#the-github-built-in)).
 - A `HostsOf` built-in's shell jobs reach the network through the
   egress proxy: its connection gets a scoped proxy credential admitted
-  to `Hosts(conn)` and nothing else.
+  to `Hosts(conn)` and nothing else. Git (Basic) and GitHub are both.
 - A `ConnectionChecker` holds a connection to more than its form:
   saving it (`PUT .../connection`, a token flow's Form) calls
   `CheckConnection` after the form's own checks and before it stores
@@ -2650,12 +2651,12 @@ every access row, now naming no connection (or naming a connection set
 aside), as invalid until the owner sets it again.
 
 GitHub 1.0.0 (a bundle an earlier Kivali shipped and ran in a pod) is
-GitHub 2.0.0 here, a built-in of Go code. Boot's
-`InstallBuiltinIntegrations` makes 2.0.0 the version in use and 1.0.0
+GitHub 2.1.0 here, a built-in of Go code. Boot's
+`InstallBuiltinIntegrations` makes 2.1.0 the version in use and 1.0.0
 superseded; the reconcile stops 1.0.0's pod, since it runs no pod for
 a built-in record. 1.0.0's connection, the owner's own GitHub App
 signed in with (its client id in the record; its client secret and
-the sign-in's tokens in the Secret), does not fit 2.0.0's setup flow,
+the sign-in's tokens in the Secret), does not fit 2.x's setup flow,
 which makes its own app (`setupMisfit`, [Keep](#keep)): its record
 and Secret are left as they are, GitHub reads installed with one unmet
 `connection` row ("Set up GitHub again: ..."), agents' calls are
@@ -2670,9 +2671,19 @@ The page offers Disconnect meanwhile: it removes the earlier connection
 and every agent's access, and revokes the earlier app's grant as the
 install would. With several connection records (a migration that
 could not finish), no install takes the connection over. Started on
-this data, a Kivali that ships GitHub 1.0.0 reads 2.0.0's
+this data, a Kivali that ships GitHub 1.0.0 reads 2.x's
 connection as its own and finds no client id there, so GitHub needs
 connecting again.
+
+GitHub 2.0.0's connection fits 2.1.0, which keeps its setup and its
+access form (the `write` switch is retitled, its key unchanged), so
+boot supersedes 2.0.0 and every connection and access row carries
+over. 2.1.0 adds clone, fetch and push and needs `contents: write` of
+the installation, which an app 2.0.0 made does not have: its
+`permissions` requirement reads unmet, naming `contents: write`, until
+the owner's Fix gives it on GitHub ([The GitHub
+built-in](#the-github-built-in)).
+Until then GitHub refuses a push's token, and everything else works.
 
 ### Dispatch
 
@@ -2769,7 +2780,8 @@ agent's access set under 2.0.0 stays valid. Its manifest:
 
 Everything about a clone, a fetch or a push that is not Git (Basic)'s own
 policy is `internal/builtinintegrations/gitops`, so another built-in
-can run the same actions through the same daemon. Git (Basic) reads its
+can run the same actions through the same daemon, as GitHub does
+([The GitHub built-in](#the-github-built-in)). Git (Basic) reads its
 connection and the caller's access (`gitintegration/access.go`) into a
 `gitops.Policy`, per call, and hands it in; `gitops` reads no access
 form:
@@ -2968,7 +2980,8 @@ Clone and fetch set no `force`, no `allowed_refs` and no
 `any_branch_or_tag`. `any_branch_or_tag` is for an access that lets an
 agent push without naming branches and tags, which no pattern can say
 (`*` stands within one segment); Git (Basic)'s push never sets it, since its
-access names them in `push_refs`. Nothing on the job's path logs it:
+access names them in `push_refs`, and GitHub's always does
+([Clone, fetch and push](#clone-fetch-and-push)). Nothing on the job's path logs it:
 not core, not the MCP server, not the daemon.
 
 Git (Basic)'s refusals name the cause and the owner only:
@@ -3180,6 +3193,13 @@ scoped proxy credential of its own (`internal/web/integration_builtin_egress.go`
   whose connection's Secret holds no secret mints and registers one
   first.
 
+GitHub implements `HostsOf` too, its connection reaching `github.com`
+alone (`integration-github.<connection id>`). Its connection is made by
+setup, never saved by the form, so its secret is minted at the first
+job or the next boot, whichever comes first; a setup that keeps values
+over the connection, a take-over among them, keeps the secret, and
+Disconnect drops it as above.
+
 #### Checks at save
 
 Git (Basic) is a `ConnectionChecker` and an `AccessChecker`. Saving a
@@ -3234,14 +3254,15 @@ submodules (not cloned), and deleting a remote ref.
 ### The GitHub built-in
 
 `internal/builtinintegrations/githubintegration` (name `github`,
-version 2.0.0, in `builtins.All()`) is GitHub as a built-in of Go
-code: agents read and open issues, comments and pull requests as a
-private GitHub App its setup makes on the owner's account or an
-organization's, through GitHub's REST API. The package implements
-`Integration`, `SetupIntegration` (`setup.go`), `RequirementsOf`
+version 2.1.0, in `builtins.All()`) is GitHub as a built-in of Go
+code: agents read and open issues, comments and pull requests through
+GitHub's REST API, and clone, fetch and push through the agent-shell
+daemon, as a private GitHub App its setup makes on the owner's account
+or an organization's. The package implements `Integration`,
+`SetupIntegration` (`setup.go`), `RequirementsOf`
 (`requirements.go`), `Uninstaller` and `SignInReplacer`
-(`uninstall.go`); not `ShellJobIntegration` or `HostsOf`, since no
-action works in the agent's shell or moves commits.
+(`uninstall.go`), and `ShellJobIntegration` and `HostsOf` (`git.go`,
+[Clone, fetch and push](#clone-fetch-and-push)).
 
 - **The manifest**: `kivali.connection.method: setup`, with the
   `setup` block of [Setup connections](#setup-connections) (the
@@ -3252,11 +3273,12 @@ action works in the agent's shell or moves commits.
   `client_secret` and `private_key`, secret; no `then`), an empty `user_config`,
   `kivali.hosts: ["api.github.com", "github.com"]`, `kivali.verify:
   whoami`, and GitHub 1.0.0's access form, so agents' access carries
-  over: `repositories` (required) and `write`, "May create and
-  comment". Its `tools` are the actions an agent may be given, the
-  three write ones (`create_issue`, `comment`, `create_pull_request`)
-  with `"access": "write"`, so the page lists them under "May create
-  and comment" and the rest under "Any access". `whoami`
+  over: `repositories` (required) and `write`, "May create, comment and
+  push". Its `tools` are the actions an agent may be given, the REST
+  ones then `clone`, `fetch` and `push`, the four write ones
+  (`create_issue`, `comment`, `create_pull_request`, `push`) with
+  `"access": "write"`, so the page lists them under "May create,
+  comment and push" and the rest under "Any access". `whoami`
   is not a tool: a built-in's `kivali.verify` need not name one
   ([The check](#the-check)). It passes `integration.ValidateBuiltin`.
 - **The connection** is what setup keeps, read as `conn.Fields`.
@@ -3293,7 +3315,7 @@ GitHub's own pages and nothing copied:
    <the same>, "setup_on_update": true, "public":
    false, "hook_attributes": {"url": "https://example.com/no-webhook",
    "active": false}, "default_permissions": {"metadata": "read",
-   "contents": "read", "issues": "write", "pull_requests": "write"},
+   "contents": "write", "issues": "write", "pull_requests": "write"},
    "default_events": []}`. GitHub takes no `hook_attributes` without a
    `url`, an inactive webhook's included, and names the lack "url"
    alone; and no `url` whose host is not reachable over the public
@@ -3375,6 +3397,13 @@ page is read and on the hourly refresh, never for the list or Home
 | `permissions` | Permissions current | "The installation has every permission this version needs." | "The installation lacks permissions this version needs: issues: write, ... Approve them on GitHub.", Fix `permissions` (write covers read, admin both) |
 
 Any other failure is an error, which core shows as its one `checks` row.
+This version needs `needed()`: `contents: write` (a push's token
+writes contents), `issues: write`, `pull_requests: write` and
+`metadata: read`, which is also what the app is made with. An app 2.0.0
+made has `contents: read`, so its row reads "...lacks permissions this
+version needs: contents: write. Approve them on GitHub.", and the Fix
+sends the owner to the app's own permissions first, since the app does
+not ask for it.
 
 #### Uninstall
 
@@ -3406,17 +3435,23 @@ installation access token (`POST
 /app/installations/{installation_id}/access_tokens`), whose body
 narrows it to the call's repository (`repositories: [name]`) and to
 the permissions the action needs (`permissions`, always with `metadata:
-read`). A minted token is cached in the process's memory, by
-connection id, app id, installation id, the repository's name (the
-owner dropped, in lower case, as the token's `repositories` names it;
-none for a token that reaches the whole installation) and permissions,
-and handed out again until a minute before the
-`expires_at` GitHub gave, on the same clock; one that expires within
-the minute is used once and not cached. Tokens are never written
-anywhere and never in an answer: GitHub's words an error passes on have
-the request's credential replaced by `[credential]`. `installations`
-lists the app's installations with the JWT (`GET /app/installations`),
-for the setup flow to check an installation id against.
+read`). A REST action's token (`installationToken`) is cached in the
+process's memory, by connection id, app id, installation id, the
+repository's name (the owner dropped, in lower case, as the token's
+`repositories` names it; none for a token that reaches the whole
+installation) and permissions, and handed out again until a minute
+before the `expires_at` GitHub gave, on the same clock; one that
+expires within the minute is used once and not cached. A shell job's
+token (`jobToken`) is minted the same way (`mint`, the one request
+both share) but never handed out from the cache nor put in it, and
+only ever narrowed to one repository: it is the job's alone, core
+keeps it nowhere, and it expires when GitHub says, within the hour
+([Clone, fetch and push](#clone-fetch-and-push)). Tokens are never
+written anywhere and never in an answer: GitHub's words an error
+passes on have the request's credential replaced by `[credential]`.
+`installations` lists the app's installations with the JWT (`GET
+/app/installations`), for the setup flow to check an installation id
+against.
 
 GitHub refusing a token is an error result for the agent: 401 (the
 key) and 404 (no such installation) end with "Ask the owner."; 422 for
@@ -3439,8 +3474,10 @@ permission, and to ask the owner.
 | `list_branches` | `GET /repos/{o}/{r}/branches` | `contents: read` |
 | `compare` | `GET /repos/{o}/{r}/compare/{base}...{head}`: commits and files, no patches | `contents: read` |
 | `whoami` | `GET /app` and `GET /app/installations/{id}`, both with the JWT | no installation token |
+| `clone`, `fetch` | a shell job ([Clone, fetch and push](#clone-fetch-and-push)) | `contents: read`, in the job's own token |
+| `push` | a shell job | `contents: write`, in the job's own token |
 
-The rules are GitHub 1.0.0's:
+The REST actions' rules are GitHub 1.0.0's:
 
 - **Access.** A repository argument must be `owner/name`
   (`cleanRepository`: spaces and tabs around it and a `.git` dropped,
@@ -3448,10 +3485,10 @@ The rules are GitHub 1.0.0's:
   starting with `-`); one the access's `repositories` patterns do not
   match (`gitrepo.Match`) is refused before any token is minted, "Your
   access to GitHub does not include <owner/name>; ask the owner."
-  `create_issue`, `comment` and `create_pull_request` need `write:
-  true`: `Tools` leaves them out without it and `Call` refuses them by
-  name, "Your access to GitHub does not include creating issues,
-  comments or pull requests; ask the owner." `whoami` is Test
+  `create_issue`, `comment` and `create_pull_request`, and `push`, need
+  `write: true`: `Tools` leaves them out without it and `Call` refuses
+  them by name, "Your access to GitHub does not include opening issues
+  and pull requests, commenting or pushing; ask the owner." `whoami` is Test
   connection's (`Verify`, "Connected as <slug>[bot], the app <name>,
   installed on <account>", the bot agents act as and the app's name
   from GET /app): it is not among the manifest's tools, no agent is
@@ -3515,7 +3552,11 @@ repositories keeps to the patterns, list issues stays in the
 repository, every answer is bounded, refusals tell the agent to ask the
 owner, and branches and compare call their paths; and tokens are
 minted per call, narrowed, cached until a minute before they expire,
-and never in an answer. `setup_test.go` drives `Setup`, `Requirements`,
+and never in an answer. `git_test.go` holds clone, fetch and push to
+[Clone, fetch and push](#clone-fetch-and-push): the job's token minted
+for the repository alone with the action's permission, after the
+check and never through the cache, and every refusal minting nothing.
+`setup_test.go` drives `Setup`, `Requirements`,
 `Uninstall` and `RevokeSignIn` against the same fake, holding every
 step to the manifest's declarations and to what core's scrubbing leaves
 readable. `internal/web/integration_github_test.go` drives the whole
@@ -3524,7 +3565,68 @@ API that makes the app from a code once and lists its installation:
 the start page's manifest, the conversion and what is kept, the
 stateless return and the listed installation, the Wait for an
 approval, nothing kept on a failure, the requirement rows and their
-Fixes, Uninstall, and the install over a 1.0.0 connection.
+Fixes, Uninstall, the install over a 1.0.0 connection, and a clone
+relayed on the real client and MCP tools, its job carrying the
+connection's proxy credential.
+
+#### Clone, fetch and push
+
+`git.go`. `clone`, `fetch` and `push` are gitops's ([The shared clone,
+fetch and push](#the-shared-clone-fetch-and-push)), run in two
+requests as Git (Basic)'s are ([A call, in two
+requests](#a-call-in-two-requests)): the same job, daemon, relay, audit
+rows and words, naming the GitHub integration. Its `gitops.Integration`
+is `Name: "github"`, `DisplayName: "GitHub"`, `HostWords: "github.com"`
+and `NameRepository`, with no `ForceSwitch`, so agents call
+`github_clone(url, path)`, `github_fetch(path, url, refs?)` and
+`github_push(path, refs, url)`; each tool's description ends, as the
+REST ones do, with the owner deciding which repositories the agent may
+use and whether it may open issues and pull requests, comment and
+push.
+
+`gitPolicy` reads the call's `gitops.Policy`: the host `github.com`;
+with `write`, `Push` is the access's `repositories`, with `AnyRef` (any
+branch or tag); without, `Pull` is, and `Push` is empty. A job's
+`allowed_repositories` are the row's patterns either way. Its
+`Refused`:
+
+| Cause | The agent reads | The audit's reason |
+| --- | --- | --- |
+| A push without `write` | Your access to GitHub does not include opening issues and pull requests, commenting or pushing; ask the owner. | the access does not include opening issues and pull requests, commenting or pushing |
+| A connection setup has not finished | GitHub's connection is not set up; ask the owner to set it up again. | what is missing, as for the REST actions |
+
+`Check` then refuses, in gitops's words: `force: true` or a `+`
+("Force-pushing is not something the GitHub integration does."), a
+deletion ("Deleting a remote ref is not something the GitHub
+integration does."), a fetch or a push without `url` ("github_fetch
+needs url: name the repository, as its HTTPS URL on github.com or
+owner/name."), a URL on another host, and a repository outside the
+access. `callGit` adds one: a path of more than two segments is not a
+GitHub repository ("A GitHub repository is owner/name, and
+acme/tools/cli is not one.", `the repository is not owner/name`). A
+refused call mints nothing.
+
+Once the check has passed, `callGit` mints the job's token
+(`jobToken`, [Tokens](#tokens)): `repositories: [<name>]`, the call's
+repository alone, and `permissions` `contents: read` for a clone or a
+fetch, `contents: write` for a push, with `metadata: read`. It goes
+into the job as `auth: {username: x-access-token, password: <the
+token>}`, and core adds the connection's proxy credential
+([The connection's proxy credential](#the-connections-proxy-credential)).
+The token is in nothing else: the first request's result holds no
+content and its audit reason is `Call.Started()`; nothing on the job's
+path logs it, and the daemon takes it out of what it answers
+(`agentshell.GitScrubber`), since core's scrubber, made from the
+connection's secrets, does not know it. Core keeps it nowhere and does
+not revoke it: it expires when GitHub says, within the hour. GitHub
+refusing it (a 422 when the app is not installed on the repository or
+lacks `contents: write`) is an error result in [Tokens](#tokens)'
+words, and no job goes out. `Complete` mints nothing: it reads the
+policy again and calls `gitops.Complete`, so a push whose `write` was
+turned off while it ran is told as landed when refs did
+(`pushedUnderOldAccess`). GitHub's own rules for the repository, such
+as branch protection, still apply to a push, and its refusal reaches
+the agent in the daemon's words.
 
 ## The Kivali Developer
 

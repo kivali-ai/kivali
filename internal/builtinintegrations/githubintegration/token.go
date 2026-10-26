@@ -129,15 +129,9 @@ type cachedToken struct {
 // permissions is handed out again until a minute before it expires;
 // tokens live in this memory alone.
 func (g *GitHub) installationToken(ctx context.Context, c connection, repo string, p permissions) (string, error) {
-	name := ""
-	if repo != "" {
-		_, after, ok := strings.Cut(repo, "/")
-		if !ok || after == "" {
-			// Never a token for the whole installation in place of one
-			// narrowed to a repository.
-			return "", errors.New("a token narrowed to " + repo + ", which is not owner/name")
-		}
-		name = strings.ToLower(after)
+	name, err := narrowedName(repo)
+	if err != nil {
+		return "", err
 	}
 	k := tokenKey{conn: c.id, app: c.appID, installation: c.installationID, repo: name, perms: p.key()}
 	now := g.now()
@@ -148,9 +142,70 @@ func (g *GitHub) installationToken(ctx context.Context, c connection, repo strin
 	}
 	g.tokensMu.Unlock()
 
-	jwt, err := g.jwt(c)
+	tok, exp, err := g.mint(ctx, c, repo, name, p)
 	if err != nil {
 		return "", err
+	}
+	if !exp.IsZero() && now.Before(exp.Add(-tokenMargin)) {
+		g.tokensMu.Lock()
+		if g.tokens == nil {
+			g.tokens = map[tokenKey]cachedToken{}
+		}
+		for key, t := range g.tokens {
+			if !now.Before(t.until) {
+				delete(g.tokens, key)
+			}
+		}
+		g.tokens[k] = cachedToken{token: tok, until: exp.Add(-tokenMargin)}
+		g.tokensMu.Unlock()
+	}
+	return tok, nil
+}
+
+// jobToken is a token of the connection's installation for one shell
+// job, narrowed to the repository owner/name alone, that may do p. It
+// is minted for the job: never handed out from the cache nor put in
+// it, and kept nowhere in Kivali. It expires when GitHub says, within
+// the hour.
+func (g *GitHub) jobToken(ctx context.Context, c connection, repo string, p permissions) (string, error) {
+	name, err := narrowedName(repo)
+	switch {
+	case err != nil:
+		return "", err
+	case name == "":
+		// Never a token for the whole installation in a job.
+		return "", errors.New("a job's token narrowed to no repository")
+	}
+	tok, _, err := g.mint(ctx, c, repo, name, p)
+	return tok, err
+}
+
+// narrowedName is the repository owner/name as a token narrowed to it
+// names it: its name, the owner dropped, in lower case. "" for repo
+// "", a token that reaches every repository of the installation.
+func narrowedName(repo string) (string, error) {
+	if repo == "" {
+		return "", nil
+	}
+	_, after, ok := strings.Cut(repo, "/")
+	if !ok || after == "" {
+		// Never a token for the whole installation in place of one
+		// narrowed to a repository.
+		return "", errors.New("a token narrowed to " + repo + ", which is not owner/name")
+	}
+	return strings.ToLower(after), nil
+}
+
+// mint trades the connection's JWT for a token of its installation
+// (POST /app/installations/{id}/access_tokens) that may do p, narrowed
+// to the repository name when it is not "" (repo is that repository as
+// owner/name, for the words of GitHub's refusal), and gives when GitHub
+// says it expires: the zero time when its answer does not say so in a
+// form Kivali reads.
+func (g *GitHub) mint(ctx context.Context, c connection, repo, name string, p permissions) (string, time.Time, error) {
+	jwt, err := g.jwt(c)
+	if err != nil {
+		return "", time.Time{}, err
 	}
 	body := map[string]any{"permissions": p}
 	if name != "" {
@@ -164,27 +219,18 @@ func (g *GitHub) installationToken(ctx context.Context, c connection, repo strin
 	if err != nil {
 		var e *apiError
 		if errors.As(err, &e) {
-			return "", &tokenError{api: e, repo: repo}
+			return "", time.Time{}, &tokenError{api: e, repo: repo}
 		}
-		return "", err
+		return "", time.Time{}, err
 	}
 	if out.Token == "" {
-		return "", &tokenError{api: &apiError{Message: "its answer holds no token"}, repo: repo}
+		return "", time.Time{}, &tokenError{api: &apiError{Message: "its answer holds no token"}, repo: repo}
 	}
-	if exp, err := time.Parse(time.RFC3339, out.ExpiresAt); err == nil && now.Before(exp.Add(-tokenMargin)) {
-		g.tokensMu.Lock()
-		if g.tokens == nil {
-			g.tokens = map[tokenKey]cachedToken{}
-		}
-		for key, t := range g.tokens {
-			if !now.Before(t.until) {
-				delete(g.tokens, key)
-			}
-		}
-		g.tokens[k] = cachedToken{token: out.Token, until: exp.Add(-tokenMargin)}
-		g.tokensMu.Unlock()
+	exp, err := time.Parse(time.RFC3339, out.ExpiresAt)
+	if err != nil {
+		exp = time.Time{}
 	}
-	return out.Token, nil
+	return out.Token, exp, nil
 }
 
 // tokenError is GitHub refusing the app an installation token.

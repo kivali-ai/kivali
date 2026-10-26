@@ -112,7 +112,7 @@ func TestWriteActionsNeedWrite(t *testing.T) {
 	} {
 		for _, name := range writeTools {
 			r := g.callT(t, callerWith(access), name, map[string]any{"repository": "acme/widgets", "title": "t", "number": 1, "body": "b", "head": "h", "base": "main"})
-			if r.refusal == nil || r.text != "Your access to GitHub does not include creating issues, comments or pull requests; ask the owner." {
+			if r.refusal == nil || r.text != "Your access to GitHub does not include opening issues and pull requests, commenting or pushing; ask the owner." {
 				t.Errorf("%v %s: %+v", access, name, r)
 			}
 		}

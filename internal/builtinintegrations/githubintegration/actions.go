@@ -28,7 +28,7 @@ const (
 	actionWhoami            = "whoami"
 )
 
-// action is one of GitHub's actions. description is what the agent's
+// action is one of GitHub's REST actions. description is what the agent's
 // model reads, ownerDescription the manifest's, for the owner. write
 // marks an action that creates something on GitHub, which an agent has
 // only when its access allows writing (its manifest tool's access is
@@ -45,10 +45,10 @@ type action struct {
 }
 
 // ownerDecides ends every description an agent reads.
-const ownerDecides = " The owner decides which repositories you may use and whether you may create issues, comments and pull requests."
+const ownerDecides = " The owner decides which repositories you may use and whether you may open issues and pull requests, comment and push."
 
-// actions is every action: the manifest's tools are these in this
-// order, less the ownerOnly one.
+// actions is every REST action: the manifest's tools are these in this
+// order, less the ownerOnly one, then clone, fetch and push (git.go).
 var actions = []action{
 	{
 		name:             actionListRepositories,
@@ -130,7 +130,7 @@ var actions = []action{
 	},
 	{
 		name:             actionCreatePullRequest,
-		description:      "Open a pull request in a GitHub repository from the head branch into the base branch, as the owner's GitHub App. The head branch must already be on GitHub: this action moves no commits, so push it first with the Git integration, or ask whoever owns the branch. Answers the pull request's address.",
+		description:      "Open a pull request in a GitHub repository from the head branch into the base branch, as the owner's GitHub App. The head branch must already be on GitHub: this action moves no commits, so push it first with github_push, or ask whoever owns the branch. Answers the pull request's address.",
 		ownerDescription: "Open a pull request from a branch already on GitHub, when the agent's access allows creating and commenting. Creates a pull request as the GitHub App; moves no commits.",
 		schema: schema(map[string]any{
 			"repository": repositoryProperty,

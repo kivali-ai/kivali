@@ -25,11 +25,14 @@ import (
 	"time"
 
 	"github.com/kivali-ai/kivali/internal/agentpod"
+	"github.com/kivali-ai/kivali/internal/agentshell"
 	"github.com/kivali-ai/kivali/internal/builtinintegrations"
 	"github.com/kivali-ai/kivali/internal/builtinintegrations/githubintegration"
 	"github.com/kivali-ai/kivali/internal/clock"
 	"github.com/kivali-ai/kivali/internal/connect"
+	"github.com/kivali-ai/kivali/internal/egresscred"
 	"github.com/kivali-ai/kivali/internal/integration"
+	"github.com/kivali-ai/kivali/internal/mcp"
 	"github.com/kivali-ai/kivali/internal/secrets"
 	"github.com/kivali-ai/kivali/internal/store"
 	"github.com/kivali-ai/kivali/internal/web/apitypes"
@@ -92,7 +95,7 @@ type fakeGitHubAPI struct {
 }
 
 func newFakeGitHubAPI(t *testing.T) *fakeGitHubAPI {
-	f := &fakeGitHubAPI{t: t, perms: map[string]string{"metadata": "read", "contents": "read", "issues": "write", "pull_requests": "write"},
+	f := &fakeGitHubAPI{t: t, perms: map[string]string{"metadata": "read", "contents": "write", "issues": "write", "pull_requests": "write"},
 		repos: 2, deleteStatus: http.StatusNoContent, grants: make(chan string, 8)}
 	f.srv = httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(f.srv.Close)
@@ -180,7 +183,7 @@ func (f *fakeGitHubAPI) serve(w http.ResponseWriter, r *http.Request) {
 		// The app asks for every permission this version needs; its
 		// installation may not have approved them all (perms).
 		answer(http.StatusOK, map[string]any{"id": 1234, "slug": ghSlug, "name": "Kivali Acme", "owner": map[string]string{"login": "acme", "type": "User"},
-			"permissions": map[string]string{"metadata": "read", "contents": "read", "issues": "write", "pull_requests": "write"}})
+			"permissions": map[string]string{"metadata": "read", "contents": "write", "issues": "write", "pull_requests": "write"}})
 	case path == "GET /app/installations":
 		list := []any{}
 		if f.installed != 0 {
@@ -509,7 +512,7 @@ func TestGitHubRequirementsAndFixes(t *testing.T) {
 	githubInstall(t, srv, f)
 
 	f.set(func(f *fakeGitHubAPI) {
-		f.perms = map[string]string{"metadata": "read", "contents": "read", "issues": "read", "pull_requests": "write"}
+		f.perms = map[string]string{"metadata": "read", "contents": "write", "issues": "read", "pull_requests": "write"}
 	})
 	page := githubRequirements(t, srv, clk)
 	if r, _ := requirementOf(page, "permissions"); r.Met || r.Fix != "permissions" || page.Summary.Needs != 1 {
@@ -628,9 +631,9 @@ func githubV1(t *testing.T, srv *Server, mem *secrets.Memory) store.IntegrationC
 }
 
 // Why this test exists: a team upgraded from GitHub 1.0.0 holds a
-// connection to the owner's own app that 2.0.0 cannot use. It must not
+// connection to the owner's own app that 2.x cannot use. It must not
 // read installed (agents' calls would fail, with Needs you saying
-// nothing), nor be deleted at boot: the version in use becomes 2.0.0
+// nothing), nor be deleted at boot: the version in use becomes 2.1.0
 // with 1.0.0 superseded, the record and Secret stay as they are, and
 // GitHub reads available with one row saying to set it up again. The
 // install then takes the record over at its first Keep: every 1.0.0
@@ -642,7 +645,7 @@ func TestGitHubInstallsOverAOneZeroConnection(t *testing.T) {
 	srv.BuiltinIntegrations.Lookup("github").(*githubintegration.GitHub).TokenURL = f.srv.URL + "/login/oauth/access_token"
 	old := githubV1(t, srv, mem)
 	vs, _ := srv.Store.IntegrationVersions("github")
-	if len(vs) != 2 || vs[0].Version != "2.0.0" || vs[0].State != store.IntegrationVersionApproved || vs[1].State != store.IntegrationVersionSuperseded {
+	if len(vs) != 2 || vs[0].Version != "2.1.0" || vs[0].State != store.IntegrationVersionApproved || vs[1].State != store.IntegrationVersionSuperseded {
 		t.Fatalf("versions = %+v", vs)
 	}
 	page := githubPage(t, srv)
@@ -763,5 +766,97 @@ func TestGitHubDisconnectsAOneZeroConnection(t *testing.T) {
 	page := githubPage(t, srv)
 	if page.Summary.State != apitypes.IntegrationStateInstalled || len(page.Access) != 0 || len(page.Requirements) != 0 || len(mem.Names()) != 0 {
 		t.Errorf("after = %s, access %+v, rows %+v, secrets %v", page.Summary.State, page.Access, page.Requirements, mem.Names())
+	}
+}
+
+// Why this test exists: GitHub's clone, fetch and push reach github.com
+// from the agent's shell through the egress proxy, which lets a job
+// through only with the connection's own scoped proxy credential. A
+// connection made by setup has none until its first job: core must
+// mint it then, keep it in the connection's Secret beside the app's
+// keeps (never among them), register it for github.com alone and put
+// it in the job beside the token minted for the call, narrowed to the
+// repository. Without it the clone could not leave the pod; registered
+// for more hosts, the job could carry the token elsewhere. The audit
+// rows must name the repository and never the token, which core's
+// scrubber does not know, and Disconnect must drop the credential with
+// the connection.
+func TestGitHubShellJobGetsTheConnectionsProxyCredential(t *testing.T) {
+	srv, f, mem, _ := githubServer(t)
+	githubInstall(t, srv, f)
+	intTeam(t, srv, "dana")
+	putIntegrationAccess(t, srv, "github", "dana", `{"repositories":["acme/*"]}`)
+	dana := agentpod.NewClient(serveCoreUDS(t, srv), "dana")
+	ctx := context.Background()
+	list, err := dana.IntegrationTools(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	shell := &fakeGitShell{res: &agentshell.GitResponse{Repository: "acme/widgets", Updated: []agentshell.GitRefUpdate{{Ref: "refs/remotes/origin/main", New: "1111111aaaa"}}}}
+	var clone *mcp.Tool
+	tools := mcp.IntegrationTools(dana, shell, list.Tools, nil)
+	for i := range tools {
+		switch tools[i].Name {
+		case "github_clone":
+			clone = &tools[i]
+		case "github_push":
+			t.Error("dana, without write, is given github_push")
+		}
+	}
+	if clone == nil {
+		t.Fatalf("dana's actions = %+v", list)
+	}
+	res, err := clone.Handler(ctx, json.RawMessage(`{"url":"acme/widgets","path":"/files/widgets"}`))
+	if err != nil || res.IsError || !strings.HasPrefix(res.Content[0], "Cloned acme/widgets into /files/widgets.") {
+		t.Fatalf("clone = %+v, %v", res, err)
+	}
+
+	rec, data := githubSecret(t, srv, mem)
+	secret := data[builtinintegrations.ProxySecretKey]
+	proxy, registered := srv.Store.EgressScopedCredentials()[builtinintegrations.ProxyUser("github", rec.ID)]
+	if secret == "" || !registered || proxy.Hash != egresscred.Hash(secret) || !slices.Equal(proxy.Hosts, []string{"github.com"}) ||
+		slices.Contains(rec.SecretKeys, builtinintegrations.ProxySecretKey) || data["private_key"] == "" {
+		t.Errorf("proxy credential = %+v registered %v, record %+v", proxy, registered, rec)
+	}
+	if len(shell.jobs) != 1 {
+		t.Fatalf("jobs = %d", len(shell.jobs))
+	}
+	if j := shell.jobs[0]; j.Op != "clone" || j.URL != "https://github.com/acme/widgets.git" || j.Host != "github.com" ||
+		j.Auth != (agentshell.GitAuth{Username: "x-access-token", Password: "ghs_faketoken0001"}) ||
+		j.Proxy != (agentshell.GitProxy{Username: builtinintegrations.ProxyUser("github", rec.ID), Password: secret}) ||
+		!slices.Equal(j.AllowedRepositories, []string{"acme/*"}) {
+		t.Errorf("job = %+v", j)
+	}
+	var minted []string
+	for _, r := range f.requestsTo("POST", "/app/installations/42/access_tokens") {
+		if strings.Contains(r.Body, "repositories") {
+			minted = append(minted, r.Body)
+		}
+	}
+	if !slices.Equal(minted, []string{`{"permissions":{"contents":"read","metadata":"read"},"repositories":["widgets"]}`}) {
+		t.Errorf("tokens minted for a repository = %v", minted)
+	}
+	rows, err := srv.Store.ReadIntegrationAuditTail("github", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var clones []string
+	for _, r := range rows {
+		if strings.Contains(r.Reason, "ghs_") {
+			t.Errorf("an audit row names the token: %+v", r)
+		}
+		if r.Action == "clone" && r.Agent == "dana" && r.Allowed {
+			clones = append(clones, r.Reason)
+		}
+	}
+	if !slices.Equal(clones, []string{"acme/widgets: updated refs/remotes/origin/main", "started: acme/widgets"}) {
+		t.Errorf("clone rows = %v", clones)
+	}
+
+	if rr := intDelete(t, srv, intBase+"/github/connection"); rr.Code != http.StatusOK {
+		t.Fatalf("disconnect = %d %s", rr.Code, rr.Body.String())
+	}
+	if _, ok := srv.Store.EgressScopedCredentials()[builtinintegrations.ProxyUser("github", rec.ID)]; ok {
+		t.Error("the proxy credential outlived the connection")
 	}
 }

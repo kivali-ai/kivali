@@ -1,15 +1,27 @@
 // Package githubintegration is the GitHub built-in integration: agents
 // read and open issues, comments and pull requests in GitHub
-// repositories, acting as a private GitHub App that the owner's setup
-// makes on their account and installs on the repositories they choose.
+// repositories, and clone, fetch and push them, acting as a private
+// GitHub App that the owner's setup makes on their account and
+// installs on the repositories they choose.
 //
 // Every call acts as the app's installation: core signs a JSON web
 // token with the app's private key and trades it for an installation
 // access token (POST /app/installations/{id}/access_tokens), narrowed
 // to the call's repository and to the permissions its action needs
-// (token.go). A token is kept in this process's memory until a minute
-// before it expires, and nowhere else. The actions are GitHub's REST
-// API (actions.go), each held to the agent's access first (access.go).
+// (token.go). The REST actions (actions.go) are each held to the
+// agent's access first (access.go), and their tokens are kept in this
+// process's memory until a minute before they expire, and nowhere
+// else.
+//
+// Clone, fetch and push (git.go) are gitops's
+// (internal/builtinintegrations/gitops), run as Git (Basic) runs them:
+// core checks the call and answers with a shell job, which the agent's
+// MCP server has the agent-shell daemon run, and Complete puts its
+// result in words. Once the check has passed, the job is given a token
+// minted for it alone, narrowed to the one repository and to reading
+// its contents (clone, fetch) or writing them (push). That token is
+// never cached and core keeps it nowhere: it leaves in the job and
+// expires within the hour, as GitHub sets.
 //
 // The connection is made by the integration's own setup flow (method
 // setup, setup.go): GitHub's app-manifest flow keeps the app's id,
@@ -34,6 +46,7 @@ import (
 	"time"
 
 	"github.com/kivali-ai/kivali/internal/builtinintegrations"
+	"github.com/kivali-ai/kivali/internal/builtinintegrations/gitops"
 	"github.com/kivali-ai/kivali/internal/clock"
 	"github.com/kivali-ai/kivali/internal/integration"
 )
@@ -90,18 +103,20 @@ func (g *GitHub) now() time.Time {
 
 // setupSummary is what setup does, in words for the owner, with what
 // Disconnect leaves on GitHub.
-const setupSummary = "Creates a private GitHub App, on your account or an organization's, that may read contents and write issues and pull requests, and installs it on the repositories you choose. Disconnecting removes the installation; the app stays on GitHub until you delete it under GitHub Apps in the account's settings."
+const setupSummary = "Creates a private GitHub App, on your account or an organization's, that may read and write contents, issues and pull requests, and installs it on the repositories you choose. Disconnecting removes the installation; the app stays on GitHub until you delete it under GitHub Apps in the account's settings."
 
 // accessSchema is the access form: the repositories an agent may use,
-// and whether it may create issues, comments and pull requests there.
+// and whether it may open issues and pull requests, comment and push
+// there.
 const accessSchema = `{"type":"object","properties":{` +
 	`"repositories":{"type":"array","items":{"type":"string"},"title":"Repositories","description":"Each one owner/name, such as acme/widgets, or a pattern such as acme/*, which covers every repository directly under acme. * is the only wildcard. Capitals do not matter."},` +
-	`"write":{"type":"boolean","title":"May create and comment","description":"Lets the agent open issues and pull requests and comment on them in those repositories, as the GitHub App."}},` +
+	`"write":{"type":"boolean","title":"May create, comment and push","description":"Lets the agent open issues and pull requests, comment on them and push branches and tags in those repositories, as the GitHub App. A push never overwrites history."}},` +
 	`"required":["repositories"]}`
 
 // Manifest is GitHub's manifest. Its tools are the actions an agent
-// may be given, each write one needing the write switch; whoami is
-// Test connection's (kivali.verify) and no tool.
+// may be given, the REST ones then clone, fetch and push, each write
+// one needing the write switch; whoami is Test connection's
+// (kivali.verify) and no tool.
 func (g *GitHub) Manifest() *integration.Manifest {
 	var tools []integration.Tool
 	for _, a := range actions {
@@ -114,12 +129,13 @@ func (g *GitHub) Manifest() *integration.Manifest {
 		}
 		tools = append(tools, t)
 	}
+	tools = append(tools, gitTools...)
 	return &integration.Manifest{
 		ManifestVersion: "0.3",
 		Name:            Name,
-		Version:         "2.0.0",
+		Version:         "2.1.0",
 		DisplayName:     "GitHub",
-		Description:     "Read and open issues, comments and pull requests in GitHub repositories, as a private GitHub App on your account.",
+		Description:     "Read and open issues, comments and pull requests in GitHub repositories, and clone, fetch and push them, as a private GitHub App on your account.",
 		Author:          integration.Author{Name: "Kivali"},
 		UserConfig:      integration.UserConfig{},
 		Tools:           tools,
@@ -154,9 +170,9 @@ func (g *GitHub) Manifest() *integration.Manifest {
 	}
 }
 
-// Tools lists every action the caller's access allows: the write
-// actions only with write, and never whoami, which is Test
-// connection's.
+// Tools lists every action the caller's access allows, in the
+// manifest's order: the write actions, push among them, only with
+// write, and never whoami, which is Test connection's.
 func (g *GitHub) Tools(_ context.Context, caller builtinintegrations.Caller) ([]builtinintegrations.Tool, error) {
 	acc := readAccess(caller.Access)
 	var out []builtinintegrations.Tool
@@ -165,6 +181,13 @@ func (g *GitHub) Tools(_ context.Context, caller builtinintegrations.Caller) ([]
 			continue
 		}
 		out = append(out, builtinintegrations.Tool{Name: a.name, Description: a.description + ownerDecides, InputSchema: json.RawMessage(a.schema)})
+	}
+	for _, t := range gitops.Tools(gitIntegration) {
+		if t.Name == gitops.Push && !acc.write {
+			continue
+		}
+		t.Description += ownerDecides
+		out = append(out, t)
 	}
 	return out, nil
 }
@@ -227,7 +250,11 @@ func digits(s string) bool {
 // Call runs the action name for the caller: the action, its access and
 // the connection are checked before anything reaches GitHub, each
 // refused with a Refusal; a GitHub failure is an error result in words.
+// A clone, a fetch or a push answers with its shell job (callGit).
 func (g *GitHub) Call(ctx context.Context, caller builtinintegrations.Caller, conn builtinintegrations.Connection, name string, raw json.RawMessage) (*builtinintegrations.Result, error) {
+	if gitops.IsAction(name) {
+		return g.callGit(ctx, caller, conn, name, raw)
+	}
 	a := actionNamed(name)
 	switch {
 	case a == nil:
@@ -237,7 +264,7 @@ func (g *GitHub) Call(ctx context.Context, caller builtinintegrations.Caller, co
 	}
 	acc := readAccess(caller.Access)
 	if a.write && !acc.write {
-		return nil, refuse(writeRefusal, "the access does not include creating issues, comments or pull requests")
+		return nil, refuse(writeRefusal, writeReason)
 	}
 	c, err := readConnection(conn)
 	if err != nil {
