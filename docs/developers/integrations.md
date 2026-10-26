@@ -3716,8 +3716,11 @@ only when a commit has an identity GitHub did not resolve: `GET
 /users/<slug>%5Bbot%5D` (`bot`, `bot.go`), with an installation token
 narrowed to the repository that reads metadata alone (the app's JWT
 reaches only the `/app` endpoints), once per connection, kept in the
-process's memory by connection, app and kept slug. A bot user GitHub
-answers that is not `type` `Bot` with that login is an error. The
+process's memory by connection, app and kept slug. GitHub having no
+bot user by the kept slug (a 404) has it read again by the slug GitHub
+gives the app now (`GET /app`), for an app renamed since setup. A bot
+user GitHub answers that is not `type` `Bot` with that login is an
+error. The
 action then deletes `refs/heads/<branch>` and nothing else, and
 GitHub's own branch protection still applies. The checks and the
 deletion are separate requests: a commit pushed to the branch between

@@ -60,6 +60,22 @@ func TestACloneIsGivenTheAppsBotAsItsIdentity(t *testing.T) {
 	}
 }
 
+// Why this test exists: the slug the connection keeps is the app's
+// name when setup ran, and GitHub has no bot user by it once the app
+// is renamed. Held to it alone, every clone of a renamed app would
+// fail; the bot user is read again by the slug GitHub gives the app
+// now (GET /app), and the working copy gets that bot's identity.
+func TestACloneOfARenamedAppHasTheBotsNewIdentity(t *testing.T) {
+	g, f := newTest(t)
+	f.route("GET /app", 200, `{"id":1234,"slug":"kivali-acme-renamed","name":"Kivali acme renamed"}`)
+	f.route("GET /users/kivali-acme-renamed[bot]", 200, `{"login":"kivali-acme-renamed[bot]","id":77,"type":"Bot"}`)
+	job, res, ref := g.gitCall(t, agent(false, "acme/*"), "clone", `{"url":"acme/widgets","path":"w"}`)
+	want := shelljob.GitIdentity{Name: "kivali-acme-renamed[bot]", Email: "77+kivali-acme-renamed[bot]@users.noreply.github.com"}
+	if ref != nil || job == nil || job.Identity == nil || *job.Identity != want {
+		t.Errorf("clone = %+v, %+v, %+v", job, res, ref)
+	}
+}
+
 // Why this test exists: without the bot user, the working copy could
 // not be given the bot's identity, and the agent's commits would carry
 // whatever identity the shell has. GitHub not answering for it, or
