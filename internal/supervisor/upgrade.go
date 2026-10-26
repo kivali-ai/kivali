@@ -389,19 +389,19 @@ func (s *Supervisor) bakedTarget(gs guestapi.Status, from string, force bool, lo
 	to := strings.TrimPrefix(c.Version, "v")
 	switch {
 	case isDevVersion(from):
-		return c, fmt.Errorf("Kivali %s is a development build; the VM image's %s is not applied over it (restart puts the team onto the images now in its VM)", from, to)
+		return c, fmt.Errorf("the team runs Kivali %s, a development build; the VM image's %s is not applied over it (restart puts the team onto the images now in its VM)", from, to)
 	case isDevVersion(to):
 		return c, fmt.Errorf("the VM image bakes a development build of Kivali (%s), which is not applied to a team on %s", to, from)
 	case !isRelease(from) || !isRelease(to):
 		return c, fmt.Errorf("cannot compare Kivali %s with the VM image's %s", from, to)
 	case compareVersions(to, from) <= 0:
 		if !force {
-			return c, fmt.Errorf("Kivali %s is up to date; the VM image bakes %s", from, to)
+			return c, fmt.Errorf("the team's Kivali %s is up to date; the VM image bakes %s", from, to)
 		}
 		logf("Kivali %s is up to date (the VM image bakes %s); upgrading anyway (--force)", from, to)
 	}
 	if gs.ManualSteps {
-		return c, fmt.Errorf("Kivali %s needs steps the app can't do yet; see the upgrade notes", to)
+		return c, fmt.Errorf("the VM image's Kivali %s needs steps the app can't do yet; see the upgrade notes", to)
 	}
 	logf("upgrading to Kivali %s, baked into the VM image", to)
 	return c, nil
