@@ -53,16 +53,6 @@
         "secret": false
       },
       {
-        "key": "client_id",
-        "words": "The app's client id",
-        "secret": false
-      },
-      {
-        "key": "client_secret",
-        "words": "The app's client secret",
-        "secret": true
-      },
-      {
         "key": "private_key",
         "words": "The app's private key, which Kivali signs with to get a token for each call",
         "secret": true

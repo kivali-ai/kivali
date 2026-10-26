@@ -17,7 +17,9 @@ import (
 // the built-in check (a setup connection with its declarations, the
 // hosts its setup and its calls reach, no server or packages), declare
 // exactly what setup may do as the design names it (GitHub's own pages
-// only, one field, the seven keeps and no hand-over to a sign-in), keep
+// only, one field, the five keeps and no hand-over to a sign-in; no
+// client id or secret, which nothing reads and which the page would
+// list as kept), keep
 // the access form the shipped bundle has, so agents' access carries
 // over, and name whoami as Test connection without listing it among
 // the tools, each write one marked as needing the write switch and
@@ -42,7 +44,7 @@ func TestManifest(t *testing.T) {
 	if len(s.Fields) != 1 || s.Fields[0].Key != "account" || s.Fields[0].Secret || s.Fields[0].SetupOnly {
 		t.Errorf("setup fields = %+v", s.Fields)
 	}
-	if want := []string{"app_id", "slug", "client_id", "client_secret", "private_key", "installation_id", "installation_account"}; !slices.Equal(s.Keeps.Keys(), want) {
+	if want := []string{"app_id", "slug", "private_key", "installation_id", "installation_account"}; !slices.Equal(s.Keeps.Keys(), want) {
 		t.Errorf("keeps = %v, want %v", s.Keeps.Keys(), want)
 	}
 	if !slices.Equal(m.Kivali.Hosts, []string{"api.github.com", "github.com"}) || m.Kivali.Verify != "whoami" || len(m.Kivali.Packages) != 0 {
@@ -235,6 +237,35 @@ func TestAnIncompleteConnectionRefusesEveryCall(t *testing.T) {
 	f.route("GET /repos/acme/widgets", 200, `{"full_name":"acme/widgets"}`)
 	if r := g.callConn(t, agent(false, "acme/*"), conn, "get_repository", map[string]any{"repository": "acme/widgets"}); r.isError {
 		t.Errorf("PKCS#8 key: %+v", r)
+	}
+}
+
+// Why this test exists: setup keeps no client id or secret, but a
+// connection a setup that kept them made still holds both. Such a
+// connection must work as any other: were the extra values read as a
+// connection that does not read, every call would be refused as "not
+// set up" and the requirements would say to set GitHub up again, which
+// makes a second app on GitHub. Core gives a call only the keys the
+// manifest declares; the built-in must not depend on that.
+func TestAConnectionHoldingTheClientWorks(t *testing.T) {
+	g, f := newTest(t)
+	f.route("GET /repos/acme/widgets", 200, `{"full_name":"acme/widgets"}`)
+	if r := g.callConn(t, agent(false, "acme/*"), clientConn(), "get_repository", map[string]any{"repository": "acme/widgets"}); r.isError || r.refusal != nil {
+		t.Errorf("call = %+v", r)
+	}
+	f.route("GET /app", 200, appAnswer)
+	f.route("GET /app/installations/42", 200, installation("selected", allPerms, false))
+	f.route("GET /installation/repositories", 200, `{"total_count":3,"repositories":[]}`)
+	if got := rowsOf(g.requirementsT(t, clientConn())); got != "key met |installed met |repositories met |permissions met " {
+		t.Errorf("requirements = %s", got)
+	}
+	if msg, err := g.Verify(context.Background(), clientConn()); err != nil || !strings.HasPrefix(msg, "Connected as kivali-acme[bot]") {
+		t.Errorf("verify = %q, %v", msg, err)
+	}
+	for _, r := range f.requests() {
+		if strings.HasPrefix(r.Header.Get("Authorization"), "Basic ") || strings.Contains(r.Body, testClientSecret) || strings.Contains(r.Path, testClientID) {
+			t.Errorf("%s %s sent the app's client", r.Method, r.Path)
+		}
 	}
 }
 

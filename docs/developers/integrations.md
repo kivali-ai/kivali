@@ -3296,9 +3296,9 @@ or an organization's. The package implements `Integration`,
   summary, which ends with what Disconnect leaves on GitHub;
   `hosts: ["github.com"]`; one field, `account`, "An organization's
   name, or leave it blank for your personal account"; keeps `app_id`,
-  `slug`, `client_id`, `installation_id` and `installation_account`
-  (the login of the account the app is installed on), declared not
-  secret, and `client_secret` and `private_key`, secret; no `then`), an empty `user_config`,
+  `slug`, `installation_id` and `installation_account` (the login of
+  the account the app is installed on), declared not secret, and
+  `private_key`, secret; no `then`), an empty `user_config`,
   `kivali.hosts: ["api.github.com", "github.com"]`, `kivali.verify:
   whoami`, and GitHub 1.0.0's access form, so agents' access carries
   over: `repositories` (required) and `write`, "May create, comment,
@@ -3315,20 +3315,23 @@ or an organization's. The package implements `Integration`,
 - **The connection** is what setup keeps, read as `conn.Fields`.
   `app_id`, `private_key` (PEM: PKCS#1 `RSA PRIVATE KEY` as GitHub
   issues it, or PKCS#8 `PRIVATE KEY` holding an RSA key) and
-  `installation_id` are what a call needs, the two ids whole numbers;
-  `client_id` and `client_secret` are read by no action. A connection
-  missing any of the three, or whose key or ids do not read, refuses
-  every call with "GitHub's connection is not set up; ask the owner to
-  set it up again.", its reason in the audit (`the connection is
-  incomplete`, or what does not read), and nothing reaches GitHub.
+  `installation_id` are what a call needs, the two ids whole numbers.
+  A connection missing any of the three, or whose key or ids do not
+  read, refuses every call with "GitHub's connection is not set up;
+  ask the owner to set it up again.", its reason in the audit (`the
+  connection is incomplete`, or what does not read), and nothing
+  reaches GitHub.
   `installation_account` holds every token narrowed to a repository to
   that account ([Tokens](#tokens)); a connection 2.0.0 kept has none,
-  and GitHub is asked for it instead.
-  Core scrubs the client secret and the private key from what the owner
-  and the agents read ([Scrubbing and the audit](#scrubbing-and-the-audit));
-  the app's id, slug, client id, installation id and installation
-  account are GitHub's public names for the app and where it is
-  installed, so a page a step names,
+  and GitHub is asked for it instead. A connection that also holds the
+  app's `client_id` and `client_secret` in its Secret fits the setup as
+  well (`setupMisfit`, [Keep](#keep)); nothing reads them, and core
+  gives no call either, since the manifest declares neither.
+  Core scrubs the private key from what the owner and the agents read
+  ([Scrubbing and the audit](#scrubbing-and-the-audit));
+  the app's id, slug, installation id and installation account are
+  GitHub's public names for the app and where it is installed, so a
+  page a step names,
   a requirement's words and an agent's answer may carry them as they
   are: an issue the app opened reads as opened by `<slug>[bot]`.
 
@@ -3369,12 +3372,13 @@ GitHub's own pages and nothing copied:
    "Creating the app on GitHub". The code (one use, within the hour;
    at most 200 characters, never a path) is traded with no credential,
    `POST /app-manifests/{code}/conversions`, and kept nowhere; of the
-   answer, the app's `id`, `slug`, `client_id`, `client_secret` and
-   `pem` are kept (`app_id`, `slug`, `client_id`, `client_secret`,
+   answer, the app's `id`, `slug` and `pem` are kept (`app_id`, `slug`,
    `private_key`), each checked first (an id, a slug of lowercase
-   letters, digits and hyphens, a client, a key that reads), and the
-   `webhook_secret` dropped. A 404 says the code works once, within an
-   hour; any other failure gives GitHub's words, and nothing is kept.
+   letters, digits and hyphens, a key that reads), and the `client_id`,
+   `client_secret` and `webhook_secret` dropped: every call signs with
+   the key, and the app signs no user in. A 404 says the code works
+   once, within an hour; any other failure gives GitHub's words, and
+   nothing is kept.
 4. **Go** (`Stateless`) to `https://github.com/apps/<slug>/installations/new?state=<state>`,
    where the owner chooses the account's repositories. GitHub sends the
    browser to the setup address with `installation_id` and

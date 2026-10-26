@@ -96,7 +96,7 @@ func waitURL(s builtinintegrations.Step) string {
 // conversionAnswer is GitHub's answer to a manifest's code.
 func conversionAnswer() string {
 	b, _ := json.Marshal(map[string]any{
-		"id": 1234, "slug": testSlug, "name": "Kivali Acme", "client_id": "Iv23liTest", "client_secret": testClientSecret,
+		"id": 1234, "slug": testSlug, "name": "Kivali Acme", "client_id": testClientID, "client_secret": testClientSecret,
 		"webhook_secret": "whsec-not-kept-0000", "pem": pkcs1PEM(testKey()), "owner": map[string]any{"login": "acme"},
 	})
 	return string(b)
@@ -120,8 +120,10 @@ func madeConn() builtinintegrations.Connection {
 // needs, GitHub sent back to the flow's callback and the setup
 // address) to the personal
 // account's new-app page with the flow's state; the code GitHub sends
-// back is traded with no credential, and only the app's five values
-// are kept (the webhook secret and the code never); the install Go is
+// back is traded with no credential, and only the app's id, slug and
+// private key are kept (the client id and secret, the webhook secret
+// and the code never: nothing reads them, and a kept client secret is
+// one more secret to lose); the install Go is
 // Stateless, as GitHub's setup address carries no state of Kivali's;
 // and the installation kept is the one the app's own JWT lists, never
 // the id the browser came back with. Each piece missing is a setup that
@@ -171,9 +173,14 @@ func TestSetupInstallsThroughTheManifestFlow(t *testing.T) {
 	if len(reqs) != 1 || reqs[0].Method != "POST" || reqs[0].Header.Get("Authorization") != "" {
 		t.Errorf("conversion = %+v", reqs)
 	}
-	wantKeep := map[string]string{FieldAppID: "1234", FieldSlug: testSlug, FieldClientID: "Iv23liTest", FieldClientSecret: testClientSecret, FieldPrivateKey: pkcs1PEM(testKey())}
+	wantKeep := map[string]string{FieldAppID: "1234", FieldSlug: testSlug, FieldPrivateKey: pkcs1PEM(testKey())}
 	if mustJSON(t, back.Keep) != mustJSON(t, wantKeep) {
 		t.Errorf("kept %v", back.Keep)
+	}
+	for k, v := range back.Keep {
+		if v == testClientID || v == testClientSecret {
+			t.Errorf("kept the app's client under %s", k)
+		}
 	}
 	for k, v := range back.State {
 		if strings.Contains(v, "c0de-1") || strings.Contains(k+v, "whsec") {
@@ -380,9 +387,11 @@ func (g *GitHub) requirementsT(t *testing.T, conn builtinintegrations.Connection
 		t.Fatalf("requirements: %v", err)
 	}
 	for _, r := range rows {
-		// Core scrubs the connection's kept values from the words, so a
-		// row naming one would read "[secret]".
-		for _, kept := range []string{testClientSecret} {
+		// Core scrubs the connection's secret kept values from the
+		// words, so a row naming one would read "[secret]"; a client
+		// secret the connection holds beside them is not kept, nor
+		// scrubbed, so a row naming it would show it.
+		for _, kept := range []string{"PRIVATE KEY", testClientSecret} {
 			if strings.Contains(r.Words+r.Title, kept) {
 				t.Errorf("%s names %q: %q", r.ID, kept, r.Words)
 			}

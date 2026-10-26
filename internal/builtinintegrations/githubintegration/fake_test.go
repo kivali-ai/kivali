@@ -48,19 +48,30 @@ func pkcs8PEM(t *testing.T, k *rsa.PrivateKey) string {
 	return string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: b}))
 }
 
-// The connection's values in every test.
+// The connection's values in every test, and the app's client id and
+// secret, which GitHub's conversion answer carries and setup does not
+// keep.
 const (
 	testAppID          = "1234"
 	testSlug           = "kivali-acme"
 	testInstallationID = "42"
+	testClientID       = "Iv23liTest"
 	testClientSecret   = "test-client-secret-0000"
 )
 
 func testConn() builtinintegrations.Connection {
 	return builtinintegrations.Connection{ID: "c0ffee01", Fields: map[string]string{
-		FieldAppID: testAppID, FieldSlug: testSlug, FieldClientID: "Iv23liTest", FieldClientSecret: testClientSecret,
-		FieldPrivateKey: pkcs1PEM(testKey()), FieldInstallationID: testInstallationID, FieldInstallationAccount: "acme",
+		FieldAppID: testAppID, FieldSlug: testSlug, FieldPrivateKey: pkcs1PEM(testKey()),
+		FieldInstallationID: testInstallationID, FieldInstallationAccount: "acme",
 	}}
+}
+
+// clientConn is testConn holding the app's client id and secret as
+// well, as a setup that kept them left it.
+func clientConn() builtinintegrations.Connection {
+	c := testConn()
+	c.Fields["client_id"], c.Fields["client_secret"] = testClientID, testClientSecret
+	return c
 }
 
 // agent is a caller whose access names patterns, writing or not.
