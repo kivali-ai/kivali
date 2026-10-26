@@ -122,12 +122,13 @@ func (v *integrationView) connectionMisfit() bool {
 // flow keeps. A GitHub 1.0.0 connection, the owner's own app signed in
 // with, is one for GitHub 2.0.0, whose setup makes the app.
 //
-// An app's client id and secret in the Secret beside what the flow
-// keeps (keptClient) fit: a setup flow keeps them for the app it made,
-// and one whose keeps lack them leaves them unread, since a call is
-// given no value its manifest does not declare. A connection made by
-// signing in holds its client id in the record, so it still does not
-// fit.
+// An app's client id and secret, the pair, in the Secret beside what
+// the flow keeps (keptClient) fit: a setup flow keeps them for the app
+// it made, and one whose keeps lack them leaves them unread, since a
+// call is given no value its manifest does not declare. Either of them
+// alone is a key outside the keeps like any other. A connection made
+// by signing in holds its client id in the record, so it still does
+// not fit.
 func setupMisfit(setup *integration.Setup, rec store.IntegrationConnection) bool {
 	switch {
 	case setup == nil:
@@ -135,22 +136,23 @@ func setupMisfit(setup *integration.Setup, rec store.IntegrationConnection) bool
 	case len(rec.Fields) > 0, rec.SignIn != nil && setup.Then == "":
 		return true
 	}
+	client := keptClient(rec.SecretKeys)
 	held := false
 	for _, k := range rec.SecretKeys {
 		switch {
 		case setup.Keeps.Has(k):
 			held = true
-		case !keptClient(k):
+		case !client || (k != integration.FieldClientID && k != integration.FieldClientSecret):
 			return true
 		}
 	}
 	return !held
 }
 
-// keptClient reports whether key is one a setup flow keeps the app it
-// made's client under: client_id or client_secret.
-func keptClient(key string) bool {
-	return key == integration.FieldClientID || key == integration.FieldClientSecret
+// keptClient reports whether keys hold both of the keys a setup flow
+// keeps the app it made's client under: client_id and client_secret.
+func keptClient(keys []string) bool {
+	return slices.Contains(keys, integration.FieldClientID) && slices.Contains(keys, integration.FieldClientSecret)
 }
 
 // misfitRequirement is the one row of an integration whose connection
