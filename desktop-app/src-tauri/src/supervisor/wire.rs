@@ -167,6 +167,21 @@ pub struct CheckRequest {
 pub struct UpgradeOptions {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub feed: String,
+    /// Upgrade to the Kivali baked into the VM image the team runs on,
+    /// downloading nothing; the feed is not consulted.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub baked: bool,
+}
+
+/// The Kivali the team's VM image carries (its baked chart), and whether
+/// the team can move to it: both are releases and the baked one is
+/// newer. In the status report once the guest has answered.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct BakedRelease {
+    #[serde(default)]
+    pub version: String,
+    #[serde(default)]
+    pub newer: bool,
 }
 
 /// `GET /v1/status`, and the result of `up` and `upgrade`.
@@ -184,6 +199,9 @@ pub struct Report {
     pub guest: Option<GuestStatus>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub guest_error: Option<String>,
+    /// The VM image's Kivali against the installed one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub baked: Option<BakedRelease>,
     /// Why the forward is down while the VM runs: the team's recorded
     /// port could not be bound, in words for the person.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -553,6 +571,11 @@ mod tests {
         )
         .unwrap();
         assert_eq!((r.terminals, r.disk_used_bytes, r.disk_size_bytes), (1, 3 << 30, 64 << 30));
+        assert_eq!(r.baked, None);
+        let r: Report = serde_json::from_str(r#"{"running":true,"state":{},"baked":{"version":"0.16.0","newer":true}}"#).unwrap();
+        assert_eq!(r.baked, Some(BakedRelease { version: "0.16.0".into(), newer: true }));
+        assert_eq!(serde_json::to_string(&UpgradeOptions::default()).unwrap(), "{}");
+        assert_eq!(serde_json::to_string(&UpgradeOptions { baked: true, ..Default::default() }).unwrap(), r#"{"baked":true}"#);
 
         let up = UpOptions { port_hint: 18081, memory_mb: 6144, cpus: 2, ..Default::default() };
         assert_eq!(serde_json::to_string(&up).unwrap(), r#"{"install":{},"port_hint":18081,"memory_mb":6144,"cpus":2}"#);

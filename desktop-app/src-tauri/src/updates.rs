@@ -6,7 +6,7 @@
 //! whether the tray icon carries a badge, and what the item does. Never a
 //! modal (docs/developers/desktop-app.md, "Update states").
 
-use crate::supervisor::wire::{check_status, CheckReport};
+use crate::supervisor::wire::{check_status, BakedRelease, CheckReport};
 use semver::Version;
 use serde::Serialize;
 use time::format_description::well_known::Rfc3339;
@@ -43,7 +43,10 @@ pub enum UpdateState {
     /// stopped short), so there is nothing to compare.
     NotInstalled,
     UpToDate { current: String, checked_at: Option<String> },
-    Available { current: String, latest: String },
+    /// `baked`: the release on offer is the one baked into the team's VM
+    /// image (a newer Kivali Desktop brought it), applied with nothing
+    /// downloaded; otherwise it is the feed's.
+    Available { current: String, latest: String, baked: bool },
     DesktopFirst { latest: String, min_desktop: String },
     ManualSteps { latest: String, notes_url: Option<String> },
     Failed { error: String, last_ok_at: Option<String> },
@@ -142,7 +145,23 @@ pub fn decide(report: Option<&CheckReport>, has_local: bool, app_version: &str) 
     if r.manual_steps {
         return UpdateState::ManualSteps { latest, notes_url: r.notes_url.clone() };
     }
-    UpdateState::Available { current, latest }
+    UpdateState::Available { current, latest, baked: false }
+}
+
+/// Folds the VM image's release into the feed's verdict. A baked Kivali
+/// the team can move to (`newer`: a release above the team's release) is
+/// on offer whatever the feed said or whether it was reached, since the
+/// app that bakes it is by definition new enough for it; only a feed
+/// release above it keeps the feed's offer. `current` is the team's
+/// version from its status, for when no check has finished.
+pub fn with_baked(state: UpdateState, baked: Option<&BakedRelease>, current: Option<&str>) -> UpdateState {
+    let Some(b) = baked.filter(|b| b.newer) else { return state };
+    let Some(bv) = parse_version(&b.version) else { return state };
+    match &state {
+        UpdateState::NoLocalOrg => state,
+        UpdateState::Available { latest, .. } if parse_version(latest).is_some_and(|l| l > bv) => state,
+        _ => UpdateState::Available { current: current.unwrap_or_default().to_string(), latest: b.version.clone(), baked: true },
+    }
 }
 
 /// Whether release.json's minimum desktop version is above this app's.
@@ -257,6 +276,46 @@ mod tests {
         // Older feed than the org (a rollback of the release) is not an upgrade.
         let s = decide(Some(&report("v0.17.0", Some("0.16.0"))), true, "0.16.0");
         assert_eq!(view(s, now()).label, "Kivali v0.17.0 is up to date · checked 3h ago");
+    }
+
+    fn baked(version: &str, newer: bool) -> BakedRelease {
+        BakedRelease { version: version.into(), newer }
+    }
+
+    // Guards the first-boot update's offer: the VM image's release
+    // stands in for the feed's whether the feed was reached, failed or
+    // named something older, and steps aside only for a feed release
+    // above it. A baked Kivali the supervisor judged not newer (a dev
+    // build on either side, the same or an older version) changes
+    // nothing.
+    #[test]
+    fn baked_release_is_offered_over_the_feed() {
+        let b = baked("0.17.0", true);
+        let offered = |s: UpdateState| matches!(s, UpdateState::Available { ref latest, baked: true, .. } if latest == "0.17.0");
+        assert!(offered(with_baked(decide(None, true, "0.17.0"), Some(&b), Some("0.16.0"))));
+        assert!(offered(with_baked(decide(Some(&report("0.16.0", Some("0.16.0"))), true, "0.17.0"), Some(&b), Some("0.16.0"))));
+        let mut failed = report("0.16.0", None);
+        failed.error = Some("timed out".into());
+        assert!(offered(with_baked(decide(Some(&failed), true, "0.17.0"), Some(&b), Some("0.16.0"))));
+        let mut manual = report("0.16.0", Some("0.17.0"));
+        manual.manual_steps = true;
+        assert!(offered(with_baked(decide(Some(&manual), true, "0.17.0"), Some(&b), Some("0.16.0"))));
+        assert_eq!(
+            with_baked(decide(None, true, "0.17.0"), Some(&b), Some("0.16.0")),
+            UpdateState::Available { current: "0.16.0".into(), latest: "0.17.0".into(), baked: true }
+        );
+        // The feed's own offer of the same version becomes the baked one.
+        assert!(offered(with_baked(decide(Some(&report("0.16.0", Some("0.17.0"))), true, "0.17.0"), Some(&b), Some("0.16.0"))));
+        // A feed release above the baked one keeps the feed's offer.
+        assert_eq!(
+            with_baked(decide(Some(&report("0.16.0", Some("0.17.1"))), true, "0.17.0"), Some(&b), Some("0.16.0")),
+            UpdateState::Available { current: "0.16.0".into(), latest: "0.17.1".into(), baked: false }
+        );
+        // Not newer, or no verdict yet: the feed's state stands.
+        let up = decide(Some(&report("0.16.0", Some("0.16.0"))), true, "0.16.0");
+        assert_eq!(with_baked(up.clone(), Some(&baked("0.16.0", false)), Some("0.16.0")), up);
+        assert_eq!(with_baked(up.clone(), None, Some("0.16.0")), up);
+        assert_eq!(with_baked(UpdateState::NoLocalOrg, Some(&b), None), UpdateState::NoLocalOrg);
     }
 
     #[test]
