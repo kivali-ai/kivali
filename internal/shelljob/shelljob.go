@@ -104,7 +104,9 @@ type Result struct {
 // wrote), its error, how long it took and the connection it ran
 // through (the job's ConnectionID, echoed). Updated is at most the
 // daemon's first 200 refs by name; UpdatedTotal counts every ref that
-// moved.
+// moved. Identity says a clone's working copy was given the job's
+// Identity: false for a clone without one, and for one whose identity
+// could not be written though the clone landed.
 type GitResult struct {
 	Repository   string         `json:"repository,omitempty"`
 	Updated      []GitRefUpdate `json:"updated,omitempty"`
@@ -113,6 +115,7 @@ type GitResult struct {
 	DurationMs   int64          `json:"duration_ms,omitempty"`
 	TimedOut     bool           `json:"timed_out,omitempty"`
 	ConnectionID string         `json:"connection_id,omitempty"`
+	Identity     bool           `json:"identity,omitempty"`
 }
 
 // GitRefUpdate is one ref a git operation moved: its name and the

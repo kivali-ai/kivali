@@ -198,9 +198,6 @@ func (f *fakeGitHubAPI) serve(w http.ResponseWriter, r *http.Request) {
 		answer(f.deleteStatus, nil)
 	case path == "GET /installation/repositories":
 		answer(http.StatusOK, map[string]any{"total_count": f.repos, "repositories": []any{}})
-	case path == "GET /users/"+ghSlug+"[bot]":
-		// The app's bot user, whose id names its no-reply address.
-		answer(http.StatusOK, map[string]any{"login": ghSlug + "[bot]", "id": 99, "type": "Bot"})
 	case path == "GET /repos/acme/widgets/issues":
 		// An issue the app itself opened: GitHub names its author by the
 		// app's slug.
@@ -831,21 +828,13 @@ func TestGitHubShellJobGetsTheConnectionsProxyCredential(t *testing.T) {
 		!slices.Equal(j.AllowedRepositories, []string{"acme/*"}) {
 		t.Errorf("job = %+v", j)
 	}
-	// The working copy's identity is the app's bot, relayed to the
-	// daemon as core named it.
-	if id := shell.jobs[0].Identity; id == nil || *id != (agentshell.GitIdentity{Name: ghSlug + "[bot]", Email: "99+" + ghSlug + "[bot]@users.noreply.github.com"}) {
-		t.Errorf("identity = %+v", id)
-	}
-	// The bot user is read with a token that reads metadata alone, then
-	// the job's token is minted.
 	var minted []string
 	for _, r := range f.requestsTo("POST", "/app/installations/42/access_tokens") {
 		if strings.Contains(r.Body, "repositories") {
 			minted = append(minted, r.Body)
 		}
 	}
-	if !slices.Equal(minted, []string{`{"permissions":{"metadata":"read"},"repositories":["widgets"]}`,
-		`{"permissions":{"contents":"read","metadata":"read"},"repositories":["widgets"]}`}) {
+	if !slices.Equal(minted, []string{`{"permissions":{"contents":"read","metadata":"read"},"repositories":["widgets"]}`}) {
 		t.Errorf("tokens minted for a repository = %v", minted)
 	}
 	rows, err := srv.Store.ReadIntegrationAuditTail("github", 100)

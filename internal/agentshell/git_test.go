@@ -446,8 +446,10 @@ func TestGitCloneRefusals(t *testing.T) {
 // as its identity, so the commits an agent makes there are authored and
 // committed as the bot, which is what lets the agent delete such a
 // branch later. The daemon must write it into the new working copy's
-// .git/config as user.name and user.email, as git reads them; a clone
-// without one (Git (Basic)'s) must get no user section at all, and an
+// .git/config as user.name and user.email, as git reads them, and say
+// it did (core tells the agent when its commits will not read as the
+// bot's); a clone without one (Git (Basic)'s) must get no user section
+// at all and say none was written, and an
 // identity git would not take (a line break could add config of its
 // own) must be refused before any byte goes to the git host.
 func TestGitCloneWritesTheIdentity(t *testing.T) {
@@ -457,7 +459,7 @@ func TestGitCloneWritesTheIdentity(t *testing.T) {
 	id := &GitIdentity{Name: "kivali-acme[bot]", Email: "99+kivali-acme[bot]@users.noreply.github.com"}
 	req := cloneJob(srv, "with")
 	req.Identity = id
-	if res := d.run(t, req); res.Error != "" {
+	if res := d.run(t, req); res.Error != "" || !res.Identity {
 		t.Fatalf("clone = %+v", res)
 	}
 	wc := filepath.Join(d.root, "with")
@@ -471,7 +473,7 @@ func TestGitCloneWritesTheIdentity(t *testing.T) {
 		t.Errorf("origin = %q", got)
 	}
 
-	if res := d.run(t, cloneJob(srv, "without")); res.Error != "" {
+	if res := d.run(t, cloneJob(srv, "without")); res.Error != "" || res.Identity {
 		t.Fatalf("clone = %+v", res)
 	}
 	cfg, err := os.ReadFile(filepath.Join(d.root, "without", ".git", "config"))

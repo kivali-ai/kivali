@@ -85,8 +85,8 @@ func TestIntegrationToolsRelayToCore(t *testing.T) {
 // the token, the proxy credential, the bound, the connection), the
 // second request
 // must carry the same name and arguments with what the shell gave back,
-// ref for ref, with the connection the daemon echoed,
-// and only core's second answer may reach the model: never the job,
+// ref for ref, with the connection the daemon echoed and whether it
+// wrote the identity, and only core's second answer may reach the model: never the job,
 // which holds the token.
 func TestIntegrationToolsRunTheShellJob(t *testing.T) {
 	job := &agentpod.GitJob{
@@ -106,8 +106,8 @@ func TestIntegrationToolsRunTheShellJob(t *testing.T) {
 	}}
 	shell := &recordingShell{res: &agentshell.GitResponse{
 		Repository: "acme/widgets", DurationMs: 1200, UpdatedTotal: 901,
-		ConnectionID: "1a2b3c4d",
-		Updated:      []agentshell.GitRefUpdate{{Ref: "refs/remotes/origin/main", New: "abc"}},
+		ConnectionID: "1a2b3c4d", Identity: true,
+		Updated: []agentshell.GitRefUpdate{{Ref: "refs/remotes/origin/main", New: "abc"}},
 	}}
 	tools := IntegrationTools(c, shell, []agentpod.IntegrationTool{{Name: "git_clone"}}, nil)
 	args := json.RawMessage(`{"url":"acme/widgets","path":"/files/widgets"}`)
@@ -135,7 +135,7 @@ func TestIntegrationToolsRunTheShellJob(t *testing.T) {
 		t.Fatalf("requests = %+v", c.reqs)
 	}
 	r := c.reqs[1].ShellJobResult.Git
-	if r == nil || r.Repository != "acme/widgets" || r.ConnectionID != "1a2b3c4d" || r.DurationMs != 1200 || r.UpdatedTotal != 901 || len(r.Updated) != 1 || r.Updated[0] != (agentpod.GitRefUpdate{Ref: "refs/remotes/origin/main", New: "abc"}) {
+	if r == nil || r.Repository != "acme/widgets" || r.ConnectionID != "1a2b3c4d" || r.DurationMs != 1200 || r.UpdatedTotal != 901 || !r.Identity || len(r.Updated) != 1 || r.Updated[0] != (agentpod.GitRefUpdate{Ref: "refs/remotes/origin/main", New: "abc"}) {
 		t.Errorf("result sent = %+v", r)
 	}
 

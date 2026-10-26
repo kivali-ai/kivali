@@ -132,6 +132,7 @@ func runShellJob(ctx context.Context, shell IntegrationShell, job agentpod.Integ
 		DurationMs:   res.DurationMs,
 		TimedOut:     res.TimedOut,
 		ConnectionID: res.ConnectionID,
+		Identity:     res.Identity,
 	}
 	for _, u := range res.Updated {
 		out.Updated = append(out.Updated, agentpod.GitRefUpdate{Ref: u.Ref, Old: u.Old, New: u.New})

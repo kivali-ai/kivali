@@ -232,7 +232,9 @@ type GitProxy struct {
 // echoed. Every string is scrubbed of the
 // request's token and proxy credential. Updated lists at most
 // GitUpdatedMax refs, by name, and UpdatedTotal counts every ref that
-// moved; Error is at most GitErrorMaxBytes.
+// moved; Error is at most GitErrorMaxBytes. Identity says a clone's
+// working copy was given the request's Identity; a clone whose identity
+// could not be written has landed all the same, without it.
 type GitResponse struct {
 	Repository   string         `json:"repository,omitempty"`
 	Updated      []GitRefUpdate `json:"updated,omitempty"`
@@ -241,6 +243,7 @@ type GitResponse struct {
 	DurationMs   int64          `json:"duration_ms,omitempty"`
 	TimedOut     bool           `json:"timed_out,omitempty"`
 	ConnectionID string         `json:"connection_id,omitempty"`
+	Identity     bool           `json:"identity,omitempty"`
 }
 
 // GitRefUpdate is one ref a git operation moved: its name and the

@@ -474,10 +474,10 @@ func gitClone(ctx context.Context, cfg ServerConfig, req GitRequest, host, dir s
 		return res
 	}
 	res.Updated = refUpdates(nil, refSnapshot(r))
-	if req.Identity != nil {
-		if err := writeGitIdentity(r, *req.Identity); err != nil {
-			res.Error = "the clone landed, but its git identity could not be written to .git/config: " + err.Error()
-		}
+	// An identity that cannot be written leaves the clone as it landed,
+	// without one, and the answer says so (Identity false).
+	if req.Identity != nil && writeGitIdentity(r, *req.Identity) == nil {
+		res.Identity = true
 	}
 	return res
 }
