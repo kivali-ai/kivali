@@ -20,6 +20,10 @@
 //!   FAKE_STEP_MS    delay per log line (default 600)
 //!   FAKE_CHECK      up-to-date | upgrade-available (default) |
 //!                   desktop-update-required | manual-steps | failed
+//!   FAKE_BAKED      the Kivali version the fake's VM image bakes
+//!                   (default: the one it ships, 0.16.0); a release newer
+//!                   than the org's makes the status report say the org
+//!                   can move to it, and `upgrade {"baked": true}` does
 //!   FAKE_FAIL_UP    set to fail the first `up` part-way
 //!   FAKE_SIGNED_IN  1 starts with Claude signed in, as the owner (it is
 //!                   otherwise not signed in)
@@ -65,6 +69,33 @@ use wire::*;
 
 const SHIPPED: &str = "0.16.0";
 const LATEST: &str = "0.17.0";
+
+/// The Kivali version the fake's VM image bakes (FAKE_BAKED, else what
+/// it ships).
+fn baked_version() -> String {
+    std::env::var("FAKE_BAKED").ok().filter(|v| !v.trim().is_empty()).unwrap_or_else(|| SHIPPED.into())
+}
+
+/// MAJOR.MINOR.PATCH of a release version; None for a development build
+/// (a "dev" pre-release part) or anything else, as the supervisor's
+/// isRelease decides.
+fn release_parts(v: &str) -> Option<[u64; 3]> {
+    let v = v.trim().trim_start_matches('v');
+    let (core, pre) = v.split_once('-').unwrap_or((v, ""));
+    if pre.split('.').any(|p| p == "dev") {
+        return None;
+    }
+    let mut parts = core.split('.').map(|p| p.parse::<u64>().ok());
+    let out = [parts.next()??, parts.next()??, parts.next()??];
+    parts.next().is_none().then_some(out)
+}
+
+/// The status report's view of the baked Kivali against the org's.
+fn baked_release(installed: &str) -> BakedRelease {
+    let version = baked_version();
+    let newer = matches!((release_parts(installed), release_parts(&version)), (Some(i), Some(b)) if b > i);
+    BakedRelease { version, newer }
+}
 
 /// The data disk an earlier version kept in the config directory, and
 /// the size its move reports at least (the file itself is a marker).
@@ -145,6 +176,7 @@ impl Fake {
             url: forwarding.then(|| format!("http://127.0.0.1:{}/", p.port)),
             guest: running.then(|| GuestStatus { state: "ready".into(), fatal: None, node_ready: true }),
             guest_error: None,
+            baked: running.then(|| baked_release(&p.kivali)),
             forward_error: fwd_err,
             state: LocalState {
                 kivali: p.kivali,
@@ -594,9 +626,27 @@ fn handle(fake: &Fake, mut conn: impl Read + Write) -> std::io::Result<()> {
             }
         }
         "check" => Ok(Some(serde_json::to_value(fake.check()).unwrap())),
-        "upgrade" => {
+        "upgrade" => body_or_default::<UpgradeOptions>(&body).and_then(|o| {
             if !fake.running.load(Ordering::SeqCst) {
-                Err("the VM is not running".into())
+                return Err("the VM is not running".into());
+            }
+            let current = fake.persisted.lock().unwrap().kivali.clone();
+            let to = if o.baked {
+                // The real supervisor's refusals, in its words.
+                let baked = baked_release(&current);
+                if !baked.newer {
+                    return Err(format!("Kivali {current} is up to date; the VM image bakes {}", baked.version));
+                }
+                let _ = fake.logs(
+                    &mut conn,
+                    stage::DOWNLOADING,
+                    &[
+                        &format!("upgrading to Kivali {}, baked into the VM image", baked.version),
+                        &format!("chart kivali {} is baked into the VM image; waiting for k3s to import its images", baked.version),
+                        "images in containerd: docker.io/library/kivali, kivali-egress-proxy, kivali-agent-shell, kivali-browser",
+                    ],
+                );
+                baked.version
             } else {
                 let _ = fake.logs(
                     &mut conn,
@@ -605,18 +655,19 @@ fn handle(fake: &Fake, mut conn: impl Read + Write) -> std::io::Result<()> {
                 );
                 let _ = fake.reports(&mut conn, stage::DOWNLOADING, 512 << 20, 8);
                 let _ = fake.logs(&mut conn, stage::DOWNLOADING, &["importing the images"]);
-                let _ = fake.logs(&mut conn, stage::SNAPSHOT, &["journal: prepared", "deleting the agent pods; stopping the VM", "copying the data disk for the snapshot"]);
-                let _ = fake.reports(&mut conn, stage::SNAPSHOT, 4 << 30, 8);
-                let _ = fake.logs(&mut conn, stage::INSTALLING, &["starting the VM", "HelmChart now points at kivali-0.17.0.tgz"]);
-                let _ = fake.logs(&mut conn, stage::STARTING, &["waiting for the new server"]);
-                let _ = fake.logs(&mut conn, stage::STARTING_AGENTS, &["waiting for the agents to connect to the server"]);
-                let _ = fake.reports(&mut conn, stage::STARTING_AGENTS, 3, 3);
-                let _ = fake.logs(&mut conn, stage::STARTING_AGENTS, &["journal: committed; snapshot deleted"]);
-                fake.persisted.lock().unwrap().kivali = LATEST.into();
-                fake.save();
-                Ok(Some(serde_json::to_value(fake.report()).unwrap()))
-            }
-        }
+                LATEST.to_string()
+            };
+            let _ = fake.logs(&mut conn, stage::SNAPSHOT, &["journal: prepared", "deleting the agent pods; stopping the VM", "copying the data disk for the snapshot"]);
+            let _ = fake.reports(&mut conn, stage::SNAPSHOT, 4 << 30, 8);
+            let _ = fake.logs(&mut conn, stage::INSTALLING, &["starting the VM", &format!("HelmChart now points at kivali-{to}.tgz")]);
+            let _ = fake.logs(&mut conn, stage::STARTING, &["waiting for the new server"]);
+            let _ = fake.logs(&mut conn, stage::STARTING_AGENTS, &["waiting for the agents to connect to the server"]);
+            let _ = fake.reports(&mut conn, stage::STARTING_AGENTS, 3, 3);
+            let _ = fake.logs(&mut conn, stage::STARTING_AGENTS, &["journal: committed; snapshot deleted"]);
+            fake.persisted.lock().unwrap().kivali = to;
+            fake.save();
+            Ok(Some(serde_json::to_value(fake.report()).unwrap()))
+        }),
         other => Err(format!("unknown operation {other}")),
     };
     fake.busy.store(false, Ordering::SeqCst);

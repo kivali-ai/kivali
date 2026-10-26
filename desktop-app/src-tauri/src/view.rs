@@ -179,16 +179,39 @@ pub fn measure(kind: OpKind, index: usize, p: StageProgress) -> StageMeasure {
 /// took on Windows.
 pub const SNAPSHOT_COPY_BYTES_PER_SEC: u64 = 64 << 20;
 
+/// An update to the Kivali baked into the team's VM image downloads
+/// nothing: its first stage only finds the image's chart and images, so
+/// it reads so and is short.
+pub const BAKED_FIRST_STAGE: (&str, u64) = ("Checking the update", 5);
+
 /// The typical length, in seconds, of each of `kind`'s stages in order:
 /// [`OpKind::stages`]' own, with an update's snapshot longer by the time
 /// to copy `copy_bytes` (the data disk's used bytes where the snapshot
-/// copies it, 0 where it is a clone).
-pub fn lengths(kind: OpKind, copy_bytes: u64) -> Vec<u64> {
+/// copies it, 0 where it is a clone), and an update from the VM image
+/// (`baked`) keeping its first stage to [`BAKED_FIRST_STAGE`]'s.
+pub fn lengths(kind: OpKind, copy_bytes: u64, baked: bool) -> Vec<u64> {
     kind.stages()
         .iter()
-        .map(|&(id, _, secs)| if kind == OpKind::Update && id == stage::SNAPSHOT { secs + copy_bytes / SNAPSHOT_COPY_BYTES_PER_SEC } else { secs })
+        .map(|&(id, _, secs)| match id {
+            stage::SNAPSHOT if kind == OpKind::Update => secs + copy_bytes / SNAPSHOT_COPY_BYTES_PER_SEC,
+            stage::DOWNLOADING if kind == OpKind::Update && baked => BAKED_FIRST_STAGE.1,
+            _ => secs,
+        })
         .collect()
 }
+
+/// The words for stage `index` of an operation of `kind`: the stage's
+/// own, except an update from the VM image's first, which downloads
+/// nothing.
+pub fn stage_label(kind: OpKind, index: usize, baked: bool) -> &'static str {
+    let stages = kind.stages();
+    match stages.get(index) {
+        Some(&(id, _, _)) if kind == OpKind::Update && baked && id == stage::DOWNLOADING => BAKED_FIRST_STAGE.0,
+        Some(&(_, label, _)) => label,
+        None => "",
+    }
+}
+
 
 /// Where an operation is: which stage, from the supervisor's stage id
 /// (an id this kind does not know keeps the index it had), how long it
@@ -314,10 +337,11 @@ pub fn pause_message(working: Option<u64>) -> String {
 
 /// How long an operation of this kind typically takes, in words, over
 /// the stages every one goes through: "about 4 minutes" for an update
-/// whose snapshot copies nothing; `copy_bytes` as for [`lengths`].
-pub fn typical(kind: OpKind, copy_bytes: u64) -> String {
+/// whose snapshot copies nothing; `copy_bytes` and `baked` as for
+/// [`lengths`].
+pub fn typical(kind: OpKind, copy_bytes: u64, baked: bool) -> String {
     let optional = kind.optional();
-    let secs: u64 = kind.stages().iter().zip(lengths(kind, copy_bytes)).filter(|(s, _)| !optional.contains(&s.0)).map(|(_, l)| l).sum();
+    let secs: u64 = kind.stages().iter().zip(lengths(kind, copy_bytes, baked)).filter(|(s, _)| !optional.contains(&s.0)).map(|(_, l)| l).sum();
     about(secs as f64)
 }
 
@@ -417,7 +441,7 @@ mod tests {
         assert!(pause_message(Some(0)).starts_with("No agents are working right now."));
         assert!(pause_message(None).starts_with("Agents that are working stop mid-task"));
         // The update dialog: "It takes about 4 minutes."
-        assert_eq!(typical(OpKind::Update, 0), "about 4 minutes");
+        assert_eq!(typical(OpKind::Update, 0, false), "about 4 minutes");
     }
 
     #[test]
@@ -426,14 +450,14 @@ mod tests {
         assert_eq!(stage_index(OpKind::Create, Some("bogus")), None);
         assert_eq!(stage_index(OpKind::Update, Some("snapshot")), Some(1));
         let all = |kind: OpKind| (0..kind.stages().len()).collect::<Vec<_>>();
-        let (p, left) = progress(&lengths(OpKind::Create, 0), &all(OpKind::Create), 1, Duration::from_secs(10), None, false);
+        let (p, left) = progress(&lengths(OpKind::Create, 0, false), &all(OpKind::Create), 1, Duration::from_secs(10), None, false);
         // 12 + 10 of 57 seconds.
         assert_eq!(p, 38);
         assert_eq!(left.as_deref(), Some("about 40 seconds"));
         // A slow stage never reads as past 95% of itself.
-        let (p, _) = progress(&lengths(OpKind::Pause, 0), &[0], 0, Duration::from_secs(600), None, false);
+        let (p, _) = progress(&lengths(OpKind::Pause, 0, false), &[0], 0, Duration::from_secs(600), None, false);
         assert_eq!(p, 95);
-        assert_eq!(progress(&lengths(OpKind::Create, 0), &all(OpKind::Create), 2, Duration::ZERO, None, true), (100, None));
+        assert_eq!(progress(&lengths(OpKind::Create, 0, false), &all(OpKind::Create), 2, Duration::ZERO, None, true), (100, None));
         assert_eq!(about(170.0), "about 3 minutes");
         assert_eq!(about(4.0), "a few seconds");
     }
@@ -447,12 +471,12 @@ mod tests {
         assert_eq!(ids, ["updating-data", "making-room", "starting", "setting-up"]);
         assert_eq!(OpKind::Resume.first_stage(), 2);
         assert_eq!(OpKind::Create.first_stage(), 0);
-        assert_eq!(typical(OpKind::Resume, 0), "about 30 seconds");
+        assert_eq!(typical(OpKind::Resume, 0, false), "about 30 seconds");
 
         // A plain resume: starting, then setting up, 12 and 18 seconds.
         let mut seen = [false, false, true, false];
         assert_eq!(shown_stages(OpKind::Resume, &seen, 2), [2, 3]);
-        let (p, left) = progress(&lengths(OpKind::Resume, 0), &[2, 3], 2, Duration::from_secs(6), None, false);
+        let (p, left) = progress(&lengths(OpKind::Resume, 0, false), &[2, 3], 2, Duration::from_secs(6), None, false);
         assert_eq!((p, left.as_deref()), (20, Some("about 30 seconds")));
 
         // The supervisor moves the disk: every stage from there on shows.
@@ -472,18 +496,18 @@ mod tests {
         let shown = [0, 2, 3]; // updating-data 120, starting 12, setting-up 18
         let three_of_eight = Some(StageProgress { done: 3 << 30, total: 8 << 30 });
         // 3/8 of 120 seconds' share = 45 of 150.
-        let (p, left) = progress(&lengths(OpKind::Resume, 0), &shown, 0, Duration::from_secs(30), three_of_eight, false);
+        let (p, left) = progress(&lengths(OpKind::Resume, 0, false), &shown, 0, Duration::from_secs(30), three_of_eight, false);
         assert_eq!(p, 30);
         // 30 s for 3/8: 50 s more, and 30 s of the stages after.
         assert_eq!(left.as_deref(), Some("about 80 seconds"));
         // However long it has taken, done is done.
-        let (p, _) = progress(&lengths(OpKind::Resume, 0), &shown, 0, Duration::from_secs(600), Some(StageProgress { done: 8, total: 8 }), false);
+        let (p, _) = progress(&lengths(OpKind::Resume, 0, false), &shown, 0, Duration::from_secs(600), Some(StageProgress { done: 8, total: 8 }), false);
         assert_eq!(p, 80);
         // Without a report, time against the typical length, as before.
-        let (p, _) = progress(&lengths(OpKind::Resume, 0), &shown, 0, Duration::from_secs(30), None, false);
+        let (p, _) = progress(&lengths(OpKind::Resume, 0, false), &shown, 0, Duration::from_secs(30), None, false);
         assert_eq!(p, 20);
         // A report with no total is no measure.
-        let (p, _) = progress(&lengths(OpKind::Resume, 0), &shown, 0, Duration::from_secs(30), Some(StageProgress { done: 0, total: 0 }), false);
+        let (p, _) = progress(&lengths(OpKind::Resume, 0, false), &shown, 0, Duration::from_secs(30), Some(StageProgress { done: 0, total: 0 }), false);
         assert_eq!(p, 20);
         // The copy is measured in bytes; a compaction only makes a share.
         assert_eq!(measure(OpKind::Resume, 0, StageProgress { done: 9, total: 8 }), StageMeasure { done: 8, total: 8, unit: MeasureUnit::Bytes });
@@ -527,15 +551,23 @@ mod tests {
     /// took 4 to 8 on Windows.
     #[test]
     fn update_length_follows_the_copy() {
-        assert_eq!(typical(OpKind::Update, 0), "about 4 minutes");
-        assert_eq!(typical(OpKind::Update, 4 << 30), "about 6 minutes");
-        assert_eq!(typical(OpKind::Update, 15 << 30), "about 8 minutes");
-        assert_eq!(lengths(OpKind::Update, 4 << 30), [60, 94, 50, 40, 60, 60]);
+        assert_eq!(typical(OpKind::Update, 0, false), "about 4 minutes");
+        assert_eq!(typical(OpKind::Update, 4 << 30, false), "about 6 minutes");
+        assert_eq!(typical(OpKind::Update, 15 << 30, false), "about 8 minutes");
+        assert_eq!(lengths(OpKind::Update, 4 << 30, false), [60, 94, 50, 40, 60, 60]);
+        // An update from the VM image downloads nothing: its first stage
+        // is short and says what it does, and the estimate follows.
+        assert_eq!(lengths(OpKind::Update, 4 << 30, true), [5, 94, 50, 40, 60, 60]);
+        assert_eq!(typical(OpKind::Update, 4 << 30, true), "about 5 minutes");
+        assert_eq!(stage_label(OpKind::Update, 0, true), "Checking the update");
+        assert_eq!(stage_label(OpKind::Update, 0, false), "Downloading");
+        assert_eq!(stage_label(OpKind::Update, 1, true), "Saving a snapshot");
+        assert_eq!(lengths(OpKind::Resume, 0, true), lengths(OpKind::Resume, 0, false));
         // Only an update's snapshot grows.
-        assert_eq!(lengths(OpKind::Resume, 4 << 30), lengths(OpKind::Resume, 0));
+        assert_eq!(lengths(OpKind::Resume, 4 << 30, false), lengths(OpKind::Resume, 0, false));
         // Halfway through a 4 GB copy: 60 + 47 of 304 seconds.
         let half = Some(StageProgress { done: 2 << 30, total: 4 << 30 });
-        let (p, _) = progress(&lengths(OpKind::Update, 4 << 30), &[0, 1, 2, 3, 4], 1, Duration::from_secs(47), half, false);
+        let (p, _) = progress(&lengths(OpKind::Update, 4 << 30, false), &[0, 1, 2, 3, 4], 1, Duration::from_secs(47), half, false);
         assert_eq!(p, 35);
     }
 

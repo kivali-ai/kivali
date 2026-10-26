@@ -10,7 +10,7 @@ use crate::platform;
 use crate::signin::PendingSignin;
 use crate::supervisor::sidecar::{self, Sidecar, STOP_TIMEOUTS};
 use crate::supervisor::wire::{
-    CheckReport, CredentialStatus, OrgState, Progress, Report, SetupInfo, SetupRequest, SetupResult, StageProgress, Status,
+    BakedRelease, CheckReport, CredentialStatus, OrgState, Progress, Report, SetupInfo, SetupRequest, SetupResult, StageProgress, Status,
 };
 use crate::supervisor::{Error as SupError, Supervisor, UpRequest};
 use crate::teams::{Kind, Place, Team, TeamsFile};
@@ -77,12 +77,20 @@ pub struct TeamOp {
     pub measured: Option<StageProgress>,
     /// The stages' typical lengths on this computer (`view::lengths`).
     pub lengths: Vec<u64>,
+    /// An update to the Kivali baked into the team's VM image: nothing is
+    /// downloaded, and its first stage reads so.
+    pub baked: bool,
 }
 
 impl TeamOp {
     /// `copy_bytes` is what an update's snapshot copies
     /// ([`snapshot_copy_bytes`]).
     fn new(kind: OpKind, copy_bytes: u64) -> TeamOp {
+        TeamOp::with(kind, copy_bytes, false)
+    }
+
+    /// [`TeamOp::new`], an update from the VM image when `baked`.
+    fn with(kind: OpKind, copy_bytes: u64, baked: bool) -> TeamOp {
         TeamOp {
             kind,
             running: true,
@@ -94,7 +102,8 @@ impl TeamOp {
             started_ms: unix_ms(),
             seen: vec![false; kind.stages().len()],
             measured: None,
-            lengths: view::lengths(kind, copy_bytes),
+            lengths: view::lengths(kind, copy_bytes, baked),
+            baked,
         }
     }
 
@@ -137,9 +146,9 @@ impl TeamOp {
             error: self.error.clone(),
             finished: self.finished,
             lines: self.lines.clone(),
-            stage: stages.get(index).map(|s| s.1.to_string()),
+            stage: (index < stages.len()).then(|| view::stage_label(self.kind, index, self.baked).to_string()),
             stage_index: shown.iter().position(|&i| i == index).unwrap_or(0),
-            stages: shown.iter().map(|&i| stages[i].1.to_string()).collect(),
+            stages: shown.iter().map(|&i| view::stage_label(self.kind, i, self.baked).to_string()).collect(),
             started_ms: self.started_ms,
             percent,
             remaining: if self.running { remaining } else { None },
@@ -653,23 +662,51 @@ fn copy_bytes(copies: bool, report: Option<&Report>) -> u64 {
     }
 }
 
+/// What the team's update row offers: the feed's verdict with the VM
+/// image's release folded in (`updates::with_baked`). `current` is the
+/// team's version from its status.
+fn update_state(check: Option<&CheckReport>, baked: Option<&BakedRelease>, current: Option<&str>, app_version: &str) -> updates::UpdateState {
+    updates::with_baked(updates::decide(check, true, app_version), baked, current)
+}
+
 /// `copy_bytes` is what an update's snapshot copies
 /// ([`snapshot_copy_bytes`]), for its length.
-fn update_view(check: Option<&CheckReport>, app_version: &str, now: OffsetDateTime, copy_bytes: u64) -> TeamUpdateView {
+fn update_view(
+    check: Option<&CheckReport>,
+    baked: Option<&BakedRelease>,
+    current: Option<&str>,
+    app_version: &str,
+    now: OffsetDateTime,
+    copy_bytes: u64,
+) -> TeamUpdateView {
     use updates::UpdateState as U;
-    let state = updates::decide(check, true, app_version);
+    let state = update_state(check, baked, current, app_version);
     let checked_at = check.and_then(|c| c.checked_at.clone());
+    let mut from_image = false;
     let (s, current, latest, notes) = match state {
         U::NoLocalOrg | U::NotChecked | U::NotInstalled => ("not_checked", None, None, None),
         U::UpToDate { current, .. } => ("up_to_date", Some(current), None, None),
-        U::Available { current, latest } => ("available", Some(current), Some(latest), check.and_then(|c| c.notes_url.clone())),
+        U::Available { current, latest, baked } => {
+            from_image = baked;
+            // The feed's notes, when it describes the release on offer.
+            let notes = check.filter(|c| c.latest.as_deref().map(|l| l.trim_start_matches('v')) == Some(latest.trim_start_matches('v'))).and_then(|c| c.notes_url.clone());
+            ("available", Some(current), Some(latest), notes)
+        }
         U::DesktopFirst { latest, .. } => ("desktop_first", check.map(|c| c.current.clone()), Some(latest), None),
         U::ManualSteps { latest, notes_url } => ("manual_steps", check.map(|c| c.current.clone()), Some(latest), notes_url),
         U::Failed { .. } => ("failed", check.map(|c| c.current.clone()), None, None),
     };
     let _ = now;
     let bare = |v: Option<String>| v.map(|v| v.trim_start_matches('v').to_string()).filter(|v| !v.is_empty());
-    TeamUpdateView { state: s, current: bare(current), latest: bare(latest), notes_url: notes, summary: None, checked_at, takes: view::typical(OpKind::Update, copy_bytes) }
+    TeamUpdateView {
+        state: s,
+        current: bare(current),
+        latest: bare(latest),
+        notes_url: notes,
+        summary: None,
+        checked_at,
+        takes: view::typical(OpKind::Update, copy_bytes, from_image),
+    }
 }
 
 impl Shell {
@@ -819,7 +856,14 @@ impl Shell {
                     op,
                     version: status.as_ref().and_then(|s| s.kivali.clone()),
                     dev: status.as_ref().and_then(|s| s.kivali.as_deref()).is_some_and(updates::is_dev_version),
-                    update: Some(update_view(check.as_ref(), &self.app_version, now, snapshot_copy_bytes(report.as_ref()))),
+                    update: Some(update_view(
+                        check.as_ref(),
+                        report.as_ref().and_then(|r| r.baked.as_ref()),
+                        status.as_ref().and_then(|s| s.kivali.as_deref()),
+                        &self.app_version,
+                        now,
+                        snapshot_copy_bytes(report.as_ref()),
+                    )),
                     ai: Some(AiView {
                         provider: "claude",
                         signed_in,
@@ -1101,6 +1145,15 @@ pub fn run_op<F>(app: &AppHandle, rt: Arc<Runtime>, kind: OpKind, work: F) -> Re
 where
     F: FnOnce(&AppHandle, &Shell, &Runtime, &mut dyn FnMut(Progress)) -> Result<(), String> + Send + 'static,
 {
+    run_op_with(app, rt, kind, false, work)
+}
+
+/// [`run_op`]; `baked` marks an update from the VM image, whose first
+/// stage downloads nothing ([`TeamOp::with`]).
+pub fn run_op_with<F>(app: &AppHandle, rt: Arc<Runtime>, kind: OpKind, baked: bool, work: F) -> Result<(), String>
+where
+    F: FnOnce(&AppHandle, &Shell, &Runtime, &mut dyn FnMut(Progress)) -> Result<(), String> + Send + 'static,
+{
     if shell(app).quitting.load(Ordering::SeqCst) {
         return Err("Kivali is quitting.".into());
     }
@@ -1110,7 +1163,7 @@ where
         if let Some(o) = op.as_ref().filter(|o| o.running) {
             return Err(format!("{} is busy ({:?}).", rt.id, o.kind).to_lowercase());
         }
-        *op = Some(TeamOp::new(kind, copy));
+        *op = Some(TeamOp::with(kind, copy, baked));
     }
     changed(app);
     let app = app.clone();
@@ -1631,13 +1684,32 @@ pub fn restart_team(app: &AppHandle, id: &str) -> Result<(), String> {
     })
 }
 
+/// Update… and Try again: the release the team's update row offers,
+/// from the VM image when that is the one on offer, else the feed's.
 pub fn update_team(app: &AppHandle, id: &str) -> Result<(), String> {
+    let sh = shell(app);
+    let rt = sh.runtime(id).ok_or_else(no_team_here)?;
+    let baked = {
+        let report = rt.report.lock().unwrap();
+        let check = rt.check.lock().unwrap();
+        let current = report.as_ref().map(|r| r.state.kivali.clone());
+        matches!(
+            update_state(check.as_ref(), report.as_ref().and_then(|r| r.baked.as_ref()), current.as_deref(), &sh.app_version),
+            updates::UpdateState::Available { baked: true, .. }
+        )
+    };
+    update_team_with(app, id, baked)
+}
+
+/// Updates the team to the feed's release, or with `baked` to the Kivali
+/// baked into its VM image.
+fn update_team_with(app: &AppHandle, id: &str, baked: bool) -> Result<(), String> {
     let rt = shell(app).runtime(id).ok_or_else(no_team_here)?;
     let id = id.to_string();
-    run_op(app, rt, OpKind::Update, move |app, sh, rt, progress| {
+    run_op_with(app, rt, OpKind::Update, baked, move |app, sh, rt, progress| {
         let before = rt.status().and_then(|s| s.kivali);
         let name = sh.team(&id).map(|t| t.name).unwrap_or_default();
-        match rt.supervisor.upgrade(progress) {
+        match rt.supervisor.upgrade(baked, progress) {
             Ok(st) => {
                 let _ = rt.refresh_status();
                 notify_background(
@@ -1859,6 +1931,7 @@ pub fn set_resources(app: &AppHandle, id: &str, memory_mb: u32, cpus: u32) -> Re
 
 /// The release check, once now and then daily, after a team came up.
 fn after_started(app: &AppHandle, rt: &Runtime) {
+    first_boot_update(app, rt);
     check_now_id(app, &rt.id);
     if !rt.check_loop.swap(true, Ordering::SeqCst) {
         let app = app.clone();
@@ -1869,6 +1942,41 @@ fn after_started(app: &AppHandle, rt: &Runtime) {
             run_check_blocking(&app, &rt);
         });
     }
+}
+
+/// The first start after Kivali Desktop was updated: the VM image the
+/// team just booted bakes a newer Kivali than the team runs
+/// (`Report::baked`), and the team moves to it without being asked, once
+/// the operation that started it has ended (docs/developers/desktop-app.md,
+/// "Updating a team"). Each baked version is tried once per team
+/// (teams.json `first_boot_update`): an update that fails shows in
+/// Settings with Try again, and is not attempted again at every launch.
+/// The supervisor's verdict already leaves a development build on either
+/// side alone, and a team setup has not finished with is left to setup.
+fn first_boot_update(app: &AppHandle, rt: &Runtime) {
+    let sh = shell(app);
+    let Some(baked) = rt.report.lock().unwrap().as_ref().and_then(|r| r.baked.clone()).filter(|b| b.newer) else { return };
+    {
+        let mut teams = sh.teams.lock().unwrap();
+        let Some(l) = teams.get_mut(&rt.id).and_then(Team::local_mut) else { return };
+        if l.provisional || l.first_boot_update.as_deref() == Some(baked.version.as_str()) {
+            return;
+        }
+        l.first_boot_update = Some(baked.version.clone());
+    }
+    if let Err(e) = sh.save_teams() {
+        eprintln!("kivali: {}: recording the first-boot update: {e}", rt.id);
+    }
+    eprintln!("kivali: {}: Kivali {} is baked into the VM image; updating on this first start", rt.id, baked.version);
+    let app = app.clone();
+    let id = rt.id.clone();
+    std::thread::spawn(move || {
+        let Some(rt) = app.state::<Shell>().runtime(&id) else { return };
+        rt.wait_idle();
+        if let Err(e) = update_team_with(&app, &id, true) {
+            eprintln!("kivali: {id}: first-boot update: {e}");
+        }
+    });
 }
 
 pub fn run_check_blocking(app: &AppHandle, rt: &Runtime) {
@@ -2592,6 +2700,15 @@ mod tests {
         assert_eq!(v.stage.as_deref(), Some("Going back to the previous version"));
         assert_eq!(v.stages, ["Downloading", "Saving a snapshot", "Installing", "Going back to the previous version"]);
         assert_eq!(v.stage_index, 3);
+
+        // An update from the VM image downloads nothing: its first stage
+        // says what it does instead, and the rest reads as any update.
+        let mut op = TeamOp::with(OpKind::Update, 0, true);
+        op.progress(&Progress { label: "chart kivali 0.17.0 is baked into the VM image".into(), stage: Some("downloading".into()), progress: None });
+        let v = op.view();
+        assert_eq!(v.stage.as_deref(), Some("Checking the update"));
+        assert_eq!(v.stages, ["Checking the update", "Saving a snapshot", "Installing", "Starting up", "Starting your agents"]);
+        assert_eq!(op.lengths[0], view::BAKED_FIRST_STAGE.1);
 
         // An update that gets to its agents counts them as they connect.
         let mut op = TeamOp::new(OpKind::Update, 0);

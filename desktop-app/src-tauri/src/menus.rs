@@ -823,7 +823,7 @@ mod tests {
 
     fn row(name: &str, here: bool, state: TeamState, phrase: &str) -> Row {
         let place = if here {
-            Place::Here(crate::teams::Local { dir: format!("teams/{name}"), port: 0, owner: None, memory_mb: 4096, cpus: 4, public_url: None, call_me: None, signed_out_at: None, provisional: false })
+            Place::Here(crate::teams::Local { dir: format!("teams/{name}"), port: 0, owner: None, memory_mb: 4096, cpus: 4, public_url: None, call_me: None, signed_out_at: None, provisional: false, first_boot_update: None })
         } else {
             Place::Elsewhere { url: format!("https://{name}.example.com") }
         };

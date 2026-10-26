@@ -6,7 +6,7 @@
 
 use kivali_desktop_lib::orgurl;
 use kivali_desktop_lib::supervisor::sidecar::{Sidecar, Stopped, STOP_TIMEOUTS};
-use kivali_desktop_lib::supervisor::wire::{check_status, stage, OrgState, SetupRequest, StageProgress};
+use kivali_desktop_lib::supervisor::wire::{check_status, stage, BakedRelease, OrgState, SetupRequest, StageProgress};
 use kivali_desktop_lib::supervisor::{UpRequest, Error, Supervisor};
 use std::path::{Path, PathBuf};
 
@@ -37,6 +37,7 @@ fn start(binary: &Path, dir: &Path, vm_dir: Option<&Path>) -> (Supervisor, Sidec
 fn create_check_credential_upgrade_destroy_against_the_fake() {
     std::env::set_var("FAKE_STEP_MS", "0");
     std::env::set_var("FAKE_PORT", "18931");
+    std::env::set_var("FAKE_BAKED", "0.18.0");
     let dir = tempfile::tempdir().unwrap();
     let (sup, sc) = start(&fake_binary(), dir.path(), None);
 
@@ -86,8 +87,23 @@ fn create_check_credential_upgrade_destroy_against_the_fake() {
     assert_eq!(report.latest.as_deref(), Some("0.17.0"));
     assert_eq!(report.min_desktop.as_deref(), Some("0.16.0"));
 
-    let st = sup.upgrade(&mut |_| {}).unwrap();
+    // The VM image bakes a newer Kivali than the team runs (a newer
+    // desktop's), so the report says the team can move to it.
+    assert_eq!(sup.report().unwrap().baked, Some(BakedRelease { version: "0.18.0".into(), newer: true }));
+
+    let st = sup.upgrade(false, &mut |_| {}).unwrap();
     assert_eq!(st.kivali.as_deref(), Some("0.17.0"));
+
+    // The baked update: no download, its first stage says so, and the
+    // report then has nothing newer.
+    let mut seen = Vec::new();
+    let st = sup.upgrade(true, &mut |p| seen.push(p)).unwrap();
+    assert_eq!(st.kivali.as_deref(), Some("0.18.0"));
+    assert!(seen.iter().any(|p| p.label.contains("baked into the VM image")), "{seen:?}");
+    assert!(!seen.iter().any(|p| p.stage.as_deref() == Some(stage::DOWNLOADING) && p.label.is_empty()), "a baked update reported download progress: {seen:?}");
+    assert_eq!(sup.report().unwrap().baked, Some(BakedRelease { version: "0.18.0".into(), newer: false }));
+    let e = sup.upgrade(true, &mut |_| {}).unwrap_err();
+    assert!(matches!(e, Error::Supervisor(ref m) if m.contains("up to date")), "{e:?}");
 
     // A team whose data disk an earlier version kept in the config
     // directory: the next resume moves it first, reporting the copy's

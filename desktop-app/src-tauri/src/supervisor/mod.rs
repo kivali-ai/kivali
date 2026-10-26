@@ -309,8 +309,10 @@ impl Supervisor {
         Ok(CheckReport::from_result(&result, last_ok))
     }
 
-    pub fn upgrade(&self, on_progress: &mut dyn FnMut(Progress)) -> Result<Status, Error> {
-        let r = self.op("upgrade", &UpgradeOptions::default(), on_progress)?;
+    /// Upgrades the team: to the feed's release, or with `baked` to the
+    /// Kivali baked into its VM image (nothing downloaded).
+    pub fn upgrade(&self, baked: bool, on_progress: &mut dyn FnMut(Progress)) -> Result<Status, Error> {
+        let r = self.op("upgrade", &UpgradeOptions { baked, ..Default::default() }, on_progress)?;
         self.status_from(r)
     }
 
