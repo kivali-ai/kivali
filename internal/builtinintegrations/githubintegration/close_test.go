@@ -359,18 +359,26 @@ func compareJSON(total int, commits ...string) string {
 	return fmt.Sprintf(`{"status":"ahead","ahead_by":%d,"total_commits":%d,"commits":[%s],"files":[]}`, total, total, strings.Join(commits, ","))
 }
 
-// branchRoutes answers acme/widgets (default branch main, owner acme),
-// no open pull requests from or into agent/fix-1, and the comparison of
-// agent/fix-1 with main with compare.
-func branchRoutes(f *fakeGitHub, compare string) {
-	branchRoutesWith(f, nil, nil, compare)
+// The commits the branch agent/fix-1 and the default branch point at.
+const (
+	tipSHA  = "1111111111111111111111111111111111111111"
+	baseSHA = "2222222222222222222222222222222222222222"
+)
+
+// branchJSON is GET /repos/{r}/branches/{name}'s answer.
+func branchJSON(name, sha string) string {
+	return fmt.Sprintf(`{"name":%q,"commit":{"sha":%q},"protected":false}`, name, sha)
 }
 
-// branchRoutesWith is branchRoutes, answering the open pull requests
-// from agent/fix-1 (a listing by head) with from and into it (by base)
-// with into.
-func branchRoutesWith(f *fakeGitHub, from, into []string, compare string) {
-	f.route("GET /repos/acme/widgets", 200, `{"full_name":"acme/widgets","default_branch":"main","owner":{"login":"acme","type":"Organization"}}`)
+// branchRoutesOn answers acme/widgets (default branch def, owner acme),
+// the branch agent/fix-1 at tipSHA and def at baseSHA, the open pull
+// requests from agent/fix-1 (a listing by head) with from and into it
+// (by base) with into, and the comparison of the two commits, and of
+// nothing by name, with compare.
+func branchRoutesOn(f *fakeGitHub, def string, from, into []string, compare string) {
+	f.route("GET /repos/acme/widgets", 200, fmt.Sprintf(`{"full_name":"acme/widgets","default_branch":%q,"owner":{"login":"acme","type":"Organization"}}`, def))
+	f.route("GET /repos/acme/widgets/branches/agent/fix-1", 200, branchJSON("agent/fix-1", tipSHA))
+	f.route("GET /repos/acme/widgets/branches/"+def, 200, branchJSON(def, baseSHA))
 	f.routeFunc("GET /repos/acme/widgets/pulls", func(r recorded) reply {
 		list := from
 		if r.Query.Get("base") != "" {
@@ -378,7 +386,17 @@ func branchRoutesWith(f *fakeGitHub, from, into []string, compare string) {
 		}
 		return reply{Status: 200, Body: "[" + strings.Join(list, ",") + "]"}
 	})
-	f.route("GET /repos/acme/widgets/compare/main...agent/fix-1", 200, compare)
+	f.route("GET /repos/acme/widgets/compare/"+baseSHA+"..."+tipSHA, 200, compare)
+}
+
+// branchRoutesWith is branchRoutesOn with the default branch main.
+func branchRoutesWith(f *fakeGitHub, from, into []string, compare string) {
+	branchRoutesOn(f, "main", from, into, compare)
+}
+
+// branchRoutes is branchRoutesWith with no open pull requests.
+func branchRoutes(f *fakeGitHub, compare string) {
+	branchRoutesWith(f, nil, nil, compare)
 }
 
 // Why this test exists: whether the app's bot made a commit is what a
@@ -506,7 +524,7 @@ func TestDeleteBranchRefusesABranchNotAllTheBots(t *testing.T) {
 	}
 
 	branchRoutes(f, compareJSON(0))
-	f.route("GET /repos/acme/widgets/compare/main...agent/fix-1", 404, `{"message":"No common ancestor between main and agent/fix-1."}`)
+	f.route("GET /repos/acme/widgets/compare/"+baseSHA+"..."+tipSHA, 404, `{"message":"No common ancestor between main and agent/fix-1."}`)
 	r = del()
 	if r.refusal == nil || r.text != "GitHub cannot compare agent/fix-1 with main (HTTP 404: No common ancestor between main and agent/fix-1), so it is not deleted; ask the owner." ||
 		r.refusal.Reason != "the branch cannot be compared with the default branch" {
@@ -521,23 +539,134 @@ func TestDeleteBranchRefusesABranchNotAllTheBots(t *testing.T) {
 	}
 }
 
+// Why this test exists: a bare name in a comparison is resolved by git's
+// rules, a tag before a branch, and github_push may create any tag. A
+// tag named like the branch (or like the default branch) and pointing
+// at the default branch's commit would compare as nothing beyond it, a
+// fully merged branch, and the branch, with someone's commits on it,
+// would be deleted. Both ends must be the branches' own commits, read
+// from the branches endpoint, which names branches alone, and compared
+// by commit; no comparison by name is asked for.
+func TestDeleteBranchComparesTheBranchNotATagOfItsName(t *testing.T) {
+	g, f := newTest(t)
+	branchRoutes(f, compareJSON(1, commitJSON("ddd444555666777", personUser, personUser, "dana@example.com", "dana@example.com")))
+	// What GitHub would answer by name, a tag agent/fix-1 at main's
+	// commit taking the branch's place.
+	f.route("GET /repos/acme/widgets/compare/main...agent/fix-1", 200, compareJSON(0))
+	f.route("DELETE /repos/acme/widgets/git/refs/heads/agent/fix-1", 204, "")
+	r := g.callT(t, agent(true, "acme/*"), "delete_branch", map[string]any{"repository": "acme/widgets", "branch": "agent/fix-1"})
+	if r.refusal == nil || r.refusal.Reason != "commit ddd444555666 of the branch is not the app's bot's" {
+		t.Errorf("%+v", r)
+	}
+	for _, q := range f.api() {
+		if q.Path == "/repos/acme/widgets/compare/main...agent/fix-1" {
+			t.Error("the branch was compared by name")
+		}
+	}
+	if w := writesTaken(f); len(w) != 0 {
+		t.Errorf("wrote %v", w)
+	}
+}
+
+// Why this test exists: the repository's default branch is whatever
+// GitHub names, not main. It must be the one refused, and the one the
+// branch is compared with; a branch named main in such a repository is
+// an ordinary branch.
+func TestDeleteBranchHoldsToTheRepositorysOwnDefaultBranch(t *testing.T) {
+	g, f := newTest(t)
+	branchRoutesOn(f, "trunk", nil, nil, compareJSON(0))
+	writer := agent(true, "acme/*")
+	r := g.callT(t, writer, "delete_branch", map[string]any{"repository": "acme/widgets", "branch": "trunk"})
+	if r.refusal == nil || r.refusal.Reason != "the branch is the repository's default branch" {
+		t.Errorf("trunk: %+v", r)
+	}
+	f.route("DELETE /repos/acme/widgets/git/refs/heads/agent/fix-1", 204, "")
+	if r := g.callT(t, writer, "delete_branch", map[string]any{"repository": "acme/widgets", "branch": "agent/fix-1"}); r.isError {
+		t.Fatalf("agent/fix-1: %+v", r)
+	}
+	var tips []string
+	for _, q := range f.api() {
+		if strings.HasPrefix(q.Path, "/repos/acme/widgets/branches/") {
+			tips = append(tips, strings.TrimPrefix(q.Path, "/repos/acme/widgets/branches/"))
+		}
+	}
+	if want := []string{"agent/fix-1", "trunk", "agent/fix-1"}; !slices.Equal(tips, want) {
+		t.Errorf("branches read %v, want %v", tips, want)
+	}
+}
+
+// Why this test exists: only a branch can be deleted, by a name git
+// takes for one. HEAD, a segment git refuses, a name the repository has
+// no branch by (a tag of that name included) and a name GitHub answers
+// for with another branch (a renamed one) are not deleted; and a branch
+// that moves between its comparison and the deletion is not deleted
+// either, since the commit compared is no longer its tip.
+func TestDeleteBranchDeletesOnlyTheBranchItChecked(t *testing.T) {
+	g, f := newTest(t)
+	writer := agent(true, "acme/*")
+	for _, branch := range []string{"HEAD", "agent/.x", "agent.lock/x"} {
+		if r := g.callT(t, writer, "delete_branch", map[string]any{"repository": "acme/widgets", "branch": branch}); r.refusal == nil || r.text != "branch is not a branch name." {
+			t.Errorf("%s: %+v", branch, r)
+		}
+	}
+	if n := len(f.requests()); n != 0 {
+		t.Errorf("GitHub took %d requests for names git refuses", n)
+	}
+
+	branchRoutes(f, compareJSON(0))
+	f.route("DELETE /repos/acme/widgets/git/refs/heads/agent/fix-1", 204, "")
+	for name, answer := range map[string]reply{
+		"no such branch": {Status: 404, Body: `{"message":"Branch not found"}`},
+		"renamed":        {Status: 200, Body: branchJSON("agent/fix-2", tipSHA)},
+	} {
+		f.routeFunc("GET /repos/acme/widgets/branches/agent/fix-1", func(recorded) reply { return answer })
+		r := g.callT(t, writer, "delete_branch", map[string]any{"repository": "acme/widgets", "branch": "agent/fix-1"})
+		if !r.isError || r.refusal != nil || r.text != "acme/widgets has no branch named agent/fix-1." {
+			t.Errorf("%s: %+v", name, r)
+		}
+	}
+
+	reads := 0
+	f.routeFunc("GET /repos/acme/widgets/branches/agent/fix-1", func(recorded) reply {
+		reads++
+		if reads == 1 {
+			return reply{Status: 200, Body: branchJSON("agent/fix-1", tipSHA)}
+		}
+		return reply{Status: 200, Body: branchJSON("agent/fix-1", "3333333333333333333333333333333333333333")}
+	})
+	r := g.callT(t, writer, "delete_branch", map[string]any{"repository": "acme/widgets", "branch": "agent/fix-1"})
+	if !r.isError || r.text != "agent/fix-1 changed while it was checked, so it is not deleted; try again." || reads != 2 {
+		t.Errorf("moved: %+v, %d reads", r, reads)
+	}
+	if w := writesTaken(f); len(w) != 0 {
+		t.Errorf("wrote %v", w)
+	}
+}
+
 // Why this test exists: once the rule holds, delete_branch deletes the
 // branch's ref and nothing else, with a token narrowed to the
 // repository that may write its contents, minted only then. A fully
 // merged branch (no commits beyond the default branch) and one of the
 // bot's commits, as GitHub resolves them or by the bot's no-reply
-// address where it resolves no user, each qualify. The pull requests
-// must be asked for open, by the repository owner's head
-// (owner:branch) and by base, and the commits by comparing the branch
-// with the default branch, every read with a token that only reads;
-// the bot's user, for its address, is read once per connection with an
-// installation token (the app's JWT reaches only /app); and the
-// owner's audit row must say what was deleted.
+// address where it resolves no user, each qualify. The branch's commit
+// must be read as a branch, the pull requests asked for open, by the
+// repository owner's head (owner:branch) and by base, the two commits
+// compared, and the branch read again before it is deleted, every read
+// with a token that only reads; the bot's user, for its address, is
+// read once per connection with an installation token (the app's JWT
+// reaches only /app); and the owner's audit row must say what was
+// deleted.
 func TestDeleteBranchDeletesABranchOfTheBotsCommits(t *testing.T) {
 	g, f := newTest(t)
+	f.route("GET /app", 200, appInfoJSON)
 	f.route("GET /users/kivali-acme[bot]", 200, botUserJSON)
 	f.route("DELETE /repos/acme/widgets/git/refs/heads/agent/fix-1", 204, "")
 	read := map[string]string{"metadata": "read", "contents": "read", "pull_requests": "read"}
+	paths := []string{
+		"GET /repos/acme/widgets", "GET /repos/acme/widgets/branches/agent/fix-1", "GET /repos/acme/widgets/pulls", "GET /repos/acme/widgets/pulls",
+		"GET /repos/acme/widgets/branches/main", "GET /repos/acme/widgets/compare/" + baseSHA + "..." + tipSHA, "GET /repos/acme/widgets/branches/agent/fix-1",
+		"DELETE /repos/acme/widgets/git/refs/heads/agent/fix-1",
+	}
 	for _, c := range []struct {
 		name    string
 		compare string
@@ -558,9 +687,11 @@ func TestDeleteBranchDeletesABranchOfTheBotsCommits(t *testing.T) {
 		}
 		var users, rest []recorded
 		for _, q := range f.api()[before:] {
-			if q.Path == "/users/kivali-acme[bot]" {
+			switch q.Path {
+			case "/users/kivali-acme[bot]":
 				users = append(users, q)
-			} else {
+			case "/app":
+			default:
 				rest = append(rest, q)
 			}
 		}
@@ -572,18 +703,25 @@ func TestDeleteBranchDeletesABranchOfTheBotsCommits(t *testing.T) {
 				t.Errorf("%s: GET /users with %+v", c.name, q.Grant)
 			}
 		}
-		if len(rest) != 5 || rest[1].Path != "/repos/acme/widgets/pulls" || rest[2].Path != "/repos/acme/widgets/pulls" ||
-			rest[3].Path != "/repos/acme/widgets/compare/main...agent/fix-1" || rest[4].Method != "DELETE" {
-			t.Fatalf("%s: requests %+v", c.name, rest)
+		var got []string
+		for _, q := range rest {
+			got = append(got, q.Method+" "+q.Path)
 		}
-		if q := rest[1].Query; q.Get("head") != "acme:agent/fix-1" || q.Get("state") != "open" {
+		if !slices.Equal(got, paths) {
+			t.Fatalf("%s: requests %v", c.name, got)
+		}
+		if q := rest[2].Query; q.Get("head") != "acme:agent/fix-1" || q.Get("state") != "open" {
 			t.Errorf("%s: query %v", c.name, q)
 		}
-		if q := rest[2].Query; q.Get("base") != "agent/fix-1" || q.Get("state") != "open" || q.Get("head") != "" {
+		if q := rest[3].Query; q.Get("base") != "agent/fix-1" || q.Get("state") != "open" || q.Get("head") != "" {
 			t.Errorf("%s: query %v", c.name, q)
 		}
-		for i, want := range []map[string]string{read, read, read, read, {"metadata": "read", "contents": "write"}} {
-			if q := rest[i]; q.Grant == nil || !mapsEqual(q.Grant.Permissions, want) || !slices.Equal(q.Grant.Repositories, []string{"widgets"}) {
+		for i, q := range rest {
+			want := read
+			if q.Method == "DELETE" {
+				want = map[string]string{"metadata": "read", "contents": "write"}
+			}
+			if q.Grant == nil || !mapsEqual(q.Grant.Permissions, want) || !slices.Equal(q.Grant.Repositories, []string{"widgets"}) {
 				t.Errorf("%s: request %d %s %s: grant %+v", c.name, i, q.Method, q.Path, q.Grant)
 			}
 		}
@@ -624,8 +762,7 @@ func TestDeleteBranchRefusesWhenItsPullRequestsCannotAllBeRead(t *testing.T) {
 	from := append(full(func(i int) string { return pullJSON(i, personUser, "open", "dana/other", false) }),
 		"["+pullJSON(5000, personUser, "open", "agent/fix-1", false)+"]")
 	into := append(full(func(i int) string { return pullIntoJSON(i, "main") }), "["+pullIntoJSON(5000, "agent/fix-1")+"]")
-	f.route("GET /repos/acme/widgets", 200, `{"full_name":"acme/widgets","default_branch":"main","owner":{"login":"acme"}}`)
-	f.route("GET /repos/acme/widgets/compare/main...agent/fix-1", 200, compareJSON(0))
+	branchRoutes(f, compareJSON(0))
 	f.route("DELETE /repos/acme/widgets/git/refs/heads/agent/fix-1", 204, "")
 	for name, pages := range map[string][2][]string{
 		"from the branch": {from, nil},
@@ -680,8 +817,10 @@ func TestDeleteBranchAsksForPullRequestsByGitHubsOwner(t *testing.T) {
 	} {
 		g, f := newTest(t)
 		f.route("GET /repos/"+c.arg, 200, fmt.Sprintf(`{"full_name":%q,"default_branch":"main","owner":{"login":%q,"type":"Organization"}}`, c.full, c.owner))
+		f.route("GET /repos/"+c.arg+"/branches/agent/fix-1", 200, branchJSON("agent/fix-1", tipSHA))
+		f.route("GET /repos/"+c.arg+"/branches/main", 200, branchJSON("main", baseSHA))
 		f.route("GET /repos/"+c.arg+"/pulls", 200, "[]")
-		f.route("GET /repos/"+c.arg+"/compare/main...agent/fix-1", 200, compareJSON(0))
+		f.route("GET /repos/"+c.arg+"/compare/"+baseSHA+"..."+tipSHA, 200, compareJSON(0))
 		f.route("DELETE /repos/"+c.arg+"/git/refs/heads/agent/fix-1", 204, "")
 		r := g.callT(t, agent(true, "acme/*"), "delete_branch", map[string]any{"repository": c.arg, "branch": "agent/fix-1"})
 		if r.isError {

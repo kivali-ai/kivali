@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -1203,19 +1204,67 @@ func refPath(name string) string {
 	return strings.Join(segs, "/")
 }
 
+// gitBranch reports whether name is one git takes as a branch's, past
+// what args.branch holds a name to: not HEAD, and no segment empty,
+// starting with a dot or ending with .lock.
+func gitBranch(name string) bool {
+	if name == "HEAD" {
+		return false
+	}
+	for _, s := range strings.Split(name, "/") {
+		if s == "" || strings.HasPrefix(s, ".") || strings.HasSuffix(s, ".lock") {
+			return false
+		}
+	}
+	return true
+}
+
+// commitID matches a commit's id as GitHub gives it: SHA-1 or SHA-256,
+// in hex.
+var commitID = regexp.MustCompile(`^([0-9a-f]{40}|[0-9a-f]{64})$`)
+
+// branchTip is the commit the branch name points at (GET
+// /repos/{r}/branches/{name}, which names branches alone, never a tag
+// of the same name), and false when the repository has no such branch.
+// An answer for another branch (GitHub redirects a renamed branch's
+// name to the new one) is no such branch.
+func (c *call) branchTip(ctx context.Context, tok, repo, name string) (string, bool, error) {
+	var b struct {
+		Name   string `json:"name"`
+		Commit struct {
+			SHA string `json:"sha"`
+		} `json:"commit"`
+	}
+	err := c.g.getJSON(ctx, tok, repoPath(repo)+"/branches/"+refPath(name), &b)
+	var ae *apiError
+	switch {
+	case errors.As(err, &ae) && ae.Status == http.StatusNotFound:
+		return "", false, nil
+	case err != nil:
+		return "", false, err
+	case b.Name != name:
+		return "", false, nil
+	case !commitID.MatchString(b.Commit.SHA):
+		return "", false, failure(fmt.Sprintf("GitHub names no commit for the branch %s of %s; ask the owner.", name, repo))
+	}
+	return b.Commit.SHA, true, nil
+}
+
 // branchByBot is the rule that lets a branch go once nothing open uses
-// it: every commit it has beyond the default branch (GET
-// /repos/{r}/compare/{default}...{branch}) was authored and committed
-// by the app's bot (commitByBot), or it has none. A comparison GitHub
-// cannot make (404: no common history, or no such branch), or one that
-// lists fewer commits than it counts, refuses the branch; so does the
-// first commit that is not the bot's.
-func (c *call) branchByBot(ctx context.Context, tok, repo, branch, def string) error {
+// it: every commit the branch's tip (head, a commit id) has beyond the
+// default branch's (base) was authored and committed by the app's bot
+// (commitByBot), or it has none (GET /repos/{r}/compare/{base}...{head},
+// by commit, so no tag of either name is compared in a branch's
+// place). A comparison GitHub cannot make (404: no common history), or
+// one that lists fewer commits than it counts, refuses the branch; so
+// does the first commit that is not the bot's. branch and def name the
+// branch and the default branch in its words.
+func (c *call) branchByBot(ctx context.Context, tok, repo, branch, def, base, head string) error {
 	var cmpd struct {
 		TotalCommits int        `json:"total_commits"`
 		Commits      []ghCommit `json:"commits"`
 	}
-	err := c.g.getJSON(ctx, tok, repoPath(repo)+"/compare/"+refPath(def)+"..."+refPath(branch), &cmpd)
+	err := c.g.getJSON(ctx, tok, repoPath(repo)+"/compare/"+base+"..."+head, &cmpd)
 	var ae *apiError
 	switch {
 	case errors.As(err, &ae) && ae.Status == http.StatusNotFound:
@@ -1256,12 +1305,14 @@ func (c *call) branchByBot(ctx context.Context, tok, repo, branch, def string) e
 
 // deleteBranch deletes a branch whose work is done (branchByBot). With
 // a token that only reads, it reads the repository's default branch,
-// which it never deletes, and the repository's open pull requests from
-// the branch (head owner:branch, the owner GitHub names the
-// repository's) and into it (base), refusing while there is one or
-// either listing is cut, then compares the branch with the default
-// branch; only then is a token that writes the repository's contents
-// minted, for the deletion.
+// which it never deletes, the commit the branch points at (as a
+// branch), and the repository's open pull requests from the branch
+// (head owner:branch, the owner GitHub names the repository's) and into
+// it (base), refusing while there is one or either listing is cut; then
+// it compares the branch's commit with the default branch's, and reads
+// the branch again, so one that moved meanwhile is not deleted. Only
+// then is a token that writes the repository's contents minted, for the
+// deletion.
 func deleteBranch(ctx context.Context, c *call) (any, error) {
 	repo, err := c.args.repository(c.access)
 	if err != nil {
@@ -1270,6 +1321,9 @@ func deleteBranch(ctx context.Context, c *call) (any, error) {
 	branch, err := c.args.branch("branch", true)
 	if err != nil {
 		return nil, err
+	}
+	if !gitBranch(branch) {
+		return nil, badArgument("branch is not a branch name.")
 	}
 	read, err := c.token(ctx, repo, perms("contents", "read", "pull_requests", "read"))
 	if err != nil {
@@ -1284,11 +1338,18 @@ func deleteBranch(ctx context.Context, c *call) (any, error) {
 	}
 	switch {
 	case r.DefaultBranch == "":
-		return nil, &apiError{Message: "its answer names no default branch"}
+		return nil, failure(fmt.Sprintf("GitHub names no default branch for %s; ask the owner.", repo))
 	case strings.EqualFold(branch, r.DefaultBranch):
 		// Capitals aside: a name that differs only in them is refused
 		// too.
 		return nil, refuse(fmt.Sprintf("%s is the default branch of %s, which your access does not let you delete; ask the owner.", branch, repo), "the branch is the repository's default branch")
+	}
+	tip, ok, err := c.branchTip(ctx, read, repo, branch)
+	switch {
+	case err != nil:
+		return nil, err
+	case !ok:
+		return nil, failure(fmt.Sprintf("%s has no branch named %s.", repo, branch))
 	}
 	owner, _, _ := strings.Cut(repo, "/")
 
@@ -1323,8 +1384,24 @@ func deleteBranch(ctx context.Context, c *call) (any, error) {
 		}
 	}
 
-	if err := c.branchByBot(ctx, read, repo, branch, r.DefaultBranch); err != nil {
+	defTip, ok, err := c.branchTip(ctx, read, repo, r.DefaultBranch)
+	switch {
+	case err != nil:
 		return nil, err
+	case !ok:
+		return nil, failure(fmt.Sprintf("GitHub has no branch %s, the default branch of %s; ask the owner.", r.DefaultBranch, repo))
+	}
+	if err := c.branchByBot(ctx, read, repo, branch, r.DefaultBranch, defTip, tip); err != nil {
+		return nil, err
+	}
+	// The checks and the deletion are separate requests: a branch that
+	// moved since its commit was compared is not deleted.
+	now, ok, err := c.branchTip(ctx, read, repo, branch)
+	switch {
+	case err != nil:
+		return nil, err
+	case !ok || now != tip:
+		return nil, failure(fmt.Sprintf("%s changed while it was checked, so it is not deleted; try again.", branch))
 	}
 	write, err := c.token(ctx, repo, perms("contents", "write"))
 	if err != nil {

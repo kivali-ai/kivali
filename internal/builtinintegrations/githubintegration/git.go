@@ -31,7 +31,7 @@ var gitIntegration = gitops.Integration{Name: Name, DisplayName: "GitHub", HostW
 // gitTools are clone, fetch and push as the manifest declares them,
 // for the owner: push needs the write switch.
 var gitTools = []integration.Tool{
-	{Name: gitops.Clone, Description: "Clone a repository the agent's access names into its files, with a token for that repository alone, its git identity the GitHub App's bot. Reads only."},
+	{Name: gitops.Clone, Description: "Clone a repository the agent's access names into its files, with a token for that repository alone; when the access allows writing, its git identity is the GitHub App's bot. Reads only."},
 	{Name: gitops.Fetch, Description: "Fetch new commits and tags into the agent's working copy of a repository its access names, with a token for that repository alone. Reads only."},
 	{Name: gitops.Push, Description: "Push branches and tags to a repository the agent's access names, with a token for that repository alone. Never forced, never deleting; GitHub's branch protection applies." + needsWrite, Access: writeKey},
 }
@@ -78,8 +78,10 @@ func gitPolicy(caller builtinintegrations.Caller, conn builtinintegrations.Conne
 // (jobToken), narrowed to the call's repository and to reading its
 // contents, or for a push writing them; a repository under another
 // account than the installation's is refused first (narrowedName). A
-// refused call mints nothing. A clone's job also names the app's bot
-// user as the working copy's git identity.
+// refused call mints nothing. A clone for an agent whose access may
+// write also names the app's bot user as the working copy's git
+// identity, when GitHub gives it; the clone goes ahead without one when
+// it does not (Complete says so).
 // The token is presented as x-access-token's password and is in
 // nothing but the job: not in the answer, the audit or an error.
 func (g *GitHub) callGit(ctx context.Context, caller builtinintegrations.Caller, conn builtinintegrations.Connection, name string, args json.RawMessage) (*builtinintegrations.Result, error) {
@@ -99,36 +101,26 @@ func (g *GitHub) callGit(ctx context.Context, caller builtinintegrations.Caller,
 		echoed, _ := clip(repo.Path, 200)
 		return nil, refuse(fmt.Sprintf("A GitHub repository is owner/name, and %s is not one.", echoed), "the repository is not owner/name")
 	}
-	// A clone's working copy is given the app's bot as its identity, so
-	// what the agent commits there is the bot's (bot.go).
+	// A writer's clone is given the app's bot as its identity, so what
+	// the agent commits there is the bot's (bot.go), which is what lets
+	// it delete such a branch.
 	var identity *shelljob.GitIdentity
-	if name == gitops.Clone {
-		b, err := g.bot(ctx, c, repo.Path)
-		if err != nil {
-			return gitFailure(err)
+	if name == gitops.Clone && readAccess(caller.Access).write {
+		if b, err := g.bot(ctx, c, repo.Path); err == nil {
+			identity = &shelljob.GitIdentity{Name: b.login, Email: b.noreply()}
 		}
-		identity = &shelljob.GitIdentity{Name: b.login, Email: b.noreply()}
 	}
 	tok, err := g.jobToken(ctx, c, repo.Path, jobPermissions(name))
 	if err != nil {
-		return gitFailure(err)
+		var te *tokenError
+		if errors.As(err, &te) {
+			return failed(te.words()), nil
+		}
+		return nil, err
 	}
 	job := call.Job(shelljob.GitAuth{Username: tokenUser, Password: tok}, conn.ID)
 	job.Identity = identity
 	return &builtinintegrations.Result{ShellJob: &shelljob.Job{Git: job}, Audit: call.Started()}, nil
-}
-
-// gitFailure is err of a clone's, a fetch's or a push's first request:
-// a Refusal as it is, GitHub's failure an error result in its words.
-func gitFailure(err error) (*builtinintegrations.Result, error) {
-	var ref *builtinintegrations.Refusal
-	if errors.As(err, &ref) {
-		return nil, err
-	}
-	if words, ok := failureWords(err); ok {
-		return failed(words), nil
-	}
-	return nil, err
 }
 
 // jobPermissions is what the job of the action name may do besides
@@ -143,9 +135,22 @@ func jobPermissions(name string) permissions {
 
 // Complete puts the shell's result in words for the agent and the
 // audit, with the call checked again under the access and the
-// connection as they are at the second request (gitops.Complete). It
-// mints no token.
+// connection as they are at the second request (gitops.Complete). A
+// writer's clone that landed without the bot's identity (GitHub did not
+// give the bot user, or the shell could not write it) says commits made
+// there will not read as the app's. It mints no token.
 func (g *GitHub) Complete(_ context.Context, caller builtinintegrations.Caller, conn builtinintegrations.Connection, name string, args json.RawMessage, result shelljob.Result) (*builtinintegrations.Result, error) {
 	p, _ := gitPolicy(caller, conn, name)
-	return gitops.Complete(name, args, p, conn.ID, result)
+	res, err := gitops.Complete(name, args, p, conn.ID, result)
+	if err != nil || res == nil || res.IsError || len(res.Content) == 0 {
+		return res, err
+	}
+	if r := result.Git; name == gitops.Clone && readAccess(caller.Access).write && r != nil && r.Error == "" && !r.Identity {
+		res.Content[0] += noIdentity
+	}
+	return res, nil
 }
+
+// noIdentity follows the answer of a writer's clone that landed without
+// the bot's identity.
+const noIdentity = " The working copy has no git identity of the GitHub App's bot, so commits you make there will not read as the app's, and github_delete_branch will not delete a branch that holds them."
