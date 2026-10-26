@@ -41,7 +41,7 @@ const appNameMax = 34
 // needed is what this version needs of the installation: the
 // permissions the app is made with.
 func needed() permissions {
-	return perms("contents", "read", "issues", "write", "pull_requests", "write")
+	return perms("contents", "write", "issues", "write", "pull_requests", "write")
 }
 
 // accountName is a GitHub account's name: letters, digits and hyphens,

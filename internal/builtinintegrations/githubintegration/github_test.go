@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/kivali-ai/kivali/internal/builtinintegrations"
+	"github.com/kivali-ai/kivali/internal/builtinintegrations/gitops"
 	"github.com/kivali-ai/kivali/internal/integration"
 )
 
@@ -25,7 +26,7 @@ func TestManifest(t *testing.T) {
 	if f := integration.ValidateBuiltin(m); len(f) != 0 {
 		t.Fatalf("findings: %v", f.Texts())
 	}
-	if m.Name != "github" || m.Version != "2.0.0" || m.DisplayName != "GitHub" || len(m.UserConfig) != 0 || m.Kivali.SetupNotes != "" {
+	if m.Name != "github" || m.Version != "2.1.0" || m.DisplayName != "GitHub" || len(m.UserConfig) != 0 || m.Kivali.SetupNotes != "" {
 		t.Errorf("manifest = %+v", m)
 	}
 	c := m.Kivali.Connection
@@ -48,7 +49,8 @@ func TestManifest(t *testing.T) {
 	form := integration.AccessForm(m)
 	if form == nil || len(form.Fields) != 2 ||
 		form.Fields[0].Key != "repositories" || form.Fields[0].Kind != integration.FieldList || !form.Fields[0].Required ||
-		form.Fields[1].Key != "write" || form.Fields[1].Kind != integration.FieldSwitch || form.Fields[1].Title != "May create and comment" {
+		form.Fields[1].Key != "write" || form.Fields[1].Kind != integration.FieldSwitch || form.Fields[1].Title != "May create, comment and push" ||
+		!strings.Contains(form.Fields[1].Description, "push branches and tags") {
 		t.Errorf("access form = %+v", form)
 	}
 	var names, writes []string
@@ -66,11 +68,11 @@ func TestManifest(t *testing.T) {
 		}
 	}
 	want := []string{"list_repositories", "get_repository", "list_issues", "get_issue", "create_issue", "comment",
-		"list_pull_requests", "get_pull_request", "create_pull_request", "list_branches", "compare"}
+		"list_pull_requests", "get_pull_request", "create_pull_request", "list_branches", "compare", "clone", "fetch", "push"}
 	if !slices.Equal(names, want) {
 		t.Errorf("tools = %v", names)
 	}
-	if want := []string{"create_issue", "comment", "create_pull_request"}; !slices.Equal(writes, want) {
+	if want := []string{"create_issue", "comment", "create_pull_request", "push"}; !slices.Equal(writes, want) {
 		t.Errorf("tools needing write = %v, want %v", writes, want)
 	}
 }
@@ -114,8 +116,8 @@ func TestManifestToolsNameTheAccessToolsFollows(t *testing.T) {
 // must not be shown the actions that create something, an agent with it
 // must be, whoami (Test connection's) is listed to none, and each
 // action's schema must be JSON a model reads, naming the repository it
-// acts on. Only list_issues takes a search, the one place a GitHub
-// search runs.
+// acts on (clone, fetch and push by url). Only list_issues takes a
+// search, the one place a GitHub search runs.
 func TestToolsFollowTheManifestAndTheAccess(t *testing.T) {
 	g := New()
 	var declared []string
@@ -126,8 +128,8 @@ func TestToolsFollowTheManifestAndTheAccess(t *testing.T) {
 		write bool
 		want  []string
 	}{
-		{false, []string{"list_repositories", "get_repository", "list_issues", "get_issue", "list_pull_requests", "get_pull_request", "list_branches", "compare"}},
-		{true, []string{"list_repositories", "get_repository", "list_issues", "get_issue", "create_issue", "comment", "list_pull_requests", "get_pull_request", "create_pull_request", "list_branches", "compare"}},
+		{false, []string{"list_repositories", "get_repository", "list_issues", "get_issue", "list_pull_requests", "get_pull_request", "list_branches", "compare", "clone", "fetch"}},
+		{true, []string{"list_repositories", "get_repository", "list_issues", "get_issue", "create_issue", "comment", "list_pull_requests", "get_pull_request", "create_pull_request", "list_branches", "compare", "clone", "fetch", "push"}},
 	} {
 		tools, err := g.Tools(context.Background(), agent(c.write, "acme/*"))
 		if err != nil {
@@ -150,7 +152,11 @@ func TestToolsFollowTheManifestAndTheAccess(t *testing.T) {
 			if _, ok := s.Properties["search"]; ok != (tl.Name == "list_issues") {
 				t.Errorf("%s: search %v", tl.Name, ok)
 			}
-			if tl.Name != "list_repositories" && !slices.Contains(s.Required, "repository") {
+			repository := "repository"
+			if gitops.IsAction(tl.Name) {
+				repository = "url"
+			}
+			if tl.Name != "list_repositories" && !slices.Contains(s.Required, repository) {
 				t.Errorf("%s: required %v", tl.Name, s.Required)
 			}
 			if !strings.HasSuffix(tl.Description, ownerDecides) || strings.Contains(tl.Description, "signed in with") {
@@ -164,8 +170,8 @@ func TestToolsFollowTheManifestAndTheAccess(t *testing.T) {
 	// Access without the switch is off.
 	tools, _ := g.Tools(context.Background(), builtinintegrations.Caller{Access: map[string]any{"repositories": []any{"acme/*"}}})
 	for _, tl := range tools {
-		if tl.Name == "create_issue" {
-			t.Error("access without write lists create_issue")
+		if tl.Name == "create_issue" || tl.Name == "push" {
+			t.Errorf("access without write lists %s", tl.Name)
 		}
 	}
 }
