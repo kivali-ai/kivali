@@ -2,7 +2,9 @@ package githubintegration
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"strings"
 )
@@ -64,6 +66,30 @@ func (g *GitHub) bot(ctx context.Context, c connection, repo string) (botUser, e
 	if err != nil {
 		return botUser{}, err
 	}
+	b, err = g.botNamed(ctx, tok, login)
+	var ae *apiError
+	if errors.As(err, &ae) && ae.Status == http.StatusNotFound && appSlug.MatchString(c.slug) {
+		// The kept slug may be the app's name before a rename; GitHub
+		// gives the one it has now.
+		if app, aerr := g.appOf(ctx, c); aerr == nil && appSlug.MatchString(app.Slug) && app.Slug != c.slug {
+			b, err = g.botNamed(ctx, tok, app.Slug+"[bot]")
+		}
+	}
+	if err != nil {
+		return botUser{}, err
+	}
+	g.botsMu.Lock()
+	if g.bots == nil {
+		g.bots = map[botKey]botUser{}
+	}
+	g.bots[k] = b
+	g.botsMu.Unlock()
+	return b, nil
+}
+
+// botNamed is the bot user login names (GET /users/<login>, with tok):
+// an error unless GitHub answers a Bot of that login.
+func (g *GitHub) botNamed(ctx context.Context, tok, login string) (botUser, error) {
 	var u struct {
 		Login string `json:"login"`
 		ID    int64  `json:"id"`
@@ -75,12 +101,5 @@ func (g *GitHub) bot(ctx context.Context, c connection, repo string) (botUser, e
 	if u.ID <= 0 || u.Type != "Bot" || !strings.EqualFold(u.Login, login) {
 		return botUser{}, &apiError{Message: "its answer for " + login + " is not the app's bot user"}
 	}
-	b = botUser{login: login, id: u.ID}
-	g.botsMu.Lock()
-	if g.bots == nil {
-		g.bots = map[botKey]botUser{}
-	}
-	g.bots[k] = b
-	g.botsMu.Unlock()
-	return b, nil
+	return botUser{login: login, id: u.ID}, nil
 }
