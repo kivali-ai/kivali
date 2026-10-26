@@ -3,14 +3,14 @@
     {
       "name": "hubspot",
       "display_name": "HubSpot",
-      "state": "installed",
+      "state": "connected",
       "usable": true,
       "summary": "Blogs: Marketing · May publish and edit"
     },
     {
       "name": "crm",
       "display_name": "CRM",
-      "state": "off",
+      "state": "disabled",
       "usable": false,
       "summary": "Full access",
       "invalid": "Blogs lists a choice the form no longer offers"
@@ -18,7 +18,7 @@
     {
       "name": "git",
       "display_name": "Git",
-      "state": "installed",
+      "state": "connected",
       "usable": false,
       "summary": "Repositories: eng/*"
     }

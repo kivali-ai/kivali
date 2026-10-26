@@ -57,27 +57,27 @@ func echoSummary(t *testing.T, srv *Server) apitypes.IntegrationSummary {
 // Why this test exists: a built-in has no pod, so nothing ever
 // connects a shim for it. If its health came from the shim it would
 // read "not running" forever and Test connection would stay disabled;
-// it must read available, installed or off, with the built-in's own
+// it must read installed, connected or disabled, with the built-in’s own
 // version and no running requirement, and its page must offer
-// Uninstall only once something is installed and name Kivali as the
+// Disconnect only once it is connected and name Kivali as the
 // publisher of its version.
 func TestBuiltinIntegrationState(t *testing.T) {
 	srv := newTestServer(t)
 	withEcho(t, srv)
 	sum := echoSummary(t, srv)
-	if sum.State != apitypes.IntegrationStateAvailable || sum.Needs != 0 || sum.Version != "1.0.0" || !sum.Builtin || !sum.Enabled || sum.PendingVersion != nil {
+	if sum.State != apitypes.IntegrationStateInstalled || sum.Needs != 0 || sum.Version != "1.0.0" || !sum.Builtin || !sum.Enabled || sum.PendingVersion != nil {
 		t.Errorf("before a connection = %+v", sum)
 	}
 	connectEcho(t, srv, "Hello")
-	if sum := echoSummary(t, srv); sum.State != apitypes.IntegrationStateInstalled || sum.Needs != 0 {
+	if sum := echoSummary(t, srv); sum.State != apitypes.IntegrationStateConnected || sum.Needs != 0 {
 		t.Errorf("installed = %+v", sum)
 	}
 	page := orgOK[apitypes.IntegrationPage](t, intPost(t, srv, intBase+"/echo/disable"))
-	if page.Summary.State != apitypes.IntegrationStateOff || !page.CanUninstall {
+	if page.Summary.State != apitypes.IntegrationStateDisabled || !page.CanDisconnect {
 		t.Errorf("off = %+v", page.Summary)
 	}
 	page = orgOK[apitypes.IntegrationPage](t, intPost(t, srv, intBase+"/echo/enable"))
-	if !installedAndMet(page) || !page.Running || !page.CanUninstall || !slices.Equal(requirementIDs(page), []string{"version", "connection"}) {
+	if !connectedAndMet(page) || !page.Running || !page.CanDisconnect || !slices.Equal(requirementIDs(page), []string{"version", "connection"}) {
 		t.Errorf("page = %+v", page.Summary)
 	}
 	if len(page.Versions) != 1 || page.Versions[0].PublishedBy != (apitypes.PersonRef{Slug: store.BuiltinIntegrationPublisher, Name: "Kivali"}) ||
@@ -219,7 +219,7 @@ func TestAgentCallsABuiltinIntegration(t *testing.T) {
 	// Switched off, the built-in is refused like a bundle.
 	intPost(t, srv, intBase+"/echo/disable")
 	resp, _ = dana.IntegrationCall(ctx, agentpod.IntegrationCallRequest{Name: "echo_echo", Arguments: nil})
-	if !resp.IsError || resp.Content[0] != "The Echo integration is switched off. Ask the owner if your work needs it." {
+	if !resp.IsError || resp.Content[0] != "The Echo integration is disabled. Ask the owner if your work needs it." {
 		t.Errorf("off = %+v", resp)
 	}
 }
@@ -274,10 +274,10 @@ func TestBuiltinIntegrationAnswersAreScrubbed(t *testing.T) {
 func TestBuiltinIntegrationVerifyAndChoices(t *testing.T) {
 	srv := newTestServer(t)
 	echo := withEcho(t, srv)
-	if e := assertAPIError(t, intPost(t, srv, intBase+"/echo/connection/verify"), http.StatusConflict); e.Error != "install Echo first" {
+	if e := assertAPIError(t, intPost(t, srv, intBase+"/echo/connection/verify"), http.StatusConflict); e.Error != "connect Echo first" {
 		t.Errorf("verify with no connection = %+v", e)
 	}
-	if e := assertAPIError(t, orgGet(t, srv, intBase+"/echo/choices/colors"), http.StatusConflict); e.Error != "install Echo first" {
+	if e := assertAPIError(t, orgGet(t, srv, intBase+"/echo/choices/colors"), http.StatusConflict); e.Error != "connect Echo first" {
 		t.Errorf("choices with no connection = %+v", e)
 	}
 	connectEcho(t, srv, "Hello")

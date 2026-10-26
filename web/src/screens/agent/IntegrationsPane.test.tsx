@@ -25,15 +25,15 @@ describe('Integrations tab', () => {
     const rows = within(connected).getAllByRole('link');
     expect(rows.map((r) => r.getAttribute('href'))).toEqual(['/org/integrations/hubspot', '/org/integrations/crm', '/org/integrations/git']);
     expect(within(rows[0]!).getByText('HubSpot')).toBeInTheDocument();
-    expect(within(rows[0]!).getByText('Installed')).toHaveClass('kv-badge--success');
+    expect(within(rows[0]!).getByText('Connected')).toHaveClass('kv-badge--success');
     expect(within(rows[0]!).getByText('Blogs: Marketing · May publish and edit')).toBeInTheDocument();
-    expect(within(rows[1]!).getByText('Off')).toBeInTheDocument();
+    expect(within(rows[1]!).getByText('Disabled')).toBeInTheDocument();
     expect(within(rows[1]!).getByText('Invalid: Blogs lists a choice the form no longer offers')).toHaveClass('kv-text--danger');
 
     const available = page().getByRole('region', { name: 'Not connected' });
     const other = within(available).getByRole('link', { name: /Weather/ });
     expect(other).toHaveAttribute('href', '/org/integrations/weather');
-    expect(within(other).getByText('Pending')).toHaveClass('kv-badge--signal');
+    expect(within(other).getByText('Waiting for approval')).toHaveClass('kv-badge--signal');
   });
 
   // Guards the row's title now that an integration has one connection (agent_integrations.json's Git row carries no
@@ -50,13 +50,13 @@ describe('Integrations tab', () => {
 
   // Guards whether the agent's calls can go through now (usable): the server reads it from the integration's
   // one connection, so a Git connection that needs its secrets again reads not usable on this agent's row while Git is
-  // installed, and a usable row says nothing of it. A row showing the state alone would hide that this agent's calls
+  // connected, and a usable row says nothing of it. A row showing the state alone would hide that this agent's calls
   // fail.
-  it('says when the agent cannot use an installed integration', async () => {
+  it('says when the agent cannot use a connected integration', async () => {
     renderTabs(PATH, { routes: { ['GET ' + API]: agentIntegrations } });
     const connected = await page().findByRole('region', { name: 'Connected to Engineering lead' });
     const git = within(connected).getByRole('link', { name: /Git/ });
-    expect(within(git).getByText('Installed')).toHaveClass('kv-badge');
+    expect(within(git).getByText('Connected')).toHaveClass('kv-badge--success');
     expect(within(git).getByText('Not usable until its requirements are met')).toHaveClass('kv-text--danger');
     const hubspot = within(connected).getByRole('link', { name: /HubSpot/ });
     expect(within(hubspot).queryByText('Not usable until its requirements are met')).toBeNull();

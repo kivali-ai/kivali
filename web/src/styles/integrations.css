@@ -74,8 +74,17 @@
   gap: var(--space-2);
 }
 
-.app-int-block-title {
-  flex: 1;
+/* Where the block stands, beside its heading ("All met", "Connected since 21 Oct"), read without opening it. */
+.app-int-block-summary {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A section's own part (an h3 block): its heading set like a field label, and a little air above it. */
+.app-int-block > .app-int-block {
+  margin-top: var(--space-2);
 }
 
 /* A collapsible block's toggle: a chevron at the end of the heading that turns while the block is open. It has no

@@ -4,7 +4,7 @@
     "display_name": "GitHub",
     "description": "Issues and pull requests on GitHub.",
     "version": "1.0.0",
-    "state": "installed",
+    "state": "connected",
     "needs": 1,
     "enabled": true,
     "builtin": false,
@@ -156,5 +156,6 @@
       "fix": ""
     }
   ],
+  "can_disconnect": true,
   "can_uninstall": true
 }

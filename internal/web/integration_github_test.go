@@ -357,7 +357,7 @@ func TestGitHubSetupInstalls(t *testing.T) {
 	if _, err := srv.Store.GetIntegrationConnection("github"); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("kept before GitHub made the app: %v", err)
 	}
-	if page := githubPage(t, srv); page.Summary.State != apitypes.IntegrationStateSettingUp {
+	if page := githubPage(t, srv); page.Summary.State != apitypes.IntegrationStateInstalled {
 		t.Errorf("while setting up = %s", page.Summary.State)
 	}
 
@@ -397,7 +397,7 @@ func TestGitHubSetupInstalls(t *testing.T) {
 		t.Errorf("audit = %s", got)
 	}
 	page := githubPage(t, srv)
-	if !installedAndMet(page) || !slices.Equal(requirementIDs(page), []string{"version", "connection", "key", "installed", "repositories", "permissions"}) {
+	if !connectedAndMet(page) || !slices.Equal(requirementIDs(page), []string{"version", "connection", "key", "installed", "repositories", "permissions"}) {
 		t.Fatalf("page = %s %v %v", page.Summary.State, requirementIDs(page), unmetIDs(page))
 	}
 	for _, r := range page.Requirements {
@@ -484,7 +484,7 @@ func TestGitHubSetupFailureKeepsNothing(t *testing.T) {
 	if _, err := srv.Store.GetIntegrationConnection("github"); !errors.Is(err, store.ErrNotFound) || len(mem.Names()) != 0 {
 		t.Errorf("cancelled after the conversion: %v %v", err, mem.Names())
 	}
-	if page := githubPage(t, srv); page.Summary.State != apitypes.IntegrationStateAvailable {
+	if page := githubPage(t, srv); page.Summary.State != apitypes.IntegrationStateInstalled {
 		t.Errorf("after = %s", page.Summary.State)
 	}
 }
@@ -538,7 +538,7 @@ func TestGitHubRequirementsAndFixes(t *testing.T) {
 	clk.Advance(setupWaitEvery)
 	waitFlow(t, srv, "github", apitypes.SetupFlowStateDone)
 	srv.setupUnsubscribe(run, ch)
-	if page := githubPage(t, srv); !installedAndMet(page) {
+	if page := githubPage(t, srv); !connectedAndMet(page) {
 		t.Errorf("after the fix = %v", unmetIDs(page))
 	}
 
@@ -560,35 +560,35 @@ func TestGitHubRequirementsAndFixes(t *testing.T) {
 	}
 }
 
-// Why this test exists: Uninstall must remove the installation from
+// Why this test exists: Disconnect must remove the installation from
 // GitHub with the app's key before Kivali forgets that key, or the app
 // keeps its access with nothing in Kivali to remove it; an installation
 // already gone on GitHub must not block the owner's Uninstall.
-func TestGitHubUninstall(t *testing.T) {
+func TestGitHubDisconnect(t *testing.T) {
 	srv, f, mem, _ := githubServer(t)
 	githubInstall(t, srv, f)
-	if rr := intDelete(t, srv, intBase+"/github"); rr.Code != http.StatusNoContent {
-		t.Fatalf("uninstall = %d %s", rr.Code, rr.Body.String())
+	if rr := intDelete(t, srv, intBase+"/github/connection"); rr.Code != http.StatusOK {
+		t.Fatalf("disconnect = %d %s", rr.Code, rr.Body.String())
 	}
 	if del := f.requestsTo("DELETE", "/app/installations/42"); len(del) != 1 || !del[0].JWT {
 		t.Errorf("deleted = %+v", del)
 	}
-	if page := githubPage(t, srv); page.Summary.State != apitypes.IntegrationStateAvailable || len(mem.Names()) != 0 {
+	if page := githubPage(t, srv); page.Summary.State != apitypes.IntegrationStateInstalled || len(mem.Names()) != 0 {
 		t.Errorf("after = %s, secrets %v", page.Summary.State, mem.Names())
 	}
 
 	f.set(func(f *fakeGitHubAPI) { f.codeUsed, f.installed = false, 0 })
 	githubInstall(t, srv, f)
 	f.set(func(f *fakeGitHubAPI) { f.deleteStatus = http.StatusNotFound })
-	if rr := intDelete(t, srv, intBase+"/github"); rr.Code != http.StatusNoContent {
-		t.Errorf("uninstall of one already gone = %d %s", rr.Code, rr.Body.String())
+	if rr := intDelete(t, srv, intBase+"/github/connection"); rr.Code != http.StatusOK {
+		t.Errorf("disconnect of one already gone = %d %s", rr.Code, rr.Body.String())
 	}
 	f.set(func(f *fakeGitHubAPI) {
 		f.codeUsed, f.installed, f.deleteStatus = false, 0, http.StatusInternalServerError
 	})
 	githubInstall(t, srv, f)
-	if rr := intDelete(t, srv, intBase+"/github"); rr.Code != http.StatusBadGateway || !strings.Contains(rr.Body.String(), "GitHub did not remove the app's installation") {
-		t.Errorf("uninstall GitHub refused = %d %s", rr.Code, rr.Body.String())
+	if rr := intDelete(t, srv, intBase+"/github/connection"); rr.Code != http.StatusBadGateway || !strings.Contains(rr.Body.String(), "GitHub did not remove the app's installation") {
+		t.Errorf("disconnect GitHub refused = %d %s", rr.Code, rr.Body.String())
 	}
 }
 
@@ -646,8 +646,8 @@ func TestGitHubInstallsOverAOneZeroConnection(t *testing.T) {
 		t.Fatalf("versions = %+v", vs)
 	}
 	page := githubPage(t, srv)
-	if page.Summary.State != apitypes.IntegrationStateAvailable || len(page.Requirements) != 1 || page.Requirements[0].ID != "connection" ||
-		page.Requirements[0].Met || page.Requirements[0].Fix != "setup" || page.Requirements[0].Words != "Set up GitHub again: this version makes its connection by its own setup, and the one an earlier version made does not fit it. Every agent's access is kept." || !page.CanUninstall {
+	if page.Summary.State != apitypes.IntegrationStateInstalled || len(page.Requirements) != 1 || page.Requirements[0].ID != "connection" ||
+		page.Requirements[0].Met || page.Requirements[0].Fix != "setup" || page.Requirements[0].Words != "Set up GitHub again: this version makes its connection by its own setup, and the one an earlier version made does not fit it. Every agent's access is kept." || !page.CanDisconnect {
 		t.Fatalf("1.0.0's connection reads %s %+v", page.Summary.State, page.Requirements)
 	}
 	if len(page.Access) != 1 || page.Access[0].Invalid != nil {
@@ -675,7 +675,7 @@ func TestGitHubInstallsOverAOneZeroConnection(t *testing.T) {
 		t.Error("1.0.0's grant was not revoked")
 	}
 	page = githubPage(t, srv)
-	if !installedAndMet(page) || len(page.Access) != 1 || page.Access[0].Invalid != nil {
+	if !connectedAndMet(page) || len(page.Access) != 1 || page.Access[0].Invalid != nil {
 		t.Errorf("installed = %s %v, access %+v", page.Summary.State, unmetIDs(page), page.Access)
 	}
 	tab := orgOK[apitypes.AgentIntegrations](t, orgGet(t, srv, "/api/v1/agents/dana/integrations"))
@@ -703,7 +703,7 @@ func TestGitHubInstallOverOneZeroCancelledKeepsTheAccess(t *testing.T) {
 		t.Fatalf("after the cancel: %+v %v, secrets %v", rec, err, mem.Names())
 	}
 	page := githubPage(t, srv)
-	if page.Summary.State != apitypes.IntegrationStateAvailable || len(page.Access) != 1 {
+	if page.Summary.State != apitypes.IntegrationStateInstalled || len(page.Access) != 1 {
 		t.Errorf("after = %s, access %+v", page.Summary.State, page.Access)
 	}
 	f.set(func(f *fakeGitHubAPI) { f.codeUsed = false })
@@ -711,7 +711,7 @@ func TestGitHubInstallOverOneZeroCancelledKeepsTheAccess(t *testing.T) {
 	if rec, _ := githubSecret(t, srv, mem); rec.ID != old.ID {
 		t.Errorf("record = %+v", rec)
 	}
-	if page := githubPage(t, srv); !installedAndMet(page) || len(page.Access) != 1 {
+	if page := githubPage(t, srv); !connectedAndMet(page) || len(page.Access) != 1 {
 		t.Errorf("installed again = %v, access %+v", unmetIDs(page), page.Access)
 	}
 }
@@ -742,12 +742,12 @@ func TestGitHubAgentReadsTheAppAsAuthor(t *testing.T) {
 // earlier app's grant through GitHub's own revocation, since 1.0.0's
 // manifest gives core no revocation endpoint: left alone, the owner's
 // app would keep a live grant to their account.
-func TestGitHubUninstallsAOneZeroConnection(t *testing.T) {
+func TestGitHubDisconnectsAOneZeroConnection(t *testing.T) {
 	srv, f, mem, _ := githubServer(t)
 	srv.BuiltinIntegrations.Lookup("github").(*githubintegration.GitHub).TokenURL = f.srv.URL + "/login/oauth/access_token"
 	githubV1(t, srv, mem)
-	if rr := intDelete(t, srv, intBase+"/github"); rr.Code != http.StatusNoContent {
-		t.Fatalf("uninstall = %d %s", rr.Code, rr.Body.String())
+	if rr := intDelete(t, srv, intBase+"/github/connection"); rr.Code != http.StatusOK {
+		t.Fatalf("disconnect = %d %s", rr.Code, rr.Body.String())
 	}
 	select {
 	case tok := <-f.grants:
@@ -761,7 +761,7 @@ func TestGitHubUninstallsAOneZeroConnection(t *testing.T) {
 		t.Errorf("an installation was deleted: %+v", del)
 	}
 	page := githubPage(t, srv)
-	if page.Summary.State != apitypes.IntegrationStateAvailable || len(page.Access) != 0 || len(page.Requirements) != 0 || len(mem.Names()) != 0 {
+	if page.Summary.State != apitypes.IntegrationStateInstalled || len(page.Access) != 0 || len(page.Requirements) != 0 || len(mem.Names()) != 0 {
 		t.Errorf("after = %s, access %+v, rows %+v, secrets %v", page.Summary.State, page.Access, page.Requirements, mem.Names())
 	}
 }

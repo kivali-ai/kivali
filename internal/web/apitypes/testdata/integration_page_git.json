@@ -4,7 +4,7 @@
     "display_name": "Git",
     "description": "Clones, fetches and pushes repositories over HTTPS.",
     "version": "1.2.0",
-    "state": "installed",
+    "state": "connected",
     "needs": 1,
     "enabled": true,
     "builtin": true,
@@ -162,5 +162,6 @@
       "fix": "setup"
     }
   ],
-  "can_uninstall": true
+  "can_disconnect": true,
+  "can_uninstall": false
 }

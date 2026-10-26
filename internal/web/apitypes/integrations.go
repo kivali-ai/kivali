@@ -20,28 +20,32 @@ type Integrations struct {
 	Integrations []IntegrationSummary `json:"integrations"`
 }
 
-// IntegrationState is where an integration stands in its lifecycle:
-// available, setting up, installed or off; or, before that, waiting
-// for its first approval, or not in this version of Kivali.
+// IntegrationState is where an integration stands in its lifecycle.
+// Installed is being on the team at all: a built-in this version of
+// Kivali carries, or a bundle with an approved version. Connecting it
+// (its setup flow: a token, a sign-in or its own steps) makes it
+// connected, which the switch takes to disabled and back; disconnecting
+// forgets the connection and every agent's access, back to installed.
+// Before installed, a bundle waits for its first approval; apart, a
+// built-in another version shipped is not in this version of Kivali.
 type IntegrationState string
 
 const (
-	// IntegrationStateAvailable: ready to install. A built-in while this
-	// version of Kivali carries it, a bundle once a version is approved.
-	// Install runs its setup flow.
-	IntegrationStateAvailable IntegrationState = "available"
-	// IntegrationStateSettingUp: its setup flow runs (IntegrationPage's
-	// Flow). A flow that fails or is cancelled keeps nothing, and the
-	// integration is available again.
-	IntegrationStateSettingUp IntegrationState = "setting_up"
-	// IntegrationStateInstalled: the connection exists, and agents can
-	// be given access. Its requirements say whether it works.
-	IntegrationStateInstalled IntegrationState = "installed"
-	// IntegrationStateOff: switched off. Agents cannot use it; the
-	// connection and their access are kept.
-	IntegrationStateOff IntegrationState = "off"
 	// IntegrationStatePending: no version has been approved yet.
+	// Approving one installs it.
 	IntegrationStatePending IntegrationState = "pending"
+	// IntegrationStateInstalled: on the team with no connection. Connect
+	// runs its setup flow (IntegrationPage's Flow); a flow that fails
+	// or is cancelled keeps nothing. Agents cannot use it.
+	IntegrationStateInstalled IntegrationState = "installed"
+	// IntegrationStateConnected: the connection exists and the switch is
+	// on: agents can be given access. Its requirements say whether it
+	// works.
+	IntegrationStateConnected IntegrationState = "connected"
+	// IntegrationStateDisabled: the connection exists and the switch is
+	// off. Agents cannot use it; the connection and their access are
+	// kept for when it is enabled again.
+	IntegrationStateDisabled IntegrationState = "disabled"
 	// IntegrationStateNotIncluded: a built-in integration this version
 	// of Kivali does not carry (another version shipped it). Nothing
 	// runs it and agents cannot use it; it can be uninstalled.
@@ -58,7 +62,7 @@ type IntegrationSummary struct {
 	Version string           `json:"version"`
 	State   IntegrationState `json:"state"`
 	// Needs is how many of its requirements are not met, each a row of
-	// Needs you; 0 for an integration that is not installed or is off.
+	// Needs you; 0 for an integration that is not connected.
 	Needs   int  `json:"needs"`
 	Enabled bool `json:"enabled"`
 	Builtin bool `json:"builtin"`
@@ -148,18 +152,26 @@ type IntegrationPage struct {
 	// server runs. Test connection and the options an access form lists
 	// wait for it.
 	Running bool `json:"running"`
-	// Requirements are an installed or switched-off integration's
-	// health, Kivali's rows first (an approved version, the connection,
-	// a sign-in still accepted, the connection test, the integration
-	// running), then the integration's own. Empty in any other state.
+	// Requirements are a connected or disabled integration's health,
+	// Kivali's rows first (an approved version, the connection, a
+	// sign-in still accepted, the connection test, the integration
+	// running), then the integration's own. Installed, the one row of
+	// a connection an earlier version made that this version's setup
+	// does not take, whose Fix connects again; empty otherwise.
 	Requirements []IntegrationRequirement `json:"requirements"`
 	// Flow is its setup flow under way, or the one that last ended,
-	// which Kivali keeps for ten minutes: installing (flow setup) or a
+	// which Kivali keeps for ten minutes: connecting (flow setup) or a
 	// requirement's fix. Absent with none.
 	Flow *SetupFlow `json:"flow,omitempty"`
+	// CanDisconnect is true when DELETE
+	// /api/v1/org/integrations/{name}/connection applies: the
+	// integration holds a connection, this version's or an earlier
+	// one's, and this version of Kivali carries it.
+	CanDisconnect bool `json:"can_disconnect"`
 	// CanUninstall is true when DELETE /api/v1/org/integrations/{name}
 	// applies: to an uploaded integration whatever its state, and to a
-	// built-in that is installed, off or not in this version of Kivali.
+	// built-in not in this version of Kivali. A built-in this version
+	// carries is never uninstalled, only disconnected.
 	CanUninstall bool `json:"can_uninstall"`
 }
 
@@ -668,7 +680,7 @@ type AgentIntegration struct {
 	// State is the integration's.
 	State IntegrationState `json:"state"`
 	// Usable is true when the agent's calls can go through now: the
-	// integration is installed and running, and its connection has its
+	// integration is connected and running, and its connection has its
 	// secrets and, made by signing in, is signed in. Always false under
 	// Available.
 	Usable bool `json:"usable"`

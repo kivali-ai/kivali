@@ -27,7 +27,7 @@ func TestAPIIntegrationVerify(t *testing.T) {
 	srv := newTestServer(t)
 	withIntegrationRegistry(srv, newFakeIntegrationProv())
 	intInstalled(t, srv, "crm", "1.0.0")
-	if e := assertAPIError(t, intPost(t, srv, intBase+"/crm/connection/verify"), http.StatusConflict); e.Error != "install Test crm first" {
+	if e := assertAPIError(t, intPost(t, srv, intBase+"/crm/connection/verify"), http.StatusConflict); e.Error != "connect Test crm first" {
 		t.Errorf("no connection = %+v", e)
 	}
 	orgJSON(t, srv, http.MethodPut, intBase+"/crm/connection", apitypes.ConnectionWrite{Fields: map[string]string{"token": "t"}})
@@ -35,7 +35,7 @@ func TestAPIIntegrationVerify(t *testing.T) {
 		t.Errorf("not running = %+v", e)
 	}
 	page := orgOK[apitypes.IntegrationPage](t, orgGet(t, srv, intBase+"/crm"))
-	if page.Summary.State != apitypes.IntegrationStateInstalled || page.Running || !slices.Equal(unmetIDs(page), []string{"running"}) {
+	if page.Summary.State != apitypes.IntegrationStateConnected || page.Running || !slices.Equal(unmetIDs(page), []string{"running"}) {
 		t.Errorf("without a shim: state %s, running %v, unmet %v", page.Summary.State, page.Running, unmetIDs(page))
 	}
 	if !page.ConnectionTest {
@@ -48,7 +48,7 @@ func TestAPIIntegrationVerify(t *testing.T) {
 	if c == nil || c.Verified == nil || !*c.Verified || c.VerifyMessage == nil || *c.VerifyMessage != "Signed in as Acme" || c.VerifiedAt == nil {
 		t.Fatalf("connection = %+v", c)
 	}
-	if !installedAndMet(page) || !page.Running {
+	if !connectedAndMet(page) || !page.Running {
 		t.Errorf("state %s, unmet %v", page.Summary.State, unmetIDs(page))
 	}
 	fs.mu.Lock()

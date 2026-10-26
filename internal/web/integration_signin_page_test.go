@@ -134,11 +134,11 @@ func TestSignInRequirementOnTheList(t *testing.T) {
 		t.Fatal(err)
 	}
 	signedIn(t, srv, echotest.Name, vendor.Issue())
-	if sum := echoSummary(t, srv); sum.State != apitypes.IntegrationStateInstalled || sum.Needs != 0 {
+	if sum := echoSummary(t, srv); sum.State != apitypes.IntegrationStateConnected || sum.Needs != 0 {
 		t.Errorf("signed in: %+v", sum)
 	}
 	srv.markSignInFailed(echotest.Name, "c1", "the vendor refused the sign-in (invalid_grant)")
-	if sum := echoSummary(t, srv); sum.State != apitypes.IntegrationStateInstalled || sum.Needs != 1 {
+	if sum := echoSummary(t, srv); sum.State != apitypes.IntegrationStateConnected || sum.Needs != 1 {
 		t.Errorf("needs a new sign-in: %+v", sum)
 	}
 }

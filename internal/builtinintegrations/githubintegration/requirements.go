@@ -44,7 +44,7 @@ func (g *GitHub) Requirements(ctx context.Context, conn builtinintegrations.Conn
 		return nil, checkError(err)
 	}
 	key.Met = true
-	key.Words = "GitHub accepts the key of the app " + cmp.Or(app.Name, "Kivali made") + ". Uninstalling GitHub here leaves the app on GitHub, for you to delete in its settings at " + app.settingsURL() + "."
+	key.Words = "GitHub accepts the key of the app " + cmp.Or(app.Name, "Kivali made") + ". Disconnecting GitHub here leaves the app on GitHub, for you to delete in its settings at " + app.settingsURL() + "."
 	rows := []builtinintegrations.Requirement{key}
 
 	installed := builtinintegrations.Requirement{ID: reqInstalled, Title: "Installed on GitHub"}

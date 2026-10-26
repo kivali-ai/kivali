@@ -338,7 +338,7 @@ func TestBundleSetupInstalls(t *testing.T) {
 	if rpcErr != nil || cred.Env["TOKEN"] != "tok-c0de-9" || cred.Fields["account"] != "acme" {
 		t.Errorf("the server is started with %+v, %v", cred, rpcErr)
 	}
-	if page := orgOK[apitypes.IntegrationPage](t, orgGet(t, srv, intBase+"/crm")); !installedAndMet(page) {
+	if page := orgOK[apitypes.IntegrationPage](t, orgGet(t, srv, intBase+"/crm")); !connectedAndMet(page) {
 		t.Errorf("after setup = %s, unmet %v", page.Summary.State, unmetIDs(page))
 	}
 }
@@ -608,7 +608,7 @@ func TestBundleUninstall(t *testing.T) {
 	if apiErr.Error != "Test crm could not undo its installation: setup.example kept the app of token "+integrationSecretPlaceholder+"; nothing was changed" {
 		t.Errorf("refusal = %+v", apiErr)
 	}
-	if page := orgOK[apitypes.IntegrationPage](t, orgGet(t, srv, intBase+"/crm")); page.Summary.State != apitypes.IntegrationStateInstalled || len(mem.Names()) != 1 {
+	if page := orgOK[apitypes.IntegrationPage](t, orgGet(t, srv, intBase+"/crm")); page.Summary.State != apitypes.IntegrationStateConnected || len(mem.Names()) != 1 {
 		t.Errorf("after the refusal = %s, secrets %v", page.Summary.State, mem.Names())
 	}
 	pod.set(func(sp *setupPod) { sp.uninstall = nil })
@@ -627,7 +627,7 @@ func TestBundleUninstall(t *testing.T) {
 	installBundle(t, srv, pod)
 	srv.Integrations.disconnect(fs.link)
 	apiErr = assertAPIError(t, intDelete(t, srv, intBase+"/crm"), http.StatusConflict)
-	if apiErr.Error != "Test crm is not running, so it cannot undo its installation on the service; switch it off to uninstall it without that" || len(mem.Names()) != 1 {
+	if apiErr.Error != "Test crm is not running, so it cannot undo its installation on the service; disable it to uninstall it without that" || len(mem.Names()) != 1 {
 		t.Errorf("not running = %+v, secrets %v", apiErr, mem.Names())
 	}
 

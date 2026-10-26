@@ -84,7 +84,7 @@ const (
 	// requirements is not met (the body says what is), such as a sign-in
 	// the service no longer accepts. Open the integration's page
 	// (ReviewPath), where its Fix is. The row leaves once the
-	// requirement is met, or the integration is switched off or
+	// requirement is met, or the integration is disabled or
 	// uninstalled.
 	NeedKindIntegrationRequirement NeedKind = "integration_requirement"
 )

@@ -306,7 +306,7 @@ func TestGitConnectionProxyCredential(t *testing.T) {
 	}
 	intPost(t, srv, intBase+"/git/enable")
 
-	if rr := intDelete(t, srv, intBase+"/git"); rr.Code != http.StatusNoContent {
+	if rr := intDelete(t, srv, intBase+"/git/connection"); rr.Code != http.StatusOK {
 		t.Fatal(rr.Body.String())
 	}
 	if _, ok := srv.Store.EgressScopedCredentials()[builtinintegrations.ProxyUser("git", connID)]; ok {

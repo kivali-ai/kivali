@@ -455,7 +455,7 @@ func (s *Server) verifyConnection(w http.ResponseWriter, r *http.Request, v *int
 		writeAPIError(w, http.StatusConflict, "approve a version of "+v.displayName()+" first", whoYou)
 		return
 	case c == nil:
-		writeAPIError(w, http.StatusConflict, "install "+v.displayName()+" first", whoYou)
+		writeAPIError(w, http.StatusConflict, "connect "+v.displayName()+" first", whoYou)
 		return
 	case v.several:
 		writeAPIError(w, http.StatusConflict, v.displayName()+" holds more than one connection record and Kivali could not bring it to one; see the log", whoServer)

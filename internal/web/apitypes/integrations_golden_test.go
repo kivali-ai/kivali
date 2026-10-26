@@ -26,7 +26,7 @@ func goldenIntegrationSummary() IntegrationSummary {
 		DisplayName:    "HubSpot",
 		Description:    "Blog posts and contacts in HubSpot.",
 		Version:        "1.2.0",
-		State:          IntegrationStateInstalled,
+		State:          IntegrationStateConnected,
 		Enabled:        true,
 		Builtin:        false,
 		Agents:         2,
@@ -39,10 +39,10 @@ func goldenIntegrations() Integrations {
 		goldenIntegrationSummary(),
 		{Name: "weather", DisplayName: "Weather", Description: "Forecasts.", Version: "", State: IntegrationStatePending, Enabled: true, Agents: 0},
 		{Name: "maps", DisplayName: "Maps", Description: "Places and routes.", Version: "1.0.0", State: IntegrationStateNotIncluded, Enabled: true, Builtin: true, Agents: 0},
-		{Name: "git", DisplayName: "Git", Description: "Repositories on a Git host.", Version: "1.0.0", State: IntegrationStateAvailable, Enabled: true, Builtin: true, Agents: 0},
-		{Name: "github", DisplayName: "GitHub", Description: "Issues and pull requests on GitHub.", Version: "2.0.0", State: IntegrationStateSettingUp, Enabled: true, Builtin: true, Agents: 0},
-		{Name: "crm", DisplayName: "CRM", Description: "Contacts.", Version: "2.1.0", State: IntegrationStateInstalled, Needs: 1, Enabled: true, Agents: 1},
-		{Name: "blog", DisplayName: "Blog", Description: "Posts.", Version: "1.0.0", State: IntegrationStateOff, Enabled: false, Agents: 3},
+		{Name: "git", DisplayName: "Git", Description: "Repositories on a Git host.", Version: "1.0.0", State: IntegrationStateInstalled, Enabled: true, Builtin: true, Agents: 0},
+		{Name: "github", DisplayName: "GitHub", Description: "Issues and pull requests on GitHub.", Version: "2.0.0", State: IntegrationStateInstalled, Enabled: true, Builtin: true, Agents: 0},
+		{Name: "crm", DisplayName: "CRM", Description: "Contacts.", Version: "2.1.0", State: IntegrationStateConnected, Needs: 1, Enabled: true, Agents: 1},
+		{Name: "blog", DisplayName: "Blog", Description: "Posts.", Version: "1.0.0", State: IntegrationStateDisabled, Enabled: false, Agents: 3},
 	}}
 }
 
@@ -117,7 +117,7 @@ func goldenIntegrationPageGit() IntegrationPage {
 	return IntegrationPage{
 		Summary: IntegrationSummary{
 			Name: "git", DisplayName: "Git", Description: "Clones, fetches and pushes repositories over HTTPS.",
-			Version: "1.2.0", State: IntegrationStateInstalled, Needs: 1, Enabled: true, Builtin: true, Agents: 2,
+			Version: "1.2.0", State: IntegrationStateConnected, Needs: 1, Enabled: true, Builtin: true, Agents: 2,
 		},
 		Author:           "Kivali",
 		Hosts:            []string{},
@@ -148,7 +148,8 @@ func goldenIntegrationPageGit() IntegrationPage {
 			{ID: "version", Title: "Approved version", Words: "Version 1.2.0 ships with Kivali.", Met: true},
 			{ID: "connection", Title: "Connection", Words: "Its secrets are not stored on this Kivali server, as after a restore from a backup. Enter them again.", Met: false, Fix: "setup"},
 		},
-		CanUninstall: true,
+		CanDisconnect: true,
+		CanUninstall:  false,
 	}
 }
 
@@ -177,18 +178,19 @@ func goldenIntegrationPage() IntegrationPage {
 			{Version: "1.1.1", State: IntegrationVersionStateRejected, PublishedAt: integrationEarlier, PublishedBy: PersonRef{Slug: "kivali-developer", Name: "Kivali Developer"}, NotesMD: "Reaches a reporting host."},
 			{Version: "1.1.0", State: IntegrationVersionStateSuperseded, PublishedAt: integrationEarlier, PublishedBy: PersonRef{Slug: "kivali-developer", Name: "Kivali Developer"}, ApprovedAt: &integrationEarlier, NotesMD: "Blog posts only."},
 		},
-		Running:      true,
-		Requirements: goldenRequirementsMet(),
-		CanUninstall: true,
+		Running:       true,
+		Requirements:  goldenRequirementsMet(),
+		CanDisconnect: true,
+		CanUninstall:  true,
 	}
 }
 
-// goldenIntegrationPageOff is HubSpot's page switched off: its
+// goldenIntegrationPageDisabled is HubSpot’s page disabled: its
 // connection and access kept, its requirements without the running
 // row, nothing in Needs you.
-func goldenIntegrationPageOff() IntegrationPage {
+func goldenIntegrationPageDisabled() IntegrationPage {
 	page := goldenIntegrationPage()
-	page.Summary.State, page.Summary.Enabled = IntegrationStateOff, false
+	page.Summary.State, page.Summary.Enabled = IntegrationStateDisabled, false
 	page.Running = false
 	page.Requirements = goldenRequirementsMet()[:3]
 	return page
@@ -212,9 +214,10 @@ func goldenIntegrationPagePending() IntegrationPage {
 		Versions: []IntegrationVersionSummary{
 			{Version: "1.0.0", State: IntegrationVersionStatePending, PublishedAt: integrationLater, PublishedBy: PersonRef{Slug: "kivali-developer", Name: "Kivali Developer"}, NotesMD: "Forecasts by place."},
 		},
-		Running:      false,
-		Requirements: []IntegrationRequirement{},
-		CanUninstall: true,
+		Running:       false,
+		Requirements:  []IntegrationRequirement{},
+		CanDisconnect: false,
+		CanUninstall:  true,
 	}
 }
 
@@ -345,7 +348,7 @@ func goldenIntegrationPageSignIn(needsSignIn bool) IntegrationPage {
 	return IntegrationPage{
 		Summary: IntegrationSummary{
 			Name: "github", DisplayName: "GitHub", Description: "Issues and pull requests on GitHub.",
-			Version: "1.0.0", State: IntegrationStateInstalled, Needs: needs, Enabled: true, Agents: 0,
+			Version: "1.0.0", State: IntegrationStateConnected, Needs: needs, Enabled: true, Agents: 0,
 		},
 		Author:            "Kivali Developer (agent)",
 		Hosts:             []string{"api.github.com"},
@@ -373,7 +376,8 @@ func goldenIntegrationPageSignIn(needsSignIn bool) IntegrationPage {
 			signInRow,
 			{ID: "running", Title: "Running", Words: "It is running.", Met: true},
 		},
-		CanUninstall: true,
+		CanDisconnect: true,
+		CanUninstall:  true,
 	}
 }
 
@@ -407,9 +411,9 @@ func goldenIntegrationAudit() IntegrationAudit {
 func goldenAgentIntegrations() AgentIntegrations {
 	return AgentIntegrations{
 		Connected: []AgentIntegration{
-			{Name: "hubspot", DisplayName: "HubSpot", State: IntegrationStateInstalled, Usable: true, Summary: "Blogs: Marketing · May publish and edit"},
-			{Name: "crm", DisplayName: "CRM", State: IntegrationStateOff, Usable: false, Summary: "Full access", Invalid: &integrationInvalid},
-			{Name: "git", DisplayName: "Git", State: IntegrationStateInstalled, Usable: false, Summary: "Repositories: eng/*"},
+			{Name: "hubspot", DisplayName: "HubSpot", State: IntegrationStateConnected, Usable: true, Summary: "Blogs: Marketing · May publish and edit"},
+			{Name: "crm", DisplayName: "CRM", State: IntegrationStateDisabled, Usable: false, Summary: "Full access", Invalid: &integrationInvalid},
+			{Name: "git", DisplayName: "Git", State: IntegrationStateConnected, Usable: false, Summary: "Repositories: eng/*"},
 		},
 		Available: []AgentIntegration{
 			{Name: "weather", DisplayName: "Weather", State: IntegrationStatePending, Summary: ""},
@@ -439,7 +443,7 @@ func goldenIntegrationVersionSignIn() IntegrationVersion {
 // asking for the account first, and keep the app's values.
 func goldenIntegrationSetup() *IntegrationSetup {
 	return &IntegrationSetup{
-		Summary: "Creates a private GitHub App, on your account or an organization's, that may read contents and write issues and pull requests, and installs it on the repositories you choose. Uninstalling removes the installation; the app stays on GitHub until you delete it under GitHub Apps in the account's settings.",
+		Summary: "Creates a private GitHub App, on your account or an organization's, that may read contents and write issues and pull requests, and installs it on the repositories you choose. Disconnecting removes the installation; the app stays on GitHub until you delete it under GitHub Apps in the account's settings.",
 		Hosts:   []string{"github.com"},
 		Fields: []SetupField{
 			{Key: "account", Title: "Account", Words: "An organization's name, or leave it blank for your personal account", Secret: false, SetupOnly: false},
@@ -501,7 +505,7 @@ func goldenIntegrationPageSetup() IntegrationPage {
 	return IntegrationPage{
 		Summary: IntegrationSummary{
 			Name: "github", DisplayName: "GitHub", Description: goldenGitHubDescription,
-			Version: "2.0.0", State: IntegrationStateAvailable, Enabled: true, Builtin: true, Agents: 0,
+			Version: "2.0.0", State: IntegrationStateInstalled, Enabled: true, Builtin: true, Agents: 0,
 		},
 		Author:           "Kivali",
 		Hosts:            []string{"api.github.com", "github.com"},
@@ -519,17 +523,18 @@ func goldenIntegrationPageSetup() IntegrationPage {
 		Versions: []IntegrationVersionSummary{
 			{Version: "2.0.0", State: IntegrationVersionStateApproved, PublishedAt: integrationEarlier, PublishedBy: PersonRef{Slug: "kivali", Name: "Kivali"}, ApprovedAt: &integrationEarlier, NotesMD: "Ships with Kivali."},
 		},
-		Running:      true,
-		Requirements: []IntegrationRequirement{},
-		CanUninstall: false,
+		Running:       true,
+		Requirements:  []IntegrationRequirement{},
+		CanDisconnect: false,
+		CanUninstall:  false,
 	}
 }
 
-// goldenIntegrationPageSettingUp is the same GitHub page while its
-// setup flow builds the app: setting up, with the flow under way.
-func goldenIntegrationPageSettingUp() IntegrationPage {
+// goldenIntegrationPageConnecting is the same GitHub page while its
+// setup flow builds the app: still installed, with the flow under way.
+func goldenIntegrationPageConnecting() IntegrationPage {
 	page := goldenIntegrationPageSetup()
-	page.Summary.State = IntegrationStateSettingUp
+	page.Summary.State = IntegrationStateInstalled // connecting: no connection yet
 	flow := goldenSetupFlowRunning()
 	page.Flow = &flow
 	return page
@@ -541,14 +546,14 @@ func goldenIntegrationPageSettingUp() IntegrationPage {
 func goldenIntegrationPageFix() IntegrationPage {
 	page := goldenIntegrationPageSetup()
 	conn := ConnectionState{ID: "f00dcafe", CreatedAt: integrationNow, Fields: []ConnectionField{}, VerifiedAt: &integrationLater, Verified: &integrationVerified, VerifyMessage: new("Connected as kivali-acme[bot], the app Kivali Acme, installed on acme")}
-	page.Summary.State, page.Summary.Needs = IntegrationStateInstalled, 1
+	page.Summary.State, page.Summary.Needs = IntegrationStateConnected, 1
 	page.Connection = &conn
-	page.CanUninstall = true
+	page.CanDisconnect = true
 	page.Requirements = []IntegrationRequirement{
 		{ID: "version", Title: "Approved version", Words: "Version 2.0.0 ships with Kivali.", Met: true},
 		{ID: "connection", Title: "Connection", Words: "Its secrets are stored.", Met: true},
 		{ID: "connection_test", Title: "Connection test", Words: "Connected as kivali-acme[bot], the app Kivali Acme, installed on acme", Met: true},
-		{ID: "key", Title: "The app's key works", Words: "GitHub accepts the key of the app Kivali Acme. Uninstalling GitHub here leaves the app on GitHub, for you to delete in its settings at https://github.com/organizations/acme/settings/apps/kivali-acme.", Met: true},
+		{ID: "key", Title: "The app's key works", Words: "GitHub accepts the key of the app Kivali Acme. Disconnecting GitHub here leaves the app on GitHub, for you to delete in its settings at https://github.com/organizations/acme/settings/apps/kivali-acme.", Met: true},
 		{ID: "installed", Title: "Installed on GitHub", Words: "Installed on acme.", Met: true},
 		{ID: "repositories", Title: "Repositories it reaches", Words: "Installed on acme, reaching 12 repositories.", Met: true},
 		{ID: "permissions", Title: "Permissions current", Words: "The installation lacks permissions this version needs: pull requests: write. Approve them on GitHub.", Met: false, Fix: "permissions"},
@@ -566,6 +571,9 @@ func goldenIntegrationPageFix() IntegrationPage {
 func goldenIntegrationPageMisfit() IntegrationPage {
 	page := goldenIntegrationPageSetup()
 	page.Summary.Agents = 1
+	// The earlier version's connection, which Disconnect drops.
+	page.Connection = &ConnectionState{ID: "a1b2c3d4", CreatedAt: integrationEarlier, Fields: []ConnectionField{}}
+	page.CanDisconnect = true
 	page.Requirements = []IntegrationRequirement{{
 		ID: "connection", Title: "Connection", Met: false, Fix: "setup",
 		Words: "Set up GitHub again: this version makes its connection by its own setup, and the one an earlier version made does not fit it. Every agent's access is kept.",

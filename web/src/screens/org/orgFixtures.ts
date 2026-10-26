@@ -19,10 +19,10 @@ import goIntegrationVersionSignInJson from '../../../../internal/web/apitypes/te
 import goIntegrationVersionSetupJson from '../../../../internal/web/apitypes/testdata/integration_version_setup.json';
 import goIntegrationVersionRegisteredJson from '../../../../internal/web/apitypes/testdata/integration_version_registered.json';
 import goIntegrationPageSetupJson from '../../../../internal/web/apitypes/testdata/integration_page_setup.json';
-import goIntegrationPageSettingUpJson from '../../../../internal/web/apitypes/testdata/integration_page_setting_up.json';
+import goIntegrationPageConnectingJson from '../../../../internal/web/apitypes/testdata/integration_page_connecting.json';
 import goIntegrationPageFixJson from '../../../../internal/web/apitypes/testdata/integration_page_fix.json';
 import goIntegrationPageMisfitJson from '../../../../internal/web/apitypes/testdata/integration_page_misfit.json';
-import goIntegrationPageOffJson from '../../../../internal/web/apitypes/testdata/integration_page_off.json';
+import goIntegrationPageDisabledJson from '../../../../internal/web/apitypes/testdata/integration_page_disabled.json';
 import goIntegrationPagePendingJson from '../../../../internal/web/apitypes/testdata/integration_page_pending.json';
 import goIntegrationPageNotIncludedJson from '../../../../internal/web/apitypes/testdata/integration_page_not_included.json';
 import goSetupFlowDoneJson from '../../../../internal/web/apitypes/testdata/setup_flow_done.json';
@@ -120,14 +120,14 @@ export const goIntegrationVersionSignIn = (goIntegrationVersionSignInJson satisf
 export const goIntegrationVersionSetup = (goIntegrationVersionSetupJson satisfies Wire<IntegrationVersion>) as IntegrationVersion;
 /** GitHub's page, a setup built-in, before setup has run. */
 export const goIntegrationPageSetup = (goIntegrationPageSetupJson satisfies Wire<IntegrationPage>) as IntegrationPage;
-/** The same page while its setup flow builds the app: setting up, with the flow under way. */
-export const goIntegrationPageSettingUp = (goIntegrationPageSettingUpJson satisfies Wire<IntegrationPage>) as IntegrationPage;
-/** The same page once installed, one of its own requirements unmet and its Fix flow waiting on GitHub. */
+/** The same page while its setup flow builds the app: installed, with the flow under way. */
+export const goIntegrationPageConnecting = (goIntegrationPageConnectingJson satisfies Wire<IntegrationPage>) as IntegrationPage;
+/** The same page once connected, one of its own requirements unmet and its Fix flow waiting on GitHub. */
 export const goIntegrationPageFix = (goIntegrationPageFixJson satisfies Wire<IntegrationPage>) as IntegrationPage;
 /** The same page after an update whose setup does not take the connection an earlier version made: set it up again. */
 export const goIntegrationPageMisfit = (goIntegrationPageMisfitJson satisfies Wire<IntegrationPage>) as IntegrationPage;
-/** HubSpot's page switched off: its connection and access kept, no running row. */
-export const goIntegrationPageOff = (goIntegrationPageOffJson satisfies Wire<IntegrationPage>) as IntegrationPage;
+/** HubSpot's page disabled: its connection and access kept, no running row. */
+export const goIntegrationPageDisabled = (goIntegrationPageDisabledJson satisfies Wire<IntegrationPage>) as IntegrationPage;
 /** An uploaded bundle's page before any version is approved. */
 export const goIntegrationPagePending = (goIntegrationPagePendingJson satisfies Wire<IntegrationPage>) as IntegrationPage;
 /** The page of a built-in another version of Kivali shipped. */

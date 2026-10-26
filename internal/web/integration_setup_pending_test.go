@@ -36,7 +36,7 @@ func TestInstallMarksItsConnectionUntilDone(t *testing.T) {
 	}
 	echoBack(t, srv, e, cookie, url.Values{"code": {"c0de-p1"}})
 	waitFlow(t, srv, "echo", apitypes.SetupFlowStateWait)
-	if page := echoPage(t, srv); page.Summary.State != apitypes.IntegrationStateSettingUp {
+	if page := echoPage(t, srv); page.Summary.State != apitypes.IntegrationStateInstalled {
 		t.Errorf("while the install runs = %s", page.Summary.State)
 	}
 	e.SetInstalled(true)
@@ -45,7 +45,7 @@ func TestInstallMarksItsConnectionUntilDone(t *testing.T) {
 	if rec, err := srv.Store.GetIntegrationConnection("echo"); err != nil || rec.SetupPending {
 		t.Errorf("after Done: %+v %v", rec, err)
 	}
-	if page := echoPage(t, srv); page.Summary.State != apitypes.IntegrationStateInstalled {
+	if page := echoPage(t, srv); page.Summary.State != apitypes.IntegrationStateConnected {
 		t.Errorf("after Done = %s", page.Summary.State)
 	}
 	// A restart finds nothing to discard.
@@ -75,7 +75,7 @@ func TestRestartDiscardsAnUnfinishedInstall(t *testing.T) {
 
 	// The process stops: its flows are lost, and nothing is discarded.
 	forgetFlowsAsARestartDoes(srv)
-	if page := echoPage(t, srv); page.Summary.State != apitypes.IntegrationStateAvailable || page.Flow != nil {
+	if page := echoPage(t, srv); page.Summary.State != apitypes.IntegrationStateInstalled || page.Flow != nil {
 		t.Errorf("after the restart = %s, flow %+v", page.Summary.State, page.Flow)
 	}
 
@@ -87,7 +87,7 @@ func TestRestartDiscardsAnUnfinishedInstall(t *testing.T) {
 	if u := e.callsOf("uninstall"); len(u) != 1 || u[0].Conn.ID != made.ID || u[0].Conn.Fields["token"] != "tok-c0de-p2" {
 		t.Errorf("uninstall calls = %+v", u)
 	}
-	if page := echoPage(t, srv); page.Summary.State != apitypes.IntegrationStateAvailable {
+	if page := echoPage(t, srv); page.Summary.State != apitypes.IntegrationStateInstalled {
 		t.Errorf("after the discard = %s", page.Summary.State)
 	}
 	// The owner installs again from nothing.

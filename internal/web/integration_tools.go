@@ -79,8 +79,8 @@ func refuseNoVersion(display string) string {
 	return fmt.Sprintf("The %s integration has no approved version. Ask the owner if your work needs it.", display)
 }
 
-func refuseOff(display string) string {
-	return fmt.Sprintf("The %s integration is switched off. Ask the owner if your work needs it.", display)
+func refuseDisabled(display string) string {
+	return fmt.Sprintf("The %s integration is disabled. Ask the owner if your work needs it.", display)
 }
 
 func refuseNoAccess(display string) string {
@@ -119,7 +119,7 @@ const reasonSettingUp = "the connection is being set up"
 // agent may call through, though it may exist: an install of it under
 // way, one a stopped Kivali left unfinished (SetupPending), one being
 // discarded, or one an earlier version made that m's setup does not fit
-// (setupMisfit). Agents call through an installed connection alone, as
+// (setupMisfit). Agents call through a connected connection alone, as
 // the lifecycle (integrationView.state) and AgentIntegration.usable say.
 func (s *Server) connectionBeingSetUp(name string, m *integration.Manifest) bool {
 	if _, installing, discarding := s.setupPeek(name); installing || discarding {
@@ -133,7 +133,7 @@ func (s *Server) connectionBeingSetUp(name string, m *integration.Manifest) bool
 }
 
 // agentIntegrationFor is it as slug's calls find it: refused when no
-// version is approved, it is switched off, the agent has no access or
+// version is approved, it is disabled, the agent has no access or
 // access that no longer applies, it is not running, or its connection
 // is being set up (connectionBeingSetUp).
 func (s *Server) agentIntegrationFor(it store.Integration, slug string) (agentIntegration, error) {
@@ -146,7 +146,7 @@ func (s *Server) agentIntegrationFor(it store.Integration, slug string) (agentIn
 		return refuse(refuseNoVersion(v.display), "no version is approved")
 	}
 	if !it.Enabled {
-		return refuse(refuseOff(v.display), "the integration is off")
+		return refuse(refuseDisabled(v.display), "the integration is disabled")
 	}
 	rows, err := s.Store.ListIntegrationAccess(it.Name)
 	if err != nil {

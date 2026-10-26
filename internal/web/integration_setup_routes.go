@@ -93,7 +93,7 @@ func (s *Server) handleAPISetupStart(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusConflict, errFlowNotOffered(flow, display), whoLink)
 		return
 	case flow != builtinintegrations.FlowSetup && !installed:
-		writeAPIError(w, http.StatusConflict, "install "+display+" first", whoYou)
+		writeAPIError(w, http.StatusConflict, "connect "+display+" first", whoYou)
 		return
 	case !v.it.Enabled && installed:
 		writeAPIError(w, http.StatusConflict, "switch "+display+" on first", whoYou)
@@ -113,11 +113,11 @@ func (s *Server) handleAPISetupStart(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, werr.status, werr.words, werr.who)
 		return
 	}
-	// Installing what is not installed switches it on: an integration
+	// Connecting what is not connected switches it on: an integration
 	// with no connection has nothing to keep off.
 	if !v.it.Enabled {
 		if err := s.Store.SetIntegrationEnabled(v.it.Name, true); err != nil {
-			log.Printf("integration %s: switch it on to install it: %v", v.it.Name, err)
+			log.Printf("integration %s: switch it on to connect it: %v", v.it.Name, err)
 			writeAPIError(w, http.StatusInternalServerError, "the integration's switch could not be saved", whoServer)
 			return
 		}

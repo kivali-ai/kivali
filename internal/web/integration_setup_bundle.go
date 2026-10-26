@@ -73,7 +73,7 @@ func (s *Server) requirementsOf(v *integrationView) (builtinintegrations.Require
 
 // uninstallerOf is what undoes v's installation on the service: a
 // built-in's Uninstaller, or a setup bundle's server while it runs
-// (uninstallRefusal says what Uninstall does when it does not run).
+// (serviceUndoRefusal says what Disconnect does when it does not run).
 func (s *Server) uninstallerOf(v *integrationView) (builtinintegrations.Uninstaller, bool) {
 	if u, ok := v.builtin.(builtinintegrations.Uninstaller); ok {
 		return u, true
@@ -84,17 +84,17 @@ func (s *Server) uninstallerOf(v *integrationView) (builtinintegrations.Uninstal
 	return nil, false
 }
 
-// uninstallRefusal is why Uninstall of a setup bundle with a
-// connection is refused: switched on with its server not running, it
-// cannot ask the server to undo the installation on the service, and
-// the server may be about to run. "" otherwise: one switched off is
-// uninstalled without asking, its installation on the service left as
-// it is.
-func (s *Server) uninstallRefusal(v *integrationView) string {
+// serviceUndoRefusal is why Disconnect or Uninstall (action) of a
+// setup bundle with a connection is refused: enabled with its server
+// not running, it cannot ask the server to undo the installation on
+// the service, and the server may be about to run. "" otherwise: one
+// disabled is disconnected or uninstalled without asking, its
+// installation on the service left as it is.
+func (s *Server) serviceUndoRefusal(v *integrationView, action string) string {
 	if _, ok := s.bundleHooksOf(v); !ok || v.conn == nil || v.running || !v.it.Enabled {
 		return ""
 	}
-	return v.displayName() + " is not running, so it cannot undo its installation on the service; switch it off to uninstall it without that"
+	return v.displayName() + " is not running, so it cannot undo its installation on the service; disable it to " + action + " it without that"
 }
 
 // errBundleNotRunning refuses a Fix of a setup bundle whose server is

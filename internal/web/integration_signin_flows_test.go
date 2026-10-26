@@ -196,7 +196,7 @@ func TestDeviceSignInEndToEnd(t *testing.T) {
 	fs.next(t, integrationpod.EventRestart)
 
 	page = orgOK[apitypes.IntegrationPage](t, orgGet(t, srv, intBase+"/crm"))
-	if si := page.Connection.SignIn; !installedAndMet(page) || si == nil || !si.SignedIn || si.Method != "device" {
+	if si := page.Connection.SignIn; !connectedAndMet(page) || si == nil || !si.SignedIn || si.Method != "device" {
 		t.Errorf("after the sign-in: unmet %v, %+v", unmetIDs(page), page.Connection.SignIn)
 	}
 	if got := strings.Join(setupAudit(t, srv, "crm"), "|"); got != "started|done" {

@@ -22,8 +22,8 @@
 //   - It needs no install approval: the owner approved the binary. Boot
 //     writes its record and its version (store.InstallBuiltinIntegrations).
 //   - While the binary carries it, it cannot be replaced by an upload,
-//     and Uninstall takes it back to available rather than off the
-//     team; it can be switched off.
+//     and Disconnect takes it back to installed, with no connection,
+//     rather than Uninstall off the team; it can be disabled.
 //
 // To add one, implement Integration in a package of its own and list it
 // in builtins.All (internal/builtinintegrations/builtins).
@@ -192,7 +192,7 @@ type SetupIntegration interface {
 }
 
 // FlowSetup is the flow that installs the integration: the one the
-// owner starts from Available.
+// owner starts from Installed, to connect it.
 const FlowSetup = "setup"
 
 // Step is what the owner does next. Exactly one of Form, Go, Wait or

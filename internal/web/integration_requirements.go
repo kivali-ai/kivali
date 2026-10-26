@@ -2,21 +2,21 @@
 // lifecycle and its health.
 //
 // Every integration moves through the same states
-// (apitypes.IntegrationState): available (a built-in this binary
-// carries, a bundle once a version is approved), setting up (its setup
-// flow runs, from no connection), installed (the connection exists,
-// and agents can be given access), off (switched off, the connection
-// and access kept), and back to available by Uninstall. A record with
-// no approved version is pending; a built-in this binary does not
-// carry is not included.
+// (apitypes.IntegrationState): installed (on the team with no
+// connection: a built-in this binary carries, a bundle once a version
+// is approved), connected (the connection exists and the switch is on:
+// agents can be given access), disabled (the switch is off, the
+// connection and access kept), and back to installed by Disconnect. A
+// record with no approved version is pending; a built-in this binary
+// does not carry is not included.
 //
-// Requirements are an installed integration's health: Kivali's rows
+// Requirements are a connected integration's health: Kivali's rows
 // first (an approved version, the connection's secrets, a sign-in the
 // service still accepts, the connection test, a bundle's server
 // running), then the integration's own (builtinintegrations.
 // RequirementsOf), asked for when the page, the list or Home is read,
-// never on a timer, under requirementsTimeout. Each unmet row of an
-// installed integration is a Needs-you row (integration_requirement),
+// never on a timer, under requirementsTimeout. Each unmet row of a
+// connected integration is a Needs-you row (integration_requirement),
 // and its Fix runs a flow through the setup runner: setup, sign_in, or
 // a flow the integration's rows name.
 
@@ -85,24 +85,23 @@ func (v *integrationView) state() apitypes.IntegrationState {
 		return apitypes.IntegrationStateNotIncluded
 	case v.it.CurrentVersion == "":
 		return apitypes.IntegrationStatePending
-	case v.installing:
-		return apitypes.IntegrationStateSettingUp
-	case v.conn == nil || v.discarding || v.connectionMisfit() || v.conn.rec.SetupPending:
-		// A connection a failed install made is on its way out, one an
-		// earlier version made does not fit this version's setup, or one
-		// an install left unfinished when Kivali stopped waits to be
-		// discarded.
-		return apitypes.IntegrationStateAvailable
+	case v.installing, v.conn == nil, v.discarding, v.connectionMisfit(), v.conn.rec.SetupPending:
+		// No connection, or none that stands: the flow that connects it
+		// is under way, a connection a failed connect made is on its way
+		// out, one an earlier version made does not fit this version's
+		// setup, or one a connect left unfinished when Kivali stopped
+		// waits to be discarded.
+		return apitypes.IntegrationStateInstalled
 	case !v.it.Enabled:
-		return apitypes.IntegrationStateOff
+		return apitypes.IntegrationStateDisabled
 	}
-	return apitypes.IntegrationStateInstalled
+	return apitypes.IntegrationStateConnected
 }
 
 // connectionMisfit reports whether v's connection was made by an
 // earlier version's way of connecting and does not fit this version's
-// setup flow (setupMisfit). v then reads available, its one row says
-// to set it up again, and installing it takes the connection over
+// setup flow (setupMisfit). v then reads installed, its one row says
+// to set it up again, and connecting it takes the connection over
 // (keepSetupValues): its record and every agent's access stay, and its
 // values are replaced.
 func (v *integrationView) connectionMisfit() bool {
@@ -141,23 +140,23 @@ func (v *integrationView) misfitRequirement() apitypes.IntegrationRequirement {
 	}
 }
 
-// installed reports whether v has its requirements read: installed or
-// off.
-func (v *integrationView) installed() bool {
+// configured reports whether v holds a connection this version takes,
+// and so has its requirements read: connected or disabled.
+func (v *integrationView) configured() bool {
 	st := v.state()
-	return st == apitypes.IntegrationStateInstalled || st == apitypes.IntegrationStateOff
+	return st == apitypes.IntegrationStateConnected || st == apitypes.IntegrationStateDisabled
 }
 
 // agentUsable reports whether an agent with access can call v now:
-// installed and running, its connection with all its secrets and, made
+// connected and running, its connection with all its secrets and, made
 // by signing in, signed in.
 func (v *integrationView) agentUsable() bool {
-	return v.state() == apitypes.IntegrationStateInstalled && v.running && v.conn != nil && !v.several && v.usable(v.conn)
+	return v.state() == apitypes.IntegrationStateConnected && v.running && v.conn != nil && !v.several && v.usable(v.conn)
 }
 
-// coreRequirements are Kivali's own rows of v, installed or off: an
-// approved version, the connection's secrets, the sign-in, the
-// connection test once it has run, and, for a bundle switched on, its
+// coreRequirements are Kivali's own rows of v, connected or disabled:
+// an approved version, the connection's secrets, the sign-in, the
+// connection test once it has run, and, for a bundle enabled, its
 // server running. at is when each unmet row has stood since, as far as
 // Kivali knows, for Needs you.
 func (v *integrationView) coreRequirements() ([]apitypes.IntegrationRequirement, map[string]time.Time) {
@@ -393,11 +392,11 @@ func (c *requirementsCache) forget(name string) {
 
 // requirements are v's rows, Kivali's then its own, with when each
 // unmet one of Kivali's has stood since; none for an integration that
-// is not installed or off, but the one row of an available one whose
-// connection an earlier version made (connectionMisfit).
+// is not connected or disabled, but the one row of an installed one
+// whose connection an earlier version made (connectionMisfit).
 func (s *Server) requirements(ctx context.Context, v *integrationView) ([]apitypes.IntegrationRequirement, map[string]time.Time) {
-	if !v.installed() {
-		if v.state() == apitypes.IntegrationStateAvailable && v.connectionMisfit() {
+	if !v.configured() {
+		if v.state() == apitypes.IntegrationStateInstalled && v.connectionMisfit() {
 			return []apitypes.IntegrationRequirement{v.misfitRequirement()}, nil
 		}
 		return []apitypes.IntegrationRequirement{}, nil
@@ -419,14 +418,14 @@ func unmet(rows []apitypes.IntegrationRequirement) int {
 
 // integrationRequirementNeedPrefix is the ID prefix of an integration's
 // Needs-you row. The row takes no answer: it leaves once its
-// requirement is met, or the integration is switched off or
+// requirement is met, or the integration is disabled or
 // uninstalled.
 const integrationRequirementNeedPrefix = "integration_requirement:"
 
 // integrationNeedFrom is who an integration_requirement row is from.
 var integrationNeedFrom = apitypes.PersonRef{Slug: store.BuiltinIntegrationPublisher, Name: "Kivali"}
 
-// integrationRequirementItems are the Needs-you rows of every installed
+// integrationRequirementItems are the Needs-you rows of every connected
 // integration's unmet requirements, read as they stand, each
 // integration's asked for at once, oldest first. A row whose start
 // Kivali does not know (an integration's own) stands from when the
@@ -442,7 +441,7 @@ func (s *Server) integrationRequirementItems(ctx context.Context) []apitypes.Nee
 		out []apitypes.NeedItem
 	)
 	for _, it := range its {
-		// Switched off, nothing calls it, and an integration that has
+		// Disabled, nothing calls it, and an integration that has
 		// never had a version approved has no connection.
 		if !it.Enabled || it.CurrentVersion == "" {
 			continue
@@ -451,7 +450,7 @@ func (s *Server) integrationRequirementItems(ctx context.Context) []apitypes.Nee
 		go func() {
 			defer wg.Done()
 			v, err := s.loadIntegration(ctx, it.Name)
-			if err != nil || v.state() != apitypes.IntegrationStateInstalled {
+			if err != nil || v.state() != apitypes.IntegrationStateConnected {
 				return
 			}
 			rows, at := s.requirements(ctx, v)
@@ -505,9 +504,9 @@ func errFlowNotOffered(flow, display string) string {
 
 // fixNamed reports whether one of v's own requirements names flow as
 // its Fix: the flows an integration's own setup runs besides
-// installing.
+// connecting.
 func (s *Server) fixNamed(ctx context.Context, v *integrationView, flow string) bool {
-	if !v.installed() {
+	if !v.configured() {
 		return false
 	}
 	return slices.ContainsFunc(s.ownRequirements(ctx, v), func(r apitypes.IntegrationRequirement) bool { return r.Fix == flow })
@@ -530,7 +529,7 @@ func (s *Server) fixSpecFor(v *integrationView, flow string) (setupSpec, *connWr
 }
 
 // listedIntegration is one integration as a list reads it: its row and
-// its requirements (none unless installed or off).
+// its requirements (none unless connected or disabled).
 type listedIntegration struct {
 	sum  apitypes.IntegrationSummary
 	rows []apitypes.IntegrationRequirement
@@ -556,7 +555,7 @@ func (s *Server) listIntegrations(ctx context.Context, its []store.Integration) 
 			}
 			rows, _ := s.requirements(ctx, v)
 			sum := v.summary()
-			if sum.State == apitypes.IntegrationStateInstalled {
+			if sum.State == apitypes.IntegrationStateConnected {
 				sum.Needs = unmet(rows)
 			}
 			out[i] = listedIntegration{sum: sum, rows: rows}

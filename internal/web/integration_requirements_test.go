@@ -140,13 +140,13 @@ func TestIntegrationLifecycle(t *testing.T) {
 	intTeam(t, srv, "dana")
 
 	page := echoPage(t, srv)
-	if page.Summary.State != apitypes.IntegrationStateAvailable || page.CanUninstall || len(page.Requirements) != 0 || page.Flow != nil {
-		t.Errorf("before = %s, can uninstall %v, requirements %v", page.Summary.State, page.CanUninstall, page.Requirements)
+	if page.Summary.State != apitypes.IntegrationStateInstalled || page.CanDisconnect || len(page.Requirements) != 0 || page.Flow != nil {
+		t.Errorf("before = %s, can disconnect %v, requirements %v", page.Summary.State, page.CanUninstall, page.Requirements)
 	}
 	startSetupFlow(t, srv, "echo")
 	waitFlow(t, srv, "echo", apitypes.SetupFlowStateForm)
 	page = echoPage(t, srv)
-	if page.Summary.State != apitypes.IntegrationStateSettingUp || page.Flow == nil || page.Flow.State != apitypes.SetupFlowStateForm || page.Flow.Flow != "setup" {
+	if page.Summary.State != apitypes.IntegrationStateInstalled || page.Flow == nil || page.Flow.State != apitypes.SetupFlowStateForm || page.Flow.Flow != "setup" {
 		t.Errorf("while setting up = %s, flow %+v", page.Summary.State, page.Flow)
 	}
 	if !srv.setupCancel("echo") {
@@ -154,16 +154,16 @@ func TestIntegrationLifecycle(t *testing.T) {
 	}
 	installEcho(t, srv, e, "acme")
 	page = echoPage(t, srv)
-	if !installedAndMet(page) || !page.CanUninstall || !slices.Equal(requirementIDs(page), []string{"version", "connection", "installed", "permissions"}) {
+	if !connectedAndMet(page) || !page.CanDisconnect || !slices.Equal(requirementIDs(page), []string{"version", "connection", "installed", "permissions"}) {
 		t.Errorf("installed = %s, unmet %v, ids %v", page.Summary.State, unmetIDs(page), requirementIDs(page))
 	}
 	putIntegrationAccess(t, srv, "echo", "dana", `{}`)
 
 	page = orgOK[apitypes.IntegrationPage](t, intPost(t, srv, intBase+"/echo/disable"))
-	if page.Summary.State != apitypes.IntegrationStateOff || len(page.Access) != 1 || !page.CanUninstall {
+	if page.Summary.State != apitypes.IntegrationStateDisabled || len(page.Access) != 1 || !page.CanDisconnect {
 		t.Errorf("off = %s, access %v", page.Summary.State, page.Access)
 	}
-	if rr := intDelete(t, srv, intBase+"/echo"); rr.Code != http.StatusNoContent {
+	if rr := intDelete(t, srv, intBase+"/echo/connection"); rr.Code != http.StatusOK {
 		t.Fatalf("uninstall: %d %s", rr.Code, rr.Body.String())
 	}
 	got := e.callsOf("uninstall")
@@ -171,19 +171,19 @@ func TestIntegrationLifecycle(t *testing.T) {
 		t.Errorf("Uninstall was given %+v", got)
 	}
 	page = echoPage(t, srv)
-	if page.Summary.State != apitypes.IntegrationStateAvailable || len(page.Access) != 0 || page.Connection != nil || page.CanUninstall {
-		t.Errorf("after uninstall = %s, access %v, connections %v", page.Summary.State, page.Access, page.Connection)
+	if page.Summary.State != apitypes.IntegrationStateInstalled || len(page.Access) != 0 || page.Connection != nil || page.CanDisconnect {
+		t.Errorf("after disconnect = %s, access %v, connections %v", page.Summary.State, page.Access, page.Connection)
 	}
 	if names := mem.Names(); len(names) != 0 {
 		t.Errorf("secrets left: %v", names)
 	}
-	if got := auditActions(t, srv, "echo", uninstallAction); !slices.Equal(got, []string{""}) {
+	if got := auditActions(t, srv, "echo", disconnectAction); !slices.Equal(got, []string{""}) {
 		t.Errorf("uninstall audit = %v", got)
 	}
 	// Installing it again switches it on: nothing installed has nothing
 	// to keep off.
 	installEcho(t, srv, e, "acme")
-	if page := echoPage(t, srv); !installedAndMet(page) || !page.Summary.Enabled {
+	if page := echoPage(t, srv); !connectedAndMet(page) || !page.Summary.Enabled {
 		t.Errorf("installed again = %+v", page.Summary)
 	}
 }
@@ -223,12 +223,12 @@ func TestFailedInstallKeepsNothing(t *testing.T) {
 			srv.Secrets = mem
 			startSetupFlow(t, srv, "echo")
 			_, cookie := echoGo(t, srv, "acme")
-			if page := echoPage(t, srv); page.Summary.State != apitypes.IntegrationStateSettingUp || page.Connection == nil {
+			if page := echoPage(t, srv); page.Summary.State != apitypes.IntegrationStateInstalled || page.Connection == nil {
 				t.Fatalf("after the Keep = %s, connections %v", page.Summary.State, page.Connection)
 			}
 			end.do(t, srv, e, cookie)
 			srv.setupAwaitDiscard(context.Background(), "echo")
-			if page := echoPage(t, srv); page.Summary.State != apitypes.IntegrationStateAvailable || page.Connection != nil {
+			if page := echoPage(t, srv); page.Summary.State != apitypes.IntegrationStateInstalled || page.Connection != nil {
 				t.Errorf("after it %s = %s, connections %v", end.name, page.Summary.State, page.Connection)
 			}
 			if names := mem.Names(); len(names) != 0 {
@@ -255,7 +255,7 @@ func TestFailedInstallKeepsNothing(t *testing.T) {
 		waitFlow(t, srv, "echo", apitypes.SetupFlowStateFailed)
 		srv.setupAwaitDiscard(context.Background(), "echo")
 		page := echoPage(t, srv)
-		if page.Summary.State != apitypes.IntegrationStateInstalled || page.Connection == nil {
+		if page.Summary.State != apitypes.IntegrationStateConnected || page.Connection == nil {
 			t.Errorf("after a failed fix = %s, connections %v", page.Summary.State, page.Connection)
 		}
 		if conn := srv.setupConnection(context.Background(), "echo"); conn.Fields["account"] != "half-made-app" || conn.Fields["token"] != "tok-c0de-1" {
@@ -299,7 +299,7 @@ func TestIntegrationOwnRequirements(t *testing.T) {
 	if u, _ := requirementOf(page, "untitled"); u.Title != "untitled" {
 		t.Errorf("a row with no title = %+v", u)
 	}
-	if sum := echoSummary(t, srv); sum.Needs != 1 || sum.State != apitypes.IntegrationStateInstalled {
+	if sum := echoSummary(t, srv); sum.Needs != 1 || sum.State != apitypes.IntegrationStateConnected {
 		t.Errorf("summary = %+v", sum)
 	}
 	needs := requirementNeeds(t, srv)
@@ -387,7 +387,7 @@ func TestRequirementFixRunsItsFlow(t *testing.T) {
 		t.Errorf("the fix was given %+v", calls[len(calls)-1].Conn)
 	}
 	page = echoPage(t, srv)
-	if !installedAndMet(page) || page.Flow == nil || page.Flow.Flow != "permissions" {
+	if !connectedAndMet(page) || page.Flow == nil || page.Flow.Flow != "permissions" {
 		t.Errorf("after the fix = %s, unmet %v, flow %+v", page.Summary.State, unmetIDs(page), page.Flow)
 	}
 	if needs := requirementNeeds(t, srv); len(needs) != 0 {
@@ -403,7 +403,7 @@ func TestRequirementFixRunsItsFlow(t *testing.T) {
 	orgOK[apitypes.SetupFlow](t, start("permissions"))
 	waitFlow(t, srv, "echo", apitypes.SetupFlowStateForm)
 	page = echoPage(t, srv)
-	if page.Summary.State != apitypes.IntegrationStateInstalled || page.Flow == nil || page.Flow.Flow != "permissions" {
+	if page.Summary.State != apitypes.IntegrationStateConnected || page.Flow == nil || page.Flow.Flow != "permissions" {
 		t.Errorf("while fixing = %s, flow %+v", page.Summary.State, page.Flow)
 	}
 	orgOK[apitypes.IntegrationPage](t, intPost(t, srv, intBase+"/echo/disable"))
@@ -415,13 +415,13 @@ func TestRequirementFixRunsItsFlow(t *testing.T) {
 	}
 }
 
-// Why this test exists: Uninstall undoes the installation on the
+// Why this test exists: Disconnect undoes the installation on the
 // service before Kivali forgets anything. When the integration says it
 // could not, the owner must read why (with no secret in it) and keep
 // everything: the connection, its Secret and every agent's access. A
 // failure that went on to forget the connection would leave an app on
 // the service that nothing can reach to remove.
-func TestUninstallRefusedByTheIntegration(t *testing.T) {
+func TestDisconnectRefusedByTheIntegration(t *testing.T) {
 	srv, e, _ := healthServer(t)
 	mem := secrets.NewMemory()
 	srv.Secrets = mem
@@ -429,7 +429,7 @@ func TestUninstallRefusedByTheIntegration(t *testing.T) {
 	installEcho(t, srv, e, "acme")
 	putIntegrationAccess(t, srv, "echo", "dana", `{}`)
 	e.FailUninstall(true)
-	apiErr := assertAPIError(t, intDelete(t, srv, intBase+"/echo"), http.StatusBadGateway)
+	apiErr := assertAPIError(t, intDelete(t, srv, intBase+"/echo/connection"), http.StatusBadGateway)
 	if apiErr.Error != "Echo could not undo its installation: setup.example kept the app of token "+integrationSecretPlaceholder+"; nothing was changed" || apiErr.Who != whoDevelopers {
 		t.Errorf("refusal = %+v", apiErr)
 	}
@@ -437,20 +437,20 @@ func TestUninstallRefusedByTheIntegration(t *testing.T) {
 		t.Errorf("Uninstall was given %+v", got)
 	}
 	page := echoPage(t, srv)
-	if page.Summary.State != apitypes.IntegrationStateInstalled || len(page.Access) != 1 || len(mem.Names()) != 1 {
+	if page.Summary.State != apitypes.IntegrationStateConnected || len(page.Access) != 1 || len(mem.Names()) != 1 {
 		t.Errorf("after the refusal = %s, access %v, secrets %v", page.Summary.State, page.Access, mem.Names())
 	}
-	if got := auditActions(t, srv, "echo", uninstallAction); len(got) != 1 || !strings.HasPrefix(got[0], "refused Echo could not undo") || strings.Contains(got[0], "tok-c0de-1") {
+	if got := auditActions(t, srv, "echo", disconnectAction); len(got) != 1 || !strings.HasPrefix(got[0], "refused Echo could not undo") || strings.Contains(got[0], "tok-c0de-1") {
 		t.Errorf("audit = %v", got)
 	}
 
 	// Once the service lets it go, Uninstall goes through.
 	e.FailUninstall(false)
-	if rr := intDelete(t, srv, intBase+"/echo"); rr.Code != http.StatusNoContent {
+	if rr := intDelete(t, srv, intBase+"/echo/connection"); rr.Code != http.StatusOK {
 		t.Fatalf("uninstall: %d %s", rr.Code, rr.Body.String())
 	}
-	if page := echoPage(t, srv); page.Summary.State != apitypes.IntegrationStateAvailable || len(mem.Names()) != 0 {
-		t.Errorf("after uninstall = %s, secrets %v", page.Summary.State, mem.Names())
+	if page := echoPage(t, srv); page.Summary.State != apitypes.IntegrationStateInstalled || len(mem.Names()) != 0 {
+		t.Errorf("after disconnect = %s, secrets %v", page.Summary.State, mem.Names())
 	}
 }
 
@@ -474,7 +474,7 @@ func TestSignInFixSignsInAgain(t *testing.T) {
 	}
 	waitFlow(t, srv, "crm", apitypes.SetupFlowStateWait)
 	page = orgOK[apitypes.IntegrationPage](t, orgGet(t, srv, intBase+"/crm"))
-	if page.Summary.State != apitypes.IntegrationStateInstalled || page.Flow == nil || page.Flow.Flow != "sign_in" {
+	if page.Summary.State != apitypes.IntegrationStateConnected || page.Flow == nil || page.Flow.Flow != "sign_in" {
 		t.Errorf("while signing in again = %s, %+v", page.Summary.State, page.Flow)
 	}
 

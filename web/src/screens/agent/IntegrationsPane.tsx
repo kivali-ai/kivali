@@ -18,7 +18,7 @@ function IntegrationList({ items, connected, href }: { items: readonly AgentInte
             meta={
               <>
                 <StateBadge state={i.state} />
-                {connected && i.state === 'installed' && !i.usable && !i.invalid && (
+                {connected && i.state === 'connected' && !i.usable && !i.invalid && (
                   <Text variant="caption" tone="danger">
                     Not usable until its requirements are met
                   </Text>

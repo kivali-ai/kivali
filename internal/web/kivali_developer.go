@@ -390,21 +390,19 @@ func (s *Server) fileIntegrationInstallRequest(ctx context.Context, slug string,
 }
 
 // stateWords is where an integration stands as integration_list says
-// it: its state and, installed, the titles of the requirements not
+// it: its state and, connected, the titles of the requirements not
 // met.
 func stateWords(st apitypes.IntegrationState, rows []apitypes.IntegrationRequirement) string {
 	switch st {
 	case apitypes.IntegrationStatePending:
 		return "no version approved"
-	case apitypes.IntegrationStateAvailable:
-		return "not installed"
-	case apitypes.IntegrationStateSettingUp:
-		return "being set up"
-	case apitypes.IntegrationStateOff:
-		return "installed, off"
+	case apitypes.IntegrationStateInstalled:
+		return "installed, not connected"
+	case apitypes.IntegrationStateDisabled:
+		return "disabled"
 	case apitypes.IntegrationStateNotIncluded:
 		return "not in this version of Kivali"
-	case apitypes.IntegrationStateInstalled:
+	case apitypes.IntegrationStateConnected:
 		var titles []string
 		for _, r := range rows {
 			if !r.Met {
@@ -413,11 +411,11 @@ func stateWords(st apitypes.IntegrationState, rows []apitypes.IntegrationRequire
 		}
 		switch len(titles) {
 		case 0:
-			return "installed, every requirement met"
+			return "connected, every requirement met"
 		case 1:
-			return "installed, 1 requirement not met: " + titles[0]
+			return "connected, 1 requirement not met: " + titles[0]
 		}
-		return fmt.Sprintf("installed, %d requirements not met: %s", len(titles), strings.Join(titles, ", "))
+		return fmt.Sprintf("connected, %d requirements not met: %s", len(titles), strings.Join(titles, ", "))
 	}
 	return string(st)
 }
