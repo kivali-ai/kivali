@@ -698,7 +698,7 @@ VM_ARCH ?= arm64
 vm-release: require-release-version require-explicit-version
 	@test -f dist/kivali-$(VERSION:v%=%).tgz || { echo "vm-release: dist/kivali-$(VERSION:v%=%).tgz missing (make chart-package VERSION=$(VERSION))" >&2; exit 1; }
 	@test -f $(IMAGES_DIR)/bundle-$(VM_ARCH)/kivali-images.tar || { echo "vm-release: $(IMAGES_DIR)/bundle-$(VM_ARCH)/kivali-images.tar missing (make release-assets VERSION=$(VERSION) RELEASE_ARCHES=$(VM_ARCH))" >&2; exit 1; }
-	$(MAKE) -C vm image ARCH=$(VM_ARCH) VM_VERSION=$(VERSION:v%=%) KIVALI_CHART=$(abspath dist/kivali-$(VERSION:v%=%).tgz) KIVALI_IMAGES_DIR=$(abspath $(IMAGES_DIR)/bundle-$(VM_ARCH))
+	$(MAKE) -C vm image ARCH=$(VM_ARCH) VM_VERSION=$(VERSION:v%=%) MANUAL_STEPS=$$(sh scripts/manual-steps.sh $(VERSION)) KIVALI_CHART=$(abspath dist/kivali-$(VERSION:v%=%).tgz) KIVALI_IMAGES_DIR=$(abspath $(IMAGES_DIR)/bundle-$(VM_ARCH))
 
 # The one desktop version, tauri.conf.json's (what the supervisor sidecar
 # is stamped with, here and in desktop-app/Makefile).

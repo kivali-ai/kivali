@@ -66,6 +66,9 @@ KIVALI_CHART ?=
 KIVALI_CHARTS_DIR := $(BUILD)/charts
 # The root disk's version, reported by the guest agent.
 VM_VERSION ?= dev
+# true marks the baked release as needing steps the app cannot do
+# (scripts/manual-steps.sh): the desktop then offers no update to it.
+MANUAL_STEPS ?= false
 
 BOOTTEST_BIN := $(BUILD)/boottest
 BOOTTEST_FLAGS ?=
@@ -90,6 +93,7 @@ endif
 ifeq ($(ENGINE),docker)
 	docker build --platform '$(PLATFORM)' --target 'artifacts-$(ARCH)' \
 		--build-arg 'VM_VERSION=$(VM_VERSION)' \
+		--build-arg 'MANUAL_STEPS=$(MANUAL_STEPS)' \
 		--build-arg 'K3S_VERSION=$(K3S_VERSION)' \
 		--build-arg 'GO_VERSION=$(GO_VERSION)' \
 		--build-context 'k3sdl=$(DL)' \
@@ -110,6 +114,7 @@ else
 		--local 'context=$(GUEST_CTX)/vm' --local 'dockerfile=$(GUEST_CTX)/vm' \
 		--opt 'target=artifacts-$(ARCH)' --opt 'platform=$(PLATFORM)' \
 		--opt 'build-arg:VM_VERSION=$(VM_VERSION)' \
+		--opt 'build-arg:MANUAL_STEPS=$(MANUAL_STEPS)' \
 		--opt 'build-arg:K3S_VERSION=$(K3S_VERSION)' \
 		--opt 'build-arg:GO_VERSION=$(GO_VERSION)' \
 		--opt context:k3sdl=local:k3sdl --local 'k3sdl=$(GUEST_CTX)/k3sdl' \

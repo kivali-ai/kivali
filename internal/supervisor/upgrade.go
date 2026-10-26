@@ -400,6 +400,9 @@ func (s *Supervisor) bakedTarget(gs guestapi.Status, from string, force bool, lo
 		}
 		logf("Kivali %s is up to date (the VM image bakes %s); upgrading anyway (--force)", from, to)
 	}
+	if gs.ManualSteps {
+		return c, fmt.Errorf("Kivali %s needs steps the app can't do yet; see the upgrade notes", to)
+	}
 	logf("upgrading to Kivali %s, baked into the VM image", to)
 	return c, nil
 }

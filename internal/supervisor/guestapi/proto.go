@@ -69,6 +69,11 @@ type Status struct {
 	// BakedCharts are the chart tarballs baked into the root disk
 	// (/usr/share/kivali/charts).
 	BakedCharts []BakedChart `json:"baked_charts"`
+	// ManualSteps is whether the baked release's upgrade needs steps the
+	// app cannot do (/usr/share/kivali/manual-steps exists; the release
+	// pipeline writes it from scripts/manual-steps, as it does
+	// release.json's manual_steps).
+	ManualSteps bool `json:"manual_steps"`
 	// DataDisk is the data disk's filesystem health, read now.
 	DataDisk DataDiskHealth `json:"data_disk"`
 	Time     time.Time      `json:"time"`

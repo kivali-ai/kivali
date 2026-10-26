@@ -53,6 +53,7 @@ func testServer(t *testing.T) *Server {
 	s.ImagesDir = filepath.Join(dir, "images")
 	s.ChartsDir = filepath.Join(dir, "charts")
 	s.VMVersionFile = filepath.Join(dir, "vm-version")
+	s.ManualStepsFile = filepath.Join(dir, "manual-steps")
 	s.BootIDFile = filepath.Join(dir, "boot_id")
 	s.KernelFile = filepath.Join(dir, "osrelease")
 	s.Env = []string{"PATH=/usr/bin:/bin"}
@@ -101,6 +102,21 @@ func TestStatusStates(t *testing.T) {
 	}
 	if st.Versions.VMImage != "0.1.0" || st.Versions.K3s != "k3s version test" {
 		t.Fatalf("versions %+v", st.Versions)
+	}
+	// The manual-steps marker: absent in this image, present once the
+	// release pipeline wrote it. Without it the desktop would apply a
+	// baked release whose upgrade needs steps by hand.
+	if st.ManualSteps {
+		t.Fatal("manual steps reported without the marker")
+	}
+	if err := os.WriteFile(s.ManualStepsFile, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if st, _ = c.Status(ctx); !st.ManualSteps {
+		t.Fatal("manual steps not reported with the marker")
+	}
+	if err := os.Remove(s.ManualStepsFile); err != nil {
+		t.Fatal(err)
 	}
 
 	// A READY recorded by the previous boot does not count.

@@ -25,6 +25,9 @@
 # executable is written to the host's filesystem (vm/README.md, "Built
 # inside Docker").
 #
+# MANUAL_STEPS=true marks the baked release as one whose upgrade needs
+# steps the app cannot do (/usr/share/kivali/manual-steps exists), as
+# release.json's manual_steps does for the feed.
 # VM_VERSION is written to /usr/share/kivali/vm-version and stamped
 # into the guest agent. K3S_VERSION and GO_VERSION have no default; the
 # Makefile passes them (GO_VERSION read from the root Dockerfile).
@@ -161,11 +164,13 @@ COPY --from=common-licenses /usr/share/common-licenses/GPL-2 /usr/share/common-l
      /rootfs/usr/share/doc/kivali/licenses/
 COPY selftest/ /tmp/selftest/
 ARG VM_VERSION=dev
+ARG MANUAL_STEPS=false
 RUN set -e; \
     cd /rootfs/usr/local/bin; \
     for t in kubectl crictl ctr; do ln -sf k3s "$t"; done; \
     rm -f /rootfs/usr/share/kivali/images/.gitkeep /rootfs/usr/share/kivali/charts/.gitkeep; \
     echo "$VM_VERSION" > /rootfs/usr/share/kivali/vm-version; \
+    if [ "$MANUAL_STEPS" = true ]; then : > /rootfs/usr/share/kivali/manual-steps; fi; \
     mkdir -p /rootfs/var/lib/kivali /rootfs/var/lib/kubelet /rootfs/etc/rancher \
              /rootfs/usr/share/kivali/selftest; \
     # The self-test chart is a plain helm chart tarball: a top-level

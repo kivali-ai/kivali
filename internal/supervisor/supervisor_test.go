@@ -686,9 +686,26 @@ func TestBakedUpgradeRefusals(t *testing.T) {
 	try("0.0.0-dev", "0.16.0", "v0.16.0", "development build")
 	try("0.15.0", "0.0.0-dev", "dev", "development build")
 	try("0.0.0-dev", "0.0.0-dev", "dev", "development build")
+	// A release whose upgrade needs steps by hand (the image's marker)
+	// is newer but refused, as the feed's manual_steps release is.
+	if err := h.update(t, func(st *State) { st.Kivali = "0.15.0" }); err != nil {
+		t.Fatal(err)
+	}
+	h.bakeRelease("0.16.0", "v0.16.0")
+	h.vm.mu.Lock()
+	h.vm.manualSteps = true
+	h.vm.mu.Unlock()
+	if b := h.sup.Status(context.Background()).Baked; b == nil || !b.Newer || !b.ManualSteps {
+		t.Errorf("manual steps: verdict %+v, want newer with manual steps", b)
+	}
+	if err := h.sup.Upgrade(context.Background(), UpgradeOptions{Baked: true}, h.logf()); err == nil || !strings.Contains(err.Error(), "needs steps the app can't do yet") {
+		t.Fatalf("manual steps: %v", err)
+	}
+	h.vm.mu.Lock()
+	h.vm.manualSteps = false
+	h.vm.mu.Unlock()
 	// A development build is refused even with --force; the same
 	// release is not.
-	h.bakeRelease("0.16.0", "v0.16.0")
 	if err := h.update(t, func(st *State) { st.Kivali = "0.0.0-dev" }); err != nil {
 		t.Fatal(err)
 	}
