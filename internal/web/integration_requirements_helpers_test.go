@@ -51,8 +51,8 @@ func requirementNeeds(t *testing.T, srv *Server) map[string]apitypes.NeedItem {
 	return out
 }
 
-// installedAndMet reports whether page is installed with every
+// connectedAndMet reports whether page is installed with every
 // requirement met.
-func installedAndMet(page apitypes.IntegrationPage) bool {
-	return page.Summary.State == apitypes.IntegrationStateInstalled && len(unmetIDs(page)) == 0 && page.Summary.Needs == 0
+func connectedAndMet(page apitypes.IntegrationPage) bool {
+	return page.Summary.State == apitypes.IntegrationStateConnected && len(unmetIDs(page)) == 0 && page.Summary.Needs == 0
 }

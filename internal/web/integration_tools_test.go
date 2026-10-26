@@ -158,7 +158,7 @@ func TestAgentCallsAnIntegrationThroughCore(t *testing.T) {
 	// Not running yet: the agent's tab says so, and there is nothing
 	// to call.
 	tab := orgOK[apitypes.AgentIntegrations](t, orgGet(t, srv, "/api/v1/agents/dana/integrations"))
-	if len(tab.Connected) != 1 || tab.Connected[0].State != apitypes.IntegrationStateInstalled || tab.Connected[0].Usable {
+	if len(tab.Connected) != 1 || tab.Connected[0].State != apitypes.IntegrationStateConnected || tab.Connected[0].Usable {
 		t.Errorf("tab before the shim = %+v", tab.Connected)
 	}
 	if list, err := dana.IntegrationTools(ctx); err != nil || len(list.Tools) != 0 {
@@ -403,11 +403,11 @@ func TestAgentIntegrationCallsAreHeldToTheAccess(t *testing.T) {
 	}
 	putIntegrationAccess(t, srv, "crm", "dana", `{"blogs":["Marketing"]}`)
 	intPost(t, srv, intBase+"/crm/disable")
-	if resp := callAs(t, srv, "dana", "crm_whoami", `{}`); resp.Content[0] != "The Test crm integration is switched off. Ask the owner if your work needs it." {
+	if resp := callAs(t, srv, "dana", "crm_whoami", `{}`); resp.Content[0] != "The Test crm integration is disabled. Ask the owner if your work needs it." {
 		t.Errorf("off = %+v", resp)
 	}
 	rows, _ := srv.Store.ReadIntegrationAuditTail("crm", 1)
-	if rows[0].Reason != "the integration is off" || rows[0].Allowed {
+	if rows[0].Reason != "the integration is disabled" || rows[0].Allowed {
 		t.Errorf("audit when off = %+v", rows)
 	}
 	intPost(t, srv, intBase+"/crm/enable")

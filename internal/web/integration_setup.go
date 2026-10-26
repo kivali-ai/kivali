@@ -42,12 +42,12 @@
 // A flow is forgotten setupFlowTTL after its last change or its last
 // Wait check (made only while someone watches it), setupFlowMaxAge after
 // its start at most, and lost on a restart; deleting a connection, uninstalling the integration,
-// switching it off and signing out cancel it. A flow that installs
+// disabling it and signing out cancel it. A flow that connects
 // (it started with no connection) and fails, is cancelled or is
 // forgotten before it is done keeps nothing: the integration is asked
 // to undo what it made on the service, best effort (setupUndo), the
 // connection its Keep made goes again (setupDiscard), and the
-// integration is available again. An install started while another is
+// integration is installed again, with no connection. A connect started while another is
 // under way ends that one and takes over the connection it made, with
 // what it kept.
 
@@ -319,7 +319,7 @@ func (s *Server) setupUnlock() {
 
 // endLocked starts forgetting the connection run made, when run
 // installs and ends without being done: a flow that fails or is
-// cancelled keeps nothing, and the integration is available again.
+// cancelled keeps nothing, and the integration is installed again, with no connection.
 func (t *setupRuns) endLocked(run *setupRun) {
 	if !run.install || run.madeConn == "" || run.state == apitypes.SetupFlowStateDone || t.discard == nil {
 		return
@@ -1257,8 +1257,8 @@ func (s *Server) setupDiscard(name, id string, keepRecord bool) {
 // install that ended without being done made there, before core
 // forgets the connection id it kept: a built-in's Uninstall, or a
 // setup bundle's kivali/uninstall, its server waited for bundleStartWait
-// at most when it is switched on and not running yet (one that still
-// is not, or is switched off, is not asked, and the log says so), with
+// at most when it is enabled and not running yet (one that still
+// is not, or is disabled, is not asked, and the log says so), with
 // the connection as kept so far, which may lack what later steps
 // would have kept. It is best effort, under integrationCallTimeout, off
 // every lock: a failure, or no answer in time, is logged, scrubbed of
@@ -1337,7 +1337,7 @@ func (s *Server) setupUnsubscribe(run *setupRun, ch chan []byte) {
 
 // setupCancel ends and forgets name's flow, auditing it as cancelled
 // when it had not ended: the connection is going, or the integration
-// is switched off or removed.
+// is disabled or removed.
 func (s *Server) setupCancel(name string) bool {
 	return s.setupCancelRun(name, false)
 }

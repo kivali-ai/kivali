@@ -40,7 +40,7 @@ func (g *GitHub) Uninstall(ctx context.Context, conn builtinintegrations.Connect
 		return nil
 	case errors.As(err, &ae) && ae.Status == http.StatusUnauthorized:
 		return errors.New("GitHub did not remove the app's installation: it refused the times Kivali signed with (HTTP 401): " + sentence(ae.Message) +
-			". Check the clock of the computer Kivali runs on, then uninstall again")
+			". Check the clock of the computer Kivali runs on, then disconnect again")
 	case errors.As(err, &ae):
 		return errors.New("GitHub did not remove the app's installation: " + sentence(ownerWords(ae)))
 	}

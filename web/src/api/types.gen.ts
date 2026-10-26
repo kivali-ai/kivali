@@ -1458,7 +1458,7 @@ export const NeedKindWebBudget = "web_budget";
  * requirements is not met (the body says what is), such as a sign-in
  * the service no longer accepts. Open the integration's page
  * (ReviewPath), where its Fix is. The row leaves once the
- * requirement is met, or the integration is switched off or
+ * requirement is met, or the integration is disabled or
  * uninstalled.
  */
 export const NeedKindIntegrationRequirement = "integration_requirement";
@@ -1765,43 +1765,45 @@ export interface Integrations {
   integrations: IntegrationSummary[];
 }
 /**
- * IntegrationState is where an integration stands in its lifecycle:
- * available, setting up, installed or off; or, before that, waiting
- * for its first approval, or not in this version of Kivali.
+ * IntegrationState is where an integration stands in its lifecycle.
+ * Installed is being on the team at all: a built-in this version of
+ * Kivali carries, or a bundle with an approved version. Connecting it
+ * (its setup flow: a token, a sign-in or its own steps) makes it
+ * connected, which the switch takes to disabled and back; disconnecting
+ * forgets the connection and every agent's access, back to installed.
+ * Before installed, a bundle waits for its first approval; apart, a
+ * built-in another version shipped is not in this version of Kivali.
  */
 /**
- * IntegrationStateAvailable: ready to install. A built-in while this
- * version of Kivali carries it, a bundle once a version is approved.
- * Install runs its setup flow.
+ * IntegrationStatePending: no version has been approved yet.
+ * Approving one installs it.
  */
-export const IntegrationStateAvailable = "available";
+export const IntegrationStatePending = "pending";
 /**
- * IntegrationStateSettingUp: its setup flow runs (IntegrationPage's
- * Flow). A flow that fails or is cancelled keeps nothing, and the
- * integration is available again.
- */
-export const IntegrationStateSettingUp = "setting_up";
-/**
- * IntegrationStateInstalled: the connection exists, and agents can
- * be given access. Its requirements say whether it works.
+ * IntegrationStateInstalled: on the team with no connection. Connect
+ * runs its setup flow (IntegrationPage's Flow); a flow that fails
+ * or is cancelled keeps nothing. Agents cannot use it.
  */
 export const IntegrationStateInstalled = "installed";
 /**
- * IntegrationStateOff: switched off. Agents cannot use it; the
- * connection and their access are kept.
+ * IntegrationStateConnected: the connection exists and the switch is
+ * on: agents can be given access. Its requirements say whether it
+ * works.
  */
-export const IntegrationStateOff = "off";
+export const IntegrationStateConnected = "connected";
 /**
- * IntegrationStatePending: no version has been approved yet.
+ * IntegrationStateDisabled: the connection exists and the switch is
+ * off. Agents cannot use it; the connection and their access are
+ * kept for when it is enabled again.
  */
-export const IntegrationStatePending = "pending";
+export const IntegrationStateDisabled = "disabled";
 /**
  * IntegrationStateNotIncluded: a built-in integration this version
  * of Kivali does not carry (another version shipped it). Nothing
  * runs it and agents cannot use it; it can be uninstalled.
  */
 export const IntegrationStateNotIncluded = "not_included";
-export type IntegrationState = typeof IntegrationStateAvailable | typeof IntegrationStateSettingUp | typeof IntegrationStateInstalled | typeof IntegrationStateOff | typeof IntegrationStatePending | typeof IntegrationStateNotIncluded;
+export type IntegrationState = typeof IntegrationStatePending | typeof IntegrationStateInstalled | typeof IntegrationStateConnected | typeof IntegrationStateDisabled | typeof IntegrationStateNotIncluded;
 /**
  * IntegrationSummary is one row of the list.
  */
@@ -1817,7 +1819,7 @@ export interface IntegrationSummary {
   state: IntegrationState;
   /**
    * Needs is how many of its requirements are not met, each a row of
-   * Needs you; 0 for an integration that is not installed or is off.
+   * Needs you; 0 for an integration that is not connected.
    */
   needs: number /* int */;
   enabled: boolean;
@@ -1950,22 +1952,32 @@ export interface IntegrationPage {
    */
   running: boolean;
   /**
-   * Requirements are an installed or switched-off integration's
-   * health, Kivali's rows first (an approved version, the connection,
-   * a sign-in still accepted, the connection test, the integration
-   * running), then the integration's own. Empty in any other state.
+   * Requirements are a connected or disabled integration's health,
+   * Kivali's rows first (an approved version, the connection, a
+   * sign-in still accepted, the connection test, the integration
+   * running), then the integration's own. Installed, the one row of
+   * a connection an earlier version made that this version's setup
+   * does not take, whose Fix connects again; empty otherwise.
    */
   requirements: IntegrationRequirement[];
   /**
    * Flow is its setup flow under way, or the one that last ended,
-   * which Kivali keeps for ten minutes: installing (flow setup) or a
+   * which Kivali keeps for ten minutes: connecting (flow setup) or a
    * requirement's fix. Absent with none.
    */
   flow?: SetupFlow;
   /**
+   * CanDisconnect is true when DELETE
+   * /api/v1/org/integrations/{name}/connection applies: the
+   * integration holds a connection, this version's or an earlier
+   * one's, and this version of Kivali carries it.
+   */
+  can_disconnect: boolean;
+  /**
    * CanUninstall is true when DELETE /api/v1/org/integrations/{name}
    * applies: to an uploaded integration whatever its state, and to a
-   * built-in that is installed, off or not in this version of Kivali.
+   * built-in not in this version of Kivali. A built-in this version
+   * carries is never uninstalled, only disconnected.
    */
   can_uninstall: boolean;
 }
@@ -2662,7 +2674,7 @@ export interface AgentIntegration {
   state: IntegrationState;
   /**
    * Usable is true when the agent's calls can go through now: the
-   * integration is installed and running, and its connection has its
+   * integration is connected and running, and its connection has its
    * secrets and, made by signing in, is signed in. Always false under
    * Available.
    */

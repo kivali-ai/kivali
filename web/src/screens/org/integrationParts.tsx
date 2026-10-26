@@ -30,11 +30,10 @@ export function rollBackApi(name: string, version: string): string {
 }
 
 const STATE: Record<IntegrationState, { label: string; tone: BadgeTone }> = {
-  available: { label: 'Available', tone: 'neutral' },
-  setting_up: { label: 'Setting up', tone: 'signal' },
-  installed: { label: 'Installed', tone: 'success' },
-  off: { label: 'Off', tone: 'neutral' },
-  pending: { label: 'Pending', tone: 'signal' },
+  pending: { label: 'Waiting for approval', tone: 'signal' },
+  installed: { label: 'Installed', tone: 'neutral' },
+  connected: { label: 'Connected', tone: 'success' },
+  disabled: { label: 'Disabled', tone: 'neutral' },
   not_included: { label: 'Not in this version of Kivali', tone: 'neutral' },
 };
 
@@ -44,13 +43,18 @@ export function StateBadge({ state }: { state: IntegrationState }) {
   return <Badge tone={s.tone}>{s.label}</Badge>;
 }
 
-/** "1 needs you", "3 need you": an installed integration's unmet requirements; empty for none. */
+/** "1 needs you", "3 need you": a connected integration's unmet requirements; empty for none. */
 export function needsLabel(n: number): string {
   if (n <= 0) return '';
   return n + (n === 1 ? ' needs you' : ' need you');
 }
 
-/** The badge of an installed integration's unmet requirements: "1 needs you"; nothing for none. */
+/** "All met", "1 not met", "3 not met": where a connected integration's requirements stand, beside their heading. */
+export function requirementsSummary(unmet: number): string {
+  return unmet <= 0 ? 'All met' : unmet + ' not met';
+}
+
+/** The badge of a connected integration's unmet requirements: "1 needs you"; nothing for none. */
 export function NeedsBadge({ needs }: { needs: number }) {
   const label = needsLabel(needs);
   if (!label) return null;
@@ -138,24 +142,46 @@ export function uploadRefusalOf(err: unknown): IntegrationUploadRefused | null {
 interface BlockProps {
   label: string;
   children: ReactNode;
+  /** Where the block stands, in a few words beside its heading, read without opening it ("All met"). */
+  summary?: ReactNode;
+  /** The summary's tone: muted (the default), or danger for one that needs the owner. */
+  summaryTone?: 'muted' | 'danger';
   /** One small control beside the heading. */
   action?: ReactNode;
-  /** `heading` for the integration page's sections; `label` (the default) for the install screen's facts. */
+  /** `heading` for the integration page's sections; `label` (the default) for the install screen's facts and a section's own parts. */
   variant?: 'heading' | 'label';
-  /** Starts closed: a chevron at the end of the heading opens and closes it, and the action shows only while it is open. */
+  /** `h2` (the default) for a page's sections; `h3` for a part of one. */
+  level?: 'h2' | 'h3';
+  /** A chevron at the end of the heading opens and closes it, and the action shows only while it is open. */
   collapsible?: boolean;
+  /** How a collapsible block the page does not control starts: closed, unless true. */
+  defaultOpen?: boolean;
+  /** A collapsible block the page opens and closes itself: whether it is open, and what the chevron asks for. */
+  open?: boolean;
+  onOpenChange?(open: boolean): void;
 }
 
 /** One labelled block of an integration's page or install screen: its heading, then what it says. */
-export function Block({ label, children, action, variant = 'label', collapsible = false }: BlockProps) {
-  const [open, setOpen] = useState(false);
-  const shown = !collapsible || open;
+export function Block({ label, children, summary, summaryTone = 'muted', action, variant = 'label', level = 'h2', collapsible = false, defaultOpen = false, open, onOpenChange }: BlockProps) {
+  const [inner, setInner] = useState(defaultOpen);
+  const isOpen = open ?? inner;
+  const shown = !collapsible || isOpen;
+  const toggle = () => {
+    setInner(!isOpen);
+    onOpenChange?.(!isOpen);
+  };
   return (
     <section className="app-int-block" aria-label={label}>
       <div className="app-int-block-head">
-        <Text as="h2" variant={variant} {...(variant === 'label' ? { tone: 'muted' as const } : {})} className="app-int-block-title">
+        <Text as={level} variant={variant} {...(variant === 'label' ? { tone: 'muted' as const } : {})} className="app-int-block-title">
           {label}
         </Text>
+        {summary != null && summary !== '' && (
+          <Text variant="caption" tone={summaryTone} className="app-int-block-summary">
+            {summary}
+          </Text>
+        )}
+        <span className="app-int-spacer" />
         {shown && action}
         {collapsible && (
           <Button
@@ -164,9 +190,9 @@ export function Block({ label, children, action, variant = 'label', collapsible 
             iconOnly
             icon={<Icon name="chevron-down" className="app-int-block-chev" />}
             aria-label={label}
-            aria-expanded={open}
+            aria-expanded={isOpen}
             className="app-int-block-toggle"
-            onClick={() => setOpen((o) => !o)}
+            onClick={toggle}
           />
         )}
       </div>

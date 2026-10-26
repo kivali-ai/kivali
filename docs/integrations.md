@@ -1,6 +1,6 @@
 # Integrations
 
-An integration is an external service your agents can act on, such as a CRM, a blog or a ticket tracker. Each one comes from a bundle you approve or ships with Kivali, is installed with a token you paste, by signing in to the service or by its own setup, and is given to agents one at a time, each with its own access. This page covers having one built, approving one and its new versions, rolling back to an earlier version, installing it, what it needs from you once installed, giving agents access, what an agent then sees, the record of their calls, its log, switching it off or uninstalling it, and the [Git](#git) and [GitHub](#github) integrations that ship with Kivali.
+An integration is an external service your agents can act on, such as a CRM, a blog or a ticket tracker. Each one comes from a bundle you approve or ships with Kivali, is connected with a token you paste, by signing in to the service or by its own setup, and is given to agents one at a time, each with its own access. This page covers having one built, approving one and its new versions, rolling back to an earlier version, connecting it, what it needs from you once connected, giving agents access, what an agent then sees, the record of their calls, its log, disabling, disconnecting or uninstalling it, and the [Git](#git) and [GitHub](#github) integrations that ship with Kivali.
 
 Integrations are under **Org**, **Integrations**.
 
@@ -8,20 +8,21 @@ Integrations are under **Org**, **Integrations**.
 
 An integration gives agents **actions**: things they can do in the service, such as "create a blog post" or "list contacts". Its **connection** is how it signs in to the service: a token or key you copy from the service's settings, and sometimes a field or two more, such as an account name. Its **access** is what one agent may do with it, chosen on a form the integration describes: which blogs, which projects, whether it may publish.
 
-An integration is installed one **version** at a time. Nothing in a version runs until you approve it. Once approved and switched on, an integration you install runs on its own, apart from Kivali and from your agents, and reaches only the hosts its install screen listed.
+An integration is installed one **version** at a time. Nothing in a version runs until you approve it. Once approved and enabled, an integration you upload runs on its own, apart from Kivali and from your agents, and reaches only the hosts its install screen listed.
 
-Some integrations ship with Kivali. They are on the Integrations page already, marked **Built in**, and need no approval: their version comes with Kivali, and Kivali's updates bring the next one, so there is nothing to approve, reject or roll back to. They run inside Kivali: one connected with a token reaches the hosts its connection names, and its install screen lists no hosts of its own; one whose own setup makes its connection, such as [GitHub](#github), lists every host its setup and its calls reach. Install one and give agents access as you would any other. Uninstalling a built-in integration takes it back to **Available**, ready to install again; switch it off when your team should not use it for a while, and it stays off. One that this version of Kivali does not include (another version shipped it) is marked **Not in this version of Kivali**: agents cannot use it, and you can uninstall it.
+Some integrations ship with Kivali. They are on the Integrations page already, marked **Built in**, and need no approval: their version comes with Kivali, and Kivali's updates bring the next one, so there is nothing to approve, reject or roll back to. They run inside Kivali: one connected with a token reaches the hosts its connection names, and its install screen lists no hosts of its own; one whose own setup makes its connection, such as [GitHub](#github), lists every host its setup and its calls reach. Connect one and give agents access as you would any other. An integration that ships with Kivali is never uninstalled: **Disconnect** forgets its connection and leaves it **Installed**, ready to connect again; disable it when your team should not use it for a while, and it stays disabled. One that this version of Kivali does not include (another version shipped it) is marked **Not in this version of Kivali**: agents cannot use it, and you can uninstall it.
 
 ### Where an integration stands
 
 Every integration's page and its row on the Integrations page show where it stands:
 
-- **Pending**: no version is approved yet. Approve one from its install screen.
-- **Available**: ready to install. **Install** on its page runs its setup.
-- **Setting up**: its setup runs. A setup that fails or that you cancel keeps nothing, and the integration is available again.
-- **Installed**: it has its connection, and agents can be given access. Its **Requirements** say whether it works, and the list shows how many need you ("1 needs you").
-- **Off**: switched off. Agents cannot use it; its connection and every agent's access are kept for when you switch it on.
+- **Waiting for approval**: no version is approved yet. Approve one from its install screen; approving installs it.
+- **Installed**: on the team, with no connection. **Connect** on its page runs its setup. A setup that fails or that you cancel keeps nothing, and the integration stays installed.
+- **Connected**: it has its connection and is enabled, so agents can be given access. Its **Requirements** say whether it works, and the list shows how many need you ("1 needs you").
+- **Disabled**: its connection and every agent's access are kept, but agents cannot use it, until you enable it again.
 - **Not in this version of Kivali**: see above.
+
+Installed and disabled are alike for your agents: neither can be used. The difference is what Kivali holds: a disabled integration keeps its connection and everyone's access for when you enable it; an installed one holds nothing of the service's. **Disconnect** forgets the connection and every agent's access, back to **Installed**; **Uninstall** takes an integration you uploaded off the team altogether ([Disable, disconnect or uninstall it](#disable-disconnect-or-uninstall-it)).
 
 ## Have an integration built
 
@@ -30,7 +31,7 @@ You do not need a bundle from anyone else: every team has a **Kivali Developer**
 1. Ask the Kivali Developer for the integration, in its chat or through your Chief of Staff: the service, what your agents should be able to do in it, and what you want to limit agent by agent, such as which blogs an agent may write in or whether it may publish.
 2. The Kivali Developer reads the service's documentation, writes the integration, and tests it against a stand-in for the service it writes itself, never against your account: it never sees your connection's secrets. Before it publishes, it checks the bundle by the rules an install checks it by, and starts it with no network to see that it answers.
 3. When it publishes a version, a request arrives in **Needs you**: **Install** and the integration's name and version, with the Kivali Developer's notes on what it does, every host it reaches, each secret it asks for and anything it can change or delete. **Review** opens the version's [install screen](#install-an-integration), which shows the notes beside everything approving lets in. Approve or reject it there or in Needs you; the Kivali Developer hears your answer in its chat.
-4. [Install it](#install-it), choose **Test connection**, and [give agents access](#give-agents-access). Tell the Kivali Developer what the test said. If it failed, the Kivali Developer reads the integration's [log](#its-log) and publishes a fixed version, which reaches you the same way.
+4. [Connect it](#connect-it), choose **Test connection**, and [give agents access](#give-agents-access). Tell the Kivali Developer what the test said. If it failed, the Kivali Developer reads the integration's [log](#its-log) and publishes a fixed version, which reaches you the same way.
 
 The Kivali Developer uses an integration only if you give it access, like any agent. Its own commands reach the hosts your team allows and the ones you add on its **Security** view, so if it needs to download a package, it asks you for that host.
 
@@ -67,9 +68,9 @@ Rolling back stops the version in use and runs the earlier one again in a few se
 
 Your agents' access stays as it is. Access that no longer fits the earlier version's access form is marked, as after a new version (see [Give agents access](#give-agents-access)). Every version is kept until you remove the integration, so any version that was in use can be rolled back to.
 
-## Install it
+## Connect it
 
-On the integration's page, under **Install**, choose **Install**. For an integration you connect with a token, it asks for the connection's fields, under the integration's name; fill them in and choose **Continue**. The fields are the approved version's, so approve a version first. **Cancel** stops, keeping nothing. An integration whose own setup makes its connection, such as [GitHub](#github), takes you through that setup's steps instead. A setup that does not finish (you cancel it, it fails, nobody takes a step for ten minutes, or Kivali restarts meanwhile) keeps nothing: Kivali asks the integration to undo what it made on the service where it can, forgets the connection, and you can install again from the start. Starting the setup again while one is under way, in another tab say, ends the first and carries on with what it already made. Once the integration is installed, its page shows its requirements, its connection form, where you change a field and choose **Save connection**, and who has access.
+On the integration’s page, under **Connect**, choose **Connect**. For an integration you connect with a token, it asks for the connection's fields, under the integration's name; fill them in and choose **Continue**. The fields are the approved version's, so approve a version first. **Cancel** stops, keeping nothing. An integration whose own setup makes its connection, such as [GitHub](#github), takes you through that setup's steps instead. A setup that does not finish (you cancel it, it fails, nobody takes a step for ten minutes, or Kivali restarts meanwhile) keeps nothing: Kivali asks the integration to undo what it made on the service where it can, forgets the connection, and you can connect again from the start. Starting the setup again while one is under way, in another tab say, ends the first and carries on with what it already made. Once the integration is connected, its page leads with its **Requirements** (open while one needs you; one line, "All met", otherwise) and **Access**, who may use it and how far. Its **Connection** block stays closed until you open it: it holds the connection form, where you change a field and choose **Save connection**, the setup notes, and **Disconnect**.
 
 Secret fields, such as tokens, are never shown again once saved: the page says only that they are set. To change one, type the new value; leave it empty to keep the one stored. They are kept outside your team's data volume, so [backups](backup-and-restore.md) never contain them. After a restore, an integration whose secrets are not there has its **Connection** requirement not met until you enter them again: its **Fix** asks for them.
 
@@ -89,14 +90,14 @@ An installed integration lists its **Requirements**: what it needs to work, each
 
 Then the integration's own, such as whether its app is still installed on the service.
 
-A requirement that is not met has **Fix**, which runs what mends it, with the same steps as installing: entering the connection again, signing in again, or the integration's own steps, such as approving a new permission on the service. Each one not met is also in **Needs you** on Home, under the integration's name, with **Open** to go to its page; it leaves once the requirement is met, or once you switch the integration off or uninstall it.
+A requirement that is not met has **Fix**, which runs what mends it, with the same steps as connecting: entering the connection again, signing in again, or the integration's own steps, such as approving a new permission on the service. Each one not met is also in **Needs you** on Home, under the integration's name, with **Open** to go to its page; it leaves once the requirement is met, or once you disable, disconnect or uninstall the integration.
 
 ### Connect by signing in
 
 Some services hand out no token to paste: you connect them by signing in to the service and approving Kivali there. The integration's page says so and shows the service's own setup steps above the connection form. When the integration asks the service for particular scopes, its install screen and page list them ("Asks the service for: ..."); one whose app's own settings decide what it may do lists none.
 
 1. Register an app with the service, as its setup steps say. The service gives the app a client id and a client secret.
-2. On the integration's page, choose **Install**, paste the client id and the client secret, with any other field it asks for, and choose **Continue**. The client secret is kept like any other secret field and never shown again.
+2. On the integration’s page, choose **Connect**, paste the client id and the client secret, with any other field it asks for, and choose **Continue**. The client secret is kept like any other secret field and never shown again.
 3. The page shows a code, a **Copy code** button, the service's page to enter it on (it opens in a new tab), and how long the code works, at most ten minutes.
 4. Enter the code on the service's page and approve the sign-in there. The integration's page notices within a few seconds and shows **Signed in**, with the account you signed in as when the integration has a connection test. The integration restarts with the sign-in, which takes a few seconds.
 
@@ -104,14 +105,14 @@ If you turn the sign-in down on the service's page, or the code runs out before 
 
 #### In your browser
 
-Some services sign in in your browser instead of with a code (HubSpot, Slack, Notion), and some offer both. **Install**, and the **Sign-in** requirement's **Fix** once installed, sign in in the browser where a sign-in there can finish, and with a code elsewhere (below).
+Some services sign in in your browser instead of with a code (HubSpot, Slack, Notion), and some offer both. **Connect**, and the **Sign-in** requirement’s **Fix** once connected, sign in in the browser where a sign-in there can finish, and with a code elsewhere (below).
 
 1. Open the integration's page at the address you will keep using for Kivali. Above the connection form, the page shows a **Redirect address**, with **Copy**: Kivali's address as your browser reaches it, followed by `/connect/callback`. It is the same for every integration.
 2. Register an app with the service, as its setup steps say, and enter that redirect address exactly as the app's callback URL (some services call it the redirect URL). The service gives the app a client id and a client secret.
-3. Choose **Install**, which names the host it sends you to ("Signs in at app.hubspot.com"), paste the client id and the client secret, and choose **Continue**.
+3. Choose **Connect**, which names the host it sends you to ("Signs in at app.hubspot.com"), paste the client id and the client secret, and choose **Continue**.
 4. Choose **Continue to** the service's host. The page takes you to the service, where you approve Kivali; the service sends you back to the integration's page, which finishes the sign-in and says **Signed in**.
 
-Some services let Kivali register itself, as many MCP servers do: the install screen says "Kivali registers itself with the service; there is nothing to paste." There is no app to register and no redirect address to copy. Choose **Install** (or, once installed, the **Sign-in** requirement's **Fix**): Kivali reads where the service signs in from the service itself, registers the team with it under the name "Kivali" and your team's name, and takes you to the service's sign-in, as above. Kivali goes only to the hosts the install screen lists under "Signs in at", and the page names the one you are sent to once it knows it. Signing in later from another address of the team, such as its address for other devices, registers the team again with that address too. **Sign out** and **Uninstall** also remove Kivali's registration with the service where the service allows it, and the next sign-in registers again.
+Some services let Kivali register itself, as many MCP servers do: the install screen says "Kivali registers itself with the service; there is nothing to paste." There is no app to register and no redirect address to copy. Choose **Connect** (or, once connected, the **Sign-in** requirement’s **Fix**): Kivali reads where the service signs in from the service itself, registers the team with it under the name "Kivali" and your team's name, and takes you to the service's sign-in, as above. Kivali goes only to the hosts the install screen lists under "Signs in at", and the page names the one you are sent to once it knows it. Signing in later from another address of the team, such as its address for other devices, registers the team again with that address too. **Sign out** and **Disconnect** also remove Kivali’s registration with the service where the service allows it, and the next sign-in registers again.
 
 The sign-in finishes in the browser that went to the service, signed in to Kivali: if Kivali asks you to sign in on the way back, do, and the sign-in carries on. If you turn it down, take longer than ten minutes, or come back in another browser, the page says why and offers **Try again**. One browser sign-in at a time: going to a service from the same browser for another integration ends the one before, and its page says so.
 
@@ -141,13 +142,13 @@ Kivali keeps the sign-in fresh: the integration never sees the client secret or 
 
 While a connection needs you to sign in, an agent's call through it is refused with words that say the connection needs you to sign in again and to ask you; nothing reaches the service.
 
-**Sign out** ends the sign-in: Kivali forgets the tokens and asks the service to revoke them where the service allows it. The client id and secret stay, so you can sign in again at once with the **Sign-in** requirement's **Fix**. Uninstalling the integration revokes the tokens the same way. Switching the integration off, signing out and uninstalling it end a sign-in that is waiting for your approval.
+**Sign out** ends the sign-in: Kivali forgets the tokens and asks the service to revoke them where the service allows it. The client id and secret stay, so you can sign in again at once with the **Sign-in** requirement's **Fix**. Disconnecting the integration revokes the tokens the same way. Disabling the integration, signing out and disconnecting it end a sign-in that is waiting for your approval.
 
 ### Not running
 
-An installed integration that runs on its own has its **Running** requirement not met while it is starting, and when it has stopped. Starting takes a few seconds, or longer for one that installs software: it installs it each time it starts, before it runs, and **Recent logs** says **Installing** and the packages' names, then **Installed**, or which could not be installed and why. While it is not running, **Test connection** and the options in an access form are not available.
+A connected integration that runs on its own has its **Running** requirement not met while it is starting, and when it has stopped. Starting takes a few seconds, or longer for one that installs software: it installs it each time it starts, before it runs, and **Recent logs** says **Installing** and the packages' names, then **Installed**, or which could not be installed and why. While it is not running, **Test connection** and the options in an access form are not available.
 
-If it stays not running, open **Recent logs** on its page: the integration's own messages and Kivali's about it say what happened, such as a server that did not start or stopped answering. Kivali starts a stopped integration again by itself, and restarts one that stops answering. If the log shows the integration failing each time it starts, the version itself is at fault: ask whoever built the bundle for a fixed version, or switch it off. An integration whose software cannot be installed stops, tries again each time Kivali starts it, and says so in its log each time: a package name Debian does not have needs a fixed version, while a failure to reach Debian's repositories may pass on its own. On a team short of memory, the log says the team does not have enough memory for it; raise the team's memory in Kivali Desktop's settings, or ask whoever runs your server.
+If it stays not running, open **Recent logs** on its page: the integration's own messages and Kivali's about it say what happened, such as a server that did not start or stopped answering. Kivali starts a stopped integration again by itself, and restarts one that stops answering. If the log shows the integration failing each time it starts, the version itself is at fault: ask whoever built the bundle for a fixed version, or disable it. An integration whose software cannot be installed stops, tries again each time Kivali starts it, and says so in its log each time: a package name Debian does not have needs a fixed version, while a failure to reach Debian's repositories may pass on its own. On a team short of memory, the log says the team does not have enough memory for it; raise the team's memory in Kivali Desktop's settings, or ask whoever runs your server.
 
 ## Its log
 
@@ -165,7 +166,7 @@ An agent that is offboarded loses its access to every integration.
 
 An agent with access to a running integration has its actions as tools, named after the integration and the action: `hubspot_create_post` for HubSpot's "create post". It has only the actions its access lets the integration offer it, among those the install screen listed, and is told that you decide what it may do with each integration. An agent without access, or with access that no longer applies, has none of them.
 
-Kivali checks every call against the agent's access before the integration sees it, and tells the integration which agent is calling and with what access. A call Kivali refuses (no access, the integration switched off, not running or still being set up, an action the agent's access does not include) tells the agent why and to ask you. What comes back is the integration's text, with the connection's secrets replaced by `[secret]`; images and other content that is not text are not passed on in this release.
+Kivali checks every call against the agent's access before the integration sees it, and tells the integration which agent is calling and with what access. A call Kivali refuses (no access, the integration disabled, not running or still being connected, an action the agent's access does not include) tells the agent why and to ask you. What comes back is the integration's text, with the connection's secrets replaced by `[secret]`; images and other content that is not text are not passed on in this release.
 
 A change to an agent's access, given or taken away, changes its tools from its next turn. Access you take away is refused from the next call, even in the middle of a turn.
 
@@ -173,11 +174,13 @@ A change to an agent's access, given or taken away, changes its tools from its n
 
 **Recent calls** on an integration's page starts closed; select the arrow beside its heading to open it. It lists the latest calls through it, newest first: when, which agent, the action, whether Kivali let it through and, for a call that was refused or failed, why, and how long it took. Your own Test connection, the options an access form loads and your roll backs are in it too, under your name; a roll back reads **Roll back**, with the versions it went from and to. Calls an agent made are listed whether Kivali allowed them or not.
 
-## Switch it off or uninstall it
+## Disable, disconnect or uninstall it
 
-The switch at the top of an installed integration's page turns it off for every agent at once and stops it running, keeping the connection and everyone's access for when you turn it back on.
+The **Enabled** switch at the top of a connected integration's page turns it off for every agent at once and stops it running, keeping the connection and everyone's access for when you turn it back on. It reads **Disabled** meanwhile.
 
-**Uninstall** asks first, naming what goes. Kivali asks the service to undo the installation where the integration can (such as removing its app), revokes a sign-in's tokens where the service allows it, then forgets the connection and its secrets, and every agent's access goes. If the integration could not undo its side, the page says why and nothing changes. An integration that ships with Kivali is then **Available** again, ready to install. One you uploaded goes with every version and its log, and stops running; uploading a bundle brings it back from scratch.
+**Disconnect**, at the end of the **Connection** block, asks first, naming what goes. Kivali asks the service to undo the installation where the integration can (such as removing its app), revokes a sign-in's tokens where the service allows it, then forgets the connection and its secrets, and every agent's access goes. If the integration could not undo its side, the page says why and nothing changes. The integration stays on the team, **Installed**, ready to connect again.
+
+**Uninstall**, at the top of the page, is for an integration you uploaded: it disconnects it the same way, then takes it off the team with every version and its log, and it stops running; uploading a bundle brings it back from scratch. An integration that ships with Kivali cannot be uninstalled while this version of Kivali carries it; one that another version shipped can.
 
 ## Git
 
@@ -194,7 +197,7 @@ Git has one connection, like every integration: one host and its token. Every ag
 
 The token is kept in the connection's Secret, like every connection secret. The connection also has a network credential of its own, kept beside the token, that lets an agent's clone, fetch or push reach the connection's host and nothing else. Your team's allow list does not change.
 
-A team whose Git holds several connections, one per host, as earlier versions of Kivali allowed, keeps one when Kivali starts: the one most agents' access uses (the oldest, when two are used as much). The others are set aside, not deleted: agents can no longer use them, and their tokens stay where they were kept until you uninstall Git, which forgets them with the connection. An agent whose access was given for a connection set aside keeps its access on the page, marked invalid with the reason, such as "set for the connection Company GitLab, which Git no longer has", and can use Git again once you set its access with **Change**. If Kivali cannot finish setting the others aside, it says so in its log, and no agent can use Git (every access row says why) until it can. Going back to an earlier version of Kivali afterwards keeps the connection, but every agent's Git access then reads as invalid until you set it again.
+A team whose Git holds several connections, one per host, as earlier versions of Kivali allowed, keeps one when Kivali starts: the one most agents' access uses (the oldest, when two are used as much). The others are set aside, not deleted: agents can no longer use them, and their tokens stay where they were kept until you disconnect Git, which forgets them with the connection. An agent whose access was given for a connection set aside keeps its access on the page, marked invalid with the reason, such as "set for the connection Company GitLab, which Git no longer has", and can use Git again once you set its access with **Change**. If Kivali cannot finish setting the others aside, it says so in its log, and no agent can use Git (every access row says why) until it can. Going back to an earlier version of Kivali afterwards keeps the connection, but every agent's Git access then reads as invalid until you set it again.
 
 ### Access
 
@@ -221,7 +224,7 @@ An agent with access has three actions:
 
 All three go to the connection's host with your token. The working copy is an ordinary one, whose origin is the repository's address without the token, and the agent works in it with plain git in its shell. That plain git reaches only the hosts on your team's allow list, and without your token, so a repository host that is not on the list is reachable only through these three actions.
 
-Every clone, fetch and push is in **Recent calls**, with the repository and the branches and tags that moved (a push also says when it forced), or why it failed. Kivali checks each one against the agent's access before anything runs. Each has two rows: one when it starts and one when it ends. If you change an agent's access while its push runs, the second row still records what the push wrote, and says the access changed during it. If you uninstall Git and install it again while an agent's clone, fetch or push runs, the second row records what ran and says the connection changed during it.
+Every clone, fetch and push is in **Recent calls**, with the repository and the branches and tags that moved (a push also says when it forced), or why it failed. Kivali checks each one against the agent's access before anything runs. Each has two rows: one when it starts and one when it ends. If you change an agent's access while its push runs, the second row still records what the push wrote, and says the access changed during it. If you disconnect Git and connect it again while an agent’s clone, fetch or push runs, the second row records what ran and says the connection changed during it.
 
 ### Not supported
 
@@ -235,14 +238,14 @@ Every clone, fetch and push is in **Recent calls**, with the repository and the 
 
 **GitHub** ships with Kivali. It lets agents read and open issues, comments and pull requests in your GitHub repositories, as a private GitHub App its setup makes on your account or an organization's. It runs inside Kivali and reaches only `api.github.com` and `github.com`.
 
-### Install it
+### Connect it
 
-On GitHub's page, choose **Install**. Setup makes the app and installs it on GitHub's own pages, where you are signed in to GitHub, and you copy nothing:
+On GitHub’s page, choose **Connect**. Setup makes the app and installs it on GitHub's own pages, where you are signed in to GitHub, and you copy nothing:
 
 1. Name the account to make the app on: an organization's name, or leave it blank for your personal account. Choose the account that owns the repositories agents should reach: the app can reach only that account's repositories. Choose **Continue**.
 2. Choose **Continue to github.com**. GitHub's form for a new GitHub App opens filled in: the name (Kivali and your team's name), the team's address, the webhook off, installation only on that account, and the repository permissions Contents and Metadata read-only, Issues and Pull requests read and write. App names are unique across GitHub, so GitHub may ask you to change the name. Choose **Create GitHub App**.
 3. GitHub sends you back to Kivali, which takes the app GitHub made. Choose **Continue to github.com** again: on GitHub's page for installing the app, choose the repositories agents should reach and choose **Install**. Agents reach only repositories the app is installed on.
-4. GitHub sends you back, and GitHub is installed. When an organization's owners approve installations first, the page waits until one of them approves it on GitHub.
+4. GitHub sends you back, and GitHub is connected. When an organization's owners approve installations first, the page waits until one of them approves it on GitHub.
 
 Kivali keeps the app's id, name, client id and secret, its private key and where it is installed, and nothing of your own GitHub account's. The client secret and the private key are secrets, never shown; the app's id, name, client id and installation are GitHub's public names for it, so what the app writes on GitHub reads as written by `<the app's name on GitHub>[bot]`, to agents as on GitHub. Each call is made as the app: Kivali signs with the app's key for a token that lasts an hour at most, narrowed to the call's repository and to what the action needs.
 
@@ -250,7 +253,7 @@ If setup stops before it is done, Kivali keeps nothing, and you can start again;
 
 **Test connection** names the app, as the bot agents act as, and the account it is installed on.
 
-### What it needs once installed
+### What it needs once connected
 
 Besides Kivali's own, GitHub's page lists four requirements, each with a **Fix** that takes you to the page on GitHub that mends it:
 
@@ -259,13 +262,13 @@ Besides Kivali's own, GitHub's page lists four requirements, each with a **Fix**
 - **Repositories it reaches**: how many repositories the installation reaches, or all of them. Reaching none, **Fix** opens the installation's settings, to choose them.
 - **Permissions current**: the installation has every permission this version of Kivali needs. When a later version needs one more, **Fix** opens the app's settings on GitHub to add it (or the installation's, to approve it), and the page waits until GitHub shows it granted.
 
-### Uninstall
+### Disconnect
 
-Uninstalling GitHub removes the app's installation from GitHub, then Kivali forgets the app's key and every agent's access. The app itself stays on GitHub: delete it under **GitHub Apps** in the account's settings on GitHub (for an organization, the organization's settings), where the **The app's key works** requirement links it, when you no longer need it. Installing GitHub again makes a new app.
+Disconnecting GitHub removes the app’s installation from GitHub, then Kivali forgets the app's key and every agent's access. The app itself stays on GitHub: delete it under **GitHub Apps** in the account's settings on GitHub (for an organization, the organization's settings), where the **The app's key works** requirement links it, when you no longer need it. Connecting GitHub again makes a new app.
 
 ### From an earlier version of Kivali
 
-An earlier version of Kivali connected GitHub by signing in with a GitHub App you registered yourself. This version makes its own app, so that connection does not carry over: after the update, GitHub reads **Available** and says to set it up again, and agents cannot use it until you do. Install it as above. Installing it replaces the earlier connection, and Kivali revokes the earlier app's sign-in; every agent's access is kept, and works again once GitHub is installed. If you no longer want GitHub, choose **Uninstall** instead: it removes the earlier connection and every agent's access, and revokes the earlier app's sign-in. Either way, the app you registered stays on GitHub: delete it there when you no longer need it.
+An earlier version of Kivali connected GitHub by signing in with a GitHub App you registered yourself. This version makes its own app, so that connection does not carry over: after the update, GitHub reads **Installed** and says to set it up again, and agents cannot use it until you do. Connect it as above. Connecting it replaces the earlier connection, and Kivali revokes the earlier app's sign-in; every agent's access is kept, and works again once GitHub is connected. If you no longer want GitHub, choose **Disconnect** instead: it removes the earlier connection and every agent's access, and revokes the earlier app's sign-in. Either way, the app you registered stays on GitHub: delete it there when you no longer need it.
 
 ### Access
 

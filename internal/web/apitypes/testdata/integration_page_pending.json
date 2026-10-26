@@ -59,5 +59,6 @@
   ],
   "running": false,
   "requirements": [],
+  "can_disconnect": false,
   "can_uninstall": true
 }

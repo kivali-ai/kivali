@@ -4,7 +4,7 @@
     "display_name": "HubSpot",
     "description": "Blog posts and contacts in HubSpot.",
     "version": "1.2.0",
-    "state": "installed",
+    "state": "connected",
     "needs": 0,
     "enabled": true,
     "builtin": false,
@@ -260,5 +260,6 @@
       "fix": ""
     }
   ],
+  "can_disconnect": true,
   "can_uninstall": true
 }

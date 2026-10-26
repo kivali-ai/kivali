@@ -114,7 +114,7 @@ func TestSetupStartedAgainTakesOverWhatWasKept(t *testing.T) {
 	if u := e.callsOf("uninstall"); len(u) != 0 {
 		t.Errorf("starting again undid the install: %+v", u)
 	}
-	if page := echoPage(t, srv); page.Summary.State != apitypes.IntegrationStateSettingUp {
+	if page := echoPage(t, srv); page.Summary.State != apitypes.IntegrationStateInstalled {
 		t.Errorf("while the new install runs = %s", page.Summary.State)
 	}
 

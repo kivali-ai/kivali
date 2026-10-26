@@ -143,7 +143,7 @@ func TestGitAfterOneConnectionMigration(t *testing.T) {
 	srv.RegisterBuiltinEgress(context.Background())
 
 	page := orgOK[apitypes.IntegrationPage](t, orgGet(t, srv, intBase+"/git"))
-	if page.Connection == nil || page.Connection.ID != lab || !installedAndMet(page) {
+	if page.Connection == nil || page.Connection.ID != lab || !connectedAndMet(page) {
 		t.Fatalf("page = %+v, unmet %v", page.Connection, unmetIDs(page))
 	}
 	rows := map[string]apitypes.AccessRow{}
@@ -195,15 +195,15 @@ func TestGitAfterOneConnectionMigration(t *testing.T) {
 		t.Errorf("dana's tab after setting the access again = %+v", tab.Connected)
 	}
 
-	// Uninstall forgets the connection set aside with the connection.
-	if rr := intDelete(t, srv, intBase+"/git"); rr.Code != http.StatusNoContent {
-		t.Fatalf("uninstall = %d %s", rr.Code, rr.Body.String())
+	// Disconnect forgets the connection set aside with the connection.
+	if rr := intDelete(t, srv, intBase+"/git/connection"); rr.Code != http.StatusOK {
+		t.Fatalf("disconnect = %d %s", rr.Code, rr.Body.String())
 	}
 	if names := mem.Names(); len(names) != 0 {
-		t.Errorf("secrets after uninstall = %v", names)
+		t.Errorf("secrets after disconnect = %v", names)
 	}
 	if retired, _ := srv.Store.RetiredIntegrationConnections("git"); len(retired) != 0 {
-		t.Errorf("set aside after uninstall = %+v", retired)
+		t.Errorf("set aside after disconnect = %+v", retired)
 	}
 }
 
@@ -231,8 +231,8 @@ func TestGitJobTellsWhatRanThroughItsConnection(t *testing.T) {
 	if err != nil || first.ShellJob == nil || first.ShellJob.Git == nil || first.ShellJob.Git.ConnectionID != before {
 		t.Fatalf("first request = %+v, %v", first, err)
 	}
-	if rr := intDelete(t, srv, intBase+"/git"); rr.Code != http.StatusNoContent {
-		t.Fatalf("uninstall = %d %s", rr.Code, rr.Body.String())
+	if rr := intDelete(t, srv, intBase+"/git/connection"); rr.Code != http.StatusOK {
+		t.Fatalf("disconnect = %d %s", rr.Code, rr.Body.String())
 	}
 	if after := connectGit(t, srv, "github.com").Connection.ID; after == before {
 		t.Fatal("installing again kept the connection's id")
@@ -308,11 +308,11 @@ func TestSeveralConnectionRecordsGrantNothing(t *testing.T) {
 	if !resp.IsError || !strings.Contains(strings.Join(resp.Content, " "), several) {
 		t.Errorf("lee's call = %+v", resp)
 	}
-	if rr := intDelete(t, srv, intBase+"/git"); rr.Code != http.StatusNoContent {
-		t.Fatalf("uninstall = %d %s", rr.Code, rr.Body.String())
+	if rr := intDelete(t, srv, intBase+"/git/connection"); rr.Code != http.StatusOK {
+		t.Fatalf("disconnect = %d %s", rr.Code, rr.Body.String())
 	}
 	if conns, _ := srv.Store.ListIntegrationConnections("git"); len(conns) != 0 || len(mem.Names()) != 0 {
-		t.Errorf("after uninstall: records %+v, secrets %v", conns, mem.Names())
+		t.Errorf("after disconnect: records %+v, secrets %v", conns, mem.Names())
 	}
 }
 

@@ -421,7 +421,7 @@ func TestRequirements(t *testing.T) {
 	if got := rowsOf(rows); got != "key met |installed met |repositories met |permissions met " {
 		t.Fatalf("rows = %s", got)
 	}
-	if rows[0].Title != "The app's key works" || rows[0].Words != "GitHub accepts the key of the app Kivali Acme. Uninstalling GitHub here leaves the app on GitHub, for you to delete in its settings at https://github.com/organizations/acme/settings/apps/kivali-acme." ||
+	if rows[0].Title != "The app's key works" || rows[0].Words != "GitHub accepts the key of the app Kivali Acme. Disconnecting GitHub here leaves the app on GitHub, for you to delete in its settings at https://github.com/organizations/acme/settings/apps/kivali-acme." ||
 		rows[1].Words != "Installed on acme." || rows[2].Words != "Installed on acme, reaching 3 repositories." || rows[3].Title != "Permissions current" {
 		t.Errorf("words = %+v", rows)
 	}

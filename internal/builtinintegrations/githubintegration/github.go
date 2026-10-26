@@ -89,8 +89,8 @@ func (g *GitHub) now() time.Time {
 }
 
 // setupSummary is what setup does, in words for the owner, with what
-// Uninstall leaves on GitHub.
-const setupSummary = "Creates a private GitHub App, on your account or an organization's, that may read contents and write issues and pull requests, and installs it on the repositories you choose. Uninstalling removes the installation; the app stays on GitHub until you delete it under GitHub Apps in the account's settings."
+// Disconnect leaves on GitHub.
+const setupSummary = "Creates a private GitHub App, on your account or an organization's, that may read contents and write issues and pull requests, and installs it on the repositories you choose. Disconnecting removes the installation; the app stays on GitHub until you delete it under GitHub Apps in the account's settings."
 
 // accessSchema is the access form: the repositories an agent may use,
 // and whether it may create issues, comments and pull requests there.

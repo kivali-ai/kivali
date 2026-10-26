@@ -126,34 +126,34 @@ func runnerSettled(t *testing.T, srv *Server) {
 // integration doing anything of its own.
 func TestInstallOverAnEarlierSignInRevokesIt(t *testing.T) {
 	srv, e, _, vendor, tok := echoMisfitServer(t)
-	if page := echoPage(t, srv); page.Summary.State != apitypes.IntegrationStateAvailable || !page.CanUninstall {
-		t.Fatalf("before = %s, can uninstall %v", page.Summary.State, page.CanUninstall)
+	if page := echoPage(t, srv); page.Summary.State != apitypes.IntegrationStateInstalled || !page.CanDisconnect {
+		t.Fatalf("before = %s, can disconnect %v", page.Summary.State, page.CanUninstall)
 	}
 	installEcho(t, srv, e, "acme")
 	runnerSettled(t, srv)
 	if got := vendor.Revoked(); !slices.Contains(got, tok.Refresh) || !slices.Contains(got, tok.Access) {
 		t.Errorf("revoked = %v", got)
 	}
-	if page := echoPage(t, srv); page.Summary.State != apitypes.IntegrationStateInstalled || len(page.Access) != 1 {
+	if page := echoPage(t, srv); page.Summary.State != apitypes.IntegrationStateConnected || len(page.Access) != 1 {
 		t.Errorf("after = %s, access %+v", page.Summary.State, page.Access)
 	}
 }
 
 // Why this test exists: the owner may drop an earlier version's
-// connection rather than set it up again. Uninstall must be offered,
+// connection rather than set it up again. Disconnect must be offered,
 // remove the connection and every agent's access, and revoke the
 // sign-in it held, which this version's manifest knows nothing of.
-func TestUninstallAnEarlierSignInRevokesIt(t *testing.T) {
+func TestDisconnectAnEarlierSignInRevokesIt(t *testing.T) {
 	srv, _, mem, vendor, tok := echoMisfitServer(t)
-	if rr := intDelete(t, srv, intBase+"/echo"); rr.Code != http.StatusNoContent {
-		t.Fatalf("uninstall = %d %s", rr.Code, rr.Body.String())
+	if rr := intDelete(t, srv, intBase+"/echo/connection"); rr.Code != http.StatusOK {
+		t.Fatalf("disconnect = %d %s", rr.Code, rr.Body.String())
 	}
 	runnerSettled(t, srv)
 	if got := vendor.Revoked(); !slices.Contains(got, tok.Refresh) || !slices.Contains(got, tok.Access) {
 		t.Errorf("revoked = %v", got)
 	}
 	page := echoPage(t, srv)
-	if page.Summary.State != apitypes.IntegrationStateAvailable || len(page.Access) != 0 || len(page.Requirements) != 0 || len(mem.Names()) != 0 {
+	if page.Summary.State != apitypes.IntegrationStateInstalled || len(page.Access) != 0 || len(page.Requirements) != 0 || len(mem.Names()) != 0 {
 		t.Errorf("after = %s, access %+v, rows %+v, secrets %v", page.Summary.State, page.Access, page.Requirements, mem.Names())
 	}
 }

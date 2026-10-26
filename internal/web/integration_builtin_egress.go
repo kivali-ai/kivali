@@ -168,8 +168,8 @@ func (s *Server) mintBuiltinProxySecret(ctx context.Context, name, connID string
 }
 
 // RegisterBuiltinEgress registers the scoped proxy credential of the
-// connection of every switched-on built-in integration again, from its
-// Secret, and drops those of the ones switched off and of every
+// connection of every enabled built-in integration again, from its
+// Secret, and drops those of the ones disabled and of every
 // connection set aside. Boot calls it
 // (main.go), and so does a restore: the proxy's credentials file is
 // not in a backup, and the Secrets are not touched by one. Failures are

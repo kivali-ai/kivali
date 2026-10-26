@@ -128,7 +128,7 @@ func TestEchoSetupInstalls(t *testing.T) {
 	if got := strings.Join(setupAudit(t, srv, "echo"), "|"); got != "started|returned|done" {
 		t.Errorf("audit = %s", got)
 	}
-	if page := echoPage(t, srv); page.Summary.State != apitypes.IntegrationStateInstalled {
+	if page := echoPage(t, srv); page.Summary.State != apitypes.IntegrationStateConnected {
 		t.Errorf("after setup = %s", page.Summary.State)
 	}
 	// What setup kept is the connection an ordinary call is given: Test
@@ -212,7 +212,7 @@ func TestEchoSetupCancelled(t *testing.T) {
 	if got := strings.Join(setupAudit(t, srv, "echo"), "|"); got != "started|returned|cancelled" {
 		t.Errorf("audit = %s", got)
 	}
-	if page := echoPage(t, srv); page.Summary.State != apitypes.IntegrationStateAvailable {
+	if page := echoPage(t, srv); page.Summary.State != apitypes.IntegrationStateInstalled {
 		t.Errorf("after cancel = %s", page.Summary.State)
 	}
 }
@@ -276,7 +276,7 @@ func TestEchoSetupCancelledUndoesWhatItCan(t *testing.T) {
 	if _, err := srv.Store.GetIntegrationConnection("echo"); !errors.Is(err, store.ErrNotFound) || len(mem.Names()) != 0 {
 		t.Errorf("after an uninstall that failed: %v, secrets %v", err, mem.Names())
 	}
-	if page := echoPage(t, srv); page.Summary.State != apitypes.IntegrationStateAvailable {
+	if page := echoPage(t, srv); page.Summary.State != apitypes.IntegrationStateInstalled {
 		t.Errorf("after = %s", page.Summary.State)
 	}
 }

@@ -41,6 +41,7 @@ func (s *Server) wireAPIIntegrationRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/org/integrations", s.handleAPIIntegrationUpload)
 	mux.HandleFunc("GET /api/v1/org/integrations/{name}", s.handleAPIIntegration)
 	mux.HandleFunc("DELETE /api/v1/org/integrations/{name}", s.handleAPIIntegrationUninstall)
+	mux.HandleFunc("DELETE /api/v1/org/integrations/{name}/connection", s.handleAPIIntegrationDisconnect)
 	mux.HandleFunc("POST /api/v1/org/integrations/{name}/enable", s.handleAPIIntegrationToggle(true))
 	mux.HandleFunc("POST /api/v1/org/integrations/{name}/disable", s.handleAPIIntegrationToggle(false))
 	mux.HandleFunc("GET /api/v1/org/integrations/{name}/versions/{version}", s.handleAPIIntegrationVersion)
@@ -167,7 +168,7 @@ func (s *Server) loadIntegration(ctx context.Context, name string) (*integration
 		v.conn = s.readConnectionSecret(ctx, name, rec)
 	case errors.Is(err, store.ErrIntegrationConnectionsSeveral):
 		// The page shows the oldest record, so the owner can see and
-		// uninstall it; no call reaches any (readStoredConnection), and
+		// disconnect it; no call reaches any (readStoredConnection), and
 		// the connection requirement says why.
 		all, err := s.Store.ListIntegrationConnections(name)
 		if err != nil || len(all) == 0 {
@@ -520,10 +521,11 @@ func (s *Server) integrationPage(v *integrationView, r *http.Request) apitypes.I
 		Versions:         []apitypes.IntegrationVersionSummary{},
 		Running:          v.running,
 		Flow:             v.flow,
-		CanUninstall:     !v.it.Builtin || v.staleBuiltin() || v.installed() || v.connectionMisfit(),
+		CanDisconnect:    v.conn != nil && !v.staleBuiltin(),
+		CanUninstall:     !v.it.Builtin || v.staleBuiltin(),
 	}
 	page.Requirements, _ = s.requirements(r.Context(), v)
-	if page.Summary.State == apitypes.IntegrationStateInstalled {
+	if page.Summary.State == apitypes.IntegrationStateConnected {
 		page.Summary.Needs = unmet(page.Requirements)
 	}
 	if v.manifest != nil {
@@ -784,7 +786,7 @@ func (s *Server) handleAPIIntegrationToggle(on bool) http.HandlerFunc {
 			writeAPIError(w, http.StatusInternalServerError, "the integration's switch could not be saved", whoServer)
 			return
 		}
-		// A sign-in under way ends with the integration switched off.
+		// A sign-in under way ends with the integration disabled.
 		if !on {
 			s.setupCancel(v.it.Name)
 		}
@@ -797,47 +799,80 @@ func (s *Server) handleAPIIntegrationToggle(on bool) http.HandlerFunc {
 	}
 }
 
-// uninstallAction is the audit's action for the owner's Uninstall.
-const uninstallAction = "uninstall"
+// The audit's actions for the owner's Disconnect and Uninstall.
+const (
+	disconnectAction = "disconnect"
+	uninstallAction  = "uninstall"
+)
 
-// errNotInstalled refuses Uninstall of a built-in that has nothing
-// installed.
-func errNotInstalled(display string) string {
-	return display + " is not installed, so there is nothing to uninstall"
+// errNotConnected refuses Disconnect of an integration with no
+// connection.
+func errNotConnected(display string) string {
+	return display + " is not connected, so there is nothing to disconnect"
 }
 
-// handleAPIIntegrationUninstall is Uninstall, for every integration: a
+// errBuiltinUninstall refuses Uninstall of a built-in this binary
+// carries: it is on the team as long as this version of Kivali is.
+func errBuiltinUninstall(display string) string {
+	return display + " ships with Kivali, so it cannot be uninstalled; disconnect it instead"
+}
+
+// handleAPIIntegrationDisconnect is Disconnect, for an integration with
+// a connection, this version's or one an earlier version made: a
 // built-in that undoes its installation on the service
 // (builtinintegrations.Uninstaller), or a setup bundle whose server
 // runs, does so first, and its error is a 502 that leaves everything as
-// it was. Then its setup flow under way
-// ends, each connection's Secret goes (a sign-in's tokens revoked with
-// the service where it has a revocation endpoint), and every agent's
-// access with the connections' records. A built-in this binary carries
-// is then available again, with an audit row uninstall; one with
-// nothing installed is a 409. Any other integration (uploaded, or a
-// built-in this binary does not carry) goes whole: every version, its
-// audit and its log. 204 once done.
+// it was. Then its setup flow under way ends, the connection's Secret
+// goes (a sign-in's tokens revoked with the service where it has a
+// revocation endpoint), and every agent's access with the connection's
+// record. The integration is then installed again, with an audit row
+// disconnect, and the answer is its page. One with no connection, or
+// not in this version of Kivali, is a 409.
+func (s *Server) handleAPIIntegrationDisconnect(w http.ResponseWriter, r *http.Request) {
+	v, ok := s.integrationOr404(w, r)
+	if !ok {
+		return
+	}
+	switch {
+	case v.staleBuiltin():
+		writeAPIError(w, http.StatusConflict, builtinRefusal(v.displayName(), builtinNotIncluded), whoYou)
+		return
+	case v.conn == nil:
+		writeAPIError(w, http.StatusConflict, errNotConnected(v.displayName()), whoNoOne)
+		return
+	}
+	if !s.serviceUndone(w, r, v, disconnectAction) {
+		return
+	}
+	unlock := s.lockIntegrations()
+	revokes, ok := s.disconnectLocked(w, r)
+	unlock()
+	// The vendor is asked to revoke a sign-in's tokens with the lock
+	// released, so a slow vendor holds up no other integration write.
+	s.revokeSignIns(r.Context(), revokes)
+	if ok {
+		s.writeIntegrationPage(w, r)
+	}
+}
+
+// handleAPIIntegrationUninstall is Uninstall, for an uploaded
+// integration in any state and for a built-in this binary does not
+// carry; a built-in it carries is a 409, since it is disconnected
+// instead. With a connection, the service's side is undone first, as
+// Disconnect has it. Then its setup flow under way ends, each
+// connection's Secret goes (a sign-in's tokens revoked with the service
+// where it has a revocation endpoint), and it goes whole: every
+// version, its audit and its log. 204 once done.
 func (s *Server) handleAPIIntegrationUninstall(w http.ResponseWriter, r *http.Request) {
 	v, ok := s.integrationOr404(w, r)
 	if !ok {
 		return
 	}
-	if v.it.Builtin && !v.staleBuiltin() && v.conn == nil {
-		writeAPIError(w, http.StatusConflict, errNotInstalled(v.displayName()), whoNoOne)
+	if v.it.Builtin && !v.staleBuiltin() {
+		writeAPIError(w, http.StatusConflict, errBuiltinUninstall(v.displayName()), whoNoOne)
 		return
 	}
-	// A setup bundle switched on whose server is not running cannot be
-	// asked to undo its installation, and the uninstall waits for it;
-	// one switched off leaves the service's side as it is.
-	if words := s.uninstallRefusal(v); words != "" {
-		writeAPIError(w, http.StatusConflict, words, whoYou)
-		return
-	}
-	// The service's side first, with no lock held: it may be slow, and
-	// a failure changes nothing here.
-	if words := s.serviceUninstall(r.Context(), v); words != "" {
-		writeAPIError(w, http.StatusBadGateway, words, v.whoBuilt())
+	if !s.serviceUndone(w, r, v, uninstallAction) {
 		return
 	}
 	unlock := s.lockIntegrations()
@@ -849,6 +884,26 @@ func (s *Server) handleAPIIntegrationUninstall(w http.ResponseWriter, r *http.Re
 	if ok {
 		w.WriteHeader(http.StatusNoContent)
 	}
+}
+
+// serviceUndone has v's installation on the service undone before
+// Disconnect or Uninstall (action) forgets its connection: true once
+// it is, or there was nothing to undo; false with the refusal
+// answered. A setup bundle enabled whose server is not running cannot
+// be asked, and is a 409 that waits for it (serviceUndoRefusal); one
+// disabled leaves the service's side as it is. The service's side goes
+// first, with no lock held: it may be slow, and a failure (a 502)
+// changes nothing here.
+func (s *Server) serviceUndone(w http.ResponseWriter, r *http.Request, v *integrationView, action string) bool {
+	if words := s.serviceUndoRefusal(v, action); words != "" {
+		writeAPIError(w, http.StatusConflict, words, whoYou)
+		return false
+	}
+	if words := s.serviceUninstall(r.Context(), v, action); words != "" {
+		writeAPIError(w, http.StatusBadGateway, words, v.whoBuilt())
+		return false
+	}
+	return true
 }
 
 // uninstallConnection is name's connection id as Uninstall is given it:
@@ -868,9 +923,9 @@ func (s *Server) uninstallConnection(ctx context.Context, name, id string) (buil
 // or a setup bundle's kivali/uninstall while its server runs
 // (uninstallerOf), with the connection as a call reads it (as stored
 // when it needs a sign-in), under integrationCallTimeout: the words of
-// a failure, scrubbed of the connection's secrets and audited, or ""
-// once it went through.
-func (s *Server) serviceUninstall(ctx context.Context, v *integrationView) string {
+// a failure, scrubbed of the connection's secrets and audited as
+// action (disconnect or uninstall), or "" once it went through.
+func (s *Server) serviceUninstall(ctx context.Context, v *integrationView, action string) string {
 	u, ok := s.uninstallerOf(v)
 	if !ok {
 		return ""
@@ -883,9 +938,9 @@ func (s *Server) serviceUninstall(ctx context.Context, v *integrationView) strin
 			return ""
 		}
 		if err != nil {
-			log.Printf("integration %s: read connection %s to uninstall it: %v", name, c.rec.ID, err)
-			words := display + " could not be uninstalled: Kivali could not read its connection; nothing was changed"
-			s.auditAgentCall(name, start, agent.CEOSlug, uninstallAction, false, words)
+			log.Printf("integration %s: read connection %s to undo its installation: %v", name, c.rec.ID, err)
+			words := "Kivali could not read " + display + "'s connection to undo its installation on the service; nothing was changed"
+			s.auditAgentCall(name, start, agent.CEOSlug, action, false, words)
 			return words
 		}
 		_, err = runBuiltin(ctx, s.clk(), integrationCallTimeout, func(ctx context.Context) (struct{}, error) {
@@ -897,25 +952,37 @@ func (s *Server) serviceUninstall(ctx context.Context, v *integrationView) strin
 				said = fmt.Sprintf("it did not answer within %d seconds", int(integrationCallTimeout/time.Second))
 			}
 			words := display + " could not undo its installation: " + clipRunes(scrub.Replace(said), signInWordsRunes) + "; nothing was changed"
-			s.auditAgentCall(name, start, agent.CEOSlug, uninstallAction, false, words)
+			s.auditAgentCall(name, start, agent.CEOSlug, action, false, words)
 			return words
 		}
 	}
 	return ""
 }
 
-// uninstallBuiltinLocked takes v, a built-in this binary carries, back
-// to available under lockIntegrations, once its own Uninstall (if any)
-// has undone the service's side: the connection's Secret goes (its
+// disconnectLocked is Disconnect's part under lockIntegrations, once
+// the service's side is undone: the connection's Secret goes (its
 // sign-in's tokens to revoke), then its record, its scoped proxy
-// credential and every agent's access. A Secret that cannot be deleted
-// keeps the record, so the Secret is still named and Uninstall again
-// finishes it, and the answer is a 500 saying the service's side was
-// undone. Once the connection is gone, the Secrets of any other record
-// and of the connections set aside go, best effort, and the owner's
-// audit gains uninstall. The caller has checked v has its connection.
-func (s *Server) uninstallBuiltinLocked(w http.ResponseWriter, r *http.Request, v *integrationView, start time.Time) (signInRevocations, bool) {
+// credential and every agent's access, and the integration is
+// installed again. A Secret that cannot be deleted keeps the record, so
+// the Secret is still named and Disconnect again finishes it, and the
+// answer is a 500 saying the service's side was undone. Once the
+// connection is gone, the Secrets of any other record and of the
+// connections set aside go, best effort, and the owner's audit gains
+// disconnect. True once done, false with an error answered; it returns
+// the sign-in tokens to revoke.
+func (s *Server) disconnectLocked(w http.ResponseWriter, r *http.Request) (signInRevocations, bool) {
+	v, ok := s.integrationOr404(w, r)
+	if !ok {
+		return nil, false
+	}
+	if v.conn == nil {
+		// Disconnected meanwhile.
+		writeAPIError(w, http.StatusConflict, errNotConnected(v.displayName()), whoNoOne)
+		return nil, false
+	}
 	name, c := v.it.Name, v.conn
+	start := s.clk().Now()
+	s.setupCancel(name)
 	var revokes signInRevocations
 	failed := false
 	if c.rec.SecretName != "" {
@@ -930,7 +997,7 @@ func (s *Server) uninstallBuiltinLocked(w http.ResponseWriter, r *http.Request, 
 			}
 		}
 		if err := s.Secrets.Delete(r.Context(), c.rec.SecretName); err != nil && !errors.Is(err, secrets.ErrNotFound) {
-			log.Printf("integration %s: uninstall: delete Secret %s: %v", name, c.rec.SecretName, err)
+			log.Printf("integration %s: disconnect: delete Secret %s: %v", name, c.rec.SecretName, err)
 			failed = true
 		} else {
 			revokes = revokes.add(name, v.manifest, c.rec, tokens)
@@ -945,15 +1012,15 @@ func (s *Server) uninstallBuiltinLocked(w http.ResponseWriter, r *http.Request, 
 			log.Printf("integration %s: drop the connection's proxy credential: %v", name, err)
 		}
 		if _, _, err := s.Store.DeleteIntegrationConnectionByID(name, c.rec.ID); err != nil && !errors.Is(err, store.ErrNotFound) {
-			log.Printf("integration %s: uninstall: delete connection %s: %v", name, c.rec.ID, err)
+			log.Printf("integration %s: disconnect: delete connection %s: %v", name, c.rec.ID, err)
 			failed = true
 		}
 	}
 	s.Integrations.ConnectionChanged(name)
 	s.Integrations.Changed()
 	if failed {
-		words := v.displayName() + "'s installation was undone on the service, but Kivali could not remove its connection; uninstall it again to finish"
-		s.auditAgentCall(name, start, agent.CEOSlug, uninstallAction, false, words)
+		words := v.displayName() + "'s installation was undone on the service, but Kivali could not remove its connection; disconnect it again to finish"
+		s.auditAgentCall(name, start, agent.CEOSlug, disconnectAction, false, words)
 		writeAPIError(w, http.StatusInternalServerError, words, whoServer)
 		return revokes, false
 	}
@@ -964,7 +1031,7 @@ func (s *Server) uninstallBuiltinLocked(w http.ResponseWriter, r *http.Request, 
 		for _, other := range rest {
 			if other.SecretName != "" {
 				if err := s.Secrets.Delete(r.Context(), other.SecretName); err != nil && !errors.Is(err, secrets.ErrNotFound) {
-					log.Printf("integration %s: uninstall: delete Secret %s: %v", name, other.SecretName, err)
+					log.Printf("integration %s: disconnect: delete Secret %s: %v", name, other.SecretName, err)
 				}
 			}
 			if err := s.dropBuiltinEgress(name, []store.IntegrationConnection{other}); err != nil {
@@ -974,9 +1041,9 @@ func (s *Server) uninstallBuiltinLocked(w http.ResponseWriter, r *http.Request, 
 	}
 	s.forgetRetiredConnectionSecrets(r.Context(), name)
 	if _, err := s.Store.DeleteIntegrationConnection(name); err != nil {
-		log.Printf("integration %s: uninstall: %v", name, err)
+		log.Printf("integration %s: disconnect: %v", name, err)
 	}
-	s.auditAgentCall(name, start, agent.CEOSlug, uninstallAction, true, "")
+	s.auditAgentCall(name, start, agent.CEOSlug, disconnectAction, true, "")
 	return revokes, true
 }
 
@@ -989,17 +1056,7 @@ func (s *Server) uninstallLocked(w http.ResponseWriter, r *http.Request) (signIn
 		return nil, false
 	}
 	name := v.it.Name
-	keep := v.it.Builtin && !v.staleBuiltin()
-	if keep && v.conn == nil {
-		// Uninstalled meanwhile.
-		writeAPIError(w, http.StatusConflict, errNotInstalled(v.displayName()), whoNoOne)
-		return nil, false
-	}
-	start := s.clk().Now()
 	s.setupCancel(name)
-	if keep {
-		return s.uninstallBuiltinLocked(w, r, v, start)
-	}
 	revokes, ok := s.deleteConnectionSecrets(w, r, name)
 	if !ok {
 		return revokes, false
@@ -1392,7 +1449,7 @@ func (s *Server) handleAPIIntegrationAccessPut(w http.ResponseWriter, r *http.Re
 		return
 	}
 	if v.conn == nil {
-		writeAPIError(w, http.StatusConflict, "install "+v.displayName()+" first", whoYou)
+		writeAPIError(w, http.StatusConflict, "connect "+v.displayName()+" first", whoYou)
 		return
 	}
 	if err := integration.ValidateAccess(v.manifest, req.Access); err != nil {
@@ -1473,7 +1530,7 @@ func (s *Server) handleAPIIntegrationChoices(w http.ResponseWriter, r *http.Requ
 		writeAPIError(w, http.StatusConflict, errNotRunning, v.whoBuilt())
 		return
 	case v.builtin != nil && conn == nil:
-		writeAPIError(w, http.StatusConflict, "install "+v.displayName()+" first", whoYou)
+		writeAPIError(w, http.StatusConflict, "connect "+v.displayName()+" first", whoYou)
 		return
 	case v.several:
 		writeAPIError(w, http.StatusConflict, v.displayName()+" holds more than one connection record and Kivali could not bring it to one; see the log", whoServer)

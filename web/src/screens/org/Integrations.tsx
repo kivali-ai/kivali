@@ -11,14 +11,16 @@ import { useAction, useResource } from './useResource';
 import '../../styles/integrations.css';
 
 /**
- * "2 installed · 1 needs you · 1 waiting": installed counts those installed or off, needs you those installed with a
- * requirement not met, and waiting those with a version for you to approve.
+ * "2 connected · 1 disabled · 1 needs you · 1 waiting": connected counts those connected, disabled those with a
+ * connection and the switch off, needs you those connected with a requirement not met, and waiting those with a
+ * version for you to approve.
  */
 export function integrationsMeta(list: readonly IntegrationSummary[]): string {
-  const installed = list.filter((i) => i.state === 'installed' || i.state === 'off').length;
-  const needs = list.filter((i) => i.state === 'installed' && i.needs > 0).length;
+  const connected = list.filter((i) => i.state === 'connected').length;
+  const disabled = list.filter((i) => i.state === 'disabled').length;
+  const needs = list.filter((i) => i.state === 'connected' && i.needs > 0).length;
   const waiting = list.filter((i) => i.pending_version).length;
-  return `${installed} installed` + (needs > 0 ? ` · ${needsLabel(needs)}` : '') + (waiting > 0 ? ` · ${waiting} waiting` : '');
+  return `${connected} connected` + (disabled > 0 ? ` · ${disabled} disabled` : '') + (needs > 0 ? ` · ${needsLabel(needs)}` : '') + (waiting > 0 ? ` · ${waiting} waiting` : '');
 }
 
 /** One integration: its row opens its page; a version waiting for approval links to its install screen below it. */
@@ -36,7 +38,7 @@ function IntegrationRow({ item }: { item: IntegrationSummary }) {
             {item.version && <span>{'v' + item.version.replace(/^v/, '')}</span>}
             {item.version && <span aria-hidden="true">·</span>}
             <StateBadge state={item.state} />
-            {item.state === 'installed' && <NeedsBadge needs={item.needs} />}
+            {item.state === 'connected' && <NeedsBadge needs={item.needs} />}
             <span aria-hidden="true">·</span>
             <span>{agentsLabel(item.agents)}</span>
           </>
@@ -92,7 +94,7 @@ export function IntegrationsSection({ showHead }: SectionProps) {
     <>
       <SectionHead title="Integrations" show={showHead} meta={items ? integrationsMeta(items) : undefined} />
       <Text as="p" variant="caption" tone="muted">
-        Services your agents can act on, each from a bundle you approve or shipped with Kivali. You install each one, then choose which agents may use it and how far.
+        Services your agents can act on, each from a bundle you approve or shipped with Kivali. You connect each one, then choose which agents may use it and how far.
       </Text>
       <ErrorBanner error={list.error ?? action.error} {...(action.error ? { onDismiss: action.dismiss } : {})} />
       {signInError && (

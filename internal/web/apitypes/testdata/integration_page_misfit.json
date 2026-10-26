@@ -4,7 +4,7 @@
     "display_name": "GitHub",
     "description": "Read and open issues, comments and pull requests in GitHub repositories, as a private GitHub App on your account.",
     "version": "2.0.0",
-    "state": "available",
+    "state": "installed",
     "needs": 0,
     "enabled": true,
     "builtin": true,
@@ -28,7 +28,7 @@
   "scopes": [],
   "setup_notes_md": "",
   "setup": {
-    "summary": "Creates a private GitHub App, on your account or an organization's, that may read contents and write issues and pull requests, and installs it on the repositories you choose. Uninstalling removes the installation; the app stays on GitHub until you delete it under GitHub Apps in the account's settings.",
+    "summary": "Creates a private GitHub App, on your account or an organization's, that may read contents and write issues and pull requests, and installs it on the repositories you choose. Disconnecting removes the installation; the app stays on GitHub until you delete it under GitHub Apps in the account's settings.",
     "hosts": [
       "github.com"
     ],
@@ -76,6 +76,12 @@
     "then": ""
   },
   "sign_in_hosts": [],
+  "connection": {
+    "id": "a1b2c3d4",
+    "created_at": "2026-10-20T09:00:00Z",
+    "fields": [],
+    "reconnect_needed": false
+  },
   "connection_test": true,
   "access": [],
   "agents_without": [
@@ -107,5 +113,6 @@
       "fix": "setup"
     }
   ],
+  "can_disconnect": true,
   "can_uninstall": false
 }
