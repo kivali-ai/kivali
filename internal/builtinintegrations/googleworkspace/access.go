@@ -3,6 +3,7 @@ package googleworkspace
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"slices"
 	"strings"
 
@@ -113,17 +114,29 @@ func readAccess(m map[string]any) access {
 		}
 	}
 	ids := func(key string) []string {
-		var out []string
+		out := malformed(m[key])
 		for _, s := range listOf(m[key]) {
 			out = append(out, optionID(s))
 		}
 		return out
 	}
 	a.gmailLabels, a.calendars, a.docsFolders = ids(keyGmailLabels), ids(keyCalendars), ids(keyDocsFolders)
+	a.sendTo = malformed(m[keySendTo])
 	for _, s := range listOf(m[keySendTo]) {
 		a.sendTo = append(a.sendTo, strings.ToLower(s))
 	}
 	return a
+}
+
+// malformed is the start of a stored list's entries: nil for a list
+// that is missing, null or a list, and an empty, non-nil list for any
+// other value, which includes reads as matching nothing: a stored form
+// that does not read as a list never widens an agent's access.
+func malformed(v any) []string {
+	if _, isList := v.([]any); v == nil || isList {
+		return nil
+	}
+	return []string{}
 }
 
 // listOf is the non-blank strings of a stored list, trimmed.
@@ -142,8 +155,9 @@ func listOf(v any) []string {
 func (a access) on(key string) bool { return a.switches[key] }
 
 // includes reports whether list, one of the access's lists of ids,
-// allows id: every id when it is empty.
-func includes(list []string, id string) bool { return len(list) == 0 || slices.Contains(list, id) }
+// allows id: every id when it is nil, none when it is empty and not
+// nil (a stored list that did not read).
+func includes(list []string, id string) bool { return list == nil || slices.Contains(list, id) }
 
 // A live option is shown, and stored in the access, as "<name> (<id>)":
 // the name the owner knows a label, a calendar or a folder by, then
@@ -222,4 +236,51 @@ func readArgs(raw json.RawMessage) (args, error) {
 		return nil, badArgument("The arguments are an object.")
 	}
 	return args(m), nil
+}
+
+// CheckAccess holds an agent's access, as the owner saves it, to what
+// Kivali can read: every entry of send_to an address (local@domain) or
+// *@domain, and every entry of the label, calendar and folder lists one
+// that reads through optionID to an id. The form has made sure the
+// fields are lists of strings.
+func (g *GoogleWorkspace) CheckAccess(access map[string]any) error {
+	for _, key := range []string{keyGmailLabels, keyCalendars, keyDocsFolders} {
+		raw, _ := access[key].([]any)
+		for _, v := range raw {
+			s, _ := v.(string)
+			if optionID(s) == "" {
+				return fmt.Errorf("%q is not a label, calendar or folder from the list", s)
+			}
+		}
+	}
+	raw, _ := access[keySendTo].([]any)
+	for _, v := range raw {
+		s, _ := v.(string)
+		if !validRecipient(strings.TrimSpace(s)) {
+			return fmt.Errorf("%q is not an address such as dana@example.com or *@example.com", s)
+		}
+	}
+	return nil
+}
+
+// validRecipient reports whether s is local@domain or *@domain, with
+// no space, no second @ and a domain holding a dot.
+func validRecipient(s string) bool {
+	local, domain, ok := strings.Cut(s, "@")
+	if !ok || local == "" || strings.ContainsAny(s, " \t\r\n,;<>\"()") || strings.Contains(domain, "@") {
+		return false
+	}
+	if strings.Contains(local, "*") && local != "*" {
+		return false
+	}
+	d := strings.Split(domain, ".")
+	if len(d) < 2 {
+		return false
+	}
+	for _, p := range d {
+		if p == "" {
+			return false
+		}
+	}
+	return true
 }

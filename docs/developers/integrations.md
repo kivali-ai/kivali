@@ -2522,7 +2522,9 @@ type SignInAdviser interface{ SignInAdvice(refusal string) string }
   (`sign_in.error`, "the vendor refused the sign-in (invalid_grant):
   ..."); an empty answer adds nothing. It is called each time the rows
   are built, with no connection and no deadline, so it is cheap and
-  reaches no service. A built-in's hook only: Google Workspace names an
+  reaches no service, and from several goroutines at once (Home builds
+  each integration's rows on its own), so it is safe for concurrent
+  use. A built-in's hook only: Google Workspace names an
   app left in Testing for `invalid_grant` ([The Google Workspace
   built-in](#the-google-workspace-built-in)).
 
@@ -3918,7 +3920,8 @@ apart:
   hands over to a sign-in ([The credential path](#the-credential-path)):
   `client_id` and the current access token under `GOOGLE_ACCESS_TOKEN`,
   never the client secret or the refresh token. A connection with no
-  access token refuses every call with "Google Workspace's connection is
+  access token refuses every call of an action this version runs, once
+  the action, its switch and the access pass, with "Google Workspace's connection is
   not signed in; ask the owner to set it up again.", audited as `the
   connection holds no access token`, and nothing reaches Google; core
   refuses a call itself while the sign-in needs the owner.
@@ -3980,6 +3983,11 @@ everything.
 | `gmail_send`, `calendar_send`, `docs_send` | switch | May send mail, May invite and respond, May comment, each with "(each ... waits for your approval)" |
 | `gmail_labels`, `calendars`, `docs_folders` | choices, listed live | Labels it may read, Calendars it may use, Folders it may read |
 | `send_to` | list | May send to: addresses, or `*@domain` |
+
+Google Workspace implements `AccessChecker`: saving an access refuses a
+`send_to` entry that is not an address (`local@domain`) or `*@domain`,
+and a label, calendar or folder entry that reads to no id. A stored
+list that is not a list matches nothing.
 
 Read is what sees inside the owner's account, write what changes
 something there that no other person is told about, and send anything
@@ -4070,7 +4078,9 @@ not turned on in the project (`accessNotConfigured`,
 `SERVICE_DISABLED`) or a scope the owner left unticked
 (`insufficientPermissions`, `ACCESS_TOKEN_SCOPE_INSUFFICIENT`), each
 sending it to the owner, a rate limit (429, or a 403 for
-`rateLimitExceeded`) saying to try later, and Google's words for the
+`rateLimitExceeded`, `userRateLimitExceeded` or `RATE_LIMIT_EXCEEDED`)
+and a 5xx saying to try later, an answer over 16 MiB or not JSON saying
+Kivali does not read it, and Google's words for the
 rest. The owner reads the same in Test connection's and the options'
 words, with what to do: sign in again, turn the API on, or sign in
 again allowing everything Google lists.
@@ -4080,11 +4090,11 @@ again allowing everything Google lists.
 Google Workspace has no rows of its own. As a `SignInAdviser`, it adds
 to the `sign_in` row of a refusal naming `invalid_grant`, which Google
 answers once it ends a sign-in, the likely cause: "If this came about a
-week after you signed in, the likely cause is the app being in
-Testing, where Google ends every sign-in after seven days: publish it
-under Audience in Google's Auth Platform, then sign in again." Google
-answers `invalid_grant` for a revoked sign-in too, so the words name a
-likely cause, not the only one; any other refusal gets nothing added.
+week after you signed in, the app is likely still in Testing on
+Google's Auth Platform, where Google ends every sign-in after seven
+days: publish it under Audience, then sign in again." Google answers
+`invalid_grant` for a revoked sign-in too, so the words are added to
+every `invalid_grant` and are conditional in their own wording; any other refusal gets nothing added.
 
 ## The Kivali Developer
 

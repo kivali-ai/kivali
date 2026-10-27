@@ -331,7 +331,7 @@ On Google Workspace's page, **Connect** shows the steps on Google's side above t
 
 Kivali keeps the client's id and secret and the sign-in's tokens as secrets: they are never shown, and Google Workspace's calls are given only a token that works at that moment, which Kivali renews. **Test connection** names the Google account the sign-in is for ("Signed in as dana@example.com").
 
-When Google no longer accepts the sign-in, the **Sign-in** requirement is not met, and **Needs you** lists it until you sign in again with its **Fix**. If that comes about a week after you signed in, the requirement says the app is likely still in Testing: publish it, then sign in again.
+When Google no longer accepts the sign-in, the **Sign-in** requirement is not met, and **Needs you** lists it until you sign in again with its **Fix**. Whenever Google refuses the sign-in, the requirement adds that if this came about a week after you signed in, the app is likely still in Testing: publish it, then sign in again.
 
 **Disconnect** forgets the client id and secret, the sign-in and every agent's access, and asks Google to revoke the sign-in. The project and the client stay in Google Cloud console; delete them there when you no longer need them.
 
@@ -355,6 +355,6 @@ A call the agent's access does not allow is refused before anything reaches Goog
 
 ### Not supported
 
-- Moving mail, events or documents to the trash, and sharing documents.
+- Moving mail or documents to the trash, and sharing documents. `delete_event` deletes only events Kivali created.
 - Google Sheets and Google Slides.
 - Gmail's settings, such as filters and forwarding: Kivali never asks for them.

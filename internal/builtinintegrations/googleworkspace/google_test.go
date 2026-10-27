@@ -218,7 +218,9 @@ func TestCallRefuses(t *testing.T) {
 // Gmail for the profile on Gmail's origin with the access token core
 // handed in, and say the account; Google refusing the token, or an API
 // left off in the project, must reach the owner in words saying what
-// to do, with the token nowhere in them.
+// to do, with the token nowhere in them: the fake quotes the request's
+// Authorization header in its 401, so the words must carry the
+// scrubbed marker where the token was.
 func TestVerify(t *testing.T) {
 	f, g := newFakeGoogle(t)
 	msg, err := g.Verify(context.Background(), testConn())
@@ -232,7 +234,7 @@ func TestVerify(t *testing.T) {
 	stale := testConn()
 	stale.Fields[CredentialKey] = "ya29.stale"
 	if _, err := g.Verify(context.Background(), stale); err == nil || !strings.Contains(err.Error(), "HTTP 401") ||
-		!strings.Contains(err.Error(), "Sign in again") || strings.Contains(err.Error(), "ya29") {
+		!strings.Contains(err.Error(), "Sign in again") || !strings.Contains(err.Error(), "Bearer [credential]") || strings.Contains(err.Error(), "ya29") {
 		t.Errorf("a token Google refuses: %v", err)
 	}
 

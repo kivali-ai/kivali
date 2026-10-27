@@ -400,7 +400,9 @@ type SignInReplacer interface {
 // of the refusal ("the vendor refused the sign-in (invalid_grant):
 // ..."), and "" adds nothing. It is called each time the requirements
 // are read, with no connection and no deadline, so it must be cheap and
-// must not reach the service.
+// must not reach the service. Core calls it from several goroutines at
+// once (Home builds each integration's rows on its own), so it must be
+// safe for concurrent use.
 type SignInAdviser interface {
 	SignInAdvice(refusal string) string
 }
