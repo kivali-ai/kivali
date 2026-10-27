@@ -12,8 +12,7 @@
   border-bottom: 1px solid var(--line);
 }
 
-.app-int-item > .app-int-row,
-.app-int-item > .app-int-version {
+.app-int-item > .app-int-row {
   border-bottom: 0;
 }
 

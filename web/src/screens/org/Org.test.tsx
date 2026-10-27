@@ -1184,25 +1184,12 @@ describe('Integrations', () => {
     expect(screen.getByText('None in this version of Kivali.')).toBeInTheDocument();
   });
 
-  // Guards the download from the list: an integration from a bundle with a version in use has Download beside its
-  // row (a button, so the row's link stays the row), which fetches that version's bundle and hands the zip to the
-  // browser under the server's name; one with no version yet and every built-in offer none, since there is nothing
-  // stored to download for the one and the server refuses the other.
-  it('downloads the version in use of an integration from a bundle, and offers none for a built-in', async () => {
-    const created = vi.fn(() => 'blob:bundle');
-    vi.stubGlobal('URL', Object.assign(URL, { createObjectURL: created, revokeObjectURL: vi.fn() }));
-    const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
-    await renderOrg('/org/integrations', { routes: { 'GET /api/v1/org/integrations/hubspot/versions/1.2.0/bundle': new Blob(['zip']) } });
-    expect(screen.getAllByRole('button', { name: /^Download / }).map((b) => b.getAttribute('aria-label'))).toEqual([
-      'Download HubSpot version 1.2.0',
-      'Download CRM version 2.1.0',
-      'Download Blog version 1.0.0',
-    ]);
-    await click(screen.getByRole('button', { name: 'Download HubSpot version 1.2.0' }));
-    expect(called('GET', '/api/v1/org/integrations/hubspot/versions/1.2.0/bundle')).toBe(true);
-    expect(created).toHaveBeenCalled();
-    expect(anchorClick).toHaveBeenCalledTimes(1);
-    expect((anchorClick.mock.instances[0] as unknown as HTMLAnchorElement).download).toBe('hubspot-1.2.0.zip');
+  // Guards that the list offers no download: the bundle is downloaded from an integration's page, so a row stays a
+  // link alone, and the group's caption says where the download is.
+  it('offers no download from the list', async () => {
+    await renderOrg('/org/integrations');
+    expect(screen.queryByRole('button', { name: /^Download/ })).toBeNull();
+    expect(screen.getByText('Uploaded by you or published by your Kivali Developer. An integration’s page has its bundle to download.')).toBeInTheDocument();
   });
 
   // Guards the upload: one .zip goes up as the multipart field `file`, and the version the server stored leads

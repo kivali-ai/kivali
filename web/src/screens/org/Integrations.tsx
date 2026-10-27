@@ -4,7 +4,7 @@ import { apiPostForm } from '../../api/client';
 import type { IntegrationSummary, IntegrationUploadRefused, IntegrationVersion, Integrations } from '../../api/types.gen';
 import { Banner, Button, Dialog, DialogClose, Icon, ListRow, Text } from '../../ds';
 import { pickFiles } from '../../lib/pickFiles';
-import { Block, INTEGRATIONS_API, NeedsBadge, StateBadge, agentsLabel, downloadBundle, needsLabel, integrationPath, signInErrorWords, uploadRefusalOf, versionPath } from './integrationParts';
+import { Block, INTEGRATIONS_API, NeedsBadge, StateBadge, agentsLabel, needsLabel, integrationPath, signInErrorWords, uploadRefusalOf, versionPath } from './integrationParts';
 import { ErrorBanner, None, RowList, RowSkeletons, SectionHead } from './parts';
 import type { SectionProps } from './sections';
 import { useAction, useResource } from './useResource';
@@ -27,58 +27,28 @@ function countLabel(n: number): string {
   return n === 1 ? '1 integration' : n + ' integrations';
 }
 
-interface IntegrationRowProps {
-  item: IntegrationSummary;
-  busy: boolean;
-  /** Downloads the version in use as the bundle it was installed from; absent for a built-in, which has no bundle. */
-  onDownload?: () => void;
-}
-
-/**
- * One integration: its row opens its page; a version waiting for approval links to its install screen below it. An
- * integration from a bundle with a version in use has Download beside its row, to pass the bundle on to another team.
- */
-function IntegrationRow({ item, busy, onDownload }: IntegrationRowProps) {
+/** One integration: its row opens its page; a version waiting for approval links to its install screen below it. */
+function IntegrationRow({ item }: { item: IntegrationSummary }) {
   const href = useHref(integrationPath(item.name));
-  const row = (
-    <ListRow
-      className="app-int-row"
-      lead={<Icon name="plug" size={20} />}
-      title={item.display_name}
-      meta={
-        <>
-          {item.version && <span>{'v' + item.version.replace(/^v/, '')}</span>}
-          {item.version && <span aria-hidden="true">·</span>}
-          <StateBadge state={item.state} />
-          {item.state === 'connected' && <NeedsBadge needs={item.needs} />}
-          <span aria-hidden="true">·</span>
-          <span>{agentsLabel(item.agents)}</span>
-        </>
-      }
-      trail={<Icon name="chevron-right" />}
-      href={href}
-    />
-  );
   return (
     <div className="app-int-item">
-      {onDownload && item.version ? (
-        // The button sits beside the row's link, never inside it.
-        <div className="app-int-version">
-          {row}
-          <Button
-            size="sm"
-            variant="ghost"
-            icon={<Icon name="download" />}
-            aria-label={'Download ' + item.display_name + ' version ' + item.version}
-            disabled={busy}
-            onClick={onDownload}
-          >
-            Download
-          </Button>
-        </div>
-      ) : (
-        row
-      )}
+      <ListRow
+        className="app-int-row"
+        lead={<Icon name="plug" size={20} />}
+        title={item.display_name}
+        meta={
+          <>
+            {item.version && <span>{'v' + item.version.replace(/^v/, '')}</span>}
+            {item.version && <span aria-hidden="true">·</span>}
+            <StateBadge state={item.state} />
+            {item.state === 'connected' && <NeedsBadge needs={item.needs} />}
+            <span aria-hidden="true">·</span>
+            <span>{agentsLabel(item.agents)}</span>
+          </>
+        }
+        trail={<Icon name="chevron-right" />}
+        href={href}
+      />
       {item.pending_version && (
         <Link className="app-int-pending" to={versionPath(item.name, item.pending_version)}>
           {'Version ' + item.pending_version + ' waits for your approval'}
@@ -91,7 +61,7 @@ function IntegrationRow({ item, busy, onDownload }: IntegrationRowProps) {
 
 /**
  * Org > Integrations: every installed integration in two groups, those from a bundle (an upload, or one the Kivali
- * Developer published) with the upload that adds one and a download for each, and those built in to Kivali.
+ * Developer published) with the upload that adds one, and those built in to Kivali.
  */
 export function IntegrationsSection({ showHead }: SectionProps) {
   const list = useResource<Integrations>(INTEGRATIONS_API);
@@ -125,8 +95,6 @@ export function IntegrationsSection({ showHead }: SectionProps) {
     });
   };
 
-  const download = (item: IntegrationSummary) => action.run(() => downloadBundle(item.name, item.version));
-
   const items = list.data?.integrations;
   const bundles = items?.filter((i) => !i.builtin);
   const builtins = items?.filter((i) => i.builtin);
@@ -147,14 +115,14 @@ export function IntegrationsSection({ showHead }: SectionProps) {
         <>
           <Block label="From a bundle" level="h3" summary={bundles.length === 0 ? undefined : countLabel(bundles.length)}>
             <Text as="p" variant="caption" tone="muted">
-              Uploaded by you or published by your Kivali Developer. Download one to install it on another team.
+              Uploaded by you or published by your Kivali Developer. An integration’s page has its bundle to download.
             </Text>
             {bundles.length === 0 ? (
               <None>No integrations from a bundle yet.</None>
             ) : (
               <RowList>
                 {bundles.map((item) => (
-                  <IntegrationRow key={item.name} item={item} busy={action.busy} onDownload={() => void download(item)} />
+                  <IntegrationRow key={item.name} item={item} />
                 ))}
               </RowList>
             )}
@@ -173,7 +141,7 @@ export function IntegrationsSection({ showHead }: SectionProps) {
             ) : (
               <RowList>
                 {builtins.map((item) => (
-                  <IntegrationRow key={item.name} item={item} busy={action.busy} />
+                  <IntegrationRow key={item.name} item={item} />
                 ))}
               </RowList>
             )}
