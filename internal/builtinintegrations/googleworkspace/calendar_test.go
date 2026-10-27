@@ -5,12 +5,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/kivali-ai/kivali/internal/builtinintegrations"
+	"github.com/kivali-ai/kivali/internal/clock"
 )
 
 // callCalendar runs name with args for an agent whose access is access.
@@ -148,6 +151,25 @@ func TestCalendarAccessIsHeld(t *testing.T) {
 	res := calAnswer(t, g, calReads(team), "list_events", `{"calendar_id":"`+team+`"}`)
 	if !strings.Contains(res.Content[0], "1. Event t1,") {
 		t.Errorf("a calendar named as the access stores it:\n%s", res.Content[0])
+	}
+}
+
+// Why this test exists: freeBusy is a POST, as Calendar's writes are,
+// not a get, and an answer Kivali does not read must reach the agent as
+// get's does: saying so, never telling it to try again, which would
+// answer the same.
+func TestCalendarUnreadableAnswer(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/calendar/v3/users/me/calendarList" {
+			writeJSON(w, map[string]any{"items": fakeCalendars})
+			return
+		}
+		_, _ = w.Write([]byte("<html>not json</html>"))
+	}))
+	t.Cleanup(srv.Close)
+	g := &GoogleWorkspace{GmailBase: srv.URL, APIBase: srv.URL, Clock: clock.NewFakeAt(monday)}
+	if words := calFailed(t, g, calReads(), "find_free_time", `{"time_min":"2026-10-27T09:00:00Z","time_max":"2026-10-27T17:00:00Z"}`); words != "Google's answer was not one Kivali reads." {
+		t.Errorf("an answer that is not JSON: %q", words)
 	}
 }
 
