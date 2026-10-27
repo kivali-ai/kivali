@@ -1,13 +1,10 @@
 package googleworkspace
 
 import (
-	"bytes"
 	"cmp"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -201,59 +198,6 @@ const (
 // delimitEvent puts an event's own text, or a list of calendars, between
 // the two lines (delimit).
 func delimitEvent(s string) string { return delimit(s, eventContentStart, eventContentEnd) }
-
-// calendarRequest sends method to path on www.googleapis.com with body
-// as JSON (none for nil) and the access token token, and decodes the
-// JSON answer into out (nil reads none): get's request for Calendar's
-// writes and its one read that is a POST, freeBusy.
-func (g *GoogleWorkspace) calendarRequest(ctx context.Context, token, method, path string, body, out any) error {
-	base, err := g.base(googleAPI)
-	if err != nil {
-		return err
-	}
-	var r io.Reader
-	if body != nil {
-		b, err := json.Marshal(body)
-		if err != nil {
-			return err
-		}
-		r = bytes.NewReader(b)
-	}
-	req, err := http.NewRequestWithContext(ctx, method, base.String()+path, r)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", "Kivali")
-	req.Header.Set("Authorization", "Bearer "+token)
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	resp, err := g.httpClient().Do(req)
-	if err != nil {
-		return transportError(ctx, err, token)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	b, err := io.ReadAll(io.LimitReader(resp.Body, maxAnswerBytes+1))
-	switch {
-	case err != nil:
-		return transportError(ctx, err, token)
-	case len(b) > maxAnswerBytes:
-		return &apiError{Message: "Google's answer was larger than Kivali reads", Unreadable: true}
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		e := readError(b, resp.StatusCode)
-		e.Message = scrub(e.Message, token)
-		return e
-	}
-	if out == nil {
-		return nil
-	}
-	if err := json.Unmarshal(b, out); err != nil {
-		return &apiError{Message: "Google's answer was not one Kivali reads", Unreadable: true}
-	}
-	return nil
-}
 
 // calendarEntry is one calendar of the account's list
 // (users/me/calendarList): AccessRole is the owner's role on it, owner,
@@ -1117,39 +1061,6 @@ func (r *eventRendering) text(most int) string {
 	return strings.Join(notes, "\n")
 }
 
-// textListArg is the argument key as a list of strings, each trimmed and
-// not empty; given is false when it is missing or null. A list that is
-// not one of strings, holds more than most of them or one longer than
-// each characters is refused.
-func textListArg(a args, key string, most, each int) (list []string, given bool, err error) {
-	v, ok := a[key]
-	if !ok || v == nil {
-		return nil, false, nil
-	}
-	raw, ok := v.([]any)
-	if !ok {
-		return nil, false, badArgument(key + " is a list of text.")
-	}
-	if len(raw) > most {
-		return nil, false, badArgument(fmt.Sprintf("%s holds at most %d entries.", key, most))
-	}
-	list = []string{}
-	for _, x := range raw {
-		s, ok := x.(string)
-		if !ok {
-			return nil, false, badArgument(key + " is a list of text.")
-		}
-		if s = strings.TrimSpace(s); s == "" {
-			continue
-		}
-		if utf8.RuneCountInString(s) > each {
-			return nil, false, badArgument(fmt.Sprintf("Each of %s is at most %d characters.", key, each))
-		}
-		list = append(list, s)
-	}
-	return list, true, nil
-}
-
 // timeSpan is a stretch of time, end after start.
 type timeSpan struct{ start, end time.Time }
 
@@ -1211,7 +1122,7 @@ func spanWords(s timeSpan, loc *time.Location) string {
 // it; at most maxFreeCalendars, and note says when the access's list
 // held more.
 func (cc *calCall) freeBusyCalendars(ctx context.Context) (ids []string, note string, err error) {
-	named, given, err := textListArg(cc.args, "calendar_ids", maxFreeCalendars, 300)
+	named, given, err := cc.args.texts("calendar_ids", maxFreeCalendars, 300)
 	if err != nil {
 		return nil, "", err
 	}
@@ -1288,7 +1199,7 @@ func findFreeTime(ctx context.Context, c *call) (any, error) {
 			} `json:"errors"`
 		} `json:"calendars"`
 	}
-	if err := c.g.calendarRequest(ctx, c.token, http.MethodPost, "/calendar/v3/freeBusy", body, &answer); err != nil {
+	if err := c.g.change(ctx, c.token, googleAPI, http.MethodPost, "/calendar/v3/freeBusy", body, &answer); err != nil {
 		return nil, err
 	}
 	loc := from.Location()

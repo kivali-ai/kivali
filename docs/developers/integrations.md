@@ -3919,9 +3919,9 @@ apart:
 
 | File | Holds |
 | --- | --- |
-| `google.go` | the type, `Manifest`, `Tools`, `Call`, `Verify`, `Choices`, the joined action table and `answerText` |
-| `api.go` | the client: the three pinned origins, Google's errors, their words for the agent and the owner |
-| `access.go` | the access form, `readAccess`, the live options' encoding, the refusals by bucket, `readArgs` |
+| `google.go` | the type, `Manifest`, `Tools`, `Call`, `Verify`, `Choices`, the joined action table, `answerText`, the clock (`now`) and the mark of what an agent makes (`marker`) |
+| `api.go` | the client: the three pinned origins, `get` and `change`, Google's errors, their words for the agent and the owner |
+| `access.go` | the access form, `readAccess`, the live options' encoding, the refusals by bucket, `readArgs` and the readers of an argument |
 | `setup.go` | the setup flow, the client JSON's reading and the setup notes |
 | `requirements.go` | the Sign-in requirement's words for a refusal |
 | `gmail.go`, `calendar.go`, `docs.go` | each service's actions, and the options of its list |
@@ -4074,9 +4074,10 @@ bucket's switch:
 | `docs_send` | `add_comment`, `reply_to_comment` |
 
 This version runs the `gmail_read`, `gmail_write`, `calendar_read`,
-`calendar_write`, `docs_read` and `docs_write` actions; the rest
-have no `run`, and `send_email` and `send_draft` declare their
-arguments already ([Writing mail](#writing-mail)). `Tools` gives
+`calendar_write`, `docs_read` and `docs_write` actions; the rest, the
+send actions, have no `run` and declare their arguments already
+([Writing mail](#writing-mail), [Calendar](#calendar), [Writing
+documents](#writing-documents)). `Tools` gives
 an agent each action whose switch its access has on and that this
 version runs, with its description and the sentence saying
 the owner decides. `Call` refuses, in order, an action that is not one
@@ -4309,10 +4310,10 @@ attachment <id> of message <id> (<n> bytes)".
 #### Writing mail
 
 The `gmail_write` actions (`gmail_write.go`) change the account and
-tell no one. Each change is `gmailChange`: a POST or a DELETE on
-Gmail's origin with a JSON body, under the client's bounds and with
-Google's errors in the agent's words as for a read; the client follows
-no redirect of it. Each sets `Result.Audit` to the ids it changed and
+tell no one. Each change is `change` ([The client](#the-client)): a
+POST or a DELETE on Gmail's origin with a JSON body, under the
+client's bounds and with Google's errors in the agent's words as for a
+read; the client follows no redirect of it. Each sets `Result.Audit` to the ids it changed and
 what changed, never a draft's text. None sets `Result.Outside`: none
 returns text a sender wrote.
 
@@ -4362,8 +4363,8 @@ returns text a sender wrote.
 **The mark.** Gmail keeps no properties of an integration's own on a
 draft, so Kivali marks a draft in its message: the header
 `X-Kivali-Agent: <slug>` (`markerHeader`), the slug the calling agent's
-(`Caller.Agent`, kept in `call.agent`; "kivali" for one a header could
-not carry). Gmail keeps a draft's headers as they were written, so
+(`marker`: `Caller.Agent`, kept in `call.agent`; "kivali" for none, or
+one a mark could not carry), as Calendar and Docs mark what they make. Gmail keeps a draft's headers as they were written, so
 `drafts.get` gives the mark back; a draft written in Gmail has none,
 and one the owner edits in Gmail may lose it (unverified live). Whether
 the header reaches a recipient is unverified too, and the send slice
@@ -4422,9 +4423,9 @@ lines when more than a third of its bytes are outside ASCII, and
 `calendar.go` holds Calendar's actions and its reading,
 `calendar_write.go` its changes. Every request goes to
 `www.googleapis.com/calendar/v3`; a read is a GET (`get`), and
-freeBusy and the writes go through `calendarRequest`, which sends a
-JSON body with any method and reads the answer as `get` does (the same
-client, bounds, errors and scrubbing).
+freeBusy and the writes go through `change`, which sends a JSON body
+with any method and reads the answer as `get` does (the same client,
+bounds, errors and scrubbing).
 
 - **Which calendar.** `calendar_id` is an id as `list_calendars` gives
   it, or an option as the access stores one (`optionID`): letters,
@@ -4522,7 +4523,7 @@ no one.
 - `create_event` is `POST calendars/{id}/events` with `summary`,
   `start`, `end`, `description`, `location` and
   `extendedProperties.private.kivali` set to the agent's slug
-  (`Caller.Agent`): the mark `delete_event` looks for, private to the
+  (`marker`, as a draft's mark is): the mark `delete_event` looks for, private to the
   calendar's copy of the event, which marks it as an event Kivali
   created on this account. Audit: "created event <id> on calendar
   <id>, <when>".
@@ -4707,7 +4708,7 @@ document is; a marked document someone else owns now is theirs. Any other is ref
 changes, "Document <id> is not the owner's and Kivali did not make it:
 you may change only documents the owner owns or Kivali made.", audited
 as `document <id> is neither the owner's nor made by Kivali`. Writes
-are `POST`s (`post`, [The client](#the-client)); a write Google does
+are `POST`s (`change`, [The client](#the-client)); a write Google does
 not answer says Kivali cannot tell whether the document changed. Each
 write sets its audit before its request ("creating a document in
 folder <id>", "adding N characters to the end of document <id>",
@@ -4723,7 +4724,7 @@ its audit "(shared with others)".
   /drive/v3/files?fields=id&supportsAllDrives=true` on
   `www.googleapis.com` with `name`, `mimeType`
   `application/vnd.google-apps.document`, `appProperties.kivali` the
-  agent's slug and, with a folder, `parents` that folder, so the
+  agent's slug (`marker`, as a draft's mark is) and, with a folder, `parents` that folder, so the
   document is Kivali's and in its folder from the start; then a
   `batchUpdate` writes `body` from index 1, a new document being one
   empty paragraph. When Drive refuses the folder itself, a 403 or a
@@ -4830,9 +4831,11 @@ rest. The owner reads the same in Test connection's and the options'
 words, with what to do: sign in again, turn the API on, or sign in
 again allowing everything Google lists.
 
-A read is `get` (`getUpTo` for a larger answer) and a write `post`, a
-JSON body; both are `send`, with the same origins, headers, bounds and
-error words, and a write follows no redirect.
+A read is `get` (`getUpTo` for a larger answer), and a change `change`:
+any method, with a JSON body or none, for Gmail's, Calendar's, Drive's
+and Docs' writes and Calendar's freeBusy. Both are `send`, with the
+same origins, headers, bounds and error words, and a change follows no
+redirect.
 
 #### Requirements
 

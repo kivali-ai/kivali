@@ -4,10 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"mime"
 	"mime/quotedprintable"
 	"net/http"
@@ -27,9 +25,6 @@ import (
 // draft, so the mark is a header of the message itself. delete_draft
 // deletes only a draft whose message carries it.
 const markerHeader = "X-Kivali-Agent"
-
-// agentSlugPattern is an agent's slug as the marker writes it.
-var agentSlugPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
 
 // draftIDPattern is a draft's id as Gmail gives it ("r-8171384447376520312").
 var draftIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
@@ -87,119 +82,6 @@ var (
 	}, "message_id")
 )
 
-// texts is the argument key as a list of text: nil when it is missing
-// or null, and a refusal when it is not a list of text, holds more than
-// most entries, or an entry of more than each characters. Entries are
-// trimmed, and blank ones dropped.
-func (a args) texts(key string, most, each int) ([]string, error) {
-	v, ok := a[key]
-	if !ok || v == nil {
-		return nil, nil
-	}
-	list, isList := v.([]any)
-	switch {
-	case !isList:
-		return nil, badArgument(key + " is a list of text.")
-	case len(list) > most:
-		return nil, badArgument(fmt.Sprintf("%s holds at most %d entries.", key, most))
-	}
-	var out []string
-	for _, x := range list {
-		s, isText := x.(string)
-		if !isText {
-			return nil, badArgument(key + " is a list of text.")
-		}
-		if s = strings.TrimSpace(s); s == "" {
-			continue
-		}
-		if utf8.RuneCountInString(s) > each {
-			return nil, badArgument(fmt.Sprintf("Each entry of %s is at most %d characters.", key, each))
-		}
-		out = append(out, s)
-	}
-	return out, nil
-}
-
-// flag is the boolean argument key: false when it is missing or null,
-// and a refusal when it is another type.
-func (a args) flag(key string) (bool, error) {
-	v, ok := a[key]
-	if !ok || v == nil {
-		return false, nil
-	}
-	b, isBool := v.(bool)
-	if !isBool {
-		return false, badArgument(key + " is true or false.")
-	}
-	return b, nil
-}
-
-// maybeID is the argument key as one of Google's ids, as id reads one,
-// or "" when it is missing or empty.
-func (a args) maybeID(key string, ok *regexp.Regexp) (string, error) {
-	s, err := a.text(key, false, 256)
-	if err != nil || s == "" {
-		return "", err
-	}
-	if !ok.MatchString(s) {
-		return "", badArgument(key + " is not an id Google gives; use one as Kivali listed it.")
-	}
-	return s, nil
-}
-
-// gmailChange sends Gmail a request that changes the account: method on
-// path (with its query), body as JSON (nil for none), and the JSON
-// answer decoded into out (nil reads none, as for a DELETE). Its bounds
-// and Google's errors are get's; the client follows no redirect of it.
-func (g *GoogleWorkspace) gmailChange(ctx context.Context, token, method, path string, body, out any) error {
-	base, err := g.base(gmailAPI)
-	if err != nil {
-		return err
-	}
-	var content io.Reader
-	if body != nil {
-		b, err := json.Marshal(body)
-		if err != nil {
-			return err
-		}
-		content = bytes.NewReader(b)
-	}
-	req, err := http.NewRequestWithContext(ctx, method, base.String()+path, content)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", "Kivali")
-	req.Header.Set("Authorization", "Bearer "+token)
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	resp, err := g.httpClient().Do(req)
-	if err != nil {
-		return transportError(ctx, err, token)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	b, err := io.ReadAll(io.LimitReader(resp.Body, maxAnswerBytes+1))
-	switch {
-	case err != nil:
-		return transportError(ctx, err, token)
-	case len(b) > maxAnswerBytes:
-		return &apiError{Message: "its answer is larger than Kivali reads"}
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		e := readError(b, resp.StatusCode)
-		e.Message = scrub(e.Message, token)
-		return e
-	}
-	if out == nil {
-		return nil
-	}
-	if err := json.Unmarshal(b, out); err != nil {
-		return &apiError{Message: "its answer is not JSON Kivali reads"}
-	}
-	return nil
-}
-
 // composition is an email an agent writes, from create_draft's or
 // send_email's arguments (composeProps), read and checked by
 // readComposition: from the signed-in account, to its recipients, with
@@ -231,7 +113,7 @@ type composition struct {
 func readComposition(ctx context.Context, c *call) (*composition, error) {
 	var lists [3][]*mail.Address
 	for i, key := range []string{"to", "cc", "bcc"} {
-		entries, err := c.args.texts(key, maxRecipients, addressMost)
+		entries, _, err := c.args.texts(key, maxRecipients, addressMost)
 		if err != nil {
 			return nil, err
 		}
@@ -262,7 +144,7 @@ func readComposition(ctx context.Context, c *call) (*composition, error) {
 	if err != nil {
 		return nil, err
 	}
-	all, err := c.args.flag("reply_all")
+	all, _, err := c.args.flag("reply_all")
 	if err != nil {
 		return nil, err
 	}
@@ -669,15 +551,6 @@ func recipientWords(n int) string {
 	return fmt.Sprintf("%d recipients", n)
 }
 
-// marker is the calling agent's markerHeader value: its slug, or
-// "kivali" for a slug a header cannot carry as it is.
-func (c *call) marker() string {
-	if agentSlugPattern.MatchString(c.agent) {
-		return c.agent
-	}
-	return "kivali"
-}
-
 func draftPath(id string) string { return "/gmail/v1/users/me/drafts/" + url.PathEscape(id) }
 
 // createDraft writes the email the arguments describe (readComposition)
@@ -700,7 +573,7 @@ func createDraft(ctx context.Context, c *call) (any, error) {
 			ThreadID string `json:"threadId"`
 		} `json:"message"`
 	}
-	if err := c.g.gmailChange(ctx, c.token, http.MethodPost, "/gmail/v1/users/me/drafts", map[string]any{"message": msg}, &made); err != nil {
+	if err := c.g.change(ctx, c.token, gmailAPI, http.MethodPost, "/gmail/v1/users/me/drafts", map[string]any{"message": msg}, &made); err != nil {
 		return nil, err
 	}
 	if made.ID == "" {
@@ -736,7 +609,7 @@ func deleteDraft(ctx context.Context, c *call) (any, error) {
 	if writer == "" {
 		return nil, refuse("Draft "+id+" was not written by Kivali: you may delete only drafts Kivali made.", "draft "+id+" carries no "+markerHeader+" header")
 	}
-	if err := c.g.gmailChange(ctx, c.token, http.MethodDelete, draftPath(id), nil, nil); err != nil {
+	if err := c.g.change(ctx, c.token, gmailAPI, http.MethodDelete, draftPath(id), nil, nil); err != nil {
 		return nil, err
 	}
 	c.audit = fmt.Sprintf("deleted draft %s (message %s)", id, d.Message.ID)
@@ -852,11 +725,11 @@ func modifyLabels(ctx context.Context, c *call) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	add, err := c.args.texts("add", maxLabelChanges, 300)
+	add, _, err := c.args.texts("add", maxLabelChanges, 300)
 	if err != nil {
 		return nil, err
 	}
-	remove, err := c.args.texts("remove", maxLabelChanges, 300)
+	remove, _, err := c.args.texts("remove", maxLabelChanges, 300)
 	if err != nil {
 		return nil, err
 	}
@@ -905,7 +778,7 @@ func modifyLabels(ctx context.Context, c *call) (any, error) {
 		Remove []string `json:"removeLabelIds,omitempty"`
 	}{addIDs, removeIDs}
 	var after gmailMessage
-	if err := c.g.gmailChange(ctx, c.token, http.MethodPost, messagePath(id)+"/modify", change, &after); err != nil {
+	if err := c.g.change(ctx, c.token, gmailAPI, http.MethodPost, messagePath(id)+"/modify", change, &after); err != nil {
 		return nil, err
 	}
 	named := func(ids []string) string {

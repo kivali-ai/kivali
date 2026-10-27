@@ -941,20 +941,6 @@ func docsWhole(a args, key string) (int, error) {
 	return int(i), nil
 }
 
-// docsFlag is the argument key as true or false: false when it is
-// missing or null.
-func docsFlag(a args, key string) (bool, error) {
-	v, ok := a[key]
-	if !ok || v == nil {
-		return false, nil
-	}
-	b, isBool := v.(bool)
-	if !isBool {
-		return false, badArgument(key + " is true or false.")
-	}
-	return b, nil
-}
-
 // folderQuery is the Drive search for folders: every folder the
 // sign-in can open that is not in the trash.
 const folderQuery = "mimeType='application/vnd.google-apps.folder' and trashed=false"
