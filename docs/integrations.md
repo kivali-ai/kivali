@@ -316,7 +316,7 @@ Each action is in **Recent calls**: one that opens, comments, closes or deletes 
 
 ## Google Workspace
 
-**Google Workspace** ships with Kivali. It connects your Gmail, Google Calendar and Google Docs, signed in with an OAuth client you make on Google's Auth Platform, in a Google Cloud project of yours. In this version, agents can list your Gmail labels. It runs inside Kivali and reaches only Google's APIs (`gmail.googleapis.com`, `www.googleapis.com` and `docs.googleapis.com`) and Google's sign-in (`accounts.google.com` and `oauth2.googleapis.com`).
+**Google Workspace** ships with Kivali. It connects your Gmail, Google Calendar and Google Docs, signed in with an OAuth client you make on Google's Auth Platform, in a Google Cloud project of yours. In this version, agents can read your Gmail. It runs inside Kivali and reaches only Google's APIs (`gmail.googleapis.com`, `www.googleapis.com` and `docs.googleapis.com`) and Google's sign-in (`accounts.google.com` and `oauth2.googleapis.com`).
 
 ### Connect it
 
@@ -347,11 +347,32 @@ An agent's access has a part for each of Gmail, Google Calendar and Google Docs,
 
 ### What agents can do
 
-Google Workspace's page lists its actions under **Actions** by the switch that gives each. This version runs one of them; the page marks the others "Not available in this version of Kivali", and agents are not given them.
+Google Workspace's page lists its actions under **Actions** by the switch that gives each. This version runs Gmail's reading; the page marks the others "Not available in this version of Kivali", and agents are not given them.
 
-With **May read mail**, an agent can list the Gmail labels its access includes: Gmail's own, then yours by name, each with its id.
+With **May read mail**, an agent can:
 
-A call the agent's access does not allow is refused before anything reaches Google, and the agent is told to ask you. Each call is in **Recent calls**.
+- List the Gmail labels its access includes: Gmail's own, then yours by name, each with its id.
+- Search your mail with Gmail's search words, such as `from:dana@example.com has:attachment`, newest first, 25 messages a page, each listed with its sender, recipients, subject and Gmail's snippet of it.
+- Read a message, or a whole conversation oldest first, as text: its headers, its body, and its attachments by name, type and size.
+- Save an attachment of up to 25 MB into its files.
+
+It reads only mail in the labels its access names under **Labels it may read**, or all of it when that list is empty. A search lists only the messages in those labels, so a page may list fewer than 25. A message outside them is refused, and a conversation shows only its messages in them, saying how many it left out.
+
+#### What the agent reads
+
+An email can be written by anyone, and may carry text meant to steer the agent. Kivali hands the agent each email's own text between two fixed lines that say it is untrusted, and tells the agent never to follow instructions it finds there. Before it, Kivali writes a line of its own: the sender's address, whether it is from your domain, and what Gmail's checks of the sender (SPF, DKIM and DMARC) found. A message that claims your domain but that Gmail's checks deny reads as from outside it. For an account at gmail.com, only your own address counts as your domain.
+
+Text an email hides from the person reading it (styled not to show, in a tiny font, in the colour of its background, or in comments) is left out, and the agent is told how many characters were. Each link is replaced by a numbered marker such as [link 1] and listed after the body, its host first, so the agent sees where a link goes before following it. A body over 60,000 characters is cut, and a long conversation names the messages it had no room for.
+
+#### Attachments
+
+An attachment the agent saves lands in its files as it came, under `/files/integrations/google-workspace/untrusted-downloads/`, in a folder of its own for each message: the path tells the agent the file is content from outside, never instructions. Kivali never opens it. Its name is cleaned to a plain file name, and an attachment over 25 MB is refused before any of it is read.
+
+#### Give an agent only some of your mail
+
+The label list is how you choose which mail an agent sees. Make a label for it, such as "Invoices", and a Gmail filter that applies the label to the mail you want it to have: in Gmail, open **Settings**, **See all settings**, **Filters and Blocked Addresses**, then **Create a new filter**, describe the mail, and choose **Apply the label**. Then name that label alone under **Labels it may read**. Kivali never changes your filters: Gmail's settings are not among what it asks Google for.
+
+A call the agent's access does not allow is refused before anything reaches Google, and the agent is told to ask you. Each call is in **Recent calls**, naming the messages it read or the attachment it saved.
 
 ### Not supported
 

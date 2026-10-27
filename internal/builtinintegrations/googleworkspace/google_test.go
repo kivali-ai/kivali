@@ -154,7 +154,8 @@ func TestToolsFollowTheSwitches(t *testing.T) {
 	if got := names(map[string]any{}); len(got) != 0 {
 		t.Errorf("no switch on: %v", got)
 	}
-	if got := names(map[string]any{"gmail_read": true}); !slices.Equal(got, []string{"list_labels"}) {
+	gmailRead := []string{"list_labels", "search_messages", "get_message", "get_thread", "get_attachment"}
+	if got := names(map[string]any{"gmail_read": true}); !slices.Equal(got, gmailRead) {
 		t.Errorf("gmail_read: %v", got)
 	}
 	// A switch stored as anything but true is off.
@@ -165,7 +166,7 @@ func TestToolsFollowTheSwitches(t *testing.T) {
 	for _, k := range switchKeys {
 		all[k] = true
 	}
-	if got := names(all); !slices.Equal(got, []string{"list_labels"}) {
+	if got := names(all); !slices.Equal(got, gmailRead) {
 		t.Errorf("every switch: %v", got)
 	}
 	m := New().Manifest()
