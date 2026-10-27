@@ -10,6 +10,7 @@ import (
 
 	"github.com/kivali-ai/kivali/internal/agent"
 	"github.com/kivali-ai/kivali/internal/provider"
+	"github.com/kivali-ai/kivali/internal/seed"
 	"github.com/kivali-ai/kivali/internal/web/apitypes"
 )
 
@@ -116,11 +117,12 @@ func TestBootstrapFlow(t *testing.T) {
 		t.Errorf(".seed/response.md missing briefing")
 	}
 
-	// chat.jsonl is untouched — the seed prompt and response never show
-	// in the chat. If CreateAgent ever writes a seed entry, update this
-	// assertion rather than weakening it.
-	if history, err := srv.Store.ReadChatHistory("chief-of-staff"); err == nil && len(history) > 0 {
-		t.Errorf("chat.jsonl has %d entries on a freshly seeded CoS; seed prompt/response must not render", len(history))
+	// The seed prompt and response never show in the chat: its only
+	// entry is the first message, sent as the CEO's own. If CreateAgent
+	// ever writes a seed entry, update this assertion rather than
+	// weakening it.
+	if history, err := srv.Store.ReadChatHistory("chief-of-staff"); err != nil || len(history) != 1 || history[0].Content != strings.TrimSpace(seed.WorkFirstMessage) {
+		t.Errorf("chat.jsonl on a freshly seeded CoS = %+v (err %v); want the work first message alone, never the seed prompt or response", history, err)
 	}
 
 	// The seed call's shape: 2 system blocks (handbook + role), and

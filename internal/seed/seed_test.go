@@ -124,6 +124,7 @@ func TestFirstMessagesNameWhatExists(t *testing.T) {
 	for _, tc := range []struct{ name, msg, handbook string }{
 		{"files message", HandbookFromFilesMessage, Handbook},
 		{"personal first message", PersonalFirstMessage, PersonalHandbook},
+		{"work first message", WorkFirstMessage, Handbook},
 	} {
 		if strings.TrimSpace(tc.msg) == "" {
 			t.Fatalf("%s is empty", tc.name)
@@ -163,6 +164,7 @@ func TestSeedTextSaysTheOwner(t *testing.T) {
 		"personal cos role":      ChiefOfStaffRoleFor("personal"),
 		"files message":          HandbookFromFilesMessage,
 		"personal first message": PersonalFirstMessage,
+		"work first message":     WorkFirstMessage,
 		"kivali developer":       KivaliDeveloperRole,
 	}
 	for name, text := range docs {

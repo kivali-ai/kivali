@@ -80,20 +80,25 @@ func (s *Server) removeProjectFile(sha string) error {
 
 // defaultSeedInstruction is the closing instruction sent to CoS along
 // with the handbook, role template, and project files.
-const defaultSeedInstruction = `Read through the project files above. Synthesize what you now understand about the business, the market, the product, the operating model, and anything else that will be load-bearing for you as Chief of Staff. Write this as your initial agent memory — thorough, markdown, first-person where natural. It will be inlined into your system prompt on every future Claude call and evolves over time as your chats rotate.
+const defaultSeedInstruction = `Read through the project files above, if there are any, and the handbook. Write down what they say about the business, the market, the product, the operating model, and anything else that will be load-bearing for you as Chief of Staff, drawing only on what they say. Where they say little or nothing, say so and note what you will ask the owner; never fill a gap with a guess. Write this as your initial agent memory — markdown, first-person where natural. It will be inlined into your system prompt on every future Claude call and evolves over time as your chats rotate.
 
 Respond with only the agent memory content (no preamble, no meta-commentary).`
 
 // personalSeedInstruction closes the seed call for a personal team,
 // whose Chief of Staff works for one person rather than a business and
 // may have no project files to read.
-const personalSeedInstruction = `Read through the project files above, if there are any. Synthesize what you now understand about the person this team works for: who they are, who is in their life and home, what they want help with, what is off limits, and anything else that will be load-bearing for you as Chief of Staff. Where you know little yet, say so and note what you will ask them. Write this as your initial agent memory — thorough, markdown, first-person where natural. It will be inlined into your system prompt on every future Claude call and evolves over time as your chats rotate.
+const personalSeedInstruction = `Read through the project files above, if there are any. Synthesize what you now understand about the person this team works for: who they are, who is in their life and home, what they want help with, what is off limits, and anything else that will be load-bearing for you as Chief of Staff. Where you know little yet, say so and note what you will ask them; never fill a gap with a guess. Write this as your initial agent memory — markdown, first-person where natural. It will be inlined into your system prompt on every future Claude call and evolves over time as your chats rotate.
 
 Respond with only the agent memory content (no preamble, no meta-commentary).`
 
 // personalFirstMessageLabel is the first-message stage in words for a
 // personal team, whose Chief of Staff starts by asking questions.
 const personalFirstMessageLabel = "Asking it to get to know you"
+
+// workFirstMessageLabel is the first-message stage in words for a
+// work team whose handbook is not drafted from the files: its Chief
+// of Staff starts by asking about the business.
+const workFirstMessageLabel = "Asking it to get to know your business"
 
 // cosSlug is the Chief of Staff's slug: the agent setup hires, and
 // whose existence means setup is done.
@@ -167,8 +172,9 @@ func (s *Server) RefreshKivaliRoles() (rewritten []string, err error) {
 }
 
 // The Chief of Staff seed runs in these stages, in order; the hiring
-// panel shows one line per stage. seedStageFirstMessage runs only when
-// the seed carries a first message.
+// panel shows one line per stage. seedStageFirstMessage runs when the
+// seed carries a first message, which every setup path does: the
+// label below is the files path's, and the other paths replace it.
 const (
 	seedStageRead         = iota // read the handbook and every project file's text
 	seedStageBrief               // the one long model call: the Chief of Staff writes its memory

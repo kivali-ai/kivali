@@ -221,7 +221,7 @@ func TestSeedCoS(t *testing.T) {
 		if c.Type == provider.ContentText && strings.Contains(c.Text, "Revenue plan") {
 			foundText = true
 		}
-		if c.Type == provider.ContentText && strings.Contains(c.Text, "Synthesize what you now understand") {
+		if c.Type == provider.ContentText && strings.Contains(c.Text, "never fill a gap with a guess") {
 			foundInstruct = true
 		}
 	}

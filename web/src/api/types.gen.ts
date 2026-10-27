@@ -3461,6 +3461,8 @@ export interface SeedCoSRequest {
    * project files and propose it, or to ask the CEO what the files
    * leave out. The handbook written at seeding is then the
    * default (or HandbookMD), to be replaced by that proposal.
+   * Without it, a work team's Chief of Staff asks the CEO about
+   * the business in its first message and drafts from the answers.
    */
   handbook_from_files: boolean;
   /**
@@ -3489,9 +3491,10 @@ export type SetupStageState = typeof SetupStageStateDone | typeof SetupStageStat
 /**
  * SetupStage is one line of the hiring panel. The labels name the
  * seed's real steps: "Reading your files", "Writing its first
- * briefing" (the one long model call), "Hiring", and, when the
- * handbook is to come from the files, "Asking it to draft the
- * handbook".
+ * briefing" (the one long model call), "Hiring", and the first
+ * message's: "Asking it to draft the handbook" when the handbook is to
+ * come from the files, "Asking it to get to know you" on a personal
+ * team, and "Asking it to get to know your business" otherwise.
  */
 export interface SetupStage {
   label: string;
