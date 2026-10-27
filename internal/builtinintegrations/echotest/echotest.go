@@ -12,11 +12,11 @@
 // whose words for a refused sign-in are Advise's.
 //
 // With Holds set it has a third action, hold, whose call waits for the
-// owner's approval (Result.Hold): the title, fields and recipients are
-// its arguments' (HoldArgs), and its Run, approved, answers with how
-// many fields it echoed and whoami of the connection it is run with,
-// so a test sees the connection read at approval rather than at the
-// call. HoldRun, when set, runs in its place.
+// owner's approval (Result.Hold): the title, fields, recipients and
+// switch are its arguments' (HoldArgs), and its Run, approved, answers
+// with how many fields it echoed and whoami of the connection it is run
+// with, so a test sees the connection read at approval rather than at
+// the call. HoldRun, when set, runs in its place.
 //
 // With SetupFlow set its connection is a setup one instead (method
 // setup, setup.go), and it implements every optional hook of the setup
@@ -191,12 +191,14 @@ func (e *Echo) Tools(_ context.Context, _ builtinintegrations.Caller) ([]builtin
 	return tools, nil
 }
 
-// HoldArgs are hold's arguments: the held call's title, its fields
-// and whom it reaches.
+// HoldArgs are hold's arguments: the held call's title, its fields,
+// whom it reaches and the switch of the access form that must still be
+// on at approval (Hold.Switch; "loud" is echo's).
 type HoldArgs struct {
 	Title      string                          `json:"title"`
 	Fields     []builtinintegrations.HoldField `json:"fields"`
 	Recipients []string                        `json:"recipients"`
+	Switch     string                          `json:"switch,omitempty"`
 }
 
 // hold is the held call of hold with args. Its Run (HoldRun, or echo's
@@ -222,6 +224,7 @@ func (e *Echo) hold(caller builtinintegrations.Caller, args json.RawMessage) (*b
 		Title:      cmp.Or(a.Title, "Echo the fields"),
 		Fields:     a.Fields,
 		Recipients: a.Recipients,
+		Switch:     a.Switch,
 		Run: func(ctx context.Context, conn builtinintegrations.Connection) (*builtinintegrations.Result, error) {
 			e.see("hold run", caller, conn)
 			return run(ctx, conn)

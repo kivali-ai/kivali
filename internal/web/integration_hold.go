@@ -11,13 +11,15 @@
 // reaches, and the taint line (heldCallTaint). A hold the owner could
 // not read as Run sends it is refused: one carrying the connection's
 // secret, which the owner would read scrubbed, or a Unicode format
-// character, which shows as nothing. At most
+// character other than the zero-width joiner, which shows as nothing.
+// At most
 // maxHeldCallsPerAgent of an agent's calls wait at once; another is
 // refused before it is held.
 //
 // Approve works the integration out again exactly as a call does (the
-// agent still on the team, agentIntegrationFor, the agent's listed
-// actions, the connection). A refusal there is the owner's answer,
+// agent still on the team, agentIntegrationFor, the hold's Switch still
+// on in the agent's access, the agent's listed actions, the
+// connection). A refusal there is the owner's answer,
 // audited as not run, and the call keeps waiting. Otherwise core runs
 // Hold.Run once, with the connection read then, under a call's
 // deadline, writes the row of how it ended ("approved: ...") and tells
@@ -112,8 +114,9 @@ func refuseHeldCallSecret(display string) string {
 
 // reasonHeldCallFormat is the audit's reason for a hold whose words
 // hold a Unicode format character (category Cf: zero-width spaces and
-// joiners, direction marks and overrides, the byte order mark), which
-// the owner would not see and Run would send.
+// non-joiners, direction marks and overrides, the byte order mark),
+// which the owner would not see and Run would send. The zero-width
+// joiner is allowed (hasFormatRune).
 const reasonHeldCallFormat = "the call holds invisible formatting characters"
 
 func refuseHeldCallFormat() string {
@@ -140,9 +143,12 @@ type integrationHold struct {
 	title       string
 	fields      []builtinintegrations.HoldField
 	recipients  []string
-	taint       string
-	at          time.Time
-	run         func(context.Context, builtinintegrations.Connection) (*builtinintegrations.Result, error)
+	// needs is the hold's Switch: the access form's switch that must
+	// still be on at approval, "" for none.
+	needs string
+	taint string
+	at    time.Time
+	run   func(context.Context, builtinintegrations.Connection) (*builtinintegrations.Result, error)
 
 	// answers takes the owner's answers, one at a time, to the
 	// goroutine that waits for them (awaitHeldCall); stop, closed, ends
@@ -345,7 +351,7 @@ func (s *Server) holdAgentCall(start time.Time, slug string, v agentIntegration,
 	now := s.clk().Now()
 	h := &integrationHold{
 		id: id, agent: slug, integration: v.name, display: v.display, tool: tool,
-		title: title, fields: fields, recipients: recipients,
+		title: title, fields: fields, recipients: recipients, needs: hold.Switch,
 		taint: s.heldCallTaint(v.name, slug, now), at: now, run: hold.Run,
 		answers: make(chan heldCallAnswer), stop: make(chan struct{}), ended: make(chan struct{}),
 	}
@@ -380,10 +386,16 @@ func heldCallWords(hold *builtinintegrations.Hold) []string {
 	return append(out, hold.Recipients...)
 }
 
+// zeroWidthJoiner joins emoji into one (a family, a skin tone on a
+// profession): it changes how they are drawn, never what text the owner
+// reads, so a hold may carry it.
+const zeroWidthJoiner = '\u200d'
+
 // hasFormatRune reports whether w holds a Unicode format character
-// (category Cf), which shows as nothing on the owner's screen.
+// (category Cf) other than zeroWidthJoiner, which shows as nothing on
+// the owner's screen.
 func hasFormatRune(w string) bool {
-	return strings.IndexFunc(w, func(r rune) bool { return unicode.Is(unicode.Cf, r) }) >= 0
+	return strings.IndexFunc(w, func(r rune) bool { return r != zeroWidthJoiner && unicode.Is(unicode.Cf, r) }) >= 0
 }
 
 // heldCallGone is why h may no longer wait, in the words the owner's
@@ -488,9 +500,9 @@ func (s *Server) answerHeldCall(h *integrationHold, a heldCallAnswer) (apitypes.
 	}
 
 	ctx := context.Background()
-	v, conn, scrub, why := s.heldCallTarget(ctx, h, name)
+	v, conn, scrub, why, audit := s.heldCallTarget(ctx, h, name)
 	if why != "" {
-		s.auditAgentCall(h.integration, start, h.agent, h.tool, false, "approved, not run: "+why)
+		s.auditAgentCall(h.integration, start, h.agent, h.tool, false, "approved, not run: "+cmp.Or(audit, why))
 		return apitypes.NeedActionResponse{}, false, &ceoRefusal{
 			Status: http.StatusConflict,
 			Msg:    "integration_hold approve: " + why,
@@ -539,51 +551,60 @@ func (s *Server) answerHeldCall(h *integrationHold, a heldCallAnswer) (apitypes.
 	return apitypes.NeedActionResponse{Result: "Approved and done. " + told, Link: link}, true, nil
 }
 
+// reasonSwitchOff is the audit's reason, after "approved, not run: ",
+// for an approval of a held call whose Switch the agent's access no
+// longer has on.
+const reasonSwitchOff = "the agent's access no longer allows it"
+
 // heldCallTarget is h's integration as a call of it finds it now, with
 // the connection read now and its scrubber; or, when it cannot run,
-// why, for the owner: the agent gone, the integration refused (as
-// agentIntegrationFor and the agent's listed actions refuse a call),
-// or no connection to run it with. name is the agent's.
-func (s *Server) heldCallTarget(ctx context.Context, h *integrationHold, name string) (agentIntegration, builtinintegrations.Connection, *strings.Replacer, string) {
-	var v agentIntegration
-	var conn builtinintegrations.Connection
+// why, for the owner, and, when the audit says it otherwise, audit: the
+// agent gone, the integration refused (as agentIntegrationFor and the
+// agent's listed actions refuse a call), the hold's Switch off in the
+// agent's access, or no connection to run it with. name is the agent's.
+func (s *Server) heldCallTarget(ctx context.Context, h *integrationHold, name string) (v agentIntegration, conn builtinintegrations.Connection, scrub *strings.Replacer, why, audit string) {
 	if _, err := s.Store.GetAgent(h.agent); err != nil {
-		return v, conn, nil, name + " is no longer on the team"
+		return v, conn, nil, name + " is no longer on the team", ""
 	}
 	it, err := s.Store.GetIntegration(h.integration)
 	if err != nil {
-		return v, conn, nil, h.display + " is no longer on the team"
+		return v, conn, nil, h.display + " is no longer on the team", ""
 	}
 	v, err = s.agentIntegrationFor(it, h.agent)
 	switch {
 	case err != nil:
 		log.Printf("integration %s: %s's access, for a held call: %v", h.integration, h.agent, err)
-		return v, conn, nil, "Kivali could not read " + name + "'s access to " + h.display
+		return v, conn, nil, "Kivali could not read " + name + "'s access to " + h.display, ""
 	case v.refusal != "":
-		return v, conn, nil, heldCallRefused(v, name)
+		return v, conn, nil, heldCallRefused(v, name), ""
 	case v.builtin == nil:
-		return v, conn, nil, v.display + " is not in this version of Kivali"
+		return v, conn, nil, v.display + " is not in this version of Kivali", ""
+	}
+	if h.needs != "" {
+		if on, _ := callerOf(h.agent, v.access).Access[h.needs].(bool); !on {
+			return v, conn, nil, name + "'s access to " + v.display + " no longer allows it", reasonSwitchOff
+		}
 	}
 	tools, err := s.agentToolsOf(ctx, v, h.agent)
 	if err != nil {
-		return v, conn, nil, v.display + " did not list " + name + "'s actions (" + integrationErrorWords(err) + ")"
+		return v, conn, nil, v.display + " did not list " + name + "'s actions (" + integrationErrorWords(err) + ")", ""
 	}
 	if !slices.ContainsFunc(tools, func(t agentIntegrationTool) bool { return t.Tool == h.tool }) {
-		return v, conn, nil, name + "'s access to " + v.display + " no longer includes " + h.tool
+		return v, conn, nil, name + "'s access to " + v.display + " no longer includes " + h.tool, ""
 	}
 	conn, _, secretValues, err := s.builtinConnectionSecrets(ctx, v.name, "")
 	switch {
 	case errors.Is(err, store.ErrNotFound):
-		return v, conn, nil, v.display + " has no connection"
+		return v, conn, nil, v.display + " has no connection", ""
 	case errors.Is(err, errSignInNeeded):
-		return v, conn, nil, v.display + "'s connection needs you to sign in again"
+		return v, conn, nil, v.display + "'s connection needs you to sign in again", ""
 	case errors.Is(err, errVendorUnavailable):
-		return v, conn, nil, v.display + " did not answer when Kivali renewed the connection's sign-in"
+		return v, conn, nil, v.display + " did not answer when Kivali renewed the connection's sign-in", ""
 	case err != nil:
 		log.Printf("integration %s: the connection, for a held call: %v", v.name, err)
-		return v, conn, nil, "Kivali could not read " + v.display + "'s connection"
+		return v, conn, nil, "Kivali could not read " + v.display + "'s connection", ""
 	}
-	return v, conn, newScrubber(secretValues), ""
+	return v, conn, newScrubber(secretValues), "", ""
 }
 
 // heldCallRefused is v's refusal of agent name's call in the owner's

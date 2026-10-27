@@ -2850,6 +2850,11 @@ can, does nothing outward, and answers with `Result.Hold` and no
   alice@example.org"); `Fields` are what the owner reads, in order,
   each a label and the value exactly as it will go (From, To, Subject,
   Body); `Recipients` are the addresses it reaches.
+- `Switch`, when set, is the key of the access form's switch that must
+  still be on when the owner approves: the one that lets the agent ask
+  for the action, which may not be the one its listing hangs on
+  (Google Workspace's `update_event` is listed under `calendar_write`,
+  and its sends need `calendar_send`).
 - `Run` performs exactly what the fields show, from what `Call`
   captured when it held the call (the message as built then), never
   read again from the agent or the service. It runs under a call's
@@ -2865,9 +2870,11 @@ connection (the scrubber would change them: `the call carries the
 connection's secret`; the agent reads "This request carries the
 <integration> integration's secret, so it was not held for the
 owner's approval.") or a Unicode format character, category Cf, such
-as U+200B to U+200F, U+202A to U+202E, U+2060 to U+2064, U+2066 to
-U+2069 or U+FEFF, which shows as nothing (`the call holds invisible
-formatting characters`; the agent is told to remove them). It cuts
+as U+200B, U+200C, U+200E, U+200F, U+202A to U+202E, U+2060 to
+U+2064, U+2066 to U+2069 or U+FEFF, which shows as nothing (`the call
+holds invisible formatting characters`; the agent is told to remove
+them). The zero-width joiner, U+200D, is allowed: it joins emoji into
+one (a family, a woman technologist) and hides no text. It cuts
 the title and each label to one line of 300 bytes and each recipient
 to one of 320, and shows each value whole.
 
@@ -2903,9 +2910,9 @@ so it is answered once; an answer to a call no longer waiting is a 409
 
 | How it ends | What core does | Audit row | The agent's message |
 | --- | --- | --- | --- |
-| Approved | Works the call out again as a call is: the agent still on the team, `agentIntegrationFor`, the agent's listed actions still including the action, the connection; then `Run` | allowed, `approved: ` and `Run`'s `Audit`, or failing that the title, never `Run`'s answer | `Approved: <title>`: "The owner approved it, and Kivali ran it. The <integration> integration answered:" and the answer, fenced |
+| Approved | Works the call out again as a call is: the agent still on the team, `agentIntegrationFor`, the hold's `Switch` still on in the agent's access, the agent's listed actions still including the action, the connection; then `Run` | allowed, `approved: ` and `Run`'s `Audit`, or failing that the title, never `Run`'s answer | `Approved: <title>`: "The owner approved it, and Kivali ran it. The <integration> integration answered:" and the answer, fenced |
 | Approved, `Run` fails | Ends it | allowed, `approved, then failed: ` and `Run`'s `Audit` or the title | "... but the <integration> integration answered with an error:" and the answer, fenced |
-| Approved, refused there | Nothing: the owner reads why ("Dana has no access to Echo, so it was not done. It is still waiting: approve it again once that changes, or deny it", a 409), and the call keeps waiting | not allowed, `approved, not run: <why>` ("Dana has no access to Echo") | none |
+| Approved, refused there | Nothing: the owner reads why ("Dana has no access to Echo, so it was not done. It is still waiting: approve it again once that changes, or deny it", a 409), and the call keeps waiting | not allowed, `approved, not run: <why>` ("Dana has no access to Echo"; for a `Switch` off, "the agent's access no longer allows it", the owner reading "Dana's access to Echo no longer allows it, ...") | none |
 | Approved, `Run` refuses | Ends it | not allowed, `approved, then refused: <reason>` | "... refused it, and nothing was done:" and the refusal's text |
 | Denied | Ends it; `Run` never runs | not allowed, `denied: <note>` | `Denied: <title>`: "The owner denied it, so it was not done." and the note |
 | A day with no answer, on core's clock | Ends it | not allowed, `nobody answered within a day` | `Not answered: <title>`: "Nobody answered within a day, so it was not done." |
@@ -2913,8 +2920,8 @@ so it is answered once; an answer to a call no longer waiting is a 409
 | The agent offboarded | Ends each of its calls | not allowed, `denied: the agent left the team` | none: the agent is archived |
 
 An owner's note goes after the outcome as "The owner's note: ...".
-Removing an agent's access does not end its calls; approving one then
-is refused as above. A row's `outside`, for an approved `Run` that
+Removing an agent's access, or turning off a hold's `Switch` in it,
+does not end its calls; approving one then is refused as above. A row's `outside`, for an approved `Run` that
 names senders outside the owner's domain, is kept as for any call
 (`auditOutside`, the one shape every row's `outside` is written in).
 
