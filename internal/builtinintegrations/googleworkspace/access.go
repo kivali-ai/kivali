@@ -17,9 +17,10 @@ import (
 //
 //   - read: sees what is inside the owner's account;
 //   - write: changes something inside the account that no other person
-//     is told about;
+//     is told about or can see;
 //   - send: anything that makes Google deliver something to another
-//     person, which always waits for the owner's approval: the switch
+//     person, or changes a calendar or a document another person can
+//     see, which always waits for the owner's approval: the switch
 //     decides only whether the agent may ask.
 //
 // send_to holds every send to the addresses it names. A list left empty
@@ -54,14 +55,14 @@ var accessFields = []accessField{
 	{key: keyGmailSend, title: "May send mail (each send waits for your approval)", description: "Lets the agent ask to send mail: an email it writes, or a draft. Nothing is sent until you approve it, exactly as you saw it."},
 	{key: keyGmailLabels, title: "Labels it may read", description: "The labels the agent may read mail in. Leave it empty for every label.", list: true},
 	{key: keyCalendarRead, title: "May read calendars", description: "Lets the agent see the calendars below and their events. It changes nothing."},
-	{key: keyCalendarWrite, title: "May change events", description: "Lets the agent create events on your own calendars, and change and delete the events there that you organized and that invite no one but you, telling no one. It deletes only events Kivali created. Inviting people, changing who an event invites, and changing or deleting an event that invites others each wait for your approval and need May invite and respond."},
-	{key: keyCalendarSend, title: "May invite and respond (each waits for your approval)", description: "Lets the agent ask to invite people to events, to change and delete events that invite others, and to answer invitations. Nothing reaches anyone until you approve it, exactly as you saw it."},
+	{key: keyCalendarWrite, title: "May change events", description: "Lets the agent create events on your own calendars, and change and delete the events there that you organized and that invite no one but you, telling no one. It deletes only events Kivali created. Inviting people, changing who an event invites, changing or deleting an event that invites others, and any change on a calendar shared with others, who see it, each wait for your approval and need May invite and respond."},
+	{key: keyCalendarSend, title: "May invite and respond (each waits for your approval)", description: "Lets the agent ask to invite people to events, to change and delete events that invite others, to create, change and delete events on calendars shared with others, and to answer invitations. Nothing reaches anyone until you approve it, exactly as you saw it."},
 	{key: keyCalendars, title: "Calendars it may use", description: "The calendars the agent may use. Leave it empty for every calendar.", list: true},
 	{key: keyDocsRead, title: "May read documents", description: "Lets the agent find and read Google Docs and their comments, within the folders below. It changes nothing."},
-	{key: keyDocsWrite, title: "May write documents", description: "Lets the agent create documents, and change documents you own or it created, telling no one."},
-	{key: keyDocsSend, title: "May comment (each comment waits for your approval)", description: "Lets the agent ask to comment on documents Kivali made and to reply to comments on them, within the folders below. Nothing is posted until you approve it, exactly as you saw it."},
+	{key: keyDocsWrite, title: "May write documents", description: "Lets the agent create documents, and change documents you own or it created, telling no one. Changing a document shared with others, or creating one in a folder shared with others, who see it, waits for your approval and needs May comment."},
+	{key: keyDocsSend, title: "May comment (each comment waits for your approval)", description: "Lets the agent ask to comment on documents Kivali made and to reply to comments on them, and to change documents shared with others and create documents in folders shared with others, within the folders below. Nothing is posted or changed until you approve it, exactly as you saw it."},
 	{key: keyDocsFolders, title: "Folders it may read", description: "The Drive folders the agent may read and change documents in, the folders inside them included. Leave it empty for every document you can open.", list: true},
-	{key: keySendTo, title: "May send to", description: "Who the agent's sends may reach: everyone an email goes to, everyone Google tells of an invitation, a change to an event or an answer, and everyone Google tells of a comment. An address such as dana@example.com, or *@example.com for everyone at a domain. Leave it empty for anyone. Every send still waits for your approval.", list: true},
+	{key: keySendTo, title: "May send to", description: "Who the agent's sends may reach: everyone an email goes to, everyone Google tells of an invitation, a change to an event or an answer, everyone Google tells of a comment, and everyone a calendar or a document is shared with, for a change to it. An address such as dana@example.com, or *@example.com for everyone at a domain. Leave it empty for anyone. While it names anyone, a change to a calendar or a document shared with everyone at a domain, or with anyone, is refused. Every send still waits for your approval.", list: true},
 }
 
 // accessSchema is the access form as the manifest's JSON Schema, the

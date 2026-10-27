@@ -49,6 +49,38 @@ type fakeFile struct {
 	// refuseChild, on a folder, is Drive's answer to making a file in
 	// it.
 	refuseChild *fakeError
+	// perms is the file's permissions as permissions.list answers them;
+	// nil is its owners' alone (ownerPermissions).
+	perms []map[string]any
+}
+
+// ownerPermissions is the permissions of a file shared with no one: its
+// owner's, or, for a shared drive's, the signed-in account's as the
+// drive's manager.
+func (ff *fakeFile) ownerPermissions() []map[string]any {
+	if len(ff.file.Owners) == 0 {
+		return []map[string]any{{"type": "user", "role": "organizer", "emailAddress": "dana@example.com"}}
+	}
+	var out []map[string]any
+	for _, o := range ff.file.Owners {
+		out = append(out, map[string]any{"type": "user", "role": "owner", "emailAddress": o.EmailAddress})
+	}
+	return out
+}
+
+// permission is a permission of permissions.list of type kind, its
+// address or domain who ("" for anyone's), found in a search when found.
+func permission(kind, who string, found bool) map[string]any {
+	p := map[string]any{"type": kind, "role": "reader"}
+	switch kind {
+	case "user", "group":
+		p["emailAddress"] = who
+	case "domain":
+		p["domain"], p["allowFileDiscovery"] = who, found
+	case "anyone":
+		p["allowFileDiscovery"] = found
+	}
+	return p
 }
 
 // fakePara is a paragraph of a modelled body: its text, its named
@@ -180,6 +212,8 @@ func (d *fakeDocs) handler(origin string, next http.Handler) http.Handler {
 			d.listComments(w, r, strings.TrimSuffix(strings.TrimPrefix(p, "/drive/v3/files/"), "/comments"))
 		case origin == "www" && strings.Contains(p, "/comments"):
 			d.comment(w, r, strings.Split(strings.TrimPrefix(p, "/drive/v3/files/"), "/"), body)
+		case origin == "www" && strings.HasSuffix(p, "/permissions") && r.Method == http.MethodGet:
+			d.listPermissions(w, r, strings.TrimSuffix(strings.TrimPrefix(p, "/drive/v3/files/"), "/permissions"))
 		case origin == "www" && r.Method == http.MethodGet:
 			ff := d.get(strings.TrimPrefix(p, "/drive/v3/files/"))
 			if ff == nil {
@@ -297,6 +331,34 @@ func (d *fakeDocs) listComments(w http.ResponseWriter, r *http.Request, id strin
 	all := ff.comments
 	d.mu.Unlock()
 	out := map[string]any{"comments": all[min(from, len(all)):min(from+size, len(all))]}
+	if from+size < len(all) {
+		out["nextPageToken"] = strconv.Itoa(from + size)
+	}
+	writeJSON(w, out)
+}
+
+// listPermissions is permissions.list, which Drive answers for a shared
+// drive's file only with supportsAllDrives: the file's permissions
+// (ownerPermissions when perms is nil), pageSize a page, its token the
+// offset.
+func (d *fakeDocs) listPermissions(w http.ResponseWriter, r *http.Request, id string) {
+	ff := d.get(id)
+	if ff == nil || r.URL.Query().Get("supportsAllDrives") != "true" {
+		fakeFail(w, http.StatusNotFound, "File not found: "+id+".")
+		return
+	}
+	d.mu.Lock()
+	all := ff.perms
+	if all == nil {
+		all = ff.ownerPermissions()
+	}
+	d.mu.Unlock()
+	size, _ := strconv.Atoi(r.URL.Query().Get("pageSize"))
+	if size <= 0 {
+		size = 100
+	}
+	from, _ := strconv.Atoi(r.URL.Query().Get("pageToken"))
+	out := map[string]any{"permissions": all[min(from, len(all)):min(from+size, len(all))]}
 	if from+size < len(all) {
 		out["nextPageToken"] = strconv.Itoa(from + size)
 	}

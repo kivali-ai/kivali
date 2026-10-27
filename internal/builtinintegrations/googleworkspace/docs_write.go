@@ -1,6 +1,7 @@
 package googleworkspace
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -10,14 +11,20 @@ import (
 	"slices"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/kivali-ai/kivali/internal/builtinintegrations"
 )
 
 // Docs' writing: creating a document, adding to one and replacing text
 // in one. A write changes only a document the signed-in account owns or
 // that counts as Kivali's (writableDocument), within the folders the
 // access includes, and everything is checked before anything is
-// changed. Each write's audit is set before its request, so a write
-// Google does not answer still names what it changed.
+// changed. A write to a document, or into a folder, that anyone besides
+// the owner can see (fileShare) is a send, since they see the change:
+// it needs docs_send, everyone it is shared with in send_to
+// (checkShared), and is held for the owner (held), its Run doing what
+// the write would have. Each write's audit is set before its request,
+// so a write Google does not answer still names what it changed.
 
 // maxWriteChars bounds the text one write adds.
 const maxWriteChars = 100000
@@ -56,15 +63,6 @@ func unanswered(err error) error {
 	return err
 }
 
-// sharedNote ends a write's audit for a document or folder shared with
-// others, whom the change reaches; "" for one that is not.
-func sharedNote(f driveFile) string {
-	if f.Shared {
-		return " (shared with others)"
-	}
-	return ""
-}
-
 // batchUpdate applies requests to the document id, in order, and reads
 // Google's replies into out (nil for none). revision, when it is not
 // "", is the revision the requests' indexes were read from: Google
@@ -93,12 +91,30 @@ var (
 	mdBullet  = regexp.MustCompile(`^[ \t]*[-*+][ \t]+(.*)$`)
 )
 
-// parseMarkdown reads s, a line a paragraph, in the Markdown
-// markdownWords describes. Blank lines at its end are dropped; other
-// Markdown is written as it is. The Docs API strips the Private Use
-// Area (U+E000 to U+F8FF) from text it inserts, so it is taken out
-// first, and the indexes counted are those of the text Google keeps.
+// parseMarkdown reads s, a line a paragraph (markdownLines), in the
+// Markdown markdownWords describes; other Markdown is written as it is.
 func parseMarkdown(s string) []mdParagraph {
+	var out []mdParagraph
+	for _, line := range markdownLines(s) {
+		var p mdParagraph
+		if m := mdHeading.FindStringSubmatch(line); m != nil {
+			p.heading, line = len(m[1]), m[2]
+		} else if m := mdBullet.FindStringSubmatch(line); m != nil {
+			p.bullet, line = true, m[1]
+		}
+		p.text, p.bold = boldSpans(line)
+		out = append(out, p)
+	}
+	return out
+}
+
+// markdownLines is s as parseMarkdown reads it, a line a paragraph,
+// which a card shows as what is written: cleanText's, each line's
+// spaces at its end and blank lines at the end dropped. The Docs API
+// strips the Private Use Area (U+E000 to U+F8FF) from text it inserts,
+// so it is taken out first, and the indexes counted are those of the
+// text Google keeps.
+func markdownLines(s string) []string {
 	s, _ = cleanText(s)
 	s = strings.Map(func(r rune) rune {
 		if r >= 0xE000 && r <= 0xF8FF {
@@ -110,19 +126,11 @@ func parseMarkdown(s string) []mdParagraph {
 	if s == "" {
 		return nil
 	}
-	var out []mdParagraph
-	for _, line := range strings.Split(s, "\n") {
-		line = strings.TrimRight(line, " \t")
-		var p mdParagraph
-		if m := mdHeading.FindStringSubmatch(line); m != nil {
-			p.heading, line = len(m[1]), m[2]
-		} else if m := mdBullet.FindStringSubmatch(line); m != nil {
-			p.bullet, line = true, m[1]
-		}
-		p.text, p.bold = boldSpans(line)
-		out = append(out, p)
+	lines := strings.Split(s, "\n")
+	for i, line := range lines {
+		lines[i] = strings.TrimRight(line, " \t")
 	}
-	return out
+	return lines
 }
 
 // boldSpans is line with its ** marks taken out, and the spans they
@@ -262,8 +270,11 @@ func writeText(a args, key string, required bool) ([]mdParagraph, int, error) {
 // then writes body into it (batchUpdate). The folder is checked first:
 // folder_id, which must be one the access includes or inside one, else
 // the first folder the access names, else none, the top of the owner's
-// My Drive. Once the document is made, a failure to write its text is
-// said in the answer, with the document's id.
+// My Drive. A folder anyone besides the owner can see (fileShare) shows
+// them the document, so making one there is held for the owner, with
+// its title, its text and who can see the folder. Once the document is
+// made, a failure to write its text is said in the answer, with the
+// document's id.
 func createDocument(ctx context.Context, c *call) (any, error) {
 	title, err := c.args.text("title", true, nameClip)
 	if err != nil {
@@ -282,16 +293,14 @@ func createDocument(ctx context.Context, c *call) (any, error) {
 	if !named && len(c.access.docsFolders) > 0 {
 		folder = c.access.docsFolders[0]
 	}
-	// shared is the audit's note for a folder shared with others, whom
-	// a document made in it reaches.
-	shared := ""
+	var dir driveFile
+	var sh share
 	if folder != "" {
-		f, err := c.file(ctx, folder, "id,mimeType,shared")
-		if err != nil {
+		if dir, err = c.file(ctx, folder, "id,name,mimeType"); err != nil {
 			return nil, err
 		}
 		if named {
-			if f.MimeType != folderType {
+			if dir.MimeType != folderType {
 				return nil, badArgument("folder_id is not a folder's id; search_documents lists the folder each document is in.")
 			}
 			in, err := c.inFolders(ctx, []string{folder})
@@ -302,48 +311,122 @@ func createDocument(ctx context.Context, c *call) (any, error) {
 				return nil, folderNotIncluded(folder)
 			}
 		}
-		shared = sharedNote(f)
+		if sh, err = c.fileShare(ctx, folder); err != nil {
+			return nil, err
+		}
 	}
+	// limited is whether the access names folders, read now, since a
+	// held call's Run has no access of its own.
+	limited := len(c.access.docsFolders) > 0
+	create := func(ctx context.Context, c *call) (any, error) {
+		folder, note := folder, sh.auditNote()
+		asked := folder
+		if folder != "" {
+			c.audit = "creating a document in folder " + folder
+		} else {
+			c.audit = "creating a document"
+		}
+		id, refused, err := c.newDocument(ctx, title, folder)
+		if err != nil {
+			return nil, unanswered(err)
+		}
+		if refused != "" {
+			folder, note = "", ""
+		}
+		where := ""
+		if folder != "" {
+			where = " in folder " + folder
+		}
+		// A Google Doc Drive makes is one empty paragraph, so the body is
+		// its text from index 1.
+		why := ""
+		if len(paras) > 0 {
+			if err := c.batchUpdate(ctx, id, "", insertRequests(1, "", paras), nil); err != nil {
+				why = writeWords(err)
+			}
+		}
+		answer := fmt.Sprintf("Created document %s%s with %d characters of text, marked as made by Kivali.", id, where, chars)
+		c.audit = fmt.Sprintf("created document %s%s with %d characters of text%s", id, where, chars, note)
+		if why != "" {
+			answer = fmt.Sprintf("Created document %s%s, marked as made by Kivali, but Kivali could not write its text: %s", id, where, why)
+			c.audit = fmt.Sprintf("created document %s%s; could not write its text%s", id, where, note)
+		}
+		if refused != "" {
+			answer += " Google would not put it in folder " + asked + " (" + refused + "), so Kivali made it at the top of the owner's My Drive."
+			if limited {
+				answer += " It is outside the folders your access includes, so you cannot read or change it; tell the owner."
+			}
+			c.audit += "; Google refused folder " + asked + ", so it is at the top of My Drive"
+		}
+		return answer, nil
+	}
+	if !sh.others() {
+		return create(ctx, c)
+	}
+	if !c.access.on(keyDocsSend) {
+		return nil, sharedNotGiven("folder", folder, keyDocsSend)
+	}
+	if err := c.access.checkShared("folder", folder, sh); err != nil {
+		return nil, err
+	}
+	text, _ := c.args.text("body", false, maxWriteChars)
+	return &held{
+		title: `Create "` + oneLine(title, listedTitleClip) + `" in a shared folder`,
+		fields: []builtinintegrations.HoldField{
+			field("Folder", folderCard(dir)),
+			field(fileShareLabel, sh.text()),
+			field("Title", title),
+			field("Text", orNone(strings.Join(markdownLines(text), "\n"))),
+		},
+		recipients: sh.people,
+		needs:      keyDocsSend,
+		run:        create,
+	}, nil
+}
 
-	asked := folder
-	if folder != "" {
-		c.audit = "creating a document in folder " + folder + shared
-	} else {
-		c.audit = "creating a document"
+// folderCard is a folder as a card names it: its name, the owner's
+// text shown and not sent, and its id.
+func folderCard(f driveFile) string {
+	if name := shownLine(f.Name, nameClip); name != "" {
+		return `"` + name + `" (` + f.ID + `)`
 	}
-	id, refused, err := c.newDocument(ctx, title, folder)
+	return "Folder " + f.ID
+}
+
+// sharedDocumentHold is a write to the document f that anyone besides
+// the owner can see (s), held for the owner: titled "<what> <name>, a
+// shared document", its card the document, who can see it, then
+// fields, and run what the write does, refusing once the document is
+// gone (404, 410), since nothing was done. It needs docs_send and
+// everyone s names in send_to (checkShared).
+func (c *call) sharedDocumentHold(ctx context.Context, f driveFile, s share, what string, fields []builtinintegrations.HoldField, run func(ctx context.Context, c *call) (any, error)) (any, error) {
+	if !c.access.on(keyDocsSend) {
+		return nil, sharedNotGiven("document", f.ID, keyDocsSend)
+	}
+	if err := c.access.checkShared("document", f.ID, s); err != nil {
+		return nil, err
+	}
+	o, err := c.ownerOf(ctx, f)
 	if err != nil {
-		return nil, unanswered(err)
+		return nil, err
 	}
-	if refused != "" {
-		folder, shared = "", ""
+	me, err := c.account(ctx)
+	if err != nil {
+		return nil, err
 	}
-	where := ""
-	if folder != "" {
-		where = " in folder " + folder
-	}
-	// A Google Doc Drive makes is one empty paragraph, so the body is
-	// its text from index 1.
-	why := ""
-	if len(paras) > 0 {
-		if err := c.batchUpdate(ctx, id, "", insertRequests(1, "", paras), nil); err != nil {
-			why = writeWords(err)
-		}
-	}
-	answer := fmt.Sprintf("Created document %s%s with %d characters of text, marked as made by Kivali.", id, where, chars)
-	c.audit = fmt.Sprintf("created document %s%s with %d characters of text%s", id, where, chars, shared)
-	if why != "" {
-		answer = fmt.Sprintf("Created document %s%s, marked as made by Kivali, but Kivali could not write its text: %s", id, where, why)
-		c.audit = fmt.Sprintf("created document %s%s%s; could not write its text", id, where, shared)
-	}
-	if refused != "" {
-		answer += " Google would not put it in folder " + asked + " (" + refused + "), so Kivali made it at the top of the owner's My Drive."
-		if len(c.access.docsFolders) > 0 {
-			answer += " It is outside the folders your access includes, so you cannot read or change it; tell the owner."
-		}
-		c.audit += "; Google refused folder " + asked + ", so it is at the top of My Drive"
-	}
-	return answer, nil
+	return &held{
+		title:      what + " " + docTitle(f) + ", a shared document",
+		fields:     append([]builtinintegrations.HoldField{field("Document", docNamed(f, o, me)), field(fileShareLabel, s.text())}, fields...),
+		recipients: s.people,
+		needs:      keyDocsSend,
+		run: func(ctx context.Context, c *call) (any, error) {
+			answer, err := run(ctx, c)
+			if g := gone(err, "The document", "document "+f.ID+" was gone"); g != nil {
+				return nil, g
+			}
+			return answer, err
+		},
+	}, nil
 }
 
 // newDocument makes an empty Google Doc titled title through Drive
@@ -409,7 +492,10 @@ func writeWords(err error) string {
 
 // appendToDocument adds text at the end of a document's body (its
 // first tab's), as its own paragraphs, against the revision it read the
-// end from.
+// end from. On a document anyone besides the owner can see (fileShare)
+// it is held for the owner with the text it adds, and Run reads the end
+// when the owner approves, since a revision read a day before is one
+// Google no longer writes against.
 func appendToDocument(ctx context.Context, c *call) (any, error) {
 	id, err := c.args.id("document_id", driveIDPattern)
 	if err != nil {
@@ -423,25 +509,40 @@ func appendToDocument(ctx context.Context, c *call) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	d, err := c.documentEnd(ctx, id)
+	sh, err := c.fileShare(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	at, empty := bodyEnd(d.Body)
-	prefix := "\n"
-	if empty {
-		prefix = ""
+	add := func(ctx context.Context, c *call) (any, error) {
+		d, err := c.documentEnd(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		at, empty := bodyEnd(d.Body)
+		prefix := "\n"
+		if empty {
+			prefix = ""
+		}
+		c.audit = fmt.Sprintf("adding %d characters to the end of document %s", chars, id)
+		if err := c.batchUpdate(ctx, id, d.RevisionID, insertRequests(at, prefix, paras), nil); err != nil {
+			return nil, unanswered(err)
+		}
+		c.audit = fmt.Sprintf("added %d characters to the end of document %s%s", chars, id, sh.auditNote())
+		return fmt.Sprintf("Added %d characters at the end of document %s.", chars, id), nil
 	}
-	c.audit = fmt.Sprintf("adding %d characters to the end of document %s%s", chars, id, sharedNote(f))
-	if err := c.batchUpdate(ctx, id, d.RevisionID, insertRequests(at, prefix, paras), nil); err != nil {
-		return nil, unanswered(err)
+	if !sh.others() {
+		return add(ctx, c)
 	}
-	c.audit = fmt.Sprintf("added %d characters to the end of document %s%s", chars, id, sharedNote(f))
-	return fmt.Sprintf("Added %d characters at the end of document %s.", chars, id), nil
+	text, _ := c.args.text("text", true, maxWriteChars)
+	return c.sharedDocumentHold(ctx, f, sh, "Add to", []builtinintegrations.HoldField{
+		field("Text to add at the end", strings.Join(markdownLines(text), "\n")),
+	}, add)
 }
 
 // replaceText replaces every occurrence of find in a document
-// (replaceAllText, every tab), and answers how many Google replaced.
+// (replaceAllText, every tab), and answers how many Google replaced. On
+// a document anyone besides the owner can see (fileShare) it is held
+// for the owner with what it finds and what replaces it.
 func replaceText(ctx context.Context, c *call) (any, error) {
 	id, err := c.args.id("document_id", driveIDPattern)
 	if err != nil {
@@ -463,33 +564,51 @@ func replaceText(ctx context.Context, c *call) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	var answer struct {
-		Replies []struct {
-			ReplaceAllText *struct {
-				OccurrencesChanged int `json:"occurrencesChanged"`
-			} `json:"replaceAllText"`
-		} `json:"replies"`
+	sh, err := c.fileShare(ctx, id)
+	if err != nil {
+		return nil, err
 	}
 	req := map[string]any{"replaceAllText": map[string]any{
 		"containsText": map[string]any{"text": find, "matchCase": matchCase},
 		"replaceText":  with,
 	}}
-	c.audit = "replacing text in document " + id + sharedNote(f)
-	if err := c.batchUpdate(ctx, id, "", []any{req}, &answer); err != nil {
-		return nil, unanswered(err)
+	replace := func(ctx context.Context, c *call) (any, error) {
+		var answer struct {
+			Replies []struct {
+				ReplaceAllText *struct {
+					OccurrencesChanged int `json:"occurrencesChanged"`
+				} `json:"replaceAllText"`
+			} `json:"replies"`
+		}
+		c.audit = "replacing text in document " + id
+		if err := c.batchUpdate(ctx, id, "", []any{req}, &answer); err != nil {
+			return nil, unanswered(err)
+		}
+		n := 0
+		if len(answer.Replies) > 0 && answer.Replies[0].ReplaceAllText != nil {
+			n = answer.Replies[0].ReplaceAllText.OccurrencesChanged
+		}
+		c.audit = fmt.Sprintf("replaced %d occurrences in document %s%s", n, id, sh.auditNote())
+		if n == 0 {
+			return "Document " + id + " holds no occurrence of the text; nothing was changed.", nil
+		}
+		if n == 1 {
+			return "Replaced 1 occurrence in document " + id + ".", nil
+		}
+		return fmt.Sprintf("Replaced %d occurrences in document %s.", n, id), nil
 	}
-	n := 0
-	if len(answer.Replies) > 0 && answer.Replies[0].ReplaceAllText != nil {
-		n = answer.Replies[0].ReplaceAllText.OccurrencesChanged
+	if !sh.others() {
+		return replace(ctx, c)
 	}
-	c.audit = fmt.Sprintf("replaced %d occurrences in document %s%s", n, id, sharedNote(f))
-	if n == 0 {
-		return "Document " + id + " holds no occurrence of the text; nothing was changed.", nil
+	capitals := "Ignored"
+	if matchCase {
+		capitals = "Must match"
 	}
-	if n == 1 {
-		return "Replaced 1 occurrence in document " + id + ".", nil
-	}
-	return fmt.Sprintf("Replaced %d occurrences in document %s.", n, id), nil
+	return c.sharedDocumentHold(ctx, f, sh, "Replace text in", []builtinintegrations.HoldField{
+		field("Find", find),
+		field("Replace with", cmp.Or(with, "Nothing: each occurrence is deleted")),
+		field("Capitals", capitals),
+	}, replace)
 }
 
 // untrimmed is the string argument key as the agent gave it, its

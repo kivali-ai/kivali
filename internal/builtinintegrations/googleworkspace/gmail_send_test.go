@@ -28,6 +28,7 @@ var sendSwitch = map[string]string{
 	"send_email": keyGmailSend, "send_draft": keyGmailSend,
 	"create_event": keyCalendarSend, "update_event": keyCalendarSend, "delete_event": keyCalendarSend, "respond_to_invitation": keyCalendarSend,
 	"add_comment": keyDocsSend, "reply_to_comment": keyDocsSend,
+	"create_document": keyDocsSend, "append_to_document": keyDocsSend, "replace_text": keyDocsSend,
 }
 
 // holdOf is caller's call of name with args, which must be held: a

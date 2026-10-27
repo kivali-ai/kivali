@@ -1111,43 +1111,6 @@ func TestWriteAuditNamesWhatFailed(t *testing.T) {
 	}
 }
 
-// Why this test exists: a change to a document others can open reaches
-// them, and the owner reads Recent calls to know what an agent changed.
-// A write to a shared document, and a document made in a shared folder,
-// must say so in the audit; one that is not shared must not.
-func TestWriteAuditSaysShared(t *testing.T) {
-	d, _, g := newFakeDocs(t)
-	d.addFolder("fold1", "Team")
-	d.get("fold1").file.Shared = true
-	d.addFolder("fold2", "Mine")
-	d.addDoc("shared1", "Plan", "dana@example.com", "", "fold1").file.Shared = true
-	d.addDoc("own1", "Notes", "dana@example.com", "", "fold2")
-	res := docsAnswer(t, g, nil, "append_to_document", `{"document_id":"shared1","text":"x"}`)
-	if res.Audit != "added 1 characters to the end of document shared1 (shared with others)" {
-		t.Errorf("append: %q", res.Audit)
-	}
-	res = docsAnswer(t, g, nil, "replace_text", `{"document_id":"shared1","find":"x","replace":"y"}`)
-	if res.Audit != "replaced 1 occurrences in document shared1 (shared with others)" {
-		t.Errorf("replace: %q", res.Audit)
-	}
-	res = docsAnswer(t, g, nil, "append_to_document", `{"document_id":"own1","text":"x"}`)
-	if res.Audit != "added 1 characters to the end of document own1" {
-		t.Errorf("append to one not shared: %q", res.Audit)
-	}
-	res = docsAnswer(t, g, nil, "create_document", `{"title":"T","body":"x","folder_id":"fold1"}`)
-	if res.Audit != "created document madeDoc1 in folder fold1 with 1 characters of text (shared with others)" {
-		t.Errorf("create in a shared folder: %q", res.Audit)
-	}
-	res = docsAnswer(t, g, map[string]any{"docs_folders": []string{"fold1"}}, "create_document", `{"title":"T"}`)
-	if res.Audit != "created document madeDoc2 in folder fold1 with 0 characters of text (shared with others)" {
-		t.Errorf("create in the access's shared folder: %q", res.Audit)
-	}
-	res = docsAnswer(t, g, nil, "create_document", `{"title":"T","folder_id":"fold2"}`)
-	if res.Audit != "created document madeDoc3 in folder fold2 with 0 characters of text" {
-		t.Errorf("create in a folder not shared: %q", res.Audit)
-	}
-}
-
 // Why this test exists: one search reaches at most 50 folders. When the
 // access names more than that, or the folders inside the ones it names
 // are more, the search must ask Drive for 50 of them, the named ones

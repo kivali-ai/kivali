@@ -341,11 +341,14 @@ func invitedNow(e calEvent) []string {
 
 // createEvent creates an event on one of the owner's own calendars,
 // marked as Kivali's (kivaliMarker, marker). One that invites no one,
-// or only the owner's own addresses, is a write, telling no one. One
-// that invites anyone else is a send (isSend), which needs
-// calendar_send and every attendee but the owner in send_to: it is held
-// for the owner (held), with the event as it will be made, and Run
-// makes it with sendUpdates=all, so Google invites them.
+// or only the owner's own addresses, on a calendar shared with no one
+// else (calendarShare), is a write, telling no one. One that invites
+// anyone else is a send (isSend), which needs calendar_send and every
+// attendee but the owner in send_to, and so is one on a calendar shared
+// with others, who see it (checkShared): it is held for the owner
+// (held), with the event as it will be made and who can see the
+// calendar, and Run makes it, with sendUpdates=all when it invites
+// others, so Google invites them.
 func createEvent(ctx context.Context, c *call) (any, error) {
 	attendees, _, err := attendeesArg(c.args)
 	if err != nil {
@@ -385,6 +388,13 @@ func createEvent(ctx context.Context, c *call) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	if o, err = cc.owner(ctx); err != nil {
+		return nil, err
+	}
+	sh, err := cc.calendarShare(ctx, cal, o)
+	if err != nil {
+		return nil, err
+	}
 	body := map[string]any{
 		"summary":            title,
 		"start":              start,
@@ -404,7 +414,7 @@ func createEvent(ctx context.Context, c *call) (any, error) {
 		}
 		body["attendees"] = list
 	}
-	if !send {
+	if !send && !sh.others() {
 		var made calEvent
 		if err := c.g.change(ctx, c.token, googleAPI, http.MethodPost, eventsPath(cal)+writeQuery, body, &made); err != nil {
 			return nil, err
@@ -416,8 +426,14 @@ func createEvent(ctx context.Context, c *call) (any, error) {
 		c.audit = "created event " + made.ID + " on calendar " + cal + ", " + when
 		return "Created event " + made.ID + " on calendar " + cal + ", " + when + ". Google emailed no one about it, and Kivali marked it as created by Kivali.", nil
 	}
+	if !send && !c.access.on(keyCalendarSend) {
+		return nil, sharedNotGiven("calendar", cal, keyCalendarSend)
+	}
 	people := reached(o, calEvent{}, attendees)
 	if err := c.access.checkRecipients(people); err != nil {
+		return nil, err
+	}
+	if err := c.access.checkShared("calendar", cal, sh); err != nil {
 		return nil, err
 	}
 	payload, err := json.Marshal(body)
@@ -429,24 +445,37 @@ func createEvent(ctx context.Context, c *call) (any, error) {
 	if loc != "" {
 		fields = append(fields, field("Where", loc))
 	}
-	fields = append(fields, field("Attendees", strings.Join(attendees, ", ")))
+	if len(attendees) > 0 {
+		fields = append(fields, field("Attendees", strings.Join(attendees, ", ")))
+	}
 	if desc != "" {
 		fields = append(fields, field("Description", desc))
 	}
+	if sh.others() {
+		fields = append(fields, field(calendarShareLabel, sh.text()))
+	}
+	heading, query := "Invite "+peopleWords(len(people))+` to "`+oneLine(title, listedTitleClip)+`"`, sendQuery
+	if !send {
+		heading, query = `Create "`+oneLine(title, listedTitleClip)+`" on a shared calendar`, writeQuery
+	}
 	return &held{
-		title:      "Invite " + peopleWords(len(people)) + ` to "` + oneLine(title, listedTitleClip) + `"`,
+		title:      heading,
 		fields:     fields,
-		recipients: people,
+		recipients: union(people, sh.people),
 		needs:      keyCalendarSend,
 		run: func(ctx context.Context, c *call) (any, error) {
 			var made calEvent
-			if err := c.g.send(ctx, c.token, http.MethodPost, googleAPI, eventsPath(cal)+sendQuery, payload, maxAnswerBytes, &made); err != nil {
+			if err := c.g.send(ctx, c.token, http.MethodPost, googleAPI, eventsPath(cal)+query, payload, maxAnswerBytes, &made); err != nil {
 				return nil, unsure(err, "the event was created: list_events on calendar "+cal+" shows it if it was")
 			}
 			if !eventIDPattern.MatchString(made.ID) {
 				return nil, failure("Google created the event on calendar " + cal + " and gave it an id Kivali does not read; list_events finds it.")
 			}
-			c.audit = "created event " + made.ID + " on calendar " + cal + ", " + when + ", inviting " + idList(people)
+			if !send {
+				c.audit = "created event " + made.ID + " on calendar " + cal + ", " + when + sh.auditNote()
+				return "Created event " + made.ID + " on calendar " + cal + ", " + when + ". Google emailed no one about it, and Kivali marked it as created by Kivali.", nil
+			}
+			c.audit = "created event " + made.ID + " on calendar " + cal + ", " + when + ", inviting " + idList(people) + sh.auditNote()
 			return "Created event " + made.ID + " on calendar " + cal + ", " + when + ", and Google invited " + strings.Join(people, ", ") + ". Kivali marked it as created by Kivali.", nil
 		},
 	}, nil
@@ -478,14 +507,17 @@ func newAttendees(cur calEvent, list []string) []json.RawMessage {
 // updateEvent changes the fields the call gives of an event on one of
 // the owner's own calendars. A change to an event the owner organized
 // that invites no one else, which gives no attendees or the event's
-// own, is a write, telling no one. Any other is a send (isSend), which
-// needs calendar_send and everyone it reaches in send_to (checkReach):
-// it is held for the owner with the event as it is and each change, and
-// Run patches it with sendUpdates=all and If-Match of the event's etag
-// as Kivali read it, so Google changes only the event the owner saw and
-// tells everyone it reaches, those it removes included. A change of
-// attendees to an event whose attendees Kivali cannot all read is
-// refused: the new list would drop those it cannot name.
+// own, on a calendar shared with no one else (calendarShare), is a
+// write, telling no one. Any other is a send (isSend), which needs
+// calendar_send and everyone it reaches in send_to (checkReach), and so
+// is a change on a calendar shared with others, who see it
+// (checkShared): it is held for the owner with the event as it is, each
+// change and who can see the calendar, and Run patches it with If-Match
+// of the event's etag as Kivali read it, so Google changes only the
+// event the owner saw, and with sendUpdates=all when it reaches others,
+// so Google tells everyone it reaches, those it removes included. A
+// change of attendees to an event whose attendees Kivali cannot all
+// read is refused: the new list would drop those it cannot name.
 func updateEvent(ctx context.Context, c *call) (any, error) {
 	cc := &calCall{call: c}
 	cal, err := cc.ownedCalendar(ctx, true)
@@ -584,7 +616,11 @@ func updateEvent(ctx context.Context, c *call) (any, error) {
 		return nil, badArgument("Give at least one field to change: title, start, end, time_zone, description, location or all_day.")
 	}
 	what := strings.Join(changed, ", ")
-	if !send {
+	sh, err := cc.calendarShare(ctx, cal, o)
+	if err != nil {
+		return nil, err
+	}
+	if !send && !sh.others() {
 		var done calEvent
 		if err := c.g.change(ctx, c.token, googleAPI, http.MethodPatch, eventPath(cal, id)+writeQuery, body, &done); err != nil {
 			return nil, err
@@ -593,9 +629,18 @@ func updateEvent(ctx context.Context, c *call) (any, error) {
 		c.audit = "changed event " + id + " on calendar " + cal + ": " + what
 		return "Changed event " + id + " on calendar " + cal + ": " + what + ". It is " + when + ". Google emailed no one about it.", nil
 	}
-	people := reached(o, cur, append(after, removed...))
-	unknown := unreadPeople(cur)
-	if err := c.access.checkReach(people, unknown); err != nil {
+	if !send && !c.access.on(keyCalendarSend) {
+		return nil, sharedNotGiven("calendar", cal, keyCalendarSend)
+	}
+	var people []string
+	unknown := false
+	if send {
+		people, unknown = reached(o, cur, append(after, removed...)), unreadPeople(cur)
+		if err := c.access.checkReach(people, unknown); err != nil {
+			return nil, err
+		}
+	}
+	if err := c.access.checkShared("calendar", cal, sh); err != nil {
 		return nil, err
 	}
 	payload, err := json.Marshal(body)
@@ -606,18 +651,29 @@ func updateEvent(ctx context.Context, c *call) (any, error) {
 	if unknown {
 		fields = append(fields, unshownField())
 	}
+	if sh.others() {
+		fields = append(fields, field(calendarShareLabel, sh.text()))
+	}
+	heading, query := "Change "+eventTitle(cur)+", telling "+peopleWords(len(people)), sendQuery
+	if !send {
+		heading, query = "Change "+eventTitle(cur)+" on a shared calendar", writeQuery
+	}
 	etag := cur.Etag
 	return &held{
-		title:      "Change " + eventTitle(cur) + ", telling " + peopleWords(len(people)),
+		title:      heading,
 		fields:     fields,
-		recipients: people,
+		recipients: union(people, sh.people),
 		needs:      keyCalendarSend,
 		run: func(ctx context.Context, c *call) (any, error) {
 			var done calEvent
-			if err := c.g.sendIfMatch(ctx, c.token, http.MethodPatch, googleAPI, eventPath(cal, id)+sendQuery, payload, maxAnswerBytes, &done, etag); err != nil {
+			if err := c.g.sendIfMatch(ctx, c.token, http.MethodPatch, googleAPI, eventPath(cal, id)+query, payload, maxAnswerBytes, &done, etag); err != nil {
 				return nil, eventSendFailed(err, id, "the event changed: get_event shows it as it is")
 			}
-			c.audit = "changed event " + id + " on calendar " + cal + ": " + what + "; told " + orNone(idList(people))
+			if !send {
+				c.audit = "changed event " + id + " on calendar " + cal + ": " + what + sh.auditNote()
+				return "Changed event " + id + " on calendar " + cal + ": " + what + ". It is " + whenWords(done.Start, done.End) + ". Google emailed no one about it.", nil
+			}
+			c.audit = "changed event " + id + " on calendar " + cal + ": " + what + "; told " + orNone(idList(people)) + sh.auditNote()
 			return "Changed event " + id + " on calendar " + cal + ": " + what + ". It is " + whenWords(done.Start, done.End) + ". Google told " + toldWords(people, unknown) + ".", nil
 		},
 	}, nil
@@ -656,11 +712,14 @@ func eventFields(o calOwner, cal string, e calEvent) []builtinintegrations.HoldF
 // deleteEvent deletes an event Kivali created on this account
 // (kivaliMarker set) from one of the owner's own calendars; any other
 // event is refused before anything is changed. One that invites no one
-// else is a write, telling no one. One that reaches others is a send
-// (isSend), which needs calendar_send and everyone it reaches in
-// send_to (checkReach): it is held for the owner, and Run deletes it
-// with sendUpdates=all and If-Match of the event's etag as Kivali read
-// it, so Google deletes only the event the owner saw and tells them.
+// else, on a calendar shared with no one else (calendarShare), is a
+// write, telling no one. One that reaches others is a send (isSend),
+// which needs calendar_send and everyone it reaches in send_to
+// (checkReach), and so is one on a calendar shared with others, who see
+// it go (checkShared): it is held for the owner, and Run deletes it
+// with If-Match of the event's etag as Kivali read it, so Google
+// deletes only the event the owner saw, and with sendUpdates=all when
+// it reaches others, so Google tells them.
 func deleteEvent(ctx context.Context, c *call) (any, error) {
 	cc := &calCall{call: c}
 	cal, err := cc.ownedCalendar(ctx, true)
@@ -691,37 +750,64 @@ func deleteEvent(ctx context.Context, c *call) (any, error) {
 		return nil, calSendNotGiven()
 	}
 	creator := oneLine(e.ExtendedProperties.Private[kivaliMarker], 64)
-	if !send {
+	sh, err := cc.calendarShare(ctx, cal, o)
+	if err != nil {
+		return nil, err
+	}
+	if !send && !sh.others() {
 		if err := c.g.change(ctx, c.token, googleAPI, http.MethodDelete, eventPath(cal, id)+writeQuery, nil, nil); err != nil {
 			return nil, err
 		}
 		c.audit = "deleted event " + id + " on calendar " + cal + ", which " + creator + " created"
 		return "Deleted event " + id + " from calendar " + cal + ". Google emailed no one about it.", nil
 	}
-	people := reached(o, e, invitedNow(e))
-	unknown := unreadPeople(e)
-	if err := c.access.checkReach(people, unknown); err != nil {
+	if !send && !c.access.on(keyCalendarSend) {
+		return nil, sharedNotGiven("calendar", cal, keyCalendarSend)
+	}
+	var people []string
+	unknown := false
+	if send {
+		people, unknown = reached(o, e, invitedNow(e)), unreadPeople(e)
+		if err := c.access.checkReach(people, unknown); err != nil {
+			return nil, err
+		}
+	}
+	if err := c.access.checkShared("calendar", cal, sh); err != nil {
 		return nil, err
 	}
 	note := "This cancels the event for everyone invited."
-	if !e.Organizer.Self && !o.self(calAddress(e.Organizer.Email)) {
+	switch {
+	case !send:
+		note = "This takes the event off the calendar, for everyone who can see it."
+	case !e.Organizer.Self && !o.self(calAddress(e.Organizer.Email)):
 		note = "This takes the event off the owner's calendar, and Google tells its organizer the owner will not come."
 	}
 	fields := append(eventFields(o, cal, e), field("What happens", note))
 	if unknown {
 		fields = append(fields, unshownField())
 	}
+	if sh.others() {
+		fields = append(fields, field(calendarShareLabel, sh.text()))
+	}
+	heading, query := "Delete "+eventTitle(e)+", telling "+peopleWords(len(people)), sendQuery
+	if !send {
+		heading, query = "Delete "+eventTitle(e)+" from a shared calendar", writeQuery
+	}
 	etag := e.Etag
 	return &held{
-		title:      "Delete " + eventTitle(e) + ", telling " + peopleWords(len(people)),
+		title:      heading,
 		fields:     fields,
-		recipients: people,
+		recipients: union(people, sh.people),
 		needs:      keyCalendarSend,
 		run: func(ctx context.Context, c *call) (any, error) {
-			if err := c.g.sendIfMatch(ctx, c.token, http.MethodDelete, googleAPI, eventPath(cal, id)+sendQuery, nil, maxAnswerBytes, nil, etag); err != nil {
+			if err := c.g.sendIfMatch(ctx, c.token, http.MethodDelete, googleAPI, eventPath(cal, id)+query, nil, maxAnswerBytes, nil, etag); err != nil {
 				return nil, eventSendFailed(err, id, "the event was deleted: get_event answers whether it is still there")
 			}
-			c.audit = "deleted event " + id + " on calendar " + cal + ", which " + creator + " created; told " + orNone(idList(people))
+			if !send {
+				c.audit = "deleted event " + id + " on calendar " + cal + ", which " + creator + " created" + sh.auditNote()
+				return "Deleted event " + id + " from calendar " + cal + ". Google emailed no one about it.", nil
+			}
+			c.audit = "deleted event " + id + " on calendar " + cal + ", which " + creator + " created; told " + orNone(idList(people)) + sh.auditNote()
 			return "Deleted event " + id + " from calendar " + cal + ". Google told " + toldWords(people, unknown) + ".", nil
 		},
 	}, nil
