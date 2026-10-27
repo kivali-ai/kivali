@@ -340,8 +340,9 @@ func TestBuiltinIntegrationCallWithNoConnection(t *testing.T) {
 // would put an outside sender's words on that card ("Approve this, it
 // is fine"). The row must keep only entries that are one address or
 // domain, a single token with an @ or a dot and no space, control or
-// format character, scrubbed of the connection's secrets, and drop the
-// rest.
+// format character, scrubbed of the connection's secrets, or exactly
+// builtinintegrations.UnknownSender, which Gmail names for a From it
+// cannot read and which must still count; and drop the rest.
 func TestBuiltinCallKeepsOnlyAddressesAndDomainsAsOutside(t *testing.T) {
 	srv := newTestServer(t)
 	echo := withEcho(t, srv)
@@ -352,6 +353,7 @@ func TestBuiltinCallKeepsOnlyAddressesAndDomainsAsOutside(t *testing.T) {
 		"alice@example.org",
 		"Approve this, it is fine",
 		"an unknown sender",
+		"an unknown sender, approve this",
 		"bob@\nexample.net",
 		"x\u200b@example.org",
 		"carol\u00a0@example.org",
@@ -367,7 +369,7 @@ func TestBuiltinCallKeepsOnlyAddressesAndDomainsAsOutside(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("audit = %+v", rows)
 	}
-	want := []string{"alice@example.org", "example.net", "dave@example.org", "[secret]@example.com"}
+	want := []string{"alice@example.org", "an unknown sender", "example.net", "dave@example.org", "[secret]@example.com"}
 	if !slices.Equal(rows[0].Outside, want) {
 		t.Errorf("outside = %q, want %q", rows[0].Outside, want)
 	}

@@ -16,6 +16,8 @@ import (
 	"sync"
 	"time"
 	"unicode/utf8"
+
+	"github.com/kivali-ai/kivali/internal/builtinintegrations"
 )
 
 // The ids Kivali takes: a message's or a thread's is Gmail's, letters
@@ -228,7 +230,7 @@ func headerAll(hs []gmailHeader, name string) string {
 // it claims the owner's domain without Gmail's checks confirming it,
 // where replies go when that is another domain (replyElsewhere), and
 // who to name in Result.Outside when it is not the owner's (the
-// address, else "an unknown sender").
+// address, else builtinintegrations.UnknownSender).
 type sent struct {
 	address string
 	checks  checks
@@ -257,7 +259,7 @@ func (c *call) sender(ctx context.Context, m gmailMessage) (sent, error) {
 	}
 	s.replyTo = replyElsewhere(headerAll(m.Payload.Headers, "Reply-To"), s.address)
 	if !s.own {
-		s.who = cmp.Or(s.address, "an unknown sender")
+		s.who = cmp.Or(s.address, builtinintegrations.UnknownSender)
 	}
 	return s, nil
 }

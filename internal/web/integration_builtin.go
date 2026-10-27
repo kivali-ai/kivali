@@ -372,16 +372,17 @@ func (s *Server) builtinAgentCall(ctx context.Context, start time.Time, slug str
 // auditOutside is a built-in's Result.Outside as its audit row keeps
 // it, the one shape every row's outside is written in: the first
 // builtinintegrations.MaxOutside entries that are each an address or a
-// domain (outsideToken), scrubbed and cut at 254 bytes. Anything else,
-// such as a From header's words, is dropped, so the taint line a held
-// call reads from the rows names only an address or a domain.
+// domain (outsideToken), or builtinintegrations.UnknownSender, scrubbed
+// and cut at 254 bytes. Anything else, such as a From header's words,
+// is dropped, so the taint line a held call reads from the rows names
+// only an address, a domain or an unknown sender.
 func auditOutside(outside []string, scrub *strings.Replacer) []string {
 	var out []string
 	for _, a := range outside {
 		if len(out) == builtinintegrations.MaxOutside {
 			break
 		}
-		if a = scrub.Replace(strings.TrimSpace(a)); outsideToken(a) {
+		if a = scrub.Replace(strings.TrimSpace(a)); a == builtinintegrations.UnknownSender || outsideToken(a) {
 			out = append(out, clipText(a, 254))
 		}
 	}
