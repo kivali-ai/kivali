@@ -51,7 +51,7 @@ type accessField struct {
 var accessFields = []accessField{
 	{key: keyGmailRead, title: "May read mail", description: "Lets the agent see what is in your Gmail, within the labels below. It changes nothing."},
 	{key: keyGmailWrite, title: "May draft and label", description: "Lets the agent change your Gmail where no one else is told: drafts it writes, and labels on messages. It sends nothing."},
-	{key: keyGmailSend, title: "May send mail", description: "Lets the agent send mail. Not available in this version of Kivali."},
+	{key: keyGmailSend, title: "May send mail (each send waits for your approval)", description: "Lets the agent ask to send mail: an email it writes, or a draft. Nothing is sent until you approve it, exactly as you saw it."},
 	{key: keyGmailLabels, title: "Labels it may read", description: "The labels the agent may read mail in. Leave it empty for every label.", list: true},
 	{key: keyCalendarRead, title: "May read calendars", description: "Lets the agent see the calendars below and their events. It changes nothing."},
 	{key: keyCalendarWrite, title: "May change events", description: "Lets the agent create events on your own calendars, and change and delete the events there that you organized and that invite no one but you, telling no one. It deletes only events Kivali created. Inviting people, and changing or deleting an event that invites others, are not available in this version of Kivali."},
@@ -61,7 +61,7 @@ var accessFields = []accessField{
 	{key: keyDocsWrite, title: "May write documents", description: "Lets the agent create documents, and change documents you own or it created, telling no one."},
 	{key: keyDocsSend, title: "May comment", description: "Lets the agent comment on documents and reply to comments. Not available in this version of Kivali."},
 	{key: keyDocsFolders, title: "Folders it may read", description: "The Drive folders the agent may read and change documents in, the folders inside them included. Leave it empty for every document you can open.", list: true},
-	{key: keySendTo, title: "May send to", description: "Who the agent may send mail and invitations to: an address such as dana@example.com, or *@example.com for everyone at a domain. Leave it empty for anyone.", list: true},
+	{key: keySendTo, title: "May send to", description: "Who the agent may send mail and invitations to: an address such as dana@example.com, or *@example.com for everyone at a domain. Leave it empty for anyone. Every send still waits for your approval.", list: true},
 }
 
 // accessSchema is the access form as the manifest's JSON Schema, the
@@ -209,6 +209,80 @@ func notGiven(bucket string) error {
 	return refuse("The owner has not given you "+w+" in Google Workspace; ask the owner if your work needs it.", "the access does not include "+w)
 }
 
+// mayReach reports whether send_to lets a send reach addr, a
+// lower-cased address: any address when the list is empty, else one it
+// names, or one at a domain it names as *@domain (that domain alone,
+// not the domains under it).
+func (a access) mayReach(addr string) bool {
+	if len(a.sendTo) == 0 {
+		return true
+	}
+	for _, p := range a.sendTo {
+		if dom, ok := strings.CutPrefix(p, "*@"); ok {
+			if domainOf(addr) == dom {
+				return true
+			}
+		} else if p == addr {
+			return true
+		}
+	}
+	return false
+}
+
+// checkRecipients refuses a send that would reach an address send_to
+// does not allow, naming each, before the call is held for the owner.
+// The addresses are lower-cased.
+func (a access) checkRecipients(addrs []string) error {
+	var out []string
+	for _, x := range addrs {
+		if !a.mayReach(x) && !slices.Contains(out, x) {
+			out = append(out, x)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return refuse("The owner has not allowed you to send to "+idList(out)+" through Google Workspace; ask the owner if your work needs it.",
+		"send_to does not include "+idList(out))
+}
+
+// sendToEntry reports whether s, an entry of send_to lower-cased, is
+// one Kivali reads: an address, or *@ and a domain with a dot in it. A
+// * stands only for everyone at a domain, never for part of an address.
+func sendToEntry(s string) bool {
+	if dom, ok := strings.CutPrefix(s, "*@"); ok {
+		return len(dom) <= 253 && strings.Contains(dom, ".") && domainName.MatchString(dom)
+	}
+	return len(s) <= 254 && addressChars.MatchString(s) && !strings.Contains(s, "*")
+}
+
+// CheckAccess holds an agent's access, as the owner saves it, to what
+// Kivali reads: every entry of the label, calendar and folder lists one
+// that reads through optionID to an id, and every entry of send_to an
+// address, such as dana@example.com, or a domain, such as *@example.com
+// (sendToEntry). An entry that is neither would match no one, so the
+// owner is told rather than left with sends or items refused for a
+// typing slip. The form has made sure the fields are lists of strings.
+func (g *GoogleWorkspace) CheckAccess(m map[string]any) error {
+	for _, key := range []string{keyGmailLabels, keyCalendars, keyDocsFolders} {
+		raw, _ := m[key].([]any)
+		for _, v := range raw {
+			s, _ := v.(string)
+			if optionID(s) == "" {
+				return fmt.Errorf("%q is not a label, calendar or folder from the list", s)
+			}
+		}
+	}
+	raw, _ := m[keySendTo].([]any)
+	for _, v := range raw {
+		s, _ := v.(string)
+		if !sendToEntry(strings.ToLower(strings.TrimSpace(s))) {
+			return fmt.Errorf("%q under May send to is not an address, such as dana@example.com, or a domain, such as *@example.com", oneLine(s, 100))
+		}
+	}
+	return nil
+}
+
 func refuse(text, reason string) error {
 	return &builtinintegrations.Refusal{Text: text, Reason: reason}
 }
@@ -337,51 +411,4 @@ func (a args) maybeID(key string, ok *regexp.Regexp) (string, error) {
 		return "", badArgument(key + " is not an id Google gives; use one as Kivali listed it.")
 	}
 	return s, nil
-}
-
-// CheckAccess holds an agent's access, as the owner saves it, to what
-// Kivali can read: every entry of send_to an address (local@domain) or
-// *@domain, and every entry of the label, calendar and folder lists one
-// that reads through optionID to an id. The form has made sure the
-// fields are lists of strings.
-func (g *GoogleWorkspace) CheckAccess(access map[string]any) error {
-	for _, key := range []string{keyGmailLabels, keyCalendars, keyDocsFolders} {
-		raw, _ := access[key].([]any)
-		for _, v := range raw {
-			s, _ := v.(string)
-			if optionID(s) == "" {
-				return fmt.Errorf("%q is not a label, calendar or folder from the list", s)
-			}
-		}
-	}
-	raw, _ := access[keySendTo].([]any)
-	for _, v := range raw {
-		s, _ := v.(string)
-		if !validRecipient(strings.TrimSpace(s)) {
-			return fmt.Errorf("%q is not an address such as dana@example.com or *@example.com", s)
-		}
-	}
-	return nil
-}
-
-// validRecipient reports whether s is local@domain or *@domain, with
-// no space, no second @ and a domain holding a dot.
-func validRecipient(s string) bool {
-	local, domain, ok := strings.Cut(s, "@")
-	if !ok || local == "" || strings.ContainsAny(s, " \t\r\n,;<>\"()") || strings.Contains(domain, "@") {
-		return false
-	}
-	if strings.Contains(local, "*") && local != "*" {
-		return false
-	}
-	d := strings.Split(domain, ".")
-	if len(d) < 2 {
-		return false
-	}
-	for _, p := range d {
-		if p == "" {
-			return false
-		}
-	}
-	return true
 }

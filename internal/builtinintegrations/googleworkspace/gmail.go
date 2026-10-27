@@ -100,15 +100,19 @@ var gmailActions = []action{
 	},
 	{
 		name:             actionSendEmail,
+		description:      sendEmailWords,
 		ownerDescription: "Ask to send an email. It goes only once you approve it, exactly as you approved it.",
 		schema:           composeSchema,
 		bucket:           keyGmailSend,
+		run:              sendEmail,
 	},
 	{
 		name:             actionSendDraft,
-		ownerDescription: "Ask to send a draft. It goes only once you approve it, exactly as you approved it.",
+		description:      sendDraftWords,
+		ownerDescription: "Ask to send a draft. It goes only once you approve it, exactly as you approved it, and then leaves your Drafts.",
 		schema:           draftSchema,
 		bucket:           keyGmailSend,
+		run:              sendDraft,
 	},
 	{
 		name:             actionProfile,

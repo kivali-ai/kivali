@@ -21,7 +21,10 @@
 // agent is given it only while its access has that switch on. The
 // actions are per service (gmail.go, calendar.go, docs.go), joined in
 // actions; Gmail's reading is gmail_read.go, the text it hands the
-// agent gmail_text.go and its attachments gmail_attach.go. An action
+// agent gmail_text.go, its attachments gmail_attach.go and its sends
+// gmail_send.go. A send never reaches anyone from its call: it holds
+// the call for the owner's approval (held), and only the hold's Run,
+// once the owner approves, sends what the call captured. An action
 // whose run is nil is declared in the manifest and not run by this
 // version: Tools leaves it out, the owner's words for it say so, and
 // Call answers that it is not available.
@@ -41,6 +44,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/kivali-ai/kivali/internal/builtinintegrations"
 	"github.com/kivali-ai/kivali/internal/clock"
@@ -109,6 +113,7 @@ func New() *GoogleWorkspace { return &GoogleWorkspace{} }
 var (
 	_ builtinintegrations.SetupIntegration = (*GoogleWorkspace)(nil)
 	_ builtinintegrations.SignInAdviser    = (*GoogleWorkspace)(nil)
+	_ builtinintegrations.AccessChecker    = (*GoogleWorkspace)(nil)
 )
 
 // action is one action. description is what the agent's model reads,
@@ -174,7 +179,7 @@ func (g *GoogleWorkspace) Manifest() *integration.Manifest {
 		Name:            Name,
 		Version:         "1.0.0",
 		DisplayName:     displayName,
-		Description:     "Gmail, Google Calendar and Google Docs, signed in with an OAuth client you make on Google's Auth Platform. In this version agents can read your Gmail, write drafts in it and label its mail, read your Google Calendar and change its events, and read and write your Google Docs.",
+		Description:     "Gmail, Google Calendar and Google Docs, signed in with an OAuth client you make on Google's Auth Platform. In this version agents can read your Gmail, write drafts in it, label its mail and send mail you approve, read your Google Calendar and change its events, and read and write your Google Docs.",
 		Author:          integration.Author{Name: "Kivali"},
 		UserConfig:      integration.UserConfig{},
 		Tools:           tools,
@@ -285,7 +290,8 @@ func accessToken(conn builtinintegrations.Connection) (string, error) {
 // the connection are checked before anything reaches Google, each
 // refused with a Refusal; an action this version does not run answers
 // so; a Google failure is an error result in words, with the audit
-// the run had set.
+// the run had set; a send that held its call answers Result.Hold
+// (holdResult).
 func (g *GoogleWorkspace) Call(ctx context.Context, caller builtinintegrations.Caller, conn builtinintegrations.Connection, name string, raw json.RawMessage) (*builtinintegrations.Result, error) {
 	a := actionNamed(name)
 	switch {
@@ -311,6 +317,17 @@ func (g *GoogleWorkspace) Call(ctx context.Context, caller builtinintegrations.C
 	}
 	c := &call{g: g, token: tok, access: acc, args: in, save: caller.Save, agent: caller.Agent}
 	answer, err := a.run(ctx, c)
+	if h, ok := answer.(*held); ok && err == nil {
+		return g.holdResult(c.agent, h), nil
+	}
+	return c.result(answer, err)
+}
+
+// result is a run's answer, or its failure, as Call answers it: a
+// Refusal as it is; a Google failure, or the run's own, as an error
+// result in words, with the audit the run had set; the answer as its
+// text, with the call's audit and outside.
+func (c *call) result(answer any, err error) (*builtinintegrations.Result, error) {
 	if err != nil {
 		var ref *builtinintegrations.Refusal
 		var ae *apiError
@@ -335,6 +352,79 @@ func (g *GoogleWorkspace) Call(ctx context.Context, caller builtinintegrations.C
 func failed(words string) *builtinintegrations.Result {
 	return &builtinintegrations.Result{Content: []string{words}, IsError: true}
 }
+
+// held is a send's answer from its run: the call waits for the owner's
+// approval (Result.Hold), shown to the owner as title, fields and
+// recipients, and nothing has reached anyone. run is what the owner
+// approves: it does exactly what the fields show, from what the send
+// captured when it held the call, never reading the agent's arguments
+// or Google again for what it sends.
+type held struct {
+	title      string
+	fields     []builtinintegrations.HoldField
+	recipients []string
+	run        func(ctx context.Context, c *call) (any, error)
+}
+
+// field is one line of a held call's card.
+func field(label, value string) builtinintegrations.HoldField {
+	return builtinintegrations.HoldField{Label: label, Value: value}
+}
+
+// holdResult is h as Call answers it, for the agent agent. Its Run reads
+// the access token core hands it, at the owner's approval, and runs
+// h.run with a call of its own, answering as Call does: the agent's
+// access is not read again, since core has checked it then.
+func (g *GoogleWorkspace) holdResult(agent string, h *held) *builtinintegrations.Result {
+	return &builtinintegrations.Result{Hold: &builtinintegrations.Hold{
+		Title:      h.title,
+		Fields:     h.fields,
+		Recipients: h.recipients,
+		Run: func(ctx context.Context, conn builtinintegrations.Connection) (*builtinintegrations.Result, error) {
+			tok, err := accessToken(conn)
+			if err != nil {
+				return nil, refuse(notSignedIn, err.Error())
+			}
+			c := &call{g: g, token: tok, agent: agent}
+			answer, err := h.run(ctx, c)
+			return c.result(answer, err)
+		},
+	}}
+}
+
+// shownLine is text a card shows the owner and Kivali does not send,
+// such as the subject of the message a reply answers or the name of a
+// document: one line of at most most characters (oneLine), with no
+// format character left, since core refuses a card that holds one and
+// this text is not the agent's to change. shownText is the same for
+// text of many lines, cut at shownMost characters.
+func shownLine(s string, most int) string { return dropFormat(oneLine(s, most)) }
+
+func shownText(s string) string {
+	s, _ = cleanText(s)
+	if cut, clipped := clip(strings.TrimSpace(s), shownMost); clipped {
+		s = cut + "..."
+	}
+	return dropFormat(strings.TrimSpace(s))
+}
+
+// shownMost bounds a card's text that Kivali shows and does not send.
+const shownMost = 20000
+
+// dropFormat is s without its Unicode format characters (Cf), the
+// zero-width joiner cleanText keeps among them.
+func dropFormat(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.Is(unicode.Cf, r) {
+			return -1
+		}
+		return r
+	}, s)
+}
+
+// waitsWords end the description of every action that may wait for
+// the owner's approval, which the agent reads.
+const waitsWords = " The call waits for the owner's approval: it answers at once that it is waiting, and you hear in your chat whether it was done, with what Google answered, or the owner's note if they denied it."
 
 // failedWith is the error result of a run that failed with words. Its
 // audit is what the run had set, what it did or was doing, then the

@@ -4050,9 +4050,9 @@ apart:
 
 | File | Holds |
 | --- | --- |
-| `google.go` | the type, `Manifest`, `Tools`, `Call`, `Verify`, `Choices`, the joined action table, `answerText`, the clock (`now`) and the mark of what an agent makes (`marker`) |
+| `google.go` | the type, `Manifest`, `Tools`, `Call`, `Verify`, `Choices`, the joined action table, `answerText`, the clock (`now`), the mark of what an agent makes (`marker`) and a send's held call (`held`, `holdResult`) |
 | `api.go` | the client: the three pinned origins, `get` and `change`, Google's errors, their words for the agent and the owner |
-| `access.go` | the access form, `readAccess`, the live options' encoding, the refusals by bucket, `readArgs` and the readers of an argument |
+| `access.go` | the access form, `readAccess`, `CheckAccess`, the live options' encoding, the refusals by bucket, `send_to` (`checkRecipients`), `readArgs` and the readers of an argument |
 | `setup.go` | the setup flow, the client JSON's reading and the setup notes |
 | `requirements.go` | the Sign-in requirement's words for a refusal |
 | `gmail.go`, `calendar.go`, `docs.go` | each service's actions, and the options of its list |
@@ -4060,6 +4060,7 @@ apart:
 | `gmail_text.go` | the text an email becomes: the framing, the provenance line, HTML to text, the links |
 | `gmail_attach.go` | saving an attachment into the agent's files |
 | `gmail_write.go` | Gmail's writing: drafts, labels on messages, the message builder, the requests that change the account |
+| `gmail_send.go` | Gmail's sends: an email and a draft held for the owner, a draft's message read for its card, `messages.send` |
 | `calendar_write.go` | Calendar's changes: creating, changing and deleting events, and `isSend` |
 | `docs.go` | also Docs' reading: search, a document's pages, comments, the folders a document is within |
 | `docs_text.go` | the text a document becomes: its framing, its structure walked into text, hidden runs, a page |
@@ -4204,10 +4205,9 @@ bucket's switch:
 | `docs_write` | `create_document`, `append_to_document`, `replace_text` |
 | `docs_send` | `add_comment`, `reply_to_comment` |
 
-This version runs the `gmail_read`, `gmail_write`, `calendar_read`,
-`calendar_write`, `docs_read` and `docs_write` actions; the rest, the
-send actions, have no `run` and declare their arguments already
-([Writing mail](#writing-mail), [Calendar](#calendar), [Writing
+This version runs every action but `respond_to_invitation`,
+`add_comment` and `reply_to_comment`, which have no `run` and declare
+their arguments already ([Calendar](#calendar), [Writing
 documents](#writing-documents)). `Tools` gives
 an agent each action whose switch its access has on and that this
 version runs, with its description and the sentence saying
@@ -4217,7 +4217,13 @@ action whose switch is off, then answers an action with no `run` with
 the error result "This action is not available in this version of
 Kivali.", then refuses a connection with no access token; arguments
 that are not an object are refused as for GitHub. A run sets the call's
-`Result.Audit` and `Result.Outside` (below) through its `call`. A run
+`Result.Audit` and `Result.Outside` (below) through its `call`. A send's
+run answers `held` instead of an answer, and `Call` answers it as
+`Result.Hold` (`holdResult`): its title, fields and recipients, and a
+`Run` that reads the access token core hands it at the owner's
+approval and runs what the send captured with a `call` of its own,
+answering as `Call` does ([Held calls](#held-calls), [Sending
+mail](#sending-mail)). A run
 that fails with Google's words or its own is an error result whose
 `Audit` is what the run had set, then "; " and the words
 (`failedWith`), or, with none set, empty, so core keeps the words.
@@ -4498,8 +4504,8 @@ draft, so Kivali marks a draft in its message: the header
 one a mark could not carry), as Calendar and Docs mark what they make. Gmail keeps a draft's headers as they were written, so
 `drafts.get` gives the mark back; a draft written in Gmail has none,
 and one the owner edits in Gmail may lose it (unverified live). Whether
-the header reaches a recipient is unverified too, and the send slice
-leaves the mark out of what it sends.
+the header reaches a recipient is unverified too, and `send_draft`
+takes the mark out of what it sends ([Sending mail](#sending-mail)).
 
 **Replies.** A reply (`in_reply_to_message_id`, or `thread_id` alone)
 reads the replied message's headers (`messages/{id}?format=metadata`
@@ -4522,8 +4528,8 @@ the agent gave one. The owner's own address is left out.
 
 **The message builder.** `readComposition(ctx, c)` reads an email from
 `composeProps`, the arguments `create_draft` takes and `send_email`
-takes too (`send_email` declares `composeSchema`, `send_draft` declares
-`draftSchema`, and neither has a `run`), and
+takes too (`send_email` declares `composeSchema`, `send_draft`
+`draftSchema`), and
 `composition.message(marker, date)` writes it. Every
 entry of `to`, `cc` and `bcc` is one address by `net/mail`
 (`mail.AddressParser`, encoded names read in any charset) whose
@@ -4550,6 +4556,70 @@ a line end in a value becomes a space. The body is `7bit` when it is
 ASCII in lines of at most 998 characters, `base64` in 76-character
 lines when more than a third of its bytes are outside ASCII, and
 `quoted-printable` otherwise.
+
+#### Sending mail
+
+The `gmail_send` actions (`gmail_send.go`) are held calls ([Held
+calls](#held-calls)): each checks everything, reaches nothing that
+sends, and answers `Result.Hold`. Every address the email goes to must
+be one `send_to` allows (`checkRecipients`: an address it names, or one
+at a domain it names as `*@domain`, that domain alone; any address
+when it is empty), or the call is refused before it is held, "The
+owner has not allowed you to send to <addresses> through Google
+Workspace; ask the owner if your work needs it.", audited as `send_to
+does not include <addresses>`. `Run` is `POST
+/gmail/v1/users/me/messages/send` with the `{"raw":...,"threadId":...}`
+body built when the call was held, sent as those bytes; its audit is
+"sent message <id> (thread <id>) to <addresses>", never the text, and
+it sets no `Result.Outside`. Google not answering may have sent the
+email, so that failure tells the agent to search the owner's Sent mail
+before asking again.
+
+- `send_email` takes `create_draft`'s arguments and reads them as it
+  does (`readComposition`, replies included), then leaves out every
+  name, so the email goes to the plain addresses the card shows. The
+  message is `composition.message` with no mark, dated when it is
+  held, and joins the replied message's thread for a reply. The card:
+  title "Send an email to <first address>[ and N more]"; fields From,
+  To, Cc and Bcc (when set) by address, Subject, "In reply to" for a
+  reply (the replied message's sender by address, when it was sent and
+  its subject, read with the reply's headers and shown without its
+  format characters, since it is shown and not sent), and Body, the
+  text as it goes; recipients every address. Audit "sent message <id>
+  (thread <id>), a reply to message <id>, to <addresses>".
+- `send_draft(draft_id)` takes any draft of the account, Kivali's or
+  the owner's, read whole (`drafts.get` in format `raw`), its message
+  `withoutHeader` the mark: those bytes are what goes. The message is
+  read (`readDraft`) for its headers and its first `text/plain` and
+  `text/html` parts that are not attachments, decoded from their
+  transfer encoding and character set; a draft with any other part, a
+  file name or an attachment disposition is refused, "Draft <id> has
+  attachments, which Kivali does not send; the owner can send it from
+  Gmail.", audited as `draft <id> has attachments`, and one with no
+  text, or whose addresses or parts do not read, answers so. The card:
+  title "Send a draft to <first address>[ and N more]"; fields Draft
+  ("Draft <id>, which Kivali wrote (agent <slug>)", or "which Kivali
+  did not write"), From, To, Cc and Bcc as the draft names them (each
+  address, then its name in parentheses), Reply-To when set, Subject
+  decoded, "In reply to" (the message of the draft's thread whose
+  Message-ID its In-Reply-To names, as for `send_email`), Body (the
+  text part exactly) and, for a draft with an HTML part, "Formatted
+  version, as a reader sees it": `htmlToText`'s text, its links listed
+  and the count of hidden characters, which go with it. `Run` reads
+  the draft again in format `minimal`: gone (404), it refuses, "Draft
+  <id> is no longer in the owner's Drafts: it was sent or deleted after
+  the owner saw it, so Kivali sent nothing."; otherwise it sends the
+  bytes captured, in the draft's thread, then, when the draft's message
+  id is the one the owner saw, deletes the draft (`DELETE
+  /gmail/v1/users/me/drafts/{id}`). A draft whose message changed
+  since (Gmail gives a changed draft a new message id) is sent as the
+  owner saw it and kept, and the answer and the audit say so. Audit
+  "sent message <id> (thread <id>) to <addresses>, from draft <id>,
+  which Kivali deleted" (or "which had changed since the owner saw it,
+  so Kivali kept it", or "; the draft could not be deleted").
+
+`gmail.modify` covers `messages.send`; Kivali asks for no other Gmail
+scope to send.
 
 #### Calendar
 
