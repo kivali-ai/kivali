@@ -1,7 +1,8 @@
 // Kivali Desktop's bundled pages: setup (A), connect (B), the page in a
-// team's window when the team can't show itself and Settings
-// (D, with the E dialogs). They are the only pages with IPC; a team's own
-// web app has none (docs/developers/desktop-app.md). Routes: logic/route.ts.
+// team's window when the team can't show itself, the downloads card over
+// a team's web app, and Settings (D, with the E dialogs). They are the
+// only pages with IPC; a team's own web app has none
+// (docs/developers/desktop-app.md). Routes: logic/route.ts.
 
 import "../../design-system/styles.css";
 import "./style.css";
@@ -12,6 +13,7 @@ import { parseRoute, setupTitle, type Route } from "./logic/route";
 import { errorText } from "./logic/setup";
 import { shouldPoll } from "./logic/teams";
 import * as connect from "./pages/connect";
+import * as downloads from "./pages/downloads";
 import * as settings from "./pages/settings";
 import * as setup from "./pages/setup";
 import * as team from "./pages/team";
@@ -106,7 +108,15 @@ function render() {
   root.querySelectorAll<HTMLElement>("[data-keep-scroll]").forEach((el) => scrolls.set(el.id, el.scrollTop));
 
   const nodes =
-    r.page === "setup" ? setup.render(ctx) : r.page === "connect" ? connect.render(ctx) : r.page === "team" ? team.render(ctx) : settings.render(ctx);
+    r.page === "setup"
+      ? setup.render(ctx)
+      : r.page === "connect"
+        ? connect.render(ctx)
+        : r.page === "team"
+          ? team.render(ctx)
+          : r.page === "downloads"
+            ? downloads.render(ctx)
+            : settings.render(ctx);
   root.replaceChildren(...nodes);
 
   for (const [id, top] of scrolls) {

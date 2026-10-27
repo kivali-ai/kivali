@@ -10,7 +10,9 @@ export type Route =
   | { page: "connect" }
   | { page: "settings"; section: "general" | "advanced" }
   | { page: "settings"; section: "team"; id: string; tab: TeamTab }
-  | { page: "team"; id: string };
+  | { page: "team"; id: string }
+  /** The downloads card over a team's web app (pages/downloads.ts). */
+  | { page: "downloads"; id: string };
 
 const TABS: TeamTab[] = ["overview", "ai", "mac", "devices"];
 
@@ -38,6 +40,7 @@ export function parseRoute(hash: string): Route {
     return { page: "settings", section: "general" };
   }
   if (a === "team" && b) return { page: "team", id: b };
+  if (a === "downloads" && b) return { page: "downloads", id: b };
   return { page: "setup", mode: "welcome" };
 }
 
@@ -49,6 +52,8 @@ export function routeHash(r: Route): string {
       return "#/connect";
     case "team":
       return `#/team/${encodeURIComponent(r.id)}`;
+    case "downloads":
+      return `#/downloads/${encodeURIComponent(r.id)}`;
     case "settings":
       return r.section === "team"
         ? `#/settings/team/${encodeURIComponent(r.id)}/${r.tab}`

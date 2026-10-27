@@ -6,6 +6,7 @@ pub mod cli;
 mod commands;
 mod connectreturn;
 mod diagnostics;
+mod downloads;
 mod hostinfo;
 mod menus;
 pub mod orgurl;
@@ -38,6 +39,20 @@ pub(crate) fn http_client(redirect: reqwest::redirect::Policy) -> Result<reqwest
     reqwest::Client::builder()
         .redirect(redirect)
         .timeout(Duration::from_secs(10))
+        .user_agent(format!("KivaliDesktop/{APP_VERSION}"))
+        .build()
+        .map_err(|e| format!("cannot set up HTTP: {e}"))
+}
+
+/// An HTTP client for a download of a team's file (downloads.rs): the
+/// stack of [`http_client`], with no limit on the whole transfer, only
+/// on the wait for the connection and for each next byte.
+pub(crate) fn download_client(read_timeout: Duration) -> Result<reqwest::Client, String> {
+    install_crypto_provider();
+    reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .connect_timeout(Duration::from_secs(10))
+        .read_timeout(read_timeout)
         .user_agent(format!("KivaliDesktop/{APP_VERSION}"))
         .build()
         .map_err(|e| format!("cannot set up HTTP: {e}"))

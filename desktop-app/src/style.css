@@ -133,6 +133,23 @@ button { font: inherit; }
 /* ---- Team page ---- */
 
 .team-page { height: 100%; display: flex; align-items: center; justify-content: center; padding: 40px; overflow: auto; }
+
+/* ---- The downloads card over a team's web app (pages/downloads.ts): its
+   webview is 360 wide and 16 + 64 px per row tall (src-tauri/src/downloads.rs
+   card_size), so the row height and the padding here are what size it. ---- */
+
+.dl-card { height: 100%; padding: 8px; display: flex; flex-direction: column; background: var(--paper-raised); border: 1px solid var(--line); border-radius: var(--radius-lg); box-shadow: var(--shadow-lg); overflow: hidden; }
+.dl-row { height: 64px; flex: none; display: flex; align-items: center; gap: 8px; padding: 0 4px 0 8px; }
+.dl-row + .dl-row { border-top: 1px solid var(--line); }
+.dl-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+.dl-name { font: 500 13px/18px var(--font-sans); color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dl-line { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dl-bar { height: 4px; }
+.dl-bar--indeterminate > span { width: 40%; animation: dl-slide 1.4s var(--ease-out) infinite; }
+@keyframes dl-slide { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
+@media (prefers-reduced-motion: reduce) { .dl-bar--indeterminate > span { animation: none; width: 100%; opacity: .4; } }
+.dl-actions { flex: none; display: flex; align-items: center; gap: 2px; }
+.dl-x .kv-btn-label:empty { display: none; }
 .tp-center { width: 420px; max-width: 100%; display: flex; flex-direction: column; align-items: center; text-align: center; gap: 16px; }
 .tp-titles { display: flex; flex-direction: column; gap: 6px; }
 .h-page { margin: 0; font: 600 24px/30px var(--font-display); letter-spacing: -0.01em; }

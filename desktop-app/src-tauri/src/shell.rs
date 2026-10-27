@@ -5,6 +5,7 @@
 //! Windows, menus and IPC commands call into here.
 
 use crate::connectreturn::PendingReturn;
+use crate::downloads;
 use crate::ownersignin;
 use crate::platform;
 use crate::signin::PendingSignin;
@@ -498,6 +499,8 @@ pub struct Shell {
     pub pending_returns: Mutex<HashMap<String, PendingReturn>>,
     /// The team window in front, or last in front.
     pub front_team: Mutex<Option<String>>,
+    /// Downloads from the team windows (downloads.rs), by team.
+    pub downloads: Mutex<downloads::Downloads>,
     pub zoom: Mutex<HashMap<String, f64>>,
     pub last_deleted: Mutex<Option<(String, u64)>>,
     pub quitting: AtomicBool,
@@ -644,6 +647,9 @@ pub struct TeamView {
     /// A team here: the memory the shell would let it use beside the
     /// teams running now (`view::memory_free_mb`; the memory dialog's "2 GB free").
     pub memory_free_mb: Option<u64>,
+    /// Downloads from the team's window, oldest first (downloads.rs):
+    /// what its downloads card draws.
+    pub downloads: Vec<downloads::DownloadView>,
 }
 
 /// What an update's snapshot copies on this computer, in bytes: the
@@ -730,6 +736,7 @@ impl Shell {
             pending_signins: Mutex::new(HashMap::new()),
             pending_returns: Mutex::new(HashMap::new()),
             front_team: Mutex::new(None),
+            downloads: Mutex::new(downloads::Downloads::default()),
             zoom: Mutex::new(HashMap::new()),
             last_deleted: Mutex::new(None),
             quitting: AtomicBool::new(false),
@@ -891,6 +898,7 @@ impl Shell {
                     files: facts.as_ref().map(|f| f.files),
                     signed_in_as: facts.map(|f| f.email),
                     memory_free_mb: Some(view::memory_free_mb(hostinfo::memory_mb(), running_mb)),
+                    downloads: self.downloads.lock().unwrap().view(&t.id),
                 }
             }
             Place::Elsewhere { .. } => {
@@ -930,6 +938,7 @@ impl Shell {
                     files: facts.as_ref().map(|f| f.files),
                     signed_in_as: facts.map(|f| f.email),
                     memory_free_mb: None,
+                    downloads: self.downloads.lock().unwrap().view(&t.id),
                 }
             }
         }
@@ -1132,6 +1141,12 @@ pub fn changed(app: &AppHandle) {
         menus::refresh(&a);
         windows::sync_all(&a);
     });
+    let _ = app.emit(CHANGED_EVENT, ());
+}
+
+/// Only the pages redraw: for a change that moves no window, menu or
+/// tray (a download's bytes so far).
+pub fn emit_changed(app: &AppHandle) {
     let _ = app.emit(CHANGED_EVENT, ());
 }
 
@@ -2614,7 +2629,7 @@ mod tests {
         for k in [
             "id", "name", "kind", "place", "url", "device", "state", "activity", "phrase", "reason", "pause_first", "op", "version", "dev",
             "update", "ai", "owner", "memory_mb", "cpus", "disk_used_bytes", "disk_size_bytes", "public_url", "paused_since", "last_reached",
-            "provisional", "agents", "working", "files", "signed_in_as", "memory_free_mb",
+            "provisional", "agents", "working", "files", "signed_in_as", "memory_free_mb", "downloads",
         ] {
             assert!(t.get(k).is_some(), "team lacks {k}");
         }

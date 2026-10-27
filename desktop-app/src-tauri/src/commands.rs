@@ -390,6 +390,30 @@ pub async fn save_diagnostics(webview: Webview, app: AppHandle) -> Res<String> {
     crate::diagnostics::save(app).await
 }
 
+/// Cancel on a team's downloads card: the fetch stops and the row goes.
+#[tauri::command]
+pub fn cancel_download(webview: Webview, app: AppHandle, team: String, id: u64) -> Res {
+    guard(&webview)?;
+    crate::downloads::cancel(&app, &team, id);
+    Ok(())
+}
+
+/// The × on a finished download: the row goes.
+#[tauri::command]
+pub fn dismiss_download(webview: Webview, app: AppHandle, team: String, id: u64) -> Res {
+    guard(&webview)?;
+    crate::downloads::dismiss(&app, &team, id);
+    Ok(())
+}
+
+/// Show in folder on a saved download: the file, selected in the file
+/// manager.
+#[tauri::command]
+pub fn reveal_download(webview: Webview, app: AppHandle, team: String, id: u64) -> Res {
+    guard(&webview)?;
+    crate::downloads::reveal(&app, &team, id)
+}
+
 /// Opens an https link (What's new, release notes) in the system browser.
 #[tauri::command]
 pub fn open_external(webview: Webview, app: AppHandle, url: String) -> Res {
@@ -445,6 +469,9 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static 
         open_config_dir,
         save_diagnostics,
         open_external,
+        cancel_download,
+        dismiss_download,
+        reveal_download,
     ]
 }
 
@@ -494,6 +521,9 @@ pub const COMMANDS: &[&str] = &[
     "open_config_dir",
     "save_diagnostics",
     "open_external",
+    "cancel_download",
+    "dismiss_download",
+    "reveal_download",
 ];
 
 #[cfg(test)]

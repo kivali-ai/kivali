@@ -430,7 +430,7 @@ webview (`windows.rs`):
 | --- | --- | --- | --- |
 | Setup | `setup` | 680 × 580, fixed | adding a team: `#/setup/welcome` (A1, first launch, "Welcome to Kivali"), `#/setup/add` (A1 as "Add a team", with Cancel), `#/setup/new` (the create steps A2–A20, "New team"), `#/setup/new/<id>` (the same, picked up at step 3 for a team whose setup didn't finish), `#/connect` (B1–B6, "Connect to a team") |
 | Settings | `settings` | 880 × 640, fixed width, taller allowed | `#/settings/general` (D1, D11), `#/settings/team/<id>[/overview\|ai\|mac]` (D2–D6, or D9 for a team elsewhere), `#/settings/advanced` (D10) |
-| A team | `team-<id>` | 1200 × 760, resizable, at least 900 × 600 | two child webviews in the same place, one shown at a time (below) |
+| A team | `team-<id>` | 1200 × 760, resizable, at least 900 × 600 | two child webviews in the same place, one shown at a time, and the downloads card above them while the team has downloads (below) |
 | A browser | `browser-<hash>-<id>` | 1320 × 900, resizable | a web subagent's browser page of the team's web app ("The browser window" below) |
 
 A team's window is titled with its name, plus `· <host>` for a team
@@ -446,6 +446,12 @@ elsewhere. It holds:
   couldn't start (C7, with the reason when known, Show details and Try
   again or "Pause X and resume"), or a team elsewhere that does not
   answer (C8, retried quietly). It has IPC.
+- **`downloads-<id>`**, the bundled page `#/downloads/<id>`, the
+  downloads card: a 360-px-wide child webview at the window's top right
+  (inset 16 px, 16 + 64 px per row tall, `downloads::card_size`),
+  added above the other two the first time the team has a download
+  and shown while it has any and the web app shows ("Downloads"
+  below). It has IPC; `Resized` keeps it in the corner.
 
 `sync_team` decides which shows on every change: a team here shows its
 web app only while it is running and has a port; a team elsewhere shows
@@ -526,6 +532,7 @@ way, to the browser through the gate below.
 | the pinned origin, `/auth/login` without `client=desktop` | refused; the desktop sign-in starts its listener and loads it again with `client=desktop`, `return_port` and `return_token` |
 | the pinned origin, `/connect/start?flow=<32 hex digits>` (its path percent-decoded) | refused; for a team here the system browser opens the team's handoff with `next=<flow>`, for a team elsewhere nothing opens ("Signing in to an integration" below) |
 | the pinned origin, any other path (including `/auth/login?…client=desktop`, as is, and `/auth/callback`) | loads |
+| the pinned origin, an answer that is a download (`Content-Disposition: attachment`) | the web view saves nothing; the shell asks where to save and fetches the URL itself ("Downloads" below) |
 | `about:blank`, `about:srcdoc`, the pinned origin's `blob:` | loads |
 | any other `http`/`https` page (another team, another port, Google) | refused, opened in the system browser |
 | the app's origin, `file:`, `data:`, `asset:`, foreign `blob:` | refused |
@@ -702,6 +709,62 @@ loads it. A device sign-in's link to the vendor's page is another site,
 opened in the system browser through the gate like any other. Nothing
 here is platform-specific: macOS and Windows behave the same.
 
+## Downloads
+
+A team's web view never saves a file on its own (`downloads.rs`). Its
+`on_download` hook answers every `DownloadEvent::Requested` with
+`false`, so neither WKWebView nor WebView2 writes anything, and the
+shell takes the download over:
+
+1. **Where.** The system save dialog (the dialog plugin's
+   `save_file`, non-blocking, a sheet on the team's window; a download
+   from a browser window sheets on that window) opens on the downloads
+   folder with the server's file name filled in, the name wry put in
+   the hook's `destination`. One dialog at a time per team
+   (`Downloads::begin_pick`): a page that asks for a second download
+   while the sheet is up gets nothing, logged, so it cannot stack
+   sheets on the person. Cancel ends it there.
+2. **The fetch.** Save starts a task that reads the team window's
+   cookies off the main thread (`teamapi::jar`, as the team API does),
+   sends the session cookie with a `GET` of the URL (`download_client`:
+   the updater's TLS stack, no redirects, 10 s to connect, 60 s between
+   bytes, no limit on the whole), and refuses a URL off the team's
+   pinned origin or a window that is not signed in. The bytes go to
+   `<name>.kivali-partial` beside the chosen path, renamed into place
+   once the length the server gave (`Content-Length`, which the
+   attachment, project file and web-task file handlers send) has
+   arrived and the file is synced; a cut, failed or cancelled download
+   removes the partial file and leaves nothing.
+3. **The card.** `Shell::downloads` (`Downloads`, pure and tested)
+   holds each team's downloads: id, name, path, state (`downloading`,
+   `done`, `failed`), bytes, length, error. The snapshot carries them
+   as `teams[].downloads`, and the card (`pages/downloads.ts`) draws a
+   row each: the bytes and a bar (indeterminate without a length) with
+   Cancel; "Saved in Downloads" with Show in folder (the opener's
+   `reveal_item_in_dir`) and ×; or the failure's words with ×. Progress
+   redraws the pages alone (`shell::emit_changed`), at most every
+   250 ms; a state change goes through `shell::changed`, which also
+   shows, sizes or hides the card (`windows::sync_downloads`). A saved
+   download leaves the card `KEEP_DONE` (10 s) after it finished; a
+   failed one stays until dismissed; at most six are listed, the
+   finished ones going first. Cancel on the card sets the fetch's flag
+   and removes the row at once (`cancel_download`; `dismiss_download`,
+   `reveal_download` are the other two commands).
+4. **The notification.** A download that ends while Kivali is not the
+   app in front is a notification, opening the team's window
+   (`notify_background`).
+
+A download the shell cannot fetch again, a `blob:` or `data:` URL the
+page made itself, is the exception: the hook answers `true` and the
+web view saves it where wry chose (the downloads folder, the name
+deduplicated), with no dialog; the shell records it from the hook's
+`destination` and the card shows its finish from
+`DownloadEvent::Finished`. The web app itself makes none: project
+files, attachments and backups download by navigating to a URL the
+server answers as an attachment (the backup through a one-time link
+from `POST /api/v1/org/backup/links`, since a navigation is a `GET`),
+so this path is for an older team's pages.
+
 ## The team API
 
 What the shell shows about the inside of a team (the tray's
@@ -791,8 +854,8 @@ this sign-in produced.
 ## Capabilities: why team web apps get nothing
 
 The only capability, `shell-pages`, names the `setup` and `settings`
-windows and the `setup`, `settings` and `page-*` webviews, on local
-origins only, and lists the app's own commands plus event listening.
+windows and the `setup`, `settings`, `page-*` and `downloads-*`
+webviews, on local origins only, and lists the app's own commands plus event listening.
 There is no `remote` entry, no `dangerousRemoteDomainIpcAccess`, and no
 entry that matches `team-*` windows or `web-*` webviews, so:
 
@@ -802,8 +865,8 @@ entry that matches `team-*` windows or `web-*` webviews, so:
   test (`commands::tests`) checks that build.rs and the capability list
   every command in `COMMANDS`.
 - Every command also checks that its caller's webview label is
-  `setup`, `settings` or `page-<id>` (`is_page_label`), so an error in
-  the capability file alone does not expose one.
+  `setup`, `settings`, `page-<id>` or `downloads-<id>` (`is_page_label`),
+  so an error in the capability file alone does not expose one.
 - A team's web view cannot navigate to the app's origin, so it never
   runs the bundled pages either; the page webview beside it in the
   same window is a separate webview with its own label.
@@ -1662,7 +1725,8 @@ Plain TypeScript, no framework, built by Vite into `dist/` (dev server
 on port 1420). `index.html` has one `<div id="app">`; `main.ts` reads
 the route from the hash (`logic/route.ts`), fetches the snapshot, and
 renders the page for it: `pages/setup.ts`, `pages/connect.ts`,
-`pages/team.ts` or `pages/settings.ts` (with `pages/dialogs.ts`). Every
+`pages/team.ts`, `pages/downloads.ts` or `pages/settings.ts` (with
+`pages/dialogs.ts`). Every
 render replaces the page's DOM from the snapshot and the page's own
 state, keeping the focused element, its caret and the scroll position
 of elements marked `data-keep-scroll`. Unknown routes fall back to the
@@ -1685,7 +1749,8 @@ welcome screen.
   `setup.ts` (which A screen shows, Back, the getting-ready bar, error
   words), `teams.ts` (dots and words, the team page, Settings rows,
   the E dialogs' words, when to poll), `format.ts` (sizes, times,
-  versions, device names), `route.ts`.
+  versions, device names), `downloads.ts` (the downloads card's sizes
+  and lines), `route.ts`.
 
 **The snapshot** (`shell_snapshot`; `src/types.ts` `Snapshot`, built by
 `Shell::snapshot`; a Rust test serialises one and checks every key
@@ -1694,7 +1759,7 @@ welcome screen.
 | Key | What |
 | --- | --- |
 | `app_version`, `platform` | this app's version; `macos`, `windows` or `linux` |
-| `teams[]` | per team: `id`, `name`, `kind`, `place` (`here`/`elsewhere`), `url`, `device`, `state`, `activity`, `phrase`, `reason`, `pause_first` (the team to pause when memory stopped a start), `op` (the current or last operation: kind, running, error, finished, raw lines, stage, stage index, stages, start time, percent, time left), `version`, `update` (above, plus `takes`, an update's typical length in words, "about 4 minutes", from its stages), `ai` (`provider`, `signed_in`, `email` and `billing` as `claude auth status` reports them, `terminal_open`, `signin`, `signed_out_at` while Claude is signed out), `owner`, `memory_mb`, `cpus`, `disk_used_bytes`, `disk_size_bytes`, `paused_since`, `last_reached`, `provisional`, `agents`, `working` (only while running), `files`, `signed_in_as` ("The team API"; null until read), `memory_free_mb` (a team here: `view::memory_free_mb` beside the other teams running now, E5's "2 GB free"; null elsewhere) |
+| `teams[]` | per team: `id`, `name`, `kind`, `place` (`here`/`elsewhere`), `url`, `device`, `state`, `activity`, `phrase`, `reason`, `pause_first` (the team to pause when memory stopped a start), `op` (the current or last operation: kind, running, error, finished, raw lines, stage, stage index, stages, start time, percent, time left), `version`, `update` (above, plus `takes`, an update's typical length in words, "about 4 minutes", from its stages), `ai` (`provider`, `signed_in`, `email` and `billing` as `claude auth status` reports them, `terminal_open`, `signin`, `signed_out_at` while Claude is signed out), `owner`, `memory_mb`, `cpus`, `disk_used_bytes`, `disk_size_bytes`, `paused_since`, `last_reached`, `provisional`, `agents`, `working` (only while running), `files`, `signed_in_as` ("The team API"; null until read), `memory_free_mb` (a team here: `view::memory_free_mb` beside the other teams running now, E5's "2 GB free"; null elsewhere), `downloads` (the window's downloads, oldest first: `id`, `name`, `folder`, `state`, `received`, `total`, `error`; "Downloads") |
 | `host` | this computer's memory and CPUs, and `vm_support`: whether a team's VM can run here (`ready`, `hyperv_off`, `windows_home`, `virtualization_off`, `in_vm`; `platform::vm_support`) |
 | `web_memory_mb` | the least memory a team needs for a web task (`teams::WEB_TASK_MEMORY_MB`); the memory select warns below it |
 | `settings` | `start_at_login`, `ask_before_quit` |
