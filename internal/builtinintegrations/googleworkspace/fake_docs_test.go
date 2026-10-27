@@ -308,6 +308,9 @@ func (d *fakeDocs) listComments(w http.ResponseWriter, r *http.Request, id strin
 // files/{id}/comments/{id}/replies), each of which Drive answers only
 // with fields named. A comment made is the signed-in account's, with
 // the content and quote given; a reply joins its comment's replies.
+// Either is refused 403 on a file without Kivali's mark, as Drive
+// refuses one under drive.file on a file the OAuth client did not
+// create.
 func (d *fakeDocs) comment(w http.ResponseWriter, r *http.Request, parts []string, body map[string]any) {
 	if r.URL.Query().Get("fields") == "" {
 		fakeFail(w, http.StatusBadRequest, "The 'fields' parameter is required for this operation.")
@@ -320,6 +323,10 @@ func (d *fakeDocs) comment(w http.ResponseWriter, r *http.Request, parts []strin
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if _, marked := ff.file.AppProperties[kivaliMark]; r.Method == http.MethodPost && !marked {
+		fakeFail(w, http.StatusForbidden, "The user does not have sufficient permissions for this file.")
+		return
+	}
 	find := func(id string) map[string]any {
 		for _, c := range ff.comments {
 			if c["id"] == id {

@@ -71,7 +71,8 @@ const (
 // takes nothing from its settings); Calendar's events and calendars
 // read; Docs; Drive read, for finding documents and folders; and
 // Drive's files Kivali makes, for creating a document with Kivali's
-// mark, in its folder.
+// mark, in its folder, and commenting on the documents Kivali made,
+// the only ones Drive takes a comment on under it.
 var scopes = []string{
 	"https://www.googleapis.com/auth/gmail.modify",
 	"https://www.googleapis.com/auth/calendar.events",
@@ -165,7 +166,7 @@ func (g *GoogleWorkspace) Manifest() *integration.Manifest {
 		Name:            Name,
 		Version:         "1.0.0",
 		DisplayName:     displayName,
-		Description:     "Gmail, Google Calendar and Google Docs, signed in with an OAuth client you make on Google's Auth Platform. In this version agents can read your Gmail, write drafts in it, label its mail and send mail you approve, read your Google Calendar, change its events, and invite people and answer invitations once you approve, and read and write your Google Docs and comment on them once you approve.",
+		Description:     "Gmail, Google Calendar and Google Docs, signed in with an OAuth client you make on Google's Auth Platform. In this version agents can read your Gmail, write drafts in it, label its mail and send mail you approve, read your Google Calendar, change its events, and invite people and answer invitations once you approve, and read and write your Google Docs and comment on those Kivali made once you approve.",
 		Author:          integration.Author{Name: "Kivali"},
 		UserConfig:      integration.UserConfig{},
 		Tools:           tools,
@@ -337,14 +338,18 @@ func failed(words string) *builtinintegrations.Result {
 
 // held is a send's answer from its run: the call waits for the owner's
 // approval (Result.Hold), shown to the owner as title, fields and
-// recipients, and nothing has reached anyone. run is what the owner
-// approves: it does exactly what the fields show, from what the send
-// captured when it held the call, never reading the agent's arguments
-// or Google again for what it sends.
+// recipients, and nothing has reached anyone. needs is the send switch
+// that lets the agent ask for it (gmail_send, calendar_send or
+// docs_send), which core holds the access to again at approval
+// (Hold.Switch). run is what the owner approves: it does exactly what
+// the fields show, from what the send captured when it held the call,
+// never reading the agent's arguments or Google again for what it
+// sends.
 type held struct {
 	title      string
 	fields     []builtinintegrations.HoldField
 	recipients []string
+	needs      string
 	run        func(ctx context.Context, c *call) (any, error)
 }
 
@@ -353,15 +358,17 @@ func field(label, value string) builtinintegrations.HoldField {
 	return builtinintegrations.HoldField{Label: label, Value: value}
 }
 
-// holdResult is h as Call answers it, for the agent agent. Its Run reads
-// the access token core hands it, at the owner's approval, and runs
-// h.run with a call of its own, answering as Call does: the agent's
-// access is not read again, since core has checked it then.
+// holdResult is h as Call answers it, for the agent agent, its Switch
+// h.needs. Its Run reads the access token core hands it, at the owner's
+// approval, and runs h.run with a call of its own, answering as Call
+// does: the agent's access is not read again, since core has checked
+// it then, h.needs included.
 func (g *GoogleWorkspace) holdResult(agent string, h *held) *builtinintegrations.Result {
 	return &builtinintegrations.Result{Hold: &builtinintegrations.Hold{
 		Title:      h.title,
 		Fields:     h.fields,
 		Recipients: h.recipients,
+		Switch:     h.needs,
 		Run: func(ctx context.Context, conn builtinintegrations.Connection) (*builtinintegrations.Result, error) {
 			tok, err := accessToken(conn)
 			if err != nil {
@@ -402,6 +409,49 @@ func dropFormat(s string) string {
 		}
 		return r
 	}, s)
+}
+
+// hidesText reports whether s holds a Unicode format character (Cf)
+// other than the zero-width joiner emoji are made with: one that shows
+// as nothing on the owner's card, which core refuses.
+func hidesText(s string) bool {
+	return strings.ContainsFunc(s, func(r rune) bool { return r != '\u200d' && unicode.Is(unicode.Cf, r) })
+}
+
+// gone is a send's Run finding what it acts on no longer there, Google
+// answering 404 or 410: a Refusal, since nothing was done, in the words
+// "<what> is gone; nothing was done." (what is "The event", "The
+// comment", ...), with reason for the audit. nil for any other failure.
+func gone(err error, what, reason string) error {
+	var ae *apiError
+	if errors.As(err, &ae) && (ae.Status == http.StatusNotFound || ae.Status == http.StatusGone) {
+		return refuse(what+" is gone; nothing was done.", reason)
+	}
+	return nil
+}
+
+// unshownPeople names, on a card and in an answer, the people a send
+// reaches whose address Google does not show.
+const unshownPeople = "others whose address Google does not show"
+
+// withUnshown is people in words, then, when unknown, unshownPeople:
+// "alice@example.org and others whose address Google does not show".
+// It is "" for no one.
+func withUnshown(people []string, unknown bool) string {
+	w := strings.Join(people, ", ")
+	switch {
+	case !unknown:
+		return w
+	case w == "":
+		return "people whose address Google does not show"
+	}
+	return w + " and " + unshownPeople
+}
+
+// unshownField is the field a card ends with when the send reaches
+// people whose address Google does not show.
+func unshownField() builtinintegrations.HoldField {
+	return field("Also reaches", "People whose address Google does not show")
 }
 
 // waitsWords end the description of every action that waits for the

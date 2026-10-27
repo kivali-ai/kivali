@@ -2842,7 +2842,8 @@ A built-in action that must not happen until the owner says so (an
 email sent, an invitation, a comment others are told of) is a *held
 call* (`internal/web/integration_hold.go`). Google Workspace's sends
 are held calls ([Sending mail](#sending-mail), [Calendar](#calendar),
-[Commenting](#commenting)). Its `Call` checks what it
+[Commenting](#commenting)), each naming its send switch as `Switch`.
+Its `Call` checks what it
 can, does nothing outward, and answers with `Result.Hold` and no
 `Content`:
 
@@ -4091,7 +4092,9 @@ apart:
   `drive.readonly` and `drive.file` (each under
   `https://www.googleapis.com/auth/`), never Gmail's settings:
   `drive.readonly` finds documents and folders, and `drive.file`
-  lets Drive make a document with Kivali's mark, in its folder. The
+  lets Drive make a document with Kivali's mark, in its folder, and
+  post a comment, which Drive takes under it only on a file Kivali's
+  OAuth client created ([Commenting](#commenting)). The
   `setup` block: a summary; `hosts: ["console.cloud.google.com"]`; one
   field, `client_json`, secret and setup-only; keeps `client_id` and
   `client_secret`, both secret, which core signs in with. An empty
@@ -4182,7 +4185,10 @@ waits for the owner's approval, as a held call: `send_email`,
 `send_draft`, `respond_to_invitation`, `add_comment`,
 `reply_to_comment`, and a `create_event`, `update_event` or
 `delete_event` call `isSend` finds is a send. The send switch decides
-only whether the agent may ask. `CheckAccess` refuses, as the owner
+only whether the agent may ask; each send's `Hold.Switch` names it
+(`gmail_send`, `calendar_send` or `docs_send`), so an approval after
+the owner turned it off is refused and the call keeps waiting ([Held
+calls](#held-calls)). `CheckAccess` refuses, as the owner
 saves an access, a `send_to` entry that is neither an address nor
 `*@` and a domain with a dot, which would match no one: ""<entry>"
 under May send to is not an address, such as dana@example.com, or a
@@ -4573,19 +4579,31 @@ lines when more than a third of its bytes are outside ASCII, and
 
 The `gmail_send` actions (`gmail_send.go`) are held calls ([Held
 calls](#held-calls)): each checks everything, reaches nothing that
-sends, and answers `Result.Hold`. Every address the email goes to must
-be one `send_to` allows (`checkRecipients`: an address it names, or one
-at a domain it names as `*@domain`, that domain alone; any address
-when it is empty), or the call is refused before it is held, "The
-owner has not allowed you to send to <addresses> through Google
-Workspace; ask the owner if your work needs it.", audited as `send_to
-does not include <addresses>`. `Run` is `POST
-/gmail/v1/users/me/messages/send` with the `{"raw":...,"threadId":...}`
-body built when the call was held, sent as those bytes; its audit is
-"sent message <id> (thread <id>) to <addresses>", never the text, and
-it sets no `Result.Outside`. Google not answering may have sent the
-email, so that failure tells the agent to search the owner's Sent mail
-before asking again.
+sends, and answers `Result.Hold` with `Switch` `gmail_send`. Every
+address the email goes to must be one `send_to` allows
+(`checkRecipients`: an address it names, or one at a domain it names
+as `*@domain`, that domain alone; any address when it is empty), or
+the call is refused before it is held, "The owner has not allowed you
+to send to <addresses> through Google Workspace; ask the owner if your
+work needs it.", audited as `send_to does not include <addresses>`.
+`Run` is `POST /gmail/v1/users/me/messages/send` with the
+`{"raw":...,"threadId":...}` body built when the call was held, sent
+as those bytes; its audit is "sent message <id> (thread <id>) to
+<addresses>", never the text, and it sets no `Result.Outside`. Google
+not answering may have sent the email, so that failure tells the agent
+to search the owner's Sent mail before asking again.
+
+Every send of Calendar and Docs holds everyone it reaches to `send_to`
+the same way (`checkReach`). While `send_to` names anyone, it also
+refuses a send that reaches people whose address Google does not
+show, whom it cannot check: "This send also reaches people whose
+address Google does not show, so Kivali cannot check them against the
+addresses the owner allows you to send to; ask the owner if your work
+needs it.", audited as `send_to cannot be checked: the send reaches
+people whose address Google does not show`. With `send_to` empty such
+a send is held, its card ending with "Also reaches": "People whose
+address Google does not show", and `Run`'s answer naming them as "...
+and others whose address Google does not show".
 
 - `send_email` takes `create_draft`'s arguments and reads them as it
   does (`readComposition`, replies included), then leaves out every
@@ -4596,19 +4614,34 @@ before asking again.
   To, Cc and Bcc (when set) by address, Subject, "In reply to" for a
   reply (the replied message's sender by address, when it was sent and
   its subject, read with the reply's headers and shown without its
-  format characters, since it is shown and not sent), and Body, the
-  text as it goes; recipients every address. Audit "sent message <id>
-  (thread <id>), a reply to message <id>, to <addresses>".
+  format characters, since it is shown and not sent), Threading for a
+  reply (the message id its `In-Reply-To` names and its `References`
+  end with), and Body, the text as it goes; recipients every address.
+  Audit "sent message <id> (thread <id>), a reply to message <id>, to
+  <addresses>".
 - `send_draft(draft_id)` takes any draft of the account, Kivali's or
   the owner's, read whole (`drafts.get` in format `raw`), its message
   `withoutHeader` the mark: those bytes are what goes. The message is
-  read (`readDraft`) for its headers and its first `text/plain` and
+  read (`readDraft`) for its headers and its `text/plain` and
   `text/html` parts that are not attachments, decoded from their
-  transfer encoding and character set; a draft with any other part, a
-  file name or an attachment disposition is refused, "Draft <id> has
-  attachments, which Kivali does not send; the owner can send it from
-  Gmail.", audited as `draft <id> has attachments`, and one with no
-  text, or whose addresses or parts do not read, answers so. The card:
+  transfer encoding and character set. The card shows one of each, so
+  a draft it cannot show whole is refused before it is held: one with
+  a part that has a file name or an attachment disposition, "Draft
+  <id> has attachments, which Kivali does not send; the owner can send
+  it from Gmail.", audited as `draft <id> has attachments`; one with
+  more than one text part, more than one HTML part, or a part of any
+  other type (an inline image, `text/calendar`), "Draft <id> has 2
+  text parts, a part of type image/png, and Kivali shows the owner one
+  text part and one formatted part and nothing else, so it cannot show
+  the owner all of what it would send; the owner can send it from
+  Gmail." (`draftContent.unshown`, at most five types named), audited
+  as `draft <id> has <what it found>`; and one whose decoded text or
+  HTML holds a Unicode format character other than U+200D
+  (`hidesText`), "Draft <id> holds invisible characters (...), which
+  the owner cannot see before approving. The owner must remove them in
+  Gmail before Kivali can send it.", audited as `draft <id> holds
+  invisible formatting characters`. One with no text, or whose
+  addresses or parts do not read, answers so. The card:
   title "Send a draft to <first address>[ and N more]"; fields Draft
   ("Draft <id>, which Kivali wrote (agent <slug>)", or "which Kivali
   did not write"), From, To, Cc and Bcc as the draft names them (each
@@ -4617,10 +4650,13 @@ before asking again.
   Message-ID its In-Reply-To names, as for `send_email`), Body (the
   text part exactly) and, for a draft with an HTML part, "Formatted
   version, as a reader sees it": `htmlToText`'s text, its links listed
-  and the count of hidden characters, which go with it. `Run` reads
-  the draft again in format `minimal`: gone (404), it refuses, "Draft
-  <id> is no longer in the owner's Drafts: it was sent or deleted after
-  the owner saw it, so Kivali sent nothing."; otherwise it sends the
+  and the count of hidden characters, which go with it. Of the
+  draft's headers the card shows From, To, Cc, Bcc, Reply-To, Subject
+  and, through "In reply to", In-Reply-To; any other header (Date,
+  References, Message-ID, an `X-` header) goes as the draft holds it
+  and is not shown. `Run` reads the draft again in format `minimal`:
+  gone (404 or 410), it refuses, "The draft is gone; nothing was
+  done.", audited as `draft <id> was gone`; otherwise it sends the
   bytes captured, in the draft's thread, then, when the draft's message
   id is the one the owner saw, deletes the draft (`DELETE
   /gmail/v1/users/me/drafts/{id}`). A draft whose message changed
@@ -4740,7 +4776,8 @@ the owner's own`, before an event is read. Every write sends
 Google tells everyone it reaches.
 
 - `create_event` is `POST calendars/{id}/events` with `summary`,
-  `start`, `end`, `description`, `location` and
+  `start`, `end`, `description`, `location`, `attendees` when they are
+  only the owner's own addresses (`self`), and
   `extendedProperties.private.kivali` set to the agent's slug
   (`marker`, as a draft's mark is): the mark `delete_event` looks for, private to the
   calendar's copy of the event, which marks it as an event Kivali
@@ -4763,10 +4800,12 @@ Google tells everyone it reaches.
   all-day or back needs both, and the patch sets the other kind's
   fields to null. `time_zone` is checked for an IANA name's form only.
 - **Sends** (`isSend`, the one function that tells a write from a
-  send): a `create_event` or `update_event` call is a send when its
-  `attendees`, as a set of lower-cased addresses, differ from the
-  event's (none for `create_event`); no `attendees`, or null, is no
-  change. An `update_event` or `delete_event` call is a send, whatever
+  send): a `create_event` call is a send when its `attendees` name
+  anyone but the owner (`self`); one naming only the owner's own
+  addresses is a write, which reads the calendar list to tell. An
+  `update_event` call is a send when its `attendees`, as a set of
+  lower-cased addresses, differ from the event's; no `attendees`, or
+  null, is no change. An `update_event` or `delete_event` call is a send, whatever
   it gives, when the event reaches others (`reachesOthers`): it has an
   attendee that is not the owner (`self`, the signed-in address or one
   of the owner's own calendars; a colleague or a room is another),
@@ -4779,18 +4818,21 @@ Google tells everyone it reaches.
 `respond_to_invitation`) are held calls. A send of `create_event`,
 `update_event` or `delete_event` needs `calendar_send` as well as the
 write switch that gives the action; without it the call is refused
-before anything reaches Google, "This call is a send: it invites
+before anything changes, "This call is a send: it invites
 people or changes who an event invites, or changes or deletes an event
 that has attendees other than the owner or that someone else
 organized, which reaches those people. The owner has not given you
 inviting people and answering invitations in Google Workspace; ...",
 audited as `the access does not include inviting people and answering
-invitations`. Every attendee a send adds, the owner's own addresses
-left out, must be one `send_to` allows, as for mail ([Sending
-mail](#sending-mail)); those it already invites are not checked. A
-card's recipients are everyone the send reaches: the attendees after
-the change, those it removes, and the organizer, the owner's own
-addresses left out. The event's own text on a card (its title and
+invitations`. Each send's `Hold.Switch` is `calendar_send`. Everyone
+a send reaches, the owner's own addresses left out, must be one
+`send_to` allows (`checkReach`, [Sending mail](#sending-mail)): the
+attendees after the change, those it removes, and the organizer; for
+`respond_to_invitation`, the organizer. An attendee or an organizer
+Google gives no address Kivali reads, other than the calendar's own,
+and `attendeesOmitted`, are people Kivali cannot check
+(`unreadPeople`). A card's recipients are everyone the send reaches
+whom Kivali reads. The event's own text on a card (its title and
 place as they are, its description before a change) is shown without
 format characters, since it is shown and not sent. Google not
 answering a `Run` may have done it, so that failure says what to look
@@ -4810,17 +4852,31 @@ at before asking again. No send sets `Result.Outside`.
   "Time changes to", "Attendees added", "Attendees removed". A new
   attendee list is sent as each attendee the event keeps, whole as
   Google gave it (its answer kept), in the event's order, then each
-  new one by address (`newAttendees`). `Run` is `PATCH
-  calendars/{id}/events/{id}?sendUpdates=all` with the patch captured.
-  Audit "changed event <id> on calendar <id>: <fields>; told
-  <addresses>".
+  new one by address (`newAttendees`). A change of attendees to an
+  event with `attendeesOmitted` or an attendee with no address Kivali
+  reads is refused before it is held, since the new list would drop
+  them: "Kivali cannot change who event <id> invites: Google lists only
+  some of its attendees, or shows no address for one, so a new list
+  would drop them. ...", audited as `event <id> has attendees Kivali
+  cannot read`. `Run` is `PATCH
+  calendars/{id}/events/{id}?sendUpdates=all` with the patch captured
+  and `If-Match` of the event's `etag` as Kivali read it. Audit
+  "changed event <id> on calendar <id>: <fields>; told <addresses>".
 - `delete_event` as a send, after the Kivali-created rule: the card is
   titled "Delete "<title>", telling N people", with the event as it is
   and "What happens": "This cancels the event for everyone invited.",
   or, for an event someone else organizes, that it leaves the owner's
   calendar and Google tells the organizer. `Run` is `DELETE
-  calendars/{id}/events/{id}?sendUpdates=all`. Audit "deleted event
-  <id> on calendar <id>, which <slug> created; told <addresses>".
+  calendars/{id}/events/{id}?sendUpdates=all` with `If-Match` of the
+  event's `etag` as Kivali read it. Audit "deleted event <id> on
+  calendar <id>, which <slug> created; told <addresses>".
+- **At approval.** Google answering an `update_event` or
+  `delete_event` `Run` 412, the event changed since Kivali read it,
+  ends the call as a refusal: "The event changed after the owner saw
+  it; nothing was done.", audited as `event <id> changed after the
+  owner saw it`. Any send's event gone (404 or 410) ends it as "The
+  event is gone; nothing was done.", audited as `event <id> was
+  gone`.
 - `respond_to_invitation(calendar_id, event_id, response, comment?)`,
   under `calendar_send`: `response` is `accepted`, `declined` or
   `tentative`, `comment` at most 1,000 characters. The event must have
@@ -5053,22 +5109,37 @@ does.
 #### Commenting
 
 The `docs_send` actions (`docs_send.go`) are held calls ([Held
-calls](#held-calls)). Each reaches only a document that is readable
-(its folders included, as for a read; the read switch is not needed),
-and its text (`content`, required, at most 4,000 characters,
-`cleanText`'s) is what the card shows and what goes. A mention is an
-address with `+` or `@` right before it, not inside a word or another
-address (`mentions`: `+dana@example.com`, `@dana@example.com`; not
-`foo+dana@example.com` or a bare address), lower-cased, at most 50;
-Google emails each person mentioned, so every mention but the
-signed-in address must be one `send_to` allows, or the call is refused
-before it is held, as a send of mail is ([Sending mail](#sending-mail)).
-A card's Document field names the document, its id, its owner ("owned
-by you", by address, or "in a shared drive") and whether it is shared,
-its name shown without format characters, since it is shown and not
-sent; its recipients are the people mentioned and the document's
-owner, the signed-in account left out. Google not answering a `Run`
-may have posted it, so that failure says to look with `list_comments`
+calls](#held-calls)), each with `Hold.Switch` `docs_send`. Each
+reaches only a document that is readable (its folders included, as for
+a read; the read switch is not needed) and that Kivali made
+(`driveFile.madeByKivali`, its `appProperties.kivali` set): the
+sign-in's scope for comments is `drive.file`, under which Drive takes
+a comment or a reply only on a file Kivali's OAuth client created. Any
+other document is refused before it is held, "The owner's Google
+sign-in lets Kivali comment only on documents Kivali made, and Kivali
+did not make document <id>.", audited as `document <id> was not made
+by Kivali`; commenting on any document would need the full `drive`
+scope, which Kivali does not ask for. Its text (`content`, required,
+at most 4,000 characters, `cleanText`'s) is what the card shows and
+what goes. A mention is an address with `+` or `@` right before it,
+not inside a word or another address (`mentions`:
+`+dana@example.com`, `@dana@example.com`; not `foo+dana@example.com`
+or a bare address), lower-cased, at most 50. Google emails each person
+mentioned and tells the document's owner, and of a reply everyone in
+the comment's conversation, so everyone it reaches but the signed-in
+address must be one `send_to` allows (`checkReach`, [Sending
+mail](#sending-mail)): those mentioned, the document's owner and, for
+a reply, the comment's author and its repliers. A document's owner
+(outside a shared drive), an author or a replier with no address
+Kivali reads is one Kivali cannot check (`commentPeople`). A card's
+Document field names the document, its id, its owner ("owned by you",
+by address, or "in a shared drive") and whether it is shared, its name
+shown without format characters, since it is shown and not sent; its
+recipients are everyone it reaches whom Kivali reads. A `Run` whose
+document (`add_comment`) or comment (`reply_to_comment`) is gone (404
+or 410) refuses, "The document is gone; nothing was done." or "The
+comment is gone; nothing was done.". Google not answering a `Run` may
+have posted it, so that failure says to look with `list_comments`
 before asking again. No send sets `Result.Outside`.
 
 - `add_comment(document_id, content, anchor_text?)`: the card is

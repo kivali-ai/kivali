@@ -22,15 +22,41 @@ func sender(m map[string]any) builtinintegrations.Caller {
 	return c
 }
 
+// sendSwitch is the send switch each action that holds a call needs,
+// which its Hold names (Hold.Switch).
+var sendSwitch = map[string]string{
+	"send_email": keyGmailSend, "send_draft": keyGmailSend,
+	"create_event": keyCalendarSend, "update_event": keyCalendarSend, "delete_event": keyCalendarSend, "respond_to_invitation": keyCalendarSend,
+	"add_comment": keyDocsSend, "reply_to_comment": keyDocsSend,
+}
+
 // holdOf is caller's call of name with args, which must be held: a
-// Result with a Hold that has a Run, and nothing else.
+// Result with a Hold that has a Run, and nothing else. The Hold must
+// name the action's send switch: core holds the agent's access to it
+// again when the owner approves, so a switch turned off meanwhile stops
+// the send; one missing would let it through, since create_event,
+// update_event and delete_event are listed under calendar_write.
 func holdOf(t *testing.T, g *GoogleWorkspace, caller builtinintegrations.Caller, name, args string) *builtinintegrations.Hold {
 	t.Helper()
 	res, err := g.Call(context.Background(), caller, testConn(), name, json.RawMessage(args))
 	if err != nil || res == nil || res.Hold == nil || res.Hold.Run == nil || len(res.Content) != 0 || res.IsError {
 		t.Fatalf("%s %s = %+v, %v; want a held call", name, args, res, err)
 	}
+	if want := sendSwitch[name]; want == "" || res.Hold.Switch != want {
+		t.Errorf("%s held a call naming the switch %q, want %q", name, res.Hold.Switch, want)
+	}
 	return res.Hold
+}
+
+// runRefused runs h as core does once the owner approves it; it must
+// refuse with text, doing nothing.
+func runRefused(t *testing.T, h *builtinintegrations.Hold, text string) {
+	t.Helper()
+	res, err := h.Run(context.Background(), testConn())
+	var ref *builtinintegrations.Refusal
+	if res != nil || !errors.As(err, &ref) || ref.Text != text || ref.Reason == "" {
+		t.Errorf("approved %q = %+v, %v; want the refusal %q", h.Title, res, err, text)
+	}
 }
 
 // labelsOf is a hold's fields' labels, in order, and valueOf the value
@@ -159,16 +185,18 @@ func addressesOnly(t *testing.T, msg *mail.Message, name string) []string {
 // Why this test exists: a reply the owner approves must show what it
 // answers, so the owner can tell which conversation it joins: the
 // replied message's sender by address, when it was sent and its
-// subject. Approved, it must go in that message's thread, threaded
-// under its Message-ID, as a draft reply would; the audit names the
-// message it replies to.
+// subject, and the message id its In-Reply-To header names (Threading),
+// which goes with it and which no other field shows. Approved, it must
+// go in that message's thread, threaded under its Message-ID, as a
+// draft reply would; the audit names the message it replies to.
 func TestSendEmailReply(t *testing.T) {
 	f, w, g := newFakeGmail(t)
 	replyMail(f)
 	h := holdOf(t, g, sender(map[string]any{}), "send_email", `{"in_reply_to_message_id":"m1","body":"Paid today."}`)
 	if h.Title != "Send an email to alice@example.org" || valueOf(h, "Subject") != "Re: Invoice 1" ||
 		valueOf(h, "In reply to") != "The message from alice@example.org, sent 2026-10-26 09:00 UTC, subject: Invoice 1" ||
-		!slices.Equal(labelsOf(h), []string{"From", "To", "Subject", "In reply to", "Body"}) {
+		valueOf(h, "Threading") != "<m1@example.org>" ||
+		!slices.Equal(labelsOf(h), []string{"From", "To", "Subject", "In reply to", "Threading", "Body"}) {
 		t.Errorf("a reply's card: %q %+v", h.Title, h.Fields)
 	}
 	res := approve(t, h)
@@ -312,11 +340,7 @@ func TestSendDraftEdges(t *testing.T) {
 	w.mu.Lock()
 	w.drafts = slices.DeleteFunc(w.drafts, func(d fakeDraft) bool { return d.id == "r-81" })
 	w.mu.Unlock()
-	_, err := h.Run(context.Background(), testConn())
-	var ref *builtinintegrations.Refusal
-	if !errors.As(err, &ref) || ref.Text != "Draft r-81 is no longer in the owner's Drafts: it was sent or deleted after the owner saw it, so Kivali sent nothing." {
-		t.Errorf("a draft gone: %v", err)
-	}
+	runRefused(t, h, "The draft is gone; nothing was done.")
 	if got := len(w.sentMessages()); got != 1 {
 		t.Errorf("%d messages sent", got)
 	}
@@ -329,6 +353,47 @@ func TestSendDraftEdges(t *testing.T) {
 		"The owner has not allowed you to send to erin@example.org through Google Workspace; ask the owner if your work needs it.")
 	if got := len(w.sentMessages()); got != 1 || len(requestsFor(f, "gmail POST")) != 1 {
 		t.Errorf("refused drafts were sent: %v", requestsFor(f, "gmail POST"))
+	}
+}
+
+// Why this test exists: the owner approves a draft as its card shows
+// it, and the card shows one text part and one formatted part. A draft
+// with a second text or formatted part, or a part of another type (an
+// inline image, a calendar invitation), would send what the owner never
+// saw, so it must be refused before it is held, saying what it found;
+// so must a draft whose text holds an invisible character, which the
+// card would show as nothing, whether in the text or the formatted
+// part, the agent told the owner must remove it in Gmail. The joiner
+// inside an emoji is no such character, and its draft is held.
+func TestSendDraftRefusesWhatTheCardCannotShow(t *testing.T) {
+	f, w, g := newFakeGmail(t)
+	head := "From: dana@example.com" + "\r\n" + "To: erin@example.org" + "\r\n" + "Subject: s" + "\r\n"
+	part := func(media, body string) string {
+		return "--b" + "\r\n" + "Content-Type: " + media + "; charset=UTF-8" + "\r\n" + "\r\n" + body + "\r\n"
+	}
+	multi := func(kind string, parts ...string) string {
+		return head + "Content-Type: multipart/" + kind + "; boundary=" + "\"" + "b" + "\"" + "\r\n" + "\r\n" + strings.Join(parts, "") + "--b--" + "\r\n"
+	}
+	cannot := ", and Kivali shows the owner one text part and one formatted part and nothing else, so it cannot show the owner all of what it would send; the owner can send it from Gmail."
+	w.addDraft("r-90", multi("mixed", part("text/plain", "Hello"), part("text/plain", "Wire the money")))
+	writeRefused(t, g, sender(map[string]any{}), "send_draft", `{"draft_id":"r-90"}`, "Draft r-90 has 2 text parts"+cannot)
+	w.addDraft("r-91", multi("mixed", part("text/plain", "Hello"), part("text/html", "<p>Hello</p>"), part("text/html", "<p>Wire</p>"),
+		part("image/png", "PNG"), part("text/calendar", "BEGIN:VCALENDAR"), part("image/png", "PNG")))
+	writeRefused(t, g, sender(map[string]any{}), "send_draft", `{"draft_id":"r-91"}`,
+		"Draft r-91 has 2 formatted (HTML) parts, a part of type image/png, a part of type text/calendar"+cannot)
+	invisible := "Draft r-92 holds invisible characters (Unicode format characters, such as zero-width spaces or direction marks), which the owner cannot see before approving. The owner must remove them in Gmail before Kivali can send it."
+	w.addDraft("r-92", head+"\r\n"+"Pay \u200bnow"+"\r\n")
+	writeRefused(t, g, sender(map[string]any{}), "send_draft", `{"draft_id":"r-92"}`, invisible)
+	w.addDraft("r-93", multi("alternative", part("text/plain", "Pay now"), part("text/html", "<p>Pay \u202enow</p>")))
+	writeRefused(t, g, sender(map[string]any{}), "send_draft", `{"draft_id":"r-93"}`, strings.Replace(invisible, "r-92", "r-93", 1))
+	if got := requestsFor(f, "gmail POST"); len(got) != 0 || len(w.sentMessages()) != 0 {
+		t.Errorf("refused drafts were sent: %v", got)
+	}
+
+	w.addDraft("r-94", head+"Content-Type: text/plain; charset=UTF-8"+"\r\n"+"\r\n"+"Thanks \U0001F469\u200d\U0001F4BB"+"\r\n")
+	h := holdOf(t, g, sender(map[string]any{}), "send_draft", `{"draft_id":"r-94"}`)
+	if valueOf(h, "Body") != "Thanks \U0001F469\u200d\U0001F4BB"+"\n" {
+		t.Errorf("an emoji's draft: %+v", h.Fields)
 	}
 }
 

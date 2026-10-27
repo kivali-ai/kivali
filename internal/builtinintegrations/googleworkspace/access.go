@@ -59,9 +59,9 @@ var accessFields = []accessField{
 	{key: keyCalendars, title: "Calendars it may use", description: "The calendars the agent may use. Leave it empty for every calendar.", list: true},
 	{key: keyDocsRead, title: "May read documents", description: "Lets the agent find and read Google Docs and their comments, within the folders below. It changes nothing."},
 	{key: keyDocsWrite, title: "May write documents", description: "Lets the agent create documents, and change documents you own or it created, telling no one."},
-	{key: keyDocsSend, title: "May comment (each comment waits for your approval)", description: "Lets the agent ask to comment on documents and to reply to comments, within the folders below. Nothing is posted until you approve it, exactly as you saw it."},
+	{key: keyDocsSend, title: "May comment (each comment waits for your approval)", description: "Lets the agent ask to comment on documents Kivali made and to reply to comments on them, within the folders below. Nothing is posted until you approve it, exactly as you saw it."},
 	{key: keyDocsFolders, title: "Folders it may read", description: "The Drive folders the agent may read and change documents in, the folders inside them included. Leave it empty for every document you can open.", list: true},
-	{key: keySendTo, title: "May send to", description: "Who the agent may send mail and invitations to, and mention in comments: an address such as dana@example.com, or *@example.com for everyone at a domain. Leave it empty for anyone. Every send still waits for your approval.", list: true},
+	{key: keySendTo, title: "May send to", description: "Who the agent's sends may reach: everyone an email goes to, everyone Google tells of an invitation, a change to an event or an answer, and everyone Google tells of a comment. An address such as dana@example.com, or *@example.com for everyone at a domain. Leave it empty for anyone. Every send still waits for your approval.", list: true},
 }
 
 // accessSchema is the access form as the manifest's JSON Schema, the
@@ -245,6 +245,25 @@ func (a access) checkRecipients(addrs []string) error {
 	return refuse("The owner has not allowed you to send to "+idList(out)+" through Google Workspace; ask the owner if your work needs it.",
 		"send_to does not include "+idList(out))
 }
+
+// checkReach refuses a send that reaches an address send_to does not
+// allow (checkRecipients) or, while send_to names anyone, people whose
+// address Google does not show (unknown), whom Kivali cannot hold to it.
+// addrs is everyone the send reaches that Kivali reads, lower-cased, the
+// owner's own addresses left out.
+func (a access) checkReach(addrs []string, unknown bool) error {
+	if err := a.checkRecipients(addrs); err != nil {
+		return err
+	}
+	if unknown && len(a.sendTo) > 0 {
+		return refuse(unshownRefusal, "send_to cannot be checked: the send reaches people whose address Google does not show")
+	}
+	return nil
+}
+
+// unshownRefusal is checkReach's words for a send that reaches people
+// whose address Google does not show.
+const unshownRefusal = "This send also reaches people whose address Google does not show, so Kivali cannot check them against the addresses the owner allows you to send to; ask the owner if your work needs it."
 
 // sendToEntry reports whether s, an entry of send_to lower-cased, is
 // one Kivali reads: an address, or *@ and a domain with a dot in it. A

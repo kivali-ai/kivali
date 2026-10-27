@@ -17,8 +17,11 @@ import (
 // Docs' sends: a comment on a document and a reply to a comment, each
 // held for the owner's approval (held). Drive tells the document's
 // owner of a comment, everyone in a comment's conversation of a reply,
-// and each person a comment mentions; Run posts the text the card
-// showed.
+// and each person a comment mentions, each of whom send_to must allow;
+// Run posts the text the card showed. The sign-in's Drive scope for
+// comments is drive.file, under which Drive takes a comment only on a
+// file the owner's OAuth client created, so both work only on a
+// document Kivali made (driveFile.madeByKivali).
 
 // The bounds of a comment an agent writes: its text, the document's
 // text it quotes, and the people it mentions.
@@ -30,9 +33,10 @@ const (
 
 // The descriptions of Docs' sends, which the agent reads.
 const (
-	mentionWords    = " To mention someone, write their address with + or @ before it, such as +dana@example.com; Google emails each person mentioned, and each must be one the owner allows you to send to."
-	addCommentWords = "Ask the owner to post a comment on a document within the folders your access includes, by its id: content is the comment's text, and anchor_text, when given, the document's text it is about, which the comment quotes. Google tells the document's owner." + mentionWords + waitsWords
-	replyWords      = "Ask the owner to post a reply to a comment on a document within the folders your access includes, by the document's id and the comment's, as list_comments lists them: content is the reply's text. Google tells the document's owner and everyone in the comment's conversation." + mentionWords + waitsWords
+	mentionWords    = " To mention someone, write their address with + or @ before it, such as +dana@example.com; Google emails each person mentioned. Everyone Google tells must be one the owner allows you to send to."
+	madeWords       = " The owner's Google sign-in lets Kivali comment only on documents Kivali made (create_document); any other document is refused."
+	addCommentWords = "Ask the owner to post a comment on a document Kivali made, within the folders your access includes, by its id: content is the comment's text, and anchor_text, when given, the document's text it is about, which the comment quotes. Google tells the document's owner." + mentionWords + madeWords + waitsWords
+	replyWords      = "Ask the owner to post a reply to a comment on a document Kivali made, within the folders your access includes, by the document's id and the comment's, as list_comments lists them: content is the reply's text. Google tells the document's owner and everyone in the comment's conversation." + mentionWords + madeWords + waitsWords
 )
 
 // mentionPattern is a mention in a comment's text: + or @ right before
@@ -93,27 +97,46 @@ func docCard(f driveFile, o docOwner, me account) string {
 
 // commentPeople is whom a comment reaches besides those it mentions:
 // the document's owner, and others (a comment's author and its
-// repliers), each when Kivali reads their address and it is not the
-// signed-in account's.
-func commentPeople(me account, mentioned []string, o docOwner, others ...string) []string {
+// repliers, "" for one whose address Kivali does not read), each when
+// Kivali reads their address and it is not the signed-in account's;
+// and whether it reaches anyone whose address Kivali does not read: the
+// owner of a document outside a shared drive, or one of others.
+func commentPeople(me account, mentioned []string, o docOwner, others ...string) (people []string, unknown bool) {
 	out := slices.Clone(mentioned)
+	unknown = o.address == "" && !o.sharedDrive
 	for _, a := range append([]string{o.address}, others...) {
 		if a != "" && a != me.address && !slices.Contains(out, a) {
 			out = append(out, a)
 		}
 	}
-	return out
+	return out, unknown || slices.Contains(others, "")
+}
+
+// commentable refuses the document id, f, unless Kivali made it: the
+// sign-in's drive.file scope lets Drive take a comment only on a file
+// the owner's OAuth client created.
+func commentable(f driveFile, id string) error {
+	if f.madeByKivali() {
+		return nil
+	}
+	return refuse("The owner's Google sign-in lets Kivali comment only on documents Kivali made, and Kivali did not make document "+id+".",
+		"document "+id+" was not made by Kivali")
 }
 
 // sendComment is a comment's or a reply's run: content posted to path
 // on Drive (comments.create, replies.create), answering the new one's
-// id. Google not answering may have posted it, so that failure says to
-// look first.
-func (c *call) sendComment(ctx context.Context, path string, payload []byte) (string, error) {
+// id. When what it posts on is gone (404, 410) it refuses, naming it
+// (what: "The document" or "The comment"; reason, for the audit).
+// Google not answering may have posted it, so that failure says to look
+// first.
+func (c *call) sendComment(ctx context.Context, path string, payload []byte, what, reason string) (string, error) {
 	var made struct {
 		ID string `json:"id"`
 	}
 	if err := c.g.send(ctx, c.token, http.MethodPost, googleAPI, path+"?fields=id", payload, maxAnswerBytes, &made); err != nil {
+		if g := gone(err, what, reason); g != nil {
+			return "", g
+		}
 		return "", unsure(err, "it was posted: list_comments shows it if it was")
 	}
 	if !driveIDPattern.MatchString(made.ID) {
@@ -123,9 +146,11 @@ func (c *call) sendComment(ctx context.Context, path string, payload []byte) (st
 }
 
 // addComment holds a comment on a document the access includes
-// (readableDocument) for the owner's approval: its text, the document's
-// text it quotes when anchor_text is given, and whom it mentions, each
-// of whom must be in send_to. Run posts it (comments.create).
+// (readableDocument) and Kivali made (commentable) for the owner's
+// approval: its text, the document's text it quotes when anchor_text is
+// given, and whom it mentions. Everyone it reaches, those mentioned and
+// the document's owner, must be in send_to (checkReach). Run posts it
+// (comments.create).
 func addComment(ctx context.Context, c *call) (any, error) {
 	id, err := c.args.id("document_id", driveIDPattern)
 	if err != nil {
@@ -144,6 +169,9 @@ func addComment(ctx context.Context, c *call) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := commentable(f, id); err != nil {
+		return nil, err
+	}
 	o, err := c.ownerOf(ctx, f)
 	if err != nil {
 		return nil, err
@@ -153,7 +181,8 @@ func addComment(ctx context.Context, c *call) (any, error) {
 		return nil, err
 	}
 	mentioned := slices.DeleteFunc(mentions(content), func(a string) bool { return a == me.address })
-	if err := c.access.checkRecipients(mentioned); err != nil {
+	people, unknown := commentPeople(me, mentioned, o)
+	if err := c.access.checkReach(people, unknown); err != nil {
 		return nil, err
 	}
 	body := map[string]any{"content": content}
@@ -163,22 +192,25 @@ func addComment(ctx context.Context, c *call) (any, error) {
 		fields = append(fields, field("Quoting", anchor))
 	}
 	fields = append(fields, field("Comment", content), field("Mentions", orNone(strings.Join(mentioned, ", "))))
+	if unknown {
+		fields = append(fields, unshownField())
+	}
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
-	people := commentPeople(me, mentioned, o)
 	return &held{
 		title:      "Comment on " + docTitle(f),
 		fields:     fields,
 		recipients: people,
+		needs:      keyDocsSend,
 		run: func(ctx context.Context, c *call) (any, error) {
-			made, err := c.sendComment(ctx, filePath(id)+"/comments", payload)
+			made, err := c.sendComment(ctx, filePath(id)+"/comments", payload, "The document", "document "+id+" was gone")
 			if err != nil {
 				return nil, err
 			}
 			c.audit = "commented on document " + id + " as comment " + made + "; told " + orNone(idList(people))
-			return "Posted comment " + made + " on document " + id + ". Google told " + toldWords(people) + ".", nil
+			return "Posted comment " + made + " on document " + id + ". Google told " + toldWords(people, unknown) + ".", nil
 		},
 	}, nil
 }
@@ -196,10 +228,13 @@ func docTitle(f driveFile) string {
 const commentGetFields = "id,author(displayName,emailAddress,me),createdTime,content,deleted,replies(author(emailAddress,me),deleted)"
 
 // replyToComment holds a reply to a comment on a document the access
-// includes for the owner's approval, its card showing the comment it
-// answers: who wrote it, when, and its text, the commenter's, shown and
-// not sent. Everyone it mentions must be in send_to. Run posts it
-// (replies.create).
+// includes and Kivali made (commentable) for the owner's approval, its
+// card showing the comment it answers: who wrote it, when, and its
+// text, the commenter's, shown and not sent. Everyone it reaches, those
+// mentioned, the document's owner, the comment's author and its
+// repliers, must be in send_to (checkReach); while send_to names anyone,
+// one of them whose address Google does not show is refused. Run posts
+// it (replies.create).
 func replyToComment(ctx context.Context, c *call) (any, error) {
 	id, err := c.args.id("document_id", driveIDPattern)
 	if err != nil {
@@ -215,6 +250,9 @@ func replyToComment(ctx context.Context, c *call) (any, error) {
 	}
 	f, err := c.readableDocument(ctx, id)
 	if err != nil {
+		return nil, err
+	}
+	if err := commentable(f, id); err != nil {
 		return nil, err
 	}
 	o, err := c.ownerOf(ctx, f)
@@ -250,9 +288,6 @@ func replyToComment(ctx context.Context, c *call) (any, error) {
 		return nil, err
 	}
 	mentioned := slices.DeleteFunc(mentions(content), func(a string) bool { return a == me.address })
-	if err := c.access.checkRecipients(mentioned); err != nil {
-		return nil, err
-	}
 	author := func(addr string, mine bool) string {
 		if mine {
 			return me.address
@@ -279,27 +314,35 @@ func replyToComment(ctx context.Context, c *call) (any, error) {
 	if t := driveTime(cm.CreatedTime); t != "" {
 		by += ", written " + t
 	}
+	people, unknown := commentPeople(me, mentioned, o, others...)
+	if err := c.access.checkReach(people, unknown); err != nil {
+		return nil, err
+	}
 	payload, err := json.Marshal(map[string]string{"content": content})
 	if err != nil {
 		return nil, err
 	}
-	people := commentPeople(me, mentioned, o, others...)
+	fields := []builtinintegrations.HoldField{
+		field("Document", docCard(f, o, me)),
+		field("Replying to", "Comment "+cid+" "+by+":\n"+orNone(shownText(cm.Content))),
+		field("Reply", content),
+		field("Mentions", orNone(strings.Join(mentioned, ", "))),
+	}
+	if unknown {
+		fields = append(fields, unshownField())
+	}
 	return &held{
-		title: "Reply to a comment on " + docTitle(f),
-		fields: []builtinintegrations.HoldField{
-			field("Document", docCard(f, o, me)),
-			field("Replying to", "Comment "+cid+" "+by+":\n"+orNone(shownText(cm.Content))),
-			field("Reply", content),
-			field("Mentions", orNone(strings.Join(mentioned, ", "))),
-		},
+		title:      "Reply to a comment on " + docTitle(f),
+		fields:     fields,
 		recipients: people,
+		needs:      keyDocsSend,
 		run: func(ctx context.Context, c *call) (any, error) {
-			made, err := c.sendComment(ctx, filePath(id)+"/comments/"+url.PathEscape(cid)+"/replies", payload)
+			made, err := c.sendComment(ctx, filePath(id)+"/comments/"+url.PathEscape(cid)+"/replies", payload, "The comment", "comment "+cid+" was gone")
 			if err != nil {
 				return nil, err
 			}
 			c.audit = "replied to comment " + cid + " on document " + id + " as reply " + made + "; told " + orNone(idList(people))
-			return "Posted reply " + made + " to comment " + cid + " on document " + id + ". Google told " + toldWords(people) + ".", nil
+			return "Posted reply " + made + " to comment " + cid + " on document " + id + ". Google told " + toldWords(people, unknown) + ".", nil
 		},
 	}, nil
 }

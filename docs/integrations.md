@@ -326,7 +326,7 @@ Each action is in **Recent calls**: one that opens, comments, closes or deletes 
 
 ## Google Workspace
 
-**Google Workspace** ships with Kivali. It connects your Gmail, Google Calendar and Google Docs, signed in with an OAuth client you make on Google's Auth Platform, in a Google Cloud project of yours. In this version, agents can read your Gmail, write drafts in it, label its mail and send mail you approve, read your Google Calendar, change its events, and invite people and answer invitations once you approve, and read and write your Google Docs and comment on them once you approve. It runs inside Kivali and reaches only Google's APIs (`gmail.googleapis.com`, `www.googleapis.com` and `docs.googleapis.com`) and Google's sign-in (`accounts.google.com` and `oauth2.googleapis.com`).
+**Google Workspace** ships with Kivali. It connects your Gmail, Google Calendar and Google Docs, signed in with an OAuth client you make on Google's Auth Platform, in a Google Cloud project of yours. In this version, agents can read your Gmail, write drafts in it, label its mail and send mail you approve, read your Google Calendar, change its events, and invite people and answer invitations once you approve, and read and write your Google Docs and comment on those Kivali made once you approve. It runs inside Kivali and reaches only Google's APIs (`gmail.googleapis.com`, `www.googleapis.com` and `docs.googleapis.com`) and Google's sign-in (`accounts.google.com` and `oauth2.googleapis.com`).
 
 ### Connect it
 
@@ -355,7 +355,7 @@ An agent's access has a part for each of Gmail, Google Calendar and Google Docs,
 - **Write** (**May draft and label**, **May change events**, **May write documents**): the agent changes something in your account that no other person is told about, such as a draft it writes or a label on a message.
 - **Send** (**May send mail**, **May invite and respond**, **May comment**): anything that makes Google deliver something to another person. Every send waits for your approval ([Calls that wait for you](#calls-that-wait-for-you)), always: an email or a draft sent, an invitation, a change or a deletion that reaches people an event invites, an answer to an invitation, a comment and a reply to one. The switch only decides whether the agent may ask.
 - **Labels it may read**, **Calendars it may use** and **Folders it may read**: what the agent may use in each. **Load options** lists them from your account: Gmail's own labels (Inbox, Starred, Important, Sent, Drafts, Spam and Trash) and yours, your calendars, and the Drive folders you can open. Each is shown by its name with Google's id for it in parentheses, and the agent is held to the id. Leave a list empty for everything, except that an empty label list leaves out Spam and Trash: name them to let the agent read them.
-- **May send to**: the addresses the agent may send mail and invitations to and mention in comments, such as `dana@example.com`, or `*@example.com` for everyone at that domain (not the domains under it). Leave it empty for anyone. Saving the access refuses an entry that is neither. A send to anyone outside it is refused before it reaches you.
+- **May send to**: the addresses an agent's sends may reach, such as `dana@example.com`, or `*@example.com` for everyone at that domain (not the domains under it). Leave it empty for anyone. Saving the access refuses an entry that is neither. A send is refused before it reaches you when anyone it reaches is outside the list: everyone an email goes to; everyone Google tells of an invitation, a change to an event or an answer to one; and everyone Google tells of a comment. While the list names anyone, a send that also reaches people whose address Google does not show is refused too, since Kivali cannot check them.
 
 ### What agents can do
 
@@ -381,9 +381,9 @@ When **Labels it may read** names labels, an agent replies only to messages in t
 With **May send mail**, an agent can ask to:
 
 - Send an email it writes, new or a reply, addressed as a draft is. It goes to the addresses alone: a name the agent gives with an address is left out.
-- Send a draft from your Drafts, one an agent wrote or one you wrote. Once sent, it leaves your Drafts. A draft with attachments is refused: send it from Gmail.
+- Send a draft from your Drafts, one an agent wrote or one you wrote. Once sent, it leaves your Drafts. A draft Kivali cannot show you whole is refused: one with attachments, with more than one plain or formatted version, or with another kind of part such as an inline image, and one holding invisible characters such as zero-width spaces, which you would need to remove in Gmail. Send those from Gmail.
 
-Each waits for you as a [call that waits for you](#calls-that-wait-for-you), titled such as "Send an email to alice@example.org and 2 more", and nothing reaches anyone until you approve it. It shows From, To, Cc and Bcc by address, the subject, what a reply answers (its sender, when it was sent and its subject), and the whole body as plain text. A draft's request also says whether Kivali wrote it, shows the name the draft gives each address after it, and, for a draft written in Gmail's formatting, shows the formatted version as a reader sees it, its links listed and how many characters of hidden text it holds, which go with it. What goes is what you saw: a draft changed in Gmail after the agent asked is sent as it was when you saw it, and the changed draft stays in your Drafts; a draft you sent or deleted meanwhile is not sent. Kivali's `X-Kivali-Agent` header never goes with a draft it sends. An agent asking to send to an address outside **May send to** is refused before the request reaches you. **Recent calls** names each message sent and whom it went to, never what it says.
+Each waits for you as a [call that waits for you](#calls-that-wait-for-you), titled such as "Send an email to alice@example.org and 2 more", and nothing reaches anyone until you approve it. It shows From, To, Cc and Bcc by address, the subject, what a reply answers (its sender, when it was sent and its subject) and the message id it is threaded under, and the whole body as plain text. A draft's request also says whether Kivali wrote it, shows the name the draft gives each address after it, and, for a draft written in Gmail's formatting, shows the formatted version as a reader sees it, its links listed and how many characters of hidden text it holds, which go with it. What goes is what you saw: a draft changed in Gmail after the agent asked is sent as it was when you saw it, and the changed draft stays in your Drafts; a draft you sent or deleted meanwhile is not sent. Kivali's `X-Kivali-Agent` header never goes with a draft it sends. An agent asking to send to an address outside **May send to** is refused before the request reaches you. **Recent calls** names each message sent and whom it went to, never what it says.
 
 #### What the agent reads
 
@@ -418,7 +418,7 @@ An event's title, place, description and the names of its organizer and attendee
 
 With **May change events**, an agent can:
 
-- Create an event, at a time or all day, on one of your own calendars. Kivali marks each event it creates as made by Kivali.
+- Create an event, at a time or all day, on one of your own calendars, inviting no one or only you. Kivali marks each event it creates as made by Kivali.
 - Change an event's title, time, place or description on one of your own calendars, when you organized it and it invites no one but you.
 - Delete an event Kivali created on this Google account, on one of your own calendars, when it invites no one but you. Events you or anyone else made are refused.
 
@@ -432,7 +432,7 @@ With **May invite and respond** as well as **May change events**, an agent can a
 
 With **May invite and respond**, an agent can ask to answer an invitation on one of your own calendars for you: yes, no or maybe, with a note to the organizer. The request shows the event, its organizer, the answer and the note. Only your answer changes; an event you organized, or one that does not invite you, is refused.
 
-Each waits for you as a [call that waits for you](#calls-that-wait-for-you), titled such as "Invite 3 people to "Sync"", and lists everyone Google will tell: the people invited after the change, those removed, and the organizer, never you. Once you approve, Google emails them, as Google Calendar does for a change you make. Everyone an agent adds to an event must be in **May send to**, or the request is refused before it reaches you; people an event already invites are not checked.
+Each waits for you as a [call that waits for you](#calls-that-wait-for-you), titled such as "Invite 3 people to "Sync"", and lists everyone Google will tell: the people invited after the change, those removed, and the organizer, never you. Once you approve, Google emails them, as Google Calendar does for a change you make. Everyone Google will tell must be in **May send to**, people the event already invites included, or the request is refused before it reaches you. An agent cannot change who an event invites when Google lists only some of its attendees or shows no address for one; it can still change the rest of the event. If the event changes in Google Calendar before you approve, nothing is done, and you and the agent are told it changed after you saw it; an event deleted meanwhile is gone, with nothing done.
 
 Each Calendar call is in **Recent calls**, naming the events it read, created, changed or deleted.
 
@@ -457,7 +457,7 @@ With **May comment**, an agent can ask to:
 - Comment on a document, quoting the document's text the comment is about when it gives one.
 - Reply to a comment on a document.
 
-It comments only on documents in the folders its access names, as it reads them. An agent mentions someone by writing their address with `+` or `@` before it, such as `+dana@example.com`; Google emails each person mentioned, and each must be in **May send to**. Each comment waits for you as a [call that waits for you](#calls-that-wait-for-you), titled such as "Comment on "Plan"": it shows the document (its name, who owns it and whether it is shared), the text it quotes, the comment exactly and whom it mentions; a reply also shows the comment it answers, who wrote it and when. Once you approve, Google posts it, as you, and tells the document's owner and the people mentioned, and for a reply everyone in that comment's conversation.
+It comments only on documents Kivali made, in the folders its access names, as it reads them: your Google sign-in gives Kivali Google Drive's permission for the files Kivali creates, and that is the only kind of file Google lets it comment on. Commenting on any of your documents would need the broader Google Drive permission, which Kivali does not ask for. An agent mentions someone by writing their address with `+` or `@` before it, such as `+dana@example.com`; Google emails each person mentioned. Everyone Google tells must be in **May send to**: the people mentioned, the document's owner and, for a reply, everyone in the comment's conversation. Each comment waits for you as a [call that waits for you](#calls-that-wait-for-you), titled such as "Comment on "Plan"": it shows the document (its name, who owns it and whether it is shared), the text it quotes, the comment exactly and whom it mentions; a reply also shows the comment it answers, who wrote it and when. Once you approve, Google posts it, as you, and tells the document's owner and the people mentioned, and for a reply everyone in that comment's conversation. A document or comment deleted meanwhile is gone, with nothing done.
 
 An agent changes only documents you own, and documents Kivali made that no one else owns, such as one it made in a shared drive. A document someone else owns and shared with you is refused, so an agent cannot be steered into changing what other people wrote. A change to a document shared with others is seen by everyone it is shared with, and its row in **Recent calls** says "(shared with others)", as does the row of a document made in a folder shared with others.
 
@@ -477,6 +477,7 @@ Each call is in **Recent calls**, naming the documents it read, created or chang
 
 - Moving mail or documents to the trash, deleting events Kivali did not create, and sharing documents.
 - Attachments on mail an agent sends, and sending a draft that has them: send that one from Gmail.
+- Commenting on documents Kivali did not make.
 - Google Sheets and Google Slides.
 - Gmail's settings, such as filters and forwarding: Kivali never asks for them.
 - A document's headers, footers and footnotes: agents read its body.

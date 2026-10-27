@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"slices"
@@ -25,12 +26,14 @@ func calSendNotGiven() error {
 // isSend reports whether a create_event, update_event or delete_event
 // call (action) is a send: one that reaches a person other than the
 // owner. cur is the event an update_event or delete_event call names,
-// nil for create_event, and o who the owner is. A call is a send when
-// cur reaches others (reachesOthers), or when the call's attendees,
-// ignoring case, order and repeats, are a list other than cur's (none
-// for create_event; delete_event takes none). A call that gives no
-// attendees, or null, changes no one's invitation. Every address must
-// be one: a list that is not is refused.
+// nil for create_event, and o who the owner is. A create_event call is
+// a send when its attendees name anyone but the owner (calOwner.self):
+// one inviting only the owner's own addresses tells no one else. An
+// update_event or delete_event call is a send when cur reaches others
+// (reachesOthers), or when the call's attendees, ignoring case, order
+// and repeats, are a list other than cur's (delete_event takes none).
+// A call that gives no attendees, or null, changes no one's invitation.
+// Every address must be one: a list that is not is refused.
 func isSend(action string, a args, cur *calEvent, o calOwner) (bool, error) {
 	var list []string
 	given := false
@@ -40,14 +43,13 @@ func isSend(action string, a args, cur *calEvent, o calOwner) (bool, error) {
 			return false, err
 		}
 	}
-	var now []string
-	if cur != nil {
-		if reachesOthers(*cur, o) {
-			return true, nil
-		}
-		now = invited(*cur)
+	if cur == nil {
+		return slices.ContainsFunc(list, func(x string) bool { return !o.self(x) }), nil
 	}
-	return given && !slices.Equal(list, addressSet(now)), nil
+	if reachesOthers(*cur, o) {
+		return true, nil
+	}
+	return given && !slices.Equal(list, addressSet(invited(*cur))), nil
 }
 
 // reachesOthers reports whether a change to e reaches someone other
@@ -299,6 +301,32 @@ func reached(o calOwner, e calEvent, after []string) []string {
 	return out
 }
 
+// unreadPeople reports whether a change to e reaches people whose
+// address Kivali does not read, whom it cannot hold to send_to: Google
+// lists only some of e's attendees, or gives an attendee or the
+// organizer, other than the calendar's own, no address Kivali reads.
+func unreadPeople(e calEvent) bool {
+	if e.AttendeesOmitted || (!e.Organizer.Self && calAddress(e.Organizer.Email) == "") {
+		return true
+	}
+	return slices.ContainsFunc(e.Attendees, func(a calAttendee) bool { return !a.Self && calAddress(a.Email) == "" })
+}
+
+// eventSendFailed is a failure of the Run of a send that changes or
+// deletes event id, which Kivali read at etag when it held the call:
+// the event changed since (412, If-Match) or is gone (404, 410), each a
+// Refusal, since nothing was done; else unsure's, with check.
+func eventSendFailed(err error, id, check string) error {
+	var ae *apiError
+	if errors.As(err, &ae) && ae.Status == http.StatusPreconditionFailed {
+		return refuse("The event changed after the owner saw it; nothing was done.", "event "+id+" changed after the owner saw it")
+	}
+	if g := gone(err, "The event", "event "+id+" was gone"); g != nil {
+		return g
+	}
+	return unsure(err, check)
+}
+
 // invitedNow is the addresses e invites, lower-cased, those Kivali
 // reads.
 func invitedNow(e calEvent) []string {
@@ -312,21 +340,31 @@ func invitedNow(e calEvent) []string {
 }
 
 // createEvent creates an event on one of the owner's own calendars,
-// marked as Kivali's (kivaliMarker, marker). One that invites no one
-// is a write, telling no one. One that invites people is a send
-// (isSend), which needs calendar_send and every attendee but the owner
-// in send_to: it is held for the owner (held), with the event as it
-// will be made, and Run makes it with sendUpdates=all, so Google
-// invites them.
+// marked as Kivali's (kivaliMarker, marker). One that invites no one,
+// or only the owner's own addresses, is a write, telling no one. One
+// that invites anyone else is a send (isSend), which needs
+// calendar_send and every attendee but the owner in send_to: it is held
+// for the owner (held), with the event as it will be made, and Run
+// makes it with sendUpdates=all, so Google invites them.
 func createEvent(ctx context.Context, c *call) (any, error) {
-	send, err := isSend(actionCreateEvent, c.args, nil, calOwner{})
+	attendees, _, err := attendeesArg(c.args)
+	if err != nil {
+		return nil, err
+	}
+	cc := &calCall{call: c}
+	var o calOwner
+	if len(attendees) > 0 {
+		if o, err = cc.owner(ctx); err != nil {
+			return nil, err
+		}
+	}
+	send, err := isSend(actionCreateEvent, c.args, nil, o)
 	if err != nil {
 		return nil, err
 	}
 	if send && !c.access.on(keyCalendarSend) {
 		return nil, calSendNotGiven()
 	}
-	cc := &calCall{call: c}
 	cal, err := cc.ownedCalendar(ctx, false)
 	if err != nil {
 		return nil, err
@@ -359,6 +397,13 @@ func createEvent(ctx context.Context, c *call) (any, error) {
 	if loc != "" {
 		body["location"] = loc
 	}
+	if len(attendees) > 0 {
+		list := make([]map[string]string, 0, len(attendees))
+		for _, a := range attendees {
+			list = append(list, map[string]string{"email": a})
+		}
+		body["attendees"] = list
+	}
 	if !send {
 		var made calEvent
 		if err := c.g.change(ctx, c.token, googleAPI, http.MethodPost, eventsPath(cal)+writeQuery, body, &made); err != nil {
@@ -371,16 +416,6 @@ func createEvent(ctx context.Context, c *call) (any, error) {
 		c.audit = "created event " + made.ID + " on calendar " + cal + ", " + when
 		return "Created event " + made.ID + " on calendar " + cal + ", " + when + ". Google emailed no one about it, and Kivali marked it as created by Kivali.", nil
 	}
-	o, err := cc.owner(ctx)
-	if err != nil {
-		return nil, err
-	}
-	attendees, _, _ := attendeesArg(c.args)
-	list := make([]map[string]string, 0, len(attendees))
-	for _, a := range attendees {
-		list = append(list, map[string]string{"email": a})
-	}
-	body["attendees"] = list
 	people := reached(o, calEvent{}, attendees)
 	if err := c.access.checkRecipients(people); err != nil {
 		return nil, err
@@ -402,6 +437,7 @@ func createEvent(ctx context.Context, c *call) (any, error) {
 		title:      "Invite " + peopleWords(len(people)) + ` to "` + oneLine(title, listedTitleClip) + `"`,
 		fields:     fields,
 		recipients: people,
+		needs:      keyCalendarSend,
 		run: func(ctx context.Context, c *call) (any, error) {
 			var made calEvent
 			if err := c.g.send(ctx, c.token, http.MethodPost, googleAPI, eventsPath(cal)+sendQuery, payload, maxAnswerBytes, &made); err != nil {
@@ -443,10 +479,13 @@ func newAttendees(cur calEvent, list []string) []json.RawMessage {
 // the owner's own calendars. A change to an event the owner organized
 // that invites no one else, which gives no attendees or the event's
 // own, is a write, telling no one. Any other is a send (isSend), which
-// needs calendar_send and everyone it adds in send_to: it is held for
-// the owner with the event as it is and each change, and Run patches
-// it with sendUpdates=all, so Google tells everyone it reaches, those
-// it removes included.
+// needs calendar_send and everyone it reaches in send_to (checkReach):
+// it is held for the owner with the event as it is and each change, and
+// Run patches it with sendUpdates=all and If-Match of the event's etag
+// as Kivali read it, so Google changes only the event the owner saw and
+// tells everyone it reaches, those it removes included. A change of
+// attendees to an event whose attendees Kivali cannot all read is
+// refused: the new list would drop those it cannot name.
 func updateEvent(ctx context.Context, c *call) (any, error) {
 	cc := &calCall{call: c}
 	cal, err := cc.ownedCalendar(ctx, true)
@@ -514,6 +553,10 @@ func updateEvent(ctx context.Context, c *call) (any, error) {
 	after := invitedNow(cur)
 	var added, removed []string
 	if list, given, _ := attendeesArg(c.args); send && given && !slices.Equal(list, addressSet(invited(cur))) {
+		if cur.AttendeesOmitted || slices.ContainsFunc(cur.Attendees, func(a calAttendee) bool { return calAddress(a.Email) == "" }) {
+			return nil, refuse("Kivali cannot change who event "+id+" invites: Google lists only some of its attendees, or shows no address for one, so a new list would drop them. Leave attendees out to change the rest of it; the owner can change who it invites in Google Calendar.",
+				"event "+id+" has attendees Kivali cannot read")
+		}
 		for _, a := range list {
 			if !slices.Contains(after, a) {
 				added = append(added, a)
@@ -550,42 +593,40 @@ func updateEvent(ctx context.Context, c *call) (any, error) {
 		c.audit = "changed event " + id + " on calendar " + cal + ": " + what
 		return "Changed event " + id + " on calendar " + cal + ": " + what + ". It is " + when + ". Google emailed no one about it.", nil
 	}
-	var newcomers []string
-	for _, a := range added {
-		if !o.self(a) {
-			newcomers = append(newcomers, a)
-		}
-	}
-	if err := c.access.checkRecipients(newcomers); err != nil {
+	people := reached(o, cur, append(after, removed...))
+	unknown := unreadPeople(cur)
+	if err := c.access.checkReach(people, unknown); err != nil {
 		return nil, err
 	}
-	people := reached(o, cur, append(after, removed...))
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	fields := append(eventFields(o, cal, cur), changes...)
+	if unknown {
+		fields = append(fields, unshownField())
+	}
+	etag := cur.Etag
 	return &held{
 		title:      "Change " + eventTitle(cur) + ", telling " + peopleWords(len(people)),
 		fields:     fields,
 		recipients: people,
+		needs:      keyCalendarSend,
 		run: func(ctx context.Context, c *call) (any, error) {
 			var done calEvent
-			if err := c.g.send(ctx, c.token, http.MethodPatch, googleAPI, eventPath(cal, id)+sendQuery, payload, maxAnswerBytes, &done); err != nil {
-				return nil, unsure(err, "the event changed: get_event shows it as it is")
+			if err := c.g.sendIfMatch(ctx, c.token, http.MethodPatch, googleAPI, eventPath(cal, id)+sendQuery, payload, maxAnswerBytes, &done, etag); err != nil {
+				return nil, eventSendFailed(err, id, "the event changed: get_event shows it as it is")
 			}
 			c.audit = "changed event " + id + " on calendar " + cal + ": " + what + "; told " + orNone(idList(people))
-			return "Changed event " + id + " on calendar " + cal + ": " + what + ". It is " + whenWords(done.Start, done.End) + ". Google told " + toldWords(people) + ".", nil
+			return "Changed event " + id + " on calendar " + cal + ": " + what + ". It is " + whenWords(done.Start, done.End) + ". Google told " + toldWords(people, unknown) + ".", nil
 		},
 	}, nil
 }
 
-// toldWords is whom Google told, for an answer.
-func toldWords(people []string) string {
-	if len(people) == 0 {
-		return "no one Kivali can name"
-	}
-	return strings.Join(people, ", ")
+// toldWords is whom Google told, for an answer: people, and, when
+// unknown, those whose address Google does not show.
+func toldWords(people []string, unknown bool) string {
+	return cmp.Or(withUnshown(people, unknown), "no one Kivali can name")
 }
 
 // eventFields are the first fields of a card for a change to e on the
@@ -616,8 +657,10 @@ func eventFields(o calOwner, cal string, e calEvent) []builtinintegrations.HoldF
 // (kivaliMarker set) from one of the owner's own calendars; any other
 // event is refused before anything is changed. One that invites no one
 // else is a write, telling no one. One that reaches others is a send
-// (isSend), which needs calendar_send: it is held for the owner, and
-// Run deletes it with sendUpdates=all, so Google tells them.
+// (isSend), which needs calendar_send and everyone it reaches in
+// send_to (checkReach): it is held for the owner, and Run deletes it
+// with sendUpdates=all and If-Match of the event's etag as Kivali read
+// it, so Google deletes only the event the owner saw and tells them.
 func deleteEvent(ctx context.Context, c *call) (any, error) {
 	cc := &calCall{call: c}
 	cal, err := cc.ownedCalendar(ctx, true)
@@ -656,20 +699,30 @@ func deleteEvent(ctx context.Context, c *call) (any, error) {
 		return "Deleted event " + id + " from calendar " + cal + ". Google emailed no one about it.", nil
 	}
 	people := reached(o, e, invitedNow(e))
+	unknown := unreadPeople(e)
+	if err := c.access.checkReach(people, unknown); err != nil {
+		return nil, err
+	}
 	note := "This cancels the event for everyone invited."
 	if !e.Organizer.Self && !o.self(calAddress(e.Organizer.Email)) {
 		note = "This takes the event off the owner's calendar, and Google tells its organizer the owner will not come."
 	}
+	fields := append(eventFields(o, cal, e), field("What happens", note))
+	if unknown {
+		fields = append(fields, unshownField())
+	}
+	etag := e.Etag
 	return &held{
 		title:      "Delete " + eventTitle(e) + ", telling " + peopleWords(len(people)),
-		fields:     append(eventFields(o, cal, e), field("What happens", note)),
+		fields:     fields,
 		recipients: people,
+		needs:      keyCalendarSend,
 		run: func(ctx context.Context, c *call) (any, error) {
-			if err := c.g.send(ctx, c.token, http.MethodDelete, googleAPI, eventPath(cal, id)+sendQuery, nil, maxAnswerBytes, nil); err != nil {
-				return nil, unsure(err, "the event was deleted: get_event answers whether it is still there")
+			if err := c.g.sendIfMatch(ctx, c.token, http.MethodDelete, googleAPI, eventPath(cal, id)+sendQuery, nil, maxAnswerBytes, nil, etag); err != nil {
+				return nil, eventSendFailed(err, id, "the event was deleted: get_event answers whether it is still there")
 			}
 			c.audit = "deleted event " + id + " on calendar " + cal + ", which " + creator + " created; told " + orNone(idList(people))
-			return "Deleted event " + id + " from calendar " + cal + ". Google told " + toldWords(people) + ".", nil
+			return "Deleted event " + id + " from calendar " + cal + ". Google told " + toldWords(people, unknown) + ".", nil
 		},
 	}, nil
 }
@@ -684,10 +737,11 @@ const maxResponseComment = 1000
 // respondToInvitation answers an invitation on one of the owner's own
 // calendars for the owner: the event must invite the owner (its
 // attendee for this calendar, or one of the owner's own addresses) and
-// someone else must have organized it. It is always a send, held for
-// the owner, and Run patches the owner's own answer alone, with
-// attendeesOmitted, as Calendar takes a participant's answer, and
-// sendUpdates=all, so Google tells the organizer.
+// someone else must have organized it, whom send_to must allow
+// (checkReach). It is always a send, held for the owner, and Run
+// patches the owner's own answer alone, with attendeesOmitted, as
+// Calendar takes a participant's answer, and sendUpdates=all, so Google
+// tells the organizer.
 func respondToInvitation(ctx context.Context, c *call) (any, error) {
 	cc := &calCall{call: c}
 	cal, err := cc.ownedCalendar(ctx, true)
@@ -741,6 +795,10 @@ func respondToInvitation(ctx context.Context, c *call) (any, error) {
 	if org != "" {
 		people = []string{org}
 	}
+	if err := c.access.checkReach(people, org == ""); err != nil {
+		return nil, err
+	}
+	told := cmp.Or(org, "whose address Google does not show")
 	fields := []builtinintegrations.HoldField{
 		field("Calendar", cal),
 		field("Title", orNone(shownLine(e.Summary, titleClip))),
@@ -755,12 +813,16 @@ func respondToInvitation(ctx context.Context, c *call) (any, error) {
 		title:      "Answer " + word + " to " + eventTitle(e),
 		fields:     fields,
 		recipients: people,
+		needs:      keyCalendarSend,
 		run: func(ctx context.Context, c *call) (any, error) {
 			if err := c.g.send(ctx, c.token, http.MethodPatch, googleAPI, eventPath(cal, id)+sendQuery, payload, maxAnswerBytes, nil); err != nil {
+				if g := gone(err, "The event", "event "+id+" was gone"); g != nil {
+					return nil, g
+				}
 				return nil, unsure(err, "the answer was given: get_event shows how the owner answered")
 			}
 			c.audit = "answered " + answer + " to event " + id + " on calendar " + cal + "; told " + orNone(idList(people))
-			return "Answered " + word + " to event " + id + " on calendar " + cal + ". Google told its organizer, " + toldWords(people) + ".", nil
+			return "Answered " + word + " to event " + id + " on calendar " + cal + ". Google told its organizer, " + told + ".", nil
 		},
 	}, nil
 }

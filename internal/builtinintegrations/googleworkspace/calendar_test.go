@@ -698,7 +698,8 @@ func TestFreeGaps(t *testing.T) {
 
 // Why this test exists: isSend is the line between a write, which runs
 // at once, and a send, which must wait for the owner. Giving no
-// attendees, or an empty list on a new event, invites no one; any
+// attendees, or an empty list on a new event, invites no one, and nor
+// does a new event's list of the owner's own addresses; any other
 // address on a new event invites; on an existing event, the same people
 // in another order or case change nothing, and anyone added or removed
 // is a change; attendees that are not addresses must be refused rather
@@ -724,6 +725,8 @@ func TestIsSend(t *testing.T) {
 		{"empty, new", actionCreateEvent, `{"attendees":[]}`, nil, false},
 		{"blank, new", actionCreateEvent, `{"attendees":[" "]}`, nil, false},
 		{"one, new", actionCreateEvent, `{"attendees":["alice@example.org"]}`, nil, true},
+		{"the owner's own alone, new", actionCreateEvent, `{"attendees":["Dana@example.com","team@group.calendar.google.com"]}`, nil, false},
+		{"the owner and another, new", actionCreateEvent, `{"attendees":["dana@example.com","lee@example.com"]}`, nil, true},
 		{"none given, the owner's alone", actionUpdateEvent, `{"title":"x"}`, solo, false},
 		{"same, another order and case", actionUpdateEvent, `{"attendees":["TEAM@group.calendar.google.com","dana@example.com","dana@example.com"]}`, solo, false},
 		{"one removed", actionUpdateEvent, `{"attendees":["dana@example.com"]}`, solo, true},
