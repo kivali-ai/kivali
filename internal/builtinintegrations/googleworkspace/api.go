@@ -122,6 +122,8 @@ type apiError struct {
 	// Unreadable is an answer Google gave that Kivali does not read
 	// (too large, or not JSON), for Status 0: Message says which, whole.
 	Unreadable bool
+	// TooLarge is an Unreadable answer that was larger than Kivali reads.
+	TooLarge bool
 }
 
 func (e *apiError) Error() string {
@@ -203,7 +205,7 @@ func (g *GoogleWorkspace) send(ctx context.Context, token, method string, a api,
 	case err != nil:
 		return transportError(ctx, err, token)
 	case len(b) > most:
-		return &apiError{Message: "Google's answer was larger than Kivali reads", Unreadable: true}
+		return &apiError{Message: "Google's answer was larger than Kivali reads", Unreadable: true, TooLarge: true}
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		e := readError(b, resp.StatusCode)

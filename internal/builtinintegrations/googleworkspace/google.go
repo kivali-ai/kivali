@@ -219,10 +219,10 @@ func (g *GoogleWorkspace) Tools(_ context.Context, caller builtinintegrations.Ca
 // call is one action's run: the access token core handed in, the
 // caller's access, the model's arguments and where it may save a file
 // (Caller.Save, nil when core gave none). A run sets audit, the reason
-// the owner's audit keeps, and outside, who outside the owner's domain
-// wrote what it returned (Result.Audit and Result.Outside). me and
-// labelList are what the run read of the account, kept for this call
-// alone.
+// the owner's audit keeps, kept on an error result too (failedWith),
+// and outside, who outside the owner's domain wrote what it returned
+// (Result.Audit and Result.Outside). me and labelList are what the run
+// read of the account, kept for this call alone.
 type call struct {
 	g      *GoogleWorkspace
 	token  string
@@ -259,7 +259,8 @@ func accessToken(conn builtinintegrations.Connection) (string, error) {
 // Call runs the action name for the caller: the action, its switch and
 // the connection are checked before anything reaches Google, each
 // refused with a Refusal; an action this version does not run answers
-// so; a Google failure is an error result in words.
+// so; a Google failure is an error result in words, with the audit
+// the run had set.
 func (g *GoogleWorkspace) Call(ctx context.Context, caller builtinintegrations.Caller, conn builtinintegrations.Connection, name string, raw json.RawMessage) (*builtinintegrations.Result, error) {
 	a := actionNamed(name)
 	switch {
@@ -293,9 +294,9 @@ func (g *GoogleWorkspace) Call(ctx context.Context, caller builtinintegrations.C
 		case errors.As(err, &ref):
 			return nil, err
 		case errors.As(err, &ae):
-			return failed(agentWords(ae)), nil
+			return c.failedWith(agentWords(ae)), nil
 		case errors.As(err, &f):
-			return failed(string(f)), nil
+			return c.failedWith(string(f)), nil
 		}
 		return nil, err
 	}
@@ -308,6 +309,18 @@ func (g *GoogleWorkspace) Call(ctx context.Context, caller builtinintegrations.C
 
 func failed(words string) *builtinintegrations.Result {
 	return &builtinintegrations.Result{Content: []string{words}, IsError: true}
+}
+
+// failedWith is the error result of a run that failed with words. Its
+// audit is what the run had set, what it did or was doing, then the
+// words, so a write Google did not answer still names its document;
+// with none set, core keeps the words alone.
+func (c *call) failedWith(words string) *builtinintegrations.Result {
+	r := failed(words)
+	if c.audit != "" {
+		r.Audit = c.audit + "; " + words
+	}
+	return r
 }
 
 // failure is an action that reached Google and did not do what it was

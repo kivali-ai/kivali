@@ -48,7 +48,7 @@ var docsActions = []action{
 	},
 	{
 		name:             actionGetDocument,
-		description:      "Read a document by its id as text: a heading starts with #, a list item with -, and a table's cells are split by |. Each link is replaced by a marker such as [link 1] and listed after the text, its host first. Text the document hides from a reader (in the colour of what is behind it, or in a font of 3 points or less) is left out, and Kivali says how much. An answer holds at most 60000 characters, so a long document is read a page at a time: each answer says which characters of the document's total it holds and, while there is more, next_offset, which you pass as offset for the next page." + documentUntrusted,
+		description:      "Read a document by its id as text: a heading starts with #, a list item with -, and a table's cells are split by |. Each link is replaced by a marker such as [link 1] and listed after the text, its host first. Text the document hides from a reader (in the colour of what is behind it, or in a font of 3 points or less) is left out, and Kivali says how much. Its headers, footers and footnotes are not read. An answer holds at most 60000 characters, so a long document is read a page at a time: each answer says which characters of the document's total it holds and, while there is more, next_offset, which you pass as offset for the next page." + documentUntrusted,
 		ownerDescription: "Read a document as text, up to 60,000 characters at a time, leaving out text hidden from a reader. Reads only.",
 		schema: schema(map[string]any{
 			"document_id": map[string]string{"type": "string", "description": "the document's id, as search_documents lists it"},
@@ -82,8 +82,8 @@ var docsActions = []action{
 	},
 	{
 		name:             actionAppendToDocument,
-		description:      "Add text at the end of a document the owner owns or Kivali made. " + markdownWords + " It changes nothing else in the document and tells no one.",
-		ownerDescription: "Add text at the end of a document you own or the agent created. Tells no one.",
+		description:      "Add text at the end of the first tab of a document the owner owns or Kivali made. " + markdownWords + " It changes nothing else in the document and tells no one.",
+		ownerDescription: "Add text at the end of the first tab of a document you own or the agent created. Tells no one.",
 		schema: schema(map[string]any{
 			"document_id": map[string]string{"type": "string", "description": "the document's id"},
 			"text":        map[string]string{"type": "string", "description": "the text to add, in the Markdown described"},
@@ -93,8 +93,8 @@ var docsActions = []action{
 	},
 	{
 		name:             actionReplaceText,
-		description:      "Replace every occurrence of find with replace in a document the owner owns or Kivali made, capitals ignored unless match_case is true, and answer how many were replaced. An empty replace deletes them. It tells no one.",
-		ownerDescription: "Replace text in a document you own or the agent created. Tells no one.",
+		description:      "Replace every occurrence of find with replace in a document the owner owns or Kivali made, capitals ignored unless match_case is true, and answer how many were replaced. It replaces in every tab and also in the document's headers, footers and footnotes, which get_document does not read. An empty replace deletes them. It tells no one.",
+		ownerDescription: "Replace text in a document you own or the agent created, its headers, footers and footnotes included. Tells no one.",
 		schema: schema(map[string]any{
 			"document_id": map[string]string{"type": "string", "description": "the document's id"},
 			"find":        map[string]string{"type": "string", "description": "the text to find, exactly as written"},
@@ -179,6 +179,7 @@ type driveFile struct {
 	Owners        []driveUser       `json:"owners"`
 	ModifiedTime  string            `json:"modifiedTime"`
 	Shared        bool              `json:"shared"`
+	Trashed       bool              `json:"trashed"`
 	Parents       []string          `json:"parents"`
 	AppProperties map[string]string `json:"appProperties"`
 	WebViewLink   string            `json:"webViewLink"`
@@ -190,12 +191,26 @@ type driveUser struct {
 }
 
 // fileFields are the fields Kivali asks Drive for of a document.
-const fileFields = "id,name,mimeType,owners(emailAddress),modifiedTime,shared,parents,appProperties,webViewLink"
+const fileFields = "id,name,mimeType,owners(emailAddress),modifiedTime,shared,trashed,parents,appProperties,webViewLink"
 
 // madeByKivali reports whether Kivali marked f as a document it made.
 func (f driveFile) madeByKivali() bool {
 	_, ok := f.AppProperties[kivaliMark]
 	return ok
+}
+
+// kivalis reports whether f counts as a document Kivali made: marked
+// so, and owned by address, the signed-in account's, or by no one, as
+// a shared drive's document is. A marked document someone else owns
+// now is theirs.
+func (f driveFile) kivalis(address string) bool {
+	return f.madeByKivali() && (len(f.Owners) == 0 || f.ownedBy(address))
+}
+
+// writableBy reports whether a write may change f: owned by address,
+// the signed-in account's, or Kivali's (kivalis).
+func (f driveFile) writableBy(address string) bool {
+	return f.ownedBy(address) || f.kivalis(address)
 }
 
 // ownedBy reports whether address, the signed-in account's, is among
@@ -217,8 +232,8 @@ func (c *call) file(ctx context.Context, id, fields string) (driveFile, error) {
 }
 
 // readableDocument is the Drive file of the document id, checked
-// before any of its content is read: a Google Doc, within the folders
-// the access includes.
+// before any of its content is read: a Google Doc, not in the trash,
+// within the folders the access includes.
 func (c *call) readableDocument(ctx context.Context, id string) (driveFile, error) {
 	f, err := c.file(ctx, id, fileFields)
 	if err != nil {
@@ -226,6 +241,10 @@ func (c *call) readableDocument(ctx context.Context, id string) (driveFile, erro
 	}
 	if f.MimeType != documentType {
 		return driveFile{}, failure("File " + id + " is not a Google Doc; search_documents lists documents.")
+	}
+	if f.Trashed {
+		return driveFile{}, refuse("Document "+id+" is in the trash; ask the owner if your work needs it.",
+			"document "+id+" is in the trash")
 	}
 	in, err := c.inFolders(ctx, f.Parents)
 	if err != nil {
@@ -277,18 +296,23 @@ func (c *call) inFolders(ctx context.Context, start []string) (bool, error) {
 
 // folderTree is roots and the folders inside them, breadth first, as
 // far down as a document within them may be (inFolders), at most
-// maxSearchFolders; cut reports whether there were more. Each level is
-// one listing, its folders by id, so the same folders give the same
-// tree and a search's next page asks Drive the same question.
+// maxSearchFolders, roots first; cut reports whether there were more.
+// Each level is one listing, its folders by id, so the same folders
+// give the same tree and a search's next page asks Drive the same
+// question.
 func (c *call) folderTree(ctx context.Context, roots []string) (tree []string, cut bool, err error) {
 	seen := map[string]bool{}
 	var level []string
 	for _, id := range roots {
-		if !seen[id] {
-			seen[id] = true
-			tree = append(tree, id)
-			level = append(level, id)
+		if seen[id] {
+			continue
 		}
+		if len(tree) == maxSearchFolders {
+			return tree, true, nil
+		}
+		seen[id] = true
+		tree = append(tree, id)
+		level = append(level, id)
 	}
 	for depth := 1; depth < maxFolderDepth && len(level) > 0; depth++ {
 		q := url.Values{
@@ -360,13 +384,14 @@ func documentQuery(words string, within []string) string {
 // docOwner is who owns a document, by Kivali's reading: its first
 // owner's address, "" when Kivali cannot read one; whether that is the
 // owner's domain; whether it is in a shared drive, which owns it
-// instead; and who to name in Result.Outside when it is not the
-// owner's domain.
+// instead; who to name in Result.Outside when it is not the owner's
+// domain; and whether it counts as Kivali's (driveFile.kivalis).
 type docOwner struct {
 	address     string
 	own         bool
 	sharedDrive bool
 	who         string
+	kivalis     bool
 }
 
 // ownerOf reads who owns f. A document in a shared drive has no owner
@@ -377,13 +402,13 @@ func (c *call) ownerOf(ctx context.Context, f driveFile) (docOwner, error) {
 		return docOwner{}, err
 	}
 	if len(f.Owners) == 0 {
-		return docOwner{sharedDrive: true, who: "a shared drive"}, nil
+		return docOwner{sharedDrive: true, who: "a shared drive", kivalis: f.kivalis(me.address)}, nil
 	}
 	addr := strings.ToLower(strings.TrimSpace(f.Owners[0].EmailAddress))
 	if len(addr) > 254 || !addressChars.MatchString(addr) {
 		addr = ""
 	}
-	o := docOwner{address: addr, own: me.owns(addr)}
+	o := docOwner{address: addr, own: me.owns(addr), kivalis: f.kivalis(me.address)}
 	if !o.own {
 		o.who = cmp.Or(addr, "an unknown owner")
 	}
@@ -392,7 +417,8 @@ func (c *call) ownerOf(ctx context.Context, f driveFile) (docOwner, error) {
 
 // provenance is the line Kivali writes before a document's own text:
 // its owner, whether that is the owner's domain, whether it is shared,
-// when it last changed, and whether Kivali made it.
+// when it last changed, and whether it counts as Kivali's
+// (driveFile.kivalis).
 func (o docOwner) provenance(f driveFile) string {
 	var b strings.Builder
 	switch {
@@ -413,7 +439,7 @@ func (o docOwner) provenance(f driveFile) string {
 	if t := driveTime(f.ModifiedTime); t != "" {
 		b.WriteString(" Last changed " + t + ".")
 	}
-	if f.madeByKivali() {
+	if o.kivalis {
 		b.WriteString(" Kivali made it.")
 	}
 	return b.String()
@@ -546,7 +572,7 @@ func searchDocuments(ctx context.Context, c *call) (any, error) {
 		out = append(out, fmt.Sprintf("%d documents, %s. %s", len(shown), order, more))
 	}
 	if cut {
-		out = append(out, fmt.Sprintf("The folders hold more than %d folders, more than one search reaches: Kivali searched the first %d, so documents further down may be missing. folder_id searches one folder and the folders inside it.", maxSearchFolders, maxSearchFolders))
+		out = append(out, fmt.Sprintf("Your access's folders and the folders inside them are more than the %d one search reaches: Kivali searched the first %d, so documents in the others may be missing. folder_id searches one folder and the folders inside it.", maxSearchFolders, maxSearchFolders))
 	}
 	var ids []string
 	for i, f := range shown {
@@ -609,7 +635,7 @@ func getDocument(ctx context.Context, c *call) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	d, err := c.document(ctx, id, true)
+	d, err := c.document(ctx, id)
 	if err != nil {
 		return nil, err
 	}
@@ -627,16 +653,78 @@ func getDocument(ctx context.Context, c *call) (any, error) {
 // every run carries its style.
 const maxDocumentBytes = 48 << 20
 
-// document is the document id as the Docs API answers it: with every
-// tab's content when tabs is set, else the first tab's as its body.
-func (c *call) document(ctx context.Context, id string, tabs bool) (docsDocument, error) {
-	path := "/v1/documents/" + url.PathEscape(id)
-	if tabs {
-		path += "?includeTabsContent=true"
-	}
+// document is the document id as get_document reads it
+// (documents.get): every tab's content, with only the fields
+// renderDocument reads (readFields), and with every suggestion
+// rejected, since anyone who may comment on a document may suggest in
+// it.
+func (c *call) document(ctx context.Context, id string) (docsDocument, error) {
+	return c.documentAs(ctx, id, "includeTabsContent=true&suggestionsViewMode=PREVIEW_WITHOUT_SUGGESTIONS&fields="+readFields)
+}
+
+// documentEnd is the document id as append_to_document reads it: its
+// revision and where its first tab's body ends (endFields), its
+// suggestions inline, as the indexes a write names count them.
+func (c *call) documentEnd(ctx context.Context, id string) (docsDocument, error) {
+	return c.documentAs(ctx, id, "fields="+endFields)
+}
+
+// documentAs is documents.get of the document id with query. An answer
+// larger than maxDocumentBytes is a failure saying the document is too
+// large to read, which trying again does not change.
+func (c *call) documentAs(ctx context.Context, id, query string) (docsDocument, error) {
 	var d docsDocument
-	err := c.g.getUpTo(ctx, c.token, docsAPI, path, maxDocumentBytes, &d)
+	err := c.g.getUpTo(ctx, c.token, docsAPI, "/v1/documents/"+url.PathEscape(id)+"?"+query, maxDocumentBytes, &d)
+	var ae *apiError
+	if errors.As(err, &ae) && ae.TooLarge {
+		return docsDocument{}, failure("Document " + id + " is too large for Kivali to read.")
+	}
 	return d, err
+}
+
+// The fields documents.get is asked for, in Google's partial-answer
+// syntax, so an answer holds only what Kivali reads. readFields is a
+// document's title and its tabs, three deep (tabFields); endFields an
+// append's: the revision it writes against, and the last paragraph of
+// the first tab's body, its end and its runs' text (bodyEnd). Each is
+// written into the query as it is: it holds only letters, commas and
+// brackets.
+var (
+	readFields = "title,tabs(" + tabFields(2) + ")"
+	endFields  = "revisionId,body(content(endIndex,paragraph(elements(startIndex,textRun(content)))))"
+)
+
+// textStyleFields are a run's style as hides reads it, and its link;
+// paragraphFields a paragraph as docRenderer.paragraph reads it. A
+// bullet is asked for whole: one at the first level sets no
+// nestingLevel, and must not come back as nothing.
+const (
+	textStyleFields = "textStyle(foregroundColor,backgroundColor,fontSize,link(url))"
+	paragraphFields = "paragraph(elements(textRun(content," + textStyleFields + "),person(personProperties(name,email)," + textStyleFields +
+		"),richLink(richLinkProperties(title,uri)," + textStyleFields + "),horizontalRule),paragraphStyle(namedStyleType,shading),bullet)"
+)
+
+// contentFields are a body's or a table cell's content as
+// docRenderer.content reads it, with the tables in it, and in their
+// cells, depth tables further down; a cell past those is asked for
+// whole, so no text is ever left out.
+func contentFields(depth int) string {
+	cells := "content"
+	if depth > 0 {
+		cells = contentFields(depth - 1)
+	}
+	return "content(" + paragraphFields + ",table(tableRows(tableCells(" + cells + ",tableCellStyle(backgroundColor)))))"
+}
+
+// tabFields are a tab as renderDocument reads it, with depth levels of
+// tabs inside it; a tab past those is asked for whole.
+func tabFields(depth int) string {
+	child := "childTabs"
+	if depth > 0 {
+		child = "childTabs(" + tabFields(depth-1) + ")"
+	}
+	return "tabProperties(title),documentTab(body(" + contentFields(1) + "),documentStyle(background)," +
+		"namedStyles(styles(namedStyleType,textStyle(foregroundColor,backgroundColor,fontSize),paragraphStyle(shading))))," + child
 }
 
 // driveComment is a comment as Drive's comments.list answers it.
@@ -675,7 +763,12 @@ func listComments(ctx context.Context, c *call) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := c.readableDocument(ctx, id); err != nil {
+	f, err := c.readableDocument(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	o, err := c.ownerOf(ctx, f)
+	if err != nil {
 		return nil, err
 	}
 	me, err := c.account(ctx)
@@ -697,6 +790,9 @@ func listComments(ctx context.Context, c *call) (any, error) {
 	if page.NextPageToken != "" {
 		more = "next_page_token: " + page.NextPageToken + " (pass it as page_token for the next page)."
 	}
+	// A comment carries the text of the document it is on, so the
+	// document's owner is named as for a read.
+	c.addOutside(o.who)
 	out := []string{fmt.Sprintf("Document %s: %d comments on this page. %s", id, len(page.Comments), more)}
 	if len(page.Comments) == 0 {
 		out[0] = "Document " + id + " has no comments on this page. " + more

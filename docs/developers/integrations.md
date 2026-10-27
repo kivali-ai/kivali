@@ -4080,7 +4080,10 @@ action whose switch is off, then answers an action with no `run` with
 the error result "This action is not available in this version of
 Kivali.", then refuses a connection with no access token; arguments
 that are not an object are refused as for GitHub. A run sets the call's
-`Result.Audit` and `Result.Outside` (below) through its `call`.
+`Result.Audit` and `Result.Outside` (below) through its `call`. A run
+that fails with Google's words or its own is an error result whose
+`Audit` is what the run had set, then "; " and the words
+(`failedWith`), or, with none set, empty, so core keeps the words.
 
 `list_labels` (`GET /gmail/v1/users/me/labels`) answers the labels the
 access includes, one per line as options read: Gmail's own Inbox,
@@ -4454,7 +4457,9 @@ is asked for, "Document <id> is not in the folders your access
 includes; ask the owner if your work needs it.", audited as `document
 <id> is outside the access's folders`. A file that is not a Google Doc
 (`mimeType` other than `application/vnd.google-apps.document`) answers
-so. Ids are letters, digits, `-` and `_`, checked before anything
+so, and one in the trash (`trashed`) is refused, "Document <id> is in
+the trash; ask the owner if your work needs it.", audited as `document
+<id> is in the trash`. Ids are letters, digits, `-` and `_`, checked before anything
 reaches Google; a page token is printable ASCII.
 
 - `search_documents(query?, folder_id?, page_token?)` is `GET
@@ -4462,9 +4467,10 @@ reaches Google; a page token is printable ASCII.
   `q=mimeType='application/vnd.google-apps.document' and
   trashed=false`, then, when the access names folders, `and ('<id>' in
   parents or ...)` over them and the folders inside them
-  (`folderTree`: one listing of folders a level, nine levels down,
-  sorted by id, at most 50 folders, the answer saying when there were
-  more), then for `query` `and (name contains '<q>' or fullText
+  (`folderTree`: the access's folders first, then one listing of
+  folders a level, nine levels down, sorted by id, at most 50 folders
+  in all, the answer saying when there were more, whether the access
+  names more than 50 or the folders inside them are), then for `query` `and (name contains '<q>' or fullText
   contains '<q>')`, `\` and `'` escaped; `pageSize=25`,
   `supportsAllDrives`, `includeItemsFromAllDrives`, and
   `orderBy=modifiedTime desc` without a query (Drive refuses any order
@@ -4480,10 +4486,16 @@ reaches Google; a page token is printable ASCII.
   its links. Audit: "searched documents, listing N: <ids>".
 - `get_document(document_id, offset?)` checks the document (`files.get`
   with `id,name,mimeType,owners(emailAddress),modifiedTime,shared,
-  parents,appProperties,webViewLink` and `supportsAllDrives`), then
-  reads `GET /v1/documents/{id}?includeTabsContent=true` on
-  `docs.googleapis.com` (at most 48 MiB) and renders all of it, afresh
-  each call ([The text a document becomes](#the-text-a-document-becomes)).
+  trashed,parents,appProperties,webViewLink` and `supportsAllDrives`),
+  then reads `GET /v1/documents/{id}` on `docs.googleapis.com` with
+  `includeTabsContent=true`, `suggestionsViewMode=PREVIEW_WITHOUT_SUGGESTIONS`
+  and `fields` naming only what the text is built from (`readFields`:
+  the title, and each tab's title, body, page colour and named styles'
+  text styles and paragraph shading, three tabs deep and tables two
+  deep, anything deeper asked for whole), written into the query
+  unescaped. An answer over 48 MiB is "Document <id> is too large for
+  Kivali to read.". The document is rendered whole, afresh each call
+  ([The text a document becomes](#the-text-a-document-becomes)).
   `offset` is a whole number of characters into that text; one past its
   end is refused. The answer is a heading line, "Document <id>:
   characters <from> to <to> of <total>.", the provenance line, framed
@@ -4506,8 +4518,10 @@ reaches Google; a page token is printable ASCII.
   address Drive does not give counts as outside. Each comment gets its
   share of the room left in the answer: its text is cut at 2,000
   characters, and shorter, in proportion, when its links outweigh it,
-  and left out after eight tries, each cut said. Audit: "listed N
-  comments on document <id>".
+  and left out after eight tries, each cut said. The document's owner
+  is named in `Result.Outside` as for `get_document`, since a comment
+  carries the document's text it is on. Audit: "listed N comments on
+  document <id>".
 
 The provenance line is "Owner: <address>, from your domain." or "from
 outside your domain.", the owner's domain as for mail (the signed-in
@@ -4515,7 +4529,9 @@ address's; for `gmail.com` that address alone), or, for a document in
 a shared drive, which has no owners, "Owner: a shared drive, which
 Kivali counts as outside your domain."; then "Shared with others." or
 "Not shared." (not for a shared drive), "Last changed <time>.", and
-"Kivali made it." for a document marked as Kivali's.
+"Kivali made it." for a document that counts as Kivali's: marked as
+Kivali's and owned by the signed-in account or, in a shared drive, by
+no one ([Writing documents](#writing-documents)).
 
 #### The text a document becomes
 
@@ -4539,14 +4555,16 @@ so the mitigations apply to all of it; there is no file export.
   row, each cell's text on one line, split by " | ". A table of
   contents, section breaks, images, footnote references and equations
   are not text, and headers, footers and footnotes are not read.
-  Suggestions read as the API gives them.
+  Suggestions are left out: the document is read with every suggestion
+  rejected, since anyone who may comment may suggest.
 - **Hidden runs.** A run's style is what it sets over its paragraph's
   named style over Normal text (`namedStyles`). It is hidden when its
   font is 3 points or less, its colour is transparent (an
   `OptionalColor` with no colour), or each of its red, green and blue
   is within 0.08 of the colour behind it: the run's highlight, else its
-  paragraph's shading, else its table cell's background, else the
-  tab's page colour (`documentStyle.background`), white unless set. A
+  paragraph's shading (its own, else its named style's, else Normal
+  text's), else its table cell's background, else the tab's page
+  colour (`documentStyle.background`), white unless set. A
   run that sets no colour anywhere is black. A hidden run, a chip
   styled so among them, is left out with its link and counted, as are
   Unicode tag characters; a paragraph whose text is all hidden leaves
@@ -4554,7 +4572,10 @@ so the mitigations apply to all of it; there is no file export.
   from the document.".
 - **Links.** A run's `link.url` (http or https) gets its marker after
   the run's text, consecutive runs with the same link one marker; a
-  URL written in the text is replaced as in an email. The listing and
+  URL written in the text is replaced as in an email. Text that reads
+  like a marker is spaced apart across the paragraph's runs before the
+  markers go in (`spaceMarkers`), so a "[" ending one run and "link"
+  starting the next do not make one. The listing and
   its bounds are an email's (`linkList`), numbered across the whole
   document; a page lists the links it names (`listingOf`).
 
@@ -4562,18 +4583,27 @@ so the mitigations apply to all of it; there is no file export.
 
 A write reaches only a document that is readable (above, its folders
 included) and that the signed-in account owns (its address among
-`owners`) or Kivali made (`appProperties.kivali` set; Drive keeps an
-app's properties to the OAuth client that set them, so no one sharing
-a document can mark it). Any other is refused before anything
+`owners`) or that counts as Kivali's (`driveFile.writableBy`):
+`appProperties.kivali` set (Drive keeps an app's properties to the
+OAuth client that set them, so no one sharing a document can mark it)
+and owned by the signed-in account or by no one, as a shared drive's
+document is; a marked document someone else owns now is theirs. Any other is refused before anything
 changes, "Document <id> is not the owner's and Kivali did not make it:
 you may change only documents the owner owns or Kivali made.", audited
 as `document <id> is neither the owner's nor made by Kivali`. Writes
 are `POST`s (`post`, [The client](#the-client)); a write Google does
-not answer says Kivali cannot tell whether the document changed.
+not answer says Kivali cannot tell whether the document changed. Each
+write sets its audit before its request ("creating a document in
+folder <id>", "adding N characters to the end of document <id>",
+"replacing text in document <id>"), which an error result keeps,
+followed by its words. A write to a document shared with others
+(`shared`), or a document made in a folder shared with others, ends
+its audit "(shared with others)".
 
 - `create_document(title, body?, folder_id?)` checks `folder_id` first
   (a folder, within the access's folders, else refused), or takes the
-  access's first folder, then makes the document through Drive, `POST
+  access's first folder, reading the folder's `shared` either way, then
+  makes the document through Drive, `POST
   /drive/v3/files?fields=id&supportsAllDrives=true` on
   `www.googleapis.com` with `name`, `mimeType`
   `application/vnd.google-apps.document`, `appProperties.kivali` the
@@ -4593,25 +4623,37 @@ not answer says Kivali cannot tell whether the document changed.
   characters of text", "; could not write its text" in place of the
   count, and "; Google refused folder <id>, so it is at the top of My
   Drive".
-- `append_to_document(document_id, text)` reads the body (`GET
-  /v1/documents/{id}`, the first tab's) and inserts at the end of its
-  last paragraph, after a line end unless that paragraph is empty.
-  Audit: "added N characters to the end of document <id>".
+- `append_to_document(document_id, text)` reads the first tab's body
+  (`GET /v1/documents/{id}` with `fields=revisionId,body(content(endIndex,
+  paragraph(elements(startIndex,textRun(content)))))`, suggestions
+  inline, as the indexes a write names count them) and inserts at the
+  end of its last paragraph, after a line end unless that paragraph is
+  empty, with `writeControl.targetRevisionId` the revision read, so
+  Google applies the insert past what others changed since. Audit:
+  "added N characters to the end of document <id>".
 - `replace_text(document_id, find, replace, match_case?)` is one
-  `replaceAllText` over every tab, `find` and `replace` taken as given
-  (`replace` may be empty), answering Google's `occurrencesChanged`.
-  Audit: "replaced N occurrences in document <id>".
+  `replaceAllText`, which reaches every tab and the headers, footers
+  and footnotes `get_document` does not read, as its description says;
+  `find` and `replace` are taken as given (`replace` may be empty),
+  answering Google's `occurrencesChanged`. Audit: "replaced N
+  occurrences in document <id>".
 
 The text of a create or an append is a little Markdown
 (`parseMarkdown`), a line a paragraph: `#` to `######` and a space a
 heading, `-`, `*` or `+` and a space a list item, `**...**` bold (a
 last `**` with no partner is text), blank lines at the end dropped, all
-else as written. The requests (`insertRequests`) insert the text in one
-`insertText`, then, over the range inserted, set Normal text, remove
-bullets and reset the text style (`fields: "*"`), since inserted text
-takes the style of the paragraph it lands in; then set each heading,
-one `createParagraphBullets` per run of list items, and `bold` per
-span. Indexes count UTF-16 code units, as the Docs API does.
+else as written. The Private Use Area (U+E000 to U+F8FF), which the
+Docs API strips from inserted text, is taken out first. Text that holds
+nothing once its marks are taken out is refused before anything
+reaches Google, "<key> holds no text once its Markdown marks are taken
+out.". The requests (`insertRequests`) insert the text in one
+`insertText`, then, over the range inserted, set Normal text and reset
+every other paragraph style (`fields: "*"`, so no shading or indent
+carries over), remove bullets and reset the text style (`fields: "*"`),
+since inserted text takes the style of the paragraph it lands in; then
+set each heading, one `createParagraphBullets` per run of list items,
+and `bold` per span. Indexes count UTF-16 code units, as the Docs API
+does.
 
 `add_comment` and `reply_to_comment` are declared, with their schemas,
 and have no `run`.
@@ -4626,10 +4668,10 @@ message it lists, since a snippet is the message's text. Core keeps
 them in the audit row's `outside` ([The audit](#the-audit)), which the
 approval of a send will read; nothing else is stored.
 
-Docs' reads name the owner of each document read or listed that is
-not the owner's domain, "a shared drive" for one in a shared drive,
-and the outside authors of the comments listed: the address, else the
-author's name, else "an unknown author".
+Docs' reads name the owner of each document read or listed, or whose
+comments are listed, that is not the owner's domain, "a shared drive"
+for one in a shared drive, and the outside authors of the comments
+listed: the address, else the author's name, else "an unknown author".
 
 #### Test connection and options
 
