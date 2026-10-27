@@ -73,7 +73,8 @@ func TestReadAccess(t *testing.T) {
 // The read and write switches and the lists promise no approval.
 func TestFormSaysWhichSendsWait(t *testing.T) {
 	waits := map[string]string{
-		keyGmailSend: "May send mail (each send waits for your approval)",
+		keyGmailSend:    "May send mail (each send waits for your approval)",
+		keyCalendarSend: "May invite and respond (each waits for your approval)",
 	}
 	for _, f := range accessFields {
 		approves := strings.Contains(strings.ToLower(f.title+" "+f.description), "approv")
@@ -81,7 +82,7 @@ func TestFormSaysWhichSendsWait(t *testing.T) {
 		switch {
 		case wait && f.title != title:
 			t.Errorf("%s is titled %q, want %q", f.key, f.title, title)
-		case !wait && approves && f.key != keySendTo:
+		case !wait && approves && f.key != keySendTo && f.key != keyCalendarWrite:
 			t.Errorf("%s promises an approval: %q, %q", f.key, f.title, f.description)
 		}
 	}

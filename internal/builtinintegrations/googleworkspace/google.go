@@ -179,7 +179,7 @@ func (g *GoogleWorkspace) Manifest() *integration.Manifest {
 		Name:            Name,
 		Version:         "1.0.0",
 		DisplayName:     displayName,
-		Description:     "Gmail, Google Calendar and Google Docs, signed in with an OAuth client you make on Google's Auth Platform. In this version agents can read your Gmail, write drafts in it, label its mail and send mail you approve, read your Google Calendar and change its events, and read and write your Google Docs.",
+		Description:     "Gmail, Google Calendar and Google Docs, signed in with an OAuth client you make on Google's Auth Platform. In this version agents can read your Gmail, write drafts in it, label its mail and send mail you approve, read your Google Calendar, change its events, and invite people and answer invitations once you approve, and read and write your Google Docs.",
 		Author:          integration.Author{Name: "Kivali"},
 		UserConfig:      integration.UserConfig{},
 		Tools:           tools,
@@ -422,9 +422,14 @@ func dropFormat(s string) string {
 	}, s)
 }
 
-// waitsWords end the description of every action that may wait for
-// the owner's approval, which the agent reads.
-const waitsWords = " The call waits for the owner's approval: it answers at once that it is waiting, and you hear in your chat whether it was done, with what Google answered, or the owner's note if they denied it."
+// waitsWords end the description of every action that waits for the
+// owner's approval, and sendWaitsWords of one whose calls wait when
+// they are sends, which the agent reads.
+const (
+	waitsTail      = "it answers at once that it is waiting, and you hear in your chat whether it was done, with what Google answered, or the owner's note if they denied it."
+	waitsWords     = " The call waits for the owner's approval: " + waitsTail
+	sendWaitsWords = " A send needs the owner to have given you inviting people, and waits for the owner's approval: " + waitsTail
+)
 
 // failedWith is the error result of a run that failed with words. Its
 // audit is what the run had set, what it did or was doing, then the

@@ -326,7 +326,7 @@ Each action is in **Recent calls**: one that opens, comments, closes or deletes 
 
 ## Google Workspace
 
-**Google Workspace** ships with Kivali. It connects your Gmail, Google Calendar and Google Docs, signed in with an OAuth client you make on Google's Auth Platform, in a Google Cloud project of yours. In this version, agents can read your Gmail, write drafts in it, label its mail and send mail you approve, read your Google Calendar and change its events, and read and write your Google Docs. It runs inside Kivali and reaches only Google's APIs (`gmail.googleapis.com`, `www.googleapis.com` and `docs.googleapis.com`) and Google's sign-in (`accounts.google.com` and `oauth2.googleapis.com`).
+**Google Workspace** ships with Kivali. It connects your Gmail, Google Calendar and Google Docs, signed in with an OAuth client you make on Google's Auth Platform, in a Google Cloud project of yours. In this version, agents can read your Gmail, write drafts in it, label its mail and send mail you approve, read your Google Calendar, change its events, and invite people and answer invitations once you approve, and read and write your Google Docs. It runs inside Kivali and reaches only Google's APIs (`gmail.googleapis.com`, `www.googleapis.com` and `docs.googleapis.com`) and Google's sign-in (`accounts.google.com` and `oauth2.googleapis.com`).
 
 ### Connect it
 
@@ -353,13 +353,13 @@ An agent's access has a part for each of Gmail, Google Calendar and Google Docs,
 
 - **Read** (**May read mail**, **May read calendars**, **May read documents**): the agent sees what is in your account. It changes nothing.
 - **Write** (**May draft and label**, **May change events**, **May write documents**): the agent changes something in your account that no other person is told about, such as a draft it writes or a label on a message.
-- **Send** (**May send mail**, **May invite and respond**, **May comment**): anything that makes Google deliver something to another person. Each email an agent sends waits for your approval ([Calls that wait for you](#calls-that-wait-for-you)); the switch only decides whether the agent may ask. **May invite and respond** and **May comment** give actions that are not available in this version of Kivali.
+- **Send** (**May send mail**, **May invite and respond**, **May comment**): anything that makes Google deliver something to another person. Each email an agent sends, and each invitation, change that reaches other people and answer to an invitation, waits for your approval ([Calls that wait for you](#calls-that-wait-for-you)); the switch only decides whether the agent may ask. **May comment** gives actions that are not available in this version of Kivali.
 - **Labels it may read**, **Calendars it may use** and **Folders it may read**: what the agent may use in each. **Load options** lists them from your account: Gmail's own labels (Inbox, Starred, Important, Sent, Drafts, Spam and Trash) and yours, your calendars, and the Drive folders you can open. Each is shown by its name with Google's id for it in parentheses, and the agent is held to the id. Leave a list empty for everything, except that an empty label list leaves out Spam and Trash: name them to let the agent read them.
 - **May send to**: the addresses the agent may send mail and invitations to, such as `dana@example.com`, or `*@example.com` for everyone at a domain. Leave it empty for anyone.
 
 ### What agents can do
 
-Google Workspace's page lists its actions under **Actions** by the switch that gives each. This version runs Gmail's reading, drafting, labelling and sending, Google Calendar's reading and changing, and Docs' reading and writing; the page marks the others "Not available in this version of Kivali", and agents are not given them.
+Google Workspace's page lists its actions under **Actions** by the switch that gives each. This version runs Gmail's reading, drafting, labelling and sending, Google Calendar's reading, changing, inviting and answering, and Docs' reading and writing; the page marks the others "Not available in this version of Kivali", and agents are not given them.
 
 With **May read mail**, an agent can:
 
@@ -422,7 +422,17 @@ With **May change events**, an agent can:
 - Change an event's title, time, place or description on one of your own calendars, when you organized it and it invites no one but you.
 - Delete an event Kivali created on this Google account, on one of your own calendars, when it invites no one but you. Events you or anyone else made are refused.
 
-Google emails no one about these changes. Changing or deleting an event that invites anyone but you, a room included, or that someone else organized, would show on their calendars, so it is a send, as are inviting people, changing who an event invites and answering invitations. Sends are not available in this version.
+Google emails no one about these changes. Changing or deleting an event that invites anyone but you, a room included, or that someone else organized, would show on their calendars, so it is a send, as are inviting people, changing who an event invites and answering invitations.
+
+With **May invite and respond** as well as **May change events**, an agent can ask to:
+
+- Create an event that invites people. The request shows the calendar, title, time, place, every attendee and the description, as the event will be made.
+- Change an event so that it invites more or fewer people, or change an event that invites anyone but you or that someone else organized. The request shows the event as it is, then each change: the new title, time, place or description (and the description before it), and who is added and removed.
+- Delete an event Kivali created that invites others. The request shows the event and says it is cancelled for everyone invited.
+
+With **May invite and respond**, an agent can ask to answer an invitation on one of your own calendars for you: yes, no or maybe, with a note to the organizer. The request shows the event, its organizer, the answer and the note. Only your answer changes; an event you organized, or one that does not invite you, is refused.
+
+Each waits for you as a [call that waits for you](#calls-that-wait-for-you), titled such as "Invite 3 people to "Sync"", and lists everyone Google will tell: the people invited after the change, those removed, and the organizer, never you. Once you approve, Google emails them, as Google Calendar does for a change you make. Everyone an agent adds to an event must be in **May send to**, or the request is refused before it reaches you; people an event already invites are not checked.
 
 Each Calendar call is in **Recent calls**, naming the events it read, created, changed or deleted.
 

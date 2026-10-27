@@ -4061,7 +4061,7 @@ apart:
 | `gmail_attach.go` | saving an attachment into the agent's files |
 | `gmail_write.go` | Gmail's writing: drafts, labels on messages, the message builder, the requests that change the account |
 | `gmail_send.go` | Gmail's sends: an email and a draft held for the owner, a draft's message read for its card, `messages.send` |
-| `calendar_write.go` | Calendar's changes: creating, changing and deleting events, and `isSend` |
+| `calendar_write.go` | Calendar's changes: creating, changing and deleting events, `isSend`, the sends among them and answering an invitation |
 | `docs.go` | also Docs' reading: search, a document's pages, comments, the folders a document is within |
 | `docs_text.go` | the text a document becomes: its framing, its structure walked into text, hidden runs, a page |
 | `docs_write.go` | Docs' writing: the owner-only rule, the requests that change Google, the Markdown a write takes |
@@ -4199,16 +4199,15 @@ bucket's switch:
 | `gmail_write` | `create_draft`, `delete_draft`, `modify_labels` |
 | `gmail_send` | `send_email`, `send_draft` |
 | `calendar_read` | `list_calendars`, `list_events`, `get_event`, `find_free_time` |
-| `calendar_write` | `create_event`, `update_event`, `delete_event` (a call that sets or changes who is invited, or changes or deletes an event that has another attendee or organizer, is a send, which this version does not run) |
+| `calendar_write` | `create_event`, `update_event`, `delete_event` (a call that sets or changes who is invited, or changes or deletes an event that has another attendee or organizer, is a send, which needs `calendar_send` too and is held for the owner) |
 | `calendar_send` | `respond_to_invitation` |
 | `docs_read` | `search_documents`, `get_document`, `list_comments` |
 | `docs_write` | `create_document`, `append_to_document`, `replace_text` |
 | `docs_send` | `add_comment`, `reply_to_comment` |
 
-This version runs every action but `respond_to_invitation`,
-`add_comment` and `reply_to_comment`, which have no `run` and declare
-their arguments already ([Calendar](#calendar), [Writing
-documents](#writing-documents)). `Tools` gives
+This version runs every action but `add_comment` and
+`reply_to_comment`, which have no `run` and declare their arguments
+already ([Writing documents](#writing-documents)). `Tools` gives
 an agent each action whose switch its access has on and that this
 version runs, with its description and the sentence saying
 the owner decides. `Call` refuses, in order, an action that is not one
@@ -4717,13 +4716,15 @@ bounds, errors and scrubbing).
   calendar covers (`freeGaps`). Audit: "read free and busy times of
   calendars <ids> from <time_min> to <time_max>".
 
-**Changes.** `create_event`, `update_event` and `delete_event` work
-only on the owner's own calendars (`ownedCalendar`); any other is
-refused, "Calendar <id> is not one of the owner's own calendars, and
-you may change events only on the owner's own calendars: ...",
-audited as `calendar <id> is not one of the owner's own`, before an
-event is read. Every write sends `sendUpdates=none`, so Google emails
-no one.
+**Changes.** `create_event`, `update_event`, `delete_event` and
+`respond_to_invitation` work only on the owner's own calendars
+(`ownedCalendar`); any other is refused, "Calendar <id> is not one of
+the owner's own calendars, and you may change events only on the
+owner's own calendars: ...", audited as `calendar <id> is not one of
+the owner's own`, before an event is read. Every write sends
+`sendUpdates=none`, so Google emails no one; every send is a held call
+([Held calls](#held-calls)) whose `Run` sends `sendUpdates=all`, so
+Google tells everyone it reaches.
 
 - `create_event` is `POST calendars/{id}/events` with `summary`,
   `start`, `end`, `description`, `location` and
@@ -4758,12 +4759,71 @@ no one.
   of the owner's own calendars; a colleague or a room is another),
   `attendeesOmitted`, or an organizer that is neither `self` nor the
   owner's. Only an event with no other attendee is changed or deleted
-  as a write. A send answers the error result "This call is a send,
-  which is not available in this version of Kivali, so Kivali did not
-  run it. ..." with nothing sent to Google. An `update_event` that
-  gives the event's own list leaves `attendees` out of the patch.
-  `respond_to_invitation`, under `calendar_send`, has a schema and no
-  `run`.
+  as a write. An `update_event` that gives the event's own list leaves
+  `attendees` out of the patch.
+
+**Sends** (the calls `isSend` finds are sends, and
+`respond_to_invitation`) are held calls. A send of `create_event`,
+`update_event` or `delete_event` needs `calendar_send` as well as the
+write switch that gives the action; without it the call is refused
+before anything reaches Google, "This call is a send: it invites
+people or changes who an event invites, or changes or deletes an event
+that has attendees other than the owner or that someone else
+organized, which reaches those people. The owner has not given you
+inviting people and answering invitations in Google Workspace; ...",
+audited as `the access does not include inviting people and answering
+invitations`. Every attendee a send adds, the owner's own addresses
+left out, must be one `send_to` allows, as for mail ([Sending
+mail](#sending-mail)); those it already invites are not checked. A
+card's recipients are everyone the send reaches: the attendees after
+the change, those it removes, and the organizer, the owner's own
+addresses left out. The event's own text on a card (its title and
+place as they are, its description before a change) is shown without
+format characters, since it is shown and not sent. Google not
+answering a `Run` may have done it, so that failure says what to look
+at before asking again. No send sets `Result.Outside`.
+
+- `create_event` with attendees: the card is titled "Invite N people
+  to "<title>"", with fields Calendar, Title, When, Where, Attendees
+  (every address, lower-cased, sorted, each once) and Description, as
+  the event will be made; `Run` is `POST calendars/{id}/events?
+  sendUpdates=all` with the body captured, Kivali's mark and
+  `attendees` (`{"email": ...}` each) in it. Audit "created event <id>
+  on calendar <id>, <when>, inviting <addresses>".
+- `update_event` as a send: the card is titled "Change "<title>",
+  telling N people", with the event as it is (Calendar, Title, When,
+  Where, Organizer, Attendees), then each change: "Title changes to",
+  "Description now" and "Description changes to", "Place changes to",
+  "Time changes to", "Attendees added", "Attendees removed". A new
+  attendee list is sent as each attendee the event keeps, whole as
+  Google gave it (its answer kept), in the event's order, then each
+  new one by address (`newAttendees`). `Run` is `PATCH
+  calendars/{id}/events/{id}?sendUpdates=all` with the patch captured.
+  Audit "changed event <id> on calendar <id>: <fields>; told
+  <addresses>".
+- `delete_event` as a send, after the Kivali-created rule: the card is
+  titled "Delete "<title>", telling N people", with the event as it is
+  and "What happens": "This cancels the event for everyone invited.",
+  or, for an event someone else organizes, that it leaves the owner's
+  calendar and Google tells the organizer. `Run` is `DELETE
+  calendars/{id}/events/{id}?sendUpdates=all`. Audit "deleted event
+  <id> on calendar <id>, which <slug> created; told <addresses>".
+- `respond_to_invitation(calendar_id, event_id, response, comment?)`,
+  under `calendar_send`: `response` is `accepted`, `declined` or
+  `tentative`, `comment` at most 1,000 characters. The event must have
+  another organizer ("The owner organized event <id>, so there is no
+  invitation to answer.") and invite the owner (its `self` attendee,
+  else one of the owner's own addresses; "Event <id> on calendar <id>
+  does not invite the owner, so there is no invitation to answer.").
+  The card is titled "Answer yes|no|maybe to "<title>"", with fields
+  Calendar, Title, When, Organizer, "Your response" ("No (declined)")
+  and Comment; its recipient is the organizer. `Run` is `PATCH
+  calendars/{id}/events/{id}?sendUpdates=all` with
+  `{"attendeesOmitted": true, "attendees": [{"email": <the owner's
+  attendee>, "responseStatus": ..., "comment": ...}]}`: the owner's
+  entry alone, which Calendar takes as that participant's answer and
+  no change to the rest. Audit "answered <response> to event <id> on
+  calendar <id>; told <organizer>".
 
 #### Reading documents
 

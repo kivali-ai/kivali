@@ -813,9 +813,7 @@ func TestCreateEvent(t *testing.T) {
 	calRefused(t, g, calWrites(), "create_event", `{`+day+`"start":"tomorrow","end":"2026-10-27"}`, "")
 	calRefused(t, g, calWrites(), "create_event", `{`+day+`"start":"2026-10-27T09:00:00Z","end":"2026-10-27T10:00:00Z","all_day":true}`, "An all-day event's start and end are dates, such as 2026-10-27.")
 	calRefused(t, g, calWrites(), "create_event", `{`+day+`"start":"2026-10-27T09:00:00Z","end":"2026-10-27T10:00:00Z","time_zone":"London time"}`, "")
-	if words := calFailed(t, g, calWrites(), "create_event", `{`+day+`"start":"2026-10-27","end":"2026-10-27","attendees":["alice@example.org"]}`); words != sendNotAvailable {
-		t.Errorf("an invitation: %q", words)
-	}
+	calRefused(t, g, calWrites(), "create_event", `{`+day+`"start":"2026-10-27","end":"2026-10-27","attendees":["alice@example.org"]}`, calSendNotGivenText)
 	if got := f.requests()[before:]; slices.ContainsFunc(got, func(r fakeCalRequest) bool { return r.method != "GET" }) {
 		t.Errorf("refused creates and an invitation were written: %v", got)
 	}
@@ -893,18 +891,14 @@ func TestUpdateEvent(t *testing.T) {
 
 	writesBefore := len(f.written())
 	for _, list := range []string{`["alice@example.org"]`, `["dana@example.com","bob@example.com"]`, `[]`} {
-		if words := calFailed(t, g, calWrites(), "update_event", `{`+ev+`"title":"x","attendees":`+list+`}`); words != sendNotAvailable {
-			t.Errorf("attendees %s: %q", list, words)
-		}
+		calRefused(t, g, calWrites(), "update_event", `{`+ev+`"title":"x","attendees":`+list+`}`, calSendNotGivenText)
 	}
 	for _, call := range []string{
 		`{"calendar_id":"dana@example.com","event_id":"ev6","title":"x"}`,
 		`{"calendar_id":"dana@example.com","event_id":"ev6","start":"2026-10-28T11:00:00Z","end":"2026-10-28T12:00:00Z","attendees":["alice@example.org","dana@example.com"]}`,
 		`{"calendar_id":"dana@example.com","event_id":"ev5","location":"Desk"}`,
 	} {
-		if words := calFailed(t, g, calWrites(), "update_event", call); words != sendNotAvailable {
-			t.Errorf("%s: %q", call, words)
-		}
+		calRefused(t, g, calWrites(), "update_event", call, calSendNotGivenText)
 	}
 	calRefused(t, g, calWrites(), "update_event", `{`+ev+`"start":"2026-10-31T09:00:00Z"}`, "")
 	calRefused(t, g, calWrites(), "update_event", `{`+ev+`"attendees":["dana@example.com"]}`,
@@ -941,9 +935,7 @@ func TestDeleteEvent(t *testing.T) {
 		`{"id":"ev8","summary":"Hold","start":{"date":"2026-10-27"},"end":{"date":"2026-10-28"},"organizer":{"email":"dana@example.com","self":true},"extendedProperties":{"private":{"kivali":"riley"}}}`,
 		`{"id":"ev10","summary":"Shared hold","start":{"date":"2026-10-27"},"end":{"date":"2026-10-28"},"organizer":{"email":"dana@example.com","self":true},
 		  "attendees":[{"email":"alice@example.org"}],"extendedProperties":{"private":{"kivali":"riley"}}}`)
-	if words := calFailed(t, g, calWrites(), "delete_event", `{"calendar_id":"dana@example.com","event_id":"ev10"}`); words != sendNotAvailable {
-		t.Errorf("a marked event inviting alice: %q", words)
-	}
+	calRefused(t, g, calWrites(), "delete_event", `{"calendar_id":"dana@example.com","event_id":"ev10"}`, calSendNotGivenText)
 	if got := f.written(); len(got) != 0 || f.eventOn("dana@example.com", "ev10") == nil {
 		t.Errorf("an event inviting alice was deleted: %v", got)
 	}

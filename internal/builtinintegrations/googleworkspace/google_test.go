@@ -120,10 +120,10 @@ func TestManifest(t *testing.T) {
 		}
 	}
 	// A call that invites people, or changes or deletes an event that
-	// invites others, is a send, which this version does not run: the
-	// owner's words for the three actions that may make one say so.
+	// invites others, is a send, which waits for the owner's approval:
+	// the owner's words for the three actions that may make one say so.
 	for _, tl := range m.Tools {
-		if (tl.Name == "create_event" || tl.Name == "update_event" || tl.Name == "delete_event") && !strings.Contains(tl.Description, "not available in this version of Kivali") {
+		if (tl.Name == "create_event" || tl.Name == "update_event" || tl.Name == "delete_event") && !strings.Contains(tl.Description, "waits for your approval") {
 			t.Errorf("%s: %q", tl.Name, tl.Description)
 		}
 	}
@@ -168,7 +168,7 @@ func TestToolsFollowTheSwitches(t *testing.T) {
 	}
 	gmailWrite := []string{"create_draft", "delete_draft", "modify_labels"}
 	gmailSend := []string{"send_email", "send_draft"}
-	calendar := []string{"list_calendars", "list_events", "get_event", "find_free_time", "create_event", "update_event", "delete_event"}
+	calendar := []string{"list_calendars", "list_events", "get_event", "find_free_time", "create_event", "update_event", "delete_event", "respond_to_invitation"}
 	docs := []string{"search_documents", "get_document", "list_comments", "create_document", "append_to_document", "replace_text"}
 	if got := names(all); !slices.Equal(got, slices.Concat(gmailRead, gmailWrite, gmailSend, calendar, docs)) {
 		t.Errorf("every switch: %v", got)
@@ -209,7 +209,7 @@ func TestCallRefuses(t *testing.T) {
 	delete(noToken.Fields, CredentialKey)
 	refused("list_labels", reads, noToken, notSignedIn)
 
-	res, err := g.Call(context.Background(), agent(map[string]any{"calendar_send": true}), testConn(), "respond_to_invitation", nil)
+	res, err := g.Call(context.Background(), agent(map[string]any{"docs_send": true}), testConn(), "add_comment", nil)
 	if err != nil || res == nil || !res.IsError || len(res.Content) != 1 || res.Content[0] != "This action is not available in this version of Kivali." {
 		t.Errorf("an action this version does not run: %+v, %v", res, err)
 	}
