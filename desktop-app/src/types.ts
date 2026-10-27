@@ -167,6 +167,24 @@ export interface Team {
   /** A team on this computer: the memory the shell would let it use beside
    *  the teams running now (the memory dialog's "this Mac has 2 GB free"); null elsewhere. */
   memory_free_mb: number | null;
+  /** Downloads from the team's window, oldest first (src-tauri/src/downloads.rs):
+   *  what its downloads card (#/downloads/<id>) draws. */
+  downloads: Download[];
+}
+
+/** One download from a team's window, as its card draws it. */
+export interface Download {
+  id: number;
+  /** The file's name, as saved. */
+  name: string;
+  /** The folder it is saved in ("Downloads"). */
+  folder: string;
+  state: "downloading" | "done" | "failed";
+  received: number;
+  /** The length the server gave, or null (the bar is then indeterminate). */
+  total: number | null;
+  /** Why it failed, in the card's words. */
+  error: string | null;
 }
 
 export interface OwnerSignin {

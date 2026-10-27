@@ -19,6 +19,8 @@ Each team opens in its own window, showing that team's Kivali. When a team canno
 
 **Open in browser** (Team menu, ⇧⌘B, or the team's **Overview** in Settings) opens the running team in your usual browser on this computer.
 
+**Downloads.** When you download a file from a team (an attachment, a project file, a backup), Kivali Desktop first asks where to save it, with the file's name filled in and your Downloads folder chosen. The download then shows in a card at the top right of the team's window: the file's name, how far it has got, and **Cancel**. Once saved, the card says where the file went, with **Show in folder**, and goes away after a few seconds; a download that could not finish says why until you dismiss it. Nothing is saved without asking, and a cancelled or failed download leaves no file behind.
+
 **Sign in to an integration.** When an integration's **Install**, or the **Fix** of its **Sign-in** requirement, sends you to the service, Kivali Desktop opens your usual browser, already signed in to the team, rather than signing in inside the team's window, which many services refuse. Approve Kivali on the service's page; the team's window says **Signed in** within a few seconds. A team elsewhere cannot hand that sign-in to your browser, so its window signs in with a code instead when the integration has one; when it does not, the page gives the team's address to open in your browser and sign in there. [Integrations](integrations.md#in-your-browser) has the redirect address to register for a team on this computer.
 
 Closing a window does not stop anything. Kivali keeps running in the menu bar on macOS, and in the notification area on Windows.
@@ -73,7 +75,8 @@ When Kivali is not the app in front, it notifies you when:
 
 - a team stopped unexpectedly;
 - Claude signed a team out, so its agents cannot work until you sign in again;
-- a team finished updating, or could not update.
+- a team finished updating, or could not update;
+- a download finished, or could not.
 
 Click a notification to go straight to the team or the setting it concerns.
 

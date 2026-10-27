@@ -77,6 +77,7 @@ function team(o: Partial<Team> & Pick<Team, "id" | "name">): Team {
     files: null,
     signed_in_as: null,
     memory_free_mb: 8192,
+    downloads: [],
     ...o,
   };
 }
@@ -239,6 +240,18 @@ const FIXTURES: Record<string, Fixture> = {
     preset: { connect: { address: "https://dana-imac.local:8443", phase: "found", found: { origin: "https://dana-imac.local:8443", name: "Plainsong", host: "dana-imac.local" } } },
   },
   "team-paused": { hash: "#/team/home" },
+  // The downloads card: one of each state the shell reports.
+  "team-downloads": {
+    hash: "#/downloads/plainsong",
+    snap: (s) => {
+      s.teams[0].downloads = [
+        { id: 1, name: "hosting-quote.pdf", folder: "Downloads", state: "downloading", received: 1258291, total: 4194304, error: null },
+        { id: 2, name: "kivali-backup-plainsong-20261026T190412Z.zip", folder: "Downloads", state: "downloading", received: 150 * 1024 ** 2, total: null, error: null },
+        { id: 3, name: "plan.pdf", folder: "Desktop", state: "done", received: 86016, total: 86016, error: null },
+        { id: 4, name: "notes.md", folder: "Downloads", state: "failed", received: 0, total: null, error: "The connection was lost." },
+      ];
+    },
+  },
   "team-waking": {
     hash: "#/team/home",
     snap: (s) => {
@@ -359,7 +372,9 @@ export function installMock() {
     const frame = () => {
       const app = document.getElementById("app")!;
       const page = location.hash.split("/")[1];
-      const [w, hgt] = page === "settings" ? [880, 600] : page === "team" ? [1200, 720] : [720, 600];
+      // The downloads card's webview is sized to its rows (src-tauri/src/downloads.rs card_size).
+      const rows = snap.teams.find((t) => t.id === decodeURIComponent(location.hash.split("/")[2] ?? ""))?.downloads.length ?? 1;
+      const [w, hgt] = page === "settings" ? [880, 600] : page === "team" ? [1200, 720] : page === "downloads" ? [360, 16 + 64 * rows] : [720, 600];
       app.style.width = `${w}px`;
       app.style.height = `${hgt}px`;
       app.style.outline = "1px solid rgba(127,127,127,.4)";

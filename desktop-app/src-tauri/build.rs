@@ -46,6 +46,9 @@ const COMMANDS: &[&str] = &[
     "open_config_dir",
     "save_diagnostics",
     "open_external",
+    "cancel_download",
+    "dismiss_download",
+    "reveal_download",
 ];
 
 /// The one desktop version is tauri.conf.json's. It becomes APP_VERSION

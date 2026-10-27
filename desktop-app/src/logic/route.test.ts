@@ -15,14 +15,16 @@ describe("parseRoute", () => {
     expect(parseRoute("#/settings/team/abc/devices")).toEqual({ page: "settings", section: "team", id: "abc", tab: "devices" });
     expect(parseRoute("#/settings/team/abc/nope")).toEqual({ page: "settings", section: "team", id: "abc", tab: "overview" });
     expect(parseRoute("#/team/home")).toEqual({ page: "team", id: "home" });
+    expect(parseRoute("#/downloads/home")).toEqual({ page: "downloads", id: "home" });
   });
   it("falls back to the welcome screen", () => {
     expect(parseRoute("")).toEqual({ page: "setup", mode: "welcome" });
     expect(parseRoute("#/nope")).toEqual({ page: "setup", mode: "welcome" });
     expect(parseRoute("#/settings")).toEqual({ page: "settings", section: "general" });
+    expect(parseRoute("#/downloads")).toEqual({ page: "setup", mode: "welcome" });
   });
   it("round-trips", () => {
-    for (const h of ["#/setup/new", "#/setup/new/home-3f2a", "#/connect", "#/settings/team/x%20y/mac", "#/team/home", "#/settings/advanced"])
+    for (const h of ["#/setup/new", "#/setup/new/home-3f2a", "#/connect", "#/settings/team/x%20y/mac", "#/team/home", "#/downloads/home", "#/settings/advanced"])
       expect(routeHash(parseRoute(h))).toBe(h);
   });
   it("titles the setup window", () => {

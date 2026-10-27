@@ -52,6 +52,7 @@ export function team(o: Partial<Team> = {}): Team {
     files: null,
     signed_in_as: null,
     memory_free_mb: null,
+    downloads: [],
     ...o,
   };
 }

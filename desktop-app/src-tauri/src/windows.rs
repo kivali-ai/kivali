@@ -25,6 +25,7 @@
 use crate::connectreturn;
 use crate::platform;
 use crate::shell::{self, Shell};
+use crate::downloads;
 use crate::signin;
 use crate::teams::{Place, Team};
 use crate::view::TeamState;
@@ -42,6 +43,7 @@ pub const SETTINGS: &str = "settings";
 const TEAM_PREFIX: &str = "team-";
 const WEB_PREFIX: &str = "web-";
 const PAGE_PREFIX: &str = "page-";
+const DOWNLOADS_PREFIX: &str = "downloads-";
 const BROWSER_PREFIX: &str = "browser-";
 /// Hex digits of the path's hash in a browser window's label.
 const BROWSER_HASH_LEN: usize = 16;
@@ -54,6 +56,9 @@ pub fn web_label(id: &str) -> String {
 }
 fn page_label(id: &str) -> String {
     format!("{PAGE_PREFIX}{id}")
+}
+fn downloads_label(id: &str) -> String {
+    format!("{DOWNLOADS_PREFIX}{id}")
 }
 
 /// A team's browser window for the page at `path`:
@@ -76,6 +81,7 @@ pub fn team_of(label: &str) -> Option<&str> {
         .strip_prefix(TEAM_PREFIX)
         .or_else(|| label.strip_prefix(WEB_PREFIX))
         .or_else(|| label.strip_prefix(PAGE_PREFIX))
+        .or_else(|| label.strip_prefix(DOWNLOADS_PREFIX))
         .or_else(|| {
             let rest = label.strip_prefix(BROWSER_PREFIX)?;
             let (hash, id) = (rest.get(..BROWSER_HASH_LEN)?, rest.get(BROWSER_HASH_LEN..)?.strip_prefix('-')?);
@@ -105,7 +111,7 @@ fn closes_browser(url: &Url, pinned: Option<&url::Origin>) -> bool {
 
 /// Webviews that run the bundled pages and may call the app's commands.
 pub fn is_page_label(label: &str) -> bool {
-    label == SETUP || label == SETTINGS || label.starts_with(PAGE_PREFIX)
+    label == SETUP || label == SETTINGS || label.starts_with(PAGE_PREFIX) || label.starts_with(DOWNLOADS_PREFIX)
 }
 
 /// What a team's web view does with a navigation.
@@ -834,8 +840,8 @@ fn create_team_window(app: &AppHandle, t: &Team, visible: bool) -> Option<Window
     let gate = Arc::new(Mutex::new(BrowserGate::default()));
     gate.lock().unwrap().focus(true, Instant::now());
     let (gate_nav, gate_new, gate_focus) = (gate.clone(), gate.clone(), gate);
-    let (app_nav, app_new, app_load) = (app.clone(), app.clone(), app.clone());
-    let (id_nav, id_new, id_load) = (id.clone(), id.clone(), id.clone());
+    let (app_nav, app_new, app_load, app_dl) = (app.clone(), app.clone(), app.clone(), app.clone());
+    let (id_nav, id_new, id_load, id_dl) = (id.clone(), id.clone(), id.clone(), id.clone());
     let (pin_nav, pin_new) = (pin.clone(), pin.clone());
     let watched = Arc::new(AtomicBool::new(false));
     let watched_load = watched.clone();
@@ -870,6 +876,9 @@ fn create_team_window(app: &AppHandle, t: &Team, visible: bool) -> Option<Window
             open_new_window(&app_new, &id_new, &pin_new, &gate_new, url);
             NewWindowResponse::Deny
         })
+        // A download is the shell's to save, never the web view's
+        // (downloads.rs).
+        .on_download(move |webview, event| crate::downloads::on_download(&app_dl, &id_dl, &webview, event))
         .on_page_load(move |_w, payload| {
             if payload.event() == PageLoadEvent::Started {
                 web_load(&id_load, |w| w.started(Instant::now()));
@@ -931,9 +940,69 @@ fn create_team_window(app: &AppHandle, t: &Team, visible: bool) -> Option<Window
                 crate::teamapi::refresh(&app2, &id);
             }
         }
+        tauri::WindowEvent::Resized(_) => place_downloads(&app2, &w2, &id),
         _ => {}
     });
     Some(window)
+}
+
+/// The downloads card over a team's web app (downloads.rs): while the
+/// web app shows and the team has downloads, a child webview at the top
+/// right sized to its rows, above the other two; hidden otherwise. It
+/// is made the first time it is needed. On the main thread, as
+/// [`sync_team`] is.
+fn sync_downloads(app: &AppHandle, window: &Window, id: &str, web_shown: bool) {
+    let label = downloads_label(id);
+    let n = app.state::<Shell>().downloads.lock().unwrap().count(id);
+    let existing = app.get_webview(&label);
+    if n == 0 || !web_shown {
+        if let Some(w) = existing {
+            let _ = w.hide();
+        }
+        return;
+    }
+    let Some((pos, size)) = card_place(window, n) else { return };
+    match existing {
+        Some(w) => {
+            let _ = w.set_position(pos);
+            let _ = w.set_size(size);
+            let _ = w.show();
+        }
+        None => {
+            let card = WebviewBuilder::new(label, WebviewUrl::App(format!("index.html#/downloads/{id}").into()))
+                .on_navigation(page_may_load)
+                .on_page_load(heal_page_loads())
+                .focused(false);
+            match window.add_child(card, pos, size) {
+                Ok(w) => {
+                    platform::contain_keys(&w);
+                    crate::menus::hook_window_shortcuts(app, &w, id);
+                }
+                Err(e) => eprintln!("kivali: cannot show {id}'s downloads: {e}"),
+            }
+        }
+    }
+}
+
+/// Where the card sits in `window` with `n` rows: the top right corner,
+/// inset by [`downloads::CARD_INSET`].
+fn card_place(window: &Window, n: usize) -> Option<(LogicalPosition<f64>, LogicalSize<f64>)> {
+    let scale = window.scale_factor().ok()?;
+    let inner = window.inner_size().ok()?.to_logical::<f64>(scale);
+    let (width, height) = downloads::card_size(n);
+    let x = (inner.width - width - downloads::CARD_INSET).max(0.0);
+    Some((LogicalPosition::new(x, downloads::CARD_INSET), LogicalSize::new(width, height)))
+}
+
+/// The window was resized: the card, if it has been made, stays at the
+/// top right.
+fn place_downloads(app: &AppHandle, window: &Window, id: &str) {
+    let Some(w) = app.get_webview(&downloads_label(id)) else { return };
+    let n = app.state::<Shell>().downloads.lock().unwrap().count(id);
+    if let Some((pos, size)) = card_place(window, n.max(1)) {
+        let _ = w.set_position(pos);
+        let _ = w.set_size(size);
+    }
 }
 
 /// A new window a team's page asks for (`window.open`, a link with a
@@ -989,11 +1058,14 @@ fn show_browser(app: &AppHandle, id: &str, url: Url) {
     let gate = Arc::new(Mutex::new(BrowserGate::default()));
     gate.lock().unwrap().focus(true, Instant::now());
     let (gate_nav, gate_new, gate_focus) = (gate.clone(), gate.clone(), gate);
-    let (app_nav, app_new) = (app.clone(), app.clone());
+    let (app_nav, app_new, app_dl) = (app.clone(), app.clone(), app.clone());
     let (pin_nav, pin_new) = (pin.clone(), pin.clone());
-    let (label_nav, id_new) = (label.clone(), id.to_string());
+    let (label_nav, id_new, id_dl) = (label.clone(), id.to_string(), id.to_string());
     let blank = Url::parse("about:blank").expect("a constant URL");
     let built = WebviewWindowBuilder::new(app, &label, WebviewUrl::External(blank))
+        // A download from here is saved as one from the team's window
+        // is, and shows on that window's card (downloads.rs).
+        .on_download(move |webview, event| crate::downloads::on_download(&app_dl, &id_dl, &webview, event))
         .title("Browser")
         .inner_size(1320.0, 900.0)
         .resizable(true)
@@ -1339,6 +1411,8 @@ pub fn sync_team(app: &AppHandle, t: &Team) -> bool {
         let _ = page.show();
         let _ = web.hide();
     }
+    let web_shown = shows_web(&sh, t) && web_load(&t.id, |w| w.loaded);
+    sync_downloads(app, &window, &t.id, web_shown);
     sent
 }
 
@@ -2108,7 +2182,7 @@ mod tests {
         assert_eq!(team_of("web-x"), Some("x"));
         assert_eq!(team_of("page-x"), Some("x"));
         assert_eq!(team_of("settings"), None);
-        assert!(is_page_label("setup") && is_page_label("settings") && is_page_label("page-x"));
+        assert!(is_page_label("setup") && is_page_label("settings") && is_page_label("page-x") && is_page_label("downloads-x"));
         assert!(!is_page_label("web-x") && !is_page_label("team-x"));
         assert_eq!(setup_title("welcome"), "Welcome to Kivali");
         assert_eq!(setup_title("new"), "New team");

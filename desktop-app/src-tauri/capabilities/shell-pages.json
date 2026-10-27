@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "shell-pages",
-  "description": "IPC for the pages bundled in the app (setup, settings, and each team window's Kivali page), and nowhere else. There is deliberately no `remote` entry and no team `web-*` webview: a team's served web app, here or elsewhere, gets no IPC at all (docs/developers/desktop-app.md, Capabilities).",
+  "description": "IPC for the pages bundled in the app (setup, settings, each team window's Kivali page and its downloads card), and nowhere else. There is deliberately no `remote` entry and no team `web-*` webview: a team's served web app, here or elsewhere, gets no IPC at all (docs/developers/desktop-app.md, Capabilities).",
   "local": true,
   "windows": [
     "setup",
@@ -10,7 +10,8 @@
   "webviews": [
     "setup",
     "settings",
-    "page-*"
+    "page-*",
+    "downloads-*"
   ],
   "permissions": [
     "core:event:allow-listen",
@@ -56,6 +57,9 @@
     "allow-open-logs",
     "allow-open-config-dir",
     "allow-save-diagnostics",
-    "allow-open-external"
+    "allow-open-external",
+    "allow-cancel-download",
+    "allow-dismiss-download",
+    "allow-reveal-download"
   ]
 }
