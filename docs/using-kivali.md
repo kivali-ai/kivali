@@ -27,7 +27,7 @@ Everything waiting on you is in **Needs you** on Home. Expand an item to act on 
 | **Install software** | Open it to see each package, with its version and a one-line description from Debian, and why the agent wants them, then **Install** or **Deny**, with an optional note. |
 | **Hire**, **Offboard**, **Reorg**, **Role update**, **Handbook update** | Choose **Review** to open the proposal page with the full documents, then approve or deny with an optional note. |
 | **Install an integration** | Choose **Review** to open the version's install screen, then **Approve and install** or **Reject**. See [Integrations](#integrations). |
-| **Integration action** | An agent's call that reaches other people, such as an email, waits for you. Read whom it reaches, every field as it will go and, when the agent read outside mail or documents first, the marked warning, then **Approve** or **Deny**, with an optional note. Unanswered within a day, nothing is done. See [Calls that wait for you](integrations.md#calls-that-wait-for-you). |
+| **Integration action** | An agent's call that reaches other people, such as an email, waits for you. Read whom it reaches, every field as it will go and, when the agent read outside mail or documents first, the marked warning, then **Approve** or **Deny**, with an optional note. Unanswered within a day, nothing is done. No action of this version of Kivali uses this yet; the Google Workspace Send actions arrive in a later version. See [Calls that wait for you](integrations.md#calls-that-wait-for-you). |
 | **Assigned to you** | Set **Resolution** to **Done** or **Dropped**, write the **Outcome**, then **Hand back**. |
 | **Needs help** | An agent stopped and needs you. **Open chat** to see why. |
 
