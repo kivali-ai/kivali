@@ -42,7 +42,8 @@ func TestManifest(t *testing.T) {
 	}
 	wantScopes := []string{
 		"https://www.googleapis.com/auth/gmail.modify", "https://www.googleapis.com/auth/calendar.events",
-		"https://www.googleapis.com/auth/calendar.readonly", "https://www.googleapis.com/auth/documents",
+		"https://www.googleapis.com/auth/calendar.readonly", "https://www.googleapis.com/auth/calendar.acls.readonly",
+		"https://www.googleapis.com/auth/documents",
 		"https://www.googleapis.com/auth/drive.readonly", "https://www.googleapis.com/auth/drive.file",
 	}
 	if !slices.Equal(c.Scopes, wantScopes) {

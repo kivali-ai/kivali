@@ -14,8 +14,10 @@
 //
 // The access form (access.go) has three switches per service, one per
 // bucket: read (sees what is in the account), write (changes something
-// in the account that no other person is told about) and send
-// (anything that makes Google deliver something to another person),
+// in the account that no other person is told about or can see) and
+// send (anything that makes Google deliver something to another
+// person, or changes a calendar or a document another person can see,
+// shared.go),
 // and per service the labels, calendars or folders an agent may use,
 // which Choices lists live. Every action belongs to one bucket, and an
 // agent is given it only while its access has that switch on. The
@@ -69,14 +71,17 @@ const (
 // scopes are what the sign-in asks Google for: Gmail's modify alone,
 // which reads, composes, sends and changes the labels of mail (and
 // takes nothing from its settings); Calendar's events and calendars
-// read; Docs; Drive read, for finding documents and folders; and
-// Drive's files Kivali makes, for creating a document with Kivali's
-// mark, in its folder, and commenting on the documents Kivali made,
-// the only ones Drive takes a comment on under it.
+// read, and its sharing read, for who sees a change to a calendar
+// (calendarShare); Docs; Drive read, for finding documents and folders
+// and who they are shared with (fileShare); and Drive's files Kivali
+// makes, for creating a document with Kivali's mark, in its folder, and
+// commenting on the documents Kivali made, the only ones Drive takes a
+// comment on under it.
 var scopes = []string{
 	"https://www.googleapis.com/auth/gmail.modify",
 	"https://www.googleapis.com/auth/calendar.events",
 	"https://www.googleapis.com/auth/calendar.readonly",
+	"https://www.googleapis.com/auth/calendar.acls.readonly",
 	"https://www.googleapis.com/auth/documents",
 	"https://www.googleapis.com/auth/drive.readonly",
 	"https://www.googleapis.com/auth/drive.file",

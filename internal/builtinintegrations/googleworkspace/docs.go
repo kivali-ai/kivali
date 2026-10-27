@@ -72,8 +72,8 @@ var docsActions = []action{
 	},
 	{
 		name:             actionCreateDocument,
-		description:      "Create a Google Doc in the owner's Drive titled title, with body as its text when given, and answer its id. " + markdownWords + " folder_id puts it in a folder: when your access names folders, it must be one of them or inside one, and left out the document goes in the first of them. Kivali marks the document as one it made, so you may change it later. It tells no one.",
-		ownerDescription: "Create a document, marked as made by Kivali. Tells no one.",
+		description:      "Create a Google Doc in the owner's Drive titled title, with body as its text when given, and answer its id. " + markdownWords + " folder_id puts it in a folder: when your access names folders, it must be one of them or inside one, and left out the document goes in the first of them. Kivali marks the document as one it made, so you may change it later. It tells no one. Making one in a folder the owner shares with anyone else" + docSharedTail,
+		ownerDescription: "Create a document, marked as made by Kivali. Tells no one; one in a folder shared with others waits for your approval.",
 		schema: schema(map[string]any{
 			"title":     map[string]string{"type": "string", "description": "the document's title"},
 			"body":      map[string]string{"type": "string", "description": "the document's text, in the Markdown described"},
@@ -84,8 +84,8 @@ var docsActions = []action{
 	},
 	{
 		name:             actionAppendToDocument,
-		description:      "Add text at the end of the first tab of a document the owner owns or Kivali made. " + markdownWords + " It changes nothing else in the document and tells no one.",
-		ownerDescription: "Add text at the end of the first tab of a document you own or the agent created. Tells no one.",
+		description:      "Add text at the end of the first tab of a document the owner owns or Kivali made. " + markdownWords + " It changes nothing else in the document and tells no one. Adding to a document the owner shares with anyone else" + docSharedTail,
+		ownerDescription: "Add text at the end of the first tab of a document you own or the agent created. Tells no one; a document shared with others waits for your approval.",
 		schema: schema(map[string]any{
 			"document_id": map[string]string{"type": "string", "description": "the document's id"},
 			"text":        map[string]string{"type": "string", "description": "the text to add, in the Markdown described"},
@@ -95,8 +95,8 @@ var docsActions = []action{
 	},
 	{
 		name:             actionReplaceText,
-		description:      "Replace every occurrence of find with replace in a document the owner owns or Kivali made, capitals ignored unless match_case is true, and answer how many were replaced. It replaces in every tab and also in the document's headers, footers and footnotes, which get_document does not read. An empty replace deletes them. It tells no one.",
-		ownerDescription: "Replace text in a document you own or the agent created, its headers, footers and footnotes included. Tells no one.",
+		description:      "Replace every occurrence of find with replace in a document the owner owns or Kivali made, capitals ignored unless match_case is true, and answer how many were replaced. It replaces in every tab and also in the document's headers, footers and footnotes, which get_document does not read. An empty replace deletes them. It tells no one. Replacing in a document the owner shares with anyone else" + docSharedTail,
+		ownerDescription: "Replace text in a document you own or the agent created, its headers, footers and footnotes included. Tells no one; a document shared with others waits for your approval.",
 		schema: schema(map[string]any{
 			"document_id": map[string]string{"type": "string", "description": "the document's id"},
 			"find":        map[string]string{"type": "string", "description": "the text to find, exactly as written"},

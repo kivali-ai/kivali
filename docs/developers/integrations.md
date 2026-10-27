@@ -4086,8 +4086,9 @@ so each service's actions change apart:
 | `calendar_write.go` | Calendar's changes: creating, changing and deleting events, `isSend`, the sends among them and answering an invitation |
 | `docs.go` | Docs' actions and reading: search, a document's pages, comments, the folders a document is within, the options of `docs_folders` |
 | `docs_text.go` | the text a document becomes: its framing, its structure walked into text, hidden runs, a page |
-| `docs_write.go` | Docs' writing: the owner-only rule, the requests that change Google, the Markdown a write takes |
+| `docs_write.go` | Docs' writing: the owner-only rule, the requests that change Google, the Markdown a write takes, a write to a shared document held for the owner |
 | `docs_send.go` | Docs' sends: a comment and a reply held for the owner, the mentions a comment makes |
+| `shared.go` | who besides the owner can see a calendar (`calendarShare`, its ACL) or a document or folder (`fileShare`, its permissions), their words on a card, and `checkShared` |
 
 - **The manifest**: `kivali.connection.method: setup`, handing over
   to a browser sign-in (`setup.then: browser`) at Google's endpoints
@@ -4100,10 +4101,12 @@ so each service's actions change apart:
   `gmail.modify` alone for Gmail (it reads, composes, sends and
   changes the labels of mail, which `messages.modify` needs, and
   covers `messages.send`),
-  `calendar.events`, `calendar.readonly`, `documents`,
-  `drive.readonly` and `drive.file` (each under
+  `calendar.events`, `calendar.readonly`, `calendar.acls.readonly`,
+  `documents`, `drive.readonly` and `drive.file` (each under
   `https://www.googleapis.com/auth/`), never Gmail's settings:
-  `drive.readonly` finds documents and folders, and `drive.file`
+  `calendar.acls.readonly` reads who a calendar is shared with
+  ([Calendar](#calendar)), `drive.readonly` finds documents and
+  folders and reads who they are shared with, and `drive.file`
   lets Drive make a document with Kivali's mark, in its folder, and
   post a comment, which Drive takes under it only on a file Kivali's
   OAuth client created ([Commenting](#commenting)). The
@@ -4186,12 +4189,17 @@ everything.
 | `send_to` | list | May send to: addresses, or `*@domain` |
 
 Read is what sees inside the owner's account, write what changes
-something there that no other person is told about, and send anything
-that makes Google deliver something to another person, which always
-waits for the owner's approval, as a held call: `send_email`,
+something there that no other person is told about or can see, and
+send anything that makes Google deliver something to another person,
+or changes a calendar or a document another person can see, which
+always waits for the owner's approval, as a held call: `send_email`,
 `send_draft`, `respond_to_invitation`, `add_comment`,
-`reply_to_comment`, and a `create_event`, `update_event` or
-`delete_event` call `isSend` finds is a send. The send switch decides
+`reply_to_comment`, a `create_event`, `update_event` or
+`delete_event` call `isSend` finds is a send or that is on a calendar
+shared with others, and a `create_document` into a folder, an
+`append_to_document` or a `replace_text` on a document, shared with
+others ([Shared calendars and
+documents](#shared-calendars-and-documents)). The send switch decides
 only whether the agent may ask; each send's `Hold.Switch` names it
 (`gmail_send`, `calendar_send` or `docs_send`), so an approval after
 the owner turned it off is refused and the call keeps waiting ([Held
@@ -4230,10 +4238,10 @@ bucket's switch:
 | `gmail_write` | `create_draft`, `delete_draft`, `modify_labels` |
 | `gmail_send` | `send_email`, `send_draft` |
 | `calendar_read` | `list_calendars`, `list_events`, `get_event`, `find_free_time` |
-| `calendar_write` | `create_event`, `update_event`, `delete_event` (a call that sets or changes who is invited, or changes or deletes an event that has another attendee or organizer, is a send, which needs `calendar_send` too and is held for the owner) |
+| `calendar_write` | `create_event`, `update_event`, `delete_event` (a call that sets or changes who is invited, changes or deletes an event that has another attendee or organizer, or is on a calendar shared with others, is a send, which needs `calendar_send` too and is held for the owner) |
 | `calendar_send` | `respond_to_invitation` |
 | `docs_read` | `search_documents`, `get_document`, `list_comments` |
-| `docs_write` | `create_document`, `append_to_document`, `replace_text` |
+| `docs_write` | `create_document`, `append_to_document`, `replace_text` (a call on a document, or into a folder, shared with others is a send, which needs `docs_send` too and is held for the owner) |
 | `docs_send` | `add_comment`, `reply_to_comment` |
 
 `Tools` gives an agent each action whose switch its access has on,
@@ -4269,8 +4277,14 @@ captured:
 | `update_event` as a send | Change "<title>", telling N people | `calendar_send` | `PATCH` of the changes captured, `sendUpdates=all`, `If-Match` the etag read |
 | `delete_event` as a send | Delete "<title>", telling N people | `calendar_send` | `DELETE`, `sendUpdates=all`, `If-Match` the etag read |
 | `respond_to_invitation` | Answer yes, no or maybe to "<title>" | `calendar_send` | `PATCH` of the owner's attendee entry alone, `sendUpdates=all` |
+| `create_event` on a shared calendar, inviting no one else | Create "<title>" on a shared calendar | `calendar_send` | `POST` of the event captured, `sendUpdates=none` |
+| `update_event` on a shared calendar, as a write otherwise | Change "<title>" on a shared calendar | `calendar_send` | `PATCH` of the changes captured, `sendUpdates=none`, `If-Match` the etag read |
+| `delete_event` on a shared calendar, as a write otherwise | Delete "<title>" from a shared calendar | `calendar_send` | `DELETE`, `sendUpdates=none`, `If-Match` the etag read |
 | `add_comment` | Comment on "<name>" | `docs_send` | `comments.create` of the text captured |
 | `reply_to_comment` | Reply to a comment on "<name>" | `docs_send` | `replies.create` of the text captured |
+| `create_document` into a shared folder | Create "<title>" in a shared folder | `docs_send` | `files.create` in the folder, then `batchUpdate` of the text captured, as the write does |
+| `append_to_document` on a shared document | Add to "<name>", a shared document | `docs_send` | reads the end of the first tab, then `batchUpdate` of the text captured there, against that revision |
+| `replace_text` on a shared document | Replace text in "<name>", a shared document | `docs_send` | `replaceAllText` of the find and replace captured |
 
 A `Run` that finds what it acts on gone (404 or 410), or, for
 `update_event` and `delete_event`, changed since it was read (412),
@@ -4805,7 +4819,11 @@ owner's own calendars: ...", audited as `calendar <id> is not one of
 the owner's own`, before an event is read. Every write sends
 `sendUpdates=none`, so Google emails no one; every send is a held call
 ([Held calls](#held-calls)) whose `Run` sends `sendUpdates=all`, so
-Google tells everyone it reaches.
+Google tells everyone it reaches. `create_event`, `update_event` and
+`delete_event` read the calendar's ACL before they change anything,
+and one on a calendar shared with others is held too, its `Run`
+sending `sendUpdates=none` unless the call is a send of its own
+([Shared calendars and documents](#shared-calendars-and-documents)).
 
 - `create_event` is `POST calendars/{id}/events` with `summary`,
   `start`, `end`, `description`, `location`, `attendees` when they are
@@ -5079,14 +5097,15 @@ not answer says Kivali cannot tell whether the document changed. Each
 write sets its audit before its request ("creating a document in
 folder <id>", "adding N characters to the end of document <id>",
 "replacing text in document <id>"), which an error result keeps,
-followed by its words. A write to a document shared with others
-(`shared`), or a document made in a folder shared with others, ends
-its audit "(shared with others)".
+followed by its words. A write to a document shared with others, or a
+document made in a folder shared with others, is held for the owner
+([Shared calendars and documents](#shared-calendars-and-documents)).
 
 - `create_document(title, body?, folder_id?)` checks `folder_id` first
   (a folder, within the access's folders, else refused), or takes the
-  access's first folder, reading the folder's `shared` either way, then
-  makes the document through Drive, `POST
+  access's first folder, reading the folder's name and who it is
+  shared with (`fileShare`) either way, then makes the document
+  through Drive, `POST
   /drive/v3/files?fields=id&supportsAllDrives=true` on
   `www.googleapis.com` with `name`, `mimeType`
   `application/vnd.google-apps.document`, `appProperties.kivali` the
@@ -5195,6 +5214,83 @@ before asking again. No send sets `Result.Outside`.
   /drive/v3/files/{id}/comments/{id}/replies?fields=id` with
   `content`. Audit "replied to comment <id> on document <id> as reply
   <id>; told <addresses>".
+
+#### Shared calendars and documents
+
+Whoever a calendar or a document is shared with sees what a write
+changes there, so a write to one shared with anyone besides the owner
+is a send (`shared.go`). Who that is, a `share`, is read when the call
+is held and shown on its card; `Run` does not read it again.
+
+- **A calendar** (`calendarShare`): `GET
+  /calendar/v3/calendars/{id}/acl?maxResults=250`, by `pageToken`, ten
+  pages at most, under `calendar.acls.readonly`, before every
+  `create_event`, `update_event` and `delete_event` on one of the
+  owner's own calendars. A rule counts when its role is not `none`
+  (which gives nothing) or `freeBusyReader` (busy times alone, none of
+  an event's text): scope `user` other than the owner's own addresses
+  (`self`), `group`, `domain`, or `default` (the public).
+- **A document or a folder** (`fileShare`): `GET
+  /drive/v3/files/{id}/permissions` with `fields=nextPageToken,
+  permissions(type,emailAddress,domain,allowFileDiscovery,deleted)`,
+  `pageSize=100` and `supportsAllDrives`, so a shared drive's members
+  are listed, ten pages at most, under `drive.readonly`: the
+  document's before `append_to_document` and `replace_text`, the
+  folder's before `create_document` into one. Every permission counts
+  but a deleted account's: `user` other than the signed-in address,
+  `group`, `domain` and `anyone`, whatever its role.
+
+A card names each entry: a user's address, a group's with " (a
+group)", "everyone at <domain>" (a Drive permission that cannot be
+found by search adds " with the link"), "anyone, as the calendar is
+public", "anyone with the link", "anyone, as it is public on the web",
+"someone whose address Google does not show" for an address Kivali
+does not read, and "more than Kivali lists" past ten pages. The
+recipients are the users' and groups' addresses.
+
+Such a write needs the send switch of its service, `calendar_send` or
+`docs_send` (its `Hold.Switch`); without it the call is refused before
+anything changes, "This call is a send: <calendar|document|folder> <id>
+is shared with others, who would see the change. The owner has not
+given you <words> in Google Workspace, which a change others see
+needs; ...", audited as `the access does not include <words>`. Every
+address must be one `send_to` allows (`checkRecipients`); and while
+`send_to` names anyone, an entry Kivali cannot hold to it by address
+(a domain, even one `send_to` names as `*@`; anyone; an address Kivali
+does not read; entries past ten pages) is refused (`checkShared`),
+"<Calendar|Document|Folder> <id> is shared with <entries>, whom Kivali
+cannot check against the addresses the owner allows you to send to,
+and they would see this change; ...", audited as `send_to cannot be
+checked: ...`.
+
+- **Calendar.** A call that is a write otherwise is titled "Create
+  "<title>" on a shared calendar", "Change "<title>" on a shared
+  calendar" or "Delete "<title>" from a shared calendar", with the
+  fields the send of that action shows ("What happens": "This takes the
+  event off the calendar, for everyone who can see it."), then "Who can
+  see this calendar". Its `Run` is the write's request with
+  `sendUpdates=none`, and `If-Match` of the etag read for a change or a
+  deletion. A call `isSend` finds is a send keeps its own card and
+  `Run`, the field added, and its recipients add the calendar's.
+- **Docs.** `append_to_document` is titled "Add to "<name>", a shared
+  document", with fields Document (its name, id and owner, or "in a
+  shared drive", `docNamed`), "Who can see it" and "Text to add at the
+  end", the text as `markdownLines` reads it; its `Run` reads the end of
+  the first tab when the owner approves, since a revision read a day
+  before is one Docs no longer takes as `targetRevisionId`, and writes
+  there against it. `replace_text` is titled "Replace text in "<name>",
+  a shared document", with fields Document, "Who can see it", Find,
+  "Replace with" ("Nothing: each occurrence is deleted" for an empty
+  one) and Capitals ("Must match" or "Ignored"); its `Run` is the
+  `replaceAllText`. Either `Run` whose document is gone (404 or 410)
+  refuses, "The document is gone; nothing was done.". `create_document`
+  into a shared folder is titled "Create "<title>" in a shared
+  folder", with fields Folder, "Who can see it", Title and Text; its
+  `Run` makes the document as the write does.
+
+The audit of each `Run` is its write's, then "; shared with
+<entries>"; core's rows say it waited for the owner and was approved
+([Held calls](#held-calls)).
 
 #### Outside and the audit
 

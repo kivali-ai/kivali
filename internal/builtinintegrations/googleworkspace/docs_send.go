@@ -70,10 +70,23 @@ func commentText(a args, key string) (string, error) {
 	return s, nil
 }
 
-// docCard is a document as a send's card names it: its name, its id,
-// who owns it and whether it is shared. The name is its owner's text,
-// shown and not sent.
+// docCard is a document as a send's card names it: docNamed, and
+// whether it is shared.
 func docCard(f driveFile, o docOwner, me account) string {
+	w := docNamed(f, o, me)
+	switch {
+	case o.sharedDrive:
+		return w
+	case f.Shared:
+		return w + ", shared with others"
+	}
+	return w + ", not shared"
+}
+
+// docNamed is a document as a card names it: its name, its id, and who
+// owns it, or the shared drive it is in. The name is its owner's text,
+// shown and not sent.
+func docNamed(f driveFile, o docOwner, me account) string {
 	name := shownLine(f.Name, nameClip)
 	w := `"` + name + `" (` + f.ID + `)`
 	if name == "" {
@@ -83,16 +96,11 @@ func docCard(f driveFile, o docOwner, me account) string {
 	case o.sharedDrive:
 		return w + ", in a shared drive"
 	case o.address == me.address:
-		w += ", owned by you"
+		return w + ", owned by you"
 	case o.address != "":
-		w += ", owned by " + o.address
-	default:
-		w += ", owned by someone whose address Google does not show"
+		return w + ", owned by " + o.address
 	}
-	if f.Shared {
-		return w + ", shared with others"
-	}
-	return w + ", not shared"
+	return w + ", owned by someone whose address Google does not show"
 }
 
 // commentPeople is whom a comment reaches besides those it mentions:

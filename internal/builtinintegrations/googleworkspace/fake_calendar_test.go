@@ -22,8 +22,9 @@ import (
 // account's calendar list, each calendar's events (listed, read,
 // inserted, patched and deleted as Calendar does, each with an etag
 // that every change moves on, a patch or a delete with an If-Match of
-// another refused 412) and their busy times. Every request must carry
-// testToken as its bearer, or it is answered 401 as Google answers.
+// another refused 412), their busy times and their access control
+// lists. Every request must carry testToken as its bearer, or it is
+// answered 401 as Google answers.
 type fakeCalendar struct {
 	gmail, www *httptest.Server
 
@@ -43,6 +44,30 @@ type fakeCalendar struct {
 	events     map[string][]map[string]any
 	busy       map[string][]map[string]string
 	busyErrors map[string]string
+	// acl is each calendar's access control list, as acl.list answers
+	// its rules; a calendar it does not name is the owner's alone
+	// (ownerOnlyACL).
+	acl map[string][]map[string]any
+}
+
+// ownerOnlyACL is the access control list of a calendar shared with no
+// one: the owner's own rule, and the public's, which gives nothing, as
+// Google lists one.
+func ownerOnlyACL() []map[string]any {
+	return []map[string]any{
+		{"id": "user:dana@example.com", "role": "owner", "scope": map[string]any{"type": "user", "value": "dana@example.com"}},
+		{"id": "default", "role": "none", "scope": map[string]any{"type": "default"}},
+	}
+}
+
+// aclEntry is a rule of acl.list giving role to scope, of type kind and
+// value ("" for none, as the public's has).
+func aclEntry(role, kind, value string) map[string]any {
+	scope := map[string]any{"type": kind}
+	if value != "" {
+		scope["value"] = value
+	}
+	return map[string]any{"id": kind + ":" + value, "role": role, "scope": scope}
 }
 
 // fakeCalRequest is one request the fake was sent: its method, its
@@ -69,7 +94,7 @@ var fakeCalendars = []calendarEntry{
 func newFakeCalendar(t *testing.T) (*fakeCalendar, *GoogleWorkspace) {
 	t.Helper()
 	f := &fakeCalendar{calendars: slices.Clone(fakeCalendars), events: map[string][]map[string]any{},
-		busy: map[string][]map[string]string{}, busyErrors: map[string]string{}}
+		busy: map[string][]map[string]string{}, busyErrors: map[string]string{}, acl: map[string][]map[string]any{}}
 	f.gmail = httptest.NewServer(http.HandlerFunc(f.serveGmail))
 	f.www = httptest.NewServer(http.HandlerFunc(f.serveCalendar))
 	t.Cleanup(func() { f.gmail.Close(); f.www.Close() })
@@ -192,6 +217,8 @@ func (f *fakeCalendar) serveCalendar(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"items": f.calendars})
 	case r.Method == http.MethodPost && rest == "freeBusy":
 		f.freeBusy(w, body)
+	case r.Method == http.MethodGet && len(parts) == 3 && parts[0] == "calendars" && parts[2] == "acl":
+		f.listACL(w, r, parts[1])
 	case len(parts) >= 3 && parts[0] == "calendars" && parts[2] == "events":
 		cal := parts[1]
 		if !f.served(cal) {
@@ -211,6 +238,30 @@ func (f *fakeCalendar) serveCalendar(w http.ResponseWriter, r *http.Request) {
 	default:
 		calNotFound(w)
 	}
+}
+
+// listACL is acl.list: the calendar's rules (ownerOnlyACL when acl
+// names none), maxResults a page, the next page's token the offset it
+// starts at. A calendar Google does not answer for is notFound.
+func (f *fakeCalendar) listACL(w http.ResponseWriter, r *http.Request, cal string) {
+	if !f.served(cal) {
+		calNotFound(w)
+		return
+	}
+	rules, ok := f.acl[cal]
+	if !ok {
+		rules = ownerOnlyACL()
+	}
+	size, _ := strconv.Atoi(r.URL.Query().Get("maxResults"))
+	if size <= 0 {
+		size = 100
+	}
+	at, _ := strconv.Atoi(r.URL.Query().Get("pageToken"))
+	out := map[string]any{"kind": "calendar#acl", "items": rules[min(at, len(rules)):min(at+size, len(rules))]}
+	if at+size < len(rules) {
+		out["nextPageToken"] = strconv.Itoa(at + size)
+	}
+	writeJSON(w, out)
 }
 
 // served reports whether Google answers for the calendar cal: one of
