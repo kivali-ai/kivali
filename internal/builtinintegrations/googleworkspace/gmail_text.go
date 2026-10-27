@@ -193,7 +193,9 @@ func senderOf(from string) string {
 }
 
 // plainAddress is a parsed address lower-cased, when it is one Kivali
-// writes in its own words (addressChars); "" when it is not.
+// writes in its own words (addressChars): at most 254 characters, a
+// domain with a dot in it, and ASCII alone, so an international domain
+// not in its xn-- form is not one. "" when it is not.
 func plainAddress(a *mail.Address) string {
 	addr := strings.ToLower(a.Address)
 	if len(addr) > 254 || !addressChars.MatchString(addr) {
