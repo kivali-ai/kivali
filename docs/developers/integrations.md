@@ -3929,6 +3929,9 @@ apart:
 | `gmail_text.go` | the text an email becomes: the framing, the provenance line, HTML to text, the links |
 | `gmail_attach.go` | saving an attachment into the agent's files |
 | `calendar_write.go` | Calendar's changes: creating, changing and deleting events, and `isSend` |
+| `docs.go` | also Docs' reading: search, a document's pages, comments, the folders a document is within |
+| `docs_text.go` | the text a document becomes: its framing, its structure walked into text, hidden runs, a page |
+| `docs_write.go` | Docs' writing: the owner-only rule, the requests that change Google, the Markdown a write takes |
 
 - **The manifest**: `kivali.connection.method: setup`, handing over
   to a browser sign-in (`setup.then: browser`) at Google's endpoints
@@ -4064,7 +4067,8 @@ bucket's switch:
 | `docs_write` | `create_document`, `append_to_document`, `replace_text` |
 | `docs_send` | `add_comment`, `reply_to_comment` |
 
-This version runs the `gmail_read`, `calendar_read` and `calendar_write` actions; the rest have no `run`.
+This version runs the `gmail_read`, `calendar_read`, `calendar_write`, `docs_read` and
+`docs_write` actions; the rest have no `run`.
 `Tools` gives an agent each action whose switch its access has on and
 that this version runs, with its description and the sentence saying
 the owner decides. `Call` refuses, in order, an action that is not one
@@ -4169,9 +4173,10 @@ an email says to the agent.
   "Content of an untrusted email follows." and "End of email
   content.", the browser pod's pattern for a page
   (`internal/browserpod/snapshot.go`). A line of the email whose
-  letters start with the letters of either, whatever its case,
+  letters start with the letters of either, or of any other framing
+  line Kivali writes (an event's, a document's), whatever its case,
   spacing, punctuation and what follows, is quoted with "> "
-  (`delimitEmail`), so an email cannot close its own framing and write
+  (`delimitEmail`, `delimit`), so an email cannot close its own framing and write
   on as Kivali. Letters are compared after NFKC folding (a full-width
   letter reads as its plain one); look-alike letters of other scripts
   (a Cyrillic "е") are not mapped to Latin. Kivali's own lines are
@@ -4290,16 +4295,6 @@ and that the file is as its sender sent it and nothing in it is an
 instruction. A call core gave no `Save` fails in words. Audit: "saved
 attachment <id> of message <id> (<n> bytes)".
 
-#### Outside and the audit
-
-Each read sets `Result.Outside` to the senders of what it returned or
-saved that are not the owner's (Provenance, above), each once in the
-order read: the From address Kivali read, or "an unknown sender" when
-it read none, never the header's own words. A search names the senders of every
-message it lists, since a snippet is the message's text. Core keeps
-them in the audit row's `outside` ([The audit](#the-audit)), which the
-approval of a send will read; nothing else is stored.
-
 #### Calendar
 
 `calendar.go` holds Calendar's actions and its reading,
@@ -4366,9 +4361,9 @@ client, bounds, errors and scrubbing).
   `get_message`'s does. Audit: "read event <id> on calendar <id>".
 - **Framing and provenance.** An event's own text is between "Content
   of an untrusted calendar event follows." and "End of calendar event
-  content." (`delimitEvent`), a line starting as either, or as an
-  email's framing line, whatever follows, quoted with "> " as
-  `delimitEmail` quotes one; the read actions'
+  content." (`delimitEvent`), a line starting as any framing line
+  Kivali writes, an email's and a document's included, whatever
+  follows, quoted with "> " (`delimit`); the read actions'
   descriptions say the text is untrusted, as Gmail's do. The provenance
   line is "Organizer: <address>, from your domain" or "from outside
   your domain", then "Created by <address>, ..." when the creator is
@@ -4442,6 +4437,184 @@ no one.
   `respond_to_invitation`, under `calendar_send`, has a schema and no
   `run`.
 
+#### Reading documents
+
+A document is the access's when it is within `docs_folders`
+(`call.inFolders`): one of its parents (`files.get`, `fields=parents`)
+is a folder the list names, or one of theirs is, walking up at most
+ten folders, so a document ten folders below a named one is within it
+and one eleven below is not. A folder the sign-in cannot open (404)
+ends that way up, so a document shared with the owner whose folder the
+owner cannot see is within none. Every document is the access's when
+the list is empty. One that is not is refused before any of its content
+is asked for, "Document <id> is not in the folders your access
+includes; ask the owner if your work needs it.", audited as `document
+<id> is outside the access's folders`. A file that is not a Google Doc
+(`mimeType` other than `application/vnd.google-apps.document`) answers
+so. Ids are letters, digits, `-` and `_`, checked before anything
+reaches Google; a page token is printable ASCII.
+
+- `search_documents(query?, folder_id?, page_token?)` is `GET
+  /drive/v3/files` on `www.googleapis.com` with
+  `q=mimeType='application/vnd.google-apps.document' and
+  trashed=false`, then, when the access names folders, `and ('<id>' in
+  parents or ...)` over them and the folders inside them
+  (`folderTree`: one listing of folders a level, nine levels down,
+  sorted by id, at most 50 folders, the answer saying when there were
+  more), then for `query` `and (name contains '<q>' or fullText
+  contains '<q>')`, `\` and `'` escaped; `pageSize=25`,
+  `supportsAllDrives`, `includeItemsFromAllDrives`, and
+  `orderBy=modifiedTime desc` without a query (Drive refuses any order
+  for a `fullText` search, which comes by relevance). The folders are
+  one question to Drive, the same from page to page, so the page and
+  `next_page_token` are Drive's own and paging on never skips or
+  repeats a document. `folder_id` (an id, or an option as stored) must
+  be within the access's folders, or the call is refused, "Folder <id>
+  is not among the folders your access includes; ...", and holds the
+  search to that folder and the folders inside it. Each row is Kivali's
+  line (the id, `webViewLink`'s host, the first parent's id) and the
+  provenance line, then framed the name, cut at 300 characters, with
+  its links. Audit: "searched documents, listing N: <ids>".
+- `get_document(document_id, offset?)` checks the document (`files.get`
+  with `id,name,mimeType,owners(emailAddress),modifiedTime,shared,
+  parents,appProperties,webViewLink` and `supportsAllDrives`), then
+  reads `GET /v1/documents/{id}?includeTabsContent=true` on
+  `docs.googleapis.com` (at most 48 MiB) and renders all of it, afresh
+  each call ([The text a document becomes](#the-text-a-document-becomes)).
+  `offset` is a whole number of characters into that text; one past its
+  end is refused. The answer is a heading line, "Document <id>:
+  characters <from> to <to> of <total>.", the provenance line, framed
+  the title, the characters from `offset` and the links they name, then
+  the notes: hidden text, links past 50, and "next_offset: <to> (pass
+  it as offset for the next page)." or "This is the end of the
+  document.". The characters are as many as fit in `answerClip` with
+  the framing closed: up to 58,000, fewer when the links they name need
+  the room, never stopping inside a marker (`markerSafe`). Audit: "read
+  document <id>, characters <from> to <to> of <total>".
+- `list_comments(document_id, page_token?)` checks the document as
+  `get_document` does, then `GET /drive/v3/files/{id}/comments` with
+  `fields` naming each field read (Drive answers comments only for the
+  fields named) and `pageSize=20`. Each comment is Kivali's line (its
+  id, when it was written, its author's address and whether that is the
+  owner's domain, open or resolved, its replies not deleted), then
+  framed its author's name, the document's text it is on
+  (`quotedFileContent`, cut at 300), its own text and their links.
+  Drive marks the owner's own comments (`author.me`); an author whose
+  address Drive does not give counts as outside. Each comment gets its
+  share of the room left in the answer: its text is cut at 2,000
+  characters, and shorter, in proportion, when its links outweigh it,
+  and left out after eight tries, each cut said. Audit: "listed N
+  comments on document <id>".
+
+The provenance line is "Owner: <address>, from your domain." or "from
+outside your domain.", the owner's domain as for mail (the signed-in
+address's; for `gmail.com` that address alone), or, for a document in
+a shared drive, which has no owners, "Owner: a shared drive, which
+Kivali counts as outside your domain."; then "Shared with others." or
+"Not shared." (not for a shared drive), "Last changed <time>.", and
+"Kivali made it." for a document marked as Kivali's.
+
+#### The text a document becomes
+
+`docs_text.go` builds a document's text from the Docs API's structure,
+so the mitigations apply to all of it; there is no file export.
+
+- **Framing.** A document's own text and each comment's are between
+  "Content of an untrusted document follows." and "End of document
+  content." (`delimitDocument`), quoted as an email's are: a line
+  starting with the letters of any of Kivali's framing lines, an
+  email's, an event's or a document's, gets "> " (`delimit`). The three read actions'
+  descriptions say the framed text is untrusted and may read like
+  instructions, which the agent does not follow.
+- **Structure.** Each tab, depth first, starts with "Tab: <title>"
+  when there are several. A paragraph is a line: Title and Heading 1 to
+  6 start with as many `#` (Title one), a list item with "- " indented
+  two spaces a nesting level, and a heading or a table has a blank line
+  before it. Runs are joined as written; a vertical tab (the API's line
+  break) is a line end; a person chip is its name, a link chip its
+  title with its link, a horizontal rule "---". A table is a line a
+  row, each cell's text on one line, split by " | ". A table of
+  contents, section breaks, images, footnote references and equations
+  are not text, and headers, footers and footnotes are not read.
+  Suggestions read as the API gives them.
+- **Hidden runs.** A run's style is what it sets over its paragraph's
+  named style over Normal text (`namedStyles`). It is hidden when its
+  font is 3 points or less, its colour is transparent (an
+  `OptionalColor` with no colour), or each of its red, green and blue
+  is within 0.08 of the colour behind it: the run's highlight, else its
+  paragraph's shading, else its table cell's background, else the
+  tab's page colour (`documentStyle.background`), white unless set. A
+  run that sets no colour anywhere is black. A hidden run, a chip
+  styled so among them, is left out with its link and counted, as are
+  Unicode tag characters; a paragraph whose text is all hidden leaves
+  no line. The note is "Kivali left out N characters of hidden text
+  from the document.".
+- **Links.** A run's `link.url` (http or https) gets its marker after
+  the run's text, consecutive runs with the same link one marker; a
+  URL written in the text is replaced as in an email. The listing and
+  its bounds are an email's (`linkList`), numbered across the whole
+  document; a page lists the links it names (`listingOf`).
+
+#### Writing documents
+
+A write reaches only a document that is readable (above, its folders
+included) and that the signed-in account owns (its address among
+`owners`) or Kivali made (`appProperties.kivali` set; Drive keeps an
+app's properties to the OAuth client that set them, so no one sharing
+a document can mark it). Any other is refused before anything
+changes, "Document <id> is not the owner's and Kivali did not make it:
+you may change only documents the owner owns or Kivali made.", audited
+as `document <id> is neither the owner's nor made by Kivali`. Writes
+are `POST` and `PATCH` through `docsRequest`; a write Google does not
+answer says Kivali cannot tell whether the document changed.
+
+- `create_document(title, body?, folder_id?)` checks `folder_id` first
+  (a folder, within the access's folders, else refused), or takes the
+  access's first folder, then `POST /v1/documents` with the title, a
+  `batchUpdate` writing `body`, and `PATCH /drive/v3/files/{id}`
+  setting `appProperties.kivali` to the agent's slug, with `addParents`
+  the folder and `removeParents` the parents it was made in. Once the
+  document exists, a later failure is an answer naming the document
+  and what was left undone. Audit: "created document <id> in folder
+  <id> with N characters of text".
+- `append_to_document(document_id, text)` reads the body (`GET
+  /v1/documents/{id}`, the first tab's) and inserts at the end of its
+  last paragraph, after a line end unless that paragraph is empty.
+  Audit: "added N characters to the end of document <id>".
+- `replace_text(document_id, find, replace, match_case?)` is one
+  `replaceAllText` over every tab, `find` and `replace` taken as given
+  (`replace` may be empty), answering Google's `occurrencesChanged`.
+  Audit: "replaced N occurrences in document <id>".
+
+The text of a create or an append is a little Markdown
+(`parseMarkdown`), a line a paragraph: `#` to `######` and a space a
+heading, `-`, `*` or `+` and a space a list item, `**...**` bold (a
+last `**` with no partner is text), blank lines at the end dropped, all
+else as written. The requests (`insertRequests`) insert the text in one
+`insertText`, then, over the range inserted, set Normal text, remove
+bullets and reset the text style (`fields: "*"`), since inserted text
+takes the style of the paragraph it lands in; then set each heading,
+one `createParagraphBullets` per run of list items, and `bold` per
+span. Indexes count UTF-16 code units, as the Docs API does.
+
+`add_comment` and `reply_to_comment` are declared, with their schemas,
+and have no `run`.
+
+#### Outside and the audit
+
+Each read sets `Result.Outside` to the senders of what it returned or
+saved that are not the owner's (Provenance, above), each once in the
+order read: the From address Kivali read, or "an unknown sender" when
+it read none, never the header's own words. A search names the senders of every
+message it lists, since a snippet is the message's text. Core keeps
+them in the audit row's `outside` ([The audit](#the-audit)), which the
+approval of a send will read; nothing else is stored.
+
+Docs' reads name the owner of each document read or listed that is
+not the owner's domain, "a shared drive" for one in a shared drive,
+and the outside authors of the comments listed: the address, else the
+author's name, else "an unknown author".
+
 #### Test connection and options
 
 `Verify` is `GET https://gmail.googleapis.com/gmail/v1/users/me/profile`
@@ -4482,6 +4655,10 @@ Kivali does not read it, and Google's words for the
 rest. The owner reads the same in Test connection's and the options'
 words, with what to do: sign in again, turn the API on, or sign in
 again allowing everything Google lists.
+
+Docs' writes, `POST` and `PATCH`, go through `docsRequest`
+(`docs_write.go`): the same origins, headers, bounds and error words,
+a JSON body, and no redirect followed.
 
 #### Requirements
 

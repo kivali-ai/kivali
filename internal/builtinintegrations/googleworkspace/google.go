@@ -161,7 +161,7 @@ func (g *GoogleWorkspace) Manifest() *integration.Manifest {
 		Name:            Name,
 		Version:         "1.0.0",
 		DisplayName:     displayName,
-		Description:     "Gmail, Google Calendar and Google Docs, signed in with an OAuth client you make on Google's Auth Platform. In this version agents can read your Gmail, and read your Google Calendar and change its events.",
+		Description:     "Gmail, Google Calendar and Google Docs, signed in with an OAuth client you make on Google's Auth Platform. In this version agents can read your Gmail, read your Google Calendar and change its events, and read and write your Google Docs.",
 		Author:          integration.Author{Name: "Kivali"},
 		UserConfig:      integration.UserConfig{},
 		Tools:           tools,
@@ -227,7 +227,9 @@ type call struct {
 	access access
 	args   args
 	save   builtinintegrations.SaveFunc
-	// agent is the calling agent's slug (Caller.Agent).
+	// agent is the calling agent's slug (Caller.Agent), which an event
+	// or a document Kivali makes is marked with (calendar_write.go,
+	// docs_write.go).
 	agent string
 
 	audit   string
