@@ -1,9 +1,12 @@
 package googleworkspace
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -51,6 +54,13 @@ type fakeGoogle struct {
 	// fail answers the path (without its query) with this status and
 	// Google error body, in place of its answer.
 	fail map[string]fakeError
+
+	// mail is the account's messages, newest first, as Gmail answers
+	// them in full; held is the content Gmail keeps apart from them, by
+	// attachment id, in base64url. Both are set before the first call
+	// and only read after.
+	mail []gmailMessage
+	held map[string]string
 }
 
 type fakeError struct {
@@ -63,7 +73,7 @@ type fakeError struct {
 // newFakeGoogle starts the fake, and g reaching it.
 func newFakeGoogle(t *testing.T) (*fakeGoogle, *GoogleWorkspace) {
 	t.Helper()
-	f := &fakeGoogle{fail: map[string]fakeError{}}
+	f := &fakeGoogle{fail: map[string]fakeError{}, held: map[string]string{}}
 	f.gmail = httptest.NewServer(f.handler("gmail"))
 	f.www = httptest.NewServer(f.handler("www"))
 	f.docs = httptest.NewServer(f.handler("docs"))
@@ -142,6 +152,23 @@ func (f *fakeGoogle) handler(origin string) http.Handler {
 			answer(`{"emailAddress":"dana@example.com","messagesTotal":12,"threadsTotal":9,"historyId":"77"}`)
 		case origin == "gmail" && r.URL.Path == "/gmail/v1/users/me/labels":
 			answer(fakeLabels)
+		case origin == "gmail" && r.URL.Path == "/gmail/v1/users/me/messages":
+			f.listMessages(w, r)
+		case origin == "gmail" && strings.HasPrefix(r.URL.Path, "/gmail/v1/users/me/messages/"):
+			f.getMessage(w, r, strings.TrimPrefix(r.URL.Path, "/gmail/v1/users/me/messages/"))
+		case origin == "gmail" && strings.HasPrefix(r.URL.Path, "/gmail/v1/users/me/threads/"):
+			id := strings.TrimPrefix(r.URL.Path, "/gmail/v1/users/me/threads/")
+			var msgs []gmailMessage
+			for _, m := range slices.Backward(f.mail) {
+				if m.ThreadID == id {
+					msgs = append(msgs, m)
+				}
+			}
+			if len(msgs) == 0 || r.URL.Query().Get("format") != "full" {
+				http.Error(w, `{"error":{"code":404,"message":"Requested entity was not found."}}`, http.StatusNotFound)
+				return
+			}
+			writeJSON(w, map[string]any{"id": id, "messages": msgs})
 		case origin == "www" && r.URL.Path == "/calendar/v3/users/me/calendarList":
 			// Two pages: Google pages a list by nextPageToken.
 			if r.URL.Query().Get("pageToken") == "" {
@@ -165,4 +192,93 @@ func (f *fakeGoogle) handler(origin string) http.Handler {
 			_, _ = w.Write(b)
 		}
 	})
+}
+
+func writeJSON(w http.ResponseWriter, v any) {
+	b, err := json.Marshal(v)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	_, _ = w.Write(b)
+}
+
+// listMessages is users/me/messages as Gmail answers it: the messages
+// carrying every label labelIds names, whose subject holds q (the
+// fake's stand-in for Gmail's search words), Spam and Trash left out
+// unless asked for, newest first, maxResults a page, the next page's
+// token the offset it starts at.
+func (f *fakeGoogle) listMessages(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query()
+	labels := query["labelIds"]
+	spam := query.Get("includeSpamTrash") == "true"
+	var hits []gmailMessage
+	for _, m := range f.mail {
+		if !spam && (slices.Contains(m.LabelIDs, "SPAM") || slices.Contains(m.LabelIDs, "TRASH")) && !slices.Contains(labels, "SPAM") && !slices.Contains(labels, "TRASH") {
+			continue
+		}
+		if !strings.Contains(strings.ToLower(header(m.Payload.Headers, "Subject")), strings.ToLower(query.Get("q"))) {
+			continue
+		}
+		if !slices.ContainsFunc(labels, func(l string) bool { return !slices.Contains(m.LabelIDs, l) }) {
+			hits = append(hits, m)
+		}
+	}
+	size, _ := strconv.Atoi(query.Get("maxResults"))
+	if size <= 0 {
+		size = 100
+	}
+	from, _ := strconv.Atoi(query.Get("pageToken"))
+	out := map[string]any{"resultSizeEstimate": len(hits)}
+	var page []map[string]string
+	for _, m := range hits[min(from, len(hits)):min(from+size, len(hits))] {
+		page = append(page, map[string]string{"id": m.ID, "threadId": m.ThreadID})
+	}
+	if page != nil {
+		out["messages"] = page
+	}
+	if from+size < len(hits) {
+		out["nextPageToken"] = strconv.Itoa(from + size)
+	}
+	writeJSON(w, out)
+}
+
+// getMessage is users/me/messages/{id} in format full, or metadata
+// (the headers metadataHeaders names, no parts and no body), and
+// users/me/messages/{id}/attachments/{id}, the content Gmail keeps
+// apart.
+func (f *fakeGoogle) getMessage(w http.ResponseWriter, r *http.Request, rest string) {
+	id, att, isAtt := strings.Cut(rest, "/attachments/")
+	i := slices.IndexFunc(f.mail, func(m gmailMessage) bool { return m.ID == id })
+	if i < 0 {
+		http.Error(w, `{"error":{"code":404,"message":"Requested entity was not found."}}`, http.StatusNotFound)
+		return
+	}
+	if isAtt {
+		data, ok := f.held[att]
+		if !ok {
+			http.Error(w, `{"error":{"code":400,"message":"Invalid attachment token"}}`, http.StatusBadRequest)
+			return
+		}
+		raw, _ := base64.RawURLEncoding.DecodeString(data)
+		writeJSON(w, map[string]any{"attachmentId": att, "size": len(raw), "data": data})
+		return
+	}
+	m := f.mail[i]
+	switch r.URL.Query().Get("format") {
+	case "full":
+	case "metadata":
+		want := r.URL.Query()["metadataHeaders"]
+		var hs []gmailHeader
+		for _, h := range m.Payload.Headers {
+			if slices.ContainsFunc(want, func(n string) bool { return strings.EqualFold(n, h.Name) }) {
+				hs = append(hs, h)
+			}
+		}
+		m.Payload = gmailPart{MimeType: m.Payload.MimeType, Headers: hs}
+	default:
+		http.Error(w, `{"error":{"code":400,"message":"the fake answers format full or metadata"}}`, http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, m)
 }

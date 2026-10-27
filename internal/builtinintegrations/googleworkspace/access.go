@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/kivali-ai/kivali/internal/builtinintegrations"
 )
@@ -236,6 +238,39 @@ func readArgs(raw json.RawMessage) (args, error) {
 		return nil, badArgument("The arguments are an object.")
 	}
 	return args(m), nil
+}
+
+// text is the string argument key, trimmed: "" when it is missing or
+// null, and a refusal when it is another type, holds more than most
+// characters or, for required, is empty.
+func (a args) text(key string, required bool, most int) (string, error) {
+	v, ok := a[key]
+	if !ok || v == nil {
+		v = ""
+	}
+	s, isText := v.(string)
+	switch s = strings.TrimSpace(s); {
+	case !isText:
+		return "", badArgument(key + " is text.")
+	case required && s == "":
+		return "", badArgument(key + " is required.")
+	case utf8.RuneCountInString(s) > most:
+		return "", badArgument(fmt.Sprintf("%s is at most %d characters.", key, most))
+	}
+	return s, nil
+}
+
+// id is the argument key as one of Google's ids: required, and only
+// the characters ok allows.
+func (a args) id(key string, ok *regexp.Regexp) (string, error) {
+	s, err := a.text(key, true, 256)
+	if err != nil {
+		return "", err
+	}
+	if !ok.MatchString(s) {
+		return "", badArgument(key + " is not an id Google gives; use one as Kivali listed it.")
+	}
+	return s, nil
 }
 
 // CheckAccess holds an agent's access, as the owner saves it, to what

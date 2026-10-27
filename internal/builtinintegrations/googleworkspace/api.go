@@ -149,6 +149,12 @@ func (e *apiError) apiOff() bool {
 // get GETs path (with its query) on a with the access token token, and
 // decodes the JSON answer into out.
 func (g *GoogleWorkspace) get(ctx context.Context, token string, a api, path string, out any) error {
+	return g.getUpTo(ctx, token, a, path, maxAnswerBytes, out)
+}
+
+// getUpTo is get reading at most most bytes of the answer, for one
+// larger than maxAnswerBytes may be: an attachment's.
+func (g *GoogleWorkspace) getUpTo(ctx context.Context, token string, a api, path string, most int, out any) error {
 	base, err := g.base(a)
 	if err != nil {
 		return err
@@ -165,11 +171,11 @@ func (g *GoogleWorkspace) get(ctx context.Context, token string, a api, path str
 		return transportError(ctx, err, token)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	b, err := io.ReadAll(io.LimitReader(resp.Body, maxAnswerBytes+1))
+	b, err := io.ReadAll(io.LimitReader(resp.Body, int64(most)+1))
 	switch {
 	case err != nil:
 		return transportError(ctx, err, token)
-	case len(b) > maxAnswerBytes:
+	case len(b) > most:
 		return &apiError{Message: "Google's answer was larger than Kivali reads", Unreadable: true}
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {

@@ -20,9 +20,11 @@
 // which Choices lists live. Every action belongs to one bucket, and an
 // agent is given it only while its access has that switch on. The
 // actions are per service (gmail.go, calendar.go, docs.go), joined in
-// actions. An action whose run is nil is declared in the manifest and
-// not run by this version: Tools leaves it out, the owner's words for
-// it say so, and Call answers that it is not available.
+// actions; Gmail's reading is gmail_read.go, the text it hands the
+// agent gmail_text.go and its attachments gmail_attach.go. An action
+// whose run is nil is declared in the manifest and not run by this
+// version: Tools leaves it out, the owner's words for it say so, and
+// Call answers that it is not available.
 //
 // Calls reach Google's REST APIs (api.go) at three origins, each
 // pinned: gmail.googleapis.com, www.googleapis.com (Calendar and Drive)
@@ -156,7 +158,7 @@ func (g *GoogleWorkspace) Manifest() *integration.Manifest {
 		Name:            Name,
 		Version:         "1.0.0",
 		DisplayName:     displayName,
-		Description:     "Gmail, Google Calendar and Google Docs, signed in with an OAuth client you make on Google's Auth Platform. In this version agents can list your Gmail labels.",
+		Description:     "Gmail, Google Calendar and Google Docs, signed in with an OAuth client you make on Google's Auth Platform. In this version agents can read your Gmail.",
 		Author:          integration.Author{Name: "Kivali"},
 		UserConfig:      integration.UserConfig{},
 		Tools:           tools,
@@ -210,12 +212,24 @@ func (g *GoogleWorkspace) Tools(_ context.Context, caller builtinintegrations.Ca
 }
 
 // call is one action's run: the access token core handed in, the
-// caller's access and the model's arguments.
+// caller's access, the model's arguments and where it may save a file
+// (Caller.Save, nil when core gave none). A run sets audit, the reason
+// the owner's audit keeps, and outside, who outside the owner's domain
+// wrote what it returned (Result.Audit and Result.Outside). me and
+// labelList are what the run read of the account, kept for this call
+// alone.
 type call struct {
 	g      *GoogleWorkspace
 	token  string
 	access access
 	args   args
+	save   builtinintegrations.SaveFunc
+
+	audit   string
+	outside []string
+
+	me        *account
+	labelList []label
 }
 
 // notSignedIn is the words of a call whose connection holds no access
@@ -260,7 +274,8 @@ func (g *GoogleWorkspace) Call(ctx context.Context, caller builtinintegrations.C
 	if err != nil {
 		return nil, err
 	}
-	answer, err := a.run(ctx, &call{g: g, token: tok, access: acc, args: in})
+	c := &call{g: g, token: tok, access: acc, args: in, save: caller.Save}
+	answer, err := a.run(ctx, c)
 	if err != nil {
 		var ref *builtinintegrations.Refusal
 		var ae *apiError
@@ -279,7 +294,7 @@ func (g *GoogleWorkspace) Call(ctx context.Context, caller builtinintegrations.C
 	if err != nil {
 		return nil, err
 	}
-	return &builtinintegrations.Result{Content: []string{text}}, nil
+	return &builtinintegrations.Result{Content: []string{text}, Audit: c.audit, Outside: c.outside}, nil
 }
 
 func failed(words string) *builtinintegrations.Result {
