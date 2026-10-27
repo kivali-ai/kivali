@@ -695,6 +695,24 @@ func TestGmailLabelRestriction(t *testing.T) {
 	}
 }
 
+// Why this test exists: a stored label list that does not read as a
+// list (hand-edited, or written by an older build) reads as an empty
+// list that is not nil, and Gmail's reading must take it as naming no
+// label at all: checking its length alone would read it as left empty
+// and let the agent read every label.
+func TestGmailMalformedLabelsReadNothing(t *testing.T) {
+	f, g := newFakeGoogle(t)
+	searchMail(f)
+	broken := func() builtinintegrations.Caller { return agent(map[string]any{"gmail_labels": "INBOX"}) }
+	refusedWith(t, g, broken(), "get_message", `{"id":"m5"}`, "Message m5 is not in the labels your access includes; ask the owner if your work needs it.")
+	if res := gmailAnswer(t, g, broken(), "list_labels", `{}`); res.Content[0] != "Your access includes none of the account's labels." {
+		t.Errorf("list_labels: %q", res.Content[0])
+	}
+	if res := gmailAnswer(t, g, broken(), "search_messages", `{}`); len(listedIDs(res.Content[0])) != 0 {
+		t.Errorf("search_messages listed %v", listedIDs(res.Content[0]))
+	}
+}
+
 // Why this test exists: get_attachment writes what a sender sent into
 // the agent's files, so the bytes must arrive exactly as sent, under
 // the integration's untrusted downloads folder for the message, with a

@@ -148,9 +148,11 @@ func (c *call) accountLabels(ctx context.Context) ([]label, error) {
 var spamTrash = []string{"SPAM", "TRASH"}
 
 // labelIncluded reports whether the access's labels include the label
-// id: they name it, or they name none and it is not Spam or Trash.
+// id: they name it, or the list is nil (left empty, so every label) and
+// it is not Spam or Trash. An empty list that is not nil, a stored list
+// that did not read, includes nothing.
 func labelIncluded(labels []string, id string) bool {
-	return slices.Contains(labels, id) || (len(labels) == 0 && !slices.Contains(spamTrash, id))
+	return slices.Contains(labels, id) || (labels == nil && !slices.Contains(spamTrash, id))
 }
 
 // readable reports whether the access includes a message: it carries
@@ -162,7 +164,7 @@ func (c *call) readable(m gmailMessage) bool {
 			return false
 		}
 	}
-	return len(c.access.gmailLabels) == 0 || slices.ContainsFunc(m.LabelIDs, func(id string) bool { return slices.Contains(c.access.gmailLabels, id) })
+	return c.access.gmailLabels == nil || slices.ContainsFunc(m.LabelIDs, func(id string) bool { return slices.Contains(c.access.gmailLabels, id) })
 }
 
 // notIncluded is the refusal of a message the access does not include.
@@ -630,7 +632,7 @@ func searchMessages(ctx context.Context, c *call) (any, error) {
 	}
 	var shown []gmailMessage
 	for _, m := range found {
-		if c.readable(m) && (len(within) == 0 || slices.ContainsFunc(m.LabelIDs, func(id string) bool { return slices.Contains(within, id) })) {
+		if c.readable(m) && (within == nil || slices.ContainsFunc(m.LabelIDs, func(id string) bool { return slices.Contains(within, id) })) {
 			shown = append(shown, m)
 		}
 	}
