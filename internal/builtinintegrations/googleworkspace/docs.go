@@ -19,8 +19,8 @@ import (
 
 // Docs' reading is here: finding documents, a document's text a page at
 // a time and its comments, each held to the folders the access names.
-// The text a document becomes is docs_text.go, and Docs' writing
-// docs_write.go.
+// The text a document becomes is docs_text.go, Docs' writing
+// docs_write.go and its sends, comments, docs_send.go.
 
 // Docs' actions, unprefixed.
 const (
@@ -108,24 +108,27 @@ var docsActions = []action{
 	},
 	{
 		name:             actionAddComment,
-		description:      "Ask the owner to post a comment on a document. The comment is posted only once the owner approves it.",
+		description:      addCommentWords,
 		ownerDescription: "Ask to comment on a document. The comment is posted only once you approve it.",
 		schema: schema(map[string]any{
 			"document_id": map[string]string{"type": "string", "description": "the document's id"},
-			"content":     map[string]string{"type": "string", "description": "the comment's text"},
+			"content":     map[string]string{"type": "string", "description": "the comment's text, mentioning people as +address"},
+			"anchor_text": map[string]string{"type": "string", "description": "the document's text the comment is about, which it quotes"},
 		}, "document_id", "content"),
 		bucket: keyDocsSend,
+		run:    addComment,
 	},
 	{
 		name:             actionReplyToComment,
-		description:      "Ask the owner to post a reply to a comment on a document. The reply is posted only once the owner approves it.",
+		description:      replyWords,
 		ownerDescription: "Ask to reply to a comment on a document. The reply is posted only once you approve it.",
 		schema: schema(map[string]any{
 			"document_id": map[string]string{"type": "string", "description": "the document's id"},
 			"comment_id":  map[string]string{"type": "string", "description": "the comment's id, as list_comments lists it"},
-			"content":     map[string]string{"type": "string", "description": "the reply's text"},
+			"content":     map[string]string{"type": "string", "description": "the reply's text, mentioning people as +address"},
 		}, "document_id", "comment_id", "content"),
 		bucket: keyDocsSend,
+		run:    replyToComment,
 	},
 }
 

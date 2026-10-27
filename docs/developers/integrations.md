@@ -2840,7 +2840,9 @@ says agents cannot use it, and offers Uninstall, which removes it.
 
 A built-in action that must not happen until the owner says so (an
 email sent, an invitation, a comment others are told of) is a *held
-call* (`internal/web/integration_hold.go`). Its `Call` checks what it
+call* (`internal/web/integration_hold.go`). Google Workspace's sends
+are held calls ([Sending mail](#sending-mail), [Calendar](#calendar),
+[Commenting](#commenting)). Its `Call` checks what it
 can, does nothing outward, and answers with `Result.Hold` and no
 `Content`:
 
@@ -4065,6 +4067,7 @@ apart:
 | `docs.go` | also Docs' reading: search, a document's pages, comments, the folders a document is within |
 | `docs_text.go` | the text a document becomes: its framing, its structure walked into text, hidden runs, a page |
 | `docs_write.go` | Docs' writing: the owner-only rule, the requests that change Google, the Markdown a write takes |
+| `docs_send.go` | Docs' sends: a comment and a reply held for the owner, the mentions a comment makes |
 
 - **The manifest**: `kivali.connection.method: setup`, handing over
   to a browser sign-in (`setup.then: browser`) at Google's endpoints
@@ -4091,9 +4094,7 @@ apart:
   tool; and `kivali.setup_notes`, the console guide (below). Its
   `tools` are every action of the three services, each with `access`
   set to its bucket's switch, so the page lists it under that switch's
-  title. An action this version declares and does not run has nil
-  `run` in its table, and its words end "Not available in this version
-  of Kivali.". It passes `integration.ValidateBuiltin`.
+  title. It passes `integration.ValidateBuiltin`.
 - **The connection** is what core gives a built-in of a setup that
   hands over to a sign-in ([The credential path](#the-credential-path)):
   `client_id` and the current access token under `GOOGLE_ACCESS_TOKEN`,
@@ -4158,7 +4159,7 @@ everything.
 | --- | --- | --- |
 | `gmail_read`, `calendar_read`, `docs_read` | switch | May read mail, May read calendars, May read documents |
 | `gmail_write`, `calendar_write`, `docs_write` | switch | May draft and label, May change events, May write documents |
-| `gmail_send`, `calendar_send`, `docs_send` | switch | May send mail, May invite and respond, May comment |
+| `gmail_send`, `calendar_send`, `docs_send` | switch | May send mail (each send waits for your approval), May invite and respond (each waits for your approval), May comment (each comment waits for your approval) |
 | `gmail_labels`, `calendars`, `docs_folders` | choices, listed live | Labels it may read, Calendars it may use, Folders it may read |
 | `send_to` | list | May send to: addresses, or `*@domain` |
 
@@ -4170,8 +4171,15 @@ list that is not a list matches nothing.
 Read is what sees inside the owner's account, write what changes
 something there that no other person is told about, and send anything
 that makes Google deliver something to another person, which always
-waits for the owner's approval: its switch decides only whether the
-agent may ask. `readAccess` takes a switch as on only when it is
+waits for the owner's approval, as a held call: `send_email`,
+`send_draft`, `respond_to_invitation`, `add_comment`,
+`reply_to_comment`, and a `create_event`, `update_event` or
+`delete_event` call `isSend` finds is a send. The send switch decides
+only whether the agent may ask. `CheckAccess` refuses, as the owner
+saves an access, a `send_to` entry that is neither an address nor
+`*@` and a domain with a dot, which would match no one: ""<entry>"
+under May send to is not an address, such as dana@example.com, or a
+domain, such as *@example.com". `readAccess` takes a switch as on only when it is
 `true`, and each list's entries as Google's ids.
 
 A live option is `<name> (<id>)`: the name the owner knows the label,
@@ -4205,16 +4213,13 @@ bucket's switch:
 | `docs_write` | `create_document`, `append_to_document`, `replace_text` |
 | `docs_send` | `add_comment`, `reply_to_comment` |
 
-This version runs every action but `add_comment` and
-`reply_to_comment`, which have no `run` and declare their arguments
-already ([Writing documents](#writing-documents)). `Tools` gives
-an agent each action whose switch its access has on and that this
-version runs, with its description and the sentence saying
-the owner decides. `Call` refuses, in order, an action that is not one
-("There is no action named <name>."), `profile` (Test connection's), an
-action whose switch is off, then answers an action with no `run` with
-the error result "This action is not available in this version of
-Kivali.", then refuses a connection with no access token; arguments
+`Tools` gives an agent each action whose switch its access has on,
+with its description and the sentence saying the owner decides; a
+send's description also says the call waits for the owner's approval
+and that the outcome comes to the agent's chat. `Call` refuses, in
+order, an action that is not one ("There is no action named
+<name>."), `profile` (Test connection's), an action whose switch is
+off, then a connection with no access token; arguments
 that are not an object are refused as for GitHub. A run sets the call's
 `Result.Audit` and `Result.Outside` (below) through its `call`. A send's
 run answers `held` instead of an answer, and `Call` answers it as
@@ -4222,7 +4227,8 @@ run answers `held` instead of an answer, and `Call` answers it as
 `Run` that reads the access token core hands it at the owner's
 approval and runs what the send captured with a `call` of its own,
 answering as `Call` does ([Held calls](#held-calls), [Sending
-mail](#sending-mail)). A run
+mail](#sending-mail), [Calendar](#calendar),
+[Commenting](#commenting)). A run
 that fails with Google's words or its own is an error result whose
 `Audit` is what the run had set, then "; " and the words
 (`failedWith`), or, with none set, empty, so core keeps the words.
@@ -5037,8 +5043,48 @@ set each heading, one `createParagraphBullets` per run of list items,
 and `bold` per span. Indexes count UTF-16 code units, as the Docs API
 does.
 
-`add_comment` and `reply_to_comment` are declared, with their schemas,
-and have no `run`.
+#### Commenting
+
+The `docs_send` actions (`docs_send.go`) are held calls ([Held
+calls](#held-calls)). Each reaches only a document that is readable
+(its folders included, as for a read; the read switch is not needed),
+and its text (`content`, required, at most 4,000 characters,
+`cleanText`'s) is what the card shows and what goes. A mention is an
+address with `+` or `@` right before it, not inside a word or another
+address (`mentions`: `+dana@example.com`, `@dana@example.com`; not
+`foo+dana@example.com` or a bare address), lower-cased, at most 50;
+Google emails each person mentioned, so every mention but the
+signed-in address must be one `send_to` allows, or the call is refused
+before it is held, as a send of mail is ([Sending mail](#sending-mail)).
+A card's Document field names the document, its id, its owner ("owned
+by you", by address, or "in a shared drive") and whether it is shared,
+its name shown without format characters, since it is shown and not
+sent; its recipients are the people mentioned and the document's
+owner, the signed-in account left out. Google not answering a `Run`
+may have posted it, so that failure says to look with `list_comments`
+before asking again. No send sets `Result.Outside`.
+
+- `add_comment(document_id, content, anchor_text?)`: the card is
+  titled "Comment on "<name>"", with fields Document, Quoting
+  (`anchor_text`, at most 500 characters, when given), Comment and
+  Mentions. `Run` is `POST /drive/v3/files/{id}/comments?fields=id`
+  with `content` and, for `anchor_text`, `quotedFileContent`
+  (`text/plain`). Audit "commented on document <id> as comment <id>;
+  told <addresses>".
+- `reply_to_comment(document_id, comment_id, content)` reads the
+  comment (`GET /drive/v3/files/{id}/comments/{id}` with its author,
+  when it was written, its text, whether it is deleted and its
+  replies' authors; a deleted or missing one is "Document <id> has no
+  comment <id>; ..."). The card is titled "Reply to a comment on
+  "<name>"", with fields Document, "Replying to" (the comment's id, its
+  author by address, "by you", or "by someone whose address Google does
+  not show", when it was written, and its text, the commenter's, shown
+  without format characters and cut at 20,000 characters), Reply and
+  Mentions; its recipients add the comment's author and the authors of
+  its replies not deleted, each by address. `Run` is `POST
+  /drive/v3/files/{id}/comments/{id}/replies?fields=id` with
+  `content`. Audit "replied to comment <id> on document <id> as reply
+  <id>; told <addresses>".
 
 #### Outside and the audit
 

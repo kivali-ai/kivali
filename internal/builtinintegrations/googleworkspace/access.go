@@ -59,9 +59,9 @@ var accessFields = []accessField{
 	{key: keyCalendars, title: "Calendars it may use", description: "The calendars the agent may use. Leave it empty for every calendar.", list: true},
 	{key: keyDocsRead, title: "May read documents", description: "Lets the agent find and read Google Docs and their comments, within the folders below. It changes nothing."},
 	{key: keyDocsWrite, title: "May write documents", description: "Lets the agent create documents, and change documents you own or it created, telling no one."},
-	{key: keyDocsSend, title: "May comment", description: "Lets the agent comment on documents and reply to comments. Not available in this version of Kivali."},
+	{key: keyDocsSend, title: "May comment (each comment waits for your approval)", description: "Lets the agent ask to comment on documents and to reply to comments, within the folders below. Nothing is posted until you approve it, exactly as you saw it."},
 	{key: keyDocsFolders, title: "Folders it may read", description: "The Drive folders the agent may read and change documents in, the folders inside them included. Leave it empty for every document you can open.", list: true},
-	{key: keySendTo, title: "May send to", description: "Who the agent may send mail and invitations to: an address such as dana@example.com, or *@example.com for everyone at a domain. Leave it empty for anyone. Every send still waits for your approval.", list: true},
+	{key: keySendTo, title: "May send to", description: "Who the agent may send mail and invitations to, and mention in comments: an address such as dana@example.com, or *@example.com for everyone at a domain. Leave it empty for anyone. Every send still waits for your approval.", list: true},
 }
 
 // accessSchema is the access form as the manifest's JSON Schema, the

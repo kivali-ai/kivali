@@ -75,6 +75,7 @@ func TestFormSaysWhichSendsWait(t *testing.T) {
 	waits := map[string]string{
 		keyGmailSend:    "May send mail (each send waits for your approval)",
 		keyCalendarSend: "May invite and respond (each waits for your approval)",
+		keyDocsSend:     "May comment (each comment waits for your approval)",
 	}
 	for _, f := range accessFields {
 		approves := strings.Contains(strings.ToLower(f.title+" "+f.description), "approv")
