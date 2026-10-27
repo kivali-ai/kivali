@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -528,6 +529,36 @@ func TestIntegrationAuditTail(t *testing.T) {
 	_ = f.Close()
 	if rows, _ := s.ReadIntegrationAuditTail("crm", 1); len(rows) != 1 || rows[0].DurationMS != 19 {
 		t.Errorf("tail past a cut append = %v", rows)
+	}
+}
+
+// Why this test exists: an audit row names who outside the owner's
+// domain wrote what a built-in's call returned, and a send's approval
+// card is to read it back from the audit tail. The names must survive
+// the write and the read in order, and a row without any must keep
+// the field out of the line, so the rows of every other call read as
+// they did.
+func TestIntegrationAuditOutside(t *testing.T) {
+	s := mustStore(t)
+	storeVersion(t, s, "crm", "1.0.0")
+	outside := []string{"alice@example.org", "bob@example.net"}
+	if err := s.AppendIntegrationAudit("crm", IntegrationAuditRow{At: intNow, Agent: "dana", Action: "get_thread", Allowed: true, Outside: outside}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AppendIntegrationAudit("crm", IntegrationAuditRow{At: intNow, Agent: "dana", Action: "list_labels", Allowed: true}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := s.ReadIntegrationAuditTail("crm", 2)
+	if err != nil || len(rows) != 2 || len(rows[0].Outside) != 0 || !slices.Equal(rows[1].Outside, outside) {
+		t.Fatalf("tail = %+v, %v", rows, err)
+	}
+	b, err := os.ReadFile(filepath.Join(s.Root(), "integrations", "crm", "audit.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
+	if len(lines) != 2 || !strings.Contains(lines[0], `"outside":["alice@example.org","bob@example.net"]`) || strings.Contains(lines[1], "outside") {
+		t.Errorf("audit.jsonl = %s", b)
 	}
 }
 

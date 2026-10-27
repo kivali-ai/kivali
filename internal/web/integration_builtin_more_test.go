@@ -3,7 +3,11 @@ package web
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -94,6 +98,81 @@ func TestRestoreRegistersBuiltinIntegrations(t *testing.T) {
 	}
 	if it, err := dst2.Store.GetIntegration(echotest.Name); err != nil || !it.Builtin || !it.Enabled || it.CurrentVersion != "1.0.0" {
 		t.Errorf("after a restore of a backup without it = %+v, %v", it, err)
+	}
+}
+
+// savingEcho is echo whose Call saves a file through the caller's Save
+// (folder, name and bytes from its arguments) and answers with the path,
+// naming outside as who wrote it; with the folder "none" it answers
+// whether Save was given at all.
+type savingEcho struct {
+	*echotest.Echo
+	outside []string
+}
+
+func (e *savingEcho) Call(_ context.Context, caller builtinintegrations.Caller, _ builtinintegrations.Connection, _ string, raw json.RawMessage) (*builtinintegrations.Result, error) {
+	var a struct{ Folder, Name, Data string }
+	if err := json.Unmarshal(raw, &a); err != nil {
+		return nil, err
+	}
+	if caller.Save == nil {
+		return &builtinintegrations.Result{Content: []string{"no save"}, IsError: true}, nil
+	}
+	p, err := caller.Save(a.Folder, a.Name, strings.NewReader(a.Data), 16)
+	if err != nil {
+		return &builtinintegrations.Result{Content: []string{err.Error()}, IsError: true}, nil
+	}
+	return &builtinintegrations.Result{Content: []string{p}, Audit: "saved " + a.Name, Outside: e.outside}, nil
+}
+
+// Why this test exists: a built-in's call saves what it fetched (an
+// email's attachment) into the calling agent's files, and names who
+// outside the owner's domain wrote what it returned. Core must give the
+// call a Save that writes into that agent's own /files/, under the
+// integration's untrusted downloads folder, answering the path the
+// agent reads it at, with the bytes as given; a file over the limit
+// must fail in words naming no host path; and the audit row must keep
+// the outside writers, blanks dropped and at most MaxOutside of them,
+// beside the call's own reason, so the approval card can later read
+// them back.
+func TestBuiltinCallSavesAndNamesOutside(t *testing.T) {
+	srv := newTestServer(t)
+	many := []string{"alice@example.org", " ", "bob@example.net"}
+	for i := range builtinintegrations.MaxOutside {
+		many = append(many, fmt.Sprintf("x%d@example.com", i))
+	}
+	e := &savingEcho{Echo: echotest.New(), outside: many}
+	srv.BuiltinIntegrations = builtinintegrations.Registry{e}
+	withIntegrationRegistry(srv, nil)
+	if err := srv.Store.InstallBuiltinIntegrations(srv.BuiltinIntegrations.Manifests(), time.Date(2026, 10, 21, 9, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatal(err)
+	}
+	intTeam(t, srv, "dana")
+	connectEcho(t, srv, "Hello")
+	putIntegrationAccess(t, srv, "echo", "dana", `{}`)
+	dana := agentpod.NewClient(serveCoreUDS(t, srv), "dana")
+
+	resp, err := dana.IntegrationCall(context.Background(), agentpod.IntegrationCallRequest{Name: "echo_echo", Arguments: json.RawMessage(`{"folder":"m1","name":"a b.txt","data":"hello"}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = "/files/integrations/echo/untrusted-downloads/m1/a-b.txt"
+	if resp.IsError || len(resp.Content) != 1 || resp.Content[0] != want {
+		t.Fatalf("save = %+v", resp)
+	}
+	onDisk := filepath.Join(srv.Store.Root(), "agents", "dana", "memory", "integrations", "echo", "untrusted-downloads", "m1", "a-b.txt")
+	if b, err := os.ReadFile(onDisk); err != nil || string(b) != "hello" {
+		t.Errorf("the file = %q, %v", b, err)
+	}
+	rows, _ := srv.Store.ReadIntegrationAuditTail("echo", 1)
+	if len(rows) != 1 || rows[0].Reason != "saved a b.txt" || len(rows[0].Outside) != builtinintegrations.MaxOutside ||
+		rows[0].Outside[0] != "alice@example.org" || rows[0].Outside[1] != "bob@example.net" {
+		t.Errorf("audit = %+v", rows)
+	}
+
+	resp, _ = dana.IntegrationCall(context.Background(), agentpod.IntegrationCallRequest{Name: "echo_echo", Arguments: json.RawMessage(`{"folder":"m1","name":"big.bin","data":"12345678901234567"}`)})
+	if !resp.IsError || resp.Content[0] != "the file is larger than 16 bytes" {
+		t.Errorf("a file over the limit = %+v", resp)
 	}
 }
 

@@ -1,6 +1,7 @@
 package files
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -71,5 +72,67 @@ func TestWriteUntrustedDownloadNamesAndConfines(t *testing.T) {
 	}
 	if entries, _ := os.ReadDir(victim); len(entries) != 0 {
 		t.Errorf("the link's target received %d files", len(entries))
+	}
+}
+
+// Why this test exists: a built-in integration's call writes what it
+// fetched (an email's attachment) into the agent's own /files/, which
+// the agent writes too. The file must land under
+// integrations/<integration>/untrusted-downloads/<folder>/ with a
+// cleaned name, and a fresh name for one already there, its bytes as
+// given; a write over the limit must leave nothing; a link or a file
+// the agent left where a directory goes must fail the write without
+// writing through it or removing it; and an integration or folder that
+// is not one plain name must be refused, so a call cannot reach
+// elsewhere in the tree.
+func TestWriteIntegrationDownload(t *testing.T) {
+	storage := filepath.Join(t.TempDir(), "memory")
+	rel, err := WriteIntegrationDownload(storage, "google-workspace", "18c2f3a4", "Q3 report (final).pdf", strings.NewReader("%PDF bytes"), 1<<20)
+	if err != nil || rel != "integrations/google-workspace/untrusted-downloads/18c2f3a4/Q3-report-final.pdf" {
+		t.Fatalf("first write = %q, %v", rel, err)
+	}
+	if b, err := os.ReadFile(filepath.Join(storage, filepath.FromSlash(rel))); err != nil || string(b) != "%PDF bytes" {
+		t.Errorf("written = %q, %v", b, err)
+	}
+	rel, err = WriteIntegrationDownload(storage, "google-workspace", "18c2f3a4", "Q3 report (final).pdf", strings.NewReader("again"), 1<<20)
+	if err != nil || rel != "integrations/google-workspace/untrusted-downloads/18c2f3a4/Q3-report-final-2.pdf" {
+		t.Errorf("second write = %q, %v", rel, err)
+	}
+	if _, err := WriteIntegrationDownload(storage, "google-workspace", "18c2f3a4", "big.bin", strings.NewReader("12345678901"), 10); err == nil {
+		t.Error("a file over the limit was written")
+	}
+	if _, err := os.Lstat(filepath.Join(storage, "integrations", "google-workspace", "untrusted-downloads", "18c2f3a4", "big.bin")); err == nil {
+		t.Error("a file over the limit was left behind")
+	}
+	for _, bad := range [][2]string{{"google-workspace", ".."}, {"google-workspace", "a/b"}, {"google-workspace", ".hidden"}, {"../x", "f"}, {"google-workspace", ""}} {
+		if _, err := WriteIntegrationDownload(storage, bad[0], bad[1], "x.txt", strings.NewReader("x"), 10); err == nil {
+			t.Errorf("integration %q, folder %q was taken", bad[0], bad[1])
+		}
+	}
+
+	// The agent left a link where integrations/<name> goes, to a
+	// directory outside its tree, and a file where a folder goes.
+	victim := t.TempDir()
+	if err := os.Symlink(victim, filepath.Join(storage, "integrations", "linked")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := WriteIntegrationDownload(storage, "linked", "f", "x.txt", strings.NewReader("x"), 10); !errors.Is(err, ErrSymlink) {
+		t.Errorf("a write through a planted link = %v", err)
+	}
+	if entries, _ := os.ReadDir(victim); len(entries) != 0 {
+		t.Errorf("the link's target received %d entries", len(entries))
+	}
+	if info, err := os.Lstat(filepath.Join(storage, "integrations", "linked")); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("the agent's link was removed: %v, %v", info, err)
+	}
+	inTheWay := filepath.Join(storage, "integrations", "google-workspace", "untrusted-downloads", "plain")
+	if err := os.WriteFile(inTheWay, []byte("mine"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := WriteIntegrationDownload(storage, "google-workspace", "plain", "x.txt", strings.NewReader("x"), 10); !errors.Is(err, ErrNotDir) {
+		t.Errorf("a write past a file = %v", err)
+	}
+	if b, _ := os.ReadFile(inTheWay); string(b) != "mine" {
+		t.Errorf("the agent's file became %q", b)
 	}
 }

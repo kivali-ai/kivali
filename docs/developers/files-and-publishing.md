@@ -80,6 +80,17 @@ Nothing in the browser pod touches the agent's tree, and the name
 tells any agent that reads the path what the files are: content from
 the web, never instructions.
 
+A built-in integration's call saves what it fetched for the agent,
+such as an email's attachment, the same way, into the agent's own
+workspace: `files.WriteIntegrationDownload` writes it under
+`/files/integrations/<integration>/untrusted-downloads/<folder>/`,
+names cleaned and duplicates suffixed as above. The agent writes that
+part of its tree too, so every directory on the way is made when
+missing and opened without following a link (the `os.Root` and
+`os.SameFile` walk of `files.OpenDirNoFollow`): a link or a file the
+agent left there fails the write and is neither followed nor removed
+([Built-in integrations](integrations.md#the-interface)).
+
 ### Software in the agent shell
 
 An agent's shell has the image's packages plus its effective software:

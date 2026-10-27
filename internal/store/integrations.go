@@ -252,6 +252,11 @@ type IntegrationAuditRow struct {
 	Allowed    bool   `json:"allowed"`
 	Reason     string `json:"reason,omitempty"`
 	DurationMS int64  `json:"duration_ms"`
+	// Outside names, for a built-in's call, who outside the owner's
+	// domain wrote content it returned to the agent: a message's
+	// sender, a document's owner, by address
+	// (builtinintegrations.Result.Outside).
+	Outside []string `json:"outside,omitempty"`
 }
 
 // integrationLocks holds a *sync.Mutex per integration name.

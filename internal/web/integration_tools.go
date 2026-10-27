@@ -572,6 +572,13 @@ func integrationError(text string) agentpod.IntegrationCallResponse {
 // auditAgentCall appends one row for slug's call of tool to name's
 // audit.
 func (s *Server) auditAgentCall(name string, start time.Time, slug, tool string, allowed bool, reason string) {
+	s.auditAgentRow(name, start, slug, tool, allowed, reason, nil)
+}
+
+// auditAgentRow is auditAgentCall for a built-in's call that names who
+// outside the owner's domain wrote what it returned (outside, as
+// auditOutside keeps it).
+func (s *Server) auditAgentRow(name string, start time.Time, slug, tool string, allowed bool, reason string, outside []string) {
 	row := store.IntegrationAuditRow{
 		At:         start,
 		Agent:      slug,
@@ -579,6 +586,7 @@ func (s *Server) auditAgentCall(name string, start time.Time, slug, tool string,
 		Allowed:    allowed,
 		Reason:     clipText(reason, integrationVerifyMessageMax),
 		DurationMS: s.clk().Now().Sub(start).Milliseconds(),
+		Outside:    outside,
 	}
 	if err := s.Store.AppendIntegrationAudit(name, row); err != nil && !errors.Is(err, store.ErrNotFound) {
 		log.Printf("integration %s: audit: %v", name, err)
