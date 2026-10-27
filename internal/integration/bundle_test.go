@@ -182,3 +182,63 @@ func TestExtractStripsTopFolderKeepsExecBit(t *testing.T) {
 		t.Errorf("second extract into the same dir: %v", err)
 	}
 }
+
+// Why this test exists: a stored version's files are the only copy of
+// its bundle, and WriteZip is how the owner gets it back to share. If
+// it left a file out, lost the exec bit, kept a bytecode cache the
+// server wrote beside the code, or laid the files out so ReadBundle
+// would not take them, the download could not be installed on another
+// team as it was here. A symlink in the directory must be an error,
+// never followed into a file outside the bundle.
+func TestWriteZipReadsBackAsTheSameBundle(t *testing.T) {
+	dir := t.TempDir()
+	m := integrationtest.Manifest("crm", "1.0.0")
+	if err := Extract(integrationtest.Zip(t, "crm", m, map[string]integrationtest.File{"bin/tool": {Body: "#!/bin/sh\n", Mode: 0o755}}), dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "server", "__pycache__"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "server", "__pycache__", "main.pyc"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	if err := WriteZip(os.DirFS(dir), &buf); err != nil {
+		t.Fatal(err)
+	}
+	b, err := ReadBundle(buf.Bytes())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var paths []string
+	modes := map[string]fs.FileMode{}
+	for _, f := range b.Files {
+		paths = append(paths, f.Path)
+		modes[f.Path] = f.Mode.Perm()
+	}
+	if want := []string{"bin/tool", "manifest.json", "server/main.py"}; strings.Join(paths, ",") != strings.Join(want, ",") {
+		t.Errorf("paths = %v, want %v", paths, want)
+	}
+	if modes["bin/tool"] != 0o755 {
+		t.Errorf("bin/tool mode = %o, want 755", modes["bin/tool"])
+	}
+	if !bytes.Equal(b.ManifestBytes(), integrationtest.ManifestJSON(t, m)) {
+		t.Errorf("manifest changed:\n%s", b.ManifestBytes())
+	}
+	zr, err := zip.NewReader(bytes.NewReader(buf.Bytes()), int64(buf.Len()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range zr.File {
+		if f.FileInfo().IsDir() {
+			t.Errorf("zip holds a directory entry %s", f.Name)
+		}
+	}
+
+	if err := os.Symlink("/etc/hosts", filepath.Join(dir, "server", "link")); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteZip(os.DirFS(dir), &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), "server/link is not a regular file") {
+		t.Errorf("symlink: err = %v", err)
+	}
+}

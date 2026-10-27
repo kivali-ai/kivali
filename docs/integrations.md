@@ -2,7 +2,7 @@
 
 An integration is an external service your agents can act on, such as a CRM, a blog or a ticket tracker. Each one comes from a bundle you approve or ships with Kivali, is connected with a token you paste, by signing in to the service or by its own setup, and is given to agents one at a time, each with its own access. This page covers having one built, approving one and its new versions, rolling back to an earlier version, connecting it, what it needs from you once connected, giving agents access, what an agent then sees, the record of their calls, its log, disabling, disconnecting or uninstalling it, and the [Git (Basic)](#git-basic) and [GitHub](#github) integrations that ship with Kivali.
 
-Integrations are under **Org**, **Integrations**.
+Integrations are under **Org**, **Integrations**, in two groups: **From a bundle**, the integrations you uploaded or your Kivali Developer published, with **Upload a bundle** under them; and **Built in**, the ones that ship with Kivali.
 
 ## What an integration is
 
@@ -10,7 +10,7 @@ An integration gives agents **actions**: things they can do in the service, such
 
 An integration is installed one **version** at a time. Nothing in a version runs until you approve it. Once approved and enabled, an integration you upload runs on its own, apart from Kivali and from your agents, and reaches only the hosts its install screen listed.
 
-Some integrations ship with Kivali. They are on the Integrations page already, marked **Built in**, and need no approval: their version comes with Kivali, and Kivali's updates bring the next one, so there is nothing to approve, reject or roll back to. They run inside Kivali: one connected with a token reaches the hosts its connection names, and its install screen lists no hosts of its own; one whose own setup makes its connection, such as [GitHub](#github), lists every host its setup and its calls reach. Connect one and give agents access as you would any other. An integration that ships with Kivali is never uninstalled: **Disconnect** forgets its connection and leaves it **Installed**, ready to connect again; disable it when your team should not use it for a while, and it stays disabled. One that this version of Kivali does not include (another version shipped it) is marked **Not in this version of Kivali**: agents cannot use it, and you can uninstall it.
+Some integrations ship with Kivali. They are on the Integrations page already, under **Built in**, and need no approval: their version comes with Kivali, and Kivali's updates bring the next one, so there is nothing to approve, reject or roll back to. They run inside Kivali: one connected with a token reaches the hosts its connection names, and its install screen lists no hosts of its own; one whose own setup makes its connection, such as [GitHub](#github), lists every host its setup and its calls reach. Connect one and give agents access as you would any other. An integration that ships with Kivali is never uninstalled: **Disconnect** forgets its connection and leaves it **Installed**, ready to connect again; disable it when your team should not use it for a while, and it stays disabled. One that this version of Kivali does not include (another version shipped it) is marked **Not in this version of Kivali**: agents cannot use it, and you can uninstall it.
 
 ### Where an integration stands
 
@@ -37,7 +37,7 @@ The Kivali Developer uses an integration only if you give it access, like any ag
 
 ## Install an integration
 
-An integration arrives as a bundle, a `.zip` file. In **Org**, **Integrations**, choose **Upload a bundle** and pick the file.
+An integration arrives as a bundle, a `.zip` file. In **Org**, **Integrations**, under **From a bundle**, choose **Upload a bundle** and pick the file.
 
 Kivali checks the bundle first: that it says what it is and what it reaches, that its form makes sense, and that its files are safe to unpack. A bundle that fails is not stored, and the dialog lists every problem for whoever built it. A version already installed cannot be uploaded again; a changed bundle needs a new version number.
 
@@ -67,6 +67,10 @@ If a new version does not work as it should, you can go back to the one it repla
 Rolling back stops the version in use and runs the earlier one again in a few seconds, from the code that was approved for it. The version you rolled back from is marked **Replaced**, and you can roll back to it in turn. A rejected version never runs, so it has no **Roll back**, and a version waiting for approval is approved, not rolled back to. The roll back is in [Recent calls](#recent-calls), under your name.
 
 Your agents' access stays as it is. Access that no longer fits the earlier version's access form is marked, as after a new version (see [Give agents access](#give-agents-access)). Every version is kept until you remove the integration, so any version that was in use can be rolled back to.
+
+### Share an integration
+
+An integration from a bundle can be downloaded again as one, to install it on another team. On the Integrations page, **Download** beside an integration's row saves the version in use as a `.zip`, named after the integration and the version. On the integration's page, **Download bundle** at the top saves the same, and under **Versions** every version has its own **Download**, so an earlier version can be passed on too. The zip holds the files the version was installed from, nothing of your connection or your agents' access, and uploads on another team as any bundle does. An integration that ships with Kivali has no bundle to download.
 
 ## Connect it
 

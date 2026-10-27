@@ -1127,8 +1127,9 @@ describe('Software', () => {
 describe('Integrations', () => {
   // Guards the list's reading of integrations.json: each row's version, state badge, how many of a connected one's
   // requirements need you, and agent count, the row opening the integration's page, the version waiting for approval
-  // linking to its install screen, and the head's counts. A field the list drops, a badge in the wrong tone or a link
-  // to the wrong place fails here.
+  // linking to its install screen, the head's counts, and the split: every integration from a bundle under "From a
+  // bundle", every built-in under "Built in", so the group says what a badge said before. A field the list drops, a
+  // badge in the wrong tone, a link to the wrong place or a row in the wrong group fails here.
   it('lists each integration with its version, state and agents, and links a waiting version to its install screen', async () => {
     await renderOrg('/org/integrations', { desktop: true });
     const section = within(screen.getByRole('region', { name: 'Integrations' }));
@@ -1149,22 +1150,59 @@ describe('Integrations', () => {
     expect(within(weather).getByText('No agents')).toBeInTheDocument();
     expect(section.getByRole('link', { name: 'Version 1.3.0 waits for your approval' })).toHaveAttribute('href', '/org/integrations/hubspot/versions/1.3.0');
     expect(section.getAllByRole('link', { name: /waits for your approval/ })).toHaveLength(1);
-    expect(within(hubspot).queryByText('Built in')).toBeNull();
     // A built-in record this version of Kivali does not carry says so, rather than "Not running".
     const maps = section.getByRole('link', { name: /Maps/ });
     expect(within(maps).getByText('Not in this version of Kivali')).toHaveClass('kv-badge--neutral');
-    expect(within(maps).getByText('Built in')).toBeInTheDocument();
+    expect(section.queryByText('Built in', { selector: '.kv-badge' })).toBeNull();
+    const bundles = within(section.getByRole('region', { name: 'From a bundle' }));
+    const builtins = within(section.getByRole('region', { name: 'Built in' }));
+    expect(bundles.getAllByRole('link', { name: /^(HubSpot|Weather|CRM|Blog)/ }).map((l) => l.getAttribute('href'))).toEqual([
+      '/org/integrations/hubspot',
+      '/org/integrations/weather',
+      '/org/integrations/crm',
+      '/org/integrations/blog',
+    ]);
+    expect(builtins.getAllByRole('link').map((l) => l.getAttribute('href'))).toEqual(['/org/integrations/maps', '/org/integrations/git', '/org/integrations/github']);
+    expect(bundles.getByText('4 integrations')).toBeInTheDocument();
+    expect(builtins.getByText('3 integrations')).toBeInTheDocument();
+    expect(bundles.getByRole('button', { name: 'Upload a bundle' })).toBeInTheDocument();
+    expect(builtins.queryByRole('button', { name: 'Upload a bundle' })).toBeNull();
   });
 
-  // Guards the quiet states: a built-in integration carries the Built in badge beside its status, and an empty
-  // list says so instead of drawing an empty container.
-  it('marks a built-in integration, and says when none is installed', async () => {
+  // Guards the quiet states: a group with nothing in it says so instead of drawing an empty container, and the
+  // upload stays with the bundles however empty they are, so a team with only built-ins can still add one.
+  it('says when a group has nothing in it', async () => {
     const builtin = { integrations: [{ ...goIntegrations.integrations[1]!, builtin: true }] };
     const h = await renderOrg('/org/integrations', { routes: { 'GET /api/v1/org/integrations': builtin } });
-    expect(within(screen.getByRole('link', { name: /Weather/ })).getByText('Built in')).toHaveClass('kv-badge--outline');
+    const bundles = within(screen.getByRole('region', { name: 'From a bundle' }));
+    expect(bundles.getByText('No integrations from a bundle yet.')).toBeInTheDocument();
+    expect(bundles.getByRole('button', { name: 'Upload a bundle' })).toBeInTheDocument();
+    expect(within(screen.getByRole('region', { name: 'Built in' })).getByRole('link', { name: /Weather/ })).toBeInTheDocument();
     h.unmount();
     await renderOrg('/org/integrations', { routes: { 'GET /api/v1/org/integrations': { integrations: [] } } });
-    expect(screen.getByText('No integrations yet.')).toBeInTheDocument();
+    expect(screen.getByText('No integrations from a bundle yet.')).toBeInTheDocument();
+    expect(screen.getByText('None in this version of Kivali.')).toBeInTheDocument();
+  });
+
+  // Guards the download from the list: an integration from a bundle with a version in use has Download beside its
+  // row (a button, so the row's link stays the row), which fetches that version's bundle and hands the zip to the
+  // browser under the server's name; one with no version yet and every built-in offer none, since there is nothing
+  // stored to download for the one and the server refuses the other.
+  it('downloads the version in use of an integration from a bundle, and offers none for a built-in', async () => {
+    const created = vi.fn(() => 'blob:bundle');
+    vi.stubGlobal('URL', Object.assign(URL, { createObjectURL: created, revokeObjectURL: vi.fn() }));
+    const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+    await renderOrg('/org/integrations', { routes: { 'GET /api/v1/org/integrations/hubspot/versions/1.2.0/bundle': new Blob(['zip']) } });
+    expect(screen.getAllByRole('button', { name: /^Download / }).map((b) => b.getAttribute('aria-label'))).toEqual([
+      'Download HubSpot version 1.2.0',
+      'Download CRM version 2.1.0',
+      'Download Blog version 1.0.0',
+    ]);
+    await click(screen.getByRole('button', { name: 'Download HubSpot version 1.2.0' }));
+    expect(called('GET', '/api/v1/org/integrations/hubspot/versions/1.2.0/bundle')).toBe(true);
+    expect(created).toHaveBeenCalled();
+    expect(anchorClick).toHaveBeenCalledTimes(1);
+    expect((anchorClick.mock.instances[0] as unknown as HTMLAnchorElement).download).toBe('hubspot-1.2.0.zip');
   });
 
   // Guards the upload: one .zip goes up as the multipart field `file`, and the version the server stored leads
@@ -1991,9 +2029,16 @@ describe('Integration page', () => {
     expect(within(links[1]!).getByText('In use')).toHaveClass('kv-badge--success');
     expect(within(links[2]!).getByText('Rejected')).toBeInTheDocument();
     expect(within(links[3]!).getByText('Replaced')).toBeInTheDocument();
-    // Roll back sits beside the superseded version's link, never inside one, and nowhere else: the block's one other
-    // button is its own toggle.
-    expect(versions.getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual(['Versions', 'Roll back to version 1.1.0']);
+    // Roll back sits beside the superseded version's link, never inside one, and nowhere else; every version has its
+    // Download beside it, and the block's one other button is its own toggle.
+    expect(versions.getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual([
+      'Versions',
+      'Download version 1.3.0',
+      'Download version 1.2.0',
+      'Download version 1.1.1',
+      'Download version 1.1.0',
+      'Roll back to version 1.1.0',
+    ]);
     for (const l of links) expect(within(l).queryByRole('button')).toBeNull();
 
     await click(screen.getByRole('button', { name: 'Recent calls' }));
@@ -2047,7 +2092,7 @@ describe('Integration page', () => {
     const links = versions.getAllByRole('link');
     expect(within(links[3]!).getByText('In use')).toBeInTheDocument();
     expect(within(links[1]!).getByText('Replaced')).toBeInTheDocument();
-    expect(versions.getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual(['Versions', 'Roll back to version 1.2.0']);
+    expect(versions.getAllByRole('button').filter((b) => b.textContent === 'Roll back').map((b) => b.getAttribute('aria-label'))).toEqual(['Roll back to version 1.2.0']);
     expect(auditReads()).toBe(readsBefore + 1);
   });
 
@@ -2078,6 +2123,7 @@ describe('Integration page', () => {
     expect(versions.getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual(['Versions']);
     expect(connection.getByRole('button', { name: 'Disconnect' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Uninstall' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Download bundle' })).toBeNull();
   });
 
   // Guards a built-in record this version of Kivali does not carry (integration_page_not_included.json): nothing runs
@@ -2101,6 +2147,38 @@ describe('Integration page', () => {
     await click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Uninstall' }));
     expect(called('DELETE', '/api/v1/org/integrations/maps')).toBe(true);
     expect(h.router.state.location.pathname).toBe('/org/integrations');
+  });
+
+  // Guards the page's downloads: Download bundle in the header fetches the version in use, and every version under
+  // Versions has its own Download, so an earlier version can be passed on too; the roll back stays beside a replaced
+  // one. A download that the server refuses shows in the page's banner.
+  it('downloads the version in use from the header and any version from its row', async () => {
+    const created = vi.fn(() => 'blob:bundle');
+    vi.stubGlobal('URL', Object.assign(URL, { createObjectURL: created, revokeObjectURL: vi.fn() }));
+    const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+    await renderOrg(PATH, {
+      routes: {
+        ['GET ' + API + '/versions/1.2.0/bundle']: new Blob(['zip']),
+        ['GET ' + API + '/versions/1.1.0/bundle']: fail(500, 'the bundle could not be read', 'whoever runs this Kivali server'),
+      },
+    });
+    await click(screen.getByRole('button', { name: 'Download bundle' }));
+    expect(called('GET', API + '/versions/1.2.0/bundle')).toBe(true);
+    expect((anchorClick.mock.instances[0] as unknown as HTMLAnchorElement).download).toBe('hubspot-1.2.0.zip');
+    await click(screen.getByRole('button', { name: 'Versions' }));
+    const versions = within(screen.getByRole('region', { name: 'Versions' }));
+    expect(versions.getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual([
+      'Versions',
+      'Download version 1.3.0',
+      'Download version 1.2.0',
+      'Download version 1.1.1',
+      'Download version 1.1.0',
+      'Roll back to version 1.1.0',
+    ]);
+    await click(versions.getByRole('button', { name: 'Download version 1.1.0' }));
+    expect(called('GET', API + '/versions/1.1.0/bundle')).toBe(true);
+    expect(screen.getByText('the bundle could not be read')).toBeInTheDocument();
+    expect(anchorClick).toHaveBeenCalledTimes(1);
   });
 
   // Guards a refused roll back (a 409, such as a version answered in another tab): the dialog stays open with the

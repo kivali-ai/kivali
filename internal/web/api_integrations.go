@@ -1,6 +1,7 @@
 package web
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"encoding/json"
@@ -11,6 +12,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/url"
+	"os"
 	"slices"
 	"sort"
 	"strconv"
@@ -45,6 +47,7 @@ func (s *Server) wireAPIIntegrationRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/org/integrations/{name}/enable", s.handleAPIIntegrationToggle(true))
 	mux.HandleFunc("POST /api/v1/org/integrations/{name}/disable", s.handleAPIIntegrationToggle(false))
 	mux.HandleFunc("GET /api/v1/org/integrations/{name}/versions/{version}", s.handleAPIIntegrationVersion)
+	mux.HandleFunc("GET /api/v1/org/integrations/{name}/versions/{version}/bundle", s.handleAPIIntegrationBundle)
 	mux.HandleFunc("POST /api/v1/org/integrations/{name}/versions/{version}/approve", s.handleAPIIntegrationAnswer(true))
 	mux.HandleFunc("POST /api/v1/org/integrations/{name}/versions/{version}/reject", s.handleAPIIntegrationAnswer(false))
 	mux.HandleFunc("POST /api/v1/org/integrations/{name}/versions/{version}/rollback", s.handleAPIIntegrationRollBack)
@@ -242,6 +245,7 @@ const (
 	builtinReject
 	builtinRollBack
 	builtinUpload
+	builtinDownload
 	builtinNotIncluded
 )
 
@@ -251,6 +255,8 @@ func builtinRefusal(display string, move builtinMove) string {
 	switch move {
 	case builtinUpload:
 		return display + " ships with Kivali, so a bundle cannot replace it"
+	case builtinDownload:
+		return display + " ships with Kivali, so it has no bundle to download"
 	case builtinNotIncluded:
 		return display + " is not in this version of Kivali, so nothing runs it; you can uninstall it"
 	}
@@ -1158,6 +1164,58 @@ func (s *Server) writeIntegrationVersionView(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	writeJSON(w, http.StatusOK, s.integrationVersionView(v, ver, m, r))
+}
+
+// handleAPIIntegrationBundle answers GET .../versions/{version}/bundle
+// with the version's bundle as a zip, to download and install on
+// another team: the stored files (integration.WriteZip), named
+// <name>-<version>.zip. 404 for a version not stored; 409 for a
+// built-in integration, whose versions have no bundle.
+func (s *Server) handleAPIIntegrationBundle(w http.ResponseWriter, r *http.Request) {
+	v, ok := s.integrationOr404(w, r)
+	if !ok {
+		return
+	}
+	version := r.PathValue("version")
+	switch _, _, err := s.Store.GetIntegrationVersion(v.it.Name, version); {
+	case errors.Is(err, store.ErrNotFound):
+		writeAPIError(w, http.StatusNotFound, "version "+version+" of "+v.it.Name+" is not stored", whoLink)
+		return
+	case err != nil:
+		writeAPIError(w, http.StatusInternalServerError, "the version could not be read", whoServer)
+		return
+	}
+	if v.it.Builtin {
+		writeAPIError(w, http.StatusConflict, builtinRefusal(v.displayName(), builtinDownload), whoYou)
+		return
+	}
+	dir, err := s.Store.IntegrationBundleDir(v.it.Name, version)
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "the version could not be read", whoServer)
+		return
+	}
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		log.Printf("integration %s %s: open bundle: %v", v.it.Name, version, err)
+		writeAPIError(w, http.StatusInternalServerError, "the bundle could not be read", whoServer)
+		return
+	}
+	defer func() { _ = root.Close() }()
+	// Whole in memory first (a bundle is at most MaxBundleBytes
+	// unpacked), so a file that cannot be read is an error, never a
+	// truncated zip the browser saves.
+	var buf bytes.Buffer
+	if err := integration.WriteZip(root.FS(), &buf); err != nil {
+		log.Printf("integration %s %s: zip bundle: %v", v.it.Name, version, err)
+		writeAPIError(w, http.StatusInternalServerError, "the bundle could not be read", whoServer)
+		return
+	}
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+sanitizeDownloadName(v.it.Name+"-"+version+".zip")+`"`)
+	w.Header().Set("Content-Length", strconv.Itoa(buf.Len()))
+	_, _ = w.Write(buf.Bytes())
 }
 
 // handleAPIIntegrationAnswer approves or rejects a pending version from
