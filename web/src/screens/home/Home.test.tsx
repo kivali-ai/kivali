@@ -630,7 +630,7 @@ describe('Needs you', () => {
       expect(values).toEqual(held.integration_hold?.fields.map((f) => f.value));
       expect(values[2]).toContain('**asked**');
       expect(el.querySelector('strong, blockquote')).toBeNull();
-      const taint = row.getByText(/^Before asking, this agent read 3 messages or documents from outside your domain/);
+      const taint = row.getByText(/^Before asking, this agent read 3 messages, events or documents from outside your domain/);
       expect(taint.closest('.app-home-taint')).not.toBeNull();
       const firstField = row.getByText('Subject');
       expect(taint.compareDocumentPosition(firstField) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();

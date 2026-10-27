@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// Why this test exists: list_labels is the one action this version
+// Why this test exists: list_labels is the simplest action that
 // runs end to end, so it proves the path from an agent's call to
 // Gmail and back: the token core handed in, Gmail's origin, the answer
 // as the agent reads it. An agent whose access names labels must see

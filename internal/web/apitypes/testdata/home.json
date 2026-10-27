@@ -250,7 +250,7 @@
         "recipients": [
           "alice@example.org"
         ],
-        "taint": "Before asking, this agent read 3 messages or documents from outside your domain, the latest from alice@example.org."
+        "taint": "Before asking, this agent read 3 messages, events or documents from outside your domain, the latest from alice@example.org."
       }
     }
   ],
