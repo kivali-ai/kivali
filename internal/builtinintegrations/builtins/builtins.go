@@ -8,9 +8,10 @@ import (
 	"github.com/kivali-ai/kivali/internal/builtinintegrations"
 	"github.com/kivali-ai/kivali/internal/builtinintegrations/githubintegration"
 	"github.com/kivali-ai/kivali/internal/builtinintegrations/gitintegration"
+	"github.com/kivali-ai/kivali/internal/builtinintegrations/googleworkspace"
 )
 
 // All is the built-in integrations compiled into this binary.
 func All() builtinintegrations.Registry {
-	return builtinintegrations.Registry{gitintegration.New(), githubintegration.New()}
+	return builtinintegrations.Registry{gitintegration.New(), githubintegration.New(), googleworkspace.New()}
 }

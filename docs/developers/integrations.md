@@ -60,7 +60,10 @@ a built-in runs in the agent's shell: checks, job and words),
 ([The git built-in](#the-git-built-in)).
 `internal/builtinintegrations/githubintegration` is GitHub as a
 built-in of Go code, listed in `builtins.All()` beside Git (Basic)
-([The GitHub built-in](#the-github-built-in)).
+([The GitHub built-in](#the-github-built-in)), and
+`internal/builtinintegrations/googleworkspace` is Gmail, Google
+Calendar and Google Docs ([The Google Workspace
+built-in](#the-google-workspace-built-in)).
 `cmd/fake-integration` is a stdio MCP server for tests
 (`internal/integrationpod/fakeintegration`);
 `internal/integration/testdata/echo` is a real Python bundle the tests
@@ -2519,7 +2522,9 @@ type SignInAdviser interface{ SignInAdvice(refusal string) string }
   (`sign_in.error`, "the vendor refused the sign-in (invalid_grant):
   ..."); an empty answer adds nothing. It is called each time the rows
   are built, with no connection and no deadline, so it is cheap and
-  reaches no service. A built-in's hook only.
+  reaches no service. A built-in's hook only: Google Workspace names an
+  app left in Testing for `invalid_grant` ([The Google Workspace
+  built-in](#the-google-workspace-built-in)).
 
 Core runs `Setup` through the setup runner ([Setup flows](#setup-flows)):
 `POST .../setup` of a `setup` connection whose built-in implements
@@ -2539,7 +2544,7 @@ abandoned and its answer dropped; its context ends, and it must honour
 that and stop.
 
 `builtins.All()` (`internal/builtinintegrations/builtins`) is the
-built-ins compiled into the binary: Git and GitHub. Each built-in is a package of
+built-ins compiled into the binary: Git, GitHub and Google Workspace. Each built-in is a package of
 its own that imports `builtinintegrations` for its types, so the list
 lives in a package apart. `Server.BuiltinIntegrations` is the ones core
 calls (`builtins.All()` unless a test sets others).
@@ -3863,6 +3868,223 @@ turned off while it ran is told as landed when refs did
 (`pushedUnderOldAccess`). GitHub's own rules for the repository, such
 as branch protection, still apply to a push, and its refusal reaches
 the agent in the daemon's words.
+
+### The Google Workspace built-in
+
+`internal/builtinintegrations/googleworkspace` (name `google-workspace`,
+display name Google Workspace, version 1.0.0, in `builtins.All()`) is
+Gmail, Google Calendar and Google Docs as a built-in of Go code,
+signed in with an OAuth client the owner makes on Google's Auth
+Platform. An integration's name takes hyphens, not underscores
+([The check](#the-check)), and `integration.ToolPrefix` makes its
+actions `google_workspace_<action>`. The package implements
+`Integration`, `SetupIntegration` (`setup.go`) and `SignInAdviser`
+(`requirements.go`), in these files, so each service's actions change
+apart:
+
+| File | Holds |
+| --- | --- |
+| `google.go` | the type, `Manifest`, `Tools`, `Call`, `Verify`, `Choices`, the joined action table and `answerText` |
+| `api.go` | the client: the three pinned origins, Google's errors, their words for the agent and the owner |
+| `access.go` | the access form, `readAccess`, the live options' encoding, the refusals by bucket, `readArgs` |
+| `setup.go` | the setup flow, the client JSON's reading and the setup notes |
+| `requirements.go` | the Sign-in requirement's words for a refusal |
+| `gmail.go`, `calendar.go`, `docs.go` | each service's actions, and the options of its list |
+
+- **The manifest**: `kivali.connection.method: setup`, handing over
+  to a browser sign-in (`setup.then: browser`) at Google's endpoints
+  (`https://accounts.google.com/o/oauth2/v2/auth`,
+  `https://oauth2.googleapis.com/token`, revocation
+  `https://oauth2.googleapis.com/revoke`), PKCE on,
+  `extra_authorization_params` `access_type=offline` and
+  `prompt=consent` (Google gives a refresh token only for both),
+  `credential_keys.access_token: GOOGLE_ACCESS_TOKEN`, and the scopes
+  `gmail.readonly`, `gmail.compose`, `gmail.labels`, `calendar.events`,
+  `calendar.readonly`, `documents` and `drive.readonly` (each under
+  `https://www.googleapis.com/auth/`), never Gmail's settings. The
+  `setup` block: a summary; `hosts: ["console.cloud.google.com"]`; one
+  field, `client_json`, secret and setup-only; keeps `client_id` and
+  `client_secret`, both secret, which core signs in with. An empty
+  `user_config`; `kivali.hosts`: `gmail.googleapis.com`,
+  `www.googleapis.com`, `docs.googleapis.com`, `oauth2.googleapis.com`
+  and `accounts.google.com`; `kivali.verify: profile`, which is not a
+  tool; and `kivali.setup_notes`, the console guide (below). Its
+  `tools` are every action of the three services, each with `access`
+  set to its bucket's switch, so the page lists it under that switch's
+  title. An action this version declares and does not run has nil
+  `run` in its table, and its words end "Not available in this version
+  of Kivali.". It passes `integration.ValidateBuiltin`.
+- **The connection** is what core gives a built-in of a setup that
+  hands over to a sign-in ([The credential path](#the-credential-path)):
+  `client_id` and the current access token under `GOOGLE_ACCESS_TOKEN`,
+  never the client secret or the refresh token. A connection with no
+  access token refuses every call with "Google Workspace's connection is
+  not signed in; ask the owner to set it up again.", audited as `the
+  connection holds no access token`, and nothing reaches Google; core
+  refuses a call itself while the sign-in needs the owner.
+
+#### Setup
+
+`Setup` with `FlowSetup` is one **Form**, `client_json`, then **Done**:
+
+1. The Form's words say to paste the JSON of the client made on
+   Google's Auth Platform, as the steps above say. A step's words are
+   plain text, cut at 200 characters ([Scrubbing and the
+   audit](#scrubbing-and-the-audit)), so the guide with its links is
+   `kivali.setup_notes`, which the page draws above the setup while
+   Google Workspace is installed, and under Setup notes once it is
+   connected. The guide links each page of Google Cloud console:
+   creating a project (`/projectcreate`), turning on the Gmail,
+   Calendar, Docs and Drive APIs (`/flows/enableapi?apiid=...`), Google
+   Auth Platform's **Get started** (`/auth/overview`; External for a
+   Gmail account, Internal for a Workspace one), publishing an External
+   app (`/auth/audience`; Testing ends every sign-in after seven days,
+   and an unverified app shows "Google hasn't verified this app" once,
+   with Advanced to go on), and creating a client (`/auth/clients/create`):
+   **Desktop app** for a team opened at `127.0.0.1`, which registers
+   nothing since Google takes a desktop client's sign-in at any
+   loopback port, or **Web application** for a team opened at another
+   address, which registers the redirect address under Authorized
+   redirect URIs. That address is the notes' `{{redirect_url}}`, in a
+   top-level code block headed "Redirect address", which core fills
+   with the address the page is open at (`Server.setupNotes`), the one
+   the sign-in after setup sends Google as its `redirect_uri`.
+2. The answer is read (`readClientJSON`): trimmed, at most 64 KiB, a
+   JSON object whose `installed` (a Desktop app's) or `web` (a Web
+   application's) holds `client_id`, ending
+   `.apps.googleusercontent.com`, and `client_secret`, each without a
+   space or control character and at most 512 bytes. Anything else
+   asks again on the same Form, in words saying what to paste instead,
+   each under 200 characters and quoting nothing of the paste: an
+   empty answer; one that is not JSON or is too long; a service
+   account's key (`type: service_account`); JSON with neither client;
+   no client id Google issues; no client secret. Nothing is kept until
+   it reads.
+3. **Done**, keeping `client_id` and `client_secret`. Core's browser
+   sign-in takes over with them ([Signing in](#signing-in)).
+
+`State` holds the marker `form` alone; the pasted JSON is setup-only
+and never carried. Any other flow fails: Google Workspace's rows name
+no Fix of its own.
+
+#### Access
+
+The access form has, for each of Gmail, Calendar and Docs, three
+switches, one per bucket, and a list; then `send_to`. Empty lists are
+everything.
+
+| Key | Kind | Title |
+| --- | --- | --- |
+| `gmail_read`, `calendar_read`, `docs_read` | switch | May read mail, May read calendars, May read documents |
+| `gmail_write`, `calendar_write`, `docs_write` | switch | May draft and label, May change events, May write documents |
+| `gmail_send`, `calendar_send`, `docs_send` | switch | May send mail, May invite and respond, May comment, each with "(each ... waits for your approval)" |
+| `gmail_labels`, `calendars`, `docs_folders` | choices, listed live | Labels it may read, Calendars it may use, Folders it may read |
+| `send_to` | list | May send to: addresses, or `*@domain` |
+
+Read is what sees inside the owner's account, write what changes
+something there that no other person is told about, and send anything
+that makes Google deliver something to another person, which always
+waits for the owner's approval: its switch decides only whether the
+agent may ask. `readAccess` takes a switch as on only when it is
+`true`, and each list's entries as Google's ids.
+
+A live option is `<name> (<id>)`: the name the owner knows the label,
+calendar or folder by, then Google's id for it (`option`). The access
+stores the option as it is, and every call reads the id back
+(`optionID`): the text inside the parentheses that end the entry, or
+the whole entry, as an id itself, when it does not end so. Google's
+ids hold no parentheses or spaces, so a name with parentheses of its
+own reads right ("Clients (old) (Label_12)" is `Label_12`).
+
+An action whose switch is off is refused, "The owner has not given you
+<reading mail> in Google Workspace; ask the owner if your work needs
+it.", audited as `the access does not include <reading mail>`, each
+switch with its own words (`bucketWords`).
+
+#### Actions and calls
+
+The actions are per service (`gmailActions`, `calendarActions`,
+`docsActions`, joined in that order as `actions`), each with its
+bucket's switch:
+
+| Switch | Actions |
+| --- | --- |
+| `gmail_read` | `list_labels`, `search_messages`, `get_message`, `get_thread`, `get_attachment` |
+| `gmail_write` | `create_draft`, `delete_draft`, `modify_labels` |
+| `gmail_send` | `send_email`, `send_draft` |
+| `calendar_read` | `list_calendars`, `list_events`, `get_event`, `find_free_time` |
+| `calendar_write` | `create_event`, `update_event` (a call that sets or changes who is invited waits for approval instead, under `calendar_send`), `delete_event` |
+| `calendar_send` | `respond_to_invitation` |
+| `docs_read` | `search_documents`, `get_document`, `list_comments` |
+| `docs_write` | `create_document`, `append_to_document`, `replace_text` |
+| `docs_send` | `add_comment`, `reply_to_comment` |
+
+This version runs `list_labels`; the rest have no `run`. `Tools` gives
+an agent each action whose switch its access has on and that this
+version runs, with its description and the sentence saying the owner
+decides. `Call` refuses, in order, an action that is not one ("There is
+no action named <name>."), `profile` (Test connection's), an action
+whose switch is off, then answers an action with no `run` with the
+error result "This action is not available in this version of
+Kivali.", then refuses a connection with no access token; arguments
+that are not an object are refused as for GitHub.
+
+`list_labels` (`GET /gmail/v1/users/me/labels`) answers the labels the
+access includes, one per line as options read: Gmail's own Inbox,
+Starred, Important, Sent, Drafts (`DRAFT`), Spam and Trash where Gmail
+lists them, then the account's own labels by name, capitals ignored.
+Gmail's other own labels (UNREAD, CHAT, the inbox's categories) are
+not listed. An access naming none of the account's labels answers so.
+
+#### Test connection and options
+
+`Verify` is `GET https://gmail.googleapis.com/gmail/v1/users/me/profile`
+with the access token: "Signed in as <emailAddress>". `Choices` lists
+each live field's options, as `option` writes them:
+
+- `gmail_labels`: the labels `list_labels` lists.
+- `calendars`: `GET /calendar/v3/users/me/calendarList` on
+  `www.googleapis.com`, 250 a page by `pageToken`, each by its
+  `summaryOverride`, else `summary`, else its id, the primary calendar
+  first and the rest by name. A calendar's id is its address.
+- `docs_folders`: `GET /drive/v3/files` on `www.googleapis.com` with
+  `q=mimeType='application/vnd.google-apps.folder' and trashed=false`,
+  `supportsAllDrives` and `includeItemsFromAllDrives`, 1000 a page, by
+  name.
+
+Each list reads at most ten pages.
+
+#### The client
+
+Each request goes to one of three origins, `gmail.googleapis.com`,
+`www.googleapis.com` (Calendar and Drive) and `docs.googleapis.com`,
+each pinned: `GmailBase`, `APIBase` and `DocsBase` are test hooks that
+must be the default `https://` origin, or plain `http` on loopback for
+the tests' fake. A request carries the access token as its bearer, has
+30 seconds, reads at most 16 MiB and follows a redirect only for a GET
+on its own origin. Google's error answer gives its `message` and the
+first `reason` of its `errors` or `details`; the token is replaced by
+`[credential]` in any words passed on. An agent reads: a 401 ("Google
+refused the connection's sign-in ... Ask the owner."), a 403 for an API
+not turned on in the project (`accessNotConfigured`,
+`SERVICE_DISABLED`) or a scope the owner left unticked
+(`insufficientPermissions`, `ACCESS_TOKEN_SCOPE_INSUFFICIENT`), each
+sending it to the owner, a rate limit (429, or a 403 for
+`rateLimitExceeded`) saying to try later, and Google's words for the
+rest. The owner reads the same in Test connection's and the options'
+words, with what to do: sign in again, turn the API on, or sign in
+again allowing everything Google lists.
+
+#### Requirements
+
+Google Workspace has no rows of its own. As a `SignInAdviser`, it adds
+to the `sign_in` row of a refusal naming `invalid_grant`, which Google
+answers once it ends a sign-in, the likely cause: "If this came about a
+week after you signed in, the likely cause is the app being in
+Testing, where Google ends every sign-in after seven days: publish it
+under Audience in Google's Auth Platform, then sign in again." Google
+answers `invalid_grant` for a revoked sign-in too, so the words name a
+likely cause, not the only one; any other refusal gets nothing added.
 
 ## The Kivali Developer
 
