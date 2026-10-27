@@ -1283,6 +1283,9 @@ in place of Resume or Try again.
 Pause…) runs the supervisor's `restart`: the agent pods are deleted,
 the server deployment is rolled and `/readyz` is waited for, so a team
 whose `:dev` image tags moved under it runs the images now in its VM.
+A development build names its commit (the Makefile's `BUILD_VERSION`),
+so the team window's web app, kept across the restart, reloads itself
+on the new build's first snapshot as it does after an update.
 The button shows only for a team here whose Kivali version is a
 development one (`updates::is_dev_version`: the dev chart's
 `0.0.0-dev`, or `dev`), carried in the snapshot as the team's `dev`.
@@ -1308,7 +1311,12 @@ still available Settings → team → Overview shows a danger banner,
 "Plainsong couldn't update to 0.17.0", with the supervisor's error, the
 update line reads "Couldn't update to 0.17.0" and its button
 Try again… (the error is the last operation's, `op.error`, until the
-team's next operation).
+team's next operation). The team window keeps its web view across the
+update, hidden behind the page meanwhile, and the web app reloads
+itself once its stream reconnects and the first snapshot names the new
+build (`OrgSnapshot.version`), so the window runs the new release's app
+without a Reload by hand; a pause and resume brings the same build back
+and keeps the page as it was.
 
 The release updated to is the one the row offers (`shell::update_state`):
 the Kivali baked into the team's VM image when that is a release above

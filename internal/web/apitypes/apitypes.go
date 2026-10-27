@@ -94,6 +94,11 @@ type OrgSnapshot struct {
 	// Done-when conditions, ascending by id.
 	Goals    []Goal   `json:"goals"`
 	Readouts Readouts `json:"readouts"`
+	// Version is the server build serving the stream, as /api/v1/me
+	// reports it. It is fixed for the life of a process, so it never
+	// changes a snapshot on its own; a stream reconnecting after an
+	// update sees a new one, and the web app reloads itself to match.
+	Version string `json:"version"`
 }
 
 // SnapshotAgent is one agent's liveness: State, derived on the server

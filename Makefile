@@ -49,10 +49,27 @@ GOLANGCI_VERSION := v2.14.0
 SHELLCHECK_VERSION := v0.11.0
 
 # VERSION: `git describe` when available, "dev" as ultimate fallback.
-# Lands in the Go binary via -ldflags="-X main.version=$(VERSION)" and
-# drives image tags. Override on the command line to force a tag:
+# Drives image tags and the chart. Override on the command line to force
+# a tag:
 #   make images VERSION=v0.1.2
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+
+# BUILD_VERSION: what the server binary says it is (-ldflags "-X
+# main.version=..."; /api/v1/me, the org stream's snapshot, the boot
+# log). A VERSION given on the command line names the build (a release
+# tag, nightly), so the binary says exactly that. Everything else is a
+# development build, and "dev" alone would have every one of them claim
+# the same version, so they are stamped 0.0.0-dev plus the commit:
+# 0.0.0-dev+g2b703bf3c1e4, with .dirty.<UTC time> when the tree has
+# uncommitted changes, since the commit then no longer names what was
+# built. The web app reloads itself when a server it reconnects to says
+# another version, so each build must say its own; the supervisor and
+# Kivali Desktop read any version with a "dev" pre-release part as a
+# development build.
+GIT_COMMIT := $(shell git rev-parse --short=12 HEAD 2>/dev/null)
+GIT_DIRTY := $(shell git diff --quiet HEAD -- 2>/dev/null || echo .dirty.$$(date -u +%Y%m%dT%H%M%SZ))
+DEV_BUILD_VERSION := 0.0.0-dev$(if $(GIT_COMMIT),+g$(GIT_COMMIT)$(GIT_DIRTY))
+BUILD_VERSION ?= $(if $(filter-out dev,$(if $(filter command environment,$(origin VERSION)),$(VERSION))),$(VERSION),$(DEV_BUILD_VERSION))
 
 # Image names. REGISTRY prefixes all four (include the trailing slash)
 # once a registry exists; empty, the tags are the bare local names.
@@ -99,7 +116,7 @@ help: ## this list
 # builds the frontend first. A bare `go build` still compiles without
 # it; every app route then answers 503 saying the frontend is not built.
 build: web-build ## the kivali binary, web app embedded, into bin/
-	go build -trimpath -ldflags="-s -w -X main.version=$(VERSION)" -o bin/$(BINARY) .
+	go build -trimpath -ldflags="-s -w -X main.version=$(BUILD_VERSION)" -o bin/$(BINARY) .
 
 # The quick loop while working: Go unit tests and lint, the web app's
 # lint and tests, the wire types. A minute or two. `make ci` is the full
@@ -260,16 +277,16 @@ BUILD_VM_DOWN := $(if $(KIVALI_BUILD_VM_KEEP),true,$(BUILD_VM) down)
 images: $(if $(filter vm,$(ENGINE)),supervisor) ## the four images into the build VM or local docker (VERSION, AGENT_SHELL_EXTRA_PACKAGES)
 	@echo "agent-shell extra packages: $(if $(strip $(AGENT_SHELL_EXTRA_PACKAGES)),$(AGENT_SHELL_EXTRA_PACKAGES),none)"
 ifeq ($(ENGINE),docker)
-	docker build --build-arg VERSION=$(VERSION) -t $(IMAGE):$(VERSION) .
+	docker build --build-arg VERSION=$(BUILD_VERSION) -t $(IMAGE):$(VERSION) .
 	docker build -f Dockerfile.egress-proxy -t $(EGRESS_IMAGE):$(VERSION) .
-	docker build --build-arg VERSION=$(VERSION) --build-arg AGENT_SHELL_EXTRA_PACKAGES="$(AGENT_SHELL_EXTRA_PACKAGES)" -f Dockerfile.agent-shell -t $(AGENT_SHELL_IMAGE):$(VERSION) .
+	docker build --build-arg VERSION=$(BUILD_VERSION) --build-arg AGENT_SHELL_EXTRA_PACKAGES="$(AGENT_SHELL_EXTRA_PACKAGES)" -f Dockerfile.agent-shell -t $(AGENT_SHELL_IMAGE):$(VERSION) .
 	docker build --build-arg KIVALI_IMAGE=$(IMAGE):$(VERSION) -f Dockerfile.browser -t $(BROWSER_IMAGE):$(VERSION) .
 else
 	$(BUILD_VM) up
 	$(BUILD_VM) put-tree . src
-	$(BUILD_VM) build $(BUILD_VM_CTX) --opt build-arg:VERSION=$(VERSION) --output type=image,name=docker.io/library/$(IMAGE):$(VERSION),unpack=true
+	$(BUILD_VM) build $(BUILD_VM_CTX) --opt build-arg:VERSION=$(BUILD_VERSION) --output type=image,name=docker.io/library/$(IMAGE):$(VERSION),unpack=true
 	$(BUILD_VM) build $(BUILD_VM_CTX) --opt filename=Dockerfile.egress-proxy --output type=image,name=docker.io/library/$(EGRESS_IMAGE):$(VERSION),unpack=true
-	$(BUILD_VM) build $(BUILD_VM_CTX) --opt filename=Dockerfile.agent-shell --opt build-arg:VERSION=$(VERSION) --opt 'build-arg:AGENT_SHELL_EXTRA_PACKAGES=$(AGENT_SHELL_EXTRA_PACKAGES)' --output type=image,name=docker.io/library/$(AGENT_SHELL_IMAGE):$(VERSION),unpack=true
+	$(BUILD_VM) build $(BUILD_VM_CTX) --opt filename=Dockerfile.agent-shell --opt build-arg:VERSION=$(BUILD_VERSION) --opt 'build-arg:AGENT_SHELL_EXTRA_PACKAGES=$(AGENT_SHELL_EXTRA_PACKAGES)' --output type=image,name=docker.io/library/$(AGENT_SHELL_IMAGE):$(VERSION),unpack=true
 	$(BUILD_VM) build $(BUILD_VM_CTX) --opt filename=Dockerfile.browser --opt build-arg:KIVALI_IMAGE=docker.io/library/$(IMAGE):$(VERSION) --opt image-resolve-mode=local --output type=image,name=docker.io/library/$(BROWSER_IMAGE):$(VERSION),unpack=true
 	$(BUILD_VM_DOWN)
 endif
@@ -518,7 +535,7 @@ api-types-check:
 # The server binary embeds internal/web/ui/dist, so it is rebuilt after
 # web-build every time: a stale bin/kivali-e2e would test an old UI.
 e2e-bins:
-	go build -o bin/kivali-e2e .
+	go build -ldflags="-X main.version=$(BUILD_VERSION)" -o bin/kivali-e2e .
 	go build -o bin/devseed ./cmd/devseed
 	go build -o bin/fakebin/claude ./cmd/fake-claude
 
@@ -621,11 +638,11 @@ ifeq ($(filter $(ARCH),amd64 arm64),)
 	$(error image-tars: ARCH must be amd64 or arm64 (got '$(ARCH)'))
 endif
 	mkdir -p $(IMAGES_DIR)
-	docker buildx build --platform linux/$(ARCH) --build-arg VERSION=$(VERSION) \
+	docker buildx build --platform linux/$(ARCH) --build-arg VERSION=$(BUILD_VERSION) \
 		-t $(IMAGE):$(VERSION) -o type=docker,dest=$(IMAGES_DIR)/kivali-$(ARCH).tar .
 	docker buildx build --platform linux/$(ARCH) -f Dockerfile.egress-proxy \
 		-t $(EGRESS_IMAGE):$(VERSION) -o type=docker,dest=$(IMAGES_DIR)/kivali-egress-proxy-$(ARCH).tar .
-	docker buildx build --platform linux/$(ARCH) --build-arg VERSION=$(VERSION) \
+	docker buildx build --platform linux/$(ARCH) --build-arg VERSION=$(BUILD_VERSION) \
 		--build-arg AGENT_SHELL_EXTRA_PACKAGES="$(AGENT_SHELL_EXTRA_PACKAGES)" -f Dockerfile.agent-shell \
 		-t $(AGENT_SHELL_IMAGE):$(VERSION) -o type=docker,dest=$(IMAGES_DIR)/kivali-agent-shell-$(ARCH).tar .
 	rm -rf $(IMAGES_DIR)/kivali-$(ARCH).oci && mkdir -p $(IMAGES_DIR)/kivali-$(ARCH).oci

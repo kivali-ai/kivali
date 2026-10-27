@@ -99,6 +99,7 @@ func goldenFixtures() map[string]any {
 				{ID: 50, Title: "Hire a CFO", Owner: "chief-of-staff", Done: 0, Total: 3, Blocked: []GoalBlocker{}, Workers: []string{}},
 			},
 			Readouts: Readouts{Working: 2, Blocked: 1, ClosedWeek: 9, SpendToday: 4.25, Spend7d: 61.5},
+			Version:  "v0.17.0",
 		},
 		"agents": AgentsResponse{
 			Agents:   []AgentSummary{goldenSummary()},

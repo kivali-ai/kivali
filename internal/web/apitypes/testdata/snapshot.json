@@ -101,5 +101,6 @@
     "closed_week": 9,
     "spend_today": 4.25,
     "spend_7d": 61.5
-  }
+  },
+  "version": "v0.17.0"
 }

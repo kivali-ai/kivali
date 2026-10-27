@@ -170,6 +170,16 @@ The binary embeds `internal/web/ui/dist`; `make build` builds the web
 app first. A bare `go build` still compiles, and every app route then
 answers 503 saying the frontend is not built.
 
+Every build says which one it is (`-X main.version`, the Makefile's
+`BUILD_VERSION`): a release is its tag, and a development build is
+`0.0.0-dev` plus the commit, `0.0.0-dev+g2b703bf3c1e4`, with
+`.dirty.<UTC time>` when the tree has uncommitted changes. It is what
+`/api/v1/me` and the org stream's snapshot report and what About shows;
+the web app reloads itself when a server it reconnects to says another
+version, so a team page open across an update, or across a dev team's
+restart onto new images, runs the new build's app without a reload by
+hand. A bare `go build` says `dev`.
+
 ### The integration suite
 
 `integration_test.go` installs the server the way the supervisor does

@@ -201,6 +201,7 @@ func TestNameFromEmail(t *testing.T) {
 // The API's snapshot is the SSE snapshot, byte for byte in shape.
 func TestAPISnapshotMatchesStream(t *testing.T) {
 	srv := newTestServer(t)
+	srv.VersionName = "v9.9.9"
 	if err := srv.Store.CreateAgent(store.Agent{Slug: "chief-of-staff", Role: "Chief of Staff", ReportsTo: "ceo"}, "k"); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -209,6 +210,12 @@ func TestAPISnapshotMatchesStream(t *testing.T) {
 		t.Fatalf("code = %d", rr.Code)
 	}
 	got := decodeAPI[apitypes.OrgSnapshot](t, rr)
+	// The web app reloads itself when a stream's first snapshot names a
+	// build other than the one it loaded under: a snapshot without the
+	// server's version would make every reconnect look like an update.
+	if got.Version != "v9.9.9" {
+		t.Errorf("snapshot version = %q", got.Version)
+	}
 	var want apitypes.OrgSnapshot
 	if err := json.Unmarshal(srv.buildOrgSnapshot(), &want); err != nil {
 		t.Fatal(err)

@@ -763,7 +763,9 @@ func TestBakedUpgradeWaitsForTheImport(t *testing.T) {
 // updates::is_dev_version is the same rule, so the two sides must agree
 // on every shape here.
 func TestIsDevVersion(t *testing.T) {
-	for _, v := range []string{"dev", " dev ", "0.0.0-dev", "v0.0.0-dev", "1.3.0-dev.2", "1.3.0-rc.1.dev+build"} {
+	// The Makefile's BUILD_VERSION for a development build carries the
+	// commit, and a dirty tree's time, as build metadata.
+	for _, v := range []string{"dev", " dev ", "0.0.0-dev", "v0.0.0-dev", "1.3.0-dev.2", "1.3.0-rc.1.dev+build", "0.0.0-dev+g2b703bf3c1e4", "0.0.0-dev+g2b703bf3c1e4.dirty.20261027T153000Z"} {
 		if !isDevVersion(v) {
 			t.Errorf("isDevVersion(%q) = false, want true", v)
 		}

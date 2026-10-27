@@ -141,6 +141,7 @@ func (s *Server) orgSnapshotValue() orgSnapshot {
 			SpendToday: spendToday,
 			Spend7d:    spend7d,
 		},
+		Version: s.VersionName,
 	}
 }
 
