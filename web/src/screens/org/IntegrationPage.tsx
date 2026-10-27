@@ -37,6 +37,7 @@ import {
   actionGroups,
   actionWords,
   agentsLabel,
+  downloadBundle,
   durationLabel,
   integrationApi,
   invalidAccessLine,
@@ -390,13 +391,17 @@ interface VersionRowProps {
   v: IntegrationVersionSummary;
   now: number;
   busy: boolean;
-  /** A built-in integration's versions come with Kivali: none offers Roll back. */
+  /** A built-in integration's versions come with Kivali: none offers Roll back, and none has a bundle to download. */
   builtin: boolean;
   onRollBack(): void;
+  onDownload(): void;
 }
 
-/** One version: its row opens its install screen; a superseded one has Roll back beside it. */
-function VersionRow({ name, v, now, busy, builtin, onRollBack }: VersionRowProps) {
+/**
+ * One version: its row opens its install screen; a bundle's version has Download beside it, and a superseded one
+ * Roll back too.
+ */
+function VersionRow({ name, v, now, busy, builtin, onRollBack, onDownload }: VersionRowProps) {
   const href = useHref(versionPath(name, v.version));
   const notes = v.notes_md.trim().split('\n')[0] ?? '';
   const row = (
@@ -414,14 +419,19 @@ function VersionRow({ name, v, now, busy, builtin, onRollBack }: VersionRowProps
       href={href}
     />
   );
-  if (v.state !== 'superseded' || builtin) return row;
-  // The button sits beside the row's link, never inside it.
+  if (builtin) return row;
+  // The buttons sit beside the row's link, never inside it.
   return (
     <div className="app-int-version">
       {row}
-      <Button size="sm" variant="ghost" aria-label={'Roll back to version ' + v.version} disabled={busy} onClick={onRollBack}>
-        Roll back
+      <Button size="sm" variant="ghost" icon={<Icon name="download" />} aria-label={'Download version ' + v.version} disabled={busy} onClick={onDownload}>
+        Download
       </Button>
+      {v.state === 'superseded' && (
+        <Button size="sm" variant="ghost" aria-label={'Roll back to version ' + v.version} disabled={busy} onClick={onRollBack}>
+          Roll back
+        </Button>
+      )}
     </div>
   );
 }
@@ -631,6 +641,7 @@ export function IntegrationPage() {
       setUninstalling(false);
       void navigate('/org/integrations');
     });
+  const download = (version: string) => action.run(() => downloadBundle(name, version));
   // The roll back answers with the version; the page and the audit (which gains a row for it) are read again.
   const rollBack = (version: string) =>
     action.run(async () => {
@@ -767,6 +778,11 @@ export function IntegrationPage() {
           </Text>
           <span className="app-int-spacer" />
           {configured && <Switch label="Enabled" checked={s.enabled} disabled={action.busy} onCheckedChange={(on) => void toggle(on)} />}
+          {!s.builtin && s.version && (
+            <Button variant="ghost" icon={<Icon name="download" />} disabled={action.busy} onClick={() => void download(s.version)}>
+              Download bundle
+            </Button>
+          )}
           {p.can_uninstall && (
             <Button variant="ghost" icon={<Icon name="trash2" />} disabled={action.busy} onClick={() => setUninstalling(true)}>
               Uninstall
@@ -967,7 +983,16 @@ export function IntegrationPage() {
         ) : (
           <RowList>
             {p.versions.map((v) => (
-              <VersionRow key={v.version} name={name} v={v} now={now} busy={action.busy} builtin={s.builtin} onRollBack={() => setRollingBack(v.version)} />
+              <VersionRow
+                key={v.version}
+                name={name}
+                v={v}
+                now={now}
+                busy={action.busy}
+                builtin={s.builtin}
+                onRollBack={() => setRollingBack(v.version)}
+                onDownload={() => void download(v.version)}
+              />
             ))}
           </RowList>
         )}

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/kivali-ai/kivali/internal/agent"
+	"github.com/kivali-ai/kivali/internal/integration"
 	"github.com/kivali-ai/kivali/internal/integration/integrationtest"
 	"github.com/kivali-ai/kivali/internal/secrets"
 	"github.com/kivali-ai/kivali/internal/store"
@@ -869,4 +870,62 @@ func TestAPIIntegrationAuditAndChoices(t *testing.T) {
 		t.Errorf("choices = %+v", e)
 	}
 	assertAPIError(t, orgGet(t, srv, intBase+"/crm/choices/write"), http.StatusNotFound)
+}
+
+// Why this test exists: the uploaded zip is not kept; a version's
+// download is built from its stored files, and is the owner's way to
+// pass an integration to another team. If the zip left a file out, or
+// laid the files out so the upload check would not take it, the
+// download could not be installed elsewhere; a built-in has no bundle,
+// so asking for one must be refused in words rather than answer an
+// empty zip.
+func TestAPIIntegrationBundleDownload(t *testing.T) {
+	srv := newTestServer(t)
+	m := integrationtest.Manifest("crm", "1.0.0")
+	if rr := intUpload(t, srv, integrationtest.Zip(t, "crm-1.0.0", m, map[string]integrationtest.File{"server/util.py": {Body: "x = 1\n", Mode: 0o644}})); rr.Code != http.StatusCreated {
+		t.Fatalf("upload: %d %s", rr.Code, rr.Body.String())
+	}
+	rr := orgGet(t, srv, intBase+"/crm/versions/1.0.0/bundle")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("download: %d %s", rr.Code, rr.Body.String())
+	}
+	if ct, cd := rr.Header().Get("Content-Type"), rr.Header().Get("Content-Disposition"); ct != "application/zip" || cd != `attachment; filename="crm-1.0.0.zip"` {
+		t.Errorf("headers = %q, %q", ct, cd)
+	}
+	b, err := integration.ReadBundle(rr.Body.Bytes())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var paths []string
+	for _, f := range b.Files {
+		paths = append(paths, f.Path)
+	}
+	if strings.Join(paths, ",") != "manifest.json,server/main.py,server/util.py" || !bytes.Equal(b.ManifestBytes(), integrationtest.ManifestJSON(t, m)) {
+		t.Errorf("files = %v, manifest %s", paths, b.ManifestBytes())
+	}
+	dir := filepath.Join(t.TempDir(), "x")
+	if err := integration.Extract(rr.Body.Bytes(), dir); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := store.BundleDigest(dir)
+	if want, _ := srv.Store.IntegrationBundleDigest("crm", "1.0.0"); got != want || got == "" {
+		t.Errorf("digest of the download = %s, stored %s", got, want)
+	}
+
+	// The download installs on another team as it is.
+	other := newTestServer(t)
+	rr2 := intUpload(t, other, rr.Body.Bytes())
+	if rr2.Code != http.StatusCreated {
+		t.Fatalf("upload of the download: %d %s", rr2.Code, rr2.Body.String())
+	}
+	if v := decodeAPI[apitypes.IntegrationVersion](t, rr2); v.Name != "crm" || v.Version != "1.0.0" || v.FileCount != 3 {
+		t.Errorf("version = %+v", v)
+	}
+
+	assertAPIError(t, orgGet(t, srv, intBase+"/crm/versions/9.9.9/bundle"), http.StatusNotFound)
+	assertAPIError(t, orgGet(t, srv, intBase+"/nope/versions/1.0.0/bundle"), http.StatusNotFound)
+	withEcho(t, srv)
+	if e := assertAPIError(t, orgGet(t, srv, intBase+"/echo/versions/1.0.0/bundle"), http.StatusConflict); e.Error != "Echo ships with Kivali, so it has no bundle to download" {
+		t.Errorf("built-in = %+v", e)
+	}
 }

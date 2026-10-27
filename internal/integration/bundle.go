@@ -315,3 +315,56 @@ func copyBundleFile(fsys fs.FS, f BundleFile, dir string, limit int64) (int64, e
 	}
 	return n, nil
 }
+
+// WriteZip writes the bundle unpacked in fsys (rooted at the bundle's
+// root, so manifest.json is at the top) as a zip to w: every regular
+// file, by path, in path order, with its mode; __MACOSX and __pycache__
+// directories are left out, as a reading leaves them out. The zip
+// reads back with ReadBundle to the same files, so a stored version
+// can be passed on and installed elsewhere as it is. A symlink or
+// special file is an error: a stored bundle holds none.
+func WriteZip(fsys fs.FS, w io.Writer) error {
+	zw := zip.NewWriter(w)
+	err := fs.WalkDir(fsys, ".", func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if p == "." {
+			return nil
+		}
+		if d.IsDir() {
+			if skippedDirs[path.Base(p)] {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("bundle: %s is not a regular file", p)
+		}
+		h, err := zip.FileInfoHeader(info)
+		if err != nil {
+			return err
+		}
+		h.Name = p
+		h.Method = zip.Deflate
+		dst, err := zw.CreateHeader(h)
+		if err != nil {
+			return err
+		}
+		src, err := fsys.Open(p)
+		if err != nil {
+			return err
+		}
+		_, err = io.Copy(dst, src)
+		_ = src.Close()
+		return err
+	})
+	if err != nil {
+		return err
+	}
+	return zw.Close()
+}
