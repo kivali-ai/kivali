@@ -17,6 +17,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -68,7 +70,7 @@ func addressListProp(what string) map[string]any {
 
 // The descriptions of Gmail's write actions, which the agent reads.
 const (
-	createDraftWords  = "Write an email as a draft in the owner's Gmail. A draft goes to no one: it waits in the owner's Drafts, where the owner can change it and send it. Give to, cc and bcc as lists, one address an entry (dana@example.com, or Dana Smith <dana@example.com>), a subject, and body as plain text. To reply, give in_reply_to_message_id, the message's id, or thread_id alone to reply to the conversation's latest message, which must be in the labels your access includes: the draft joins its conversation, its subject gets Re: before it and is the message's own when you give none (Gmail keeps a reply in its conversation only while the subject matches), and with no to it is addressed to the message's sender, or with reply_all to its sender and its other recipients, the owner left out. Answers the draft's id, its message's id, its thread's id and what the draft holds."
+	createDraftWords  = "Write an email as a draft in the owner's Gmail. A draft goes to no one: it waits in the owner's Drafts, where the owner can change it and send it. Give to, cc and bcc as lists, one address an entry (dana@example.com, or Dana Smith <dana@example.com>), a subject, and body as plain text. To reply, give in_reply_to_message_id, the message's id, or thread_id alone to reply to the conversation's latest message, which must be in the labels your access includes: the draft joins its conversation, its subject gets Re: before it and is the message's own when you give none (Gmail keeps a reply in its conversation only while the subject matches), and with no to it is addressed to the message's sender (to its To when the owner sent it), or with reply_all to its sender and its other recipients, the owner left out. Answers the draft's id, its message's id, its thread's id and what the draft holds."
 	deleteDraftWords  = "Delete a draft Kivali wrote, by the draft id create_draft answered. You may delete only drafts Kivali made: a draft written in Gmail, or by anything else, is refused."
 	modifyLabelsWords = "Add labels to and remove labels from one message, by its id. Name each label by its name, capitals ignored, or its id, as list_labels lists them; Gmail's own go by INBOX, UNREAD, STARRED and IMPORTANT. Remove INBOX to archive the message, remove UNREAD to mark it read or add it to mark it unread, and add STARRED to star it. Kivali does not move mail to Trash or Spam. When your access names labels, the message must carry one of them, and you may add or remove only those, INBOX, UNREAD and STARRED. Answers the labels the message carries afterwards."
 )
@@ -234,8 +236,11 @@ func readComposition(ctx context.Context, c *call) (*composition, error) {
 			return nil, err
 		}
 		for _, e := range entries {
-			a, ok := readAddress(e)
-			if !ok {
+			a, err := readAddress(e)
+			if errors.Is(err, errDisplayName) {
+				return nil, badArgument(fmt.Sprintf("%s holds %q, whose name has an @, a < or > or an invisible character, which could make the recipient look like someone else: give a plain name, or none.", key, oneLine(e, 100)))
+			}
+			if err != nil {
 				return nil, badArgument(fmt.Sprintf("%s holds %q, which is not one email address: give one address an entry, such as dana@example.com or Dana Smith <dana@example.com>.", key, oneLine(e, 100)))
 			}
 			lists[i] = append(lists[i], a)
@@ -285,6 +290,8 @@ func readComposition(ctx context.Context, c *call) (*composition, error) {
 	}
 	m.distinct()
 	switch n := len(m.to) + len(m.cc) + len(m.bcc); {
+	case replying && all && n > maxRecipients:
+		return nil, badArgument(fmt.Sprintf("Replying to all of message %s names %d addresses, and an email goes to at most %d; name the recipients in to (and cc) yourself.", m.reply, n, maxRecipients))
 	case len(m.to) == 0:
 		return nil, failure(fmt.Sprintf("Message %s names no one to reply to but the owner; name the recipients in to.", m.reply))
 	case n > maxRecipients:
@@ -297,19 +304,31 @@ func readComposition(ctx context.Context, c *call) (*composition, error) {
 // character set the HTML package knows.
 var replyParser = &mail.AddressParser{WordDecoder: headerDecoder}
 
+// errNotAddress is an entry that is not one address; errDisplayName is
+// one whose name could make the recipient look like someone else.
+var (
+	errNotAddress  = errors.New("not one email address")
+	errDisplayName = errors.New("a name that could pass for another address")
+)
+
 // readAddress is an entry of to, cc or bcc as one address: one of
 // net/mail's whose address is plain ASCII (plainAddress), its name made
-// one line.
-func readAddress(entry string) (*mail.Address, bool) {
+// one line. A name with an @, a < or a > in it, or a Unicode format
+// character (invisible, or one that reorders text), is refused: it could
+// make the recipient read as another address.
+func readAddress(entry string) (*mail.Address, error) {
 	if strings.ContainsAny(entry, "\r\n") {
-		return nil, false
+		return nil, errNotAddress
 	}
 	a, err := replyParser.Parse(entry)
 	if err != nil || plainAddress(a) == "" {
-		return nil, false
+		return nil, errNotAddress
+	}
+	if strings.ContainsAny(a.Name, "@<>") || strings.ContainsFunc(a.Name, func(r rune) bool { return unicode.Is(unicode.Cf, r) }) {
+		return nil, errDisplayName
 	}
 	a.Name = oneLine(a.Name, nameMost)
-	return a, true
+	return a, nil
 }
 
 // headerAddresses is every address of the header name, each as
@@ -402,7 +421,7 @@ func (c *call) replyTo(ctx context.Context, m *composition, reply, thread string
 }
 
 // latestInThread is the latest message of thread id, by when Gmail
-// received it, that the access includes and is not a draft; refused as
+// received it, that the access includes and is not a draft, in Spam or in Trash; refused as
 // not included when the thread has such messages only outside the
 // access's labels.
 func (c *call) latestInThread(ctx context.Context, id string) (gmailMessage, error) {
@@ -416,7 +435,7 @@ func (c *call) latestInThread(ctx context.Context, id string) (gmailMessage, err
 	var when int64
 	outside := false
 	for i, m := range t.Messages {
-		if slices.Contains(m.LabelIDs, "DRAFT") {
+		if slices.ContainsFunc(m.LabelIDs, func(l string) bool { return l == "DRAFT" || l == "SPAM" || l == "TRASH" }) {
 			continue
 		}
 		if !c.readable(m) {
@@ -439,8 +458,9 @@ func (c *call) latestInThread(ctx context.Context, id string) (gmailMessage, err
 
 // replyRecipients is whom a reply to r goes to, as Gmail's Reply and
 // Reply all address one: its Reply-To, else its From, or for a message
-// the owner sent, whom it went to (its To); with all, its sender and its
-// To, and its Cc in cc. The owner's own address is left out.
+// the owner sent (its From is the owner's), whom it went to (its To);
+// with all, its sender and its To, and its Cc in cc. The owner's own
+// address is left out.
 func replyRecipients(r gmailMessage, me account, all bool) (to, cc []*mail.Address, err error) {
 	read := func(name string) ([]*mail.Address, error) {
 		list, err := headerAddresses(r.Payload.Headers, name)
@@ -450,14 +470,20 @@ func replyRecipients(r gmailMessage, me account, all bool) (to, cc []*mail.Addre
 		return list, nil
 	}
 	mine := func(a *mail.Address) bool { return strings.EqualFold(a.Address, me.address) }
-	sender, err := read("Reply-To")
-	if err == nil && len(sender) == 0 {
-		sender, err = read("From")
-	}
+	sender, err := read("From")
 	if err != nil {
 		return nil, nil, err
 	}
-	own := !slices.ContainsFunc(sender, func(a *mail.Address) bool { return !mine(a) })
+	own := len(sender) > 0 && !slices.ContainsFunc(sender, func(a *mail.Address) bool { return !mine(a) })
+	if !own {
+		var replyTo []*mail.Address
+		if replyTo, err = read("Reply-To"); err != nil {
+			return nil, nil, err
+		}
+		if len(replyTo) > 0 {
+			sender = replyTo
+		}
+	}
 	var others []*mail.Address
 	if all || own {
 		if others, err = read("To"); err != nil {
@@ -499,7 +525,7 @@ func (m *composition) distinct() {
 const foldAt = 78
 
 // message is the composition as an RFC 2822 message, ASCII alone in CRLF
-// lines: From, To, Cc, Bcc, Subject, In-Reply-To and References for a
+// lines: From, Date (date, in RFC 5322's form), To, Cc, Bcc, Subject, In-Reply-To and References for a
 // reply, markerHeader with marker when it is not "", then text/plain in
 // UTF-8. A name or a subject outside ASCII is written in encoded words
 // (net/mail and mime.QEncoding), and a header longer than foldAt is
@@ -507,9 +533,10 @@ const foldAt = 78
 // of at most 998 characters, else quoted-printable, or base64 when more
 // than a third of its bytes are outside ASCII. Bcc is a header of the
 // message, which is how a draft keeps it.
-func (m *composition) message(marker string) []byte {
+func (m *composition) message(marker string, date time.Time) []byte {
 	var b bytes.Buffer
 	writeHeader(&b, "From", m.from.String())
+	writeHeader(&b, "Date", date.Format(time.RFC1123Z))
 	writeHeader(&b, "To", addressLine(m.to))
 	if len(m.cc) > 0 {
 		writeHeader(&b, "Cc", addressLine(m.cc))
@@ -662,7 +689,7 @@ func createDraft(ctx context.Context, c *call) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	msg := map[string]string{"raw": rawMessage(m.message(c.marker()))}
+	msg := map[string]string{"raw": rawMessage(m.message(c.marker(), c.g.now()))}
 	if m.threadID != "" {
 		msg["threadId"] = m.threadID
 	}
@@ -678,6 +705,9 @@ func createDraft(ctx context.Context, c *call) (any, error) {
 	}
 	if made.ID == "" {
 		return nil, failure("Gmail answered without the draft's id; tell the owner.")
+	}
+	if made.Message.ThreadID != "" {
+		m.threadID = made.Message.ThreadID
 	}
 	c.audit = fmt.Sprintf("created draft %s (message %s, thread %s)", made.ID, made.Message.ID, made.Message.ThreadID)
 	if m.reply != "" {

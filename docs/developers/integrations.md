@@ -3942,8 +3942,9 @@ apart:
   `extra_authorization_params` `access_type=offline` and
   `prompt=consent` (Google gives a refresh token only for both),
   `credential_keys.access_token: GOOGLE_ACCESS_TOKEN`, and the scopes
-  `gmail.readonly`, `gmail.compose`, `gmail.labels`, `gmail.modify`
-  (which `messages.modify`, changing a message's labels, needs),
+  `gmail.modify` alone for Gmail (it reads, composes, sends and
+  changes the labels of mail, which `messages.modify` needs; the
+  owner has nothing to untick for Gmail),
   `calendar.events`, `calendar.readonly`, `documents`,
   `drive.readonly` and `drive.file` (each under
   `https://www.googleapis.com/auth/`), never Gmail's settings:
@@ -4363,42 +4364,49 @@ draft, so Kivali marks a draft in its message: the header
 `X-Kivali-Agent: <slug>` (`markerHeader`), the slug the calling agent's
 (`Caller.Agent`, kept in `call.agent`; "kivali" for one a header could
 not carry). Gmail keeps a draft's headers as they were written, so
-`drafts.get` gives the mark back; a draft written in Gmail, or changed
-there since, has none.
+`drafts.get` gives the mark back; a draft written in Gmail has none,
+and one the owner edits in Gmail may lose it (unverified live). Whether
+the header reaches a recipient is unverified too, and the send slice
+leaves the mark out of what it sends.
 
 **Replies.** A reply (`in_reply_to_message_id`, or `thread_id` alone)
 reads the replied message's headers (`messages/{id}?format=metadata`
 with From, Reply-To, To, Cc, Subject, Message-ID, References and
 In-Reply-To); for `thread_id` alone, the thread's (`threads/{id}` in
 the same format), taking its latest message by `internalDate` that
-the access includes and is not a draft. The message must be one the
+the access includes and is not a draft, in Spam or in Trash. The message must be one the
 access includes (`call.readable`), refused as reading refuses one, and
 in `thread_id` when both are given. `In-Reply-To` is its Message-ID,
 and `References` its References (else its In-Reply-To) then its
 Message-ID, the first and the last 19 kept past 20. The subject is the
 agent's, or the message's when it gives none, with "Re: " before it
 unless it starts so. With no `to`, the reply goes to the message's
-Reply-To, else its From, or for a message the owner sent, to its To;
+Reply-To, else its From, or for a message whose From is the owner's
+(whatever its Reply-To), to its To;
 with `reply_all`, to its sender and its To, with its Cc in `cc` unless
 the agent gave one. The owner's own address is left out.
 
 **The message builder.** `readComposition(ctx, c)` reads an email from
 `composeProps`, the arguments `create_draft` takes and `send_email`
-takes too (`send_email` and `send_draft` declare `composeSchema` and
-`draftSchema` and have no `run`), and `composition.message(marker)`
-writes it; `send_email` builds its message with the same two. Every
+takes too (`send_email` declares `composeSchema`, `send_draft` declares
+`draftSchema`, and neither has a `run`), and
+`composition.message(marker, date)` writes it. Every
 entry of `to`, `cc` and `bcc` is one address by `net/mail`
 (`mail.AddressParser`, encoded names read in any charset) whose
 address is plain ASCII with a dotted domain (`plainAddress`); an entry
 that is not, two addresses in one entry, an address outside ASCII, or
-one carrying a line end is refused naming it, before anything reaches
-Google. A new email needs `to` and `subject`; `body` is required, at
+one carrying a line end is refused naming it, and so is a name with an
+`@`, `<` or `>` in it or a Unicode format (Cf) character, before
+anything reaches Google. A new email needs `to` and `subject`; `body` is required, at
 most 200,000 characters, and the subject at most 500, one line; both
 are `cleanText`'s. An email names at most 100 addresses, each kept
-once, in to, cc and bcc's order. From is the signed-in address
+once, in to, cc and bcc's order; a reply to all that comes to more than
+100 is refused, telling the agent to name the recipients itself. The
+answer gives the thread id Gmail returned. From is the signed-in address
 (`users/me/profile`). `message` writes RFC 2822 in ASCII CRLF lines:
-From, To, Cc, Bcc (a header of the message, which is how a draft keeps
-it), Subject, In-Reply-To and References for a reply, the mark, then
+From, Date (RFC 5322's form, from `GoogleWorkspace.Clock`, the system's
+when nil), To, Cc, Bcc (a header of the message, which is how a draft
+keeps it), Subject, In-Reply-To and References for a reply, the mark, then
 `MIME-Version: 1.0`, `Content-Type: text/plain; charset=UTF-8` and the
 body, its last line ended. A name outside ASCII is written in encoded
 words by `net/mail` (Q, or B where the name holds RFC 2047's special

@@ -39,6 +39,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/kivali-ai/kivali/internal/builtinintegrations"
 	"github.com/kivali-ai/kivali/internal/clock"
@@ -63,16 +64,13 @@ const (
 	revocationEndpoint    = "https://oauth2.googleapis.com/revoke"
 )
 
-// scopes are what the sign-in asks Google for: Gmail's read, compose
-// (drafts and sending), labels and modify (the labels on a message,
-// which messages.modify needs), never its settings; Calendar's events
-// and calendars read; Docs; Drive read, for finding documents and
-// folders; and Drive's files Kivali makes, for creating a document
-// with Kivali's mark, in its folder.
+// scopes are what the sign-in asks Google for: Gmail's modify alone,
+// which reads, composes, sends and changes the labels of mail (and
+// takes nothing from its settings); Calendar's events and calendars
+// read; Docs; Drive read, for finding documents and folders; and
+// Drive's files Kivali makes, for creating a document with Kivali's
+// mark, in its folder.
 var scopes = []string{
-	"https://www.googleapis.com/auth/gmail.readonly",
-	"https://www.googleapis.com/auth/gmail.compose",
-	"https://www.googleapis.com/auth/gmail.labels",
 	"https://www.googleapis.com/auth/gmail.modify",
 	"https://www.googleapis.com/auth/calendar.events",
 	"https://www.googleapis.com/auth/calendar.readonly",
@@ -87,11 +85,21 @@ var scopes = []string{
 // plain http on loopback for the tests' fake.
 type GoogleWorkspace struct {
 	GmailBase, APIBase, DocsBase string
-	// Clock is what Calendar's "now" is read from; nil is the system's.
+
+	// Clock is the time source for what Kivali dates and for Calendar's
+	// "now"; nil is the system's.
 	Clock clock.Clock
 
 	clientOnce sync.Once
 	client     *http.Client
+}
+
+// now is the time by Clock, or the system's.
+func (g *GoogleWorkspace) now() time.Time {
+	if g.Clock == nil {
+		return time.Now()
+	}
+	return g.Clock.Now()
 }
 
 // New is the built-in as the binary runs it.

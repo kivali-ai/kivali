@@ -202,14 +202,6 @@ const (
 // the two lines (delimit).
 func delimitEvent(s string) string { return delimit(s, eventContentStart, eventContentEnd) }
 
-// now is the built-in's clock's time, the system's when it has none.
-func (g *GoogleWorkspace) now() time.Time {
-	if g.Clock == nil {
-		return time.Now()
-	}
-	return g.Clock.Now()
-}
-
 // calendarRequest sends method to path on www.googleapis.com with body
 // as JSON (none for nil) and the access token token, and decodes the
 // JSON answer into out (nil reads none): get's request for Calendar's
