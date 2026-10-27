@@ -641,7 +641,7 @@ export function IntegrationPage() {
       setUninstalling(false);
       void navigate('/org/integrations');
     });
-  const download = (version: string) => action.run(() => downloadBundle(name, version));
+  const download = (version: string) => downloadBundle(name, version);
   // The roll back answers with the version; the page and the audit (which gains a row for it) are read again.
   const rollBack = (version: string) =>
     action.run(async () => {

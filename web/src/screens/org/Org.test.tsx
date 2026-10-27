@@ -2134,22 +2134,17 @@ describe('Integration page', () => {
     expect(h.router.state.location.pathname).toBe('/org/integrations');
   });
 
-  // Guards the page's downloads: Download bundle in the header fetches the version in use, and every version under
+  // Guards the page's downloads: Download bundle in the header takes the version in use, and every version under
   // Versions has its own Download, so an earlier version can be passed on too; the roll back stays beside a replaced
-  // one. A download that the server refuses shows in the page's banner.
+  // one. A bundle downloads by sending the browser to its URL, which the server answers as an attachment, never
+  // through the page: fetched into a blob, Kivali Desktop could not take it, as it fetches the URL it is handed itself.
   it('downloads the version in use from the header and any version from its row', async () => {
-    const created = vi.fn(() => 'blob:bundle');
-    vi.stubGlobal('URL', Object.assign(URL, { createObjectURL: created, revokeObjectURL: vi.fn() }));
-    const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
-    await renderOrg(PATH, {
-      routes: {
-        ['GET ' + API + '/versions/1.2.0/bundle']: new Blob(['zip']),
-        ['GET ' + API + '/versions/1.1.0/bundle']: fail(500, 'the bundle could not be read', 'whoever runs this Kivali server'),
-      },
-    });
+    const assign = vi.fn();
+    vi.stubGlobal('location', { href: 'http://localhost' + PATH, pathname: PATH, search: '', assign });
+    await renderOrg(PATH);
     await click(screen.getByRole('button', { name: 'Download bundle' }));
-    expect(called('GET', API + '/versions/1.2.0/bundle')).toBe(true);
-    expect((anchorClick.mock.instances[0] as unknown as HTMLAnchorElement).download).toBe('hubspot-1.2.0.zip');
+    expect(assign).toHaveBeenCalledWith(API + '/versions/1.2.0/bundle');
+    expect(called('GET', API + '/versions/1.2.0/bundle')).toBe(false);
     await click(screen.getByRole('button', { name: 'Versions' }));
     const versions = within(screen.getByRole('region', { name: 'Versions' }));
     expect(versions.getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual([
@@ -2161,9 +2156,8 @@ describe('Integration page', () => {
       'Roll back to version 1.1.0',
     ]);
     await click(versions.getByRole('button', { name: 'Download version 1.1.0' }));
-    expect(called('GET', API + '/versions/1.1.0/bundle')).toBe(true);
-    expect(screen.getByText('the bundle could not be read')).toBeInTheDocument();
-    expect(anchorClick).toHaveBeenCalledTimes(1);
+    expect(assign).toHaveBeenLastCalledWith(API + '/versions/1.1.0/bundle');
+    expect(assign).toHaveBeenCalledTimes(2);
   });
 
   // Guards a refused roll back (a 409, such as a version answered in another tab): the dialog stays open with the
