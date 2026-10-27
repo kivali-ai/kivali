@@ -210,11 +210,12 @@ func notGiven(bucket string) error {
 }
 
 // mayReach reports whether send_to lets a send reach addr, a
-// lower-cased address: any address when the list is empty, else one it
-// names, or one at a domain it names as *@domain (that domain alone,
-// not the domains under it).
+// lower-cased address: any address when the list is left empty (nil),
+// else one it names, or one at a domain it names as *@domain (that
+// domain alone, not the domains under it). A list that is empty and not
+// nil, a stored list that did not read, lets a send reach no one.
 func (a access) mayReach(addr string) bool {
-	if len(a.sendTo) == 0 {
+	if a.sendTo == nil {
 		return true
 	}
 	for _, p := range a.sendTo {
@@ -247,15 +248,16 @@ func (a access) checkRecipients(addrs []string) error {
 }
 
 // checkReach refuses a send that reaches an address send_to does not
-// allow (checkRecipients) or, while send_to names anyone, people whose
-// address Google does not show (unknown), whom Kivali cannot hold to it.
+// allow (checkRecipients) or, while send_to is not left empty, people
+// whose address Google does not show (unknown), whom Kivali cannot hold
+// to it.
 // addrs is everyone the send reaches that Kivali reads, lower-cased, the
 // owner's own addresses left out.
 func (a access) checkReach(addrs []string, unknown bool) error {
 	if err := a.checkRecipients(addrs); err != nil {
 		return err
 	}
-	if unknown && len(a.sendTo) > 0 {
+	if unknown && a.sendTo != nil {
 		return refuse(unshownRefusal, "send_to cannot be checked: the send reaches people whose address Google does not show")
 	}
 	return nil
