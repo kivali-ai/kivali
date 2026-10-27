@@ -3,6 +3,7 @@ package googleworkspace
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -47,8 +48,9 @@ const ownWords = "the owner's own calendars: the primary calendar, and those who
 // create_event or update_event call that sets or changes who is
 // invited, and an update_event or delete_event call on an event that
 // has attendees other than the owner or another organizer, is a send
-// (isSend, calendar_write.go); the rest of each is a write, so each is
-// one action under the write switch.
+// (isSend, calendar_write.go), which also needs the send switch and
+// waits for the owner's approval; the rest of each is a write, so each
+// is one action under the write switch.
 var calendarActions = []action{
 	{
 		name:             actionListCalendars,
@@ -97,8 +99,8 @@ var calendarActions = []action{
 	},
 	{
 		name:             actionCreateEvent,
-		description:      "Create an event on one of " + ownWords + "; Google emails no one about it. start and end are in " + timeWords + ", end after start; for an all-day event, both are dates such as 2026-10-27, end being its last day (the same as start for one day), and all_day may say so. time_zone is an IANA time zone such as Europe/London; the calendar's own when left out. calendar_id is the calendar's id as list_calendars gives it; without it, the primary calendar. Kivali marks the event as one it created, which delete_event looks for, and answers its id. Inviting people is a send, which is not available in this version of Kivali: a call whose attendees name anyone is not run.",
-		ownerDescription: "Create an event on one of your own calendars, telling no one. Inviting people is not available in this version of Kivali.",
+		description:      "Create an event on one of " + ownWords + "; Google emails no one about it. start and end are in " + timeWords + ", end after start; for an all-day event, both are dates such as 2026-10-27, end being its last day (the same as start for one day), and all_day may say so. time_zone is an IANA time zone such as Europe/London; the calendar's own when left out. calendar_id is the calendar's id as list_calendars gives it; without it, the primary calendar. Kivali marks the event as one it created, which delete_event looks for, and answers its id. With no attendees, Google emails no one about it. attendees invites people, which is a send: Google invites each of them once the owner approves, and every attendee must be one the owner allows you to send to." + sendWaitsWords,
+		ownerDescription: "Create an event on one of your own calendars, telling no one. One that invites people waits for your approval.",
 		schema: schema(map[string]any{
 			"calendar_id": map[string]string{"type": "string", "description": "the calendar's id, as list_calendars gives it; the primary calendar when left out"},
 			"title":       map[string]string{"type": "string", "description": "the event's title"},
@@ -108,15 +110,15 @@ var calendarActions = []action{
 			"description": map[string]string{"type": "string", "description": "the event's description, as plain text"},
 			"location":    map[string]string{"type": "string", "description": "where it is"},
 			"all_day":     map[string]string{"type": "boolean", "description": "true for an all-day event, whose start and end are dates"},
-			"attendees":   map[string]any{"type": "array", "items": map[string]string{"type": "string"}, "description": "email addresses to invite; a call that gives any is not run in this version of Kivali"},
+			"attendees":   map[string]any{"type": "array", "items": map[string]string{"type": "string"}, "description": "email addresses to invite; a call that gives any waits for the owner's approval"},
 		}, "title", "start", "end"),
 		bucket: keyCalendarWrite,
 		run:    createEvent,
 	},
 	{
 		name:             actionUpdateEvent,
-		description:      "Change an event on one of " + ownWords + ", by the calendar's id and the event's, when the owner organized it and it has no attendees other than the owner; Google emails no one about it. Only the fields you give change: title, start, end, time_zone, description, location and all_day, each as create_event takes it; a start or end given alone keeps the other as it is, and to turn an event into an all-day one or back, give both. Changing an event that has other attendees or another organizer, or changing who an event invites, is a send, which is not available in this version of Kivali: such a call is not run, and one that gives the event's own attendees changes the rest.",
-		ownerDescription: "Change an event on one of your own calendars that invites no one but you, telling no one. Changing an event that invites others, or who it invites, is not available in this version of Kivali.",
+		description:      "Change an event on one of " + ownWords + ", by the calendar's id and the event's. Only the fields you give change: title, start, end, time_zone, description, location and all_day, each as create_event takes it, and attendees, the whole list of addresses it invites; a start or end given alone keeps the other as it is, and to turn an event into an all-day one or back, give both. A change to an event the owner organized that has no attendees other than the owner, giving no attendees or the event's own, is a write, and Google emails no one about it. Changing who an event invites, or changing an event that has other attendees or another organizer, is a send: Google tells the people it reaches once the owner approves, and everyone it adds must be one the owner allows you to send to." + sendWaitsWords,
+		ownerDescription: "Change an event on one of your own calendars, telling no one when it invites no one but you. Changing who it invites, or an event that invites others, waits for your approval.",
 		schema: schema(map[string]any{
 			"calendar_id": map[string]string{"type": "string", "description": "the calendar's id, as list_calendars gives it"},
 			"event_id":    map[string]string{"type": "string", "description": "the event's id, as list_events gives it"},
@@ -127,15 +129,15 @@ var calendarActions = []action{
 			"description": map[string]string{"type": "string", "description": "the event's new description, as plain text; empty to clear it"},
 			"location":    map[string]string{"type": "string", "description": "where it is; empty to clear it"},
 			"all_day":     map[string]string{"type": "boolean", "description": "true for an all-day event, whose start and end are dates"},
-			"attendees":   map[string]any{"type": "array", "items": map[string]string{"type": "string"}, "description": "the email addresses it invites; a list other than the event's own is not run in this version of Kivali"},
+			"attendees":   map[string]any{"type": "array", "items": map[string]string{"type": "string"}, "description": "the email addresses it invites, the whole list; a list other than the event's own waits for the owner's approval"},
 		}, "calendar_id", "event_id"),
 		bucket: keyCalendarWrite,
 		run:    updateEvent,
 	},
 	{
 		name:             actionDeleteEvent,
-		description:      "Delete an event Kivali created on this account, from one of " + ownWords + ", by the calendar's id and the event's; Google emails no one about it. An event Kivali did not create is refused. Deleting an event that has attendees other than the owner, or another organizer, is a send, which is not available in this version of Kivali: such a call is not run.",
-		ownerDescription: "Delete an event Kivali created on this account, on one of your own calendars, telling no one. Deleting one that invites others is not available in this version of Kivali.",
+		description:      "Delete an event Kivali created on this account, from one of " + ownWords + ", by the calendar's id and the event's. An event Kivali did not create is refused. Deleting one that has no attendees other than the owner is a write, and Google emails no one about it. Deleting one that has other attendees or another organizer is a send: Google tells them once the owner approves." + sendWaitsWords,
+		ownerDescription: "Delete an event Kivali created on this account, on one of your own calendars, telling no one when it invites no one but you. Deleting one that invites others waits for your approval.",
 		schema: schema(map[string]any{
 			"calendar_id": map[string]string{"type": "string", "description": "the calendar's id, as list_calendars gives it"},
 			"event_id":    map[string]string{"type": "string", "description": "the event's id, as list_events gives it"},
@@ -145,6 +147,7 @@ var calendarActions = []action{
 	},
 	{
 		name:             actionRespondToInvitation,
+		description:      "Answer an invitation for the owner, on one of " + ownWords + ", by the calendar's id and the event's: response is accepted, declined or tentative, and comment a note to the organizer. Only the owner's own answer changes, and Google tells the organizer once the owner approves. An event the owner organized, or one that does not invite the owner, is refused." + waitsWords,
 		ownerDescription: "Ask to answer an invitation: yes, no or maybe. The answer goes only once you approve it.",
 		schema: schema(map[string]any{
 			"calendar_id": map[string]string{"type": "string", "description": "the calendar's id, as list_calendars gives it"},
@@ -153,6 +156,7 @@ var calendarActions = []action{
 			"comment":     map[string]string{"type": "string", "description": "a note to the organizer"},
 		}, "calendar_id", "event_id", "response"),
 		bucket: keyCalendarSend,
+		run:    respondToInvitation,
 	},
 }
 
@@ -477,6 +481,11 @@ type calEvent struct {
 	ExtendedProperties struct {
 		Private map[string]string `json:"private"`
 	} `json:"extendedProperties"`
+
+	// rawAttendees is Attendees as Google gave them, each whole, for a
+	// change that keeps them as they are (newAttendees); set by
+	// calCall.event.
+	rawAttendees []json.RawMessage
 }
 
 // eventTime is an event's start or end: Date for an all-day event (an
@@ -523,16 +532,27 @@ func eventsPath(cal string) string {
 
 func eventPath(cal, id string) string { return eventsPath(cal) + "/" + url.PathEscape(id) }
 
-// event is the event id on the calendar cal; a failure in words when
-// Google has none.
+// event is the event id on the calendar cal, its attendees kept as
+// Google gave them too; a failure in words when Google has none.
 func (cc *calCall) event(ctx context.Context, cal, id string) (calEvent, error) {
-	var e calEvent
-	err := cc.g.get(ctx, cc.token, googleAPI, eventPath(cal, id), &e)
+	var raw json.RawMessage
+	err := cc.g.get(ctx, cc.token, googleAPI, eventPath(cal, id), &raw)
 	var ae *apiError
 	if errors.As(err, &ae) && (ae.Status == http.StatusNotFound || ae.Status == http.StatusGone) {
 		return calEvent{}, failure("Calendar " + cal + " has no event " + id + "; list_events lists its events with their ids.")
 	}
-	return e, err
+	if err != nil {
+		return calEvent{}, err
+	}
+	var e calEvent
+	var people struct {
+		Attendees []json.RawMessage `json:"attendees"`
+	}
+	if json.Unmarshal(raw, &e) != nil || json.Unmarshal(raw, &people) != nil {
+		return calEvent{}, &apiError{Message: "its answer is not JSON Kivali reads"}
+	}
+	e.rawAttendees = people.Attendees
+	return e, nil
 }
 
 // calAddress is an address Calendar gives, lower-cased, when it is one
