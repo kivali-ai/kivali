@@ -312,6 +312,26 @@ func TestDocsFolderRestriction(t *testing.T) {
 	}
 }
 
+// Why this test exists: a stored folder list that does not read as a
+// list (hand-edited, or written by an older build) reads as an empty
+// list that is not nil, which includes no document. Docs' reading must
+// take it so: checking the list's length alone would read it as left
+// empty and let the agent search and read every document.
+func TestDocsMalformedFoldersIncludeNothing(t *testing.T) {
+	d, f, g := newFakeDocs(t)
+	d.addFolder("fold1", "Projects")
+	d.addDoc("inTop", "Top", "dana@example.com", "", "fold1")
+	broken := map[string]any{"docs_folders": "fold1"}
+	if res := docsAnswer(t, g, broken, "search_documents", `{}`); res.Content[0] != "No documents match. This is the last page." {
+		t.Errorf("search: %q", res.Content[0])
+	}
+	docsRefused(t, g, broken, "get_document", `{"document_id":"inTop"}`,
+		"Document inTop is not in the folders your access includes; ask the owner if your work needs it.")
+	if got := requestsFor(f, "docs "); len(got) != 0 {
+		t.Errorf("a document's content was asked for: %v", got)
+	}
+}
+
 // Why this test exists: an agent reads a document as the text Kivali
 // builds from its structure, never an export, so the structure's parts
 // must each read as what they are: the title and headings as # lines,
