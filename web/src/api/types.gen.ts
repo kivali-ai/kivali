@@ -1462,7 +1462,44 @@ export const NeedKindWebBudget = "web_budget";
  * uninstalled.
  */
 export const NeedKindIntegrationRequirement = "integration_requirement";
-export type NeedKind = typeof NeedKindApproval | typeof NeedKindNotification | typeof NeedKindAssignment | typeof NeedKindNeedsHelp | typeof NeedKindProposal | typeof NeedKindWebSignIn | typeof NeedKindWebUpload | typeof NeedKindWebBudget | typeof NeedKindIntegrationRequirement;
+/**
+ * NeedKindIntegrationHold: an agent's call of an integration waits
+ * for you to approve it before it runs (IntegrationHold). Approve
+ * or deny, with a note the agent reads, through
+ * POST /api/v1/needs/approve and /deny with the row's ID as path.
+ * Nobody answering within a day is a denial.
+ */
+export const NeedKindIntegrationHold = "integration_hold";
+export type NeedKind = typeof NeedKindApproval | typeof NeedKindNotification | typeof NeedKindAssignment | typeof NeedKindNeedsHelp | typeof NeedKindProposal | typeof NeedKindWebSignIn | typeof NeedKindWebUpload | typeof NeedKindWebBudget | typeof NeedKindIntegrationRequirement | typeof NeedKindIntegrationHold;
+/**
+ * IntegrationHoldRef is the call an integration_hold row asks you to
+ * approve: the integration (its page is /org/integrations/{integration})
+ * and its display name, the agent that called it, the action without
+ * the integration's prefix, what it does in a few words (Title), each
+ * field exactly as it will go, who it reaches, and Taint: what the
+ * agent read from outside your domain before asking, in words, empty
+ * when it read nothing from outside. Fields, Recipients and Taint are
+ * text, shown as text and never rendered: a field may quote an outside
+ * message.
+ */
+export interface IntegrationHoldRef {
+  integration: string;
+  display: string;
+  agent: string;
+  action: string;
+  title: string;
+  fields: HoldField[];
+  recipients: string[];
+  taint: string;
+}
+/**
+ * HoldField is one line of what a held call does: a label ("Subject")
+ * and the value exactly as it will go.
+ */
+export interface HoldField {
+  label: string;
+  value: string;
+}
 /**
  * WebUploadRef is the upload a web_upload row asks you to approve: the
  * task (its page is /agents/{parent}/subagents/{id}), the site it is
@@ -1554,9 +1591,11 @@ export interface NeedItem {
    * "agent:<slug>" for a needs-help row, and
    * "web_sign_in:<agent>/<task>", "web_upload:<agent>/<task>" and
    * "web_budget:<agent>/<task>" for a web task's rows, the last two
-   * being the path POST /api/v1/needs/* takes for them, and
+   * being the path POST /api/v1/needs/* takes for them,
    * "integration_requirement:<integration>/<requirement>" for an
-   * installed integration's requirement that is not met.
+   * installed integration's requirement that is not met, and
+   * "integration_hold:<id>" for an agent's call waiting for your
+   * approval, the path POST /api/v1/needs/approve and /deny take.
    */
   id: string;
   kind: NeedKind;
@@ -1596,8 +1635,14 @@ export interface NeedItem {
    */
   web_budget?: WebBudgetRef;
   /**
+   * IntegrationHold is the call an integration_hold row asks you to
+   * approve.
+   */
+  integration_hold?: IntegrationHoldRef;
+  /**
    * RawURL opens the message file; absent on a needs-help row, a web
-   * task's rows and an integration_requirement row.
+   * task's rows, an integration_requirement row and an
+   * integration_hold row.
    */
   raw_url?: string;
 }

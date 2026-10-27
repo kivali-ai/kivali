@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
 import { Link, useHref, useNavigate } from 'react-router';
-import type { AssignmentResolution, AttachmentRef, NeedItem, SubagentRef, WebBudgetRef, WebUploadRef } from '../../api/types.gen';
+import type { AssignmentResolution, AttachmentRef, IntegrationHoldRef, NeedItem, SubagentRef, WebBudgetRef, WebUploadRef } from '../../api/types.gen';
 import { browserWindowName, browserWindowPath, subagentPath } from '../../app/links';
 import { Badge, Button, EmptyState, Icon, ListRow, Select, Text, TextField } from '../../ds';
 import { pickFiles } from '../../lib/pickFiles';
@@ -196,6 +196,69 @@ function UploadApproval({ upload, files, onAct }: { upload: WebUploadRef; files:
   );
 }
 
+/**
+ * An agent's call of an integration that waits for the person before it runs: the taint line first when the agent
+ * read outside mail or documents before asking, the integration and action, whom it reaches, each field exactly as it
+ * will go, then deny or approve with a note. The values are the agent's words and may quote an outside message, so
+ * they are preformatted text, never Markdown.
+ */
+function HoldApproval({ hold, onAct }: { hold: IntegrationHoldRef; onAct(a: NeedAction): void }) {
+  const [message, setMessage] = useState('');
+  return (
+    <>
+      {hold.taint !== '' && (
+        <p className="app-home-taint">
+          <span className="app-home-taint-mark">
+            <Icon name="triangle-alert" />
+          </span>
+          <Text variant="caption">{hold.taint}</Text>
+        </p>
+      )}
+      <dl className="app-home-upload">
+        <dt>Integration</dt>
+        <dd>
+          <Link className="app-home-link" to={'/org/integrations/' + encodeURIComponent(hold.integration)}>
+            {hold.display}
+          </Link>
+          <Badge variant="outline" mono>
+            {hold.action}
+          </Badge>
+        </dd>
+        {hold.recipients.length > 0 && (
+          <>
+            <dt>Reaches</dt>
+            <dd>
+              {hold.recipients.map((r) => (
+                <Badge key={r} variant="outline" mono>
+                  {r}
+                </Badge>
+              ))}
+            </dd>
+          </>
+        )}
+        {hold.fields.map((f, i) => (
+          <Fragment key={i + ':' + f.label}>
+            <dt>{f.label}</dt>
+            <dd>
+              <pre className="app-home-hold-value">{f.value}</pre>
+            </dd>
+          </Fragment>
+        ))}
+      </dl>
+      <TextField label="Note (optional)" multiline rows={2} placeholder="Say why, if you deny it." value={message} onChange={(e) => setMessage(e.currentTarget.value)} />
+      <div className="app-home-actions">
+        <span className="app-home-spacer" />
+        <Button variant="secondary" size="sm" onClick={() => onAct({ kind: 'answer', verb: 'deny', message, files: [] })}>
+          Deny
+        </Button>
+        <Button variant="primary" size="sm" onClick={() => onAct({ kind: 'answer', verb: 'approve', message, files: [] })}>
+          Approve
+        </Button>
+      </div>
+    </>
+  );
+}
+
 /** A web task refused an action over the web budget: the task, then acknowledge. Every word is the server's. */
 function BudgetNotice({ notice, onAct }: { notice: WebBudgetRef; onAct(a: NeedAction): void }) {
   return (
@@ -274,6 +337,7 @@ function NeedRow({ item, now, base, expanded, onToggle, onAct }: NeedRowProps) {
           {item.kind === 'web_sign_in' && item.subagent && <SignInActions task={item.subagent} />}
           {item.kind === 'web_upload' && item.web_upload && <UploadApproval upload={item.web_upload} files={item.attachments} onAct={onAct} />}
           {item.kind === 'web_budget' && item.web_budget && <BudgetNotice notice={item.web_budget} onAct={onAct} />}
+          {item.kind === 'integration_hold' && item.integration_hold && <HoldApproval hold={item.integration_hold} onAct={onAct} />}
           {item.kind === 'integration_requirement' && item.review_path && (
             <div className="app-home-actions">
               <span className="app-home-spacer" />

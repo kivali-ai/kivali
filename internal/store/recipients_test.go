@@ -179,6 +179,9 @@ func TestTakesReplies(t *testing.T) {
 	if MsgNotice.TakesReplies() {
 		t.Error("a notice must not be repliable")
 	}
+	if MsgHeldCall.TakesReplies() {
+		t.Error("a held call's outcome must not be repliable")
+	}
 	for _, mt := range []MessageType{MsgCEOApprovalRequest, MsgCEONotification, MsgCEOApprovalResponse} {
 		if !mt.TakesReplies() {
 			t.Errorf("%s should be repliable", mt)

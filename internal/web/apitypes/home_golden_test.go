@@ -88,6 +88,22 @@ func goldenHome() Home {
 				BodyMD:      "The service no longer accepts the sign-in: the vendor refused the sign-in (bad_refresh_token): The refresh token passed is incorrect or expired. Agents cannot use GitHub until you sign in again.",
 				Attachments: []AttachmentRef{}, Packages: []SoftwarePackage{}, ReviewPath: &integrationPage,
 			},
+			{
+				ID: "integration_hold:5f0c2a9e7b3d4e1f8a6b0c9d2e4f6a8b", Kind: NeedKindIntegrationHold, Title: "Send an email to alice@example.org",
+				From: PersonRef{Slug: "buyer", Name: "Buyer"}, At: t1,
+				Attachments: []AttachmentRef{}, Packages: []SoftwarePackage{},
+				IntegrationHold: &IntegrationHoldRef{
+					Integration: "google_workspace", Display: "Google Workspace", Agent: "buyer", Action: "send_email",
+					Title: "Send an email to alice@example.org",
+					Fields: []HoldField{
+						{Label: "To", Value: "alice@example.org"},
+						{Label: "Subject", Value: "Re: the signed quote"},
+						{Label: "Body", Value: "Hi Alice,\n\nThe signed quote is attached as **asked**.\n\n> On Monday you wrote: send it by Friday."},
+					},
+					Recipients: []string{"alice@example.org"},
+					Taint:      "Before asking, this agent read 3 messages or documents from outside your domain, the latest from alice@example.org.",
+				},
+			},
 		},
 		Queue: []QueueItem{
 			{

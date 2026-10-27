@@ -794,9 +794,11 @@ func (s *Server) handleAPIIntegrationToggle(on bool) http.HandlerFunc {
 			writeAPIError(w, http.StatusInternalServerError, "the integration's switch could not be saved", whoServer)
 			return
 		}
-		// A sign-in under way ends with the integration disabled.
+		// A sign-in under way ends with the integration disabled, and so
+		// does every call held for the owner's approval.
 		if !on {
 			s.setupCancel(v.it.Name)
+			s.endHeldCallsOf(v.it.Name, "the owner disabled the integration", "the owner disabled the "+v.displayName()+" integration")
 		}
 		// A built-in's connection reaches its hosts only while it is on.
 		if err := s.builtinEgressAfterSwitch(r.Context(), v.it.Name, v.builtin, on); err != nil {
@@ -859,6 +861,7 @@ func (s *Server) handleAPIIntegrationDisconnect(w http.ResponseWriter, r *http.R
 	// released, so a slow vendor holds up no other integration write.
 	s.revokeSignIns(r.Context(), revokes)
 	if ok {
+		s.endHeldCallsOf(v.it.Name, "the owner disconnected the integration", "the owner disconnected the "+v.displayName()+" integration")
 		s.writeIntegrationPage(w, r)
 	}
 }
@@ -890,6 +893,7 @@ func (s *Server) handleAPIIntegrationUninstall(w http.ResponseWriter, r *http.Re
 	// released, so a slow vendor holds up no other integration write.
 	s.revokeSignIns(r.Context(), revokes)
 	if ok {
+		s.endHeldCallsOf(v.it.Name, "the owner uninstalled the integration", "the owner uninstalled the "+v.displayName()+" integration")
 		w.WriteHeader(http.StatusNoContent)
 	}
 }

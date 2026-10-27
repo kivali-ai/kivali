@@ -157,8 +157,8 @@ describe('Home renders', () => {
     expect(screen.getByText('Waiting on #45, Run the tests')).toBeInTheDocument();
 
     const needs = screen.getByRole('region', { name: 'Needs you' });
-    expect(within(needs).getByLabelText('10 waiting on you')).toHaveTextContent('10');
-    for (const kind of ['Approval', 'Hire', 'Notice', 'Assigned to you', 'Needs help', 'Sign in', 'Install software', 'Upload request', 'Web budget', 'Integration']) expect(within(needs).getByText(kind)).toBeInTheDocument();
+    expect(within(needs).getByLabelText('11 waiting on you')).toHaveTextContent('11');
+    for (const kind of ['Approval', 'Hire', 'Notice', 'Assigned to you', 'Needs help', 'Sign in', 'Install software', 'Upload request', 'Web budget', 'Integration', 'Integration action']) expect(within(needs).getByText(kind)).toBeInTheDocument();
 
     const queue = screen.getByRole('region', { name: 'Queue' });
     expect(within(queue).getByText('3 passing through')).toBeInTheDocument();
@@ -248,9 +248,9 @@ describe('Home follows the design rules', () => {
     await renderHome(busyHome);
     const signals = document.querySelectorAll('.kv-badge--signal');
     expect(signals).toHaveLength(1);
-    expect(signals[0]).toHaveAccessibleName('10 waiting on you');
+    expect(signals[0]).toHaveAccessibleName('11 waiting on you');
     const needs = screen.getByRole('region', { name: 'Needs you' });
-    for (const kind of ['Approval', 'Hire', 'Notice', 'Assigned to you', 'Needs help', 'Sign in', 'Install software', 'Upload request', 'Web budget', 'Integration']) expect(within(needs).getByText(kind)).toHaveClass('kv-badge--neutral');
+    for (const kind of ['Approval', 'Hire', 'Notice', 'Assigned to you', 'Needs help', 'Sign in', 'Install software', 'Upload request', 'Web budget', 'Integration', 'Integration action']) expect(within(needs).getByText(kind)).toHaveClass('kv-badge--neutral');
   });
 
   it('keeps Release all the one primary until a row opens, and Open chat secondary', async () => {
@@ -402,7 +402,7 @@ describe('Needs you', () => {
     expect(form.get('message')).toBe('Go ahead.');
     expect((form.getAll('attachments[]')[0] as File).name).toBe('po.pdf');
     expect(document.querySelector(`[data-id="${approval.id}"]`)).toBeNull();
-    expect(screen.getByLabelText('9 waiting on you')).toBeInTheDocument();
+    expect(screen.getByLabelText('10 waiting on you')).toBeInTheDocument();
 
     // The answer's result shows as a toast with a link, and leaves on its own.
     const toast = screen.getAllByRole('status').find((el) => el.textContent?.includes('Garden advisor is hired and reports to Chief of Staff'));
@@ -607,6 +607,88 @@ describe('Needs you', () => {
       fireEvent.click(row.getByRole('button', { name: 'Open' }));
       await flush();
       expect(router.state.location.pathname).toBe('/org/integrations/github');
+    });
+  });
+
+  describe('an integration call waiting for approval (home.json)', () => {
+    const held = busyHome.needs.find((n) => n.kind === 'integration_hold');
+    if (!held?.integration_hold) throw new Error('fixture has no integration_hold row');
+
+    // Guards what the owner approves: every field exactly as it will go, as text. A body rendered as Markdown would
+    // show the owner something other than what is sent (bold where the mail has asterisks, a quote block where it has
+    // "> "), and a field left out would let it go unread. The taint line must stand out from the fields, ahead of them.
+    it('shows the fields as preformatted text, whom it reaches and the taint line, with Deny and Approve', async () => {
+      await renderHome(busyHome);
+      fireEvent.click(screen.getByRole('button', { name: /Send an email to alice@example\.org/ }));
+      const el = rowFor('data-id', held.id);
+      const row = within(el);
+      expect(row.getByText('Integration action')).toBeInTheDocument();
+      expect(row.getByRole('link', { name: 'Google Workspace' })).toHaveAttribute('href', '/org/integrations/google_workspace');
+      expect(row.getByText('send_email')).toBeInTheDocument();
+      expect(row.getAllByText('alice@example.org').length).toBeGreaterThanOrEqual(2); // Reaches, and the To field
+      const values = [...el.querySelectorAll('pre.app-home-hold-value')].map((p) => p.textContent);
+      expect(values).toEqual(held.integration_hold?.fields.map((f) => f.value));
+      expect(values[2]).toContain('**asked**');
+      expect(el.querySelector('strong, blockquote')).toBeNull();
+      const taint = row.getByText(/^Before asking, this agent read 3 messages or documents from outside your domain/);
+      expect(taint.closest('.app-home-taint')).not.toBeNull();
+      const firstField = row.getByText('Subject');
+      expect(taint.compareDocumentPosition(firstField) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(row.getByLabelText('Note (optional)')).toBeInTheDocument();
+      expect(row.getByRole('button', { name: 'Deny' })).toBeInTheDocument();
+      expect(row.getByRole('button', { name: 'Approve' })).toBeInTheDocument();
+      expect(row.queryByRole('button', { name: 'Attach' })).toBeNull();
+    });
+
+    // Guards the answer's path: the server knows the call only by the row's id, and the note is what the agent reads.
+    it('approves and denies through the needs endpoints with the row’s id and the note', async () => {
+      formMock.mockResolvedValue({ result: 'Approved and done. Buyer is told in its chat', link: '/agents/buyer' });
+      await renderHome(busyHome);
+      fireEvent.click(screen.getByRole('button', { name: /Send an email to alice@example\.org/ }));
+      const row = within(rowFor('data-id', held.id));
+      fireEvent.change(row.getByLabelText('Note (optional)'), { target: { value: 'Keep it short.' } });
+      fireEvent.click(row.getByRole('button', { name: 'Approve' }));
+      await flush();
+      const [url, form] = formMock.mock.calls[0] as [string, FormData];
+      expect(url).toBe('/api/v1/needs/approve');
+      expect(form.get('path')).toBe(held.id);
+      expect(form.get('message')).toBe('Keep it short.');
+      expect(document.querySelector(`[data-id="${held.id}"]`)).toBeNull();
+      expect(screen.getByText('Approved and done. Buyer is told in its chat')).toBeInTheDocument();
+    });
+
+    // Guards an approval Kivali refused to run: the row comes back, still waiting, with the server's words.
+    it('keeps the row and says why when the approval cannot run', async () => {
+      formMock.mockRejectedValue(new ApiError(409, 'Buyer has no access to Google Workspace, so it was not done. It is still waiting: approve it again once that changes, or deny it', 'you'));
+      await renderHome(busyHome);
+      fireEvent.click(screen.getByRole('button', { name: /Send an email to alice@example\.org/ }));
+      fireEvent.click(within(rowFor('data-id', held.id)).getByRole('button', { name: 'Approve' }));
+      await flush();
+      expect(rowFor('data-id', held.id)).toBeInTheDocument();
+      expect(screen.getByText(/Buyer has no access to Google Workspace, so it was not done/)).toBeInTheDocument();
+    });
+
+    // Guards a denial reaching the deny endpoint, never approve, with the owner's reason for the agent.
+    it('denies with the note', async () => {
+      formMock.mockResolvedValue({ result: 'Denied. Buyer is told in its chat' });
+      await renderHome(busyHome);
+      fireEvent.click(screen.getByRole('button', { name: /Send an email to alice@example\.org/ }));
+      const row = within(rowFor('data-id', held.id));
+      fireEvent.change(row.getByLabelText('Note (optional)'), { target: { value: 'Not to Alice.' } });
+      fireEvent.click(row.getByRole('button', { name: 'Deny' }));
+      await flush();
+      const [url, form] = formMock.mock.calls[0] as [string, FormData];
+      expect(url).toBe('/api/v1/needs/deny');
+      expect(form.get('path')).toBe(held.id);
+      expect(form.get('message')).toBe('Not to Alice.');
+    });
+
+    // Guards the empty case: with nothing read from outside, no taint line at all, so one that shows means something.
+    it('shows no taint line when the agent read nothing from outside', async () => {
+      const quiet = { ...busyHome, needs: busyHome.needs.map((n) => (n.id === held.id && n.integration_hold ? { ...n, integration_hold: { ...n.integration_hold, taint: '' } } : n)) };
+      await renderHome(quiet);
+      fireEvent.click(screen.getByRole('button', { name: /Send an email to alice@example\.org/ }));
+      expect(rowFor('data-id', held.id).querySelector('.app-home-taint')).toBeNull();
     });
   });
 });

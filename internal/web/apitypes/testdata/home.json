@@ -214,6 +214,44 @@
       "attachments": [],
       "review_path": "/org/integrations/github",
       "packages": []
+    },
+    {
+      "id": "integration_hold:5f0c2a9e7b3d4e1f8a6b0c9d2e4f6a8b",
+      "kind": "integration_hold",
+      "title": "Send an email to alice@example.org",
+      "from": {
+        "slug": "buyer",
+        "name": "Buyer"
+      },
+      "at": "2026-09-20T17:00:00Z",
+      "body_md": "",
+      "attachments": [],
+      "packages": [],
+      "integration_hold": {
+        "integration": "google_workspace",
+        "display": "Google Workspace",
+        "agent": "buyer",
+        "action": "send_email",
+        "title": "Send an email to alice@example.org",
+        "fields": [
+          {
+            "label": "To",
+            "value": "alice@example.org"
+          },
+          {
+            "label": "Subject",
+            "value": "Re: the signed quote"
+          },
+          {
+            "label": "Body",
+            "value": "Hi Alice,\n\nThe signed quote is attached as **asked**.\n\n\u003e On Monday you wrote: send it by Friday."
+          }
+        ],
+        "recipients": [
+          "alice@example.org"
+        ],
+        "taint": "Before asking, this agent read 3 messages or documents from outside your domain, the latest from alice@example.org."
+      }
     }
   ],
   "queue": [

@@ -11,6 +11,13 @@
 // a test sees the secret reach the Go function. It is a SignInAdviser,
 // whose words for a refused sign-in are Advise's.
 //
+// With Holds set it has a third action, hold, whose call waits for the
+// owner's approval (Result.Hold): the title, fields and recipients are
+// its arguments' (HoldArgs), and its Run, approved, answers with how
+// many fields it echoed and whoami of the connection it is run with,
+// so a test sees the connection read at approval rather than at the
+// call. HoldRun, when set, runs in its place.
+//
 // With SetupFlow set its connection is a setup one instead (method
 // setup, setup.go), and it implements every optional hook of the setup
 // contract: SetupIntegration, RequirementsOf and Uninstaller. Its flow
@@ -66,6 +73,16 @@ type Echo struct {
 	// sign-in with, for tests of core adding a built-in's words to its
 	// Sign-in requirement; nil adds nothing.
 	Advise func(refusal string) string
+	// Outside is what echo's Result names as the senders, outside the
+	// owner's domain, of what it returned (Result.Outside), for tests
+	// of core keeping it in the audit.
+	Outside []string
+	// Holds adds the action hold. HoldRun, when set, is the Run of
+	// hold's Hold in place of echo's own, for tests of a Run that
+	// refuses or fails; it is recorded as echo's is. Neither changes
+	// once the built-in is registered.
+	Holds   bool
+	HoldRun func(ctx context.Context, conn builtinintegrations.Connection) (*builtinintegrations.Result, error)
 
 	// Watch, when set, is sent every call of Setup as it is recorded,
 	// for a test that waits on a call its flow's state does not show (a
@@ -80,9 +97,9 @@ type Echo struct {
 }
 
 // Seen is one call Echo was given: the action (an action's name, or
-// verify, choices, setup, requirements or uninstall), the caller and
-// the connection. For setup, Flow and Answer are what the call was
-// given.
+// verify, choices, setup, requirements, uninstall, or hold run for a
+// held call's Run), the caller and the connection. For setup, Flow and
+// Answer are what the call was given.
 type Seen struct {
 	Action string
 	Caller builtinintegrations.Caller
@@ -151,23 +168,68 @@ func (e *Echo) Manifest() *integration.Manifest {
 			Verify: "whoami",
 		},
 	}
+	if e.Holds {
+		m.Tools = append(m.Tools, integration.Tool{Name: "hold", Description: "Wait for the owner's approval, then echo the fields."})
+	}
 	if e.SetupFlow {
 		e.setupManifest(m)
 	}
 	return m
 }
 
-// Tools lists echo and whoami for every caller, and an action the
-// manifest does not declare, which core must leave out.
+// Tools lists echo and whoami for every caller, hold with Holds, and an
+// action the manifest does not declare, which core must leave out.
 func (e *Echo) Tools(_ context.Context, _ builtinintegrations.Caller) ([]builtinintegrations.Tool, error) {
-	return []builtinintegrations.Tool{
+	tools := []builtinintegrations.Tool{
 		{Name: "echo", Description: "Answer with the arguments."},
 		{Name: "whoami", Description: "Say who is connected.", InputSchema: json.RawMessage(`{"type":"object","properties":{}}`)},
 		{Name: "undeclared", Description: "Not in the manifest."},
-	}, nil
+	}
+	if e.Holds {
+		tools = append(tools, builtinintegrations.Tool{Name: "hold", Description: "Wait for the owner, then echo the fields."})
+	}
+	return tools, nil
 }
 
-// Call runs echo or whoami.
+// HoldArgs are hold's arguments: the held call's title, its fields
+// and whom it reaches.
+type HoldArgs struct {
+	Title      string                          `json:"title"`
+	Fields     []builtinintegrations.HoldField `json:"fields"`
+	Recipients []string                        `json:"recipients"`
+}
+
+// hold is the held call of hold with args. Its Run (HoldRun, or echo's
+// own) is recorded as hold run, with the connection it is given.
+func (e *Echo) hold(caller builtinintegrations.Caller, args json.RawMessage) (*builtinintegrations.Result, error) {
+	var a HoldArgs
+	if len(args) > 0 {
+		if err := json.Unmarshal(args, &a); err != nil {
+			return &builtinintegrations.Result{Content: []string{"The arguments are not hold's: " + err.Error()}, IsError: true}, nil
+		}
+	}
+	run := e.HoldRun
+	if run == nil {
+		run = func(_ context.Context, conn builtinintegrations.Connection) (*builtinintegrations.Result, error) {
+			res := &builtinintegrations.Result{Content: []string{fmt.Sprintf("Echoed %d fields; %s", len(a.Fields), whoami(conn))}}
+			if len(a.Recipients) > 0 {
+				res.Audit = "echoed to " + strings.Join(a.Recipients, ", ")
+			}
+			return res, nil
+		}
+	}
+	return &builtinintegrations.Result{Hold: &builtinintegrations.Hold{
+		Title:      cmp.Or(a.Title, "Echo the fields"),
+		Fields:     a.Fields,
+		Recipients: a.Recipients,
+		Run: func(ctx context.Context, conn builtinintegrations.Connection) (*builtinintegrations.Result, error) {
+			e.see("hold run", caller, conn)
+			return run(ctx, conn)
+		},
+	}}, nil
+}
+
+// Call runs echo, whoami, or hold with Holds.
 func (e *Echo) Call(_ context.Context, caller builtinintegrations.Caller, conn builtinintegrations.Connection, name string, args json.RawMessage) (*builtinintegrations.Result, error) {
 	e.see(name, caller, conn)
 	switch name {
@@ -180,9 +242,13 @@ func (e *Echo) Call(_ context.Context, caller builtinintegrations.Caller, conn b
 		if loud, _ := caller.Access["loud"].(bool); loud {
 			text = strings.ToUpper(text)
 		}
-		return &builtinintegrations.Result{Content: []string{text}}, nil
+		return &builtinintegrations.Result{Content: []string{text}, Outside: e.Outside}, nil
 	case "whoami":
 		return &builtinintegrations.Result{Content: []string{whoami(conn)}}, nil
+	case "hold":
+		if e.Holds {
+			return e.hold(caller, args)
+		}
 	}
 	return nil, fmt.Errorf("echo has no action %s", name)
 }

@@ -2315,12 +2315,14 @@ in the agent's shell ([The git built-in](#the-git-built-in)) appends
 two rows: one when core hands the job out, with the built-in's
 `Result.Audit` as its reason (`started: acme/widgets`), and one when
 the second request ends it, with how it ended; a second request that
-never comes leaves the first row alone. A built-in's call that
+never comes leaves the first row alone. A held call appends two rows
+too: one as it is held (`waiting for the owner's approval: <title>`)
+and one as it ends ([Held calls](#held-calls)). A built-in's call that
 returned content written outside the owner's domain names who wrote
 it, by address, in the row's `outside` (from `Result.Outside`, the
 first 50, each scrubbed and cut at 254 bytes; left out when there are
-none): a message's sender, a document's owner. Core does nothing else
-with it yet. The owner's own calls
+none): a message's sender, a document's owner. A held call's taint
+line is worked out from it ([Held calls](#held-calls)). The owner's own calls
 are rows for `ceo`, and so is a roll back, with the action `rollback`
 and the versions as its reason ([Rolling back](#rolling-back)), which
 the page shows as "Roll back" and "From version 1.1.0 to version
@@ -2366,7 +2368,15 @@ type Result struct {
 	Audit    string        // the audit row's reason; empty: the failure's words
 	Outside  []string      // who outside the owner's domain wrote what it returned, by address
 	ShellJob *shelljob.Job // work for the agent's shell (ShellJobIntegration)
+	Hold     *Hold         // a call that waits for the owner's approval; no Content
 }
+type Hold struct {
+	Title      string      // the Needs-you row: "Send an email to alice@example.org"
+	Fields     []HoldField // what the owner reads, exactly as it will go
+	Recipients []string    // whom it reaches
+	Run        func(ctx context.Context, conn Connection) (*Result, error) // does it, once approved
+}
+type HoldField struct{ Label, Value string }
 
 // Optional capabilities.
 type ShellJobIntegration interface {
@@ -2482,6 +2492,9 @@ type SignInAdviser interface{ SignInAdvice(refusal string) string }
   `Complete` puts the shell's result in words on the call's second
   request ([The git built-in](#the-git-built-in); GitHub's clone,
   fetch and push, [The GitHub built-in](#the-github-built-in)).
+- A `Call` that answers with `Result.Hold` has its call held for the
+  owner's approval, and `Hold.Run` does the action once the owner
+  approves ([Held calls](#held-calls)).
 - A `HostsOf` built-in's shell jobs reach the network through the
   egress proxy: its connection gets a scoped proxy credential admitted
   to `Hosts(conn)` and nothing else. Git (Basic) and GitHub are both.
@@ -2618,8 +2631,13 @@ take a step outside the declarations
 `ScriptSetup` and `ScriptRequirements` replace echo's own answers for
 the tests of the runner's mechanics and of rows no integration should
 give. `Advise` is what its `SignInAdvice` answers a refused sign-in
-with, in any shape. `Calls` records every call, with each Setup call's
-flow and `Answer`.
+with, in any shape. `Outside` is what its `echo` names in
+`Result.Outside`. With `Holds` it has a third action, `hold`, a held
+call ([Held calls](#held-calls)) whose title, fields and recipients are
+its arguments and whose `Run` answers with how many fields it echoed
+and `whoami` of the connection it is run with; `HoldRun` runs in its
+place. `Calls` records every call, with each Setup call's flow and
+`Answer`, and each held call's `Run` as `hold run`.
 
 ### Sharing a version
 
@@ -2779,6 +2797,7 @@ Where core would reach a pod, it calls the function instead
 | Test connection | `tools/call` of `kivali.verify` | `Verify(connection)`, with the integration's connection; the audit's action is the name `kivali.verify` gives (`whoami` for echo) |
 | An access field's options | `tools/call` of the field's tool | `Choices(connection, name)`, with the integration's connection; 409 with no connection |
 | Work in the agent's shell | none | `Call` answers with `ShellJob`, `Complete` the call's second request |
+| An action that waits for the owner's approval | none | `Call` answers with `Hold`, and `Hold.Run` does it once approved ([Held calls](#held-calls)) |
 | Setup (`method: setup`) | `kivali/setup` with the flow and the answer, through the shim, its progress notifications the flow's stages, each step held to `kivali.connection.setup` ([For a bundle](#for-a-bundle)) | `Setup(conn, flow, answer, progress)`, in the background through the setup runner, each step held to `kivali.connection.setup` |
 | Requirements | `kivali/requirements` of a setup bundle while its server runs, under a 5 s deadline, as the integration's rows after Kivali's | `Requirements(connection)` of the connection, under a 5 s deadline, as the integration's rows after Kivali's; unmet ones are Needs-you rows |
 | Uninstall | `kivali/uninstall` of a setup bundle while its server runs; an error is a 502 that changes nothing | `Uninstall(connection)` of the connection before anything is forgotten; an error is a 502 that changes nothing |
@@ -2808,6 +2827,87 @@ names (a setup built-in lists its `kivali.hosts`); the page's version
 list offers no Roll back. A built-in record this binary does not carry
 shows "Not in this version of Kivali" (`IntegrationStateNotIncluded`),
 says agents cannot use it, and offers Uninstall, which removes it.
+
+### Held calls
+
+A built-in action that must not happen until the owner says so (an
+email sent, an invitation, a comment others are told of) is a *held
+call* (`internal/web/integration_hold.go`). Its `Call` checks what it
+can, does nothing outward, and answers with `Result.Hold` and no
+`Content`:
+
+- `Title` is the Needs-you row in a few words ("Send an email to
+  alice@example.org"); `Fields` are what the owner reads, in order,
+  each a label and the value exactly as it will go (From, To, Subject,
+  Body); `Recipients` are the addresses it reaches.
+- `Run` performs exactly what the fields show, from what `Call`
+  captured when it held the call (the message as built then), never
+  read again from the agent or the service. It runs under a call's
+  60 s deadline, with the integration's `Connection` read when the
+  owner approves, so a sign-in's token is current. A `Refusal` says it
+  did nothing; any other error, or a `Result` with `IsError`, is a
+  failure.
+
+Core holds the call in memory under 128 random bits in hex, the row's
+id, scrubs the title, the fields and the recipients of the
+connection's secrets, and answers the agent at once, with `is_error`
+false: "Waiting for the owner's approval. You will hear in your chat
+whether it was done. If you hear nothing within a day, it was not
+done." The agent's turn carries on. At most five of one agent's calls
+wait at once; a sixth is refused before it is held ("The owner has
+five of your requests waiting for approval. Wait for their answers in
+your chat before asking for another."), as is a hold with more than 64
+fields or 256 KB, too much for the owner to read. A `Hold` from
+`Complete`, or one with no `Run` or no title, is the integration's
+failure.
+
+Home lists it as an `integration_hold` need, id
+`integration_hold:<id>`, from the agent, at the time it was held, with
+`IntegrationHoldRef{integration, display, agent, action, title,
+fields, recipients, taint}`; the org stream counts it with the inbox,
+so Home refetches. The owner answers through `POST
+/api/v1/needs/approve` or `/deny` with the id as `path` and an
+optional note of at most 2 KB, which the agent reads; any other verb
+is a 400. One goroutine per held call takes its answers one at a time,
+so it is answered once; an answer to a call no longer waiting is a 409
+("That request is no longer waiting for an answer").
+
+| How it ends | What core does | Audit row | The agent's message |
+| --- | --- | --- | --- |
+| Approved | Works the call out again as a call is: the agent still on the team, `agentIntegrationFor`, the agent's listed actions still including the action, the connection; then `Run` | allowed, `approved: ` and `Run`'s `Audit`, or failing that its answer | `Approved: <title>`: "The owner approved it, and Kivali ran it. The <integration> integration answered:" and the answer, fenced |
+| Approved, refused there | Nothing: the owner reads why ("Dana has no access to Echo, so it was not done. It is still waiting: approve it again once that changes, or deny it", a 409), and the call keeps waiting | none | none |
+| Approved, `Run` refuses | Ends it | not allowed, `approved, then refused: <reason>` | "... refused it, and nothing was done:" and the refusal's text |
+| Denied | Ends it; `Run` never runs | not allowed, `denied: <note>` | `Denied: <title>`: "The owner denied it, so it was not done." and the note |
+| A day with no answer, on core's clock | Ends it | not allowed, `nobody answered within a day` | `Not answered: <title>`: "Nobody answered within a day, so it was not done." |
+| The integration disabled, disconnected or uninstalled | Ends each of its calls | not allowed, `denied: the owner disabled the integration` (disconnected, uninstalled) | `Denied: <title>`: "It was not done: the owner disabled the <integration> integration." |
+| The agent offboarded | Ends each of its calls | not allowed, `denied: the agent left the team` | none: the agent is archived |
+
+An owner's note goes after the outcome as "The owner's note: ...".
+Removing an agent's access does not end its calls; approving one then
+is refused as above. A row's `outside`, for an approved `Run` that
+names senders outside the owner's domain, is kept as for any call.
+
+The message is a `held_call` message (`store.MsgHeldCall`) from `ceo`
+to the agent, written to `messages/` and delivered at once, as the
+owner's answer to a request is (`Messenger.DeliverToAgent`), so it
+wakes the agent and shows in Home's History. The agent reads "Kivali
+reports how your integration call "<title>", which waited for the
+owner's approval, ended. Nothing is owed back on this message." and
+then the outcome. It takes no reply.
+
+The row's *taint line* warns the owner that the agent may be acting on
+outside text. When the call is held, core reads the newest 500 rows
+of the integration's audit, takes the agent's rows of the 24 hours
+before with `outside` set, counts their entries and names the newest
+row's last: "Before asking, this agent read 3 messages or documents
+from outside your domain, the latest from alice@example.org." With
+one, "... read 1 message or document from outside your domain, from
+alice@example.org."; with none, the line is empty. Nothing else is
+stored for it.
+
+Held calls live in core's memory alone. A restart of Kivali drops every
+one, unrun, with no row and no message: the agent was told that no
+word within a day means it was not done.
 
 ### The git built-in
 
@@ -4784,8 +4884,9 @@ saved that are not the owner's (Provenance, above), each once in the
 order read: the From address Kivali read, or "an unknown sender" when
 it read none, never the header's own words. A search names the senders of every
 message it lists, since a snippet is the message's text. Core keeps
-them in the audit row's `outside` ([The audit](#the-audit)), which the
-approval of a send will read; nothing else is stored.
+them in the audit row's `outside` ([The audit](#the-audit)), which a
+held call's taint line reads ([Held calls](#held-calls)); nothing else
+is stored.
 
 Docs' reads name the owner of each document read or listed, or whose
 comments are listed, that is not the owner's domain, "a shared drive"

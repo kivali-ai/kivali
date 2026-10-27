@@ -87,7 +87,40 @@ const (
 	// requirement is met, or the integration is disabled or
 	// uninstalled.
 	NeedKindIntegrationRequirement NeedKind = "integration_requirement"
+	// NeedKindIntegrationHold: an agent's call of an integration waits
+	// for you to approve it before it runs (IntegrationHold). Approve
+	// or deny, with a note the agent reads, through
+	// POST /api/v1/needs/approve and /deny with the row's ID as path.
+	// Nobody answering within a day is a denial.
+	NeedKindIntegrationHold NeedKind = "integration_hold"
 )
+
+// IntegrationHoldRef is the call an integration_hold row asks you to
+// approve: the integration (its page is /org/integrations/{integration})
+// and its display name, the agent that called it, the action without
+// the integration's prefix, what it does in a few words (Title), each
+// field exactly as it will go, who it reaches, and Taint: what the
+// agent read from outside your domain before asking, in words, empty
+// when it read nothing from outside. Fields, Recipients and Taint are
+// text, shown as text and never rendered: a field may quote an outside
+// message.
+type IntegrationHoldRef struct {
+	Integration string      `json:"integration"`
+	Display     string      `json:"display"`
+	Agent       string      `json:"agent"`
+	Action      string      `json:"action"`
+	Title       string      `json:"title"`
+	Fields      []HoldField `json:"fields"`
+	Recipients  []string    `json:"recipients"`
+	Taint       string      `json:"taint"`
+}
+
+// HoldField is one line of what a held call does: a label ("Subject")
+// and the value exactly as it will go.
+type HoldField struct {
+	Label string `json:"label"`
+	Value string `json:"value"`
+}
 
 // WebUploadRef is the upload a web_upload row asks you to approve: the
 // task (its page is /agents/{parent}/subagents/{id}), the site it is
@@ -168,9 +201,11 @@ type NeedItem struct {
 	// "agent:<slug>" for a needs-help row, and
 	// "web_sign_in:<agent>/<task>", "web_upload:<agent>/<task>" and
 	// "web_budget:<agent>/<task>" for a web task's rows, the last two
-	// being the path POST /api/v1/needs/* takes for them, and
+	// being the path POST /api/v1/needs/* takes for them,
 	// "integration_requirement:<integration>/<requirement>" for an
-	// installed integration's requirement that is not met.
+	// installed integration's requirement that is not met, and
+	// "integration_hold:<id>" for an agent's call waiting for your
+	// approval, the path POST /api/v1/needs/approve and /deny take.
 	ID           string          `json:"id"`
 	Kind         NeedKind        `json:"kind"`
 	ProposalKind *ProposalKind   `json:"proposal_kind,omitempty"`
@@ -196,8 +231,12 @@ type NeedItem struct {
 	WebUpload *WebUploadRef `json:"web_upload,omitempty"`
 	// WebBudget is what a web_budget row reports.
 	WebBudget *WebBudgetRef `json:"web_budget,omitempty"`
+	// IntegrationHold is the call an integration_hold row asks you to
+	// approve.
+	IntegrationHold *IntegrationHoldRef `json:"integration_hold,omitempty"`
 	// RawURL opens the message file; absent on a needs-help row, a web
-	// task's rows and an integration_requirement row.
+	// task's rows, an integration_requirement row and an
+	// integration_hold row.
 	RawURL *string `json:"raw_url,omitempty"`
 }
 

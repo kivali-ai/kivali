@@ -146,7 +146,7 @@ describe('optimistic removal', () => {
 
 describe('words', () => {
   it('labels need kinds neutrally', () => {
-    expect(busyHome.needs.map(needKindLabel)).toEqual(['Approval', 'Hire', 'Notice', 'Assigned to you', 'Needs help', 'Sign in', 'Install software', 'Upload request', 'Web budget', 'Integration']);
+    expect(busyHome.needs.map(needKindLabel)).toEqual(['Approval', 'Hire', 'Notice', 'Assigned to you', 'Needs help', 'Sign in', 'Install software', 'Upload request', 'Web budget', 'Integration', 'Integration action']);
   });
 
   it('says the blocker in words', () => {
