@@ -1027,31 +1027,6 @@ func TestWritesRefuseDocumentsNotTheOwners(t *testing.T) {
 	}
 }
 
-// Why this test exists: commenting is a send, which waits for the
-// owner's approval in a later version. Until then its actions are
-// declared with their schemas but given to no agent, and a call to one
-// answers that it is not available, reaching nothing.
-func TestDocsSendIsNotAvailable(t *testing.T) {
-	d, f, g := newFakeDocs(t)
-	d.addDoc("doc1", "Plan", "dana@example.com", "")
-	tools, err := g.Tools(context.Background(), agent(map[string]any{"docs_send": true}))
-	if err != nil || len(tools) != 0 {
-		t.Errorf("docs_send gives %v, %v", tools, err)
-	}
-	for _, name := range []string{"add_comment", "reply_to_comment"} {
-		if a := actionNamed(name); a == nil || a.schema == "" || a.description == "" {
-			t.Errorf("%s is not declared", name)
-		}
-		res, err := g.Call(context.Background(), agent(map[string]any{"docs_send": true}), testConn(), name, json.RawMessage(`{"document_id":"doc1","content":"hi"}`))
-		if err != nil || res == nil || !res.IsError || res.Content[0] != notAvailable {
-			t.Errorf("%s: %+v, %v", name, res, err)
-		}
-	}
-	if got := f.requests(); len(got) != 0 {
-		t.Errorf("Google was sent %v", got)
-	}
-}
-
 // Why this test exists: the Markdown a write takes is promised in the
 // tools' words, so each mark must do what they say and anything else
 // stay as written: a heading's level from its #s, - * and + list items,

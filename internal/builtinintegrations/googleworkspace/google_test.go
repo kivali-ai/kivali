@@ -20,9 +20,9 @@ import (
 // consent prompt a refresh token needs, keep the access form's keys
 // (stored access is read by them) and its three live lists, and name
 // profile as Test connection without listing it. Each action must sit
-// under the switch of its bucket, so the page groups it there; an
-// action this version does not run must say so to the owner, so the
-// page never promises what an agent cannot do.
+// under the switch of its bucket, so the page groups it there, and be
+// one this version runs, so the page never promises what an agent
+// cannot do.
 func TestManifest(t *testing.T) {
 	m := New().Manifest()
 	if f := integration.ValidateBuiltin(m); len(f) != 0 {
@@ -96,7 +96,7 @@ func TestManifest(t *testing.T) {
 	for _, tl := range m.Tools {
 		buckets[tl.Access] = append(buckets[tl.Access], tl.Name)
 		a := actionNamed(tl.Name)
-		if a == nil || tl.Description == "" || strings.HasSuffix(tl.Description, notAvailableOwner) != (a.run == nil) {
+		if a == nil || tl.Description == "" || a.run == nil || strings.Contains(tl.Description, "Not available") {
 			t.Errorf("%s: %q", tl.Name, tl.Description)
 		}
 	}
@@ -130,8 +130,8 @@ func TestManifest(t *testing.T) {
 }
 
 // Why this test exists: an agent is given an action only while its
-// access has that action's switch on, and only an action this version
-// runs, so it is never handed a tool that would only refuse. Every tool
+// access has that action's switch on, so it is never handed a tool
+// that would only refuse. Every tool
 // it is given must be in the manifest under that switch, carry an input
 // schema and end with the sentence saying the owner decides; profile,
 // Test connection's, is given to no one.
@@ -169,7 +169,7 @@ func TestToolsFollowTheSwitches(t *testing.T) {
 	gmailWrite := []string{"create_draft", "delete_draft", "modify_labels"}
 	gmailSend := []string{"send_email", "send_draft"}
 	calendar := []string{"list_calendars", "list_events", "get_event", "find_free_time", "create_event", "update_event", "delete_event", "respond_to_invitation"}
-	docs := []string{"search_documents", "get_document", "list_comments", "create_document", "append_to_document", "replace_text"}
+	docs := []string{"search_documents", "get_document", "list_comments", "create_document", "append_to_document", "replace_text", "add_comment", "reply_to_comment"}
 	if got := names(all); !slices.Equal(got, slices.Concat(gmailRead, gmailWrite, gmailSend, calendar, docs)) {
 		t.Errorf("every switch: %v", got)
 	}
@@ -186,8 +186,7 @@ func TestToolsFollowTheSwitches(t *testing.T) {
 // An unknown action, Test connection's profile, an action whose switch
 // is off, and a connection with no access token must each be refused
 // as not allowed, in words naming the cause and the owner, with
-// nothing sent to Google; an action this version does not run must
-// answer that it is not available, as an error the agent reads.
+// nothing sent to Google.
 func TestCallRefuses(t *testing.T) {
 	f, g := newFakeGoogle(t)
 	reads := agent(map[string]any{"gmail_read": true, "calendar_read": true})
@@ -209,10 +208,6 @@ func TestCallRefuses(t *testing.T) {
 	delete(noToken.Fields, CredentialKey)
 	refused("list_labels", reads, noToken, notSignedIn)
 
-	res, err := g.Call(context.Background(), agent(map[string]any{"docs_send": true}), testConn(), "add_comment", nil)
-	if err != nil || res == nil || !res.IsError || len(res.Content) != 1 || res.Content[0] != "This action is not available in this version of Kivali." {
-		t.Errorf("an action this version does not run: %+v, %v", res, err)
-	}
 	if got := f.requests(); len(got) != 0 {
 		t.Errorf("Google was sent %v", got)
 	}

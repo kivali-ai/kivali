@@ -178,6 +178,8 @@ func (d *fakeDocs) handler(origin string, next http.Handler) http.Handler {
 			d.list(w, r)
 		case origin == "www" && strings.HasSuffix(p, "/comments") && r.Method == http.MethodGet:
 			d.listComments(w, r, strings.TrimSuffix(strings.TrimPrefix(p, "/drive/v3/files/"), "/comments"))
+		case origin == "www" && strings.Contains(p, "/comments"):
+			d.comment(w, r, strings.Split(strings.TrimPrefix(p, "/drive/v3/files/"), "/"), body)
 		case origin == "www" && r.Method == http.MethodGet:
 			ff := d.get(strings.TrimPrefix(p, "/drive/v3/files/"))
 			if ff == nil {
@@ -299,6 +301,63 @@ func (d *fakeDocs) listComments(w http.ResponseWriter, r *http.Request, id strin
 		out["nextPageToken"] = strconv.Itoa(from + size)
 	}
 	writeJSON(w, out)
+}
+
+// comment is comments.get (files/{id}/comments/{id}), comments.create
+// (a POST to files/{id}/comments) and replies.create (a POST to
+// files/{id}/comments/{id}/replies), each of which Drive answers only
+// with fields named. A comment made is the signed-in account's, with
+// the content and quote given; a reply joins its comment's replies.
+func (d *fakeDocs) comment(w http.ResponseWriter, r *http.Request, parts []string, body map[string]any) {
+	if r.URL.Query().Get("fields") == "" {
+		fakeFail(w, http.StatusBadRequest, "The 'fields' parameter is required for this operation.")
+		return
+	}
+	ff := d.get(parts[0])
+	if ff == nil || len(parts) < 2 || parts[1] != "comments" {
+		fakeFail(w, http.StatusNotFound, "File not found: "+parts[0]+".")
+		return
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	find := func(id string) map[string]any {
+		for _, c := range ff.comments {
+			if c["id"] == id {
+				return c
+			}
+		}
+		return nil
+	}
+	switch {
+	case r.Method == http.MethodPost && len(parts) == 2:
+		d.made++
+		c := map[string]any{"id": "nc" + strconv.Itoa(d.made), "author": map[string]any{"me": true, "displayName": "Dana"}, "content": body["content"]}
+		if q, ok := body["quotedFileContent"]; ok {
+			c["quotedFileContent"] = q
+		}
+		ff.comments = append(ff.comments, c)
+		writeJSON(w, map[string]any{"id": c["id"]})
+	case len(parts) == 3 && r.Method == http.MethodGet:
+		c := find(parts[2])
+		if c == nil {
+			fakeFail(w, http.StatusNotFound, "Comment not found: "+parts[2]+".")
+			return
+		}
+		writeJSON(w, c)
+	case len(parts) == 4 && parts[3] == "replies" && r.Method == http.MethodPost:
+		c := find(parts[2])
+		if c == nil {
+			fakeFail(w, http.StatusNotFound, "Comment not found: "+parts[2]+".")
+			return
+		}
+		d.made++
+		reply := map[string]any{"id": "nr" + strconv.Itoa(d.made), "author": map[string]any{"me": true}, "content": body["content"]}
+		replies, _ := c["replies"].([]any)
+		c["replies"] = append(replies, reply)
+		writeJSON(w, map[string]any{"id": reply["id"]})
+	default:
+		fakeFail(w, http.StatusNotFound, "no "+r.Method+" "+r.URL.Path)
+	}
 }
 
 // create is files.create for a Google Doc: one empty paragraph, named,

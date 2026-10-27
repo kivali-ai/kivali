@@ -24,10 +24,7 @@
 // agent gmail_text.go, its attachments gmail_attach.go and its sends
 // gmail_send.go. A send never reaches anyone from its call: it holds
 // the call for the owner's approval (held), and only the hold's Run,
-// once the owner approves, sends what the call captured. An action
-// whose run is nil is declared in the manifest and not run by this
-// version: Tools leaves it out, the owner's words for it say so, and
-// Call answers that it is not available.
+// once the owner approves, sends what the call captured.
 //
 // Calls reach Google's REST APIs (api.go) at three origins, each
 // pinned: gmail.googleapis.com, www.googleapis.com (Calendar and Drive)
@@ -118,9 +115,9 @@ var (
 
 // action is one action. description is what the agent's model reads,
 // ownerDescription the manifest's, for the owner. bucket is the access
-// form's switch that gives it, the manifest tool's access. run is nil
-// for an action this version declares and does not run; ownerOnly
-// keeps an action for Test connection, out of the manifest's tools.
+// form's switch that gives it, the manifest tool's access. ownerOnly
+// keeps an action for Test connection, out of the manifest's tools,
+// and with no run.
 type action struct {
 	name             string
 	description      string
@@ -145,13 +142,6 @@ func actionNamed(name string) *action {
 	return nil
 }
 
-// notAvailable is the answer to an action this version declares and
-// does not run, and notAvailableOwner ends the owner's words for one.
-const (
-	notAvailable      = "This action is not available in this version of Kivali."
-	notAvailableOwner = " Not available in this version of Kivali."
-)
-
 // ownerDecides ends every description an agent reads.
 const ownerDecides = " The owner decides what you may read, change and send in Gmail, Google Calendar and Google Docs, and which labels, calendars and folders you may use."
 
@@ -167,11 +157,7 @@ func (g *GoogleWorkspace) Manifest() *integration.Manifest {
 		if a.ownerOnly {
 			continue
 		}
-		words := a.ownerDescription
-		if a.run == nil {
-			words += notAvailableOwner
-		}
-		tools = append(tools, integration.Tool{Name: a.name, Description: words, Access: a.bucket})
+		tools = append(tools, integration.Tool{Name: a.name, Description: a.ownerDescription, Access: a.bucket})
 	}
 	pkce := true
 	return &integration.Manifest{
@@ -179,7 +165,7 @@ func (g *GoogleWorkspace) Manifest() *integration.Manifest {
 		Name:            Name,
 		Version:         "1.0.0",
 		DisplayName:     displayName,
-		Description:     "Gmail, Google Calendar and Google Docs, signed in with an OAuth client you make on Google's Auth Platform. In this version agents can read your Gmail, write drafts in it, label its mail and send mail you approve, read your Google Calendar, change its events, and invite people and answer invitations once you approve, and read and write your Google Docs.",
+		Description:     "Gmail, Google Calendar and Google Docs, signed in with an OAuth client you make on Google's Auth Platform. In this version agents can read your Gmail, write drafts in it, label its mail and send mail you approve, read your Google Calendar, change its events, and invite people and answer invitations once you approve, and read and write your Google Docs and comment on them once you approve.",
 		Author:          integration.Author{Name: "Kivali"},
 		UserConfig:      integration.UserConfig{},
 		Tools:           tools,
@@ -218,13 +204,13 @@ func (g *GoogleWorkspace) Manifest() *integration.Manifest {
 }
 
 // Tools lists every action the caller's access gives, in the
-// manifest's order: those whose switch it has on and that this version
-// runs, never profile, which is Test connection's.
+// manifest's order: those whose switch it has on, never profile, which
+// is Test connection's.
 func (g *GoogleWorkspace) Tools(_ context.Context, caller builtinintegrations.Caller) ([]builtinintegrations.Tool, error) {
 	acc := readAccess(caller.Access)
 	var out []builtinintegrations.Tool
 	for _, a := range actions {
-		if a.ownerOnly || a.run == nil || !acc.on(a.bucket) {
+		if a.ownerOnly || !acc.on(a.bucket) {
 			continue
 		}
 		out = append(out, builtinintegrations.Tool{Name: a.name, Description: a.description + ownerDecides, InputSchema: json.RawMessage(a.schema)})
@@ -288,10 +274,9 @@ func accessToken(conn builtinintegrations.Connection) (string, error) {
 
 // Call runs the action name for the caller: the action, its switch and
 // the connection are checked before anything reaches Google, each
-// refused with a Refusal; an action this version does not run answers
-// so; a Google failure is an error result in words, with the audit
-// the run had set; a send that held its call answers Result.Hold
-// (holdResult).
+// refused with a Refusal; a Google failure is an error result in
+// words, with the audit the run had set; a send that held its call
+// answers Result.Hold (holdResult).
 func (g *GoogleWorkspace) Call(ctx context.Context, caller builtinintegrations.Caller, conn builtinintegrations.Connection, name string, raw json.RawMessage) (*builtinintegrations.Result, error) {
 	a := actionNamed(name)
 	switch {
@@ -303,9 +288,6 @@ func (g *GoogleWorkspace) Call(ctx context.Context, caller builtinintegrations.C
 	acc := readAccess(caller.Access)
 	if !acc.on(a.bucket) {
 		return nil, notGiven(a.bucket)
-	}
-	if a.run == nil {
-		return failed(notAvailable), nil
 	}
 	tok, err := accessToken(conn)
 	if err != nil {
