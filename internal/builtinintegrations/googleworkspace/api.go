@@ -1,6 +1,7 @@
 package googleworkspace
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"encoding/json"
@@ -153,17 +154,43 @@ func (g *GoogleWorkspace) get(ctx context.Context, token string, a api, path str
 }
 
 // getUpTo is get reading at most most bytes of the answer, for one
-// larger than maxAnswerBytes may be: an attachment's.
+// larger than maxAnswerBytes may be: an attachment's, a document's.
 func (g *GoogleWorkspace) getUpTo(ctx context.Context, token string, a api, path string, most int, out any) error {
+	return g.send(ctx, token, http.MethodGet, a, path, nil, most, out)
+}
+
+// post POSTs body as JSON to path on a, a request that changes
+// something (a Drive file made, a document's batchUpdate), and decodes
+// the JSON answer into out (nil to read none).
+func (g *GoogleWorkspace) post(ctx context.Context, token string, a api, path string, body, out any) error {
+	b, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+	return g.send(ctx, token, http.MethodPost, a, path, b, maxAnswerBytes, out)
+}
+
+// send is one request, method to path on a with the access token and,
+// when body is not nil, body as its JSON: at most most bytes of the
+// answer read, Google's error answer as an apiError, and the JSON
+// answer decoded into out (nil to read none).
+func (g *GoogleWorkspace) send(ctx context.Context, token, method string, a api, path string, body []byte, most int, out any) error {
 	base, err := g.base(a)
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base.String()+path, nil)
+	var rd io.Reader
+	if body != nil {
+		rd = bytes.NewReader(body)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, base.String()+path, rd)
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Accept", "application/json")
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	req.Header.Set("User-Agent", "Kivali")
 	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := g.httpClient().Do(req)
@@ -182,6 +209,9 @@ func (g *GoogleWorkspace) getUpTo(ctx context.Context, token string, a api, path
 		e := readError(b, resp.StatusCode)
 		e.Message = scrub(e.Message, token)
 		return e
+	}
+	if out == nil {
+		return nil
 	}
 	if err := json.Unmarshal(b, out); err != nil {
 		return &apiError{Message: "Google's answer was not one Kivali reads", Unreadable: true}

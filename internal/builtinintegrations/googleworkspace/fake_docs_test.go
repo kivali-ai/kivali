@@ -42,6 +42,9 @@ type fakeFile struct {
 	raw      string
 	paras    []fakePara
 	comments []map[string]any
+	// refuseChild, on a folder, is Drive's answer to making a file in
+	// it.
+	refuseChild *fakeError
 }
 
 // fakePara is a paragraph of a modelled body: its text, its named
@@ -167,9 +170,7 @@ func (d *fakeDocs) handler(origin string, next http.Handler) http.Handler {
 			d.mu.Lock()
 			writeJSON(w, ff.file)
 			d.mu.Unlock()
-		case origin == "www" && r.Method == http.MethodPatch:
-			d.update(w, r, strings.TrimPrefix(p, "/drive/v3/files/"), body)
-		case origin == "docs" && p == "/v1/documents" && r.Method == http.MethodPost:
+		case origin == "www" && p == "/drive/v3/files" && r.Method == http.MethodPost:
 			d.create(w, body)
 		case origin == "docs" && strings.HasSuffix(p, ":batchUpdate") && r.Method == http.MethodPost:
 			d.batch(w, strings.TrimSuffix(strings.TrimPrefix(p, "/v1/documents/"), ":batchUpdate"), body)
@@ -287,49 +288,54 @@ func (d *fakeDocs) listComments(w http.ResponseWriter, r *http.Request, id strin
 	writeJSON(w, out)
 }
 
-// update is files.update: its app properties merged, addParents added
-// and removeParents taken away.
-func (d *fakeDocs) update(w http.ResponseWriter, r *http.Request, id string, body map[string]any) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	ff := d.files[id]
-	if ff == nil {
-		fakeFail(w, http.StatusNotFound, "File not found: "+id+".")
+// create is files.create for a Google Doc: one empty paragraph, named,
+// owned by the signed-in account, with the app properties given, in
+// the parents given or at the top of My Drive. A parent the fake does
+// not hold, or that is not a folder, is refused 404 as Drive refuses
+// one; a folder whose refuseChild is set answers that instead, and
+// with status 0 closes the connection unanswered.
+func (d *fakeDocs) create(w http.ResponseWriter, body map[string]any) {
+	if body["mimeType"] != documentType {
+		fakeFail(w, http.StatusBadRequest, "the fake makes only Google Docs")
 		return
 	}
-	if props, ok := body["appProperties"].(map[string]any); ok {
-		if ff.file.AppProperties == nil {
-			ff.file.AppProperties = map[string]string{}
-		}
-		for k, v := range props {
-			s, _ := v.(string)
-			ff.file.AppProperties[k] = s
-		}
-	}
-	q := r.URL.Query()
-	if rm := q.Get("removeParents"); rm != "" {
-		ff.file.Parents = slices.DeleteFunc(ff.file.Parents, func(p string) bool { return slices.Contains(strings.Split(rm, ","), p) })
-	}
-	if add := q.Get("addParents"); add != "" {
-		ff.file.Parents = append(ff.file.Parents, strings.Split(add, ",")...)
-	}
-	writeJSON(w, map[string]any{"id": id, "parents": ff.file.Parents})
-}
-
-// create is documents.create: a document of one empty paragraph,
-// titled, owned by the signed-in account at the Drive's top.
-func (d *fakeDocs) create(w http.ResponseWriter, body map[string]any) {
-	title, _ := body["title"].(string)
 	d.mu.Lock()
+	defer d.mu.Unlock()
+	parents := []string{"rootFolder"}
+	if ps, ok := body["parents"].([]any); ok {
+		parents = nil
+		for _, raw := range ps {
+			id, _ := raw.(string)
+			folder := d.files[id]
+			switch {
+			case folder == nil || folder.file.MimeType != folderType:
+				fakeFail(w, http.StatusNotFound, "File not found: "+id+".")
+				return
+			case folder.refuseChild != nil && folder.refuseChild.status == 0:
+				conn, _, _ := w.(http.Hijacker).Hijack()
+				_ = conn.Close()
+				return
+			case folder.refuseChild != nil:
+				w.WriteHeader(folder.refuseChild.status)
+				_, _ = w.Write([]byte(folder.refuseChild.body))
+				return
+			}
+			parents = append(parents, id)
+		}
+	}
+	props := map[string]string{}
+	if ps, ok := body["appProperties"].(map[string]any); ok {
+		for k, v := range ps {
+			props[k], _ = v.(string)
+		}
+	}
+	name, _ := body["name"].(string)
 	d.made++
 	id := "madeDoc" + strconv.Itoa(d.made)
-	ff := &fakeFile{file: driveFile{ID: id, Name: title, MimeType: documentType, Parents: []string{"rootFolder"},
+	d.files[id] = &fakeFile{file: driveFile{ID: id, Name: name, MimeType: documentType, Parents: parents, AppProperties: props,
 		Owners: []driveUser{{"dana@example.com"}}, ModifiedTime: fakeModified.Format(time.RFC3339)}, paras: []fakePara{{}}}
-	d.files[id] = ff
 	d.order = append(d.order, id)
-	doc := ff.modelled(false)
-	d.mu.Unlock()
-	writeJSON(w, doc)
+	writeJSON(w, map[string]any{"id": id})
 }
 
 // starts is where each paragraph of a modelled body starts, in UTF-16

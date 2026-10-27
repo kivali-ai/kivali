@@ -45,7 +45,7 @@ func TestManifest(t *testing.T) {
 		"https://www.googleapis.com/auth/gmail.readonly", "https://www.googleapis.com/auth/gmail.compose",
 		"https://www.googleapis.com/auth/gmail.labels", "https://www.googleapis.com/auth/calendar.events",
 		"https://www.googleapis.com/auth/calendar.readonly", "https://www.googleapis.com/auth/documents",
-		"https://www.googleapis.com/auth/drive.readonly",
+		"https://www.googleapis.com/auth/drive.readonly", "https://www.googleapis.com/auth/drive.file",
 	}
 	if !slices.Equal(c.Scopes, wantScopes) {
 		t.Errorf("scopes = %v", c.Scopes)

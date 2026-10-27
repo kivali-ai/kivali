@@ -3942,8 +3942,11 @@ apart:
   `prompt=consent` (Google gives a refresh token only for both),
   `credential_keys.access_token: GOOGLE_ACCESS_TOKEN`, and the scopes
   `gmail.readonly`, `gmail.compose`, `gmail.labels`, `calendar.events`,
-  `calendar.readonly`, `documents` and `drive.readonly` (each under
-  `https://www.googleapis.com/auth/`), never Gmail's settings. The
+  `calendar.readonly`, `documents`, `drive.readonly` and `drive.file`
+  (each under `https://www.googleapis.com/auth/`), never Gmail's
+  settings: `drive.readonly` finds documents and folders, and
+  `drive.file` lets Drive make a document with Kivali's mark, in its
+  folder. The
   `setup` block: a summary; `hosts: ["console.cloud.google.com"]`; one
   field, `client_json`, secret and setup-only; keeps `client_id` and
   `client_secret`, both secret, which core signs in with. An empty
@@ -4565,18 +4568,31 @@ a document can mark it). Any other is refused before anything
 changes, "Document <id> is not the owner's and Kivali did not make it:
 you may change only documents the owner owns or Kivali made.", audited
 as `document <id> is neither the owner's nor made by Kivali`. Writes
-are `POST` and `PATCH` through `docsRequest`; a write Google does not
-answer says Kivali cannot tell whether the document changed.
+are `POST`s (`post`, [The client](#the-client)); a write Google does
+not answer says Kivali cannot tell whether the document changed.
 
 - `create_document(title, body?, folder_id?)` checks `folder_id` first
   (a folder, within the access's folders, else refused), or takes the
-  access's first folder, then `POST /v1/documents` with the title, a
-  `batchUpdate` writing `body`, and `PATCH /drive/v3/files/{id}`
-  setting `appProperties.kivali` to the agent's slug, with `addParents`
-  the folder and `removeParents` the parents it was made in. Once the
-  document exists, a later failure is an answer naming the document
-  and what was left undone. Audit: "created document <id> in folder
-  <id> with N characters of text".
+  access's first folder, then makes the document through Drive, `POST
+  /drive/v3/files?fields=id&supportsAllDrives=true` on
+  `www.googleapis.com` with `name`, `mimeType`
+  `application/vnd.google-apps.document`, `appProperties.kivali` the
+  agent's slug and, with a folder, `parents` that folder, so the
+  document is Kivali's and in its folder from the start; then a
+  `batchUpdate` writes `body` from index 1, a new document being one
+  empty paragraph. When Drive refuses the folder itself, a 403 or a
+  404 (not a rate limit) whose words name the folder's id, as Drive
+  answers for a folder `drive.file` may not add to, the document is
+  made again with no `parents`, at the top of My Drive, and the answer
+  says Google would not put it in the folder, in Google's words, and,
+  when the access names folders, that the agent cannot read it back.
+  Any other failure, Google not answering or a 5xx among them, makes
+  nothing again, since the document may exist. Once the document
+  exists, a failure to write its text is an answer naming the document
+  and saying so. Audit: "created document <id> in folder <id> with N
+  characters of text", "; could not write its text" in place of the
+  count, and "; Google refused folder <id>, so it is at the top of My
+  Drive".
 - `append_to_document(document_id, text)` reads the body (`GET
   /v1/documents/{id}`, the first tab's) and inserts at the end of its
   last paragraph, after a line end unless that paragraph is empty.
@@ -4656,13 +4672,22 @@ rest. The owner reads the same in Test connection's and the options'
 words, with what to do: sign in again, turn the API on, or sign in
 again allowing everything Google lists.
 
-Docs' writes, `POST` and `PATCH`, go through `docsRequest`
-(`docs_write.go`): the same origins, headers, bounds and error words,
-a JSON body, and no redirect followed.
+A read is `get` (`getUpTo` for a larger answer) and a write `post`, a
+JSON body; both are `send`, with the same origins, headers, bounds and
+error words, and a write follows no redirect.
 
 #### Requirements
 
-Google Workspace has no rows of its own. As a `SignInAdviser`, it adds
+Google Workspace has no rows of its own. The scope Google granted is
+on the connection's record (`sign_in.scope`), and a built-in is given
+only the client id and the access token, so no row reports a sign-in
+that lacks a scope: an action that needs it is refused by Google
+(`insufficientPermissions`), and the agent reads that the owner's
+sign-in does not allow it and asks the owner. A sign-in made before
+`drive.file` was among the scopes lacks it, so `create_document`
+fails that way until the owner signs out and signs in again with the
+`sign_in` row's Fix, whose `prompt=consent` has Google ask for every
+scope again. As a `SignInAdviser`, it adds
 to the `sign_in` row of a refusal naming `invalid_grant`, which Google
 answers once it ends a sign-in, the likely cause: "If this came about a
 week after you signed in, the app is likely still in Testing on
