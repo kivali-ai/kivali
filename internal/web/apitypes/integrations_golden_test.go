@@ -604,7 +604,20 @@ func goldenSetupFlowForm() SetupFlow {
 	f.Step = &SetupFlowStep{Kind: SetupFlowStepKindForm, Words: "Name the account the app goes on.", Fields: []SetupField{
 		{Key: "account", Title: "Account", Words: "Your personal account, or an organization's name"},
 		{Key: "personal_access_key", Title: "Key", Words: "From the key page", Secret: true, SetupOnly: true},
-	}}
+	}, Copy: []string{}}
+	return f
+}
+
+// goldenSetupFlowFormByHand is a step the owner takes on the service
+// by hand: a form with no fields, the service's page to open and an
+// address to copy there.
+func goldenSetupFlowFormByHand() SetupFlow {
+	f := goldenSetupFlow(SetupFlowStateForm)
+	page, host := "https://github.com/settings/apps/new", "github.com"
+	f.Step = &SetupFlowStep{
+		Kind: SetupFlowStepKindForm, Words: "Register the address below as the app’s callback URL, then choose Create.",
+		Fields: []SetupField{}, URL: &page, Host: &host, Copy: []string{"https://team.example/connect/callback"},
+	}
 	return f
 }
 
@@ -613,7 +626,7 @@ func goldenSetupFlowForm() SetupFlow {
 func goldenSetupFlowGo() SetupFlow {
 	f := goldenSetupFlow(SetupFlowStateGo)
 	start, host := "/connect/start?flow="+goldenSetupFlowID, "github.com"
-	f.Step = &SetupFlowStep{Kind: SetupFlowStepKindGo, Words: "Create the app on GitHub. GitHub sends you back here.", Fields: []SetupField{}, StartURL: &start, Host: &host}
+	f.Step = &SetupFlowStep{Kind: SetupFlowStepKindGo, Words: "Create the app on GitHub. GitHub sends you back here.", Fields: []SetupField{}, Copy: []string{}, StartURL: &start, Host: &host}
 	return f
 }
 
@@ -633,7 +646,7 @@ func goldenSetupFlowWait() SetupFlow {
 	page, host, code := "https://github.com/login/device?user_code=WDJB-MJHT", "github.com", "WDJB-MJHT"
 	f.Step = &SetupFlowStep{
 		Kind: SetupFlowStepKindWait, Words: "Enter this code on the service’s page, then approve the sign-in there. Kivali finishes it here once you do.",
-		Fields: []SetupField{}, URL: &page, Host: &host, Code: &code,
+		Fields: []SetupField{}, Copy: []string{}, URL: &page, Host: &host, Code: &code,
 	}
 	return f
 }

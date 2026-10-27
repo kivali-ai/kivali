@@ -219,6 +219,8 @@ func TestSetupFlowHoldsStepsToTheDeclarations(t *testing.T) {
 		{"undeclared host", builtinintegrations.Step{Go: &builtinintegrations.Go{URL: "https://evil.example/login"}}, "Echo's setup tried to send your browser to evil.example, which its manifest does not declare"},
 		{"plain http", builtinintegrations.Step{Go: &builtinintegrations.Go{URL: "http://" + setupHost + "/login"}}, "Echo's setup tried to send your browser to " + setupHost + ", which its manifest does not declare"},
 		{"wait page elsewhere", builtinintegrations.Step{Wait: &builtinintegrations.Wait{URL: "https://evil.example/"}}, "Echo's setup named a page on evil.example, which its manifest does not declare"},
+		{"form page elsewhere", builtinintegrations.Step{Form: &builtinintegrations.Form{Words: "Make the app.", URL: "https://evil.example/apps/new"}}, "Echo's setup named a page on evil.example, which its manifest does not declare"},
+		{"too much to copy", builtinintegrations.Step{Form: &builtinintegrations.Form{Copy: make([]string, setupCopyMax+1)}}, "Echo's setup gave more than 10 values to copy"},
 		{"undeclared keep", builtinintegrations.Step{Done: true, Keep: map[string]string{"account": "a1", "password": "hunter22"}}, "Echo's setup tried to keep password, which its manifest does not declare"},
 		{"no step", builtinintegrations.Step{Keep: map[string]string{"account": "a1"}}, "Echo's setup gave no next step"},
 		{"two steps", builtinintegrations.Step{Done: true, Wait: &builtinintegrations.Wait{}}, "Echo's setup gave more than one next step"},

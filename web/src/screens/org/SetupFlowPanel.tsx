@@ -6,7 +6,7 @@ import { createEventStream } from '../../api/sse';
 import type { EventSourceLike } from '../../api/sse';
 import type { SetupFlow, SetupFlowAnswer, SetupFlowStart } from '../../api/types.gen';
 import { Banner, Button, Icon, Progress, Text, TextField } from '../../ds';
-import { ErrorBanner } from './parts';
+import { CopyAddress, ErrorBanner } from './parts';
 import { asApiError } from './useResource';
 
 /** How often the panel asks how a flow stands, where it cannot follow the flow's stream. */
@@ -74,8 +74,10 @@ export interface SetupFlowPanelProps {
 /**
  * A setup flow, drawn from its state as the server streams it: the button that starts it; while it runs, its progress
  * (a real progress bar where there is a count); a Form of the fields the integration declared, secrets as password
- * fields; a Go that sends the browser to the service, by /connect/start, which Kivali Desktop opens in the system
- * browser; a Wait with its words, a code to copy and the service's page; done; or failed with why and Try again.
+ * fields, with the service's page to open and what to copy there, or with no fields a step taken on the service by
+ * hand, Continue alone going on; a Go that sends the browser to the service, by /connect/start, which Kivali Desktop
+ * opens in the system browser; a Wait with its words, a code to copy and the service's page; done; or failed with why
+ * and Try again.
  * Cancel ends a flow under way. The panel follows the flow's stream, or asks every few seconds while the tab is
  * visible where there is no stream.
  */
@@ -270,9 +272,22 @@ export function SetupFlowPanel({ api, integration, label, flow: flowName = 'setu
             {step.words}
           </Text>
         )}
-        <Text as="p" variant="caption" tone="muted">
-          {integration + ' asks for'}
-        </Text>
+        {step.url && (
+          <Text as="p" variant="body">
+            {/* eslint-disable-next-line react/forbid-elements -- external */}
+            <a href={step.url} target="_blank" rel="noopener">
+              {'Open ' + (step.host ?? step.url)}
+            </a>
+          </Text>
+        )}
+        {step.copy.map((v, i) => (
+          <CopyAddress key={i} label={step.copy.length > 1 ? 'To copy ' + (i + 1) : 'To copy'} url={v} />
+        ))}
+        {step.fields.length > 0 && (
+          <Text as="p" variant="caption" tone="muted">
+            {integration + ' asks for'}
+          </Text>
+        )}
         {step.fields.map((f) => (
           <TextField
             key={f.key}

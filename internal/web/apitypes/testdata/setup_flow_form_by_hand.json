@@ -1,0 +1,18 @@
+{
+  "id": "9f86d081884c7d659a2feaa0c55ad015",
+  "flow": "setup",
+  "state": "form",
+  "seq": 2,
+  "step": {
+    "kind": "form",
+    "words": "Register the address below as the app’s callback URL, then choose Create.",
+    "fields": [],
+    "no_return": false,
+    "url": "https://github.com/settings/apps/new",
+    "host": "github.com",
+    "copy": [
+      "https://team.example/connect/callback"
+    ]
+  },
+  "expires_at": "2026-10-21T10:10:00Z"
+}

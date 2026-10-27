@@ -1,6 +1,7 @@
+import { useState } from 'react';
 import type { ReactNode } from 'react';
 import type { ApiError } from '../../api/client';
-import { Banner, Skeleton, Text } from '../../ds';
+import { Banner, Button, Icon, Skeleton, Text, TextField } from '../../ds';
 
 /** A section's heading row. Desktop only: on phone the frame header already names the sub-page. */
 export function SectionHead({ title, meta, show }: { title: string; meta?: ReactNode; show: boolean }) {
@@ -69,4 +70,23 @@ export function formatBytes(n: number): string {
   if (n < 1024) return n + ' B';
   if (n < 1024 * 1024) return Math.round(n / 1024) + ' KB';
   return (n / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+/** An address to copy, such as the redirect address to register with the service, read-only, with Copy. */
+export function CopyAddress({ label, hint, url }: { label: string; hint?: string; url: string }) {
+  const [copied, setCopied] = useState(false);
+  const copy = () => {
+    void navigator.clipboard?.writeText(url).then(
+      () => setCopied(true),
+      () => setCopied(false),
+    );
+  };
+  return (
+    <div className="app-int-redirect">
+      <TextField label={label} {...(hint ? { hint } : {})} value={url} readOnly onFocus={(e) => e.currentTarget.select()} />
+      <Button type="button" size="sm" variant="ghost" icon={<Icon name={copied ? 'check' : 'copy'} />} onClick={copy}>
+        {copied ? 'Copied' : 'Copy'}
+      </Button>
+    </div>
+  );
 }

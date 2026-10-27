@@ -225,6 +225,7 @@ func goldenFixtures() map[string]any {
 		"integration_logs":                   IntegrationLogs{Lines: []IntegrationLogLine{{At: integrationNow, Level: "info", Message: "server started"}, {At: integrationLater, Level: "stderr", Message: "token [secret] accepted"}}},
 		"setup_flow_running":                 goldenSetupFlowRunning(),
 		"setup_flow_form":                    goldenSetupFlowForm(),
+		"setup_flow_form_by_hand":            goldenSetupFlowFormByHand(),
 		"setup_flow_go":                      goldenSetupFlowGo(),
 		"setup_flow_go_no_return":            goldenSetupFlowGoNoReturn(),
 		"setup_flow_wait":                    goldenSetupFlowWait(),

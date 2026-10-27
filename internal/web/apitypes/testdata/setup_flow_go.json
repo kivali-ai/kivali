@@ -9,7 +9,8 @@
     "fields": [],
     "start_url": "/connect/start?flow=9f86d081884c7d659a2feaa0c55ad015",
     "no_return": false,
-    "host": "github.com"
+    "host": "github.com",
+    "copy": []
   },
   "expires_at": "2026-10-21T10:10:00Z"
 }

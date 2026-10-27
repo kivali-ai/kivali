@@ -2347,8 +2347,9 @@ export interface SetupFlowStep {
    */
   words: string;
   /**
-   * Fields is a form's fields, in order; empty for the other kinds.
-   * Answer them with POST .../setup/answer.
+   * Fields is a form's fields, in order; empty for a form step you take
+   * on the service, and for the other kinds. Answer them with POST
+   * .../setup/answer.
    */
   fields: SetupField[];
   /**
@@ -2364,18 +2365,27 @@ export interface SetupFlowStep {
    */
   no_return: boolean;
   /**
-   * URL is, for a wait step, a page on the service to open meanwhile.
+   * URL is, for a form or a wait step, a page on the service to open
+   * meanwhile, in a new tab.
    */
   url?: string;
   /**
-   * Host is the host the step sends you to: a go step's, or a wait
-   * step's page's.
+   * Host is the host the step sends you to: a go step's, or a form or
+   * a wait step's page's.
    */
   host?: string;
   /**
    * Code is, for a wait step, a code to enter on its page.
    */
   code?: string;
+  /**
+   * Copy is, for a form step, what to copy to its page, such as an
+   * address to register, each with a Copy button; empty for nothing,
+   * and for the other kinds. A form step with no fields is one you
+   * take on the service: its words, its page and what to copy there,
+   * then Continue.
+   */
+  copy: string[];
 }
 /**
  * SetupFlowProgress is how far a running step has got, in the

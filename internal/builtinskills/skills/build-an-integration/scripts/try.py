@@ -112,12 +112,16 @@ REQUIREMENT_WORDS = 500
 REQUIREMENT_ROWS = 20
 # The words of a setup flow's failure, its steps and its progress are
 # cut to this many characters after their secrets are replaced, and a
-# Wait's code, shown as given, to CODE_CHARS. A step naming an address longer than
-# URL_CHARS, keeping and carrying more than CARRY_BYTES together, or
-# posting more than CARRY_BYTES fails the flow.
+# Wait's code, shown as given, to CODE_CHARS, and each of a Form's
+# values to copy, shown as given, to COPY_CHARS. A step naming an
+# address longer than URL_CHARS, giving more than COPY_VALUES values to
+# copy, keeping and carrying more than CARRY_BYTES together, or posting
+# more than CARRY_BYTES fails the flow.
 FLOW_WORDS = 200
 CODE_CHARS = 64
 URL_CHARS = 4096
+COPY_VALUES = 10
+COPY_CHARS = 1024
 CARRY_BYTES = 64 << 10
 VERIFY_MESSAGE = 1000
 # The shortest secret value Kivali replaces with [secret].
@@ -827,7 +831,7 @@ def secret_return_key(k):
 # these, or a value of another type, and Kivali cannot read the step.
 STEP_KEYS = {"form", "go", "wait", "done", "keep", "state"}
 KIND_KEYS = {
-    "form": {"words": "text", "fields": "texts"},
+    "form": {"words": "text", "fields": "texts", "url": "text", "copy": "texts"},
     "go": {"words": "text", "url": "text", "post": "post", "no_return": "switch", "stateless": "switch"},
     "wait": {"words": "text", "url": "text", "code": "text"},
 }
@@ -928,19 +932,20 @@ def check_step(step, display, setup):
     size = lambda m: sum(len(k.encode()) + len(v.encode()) for k, v in (m or {}).items())
     if size(step.get("keep")) + size(step.get("state")) > CARRY_BYTES:
         return "%s's setup gave more to keep and carry than Kivali holds for a step (%d KiB)" % (display, CARRY_BYTES >> 10)
-    for kind in ("go", "wait"):
+    for kind in ("form", "go", "wait"):
         if kind in step and len((step[kind].get("url") or "").encode()) > URL_CHARS:
             return "%s's setup named an address longer than %d characters" % (display, URL_CHARS)
     post = (step.get("go") or {}).get("post") or {}
     if sum(len(k.encode()) + sum(len(x.encode()) for x in ([v] if isinstance(v, str) else v)) for k, v in post.items()) > CARRY_BYTES:
         return "%s's setup gave a form to post larger than Kivali sends (%d KiB)" % (display, CARRY_BYTES >> 10)
     if "form" in step:
-        asked = step["form"].get("fields") or []
-        if not asked:
-            return "%s's setup asked for a form with no fields" % display
-        for k in asked:
+        for k in step["form"].get("fields") or []:
             if k not in fields:
                 return "%s's setup asked for %s, which its manifest does not declare" % (display, k)
+        if len(step["form"].get("copy") or []) > COPY_VALUES:
+            return "%s's setup gave more than %d values to copy" % (display, COPY_VALUES)
+        if step["form"].get("url") and not url_allowed(step["form"]["url"], hosts):
+            return "%s's setup named a page on %s, which its manifest does not declare" % (display, url_words(step["form"]["url"]))
     if "go" in step and not url_allowed(step["go"].get("url", ""), hosts):
         return "%s's setup tried to send your browser to %s, which its manifest does not declare" % (display, url_words(step["go"].get("url", "")))
     if "wait" in step and step["wait"].get("url") and not url_allowed(step["wait"]["url"], hosts):
@@ -1169,7 +1174,11 @@ def show_step(srv, step, took):
     if "form" in step:
         f = step["form"]
         say("  A Form, in %.1f s: %s" % (took, words(f.get("words", ""))))
-        say("    asks for: %s" % ", ".join(f.get("fields") or []))
+        say("    asks for: %s" % (", ".join(f.get("fields") or []) or "nothing: Continue alone goes on"))
+        if f.get("url"):
+            say("    page: %s" % scrub(f["url"]))
+        for v in f.get("copy") or []:
+            say("    to copy there: %s" % clip(v, COPY_CHARS))
     elif "go" in step:
         g = step["go"]
         how = "posts a form to" if g.get("post") is not None else "goes to"

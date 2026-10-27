@@ -38,12 +38,12 @@ function state(seq: number, rest: Omit<SetupFlow, 'id' | 'flow' | 'seq' | 'expir
 
 const form = state(1, {
   state: 'form',
-  step: { kind: 'form', words: 'Name the account.', fields: [{ key: 'account', title: 'Account', words: 'An organization, or blank', secret: false, setup_only: false }], no_return: false },
+  step: { kind: 'form', words: 'Name the account.', fields: [{ key: 'account', title: 'Account', words: 'An organization, or blank', secret: false, setup_only: false }], copy: [], no_return: false },
 });
 const running = state(2, { state: 'running' });
 const go = state(3, {
   state: 'go',
-  step: { kind: 'go', words: 'Create the app on GitHub.', fields: [], start_url: '/connect/start?flow=' + ID, host: 'github.com', no_return: false },
+  step: { kind: 'go', words: 'Create the app on GitHub.', fields: [], copy: [], start_url: '/connect/start?flow=' + ID, host: 'github.com', no_return: false },
 });
 
 /** Lets every settled promise run and React commit what they set. */
@@ -88,6 +88,37 @@ afterEach(() => {
 });
 
 describe('SetupFlowPanel', () => {
+  // Guards a step the owner takes on the service by hand (a form with no fields): the page must show its words, the
+  // service's page as a link that opens in a new tab, each value to copy with Copy, no "asks for" line for fields it
+  // does not ask, and Continue, which answers with no fields so the flow goes on.
+  it('draws a form with no fields as a step taken on the service', async () => {
+    const byHand = state(1, {
+      state: 'form',
+      step: {
+        kind: 'form',
+        words: 'Create a project, or pick one you have.',
+        fields: [],
+        url: 'https://console.example/projectcreate',
+        host: 'console.example',
+        copy: ['https://team.example/connect/callback'],
+        no_return: false,
+      },
+    });
+    vi.mocked(apiGet).mockImplementation(((path: string) => (path === API + '/setup' ? Promise.resolve(structuredClone(byHand)) : Promise.reject(new Error(path)))) as never);
+    await renderPanel();
+    expect(screen.getByText('Create a project, or pick one you have.')).toBeInTheDocument();
+    const link = screen.getByRole('link', { name: 'Open console.example' });
+    expect(link).toHaveAttribute('href', 'https://console.example/projectcreate');
+    expect(link).toHaveAttribute('target', '_blank');
+    expect(screen.getByLabelText('To copy')).toHaveValue('https://team.example/connect/callback');
+    expect(screen.queryByText('GitHub asks for')).toBeNull();
+    vi.mocked(apiPost).mockResolvedValue(structuredClone(running) as never);
+    fireEvent.submit(screen.getByRole('button', { name: 'Continue' }).closest('form')!);
+    await flush();
+    expect(vi.mocked(apiPost)).toHaveBeenCalledWith(API + '/setup/answer', { fields: {} });
+    expect(screen.getByText('Working.')).toBeInTheDocument();
+  });
+
   // Guards the order of a request's reply and the stream. The server answers POST …/setup/answer with the flow as it
   // stands when the reply is written, running, while the step it set going may finish at once and reach the stream
   // first as the next step. Taken as it arrived, the stale reply would put the page back on "Working." with only

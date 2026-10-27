@@ -47,7 +47,7 @@ import {
   versionPath,
   whenLabel,
 } from './integrationParts';
-import { ErrorBanner, None, RowList } from './parts';
+import { CopyAddress, ErrorBanner, None, RowList } from './parts';
 import { asApiError, useAction, useResource } from './useResource';
 import '../../styles/org.css';
 import '../../styles/integrations.css';
@@ -228,25 +228,6 @@ function SignInBlock({ connection, api, busy, onPage }: SignInBlockProps) {
       <ErrorBanner error={error} onDismiss={() => setError(null)} />
       {body}
     </section>
-  );
-}
-
-/** An address to copy, such as the redirect address to register with the service, read-only, with Copy. */
-function CopyAddress({ label, hint, url }: { label: string; hint?: string; url: string }) {
-  const [copied, setCopied] = useState(false);
-  const copy = () => {
-    void navigator.clipboard?.writeText(url).then(
-      () => setCopied(true),
-      () => setCopied(false),
-    );
-  };
-  return (
-    <div className="app-int-redirect">
-      <TextField label={label} {...(hint ? { hint } : {})} value={url} readOnly onFocus={(e) => e.currentTarget.select()} />
-      <Button type="button" size="sm" variant="ghost" icon={<Icon name={copied ? 'check' : 'copy'} />} onClick={copy}>
-        {copied ? 'Copied' : 'Copy'}
-      </Button>
-    </div>
   );
 }
 
