@@ -51,17 +51,17 @@ type accessField struct {
 var accessFields = []accessField{
 	{key: keyGmailRead, title: "May read mail", description: "Lets the agent see what is in your Gmail, within the labels below. It changes nothing."},
 	{key: keyGmailWrite, title: "May draft and label", description: "Lets the agent change your Gmail where no one else is told: drafts it writes, and labels on messages. It sends nothing."},
-	{key: keyGmailSend, title: "May send mail (each send waits for your approval)", description: "Lets the agent ask to send mail. Nothing is sent until you approve it."},
+	{key: keyGmailSend, title: "May send mail", description: "Lets the agent send mail. Not available in this version of Kivali."},
 	{key: keyGmailLabels, title: "Labels it may read", description: "The labels the agent may read mail in. Leave it empty for every label.", list: true},
 	{key: keyCalendarRead, title: "May read calendars", description: "Lets the agent see the calendars below and their events. It changes nothing."},
-	{key: keyCalendarWrite, title: "May change events", description: "Lets the agent create and change events on calendars you own, and delete the events it created, telling no one. A change that invites people, or changes who is invited, waits for your approval and needs May invite and respond."},
-	{key: keyCalendarSend, title: "May invite and respond (each waits for your approval)", description: "Lets the agent ask to invite people to events and to answer invitations. Nothing reaches anyone until you approve it."},
+	{key: keyCalendarWrite, title: "May change events", description: "Lets the agent create events on your own calendars, and change and delete the events there that you organized and that invite no one but you, telling no one. It deletes only events Kivali created. Inviting people, and changing or deleting an event that invites others, are not available in this version of Kivali."},
+	{key: keyCalendarSend, title: "May invite and respond", description: "Lets the agent invite people to events, change events that invite others, and answer invitations. Not available in this version of Kivali."},
 	{key: keyCalendars, title: "Calendars it may use", description: "The calendars the agent may use. Leave it empty for every calendar.", list: true},
 	{key: keyDocsRead, title: "May read documents", description: "Lets the agent find and read Google Docs and their comments, within the folders below. It changes nothing."},
 	{key: keyDocsWrite, title: "May write documents", description: "Lets the agent create documents, and change documents you own or it created, telling no one."},
-	{key: keyDocsSend, title: "May comment (each comment waits for your approval)", description: "Lets the agent ask to comment on documents and reply to comments. Nothing is posted until you approve it."},
+	{key: keyDocsSend, title: "May comment", description: "Lets the agent comment on documents and reply to comments. Not available in this version of Kivali."},
 	{key: keyDocsFolders, title: "Folders it may read", description: "The Drive folders the agent may read documents in. Leave it empty for every document you can open.", list: true},
-	{key: keySendTo, title: "May send to", description: "Who the agent may send mail and invitations to: an address such as dana@example.com, or *@example.com for everyone at a domain. Leave it empty for anyone. Every send still waits for your approval.", list: true},
+	{key: keySendTo, title: "May send to", description: "Who the agent may send mail and invitations to: an address such as dana@example.com, or *@example.com for everyone at a domain. Leave it empty for anyone.", list: true},
 }
 
 // accessSchema is the access form as the manifest's JSON Schema, the

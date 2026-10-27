@@ -378,22 +378,24 @@ A call the agent's access does not allow is refused before anything reaches Goog
 
 With **May read calendars**, an agent can:
 
-- List the calendars its access includes, each with your role on it (owner, writer, reader, or free and busy only) and its time zone.
+- List the calendars its access includes, each with your role on it (owner, writer, reader, or free and busy only) and its time zone. A calendar's name is written by whoever made the calendar, so the list reaches the agent between the fixed lines an event's text does (below), each name on one line and cut at 100 characters.
 - List the events on a calendar, soonest first, 25 a page, over at most 60 days (the next 7 unless it asks for others), each with when it is, its status, its organizer, how many people it invites and its title. A repeating event's occurrences are listed one by one.
-- Read an event: when and where it is, its organizer, its attendees and how each answered, the host of its video call, how it repeats, and its description.
+- Read an event: when and where it is, its organizer, its first 50 attendees and how each answered, the host of its video call, how it repeats, and its description.
 - Find when calendars are free over at most 7 days: each calendar's busy times, and the times none of them is busy. Busy times carry nothing of the events' text.
 
-It uses only the calendars named under **Calendars it may use**, or every calendar when that list is empty; a call that names no calendar uses your primary one. A calendar outside the list is refused.
+It uses only calendars in your Google Calendar list, the ones **Load options** lists: those named under **Calendars it may use**, or every one in your list when that list is empty. A call that names no calendar uses your primary one, and a calendar outside them is refused. In this version an agent cannot read another person's calendar by its address, even one Google would show you; add it to your Google Calendar list first.
 
-An event's title, place and description are written by whoever made the event, often someone who invited you, so the agent reads them as it reads an email: between two fixed lines that say the text is untrusted, after a line of Kivali's naming the organizer and whether that is your domain, with hidden text left out and links listed after the description, host first. An event organized by a calendar you own counts as from your domain.
+Your own calendars are your primary calendar and the calendars made in Google Calendar on which your role is owner. A person's calendar shared with you is never one of them, whatever your role on it.
+
+An event's title, place, description and the names of its organizer and attendees are written by whoever made the event, often someone who invited you, so the agent reads them as it reads an email: between two fixed lines that say the text is untrusted, after a line of Kivali's naming the organizer and whether that is your domain, with hidden text left out and links listed after the description, host first. Kivali judges each event by its organizer's and creator's addresses, on your own calendars as on any other: one of your own calendars' addresses counts as your domain, and a person's calendar shared with you as that person's.
 
 With **May change events**, an agent can:
 
-- Create an event, at a time or all day, on a calendar you own, the ones whose role is owner. Kivali marks each event it creates as made by Kivali.
-- Change an event's title, time, place or description on a calendar you own.
-- Delete an event Kivali created, by any of your agents, on a calendar you own. Events you or anyone else made are refused.
+- Create an event, at a time or all day, on one of your own calendars. Kivali marks each event it creates as made by Kivali.
+- Change an event's title, time, place or description on one of your own calendars, when you organized it and it invites no one but you.
+- Delete an event Kivali created on this Google account, on one of your own calendars, when it invites no one but you. Events you or anyone else made are refused.
 
-Google emails no one about these changes, though people an event already invites see its new time or place on their own calendars. Inviting people, changing who an event invites and answering invitations are not available in this version.
+Google emails no one about these changes. Changing or deleting an event that invites anyone but you, a room included, or that someone else organized, would show on their calendars, so it is a send, as are inviting people, changing who an event invites and answering invitations. Sends are not available in this version.
 
 Each Calendar call is in **Recent calls**, naming the events it read, created, changed or deleted.
 

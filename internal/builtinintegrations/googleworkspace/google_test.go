@@ -120,11 +120,11 @@ func TestManifest(t *testing.T) {
 			t.Errorf("%s: tools %v, want %v", k, buckets[k], names)
 		}
 	}
-	// A call that invites people is a send, which this version does not
-	// run: the owner's words for the two actions that may make one say
-	// so.
+	// A call that invites people, or changes or deletes an event that
+	// invites others, is a send, which this version does not run: the
+	// owner's words for the three actions that may make one say so.
 	for _, tl := range m.Tools {
-		if (tl.Name == "create_event" || tl.Name == "update_event") && !strings.Contains(tl.Description, "not available in this version of Kivali") {
+		if (tl.Name == "create_event" || tl.Name == "update_event" || tl.Name == "delete_event") && !strings.Contains(tl.Description, "not available in this version of Kivali") {
 			t.Errorf("%s: %q", tl.Name, tl.Description)
 		}
 	}
