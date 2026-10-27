@@ -41,6 +41,7 @@ import (
 	"sync"
 
 	"github.com/kivali-ai/kivali/internal/builtinintegrations"
+	"github.com/kivali-ai/kivali/internal/clock"
 	"github.com/kivali-ai/kivali/internal/integration"
 )
 
@@ -82,6 +83,8 @@ var scopes = []string{
 // plain http on loopback for the tests' fake.
 type GoogleWorkspace struct {
 	GmailBase, APIBase, DocsBase string
+	// Clock is what Calendar's "now" is read from; nil is the system's.
+	Clock clock.Clock
 
 	clientOnce sync.Once
 	client     *http.Client
@@ -158,7 +161,7 @@ func (g *GoogleWorkspace) Manifest() *integration.Manifest {
 		Name:            Name,
 		Version:         "1.0.0",
 		DisplayName:     displayName,
-		Description:     "Gmail, Google Calendar and Google Docs, signed in with an OAuth client you make on Google's Auth Platform. In this version agents can read your Gmail.",
+		Description:     "Gmail, Google Calendar and Google Docs, signed in with an OAuth client you make on Google's Auth Platform. In this version agents can read your Gmail, and read your Google Calendar and change its events.",
 		Author:          integration.Author{Name: "Kivali"},
 		UserConfig:      integration.UserConfig{},
 		Tools:           tools,
@@ -224,6 +227,8 @@ type call struct {
 	access access
 	args   args
 	save   builtinintegrations.SaveFunc
+	// agent is the calling agent's slug (Caller.Agent).
+	agent string
 
 	audit   string
 	outside []string
@@ -274,7 +279,7 @@ func (g *GoogleWorkspace) Call(ctx context.Context, caller builtinintegrations.C
 	if err != nil {
 		return nil, err
 	}
-	c := &call{g: g, token: tok, access: acc, args: in, save: caller.Save}
+	c := &call{g: g, token: tok, access: acc, args: in, save: caller.Save, agent: caller.Agent}
 	answer, err := a.run(ctx, c)
 	if err != nil {
 		var ref *builtinintegrations.Refusal

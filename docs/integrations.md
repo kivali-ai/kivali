@@ -316,7 +316,7 @@ Each action is in **Recent calls**: one that opens, comments, closes or deletes 
 
 ## Google Workspace
 
-**Google Workspace** ships with Kivali. It connects your Gmail, Google Calendar and Google Docs, signed in with an OAuth client you make on Google's Auth Platform, in a Google Cloud project of yours. In this version, agents can read your Gmail. It runs inside Kivali and reaches only Google's APIs (`gmail.googleapis.com`, `www.googleapis.com` and `docs.googleapis.com`) and Google's sign-in (`accounts.google.com` and `oauth2.googleapis.com`).
+**Google Workspace** ships with Kivali. It connects your Gmail, Google Calendar and Google Docs, signed in with an OAuth client you make on Google's Auth Platform, in a Google Cloud project of yours. In this version, agents can read your Gmail, and read your Google Calendar and change its events. It runs inside Kivali and reaches only Google's APIs (`gmail.googleapis.com`, `www.googleapis.com` and `docs.googleapis.com`) and Google's sign-in (`accounts.google.com` and `oauth2.googleapis.com`).
 
 ### Connect it
 
@@ -347,7 +347,7 @@ An agent's access has a part for each of Gmail, Google Calendar and Google Docs,
 
 ### What agents can do
 
-Google Workspace's page lists its actions under **Actions** by the switch that gives each. This version runs Gmail's reading; the page marks the others "Not available in this version of Kivali", and agents are not given them.
+Google Workspace's page lists its actions under **Actions** by the switch that gives each. This version runs Gmail's reading, and Google Calendar's reading and changing; the page marks the others "Not available in this version of Kivali", and agents are not given them.
 
 With **May read mail**, an agent can:
 
@@ -374,8 +374,31 @@ The label list is how you choose which mail an agent sees. Make a label for it, 
 
 A call the agent's access does not allow is refused before anything reaches Google, and the agent is told to ask you. Each call is in **Recent calls**, naming the messages it read or the attachment it saved.
 
+#### Google Calendar
+
+With **May read calendars**, an agent can:
+
+- List the calendars its access includes, each with your role on it (owner, writer, reader, or free and busy only) and its time zone.
+- List the events on a calendar, soonest first, 25 a page, over at most 60 days (the next 7 unless it asks for others), each with when it is, its status, its organizer, how many people it invites and its title. A repeating event's occurrences are listed one by one.
+- Read an event: when and where it is, its organizer, its attendees and how each answered, the host of its video call, how it repeats, and its description.
+- Find when calendars are free over at most 7 days: each calendar's busy times, and the times none of them is busy. Busy times carry nothing of the events' text.
+
+It uses only the calendars named under **Calendars it may use**, or every calendar when that list is empty; a call that names no calendar uses your primary one. A calendar outside the list is refused.
+
+An event's title, place and description are written by whoever made the event, often someone who invited you, so the agent reads them as it reads an email: between two fixed lines that say the text is untrusted, after a line of Kivali's naming the organizer and whether that is your domain, with hidden text left out and links listed after the description, host first. An event organized by a calendar you own counts as from your domain.
+
+With **May change events**, an agent can:
+
+- Create an event, at a time or all day, on a calendar you own, the ones whose role is owner. Kivali marks each event it creates as made by Kivali.
+- Change an event's title, time, place or description on a calendar you own.
+- Delete an event Kivali created, by any of your agents, on a calendar you own. Events you or anyone else made are refused.
+
+Google emails no one about these changes, though people an event already invites see its new time or place on their own calendars. Inviting people, changing who an event invites and answering invitations are not available in this version.
+
+Each Calendar call is in **Recent calls**, naming the events it read, created, changed or deleted.
+
 ### Not supported
 
-- Moving mail or documents to the trash, and sharing documents. `delete_event` deletes only events Kivali created.
+- Moving mail or documents to the trash, deleting events Kivali did not create, and sharing documents.
 - Google Sheets and Google Slides.
 - Gmail's settings, such as filters and forwarding: Kivali never asks for them.
