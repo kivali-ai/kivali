@@ -3942,12 +3942,13 @@ apart:
   `extra_authorization_params` `access_type=offline` and
   `prompt=consent` (Google gives a refresh token only for both),
   `credential_keys.access_token: GOOGLE_ACCESS_TOKEN`, and the scopes
-  `gmail.readonly`, `gmail.compose`, `gmail.labels`, `calendar.events`,
-  `calendar.readonly`, `documents`, `drive.readonly` and `drive.file`
-  (each under `https://www.googleapis.com/auth/`), never Gmail's
-  settings: `drive.readonly` finds documents and folders, and
-  `drive.file` lets Drive make a document with Kivali's mark, in its
-  folder. The
+  `gmail.readonly`, `gmail.compose`, `gmail.labels`, `gmail.modify`
+  (which `messages.modify`, changing a message's labels, needs),
+  `calendar.events`, `calendar.readonly`, `documents`,
+  `drive.readonly` and `drive.file` (each under
+  `https://www.googleapis.com/auth/`), never Gmail's settings:
+  `drive.readonly` finds documents and folders, and `drive.file`
+  lets Drive make a document with Kivali's mark, in its folder. The
   `setup` block: a summary; `hosts: ["console.cloud.google.com"]`; one
   field, `client_json`, secret and setup-only; keeps `client_id` and
   `client_secret`, both secret, which core signs in with. An empty

@@ -64,14 +64,16 @@ const (
 )
 
 // scopes are what the sign-in asks Google for: Gmail's read, compose
-// (drafts and sending) and labels, never its settings; Calendar's
-// events and calendars read; Docs; Drive read, for finding documents
-// and folders; and Drive's files Kivali makes, for creating a document
+// (drafts and sending), labels and modify (the labels on a message,
+// which messages.modify needs), never its settings; Calendar's events
+// and calendars read; Docs; Drive read, for finding documents and
+// folders; and Drive's files Kivali makes, for creating a document
 // with Kivali's mark, in its folder.
 var scopes = []string{
 	"https://www.googleapis.com/auth/gmail.readonly",
 	"https://www.googleapis.com/auth/gmail.compose",
 	"https://www.googleapis.com/auth/gmail.labels",
+	"https://www.googleapis.com/auth/gmail.modify",
 	"https://www.googleapis.com/auth/calendar.events",
 	"https://www.googleapis.com/auth/calendar.readonly",
 	"https://www.googleapis.com/auth/documents",
